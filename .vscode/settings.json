@@ -1,0 +1,18 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.espIdfPathWin": "C:\\Users\\leastbad\\esp\\v5.4\\esp-idf",
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ],
+  "idf.portWin": "COM5",
+  "idf.toolsPathWin": "C:\\Users\\leastbad\\.espressif",
+  "idf.flashType": "UART",
+  "files.associations": {
+    "freertos.h": "c",
+    "bitset": "c",
+    "string_view": "c",
+    "regex": "c",
+    "cstdint": "c",
+    "display.h": "c"
+  }
+}
