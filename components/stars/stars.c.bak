@@ -1,0 +1,67 @@
+#include "stars.h"
+#include <stdlib.h>
+#include "lvgl.h"
+#include "esp_log.h"
+
+static Star stars[MAX_STARS];
+static void *pixel_buffer;
+lv_obj_t *canvas = NULL;
+
+void starfield_task(void *pvParameter);
+void init_stars(void);
+
+void init_star(int i) {
+  stars[i].x = rand() % 200 - 100;
+  stars[i].y = rand() % 200 - 100;
+  stars[i].z = rand() % 400 + 100;
+  stars[i].brightness = rand() % 256;
+}
+
+void init_stars() {
+  for (int i = 0; i < MAX_STARS; i++) {
+    init_star(i);
+  }
+}
+
+void update_and_draw_stars() {
+  int centre_x = DISP_HOR_RES / 2;
+  int centre_y = DISP_VER_RES / 2;
+
+  uint8_t *buf = (uint8_t *)pixel_buffer;  
+
+  for (int i = 0; i < MAX_STARS; i++) {
+    stars[i].z -= 7;
+
+    int x = (int)((stars[i].x / (float)stars[i].z) * 100.0f) + centre_x;
+    int y = (int)((stars[i].y / (float)stars[i].z) * 100.0f) + centre_y;
+
+    if (x < 0 || x >= DISP_HOR_RES || y < 0 || y >= DISP_VER_RES || stars[i].z < 1) {
+      init_star(i);
+    } else {
+      uint8_t brightness = (stars[i].brightness * 15) / 255;
+      buf[y * DISP_HOR_RES + x] = brightness;
+    }
+  }
+
+  for (int y = 0; y < DISP_VER_RES; y++) {
+    for (int x = 0; x < DISP_HOR_RES; x++) {
+      uint8_t brightness = buf[y * DISP_HOR_RES + x];
+      if (brightness > 0) {  
+        lv_color_t color = lv_color_make(brightness, brightness, brightness);
+        lv_canvas_set_px(canvas, x, y, color, LV_OPA_COVER);
+      }
+    }
+  }
+
+  lv_obj_invalidate(canvas);
+}
+
+void starfield_task(void *pvParameter) {
+  init_stars();
+
+  while (1) {
+    ESP_LOGI(TAG, "star task running");
+    update_and_draw_stars();  
+    vTaskDelay(pdMS_TO_TICKS(16)); // 60fps
+  }
+}
