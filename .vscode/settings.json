@@ -13,6 +13,7 @@
     "string_view": "c",
     "regex": "c",
     "cstdint": "c",
-    "display.h": "c"
+    "display.h": "c",
+    "touch_pad.h": "c"
   }
 }

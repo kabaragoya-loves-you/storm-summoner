@@ -3,6 +3,8 @@
 #include "display.h"
 #include "lvgl_test.h"
 #include "stars.h"
+#include "touch.h"
+#include "touch_basic.h"
 
 #define TAG "main"
 
@@ -10,5 +12,7 @@ void app_main(void) {
   lvgl_setup();
   // lvgl_test();
   create_starfield();
-  xTaskCreate(lvgl_task, "lvgl_task", 4096, NULL, 5, NULL);
+  // touch_init();
+  touch_basic_init();
+  create_lvgl_task();
 }

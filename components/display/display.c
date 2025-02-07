@@ -13,7 +13,8 @@
 
 #define TAG "display"
 
-void lvgl_task(void *pvParameter);
+// void lvgl_task(void *pvParameter);
+void create_lvgl_task(void);
 uint32_t esp_tick_cb(void);
 
 void lvgl_setup(void) {
@@ -41,6 +42,10 @@ void lvgl_task(void *pvParameter) {
     lv_task_handler();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
+}
+
+void create_lvgl_task(void) {
+  xTaskCreate(lvgl_task, "lvgl_task", 4096, NULL, 5, NULL);
 }
 
 uint32_t esp_tick_cb(void) {

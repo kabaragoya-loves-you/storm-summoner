@@ -10,6 +10,8 @@
 #define PIN_DC 26
 #define PIN_CS 21
 
+#define TAG "SSD1327"
+
 static spi_device_handle_t spi;
 
 void ssd1327_init(void) {
@@ -144,5 +146,5 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   // 4) Tell LVGL we’re done
   lv_disp_flush_ready(disp);
 
-  ESP_LOGI("SSD1327", "Flushed area x[%d..%d], y[%d..%d]", (int)area->x1, (int)area->x2, (int)area->y1, (int)area->y2);
+  // ESP_LOGI(TAG, "Flushed area x[%d..%d], y[%d..%d]", (int)area->x1, (int)area->x2, (int)area->y1, (int)area->y2);
 }
