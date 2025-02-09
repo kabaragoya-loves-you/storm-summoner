@@ -13,10 +13,19 @@ static QueueHandle_t haptic_job_queue = NULL;
 static void drv2605_job_task(void *pvParameters);
 
 static const haptic_job_t HAPTIC_JOBS[NUM_HAPTIC_JOBS] = {
-  [SHORT_PULSE] = { .waveform_sequence = { 1, 2 }, .length = 2, .name = "SHORT_PULSE" },
-  [LONG_BUZZ]   = { .waveform_sequence = { 3, 4, 5 }, .length = 3, .name = "LONG_BUZZ" },
-  [RAMP_UP]     = { .waveform_sequence = { 6, 7, 8, 9 }, .length = 4, .name = "RAMP_UP" },
-  [RAMP_DOWN]   = { .waveform_sequence = { 10, 11 }, .length = 2, .name = "RAMP_DOWN" }
+  [STRONG_CLICK] = { .waveform_sequence = { 1 }, .length = 1, .name = "STRONG_CLICK" },
+  [SHARP_CLICK]   = { .waveform_sequence = { 4 }, .length = 1, .name = "SHARP_CLICK" },
+  [SOFT_BUMP]     = { .waveform_sequence = { 7 }, .length = 1, .name = "SOFT_BUMP" },
+  [DOUBLE_CLICK]   = { .waveform_sequence = { 10 }, .length = 1, .name = "DOUBLE_CLICK" },
+  [TRIPLE_CLICK]   = { .waveform_sequence = { 12 }, .length = 1, .name = "TRIPLE_CLICK" },
+  [STRONG_BUZZ]   = { .waveform_sequence = { 14 }, .length = 1, .name = "STRONG_BUZZ" },
+  [ALERT_1000]   = { .waveform_sequence = { 16 }, .length = 1, .name = "ALERT_1000" },
+  [SHARP_TICK]   = { .waveform_sequence = { 24 }, .length = 1, .name = "SHARP_TICK" },
+  [SHORT_DOUBLE_CLICK_STRONG]   = { .waveform_sequence = { 27 }, .length = 1, .name = "SHORT_DOUBLE_CLICK_STRONG" },
+  [LONG_DOUBLE_SHARP_CLICK_STRONG]   = { .waveform_sequence = { 37 }, .length = 1, .name = "LONG_DOUBLE_SHARP_CLICK_STRONG" },
+  [BUZZ]   = { .waveform_sequence = { 47 }, .length = 1, .name = "BUZZ" },
+  [PULSING_STRONG]   = { .waveform_sequence = { 52 }, .length = 1, .name = "PULSING_STRONG" },
+  [TRANSITION_CLICK]   = { .waveform_sequence = { 58 }, .length = 1, .name = "TRANSITION_CLICK" }
 };
 
 void haptic(haptic_job_id_t job_id) {
@@ -28,7 +37,6 @@ void haptic(haptic_job_id_t job_id) {
     if (xQueueSend(haptic_job_queue, &HAPTIC_JOBS[job_id], pdMS_TO_TICKS(100)) != pdPASS) {
       ESP_LOGE(TAG, "Failed to enqueue haptic job");
     }
-    ESP_LOGI(TAG, "Enqueued haptic job %s with %d steps", HAPTIC_JOBS[job_id].name, HAPTIC_JOBS[job_id].length);
   }
 }
 

@@ -12,10 +12,19 @@ typedef struct {
 } haptic_job_t;
 
 typedef enum {
-  SHORT_PULSE,
-  LONG_BUZZ,
-  RAMP_UP,
-  RAMP_DOWN,
+  STRONG_CLICK,
+  SHARP_CLICK,
+  SOFT_BUMP,
+  DOUBLE_CLICK,
+  TRIPLE_CLICK,
+  STRONG_BUZZ,
+  ALERT_1000,
+  SHARP_TICK,
+  SHORT_DOUBLE_CLICK_STRONG,
+  LONG_DOUBLE_SHARP_CLICK_STRONG,
+  BUZZ,
+  PULSING_STRONG,
+  TRANSITION_CLICK,
   NUM_HAPTIC_JOBS // Always last to track array size
 } haptic_job_id_t;
 

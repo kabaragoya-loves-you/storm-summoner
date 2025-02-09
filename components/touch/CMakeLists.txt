@@ -5,5 +5,5 @@ idf_component_register(
     "touch_modes.c"
     "touch_thresholds.c"
   INCLUDE_DIRS "include"
-  REQUIRES log driver esp_timer
+  REQUIRES log driver esp_timer drv2605
 )

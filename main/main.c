@@ -13,5 +13,4 @@ void app_main(void) {
   touch_init();
   i2c_common_init();
   drv2605_start();
-  haptic(LONG_BUZZ);
 }

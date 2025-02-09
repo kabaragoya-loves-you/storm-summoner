@@ -4,6 +4,7 @@
 #include "touch_gestures.h"
 #include "esp_log.h"
 #include "freertos/semphr.h"
+#include "drv2605_manager.h"
 
 #define TAG "TOUCH"
 
@@ -40,6 +41,7 @@ static void touch_task(void *arg) {
 
       switch (current_mode) {
       case TOUCH_MODE_BUTTONS:
+        haptic(evt.pad_num - 1);
         process_touch_buttons(evt);
         break;
       case TOUCH_MODE_ROTARY:
@@ -54,9 +56,9 @@ static void touch_task(void *arg) {
       }
     }
 
-    if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) {
-      ESP_LOGI(TAG, "Pin [%"PRIu32"] is released, status mask 0x%"PRIu32, evt.pad_num, evt.pad_status);
-    }
+    // if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) {
+    //   ESP_LOGI(TAG, "Pin [%"PRIu32"] is released, status mask 0x%"PRIu32, evt.pad_num, evt.pad_status);
+    // }
   }
 }
 
