@@ -13,7 +13,7 @@ const uint16_t touch_thresholds[MAX_TOUCH_PADS] = {
 
 void apply_touch_thresholds(void) {
   uint32_t touch_value;
-  vTaskDelay(50 / portTICK_PERIOD_MS);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {
     touch_pad_read_benchmark(TOUCH_PADS[i], &touch_value);
     touch_pad_set_thresh(TOUCH_PADS[i], touch_value * 0.2);
