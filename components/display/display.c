@@ -13,9 +13,8 @@
 
 #define TAG "display"
 
-// void lvgl_task(void *pvParameter);
-void create_lvgl_task(void);
 uint32_t esp_tick_cb(void);
+void lvgl_task(void *pvParameter);
 
 void lvgl_setup(void) {
   lv_init();
@@ -30,10 +29,12 @@ void lvgl_setup(void) {
   uint8_t *buf2 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
   if(!buf1) {
     ESP_LOGE(TAG, "Failed to allocate LVGL buffer. Cannot continue.");
-    return; // or handle error
+    return;
   }
 
   lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
+
+  xTaskCreate(&lvgl_task, "lvgl_task", 4096, NULL, 5, NULL);
 }
 
 void lvgl_task(void *pvParameter) {
@@ -42,10 +43,6 @@ void lvgl_task(void *pvParameter) {
     lv_task_handler();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
-}
-
-void create_lvgl_task(void) {
-  xTaskCreate(lvgl_task, "lvgl_task", 4096, NULL, 5, NULL);
 }
 
 uint32_t esp_tick_cb(void) {

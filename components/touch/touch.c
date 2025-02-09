@@ -129,10 +129,15 @@ void touch_init(void) {
     ESP_LOGE(TAG, "Failed to create mode mutex");
   }
 
-  ESP_LOGI(TAG, "Touch pad initialized successfully");
-}
+  if (touch_evt_queue == NULL) {
+    touch_evt_queue = xQueueCreate(MAX_TOUCH_PADS, sizeof(touch_event_t));
+    if (touch_evt_queue == NULL) {
+      ESP_LOGE(TAG, "Failed to create touch pad queue");
+      return;
+    }
+  }
 
-void start_touch_task(void) {
-  touch_evt_queue = xQueueCreate(MAX_TOUCH_PADS, sizeof(touch_event_t));
   xTaskCreate(&touch_task, "touch_task", 4096, NULL, 5, NULL);
+
+  ESP_LOGI(TAG, "Touch pad initialized successfully");
 }

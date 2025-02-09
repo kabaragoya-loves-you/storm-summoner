@@ -44,7 +44,6 @@ typedef struct touch_msg {
 } touch_event_t;
 
 void touch_init(void);
-void start_touch_task(void);
 void set_touch_mode(touch_mode_t mode);
 touch_mode_t get_touch_mode(void);
 

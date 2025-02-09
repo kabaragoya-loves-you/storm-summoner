@@ -78,37 +78,37 @@ void process_touch_rotary(touch_event_t evt, uint32_t time_now) {
 
   int current_position = -1;
   for (int i = 0; i < TOUCH_WHEEL_PINS; i++) {
-  if (evt.pad_status & (1 << i)) {
-  current_position = i;
-  break;
-  }
+    if (evt.pad_status & (1 << i)) {
+      current_position = i;
+      break;
+    }
   }
 
   if (current_position != -1 && last_position != -1) {
-  int delta = current_position - last_position;
-  if (delta == 7) delta = -1; // Handle wrap-around clockwise
-  if (delta == -7) delta = 1; // Handle wrap-around counter-clockwise
+    int delta = current_position - last_position;
+    if (delta == 7) delta = -1; // Handle wrap-around clockwise
+    if (delta == -7) delta = 1; // Handle wrap-around counter-clockwise
 
-  uint32_t time_diff = time_now - last_time;
-  int speed = 1;
-  if (time_diff < 100) {
-  speed = 3; // Fast rotation
-  } else if (time_diff < 300) {
-  speed = 2; // Medium rotation
-  }
+    uint32_t time_diff = time_now - last_time;
+    int speed = 1;
+    if (time_diff < 100) {
+      speed = 3; // Fast rotation
+    } else if (time_diff < 300) {
+      speed = 2; // Medium rotation
+    }
 
-  if (delta > 0) {
-  ESP_LOGI(TAG, "Rotated clockwise by %d steps at speed %d", delta, speed);
-  // Increment your value based on delta and speed
-  } else if (delta < 0) {
-  ESP_LOGI(TAG, "Rotated counter-clockwise by %d steps at speed %d", -delta, speed);
-  // Decrement your value based on delta and speed
-  }
+    if (delta > 0) {
+      ESP_LOGI(TAG, "Rotated clockwise by %d steps at speed %d", delta, speed);
+      // Increment your value based on delta and speed
+    } else if (delta < 0) {
+      ESP_LOGI(TAG, "Rotated counter-clockwise by %d steps at speed %d", -delta, speed);
+      // Decrement your value based on delta and speed
+    }
   }
 
   if (current_position != -1) {
-  last_position = current_position;
-  last_time = time_now;
+    last_position = current_position;
+    last_time = time_now;
   }
 }
 
@@ -132,22 +132,22 @@ void process_touch_bi_polar(touch_event_t evt) {
   static int last_pad = -1;
 
   if ((evt.pad_status & (1 << 0)) && (evt.pad_status & (1 << 7))) {
-  ESP_LOGI(TAG, "Pads 1 and 8 touched simultaneously. Value reset to 0.");
-  last_pad = -1;
-  return;
+    ESP_LOGI(TAG, "Pads 1 and 8 touched simultaneously. Value reset to 0.");
+    last_pad = -1;
+    return;
   }
 
   for (int i = 0; i < TOUCH_WHEEL_PINS; i++) {
-  if (evt.pad_status & (1 << i)) {
-  if ((last_pad == 3 && i == 4) || (last_pad == 4 && i == 3)) {
-  ESP_LOGI(TAG, "Direct transition between pads 4 and 5 is not allowed.");
-  return;
-  }
+    if (evt.pad_status & (1 << i)) {
+      if ((last_pad == 3 && i == 4) || (last_pad == 4 && i == 3)) {
+        ESP_LOGI(TAG, "Direct transition between pads 4 and 5 is not allowed.");
+        return;
+      }
 
-  float value = bipolar_values[i];
-  ESP_LOGI(TAG, "Bi-Polar value set to %.2f by touching pad %d", value, i + 1);
-  last_pad = i;
-  break;
-  }
+      float value = bipolar_values[i];
+      ESP_LOGI(TAG, "Bi-Polar value set to %.2f by touching pad %d", value, i + 1);
+      last_pad = i;
+      break;
+    }
   }
 }
