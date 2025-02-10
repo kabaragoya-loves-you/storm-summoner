@@ -3,7 +3,7 @@
 #include "touch.h"
 #include "i2c_common.h"
 #include "drv2605_manager.h"
-#include "esp_log.h"
+#include "flicker.h"
 
 #define TAG "main"
 
@@ -12,5 +12,7 @@ void app_main(void) {
   create_starfield();
   touch_init();
   i2c_common_init();
-  drv2605_start();
+  drv2605_init();
+  flicker_init();
+  flicker_enable();
 }

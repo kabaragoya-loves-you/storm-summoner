@@ -12,7 +12,7 @@ static esp_err_t drv2605_write_reg(uint8_t reg, uint8_t data) {
   return i2c_master_transmit(drv2605_dev, tx_data, 2, -1);
 }
 
-esp_err_t drv2605_init(void) {
+esp_err_t drv2605_setup(void) {
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
     .device_address   = DRV2605_ADDR,

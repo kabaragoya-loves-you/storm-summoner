@@ -33,6 +33,6 @@ typedef enum {
 
 void haptic(haptic_job_id_t job_id);
 
-void drv2605_start(void);
+void drv2605_init(void);
 
 #endif // DRV2605_MANAGER_H

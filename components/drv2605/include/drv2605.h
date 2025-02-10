@@ -22,7 +22,7 @@
 #define DRV2605_MODE_DIAG           6
 #define DRV2605_MODE_AUTOCAL        7
 
-esp_err_t drv2605_init(void);
+esp_err_t drv2605_setup(void);
 
 esp_err_t drv2605_set_mode(uint8_t mode);
 

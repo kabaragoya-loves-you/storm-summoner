@@ -40,7 +40,7 @@ void haptic(haptic_job_id_t job_id) {
   }
 }
 
-void drv2605_start(void) {
+void drv2605_init(void) {
   if (haptic_job_queue == NULL) {
     haptic_job_queue = xQueueCreate(10, sizeof(haptic_job_t));
     if (haptic_job_queue == NULL) {
@@ -55,7 +55,7 @@ void drv2605_start(void) {
 static void drv2605_job_task(void *pvParameters) {
   haptic_job_t job;
 
-  if (drv2605_init() != ESP_OK) {
+  if (drv2605_setup() != ESP_OK) {
     ESP_LOGE(TAG, "DRV2605 initialization failed in job task");
     vTaskDelete(NULL);
   }
