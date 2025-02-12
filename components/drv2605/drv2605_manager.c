@@ -14,16 +14,16 @@ static void drv2605_job_task(void *pvParameters);
 
 static const haptic_job_t HAPTIC_JOBS[NUM_HAPTIC_JOBS] = {
   [STRONG_CLICK] = { .waveform_sequence = { 1 }, .length = 1, .name = "STRONG_CLICK" },
-  [SHARP_CLICK]   = { .waveform_sequence = { 4 }, .length = 1, .name = "SHARP_CLICK" },
-  [SOFT_BUMP]     = { .waveform_sequence = { 7 }, .length = 1, .name = "SOFT_BUMP" },
+  [ALERT_750]   = { .waveform_sequence = { 15 }, .length = 1, .name = "ALERT_750" },
+  [TRANSITION_HUM]     = { .waveform_sequence = { 64 }, .length = 1, .name = "TRANSITION_HUM" },
   [DOUBLE_CLICK]   = { .waveform_sequence = { 10 }, .length = 1, .name = "DOUBLE_CLICK" },
   [TRIPLE_CLICK]   = { .waveform_sequence = { 12 }, .length = 1, .name = "TRIPLE_CLICK" },
   [STRONG_BUZZ]   = { .waveform_sequence = { 14 }, .length = 1, .name = "STRONG_BUZZ" },
   [ALERT_1000]   = { .waveform_sequence = { 16 }, .length = 1, .name = "ALERT_1000" },
-  [SHARP_TICK]   = { .waveform_sequence = { 24 }, .length = 1, .name = "SHARP_TICK" },
-  [SHORT_DOUBLE_CLICK_STRONG]   = { .waveform_sequence = { 27 }, .length = 1, .name = "SHORT_DOUBLE_CLICK_STRONG" },
-  [LONG_DOUBLE_SHARP_CLICK_STRONG]   = { .waveform_sequence = { 37 }, .length = 1, .name = "LONG_DOUBLE_SHARP_CLICK_STRONG" },
-  [BUZZ]   = { .waveform_sequence = { 47 }, .length = 1, .name = "BUZZ" },
+  [TRANSITION_DOWN]   = { .waveform_sequence = { 70 }, .length = 1, .name = "TRANSITION_DOWN" },
+  [TRANSITION_DOWN_SHARP]   = { .waveform_sequence = { 76 }, .length = 1, .name = "TRANSITION_DOWN_SHARP" },
+  [TRANSITION_DOWN_SHORT]   = { .waveform_sequence = { 80 }, .length = 1, .name = "TRANSITION_DOWN_SHORT" },
+  [TRANSITION_UP]   = { .waveform_sequence = { 86 }, .length = 1, .name = "TRANSITION_UP" },
   [PULSING_STRONG]   = { .waveform_sequence = { 52 }, .length = 1, .name = "PULSING_STRONG" },
   [TRANSITION_CLICK]   = { .waveform_sequence = { 58 }, .length = 1, .name = "TRANSITION_CLICK" }
 };

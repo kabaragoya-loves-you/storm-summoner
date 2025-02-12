@@ -4,6 +4,7 @@
 #include "i2c_common.h"
 #include "drv2605_manager.h"
 #include "flicker.h"
+#include "cv.h"
 
 #define TAG "main"
 
@@ -14,5 +15,5 @@ void app_main(void) {
   i2c_common_init();
   drv2605_init();
   flicker_init();
-  flicker_enable();
+  cv_init();
 }

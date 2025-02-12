@@ -2,6 +2,7 @@ idf_component_register (
   SRCS "main.c"
   INCLUDE_DIRS "."
   REQUIRES
+    cv
     display
     drv2605
     flicker
