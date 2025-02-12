@@ -5,6 +5,7 @@ idf_component_register (
     cv
     display
     drv2605
+    expression
     flicker
     i2c_common
     log

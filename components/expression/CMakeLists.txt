@@ -1,6 +1,6 @@
 idf_component_register(
   SRCS
-    "cv.c"
+    "expression.c"
   INCLUDE_DIRS "include"
   REQUIRES log esp_adc adc2
 )

@@ -1,1 +1,1 @@
-void lvgl_setup(void);
+void display_init(void);

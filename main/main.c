@@ -5,15 +5,17 @@
 #include "drv2605_manager.h"
 #include "flicker.h"
 #include "cv.h"
+#include "expression.h"
 
 #define TAG "main"
 
 void app_main(void) {
-  lvgl_setup();
+  display_init();
   create_starfield();
   touch_init();
   i2c_common_init();
   drv2605_init();
   flicker_init();
   cv_init();
+  expression_init();
 }

@@ -16,7 +16,7 @@
 uint32_t esp_tick_cb(void);
 void lvgl_task(void *pvParameter);
 
-void lvgl_setup(void) {
+void display_init(void) {
   lv_init();
   ssd1327_init();
 
