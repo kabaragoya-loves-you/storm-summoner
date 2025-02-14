@@ -19,8 +19,11 @@ esp_err_t drv2605_setup(void) {
     .scl_speed_hz = 100000,
   };
 
-  i2c_master_bus_handle_t bus_handle;
-  ESP_ERROR_CHECK(i2c_master_get_bus_handle(0, &bus_handle));
+  i2c_master_bus_handle_t bus_handle = i2c_bus_handle();
+  if (!bus_handle) {
+    ESP_LOGE(TAG, "I2C bus handle is NULL");
+    return ESP_FAIL;
+  }
 
   esp_err_t err = i2c_master_bus_add_device(bus_handle, &dev_cfg, &drv2605_dev);
   if (err != ESP_OK) {

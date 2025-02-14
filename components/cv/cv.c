@@ -44,10 +44,6 @@ void cv_enable(void) {
     vTaskResume(task_handle);
     ESP_LOGI(TAG, "CV task resumed");
   } else {
-    if (task_handle != NULL) {
-      ESP_LOGW(TAG, "CV task already running");
-      return;
-    }
     BaseType_t ret = xTaskCreate(cv_task, "cv_task", 4096, NULL, 5, &task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create CV task");

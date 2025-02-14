@@ -44,10 +44,6 @@ void expression_enable(void) {
     vTaskResume(task_handle);
     ESP_LOGI(TAG, "Expression task resumed");
   } else {
-    if (task_handle != NULL) {
-      ESP_LOGW(TAG, "Expression task already running");
-      return;
-    }
     BaseType_t ret = xTaskCreate(expression_task, "expression_task", 4096, NULL, 5, &task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create Expression task");
