@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/semphr.h"
 #include "drv2605_manager.h"
+#include "midi.h"
 
 #define TAG "TOUCH"
 
@@ -42,6 +43,16 @@ static void touch_task(void *arg) {
       switch (current_mode) {
       case TOUCH_MODE_BUTTONS:
         haptic(evt.pad_num - 1);
+        if (evt.pad_num < 9) send_program_change(0, evt.pad_num - 1);
+        if (evt.pad_num == 9) send_control_change(0, 93, 127); // Microcosm tap
+        if (evt.pad_num == 10) send_control_change(0, 16, 22); // Chroma sweeten
+        if (evt.pad_num == 11) send_control_change(0, 17, 88); // Chroma pitch
+        if (evt.pad_num == 12) send_control_change(0, 18, 0); // Chroma cascade
+        if (evt.pad_num == 13) send_control_change(0, 19, 66); // Chroma broken
+        // if (evt.pad_num == 10) send_control_change(0, 20, 54); // Reverb mode 7
+        // if (evt.pad_num == 11) send_control_change(0, 20, 16); // Reverb mode 2
+        // if (evt.pad_num == 12) send_control_change(0, 100, 33); // Echo mode 4 setting 2
+        // if (evt.pad_num == 13) send_control_change(0, 100, 24); // Echo mode 3
         process_touch_buttons(evt);
         break;
       case TOUCH_MODE_ROTARY:
@@ -85,8 +96,6 @@ touch_mode_t get_touch_mode(void) {
 }
 
 void touch_init(void) {
-  ESP_LOGI(TAG, "Initializing touch pad");
-
   touch_pad_init();
 
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {
@@ -141,5 +150,5 @@ void touch_init(void) {
 
   xTaskCreate(&touch_task, "touch_task", 4096, NULL, 5, NULL);
 
-  ESP_LOGI(TAG, "Touch pad initialized successfully");
+  ESP_LOGI(TAG, "13 touch pads + shield initialized");
 }

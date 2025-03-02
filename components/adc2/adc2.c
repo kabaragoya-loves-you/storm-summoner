@@ -20,6 +20,6 @@ adc_oneshot_unit_handle_t adc2_handle(void) {
     ESP_LOGE(TAG, "adc_oneshot_new_unit failed: %d", err);
     return NULL;
   }
-  ESP_LOGI(TAG, "ADC2 initialized");
+  ESP_LOGI(TAG, "Analog to Digital Converter 2 initialized");
   return adc_handle;
 }

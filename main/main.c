@@ -6,6 +6,7 @@
 #include "cv.h"
 #include "expression.h"
 #include "vcnl4040.h"
+#include "uartmidi.h"
 
 #define TAG "main"
 
@@ -18,4 +19,5 @@ void app_main(void) {
   cv_init();
   expression_init();
   vcnl4040_init();
+  uartmidi_init();
 }

@@ -66,7 +66,7 @@ void vcnl4040_init(void) {
     return;
   }
 
-  ESP_LOGI(TAG, "VCNL4040 initialized");
+  ESP_LOGI(TAG, "Light and proximity sensor initialized");
 }
 
 static void als_task(void *arg) {

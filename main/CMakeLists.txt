@@ -11,5 +11,6 @@ idf_component_register (
     log
     stars
     touch
+    uartmidi
     vcnl4040
 )

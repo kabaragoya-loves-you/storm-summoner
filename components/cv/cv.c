@@ -29,7 +29,7 @@ void cv_init(void) {
     ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %d", err);
     return;
   }
-  ESP_LOGI(TAG, "CV component initialized");
+  ESP_LOGI(TAG, "Control Voltage ADC initialized");
 }
 
 void cv_disable(void) {
@@ -85,6 +85,6 @@ static void cv_task(void *arg) {
       midi_value = (uint8_t)((((float)cv_value - (float)CV_MIN) * 127.0f / ((float)CV_MAX - (float)CV_MIN)) + 0.5f);
     }
     vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-    // ESP_LOGI(TAG, "CV is %f, MIDI is %d", cv_value, midi_value);
+    ESP_LOGI(TAG, "CV is %f, MIDI is %d", cv_value, midi_value);
   }
 }

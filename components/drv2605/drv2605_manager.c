@@ -12,7 +12,7 @@ static QueueHandle_t haptic_job_queue = NULL;
 
 static void drv2605_job_task(void *pvParameters);
 
-static const haptic_job_t HAPTIC_JOBS[NUM_HAPTIC_JOBS] = {
+static const haptic_job_t HAPTIC_JOBS[13] = {
   [STRONG_CLICK] = { .waveform_sequence = { 1 }, .length = 1, .name = "STRONG_CLICK" },
   [ALERT_750]   = { .waveform_sequence = { 15 }, .length = 1, .name = "ALERT_750" },
   [TRANSITION_HUM]     = { .waveform_sequence = { 64 }, .length = 1, .name = "TRANSITION_HUM" },
@@ -33,7 +33,7 @@ void haptic(haptic_job_id_t job_id) {
     ESP_LOGE(TAG, "Job queue not created");
     return;
   }
-  if (job_id < NUM_HAPTIC_JOBS) {
+  if (job_id < 13) {
     if (xQueueSend(haptic_job_queue, &HAPTIC_JOBS[job_id], pdMS_TO_TICKS(100)) != pdPASS) {
       ESP_LOGE(TAG, "Failed to enqueue haptic job");
     }
@@ -50,6 +50,7 @@ void drv2605_init(void) {
   }
 
   xTaskCreate(drv2605_job_task, "drv2605_job_task", 4096, NULL, 10, NULL);
+  ESP_LOGI(TAG, "Haptic feedback initialized");
 }
 
 static void drv2605_job_task(void *pvParameters) {
@@ -59,7 +60,6 @@ static void drv2605_job_task(void *pvParameters) {
     ESP_LOGE(TAG, "DRV2605 initialization failed in job task");
     vTaskDelete(NULL);
   }
-  ESP_LOGI(TAG, "DRV2605 job task started");
 
   while (1) {
     if (xQueueReceive(haptic_job_queue, &job, portMAX_DELAY) == pdPASS) {

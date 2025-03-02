@@ -40,7 +40,7 @@ void flicker_init(void) {
   };
   gpio_config(&io_conf);
 
-  ESP_LOGI(TAG, "UV LED GPIO configured");
+  ESP_LOGI(TAG, "UV LED initialized");
 }
 
 void flicker_enable(void) {

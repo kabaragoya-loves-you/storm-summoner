@@ -29,7 +29,7 @@ void expression_init(void) {
     ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %d", err);
     return;
   }
-  ESP_LOGI(TAG, "Expression component initialized");
+  ESP_LOGI(TAG, "Expression pedal ADC initialized");
 }
 
 void expression_disable(void) {

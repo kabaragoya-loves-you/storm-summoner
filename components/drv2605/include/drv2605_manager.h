@@ -24,12 +24,8 @@ typedef enum {
   TRANSITION_DOWN_SHORT,
   TRANSITION_UP,
   PULSING_STRONG,
-  TRANSITION_CLICK,
-  NUM_HAPTIC_JOBS // Always last to track array size
+  TRANSITION_CLICK
 } haptic_job_id_t;
-
-// API function to retrieve a job by symbolic name
-// const haptic_job_t *get_haptic_job(haptic_job_id_t job_id);
 
 void haptic(haptic_job_id_t job_id);
 
