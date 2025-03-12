@@ -18,5 +18,6 @@
     "compare": "c",
     "i2c_master.h": "c",
     "format": "c"
-  }
+  },
+  "idf.pythonInstallPath": "C:\\Users\\leastbad\\.espressif\\tools\\idf-python\\3.11.2\\python.exe"
 }

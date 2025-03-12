@@ -7,9 +7,9 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 
-#define UARTMIDI_TXD 38
-#define UARTMIDI_RXD -1
-#define PIN_POLARITY 48
+#define UARTMIDI_TXD 26
+#define UARTMIDI_RXD 47
+#define PIN_POLARITY 38
 
 typedef struct {
   uint8_t *data;

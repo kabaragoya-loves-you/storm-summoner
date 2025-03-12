@@ -15,7 +15,7 @@ void flicker_task(void *pvParameters) {
     gpio_set_level(LED_GPIO, 0);
     vTaskDelay(pdMS_TO_TICKS(off_duration));
 
-    int burst_count = 1 + (esp_random() % 3);
+    int burst_count = 1 + (esp_random() % 5);
     for (int i = 0; i < burst_count; i++) {
       int on_duration = 50 + (esp_random() % 250);
       gpio_set_level(LED_GPIO, 1);

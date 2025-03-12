@@ -4,6 +4,10 @@
 #include "driver/spi_master.h"
 #include "lvgl.h"
 
+#define PIN_CLK 48
+#define PIN_MOSI 34
+#define PIN_DC 33
+
 void ssd1327_init(void);
 void ssd1327_flush(lv_display_t *drv, const lv_area_t *area, uint8_t * px_map);
 

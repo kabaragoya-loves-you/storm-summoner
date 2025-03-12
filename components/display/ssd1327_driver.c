@@ -4,12 +4,6 @@
 #include "lvgl.h"
 #include <string.h>
 
-#define PIN_CLK 34
-#define PIN_MOSI 33
-#define PIN_RESET 47
-#define PIN_DC 26
-#define PIN_CS 21
-
 #define TAG "SSD1327"
 
 static spi_device_handle_t spi;
@@ -28,18 +22,12 @@ void ssd1327_init(void) {
   spi_device_interface_config_t devcfg = {
     .clock_speed_hz = 20 * 1000 * 1000, // 20 MHz
     .mode = 0,
-    .spics_io_num = PIN_CS,
+    .spics_io_num = -1,
     .queue_size = 7,
   };
   spi_bus_add_device(SPI2_HOST, &devcfg, &spi);
 
   gpio_set_direction(PIN_DC, GPIO_MODE_OUTPUT);
-  gpio_set_direction(PIN_RESET, GPIO_MODE_OUTPUT);
-
-  gpio_set_level(PIN_RESET, 0);
-  vTaskDelay(pdMS_TO_TICKS(10));
-  gpio_set_level(PIN_RESET, 1);
-  vTaskDelay(pdMS_TO_TICKS(10));
 
   uint8_t ssd1327_init_cmds[] = { // commands to initialize the SSD1327, borrowed from u8g2
     0xFD, 0x12, // Unlock display (if required)

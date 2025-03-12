@@ -20,4 +20,5 @@ void app_main(void) {
   expression_init();
   vcnl4040_init();
   uartmidi_init();
+  flicker_enable();
 }
