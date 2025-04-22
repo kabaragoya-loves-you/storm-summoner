@@ -2,7 +2,8 @@
   "C_Cpp.intelliSenseEngine": "default",
   "idf.espIdfPathWin": "C:\\Users\\leastbad\\esp\\v5.4\\esp-idf",
   "idf.openOcdConfigs": [
-    "board/esp32s3-builtin.cfg"
+    "interface/ftdi/esp32_devkitj_v1.cfg",
+    "target/esp32s3.cfg"
   ],
   "idf.portWin": "COM5",
   "idf.toolsPathWin": "C:\\Users\\leastbad\\.espressif",
@@ -17,7 +18,9 @@
     "touch_pad.h": "c",
     "compare": "c",
     "i2c_master.h": "c",
-    "format": "c"
+    "format": "c",
+    "touch.h": "c",
+    "drv2605_manager.h": "c"
   },
   "idf.pythonInstallPath": "C:\\Users\\leastbad\\.espressif\\tools\\idf-python\\3.11.2\\python.exe"
 }

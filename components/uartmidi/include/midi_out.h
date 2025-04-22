@@ -1,5 +1,5 @@
-#ifndef _MIDI_H
-#define _MIDI_H
+#ifndef _MIDI_OUT_H
+#define _MIDI_OUT_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -28,5 +28,6 @@ void send_note_on_optimized(uint8_t channel, uint8_t note, uint8_t velocity);
 void send_nrpn(uint8_t channel, uint16_t parameter, uint16_t value);
 void send_mts_single(uint8_t channel, uint8_t note, int16_t pitch_offset);
 void send_mts_full(uint8_t channel, uint16_t *tuning_data);
+void send_tune_request();
 
-#endif /* _MIDI_H */
+#endif /* _MIDI_OUT_H */

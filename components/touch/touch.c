@@ -5,7 +5,7 @@
 #include "esp_log.h"
 #include "freertos/semphr.h"
 #include "drv2605_manager.h"
-#include "midi.h"
+#include "midi_out.h"
 
 #define TAG "TOUCH"
 

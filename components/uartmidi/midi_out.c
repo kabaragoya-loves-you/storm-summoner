@@ -1,10 +1,10 @@
-#include "uartmidi.h"
-#include "midi.h"
+#include "uartmidi_out.h"
+#include "midi_out.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#define TAG "MIDI"
+#define TAG "MIDI OUT"
 
 void send_note_on(uint8_t channel, uint8_t note, uint8_t velocity) {
   uint8_t message[3] = {
@@ -237,4 +237,9 @@ void send_mts_full(uint8_t channel, uint16_t *tuning_data) {
 
   message[265] = 0xF7; // End SysEx
   uartmidi_send_message(message, sizeof(message));
+}
+
+void send_tune_request() {
+  uint8_t message = 0xF6; // Tune Request
+  uartmidi_send_message(&message, 1);
 }

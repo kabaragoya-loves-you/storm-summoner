@@ -4,8 +4,17 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "adc2.h"
+#include "midi_out.h"
+#include "uartmidi_out.h"
+#include <math.h>
 
 #define TAG "EXPRESSION"
+#define MIN_MIDI_INTERVAL_MS 15  // Increased from 20ms to 30ms for more conservative rate limiting
+#define DEADZONE_THRESHOLD 2    // Minimum change required to send MIDI
+#define FLOATING_THRESHOLD 5    // Maximum allowed variation in floating state
+#define FLOATING_SAMPLES 10     // Number of samples to analyze for floating state
+#define FLOATING_IIR_ALPHA 0.1f // More aggressive filtering for floating state
+#define MAX_LATENCY_MS 50       // Maximum allowed latency before clearing queue
 
 static TaskHandle_t task_handle = NULL;
 
@@ -15,6 +24,13 @@ static int sum_samples = 0;
 static int num_samples = 0;
 static float expression_value = 0.0f;
 static uint8_t midi_value = 0;
+static uint8_t last_midi_value = 0;
+static TickType_t last_queue_clear_time = 0;
+
+// Floating state detection
+static float recent_values[FLOATING_SAMPLES] = {0};
+static int recent_index = 0;
+static bool is_floating = false;
 
 static void expression_task(void *arg);
 
@@ -61,6 +77,29 @@ uint8_t expression_get_midi_value(void) {
   return midi_value;
 }
 
+static bool detect_floating_state(float new_value) {
+    // Update circular buffer
+    recent_values[recent_index] = new_value;
+    recent_index = (recent_index + 1) % FLOATING_SAMPLES;
+    
+    // Calculate mean and standard deviation
+    float mean = 0.0f;
+    for (int i = 0; i < FLOATING_SAMPLES; i++) {
+        mean += recent_values[i];
+    }
+    mean /= FLOATING_SAMPLES;
+    
+    float variance = 0.0f;
+    for (int i = 0; i < FLOATING_SAMPLES; i++) {
+        float diff = recent_values[i] - mean;
+        variance += diff * diff;
+    }
+    variance /= FLOATING_SAMPLES;
+    float std_dev = sqrtf(variance);
+    
+    return std_dev < FLOATING_THRESHOLD;
+}
+
 static void expression_task(void *arg) {
   int raw = 0;
   while (1) {
@@ -79,12 +118,36 @@ static void expression_task(void *arg) {
       sample_index = (sample_index + 1) % MOVING_AVG_LENGTH;
       int moving_avg = sum_samples / num_samples;
 
-      expression_value = IIR_ALPHA * moving_avg + (1.0f - IIR_ALPHA) * expression_value;
+      // Detect if we're in a floating state
+      is_floating = detect_floating_state(moving_avg);
+      
+      // Use different IIR alpha based on state
+      float alpha = is_floating ? FLOATING_IIR_ALPHA : IIR_ALPHA;
+      expression_value = alpha * moving_avg + (1.0f - alpha) * expression_value;
 
       // Scale the processed value (0 - 4095) linearly to MIDI CC range (0 - 127).
-      midi_value = (uint8_t)((((float)expression_value - (float)EXPRESSION_MIN) * 127.0f / ((float)EXPRESSION_MAX - (float)EXPRESSION_MIN)) + 0.5f);
+      float scaled = ((float)expression_value - (float)EXPRESSION_MIN) * 127.0f / ((float)EXPRESSION_MAX - (float)EXPRESSION_MIN);
+      // Ensure we can hit 127 by using ceilf for values very close to 127
+      uint8_t new_midi_value = (scaled > 126.5f) ? 127 : (uint8_t)(scaled + 0.5f);
+      
+      // Clamp to valid MIDI range (0-127)
+      if (new_midi_value > 127) new_midi_value = 127;
+      
+      // Check if we need to clear the queue due to latency
+      TickType_t current_time = xTaskGetTickCount();
+      if ((current_time - last_queue_clear_time) >= pdMS_TO_TICKS(MAX_LATENCY_MS)) {
+        uartmidi_clear_queue();
+        last_queue_clear_time = current_time;
+      }
+      
+      // Only send MIDI if value changed beyond deadzone
+      if (abs(new_midi_value - last_midi_value) >= DEADZONE_THRESHOLD) {
+        ESP_LOGI(TAG, "Expression pedal sent MIDI value %d (floating: %s)", new_midi_value, is_floating ? "yes" : "no");
+        send_control_change(0, 4, new_midi_value);
+        last_midi_value = new_midi_value;
+      }
+      midi_value = new_midi_value;
     }
     vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-    // ESP_LOGI(TAG, "Expression is %f, MIDI is %d", expression_value, midi_value);
   }
 }
