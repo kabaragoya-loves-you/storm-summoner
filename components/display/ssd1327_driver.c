@@ -118,6 +118,7 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
       // Odd: combine with high nibble and write out
       ssd1327_buf[out_index++] = high_nibble | (gray_4 & 0x0F);
     }
+
   }
   // If we had an odd number of pixels in this area, be sure to write the last nibble
   // (In typical use, area->width * area->height is even, but if you do partial updates,
@@ -131,8 +132,9 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   data.tx_buffer = ssd1327_buf;
   spi_device_transmit(spi, &data);
 
-  // 4) Tell LVGL we’re done
+  // 4) Tell LVGL we're done
   lv_disp_flush_ready(disp);
 
   // ESP_LOGI(TAG, "Flushed area x[%d..%d], y[%d..%d]", (int)area->x1, (int)area->x2, (int)area->y1, (int)area->y2);
 }
+

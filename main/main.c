@@ -10,13 +10,13 @@
 #include "uartmidi_out.h"
 #include "midi_in.h"
 #include "midi_tempo.h"
-#include "esp_log.h"
+#include "elite.h"
 
 #define TAG "main"
 
 void app_main(void) {
   display_init();
-  create_starfield();
+  // create_starfield();
   touch_init();
   drv2605_init();
   flicker_init();
@@ -29,9 +29,10 @@ void app_main(void) {
   expression_enable();
   flicker_enable();
   midi_tempo_init();
-  midi_tempo_set_source(CLOCK_SOURCE_SYNC);
-  midi_tempo_start();
+  // midi_tempo_set_source(CLOCK_SOURCE_INTERNAL);
+  // midi_tempo_start();
   vcnl4040_als_enable();
   vcnl4040_ps_enable();
   midi_in_init();
+  elite_init();
 }
