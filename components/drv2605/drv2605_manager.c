@@ -49,7 +49,7 @@ void drv2605_init(void) {
     }
   }
 
-  xTaskCreate(drv2605_job_task, "drv2605_job_task", 4096, NULL, 10, NULL);
+  xTaskCreate(drv2605_job_task, "drv2605_job_task", 4096, NULL, 5, NULL);
   ESP_LOGI(TAG, "Haptic feedback initialized");
 }
 
