@@ -137,15 +137,15 @@ static void uartmidi_out_task(void *pvParameters) {
   uartmidi_out_job_t *job;
   for (;;) {
     if (xQueueReceive(uartmidi_out_queue, &job, portMAX_DELAY) == pdPASS) {
-      if (xSemaphoreTake(uartmidi_out_mutex, portMAX_DELAY) == pdPASS) {
-        TickType_t current_tick = xTaskGetTickCount();
-        if (last_send_tick != 0) {
-          TickType_t elapsed = current_tick - last_send_tick;
-          if (elapsed < UARTMIDI_MIN_INTERVAL) {
-            vTaskDelay(UARTMIDI_MIN_INTERVAL - elapsed);
-          }
+      TickType_t current_tick = xTaskGetTickCount();
+      if (last_send_tick != 0) {
+        TickType_t elapsed = current_tick - last_send_tick;
+        if (elapsed < UARTMIDI_MIN_INTERVAL) {
+          vTaskDelay(UARTMIDI_MIN_INTERVAL - elapsed);
         }
+      }
 
+      if (xSemaphoreTake(uartmidi_out_mutex, portMAX_DELAY) == pdPASS) {
         switch (current_mode) {
             case MIDI_TRANSMIT_BOTH:
                 gpio_set_level(PIN_POLARITY, TYPE_A);
@@ -165,7 +165,6 @@ static void uartmidi_out_task(void *pvParameters) {
                 uart_write_bytes(UART_NUM_1, job->data, job->len);
                 break;
         }
-
         last_send_tick = xTaskGetTickCount();
         xSemaphoreGive(uartmidi_out_mutex);
       }
