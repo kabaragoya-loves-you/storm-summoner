@@ -7,7 +7,7 @@
 #include "cv.h"
 #include "expression.h"
 #include "vcnl4040.h"
-#include "uartmidi_out.h"
+#include "midi_out.h"
 #include "midi_messages.h"
 #include "midi_callbacks.h"
 #include "midi_tempo.h"

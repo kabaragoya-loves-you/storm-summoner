@@ -6,6 +6,7 @@
 #include "adc2.h"
 #include "midi_messages.h"
 #include "uartmidi_out.h"
+#include "midi_out.h"
 #include <math.h>
 #include <string.h>
 
