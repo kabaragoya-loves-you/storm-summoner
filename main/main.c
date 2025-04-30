@@ -2,7 +2,7 @@
 #include "stars.h"
 #include "touch.h"
 #include "drv2605_manager.h"
-#include "flicker.h"
+#include "led.h"
 #include "analog_input.h"
 #include "cv.h"
 #include "expression.h"
@@ -22,7 +22,7 @@ void app_main(void) {
   // create_starfield();
   touch_init();
   drv2605_init();
-  flicker_init();
+  led_init();
   analog_input_init();
   cv_init();
   vcnl4040_init();
@@ -30,7 +30,7 @@ void app_main(void) {
   midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
   expression_init();
   expression_enable();
-  flicker_enable();
+  led_enable();
   vcnl4040_als_enable();
   vcnl4040_ps_enable();
   midi_callbacks_init();

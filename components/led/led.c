@@ -1,15 +1,15 @@
-#include "flicker.h"
+#include "led.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_random.h"
 #include "esp_log.h"
 
-#define TAG "flicker"
+#define TAG "led"
 
 static TaskHandle_t task_handle = NULL;
 
-void flicker_task(void *pvParameters) {
+void led_task(void *pvParameters) {
   while (1) {
     int off_duration = 30000 + (esp_random() % 90000);
     gpio_set_level(LED_GPIO, 0);
@@ -30,7 +30,7 @@ void flicker_task(void *pvParameters) {
   }
 }
 
-void flicker_init(void) {
+void led_init(void) {
   gpio_config_t io_conf = {
     .pin_bit_mask = (1ULL << LED_GPIO),
     .mode = GPIO_MODE_OUTPUT,
@@ -43,18 +43,17 @@ void flicker_init(void) {
   ESP_LOGI(TAG, "UV LED initialized");
 }
 
-void flicker_enable(void) {
-
+void led_enable(void) {
   if (task_handle != NULL) {
     vTaskResume(task_handle);
     ESP_LOGI(TAG, "UV LED job task resumed");
   } else {
-    xTaskCreate(flicker_task, "LED Flicker Task", 2048, NULL, tskIDLE_PRIORITY, &task_handle);
+    xTaskCreate(led_task, "LED Task", 2048, NULL, tskIDLE_PRIORITY, &task_handle);
     ESP_LOGI(TAG, "UV LED job task started");
   }
 }
 
-void flicker_disable(void) {
+void led_disable(void) {
   vTaskSuspend(task_handle);
   gpio_set_level(LED_GPIO, 0);
   ESP_LOGI(TAG, "UV LED job task suspended");

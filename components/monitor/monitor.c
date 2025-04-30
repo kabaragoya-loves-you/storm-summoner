@@ -44,7 +44,7 @@ static void monitor(void *arg) {
     uint32_t last_idle_runtime = 0;
     uint32_t last_touch_runtime = 0;
     uint32_t last_lvgl_runtime = 0;
-    uint32_t last_uartmidi_runtime = 0;
+    uint32_t last_midi_runtime = 0;
     uint32_t last_expression_runtime = 0;
     uint32_t last_vcnl_runtime = 0;
     uint32_t last_drv2605_runtime = 0;
@@ -105,8 +105,8 @@ static void monitor(void *arg) {
                         runtime_diff = current_runtime - last_lvgl_runtime;
                         last_lvgl_runtime = current_runtime;
                     } else if (strcmp(task_name, "midi_messages") == 0) {
-                        runtime_diff = current_runtime - last_uartmidi_runtime;
-                        last_uartmidi_runtime = current_runtime;
+                        runtime_diff = current_runtime - last_midi_runtime;
+                        last_midi_runtime = current_runtime;
                     } else if (strcmp(task_name, "expression") == 0) {
                         runtime_diff = current_runtime - last_expression_runtime;
                         last_expression_runtime = current_runtime;

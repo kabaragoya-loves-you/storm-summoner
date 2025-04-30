@@ -6,7 +6,7 @@
 #include <string.h>
 
 #define TAG "MIDI_IN"
-#define UARTMIDI_NUM       UART_NUM_1
+#define MIDI_NUM       UART_NUM_1
 #define RX_BUF_SIZE        256
 #define UART_READ_TIMEOUT  20  // in milliseconds
 
@@ -312,7 +312,7 @@ static void midi_in_task(void *pvParameters)
 {
   uint8_t rx_buf[RX_BUF_SIZE];
   while (1) {
-    int len = uart_read_bytes(UARTMIDI_NUM, rx_buf, RX_BUF_SIZE,
+    int len = uart_read_bytes(MIDI_NUM, rx_buf, RX_BUF_SIZE,
                               UART_READ_TIMEOUT / portTICK_PERIOD_MS);
     if (len > 0) {
       // ESP_LOG_BUFFER_HEX(TAG, rx_buf, len);

@@ -8,9 +8,9 @@
 #include <sys/time.h>
 
 #define TAG "MIDI_OUT"
-#define UARTMIDI_QUEUE_LENGTH   50
-#define UARTMIDI_QUEUE_ITEM_SIZE sizeof(midi_out_job_t *)
-#define UARTMIDI_MIN_INTERVAL   pdMS_TO_TICKS(10)
+#define MIDI_QUEUE_LENGTH   50
+#define MIDI_QUEUE_ITEM_SIZE sizeof(midi_out_job_t *)
+#define MIDI_MIN_INTERVAL   pdMS_TO_TICKS(10)
 
 static QueueHandle_t   midi_out_queue  = NULL;
 static SemaphoreHandle_t midi_out_mutex = NULL;
@@ -34,7 +34,7 @@ void midi_out_init(void) {
   };
   
   ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
-  ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, UARTMIDI_TXD, UARTMIDI_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+  ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, MIDI_TXD, MIDI_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
   ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 256, 0, 0, NULL, 0));
 
   uart_set_line_inverse(UART_NUM_1, UART_SIGNAL_TXD_INV);
@@ -48,7 +48,7 @@ void midi_out_init(void) {
   };
   gpio_config(&io_conf2);
 
-  midi_out_queue = xQueueCreate(UARTMIDI_QUEUE_LENGTH, UARTMIDI_QUEUE_ITEM_SIZE);
+  midi_out_queue = xQueueCreate(MIDI_QUEUE_LENGTH, MIDI_QUEUE_ITEM_SIZE);
   if (midi_out_queue == NULL) {
     ESP_LOGE(TAG, "Failed to create MIDI queue");
     return;
@@ -138,8 +138,8 @@ static void midi_out_task(void *pvParameters) {
       TickType_t current_tick = xTaskGetTickCount();
       if (last_send_tick != 0) {
         TickType_t elapsed = current_tick - last_send_tick;
-        if (elapsed < UARTMIDI_MIN_INTERVAL) {
-          vTaskDelay(UARTMIDI_MIN_INTERVAL - elapsed);
+        if (elapsed < MIDI_MIN_INTERVAL) {
+          vTaskDelay(MIDI_MIN_INTERVAL - elapsed);
         }
       }
 
@@ -148,7 +148,7 @@ static void midi_out_task(void *pvParameters) {
           case MIDI_TRANSMIT_BOTH:
             gpio_set_level(PIN_POLARITY, TYPE_A);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
-            vTaskDelay(UARTMIDI_MIN_INTERVAL);
+            vTaskDelay(MIDI_MIN_INTERVAL);
             gpio_set_level(PIN_POLARITY, TYPE_B);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
             break;
