@@ -1,5 +1,5 @@
-#ifndef DRV2605_MANAGER_H
-#define DRV2605_MANAGER_H
+#ifndef HAPTIC_MANAGER_H
+#define HAPTIC_MANAGER_H
 
 #include <stdint.h>
 
@@ -29,6 +29,6 @@ typedef enum {
 
 void haptic(haptic_job_id_t job_id);
 
-void drv2605_init(void);
+void haptic_init(void);
 
-#endif // DRV2605_MANAGER_H
+#endif // HAPTIC_MANAGER_H

@@ -1,16 +1,16 @@
-#include "drv2605_manager.h"
-#include "drv2605.h"
+#include "haptic_manager.h"
+#include "haptic.h"
 #include "i2c_common.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
 
-#define TAG "DRV2605_MANAGER"
+#define TAG "HAPTIC_MANAGER"
 
 static QueueHandle_t haptic_job_queue = NULL;
 
-static void drv2605_job_task(void *pvParameters);
+static void haptic_job_task(void *pvParameters);
 
 static const haptic_job_t HAPTIC_JOBS[13] = {
   [STRONG_CLICK] = { .waveform_sequence = { 1 }, .length = 1, .name = "STRONG_CLICK" },
@@ -40,7 +40,7 @@ void haptic(haptic_job_id_t job_id) {
   }
 }
 
-void drv2605_init(void) {
+void haptic_init(void) {
   if (haptic_job_queue == NULL) {
     haptic_job_queue = xQueueCreate(10, sizeof(haptic_job_t));
     if (haptic_job_queue == NULL) {
@@ -49,15 +49,15 @@ void drv2605_init(void) {
     }
   }
 
-  xTaskCreate(drv2605_job_task, "drv2605_job_task", 4096, NULL, 5, NULL);
+  xTaskCreate(haptic_job_task, "haptic_job_task", 4096, NULL, 5, NULL);
   ESP_LOGI(TAG, "Haptic feedback initialized");
 }
 
-static void drv2605_job_task(void *pvParameters) {
+static void haptic_job_task(void *pvParameters) {
   haptic_job_t job;
 
-  if (drv2605_setup() != ESP_OK) {
-    ESP_LOGE(TAG, "DRV2605 initialization failed in job task");
+  if (haptic_setup() != ESP_OK) {
+    ESP_LOGE(TAG, "Haptic initialization failed in job task");
     vTaskDelete(NULL);
   }
 
@@ -67,15 +67,15 @@ static void drv2605_job_task(void *pvParameters) {
 
       // Loop through the sequence slots, adding the waveform and then a 0 to mark the end.
       for (uint8_t i = 0; i < job.length; i++) {
-        if (drv2605_set_waveform(i, job.waveform_sequence[i]) != ESP_OK) {
+        if (haptic_set_waveform(i, job.waveform_sequence[i]) != ESP_OK) {
           ESP_LOGE(TAG, "Failed to set waveform at slot %d", i);
           break;
         }
       }
 
-      drv2605_set_waveform(job.length, 0);
+      haptic_set_waveform(job.length, 0);
 
-      if (drv2605_go() != ESP_OK) {
+      if (haptic_go() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to trigger haptic effect");
       }
 

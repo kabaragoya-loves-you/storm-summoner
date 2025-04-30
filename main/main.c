@@ -1,7 +1,7 @@
 #include "display.h"
 #include "stars.h"
 #include "touch.h"
-#include "drv2605_manager.h"
+#include "haptic_manager.h"
 #include "led.h"
 #include "analog_input.h"
 #include "cv.h"
@@ -21,7 +21,7 @@ void app_main(void) {
   display_init();
   // create_starfield();
   touch_init();
-  drv2605_init();
+  haptic_init();
   led_init();
   analog_input_init();
   cv_init();

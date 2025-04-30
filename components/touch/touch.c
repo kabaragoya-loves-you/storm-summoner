@@ -4,7 +4,7 @@
 #include "touch_gestures.h"
 #include "esp_log.h"
 #include "freertos/semphr.h"
-#include "drv2605_manager.h"
+#include "haptic_manager.h"
 #include "midi_messages.h"
 
 #define TAG "TOUCH"
