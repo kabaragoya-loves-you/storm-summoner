@@ -12,7 +12,7 @@ void send_note_on(uint8_t channel, uint8_t note, uint8_t velocity) {
     note & 0x7F,             // Note Number
     velocity & 0x7F          // Velocity
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_note_off(uint8_t channel, uint8_t note, uint8_t velocity) {
@@ -21,7 +21,7 @@ void send_note_off(uint8_t channel, uint8_t note, uint8_t velocity) {
     note & 0x7F,             // Note Number
     velocity & 0x7F          // Release Velocity
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_control_change(uint8_t channel, uint8_t controller, uint8_t value) {
@@ -30,7 +30,7 @@ void send_control_change(uint8_t channel, uint8_t controller, uint8_t value) {
     controller & 0x7F,       // Controller Number (e.g., Mod Wheel = 1)
     value & 0x7F             // Controller Value
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_program_change(uint8_t channel, uint8_t program) {
@@ -38,12 +38,12 @@ void send_program_change(uint8_t channel, uint8_t program) {
     0xC0 | (channel & 0x0F), // Program Change, Channel
     program & 0x7F           // Program Number
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_song_select(uint8_t song_number) {
   uint8_t message[2] = {0xF3, song_number & 0x7F};
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 
@@ -54,7 +54,7 @@ void send_pitch_bend(uint8_t channel, int16_t value) {
     value & 0x7F,            // LSB (Least Significant Byte)
     (value >> 7) & 0x7F      // MSB (Most Significant Byte)
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_channel_aftertouch(uint8_t channel, uint8_t pressure) {
@@ -62,7 +62,7 @@ void send_channel_aftertouch(uint8_t channel, uint8_t pressure) {
     0xD0 | (channel & 0x0F), // Channel Aftertouch, Channel
     pressure & 0x7F          // Pressure value (0-127)
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_poly_aftertouch(uint8_t channel, uint8_t note, uint8_t pressure) {
@@ -71,7 +71,7 @@ void send_poly_aftertouch(uint8_t channel, uint8_t note, uint8_t pressure) {
     note & 0x7F,             // Note Number
     pressure & 0x7F          // Pressure value (0-127)
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_all_notes_off(uint8_t channel) {
@@ -80,7 +80,7 @@ void send_all_notes_off(uint8_t channel) {
 
 void send_reset() {
   uint8_t message = 0xFF; // System Reset (panic button!)
-  uartmidi_send_message(&message, 1);
+  midi_send_message(&message, 1);
 }
 
 // Send a System Exclusive (SysEx) message (customizable)
@@ -100,7 +100,7 @@ void send_sysex(const uint8_t *data, size_t length) {
   memcpy(&message[1], data, length);
   message[length + 1] = 0xF7; // SysEx end
 
-  uartmidi_send_message(message, length + 2);
+  midi_send_message(message, length + 2);
   free(message);
 }
 
@@ -108,31 +108,31 @@ void send_sysex(const uint8_t *data, size_t length) {
 // Send MIDI Clock (24 messages per beat for sync)
 void send_clock() {
   const uint8_t message = 0xF8; // Timing Clock
-  uartmidi_send_message(&message, 1);
+  midi_send_message(&message, 1);
 }
 
 void send_time_code(uint8_t message_type, uint8_t values) {
   uint8_t data_byte = ((message_type & 0x07) << 4) | (values & 0x0F);
   const uint8_t message[2] = {0xF1, data_byte};
-  uartmidi_send_message(message, 2);
+  midi_send_message(message, 2);
 }
 
 // Send Start (Begin playing a sequence)
 void send_start() {
   uint8_t message = 0xFA; // Start
-  uartmidi_send_message(&message, 1);
+  midi_send_message(&message, 1);
 }
 
 // Send Stop (Stop playing a sequence)
 void send_stop() {
   uint8_t message = 0xFC; // Stop
-  uartmidi_send_message(&message, 1);
+  midi_send_message(&message, 1);
 }
 
 // Send Continue (Resume playing a sequence)
 void send_continue() {
   uint8_t message = 0xFB; // Continue
-  uartmidi_send_message(&message, 1);
+  midi_send_message(&message, 1);
 }
 
 // send_double_control_change(channel, 1, 33, value);
@@ -143,14 +143,14 @@ void send_double_control_change(uint8_t channel, uint8_t msb_cc, uint8_t lsb_cc,
   const uint8_t msb_message[3] = {0xB0 | (channel & 0x0F), msb_cc & 0x7F, msb_value};
   const uint8_t lsb_message[3] = {0xB0 | (channel & 0x0F), lsb_cc & 0x7F, lsb_value};
 
-  uartmidi_send_message(msb_message, 3);
-  uartmidi_send_message(lsb_message, 3);
+  midi_send_message(msb_message, 3);
+  midi_send_message(lsb_message, 3);
 }
 
 // send this every 250ms in a task
 void send_active_sensing() {
   uint8_t message = 0xFE;
-  uartmidi_send_message(&message, 1);
+  midi_send_message(&message, 1);
 }
 
 void send_song_position(uint16_t position) {
@@ -159,7 +159,7 @@ void send_song_position(uint16_t position) {
     position & 0x7F,     // LSB
     (position >> 7) & 0x7F  // MSB
   };
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 /*
@@ -171,7 +171,7 @@ MMC Command	Function
 */
 void send_mmc(uint8_t command) {
   uint8_t message[] = {0xF0, 0x7F, 0x7F, 0x06, command, 0xF7};
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 uint8_t last_status_byte = 0; // Tracks last status to avoid redundancy
@@ -182,13 +182,13 @@ void send_note_on_optimized(uint8_t channel, uint8_t note, uint8_t velocity) {
 
   // If the current status byte is different from the last one, send the status byte
   if (status_byte != last_status_byte) {
-      uartmidi_send_message(&status_byte, 1);
+      midi_send_message(&status_byte, 1);
       last_status_byte = status_byte;
   }
 
   // Send the note and velocity data bytes
-  uartmidi_send_message(&note, 1);
-  uartmidi_send_message(&velocity, 1);
+  midi_send_message(&note, 1);
+  midi_send_message(&velocity, 1);
 }
 
 // Set Filter Cutoff (NRPN #513, value 8192)
@@ -207,7 +207,7 @@ void send_nrpn(uint8_t channel, uint16_t parameter, uint16_t value) {
   };
 
   for (int i = 0; i < 4; ++i) {
-      uartmidi_send_message(nrpn_messages[i], 3);
+      midi_send_message(nrpn_messages[i], 3);
   }
 }
 
@@ -236,10 +236,10 @@ void send_mts_full(uint8_t channel, uint16_t *tuning_data) {
   }
 
   message[265] = 0xF7; // End SysEx
-  uartmidi_send_message(message, sizeof(message));
+  midi_send_message(message, sizeof(message));
 }
 
 void send_tune_request() {
   uint8_t message = 0xF6; // Tune Request
-  uartmidi_send_message(&message, 1);
+  midi_send_message(&message, 1);
 }

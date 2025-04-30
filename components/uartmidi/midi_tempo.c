@@ -13,6 +13,9 @@
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration
 #define LED_GPIO 15
 
+// Key for storing BPM in NVS
+#define NVS_KEY_BPM "midi_tempo_bpm"
+
 // Global BPM and clock source.
 static uint16_t global_bpm = 120;
 static midi_clock_source_t clock_source = CLOCK_SOURCE_INTERNAL;
@@ -90,6 +93,16 @@ void midi_tempo_init(void) {
   if (sync_semaphore == NULL) {
     ESP_LOGE(TAG, "Failed to create sync semaphore");
   }
+
+  // Try to load saved BPM from NVS
+  uint16_t saved_bpm;
+  if (app_settings_load_u16(NVS_KEY_BPM, &saved_bpm) == ESP_OK) {
+    global_bpm = saved_bpm;
+    ESP_LOGI(TAG, "Loaded saved BPM: %d", global_bpm);
+  } else {
+    ESP_LOGI(TAG, "Using default BPM: %d", global_bpm);
+  }
+
   ESP_LOGI(TAG, "MIDI Tempo module initialized");
 }
 
@@ -162,6 +175,11 @@ void midi_tempo_stop(void) {
 //------------------------------------------------------------
 void midi_tempo_set_bpm(uint16_t bpm) {
   global_bpm = bpm;
+  // Save the new BPM to NVS
+  esp_err_t ret = app_settings_save_u16(NVS_KEY_BPM, bpm);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to save BPM to NVS: %s", esp_err_to_name(ret));
+  }
   ESP_LOGI(TAG, "Global BPM set to %d", global_bpm);
 }
 

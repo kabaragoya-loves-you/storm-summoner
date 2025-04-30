@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "app_settings.h"
 
 typedef enum {
   CLOCK_SOURCE_INTERNAL,

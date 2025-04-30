@@ -27,9 +27,9 @@ typedef enum {
   MIDI_TRANSMIT_TYPE_B   // Transmit only on Type B polarity
 } midi_transmit_mode_t;
 
-void uartmidi_out_init(void);
-void uartmidi_send_message(const uint8_t *stream, size_t len);
-void uartmidi_clear_queue(void);
-void uartmidi_set_transmit_mode(midi_transmit_mode_t mode);
+void midi_out_init(void);
+void midi_send_message(const uint8_t *stream, size_t len);
+void midi_clear_queue(void);
+void midi_set_transmit_mode(midi_transmit_mode_t mode);
 
 #endif /* _UARTMIDI_OUT_H */

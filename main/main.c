@@ -11,10 +11,12 @@
 #include "midi_in.h"
 #include "midi_tempo.h"
 #include "elite.h"
+#include "app_settings.h"
 
 #define TAG "main"
 
 void app_main(void) {
+  app_settings_init();
   display_init();
   // create_starfield();
   touch_init();
@@ -23,8 +25,8 @@ void app_main(void) {
   analog_input_init();
   cv_init();
   vcnl4040_init();
-  uartmidi_out_init();
-  uartmidi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
+  midi_out_init();
+  midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
   expression_init();
   expression_enable();
   flicker_enable();

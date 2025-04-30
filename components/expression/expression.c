@@ -136,7 +136,7 @@ static void expression_task(void *arg) {
       // Check if we need to clear the queue due to latency
       TickType_t current_time = xTaskGetTickCount();
       if ((current_time - last_queue_clear_time) >= pdMS_TO_TICKS(MAX_LATENCY_MS)) {
-        uartmidi_clear_queue();
+        midi_clear_queue();
         last_queue_clear_time = current_time;
       }
       
