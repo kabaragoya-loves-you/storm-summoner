@@ -199,7 +199,7 @@ static void ps_task(void *arg) {
         // ESP_LOGI(TAG, "Proximity sensor: raw=%d, filtered=%.1f, MIDI=%d, polarity=%s", 
         //          value, filtered_proximity, midi_value,
         //          current_polarity == PROXIMITY_POLARITY_NORMAL ? "normal" : "inverted");
-        send_control_change(0, 18, midi_value);
+        send_control_change(0, 19, midi_value);
         last_midi_proximity = midi_value;
       }
     }

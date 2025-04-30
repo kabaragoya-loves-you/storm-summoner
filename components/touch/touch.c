@@ -44,11 +44,11 @@ static void touch_task(void *arg) {
       case TOUCH_MODE_BUTTONS:
         haptic(evt.pad_num - 1);
         if (evt.pad_num < 9) send_program_change(0, evt.pad_num - 1);
-        if (evt.pad_num == 9) send_control_change(0, 93, 127); // Microcosm tap
-        if (evt.pad_num == 10) send_control_change(0, 16, 22); // Chroma sweeten
-        if (evt.pad_num == 11) send_control_change(0, 17, 88); // Chroma pitch
-        if (evt.pad_num == 12) send_control_change(0, 18, 0); // Chroma cascade
-        if (evt.pad_num == 13) send_control_change(0, 19, 66); // Chroma broken
+        if (evt.pad_num == 9) send_control_change(0, 5, 127); // Undo
+        if (evt.pad_num == 10) send_control_change(0, 7, 127); // Erase
+        if (evt.pad_num == 11) send_control_change(0, 31, 127); // Mod B
+        if (evt.pad_num == 12) send_control_change(0, 30, 127); // Mod A
+        if (evt.pad_num == 13) send_control_change(0, 6, 127); // Redo
         // if (evt.pad_num == 10) send_control_change(0, 20, 54); // Reverb mode 7
         // if (evt.pad_num == 11) send_control_change(0, 20, 16); // Reverb mode 2
         // if (evt.pad_num == 12) send_control_change(0, 100, 33); // Echo mode 4 setting 2
