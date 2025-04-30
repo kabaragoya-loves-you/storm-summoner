@@ -1,4 +1,4 @@
-#include "vcnl4040.h"
+#include "sensor.h"
 #include "i2c_common.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
@@ -9,7 +9,7 @@
 #include <inttypes.h>
 #include "task_priorities.h"
 
-#define TAG "VCNL4040"
+#define TAG "SENSOR"
 #define PROXIMITY_MIN 512    // Minimum value when nothing is near
 #define PROXIMITY_MAX 30000  // Maximum value when finger is close
 #define PROXIMITY_DEADZONE 2 // Minimum change required to send MIDI
@@ -34,12 +34,12 @@ static volatile uint16_t als_min_observed = 65535;  // Track minimum observed va
 static volatile uint16_t als_max_observed = 0;      // Track maximum observed value
 static i2c_master_dev_handle_t vcnl4040_dev = NULL;
 
-static esp_err_t vcnl4040_write16(uint8_t reg, uint16_t value) {
+static esp_err_t sensor_write16(uint8_t reg, uint16_t value) {
   uint8_t data[3] = { reg, (uint8_t)(value >> 8), (uint8_t)(value & 0xFF) };
   return i2c_master_transmit(vcnl4040_dev, data, sizeof(data), -1);
 }
 
-static esp_err_t vcnl4040_read16(uint8_t reg, uint16_t *value) {
+static esp_err_t sensor_read16(uint8_t reg, uint16_t *value) {
   uint8_t data[2];
   esp_err_t ret = i2c_master_transmit_receive(vcnl4040_dev, &reg, 1, data, 2, -1);
   if (ret == ESP_OK) {
@@ -48,12 +48,12 @@ static esp_err_t vcnl4040_read16(uint8_t reg, uint16_t *value) {
   return ret;
 }
 
-void vcnl4040_init(void) {
+void sensor_init(void) {
   esp_err_t err;
 
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-    .device_address   = VCNL4040_ADDR,
+    .device_address   = SENSOR_ADDR,
     .scl_speed_hz = 100000,
   };
 
@@ -70,20 +70,20 @@ void vcnl4040_init(void) {
   }
 
   // Disable automatic adjustment for both PS and ALS
-  err = vcnl4040_write16(VCNL4040_PS_CONF1, 0x0800); // Disable PS auto-adjustment
+  err = sensor_write16(SENSOR_PS_CONF1, 0x0800); // Disable PS auto-adjustment
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF1");
     return;
   }
 
-  err = vcnl4040_write16(VCNL4040_PS_CONF2, 0x0000);
+  err = sensor_write16(SENSOR_PS_CONF2, 0x0000);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF2");
     return;
   }
 
   // First put ALS into shutdown mode to reset any automatic features
-  err = vcnl4040_write16(VCNL4040_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
+  err = sensor_write16(SENSOR_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to shutdown ALS");
     return;
@@ -98,7 +98,7 @@ void vcnl4040_init(void) {
   // [5]     - ALS_INT_EN (Interrupt Enable)
   // [4]     - ALS_SD (Shutdown)
   // [3:0]   - Reserved
-  err = vcnl4040_write16(VCNL4040_ALS_CONF, 0x0000); // ALS_SD=0 (enabled), all other features disabled
+  err = sensor_write16(SENSOR_ALS_CONF, 0x0000); // ALS_SD=0 (enabled), all other features disabled
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing ALS_CONF");
     return;
@@ -107,20 +107,20 @@ void vcnl4040_init(void) {
   ESP_LOGI(TAG, "Light and proximity sensor initialized");
 }
 
-void vcnl4040_set_polarity(proximity_polarity_t polarity) {
+void set_ps_polarity(proximity_polarity_t polarity) {
     current_polarity = polarity;
 }
 
-void vcnl4040_set_als_polarity(als_polarity_t polarity) {
+void set_als_polarity(als_polarity_t polarity) {
     current_als_polarity = polarity;
 }
 
-void vcnl4040_reset(void) {
+void sensor_reset(void) {
     if (vcnl4040_dev) {
         // First try to reset through software
-        vcnl4040_write16(VCNL4040_ALS_CONF, 0x0010); // Shutdown
+        sensor_write16(SENSOR_ALS_CONF, 0x0010); // Shutdown
         vTaskDelay(pdMS_TO_TICKS(100));
-        vcnl4040_write16(VCNL4040_ALS_CONF, 0x0000); // Re-enable
+        sensor_write16(SENSOR_ALS_CONF, 0x0000); // Re-enable
         vTaskDelay(pdMS_TO_TICKS(100));
         
         // Clear any accumulated values
@@ -136,7 +136,7 @@ static void als_task(void *arg) {
   uint32_t last_log_time = 0;
   
   while (1) {
-    if (vcnl4040_read16(VCNL4040_ALS_DATA, &value) == ESP_OK) {
+    if (sensor_read16(SENSOR_ALS_DATA, &value) == ESP_OK) {
       // Apply IIR filter to smooth the values
       filtered_als = ALS_IIR_ALPHA * value + (1.0f - ALS_IIR_ALPHA) * filtered_als;
       
@@ -175,7 +175,7 @@ static void als_task(void *arg) {
 static void ps_task(void *arg) {
   uint16_t value;
   while (1) {
-    if (vcnl4040_read16(VCNL4040_PS_DATA, &value) == ESP_OK) {
+    if (sensor_read16(SENSOR_PS_DATA, &value) == ESP_OK) {
       ps_value = value;
       
       // Apply IIR filter to smooth the values
@@ -208,33 +208,33 @@ static void ps_task(void *arg) {
   }
 }
 
-void vcnl4040_als_enable(void) {
+void als_enable(void) {
   if (als_task_handle != NULL) {
     vTaskResume(als_task_handle);
     ESP_LOGI(TAG, "Ambient light sensor task resumed");
   } else {
-    BaseType_t ret = xTaskCreate(als_task, "ambient", 4096, NULL, TASK_PRIORITY_VCNL4040_ALS, &als_task_handle);
+    BaseType_t ret = xTaskCreate(als_task, "ambient", 4096, NULL, TASK_PRIORITY_SENSOR_ALS, &als_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create ambient light sensor task");
       return;
     }
-    ESP_LOGI(TAG, "Ambient light sensor task started with 4096 byte stack");
+    ESP_LOGI(TAG, "Ambient light sensor task started");
   }
 }
 
-void vcnl4040_als_disable(void) {
+void als_disable(void) {
   if (als_task_handle != NULL) {
     vTaskSuspend(als_task_handle);
     ESP_LOGI(TAG, "Ambient light sensor task suspended");
   }
 }
 
-void vcnl4040_ps_enable(void) {
+void ps_enable(void) {
   if (ps_task_handle != NULL) {
     vTaskResume(ps_task_handle);
     ESP_LOGI(TAG, "Proximity sensor task resumed");
   } else {
-    BaseType_t ret = xTaskCreate(ps_task, "proximity", 3072, NULL, TASK_PRIORITY_VCNL4040_PS, &ps_task_handle);
+    BaseType_t ret = xTaskCreate(ps_task, "proximity", 3072, NULL, TASK_PRIORITY_SENSOR_PS, &ps_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create proximity sensor task");
       return;
@@ -243,24 +243,24 @@ void vcnl4040_ps_enable(void) {
   }
 }
 
-void vcnl4040_ps_disable(void) {
+void ps_disable(void) {
   if (ps_task_handle != NULL) {
     vTaskSuspend(ps_task_handle);
     ESP_LOGI(TAG, "Proximity sensor task suspended");
   }
 }
 
-uint16_t vcnl4040_get_als(void) {
+uint16_t get_als(void) {
   uint16_t val;
-  if (vcnl4040_read16(VCNL4040_ALS_DATA, &val) == ESP_OK) {
+  if (sensor_read16(SENSOR_ALS_DATA, &val) == ESP_OK) {
     return val;
   }
   return 0;
 }
 
-uint16_t vcnl4040_get_ps(void) {
+uint16_t get_ps(void) {
   uint16_t val;
-  if (vcnl4040_read16(VCNL4040_PS_DATA, &val) == ESP_OK) {
+  if (sensor_read16(SENSOR_PS_DATA, &val) == ESP_OK) {
     return val;
   }
   return 0;
