@@ -6,4 +6,5 @@ idf_component_register(
     "touch_thresholds.c"
   INCLUDE_DIRS "include"
   REQUIRES log driver esp_timer haptic midi
+  PRIV_REQUIRES main
 )

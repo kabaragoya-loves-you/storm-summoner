@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include "task_priorities.h"
 
 #define TAG "MIDI_OUT"
 #define MIDI_QUEUE_LENGTH   50
@@ -62,7 +63,7 @@ void midi_out_init(void) {
     return;
   }
 
-  BaseType_t ret = xTaskCreate(midi_out_task, "midi_out_task", 4096, NULL, 5, NULL);
+  BaseType_t ret = xTaskCreate(midi_out_task, "midi_out", 4096, NULL, TASK_PRIORITY_MIDI_OUT, NULL);
   if (ret != pdPASS) {
     ESP_LOGE(TAG, "Failed to create MIDI task");
     vQueueDelete(midi_out_queue);

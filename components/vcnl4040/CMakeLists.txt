@@ -3,4 +3,5 @@ idf_component_register(
     "vcnl4040.c"
   INCLUDE_DIRS "include"
   REQUIRES log driver i2c_common midi
+  PRIV_REQUIRES main
 )

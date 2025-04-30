@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include "task_priorities.h"
 
 #define TAG "MONITOR"
 
@@ -17,7 +18,6 @@
 #define MAX_TASKS 32
 #define BUFFER_SIZE 2048
 #define MONITOR_TASK_STACK_SIZE 4096
-#define MONITOR_TASK_PRIORITY 2
 #define MONITOR_INTERVAL_MS 5000
 #define STACK_WARNING_THRESHOLD 80
 
@@ -160,7 +160,7 @@ static void monitor(void *arg) {
 void monitor_init(void) {
     // Only start the monitor if at least one monitoring feature is enabled
     if (CONFIG_MONITOR_CHECK_CRITICAL_TASKS || CONFIG_MONITOR_FULL_ANALYSIS) {
-        xTaskCreate(monitor, "monitor", MONITOR_TASK_STACK_SIZE, NULL, MONITOR_TASK_PRIORITY, NULL);
+        xTaskCreate(monitor, "monitor", MONITOR_TASK_STACK_SIZE, NULL, TASK_PRIORITY_MONITOR, NULL);
         ESP_LOGI(TAG, "Task monitor initialized with features: critical_tasks=%d, full_analysis=%d", 
                 CONFIG_MONITOR_CHECK_CRITICAL_TASKS, CONFIG_MONITOR_FULL_ANALYSIS);
     } else {

@@ -4,6 +4,7 @@
 #include "driver/gpio.h"
 #include "esp_random.h"
 #include "esp_log.h"
+#include "task_priorities.h"
 
 #define TAG "led"
 
@@ -48,7 +49,7 @@ void led_enable(void) {
     vTaskResume(task_handle);
     ESP_LOGI(TAG, "UV LED job task resumed");
   } else {
-    xTaskCreate(led_task, "LED Task", 2048, NULL, tskIDLE_PRIORITY, &task_handle);
+    xTaskCreate(led_task, "led", 2048, NULL, TASK_PRIORITY_LED, &task_handle);
     ESP_LOGI(TAG, "UV LED job task started");
   }
 }

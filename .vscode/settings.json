@@ -20,7 +20,8 @@
     "i2c_master.h": "c",
     "format": "c",
     "touch.h": "c",
-    "drv2605_manager.h": "c"
+    "drv2605_manager.h": "c",
+    "cstdlib": "c"
   },
   "idf.pythonInstallPath": "C:\\Users\\leastbad\\.espressif\\tools\\idf-python\\3.11.2\\python.exe"
 }

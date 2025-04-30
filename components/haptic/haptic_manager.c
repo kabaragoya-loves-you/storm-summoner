@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
+#include "task_priorities.h"
 
 #define TAG "HAPTIC_MANAGER"
 
@@ -49,7 +50,7 @@ void haptic_init(void) {
     }
   }
 
-  xTaskCreate(haptic_job_task, "haptic_job_task", 4096, NULL, 5, NULL);
+  xTaskCreate(haptic_job_task, "haptic", 4096, NULL, TASK_PRIORITY_HAPTIC, NULL);
   ESP_LOGI(TAG, "Haptic feedback initialized");
 }
 

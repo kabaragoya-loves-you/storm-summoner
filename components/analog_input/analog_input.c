@@ -6,6 +6,7 @@
 #include "adc2.h"
 #include "driver/gpio.h"
 #include "cv.h"  // For CV_ADC_CHANNEL, CV_SYNC_GPIO, MOVING_AVG_LENGTH, CV_MIN, and CV_MAX definitions
+#include "task_priorities.h"
 
 #define TAG "ANALOG_INPUT"
 #define IIR_ALPHA 0.1f
@@ -49,7 +50,7 @@ void analog_input_start_sampling(void) {
     if (sampling_task_handle != NULL) {
         vTaskResume(sampling_task_handle);
     } else {
-        BaseType_t ret = xTaskCreate(sampling_task, "analog_sampling", 4096, NULL, 5, &sampling_task_handle);
+        BaseType_t ret = xTaskCreate(sampling_task, "adc", 4096, NULL, TASK_PRIORITY_ANALOG_INPUT, &sampling_task_handle);
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Failed to create sampling task");
             return;

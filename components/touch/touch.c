@@ -6,6 +6,7 @@
 #include "freertos/semphr.h"
 #include "haptic_manager.h"
 #include "midi_messages.h"
+#include "task_priorities.h"
 
 #define TAG "TOUCH"
 
@@ -148,7 +149,7 @@ void touch_init(void) {
     }
   }
 
-  xTaskCreate(&touch_task, "touch_task", 4096, NULL, 5, NULL);
+  xTaskCreate(&touch_task, "touch", 4096, NULL, TASK_PRIORITY_TOUCH, NULL);
 
   ESP_LOGI(TAG, "13 touch pads + shield initialized");
 }

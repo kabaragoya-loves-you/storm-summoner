@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include "cv.h"
 #include "analog_input.h"
+#include "task_priorities.h"
 
 #define TAG "MIDI_TEMPO"
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration
@@ -111,7 +112,7 @@ static void start_tasks(void) {
   // For SYNC: both the sync BPM task and the send task are needed.
   if (clock_source == CLOCK_SOURCE_INTERNAL) {
     if (tempo_send_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(midi_tempo_send_task, "midi_tempo_send_task", 4096, NULL, 5, &tempo_send_task_handle);
+      BaseType_t ret = xTaskCreate(midi_tempo_send_task, "midi_tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
       if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create MIDI tempo send task");
         tempo_send_task_handle = NULL;
@@ -121,14 +122,14 @@ static void start_tasks(void) {
   else if (clock_source == CLOCK_SOURCE_SYNC) {
     analog_input_start_sync_detection(midi_tempo_sync_pulse);
     if (sync_bpm_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(sync_bpm_task, "sync_bpm_task", 4096, NULL, 5, &sync_bpm_task_handle);
+      BaseType_t ret = xTaskCreate(sync_bpm_task, "sync_bpm", 4096, NULL, TASK_PRIORITY_SYNC_BPM, &sync_bpm_task_handle);
       if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create sync BPM task");
         sync_bpm_task_handle = NULL;
       }
     }
     if (tempo_send_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(midi_tempo_send_task, "midi_tempo_send_task", 4096, NULL, 5, &tempo_send_task_handle);
+      BaseType_t ret = xTaskCreate(midi_tempo_send_task, "midi_tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
       if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create MIDI tempo send task");
         tempo_send_task_handle = NULL;

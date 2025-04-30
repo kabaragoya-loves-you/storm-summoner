@@ -87,5 +87,5 @@
      touch_pad_fsm_start();
  
      /* Start task to read values by pads. */
-     xTaskCreate(&tp_example_read_task, "touch_pad_read_task", 4096, NULL, 5, NULL);
+     xTaskCreate(&tp_example_read_task, "touch_pad", 4096, NULL, 5, NULL);
  }

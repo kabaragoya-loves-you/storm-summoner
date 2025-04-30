@@ -5,6 +5,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "task_priorities.h"
 
 #define LV_BYTES_PER_PIXEL 2
 #define SCREEN_WIDTH    128
@@ -34,7 +35,7 @@ void display_init(void) {
 
   lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
 
-  xTaskCreate(&lvgl_task, "lvgl_task", 4096, NULL, 5, NULL);
+  xTaskCreate(&lvgl_task, "lvgl", 4096, NULL, TASK_PRIORITY_DISPLAY, NULL);
 }
 
 void lvgl_task(void *pvParameter) {

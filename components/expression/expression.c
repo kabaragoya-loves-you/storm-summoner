@@ -8,6 +8,7 @@
 #include "midi_out.h"
 #include <math.h>
 #include <string.h>
+#include "task_priorities.h"
 
 #define TAG "EXPRESSION"
 #define MIN_MIDI_INTERVAL_MS 15  // Increased from 20ms to 30ms for more conservative rate limiting
@@ -75,7 +76,7 @@ void expression_enable(void) {
     // Add a small delay before creating the task to ensure ADC is stable
     vTaskDelay(pdMS_TO_TICKS(100));
     
-    BaseType_t ret = xTaskCreate(expression_task, "expression_task", 4096, NULL, 5, &task_handle);
+    BaseType_t ret = xTaskCreate(expression_task, "expression", 4096, NULL, TASK_PRIORITY_EXPRESSION, &task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create Expression task");
       return;

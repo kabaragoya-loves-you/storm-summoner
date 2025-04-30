@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
+#include "task_priorities.h"
 
 #define TAG "MIDI_IN"
 #define MIDI_NUM       UART_NUM_1
@@ -327,6 +328,6 @@ void midi_in_init(const midi_in_callbacks_t *callbacks)
   if (callbacks) {
     callbacks_inst = *callbacks;
   }
-  xTaskCreate(midi_in_task, "midi_in_task", 4096, NULL, 5, NULL);
+  xTaskCreate(midi_in_task, "midi_in", 4096, NULL, TASK_PRIORITY_MIDI_IN, NULL);
   ESP_LOGI(TAG, "MIDI IN initialized");
 }
