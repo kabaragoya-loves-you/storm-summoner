@@ -1,7 +1,7 @@
 #ifndef _MIDI_CALLBACKS_H
 #define _MIDI_CALLBACKS_H
 
-#include "uartmidi_in.h"
+#include "midi_in.h"
 #include "midi_tempo.h"
 #include "esp_log.h"
 

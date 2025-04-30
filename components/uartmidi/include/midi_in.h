@@ -1,5 +1,5 @@
-#ifndef _UARTMIDI_IN_H
-#define _UARTMIDI_IN_H
+#ifndef _MIDI_IN_H
+#define _MIDI_IN_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -64,9 +64,9 @@ typedef struct {
   // Default callback for any unhandled message
   midi_callback_t default_callback;
   void *user_data;
-} uartmidi_in_callbacks_t;
+} midi_in_callbacks_t;
 
-void uartmidi_in_init(const uartmidi_in_callbacks_t *callbacks);
-void uartmidi_in_process_stream(const uint8_t *data, size_t len);
+void midi_in_init(const midi_in_callbacks_t *callbacks);
+void midi_in_process_stream(const uint8_t *data, size_t len);
 
-#endif /* _UARTMIDI_IN_H */
+#endif /* _MIDI_IN_H */

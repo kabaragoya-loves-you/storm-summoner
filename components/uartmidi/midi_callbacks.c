@@ -92,7 +92,7 @@ void default_callback(const midi_message_t *msg, void *user_data) {
 }
 
 void midi_callbacks_init(void) {
-  uartmidi_in_callbacks_t callbacks = {
+  midi_in_callbacks_t callbacks = {
     .note_on            = note_on,
     .note_off           = note_off,
     .poly_aftertouch    = poly_aftertouch,
@@ -116,5 +116,5 @@ void midi_callbacks_init(void) {
     .user_data          = NULL
   };
 
-  uartmidi_in_init(&callbacks);
+  midi_in_init(&callbacks);
 } 

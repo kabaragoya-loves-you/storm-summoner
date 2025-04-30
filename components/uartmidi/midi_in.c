@@ -1,11 +1,11 @@
-#include "uartmidi_in.h"
+#include "midi_in.h"
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
 
-#define TAG "UARTMIDI_IN"
+#define TAG "MIDI_IN"
 #define UARTMIDI_NUM       UART_NUM_1
 #define RX_BUF_SIZE        256
 #define UART_READ_TIMEOUT  20  // in milliseconds
@@ -27,7 +27,7 @@ static bool in_sysex = false;
 static uint8_t sys_ex_buffer[256];
 static size_t sys_ex_index = 0;
 
-static uartmidi_in_callbacks_t callbacks_inst = {0};
+static midi_in_callbacks_t callbacks_inst = {0};
 
 static void process_byte(uint8_t byte)
 {
@@ -301,14 +301,14 @@ static void process_byte(uint8_t byte)
   }
 }
 
-void uartmidi_in_process_stream(const uint8_t *data, size_t len)
+void midi_in_process_stream(const uint8_t *data, size_t len)
 {
   for (size_t i = 0; i < len; i++) {
     process_byte(data[i]);
   }
 }
 
-static void uartmidi_in_task(void *pvParameters)
+static void midi_in_task(void *pvParameters)
 {
   uint8_t rx_buf[RX_BUF_SIZE];
   while (1) {
@@ -316,17 +316,17 @@ static void uartmidi_in_task(void *pvParameters)
                               UART_READ_TIMEOUT / portTICK_PERIOD_MS);
     if (len > 0) {
       // ESP_LOG_BUFFER_HEX(TAG, rx_buf, len);
-      uartmidi_in_process_stream(rx_buf, len);
+      midi_in_process_stream(rx_buf, len);
     }
     vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
 
-void uartmidi_in_init(const uartmidi_in_callbacks_t *callbacks)
+void midi_in_init(const midi_in_callbacks_t *callbacks)
 {
   if (callbacks) {
     callbacks_inst = *callbacks;
   }
-  xTaskCreate(uartmidi_in_task, "uartmidi_in_task", 4096, NULL, 5, NULL);
+  xTaskCreate(midi_in_task, "midi_in_task", 4096, NULL, 5, NULL);
   ESP_LOGI(TAG, "MIDI IN initialized");
 }
