@@ -1,5 +1,5 @@
 #include "uartmidi_out.h"
-#include "midi_out.h"
+#include "midi_messages.h"
 
 #include <stdlib.h>
 #include <string.h>

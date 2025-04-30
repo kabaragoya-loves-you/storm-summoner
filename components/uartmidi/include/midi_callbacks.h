@@ -1,10 +1,11 @@
-#pragma once
+#ifndef _MIDI_CALLBACKS_H
+#define _MIDI_CALLBACKS_H
 
 #include "uartmidi_in.h"
 #include "midi_tempo.h"
 #include "esp_log.h"
 
-void midi_in_init(void);
+void midi_callbacks_init(void);
 
 // MIDI Channel Voice Messages
 void note_on(const midi_message_t *msg, void *user_data);
@@ -32,4 +33,6 @@ void realtime_reset(const midi_message_t *msg, void *user_data);
 void active_sensing(const midi_message_t *msg, void *user_data);
 
 // Default handler for unhandled messages
-void default_callback(const midi_message_t *msg, void *user_data); 
+void default_callback(const midi_message_t *msg, void *user_data);
+
+#endif /* _MIDI_CALLBACKS_H */ 

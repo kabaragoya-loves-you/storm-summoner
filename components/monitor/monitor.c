@@ -73,7 +73,7 @@ static void monitor(void *arg) {
                     const char *task_name = pxTaskStatusArray[x].pcTaskName;
                     if (strcmp(task_name, "touch") == 0 ||
                         strcmp(task_name, "lvgl") == 0 ||
-                        strcmp(task_name, "midi_out") == 0) {
+                        strcmp(task_name, "midi_messages") == 0) {
                         // Check if task is blocked
                         if (pxTaskStatusArray[x].eCurrentState == eBlocked) {
                             ESP_LOGW(TAG, "Critical task %s (priority %u) is blocked", 
@@ -104,7 +104,7 @@ static void monitor(void *arg) {
                     } else if (strcmp(task_name, "lvgl") == 0) {
                         runtime_diff = current_runtime - last_lvgl_runtime;
                         last_lvgl_runtime = current_runtime;
-                    } else if (strcmp(task_name, "midi_out") == 0) {
+                    } else if (strcmp(task_name, "midi_messages") == 0) {
                         runtime_diff = current_runtime - last_uartmidi_runtime;
                         last_uartmidi_runtime = current_runtime;
                     } else if (strcmp(task_name, "expression") == 0) {

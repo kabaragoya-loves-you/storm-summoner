@@ -1,7 +1,7 @@
-#include "midi_in.h"
+#include "midi_callbacks.h"
 #include "esp_log.h"
 
-#define TAG "midi_in"
+#define TAG "midi_callbacks"
 
 // MIDI Channel Voice Messages
 void note_on(const midi_message_t *msg, void *user_data) {
@@ -91,7 +91,7 @@ void default_callback(const midi_message_t *msg, void *user_data) {
   ESP_LOG_BUFFER_HEX(TAG, msg->data, msg->length);
 }
 
-void midi_in_init(void) {
+void midi_callbacks_init(void) {
   uartmidi_in_callbacks_t callbacks = {
     .note_on            = note_on,
     .note_off           = note_off,

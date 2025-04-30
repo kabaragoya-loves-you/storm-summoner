@@ -4,9 +4,10 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "adc2.h"
-#include "midi_out.h"
+#include "midi_messages.h"
 #include "uartmidi_out.h"
 #include <math.h>
+#include <string.h>
 
 #define TAG "EXPRESSION"
 #define MIN_MIDI_INTERVAL_MS 15  // Increased from 20ms to 30ms for more conservative rate limiting
@@ -26,6 +27,7 @@ static float expression_value = 0.0f;
 static uint8_t midi_value = 0;
 static uint8_t last_midi_value = 0;
 static TickType_t last_queue_clear_time = 0;
+static bool has_valid_reading = false;  // Flag to track if we have valid readings
 
 // Floating state detection
 static float recent_values[FLOATING_SAMPLES] = {0};
@@ -60,6 +62,19 @@ void expression_enable(void) {
     vTaskResume(task_handle);
     ESP_LOGI(TAG, "Expression task resumed");
   } else {
+    // Reset state variables before creating task
+    has_valid_reading = false;
+    last_midi_value = 0;
+    midi_value = 0;
+    expression_value = 0.0f;
+    num_samples = 0;
+    sum_samples = 0;
+    sample_index = 0;
+    memset(samples, 0, sizeof(samples));
+    
+    // Add a small delay before creating the task to ensure ADC is stable
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
     BaseType_t ret = xTaskCreate(expression_task, "expression_task", 4096, NULL, 5, &task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create Expression task");
@@ -140,13 +155,23 @@ static void expression_task(void *arg) {
         last_queue_clear_time = current_time;
       }
       
-      // Only send MIDI if value changed beyond deadzone
-      if (abs(new_midi_value - last_midi_value) >= DEADZONE_THRESHOLD) {
-        ESP_LOGI(TAG, "Expression pedal sent MIDI value %d (floating: %s)", new_midi_value, is_floating ? "yes" : "no");
+      // Only send MIDI if:
+      // 1. We have enough samples for a valid reading
+      // 2. The value has changed beyond the deadzone
+      // 3. We're not in a floating state
+      if (num_samples >= MOVING_AVG_LENGTH && 
+          abs(new_midi_value - last_midi_value) >= DEADZONE_THRESHOLD &&
+          !is_floating) {
+        ESP_LOGI(TAG, "Expression pedal sent MIDI value %d", new_midi_value);
         send_control_change(0, 4, new_midi_value);
         last_midi_value = new_midi_value;
       }
       midi_value = new_midi_value;
+      
+      // Mark that we have valid readings after collecting enough samples
+      if (num_samples >= MOVING_AVG_LENGTH) {
+        has_valid_reading = true;
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
   }

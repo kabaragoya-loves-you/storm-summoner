@@ -8,7 +8,8 @@
 #include "expression.h"
 #include "vcnl4040.h"
 #include "uartmidi_out.h"
-#include "midi_in.h"
+#include "midi_messages.h"
+#include "midi_callbacks.h"
 #include "midi_tempo.h"
 #include "elite.h"
 #include "app_settings.h"
@@ -30,11 +31,11 @@ void app_main(void) {
   expression_init();
   expression_enable();
   flicker_enable();
+  vcnl4040_als_enable();
+  vcnl4040_ps_enable();
+  midi_callbacks_init();
   midi_tempo_init();
   // midi_tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // midi_tempo_start();
-  vcnl4040_als_enable();
-  vcnl4040_ps_enable();
-  midi_in_init();
   elite_init();
 }

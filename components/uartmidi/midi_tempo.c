@@ -2,7 +2,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "midi_out.h"       // for send_clock()
+#include "midi_messages.h"       // for send_clock()
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include <inttypes.h>
