@@ -43,7 +43,7 @@ static void touch_task(void *arg) {
 
       switch (current_mode) {
       case TOUCH_MODE_BUTTONS:
-        haptic(evt.pad_num - 1);
+        haptic(10);
         if (evt.pad_num < 9) send_program_change(0, evt.pad_num - 1);
         if (evt.pad_num == 9) send_control_change(0, 5, 127); // Undo
         if (evt.pad_num == 10) send_control_change(0, 7, 127); // Erase

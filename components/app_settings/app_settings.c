@@ -78,4 +78,23 @@ esp_err_t app_settings_erase_key(const char* key) {
 
 esp_err_t app_settings_erase_all(void) {
     return nvs_erase_all(app_nvs_handle);
+}
+
+esp_err_t app_settings_save_blob(const char* key, const void* value, size_t length) {
+    return nvs_set_blob(app_nvs_handle, key, value, length);
+}
+
+esp_err_t app_settings_load_blob(const char* key, void* value, size_t max_length, size_t* actual_length) {
+    size_t required_size;
+    esp_err_t ret = nvs_get_blob(app_nvs_handle, key, NULL, &required_size);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    if (required_size > max_length) {
+        return ESP_ERR_NVS_INVALID_LENGTH;
+    }
+    if (actual_length) {
+        *actual_length = required_size;
+    }
+    return nvs_get_blob(app_nvs_handle, key, value, &required_size);
 } 

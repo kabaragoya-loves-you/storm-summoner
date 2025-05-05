@@ -15,7 +15,6 @@ static Star stars[MAX_STARS];
 
 static void init_star(int i);
 static void init_stars(void);
-static void update_and_draw_stars(void);
 static void starfield_timer_cb(lv_timer_t *timer);
 
 static void init_star(int i) {
@@ -31,7 +30,9 @@ static void init_stars(void) {
   }
 }
 
-static void update_and_draw_stars(void) {
+static void starfield_timer_cb(lv_timer_t *timer) {
+  LV_UNUSED(timer);
+
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
 
   int center_x = DISP_HOR_RES / 2;
@@ -59,11 +60,6 @@ static void update_and_draw_stars(void) {
   }
 
   lv_obj_invalidate(canvas);
-}
-
-static void starfield_timer_cb(lv_timer_t *timer) {
-  LV_UNUSED(timer);
-  update_and_draw_stars();
 }
 
 void create_starfield(void) {

@@ -12,6 +12,7 @@
 #include "midi_callbacks.h"
 #include "midi_tempo.h"
 #include "elite.h"
+#include "ui.h"
 #include "app_settings.h"
 
 #define TAG "main"
@@ -38,4 +39,6 @@ void app_main(void) {
   // midi_tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // midi_tempo_start();
   elite_init();
+  // ui_init();
+  // draw_full_screen_circle();
 }
