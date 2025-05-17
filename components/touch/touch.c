@@ -7,12 +7,15 @@
 #include "haptic_manager.h"
 #include "midi_messages.h"
 #include "task_priorities.h"
+#include "lvgl.h"
 
 #define TAG "TOUCH"
 
 static QueueHandle_t touch_evt_queue = NULL;
 static touch_mode_t current_mode = TOUCH_MODE_BUTTONS;
 static SemaphoreHandle_t mode_mutex = NULL;
+static lv_indev_t *lvgl_indev = NULL;
+static bool button9_pressed = false;
 
 static void IRAM_ATTR touch_isr_handler(void *arg) {
   int task_awoken = pdFALSE;
@@ -45,15 +48,22 @@ static void touch_task(void *arg) {
       case TOUCH_MODE_BUTTONS:
         haptic(10);
         if (evt.pad_num < 9) send_program_change(0, evt.pad_num - 1);
-        if (evt.pad_num == 9) send_control_change(0, 5, 127); // Undo
+        if (evt.pad_num == 9) {
+          send_control_change(0, 5, 127); // Undo
+          // Send LVGL Enter key event
+          if (lvgl_indev != NULL) {
+            lv_indev_data_t data = {
+              .state = LV_INDEV_STATE_PRESSED,
+              .key = LV_KEY_ENTER
+            };
+            lv_indev_send_event(lvgl_indev, LV_EVENT_PRESSED, &data);
+            button9_pressed = true;
+          }
+        }
         if (evt.pad_num == 10) send_control_change(0, 7, 127); // Erase
         if (evt.pad_num == 11) send_control_change(0, 31, 127); // Mod B
         if (evt.pad_num == 12) send_control_change(0, 30, 127); // Mod A
         if (evt.pad_num == 13) send_control_change(0, 6, 127); // Redo
-        // if (evt.pad_num == 10) send_control_change(0, 20, 54); // Reverb mode 7
-        // if (evt.pad_num == 11) send_control_change(0, 20, 16); // Reverb mode 2
-        // if (evt.pad_num == 12) send_control_change(0, 100, 33); // Echo mode 4 setting 2
-        // if (evt.pad_num == 13) send_control_change(0, 100, 24); // Echo mode 3
         process_touch_buttons(evt);
         break;
       case TOUCH_MODE_ROTARY:
@@ -68,9 +78,19 @@ static void touch_task(void *arg) {
       }
     }
 
-    // if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) {
-    //   ESP_LOGI(TAG, "Pin [%"PRIu32"] is released, status mask 0x%"PRIu32, evt.pad_num, evt.pad_status);
-    // }
+    if (evt.intr_mask & TOUCH_PAD_INTR_MASK_INACTIVE) {
+      ESP_LOGI(TAG, "Pin [%"PRIu32"] is released, status mask 0x%"PRIu32, evt.pad_num, evt.pad_status);
+      
+      // Handle button 9 release for LVGL
+      if (evt.pad_num == 9 && button9_pressed && lvgl_indev != NULL) {
+        lv_indev_data_t data = {
+          .state = LV_INDEV_STATE_RELEASED,
+          .key = LV_KEY_ENTER
+        };
+        lv_indev_send_event(lvgl_indev, LV_EVENT_RELEASED, &data);
+        button9_pressed = false;
+      }
+    }
   }
 }
 
@@ -147,6 +167,15 @@ void touch_init(void) {
       ESP_LOGE(TAG, "Failed to create touch pad queue");
       return;
     }
+  }
+
+  // Create LVGL input device
+  lvgl_indev = lv_indev_create();
+  if (lvgl_indev != NULL) {
+    lv_indev_set_type(lvgl_indev, LV_INDEV_TYPE_KEYPAD);
+    ESP_LOGI(TAG, "LVGL input device initialized");
+  } else {
+    ESP_LOGE(TAG, "Failed to create LVGL input device");
   }
 
   xTaskCreate(&touch_task, "touch", 4096, NULL, TASK_PRIORITY_TOUCH, NULL);
