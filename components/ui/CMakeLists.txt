@@ -1,6 +1,6 @@
 idf_component_register(
     SRCS 
-        "ui.c" "draw_image.c"
+        "ui.c"
     INCLUDE_DIRS 
         "include"
     REQUIRES

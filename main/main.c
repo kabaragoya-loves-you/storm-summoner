@@ -38,7 +38,6 @@ void app_main(void) {
   midi_tempo_init();
   // midi_tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // midi_tempo_start();
-  elite_init();
-  // ui_init();
-  // draw_full_screen_circle();
+  // elite_init();
+  ui_init();
 }
