@@ -20,6 +20,13 @@ void boundary_circle(void) {
   }
 }
 
+void redraw_circle(void) {
+  if (circle != NULL) {
+    // Force the circle to redraw by invalidating it
+    lv_obj_invalidate(circle);
+  }
+}
+
 void lvgl_timer_cb(lv_timer_t *timer) {
   LV_UNUSED(timer);
   
@@ -27,6 +34,9 @@ void lvgl_timer_cb(lv_timer_t *timer) {
   if (canvas != NULL) {
     // Clear the canvas
     lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+    
+    // Redraw the circle
+    redraw_circle();
     
     // Invalidate the canvas to trigger a redraw
     // LVGL will automatically handle dirty region tracking
