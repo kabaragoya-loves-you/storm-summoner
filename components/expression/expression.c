@@ -12,11 +12,13 @@
 
 #define TAG "EXPRESSION"
 #define MIN_MIDI_INTERVAL_MS 15  // Increased from 20ms to 30ms for more conservative rate limiting
-#define DEADZONE_THRESHOLD 2    // Minimum change required to send MIDI
-#define FLOATING_THRESHOLD 5    // Maximum allowed variation in floating state
+#define DEADZONE_THRESHOLD 4    // Minimum change required to send MIDI
+#define FLOATING_THRESHOLD 3    // Maximum allowed variation in floating state
 #define FLOATING_SAMPLES 10     // Number of samples to analyze for floating state
 #define FLOATING_IIR_ALPHA 0.1f // More aggressive filtering for floating state
 #define MAX_LATENCY_MS 50       // Maximum allowed latency before clearing queue
+#define STABLE_SAMPLES_REQUIRED 5  // Number of consecutive stable samples required before sending
+#define INITIALIZATION_PERIOD_MS 2000  // Wait 2 seconds after startup before sending any messages
 
 static TaskHandle_t task_handle = NULL;
 
@@ -34,6 +36,9 @@ static bool has_valid_reading = false;  // Flag to track if we have valid readin
 static float recent_values[FLOATING_SAMPLES] = {0};
 static int recent_index = 0;
 static bool is_floating = false;
+static bool first_message_sent = false;  // Flag to track if we've sent the first message
+static int stable_sample_count = 0;  // Count of consecutive stable samples
+static TickType_t initialization_start_time = 0;  // Track when initialization started
 
 static void expression_task(void *arg);
 
@@ -71,6 +76,9 @@ void expression_enable(void) {
     num_samples = 0;
     sum_samples = 0;
     sample_index = 0;
+    first_message_sent = false;  // Reset first message flag
+    stable_sample_count = 0;  // Reset stable sample count
+    initialization_start_time = xTaskGetTickCount();  // Record initialization start time
     memset(samples, 0, sizeof(samples));
     
     // Add a small delay before creating the task to ensure ADC is stable
@@ -94,26 +102,29 @@ uint8_t expression_get_midi_value(void) {
 }
 
 static bool detect_floating_state(float new_value) {
-    // Update circular buffer
-    recent_values[recent_index] = new_value;
-    recent_index = (recent_index + 1) % FLOATING_SAMPLES;
-    
-    // Calculate mean and standard deviation
-    float mean = 0.0f;
-    for (int i = 0; i < FLOATING_SAMPLES; i++) {
-        mean += recent_values[i];
-    }
-    mean /= FLOATING_SAMPLES;
-    
-    float variance = 0.0f;
-    for (int i = 0; i < FLOATING_SAMPLES; i++) {
-        float diff = recent_values[i] - mean;
-        variance += diff * diff;
-    }
-    variance /= FLOATING_SAMPLES;
-    float std_dev = sqrtf(variance);
-    
-    return std_dev < FLOATING_THRESHOLD;
+  // Update circular buffer
+  recent_values[recent_index] = new_value;
+  recent_index = (recent_index + 1) % FLOATING_SAMPLES;
+  
+  // Calculate mean and standard deviation
+  float mean = 0.0f;
+  for (int i = 0; i < FLOATING_SAMPLES; i++) {
+    mean += recent_values[i];
+  }
+  mean /= FLOATING_SAMPLES;
+  
+  float variance = 0.0f;
+  for (int i = 0; i < FLOATING_SAMPLES; i++) {
+    float diff = recent_values[i] - mean;
+    variance += diff * diff;
+  }
+  variance /= FLOATING_SAMPLES;
+  float std_dev = sqrtf(variance);
+  
+  // Add debug logging for floating state detection
+  // if (std_dev < FLOATING_THRESHOLD) ESP_LOGI(TAG, "Floating state detected - std_dev: %.2f, mean: %.2f", std_dev, mean);
+  
+  return std_dev < FLOATING_THRESHOLD;
 }
 
 static void expression_task(void *arg) {
@@ -156,23 +167,44 @@ static void expression_task(void *arg) {
         last_queue_clear_time = current_time;
       }
       
+      // Update stable sample count
+      if (is_floating) {
+        stable_sample_count = 0;  // Reset count if we detect floating
+      } else {
+        stable_sample_count++;    // Increment count if stable
+      }
+      
+      // Check if we're still in initialization period
+      bool in_initialization = (current_time - initialization_start_time) < pdMS_TO_TICKS(INITIALIZATION_PERIOD_MS);
+      
       // Only send MIDI if:
       // 1. We have enough samples for a valid reading
       // 2. The value has changed beyond the deadzone
       // 3. We're not in a floating state
+      // 4. We've already sent our first message
+      // 5. We have enough consecutive stable samples
+      // 6. We're not in initialization period
       if (num_samples >= MOVING_AVG_LENGTH && 
           abs(new_midi_value - last_midi_value) >= DEADZONE_THRESHOLD &&
-          !is_floating) {
+          !is_floating &&
+          first_message_sent &&
+          stable_sample_count >= STABLE_SAMPLES_REQUIRED &&
+          !in_initialization) {
         ESP_LOGI(TAG, "Expression pedal sent MIDI value %d", new_midi_value);
+        // ESP_LOGI(TAG, "Debug - num_samples: %d, last_midi: %d, new_midi: %d, is_floating: %d, stable_count: %d", 
+                //  num_samples, last_midi_value, new_midi_value, is_floating, stable_sample_count);
         send_control_change(0, 4, new_midi_value);
         last_midi_value = new_midi_value;
+      } else if (!first_message_sent && num_samples >= MOVING_AVG_LENGTH && !in_initialization) {
+        // If this would have been our first message and we're past initialization, just mark it as sent
+        first_message_sent = true;
+        last_midi_value = new_midi_value;  // Update last_midi_value to prevent a jump on next message
+        // ESP_LOGI(TAG, "Skipped first MIDI message with value %d", new_midi_value);
       }
       midi_value = new_midi_value;
       
       // Mark that we have valid readings after collecting enough samples
-      if (num_samples >= MOVING_AVG_LENGTH) {
-        has_valid_reading = true;
-      }
+      if (num_samples >= MOVING_AVG_LENGTH) has_valid_reading = true;
     }
     vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
   }
