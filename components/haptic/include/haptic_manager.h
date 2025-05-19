@@ -12,19 +12,9 @@ typedef struct {
 } haptic_job_t;
 
 typedef enum {
-  STRONG_CLICK,
-  ALERT_750,
-  TRANSITION_HUM,
-  DOUBLE_CLICK,
-  TRIPLE_CLICK,
-  STRONG_BUZZ,
-  ALERT_1000,
-  TRANSITION_DOWN,
-  TRANSITION_DOWN_SHARP,
-  TRANSITION_DOWN_SHORT,
-  TRANSITION_UP,
-  PULSING_STRONG,
-  TRANSITION_CLICK
+  CLICK,
+  DECREMENT,
+  INCREMENT,
 } haptic_job_id_t;
 
 void haptic(haptic_job_id_t job_id);

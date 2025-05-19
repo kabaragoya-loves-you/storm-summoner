@@ -13,20 +13,10 @@ static QueueHandle_t haptic_job_queue = NULL;
 
 static void haptic_job_task(void *pvParameters);
 
-static const haptic_job_t HAPTIC_JOBS[13] = {
-  [STRONG_CLICK] = { .waveform_sequence = { 1 }, .length = 1, .name = "STRONG_CLICK" },
-  [ALERT_750]   = { .waveform_sequence = { 15 }, .length = 1, .name = "ALERT_750" },
-  [TRANSITION_HUM]     = { .waveform_sequence = { 64 }, .length = 1, .name = "TRANSITION_HUM" },
-  [DOUBLE_CLICK]   = { .waveform_sequence = { 10 }, .length = 1, .name = "DOUBLE_CLICK" },
-  [TRIPLE_CLICK]   = { .waveform_sequence = { 12 }, .length = 1, .name = "TRIPLE_CLICK" },
-  [STRONG_BUZZ]   = { .waveform_sequence = { 14 }, .length = 1, .name = "STRONG_BUZZ" },
-  [ALERT_1000]   = { .waveform_sequence = { 16 }, .length = 1, .name = "ALERT_1000" },
-  [TRANSITION_DOWN]   = { .waveform_sequence = { 70 }, .length = 1, .name = "TRANSITION_DOWN" },
-  [TRANSITION_DOWN_SHARP]   = { .waveform_sequence = { 76 }, .length = 1, .name = "TRANSITION_DOWN_SHARP" },
-  [TRANSITION_DOWN_SHORT]   = { .waveform_sequence = { 80 }, .length = 1, .name = "TRANSITION_DOWN_SHORT" },
-  [TRANSITION_UP]   = { .waveform_sequence = { 86 }, .length = 1, .name = "TRANSITION_UP" },
-  [PULSING_STRONG]   = { .waveform_sequence = { 52 }, .length = 1, .name = "PULSING_STRONG" },
-  [TRANSITION_CLICK]   = { .waveform_sequence = { 58 }, .length = 1, .name = "TRANSITION_CLICK" }
+static const haptic_job_t HAPTIC_JOBS[3] = {
+  [CLICK]     = { .waveform_sequence = { 1 }, .length = 1, .name = "CLICK" },
+  [INCREMENT] = { .waveform_sequence = { 21 }, .length = 1, .name = "INCREMENT" },
+  [DECREMENT] = { .waveform_sequence = { 24 }, .length = 1, .name = "DECREMENT" },
 };
 
 void haptic(haptic_job_id_t job_id) {
@@ -64,7 +54,7 @@ static void haptic_job_task(void *pvParameters) {
 
   while (1) {
     if (xQueueReceive(haptic_job_queue, &job, portMAX_DELAY) == pdPASS) {
-      ESP_LOGI(TAG, "Received haptic job %s with %d steps", job.name, job.length);
+      // ESP_LOGI(TAG, "Received haptic job %s with %d steps", job.name, job.length);
 
       // Loop through the sequence slots, adding the waveform and then a 0 to mark the end.
       for (uint8_t i = 0; i < job.length; i++) {
