@@ -1,0 +1,17 @@
+#ifndef SCREENSAVER_H
+#define SCREENSAVER_H
+
+#include "esp_err.h"
+
+typedef enum {
+    SCREENSAVER_MODE_STARFIELD,
+    SCREENSAVER_MODE_ELITE
+} screensaver_mode_t;
+
+void screensaver_init(void);
+void screensaver_enable(void);
+void screensaver_disable(void);
+void screensaver_notify_activity(void);
+void screensaver_set_mode(screensaver_mode_t mode);
+
+#endif // SCREENSAVER_H 

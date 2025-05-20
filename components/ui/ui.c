@@ -5,6 +5,7 @@
 
 lv_obj_t *canvas = NULL;
 static lv_obj_t *circle = NULL;
+static lv_timer_t *g_ui_refresh_timer = NULL; // Store the timer handle
 
 // LVGL canvas buffer (16-bit color) - ensure proper alignment
 static lv_color_t display_buf[128 * 128] __attribute__((aligned(4)));
@@ -21,6 +22,10 @@ static lv_color_t display_buf[128 * 128] __attribute__((aligned(4)));
 // Define grayscale tone for filling (0-15 for SSD1327)
 #define GRAY_TONE 6
 #define DEFAULT_BITE_SIZE 25 // Pixels removed from the center of the slice (0 for full slice)
+
+// Application mode state
+app_mode_t g_app_mode = APP_MODE_PERFORMANCE;
+bool g_at_programming_top_level_menu = false;
 
 void boundary_circle(void) {
   // Create circle only if it doesn't exist
@@ -291,8 +296,8 @@ void ui_init(void) {
   
   // Create timer with error checking
   // Using a longer refresh rate since we don't need 60fps for a static circle
-  lv_timer_t *timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
-  if (timer == NULL) {
+  g_ui_refresh_timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
+  if (g_ui_refresh_timer == NULL) {
     ESP_LOGE(TAG, "ui_init: Failed to create lvgl_timer_cb timer!");
     // Handle timer creation failure, e.g., by not invalidating, 
     // but canvas and initial pizza2 draw are already done.
@@ -300,4 +305,55 @@ void ui_init(void) {
     // For now, just log, as initial draw is complete.
   }
   ESP_LOGI(TAG, "ui_init: lvgl_timer_cb timer created.");
+
+  // Initialize UI state
+  g_app_mode = APP_MODE_PERFORMANCE;
+  g_at_programming_top_level_menu = false;
+  ESP_LOGI(TAG, "UI initialized");
+}
+
+app_mode_t ui_get_app_mode(void) {
+  return g_app_mode;
+}
+
+void ui_set_app_mode(app_mode_t mode) {
+  g_app_mode = mode;
+  ESP_LOGI(TAG, "App mode set to: %s", 
+           mode == APP_MODE_PERFORMANCE ? "Performance" : "Programming");
+}
+
+bool ui_is_programming_top_level(void) {
+  return g_at_programming_top_level_menu;
+}
+
+void ui_set_programming_top_level(bool is_top_level) {
+  g_at_programming_top_level_menu = is_top_level;
+  ESP_LOGI(TAG, "Programming menu level set to: %s", 
+           is_top_level ? "Top Level" : "Sub-Level");
+}
+
+void ui_graphics_suspend(void) {
+  if (g_ui_refresh_timer != NULL) {
+    lv_timer_pause(g_ui_refresh_timer);
+    ESP_LOGI(TAG, "UI graphics timer paused.");
+  }
+  // Additionally, hide the main UI canvas if it exists and is different from screensavers
+  if (canvas != NULL) {
+    lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    ESP_LOGI(TAG, "Main UI canvas hidden.");
+  }
+}
+
+void ui_graphics_resume(void) {
+  if (g_ui_refresh_timer != NULL) {
+    lv_timer_resume(g_ui_refresh_timer);
+    ESP_LOGI(TAG, "UI graphics timer resumed.");
+  }
+  // Make the main UI canvas visible again
+  if (canvas != NULL) {
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    // Ensure it's redrawn
+    lv_obj_invalidate(canvas);
+    ESP_LOGI(TAG, "Main UI canvas made visible and invalidated.");
+  }
 }

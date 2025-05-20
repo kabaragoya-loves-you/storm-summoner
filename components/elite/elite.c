@@ -40,7 +40,9 @@ static char ShipName[32] = "";
 static lv_obj_t *canvas;
 static lv_obj_t *info_label;
 static lv_timer_t *rotation_timer;
+static lv_timer_t *g_ship_cycling_timer = NULL; // For cycling ships
 static lv_style_t style_default;
+static bool g_elite_style_initialized = false;
 
 // Drawing buffer for canvas
 static lv_color_t canvas_buf[ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT];
@@ -209,6 +211,11 @@ static void cleanup_ship_resources(void) {
         lv_timer_del(rotation_timer);
         rotation_timer = NULL;
     }
+    // Delete ship cycling timer
+    if (g_ship_cycling_timer) {
+        lv_timer_del(g_ship_cycling_timer);
+        g_ship_cycling_timer = NULL;
+    }
     
     // Delete canvas if it exists
     if (canvas) {
@@ -224,9 +231,26 @@ static void cleanup_ship_resources(void) {
 }
 
 void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale, int* faces, int face_cnt) {
-    // Clean up previous ship's resources
-    cleanup_ship_resources();
+    // Clean up previous ship's resources (primarily rotation_timer, canvas, info_label)
+    // Note: cleanup_ship_resources() is now more comprehensive.
+    // If display_ship is called multiple times by next_random_ship, we need to be careful.
+    // The current cleanup_ship_resources call here will delete the ship cycling timer if it's called internally.
+    // This needs to be handled: display_ship should only clean up *its* specific resources (canvas, label, rotation_timer).
     
+    // Simplified cleanup for display_ship (specific to a single ship's display elements)
+    if (rotation_timer) {
+        lv_timer_del(rotation_timer);
+        rotation_timer = NULL;
+    }
+    if (canvas) {
+        lv_obj_del(canvas);
+        canvas = NULL;
+    }
+    if (info_label) {
+        lv_obj_del(info_label);
+        info_label = NULL;
+    }
+
     // Update ship name
     strcpy(ShipName, name);
     
@@ -268,34 +292,73 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
 }
 
 void elite_init(void) {  
-    // Initialize random number generator
+    // Initialize random number generator - this is a one-time setup
     esp_random();
-    
-    // Clear screen to black first
+    ESP_LOGI(TAG, "Elite component initialized (random seeded).");
+    // Style initialization moved to elite_start to ensure it happens before object creation if elite is stopped/started multiple times.
+    // Initial ship display and timers moved to elite_start.
+}
+
+void elite_start(void) {
+    ESP_LOGI(TAG, "Starting Elite screensaver...");
+
+    if (!g_elite_style_initialized) {
+        lv_style_init(&style_default);
+        lv_style_set_text_font(&style_default, &flyer_venice_14);  // Use the new font
+        lv_style_set_text_color(&style_default, lv_color_white());
+        g_elite_style_initialized = true;
+        ESP_LOGI(TAG, "Elite style initialized.");
+    }
+
+    // Clear screen to black first - ensure this is effective.
+    // The screen is lv_scr_act(), and canvas is created on top.
+    // This might be better done by ensuring the canvas itself covers the screen and is black.
     lv_obj_t *screen = lv_scr_act();
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     
-    // Initialize style
-    lv_style_init(&style_default);
-    lv_style_set_text_font(&style_default, &flyer_venice_14);  // Use the new font
-    lv_style_set_text_color(&style_default, lv_color_white());
-    
-    // Initialize canvas buffer to black
+    // Initialize canvas buffer to black - good practice.
     for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) {
         canvas_buf[i] = lv_color_make(0, 0, 0);
     }
-    
+
     // Start with a random ship
-    next_random_ship(NULL);
+    // next_random_ship will call display_ship, which creates canvas, label, and rotation_timer.
+    next_random_ship(NULL); 
     
-    // Start ship cycling timer
-    lv_timer_create(next_random_ship, ELITE_SHIP_CHANGE_INTERVAL_MS, NULL);
+    // Start ship cycling timer if not already running
+    if (g_ship_cycling_timer == NULL) {
+        g_ship_cycling_timer = lv_timer_create(next_random_ship, ELITE_SHIP_CHANGE_INTERVAL_MS, NULL);
+        if (g_ship_cycling_timer == NULL) {
+            ESP_LOGE(TAG, "Failed to create ship cycling timer!");
+            // Cleanup what was created by next_random_ship if timer fails
+            cleanup_ship_resources(); // This will clear canvas, label, rotation_timer created by next_random_ship
+            return;
+        }
+        ESP_LOGI(TAG, "Elite ship cycling timer started.");
+    } else {
+        lv_timer_resume(g_ship_cycling_timer); // Or lv_timer_reset if preferred
+    }
+    ESP_LOGI(TAG, "Elite screensaver started.");
+}
+
+void elite_stop(void) {
+    ESP_LOGI(TAG, "Stopping Elite screensaver...");
+    cleanup_ship_resources(); // This now stops rotation_timer, g_ship_cycling_timer, and deletes canvas, info_label.
+    ESP_LOGI(TAG, "Elite screensaver stopped and resources cleaned up.");
 }
 
 static void next_random_ship(lv_timer_t *timer) {
-  (void)timer;  // Mark parameter as intentionally unused
+  // (void)timer; // Mark parameter as intentionally unused - but it is used by lv_timer_create
+  LV_UNUSED(timer); // More standard LVGL way
   
+  ESP_LOGD(TAG, "Selecting next random ship.");
+  // display_ship itself handles cleaning previous ship's canvas/label/timer if called repeatedly.
+  // No, display_ship was modified to only clean its own resources.
+  // So, if next_random_ship is called, it implicitly means we are switching.
+  // The old canvas/label/rotation_timer from the *previous* ship should be gone.
+  // This is handled by display_ship's internal cleanup at its start.
+
   int randompick = (esp_random() % 28) + 1;
   
   switch(randompick) {

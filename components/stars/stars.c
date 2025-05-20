@@ -9,6 +9,7 @@ static lv_color_t starfield_buf[DISP_HOR_RES * DISP_VER_RES];
 
 // Canvas object
 static lv_obj_t *canvas = NULL;
+static lv_timer_t *g_starfield_animation_timer = NULL;
 
 // Star data
 static Star stars[MAX_STARS];
@@ -32,6 +33,8 @@ static void init_stars(void) {
 
 static void starfield_timer_cb(lv_timer_t *timer) {
   LV_UNUSED(timer);
+
+  if (!canvas) return; // Check if canvas exists
 
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
 
@@ -63,7 +66,22 @@ static void starfield_timer_cb(lv_timer_t *timer) {
 }
 
 void create_starfield(void) {
+  ESP_LOGI(TAG, "create_starfield() called (should be deprecated).");
+  // For now, let's not call starfield_start() from here to prevent auto-start.
+}
+
+void starfield_start(void) {
+  if (canvas != NULL) {
+    ESP_LOGW(TAG, "Starfield already started.");
+    return;
+  }
+  ESP_LOGI(TAG, "Starting starfield...");
+
   canvas = lv_canvas_create(lv_scr_act());
+  if (!canvas) {
+    ESP_LOGE(TAG, "Failed to create starfield canvas.");
+    return;
+  }
 
   lv_canvas_set_buffer(
     canvas,
@@ -75,10 +93,35 @@ void create_starfield(void) {
 
   lv_obj_set_size(canvas, DISP_HOR_RES, DISP_VER_RES);
   lv_obj_center(canvas);
-
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
 
   init_stars();
 
-  lv_timer_create(starfield_timer_cb, 16, NULL);
+  if (g_starfield_animation_timer != NULL) {
+    lv_timer_del(g_starfield_animation_timer);
+    g_starfield_animation_timer = NULL;
+  }
+  g_starfield_animation_timer = lv_timer_create(starfield_timer_cb, 16, NULL);
+  if (!g_starfield_animation_timer) {
+    ESP_LOGE(TAG, "Failed to create starfield animation timer.");
+    lv_obj_del(canvas);
+    canvas = NULL;
+    return;
+  }
+  ESP_LOGI(TAG, "Starfield started successfully.");
+}
+
+void starfield_stop(void) {
+  ESP_LOGI(TAG, "Stopping starfield...");
+  if (g_starfield_animation_timer != NULL) {
+    lv_timer_del(g_starfield_animation_timer);
+    g_starfield_animation_timer = NULL;
+    ESP_LOGI(TAG, "Starfield animation timer deleted.");
+  }
+  if (canvas != NULL) {
+    lv_obj_del(canvas);
+    canvas = NULL;
+    ESP_LOGI(TAG, "Starfield canvas deleted.");
+  }
+  ESP_LOGI(TAG, "Starfield stopped.");
 }

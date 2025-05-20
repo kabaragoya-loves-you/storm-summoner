@@ -5,6 +5,7 @@
 #include "freertos/queue.h"
 #include "driver/touch_pad.h"
 #include "touch_config.h"
+#include "ui.h"
 
 
 // Callback for button press/release events
@@ -19,11 +20,6 @@ typedef void (*touch_wheel_callback_t)(int delta);
 // Callback for application mode changes (triggered by button 13 long press/tap)
 // program_mode_active: true if programming mode is active, false for performance mode
 typedef void (*touch_mode_callback_t)(bool program_mode_active);
-
-typedef enum {
-    TOUCH_APP_MODE_PERFORMANCE,
-    TOUCH_APP_MODE_PROGRAMMING
-} touch_app_mode_t;
 
 typedef enum {
     TOUCH_WHEEL_AS_BUTTONS,
@@ -48,7 +44,7 @@ void touch_set_wheel_config(touch_wheel_config_t config);
 
 bool touch_is_button_pressed(touch_pad_t pad_num);
 
-touch_app_mode_t touch_get_app_mode(void);
+app_mode_t touch_get_app_mode(void);
 
 void touch_set_programming_menu_level(bool is_top_level);
 

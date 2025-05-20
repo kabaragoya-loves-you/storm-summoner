@@ -5,6 +5,8 @@
 #include "freertos/timers.h"
 #include "haptic_manager.h"
 #include "task_priorities.h"
+#include "ui.h"
+#include "screensaver.h"
 // #include "lvgl/lvgl.h"
 
 const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
@@ -24,8 +26,6 @@ const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
   SHIELD_PAD
 };
 
-volatile uint32_t g_isr_entry_count = 0; // Global counter
-
 #define TAG "TOUCH"
 
 #define BUTTON_13_LONG_PRESS_MS 1000
@@ -35,10 +35,8 @@ static QueueHandle_t s_touch_evt_queue = NULL;
 static SemaphoreHandle_t s_config_mutex = NULL;
 static TimerHandle_t s_button13_long_press_timer = NULL;
 
-static touch_app_mode_t s_current_app_mode = TOUCH_APP_MODE_PERFORMANCE;
 static touch_wheel_config_t s_current_wheel_config = TOUCH_WHEEL_AS_ROTARY;
-static bool s_at_programming_top_level_menu = false; // New state variable
-static bool s_long_press_timer_fired = false; // New flag
+static bool s_long_press_timer_fired = false;
 
 static bool s_button_pressed_states[TOUCH_PAD_MAX] = {false};
 
@@ -48,14 +46,11 @@ static touch_mode_callback_t s_mode_callback = NULL;
 
 static int s_last_logical_wheel_pos = -1;
 static uint32_t s_last_wheel_interaction_time = 0;
-static int s_rotary_value = 0; // New static variable for rotary value
+static int s_rotary_value = 0;
 
 // static lv_indev_t *lvgl_indev = NULL;
 
 static void IRAM_ATTR touch_isr_handler(void *arg) {
-  g_isr_entry_count++; // Increment counter first thing
-  // ESP_DRAM_LOGI(TAG, "ISR Entered! Count: %lu", g_isr_entry_count); // VERY TEMPORARY, use ESP_DRAM_LOG if essential
-
   int task_awoken = pdFALSE;
   touch_event_t evt;
 
@@ -83,9 +78,9 @@ static void IRAM_ATTR touch_isr_handler(void *arg) {
 
 static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   if (xSemaphoreTake(s_config_mutex, (TickType_t)10) == pdTRUE) {
-    if (s_current_app_mode == TOUCH_APP_MODE_PERFORMANCE) {
-      s_current_app_mode = TOUCH_APP_MODE_PROGRAMMING;
-      s_at_programming_top_level_menu = true;
+    if (ui_get_app_mode() == APP_MODE_PERFORMANCE) {
+      ui_set_app_mode(APP_MODE_PROGRAMMING);
+      ui_set_programming_top_level(true);
       s_long_press_timer_fired = true; // Set flag when timer fires
       ESP_LOGI(TAG, "Button 13 long press: Entering Programming Mode (top level menu)");
       if (s_mode_callback) s_mode_callback(true);
@@ -141,6 +136,8 @@ static void touch_task(void *arg) {
   touch_event_t evt;
   while (1) {
     if (xQueueReceive(s_touch_evt_queue, &evt, portMAX_DELAY) == pdTRUE) {
+      screensaver_notify_activity(); // Notify screensaver of touch activity
+
       uint32_t time_now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
       touch_pad_t pad_num = (touch_pad_t)evt.pad_num;
 
@@ -148,7 +145,7 @@ static void touch_task(void *arg) {
         if(pad_num < TOUCH_PAD_MAX) s_button_pressed_states[pad_num] = true;
 
         bool is_wheel_pad_in_rotary_mode = false;
-        if (s_current_app_mode == TOUCH_APP_MODE_PERFORMANCE && s_current_wheel_config == TOUCH_WHEEL_AS_ROTARY) {
+        if (ui_get_app_mode() == APP_MODE_PERFORMANCE && s_current_wheel_config == TOUCH_WHEEL_AS_ROTARY) {
             for(int i=0; i < NUM_WHEEL_PADS; ++i) {
                 if (TOUCH_PADS[i] == pad_num) {
                     is_wheel_pad_in_rotary_mode = true; 
@@ -173,12 +170,12 @@ static void touch_task(void *arg) {
 
         if (xSemaphoreTake(s_config_mutex, portMAX_DELAY) == pdTRUE) {
           if (pad_num == BUTTON_13_PAD) {
-            if (s_current_app_mode == TOUCH_APP_MODE_PERFORMANCE) {
+            if (ui_get_app_mode() == APP_MODE_PERFORMANCE) {
               s_long_press_timer_fired = false;
               xTimerStart(s_button13_long_press_timer, 0);
             }
           } else { // For pads other than Button 13
-            if (s_current_app_mode == TOUCH_APP_MODE_PERFORMANCE && s_current_wheel_config == TOUCH_WHEEL_AS_ROTARY) {
+            if (ui_get_app_mode() == APP_MODE_PERFORMANCE && s_current_wheel_config == TOUCH_WHEEL_AS_ROTARY) {
               // Check if it is a wheel pad before calling handle_rotary_press
               bool is_wheel_pad_for_logic = false;
               for(int i=0; i < NUM_WHEEL_PADS; ++i) {
@@ -188,7 +185,7 @@ static void touch_task(void *arg) {
                 }
               }
               if (is_wheel_pad_for_logic) handle_rotary_press(pad_num, time_now_ms);
-            } else if (s_current_app_mode == TOUCH_APP_MODE_PROGRAMMING) {
+            } else if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
               ESP_LOGI(TAG, "Button %d pressed in programming mode.", pad_num);
             }
           }
@@ -203,13 +200,13 @@ static void touch_task(void *arg) {
         if (xSemaphoreTake(s_config_mutex, portMAX_DELAY) == pdTRUE) {
           if (pad_num == BUTTON_13_PAD) {
             xTimerStop(s_button13_long_press_timer, 0);
-            if (s_current_app_mode == TOUCH_APP_MODE_PROGRAMMING) {
+            if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
               if (s_long_press_timer_fired) {
                 s_long_press_timer_fired = false;
                 ESP_LOGD(TAG, "Button 13 released (after long press into programming mode).");
               } else {
-                if (s_at_programming_top_level_menu) {
-                  s_current_app_mode = TOUCH_APP_MODE_PERFORMANCE;
+                if (ui_is_programming_top_level()) {
+                  ui_set_app_mode(APP_MODE_PERFORMANCE);
                   ESP_LOGI(TAG, "Button 13 TAP (top level): Exiting Programming Mode.");
                   if (s_mode_callback) s_mode_callback(false);
                 } else {
@@ -327,22 +324,10 @@ bool touch_is_button_pressed(touch_pad_t pad_num) {
   return false;
 }
 
-touch_app_mode_t touch_get_app_mode(void) {
-  touch_app_mode_t mode;
-  if (xSemaphoreTake(s_config_mutex, portMAX_DELAY) == pdTRUE) {
-    mode = s_current_app_mode;
-    xSemaphoreGive(s_config_mutex);
-  } else {
-    ESP_LOGE(TAG, "Failed to get app mode, returning default");
-    mode = TOUCH_APP_MODE_PERFORMANCE;
-  }
-  return mode;
+app_mode_t touch_get_app_mode(void) {
+  return ui_get_app_mode();
 }
 
 void touch_set_programming_menu_level(bool is_top_level) {
-  if (xSemaphoreTake(s_config_mutex, portMAX_DELAY) == pdTRUE) {
-    s_at_programming_top_level_menu = is_top_level;
-    ESP_LOGI(TAG, "Programming menu level set to: %s", is_top_level ? "Top Level" : "Sub-Level");
-    xSemaphoreGive(s_config_mutex);
-  }
+  ui_set_programming_top_level(is_top_level);
 }

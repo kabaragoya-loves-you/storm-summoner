@@ -1,6 +1,11 @@
 #pragma once
 
+// #define ELITE_ROTATION_INTERVAL_MS      (33)  // approx 30 FPS -- Moved to elite_config.h
+// #define ELITE_SHIP_CHANGE_INTERVAL_MS (10000) // 10 seconds -- Moved to elite_config.h
+
 void elite_init(void);
+void elite_start(void);
+void elite_stop(void);
 
 /**
  * @brief Display a specific ship

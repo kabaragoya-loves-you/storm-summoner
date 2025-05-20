@@ -2,8 +2,13 @@
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "i2c_common.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define TAG "HAPTIC"
+
+#define HAPTIC_SETUP_RETRY_COUNT 3
+#define HAPTIC_SETUP_RETRY_DELAY_MS 100
 
 static i2c_master_dev_handle_t haptic_dev = NULL;
 
@@ -31,11 +36,25 @@ esp_err_t haptic_setup(void) {
     return err;
   }
 
-  err = haptic_write_reg(HAPTIC_REG_MODE, HAPTIC_MODE_INTTRIG);
+  // Retry mechanism for setting mode register
+  err = ESP_FAIL; // Initialize err to a failing state
+  for (int i = 0; i < HAPTIC_SETUP_RETRY_COUNT; ++i) {
+    err = haptic_write_reg(HAPTIC_REG_MODE, HAPTIC_MODE_INTTRIG);
+    if (err == ESP_OK) {
+      break; // Success
+    }
+    ESP_LOGW(TAG, "Failed to set mode register (attempt %d/%d), retrying in %dms...", i + 1, HAPTIC_SETUP_RETRY_COUNT, HAPTIC_SETUP_RETRY_DELAY_MS);
+    vTaskDelay(pdMS_TO_TICKS(HAPTIC_SETUP_RETRY_DELAY_MS));
+  }
+
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to set mode register");
+    ESP_LOGE(TAG, "Failed to set mode register after %d attempts", HAPTIC_SETUP_RETRY_COUNT);
+    // Optional: Consider cleaning up the added device if this is critical
+    // i2c_master_bus_rm_device(haptic_dev);
+    // haptic_dev = NULL;
     return err;
   }
+  ESP_LOGI(TAG, "Mode register set successfully.");
 
   // Select default effect library (typically library 1)
   err = haptic_write_reg(HAPTIC_REG_LIBRARY, 1);
