@@ -8,12 +8,14 @@
 #include "task_priorities.h"
 
 #define TAG "HAPTIC_MANAGER"
+#define HAPTIC_JOB_QUEUE_SIZE 10
+#define HAPTIC_JOBS_COUNT 3
 
 static QueueHandle_t haptic_job_queue = NULL;
 
 static void haptic_job_task(void *pvParameters);
 
-static const haptic_job_t HAPTIC_JOBS[3] = {
+static const haptic_job_t HAPTIC_JOBS[HAPTIC_JOBS_COUNT] = {
   [CLICK]     = { .waveform_sequence = { 1 }, .length = 1, .name = "CLICK" },
   [INCREMENT] = { .waveform_sequence = { 21 }, .length = 1, .name = "INCREMENT" },
   [DECREMENT] = { .waveform_sequence = { 24 }, .length = 1, .name = "DECREMENT" },
@@ -24,7 +26,7 @@ void haptic(haptic_job_id_t job_id) {
     ESP_LOGE(TAG, "Job queue not created");
     return;
   }
-  if (job_id < 13) {
+  if (job_id < HAPTIC_JOBS_COUNT) {
     if (xQueueSend(haptic_job_queue, &HAPTIC_JOBS[job_id], pdMS_TO_TICKS(100)) != pdPASS) {
       ESP_LOGE(TAG, "Failed to enqueue haptic job");
     }
@@ -33,7 +35,7 @@ void haptic(haptic_job_id_t job_id) {
 
 void haptic_init(void) {
   if (haptic_job_queue == NULL) {
-    haptic_job_queue = xQueueCreate(10, sizeof(haptic_job_t));
+    haptic_job_queue = xQueueCreate(HAPTIC_JOB_QUEUE_SIZE, sizeof(haptic_job_t));
     if (haptic_job_queue == NULL) {
       ESP_LOGE(TAG, "Failed to create haptic job queue");
       return;
