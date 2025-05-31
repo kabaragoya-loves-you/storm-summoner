@@ -147,7 +147,6 @@ void send_double_control_change(uint8_t channel, uint8_t msb_cc, uint8_t lsb_cc,
   midi_send_message(lsb_message, 3);
 }
 
-// send this every 250ms in a task
 void send_active_sensing() {
   uint8_t message = 0xFE;
   midi_send_message(&message, 1);

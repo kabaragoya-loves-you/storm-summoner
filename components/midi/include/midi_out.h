@@ -32,4 +32,9 @@ void midi_send_message(const uint8_t *stream, size_t len);
 void midi_clear_queue(void);
 void midi_set_transmit_mode(midi_transmit_mode_t mode);
 
+// Active sensing control functions
+void midi_active_sensing_start(void);
+void midi_active_sensing_stop(void);
+bool midi_active_sensing_is_enabled(void);
+
 #endif /* _MIDI_OUT_H */

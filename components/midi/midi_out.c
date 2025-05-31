@@ -2,23 +2,31 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_err.h"
+#include "nvs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include "task_priorities.h"
+#include "app_settings.h"
+#include "midi_messages.h"
 
 #define TAG "MIDI_OUT"
 #define MIDI_QUEUE_LENGTH   50
 #define MIDI_QUEUE_ITEM_SIZE sizeof(midi_out_job_t *)
 #define MIDI_MIN_INTERVAL   pdMS_TO_TICKS(10)
+#define ACTIVE_SENSING_INTERVAL pdMS_TO_TICKS(250)
+#define NVS_KEY_ACTIVE_SENSING "midi_act_sense"
 
 static QueueHandle_t   midi_out_queue  = NULL;
 static SemaphoreHandle_t midi_out_mutex = NULL;
 static TickType_t        last_send_tick  = 0;
 static midi_transmit_mode_t current_mode = MIDI_TRANSMIT_BOTH;
+static TaskHandle_t active_sensing_task_handle = NULL;
 
 static void midi_out_task(void *pvParameters);
+static void active_sensing_task(void *pvParameters);
 
 void midi_out_init(void) {
   if (midi_out_queue != NULL) {
@@ -62,6 +70,13 @@ void midi_out_init(void) {
     midi_out_queue = NULL;
     return;
   }
+
+  bool active_sensing_enabled = false;
+  esp_err_t err = app_settings_load_bool(NVS_KEY_ACTIVE_SENSING, &active_sensing_enabled);
+  
+  if (err != ESP_OK) app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, false);
+  
+  if (active_sensing_enabled) midi_active_sensing_start();
 
   BaseType_t ret = xTaskCreate(midi_out_task, "midi_out", 4096, NULL, TASK_PRIORITY_MIDI_OUT, NULL);
   if (ret != pdPASS) {
@@ -171,4 +186,37 @@ static void midi_out_task(void *pvParameters) {
       free(job);
     }
   }
+}
+
+static void active_sensing_task(void *pvParameters) {
+  for (;;) {
+    send_active_sensing();
+    vTaskDelay(ACTIVE_SENSING_INTERVAL);
+  }
+}
+
+void midi_active_sensing_start(void) {
+  if (active_sensing_task_handle != NULL) return;
+
+  BaseType_t ret = xTaskCreate(active_sensing_task, "heartbeat", 2048, NULL, TASK_PRIORITY_MIDI_OUT, &active_sensing_task_handle);
+  if (ret != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create active sensing task");
+    return;
+  }
+
+  app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, true);
+  ESP_LOGI(TAG, "Active sensing started");
+}
+
+void midi_active_sensing_stop(void) {
+  if (active_sensing_task_handle == NULL) return;
+
+  vTaskDelete(active_sensing_task_handle);
+  active_sensing_task_handle = NULL;
+  app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, false);
+  ESP_LOGI(TAG, "Active sensing stopped");
+}
+
+bool midi_active_sensing_is_enabled(void) {
+  return active_sensing_task_handle != NULL;
 }
