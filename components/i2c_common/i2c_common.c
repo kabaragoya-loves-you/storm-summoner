@@ -11,6 +11,7 @@ i2c_master_bus_handle_t i2c_bus_handle(void) {
     return bus_handle;
   }
   
+  // Switch to SDA 8 and SCL 9 and 400kHz when WROOM arrives
   i2c_master_bus_config_t master_conf = {
     .sda_io_num                   = I2C_MASTER_SDA_IO,
     .scl_io_num                   = I2C_MASTER_SCL_IO,
