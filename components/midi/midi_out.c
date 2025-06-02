@@ -46,8 +46,6 @@ void midi_out_init(void) {
   ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, MIDI_TXD, MIDI_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
   ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 256, 0, 0, NULL, 0));
 
-  uart_set_line_inverse(UART_NUM_1, UART_SIGNAL_TXD_INV);
-
   gpio_config_t io_conf2 = {
     .pin_bit_mask = (1ULL << PIN_POLARITY),
     .mode = GPIO_MODE_OUTPUT,
@@ -75,7 +73,8 @@ void midi_out_init(void) {
   esp_err_t err = app_settings_load_bool(NVS_KEY_ACTIVE_SENSING, &active_sensing_enabled);
   
   if (err != ESP_OK) app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, false);
-  
+
+
   if (active_sensing_enabled) midi_active_sensing_start();
 
   BaseType_t ret = xTaskCreate(midi_out_task, "midi_out", 4096, NULL, TASK_PRIORITY_MIDI_OUT, NULL);
@@ -160,6 +159,14 @@ static void midi_out_task(void *pvParameters) {
       }
 
       if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+        // Print MIDI message bytes in hex
+        char hex_str[64] = {0};
+        char *ptr = hex_str;
+        for (size_t i = 0; i < job->len && i < 16; i++) {
+          ptr += sprintf(ptr, "%02X ", job->data[i]);
+        }
+        ESP_LOGD(TAG, "Sending MIDI message: %s", hex_str);
+
         switch (current_mode) {
           case MIDI_TRANSMIT_BOTH:
             gpio_set_level(PIN_POLARITY, TYPE_A);
