@@ -2,6 +2,7 @@
 #define SENSOR_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define SENSOR_ADDR             0x60
 #define SENSOR_ALS_CONF         0x00
@@ -31,5 +32,11 @@ void set_als_polarity(als_polarity_t polarity);
 
 uint16_t get_als(void);
 uint16_t get_ps(void);
+
+// Rate limit control functions
+uint32_t get_als_rate_limit(void);
+uint32_t get_ps_rate_limit(void);
+void set_als_rate_limit(uint32_t rate);
+void set_ps_rate_limit(uint32_t rate);
 
 #endif // SENSOR_H
