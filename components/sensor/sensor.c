@@ -84,7 +84,7 @@ void sensor_init(void) {
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
     .device_address   = SENSOR_ADDR,
-    .scl_speed_hz = 100000,
+    .scl_speed_hz = 400000,
   };
 
   i2c_master_bus_handle_t bus_handle = i2c_bus_handle();
