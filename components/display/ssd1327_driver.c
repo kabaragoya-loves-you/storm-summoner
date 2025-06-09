@@ -3,12 +3,45 @@
 #include "esp_log.h"
 #include "lvgl.h"
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define TAG "SSD1327"
+
+// IRAM_ATTR bool is_pixel_visible(int16_t x, int16_t y) {
+//   int16_t dx = x - 64;  // Center at (64, 64)
+//   int16_t dy = y - 64;
+//   return (dx * dx + dy * dy) <= (64 * 64);  // R² = 64²
+// }
 
 static spi_device_handle_t spi;
 
 void ssd1327_init(void) {
+  // Configure and perform display reset with robust sequence
+  gpio_config_t reset_gpio_config = {
+    .pin_bit_mask = (1ULL << PIN_RESET),
+    .mode = GPIO_MODE_OUTPUT,
+    .pull_up_en = GPIO_PULLUP_DISABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE
+  };
+  gpio_config(&reset_gpio_config);
+  
+  // Ensure reset pin starts high (inactive)
+  gpio_set_level(PIN_RESET, 1);
+  vTaskDelay(pdMS_TO_TICKS(20)); // Wait 20ms to ensure pin is stable
+  
+  // Perform reset sequence - multiple pulses for robustness
+  for (int i = 0; i < 2; i++) {
+    gpio_set_level(PIN_RESET, 0);  // Reset low (active)
+    vTaskDelay(pdMS_TO_TICKS(20)); // Hold reset for 20ms
+    gpio_set_level(PIN_RESET, 1);  // Reset high (inactive)
+    vTaskDelay(pdMS_TO_TICKS(20)); // Wait 20ms between pulses
+  }
+  
+  // Final longer wait for display to fully initialize
+  vTaskDelay(pdMS_TO_TICKS(50)); // Wait 50ms for display to be completely ready
+
   spi_bus_config_t buscfg = {
     .miso_io_num = -1,
     .mosi_io_num = PIN_MOSI,
@@ -137,4 +170,6 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
 
   // ESP_LOGI(TAG, "Flushed area x[%d..%d], y[%d..%d]", (int)area->x1, (int)area->x2, (int)area->y1, (int)area->y2);
 }
+
+
 
