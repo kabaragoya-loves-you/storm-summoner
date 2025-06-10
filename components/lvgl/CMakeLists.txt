@@ -4,7 +4,7 @@ file(GLOB_RECURSE LVGL_SRCS
 )
 
 idf_component_register(
-    SRCS ${LVGL_SRCS}
+    SRCS ${LVGL_SRCS} "polygon.c"
     INCLUDE_DIRS "." "src"
     REQUIRES driver esp_timer
 )

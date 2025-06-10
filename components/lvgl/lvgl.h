@@ -112,6 +112,9 @@ extern "C" {
 #include "src/draw/lv_draw_vector.h"
 #include "src/draw/sw/lv_draw_sw.h"
 
+// Custom polygon rasterizer extension
+#include "polygon.h"
+
 #include "src/themes/lv_theme.h"
 
 #include "src/drivers/lv_drivers.h"
