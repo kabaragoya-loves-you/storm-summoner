@@ -1,18 +1,26 @@
 #include "lvgl.h"
 #include "ui.h"
+#include "esp_log.h"
 
 #define PIZZA_CENTER_X 64
 #define PIZZA_CENTER_Y 64
 #define PIZZA_RADIUS 60
+#define TAG "PIZZA"
 
 extern lv_obj_t *canvas;
 
-void pizza(void) {
-  if (!canvas) return;
+static void pizza_draw_deferred_cb(lv_timer_t *timer) {
+  if (!canvas) {
+    lv_timer_del(timer);
+    return;
+  }
 
   lv_layer_t layer;
   lv_canvas_init_layer(canvas, &layer);
-  if (!layer.draw_buf) return;
+  if (!layer.draw_buf) {
+    lv_timer_del(timer);
+    return;
+  }
   
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
   
@@ -60,4 +68,20 @@ void pizza(void) {
   
   lv_canvas_finish_layer(canvas, &layer);
   lv_obj_invalidate(canvas);
-} 
+  
+  lv_timer_del(timer);
+}
+
+// Use the macro to create the deferred draw function
+UI_CREATE_DEFERRED_DRAW_FUNC(pizza, pizza_draw_deferred_cb)
+
+static void pizza_teardown(void) {}
+
+static void pizza_init(void) {}
+
+ui_draw_module_t pizza_module = {
+  .draw_func = pizza_draw,
+  .teardown_func = pizza_teardown,
+  .init_func = pizza_init,
+  .name = "pizza"
+};

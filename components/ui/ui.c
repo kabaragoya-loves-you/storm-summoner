@@ -4,6 +4,7 @@
 
 lv_obj_t *canvas = NULL;
 static lv_timer_t *g_ui_refresh_timer = NULL;
+static ui_draw_module_t* current_draw_module = NULL;
 
 static lv_color_t display_buf[128 * 128] __attribute__((aligned(4)));
 
@@ -17,20 +18,34 @@ void lvgl_timer_cb(lv_timer_t *timer) {
   if (canvas != NULL) lv_obj_invalidate(canvas);
 }
 
-static void deferred_draw_lizard_cb(lv_timer_t *timer) {  
-  draw_lizard();
-  lv_timer_del(timer);
+void ui_set_draw_module(ui_draw_module_t* module) {
+  if (!module) {
+    ESP_LOGW(TAG, "Attempted to set NULL module");
+    return;
+  }
+
+  if (current_draw_module && current_draw_module->teardown_func) current_draw_module->teardown_func();
+
+  if (canvas) {
+    lv_layer_t layer;
+    lv_canvas_init_layer(canvas, &layer);
+    if (layer.draw_buf) {
+      lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+      lv_canvas_finish_layer(canvas, &layer);
+      lv_obj_invalidate(canvas);
+    }
+  }
+
+  current_draw_module = module;
+  ESP_LOGI(TAG, "Switched to module: %s", module->name);
+
+  if (module->init_func) module->init_func();
+
+  if (module->draw_func) module->draw_func();
 }
 
-static void deferred_pizza2_cb(lv_timer_t *timer) {  
-  bool slices[SLICE_COUNT] = {true, false, true, false, true, false, true, false};
-  pizza2(slices);
-  lv_timer_del(timer);
-}
-
-static void deferred_pizza_cb(lv_timer_t *timer) {  
-  pizza();
-  lv_timer_del(timer);
+ui_draw_module_t* ui_get_current_module(void) {
+  return current_draw_module;
 }
 
 static void deferred_canvas_hide_cb(lv_timer_t *timer) {
@@ -46,11 +61,6 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
   lv_timer_del(timer);
 }
 
-static void deferred_boundary_circle_cb(lv_timer_t *timer) {  
-  boundary_circle();
-  lv_timer_del(timer);
-}
-
 void ui_init(void) {
   canvas = lv_canvas_create(lv_scr_act());
 
@@ -61,9 +71,6 @@ void ui_init(void) {
   lv_obj_set_size(canvas, 128, 128);
   lv_obj_center(canvas);
 
-  lv_timer_t *deferred_timer = lv_timer_create(deferred_pizza2_cb, 50, NULL);
-  if (deferred_timer != NULL) lv_timer_set_repeat_count(deferred_timer, 1);
-  
   g_ui_refresh_timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
 
   g_app_mode = APP_MODE_PERFORMANCE;

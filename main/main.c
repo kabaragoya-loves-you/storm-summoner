@@ -1,10 +1,10 @@
 #include "display.h"
 #include "stars.h"
 #include "touch.h"
+#include "touch_thresholds.h"
 #include "haptic_manager.h"
-#include "led.h"
-#include "analog_input.h"
 #include "cv.h"
+#include "led.h"
 #include "expression.h"
 #include "sensor.h"
 #include "midi_out.h"
@@ -15,17 +15,24 @@
 #include "ui.h"
 #include "app_settings.h"
 #include "screensaver.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
 
-#define TAG "main"
+#define TAG "MAIN"
 
 void app_main(void) {
   app_settings_init();
+  
   display_init();
-  // create_starfield();
+  
+  ui_init();
+  ui_set_draw_module(&pizza2_module);
+
   touch_init();
   haptic_init();
+  
   led_init();
-  analog_input_init();
   cv_init();
   sensor_init();
   midi_out_init();
@@ -40,6 +47,10 @@ void app_main(void) {
   screensaver_init();
   // midi_tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // midi_tempo_start();
-  // elite_init();
-  ui_init();
+  
+  // Force recalibration to apply new sensitivity settings
+  // esp_err_t ret = force_touch_recalibration();
+  // if (ret != ESP_OK) {
+  //   ESP_LOGW(TAG, "Failed to apply new touch sensitivity settings: %s", esp_err_to_name(ret));
+  // }
 }

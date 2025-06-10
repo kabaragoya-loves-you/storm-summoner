@@ -9,14 +9,35 @@ typedef enum {
   APP_MODE_SCREENSAVER
 } app_mode_t;
 
+typedef void (*ui_draw_func_t)(void);
+typedef void (*ui_teardown_func_t)(void);
+typedef void (*ui_init_func_t)(void);
+
+typedef struct {
+  ui_draw_func_t draw_func;
+  ui_teardown_func_t teardown_func;
+  ui_init_func_t init_func;
+  const char* name;
+} ui_draw_module_t;
+
+#define UI_CREATE_DEFERRED_DRAW_FUNC(module_name, deferred_cb_func) \
+static void module_name##_draw(void) { \
+  lv_timer_t *deferred_timer = lv_timer_create(deferred_cb_func, 10, NULL); \
+  if (deferred_timer != NULL) lv_timer_set_repeat_count(deferred_timer, 1); \
+}
+
 extern app_mode_t g_app_mode;
 extern bool g_at_programming_top_level_menu;
 
+extern ui_draw_module_t boundary_circle_module;
+extern ui_draw_module_t pizza_module;
+extern ui_draw_module_t pizza2_module;
+extern ui_draw_module_t draw_lizard_module;
+
 void ui_init(void);
-void draw_lizard(void);
-void boundary_circle(void);
-void pizza(void);
-void pizza2(const bool slice_states[SLICE_COUNT]);
+
+void ui_set_draw_module(ui_draw_module_t* module);
+ui_draw_module_t* ui_get_current_module(void);
 
 app_mode_t ui_get_app_mode(void);
 void ui_set_app_mode(app_mode_t mode);

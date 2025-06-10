@@ -1,14 +1,23 @@
 #include "lvgl.h"
 #include "ui.h"
+#include "esp_log.h"
+
+#define TAG "BOUNDARY_CIRCLE"
 
 extern lv_obj_t *canvas;
 
-void boundary_circle(void) {
-  if (!canvas) return;
+static void boundary_circle_draw_deferred_cb(lv_timer_t *timer) {
+  if (!canvas) {
+    lv_timer_del(timer);
+    return;
+  }
 
   lv_layer_t layer;
   lv_canvas_init_layer(canvas, &layer);
-  if (!layer.draw_buf) return;
+  if (!layer.draw_buf) {
+    lv_timer_del(timer);
+    return;
+  }
 
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
   
@@ -26,4 +35,19 @@ void boundary_circle(void) {
   
   lv_canvas_finish_layer(canvas, &layer);
   lv_obj_invalidate(canvas);
+  
+  lv_timer_del(timer);
 }
+
+UI_CREATE_DEFERRED_DRAW_FUNC(boundary_circle, boundary_circle_draw_deferred_cb)
+
+static void boundary_circle_teardown(void) {}
+
+static void boundary_circle_init(void) {}
+
+ui_draw_module_t boundary_circle_module = {
+  .draw_func = boundary_circle_draw,
+  .teardown_func = boundary_circle_teardown,
+  .init_func = boundary_circle_init,
+  .name = "boundary_circle"
+};

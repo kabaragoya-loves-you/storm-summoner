@@ -1,6 +1,7 @@
 #include "lvgl.h"
 #include "ui.h"
 #include <math.h>
+#include "esp_log.h"
 
 #define PIZZA_CENTER_X 64
 #define PIZZA_CENTER_Y 64
@@ -9,6 +10,7 @@
 #define SLICE_COUNT 8
 #define GRAY_TONE 6
 #define DEFAULT_BITE_SIZE 25
+#define TAG "PIZZA2"
 
 extern lv_obj_t *canvas;
 
@@ -107,18 +109,47 @@ static void draw_active_filled_slice(lv_layer_t *layer, uint8_t slice_index) {
   }
 }
 
-void pizza2(const bool slice_states[SLICE_COUNT]) {
-  if (!canvas) return;
+static void pizza2_draw_deferred_cb(lv_timer_t *timer) {
+  ESP_LOGI(TAG, "pizza2_draw_deferred_cb() called");
+  
+  if (!canvas) {
+    ESP_LOGW(TAG, "Canvas is NULL in deferred callback!");
+    lv_timer_del(timer);
+    return;
+  }
 
   lv_layer_t layer;
   lv_canvas_init_layer(canvas, &layer);
-  if (!layer.draw_buf) return;
+  if (!layer.draw_buf) {
+    ESP_LOGW(TAG, "Layer draw_buf is NULL in deferred callback!");
+    lv_timer_del(timer);
+    return;
+  }
 
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
   
+  bool default_slices[SLICE_COUNT] = {true, false, true, false, true, false, true, false};
+  
   for (uint8_t i = 0; i < SLICE_COUNT; i++) {
-    if (slice_states[i]) draw_active_filled_slice(&layer, i);
+    if (default_slices[i]) draw_active_filled_slice(&layer, i);
   }
   
   lv_canvas_finish_layer(canvas, &layer);
+  lv_obj_invalidate(canvas);
+  
+  ESP_LOGI(TAG, "pizza2_draw_deferred_cb() completed");
+  lv_timer_del(timer);
 }
+
+UI_CREATE_DEFERRED_DRAW_FUNC(pizza2, pizza2_draw_deferred_cb)
+
+static void pizza2_teardown(void) {}
+
+static void pizza2_init(void) {}
+
+ui_draw_module_t pizza2_module = {
+  .draw_func = pizza2_draw,
+  .teardown_func = pizza2_teardown,
+  .init_func = pizza2_init,
+  .name = "pizza2"
+};
