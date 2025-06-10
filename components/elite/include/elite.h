@@ -1,9 +1,17 @@
 #pragma once
 
-// #define ELITE_ROTATION_INTERVAL_MS      (33)  // approx 30 FPS -- Moved to elite_config.h
-// #define ELITE_SHIP_CHANGE_INTERVAL_MS (10000) // 10 seconds -- Moved to elite_config.h
+#include "sdkconfig.h"
+#include "freertos/FreeRTOS.h"
 
-void elite_init(void);
+// Display configuration
+#define ELITE_DISPLAY_WIDTH  128
+#define ELITE_DISPLAY_HEIGHT 128
+#define ELITE_COLOR_DEPTH   16  // 16-bit RGB565
+
+// Animation configuration
+#define ELITE_ROTATION_INTERVAL_MS 50
+#define ELITE_SHIP_CHANGE_INTERVAL_MS 10000
+
 void elite_start(void);
 void elite_stop(void);
 
