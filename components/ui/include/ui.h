@@ -41,6 +41,19 @@ ui_draw_module_t* ui_get_current_module(void);
 
 app_mode_t ui_get_app_mode(void);
 void ui_set_app_mode(app_mode_t mode);
+
+static inline bool ui_is_in_screensaver_mode(void) {
+  return ui_get_app_mode() == APP_MODE_SCREENSAVER;
+}
+
+static inline bool ui_is_in_performance_mode(void) {
+  return ui_get_app_mode() == APP_MODE_PERFORMANCE;
+}
+
+static inline bool ui_is_in_programming_mode(void) {
+  return ui_get_app_mode() == APP_MODE_PROGRAMMING;
+}
+
 bool ui_is_programming_top_level(void);
 void ui_set_programming_top_level(bool is_top_level);
 

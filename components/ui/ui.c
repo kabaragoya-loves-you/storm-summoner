@@ -83,8 +83,14 @@ app_mode_t ui_get_app_mode(void) {
 }
 
 void ui_set_app_mode(app_mode_t mode) {
+  app_mode_t previous_mode = g_app_mode;
   g_app_mode = mode;
-  ESP_LOGI(TAG, "App mode set to: %s", mode == APP_MODE_PERFORMANCE ? "Performance" : "Programming");
+  
+  const char* mode_names[] = {"Performance", "Programming", "Screensaver"};
+  const char* prev_name = (previous_mode < 3) ? mode_names[previous_mode] : "Unknown";
+  const char* new_name = (mode < 3) ? mode_names[mode] : "Unknown";
+  
+  ESP_LOGI(TAG, "App mode changed: %s -> %s", prev_name, new_name);
 }
 
 bool ui_is_programming_top_level(void) {
