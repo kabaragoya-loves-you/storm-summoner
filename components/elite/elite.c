@@ -253,7 +253,6 @@ void elite_start(void) {
     lv_style_set_text_font(&style_default, &flyer_venice_14);  // Use the new font
     lv_style_set_text_color(&style_default, lv_color_white());
     g_elite_style_initialized = true;
-    ESP_LOGI(TAG, "Elite style initialized.");
   }
 
   lv_obj_t *screen = lv_scr_act();
@@ -267,19 +266,17 @@ void elite_start(void) {
   if (g_ship_cycling_timer == NULL) {
     g_ship_cycling_timer = lv_timer_create(next_random_ship, ELITE_SHIP_CHANGE_INTERVAL_MS, NULL);
     if (g_ship_cycling_timer == NULL) {
-      ESP_LOGE(TAG, "Failed to create ship cycling timer!");
       cleanup_ship_resources();
       return;
     }
-    ESP_LOGI(TAG, "Elite ship cycling timer started.");
   } else lv_timer_resume(g_ship_cycling_timer);
 
-  ESP_LOGI(TAG, "Elite screensaver started.");
+  ESP_LOGI(TAG, "Elite screensaver started");
 }
 
 void elite_stop(void) {
   cleanup_ship_resources();
-  ESP_LOGI(TAG, "Elite screensaver stopped and resources cleaned up.");
+  ESP_LOGI(TAG, "Elite screensaver stopped and resources cleaned up");
 }
 
 static void next_random_ship(lv_timer_t *timer) {
