@@ -1,7 +1,10 @@
 idf_component_register(
     SRCS 
         "ui.c"
-       
+        "boundary_circle.c"
+        "pizza.c"
+        "pizza2.c"
+        "draw_lizard.c"
     INCLUDE_DIRS 
         "include"
     REQUIRES

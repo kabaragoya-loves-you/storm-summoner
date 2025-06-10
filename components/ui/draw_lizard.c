@@ -141,8 +141,31 @@ const lv_image_dsc_t tiny_transparent_white = {
   .data = tiny_transparent_white_map,
 };
 
+extern lv_obj_t *canvas;
+
 void draw_lizard(void) {
-  lv_obj_t *img = lv_img_create(lv_scr_act());
-  lv_img_set_src(img, &tiny_transparent_white);
-  lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+  if (!canvas) return;
+
+  lv_layer_t layer;
+  lv_canvas_init_layer(canvas, &layer);
+  if (!layer.draw_buf) return;
+
+  lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+  
+  lv_draw_image_dsc_t img_dsc;
+  lv_draw_image_dsc_init(&img_dsc);
+  img_dsc.src = &tiny_transparent_white;
+  img_dsc.pivot.x = 64;  // Center of 128x128 canvas
+  img_dsc.pivot.y = 64;
+  
+  lv_area_t coords;
+  coords.x1 = 0;
+  coords.y1 = 0;
+  coords.x2 = 127;
+  coords.y2 = 127;
+  
+  lv_draw_image(&layer, &img_dsc, &coords);
+  
+  lv_canvas_finish_layer(canvas, &layer);
+  lv_obj_invalidate(canvas);
 }
