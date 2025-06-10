@@ -8,9 +8,8 @@ static adc_oneshot_unit_handle_t adc_handle = NULL;
 
 adc_oneshot_unit_handle_t adc2_handle(void) {
   esp_err_t err;
-  if (adc_handle != NULL) {
-    return adc_handle;
-  }
+  if (adc_handle != NULL) return adc_handle;
+  
   adc_oneshot_unit_init_cfg_t unit_config = {
     .unit_id = ADC_UNIT,
     .ulp_mode = ADC_ULP_MODE_DISABLE,
@@ -20,6 +19,5 @@ adc_oneshot_unit_handle_t adc2_handle(void) {
     ESP_LOGE(TAG, "adc_oneshot_new_unit failed: %d", err);
     return NULL;
   }
-  ESP_LOGI(TAG, "Analog to Digital Converter 2 initialized");
   return adc_handle;
 }
