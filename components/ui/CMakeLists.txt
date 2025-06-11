@@ -5,6 +5,7 @@ idf_component_register(
         "pizza.c"
         "pizza2.c"
         "draw_lizard.c"
+        "sphere.c"
     INCLUDE_DIRS 
         "include"
     REQUIRES

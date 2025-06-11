@@ -33,6 +33,7 @@ extern ui_draw_module_t boundary_circle_module;
 extern ui_draw_module_t pizza_module;
 extern ui_draw_module_t pizza2_module;
 extern ui_draw_module_t draw_lizard_module;
+extern ui_draw_module_t sphere_module;
 
 void ui_init(void);
 
