@@ -34,6 +34,8 @@ extern ui_draw_module_t pizza_module;
 extern ui_draw_module_t pizza2_module;
 extern ui_draw_module_t draw_lizard_module;
 extern ui_draw_module_t sphere_module;
+extern ui_draw_module_t sphere2_module;
+extern ui_draw_module_t greyscale_test_module;
 
 void ui_init(void);
 

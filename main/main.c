@@ -13,6 +13,7 @@
 #include "midi_tempo.h"
 #include "elite.h"
 #include "ui.h"
+#include "sphere3.h"
 #include "app_settings.h"
 #include "screensaver.h"
 #include "freertos/FreeRTOS.h"
@@ -27,7 +28,7 @@ void app_main(void) {
   display_init();
   
   ui_init();
-  ui_set_draw_module(&pizza2_module);
+  ui_set_draw_module(&sphere3_module);
 
   touch_init();
   haptic_init();
