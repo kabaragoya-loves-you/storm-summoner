@@ -16,6 +16,8 @@
 #define NVS_KEY_SS_DELAY  "ss_delay_sec"
 #define NVS_KEY_SS_MODE   "ss_mode"
 
+#define MAX_DELAY_SECONDS 3600 // 1 hour maximum
+
 static bool g_screensaver_initialised = false;
 static bool g_screensaver_enabled_in_settings = true; // Default if NVS fails or key not found
 static uint16_t g_screensaver_delay_seconds = 60;    // Default
@@ -115,6 +117,24 @@ void screensaver_enable(void) {
   if (!g_screensaver_enabled_in_settings) {
     ESP_LOGI(TAG, "Screensaver is disabled in settings, not enabling.");
     return;
+  }
+
+  // Check if delay is 0 and fix it before enabling
+  if (g_screensaver_delay_seconds == 0) {
+    ESP_LOGW(TAG, "Screensaver delay is 0, setting to default 60 seconds before enabling.");
+    g_screensaver_delay_seconds = 60;
+    esp_err_t ret = app_settings_save_u16(NVS_KEY_SS_DELAY, g_screensaver_delay_seconds);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to save corrected delay to NVS: %s", esp_err_to_name(ret));
+    }
+    
+    // Update timer period if timer exists
+    if (g_screensaver_activity_timer != NULL) {
+      TickType_t new_period = pdMS_TO_TICKS(g_screensaver_delay_seconds * 1000);
+      if (xTimerChangePeriod(g_screensaver_activity_timer, new_period, portMAX_DELAY) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to update timer period to corrected delay!");
+      }
+    }
   }
 
   if (g_screensaver_activity_timer != NULL) {
@@ -326,6 +346,68 @@ void screensaver_set_mode(screensaver_mode_t mode) {
   } else {
     ESP_LOGE(TAG, "screensaver_set_mode: Failed to save new mode to NVS! Error: %s", esp_err_to_name(ret));
     // Decide if we should revert g_selected_screensaver_mode or not. For now, keep it changed locally.
+  }
+}
+
+// Function to change the screensaver delay
+void screensaver_set_delay(uint16_t delay_seconds) {
+  if (!g_screensaver_initialised) {
+    ESP_LOGE(TAG, "screensaver_set_delay: Screensaver not initialized yet.");
+    return;
+  }
+
+  // Handle special case: 0 means disable screensaver
+  if (delay_seconds == 0) {
+    ESP_LOGI(TAG, "screensaver_set_delay: Delay set to 0, disabling screensaver.");
+    g_screensaver_delay_seconds = 0;
+    g_screensaver_enabled_in_settings = false;
+    
+    // Save both values to NVS
+    esp_err_t ret1 = app_settings_save_u16(NVS_KEY_SS_DELAY, delay_seconds);
+    esp_err_t ret2 = app_settings_save_bool(NVS_KEY_SS_ACTIVE, false);
+    
+    if (ret1 != ESP_OK) {
+      ESP_LOGE(TAG, "screensaver_set_delay: Failed to save delay to NVS: %s", esp_err_to_name(ret1));
+    }
+    if (ret2 != ESP_OK) {
+      ESP_LOGE(TAG, "screensaver_set_delay: Failed to save active setting to NVS: %s", esp_err_to_name(ret2));
+    }
+    
+    // Disable the screensaver
+    screensaver_disable();
+    return;
+  }
+
+  // Validate delay (allow reasonable range)
+  if (delay_seconds > MAX_DELAY_SECONDS) {
+    ESP_LOGE(TAG, "screensaver_set_delay: Invalid delay: %u seconds (must be 1-%u)", delay_seconds, MAX_DELAY_SECONDS);
+    return;
+  }
+
+  if (g_screensaver_delay_seconds == delay_seconds) {
+    ESP_LOGI(TAG, "screensaver_set_delay: Delay is already %u seconds. No change needed.", delay_seconds);
+    return;
+  }
+
+  g_screensaver_delay_seconds = delay_seconds;
+  ESP_LOGI(TAG, "screensaver_set_delay: Screensaver delay changed to %u seconds locally.", delay_seconds);
+
+  // Save to NVS
+  esp_err_t ret = app_settings_save_u16(NVS_KEY_SS_DELAY, delay_seconds);
+  if (ret == ESP_OK) {
+    // ESP_LOGI(TAG, "screensaver_set_delay: Successfully saved new delay (%u) to NVS.", delay_seconds);
+  } else {
+    ESP_LOGE(TAG, "screensaver_set_delay: Failed to save new delay to NVS! Error: %s", esp_err_to_name(ret));
+  }
+
+  // Update the timer period if it exists and is enabled
+  if (g_screensaver_enabled_in_settings && g_screensaver_activity_timer != NULL) {
+    TickType_t new_period = pdMS_TO_TICKS(delay_seconds * 1000);
+    if (xTimerChangePeriod(g_screensaver_activity_timer, new_period, portMAX_DELAY) == pdPASS) {
+      ESP_LOGI(TAG, "screensaver_set_delay: Timer period updated to %u seconds.", delay_seconds);
+    } else {
+      ESP_LOGE(TAG, "screensaver_set_delay: Failed to update timer period!");
+    }
   }
 }
 

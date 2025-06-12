@@ -13,5 +13,6 @@ void screensaver_enable(void);
 void screensaver_disable(void);
 void screensaver_notify_activity(void);
 void screensaver_set_mode(screensaver_mode_t mode);
+void screensaver_set_delay(uint16_t delay_seconds);
 
 #endif // SCREENSAVER_H 
