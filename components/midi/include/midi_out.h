@@ -10,6 +10,7 @@
 #define MIDI_TXD 26
 #define MIDI_RXD 47
 #define PIN_POLARITY 38
+#define MIDI_GROUND 40
 
 typedef struct {
   uint8_t *data;
@@ -22,9 +23,10 @@ typedef enum {
 } polarity_t;
 
 typedef enum {
-  MIDI_TRANSMIT_BOTH,    // Transmit on both polarities (default)
-  MIDI_TRANSMIT_TYPE_A,  // Transmit only on Type A polarity
-  MIDI_TRANSMIT_TYPE_B   // Transmit only on Type B polarity
+  MIDI_TRANSMIT_BOTH,
+  MIDI_TRANSMIT_TYPE_A,
+  MIDI_TRANSMIT_TYPE_B,
+  MIDI_TRANSMIT_TS
 } midi_transmit_mode_t;
 
 void midi_out_init(void);

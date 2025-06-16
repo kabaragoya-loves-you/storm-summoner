@@ -18,11 +18,12 @@
 #define MIDI_MIN_INTERVAL   pdMS_TO_TICKS(10)
 #define ACTIVE_SENSING_INTERVAL pdMS_TO_TICKS(250)
 #define NVS_KEY_ACTIVE_SENSING "midi_act_sense"
+#define NVS_KEY_MIDI_MODE "midi_mode"
 
 static QueueHandle_t   midi_out_queue  = NULL;
 static SemaphoreHandle_t midi_out_mutex = NULL;
 static TickType_t        last_send_tick  = 0;
-static midi_transmit_mode_t current_mode = MIDI_TRANSMIT_BOTH;
+static midi_transmit_mode_t current_mode = 0;
 static TaskHandle_t active_sensing_task_handle = NULL;
 
 static void midi_out_task(void *pvParameters);
@@ -69,12 +70,16 @@ void midi_out_init(void) {
     return;
   }
 
+  // Load transmit mode from NVS, default to MIDI_TRANSMIT_BOTH
+  uint16_t mode_val = (uint16_t)MIDI_TRANSMIT_BOTH;
+  esp_err_t err_mode = app_settings_load_u16(NVS_KEY_MIDI_MODE, &mode_val);
+  if (err_mode != ESP_OK) app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)MIDI_TRANSMIT_BOTH);
+  current_mode = (midi_transmit_mode_t)mode_val;
+  gpio_set_level(MIDI_GROUND, current_mode == MIDI_TRANSMIT_TS ? 0 : 1);
+
   bool active_sensing_enabled = false;
   esp_err_t err = app_settings_load_bool(NVS_KEY_ACTIVE_SENSING, &active_sensing_enabled);
-  
   if (err != ESP_OK) app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, false);
-
-
   if (active_sensing_enabled) midi_active_sensing_start();
 
   BaseType_t ret = xTaskCreate(midi_out_task, "midi_out", 4096, NULL, TASK_PRIORITY_MIDI_OUT, NULL);
@@ -141,7 +146,9 @@ void midi_clear_queue(void) {
 
 void midi_set_transmit_mode(midi_transmit_mode_t mode) {
   if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    gpio_set_level(MIDI_GROUND, mode == MIDI_TRANSMIT_TS ? 0 : 1);
     current_mode = mode;
+    app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)mode);
     xSemaphoreGive(midi_out_mutex);
   }
 }
@@ -182,6 +189,11 @@ static void midi_out_task(void *pvParameters) {
             break;
             
           case MIDI_TRANSMIT_TYPE_B:
+            gpio_set_level(PIN_POLARITY, TYPE_B);
+            uart_write_bytes(UART_NUM_1, job->data, job->len);
+            break;
+
+          case MIDI_TRANSMIT_TS:
             gpio_set_level(PIN_POLARITY, TYPE_B);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
             break;
