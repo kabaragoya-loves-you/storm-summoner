@@ -11,6 +11,7 @@
 #include "task_priorities.h"
 #include "app_settings.h"
 #include "midi_messages.h"
+#include "io.h"
 
 #define TAG "MIDI_OUT"
 #define MIDI_QUEUE_LENGTH   50
@@ -47,14 +48,14 @@ void midi_out_init(void) {
   ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, MIDI_TXD, MIDI_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
   ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 256, 0, 0, NULL, 0));
 
-  gpio_config_t io_conf2 = {
+  gpio_config_t io_polarity = {
     .pin_bit_mask = (1ULL << PIN_POLARITY),
     .mode = GPIO_MODE_OUTPUT,
     .pull_up_en = GPIO_PULLUP_ENABLE,
     .pull_down_en = GPIO_PULLDOWN_DISABLE,
     .intr_type = GPIO_INTR_DISABLE
   };
-  gpio_config(&io_conf2);
+  gpio_config(&io_polarity);
 
   midi_out_queue = xQueueCreate(MIDI_QUEUE_LENGTH, MIDI_QUEUE_ITEM_SIZE);
   if (midi_out_queue == NULL) {
@@ -70,12 +71,23 @@ void midi_out_init(void) {
     return;
   }
 
-  // Load transmit mode from NVS, default to MIDI_TRANSMIT_BOTH
+  // gpio_config_t io_ground = {
+  //   .pin_bit_mask = (1ULL << MIDI_GROUND),
+  //   .mode = GPIO_MODE_OUTPUT,
+  //   .pull_up_en = GPIO_PULLUP_DISABLE,
+  //   .pull_down_en = GPIO_PULLDOWN_DISABLE,
+  //   .intr_type = GPIO_INTR_DISABLE
+  // };
+  // gpio_config(&io_ground);
+  gpio_reset_pin(MIDI_GROUND);
+  gpio_set_direction(MIDI_GROUND, GPIO_MODE_OUTPUT);
+
   uint16_t mode_val = (uint16_t)MIDI_TRANSMIT_BOTH;
   esp_err_t err_mode = app_settings_load_u16(NVS_KEY_MIDI_MODE, &mode_val);
   if (err_mode != ESP_OK) app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)MIDI_TRANSMIT_BOTH);
   current_mode = (midi_transmit_mode_t)mode_val;
   gpio_set_level(MIDI_GROUND, current_mode == MIDI_TRANSMIT_TS ? 0 : 1);
+  ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);
 
   bool active_sensing_enabled = false;
   esp_err_t err = app_settings_load_bool(NVS_KEY_ACTIVE_SENSING, &active_sensing_enabled);
@@ -149,6 +161,7 @@ void midi_set_transmit_mode(midi_transmit_mode_t mode) {
     gpio_set_level(MIDI_GROUND, mode == MIDI_TRANSMIT_TS ? 0 : 1);
     current_mode = mode;
     app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)mode);
+    ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);
     xSemaphoreGive(midi_out_mutex);
   }
 }

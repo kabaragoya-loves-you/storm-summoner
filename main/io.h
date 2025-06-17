@@ -1,0 +1,34 @@
+#ifndef IO_H
+#define IO_H
+
+// GPIO and ADC channel definitions for all modules
+// Update this file to support multiple PCB revisions
+
+// LED
+#define LED_GPIO 15
+
+// Expression Pedal
+#define EXPRESSION_ADC_CHANNEL     ADC_CHANNEL_6
+
+// CV
+#define CV_ADC_CHANNEL     ADC_CHANNEL_5
+#define CV_SYNC_GPIO      16
+
+// Display (SSD1327)
+#define PIN_CLK   48
+#define PIN_MOSI  34
+#define PIN_DC    33
+#define PIN_RESET 39
+
+// MIDI
+#define MIDI_TXD      26
+#define MIDI_RXD      47
+#define PIN_POLARITY  38
+#define MIDI_GROUND   39
+
+// I2C (from i2c_common.h for completeness)
+#define I2C_MASTER_SDA_IO    21 // move to 8 soon
+#define I2C_MASTER_SCL_IO    18 // move to 9 soon
+#define I2C_MASTER_NUM       I2C_NUM_0
+
+#endif // IO_H 

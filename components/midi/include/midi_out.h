@@ -7,11 +7,6 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 
-#define MIDI_TXD 26
-#define MIDI_RXD 47
-#define PIN_POLARITY 38
-#define MIDI_GROUND 40
-
 typedef struct {
   uint8_t *data;
   size_t   len;

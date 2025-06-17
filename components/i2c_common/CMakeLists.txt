@@ -3,4 +3,5 @@ idf_component_register(
     "i2c_common.c"
   INCLUDE_DIRS "include"
   REQUIRES log driver
+  PRIV_REQUIRES main
 )

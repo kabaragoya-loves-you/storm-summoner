@@ -4,13 +4,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define CV_ADC_CHANNEL     ADC_CHANNEL_5
 #define MOVING_AVG_LENGTH   8      // Number of samples for moving average
 #define IIR_ALPHA           0.1f   // IIR filter smoothing factor
 #define TASK_DELAY_MS       10     // Delay between ADC readings in ms
 #define CV_MIN              5
 #define CV_MAX              4095
-#define CV_SYNC_GPIO        16
 
 void cv_init(void);
 

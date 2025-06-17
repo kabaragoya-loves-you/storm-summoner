@@ -7,6 +7,7 @@
 #include "driver/gpio.h"
 #include "cv.h"  // For CV_ADC_CHANNEL, CV_SYNC_GPIO, MOVING_AVG_LENGTH, CV_MIN, and CV_MAX definitions
 #include "task_priorities.h"
+#include "io.h"
 
 #define TAG "ANALOG_INPUT"
 #define IIR_ALPHA 0.1f

@@ -1,4 +1,5 @@
 #include "expression.h"
+#include "io.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_adc/adc_oneshot.h"

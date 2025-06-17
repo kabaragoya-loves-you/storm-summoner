@@ -1,6 +1,7 @@
 #include "i2c_common.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "io.h"
 
 #define TAG "I2C_COMMON"
 
