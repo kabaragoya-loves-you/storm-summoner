@@ -28,7 +28,7 @@ void app_main(void) {
   display_init();
   
   ui_init();
-  ui_set_draw_module(&sphere3_module);
+  ui_set_draw_module(&buttons_module);
 
   touch_init();
   haptic_init();
@@ -41,8 +41,8 @@ void app_main(void) {
   expression_init();
   expression_enable();
   led_enable();
-  als_enable();
-  ps_enable();
+  // als_enable();
+  // ps_enable();
   midi_callbacks_init();
   midi_tempo_init();
   screensaver_init();

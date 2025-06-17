@@ -1,16 +1,9 @@
+file(GLOB UI_SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/*.c")
+
 idf_component_register(
-    SRCS 
-        "ui.c"
-        "boundary_circle.c"
-        "pizza.c"
-        "pizza2.c"
-        "draw_lizard.c"
-        "sphere.c"
-        "sphere2.c"
-        "sphere3.c"
-        "earth.c"
-        "greyscale_test.c"
-    INCLUDE_DIRS 
+    SRCS
+        ${UI_SRC_FILES}
+    INCLUDE_DIRS
         "include"
     REQUIRES
         "lvgl"
