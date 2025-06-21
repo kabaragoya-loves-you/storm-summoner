@@ -1,6 +1,7 @@
 #include "display.h"
 #include "stars.h"
 #include "touch.h"
+#include "touch2.h"
 #include "touch_thresholds.h"
 #include "haptic_manager.h"
 #include "cv.h"
@@ -31,6 +32,7 @@ void app_main(void) {
   ui_set_draw_module(&buttons_module);
 
   touch_init();
+  touch2_init();
   haptic_init();
   
   led_init();
