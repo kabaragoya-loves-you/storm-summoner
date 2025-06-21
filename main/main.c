@@ -2,6 +2,7 @@
 #include "stars.h"
 #include "touch.h"
 #include "touch2.h"
+#include "bump.h"
 #include "touch_thresholds.h"
 #include "haptic_manager.h"
 #include "cv.h"
@@ -34,6 +35,7 @@ void app_main(void) {
   touch_init();
   touch2_init();
   haptic_init();
+  bump_init();
   
   led_init();
   cv_init();

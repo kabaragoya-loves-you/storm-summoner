@@ -34,4 +34,7 @@
 // Touch2 (IS31SE5117A)
 #define TOUCH2_INTB_GPIO     37
 
+// Bump (LIS3DHTR)
+#define BUMP_INT1_GPIO       40
+
 #endif // IO_H 
