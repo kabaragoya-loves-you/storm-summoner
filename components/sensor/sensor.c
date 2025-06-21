@@ -46,20 +46,6 @@ static i2c_master_dev_handle_t vcnl4040_dev = NULL;
 static uint32_t als_rate_limit = DEFAULT_ALS_RATE;
 static uint32_t ps_rate_limit = DEFAULT_PS_RATE;
 
-static esp_err_t sensor_write16(uint8_t reg, uint16_t value) {
-  uint8_t data[3] = { reg, (uint8_t)(value >> 8), (uint8_t)(value & 0xFF) };
-  return i2c_master_transmit(vcnl4040_dev, data, sizeof(data), -1);
-}
-
-static esp_err_t sensor_read16(uint8_t reg, uint16_t *value) {
-  uint8_t data[2];
-  esp_err_t ret = i2c_master_transmit_receive(vcnl4040_dev, &reg, 1, data, 2, -1);
-  if (ret == ESP_OK) {
-    *value = ((uint16_t)data[0] << 8) | data[1];
-  }
-  return ret;
-}
-
 void sensor_init(void) {
   esp_err_t err;
 
@@ -100,20 +86,20 @@ void sensor_init(void) {
   }
 
   // Disable automatic adjustment for both PS and ALS
-  err = sensor_write16(SENSOR_PS_CONF1, 0x0800); // Disable PS auto-adjustment
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x0800); // Disable PS auto-adjustment
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF1");
     return;
   }
 
-  err = sensor_write16(SENSOR_PS_CONF2, 0x0000);
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF2, 0x0000);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF2");
     return;
   }
 
   // First put ALS into shutdown mode to reset any automatic features
-  err = sensor_write16(SENSOR_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to shutdown ALS");
     return;
@@ -128,7 +114,7 @@ void sensor_init(void) {
   // [5]     - ALS_INT_EN (Interrupt Enable)
   // [4]     - ALS_SD (Shutdown)
   // [3:0]   - Reserved
-  err = sensor_write16(SENSOR_ALS_CONF, 0x0000); // ALS_SD=0 (enabled), all other features disabled
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0000); // ALS_SD=0 (enabled), all other features disabled
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing ALS_CONF");
     return;
@@ -148,9 +134,9 @@ void set_als_polarity(als_polarity_t polarity) {
 void sensor_reset(void) {
   if (vcnl4040_dev) {
     // First try to reset through software
-    sensor_write16(SENSOR_ALS_CONF, 0x0010); // Shutdown
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // Shutdown
     vTaskDelay(pdMS_TO_TICKS(100));
-    sensor_write16(SENSOR_ALS_CONF, 0x0000); // Re-enable
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0000); // Re-enable
     vTaskDelay(pdMS_TO_TICKS(100));
     
     // Clear any accumulated values
@@ -186,7 +172,7 @@ static void als_task(void *arg) {
   uint8_t last_sent_midi = 0;  // Track the last MIDI value we actually sent
   
   while (1) {
-    if (sensor_read16(SENSOR_ALS_DATA, &value) == ESP_OK) {
+    if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &value) == ESP_OK) {
       // Apply IIR filter to smooth the values
       filtered_als = ALS_IIR_ALPHA * value + (1.0f - ALS_IIR_ALPHA) * filtered_als;
       
@@ -228,7 +214,7 @@ static void ps_task(void *arg) {
   uint8_t last_sent_midi = 0;
   
   while (1) {
-    if (sensor_read16(SENSOR_PS_DATA, &value) == ESP_OK) {
+    if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &value) == ESP_OK) {
       ps_value = value;
       
       // Apply IIR filter to smooth the values
@@ -310,7 +296,7 @@ void ps_disable(void) {
 
 uint16_t get_als(void) {
   uint16_t val;
-  if (sensor_read16(SENSOR_ALS_DATA, &val) == ESP_OK) {
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
     return val;
   }
   return 0;
@@ -318,7 +304,7 @@ uint16_t get_als(void) {
 
 uint16_t get_ps(void) {
   uint16_t val;
-  if (sensor_read16(SENSOR_PS_DATA, &val) == ESP_OK) {
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
     return val;
   }
   return 0;
