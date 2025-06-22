@@ -30,11 +30,15 @@
 #define LIS3DHTR_REG_INT1_SRC   0x31
 
 #define NVS_KEY_BUMP_THRESHOLD "bump_thresh"
+#define NVS_KEY_BUMP_DEBOUNCE "bump_debounce"
 #define DEFAULT_BUMP_THRESHOLD 15
+#define DEFAULT_BUMP_DEBOUNCE_MS 50
 
 static i2c_master_dev_handle_t s_bump_dev_handle;
 static SemaphoreHandle_t s_bump_sem = NULL;
 static uint8_t s_bump_threshold = DEFAULT_BUMP_THRESHOLD;
+static uint32_t s_bump_debounce_ms = DEFAULT_BUMP_DEBOUNCE_MS;
+static volatile TickType_t s_last_bump_tick = 0;
 
 static void IRAM_ATTR bump_isr_handler(void* arg) {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -47,11 +51,18 @@ static void IRAM_ATTR bump_isr_handler(void* arg) {
 static void bump_task(void *pvParameters) {
   while (1) {
     if (xSemaphoreTake(s_bump_sem, portMAX_DELAY) == pdTRUE) {
+      TickType_t now = xTaskGetTickCount();
+      if ((now - s_last_bump_tick) * portTICK_PERIOD_MS < s_bump_debounce_ms) {
+        // Debounce: ignore this interrupt
+        continue;
+      }
+      
       uint8_t click_src = 0;
       esp_err_t ret = i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_CLICK_SRC, &click_src);
 
       if (ret == ESP_OK) {
         if (click_src > 0) {
+          s_last_bump_tick = now;
           // midi_tempo_tap_event();
           ESP_LOGI(TAG, "Bump detected!");
         } else {
@@ -69,11 +80,17 @@ static void bump_task(void *pvParameters) {
 }
 
 void bump_init(void) {
-  uint32_t stored_thresh;
-  if (app_settings_load_u32(NVS_KEY_BUMP_THRESHOLD, &stored_thresh) == ESP_OK) {
-    s_bump_threshold = (uint8_t)stored_thresh;
+  uint32_t stored_val;
+  if (app_settings_load_u32(NVS_KEY_BUMP_THRESHOLD, &stored_val) == ESP_OK) {
+    s_bump_threshold = (uint8_t)stored_val;
   } else {
     app_settings_save_u32(NVS_KEY_BUMP_THRESHOLD, DEFAULT_BUMP_THRESHOLD);
+  }
+
+  if (app_settings_load_u32(NVS_KEY_BUMP_DEBOUNCE, &stored_val) == ESP_OK) {
+    s_bump_debounce_ms = stored_val;
+  } else {
+    app_settings_save_u32(NVS_KEY_BUMP_DEBOUNCE, DEFAULT_BUMP_DEBOUNCE_MS);
   }
 
   i2c_device_config_t dev_cfg = {
@@ -128,4 +145,14 @@ void bump_set_threshold(uint8_t threshold) {
   }
   app_settings_save_u32(NVS_KEY_BUMP_THRESHOLD, s_bump_threshold);
   ESP_LOGI(TAG, "Bump threshold set to %d", s_bump_threshold);
+}
+
+uint32_t bump_get_debounce(void) {
+    return s_bump_debounce_ms;
+}
+
+void bump_set_debounce(uint32_t ms) {
+    s_bump_debounce_ms = ms;
+    app_settings_save_u32(NVS_KEY_BUMP_DEBOUNCE, ms);
+    ESP_LOGI(TAG, "Bump debounce set to %lu ms", ms);
 } 
