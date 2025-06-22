@@ -8,6 +8,7 @@
 #include "task_priorities.h"
 #include "app_settings.h"
 #include "bump.h"
+#include "midi_tempo.h"
 #include <string.h>
 
 #define TAG "BUMP"
@@ -19,6 +20,7 @@
 #define LIS3DHTR_REG_CTRL3      0x22
 #define LIS3DHTR_REG_CTRL4      0x23
 #define LIS3DHTR_REG_CTRL5      0x24
+#define LIS3DHTR_REG_CTRL6      0x25
 #define LIS3DHTR_REG_CLICK_CFG  0x38
 #define LIS3DHTR_REG_CLICK_SRC  0x39
 #define LIS3DHTR_REG_CLICK_THS  0x3A
@@ -49,13 +51,9 @@ static void bump_task(void *pvParameters) {
       esp_err_t ret = i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_CLICK_SRC, &click_src);
 
       if (ret == ESP_OK) {
-        // Any non-zero value in CLICK_SRC indicates a tap was detected on an axis.
         if (click_src > 0) {
-          char axis_info[10] = {0};
-          if (click_src & 0x01) strcat(axis_info, "X ");
-          if (click_src & 0x02) strcat(axis_info, "Y ");
-          if (click_src & 0x04) strcat(axis_info, "Z ");
-          ESP_LOGI(TAG, "Bump Detected! (SRC: 0x%02X) Axes: %s", click_src, axis_info);
+          // midi_tempo_tap_event();
+          ESP_LOGI(TAG, "Bump detected!");
         } else {
           ESP_LOGW(TAG, "ISR triggered, but CLICK_SRC was empty.");
         }
@@ -90,6 +88,7 @@ void bump_init(void) {
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CTRL1, 0x77); // 400Hz, Normal mode, X/Y/Z enabled
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CTRL4, 0x88); // BDU enabled, HR (High-Resolution) enabled
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CTRL3, 0x80); // Route Click interrupt to INT1
+  i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CTRL6, 0x00); // Disable INT2
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CTRL5, 0x08); // Latch interrupt on INT1 pin
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CLICK_CFG, 0x15); // Enable single click on X/Y/Z
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CLICK_THS, s_bump_threshold); // No latch, just threshold
@@ -101,7 +100,7 @@ void bump_init(void) {
   i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_CLICK_SRC, &temp);
 
   s_bump_sem = xSemaphoreCreateBinary();
-  xTaskCreate(bump_task, "bump_task", 4096, NULL, TASK_PRIORITY_BUMP, NULL);
+  xTaskCreate(bump_task, "bump", 4096, NULL, TASK_PRIORITY_BUMP, NULL);
 
   gpio_config_t io_conf = {
       .pin_bit_mask = (1ULL << BUMP_INT1_GPIO),

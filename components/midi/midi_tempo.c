@@ -2,7 +2,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "midi_messages.h"       // for send_clock()
+#include "midi_messages.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include <inttypes.h>
@@ -14,29 +14,22 @@
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration
 #define LED_GPIO 15
 
-// Key for storing BPM in NVS
 #define NVS_KEY_BPM "midi_tempo_bpm"
 
-// Global BPM and clock source.
 static uint16_t global_bpm = 120;
 static midi_clock_source_t clock_source = CLOCK_SOURCE_INTERNAL;
 
-// Task handles.
 static TaskHandle_t tempo_send_task_handle = NULL;
 static TaskHandle_t sync_bpm_task_handle = NULL;
 
-// Semaphore for external sync pulses.
 static SemaphoreHandle_t sync_semaphore = NULL;
 
-// For sync BPM calculation.
 static uint32_t last_sync_tick_ms = 0;
 
-// LED and note divider state.
 static bool quarter_note_log_enabled = false;
 static uint8_t note_divider = DIVIDER_QUARTER; // default: quarter note = 24 ticks
 static uint32_t tick_counter = 0;
 
-// Tap tempo data.
 #define TAP_BUFFER_SIZE 4
 #define TAP_TIMEOUT_MS 2000
 static uint32_t tap_timestamps[TAP_BUFFER_SIZE] = {0};
@@ -86,16 +79,12 @@ static void midi_tempo_send_task(void *pvParameters) {
   }
 }
 
-//------------------------------------------------------------
-// Initialization and Start/Stop functions.
-//------------------------------------------------------------
 void midi_tempo_init(void) {
   sync_semaphore = xSemaphoreCreateBinary();
   if (sync_semaphore == NULL) {
     ESP_LOGE(TAG, "Failed to create sync semaphore");
   }
 
-  // Try to load saved BPM from NVS
   uint16_t saved_bpm;
   if (app_settings_load_u16(NVS_KEY_BPM, &saved_bpm) == ESP_OK) {
     global_bpm = saved_bpm;
@@ -142,7 +131,6 @@ static void start_tasks(void) {
 }
 
 void midi_tempo_start(void) {
-  // Only start tasks if clock_source is INTERNAL or SYNC.
   if (clock_source == CLOCK_SOURCE_INTERNAL || clock_source == CLOCK_SOURCE_SYNC) {
     start_tasks();
     ESP_LOGI(TAG, "MIDI tempo tasks started");
@@ -153,9 +141,7 @@ void midi_tempo_start(void) {
 }
 
 static void stop_tasks(void) {
-  if (clock_source == CLOCK_SOURCE_SYNC) {
-    analog_input_stop_sync_detection();
-  }
+  if (clock_source == CLOCK_SOURCE_SYNC) analog_input_stop_sync_detection();
   if (sync_bpm_task_handle != NULL) {
     vTaskDelete(sync_bpm_task_handle);
     sync_bpm_task_handle = NULL;
@@ -171,16 +157,10 @@ void midi_tempo_stop(void) {
   ESP_LOGI(TAG, "MIDI tempo tasks stopped");
 }
 
-//------------------------------------------------------------
-// Getters/Setters and API functions.
-//------------------------------------------------------------
 void midi_tempo_set_bpm(uint16_t bpm) {
   global_bpm = bpm;
-  // Save the new BPM to NVS
   esp_err_t ret = app_settings_save_u16(NVS_KEY_BPM, bpm);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to save BPM to NVS: %s", esp_err_to_name(ret));
-  }
+  if (ret != ESP_OK) ESP_LOGE(TAG, "Failed to save BPM to NVS: %s", esp_err_to_name(ret));
   ESP_LOGI(TAG, "Global BPM set to %d", global_bpm);
 }
 
@@ -189,26 +169,18 @@ uint16_t midi_tempo_get_bpm(void) {
 }
 
 void midi_tempo_set_source(midi_clock_source_t source) {
-  // If source changes, stop existing tasks.
-  if (source != clock_source) {
-    stop_tasks();
-  }
+  if (source != clock_source) stop_tasks();
   clock_source = source;
   ESP_LOGI(TAG, "Clock source set to %d", clock_source);
   
-  // Start tasks if needed.
-  if (clock_source == CLOCK_SOURCE_INTERNAL || clock_source == CLOCK_SOURCE_SYNC) {
-    start_tasks();
-  }
+  if (clock_source == CLOCK_SOURCE_INTERNAL || clock_source == CLOCK_SOURCE_SYNC) start_tasks();
 }
 
 void midi_tempo_sync_pulse(void) {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   if (sync_semaphore) {
     xSemaphoreGiveFromISR(sync_semaphore, &xHigherPriorityTaskWoken);
-    if (xHigherPriorityTaskWoken) {
-      portYIELD_FROM_ISR();
-    }
+    if (xHigherPriorityTaskWoken) portYIELD_FROM_ISR();
   }
 }
 
@@ -225,20 +197,14 @@ void midi_tempo_tap_event(void) {
   }
   tap_timestamps[tap_index] = now;
   tap_index = (tap_index + 1) % TAP_BUFFER_SIZE;
-  if (tap_count < TAP_BUFFER_SIZE) {
-    tap_count++;
-  }
+  if (tap_count < TAP_BUFFER_SIZE) tap_count++;
   if (tap_count >= 2) {
     uint32_t sum_intervals = 0;
     int intervals = tap_count - 1;
     uint32_t sorted[TAP_BUFFER_SIZE];
     int idx = tap_index;
-    for (int i = 0; i < tap_count; i++) {
-      sorted[i] = tap_timestamps[(idx + i) % TAP_BUFFER_SIZE];
-    }
-    for (int i = 1; i < tap_count; i++) {
-      sum_intervals += (sorted[i] - sorted[i - 1]);
-    }
+    for (int i = 0; i < tap_count; i++) sorted[i] = tap_timestamps[(idx + i) % TAP_BUFFER_SIZE];
+    for (int i = 1; i < tap_count; i++) sum_intervals += (sorted[i] - sorted[i - 1]);
     uint32_t avg_interval = sum_intervals / intervals;
     if (avg_interval > 0) {
       uint16_t new_bpm = 60000 / avg_interval;
