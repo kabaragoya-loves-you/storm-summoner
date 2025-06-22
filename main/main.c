@@ -5,9 +5,7 @@
 #include "bump.h"
 #include "touch_thresholds.h"
 #include "haptic_manager.h"
-#include "cv.h"
 #include "led.h"
-#include "expression.h"
 #include "sensor.h"
 #include "midi_out.h"
 #include "midi_messages.h"
@@ -21,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "adc.h"
 
 #define TAG "MAIN"
 
@@ -38,7 +37,6 @@ void app_main(void) {
   bump_init();
   
   led_init();
-  cv_init();
   sensor_init();
   midi_out_init();
   midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);

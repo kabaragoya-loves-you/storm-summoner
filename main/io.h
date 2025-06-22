@@ -37,4 +37,7 @@
 // Bump (LIS3DHTR)
 #define BUMP_INT1_GPIO       40
 
+// Expression Cable Detect
+#define EXPRESSION_CABLE_DETECT_GPIO 41
+
 #endif // IO_H 
