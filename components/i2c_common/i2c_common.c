@@ -52,3 +52,18 @@ esp_err_t i2c_common_read_reg16(i2c_master_dev_handle_t dev_handle, uint8_t reg,
 esp_err_t i2c_common_read_block(i2c_master_dev_handle_t dev_handle, uint8_t reg, uint8_t *data, size_t len) {
     return i2c_master_transmit_receive(dev_handle, &reg, 1, data, len, -1);
 }
+
+// Big-Endian Implementations
+esp_err_t i2c_common_write_reg16_be(i2c_master_dev_handle_t dev_handle, uint8_t reg, uint16_t data) {
+    uint8_t write_buf[3] = {reg, (uint8_t)(data >> 8), (uint8_t)(data & 0xFF)};
+    return i2c_master_transmit(dev_handle, write_buf, sizeof(write_buf), -1);
+}
+
+esp_err_t i2c_common_read_reg16_be(i2c_master_dev_handle_t dev_handle, uint8_t reg, uint16_t *data) {
+    uint8_t out_buf[2];
+    esp_err_t ret = i2c_master_transmit_receive(dev_handle, &reg, 1, out_buf, 2, -1);
+    if (ret == ESP_OK) {
+        *data = ((uint16_t)out_buf[0] << 8) | out_buf[1];
+    }
+    return ret;
+}
