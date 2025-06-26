@@ -96,7 +96,7 @@ void bump_init(void) {
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
     .device_address = LIS3DHTR_I2C_ADDR,
-    .scl_speed_hz = 400000,
+    .scl_speed_hz = I2C_SCL_SPEED_HZ,
   };
 
   ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_handle(), &dev_cfg, &s_bump_dev_handle));

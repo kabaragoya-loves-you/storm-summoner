@@ -11,7 +11,7 @@
 
 static const char *TAG = "touch2";
 
-#define IS31_I2C_ADDR 0x3C
+#define IS31_I2C_ADDR 0x3C //0x27 //0x3C
 
 // Page 0 Registers
 #define IS31_REG_MAIN_CONTROL 0x05
@@ -83,7 +83,7 @@ void touch2_init(void) {
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
     .device_address = IS31_I2C_ADDR,
-    .scl_speed_hz = 400000, // 400kHz
+    .scl_speed_hz = I2C_SCL_SPEED_HZ, // 400kHz
   };
 
   ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_handle(), &dev_cfg, &s_touch_ic_dev_handle));

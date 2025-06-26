@@ -166,7 +166,7 @@ void adc_init(void) {
   if (app_settings_load_u32(NVS_KEY_CV_MODE, &stored_mode) == ESP_OK) s_cv_mode = (adc_cv_mode_t)stored_mode;
   else app_settings_save_u32(NVS_KEY_CV_MODE, (uint32_t)s_cv_mode);
 
-  i2c_device_config_t dev_cfg = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = ADS1015_I2C_ADDR, .scl_speed_hz = 400000, };
+  i2c_device_config_t dev_cfg = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = ADS1015_I2C_ADDR, .scl_speed_hz = I2C_SCL_SPEED_HZ, };
   ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_handle(), &dev_cfg, &s_adc_dev_handle));
 
   xTaskCreate(cv_task, "cv", 4096, NULL, TASK_PRIORITY_ADC_CV, &s_cv_task_handle);
@@ -192,8 +192,24 @@ void expression_init(void) {
   };
   gpio_config(&io_conf);
 
+  // gpio_config_t io_conf2 = {
+  //   .pin_bit_mask = (1ULL << CV_CABLE_DETECT_GPIO),
+  //   .mode = GPIO_MODE_INPUT,
+  //   .pull_up_en = GPIO_PULLUP_ENABLE,
+  // };
+  // gpio_config(&io_conf2);
+
+  // while (1) {
+  //   if (gpio_get_level(CV_CABLE_DETECT_GPIO) == 1) {
+  //     ESP_LOGI(TAG, "HIGH");
+  //   } else {
+  //     ESP_LOGI(TAG, "LOW");
+  //   }
+  //   vTaskDelay(pdMS_TO_TICKS(100));
+  // }
+
   if (!s_adc_dev_handle) {
-    i2c_device_config_t dev_cfg = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = ADS1015_I2C_ADDR, .scl_speed_hz = 400000, };
+    i2c_device_config_t dev_cfg = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = ADS1015_I2C_ADDR, .scl_speed_hz = I2C_SCL_SPEED_HZ, };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_handle(), &dev_cfg, &s_adc_dev_handle));
   }
 

@@ -2,6 +2,7 @@
 #include "i2c_common.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
+#include "io.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -70,7 +71,7 @@ void sensor_init(void) {
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
     .device_address   = SENSOR_ADDR,
-    .scl_speed_hz = 400000,
+    .scl_speed_hz = I2C_SCL_SPEED_HZ,
   };
 
   i2c_master_bus_handle_t bus_handle = i2c_bus_handle();

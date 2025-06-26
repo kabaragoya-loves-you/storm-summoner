@@ -26,10 +26,11 @@
 #define PIN_POLARITY  38
 #define MIDI_GROUND   39
 
-// I2C (from i2c_common.h for completeness)
+// I2C
 #define I2C_MASTER_SDA_IO    21 // move to 8 soon
 #define I2C_MASTER_SCL_IO    18 // move to 9 soon
 #define I2C_MASTER_NUM       I2C_NUM_0
+#define I2C_SCL_SPEED_HZ     100000
 
 // Touch2 (IS31SE5117A)
 #define TOUCH2_INTB_GPIO     37
@@ -39,5 +40,8 @@
 
 // Expression Cable Detect
 #define EXPRESSION_CABLE_DETECT_GPIO 41
+
+// CV Switch
+#define CV_CABLE_DETECT_GPIO 36
 
 #endif // IO_H 
