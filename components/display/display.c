@@ -6,11 +6,29 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "task_priorities.h"
+#if DISPLAY_OPTIMIZATION_MODE == 2
+#include "coordinate_map.h"
+#endif
+#if SHOW_PERF_MONITOR
+#include "../lvgl/src/others/sysmon/lv_sysmon.h"
+#endif
+#include "esp_task_wdt.h"
 
 #define LV_BYTES_PER_PIXEL 2
-#define SCREEN_WIDTH    128
-#define SCREEN_HEIGHT   128
-#define BUFFER_SIZE     (SCREEN_WIDTH * SCREEN_HEIGHT * LV_BYTES_PER_PIXEL)
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 128
+
+#if DISPLAY_OPTIMIZATION_MODE == 0
+  // Mode 0: Original Full-Screen Single Buffer
+  #define BUFFER_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT * LV_BYTES_PER_PIXEL)
+#elif DISPLAY_OPTIMIZATION_MODE == 1
+  // Mode 1: Dynamic Calculation with Partial Double Buffering
+  #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
+  #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+#elif DISPLAY_OPTIMIZATION_MODE == 2
+  // Mode 2: Coordinate Map with Sparse Double Buffering
+  #define BUFFER_SIZE (VISIBLE_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+#endif
 
 #define TAG "display"
 
@@ -34,43 +52,42 @@ void display_init(void) {
   lv_display_set_flush_cb(display, ssd1327_flush);
   lv_tick_set_cb(esp_tick_cb);
 
-  /* Allocate the LVGL draw buffers from heap (DMA-capable memory) */
-  /* Try to allocate both buffers first to check memory availability */
-  
-  // First attempt: try to allocate a single large block for both buffers
-  uint8_t *combined_buffer = (uint8_t *)heap_caps_malloc(BUFFER_SIZE * 2, MALLOC_CAP_DMA);
-  uint8_t *buf1, *buf2 = NULL;
-  
-  if (combined_buffer) {
-    ESP_LOGI(TAG, "Allocated combined DMA buffer (%d bytes) for dual buffer mode", BUFFER_SIZE * 2);
-    buf1 = combined_buffer;
-    buf2 = combined_buffer + BUFFER_SIZE;
-    ESP_LOGI(TAG, "Buffer 1 at %p, Buffer 2 at %p", (void*)buf1, (void*)buf2);
-    ESP_LOGI(TAG, "Dual buffer mode enabled (contiguous DMA allocation)");
-  } else {
-    ESP_LOGW(TAG, "Failed to allocate contiguous DMA buffers, trying separate allocation");
-    
-    // Fallback: allocate buffers separately
-    buf1 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
-    if(!buf1) {
-      ESP_LOGE(TAG, "Failed to allocate LVGL buffer 1 (%d bytes). Cannot continue.", BUFFER_SIZE);
-      ESP_LOGE(TAG, "Available DMA memory: %zu bytes", heap_caps_get_free_size(MALLOC_CAP_DMA));
-      return;
-    }
-    ESP_LOGI(TAG, "Buffer 1 allocated successfully at %p", (void*)buf1);
-    
-    buf2 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
-    if(!buf2) {
-      ESP_LOGW(TAG, "Failed to allocate LVGL buffer 2 (%d bytes). Using single buffer mode.", BUFFER_SIZE);
-      ESP_LOGW(TAG, "Available DMA memory after buf1: %zu bytes", heap_caps_get_free_size(MALLOC_CAP_DMA));
-      ESP_LOGW(TAG, "Largest free block: %zu bytes", heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
-    } else {
-      ESP_LOGI(TAG, "Buffer 2 allocated successfully at %p", (void*)buf2);
-      ESP_LOGI(TAG, "Dual buffer mode enabled (separate DMA allocation)");
-    }
-  }
+  ESP_LOGI(TAG, "Temporarily disabling task watchdog for buffer allocation");
+  esp_task_wdt_deinit();
 
-  lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
+#if DISPLAY_OPTIMIZATION_MODE == 0
+  ESP_LOGI(TAG, "Using Original Full-Screen Single Buffer. Render Mode: FULL");
+  uint8_t *buf1 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+  if (!buf1) {
+    ESP_LOGE(TAG, "Failed to allocate LVGL buffer for Mode 0. Cannot continue.");
+    return;
+  }
+  lv_display_set_buffers(display, buf1, NULL, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
+#else
+  // Modes 1 and 2 use double buffering
+  ESP_LOGI(TAG, "Allocating two buffers of %d bytes each for double buffering.", BUFFER_SIZE);
+  uint8_t *buf1 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+  uint8_t *buf2 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+  if (!buf1 || !buf2) {
+    ESP_LOGE(TAG, "Failed to allocate LVGL buffers for double buffering. Cannot continue.");
+    if(buf1) heap_caps_free(buf1);
+    if(buf2) heap_caps_free(buf2);
+    return;
+  }
+  #if DISPLAY_OPTIMIZATION_MODE == 1
+    ESP_LOGI(TAG, "Using Dynamic Calculation. Render Mode: PARTIAL");
+    lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  #elif DISPLAY_OPTIMIZATION_MODE == 2
+    ESP_LOGI(TAG, "Using Coordinate Map. Render Mode: DIRECT");
+    lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_DIRECT);
+  #endif
+#endif
+
+  ESP_LOGI(TAG, "Task watchdog re-enabled");
+
+#if SHOW_PERF_MONITOR
+    lv_sysmon_create(display);
+#endif
 
   BaseType_t task_result = xTaskCreate(&lvgl_task, "lvgl", 4096, NULL, TASK_PRIORITY_DISPLAY, NULL);
   if (task_result != pdPASS) {
