@@ -24,7 +24,8 @@
     "touch.h": "c",
     "drv2605_manager.h": "c",
     "cstdlib": "c",
-    "lvgl.h": "c"
+    "lvgl.h": "c",
+    "lv_refr_private.h": "c"
   },
   "idf.pythonInstallPath": "C:\\Users\\leastbad\\.espressif\\tools\\idf-python\\3.11.2\\python.exe"
 }

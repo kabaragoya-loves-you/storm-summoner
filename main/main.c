@@ -20,6 +20,8 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "adc.h"
+#include "esp_heap_caps.h"
+#include "performance.h"
 
 #define TAG "MAIN"
 
@@ -32,7 +34,7 @@ void app_main(void) {
   ui_set_draw_module(&buttons_module);
 
   touch_init();
-  touch2_init();
+  // touch2_init();
   haptic_init();
   bump_init();
   
@@ -56,4 +58,9 @@ void app_main(void) {
   // if (ret != ESP_OK) {
   //   ESP_LOGW(TAG, "Failed to apply new touch sensitivity settings: %s", esp_err_to_name(ret));
   // }
+
+  #if ENABLE_PERFORMANCE_MONITORING
+  // Initialize performance monitoring
+  performance_init();
+  #endif
 }

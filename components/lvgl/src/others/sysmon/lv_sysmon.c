@@ -22,7 +22,7 @@
  *      DEFINES
  *********************/
 #ifndef LV_SYSMON_REFR_PERIOD_DEF
-    #define LV_SYSMON_REFR_PERIOD_DEF 300 /* ms */
+    #define LV_SYSMON_REFR_PERIOD_DEF 1000 /* ms - increased from 300ms for better averaging with intermittent animations */
 #endif
 
 #if LV_USE_MEM_MONITOR

@@ -339,17 +339,12 @@
  * Logging
  *-----------*/
 
-/** Enable log module */
-#define LV_USE_LOG 0
+/** 1: Enable print-like logging via `LV_LOG` */
+#define LV_USE_LOG 1
 #if LV_USE_LOG
-    /** Set value to one of the following levels of logging detail:
-     *  - LV_LOG_LEVEL_TRACE    Log detailed information.
-     *  - LV_LOG_LEVEL_INFO     Log important events.
-     *  - LV_LOG_LEVEL_WARN     Log if something unwanted happened but didn't cause a problem.
-     *  - LV_LOG_LEVEL_ERROR    Log only critical issues, when system may fail.
-     *  - LV_LOG_LEVEL_USER     Log only custom log messages added by the user.
-     *  - LV_LOG_LEVEL_NONE     Do not log anything. */
-    #define LV_LOG_LEVEL LV_LOG_LEVEL_TRACE
+
+    /** Set value to one of the available verbosity levels */
+    #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 
     /** - 1: Print log with 'printf';
      *  - 0: User needs to register a callback with `lv_log_register_print_cb()`. */
@@ -358,7 +353,7 @@
     /** Set callback to print logs.
      *  E.g `my_print`. The prototype should be `void my_print(lv_log_level_t level, const char * buf)`.
      *  Can be overwritten by `lv_log_register_print_cb`. */
-    #define LV_LOG_PRINT_CB
+    /* #define LV_LOG_PRINT_CB */
 
     /** - 1: Enable printing timestamp;
      *  - 0: Disable printing timestamp. */
@@ -969,19 +964,24 @@
 #define LV_USE_SNAPSHOT 0
 
 /** 1: Enable system monitor component */
-#define LV_USE_SYSMON   1
+/* Check if ENABLE_PERFORMANCE_MONITORING is defined from ssd1327_driver.h */
+#ifndef ENABLE_PERFORMANCE_MONITORING
+  #define ENABLE_PERFORMANCE_MONITORING 0
+#endif
+
+#define LV_USE_SYSMON   ENABLE_PERFORMANCE_MONITORING
 #if LV_USE_SYSMON
     /** Get the idle percentage. E.g. uint32_t my_get_idle(void); */
     #define LV_SYSMON_GET_IDLE lv_timer_get_idle
 
     /** 1: Show CPU usage and FPS count.
      *  - Requires `LV_USE_SYSMON = 1` */
-    #define LV_USE_PERF_MONITOR 1
+    #define LV_USE_PERF_MONITOR ENABLE_PERFORMANCE_MONITORING
     #if LV_USE_PERF_MONITOR
         #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
 
         /** 0: Displays performance data on the screen; 1: Prints performance data using log. */
-        #define LV_USE_PERF_MONITOR_LOG_MODE 0
+        #define LV_USE_PERF_MONITOR_LOG_MODE 1
     #endif
 
     /** 1: Show used memory and memory fragmentation.

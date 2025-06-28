@@ -15,8 +15,10 @@
 #define CV_SYNC_GPIO      16
 
 // Display (SSD1327)
-#define PIN_CLK   48
-#define PIN_MOSI  34
+// Note: For DMA support, MOSI must be on GPIO 11 and CLK must be on GPIO 12
+// These pins are connected to the ESP32-S3's SPI2 peripheral with DMA capability
+#define PIN_CLK   48 // Non-DMA pin (GPIO 12 is DMA-capable)
+#define PIN_MOSI  34 // Non-DMA pin (GPIO 11 is DMA-capable)
 #define PIN_DC    33
 #define PIN_RESET 39
 

@@ -6,11 +6,12 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "task_priorities.h"
+#include <string.h>
 #if DISPLAY_OPTIMIZATION_MODE == 2
 #include "coordinate_map.h"
 #endif
-#if SHOW_PERF_MONITOR
-#include "../lvgl/src/others/sysmon/lv_sysmon.h"
+#if DISPLAY_OPTIMIZATION_MODE == 3
+#include "circular_display.h"
 #endif
 #include "esp_task_wdt.h"
 
@@ -26,11 +27,45 @@
   #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
   #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
 #elif DISPLAY_OPTIMIZATION_MODE == 2
-  // Mode 2: Coordinate Map with Sparse Double Buffering
-  #define BUFFER_SIZE (VISIBLE_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+  // Mode 2: Coordinate Map with Partial Double Buffering
+  #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
+  #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+#elif DISPLAY_OPTIMIZATION_MODE == 3
+  // Mode 3: LVGL-Integrated Circular Display Optimization
+  #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
+  #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
 #endif
 
 #define TAG "display"
+
+#if LV_USE_LOG
+// Custom log callback to redirect LVGL logs to ESP_LOG
+static void lvgl_log_cb(lv_log_level_t level, const char * buf) {
+    // Always show sysmon performance logs regardless of level
+    if (strstr(buf, "sysmon:") != NULL) {
+        ESP_LOGI("LVGL", "%s", buf);
+        return;
+    }
+    
+    switch(level) {
+        case LV_LOG_LEVEL_ERROR:
+            ESP_LOGE("LVGL", "%s", buf);
+            break;
+        case LV_LOG_LEVEL_WARN:
+            ESP_LOGW("LVGL", "%s", buf);
+            break;
+        case LV_LOG_LEVEL_INFO:
+            ESP_LOGI("LVGL", "%s", buf);
+            break;
+        case LV_LOG_LEVEL_TRACE:
+            ESP_LOGD("LVGL", "%s", buf);
+            break;
+        default:
+            ESP_LOGI("LVGL", "%s", buf);
+            break;
+    }
+}
+#endif
 
 uint32_t esp_tick_cb(void);
 void lvgl_task(void *pvParameter);
@@ -41,6 +76,12 @@ void display_init(void) {
   ESP_LOGI(TAG, "Buffer size needed: %d bytes each", BUFFER_SIZE);
 
   lv_init();
+  
+  #if LV_USE_LOG
+    // Register custom log callback to redirect to ESP_LOG
+    lv_log_register_print_cb(lvgl_log_cb);
+  #endif
+  
   ssd1327_init();
 
   lv_display_t *display = lv_display_create(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -64,7 +105,7 @@ void display_init(void) {
   }
   lv_display_set_buffers(display, buf1, NULL, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
 #else
-  // Modes 1 and 2 use double buffering
+  // Modes 1, 2, and 3 use double buffering
   ESP_LOGI(TAG, "Allocating two buffers of %d bytes each for double buffering.", BUFFER_SIZE);
   uint8_t *buf1 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
   uint8_t *buf2 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
@@ -78,8 +119,13 @@ void display_init(void) {
     ESP_LOGI(TAG, "Using Dynamic Calculation. Render Mode: PARTIAL");
     lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
   #elif DISPLAY_OPTIMIZATION_MODE == 2
-    ESP_LOGI(TAG, "Using Coordinate Map. Render Mode: DIRECT");
-    lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_DIRECT);
+    ESP_LOGI(TAG, "Using Coordinate Map. Render Mode: PARTIAL");
+    lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  #elif DISPLAY_OPTIMIZATION_MODE == 3
+    ESP_LOGI(TAG, "Using LVGL-Integrated Circular Display. Render Mode: PARTIAL");
+    lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    // Initialize circular display optimization
+    circular_display_init(display);
   #endif
 #endif
 
@@ -87,6 +133,14 @@ void display_init(void) {
 
 #if SHOW_PERF_MONITOR
     lv_sysmon_create(display);
+#endif
+
+#if ENABLE_PERFORMANCE_MONITORING && LV_USE_SYSMON && LV_USE_PERF_MONITOR && LV_USE_PERF_MONITOR_LOG_MODE
+    // Create sysmon and enable performance monitoring
+    lv_obj_t *sysmon = lv_sysmon_create(display);
+    if (sysmon) {
+      lv_sysmon_show_performance(display);
+    }
 #endif
 
   BaseType_t task_result = xTaskCreate(&lvgl_task, "lvgl", 4096, NULL, TASK_PRIORITY_DISPLAY, NULL);
