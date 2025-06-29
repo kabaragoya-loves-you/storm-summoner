@@ -81,6 +81,10 @@ static void performance_monitor_task(void *pvParameters) {
     case 3:
       ESP_LOGI(TAG, "Mode 3: LVGL callback wrapper");
       break;
+    case 4:
+      ESP_LOGI(TAG, "Mode 4: Sparse buffer analysis (demonstration)");
+      ESP_LOGI(TAG, "This mode shows compression potential but doesn't modify buffers");
+      break;
   }
   
   #if ENABLE_CONTINUOUS_ANIMATION_TEST

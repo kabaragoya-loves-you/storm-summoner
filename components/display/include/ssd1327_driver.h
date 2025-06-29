@@ -23,6 +23,7 @@
 // Set to 1 for Dynamic Calculation with Partial Double Buffering
 // Set to 2 for Coordinate Map with Sparse Double Buffering
 // Set to 3 for LVGL-Integrated Circular Display Optimization
+// Set to 4 for Sparse Buffer with Compressed Storage
 #ifndef DISPLAY_OPTIMIZATION_MODE
   #define DISPLAY_OPTIMIZATION_MODE 0
 #endif

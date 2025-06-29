@@ -13,6 +13,9 @@
 #if DISPLAY_OPTIMIZATION_MODE == 3
 #include "circular_display.h"
 #endif
+#if DISPLAY_OPTIMIZATION_MODE == 4
+#include "sparse_buffer.h"
+#endif
 #include "esp_task_wdt.h"
 
 #define LV_BYTES_PER_PIXEL 2
@@ -33,6 +36,11 @@
 #elif DISPLAY_OPTIMIZATION_MODE == 3
   // Mode 3: LVGL-Integrated Circular Display Optimization
   #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
+  #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+#elif DISPLAY_OPTIMIZATION_MODE == 4
+  // Mode 4: Sparse Buffer with Compressed Storage
+  // Use smaller buffers since we'll compress between operations
+  #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 16))
   #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
 #endif
 
@@ -126,6 +134,11 @@ void display_init(void) {
     lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
     // Initialize circular display optimization
     circular_display_init(display);
+  #elif DISPLAY_OPTIMIZATION_MODE == 4
+    ESP_LOGI(TAG, "Using Sparse Buffer with Compressed Storage. Render Mode: PARTIAL");
+    lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    // Initialize sparse buffer system
+    sparse_buffer_init(display);
   #endif
 #endif
 
