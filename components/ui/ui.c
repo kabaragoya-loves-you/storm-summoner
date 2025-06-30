@@ -1,6 +1,8 @@
 #include "lvgl.h"
+#include "../lvgl/src/display/lv_display_private.h"
 #include "ui.h"
 #include "esp_log.h"
+#include <string.h>
 
 lv_obj_t *canvas = NULL;
 static lv_timer_t *g_ui_refresh_timer = NULL;
@@ -15,7 +17,13 @@ bool g_at_programming_top_level_menu = false;
 
 void lvgl_timer_cb(lv_timer_t *timer) {
   LV_UNUSED(timer);
-  if (canvas != NULL) lv_obj_invalidate(canvas);
+  // Only invalidate if not currently rendering to prevent feedback loops
+  if (canvas != NULL) {
+    lv_display_t *disp = lv_obj_get_disp(canvas);
+    if (disp && !disp->rendering_in_progress) {
+      lv_obj_invalidate(canvas);
+    }
+  }
 }
 
 void ui_set_draw_module(ui_draw_module_t* module) {
@@ -56,26 +64,33 @@ static void deferred_canvas_hide_cb(lv_timer_t *timer) {
 static void deferred_canvas_show_cb(lv_timer_t *timer) {
   if (canvas != NULL) {
     lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_invalidate(canvas);
+    // Only invalidate if not currently rendering to prevent feedback loops
+    lv_display_t *disp = lv_obj_get_disp(canvas);
+    if (disp && !disp->rendering_in_progress) {
+      lv_obj_invalidate(canvas);
+    }
   }
   lv_timer_del(timer);
 }
 
+
+
 void ui_init(void) {
+  ESP_LOGI(TAG, "Mode 5: Clean RGB565 with I4 display driver conversion (double buffering)");
+
+  // Standard RGB565 canvas - same as all other modes
   canvas = lv_canvas_create(lv_scr_act());
-
-  lv_obj_remove_style_all(canvas);
-
-  lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
-
   lv_obj_set_size(canvas, 128, 128);
   lv_obj_center(canvas);
+  
+  memset(display_buf, 0, sizeof(display_buf));
+  lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_RGB565);
+  ESP_LOGI(TAG, "Canvas created: %d bytes", (int)sizeof(display_buf));
 
   g_ui_refresh_timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
 
   g_app_mode = APP_MODE_PERFORMANCE;
   g_at_programming_top_level_menu = false;
-  ESP_LOGI(TAG, "UI initialized");
 }
 
 app_mode_t ui_get_app_mode(void) {

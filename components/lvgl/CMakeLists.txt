@@ -9,4 +9,7 @@ idf_component_register(
     REQUIRES driver esp_timer
 )
 
-target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_INCLUDE_SIMPLE")
+target_compile_definitions(${COMPONENT_LIB} PUBLIC 
+    "-DLV_CONF_INCLUDE_SIMPLE"
+    "-DENABLE_PERFORMANCE_MONITORING=${CONFIG_ENABLE_PERFORMANCE_MONITORING}"
+)

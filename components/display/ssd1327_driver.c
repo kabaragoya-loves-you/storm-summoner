@@ -25,8 +25,8 @@ static uint8_t *ssd1327_buf = NULL;
 static uint8_t ssd1327_buf[128 * 128 / 2];
 #endif
 
-#if DISPLAY_OPTIMIZATION_MODE != 2
-// is_pixel_visible is only needed for modes 0 and 1
+#if DISPLAY_OPTIMIZATION_MODE != 2 && DISPLAY_OPTIMIZATION_MODE != 3
+// is_pixel_visible is needed for modes 0, 1, and 5
 IRAM_ATTR bool is_pixel_visible(int16_t x, int16_t y) {
   int16_t dx = x - 64;
   int16_t dy = y - 64;
@@ -268,11 +268,12 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   const int32_t area_y1 = area->y1;
   const int32_t radius_squared = 64 * 64;
 
+  // All modes including Mode 5: Handle RGB565 input data with conversion
   for (int32_t y = 0; y < h; y++) {
     int32_t abs_y = area_y1 + y;
     
-    // Row-wise early exit optimization for modes 0 and 1
-    #if DISPLAY_OPTIMIZATION_MODE == 0 || DISPLAY_OPTIMIZATION_MODE == 1
+    // Row-wise early exit optimization for modes 0, 1, and 5
+    #if DISPLAY_OPTIMIZATION_MODE == 0 || DISPLAY_OPTIMIZATION_MODE == 1 || DISPLAY_OPTIMIZATION_MODE == 5
     int32_t dy = abs_y - 64;
     if ((dy * dy) > radius_squared) {
       // Entire row is outside circle, output black pixels
@@ -308,6 +309,9 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
 #elif DISPLAY_OPTIMIZATION_MODE == 3
       // Mode 3: No culling here - circular display handler does it
       c = ((uint16_t *)px_map)[y * w + x];
+#elif DISPLAY_OPTIMIZATION_MODE == 5
+      // Mode 5: Cull based on dynamic calculation like Mode 0/1
+      if (is_pixel_visible(area_x1 + x, abs_y)) c = ((uint16_t *)px_map)[y * w + x];
 #endif
 
       // --- Common color conversion and packing logic ---

@@ -1,5 +1,8 @@
 #include "lvgl.h"
 #include "ssd1327_driver.h"
+#if ENABLE_PERFORMANCE_MONITORING
+#include "../lvgl/src/others/sysmon/lv_sysmon.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
@@ -42,6 +45,13 @@
   // Use smaller buffers since we'll compress between operations
   #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 16))
   #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+  #elif DISPLAY_OPTIMIZATION_MODE == 5
+    // Mode 5: RGB565 with I4 Display Driver Conversion (Partial Double Buffering)
+    #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
+    #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+#else
+  // Fallback - should not happen
+  #define BUFFER_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT * LV_BYTES_PER_PIXEL)
 #endif
 
 #define TAG "display"
@@ -139,24 +149,35 @@ void display_init(void) {
     lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
     // Initialize sparse buffer system
     sparse_buffer_init(display);
+  #elif DISPLAY_OPTIMIZATION_MODE == 5
+    ESP_LOGI(TAG, "Using RGB565 with I4 Display Driver Conversion. Render Mode: PARTIAL");
+    lv_display_set_buffers(display, buf1, buf2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
   #endif
 #endif
 
   ESP_LOGI(TAG, "Task watchdog re-enabled");
 
-#if SHOW_PERF_MONITOR
-    lv_sysmon_create(display);
+#if ENABLE_PERFORMANCE_MONITORING
+    ESP_LOGI(TAG, "Performance monitoring temporarily disabled to debug kernel panic");
+    ESP_LOGI(TAG, "Kernel panic occurs in lv_refr_get_top_obj - investigating display system first");
+    // TODO: Re-enable after Mode 5 display system is stable
+    #if 0
+    #if LV_USE_SYSMON
+        ESP_LOGI(TAG, "Enabling LVGL performance monitoring");
+        lv_obj_t *sysmon = lv_sysmon_create(display);
+        if (sysmon) {
+            ESP_LOGI(TAG, "LVGL system monitor created successfully - FPS/CPU will be logged");
+        } else {
+            ESP_LOGW(TAG, "Failed to create LVGL system monitor");
+        }
+    #else
+        ESP_LOGW(TAG, "Performance monitoring requested but LVGL sysmon module not available");
+        ESP_LOGW(TAG, "Enable LV_USE_SYSMON = 1 in LVGL configuration for FPS/CPU monitoring");
+    #endif
+    #endif
 #endif
 
-#if ENABLE_PERFORMANCE_MONITORING && LV_USE_SYSMON && LV_USE_PERF_MONITOR && LV_USE_PERF_MONITOR_LOG_MODE
-    // Create sysmon and enable performance monitoring
-    lv_obj_t *sysmon = lv_sysmon_create(display);
-    if (sysmon) {
-      lv_sysmon_show_performance(display);
-    }
-#endif
-
-  BaseType_t task_result = xTaskCreate(&lvgl_task, "lvgl", 4096, NULL, TASK_PRIORITY_DISPLAY, NULL);
+      BaseType_t task_result = xTaskCreate(&lvgl_task, "lvgl", 8192, NULL, TASK_PRIORITY_DISPLAY, NULL);
   if (task_result != pdPASS) {
     ESP_LOGE(TAG, "Failed to create LVGL task");
     return;

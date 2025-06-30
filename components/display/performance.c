@@ -85,59 +85,26 @@ static void performance_monitor_task(void *pvParameters) {
       ESP_LOGI(TAG, "Mode 4: Sparse buffer analysis (demonstration)");
       ESP_LOGI(TAG, "This mode shows compression potential but doesn't modify buffers");
       break;
+    case 5:
+      ESP_LOGI(TAG, "Mode 5: RGB565 with I4 display driver conversion");
+      ESP_LOGI(TAG, "Partial double buffering with hardware-level I4 conversion");
+      break;
   }
   
-  #if ENABLE_CONTINUOUS_ANIMATION_TEST
-  // Create a simple animated object to force continuous refreshes
-  lv_obj_t *test_obj = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(test_obj, 50, 50);
-  lv_obj_center(test_obj);
-  
-  // Create animation that moves the object continuously
-  lv_anim_t anim;
-  lv_anim_init(&anim);
-  lv_anim_set_var(&anim, test_obj);
-  lv_anim_set_exec_cb(&anim, (lv_anim_exec_xcb_t)lv_obj_set_x);
-  lv_anim_set_values(&anim, 20, 108);
-  lv_anim_set_time(&anim, 2000);
-  lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
-  lv_anim_set_playback_time(&anim, 2000);
-  lv_anim_start(&anim);
-  
-  ESP_LOGI(TAG, "Continuous animation test ENABLED - expect steady FPS");
-  #endif
-  
   while (1) {
-    // Wait for the next cycle
     vTaskDelayUntil(&last_wake_time, period_ticks);
-    
-    ESP_LOGI(TAG, "=== PERFORMANCE STATS (Mode %d) ===", current_display_mode);
-    
-    // Get LVGL performance stats if available
-    #if LV_USE_PERF_MONITOR && LV_USE_PERF_MONITOR_LOG_MODE
-      ESP_LOGI(TAG, "LVGL perf monitor is logging internally");
-      ESP_LOGI(TAG, "Look for 'sysmon:' lines - FPS averaged over 1000ms windows");
-      ESP_LOGI(TAG, "Changed from default 300ms to reduce 0 FPS readings with intermittent animations");
-      ESP_LOGI(TAG, "With 1-second averaging, you should see more consistent FPS values");
-    #else
-      ESP_LOGI(TAG, "Enable LV_USE_PERF_MONITOR_LOG_MODE for detailed stats");
-    #endif
-    
-    // Track LVGL activity
+
     lv_display_t *disp = lv_display_get_default();
     if (disp != NULL) {
-      // Get display inactivity time
       uint32_t inactive_time = lv_display_get_inactive_time(disp);
       ESP_LOGI(TAG, "Display inactive time: %lu ms", inactive_time);
       
-      // Get refresh timer info
       lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
       if (refr_timer != NULL) {
         ESP_LOGI(TAG, "Refresh timer exists");
       }
     }
     
-    // Get heap info
     ESP_LOGI(TAG, "Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGI(TAG, "Largest free block: %lu bytes", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
   }

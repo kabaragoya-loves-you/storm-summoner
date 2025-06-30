@@ -972,19 +972,14 @@
 #define LV_USE_SNAPSHOT 0
 
 /** 1: Enable system monitor component */
-/* Check if ENABLE_PERFORMANCE_MONITORING is defined from ssd1327_driver.h */
-#ifndef ENABLE_PERFORMANCE_MONITORING
-  #define ENABLE_PERFORMANCE_MONITORING 0
-#endif
-
-#define LV_USE_SYSMON   ENABLE_PERFORMANCE_MONITORING
+#define LV_USE_SYSMON 1
 #if LV_USE_SYSMON
     /** Get the idle percentage. E.g. uint32_t my_get_idle(void); */
     #define LV_SYSMON_GET_IDLE lv_timer_get_idle
 
     /** 1: Show CPU usage and FPS count.
      *  - Requires `LV_USE_SYSMON = 1` */
-    #define LV_USE_PERF_MONITOR ENABLE_PERFORMANCE_MONITORING
+    #define LV_USE_PERF_MONITOR 1
     #if LV_USE_PERF_MONITOR
         #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
 

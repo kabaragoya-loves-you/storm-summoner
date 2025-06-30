@@ -417,7 +417,7 @@
 	        #ifdef CONFIG_LV_DRAW_SW_SUPPORT_ARGB8888
 	            #define LV_DRAW_SW_SUPPORT_ARGB8888 CONFIG_LV_DRAW_SW_SUPPORT_ARGB8888
 	        #else
-	            #define LV_DRAW_SW_SUPPORT_ARGB8888 0
+	            #define LV_DRAW_SW_SUPPORT_ARGB8888 1
 	        #endif
 	    #else
 	        #define LV_DRAW_SW_SUPPORT_ARGB8888		1
@@ -465,6 +465,17 @@
 	        #endif
 	    #else
 	        #define LV_DRAW_SW_SUPPORT_I1			1
+	    #endif
+	#endif
+	#ifndef LV_DRAW_SW_SUPPORT_I4
+	    #ifdef LV_KCONFIG_PRESENT
+	        #ifdef CONFIG_LV_DRAW_SW_SUPPORT_I4
+	            #define LV_DRAW_SW_SUPPORT_I4 CONFIG_LV_DRAW_SW_SUPPORT_I4
+	        #else
+	            #define LV_DRAW_SW_SUPPORT_I4 1
+	        #endif
+	    #else
+	        #define LV_DRAW_SW_SUPPORT_I4			1
 	    #endif
 	#endif
 
@@ -2813,11 +2824,11 @@
 
 /*1: Enable system monitor component*/
 #ifndef LV_USE_SYSMON
-    #ifdef CONFIG_LV_USE_SYSMON
-        #define LV_USE_SYSMON CONFIG_LV_USE_SYSMON
-    #else
-        #define LV_USE_SYSMON   0
-    #endif
+#if defined(CONFIG_LV_USE_SYSMON) && CONFIG_LV_USE_SYSMON
+#define LV_USE_SYSMON CONFIG_LV_USE_SYSMON
+#else
+#define LV_USE_SYSMON   1
+#endif
 #endif
 #if LV_USE_SYSMON
     /*Get the idle percentage. E.g. uint32_t my_get_idle(void);*/

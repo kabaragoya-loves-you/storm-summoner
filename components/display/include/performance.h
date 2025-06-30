@@ -9,9 +9,6 @@
   #define ENABLE_PERFORMANCE_MONITORING 0
 #endif
 
-// Enable continuous animation test (forces constant screen updates)
-#define ENABLE_CONTINUOUS_ANIMATION_TEST 0
-
 // SYSMON WINDOW ADJUSTMENT:
 // To change the sysmon sampling window from 300ms, you need to:
 // 1. In your local LVGL fork, edit src/others/sysmon/lv_sysmon.c
