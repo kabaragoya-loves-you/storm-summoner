@@ -11,7 +11,7 @@ idf_component_register(
 # Add compile definitions from ssd1327_driver.h configuration
 # These need to be available globally for LVGL configuration
 target_compile_definitions(${COMPONENT_LIB} PUBLIC 
-    -DENABLE_PERFORMANCE_MONITORING=0
+    -DENABLE_PERFORMANCE_MONITORING=${ENABLE_PERFORMANCE_MONITORING}
     -DDISPLAY_OPTIMIZATION_MODE=0
     -DENABLE_SPI_DMA=1
 )
