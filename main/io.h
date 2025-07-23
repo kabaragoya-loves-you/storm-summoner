@@ -32,7 +32,7 @@
 #define I2C_MASTER_SDA_IO    21 // move to 8 soon
 #define I2C_MASTER_SCL_IO    18 // move to 9 soon
 #define I2C_MASTER_NUM       I2C_NUM_0
-#define I2C_SCL_SPEED_HZ     100000
+#define I2C_SCL_SPEED_HZ     400000
 
 // Touch2 (IS31SE5117A)
 #define TOUCH2_INTB_GPIO     37

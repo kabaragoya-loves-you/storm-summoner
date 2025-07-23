@@ -86,7 +86,7 @@ void analog_input_start_sync_detection(sync_pulse_callback_t callback) {
     .pull_down_en = GPIO_PULLDOWN_ENABLE
   };
   gpio_config(&io_conf);
-  gpio_install_isr_service(0);
+
   gpio_isr_handler_add(CV_SYNC_GPIO, sync_isr, NULL);
   sync_isr_active = true;
   ESP_LOGI(TAG, "Sync pulse detection started");

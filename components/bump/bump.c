@@ -128,7 +128,6 @@ void bump_init(void) {
   };
   gpio_config(&io_conf);
 
-  gpio_install_isr_service(0);
   gpio_isr_handler_add(BUMP_INT1_GPIO, bump_isr_handler, NULL);
 
   ESP_LOGI(TAG, "LIS3DHTR initialized");

@@ -1,1 +1,0 @@
-void touch_interrupt_init(void);

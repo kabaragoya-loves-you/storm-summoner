@@ -1,1 +1,0 @@
-void touch_basic_init(void);
