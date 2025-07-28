@@ -65,7 +65,7 @@ void ssd1327_init(void) {
   spi_bus_config_t buscfg = {
     .miso_io_num = -1,
     .mosi_io_num = PIN_MOSI,
-    .sclk_io_num = PIN_CLK,
+    .sclk_io_num = PIN_SCLK,
     .quadwp_io_num = -1,
     .quadhd_io_num = -1,
     .max_transfer_sz = 128 * 128 * 2,
@@ -74,7 +74,7 @@ void ssd1327_init(void) {
 #if ENABLE_SPI_DMA
   // With DMA enabled, we can use hardware acceleration
   #if DEBUG_FLUSH_MESSAGES
-  ESP_LOGI(TAG, "Initializing SPI with DMA support (MOSI: GPIO%d, CLK: GPIO%d)", PIN_MOSI, PIN_CLK);
+  ESP_LOGI(TAG, "Initializing SPI with DMA support (MOSI: GPIO%d, CLK: GPIO%d)", PIN_MOSI, PIN_SCLK);
   #endif
   esp_err_t ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
   if (ret != ESP_OK) {
@@ -84,7 +84,7 @@ void ssd1327_init(void) {
 #else
   // Without DMA, use polling mode
   #if DEBUG_FLUSH_MESSAGES
-  ESP_LOGI(TAG, "Initializing SPI without DMA (MOSI: GPIO%d, CLK: GPIO%d)", PIN_MOSI, PIN_CLK);
+  ESP_LOGI(TAG, "Initializing SPI without DMA (MOSI: GPIO%d, CLK: GPIO%d)", PIN_MOSI, PIN_SCLK);
   #endif
   esp_err_t ret = spi_bus_initialize(SPI2_HOST, &buscfg, 0);  // 0 = no DMA
   if (ret != ESP_OK) {

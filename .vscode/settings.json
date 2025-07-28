@@ -26,7 +26,8 @@
     "cstdlib": "c",
     "lvgl.h": "c",
     "lv_refr_private.h": "c",
-    "midi_callbacks.h": "c"
+    "midi_callbacks.h": "c",
+    "touch_config.h": "c"
   },
   "idf.pythonInstallPath": "C:\\Users\\leastbad\\.espressif\\tools\\idf-python\\3.11.2\\python.exe"
 }

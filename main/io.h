@@ -1,49 +1,34 @@
 #ifndef IO_H
 #define IO_H
 
-// GPIO and ADC channel definitions for all modules
-// Update this file to support multiple PCB revisions
+// #define EXPRESSION_ADC_CHANNEL     ADC_CHANNEL_6
+// #define CV_ADC_CHANNEL     ADC_CHANNEL_5
+// #define CV_SYNC_GPIO      16
 
-// LED
-#define LED_GPIO 15
-
-// Expression Pedal
-#define EXPRESSION_ADC_CHANNEL     ADC_CHANNEL_6
-
-// CV
-#define CV_ADC_CHANNEL     ADC_CHANNEL_5
-#define CV_SYNC_GPIO      16
-
-// Display (SSD1327)
-// Note: For DMA support, MOSI must be on GPIO 11 and CLK must be on GPIO 12
-// These pins are connected to the ESP32-S3's SPI2 peripheral with DMA capability
-#define PIN_CLK   48 // Non-DMA pin (GPIO 12 is DMA-capable)
-#define PIN_MOSI  34 // Non-DMA pin (GPIO 11 is DMA-capable)
-#define PIN_DC    33
-#define PIN_RESET 39
-
-// MIDI
-#define MIDI_TXD      26
-#define MIDI_RXD      47
-#define PIN_POLARITY  38
-#define MIDI_GROUND   39
-
-// I2C
-#define I2C_MASTER_SDA_IO    21 // move to 8 soon
-#define I2C_MASTER_SCL_IO    18 // move to 9 soon
-#define I2C_MASTER_NUM       I2C_NUM_0
 #define I2C_SCL_SPEED_HZ     400000
 
-// Touch2 (IS31SE5117A)
-#define TOUCH2_INTB_GPIO     37
-
-// Bump (LIS3DHTR)
-#define BUMP_INT1_GPIO       40
-
-// Expression Cable Detect
-#define EXPRESSION_CABLE_DETECT_GPIO 41
-
-// CV Switch
-#define CV_CABLE_DETECT_GPIO 36
+#define PIN_BUMP_INT   1
+#define PIN_CLOCK_INT  2
+#define PIN_TOUCH_CS   3
+#define PIN_TOUCH_MOSI 4
+#define PIN_TOUCH_SCLK 5
+#define PIN_SCL        6
+#define PIN_SDA        7
+#define PIN_TOUCH_MISO 8
+#define PIN_TOUCH_INT  9
+#define PIN_LED       10
+#define PIN_MOSI      11
+#define PIN_SCLK      12
+#define PIN_DC        13
+#define PIN_RESET     14
+#define PIN_REVISION  15
+#define PIN_EXP_SW    16
+#define PIN_CV_SW     17
+#define PIN_MIDI_TS   18
+#define PIN_MIDI_SW   21
+#define PIN_POLARITY  26
+#define PIN_CALIBRATE 42
+#define PIN_MIDI_TXD  43
+#define PIN_MIDI_RXD  44
 
 #endif // IO_H 

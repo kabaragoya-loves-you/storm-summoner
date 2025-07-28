@@ -120,7 +120,7 @@ void bump_init(void) {
   xTaskCreate(bump_task, "bump", 4096, NULL, TASK_PRIORITY_BUMP, NULL);
 
   gpio_config_t io_conf = {
-      .pin_bit_mask = (1ULL << BUMP_INT1_GPIO),
+      .pin_bit_mask = (1ULL << PIN_BUMP_INT),
       .mode = GPIO_MODE_INPUT,
       .pull_up_en = GPIO_PULLUP_DISABLE,
       .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -128,7 +128,7 @@ void bump_init(void) {
   };
   gpio_config(&io_conf);
 
-  gpio_isr_handler_add(BUMP_INT1_GPIO, bump_isr_handler, NULL);
+  gpio_isr_handler_add(PIN_BUMP_INT, bump_isr_handler, NULL);
 
   ESP_LOGI(TAG, "LIS3DHTR initialized");
 }

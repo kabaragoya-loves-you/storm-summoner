@@ -13,18 +13,18 @@ static TaskHandle_t task_handle = NULL;
 void led_task(void *pvParameters) {
   while (1) {
     int off_duration = 30000 + (esp_random() % 90000);
-    gpio_set_level(LED_GPIO, 0);
+    gpio_set_level(PIN_LED, 0);
     vTaskDelay(pdMS_TO_TICKS(off_duration));
 
     int burst_count = 1 + (esp_random() % 5);
     for (int i = 0; i < burst_count; i++) {
       int on_duration = 50 + (esp_random() % 250);
-      gpio_set_level(LED_GPIO, 1);
+      gpio_set_level(PIN_LED, 1);
       vTaskDelay(pdMS_TO_TICKS(on_duration));
 
       if (i < burst_count - 1) {
         int inter_burst_off = 50 + (esp_random() % 100);
-        gpio_set_level(LED_GPIO, 0);
+        gpio_set_level(PIN_LED, 0);
         vTaskDelay(pdMS_TO_TICKS(inter_burst_off));
       }
     }
@@ -33,7 +33,7 @@ void led_task(void *pvParameters) {
 
 void led_init(void) {
   gpio_config_t io_conf = {
-    .pin_bit_mask = (1ULL << LED_GPIO),
+    .pin_bit_mask = (1ULL << PIN_LED),
     .mode = GPIO_MODE_OUTPUT,
     .pull_up_en = GPIO_PULLUP_DISABLE,
     .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -56,6 +56,6 @@ void led_enable(void) {
 
 void led_disable(void) {
   vTaskSuspend(task_handle);
-  gpio_set_level(LED_GPIO, 0);
+  gpio_set_level(PIN_LED, 0);
   ESP_LOGI(TAG, "UV LED job task suspended");
 }

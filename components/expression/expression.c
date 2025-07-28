@@ -49,11 +49,12 @@ void expression_init(void) {
     .bitwidth = ADC_BITWIDTH_DEFAULT, // Use default bit width
     .atten = ADC_ATTEN_DB_12,           // Attenuation for proper input range
   };
-  err = adc_oneshot_config_channel(adc2_handle(), EXPRESSION_ADC_CHANNEL, &chan_config);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %d", err);
-    return;
-  }
+// commented for refactor
+  // err = adc_oneshot_config_channel(adc2_handle(), EXPRESSION_ADC_CHANNEL, &chan_config);
+  // if (err != ESP_OK) {
+  //   ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %d", err);
+  //   return;
+  // }
   ESP_LOGI(TAG, "Expression pedal ADC initialized");
 }
 
@@ -129,84 +130,84 @@ static bool detect_floating_state(float new_value) {
 }
 
 static void expression_task(void *arg) {
-  int raw = 0;
-  while (1) {
-    esp_err_t err = adc_oneshot_read(adc2_handle(), EXPRESSION_ADC_CHANNEL, &raw);
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "adc_oneshot_read failed: %d", err);
-    } else {
-      if (num_samples < MOVING_AVG_LENGTH) {
-        samples[sample_index] = raw;
-        sum_samples += raw;
-        num_samples++;
-      } else {
-        sum_samples = sum_samples - samples[sample_index] + raw;
-        samples[sample_index] = raw;
-      }
-      sample_index = (sample_index + 1) % MOVING_AVG_LENGTH;
-      int moving_avg = sum_samples / num_samples;
+  // int raw = 0;
+  // while (1) {
+  //   esp_err_t err = adc_oneshot_read(adc2_handle(), EXPRESSION_ADC_CHANNEL, &raw);
+  //   if (err != ESP_OK) {
+  //     ESP_LOGE(TAG, "adc_oneshot_read failed: %d", err);
+  //   } else {
+  //     if (num_samples < MOVING_AVG_LENGTH) {
+  //       samples[sample_index] = raw;
+  //       sum_samples += raw;
+  //       num_samples++;
+  //     } else {
+  //       sum_samples = sum_samples - samples[sample_index] + raw;
+  //       samples[sample_index] = raw;
+  //     }
+  //     sample_index = (sample_index + 1) % MOVING_AVG_LENGTH;
+  //     int moving_avg = sum_samples / num_samples;
 
-      // Detect if we're in a floating state
-      is_floating = detect_floating_state(moving_avg);
+  //     // Detect if we're in a floating state
+  //     is_floating = detect_floating_state(moving_avg);
       
-      // Use different IIR alpha based on state
-      float alpha = is_floating ? FLOATING_IIR_ALPHA : IIR_ALPHA;
-      expression_value = alpha * moving_avg + (1.0f - alpha) * expression_value;
+  //     // Use different IIR alpha based on state
+  //     float alpha = is_floating ? FLOATING_IIR_ALPHA : IIR_ALPHA;
+  //     expression_value = alpha * moving_avg + (1.0f - alpha) * expression_value;
 
-      // Scale the processed value (0 - 4095) linearly to MIDI CC range (0 - 127).
-      float scaled = ((float)expression_value - (float)EXPRESSION_MIN) * 127.0f / ((float)EXPRESSION_MAX - (float)EXPRESSION_MIN);
-      // Ensure we can hit 127 by using ceilf for values very close to 127
-      uint8_t new_midi_value = (scaled > 126.5f) ? 127 : (uint8_t)(scaled + 0.5f);
+  //     // Scale the processed value (0 - 4095) linearly to MIDI CC range (0 - 127).
+  //     float scaled = ((float)expression_value - (float)EXPRESSION_MIN) * 127.0f / ((float)EXPRESSION_MAX - (float)EXPRESSION_MIN);
+  //     // Ensure we can hit 127 by using ceilf for values very close to 127
+  //     uint8_t new_midi_value = (scaled > 126.5f) ? 127 : (uint8_t)(scaled + 0.5f);
       
-      // Clamp to valid MIDI range (0-127)
-      if (new_midi_value > 127) new_midi_value = 127;
+  //     // Clamp to valid MIDI range (0-127)
+  //     if (new_midi_value > 127) new_midi_value = 127;
       
-      // Check if we need to clear the queue due to latency
-      TickType_t current_time = xTaskGetTickCount();
-      if ((current_time - last_queue_clear_time) >= pdMS_TO_TICKS(MAX_LATENCY_MS)) {
-        midi_clear_queue();
-        last_queue_clear_time = current_time;
-      }
+  //     // Check if we need to clear the queue due to latency
+  //     TickType_t current_time = xTaskGetTickCount();
+  //     if ((current_time - last_queue_clear_time) >= pdMS_TO_TICKS(MAX_LATENCY_MS)) {
+  //       midi_clear_queue();
+  //       last_queue_clear_time = current_time;
+  //     }
       
-      // Update stable sample count
-      if (is_floating) {
-        stable_sample_count = 0;  // Reset count if we detect floating
-      } else {
-        stable_sample_count++;    // Increment count if stable
-      }
+  //     // Update stable sample count
+  //     if (is_floating) {
+  //       stable_sample_count = 0;  // Reset count if we detect floating
+  //     } else {
+  //       stable_sample_count++;    // Increment count if stable
+  //     }
       
-      // Check if we're still in initialization period
-      bool in_initialization = (current_time - initialization_start_time) < pdMS_TO_TICKS(INITIALIZATION_PERIOD_MS);
+  //     // Check if we're still in initialization period
+  //     bool in_initialization = (current_time - initialization_start_time) < pdMS_TO_TICKS(INITIALIZATION_PERIOD_MS);
       
-      // Only send MIDI if:
-      // 1. We have enough samples for a valid reading
-      // 2. The value has changed beyond the deadzone
-      // 3. We're not in a floating state
-      // 4. We've already sent our first message
-      // 5. We have enough consecutive stable samples
-      // 6. We're not in initialization period
-      if (num_samples >= MOVING_AVG_LENGTH && 
-          abs(new_midi_value - last_midi_value) >= DEADZONE_THRESHOLD &&
-          !is_floating &&
-          first_message_sent &&
-          stable_sample_count >= STABLE_SAMPLES_REQUIRED &&
-          !in_initialization) {
-        ESP_LOGI(TAG, "Expression pedal sent MIDI value %d", new_midi_value);
-        // ESP_LOGI(TAG, "Debug - num_samples: %d, last_midi: %d, new_midi: %d, is_floating: %d, stable_count: %d", 
-                //  num_samples, last_midi_value, new_midi_value, is_floating, stable_sample_count);
-        send_control_change(0, 4, new_midi_value);
-        last_midi_value = new_midi_value;
-      } else if (!first_message_sent && num_samples >= MOVING_AVG_LENGTH && !in_initialization) {
-        // If this would have been our first message and we're past initialization, just mark it as sent
-        first_message_sent = true;
-        last_midi_value = new_midi_value;  // Update last_midi_value to prevent a jump on next message
-        // ESP_LOGI(TAG, "Skipped first MIDI message with value %d", new_midi_value);
-      }
-      midi_value = new_midi_value;
+  //     // Only send MIDI if:
+  //     // 1. We have enough samples for a valid reading
+  //     // 2. The value has changed beyond the deadzone
+  //     // 3. We're not in a floating state
+  //     // 4. We've already sent our first message
+  //     // 5. We have enough consecutive stable samples
+  //     // 6. We're not in initialization period
+  //     if (num_samples >= MOVING_AVG_LENGTH && 
+  //         abs(new_midi_value - last_midi_value) >= DEADZONE_THRESHOLD &&
+  //         !is_floating &&
+  //         first_message_sent &&
+  //         stable_sample_count >= STABLE_SAMPLES_REQUIRED &&
+  //         !in_initialization) {
+  //       ESP_LOGI(TAG, "Expression pedal sent MIDI value %d", new_midi_value);
+  //       // ESP_LOGI(TAG, "Debug - num_samples: %d, last_midi: %d, new_midi: %d, is_floating: %d, stable_count: %d", 
+  //               //  num_samples, last_midi_value, new_midi_value, is_floating, stable_sample_count);
+  //       send_control_change(0, 4, new_midi_value);
+  //       last_midi_value = new_midi_value;
+  //     } else if (!first_message_sent && num_samples >= MOVING_AVG_LENGTH && !in_initialization) {
+  //       // If this would have been our first message and we're past initialization, just mark it as sent
+  //       first_message_sent = true;
+  //       last_midi_value = new_midi_value;  // Update last_midi_value to prevent a jump on next message
+  //       // ESP_LOGI(TAG, "Skipped first MIDI message with value %d", new_midi_value);
+  //     }
+  //     midi_value = new_midi_value;
       
-      // Mark that we have valid readings after collecting enough samples
-      if (num_samples >= MOVING_AVG_LENGTH) has_valid_reading = true;
-    }
-    vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-  }
+  //     // Mark that we have valid readings after collecting enough samples
+  //     if (num_samples >= MOVING_AVG_LENGTH) has_valid_reading = true;
+  //   }
+  //   vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+  // }
 }

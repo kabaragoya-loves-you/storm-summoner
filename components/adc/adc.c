@@ -95,7 +95,7 @@ static void expression_task(void *pvParameters) {
 
   while (1) {
     // Only run logic if cable is inserted (pin is HIGH).
-    if (gpio_get_level(EXPRESSION_CABLE_DETECT_GPIO) == 1) {
+    if (gpio_get_level(PIN_EXP_SW) == 1) {
       int raw = read_adc_channel(0);
 
       // Moving average filter
@@ -186,21 +186,21 @@ void expression_init(void) {
   else app_settings_save_u32(NVS_KEY_EXP_DEADZONE, s_expression_deadzone);
 
   gpio_config_t io_conf = {
-    .pin_bit_mask = (1ULL << EXPRESSION_CABLE_DETECT_GPIO),
+    .pin_bit_mask = (1ULL << PIN_EXP_SW),
     .mode = GPIO_MODE_INPUT,
     .pull_up_en = GPIO_PULLUP_ENABLE,
   };
   gpio_config(&io_conf);
 
   // gpio_config_t io_conf2 = {
-  //   .pin_bit_mask = (1ULL << CV_CABLE_DETECT_GPIO),
+  //   .pin_bit_mask = (1ULL << PIN_CV_SW),
   //   .mode = GPIO_MODE_INPUT,
   //   .pull_up_en = GPIO_PULLUP_ENABLE,
   // };
   // gpio_config(&io_conf2);
 
   // while (1) {
-  //   if (gpio_get_level(CV_CABLE_DETECT_GPIO) == 1) {
+  //   if (gpio_get_level(PIN_CV_SW) == 1) {
   //     ESP_LOGI(TAG, "HIGH");
   //   } else {
   //     ESP_LOGI(TAG, "LOW");

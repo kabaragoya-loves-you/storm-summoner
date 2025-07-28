@@ -45,7 +45,7 @@ void midi_out_init(void) {
   };
   
   ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
-  ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, MIDI_TXD, MIDI_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+  ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, PIN_MIDI_TXD, PIN_MIDI_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
   ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 256, 0, 0, NULL, 0));
 
   gpio_config_t io_polarity = {
@@ -72,21 +72,21 @@ void midi_out_init(void) {
   }
 
   // gpio_config_t io_ground = {
-  //   .pin_bit_mask = (1ULL << MIDI_GROUND),
+  //   .pin_bit_mask = (1ULL << PIN_MIDI_TS),
   //   .mode = GPIO_MODE_OUTPUT,
   //   .pull_up_en = GPIO_PULLUP_DISABLE,
   //   .pull_down_en = GPIO_PULLDOWN_DISABLE,
   //   .intr_type = GPIO_INTR_DISABLE
   // };
   // gpio_config(&io_ground);
-  gpio_reset_pin(MIDI_GROUND);
-  gpio_set_direction(MIDI_GROUND, GPIO_MODE_OUTPUT);
+  gpio_reset_pin(PIN_MIDI_TS);
+  gpio_set_direction(PIN_MIDI_TS, GPIO_MODE_OUTPUT);
 
   uint16_t mode_val = (uint16_t)MIDI_TRANSMIT_BOTH;
   esp_err_t err_mode = app_settings_load_u16(NVS_KEY_MIDI_MODE, &mode_val);
   if (err_mode != ESP_OK) app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)MIDI_TRANSMIT_BOTH);
   current_mode = (midi_transmit_mode_t)mode_val;
-  gpio_set_level(MIDI_GROUND, current_mode == MIDI_TRANSMIT_TS ? 0 : 1);
+  gpio_set_level(PIN_MIDI_TS, current_mode == MIDI_TRANSMIT_TS ? 0 : 1);
   ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);
 
   bool active_sensing_enabled = false;
@@ -158,7 +158,7 @@ void midi_clear_queue(void) {
 
 void midi_set_transmit_mode(midi_transmit_mode_t mode) {
   if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
-    gpio_set_level(MIDI_GROUND, mode == MIDI_TRANSMIT_TS ? 0 : 1);
+    gpio_set_level(PIN_MIDI_TS, mode == MIDI_TRANSMIT_TS ? 0 : 1);
     current_mode = mode;
     app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)mode);
     ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);

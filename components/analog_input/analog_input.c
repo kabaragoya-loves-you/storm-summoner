@@ -37,11 +37,12 @@ void analog_input_init(void) {
     .bitwidth = ADC_BITWIDTH_DEFAULT,
     .atten = ADC_ATTEN_DB_12,
   };
-  err = adc_oneshot_config_channel(adc2_handle(), CV_ADC_CHANNEL, &chan_config);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %d", err);
-    return;
-  }
+  // commented for refactor
+  // err = adc_oneshot_config_channel(adc2_handle(), CV_ADC_CHANNEL, &chan_config);
+  // if (err != ESP_OK) {
+  //   ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %d", err);
+  //   return;
+  // }
   ESP_LOGI(TAG, "Analog input system initialized");
 }
 
@@ -78,23 +79,26 @@ void analog_input_start_sync_detection(sync_pulse_callback_t callback) {
   }
 
   sync_callback = callback;
-  gpio_config_t io_conf = {
-    .intr_type = GPIO_INTR_POSEDGE,
-    .mode = GPIO_MODE_INPUT,
-    .pin_bit_mask = (1ULL << CV_SYNC_GPIO),
-    .pull_up_en = GPIO_PULLUP_DISABLE,
-    .pull_down_en = GPIO_PULLDOWN_ENABLE
-  };
-  gpio_config(&io_conf);
+// commented for refactor
+  // gpio_config_t io_conf = {
+  //   .intr_type = GPIO_INTR_POSEDGE,
+  //   .mode = GPIO_MODE_INPUT,
+  //   .pin_bit_mask = (1ULL << CV_SYNC_GPIO),
+  //   .pull_up_en = GPIO_PULLUP_DISABLE,
+  //   .pull_down_en = GPIO_PULLDOWN_ENABLE
+  // };
+  // gpio_config(&io_conf);
 
-  gpio_isr_handler_add(CV_SYNC_GPIO, sync_isr, NULL);
+  // commented for refactor
+  // gpio_isr_handler_add(CV_SYNC_GPIO, sync_isr, NULL);
   sync_isr_active = true;
   ESP_LOGI(TAG, "Sync pulse detection started");
 }
 
 void analog_input_stop_sync_detection(void) {
   if (sync_isr_active) {
-    gpio_isr_handler_remove(CV_SYNC_GPIO);
+    // commented for refactor
+    // gpio_isr_handler_remove(CV_SYNC_GPIO);
     sync_isr_active = false;
     sync_callback = NULL;
     ESP_LOGI(TAG, "Sync pulse detection stopped");
@@ -106,24 +110,25 @@ bool analog_input_is_sync_detection_active(void) {
 }
 
 static void sampling_task(void *arg) {
-  int raw = 0;
-  while (1) {
-    esp_err_t err = adc_oneshot_read(adc2_handle(), CV_ADC_CHANNEL, &raw);
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "adc_oneshot_read failed: %d", err);
-    } else {
-      if (num_samples < MOVING_AVG_LENGTH) {
-        samples[sample_index] = raw;
-        sum_samples += raw;
-        num_samples++;
-      } else {
-        sum_samples = sum_samples - samples[sample_index] + raw;
-        samples[sample_index] = raw;
-      }
-      sample_index = (sample_index + 1) % MOVING_AVG_LENGTH;
-      int moving_avg = sum_samples / num_samples;
-      current_value = IIR_ALPHA * moving_avg + (1.0f - IIR_ALPHA) * current_value;
-    }
-    vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-  }
+  // commented for refactor
+  // int raw = 0;
+  // while (1) {
+  //   esp_err_t err = adc_oneshot_read(adc2_handle(), CV_ADC_CHANNEL, &raw);
+  //   if (err != ESP_OK) {
+  //     ESP_LOGE(TAG, "adc_oneshot_read failed: %d", err);
+  //   } else {
+  //     if (num_samples < MOVING_AVG_LENGTH) {
+  //       samples[sample_index] = raw;
+  //       sum_samples += raw;
+  //       num_samples++;
+  //     } else {
+  //       sum_samples = sum_samples - samples[sample_index] + raw;
+  //       samples[sample_index] = raw;
+  //     }
+  //     sample_index = (sample_index + 1) % MOVING_AVG_LENGTH;
+  //     int moving_avg = sum_samples / num_samples;
+  //     current_value = IIR_ALPHA * moving_avg + (1.0f - IIR_ALPHA) * current_value;
+  //   }
+  //   vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+  // }
 } 

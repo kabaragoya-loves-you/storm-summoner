@@ -11,9 +11,9 @@ i2c_master_bus_handle_t i2c_bus_handle(void) {
   if (bus_handle != NULL) return bus_handle;
   
   i2c_master_bus_config_t master_conf = {
-    .sda_io_num                   = I2C_MASTER_SDA_IO,
-    .scl_io_num                   = I2C_MASTER_SCL_IO,
-    .i2c_port                     = I2C_MASTER_NUM,
+    .sda_io_num                   = PIN_SDA,
+    .scl_io_num                   = PIN_SCL,
+    .i2c_port                     = I2C_NUM_0,
     .flags.enable_internal_pullup = true,
     .clk_source                   = I2C_CLK_SRC_DEFAULT,
     .glitch_ignore_cnt            = 7,

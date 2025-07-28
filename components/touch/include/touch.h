@@ -4,9 +4,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "driver/touch_pad.h"
-#include "touch_config.h"
+#include "esp_err.h"
 #include "ui.h"
 
+#define MAX_TOUCH_PADS 13
+#define BUTTON_13_PAD TOUCH_PAD_NUM13
+#define NUM_WHEEL_PADS 8
+
+extern const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS];
 
 // Callback for button press/release events
 // pad_num: The touch_pad_t of the button
@@ -26,11 +31,11 @@ typedef enum {
     TOUCH_WHEEL_AS_ROTARY
 } touch_wheel_config_t;
 
-typedef struct {
-    uint32_t intr_mask;
-    uint32_t pad_status;
-    uint32_t pad_num;
-} touch_event_t;
+// typedef enum {
+//   APP_MODE_PERFORMANCE,
+//   APP_MODE_PROGRAMMING,
+//   APP_MODE_SCREENSAVER
+// } app_mode_t;
 
 void touch_init(void);
 
@@ -47,5 +52,19 @@ bool touch_is_button_pressed(touch_pad_t pad_num);
 app_mode_t touch_get_app_mode(void);
 
 void touch_set_programming_menu_level(bool is_top_level);
+
+void touch_enable_debug_logging(void);
+
+// UI functions ported from ui component to remove dependency
+// app_mode_t ui_get_app_mode(void);
+// void ui_set_app_mode(app_mode_t mode);
+// bool ui_is_programming_top_level(void);
+// void ui_set_programming_top_level(bool is_top_level);
+// void screensaver_notify_activity(void);
+
+uint32_t touch_get_button13_long_press_ms(void);
+esp_err_t touch_set_button13_long_press_ms(uint32_t value_ms);
+uint32_t touch_get_rotary_inactivity_timeout_ms(void);
+esp_err_t touch_set_rotary_inactivity_timeout_ms(uint32_t value_ms);
 
 #endif // TOUCH_H_ 

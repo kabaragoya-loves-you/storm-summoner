@@ -2,7 +2,7 @@
 #define TASK_PRIORITIES_H
 
 // System priorities (higher number = higher priority)
-#define TASK_PRIORITY_MONITOR          2
+#define TASK_PRIORITY_MONITOR         2
 #define TASK_PRIORITY_DEFAULT         5
 #define TASK_PRIORITY_LED             tskIDLE_PRIORITY
 
@@ -22,5 +22,6 @@
 #define TASK_PRIORITY_BUMP            TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_ADC_EXP         TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_ADC_CV          TASK_PRIORITY_DEFAULT
+#define TASK_PRIORITY_SPI             TASK_PRIORITY_DEFAULT
 
 #endif // TASK_PRIORITIES_H

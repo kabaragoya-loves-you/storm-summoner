@@ -12,7 +12,7 @@
 
 #define TAG "MIDI_TEMPO"
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration
-#define LED_GPIO 15
+#define PIN_LED 15
 
 #define NVS_KEY_BPM "midi_tempo_bpm"
 
@@ -243,7 +243,7 @@ void blink_led_on_quarter_note(void) {
   uint32_t quarter_note_ms = 60000 / bpm;
   uint32_t on_time_ms = (quarter_note_ms * LED_DEFAULT_ON_PERCENT) / 100;
   
-  gpio_set_level(LED_GPIO, 1);
+  gpio_set_level(PIN_LED, 1);
   vTaskDelay(pdMS_TO_TICKS(on_time_ms));
-  gpio_set_level(LED_GPIO, 0);
+  gpio_set_level(PIN_LED, 0);
 }
