@@ -31,12 +31,6 @@ typedef enum {
     TOUCH_WHEEL_AS_ROTARY
 } touch_wheel_config_t;
 
-// typedef enum {
-//   APP_MODE_PERFORMANCE,
-//   APP_MODE_PROGRAMMING,
-//   APP_MODE_SCREENSAVER
-// } app_mode_t;
-
 void touch_init(void);
 
 void touch_register_button_callback(touch_button_callback_t callback);
@@ -54,13 +48,6 @@ app_mode_t touch_get_app_mode(void);
 void touch_set_programming_menu_level(bool is_top_level);
 
 void touch_enable_debug_logging(void);
-
-// UI functions ported from ui component to remove dependency
-// app_mode_t ui_get_app_mode(void);
-// void ui_set_app_mode(app_mode_t mode);
-// bool ui_is_programming_top_level(void);
-// void ui_set_programming_top_level(bool is_top_level);
-// void screensaver_notify_activity(void);
 
 uint32_t touch_get_button13_long_press_ms(void);
 esp_err_t touch_set_button13_long_press_ms(uint32_t value_ms);

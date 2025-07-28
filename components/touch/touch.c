@@ -35,9 +35,6 @@ const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
 #define NVS_KEY_BUTTON_13_LONG_PRESS_MS "btn13_lp_ms"
 #define NVS_KEY_ROTARY_INACTIVITY_TIMEOUT_MS "rotary_timeout_ms"
 
-// app_mode_t g_app_mode = APP_MODE_PERFORMANCE;
-// static bool g_at_programming_top_level_menu = false;
-
 static SemaphoreHandle_t s_config_mutex = NULL;
 static TimerHandle_t s_button13_long_press_timer = NULL;
 
@@ -360,31 +357,6 @@ app_mode_t touch_get_app_mode(void) {
 void touch_set_programming_menu_level(bool is_top_level) {
   ui_set_programming_top_level(is_top_level);
 }
-
-// UI functions ported from ui component to remove dependency
-// app_mode_t ui_get_app_mode(void) {
-//   return g_app_mode;
-// }
-
-// void ui_set_app_mode(app_mode_t mode) {
-//   app_mode_t previous_mode = g_app_mode;
-//   g_app_mode = mode;
-
-//   const char* mode_names[] = {"Performance", "Programming", "Screensaver"};
-//   const char* prev_name = (previous_mode < 3) ? mode_names[previous_mode] : "Unknown";
-//   const char* new_name = (mode < 3) ? mode_names[mode] : "Unknown";
-
-//   ESP_LOGI(TAG, "App mode changed: %s -> %s", prev_name, new_name);
-// }
-
-// bool ui_is_programming_top_level(void) {
-//   return g_at_programming_top_level_menu;
-// }
-
-// void ui_set_programming_top_level(bool is_top_level) {
-//   g_at_programming_top_level_menu = is_top_level;
-//   ESP_LOGI(TAG, "Programming menu level set to: %s", is_top_level ? "Top Level" : "Sub-Level");
-// }
 
 // Timing settings getters and setters
 uint32_t touch_get_button13_long_press_ms(void) {
