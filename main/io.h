@@ -9,14 +9,14 @@
 
 #define PIN_BUMP_INT   1
 #define PIN_CLOCK_INT  2
-#define PIN_TOUCH_CS   3
-#define PIN_TOUCH_MOSI 4
-#define PIN_TOUCH_SCLK 5
-#define PIN_SCL        6
-#define PIN_SDA        7
+#define PIN_SCL        3
+#define PIN_SDA        4
+#define PIN_TOUCH_CS   5
+#define PIN_TOUCH_MOSI 6
+#define PIN_TOUCH_SCLK 7
 #define PIN_TOUCH_MISO 8
-#define PIN_TOUCH_INT  9
-#define PIN_LED       10
+#define PIN_LED        9
+#define PIN_TOUCH_INT 10
 #define PIN_MOSI      11
 #define PIN_SCLK      12
 #define PIN_DC        13
