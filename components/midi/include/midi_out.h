@@ -13,8 +13,8 @@ typedef struct {
 } midi_out_job_t;
 
 typedef enum {
-  TYPE_A,
-  TYPE_B
+  TYPE_B,
+  TYPE_A
 } polarity_t;
 
 typedef enum {

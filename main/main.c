@@ -44,12 +44,12 @@ void app_main(void) {
   led_init();
   sensor_init();
   midi_out_init();
-  midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
+  midi_set_transmit_mode(MIDI_TRANSMIT_TS);
   // expression_init();
   // expression_enable();
   led_enable();
-  als_enable();
-  ps_enable();
+  // als_enable();
+  // ps_enable();
   midi_callbacks_init();
   midi_tempo_init();
   screensaver_init();
@@ -63,7 +63,7 @@ void app_main(void) {
   // gpio_config_t io_conf = {
   //   .pin_bit_mask = (1ULL << PIN_CALIBRATE),
   //   .mode = GPIO_MODE_OUTPUT,
-  //   .pull_up_en = GPIO_PULLUP_DISABLE,
+  //   .pull_up_en = GPIO_PULLUP_ENABLE,
   //   .pull_down_en = GPIO_PULLDOWN_DISABLE,
   //   .intr_type = GPIO_INTR_DISABLE
   // };
