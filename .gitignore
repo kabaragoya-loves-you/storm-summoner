@@ -4,3 +4,4 @@ sdkconfig.old
 .clang-format
 .editorconfig
 *.md
+.vscode/settings.json
