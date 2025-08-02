@@ -10,6 +10,8 @@
 #include "ui.h"
 #include "screensaver.h"
 #include "midi_messages.h"
+#include "driver/gpio.h"
+#include "io.h"
 
 const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
   TOUCH_PAD_NUM1,
@@ -114,7 +116,6 @@ static void handle_rotary_press(touch_pad_t actual_pad_num, uint32_t time_now_ms
   s_rotary_interaction_active = true; // Mark that rotary interaction is now active
 }
 
-// Touch SPI master callback - replaces the ISR and touch task processing
 static void touch_spi_master_event_callback(uint8_t pad_num, bool is_pressed) {
   // Validate pad number
   if (pad_num >= MAX_TOUCH_PADS) {
@@ -260,7 +261,6 @@ void touch_init(void) {
     return;
   }
 
-  // Load timing settings from NVS with defaults
   uint32_t loaded_value;
   esp_err_t ret = app_settings_load_u32(NVS_KEY_BUTTON_13_LONG_PRESS_MS, &loaded_value);
   if (ret == ESP_OK) {
@@ -278,12 +278,7 @@ void touch_init(void) {
     ESP_LOGI(TAG, "Using default rotary inactivity timeout: %lu ms", s_rotary_inactivity_timeout_ms);
   }
 
-  s_button13_long_press_timer = xTimerCreate(
-      "btn13_lp_tmr",
-      pdMS_TO_TICKS(s_button13_long_press_ms),
-      pdFALSE,
-      (void *)0,
-      button13_long_press_timer_cb);
+  s_button13_long_press_timer = xTimerCreate("btn13_lp_tmr", pdMS_TO_TICKS(s_button13_long_press_ms), pdFALSE, (void *)0, button13_long_press_timer_cb);
 
   if (s_button13_long_press_timer == NULL) ESP_LOGE(TAG, "Failed to create button 13 long press timer");
   
@@ -299,7 +294,22 @@ void touch_init(void) {
     ESP_LOGI(TAG, "Touch SPI master initialized for touch event reception");
   }
 
+  gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << PIN_CALIBRATE),
+    .mode = GPIO_MODE_OUTPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE
+  };
+  gpio_config(&io_conf);
+
   ESP_LOGI(TAG, "Touch module initialized (SPI-based)");
+}
+
+void force_touch_calibration(void) {
+  gpio_set_level(PIN_CALIBRATE, 0);
+  vTaskDelay(pdMS_TO_TICKS(100));
+  gpio_set_level(PIN_CALIBRATE, 1);
 }
 
 void touch_enable_debug_logging(void) {

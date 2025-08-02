@@ -33,6 +33,8 @@ typedef enum {
 
 void touch_init(void);
 
+void force_touch_calibration(void);
+
 void touch_register_button_callback(touch_button_callback_t callback);
 
 void touch_register_wheel_callback(touch_wheel_callback_t callback);

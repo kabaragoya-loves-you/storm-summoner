@@ -37,6 +37,7 @@ void app_main(void) {
   ui_set_draw_module(&buttons_module);
 
   touch_init();
+  force_touch_calibration();
   
   haptic_init();
   bump_init();
@@ -60,16 +61,4 @@ void app_main(void) {
   performance_init();
   #endif
 
-  // gpio_config_t io_conf = {
-  //   .pin_bit_mask = (1ULL << PIN_CALIBRATE),
-  //   .mode = GPIO_MODE_OUTPUT,
-  //   .pull_up_en = GPIO_PULLUP_ENABLE,
-  //   .pull_down_en = GPIO_PULLDOWN_DISABLE,
-  //   .intr_type = GPIO_INTR_DISABLE
-  // };
-  // gpio_config(&io_conf);
-  
-  // gpio_set_level(PIN_CALIBRATE, 0);
-  // vTaskDelay(pdMS_TO_TICKS(100));
-  // gpio_set_level(PIN_CALIBRATE, 1);
 }

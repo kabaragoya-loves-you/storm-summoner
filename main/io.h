@@ -7,8 +7,8 @@
 
 #define I2C_SCL_SPEED_HZ     400000
 
-#define PIN_BUMP_INT   1
-#define PIN_CLOCK_INT  2
+#define PIN_CLOCK_INT  1
+#define PIN_BUMP_INT   2
 #define PIN_SCL        3
 #define PIN_SDA        4
 #define PIN_TOUCH_CS   5
