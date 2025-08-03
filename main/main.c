@@ -45,7 +45,7 @@ void app_main(void) {
   led_init();
   sensor_init();
   midi_out_init();
-  midi_set_transmit_mode(MIDI_TRANSMIT_TS);
+  midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
   // expression_init();
   // expression_enable();
   led_enable();

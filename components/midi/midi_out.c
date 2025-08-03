@@ -76,7 +76,7 @@ void midi_out_init(void) {
   gpio_config_t io_ground = {
     .pin_bit_mask = (1ULL << PIN_MIDI_TS),
     .mode = GPIO_MODE_OUTPUT,
-    .pull_up_en = GPIO_PULLUP_DISABLE,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
     .pull_down_en = GPIO_PULLDOWN_DISABLE,
     .intr_type = GPIO_INTR_DISABLE
   };
@@ -86,7 +86,6 @@ void midi_out_init(void) {
   esp_err_t err_mode = app_settings_load_u16(NVS_KEY_MIDI_MODE, &mode_val);
   if (err_mode != ESP_OK) app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)MIDI_TRANSMIT_BOTH);
   current_mode = (midi_transmit_mode_t)mode_val;
-  gpio_set_level(PIN_MIDI_TS, current_mode == MIDI_TRANSMIT_TS ? 0 : 1);
   ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);
 
   bool active_sensing_enabled = false;
@@ -158,7 +157,6 @@ void midi_clear_queue(void) {
 
 void midi_set_transmit_mode(midi_transmit_mode_t mode) {
   if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
-    gpio_set_level(PIN_MIDI_TS, mode == MIDI_TRANSMIT_TS ? 1 : 0);
     current_mode = mode;
     app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)mode);
     ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);
@@ -190,24 +188,29 @@ static void midi_out_task(void *pvParameters) {
         switch (current_mode) {
           case MIDI_TRANSMIT_BOTH:
             gpio_set_level(PIN_POLARITY, TYPE_A);
+            gpio_set_level(PIN_MIDI_TS, TYPE_A);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
             vTaskDelay(MIDI_MIN_INTERVAL);
             gpio_set_level(PIN_POLARITY, TYPE_B);
+            gpio_set_level(PIN_MIDI_TS, TYPE_B);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
             break;
             
           case MIDI_TRANSMIT_TYPE_A:
             gpio_set_level(PIN_POLARITY, TYPE_A);
+            gpio_set_level(PIN_MIDI_TS, TYPE_A);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
             break;
             
           case MIDI_TRANSMIT_TYPE_B:
             gpio_set_level(PIN_POLARITY, TYPE_B);
+            gpio_set_level(PIN_MIDI_TS, TYPE_B);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
             break;
 
           case MIDI_TRANSMIT_TS:
-            gpio_set_level(PIN_POLARITY, TYPE_B);
+            gpio_set_level(PIN_POLARITY, TYPE_A);
+            gpio_set_level(PIN_MIDI_TS, 1);
             uart_write_bytes(UART_NUM_1, job->data, job->len);
             break;
         }

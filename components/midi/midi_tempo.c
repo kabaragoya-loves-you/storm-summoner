@@ -81,9 +81,7 @@ static void midi_tempo_send_task(void *pvParameters) {
 
 void midi_tempo_init(void) {
   sync_semaphore = xSemaphoreCreateBinary();
-  if (sync_semaphore == NULL) {
-    ESP_LOGE(TAG, "Failed to create sync semaphore");
-  }
+  if (sync_semaphore == NULL) ESP_LOGE(TAG, "Failed to create sync semaphore");
 
   uint16_t saved_bpm;
   if (app_settings_load_u16(NVS_KEY_BPM, &saved_bpm) == ESP_OK) {
