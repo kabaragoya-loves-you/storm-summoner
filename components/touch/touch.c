@@ -360,15 +360,6 @@ bool touch_is_button_pressed(touch_pad_t pad_num) {
   return false;
 }
 
-app_mode_t touch_get_app_mode(void) {
-  return ui_get_app_mode();
-}
-
-void touch_set_programming_menu_level(bool is_top_level) {
-  ui_set_programming_top_level(is_top_level);
-}
-
-// Timing settings getters and setters
 uint32_t touch_get_button13_long_press_ms(void) {
   return s_button13_long_press_ms;
 }

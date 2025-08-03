@@ -73,8 +73,6 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
   lv_timer_del(timer);
 }
 
-
-
 void ui_init(void) {
   ESP_LOGI(TAG, "Mode 5: Clean RGB565 with I4 display driver conversion (double buffering)");
 

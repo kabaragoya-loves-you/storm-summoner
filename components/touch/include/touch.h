@@ -45,10 +45,6 @@ void touch_set_wheel_config(touch_wheel_config_t config);
 
 bool touch_is_button_pressed(touch_pad_t pad_num);
 
-app_mode_t touch_get_app_mode(void);
-
-void touch_set_programming_menu_level(bool is_top_level);
-
 void touch_enable_debug_logging(void);
 
 uint32_t touch_get_button13_long_press_ms(void);
