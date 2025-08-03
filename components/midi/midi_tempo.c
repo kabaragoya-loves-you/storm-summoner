@@ -241,7 +241,5 @@ void blink_led_on_quarter_note(void) {
   uint32_t quarter_note_ms = 60000 / bpm;
   uint32_t on_time_ms = (quarter_note_ms * LED_DEFAULT_ON_PERCENT) / 100;
   
-  gpio_set_level(PIN_LED, 1);
-  vTaskDelay(pdMS_TO_TICKS(on_time_ms));
-  gpio_set_level(PIN_LED, 0);
+  flash_led(on_time_ms);
 }

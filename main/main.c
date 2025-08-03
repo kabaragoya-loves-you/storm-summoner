@@ -48,7 +48,7 @@ void app_main(void) {
   midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
   // expression_init();
   // expression_enable();
-  led_enable();
+  flicker_start();
   // als_enable();
   // ps_enable();
   midi_callbacks_init();

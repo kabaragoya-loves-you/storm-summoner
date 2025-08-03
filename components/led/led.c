@@ -5,26 +5,27 @@
 #include "esp_random.h"
 #include "esp_log.h"
 #include "task_priorities.h"
+#include "app_settings.h"
 
 #define TAG "led"
+#define LED_ENABLED_KEY "led_enabled"
 
 static TaskHandle_t task_handle = NULL;
+static bool led_enabled = true;
 
 void led_task(void *pvParameters) {
   while (1) {
     int off_duration = 30000 + (esp_random() % 90000);
-    gpio_set_level(PIN_LED, 0);
+    int burst_count = 1 + (esp_random() % 5);
+    
     vTaskDelay(pdMS_TO_TICKS(off_duration));
 
-    int burst_count = 1 + (esp_random() % 5);
     for (int i = 0; i < burst_count; i++) {
       int on_duration = 50 + (esp_random() % 250);
-      gpio_set_level(PIN_LED, 1);
-      vTaskDelay(pdMS_TO_TICKS(on_duration));
+      flash_led(on_duration);
 
       if (i < burst_count - 1) {
         int inter_burst_off = 50 + (esp_random() % 100);
-        gpio_set_level(PIN_LED, 0);
         vTaskDelay(pdMS_TO_TICKS(inter_burst_off));
       }
     }
@@ -41,21 +42,51 @@ void led_init(void) {
   };
   gpio_config(&io_conf);
 
-  ESP_LOGI(TAG, "UV LED initialized");
+  bool saved_enabled;
+  esp_err_t ret = app_settings_load_bool(LED_ENABLED_KEY, &saved_enabled);
+  if (ret == ESP_OK) {
+    led_enabled = saved_enabled;
+  } else {
+    led_enabled = true;
+    app_settings_save_bool(LED_ENABLED_KEY, true);
+  }
+
+  ESP_LOGI(TAG, "UV LED initialized, enabled: %s", led_enabled ? "true" : "false");
 }
 
-void led_enable(void) {
+void flicker_start(void) {
   if (task_handle != NULL) {
     vTaskResume(task_handle);
-    ESP_LOGI(TAG, "UV LED job task resumed");
+    ESP_LOGI(TAG, "Flicker task resumed");
   } else {
-    xTaskCreate(led_task, "led", 2048, NULL, TASK_PRIORITY_LED, &task_handle);
-    ESP_LOGI(TAG, "UV LED job task started");
+    xTaskCreate(led_task, "flicker", 2048, NULL, TASK_PRIORITY_LED, &task_handle);
+    ESP_LOGI(TAG, "Flicker task started");
   }
 }
 
-void led_disable(void) {
+void flicker_stop(void) {
   vTaskSuspend(task_handle);
   gpio_set_level(PIN_LED, 0);
-  ESP_LOGI(TAG, "UV LED job task suspended");
+  ESP_LOGI(TAG, "Flicker task suspended");
+}
+
+void flash_led(uint32_t duration) {
+  if (!led_enabled) return;
+  gpio_set_level(PIN_LED, 1);
+  vTaskDelay(pdMS_TO_TICKS(duration));
+  gpio_set_level(PIN_LED, 0);
+}
+
+void led_set_enabled(bool enabled) {
+  led_enabled = enabled;
+  esp_err_t ret = app_settings_save_bool(LED_ENABLED_KEY, enabled);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to save LED enabled state: %s", esp_err_to_name(ret));
+  } else {
+    ESP_LOGI(TAG, "LED enabled state set to: %s", enabled ? "true" : "false");
+  }
+}
+
+bool led_get_enabled(void) {
+  return led_enabled;
 }
