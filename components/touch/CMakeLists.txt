@@ -1,7 +1,6 @@
 idf_component_register(
   SRCS
-    # "touch.c"
-    "touch_simple.c"
+    "touch.c"
   INCLUDE_DIRS 
     "include"
   REQUIRES 
