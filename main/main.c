@@ -14,6 +14,7 @@
 #include "sphere3.h"
 #include "app_settings.h"
 #include "screensaver.h"
+#include "event_bus.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -26,10 +27,14 @@
 
 #define TAG "MAIN"
 
+void event_bus_test(void);
+
 void app_main(void) {
   esp_wifi_deinit();
 
   app_settings_init();
+  
+  event_bus_init();
   
   display_init();
   
@@ -60,5 +65,9 @@ void app_main(void) {
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
   #endif
+
+  ESP_LOGI(TAG, "Running event bus test...");
+  // event_bus_test();
+  ESP_LOGI(TAG, "Event bus test completed");
 
 }

@@ -9,6 +9,7 @@
 #include "cv.h"
 #include "analog_input.h"
 #include "task_priorities.h"
+#include "led.h"
 
 #define TAG "MIDI_TEMPO"
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration

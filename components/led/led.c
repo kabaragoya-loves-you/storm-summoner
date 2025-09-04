@@ -13,6 +13,13 @@
 static TaskHandle_t task_handle = NULL;
 static bool led_enabled = true;
 
+void flash_led(uint32_t duration) {
+  if (!led_enabled) return;
+  gpio_set_level(PIN_LED, 1);
+  vTaskDelay(pdMS_TO_TICKS(duration));
+  gpio_set_level(PIN_LED, 0);
+}
+
 void led_task(void *pvParameters) {
   while (1) {
     int off_duration = 30000 + (esp_random() % 90000);
@@ -68,13 +75,6 @@ void flicker_stop(void) {
   vTaskSuspend(task_handle);
   gpio_set_level(PIN_LED, 0);
   ESP_LOGI(TAG, "Flicker task suspended");
-}
-
-void flash_led(uint32_t duration) {
-  if (!led_enabled) return;
-  gpio_set_level(PIN_LED, 1);
-  vTaskDelay(pdMS_TO_TICKS(duration));
-  gpio_set_level(PIN_LED, 0);
 }
 
 void led_set_enabled(bool enabled) {

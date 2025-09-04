@@ -17,23 +17,23 @@ static TaskHandle_t sampling_task_handle = NULL;
 static sync_pulse_callback_t sync_callback = NULL;
 static bool sync_isr_active = false;
 
-// ADC sampling state
-static int samples[MOVING_AVG_LENGTH] = {0};
-static int sample_index = 0;
-static int sum_samples = 0;
-static int num_samples = 0;
+// ADC sampling state (unused - commented out for refactor)
+static int samples[MOVING_AVG_LENGTH] __attribute__((unused)) = {0};
+static int sample_index __attribute__((unused)) = 0;
+static int sum_samples __attribute__((unused)) = 0;
+static int num_samples __attribute__((unused)) = 0;
 static float current_value = 0.0f;
 
 static void sampling_task(void *arg);
 
-// ISR handler for sync pulses
-static void IRAM_ATTR sync_isr(void *arg) {
+// ISR handler for sync pulses (unused - commented out for refactor)
+static void __attribute__((unused)) IRAM_ATTR sync_isr(void *arg) {
   if (sync_callback != NULL) sync_callback();
 }
 
 void analog_input_init(void) {
-  esp_err_t err;
-  adc_oneshot_chan_cfg_t chan_config = {
+  esp_err_t err __attribute__((unused));
+  adc_oneshot_chan_cfg_t chan_config __attribute__((unused)) = {
     .bitwidth = ADC_BITWIDTH_DEFAULT,
     .atten = ADC_ATTEN_DB_12,
   };
