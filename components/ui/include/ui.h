@@ -66,6 +66,7 @@ void ui_set_programming_top_level(bool is_top_level);
 void ui_graphics_suspend(void);
 void ui_graphics_resume(void);
 
-
+// Event handler initialization
+void ui_event_handler_init(void);
 
 #endif // UI_H 

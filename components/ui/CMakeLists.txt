@@ -8,4 +8,7 @@ idf_component_register(
     REQUIRES
         "lvgl"
         "touch"
+        "event_bus"
+        "haptic"
+        "screensaver"
 )
