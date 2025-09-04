@@ -23,6 +23,9 @@ typedef enum {
   EVENT_GESTURE_ROTARY,
   EVENT_MODE_CHANGE_REQUEST,
   EVENT_HAPTIC_REQUEST,
+  EVENT_LED_FLASH_REQUEST,
+  EVENT_LED_FLICKER_START,
+  EVENT_LED_FLICKER_STOP,
   EVENT_BUMP_DETECTED,
   EVENT_ENCODER_ROTATE,
   EVENT_TIMER_TICK,
@@ -70,6 +73,10 @@ typedef struct {
     struct {
       haptic_pattern_t pattern;
     } haptic;
+    
+    struct {
+      uint32_t duration_ms;
+    } led_flash;
     
     struct {
       int intensity;

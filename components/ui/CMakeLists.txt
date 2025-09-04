@@ -9,7 +9,6 @@ idf_component_register(
         "lvgl"
         "touch"
         "event_bus"
-        "haptic"
         "screensaver"
         "app_settings"
 )

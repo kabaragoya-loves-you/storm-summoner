@@ -3,7 +3,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "screensaver.h"
-#include "haptic_manager.h"
 #include "ui.h"
 #include "touch.h"
 #include "app_settings.h"
@@ -94,8 +93,15 @@ static void handle_rotary_press(uint8_t pad_id, uint32_t time_now_ms) {
       
       int effective_delta = delta * speed_multiplier;
       
-      // Haptic feedback for rotary
-      effective_delta > 0 ? haptic(INCREMENT) : haptic(DECREMENT);
+      event_t haptic_event = {
+        .type = EVENT_HAPTIC_REQUEST,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.haptic = { 
+          .pattern = effective_delta > 0 ? HAPTIC_INCREMENT : HAPTIC_DECREMENT 
+        }
+      };
+      event_bus_post(&haptic_event);
       
       s_rotary_value += effective_delta;
       ESP_LOGI(TAG, "Rotary: Value = %d (Pad %d -> Pad %d. Delta: %d, EffDelta: %d)",
@@ -174,8 +180,14 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       handle_rotary_press(pad_id, time_now_ms);
       ESP_LOGD(TAG, "Handled rotary press for wheel pad %d", pad_id);
     } else {
-      haptic(CLICK);
-      ESP_LOGD(TAG, "Haptic feedback triggered for pad %d", pad_id);
+      event_t haptic_event = {
+        .type = EVENT_HAPTIC_REQUEST,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.haptic = { .pattern = HAPTIC_CLICK }
+      };
+      event_bus_post(&haptic_event);
+      ESP_LOGD(TAG, "Posted haptic event for pad %d", pad_id);
     }
     
   } else if (event->type == EVENT_TOUCH_RELEASE) {

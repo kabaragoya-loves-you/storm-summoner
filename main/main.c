@@ -13,8 +13,8 @@
 #include "ui.h"
 #include "sphere3.h"
 #include "app_settings.h"
-#include "screensaver.h"
 #include "event_bus.h"
+#include "screensaver.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -47,9 +47,11 @@ void app_main(void) {
   // force_touch_calibration();
   
   haptic_init();
+  haptic_event_handler_init();
   bump_init();
   
   led_init();
+  led_event_handler_init();
   sensor_init();
   midi_out_init();
   midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
@@ -67,4 +69,15 @@ void app_main(void) {
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
   #endif
+
+  // Test LED event system
+  ESP_LOGI(TAG, "Testing LED event system...");
+  event_t led_test_event = {
+    .type = EVENT_LED_FLASH_REQUEST,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.led_flash = { .duration_ms = 1000 }
+  };
+  event_bus_post(&led_test_event);
+  ESP_LOGI(TAG, "LED flash event posted");
 }

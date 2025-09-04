@@ -9,7 +9,7 @@
 #include "cv.h"
 #include "analog_input.h"
 #include "task_priorities.h"
-#include "led.h"
+#include "event_bus.h"
 
 #define TAG "MIDI_TEMPO"
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration
@@ -242,5 +242,11 @@ void blink_led_on_quarter_note(void) {
   uint32_t quarter_note_ms = 60000 / bpm;
   uint32_t on_time_ms = (quarter_note_ms * LED_DEFAULT_ON_PERCENT) / 100;
   
-  flash_led(on_time_ms);
+  event_t led_event = {
+    .type = EVENT_LED_FLASH_REQUEST,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.led_flash = { .duration_ms = on_time_ms }
+  };
+  event_bus_post(&led_event);
 }
