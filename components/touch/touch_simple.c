@@ -5,6 +5,7 @@
 #include "driver/gpio.h"
 #include "driver/touch_pad.h"
 #include "io.h"
+#include "ui.h"
 
 #define TAG "TOUCH_SIMPLE"
 
@@ -75,12 +76,11 @@ void force_touch_calibration(void) {
 
 bool touch_is_button_pressed(touch_pad_t pad_num) {
   // Convert touch_pad_t to logical pad number (0-12)
-  // For now, assume touch_pad_t values are sequential starting from 1
   uint8_t logical_pad = (pad_num >= TOUCH_PAD_NUM1 && pad_num <= TOUCH_PAD_NUM13) ? 
                         (pad_num - TOUCH_PAD_NUM1) : 0xFF;
   
-  if (logical_pad < MAX_TOUCH_PADS) return s_button_pressed_states[logical_pad];
-  return false;
+  // Delegate to UI module which now manages button state
+  return ui_touch_is_button_pressed(logical_pad);
 }
 
 void touch_enable_debug_logging(void) {
@@ -98,7 +98,8 @@ void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "=== END DEBUG DATA ===");
 }
 
-// Stub functions for now - these will be removed once UI module takes over
+// Stub functions for legacy compatibility - these will be removed once UI module takes over
+#ifdef TOUCH_LEGACY_SUPPORT
 void touch_register_button_callback(touch_button_callback_t callback) {
   ESP_LOGW(TAG, "touch_register_button_callback: Callbacks deprecated, use event bus");
 }
@@ -110,27 +111,26 @@ void touch_register_wheel_callback(touch_wheel_callback_t callback) {
 void touch_register_mode_callback(touch_mode_callback_t callback) {
   ESP_LOGW(TAG, "touch_register_mode_callback: Callbacks deprecated, use event bus");
 }
+#endif // TOUCH_LEGACY_SUPPORT
 
 void touch_set_wheel_config(touch_wheel_config_t config) {
   ESP_LOGW(TAG, "touch_set_wheel_config: Config now managed by UI module");
 }
 
 uint32_t touch_get_button13_long_press_ms(void) {
-  ESP_LOGW(TAG, "touch_get_button13_long_press_ms: Now managed by UI module");
-  return 1000; // Default value
+  return ui_get_button13_long_press_ms();
 }
 
 esp_err_t touch_set_button13_long_press_ms(uint32_t value_ms) {
-  ESP_LOGW(TAG, "touch_set_button13_long_press_ms: Now managed by UI module");
-  return ESP_ERR_NOT_SUPPORTED;
+  ui_set_button13_long_press_ms(value_ms);
+  return ESP_OK;
 }
 
 uint32_t touch_get_rotary_inactivity_timeout_ms(void) {
-  ESP_LOGW(TAG, "touch_get_rotary_inactivity_timeout_ms: Now managed by UI module");
-  return 500; // Default value
+  return ui_get_rotary_inactivity_timeout_ms();
 }
 
 esp_err_t touch_set_rotary_inactivity_timeout_ms(uint32_t value_ms) {
-  ESP_LOGW(TAG, "touch_set_rotary_inactivity_timeout_ms: Now managed by UI module");
-  return ESP_ERR_NOT_SUPPORTED;
+  ui_set_rotary_inactivity_timeout_ms(value_ms);
+  return ESP_OK;
 }

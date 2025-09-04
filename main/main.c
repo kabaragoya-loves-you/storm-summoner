@@ -41,12 +41,10 @@ void app_main(void) {
   ui_init();
   ui_set_draw_module(&buttons_module);
   
-  // Initialize UI event handler before touch so it's ready to receive events
   ui_event_handler_init();
 
-  // Use simplified touch module temporarily
-  touch_init();  // This is now the simplified version
-  force_touch_calibration();
+  touch_init();
+  // force_touch_calibration();
   
   haptic_init();
   bump_init();

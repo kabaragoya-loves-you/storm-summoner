@@ -284,7 +284,7 @@ void touch_init(void) {
   
   for (int i = 0; i < TOUCH_PAD_MAX; i++) s_button_pressed_states[i] = false;
 
-  touch_register_button_callback(touch_button_callback);
+  // touch_register_button_callback(touch_button_callback);
 
   esp_err_t spi_ret = touch_spi_master_init();
   if (spi_ret != ESP_OK) {

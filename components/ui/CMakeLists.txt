@@ -11,4 +11,5 @@ idf_component_register(
         "event_bus"
         "haptic"
         "screensaver"
+        "app_settings"
 )

@@ -1,6 +1,6 @@
 idf_component_register(
   SRCS
-    # "touch.c"  # Temporarily disabled while testing simplified version
+    # "touch.c"
     "touch_simple.c"
   INCLUDE_DIRS 
     "include"

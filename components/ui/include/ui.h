@@ -69,4 +69,13 @@ void ui_graphics_resume(void);
 // Event handler initialization
 void ui_event_handler_init(void);
 
+// Touch state and configuration API
+bool ui_touch_is_button_pressed(uint8_t pad_id);
+uint32_t ui_get_button13_long_press_ms(void);
+void ui_set_button13_long_press_ms(uint32_t value_ms);
+uint32_t ui_get_rotary_inactivity_timeout_ms(void);
+void ui_set_rotary_inactivity_timeout_ms(uint32_t value_ms);
+int ui_get_rotary_value(void);
+void ui_reset_rotary_value(void);
+
 #endif // UI_H 

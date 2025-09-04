@@ -4,6 +4,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "nvs_flash.h"
+
+// Abstracted error codes - use these instead of NVS-specific errors
+#define APP_SETTINGS_OK ESP_OK
+#define APP_SETTINGS_ERR_NOT_FOUND ESP_ERR_NVS_NOT_FOUND
+#define APP_SETTINGS_ERR_INVALID_ARG ESP_ERR_INVALID_ARG
+#define APP_SETTINGS_ERR_NO_MEM ESP_ERR_NO_MEM
+#define APP_SETTINGS_ERR_INVALID_STATE ESP_ERR_INVALID_STATE
 
 // Initialize the settings module
 esp_err_t app_settings_init(void);
