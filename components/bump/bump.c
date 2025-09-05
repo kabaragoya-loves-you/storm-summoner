@@ -8,7 +8,7 @@
 #include "task_priorities.h"
 #include "app_settings.h"
 #include "bump.h"
-#include "midi_tempo.h"
+#include "event_bus.h"
 #include <string.h>
 
 #define TAG "BUMP"
@@ -63,8 +63,20 @@ static void bump_task(void *pvParameters) {
       if (ret == ESP_OK) {
         if (click_src > 0) {
           s_last_bump_tick = now;
-          // midi_tempo_tap_event();
-          ESP_LOGI(TAG, "Bump detected!");
+          
+          // Post bump event instead of direct call
+          event_t bump_event = {
+            .type = EVENT_BUMP_DETECTED,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.bump = { 
+              .intensity = click_src,  // Pass the click source as intensity
+              .duration_ms = 0         // Not used for tap tempo
+            }
+          };
+          event_bus_post(&bump_event);
+          
+          ESP_LOGI(TAG, "Bump detected! (intensity: %d)", click_src);
         } else {
           ESP_LOGW(TAG, "ISR triggered, but CLICK_SRC was empty.");
         }
