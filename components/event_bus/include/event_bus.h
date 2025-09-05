@@ -33,6 +33,7 @@ typedef enum {
   EVENT_UI_ACTION,
   EVENT_SENSOR_ALS,
   EVENT_SENSOR_PROXIMITY,
+  EVENT_MIDI_IN,
   EVENT_TYPE_MAX
 } event_type_t;
 
@@ -42,6 +43,14 @@ typedef enum {
   EVENT_PRIORITY_HIGH,
   EVENT_PRIORITY_CRITICAL
 } event_priority_t;
+
+// MIDI input sources
+typedef enum {
+  MIDI_SOURCE_UART,
+  MIDI_SOURCE_USB,
+  MIDI_SOURCE_NETWORK,
+  MIDI_SOURCE_INTERNAL
+} midi_source_t;
 
 typedef enum {
   HAPTIC_CLICK,
@@ -108,6 +117,17 @@ typedef struct {
       uint8_t controller;    // CC number
       uint8_t value;         // 0-127
     } sensor;
+    
+    struct {
+      uint8_t type;          // MIDI message type (note on/off, CC, etc)
+      uint8_t channel;       // 0-15
+      uint8_t data1;         // Note/CC number/etc
+      uint8_t data2;         // Velocity/value/etc
+      uint8_t source;        // MIDI_SOURCE_UART, MIDI_SOURCE_USB, etc
+      uint8_t raw_status;    // Original status byte
+      uint16_t length;       // For SysEx and other variable length messages
+      uint8_t* sysex_data;   // Pointer to SysEx data (if applicable)
+    } midi_in;
   } data;
 } event_t;
 

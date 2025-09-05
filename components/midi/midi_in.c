@@ -6,6 +6,8 @@
 #include <string.h>
 #include "task_priorities.h"
 
+void midi_in_event_handler_init(void);
+
 #define TAG "MIDI_IN"
 #define MIDI_NUM       UART_NUM_1
 #define RX_BUF_SIZE        256
