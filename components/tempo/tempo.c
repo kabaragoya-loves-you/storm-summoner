@@ -1,8 +1,7 @@
-#include "midi_tempo.h"
+#include "tempo.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "midi_messages.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include <inttypes.h>
@@ -10,17 +9,18 @@
 #include "analog_input.h"
 #include "task_priorities.h"
 #include "event_bus.h"
+#include "app_settings.h"
 
-void midi_tempo_event_handler_init(void);
+void tempo_event_handler_init(void);
 
-#define TAG "MIDI_TEMPO"
+#define TAG "TEMPO"
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration
 #define PIN_LED 15
 
-#define NVS_KEY_BPM "midi_tempo_bpm"
+#define NVS_KEY_BPM "tempo_bpm"
 
 static uint16_t global_bpm = 120;
-static midi_clock_source_t clock_source = CLOCK_SOURCE_INTERNAL;
+static tempo_clock_source_t clock_source = CLOCK_SOURCE_INTERNAL;
 
 static TaskHandle_t tempo_send_task_handle = NULL;
 static TaskHandle_t sync_bpm_task_handle = NULL;
@@ -64,15 +64,19 @@ static void sync_bpm_task(void *pvParameters) {
 }
 
 //------------------------------------------------------------
-// midi_tempo_send_task: Runs when clock_source == INTERNAL or SYNC.
+// tempo_send_task: Runs when clock_source == INTERNAL or SYNC.
 // Sends MIDI clock pulses at a rate derived from global_bpm.
 //------------------------------------------------------------
-static void midi_tempo_send_task(void *pvParameters) {
+static void tempo_send_task(void *pvParameters) {
   while (1) {
     // Calculate the interval (in ms) for one MIDI clock tick.
     // 24 ticks per quarter note.
     uint32_t tick_interval_ms = 60000 / (24 * global_bpm);
-    send_clock();
+    
+    // TODO: Post MIDI clock event instead of direct call
+    // For now, we'll need to import midi_messages.h temporarily
+    // send_clock();
+    
     tick_counter++;
     if (quarter_note_log_enabled && (tick_counter % note_divider == 0)) {
       blink_led_on_quarter_note();
@@ -82,7 +86,7 @@ static void midi_tempo_send_task(void *pvParameters) {
   }
 }
 
-void midi_tempo_init(void) {
+void tempo_init(void) {
   sync_semaphore = xSemaphoreCreateBinary();
   if (sync_semaphore == NULL) ESP_LOGE(TAG, "Failed to create sync semaphore");
 
@@ -94,9 +98,10 @@ void midi_tempo_init(void) {
     ESP_LOGI(TAG, "Using default BPM: %d", global_bpm);
   }
 
-  ESP_LOGI(TAG, "MIDI Tempo module initialized");
+  ESP_LOGI(TAG, "Tempo module initialized");
   
-  midi_tempo_event_handler_init();
+  // Initialize event handler
+  tempo_event_handler_init();
 }
 
 static void start_tasks(void) {
@@ -104,15 +109,16 @@ static void start_tasks(void) {
   // For SYNC: both the sync BPM task and the send task are needed.
   if (clock_source == CLOCK_SOURCE_INTERNAL) {
     if (tempo_send_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(midi_tempo_send_task, "midi_tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
+      BaseType_t ret = xTaskCreate(tempo_send_task, "tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
       if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create MIDI tempo send task");
+        ESP_LOGE(TAG, "Failed to create tempo send task");
         tempo_send_task_handle = NULL;
       }
     }
   }
   else if (clock_source == CLOCK_SOURCE_SYNC) {
-    analog_input_start_sync_detection(midi_tempo_sync_pulse);
+    // TODO: Convert to event-based sync detection
+    // analog_input_start_sync_detection(tempo_sync_pulse);
     if (sync_bpm_task_handle == NULL) {
       BaseType_t ret = xTaskCreate(sync_bpm_task, "sync_bpm", 4096, NULL, TASK_PRIORITY_SYNC_BPM, &sync_bpm_task_handle);
       if (ret != pdPASS) {
@@ -121,9 +127,9 @@ static void start_tasks(void) {
       }
     }
     if (tempo_send_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(midi_tempo_send_task, "midi_tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
+      BaseType_t ret = xTaskCreate(tempo_send_task, "tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
       if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create MIDI tempo send task");
+        ESP_LOGE(TAG, "Failed to create tempo send task");
         tempo_send_task_handle = NULL;
       }
     }
@@ -133,10 +139,10 @@ static void start_tasks(void) {
   }
 }
 
-void midi_tempo_start(void) {
+void tempo_start(void) {
   if (clock_source == CLOCK_SOURCE_INTERNAL || clock_source == CLOCK_SOURCE_SYNC) {
     start_tasks();
-    ESP_LOGI(TAG, "MIDI tempo tasks started");
+    ESP_LOGI(TAG, "Tempo tasks started");
   }
   else {
     ESP_LOGI(TAG, "Clock source is MIDI; no tempo tasks started");
@@ -144,7 +150,10 @@ void midi_tempo_start(void) {
 }
 
 static void stop_tasks(void) {
-  if (clock_source == CLOCK_SOURCE_SYNC) analog_input_stop_sync_detection();
+  if (clock_source == CLOCK_SOURCE_SYNC) {
+    // TODO: Convert to event-based sync detection
+    // analog_input_stop_sync_detection();
+  }
   if (sync_bpm_task_handle != NULL) {
     vTaskDelete(sync_bpm_task_handle);
     sync_bpm_task_handle = NULL;
@@ -155,23 +164,23 @@ static void stop_tasks(void) {
   }
 }
 
-void midi_tempo_stop(void) {
+void tempo_stop(void) {
   stop_tasks();
-  ESP_LOGI(TAG, "MIDI tempo tasks stopped");
+  ESP_LOGI(TAG, "Tempo tasks stopped");
 }
 
-void midi_tempo_set_bpm(uint16_t bpm) {
+void tempo_set_bpm(uint16_t bpm) {
   global_bpm = bpm;
   esp_err_t ret = app_settings_save_u16(NVS_KEY_BPM, bpm);
   if (ret != ESP_OK) ESP_LOGE(TAG, "Failed to save BPM to NVS: %s", esp_err_to_name(ret));
   ESP_LOGI(TAG, "Global BPM set to %d", global_bpm);
 }
 
-uint16_t midi_tempo_get_bpm(void) {
+uint16_t tempo_get_bpm(void) {
   return global_bpm;
 }
 
-void midi_tempo_set_source(midi_clock_source_t source) {
+void tempo_set_source(tempo_clock_source_t source) {
   if (source != clock_source) stop_tasks();
   clock_source = source;
   ESP_LOGI(TAG, "Clock source set to %d", clock_source);
@@ -179,7 +188,7 @@ void midi_tempo_set_source(midi_clock_source_t source) {
   if (clock_source == CLOCK_SOURCE_INTERNAL || clock_source == CLOCK_SOURCE_SYNC) start_tasks();
 }
 
-void midi_tempo_sync_pulse(void) {
+void tempo_sync_pulse(void) {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   if (sync_semaphore) {
     xSemaphoreGiveFromISR(sync_semaphore, &xHigherPriorityTaskWoken);
@@ -187,12 +196,12 @@ void midi_tempo_sync_pulse(void) {
   }
 }
 
-void midi_tempo_enable_quarter_note_log(bool enable) {
+void tempo_enable_quarter_note_log(bool enable) {
   quarter_note_log_enabled = enable;
   ESP_LOGI(TAG, "Quarter note log %s", enable ? "enabled" : "disabled");
 }
 
-void midi_tempo_tap_event(void) {
+void tempo_tap_event(void) {
   uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
   if (tap_count > 0 && (now - tap_timestamps[(tap_index + TAP_BUFFER_SIZE - 1) % TAP_BUFFER_SIZE]) > TAP_TIMEOUT_MS) {
     tap_count = 0;
@@ -217,7 +226,7 @@ void midi_tempo_tap_event(void) {
   }
 }
 
-void midi_tempo_midi_clock_tick(void) {
+void tempo_midi_clock_tick(void) {
   tick_counter++;
   if (quarter_note_log_enabled && (tick_counter % note_divider == 0)) {
     blink_led_on_quarter_note();
@@ -225,20 +234,20 @@ void midi_tempo_midi_clock_tick(void) {
   }
 }
 
-void midi_tempo_set_note_divider(midi_note_divider_t divider) {
+void tempo_set_note_divider(tempo_note_divider_t divider) {
   note_divider = divider;
   ESP_LOGI(TAG, "Note divider set to %d ticks", note_divider);
 }
 
-midi_note_divider_t midi_tempo_get_note_divider(void) {
-  return (midi_note_divider_t) note_divider;
+tempo_note_divider_t tempo_get_note_divider(void) {
+  return (tempo_note_divider_t) note_divider;
 }
 
 //------------------------------------------------------------
 // LED Blink Function (Blocking version)
 //------------------------------------------------------------
 void blink_led_on_quarter_note(void) {
-  uint16_t bpm = midi_tempo_get_bpm();
+  uint16_t bpm = tempo_get_bpm();
   if (bpm == 0) {
     ESP_LOGW("LED_BLINK", "BPM is 0; cannot compute LED pulse duration");
     return;

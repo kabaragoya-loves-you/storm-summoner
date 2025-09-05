@@ -2,7 +2,7 @@
 #define _MIDI_CALLBACKS_H
 
 #include "midi_in.h"
-#include "midi_tempo.h"
+#include "tempo.h"
 #include "esp_log.h"
 
 void midi_callbacks_init(void);

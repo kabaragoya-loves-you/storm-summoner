@@ -8,7 +8,7 @@
 #include "midi_out.h"
 #include "midi_messages.h"
 #include "midi_callbacks.h"
-#include "midi_tempo.h"
+#include "tempo.h"
 #include "elite.h"
 #include "ui.h"
 #include "sphere3.h"
@@ -58,10 +58,10 @@ void app_main(void) {
   // als_enable();
   // ps_enable();
   midi_callbacks_init();
-  midi_tempo_init();
+  tempo_init();
   screensaver_init();
-  // midi_tempo_set_source(CLOCK_SOURCE_INTERNAL);
-  // midi_tempo_start();
+  // tempo_set_source(CLOCK_SOURCE_INTERNAL);
+  // tempo_start();
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();

@@ -1,9 +1,10 @@
 #include "midi_callbacks.h"
 #include "esp_log.h"
 
-void midi_sensor_event_handler_init(void);
-
 #define TAG "midi_callbacks"
+
+// Forward declaration
+void midi_sensor_event_handler_init(void);
 
 // MIDI Channel Voice Messages
 void note_on(const midi_message_t *msg, void *user_data) {
@@ -60,7 +61,7 @@ void sys_ex(const midi_message_t *msg, void *user_data) {
 
 // System Real-Time Messages
 void realtime_clock(const midi_message_t *msg, void *user_data) {
-  midi_tempo_midi_clock_tick();
+  tempo_midi_clock_tick();
 }
 
 void realtime_tick(const midi_message_t *msg, void *user_data) {
