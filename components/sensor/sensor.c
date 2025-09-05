@@ -6,7 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "midi_messages.h"
+#include "event_bus.h"
 #include "app_settings.h"
 #include <inttypes.h>
 #include "task_priorities.h"
@@ -200,9 +200,22 @@ static void als_task(void *arg) {
       // Only send if the value has changed beyond deadzone
       int diff = abs((int)midi_value - (int)last_sent_midi);
       if (diff >= ALS_MIDI_DEADZONE) {
-        ESP_LOGD(TAG, "Sending MIDI: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
-        send_control_change(0, 17, midi_value);
-        last_sent_midi = midi_value;  // Update last sent value immediately after sending
+        ESP_LOGD(TAG, "Posting ALS event: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
+        
+        // Post sensor event instead of direct MIDI call
+        event_t sensor_event = {
+          .type = EVENT_SENSOR_ALS,
+          .priority = EVENT_PRIORITY_NORMAL,
+          .timestamp = event_bus_get_current_timestamp(),
+          .data.sensor = { 
+            .channel = 0,
+            .controller = 17,  // CC17 for ALS
+            .value = midi_value
+          }
+        };
+        event_bus_post(&sensor_event);
+        
+        last_sent_midi = midi_value;  // Update last sent value immediately after posting
       }
     }
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -244,9 +257,22 @@ static void ps_task(void *arg) {
       // Only send if the value has changed beyond deadzone
       int diff = abs((int)midi_value - (int)last_sent_midi);
       if (diff >= PROXIMITY_DEADZONE) {
-        ESP_LOGD(TAG, "Sending MIDI: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
-        send_control_change(0, 19, midi_value);
-        last_sent_midi = midi_value;  // Update last sent value immediately after sending
+        ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
+        
+        // Post sensor event instead of direct MIDI call
+        event_t sensor_event = {
+          .type = EVENT_SENSOR_PROXIMITY,
+          .priority = EVENT_PRIORITY_NORMAL,
+          .timestamp = event_bus_get_current_timestamp(),
+          .data.sensor = { 
+            .channel = 0,
+            .controller = 19,  // CC19 for proximity
+            .value = midi_value
+          }
+        };
+        event_bus_post(&sensor_event);
+        
+        last_sent_midi = midi_value;  // Update last sent value immediately after posting
       }
     }
     vTaskDelay(pdMS_TO_TICKS(10));

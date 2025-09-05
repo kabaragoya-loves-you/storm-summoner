@@ -1,6 +1,8 @@
 #include "midi_callbacks.h"
 #include "esp_log.h"
 
+void midi_sensor_event_handler_init(void);
+
 #define TAG "midi_callbacks"
 
 // MIDI Channel Voice Messages
@@ -117,4 +119,6 @@ void midi_callbacks_init(void) {
   };
 
   midi_in_init(&callbacks);
+  
+  midi_sensor_event_handler_init();
 } 

@@ -31,6 +31,8 @@ typedef enum {
   EVENT_TIMER_TICK,
   EVENT_MIDI_ACTION,
   EVENT_UI_ACTION,
+  EVENT_SENSOR_ALS,
+  EVENT_SENSOR_PROXIMITY,
   EVENT_TYPE_MAX
 } event_type_t;
 
@@ -100,6 +102,12 @@ typedef struct {
       uint32_t param1;
       uint32_t param2;
     } custom;
+    
+    struct {
+      uint8_t channel;
+      uint8_t controller;    // CC number
+      uint8_t value;         // 0-127
+    } sensor;
   } data;
 } event_t;
 

@@ -41,7 +41,9 @@ static const char* event_type_names[] = {
   [EVENT_ENCODER_ROTATE] = "ENCODER",
   [EVENT_TIMER_TICK] = "TIMER_TICK",
   [EVENT_MIDI_ACTION] = "MIDI_ACTION",
-  [EVENT_UI_ACTION] = "UI_ACTION"
+  [EVENT_UI_ACTION] = "UI_ACTION",
+  [EVENT_SENSOR_ALS] = "SENSOR_ALS",
+  [EVENT_SENSOR_PROXIMITY] = "SENSOR_PROXIMITY"
 };
 
 const char* event_type_to_string(event_type_t type) {
