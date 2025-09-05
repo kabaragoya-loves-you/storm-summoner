@@ -7,6 +7,9 @@
 #include "esp_log.h"
 #include "task_priorities.h"
 
+// Forward declaration for event handler init
+void haptic_event_handler_init(void);
+
 #define TAG "HAPTIC_MANAGER"
 #define HAPTIC_JOB_QUEUE_SIZE 10
 #define HAPTIC_JOBS_COUNT 3
@@ -44,6 +47,8 @@ void haptic_init(void) {
 
   xTaskCreate(haptic_job_task, "haptic", 4096, NULL, TASK_PRIORITY_HAPTIC, NULL);
   ESP_LOGI(TAG, "Haptic feedback initialized");
+  
+  haptic_event_handler_init();
 }
 
 static void haptic_job_task(void *pvParameters) {

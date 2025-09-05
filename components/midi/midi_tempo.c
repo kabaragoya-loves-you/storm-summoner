@@ -11,6 +11,8 @@
 #include "task_priorities.h"
 #include "event_bus.h"
 
+void midi_tempo_event_handler_init(void);
+
 #define TAG "MIDI_TEMPO"
 #define LED_DEFAULT_ON_PERCENT 15  // 15% of quarter note duration
 #define PIN_LED 15
@@ -93,6 +95,8 @@ void midi_tempo_init(void) {
   }
 
   ESP_LOGI(TAG, "MIDI Tempo module initialized");
+  
+  midi_tempo_event_handler_init();
 }
 
 static void start_tasks(void) {

@@ -4,6 +4,8 @@
 #include "esp_log.h"
 #include <string.h>
 
+void ui_event_handler_init(void);
+
 lv_obj_t *canvas = NULL;
 static lv_timer_t *g_ui_refresh_timer = NULL;
 static ui_draw_module_t* current_draw_module = NULL;
@@ -89,6 +91,8 @@ void ui_init(void) {
 
   g_app_mode = APP_MODE_PERFORMANCE;
   g_at_programming_top_level_menu = false;
+  
+  ui_event_handler_init();
 }
 
 app_mode_t ui_get_app_mode(void) {

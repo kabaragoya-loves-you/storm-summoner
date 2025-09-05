@@ -10,6 +10,8 @@
 #include "elite.h" // For elite functions
 #include "nvs.h"
 
+void screensaver_event_handler_init(void);
+
 #define TAG "SCREENSAVER"
 
 #define NVS_KEY_SS_ACTIVE "ss_active"
@@ -100,12 +102,10 @@ void screensaver_init(void) {
   }
   
   g_screensaver_initialised = true;
-  // ESP_LOGI(TAG, "Screensaver initialized.");
+  
+  screensaver_event_handler_init();
 
-  if (g_screensaver_enabled_in_settings) {
-    // ESP_LOGI(TAG, "Screensaver is active in settings, auto-enabling from init.");
-    screensaver_enable();
-  }
+  if (g_screensaver_enabled_in_settings) screensaver_enable();
 }
 
 void screensaver_enable(void) {

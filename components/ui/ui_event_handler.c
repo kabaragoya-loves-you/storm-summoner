@@ -2,7 +2,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
-#include "screensaver.h"
 #include "ui.h"
 #include "touch.h"
 #include "app_settings.h"
@@ -162,9 +161,6 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     
     // Update button state
     if (pad_id < MAX_TOUCH_PADS) s_button_pressed_states[pad_id] = true;
-    
-    // Notify screensaver of activity
-    screensaver_notify_activity();
     
     // Handle Button 13 long press detection
     if (pad_id == BUTTON_13_LOGICAL_PAD && ui_get_app_mode() == APP_MODE_PERFORMANCE) {

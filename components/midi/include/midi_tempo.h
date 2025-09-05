@@ -47,7 +47,4 @@ void midi_tempo_midi_clock_tick(void);
 void midi_tempo_set_note_divider(midi_note_divider_t divider);
 midi_note_divider_t midi_tempo_get_note_divider(void);
 
-// Event handler initialization
-void midi_tempo_event_handler_init(void);
-
 #endif /* _MIDI_TEMPO_H */

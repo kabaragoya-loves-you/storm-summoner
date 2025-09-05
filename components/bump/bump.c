@@ -74,9 +74,9 @@ static void bump_task(void *pvParameters) {
               .duration_ms = 0         // Not used for tap tempo
             }
           };
-          event_bus_post(&bump_event);
+          esp_err_t post_ret = event_bus_post(&bump_event);
           
-          ESP_LOGI(TAG, "Bump detected! (intensity: %d)", click_src);
+          ESP_LOGI(TAG, "Bump detected! (intensity: %d) - Event posted: %s", click_src, esp_err_to_name(post_ret));
         } else {
           ESP_LOGW(TAG, "ISR triggered, but CLICK_SRC was empty.");
         }

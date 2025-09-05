@@ -41,17 +41,14 @@ void app_main(void) {
   ui_init();
   ui_set_draw_module(&buttons_module);
   
-  ui_event_handler_init();
 
   touch_init();
   // force_touch_calibration();
   
   haptic_init();
-  haptic_event_handler_init();
   bump_init();
   
   led_init();
-  led_event_handler_init();
   sensor_init();
   midi_out_init();
   midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
@@ -62,7 +59,6 @@ void app_main(void) {
   // ps_enable();
   midi_callbacks_init();
   midi_tempo_init();
-  midi_tempo_event_handler_init();
   screensaver_init();
   // midi_tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // midi_tempo_start();

@@ -21,7 +21,4 @@ void haptic(haptic_job_id_t job_id);
 
 void haptic_init(void);
 
-// Event handler initialization
-void haptic_event_handler_init(void);
-
 #endif // HAPTIC_MANAGER_H

@@ -9,6 +9,5 @@ idf_component_register(
         "lvgl"
         "touch"
         "event_bus"
-        "screensaver"
         "app_settings"
 )

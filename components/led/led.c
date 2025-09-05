@@ -7,6 +7,9 @@
 #include "task_priorities.h"
 #include "app_settings.h"
 
+// Forward declaration for event handler init
+void led_event_handler_init(void);
+
 #define TAG "led"
 #define LED_ENABLED_KEY "led_enabled"
 
@@ -59,6 +62,9 @@ void led_init(void) {
   }
 
   ESP_LOGI(TAG, "UV LED initialized, enabled: %s", led_enabled ? "true" : "false");
+  
+  // Initialize event handler
+  led_event_handler_init();
 }
 
 void flicker_start(void) {
