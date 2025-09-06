@@ -24,6 +24,7 @@
 #include "driver/gpio.h"
 #include "esp_wifi.h"
 #include "io.h"
+#include "switch.h"
 
 #define TAG "MAIN"
 
@@ -47,21 +48,24 @@ void app_main(void) {
   
   haptic_init();
   bump_init();
+  switch_init();
   
   led_init();
-  sensor_init();
   midi_out_init();
   midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
   // expression_init();
   // expression_enable();
   flicker_start();
+
+  sensor_init();
   // als_enable();
   // ps_enable();
-  midi_callbacks_init();
+
   tempo_init();
-  screensaver_init();
   // tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // tempo_start();
+
+  screensaver_init();
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
