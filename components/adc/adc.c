@@ -192,12 +192,11 @@ void expression_init(void) {
   };
   gpio_config(&io_conf);
 
-  // gpio_config_t io_conf2 = {
-  //   .pin_bit_mask = (1ULL << PIN_CV_SW),
-  //   .mode = GPIO_MODE_INPUT,
-  //   .pull_up_en = GPIO_PULLUP_ENABLE,
-  // };
-  // gpio_config(&io_conf2);
+  gpio_config_t io_conf2 = {
+    .pin_bit_mask = (1ULL << PIN_CV_SW),
+    .mode = GPIO_MODE_INPUT,
+  };
+  gpio_config(&io_conf2);
 
   // while (1) {
   //   if (gpio_get_level(PIN_CV_SW) == 1) {

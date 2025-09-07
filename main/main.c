@@ -18,7 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-// #include "adc.h"
+#include "adc.h"
 #include "esp_heap_caps.h"
 #include "performance.h"
 #include "driver/gpio.h"
@@ -53,7 +53,7 @@ void app_main(void) {
   led_init();
   midi_out_init();
   midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  // expression_init();
+  expression_init();
   // expression_enable();
   flicker_start();
 

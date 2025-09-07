@@ -12,7 +12,6 @@ static void screensaver_handle_event(const event_t* event, void* context) {
     case EVENT_BUMP_DETECTED:
     case EVENT_ENCODER_ROTATE:
     case EVENT_GESTURE_ROTARY:
-      ESP_LOGI(TAG, "Activity event received: type=%d", event->type);
       screensaver_notify_activity();
       break;
     default:
