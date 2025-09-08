@@ -62,4 +62,14 @@ float ads1015_raw_to_voltage(int16_t raw_value, ads1015_gain_t gain);
  */
 esp_err_t ads1015_set_data_rate(ads1015_rate_t rate);
 
+/**
+ * Read two channels and return the ratio (channel/reference)
+ * This is useful for ratiometric measurements that cancel out reference voltage drift
+ * @param channel_num Channel to measure (0-3)
+ * @param reference_channel Reference channel (0-3)
+ * @param gain Gain setting for both readings
+ * @return Ratio (0.0-1.0), or -1.0 on error
+ */
+float ads1015_read_ratiometric(uint8_t channel_num, uint8_t reference_channel, ads1015_gain_t gain);
+
 #endif /* _ADS1015_H */

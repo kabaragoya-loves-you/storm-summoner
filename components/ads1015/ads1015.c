@@ -136,3 +136,44 @@ esp_err_t ads1015_set_data_rate(ads1015_rate_t rate) {
   s_data_rate = rate;
   return ESP_OK;
 }
+
+float ads1015_read_ratiometric(uint8_t channel_num, uint8_t reference_channel, ads1015_gain_t gain) {
+  if (!s_dev_handle) {
+    ESP_LOGE(TAG, "ADS1015 not initialized");
+    return -1.0f;
+  }
+  
+  if (channel_num > 3 || reference_channel > 3) {
+    ESP_LOGE(TAG, "Invalid channel numbers: %d, %d", channel_num, reference_channel);
+    return -1.0f;
+  }
+  
+  // Read the reference channel first
+  int16_t ref_value = ads1015_read_channel(reference_channel, gain);
+  if (ref_value < 0) {
+    ESP_LOGE(TAG, "Failed to read reference channel %d", reference_channel);
+    return -1.0f;
+  }
+  
+  // Read the measurement channel
+  int16_t channel_value = ads1015_read_channel(channel_num, gain);
+  if (channel_value < 0) {
+    ESP_LOGE(TAG, "Failed to read channel %d", channel_num);
+    return -1.0f;
+  }
+  
+  // Avoid division by zero
+  if (ref_value == 0) {
+    ESP_LOGW(TAG, "Reference channel reads 0, cannot compute ratio");
+    return 0.0f;
+  }
+  
+  // Calculate ratio (0.0 to 1.0)
+  float ratio = (float)channel_value / (float)ref_value;
+  
+  // Clamp to valid range
+  if (ratio > 1.0f) ratio = 1.0f;
+  if (ratio < 0.0f) ratio = 0.0f;
+  
+  return ratio;
+}

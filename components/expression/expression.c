@@ -15,6 +15,8 @@
 
 // ADS1015 channel allocation
 #define EXPRESSION_CHANNEL 2  // Expression pedal (0-based: 0=VCC, 1=NC, 2=Expression, 3=CV)
+#define REFERENCE_CHANNEL 0   // VCC reference channel for ratiometric measurement
+#define USE_RATIOMETRIC 1     // Enable ratiometric measurement (expression/vcc ratio)
 
 // NVS keys
 #define NVS_KEY_EXP_MIN "exp_min"
@@ -83,12 +85,32 @@ static void expression_task(void *pvParameters) {
     }
     
     if (is_connected) {
-      int16_t raw = ads1015_read_channel_default(EXPRESSION_CHANNEL);
+      int16_t raw;
+      float ratio = 0.0f;  // Declare ratio for logging
+      
+      #if USE_RATIOMETRIC
+      // Use ratiometric measurement for better stability
+      ratio = ads1015_read_ratiometric(EXPRESSION_CHANNEL, REFERENCE_CHANNEL, ADS1015_GAIN_ONE);
+      if (ratio < 0) {
+        ESP_LOGW(TAG, "Ratiometric read failed");
+        continue;
+      }
+      // Convert ratio back to raw value scale (0-4095)
+      raw = (int16_t)(ratio * 4095.0f);
+      #else
+      // Use direct ADC reading
+      raw = ads1015_read_channel_default(EXPRESSION_CHANNEL);
+      #endif
+      
       static int16_t last_raw = -1;
       
       // Log periodically
-      // static int debug_counter = 0;
+      static int debug_counter = 0;
+      #if USE_RATIOMETRIC
+      if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "Ratio: %.3f, raw: %d, filtered: %.1f, MIDI: %d", ratio, raw, s_expression_value, s_midi_value);
+      #else
       // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d (ch%d)", raw, s_expression_value, s_midi_value, EXPRESSION_CHANNEL);
+      #endif
       
       // Detect wrap-around or large jumps
       if (last_raw >= 0) {
@@ -250,7 +272,9 @@ void expression_init(void) {
   };
   gpio_config(&io_conf);
   
-  ESP_LOGI(TAG, "Expression initialized - Min: %d, Max: %d, Deadzone: %d", s_min_value, s_max_value, s_deadzone);
+  ESP_LOGI(TAG, "Expression initialized - Min: %d, Max: %d, Deadzone: %d%s", 
+    s_min_value, s_max_value, s_deadzone,
+    USE_RATIOMETRIC ? " (Ratiometric mode)" : "");
   
   // Check initial cable state
   bool cable_connected = gpio_get_level(PIN_EXP_SW) == 1;
