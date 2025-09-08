@@ -34,6 +34,12 @@ typedef enum {
   EVENT_SENSOR_ALS,
   EVENT_SENSOR_PROXIMITY,
   EVENT_MIDI_IN,
+  EVENT_EXPRESSION_VALUE,
+  EVENT_EXPRESSION_CONNECTED,
+  EVENT_EXPRESSION_DISCONNECTED,
+  EVENT_CV_VALUE,
+  EVENT_CV_DISCONNECTED,
+  EVENT_CLOCK_SYNC_PULSE,
   EVENT_TYPE_MAX
 } event_type_t;
 
@@ -128,6 +134,18 @@ typedef struct {
       uint16_t length;       // For SysEx and other variable length messages
       uint8_t* sysex_data;   // Pointer to SysEx data (if applicable)
     } midi_in;
+    
+    struct {
+      int16_t raw_value;     // Raw ADC value
+      uint8_t midi_value;    // Scaled MIDI CC value (0-127)
+      uint8_t cc_number;     // MIDI CC number to send
+    } expression;
+    
+    struct {
+      int16_t raw_value;     // Raw ADC value
+      uint8_t midi_value;    // Scaled MIDI value (0-127)
+      uint8_t mode;          // CV mode (unipolar/bipolar, range)
+    } cv;
   } data;
 } event_t;
 

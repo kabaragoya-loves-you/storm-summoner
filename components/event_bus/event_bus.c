@@ -44,7 +44,13 @@ static const char* event_type_names[] = {
   [EVENT_UI_ACTION] = "UI_ACTION",
   [EVENT_SENSOR_ALS] = "SENSOR_ALS",
   [EVENT_SENSOR_PROXIMITY] = "SENSOR_PROXIMITY",
-  [EVENT_MIDI_IN] = "MIDI_IN"
+  [EVENT_MIDI_IN] = "MIDI_IN",
+  [EVENT_EXPRESSION_VALUE] = "EXPRESSION_VALUE",
+  [EVENT_EXPRESSION_CONNECTED] = "EXPRESSION_CONN",
+  [EVENT_EXPRESSION_DISCONNECTED] = "EXPRESSION_DISC",
+  [EVENT_CV_VALUE] = "CV_VALUE",
+  [EVENT_CV_DISCONNECTED] = "CV_DISC",
+  [EVENT_CLOCK_SYNC_PULSE] = "CLOCK_SYNC"
 };
 
 const char* event_type_to_string(event_type_t type) {
@@ -125,7 +131,7 @@ esp_err_t event_bus_init(void) {
   event_bus_state.initialized = true;
   
   // Create dispatcher task with high priority for responsiveness
-  BaseType_t ret = xTaskCreate(event_dispatcher_task, "event_dispatch", 4096, NULL, 20, &event_bus_state.dispatcher_task);
+  BaseType_t ret = xTaskCreate(event_dispatcher_task, "event_dispatch", 3072, NULL, 20, &event_bus_state.dispatcher_task);
   if (ret != pdPASS) {
     ESP_LOGE(TAG, "Failed to create dispatcher task");
     vQueueDelete(event_bus_state.queue);
@@ -155,8 +161,7 @@ esp_err_t event_bus_subscribe(event_type_t type, event_handler_t handler, void* 
   return event_bus_subscribe_with_priority(type, handler, context, EVENT_PRIORITY_LOW);
 }
 
-esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t handler, 
-                                           void* context, event_priority_t min_priority) {
+esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t handler, void* context, event_priority_t min_priority) {
   if (!event_bus_state.initialized) return ESP_ERR_INVALID_STATE;
   if (!handler || type >= EVENT_TYPE_MAX) return ESP_ERR_INVALID_ARG;
   

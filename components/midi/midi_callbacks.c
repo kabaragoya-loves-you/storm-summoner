@@ -122,4 +122,7 @@ void midi_callbacks_init(void) {
   midi_in_init(&callbacks);
   
   midi_sensor_event_handler_init();
+  
+  extern void midi_expression_handler_init(void);
+  midi_expression_handler_init();
 } 

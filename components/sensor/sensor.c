@@ -284,7 +284,7 @@ void als_enable(void) {
     vTaskResume(als_task_handle);
     ESP_LOGI(TAG, "Ambient light sensor task resumed");
   } else {
-    BaseType_t ret = xTaskCreate(als_task, "ambient", 4096, NULL, TASK_PRIORITY_SENSOR_ALS, &als_task_handle);
+    BaseType_t ret = xTaskCreate(als_task, "ambient", 2048, NULL, TASK_PRIORITY_SENSOR_ALS, &als_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create ambient light sensor task");
       return;
@@ -305,7 +305,7 @@ void ps_enable(void) {
     vTaskResume(ps_task_handle);
     ESP_LOGI(TAG, "Proximity sensor task resumed");
   } else {
-    BaseType_t ret = xTaskCreate(ps_task, "proximity", 3072, NULL, TASK_PRIORITY_SENSOR_PS, &ps_task_handle);
+    BaseType_t ret = xTaskCreate(ps_task, "proximity", 2048, NULL, TASK_PRIORITY_SENSOR_PS, &ps_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create proximity sensor task");
       return;

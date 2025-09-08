@@ -3,7 +3,6 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/timers.h"
 #include "ui.h"
 #include "stars.h" // For starfield functions
@@ -30,12 +29,9 @@ static TimerHandle_t g_screensaver_activity_timer = NULL;
 static lv_timer_t *g_lvgl_screensaver_start_timer = NULL; // LVGL timer to start the actual screensaver
 static lv_timer_t *g_lvgl_screensaver_stop_timer = NULL; // LVGL timer to stop the screensaver
 
-// Forward declarations
 static void screensaver_timer_callback(TimerHandle_t xTimer);
 static void actual_screensaver_start_lvgl_cb(lv_timer_t *timer);
 static void actual_screensaver_stop_lvgl_cb(lv_timer_t *timer);
-// extern void ui_task_suspend(void); // Assumed to exist, will create/find later
-// extern void ui_task_resume(void);  // Assumed to exist, will create/find later
 
 void screensaver_init(void) {
   esp_err_t ret;
@@ -410,16 +406,3 @@ void screensaver_set_delay(uint16_t delay_seconds) {
     }
   }
 }
-
-// Dummy implementations for UI task suspend/resume - these need to be implemented correctly
-// based on how the main UI loop/LVGL timer is managed.
-// void ui_task_suspend(void) {
-//     ESP_LOGW(TAG, "ui_task_suspend: Placeholder function called.");
-//     // Actual implementation will depend on how lv_timer_handler() is called or if there's a dedicated UI task.
-//     // If ui.c's lvgl_timer_cb is the main UI refresh, we need to stop/delete that timer.
-// }
-// 
-// void ui_task_resume(void) {
-//     ESP_LOGW(TAG, "ui_task_resume: Placeholder function called.");
-//     // Actual implementation will restart the UI timer or resume the UI task.
-// } 

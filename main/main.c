@@ -18,17 +18,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "adc.h"
+#include "ads1015.h"
+#include "expression.h"
 #include "esp_heap_caps.h"
 #include "performance.h"
 #include "driver/gpio.h"
 #include "esp_wifi.h"
 #include "io.h"
 #include "switch.h"
+#include "task_monitor.h"
 
 #define TAG "MAIN"
-
-void event_bus_test(void);
 
 void app_main(void) {
   esp_wifi_deinit();
@@ -42,26 +42,28 @@ void app_main(void) {
   ui_init();
   ui_set_draw_module(&buttons_module);
   
-
   touch_init();
   // force_touch_calibration();
   
-  haptic_init();
-  bump_init();
+  // bump_init();
+  // haptic_init();
   switch_init();
-  
-  led_init();
-  midi_out_init();
-  midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  expression_init();
-  // expression_enable();
-  flicker_start();
+  // led_init();
+  // flicker_start();
 
-  sensor_init();
+  midi_out_init();
+  // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
+  midi_callbacks_init();
+  
+  ads1015_init();
+  expression_init();
+  expression_enable();
+  
+  // sensor_init();
   // als_enable();
   // ps_enable();
 
-  tempo_init();
+  // tempo_init();
   // tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // tempo_start();
 
@@ -70,15 +72,10 @@ void app_main(void) {
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
   #endif
-
-  // Test LED event system
-  ESP_LOGI(TAG, "Testing LED event system...");
-  event_t led_test_event = {
-    .type = EVENT_LED_FLASH_REQUEST,
-    .priority = EVENT_PRIORITY_NORMAL,
-    .timestamp = event_bus_get_current_timestamp(),
-    .data.led_flash = { .duration_ms = 1000 }
-  };
-  event_bus_post(&led_test_event);
-  ESP_LOGI(TAG, "LED flash event posted");
+  
+  // task_monitor_init();
+  // vTaskDelay(pdMS_TO_TICKS(3000));
+  // ESP_LOGI(TAG, "Initial memory and task report:");
+  // task_monitor_print_heap_info();
+  // task_monitor_print_report();
 }

@@ -111,7 +111,7 @@ static void performance_monitor_task(void *pvParameters) {
 }
 
 void performance_init(void) {
-  BaseType_t ret = xTaskCreate(performance_monitor_task, "perf_mon", 4096, NULL, tskIDLE_PRIORITY + 1, NULL);
+  BaseType_t ret = xTaskCreate(performance_monitor_task, "perf_mon", 3072, NULL, tskIDLE_PRIORITY + 1, NULL);
   if (ret != pdPASS) {
     ESP_LOGE(TAG, "Failed to create performance monitor task");
   } else {

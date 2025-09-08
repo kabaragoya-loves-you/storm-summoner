@@ -109,7 +109,7 @@ static void start_tasks(void) {
   // For SYNC: both the sync BPM task and the send task are needed.
   if (clock_source == CLOCK_SOURCE_INTERNAL) {
     if (tempo_send_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(tempo_send_task, "tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
+      BaseType_t ret = xTaskCreate(tempo_send_task, "tempo", 2048, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
       if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create tempo send task");
         tempo_send_task_handle = NULL;
@@ -120,14 +120,14 @@ static void start_tasks(void) {
     // TODO: Convert to event-based sync detection
     // analog_input_start_sync_detection(tempo_sync_pulse);
     if (sync_bpm_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(sync_bpm_task, "sync_bpm", 4096, NULL, TASK_PRIORITY_SYNC_BPM, &sync_bpm_task_handle);
+      BaseType_t ret = xTaskCreate(sync_bpm_task, "sync_bpm", 2048, NULL, TASK_PRIORITY_SYNC_BPM, &sync_bpm_task_handle);
       if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create sync BPM task");
         sync_bpm_task_handle = NULL;
       }
     }
     if (tempo_send_task_handle == NULL) {
-      BaseType_t ret = xTaskCreate(tempo_send_task, "tempo", 4096, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
+      BaseType_t ret = xTaskCreate(tempo_send_task, "tempo", 2048, NULL, TASK_PRIORITY_MIDI_TEMPO, &tempo_send_task_handle);
       if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create tempo send task");
         tempo_send_task_handle = NULL;

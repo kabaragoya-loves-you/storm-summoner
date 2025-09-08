@@ -288,6 +288,6 @@ void midi_in_event_handler_init(void) {
   sys_ex_buffer = malloc(sys_ex_capacity);
   if (!sys_ex_buffer) ESP_LOGE(TAG, "Failed to allocate initial SysEx buffer");
   
-  xTaskCreate(midi_in_task, "midi_in_event", 4096, NULL, TASK_PRIORITY_MIDI_IN, NULL);
+  xTaskCreate(midi_in_task, "midi_in_event", 2048, NULL, TASK_PRIORITY_MIDI_IN, NULL);
   ESP_LOGI(TAG, "MIDI IN event handler initialized");
 }

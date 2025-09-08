@@ -1,213 +1,319 @@
 #include "expression.h"
+#include "ads1015.h"
+#include "event_bus.h"
+#include "app_settings.h"
 #include "io.h"
+#include "task_priorities.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
-#include "adc2.h"
-#include "midi_messages.h"
-#include "midi_out.h"
+#include "esp_system.h"
 #include <math.h>
-#include <string.h>
-#include "task_priorities.h"
 
 #define TAG "EXPRESSION"
-#define MIN_MIDI_INTERVAL_MS 15  // Increased from 20ms to 30ms for more conservative rate limiting
-#define DEADZONE_THRESHOLD 4    // Minimum change required to send MIDI
-#define FLOATING_THRESHOLD 3    // Maximum allowed variation in floating state
-#define FLOATING_SAMPLES 10     // Number of samples to analyze for floating state
-#define FLOATING_IIR_ALPHA 0.1f // More aggressive filtering for floating state
-#define MAX_LATENCY_MS 50       // Maximum allowed latency before clearing queue
-#define STABLE_SAMPLES_REQUIRED 5  // Number of consecutive stable samples required before sending
-#define INITIALIZATION_PERIOD_MS 2000  // Wait 2 seconds after startup before sending any messages
 
-static TaskHandle_t task_handle = NULL;
+// ADS1015 channel allocation
+#define EXPRESSION_CHANNEL 2  // Expression pedal (0-based: 0=VCC, 1=NC, 2=Expression, 3=CV)
 
-static int samples[MOVING_AVG_LENGTH] = {0};
-static int sample_index = 0;
-static int sum_samples = 0;
-static int num_samples = 0;
-static float expression_value = 0.0f;
-static uint8_t midi_value = 0;
-static uint8_t last_midi_value = 0;
-static TickType_t last_queue_clear_time = 0;
-static bool has_valid_reading = false;  // Flag to track if we have valid readings
+// NVS keys
+#define NVS_KEY_EXP_MIN "exp_min"
+#define NVS_KEY_EXP_MAX "exp_max"
+#define NVS_KEY_EXP_DEADZONE "exp_deadzone"
+#define NVS_KEY_EXP_CC "exp_cc"
 
-// Floating state detection
-static float recent_values[FLOATING_SAMPLES] = {0};
-static int recent_index = 0;
-static bool is_floating = false;
-static bool first_message_sent = false;  // Flag to track if we've sent the first message
-static int stable_sample_count = 0;  // Count of consecutive stable samples
-static TickType_t initialization_start_time = 0;  // Track when initialization started
+// Default calibration values
+#define DEFAULT_MIN_VALUE 0
+#define DEFAULT_MAX_VALUE 1575
+#define DEFAULT_DEADZONE 2
+#define DEFAULT_CC_NUMBER 4  // Foot Controller
 
-static void expression_task(void *arg);
+// Filtering parameters
+#define MOVING_AVG_LENGTH 10
+#define IIR_ALPHA 0.3f
+#define TASK_DELAY_MS 10
+
+// Static variables
+static TaskHandle_t s_task_handle = NULL;
+static float s_expression_value = 0.0f;
+static uint8_t s_midi_value = 0;
+static int16_t s_min_value = DEFAULT_MIN_VALUE;
+static int16_t s_max_value = DEFAULT_MAX_VALUE;
+static uint8_t s_deadzone = DEFAULT_DEADZONE;
+static uint8_t s_cc_number = DEFAULT_CC_NUMBER;
+
+// Filtering state
+static int s_samples[MOVING_AVG_LENGTH] = {0};
+static int s_sample_index = 0;
+static int s_sum_samples = 0;
+static int s_num_samples = 0;
+
+static void expression_task(void *pvParameters) {
+  uint8_t last_midi_value = 0;
+  bool was_connected = false;
+  bool first_reading = true;  // Flag to skip initial change detection
+  
+  while (1) {
+    // Check if cable is inserted
+    bool is_connected = gpio_get_level(PIN_EXP_SW) == 1;
+    
+    // Handle connection state changes
+    if (is_connected != was_connected) {
+      if (is_connected) {
+        ESP_LOGD(TAG, "Expression pedal connected");
+        first_reading = true;  // Reset flag on connection
+        // Post connection event
+        event_t conn_event = {
+          .type = EVENT_EXPRESSION_CONNECTED,
+          .priority = EVENT_PRIORITY_NORMAL,
+          .timestamp = event_bus_get_current_timestamp()
+        };
+        event_bus_post(&conn_event);
+      } else {
+        ESP_LOGD(TAG, "Expression pedal disconnected");
+        // Post disconnection event only once
+        event_t disc_event = {
+          .type = EVENT_EXPRESSION_DISCONNECTED,
+          .priority = EVENT_PRIORITY_NORMAL,
+          .timestamp = event_bus_get_current_timestamp()
+        };
+        event_bus_post(&disc_event);
+      }
+      was_connected = is_connected;
+    }
+    
+    if (is_connected) {
+      int16_t raw = ads1015_read_channel_default(EXPRESSION_CHANNEL);
+      static int16_t last_raw = -1;
+      
+      // Log periodically
+      // static int debug_counter = 0;
+      // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d (ch%d)", raw, s_expression_value, s_midi_value, EXPRESSION_CHANNEL);
+      
+      // Detect wrap-around or large jumps
+      if (last_raw >= 0) {
+        int delta = raw - last_raw;
+        if (abs(delta) > 3000) continue;
+      }
+      last_raw = raw;
+      
+      if (raw >= 0) {  // Valid reading
+        
+        // Moving average filter
+        if (s_num_samples < MOVING_AVG_LENGTH) {
+          s_samples[s_sample_index] = raw;
+          s_sum_samples += raw;
+          s_num_samples++;
+        } else {
+          s_sum_samples = s_sum_samples - s_samples[s_sample_index] + raw;
+          s_samples[s_sample_index] = raw;
+        }
+        s_sample_index = (s_sample_index + 1) % MOVING_AVG_LENGTH;
+        int moving_avg = s_sum_samples / s_num_samples;
+        
+        // IIR filter
+        s_expression_value = IIR_ALPHA * moving_avg + (1.0f - IIR_ALPHA) * s_expression_value;
+        
+        // Scale to MIDI (0-127)
+        // Ensure we can reach exactly 0 and 127
+        int32_t scaled_value;
+        
+        if (s_expression_value <= s_min_value) {
+          scaled_value = 0;
+        } else if (s_expression_value >= s_max_value) {
+          scaled_value = 127;
+        } else {
+          // Use floating point for accurate scaling, then round
+          float range = (float)(s_max_value - s_min_value);
+          float normalized = (s_expression_value - s_min_value) / range;
+          scaled_value = (int32_t)(normalized * 127.0f + 0.5f);
+          
+          // Clamp to valid MIDI range
+          if (scaled_value < 0) scaled_value = 0;
+          if (scaled_value > 127) scaled_value = 127;
+        }
+        
+        s_midi_value = (uint8_t)scaled_value;
+        
+        // On first reading, initialize filters and set initial value
+        if (first_reading) {
+          // Pre-fill the moving average buffer with current value
+          for (int i = 0; i < MOVING_AVG_LENGTH; i++) {
+            s_samples[i] = raw;
+          }
+          s_sum_samples = raw * MOVING_AVG_LENGTH;
+          s_num_samples = MOVING_AVG_LENGTH;
+          moving_avg = raw;  // All samples are the same, so average is just the raw value
+          
+          // Initialize the IIR filter with current value to avoid startup transients
+          s_expression_value = moving_avg;
+          
+          // Recalculate MIDI value with properly initialized filter
+          if (s_expression_value <= s_min_value) {
+            scaled_value = 0;
+          } else if (s_expression_value >= s_max_value) {
+            scaled_value = 127;
+          } else {
+            float range = (float)(s_max_value - s_min_value);
+            float normalized = (s_expression_value - s_min_value) / range;
+            scaled_value = (int32_t)(normalized * 127.0f + 0.5f);
+            if (scaled_value < 0) scaled_value = 0;
+            if (scaled_value > 127) scaled_value = 127;
+          }
+          s_midi_value = (uint8_t)scaled_value;
+          
+          last_midi_value = s_midi_value;
+          first_reading = false;
+          ESP_LOGI(TAG, "Expression initial position: %d (raw: %d, filtered: %.1f)", s_midi_value, raw, s_expression_value);
+        }
+        // Check if change exceeds deadzone
+        else if (abs(s_midi_value - last_midi_value) >= s_deadzone) {
+          // Post event to event bus
+          event_t expr_event = {
+            .type = EVENT_EXPRESSION_VALUE,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.expression = {
+              .raw_value = (int16_t)s_expression_value,
+              .midi_value = s_midi_value,
+              .cc_number = s_cc_number
+            }
+          };
+          
+          esp_err_t ret = event_bus_post(&expr_event);
+          if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Expression MIDI: %d -> %d", last_midi_value, s_midi_value);
+            last_midi_value = s_midi_value;
+          }
+        }
+      } else {
+        // ADC read failed
+        ESP_LOGW(TAG, "ADS1015 read failed on channel %d", EXPRESSION_CHANNEL);
+      }
+      
+      vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+      
+    } else {
+      // Debug: Log every 100 loops when disconnected
+      static int disconnect_counter = 0;
+      if (disconnect_counter++ % 100 == 0) {
+        ESP_LOGD(TAG, "Cable disconnected, waiting... (GPIO%d=%d)", PIN_EXP_SW, gpio_get_level(PIN_EXP_SW));
+      }
+      
+      // Cable disconnected - reset state
+      s_expression_value = 0.0f;
+      s_midi_value = 0;
+      last_midi_value = 0;
+      s_num_samples = 0;
+      s_sum_samples = 0;
+      first_reading = true;  // Reset flag when disconnected
+      
+      vTaskDelay(pdMS_TO_TICKS(100));  // Check less frequently when disconnected
+    }
+  }
+}
 
 void expression_init(void) {
-  esp_err_t err;
-  adc_oneshot_chan_cfg_t chan_config = {
-    .bitwidth = ADC_BITWIDTH_DEFAULT, // Use default bit width
-    .atten = ADC_ATTEN_DB_12,           // Attenuation for proper input range
+  uint32_t stored_val;
+  
+  if (app_settings_load_u32(NVS_KEY_EXP_MIN, &stored_val) == APP_SETTINGS_OK) {
+    s_min_value = (int16_t)stored_val;
+  } else {
+    app_settings_save_u32(NVS_KEY_EXP_MIN, s_min_value);
+  }
+  
+  if (app_settings_load_u32(NVS_KEY_EXP_MAX, &stored_val) == APP_SETTINGS_OK) {
+    s_max_value = (int16_t)stored_val;
+  } else {
+    app_settings_save_u32(NVS_KEY_EXP_MAX, s_max_value);
+  }
+  
+  if (app_settings_load_u32(NVS_KEY_EXP_DEADZONE, &stored_val) == APP_SETTINGS_OK) {
+    s_deadzone = (uint8_t)stored_val;
+  } else {
+    app_settings_save_u32(NVS_KEY_EXP_DEADZONE, s_deadzone);
+  }
+  
+  if (app_settings_load_u32(NVS_KEY_EXP_CC, &stored_val) == APP_SETTINGS_OK) {
+    s_cc_number = (uint8_t)stored_val;
+  } else {
+    app_settings_save_u32(NVS_KEY_EXP_CC, s_cc_number);
+  }
+  
+  // Configure cable detection GPIO
+  gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << PIN_EXP_SW),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE
   };
-// commented for refactor
-  // err = adc_oneshot_config_channel(adc2_handle(), EXPRESSION_ADC_CHANNEL, &chan_config);
-  // if (err != ESP_OK) {
-  //   ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %d", err);
-  //   return;
-  // }
-  ESP_LOGI(TAG, "Expression pedal ADC initialized");
+  gpio_config(&io_conf);
+  
+  ESP_LOGI(TAG, "Expression initialized - Min: %d, Max: %d, Deadzone: %d", s_min_value, s_max_value, s_deadzone);
+  
+  // Check initial cable state
+  bool cable_connected = gpio_get_level(PIN_EXP_SW) == 1;
+  ESP_LOGI(TAG, "Expression cable initial state: %s (GPIO %d = %d)", 
+    cable_connected ? "CONNECTED" : "DISCONNECTED", 
+    PIN_EXP_SW, gpio_get_level(PIN_EXP_SW));
+}
+
+void expression_enable(void) {  
+  if (s_task_handle == NULL) {
+    BaseType_t ret = xTaskCreate(expression_task, "expression", 3072, NULL, TASK_PRIORITY_ADC_EXP, &s_task_handle);
+    if (ret != pdPASS) {
+      ESP_LOGE(TAG, "Failed to create expression task! Return code: %d", ret);
+    }
+  } else {
+    vTaskResume(s_task_handle);
+    ESP_LOGI(TAG, "Expression task resumed");
+  }
 }
 
 void expression_disable(void) {
-  if (task_handle != NULL) {
-    vTaskSuspend(task_handle);
+  if (s_task_handle) {
+    vTaskSuspend(s_task_handle);
     ESP_LOGI(TAG, "Expression task suspended");
   }
 }
 
-void expression_enable(void) {
-  if (task_handle != NULL) {
-    vTaskResume(task_handle);
-    ESP_LOGI(TAG, "Expression task resumed");
-  } else {
-    // Reset state variables before creating task
-    has_valid_reading = false;
-    last_midi_value = 0;
-    midi_value = 0;
-    expression_value = 0.0f;
-    num_samples = 0;
-    sum_samples = 0;
-    sample_index = 0;
-    first_message_sent = false;  // Reset first message flag
-    stable_sample_count = 0;  // Reset stable sample count
-    initialization_start_time = xTaskGetTickCount();  // Record initialization start time
-    memset(samples, 0, sizeof(samples));
-    
-    // Add a small delay before creating the task to ensure ADC is stable
-    vTaskDelay(pdMS_TO_TICKS(100));
-    
-    BaseType_t ret = xTaskCreate(expression_task, "expression", 4096, NULL, TASK_PRIORITY_EXPRESSION, &task_handle);
-    if (ret != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create Expression task");
-      return;
-    }
-    ESP_LOGI(TAG, "Expression task started");
-  }
-}
-
 float expression_get_value(void) {
-  return expression_value;
+  return s_expression_value;
 }
 
 uint8_t expression_get_midi_value(void) {
-  return midi_value;
+  return s_midi_value;
 }
 
-static bool detect_floating_state(float new_value) {
-  // Update circular buffer
-  recent_values[recent_index] = new_value;
-  recent_index = (recent_index + 1) % FLOATING_SAMPLES;
-  
-  // Calculate mean and standard deviation
-  float mean = 0.0f;
-  for (int i = 0; i < FLOATING_SAMPLES; i++) {
-    mean += recent_values[i];
-  }
-  mean /= FLOATING_SAMPLES;
-  
-  float variance = 0.0f;
-  for (int i = 0; i < FLOATING_SAMPLES; i++) {
-    float diff = recent_values[i] - mean;
-    variance += diff * diff;
-  }
-  variance /= FLOATING_SAMPLES;
-  float std_dev = sqrtf(variance);
-  
-  // Add debug logging for floating state detection
-  // if (std_dev < FLOATING_THRESHOLD) ESP_LOGI(TAG, "Floating state detected - std_dev: %.2f, mean: %.2f", std_dev, mean);
-  
-  return std_dev < FLOATING_THRESHOLD;
+void expression_set_min_value(int16_t value) {
+  s_min_value = value;
+  app_settings_save_u32(NVS_KEY_EXP_MIN, value);
 }
 
-static void expression_task(void *arg) {
-  // int raw = 0;
-  // while (1) {
-  //   esp_err_t err = adc_oneshot_read(adc2_handle(), EXPRESSION_ADC_CHANNEL, &raw);
-  //   if (err != ESP_OK) {
-  //     ESP_LOGE(TAG, "adc_oneshot_read failed: %d", err);
-  //   } else {
-  //     if (num_samples < MOVING_AVG_LENGTH) {
-  //       samples[sample_index] = raw;
-  //       sum_samples += raw;
-  //       num_samples++;
-  //     } else {
-  //       sum_samples = sum_samples - samples[sample_index] + raw;
-  //       samples[sample_index] = raw;
-  //     }
-  //     sample_index = (sample_index + 1) % MOVING_AVG_LENGTH;
-  //     int moving_avg = sum_samples / num_samples;
+void expression_set_max_value(int16_t value) {
+  s_max_value = value;
+  app_settings_save_u32(NVS_KEY_EXP_MAX, value);
+}
 
-  //     // Detect if we're in a floating state
-  //     is_floating = detect_floating_state(moving_avg);
-      
-  //     // Use different IIR alpha based on state
-  //     float alpha = is_floating ? FLOATING_IIR_ALPHA : IIR_ALPHA;
-  //     expression_value = alpha * moving_avg + (1.0f - alpha) * expression_value;
+void expression_set_deadzone(uint8_t deadzone) {
+  s_deadzone = deadzone;
+  app_settings_save_u32(NVS_KEY_EXP_DEADZONE, deadzone);
+}
 
-  //     // Scale the processed value (0 - 4095) linearly to MIDI CC range (0 - 127).
-  //     float scaled = ((float)expression_value - (float)EXPRESSION_MIN) * 127.0f / ((float)EXPRESSION_MAX - (float)EXPRESSION_MIN);
-  //     // Ensure we can hit 127 by using ceilf for values very close to 127
-  //     uint8_t new_midi_value = (scaled > 126.5f) ? 127 : (uint8_t)(scaled + 0.5f);
-      
-  //     // Clamp to valid MIDI range (0-127)
-  //     if (new_midi_value > 127) new_midi_value = 127;
-      
-  //     // Check if we need to clear the queue due to latency
-  //     TickType_t current_time = xTaskGetTickCount();
-  //     if ((current_time - last_queue_clear_time) >= pdMS_TO_TICKS(MAX_LATENCY_MS)) {
-  //       midi_clear_queue();
-  //       last_queue_clear_time = current_time;
-  //     }
-      
-  //     // Update stable sample count
-  //     if (is_floating) {
-  //       stable_sample_count = 0;  // Reset count if we detect floating
-  //     } else {
-  //       stable_sample_count++;    // Increment count if stable
-  //     }
-      
-  //     // Check if we're still in initialization period
-  //     bool in_initialization = (current_time - initialization_start_time) < pdMS_TO_TICKS(INITIALIZATION_PERIOD_MS);
-      
-  //     // Only send MIDI if:
-  //     // 1. We have enough samples for a valid reading
-  //     // 2. The value has changed beyond the deadzone
-  //     // 3. We're not in a floating state
-  //     // 4. We've already sent our first message
-  //     // 5. We have enough consecutive stable samples
-  //     // 6. We're not in initialization period
-  //     if (num_samples >= MOVING_AVG_LENGTH && 
-  //         abs(new_midi_value - last_midi_value) >= DEADZONE_THRESHOLD &&
-  //         !is_floating &&
-  //         first_message_sent &&
-  //         stable_sample_count >= STABLE_SAMPLES_REQUIRED &&
-  //         !in_initialization) {
-  //       ESP_LOGI(TAG, "Expression pedal sent MIDI value %d", new_midi_value);
-  //       // ESP_LOGI(TAG, "Debug - num_samples: %d, last_midi: %d, new_midi: %d, is_floating: %d, stable_count: %d", 
-  //               //  num_samples, last_midi_value, new_midi_value, is_floating, stable_sample_count);
-  //       send_control_change(0, 4, new_midi_value);
-  //       last_midi_value = new_midi_value;
-  //     } else if (!first_message_sent && num_samples >= MOVING_AVG_LENGTH && !in_initialization) {
-  //       // If this would have been our first message and we're past initialization, just mark it as sent
-  //       first_message_sent = true;
-  //       last_midi_value = new_midi_value;  // Update last_midi_value to prevent a jump on next message
-  //       // ESP_LOGI(TAG, "Skipped first MIDI message with value %d", new_midi_value);
-  //     }
-  //     midi_value = new_midi_value;
-      
-  //     // Mark that we have valid readings after collecting enough samples
-  //     if (num_samples >= MOVING_AVG_LENGTH) has_valid_reading = true;
-  //   }
-  //   vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-  // }
+uint8_t expression_get_deadzone(void) {
+  return s_deadzone;
+}
+
+bool expression_is_connected(void) {
+  return gpio_get_level(PIN_EXP_SW) == 1;
+}
+
+void expression_set_cc_number(uint8_t cc) {
+  s_cc_number = cc;
+  app_settings_save_u32(NVS_KEY_EXP_CC, cc);
+}
+
+uint8_t expression_get_cc_number(void) {
+  return s_cc_number;
 }

@@ -129,7 +129,7 @@ void bump_init(void) {
   i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_CLICK_SRC, &temp);
 
   s_bump_sem = xSemaphoreCreateBinary();
-  xTaskCreate(bump_task, "bump", 4096, NULL, TASK_PRIORITY_BUMP, NULL);
+  xTaskCreate(bump_task, "bump", 2048, NULL, TASK_PRIORITY_BUMP, NULL);
 
   gpio_config_t io_conf = {
       .pin_bit_mask = (1ULL << PIN_BUMP_INT),

@@ -45,10 +45,10 @@
   // Use smaller buffers since we'll compress between operations
   #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 16))
   #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
-  #elif DISPLAY_OPTIMIZATION_MODE == 5
-    // Mode 5: RGB565 with I4 Display Driver Conversion (Partial Double Buffering)
-    #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
-    #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
+#elif DISPLAY_OPTIMIZATION_MODE == 5
+  // Mode 5: RGB565 with I4 Display Driver Conversion (Partial Double Buffering)
+  #define BUFFER_PIXEL_COUNT (SCREEN_WIDTH * (SCREEN_HEIGHT / 8))
+  #define BUFFER_SIZE (BUFFER_PIXEL_COUNT * LV_BYTES_PER_PIXEL)
 #else
   // Fallback - should not happen
   #define BUFFER_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT * LV_BYTES_PER_PIXEL)

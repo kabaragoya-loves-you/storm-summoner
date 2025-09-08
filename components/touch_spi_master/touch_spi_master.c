@@ -217,7 +217,7 @@ esp_err_t touch_spi_master_init(void) {
     goto cleanup;
   }
   
-  BaseType_t task_ret = xTaskCreate(touch_spi_master_task, "touch_spi", 4096, NULL, TASK_PRIORITY_SPI, &s_state.task_handle);
+  BaseType_t task_ret = xTaskCreate(touch_spi_master_task, "touch_spi", 2048, NULL, TASK_PRIORITY_SPI, &s_state.task_handle);
   
   if (task_ret != pdPASS) {
     ESP_LOGE(TAG, "Failed to create touch SPI master task");

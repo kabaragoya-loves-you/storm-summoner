@@ -161,7 +161,7 @@ static void cv_task(void *pvParameters) {
   }
 }
 
-void adc_init(void) {
+void adc_init_old(void) {
   uint32_t stored_mode;
   if (app_settings_load_u32(NVS_KEY_CV_MODE, &stored_mode) == ESP_OK) s_cv_mode = (adc_cv_mode_t)stored_mode;
   else app_settings_save_u32(NVS_KEY_CV_MODE, (uint32_t)s_cv_mode);
@@ -173,7 +173,7 @@ void adc_init(void) {
   ESP_LOGI(TAG, "ADS1015 initialized");
 }
 
-void expression_init(void) {
+void expression_init_old(void) {
   // Load calibration from NVS
   uint32_t stored_val;
   if (app_settings_load_u32(NVS_KEY_EXP_MIN, &stored_val) == ESP_OK) s_expression_min = stored_val;
@@ -213,10 +213,10 @@ void expression_init(void) {
   }
 
   xTaskCreate(expression_task, "expression", 4096, NULL, TASK_PRIORITY_ADC_EXP, &s_expression_task_handle);
-  ESP_LOGI(TAG, "ADS1015 initialized");
+  ESP_LOGI(TAG, "ADS1015 initialized wtf");
 }
 
-void expression_enable(void) {
+void expression_enable_old(void) {
   if (s_expression_task_handle) vTaskResume(s_expression_task_handle);
 }
 
