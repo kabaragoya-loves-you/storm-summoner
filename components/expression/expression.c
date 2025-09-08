@@ -105,9 +105,9 @@ static void expression_task(void *pvParameters) {
       static int16_t last_raw = -1;
       
       // Log periodically
-      static int debug_counter = 0;
+      // static int debug_counter = 0;
       #if USE_RATIOMETRIC
-      if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "Ratio: %.3f, raw: %d, filtered: %.1f, MIDI: %d", ratio, raw, s_expression_value, s_midi_value);
+      // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "Ratio: %.3f, raw: %d, filtered: %.1f, MIDI: %d", ratio, raw, s_expression_value, s_midi_value);
       #else
       // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d (ch%d)", raw, s_expression_value, s_midi_value, EXPRESSION_CHANNEL);
       #endif
