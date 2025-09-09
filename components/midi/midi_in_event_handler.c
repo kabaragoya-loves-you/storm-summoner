@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "event_bus.h"
+#include "tempo.h"
 #include <string.h>
 #include <stdlib.h>
 #include "task_priorities.h"
@@ -83,6 +84,38 @@ static void process_byte(uint8_t byte) {
       default:   event_type = MIDI_EVENT_UNKNOWN; break;
     }
     post_midi_event(event_type, 0, 0, 0, byte, NULL, 1);
+    
+    // Post transport events for Start/Stop/Continue
+    if (byte == 0xFA) { // Start
+      event_t transport_event = {
+        .type = EVENT_TRANSPORT_START,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp()
+      };
+      event_bus_post(&transport_event);
+    }
+    else if (byte == 0xFC) { // Stop
+      event_t transport_event = {
+        .type = EVENT_TRANSPORT_STOP,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp()
+      };
+      event_bus_post(&transport_event);
+    }
+    else if (byte == 0xFB) { // Continue
+      event_t transport_event = {
+        .type = EVENT_TRANSPORT_CONTINUE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp()
+      };
+      event_bus_post(&transport_event);
+    }
+    
+    // For realtime clock, notify tempo if in MIDI clock mode
+    if (byte == 0xF8) {
+      tempo_midi_clock_tick();
+    }
+    
     return;
   }
 

@@ -27,6 +27,8 @@
 #include "io.h"
 #include "switch.h"
 #include "task_monitor.h"
+#include "transport.h"
+#include "tempo.h"
 
 #define TAG "MAIN"
 
@@ -63,7 +65,8 @@ void app_main(void) {
   // als_enable();
   // ps_enable();
 
-  // tempo_init();
+  transport_init();
+  tempo_init();
   // tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // tempo_start();
 

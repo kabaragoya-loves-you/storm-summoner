@@ -17,6 +17,8 @@
 esp_err_t app_settings_init(void);
 
 // Basic type functions
+esp_err_t app_settings_save_u8(const char* key, uint8_t value);
+esp_err_t app_settings_load_u8(const char* key, uint8_t* value);
 esp_err_t app_settings_save_u16(const char* key, uint16_t value);
 esp_err_t app_settings_load_u16(const char* key, uint16_t* value);
 esp_err_t app_settings_save_u32(const char* key, uint32_t value);

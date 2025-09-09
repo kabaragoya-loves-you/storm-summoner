@@ -27,6 +27,14 @@ esp_err_t app_settings_init(void) {
     return ESP_OK;
 }
 
+esp_err_t app_settings_save_u8(const char* key, uint8_t value) {
+    return nvs_set_u8(app_nvs_handle, key, value);
+}
+
+esp_err_t app_settings_load_u8(const char* key, uint8_t* value) {
+    return nvs_get_u8(app_nvs_handle, key, value);
+}
+
 esp_err_t app_settings_save_u16(const char* key, uint16_t value) {
     return nvs_set_u16(app_nvs_handle, key, value);
 }

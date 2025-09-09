@@ -13,7 +13,7 @@
 
 // Configuration
 #define EVENT_BUS_QUEUE_SIZE          32
-#define EVENT_BUS_MAX_HANDLERS        16
+#define EVENT_BUS_MAX_HANDLERS        32
 #define EVENT_BUS_HISTORY_SIZE        16
 
 typedef enum {
@@ -26,6 +26,18 @@ typedef enum {
   EVENT_LED_FLASH_REQUEST,
   EVENT_LED_FLICKER_START,
   EVENT_LED_FLICKER_STOP,
+  
+  // Transport events
+  EVENT_TRANSPORT_START,
+  EVENT_TRANSPORT_STOP,
+  EVENT_TRANSPORT_PAUSE,
+  EVENT_TRANSPORT_CONTINUE,
+  EVENT_TRANSPORT_RECORD,
+  EVENT_TRANSPORT_STATE_CHANGED,
+  
+  // Tempo/timing events
+  EVENT_BEAT,
+  EVENT_TEMPO_CHANGED,
   EVENT_BUMP_DETECTED,
   EVENT_ENCODER_ROTATE,
   EVENT_TIMER_TICK,
@@ -146,6 +158,23 @@ typedef struct {
       uint8_t midi_value;    // Scaled MIDI value (0-127)
       uint8_t mode;          // CV mode (unipolar/bipolar, range)
     } cv;
+    
+    // Transport event data
+    struct {
+      uint8_t state;         // transport_state_t
+      uint8_t source;        // Source of the event (MIDI, UI, etc)
+    } transport;
+    
+    // Beat event data  
+    struct {
+      uint8_t beat_in_bar;   // 1-based position in bar
+      uint8_t bar_length;    // Total beats per bar (from time signature)
+    } beat;
+    
+    // Tempo event data
+    struct {
+      uint8_t bpm;           // Current tempo in BPM (30-250)
+    } tempo;
   } data;
 } event_t;
 
