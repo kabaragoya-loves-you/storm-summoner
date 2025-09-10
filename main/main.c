@@ -29,6 +29,8 @@
 #include "task_monitor.h"
 #include "transport.h"
 #include "tempo.h"
+#include "input_manager.h"
+#include "cv.h"
 
 #define TAG "MAIN"
 
@@ -49,17 +51,31 @@ void app_main(void) {
   
   // bump_init();
   // haptic_init();
-  switch_init();
   // led_init();
   // flicker_start();
-
-  midi_out_init();
-  // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  midi_callbacks_init();
   
+  // midi_out_init();
+  // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
+  // midi_callbacks_init();
+  
+  switch_init();
   ads1015_init();
   expression_init();
+  expression_set_max_value(4050);
   expression_enable();
+  
+  input_manager_init();
+  
+  // Set input mode to CV
+  input_set_mode(INPUT_MODE_CV);
+  
+  // cv_set_calibration(CV_RANGE_BIPOLAR, 38, 1460);
+  cv_set_mode(CV_MODE_LINEAR);   // Linear voltage to MIDI mapping
+  cv_set_range(CV_RANGE_5V);
+  
+  // Other input mode options:
+  // input_set_mode(INPUT_MODE_CLOCK_SYNC);  // Clock pulse detection
+  // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
   
   // sensor_init();
   // als_enable();
@@ -78,7 +94,15 @@ void app_main(void) {
   
   // task_monitor_init();
   // vTaskDelay(pdMS_TO_TICKS(3000));
-  // ESP_LOGI(TAG, "Initial memory and task report:");
   // task_monitor_print_heap_info();
   // task_monitor_print_report();
+
+  // while (1) {
+  //   if (gpio_get_level(PIN_CV_SW) == 1) {
+  //     ESP_LOGI(TAG, "HIGH");
+  //   } else {
+  //     ESP_LOGI(TAG, "LOW");
+  //   }
+  //   vTaskDelay(pdMS_TO_TICKS(1000));
+  // }
 }

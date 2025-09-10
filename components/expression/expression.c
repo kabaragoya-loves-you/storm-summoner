@@ -26,7 +26,7 @@
 
 // Default calibration values
 #define DEFAULT_MIN_VALUE 0
-#define DEFAULT_MAX_VALUE 1575
+#define DEFAULT_MAX_VALUE 4050
 #define DEFAULT_DEADZONE 2
 #define DEFAULT_CC_NUMBER 4  // Foot Controller
 
@@ -51,6 +51,8 @@ static int s_sum_samples = 0;
 static int s_num_samples = 0;
 
 static void expression_task(void *pvParameters) {
+  ESP_LOGI(TAG, "Expression task started - Channel %d (Expression), Channel %d (Reference)", EXPRESSION_CHANNEL, REFERENCE_CHANNEL);
+  
   uint8_t last_midi_value = 0;
   bool was_connected = false;
   bool first_reading = true;  // Flag to skip initial change detection
@@ -93,6 +95,7 @@ static void expression_task(void *pvParameters) {
       ratio = ads1015_read_ratiometric(EXPRESSION_CHANNEL, REFERENCE_CHANNEL, ADS1015_GAIN_ONE);
       if (ratio < 0) {
         ESP_LOGW(TAG, "Ratiometric read failed");
+        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
         continue;
       }
       // Convert ratio back to raw value scale (0-4095)
@@ -100,6 +103,11 @@ static void expression_task(void *pvParameters) {
       #else
       // Use direct ADC reading
       raw = ads1015_read_channel_default(EXPRESSION_CHANNEL);
+      if (raw < 0) {
+        ESP_LOGW(TAG, "Direct ADC read failed on channel %d", EXPRESSION_CHANNEL);
+        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+        continue;
+      }
       #endif
       
       static int16_t last_raw = -1;
@@ -109,7 +117,7 @@ static void expression_task(void *pvParameters) {
       #if USE_RATIOMETRIC
       // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "Ratio: %.3f, raw: %d, filtered: %.1f, MIDI: %d", ratio, raw, s_expression_value, s_midi_value);
       #else
-      // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d (ch%d)", raw, s_expression_value, s_midi_value, EXPRESSION_CHANNEL);
+      if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d (ch%d)", raw, s_expression_value, s_midi_value, EXPRESSION_CHANNEL);
       #endif
       
       // Detect wrap-around or large jumps

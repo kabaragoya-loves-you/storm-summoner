@@ -98,21 +98,6 @@ void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "=== END DEBUG DATA ===");
 }
 
-// Stub functions for legacy compatibility - these will be removed once UI module takes over
-#ifdef TOUCH_LEGACY_SUPPORT
-void touch_register_button_callback(touch_button_callback_t callback) {
-  ESP_LOGW(TAG, "touch_register_button_callback: Callbacks deprecated, use event bus");
-}
-
-void touch_register_wheel_callback(touch_wheel_callback_t callback) {
-  ESP_LOGW(TAG, "touch_register_wheel_callback: Callbacks deprecated, use event bus");
-}
-
-void touch_register_mode_callback(touch_mode_callback_t callback) {
-  ESP_LOGW(TAG, "touch_register_mode_callback: Callbacks deprecated, use event bus");
-}
-#endif // TOUCH_LEGACY_SUPPORT
-
 void touch_set_wheel_config(touch_wheel_config_t config) {
   ESP_LOGW(TAG, "touch_set_wheel_config: Config now managed by UI module");
 }

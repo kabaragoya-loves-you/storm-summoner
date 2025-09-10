@@ -1,0 +1,247 @@
+#include "clock_sync.h"
+#include "switch.h"
+#include "event_bus.h"
+#include "app_settings.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "task_priorities.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "io.h"
+
+#define TAG "CLOCK_SYNC"
+
+// NVS keys
+#define NVS_KEY_SYNC_MODE "sync_mode"
+#define NVS_KEY_SYNC_VOLTAGE_RANGE "sync_vrange"
+
+// Constants
+#define SYNC_TIMEOUT_MS 2000       // Consider sync lost after 2 seconds
+#define MIN_BPM 30
+#define MAX_BPM 250
+#define PULSE_BUFFER_SIZE 8        // Average over last 8 pulse intervals
+#define DEBOUNCE_TIME_MS 1         // 1ms debounce for edge detection
+
+// State
+static clock_sync_mode_t s_mode = CLOCK_SYNC_24PPQN;
+static sync_voltage_range_t s_voltage_range = SYNC_VOLTAGE_RANGE_5V;
+static bool s_sync_active = false;
+static uint8_t s_current_bpm = 0;
+static bool s_enabled = false;
+
+// Pulse detection
+static uint32_t s_last_pulse_time = 0;
+static uint32_t s_pulse_intervals[PULSE_BUFFER_SIZE] = {0};
+static uint8_t s_pulse_index = 0;
+static uint8_t s_pulse_count = 0;
+
+// ISR queue for edge detection
+static QueueHandle_t s_gpio_evt_queue = NULL;
+
+// Forward declarations
+static void clock_sync_task(void *pvParameters);
+static uint8_t calculate_bpm_from_interval(uint32_t interval_ms, clock_sync_mode_t mode);
+
+// ISR handler for clock pulses
+static void IRAM_ATTR clock_sync_isr(void *arg) {
+  uint32_t now = esp_timer_get_time() / 1000; // Convert to ms
+  xQueueSendFromISR(s_gpio_evt_queue, &now, NULL);
+}
+
+esp_err_t clock_sync_init(void) {
+  ESP_LOGI(TAG, "Initializing clock sync component");
+  
+  // Load settings from NVS
+  uint8_t mode = CLOCK_SYNC_24PPQN;
+  app_settings_load_u8(NVS_KEY_SYNC_MODE, &mode);
+  s_mode = (clock_sync_mode_t)mode;
+  
+  uint8_t vrange = SYNC_VOLTAGE_RANGE_5V;
+  app_settings_load_u8(NVS_KEY_SYNC_VOLTAGE_RANGE, &vrange);
+  s_voltage_range = (sync_voltage_range_t)vrange;
+
+  // Configure GPIO for clock interrupt
+  gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << PIN_CLOCK_INT),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_DISABLE,
+    .pull_down_en = GPIO_PULLDOWN_ENABLE,
+    .intr_type = GPIO_INTR_DISABLE  // Will enable when clock_sync_enable() is called
+  };
+  gpio_config(&io_conf);
+  
+  // Create a queue to handle gpio events from isr
+  s_gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+  
+  ESP_LOGI(TAG, "Clock sync initialized - Mode: %d, Voltage range: %d", s_mode, s_voltage_range);
+  
+  return ESP_OK;
+}
+
+void clock_sync_enable(void) {
+  if (!s_enabled) {
+    s_enabled = true;
+    
+    // Note: Clock sync shares the same hardware path as CV through PCA9536
+    // The CV component manages the PCA9536 switch based on cable detection
+    // Clock sync just monitors PIN_CLOCK_INT for pulses
+    ESP_LOGI(TAG, "Clock sync detection enabled (PCA9536 managed by CV component)");
+    
+    xTaskCreate(clock_sync_task, "clock_sync", 2048, NULL, TASK_PRIORITY_SYNC_BPM, NULL);
+    
+    gpio_isr_handler_add(PIN_CLOCK_INT, clock_sync_isr, NULL);
+    
+    gpio_set_intr_type(PIN_CLOCK_INT, GPIO_INTR_POSEDGE);
+    
+    ESP_LOGI(TAG, "Clock sync detection enabled");
+  }
+}
+
+void clock_sync_disable(void) {
+  if (s_enabled) {
+    s_enabled = false;
+    
+    // Disable interrupt
+    gpio_set_intr_type(PIN_CLOCK_INT, GPIO_INTR_DISABLE);
+    gpio_isr_handler_remove(PIN_CLOCK_INT);
+    
+    s_sync_active = false;
+    s_current_bpm = 0;
+    s_pulse_count = 0;
+    
+    ESP_LOGI(TAG, "Clock sync detection disabled");
+  }
+}
+
+static void clock_sync_task(void *pvParameters) {
+  uint32_t pulse_time;
+  uint32_t last_pulse_time = 0;
+  
+  while (s_enabled) {
+    if (xQueueReceive(s_gpio_evt_queue, &pulse_time, pdMS_TO_TICKS(100))) {
+      // Debounce - ignore pulses too close together
+      if (last_pulse_time > 0 && (pulse_time - last_pulse_time) < DEBOUNCE_TIME_MS) continue;
+      
+      // Post sync pulse event
+      event_t sync_event = {
+        .type = EVENT_CLOCK_SYNC_PULSE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp()
+      };
+      event_bus_post(&sync_event);
+      
+      // Calculate interval since last pulse
+      if (s_last_pulse_time > 0) {
+        uint32_t interval = pulse_time - s_last_pulse_time;
+        
+        // Store interval in circular buffer
+        s_pulse_intervals[s_pulse_index] = interval;
+        s_pulse_index = (s_pulse_index + 1) % PULSE_BUFFER_SIZE;
+        if (s_pulse_count < PULSE_BUFFER_SIZE) s_pulse_count++;
+        
+        // Calculate average interval
+        if (s_pulse_count >= 2) {
+          uint32_t total_interval = 0;
+          for (int i = 0; i < s_pulse_count; i++) total_interval += s_pulse_intervals[i];
+          uint32_t avg_interval = total_interval / s_pulse_count;
+          
+          // Calculate BPM
+          uint8_t new_bpm = calculate_bpm_from_interval(avg_interval, s_mode);
+          
+          if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM) {
+            if (new_bpm != s_current_bpm) {
+              s_current_bpm = new_bpm;
+              ESP_LOGI(TAG, "Sync BPM: %d (interval: %lums)", s_current_bpm, avg_interval);
+            }
+            s_sync_active = true;
+          }
+        }
+      }
+      
+      s_last_pulse_time = pulse_time;
+      last_pulse_time = pulse_time;
+    } else {
+      // Check for sync timeout
+      if (s_sync_active && s_last_pulse_time > 0) {
+        uint32_t now = esp_timer_get_time() / 1000;
+        if ((now - s_last_pulse_time) > SYNC_TIMEOUT_MS) {
+          s_sync_active = false;
+          s_current_bpm = 0;
+          s_pulse_count = 0;
+          ESP_LOGI(TAG, "Clock sync lost");
+        }
+      }
+    }
+  }
+  
+  vTaskDelete(NULL);
+}
+
+static uint8_t calculate_bpm_from_interval(uint32_t interval_ms, clock_sync_mode_t mode) {
+  if (interval_ms == 0) return 0;
+  
+  uint32_t ms_per_beat;
+  
+  switch (mode) {
+    case CLOCK_SYNC_24PPQN:
+      ms_per_beat = interval_ms * 24;
+      break;
+    case CLOCK_SYNC_48PPQN:
+      ms_per_beat = interval_ms * 48;
+      break;
+    case CLOCK_SYNC_96PPQN:
+      ms_per_beat = interval_ms * 96;
+      break;
+    case CLOCK_SYNC_1PPQ:
+      ms_per_beat = interval_ms;
+      break;
+    case CLOCK_SYNC_2PPQ:
+      ms_per_beat = interval_ms * 2;
+      break;
+    case CLOCK_SYNC_4PPQ:
+      ms_per_beat = interval_ms * 4;
+      break;
+    default:
+      ms_per_beat = interval_ms * 24;
+      break;
+  }
+  
+  // BPM = 60000 / ms_per_beat
+  return (uint8_t)(60000 / ms_per_beat);
+}
+
+// Public API functions
+void clock_sync_set_mode(clock_sync_mode_t mode) {
+  s_mode = mode;
+  s_pulse_count = 0; // Reset averaging on mode change
+  app_settings_save_u8(NVS_KEY_SYNC_MODE, (uint8_t)mode);
+  ESP_LOGI(TAG, "Clock sync mode set to %d", mode);
+}
+
+clock_sync_mode_t clock_sync_get_mode(void) {
+  return s_mode;
+}
+
+uint8_t clock_sync_get_bpm(void) {
+  return s_sync_active ? s_current_bpm : 0;
+}
+
+bool clock_sync_is_active(void) {
+  return s_sync_active;
+}
+
+void clock_sync_set_voltage_range(sync_voltage_range_t range) {
+  s_voltage_range = range;
+  app_settings_save_u8(NVS_KEY_SYNC_VOLTAGE_RANGE, (uint8_t)range);
+  
+  // Update the PCA9536 switch
+  switch_set_channel((uint8_t)range);
+  
+  ESP_LOGI(TAG, "Clock sync voltage range set to %d", range);
+}
+
+sync_voltage_range_t clock_sync_get_voltage_range(void) {
+  return s_voltage_range;
+}

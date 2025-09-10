@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #define TAG "ADS1015"
 
@@ -37,9 +38,19 @@ static const uint16_t gain_to_mv[] = {
 
 static i2c_master_dev_handle_t s_dev_handle = NULL;
 static ads1015_rate_t s_data_rate = ADS1015_RATE_1600SPS;
+static SemaphoreHandle_t s_mutex = NULL;
 
 esp_err_t ads1015_init(void) {
   if (s_dev_handle) return ESP_OK; // Already initialized
+  
+  // Create mutex for thread-safe access
+  if (!s_mutex) {
+    s_mutex = xSemaphoreCreateMutex();
+    if (!s_mutex) {
+      ESP_LOGE(TAG, "Failed to create mutex");
+      return ESP_ERR_NO_MEM;
+    }
+  }
   
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
@@ -68,13 +79,20 @@ esp_err_t ads1015_init(void) {
 int16_t ads1015_read_channel(uint8_t channel, ads1015_gain_t gain) {
   if (!s_dev_handle || channel > 3 || gain > ADS1015_GAIN_SIXTEEN) return -1;
   
+  // Take mutex to ensure exclusive access during the entire read operation
+  if (!s_mutex || xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    ESP_LOGE(TAG, "Failed to take mutex");
+    return -1;
+  }
+  
   // Build config register value
   uint16_t config = ADS1015_CONFIG_OS_SINGLE |      // Start conversion
                     ADS1015_CONFIG_MODE_SINGLE |     // Single-shot mode
                     ADS1015_CONFIG_COMP_QUE;         // Disable comparator
   
   // Set channel (MUX bits)
-  config |= ((4 + channel) << ADS1015_CONFIG_MUX_OFFSET);  // Single-ended input
+  uint16_t mux_value = (4 + channel);
+  config |= (mux_value << ADS1015_CONFIG_MUX_OFFSET);  // Single-ended input
   
   // Set gain
   config |= (gain << ADS1015_CONFIG_PGA_OFFSET);
@@ -86,6 +104,7 @@ int16_t ads1015_read_channel(uint8_t channel, ads1015_gain_t gain) {
   esp_err_t ret = i2c_common_write_reg16_be(s_dev_handle, ADS1015_REG_POINTER_CONFIG, config);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to write config: %s", esp_err_to_name(ret));
+    xSemaphoreGive(s_mutex);
     return -1;
   }
   
@@ -106,6 +125,7 @@ int16_t ads1015_read_channel(uint8_t channel, ads1015_gain_t gain) {
   ret = i2c_common_read_reg16_be(s_dev_handle, ADS1015_REG_POINTER_CONVERT, &result);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read result: %s", esp_err_to_name(ret));
+    xSemaphoreGive(s_mutex);
     return -1;
   }
   
@@ -116,6 +136,7 @@ int16_t ads1015_read_channel(uint8_t channel, ads1015_gain_t gain) {
   // Clamp to valid 12-bit range
   if (adc_value > 4095) adc_value = 4095;
   
+  xSemaphoreGive(s_mutex);
   return (int16_t)adc_value;
 }
 
