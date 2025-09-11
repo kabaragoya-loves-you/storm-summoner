@@ -3,10 +3,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "ui.h"
-#include "touch.h"
 #include "app_settings.h"
 
 #define TAG "UI_EVENT"
+#define MAX_TOUCH_PADS 13
 #define NUM_WHEEL_PADS 8
 #define BUTTON_13_LOGICAL_PAD 12
 #define BUTTON_13_LONG_PRESS_MS 1000
