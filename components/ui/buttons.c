@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include "esp_log.h"
 
 #define BUTTONS_CENTER_X 64
 #define BUTTONS_CENTER_Y 64
@@ -107,7 +108,11 @@ static void draw_starfield_selective(void) {
   float center_x = BUTTONS_CENTER_X;
   float center_y = BUTTONS_CENTER_Y;
   float globe_r2 = BUTTONS_GLOBE_RADIUS * BUTTONS_GLOBE_RADIUS * BUTTONS_GLOBE_SCALE * BUTTONS_GLOBE_SCALE;
-  bool default_slices[BUTTONS_SLICE_COUNT] = {true, false, true, false, true, false, true, false};
+  
+  // Get current touch states for slices (pads 0-7 correspond to slices 0-7)
+  bool active_slices[BUTTONS_SLICE_COUNT];
+  for (uint8_t i = 0; i < BUTTONS_SLICE_COUNT; i++) active_slices[i] = ui_touch_is_button_pressed(i);
+  
   for (int i = 0; i < BUTTONS_STARS_COUNT; i++) {
     float sx = g_stars[i].x;
     float sy = g_stars[i].y;
@@ -119,7 +124,7 @@ static void draw_starfield_selective(void) {
     // Check if inside any active slice
     bool in_slice = false;
     for (uint8_t s = 0; s < BUTTONS_SLICE_COUNT; s++) {
-      if (!default_slices[s]) continue;
+      if (!active_slices[s]) continue;
       float start_angle_deg = (float)s * slice_angle_degrees - 90.0f;
       float end_angle_deg = start_angle_deg + slice_angle_degrees;
       if (point_in_slice(sx, sy, center_x, center_y, BUTTONS_BITE_SIZE, BUTTONS_RADIUS, start_angle_deg, end_angle_deg)) {
@@ -189,12 +194,12 @@ static void buttons_rotation_cb(lv_timer_t *timer) {
   if (!layer.draw_buf) return;
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
   globe_draw(canvas, BUTTONS_CENTER_X, BUTTONS_CENTER_Y, BUTTONS_GLOBE_RADIUS, rotation_x, rotation_y, rotation_z, BUTTONS_GLOBE_SCALE);
-  bool default_slices[BUTTONS_SLICE_COUNT] = {true, false, true, false, true, false, true, false};
+  
+  // Draw slices based on current touch states (pads 0-7 correspond to slices 0-7)
   for (uint8_t i = 0; i < BUTTONS_SLICE_COUNT; i++) {
-    if (default_slices[i]) {
-      draw_active_filled_slice(&layer, i);
-    }
+    if (ui_touch_is_button_pressed(i)) draw_active_filled_slice(&layer, i);
   }
+  
   draw_starfield_selective();
   lv_canvas_finish_layer(canvas, &layer);
   lv_obj_invalidate(canvas);

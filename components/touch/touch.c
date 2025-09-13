@@ -3,7 +3,6 @@
 #include "event_bus.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
-#include "driver/touch_pad.h"
 #include "io.h"
 #include "ui.h"
 
@@ -74,15 +73,6 @@ void force_touch_calibration(void) {
   ESP_LOGI(TAG, "Touch calibration triggered");
 }
 
-bool touch_is_button_pressed(touch_pad_t pad_num) {
-  // Convert touch_pad_t to logical pad number (0-12)
-  uint8_t logical_pad = (pad_num >= TOUCH_PAD_NUM1 && pad_num <= TOUCH_PAD_NUM13) ? 
-                        (pad_num - TOUCH_PAD_NUM1) : 0xFF;
-  
-  // Delegate to UI module which now manages button state
-  return ui_touch_is_button_pressed(logical_pad);
-}
-
 void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "=== TOUCH DEBUG DATA (Simplified) ===");
   
@@ -96,26 +86,4 @@ void touch_enable_debug_logging(void) {
   for (int i = 0; i < MAX_TOUCH_PADS; i++) if (s_button_pressed_states[i]) ESP_LOGI(TAG, "  Pad %d: PRESSED", i);
   
   ESP_LOGI(TAG, "=== END DEBUG DATA ===");
-}
-
-void touch_set_wheel_config(touch_wheel_config_t config) {
-  ESP_LOGW(TAG, "touch_set_wheel_config: Config now managed by UI module");
-}
-
-uint32_t touch_get_button13_long_press_ms(void) {
-  return ui_get_button13_long_press_ms();
-}
-
-esp_err_t touch_set_button13_long_press_ms(uint32_t value_ms) {
-  ui_set_button13_long_press_ms(value_ms);
-  return ESP_OK;
-}
-
-uint32_t touch_get_rotary_inactivity_timeout_ms(void) {
-  return ui_get_rotary_inactivity_timeout_ms();
-}
-
-esp_err_t touch_set_rotary_inactivity_timeout_ms(uint32_t value_ms) {
-  ui_set_rotary_inactivity_timeout_ms(value_ms);
-  return ESP_OK;
 }

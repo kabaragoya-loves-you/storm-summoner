@@ -27,6 +27,7 @@ esp_err_t input_manager_init(void) {
   s_current_mode = (input_mode_t)mode;
   
   // Initialize all input components
+  switch_init();
   cv_init();
   clock_sync_init();
   

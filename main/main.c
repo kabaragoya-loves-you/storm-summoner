@@ -25,7 +25,6 @@
 #include "driver/gpio.h"
 #include "esp_wifi.h"
 #include "io.h"
-#include "switch.h"
 #include "task_monitor.h"
 #include "transport.h"
 #include "tempo.h"
@@ -54,35 +53,27 @@ void app_main(void) {
   // led_init();
   // flicker_start();
   
-  // midi_out_init();
-  // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  // midi_callbacks_init();
+  midi_out_init();
+  midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
+  midi_callbacks_init();
   
-  switch_init();
-  ads1015_init();
-  expression_init();
-  expression_set_max_value(4050);
-  expression_enable();
+  // ads1015_init();
+  // expression_init();
+  // expression_enable();
   
-  input_manager_init();
-  
-  // Set input mode to CV
-  input_set_mode(INPUT_MODE_CV);
-  
-  // cv_set_calibration(CV_RANGE_BIPOLAR, 38, 1460);
-  cv_set_mode(CV_MODE_LINEAR);   // Linear voltage to MIDI mapping
-  cv_set_range(CV_RANGE_5V);
-  
-  // Other input mode options:
+  // input_manager_init();
+  // input_set_mode(INPUT_MODE_CV);
+  // cv_set_mode(CV_MODE_LINEAR);               // Linear voltage to MIDI mapping
   // input_set_mode(INPUT_MODE_CLOCK_SYNC);  // Clock pulse detection
   // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
+  // cv_set_range(CV_RANGE_5V);
   
   // sensor_init();
   // als_enable();
   // ps_enable();
 
-  transport_init();
-  tempo_init();
+  // transport_init();
+  // tempo_init();
   // tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // tempo_start();
 
