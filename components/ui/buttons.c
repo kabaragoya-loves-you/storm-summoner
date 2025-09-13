@@ -231,7 +231,7 @@ static void buttons_teardown(void) {
 static void buttons_init(void) {
   globe_init();
   rotation_x = rotation_y = rotation_z = 0.0f;
-  init_stars();
+  // init_stars();
 }
 
 ui_draw_module_t buttons_module = {
