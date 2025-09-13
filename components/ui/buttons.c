@@ -1,6 +1,7 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "globe.h"
+#include "starfield.h"
 #include "polygon.h"
 #include <math.h>
 #include <stdbool.h>
@@ -20,11 +21,6 @@
 #define BUTTONS_ROTATION_SPEED_X 0.020f
 #define BUTTONS_ROTATION_SPEED_Y 0.010f
 #define BUTTONS_ROTATION_SPEED_Z 0.0f
-#define BUTTONS_STARFIELD_SIZE 128
-#define BUTTONS_STARS_COUNT 24
-#define STAR_TWINKLE_VARIANCE 4
-#define STAR_MOVE_CHANCE 50
-#define STAR_MOVE_COUNTER_MAX 300
 #define TAG "BUTTONS"
 
 extern lv_obj_t *canvas;
@@ -35,54 +31,17 @@ static float rotation_y = 0.0f;
 static float rotation_z = 0.0f;
 static lv_timer_t *rotation_timer = NULL;
 
-// Star structure for twinkling starfield
+// Structure to hold exclusion zone data for starfield
 typedef struct {
-  float x, y;
-  uint8_t brightness;
-  uint8_t base_brightness;
-  uint16_t move_counter;
-} star_t;
+  bool* active_slices;
+  float center_x;
+  float center_y;
+  float globe_radius_squared;
+  float inner_radius;
+  float outer_radius;
+  float slice_angle_degrees;
+} buttons_exclusion_data_t;
 
-static star_t g_stars[BUTTONS_STARS_COUNT];
-
-static void init_star(int i) {
-  g_stars[i].x = rand() % BUTTONS_STARFIELD_SIZE;
-  g_stars[i].y = rand() % BUTTONS_STARFIELD_SIZE;
-  g_stars[i].base_brightness = (rand() % 12) + 1;
-  if (rand() % 4 == 0) {
-    g_stars[i].base_brightness = (rand() % 15) + 1;
-  }
-  g_stars[i].brightness = g_stars[i].base_brightness;
-  g_stars[i].move_counter = rand() % STAR_MOVE_COUNTER_MAX;
-}
-
-static void init_stars(void) {
-  for (int i = 0; i < BUTTONS_STARS_COUNT; i++) {
-    init_star(i);
-  }
-}
-
-static void update_star_twinkling(void) {
-  for (int i = 0; i < BUTTONS_STARS_COUNT; i++) {
-    int brightness_variance = (rand() % (STAR_TWINKLE_VARIANCE * 2 + 1)) - STAR_TWINKLE_VARIANCE;
-    int new_brightness = g_stars[i].base_brightness + brightness_variance;
-    g_stars[i].brightness = LV_CLAMP(1, new_brightness, 15);
-    g_stars[i].move_counter++;
-    if (g_stars[i].move_counter >= STAR_MOVE_COUNTER_MAX) {
-      g_stars[i].move_counter = 0;
-      if ((rand() % STAR_MOVE_CHANCE) == 0) {
-        g_stars[i].x = rand() % BUTTONS_STARFIELD_SIZE;
-        g_stars[i].y = rand() % BUTTONS_STARFIELD_SIZE;
-        if ((rand() % 3) == 0) {
-          g_stars[i].base_brightness = (rand() % 12) + 1;
-          if (rand() % 4 == 0) {
-            g_stars[i].base_brightness = (rand() % 15) + 1;
-          }
-        }
-      }
-    }
-  }
-}
 
 // Helper: check if a point is inside a given slice
 static bool point_in_slice(float x, float y, float center_x, float center_y, float inner_radius, float outer_radius, float start_angle_deg, float end_angle_deg) {
@@ -102,41 +61,32 @@ static bool point_in_slice(float x, float y, float center_x, float center_y, flo
   return angle >= start_angle_deg && angle <= end_angle_deg;
 }
 
-static void draw_starfield_selective(void) {
-  // Define slice geometry for checks
-  float slice_angle_degrees = 360.0f / BUTTONS_SLICE_COUNT;
-  float center_x = BUTTONS_CENTER_X;
-  float center_y = BUTTONS_CENTER_Y;
-  float globe_r2 = BUTTONS_GLOBE_RADIUS * BUTTONS_GLOBE_RADIUS * BUTTONS_GLOBE_SCALE * BUTTONS_GLOBE_SCALE;
+// Exclusion check function for starfield
+static bool buttons_exclusion_check(float x, float y, void* user_data) {
+  buttons_exclusion_data_t* data = (buttons_exclusion_data_t*)user_data;
+  if (!data) return false;
   
-  // Get current touch states for slices (pads 0-7 correspond to slices 0-7)
-  bool active_slices[BUTTONS_SLICE_COUNT];
-  for (uint8_t i = 0; i < BUTTONS_SLICE_COUNT; i++) active_slices[i] = ui_touch_is_button_pressed(i);
+  // Check if inside globe
+  float dx = x - data->center_x;
+  float dy = y - data->center_y;
+  float dist2 = dx * dx + dy * dy;
+  if (dist2 < data->globe_radius_squared) return true;
   
-  for (int i = 0; i < BUTTONS_STARS_COUNT; i++) {
-    float sx = g_stars[i].x;
-    float sy = g_stars[i].y;
-    // Check if inside globe
-    float dx = sx - center_x;
-    float dy = sy - center_y;
-    float dist2 = dx * dx + dy * dy;
-    if (dist2 < globe_r2) continue;
-    // Check if inside any active slice
-    bool in_slice = false;
-    for (uint8_t s = 0; s < BUTTONS_SLICE_COUNT; s++) {
-      if (!active_slices[s]) continue;
-      float start_angle_deg = (float)s * slice_angle_degrees - 90.0f;
-      float end_angle_deg = start_angle_deg + slice_angle_degrees;
-      if (point_in_slice(sx, sy, center_x, center_y, BUTTONS_BITE_SIZE, BUTTONS_RADIUS, start_angle_deg, end_angle_deg)) {
-        in_slice = true;
-        break;
-      }
+  // Check if inside any active slice
+  for (uint8_t s = 0; s < BUTTONS_SLICE_COUNT; s++) {
+    if (!data->active_slices[s]) continue;
+    float start_angle_deg = (float)s * data->slice_angle_degrees - 90.0f;
+    float end_angle_deg = start_angle_deg + data->slice_angle_degrees;
+    if (point_in_slice(x, y, data->center_x, data->center_y, 
+                      data->inner_radius, data->outer_radius, 
+                      start_angle_deg, end_angle_deg)) {
+      return true;
     }
-    if (in_slice) continue;
-    uint8_t scaled_gray = g_stars[i].brightness * 17;
-    lv_canvas_set_px(canvas, (int)sx, (int)sy, lv_color_make(scaled_gray, scaled_gray, scaled_gray), LV_OPA_COVER);
   }
+  
+  return false;
 }
+
 
 // Draw a single filled slice (copied from pizza2)
 static void draw_active_filled_slice(lv_layer_t *layer, uint8_t slice_index) {
@@ -187,7 +137,10 @@ static void buttons_rotation_cb(lv_timer_t *timer) {
   if (rotation_x > 2.0f * M_PI) rotation_x -= 2.0f * M_PI;
   if (rotation_y > 2.0f * M_PI) rotation_y -= 2.0f * M_PI;
   if (rotation_z > 2.0f * M_PI) rotation_z -= 2.0f * M_PI;
-  update_star_twinkling();
+  
+  // Update starfield animation
+  starfield_update();
+  
   if (!canvas) return;
   lv_layer_t layer;
   lv_canvas_init_layer(canvas, &layer);
@@ -195,12 +148,28 @@ static void buttons_rotation_cb(lv_timer_t *timer) {
   lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
   globe_draw(canvas, BUTTONS_CENTER_X, BUTTONS_CENTER_Y, BUTTONS_GLOBE_RADIUS, rotation_x, rotation_y, rotation_z, BUTTONS_GLOBE_SCALE);
   
-  // Draw slices based on current touch states (pads 0-7 correspond to slices 0-7)
+  // Get current touch states and draw slices
+  bool active_slices[BUTTONS_SLICE_COUNT];
   for (uint8_t i = 0; i < BUTTONS_SLICE_COUNT; i++) {
-    if (ui_touch_is_button_pressed(i)) draw_active_filled_slice(&layer, i);
+    active_slices[i] = ui_touch_is_button_pressed(i);
+    if (active_slices[i]) draw_active_filled_slice(&layer, i);
   }
   
-  draw_starfield_selective();
+  // Set up exclusion data for starfield
+  buttons_exclusion_data_t exclusion_data = {
+    .active_slices = active_slices,
+    .center_x = BUTTONS_CENTER_X,
+    .center_y = BUTTONS_CENTER_Y,
+    .globe_radius_squared = BUTTONS_GLOBE_RADIUS * BUTTONS_GLOBE_RADIUS * BUTTONS_GLOBE_SCALE * BUTTONS_GLOBE_SCALE,
+    .inner_radius = BUTTONS_BITE_SIZE,
+    .outer_radius = BUTTONS_RADIUS,
+    .slice_angle_degrees = 360.0f / BUTTONS_SLICE_COUNT
+  };
+  
+  // Draw starfield with exclusion zones
+  starfield_exclusion_check_fn exclusion_checks[] = { buttons_exclusion_check };
+  starfield_draw(canvas, exclusion_checks, 1, &exclusion_data);
+  
   lv_canvas_finish_layer(canvas, &layer);
   lv_obj_invalidate(canvas);
 }
@@ -226,12 +195,13 @@ static void buttons_teardown(void) {
     lv_timer_del(rotation_timer);
     rotation_timer = NULL;
   }
+  starfield_deinit();  // Clean up starfield resources
 }
 
 static void buttons_init(void) {
   globe_init();
+  starfield_init();  // Initialize starfield with default config
   rotation_x = rotation_y = rotation_z = 0.0f;
-  // init_stars();
 }
 
 ui_draw_module_t buttons_module = {
