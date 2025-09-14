@@ -43,7 +43,7 @@ void app_main(void) {
   display_init();
   
   ui_init();
-  ui_set_draw_module(&sphere_module);
+  ui_set_draw_module(&sphere2_module);
   
   // touch_init();
   // force_touch_calibration();
@@ -83,9 +83,9 @@ void app_main(void) {
   performance_init();
   #endif
   
-  // task_monitor_init();
-  // vTaskDelay(pdMS_TO_TICKS(3000));
-  // task_monitor_print_heap_info();
+  task_monitor_init();
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  task_monitor_print_heap_info();
   // task_monitor_print_report();
 
   // while (1) {
