@@ -42,7 +42,7 @@ void app_main(void) {
   display_init();
   
   ui_init();
-  ui_set_draw_module(&buttons_module);
+  ui_set_draw_module(&boundary_circle_module);
   
   touch_init();
   // force_touch_calibration();
@@ -76,15 +76,16 @@ void app_main(void) {
   // tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // tempo_start();
 
-  // screensaver_init();
+  screensaver_init();
+  screensaver_set_mode(SCREENSAVER_MODE_ELITE);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
   #endif
   
-  // task_monitor_init();
-  // vTaskDelay(pdMS_TO_TICKS(3000));
-  // task_monitor_print_heap_info();
+  task_monitor_init();
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  task_monitor_print_heap_info();
   // task_monitor_print_report();
 
   // while (1) {

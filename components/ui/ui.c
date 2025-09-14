@@ -10,7 +10,7 @@ lv_obj_t *canvas = NULL;
 static lv_timer_t *g_ui_refresh_timer = NULL;
 static ui_draw_module_t* current_draw_module = NULL;
 
-static lv_color_t display_buf[128 * 128] __attribute__((aligned(4)));
+static lv_color_t *display_buf = NULL;
 
 #define TAG "UI"
 
@@ -76,14 +76,22 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
 }
 
 void ui_init(void) {
+  // Allocate display buffer
+  size_t buf_size = 128 * 128 * sizeof(lv_color_t);
+  display_buf = lv_malloc(buf_size);
+  if (!display_buf) {
+    ESP_LOGE(TAG, "Failed to allocate display buffer!");
+    return;
+  }
+  
   // Standard RGB565 canvas - same as all other modes
   canvas = lv_canvas_create(lv_scr_act());
   lv_obj_set_size(canvas, 128, 128);
   lv_obj_center(canvas);
   
-  memset(display_buf, 0, sizeof(display_buf));
+  memset(display_buf, 0, buf_size);
   lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_RGB565);
-  ESP_LOGI(TAG, "Canvas created: %d bytes", (int)sizeof(display_buf));
+  ESP_LOGI(TAG, "Canvas created: %d bytes", (int)buf_size);
 
   g_ui_refresh_timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
 
@@ -131,4 +139,63 @@ void ui_graphics_resume(void) {
   // Defer canvas showing to avoid blocking in timer callback context
   lv_timer_t *show_timer = lv_timer_create(deferred_canvas_show_cb, 1, NULL);
   if (show_timer != NULL) lv_timer_set_repeat_count(show_timer, 1);
+}
+
+void ui_release_canvas_buffer(void) {
+  ESP_LOGI(TAG, "Releasing UI canvas buffer (32KB)...");
+  
+  // Pause the refresh timer
+  if (g_ui_refresh_timer != NULL) {
+    lv_timer_pause(g_ui_refresh_timer);
+  }
+  
+  // Hide the canvas
+  if (canvas != NULL) {
+    lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+  }
+  
+  // Free the buffer
+  if (display_buf) {
+    lv_free(display_buf);
+    display_buf = NULL;
+    ESP_LOGI(TAG, "UI canvas buffer freed");
+  }
+  
+  // Note: We don't clear the canvas buffer binding here because LVGL doesn't like NULL buffers
+  // The canvas will just remain hidden until we reclaim and set a new buffer
+}
+
+void ui_reclaim_canvas_buffer(void) {
+  ESP_LOGI(TAG, "Reclaiming UI canvas buffer...");
+  
+  // Reallocate the buffer if needed
+  if (!display_buf) {
+    size_t buf_size = 128 * 128 * sizeof(lv_color_t);
+    display_buf = lv_malloc(buf_size);
+    if (!display_buf) {
+      ESP_LOGE(TAG, "Failed to reallocate display buffer!");
+      return;
+    }
+    memset(display_buf, 0, buf_size);
+  }
+  
+  // Restore the canvas buffer
+  if (canvas != NULL && display_buf != NULL) {
+    lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_RGB565);
+    lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(canvas);
+  }
+  
+  // Resume the refresh timer
+  if (g_ui_refresh_timer != NULL) {
+    lv_timer_resume(g_ui_refresh_timer);
+  }
+  
+  // Redraw the current module if any
+  if (current_draw_module && current_draw_module->draw_func) {
+    current_draw_module->draw_func();
+  }
+  
+  ESP_LOGI(TAG, "UI canvas buffer reclaimed");
 }

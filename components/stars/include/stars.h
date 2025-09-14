@@ -13,8 +13,9 @@ typedef struct {
   uint8_t brightness; // 0..255
 } Star;
 
-void create_starfield(void);
+void create_starfield(void);  // Deprecated
 void starfield_start(void);
 void starfield_stop(void);
+void starfield_cleanup(void);  // Full cleanup of resources
 
 #endif // STARS_H

@@ -14,6 +14,7 @@
 
 void elite_start(void);
 void elite_stop(void);
+void elite_cleanup(void);  // Full cleanup of resources
 
 /**
  * @brief Display a specific ship

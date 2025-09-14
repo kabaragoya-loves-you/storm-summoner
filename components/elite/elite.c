@@ -7,6 +7,7 @@
 #include "ships.h"
 #include "esp_random.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,23 +40,45 @@ static lv_timer_t *g_ship_cycling_timer = NULL; // For cycling ships
 static lv_style_t style_default;
 static bool g_elite_style_initialized = false;
 
-static lv_color_t canvas_buf[ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT];
+static lv_color_t *canvas_buf = NULL;
+static lv_obj_t *g_elite_screen = NULL;
+static lv_obj_t *g_previous_screen = NULL;
 
 static void next_random_ship(lv_timer_t *timer);
 static void draw_wireframe_ship(void);
 static void rotate_ship_cb(lv_timer_t *timer);
 static void cleanup_ship_resources(void);
+static void resume_rotation_timer_cb(lv_timer_t *timer);
+static void init_display_cb(lv_timer_t *timer);
+static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color);
 
 static void draw_wireframe_ship(void) {
-  for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  if (!canvas_buf || !canvas) return;
   
+  // Verify canvas has a valid buffer before proceeding
+  if (!lv_canvas_get_buf(canvas)) {
+    ESP_LOGW(TAG, "Canvas buffer not set yet, skipping draw");
+    return;
+  }
+  
+  // Check if canvas is on the active screen
+  lv_obj_t *canvas_screen = lv_obj_get_screen(canvas);
+  if (canvas_screen != lv_scr_act()) {
+    ESP_LOGW(TAG, "Canvas is not on active screen, skipping draw");
+    return;
+  }
+  
+  if (canvas_buf) {
+    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  }
+  
+  // Direct wireframe drawing without layers
   int face, f_line, wf_f_1, wf_f_2;
-  lv_layer_t layer;
-  lv_canvas_init_layer(canvas, &layer);
 
   for (face = 0; face < ship_faces_cnt; face++) {
     vector = 0;
 
+    // Calculate face normal for back-face culling
     for (f_line = 1; f_line < ship_faces[face][0]; f_line++) {
       wf_f_1 = ship_faces[face][f_line];
       wf_f_2 = ship_faces[face][f_line + 1];
@@ -66,7 +89,9 @@ static void draw_wireframe_ship(void) {
     wf_f_2 = ship_faces[face][1];
     vector += wireframe[wf_f_1][0] * wireframe[wf_f_2][1] - wireframe[wf_f_1][1] * wireframe[wf_f_2][0];
 
+    // Only draw visible faces (back-face culling)
     if (vector >= 0) {
+      // Draw each edge of the face
       for (f_line = 1; f_line < ship_faces[face][0]; f_line++) {
         wf_f_1 = ship_faces[face][f_line];
         wf_f_2 = ship_faces[face][f_line + 1];
@@ -76,25 +101,11 @@ static void draw_wireframe_ship(void) {
         int x2 = wireframe[wf_f_2][0];
         int y2 = wireframe[wf_f_2][1];
         
-        x1 = LV_CLAMP(0, x1, ELITE_DISPLAY_WIDTH - 1);
-        y1 = LV_CLAMP(0, y1, ELITE_DISPLAY_HEIGHT - 1);
-        x2 = LV_CLAMP(0, x2, ELITE_DISPLAY_WIDTH - 1);
-        y2 = LV_CLAMP(0, y2, ELITE_DISPLAY_HEIGHT - 1);
-        
-        lv_draw_line_dsc_t line_dsc;
-        lv_draw_line_dsc_init(&line_dsc);
-        line_dsc.color = lv_color_white();
-        line_dsc.width = 1;
-        line_dsc.opa = LV_OPA_COVER;
-        
-        line_dsc.p1.x = x1;
-        line_dsc.p1.y = y1;
-        line_dsc.p2.x = x2;
-        line_dsc.p2.y = y2;
-        
-        lv_draw_line(&layer, &line_dsc);
+        // Draw the line using our direct drawing function
+        draw_line_on_canvas(x1, y1, x2, y2, lv_color_white());
       }
       
+      // Draw the closing edge
       wf_f_1 = ship_faces[face][f_line];
       wf_f_2 = ship_faces[face][1];
       
@@ -103,36 +114,71 @@ static void draw_wireframe_ship(void) {
       int x2 = wireframe[wf_f_2][0];
       int y2 = wireframe[wf_f_2][1];
       
-      x1 = LV_CLAMP(0, x1, ELITE_DISPLAY_WIDTH - 1);
-      y1 = LV_CLAMP(0, y1, ELITE_DISPLAY_HEIGHT - 1);
-      x2 = LV_CLAMP(0, x2, ELITE_DISPLAY_WIDTH - 1);
-      y2 = LV_CLAMP(0, y2, ELITE_DISPLAY_HEIGHT - 1);
-      
-      lv_draw_line_dsc_t line_dsc;
-      lv_draw_line_dsc_init(&line_dsc);
-      line_dsc.color = lv_color_white();
-      line_dsc.width = 1;
-      line_dsc.opa = LV_OPA_COVER;
-      
-      line_dsc.p1.x = x1;
-      line_dsc.p1.y = y1;
-      line_dsc.p2.x = x2;
-      line_dsc.p2.y = y2;
-      
-      lv_draw_line(&layer, &line_dsc);
+      draw_line_on_canvas(x1, y1, x2, y2, lv_color_white());
     }
   }
   
-  lv_canvas_finish_layer(canvas, &layer);
+  // Invalidate the canvas to trigger a redraw
+  lv_obj_invalidate(canvas);
+}
+
+static void resume_rotation_timer_cb(lv_timer_t *timer) {
+  if (rotation_timer) {
+    lv_timer_resume(rotation_timer);
+  }
+  lv_timer_del(timer);
+}
+
+static void init_display_cb(lv_timer_t *timer) {
+  next_random_ship(NULL);
+  // Resume the ship cycling timer now that first ship is displayed
+  if (g_ship_cycling_timer) {
+    lv_timer_resume(g_ship_cycling_timer);
+  }
+  lv_timer_del(timer);
+}
+
+// Simple Bresenham line drawing algorithm for canvas
+static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color) {
+  if (!canvas) return;
+  
+  int dx = abs(x1 - x0);
+  int dy = abs(y1 - y0);
+  int sx = x0 < x1 ? 1 : -1;
+  int sy = y0 < y1 ? 1 : -1;
+  int err = dx - dy;
+  
+  while (1) {
+    // Draw pixel if within bounds
+    if (x0 >= 0 && x0 < ELITE_DISPLAY_WIDTH && y0 >= 0 && y0 < ELITE_DISPLAY_HEIGHT) {
+      lv_canvas_set_px(canvas, x0, y0, color, LV_OPA_COVER);
+    }
+    
+    if (x0 == x1 && y0 == y1) break;
+    
+    int e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      x0 += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y0 += sy;
+    }
+  }
 }
 
 static void rotate_ship_cb(lv_timer_t *timer) {
+  if (!canvas || !canvas_buf) return;
+  
   static int angle = 0;
   static int rotation_pattern = -1;  // -1 means we need to pick a new pattern
   
   if (rotation_pattern == -1) rotation_pattern = (esp_random() % 2);
   
-  for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  if (canvas_buf) {
+    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  }
 
   for (int i = 0; i < ship_vertices_cnt; i++) {
     float rot = angle * 0.0174532; // 0.0174532 = one degree
@@ -228,40 +274,92 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
   
   scalefactor = 0;
   
-  canvas = lv_canvas_create(lv_scr_act());
+  canvas = lv_canvas_create(g_elite_screen ? g_elite_screen : lv_scr_act());
   
   lv_obj_remove_style_all(canvas);  // Remove any default padding/margins
   lv_obj_set_size(canvas, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT);
   lv_obj_align(canvas, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_pad_all(canvas, 0, 0);  // No padding
   
-  for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  if (canvas_buf) {
+    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  }
   
-  lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_RGB565);
+  if (canvas_buf) {
+    lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_RGB565);
+  } else {
+    ESP_LOGE(TAG, "Canvas buffer is NULL in display_ship!");
+    lv_obj_delete(canvas);
+    canvas = NULL;
+    if (info_label) {
+      lv_obj_delete(info_label);
+      info_label = NULL;
+    }
+    return;
+  }
   
-  info_label = lv_label_create(lv_scr_act());
+  info_label = lv_label_create(g_elite_screen ? g_elite_screen : lv_scr_act());
   lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 20);
   lv_obj_add_style(info_label, &style_default, 0);
   lv_label_set_text(info_label, ShipName);
   
+  // Create timer and it will start automatically
   rotation_timer = lv_timer_create(rotate_ship_cb, ELITE_ROTATION_INTERVAL_MS, NULL);
 }
 
 void elite_start(void) {
+  ESP_LOGI(TAG, "Starting Elite screensaver...");
+  
+  // Save current screen
+  g_previous_screen = lv_scr_act();
+  
+  // Create screen if needed
+  if (!g_elite_screen) {
+    g_elite_screen = lv_obj_create(NULL);
+    lv_obj_set_size(g_elite_screen, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT);
+    lv_obj_set_style_bg_color(g_elite_screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(g_elite_screen, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(g_elite_screen, 0, 0);
+  }
+  
+  // Check available memory before allocating canvas buffer
+  if (!canvas_buf) {
+    size_t free_heap = esp_get_free_heap_size();
+    size_t required_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * sizeof(lv_color_t);
+    
+    ESP_LOGI(TAG, "Free heap: %d bytes, need %d bytes for canvas", free_heap, required_size);
+    
+    if (free_heap < required_size + 16384) { // Keep 16KB safety margin
+      ESP_LOGE(TAG, "Not enough memory for Elite canvas");
+      return;
+    }
+    
+    canvas_buf = lv_malloc(required_size);
+    if (!canvas_buf) {
+      ESP_LOGE(TAG, "Failed to allocate canvas buffer");
+      return;
+    }
+    ESP_LOGI(TAG, "Allocated canvas buffer (32KB)");
+  }
+  
+  // Initialize style if needed
   if (!g_elite_style_initialized) {
     lv_style_init(&style_default);
-    lv_style_set_text_font(&style_default, &flyer_venice_14);  // Use the new font
+    lv_style_set_text_font(&style_default, &flyer_venice_14);
     lv_style_set_text_color(&style_default, lv_color_white());
     g_elite_style_initialized = true;
   }
-
-  lv_obj_t *screen = lv_scr_act();
-  lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
   
-  for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  // Load the screen FIRST before creating any objects on it
+  lv_scr_load(g_elite_screen);
+  
+  if (canvas_buf) {
+    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+  }
 
-  next_random_ship(NULL); 
+  // Defer the initial ship display to ensure screen is fully loaded
+  lv_timer_t *init_timer = lv_timer_create(init_display_cb, 200, NULL);
+  lv_timer_set_repeat_count(init_timer, 1); 
   
   if (g_ship_cycling_timer == NULL) {
     g_ship_cycling_timer = lv_timer_create(next_random_ship, ELITE_SHIP_CHANGE_INTERVAL_MS, NULL);
@@ -269,14 +367,68 @@ void elite_start(void) {
       cleanup_ship_resources();
       return;
     }
-  } else lv_timer_resume(g_ship_cycling_timer);
+    // Start paused, will be resumed after first ship is displayed
+    lv_timer_pause(g_ship_cycling_timer);
+  } else {
+    lv_timer_pause(g_ship_cycling_timer);
+  }
 
   ESP_LOGI(TAG, "Elite screensaver started");
 }
 
 void elite_stop(void) {
+  ESP_LOGI(TAG, "Stopping Elite screensaver...");
+  
   cleanup_ship_resources();
-  ESP_LOGI(TAG, "Elite screensaver stopped and resources cleaned up");
+  
+  // Free canvas buffer to save memory
+  if (canvas_buf) {
+    lv_free(canvas_buf);
+    canvas_buf = NULL;
+    ESP_LOGI(TAG, "Freed canvas buffer (32KB)");
+  }
+  
+  // Restore previous screen
+  if (g_previous_screen && lv_obj_is_valid(g_previous_screen)) {
+    lv_scr_load(g_previous_screen);
+    g_previous_screen = NULL;
+  } else {
+    ESP_LOGW(TAG, "Previous screen invalid or null, cannot restore");
+  }
+  
+  ESP_LOGI(TAG, "Elite screensaver stopped");
+}
+
+void elite_cleanup(void) {
+  ESP_LOGI(TAG, "Cleaning up Elite resources...");
+  
+  // Stop any active timers
+  if (rotation_timer) {
+    lv_timer_del(rotation_timer);
+    rotation_timer = NULL;
+  }
+  if (g_ship_cycling_timer) {
+    lv_timer_del(g_ship_cycling_timer);
+    g_ship_cycling_timer = NULL;
+  }
+  
+  // Delete screen and all children
+  if (g_elite_screen) {
+    lv_obj_delete(g_elite_screen);
+    g_elite_screen = NULL;
+    canvas = NULL;
+    info_label = NULL;
+  }
+  
+  // Free canvas buffer
+  if (canvas_buf) {
+    lv_free(canvas_buf);
+    canvas_buf = NULL;
+  }
+  
+  g_previous_screen = NULL;
+  
+  ESP_LOGI(TAG, "Elite cleanup complete");
 }
 
 static void next_random_ship(lv_timer_t *timer) {
