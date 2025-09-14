@@ -76,8 +76,6 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
 }
 
 void ui_init(void) {
-  ESP_LOGI(TAG, "Mode 5: Clean RGB565 with I4 display driver conversion (double buffering)");
-
   // Standard RGB565 canvas - same as all other modes
   canvas = lv_canvas_create(lv_scr_act());
   lv_obj_set_size(canvas, 128, 128);

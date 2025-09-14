@@ -11,7 +11,6 @@
 #include "tempo.h"
 #include "elite.h"
 #include "ui.h"
-#include "sphere3.h"
 #include "app_settings.h"
 #include "event_bus.h"
 #include "screensaver.h"
@@ -38,14 +37,14 @@ void app_main(void) {
 
   app_settings_init();
   
-  // event_bus_init();
+  event_bus_init();
   
   display_init();
   
   ui_init();
-  ui_set_draw_module(&sphere2_module);
+  ui_set_draw_module(&buttons_module);
   
-  // touch_init();
+  touch_init();
   // force_touch_calibration();
   
   // bump_init();
@@ -83,9 +82,9 @@ void app_main(void) {
   performance_init();
   #endif
   
-  task_monitor_init();
-  vTaskDelay(pdMS_TO_TICKS(3000));
-  task_monitor_print_heap_info();
+  // task_monitor_init();
+  // vTaskDelay(pdMS_TO_TICKS(3000));
+  // task_monitor_print_heap_info();
   // task_monitor_print_report();
 
   // while (1) {

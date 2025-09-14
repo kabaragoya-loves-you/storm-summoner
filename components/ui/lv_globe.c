@@ -1,12 +1,7 @@
 #include "lv_globe.h"
-#include "globe.h"  // For the original globe rendering functions
 #include <math.h>
 #include <stdlib.h>
 #include "esp_log.h"
-
-// Earth texture data - from globe.c
-extern lv_color_t *texture_data;
-extern lv_color_t sample_texture(float u, float v);
 
 #define TAG "LV_GLOBE"
 
@@ -14,10 +9,72 @@ extern lv_color_t sample_texture(float u, float v);
 #define M_PI 3.14159265358979323846
 #endif
 
+// Texture configuration
+#define TEXTURE_WIDTH 128
+#define TEXTURE_HEIGHT 64
+#define TEXTURE_SIZE (TEXTURE_WIDTH * TEXTURE_HEIGHT)
+
+// External earth texture reference
+extern const lv_image_dsc_t earth;
+
+// Texture data storage
+static lv_color_t *texture_data = NULL;
+
 // Helper: 3D vector structure
 typedef struct {
   float x, y, z;
 } vec3_t;
+
+/**********************
+ *  STATIC FUNCTIONS
+ **********************/
+
+static bool load_earth_texture(void) {
+  if (texture_data) return true;
+  texture_data = malloc(TEXTURE_SIZE * sizeof(lv_color_t));
+  if (!texture_data) return false;
+  
+  if (earth.data && earth.header.w == TEXTURE_WIDTH && earth.header.h == TEXTURE_HEIGHT) {
+    const uint16_t *src_data = (const uint16_t *)earth.data;
+    for (int i = 0; i < TEXTURE_SIZE; i++) {
+      uint16_t rgb565 = src_data[i];
+      uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;
+      uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;
+      uint8_t b = (rgb565 & 0x1F) << 3;
+      texture_data[i] = lv_color_make(r, g, b);
+    }
+    ESP_LOGI(TAG, "Loaded Earth texture %dx%d", TEXTURE_WIDTH, TEXTURE_HEIGHT);
+    return true;
+  } else {
+    // Fallback test texture
+    for (int v = 0; v < TEXTURE_HEIGHT; v++) {
+      for (int u = 0; u < TEXTURE_WIDTH; u++) {
+        int idx = v * TEXTURE_WIDTH + u;
+        if ((u / 16) % 2 == 0) {
+          texture_data[idx] = lv_color_make(0, 100, 200);
+        } else {
+          texture_data[idx] = lv_color_make(50, 150, 50);
+        }
+        if (v < 8 || v > 56) {
+          texture_data[idx] = lv_color_make(200, 220, 255);
+        }
+      }
+    }
+    ESP_LOGW(TAG, "Using fallback test texture");
+    return true;
+  }
+}
+
+static lv_color_t sample_texture(float u, float v) {
+  if (!texture_data) return lv_color_make(128, 128, 128);
+  u = fmodf(u + 1.0f, 1.0f);
+  v = fmaxf(0.0f, fminf(0.999f, v));
+  int tex_x = (int)(u * TEXTURE_WIDTH);
+  int tex_y = (int)(v * TEXTURE_HEIGHT);
+  tex_x = LV_CLAMP(0, tex_x, TEXTURE_WIDTH - 1);
+  tex_y = LV_CLAMP(0, tex_y, TEXTURE_HEIGHT - 1);
+  return texture_data[tex_y * TEXTURE_WIDTH + tex_x];
+}
 
 /**********************
  *  STATIC PROTOTYPES
@@ -71,7 +128,7 @@ lv_obj_t * lv_globe_create(lv_obj_t * parent) {
   lv_obj_add_event_cb(obj, lv_globe_destructor_event_cb, LV_EVENT_DELETE, NULL);
   
   // Initialize the globe texture
-  globe_init();
+  load_earth_texture();
   
   // Create animation timer if auto-rotate is enabled
   if (globe_data->auto_rotate) {
@@ -93,6 +150,13 @@ static void lv_globe_destructor_event_cb(lv_event_t * e) {
     }
     free(globe_data);
     lv_obj_set_user_data(obj, NULL);
+  }
+  
+  // Clean up texture data on last globe destruction
+  // Note: This is a simplification - in production you might want reference counting
+  if (texture_data) {
+    free(texture_data);
+    texture_data = NULL;
   }
 }
 
