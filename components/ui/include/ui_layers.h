@@ -5,6 +5,8 @@
 #include "globe.h"
 #include "slices.h"
 #include "starfield.h"
+#include "radar.h"
+#include "background.h"
 
 // Globe layer context
 typedef struct {
@@ -35,6 +37,8 @@ typedef struct {
   int layer_id;                    // Layer ID for compositor exclusions
 } ui_starfield_layer_context_t;
 
+// Radar layer context (no additional context needed beyond config)
+
 // Create a globe layer
 ui_compositor_layer_t ui_create_globe_layer(ui_globe_layer_context_t* context);
 
@@ -43,6 +47,12 @@ ui_compositor_layer_t ui_create_slices_layer(ui_slices_layer_context_t* context)
 
 // Create a starfield layer
 ui_compositor_layer_t ui_create_starfield_layer(ui_starfield_layer_context_t* context);
+
+// Create a radar layer
+ui_compositor_layer_t ui_create_radar_layer(void);
+
+// Create a background layer
+ui_compositor_layer_t ui_create_background_layer(void);
 
 // Convenience functions for common configurations
 

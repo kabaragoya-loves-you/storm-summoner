@@ -101,6 +101,32 @@ static void starfield_layer_deinit(void* context) {
   starfield_deinit();
 }
 
+// Radar layer functions
+static void radar_layer_init(void* context) {
+  radar_init();
+}
+
+static void radar_layer_draw(lv_obj_t* canvas, lv_layer_t* layer, void* context) {
+  radar_draw(canvas);
+}
+
+static void radar_layer_deinit(void* context) {
+  radar_deinit();
+}
+
+// Background layer functions
+static void background_layer_init(void* context) {
+  background_init();
+}
+
+static void background_layer_draw(lv_obj_t* canvas, lv_layer_t* layer, void* context) {
+  background_draw(canvas);
+}
+
+static void background_layer_deinit(void* context) {
+  background_deinit();
+}
+
 // Touch state provider for slices
 static bool touch_slice_state_provider(uint8_t slice_index, void* user_data) {
   return ui_touch_is_button_pressed(slice_index);
@@ -146,6 +172,36 @@ ui_compositor_layer_t ui_create_starfield_layer(ui_starfield_layer_context_t* co
     .init = starfield_layer_init,
     .deinit = starfield_layer_deinit,
     .context = context,
+    .enabled = true,
+    .opacity = 255
+  };
+  return layer;
+}
+
+ui_compositor_layer_t ui_create_radar_layer(void) {
+  ui_compositor_layer_t layer = {
+    .name = "radar",
+    .draw = radar_layer_draw,
+    .exclusion = NULL,  // Radar doesn't exclude anything
+    .update = NULL,     // No animation needed
+    .init = radar_layer_init,
+    .deinit = radar_layer_deinit,
+    .context = NULL,    // No context needed
+    .enabled = true,
+    .opacity = 255
+  };
+  return layer;
+}
+
+ui_compositor_layer_t ui_create_background_layer(void) {
+  ui_compositor_layer_t layer = {
+    .name = "background",
+    .draw = background_layer_draw,
+    .exclusion = NULL,  // Background doesn't exclude anything
+    .update = NULL,     // No animation needed
+    .init = background_layer_init,
+    .deinit = background_layer_deinit,
+    .context = NULL,    // No context needed
     .enabled = true,
     .opacity = 255
   };

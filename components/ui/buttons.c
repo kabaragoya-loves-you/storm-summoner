@@ -22,6 +22,8 @@ static ui_slices_layer_context_t g_slices_context;
 static ui_starfield_layer_context_t g_starfield_context;
 
 // Layer IDs
+static int g_radar_layer_id = -1;
+static int g_background_layer_id = -1;
 static int g_globe_layer_id = -1;
 static int g_slices_layer_id = -1;
 static int g_starfield_layer_id = -1;
@@ -78,11 +80,15 @@ static void buttons_draw_deferred_cb(lv_timer_t *timer) {
   };
   
   // Create and add layers (order matters: first = bottom)
+  ui_compositor_layer_t radar_layer = ui_create_radar_layer();
+  ui_compositor_layer_t background_layer = ui_create_background_layer();
   ui_compositor_layer_t globe_layer = ui_create_globe_layer(&g_globe_context);
   ui_compositor_layer_t slices_layer = ui_create_slices_layer(&g_slices_context);
   ui_compositor_layer_t starfield_layer = ui_create_starfield_layer(&g_starfield_context);
   
-  // Add layers to compositor
+  // Add layers to compositor (radar at bottom, then background, globe, slices, starfield)
+  g_radar_layer_id = ui_compositor_add_layer(&radar_layer);
+  g_background_layer_id = ui_compositor_add_layer(&background_layer);
   g_globe_layer_id = ui_compositor_add_layer(&globe_layer);
   g_slices_layer_id = ui_compositor_add_layer(&slices_layer);
   g_starfield_layer_id = ui_compositor_add_layer(&starfield_layer);
@@ -104,6 +110,8 @@ static void buttons_teardown(void) {
   ui_compositor_deinit();
   
   // Reset layer IDs
+  g_radar_layer_id = -1;
+  g_background_layer_id = -1;
   g_globe_layer_id = -1;
   g_slices_layer_id = -1;
   g_starfield_layer_id = -1;
