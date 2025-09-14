@@ -1,8 +1,7 @@
 #include "lvgl.h"
 #include "ui.h"
-#include "globe.h"
-#include "starfield.h"
-#include "slices.h"
+#include "ui_compositor.h"
+#include "ui_layers.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -62,8 +61,6 @@ static bool buttons_combined_exclusion_check(float x, float y, void* user_data) 
   return false;
 }
 
-
-
 static void buttons_rotation_cb(lv_timer_t *timer) {
   rotation_x += BUTTONS_ROTATION_SPEED_X;
   rotation_y += BUTTONS_ROTATION_SPEED_Y;
@@ -83,7 +80,7 @@ static void buttons_rotation_cb(lv_timer_t *timer) {
   
   // Draw globe
   globe_draw(canvas, BUTTONS_CENTER_X, BUTTONS_CENTER_Y, BUTTONS_GLOBE_RADIUS, 
-             rotation_x, rotation_y, rotation_z, BUTTONS_GLOBE_SCALE);
+    rotation_x, rotation_y, rotation_z, BUTTONS_GLOBE_SCALE);
   
   // Draw slices
   slices_draw(canvas, &layer, touch_slice_state_provider, NULL);
