@@ -50,9 +50,9 @@ void starfield_update(void);
 // exclusion_count: Number of exclusion check functions
 // user_data: User data passed to exclusion check functions
 void starfield_draw(lv_obj_t* canvas, 
-                   starfield_exclusion_check_fn* exclusion_checks,
-                   size_t exclusion_count,
-                   void* user_data);
+  starfield_exclusion_check_fn* exclusion_checks,
+  size_t exclusion_count,
+  void* user_data);
 
 // Get current starfield configuration
 const starfield_config_t* starfield_get_config(void);

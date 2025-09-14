@@ -35,7 +35,7 @@ static void globe_layer_draw(lv_obj_t* canvas, lv_layer_t* layer, void* context)
   if (!ctx) return;
   
   globe_draw(canvas, (int)ctx->center_x, (int)ctx->center_y, ctx->radius,
-             ctx->rotation_x, ctx->rotation_y, ctx->rotation_z, ctx->scale);
+    ctx->rotation_x, ctx->rotation_y, ctx->rotation_z, ctx->scale);
 }
 
 static bool globe_layer_exclusion(float x, float y, void* context) {
