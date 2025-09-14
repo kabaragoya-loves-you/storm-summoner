@@ -43,7 +43,7 @@ void app_main(void) {
   display_init();
   
   ui_init();
-  ui_set_draw_module(&pizza_module);
+  ui_set_draw_module(&pizza2_module);
   
   // touch_init();
   // force_touch_calibration();
