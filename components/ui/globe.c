@@ -20,7 +20,7 @@
 
 extern const lv_image_dsc_t earth;
 
-static lv_color_t *texture_data = NULL;
+lv_color_t *texture_data = NULL;
 
 // 3D vector structure
 typedef struct {
@@ -63,7 +63,7 @@ void globe_init(void) {
   load_earth_texture();
 }
 
-static lv_color_t sample_texture(float u, float v) {
+lv_color_t sample_texture(float u, float v) {
   if (!texture_data) return lv_color_make(128, 128, 128);
   u = fmodf(u + 1.0f, 1.0f);
   v = fmaxf(0.0f, fminf(0.999f, v));

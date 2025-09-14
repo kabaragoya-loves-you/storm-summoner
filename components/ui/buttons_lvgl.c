@@ -2,6 +2,7 @@
 #include "ui.h"
 #include "lv_radar.h"
 #include "lv_slices.h"
+#include "lv_globe.h"
 #include "esp_log.h"
 
 #define TAG "BUTTONS_LVGL"
@@ -14,6 +15,7 @@ extern lv_obj_t *canvas;
 static lv_obj_t *g_screen = NULL;
 static lv_obj_t *g_radar = NULL;
 static lv_obj_t *g_slices = NULL;
+static lv_obj_t *g_globe = NULL;
 
 static void buttons_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
@@ -61,6 +63,16 @@ static void buttons_draw_deferred_cb(lv_timer_t *timer) {
   lv_slices_set_colors(g_slices, lv_color_make(102, 102, 102), lv_color_black());
   lv_slices_set_opacity(g_slices, LV_OPA_COVER, LV_OPA_TRANSP);
   // Use default state callback which checks touch input
+  
+  // Create globe widget (center, on top)
+  g_globe = lv_globe_create(g_screen);
+  lv_obj_align(g_globe, LV_ALIGN_CENTER, 0, 0);
+  
+  // Configure globe (matching original buttons.c parameters)
+  lv_globe_set_radius(g_globe, 25);  // Original BUTTONS_GLOBE_RADIUS
+  lv_globe_set_scale(g_globe, 0.8f);  // Original BUTTONS_GLOBE_SCALE
+  lv_globe_set_rotation_speed(g_globe, 0, 0.02f, 0);  // Slow Y-axis rotation
+  lv_globe_set_auto_rotate(g_globe, true);
   
   // Load the screen
   lv_screen_load(g_screen);
