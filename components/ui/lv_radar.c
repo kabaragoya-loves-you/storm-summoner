@@ -39,8 +39,8 @@ lv_obj_t * lv_radar_create(lv_obj_t * parent) {
     radar_data->dot_length = LV_RADAR_DEFAULT_DOT_LENGTH;
     radar_data->line_color = lv_color_make(17, 17, 17);  // Very dim gray
     radar_data->line_opa = LV_OPA_COVER;
-    radar_data->start_radius = 0;
-    radar_data->end_radius = 64;
+    radar_data->start_radius = LV_RADAR_DEFAULT_START_RADIUS;
+    radar_data->end_radius = LV_RADAR_DEFAULT_END_RADIUS;
     radar_data->angle_offset = -90.0f;  // Start at top (0° = 12 o'clock)
     
     // Store data as user data

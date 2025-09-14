@@ -48,7 +48,7 @@ static void buttons_draw_deferred_cb(lv_timer_t *timer) {
   
   // Configure radar
   lv_radar_set_line_count(g_radar, 8);
-  lv_radar_set_radius_range(g_radar, 0, 64);
+  lv_radar_set_radius_range(g_radar, 30, 60);
   lv_radar_set_dot_pattern(g_radar, 8, 1);  // 8 pixel gaps, 1 pixel dots
   lv_radar_set_line_style(g_radar, lv_color_make(17, 17, 17), LV_OPA_COVER);
   
