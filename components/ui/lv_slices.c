@@ -98,10 +98,15 @@ static void draw_slice(lv_layer_t * layer, lv_area_t * coords, uint8_t index,
                       lv_slices_data_t * data, bool active) {
     if (!active && data->inactive_opa == LV_OPA_TRANSP) return;
     
-    // Calculate slice angles
-    float slice_angle = 360.0f / data->slice_count;
-    float start_angle = index * slice_angle + data->angle_offset;
-    float end_angle = start_angle + slice_angle;
+    // Calculate slice angles to fit between radar lines
+    float slice_angle = 360.0f / data->slice_count;  // 45 degrees per slice
+    float gap_angle = 2.0f;  // 2 degree gap at each radar line
+    
+    // Each slice starts right after its radar line and ends right before the next
+    // Radar lines are at 0°, 45°, 90°, etc.
+    // So slice 0 goes from 1° to 44°, slice 1 from 46° to 89°, etc.
+    float start_angle = index * slice_angle + data->angle_offset + (gap_angle / 2.0f);
+    float end_angle = start_angle + slice_angle - gap_angle;
     
     // Get center point
     lv_coord_t center_x = coords->x1 + lv_area_get_width(coords) / 2;
@@ -121,7 +126,7 @@ static void draw_slice(lv_layer_t * layer, lv_area_t * coords, uint8_t index,
     // Draw using many thin lines from inner to outer radius
     // This creates a smooth filled appearance
     // Calculate optimal line count based on arc length
-    float arc_length = (end_rad - start_rad) * data->outer_radius;
+    float arc_length = fabs(end_rad - start_rad) * data->outer_radius;
     int line_count = (int)(arc_length * 2);  // ~2 lines per pixel for smooth edges
     if (line_count < 32) line_count = 32;   // Minimum for quality
     if (line_count > 64) line_count = 64;   // Maximum to avoid overdraw

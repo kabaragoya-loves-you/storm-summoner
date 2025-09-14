@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include "esp_log.h"
 
+#define TAG "LV_RADAR"
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -39,7 +41,7 @@ lv_obj_t * lv_radar_create(lv_obj_t * parent) {
     radar_data->line_opa = LV_OPA_COVER;
     radar_data->start_radius = 0;
     radar_data->end_radius = 64;
-    radar_data->angle_offset = -90;
+    radar_data->angle_offset = -90.0f;  // Start at top (0° = 12 o'clock)
     
     // Store data as user data
     lv_obj_set_user_data(obj, radar_data);
@@ -99,37 +101,74 @@ static void lv_radar_draw_event_cb(lv_event_t * e) {
         float angle_deg = i * angle_step + radar_data->angle_offset;
         float angle_rad = angle_deg * M_PI / 180.0f;
         
+        ESP_LOGD(TAG, "Drawing radar line %d at angle %.1f degrees", i, angle_deg);
+        
         // Calculate direction vector
         float dx = cosf(angle_rad);
         float dy = sinf(angle_rad);
         
         // Draw dotted line from start_radius to end_radius
-        float radius = radar_data->start_radius;
-        bool drawing_dot = true;
+        // Use integer math for more consistent dot placement
+        int total_length = radar_data->end_radius - radar_data->start_radius;
+        int dot_cycle = radar_data->dot_length + radar_data->dot_spacing;
+        int num_dots = (total_length + dot_cycle - 1) / dot_cycle;
         
-        while (radius <= radar_data->end_radius) {
-            if (drawing_dot) {
-                // Calculate start and end points of this dot
-                float end_radius = radius + radar_data->dot_length;
-                if (end_radius > radar_data->end_radius) {
-                    end_radius = radar_data->end_radius;
+        for (int j = 0; j < num_dots; j++) {
+            float dot_start = radar_data->start_radius + j * dot_cycle;
+            float dot_end = dot_start + radar_data->dot_length;
+            
+            // Clamp to end radius
+            if (dot_end > radar_data->end_radius) {
+                dot_end = radar_data->end_radius;
+            }
+            
+            // Only draw if there's something to draw
+            if (dot_start < radar_data->end_radius) {
+                // Calculate precise endpoints
+                lv_point_precise_t p1, p2;
+                p1.x = center_x + dx * dot_start;
+                p1.y = center_y + dy * dot_start;
+                p2.x = center_x + dx * dot_end;
+                p2.y = center_y + dy * dot_end;
+                
+                // For dots, always use rectangles for pixel-perfect control
+                if (radar_data->dot_length <= 2) {
+                    lv_draw_rect_dsc_t rect_dsc;
+                    lv_draw_rect_dsc_init(&rect_dsc);
+                    rect_dsc.bg_color = radar_data->line_color;
+                    rect_dsc.bg_opa = radar_data->line_opa;
+                    rect_dsc.border_width = 0;
+                    
+                    lv_area_t dot_area;
+                    
+                    // For horizontal/vertical lines, snap to pixel grid
+                    if (i == 0 || i == 4) {  // Vertical lines (0°, 180°)
+                        dot_area.x1 = center_x;
+                        dot_area.y1 = (lv_coord_t)(center_y + dy * dot_start + 0.5f);
+                        dot_area.x2 = center_x;
+                        dot_area.y2 = dot_area.y1 + radar_data->dot_length - 1;
+                    } else if (i == 2 || i == 6) {  // Horizontal lines (90°, 270°)
+                        dot_area.x1 = (lv_coord_t)(center_x + dx * dot_start + 0.5f);
+                        dot_area.y1 = center_y;
+                        dot_area.x2 = dot_area.x1 + radar_data->dot_length - 1;
+                        dot_area.y2 = center_y;
+                    } else {  // Diagonal lines
+                        dot_area.x1 = (lv_coord_t)(p1.x + 0.5f);
+                        dot_area.y1 = (lv_coord_t)(p1.y + 0.5f);
+                        dot_area.x2 = dot_area.x1;
+                        dot_area.y2 = dot_area.y1;
+                    }
+                    
+                    lv_draw_rect(layer, &rect_dsc, &dot_area);
+                } else {
+                    // Use line for longer segments
+                    line_dsc.p1.x = (lv_coord_t)(p1.x + 0.5f);
+                    line_dsc.p1.y = (lv_coord_t)(p1.y + 0.5f);
+                    line_dsc.p2.x = (lv_coord_t)(p2.x + 0.5f);
+                    line_dsc.p2.y = (lv_coord_t)(p2.y + 0.5f);
+                    
+                    lv_draw_line(layer, &line_dsc);
                 }
-                
-                // Set line endpoints
-                line_dsc.p1.x = center_x + dx * radius;
-                line_dsc.p1.y = center_y + dy * radius;
-                line_dsc.p2.x = center_x + dx * end_radius;
-                line_dsc.p2.y = center_y + dy * end_radius;
-                
-                // Draw the dot segment
-                lv_draw_line(layer, &line_dsc);
-                
-                radius += radar_data->dot_length;
-                drawing_dot = false;
-            } else {
-                // Skip space between dots
-                radius += radar_data->dot_spacing;
-                drawing_dot = true;
             }
         }
     }
