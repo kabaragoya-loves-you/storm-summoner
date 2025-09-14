@@ -48,8 +48,6 @@ static void next_random_ship(lv_timer_t *timer);
 static void draw_wireframe_ship(void);
 static void rotate_ship_cb(lv_timer_t *timer);
 static void cleanup_ship_resources(void);
-static void resume_rotation_timer_cb(lv_timer_t *timer);
-static void init_display_cb(lv_timer_t *timer);
 static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color);
 
 static void draw_wireframe_ship(void) {
@@ -122,21 +120,6 @@ static void draw_wireframe_ship(void) {
   lv_obj_invalidate(canvas);
 }
 
-static void resume_rotation_timer_cb(lv_timer_t *timer) {
-  if (rotation_timer) {
-    lv_timer_resume(rotation_timer);
-  }
-  lv_timer_del(timer);
-}
-
-static void init_display_cb(lv_timer_t *timer) {
-  next_random_ship(NULL);
-  // Resume the ship cycling timer now that first ship is displayed
-  if (g_ship_cycling_timer) {
-    lv_timer_resume(g_ship_cycling_timer);
-  }
-  lv_timer_del(timer);
-}
 
 // Simple Bresenham line drawing algorithm for canvas
 static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color) {
@@ -225,6 +208,7 @@ static void rotate_ship_cb(lv_timer_t *timer) {
 }
 
 static void cleanup_ship_resources(void) {
+  // Stop any active timers
   if (rotation_timer) {
     lv_timer_del(rotation_timer);
     rotation_timer = NULL;
@@ -234,38 +218,20 @@ static void cleanup_ship_resources(void) {
     g_ship_cycling_timer = NULL;
   }
   
-  if (canvas) {
-    lv_obj_del(canvas);
-    canvas = NULL;
-  }
-  
-  if (info_label) {
-    lv_obj_del(info_label);
-    info_label = NULL;
-  }
+  // Note: canvas and info_label are deleted with the screen
+  canvas = NULL;
+  info_label = NULL;
 }
 
 void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale, int* faces, int face_cnt) {
-  // Clean up previous ship's resources (primarily rotation_timer, canvas, info_label)
-  // If display_ship is called multiple times by next_random_ship, we need to be careful.
-  // The current cleanup_ship_resources call here will delete the ship cycling timer if it's called internally.
-  // This needs to be handled: display_ship should only clean up *its* specific resources (canvas, label, rotation_timer).
-  
+  // Stop rotation timer for previous ship
   if (rotation_timer) {
     lv_timer_del(rotation_timer);
     rotation_timer = NULL;
   }
-  if (canvas) {
-    lv_obj_del(canvas);
-    canvas = NULL;
-  }
-  if (info_label) {
-    lv_obj_del(info_label);
-    info_label = NULL;
-  }
 
+  // Copy ship data
   strcpy(ShipName, name);
-  
   memcpy(ship_vertices, vertices, sizeof(int) * vert_cnt * 3);
   ship_vertices_cnt = vert_cnt;
   scale = vert_scale;
@@ -274,34 +240,21 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
   
   scalefactor = 0;
   
-  canvas = lv_canvas_create(g_elite_screen ? g_elite_screen : lv_scr_act());
+  // Update label with new ship name
+  if (info_label) {
+    lv_label_set_text(info_label, ShipName);
+  }
   
-  lv_obj_remove_style_all(canvas);  // Remove any default padding/margins
-  lv_obj_set_size(canvas, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT);
-  lv_obj_align(canvas, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_set_style_pad_all(canvas, 0, 0);  // No padding
-  
+  // Clear canvas
   if (canvas_buf) {
     for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
   }
   
-  if (canvas_buf) {
-    lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_RGB565);
-  } else {
-    ESP_LOGE(TAG, "Canvas buffer is NULL in display_ship!");
-    lv_obj_delete(canvas);
-    canvas = NULL;
-    if (info_label) {
-      lv_obj_delete(info_label);
-      info_label = NULL;
-    }
+  // Validate canvas is ready
+  if (!canvas || !canvas_buf) {
+    ESP_LOGE(TAG, "Canvas or buffer not ready in display_ship!");
     return;
   }
-  
-  info_label = lv_label_create(g_elite_screen ? g_elite_screen : lv_scr_act());
-  lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 20);
-  lv_obj_add_style(info_label, &style_default, 0);
-  lv_label_set_text(info_label, ShipName);
   
   // Create timer and it will start automatically
   rotation_timer = lv_timer_create(rotate_ship_cb, ELITE_ROTATION_INTERVAL_MS, NULL);
@@ -350,16 +303,36 @@ void elite_start(void) {
     g_elite_style_initialized = true;
   }
   
-  // Load the screen FIRST before creating any objects on it
-  lv_scr_load(g_elite_screen);
+  // Create canvas on the screen if not already created
+  if (!canvas) {
+    canvas = lv_canvas_create(g_elite_screen);
+    lv_obj_set_size(canvas, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT);
+    lv_obj_align(canvas, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_remove_style_all(canvas);
+    lv_obj_set_style_pad_all(canvas, 0, 0);
+    
+    if (canvas_buf) {
+      lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_RGB565);
+    }
+  }
   
+  // Create info label if not already created
+  if (!info_label) {
+    info_label = lv_label_create(g_elite_screen);
+    lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_add_style(info_label, &style_default, 0);
+  }
+  
+  // Clear canvas
   if (canvas_buf) {
     for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
   }
+  
+  // Load the screen
+  lv_scr_load(g_elite_screen);
 
-  // Defer the initial ship display to ensure screen is fully loaded
-  lv_timer_t *init_timer = lv_timer_create(init_display_cb, 200, NULL);
-  lv_timer_set_repeat_count(init_timer, 1); 
+  // Display the first ship immediately
+  next_random_ship(NULL); 
   
   if (g_ship_cycling_timer == NULL) {
     g_ship_cycling_timer = lv_timer_create(next_random_ship, ELITE_SHIP_CHANGE_INTERVAL_MS, NULL);
@@ -367,10 +340,8 @@ void elite_start(void) {
       cleanup_ship_resources();
       return;
     }
-    // Start paused, will be resumed after first ship is displayed
-    lv_timer_pause(g_ship_cycling_timer);
   } else {
-    lv_timer_pause(g_ship_cycling_timer);
+    lv_timer_resume(g_ship_cycling_timer);
   }
 
   ESP_LOGI(TAG, "Elite screensaver started");
