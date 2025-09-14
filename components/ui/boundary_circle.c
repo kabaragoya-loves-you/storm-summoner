@@ -1,47 +1,66 @@
 #include "lvgl.h"
 #include "ui.h"
+#include "lv_boundary_circle.h"
 #include "esp_log.h"
 
 #define TAG "BOUNDARY_CIRCLE"
 
 extern lv_obj_t *canvas;
 
+// Widget references
+static lv_obj_t *g_screen = NULL;
+static lv_obj_t *g_boundary = NULL;
+
 static void boundary_circle_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
     lv_timer_del(timer);
     return;
   }
-
-  lv_layer_t layer;
-  lv_canvas_init_layer(canvas, &layer);
-  if (!layer.draw_buf) {
+  
+  // Get the display from canvas
+  lv_display_t *disp = lv_obj_get_display(canvas);
+  if (!disp) {
+    ESP_LOGE(TAG, "Failed to get display from canvas");
     lv_timer_del(timer);
     return;
   }
-
-  lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
   
-  lv_draw_arc_dsc_t arc_dsc;
-  lv_draw_arc_dsc_init(&arc_dsc);
-  arc_dsc.color = lv_color_white();
-  arc_dsc.width = 1;
-  arc_dsc.opa = LV_OPA_COVER;
-  arc_dsc.center.x = 64;  // Center of 128x128 canvas
-  arc_dsc.center.y = 64;
-  arc_dsc.radius = 63;    // Almost full radius to fit in 128x128
-  arc_dsc.start_angle = 0;
-  arc_dsc.end_angle = 360;
-  lv_draw_arc(&layer, &arc_dsc);
+  // Create a screen
+  g_screen = lv_obj_create(NULL);
+  lv_obj_set_size(g_screen, 128, 128);
   
-  lv_canvas_finish_layer(canvas, &layer);
-  lv_obj_invalidate(canvas);
+  // Set black background
+  lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
+  
+  // Create boundary circle widget
+  g_boundary = lv_boundary_circle_create(g_screen);
+  lv_obj_set_size(g_boundary, 128, 128);
+  lv_obj_align(g_boundary, LV_ALIGN_CENTER, 0, 0);
+  
+  // Configure to match original (white, 1px width, margin of 1 to get radius 63)
+  lv_boundary_circle_set_color(g_boundary, lv_color_white());
+  lv_boundary_circle_set_width(g_boundary, 1);
+  lv_boundary_circle_set_margin(g_boundary, 1);
+  
+  // Load the screen
+  lv_screen_load(g_screen);
+  
+  ESP_LOGI(TAG, "Boundary circle screen created");
   
   lv_timer_del(timer);
 }
 
 UI_CREATE_DEFERRED_DRAW_FUNC(boundary_circle, boundary_circle_draw_deferred_cb)
 
-static void boundary_circle_teardown(void) {}
+static void boundary_circle_teardown(void) {
+  if (g_screen) {
+    lv_obj_delete(g_screen);
+    g_screen = NULL;
+    g_boundary = NULL;
+  }
+  ESP_LOGD(TAG, "Boundary circle module teardown complete");
+}
 
 static void boundary_circle_init(void) {}
 

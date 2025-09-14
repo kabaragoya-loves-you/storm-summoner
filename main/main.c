@@ -38,14 +38,14 @@ void app_main(void) {
 
   app_settings_init();
   
-  event_bus_init();
+  // event_bus_init();
   
   display_init();
   
   ui_init();
-  ui_set_draw_module(&buttons_module);
+  ui_set_draw_module(&boundary_circle_module);
   
-  touch_init();
+  // touch_init();
   // force_touch_calibration();
   
   // bump_init();
@@ -53,9 +53,9 @@ void app_main(void) {
   // led_init();
   // flicker_start();
   
-  midi_out_init();
-  midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  midi_callbacks_init();
+  // midi_out_init();
+  // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
+  // midi_callbacks_init();
   
   // ads1015_init();
   // expression_init();
@@ -77,7 +77,7 @@ void app_main(void) {
   // tempo_set_source(CLOCK_SOURCE_INTERNAL);
   // tempo_start();
 
-  screensaver_init();
+  // screensaver_init();
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
