@@ -1,73 +1,54 @@
 #include "lvgl.h"
 #include "ui.h"
+#include "lv_pizza.h"
 #include "esp_log.h"
 
-#define PIZZA_CENTER_X 64
-#define PIZZA_CENTER_Y 64
-#define PIZZA_RADIUS 60
 #define TAG "PIZZA"
 
 extern lv_obj_t *canvas;
+
+// Widget references
+static lv_obj_t *g_screen = NULL;
+static lv_obj_t *g_pizza = NULL;
 
 static void pizza_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
     lv_timer_del(timer);
     return;
   }
-
-  lv_layer_t layer;
-  lv_canvas_init_layer(canvas, &layer);
-  if (!layer.draw_buf) {
+  
+  // Get the display from canvas
+  lv_display_t *disp = lv_obj_get_display(canvas);
+  if (!disp) {
+    ESP_LOGE(TAG, "Failed to get display from canvas");
     lv_timer_del(timer);
     return;
   }
   
-  lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+  // Create a screen
+  g_screen = lv_obj_create(NULL);
+  lv_obj_set_size(g_screen, 128, 128);
   
-  lv_draw_arc_dsc_t arc_dsc;
-  lv_draw_arc_dsc_init(&arc_dsc);
-  arc_dsc.color = lv_color_white();
-  arc_dsc.width = 1;
-  arc_dsc.opa = LV_OPA_COVER;
-  arc_dsc.center.x = PIZZA_CENTER_X;
-  arc_dsc.center.y = PIZZA_CENTER_Y;
-  arc_dsc.radius = PIZZA_RADIUS;
-  arc_dsc.start_angle = 0;
-  arc_dsc.end_angle = 360;
-  lv_draw_arc(&layer, &arc_dsc);
+  // Set black background
+  lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
   
-  lv_draw_line_dsc_t line_dsc;
-  lv_draw_line_dsc_init(&line_dsc);
-  line_dsc.color = lv_color_white();
-  line_dsc.width = 1;
-  line_dsc.opa = LV_OPA_COVER;
+  // Create pizza widget
+  g_pizza = lv_pizza_create(g_screen);
+  lv_obj_set_size(g_pizza, 128, 128);
+  lv_obj_align(g_pizza, LV_ALIGN_CENTER, 0, 0);
   
-  line_dsc.p1.x = PIZZA_CENTER_X - PIZZA_RADIUS;
-  line_dsc.p1.y = PIZZA_CENTER_Y;
-  line_dsc.p2.x = PIZZA_CENTER_X + PIZZA_RADIUS;
-  line_dsc.p2.y = PIZZA_CENTER_Y;
-  lv_draw_line(&layer, &line_dsc);
+  // Configure to match original (8 slices, white, 1px width, margin of 4 to get radius 60)
+  lv_pizza_set_slice_count(g_pizza, 8);  // 8 lines = 4 crossing lines
+  lv_pizza_set_color(g_pizza, lv_color_white());
+  lv_pizza_set_width(g_pizza, 1);
+  lv_pizza_set_margin(g_pizza, 4);  // 64 - 60 = 4
+  lv_pizza_set_circle_enabled(g_pizza, true);
   
-  line_dsc.p1.x = PIZZA_CENTER_X;
-  line_dsc.p1.y = PIZZA_CENTER_Y - PIZZA_RADIUS;
-  line_dsc.p2.x = PIZZA_CENTER_X;
-  line_dsc.p2.y = PIZZA_CENTER_Y + PIZZA_RADIUS;
-  lv_draw_line(&layer, &line_dsc);
+  // Load the screen
+  lv_screen_load(g_screen);
   
-  line_dsc.p1.x = PIZZA_CENTER_X - (int)(PIZZA_RADIUS * 0.7071); // cos(45deg) = 0.7071
-  line_dsc.p1.y = PIZZA_CENTER_Y - (int)(PIZZA_RADIUS * 0.7071); // sin(45deg) = 0.7071
-  line_dsc.p2.x = PIZZA_CENTER_X + (int)(PIZZA_RADIUS * 0.7071);
-  line_dsc.p2.y = PIZZA_CENTER_Y + (int)(PIZZA_RADIUS * 0.7071);
-  lv_draw_line(&layer, &line_dsc);
-  
-  line_dsc.p1.x = PIZZA_CENTER_X + (int)(PIZZA_RADIUS * 0.7071);
-  line_dsc.p1.y = PIZZA_CENTER_Y - (int)(PIZZA_RADIUS * 0.7071);
-  line_dsc.p2.x = PIZZA_CENTER_X - (int)(PIZZA_RADIUS * 0.7071);
-  line_dsc.p2.y = PIZZA_CENTER_Y + (int)(PIZZA_RADIUS * 0.7071);
-  lv_draw_line(&layer, &line_dsc);
-  
-  lv_canvas_finish_layer(canvas, &layer);
-  lv_obj_invalidate(canvas);
+  ESP_LOGI(TAG, "Pizza screen created");
   
   lv_timer_del(timer);
 }
@@ -75,7 +56,14 @@ static void pizza_draw_deferred_cb(lv_timer_t *timer) {
 // Use the macro to create the deferred draw function
 UI_CREATE_DEFERRED_DRAW_FUNC(pizza, pizza_draw_deferred_cb)
 
-static void pizza_teardown(void) {}
+static void pizza_teardown(void) {
+  if (g_screen) {
+    lv_obj_delete(g_screen);
+    g_screen = NULL;
+    g_pizza = NULL;
+  }
+  ESP_LOGD(TAG, "Pizza module teardown complete");
+}
 
 static void pizza_init(void) {}
 
