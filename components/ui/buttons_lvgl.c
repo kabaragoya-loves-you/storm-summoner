@@ -3,6 +3,7 @@
 #include "lv_radar.h"
 #include "lv_slices.h"
 #include "lv_globe.h"
+#include "lv_starfield.h"
 #include "esp_log.h"
 
 #define TAG "BUTTONS_LVGL"
@@ -13,6 +14,7 @@ extern lv_obj_t *canvas;
 
 // Widget references
 static lv_obj_t *g_screen = NULL;
+static lv_obj_t *g_starfield = NULL;
 static lv_obj_t *g_radar = NULL;
 static lv_obj_t *g_slices = NULL;
 static lv_obj_t *g_globe = NULL;
@@ -41,7 +43,18 @@ static void buttons_draw_deferred_cb(lv_timer_t *timer) {
   
   // Create widgets in order (bottom to top)
   
-  // Create radar widget (bottom layer)
+  // Create starfield widget (bottom-most layer)
+  g_starfield = lv_starfield_create(g_screen);
+  lv_obj_set_size(g_starfield, 128, 128);
+  lv_obj_align(g_starfield, LV_ALIGN_CENTER, 0, 0);
+  
+  // Configure starfield
+  lv_starfield_set_count(g_starfield, 24);
+  lv_starfield_set_twinkle_variance(g_starfield, 4);
+  lv_starfield_set_movement(g_starfield, 50, 300);
+  lv_starfield_set_exclude_siblings(g_starfield, true);  // Auto-exclude other widgets
+  
+  // Create radar widget
   g_radar = lv_radar_create(g_screen);
   lv_obj_set_size(g_radar, 128, 128);
   lv_obj_align(g_radar, LV_ALIGN_CENTER, 0, 0);
@@ -88,8 +101,10 @@ static void buttons_lvgl_teardown(void) {
   if (g_screen) {
     lv_obj_delete(g_screen);
     g_screen = NULL;
+    g_starfield = NULL;
     g_radar = NULL;
     g_slices = NULL;
+    g_globe = NULL;
   }
   ESP_LOGD(TAG, "Buttons LVGL module teardown complete");
 }
