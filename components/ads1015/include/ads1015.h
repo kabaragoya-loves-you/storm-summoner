@@ -33,6 +33,12 @@ typedef enum {
 esp_err_t ads1015_init(void);
 
 /**
+ * Check if ADS1015 is initialized
+ * @return true if initialized, false otherwise
+ */
+bool ads1015_is_initialized(void);
+
+/**
  * Read a single-ended channel
  * @param channel Channel to read (0-3)
  * @param gain Gain setting for this reading

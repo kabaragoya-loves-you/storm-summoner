@@ -33,7 +33,7 @@
 // Filtering parameters
 #define MOVING_AVG_LENGTH 10
 #define IIR_ALPHA 0.3f
-#define TASK_DELAY_MS 10
+#define TASK_DELAY_MS 30  // Allow other ADC users time to access
 
 // Static variables
 static TaskHandle_t s_task_handle = NULL;

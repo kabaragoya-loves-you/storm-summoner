@@ -61,6 +61,11 @@ esp_err_t ads1015_init(void) {
   esp_err_t ret = i2c_master_bus_add_device(i2c_bus_handle(), &dev_cfg, &s_dev_handle);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to add I2C device: %s", esp_err_to_name(ret));
+    // Clean up mutex on failure
+    if (s_mutex) {
+      vSemaphoreDelete(s_mutex);
+      s_mutex = NULL;
+    }
     return ret;
   }
   
@@ -69,6 +74,13 @@ esp_err_t ads1015_init(void) {
   ret = i2c_common_read_reg16_be(s_dev_handle, ADS1015_REG_POINTER_CONFIG, &config);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to read config register: %s", esp_err_to_name(ret));
+    // Clean up on failure
+    i2c_master_bus_rm_device(s_dev_handle);
+    s_dev_handle = NULL;
+    if (s_mutex) {
+      vSemaphoreDelete(s_mutex);
+      s_mutex = NULL;
+    }
     return ret;
   }
   
@@ -76,12 +88,27 @@ esp_err_t ads1015_init(void) {
   return ESP_OK;
 }
 
+bool ads1015_is_initialized(void) {
+  return (s_dev_handle != NULL && s_mutex != NULL);
+}
+
 int16_t ads1015_read_channel(uint8_t channel, ads1015_gain_t gain) {
-  if (!s_dev_handle || channel > 3 || gain > ADS1015_GAIN_SIXTEEN) return -1;
+  if (!s_dev_handle || channel > 3 || gain > ADS1015_GAIN_SIXTEEN) {
+    ESP_LOGW(TAG, "ADS1015 not initialized or invalid parameters (dev=%p, ch=%d, gain=%d)", 
+             s_dev_handle, channel, gain);
+    return -1;
+  }
   
   // Take mutex to ensure exclusive access during the entire read operation
-  if (!s_mutex || xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-    ESP_LOGE(TAG, "Failed to take mutex");
+  if (!s_mutex) {
+    ESP_LOGE(TAG, "Mutex is NULL!");
+    return -1;
+  }
+  
+  if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    // Check if mutex is still valid
+    TaskHandle_t holder = xSemaphoreGetMutexHolder(s_mutex);
+    ESP_LOGE(TAG, "Failed to take mutex (handle=%p) - timeout, holder=%p", s_mutex, holder);
     return -1;
   }
   
@@ -109,12 +136,12 @@ int16_t ads1015_read_channel(uint8_t channel, ads1015_gain_t gain) {
   }
   
   // Wait for conversion to complete
-  // Conversion time depends on data rate, but max is ~8ms
-  vTaskDelay(pdMS_TO_TICKS(10));
+  // At 1600SPS, conversion takes ~0.625ms, add margin
+  vTaskDelay(pdMS_TO_TICKS(2));
   
   // Poll the OS bit to check if conversion is complete
   uint16_t status = 0;
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 5; i++) {  // Reduced iterations since conversion is faster
     ret = i2c_common_read_reg16_be(s_dev_handle, ADS1015_REG_POINTER_CONFIG, &status);
     if (ret == ESP_OK && (status & ADS1015_CONFIG_OS_SINGLE)) break;
     vTaskDelay(pdMS_TO_TICKS(1));

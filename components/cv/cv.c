@@ -31,7 +31,7 @@
 // CV modes are defined in the header file
 
 // Constants
-#define TASK_PERIOD_MS 20        // 50Hz sampling
+#define TASK_PERIOD_MS 30        // ~33Hz sampling, matches expression
 #define FILTER_ALPHA 0.2f        // IIR filter coefficient
 #define GATE_THRESHOLD 2048      // ~50% threshold for gate detection
 #define STARTUP_DELAY_MS 300     // Delay before sending events after startup
@@ -123,6 +123,12 @@ esp_err_t cv_init(void) {
 
 void cv_enable(void) {
   if (s_task_handle == NULL) {
+    // Check if ADS1015 is available
+    if (!ads1015_is_initialized()) {
+      ESP_LOGE(TAG, "Cannot enable CV - ADS1015 not initialized");
+      return;
+    }
+    
     BaseType_t ret = xTaskCreate(cv_task, "cv", 3072, NULL, TASK_PRIORITY_ADC_CV, &s_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create CV task");
@@ -159,13 +165,29 @@ static void cv_task(void *pvParameters) {
   ESP_LOGI(TAG, "CV task started");
   s_task_start_time = esp_timer_get_time() / 1000; // ms
   
+  // Add initial delay to ensure system is stable
+  vTaskDelay(pdMS_TO_TICKS(100));
+  
+  uint32_t read_count = 0;
+  uint32_t fail_count = 0;
+  
   while (1) {    
     ads1015_gain_t gain = ADS1015_GAIN_ONE;  // ±4.096V range
     
+    read_count++;
     int16_t raw = ads1015_read_channel(CV_CHANNEL, gain);
 
     if (raw < 0) {
-      ESP_LOGW(TAG, "Failed to read CV input from channel %d", CV_CHANNEL);
+      fail_count++;
+      ESP_LOGW(TAG, "Failed to read CV input from channel %d (attempt %lu, failures %lu)", 
+               CV_CHANNEL, read_count, fail_count);
+      
+      // Check if ADS1015 is still initialized
+      if (!ads1015_is_initialized()) {
+        ESP_LOGE(TAG, "ADS1015 no longer initialized! Stopping CV task");
+        break;
+      }
+      
       vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_MS));
       continue;
     }
