@@ -57,8 +57,8 @@ void app_main(void) {
   midi_callbacks_init();
   
   ads1015_init();
-  // expression_init();
-  // expression_enable();
+  expression_init();
+  expression_enable();
   
   input_manager_init();
   input_set_mode(INPUT_MODE_CV);
@@ -67,8 +67,8 @@ void app_main(void) {
   // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
   cv_set_range(CV_RANGE_5V);
   
-  sensor_init();
-  als_enable();
+  // sensor_init();
+  // als_enable();
   // ps_enable();
 
   transport_init();

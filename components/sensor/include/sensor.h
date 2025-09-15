@@ -50,6 +50,14 @@ void als_get_calibration(uint16_t *min_value, uint16_t *max_value);
 void als_set_deadzone(uint8_t deadzone);
 uint8_t als_get_deadzone(void);
 
+// ALS mode control
+void als_set_raw_mode(bool enable);
+bool als_get_raw_mode(void);
+void als_reset_filter(void);
+void als_set_use_white_channel(bool enable);
+bool als_get_use_white_channel(void);
+
 void sensor_reset(void);
+void sensor_dump_registers(void);
 
 #endif // SENSOR_H

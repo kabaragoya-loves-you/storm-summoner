@@ -19,9 +19,9 @@
 #define DEFAULT_PROXIMITY_DEADZONE 2 // Minimum change required to send MIDI
 #define PROXIMITY_IIR_ALPHA 0.2f     // Filter coefficient for smoothing
 
-#define DEFAULT_ALS_MIN 10000        // Minimum value (ambient light)
-#define DEFAULT_ALS_MAX 40000        // Maximum value (hand shadow)
-#define ALS_IIR_ALPHA 0.1f           // Filter coefficient for smoothing (lower = more smoothing)
+#define DEFAULT_ALS_MIN 0        // Minimum value (ambient light)
+#define DEFAULT_ALS_MAX 65535        // Maximum value (hand shadow)
+#define ALS_IIR_ALPHA 0.8f           // Filter coefficient for smoothing (higher = less smoothing, more responsive)
 #define DEFAULT_ALS_DEADZONE 2       // Minimum change in MIDI value (0-127) required to send
 
 // NVS keys for rate limiting and calibration
@@ -61,6 +61,11 @@ static uint8_t proximity_deadzone = DEFAULT_PROXIMITY_DEADZONE;
 static uint16_t als_min = DEFAULT_ALS_MIN;
 static uint16_t als_max = DEFAULT_ALS_MAX;
 static uint8_t als_deadzone = DEFAULT_ALS_DEADZONE;
+
+// Debug mode for ALS (bypasses filtering)
+static volatile bool als_raw_mode = false;
+// Use white channel instead of ALS
+static volatile bool use_white_channel = false;
 
 void sensor_init(void) {
   esp_err_t err;
@@ -153,28 +158,50 @@ void sensor_init(void) {
     return;
   }
 
-  // Disable automatic adjustment for both PS and ALS
-  err = i2c_common_write_reg16_be(vcnl4040_dev, SENSOR_PS_CONF1, 0x0800); // Disable PS auto-adjustment
+  // Configure proximity sensor
+  // PS_CONF1 bits [7:0] and PS_CONF2 bits [15:8]:
+  // [15] - Reserved
+  // [14:11] - PS_IT (Integration Time): 0001 = 1T (default)
+  // [10:9] - PS_PERS: 00 = 1 (default)
+  // [8] - Reserved
+  // [7:6] - PS_DUTY: 00 = 1/40
+  // [5] - PS_INT: 0 = disable interrupt
+  // [4:3] - Reserved
+  // [2] - PS_HD: 0 = 12-bit
+  // [1] - PS_SMART_PERS: 0 = disable
+  // [0] - PS_SD: 0 = enable, 1 = shutdown
+  
+  // Enable proximity sensor
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x0800); // PS_SD=0 (enable)
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF1");
     return;
   }
 
-  err = i2c_common_write_reg16_be(vcnl4040_dev, SENSOR_PS_CONF2, 0x0000);
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF2, 0x0000);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF2");
     return;
   }
+  
+  // Enable white channel measurement
+  // PS_CONF3/MS register bits:
+  // [15] - WHITE_EN: 1 = enable white channel
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, 0x8000); // WHITE_EN=1
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed enabling white channel");
+    return;
+  }
 
   // First put ALS into shutdown mode to reset any automatic features
-  err = i2c_common_write_reg16_be(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to shutdown ALS");
     return;
   }
   vTaskDelay(pdMS_TO_TICKS(10)); // Short delay to ensure shutdown
 
-  // Now configure ALS with minimal settings
+  // Now configure ALS with proper settings
   // ALS_CONF bits:
   // [15:12] - Reserved
   // [11:8]  - ALS_IT (Integration Time): 0000=80ms, 0001=160ms, 0010=320ms, 0011=640ms
@@ -182,7 +209,8 @@ void sensor_init(void) {
   // [5]     - ALS_INT_EN (Interrupt Enable)
   // [4]     - ALS_SD (Shutdown)
   // [3:0]   - Reserved
-  err = i2c_common_write_reg16_be(vcnl4040_dev, SENSOR_ALS_CONF, 0x0000); // ALS_SD=0 (enabled), all other features disabled
+  // Try 160ms integration time (0x0100) for more stable readings
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0100); // ALS_SD=0, IT=160ms
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing ALS_CONF");
     return;
@@ -202,14 +230,16 @@ void set_als_polarity(als_polarity_t polarity) {
 void sensor_reset(void) {
   if (vcnl4040_dev) {
     // First try to reset through software
-    i2c_common_write_reg16_be(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // Shutdown
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // Shutdown
     vTaskDelay(pdMS_TO_TICKS(100));
-    i2c_common_write_reg16_be(vcnl4040_dev, SENSOR_ALS_CONF, 0x0000); // Re-enable
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0100); // Re-enable with 160ms IT
     vTaskDelay(pdMS_TO_TICKS(100));
     
     // Clear any accumulated values
     filtered_als = 0.0f;
+    filtered_proximity = 0.0f;
     last_midi_als_value = 0;
+    last_midi_ps_value = 0;
     
     ESP_LOGI(TAG, "Sensor software reset complete");
   }
@@ -277,21 +307,61 @@ uint8_t als_get_deadzone(void) {
   return als_deadzone;
 }
 
+void als_set_raw_mode(bool enable) {
+  als_raw_mode = enable;
+  ESP_LOGI(TAG, "ALS mode set to: %s", enable ? "RAW" : "FILTERED");
+}
+
+bool als_get_raw_mode(void) {
+  return als_raw_mode;
+}
+
+void als_reset_filter(void) {
+  filtered_als = 0.0f;
+  ESP_LOGI(TAG, "ALS filter reset");
+}
+
+void als_set_use_white_channel(bool enable) {
+  use_white_channel = enable;
+  ESP_LOGI(TAG, "Light sensor mode: %s", enable ? "WHITE channel" : "ALS channel");
+}
+
+bool als_get_use_white_channel(void) {
+  return use_white_channel;
+}
+
 static void als_task(void *arg) {
   uint16_t value;
   uint32_t last_log_time = 0;
   uint32_t last_send_time = 0;
   uint8_t last_sent_midi = 0;  // Track the last MIDI value we actually sent
+  bool first_reading = true;
   
   while (1) {
     // Calculate minimum interval between messages based on rate limit (check each iteration for dynamic updates)
     uint32_t min_interval_ms = als_rate_limit > 0 ? 1000 / als_rate_limit : 100;
-    if (i2c_common_read_reg16_be(vcnl4040_dev, SENSOR_ALS_DATA, &value) == ESP_OK) {
-      // Apply IIR filter to smooth the values
-      filtered_als = ALS_IIR_ALPHA * value + (1.0f - ALS_IIR_ALPHA) * filtered_als;
+    
+    // Read from either ALS or White channel based on configuration
+    uint16_t reg_addr = use_white_channel ? 0x0A : SENSOR_ALS_DATA;
+    if (i2c_common_read_reg16(vcnl4040_dev, reg_addr, &value) == ESP_OK) {
+      // Initialize filter on first reading
+      if (first_reading) {
+        filtered_als = (float)value;
+        first_reading = false;
+      }
+      
+      // Choose between raw and filtered mode
+      float sensor_value;
+      if (als_raw_mode) {
+        sensor_value = (float)value;
+      } else {
+        // Apply IIR filter to smooth the values
+        filtered_als = ALS_IIR_ALPHA * value + (1.0f - ALS_IIR_ALPHA) * filtered_als;
+        sensor_value = filtered_als;
+      }
       
       // Scale to MIDI range (0-127) with proper clamping using calibration values
-      float scaled = ((float)filtered_als - (float)als_min) * 127.0f / ((float)als_max - (float)als_min);
+      float scaled = ((float)sensor_value - (float)als_min) * 127.0f / ((float)als_max - (float)als_min);
       if (scaled < 0.0f) scaled = 0.0f;
       if (scaled > 127.0f) scaled = 127.0f;
       
@@ -303,13 +373,16 @@ static void als_task(void *arg) {
         midi_value = (uint8_t)(scaled + 0.5f);
       }
       
-      // Log values periodically
+      // Log values periodically for debugging
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-      if (current_time - last_log_time >= 500) {
-        ESP_LOGD(TAG, "ALS: raw=%u, filtered=%.1f, MIDI=%u, last_sent=%u", value, filtered_als, midi_value, last_sent_midi);
+      if (current_time - last_log_time >= 5000) {  // Log every 5 seconds
+        ESP_LOGD(TAG, "%s: raw=%u, filtered=%.1f, min=%u, max=%u, MIDI=%u", 
+                use_white_channel ? "WHITE" : "ALS",
+                value, filtered_als, als_min, als_max, midi_value);
         last_log_time = current_time;
       }
       
+      // Check deadzone and rate limit before posting event
       // Only send if the value has changed beyond deadzone AND rate limit allows
       int diff = abs((int)midi_value - (int)last_sent_midi);
       if (diff >= als_deadzone && (current_time - last_send_time) >= min_interval_ms) {
@@ -347,7 +420,7 @@ static void ps_task(void *arg) {
   while (1) {
     // Calculate minimum interval between messages based on rate limit (check each iteration for dynamic updates)
     uint32_t min_interval_ms = ps_rate_limit > 0 ? 1000 / ps_rate_limit : 50;
-    if (i2c_common_read_reg16_be(vcnl4040_dev, SENSOR_PS_DATA, &value) == ESP_OK) {
+    if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &value) == ESP_OK) {
       ps_value = value;
       
       // Apply IIR filter to smooth the values
@@ -406,7 +479,7 @@ void als_enable(void) {
     vTaskResume(als_task_handle);
     ESP_LOGI(TAG, "Ambient light sensor task resumed");
   } else {
-    BaseType_t ret = xTaskCreate(als_task, "ambient", 2048, NULL, TASK_PRIORITY_SENSOR_ALS, &als_task_handle);
+    BaseType_t ret = xTaskCreate(als_task, "ambient", 3072, NULL, TASK_PRIORITY_SENSOR_ALS, &als_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create ambient light sensor task");
       return;
@@ -445,7 +518,7 @@ void ps_disable(void) {
 
 uint16_t get_als(void) {
   uint16_t val;
-  if (i2c_common_read_reg16_be(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
     return val;
   }
   return 0;
@@ -453,8 +526,50 @@ uint16_t get_als(void) {
 
 uint16_t get_ps(void) {
   uint16_t val;
-  if (i2c_common_read_reg16_be(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
     return val;
   }
   return 0;
+}
+
+void sensor_dump_registers(void) {
+  uint16_t val;
+  ESP_LOGI(TAG, "=== VCNL4040 Register Dump ===");
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_CONF, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "ALS_CONF (0x00): 0x%04X", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF1, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "PS_CONF1/2 (0x03): 0x%04X", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF3, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "PS_CONF3/MS (0x05): 0x%04X", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "PS_DATA (0x08): %u", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "ALS_DATA (0x09): %u", val);
+  }
+  
+  // Read white channel
+  if (i2c_common_read_reg16(vcnl4040_dev, 0x0A, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "WHITE_DATA (0x0A): %u", val);
+  }
+  
+  // Read interrupt flags
+  if (i2c_common_read_reg16(vcnl4040_dev, 0x0B, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "INT_FLAG (0x0B): 0x%04X", val);
+  }
+  
+  // Read device ID
+  if (i2c_common_read_reg16(vcnl4040_dev, 0x0C, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "DEVICE_ID (0x0C): 0x%04X (should be 0x0186)", val);
+  }
+  
+  ESP_LOGI(TAG, "==============================");
 }
