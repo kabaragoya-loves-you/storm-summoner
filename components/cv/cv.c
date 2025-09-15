@@ -31,7 +31,7 @@
 // CV modes are defined in the header file
 
 // Constants
-#define TASK_PERIOD_MS 30        // ~33Hz sampling, matches expression
+#define TASK_PERIOD_MS 30
 #define FILTER_ALPHA 0.2f        // IIR filter coefficient
 #define GATE_THRESHOLD 2048      // ~50% threshold for gate detection
 #define STARTUP_DELAY_MS 300     // Delay before sending events after startup

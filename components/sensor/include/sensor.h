@@ -39,4 +39,17 @@ uint32_t get_ps_rate_limit(void);
 void set_als_rate_limit(uint32_t rate);
 void set_ps_rate_limit(uint32_t rate);
 
+// Calibration functions
+void proximity_set_calibration(uint16_t min_value, uint16_t max_value);
+void proximity_get_calibration(uint16_t *min_value, uint16_t *max_value);
+void proximity_set_deadzone(uint8_t deadzone);
+uint8_t proximity_get_deadzone(void);
+
+void als_set_calibration(uint16_t min_value, uint16_t max_value);
+void als_get_calibration(uint16_t *min_value, uint16_t *max_value);
+void als_set_deadzone(uint8_t deadzone);
+uint8_t als_get_deadzone(void);
+
+void sensor_reset(void);
+
 #endif // SENSOR_H

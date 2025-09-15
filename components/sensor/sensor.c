@@ -9,23 +9,30 @@
 #include "event_bus.h"
 #include "app_settings.h"
 #include <inttypes.h>
+#include <stdlib.h>
 #include "task_priorities.h"
 
 #define TAG "SENSOR"
-#define PROXIMITY_MIN 512    // Minimum value when nothing is near
-#define PROXIMITY_MAX 30000  // Maximum value when finger is close
-#define PROXIMITY_DEADZONE 2 // Minimum change required to send MIDI
-#define PROXIMITY_IIR_ALPHA 0.2f // Filter coefficient for smoothing
+// Default calibration values
+#define DEFAULT_PROXIMITY_MIN 512    // Minimum value when nothing is near
+#define DEFAULT_PROXIMITY_MAX 30000  // Maximum value when finger is close
+#define DEFAULT_PROXIMITY_DEADZONE 2 // Minimum change required to send MIDI
+#define PROXIMITY_IIR_ALPHA 0.2f     // Filter coefficient for smoothing
 
-#define ALS_MIN 10000        // Minimum value (ambient light)
-#define ALS_MAX 40000        // Maximum value (hand shadow)
-#define ALS_DEADZONE 100     // Minimum change required to send MIDI (in raw units)
-#define ALS_IIR_ALPHA 0.1f   // Filter coefficient for smoothing (lower = more smoothing)
-#define ALS_MIDI_DEADZONE 2  // Minimum change in MIDI value (0-127) required to send
+#define DEFAULT_ALS_MIN 10000        // Minimum value (ambient light)
+#define DEFAULT_ALS_MAX 40000        // Maximum value (hand shadow)
+#define ALS_IIR_ALPHA 0.1f           // Filter coefficient for smoothing (lower = more smoothing)
+#define DEFAULT_ALS_DEADZONE 2       // Minimum change in MIDI value (0-127) required to send
 
-// NVS keys for rate limiting
+// NVS keys for rate limiting and calibration
 #define NVS_KEY_ALS_RATE "als_rate"
 #define NVS_KEY_PS_RATE "ps_rate"
+#define NVS_KEY_PROXIMITY_MIN "prox_min"
+#define NVS_KEY_PROXIMITY_MAX "prox_max"
+#define NVS_KEY_PROXIMITY_DEADZONE "prox_dz"
+#define NVS_KEY_ALS_MIN "als_min"
+#define NVS_KEY_ALS_MAX "als_max"
+#define NVS_KEY_ALS_DEADZONE "als_dz"
 #define DEFAULT_ALS_RATE 10  // Default: 10 messages per second
 #define DEFAULT_PS_RATE 20   // Default: 20 messages per second
 
@@ -44,12 +51,21 @@ static volatile uint16_t als_max_observed = 0;      // Track maximum observed va
 static i2c_master_dev_handle_t vcnl4040_dev = NULL;
 
 // Rate limiting variables
-static uint32_t als_rate_limit = DEFAULT_ALS_RATE;
-static uint32_t ps_rate_limit = DEFAULT_PS_RATE;
+static volatile uint32_t als_rate_limit = DEFAULT_ALS_RATE;
+static volatile uint32_t ps_rate_limit = DEFAULT_PS_RATE;
+
+// Calibration variables
+static uint16_t proximity_min = DEFAULT_PROXIMITY_MIN;
+static uint16_t proximity_max = DEFAULT_PROXIMITY_MAX;
+static uint8_t proximity_deadzone = DEFAULT_PROXIMITY_DEADZONE;
+static uint16_t als_min = DEFAULT_ALS_MIN;
+static uint16_t als_max = DEFAULT_ALS_MAX;
+static uint8_t als_deadzone = DEFAULT_ALS_DEADZONE;
 
 void sensor_init(void) {
   esp_err_t err;
 
+  // Load rate limits
   uint32_t stored_als_rate;
   err = app_settings_load_u32(NVS_KEY_ALS_RATE, &stored_als_rate);
   if (err != ESP_OK) {
@@ -66,6 +82,57 @@ void sensor_init(void) {
     ps_rate_limit = DEFAULT_PS_RATE;
   } else {
     ps_rate_limit = stored_ps_rate;
+  }
+
+  // Load proximity calibration
+  uint32_t stored_val;
+  err = app_settings_load_u32(NVS_KEY_PROXIMITY_MIN, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_PROXIMITY_MIN, DEFAULT_PROXIMITY_MIN);
+    proximity_min = DEFAULT_PROXIMITY_MIN;
+  } else {
+    proximity_min = (uint16_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_PROXIMITY_MAX, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_PROXIMITY_MAX, DEFAULT_PROXIMITY_MAX);
+    proximity_max = DEFAULT_PROXIMITY_MAX;
+  } else {
+    proximity_max = (uint16_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_PROXIMITY_DEADZONE, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_PROXIMITY_DEADZONE, DEFAULT_PROXIMITY_DEADZONE);
+    proximity_deadzone = DEFAULT_PROXIMITY_DEADZONE;
+  } else {
+    proximity_deadzone = (uint8_t)stored_val;
+  }
+
+  // Load ALS calibration
+  err = app_settings_load_u32(NVS_KEY_ALS_MIN, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_ALS_MIN, DEFAULT_ALS_MIN);
+    als_min = DEFAULT_ALS_MIN;
+  } else {
+    als_min = (uint16_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_ALS_MAX, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_ALS_MAX, DEFAULT_ALS_MAX);
+    als_max = DEFAULT_ALS_MAX;
+  } else {
+    als_max = (uint16_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_ALS_DEADZONE, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_ALS_DEADZONE, DEFAULT_ALS_DEADZONE);
+    als_deadzone = DEFAULT_ALS_DEADZONE;
+  } else {
+    als_deadzone = (uint8_t)stored_val;
   }
 
   i2c_device_config_t dev_cfg = {
@@ -167,18 +234,64 @@ void set_ps_rate_limit(uint32_t rate) {
   app_settings_save_u32(NVS_KEY_PS_RATE, rate);
 }
 
+// Calibration getter/setter functions
+void proximity_set_calibration(uint16_t min_value, uint16_t max_value) {
+  proximity_min = min_value;
+  proximity_max = max_value;
+  app_settings_save_u32(NVS_KEY_PROXIMITY_MIN, min_value);
+  app_settings_save_u32(NVS_KEY_PROXIMITY_MAX, max_value);
+}
+
+void proximity_get_calibration(uint16_t *min_value, uint16_t *max_value) {
+  if (min_value) *min_value = proximity_min;
+  if (max_value) *max_value = proximity_max;
+}
+
+void proximity_set_deadzone(uint8_t deadzone) {
+  proximity_deadzone = deadzone;
+  app_settings_save_u32(NVS_KEY_PROXIMITY_DEADZONE, deadzone);
+}
+
+uint8_t proximity_get_deadzone(void) {
+  return proximity_deadzone;
+}
+
+void als_set_calibration(uint16_t min_value, uint16_t max_value) {
+  als_min = min_value;
+  als_max = max_value;
+  app_settings_save_u32(NVS_KEY_ALS_MIN, min_value);
+  app_settings_save_u32(NVS_KEY_ALS_MAX, max_value);
+}
+
+void als_get_calibration(uint16_t *min_value, uint16_t *max_value) {
+  if (min_value) *min_value = als_min;
+  if (max_value) *max_value = als_max;
+}
+
+void als_set_deadzone(uint8_t deadzone) {
+  als_deadzone = deadzone;
+  app_settings_save_u32(NVS_KEY_ALS_DEADZONE, deadzone);
+}
+
+uint8_t als_get_deadzone(void) {
+  return als_deadzone;
+}
+
 static void als_task(void *arg) {
   uint16_t value;
   uint32_t last_log_time = 0;
+  uint32_t last_send_time = 0;
   uint8_t last_sent_midi = 0;  // Track the last MIDI value we actually sent
   
   while (1) {
+    // Calculate minimum interval between messages based on rate limit (check each iteration for dynamic updates)
+    uint32_t min_interval_ms = als_rate_limit > 0 ? 1000 / als_rate_limit : 100;
     if (i2c_common_read_reg16_be(vcnl4040_dev, SENSOR_ALS_DATA, &value) == ESP_OK) {
       // Apply IIR filter to smooth the values
       filtered_als = ALS_IIR_ALPHA * value + (1.0f - ALS_IIR_ALPHA) * filtered_als;
       
-      // Scale to MIDI range (0-127) with proper clamping
-      float scaled = ((float)filtered_als - (float)ALS_MIN) * 127.0f / ((float)ALS_MAX - (float)ALS_MIN);
+      // Scale to MIDI range (0-127) with proper clamping using calibration values
+      float scaled = ((float)filtered_als - (float)als_min) * 127.0f / ((float)als_max - (float)als_min);
       if (scaled < 0.0f) scaled = 0.0f;
       if (scaled > 127.0f) scaled = 127.0f;
       
@@ -197,9 +310,9 @@ static void als_task(void *arg) {
         last_log_time = current_time;
       }
       
-      // Only send if the value has changed beyond deadzone
+      // Only send if the value has changed beyond deadzone AND rate limit allows
       int diff = abs((int)midi_value - (int)last_sent_midi);
-      if (diff >= ALS_MIDI_DEADZONE) {
+      if (diff >= als_deadzone && (current_time - last_send_time) >= min_interval_ms) {
         ESP_LOGD(TAG, "Posting ALS event: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
         
         // Post sensor event instead of direct MIDI call
@@ -216,26 +329,32 @@ static void als_task(void *arg) {
         event_bus_post(&sensor_event);
         
         last_sent_midi = midi_value;  // Update last sent value immediately after posting
+        last_send_time = current_time;  // Update rate limiting timestamp
       }
     }
-    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    // Sleep based on rate limit to reduce I2C traffic
+    vTaskDelay(pdMS_TO_TICKS(min_interval_ms > 10 ? min_interval_ms / 2 : 10));
   }
 }
 
 static void ps_task(void *arg) {
   uint16_t value;
   uint32_t last_log_time = 0;
+  uint32_t last_send_time = 0;
   uint8_t last_sent_midi = 0;
   
   while (1) {
+    // Calculate minimum interval between messages based on rate limit (check each iteration for dynamic updates)
+    uint32_t min_interval_ms = ps_rate_limit > 0 ? 1000 / ps_rate_limit : 50;
     if (i2c_common_read_reg16_be(vcnl4040_dev, SENSOR_PS_DATA, &value) == ESP_OK) {
       ps_value = value;
       
       // Apply IIR filter to smooth the values
       filtered_proximity = PROXIMITY_IIR_ALPHA * value + (1.0f - PROXIMITY_IIR_ALPHA) * filtered_proximity;
       
-      // Scale to MIDI range (0-127) with proper clamping
-      float scaled = ((float)filtered_proximity - (float)PROXIMITY_MIN) * 127.0f / ((float)PROXIMITY_MAX - (float)PROXIMITY_MIN);
+      // Scale to MIDI range (0-127) with proper clamping using calibration values
+      float scaled = ((float)filtered_proximity - (float)proximity_min) * 127.0f / ((float)proximity_max - (float)proximity_min);
       if (scaled < 0.0f) scaled = 0.0f;
       if (scaled > 127.0f) scaled = 127.0f;
       
@@ -254,9 +373,9 @@ static void ps_task(void *arg) {
         last_log_time = current_time;
       }
       
-      // Only send if the value has changed beyond deadzone
+      // Only send if the value has changed beyond deadzone AND rate limit allows
       int diff = abs((int)midi_value - (int)last_sent_midi);
-      if (diff >= PROXIMITY_DEADZONE) {
+      if (diff >= proximity_deadzone && (current_time - last_send_time) >= min_interval_ms) {
         ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
         
         // Post sensor event instead of direct MIDI call
@@ -273,9 +392,12 @@ static void ps_task(void *arg) {
         event_bus_post(&sensor_event);
         
         last_sent_midi = midi_value;  // Update last sent value immediately after posting
+        last_send_time = current_time;  // Update rate limiting timestamp
       }
     }
-    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    // Sleep based on rate limit to reduce I2C traffic
+    vTaskDelay(pdMS_TO_TICKS(min_interval_ms > 10 ? min_interval_ms / 2 : 10));
   }
 }
 

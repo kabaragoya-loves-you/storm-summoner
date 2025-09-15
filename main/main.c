@@ -56,13 +56,9 @@ void app_main(void) {
   // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
   midi_callbacks_init();
   
-  esp_err_t err = ads1015_init();
-  if (err != ESP_OK) {
-    ESP_LOGE("MAIN", "Failed to initialize ADS1015: %s", esp_err_to_name(err));
-  } else {
-    expression_init();
-    expression_enable();
-  }
+  ads1015_init();
+  // expression_init();
+  // expression_enable();
   
   input_manager_init();
   input_set_mode(INPUT_MODE_CV);
@@ -71,8 +67,8 @@ void app_main(void) {
   // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
   cv_set_range(CV_RANGE_5V);
   
-  // sensor_init();
-  // als_enable();
+  sensor_init();
+  als_enable();
   // ps_enable();
 
   transport_init();
@@ -87,17 +83,8 @@ void app_main(void) {
   performance_init();
   #endif
   
-  task_monitor_init();
-  vTaskDelay(pdMS_TO_TICKS(3000));
-  task_monitor_print_heap_info();
+  // task_monitor_init();
+  // vTaskDelay(pdMS_TO_TICKS(3000));
+  // task_monitor_print_heap_info();
   // task_monitor_print_report();
-
-  // while (1) {
-  //   if (gpio_get_level(PIN_CV_SW) == 1) {
-  //     ESP_LOGI(TAG, "HIGH");
-  //   } else {
-  //     ESP_LOGI(TAG, "LOW");
-  //   }
-  //   vTaskDelay(pdMS_TO_TICKS(1000));
-  // }
 }
