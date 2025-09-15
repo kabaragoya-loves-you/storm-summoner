@@ -10,7 +10,7 @@ lv_obj_t *canvas = NULL;
 static lv_timer_t *g_ui_refresh_timer = NULL;
 static ui_draw_module_t* current_draw_module = NULL;
 
-static lv_color_t *display_buf = NULL;
+static void *display_buf = NULL;
 
 #define TAG "UI"
 
@@ -77,20 +77,21 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
 
 void ui_init(void) {
   // Allocate display buffer
-  size_t buf_size = 128 * 128 * sizeof(lv_color_t);
+  size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+  size_t buf_size = 128 * 128 * bytes_per_pixel;
   display_buf = lv_malloc(buf_size);
   if (!display_buf) {
     ESP_LOGE(TAG, "Failed to allocate display buffer!");
     return;
   }
   
-  // Standard RGB565 canvas - same as all other modes
+  // Standard canvas - using native color format
   canvas = lv_canvas_create(lv_scr_act());
   lv_obj_set_size(canvas, 128, 128);
   lv_obj_center(canvas);
   
   memset(display_buf, 0, buf_size);
-  lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_RGB565);
+  lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
   ESP_LOGI(TAG, "Canvas created: %d bytes", (int)buf_size);
 
   g_ui_refresh_timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
@@ -144,6 +145,12 @@ void ui_graphics_resume(void) {
 void ui_release_canvas_buffer(void) {
   ESP_LOGI(TAG, "Releasing UI canvas buffer (32KB)...");
   
+  // Check current memory state
+  lv_mem_monitor_t mon_initial;
+  lv_mem_monitor(&mon_initial);
+  ESP_LOGI(TAG, "LVGL memory at start of release - used: %d, free: %d, frag: %d%%", 
+           mon_initial.total_size - mon_initial.free_size, mon_initial.free_size, mon_initial.frag_pct);
+  
   // Pause the refresh timer
   if (g_ui_refresh_timer != NULL) {
     lv_timer_pause(g_ui_refresh_timer);
@@ -156,9 +163,21 @@ void ui_release_canvas_buffer(void) {
   
   // Free the buffer
   if (display_buf) {
+    // Check memory before freeing
+    lv_mem_monitor_t mon_before;
+    lv_mem_monitor(&mon_before);
+    ESP_LOGI(TAG, "LVGL memory before UI free - used: %d, free: %d, frag: %d%%", 
+             mon_before.total_size - mon_before.free_size, mon_before.free_size, mon_before.frag_pct);
+    
     lv_free(display_buf);
     display_buf = NULL;
-    ESP_LOGI(TAG, "UI canvas buffer freed");
+    
+    // Check memory after freeing
+    lv_mem_monitor_t mon_after;
+    lv_mem_monitor(&mon_after);
+    ESP_LOGI(TAG, "UI canvas buffer freed (32KB)");
+    ESP_LOGI(TAG, "LVGL memory after UI free - used: %d, free: %d, frag: %d%%", 
+             mon_after.total_size - mon_after.free_size, mon_after.free_size, mon_after.frag_pct);
   }
   
   // Note: We don't clear the canvas buffer binding here because LVGL doesn't like NULL buffers
@@ -170,7 +189,8 @@ void ui_reclaim_canvas_buffer(void) {
   
   // Reallocate the buffer if needed
   if (!display_buf) {
-    size_t buf_size = 128 * 128 * sizeof(lv_color_t);
+    size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    size_t buf_size = 128 * 128 * bytes_per_pixel;
     display_buf = lv_malloc(buf_size);
     if (!display_buf) {
       ESP_LOGE(TAG, "Failed to reallocate display buffer!");
@@ -181,10 +201,10 @@ void ui_reclaim_canvas_buffer(void) {
   
   // Restore the canvas buffer
   if (canvas != NULL && display_buf != NULL) {
-    lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_RGB565);
+    lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
     lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
     lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_invalidate(canvas);
+    // Don't invalidate here - let the draw function handle it
   }
   
   // Resume the refresh timer

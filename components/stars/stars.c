@@ -11,14 +11,16 @@ static lv_obj_t *g_stars_screen = NULL;
 static lv_obj_t *g_stars_canvas = NULL;
 static lv_timer_t *g_animation_timer = NULL;
 
-// Canvas buffer
-static lv_color_t *g_canvas_buf = NULL;
+// Canvas buffer - use void* to match canvas API
+static void *g_canvas_buf = NULL;
 
 // Star data
 static Star stars[MAX_STARS];
 
 // Previous screen reference for restoration
 static lv_obj_t *g_previous_screen = NULL;
+// Flag to skip first frame invalidation
+static bool g_skip_first_invalidate = false;
 
 static void init_star(int i) {
   stars[i].x = (esp_random() % 200) - 100;
@@ -63,7 +65,17 @@ static void starfield_animation_cb(lv_timer_t *timer) {
     lv_canvas_set_px(g_stars_canvas, x_proj, y_proj, color, LV_OPA_COVER);
   }
 
-  lv_obj_invalidate(g_stars_canvas);
+  // Skip invalidation on first frame to avoid rendering conflict
+  if (g_skip_first_invalidate) {
+    g_skip_first_invalidate = false;
+    return;
+  }
+  
+  // Simple invalidate - let LVGL handle the timing
+  // Extra safety check to ensure canvas is still valid
+  if (g_stars_canvas && lv_obj_is_valid(g_stars_canvas)) {
+    lv_obj_invalidate(g_stars_canvas);
+  }
 }
 
 void starfield_start(void) {
@@ -74,43 +86,75 @@ void starfield_start(void) {
   
   // Create screen if it doesn't exist
   if (!g_stars_screen) {
+    lv_mem_monitor_t mon1;
+    lv_mem_monitor(&mon1);
+    ESP_LOGI(TAG, "Before creating screen - LVGL free: %d, frag: %d%%", 
+             mon1.free_size, mon1.frag_pct);
+    
+    // Ensure we're in a valid LVGL context
+    if (!lv_is_initialized()) {
+      ESP_LOGE(TAG, "LVGL not initialized!");
+      return;
+    }
+    
     g_stars_screen = lv_obj_create(NULL);
+    
+    lv_mem_monitor_t mon2;
+    lv_mem_monitor(&mon2);
+    ESP_LOGI(TAG, "After creating screen - LVGL free: %d, frag: %d%%", 
+             mon2.free_size, mon2.frag_pct);
+    
     lv_obj_set_size(g_stars_screen, DISP_HOR_RES, DISP_VER_RES);
     lv_obj_set_style_bg_color(g_stars_screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(g_stars_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_stars_screen, 0, 0);
+    
+    lv_mem_monitor_t mon3;
+    lv_mem_monitor(&mon3);
+    ESP_LOGI(TAG, "Before creating canvas - LVGL free: %d, frag: %d%%", 
+             mon3.free_size, mon3.frag_pct);
     
     // Create canvas
     g_stars_canvas = lv_canvas_create(g_stars_screen);
     lv_obj_set_size(g_stars_canvas, DISP_HOR_RES, DISP_VER_RES);
     lv_obj_center(g_stars_canvas);
     
-    // Allocate canvas buffer if needed
-    if (!g_canvas_buf) {
-      // Check available memory first
-      size_t free_heap = esp_get_free_heap_size();
-      size_t required_size = DISP_HOR_RES * DISP_VER_RES * sizeof(lv_color_t);
-      
-      ESP_LOGI(TAG, "Free heap: %d bytes, need %d bytes for canvas", free_heap, required_size);
-      
-      if (free_heap < required_size + 16384) { // Keep 16KB safety margin
-        ESP_LOGE(TAG, "Not enough memory for screensaver canvas");
-        lv_obj_delete(g_stars_screen);
-        g_stars_screen = NULL;
-        g_stars_canvas = NULL;
-        return;
-      }
-      
-      g_canvas_buf = lv_malloc(required_size);
-      if (!g_canvas_buf) {
-        ESP_LOGE(TAG, "Failed to allocate canvas buffer");
-        lv_obj_delete(g_stars_screen);
-        g_stars_screen = NULL;
-        g_stars_canvas = NULL;
-        return;
-      }
+  }
+  
+  // Always allocate canvas buffer (it's freed on stop to save memory)
+  if (!g_canvas_buf) {
+    // Check available memory first
+    size_t free_heap = esp_get_free_heap_size();
+    // Calculate size based on the actual color format
+    size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    size_t required_size = DISP_HOR_RES * DISP_VER_RES * bytes_per_pixel;
+    
+    ESP_LOGI(TAG, "Canvas dimensions: %dx%d, color format: %d, bytes per pixel: %d", 
+             DISP_HOR_RES, DISP_VER_RES, LV_COLOR_FORMAT_NATIVE, bytes_per_pixel);
+    ESP_LOGI(TAG, "Free heap: %d bytes, need %d bytes for canvas", free_heap, required_size);
+    
+    // Check LVGL memory status
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    ESP_LOGI(TAG, "LVGL memory - total: %d, used: %d, free: %d, frag: %d%%", 
+             mon.total_size, mon.total_size - mon.free_size, mon.free_size, mon.frag_pct);
+    
+    if (free_heap < required_size + 16384) { // Keep 16KB safety margin
+      ESP_LOGE(TAG, "Not enough memory for screensaver canvas");
+      return;
     }
     
+    ESP_LOGI(TAG, "Attempting to allocate %d bytes from LVGL heap...", required_size);
+    g_canvas_buf = lv_malloc(required_size);
+    if (!g_canvas_buf) {
+      ESP_LOGE(TAG, "Failed to allocate canvas buffer");
+      return;
+    }
+  }
+  
+  // Always set buffer (needed on subsequent runs after buffer was freed)
+  if (g_stars_canvas && g_canvas_buf) {
+    ESP_LOGI(TAG, "Setting canvas buffer");
     lv_canvas_set_buffer(g_stars_canvas, g_canvas_buf, DISP_HOR_RES, DISP_VER_RES, LV_COLOR_FORMAT_NATIVE);
     lv_canvas_fill_bg(g_stars_canvas, lv_color_black(), LV_OPA_COVER);
   }
@@ -120,6 +164,9 @@ void starfield_start(void) {
   
   // Load the screen
   lv_scr_load(g_stars_screen);
+  
+  // Set flag to skip first invalidation
+  g_skip_first_invalidate = true;
   
   // Start animation timer
   if (!g_animation_timer) {
@@ -134,24 +181,24 @@ void starfield_start(void) {
 void starfield_stop(void) {
   ESP_LOGI(TAG, "Stopping starfield screensaver...");
   
-  // Pause animation timer (don't delete - we might start again)
+  // Pause animation timer FIRST to prevent any more invalidations
   if (g_animation_timer) {
     lv_timer_pause(g_animation_timer);
   }
   
-  // Free canvas buffer immediately to save memory
-  if (g_canvas_buf) {
-    lv_free(g_canvas_buf);
-    g_canvas_buf = NULL;
-    ESP_LOGI(TAG, "Freed canvas buffer (32KB)");
-  }
-  
-  // Restore previous screen
+  // Restore previous screen BEFORE freeing buffer
   if (g_previous_screen && lv_obj_is_valid(g_previous_screen)) {
     lv_scr_load(g_previous_screen);
     g_previous_screen = NULL;
   } else {
     ESP_LOGW(TAG, "Previous screen invalid or null, cannot restore");
+  }
+  
+  // Now free canvas buffer after screen switch is complete
+  if (g_canvas_buf) {
+    lv_free(g_canvas_buf);
+    g_canvas_buf = NULL;
+    ESP_LOGI(TAG, "Freed canvas buffer (32KB)");
   }
   
   ESP_LOGI(TAG, "Starfield screensaver stopped");

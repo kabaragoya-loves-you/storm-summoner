@@ -42,42 +42,46 @@ void app_main(void) {
   display_init();
   
   ui_init();
-  ui_set_draw_module(&boundary_circle_module);
+  ui_set_draw_module(&buttons_module);
   
   touch_init();
   // force_touch_calibration();
   
-  // bump_init();
-  // haptic_init();
-  // led_init();
-  // flicker_start();
+  bump_init();
+  haptic_init();
+  led_init();
+  flicker_start();
   
-  // midi_out_init();
+  midi_out_init();
   // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  // midi_callbacks_init();
+  midi_callbacks_init();
   
-  // ads1015_init();
-  // expression_init();
-  // expression_enable();
+  esp_err_t err = ads1015_init();
+  if (err != ESP_OK) {
+    ESP_LOGE("MAIN", "Failed to initialize ADS1015: %s", esp_err_to_name(err));
+  } else {
+    expression_init();
+    expression_enable();
+  }
   
-  // input_manager_init();
-  // input_set_mode(INPUT_MODE_CV);
-  // cv_set_mode(CV_MODE_LINEAR);               // Linear voltage to MIDI mapping
+  input_manager_init();
+  input_set_mode(INPUT_MODE_CV);
+  cv_set_mode(CV_MODE_LINEAR);               // Linear voltage to MIDI mapping
   // input_set_mode(INPUT_MODE_CLOCK_SYNC);  // Clock pulse detection
   // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
-  // cv_set_range(CV_RANGE_5V);
+  cv_set_range(CV_RANGE_5V);
   
   // sensor_init();
   // als_enable();
   // ps_enable();
 
-  // transport_init();
-  // tempo_init();
-  // tempo_set_source(CLOCK_SOURCE_INTERNAL);
-  // tempo_start();
+  transport_init();
+  tempo_init();
+  tempo_set_source(CLOCK_SOURCE_INTERNAL);
+  tempo_start();
 
   screensaver_init();
-  screensaver_set_mode(SCREENSAVER_MODE_ELITE);
+  screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();

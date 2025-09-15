@@ -40,9 +40,10 @@ static lv_timer_t *g_ship_cycling_timer = NULL; // For cycling ships
 static lv_style_t style_default;
 static bool g_elite_style_initialized = false;
 
-static lv_color_t *canvas_buf = NULL;
+static void *canvas_buf = NULL;
 static lv_obj_t *g_elite_screen = NULL;
 static lv_obj_t *g_previous_screen = NULL;
+static volatile bool g_elite_stopping = false;
 
 static void next_random_ship(lv_timer_t *timer);
 static void draw_wireframe_ship(void);
@@ -51,7 +52,7 @@ static void cleanup_ship_resources(void);
 static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color);
 
 static void draw_wireframe_ship(void) {
-  if (!canvas_buf || !canvas) return;
+  if (!canvas_buf || !canvas || g_elite_stopping) return;
   
   // Verify canvas has a valid buffer before proceeding
   if (!lv_canvas_get_buf(canvas)) {
@@ -67,7 +68,9 @@ static void draw_wireframe_ship(void) {
   }
   
   if (canvas_buf) {
-    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+    // Use memset for safety and performance
+    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    memset(canvas_buf, 0, buf_size);
   }
   
   // Direct wireframe drawing without layers
@@ -116,14 +119,16 @@ static void draw_wireframe_ship(void) {
     }
   }
   
-  // Invalidate the canvas to trigger a redraw
-  lv_obj_invalidate(canvas);
+  // Invalidate the canvas to trigger a redraw (unless we're stopping)
+  if (!g_elite_stopping && canvas && lv_obj_is_valid(canvas)) {
+    lv_obj_invalidate(canvas);
+  }
 }
 
 
 // Simple Bresenham line drawing algorithm for canvas
 static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color) {
-  if (!canvas) return;
+  if (!canvas || !canvas_buf || g_elite_stopping) return;
   
   int dx = abs(x1 - x0);
   int dy = abs(y1 - y0);
@@ -132,9 +137,15 @@ static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color
   int err = dx - dy;
   
   while (1) {
+    // Extra safety check in case canvas is cleared while drawing
+    if (!canvas || !canvas_buf || g_elite_stopping) return;
+    
     // Draw pixel if within bounds
     if (x0 >= 0 && x0 < ELITE_DISPLAY_WIDTH && y0 >= 0 && y0 < ELITE_DISPLAY_HEIGHT) {
-      lv_canvas_set_px(canvas, x0, y0, color, LV_OPA_COVER);
+      // Extra check: ensure canvas is valid and not being rendered
+      if (canvas && lv_obj_is_valid(canvas) && !g_elite_stopping) {
+        lv_canvas_set_px(canvas, x0, y0, color, LV_OPA_COVER);
+      }
     }
     
     if (x0 == x1 && y0 == y1) break;
@@ -152,7 +163,7 @@ static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color
 }
 
 static void rotate_ship_cb(lv_timer_t *timer) {
-  if (!canvas || !canvas_buf) return;
+  if (!canvas || !canvas_buf || g_elite_stopping) return;
   
   static int angle = 0;
   static int rotation_pattern = -1;  // -1 means we need to pick a new pattern
@@ -160,7 +171,9 @@ static void rotate_ship_cb(lv_timer_t *timer) {
   if (rotation_pattern == -1) rotation_pattern = (esp_random() % 2);
   
   if (canvas_buf) {
-    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+    // Use memset for safety and performance
+    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    memset(canvas_buf, 0, buf_size);
   }
 
   for (int i = 0; i < ship_vertices_cnt; i++) {
@@ -208,6 +221,7 @@ static void rotate_ship_cb(lv_timer_t *timer) {
 }
 
 static void cleanup_ship_resources(void) {
+  // This is only called on error during elite_start
   // Stop any active timers
   if (rotation_timer) {
     lv_timer_del(rotation_timer);
@@ -247,7 +261,9 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
   
   // Clear canvas
   if (canvas_buf) {
-    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+    // Use memset for safety and performance
+    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    memset(canvas_buf, 0, buf_size);
   }
   
   // Validate canvas is ready
@@ -262,6 +278,9 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
 
 void elite_start(void) {
   ESP_LOGI(TAG, "Starting Elite screensaver...");
+  
+  // Ensure stopping flag is cleared
+  g_elite_stopping = false;
   
   // Save current screen
   g_previous_screen = lv_scr_act();
@@ -278,9 +297,19 @@ void elite_start(void) {
   // Check available memory before allocating canvas buffer
   if (!canvas_buf) {
     size_t free_heap = esp_get_free_heap_size();
-    size_t required_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * sizeof(lv_color_t);
+    // Calculate size based on the actual color format
+    size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    size_t required_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * bytes_per_pixel;
     
+    ESP_LOGI(TAG, "Canvas dimensions: %dx%d, color format: %d, bytes per pixel: %d", 
+             ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_NATIVE, bytes_per_pixel);
     ESP_LOGI(TAG, "Free heap: %d bytes, need %d bytes for canvas", free_heap, required_size);
+    
+    // Check LVGL memory status
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    ESP_LOGI(TAG, "LVGL memory - total: %d, used: %d, free: %d, frag: %d%%", 
+             mon.total_size, mon.total_size - mon.free_size, mon.free_size, mon.frag_pct);
     
     if (free_heap < required_size + 16384) { // Keep 16KB safety margin
       ESP_LOGE(TAG, "Not enough memory for Elite canvas");
@@ -311,9 +340,6 @@ void elite_start(void) {
     lv_obj_remove_style_all(canvas);
     lv_obj_set_style_pad_all(canvas, 0, 0);
     
-    if (canvas_buf) {
-      lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_RGB565);
-    }
   }
   
   // Create info label if not already created
@@ -323,9 +349,17 @@ void elite_start(void) {
     lv_obj_add_style(info_label, &style_default, 0);
   }
   
+  // Always set buffer (needed on subsequent runs after buffer was freed)
+  if (canvas && canvas_buf) {
+    ESP_LOGI(TAG, "Setting canvas buffer");
+    lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_NATIVE);
+  }
+  
   // Clear canvas
   if (canvas_buf) {
-    for(int i = 0; i < ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT; i++) canvas_buf[i] = lv_color_make(0, 0, 0);
+    // Use memset for safety and performance
+    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    memset(canvas_buf, 0, buf_size);
   }
   
   // Load the screen
@@ -350,22 +384,49 @@ void elite_start(void) {
 void elite_stop(void) {
   ESP_LOGI(TAG, "Stopping Elite screensaver...");
   
-  cleanup_ship_resources();
+  // Set flag to prevent any drawing
+  g_elite_stopping = true;
   
-  // Free canvas buffer to save memory
-  if (canvas_buf) {
-    lv_free(canvas_buf);
-    canvas_buf = NULL;
-    ESP_LOGI(TAG, "Freed canvas buffer (32KB)");
+  // Pause timers IMMEDIATELY to prevent any callbacks from firing
+  if (rotation_timer) {
+    lv_timer_pause(rotation_timer);
+    // Note: We'll delete this in cleanup or when displaying a new ship
+  }
+  if (g_ship_cycling_timer) {
+    lv_timer_pause(g_ship_cycling_timer);  // Just pause, don't delete - we might restart
   }
   
-  // Restore previous screen
+  // Give a moment for any in-flight timer callbacks to complete
+  vTaskDelay(pdMS_TO_TICKS(10));
+  
+  // Clear the canvas pointer first to ensure draw functions bail out early
+  lv_obj_t *old_canvas = canvas;
+  canvas = NULL;
+  info_label = NULL;
+  
+  // Hide the canvas to prevent any rendering
+  if (old_canvas && lv_obj_is_valid(old_canvas)) {
+    lv_obj_add_flag(old_canvas, LV_OBJ_FLAG_HIDDEN);
+  }
+  
+  // Restore previous screen BEFORE freeing buffer
   if (g_previous_screen && lv_obj_is_valid(g_previous_screen)) {
     lv_scr_load(g_previous_screen);
     g_previous_screen = NULL;
   } else {
     ESP_LOGW(TAG, "Previous screen invalid or null, cannot restore");
   }
+  
+  // Now free canvas buffer after screen switch is complete
+  if (canvas_buf) {
+    void *tmp = canvas_buf;
+    canvas_buf = NULL;  // Clear pointer first to prevent race conditions
+    lv_free(tmp);
+    ESP_LOGI(TAG, "Freed canvas buffer (32KB)");
+  }
+  
+  // DO NOT reset the stopping flag here - it will be reset in elite_start()
+  // This prevents any lingering timer callbacks from trying to draw
   
   ESP_LOGI(TAG, "Elite screensaver stopped");
 }

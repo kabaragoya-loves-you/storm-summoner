@@ -4,6 +4,8 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "freertos/task.h"
+#include "lvgl.h"
 #include "ui.h"
 #include "stars.h"
 #include "elite.h"
@@ -139,29 +141,58 @@ void screensaver_disable(void) {
   }
 }
 
+// LVGL timer for deferred screensaver stop
+static void stop_screensaver_deferred(lv_timer_t *timer) {
+  lv_timer_del(timer); // One-shot timer
+  
+  ESP_LOGI(TAG, "Stopping screensaver (deferred)");
+  
+  if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {
+    starfield_stop();
+  } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
+    elite_stop();
+  }
+  
+  g_screensaver_active = false;
+  
+  // Reclaim UI canvas buffer
+  ui_reclaim_canvas_buffer();
+}
+
 void screensaver_notify_activity(void) {
   if (!g_screensaver_initialised || !g_screensaver_enabled_in_settings || g_screensaver_activity_timer == NULL) {
     return;
   }
 
-  // If screensaver is active, stop it
+  // If screensaver is active, stop it (deferred to LVGL context)
   if (g_screensaver_active) {
-    ESP_LOGD(TAG, "Activity detected - stopping screensaver");
+    ESP_LOGD(TAG, "Activity detected - scheduling screensaver stop");
     
-    if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {
-      starfield_stop();
-    } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
-      elite_stop();
+    // Create a one-shot LVGL timer to stop the screensaver in the LVGL context
+    lv_timer_t *deferred_timer = lv_timer_create(stop_screensaver_deferred, 0, NULL);
+    if (deferred_timer) {
+      lv_timer_set_repeat_count(deferred_timer, 1);
     }
-    
-    g_screensaver_active = false;
-    
-    // Reclaim UI canvas buffer
-    ui_reclaim_canvas_buffer();
   }
 
   // Always reset the inactivity timer
   xTimerReset(g_screensaver_activity_timer, portMAX_DELAY);
+}
+
+// LVGL timer for deferred screensaver start
+static void start_screensaver_deferred(lv_timer_t *timer) {
+  lv_timer_del(timer); // One-shot timer
+  
+  ESP_LOGI(TAG, "Starting screensaver (deferred)");
+  
+  // Start the selected screensaver
+  if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {
+    starfield_start();
+  } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
+    elite_start();
+  }
+  
+  g_screensaver_active = true;
 }
 
 // FreeRTOS timer callback - now much simpler!
@@ -176,14 +207,11 @@ static void screensaver_timer_callback(TimerHandle_t xTimer) {
   // Release UI canvas buffer to free up memory for screensaver
   ui_release_canvas_buffer();
   
-  // Start the selected screensaver
-  if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {
-    starfield_start();
-  } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
-    elite_start();
+  // Create a one-shot LVGL timer to start the screensaver in the LVGL context
+  lv_timer_t *deferred_timer = lv_timer_create(start_screensaver_deferred, 100, NULL);
+  if (deferred_timer) {
+    lv_timer_set_repeat_count(deferred_timer, 1);
   }
-  
-  g_screensaver_active = true;
 }
 
 void screensaver_set_mode(screensaver_mode_t mode) {
