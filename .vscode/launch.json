@@ -17,7 +17,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/build",
       "program": "${workspaceRoot}/build/blink.elf",
-      "miDebuggerPath": "C:/Users/leastbad/.espressif/tools/xtensa-esp-elf-gdb/14.2_20240403/xtensa-esp-elf-gdb/bin/xtensa-esp32s3-elf-gdb.exe",
+      "miDebuggerPath": "${env:USERPROFILE}/.espressif/tools/xtensa-esp-elf-gdb/14.2_20240403/xtensa-esp-elf-gdb/bin/xtensa-esp32s3-elf-gdb.exe",
       "setupCommands": [
         {"text": "target remote 127.0.0.1:3333"},
         {"text": "set remote hardware-watchpoint-limit 2"},

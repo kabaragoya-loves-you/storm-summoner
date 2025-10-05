@@ -29,8 +29,22 @@
 #include "tempo.h"
 #include "input_manager.h"
 #include "cv.h"
+#include "midi_scene_handler.h"
+#include "scene_test.h"
 
 #define TAG "MAIN"
+
+// Add this task to main.c
+static void monitor_input_task(void* arg) {
+  char c;
+  ESP_LOGI(TAG, "Monitor input ready. Press 'h' for help.");
+  
+  while (1) {
+    c = getchar();
+    if (c != 0xFF) scene_test_monitor_handler(c);
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
 
 void app_main(void) {
   esp_wifi_deinit();
@@ -55,6 +69,7 @@ void app_main(void) {
   midi_out_init();
   // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
   midi_callbacks_init();
+  midi_scene_handler_init();
   
   ads1015_init();
   expression_init();
@@ -78,6 +93,8 @@ void app_main(void) {
 
   screensaver_init();
   screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
+
+  xTaskCreate(&monitor_input_task, "monitor_input", 2048, NULL, 2, NULL);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();

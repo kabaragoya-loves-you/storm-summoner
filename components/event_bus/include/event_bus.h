@@ -52,6 +52,7 @@ typedef enum {
   EVENT_CV_VALUE,
   EVENT_CV_DISCONNECTED,
   EVENT_CLOCK_SYNC_PULSE,
+  EVENT_SCENE_CHANGED,
   EVENT_TYPE_MAX
 } event_type_t;
 
@@ -175,6 +176,14 @@ typedef struct {
     struct {
       uint8_t bpm;           // Current tempo in BPM (30-250)
     } tempo;
+    
+    // Scene event data
+    struct {
+      uint8_t scene_index;   // Scene number (0-based)
+    } scene;
+    
+    // Generic value for simple events
+    uint8_t value_uint8;
   } data;
 } event_t;
 
