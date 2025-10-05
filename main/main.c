@@ -22,7 +22,7 @@
 #include "esp_heap_caps.h"
 #include "performance.h"
 #include "driver/gpio.h"
-#include "esp_wifi.h"
+// #include "esp_wifi.h"
 #include "io.h"
 #include "task_monitor.h"
 #include "transport.h"
@@ -33,51 +33,51 @@
 #define TAG "MAIN"
 
 void app_main(void) {
-  esp_wifi_deinit();
+  // esp_wifi_deinit();
 
   app_settings_init();
   
   event_bus_init();
   
-  display_init();
+  // display_init();
   
-  ui_init();
-  ui_set_draw_module(&buttons_module);
+  // ui_init();
+  // ui_set_draw_module(&buttons_module);
   
-  touch_init();
+  // touch_init();
   // force_touch_calibration();
   
-  bump_init();
-  haptic_init();
-  led_init();
-  flicker_start();
+  // bump_init();
+  // haptic_init();
+  // led_init();
+  // flicker_start();
   
-  midi_out_init();
+  // midi_out_init();
   // midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  midi_callbacks_init();
+  // midi_callbacks_init();
   
-  ads1015_init();
-  expression_init();
-  expression_enable();
+  // ads1015_init();
+  // expression_init();
+  // expression_enable();
   
-  input_manager_init();
-  input_set_mode(INPUT_MODE_CV);
-  cv_set_mode(CV_MODE_LINEAR);               // Linear voltage to MIDI mapping
+  // input_manager_init();
+  // input_set_mode(INPUT_MODE_CV);
+  // cv_set_mode(CV_MODE_LINEAR);               // Linear voltage to MIDI mapping
   // input_set_mode(INPUT_MODE_CLOCK_SYNC);  // Clock pulse detection
   // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
-  cv_set_range(CV_RANGE_5V);
+  // cv_set_range(CV_RANGE_5V);
   
   // sensor_init();
   // als_enable();
   // ps_enable();
 
-  transport_init();
-  tempo_init();
-  tempo_set_source(CLOCK_SOURCE_INTERNAL);
-  tempo_start();
+  // transport_init();
+  // tempo_init();
+  // tempo_set_source(CLOCK_SOURCE_INTERNAL);
+  // tempo_start();
 
-  screensaver_init();
-  screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
+  // screensaver_init();
+  // screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
