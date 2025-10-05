@@ -8,8 +8,8 @@
 #define I2C_SCL_SPEED_HZ     400000
 
 #define PIN_CLOCK_INT  1
-#define PIN_SCL        2
-#define PIN_SDA        3
+#define PIN_SCL        19 // 2
+#define PIN_SDA        18 // 3
 #define PIN_BUMP_INT   4
 #define PIN_TOUCH_CS   5
 #define PIN_TOUCH_MOSI 6
@@ -17,10 +17,10 @@
 #define PIN_TOUCH_MISO 8
 #define PIN_LED        9
 #define PIN_TOUCH_INT 10
-#define PIN_MOSI      11
-#define PIN_SCLK      12
-#define PIN_DC        13
-#define PIN_RESET     14
+#define PIN_MOSI      31 // 11
+#define PIN_SCLK      30 // 12
+#define PIN_DC        28 // 13
+#define PIN_RESET     29 // 14
 #define PIN_REVISION  15
 #define PIN_EXP_SW    16
 #define PIN_CV_SW     17
