@@ -1,17 +1,18 @@
-#ifndef _MCP4725_H
-#define _MCP4725_H
+#ifndef _DAC_H
+#define _DAC_H
 
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
 
 // CV output voltage range modes
+// Maps to cv_range_t values for consistency
 typedef enum {
-  MCP4725_RANGE_10V_BIPOLAR = 0,   // ±10V range, 1.416V DAC output
-  MCP4725_RANGE_5V_BIPOLAR = 1,    // ±5V range, 1.241V DAC output
-  MCP4725_RANGE_10V_UNIPOLAR = 2,  // 0-10V range, 2.481V DAC output
-  MCP4725_RANGE_5V_UNIPOLAR = 3,   // 0-5V range, 1.983V DAC output
-  MCP4725_RANGE_3V3_UNIPOLAR = 4   // 0-3.3V range, 1.650V DAC output
+  MCP4725_RANGE_BIPOLAR_10V = 0,   // ±10V range, 1.416V DAC output (switch ch 0)
+  MCP4725_RANGE_10V = 1,           // 0-10V range, 2.481V DAC output (switch ch 1)
+  MCP4725_RANGE_BIPOLAR_5V = 2,    // ±5V range, 1.241V DAC output (switch ch 1)
+  MCP4725_RANGE_5V = 3,            // 0-5V range, 1.983V DAC output (switch ch 2)
+  MCP4725_RANGE_3V3 = 4            // 0-3.3V range, 1.650V DAC output (switch ch 3)
 } mcp4725_cv_range_t;
 
 // MCP4725 power-down modes
@@ -28,13 +29,13 @@ typedef enum {
  * If no value is stored, defaults to 5V bipolar mode.
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_init(void);
+esp_err_t dac_init(void);
 
 /**
  * Check if MCP4725 is initialized
  * @return true if initialized, false otherwise
  */
-bool mcp4725_is_initialized(void);
+bool dac_is_initialized(void);
 
 /**
  * Set the DAC output value (fast write, volatile)
@@ -42,7 +43,7 @@ bool mcp4725_is_initialized(void);
  * @param value 12-bit DAC value (0-4095)
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_set_value(uint16_t value);
+esp_err_t dac_set_value(uint16_t value);
 
 /**
  * Set the DAC output value and save to EEPROM (persistent)
@@ -52,14 +53,14 @@ esp_err_t mcp4725_set_value(uint16_t value);
  * @param power_down Power-down mode (typically MCP4725_PD_NORMAL)
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_set_value_eeprom(uint16_t value, mcp4725_power_down_t power_down);
+esp_err_t dac_set_value_eeprom(uint16_t value, mcp4725_power_down_t power_down);
 
 /**
  * Get the current DAC output value from the DAC register
  * @param value Pointer to store the current 12-bit DAC value
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_get_value(uint16_t *value);
+esp_err_t dac_get_value(uint16_t *value);
 
 /**
  * Get the value stored in EEPROM
@@ -67,14 +68,14 @@ esp_err_t mcp4725_get_value(uint16_t *value);
  * @param power_down Pointer to store the power-down mode (can be NULL if not needed)
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_get_eeprom_value(uint16_t *value, mcp4725_power_down_t *power_down);
+esp_err_t dac_get_eeprom_value(uint16_t *value, mcp4725_power_down_t *power_down);
 
 /**
  * Set the power-down mode (fast write)
  * @param power_down Power-down mode
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_set_power_down(mcp4725_power_down_t power_down);
+esp_err_t dac_set_power_down(mcp4725_power_down_t power_down);
 
 /**
  * Convert a voltage to a 12-bit DAC value
@@ -82,7 +83,7 @@ esp_err_t mcp4725_set_power_down(mcp4725_power_down_t power_down);
  * @param vref Reference voltage in volts (typically 3.3V or 5.0V)
  * @return 12-bit DAC value (0-4095), clamped to valid range
  */
-uint16_t mcp4725_voltage_to_value(float voltage, float vref);
+uint16_t dac_voltage_to_value(float voltage, float vref);
 
 /**
  * Convert a 12-bit DAC value to voltage
@@ -90,7 +91,7 @@ uint16_t mcp4725_voltage_to_value(float voltage, float vref);
  * @param vref Reference voltage in volts (typically 3.3V or 5.0V)
  * @return Output voltage in volts
  */
-float mcp4725_value_to_voltage(uint16_t value, float vref);
+float dac_value_to_voltage(uint16_t value, float vref);
 
 /**
  * Set the CV voltage range mode
@@ -99,13 +100,13 @@ float mcp4725_value_to_voltage(uint16_t value, float vref);
  * @param range CV voltage range mode
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_set_cv_range(mcp4725_cv_range_t range);
+esp_err_t dac_set_cv_range(mcp4725_cv_range_t range);
 
 /**
  * Get the current CV voltage range mode
  * @param range Pointer to store the current CV range mode
  * @return ESP_OK on success
  */
-esp_err_t mcp4725_get_cv_range(mcp4725_cv_range_t *range);
+esp_err_t dac_get_cv_range(mcp4725_cv_range_t *range);
 
 #endif // _MCP4725_H

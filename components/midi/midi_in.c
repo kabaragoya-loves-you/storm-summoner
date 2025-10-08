@@ -1,8 +1,11 @@
 #include "midi_in.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "input_manager.h"
+#include "io.h"
 #include <string.h>
 #include "task_priorities.h"
 
@@ -314,13 +317,37 @@ void midi_in_process_stream(const uint8_t *data, size_t len)
 static void midi_in_task(void *pvParameters)
 {
   uint8_t rx_buf[RX_BUF_SIZE];
+  bool was_connected = false;
+  
   while (1) {
-    int len = uart_read_bytes(MIDI_NUM, rx_buf, RX_BUF_SIZE,
-                              UART_READ_TIMEOUT / portTICK_PERIOD_MS);
-    if (len > 0) {
-      // ESP_LOG_BUFFER_HEX(TAG, rx_buf, len);
-      midi_in_process_stream(rx_buf, len);
+    // Check if MIDI IN cable is connected
+    bool is_connected = gpio_get_level(PIN_MIDI_SW) == 1;
+    
+    // If cable detection is disabled, treat as always connected
+    if (!input_get_cable_detection_enabled()) {
+      is_connected = true;
     }
+    
+    // Log connection state changes
+    if (is_connected != was_connected) {
+      if (is_connected) {
+        ESP_LOGI(TAG, "MIDI IN cable connected");
+      } else {
+        ESP_LOGI(TAG, "MIDI IN cable disconnected");
+      }
+      was_connected = is_connected;
+    }
+    
+    // Only read UART when cable is connected
+    if (is_connected) {
+      int len = uart_read_bytes(MIDI_NUM, rx_buf, RX_BUF_SIZE,
+                                UART_READ_TIMEOUT / portTICK_PERIOD_MS);
+      if (len > 0) {
+        // ESP_LOG_BUFFER_HEX(TAG, rx_buf, len);
+        midi_in_process_stream(rx_buf, len);
+      }
+    }
+    
     vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
@@ -330,6 +357,22 @@ void midi_in_init(const midi_in_callbacks_t *callbacks)
   if (callbacks) {
     callbacks_inst = *callbacks;
   }
+  
+  // Configure MIDI IN cable detection pin
+  gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << PIN_MIDI_SW),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE
+  };
+  gpio_config(&io_conf);
+  
   xTaskCreate(midi_in_task, "midi_in", 4096, NULL, TASK_PRIORITY_MIDI_IN, NULL);
-  ESP_LOGI(TAG, "MIDI IN initialized");
+  
+  // Check initial cable state
+  bool cable_connected = gpio_get_level(PIN_MIDI_SW) == 1;
+  ESP_LOGI(TAG, "MIDI IN initialized - Cable initial state: %s (GPIO %d = %d)", 
+    cable_connected ? "CONNECTED" : "DISCONNECTED", 
+    PIN_MIDI_SW, gpio_get_level(PIN_MIDI_SW));
 }

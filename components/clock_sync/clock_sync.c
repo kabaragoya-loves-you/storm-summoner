@@ -62,15 +62,8 @@ esp_err_t clock_sync_init(void) {
   app_settings_load_u8(NVS_KEY_SYNC_VOLTAGE_RANGE, &vrange);
   s_voltage_range = (sync_voltage_range_t)vrange;
 
-  // Configure GPIO for clock interrupt
-  gpio_config_t io_conf = {
-    .pin_bit_mask = (1ULL << PIN_CLOCK_INT),
-    .mode = GPIO_MODE_INPUT,
-    .pull_up_en = GPIO_PULLUP_DISABLE,
-    .pull_down_en = GPIO_PULLDOWN_ENABLE,
-    .intr_type = GPIO_INTR_DISABLE  // Will enable when clock_sync_enable() is called
-  };
-  gpio_config(&io_conf);
+  // Note: GPIO configuration for clock sync will be done in clock_sync_enable()
+  // when we switch from ADC mode to GPIO mode. PIN_CV_CLOCK is shared with CV input.
   
   // Create a queue to handle gpio events from isr
   s_gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
@@ -84,18 +77,27 @@ void clock_sync_enable(void) {
   if (!s_enabled) {
     s_enabled = true;
     
-    // Note: Clock sync shares the same hardware path as CV through PCA9536
-    // The CV component manages the PCA9536 switch based on cable detection
-    // Clock sync just monitors PIN_CLOCK_INT for pulses
-    ESP_LOGI(TAG, "Clock sync detection enabled (PCA9536 managed by CV component)");
+    // Configure the shared CV/clock pin as GPIO input
+    // (When CV mode is active, this pin is configured as ADC)
+    gpio_config_t io_conf = {
+      .pin_bit_mask = (1ULL << PIN_CV_CLOCK),
+      .mode = GPIO_MODE_INPUT,
+      .pull_up_en = GPIO_PULLUP_DISABLE,
+      .pull_down_en = GPIO_PULLDOWN_ENABLE,
+      .intr_type = GPIO_INTR_DISABLE  // Set after adding ISR handler
+    };
+    gpio_config(&io_conf);
     
+    // Create clock sync task
     xTaskCreate(clock_sync_task, "clock_sync", 2048, NULL, TASK_PRIORITY_SYNC_BPM, NULL);
     
-    gpio_isr_handler_add(PIN_CLOCK_INT, clock_sync_isr, NULL);
+    // Add ISR handler
+    gpio_isr_handler_add(PIN_CV_CLOCK, clock_sync_isr, NULL);
     
-    gpio_set_intr_type(PIN_CLOCK_INT, GPIO_INTR_POSEDGE);
+    // Enable interrupt on rising edge (inverted signal: high = pulse)
+    gpio_set_intr_type(PIN_CV_CLOCK, GPIO_INTR_POSEDGE);
     
-    ESP_LOGI(TAG, "Clock sync detection enabled");
+    ESP_LOGI(TAG, "Clock sync enabled on GPIO%d (shared with CV input)", PIN_CV_CLOCK);
   }
 }
 
@@ -104,14 +106,17 @@ void clock_sync_disable(void) {
     s_enabled = false;
     
     // Disable interrupt
-    gpio_set_intr_type(PIN_CLOCK_INT, GPIO_INTR_DISABLE);
-    gpio_isr_handler_remove(PIN_CLOCK_INT);
+    gpio_set_intr_type(PIN_CV_CLOCK, GPIO_INTR_DISABLE);
+    gpio_isr_handler_remove(PIN_CV_CLOCK);
+    
+    // Reset the GPIO pin (it will be reconfigured as ADC when CV mode is enabled)
+    gpio_reset_pin(PIN_CV_CLOCK);
     
     s_sync_active = false;
     s_current_bpm = 0;
     s_pulse_count = 0;
     
-    ESP_LOGI(TAG, "Clock sync detection disabled");
+    ESP_LOGI(TAG, "Clock sync disabled");
   }
 }
 
@@ -236,8 +241,9 @@ void clock_sync_set_voltage_range(sync_voltage_range_t range) {
   s_voltage_range = range;
   app_settings_save_u8(NVS_KEY_SYNC_VOLTAGE_RANGE, (uint8_t)range);
   
-  // Update the PCA9536 switch
-  switch_set_channel((uint8_t)range);
+  // Update the switch (channel 2 = unipolar 5V, typical for clock sync)
+  // Note: Clock sync typically uses unipolar 5V range (switch channel 2)
+  switch_set_channel(2);  // SWITCH_CHANNEL_5V
   
   ESP_LOGI(TAG, "Clock sync voltage range set to %d", range);
 }

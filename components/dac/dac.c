@@ -1,4 +1,4 @@
-#include "mcp4725.h"
+#include "dac.h"
 #include "i2c_common.h"
 #include "io.h"
 #include "app_settings.h"
@@ -6,7 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define TAG "MCP4725"
+#define TAG "DAC"
 #define NVS_KEY_CV_RANGE "cv_range"
 
 // MCP4725 command bits
@@ -21,24 +21,23 @@
 
 // DAC values for each CV range mode (calculated for 3.3V VDD)
 // Values = (target_voltage / 3.3V) * 4095, rounded to nearest integer
+// Order matches mcp4725_cv_range_t enum
 static const uint16_t cv_range_values[] = {
-  1757,  // MCP4725_RANGE_10V_BIPOLAR:  1.416V
-  1540,  // MCP4725_RANGE_5V_BIPOLAR:   1.241V
-  3080,  // MCP4725_RANGE_10V_UNIPOLAR: 2.481V
-  2461,  // MCP4725_RANGE_5V_UNIPOLAR:  1.983V
-  2048   // MCP4725_RANGE_3V3_UNIPOLAR: 1.650V
+  1757,  // MCP4725_RANGE_BIPOLAR_10V: 1.416V (switch ch 0)
+  3080,  // MCP4725_RANGE_10V:         2.481V (switch ch 1)
+  1540,  // MCP4725_RANGE_BIPOLAR_5V:  1.241V (switch ch 1)
+  2461,  // MCP4725_RANGE_5V:          1.983V (switch ch 2)
+  2048   // MCP4725_RANGE_3V3:         1.650V (switch ch 3)
 };
 
 static i2c_master_dev_handle_t s_dev_handle = NULL;
-static mcp4725_cv_range_t s_current_cv_range = MCP4725_RANGE_5V_BIPOLAR;
+static mcp4725_cv_range_t s_current_cv_range = MCP4725_RANGE_5V;
 
-esp_err_t mcp4725_init(void) {
+esp_err_t dac_init(void) {
   if (s_dev_handle) {
-    ESP_LOGW(TAG, "MCP4725 already initialized");
+    ESP_LOGW(TAG, "DAC already initialized");
     return ESP_OK;
   }
-
-  i2c_common_scan();
 
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
@@ -52,29 +51,29 @@ esp_err_t mcp4725_init(void) {
     return ret;
   }
 
-  ESP_LOGI(TAG, "MCP4725 initialized at address 0x60");
+  ESP_LOGI(TAG, "MCP4725 DAC initialized at address 0x60");
 
   // Try to load CV range from NVS
   uint8_t stored_range;
   ret = app_settings_load_u8(NVS_KEY_CV_RANGE, &stored_range);
   
-  if (ret == ESP_OK && stored_range <= MCP4725_RANGE_3V3_UNIPOLAR) {
+  if (ret == ESP_OK && stored_range <= MCP4725_RANGE_3V3) {
     // Valid stored range found
     s_current_cv_range = (mcp4725_cv_range_t)stored_range;
     ESP_LOGI(TAG, "Loaded CV range from NVS: %d", stored_range);
   } else {
-    // No stored value or invalid, default to 5V bipolar
-    s_current_cv_range = MCP4725_RANGE_5V_BIPOLAR;
-    ESP_LOGI(TAG, "No valid CV range in NVS, defaulting to 5V bipolar");
+    // No stored value or invalid, default to unipolar 5V
+    s_current_cv_range = MCP4725_RANGE_5V;
+    ESP_LOGI(TAG, "No valid CV range in NVS, defaulting to unipolar 5V");
     
     // Store the default value
-    ret = mcp4725_set_cv_range(s_current_cv_range);
+    ret = dac_set_cv_range(s_current_cv_range);
     if (ret != ESP_OK) ESP_LOGW(TAG, "Failed to store default CV range: %s", esp_err_to_name(ret));
   }
 
   // Set the DAC to the stored/default value
   uint16_t dac_value = cv_range_values[s_current_cv_range];
-  ret = mcp4725_set_value(dac_value);
+  ret = dac_set_value(dac_value);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to set initial DAC value: %s", esp_err_to_name(ret));
     return ret;
@@ -82,18 +81,18 @@ esp_err_t mcp4725_init(void) {
 
   ESP_LOGI(TAG, "DAC set to range mode %d, value %u (%.3fV)", 
     s_current_cv_range, (unsigned)dac_value, 
-    mcp4725_value_to_voltage(dac_value, MCP4725_VREF));
+    dac_value_to_voltage(dac_value, MCP4725_VREF));
 
   return ESP_OK;
 }
 
-bool mcp4725_is_initialized(void) {
+bool dac_is_initialized(void) {
   return (s_dev_handle != NULL);
 }
 
-esp_err_t mcp4725_set_value(uint16_t value) {
+esp_err_t dac_set_value(uint16_t value) {
   if (!s_dev_handle) {
-    ESP_LOGE(TAG, "MCP4725 not initialized");
+    ESP_LOGE(TAG, "DAC not initialized");
     return ESP_ERR_INVALID_STATE;
   }
 
@@ -119,9 +118,9 @@ esp_err_t mcp4725_set_value(uint16_t value) {
   return ESP_OK;
 }
 
-esp_err_t mcp4725_set_value_eeprom(uint16_t value, mcp4725_power_down_t power_down) {
+esp_err_t dac_set_value_eeprom(uint16_t value, mcp4725_power_down_t power_down) {
   if (!s_dev_handle) {
-    ESP_LOGE(TAG, "MCP4725 not initialized");
+    ESP_LOGE(TAG, "DAC not initialized");
     return ESP_ERR_INVALID_STATE;
   }
 
@@ -153,9 +152,9 @@ esp_err_t mcp4725_set_value_eeprom(uint16_t value, mcp4725_power_down_t power_do
   return ESP_OK;
 }
 
-esp_err_t mcp4725_get_value(uint16_t *value) {
+esp_err_t dac_get_value(uint16_t *value) {
   if (!s_dev_handle) {
-    ESP_LOGE(TAG, "MCP4725 not initialized");
+    ESP_LOGE(TAG, "DAC not initialized");
     return ESP_ERR_INVALID_STATE;
   }
 
@@ -183,9 +182,9 @@ esp_err_t mcp4725_get_value(uint16_t *value) {
   return ESP_OK;
 }
 
-esp_err_t mcp4725_get_eeprom_value(uint16_t *value, mcp4725_power_down_t *power_down) {
+esp_err_t dac_get_eeprom_value(uint16_t *value, mcp4725_power_down_t *power_down) {
   if (!s_dev_handle) {
-    ESP_LOGE(TAG, "MCP4725 not initialized");
+    ESP_LOGE(TAG, "DAC not initialized");
     return ESP_ERR_INVALID_STATE;
   }
 
@@ -213,9 +212,9 @@ esp_err_t mcp4725_get_eeprom_value(uint16_t *value, mcp4725_power_down_t *power_
   return ESP_OK;
 }
 
-esp_err_t mcp4725_set_power_down(mcp4725_power_down_t power_down) {
+esp_err_t dac_set_power_down(mcp4725_power_down_t power_down) {
   if (!s_dev_handle) {
-    ESP_LOGE(TAG, "MCP4725 not initialized");
+    ESP_LOGE(TAG, "DAC not initialized");
     return ESP_ERR_INVALID_STATE;
   }
 
@@ -233,7 +232,7 @@ esp_err_t mcp4725_set_power_down(mcp4725_power_down_t power_down) {
   return ESP_OK;
 }
 
-uint16_t mcp4725_voltage_to_value(float voltage, float vref) {
+uint16_t dac_voltage_to_value(float voltage, float vref) {
   if (voltage < 0.0f) voltage = 0.0f;
   if (voltage > vref) voltage = vref;
   
@@ -245,19 +244,19 @@ uint16_t mcp4725_voltage_to_value(float voltage, float vref) {
   return value;
 }
 
-float mcp4725_value_to_voltage(uint16_t value, float vref) {
+float dac_value_to_voltage(uint16_t value, float vref) {
   if (value > MCP4725_MAX_VALUE) value = MCP4725_MAX_VALUE;
   
   return ((float)value / MCP4725_MAX_VALUE) * vref;
 }
 
-esp_err_t mcp4725_set_cv_range(mcp4725_cv_range_t range) {
+esp_err_t dac_set_cv_range(mcp4725_cv_range_t range) {
   if (!s_dev_handle) {
-    ESP_LOGE(TAG, "MCP4725 not initialized");
+    ESP_LOGE(TAG, "DAC not initialized");
     return ESP_ERR_INVALID_STATE;
   }
 
-  if (range > MCP4725_RANGE_3V3_UNIPOLAR) {
+  if (range > MCP4725_RANGE_3V3) {
     ESP_LOGE(TAG, "Invalid CV range: %d", range);
     return ESP_ERR_INVALID_ARG;
   }
@@ -265,14 +264,14 @@ esp_err_t mcp4725_set_cv_range(mcp4725_cv_range_t range) {
   uint16_t dac_value = cv_range_values[range];
 
   // Set the DAC output (volatile)
-  esp_err_t ret = mcp4725_set_value(dac_value);
+  esp_err_t ret = dac_set_value(dac_value);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to set DAC value: %s", esp_err_to_name(ret));
     return ret;
   }
 
   // Write to EEPROM for persistence across power cycles
-  ret = mcp4725_set_value_eeprom(dac_value, MCP4725_PD_NORMAL);
+  ret = dac_set_value_eeprom(dac_value, MCP4725_PD_NORMAL);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to write DAC EEPROM: %s", esp_err_to_name(ret));
     return ret;
@@ -288,12 +287,12 @@ esp_err_t mcp4725_set_cv_range(mcp4725_cv_range_t range) {
   s_current_cv_range = range;
   
   ESP_LOGI(TAG, "Set CV range to mode %d: DAC=%u (%.3fV)", 
-    range, (unsigned)dac_value, mcp4725_value_to_voltage(dac_value, MCP4725_VREF));
+    range, (unsigned)dac_value, dac_value_to_voltage(dac_value, MCP4725_VREF));
 
   return ESP_OK;
 }
 
-esp_err_t mcp4725_get_cv_range(mcp4725_cv_range_t *range) {
+esp_err_t dac_get_cv_range(mcp4725_cv_range_t *range) {
   if (!range) {
     ESP_LOGE(TAG, "NULL pointer passed to mcp4725_get_cv_range");
     return ESP_ERR_INVALID_ARG;

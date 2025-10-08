@@ -1,9 +1,10 @@
 #include "expression.h"
-#include "ads1015.h"
 #include "event_bus.h"
 #include "app_settings.h"
 #include "io.h"
 #include "task_priorities.h"
+#include "adc_manager.h"
+#include "input_manager.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,10 +14,11 @@
 
 #define TAG "EXPRESSION"
 
-// ADS1015 channel allocation
-#define EXPRESSION_CHANNEL 2  // Expression pedal (0-based: 0=VCC, 1=NC, 2=Expression, 3=CV)
-#define REFERENCE_CHANNEL 0   // VCC reference channel for ratiometric measurement
-#define USE_RATIOMETRIC 1     // Enable ratiometric measurement (expression/vcc ratio)
+// ESP32-P4 ADC configuration
+#define EXP_ADC_CHANNEL     ADC_CHANNEL_1  // GPIO17
+#define REF_ADC_CHANNEL     ADC_CHANNEL_2  // GPIO18 (VCC reference for ratiometric)
+#define EXP_ADC_ATTEN       ADC_ATTEN_DB_12  // 0-3100mV range on P4
+#define USE_RATIOMETRIC     1  // Enable ratiometric measurement (expression/vcc ratio)
 
 // NVS keys
 #define NVS_KEY_EXP_MIN "exp_min"
@@ -33,7 +35,7 @@
 // Filtering parameters
 #define MOVING_AVG_LENGTH 10
 #define IIR_ALPHA 0.3f
-#define TASK_DELAY_MS 30  // Allow other ADC users time to access
+#define TASK_DELAY_MS 30
 
 // Static variables
 static TaskHandle_t s_task_handle = NULL;
@@ -50,8 +52,12 @@ static int s_sample_index = 0;
 static int s_sum_samples = 0;
 static int s_num_samples = 0;
 
+// Forward declarations
+static esp_err_t expression_adc_init(void);
+static void expression_adc_deinit(void);
+
 static void expression_task(void *pvParameters) {
-  ESP_LOGI(TAG, "Expression task started - Channel %d (Expression), Channel %d (Reference)", EXPRESSION_CHANNEL, REFERENCE_CHANNEL);
+  ESP_LOGI(TAG, "Expression task started - ADC1 CH%d (Expression), CH%d (Reference)", EXP_ADC_CHANNEL, REF_ADC_CHANNEL);
   
   uint8_t last_midi_value = 0;
   bool was_connected = false;
@@ -60,6 +66,11 @@ static void expression_task(void *pvParameters) {
   while (1) {
     // Check if cable is inserted
     bool is_connected = gpio_get_level(PIN_EXP_SW) == 1;
+    
+    // If cable detection is disabled, treat as always connected
+    if (!input_get_cable_detection_enabled()) {
+      is_connected = true;
+    }
     
     // Handle connection state changes
     if (is_connected != was_connected) {
@@ -91,34 +102,55 @@ static void expression_task(void *pvParameters) {
       float ratio = 0.0f;  // Declare ratio for logging
       
       #if USE_RATIOMETRIC
-      // Use ratiometric measurement for better stability
-      ratio = ads1015_read_ratiometric(EXPRESSION_CHANNEL, REFERENCE_CHANNEL, ADS1015_GAIN_ONE);
-      if (ratio < 0) {
-        ESP_LOGW(TAG, "Ratiometric read failed");
+      // Read expression pedal channel
+      int raw_exp = 0;
+      esp_err_t ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_exp);
+      if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to read expression ADC: %s", esp_err_to_name(ret));
         vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
         continue;
       }
-      // Convert ratio back to raw value scale (0-4095)
-      raw = (int16_t)(ratio * 4095.0f);
+      
+      // Read VCC reference channel
+      int raw_ref = 0;
+      ret = adc_manager_read(REF_ADC_CHANNEL, &raw_ref);
+      if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to read reference ADC: %s", esp_err_to_name(ret));
+        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+        continue;
+      }
+      
+      // Calculate ratio (protects against VCC fluctuations)
+      if (raw_ref > 100) {  // Avoid division by very small numbers
+        ratio = (float)raw_exp / (float)raw_ref;
+        // Scale back to 0-4095 range for compatibility with existing calibration
+        raw = (int16_t)(ratio * 4095.0f);
+      } else {
+        ESP_LOGW(TAG, "Reference voltage too low: %d", raw_ref);
+        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+        continue;
+      }
       #else
-      // Use direct ADC reading
-      raw = ads1015_read_channel_default(EXPRESSION_CHANNEL);
-      if (raw < 0) {
-        ESP_LOGW(TAG, "Direct ADC read failed on channel %d", EXPRESSION_CHANNEL);
+      // Use direct ADC reading (no ratiometric)
+      int raw_adc = 0;
+      esp_err_t ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_adc);
+      if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to read expression ADC: %s", esp_err_to_name(ret));
         vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
         continue;
       }
+      raw = (int16_t)raw_adc;
       #endif
       
       static int16_t last_raw = -1;
       
-      // Log periodically
+      // Log periodically for debugging
       // static int debug_counter = 0;
-      #if USE_RATIOMETRIC
+      // #if USE_RATIOMETRIC
       // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "Ratio: %.3f, raw: %d, filtered: %.1f, MIDI: %d", ratio, raw, s_expression_value, s_midi_value);
-      #else
-      if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d (ch%d)", raw, s_expression_value, s_midi_value, EXPRESSION_CHANNEL);
-      #endif
+      // #else
+      // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d", raw, s_expression_value, s_midi_value);
+      // #endif
       
       // Detect wrap-around or large jumps
       if (last_raw >= 0) {
@@ -216,9 +248,6 @@ static void expression_task(void *pvParameters) {
             last_midi_value = s_midi_value;
           }
         }
-      } else {
-        // ADC read failed
-        ESP_LOGW(TAG, "ADS1015 read failed on channel %d", EXPRESSION_CHANNEL);
       }
       
       vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
@@ -293,9 +322,19 @@ void expression_init(void) {
 
 void expression_enable(void) {  
   if (s_task_handle == NULL) {
-    BaseType_t ret = xTaskCreate(expression_task, "expression", 3072, NULL, TASK_PRIORITY_ADC_EXP, &s_task_handle);
-    if (ret != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create expression task! Return code: %d", ret);
+    // Initialize ADC
+    esp_err_t ret = expression_adc_init();
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Cannot enable expression - ADC initialization failed");
+      return;
+    }
+    
+    BaseType_t task_ret = xTaskCreate(expression_task, "expression", 3072, NULL, TASK_PRIORITY_ADC_EXP, &s_task_handle);
+    if (task_ret != pdPASS) {
+      ESP_LOGE(TAG, "Failed to create expression task! Return code: %d", task_ret);
+      expression_adc_deinit();
+    } else {
+      ESP_LOGI(TAG, "Expression task created");
     }
   } else {
     vTaskResume(s_task_handle);
@@ -305,8 +344,13 @@ void expression_enable(void) {
 
 void expression_disable(void) {
   if (s_task_handle) {
-    vTaskSuspend(s_task_handle);
-    ESP_LOGI(TAG, "Expression task suspended");
+    vTaskDelete(s_task_handle);
+    s_task_handle = NULL;
+    
+    // Deinitialize ADC
+    expression_adc_deinit();
+    
+    ESP_LOGI(TAG, "Expression task deleted and ADC deinitialized");
   }
 }
 
@@ -348,4 +392,35 @@ void expression_set_cc_number(uint8_t cc) {
 
 uint8_t expression_get_cc_number(void) {
   return s_cc_number;
+}
+
+// ADC initialization - register expression channels with ADC manager
+static esp_err_t expression_adc_init(void) {
+  // Register expression pedal channel
+  esp_err_t ret = adc_manager_register_channel(EXP_ADC_CHANNEL, EXP_ADC_ATTEN);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to register expression ADC channel: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  
+  #if USE_RATIOMETRIC
+  // Register VCC reference channel
+  ret = adc_manager_register_channel(REF_ADC_CHANNEL, EXP_ADC_ATTEN);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to register reference ADC channel: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  #endif
+  
+  ESP_LOGI(TAG, "Expression ADC channels registered: exp_ch=%d, ref_ch=%d%s", 
+    EXP_ADC_CHANNEL, REF_ADC_CHANNEL,
+    USE_RATIOMETRIC ? " (ratiometric)" : "");
+  
+  return ESP_OK;
+}
+
+// ADC deinitialization - no-op since ADC manager owns the unit
+static void expression_adc_deinit(void) {
+  // ADC manager owns the unit, nothing to clean up here
+  ESP_LOGD(TAG, "Expression ADC channels released (managed by adc_manager)");
 }

@@ -1,8 +1,6 @@
 #include "revision.h"
 #include "io.h"
-#include "esp_adc/adc_oneshot.h"
-#include "esp_adc/adc_cali.h"
-#include "esp_adc/adc_cali_scheme.h"
+#include "adc_manager.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -10,10 +8,8 @@
 #define TAG "REVISION"
 
 // ESP32-P4 ADC configuration
-#define REV_ADC_UNIT     ADC_UNIT_1
 #define REV_ADC_CHANNEL  ADC_CHANNEL_3  // GPIO19
 #define REV_ADC_ATTEN    ADC_ATTEN_DB_12
-#define REV_ADC_BITWIDTH ADC_BITWIDTH_12
 
 // Number of samples to average for stable reading
 #define NUM_SAMPLES 10
@@ -30,26 +26,6 @@
 static hw_revision_t s_hw_revision = HW_REV_UNKNOWN;
 static uint16_t s_raw_adc_value = 0;
 static bool s_initialized = false;
-
-// Read ADC with averaging for stable result
-static uint16_t read_revision_adc(adc_oneshot_unit_handle_t adc_handle) {
-  uint32_t sum = 0;
-  int valid_samples = 0;
-  
-  for (int i = 0; i < NUM_SAMPLES; i++) {
-    int raw = 0;
-    esp_err_t ret = adc_oneshot_read(adc_handle, REV_ADC_CHANNEL, &raw);
-    if (ret == ESP_OK) {
-      sum += raw;
-      valid_samples++;
-    }
-  }
-  
-  if (valid_samples > 0) {
-    return (uint16_t)(sum / valid_samples);
-  }
-  return 0;
-}
 
 // Map ADC value to hardware revision
 static hw_revision_t map_adc_to_revision(uint16_t adc_value) {
@@ -74,36 +50,10 @@ esp_err_t revision_init(void) {
   
   ESP_LOGI(TAG, "Starting hardware revision detection");
   
-  // Configure ADC oneshot unit
-  adc_oneshot_unit_init_cfg_t init_config = {
-    .unit_id = REV_ADC_UNIT,
-    .ulp_mode = ADC_ULP_MODE_DISABLE,
-  };
-  
-  adc_oneshot_unit_handle_t adc_handle = NULL;
-  esp_err_t ret = adc_oneshot_new_unit(&init_config, &adc_handle);
+  // Register our ADC channel with the manager
+  esp_err_t ret = adc_manager_register_channel(REV_ADC_CHANNEL, REV_ADC_ATTEN);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to initialize ADC unit: %s", esp_err_to_name(ret));
-    // If ADC unit already exists, default to Rev 1
-    if (ret == ESP_ERR_INVALID_STATE) {
-      ESP_LOGW(TAG, "ADC unit may already be initialized by another component, defaulting to Rev 1");
-      s_initialized = true;
-      s_hw_revision = HW_REV_1;
-      return ESP_OK;
-    }
-    return ret;
-  }
-  
-  // Configure revision detection channel
-  adc_oneshot_chan_cfg_t config = {
-    .bitwidth = REV_ADC_BITWIDTH,
-    .atten = REV_ADC_ATTEN,
-  };
-  
-  ret = adc_oneshot_config_channel(adc_handle, REV_ADC_CHANNEL, &config);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to configure ADC channel: %s", esp_err_to_name(ret));
-    adc_oneshot_del_unit(adc_handle);
+    ESP_LOGE(TAG, "Failed to register ADC channel: %s", esp_err_to_name(ret));
     return ret;
   }
   
@@ -111,19 +61,27 @@ esp_err_t revision_init(void) {
   vTaskDelay(pdMS_TO_TICKS(10));
   
   // Read and average multiple samples
-  s_raw_adc_value = read_revision_adc(adc_handle);
+  uint32_t sum = 0;
+  int valid_samples = 0;
+  
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    int raw = 0;
+    ret = adc_manager_read(REV_ADC_CHANNEL, &raw);
+    if (ret == ESP_OK) {
+      sum += raw;
+      valid_samples++;
+    }
+  }
+  
+  if (valid_samples > 0) {
+    s_raw_adc_value = (uint16_t)(sum / valid_samples);
+  } else {
+    ESP_LOGE(TAG, "Failed to read revision ADC");
+    return ESP_FAIL;
+  }
   
   // Map to hardware revision
   s_hw_revision = map_adc_to_revision(s_raw_adc_value);
-  
-  // CRITICAL: Clean up ADC immediately so other components can use it
-  ret = adc_oneshot_del_unit(adc_handle);
-  if (ret != ESP_OK) {
-    ESP_LOGW(TAG, "Failed to delete ADC unit: %s (may cause issues for other ADC users)", esp_err_to_name(ret));
-  }
-  
-  // Give ADC driver time to fully clean up
-  vTaskDelay(pdMS_TO_TICKS(50));
   
   s_initialized = true;
   
