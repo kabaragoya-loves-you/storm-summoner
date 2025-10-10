@@ -97,7 +97,9 @@ void app_main(void) {
   cv_set_mode(CV_MODE_LINEAR);               // Linear voltage to MIDI mapping
   // input_set_mode(INPUT_MODE_CLOCK_SYNC);  // Clock pulse detection
   // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
-  cv_set_range(CV_RANGE_5V);
+  cv_set_calibration(CV_RANGE_3V3, 22, 3220);
+  cv_set_deadzone(1);
+  cv_set_range(CV_RANGE_3V3);
   
   // sensor_init();
   // als_enable();

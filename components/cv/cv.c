@@ -33,24 +33,26 @@
 // CV modes are defined in the header file
 
 // Constants
-#define TASK_PERIOD_MS 30
-#define FILTER_ALPHA 0.2f        // IIR filter coefficient
+#define TASK_PERIOD_MS 20        // 50 Hz sampling rate
+#define FILTER_ALPHA 0.4f        // IIR filter coefficient (fast response for musical performance)
+#define OVERSAMPLE_COUNT 4       // 4x oversampling for +1 bit effective resolution
+#define MEDIAN_WINDOW 5          // 5-sample median filter (better noise rejection for unstable signals)
 #define GATE_THRESHOLD 2048      // ~50% threshold for gate detection
-#define STARTUP_DELAY_MS 300     // Delay before sending events after startup
-#define DEFAULT_DEADZONE 1       // Default MIDI deadzone
+#define STARTUP_DELAY_MS 1000    // Delay before sending events after startup
+#define DEFAULT_DEADZONE 2       // Default MIDI deadzone
 
 // Default calibration values for each range (5 ranges total)
 // All signals are inverted by the op-amp, so "min" is actually the high reading
-#define DEFAULT_MIN_BIPOLAR_10V 38   // +10V input → lowest voltage at ADC pin
-#define DEFAULT_MAX_BIPOLAR_10V 1460 // -10V input → highest voltage at ADC pin
-#define DEFAULT_MIN_10V 24           // 10V input → lowest ADC (inverted)
-#define DEFAULT_MAX_10V 1600         // 0V input → highest ADC (inverted)
-#define DEFAULT_MIN_BIPOLAR_5V 38    // +5V input → lowest voltage at ADC pin
-#define DEFAULT_MAX_BIPOLAR_5V 1460  // -5V input → highest voltage at ADC pin
-#define DEFAULT_MIN_5V 12            // 5V input → lowest ADC (inverted)
-#define DEFAULT_MAX_5V 1600          // 0V input → highest ADC (inverted)
-#define DEFAULT_MIN_3V3 163          // 3.3V input → lowest ADC (inverted)
-#define DEFAULT_MAX_3V3 1600         // 0V input → highest ADC (inverted)
+#define DEFAULT_MIN_BIPOLAR_10V 51   // +10V input → lowest voltage at ADC pin
+#define DEFAULT_MAX_BIPOLAR_10V 3248 // -10V input → highest voltage at ADC pin
+#define DEFAULT_MIN_10V 115           // 10V input → lowest ADC (inverted)
+#define DEFAULT_MAX_10V 3249         // 0V input → highest ADC (inverted)
+#define DEFAULT_MIN_BIPOLAR_5V 48    // +5V input → lowest voltage at ADC pin
+#define DEFAULT_MAX_BIPOLAR_5V 3300  // -5V input → highest voltage at ADC pin
+#define DEFAULT_MIN_5V 60            // 5V input → lowest ADC (inverted)
+#define DEFAULT_MAX_5V 3248          // 0V input → highest ADC (inverted)
+#define DEFAULT_MIN_3V3 22          // 3.3V input → lowest ADC (inverted)
+#define DEFAULT_MAX_3V3 3220         // 0V input → highest ADC (inverted)
 
 // Switch channel mapping for voltage ranges
 // Note: Multiple CV ranges can share a switch channel (distinguished by DAC voltage)
@@ -69,6 +71,9 @@ static bool s_connected = false;
 static float s_offset = 0.0f;
 static float s_scale = 1.0f;
 static uint8_t s_deadzone = DEFAULT_DEADZONE;
+static bool s_filter_initialized = false;
+static int16_t s_median_buffer[MEDIAN_WINDOW] = {0};
+static uint8_t s_median_index = 0;
 // Calibration arrays - indexed by cv_range_t enum (5 ranges)
 static int16_t s_min_values[5] = {
   DEFAULT_MIN_BIPOLAR_10V, DEFAULT_MIN_10V, DEFAULT_MIN_BIPOLAR_5V, DEFAULT_MIN_5V, DEFAULT_MIN_3V3
@@ -85,6 +90,8 @@ static uint8_t cv_range_to_switch_channel(cv_range_t range);
 static const char* cv_range_to_string(cv_range_t range);
 static esp_err_t cv_adc_init(void);
 static void cv_adc_deinit(void);
+static int16_t median_filter(int16_t new_value);
+static int16_t oversample_read(void);
 
 esp_err_t cv_init(void) {
   ESP_LOGI(TAG, "Initializing CV component");
@@ -194,28 +201,26 @@ void cv_disable(void) {
 static void cv_task(void *pvParameters) {
   ESP_LOGI(TAG, "CV task started");
   s_task_start_time = esp_timer_get_time() / 1000; // ms
+  s_filter_initialized = false;  // Reset filter on task start
+  s_median_index = 0;             // Reset median filter
   
-  // Add initial delay to ensure system is stable
-  vTaskDelay(pdMS_TO_TICKS(100));
+  // Add initial delay to ensure ADC is stable
+  vTaskDelay(pdMS_TO_TICKS(200));
   
-  uint32_t read_count = 0;
-  uint32_t fail_count = 0;
+  // Prime the median filter buffer with real readings (avoid zero contamination)
+  int16_t initial_reading = oversample_read();
+  for (int i = 0; i < MEDIAN_WINDOW; i++) {
+    s_median_buffer[i] = initial_reading;
+  }
+  ESP_LOGI(TAG, "Median filter primed with initial reading: %d", initial_reading);
   
-  while (1) {    
-    read_count++;
+  while (1) {
     
-    // Read raw ADC value (12-bit: 0-4095)
-    int raw_adc = 0;
-    esp_err_t ret = adc_manager_read(CV_ADC_CHANNEL, &raw_adc);
+    // Read with 4x oversampling for improved resolution and noise rejection
+    int16_t raw_oversampled = oversample_read();
     
-    if (ret != ESP_OK) {
-      fail_count++;
-      ESP_LOGW(TAG, "Failed to read CV ADC (attempt %lu, failures %lu): %s", read_count, fail_count, esp_err_to_name(ret));
-      vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_MS));
-      continue;
-    }
-    
-    int16_t raw = (int16_t)raw_adc;
+    // Apply median filter to reject impulse noise
+    int16_t raw = median_filter(raw_oversampled);
     
     bool connected = (gpio_get_level(PIN_CV_SW) == 1);
 
@@ -253,11 +258,23 @@ static void cv_task(void *pvParameters) {
         uint8_t channel = cv_range_to_switch_channel(s_range);
         switch_set_channel(channel);
         
+        // Wait for signal to stabilize after switch change
+        vTaskDelay(pdMS_TO_TICKS(50));
+        
+        // Reset filters on reconnection - prime median buffer with fresh reading
+        s_filter_initialized = false;
+        s_median_index = 0;
+        int16_t reconnect_reading = oversample_read();
+        for (int i = 0; i < MEDIAN_WINDOW; i++) {
+          s_median_buffer[i] = reconnect_reading;
+        }
+        
         // Notify input manager
         extern void input_manager_cable_changed(bool connected);
         input_manager_cable_changed(true);
         
-        ESP_LOGI(TAG, "CV cable connected - switch channel %d for %s", channel, cv_range_to_string(s_range));
+        ESP_LOGI(TAG, "CV cable connected - switch channel %d for %s (primed at %d)", 
+          channel, cv_range_to_string(s_range), reconnect_reading);
       }
     }
     
@@ -265,8 +282,13 @@ static void cv_task(void *pvParameters) {
       // Apply calibration
       float calibrated = (raw + s_offset) * s_scale;
       
-      // IIR filter
-      s_filtered_value = FILTER_ALPHA * calibrated + (1.0f - FILTER_ALPHA) * s_filtered_value;
+      // IIR filter - initialize to first reading to avoid warm-up transient
+      if (!s_filter_initialized) {
+        s_filtered_value = calibrated;
+        s_filter_initialized = true;
+      } else {
+        s_filtered_value = FILTER_ALPHA * calibrated + (1.0f - FILTER_ALPHA) * s_filtered_value;
+      }
       
       // Convert to MIDI using min/max calibration for current range
       int16_t min_val = s_min_values[s_range];
@@ -500,6 +522,46 @@ void cv_get_calibration(cv_range_t range, int16_t *min_value, int16_t *max_value
   
   if (min_value) *min_value = s_min_values[range];
   if (max_value) *max_value = s_max_values[range];
+}
+
+// Helper: Oversample ADC reading (4x for +1 bit effective resolution)
+static int16_t oversample_read(void) {
+  int32_t sum = 0;
+  for (int i = 0; i < OVERSAMPLE_COUNT; i++) {
+    int raw_adc = 0;
+    esp_err_t ret = adc_manager_read(CV_ADC_CHANNEL, &raw_adc);
+    if (ret == ESP_OK) {
+      sum += raw_adc;
+    }
+  }
+  return (int16_t)(sum / OVERSAMPLE_COUNT);
+}
+
+// Helper: 3-sample median filter (simple sort for noise rejection)
+static int16_t median_filter(int16_t new_value) {
+  // Update circular buffer
+  s_median_buffer[s_median_index] = new_value;
+  s_median_index = (s_median_index + 1) % MEDIAN_WINDOW;
+  
+  // Sort buffer copy to find median
+  int16_t sorted[MEDIAN_WINDOW];
+  for (int i = 0; i < MEDIAN_WINDOW; i++) {
+    sorted[i] = s_median_buffer[i];
+  }
+  
+  // Simple bubble sort (only 3 elements)
+  for (int i = 0; i < MEDIAN_WINDOW - 1; i++) {
+    for (int j = 0; j < MEDIAN_WINDOW - i - 1; j++) {
+      if (sorted[j] > sorted[j + 1]) {
+        int16_t temp = sorted[j];
+        sorted[j] = sorted[j + 1];
+        sorted[j + 1] = temp;
+      }
+    }
+  }
+  
+  // Return middle value
+  return sorted[MEDIAN_WINDOW / 2];
 }
 
 // ADC initialization - register CV channel with ADC manager

@@ -55,6 +55,18 @@ esp_err_t adc_manager_register_channel(adc_channel_t channel, adc_atten_t atten)
 esp_err_t adc_manager_read(adc_channel_t channel, int *raw_value);
 
 /**
+ * Read a calibrated ADC value in millivolts
+ * 
+ * Uses eFuse calibration data to return accurate voltage reading.
+ * Thread-safe. Channel must have been registered via adc_manager_register_channel().
+ * 
+ * @param channel ADC channel to read
+ * @param voltage_mv Pointer to store the calibrated voltage in millivolts
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv);
+
+/**
  * Get the ADC unit being managed
  * 
  * @return ADC unit (ADC_UNIT_1 or ADC_UNIT_2), or ADC_UNIT_1 if not initialized

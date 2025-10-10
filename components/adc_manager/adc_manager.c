@@ -1,5 +1,7 @@
 #include "adc_manager.h"
 #include "esp_log.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <string.h>
@@ -12,7 +14,10 @@
 // Channel registration tracking
 typedef struct {
   adc_channel_t channel;
+  adc_atten_t atten;
+  adc_cali_handle_t cali_handle;
   bool registered;
+  bool calibrated;
 } channel_info_t;
 
 // Global state
@@ -95,14 +100,32 @@ esp_err_t adc_manager_register_channel(adc_channel_t channel, adc_atten_t atten)
     return ret;
   }
   
+  // Create calibration scheme for this channel
+  adc_cali_handle_t cali_handle = NULL;
+  adc_cali_curve_fitting_config_t cali_config = {
+    .unit_id = s_adc_unit,
+    .atten = atten,
+    .bitwidth = s_bitwidth,
+  };
+  
+  ret = adc_cali_create_scheme_curve_fitting(&cali_config, &cali_handle);
+  bool calibrated = (ret == ESP_OK);
+  if (!calibrated) {
+    ESP_LOGW(TAG, "Calibration scheme not available for channel %d: %s", channel, esp_err_to_name(ret));
+  }
+  
   // Track registration
   s_channels[s_channel_count].channel = channel;
+  s_channels[s_channel_count].atten = atten;
+  s_channels[s_channel_count].cali_handle = cali_handle;
   s_channels[s_channel_count].registered = true;
+  s_channels[s_channel_count].calibrated = calibrated;
   s_channel_count++;
   
   xSemaphoreGive(s_mutex);
   
-  ESP_LOGI(TAG, "Registered ADC channel %d with attenuation %d", channel, atten);
+  ESP_LOGI(TAG, "Registered ADC channel %d with attenuation %d (calibration: %s)", 
+    channel, atten, calibrated ? "enabled" : "unavailable");
   
   return ESP_OK;
 }
@@ -144,6 +167,62 @@ esp_err_t adc_manager_read(adc_channel_t channel, int *raw_value) {
   return ESP_OK;
 }
 
+esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv) {
+  if (!s_initialized) {
+    ESP_LOGE(TAG, "ADC manager not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  if (voltage_mv == NULL) {
+    ESP_LOGE(TAG, "voltage_mv pointer is NULL");
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  // Find channel and its calibration handle
+  adc_cali_handle_t cali_handle = NULL;
+  bool found = false;
+  
+  xSemaphoreTake(s_mutex, portMAX_DELAY);
+  for (int i = 0; i < s_channel_count; i++) {
+    if (s_channels[i].channel == channel && s_channels[i].registered) {
+      found = true;
+      cali_handle = s_channels[i].cali_handle;
+      break;
+    }
+  }
+  xSemaphoreGive(s_mutex);
+  
+  if (!found) {
+    ESP_LOGE(TAG, "Channel %d not registered", channel);
+    return ESP_ERR_NOT_FOUND;
+  }
+  
+  // Read raw value
+  int raw_value;
+  esp_err_t ret = adc_oneshot_read(s_adc_handle, channel, &raw_value);
+  if (ret != ESP_OK) {
+    ESP_LOGD(TAG, "Failed to read channel %d: %s", channel, esp_err_to_name(ret));
+    return ret;
+  }
+  
+  // Apply calibration if available
+  if (cali_handle != NULL) {
+    ret = adc_cali_raw_to_voltage(cali_handle, raw_value, voltage_mv);
+    if (ret != ESP_OK) {
+      ESP_LOGD(TAG, "Failed to calibrate channel %d: %s", channel, esp_err_to_name(ret));
+      // Fall back to linear approximation
+      // Use 3300mV as practical upper bound (DB_12 nominal is 3100mV but extends higher)
+      *voltage_mv = (raw_value * 3300) / 4095;
+    }
+  } else {
+    // No calibration available, use linear approximation
+    // DB_12 attenuation: nominal 0-3100mV, practical range extends to ~3300mV
+    *voltage_mv = (raw_value * 3300) / 4095;
+  }
+  
+  return ESP_OK;
+}
+
 adc_unit_t adc_manager_get_unit(void) {
   return s_adc_unit;
 }
@@ -155,6 +234,13 @@ bool adc_manager_is_initialized(void) {
 void adc_manager_deinit(void) {
   if (!s_initialized) {
     return;
+  }
+  
+  // Delete calibration schemes
+  for (int i = 0; i < s_channel_count; i++) {
+    if (s_channels[i].calibrated && s_channels[i].cali_handle != NULL) {
+      adc_cali_delete_scheme_curve_fitting(s_channels[i].cali_handle);
+    }
   }
   
   if (s_adc_handle) {
