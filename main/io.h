@@ -18,10 +18,10 @@
 #define PIN_TOUCH_MISO 8
 #define PIN_LED        9
 #define PIN_TOUCH_INT 10
-#define PIN_MOSI      31 // 11
+#define PIN_MOSI      29 // 11
 #define PIN_SCLK      30 // 12
 #define PIN_DC        28 // 13
-#define PIN_RESET     29 // 14
+#define PIN_RESET     31 // 14
 #define PIN_EXP_SW    20  // Expression cable detect (was 16 - conflicted with ADC)
 #define PIN_CV_SW     21  // CV cable detect (was 17 - conflicted with ADC)
 #define PIN_MIDI_TS   22  // MIDI cable detect (was 18 - conflicted with ADC)
