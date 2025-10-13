@@ -1,6 +1,8 @@
 idf_component_register(
   SRCS
     "touch.c"
+    "touch_thresholds.c"
+    "touch_debug.c"
   INCLUDE_DIRS 
     "include"
   REQUIRES 
@@ -9,8 +11,8 @@ idf_component_register(
     esp_timer 
     freertos
     app_settings
-    touch_spi_master
     event_bus
+    task_monitor
   PRIV_REQUIRES 
     main
 )

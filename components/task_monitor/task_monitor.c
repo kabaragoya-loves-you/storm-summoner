@@ -16,6 +16,7 @@ void task_monitor_init(void) {
 void task_monitor_print_report(void) {
   ESP_LOGI(TAG, "=== Task Stack Usage Report ===");
   
+#if (configUSE_TRACE_FACILITY == 1) && (configGENERATE_RUN_TIME_STATS == 1)
   // Get the number of tasks
   UBaseType_t task_count = uxTaskGetNumberOfTasks();
   
@@ -101,6 +102,10 @@ void task_monitor_print_report(void) {
   ESP_LOGI(TAG, "Total stack used: %u bytes", (unsigned)total_stack_used);
   ESP_LOGI(TAG, "Potential savings: %u bytes", (unsigned)(total_stack_allocated - total_stack_used));
   ESP_LOGI(TAG, "Note: Stack sizes are estimates. HWM = High Water Mark (minimum free stack)");
+#else
+  ESP_LOGW(TAG, "Task runtime stats not available. Enable CONFIG_FREERTOS_USE_TRACE_FACILITY");
+  ESP_LOGW(TAG, "and CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS in menuconfig to use this feature.");
+#endif
 }
 
 uint32_t task_monitor_get_stack_hwm(TaskHandle_t task) {

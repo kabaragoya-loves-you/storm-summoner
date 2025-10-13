@@ -261,7 +261,6 @@ void tempo_start(void) {
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create tempo task");
     } else {
-      ESP_LOGI(TAG, "Tempo started");
       // Publish initial tempo
       publish_tempo_changed_event();
     }
