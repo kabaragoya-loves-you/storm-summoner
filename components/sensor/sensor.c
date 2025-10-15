@@ -14,9 +14,9 @@
 
 #define TAG "SENSOR"
 // Default calibration values
-#define DEFAULT_PROXIMITY_MIN 512    // Minimum value when nothing is near
-#define DEFAULT_PROXIMITY_MAX 30000  // Maximum value when finger is close
-#define DEFAULT_PROXIMITY_DEADZONE 2 // Minimum change required to send MIDI
+#define DEFAULT_PROXIMITY_MIN 1     // Minimum value when nothing is near
+#define DEFAULT_PROXIMITY_MAX 500    // Maximum value when finger is close (adjust based on testing)
+#define DEFAULT_PROXIMITY_DEADZONE 1 // Minimum change required to send MIDI
 #define PROXIMITY_IIR_ALPHA 0.2f     // Filter coefficient for smoothing
 
 #define DEFAULT_ALS_MIN 0        // Minimum value (ambient light)
@@ -35,6 +35,18 @@
 #define NVS_KEY_ALS_DEADZONE "als_dz"
 #define DEFAULT_ALS_RATE 10  // Default: 10 messages per second
 #define DEFAULT_PS_RATE 20   // Default: 20 messages per second
+#define NVS_KEY_HYSTERESIS_ENABLED "prox_hyst_en"
+#define NVS_KEY_REST_POSITION "prox_rest"
+#define NVS_KEY_RETURN_SPEED "prox_ret_spd"
+#define NVS_KEY_TIMEOUT "prox_timeout"
+#define DEFAULT_REST_POSITION 65
+#define NVS_KEY_PROXIMITY_MODE "prox_mode"
+#define NVS_KEY_THEREMIN_BASE "ther_base"
+#define NVS_KEY_THEREMIN_RANGE "ther_range"
+#define NVS_KEY_THEREMIN_VEL "ther_vel"
+#define DEFAULT_THEREMIN_BASE_NOTE 48  // C3
+#define DEFAULT_THEREMIN_RANGE 24      // 2 octaves
+#define DEFAULT_THEREMIN_VELOCITY 100
 
 static TaskHandle_t als_task_handle = NULL;
 static TaskHandle_t ps_task_handle = NULL;
@@ -66,6 +78,24 @@ static uint8_t als_deadzone = DEFAULT_ALS_DEADZONE;
 static volatile bool als_raw_mode = false;
 // Use white channel instead of ALS
 static volatile bool use_white_channel = false;
+
+// Hysteresis state
+static volatile bool hysteresis_enabled = false;
+static uint8_t rest_position = DEFAULT_REST_POSITION;
+static proximity_return_speed_t return_speed = PROXIMITY_RETURN_MEDIUM;
+static proximity_timeout_t timeout_setting = PROXIMITY_TIMEOUT_MEDIUM;
+static volatile uint32_t at_rest_start_time = 0;  // When sensor went to rest
+static volatile bool returning_to_rest = false;
+static volatile float return_start_value = 0.0f;  // MIDI value when return began
+static volatile uint32_t return_start_time = 0;   // When return started
+
+// Mode and theremin settings
+static proximity_mode_t proximity_mode = PROXIMITY_MODE_CC;
+static uint8_t theremin_base_note = DEFAULT_THEREMIN_BASE_NOTE;
+static uint8_t theremin_range = DEFAULT_THEREMIN_RANGE;
+static uint8_t theremin_velocity = DEFAULT_THEREMIN_VELOCITY;
+static volatile uint8_t current_theremin_note = 0;  // Currently playing note (0 = none)
+static volatile bool theremin_note_active = false;
 
 void sensor_init(void) {
   esp_err_t err;
@@ -140,6 +170,64 @@ void sensor_init(void) {
     als_deadzone = (uint8_t)stored_val;
   }
 
+  // Load hysteresis settings
+  uint8_t hyst_enabled = 0;
+  if (app_settings_load_u8(NVS_KEY_HYSTERESIS_ENABLED, &hyst_enabled) == ESP_OK) {
+    hysteresis_enabled = (hyst_enabled != 0);
+  } else {
+    app_settings_save_u8(NVS_KEY_HYSTERESIS_ENABLED, 0);
+  }
+
+  err = app_settings_load_u32(NVS_KEY_REST_POSITION, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_REST_POSITION, DEFAULT_REST_POSITION);
+  } else {
+    rest_position = (uint8_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_RETURN_SPEED, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_RETURN_SPEED, PROXIMITY_RETURN_MEDIUM);
+  } else {
+    return_speed = (proximity_return_speed_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_TIMEOUT, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_TIMEOUT, PROXIMITY_TIMEOUT_MEDIUM);
+  } else {
+    timeout_setting = (proximity_timeout_t)stored_val;
+  }
+
+  // Load mode and theremin settings
+  err = app_settings_load_u32(NVS_KEY_PROXIMITY_MODE, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_PROXIMITY_MODE, PROXIMITY_MODE_CC);
+  } else {
+    proximity_mode = (proximity_mode_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_THEREMIN_BASE, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_THEREMIN_BASE, DEFAULT_THEREMIN_BASE_NOTE);
+  } else {
+    theremin_base_note = (uint8_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_THEREMIN_RANGE, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_THEREMIN_RANGE, DEFAULT_THEREMIN_RANGE);
+  } else {
+    theremin_range = (uint8_t)stored_val;
+  }
+
+  err = app_settings_load_u32(NVS_KEY_THEREMIN_VEL, &stored_val);
+  if (err != ESP_OK) {
+    app_settings_save_u32(NVS_KEY_THEREMIN_VEL, DEFAULT_THEREMIN_VELOCITY);
+  } else {
+    theremin_velocity = (uint8_t)stored_val;
+  }
+
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
     .device_address   = SENSOR_ADDR,
@@ -171,25 +259,31 @@ void sensor_init(void) {
   // [1] - PS_SMART_PERS: 0 = disable
   // [0] - PS_SD: 0 = enable, 1 = shutdown
   
-  // Enable proximity sensor
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x0800); // PS_SD=0 (enable)
+  // Enable proximity sensor with 8T integration time for better sensitivity
+  // PS_CONF1/2 register (0x03): low byte = PS_CONF1, high byte = PS_CONF2
+  // PS_IT=1000b (8T), PS_SD=0 (enable)
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x4000); // 8T integration, enabled
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF1");
     return;
   }
-
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF2, 0x0000);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed initializing PS_CONF2");
-    return;
-  }
   
-  // Enable white channel measurement
+  // Enable white channel measurement and set LED current
   // PS_CONF3/MS register bits:
   // [15] - WHITE_EN: 1 = enable white channel
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, 0x8000); // WHITE_EN=1
+  // [14] - PS_MS: 0 = normal mode
+  // [13] - LED_I_LOW: 0 = not in low power mode
+  // [12] - Reserved
+  // [11] - PS_SC_EN: 0 = sunlight cancellation disable
+  // [10:8] - PS_TRIG: 000 = no trigger
+  // [7:6] - PS_AF: 00 = auto mode
+  // [5] - PS_SMART_PERS: 0 = disable
+  // [4:3] - Reserved
+  // [2:0] - LED_I: 000=50mA, 001=75mA, 010=100mA, 011=120mA, 100=140mA, 101=160mA, 110=180mA, 111=200mA
+  // Set WHITE_EN=1, LED current to 200mA (111)
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, 0x8007); // WHITE_EN=1, LED_I=200mA
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed enabling white channel");
+    ESP_LOGE(TAG, "Failed configuring PS_CONF3");
     return;
   }
 
@@ -305,6 +399,113 @@ void als_set_deadzone(uint8_t deadzone) {
 
 uint8_t als_get_deadzone(void) {
   return als_deadzone;
+}
+
+void proximity_set_hysteresis_enabled(bool enabled) {
+  hysteresis_enabled = enabled;
+  app_settings_save_u8(NVS_KEY_HYSTERESIS_ENABLED, enabled ? 1 : 0);
+  // Reset state when toggling
+  at_rest_start_time = 0;
+  returning_to_rest = false;
+  ESP_LOGI(TAG, "Proximity hysteresis %s", enabled ? "enabled" : "disabled");
+}
+
+bool proximity_get_hysteresis_enabled(void) {
+  return hysteresis_enabled;
+}
+
+void proximity_set_rest_position(uint8_t position) {
+  if (position > 127) position = 127;
+  rest_position = position;
+  app_settings_save_u32(NVS_KEY_REST_POSITION, position);
+  ESP_LOGI(TAG, "Proximity rest position set to %u", position);
+}
+
+uint8_t proximity_get_rest_position(void) {
+  return rest_position;
+}
+
+void proximity_set_return_speed(proximity_return_speed_t speed) {
+  return_speed = speed;
+  app_settings_save_u32(NVS_KEY_RETURN_SPEED, speed);
+  const char* names[] = {"INSTANT", "FAST", "MEDIUM", "SLOW"};
+  ESP_LOGI(TAG, "Proximity return speed set to %s", names[speed]);
+}
+
+proximity_return_speed_t proximity_get_return_speed(void) {
+  return return_speed;
+}
+
+void proximity_set_timeout(proximity_timeout_t timeout) {
+  timeout_setting = timeout;
+  app_settings_save_u32(NVS_KEY_TIMEOUT, timeout);
+  const char* names[] = {"FAST (500ms)", "MEDIUM (1s)", "SLOW (5s)"};
+  ESP_LOGI(TAG, "Proximity timeout set to %s", names[timeout]);
+}
+
+proximity_timeout_t proximity_get_timeout(void) {
+  return timeout_setting;
+}
+
+void proximity_set_mode(proximity_mode_t mode) {
+  // Turn off any active theremin note when switching modes
+  if (proximity_mode == PROXIMITY_MODE_THEREMIN && mode != PROXIMITY_MODE_THEREMIN && theremin_note_active) {
+    event_t note_off_event = {
+      .type = EVENT_NOTE_OFF,
+      .priority = EVENT_PRIORITY_NORMAL,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.note = {
+        .channel = 0,
+        .note = current_theremin_note,
+        .velocity = 0
+      }
+    };
+    event_bus_post(&note_off_event);
+    theremin_note_active = false;
+    current_theremin_note = 0;
+  }
+  
+  proximity_mode = mode;
+  app_settings_save_u32(NVS_KEY_PROXIMITY_MODE, mode);
+  const char* names[] = {"CC", "Theremin"};
+  ESP_LOGI(TAG, "Proximity mode set to %s", names[mode]);
+}
+
+proximity_mode_t proximity_get_mode(void) {
+  return proximity_mode;
+}
+
+void proximity_set_theremin_base_note(uint8_t note) {
+  if (note > 127) note = 127;
+  theremin_base_note = note;
+  app_settings_save_u32(NVS_KEY_THEREMIN_BASE, note);
+  ESP_LOGI(TAG, "Theremin base note set to %u", note);
+}
+
+uint8_t proximity_get_theremin_base_note(void) {
+  return theremin_base_note;
+}
+
+void proximity_set_theremin_range(uint8_t semitones) {
+  if (semitones > 127) semitones = 127;
+  theremin_range = semitones;
+  app_settings_save_u32(NVS_KEY_THEREMIN_RANGE, semitones);
+  ESP_LOGI(TAG, "Theremin range set to %u semitones", semitones);
+}
+
+uint8_t proximity_get_theremin_range(void) {
+  return theremin_range;
+}
+
+void proximity_set_theremin_velocity(uint8_t velocity) {
+  if (velocity > 127) velocity = 127;
+  theremin_velocity = velocity;
+  app_settings_save_u32(NVS_KEY_THEREMIN_VEL, velocity);
+  ESP_LOGI(TAG, "Theremin velocity set to %u", velocity);
+}
+
+uint8_t proximity_get_theremin_velocity(void) {
+  return theremin_velocity;
 }
 
 void als_set_raw_mode(bool enable) {
@@ -439,34 +640,191 @@ static void ps_task(void *arg) {
         midi_value = (uint8_t)(scaled + 0.5f);
       }
       
-      // Log values periodically
+      // Get current time for both logging and hysteresis
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-      if (current_time - last_log_time >= 500) {
-        ESP_LOGD(TAG, "PS: raw=%u, filtered=%.1f, MIDI=%u, last_sent=%u", value, filtered_proximity, midi_value, last_sent_midi);
-        last_log_time = current_time;
-      }
       
-      // Only send if the value has changed beyond deadzone AND rate limit allows
-      int diff = abs((int)midi_value - (int)last_sent_midi);
-      if (diff >= proximity_deadzone && (current_time - last_send_time) >= min_interval_ms) {
-        ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
+      // Branch based on mode
+      if (proximity_mode == PROXIMITY_MODE_THEREMIN) {
+        // === THEREMIN MODE ===
+        // Determine if proximity is in detectable range
+        bool in_range = (midi_value >= 5);  // Threshold for note detection
         
-        // Post sensor event instead of direct MIDI call
-        event_t sensor_event = {
-          .type = EVENT_SENSOR_PROXIMITY,
-          .priority = EVENT_PRIORITY_NORMAL,
-          .timestamp = event_bus_get_current_timestamp(),
-          .data.sensor = { 
-            .channel = 0,
-            .controller = 19,  // CC19 for proximity
-            .value = midi_value
+        if (in_range) {
+          // Map MIDI value (5-127) to note number
+          // Scale to 0-1 range, then to semitone range
+          float note_scaled = ((float)midi_value - 5.0f) / 122.0f;  // 5 to 127 -> 0 to 1
+          uint8_t semitone_offset = (uint8_t)(note_scaled * (float)theremin_range);
+          uint8_t new_note = theremin_base_note + semitone_offset;
+          if (new_note > 127) new_note = 127;
+          
+          // Check if note changed or if we need to start a new note
+          if (!theremin_note_active || new_note != current_theremin_note) {
+            // Turn off previous note if active
+            if (theremin_note_active) {
+              event_t note_off_event = {
+                .type = EVENT_NOTE_OFF,
+                .priority = EVENT_PRIORITY_NORMAL,
+                .timestamp = event_bus_get_current_timestamp(),
+                .data.note = {
+                  .channel = 0,
+                  .note = current_theremin_note,
+                  .velocity = 0
+                }
+              };
+            event_bus_post(&note_off_event);
+            ESP_LOGI(TAG, "Theremin note OFF: %u", current_theremin_note);
           }
-        };
-        event_bus_post(&sensor_event);
+          
+          // Turn on new note
+          event_t note_on_event = {
+            .type = EVENT_NOTE_ON,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.note = {
+              .channel = 0,
+              .note = new_note,
+              .velocity = theremin_velocity
+            }
+          };
+          event_bus_post(&note_on_event);
+          ESP_LOGI(TAG, "Theremin note ON: %u, velocity: %u", new_note, theremin_velocity);
+            
+            current_theremin_note = new_note;
+            theremin_note_active = true;
+          }
+        } else {
+          // Out of range - turn off note if active
+          if (theremin_note_active) {
+            event_t note_off_event = {
+              .type = EVENT_NOTE_OFF,
+              .priority = EVENT_PRIORITY_NORMAL,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.note = {
+                .channel = 0,
+                .note = current_theremin_note,
+                .velocity = 0
+              }
+            };
+            event_bus_post(&note_off_event);
+            ESP_LOGI(TAG, "Theremin note OFF (out of range): %u", current_theremin_note);
+            theremin_note_active = false;
+            current_theremin_note = 0;
+          }
+        }
         
-        last_sent_midi = midi_value;  // Update last sent value immediately after posting
-        last_send_time = current_time;  // Update rate limiting timestamp
-      }
+        // Logging for theremin mode
+        if (current_time - last_log_time >= 500) {
+          ESP_LOGD(TAG, "PS (Theremin): raw=%u, filtered=%.1f, MIDI=%u, note=%u, active=%d", 
+            value, filtered_proximity, midi_value, current_theremin_note, theremin_note_active);
+          last_log_time = current_time;
+        }
+      } else {
+        // === CC MODE ===
+        // Hysteresis logic - determine output value
+        uint8_t output_value = midi_value;  // Default to sensor reading
+        
+        if (hysteresis_enabled) {
+        // Determine if sensor is "at rest" based on polarity
+        bool at_rest = false;
+        if (current_polarity == PROXIMITY_POLARITY_NORMAL) {
+          at_rest = (midi_value < 5);  // Near minimum (nothing detected)
+        } else {
+          at_rest = (midi_value > 122);  // Near maximum (inverted, nothing detected)
+        }
+        
+        // Get timeout duration
+        // TODO: Could sync timeout to tempo (e.g., wait for end of bar)
+        uint32_t timeout_ms;
+        switch (timeout_setting) {
+          case PROXIMITY_TIMEOUT_FAST: timeout_ms = 500; break;
+          case PROXIMITY_TIMEOUT_MEDIUM: timeout_ms = 1000; break;
+          case PROXIMITY_TIMEOUT_SLOW: timeout_ms = 5000; break;
+          default: timeout_ms = 1000; break;
+        }
+        
+        // State machine logic
+        if (at_rest) {
+          if (at_rest_start_time == 0) {
+            // Just entered at-rest state
+            at_rest_start_time = current_time;
+          } else if (!returning_to_rest && (current_time - at_rest_start_time) >= timeout_ms) {
+            // Timeout expired, begin return to rest position
+            returning_to_rest = true;
+            return_start_time = current_time;
+            return_start_value = (float)last_sent_midi;
+            ESP_LOGD(TAG, "Starting return to rest: from=%u to=%u", last_sent_midi, rest_position);
+          }
+        } else {
+          // Sensor is active (user is interacting), reset hysteresis state
+          at_rest_start_time = 0;
+          returning_to_rest = false;
+        }
+        
+        // Apply return interpolation if active
+        if (returning_to_rest) {
+          // TODO: Could calculate return_duration_ms based on tempo to arrive at next beat/bar
+          uint32_t return_duration_ms;
+          switch (return_speed) {
+            case PROXIMITY_RETURN_INSTANT: return_duration_ms = 0; break;
+            case PROXIMITY_RETURN_FAST: return_duration_ms = 250; break;
+            case PROXIMITY_RETURN_MEDIUM: return_duration_ms = 1000; break;
+            case PROXIMITY_RETURN_SLOW: return_duration_ms = 2000; break;
+            default: return_duration_ms = 1000; break;
+          }
+          
+          if (return_duration_ms == 0) {
+            // Instant return
+            output_value = rest_position;
+          } else {
+            // Interpolate over time
+            uint32_t elapsed = current_time - return_start_time;
+            if (elapsed >= return_duration_ms) {
+              // Return complete
+              output_value = rest_position;
+            } else {
+              // Calculate interpolated value
+              float progress = (float)elapsed / (float)return_duration_ms;
+              output_value = (uint8_t)(return_start_value + progress * ((float)rest_position - return_start_value));
+            }
+          }
+        }
+        }
+        
+        // Log values periodically
+        if (current_time - last_log_time >= 500) {
+          if (hysteresis_enabled && returning_to_rest) {
+            ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u (returning to %u)", 
+              value, filtered_proximity, midi_value, output_value, rest_position);
+          } else {
+            ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u, last_sent=%u", 
+              value, filtered_proximity, midi_value, output_value, last_sent_midi);
+          }
+          last_log_time = current_time;
+        }
+        
+        // Only send if the value has changed beyond deadzone AND rate limit allows
+        // Use output_value (which includes hysteresis) instead of raw midi_value
+        int diff = abs((int)output_value - (int)last_sent_midi);
+        if (diff >= proximity_deadzone && (current_time - last_send_time) >= min_interval_ms) {
+          ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d", output_value, last_sent_midi, diff);
+          
+          // Post sensor event instead of direct MIDI call
+          event_t sensor_event = {
+            .type = EVENT_SENSOR_PROXIMITY,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.sensor = { 
+              .channel = 0,
+              .controller = 19,  // CC19 for proximity
+              .value = output_value
+            }
+          };
+          event_bus_post(&sensor_event);
+          
+          last_sent_midi = output_value;  // Update last sent value immediately after posting
+          last_send_time = current_time;  // Update rate limiting timestamp
+        }
+      }  // End of CC mode / theremin mode if-else
     }
     
     // Sleep based on rate limit to reduce I2C traffic
@@ -500,7 +858,7 @@ void ps_enable(void) {
     vTaskResume(ps_task_handle);
     ESP_LOGI(TAG, "Proximity sensor task resumed");
   } else {
-    BaseType_t ret = xTaskCreate(ps_task, "proximity", 2048, NULL, TASK_PRIORITY_SENSOR_PS, &ps_task_handle);
+    BaseType_t ret = xTaskCreate(ps_task, "proximity", 3072, NULL, TASK_PRIORITY_SENSOR_PS, &ps_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create proximity sensor task");
       return;

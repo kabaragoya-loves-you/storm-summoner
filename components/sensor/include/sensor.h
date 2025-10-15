@@ -6,9 +6,8 @@
 
 #define SENSOR_ADDR             0x60
 #define SENSOR_ALS_CONF         0x00
-#define SENSOR_PS_CONF1         0x03
-#define SENSOR_PS_CONF2         0x04
-#define SENSOR_PS_CONF3         0x05
+#define SENSOR_PS_CONF1         0x03  // PS_CONF1 and PS_CONF2 as 16-bit register
+#define SENSOR_PS_CONF3         0x04  // PS_CONF3 and PS_MS as 16-bit register
 #define SENSOR_PS_DATA          0x08
 #define SENSOR_ALS_DATA         0x09
 
@@ -21,6 +20,30 @@ typedef enum {
     ALS_POLARITY_NORMAL,    // 0 when dark, 127 when bright
     ALS_POLARITY_INVERTED   // 127 when dark, 0 when bright
 } als_polarity_t;
+
+typedef enum {
+  PROXIMITY_RETURN_INSTANT,  // Return immediately
+  PROXIMITY_RETURN_FAST,     // ~250ms return time
+  PROXIMITY_RETURN_MEDIUM,   // ~1000ms return time
+  PROXIMITY_RETURN_SLOW      // ~2000ms return time
+} proximity_return_speed_t;
+
+typedef enum {
+  PROXIMITY_TIMEOUT_FAST,    // 500ms before return starts
+  PROXIMITY_TIMEOUT_MEDIUM,  // 1000ms before return starts
+  PROXIMITY_TIMEOUT_SLOW     // 5000ms before return starts
+} proximity_timeout_t;
+
+typedef enum {
+  PROXIMITY_MODE_CC,         // Output continuous controller messages
+  PROXIMITY_MODE_THEREMIN    // Output note on/off messages with variable pitch
+} proximity_mode_t;
+
+// TODO: Future enhancement - tempo/transport sync mode
+// typedef enum {
+//   PROXIMITY_SYNC_MODE_TIME,   // Use fixed time durations (current implementation)
+//   PROXIMITY_SYNC_MODE_TEMPO   // Sync to tempo (wait for beat/bar, return by next beat/bar)
+// } proximity_sync_mode_t;
 
 void sensor_init(void);
 void als_enable(void);
@@ -59,5 +82,27 @@ bool als_get_use_white_channel(void);
 
 void sensor_reset(void);
 void sensor_dump_registers(void);
+
+// Hysteresis control functions
+void proximity_set_hysteresis_enabled(bool enabled);
+bool proximity_get_hysteresis_enabled(void);
+void proximity_set_rest_position(uint8_t position);
+uint8_t proximity_get_rest_position(void);
+void proximity_set_return_speed(proximity_return_speed_t speed);
+proximity_return_speed_t proximity_get_return_speed(void);
+void proximity_set_timeout(proximity_timeout_t timeout);
+proximity_timeout_t proximity_get_timeout(void);
+
+// Mode control functions
+void proximity_set_mode(proximity_mode_t mode);
+proximity_mode_t proximity_get_mode(void);
+
+// Theremin mode settings
+void proximity_set_theremin_base_note(uint8_t note);
+uint8_t proximity_get_theremin_base_note(void);
+void proximity_set_theremin_range(uint8_t semitones);
+uint8_t proximity_get_theremin_range(void);
+void proximity_set_theremin_velocity(uint8_t velocity);
+uint8_t proximity_get_theremin_velocity(void);
 
 #endif // SENSOR_H
