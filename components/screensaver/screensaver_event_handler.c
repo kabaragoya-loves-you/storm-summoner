@@ -4,8 +4,10 @@
 
 #define TAG "SCREENSAVER_EVENT"
 
+// Forward declaration
+void screensaver_handle_timeout_internal(screensaver_mode_t mode);
+
 static void screensaver_handle_event(const event_t* event, void* context) {
-  // Any of these events should count as user activity
   switch (event->type) {
     case EVENT_TOUCH_PRESS:
     case EVENT_TOUCH_RELEASE:
@@ -14,6 +16,13 @@ static void screensaver_handle_event(const event_t* event, void* context) {
     case EVENT_GESTURE_ROTARY:
       screensaver_notify_activity();
       break;
+      
+    case EVENT_SCREENSAVER_TIMEOUT:
+      // This runs in the event bus task context, safe to call LVGL/UI functions
+      ESP_LOGI(TAG, "Handling screensaver timeout event");
+      screensaver_handle_timeout_internal((screensaver_mode_t)event->data.custom.param1);
+      break;
+      
     default:
       // Other events don't wake the screensaver
       break;
@@ -27,6 +36,7 @@ void screensaver_event_handler_init(void) {
   event_bus_subscribe(EVENT_BUMP_DETECTED, screensaver_handle_event, NULL);
   event_bus_subscribe(EVENT_ENCODER_ROTATE, screensaver_handle_event, NULL);
   event_bus_subscribe(EVENT_GESTURE_ROTARY, screensaver_handle_event, NULL);
+  event_bus_subscribe(EVENT_SCREENSAVER_TIMEOUT, screensaver_handle_event, NULL);
   
   ESP_LOGI(TAG, "Screensaver event handler initialized");
 }

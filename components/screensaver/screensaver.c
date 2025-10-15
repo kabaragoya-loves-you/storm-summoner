@@ -10,6 +10,7 @@
 #include "stars.h"
 #include "elite.h"
 #include "nvs.h"
+#include "event_bus.h"
 
 void screensaver_event_handler_init(void);
 
@@ -195,22 +196,44 @@ static void start_screensaver_deferred(lv_timer_t *timer) {
   g_screensaver_active = true;
 }
 
-// FreeRTOS timer callback - now much simpler!
-static void screensaver_timer_callback(TimerHandle_t xTimer) {
+// Called from event handler in proper task context (not timer service task)
+void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
   if (g_screensaver_active) {
-    ESP_LOGW(TAG, "Screensaver already active, ignoring timer");
+    ESP_LOGW(TAG, "Screensaver already active, ignoring timeout");
     return;
   }
 
-  ESP_LOGI(TAG, "Inactivity timeout - starting screensaver");
+  ESP_LOGI(TAG, "Processing screensaver timeout");
   
   // Release UI canvas buffer to free up memory for screensaver
+  // This is safe here because we're in the event bus task, not timer service
   ui_release_canvas_buffer();
   
   // Create a one-shot LVGL timer to start the screensaver in the LVGL context
   lv_timer_t *deferred_timer = lv_timer_create(start_screensaver_deferred, 100, NULL);
   if (deferred_timer) {
     lv_timer_set_repeat_count(deferred_timer, 1);
+  }
+  
+  g_screensaver_active = true;
+}
+
+// FreeRTOS timer callback - MUST be lightweight!
+// Only posts an event, does NOT call LVGL or complex functions
+static void screensaver_timer_callback(TimerHandle_t xTimer) {
+  // Post event to be handled in event bus task context
+  event_t event = {
+    .type = EVENT_SCREENSAVER_TIMEOUT,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS,
+    .data.custom.param1 = g_selected_screensaver_mode
+  };
+  
+  // Use ISR-safe posting (timer callbacks run in timer service task, similar to ISR)
+  BaseType_t higher_priority_woken = pdFALSE;
+  esp_err_t ret = event_bus_post_from_isr(&event, &higher_priority_woken);
+  if (ret != ESP_OK) {
+    // Can't use ESP_LOGE from ISR context safely, but this shouldn't happen
   }
 }
 
