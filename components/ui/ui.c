@@ -212,10 +212,8 @@ void ui_reclaim_canvas_buffer(void) {
     lv_timer_resume(g_ui_refresh_timer);
   }
   
-  // Redraw the current module if any
-  if (current_draw_module && current_draw_module->draw_func) {
-    current_draw_module->draw_func();
-  }
+  // Don't redraw immediately after allocating 32KB - memory may be fragmented
+  // Let the refresh timer handle the next draw cycle naturally
   
   ESP_LOGI(TAG, "UI canvas buffer reclaimed");
 }
