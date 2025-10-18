@@ -41,6 +41,12 @@ typedef enum {
   EVENT_BUMP_DETECTED,
   EVENT_ENCODER_ROTATE,
   EVENT_TIMER_TICK,
+  EVENT_BUTTON_L_PRESS,
+  EVENT_BUTTON_R_PRESS,
+  EVENT_BUTTON_BOTH_PRESS,
+  EVENT_BUTTON_L_LONG_PRESS,
+  EVENT_BUTTON_R_LONG_PRESS,
+  EVENT_BUTTON_BOTH_LONG_PRESS,
   EVENT_MIDI_ACTION,
   EVENT_UI_ACTION,
   EVENT_SENSOR_ALS,
@@ -208,6 +214,12 @@ typedef struct {
       uint8_t note;          // MIDI note number (0-127)
       uint8_t velocity;      // MIDI velocity (0-127)
     } note;
+    
+    // Button event data
+    struct {
+      uint8_t button_id;     // 0=left, 1=right, 2=both
+      uint32_t duration_ms;  // Duration for long press
+    } button;
   } data;
 } event_t;
 

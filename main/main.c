@@ -35,20 +35,9 @@
 #include "switch.h"
 #include "midi_scene_handler.h"
 #include "scene_test.h"
+#include "buttons.h"
 
 #define TAG "MAIN"
-
-// Add this task to main.c
-static void monitor_input_task(void* arg) {
-  char c;
-  ESP_LOGI(TAG, "Monitor input ready. Press 'h' for help.");
-  
-  while (1) {
-    c = getchar();
-    if (c != 0xFF) scene_test_monitor_handler(c);
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
-}
 
 void app_main(void) {
   adc_manager_init(ADC_UNIT_1, ADC_BITWIDTH_12);
@@ -57,6 +46,7 @@ void app_main(void) {
   i2c_common_scan();
   app_settings_init();
   event_bus_init();
+  buttons_init(true);
   dac_init();
   display_init();
   ui_init();
@@ -131,8 +121,7 @@ void app_main(void) {
 
   screensaver_init();
   screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
-
-  xTaskCreate(&monitor_input_task, "monitor_input", 2048, NULL, 2, NULL);
+  screensaver_set_delay(600);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
