@@ -121,7 +121,7 @@ void app_main(void) {
 
   screensaver_init();
   screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
-  screensaver_set_delay(600);
+  // screensaver_set_delay(600);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();

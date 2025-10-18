@@ -17,32 +17,35 @@ static void template_draw_deferred_cb(lv_timer_t *timer) {
     return;
   }
   
-  // Get the display from canvas
-  lv_display_t *disp = lv_obj_get_display(canvas);
-  if (!disp) {
-    ESP_LOGE(TAG, "Failed to get display from canvas");
-    lv_timer_del(timer);
-    return;
+  // Only create widgets if they don't exist
+  if (g_screen == NULL) {
+    // Get the display from canvas
+    lv_display_t *disp = lv_obj_get_display(canvas);
+    if (!disp) {
+      ESP_LOGE(TAG, "Failed to get display from canvas");
+      lv_timer_del(timer);
+      return;
+    }
+    
+    // Create a screen
+    g_screen = lv_obj_create(NULL);
+    lv_obj_set_size(g_screen, 128, 128);
+    
+    // Set background style
+    lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
+    
+    // Create a simple label widget
+    g_label = lv_label_create(g_screen);
+    lv_label_set_text(g_label, "Template UI");
+    lv_obj_set_style_text_color(g_label, lv_color_white(), 0);
+    lv_obj_align(g_label, LV_ALIGN_CENTER, 0, 0);
+    
+    ESP_LOGI(TAG, "Template screen created");
   }
   
-  // Create a screen
-  g_screen = lv_obj_create(NULL);
-  lv_obj_set_size(g_screen, 128, 128);
-  
-  // Set background style
-  lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
-  
-  // Create a simple label widget
-  g_label = lv_label_create(g_screen);
-  lv_label_set_text(g_label, "Template UI");
-  lv_obj_set_style_text_color(g_label, lv_color_white(), 0);
-  lv_obj_align(g_label, LV_ALIGN_CENTER, 0, 0);
-  
-  // Load the screen
+  // Load the screen (safe to call multiple times)
   lv_screen_load(g_screen);
-  
-  ESP_LOGI(TAG, "Template screen created");
   
   // Clean up the timer
   lv_timer_del(timer);
