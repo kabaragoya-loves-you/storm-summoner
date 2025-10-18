@@ -71,6 +71,25 @@ esp_err_t dac_get_value(uint16_t *value);
 esp_err_t dac_get_eeprom_value(uint16_t *value, mcp4725_power_down_t *power_down);
 
 /**
+ * Read and log current DAC register and EEPROM values for debugging
+ * @return ESP_OK on success
+ */
+esp_err_t dac_debug_readback(void);
+
+/**
+ * Calibrate DAC VREF by measuring actual VCC via ADC reference channel
+ * Uses the same reference channel as expression pedal (GPIO18/ADC1_CH2)
+ * @return ESP_OK on success
+ */
+esp_err_t dac_calibrate_vref(void);
+
+/**
+ * Get the current calibrated VREF value
+ * @return Current VREF in volts
+ */
+float dac_get_vref(void);
+
+/**
  * Set the power-down mode (fast write)
  * @param power_down Power-down mode
  * @return ESP_OK on success

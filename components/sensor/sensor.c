@@ -78,6 +78,8 @@ static uint8_t als_deadzone = DEFAULT_ALS_DEADZONE;
 static volatile bool als_raw_mode = false;
 // Use white channel instead of ALS
 static volatile bool use_white_channel = false;
+static bool s_als_logging_enabled = false;  // Control ALS value logging
+static bool s_ps_logging_enabled = false;   // Control proximity value logging
 
 // Hysteresis state
 static volatile bool hysteresis_enabled = false;
@@ -97,8 +99,11 @@ static uint8_t theremin_velocity = DEFAULT_THEREMIN_VELOCITY;
 static volatile uint8_t current_theremin_note = 0;  // Currently playing note (0 = none)
 static volatile bool theremin_note_active = false;
 
-void sensor_init(void) {
+void sensor_init(bool enable_logging) {
   esp_err_t err;
+  
+  s_als_logging_enabled = enable_logging;
+  s_ps_logging_enabled = enable_logging;
 
   // Load rate limits
   uint32_t stored_als_rate;
@@ -380,6 +385,110 @@ uint8_t proximity_get_deadzone(void) {
   return proximity_deadzone;
 }
 
+// Helper: Compare function for qsort (uint16_t)
+static int compare_uint16(const void *a, const void *b) {
+  return (*(uint16_t*)a - *(uint16_t*)b);
+}
+
+esp_err_t proximity_auto_calibrate(uint32_t duration_ms) {
+  ESP_LOGI(TAG, "=== Auto-calibrating proximity sensor ===");
+  ESP_LOGI(TAG, "Position hand FAR and wait...");
+  
+  if (!vcnl4040_dev) {
+    ESP_LOGE(TAG, "Proximity sensor not initialized");
+    return ESP_FAIL;
+  }
+  
+  // Wait for sensor to settle
+  ESP_LOGI(TAG, "Settling for 2 seconds...");
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  
+  ESP_LOGI(TAG, "Starting calibration: HOLD FAR, then HOLD NEAR, then sweep for %u seconds", (unsigned)(duration_ms / 1000));
+  
+  // Allocate buffer for all samples
+  uint32_t max_samples = (duration_ms / 20) + 10;
+  uint16_t *samples = (uint16_t*)malloc(max_samples * sizeof(uint16_t));
+  if (!samples) {
+    ESP_LOGE(TAG, "Failed to allocate sample buffer");
+    return ESP_ERR_NO_MEM;
+  }
+  
+  uint32_t sample_count = 0;
+  uint32_t last_log_time = 0;
+  
+  // Sample for the specified duration
+  TickType_t start_tick = xTaskGetTickCount();
+  TickType_t duration_ticks = pdMS_TO_TICKS(duration_ms);
+  
+  while ((xTaskGetTickCount() - start_tick) < duration_ticks && sample_count < max_samples) {
+    uint16_t reading;
+    if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &reading) == ESP_OK) {
+      samples[sample_count++] = reading;
+      
+      // Log every second for debugging
+      uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+      if (current_time - last_log_time >= 1000) {
+        ESP_LOGI(TAG, "Sampling: raw=%u", (unsigned)reading);
+        last_log_time = current_time;
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));  // Sample at ~50Hz
+  }
+  
+  if (sample_count < 10) {
+    ESP_LOGE(TAG, "Insufficient samples collected: %u", (unsigned)sample_count);
+    free(samples);
+    return ESP_FAIL;
+  }
+  
+  // Sort samples to find range while rejecting extreme outliers
+  qsort(samples, sample_count, sizeof(uint16_t), compare_uint16);
+  
+  // Discard only the 2 most extreme samples on each end
+  uint32_t trim_count = 2;
+  uint32_t min_index = (trim_count < sample_count) ? trim_count : 0;
+  uint32_t max_index = (trim_count < sample_count) ? (sample_count - 1 - trim_count) : (sample_count - 1);
+  
+  if (min_index >= sample_count) min_index = 0;
+  if (max_index >= sample_count) max_index = sample_count - 1;
+  if (min_index >= max_index) max_index = sample_count - 1;
+  
+  uint16_t min_reading = samples[min_index];
+  uint16_t max_reading = samples[max_index];
+  uint16_t absolute_min = samples[0];
+  uint16_t absolute_max = samples[sample_count - 1];
+  
+  free(samples);
+  
+  // Check if we got a valid swing
+  uint16_t swing = max_reading - min_reading;
+  if (swing < 10) {
+    ESP_LOGW(TAG, "Insufficient swing detected (%u counts). Calibration may be inaccurate.", (unsigned)swing);
+  }
+  
+  // Apply 1% margin on each extreme for headroom
+  float margin = swing * 0.01f;
+  uint16_t final_min = min_reading + (uint16_t)margin;
+  uint16_t final_max = max_reading - (uint16_t)margin;
+  
+  // Ensure min < max after applying margins
+  if (final_min >= final_max) {
+    ESP_LOGE(TAG, "Calibration failed: min >= max after applying margins");
+    return ESP_FAIL;
+  }
+  
+  ESP_LOGI(TAG, "Calibration complete: %u samples", (unsigned)sample_count);
+  ESP_LOGI(TAG, "  Absolute range:   %u - %u", (unsigned)absolute_min, (unsigned)absolute_max);
+  ESP_LOGI(TAG, "  Trimmed range:    %u - %u (%u counts, discarded %u extreme samples)", 
+    (unsigned)min_reading, (unsigned)max_reading, (unsigned)swing, trim_count * 2);
+  ESP_LOGI(TAG, "  Final range:      %u - %u (1%% margins applied)", (unsigned)final_min, (unsigned)final_max);
+  
+  // Store calibration
+  proximity_set_calibration(final_min, final_max);
+  
+  return ESP_OK;
+}
+
 void als_set_calibration(uint16_t min_value, uint16_t max_value) {
   als_min = min_value;
   als_max = max_value;
@@ -390,6 +499,108 @@ void als_set_calibration(uint16_t min_value, uint16_t max_value) {
 void als_get_calibration(uint16_t *min_value, uint16_t *max_value) {
   if (min_value) *min_value = als_min;
   if (max_value) *max_value = als_max;
+}
+
+esp_err_t als_auto_calibrate(uint32_t duration_ms) {
+  ESP_LOGI(TAG, "=== Auto-calibrating ambient light sensor ===");
+  ESP_LOGI(TAG, "Position in DARK and wait...");
+  
+  if (!vcnl4040_dev) {
+    ESP_LOGE(TAG, "ALS sensor not initialized");
+    return ESP_FAIL;
+  }
+  
+  // Wait for sensor to settle
+  ESP_LOGI(TAG, "Settling for 2 seconds...");
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  
+  ESP_LOGI(TAG, "Starting calibration: HOLD DARK, then HOLD BRIGHT, then vary for %u seconds", (unsigned)(duration_ms / 1000));
+  
+  // Determine which channel to read
+  uint16_t reg_addr = use_white_channel ? 0x0A : SENSOR_ALS_DATA;
+  
+  // Allocate buffer for all samples
+  uint32_t max_samples = (duration_ms / 20) + 10;
+  uint16_t *samples = (uint16_t*)malloc(max_samples * sizeof(uint16_t));
+  if (!samples) {
+    ESP_LOGE(TAG, "Failed to allocate sample buffer");
+    return ESP_ERR_NO_MEM;
+  }
+  
+  uint32_t sample_count = 0;
+  uint32_t last_log_time = 0;
+  
+  // Sample for the specified duration
+  TickType_t start_tick = xTaskGetTickCount();
+  TickType_t duration_ticks = pdMS_TO_TICKS(duration_ms);
+  
+  while ((xTaskGetTickCount() - start_tick) < duration_ticks && sample_count < max_samples) {
+    uint16_t reading;
+    if (i2c_common_read_reg16(vcnl4040_dev, reg_addr, &reading) == ESP_OK) {
+      samples[sample_count++] = reading;
+      
+      // Log every second for debugging
+      uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+      if (current_time - last_log_time >= 1000) {
+        ESP_LOGI(TAG, "Sampling: raw=%u", (unsigned)reading);
+        last_log_time = current_time;
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));  // Sample at ~50Hz
+  }
+  
+  if (sample_count < 10) {
+    ESP_LOGE(TAG, "Insufficient samples collected: %u", (unsigned)sample_count);
+    free(samples);
+    return ESP_FAIL;
+  }
+  
+  // Sort samples to find range while rejecting extreme outliers
+  qsort(samples, sample_count, sizeof(uint16_t), compare_uint16);
+  
+  // Discard only the 2 most extreme samples on each end
+  uint32_t trim_count = 2;
+  uint32_t min_index = (trim_count < sample_count) ? trim_count : 0;
+  uint32_t max_index = (trim_count < sample_count) ? (sample_count - 1 - trim_count) : (sample_count - 1);
+  
+  if (min_index >= sample_count) min_index = 0;
+  if (max_index >= sample_count) max_index = sample_count - 1;
+  if (min_index >= max_index) max_index = sample_count - 1;
+  
+  uint16_t min_reading = samples[min_index];
+  uint16_t max_reading = samples[max_index];
+  uint16_t absolute_min = samples[0];
+  uint16_t absolute_max = samples[sample_count - 1];
+  
+  free(samples);
+  
+  // Check if we got a valid swing
+  uint16_t swing = max_reading - min_reading;
+  if (swing < 10) {
+    ESP_LOGW(TAG, "Insufficient swing detected (%u counts). Calibration may be inaccurate.", (unsigned)swing);
+  }
+  
+  // Apply 1% margin on each extreme for headroom
+  float margin = swing * 0.01f;
+  uint16_t final_min = min_reading + (uint16_t)margin;
+  uint16_t final_max = max_reading - (uint16_t)margin;
+  
+  // Ensure min < max after applying margins
+  if (final_min >= final_max) {
+    ESP_LOGE(TAG, "Calibration failed: min >= max after applying margins");
+    return ESP_FAIL;
+  }
+  
+  ESP_LOGI(TAG, "Calibration complete: %u samples (%s channel)", (unsigned)sample_count, use_white_channel ? "WHITE" : "ALS");
+  ESP_LOGI(TAG, "  Absolute range:   %u - %u", (unsigned)absolute_min, (unsigned)absolute_max);
+  ESP_LOGI(TAG, "  Trimmed range:    %u - %u (%u counts, discarded %u extreme samples)", 
+    (unsigned)min_reading, (unsigned)max_reading, (unsigned)swing, trim_count * 2);
+  ESP_LOGI(TAG, "  Final range:      %u - %u (1%% margins applied)", (unsigned)final_min, (unsigned)final_max);
+  
+  // Store calibration
+  als_set_calibration(final_min, final_max);
+  
+  return ESP_OK;
 }
 
 void als_set_deadzone(uint8_t deadzone) {
@@ -576,7 +787,7 @@ static void als_task(void *arg) {
       
       // Log values periodically for debugging
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-      if (current_time - last_log_time >= 5000) {  // Log every 5 seconds
+      if (s_als_logging_enabled && current_time - last_log_time >= 5000) {  // Log every 5 seconds
         ESP_LOGD(TAG, "%s: raw=%u, filtered=%.1f, min=%u, max=%u, MIDI=%u", 
                 use_white_channel ? "WHITE" : "ALS",
                 value, filtered_als, als_min, als_max, midi_value);
@@ -791,7 +1002,7 @@ static void ps_task(void *arg) {
         }
         
         // Log values periodically
-        if (current_time - last_log_time >= 500) {
+        if (s_ps_logging_enabled && current_time - last_log_time >= 500) {
           if (hysteresis_enabled && returning_to_rest) {
             ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u (returning to %u)", 
               value, filtered_proximity, midi_value, output_value, rest_position);

@@ -17,10 +17,6 @@
 
 #define TAG "CV"
 
-// ESP32-P4 ADC configuration
-#define CV_ADC_CHANNEL  ADC_CHANNEL_0  // GPIO16
-#define CV_ADC_ATTEN    ADC_ATTEN_DB_12  // 0-3100mV range on P4
-
 // NVS keys
 #define NVS_KEY_CV_MODE "cv_mode"
 #define NVS_KEY_CV_RANGE "cv_range"
@@ -29,13 +25,14 @@
 #define NVS_KEY_CV_DEADZONE "cv_deadzone"
 #define NVS_KEY_CV_MIN_PREFIX "cv_min_"  // cv_min_0, cv_min_1, etc.
 #define NVS_KEY_CV_MAX_PREFIX "cv_max_"  // cv_max_0, cv_max_1, etc.
+#define NVS_KEY_CV_PITCH_STD "cv_pitch_std"
 
 // CV modes are defined in the header file
 
 // Constants
 #define TASK_PERIOD_MS 20        // 50 Hz sampling rate
 #define FILTER_ALPHA 0.4f        // IIR filter coefficient (fast response for musical performance)
-#define OVERSAMPLE_COUNT 4       // 4x oversampling for +1 bit effective resolution
+#define OVERSAMPLE_COUNT 16      // 16x oversampling for +2 bits effective resolution
 #define MEDIAN_WINDOW 5          // 5-sample median filter (better noise rejection for unstable signals)
 #define GATE_THRESHOLD 2048      // ~50% threshold for gate detection
 #define STARTUP_DELAY_MS 1000    // Delay before sending events after startup
@@ -51,8 +48,8 @@
 #define DEFAULT_MAX_BIPOLAR_5V 3300  // -5V input → highest voltage at ADC pin
 #define DEFAULT_MIN_5V 60            // 5V input → lowest ADC (inverted)
 #define DEFAULT_MAX_5V 3248          // 0V input → highest ADC (inverted)
-#define DEFAULT_MIN_3V3 22          // 3.3V input → lowest ADC (inverted)
-#define DEFAULT_MAX_3V3 3220         // 0V input → highest ADC (inverted)
+#define DEFAULT_MIN_3V3 95          // 3.3V input → lowest ADC (inverted)
+#define DEFAULT_MAX_3V3 3440         // 0V input → highest ADC (inverted)
 
 // Switch channel mapping for voltage ranges
 // Note: Multiple CV ranges can share a switch channel (distinguished by DAC voltage)
@@ -65,12 +62,15 @@
 static TaskHandle_t s_task_handle = NULL;
 static cv_mode_t s_mode = CV_MODE_LINEAR;
 static cv_range_t s_range = CV_RANGE_5V;  // Default to unipolar 5V
+static cv_pitch_standard_t s_pitch_standard = CV_PITCH_1V_OCTAVE_C2;  // Default to C2 at 0V
 static float s_filtered_value = 0.0f;
 static uint8_t s_last_midi_value = 0;
+static uint8_t s_last_pitch_note = 60;  // For pitch mode
 static bool s_connected = false;
 static float s_offset = 0.0f;
 static float s_scale = 1.0f;
 static uint8_t s_deadzone = DEFAULT_DEADZONE;
+static bool s_logging_enabled = false;  // Control periodic value logging
 static bool s_filter_initialized = false;
 static int16_t s_median_buffer[MEDIAN_WINDOW] = {0};
 static uint8_t s_median_index = 0;
@@ -93,18 +93,74 @@ static void cv_adc_deinit(void);
 static int16_t median_filter(int16_t new_value);
 static int16_t oversample_read(void);
 
-esp_err_t cv_init(void) {
+bool cv_is_cable_connected(void) {
+  static bool last_state = true;  // Remember last state for hysteresis
+  static uint8_t stable_count = 0;  // Count consecutive readings in new state
+  static const uint8_t DEBOUNCE_COUNT = 3;  // Require 3 consecutive readings (~60ms)
+  
+  // Read switch voltage
+  int sw_raw = 0;
+  esp_err_t ret = adc_manager_read(CV_SW_ADC_CHANNEL, &sw_raw);
+  if (ret != ESP_OK) return last_state;  // Return last known state on error
+  
+  // Read VCC reference
+  int vcc_raw = 0;
+  ret = adc_manager_read(REF_ADC_CHANNEL, &vcc_raw);
+  if (ret != ESP_OK) return last_state;
+  
+  // Convert to mV (ADC_ATTEN_DB_12 → 0-3100mV range)
+  int sw_mv = (sw_raw * 3100) / 4095;
+  int vcc_mv = (vcc_raw * 3100) / 4095;
+  int delta = vcc_mv - sw_mv;
+  
+  // Hysteresis based on delta (voltage drop from VCC to switch)
+  // Cable plugged in: delta is small (~0-50mV, switch near VCC)
+  // Cable unplugged: delta is large (~400-500mV, op-amp pulls switch down)
+  bool current_reading;
+  if (last_state) {
+    // Currently connected - need delta > 350mV to consider disconnected
+    current_reading = (delta < 350);
+  } else {
+    // Currently disconnected - need delta < 200mV to consider connected
+    current_reading = (delta < 200);
+  }
+  
+  // Debouncing: Only change state after DEBOUNCE_COUNT consecutive readings
+  if (current_reading != last_state) {
+    stable_count++;
+    if (stable_count >= DEBOUNCE_COUNT) {
+      // State has been stable for required count, accept the change
+      last_state = current_reading;
+      stable_count = 0;
+    }
+  } else {
+    // Reading matches current state, reset counter
+    stable_count = 0;
+  }
+  
+  // Debug logging (enable temporarily to diagnose)
+  // static uint32_t last_log = 0;
+  // uint32_t now = esp_timer_get_time() / 1000;
+  // if (now - last_log > 1000) {  // Log every second
+  //   ESP_LOGI(TAG, "Cable detect: sw=%dmV, vcc=%dmV, delta=%dmV, state=%s (stable:%d)", 
+  //     sw_mv, vcc_mv, delta, last_state ? "CONN" : "DISC", stable_count);
+  //   last_log = now;
+  // }
+  
+  return last_state;
+}
+
+esp_err_t cv_init(bool enable_logging) {
   ESP_LOGI(TAG, "Initializing CV component");
   
-  // Configure CV cable detection pin
-  gpio_config_t io_conf = {
-    .pin_bit_mask = (1ULL << PIN_CV_SW),
-    .mode = GPIO_MODE_INPUT,
-    .pull_up_en = GPIO_PULLUP_DISABLE,
-    .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    .intr_type = GPIO_INTR_DISABLE
-  };
-  gpio_config(&io_conf);
+  s_logging_enabled = enable_logging;
+  
+  // Register CV cable detection ADC channel
+  esp_err_t ret = adc_manager_register_channel(CV_SW_ADC_CHANNEL, ADC_ATTEN);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to register CV switch ADC channel: %s", esp_err_to_name(ret));
+    return ret;
+  }
   
   // Load settings from NVS
   uint8_t mode = CV_MODE_LINEAR;
@@ -126,6 +182,14 @@ esp_err_t cv_init(void) {
   
   // Load deadzone
   app_settings_load_u8(NVS_KEY_CV_DEADZONE, &s_deadzone);
+  
+  // Load pitch standard
+  uint8_t pitch_std = CV_PITCH_1V_OCTAVE_C2;
+  if (app_settings_load_u8(NVS_KEY_CV_PITCH_STD, &pitch_std) == APP_SETTINGS_OK) {
+    s_pitch_standard = (cv_pitch_standard_t)pitch_std;
+  } else {
+    app_settings_save_u8(NVS_KEY_CV_PITCH_STD, (uint8_t)s_pitch_standard);
+  }
   
   // Load min/max values for each range (5 ranges total)
   for (int i = 0; i < 5; i++) {
@@ -159,7 +223,7 @@ void cv_enable(void) {
       ESP_LOGI(TAG, "CV sampling enabled");
       
       // Check initial cable state and set switch accordingly
-      bool connected = (gpio_get_level(PIN_CV_SW) == 1);
+      bool connected = cv_is_cable_connected();
       
       // Check cable detection setting from input manager
       extern bool input_get_cable_detection_enabled(void);
@@ -222,7 +286,7 @@ static void cv_task(void *pvParameters) {
     // Apply median filter to reject impulse noise
     int16_t raw = median_filter(raw_oversampled);
     
-    bool connected = (gpio_get_level(PIN_CV_SW) == 1);
+    bool connected = cv_is_cable_connected();
 
     // Check cable detection setting from input manager
     extern bool input_get_cable_detection_enabled(void);
@@ -301,7 +365,7 @@ static void cv_task(void *pvParameters) {
       
       // Map to MIDI 0-127
       uint8_t midi_value;
-      if (s_mode == CV_MODE_LINEAR || s_mode == CV_MODE_GATE) {
+      if (s_mode == CV_MODE_LINEAR) {
         midi_value = (uint8_t)(((clamped - min_val) * 127.0f) / (max_val - min_val));
         
         // All ranges are inverted by the op-amp circuit
@@ -309,7 +373,7 @@ static void cv_task(void *pvParameters) {
         // So we invert the MIDI value to maintain proper mapping
         midi_value = 127 - midi_value;
       } else {
-        // Use the mode-specific conversion
+        // CV_MODE_PITCH - use the mode-specific conversion
         midi_value = convert_to_midi((int16_t)s_filtered_value, s_mode);
       }
       
@@ -334,10 +398,12 @@ static void cv_task(void *pvParameters) {
             .mode = s_mode
           }
         };
-        event_bus_post(&cv_event);
-        
-        ESP_LOGI(TAG, "CV: raw=%d, filtered=%.1f, midi=%d", raw, s_filtered_value, midi_value);
-      } else if (!past_startup) {
+          event_bus_post(&cv_event);
+          
+          if (s_logging_enabled) {
+            ESP_LOGI(TAG, "raw=%d, filtered=%.1f, midi=%d", raw, s_filtered_value, midi_value);
+          }
+        } else if (!past_startup) {
         // During startup, just log periodically
         static int startup_log_counter = 0;
         if (startup_log_counter++ % 10 == 0) {
@@ -351,58 +417,78 @@ static void cv_task(void *pvParameters) {
 }
 
 static uint8_t convert_to_midi(int16_t raw_value, cv_mode_t mode) {
-  int32_t midi_value;
+  if (mode != CV_MODE_PITCH) return 0;
   
-  switch (mode) {
-    case CV_MODE_LINEAR:
-      // Direct linear mapping to 0-127 MIDI
-      // Works for any voltage range
-      midi_value = (raw_value * 127) / 4095;
-      break;
-      
-    case CV_MODE_PITCH:
-      // 1V/octave pitch CV
-      // The exact calculation depends on the voltage range
-      if (s_range == CV_RANGE_BIPOLAR_5V) {
-        // Bipolar ±5V uses inverting op-amp:
-        // Input -5V → highest ADC reading (~1600)
-        // Input  0V → center ADC reading (~800)
-        // Input +5V → lowest ADC reading (~0)
-        // Center (0V input, ~800 ADC) should be MIDI 60 (C3)
-        // Each 160 ADC counts = 1V input = 12 semitones (inverted relationship)
-        midi_value = 60 + ((800 - raw_value) * 12) / 160;
-      } else if (s_range == CV_RANGE_BIPOLAR_10V) {
-        // Bipolar ±10V uses inverting op-amp:
-        // Center (0V input) should be MIDI 60 (C3)
-        // Full ±10V range = 10 octaves = 120 semitones
-        midi_value = 60 + ((800 - raw_value) * 12) / 80;  // 80 counts per volt
+  // Pitch CV mode - convert to MIDI note number based on pitch standard
+  int32_t midi_note;
+  
+  // All signals are inverted: high input voltage → low ADC reading
+  // For unipolar ranges: max voltage = lowest ADC, 0V = highest ADC
+  // For bipolar ranges: positive voltage = low ADC, negative voltage = high ADC
+  
+  switch (s_pitch_standard) {
+    case CV_PITCH_1V_OCTAVE_C0:
+      // 1V/octave with C0 (MIDI 12) at 0V
+      // 0V should be MIDI 12, each volt up adds 12 semitones
+      if (s_range == CV_RANGE_BIPOLAR_5V || s_range == CV_RANGE_BIPOLAR_10V) {
+        // Bipolar: center = 0V = MIDI 12
+        int center_adc = (s_min_values[s_range] + s_max_values[s_range]) / 2;
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
+                           (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
+        midi_note = 12 + ((center_adc - raw_value) * 12) / adc_per_volt;
       } else {
-        // For unipolar ranges (all inverted), 0V = highest reading, max V = lowest
-        // 0V should map to MIDI 36 (C2), then scale up
-        int volts_per_range[] = {10, 10, 10, 5, 3};  // Indexed by cv_range_t
-        int counts_per_volt = 4095 / volts_per_range[s_range];
-        // Inverted: high ADC = low voltage = low MIDI
-        midi_value = 36 + ((4095 - raw_value) * 12) / counts_per_volt;
+        // Unipolar: highest ADC = 0V = MIDI 12, scale up from there
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
+                           (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
+        midi_note = 12 + ((s_max_values[s_range] - raw_value) * 12) / adc_per_volt;
       }
       break;
       
-    case CV_MODE_GATE:
-      // Simple threshold detection
-      // All ranges are inverted: high input voltage → low ADC reading
-      // Gate should trigger on high input voltage, which appears as low ADC value
-      midi_value = (raw_value < 800) ? 127 : 0;  // Threshold at ~25% ADC (high voltage input)
+    case CV_PITCH_1V_OCTAVE_C2:
+      // 1V/octave with C2 (MIDI 36) at 0V
+      if (s_range == CV_RANGE_BIPOLAR_5V || s_range == CV_RANGE_BIPOLAR_10V) {
+        int center_adc = (s_min_values[s_range] + s_max_values[s_range]) / 2;
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
+                           (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
+        midi_note = 36 + ((center_adc - raw_value) * 12) / adc_per_volt;
+      } else {
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
+                           (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
+        midi_note = 36 + ((s_max_values[s_range] - raw_value) * 12) / adc_per_volt;
+      }
+      break;
+      
+    case CV_PITCH_HZ_V:
+      // Hz/V (Buchla) - exponential relationship
+      // This is more complex - for now use a linear approximation
+      // Real implementation would need exponential scaling
+      // Approximate: 0V = 261.63 Hz (C4, MIDI 60)
+      // Each volt doubles frequency (adds 12 semitones)
+      if (s_range == CV_RANGE_BIPOLAR_5V || s_range == CV_RANGE_BIPOLAR_10V) {
+        int center_adc = (s_min_values[s_range] + s_max_values[s_range]) / 2;
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
+                           (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
+        midi_note = 60 + ((center_adc - raw_value) * 12) / adc_per_volt;
+      } else {
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
+                           (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
+        midi_note = 60 + ((s_max_values[s_range] - raw_value) * 12) / adc_per_volt;
+      }
       break;
       
     default:
-      midi_value = 0;
+      midi_note = 60;
       break;
   }
   
-  // Clamp to MIDI range
-  if (midi_value < 0) midi_value = 0;
-  if (midi_value > 127) midi_value = 127;
+  // Clamp to MIDI note range
+  if (midi_note < 0) midi_note = 0;
+  if (midi_note > 127) midi_note = 127;
   
-  return (uint8_t)midi_value;
+  // Store for cv_get_pitch_note()
+  s_last_pitch_note = (uint8_t)midi_note;
+  
+  return (uint8_t)midi_note;
 }
 
 // Helper function to map cv_range_t to switch channel
@@ -524,6 +610,141 @@ void cv_get_calibration(cv_range_t range, int16_t *min_value, int16_t *max_value
   if (max_value) *max_value = s_max_values[range];
 }
 
+void cv_set_pitch_standard(cv_pitch_standard_t standard) {
+  s_pitch_standard = standard;
+  app_settings_save_u8(NVS_KEY_CV_PITCH_STD, (uint8_t)standard);
+  
+  const char* std_names[] = {"1V/Oct C0", "1V/Oct C2", "Hz/V"};
+  ESP_LOGI(TAG, "CV pitch standard set to %s", std_names[standard]);
+}
+
+cv_pitch_standard_t cv_get_pitch_standard(void) {
+  return s_pitch_standard;
+}
+
+uint8_t cv_get_pitch_note(void) {
+  return s_last_pitch_note;
+}
+
+// Helper: Compare function for qsort
+static int compare_int16_cv(const void *a, const void *b) {
+  return (*(int16_t*)a - *(int16_t*)b);
+}
+
+esp_err_t cv_auto_calibrate(cv_range_t range, uint32_t duration_ms) {
+  if (range >= 5) {
+    ESP_LOGE(TAG, "Invalid CV range: %d", range);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  // Switch to the specified range if not already there
+  cv_range_t old_range = s_range;
+  if (s_range != range) {
+    cv_set_range(range);
+    vTaskDelay(pdMS_TO_TICKS(100));  // Allow switch to settle
+  }
+  
+  ESP_LOGI(TAG, "=== Auto-calibrating %s ===", cv_range_to_string(range));
+  ESP_LOGI(TAG, "Position input at MIN and wait...");
+  
+  // Wait for system to settle
+  ESP_LOGI(TAG, "Settling for 2 seconds...");
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  
+  ESP_LOGI(TAG, "Starting calibration: HOLD MIN, then HOLD MAX, then sweep for %u seconds", (unsigned)(duration_ms / 1000));
+  
+  // Allocate buffer for all samples
+  uint32_t max_samples = (duration_ms / 20) + 10;
+  int16_t *samples = (int16_t*)malloc(max_samples * sizeof(int16_t));
+  if (!samples) {
+    ESP_LOGE(TAG, "Failed to allocate sample buffer");
+    if (s_range != old_range) {
+      cv_set_range(old_range);
+    }
+    return ESP_ERR_NO_MEM;
+  }
+  
+  uint32_t sample_count = 0;
+  uint32_t last_log_time = 0;
+  
+  // Sample for the specified duration
+  TickType_t start_tick = xTaskGetTickCount();
+  TickType_t duration_ticks = pdMS_TO_TICKS(duration_ms);
+  
+  while ((xTaskGetTickCount() - start_tick) < duration_ticks && sample_count < max_samples) {
+    int16_t reading = oversample_read();
+    samples[sample_count++] = reading;
+    
+    // Log every second for debugging
+    uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    if (current_time - last_log_time >= 1000) {
+      ESP_LOGI(TAG, "Sampling: raw=%d", reading);
+      last_log_time = current_time;
+    }
+    
+    vTaskDelay(pdMS_TO_TICKS(20));  // Sample at ~50Hz
+  }
+  
+  if (sample_count < 10) {
+    ESP_LOGE(TAG, "Insufficient samples collected: %u", (unsigned)sample_count);
+    free(samples);
+    if (s_range != old_range) {
+      cv_set_range(old_range);
+    }
+    return ESP_FAIL;
+  }
+  
+  // Sort samples to find range while rejecting extreme outliers
+  qsort(samples, sample_count, sizeof(int16_t), compare_int16_cv);
+  
+  // Discard only the 2 most extreme samples on each end
+  uint32_t trim_count = 2;
+  uint32_t min_index = (trim_count < sample_count) ? trim_count : 0;
+  uint32_t max_index = (trim_count < sample_count) ? (sample_count - 1 - trim_count) : (sample_count - 1);
+  
+  if (min_index >= sample_count) min_index = 0;
+  if (max_index >= sample_count) max_index = sample_count - 1;
+  if (min_index >= max_index) max_index = sample_count - 1;
+  
+  int16_t min_reading = samples[min_index];
+  int16_t max_reading = samples[max_index];
+  int16_t absolute_min = samples[0];
+  int16_t absolute_max = samples[sample_count - 1];
+  
+  free(samples);
+  
+  // Check if we got a valid swing
+  int16_t swing = max_reading - min_reading;
+  if (swing < 100) {
+    ESP_LOGW(TAG, "Insufficient swing detected (%d counts). Calibration may be inaccurate.", swing);
+  }
+  
+  // Apply 1% margin on each extreme for headroom
+  float margin = swing * 0.01f;
+  int16_t final_min = min_reading + (int16_t)margin;
+  int16_t final_max = max_reading - (int16_t)margin;
+  
+  // Ensure min < max after applying margins
+  if (final_min >= final_max) {
+    ESP_LOGE(TAG, "Calibration failed: min >= max after applying margins");
+    if (s_range != old_range) {
+      cv_set_range(old_range);
+    }
+    return ESP_FAIL;
+  }
+  
+  ESP_LOGI(TAG, "Calibration complete: %u samples", (unsigned)sample_count);
+  ESP_LOGI(TAG, "  Absolute range:   %d - %d", absolute_min, absolute_max);
+  ESP_LOGI(TAG, "  Trimmed range:    %d - %d (%d counts, discarded %u extreme samples)", 
+    min_reading, max_reading, swing, trim_count * 2);
+  ESP_LOGI(TAG, "  Final range:      %d - %d (1%% margins applied)", final_min, final_max);
+  
+  // Store calibration
+  cv_set_calibration(range, final_min, final_max);
+  
+  return ESP_OK;
+}
+
 // Helper: Oversample ADC reading (4x for +1 bit effective resolution)
 static int16_t oversample_read(void) {
   int32_t sum = 0;
@@ -567,7 +788,7 @@ static int16_t median_filter(int16_t new_value) {
 // ADC initialization - register CV channel with ADC manager
 static esp_err_t cv_adc_init(void) {
   // Register our ADC channel with the manager
-  esp_err_t ret = adc_manager_register_channel(CV_ADC_CHANNEL, CV_ADC_ATTEN);
+  esp_err_t ret = adc_manager_register_channel(CV_ADC_CHANNEL, ADC_ATTEN);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register ADC channel: %s", esp_err_to_name(ret));
     return ret;

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_err.h"
 
 #define SENSOR_ADDR             0x60
 #define SENSOR_ALS_CONF         0x00
@@ -45,7 +46,7 @@ typedef enum {
 //   PROXIMITY_SYNC_MODE_TEMPO   // Sync to tempo (wait for beat/bar, return by next beat/bar)
 // } proximity_sync_mode_t;
 
-void sensor_init(void);
+void sensor_init(bool enable_logging);
 void als_enable(void);
 void als_disable(void);
 void ps_enable(void);
@@ -65,11 +66,13 @@ void set_ps_rate_limit(uint32_t rate);
 // Calibration functions
 void proximity_set_calibration(uint16_t min_value, uint16_t max_value);
 void proximity_get_calibration(uint16_t *min_value, uint16_t *max_value);
+esp_err_t proximity_auto_calibrate(uint32_t duration_ms);
 void proximity_set_deadzone(uint8_t deadzone);
 uint8_t proximity_get_deadzone(void);
 
 void als_set_calibration(uint16_t min_value, uint16_t max_value);
 void als_get_calibration(uint16_t *min_value, uint16_t *max_value);
+esp_err_t als_auto_calibrate(uint32_t duration_ms);
 void als_set_deadzone(uint8_t deadzone);
 uint8_t als_get_deadzone(void);
 

@@ -9,8 +9,15 @@
 typedef enum {
   INPUT_MODE_CV = 0,        // Control Voltage mode
   INPUT_MODE_CLOCK_SYNC,    // Clock sync detection mode
-  INPUT_MODE_AUDIO          // Audio analysis mode (future)
+  INPUT_MODE_AUDIO,         // Audio analysis mode (future)
+  INPUT_MODE_NOTE           // CV pitch + Expression gate → MIDI notes
 } input_mode_t;
+
+// Velocity mode for NOTE mode
+typedef enum {
+  VELOCITY_MODE_FIXED = 0,        // Use fixed velocity value
+  VELOCITY_MODE_GATE_VOLTAGE      // Derive from gate voltage
+} velocity_mode_t;
 
 // CV voltage ranges (only relevant when INPUT_MODE_CV is selected)
 // Note: Some ranges share switch channels but use different DAC reference voltages
@@ -25,9 +32,15 @@ typedef enum {
 // CV processing modes (how to interpret the voltage)
 typedef enum {
   CV_MODE_LINEAR = 0,       // Linear 0-127 MIDI mapping
-  CV_MODE_PITCH,            // 1V/octave pitch CV
-  CV_MODE_GATE              // Gate/trigger detection
+  CV_MODE_PITCH             // Pitch CV (standard determined by cv_pitch_standard_t)
 } cv_mode_t;
+
+// CV pitch standards (for CV_MODE_PITCH)
+typedef enum {
+  CV_PITCH_1V_OCTAVE_C0 = 0,  // 1V/octave, C0 at 0V (MIDI note 12)
+  CV_PITCH_1V_OCTAVE_C2,      // 1V/octave, C2 at 0V (MIDI note 36)
+  CV_PITCH_HZ_V               // Hz/V (Buchla standard)
+} cv_pitch_standard_t;
 
 /**
  * Set the main input mode

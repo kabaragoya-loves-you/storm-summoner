@@ -7,10 +7,6 @@
 
 #define TAG "REVISION"
 
-// ESP32-P4 ADC configuration
-#define REV_ADC_CHANNEL  ADC_CHANNEL_3  // GPIO19
-#define REV_ADC_ATTEN    ADC_ATTEN_DB_12
-
 // Number of samples to average for stable reading
 #define NUM_SAMPLES 10
 
@@ -51,7 +47,7 @@ esp_err_t revision_init(void) {
   ESP_LOGI(TAG, "Starting hardware revision detection");
   
   // Register our ADC channel with the manager
-  esp_err_t ret = adc_manager_register_channel(REV_ADC_CHANNEL, REV_ADC_ATTEN);
+  esp_err_t ret = adc_manager_register_channel(REV_ADC_CHANNEL, ADC_ATTEN);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register ADC channel: %s", esp_err_to_name(ret));
     return ret;

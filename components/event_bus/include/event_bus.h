@@ -49,9 +49,15 @@ typedef enum {
   EVENT_EXPRESSION_VALUE,
   EVENT_EXPRESSION_CONNECTED,
   EVENT_EXPRESSION_DISCONNECTED,
+  EVENT_EXPRESSION_SUSTAIN,
+  EVENT_EXPRESSION_SOSTENUTO,
+  EVENT_EXPRESSION_GATE,
   EVENT_CV_VALUE,
   EVENT_CV_DISCONNECTED,
   EVENT_CLOCK_SYNC_PULSE,
+  EVENT_SCREENSAVER_TIMEOUT,
+  EVENT_NOTE_ON,
+  EVENT_NOTE_OFF,
   EVENT_TYPE_MAX
 } event_type_t;
 
@@ -154,6 +160,17 @@ typedef struct {
     } expression;
     
     struct {
+      bool pressed;          // true = pressed, false = released
+      uint8_t cc_number;     // MIDI CC number
+      uint8_t cc_value;      // MIDI CC value (127 = pressed, 0 = released)
+    } pedal;
+    
+    struct {
+      bool high;             // true = gate high, false = gate low
+      int16_t raw_value;     // Raw ADC value
+    } gate;
+    
+    struct {
       int16_t raw_value;     // Raw ADC value
       uint8_t midi_value;    // Scaled MIDI value (0-127)
       uint8_t mode;          // CV mode (unipolar/bipolar, range)
@@ -175,6 +192,13 @@ typedef struct {
     struct {
       uint8_t bpm;           // Current tempo in BPM (30-250)
     } tempo;
+    
+    // Note event data
+    struct {
+      uint8_t channel;       // MIDI channel (0-15)
+      uint8_t note;          // MIDI note number (0-127)
+      uint8_t velocity;      // MIDI velocity (0-127)
+    } note;
   } data;
 } event_t;
 

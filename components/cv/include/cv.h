@@ -8,9 +8,10 @@
 
 /**
  * Initialize the CV component
+ * @param enable_logging Enable periodic value logging
  * @return ESP_OK on success
  */
-esp_err_t cv_init(void);
+esp_err_t cv_init(bool enable_logging);
 
 /**
  * Enable CV sampling
@@ -21,6 +22,12 @@ void cv_enable(void);
  * Disable CV sampling
  */
 void cv_disable(void);
+
+/**
+ * Check if CV cable is connected using ADC-based detection
+ * @return true if cable is connected, false otherwise
+ */
+bool cv_is_cable_connected(void);
 
 /**
  * Get the current CV value (filtered ADC reading)
@@ -92,5 +99,33 @@ void cv_set_calibration(cv_range_t range, int16_t min_value, int16_t max_value);
  * @param max_value Pointer to store max value
  */
 void cv_get_calibration(cv_range_t range, int16_t *min_value, int16_t *max_value);
+
+/**
+ * Auto-calibrate a CV range by tracking min/max over a period
+ * User should swing the input from lowest to highest voltage during this time.
+ * Applies 1% margin on each extreme for headroom.
+ * @param range The voltage range to calibrate
+ * @param duration_ms Duration in milliseconds to sample (e.g., 5000 for 5 seconds)
+ * @return ESP_OK on success
+ */
+esp_err_t cv_auto_calibrate(cv_range_t range, uint32_t duration_ms);
+
+/**
+ * Set the CV pitch standard (for CV_MODE_PITCH)
+ * @param standard The pitch standard to use
+ */
+void cv_set_pitch_standard(cv_pitch_standard_t standard);
+
+/**
+ * Get the current CV pitch standard
+ * @return Current pitch standard
+ */
+cv_pitch_standard_t cv_get_pitch_standard(void);
+
+/**
+ * Get the current pitch as a MIDI note number (for CV_MODE_PITCH)
+ * @return MIDI note number (0-127)
+ */
+uint8_t cv_get_pitch_note(void);
 
 #endif /* _CV_H */

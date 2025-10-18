@@ -12,6 +12,12 @@ typedef enum {
 } tempo_clock_source_t;
 
 typedef enum {
+  CLOCK_STANDARD_24PPQN = 0,    // DIN Sync (24 pulses per quarter note)
+  CLOCK_STANDARD_16TH_NOTE,     // Korg Volca (pulse per 16th note)
+  CLOCK_STANDARD_BEAT           // Modular (1 pulse per beat)
+} tempo_clock_standard_t;
+
+typedef enum {
   DIVIDER_QUARTER = 24,
   DIVIDER_EIGHTH  = 12,
   DIVIDER_SIXTEENTH = 6
@@ -59,5 +65,9 @@ time_signature_t tempo_get_time_signature(void);
 // LED sync control
 void tempo_set_led_sync(bool enabled);
 bool tempo_get_led_sync(void);
+
+// Clock standard control
+void tempo_set_clock_standard(tempo_clock_standard_t standard);
+tempo_clock_standard_t tempo_get_clock_standard(void);
 
 #endif /* _TEMPO_H */

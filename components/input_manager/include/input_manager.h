@@ -34,4 +34,28 @@ esp_err_t input_set_mode(input_mode_t mode);
 input_mode_t input_get_mode(void);
 bool input_is_mode_active(input_mode_t mode);
 
+/**
+ * Set velocity mode for NOTE mode
+ * @param mode Velocity mode to use
+ */
+void input_set_velocity_mode(velocity_mode_t mode);
+
+/**
+ * Get current velocity mode
+ * @return Current velocity mode
+ */
+velocity_mode_t input_get_velocity_mode(void);
+
+/**
+ * Set fixed velocity value (for VELOCITY_MODE_FIXED)
+ * @param velocity Velocity value (1-127)
+ */
+void input_set_fixed_velocity(uint8_t velocity);
+
+/**
+ * Get fixed velocity value
+ * @return Fixed velocity value
+ */
+uint8_t input_get_fixed_velocity(void);
+
 #endif /* _INPUT_MANAGER_H */

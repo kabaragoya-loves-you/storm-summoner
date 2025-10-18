@@ -16,6 +16,7 @@
 #define NVS_KEY_LED_SYNC "tempo_led_sync"
 #define NVS_KEY_TIME_SIG_NUM "tempo_ts_num"
 #define NVS_KEY_TIME_SIG_DEN "tempo_ts_den"
+#define NVS_KEY_CLOCK_STD "tempo_clk_std"
 
 // Constants
 #define MIN_BPM 30
@@ -26,6 +27,7 @@
 // State variables
 static uint8_t s_bpm = DEFAULT_BPM;
 static tempo_clock_source_t s_clock_source = CLOCK_SOURCE_INTERNAL;
+static tempo_clock_standard_t s_clock_standard = CLOCK_STANDARD_24PPQN;  // Default to 24ppqn
 static time_signature_t s_time_signature = {4, 4};  // Default 4/4
 static bool s_led_sync_enabled = false;
 static tempo_note_divider_t s_note_divider = DIVIDER_QUARTER;
@@ -85,12 +87,21 @@ void tempo_init(void) {
   s_time_signature.numerator = ts_num;
   s_time_signature.denominator = ts_den;
   
+  // Load clock standard
+  uint8_t clk_std = CLOCK_STANDARD_24PPQN;
+  if (app_settings_load_u8(NVS_KEY_CLOCK_STD, &clk_std) == APP_SETTINGS_OK) {
+    s_clock_standard = (tempo_clock_standard_t)clk_std;
+  } else {
+    app_settings_save_u8(NVS_KEY_CLOCK_STD, (uint8_t)s_clock_standard);
+  }
+  
   // Subscribe to transport state changes
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   
-  ESP_LOGI(TAG, "Tempo initialized - BPM: %d, Time Sig: %d/%d, LED Sync: %s",
+  const char* std_names[] = {"24ppqn", "16th", "Beat"};
+  ESP_LOGI(TAG, "Tempo initialized - BPM: %d, Time Sig: %d/%d, LED Sync: %s, Clock: %s",
     s_bpm, s_time_signature.numerator, s_time_signature.denominator,
-    s_led_sync_enabled ? "ON" : "OFF");
+    s_led_sync_enabled ? "ON" : "OFF", std_names[s_clock_standard]);
 }
 
 static void tempo_task(void *pvParameters) {
@@ -109,20 +120,46 @@ static void tempo_task(void *pvParameters) {
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
     uint8_t current_bpm = s_bpm;
     tempo_clock_source_t source = s_clock_source;
+    tempo_clock_standard_t standard = s_clock_standard;
     xSemaphoreGive(s_state_mutex);
     
     if (source == CLOCK_SOURCE_INTERNAL) {
+      // Calculate pulses per quarter note based on clock standard
+      uint32_t ppqn;
+      switch (standard) {
+        case CLOCK_STANDARD_24PPQN:
+          ppqn = 24;  // Standard MIDI clock
+          break;
+        case CLOCK_STANDARD_16TH_NOTE:
+          ppqn = 6;   // 1 pulse per 16th note (1/4 of 24ppqn)
+          break;
+        case CLOCK_STANDARD_BEAT:
+          ppqn = 1;   // 1 pulse per beat (1/24 of 24ppqn)
+          break;
+        default:
+          ppqn = 24;
+          break;
+      }
+      
       // Calculate tick interval
-      uint32_t tick_interval_ms = 60000 / (MIDI_CLOCKS_PER_QUARTER * current_bpm);
+      uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
       
       // Send MIDI clock directly (low latency requirement)
       send_clock();
       
-      // Track ticks and beats
+      // Track ticks and beats (use full 24ppqn for beat tracking)
       s_tick_counter++;
       
       // Check if we've completed a beat (based on divider)
-      if (s_tick_counter % s_note_divider == 0) {
+      // Note: s_note_divider is based on 24ppqn, so we need to scale it
+      uint32_t beat_divisor = s_note_divider;
+      if (standard == CLOCK_STANDARD_16TH_NOTE) {
+        beat_divisor /= 4;  // Adjust for 6ppqn
+      } else if (standard == CLOCK_STANDARD_BEAT) {
+        beat_divisor = 1;   // One tick = one beat
+      }
+      
+      if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
         s_beat_counter++;
         if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
         publish_beat_event();
@@ -437,4 +474,23 @@ bool tempo_get_led_sync(void) {
   bool enabled = s_led_sync_enabled;
   xSemaphoreGive(s_state_mutex);
   return enabled;
+}
+
+void tempo_set_clock_standard(tempo_clock_standard_t standard) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_clock_standard = standard;
+  xSemaphoreGive(s_state_mutex);
+  
+  // Save to NVS
+  app_settings_save_u8(NVS_KEY_CLOCK_STD, (uint8_t)standard);
+  
+  const char* std_names[] = {"24ppqn (DIN Sync)", "16th note (Korg Volca)", "Beat (Modular)"};
+  ESP_LOGI(TAG, "Clock standard set to %s", std_names[standard]);
+}
+
+tempo_clock_standard_t tempo_get_clock_standard(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  tempo_clock_standard_t standard = s_clock_standard;
+  xSemaphoreGive(s_state_mutex);
+  return standard;
 }

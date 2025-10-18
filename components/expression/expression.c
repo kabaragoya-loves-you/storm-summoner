@@ -5,32 +5,41 @@
 #include "task_priorities.h"
 #include "adc_manager.h"
 #include "input_manager.h"
+#include "input_mode.h"
+#include "switch.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include <math.h>
+#include <stdlib.h>
 
 #define TAG "EXPRESSION"
-
-// ESP32-P4 ADC configuration
-#define EXP_ADC_CHANNEL     ADC_CHANNEL_1  // GPIO17
-#define REF_ADC_CHANNEL     ADC_CHANNEL_2  // GPIO18 (VCC reference for ratiometric)
-#define EXP_ADC_ATTEN       ADC_ATTEN_DB_12  // 0-3100mV range on P4
-#define USE_RATIOMETRIC     1  // Enable ratiometric measurement (expression/vcc ratio)
 
 // NVS keys
 #define NVS_KEY_EXP_MIN "exp_min"
 #define NVS_KEY_EXP_MAX "exp_max"
 #define NVS_KEY_EXP_DEADZONE "exp_deadzone"
 #define NVS_KEY_EXP_CC "exp_cc"
+#define NVS_KEY_EXP_MODE "exp_mode"
+#define NVS_KEY_EXP_POLARITY "exp_polarity"
+#define NVS_KEY_EXP_SUSTAIN_CC "exp_sustain_cc"
+#define NVS_KEY_EXP_SOSTENUTO_CC "exp_sostenuto_cc"
+#define NVS_KEY_EXP_PEDAL_SW_TYPE "exp_pedal_sw"
 
 // Default calibration values
-#define DEFAULT_MIN_VALUE 0
-#define DEFAULT_MAX_VALUE 4050
+#define DEFAULT_MIN_VALUE 100
+#define DEFAULT_MAX_VALUE 3500
 #define DEFAULT_DEADZONE 2
 #define DEFAULT_CC_NUMBER 4  // Foot Controller
+#define DEFAULT_SUSTAIN_CC 64  // Sustain pedal (standard)
+#define DEFAULT_SOSTENUTO_CC 66  // Sostenuto pedal (standard)
+
+// Thresholds for sustain/sostenuto/gate detection
+#define PEDAL_PRESSED_THRESHOLD 1000   // ADC < 1000 = pressed (tip shorted to ground)
+#define PEDAL_RELEASED_THRESHOLD 3000  // ADC > 3000 = released (tip pulled high)
+#define GATE_HIGH_THRESHOLD 2048        // ADC > 2048 = gate high
 
 // Filtering parameters
 #define MOVING_AVG_LENGTH 10
@@ -45,6 +54,14 @@ static int16_t s_min_value = DEFAULT_MIN_VALUE;
 static int16_t s_max_value = DEFAULT_MAX_VALUE;
 static uint8_t s_deadzone = DEFAULT_DEADZONE;
 static uint8_t s_cc_number = DEFAULT_CC_NUMBER;
+static expression_mode_t s_mode = EXPRESSION_MODE_PEDAL;
+static expression_polarity_t s_polarity = EXPRESSION_POLARITY_TIP_ADC;
+static uint8_t s_sustain_cc = DEFAULT_SUSTAIN_CC;
+static uint8_t s_sostenuto_cc = DEFAULT_SOSTENUTO_CC;
+static pedal_switch_type_t s_pedal_switch_type = PEDAL_SWITCH_NO;  // Default: normally-open
+static bool s_gate_state = false;
+static bool s_pedal_state = false;  // For sustain/sostenuto (true = pressed)
+static bool s_logging_enabled = false;  // Control periodic value logging
 
 // Filtering state
 static int s_samples[MOVING_AVG_LENGTH] = {0};
@@ -55,13 +72,16 @@ static int s_num_samples = 0;
 // Forward declarations
 static esp_err_t expression_adc_init(void);
 static void expression_adc_deinit(void);
+static void expression_configure_switches(void);
 
 static void expression_task(void *pvParameters) {
-  ESP_LOGI(TAG, "Expression task started - ADC1 CH%d (Expression), CH%d (Reference)", EXP_ADC_CHANNEL, REF_ADC_CHANNEL);
+  ESP_LOGI(TAG, "Expression task started - Mode: %d", s_mode);
   
   uint8_t last_midi_value = 0;
   bool was_connected = false;
   bool first_reading = true;  // Flag to skip initial change detection
+  bool last_pedal_state = false;  // For sustain/sostenuto
+  bool last_gate_state = false;   // For gate mode
   
   while (1) {
     // Check if cable is inserted
@@ -75,8 +95,9 @@ static void expression_task(void *pvParameters) {
     // Handle connection state changes
     if (is_connected != was_connected) {
       if (is_connected) {
-        ESP_LOGD(TAG, "Expression pedal connected");
+        ESP_LOGD(TAG, "Expression cable connected (mode %d)", s_mode);
         first_reading = true;  // Reset flag on connection
+        expression_configure_switches();  // Configure switches for current mode
         // Post connection event
         event_t conn_event = {
           .type = EVENT_EXPRESSION_CONNECTED,
@@ -85,8 +106,8 @@ static void expression_task(void *pvParameters) {
         };
         event_bus_post(&conn_event);
       } else {
-        ESP_LOGD(TAG, "Expression pedal disconnected");
-        // Post disconnection event only once
+        ESP_LOGD(TAG, "Expression cable disconnected");
+        // Post disconnection event
         event_t disc_event = {
           .type = EVENT_EXPRESSION_DISCONNECTED,
           .priority = EVENT_PRIORITY_NORMAL,
@@ -98,10 +119,10 @@ static void expression_task(void *pvParameters) {
     }
     
     if (is_connected) {
+      // Read ADC value
       int16_t raw;
-      float ratio = 0.0f;  // Declare ratio for logging
+      float ratio = 0.0f;
       
-      #if USE_RATIOMETRIC
       // Read expression pedal channel
       int raw_exp = 0;
       esp_err_t ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_exp);
@@ -121,96 +142,45 @@ static void expression_task(void *pvParameters) {
       }
       
       // Calculate ratio (protects against VCC fluctuations)
-      if (raw_ref > 100) {  // Avoid division by very small numbers
+      if (raw_ref > 100) {
         ratio = (float)raw_exp / (float)raw_ref;
-        // Scale back to 0-4095 range for compatibility with existing calibration
         raw = (int16_t)(ratio * 4095.0f);
       } else {
         ESP_LOGW(TAG, "Reference voltage too low: %d", raw_ref);
         vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
         continue;
       }
-      #else
-      // Use direct ADC reading (no ratiometric)
-      int raw_adc = 0;
-      esp_err_t ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_adc);
-      if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to read expression ADC: %s", esp_err_to_name(ret));
-        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-        continue;
-      }
-      raw = (int16_t)raw_adc;
-      #endif
       
-      static int16_t last_raw = -1;
-      
-      // Log periodically for debugging
-      // static int debug_counter = 0;
-      // #if USE_RATIOMETRIC
-      // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "Ratio: %.3f, raw: %d, filtered: %.1f, MIDI: %d", ratio, raw, s_expression_value, s_midi_value);
-      // #else
-      // if (debug_counter++ % 100 == 0) ESP_LOGI(TAG, "ADC raw: %d, filtered: %.1f, MIDI: %d", raw, s_expression_value, s_midi_value);
-      // #endif
-      
-      // Detect wrap-around or large jumps
-      if (last_raw >= 0) {
-        int delta = raw - last_raw;
-        if (abs(delta) > 3000) continue;
-      }
-      last_raw = raw;
-      
-      if (raw >= 0) {  // Valid reading
+      // Process based on mode
+      if (s_mode == EXPRESSION_MODE_PEDAL) {
+        // Standard expression pedal mode - continuous CC values
+        static int16_t last_raw = -1;
         
-        // Moving average filter
-        if (s_num_samples < MOVING_AVG_LENGTH) {
-          s_samples[s_sample_index] = raw;
-          s_sum_samples += raw;
-          s_num_samples++;
-        } else {
-          s_sum_samples = s_sum_samples - s_samples[s_sample_index] + raw;
-          s_samples[s_sample_index] = raw;
+        // Detect wrap-around or large jumps
+        if (last_raw >= 0) {
+          int delta = raw - last_raw;
+          if (abs(delta) > 3000) continue;
         }
-        s_sample_index = (s_sample_index + 1) % MOVING_AVG_LENGTH;
-        int moving_avg = s_sum_samples / s_num_samples;
+        last_raw = raw;
         
-        // IIR filter
-        s_expression_value = IIR_ALPHA * moving_avg + (1.0f - IIR_ALPHA) * s_expression_value;
-        
-        // Scale to MIDI (0-127)
-        // Ensure we can reach exactly 0 and 127
-        int32_t scaled_value;
-        
-        if (s_expression_value <= s_min_value) {
-          scaled_value = 0;
-        } else if (s_expression_value >= s_max_value) {
-          scaled_value = 127;
-        } else {
-          // Use floating point for accurate scaling, then round
-          float range = (float)(s_max_value - s_min_value);
-          float normalized = (s_expression_value - s_min_value) / range;
-          scaled_value = (int32_t)(normalized * 127.0f + 0.5f);
-          
-          // Clamp to valid MIDI range
-          if (scaled_value < 0) scaled_value = 0;
-          if (scaled_value > 127) scaled_value = 127;
-        }
-        
-        s_midi_value = (uint8_t)scaled_value;
-        
-        // On first reading, initialize filters and set initial value
-        if (first_reading) {
-          // Pre-fill the moving average buffer with current value
-          for (int i = 0; i < MOVING_AVG_LENGTH; i++) {
-            s_samples[i] = raw;
+        if (raw >= 0) {
+          // Moving average filter
+          if (s_num_samples < MOVING_AVG_LENGTH) {
+            s_samples[s_sample_index] = raw;
+            s_sum_samples += raw;
+            s_num_samples++;
+          } else {
+            s_sum_samples = s_sum_samples - s_samples[s_sample_index] + raw;
+            s_samples[s_sample_index] = raw;
           }
-          s_sum_samples = raw * MOVING_AVG_LENGTH;
-          s_num_samples = MOVING_AVG_LENGTH;
-          moving_avg = raw;  // All samples are the same, so average is just the raw value
+          s_sample_index = (s_sample_index + 1) % MOVING_AVG_LENGTH;
+          int moving_avg = s_sum_samples / s_num_samples;
           
-          // Initialize the IIR filter with current value to avoid startup transients
-          s_expression_value = moving_avg;
+          // IIR filter
+          s_expression_value = IIR_ALPHA * moving_avg + (1.0f - IIR_ALPHA) * s_expression_value;
           
-          // Recalculate MIDI value with properly initialized filter
+          // Scale to MIDI (0-127)
+          int32_t scaled_value;
           if (s_expression_value <= s_min_value) {
             scaled_value = 0;
           } else if (s_expression_value >= s_max_value) {
@@ -224,28 +194,122 @@ static void expression_task(void *pvParameters) {
           }
           s_midi_value = (uint8_t)scaled_value;
           
-          last_midi_value = s_midi_value;
-          first_reading = false;
-          ESP_LOGI(TAG, "Expression initial position: %d (raw: %d, filtered: %.1f)", s_midi_value, raw, s_expression_value);
+          // On first reading, initialize filters
+          if (first_reading) {
+            for (int i = 0; i < MOVING_AVG_LENGTH; i++) {
+              s_samples[i] = raw;
+            }
+            s_sum_samples = raw * MOVING_AVG_LENGTH;
+            s_num_samples = MOVING_AVG_LENGTH;
+            s_expression_value = raw;
+            last_midi_value = s_midi_value;
+            first_reading = false;
+            ESP_LOGI(TAG, "Expression pedal initial: %d (raw: %d)", s_midi_value, raw);
+          }
+          // Check if change exceeds deadzone
+          else if (abs(s_midi_value - last_midi_value) >= s_deadzone) {
+            event_t expr_event = {
+              .type = EVENT_EXPRESSION_VALUE,
+              .priority = EVENT_PRIORITY_NORMAL,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.expression = {
+                .raw_value = raw,
+                .midi_value = s_midi_value,
+                .cc_number = s_cc_number
+              }
+            };
+            
+            if (event_bus_post(&expr_event) == ESP_OK) {
+              if (s_logging_enabled) {
+                ESP_LOGI(TAG, "MIDI: %d -> %d (raw value %d)", last_midi_value, s_midi_value, raw);
+              }
+              last_midi_value = s_midi_value;
+            }
+          }
         }
-        // Check if change exceeds deadzone
-        else if (abs(s_midi_value - last_midi_value) >= s_deadzone) {
-          // Post event to event bus
-          event_t expr_event = {
-            .type = EVENT_EXPRESSION_VALUE,
+      } else if (s_mode == EXPRESSION_MODE_SUSTAIN || s_mode == EXPRESSION_MODE_SOSTENUTO) {
+        // Sustain/Sostenuto pedal mode - on/off detection
+        // Both modes use the same physical pedal switch
+        bool current_state;
+        
+        // Detect pedal state with hysteresis
+        // For NO (normally-open): low ADC = pressed, high ADC = released
+        // For NC (normally-closed): high ADC = pressed, low ADC = released
+        if (s_pedal_switch_type == PEDAL_SWITCH_NO) {
+          if (raw < PEDAL_PRESSED_THRESHOLD) {
+            current_state = true;  // Pressed (NO: shorted to ground)
+          } else if (raw > PEDAL_RELEASED_THRESHOLD) {
+            current_state = false;  // Released (NO: pulled high)
+          } else {
+            current_state = s_pedal_state;  // Hysteresis
+          }
+        } else {  // PEDAL_SWITCH_NC
+          if (raw > PEDAL_RELEASED_THRESHOLD) {
+            current_state = true;  // Pressed (NC: circuit completed to VCC)
+          } else if (raw < PEDAL_PRESSED_THRESHOLD) {
+            current_state = false;  // Released (NC: circuit open)
+          } else {
+            current_state = s_pedal_state;  // Hysteresis
+          }
+        }
+        
+        s_pedal_state = current_state;
+        
+        // Detect state changes
+        if (first_reading) {
+          last_pedal_state = current_state;
+          first_reading = false;
+          ESP_LOGI(TAG, "%s initial: %s (%s switch)", 
+            s_mode == EXPRESSION_MODE_SUSTAIN ? "Sustain" : "Sostenuto",
+            current_state ? "PRESSED" : "RELEASED",
+            s_pedal_switch_type == PEDAL_SWITCH_NO ? "NO" : "NC");
+        } else if (current_state != last_pedal_state) {
+          // Post event
+          event_t pedal_event = {
+            .type = s_mode == EXPRESSION_MODE_SUSTAIN ? EVENT_EXPRESSION_SUSTAIN : EVENT_EXPRESSION_SOSTENUTO,
             .priority = EVENT_PRIORITY_NORMAL,
             .timestamp = event_bus_get_current_timestamp(),
-            .data.expression = {
-              .raw_value = (int16_t)s_expression_value,
-              .midi_value = s_midi_value,
-              .cc_number = s_cc_number
+            .data.pedal = {
+              .pressed = current_state,
+              .cc_number = s_mode == EXPRESSION_MODE_SUSTAIN ? s_sustain_cc : s_sostenuto_cc,
+              .cc_value = current_state ? 127 : 0
             }
           };
           
-          esp_err_t ret = event_bus_post(&expr_event);
-          if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Expression MIDI: %d -> %d", last_midi_value, s_midi_value);
-            last_midi_value = s_midi_value;
+          if (event_bus_post(&pedal_event) == ESP_OK) {
+            ESP_LOGI(TAG, "%s: %s (CC%d = %d)", 
+              s_mode == EXPRESSION_MODE_SUSTAIN ? "Sustain" : "Sostenuto",
+              current_state ? "PRESSED" : "RELEASED",
+              pedal_event.data.pedal.cc_number,
+              pedal_event.data.pedal.cc_value);
+            last_pedal_state = current_state;
+          }
+        }
+      } else if (s_mode == EXPRESSION_MODE_GATE) {
+        // Gate mode - high/low detection for MIDI notes
+        bool current_gate = (raw > GATE_HIGH_THRESHOLD);
+        s_gate_state = current_gate;
+        
+        // Detect gate transitions
+        if (first_reading) {
+          last_gate_state = current_gate;
+          first_reading = false;
+          ESP_LOGI(TAG, "Gate initial: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
+        } else if (current_gate != last_gate_state) {
+          // Post gate event
+          event_t gate_event = {
+            .type = EVENT_EXPRESSION_GATE,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.gate = {
+              .high = current_gate,
+              .raw_value = raw
+            }
+          };
+          
+          if (event_bus_post(&gate_event) == ESP_OK) {
+            ESP_LOGI(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
+            last_gate_state = current_gate;
           }
         }
       }
@@ -272,8 +336,11 @@ static void expression_task(void *pvParameters) {
   }
 }
 
-void expression_init(void) {
+void expression_init(bool enable_logging) {
   uint32_t stored_val;
+  uint8_t stored_u8;
+  
+  s_logging_enabled = enable_logging;
   
   if (app_settings_load_u32(NVS_KEY_EXP_MIN, &stored_val) == APP_SETTINGS_OK) {
     s_min_value = (int16_t)stored_val;
@@ -299,6 +366,41 @@ void expression_init(void) {
     app_settings_save_u32(NVS_KEY_EXP_CC, s_cc_number);
   }
   
+  // Load mode
+  if (app_settings_load_u8(NVS_KEY_EXP_MODE, &stored_u8) == APP_SETTINGS_OK) {
+    s_mode = (expression_mode_t)stored_u8;
+  } else {
+    app_settings_save_u8(NVS_KEY_EXP_MODE, (uint8_t)s_mode);
+  }
+  
+  // Load polarity
+  if (app_settings_load_u8(NVS_KEY_EXP_POLARITY, &stored_u8) == APP_SETTINGS_OK) {
+    s_polarity = (expression_polarity_t)stored_u8;
+  } else {
+    app_settings_save_u8(NVS_KEY_EXP_POLARITY, (uint8_t)s_polarity);
+  }
+  
+  // Load sustain CC
+  if (app_settings_load_u8(NVS_KEY_EXP_SUSTAIN_CC, &stored_u8) == APP_SETTINGS_OK) {
+    s_sustain_cc = stored_u8;
+  } else {
+    app_settings_save_u8(NVS_KEY_EXP_SUSTAIN_CC, s_sustain_cc);
+  }
+  
+  // Load sostenuto CC
+  if (app_settings_load_u8(NVS_KEY_EXP_SOSTENUTO_CC, &stored_u8) == APP_SETTINGS_OK) {
+    s_sostenuto_cc = stored_u8;
+  } else {
+    app_settings_save_u8(NVS_KEY_EXP_SOSTENUTO_CC, s_sostenuto_cc);
+  }
+  
+  // Load pedal switch type (used for both sustain and sostenuto)
+  if (app_settings_load_u8(NVS_KEY_EXP_PEDAL_SW_TYPE, &stored_u8) == APP_SETTINGS_OK) {
+    s_pedal_switch_type = (pedal_switch_type_t)stored_u8;
+  } else {
+    app_settings_save_u8(NVS_KEY_EXP_PEDAL_SW_TYPE, (uint8_t)s_pedal_switch_type);
+  }
+  
   // Configure cable detection GPIO
   gpio_config_t io_conf = {
     .pin_bit_mask = (1ULL << PIN_EXP_SW),
@@ -309,15 +411,59 @@ void expression_init(void) {
   };
   gpio_config(&io_conf);
   
-  ESP_LOGI(TAG, "Expression initialized - Min: %d, Max: %d, Deadzone: %d%s", 
-    s_min_value, s_max_value, s_deadzone,
-    USE_RATIOMETRIC ? " (Ratiometric mode)" : "");
+  const char* mode_names[] = {"PEDAL", "SUSTAIN", "SOSTENUTO", "GATE"};
+  ESP_LOGI(TAG, "Expression initialized - Mode: %s, Min: %d, Max: %d, Deadzone: %d (Ratiometric)", 
+    mode_names[s_mode], s_min_value, s_max_value, s_deadzone);
   
   // Check initial cable state
   bool cable_connected = gpio_get_level(PIN_EXP_SW) == 1;
   ESP_LOGI(TAG, "Expression cable initial state: %s (GPIO %d = %d)", 
     cable_connected ? "CONNECTED" : "DISCONNECTED", 
     PIN_EXP_SW, gpio_get_level(PIN_EXP_SW));
+}
+
+// Configure PCA9534 switches based on mode and polarity
+// TMUX1113 quirk: Channels 2+3 are active LOW, Channels 1+4 are active HIGH
+// P4 → Switch Ch1 (active HIGH)
+// P5 → Switch Ch2 (active LOW - inverted logic)
+// P6 → Switch Ch3 (active LOW - inverted logic)
+// P7 → Switch Ch4 (active HIGH)
+static void expression_configure_switches(void) {
+  // Start with P5 and P6 HIGH to keep those channels OFF (active-low)
+  uint8_t mask = (1 << 5) | (1 << 6);
+  
+  switch (s_mode) {
+    case EXPRESSION_MODE_PEDAL:
+      // Expression pedal mode - configure based on polarity
+      if (s_polarity == EXPRESSION_POLARITY_TIP_ADC) {
+        // P4: Tip→ADC (set HIGH), P6: Ring→VCC (clear to LOW for active-low)
+        mask |= (1 << 4);     // Turn ON P4 (active high)
+        mask &= ~(1 << 6);    // Turn ON P6 (active low - clear bit)
+      } else {
+        // P5: Ring→ADC (clear to LOW for active-low), P7: Tip→VCC (set HIGH)
+        mask &= ~(1 << 5);    // Turn ON P5 (active low - clear bit)
+        mask |= (1 << 7);     // Turn ON P7 (active high)
+      }
+      break;
+      
+    case EXPRESSION_MODE_SUSTAIN:
+    case EXPRESSION_MODE_SOSTENUTO:
+      // Sustain/Sostenuto mode: P4: Tip→ADC, P7: Tip→VCC (for switch detection)
+      mask |= (1 << 4);       // Turn ON P4 (active high)
+      mask |= (1 << 7);       // Turn ON P7 (active high)
+      break;
+      
+    case EXPRESSION_MODE_GATE:
+      // Gate mode: P4 only (Tip→ADC)
+      mask |= (1 << 4);       // Turn ON P4 (active high)
+      break;
+  }
+  
+  if (switch_set_expression_mask(mask)) {
+    ESP_LOGI(TAG, "Expression switches configured: 0x%02X (mode: %d, polarity: %d)", mask, s_mode, s_polarity);
+  } else {
+    ESP_LOGE(TAG, "Failed to configure expression switches");
+  }
 }
 
 void expression_enable(void) {  
@@ -362,14 +508,19 @@ uint8_t expression_get_midi_value(void) {
   return s_midi_value;
 }
 
-void expression_set_min_value(int16_t value) {
-  s_min_value = value;
-  app_settings_save_u32(NVS_KEY_EXP_MIN, value);
+void expression_set_range(int16_t min_value, int16_t max_value) {
+  s_min_value = min_value;
+  s_max_value = max_value;
+  app_settings_save_u32(NVS_KEY_EXP_MIN, min_value);
+  app_settings_save_u32(NVS_KEY_EXP_MAX, max_value);
+  ESP_LOGI(TAG, "Expression range set: min=%d, max=%d", min_value, max_value);
 }
 
-void expression_set_max_value(int16_t value) {
-  s_max_value = value;
-  app_settings_save_u32(NVS_KEY_EXP_MAX, value);
+// int16_t min, max;
+// expression_get_range(&min, &max);  // Get both values
+void expression_get_range(int16_t *min_value, int16_t *max_value) {
+  if (min_value) *min_value = s_min_value;
+  if (max_value) *max_value = s_max_value;
 }
 
 void expression_set_deadzone(uint8_t deadzone) {
@@ -394,27 +545,230 @@ uint8_t expression_get_cc_number(void) {
   return s_cc_number;
 }
 
+esp_err_t expression_set_mode(expression_mode_t mode) {
+  // Safety check: prevent changing from GATE mode if input manager is in NOTE mode
+  if (s_mode == EXPRESSION_MODE_GATE && mode != EXPRESSION_MODE_GATE) {
+    if (input_get_mode() == INPUT_MODE_NOTE) {
+      ESP_LOGE(TAG, "Cannot change from GATE mode while INPUT_MODE_NOTE is active");
+      return ESP_ERR_INVALID_STATE;
+    }
+  }
+  
+  s_mode = mode;
+  app_settings_save_u8(NVS_KEY_EXP_MODE, (uint8_t)mode);
+  
+  // Reconfigure switches if task is running
+  if (s_task_handle != NULL) {
+    expression_configure_switches();
+  }
+  
+  ESP_LOGI(TAG, "Expression mode set to %d", mode);
+  return ESP_OK;
+}
+
+expression_mode_t expression_get_mode(void) {
+  return s_mode;
+}
+
+void expression_set_polarity(expression_polarity_t polarity) {
+  s_polarity = polarity;
+  app_settings_save_u8(NVS_KEY_EXP_POLARITY, (uint8_t)polarity);
+  
+  // Reconfigure switches if task is running and in pedal mode
+  if (s_task_handle != NULL && s_mode == EXPRESSION_MODE_PEDAL) {
+    expression_configure_switches();
+  }
+  
+  ESP_LOGI(TAG, "Expression polarity set to %d", polarity);
+}
+
+expression_polarity_t expression_get_polarity(void) {
+  return s_polarity;
+}
+
+void expression_set_sustain_cc(uint8_t cc) {
+  s_sustain_cc = cc;
+  app_settings_save_u8(NVS_KEY_EXP_SUSTAIN_CC, cc);
+  ESP_LOGI(TAG, "Sustain CC set to %d", cc);
+}
+
+uint8_t expression_get_sustain_cc(void) {
+  return s_sustain_cc;
+}
+
+void expression_set_sostenuto_cc(uint8_t cc) {
+  s_sostenuto_cc = cc;
+  app_settings_save_u8(NVS_KEY_EXP_SOSTENUTO_CC, cc);
+  ESP_LOGI(TAG, "Sostenuto CC set to %d", cc);
+}
+
+uint8_t expression_get_sostenuto_cc(void) {
+  return s_sostenuto_cc;
+}
+
+void expression_set_pedal_switch_type(pedal_switch_type_t type) {
+  s_pedal_switch_type = type;
+  app_settings_save_u8(NVS_KEY_EXP_PEDAL_SW_TYPE, (uint8_t)type);
+  const char* type_names[] = {"NO", "NC"};
+  ESP_LOGI(TAG, "Pedal switch type set to %s (applies to both sustain and sostenuto)", type_names[type]);
+}
+
+pedal_switch_type_t expression_get_pedal_switch_type(void) {
+  return s_pedal_switch_type;
+}
+
+bool expression_get_gate_state(void) {
+  return s_gate_state;
+}
+
+// Helper: Compare function for qsort
+static int compare_int16(const void *a, const void *b) {
+  return (*(int16_t*)a - *(int16_t*)b);
+}
+
+esp_err_t expression_auto_calibrate(uint32_t duration_ms) {
+  ESP_LOGI(TAG, "=== Auto-calibrating expression pedal ===");
+  ESP_LOGI(TAG, "Position pedal at HEEL and wait...");
+  
+  // Ensure ADC is initialized
+  esp_err_t ret = expression_adc_init();
+  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE(TAG, "Failed to initialize ADC for calibration");
+    return ret;
+  }
+  
+  // Configure switches BEFORE calibration so ADC reads the correct signal
+  expression_configure_switches();
+  
+  // Wait for ADC and system to fully settle before calibrating
+  ESP_LOGI(TAG, "Settling for 2 seconds...");
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  
+  ESP_LOGI(TAG, "Starting calibration: HOLD HEEL, then HOLD TOE, then sweep for %u seconds", (unsigned)(duration_ms / 1000));
+  
+  // Allocate buffer for all samples (estimate: duration_ms / 20ms per sample)
+  uint32_t max_samples = (duration_ms / 20) + 10;
+  int16_t *samples = (int16_t*)malloc(max_samples * sizeof(int16_t));
+  if (!samples) {
+    ESP_LOGE(TAG, "Failed to allocate sample buffer");
+    return ESP_ERR_NO_MEM;
+  }
+  
+  uint32_t sample_count = 0;
+  uint32_t last_log_time = 0;
+  
+  // Sample for the specified duration
+  TickType_t start_tick = xTaskGetTickCount();
+  TickType_t duration_ticks = pdMS_TO_TICKS(duration_ms);
+  
+  while ((xTaskGetTickCount() - start_tick) < duration_ticks && sample_count < max_samples) {
+    // Read expression pedal channel
+    int raw_exp = 0;
+    ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_exp);
+    if (ret != ESP_OK) {
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+    
+    // Read VCC reference channel
+    int raw_ref = 0;
+    ret = adc_manager_read(REF_ADC_CHANNEL, &raw_ref);
+    if (ret != ESP_OK) {
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+    
+    // Calculate ratiometric reading
+    if (raw_ref > 100) {
+      float ratio = (float)raw_exp / (float)raw_ref;
+      int16_t reading = (int16_t)(ratio * 4095.0f);
+      samples[sample_count++] = reading;
+      
+      // Log every second for debugging
+      uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+      if (current_time - last_log_time >= 1000) {
+        ESP_LOGI(TAG, "Sampling: raw_exp=%d, raw_ref=%d, ratio=%.3f, result=%d", 
+          raw_exp, raw_ref, ratio, reading);
+        last_log_time = current_time;
+      }
+    }
+    
+    vTaskDelay(pdMS_TO_TICKS(20));  // Sample at ~50Hz
+  }
+  
+  if (sample_count < 10) {
+    ESP_LOGE(TAG, "Insufficient samples collected: %u", (unsigned)sample_count);
+    free(samples);
+    return ESP_FAIL;
+  }
+  
+  // Sort samples to find range while rejecting extreme outliers
+  qsort(samples, sample_count, sizeof(int16_t), compare_int16);
+  
+  // Discard only the 2 most extreme samples on each end (fixed count, not percentage)
+  // This protects against single-sample glitches while preserving brief extremes during sweeps
+  uint32_t trim_count = 2;
+  uint32_t min_index = (trim_count < sample_count) ? trim_count : 0;
+  uint32_t max_index = (trim_count < sample_count) ? (sample_count - 1 - trim_count) : (sample_count - 1);
+  
+  // Ensure indices are valid
+  if (min_index >= sample_count) min_index = 0;
+  if (max_index >= sample_count) max_index = sample_count - 1;
+  if (min_index >= max_index) max_index = sample_count - 1;
+  
+  int16_t min_reading = samples[min_index];
+  int16_t max_reading = samples[max_index];
+  int16_t absolute_min = samples[0];
+  int16_t absolute_max = samples[sample_count - 1];
+  
+  free(samples);
+  
+  // Check if we got a valid swing
+  int16_t swing = max_reading - min_reading;
+  if (swing < 100) {
+    ESP_LOGW(TAG, "Insufficient swing detected (%d counts). Calibration may be inaccurate.", swing);
+  }
+  
+  // Apply 1% margin on each extreme for headroom
+  float margin = swing * 0.01f;
+  int16_t final_min = min_reading + (int16_t)margin;
+  int16_t final_max = max_reading - (int16_t)margin;
+  
+  // Ensure min < max after applying margins
+  if (final_min >= final_max) {
+    ESP_LOGE(TAG, "Calibration failed: min >= max after applying margins");
+    return ESP_FAIL;
+  }
+  
+  ESP_LOGI(TAG, "Calibration complete: %u samples", (unsigned)sample_count);
+  ESP_LOGI(TAG, "  Absolute range:   %d - %d", absolute_min, absolute_max);
+  ESP_LOGI(TAG, "  Trimmed range:    %d - %d (%d counts, discarded %u extreme samples)", 
+    min_reading, max_reading, swing, trim_count * 2);
+  ESP_LOGI(TAG, "  Final range:      %d - %d (1%% margins applied)", final_min, final_max);
+  
+  // Store calibration
+  expression_set_range(final_min, final_max);
+  
+  return ESP_OK;
+}
+
 // ADC initialization - register expression channels with ADC manager
 static esp_err_t expression_adc_init(void) {
   // Register expression pedal channel
-  esp_err_t ret = adc_manager_register_channel(EXP_ADC_CHANNEL, EXP_ADC_ATTEN);
+  esp_err_t ret = adc_manager_register_channel(EXP_ADC_CHANNEL, ADC_ATTEN);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register expression ADC channel: %s", esp_err_to_name(ret));
     return ret;
   }
   
-  #if USE_RATIOMETRIC
   // Register VCC reference channel
-  ret = adc_manager_register_channel(REF_ADC_CHANNEL, EXP_ADC_ATTEN);
+  ret = adc_manager_register_channel(REF_ADC_CHANNEL, ADC_ATTEN);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register reference ADC channel: %s", esp_err_to_name(ret));
     return ret;
   }
-  #endif
   
-  ESP_LOGI(TAG, "Expression ADC channels registered: exp_ch=%d, ref_ch=%d%s", 
-    EXP_ADC_CHANNEL, REF_ADC_CHANNEL,
-    USE_RATIOMETRIC ? " (ratiometric)" : "");
+  ESP_LOGI(TAG, "Expression ADC channels registered: exp_ch=%d, ref_ch=%d (ratiometric)", EXP_ADC_CHANNEL, REF_ADC_CHANNEL);
   
   return ESP_OK;
 }
