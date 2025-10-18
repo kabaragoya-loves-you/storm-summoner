@@ -23,5 +23,6 @@
 #define TASK_PRIORITY_ADC_EXP         TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_ADC_CV          TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_SPI             TASK_PRIORITY_DEFAULT
+#define CONSOLE_TASK_PRIORITY         3  // Lower priority for console
 
 #endif // TASK_PRIORITIES_H
