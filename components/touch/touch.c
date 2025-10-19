@@ -14,6 +14,8 @@
 #define TAG "TOUCH"
 #define ENABLE_TOUCH_DEBUG_SUBSCRIBER false
 
+static bool s_logging_enabled = false;
+
 const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
   2,   // Logical pad 0 (GPIO3)  - Touch Channel 2
   3,   // Logical pad 1 (GPIO4)  - Touch Channel 3
@@ -93,8 +95,10 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // Update button state
   s_button_pressed_states[pad_index] = is_pressed;
   
-  ESP_LOGI(TAG, "Touch %s: GPIO%d (chan_id=%d) -> pad_index=%d", 
-    is_pressed ? "PRESS" : "RELEASE", chan_id + 1, chan_id, pad_index);
+  if (s_logging_enabled) {
+    ESP_LOGI(TAG, "Touch %s: GPIO%d (chan_id=%d) -> pad_index=%d", 
+      is_pressed ? "PRESS" : "RELEASE", chan_id + 1, chan_id, pad_index);
+  }
   
   // Post event to event bus
   event_t event = {
@@ -151,8 +155,10 @@ static bool on_touch_inactive(touch_sensor_handle_t sens_handle, const touch_ina
   return xHigherPriorityTaskWoken == pdTRUE;
 }
 
-void touch_init(void) {
+void touch_init(bool enable_logging) {
   esp_err_t ret;
+  
+  s_logging_enabled = enable_logging;
   
   // Step 1: Create touch sensor controller with sample configuration
   touch_sensor_sample_config_t sample_cfg[1] = {
@@ -253,19 +259,21 @@ void touch_init(void) {
     }
   }
   
-  vTaskDelay(pdMS_TO_TICKS(500));  // Let benchmarks stabilize
+  vTaskDelay(pdMS_TO_TICKS(1000));  // Let benchmarks stabilize
   
   // Step 9: Initialize thresholds (loads from NVS or calibrates)
   // Now that benchmarks are reset, we can properly apply thresholds
   touch_thresholds_init();
   
   // Step 10: Log pad mapping
-  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
-    // ESP32-P4: Touch channels map to GPIO = channel + 1
-    // Since we skip GPIO2 (channel 1), we use channels 2-14 for GPIO3-15
-    int gpio_num = TOUCH_PADS[i] + 1;
-    ESP_LOGI(TAG, "  [%d] -> Channel %d -> GPIO%d", 
-      i + 1, TOUCH_PADS[i], gpio_num);
+  if (s_logging_enabled) {
+    for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+      // ESP32-P4: Touch channels map to GPIO = channel + 1
+      // Since we skip GPIO2 (channel 1), we use channels 2-14 for GPIO3-15
+      int gpio_num = TOUCH_PADS[i] + 1;
+      ESP_LOGI(TAG, "  [%d] -> Channel %d -> GPIO%d", 
+        i + 1, TOUCH_PADS[i], gpio_num);
+    }
   }
   
   // Step 11: Check for invalid readings

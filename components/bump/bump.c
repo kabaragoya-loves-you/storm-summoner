@@ -13,6 +13,8 @@
 
 #define TAG "BUMP"
 
+static bool s_logging_enabled = false;
+
 #define LIS3DHTR_I2C_ADDR 0x18
 
 #define LIS3DHTR_REG_TEMP_CFG   0x1F
@@ -76,7 +78,9 @@ static void bump_task(void *pvParameters) {
           };
           esp_err_t post_ret = event_bus_post(&bump_event);
           
-          ESP_LOGI(TAG, "Bump detected! (intensity: %d) - Event posted: %s", click_src, esp_err_to_name(post_ret));
+          if (s_logging_enabled) {
+            ESP_LOGI(TAG, "Bump detected! (intensity: %d) - Event posted: %s", click_src, esp_err_to_name(post_ret));
+          }
         } else {
           ESP_LOGW(TAG, "ISR triggered, but CLICK_SRC was empty.");
         }
@@ -91,7 +95,9 @@ static void bump_task(void *pvParameters) {
   }
 }
 
-void bump_init(void) {
+void bump_init(bool enable_logging) {
+  s_logging_enabled = enable_logging;
+  
   uint32_t stored_val;
   if (app_settings_load_u32(NVS_KEY_BUMP_THRESHOLD, &stored_val) == ESP_OK) {
     s_bump_threshold = (uint8_t)stored_val;

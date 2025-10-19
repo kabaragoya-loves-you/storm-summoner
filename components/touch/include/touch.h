@@ -10,7 +10,7 @@
 typedef int touch_pad_t;
 
 // Initialize touch sensor with calibration
-void touch_init(void);
+void touch_init(bool enable_logging);
 
 // Force recalibration (calls touch_calibrate with force=true)
 void force_touch_calibration(void);

@@ -46,16 +46,16 @@ void app_main(void) {
   i2c_common_scan();
   app_settings_init();
   event_bus_init();
-  buttons_init(true);
+  buttons_init(false);
   dac_init();
   display_init();
   ui_init();
   ui_set_draw_module(&buttons_module);
   
-  touch_init();
+  touch_init(false);
   // force_touch_calibration();
   
-  bump_init();
+  bump_init(false);
   haptic_init();
   led_init();
   flicker_start();
@@ -66,9 +66,9 @@ void app_main(void) {
   midi_scene_handler_init();
   
   switch_init();
-  cv_init(true);
+  cv_init(false);
   
-  expression_init(true);
+  expression_init(false);
   // expression_set_polarity(EXPRESSION_POLARITY_TIP_ADC);
   // expression_set_range(100, 3500);
   // expression_set_deadzone(1);

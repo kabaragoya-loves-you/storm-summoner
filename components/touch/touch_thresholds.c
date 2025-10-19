@@ -285,7 +285,7 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   float threshold_ratio;
   const char* noise_level;
   if (noise_ratio < 0.01f) {
-    threshold_ratio = 0.05f;
+    threshold_ratio = 0.07f;
     noise_level = "low";
   } else if (noise_ratio < 0.03f) {
     threshold_ratio = 0.10f;

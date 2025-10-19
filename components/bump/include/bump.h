@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-void bump_init(void);
+void bump_init(bool enable_logging);
 uint8_t bump_get_threshold(void);
 void bump_set_threshold(uint8_t threshold);
 uint32_t bump_get_debounce(void);

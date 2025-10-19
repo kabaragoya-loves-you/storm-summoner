@@ -11,7 +11,7 @@
 void haptic_event_handler_init(void);
 
 #define TAG "HAPTIC_MANAGER"
-#define HAPTIC_JOB_QUEUE_SIZE 10
+#define HAPTIC_JOB_QUEUE_SIZE 15
 #define HAPTIC_JOBS_COUNT 3
 
 static QueueHandle_t haptic_job_queue = NULL;
