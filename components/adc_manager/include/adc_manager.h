@@ -29,7 +29,7 @@
  * @param bitwidth ADC resolution (typically ADC_BITWIDTH_12 for 12-bit)
  * @return ESP_OK on success, error code otherwise
  */
-esp_err_t adc_manager_init(adc_unit_t unit, adc_bitwidth_t bitwidth);
+esp_err_t adc_manager_init(void);
 
 /**
  * Register an ADC channel for use
@@ -65,13 +65,6 @@ esp_err_t adc_manager_read(adc_channel_t channel, int *raw_value);
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv);
-
-/**
- * Get the ADC unit being managed
- * 
- * @return ADC unit (ADC_UNIT_1 or ADC_UNIT_2), or ADC_UNIT_1 if not initialized
- */
-adc_unit_t adc_manager_get_unit(void);
 
 /**
  * Check if ADC manager is initialized

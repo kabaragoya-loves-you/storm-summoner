@@ -40,7 +40,7 @@
 #define TAG "MAIN"
 
 void app_main(void) {
-  adc_manager_init(ADC_UNIT_1, ADC_BITWIDTH_12);
+  adc_manager_init();
   revision_init();
   gpio_install_isr_service(0);
   i2c_common_scan();

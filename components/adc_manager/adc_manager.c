@@ -4,6 +4,7 @@
 #include "esp_adc/adc_cali_scheme.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "io.h"
 #include <string.h>
 
 #define TAG "ADC_MGR"
@@ -22,14 +23,12 @@ typedef struct {
 
 // Global state
 static adc_oneshot_unit_handle_t s_adc_handle = NULL;
-static adc_unit_t s_adc_unit = ADC_UNIT_1;
-static adc_bitwidth_t s_bitwidth = ADC_BITWIDTH_12;
 static bool s_initialized = false;
 static SemaphoreHandle_t s_mutex = NULL;
 static channel_info_t s_channels[MAX_CHANNELS] = {0};
 static int s_channel_count = 0;
 
-esp_err_t adc_manager_init(adc_unit_t unit, adc_bitwidth_t bitwidth) {
+esp_err_t adc_manager_init(void) {
   if (s_initialized) {
     ESP_LOGW(TAG, "ADC manager already initialized");
     return ESP_ERR_INVALID_STATE;
@@ -44,23 +43,21 @@ esp_err_t adc_manager_init(adc_unit_t unit, adc_bitwidth_t bitwidth) {
   
   // Configure ADC unit
   adc_oneshot_unit_init_cfg_t init_config = {
-    .unit_id = unit,
+    .unit_id = ADC_UNIT,
     .ulp_mode = ADC_ULP_MODE_DISABLE,
   };
   
   esp_err_t ret = adc_oneshot_new_unit(&init_config, &s_adc_handle);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to initialize ADC unit %d: %s", unit, esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Failed to initialize ADC unit %d: %s", ADC_UNIT, esp_err_to_name(ret));
     vSemaphoreDelete(s_mutex);
     s_mutex = NULL;
     return ret;
   }
   
-  s_adc_unit = unit;
-  s_bitwidth = bitwidth;
   s_initialized = true;
   
-  ESP_LOGI(TAG, "ADC manager initialized for unit %d, bitwidth %d", unit, bitwidth);
+  ESP_LOGI(TAG, "ADC manager initialized for unit %d, bitwidth %d", ADC_UNIT, ADC_BITWIDTH);
   
   return ESP_OK;
 }
@@ -89,7 +86,7 @@ esp_err_t adc_manager_register_channel(adc_channel_t channel, adc_atten_t atten)
   
   // Configure channel
   adc_oneshot_chan_cfg_t config = {
-    .bitwidth = s_bitwidth,
+    .bitwidth = ADC_BITWIDTH,
     .atten = atten,
   };
   
@@ -103,9 +100,9 @@ esp_err_t adc_manager_register_channel(adc_channel_t channel, adc_atten_t atten)
   // Create calibration scheme for this channel
   adc_cali_handle_t cali_handle = NULL;
   adc_cali_curve_fitting_config_t cali_config = {
-    .unit_id = s_adc_unit,
+    .unit_id = ADC_UNIT,
     .atten = atten,
-    .bitwidth = s_bitwidth,
+    .bitwidth = ADC_BITWIDTH,
   };
   
   ret = adc_cali_create_scheme_curve_fitting(&cali_config, &cali_handle);
@@ -221,10 +218,6 @@ esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv) {
   }
   
   return ESP_OK;
-}
-
-adc_unit_t adc_manager_get_unit(void) {
-  return s_adc_unit;
 }
 
 bool adc_manager_is_initialized(void) {
