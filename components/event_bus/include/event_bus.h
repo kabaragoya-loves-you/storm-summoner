@@ -12,7 +12,7 @@
 #define EVENT_BUS_ENABLE_HISTORY      1
 
 // Configuration
-#define EVENT_BUS_QUEUE_SIZE          32
+#define EVENT_BUS_QUEUE_SIZE          128
 #define EVENT_BUS_MAX_HANDLERS        32
 #define EVENT_BUS_HISTORY_SIZE        16
 

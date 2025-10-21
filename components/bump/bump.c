@@ -55,10 +55,18 @@ static void bump_task(void *pvParameters) {
     if (xSemaphoreTake(s_bump_sem, portMAX_DELAY) == pdTRUE) {
       TickType_t now = xTaskGetTickCount();
       if ((now - s_last_bump_tick) * portTICK_PERIOD_MS < s_bump_debounce_ms) {
-        // Debounce: ignore this interrupt
+        // Debounce: ignore this interrupt, but still clear the latch
+        uint8_t temp;
+        i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_INT1_SRC, &temp);
         continue;
       }
       
+      // Clear the latched interrupt FIRST by reading INT1_SRC
+      // This ensures we capture the click event before it clears
+      uint8_t int1_src = 0;
+      i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_INT1_SRC, &int1_src);
+      
+      // Now read CLICK_SRC to get click details
       uint8_t click_src = 0;
       esp_err_t ret = i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_CLICK_SRC, &click_src);
 
@@ -82,15 +90,16 @@ static void bump_task(void *pvParameters) {
             ESP_LOGI(TAG, "Bump detected! (intensity: %d) - Event posted: %s", click_src, esp_err_to_name(post_ret));
           }
         } else {
-          ESP_LOGW(TAG, "ISR triggered, but CLICK_SRC was empty.");
+          // This can happen if the click event cleared between interrupt and read
+          // It's not really an error - just ignore it silently
+          // Only log if we're in debug mode
+          if (s_logging_enabled) {
+            ESP_LOGD(TAG, "ISR triggered with empty CLICK_SRC (int1_src=0x%02X, possibly spurious)", int1_src);
+          }
         }
       } else {
         ESP_LOGE(TAG, "Failed to read CLICK_SRC register: %s", esp_err_to_name(ret));
       }
-
-      // Reading the INT1_SRC register clears the latched interrupt.
-      uint8_t temp;
-      i2c_common_read_reg(s_bump_dev_handle, LIS3DHTR_REG_INT1_SRC, &temp);
     }
   }
 }

@@ -387,10 +387,10 @@ static void cv_task(void *pvParameters) {
       if (past_startup && midi_delta >= s_deadzone) {
         s_last_midi_value = midi_value;
         
-        // Post CV value event
+        // Post CV value event with LOW priority to avoid blocking critical events
         event_t cv_event = {
           .type = EVENT_CV_VALUE,
-          .priority = EVENT_PRIORITY_NORMAL,
+          .priority = EVENT_PRIORITY_LOW,
           .timestamp = event_bus_get_current_timestamp(),
           .data.cv = {
             .raw_value = raw,
