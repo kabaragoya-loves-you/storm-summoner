@@ -142,24 +142,38 @@ void ui_graphics_resume(void) {
   if (show_timer != NULL) lv_timer_set_repeat_count(show_timer, 1);
 }
 
+// Deferred callback to tear down current module
+static void deferred_module_teardown_cb(lv_timer_t *timer) {
+  if (current_draw_module && current_draw_module->teardown_func) {
+    // Switch back to the default screen before tearing down
+    // This prevents "active screen deleted" warnings and crashes
+    lv_obj_t *default_screen = lv_obj_get_parent(canvas);
+    if (default_screen && lv_obj_is_valid(default_screen)) lv_scr_load(default_screen);
+    
+    current_draw_module->teardown_func();
+    ESP_LOGD(TAG, "Tore down module '%s' to reduce fragmentation", current_draw_module->name);
+  }
+  lv_timer_del(timer);
+}
+
 void ui_release_canvas_buffer(void) {
-  ESP_LOGI(TAG, "Releasing UI canvas buffer (32KB)...");
+  ESP_LOGD(TAG, "Releasing UI canvas buffer (32KB)...");
   
   // Check current memory state
   lv_mem_monitor_t mon_initial;
   lv_mem_monitor(&mon_initial);
   ESP_LOGI(TAG, "LVGL memory at start of release - used: %d, free: %d, frag: %d%%", 
-           mon_initial.total_size - mon_initial.free_size, mon_initial.free_size, mon_initial.frag_pct);
+    mon_initial.total_size - mon_initial.free_size, mon_initial.free_size, mon_initial.frag_pct);
   
   // Pause the refresh timer
-  if (g_ui_refresh_timer != NULL) {
-    lv_timer_pause(g_ui_refresh_timer);
-  }
+  if (g_ui_refresh_timer != NULL) lv_timer_pause(g_ui_refresh_timer);
+  
+  // Defer module teardown to LVGL context to avoid race conditions
+  lv_timer_t *teardown_timer = lv_timer_create(deferred_module_teardown_cb, 0, NULL);
+  if (teardown_timer) lv_timer_set_repeat_count(teardown_timer, 1);
   
   // Hide the canvas
-  if (canvas != NULL) {
-    lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-  }
+  if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
   
   // Free the buffer
   if (display_buf) {
@@ -167,7 +181,7 @@ void ui_release_canvas_buffer(void) {
     lv_mem_monitor_t mon_before;
     lv_mem_monitor(&mon_before);
     ESP_LOGI(TAG, "LVGL memory before UI free - used: %d, free: %d, frag: %d%%", 
-             mon_before.total_size - mon_before.free_size, mon_before.free_size, mon_before.frag_pct);
+      mon_before.total_size - mon_before.free_size, mon_before.free_size, mon_before.frag_pct);
     
     lv_free(display_buf);
     display_buf = NULL;
@@ -177,15 +191,24 @@ void ui_release_canvas_buffer(void) {
     lv_mem_monitor(&mon_after);
     ESP_LOGI(TAG, "UI canvas buffer freed (32KB)");
     ESP_LOGI(TAG, "LVGL memory after UI free - used: %d, free: %d, frag: %d%%", 
-             mon_after.total_size - mon_after.free_size, mon_after.free_size, mon_after.frag_pct);
+      mon_after.total_size - mon_after.free_size, mon_after.free_size, mon_after.frag_pct);
   }
   
   // Note: We don't clear the canvas buffer binding here because LVGL doesn't like NULL buffers
   // The canvas will just remain hidden until we reclaim and set a new buffer
 }
 
+// Deferred callback to recreate module widgets
+static void deferred_module_recreate_cb(lv_timer_t *timer) {
+  if (current_draw_module && current_draw_module->draw_func) {
+    current_draw_module->draw_func();
+    ESP_LOGD(TAG, "Recreated module '%s' widgets", current_draw_module->name);
+  }
+  lv_timer_del(timer);
+}
+
 void ui_reclaim_canvas_buffer(void) {
-  ESP_LOGI(TAG, "Reclaiming UI canvas buffer...");
+  ESP_LOGD(TAG, "Reclaiming UI canvas buffer...");
   
   // Reallocate the buffer if needed
   if (!display_buf) {
@@ -208,12 +231,12 @@ void ui_reclaim_canvas_buffer(void) {
   }
   
   // Resume the refresh timer
-  if (g_ui_refresh_timer != NULL) {
-    lv_timer_resume(g_ui_refresh_timer);
-  }
+  if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
+
   
-  // Don't redraw immediately after allocating 32KB - memory may be fragmented
-  // Let the refresh timer handle the next draw cycle naturally
+  // Defer widget recreation to LVGL context with a delay to allow memory to settle
+  lv_timer_t *recreate_timer = lv_timer_create(deferred_module_recreate_cb, 50, NULL);
+  if (recreate_timer) lv_timer_set_repeat_count(recreate_timer, 1);
   
-  ESP_LOGI(TAG, "UI canvas buffer reclaimed");
+  ESP_LOGD(TAG, "UI canvas buffer reclaimed");
 }
