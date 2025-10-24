@@ -53,9 +53,9 @@
 
 // Switch channel mapping for voltage ranges
 // Note: Multiple CV ranges can share a switch channel (distinguished by DAC voltage)
-#define SWITCH_CHANNEL_BIPOLAR_10V  0  // ±10V
-#define SWITCH_CHANNEL_10V          1  // 0-10V (also used for ±5V with different DAC)
-#define SWITCH_CHANNEL_5V           2  // 0-5V
+#define SWITCH_CHANNEL_5V           0  // 0-5V
+#define SWITCH_CHANNEL_BIPOLAR_10V  1  // ±10V
+#define SWITCH_CHANNEL_10V          2  // 0-10V (also used for ±5V with different DAC)
 #define SWITCH_CHANNEL_3V3          3  // 0-3.3V
 
 // State
@@ -433,13 +433,11 @@ static uint8_t convert_to_midi(int16_t raw_value, cv_mode_t mode) {
       if (s_range == CV_RANGE_BIPOLAR_5V || s_range == CV_RANGE_BIPOLAR_10V) {
         // Bipolar: center = 0V = MIDI 12
         int center_adc = (s_min_values[s_range] + s_max_values[s_range]) / 2;
-        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
-                           (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
         midi_note = 12 + ((center_adc - raw_value) * 12) / adc_per_volt;
       } else {
         // Unipolar: highest ADC = 0V = MIDI 12, scale up from there
-        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
-                           (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
         midi_note = 12 + ((s_max_values[s_range] - raw_value) * 12) / adc_per_volt;
       }
       break;
@@ -448,12 +446,10 @@ static uint8_t convert_to_midi(int16_t raw_value, cv_mode_t mode) {
       // 1V/octave with C2 (MIDI 36) at 0V
       if (s_range == CV_RANGE_BIPOLAR_5V || s_range == CV_RANGE_BIPOLAR_10V) {
         int center_adc = (s_min_values[s_range] + s_max_values[s_range]) / 2;
-        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
-                           (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
         midi_note = 36 + ((center_adc - raw_value) * 12) / adc_per_volt;
       } else {
-        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
-                           (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
         midi_note = 36 + ((s_max_values[s_range] - raw_value) * 12) / adc_per_volt;
       }
       break;
@@ -466,12 +462,10 @@ static uint8_t convert_to_midi(int16_t raw_value, cv_mode_t mode) {
       // Each volt doubles frequency (adds 12 semitones)
       if (s_range == CV_RANGE_BIPOLAR_5V || s_range == CV_RANGE_BIPOLAR_10V) {
         int center_adc = (s_min_values[s_range] + s_max_values[s_range]) / 2;
-        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
-                           (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / (s_range == CV_RANGE_BIPOLAR_5V ? 10 : 20);
         midi_note = 60 + ((center_adc - raw_value) * 12) / adc_per_volt;
       } else {
-        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / 
-                           (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
+        int adc_per_volt = (s_max_values[s_range] - s_min_values[s_range]) / (s_range == CV_RANGE_5V ? 5 : (s_range == CV_RANGE_10V ? 10 : 3));
         midi_note = 60 + ((s_max_values[s_range] - raw_value) * 12) / adc_per_volt;
       }
       break;
