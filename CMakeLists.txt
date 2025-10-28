@@ -6,10 +6,10 @@ cmake_minimum_required(VERSION 3.5)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-# Project-level configuration variables
 set(ENABLE_PERFORMANCE_MONITORING 0)  # Enable performance monitoring across all components
 
 project(storm-summoner)
 
-# Add main directory to build
+# littlefs_create_partition_image(assets ${CMAKE_SOURCE_DIR}/midi-devices)
+
 set(COMPONENT_DIRS main)

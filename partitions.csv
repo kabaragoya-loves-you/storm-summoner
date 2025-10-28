@@ -4,3 +4,4 @@ phy_init,    data, phy,     ,          0x1000
 factory,     app,  factory, ,          0x100000
 ota_0,       app,  ota_0,   ,          0x100000
 ota_1,       app,  ota_1,   ,          0x100000
+assets,      data, littlefs, ,          0xA00000
