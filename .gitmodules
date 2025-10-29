@@ -1,0 +1,3 @@
+[submodule "midi-devices"]
+	path = midi-devices
+	url = https://github.com/kabaragoya-loves-you/midi-devices.git

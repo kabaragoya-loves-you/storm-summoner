@@ -36,6 +36,7 @@
 #include "midi_scene_handler.h"
 #include "scene_test.h"
 #include "buttons.h"
+#include "assets_manager.h"
 
 #define TAG "MAIN"
 
@@ -45,6 +46,7 @@ void app_main(void) {
   gpio_install_isr_service(0);
   i2c_common_scan();
   app_settings_init();
+  assets_manager_init();
   event_bus_init();
   buttons_init(false);
   dac_init();
@@ -133,4 +135,14 @@ void app_main(void) {
   // task_monitor_print_report();
 
   // touch_debug_init();  // Touch sensor debugging
+  
+  // Example: Load and query a device profile
+  // device_def_t *device = assets_load_device("empress_reverb");
+  // if (device) {
+  //   const midi_control_t *mix_ctrl = assets_get_control_by_cc(device, 22);
+  //   if (mix_ctrl) {
+  //     ESP_LOGI(TAG, "Mix control: %s (range %u-%u)", mix_ctrl->name, mix_ctrl->min, mix_ctrl->max);
+  //   }
+  //   assets_free_device(device);
+  // }
 }

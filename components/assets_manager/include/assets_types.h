@@ -1,0 +1,100 @@
+#ifndef ASSETS_TYPES_H
+#define ASSETS_TYPES_H
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+// Control types
+#define MIDI_CONTROL_TYPE_CC 0
+#define MIDI_CONTROL_TYPE_NRPN 1
+
+// Cache file magic number
+#define CACHE_MAGIC 0x4D444343  // 'MDCC'
+#define CACHE_SCHEMA_VERSION 1
+
+// Individual MIDI control definition
+typedef struct {
+  uint8_t type;           // 0=CC, 1=NRPN
+  uint16_t id;            // CC number or packed NRPN (msb<<7)|lsb
+  uint16_t min;           // Minimum value
+  uint16_t max;           // Maximum value
+  const char *name;       // Control name (points into PSRAM string blob)
+  const char *additional_info;  // Optional additional info
+  uint8_t flags;          // Reserved for taper, stepped, etc.
+} midi_control_t;
+
+// Program change configuration
+typedef struct {
+  uint16_t index_base;    // Starting index (usually 0)
+  uint16_t count;         // Number of program changes
+  bool bank_select;       // Whether device uses bank select
+  const char **names;     // Optional array of preset names (NULL if not provided)
+} program_change_info_t;
+
+// Full device definition
+typedef struct {
+  char slug[64];          // Device slug identifier
+  char name[64];          // Display name
+  char vendor[64];        // Manufacturer
+  char model[64];         // Model name
+  char version[32];       // Version string
+  
+  midi_control_t *controls;   // Array of controls
+  uint16_t control_count;     // Number of controls
+  
+  int16_t *cc_lookup;         // 128-entry lookup table: cc→control_idx (-1 if unused)
+  
+  program_change_info_t *pc_info;  // Program change info (NULL if not supported)
+  
+  bool receives_pc;       // Receives program change
+  bool transmits_pc;      // Transmits program change
+  
+  void *string_blob;      // PSRAM blob containing all strings
+  size_t string_blob_size;
+} device_def_t;
+
+// Binary cache file header
+typedef struct {
+  uint32_t magic;         // 'MDCC'
+  uint16_t schema;        // Cache schema version
+  uint16_t reserved;
+  uint8_t json_sha256[32];  // SHA256 of source JSON
+  uint32_t control_count;   // Number of controls
+  uint32_t string_blob_size;  // Size of string blob
+  uint32_t pc_name_count;   // Number of PC names (0 if none)
+  uint32_t crc32;          // CRC32 of data after this header
+} __attribute__((packed)) cache_header_t;
+
+// Packed binary control record for cache files
+typedef struct {
+  uint8_t type;          // 0=CC, 1=NRPN
+  uint16_t id;           // CC or NRPN packed
+  uint16_t min;
+  uint16_t max;
+  uint32_t name_offset;  // Offset into string blob
+  uint32_t info_offset;  // Offset into string blob (0 if none)
+  uint8_t flags;
+  uint8_t padding[3];    // Align to 16 bytes
+} __attribute__((packed)) control_record_t;
+
+// Manifest device entry
+typedef struct {
+  char slug[64];
+  char name[64];
+  char vendor[64];
+  char version[32];
+  char file[128];
+  uint8_t sha256[32];
+  uint32_t size;
+} manifest_device_t;
+
+// Manifest structure
+typedef struct {
+  uint32_t schema;
+  uint32_t device_count;
+  manifest_device_t *devices;  // Array allocated in PSRAM
+} manifest_t;
+
+#endif // ASSETS_TYPES_H
+

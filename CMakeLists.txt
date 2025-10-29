@@ -10,6 +10,4 @@ set(ENABLE_PERFORMANCE_MONITORING 0)  # Enable performance monitoring across all
 
 project(storm-summoner)
 
-# littlefs_create_partition_image(assets ${CMAKE_SOURCE_DIR}/midi-devices)
-
 set(COMPONENT_DIRS main)
