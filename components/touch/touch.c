@@ -135,7 +135,7 @@ static void touch_event_task(void *pvParameters) {
   }
 }
 
-static bool on_touch_active(touch_sensor_handle_t sens_handle, const touch_active_event_data_t *event, void *user_ctx) {
+static bool IRAM_ATTR on_touch_active(touch_sensor_handle_t sens_handle, const touch_active_event_data_t *event, void *user_ctx) {
   touch_event_item_t item = {
     .chan_id = event->chan_id,
     .is_pressed = true
@@ -145,7 +145,7 @@ static bool on_touch_active(touch_sensor_handle_t sens_handle, const touch_activ
   return xHigherPriorityTaskWoken == pdTRUE;
 }
 
-static bool on_touch_inactive(touch_sensor_handle_t sens_handle, const touch_inactive_event_data_t *event, void *user_ctx) {
+static bool IRAM_ATTR on_touch_inactive(touch_sensor_handle_t sens_handle, const touch_inactive_event_data_t *event, void *user_ctx) {
   touch_event_item_t item = {
     .chan_id = event->chan_id,
     .is_pressed = false
