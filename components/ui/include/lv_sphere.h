@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LV_SPHERE_H
+#define LV_SPHERE_H
 
 #include "lvgl.h"
 
@@ -82,3 +83,5 @@ void lv_sphere_set_radius(lv_obj_t * obj, lv_coord_t radius);
 #ifdef __cplusplus
 }
 #endif
+
+#endif // LV_SPHERE_H

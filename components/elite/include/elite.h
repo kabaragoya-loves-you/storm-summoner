@@ -1,4 +1,5 @@
-#pragma once
+#ifndef ELITE_H
+#define ELITE_H
 
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
@@ -26,3 +27,5 @@ void elite_cleanup(void);  // Full cleanup of resources
  * @param face_cnt Number of faces
  */
 void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale, int* faces, int face_cnt);
+
+#endif // ELITE_H

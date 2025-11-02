@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LV_LIZARD_H
+#define LV_LIZARD_H
 
 #include "lvgl.h"
 
@@ -56,3 +57,5 @@ void lv_lizard_set_pivot(lv_obj_t * obj, lv_coord_t x, lv_coord_t y);
 #ifdef __cplusplus
 }
 #endif
+
+#endif // LV_LIZARD_H

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LV_PIZZA2_H
+#define LV_PIZZA2_H
 
 #include "lvgl.h"
 
@@ -72,3 +73,5 @@ void lv_pizza2_set_state_provider(lv_obj_t * obj, lv_pizza2_slice_state_provider
 #ifdef __cplusplus
 }
 #endif
+
+#endif // LV_PIZZA2_H

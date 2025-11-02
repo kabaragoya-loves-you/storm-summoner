@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LV_PIZZA_H
+#define LV_PIZZA_H
 
 #include "lvgl.h"
 
@@ -63,3 +64,5 @@ void lv_pizza_set_circle_enabled(lv_obj_t * obj, bool enabled);
 #ifdef __cplusplus
 }
 #endif
+
+#endif // LV_PIZZA_H

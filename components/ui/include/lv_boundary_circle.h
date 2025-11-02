@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LV_BOUNDARY_CIRCLE_H
+#define LV_BOUNDARY_CIRCLE_H
 
 #include "lvgl.h"
 
@@ -48,3 +49,5 @@ void lv_boundary_circle_set_margin(lv_obj_t * obj, lv_coord_t margin);
 #ifdef __cplusplus
 }
 #endif
+
+#endif // LV_BOUNDARY_CIRCLE_H

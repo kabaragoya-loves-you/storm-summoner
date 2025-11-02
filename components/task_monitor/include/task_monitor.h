@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TASK_MONITOR_H
+#define TASK_MONITOR_H
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -22,3 +23,5 @@ void task_monitor_print_heap_info(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif // TASK_MONITOR_H
