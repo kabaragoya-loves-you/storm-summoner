@@ -201,7 +201,7 @@ esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t h
         .active = true
       };
       xSemaphoreGive(event_bus_state.handler_mutex);
-      ESP_LOGI(TAG, "Subscribed handler to %s events (min priority: %d)", event_type_to_string(type), min_priority);
+      ESP_LOGD(TAG, "Subscribed handler to %s events (min priority: %d)", event_type_to_string(type), min_priority);
       return ESP_OK;
     }
   }

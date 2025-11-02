@@ -24,7 +24,7 @@ void screensaver_event_handler_init(void);
 
 static bool g_screensaver_initialised = false;
 static bool g_screensaver_enabled_in_settings = true;
-static uint16_t g_screensaver_delay_seconds = 60;
+static uint16_t g_screensaver_delay_seconds = 600;
 static screensaver_mode_t g_selected_screensaver_mode = SCREENSAVER_MODE_STARFIELD;
 
 static TimerHandle_t g_screensaver_activity_timer = NULL;

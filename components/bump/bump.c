@@ -15,7 +15,7 @@
 
 static bool s_logging_enabled = false;
 
-#define LIS3DHTR_I2C_ADDR 0x18
+#define LIS3DHTR_I2C_ADDR I2C_ADDR_BUMP
 
 #define LIS3DHTR_REG_TEMP_CFG   0x1F
 #define LIS3DHTR_REG_CTRL1      0x20

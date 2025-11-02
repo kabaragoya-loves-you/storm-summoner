@@ -4,6 +4,19 @@
 #include "assets_types.h"
 #include "esp_err.h"
 
+// Helper function to convert MIDI TRS type to transmit mode
+// (maps to midi_transmit_mode_t values from midi_out_uart.h)
+static inline int assets_trs_type_to_transmit_mode(midi_trs_type_t trs_type) {
+  switch (trs_type) {
+    case MIDI_TRS_TYPE_A:  return 1;  // MIDI_TRANSMIT_TYPE_A
+    case MIDI_TRS_TYPE_B:  return 2;  // MIDI_TRANSMIT_TYPE_B
+    case MIDI_TRS_TYPE_CS: return 3;  // MIDI_TRANSMIT_TS
+    case MIDI_TRS_UNKNOWN:
+    default:               return 0;  // MIDI_TRANSMIT_BOTH (fallback)
+  }
+}
+
+
 /**
  * Initialize the assets manager
  * - Mounts the LittleFS partition
@@ -54,6 +67,12 @@ const midi_control_t *assets_get_control_by_index(const device_def_t *device, ui
  * Returns pointer to PC info or NULL if device doesn't support PC
  */
 const program_change_info_t *assets_get_pc_info(const device_def_t *device);
+
+/**
+ * Get MIDI TRS wiring type for device
+ * Returns the TRS type (TYPE_A, TYPE_B, TYPE_CS, or UNKNOWN)
+ */
+midi_trs_type_t assets_get_trs_type(const device_def_t *device);
 
 #endif // ASSETS_MANAGER_H
 

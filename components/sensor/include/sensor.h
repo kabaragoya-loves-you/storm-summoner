@@ -4,8 +4,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "io.h"
 
-#define SENSOR_ADDR             0x60
+#define SENSOR_ADDR             I2C_ADDR_SENSOR
 #define SENSOR_ALS_CONF         0x00
 #define SENSOR_PS_CONF1         0x03  // PS_CONF1 and PS_CONF2 as 16-bit register
 #define SENSOR_PS_CONF3         0x04  // PS_CONF3 and PS_MS as 16-bit register

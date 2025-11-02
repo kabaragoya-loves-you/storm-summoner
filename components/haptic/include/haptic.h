@@ -2,8 +2,9 @@
 #define HAPTIC_H
 
 #include "esp_err.h"
+#include "io.h"
 
-#define HAPTIC_ADDR                0x5A
+#define HAPTIC_ADDR                I2C_ADDR_HAPTIC
 
 #define HAPTIC_REG_STATUS          0x00
 #define HAPTIC_REG_MODE            0x01

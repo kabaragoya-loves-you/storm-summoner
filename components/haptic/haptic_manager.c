@@ -15,8 +15,17 @@ void haptic_event_handler_init(void);
 #define HAPTIC_JOBS_COUNT 3
 
 static QueueHandle_t haptic_job_queue = NULL;
+static volatile uint32_t s_haptic_busy_until_ms = 0;
 
 static void haptic_job_task(void *pvParameters);
+
+// DRV2605 ROM waveform effect durations in milliseconds (measured/documented values)
+static const uint8_t WAVEFORM_DURATIONS_MS[128] = {
+  [1]  = 15,   // Strong Click - 100%
+  [21] = 40,   // Pulsing Sharp 1 - 100%
+  [24] = 40,   // Pulsing Sharp 2 - 100%
+  // Add more as needed, default 0 for unknown
+};
 
 static const haptic_job_t HAPTIC_JOBS[HAPTIC_JOBS_COUNT] = {
   [CLICK]     = { .waveform_sequence = { 1 }, .length = 1, .name = "CLICK" },
@@ -24,15 +33,46 @@ static const haptic_job_t HAPTIC_JOBS[HAPTIC_JOBS_COUNT] = {
   [DECREMENT] = { .waveform_sequence = { 24 }, .length = 1, .name = "DECREMENT" },
 };
 
+static uint32_t calculate_job_duration_ms(const haptic_job_t *job) {
+  uint32_t total_ms = 0;
+  for (uint8_t i = 0; i < job->length; i++) {
+    uint8_t waveform_id = job->waveform_sequence[i];
+    if (waveform_id < 128) {
+      total_ms += WAVEFORM_DURATIONS_MS[waveform_id];
+    }
+  }
+  // Add small buffer for I2C communication overhead
+  return total_ms > 0 ? total_ms + 5 : 50;
+}
+
+bool haptic_is_busy(void) {
+  uint32_t now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  return now_ms < s_haptic_busy_until_ms;
+}
+
 void haptic(haptic_job_id_t job_id) {
   if (haptic_job_queue == NULL) {
     ESP_LOGE(TAG, "Job queue not created");
     return;
   }
-  if (job_id < HAPTIC_JOBS_COUNT) {
-    if (xQueueSend(haptic_job_queue, &HAPTIC_JOBS[job_id], pdMS_TO_TICKS(100)) != pdPASS) {
-      ESP_LOGE(TAG, "Failed to enqueue haptic job");
-    }
+  
+  if (job_id >= HAPTIC_JOBS_COUNT) return;
+  
+  // Skip if a haptic is currently playing
+  if (haptic_is_busy()) {
+    ESP_LOGD(TAG, "Skipping haptic %s - already busy", HAPTIC_JOBS[job_id].name);
+    return;
+  }
+  
+  // Calculate duration and reserve time slot
+  uint32_t duration_ms = calculate_job_duration_ms(&HAPTIC_JOBS[job_id]);
+  uint32_t now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  s_haptic_busy_until_ms = now_ms + duration_ms;
+  
+  if (xQueueSend(haptic_job_queue, &HAPTIC_JOBS[job_id], pdMS_TO_TICKS(100)) != pdPASS) {
+    ESP_LOGE(TAG, "Failed to enqueue haptic job");
+    // Reset busy flag if we couldn't queue
+    s_haptic_busy_until_ms = 0;
   }
 }
 
@@ -61,8 +101,6 @@ static void haptic_job_task(void *pvParameters) {
 
   while (1) {
     if (xQueueReceive(haptic_job_queue, &job, portMAX_DELAY) == pdPASS) {
-      // ESP_LOGI(TAG, "Received haptic job %s with %d steps", job.name, job.length);
-
       // Loop through the sequence slots, adding the waveform and then a 0 to mark the end.
       for (uint8_t i = 0; i < job.length; i++) {
         if (haptic_set_waveform(i, job.waveform_sequence[i]) != ESP_OK) {
@@ -77,7 +115,9 @@ static void haptic_job_task(void *pvParameters) {
         ESP_LOGE(TAG, "Failed to trigger haptic effect");
       }
 
-      vTaskDelay(pdMS_TO_TICKS(100));
+      // Wait for the actual effect duration instead of fixed 100ms
+      uint32_t duration_ms = calculate_job_duration_ms(&job);
+      vTaskDelay(pdMS_TO_TICKS(duration_ms));
     }
   }
 }

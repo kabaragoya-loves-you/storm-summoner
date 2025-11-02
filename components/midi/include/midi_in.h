@@ -28,45 +28,19 @@ typedef enum {
   MIDI_EVENT_UNKNOWN
 } midi_event_type_t;
 
-typedef struct {
-  midi_event_type_t event;
-  uint8_t channel;       // Valid for channel messages
-  uint8_t data[256];     // For SysEx and other messages; typical channel messages use fewer bytes
-  size_t  length;
-} midi_message_t;
+/**
+ * @brief Initialize MIDI IN system
+ * Initializes parser, UART, and USB transports
+ */
+void midi_in_init(void);
 
-typedef void (*midi_callback_t)(const midi_message_t *msg, void *user_data);
-
-typedef struct {
-  // Channel Voice Messages
-  midi_callback_t note_on;
-  midi_callback_t note_off;
-  midi_callback_t poly_aftertouch;
-  midi_callback_t control_change;
-  midi_callback_t program_change;
-  midi_callback_t channel_aftertouch;
-  midi_callback_t pitch_bend;
-  // System Common Messages
-  midi_callback_t time_code;
-  midi_callback_t song_position;
-  midi_callback_t song_select;
-  midi_callback_t tune_request;
-  // System Exclusive
-  midi_callback_t sys_ex;
-  // Realtime Messages
-  midi_callback_t realtime_clock;
-  midi_callback_t realtime_tick;
-  midi_callback_t realtime_start;
-  midi_callback_t realtime_continue;
-  midi_callback_t realtime_stop;
-  midi_callback_t realtime_reset;
-  midi_callback_t active_sensing;
-  // Default callback for any unhandled message
-  midi_callback_t default_callback;
-  void *user_data;
-} midi_in_callbacks_t;
-
-void midi_in_init(const midi_in_callbacks_t *callbacks);
-void midi_in_process_stream(const uint8_t *data, size_t len);
+/**
+ * @brief Process MIDI byte stream
+ * Called by transport layers (UART/USB)
+ * @param data MIDI data bytes
+ * @param len Length of data
+ * @param source Source interface (MIDI_SOURCE_UART, MIDI_SOURCE_USB, etc)
+ */
+void midi_in_process_stream(const uint8_t *data, size_t len, uint8_t source);
 
 #endif /* _MIDI_IN_H */

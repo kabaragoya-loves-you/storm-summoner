@@ -2,6 +2,7 @@
 #define HAPTIC_MANAGER_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define MAX_WAVEFORM_STEPS  10
 
@@ -20,5 +21,7 @@ typedef enum {
 void haptic(haptic_job_id_t job_id);
 
 void haptic_init(void);
+
+bool haptic_is_busy(void);
 
 #endif // HAPTIC_MANAGER_H

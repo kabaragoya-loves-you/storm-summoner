@@ -38,5 +38,5 @@ void screensaver_event_handler_init(void) {
   event_bus_subscribe(EVENT_GESTURE_ROTARY, screensaver_handle_event, NULL);
   event_bus_subscribe(EVENT_SCREENSAVER_TIMEOUT, screensaver_handle_event, NULL);
   
-  ESP_LOGI(TAG, "Screensaver event handler initialized");
+  ESP_LOGD(TAG, "Screensaver event handler initialized");
 }

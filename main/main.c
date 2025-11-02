@@ -7,7 +7,11 @@
 #include "sensor.h"
 #include "midi_out.h"
 #include "midi_messages.h"
-#include "midi_callbacks.h"
+#include "midi_in.h"
+#include "midi_in_debug.h"
+#include "midi_sensor_event_handler.h"
+#include "midi_expression_handler.h"
+#include "midi_passthrough.h"
 #include "tempo.h"
 #include "elite.h"
 #include "ui.h"
@@ -37,6 +41,9 @@
 #include "scene_test.h"
 #include "buttons.h"
 #include "assets_manager.h"
+#include "firmware_update.h"
+#include "usb_mode_manager.h"
+#include "tinyusb_init.h"
 
 #define TAG "MAIN"
 
@@ -48,6 +55,9 @@ void app_main(void) {
   app_settings_init();
   assets_manager_init();
   event_bus_init();
+  firmware_update_init();
+  usb_mode_manager_init();
+  tinyusb_init_and_start();
   buttons_init(false);
   dac_init();
   display_init();
@@ -63,9 +73,16 @@ void app_main(void) {
   flicker_start();
   
   midi_out_init();
-  midi_set_transmit_mode(MIDI_TRANSMIT_BOTH);
-  midi_callbacks_init();
+  midi_out_set_interfaces(MIDI_OUT_INTERFACE_BOTH);
+  midi_set_uart_transmit_mode(MIDI_TRANSMIT_BOTH);
+  midi_in_init();
+  midi_in_debug_enable();  // Enable MIDI IN debug logging
+  midi_sensor_event_handler_init();
+  midi_expression_handler_init();
   midi_scene_handler_init();
+  midi_passthrough_init();
+  // midi_passthrough_usb_to_uart_enable(true);
+  // midi_passthrough_uart_to_usb_enable(true); 
   
   switch_init();
   cv_init(false);
@@ -143,6 +160,11 @@ void app_main(void) {
   //   if (mix_ctrl) {
   //     ESP_LOGI(TAG, "Mix control: %s (range %u-%u)", mix_ctrl->name, mix_ctrl->min, mix_ctrl->max);
   //   }
+  //   
+  //   // Set MIDI output mode based on device TRS type
+  //   midi_trs_type_t trs = assets_get_trs_type(device);
+  //   midi_out_uart_set_mode((midi_transmit_mode_t)assets_trs_type_to_transmit_mode(trs));
+  //   
   //   assets_free_device(device);
   // }
 }

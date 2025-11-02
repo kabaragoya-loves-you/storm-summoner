@@ -21,10 +21,6 @@
 // DAC reference voltage (VDD) - can be updated via calibration
 static float s_vref = 3.3f;  // Default assumed value
 
-// ADC reference channel for VCC measurement (same as expression pedal)
-#define REF_ADC_CHANNEL ADC_CHANNEL_2  // GPIO18 = ADC1_CH2
-#define REF_ADC_ATTEN   ADC_ATTEN_DB_12
-
 // ADC calibration correction factor (multiply measured voltage by this)
 // The ESP32-P4 ADC tends to read slightly high at the top of its range
 // Adjust this value to fine-tune DAC output accuracy
@@ -62,7 +58,7 @@ esp_err_t dac_init(void) {
 
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-    .device_address = 0x61,
+    .device_address = I2C_ADDR_DAC,
     .scl_speed_hz = I2C_SCL_SPEED_HZ,
   };
 
@@ -72,7 +68,7 @@ esp_err_t dac_init(void) {
     return ret;
   }
 
-  ESP_LOGI(TAG, "MCP4725 DAC initialized at address 0x61");
+  ESP_LOGI(TAG, "MCP4725 DAC initialized at address 0x%02X", I2C_ADDR_DAC);
 
   // Try to load CV range from NVS
   uint8_t stored_range;
@@ -364,7 +360,7 @@ esp_err_t dac_calibrate_vref(void) {
   
   // Ensure the reference channel is registered with ADC manager
   // (It should already be registered by expression component, but check anyway)
-  esp_err_t ret = adc_manager_register_channel(REF_ADC_CHANNEL, REF_ADC_ATTEN);
+  esp_err_t ret = adc_manager_register_channel(REF_ADC_CHANNEL, ADC_ATTEN);
   if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
     ESP_LOGE(TAG, "Failed to register reference ADC channel: %s", esp_err_to_name(ret));
     return ret;

@@ -1,34 +1,42 @@
 #include "midi_out.h"
-#include "driver/gpio.h"
-#include "driver/uart.h"
+#include "midi_out_uart.h"
+#include "midi_out_usb.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "nvs.h"
+#include "app_settings.h"
+#include "midi_messages.h"
+#include "task_priorities.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
-#include "task_priorities.h"
-#include "app_settings.h"
-#include "midi_messages.h"
-#include "io.h"
 
 #define TAG "MIDI_OUT"
 #define MIDI_QUEUE_LENGTH   50
 #define MIDI_QUEUE_ITEM_SIZE sizeof(midi_out_job_t *)
 #define MIDI_MIN_INTERVAL   pdMS_TO_TICKS(10)
 #define ACTIVE_SENSING_INTERVAL pdMS_TO_TICKS(250)
+
+// NVS Keys
 #define NVS_KEY_ACTIVE_SENSING "midi_act_sense"
 #define NVS_KEY_MIDI_MODE "midi_mode"
+#define NVS_KEY_OUT_INTERFACE "midi_out_iface"
+#define NVS_KEY_UART_TEMPO "midi_uart_tempo"
+#define NVS_KEY_UART_TRANS "midi_uart_trans"
+#define NVS_KEY_USB_TEMPO "midi_usb_tempo"
+#define NVS_KEY_USB_TRANS "midi_usb_trans"
 
 static QueueHandle_t   midi_out_queue  = NULL;
 static SemaphoreHandle_t midi_out_mutex = NULL;
 static TickType_t        last_send_tick  = 0;
-static midi_transmit_mode_t current_mode = 0;
 static TaskHandle_t active_sensing_task_handle = NULL;
+static midi_out_config_t s_config = {0};
 
 static void midi_out_task(void *pvParameters);
 static void active_sensing_task(void *pvParameters);
+static void load_config_from_nvs(void);
+static void save_config_to_nvs(void);
 
 void midi_out_init(void) {
   if (midi_out_queue != NULL) {
@@ -36,28 +44,26 @@ void midi_out_init(void) {
     return;
   }
 
-  uart_config_t uart_config = {
-    .baud_rate = 31250,
-    .data_bits = UART_DATA_8_BITS,
-    .parity    = UART_PARITY_DISABLE,
-    .stop_bits = UART_STOP_BITS_1,
-    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-  };
-  
-  ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
-  ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, PIN_MIDI_TXD, PIN_MIDI_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-  ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 256, 0, 0, NULL, 0));
+  // Load configuration from NVS
+  load_config_from_nvs();
 
-  uart_set_line_inverse(UART_NUM_1, UART_SIGNAL_TXD_INV);
+  // Initialize UART MIDI if enabled
+  if (s_config.active_interfaces & MIDI_OUT_INTERFACE_UART) {
+    esp_err_t ret = midi_out_uart_init();
+    if (ret != ESP_OK) ESP_LOGE(TAG, "Failed to initialize UART MIDI: %s", esp_err_to_name(ret));
+    
+    // Load and set UART transmit mode
+    uint16_t mode_val = (uint16_t)MIDI_TRANSMIT_BOTH;
+    esp_err_t err_mode = app_settings_load_u16(NVS_KEY_MIDI_MODE, &mode_val);
+    if (err_mode != ESP_OK) app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)MIDI_TRANSMIT_BOTH);
+    midi_out_uart_set_mode((midi_transmit_mode_t)mode_val);
+  }
 
-  gpio_config_t io_polarity = {
-    .pin_bit_mask = (1ULL << PIN_POLARITY),
-    .mode = GPIO_MODE_OUTPUT,
-    .pull_up_en = GPIO_PULLUP_ENABLE,
-    .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    .intr_type = GPIO_INTR_DISABLE
-  };
-  gpio_config(&io_polarity);
+  // TODO: Initialize USB MIDI if enabled
+  if (s_config.active_interfaces & MIDI_OUT_INTERFACE_USB) {
+    esp_err_t ret = midi_out_usb_init();
+    if (ret != ESP_OK) ESP_LOGE(TAG, "Failed to initialize USB MIDI: %s", esp_err_to_name(ret));
+  }
 
   midi_out_queue = xQueueCreate(MIDI_QUEUE_LENGTH, MIDI_QUEUE_ITEM_SIZE);
   if (midi_out_queue == NULL) {
@@ -72,21 +78,6 @@ void midi_out_init(void) {
     midi_out_queue = NULL;
     return;
   }
-
-  gpio_config_t io_ground = {
-    .pin_bit_mask = (1ULL << PIN_MIDI_TS),
-    .mode = GPIO_MODE_OUTPUT,
-    .pull_up_en = GPIO_PULLUP_ENABLE,
-    .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    .intr_type = GPIO_INTR_DISABLE
-  };
-  gpio_config(&io_ground);
-
-  uint16_t mode_val = (uint16_t)MIDI_TRANSMIT_BOTH;
-  esp_err_t err_mode = app_settings_load_u16(NVS_KEY_MIDI_MODE, &mode_val);
-  if (err_mode != ESP_OK) app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)MIDI_TRANSMIT_BOTH);
-  current_mode = (midi_transmit_mode_t)mode_val;
-  ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);
 
   bool active_sensing_enabled = false;
   esp_err_t err = app_settings_load_bool(NVS_KEY_ACTIVE_SENSING, &active_sensing_enabled);
@@ -103,7 +94,48 @@ void midi_out_init(void) {
     return;
   }
 
-  ESP_LOGI(TAG, "MIDI OUT initialized successfully");
+  ESP_LOGI(TAG, "MIDI OUT initialized - UART: %s, USB: %s, UART tempo: %s, UART transport: %s",
+    (s_config.active_interfaces & MIDI_OUT_INTERFACE_UART) ? "ON" : "OFF",
+    (s_config.active_interfaces & MIDI_OUT_INTERFACE_USB) ? "ON" : "OFF",
+    s_config.uart_send_tempo ? "ON" : "OFF",
+    s_config.uart_send_transport ? "ON" : "OFF");
+}
+
+static void load_config_from_nvs(void) {
+  // Default configuration: UART only, all messages enabled
+  s_config.active_interfaces = MIDI_OUT_INTERFACE_UART;
+  s_config.uart_send_tempo = true;
+  s_config.uart_send_transport = true;
+  s_config.usb_send_tempo = true;
+  s_config.usb_send_transport = true;
+
+  uint8_t iface_val;
+  if (app_settings_load_u8(NVS_KEY_OUT_INTERFACE, &iface_val) == ESP_OK) {
+    s_config.active_interfaces = (midi_out_interface_t)iface_val;
+  } else {
+    app_settings_save_u8(NVS_KEY_OUT_INTERFACE, (uint8_t)s_config.active_interfaces);
+  }
+
+  bool temp_bool;
+  if (app_settings_load_bool(NVS_KEY_UART_TEMPO, &temp_bool) == ESP_OK) s_config.uart_send_tempo = temp_bool;
+  else app_settings_save_bool(NVS_KEY_UART_TEMPO, s_config.uart_send_tempo);
+
+  if (app_settings_load_bool(NVS_KEY_UART_TRANS, &temp_bool) == ESP_OK) s_config.uart_send_transport = temp_bool;
+  else app_settings_save_bool(NVS_KEY_UART_TRANS, s_config.uart_send_transport);
+
+  if (app_settings_load_bool(NVS_KEY_USB_TEMPO, &temp_bool) == ESP_OK) s_config.usb_send_tempo = temp_bool;
+  else app_settings_save_bool(NVS_KEY_USB_TEMPO, s_config.usb_send_tempo);
+
+  if (app_settings_load_bool(NVS_KEY_USB_TRANS, &temp_bool) == ESP_OK) s_config.usb_send_transport = temp_bool;
+  else app_settings_save_bool(NVS_KEY_USB_TRANS, s_config.usb_send_transport);
+}
+
+static void save_config_to_nvs(void) {
+  app_settings_save_u8(NVS_KEY_OUT_INTERFACE, (uint8_t)s_config.active_interfaces);
+  app_settings_save_bool(NVS_KEY_UART_TEMPO, s_config.uart_send_tempo);
+  app_settings_save_bool(NVS_KEY_UART_TRANS, s_config.uart_send_transport);
+  app_settings_save_bool(NVS_KEY_USB_TEMPO, s_config.usb_send_tempo);
+  app_settings_save_bool(NVS_KEY_USB_TRANS, s_config.usb_send_transport);
 }
 
 void midi_send_message(const uint8_t *stream, size_t len) {
@@ -155,13 +187,106 @@ void midi_clear_queue(void) {
   }
 }
 
-void midi_set_transmit_mode(midi_transmit_mode_t mode) {
+void midi_set_uart_transmit_mode(midi_transmit_mode_t mode) {
   if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
-    current_mode = mode;
+    midi_out_uart_set_mode(mode);
     app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)mode);
-    ESP_LOGI(TAG, "MIDI transmit mode: %d", current_mode);
+    ESP_LOGI(TAG, "UART transmit mode: %d", mode);
     xSemaphoreGive(midi_out_mutex);
   }
+}
+
+void midi_out_set_interfaces(midi_out_interface_t interfaces) {
+  if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    s_config.active_interfaces = interfaces;
+    save_config_to_nvs();
+    ESP_LOGI(TAG, "Active interfaces set to: UART=%s USB=%s",
+      (interfaces & MIDI_OUT_INTERFACE_UART) ? "ON" : "OFF",
+      (interfaces & MIDI_OUT_INTERFACE_USB) ? "ON" : "OFF");
+    xSemaphoreGive(midi_out_mutex);
+  }
+}
+
+midi_out_interface_t midi_out_get_interfaces(void) {
+  midi_out_interface_t interfaces;
+  if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    interfaces = s_config.active_interfaces;
+    xSemaphoreGive(midi_out_mutex);
+  } else {
+    interfaces = MIDI_OUT_INTERFACE_NONE;
+  }
+  return interfaces;
+}
+
+void midi_out_set_tempo_enabled(midi_out_interface_t interface, bool enabled) {
+  if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    if (interface & MIDI_OUT_INTERFACE_UART) {
+      s_config.uart_send_tempo = enabled;
+      app_settings_save_bool(NVS_KEY_UART_TEMPO, enabled);
+    }
+    if (interface & MIDI_OUT_INTERFACE_USB) {
+      s_config.usb_send_tempo = enabled;
+      app_settings_save_bool(NVS_KEY_USB_TEMPO, enabled);
+    }
+    ESP_LOGI(TAG, "Tempo messages: UART=%s USB=%s",
+      s_config.uart_send_tempo ? "ON" : "OFF",
+      s_config.usb_send_tempo ? "ON" : "OFF");
+    xSemaphoreGive(midi_out_mutex);
+  }
+}
+
+void midi_out_set_transport_enabled(midi_out_interface_t interface, bool enabled) {
+  if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    if (interface & MIDI_OUT_INTERFACE_UART) {
+      s_config.uart_send_transport = enabled;
+      app_settings_save_bool(NVS_KEY_UART_TRANS, enabled);
+    }
+    if (interface & MIDI_OUT_INTERFACE_USB) {
+      s_config.usb_send_transport = enabled;
+      app_settings_save_bool(NVS_KEY_USB_TRANS, enabled);
+    }
+    ESP_LOGI(TAG, "Transport messages: UART=%s USB=%s",
+      s_config.uart_send_transport ? "ON" : "OFF",
+      s_config.usb_send_transport ? "ON" : "OFF");
+    xSemaphoreGive(midi_out_mutex);
+  }
+}
+
+bool midi_out_get_tempo_enabled(midi_out_interface_t interface) {
+  bool enabled = false;
+  if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    if (interface == MIDI_OUT_INTERFACE_UART) {
+      enabled = s_config.uart_send_tempo;
+    } else if (interface == MIDI_OUT_INTERFACE_USB) {
+      enabled = s_config.usb_send_tempo;
+    }
+    xSemaphoreGive(midi_out_mutex);
+  }
+  return enabled;
+}
+
+bool midi_out_get_transport_enabled(midi_out_interface_t interface) {
+  bool enabled = false;
+  if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    if (interface == MIDI_OUT_INTERFACE_UART) {
+      enabled = s_config.uart_send_transport;
+    } else if (interface == MIDI_OUT_INTERFACE_USB) {
+      enabled = s_config.usb_send_transport;
+    }
+    xSemaphoreGive(midi_out_mutex);
+  }
+  return enabled;
+}
+
+midi_out_config_t midi_out_get_config(void) {
+  midi_out_config_t config;
+  if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
+    config = s_config;
+    xSemaphoreGive(midi_out_mutex);
+  } else {
+    memset(&config, 0, sizeof(config));
+  }
+  return config;
 }
 
 static void midi_out_task(void *pvParameters) {
@@ -177,43 +302,30 @@ static void midi_out_task(void *pvParameters) {
       }
 
       if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
-        // Print MIDI message bytes in hex
-        char hex_str[64] = {0};
-        char *ptr = hex_str;
-        for (size_t i = 0; i < job->len && i < 16; i++) {
-          ptr += sprintf(ptr, "%02X ", job->data[i]);
+        // Detect message type
+        uint8_t status = job->data[0];
+        bool is_tempo = (status == 0xF8);  // Clock
+        bool is_transport = (status >= 0xFA && status <= 0xFC);  // Start/Stop/Continue
+        
+        // Determine which interfaces should receive this message
+        bool send_to_uart = (s_config.active_interfaces & MIDI_OUT_INTERFACE_UART) &&
+                           midi_out_uart_is_initialized();
+        bool send_to_usb = (s_config.active_interfaces & MIDI_OUT_INTERFACE_USB) && midi_out_usb_is_initialized();
+        
+        // Apply filters
+        if (is_tempo) {
+          if (!s_config.uart_send_tempo) send_to_uart = false;
+          if (!s_config.usb_send_tempo) send_to_usb = false;
         }
-        ESP_LOGD(TAG, "Sending MIDI message: %s", hex_str);
-
-        switch (current_mode) {
-          case MIDI_TRANSMIT_BOTH:
-            gpio_set_level(PIN_POLARITY, TYPE_A);
-            gpio_set_level(PIN_MIDI_TS, TYPE_A);
-            uart_write_bytes(UART_NUM_1, job->data, job->len);
-            vTaskDelay(MIDI_MIN_INTERVAL);
-            gpio_set_level(PIN_POLARITY, TYPE_B);
-            gpio_set_level(PIN_MIDI_TS, TYPE_B);
-            uart_write_bytes(UART_NUM_1, job->data, job->len);
-            break;
-            
-          case MIDI_TRANSMIT_TYPE_A:
-            gpio_set_level(PIN_POLARITY, TYPE_A);
-            gpio_set_level(PIN_MIDI_TS, TYPE_A);
-            uart_write_bytes(UART_NUM_1, job->data, job->len);
-            break;
-            
-          case MIDI_TRANSMIT_TYPE_B:
-            gpio_set_level(PIN_POLARITY, TYPE_B);
-            gpio_set_level(PIN_MIDI_TS, TYPE_B);
-            uart_write_bytes(UART_NUM_1, job->data, job->len);
-            break;
-
-          case MIDI_TRANSMIT_TS:
-            gpio_set_level(PIN_POLARITY, TYPE_A);
-            gpio_set_level(PIN_MIDI_TS, 1);
-            uart_write_bytes(UART_NUM_1, job->data, job->len);
-            break;
+        if (is_transport) {
+          if (!s_config.uart_send_transport) send_to_uart = false;
+          if (!s_config.usb_send_transport) send_to_usb = false;
         }
+        
+        // Send to enabled interfaces
+        if (send_to_uart) midi_out_uart_send(job->data, job->len);
+        if (send_to_usb) midi_out_usb_send(job->data, job->len);
+        
         last_send_tick = xTaskGetTickCount();
         xSemaphoreGive(midi_out_mutex);
       }

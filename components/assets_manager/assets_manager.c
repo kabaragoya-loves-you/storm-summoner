@@ -338,3 +338,13 @@ const program_change_info_t *assets_get_pc_info(const device_def_t *device) {
   return device->pc_info;
 }
 
+/**
+ * Get MIDI TRS type
+ */
+midi_trs_type_t assets_get_trs_type(const device_def_t *device) {
+  if (!device)
+    return MIDI_TRS_UNKNOWN;
+  
+  return device->trs_type;
+}
+

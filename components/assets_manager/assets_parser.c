@@ -129,6 +129,19 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
   if (display_name && cJSON_IsString(display_name))
     strncpy(device->name, display_name->valuestring, sizeof(device->name) - 1);
   
+  // Parse x_midiTrs extension
+  device->trs_type = MIDI_TRS_UNKNOWN;  // Default
+  cJSON *midi_trs = cJSON_GetObjectItem(root, "x_midiTrs");
+  if (midi_trs && cJSON_IsString(midi_trs)) {
+    const char *trs_str = midi_trs->valuestring;
+    if (strcmp(trs_str, "TYPE_A") == 0)
+      device->trs_type = MIDI_TRS_TYPE_A;
+    else if (strcmp(trs_str, "TYPE_B") == 0)
+      device->trs_type = MIDI_TRS_TYPE_B;
+    else if (strcmp(trs_str, "TYPE_CS") == 0)
+      device->trs_type = MIDI_TRS_TYPE_CS;
+  }
+  
   // Parse receives/transmits arrays
   cJSON *receives = cJSON_GetObjectItem(root, "receives");
   if (receives && cJSON_IsArray(receives)) {

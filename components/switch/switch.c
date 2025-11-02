@@ -6,7 +6,7 @@
 #define TAG "SWITCH"
 
 // PCA9534 configuration
-#define SWITCH_I2C_ADDR        0x20  // PCA9534 with A0-A2 tied to ground
+#define SWITCH_I2C_ADDR        I2C_ADDR_SWITCH
 #define SWITCH_NUM_CHANNELS    8
 #define SWITCH_IC_NAME         "PCA9534"
 

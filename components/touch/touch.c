@@ -16,6 +16,24 @@
 
 static bool s_logging_enabled = false;
 
+// Touch pad mapping: Production hardware has reversed order
+#if HW_CONFIG_PRODUCTION
+const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
+  14,  // Logical pad 0 (GPIO15) - Touch Channel 14
+  13,  // Logical pad 1 (GPIO14) - Touch Channel 13
+  12,  // Logical pad 2 (GPIO13) - Touch Channel 12
+  11,  // Logical pad 3 (GPIO12) - Touch Channel 11
+  10,  // Logical pad 4 (GPIO11) - Touch Channel 10
+  9,   // Logical pad 5 (GPIO10) - Touch Channel 9
+  8,   // Logical pad 6 (GPIO9)  - Touch Channel 8
+  7,   // Logical pad 7 (GPIO8)  - Touch Channel 7
+  6,   // Logical pad 8 (GPIO7)  - Touch Channel 6
+  5,   // Logical pad 9 (GPIO6)  - Touch Channel 5
+  4,   // Logical pad 10 (GPIO5) - Touch Channel 4
+  3,   // Logical pad 11 (GPIO4) - Touch Channel 3
+  2    // Logical pad 12 (GPIO3) - Touch Channel 2
+};
+#elif HW_CONFIG_DEV_BOARD
 const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
   2,   // Logical pad 0 (GPIO3)  - Touch Channel 2
   3,   // Logical pad 1 (GPIO4)  - Touch Channel 3
@@ -31,6 +49,9 @@ const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS] = {
   13,  // Logical pad 11 (GPIO14) - Touch Channel 13
   14   // Logical pad 12 (GPIO15) - Touch Channel 14
 };
+#else
+#error "Must define either HW_CONFIG_PRODUCTION or HW_CONFIG_DEV_BOARD"
+#endif
 
 // Module state
 static touch_sensor_handle_t s_sens_handle = NULL;

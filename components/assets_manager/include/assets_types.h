@@ -9,6 +9,14 @@
 #define MIDI_CONTROL_TYPE_CC 0
 #define MIDI_CONTROL_TYPE_NRPN 1
 
+// MIDI TRS wiring types (x_midiTrs extension)
+typedef enum {
+  MIDI_TRS_UNKNOWN = 0,    // Not specified or unknown
+  MIDI_TRS_TYPE_A,         // MIDI signal on tip (Empress, 1010music, Red Panda, etc.)
+  MIDI_TRS_TYPE_B,         // MIDI signal on ring (Chase Bliss Audio)
+  MIDI_TRS_TYPE_CS         // Two-wire connection (Disaster Area, Source Audio, etc.)
+} midi_trs_type_t;
+
 // Cache file magic number
 #define CACHE_MAGIC 0x4D444343  // 'MDCC'
 #define CACHE_SCHEMA_VERSION 1
@@ -49,6 +57,8 @@ typedef struct {
   
   bool receives_pc;       // Receives program change
   bool transmits_pc;      // Transmits program change
+  
+  midi_trs_type_t trs_type;  // MIDI TRS wiring type (x_midiTrs extension)
   
   void *string_blob;      // PSRAM blob containing all strings
   size_t string_blob_size;

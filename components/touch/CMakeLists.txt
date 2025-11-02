@@ -7,7 +7,8 @@ idf_component_register(
     "include"
   REQUIRES 
     log 
-    driver 
+    driver
+    esp_driver_touch_sens
     esp_timer 
     freertos
     app_settings
