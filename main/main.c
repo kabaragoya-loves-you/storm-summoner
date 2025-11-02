@@ -68,6 +68,7 @@ void app_main(void) {
   // force_touch_calibration();
   
   bump_init(false);
+  // bump_set_sensitivity_level(5);
   haptic_init();
   led_init();
   flicker_start();
