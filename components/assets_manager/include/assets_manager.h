@@ -8,11 +8,12 @@
 // (maps to midi_transmit_mode_t values from midi_out_uart.h)
 static inline int assets_trs_type_to_transmit_mode(midi_trs_type_t trs_type) {
   switch (trs_type) {
-    case MIDI_TRS_TYPE_A:  return 1;  // MIDI_TRANSMIT_TYPE_A
-    case MIDI_TRS_TYPE_B:  return 2;  // MIDI_TRANSMIT_TYPE_B
-    case MIDI_TRS_TYPE_CS: return 3;  // MIDI_TRANSMIT_TS
+    case MIDI_TRS_TYPE_A:    return 1;  // MIDI_TRANSMIT_TYPE_A
+    case MIDI_TRS_TYPE_B:    return 2;  // MIDI_TRANSMIT_TYPE_B
+    case MIDI_TRS_TYPE_CS:   return 3;  // MIDI_TRANSMIT_TS
+    case MIDI_TRS_TYPE_BOTH: return 0;  // MIDI_TRANSMIT_BOTH
     case MIDI_TRS_UNKNOWN:
-    default:               return 0;  // MIDI_TRANSMIT_BOTH (fallback)
+    default:                 return 0;  // MIDI_TRANSMIT_BOTH (fallback)
   }
 }
 
