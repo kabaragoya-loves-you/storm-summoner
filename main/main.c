@@ -44,6 +44,8 @@
 #include "firmware_update.h"
 #include "usb_mode_manager.h"
 #include "tinyusb_init.h"
+#include "device_config.h"
+#include "console_repl.h"
 
 #define TAG "MAIN"
 
@@ -56,6 +58,7 @@ void app_main(void) {
   assets_manager_init();
   event_bus_init();
   firmware_update_init();
+  device_config_init();
   usb_mode_manager_init();
   tinyusb_init_and_start();
   buttons_init(false);
@@ -142,6 +145,9 @@ void app_main(void) {
   screensaver_init();
   screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
   // screensaver_set_delay(600);
+
+  // Initialize console REPL for interactive commands
+  console_repl_init();
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
