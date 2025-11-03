@@ -1,5 +1,6 @@
 #include "scene_test.h"
 #include "scene.h"
+#include "device_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,18 +17,37 @@ void scene_test_info(void) {
     return;
   }
   
-  ESP_LOGI(TAG, "====== SCENE INFO ======");
-  ESP_LOGI(TAG, "Current scene: %d - %s", index + 1, scene->name);
-  ESP_LOGI(TAG, "MIDI channel: %d", scene->midi_channel);
-  ESP_LOGI(TAG, "Touchwheel: %s mode", scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
+  scene_mode_t mode = scene_get_mode();
+  scene_change_mode_t change_mode = scene_get_change_mode();
+  uint8_t device_channel = device_config_get_channel();
   
+  const char* mode_str = (mode == SCENE_MODE_SINGLE) ? "Single" :
+                         (mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
+  const char* change_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
+  
+  ESP_LOGI(TAG, "====== SCENE INFO ======");
+  ESP_LOGI(TAG, "Scene mode: %s", mode_str);
+  ESP_LOGI(TAG, "Change mode: %s", change_str);
+  ESP_LOGI(TAG, "Device MIDI channel: %d", device_channel);
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Current scene: %d - %s", index + 1, scene->name);
+  ESP_LOGI(TAG, "Program number: %d (send PC: %s)", scene->program_number, 
+           scene->send_pc_on_change ? "yes" : "no");
+  ESP_LOGI(TAG, "Touchwheel: %s mode", 
+           scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
+  
+  if (scene_has_pending_change()) {
+    ESP_LOGI(TAG, "PENDING CHANGE to scene %d", scene_get_pending_index() + 1);
+  }
+  
+  ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchpad mappings:");
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     touchpad_mapping_t* map = &scene->touchpads[i];
     if (map->enabled) {
+      uint8_t effective_ch = map->cc.channel ? map->cc.channel : device_channel;
       ESP_LOGI(TAG, "  Pad %2d: CC%-3d value=%-3d ch=%d", 
-        i, map->cc.cc_number, map->cc.value,
-        map->cc.channel ? map->cc.channel : scene->midi_channel);
+               i, map->cc.cc_number, map->cc.value, effective_ch);
     } else {
       ESP_LOGI(TAG, "  Pad %2d: disabled", i);
     }
@@ -125,6 +145,77 @@ void scene_test_monitor_handler(char key) {
       ESP_LOGI(TAG, "Switched to scene 3");
       break;
       
+    case 'm':
+    case 'M':
+      // Cycle through scene modes
+      {
+        scene_mode_t current = scene_get_mode();
+        scene_mode_t next = (current == SCENE_MODE_SINGLE) ? SCENE_MODE_PRESET_SYNC :
+                            (current == SCENE_MODE_PRESET_SYNC) ? SCENE_MODE_ADVANCED :
+                            SCENE_MODE_SINGLE;
+        scene_set_mode(next);
+        const char* mode_str = (next == SCENE_MODE_SINGLE) ? "Single" :
+                               (next == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
+        ESP_LOGI(TAG, "Scene mode: %s", mode_str);
+      }
+      break;
+      
+    case 'c':
+    case 'C':
+      // Toggle change mode
+      {
+        scene_change_mode_t current = scene_get_change_mode();
+        scene_change_mode_t next = (current == CHANGE_MODE_IMMEDIATE) ? 
+                                   CHANGE_MODE_PENDING : CHANGE_MODE_IMMEDIATE;
+        scene_set_change_mode(next);
+        ESP_LOGI(TAG, "Change mode: %s", next == CHANGE_MODE_IMMEDIATE ? "Immediate" : "Pending");
+      }
+      break;
+      
+    case 'y':
+    case 'Y':
+      // Confirm pending change
+      if (scene_has_pending_change()) {
+        scene_confirm_change();
+        ESP_LOGI(TAG, "Confirmed pending change");
+      } else {
+        ESP_LOGI(TAG, "No pending change");
+      }
+      break;
+      
+    case 'x':
+    case 'X':
+      // Cancel pending change
+      if (scene_has_pending_change()) {
+        scene_cancel_pending();
+        ESP_LOGI(TAG, "Cancelled pending change");
+      } else {
+        ESP_LOGI(TAG, "No pending change");
+      }
+      break;
+      
+    case '+':
+      // Increase device MIDI channel
+      {
+        uint8_t ch = device_config_get_channel();
+        if (ch < 16) {
+          device_config_set_channel(ch + 1);
+          ESP_LOGI(TAG, "Device MIDI channel: %d", ch + 1);
+        }
+      }
+      break;
+      
+    case '-':
+      // Decrease device MIDI channel
+      {
+        uint8_t ch = device_config_get_channel();
+        if (ch > 1) {
+          device_config_set_channel(ch - 1);
+          ESP_LOGI(TAG, "Device MIDI channel: %d", ch - 1);
+        }
+      }
+      break;
+      
     case 'h':
     case 'H':
       ESP_LOGI(TAG, "Scene Test Commands:");
@@ -133,6 +224,11 @@ void scene_test_monitor_handler(char key) {
       ESP_LOGI(TAG, "  p - Previous scene");
       ESP_LOGI(TAG, "  d - Apply demo configuration");
       ESP_LOGI(TAG, "  1-3 - Switch to scene 1-3");
+      ESP_LOGI(TAG, "  m - Cycle scene mode (Single/Preset Sync/Advanced)");
+      ESP_LOGI(TAG, "  c - Toggle change mode (Immediate/Pending)");
+      ESP_LOGI(TAG, "  y - Confirm pending change");
+      ESP_LOGI(TAG, "  x - Cancel pending change");
+      ESP_LOGI(TAG, "  +/- - Adjust device MIDI channel");
       ESP_LOGI(TAG, "  h - Show this help");
       break;
   }
