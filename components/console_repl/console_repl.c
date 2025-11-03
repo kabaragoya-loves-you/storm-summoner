@@ -1,5 +1,33 @@
 #include "console_repl.h"
 #include "scene_console.h"
+#include "console_completion.h"
+#include "device_config_console.h"
+#include "app_settings_console.h"
+#include "revision_console.h"
+#include "i2c_common_console.h"
+#include "input_manager_console.h"
+#include "buttons_console.h"
+#include "touch_console.h"
+#include "switch_console.h"
+#include "bump_console.h"
+#include "sensor_console.h"
+#include "expression_console.h"
+#include "cv_console.h"
+#include "dac_console.h"
+#include "midi_console.h"
+#include "midi_send_console.h"
+#include "tempo_console.h"
+#include "transport_console.h"
+#include "clock_sync_console.h"
+#include "led_console.h"
+#include "haptic_console.h"
+#include "display_console.h"
+#include "ui_console.h"
+#include "screensaver_console.h"
+#include "assets_manager_console.h"
+#include "firmware_update_console.h"
+#include "usb_mode_console.h"
+#include "event_bus_console.h"
 #include "esp_console.h"
 #include "esp_vfs_dev.h"
 #include "driver/uart.h"
@@ -10,7 +38,7 @@
 
 static const char* TAG = "console_repl";
 
-#define MAX_CONTEXTS 16
+#define MAX_CONTEXTS 32
 
 // Context registry
 typedef struct {
@@ -192,12 +220,40 @@ esp_err_t console_repl_init(void) {
   };
   ESP_ERROR_CHECK(esp_console_cmd_register(&contexts_cmd));
   
-  // Register scene context
-  console_register_context("scene", scene_console_init, scene_console_cleanup);
+  // Initialize completion system
+  console_completion_init();
   
-  // Future: Register other contexts here
-  // console_register_context("device", device_console_init, device_console_cleanup);
-  // console_register_context("midi", midi_console_init, midi_console_cleanup);
+  // Register global MIDI send command
+  midi_send_console_register();
+  
+  // Register all contexts
+  console_register_context("scene", scene_console_init, scene_console_cleanup);
+  console_register_context("device_config", device_config_console_init, device_config_console_cleanup);
+  console_register_context("app_settings", app_settings_console_init, app_settings_console_cleanup);
+  console_register_context("revision", revision_console_init, revision_console_cleanup);
+  console_register_context("i2c", i2c_common_console_init, i2c_common_console_cleanup);
+  console_register_context("input_manager", input_manager_console_init, input_manager_console_cleanup);
+  console_register_context("buttons", buttons_console_init, buttons_console_cleanup);
+  console_register_context("touch", touch_console_init, touch_console_cleanup);
+  console_register_context("switch", switch_console_init, switch_console_cleanup);
+  console_register_context("bump", bump_console_init, bump_console_cleanup);
+  console_register_context("sensor", sensor_console_init, sensor_console_cleanup);
+  console_register_context("expression", expression_console_init, expression_console_cleanup);
+  console_register_context("cv", cv_console_init, cv_console_cleanup);
+  console_register_context("dac", dac_console_init, dac_console_cleanup);
+  console_register_context("midi", midi_console_init, midi_console_cleanup);
+  console_register_context("tempo", tempo_console_init, tempo_console_cleanup);
+  console_register_context("transport", transport_console_init, transport_console_cleanup);
+  console_register_context("clock_sync", clock_sync_console_init, clock_sync_console_cleanup);
+  console_register_context("led", led_console_init, led_console_cleanup);
+  console_register_context("haptic", haptic_console_init, haptic_console_cleanup);
+  console_register_context("display", display_console_init, display_console_cleanup);
+  console_register_context("ui", ui_console_init, ui_console_cleanup);
+  console_register_context("screensaver", screensaver_console_init, screensaver_console_cleanup);
+  console_register_context("assets_manager", assets_manager_console_init, assets_manager_console_cleanup);
+  console_register_context("firmware_update", firmware_update_console_init, firmware_update_console_cleanup);
+  console_register_context("usb_mode", usb_mode_console_init, usb_mode_console_cleanup);
+  console_register_context("event_bus", event_bus_console_init, event_bus_console_cleanup);
   
   // Start the REPL
   ret = esp_console_start_repl(g_repl);

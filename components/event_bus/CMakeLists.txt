@@ -2,10 +2,12 @@ idf_component_register(
   SRCS 
     "event_bus.c"
     "test_event_bus.c"
+    "event_bus_console.c"
   INCLUDE_DIRS 
     "include"
   REQUIRES 
     freertos
     log
     esp_common
+    console
 )

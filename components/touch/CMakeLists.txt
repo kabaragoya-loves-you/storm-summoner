@@ -3,6 +3,7 @@ idf_component_register(
     "touch.c"
     "touch_thresholds.c"
     "touch_debug.c"
+    "touch_console.c"
   INCLUDE_DIRS 
     "include"
   REQUIRES 
@@ -14,6 +15,7 @@ idf_component_register(
     app_settings
     event_bus
     task_monitor
+    console
   PRIV_REQUIRES 
     main
 )

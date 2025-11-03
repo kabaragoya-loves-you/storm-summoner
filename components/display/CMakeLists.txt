@@ -1,10 +1,10 @@
-file(GLOB UI_SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/*.c")
+file(GLOB DISPLAY_SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/*.c")
 
 idf_component_register(
   SRCS
-    ${UI_SRC_FILES}
+    ${DISPLAY_SRC_FILES}
   INCLUDE_DIRS "include"
-  REQUIRES driver lvgl esp_timer log
+  REQUIRES driver lvgl esp_timer log console
   PRIV_REQUIRES main
 )
 

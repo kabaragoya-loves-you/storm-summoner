@@ -1,6 +1,6 @@
 idf_component_register(
-  SRCS "clock_sync.c"
+  SRCS "clock_sync.c" "clock_sync_console.c"
   INCLUDE_DIRS "include"
-  REQUIRES "switch" "event_bus" "app_settings" "freertos" "log" "esp_timer" "driver"
+  REQUIRES "switch" "event_bus" "app_settings" "freertos" "log" "esp_timer" "driver" "console"
   PRIV_REQUIRES "main"
 )

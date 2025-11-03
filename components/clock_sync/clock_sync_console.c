@@ -1,0 +1,158 @@
+#include "clock_sync_console.h"
+#include "clock_sync.h"
+#include "esp_log.h"
+#include "esp_console.h"
+#include "argtable3/argtable3.h"
+#include <string.h>
+
+static const char* TAG = "clock_sync_console";
+
+static const char* registered_commands[] = {
+  "info", "enable", "disable", "mode"
+};
+static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
+
+// Command: info
+static int cmd_info(int argc, char **argv) {
+  clock_sync_mode_t mode = clock_sync_get_mode();
+  sync_voltage_range_t range = clock_sync_get_voltage_range();
+  uint8_t bpm = clock_sync_get_bpm();
+  bool active = clock_sync_is_active();
+  
+  const char* mode_str;
+  switch (mode) {
+    case CLOCK_SYNC_24PPQN: mode_str = "24PPQN"; break;
+    case CLOCK_SYNC_48PPQN: mode_str = "48PPQN"; break;
+    case CLOCK_SYNC_96PPQN: mode_str = "96PPQN"; break;
+    case CLOCK_SYNC_1PPQ: mode_str = "1PPQ"; break;
+    case CLOCK_SYNC_2PPQ: mode_str = "2PPQ"; break;
+    case CLOCK_SYNC_4PPQ: mode_str = "4PPQ"; break;
+    default: mode_str = "Unknown"; break;
+  }
+  
+  const char* range_str;
+  switch (range) {
+    case SYNC_VOLTAGE_RANGE_3V3: range_str = "0-3.3V"; break;
+    case SYNC_VOLTAGE_RANGE_5V: range_str = "0-5V"; break;
+    case SYNC_VOLTAGE_RANGE_10V: range_str = "0-10V"; break;
+    case SYNC_VOLTAGE_RANGE_BIPOLAR: range_str = "±5V"; break;
+    default: range_str = "Unknown"; break;
+  }
+  
+  ESP_LOGI(TAG, "====== CLOCK SYNC ======");
+  ESP_LOGI(TAG, "Mode: %s", mode_str);
+  ESP_LOGI(TAG, "Voltage range: %s", range_str);
+  ESP_LOGI(TAG, "Detected BPM: %u", (unsigned)bpm);
+  ESP_LOGI(TAG, "Active: %s", active ? "yes" : "no");
+  ESP_LOGI(TAG, "========================");
+  
+  return 0;
+}
+
+// Command: enable
+static int cmd_enable(int argc, char **argv) {
+  ESP_LOGI(TAG, "Enabling clock sync");
+  clock_sync_enable();
+  return 0;
+}
+
+// Command: disable
+static int cmd_disable(int argc, char **argv) {
+  ESP_LOGI(TAG, "Disabling clock sync");
+  clock_sync_disable();
+  return 0;
+}
+
+// Command: mode
+static struct {
+  struct arg_str *sync_mode;
+  struct arg_end *end;
+} mode_args;
+
+static int cmd_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode_str = mode_args.sync_mode->sval[0];
+  clock_sync_mode_t mode;
+  
+  if (strcmp(mode_str, "24ppqn") == 0) {
+    mode = CLOCK_SYNC_24PPQN;
+  } else if (strcmp(mode_str, "48ppqn") == 0) {
+    mode = CLOCK_SYNC_48PPQN;
+  } else if (strcmp(mode_str, "96ppqn") == 0) {
+    mode = CLOCK_SYNC_96PPQN;
+  } else if (strcmp(mode_str, "1ppq") == 0) {
+    mode = CLOCK_SYNC_1PPQ;
+  } else if (strcmp(mode_str, "2ppq") == 0) {
+    mode = CLOCK_SYNC_2PPQ;
+  } else if (strcmp(mode_str, "4ppq") == 0) {
+    mode = CLOCK_SYNC_4PPQ;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode. Use: 24ppqn, 48ppqn, 96ppqn, 1ppq, 2ppq, or 4ppq");
+    return 1;
+  }
+  
+  clock_sync_set_mode(mode);
+  ESP_LOGI(TAG, "Clock sync mode set to: %s", mode_str);
+  
+  return 0;
+}
+
+esp_err_t clock_sync_console_init(void) {
+  ESP_LOGI(TAG, "Registering clock_sync commands");
+  
+  // info command
+  const esp_console_cmd_t info_cmd = {
+    .command = "info",
+    .help = "Show clock sync status",
+    .hint = NULL,
+    .func = &cmd_info,
+  };
+  esp_console_cmd_register(&info_cmd);
+  
+  // enable command
+  const esp_console_cmd_t enable_cmd = {
+    .command = "enable",
+    .help = "Enable clock sync",
+    .hint = NULL,
+    .func = &cmd_enable,
+  };
+  esp_console_cmd_register(&enable_cmd);
+  
+  // disable command
+  const esp_console_cmd_t disable_cmd = {
+    .command = "disable",
+    .help = "Disable clock sync",
+    .hint = NULL,
+    .func = &cmd_disable,
+  };
+  esp_console_cmd_register(&disable_cmd);
+  
+  // mode command
+  mode_args.sync_mode = arg_str1(NULL, NULL, "<24ppqn|48ppqn|96ppqn|1ppq|2ppq|4ppq>", "Sync mode");
+  mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t mode_cmd = {
+    .command = "mode",
+    .help = "Set clock sync mode",
+    .hint = NULL,
+    .func = &cmd_mode,
+    .argtable = &mode_args
+  };
+  esp_console_cmd_register(&mode_cmd);
+  
+  return ESP_OK;
+}
+
+void clock_sync_console_cleanup(void) {
+  ESP_LOGI(TAG, "Unregistering clock_sync commands");
+  
+  for (int i = 0; i < num_registered_commands; i++) {
+    esp_console_cmd_deregister(registered_commands[i]);
+  }
+}
+
