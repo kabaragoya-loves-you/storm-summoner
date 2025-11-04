@@ -1,5 +1,6 @@
 #include "midi_scene_handler.h"
 #include "scene.h"
+#include "device_config.h"
 #include "event_bus.h"
 #include "esp_log.h"
 
@@ -22,47 +23,58 @@ static void handle_touch_event(const event_t* event, void* context) {
   if (ret != ESP_OK) ESP_LOGE(TAG, "Failed to process touchpad %d: %s", pad_id, esp_err_to_name(ret));
 }
 
-// Handle button events for scene navigation
+// Handle button events for scene navigation and program changes
 static void handle_button_event(const event_t* event, void* context) {
   if (!event) return;
   
-  scene_mode_t mode = scene_get_mode();
-  scene_change_mode_t change_mode = scene_get_change_mode();
+  scene_mode_t scene_mode = scene_get_mode();
+  scene_change_mode_t scene_change_mode = scene_get_change_mode();
+  pc_change_mode_t pc_mode = device_config_get_pc_mode();
   
   switch (event->type) {
     case EVENT_BUTTON_R_PRESS:
-      // Right button = next scene/preset
-      if (mode == SCENE_MODE_SINGLE) {
-        // In single mode, buttons could send PC messages (future feature)
-        ESP_LOGD(TAG, "Right button in single mode - no action");
+      if (scene_mode == SCENE_MODE_SINGLE) {
+        // In single mode, buttons send PC messages to change presets
+        device_config_program_next();
+        if (pc_mode == PC_MODE_PENDING) {
+          ESP_LOGI(TAG, "Pending program: %d", device_config_get_pending_program());
+        }
       } else {
+        // In other modes, buttons navigate scenes
         esp_err_t ret = scene_next();
-        if (ret == ESP_OK) {
-          if (change_mode == CHANGE_MODE_PENDING) {
-            ESP_LOGI(TAG, "Pending next scene (index %d)", scene_get_pending_index());
-          }
+        if (ret == ESP_OK && scene_change_mode == CHANGE_MODE_PENDING) {
+          ESP_LOGI(TAG, "Pending next scene (index %d)", scene_get_pending_index());
         }
       }
       break;
       
     case EVENT_BUTTON_L_PRESS:
-      // Left button = previous scene/preset
-      if (mode == SCENE_MODE_SINGLE) {
-        ESP_LOGD(TAG, "Left button in single mode - no action");
+      if (scene_mode == SCENE_MODE_SINGLE) {
+        // In single mode, buttons send PC messages to change presets
+        device_config_program_prev();
+        if (pc_mode == PC_MODE_PENDING) {
+          ESP_LOGI(TAG, "Pending program: %d", device_config_get_pending_program());
+        }
       } else {
+        // In other modes, buttons navigate scenes
         esp_err_t ret = scene_previous();
-        if (ret == ESP_OK) {
-          if (change_mode == CHANGE_MODE_PENDING) {
-            ESP_LOGI(TAG, "Pending previous scene (index %d)", scene_get_pending_index());
-          }
+        if (ret == ESP_OK && scene_change_mode == CHANGE_MODE_PENDING) {
+          ESP_LOGI(TAG, "Pending previous scene (index %d)", scene_get_pending_index());
         }
       }
       break;
       
     case EVENT_BUTTON_BOTH_PRESS:
-      // Both buttons = confirm pending change or cancel
-      if (change_mode == CHANGE_MODE_PENDING) {
-        if (scene_has_pending_change()) {
+      // Both buttons = confirm pending change
+      if (scene_mode == SCENE_MODE_SINGLE) {
+        // Confirm pending program change
+        if (device_config_has_pending_program()) {
+          device_config_confirm_program();
+          ESP_LOGI(TAG, "Confirmed program change");
+        }
+      } else {
+        // Confirm pending scene change
+        if (scene_change_mode == CHANGE_MODE_PENDING && scene_has_pending_change()) {
           scene_confirm_change();
           ESP_LOGI(TAG, "Confirmed scene change");
         }

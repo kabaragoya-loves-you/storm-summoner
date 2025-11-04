@@ -12,6 +12,12 @@ typedef enum {
   DEVICE_MODE_CUSTOM     // User-defined custom device
 } device_mode_t;
 
+// Program change modes
+typedef enum {
+  PC_MODE_IMMEDIATE,    // Send PC immediately on button press
+  PC_MODE_PENDING       // Show pending, send on confirmation
+} pc_change_mode_t;
+
 // Device configuration state
 typedef struct {
   device_mode_t mode;          // Database or custom
@@ -23,6 +29,12 @@ typedef struct {
   
   // Custom mode
   char custom_name[64];        // User-defined device name
+  
+  // Program change tracking
+  uint8_t current_program;     // Current program/preset (0-127)
+  uint8_t pending_program;     // Pending program (for PC_MODE_PENDING)
+  bool has_pending_program;    // Whether there's a pending PC
+  pc_change_mode_t pc_mode;    // Immediate or pending PC changes
   
   bool initialized;
 } device_config_t;
@@ -65,6 +77,18 @@ const device_config_t* device_config_get(void);
 
 // Save current configuration to NVS
 esp_err_t device_config_save(void);
+
+// Program change management
+uint8_t device_config_get_program(void);
+esp_err_t device_config_set_program(uint8_t program);
+esp_err_t device_config_program_next(void);
+esp_err_t device_config_program_prev(void);
+pc_change_mode_t device_config_get_pc_mode(void);
+esp_err_t device_config_set_pc_mode(pc_change_mode_t mode);
+uint8_t device_config_get_pending_program(void);
+bool device_config_has_pending_program(void);
+esp_err_t device_config_confirm_program(void);
+esp_err_t device_config_cancel_pending_program(void);
 
 #endif // DEVICE_CONFIG_H
 
