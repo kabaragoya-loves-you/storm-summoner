@@ -98,6 +98,20 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // Set default button assignments
   set_default_button_assignments(scene);
+  
+  // Initialize discrete trigger inputs
+  scene->bump.num_actions = 1;
+  scene->bump.actions[0] = action_create_tap_tempo();  // Default: tap tempo on bump
+  
+  // Initialize continuous input mappings with defaults
+  scene->expression = continuous_mapping_create(11);   // CC11 = Expression
+  scene->cv = continuous_mapping_create(16);           // CC16 = General Purpose 1
+  scene->proximity = continuous_mapping_create(17);    // CC17 = General Purpose 2
+  scene->proximity.use_idle_value = true;              // Proximity returns to center
+  scene->proximity.idle_value = 64;
+  scene->proximity.idle_timeout_ms = 1000;
+  scene->proximity.polarity = POLARITY_BIPOLAR;
+  scene->als = continuous_mapping_create(18);          // CC18 = General Purpose 3
 }
 
 esp_err_t scene_init(void) {

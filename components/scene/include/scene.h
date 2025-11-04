@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "midi_messages.h"
 #include "action.h"
+#include "continuous_mapping.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -61,8 +62,15 @@ typedef struct {
   action_chain_t button_left;
   action_chain_t button_right;
   action_chain_t button_both;
+  action_chain_t bump;               // Bump detector (one-shot trigger)
   
-  // Future: sustain, sostenuto, continuous mappings (expression, CV, sensors, LFOs)
+  // Continuous input mappings
+  continuous_mapping_t expression;
+  continuous_mapping_t cv;
+  continuous_mapping_t proximity;
+  continuous_mapping_t als;          // Ambient light sensor
+  
+  // Future: sustain, sostenuto, envelope follower, LFO slots
 } scene_t;
 
 // Scene cache entry
