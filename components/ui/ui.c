@@ -144,6 +144,9 @@ void ui_graphics_resume(void) {
 
 // Deferred callback to tear down current module and free canvas buffer
 static void deferred_module_teardown_cb(lv_timer_t *timer) {
+  // First, hide the canvas to stop any further rendering
+  if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+  
   if (current_draw_module && current_draw_module->teardown_func) {
     // Switch back to the default screen before tearing down
     // This prevents "active screen deleted" warnings and crashes
@@ -183,18 +186,17 @@ void ui_release_canvas_buffer(void) {
   ESP_LOGI(TAG, "LVGL memory at start of release - used: %d, free: %d, frag: %d%%", 
     mon_initial.total_size - mon_initial.free_size, mon_initial.free_size, mon_initial.frag_pct);
   
-  // Pause the refresh timer
+  // Pause the refresh timer to prevent new render cycles
   if (g_ui_refresh_timer != NULL) lv_timer_pause(g_ui_refresh_timer);
   
-  // Hide the canvas
-  if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-  
-  // Defer both module teardown AND buffer free to LVGL context
-  // This prevents race conditions and double-free errors
+  // Defer ALL UI modifications to LVGL context
+  // This ensures any in-flight render completes before we make changes
+  // The 10ms delay allows the current render cycle to finish
   lv_timer_t *teardown_timer = lv_timer_create(deferred_module_teardown_cb, 10, NULL);
   if (teardown_timer) lv_timer_set_repeat_count(teardown_timer, 1);
   
-  // Note: We don't free the buffer here - it's done in the deferred callback
+  // Note: Canvas is hidden in the deferred callback, not here
+  // Note: Buffer is freed in the deferred callback, not here
 }
 
 // Deferred callback to recreate module widgets
