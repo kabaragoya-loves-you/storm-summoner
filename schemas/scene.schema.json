@@ -81,7 +81,7 @@
         "type": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 25,
+          "maximum": 41,
           "description": "Action type enum value"
         }
       },
@@ -89,7 +89,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": [4, 5, 6, 10]}
+              "type": {"enum": [15, 16, 17, 30]}
             }
           },
           "then": {
@@ -142,7 +142,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": [7, 8]}
+              "type": {"enum": [21, 22, 26]}
             }
           },
           "then": {
@@ -167,7 +167,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": [2, 3, 9]}
+              "type": {"enum": [2, 3, 6, 23, 27]}
             }
           },
           "then": {
@@ -185,7 +185,31 @@
         {
           "if": {
             "properties": {
-              "type": {"const": 11}
+              "type": {"enum": [19, 20]}
+            }
+          },
+          "then": {
+            "required": ["parameter", "value"],
+            "properties": {
+              "parameter": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383,
+                "description": "NRPN/RPN parameter number"
+              },
+              "value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383,
+                "description": "14-bit value"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": 31}
             }
           },
           "then": {

@@ -242,3 +242,40 @@ void send_tune_request() {
   uint8_t message = 0xF6; // Tune Request
   midi_send_message(&message, 1);
 }
+
+// Send RPN (Registered Parameter Number)
+// Similar to NRPN but uses CC101/100 instead of CC99/98
+void send_rpn(uint8_t channel, uint16_t parameter, uint16_t value) {
+  uint8_t param_msb = (parameter >> 7) & 0x7F;
+  uint8_t param_lsb = parameter & 0x7F;
+  uint8_t value_msb = (value >> 7) & 0x7F;
+  uint8_t value_lsb = value & 0x7F;
+
+  const uint8_t rpn_messages[4][3] = {
+    {0xB0 | (channel & 0x0F), 101, param_msb}, // RPN MSB
+    {0xB0 | (channel & 0x0F), 100, param_lsb}, // RPN LSB
+    {0xB0 | (channel & 0x0F), 6, value_msb},   // Data Entry MSB
+    {0xB0 | (channel & 0x0F), 38, value_lsb}   // Data Entry LSB
+  };
+
+  for (int i = 0; i < 4; ++i) {
+    midi_send_message(rpn_messages[i], 3);
+  }
+}
+
+// Send Bank Select (CC0 = MSB, CC32 = LSB)
+void send_bank_select(uint8_t channel, uint8_t bank_msb, uint8_t bank_lsb) {
+  send_control_change(channel, 0, bank_msb);   // CC0 = Bank Select MSB
+  send_control_change(channel, 32, bank_lsb);  // CC32 = Bank Select LSB
+}
+
+// High-level helper: Send bank select + program change for presets > 127
+// preset_number: 0-16383 (supports up to 128 banks of 128 presets each)
+// Example: preset 300 = bank 2, program 44 (300 / 128 = 2, 300 % 128 = 44)
+void send_bank_and_program(uint8_t channel, uint16_t preset_number) {
+  uint8_t bank = preset_number / 128;
+  uint8_t program = preset_number % 128;
+  
+  send_bank_select(channel, bank, 0);  // MSB = bank, LSB = 0
+  send_program_change(channel, program);
+}

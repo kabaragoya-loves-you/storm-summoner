@@ -12,7 +12,8 @@ typedef enum {
   // Program/Scene control
   ACTION_PROGRAM_NEXT,
   ACTION_PROGRAM_PREV,
-  ACTION_PROGRAM_SET,         // Jump to specific program
+  ACTION_PROGRAM_SET,         // Jump to specific program (0-127)
+  ACTION_PROGRAM_BANK_SET,    // Jump to banked program (0-16383, sends bank select + PC)
   ACTION_SCENE_NEXT,
   ACTION_SCENE_PREV,
   ACTION_SCENE_SET,           // Jump to specific scene

@@ -18,6 +18,7 @@ static const char* action_type_names[] = {
   [ACTION_PROGRAM_NEXT] = "Program Next",
   [ACTION_PROGRAM_PREV] = "Program Prev",
   [ACTION_PROGRAM_SET] = "Program Set",
+  [ACTION_PROGRAM_BANK_SET] = "Program Bank Set",
   [ACTION_SCENE_NEXT] = "Scene Next",
   [ACTION_SCENE_PREV] = "Scene Prev",
   [ACTION_SCENE_SET] = "Scene Set",
@@ -96,6 +97,14 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       
     case ACTION_PROGRAM_SET:
       if (is_press) device_config_set_program(action->params.target.number);
+      break;
+      
+    case ACTION_PROGRAM_BANK_SET:
+      if (is_press) {
+        // Send bank select + program change for presets > 127
+        send_bank_and_program(channel, action->params.target.number);
+        ESP_LOGI(TAG, "Sent bank+program for preset %d", action->params.target.number);
+      }
       break;
       
     // Scene control
@@ -244,11 +253,9 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       break;
       
     case ACTION_SEND_RPN:
-      // RPN uses same function as NRPN with different CC numbers
       if (is_press) {
-        // RPN: CC101(MSB), CC100(LSB) for parameter, CC6/38 for value
-        // For now, not implemented - need to add send_rpn to midi_messages
-        ESP_LOGW(TAG, "RPN not yet fully implemented");
+        send_rpn(channel, action->params.nrpn.parameter, action->params.nrpn.value);
+        ESP_LOGD(TAG, "Sent RPN %d: %d", action->params.nrpn.parameter, action->params.nrpn.value);
       }
       break;
       

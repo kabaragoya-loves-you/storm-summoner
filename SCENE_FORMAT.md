@@ -121,51 +121,73 @@ Actions are defined by a `type` number and optional parameters:
 
 | Type | Name | Parameters | Example |
 |------|------|------------|---------|
-| 4 | Send CC | `cc`, `value` | `{"type": 4, "cc": 74, "value": 127}` |
-| 5 | CC Toggle | `cc`, `value`, `value2` | `{"type": 5, "cc": 1, "value": 0, "value2": 127}` |
-| 6 | CC Cycle | `cc`, `num_values`, `values[]`, `current_index` | See below |
-| 7 | Note On | `note`, `velocity` | `{"type": 7, "note": 60, "velocity": 100}` |
-| 8 | Note Off | `note` | `{"type": 8, "note": 60}` |
-| 9 | Send PC | `number` | `{"type": 9, "number": 5}` |
-| 10 | Randomize CC | `cc` | `{"type": 10, "cc": 74}` |
-| 11 | Randomize Multi | `num_ccs`, `cc_numbers[]`, `min_values[]`, `max_values[]` | See below |
+| 15 | Send CC | `cc`, `value` | `{"type": 15, "cc": 74, "value": 127}` |
+| 16 | CC Toggle | `cc`, `value`, `value2` | `{"type": 16, "cc": 1, "value": 0, "value2": 127}` |
+| 17 | CC Cycle | `cc`, `num_values`, `values[]`, `current_index` | See below |
+| 18 | Send 14-bit CC | `msb_cc`, `lsb_cc`, `value` (0-16383) | `{"type": 18, "msb_cc": 1, "lsb_cc": 33, "value": 8192}` |
+| 19 | Send NRPN | `parameter` (0-16383), `value` (0-16383) | `{"type": 19, "parameter": 513, "value": 8192}` |
+| 20 | Send RPN | `parameter` (0-16383), `value` (0-16383) | `{"type": 20, "parameter": 0, "value": 200}` |
+| 21 | Note On | `note`, `velocity` | `{"type": 21, "note": 60, "velocity": 100}` |
+| 22 | Note Off | `note` | `{"type": 22, "note": 60}` |
+| 23 | Send PC | `number` | `{"type": 23, "number": 5}` |
+| 24 | Pitch Bend | `value` (-8192 to +8191) | `{"type": 24, "value": 2048}` |
+| 25 | Aftertouch | `pressure` (0-127) | `{"type": 25, "pressure": 80}` |
+| 26 | Poly Aftertouch | `note`, `pressure` | `{"type": 26, "note": 60, "pressure": 80}` |
+| 27 | Song Select | `number` (0-127) | `{"type": 27, "number": 3}` |
+| 28 | Song Position | `position` (0-16383) | `{"type": 28, "position": 256}` |
+| 29 | MMC | `command` (0x01-0x7F) | `{"type": 29, "command": 1}` |
+| 30 | Randomize CC | `cc` | `{"type": 30, "cc": 74}` |
+| 31 | Randomize Multi | `num_ccs`, `cc_numbers[]`, `min_values[]`, `max_values[]` | See below |
 
 ### Control Actions
 
-| Type | Name | Description |
-|------|------|-------------|
-| 0 | Program Next | Increment program |
-| 1 | Program Prev | Decrement program |
-| 2 | Program Set | `number`: Jump to program |
-| 3 | Scene Next | Next scene in manifest |
-| 4 | Scene Prev | Previous scene in manifest |
-| 5 | Scene Set | `number`: Jump to scene |
+| Type | Name | Parameters | Description |
+|------|------|------------|-------------|
+| 0 | Program Next | None | Increment program |
+| 1 | Program Prev | None | Decrement program |
+| 2 | Program Set | `number` (0-127) | Jump to program |
+| 3 | Program Bank Set | `number` (0-16383) | Jump to banked preset (auto bank select) |
+| 4 | Scene Next | None | Next scene in manifest |
+| 5 | Scene Prev | None | Previous scene in manifest |
+| 6 | Scene Set | `number` (0-127) | Jump to scene |
 
 ### Tempo Actions
 
 | Type | Name | Parameters |
 |------|------|------------|
-| 12 | Tap Tempo | None |
-| 13 | Tempo Nudge Up | `bpm_delta` (optional, default 1) |
-| 14 | Tempo Nudge Down | `bpm_delta` (optional, default 1) |
+| 7 | Tap Tempo | None |
+| 8 | Tempo Nudge Up | `bpm_delta` (optional, default 1) |
+| 9 | Tempo Nudge Down | `bpm_delta` (optional, default 1) |
 
-### Transport Actions
+### Transport Actions (not fully implemented)
 
 | Type | Name | Description |
 |------|------|-------------|
-| 6 | Transport Play | Start playback |
-| 7 | Transport Stop | Stop playback |
-| 8 | Transport Pause | Pause playback |
-| 9 | Transport Record | Start recording |
-| 10 | Transport Toggle | Toggle play/stop |
+| 10 | Transport Play | Start playback |
+| 11 | Transport Stop | Stop playback |
+| 12 | Transport Pause | Pause playback |
+| 13 | Transport Record | Start recording |
+| 14 | Transport Toggle | Toggle play/stop |
+
+### MIDI System Messages
+
+| Type | Name | Description |
+|------|------|-------------|
+| 32 | MIDI Start | MIDI Clock Start (0xFA) |
+| 33 | MIDI Stop | MIDI Clock Stop (0xFC) |
+| 34 | MIDI Continue | MIDI Clock Continue (0xFB) |
+| 35 | System Reset | System Reset (0xFF) |
+| 36 | Tune Request | Tune Request (0xF6) |
 
 ### System Actions
 
 | Type | Name | Description |
 |------|------|-------------|
-| 23 | Screensaver Toggle | Toggle screensaver on/off |
-| 24 | Confirm Pending | Confirm pending scene/program change |
-| 25 | Cancel Pending | Cancel pending change |
+| 37 | Screensaver Toggle | Toggle screensaver on/off |
+| 38 | Confirm Pending | Confirm pending scene/program change |
+| 39 | Cancel Pending | Cancel pending change |
+| 40 | All Notes Off | Send CC123 (All Notes Off) |
+| 41 | All Sound Off | Send CC120 (All Sound Off) |
 
 ## Complex Action Examples
 
@@ -191,13 +213,40 @@ Randomizes multiple CCs simultaneously:
 
 ```json
 {
-  "type": 11,
+  "type": 31,
   "num_ccs": 3,
   "cc_numbers": [74, 72, 76],
   "min_values": [0, 0, 0],
   "max_values": [127, 127, 127]
 }
 ```
+
+### Bank Select for Presets > 127
+
+Jump to preset 300 on a Strymon pedal:
+
+```json
+{
+  "type": 3,
+  "number": 300
+}
+```
+
+This automatically sends Bank Select (bank 2) + Program Change (44).
+
+### NRPN Example
+
+Many pedals use NRPN for advanced parameters:
+
+```json
+{
+  "type": 19,
+  "parameter": 513,
+  "value": 8192
+}
+```
+
+Sends NRPN parameter 513 with value 8192 (14-bit precision).
 
 ### Action Chains
 
