@@ -1,0 +1,9 @@
+# Don't ignore scene JSON files - they're the whole point!
+# This file exists to ensure the scenes/ directory is tracked
+
+# Ignore editor temp files
+*.swp
+*.swo
+*~
+.DS_Store
+

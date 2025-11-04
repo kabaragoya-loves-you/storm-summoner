@@ -152,14 +152,17 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       
     case ACTION_SEND_CC_CYCLE:
       if (is_press) {
-        // Cycle through values
-        uint8_t idx = action->params.cc.current_index;
-        uint8_t value = action->params.cc.values[idx];
-        send_control_change(channel, action->params.cc.cc_number, value);
+        // Note: This modifies the action state - works because action is passed by pointer through the chain
+        action_t* mutable_action = (action_t*)action;  // Cast away const for state tracking
+        uint8_t idx = mutable_action->params.cc.current_index;
+        uint8_t value = mutable_action->params.cc.values[idx];
+        send_control_change(channel, mutable_action->params.cc.cc_number, value);
         
-        // Update index for next time (need to make action non-const for this to work)
-        // For now, this won't work correctly - we'll need to track state separately
-        ESP_LOGD(TAG, "Cycled CC%d to %d", action->params.cc.cc_number, value);
+        // Advance to next value
+        mutable_action->params.cc.current_index = (idx + 1) % mutable_action->params.cc.num_values;
+        
+        ESP_LOGD(TAG, "Cycled CC%d to %d (next: %d)", mutable_action->params.cc.cc_number, value, 
+                 mutable_action->params.cc.values[mutable_action->params.cc.current_index]);
       }
       break;
       

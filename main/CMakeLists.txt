@@ -10,12 +10,45 @@ idf_component_register(
       esp_tinyusb_wrapper
 )
 
-# Collect all JSON files from midi-devices directory
+# Collect all JSON files from midi-devices and scenes directories
 file(GLOB_RECURSE MIDI_DEVICE_FILES "${CMAKE_SOURCE_DIR}/midi-devices/*.json")
+file(GLOB_RECURSE SCENE_FILES "${CMAKE_SOURCE_DIR}/scenes/*.json")
 
-# Create LittleFS partition image from midi-devices directory
-# Only rebuilds if any JSON file changes
-# To flash: idf.py assets-flash
-littlefs_create_partition_image(assets ${CMAKE_SOURCE_DIR}/midi-devices
+# Create a temporary combined assets directory at build time
+set(ASSETS_BUILD_DIR "${CMAKE_BINARY_DIR}/assets_combined")
+file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}")
+file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/devices")
+file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/scenes")
+
+# Copy midi-devices to assets/devices
+add_custom_command(
+  OUTPUT "${ASSETS_BUILD_DIR}/devices/.copied"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/midi-devices"
+    "${ASSETS_BUILD_DIR}/devices"
+  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/devices/.copied"
   DEPENDS ${MIDI_DEVICE_FILES}
+  COMMENT "Copying MIDI device files to build assets"
+)
+
+# Copy scenes to assets/scenes
+add_custom_command(
+  OUTPUT "${ASSETS_BUILD_DIR}/scenes/.copied"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/scenes"
+    "${ASSETS_BUILD_DIR}/scenes"
+  COMMAND ${CMAKE_COMMAND} -E remove_directory "${ASSETS_BUILD_DIR}/scenes/tools"
+  COMMAND ${CMAKE_COMMAND} -E remove -f "${ASSETS_BUILD_DIR}/scenes/README.md"
+  COMMAND ${CMAKE_COMMAND} -E remove -f "${ASSETS_BUILD_DIR}/scenes/.gitignore"
+  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/scenes/.copied"
+  DEPENDS ${SCENE_FILES}
+  COMMENT "Copying scene files to build assets"
+)
+
+# Create LittleFS partition image from combined assets directory
+# To flash: idf.py assets-flash
+littlefs_create_partition_image(assets ${ASSETS_BUILD_DIR}
+  DEPENDS 
+    "${ASSETS_BUILD_DIR}/devices/.copied"
+    "${ASSETS_BUILD_DIR}/scenes/.copied"
 )

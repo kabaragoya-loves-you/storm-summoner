@@ -1,0 +1,150 @@
+{
+  "name": "Tap & Randomize",
+  "program_number": 1,
+  "send_pc_on_change": true,
+  "touchwheel_mode": "buttons",
+  "touchpads": [
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 12,
+          "comment": "Tap tempo"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 11,
+          "num_ccs": 3,
+          "cc_numbers": [74, 72, 76],
+          "min_values": [0, 0, 0],
+          "max_values": [127, 127, 127],
+          "comment": "Randomize filter, resonance, envelope"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 6,
+          "cc": 1,
+          "num_values": 4,
+          "values": [0, 64, 99, 127],
+          "current_index": 0,
+          "comment": "Cycle modulation wheel"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 7,
+          "note": 60,
+          "velocity": 100,
+          "comment": "Send middle C"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 5,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 6,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 7,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 8,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 9,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 10,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 11,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 12,
+          "value": 127
+        }
+      ]
+    }
+  ],
+  "button_left": [
+    {
+      "type": 1
+    }
+  ],
+  "button_right": [
+    {
+      "type": 0
+    }
+  ],
+  "button_both": [
+    {
+      "type": 24
+    }
+  ]
+}
+

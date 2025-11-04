@@ -1,0 +1,14 @@
+{
+  "scenes": [
+    {
+      "index": 0,
+      "name": "Default Scene",
+      "filename": "scene_001.json"
+    },
+    {
+      "index": 1,
+      "name": "Tap & Randomize",
+      "filename": "scene_002.json"
+    }
+  ]
+}

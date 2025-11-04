@@ -1,5 +1,6 @@
 #include "console_repl.h"
 #include "scene_console.h"
+#include "scene_assign_console.h"
 #include "console_completion.h"
 #include "device_config_console.h"
 #include "app_settings_console.h"
@@ -229,6 +230,7 @@ esp_err_t console_repl_init(void) {
   // Register all contexts
   console_register_context("scene", scene_console_init, scene_console_cleanup);
   console_register_context("device_config", device_config_console_init, device_config_console_cleanup);
+  console_register_context("assign", scene_assign_console_init, scene_assign_console_cleanup);
   console_register_context("app_settings", app_settings_console_init, app_settings_console_cleanup);
   console_register_context("revision", revision_console_init, revision_console_cleanup);
   console_register_context("i2c", i2c_common_console_init, i2c_common_console_cleanup);

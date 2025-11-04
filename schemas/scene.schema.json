@@ -1,0 +1,233 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://stormsummoner.com/schemas/scene.schema.json",
+  "title": "Storm Summoner Scene",
+  "description": "Scene configuration for Storm Summoner MIDI controller",
+  "type": "object",
+  "required": ["name", "touchpads", "button_left", "button_right", "button_both"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 32,
+      "description": "Scene display name"
+    },
+    "program_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 127,
+      "default": 0,
+      "description": "Program change value for this scene"
+    },
+    "send_pc_on_change": {
+      "type": "boolean",
+      "default": true,
+      "description": "Send program change when entering this scene"
+    },
+    "touchwheel_mode": {
+      "type": "string",
+      "enum": ["buttons", "encoder"],
+      "default": "buttons",
+      "description": "Touchwheel behavior mode"
+    },
+    "touchpads": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "description": "Array of 12 touchpad mappings",
+      "items": {
+        "$ref": "#/definitions/touchpad_mapping"
+      }
+    },
+    "button_left": {
+      "$ref": "#/definitions/action_chain"
+    },
+    "button_right": {
+      "$ref": "#/definitions/action_chain"
+    },
+    "button_both": {
+      "$ref": "#/definitions/action_chain"
+    }
+  },
+  "definitions": {
+    "touchpad_mapping": {
+      "type": "object",
+      "required": ["enabled", "actions"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this touchpad is active"
+        },
+        "actions": {
+          "$ref": "#/definitions/action_chain"
+        }
+      }
+    },
+    "action_chain": {
+      "type": "array",
+      "maxItems": 4,
+      "description": "Array of actions to execute (max 4)",
+      "items": {
+        "$ref": "#/definitions/action"
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 25,
+          "description": "Action type enum value"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {"enum": [4, 5, 6, 10]}
+            }
+          },
+          "then": {
+            "required": ["cc"],
+            "properties": {
+              "cc": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "MIDI CC number"
+              },
+              "value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC value"
+              },
+              "value2": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "Second value for toggle"
+              },
+              "num_values": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8,
+                "description": "Number of values in cycle"
+              },
+              "values": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 127
+                },
+                "description": "Values for cycle"
+              },
+              "current_index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7,
+                "default": 0,
+                "description": "Current position in cycle"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"enum": [7, 8]}
+            }
+          },
+          "then": {
+            "required": ["note"],
+            "properties": {
+              "note": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "MIDI note number"
+              },
+              "velocity": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "default": 100,
+                "description": "Note velocity"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"enum": [2, 3, 9]}
+            }
+          },
+          "then": {
+            "required": ["number"],
+            "properties": {
+              "number": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "Program or scene number"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": 11}
+            }
+          },
+          "then": {
+            "required": ["num_ccs", "cc_numbers", "min_values", "max_values"],
+            "properties": {
+              "num_ccs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8,
+                "description": "Number of CCs to randomize"
+              },
+              "cc_numbers": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 127
+                },
+                "description": "CC numbers to randomize"
+              },
+              "min_values": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 127
+                },
+                "description": "Minimum value for each CC"
+              },
+              "max_values": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 127
+                },
+                "description": "Maximum value for each CC"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+

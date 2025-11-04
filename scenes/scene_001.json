@@ -1,0 +1,144 @@
+{
+  "name": "Default Scene",
+  "program_number": 0,
+  "send_pc_on_change": true,
+  "touchwheel_mode": "buttons",
+  "touchpads": [
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 1,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 2,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 3,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 4,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 5,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 6,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 7,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 8,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 9,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 10,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 11,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "actions": [
+        {
+          "type": 4,
+          "cc": 12,
+          "value": 127
+        }
+      ]
+    }
+  ],
+  "button_left": [
+    {
+      "type": 1
+    }
+  ],
+  "button_right": [
+    {
+      "type": 0
+    }
+  ],
+  "button_both": [
+    {
+      "type": 24
+    }
+  ]
+}
+
