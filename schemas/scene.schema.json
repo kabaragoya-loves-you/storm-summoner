@@ -23,6 +23,10 @@
       "default": true,
       "description": "Send program change when entering this scene"
     },
+    "on_load": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Actions to execute when scene loads (for pedal initialization)"
+    },
     "touchwheel_mode": {
       "type": "string",
       "enum": ["buttons", "encoder"],

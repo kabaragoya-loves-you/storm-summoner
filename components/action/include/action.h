@@ -45,6 +45,8 @@ typedef enum {
   ACTION_SCREENSAVER_TOGGLE,
   ACTION_CONFIRM_PENDING,     // Confirm pending scene/program change
   ACTION_CANCEL_PENDING,      // Cancel pending change
+  ACTION_ALL_NOTES_OFF,       // Send CC123 (All Notes Off)
+  ACTION_ALL_SOUND_OFF,       // Send CC120 (All Sound Off)
   
   ACTION_MAX
 } action_type_t;
@@ -118,6 +120,8 @@ action_t action_create_scene_next(void);
 action_t action_create_scene_prev(void);
 action_t action_create_tap_tempo(void);
 action_t action_create_transport(action_type_t transport_type);
+action_t action_create_all_notes_off(void);
+action_t action_create_all_sound_off(void);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);

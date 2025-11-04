@@ -1,10 +1,14 @@
 #include "device_config.h"
 #include "app_settings.h"
 #include "midi_messages.h"
+#include "event_bus.h"
 #include "esp_log.h"
 #include <string.h>
 
 static const char* TAG = "device_config";
+
+// MIDI event type constants (from midi_in_parser.c)
+#define MIDI_EVENT_PROGRAM_CHANGE 4
 
 // NVS keys
 #define NVS_KEY_DEVICE_MODE     "dev_mode"
@@ -28,6 +32,24 @@ static device_config_t g_device_config = {
   .pc_mode = PC_MODE_IMMEDIATE,
   .initialized = false
 };
+
+// Handle incoming MIDI events to track program changes
+static void midi_in_event_handler(const event_t* event, void* context) {
+  if (event->type != EVENT_MIDI_IN) return;
+  
+  // Check if it's a program change on our channel
+  if (event->data.midi_in.type == MIDI_EVENT_PROGRAM_CHANGE) {
+    uint8_t midi_channel = event->data.midi_in.channel;  // 0-based
+    uint8_t program = event->data.midi_in.data1;
+    
+    // Only track PC on our configured channel
+    if (midi_channel == (g_device_config.midi_channel - 1)) {
+      g_device_config.current_program = program;
+      // Don't save to NVS on every incoming PC - just update runtime value
+      ESP_LOGI(TAG, "Program updated from MIDI IN: %d", program);
+    }
+  }
+}
 
 esp_err_t device_config_init(void) {
   if (g_device_config.initialized) {
@@ -78,10 +100,14 @@ esp_err_t device_config_init(void) {
   
   g_device_config.initialized = true;
   
-  ESP_LOGI(TAG, "Device config initialized: mode=%s, channel=%d, trs=%d",
+  // Subscribe to MIDI IN events to track program changes
+  event_bus_subscribe(EVENT_MIDI_IN, midi_in_event_handler, NULL);
+  
+  ESP_LOGI(TAG, "Device config initialized: mode=%s, channel=%d, trs=%d, program=%d",
            g_device_config.mode == DEVICE_MODE_DATABASE ? "database" : "custom",
            g_device_config.midi_channel,
-           g_device_config.trs_type);
+           g_device_config.trs_type,
+           g_device_config.current_program);
   
   if (g_device_config.mode == DEVICE_MODE_DATABASE) {
     ESP_LOGI(TAG, "  Pedal: %s", g_device_config.pedal_slug);

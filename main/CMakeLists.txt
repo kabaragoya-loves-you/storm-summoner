@@ -26,6 +26,8 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_SOURCE_DIR}/midi-devices"
     "${ASSETS_BUILD_DIR}/devices"
+  COMMAND ${CMAKE_COMMAND} -E remove_directory "${ASSETS_BUILD_DIR}/devices/tools"
+  COMMAND ${CMAKE_COMMAND} -E remove -f "${ASSETS_BUILD_DIR}/devices/README.md"
   COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/devices/.copied"
   DEPENDS ${MIDI_DEVICE_FILES}
   COMMENT "Copying MIDI device files to build assets"

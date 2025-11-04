@@ -82,6 +82,7 @@ Each scene file contains the complete configuration:
 | `name` | string | Scene name (max 32 chars) | "Scene N" |
 | `program_number` | integer | Program change value (0-127) | scene index |
 | `send_pc_on_change` | boolean | Send PC when entering scene | true |
+| `on_load` | array | Actions to execute when scene loads (max 4) | [] |
 | `touchwheel_mode` | string | "buttons" or "encoder" | "buttons" |
 
 ### Touchpads Array
@@ -96,6 +97,21 @@ Array of 12 objects (indices 0-11), one per touchpad:
 ### Button Actions
 
 Each button field (`button_left`, `button_right`, `button_both`) contains an array of action objects (max 4).
+
+### On-Load Actions
+
+The `on_load` field contains an array of actions that execute when the scene is loaded (on boot or when switching). Perfect for initializing pedal state with multiple CC values.
+
+**Example:**
+```json
+"on_load": [
+  {"type": 4, "cc": 74, "value": 80},
+  {"type": 4, "cc": 72, "value": 60},
+  {"type": 4, "cc": 1, "value": 0}
+]
+```
+
+This sends 3 CCs when the scene loads, ensuring the pedal starts in a known state.
 
 ## Action Types
 

@@ -44,6 +44,12 @@ static void cmd_scene_info(void) {
   ESP_LOGI(TAG, "Current scene: %d - %s", index + 1, scene->name);
   ESP_LOGI(TAG, "Program number: %d (send PC: %s)", scene->program_number, 
            scene->send_pc_on_change ? "yes" : "no");
+  ESP_LOGI(TAG, "On-load actions: %d", scene->on_load.num_actions);
+  if (scene->on_load.num_actions > 0) {
+    for (int i = 0; i < scene->on_load.num_actions; i++) {
+      ESP_LOGI(TAG, "  [%d] %s", i, action_type_to_string(scene->on_load.actions[i].type));
+    }
+  }
   ESP_LOGI(TAG, "Touchwheel: %s mode", 
            scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
   

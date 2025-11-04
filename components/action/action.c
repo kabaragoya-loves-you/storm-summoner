@@ -39,7 +39,9 @@ static const char* action_type_names[] = {
   [ACTION_RANDOMIZE_MULTI] = "Randomize Multi",
   [ACTION_SCREENSAVER_TOGGLE] = "Screensaver Toggle",
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
-  [ACTION_CANCEL_PENDING] = "Cancel Pending"
+  [ACTION_CANCEL_PENDING] = "Cancel Pending",
+  [ACTION_ALL_NOTES_OFF] = "All Notes Off",
+  [ACTION_ALL_SOUND_OFF] = "All Sound Off"
 };
 
 esp_err_t action_init(void) {
@@ -242,6 +244,20 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
+    case ACTION_ALL_NOTES_OFF:
+      if (is_press) {
+        send_control_change(channel, 123, 0);  // CC123 = All Notes Off
+        ESP_LOGD(TAG, "Sent All Notes Off");
+      }
+      break;
+      
+    case ACTION_ALL_SOUND_OFF:
+      if (is_press) {
+        send_control_change(channel, 120, 0);  // CC120 = All Sound Off
+        ESP_LOGD(TAG, "Sent All Sound Off");
+      }
+      break;
+      
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
       return ESP_ERR_NOT_SUPPORTED;
@@ -319,6 +335,18 @@ action_t action_create_tap_tempo(void) {
 action_t action_create_transport(action_type_t transport_type) {
   action_t action = {0};
   action.type = transport_type;  // ACTION_TRANSPORT_PLAY, STOP, etc.
+  return action;
+}
+
+action_t action_create_all_notes_off(void) {
+  action_t action = {0};
+  action.type = ACTION_ALL_NOTES_OFF;
+  return action;
+}
+
+action_t action_create_all_sound_off(void) {
+  action_t action = {0};
+  action.type = ACTION_ALL_SOUND_OFF;
   return action;
 }
 

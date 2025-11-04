@@ -53,6 +53,9 @@ typedef struct {
   uint8_t program_number;     // PC value (0-127)
   bool send_pc_on_change;     // Send PC when switching to this scene
   
+  // Scene load actions
+  action_chain_t on_load;     // Actions to execute when scene loads (e.g., initialize pedal state)
+  
   // Touchwheel configuration
   touchwheel_mode_t touchwheel_mode;
   action_chain_t touchwheel_actions;  // Used when in encoder mode
@@ -141,9 +144,11 @@ esp_err_t scene_assign_touchpad_chain(uint8_t scene_index, uint8_t pad_index, co
 esp_err_t scene_assign_button_left(uint8_t scene_index, const action_chain_t* chain);
 esp_err_t scene_assign_button_right(uint8_t scene_index, const action_chain_t* chain);
 esp_err_t scene_assign_button_both(uint8_t scene_index, const action_chain_t* chain);
+esp_err_t scene_assign_on_load(uint8_t scene_index, const action_chain_t* chain);
 action_chain_t* scene_get_button_left(uint8_t scene_index);
 action_chain_t* scene_get_button_right(uint8_t scene_index);
 action_chain_t* scene_get_button_both(uint8_t scene_index);
+action_chain_t* scene_get_on_load(uint8_t scene_index);
 
 // Pending change mode
 uint8_t scene_get_pending_index(void);

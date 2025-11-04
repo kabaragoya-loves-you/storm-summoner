@@ -99,6 +99,10 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Set default button assignments
   set_default_button_assignments(scene);
   
+  // Initialize on_load actions (default: All Notes Off for clean slate)
+  scene->on_load.num_actions = 1;
+  scene->on_load.actions[0] = action_create_all_notes_off();
+  
   // Initialize discrete trigger inputs
   scene->bump.num_actions = 1;
   scene->bump.actions[0] = action_create_tap_tempo();  // Default: tap tempo on bump
@@ -176,6 +180,24 @@ esp_err_t scene_init(void) {
   const char* mode_str = (g_scene_manager.mode == SCENE_MODE_SINGLE) ? "Single" :
                          (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   ESP_LOGI(TAG, "Scene manager initialized: mode=%s, total_scenes=%d", mode_str, g_scene_manager.num_scenes);
+  
+  // Send program change for initial scene (if configured)
+  scene_t* initial_scene = &g_scene_manager.cache[0].scene;
+  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC && initial_scene->send_pc_on_change) {
+    uint8_t channel = device_config_get_channel();
+    send_program_change(channel - 1, 0);  // Scene 0 in preset sync
+    ESP_LOGI(TAG, "Sent initial PC 0 on channel %d (preset sync)", channel);
+  } else if (g_scene_manager.mode == SCENE_MODE_ADVANCED && initial_scene->send_pc_on_change) {
+    uint8_t channel = device_config_get_channel();
+    send_program_change(channel - 1, initial_scene->program_number);
+    ESP_LOGI(TAG, "Sent initial PC %d on channel %d", initial_scene->program_number, channel);
+  }
+  
+  // Execute on_load actions
+  if (initial_scene->on_load.num_actions > 0) {
+    ESP_LOGI(TAG, "Executing %d on_load action(s)", initial_scene->on_load.num_actions);
+    action_execute_chain(&initial_scene->on_load, 127, true);
+  }
   
   // Post event for scene change
   event_t event = {
@@ -274,6 +296,12 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   }
   
   ESP_LOGI(TAG, "Switched to scene %d: %s", scene_index + 1, new_scene->name);
+  
+  // Execute on_load actions
+  if (new_scene->on_load.num_actions > 0) {
+    ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->on_load.num_actions);
+    action_execute_chain(&new_scene->on_load, 127, true);
+  }
   
   // Post event for scene change
   event_t event = {
@@ -649,6 +677,24 @@ action_chain_t* scene_get_button_both(uint8_t scene_index) {
   return scene ? &scene->button_both : NULL;
 }
 
+esp_err_t scene_assign_on_load(uint8_t scene_index, const action_chain_t* chain) {
+  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->on_load = *chain;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  ESP_LOGI(TAG, "Assigned %d on_load actions", chain->num_actions);
+  return ESP_OK;
+}
+
+action_chain_t* scene_get_on_load(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->on_load : NULL;
+}
+
 #define SCENES_BASE_PATH "/assets/scenes"
 #define MANIFEST_PATH "/assets/scenes/manifest.json"
 
@@ -735,6 +781,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
   }
   cJSON_AddItemToObject(root, "touchpads", touchpads);
   
+  cJSON_AddItemToObject(root, "on_load", action_chain_to_json(&scene->on_load));
   cJSON_AddItemToObject(root, "button_left", action_chain_to_json(&scene->button_left));
   cJSON_AddItemToObject(root, "button_right", action_chain_to_json(&scene->button_right));
   cJSON_AddItemToObject(root, "button_both", action_chain_to_json(&scene->button_both));
@@ -769,6 +816,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
       if (actions) scene->touchpads[i].actions = json_to_action_chain(actions);
     }
   }
+  
+  cJSON* on_load = cJSON_GetObjectItem(root, "on_load");
+  if (on_load) scene->on_load = json_to_action_chain(on_load);
   
   cJSON* btn_l = cJSON_GetObjectItem(root, "button_left");
   if (btn_l) scene->button_left = json_to_action_chain(btn_l);

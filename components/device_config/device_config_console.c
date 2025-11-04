@@ -8,7 +8,7 @@
 static const char* TAG = "device_config_console";
 
 static const char* registered_commands[] = {
-  "info", "channel", "trs", "mode", "pedal", "custom", "save"
+  "info", "channel", "trs", "mode", "pedal", "custom", "program", "pc_mode", "save"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -19,11 +19,20 @@ static int cmd_info(int argc, char **argv) {
   const char* mode_str = (cfg->mode == DEVICE_MODE_DATABASE) ? "Database" : "Custom";
   const char* trs_str = (cfg->trs_type == MIDI_TRS_TYPE_A) ? "Type A" : "Type B";
   
+  const char* pc_mode_str = (cfg->pc_mode == PC_MODE_IMMEDIATE) ? "Immediate" : "Pending";
+  
   ESP_LOGI(TAG, "====== DEVICE CONFIG ======");
   ESP_LOGI(TAG, "Mode: %s", mode_str);
   ESP_LOGI(TAG, "MIDI Channel: %d", cfg->midi_channel);
   ESP_LOGI(TAG, "TRS Type: %s", trs_str);
+  ESP_LOGI(TAG, "Current Program: %d", cfg->current_program);
+  ESP_LOGI(TAG, "PC Mode: %s", pc_mode_str);
   
+  if (cfg->has_pending_program) {
+    ESP_LOGI(TAG, "PENDING PROGRAM: %d", cfg->pending_program);
+  }
+  
+  ESP_LOGI(TAG, "");
   if (cfg->mode == DEVICE_MODE_DATABASE) {
     ESP_LOGI(TAG, "Pedal: %s", cfg->pedal_slug);
   } else {
@@ -39,6 +48,18 @@ static struct {
   struct arg_int *channel_num;
   struct arg_end *end;
 } channel_args;
+
+// Command: program
+static struct {
+  struct arg_int *program_num;
+  struct arg_end *end;
+} program_args;
+
+// Command: pc_mode
+static struct {
+  struct arg_str *mode_name;
+  struct arg_end *end;
+} pc_mode_args;
 
 static int cmd_channel(int argc, char **argv) {
   int nerrors = arg_parse(argc, argv, (void **) &channel_args);
@@ -189,6 +210,47 @@ static int cmd_save(int argc, char **argv) {
   return (ret == ESP_OK) ? 0 : 1;
 }
 
+static int cmd_program(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &program_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, program_args.end, argv[0]);
+    return 1;
+  }
+  
+  int prog = program_args.program_num->ival[0];
+  if (prog < 0 || prog > 127) {
+    ESP_LOGE(TAG, "Program must be 0-127");
+    return 1;
+  }
+  
+  device_config_set_program(prog);
+  ESP_LOGI(TAG, "Program set to %d (PC sent)", prog);
+  return 0;
+}
+
+static int cmd_pc_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &pc_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, pc_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode = pc_mode_args.mode_name->sval[0];
+  
+  if (strcmp(mode, "immediate") == 0) {
+    device_config_set_pc_mode(PC_MODE_IMMEDIATE);
+    ESP_LOGI(TAG, "PC mode: Immediate");
+  } else if (strcmp(mode, "pending") == 0) {
+    device_config_set_pc_mode(PC_MODE_PENDING);
+    ESP_LOGI(TAG, "PC mode: Pending");
+  } else {
+    ESP_LOGE(TAG, "Unknown mode: %s (use 'immediate' or 'pending')", mode);
+    return 1;
+  }
+  
+  return 0;
+}
+
 esp_err_t device_config_console_init(void) {
   ESP_LOGI(TAG, "Registering device_config commands");
   
@@ -274,6 +336,32 @@ esp_err_t device_config_console_init(void) {
     .func = &cmd_save,
   };
   esp_console_cmd_register(&save_cmd);
+  
+  // program command
+  program_args.program_num = arg_int1(NULL, NULL, "<0-127>", "Program number");
+  program_args.end = arg_end(2);
+  
+  const esp_console_cmd_t program_cmd = {
+    .command = "program",
+    .help = "Set current program (sends PC)",
+    .hint = NULL,
+    .func = &cmd_program,
+    .argtable = &program_args
+  };
+  esp_console_cmd_register(&program_cmd);
+  
+  // pc_mode command
+  pc_mode_args.mode_name = arg_str1(NULL, NULL, "<immediate|pending>", "PC mode");
+  pc_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t pc_mode_cmd = {
+    .command = "pc_mode",
+    .help = "Set program change mode",
+    .hint = NULL,
+    .func = &cmd_pc_mode,
+    .argtable = &pc_mode_args
+  };
+  esp_console_cmd_register(&pc_mode_cmd);
   
   return ESP_OK;
 }
