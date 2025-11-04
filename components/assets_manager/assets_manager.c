@@ -108,7 +108,7 @@ static esp_err_t parse_manifest(const char *json_str) {
  */
 static esp_err_t load_manifest(void) {
   char path[128];
-  snprintf(path, sizeof(path), "%s/manifest.json", ASSETS_BASE_PATH);
+  snprintf(path, sizeof(path), "%s/devices/manifest.json", ASSETS_BASE_PATH);
   
   ESP_LOGI(TAG, "Loading manifest: %s", path);
   
@@ -264,7 +264,7 @@ device_def_t *assets_load_device(const char *slug) {
   ESP_LOGI(TAG, "Cache miss, parsing JSON");
   
   char json_path[256];
-  snprintf(json_path, sizeof(json_path), "%s/%s", ASSETS_BASE_PATH, manifest_dev->file);
+  snprintf(json_path, sizeof(json_path), "%s/devices/%s", ASSETS_BASE_PATH, manifest_dev->file);
   
   device = assets_parse_device_file(json_path, slug);
   if (!device) {
