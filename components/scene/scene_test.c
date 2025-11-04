@@ -45,9 +45,20 @@ void scene_test_info(void) {
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     touchpad_mapping_t* map = &scene->touchpads[i];
     if (map->enabled) {
-      uint8_t effective_ch = map->cc.channel ? map->cc.channel : device_channel;
-      ESP_LOGI(TAG, "  Pad %2d: CC%-3d value=%-3d ch=%d", 
-               i, map->cc.cc_number, map->cc.value, effective_ch);
+      if (map->actions.num_actions > 0) {
+        action_t* first_action = &map->actions.actions[0];
+        const char* action_name = action_type_to_string(first_action->type);
+        
+        if (first_action->type == ACTION_SEND_CC) {
+          ESP_LOGI(TAG, "  Pad %2d: %s (CC%d=%d) +%d more", 
+                   i, action_name, first_action->params.cc.cc_number, 
+                   first_action->params.cc.value, map->actions.num_actions - 1);
+        } else {
+          ESP_LOGI(TAG, "  Pad %2d: %s +%d more", i, action_name, map->actions.num_actions - 1);
+        }
+      } else {
+        ESP_LOGI(TAG, "  Pad %2d: no actions", i);
+      }
     } else {
       ESP_LOGI(TAG, "  Pad %2d: disabled", i);
     }
@@ -77,7 +88,7 @@ void scene_test_previous(void) {
 
 void scene_test_set_cc(uint8_t pad, uint8_t cc, uint8_t value) {
   uint8_t scene_index = scene_get_current_index();
-  esp_err_t ret = scene_set_touchpad_cc(scene_index, pad, cc, value, 0);
+  esp_err_t ret = scene_set_touchpad_cc(scene_index, pad, cc, value);
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Set pad %d: CC%d=%d", pad, cc, value);
   } else {
@@ -92,13 +103,13 @@ void scene_test_demo(void) {
   uint8_t scene_index = scene_get_current_index();
   
   // Set up a filter cutoff on pad 0
-  scene_set_touchpad_cc(scene_index, 0, 74, 127, 0);  // CC74 = Filter Cutoff
+  scene_set_touchpad_cc(scene_index, 0, 74, 127);  // CC74 = Filter Cutoff
   
   // Set up modulation on pad 1
-  scene_set_touchpad_cc(scene_index, 1, 1, 64, 0);    // CC1 = Modulation
+  scene_set_touchpad_cc(scene_index, 1, 1, 64);    // CC1 = Modulation
   
   // Set up volume on pad 2  
-  scene_set_touchpad_cc(scene_index, 2, 7, 100, 0);   // CC7 = Volume
+  scene_set_touchpad_cc(scene_index, 2, 7, 100);   // CC7 = Volume
   
   // Set scene name
   scene_set_name(scene_index, "Demo Scene");

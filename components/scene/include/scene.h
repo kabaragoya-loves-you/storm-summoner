@@ -38,28 +38,10 @@ typedef enum {
   TOUCHWHEEL_MODE_ENCODER     // Wheel acts as increment/decrement control
 } touchwheel_mode_t;
 
-// Control change assignment types
-typedef enum {
-  CC_TYPE_SIMPLE,             // Single CC, single value
-  CC_TYPE_TOGGLE,             // Toggle between two values
-  CC_TYPE_MULTI_STATE,        // Cycle through multiple values
-  CC_TYPE_CONTINUOUS          // Continuous value (for sensors/expression)
-} cc_assignment_type_t;
-
-// Simple CC assignment for initial implementation
-typedef struct {
-  uint8_t cc_number;          // MIDI CC number (0-127)
-  uint8_t value;              // Value to send (0-127)
-  uint8_t channel;            // MIDI channel (1-16, 0 = inherit from scene)
-} cc_assignment_t;
-
-// Touchpad mapping (now uses action system)
+// Touchpad mapping
 typedef struct {
   bool enabled;               // Whether this touchpad is active
   action_chain_t actions;     // Action chain to execute
-  
-  // Legacy CC assignment (for backward compatibility during migration)
-  cc_assignment_t cc;
 } touchpad_mapping_t;
 
 // Scene structure
@@ -72,7 +54,7 @@ typedef struct {
   
   // Touchwheel configuration
   touchwheel_mode_t touchwheel_mode;
-  cc_assignment_t touchwheel_cc;  // Used when in encoder mode
+  action_chain_t touchwheel_actions;  // Used when in encoder mode
   
   // Discrete input assignments (action chains)
   touchpad_mapping_t touchpads[NUM_TOUCHPADS];
@@ -139,9 +121,9 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
 esp_err_t scene_set_send_pc(uint8_t scene_index, bool send_pc);
 
-// Touchpad mapping configuration (legacy CC API - will be replaced by action API)
+// Touchpad configuration
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, 
-                                uint8_t cc_number, uint8_t value, uint8_t channel);
+                                uint8_t cc_number, uint8_t value);
 esp_err_t scene_enable_touchpad(uint8_t scene_index, uint8_t pad_index, bool enabled);
 touchpad_mapping_t* scene_get_touchpad_mapping(uint8_t scene_index, uint8_t pad_index);
 
@@ -164,8 +146,6 @@ esp_err_t scene_cancel_pending(void);
 // Process touchpad events through scene mappings
 esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed);
 
-// Utility functions
-uint8_t scene_get_effective_channel(const touchpad_mapping_t* mapping, const scene_t* scene);
 
 // Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);

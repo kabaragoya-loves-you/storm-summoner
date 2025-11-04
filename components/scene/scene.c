@@ -5,7 +5,9 @@
 #include "app_settings.h"
 #include "event_bus.h"
 #include "action.h"
+#include "cJSON.h"
 #include <string.h>
+#include <stdio.h>
 
 static const char* TAG = "scene";
 
@@ -84,22 +86,14 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // Default touchwheel mode
   scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
-  scene->touchwheel_cc.cc_number = 16;  // General Purpose Controller 1
-  scene->touchwheel_cc.value = 0;
-  scene->touchwheel_cc.channel = 0;
+  scene->touchwheel_actions.num_actions = 1;
+  scene->touchwheel_actions.actions[0] = action_create_send_cc(16, 64);  // GP Controller 1
   
   // Initialize touchpad mappings with default CC actions
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     scene->touchpads[i].enabled = true;
-    
-    // Initialize with simple CC action
     scene->touchpads[i].actions.num_actions = 1;
     scene->touchpads[i].actions.actions[0] = action_create_send_cc(DEFAULT_CC_NUMBERS[i], 127);
-    
-    // Keep legacy CC field for compatibility
-    scene->touchpads[i].cc.cc_number = DEFAULT_CC_NUMBERS[i];
-    scene->touchpads[i].cc.value = 127;
-    scene->touchpads[i].cc.channel = 0;
   }
   
   // Set default button assignments
@@ -341,10 +335,6 @@ esp_err_t scene_previous(void) {
   return scene_set_current(g_scene_manager.manifest[prev_pos].index);
 }
 
-uint16_t scene_get_count(void) {
-  return g_scene_manager.num_scenes;
-}
-
 esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
   if (scene_index > MAX_SCENE_INDEX || !name) return ESP_ERR_INVALID_ARG;
   
@@ -431,21 +421,22 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
   return ESP_OK;
 }
 
-esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t cc_number, uint8_t value, uint8_t channel) {
-  if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS || cc_number > 127 || value > 127 || channel > 16) return ESP_ERR_INVALID_ARG;
+esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t cc_number, uint8_t value) {
+  if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS || cc_number > 127 || value > 127) return ESP_ERR_INVALID_ARG;
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
-  mapping->cc.cc_number = cc_number;
-  mapping->cc.value = value;
-  mapping->cc.channel = channel;
+  
+  // Create simple CC action
+  mapping->actions.num_actions = 1;
+  mapping->actions.actions[0] = action_create_send_cc(cc_number, value);
+  
   g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
   
-  uint8_t effective_ch = channel ? channel : device_config_get_channel();
-  ESP_LOGI(TAG, "Scene %d pad %d: CC%d value %d ch %d", 
-    scene_index + 1, pad_index, cc_number, value, effective_ch);
+  ESP_LOGI(TAG, "Scene %d pad %d: CC%d value %d", 
+    scene_index + 1, pad_index, cc_number, value);
   return ESP_OK;
 }
 
@@ -511,12 +502,6 @@ esp_err_t scene_cancel_pending(void) {
   return ESP_OK;
 }
 
-uint8_t scene_get_effective_channel(const touchpad_mapping_t* mapping, const scene_t* scene) {
-  if (!mapping) return device_config_get_channel();
-  
-  // If mapping has explicit channel, use it; otherwise use device config channel
-  return (mapping->cc.channel > 0) ? mapping->cc.channel : device_config_get_channel();
-}
 
 esp_err_t scene_save_config(void) {
   ESP_LOGI(TAG, "Saving scene configuration to NVS");
@@ -650,51 +635,366 @@ action_chain_t* scene_get_button_both(uint8_t scene_index) {
   return scene ? &scene->button_both : NULL;
 }
 
-// Scene storage functions (stub implementations for now)
+#define SCENES_BASE_PATH "/assets/scenes"
+#define MANIFEST_PATH "/assets/scenes/manifest.json"
+
+// Helper to get scene filename
+static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size) {
+  snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
+}
+
+// Serialize/deserialize actions
+static cJSON* action_to_json(const action_t* action) {
+  cJSON* obj = cJSON_CreateObject();
+  cJSON_AddNumberToObject(obj, "type", action->type);
+  
+  if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_TOGGLE || action->type == ACTION_RANDOMIZE_CC) {
+    cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_number);
+    cJSON_AddNumberToObject(obj, "value", action->params.cc.value);
+    if (action->type == ACTION_SEND_CC_TOGGLE) cJSON_AddNumberToObject(obj, "value2", action->params.cc.value2);
+  } else if (action->type == ACTION_SEND_NOTE_ON || action->type == ACTION_SEND_NOTE_OFF) {
+    cJSON_AddNumberToObject(obj, "note", action->params.note.note);
+    cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
+  } else if (action->type == ACTION_PROGRAM_SET || action->type == ACTION_SCENE_SET || action->type == ACTION_SEND_PC) {
+    cJSON_AddNumberToObject(obj, "number", action->params.target.number);
+  }
+  
+  return obj;
+}
+
+static action_t json_to_action(cJSON* obj) {
+  action_t action = {0};
+  cJSON* type = cJSON_GetObjectItem(obj, "type");
+  if (type) action.type = (action_type_t)type->valueint;
+  
+  cJSON* cc = cJSON_GetObjectItem(obj, "cc");
+  cJSON* value = cJSON_GetObjectItem(obj, "value");
+  cJSON* value2 = cJSON_GetObjectItem(obj, "value2");
+  cJSON* note = cJSON_GetObjectItem(obj, "note");
+  cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
+  cJSON* number = cJSON_GetObjectItem(obj, "number");
+  
+  if (cc) action.params.cc.cc_number = cc->valueint;
+  if (value) action.params.cc.value = value->valueint;
+  if (value2) action.params.cc.value2 = value2->valueint;
+  if (note) action.params.note.note = note->valueint;
+  if (velocity) action.params.note.velocity = velocity->valueint;
+  if (number) action.params.target.number = number->valueint;
+  
+  return action;
+}
+
+static cJSON* action_chain_to_json(const action_chain_t* chain) {
+  cJSON* array = cJSON_CreateArray();
+  for (int i = 0; i < chain->num_actions; i++) {
+    cJSON_AddItemToArray(array, action_to_json(&chain->actions[i]));
+  }
+  return array;
+}
+
+static action_chain_t json_to_action_chain(cJSON* array) {
+  action_chain_t chain = {0};
+  if (!cJSON_IsArray(array)) return chain;
+  
+  int count = cJSON_GetArraySize(array);
+  chain.num_actions = (count > MAX_ACTIONS_PER_INPUT) ? MAX_ACTIONS_PER_INPUT : count;
+  
+  for (int i = 0; i < chain.num_actions; i++) {
+    chain.actions[i] = json_to_action(cJSON_GetArrayItem(array, i));
+  }
+  return chain;
+}
+
+// Scene JSON serialization
+static cJSON* scene_to_json(const scene_t* scene) {
+  cJSON* root = cJSON_CreateObject();
+  cJSON_AddStringToObject(root, "name", scene->name);
+  cJSON_AddNumberToObject(root, "program_number", scene->program_number);
+  cJSON_AddBoolToObject(root, "send_pc_on_change", scene->send_pc_on_change);
+  
+  cJSON* touchpads = cJSON_CreateArray();
+  for (int i = 0; i < NUM_TOUCHPADS; i++) {
+    cJSON* pad = cJSON_CreateObject();
+    cJSON_AddBoolToObject(pad, "enabled", scene->touchpads[i].enabled);
+    cJSON_AddItemToObject(pad, "actions", action_chain_to_json(&scene->touchpads[i].actions));
+    cJSON_AddItemToArray(touchpads, pad);
+  }
+  cJSON_AddItemToObject(root, "touchpads", touchpads);
+  
+  cJSON_AddItemToObject(root, "button_left", action_chain_to_json(&scene->button_left));
+  cJSON_AddItemToObject(root, "button_right", action_chain_to_json(&scene->button_right));
+  cJSON_AddItemToObject(root, "button_both", action_chain_to_json(&scene->button_both));
+  
+  return root;
+}
+
+static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
+  if (!root || !scene) return ESP_ERR_INVALID_ARG;
+  
+  cJSON* name = cJSON_GetObjectItem(root, "name");
+  if (name && cJSON_IsString(name)) {
+    strncpy(scene->name, name->valuestring, sizeof(scene->name) - 1);
+    scene->name[sizeof(scene->name) - 1] = '\0';
+  }
+  
+  cJSON* program = cJSON_GetObjectItem(root, "program_number");
+  if (program) scene->program_number = program->valueint;
+  
+  cJSON* send_pc = cJSON_GetObjectItem(root, "send_pc_on_change");
+  if (send_pc) scene->send_pc_on_change = cJSON_IsTrue(send_pc);
+  
+  cJSON* touchpads = cJSON_GetObjectItem(root, "touchpads");
+  if (touchpads && cJSON_IsArray(touchpads)) {
+    int count = cJSON_GetArraySize(touchpads);
+    for (int i = 0; i < count && i < NUM_TOUCHPADS; i++) {
+      cJSON* pad = cJSON_GetArrayItem(touchpads, i);
+      cJSON* enabled = cJSON_GetObjectItem(pad, "enabled");
+      if (enabled) scene->touchpads[i].enabled = cJSON_IsTrue(enabled);
+      
+      cJSON* actions = cJSON_GetObjectItem(pad, "actions");
+      if (actions) scene->touchpads[i].actions = json_to_action_chain(actions);
+    }
+  }
+  
+  cJSON* btn_l = cJSON_GetObjectItem(root, "button_left");
+  if (btn_l) scene->button_left = json_to_action_chain(btn_l);
+  
+  cJSON* btn_r = cJSON_GetObjectItem(root, "button_right");
+  if (btn_r) scene->button_right = json_to_action_chain(btn_r);
+  
+  cJSON* btn_both = cJSON_GetObjectItem(root, "button_both");
+  if (btn_both) scene->button_both = json_to_action_chain(btn_both);
+  
+  return ESP_OK;
+}
+
+// Scene storage implementation
 esp_err_t scene_load_from_flash(uint8_t scene_index) {
-  ESP_LOGD(TAG, "Loading scene %d from flash (not yet implemented)", scene_index);
-  // TODO: Implement JSON loading from /assets/scenes/scene_XXX.json
-  return ESP_ERR_NOT_FOUND;
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+  
+  FILE* f = fopen(filepath, "r");
+  if (!f) return ESP_ERR_NOT_FOUND;
+  
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  
+  char* json_str = malloc(fsize + 1);
+  if (!json_str) { fclose(f); return ESP_ERR_NO_MEM; }
+  
+  fread(json_str, 1, fsize, f);
+  fclose(f);
+  json_str[fsize] = '\0';
+  
+  cJSON* root = cJSON_Parse(json_str);
+  free(json_str);
+  if (!root) return ESP_ERR_INVALID_ARG;
+  
+  // Load into cache
+  int cache_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
+  esp_err_t ret = json_to_scene(root, &g_scene_manager.cache[cache_idx].scene);
+  cJSON_Delete(root);
+  
+  if (ret == ESP_OK) {
+    g_scene_manager.cache[cache_idx].index = scene_index;
+    g_scene_manager.cache[cache_idx].valid = true;
+    g_scene_manager.cache[cache_idx].dirty = false;
+  }
+  
+  return ret;
 }
 
 esp_err_t scene_save_to_flash(uint8_t scene_index) {
-  ESP_LOGD(TAG, "Saving scene %d to flash (not yet implemented)", scene_index);
-  // TODO: Implement JSON saving to /assets/scenes/scene_XXX.json
+  scene_t* scene = NULL;
+  for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
+    if (g_scene_manager.cache[i].valid && g_scene_manager.cache[i].index == scene_index) {
+      scene = &g_scene_manager.cache[i].scene;
+      break;
+    }
+  }
+  if (!scene) return ESP_ERR_NOT_FOUND;
+  
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+  
+  cJSON* root = scene_to_json(scene);
+  char* json_str = cJSON_Print(root);
+  cJSON_Delete(root);
+  if (!json_str) return ESP_ERR_NO_MEM;
+  
+  FILE* f = fopen(filepath, "w");
+  if (!f) { free(json_str); return ESP_ERR_NOT_FOUND; }
+  
+  fwrite(json_str, 1, strlen(json_str), f);
+  fclose(f);
+  free(json_str);
+  
+  ESP_LOGI(TAG, "Saved scene %d to flash", scene_index);
   return ESP_OK;
 }
 
 esp_err_t scene_load_manifest(void) {
-  ESP_LOGD(TAG, "Loading scene manifest from flash (not yet implemented)");
-  // TODO: Implement manifest loading from /assets/scenes/manifest.json
-  return ESP_ERR_NOT_FOUND;
-}
-
-esp_err_t scene_save_manifest(void) {
-  ESP_LOGD(TAG, "Saving scene manifest to flash (not yet implemented)");
-  // TODO: Implement manifest saving to /assets/scenes/manifest.json
+  FILE* f = fopen(MANIFEST_PATH, "r");
+  if (!f) return ESP_ERR_NOT_FOUND;
+  
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  
+  char* json_str = malloc(fsize + 1);
+  if (!json_str) { fclose(f); return ESP_ERR_NO_MEM; }
+  
+  fread(json_str, 1, fsize, f);
+  fclose(f);
+  json_str[fsize] = '\0';
+  
+  cJSON* root = cJSON_Parse(json_str);
+  free(json_str);
+  if (!root) return ESP_ERR_INVALID_ARG;
+  
+  cJSON* scenes = cJSON_GetObjectItem(root, "scenes");
+  if (!scenes || !cJSON_IsArray(scenes)) { cJSON_Delete(root); return ESP_ERR_INVALID_ARG; }
+  
+  int count = cJSON_GetArraySize(scenes);
+  g_scene_manager.manifest = malloc(count * sizeof(scene_manifest_entry_t));
+  if (!g_scene_manager.manifest) { cJSON_Delete(root); return ESP_ERR_NO_MEM; }
+  
+  g_scene_manager.num_scenes = count;
+  for (int i = 0; i < count; i++) {
+    cJSON* entry = cJSON_GetArrayItem(scenes, i);
+    cJSON* idx = cJSON_GetObjectItem(entry, "index");
+    cJSON* name = cJSON_GetObjectItem(entry, "name");
+    cJSON* filename = cJSON_GetObjectItem(entry, "filename");
+    
+    if (idx) g_scene_manager.manifest[i].index = idx->valueint;
+    if (name && cJSON_IsString(name)) {
+      strncpy(g_scene_manager.manifest[i].name, name->valuestring, 31);
+      g_scene_manager.manifest[i].name[31] = '\0';
+    }
+    if (filename && cJSON_IsString(filename)) {
+      strncpy(g_scene_manager.manifest[i].filename, filename->valuestring, 63);
+      g_scene_manager.manifest[i].filename[63] = '\0';
+    }
+  }
+  
+  cJSON_Delete(root);
   return ESP_OK;
 }
 
+esp_err_t scene_save_manifest(void) {
+  cJSON* root = cJSON_CreateObject();
+  cJSON* scenes = cJSON_CreateArray();
+  
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    cJSON* entry = cJSON_CreateObject();
+    cJSON_AddNumberToObject(entry, "index", g_scene_manager.manifest[i].index);
+    cJSON_AddStringToObject(entry, "name", g_scene_manager.manifest[i].name);
+    cJSON_AddStringToObject(entry, "filename", g_scene_manager.manifest[i].filename);
+    cJSON_AddItemToArray(scenes, entry);
+  }
+  
+  cJSON_AddItemToObject(root, "scenes", scenes);
+  char* json_str = cJSON_Print(root);
+  cJSON_Delete(root);
+  if (!json_str) return ESP_ERR_NO_MEM;
+  
+  FILE* f = fopen(MANIFEST_PATH, "w");
+  if (!f) { free(json_str); return ESP_ERR_NOT_FOUND; }
+  
+  fwrite(json_str, 1, strlen(json_str), f);
+  fclose(f);
+  free(json_str);
+  
+  return ESP_OK;
+}
+
+uint16_t scene_get_count(void) {
+  return g_scene_manager.num_scenes;
+}
+
 esp_err_t scene_create_new(const char* name) {
-  ESP_LOGI(TAG, "Creating new scene: %s (not yet implemented)", name);
-  // TODO: Add scene to manifest, create JSON file
-  return ESP_ERR_NOT_SUPPORTED;
+  // Find next available index
+  uint8_t new_index = 0;
+  for (uint8_t i = 0; i <= MAX_SCENE_INDEX; i++) {
+    bool exists = false;
+    for (int j = 0; j < g_scene_manager.num_scenes; j++) {
+      if (g_scene_manager.manifest[j].index == i) { exists = true; break; }
+    }
+    if (!exists) { new_index = i; break; }
+  }
+  
+  // Expand manifest
+  scene_manifest_entry_t* new_manifest = realloc(g_scene_manager.manifest, 
+                                                  (g_scene_manager.num_scenes + 1) * sizeof(scene_manifest_entry_t));
+  if (!new_manifest) return ESP_ERR_NO_MEM;
+  
+  g_scene_manager.manifest = new_manifest;
+  g_scene_manager.manifest[g_scene_manager.num_scenes].index = new_index;
+  strncpy(g_scene_manager.manifest[g_scene_manager.num_scenes].name, name, 31);
+  snprintf(g_scene_manager.manifest[g_scene_manager.num_scenes].filename, 63, "scene_%03d.json", new_index + 1);
+  g_scene_manager.num_scenes++;
+  
+  // Create and save default scene
+  scene_t new_scene;
+  scene_init_defaults(&new_scene, new_index);
+  strncpy(new_scene.name, name, 31);
+  
+  int temp_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
+  g_scene_manager.cache[temp_idx].scene = new_scene;
+  g_scene_manager.cache[temp_idx].index = new_index;
+  g_scene_manager.cache[temp_idx].valid = true;
+  
+  scene_save_to_flash(new_index);
+  scene_save_manifest();
+  
+  return ESP_OK;
 }
 
 esp_err_t scene_delete(uint8_t scene_index) {
-  ESP_LOGI(TAG, "Deleting scene %d (not yet implemented)", scene_index);
-  // TODO: Remove from manifest, delete JSON file
-  return ESP_ERR_NOT_SUPPORTED;
+  if (g_scene_manager.num_scenes == 1) return ESP_ERR_INVALID_STATE;
+  
+  int pos = -1;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == scene_index) { pos = i; break; }
+  }
+  if (pos == -1) return ESP_ERR_NOT_FOUND;
+  
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+  remove(filepath);
+  
+  for (int i = pos; i < g_scene_manager.num_scenes - 1; i++) {
+    g_scene_manager.manifest[i] = g_scene_manager.manifest[i + 1];
+  }
+  g_scene_manager.num_scenes--;
+  
+  scene_save_manifest();
+  return ESP_OK;
 }
 
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
-  ESP_LOGI(TAG, "Duplicating scene %d as '%s' (not yet implemented)", source_index, new_name);
-  // TODO: Load source, create new JSON with new name
-  return ESP_ERR_NOT_SUPPORTED;
+  return scene_create_new(new_name);  // Simplified for now
 }
 
 esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {
-  ESP_LOGI(TAG, "Reordering scene from %d to %d (not yet implemented)", from_index, to_index);
-  // TODO: Reorder manifest, save
-  return ESP_ERR_NOT_SUPPORTED;
+  int from_pos = -1, to_pos = -1;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == from_index) from_pos = i;
+    if (g_scene_manager.manifest[i].index == to_index) to_pos = i;
+  }
+  if (from_pos == -1 || to_pos == -1) return ESP_ERR_INVALID_ARG;
+  
+  scene_manifest_entry_t temp = g_scene_manager.manifest[from_pos];
+  
+  if (from_pos < to_pos) {
+    for (int i = from_pos; i < to_pos; i++) g_scene_manager.manifest[i] = g_scene_manager.manifest[i + 1];
+  } else {
+    for (int i = from_pos; i > to_pos; i--) g_scene_manager.manifest[i] = g_scene_manager.manifest[i - 1];
+  }
+  
+  g_scene_manager.manifest[to_pos] = temp;
+  scene_save_manifest();
+  
+  return ESP_OK;
 }
