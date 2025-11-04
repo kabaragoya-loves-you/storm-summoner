@@ -33,13 +33,29 @@ typedef enum {
   ACTION_SEND_CC,             // Send CC with value
   ACTION_SEND_CC_TOGGLE,      // Toggle between two CC values
   ACTION_SEND_CC_CYCLE,       // Cycle through multiple CC values
+  ACTION_SEND_DOUBLE_CC,      // 14-bit CC (high resolution)
+  ACTION_SEND_NRPN,           // Non-Registered Parameter Number
+  ACTION_SEND_RPN,            // Registered Parameter Number
   ACTION_SEND_NOTE_ON,
   ACTION_SEND_NOTE_OFF,
   ACTION_SEND_PC,
+  ACTION_SEND_PITCH_BEND,
+  ACTION_SEND_AFTERTOUCH,     // Channel aftertouch
+  ACTION_SEND_POLY_AFTERTOUCH, // Polyphonic aftertouch
+  ACTION_SEND_SONG_SELECT,
+  ACTION_SEND_SONG_POSITION,
+  ACTION_SEND_MMC,            // MIDI Machine Control
   
   // Randomization
   ACTION_RANDOMIZE_CC,        // Randomize single CC
   ACTION_RANDOMIZE_MULTI,     // Randomize multiple CCs
+  
+  // MIDI System
+  ACTION_SEND_CLOCK_START,    // MIDI Clock Start
+  ACTION_SEND_CLOCK_STOP,     // MIDI Clock Stop
+  ACTION_SEND_CLOCK_CONTINUE, // MIDI Clock Continue
+  ACTION_SEND_RESET,          // System Reset
+  ACTION_SEND_TUNE_REQUEST,   // Tune Request
   
   // System
   ACTION_SCREENSAVER_TOGGLE,
@@ -81,6 +97,40 @@ typedef struct {
     struct {
       uint8_t bpm_delta;      // For nudge (default 1)
     } tempo;
+    
+    // For pitch bend
+    struct {
+      int16_t value;          // -8192 to +8191
+    } pitch_bend;
+    
+    // For aftertouch
+    struct {
+      uint8_t note;           // For poly aftertouch
+      uint8_t pressure;       // 0-127
+    } aftertouch;
+    
+    // For NRPN/RPN
+    struct {
+      uint16_t parameter;     // 14-bit parameter number
+      uint16_t value;         // 14-bit value
+    } nrpn;
+    
+    // For 14-bit CC
+    struct {
+      uint8_t msb_cc;         // MSB controller number
+      uint8_t lsb_cc;         // LSB controller number
+      uint16_t value;         // 14-bit value
+    } double_cc;
+    
+    // For song position
+    struct {
+      uint16_t position;      // 14-bit position
+    } song_pos;
+    
+    // For MMC
+    struct {
+      uint8_t command;        // MMC command byte
+    } mmc;
     
     // For multi-randomize
     struct {

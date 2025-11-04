@@ -37,6 +37,20 @@ static const char* action_type_names[] = {
   [ACTION_SEND_PC] = "Send PC",
   [ACTION_RANDOMIZE_CC] = "Randomize CC",
   [ACTION_RANDOMIZE_MULTI] = "Randomize Multi",
+  [ACTION_SEND_DOUBLE_CC] = "Send 14-bit CC",
+  [ACTION_SEND_NRPN] = "Send NRPN",
+  [ACTION_SEND_RPN] = "Send RPN",
+  [ACTION_SEND_PITCH_BEND] = "Pitch Bend",
+  [ACTION_SEND_AFTERTOUCH] = "Aftertouch",
+  [ACTION_SEND_POLY_AFTERTOUCH] = "Poly Aftertouch",
+  [ACTION_SEND_SONG_SELECT] = "Song Select",
+  [ACTION_SEND_SONG_POSITION] = "Song Position",
+  [ACTION_SEND_MMC] = "MMC",
+  [ACTION_SEND_CLOCK_START] = "MIDI Start",
+  [ACTION_SEND_CLOCK_STOP] = "MIDI Stop",
+  [ACTION_SEND_CLOCK_CONTINUE] = "MIDI Continue",
+  [ACTION_SEND_RESET] = "System Reset",
+  [ACTION_SEND_TUNE_REQUEST] = "Tune Request",
   [ACTION_SCREENSAVER_TOGGLE] = "Screensaver Toggle",
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
   [ACTION_CANCEL_PENDING] = "Cancel Pending",
@@ -187,6 +201,111 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       if (is_press) {
         send_program_change(channel, action->params.target.number);
         ESP_LOGD(TAG, "Sent PC %d", action->params.target.number);
+      }
+      break;
+      
+    // Extended MIDI messages
+    case ACTION_SEND_PITCH_BEND:
+      if (is_press) {
+        send_pitch_bend(channel, action->params.pitch_bend.value);
+        ESP_LOGD(TAG, "Sent pitch bend: %d", action->params.pitch_bend.value);
+      }
+      break;
+      
+    case ACTION_SEND_AFTERTOUCH:
+      if (is_press) {
+        send_channel_aftertouch(channel, action->params.aftertouch.pressure);
+        ESP_LOGD(TAG, "Sent aftertouch: %d", action->params.aftertouch.pressure);
+      }
+      break;
+      
+    case ACTION_SEND_POLY_AFTERTOUCH:
+      if (is_press) {
+        send_poly_aftertouch(channel, action->params.aftertouch.note, action->params.aftertouch.pressure);
+        ESP_LOGD(TAG, "Sent poly aftertouch: note=%d pressure=%d", 
+                 action->params.aftertouch.note, action->params.aftertouch.pressure);
+      }
+      break;
+      
+    case ACTION_SEND_DOUBLE_CC:
+      if (is_press) {
+        send_double_control_change(channel, action->params.double_cc.msb_cc, 
+                                   action->params.double_cc.lsb_cc, action->params.double_cc.value);
+        ESP_LOGD(TAG, "Sent 14-bit CC%d/%d: %d", action->params.double_cc.msb_cc, 
+                 action->params.double_cc.lsb_cc, action->params.double_cc.value);
+      }
+      break;
+      
+    case ACTION_SEND_NRPN:
+      if (is_press) {
+        send_nrpn(channel, action->params.nrpn.parameter, action->params.nrpn.value);
+        ESP_LOGD(TAG, "Sent NRPN %d: %d", action->params.nrpn.parameter, action->params.nrpn.value);
+      }
+      break;
+      
+    case ACTION_SEND_RPN:
+      // RPN uses same function as NRPN with different CC numbers
+      if (is_press) {
+        // RPN: CC101(MSB), CC100(LSB) for parameter, CC6/38 for value
+        // For now, not implemented - need to add send_rpn to midi_messages
+        ESP_LOGW(TAG, "RPN not yet fully implemented");
+      }
+      break;
+      
+    case ACTION_SEND_SONG_SELECT:
+      if (is_press) {
+        send_song_select(action->params.target.number);
+        ESP_LOGD(TAG, "Sent song select: %d", action->params.target.number);
+      }
+      break;
+      
+    case ACTION_SEND_SONG_POSITION:
+      if (is_press) {
+        send_song_position(action->params.song_pos.position);
+        ESP_LOGD(TAG, "Sent song position: %d", action->params.song_pos.position);
+      }
+      break;
+      
+    case ACTION_SEND_MMC:
+      if (is_press) {
+        send_mmc(action->params.mmc.command);
+        ESP_LOGD(TAG, "Sent MMC command: 0x%02X", action->params.mmc.command);
+      }
+      break;
+      
+    // MIDI System messages
+    case ACTION_SEND_CLOCK_START:
+      if (is_press) {
+        send_start();
+        ESP_LOGD(TAG, "Sent MIDI Clock Start");
+      }
+      break;
+      
+    case ACTION_SEND_CLOCK_STOP:
+      if (is_press) {
+        send_stop();
+        ESP_LOGD(TAG, "Sent MIDI Clock Stop");
+      }
+      break;
+      
+    case ACTION_SEND_CLOCK_CONTINUE:
+      if (is_press) {
+        send_continue();
+        ESP_LOGD(TAG, "Sent MIDI Clock Continue");
+      }
+      break;
+      
+    case ACTION_SEND_RESET:
+      if (is_press) {
+        send_reset();
+        ESP_LOGD(TAG, "Sent System Reset");
+      }
+      break;
+      
+    case ACTION_SEND_TUNE_REQUEST:
+      if (is_press) {
+        send_tune_request();
+        ESP_LOGD(TAG, "Sent Tune Request");
       }
       break;
       
