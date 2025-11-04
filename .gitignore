@@ -1,8 +1,14 @@
+# ESP-IDF build artifacts
 build/
 sdkconfig
 sdkconfig.old
+sdkconfig.monitor
+dependencies.lock
+
+# IDE files
 .clang-format
 .editorconfig
-*.md
 .vscode/settings.json
+
+# MIDI device cache (auto-generated)
 midi-devices/cache/*.bin
