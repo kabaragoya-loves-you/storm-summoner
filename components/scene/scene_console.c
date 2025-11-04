@@ -116,8 +116,8 @@ static int cmd_goto(int argc, char **argv) {
   }
   
   int scene_num = goto_args.scene_num->ival[0];
-  if (scene_num < 1 || scene_num > MAX_SCENES) {
-    ESP_LOGE(TAG, "Scene number must be 1-%d", MAX_SCENES);
+  if (scene_num < 1 || scene_num > MAX_SCENE_INDEX) {
+    ESP_LOGE(TAG, "Scene number must be 1-%d", MAX_SCENE_INDEX);
     return 1;
   }
   

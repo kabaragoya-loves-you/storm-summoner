@@ -5,9 +5,11 @@
 #include <stdbool.h>
 #include "esp_err.h"
 #include "midi_messages.h"
+#include "action.h"
 
-// Maximum number of scenes
-#define MAX_SCENES 128
+// Scene cache size - we keep current + prev + next in RAM
+#define SCENE_CACHE_SIZE 3
+#define MAX_SCENE_INDEX 127  // Maximum scene number (0-127)
 
 // Number of touchpads
 #define NUM_TOUCHPADS 12
@@ -51,11 +53,13 @@ typedef struct {
   uint8_t channel;            // MIDI channel (1-16, 0 = inherit from scene)
 } cc_assignment_t;
 
-// Touchpad mapping
+// Touchpad mapping (now uses action system)
 typedef struct {
   bool enabled;               // Whether this touchpad is active
-  cc_assignment_t cc;         // CC assignment (for now, just simple)
-  // Future: union of different assignment types
+  action_chain_t actions;     // Action chain to execute
+  
+  // Legacy CC assignment (for backward compatibility during migration)
+  cc_assignment_t cc;
 } touchpad_mapping_t;
 
 // Scene structure
@@ -70,19 +74,44 @@ typedef struct {
   touchwheel_mode_t touchwheel_mode;
   cc_assignment_t touchwheel_cc;  // Used when in encoder mode
   
-  // Touchpad mappings (0-11 only, pad 12 is UI button)
+  // Discrete input assignments (action chains)
   touchpad_mapping_t touchpads[NUM_TOUCHPADS];
+  action_chain_t button_left;
+  action_chain_t button_right;
+  action_chain_t button_both;
   
-  // Future: other input mappings (expression, CV, sensors)
+  // Future: sustain, sostenuto, continuous mappings (expression, CV, sensors, LFOs)
 } scene_t;
+
+// Scene cache entry
+typedef struct {
+  scene_t scene;
+  uint8_t index;        // Which scene this is (0-127)
+  bool valid;           // Whether this cache entry contains valid data
+  bool dirty;           // Whether scene needs to be saved to flash
+} scene_cache_entry_t;
+
+// Scene manifest entry (lightweight metadata)
+typedef struct {
+  uint8_t index;
+  char name[32];
+  char filename[64];
+} scene_manifest_entry_t;
 
 // Scene manager state
 typedef struct {
-  scene_t scenes[MAX_SCENES];
-  uint8_t current_scene_index;
+  // Scene cache (current + neighbors for fast navigation)
+  scene_cache_entry_t cache[SCENE_CACHE_SIZE];
+  int current_cache_idx;        // Which cache slot is current scene
+  
+  uint8_t current_scene_index;  // Current scene number (0-127)
   uint8_t pending_scene_index;  // For pending change mode
   bool has_pending_change;
-  uint8_t num_scenes;           // Number of initialized scenes
+  
+  // Scene manifest
+  scene_manifest_entry_t* manifest;  // Dynamic array of scene metadata
+  uint16_t num_scenes;               // Total number of scenes in manifest
+  
   scene_mode_t mode;
   scene_change_mode_t change_mode;
   bool initialized;
@@ -110,11 +139,21 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
 esp_err_t scene_set_send_pc(uint8_t scene_index, bool send_pc);
 
-// Touchpad mapping configuration
+// Touchpad mapping configuration (legacy CC API - will be replaced by action API)
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, 
                                 uint8_t cc_number, uint8_t value, uint8_t channel);
 esp_err_t scene_enable_touchpad(uint8_t scene_index, uint8_t pad_index, bool enabled);
 touchpad_mapping_t* scene_get_touchpad_mapping(uint8_t scene_index, uint8_t pad_index);
+
+// Action-based assignment API
+esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, const action_t* action);
+esp_err_t scene_assign_touchpad_chain(uint8_t scene_index, uint8_t pad_index, const action_chain_t* chain);
+esp_err_t scene_assign_button_left(uint8_t scene_index, const action_chain_t* chain);
+esp_err_t scene_assign_button_right(uint8_t scene_index, const action_chain_t* chain);
+esp_err_t scene_assign_button_both(uint8_t scene_index, const action_chain_t* chain);
+action_chain_t* scene_get_button_left(uint8_t scene_index);
+action_chain_t* scene_get_button_right(uint8_t scene_index);
+action_chain_t* scene_get_button_both(uint8_t scene_index);
 
 // Pending change mode
 uint8_t scene_get_pending_index(void);
@@ -128,9 +167,20 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed);
 // Utility functions
 uint8_t scene_get_effective_channel(const touchpad_mapping_t* mapping, const scene_t* scene);
 
-// Save/load scene configuration to/from NVS
+// Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);
 esp_err_t scene_load_config(void);
+
+// Scene storage (flash-based)
+esp_err_t scene_load_from_flash(uint8_t scene_index);
+esp_err_t scene_save_to_flash(uint8_t scene_index);
+esp_err_t scene_load_manifest(void);
+esp_err_t scene_save_manifest(void);
+esp_err_t scene_create_new(const char* name);
+esp_err_t scene_delete(uint8_t scene_index);
+esp_err_t scene_duplicate(uint8_t source_index, const char* new_name);
+esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index);
+uint16_t scene_get_count(void);
 
 #endif // SCENE_H
 

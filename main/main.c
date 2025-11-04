@@ -46,6 +46,7 @@
 #include "tinyusb_init.h"
 #include "device_config.h"
 #include "console_repl.h"
+#include "action.h"
 
 #define TAG "MAIN"
 
@@ -59,6 +60,7 @@ void app_main(void) {
   event_bus_init();
   firmware_update_init();
   device_config_init();
+  action_init();
   usb_mode_manager_init();
   tinyusb_init_and_start();
   buttons_init(false);
