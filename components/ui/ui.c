@@ -193,13 +193,13 @@ static void deferred_module_teardown_cb(lv_timer_t *timer) {
   lv_timer_del(timer);
 }
 
-void ui_release_canvas_buffer(void) {
+bool ui_release_canvas_buffer(void) {
   ESP_LOGD(TAG, "Releasing UI canvas buffer (32KB)...");
   
   // Guard against multiple releases
   if (g_teardown_in_progress) {
     ESP_LOGW(TAG, "Teardown already in progress, ignoring release request");
-    return;
+    return false;
   }
   
   // Check current memory state
@@ -208,11 +208,21 @@ void ui_release_canvas_buffer(void) {
   ESP_LOGI(TAG, "LVGL memory at start of release - used: %d, free: %d, frag: %d%%", 
     mon_initial.total_size - mon_initial.free_size, mon_initial.free_size, mon_initial.frag_pct);
   
+  // If memory is critically low or badly fragmented, we may have a leak
+  // Force clear the flag in case it got stuck
+  if (mon_initial.free_size < 1024 && mon_initial.frag_pct > 40) {
+    ESP_LOGW(TAG, "Critically low memory detected - potential leak or stuck teardown");
+    ESP_LOGW(TAG, "Force clearing teardown flag and attempting garbage collection");
+    g_teardown_in_progress = false;
+    lv_obj_clean(lv_scr_act());  // Try to clean up any orphaned objects
+  }
+  
   // Check if we have enough memory to create a timer
   if (mon_initial.free_size < 512) {
     ESP_LOGE(TAG, "Not enough LVGL memory to create teardown timer (%d bytes free), aborting", 
       mon_initial.free_size);
-    return;
+    g_teardown_in_progress = false;  // Clear flag to allow retry
+    return false;
   }
   
   // Pause the refresh timer to prevent new render cycles
@@ -226,13 +236,15 @@ void ui_release_canvas_buffer(void) {
     ESP_LOGE(TAG, "Failed to create teardown timer (out of memory), resuming refresh timer");
     // Resume refresh timer to prevent UI freeze
     if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
-    return;
+    g_teardown_in_progress = false;  // Clear flag to allow retry
+    return false;
   }
   
   lv_timer_set_repeat_count(teardown_timer, 1);
   
   // Note: Canvas is hidden in the deferred callback, not here
   // Note: Buffer is freed in the deferred callback, not here
+  return true;
 }
 
 // Deferred callback to recreate module widgets

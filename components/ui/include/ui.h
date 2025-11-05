@@ -67,7 +67,8 @@ void ui_graphics_suspend(void);
 void ui_graphics_resume(void);
 
 // Canvas buffer management for memory optimization
-void ui_release_canvas_buffer(void);
+// Returns true if release was initiated successfully, false if aborted
+bool ui_release_canvas_buffer(void);
 void ui_reclaim_canvas_buffer(void);
 
 
