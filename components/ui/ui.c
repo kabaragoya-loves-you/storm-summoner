@@ -163,8 +163,14 @@ static void deferred_module_teardown_cb(lv_timer_t *timer) {
     lv_obj_t *default_screen = lv_obj_get_parent(canvas);
     if (default_screen && lv_obj_is_valid(default_screen)) lv_scr_load(default_screen);
     
+    // Let LVGL process the screen switch
+    lv_refr_now(NULL);
+    
     current_draw_module->teardown_func();
     ESP_LOGD(TAG, "Tore down module '%s' to reduce fragmentation", current_draw_module->name);
+    
+    // Force LVGL to process any pending deletions
+    lv_refr_now(NULL);
   }
   
   // Now free the canvas buffer after widgets are safely torn down
