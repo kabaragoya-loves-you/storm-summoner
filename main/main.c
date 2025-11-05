@@ -125,8 +125,8 @@ void app_main(void) {
   
   // dac_debug_readback();
   
-  // sensor_init(false);
-  // als_enable();
+  sensor_init(false);
+  als_enable();
   // proximity_set_calibration(1, 500);
   // proximity_set_deadzone(1);
   // proximity_set_hysteresis_enabled(true);
@@ -137,7 +137,7 @@ void app_main(void) {
   // proximity_set_theremin_base_note(60);  // Middle C
   // proximity_set_theremin_range(12);      // 1 octave
   // proximity_set_theremin_velocity(100);
-  // ps_enable();
+  ps_enable();
 
   transport_init();
   tempo_init();
