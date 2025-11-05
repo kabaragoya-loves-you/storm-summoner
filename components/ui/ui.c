@@ -11,6 +11,7 @@ static lv_timer_t *g_ui_refresh_timer = NULL;
 static ui_draw_module_t* current_draw_module = NULL;
 
 static void *display_buf = NULL;
+static bool g_teardown_in_progress = false;
 
 #define TAG "UI"
 
@@ -144,6 +145,15 @@ void ui_graphics_resume(void) {
 
 // Deferred callback to tear down current module and free canvas buffer
 static void deferred_module_teardown_cb(lv_timer_t *timer) {
+  // Guard against multiple teardowns
+  if (g_teardown_in_progress) {
+    ESP_LOGW(TAG, "Teardown already in progress, skipping");
+    lv_timer_del(timer);
+    return;
+  }
+  
+  g_teardown_in_progress = true;
+  
   // First, hide the canvas to stop any further rendering
   if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
   
@@ -179,6 +189,12 @@ static void deferred_module_teardown_cb(lv_timer_t *timer) {
 
 void ui_release_canvas_buffer(void) {
   ESP_LOGD(TAG, "Releasing UI canvas buffer (32KB)...");
+  
+  // Guard against multiple releases
+  if (g_teardown_in_progress) {
+    ESP_LOGW(TAG, "Teardown already in progress, ignoring release request");
+    return;
+  }
   
   // Check current memory state
   lv_mem_monitor_t mon_initial;
@@ -218,6 +234,7 @@ void ui_reclaim_canvas_buffer(void) {
     display_buf = lv_malloc(buf_size);
     if (!display_buf) {
       ESP_LOGE(TAG, "Failed to reallocate display buffer!");
+      g_teardown_in_progress = false;  // Clear flag on error
       return;
     }
     memset(display_buf, 0, buf_size);
@@ -233,7 +250,9 @@ void ui_reclaim_canvas_buffer(void) {
   
   // Resume the refresh timer
   if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
-
+  
+  // Clear teardown flag before recreating widgets
+  g_teardown_in_progress = false;
   
   // Defer widget recreation to LVGL context with a delay to allow memory to settle
   lv_timer_t *recreate_timer = lv_timer_create(deferred_module_recreate_cb, 50, NULL);
