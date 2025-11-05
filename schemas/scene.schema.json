@@ -50,9 +50,85 @@
     },
     "button_both": {
       "$ref": "#/definitions/action_chain"
+    },
+    "expression": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Expression pedal mapping"
+    },
+    "cv": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "CV input mapping"
+    },
+    "proximity": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Proximity sensor mapping"
+    },
+    "als": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Ambient light sensor mapping"
     }
   },
   "definitions": {
+    "continuous_mapping": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "cc_number": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "curve_type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Curve type (0=linear, 1=exp, 2=log, 3=s-curve, etc.)"
+        },
+        "curve_slope": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Curve intensity (0=gentle, 1=medium, 2=steep)"
+        },
+        "polarity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Polarity (0=unipolar, 1=bipolar, 2=inverted)"
+        },
+        "min_value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 0
+        },
+        "max_value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 127
+        },
+        "use_idle_value": {
+          "type": "boolean",
+          "default": false
+        },
+        "idle_value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 64
+        },
+        "idle_timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 10000,
+          "default": 1000
+        }
+      }
+    },
     "touchpad_mapping": {
       "type": "object",
       "required": ["enabled", "actions"],

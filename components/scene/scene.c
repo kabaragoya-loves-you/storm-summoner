@@ -108,7 +108,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->bump.actions[0] = action_create_tap_tempo();  // Default: tap tempo on bump
   
   // Initialize continuous input mappings with defaults
-  scene->expression = continuous_mapping_create(11);   // CC11 = Expression
+  scene->expression = continuous_mapping_create(4);    // CC4 = Foot Controller (expression pedal)
   scene->cv = continuous_mapping_create(16);           // CC16 = General Purpose 1
   scene->proximity = continuous_mapping_create(17);    // CC17 = General Purpose 2
   scene->proximity.use_idle_value = true;              // Proximity returns to center

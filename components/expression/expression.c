@@ -53,7 +53,6 @@ static uint8_t s_midi_value = 0;
 static int16_t s_min_value = DEFAULT_MIN_VALUE;
 static int16_t s_max_value = DEFAULT_MAX_VALUE;
 static uint8_t s_deadzone = DEFAULT_DEADZONE;
-static uint8_t s_cc_number = DEFAULT_CC_NUMBER;
 static expression_mode_t s_mode = EXPRESSION_MODE_PEDAL;
 static expression_polarity_t s_polarity = EXPRESSION_POLARITY_TIP_ADC;
 static uint8_t s_sustain_cc = DEFAULT_SUSTAIN_CC;
@@ -215,7 +214,7 @@ static void expression_task(void *pvParameters) {
               .data.expression = {
                 .raw_value = raw,
                 .midi_value = s_midi_value,
-                .cc_number = s_cc_number
+                .cc_number = 0  // Legacy field, not used
               }
             };
             
@@ -360,11 +359,7 @@ void expression_init(bool enable_logging) {
     app_settings_save_u32(NVS_KEY_EXP_DEADZONE, s_deadzone);
   }
   
-  if (app_settings_load_u32(NVS_KEY_EXP_CC, &stored_val) == APP_SETTINGS_OK) {
-    s_cc_number = (uint8_t)stored_val;
-  } else {
-    app_settings_save_u32(NVS_KEY_EXP_CC, s_cc_number);
-  }
+  // CC number removed - now controlled by scene mapping
   
   // Load mode
   if (app_settings_load_u8(NVS_KEY_EXP_MODE, &stored_u8) == APP_SETTINGS_OK) {
@@ -536,13 +531,14 @@ bool expression_is_connected(void) {
   return gpio_get_level(PIN_EXP_SW) == 1;
 }
 
+// CC number functions removed - use scene mapping instead
 void expression_set_cc_number(uint8_t cc) {
-  s_cc_number = cc;
-  app_settings_save_u32(NVS_KEY_EXP_CC, cc);
+  ESP_LOGW(TAG, "expression_set_cc_number deprecated - use scene mapping");
 }
 
 uint8_t expression_get_cc_number(void) {
-  return s_cc_number;
+  ESP_LOGW(TAG, "expression_get_cc_number deprecated - use scene mapping");
+  return 0;  // Legacy
 }
 
 esp_err_t expression_set_mode(expression_mode_t mode) {

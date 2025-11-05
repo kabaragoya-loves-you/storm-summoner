@@ -1,9 +1,6 @@
 #include "continuous_mapping.h"
-#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-static const char* TAG = "continuous_map";
 
 uint8_t apply_polarity(uint8_t input, polarity_t polarity) {
   switch (polarity) {

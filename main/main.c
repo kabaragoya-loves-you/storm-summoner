@@ -10,7 +10,6 @@
 #include "midi_in.h"
 #include "midi_in_debug.h"
 #include "midi_sensor_event_handler.h"
-#include "midi_expression_handler.h"
 #include "midi_passthrough.h"
 #include "tempo.h"
 #include "elite.h"
@@ -38,6 +37,7 @@
 #include "i2c_common.h"
 #include "switch.h"
 #include "midi_scene_handler.h"
+#include "midi_expression_scene_handler.h"
 #include "scene_test.h"
 #include "buttons.h"
 #include "assets_manager.h"
@@ -47,6 +47,7 @@
 #include "device_config.h"
 #include "console_repl.h"
 #include "action.h"
+#include "curve.h"
 
 #define TAG "MAIN"
 
@@ -61,6 +62,7 @@ void app_main(void) {
   firmware_update_init();
   device_config_init();
   action_init();
+  curve_init();
   usb_mode_manager_init();
   tinyusb_init_and_start();
   buttons_init(false);
@@ -83,8 +85,8 @@ void app_main(void) {
   midi_in_init();
   midi_in_debug_enable();  // Enable MIDI IN debug logging
   midi_sensor_event_handler_init();
-  midi_expression_handler_init();
   midi_scene_handler_init();
+  midi_expression_scene_handler_init();
   midi_passthrough_init();
   
   switch_init();

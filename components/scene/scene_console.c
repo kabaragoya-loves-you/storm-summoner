@@ -14,7 +14,8 @@ static const char* TAG = "scene_console";
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "mode", 
-  "change", "confirm", "cancel", "channel", "pad", "pc"
+  "change", "confirm", "cancel", "channel", "pad", "pc",
+  "expr_cc", "expr_curve", "expr_polarity", "expr_enable"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -55,6 +56,45 @@ static void cmd_scene_info(void) {
   
   if (scene_has_pending_change()) {
     ESP_LOGI(TAG, "PENDING CHANGE to scene %d", scene_get_pending_index() + 1);
+  }
+  
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Continuous inputs:");
+  if (scene->expression.enabled) {
+    ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
+             scene->expression.cc_number,
+             curve_type_to_string(scene->expression.curve.type),
+             scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
+             (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+  } else {
+    ESP_LOGI(TAG, "  Expression: disabled");
+  }
+  
+  if (scene->cv.enabled) {
+    ESP_LOGI(TAG, "  CV: CC%d, %s curve, %s", 
+             scene->cv.cc_number,
+             curve_type_to_string(scene->cv.curve.type),
+             scene->cv.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
+             (scene->cv.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+  } else {
+    ESP_LOGI(TAG, "  CV: disabled");
+  }
+  
+  if (scene->proximity.enabled) {
+    ESP_LOGI(TAG, "  Proximity: CC%d, %s curve, bipolar%s", 
+             scene->proximity.cc_number,
+             curve_type_to_string(scene->proximity.curve.type),
+             scene->proximity.use_idle_value ? " (idle timeout)" : "");
+  } else {
+    ESP_LOGI(TAG, "  Proximity: disabled");
+  }
+  
+  if (scene->als.enabled) {
+    ESP_LOGI(TAG, "  ALS: CC%d, %s curve", 
+             scene->als.cc_number,
+             curve_type_to_string(scene->als.curve.type));
+  } else {
+    ESP_LOGI(TAG, "  ALS: disabled");
   }
   
   ESP_LOGI(TAG, "");
@@ -330,6 +370,145 @@ static int cmd_pc(int argc, char **argv) {
   return 0;
 }
 
+// Command: expr_cc - Set expression CC number
+static struct {
+  struct arg_int *cc_num;
+  struct arg_end *end;
+} expr_cc_args;
+
+static int cmd_expr_cc(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_cc_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_cc_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int cc = expr_cc_args.cc_num->ival[0];
+  if (cc < 0 || cc > 127) {
+    ESP_LOGE(TAG, "CC must be 0-127");
+    return 1;
+  }
+  
+  scene->expression.cc_number = cc;
+  
+  ESP_LOGI(TAG, "Expression CC: %d", cc);
+  
+  // Note: Scene modifications are tracked automatically
+  // The scene will be marked dirty and saved when needed
+  return 0;
+}
+
+// Command: expr_curve - Set expression curve
+static struct {
+  struct arg_str *curve_name;
+  struct arg_end *end;
+} expr_curve_args;
+
+static int cmd_expr_curve(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_curve_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_curve_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* curve = expr_curve_args.curve_name->sval[0];
+  
+  if (strcmp(curve, "linear") == 0) {
+    scene->expression.curve = curve_create(CURVE_LINEAR);
+  } else if (strcmp(curve, "exp") == 0 || strcmp(curve, "exponential") == 0) {
+    scene->expression.curve = curve_create(CURVE_EXPONENTIAL);
+  } else if (strcmp(curve, "log") == 0 || strcmp(curve, "logarithmic") == 0) {
+    scene->expression.curve = curve_create(CURVE_LOGARITHMIC);
+  } else if (strcmp(curve, "s") == 0 || strcmp(curve, "s_curve") == 0) {
+    scene->expression.curve = curve_create(CURVE_S_CURVE);
+  } else if (strcmp(curve, "quad") == 0 || strcmp(curve, "quadratic") == 0) {
+    scene->expression.curve = curve_create(CURVE_QUADRATIC);
+  } else if (strcmp(curve, "sqrt") == 0) {
+    scene->expression.curve = curve_create(CURVE_SQUARE_ROOT);
+  } else if (strcmp(curve, "sine") == 0) {
+    scene->expression.curve = curve_create(CURVE_SINE);
+  } else {
+    ESP_LOGE(TAG, "Unknown curve");
+    ESP_LOGE(TAG, "Available: linear, exp, log, s_curve, quad, sqrt, sine");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Expression curve: %s", curve_type_to_string(scene->expression.curve.type));
+  return 0;
+}
+
+// Command: expr_polarity - Set expression polarity
+static struct {
+  struct arg_str *polarity_name;
+  struct arg_end *end;
+} expr_polarity_args;
+
+static int cmd_expr_polarity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_polarity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_polarity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* pol = expr_polarity_args.polarity_name->sval[0];
+  
+  if (strcmp(pol, "unipolar") == 0 || strcmp(pol, "uni") == 0) {
+    scene->expression.polarity = POLARITY_UNIPOLAR;
+  } else if (strcmp(pol, "bipolar") == 0 || strcmp(pol, "bi") == 0) {
+    scene->expression.polarity = POLARITY_BIPOLAR;
+  } else if (strcmp(pol, "inverted") == 0 || strcmp(pol, "inv") == 0) {
+    scene->expression.polarity = POLARITY_INVERTED;
+  } else {
+    ESP_LOGE(TAG, "Unknown polarity (use: unipolar, bipolar, inverted)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Expression polarity: %s", pol);
+  return 0;
+}
+
+// Command: expr_enable - Enable/disable expression
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} expr_enable_args;
+
+static int cmd_expr_enable(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_enable_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_enable_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* state_str = expr_enable_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  scene->expression.enabled = enable;
+  
+  // If enabling and range is invalid, set defaults
+  if (enable && scene->expression.max_value == 0) {
+    scene->expression.min_value = 0;
+    scene->expression.max_value = 127;
+    ESP_LOGI(TAG, "Initialized range to 0-127");
+  }
+  
+  ESP_LOGI(TAG, "Expression: %s", enable ? "enabled" : "disabled");
+  
+  return 0;
+}
+
 esp_err_t scene_console_init(void) {
   ESP_LOGI(TAG, "Registering scene commands");
   
@@ -470,6 +649,58 @@ esp_err_t scene_console_init(void) {
     .argtable = &pc_args
   };
   esp_console_cmd_register(&pc_cmd);
+  
+  // expr_cc command
+  expr_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
+  expr_cc_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_cc_cmd = {
+    .command = "expr_cc",
+    .help = "Set expression pedal CC number",
+    .hint = NULL,
+    .func = &cmd_expr_cc,
+    .argtable = &expr_cc_args
+  };
+  esp_console_cmd_register(&expr_cc_cmd);
+  
+  // expr_curve command
+  expr_curve_args.curve_name = arg_str1(NULL, NULL, "<curve>", "Curve type");
+  expr_curve_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_curve_cmd = {
+    .command = "expr_curve",
+    .help = "Set expression curve (linear/exp/log/s_curve/quad/sqrt/sine)",
+    .hint = NULL,
+    .func = &cmd_expr_curve,
+    .argtable = &expr_curve_args
+  };
+  esp_console_cmd_register(&expr_curve_cmd);
+  
+  // expr_polarity command
+  expr_polarity_args.polarity_name = arg_str1(NULL, NULL, "<polarity>", "Polarity type");
+  expr_polarity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_polarity_cmd = {
+    .command = "expr_polarity",
+    .help = "Set expression polarity (unipolar/bipolar/inverted)",
+    .hint = NULL,
+    .func = &cmd_expr_polarity,
+    .argtable = &expr_polarity_args
+  };
+  esp_console_cmd_register(&expr_polarity_cmd);
+  
+  // expr_enable command
+  expr_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  expr_enable_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_enable_cmd = {
+    .command = "expr_enable",
+    .help = "Enable/disable expression pedal routing",
+    .hint = NULL,
+    .func = &cmd_expr_enable,
+    .argtable = &expr_enable_args
+  };
+  esp_console_cmd_register(&expr_enable_cmd);
   
   return ESP_OK;
 }
