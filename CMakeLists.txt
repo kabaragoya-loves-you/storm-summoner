@@ -63,5 +63,6 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_firmware_update>"
     "$<TARGET_FILE:__idf_usb_mode>"
     "$<TARGET_FILE:__idf_event_bus>"
+    "$<TARGET_FILE:__idf_action>"
     "LINKER:--no-whole-archive"
 )

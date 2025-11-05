@@ -1,5 +1,6 @@
 #include "tempo.h"
 #include "transport.h"
+#include "led.h"
 #include "event_bus.h"
 #include "midi_messages.h"
 #include "app_settings.h"
@@ -465,6 +466,20 @@ void tempo_set_led_sync(bool enabled) {
   
   // Save to NVS
   app_settings_save_u8(NVS_KEY_LED_SYNC, enabled ? 1 : 0);
+  
+  // If enabling LED sync, stop flicker (will restore when disabled)
+  if (enabled) {
+    if (flicker_is_running()) {
+      flicker_stop();
+      ESP_LOGI(TAG, "Stopped flicker for tempo sync");
+    }
+  } else {
+    // If disabling and user had flicker preference enabled, restart it
+    if (led_get_flicker_preference()) {
+      flicker_start();
+      ESP_LOGI(TAG, "Restored flicker based on user preference");
+    }
+  }
   
   ESP_LOGI(TAG, "LED sync %s", enabled ? "enabled" : "disabled");
 }

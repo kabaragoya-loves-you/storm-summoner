@@ -45,4 +45,13 @@ bool transport_is_playing(void);
  */
 bool transport_is_recording(void);
 
+/**
+ * Transport control functions
+ */
+esp_err_t transport_play(void);
+esp_err_t transport_stop(void);
+esp_err_t transport_pause(void);
+esp_err_t transport_record(void);
+esp_err_t transport_toggle(void);  // Toggle between play and stop
+
 #endif /* _TRANSPORT_H */

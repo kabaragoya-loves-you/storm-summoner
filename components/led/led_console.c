@@ -8,7 +8,7 @@ static const char* TAG = "led_console";
 
 static const char* registered_commands[] = {
   "on", "off", "flash", "flicker_start", "flicker_stop", "enable", 
-  "mode", "sundial", "tempo_sync", "info"
+  "mode", "sundial", "info"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -96,15 +96,14 @@ static int cmd_info(int argc, char **argv) {
   bool enabled = led_get_enabled();
   led_mode_t mode = led_get_mode();
   bool sundial = led_get_sundial_mode();
-  bool tempo_sync = led_tempo_sync_is_enabled();
   bool flicker_running = flicker_is_running();
   
   ESP_LOGI(TAG, "====== LED STATUS ======");
   ESP_LOGI(TAG, "Enabled: %s", enabled ? "yes" : "no");
   ESP_LOGI(TAG, "Mode: %s", mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime");
   ESP_LOGI(TAG, "Sundial mode: %s", sundial ? "yes" : "no");
-  ESP_LOGI(TAG, "Tempo sync: %s", tempo_sync ? "yes" : "no");
   ESP_LOGI(TAG, "Flicker: %s", flicker_running ? "running" : "stopped");
+  ESP_LOGI(TAG, "Note: Tempo sync controlled via 'tempo' context");
   ESP_LOGI(TAG, "========================");
   
   return 0;
@@ -157,32 +156,6 @@ static int cmd_sundial(int argc, char **argv) {
   
   led_set_sundial_mode(enable);
   ESP_LOGI(TAG, "Sundial mode: %s (auto day/night based on ambient light)", enable ? "enabled" : "disabled");
-  
-  return 0;
-}
-
-// Command: tempo_sync
-static struct {
-  struct arg_str *state;
-  struct arg_end *end;
-} tempo_sync_args;
-
-static int cmd_tempo_sync(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &tempo_sync_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, tempo_sync_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* state_str = tempo_sync_args.state->sval[0];
-  
-  if (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0) {
-    led_tempo_sync_enable();
-    ESP_LOGI(TAG, "Tempo sync enabled (flashes on quarter notes)");
-  } else {
-    led_tempo_sync_disable();
-    ESP_LOGI(TAG, "Tempo sync disabled");
-  }
   
   return 0;
 }
@@ -286,19 +259,6 @@ esp_err_t led_console_init(void) {
     .argtable = &sundial_args
   };
   esp_console_cmd_register(&sundial_cmd);
-  
-  // tempo_sync command
-  tempo_sync_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
-  tempo_sync_args.end = arg_end(2);
-  
-  const esp_console_cmd_t tempo_sync_cmd = {
-    .command = "tempo_sync",
-    .help = "Sync LED to tempo (flash on beats)",
-    .hint = NULL,
-    .func = &cmd_tempo_sync,
-    .argtable = &tempo_sync_args
-  };
-  esp_console_cmd_register(&tempo_sync_cmd);
   
   return ESP_OK;
 }

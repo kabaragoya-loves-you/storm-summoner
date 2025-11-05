@@ -207,12 +207,19 @@ void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
   
   // Release UI canvas buffer to free up memory for screensaver
   // This is safe here because we're in the event bus task, not timer service
-  ui_release_canvas_buffer();
+  bool release_ok = ui_release_canvas_buffer();
+  if (!release_ok) {
+    ESP_LOGE(TAG, "Failed to release UI canvas buffer (insufficient memory), aborting screensaver");
+    return;
+  }
   
   // Create a one-shot LVGL timer to start the screensaver in the LVGL context
   lv_timer_t *deferred_timer = lv_timer_create(start_screensaver_deferred, 100, NULL);
   if (deferred_timer) {
     lv_timer_set_repeat_count(deferred_timer, 1);
+  } else {
+    ESP_LOGE(TAG, "Failed to create screensaver start timer, aborting");
+    return;
   }
   
   g_screensaver_active = true;

@@ -152,3 +152,56 @@ bool transport_is_playing(void) {
 bool transport_is_recording(void) {
   return (transport_get_state() == TRANSPORT_RECORDING);
 }
+
+// Transport control functions
+esp_err_t transport_play(void) {
+  event_t event = {
+    .type = EVENT_TRANSPORT_START,
+    .priority = EVENT_PRIORITY_HIGH,
+    .timestamp = event_bus_get_current_timestamp()
+  };
+  ESP_LOGI(TAG, "Play");
+  return event_bus_post(&event);
+}
+
+esp_err_t transport_stop(void) {
+  event_t event = {
+    .type = EVENT_TRANSPORT_STOP,
+    .priority = EVENT_PRIORITY_HIGH,
+    .timestamp = event_bus_get_current_timestamp()
+  };
+  ESP_LOGI(TAG, "Stop");
+  return event_bus_post(&event);
+}
+
+esp_err_t transport_pause(void) {
+  event_t event = {
+    .type = EVENT_TRANSPORT_PAUSE,
+    .priority = EVENT_PRIORITY_HIGH,
+    .timestamp = event_bus_get_current_timestamp()
+  };
+  ESP_LOGI(TAG, "Pause");
+  return event_bus_post(&event);
+}
+
+esp_err_t transport_record(void) {
+  event_t event = {
+    .type = EVENT_TRANSPORT_RECORD,
+    .priority = EVENT_PRIORITY_HIGH,
+    .timestamp = event_bus_get_current_timestamp()
+  };
+  ESP_LOGI(TAG, "Record");
+  return event_bus_post(&event);
+}
+
+esp_err_t transport_toggle(void) {
+  transport_state_t current = transport_get_state();
+  
+  if (current == TRANSPORT_PLAYING || current == TRANSPORT_RECORDING) {
+    ESP_LOGI(TAG, "Toggle: Stopping");
+    return transport_stop();
+  } else {
+    ESP_LOGI(TAG, "Toggle: Playing");
+    return transport_play();
+  }
+}

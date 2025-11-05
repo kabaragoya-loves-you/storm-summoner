@@ -1,6 +1,7 @@
 #include "led.h"
 #include "io.h"
 #include "event_bus.h"
+#include "tempo.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -18,14 +19,14 @@ void led_event_handler_init(void);
 #define LED_ENABLED_KEY "led_enabled"
 #define LED_MODE_KEY "led_mode"
 #define LED_SUNDIAL_KEY "led_sundial"
-#define LED_TEMPO_SYNC_KEY "led_tempo"
+#define LED_FLICKER_KEY "led_flicker"
 
 static TaskHandle_t flicker_task_handle = NULL;
 static bool led_enabled = true;
 static bool solid_on_mode = false;
 static led_mode_t led_mode = LED_MODE_DAYLIGHT;
 static bool sundial_mode = true;   // Default: sundial on for magical first experience
-static bool tempo_sync_enabled = false;
+static bool flicker_preference = true;  // User's flicker preference (persisted)
 
 // Sundial mode thresholds (ALS CC value 0-127)
 #define ALS_DARK_THRESHOLD 32    // Below this = nighttime
@@ -59,6 +60,7 @@ static int get_gpio_level_for_on(void) {
 static int get_gpio_level_for_off(void) {
   return (led_mode == LED_MODE_DAYLIGHT) ? 0 : 1;  // Nighttime inverts
 }
+
 
 void led_set_on(void) {
   if (!led_enabled) return;
@@ -155,19 +157,18 @@ void led_init(void) {
     sundial_mode = saved_sundial;
   }
   
-  bool saved_tempo_sync;
-  if (app_settings_load_bool(LED_TEMPO_SYNC_KEY, &saved_tempo_sync) == ESP_OK) {
-    tempo_sync_enabled = saved_tempo_sync;
+  bool saved_flicker;
+  if (app_settings_load_bool(LED_FLICKER_KEY, &saved_flicker) == ESP_OK) {
+    flicker_preference = saved_flicker;
   }
   
   // Set initial LED state based on mode
   gpio_set_level(PIN_LED, (led_mode == LED_MODE_NIGHTTIME && led_enabled) ? 1 : 0);
 
-  ESP_LOGI(TAG, "UV LED initialized: enabled=%s, mode=%s, sundial=%s, tempo_sync=%s", 
+  ESP_LOGI(TAG, "UV LED initialized: enabled=%s, mode=%s, sundial=%s", 
            led_enabled ? "yes" : "no",
            led_mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime",
-           sundial_mode ? "yes" : "no",
-           tempo_sync_enabled ? "yes" : "no");
+           sundial_mode ? "yes" : "no");
   
   if (sundial_mode) {
     ESP_LOGI(TAG, "Sundial mode enabled - will auto-switch based on ambient light");
@@ -176,16 +177,11 @@ void led_init(void) {
   // Subscribe to ALS events for sundial mode
   event_bus_subscribe(EVENT_SENSOR_ALS, als_event_handler, NULL);
   
-  // Initialize event handler
+  // Initialize event handler (handles EVENT_LED_FLASH_REQUEST from tempo)
   led_event_handler_init();
 }
 
 void flicker_start(void) {
-  if (tempo_sync_enabled) {
-    ESP_LOGW(TAG, "Cannot start flicker while tempo sync is active");
-    return;
-  }
-  
   if (flicker_task_handle != NULL) {
     vTaskResume(flicker_task_handle);
     ESP_LOGI(TAG, "Flicker task resumed");
@@ -193,19 +189,33 @@ void flicker_start(void) {
     xTaskCreate(flicker_task, "flicker", 2048, NULL, TASK_PRIORITY_LED, &flicker_task_handle);
     ESP_LOGI(TAG, "Flicker task started");
   }
+  
+  // Save preference
+  flicker_preference = true;
+  app_settings_save_bool(LED_FLICKER_KEY, true);
 }
 
 void flicker_stop(void) {
   if (flicker_task_handle) {
     vTaskSuspend(flicker_task_handle);
     // Return LED to default state for current mode
-    gpio_set_level(PIN_LED, (led_mode == LED_MODE_NIGHTTIME && led_enabled) ? 1 : 0);
+    if (!solid_on_mode) {
+      gpio_set_level(PIN_LED, (led_mode == LED_MODE_NIGHTTIME && led_enabled) ? 1 : 0);
+    }
     ESP_LOGI(TAG, "Flicker task suspended");
   }
+  
+  // Save preference
+  flicker_preference = false;
+  app_settings_save_bool(LED_FLICKER_KEY, false);
 }
 
 bool flicker_is_running(void) {
   return (flicker_task_handle != NULL && eTaskGetState(flicker_task_handle) != eSuspended);
+}
+
+bool led_get_flicker_preference(void) {
+  return flicker_preference;
 }
 
 void led_set_enabled(bool enabled) {
@@ -259,34 +269,4 @@ esp_err_t led_set_sundial_mode(bool enabled) {
 
 bool led_get_sundial_mode(void) {
   return sundial_mode;
-}
-
-esp_err_t led_tempo_sync_enable(void) {
-  if (flicker_is_running()) {
-    flicker_stop();
-    ESP_LOGI(TAG, "Stopped flicker to enable tempo sync");
-  }
-  
-  tempo_sync_enabled = true;
-  app_settings_save_bool(LED_TEMPO_SYNC_KEY, true);
-  
-  ESP_LOGI(TAG, "LED tempo sync enabled");
-  // TODO: Subscribe to EVENT_BEAT to flash on tempo
-  return ESP_OK;
-}
-
-esp_err_t led_tempo_sync_disable(void) {
-  tempo_sync_enabled = false;
-  app_settings_save_bool(LED_TEMPO_SYNC_KEY, false);
-  
-  // Return LED to default state
-  gpio_set_level(PIN_LED, (led_mode == LED_MODE_NIGHTTIME && led_enabled) ? 1 : 0);
-  
-  ESP_LOGI(TAG, "LED tempo sync disabled");
-  // TODO: Unsubscribe from EVENT_BEAT
-  return ESP_OK;
-}
-
-bool led_tempo_sync_is_enabled(void) {
-  return tempo_sync_enabled;
 }

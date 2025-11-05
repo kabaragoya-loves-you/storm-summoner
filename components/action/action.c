@@ -120,16 +120,25 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       if (is_press) scene_set_current(action->params.target.number);
       break;
       
-    // Transport (functions not yet implemented in transport component)
+    // Transport
     case ACTION_TRANSPORT_PLAY:
+      if (is_press) transport_play();
+      break;
+      
     case ACTION_TRANSPORT_STOP:
+      if (is_press) transport_stop();
+      break;
+      
     case ACTION_TRANSPORT_PAUSE:
+      if (is_press) transport_pause();
+      break;
+      
     case ACTION_TRANSPORT_RECORD:
+      if (is_press) transport_record();
+      break;
+      
     case ACTION_TRANSPORT_TOGGLE:
-      if (is_press) {
-        ESP_LOGW(TAG, "Transport control not yet implemented");
-        // TODO: Add transport control functions to transport component
-      }
+      if (is_press) transport_toggle();
       break;
       
     // Tempo

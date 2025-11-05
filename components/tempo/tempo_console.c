@@ -8,7 +8,7 @@
 static const char* TAG = "tempo_console";
 
 static const char* registered_commands[] = {
-  "info", "bpm", "source", "tap", "start", "stop"
+  "info", "bpm", "source", "tap", "start", "stop", "led_sync"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -116,6 +116,28 @@ static int cmd_stop(int argc, char **argv) {
   return 0;
 }
 
+// Command: led_sync
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} led_sync_args;
+
+static int cmd_led_sync(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &led_sync_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, led_sync_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* state_str = led_sync_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  tempo_set_led_sync(enable);
+  ESP_LOGI(TAG, "LED sync: %s", enable ? "enabled (flash on beats)" : "disabled");
+  
+  return 0;
+}
+
 esp_err_t tempo_console_init(void) {
   ESP_LOGI(TAG, "Registering tempo commands");
   
@@ -180,6 +202,19 @@ esp_err_t tempo_console_init(void) {
     .func = &cmd_stop,
   };
   esp_console_cmd_register(&stop_cmd);
+  
+  // led_sync command
+  led_sync_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  led_sync_args.end = arg_end(2);
+  
+  const esp_console_cmd_t led_sync_cmd = {
+    .command = "led_sync",
+    .help = "Sync LED to tempo (flash on beats)",
+    .hint = NULL,
+    .func = &cmd_led_sync,
+    .argtable = &led_sync_args
+  };
+  esp_console_cmd_register(&led_sync_cmd);
   
   return ESP_OK;
 }

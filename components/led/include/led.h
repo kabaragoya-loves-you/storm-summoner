@@ -17,11 +17,7 @@ void led_init(void);
 void flicker_start(void);
 void flicker_stop(void);
 bool flicker_is_running(void);
-
-// Tempo sync mode (flash on beats)
-esp_err_t led_tempo_sync_enable(void);
-esp_err_t led_tempo_sync_disable(void);
-bool led_tempo_sync_is_enabled(void);
+bool led_get_flicker_preference(void);  // Check if user wants flicker (persisted)
 
 // Direct LED control
 void flash_led(uint32_t duration);  // Flash for duration (non-blocking)
