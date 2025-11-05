@@ -73,7 +73,6 @@ void app_main(void) {
   // force_touch_calibration();
   
   bump_init(false);
-  // bump_set_sensitivity_level(5);
   haptic_init();
   led_init();
   flicker_start();
@@ -87,18 +86,11 @@ void app_main(void) {
   midi_expression_handler_init();
   midi_scene_handler_init();
   midi_passthrough_init();
-  // midi_passthrough_usb_to_uart_enable(true);
-  // midi_passthrough_uart_to_usb_enable(true); 
   
   switch_init();
   cv_init(false);
   
   expression_init(false);
-  // expression_set_polarity(EXPRESSION_POLARITY_TIP_ADC);
-  // expression_set_range(100, 3500);
-  // expression_set_deadzone(1);
-  // expression_auto_calibrate(10000);
-  // expression_set_mode(EXPRESSION_MODE_PEDAL);
   expression_enable();
   
   input_manager_init();
@@ -107,36 +99,14 @@ void app_main(void) {
   dac_calibrate_vref();
   
   input_set_mode(INPUT_MODE_CV);
-  cv_set_mode(CV_MODE_LINEAR);               // Linear voltage to MIDI mapping
+  cv_set_mode(CV_MODE_LINEAR);
   // input_set_mode(INPUT_MODE_CLOCK_SYNC);  // Clock pulse detection
   // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
-  // cv_set_calibration(CV_RANGE_3V3, 95, 3440);
-  // cv_set_calibration(CV_RANGE_5V, 90, 3430);
-  // cv_set_calibration(CV_RANGE_10V, 130, 3430);
-  // cv_set_calibration(CV_RANGE_BIPOLAR_5V, 100, 3300);
-  // cv_set_calibration(CV_RANGE_BIPOLAR_10V, 80, 3260);
-  // cv_set_deadzone(1);
-  // cv_set_range(CV_RANGE_3V3);
-  // cv_set_range(CV_RANGE_5V);
   cv_set_range(CV_RANGE_10V);
-  // cv_set_range(CV_RANGE_BIPOLAR_5V);
-  // cv_set_range(CV_RANGE_BIPOLAR_10V);
-  // cv_auto_calibrate(CV_RANGE_5V, 10000);
-  
-  // dac_debug_readback();
+
   
   sensor_init(false);
   als_enable();
-  // proximity_set_calibration(1, 500);
-  // proximity_set_deadzone(1);
-  // proximity_set_hysteresis_enabled(true);
-  // proximity_set_timeout(PROXIMITY_TIMEOUT_FAST);
-  // proximity_set_return_speed(PROXIMITY_RETURN_FAST);
-  // proximity_set_mode(PROXIMITY_MODE_CC);
-  // proximity_set_mode(PROXIMITY_MODE_THEREMIN);
-  // proximity_set_theremin_base_note(60);  // Middle C
-  // proximity_set_theremin_range(12);      // 1 octave
-  // proximity_set_theremin_velocity(100);
   ps_enable();
 
   transport_init();
@@ -146,9 +116,7 @@ void app_main(void) {
 
   screensaver_init();
   screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
-  // screensaver_set_delay(600);
 
-  // Initialize console REPL for interactive commands
   console_repl_init();
 
   #if ENABLE_PERFORMANCE_MONITORING

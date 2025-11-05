@@ -65,6 +65,10 @@ time_signature_t tempo_get_time_signature(void);
 // LED sync control
 void tempo_set_led_sync(bool enabled);
 bool tempo_get_led_sync(void);
+void tempo_set_led_emphasize_downbeat(bool emphasize);
+bool tempo_get_led_emphasize_downbeat(void);
+void tempo_set_led_flash_ratio(uint8_t ratio);
+uint8_t tempo_get_led_flash_ratio(void);
 
 // Clock standard control
 void tempo_set_clock_standard(tempo_clock_standard_t standard);

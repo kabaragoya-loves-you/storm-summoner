@@ -15,6 +15,8 @@
 #define TAG "TEMPO"
 #define NVS_KEY_BPM "tempo_bpm"
 #define NVS_KEY_LED_SYNC "tempo_led_sync"
+#define NVS_KEY_LED_EMPHASIZE "tempo_led_emph"
+#define NVS_KEY_LED_RATIO "tempo_led_ratio"
 #define NVS_KEY_TIME_SIG_NUM "tempo_ts_num"
 #define NVS_KEY_TIME_SIG_DEN "tempo_ts_den"
 #define NVS_KEY_CLOCK_STD "tempo_clk_std"
@@ -31,6 +33,8 @@ static tempo_clock_source_t s_clock_source = CLOCK_SOURCE_INTERNAL;
 static tempo_clock_standard_t s_clock_standard = CLOCK_STANDARD_24PPQN;  // Default to 24ppqn
 static time_signature_t s_time_signature = {4, 4};  // Default 4/4
 static bool s_led_sync_enabled = false;
+static bool s_led_emphasize_downbeat = true;  // Make beat 1 different
+static uint8_t s_led_flash_ratio = 3;  // Flash duration as % of beat (1-10, default 3%)
 static tempo_note_divider_t s_note_divider = DIVIDER_QUARTER;
 
 // Task and timing
@@ -81,6 +85,12 @@ void tempo_init(void) {
   
   uint8_t led_sync = 0;
   if (app_settings_load_u8(NVS_KEY_LED_SYNC, &led_sync) == ESP_OK) s_led_sync_enabled = (led_sync != 0);
+  
+  uint8_t led_emphasize = 1;
+  if (app_settings_load_u8(NVS_KEY_LED_EMPHASIZE, &led_emphasize) == ESP_OK) s_led_emphasize_downbeat = (led_emphasize != 0);
+  
+  uint8_t led_ratio = 3;
+  if (app_settings_load_u8(NVS_KEY_LED_RATIO, &led_ratio) == ESP_OK && led_ratio >= 1 && led_ratio <= 10) s_led_flash_ratio = led_ratio;
   
   uint8_t ts_num = 4, ts_den = 4;
   app_settings_load_u8(NVS_KEY_TIME_SIG_NUM, &ts_num);
@@ -257,12 +267,12 @@ static void publish_beat_event(void) {
     // Calculate beat duration
     uint32_t beat_duration_ms = 60000 / s_bpm;
     
-    if (s_beat_counter == 1) {
-      // Downbeat - longer flash
-      duration_ms = beat_duration_ms / 3;  // 33% duty cycle
-    } else {
-      // Regular beat
-      duration_ms = beat_duration_ms / 6;  // 16% duty cycle  
+    // Calculate flash duration based on ratio (percentage of beat)
+    duration_ms = (beat_duration_ms * s_led_flash_ratio) / 100;
+    
+    // Emphasize downbeat if enabled (2x longer)
+    if (s_led_emphasize_downbeat && s_beat_counter == 1) {
+      duration_ms *= 2;
     }
     
     // Request LED flash
@@ -489,6 +499,43 @@ bool tempo_get_led_sync(void) {
   bool enabled = s_led_sync_enabled;
   xSemaphoreGive(s_state_mutex);
   return enabled;
+}
+
+void tempo_set_led_emphasize_downbeat(bool emphasize) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_led_emphasize_downbeat = emphasize;
+  xSemaphoreGive(s_state_mutex);
+  
+  app_settings_save_u8(NVS_KEY_LED_EMPHASIZE, emphasize ? 1 : 0);
+  ESP_LOGI(TAG, "LED downbeat emphasis %s", emphasize ? "enabled" : "disabled");
+}
+
+bool tempo_get_led_emphasize_downbeat(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool emphasize = s_led_emphasize_downbeat;
+  xSemaphoreGive(s_state_mutex);
+  return emphasize;
+}
+
+void tempo_set_led_flash_ratio(uint8_t ratio) {
+  if (ratio < 1 || ratio > 10) {
+    ESP_LOGW(TAG, "LED flash ratio must be 1-10%%");
+    return;
+  }
+  
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_led_flash_ratio = ratio;
+  xSemaphoreGive(s_state_mutex);
+  
+  app_settings_save_u8(NVS_KEY_LED_RATIO, ratio);
+  ESP_LOGI(TAG, "LED flash ratio set to %d%% of beat duration", ratio);
+}
+
+uint8_t tempo_get_led_flash_ratio(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  uint8_t ratio = s_led_flash_ratio;
+  xSemaphoreGive(s_state_mutex);
+  return ratio;
 }
 
 void tempo_set_clock_standard(tempo_clock_standard_t standard) {

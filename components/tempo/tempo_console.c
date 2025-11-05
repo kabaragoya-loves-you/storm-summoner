@@ -8,7 +8,7 @@
 static const char* TAG = "tempo_console";
 
 static const char* registered_commands[] = {
-  "info", "bpm", "source", "tap", "start", "stop", "led_sync"
+  "info", "bpm", "source", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -32,6 +32,12 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Time signature: %u/%u", (unsigned)sig.numerator, (unsigned)sig.denominator);
   ESP_LOGI(TAG, "Clock standard: %s", std_str);
   ESP_LOGI(TAG, "LED sync: %s", led_sync ? "enabled" : "disabled");
+  if (led_sync) {
+    bool emphasize = tempo_get_led_emphasize_downbeat();
+    uint8_t ratio = tempo_get_led_flash_ratio();
+    ESP_LOGI(TAG, "  Downbeat emphasis: %s", emphasize ? "yes" : "no");
+    ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
+  }
   ESP_LOGI(TAG, "===================");
   
   return 0;
@@ -138,6 +144,53 @@ static int cmd_led_sync(int argc, char **argv) {
   return 0;
 }
 
+// Command: led_downbeat
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} led_downbeat_args;
+
+static int cmd_led_downbeat(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &led_downbeat_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, led_downbeat_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* state_str = led_downbeat_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  tempo_set_led_emphasize_downbeat(enable);
+  ESP_LOGI(TAG, "Downbeat emphasis: %s (beat 1 %s)", enable ? "enabled" : "disabled", enable ? "2x longer" : "same length");
+  
+  return 0;
+}
+
+// Command: led_ratio
+static struct {
+  struct arg_int *ratio;
+  struct arg_end *end;
+} led_ratio_args;
+
+static int cmd_led_ratio(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &led_ratio_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, led_ratio_args.end, argv[0]);
+    return 1;
+  }
+  
+  int ratio = led_ratio_args.ratio->ival[0];
+  if (ratio < 1 || ratio > 10) {
+    ESP_LOGE(TAG, "Flash ratio must be 1-10 (percentage of beat)");
+    return 1;
+  }
+  
+  tempo_set_led_flash_ratio((uint8_t)ratio);
+  ESP_LOGI(TAG, "LED flash ratio: %d%% of beat duration", ratio);
+  
+  return 0;
+}
+
 esp_err_t tempo_console_init(void) {
   ESP_LOGI(TAG, "Registering tempo commands");
   
@@ -215,6 +268,32 @@ esp_err_t tempo_console_init(void) {
     .argtable = &led_sync_args
   };
   esp_console_cmd_register(&led_sync_cmd);
+  
+  // led_downbeat command
+  led_downbeat_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  led_downbeat_args.end = arg_end(2);
+  
+  const esp_console_cmd_t led_downbeat_cmd = {
+    .command = "led_downbeat",
+    .help = "Emphasize beat 1 (2x longer flash)",
+    .hint = NULL,
+    .func = &cmd_led_downbeat,
+    .argtable = &led_downbeat_args
+  };
+  esp_console_cmd_register(&led_downbeat_cmd);
+  
+  // led_ratio command
+  led_ratio_args.ratio = arg_int1(NULL, NULL, "<1-10>", "Flash % of beat");
+  led_ratio_args.end = arg_end(2);
+  
+  const esp_console_cmd_t led_ratio_cmd = {
+    .command = "led_ratio",
+    .help = "Set flash duration (1-10% of beat)",
+    .hint = NULL,
+    .func = &cmd_led_ratio,
+    .argtable = &led_ratio_args
+  };
+  esp_console_cmd_register(&led_ratio_cmd);
   
   return ESP_OK;
 }
