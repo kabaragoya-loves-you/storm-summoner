@@ -2,13 +2,18 @@
   "name": "Default Scene",
   "program_number": 0,
   "send_pc_on_change": true,
+  "on_load": [
+    {
+      "type": "all_notes_off"
+    }
+  ],
   "touchwheel_mode": "buttons",
   "touchpads": [
     {
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 1,
           "value": 127
         }
@@ -18,7 +23,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 2,
           "value": 127
         }
@@ -28,7 +33,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 3,
           "value": 127
         }
@@ -38,7 +43,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 4,
           "value": 127
         }
@@ -48,7 +53,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 5,
           "value": 127
         }
@@ -58,7 +63,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 6,
           "value": 127
         }
@@ -68,7 +73,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 7,
           "value": 127
         }
@@ -78,7 +83,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 8,
           "value": 127
         }
@@ -88,7 +93,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 9,
           "value": 127
         }
@@ -98,7 +103,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 10,
           "value": 127
         }
@@ -108,7 +113,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 11,
           "value": 127
         }
@@ -118,7 +123,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 12,
           "value": 127
         }
@@ -127,17 +132,17 @@
   ],
   "button_left": [
     {
-      "type": 1
+      "type": "program_prev"
     }
   ],
   "button_right": [
     {
-      "type": 0
+      "type": "program_next"
     }
   ],
   "button_both": [
     {
-      "type": 24
+      "type": "confirm_pending"
     }
   ],
   "expression": {

@@ -11,6 +11,15 @@
 
 static const char* TAG = "scene";
 
+// Scene storage paths
+#define SCENES_BASE_PATH "/assets/scenes"
+#define MANIFEST_PATH "/assets/scenes/manifest.json"
+
+// Forward declarations
+static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size);
+static esp_err_t json_to_scene(cJSON* root, scene_t* scene);
+static void scene_init_defaults(scene_t* scene, uint8_t index);
+
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
 #define NVS_KEY_CHANGE_MODE      "change_mode"
@@ -161,16 +170,53 @@ esp_err_t scene_init(void) {
     strncpy(g_scene_manager.manifest[0].filename, "scene_001.json", sizeof(g_scene_manager.manifest[0].filename));
   }
   
-  // Load first scene into cache
+  // Load first scene into cache slot 0
   g_scene_manager.current_cache_idx = 0;
   g_scene_manager.current_scene_index = 0;
   
-  // Try to load from flash, or create default
-  ret = scene_load_from_flash(0);
-  if (ret != ESP_OK) {
-    ESP_LOGW(TAG, "Failed to load scene 0 from flash, using defaults");
+  // Load scene 0 directly into cache[0] (NOT using scene_load_from_flash which uses wrong slot)
+  char filepath[128];
+  get_scene_filename(0, filepath, sizeof(filepath));
+  
+  FILE* f = fopen(filepath, "r");
+  if (f) {
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    char* json_str = malloc(fsize + 1);
+    if (json_str) {
+      fread(json_str, 1, fsize, f);
+      fclose(f);
+      json_str[fsize] = '\0';
+      
+      cJSON* root = cJSON_Parse(json_str);
+      free(json_str);
+      
+      if (root) {
+        ret = json_to_scene(root, &g_scene_manager.cache[0].scene);
+        cJSON_Delete(root);
+        
+        if (ret == ESP_OK) {
+          ESP_LOGI(TAG, "Loaded scene 0 from flash");
+        } else {
+          ESP_LOGW(TAG, "Failed to parse scene 0, using defaults");
+          scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+        }
+      } else {
+        ESP_LOGW(TAG, "Failed to parse scene 0 JSON, using defaults");
+        scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+      }
+    } else {
+      fclose(f);
+      ESP_LOGW(TAG, "Failed to allocate memory for scene 0, using defaults");
+      scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+    }
+  } else {
+    ESP_LOGW(TAG, "Scene 0 file not found, using defaults");
     scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
   }
+  
   g_scene_manager.cache[0].index = 0;
   g_scene_manager.cache[0].valid = true;
   g_scene_manager.cache[0].dirty = false;
@@ -695,18 +741,81 @@ action_chain_t* scene_get_on_load(uint8_t scene_index) {
   return scene ? &scene->on_load : NULL;
 }
 
-#define SCENES_BASE_PATH "/assets/scenes"
-#define MANIFEST_PATH "/assets/scenes/manifest.json"
-
 // Helper to get scene filename
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size) {
   snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
 }
 
+// Action type name lookup table
+static const char* action_type_json_names[] = {
+  [ACTION_NONE] = "none",
+  [ACTION_PROGRAM_NEXT] = "program_next",
+  [ACTION_PROGRAM_PREV] = "program_prev",
+  [ACTION_PROGRAM_SET] = "program_set",
+  [ACTION_PROGRAM_BANK_SET] = "program_bank_set",
+  [ACTION_SCENE_NEXT] = "scene_next",
+  [ACTION_SCENE_PREV] = "scene_prev",
+  [ACTION_SCENE_SET] = "scene_set",
+  [ACTION_TRANSPORT_PLAY] = "transport_play",
+  [ACTION_TRANSPORT_STOP] = "transport_stop",
+  [ACTION_TRANSPORT_PAUSE] = "transport_pause",
+  [ACTION_TRANSPORT_RECORD] = "transport_record",
+  [ACTION_TRANSPORT_TOGGLE] = "transport_toggle",
+  [ACTION_TAP_TEMPO] = "tap_tempo",
+  [ACTION_TEMPO_NUDGE_UP] = "tempo_nudge_up",
+  [ACTION_TEMPO_NUDGE_DOWN] = "tempo_nudge_down",
+  [ACTION_SEND_CC] = "send_cc",
+  [ACTION_SEND_CC_TOGGLE] = "send_cc_toggle",
+  [ACTION_SEND_CC_CYCLE] = "send_cc_cycle",
+  [ACTION_SEND_DOUBLE_CC] = "send_double_cc",
+  [ACTION_SEND_NRPN] = "send_nrpn",
+  [ACTION_SEND_RPN] = "send_rpn",
+  [ACTION_SEND_NOTE_ON] = "send_note_on",
+  [ACTION_SEND_NOTE_OFF] = "send_note_off",
+  [ACTION_SEND_PC] = "send_pc",
+  [ACTION_SEND_PITCH_BEND] = "send_pitch_bend",
+  [ACTION_SEND_AFTERTOUCH] = "send_aftertouch",
+  [ACTION_SEND_POLY_AFTERTOUCH] = "send_poly_aftertouch",
+  [ACTION_SEND_SONG_SELECT] = "send_song_select",
+  [ACTION_SEND_SONG_POSITION] = "send_song_position",
+  [ACTION_SEND_MMC] = "send_mmc",
+  [ACTION_RANDOMIZE_CC] = "randomize_cc",
+  [ACTION_RANDOMIZE_MULTI] = "randomize_multi",
+  [ACTION_SEND_CLOCK_START] = "send_clock_start",
+  [ACTION_SEND_CLOCK_STOP] = "send_clock_stop",
+  [ACTION_SEND_CLOCK_CONTINUE] = "send_clock_continue",
+  [ACTION_SEND_RESET] = "send_reset",
+  [ACTION_SEND_TUNE_REQUEST] = "send_tune_request",
+  [ACTION_SCREENSAVER_TOGGLE] = "screensaver_toggle",
+  [ACTION_CONFIRM_PENDING] = "confirm_pending",
+  [ACTION_CANCEL_PENDING] = "cancel_pending",
+  [ACTION_ALL_NOTES_OFF] = "all_notes_off",
+  [ACTION_ALL_SOUND_OFF] = "all_sound_off"
+};
+
+// Helper to convert action type string to enum
+static action_type_t action_type_from_string(const char* name) {
+  if (!name) return ACTION_NONE;
+  
+  for (int i = 0; i < ACTION_MAX; i++) {
+    if (action_type_json_names[i] && strcmp(name, action_type_json_names[i]) == 0) {
+      return (action_type_t)i;
+    }
+  }
+  
+  return ACTION_NONE;
+}
+
 // Serialize/deserialize actions
 static cJSON* action_to_json(const action_t* action) {
   cJSON* obj = cJSON_CreateObject();
-  cJSON_AddNumberToObject(obj, "type", action->type);
+  
+  // Use string name instead of integer
+  if (action->type < ACTION_MAX && action_type_json_names[action->type]) {
+    cJSON_AddStringToObject(obj, "type", action_type_json_names[action->type]);
+  } else {
+    cJSON_AddStringToObject(obj, "type", "none");
+  }
   
   if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_TOGGLE || action->type == ACTION_RANDOMIZE_CC) {
     cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_number);
@@ -725,7 +834,22 @@ static cJSON* action_to_json(const action_t* action) {
 static action_t json_to_action(cJSON* obj) {
   action_t action = {0};
   cJSON* type = cJSON_GetObjectItem(obj, "type");
-  if (type) action.type = (action_type_t)type->valueint;
+  
+  if (type) {
+    if (cJSON_IsString(type)) {
+      // New format: string name
+      action.type = action_type_from_string(type->valuestring);
+      ESP_LOGI(TAG, "Loaded action: %s -> %d", type->valuestring, action.type);
+    } else if (cJSON_IsNumber(type)) {
+      // Legacy format: integer (for backward compatibility)
+      action.type = (action_type_t)type->valueint;
+      ESP_LOGW(TAG, "Loading action with legacy integer type %d (use string names)", type->valueint);
+    } else {
+      ESP_LOGE(TAG, "Action type is neither string nor number!");
+    }
+  } else {
+    ESP_LOGE(TAG, "Action missing 'type' field!");
+  }
   
   cJSON* cc = cJSON_GetObjectItem(obj, "cc");
   cJSON* value = cJSON_GetObjectItem(obj, "value");

@@ -155,17 +155,60 @@
       "required": ["type"],
       "properties": {
         "type": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 41,
-          "description": "Action type enum value"
+          "type": "string",
+          "enum": [
+            "none",
+            "program_next",
+            "program_prev",
+            "program_set",
+            "program_bank_set",
+            "scene_next",
+            "scene_prev",
+            "scene_set",
+            "transport_play",
+            "transport_stop",
+            "transport_pause",
+            "transport_record",
+            "transport_toggle",
+            "tap_tempo",
+            "tempo_nudge_up",
+            "tempo_nudge_down",
+            "send_cc",
+            "send_cc_toggle",
+            "send_cc_cycle",
+            "send_double_cc",
+            "send_nrpn",
+            "send_rpn",
+            "send_note_on",
+            "send_note_off",
+            "send_pc",
+            "send_pitch_bend",
+            "send_aftertouch",
+            "send_poly_aftertouch",
+            "send_song_select",
+            "send_song_position",
+            "send_mmc",
+            "randomize_cc",
+            "randomize_multi",
+            "send_clock_start",
+            "send_clock_stop",
+            "send_clock_continue",
+            "send_reset",
+            "send_tune_request",
+            "screensaver_toggle",
+            "confirm_pending",
+            "cancel_pending",
+            "all_notes_off",
+            "all_sound_off"
+          ],
+          "description": "Action type name"
         }
       },
       "allOf": [
         {
           "if": {
             "properties": {
-              "type": {"enum": [15, 16, 17, 30]}
+              "type": {"enum": ["send_cc", "send_cc_toggle", "send_cc_cycle", "randomize_cc"]}
             }
           },
           "then": {
@@ -218,7 +261,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": [21, 22, 26]}
+              "type": {"enum": ["send_note_on", "send_note_off", "send_poly_aftertouch"]}
             }
           },
           "then": {
@@ -243,7 +286,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": [2, 3, 6, 23, 27]}
+              "type": {"enum": ["program_set", "program_bank_set", "scene_set", "send_pc", "send_song_select"]}
             }
           },
           "then": {
@@ -261,7 +304,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": [19, 20]}
+              "type": {"enum": ["send_nrpn", "send_rpn"]}
             }
           },
           "then": {
@@ -285,7 +328,7 @@
         {
           "if": {
             "properties": {
-              "type": {"const": 31}
+              "type": {"const": "randomize_multi"}
             }
           },
           "then": {

@@ -8,7 +8,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 12,
+          "type": "tap_tempo",
           "comment": "Tap tempo"
         }
       ]
@@ -17,7 +17,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 11,
+          "type": "randomize_multi",
           "num_ccs": 3,
           "cc_numbers": [74, 72, 76],
           "min_values": [0, 0, 0],
@@ -30,7 +30,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 6,
+          "type": "send_cc_cycle",
           "cc": 1,
           "num_values": 4,
           "values": [0, 64, 99, 127],
@@ -43,7 +43,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 7,
+          "type": "send_note_on",
           "note": 60,
           "velocity": 100,
           "comment": "Send middle C"
@@ -54,7 +54,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 5,
           "value": 127
         }
@@ -64,7 +64,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 6,
           "value": 127
         }
@@ -74,7 +74,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 7,
           "value": 127
         }
@@ -84,7 +84,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 8,
           "value": 127
         }
@@ -94,7 +94,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 9,
           "value": 127
         }
@@ -104,7 +104,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 10,
           "value": 127
         }
@@ -114,7 +114,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 11,
           "value": 127
         }
@@ -124,7 +124,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": 4,
+          "type": "send_cc",
           "cc": 12,
           "value": 127
         }
@@ -133,17 +133,22 @@
   ],
   "button_left": [
     {
-      "type": 1
+      "type": "program_prev"
     }
   ],
   "button_right": [
     {
-      "type": 0
+      "type": "program_next"
     }
   ],
   "button_both": [
     {
-      "type": 24
+      "type": "confirm_pending"
+    }
+  ],
+  "on_load": [
+    {
+      "type": "all_notes_off"
     }
   ]
 }

@@ -52,11 +52,30 @@ static void cmd_scene_info(void) {
       ESP_LOGI(TAG, "  [%d] %s", i, action_type_to_string(scene->on_load.actions[i].type));
     }
   }
-  ESP_LOGI(TAG, "Touchwheel: %s mode", 
-           scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
+  ESP_LOGI(TAG, "Touchwheel: %s mode", scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
   
   if (scene_has_pending_change()) {
     ESP_LOGI(TAG, "PENDING CHANGE to scene %d", scene_get_pending_index() + 1);
+  }
+  
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Button assignments:");
+  if (scene->button_left.num_actions > 0) {
+    ESP_LOGI(TAG, "  Left: %s", action_type_to_string(scene->button_left.actions[0].type));
+  } else {
+    ESP_LOGI(TAG, "  Left: no actions");
+  }
+  
+  if (scene->button_right.num_actions > 0) {
+    ESP_LOGI(TAG, "  Right: %s", action_type_to_string(scene->button_right.actions[0].type));
+  } else {
+    ESP_LOGI(TAG, "  Right: no actions");
+  }
+  
+  if (scene->button_both.num_actions > 0) {
+    ESP_LOGI(TAG, "  Both: %s", action_type_to_string(scene->button_both.actions[0].type));
+  } else {
+    ESP_LOGI(TAG, "  Both: no actions");
   }
   
   ESP_LOGI(TAG, "");

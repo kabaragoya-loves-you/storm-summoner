@@ -36,17 +36,17 @@ static void handle_button_event(const event_t* event, void* context) {
   switch (event->type) {
     case EVENT_BUTTON_L_PRESS:
       chain = &scene->button_left;
-      ESP_LOGD(TAG, "Left button pressed");
+      ESP_LOGI(TAG, "Left button pressed - %d actions", chain->num_actions);
       break;
       
     case EVENT_BUTTON_R_PRESS:
       chain = &scene->button_right;
-      ESP_LOGD(TAG, "Right button pressed");
+      ESP_LOGI(TAG, "Right button pressed - %d actions", chain->num_actions);
       break;
       
     case EVENT_BUTTON_BOTH_PRESS:
       chain = &scene->button_both;
-      ESP_LOGD(TAG, "Both buttons pressed");
+      ESP_LOGI(TAG, "Both buttons pressed - %d actions", chain->num_actions);
       break;
       
     case EVENT_BUTTON_L_LONG_PRESS:
