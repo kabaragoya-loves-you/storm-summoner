@@ -3,14 +3,13 @@
 
 #define I2C_SCL_SPEED_HZ    400000
 
-// I2C device addresses (same for all hardware configs)
+#if HW_CONFIG_PRODUCTION
+
 #define I2C_ADDR_BUMP       0x18  // LIS3DHTR accelerometer
 #define I2C_ADDR_SWITCH     0x20  // PCA9534 I/O expander
 #define I2C_ADDR_HAPTIC     0x5A  // DRV2605 haptic driver
 #define I2C_ADDR_SENSOR     0x60  // VCNL4040 proximity/ambient light sensor
 #define I2C_ADDR_DAC        0x61  // MCP4725 DAC
-
-#if HW_CONFIG_PRODUCTION
 
 #define ADC_UNIT            ADC_UNIT_2
 #define ADC_BITWIDTH        ADC_BITWIDTH_12
@@ -45,6 +44,12 @@
 #define PIN_MIDI_TXD       54
 
 #elif HW_CONFIG_DEV_BOARD
+
+#define I2C_ADDR_BUMP       0x18  // LIS3DHTR accelerometer
+#define I2C_ADDR_SWITCH     0x20  // PCA9534 I/O expander
+#define I2C_ADDR_HAPTIC     0x5A  // DRV2605 haptic driver
+#define I2C_ADDR_SENSOR     0x60  // VCNL4040 proximity/ambient light sensor
+#define I2C_ADDR_DAC        0x62  // MCP4725 DAC
 
 #define ADC_UNIT            ADC_UNIT_1
 #define ADC_BITWIDTH        ADC_BITWIDTH_12

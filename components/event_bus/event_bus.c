@@ -29,6 +29,9 @@ static struct {
   bool profiling_active;
   uint32_t profiling_start_time;
   uint32_t profiling_event_counts[EVENT_TYPE_MAX];
+  uint32_t profiling_last_second_counts[EVENT_TYPE_MAX];
+  uint32_t profiling_peak_per_second[EVENT_TYPE_MAX];
+  uint32_t profiling_last_tick;
   #endif
 } event_bus_state = {0};
 
@@ -109,7 +112,22 @@ static void event_dispatcher_task(void* pvParameters) {
       #if EVENT_BUS_ENABLE_PROFILING
       // Track event for profiling
       if (event_bus_state.profiling_active && event.type < EVENT_TYPE_MAX) {
+        uint32_t now = event_bus_get_current_timestamp() / 1000;  // Seconds
+        
         event_bus_state.profiling_event_counts[event.type]++;
+        event_bus_state.profiling_last_second_counts[event.type]++;
+        
+        // Check if we've crossed into a new second
+        if (now != event_bus_state.profiling_last_tick) {
+          // Update peaks for all event types
+          for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+            if (event_bus_state.profiling_last_second_counts[i] > event_bus_state.profiling_peak_per_second[i]) {
+              event_bus_state.profiling_peak_per_second[i] = event_bus_state.profiling_last_second_counts[i];
+            }
+            event_bus_state.profiling_last_second_counts[i] = 0;
+          }
+          event_bus_state.profiling_last_tick = now;
+        }
       }
       #endif
       
@@ -168,6 +186,9 @@ esp_err_t event_bus_init(void) {
   event_bus_state.profiling_active = false;
   event_bus_state.profiling_start_time = 0;
   memset(event_bus_state.profiling_event_counts, 0, sizeof(event_bus_state.profiling_event_counts));
+  memset(event_bus_state.profiling_last_second_counts, 0, sizeof(event_bus_state.profiling_last_second_counts));
+  memset(event_bus_state.profiling_peak_per_second, 0, sizeof(event_bus_state.profiling_peak_per_second));
+  event_bus_state.profiling_last_tick = 0;
   #endif
   
   event_bus_state.initialized = true;
@@ -321,7 +342,10 @@ void event_bus_dump_history(void) {
 void event_bus_profiling_start(void) {
   event_bus_state.profiling_active = true;
   event_bus_state.profiling_start_time = event_bus_get_current_timestamp();
+  event_bus_state.profiling_last_tick = event_bus_state.profiling_start_time / 1000;
   memset(event_bus_state.profiling_event_counts, 0, sizeof(event_bus_state.profiling_event_counts));
+  memset(event_bus_state.profiling_last_second_counts, 0, sizeof(event_bus_state.profiling_last_second_counts));
+  memset(event_bus_state.profiling_peak_per_second, 0, sizeof(event_bus_state.profiling_peak_per_second));
   ESP_LOGI(TAG, "Event profiling started");
 }
 
@@ -331,8 +355,11 @@ void event_bus_profiling_stop(void) {
 }
 
 void event_bus_profiling_reset(void) {
-  memset(event_bus_state.profiling_event_counts, 0, sizeof(event_bus_state.profiling_event_counts));
   event_bus_state.profiling_start_time = event_bus_get_current_timestamp();
+  event_bus_state.profiling_last_tick = event_bus_state.profiling_start_time / 1000;
+  memset(event_bus_state.profiling_event_counts, 0, sizeof(event_bus_state.profiling_event_counts));
+  memset(event_bus_state.profiling_last_second_counts, 0, sizeof(event_bus_state.profiling_last_second_counts));
+  memset(event_bus_state.profiling_peak_per_second, 0, sizeof(event_bus_state.profiling_peak_per_second));
   ESP_LOGI(TAG, "Event profiling reset");
 }
 
@@ -344,6 +371,7 @@ bool event_bus_profiling_is_active(void) {
 typedef struct {
   event_type_t type;
   uint32_t count;
+  uint32_t peak_rate;
   float percent;
   float per_second;
 } profile_entry_t;
@@ -378,6 +406,7 @@ void event_bus_profiling_report(void) {
     if (event_bus_state.profiling_event_counts[i] > 0) {
       entries[entry_count].type = (event_type_t)i;
       entries[entry_count].count = event_bus_state.profiling_event_counts[i];
+      entries[entry_count].peak_rate = event_bus_state.profiling_peak_per_second[i];
       entries[entry_count].percent = (event_bus_state.profiling_event_counts[i] * 100.0f) / total_events;
       entries[entry_count].per_second = event_bus_state.profiling_event_counts[i] / elapsed_sec;
       entry_count++;
@@ -393,15 +422,16 @@ void event_bus_profiling_report(void) {
   ESP_LOGI(TAG, "Total events: %lu", (unsigned long)total_events);
   ESP_LOGI(TAG, "Average: %.1f events/sec", total_events / elapsed_sec);
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "%-25s %10s %7s %10s", "Event Type", "Count", "Percent", "Per Sec");
-  ESP_LOGI(TAG, "%-25s %10s %7s %10s", "----------", "-----", "-------", "-------");
+  ESP_LOGI(TAG, "%-25s %10s %7s %8s %8s", "Event Type", "Count", "Percent", "Avg/sec", "Peak/sec");
+  ESP_LOGI(TAG, "%-25s %10s %7s %8s %8s", "----------", "-----", "-------", "-------", "--------");
   
   for (int i = 0; i < entry_count; i++) {
-    ESP_LOGI(TAG, "%-25s %10lu %6.1f%% %10.1f",
+    ESP_LOGI(TAG, "%-25s %10lu %6.1f%% %8.1f %8lu",
              event_type_to_string(entries[i].type),
              (unsigned long)entries[i].count,
              entries[i].percent,
-             entries[i].per_second);
+             entries[i].per_second,
+             (unsigned long)entries[i].peak_rate);
   }
   
   ESP_LOGI(TAG, "============================================");

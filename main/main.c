@@ -38,6 +38,7 @@
 #include "switch.h"
 #include "midi_scene_handler.h"
 #include "midi_expression_scene_handler.h"
+#include "midi_cv_scene_handler.h"
 #include "scene_test.h"
 #include "buttons.h"
 #include "assets_manager.h"
@@ -87,6 +88,7 @@ void app_main(void) {
   midi_sensor_event_handler_init();
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
+  midi_cv_scene_handler_init();
   midi_passthrough_init();
   
   switch_init();

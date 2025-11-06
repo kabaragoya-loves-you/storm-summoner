@@ -1,6 +1,7 @@
 #include "midi_expression_scene_handler.h"
 #include "scene.h"
 #include "continuous_mapping.h"
+#include "smart_filter.h"
 #include "device_config.h"
 #include "midi_messages.h"
 #include "event_bus.h"
@@ -8,7 +9,7 @@
 
 static const char* TAG = "expr_scene";
 
-static uint8_t s_last_sent_value = 255;  // Track last sent value for deadzone
+static smart_filter_t s_expression_filter;
 
 // Handle expression pedal events through scene mapping
 static void handle_expression_event(const event_t* event, void* context) {
@@ -24,12 +25,13 @@ static void handle_expression_event(const event_t* event, void* context) {
   uint8_t raw_value = event->data.expression.midi_value;
   
   // Process through curve and polarity
-  uint8_t output_value = continuous_mapping_process(raw_value, mapping);
+  uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
   
-  // Only send if value changed
-  if (output_value == s_last_sent_value) return;
+  // Apply smart filtering (handles extremes + deadzone)
+  bool value_changed = false;
+  uint8_t output_value = smart_filter_process(&s_expression_filter, processed_value, &value_changed);
   
-  s_last_sent_value = output_value;
+  if (!value_changed) return;  // No significant change, skip
   
   // Send MIDI CC
   uint8_t channel = device_config_get_channel() - 1;
@@ -41,6 +43,9 @@ static void handle_expression_event(const event_t* event, void* context) {
 esp_err_t midi_expression_scene_handler_init(void) {
   ESP_LOGI(TAG, "Initializing expression scene handler");
   
+  // Initialize smart filter with deadzone=2 (good balance)
+  smart_filter_init(&s_expression_filter, 2);
+  
   // Subscribe to expression value events
   esp_err_t ret = event_bus_subscribe(EVENT_EXPRESSION_VALUE, handle_expression_event, NULL);
   if (ret != ESP_OK) {
@@ -48,7 +53,7 @@ esp_err_t midi_expression_scene_handler_init(void) {
     return ret;
   }
   
-  ESP_LOGI(TAG, "Expression scene handler initialized");
+  ESP_LOGI(TAG, "Expression scene handler initialized (smart filtering enabled)");
   return ESP_OK;
 }
 

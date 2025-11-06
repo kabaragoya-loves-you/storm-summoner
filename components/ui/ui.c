@@ -12,6 +12,7 @@ static ui_draw_module_t* current_draw_module = NULL;
 
 static void *display_buf = NULL;
 static bool g_teardown_in_progress = false;
+static lv_timer_t *g_teardown_timer = NULL;  // Track pending teardown timer
 
 #define TAG "UI"
 
@@ -143,37 +144,34 @@ void ui_graphics_resume(void) {
   if (show_timer != NULL) lv_timer_set_repeat_count(show_timer, 1);
 }
 
-// Deferred callback to tear down current module and free canvas buffer
-static void deferred_module_teardown_cb(lv_timer_t *timer) {
-  // Guard against multiple teardowns
+// Deferred callback to hide UI and free canvas buffer (no teardown)
+static void deferred_ui_hide_and_free_cb(lv_timer_t *timer) {
+  ESP_LOGI(TAG, "UI hide and free callback executing");
+  
+  // Clear the timer reference first
+  g_teardown_timer = NULL;
+  
+  // Guard against multiple operations
   if (g_teardown_in_progress) {
-    ESP_LOGW(TAG, "Teardown already in progress, skipping");
+    ESP_LOGW(TAG, "Operation already in progress, skipping");
     lv_timer_del(timer);
     return;
   }
   
   g_teardown_in_progress = true;
   
-  // First, hide the canvas to stop any further rendering
-  if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-  
-  if (current_draw_module && current_draw_module->teardown_func) {
-    // Switch back to the default screen before tearing down
-    // This prevents "active screen deleted" warnings and crashes
+  // Switch to default screen and hide module screen to stop rendering
+  // DON'T delete widgets - just hide them to avoid fragmentation
+  if (current_draw_module) {
     lv_obj_t *default_screen = lv_obj_get_parent(canvas);
     if (default_screen && lv_obj_is_valid(default_screen)) lv_scr_load(default_screen);
-    
-    // Let LVGL process the screen switch
-    lv_refr_now(NULL);
-    
-    current_draw_module->teardown_func();
-    ESP_LOGD(TAG, "Tore down module '%s' to reduce fragmentation", current_draw_module->name);
-    
-    // Force LVGL to process any pending deletions
-    lv_refr_now(NULL);
+    ESP_LOGI(TAG, "Switched to default screen, module widgets remain in memory");
   }
   
-  // Now free the canvas buffer after widgets are safely torn down
+  // Hide the canvas to stop rendering
+  if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+  
+  // Now free only the canvas buffer
   if (display_buf) {
     lv_mem_monitor_t mon_before;
     lv_mem_monitor(&mon_before);
@@ -191,6 +189,7 @@ static void deferred_module_teardown_cb(lv_timer_t *timer) {
   }
   
   lv_timer_del(timer);
+  ESP_LOGI(TAG, "UI hide and free callback complete");
 }
 
 bool ui_release_canvas_buffer(void) {
@@ -200,6 +199,13 @@ bool ui_release_canvas_buffer(void) {
   if (g_teardown_in_progress) {
     ESP_LOGW(TAG, "Teardown already in progress, ignoring release request");
     return false;
+  }
+  
+  // If there's already a pending teardown timer, cancel it and create a new one
+  if (g_teardown_timer != NULL) {
+    ESP_LOGW(TAG, "Cancelling existing teardown timer before creating new one");
+    lv_timer_del(g_teardown_timer);
+    g_teardown_timer = NULL;
   }
   
   // Check current memory state
@@ -226,32 +232,43 @@ bool ui_release_canvas_buffer(void) {
   }
   
   // Pause the refresh timer to prevent new render cycles
+  // CRITICAL: We must ensure this gets resumed if anything fails
   if (g_ui_refresh_timer != NULL) lv_timer_pause(g_ui_refresh_timer);
   
-  // Defer ALL UI modifications to LVGL context
+  // Defer UI hiding to LVGL context (don't tear down widgets to avoid fragmentation)
   // This ensures any in-flight render completes before we make changes
-  // The 10ms delay allows the current render cycle to finish
-  lv_timer_t *teardown_timer = lv_timer_create(deferred_module_teardown_cb, 10, NULL);
-  if (!teardown_timer) {
-    ESP_LOGE(TAG, "Failed to create teardown timer (out of memory), resuming refresh timer");
-    // Resume refresh timer to prevent UI freeze
-    if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
-    g_teardown_in_progress = false;  // Clear flag to allow retry
+  g_teardown_timer = lv_timer_create(deferred_ui_hide_and_free_cb, 10, NULL);
+  if (!g_teardown_timer) {
+    ESP_LOGE(TAG, "CRITICAL: Failed to create hide timer!");
+    ESP_LOGE(TAG, "Heap free: %d, frag: %d%% - timer creation failed", 
+      mon_initial.free_size, mon_initial.frag_pct);
+    
+    // MUST resume refresh timer to prevent UI freeze
+    if (g_ui_refresh_timer != NULL) {
+      lv_timer_resume(g_ui_refresh_timer);
+      ESP_LOGI(TAG, "Resumed refresh timer to prevent UI freeze");
+    }
+    
+    g_teardown_in_progress = false;
     return false;
   }
   
-  lv_timer_set_repeat_count(teardown_timer, 1);
+  lv_timer_set_repeat_count(g_teardown_timer, 1);
   
-  // Note: Canvas is hidden in the deferred callback, not here
-  // Note: Buffer is freed in the deferred callback, not here
+  ESP_LOGI(TAG, "UI hide timer created successfully");
   return true;
 }
 
-// Deferred callback to recreate module widgets
-static void deferred_module_recreate_cb(lv_timer_t *timer) {
-  if (current_draw_module && current_draw_module->draw_func) {
-    current_draw_module->draw_func();
-    ESP_LOGD(TAG, "Recreated module '%s' widgets", current_draw_module->name);
+// Deferred callback to show module screen (no recreation needed)
+static void deferred_module_show_cb(lv_timer_t *timer) {
+  // Just load the module screen back - widgets are already there
+  if (current_draw_module) {
+    // The deferred draw callback will load the module's screen
+    // Widgets already exist, so this will be instant
+    if (current_draw_module->draw_func) {
+      current_draw_module->draw_func();
+      ESP_LOGD(TAG, "Reloaded module '%s' screen", current_draw_module->name);
+    }
   }
   lv_timer_del(timer);
 }
@@ -286,10 +303,10 @@ void ui_reclaim_canvas_buffer(void) {
   // Clear teardown flag before recreating widgets
   g_teardown_in_progress = false;
   
-  // Defer widget recreation to LVGL context with a delay to allow memory to settle
-  lv_timer_t *recreate_timer = lv_timer_create(deferred_module_recreate_cb, 50, NULL);
-  if (!recreate_timer) {
-    ESP_LOGE(TAG, "Failed to create widget recreation timer, calling draw directly");
+  // Defer module screen reload to LVGL context with a delay to allow memory to settle
+  lv_timer_t *show_timer = lv_timer_create(deferred_module_show_cb, 50, NULL);
+  if (!show_timer) {
+    ESP_LOGE(TAG, "Failed to create show timer, calling draw directly");
     // Fallback: call draw function directly if timer creation fails
     if (current_draw_module && current_draw_module->draw_func) {
       current_draw_module->draw_func();
@@ -297,7 +314,7 @@ void ui_reclaim_canvas_buffer(void) {
     return;
   }
   
-  lv_timer_set_repeat_count(recreate_timer, 1);
+  lv_timer_set_repeat_count(show_timer, 1);
   
   ESP_LOGD(TAG, "UI canvas buffer reclaimed");
 }
