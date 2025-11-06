@@ -10,6 +10,7 @@
 #define EVENT_BUS_ENABLE_TRACE_LOG    1
 #define EVENT_BUS_ENABLE_STATISTICS   1
 #define EVENT_BUS_ENABLE_HISTORY      1
+#define EVENT_BUS_ENABLE_PROFILING    1  // Detailed per-type profiling
 
 // Configuration
 #define EVENT_BUS_QUEUE_SIZE          128
@@ -272,6 +273,15 @@ void event_bus_reset_stats(void);
 
 #if EVENT_BUS_ENABLE_HISTORY
 void event_bus_dump_history(void);
+#endif
+
+#if EVENT_BUS_ENABLE_PROFILING
+// Event profiling for identifying noisy publishers
+void event_bus_profiling_start(void);
+void event_bus_profiling_stop(void);
+void event_bus_profiling_reset(void);
+void event_bus_profiling_report(void);  // Print sorted table of event frequencies
+bool event_bus_profiling_is_active(void);
 #endif
 
 #endif // EVENT_BUS_H

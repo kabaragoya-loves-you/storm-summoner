@@ -24,6 +24,12 @@ static struct {
   event_t history[EVENT_BUS_HISTORY_SIZE];
   uint32_t history_index;
   #endif
+  
+  #if EVENT_BUS_ENABLE_PROFILING
+  bool profiling_active;
+  uint32_t profiling_start_time;
+  uint32_t profiling_event_counts[EVENT_TYPE_MAX];
+  #endif
 } event_bus_state = {0};
 
 // Event type names for debugging
@@ -100,6 +106,13 @@ static void event_dispatcher_task(void* pvParameters) {
       event_bus_state.stats.events_by_type[event.type]++;
       #endif
       
+      #if EVENT_BUS_ENABLE_PROFILING
+      // Track event for profiling
+      if (event_bus_state.profiling_active && event.type < EVENT_TYPE_MAX) {
+        event_bus_state.profiling_event_counts[event.type]++;
+      }
+      #endif
+      
       #if EVENT_BUS_ENABLE_HISTORY
       if (event_bus_state.initialized) {
         event_bus_state.history[event_bus_state.history_index] = event;
@@ -149,6 +162,12 @@ esp_err_t event_bus_init(void) {
   #if EVENT_BUS_ENABLE_HISTORY
   event_bus_state.history_index = 0;
   memset(event_bus_state.history, 0, sizeof(event_bus_state.history));
+  #endif
+  
+  #if EVENT_BUS_ENABLE_PROFILING
+  event_bus_state.profiling_active = false;
+  event_bus_state.profiling_start_time = 0;
+  memset(event_bus_state.profiling_event_counts, 0, sizeof(event_bus_state.profiling_event_counts));
   #endif
   
   event_bus_state.initialized = true;
@@ -295,5 +314,96 @@ void event_bus_dump_history(void) {
     }
   }
   ESP_LOGI(TAG, "=== End History ===");
+}
+#endif
+
+#if EVENT_BUS_ENABLE_PROFILING
+void event_bus_profiling_start(void) {
+  event_bus_state.profiling_active = true;
+  event_bus_state.profiling_start_time = event_bus_get_current_timestamp();
+  memset(event_bus_state.profiling_event_counts, 0, sizeof(event_bus_state.profiling_event_counts));
+  ESP_LOGI(TAG, "Event profiling started");
+}
+
+void event_bus_profiling_stop(void) {
+  event_bus_state.profiling_active = false;
+  ESP_LOGI(TAG, "Event profiling stopped");
+}
+
+void event_bus_profiling_reset(void) {
+  memset(event_bus_state.profiling_event_counts, 0, sizeof(event_bus_state.profiling_event_counts));
+  event_bus_state.profiling_start_time = event_bus_get_current_timestamp();
+  ESP_LOGI(TAG, "Event profiling reset");
+}
+
+bool event_bus_profiling_is_active(void) {
+  return event_bus_state.profiling_active;
+}
+
+// Helper structure for sorting
+typedef struct {
+  event_type_t type;
+  uint32_t count;
+  float percent;
+  float per_second;
+} profile_entry_t;
+
+// Comparison function for qsort
+static int compare_profile_entries(const void* a, const void* b) {
+  const profile_entry_t* ea = (const profile_entry_t*)a;
+  const profile_entry_t* eb = (const profile_entry_t*)b;
+  return (eb->count > ea->count) ? 1 : (eb->count < ea->count) ? -1 : 0;
+}
+
+void event_bus_profiling_report(void) {
+  uint32_t elapsed_ms = event_bus_get_current_timestamp() - event_bus_state.profiling_start_time;
+  float elapsed_sec = elapsed_ms / 1000.0f;
+  
+  // Calculate total events
+  uint32_t total_events = 0;
+  for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+    total_events += event_bus_state.profiling_event_counts[i];
+  }
+  
+  if (total_events == 0) {
+    ESP_LOGI(TAG, "No events recorded");
+    return;
+  }
+  
+  // Build sorted list of non-zero entries
+  profile_entry_t entries[EVENT_TYPE_MAX];
+  int entry_count = 0;
+  
+  for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+    if (event_bus_state.profiling_event_counts[i] > 0) {
+      entries[entry_count].type = (event_type_t)i;
+      entries[entry_count].count = event_bus_state.profiling_event_counts[i];
+      entries[entry_count].percent = (event_bus_state.profiling_event_counts[i] * 100.0f) / total_events;
+      entries[entry_count].per_second = event_bus_state.profiling_event_counts[i] / elapsed_sec;
+      entry_count++;
+    }
+  }
+  
+  // Sort by count (descending)
+  qsort(entries, entry_count, sizeof(profile_entry_t), compare_profile_entries);
+  
+  // Print report
+  ESP_LOGI(TAG, "========== EVENT PROFILING REPORT ==========");
+  ESP_LOGI(TAG, "Duration: %.1f seconds", elapsed_sec);
+  ESP_LOGI(TAG, "Total events: %lu", (unsigned long)total_events);
+  ESP_LOGI(TAG, "Average: %.1f events/sec", total_events / elapsed_sec);
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "%-25s %10s %7s %10s", "Event Type", "Count", "Percent", "Per Sec");
+  ESP_LOGI(TAG, "%-25s %10s %7s %10s", "----------", "-----", "-------", "-------");
+  
+  for (int i = 0; i < entry_count; i++) {
+    ESP_LOGI(TAG, "%-25s %10lu %6.1f%% %10.1f",
+             event_type_to_string(entries[i].type),
+             (unsigned long)entries[i].count,
+             entries[i].percent,
+             entries[i].per_second);
+  }
+  
+  ESP_LOGI(TAG, "============================================");
 }
 #endif
