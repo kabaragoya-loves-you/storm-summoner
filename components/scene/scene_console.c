@@ -16,7 +16,9 @@ static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "mode", 
   "change", "confirm", "cancel", "channel", "pad", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable",
-  "cv_cc", "cv_curve", "cv_polarity", "cv_enable"
+  "cv_cc", "cv_curve", "cv_polarity", "cv_enable",
+  "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable",
+  "als_cc", "als_curve", "als_polarity", "als_enable"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -665,6 +667,274 @@ static int cmd_cv_enable(int argc, char **argv) {
   return 0;
 }
 
+// Command: proximity_cc - Set proximity CC number
+static struct {
+  struct arg_int *cc_num;
+  struct arg_end *end;
+} proximity_cc_args;
+
+static int cmd_proximity_cc(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_cc_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_cc_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int cc = proximity_cc_args.cc_num->ival[0];
+  if (cc < 0 || cc > 127) {
+    ESP_LOGE(TAG, "CC must be 0-127");
+    return 1;
+  }
+  
+  scene->proximity.cc_number = cc;
+  ESP_LOGI(TAG, "Proximity CC: %d", cc);
+  return 0;
+}
+
+// Command: proximity_curve - Set proximity curve
+static struct {
+  struct arg_str *curve_name;
+  struct arg_end *end;
+} proximity_curve_args;
+
+static int cmd_proximity_curve(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_curve_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_curve_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* curve = proximity_curve_args.curve_name->sval[0];
+  
+  if (strcmp(curve, "linear") == 0) {
+    scene->proximity.curve = curve_create(CURVE_LINEAR);
+  } else if (strcmp(curve, "exp") == 0 || strcmp(curve, "exponential") == 0) {
+    scene->proximity.curve = curve_create(CURVE_EXPONENTIAL);
+  } else if (strcmp(curve, "log") == 0 || strcmp(curve, "logarithmic") == 0) {
+    scene->proximity.curve = curve_create(CURVE_LOGARITHMIC);
+  } else if (strcmp(curve, "s") == 0 || strcmp(curve, "s_curve") == 0) {
+    scene->proximity.curve = curve_create(CURVE_S_CURVE);
+  } else if (strcmp(curve, "quad") == 0 || strcmp(curve, "quadratic") == 0) {
+    scene->proximity.curve = curve_create(CURVE_QUADRATIC);
+  } else if (strcmp(curve, "sqrt") == 0) {
+    scene->proximity.curve = curve_create(CURVE_SQUARE_ROOT);
+  } else if (strcmp(curve, "sine") == 0) {
+    scene->proximity.curve = curve_create(CURVE_SINE);
+  } else {
+    ESP_LOGE(TAG, "Unknown curve");
+    ESP_LOGE(TAG, "Available: linear, exp, log, s_curve, quad, sqrt, sine");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Proximity curve: %s", curve_type_to_string(scene->proximity.curve.type));
+  return 0;
+}
+
+// Command: proximity_polarity - Set proximity polarity
+static struct {
+  struct arg_str *polarity_name;
+  struct arg_end *end;
+} proximity_polarity_args;
+
+static int cmd_proximity_polarity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_polarity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_polarity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* pol = proximity_polarity_args.polarity_name->sval[0];
+  
+  if (strcmp(pol, "unipolar") == 0 || strcmp(pol, "uni") == 0) {
+    scene->proximity.polarity = POLARITY_UNIPOLAR;
+  } else if (strcmp(pol, "bipolar") == 0 || strcmp(pol, "bi") == 0) {
+    scene->proximity.polarity = POLARITY_BIPOLAR;
+  } else if (strcmp(pol, "inverted") == 0 || strcmp(pol, "inv") == 0) {
+    scene->proximity.polarity = POLARITY_INVERTED;
+  } else {
+    ESP_LOGE(TAG, "Unknown polarity (use: unipolar, bipolar, inverted)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Proximity polarity: %s", pol);
+  return 0;
+}
+
+// Command: proximity_enable - Enable/disable proximity
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} proximity_enable_args;
+
+static int cmd_proximity_enable(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_enable_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_enable_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* state_str = proximity_enable_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  scene->proximity.enabled = enable;
+  
+  // If enabling and range is invalid, set defaults
+  if (enable && scene->proximity.max_value == 0) {
+    scene->proximity.min_value = 0;
+    scene->proximity.max_value = 127;
+    ESP_LOGI(TAG, "Initialized range to 0-127");
+  }
+  
+  ESP_LOGI(TAG, "Proximity: %s", enable ? "enabled" : "disabled");
+  return 0;
+}
+
+// Command: als_cc - Set ALS CC number
+static struct {
+  struct arg_int *cc_num;
+  struct arg_end *end;
+} als_cc_args;
+
+static int cmd_als_cc(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_cc_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_cc_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int cc = als_cc_args.cc_num->ival[0];
+  if (cc < 0 || cc > 127) {
+    ESP_LOGE(TAG, "CC must be 0-127");
+    return 1;
+  }
+  
+  scene->als.cc_number = cc;
+  ESP_LOGI(TAG, "ALS CC: %d", cc);
+  return 0;
+}
+
+// Command: als_curve - Set ALS curve
+static struct {
+  struct arg_str *curve_name;
+  struct arg_end *end;
+} als_curve_args;
+
+static int cmd_als_curve(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_curve_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_curve_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* curve = als_curve_args.curve_name->sval[0];
+  
+  if (strcmp(curve, "linear") == 0) {
+    scene->als.curve = curve_create(CURVE_LINEAR);
+  } else if (strcmp(curve, "exp") == 0 || strcmp(curve, "exponential") == 0) {
+    scene->als.curve = curve_create(CURVE_EXPONENTIAL);
+  } else if (strcmp(curve, "log") == 0 || strcmp(curve, "logarithmic") == 0) {
+    scene->als.curve = curve_create(CURVE_LOGARITHMIC);
+  } else if (strcmp(curve, "s") == 0 || strcmp(curve, "s_curve") == 0) {
+    scene->als.curve = curve_create(CURVE_S_CURVE);
+  } else if (strcmp(curve, "quad") == 0 || strcmp(curve, "quadratic") == 0) {
+    scene->als.curve = curve_create(CURVE_QUADRATIC);
+  } else if (strcmp(curve, "sqrt") == 0) {
+    scene->als.curve = curve_create(CURVE_SQUARE_ROOT);
+  } else if (strcmp(curve, "sine") == 0) {
+    scene->als.curve = curve_create(CURVE_SINE);
+  } else {
+    ESP_LOGE(TAG, "Unknown curve");
+    ESP_LOGE(TAG, "Available: linear, exp, log, s_curve, quad, sqrt, sine");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "ALS curve: %s", curve_type_to_string(scene->als.curve.type));
+  return 0;
+}
+
+// Command: als_polarity - Set ALS polarity
+static struct {
+  struct arg_str *polarity_name;
+  struct arg_end *end;
+} als_polarity_args;
+
+static int cmd_als_polarity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_polarity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_polarity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* pol = als_polarity_args.polarity_name->sval[0];
+  
+  if (strcmp(pol, "unipolar") == 0 || strcmp(pol, "uni") == 0) {
+    scene->als.polarity = POLARITY_UNIPOLAR;
+  } else if (strcmp(pol, "bipolar") == 0 || strcmp(pol, "bi") == 0) {
+    scene->als.polarity = POLARITY_BIPOLAR;
+  } else if (strcmp(pol, "inverted") == 0 || strcmp(pol, "inv") == 0) {
+    scene->als.polarity = POLARITY_INVERTED;
+  } else {
+    ESP_LOGE(TAG, "Unknown polarity (use: unipolar, bipolar, inverted)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "ALS polarity: %s", pol);
+  return 0;
+}
+
+// Command: als_enable - Enable/disable ALS
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} als_enable_args;
+
+static int cmd_als_enable(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_enable_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_enable_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* state_str = als_enable_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  scene->als.enabled = enable;
+  
+  // If enabling and range is invalid, set defaults
+  if (enable && scene->als.max_value == 0) {
+    scene->als.min_value = 0;
+    scene->als.max_value = 127;
+    ESP_LOGI(TAG, "Initialized range to 0-127");
+  }
+  
+  ESP_LOGI(TAG, "ALS: %s", enable ? "enabled" : "disabled");
+  return 0;
+}
+
 esp_err_t scene_console_init(void) {
   ESP_LOGI(TAG, "Registering scene commands");
   
@@ -909,6 +1179,110 @@ esp_err_t scene_console_init(void) {
     .argtable = &cv_enable_args
   };
   esp_console_cmd_register(&cv_enable_cmd);
+  
+  // proximity_cc command
+  proximity_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
+  proximity_cc_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_cc_cmd = {
+    .command = "proximity_cc",
+    .help = "Set proximity sensor CC number",
+    .hint = NULL,
+    .func = &cmd_proximity_cc,
+    .argtable = &proximity_cc_args
+  };
+  esp_console_cmd_register(&proximity_cc_cmd);
+  
+  // proximity_curve command
+  proximity_curve_args.curve_name = arg_str1(NULL, NULL, "<curve>", "Curve type");
+  proximity_curve_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_curve_cmd = {
+    .command = "proximity_curve",
+    .help = "Set proximity curve (linear/exp/log/s_curve/quad/sqrt/sine)",
+    .hint = NULL,
+    .func = &cmd_proximity_curve,
+    .argtable = &proximity_curve_args
+  };
+  esp_console_cmd_register(&proximity_curve_cmd);
+  
+  // proximity_polarity command
+  proximity_polarity_args.polarity_name = arg_str1(NULL, NULL, "<polarity>", "Polarity type");
+  proximity_polarity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_polarity_cmd = {
+    .command = "proximity_polarity",
+    .help = "Set proximity polarity (unipolar/bipolar/inverted)",
+    .hint = NULL,
+    .func = &cmd_proximity_polarity,
+    .argtable = &proximity_polarity_args
+  };
+  esp_console_cmd_register(&proximity_polarity_cmd);
+  
+  // proximity_enable command
+  proximity_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  proximity_enable_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_enable_cmd = {
+    .command = "proximity_enable",
+    .help = "Enable/disable proximity sensor routing",
+    .hint = NULL,
+    .func = &cmd_proximity_enable,
+    .argtable = &proximity_enable_args
+  };
+  esp_console_cmd_register(&proximity_enable_cmd);
+  
+  // als_cc command
+  als_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
+  als_cc_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_cc_cmd = {
+    .command = "als_cc",
+    .help = "Set ALS CC number",
+    .hint = NULL,
+    .func = &cmd_als_cc,
+    .argtable = &als_cc_args
+  };
+  esp_console_cmd_register(&als_cc_cmd);
+  
+  // als_curve command
+  als_curve_args.curve_name = arg_str1(NULL, NULL, "<curve>", "Curve type");
+  als_curve_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_curve_cmd = {
+    .command = "als_curve",
+    .help = "Set ALS curve (linear/exp/log/s_curve/quad/sqrt/sine)",
+    .hint = NULL,
+    .func = &cmd_als_curve,
+    .argtable = &als_curve_args
+  };
+  esp_console_cmd_register(&als_curve_cmd);
+  
+  // als_polarity command
+  als_polarity_args.polarity_name = arg_str1(NULL, NULL, "<polarity>", "Polarity type");
+  als_polarity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_polarity_cmd = {
+    .command = "als_polarity",
+    .help = "Set ALS polarity (unipolar/bipolar/inverted)",
+    .hint = NULL,
+    .func = &cmd_als_polarity,
+    .argtable = &als_polarity_args
+  };
+  esp_console_cmd_register(&als_polarity_cmd);
+  
+  // als_enable command
+  als_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  als_enable_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_enable_cmd = {
+    .command = "als_enable",
+    .help = "Enable/disable ALS routing",
+    .hint = NULL,
+    .func = &cmd_als_enable,
+    .argtable = &als_enable_args
+  };
+  esp_console_cmd_register(&als_enable_cmd);
   
   return ESP_OK;
 }

@@ -13,14 +13,15 @@
 #define SENSOR_PS_DATA          0x08
 #define SENSOR_ALS_DATA         0x09
 
+// Legacy polarity types - deprecated (use scene-based polarity instead)
 typedef enum {
-    PROXIMITY_POLARITY_NORMAL,    // 0 when far, 127 when near
-    PROXIMITY_POLARITY_INVERTED   // 127 when far, 0 when near
+    PROXIMITY_POLARITY_NORMAL,    // Deprecated
+    PROXIMITY_POLARITY_INVERTED   // Deprecated
 } proximity_polarity_t;
 
 typedef enum {
-    ALS_POLARITY_NORMAL,    // 0 when dark, 127 when bright
-    ALS_POLARITY_INVERTED   // 127 when dark, 0 when bright
+    ALS_POLARITY_NORMAL,    // Deprecated
+    ALS_POLARITY_INVERTED   // Deprecated
 } als_polarity_t;
 
 typedef enum {

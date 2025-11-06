@@ -4,6 +4,10 @@
 
 #define TAG "MIDI_SENSOR_EVENT"
 
+// DEPRECATED: This handler sends MIDI directly, bypassing scene routing
+// It will be removed once sensor scene handlers are verified working
+// Use midi_proximity_scene_handler and midi_als_scene_handler instead
+
 static void midi_sensor_handle_event(const event_t* event, void* context) {
   switch (event->type) {
     case EVENT_SENSOR_ALS:
@@ -22,7 +26,11 @@ static void midi_sensor_handle_event(const event_t* event, void* context) {
 }
 
 void midi_sensor_event_handler_init(void) {
-  event_bus_subscribe(EVENT_SENSOR_ALS, midi_sensor_handle_event, NULL);
-  event_bus_subscribe(EVENT_SENSOR_PROXIMITY, midi_sensor_handle_event, NULL);
-  ESP_LOGI(TAG, "MIDI sensor event handler initialized");
+  // DEPRECATED: Sensor routing now handled by scene-based handlers
+  // Keeping this function for backward compatibility but not subscribing
+  ESP_LOGW(TAG, "Legacy MIDI sensor event handler - now using scene-based routing");
+  
+  // Uncomment these if scene handlers aren't working and you need fallback:
+  // event_bus_subscribe(EVENT_SENSOR_ALS, midi_sensor_handle_event, NULL);
+  // event_bus_subscribe(EVENT_SENSOR_PROXIMITY, midi_sensor_handle_event, NULL);
 }

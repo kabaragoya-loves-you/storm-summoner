@@ -39,6 +39,8 @@
 #include "midi_scene_handler.h"
 #include "midi_expression_scene_handler.h"
 #include "midi_cv_scene_handler.h"
+#include "midi_proximity_scene_handler.h"
+#include "midi_als_scene_handler.h"
 #include "scene_test.h"
 #include "buttons.h"
 #include "assets_manager.h"
@@ -85,10 +87,12 @@ void app_main(void) {
   midi_set_uart_transmit_mode(MIDI_TRANSMIT_BOTH);
   midi_in_init();
   midi_in_debug_enable();  // Enable MIDI IN debug logging
-  midi_sensor_event_handler_init();
+  midi_sensor_event_handler_init();  // Legacy - will be deprecated
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
   midi_cv_scene_handler_init();
+  midi_proximity_scene_handler_init();
+  midi_als_scene_handler_init();
   midi_passthrough_init();
   
   switch_init();

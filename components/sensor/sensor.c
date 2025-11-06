@@ -56,8 +56,6 @@ static volatile uint8_t last_midi_als_value = 0;  // Last MIDI value actually se
 static volatile uint8_t last_midi_ps_value = 0;   // Last MIDI value actually sent
 static volatile float filtered_als = 0.0f;
 static volatile float filtered_proximity = 0.0f;
-static volatile proximity_polarity_t current_polarity = PROXIMITY_POLARITY_NORMAL;
-static volatile als_polarity_t current_als_polarity = ALS_POLARITY_NORMAL;
 static volatile uint16_t als_min_observed = 65535;  // Track minimum observed value
 static volatile uint16_t als_max_observed = 0;      // Track maximum observed value
 static i2c_master_dev_handle_t vcnl4040_dev = NULL;
@@ -318,12 +316,13 @@ void sensor_init(bool enable_logging) {
   ESP_LOGI(TAG, "Light and proximity sensor initialized");
 }
 
+// Legacy polarity functions removed - use scene-based polarity instead
 void set_ps_polarity(proximity_polarity_t polarity) {
-  current_polarity = polarity;
+  ESP_LOGW(TAG, "set_ps_polarity deprecated - use scene proximity_polarity command");
 }
 
 void set_als_polarity(als_polarity_t polarity) {
-  current_als_polarity = polarity;
+  ESP_LOGW(TAG, "set_als_polarity deprecated - use scene als_polarity command");
 }
 
 void sensor_reset(void) {
@@ -777,13 +776,8 @@ static void als_task(void *arg) {
       if (scaled < 0.0f) scaled = 0.0f;
       if (scaled > 127.0f) scaled = 127.0f;
       
-      // Apply polarity
-      uint8_t midi_value;
-      if (current_als_polarity == ALS_POLARITY_INVERTED) {
-        midi_value = 127 - (uint8_t)(scaled + 0.5f);
-      } else {
-        midi_value = (uint8_t)(scaled + 0.5f);
-      }
+      // Convert to MIDI value (polarity now handled by scene mapping)
+      uint8_t midi_value = (uint8_t)(scaled + 0.5f);
       
       // Log values periodically for debugging
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -843,13 +837,8 @@ static void ps_task(void *arg) {
       if (scaled < 0.0f) scaled = 0.0f;
       if (scaled > 127.0f) scaled = 127.0f;
       
-      // Apply polarity
-      uint8_t midi_value;
-      if (current_polarity == PROXIMITY_POLARITY_INVERTED) {
-        midi_value = 127 - (uint8_t)(scaled + 0.5f);
-      } else {
-        midi_value = (uint8_t)(scaled + 0.5f);
-      }
+      // Convert to MIDI value (polarity now handled by scene mapping)
+      uint8_t midi_value = (uint8_t)(scaled + 0.5f);
       
       // Get current time for both logging and hysteresis
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -935,13 +924,8 @@ static void ps_task(void *arg) {
         uint8_t output_value = midi_value;  // Default to sensor reading
         
         if (hysteresis_enabled) {
-        // Determine if sensor is "at rest" based on polarity
-        bool at_rest = false;
-        if (current_polarity == PROXIMITY_POLARITY_NORMAL) {
-          at_rest = (midi_value < 5);  // Near minimum (nothing detected)
-        } else {
-          at_rest = (midi_value > 122);  // Near maximum (inverted, nothing detected)
-        }
+        // Determine if sensor is "at rest" (nothing detected = near minimum)
+        bool at_rest = (midi_value < 5);  // Near minimum (nothing detected)
         
         // Get timeout duration
         // TODO: Could sync timeout to tempo (e.g., wait for end of bar)
