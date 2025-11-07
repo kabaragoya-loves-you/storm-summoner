@@ -33,8 +33,8 @@
 #define NVS_KEY_ALS_MIN "als_min"
 #define NVS_KEY_ALS_MAX "als_max"
 #define NVS_KEY_ALS_DEADZONE "als_dz"
-#define DEFAULT_ALS_RATE 10  // Default: 10 messages per second
-#define DEFAULT_PS_RATE 20   // Default: 20 messages per second
+#define DEFAULT_ALS_RATE 5   // Default: 5 messages per second (respect 160ms integration time)
+#define DEFAULT_PS_RATE 50   // Default: 50 messages per second (8T integration is ~10-16ms)
 #define NVS_KEY_HYSTERESIS_ENABLED "prox_hyst_en"
 #define NVS_KEY_REST_POSITION "prox_rest"
 #define NVS_KEY_RETURN_SPEED "prox_ret_spd"
@@ -48,8 +48,9 @@
 #define DEFAULT_THEREMIN_RANGE 24      // 2 octaves
 #define DEFAULT_THEREMIN_VELOCITY 100
 
-static TaskHandle_t als_task_handle = NULL;
-static TaskHandle_t ps_task_handle = NULL;
+static TaskHandle_t sensor_task_handle = NULL;
+static volatile bool als_enabled_flag = false;
+static volatile bool ps_enabled_flag = false;
 static volatile uint16_t als_value = 0;
 static volatile uint16_t ps_value = 0;
 static volatile uint8_t last_midi_als_value = 0;  // Last MIDI value actually sent
@@ -106,18 +107,22 @@ void sensor_init(bool enable_logging) {
   // Load rate limits
   uint32_t stored_als_rate;
   err = app_settings_load_u32(NVS_KEY_ALS_RATE, &stored_als_rate);
-  if (err != ESP_OK) {
+  if (err != ESP_OK || stored_als_rate > 5) {
+    // Reset if not found OR if old value is too fast (>5Hz)
     app_settings_save_u32(NVS_KEY_ALS_RATE, DEFAULT_ALS_RATE);
     als_rate_limit = DEFAULT_ALS_RATE;
+    ESP_LOGI(TAG, "Reset ALS rate to %u Hz (was %u)", DEFAULT_ALS_RATE, (unsigned)stored_als_rate);
   } else {
     als_rate_limit = stored_als_rate;
   }
 
   uint32_t stored_ps_rate;
   err = app_settings_load_u32(NVS_KEY_PS_RATE, &stored_ps_rate);
-  if (err != ESP_OK) {
+  if (err != ESP_OK || stored_ps_rate > 50) {
+    // Reset if not found OR if old value is too fast (>50Hz)
     app_settings_save_u32(NVS_KEY_PS_RATE, DEFAULT_PS_RATE);
     ps_rate_limit = DEFAULT_PS_RATE;
+    ESP_LOGI(TAG, "Reset PS rate to %u Hz (was %u)", DEFAULT_PS_RATE, (unsigned)stored_ps_rate);
   } else {
     ps_rate_limit = stored_ps_rate;
   }
@@ -316,6 +321,19 @@ void sensor_init(bool enable_logging) {
     return;
   }
 
+  // Verify sensor is responding by reading device ID
+  uint16_t device_id;
+  err = i2c_common_read_reg16(vcnl4040_dev, 0x0C, &device_id);
+  if (err == ESP_OK) {
+    if (device_id == 0x0186) {
+      ESP_LOGI(TAG, "VCNL4040 sensor verified (ID: 0x%04X)", device_id);
+    } else {
+      ESP_LOGW(TAG, "Unexpected device ID: 0x%04X (expected 0x0186)", device_id);
+    }
+  } else {
+    ESP_LOGE(TAG, "Failed to read device ID: %s", esp_err_to_name(err));
+  }
+  
   ESP_LOGI(TAG, "Light and proximity sensor initialized");
 }
 
@@ -328,23 +346,7 @@ void set_als_polarity(als_polarity_t polarity) {
   ESP_LOGW(TAG, "set_als_polarity deprecated - use scene als_polarity command");
 }
 
-void sensor_reset(void) {
-  if (vcnl4040_dev) {
-    // First try to reset through software
-    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // Shutdown
-    vTaskDelay(pdMS_TO_TICKS(100));
-    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0100); // Re-enable with 160ms IT
-    vTaskDelay(pdMS_TO_TICKS(100));
-    
-    // Clear any accumulated values
-    filtered_als = 0.0f;
-    filtered_proximity = 0.0f;
-    last_midi_als_value = 0;
-    last_midi_ps_value = 0;
-    
-    ESP_LOGI(TAG, "Sensor software reset complete");
-  }
-}
+// Moved to new location above - duplicate removed
 
 // Add functions to get/set rate limits
 uint32_t get_als_rate_limit(void) {
@@ -424,6 +426,7 @@ esp_err_t proximity_auto_calibrate(uint32_t duration_ms) {
   
   while ((xTaskGetTickCount() - start_tick) < duration_ticks && sample_count < max_samples) {
     uint16_t reading;
+    
     if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &reading) == ESP_OK) {
       samples[sample_count++] = reading;
       
@@ -538,6 +541,7 @@ esp_err_t als_auto_calibrate(uint32_t duration_ms) {
   
   while ((xTaskGetTickCount() - start_tick) < duration_ticks && sample_count < max_samples) {
     uint16_t reading;
+    
     if (i2c_common_read_reg16(vcnl4040_dev, reg_addr, &reading) == ESP_OK) {
       samples[sample_count++] = reading;
       
@@ -744,92 +748,463 @@ bool als_get_use_white_channel(void) {
   return use_white_channel;
 }
 
-static void als_task(void *arg) {
-  uint16_t value;
-  uint32_t last_log_time = 0;
-  uint32_t last_send_time = 0;
-  uint8_t last_sent_midi = 0;  // Track the last MIDI value we actually sent
-  bool first_reading = true;
+// Unified sensor task handles both ALS and proximity
+static void sensor_task(void *arg) {
+  // ALS state
+  uint16_t als_raw_value;
+  uint32_t als_last_log_time = 0;
+  uint32_t als_last_send_time = 0;
+  uint8_t als_last_sent_midi = 0;
+  bool als_first_reading = true;
+  uint32_t als_consecutive_errors = 0;
+  
+  // Proximity state
+  uint16_t ps_raw_value;
+  uint32_t ps_last_log_time = 0;
+  uint32_t ps_last_send_time = 0;
+  uint8_t ps_last_sent_midi = 0;
+  uint32_t ps_consecutive_errors = 0;
+  
+  bool read_proximity = true;  // Alternate between sensors to reduce bus load
+  uint32_t ps_last_read_time = 0;
+  uint32_t als_last_read_time = 0;
   
   while (1) {
-    // Calculate minimum interval between messages based on rate limit (check each iteration for dynamic updates)
-    uint32_t min_interval_ms = als_rate_limit > 0 ? 1000 / als_rate_limit : 100;
+    uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
     
-    // Read from either ALS or White channel based on configuration
-    uint16_t reg_addr = use_white_channel ? 0x0A : SENSOR_ALS_DATA;
-    if (i2c_common_read_reg16(vcnl4040_dev, reg_addr, &value) == ESP_OK) {
-      // Initialize filter on first reading
-      if (first_reading) {
-        filtered_als = (float)value;
-        first_reading = false;
-      }
-      
-      // Choose between raw and filtered mode
-      float sensor_value;
-      if (als_raw_mode) {
-        sensor_value = (float)value;
-      } else {
-        // Apply IIR filter to smooth the values
-        filtered_als = ALS_IIR_ALPHA * value + (1.0f - ALS_IIR_ALPHA) * filtered_als;
-        sensor_value = filtered_als;
-      }
-      
-      // Scale to MIDI range (0-127) with proper clamping using calibration values
-      float scaled = ((float)sensor_value - (float)als_min) * 127.0f / ((float)als_max - (float)als_min);
-      if (scaled < 0.0f) scaled = 0.0f;
-      if (scaled > 127.0f) scaled = 127.0f;
-      
-      // Convert to MIDI value (polarity now handled by scene mapping)
-      uint8_t midi_value = (uint8_t)(scaled + 0.5f);
-      
-      // Log values periodically for debugging
-      uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-      if (s_als_logging_enabled && current_time - last_log_time >= 5000) {  // Log every 5 seconds
-        ESP_LOGD(TAG, "%s: raw=%u, filtered=%.1f, min=%u, max=%u, MIDI=%u", 
-                use_white_channel ? "WHITE" : "ALS",
-                value, filtered_als, als_min, als_max, midi_value);
-        last_log_time = current_time;
-      }
-      
-      // Check deadzone and rate limit before posting event
-      // Only send if the value has changed beyond deadzone AND rate limit allows
-      int diff = abs((int)midi_value - (int)last_sent_midi);
-      if (diff >= als_deadzone && (current_time - last_send_time) >= min_interval_ms) {
-        ESP_LOGD(TAG, "Posting ALS event: current=%u, last=%u, diff=%d", midi_value, last_sent_midi, diff);
-        
-        // Post sensor event instead of direct MIDI call
-        event_t sensor_event = {
-          .type = EVENT_SENSOR_ALS,
-          .priority = EVENT_PRIORITY_NORMAL,
-          .timestamp = event_bus_get_current_timestamp(),
-          .data.sensor = { 
-            .channel = 0,
-            .controller = 17,  // CC17 for ALS
-            .value = midi_value
-          }
-        };
-        event_bus_post(&sensor_event);
-        
-        last_sent_midi = midi_value;  // Update last sent value immediately after posting
-        last_send_time = current_time;  // Update rate limiting timestamp
-      }
+    // Determine which sensor is ready to read
+    // Enforce minimum intervals to respect sensor integration times
+    uint32_t ps_min_interval_ms = ps_rate_limit > 0 ? 1000 / ps_rate_limit : 20;
+    if (ps_min_interval_ms < 20) ps_min_interval_ms = 20;  // Never faster than 50Hz (8T integration ~16ms)
+    
+    uint32_t als_min_interval_ms = als_rate_limit > 0 ? 1000 / als_rate_limit : 200;
+    if (als_min_interval_ms < 200) als_min_interval_ms = 200;  // Never faster than 5Hz (respect 160ms integration)
+    
+    bool ps_ready = ps_enabled_flag && (current_time - ps_last_read_time >= ps_min_interval_ms);
+    bool als_ready = als_enabled_flag && (current_time - als_last_read_time >= als_min_interval_ms);
+    
+    // Decide which sensor to read this iteration
+    if (ps_ready && als_ready) {
+      // Both ready - alternate
+      read_proximity = !read_proximity;
+    } else if (ps_ready) {
+      read_proximity = true;
+    } else if (als_ready) {
+      read_proximity = false;
+    } else {
+      // Neither ready - sleep and try again
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
     }
     
-    // Sleep based on rate limit to reduce I2C traffic
-    vTaskDelay(pdMS_TO_TICKS(min_interval_ms > 10 ? min_interval_ms / 2 : 10));
+    // ===== PROCESS PROXIMITY SENSOR =====
+    if (read_proximity && ps_enabled_flag) {
+      ps_last_read_time = current_time;
+      
+      if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &ps_raw_value) == ESP_OK) {
+        ps_consecutive_errors = 0;
+        ps_value = ps_raw_value;
+        
+        // Apply IIR filter to smooth the values
+        filtered_proximity = PROXIMITY_IIR_ALPHA * ps_raw_value + (1.0f - PROXIMITY_IIR_ALPHA) * filtered_proximity;
+        
+        // Scale to MIDI range (0-127) with proper clamping using calibration values
+        float scaled = ((float)filtered_proximity - (float)proximity_min) * 127.0f / ((float)proximity_max - (float)proximity_min);
+        if (scaled < 0.0f) scaled = 0.0f;
+        if (scaled > 127.0f) scaled = 127.0f;
+        
+        // Convert to MIDI value (polarity now handled by scene mapping)
+        uint8_t midi_value = (uint8_t)(scaled + 0.5f);
+        
+        // Branch based on mode
+        if (proximity_mode == PROXIMITY_MODE_THEREMIN) {
+          // === THEREMIN MODE ===
+          // Determine if proximity is in detectable range
+          bool in_range = (midi_value >= 5);  // Threshold for note detection
+          
+          if (in_range) {
+            // Map MIDI value (5-127) to note number
+            // Scale to 0-1 range, then to semitone range
+            float note_scaled = ((float)midi_value - 5.0f) / 122.0f;  // 5 to 127 -> 0 to 1
+            uint8_t semitone_offset = (uint8_t)(note_scaled * (float)theremin_range);
+            uint8_t new_note = theremin_base_note + semitone_offset;
+            if (new_note > 127) new_note = 127;
+            
+            // Check if note changed or if we need to start a new note
+            if (!theremin_note_active || new_note != current_theremin_note) {
+              // Turn off previous note if active
+              if (theremin_note_active) {
+                event_t note_off_event = {
+                  .type = EVENT_NOTE_OFF,
+                  .priority = EVENT_PRIORITY_NORMAL,
+                  .timestamp = event_bus_get_current_timestamp(),
+                  .data.note = {
+                    .channel = 0,
+                    .note = current_theremin_note,
+                    .velocity = 0
+                  }
+                };
+                event_bus_post(&note_off_event);
+                ESP_LOGI(TAG, "Theremin note OFF: %u", current_theremin_note);
+              }
+              
+              // Turn on new note
+              event_t note_on_event = {
+                .type = EVENT_NOTE_ON,
+                .priority = EVENT_PRIORITY_NORMAL,
+                .timestamp = event_bus_get_current_timestamp(),
+                .data.note = {
+                  .channel = 0,
+                  .note = new_note,
+                  .velocity = theremin_velocity
+                }
+              };
+              event_bus_post(&note_on_event);
+              ESP_LOGI(TAG, "Theremin note ON: %u, velocity: %u", new_note, theremin_velocity);
+              
+              current_theremin_note = new_note;
+              theremin_note_active = true;
+            }
+          } else {
+            // Out of range - turn off note if active
+            if (theremin_note_active) {
+              event_t note_off_event = {
+                .type = EVENT_NOTE_OFF,
+                .priority = EVENT_PRIORITY_NORMAL,
+                .timestamp = event_bus_get_current_timestamp(),
+                .data.note = {
+                  .channel = 0,
+                  .note = current_theremin_note,
+                  .velocity = 0
+                }
+              };
+              event_bus_post(&note_off_event);
+              ESP_LOGI(TAG, "Theremin note OFF (out of range): %u", current_theremin_note);
+              theremin_note_active = false;
+              current_theremin_note = 0;
+            }
+          }
+          
+          // Logging for theremin mode
+          if (current_time - ps_last_log_time >= 500) {
+            ESP_LOGD(TAG, "PS (Theremin): raw=%u, filtered=%.1f, MIDI=%u, note=%u, active=%d", 
+              ps_raw_value, filtered_proximity, midi_value, current_theremin_note, theremin_note_active);
+            ps_last_log_time = current_time;
+          }
+        } else {
+          // === CC MODE ===
+          // Hysteresis logic - determine output value
+          uint8_t output_value = midi_value;  // Default to sensor reading
+          
+          if (hysteresis_enabled) {
+            // Determine if sensor is "at rest" (nothing detected = near minimum)
+            bool at_rest = (midi_value < 5);  // Near minimum (nothing detected)
+            
+            // Get timeout duration
+            uint32_t timeout_ms;
+            switch (timeout_setting) {
+              case PROXIMITY_TIMEOUT_FAST: timeout_ms = 500; break;
+              case PROXIMITY_TIMEOUT_MEDIUM: timeout_ms = 1000; break;
+              case PROXIMITY_TIMEOUT_SLOW: timeout_ms = 5000; break;
+              default: timeout_ms = 1000; break;
+            }
+            
+            // State machine logic
+            if (at_rest) {
+              if (at_rest_start_time == 0) {
+                // Just entered at-rest state
+                at_rest_start_time = current_time;
+              } else if (!returning_to_rest && (current_time - at_rest_start_time) >= timeout_ms) {
+                // Timeout expired, begin return to rest position
+                returning_to_rest = true;
+                return_start_time = current_time;
+                return_start_value = (float)ps_last_sent_midi;
+                ESP_LOGD(TAG, "Starting return to rest: from=%u to=%u", ps_last_sent_midi, rest_position);
+              }
+            } else {
+              // Sensor is active (user is interacting), reset hysteresis state
+              at_rest_start_time = 0;
+              returning_to_rest = false;
+            }
+            
+            // Apply return interpolation if active
+            if (returning_to_rest) {
+              uint32_t return_duration_ms;
+              switch (return_speed) {
+                case PROXIMITY_RETURN_INSTANT: return_duration_ms = 0; break;
+                case PROXIMITY_RETURN_FAST: return_duration_ms = 250; break;
+                case PROXIMITY_RETURN_MEDIUM: return_duration_ms = 1000; break;
+                case PROXIMITY_RETURN_SLOW: return_duration_ms = 2000; break;
+                default: return_duration_ms = 1000; break;
+              }
+              
+              if (return_duration_ms == 0) {
+                // Instant return
+                output_value = rest_position;
+              } else {
+                // Interpolate over time
+                uint32_t elapsed = current_time - return_start_time;
+                if (elapsed >= return_duration_ms) {
+                  // Return complete
+                  output_value = rest_position;
+                } else {
+                  // Calculate interpolated value
+                  float progress = (float)elapsed / (float)return_duration_ms;
+                  output_value = (uint8_t)(return_start_value + progress * ((float)rest_position - return_start_value));
+                }
+              }
+            }
+          }
+          
+          // Log values periodically
+          if (s_ps_logging_enabled && current_time - ps_last_log_time >= 500) {
+            if (hysteresis_enabled && returning_to_rest) {
+              ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u (returning to %u)", 
+                ps_raw_value, filtered_proximity, midi_value, output_value, rest_position);
+            } else {
+              ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u, last_sent=%u", 
+                ps_raw_value, filtered_proximity, midi_value, output_value, ps_last_sent_midi);
+            }
+            ps_last_log_time = current_time;
+          }
+          
+          // Only send if the value has changed beyond deadzone AND rate limit allows
+          // Use output_value (which includes hysteresis) instead of raw midi_value
+          int diff = abs((int)output_value - (int)ps_last_sent_midi);
+          if (diff >= proximity_deadzone && (current_time - ps_last_send_time) >= ps_min_interval_ms) {
+            ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d", output_value, ps_last_sent_midi, diff);
+            
+            // Post sensor event instead of direct MIDI call
+            event_t sensor_event = {
+              .type = EVENT_SENSOR_PROXIMITY,
+              .priority = EVENT_PRIORITY_NORMAL,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.sensor = { 
+                .channel = 0,
+                .controller = 19,  // CC19 for proximity
+                .value = output_value
+              }
+            };
+            event_bus_post(&sensor_event);
+            
+            ps_last_sent_midi = output_value;  // Update last sent value immediately after posting
+            ps_last_send_time = current_time;  // Update rate limiting timestamp
+          }
+        }  // End of CC mode / theremin mode if-else
+      } else {
+        // I2C read failed
+        ps_consecutive_errors++;
+        if (ps_consecutive_errors >= 10) {
+          ESP_LOGE(TAG, "PS: %u consecutive I2C errors", (unsigned)ps_consecutive_errors);
+        }
+      }
+      
+    }
+    
+    // ===== PROCESS ALS SENSOR =====
+    if (!read_proximity && als_enabled_flag) {
+      als_last_read_time = current_time;
+      
+      // Read from either ALS or White channel based on configuration
+      uint16_t reg_addr = use_white_channel ? 0x0A : SENSOR_ALS_DATA;
+      
+      if (i2c_common_read_reg16(vcnl4040_dev, reg_addr, &als_raw_value) == ESP_OK) {
+        als_consecutive_errors = 0;
+        
+        // Initialize filter on first reading
+        if (als_first_reading) {
+          filtered_als = (float)als_raw_value;
+          als_first_reading = false;
+        }
+        
+        // Choose between raw and filtered mode
+        float sensor_value;
+        if (als_raw_mode) {
+          sensor_value = (float)als_raw_value;
+        } else {
+          // Apply IIR filter to smooth the values
+          filtered_als = ALS_IIR_ALPHA * als_raw_value + (1.0f - ALS_IIR_ALPHA) * filtered_als;
+          sensor_value = filtered_als;
+        }
+        
+        // Scale to MIDI range (0-127) with proper clamping using calibration values
+        float scaled = ((float)sensor_value - (float)als_min) * 127.0f / ((float)als_max - (float)als_min);
+        if (scaled < 0.0f) scaled = 0.0f;
+        if (scaled > 127.0f) scaled = 127.0f;
+        
+        // Convert to MIDI value (polarity now handled by scene mapping)
+        uint8_t midi_value = (uint8_t)(scaled + 0.5f);
+        
+        // Log values periodically for debugging
+        if (s_als_logging_enabled && current_time - als_last_log_time >= 5000) {  // Log every 5 seconds
+          ESP_LOGD(TAG, "%s: raw=%u, filtered=%.1f, min=%u, max=%u, MIDI=%u", 
+                  use_white_channel ? "WHITE" : "ALS",
+                  als_raw_value, filtered_als, als_min, als_max, midi_value);
+          als_last_log_time = current_time;
+        }
+        
+        // Check deadzone and rate limit before posting event
+        // Only send if the value has changed beyond deadzone AND rate limit allows
+        int diff = abs((int)midi_value - (int)als_last_sent_midi);
+        if (diff >= als_deadzone && (current_time - als_last_send_time) >= als_min_interval_ms) {
+          ESP_LOGD(TAG, "Posting ALS event: current=%u, last=%u, diff=%d", midi_value, als_last_sent_midi, diff);
+          
+          // Post sensor event instead of direct MIDI call
+          event_t sensor_event = {
+            .type = EVENT_SENSOR_ALS,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.sensor = { 
+              .channel = 0,
+              .controller = 17,  // CC17 for ALS
+              .value = midi_value
+            }
+          };
+          event_bus_post(&sensor_event);
+          
+          als_last_sent_midi = midi_value;  // Update last sent value immediately after posting
+          als_last_send_time = current_time;  // Update rate limiting timestamp
+        }
+      } else {
+        // I2C read failed
+        als_consecutive_errors++;
+        if (als_consecutive_errors >= 10) {
+          ESP_LOGE(TAG, "ALS: %u consecutive I2C errors", (unsigned)als_consecutive_errors);
+        }
+      }
+      
+    }
+    
+    // Small delay before next iteration (checking which sensor is ready)
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
-static void ps_task(void *arg) {
-  uint16_t value;
-  uint32_t last_log_time = 0;
-  uint32_t last_send_time = 0;
-  uint8_t last_sent_midi = 0;
+void als_enable(void) {
+  als_enabled_flag = true;
   
-  while (1) {
+  // Start unified sensor task if not already running
+  if (sensor_task_handle == NULL) {
+    BaseType_t ret = xTaskCreate(sensor_task, "sensor", 4096, NULL, TASK_PRIORITY_SENSOR_ALS, &sensor_task_handle);
+    if (ret != pdPASS) {
+      ESP_LOGE(TAG, "Failed to create sensor task");
+      return;
+    }
+    ESP_LOGI(TAG, "Sensor task started");
+  }
+  ESP_LOGI(TAG, "Ambient light sensor enabled");
+}
+
+void als_disable(void) {
+  als_enabled_flag = false;
+  ESP_LOGI(TAG, "Ambient light sensor disabled");
+}
+
+void ps_enable(void) {
+  ps_enabled_flag = true;
+  
+  // Start unified sensor task if not already running
+  if (sensor_task_handle == NULL) {
+    BaseType_t ret = xTaskCreate(sensor_task, "sensor", 4096, NULL, TASK_PRIORITY_SENSOR_PS, &sensor_task_handle);
+    if (ret != pdPASS) {
+      ESP_LOGE(TAG, "Failed to create sensor task");
+      return;
+    }
+    ESP_LOGI(TAG, "Sensor task started");
+  }
+  ESP_LOGI(TAG, "Proximity sensor enabled");
+}
+
+void ps_disable(void) {
+  ps_enabled_flag = false;
+  ESP_LOGI(TAG, "Proximity sensor disabled");
+}
+
+uint16_t get_als(void) {
+  return als_value;
+}
+
+uint16_t get_ps(void) {
+  return ps_value;
+}
+
+void sensor_reset(void) {
+  if (vcnl4040_dev) {
+    // First try to reset through software
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // Shutdown
+    vTaskDelay(pdMS_TO_TICKS(100));
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0100); // Re-enable with 160ms IT
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Clear any accumulated values
+    filtered_als = 0.0f;
+    filtered_proximity = 0.0f;
+    last_midi_als_value = 0;
+    last_midi_ps_value = 0;
+    
+    ESP_LOGI(TAG, "Sensor software reset complete");
+  }
+}
+
+void sensor_dump_registers(void) {
+  uint16_t val;
+  ESP_LOGI(TAG, "=== VCNL4040 Register Dump ===");
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_CONF, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "ALS_CONF (0x00): 0x%04X", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF1, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "PS_CONF1/2 (0x03): 0x%04X", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF3, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "PS_CONF3/MS (0x05): 0x%04X", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "PS_DATA (0x08): %u", val);
+  }
+  
+  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "ALS_DATA (0x09): %u", val);
+  }
+  
+  // Read white channel
+  if (i2c_common_read_reg16(vcnl4040_dev, 0x0A, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "WHITE_DATA (0x0A): %u", val);
+  }
+  
+  // Read interrupt flags
+  if (i2c_common_read_reg16(vcnl4040_dev, 0x0B, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "INT_FLAG (0x0B): 0x%04X", val);
+  }
+  
+  // Read device ID
+  if (i2c_common_read_reg16(vcnl4040_dev, 0x0C, &val) == ESP_OK) {
+    ESP_LOGI(TAG, "DEVICE_ID (0x0C): 0x%04X (should be 0x0186)", val);
+  }
+  
+  ESP_LOGI(TAG, "==============================");
+}
+
+// OLD CODE DELETED BELOW - replaced by unified sensor_task
+#if 0
+OLD_CODE_START: while (1) {
     // Calculate minimum interval between messages based on rate limit (check each iteration for dynamic updates)
     uint32_t min_interval_ms = ps_rate_limit > 0 ? 1000 / ps_rate_limit : 50;
-    if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &value) == ESP_OK) {
+    
+    // Acquire mutex with timeout
+    esp_err_t read_err = ESP_FAIL;
+    if (xSemaphoreTake(sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      read_err = i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &value);
+      xSemaphoreGive(sensor_mutex);
+    } else {
+      ESP_LOGW(TAG, "PS task: mutex timeout");
+    }
+    
+    if (read_err == ESP_OK) {
+      consecutive_errors = 0;  // Reset error counter on success
       ps_value = value;
       
       // Apply IIR filter to smooth the values
@@ -1023,109 +1398,24 @@ static void ps_task(void *arg) {
           last_send_time = current_time;  // Update rate limiting timestamp
         }
       }  // End of CC mode / theremin mode if-else
+    } else {
+      // I2C read failed
+      consecutive_errors++;
+      if (consecutive_errors >= 10) {
+        ESP_LOGE(TAG, "PS: %u consecutive I2C errors, reducing poll rate", (unsigned)consecutive_errors);
+      }
     }
     
     // Sleep based on rate limit to reduce I2C traffic
-    vTaskDelay(pdMS_TO_TICKS(min_interval_ms > 10 ? min_interval_ms / 2 : 10));
-  }
-}
-
-void als_enable(void) {
-  if (als_task_handle != NULL) {
-    vTaskResume(als_task_handle);
-    ESP_LOGI(TAG, "Ambient light sensor task resumed");
-  } else {
-    BaseType_t ret = xTaskCreate(als_task, "ambient", 3072, NULL, TASK_PRIORITY_SENSOR_ALS, &als_task_handle);
-    if (ret != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create ambient light sensor task");
-      return;
+    // Add exponential backoff on errors
+    uint32_t delay_ms = min_interval_ms > 10 ? min_interval_ms / 2 : 10;
+    if (consecutive_errors > 0) {
+      delay_ms += (consecutive_errors * 50);  // Add 50ms per consecutive error
+      if (delay_ms > 1000) delay_ms = 1000;  // Cap at 1 second
     }
-    ESP_LOGI(TAG, "Ambient light sensor task started");
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
 }
 
-void als_disable(void) {
-  if (als_task_handle != NULL) {
-    vTaskSuspend(als_task_handle);
-    ESP_LOGI(TAG, "Ambient light sensor task suspended");
-  }
-}
-
-void ps_enable(void) {
-  if (ps_task_handle != NULL) {
-    vTaskResume(ps_task_handle);
-    ESP_LOGI(TAG, "Proximity sensor task resumed");
-  } else {
-    BaseType_t ret = xTaskCreate(ps_task, "proximity", 3072, NULL, TASK_PRIORITY_SENSOR_PS, &ps_task_handle);
-    if (ret != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create proximity sensor task");
-      return;
-    }
-    ESP_LOGI(TAG, "Proximity sensor task started");
-  }
-}
-
-void ps_disable(void) {
-  if (ps_task_handle != NULL) {
-    vTaskSuspend(ps_task_handle);
-    ESP_LOGI(TAG, "Proximity sensor task suspended");
-  }
-}
-
-uint16_t get_als(void) {
-  uint16_t val;
-  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
-    return val;
-  }
-  return 0;
-}
-
-uint16_t get_ps(void) {
-  uint16_t val;
-  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
-    return val;
-  }
-  return 0;
-}
-
-void sensor_dump_registers(void) {
-  uint16_t val;
-  ESP_LOGI(TAG, "=== VCNL4040 Register Dump ===");
-  
-  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_CONF, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "ALS_CONF (0x00): 0x%04X", val);
-  }
-  
-  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF1, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "PS_CONF1/2 (0x03): 0x%04X", val);
-  }
-  
-  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF3, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "PS_CONF3/MS (0x05): 0x%04X", val);
-  }
-  
-  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "PS_DATA (0x08): %u", val);
-  }
-  
-  if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "ALS_DATA (0x09): %u", val);
-  }
-  
-  // Read white channel
-  if (i2c_common_read_reg16(vcnl4040_dev, 0x0A, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "WHITE_DATA (0x0A): %u", val);
-  }
-  
-  // Read interrupt flags
-  if (i2c_common_read_reg16(vcnl4040_dev, 0x0B, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "INT_FLAG (0x0B): 0x%04X", val);
-  }
-  
-  // Read device ID
-  if (i2c_common_read_reg16(vcnl4040_dev, 0x0C, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "DEVICE_ID (0x0C): 0x%04X (should be 0x0186)", val);
-  }
-  
-  ESP_LOGI(TAG, "==============================");
-}
+// Old duplicate functions deleted - all replaced above
+#endif
