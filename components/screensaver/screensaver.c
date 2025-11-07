@@ -160,6 +160,28 @@ static void stop_screensaver_deferred(lv_timer_t *timer) {
   ui_reclaim_canvas_buffer();
 }
 
+// ISR-safe version of screensaver_notify_activity
+void screensaver_notify_activity_from_isr(BaseType_t* higher_priority_woken) {
+  if (!g_screensaver_initialised || !g_screensaver_enabled_in_settings || g_screensaver_activity_timer == NULL) {
+    return;
+  }
+
+  // If screensaver is active, stop it (deferred via event)
+  if (g_screensaver_active) {
+    // Post event to stop screensaver (handled in event bus task context)
+    event_t event = {
+      .type = EVENT_UI_ACTION,
+      .priority = EVENT_PRIORITY_NORMAL,
+      .timestamp = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS
+    };
+    event_bus_post_from_isr(&event, higher_priority_woken);
+  }
+
+  // Reset the inactivity timer from ISR
+  xTimerResetFromISR(g_screensaver_activity_timer, higher_priority_woken);
+}
+
+// Non-ISR version (for task context)
 void screensaver_notify_activity(void) {
   if (!g_screensaver_initialised || !g_screensaver_enabled_in_settings || g_screensaver_activity_timer == NULL) {
     return;

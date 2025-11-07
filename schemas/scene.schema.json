@@ -18,10 +18,10 @@
       "default": 0,
       "description": "Program change value for this scene"
     },
-    "send_pc_on_change": {
+    "send_pc_on_load": {
       "type": "boolean",
       "default": true,
-      "description": "Send program change when entering this scene"
+      "description": "Send program change when loading this scene"
     },
     "on_load": {
       "$ref": "#/definitions/action_chain",
@@ -76,10 +76,38 @@
           "type": "boolean",
           "default": true
         },
+        "output_type": {
+          "type": "string",
+          "enum": ["cc", "note"],
+          "default": "cc",
+          "description": "Output type (cc or note)"
+        },
         "cc_number": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 127
+          "maximum": 127,
+          "description": "MIDI CC number (when output_type=cc)"
+        },
+        "base_note": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 60,
+          "description": "Base MIDI note, typically middle C (when output_type=note)"
+        },
+        "note_range": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 127,
+          "default": 24,
+          "description": "Range in semitones (when output_type=note)"
+        },
+        "velocity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 127,
+          "default": 100,
+          "description": "Note velocity (when output_type=note)"
         },
         "curve_type": {
           "type": "integer",
@@ -119,7 +147,8 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 127,
-          "default": 64
+          "default": 64,
+          "description": "Idle value (64 for CC bipolar, 60 for NOTE mode)"
         },
         "idle_timeout_ms": {
           "type": "integer",

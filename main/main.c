@@ -9,7 +9,6 @@
 #include "midi_messages.h"
 #include "midi_in.h"
 #include "midi_in_debug.h"
-#include "midi_sensor_event_handler.h"
 #include "midi_passthrough.h"
 #include "tempo.h"
 #include "elite.h"
@@ -87,7 +86,6 @@ void app_main(void) {
   midi_set_uart_transmit_mode(MIDI_TRANSMIT_BOTH);
   midi_in_init();
   midi_in_debug_enable();  // Enable MIDI IN debug logging
-  midi_sensor_event_handler_init();  // Legacy - will be deprecated
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
   midi_cv_scene_handler_init();

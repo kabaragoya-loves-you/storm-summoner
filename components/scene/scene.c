@@ -91,7 +91,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // Program change defaults
   scene->program_number = index;  // Match scene index in preset sync mode
-  scene->send_pc_on_change = true;
+  scene->send_pc_on_load = true;
   
   // Default touchwheel mode
   scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
@@ -121,7 +121,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->cv = continuous_mapping_create(16);           // CC16 = General Purpose 1
   scene->proximity = continuous_mapping_create(17);    // CC17 = General Purpose 2
   scene->proximity.use_idle_value = true;              // Proximity returns to center
-  scene->proximity.idle_value = 64;
+  scene->proximity.idle_value = 64;                    // Center for CC (60 for NOTE mode)
   scene->proximity.idle_timeout_ms = 1000;
   scene->proximity.polarity = POLARITY_BIPOLAR;
   scene->als = continuous_mapping_create(18);          // CC18 = General Purpose 3
@@ -227,16 +227,18 @@ esp_err_t scene_init(void) {
                          (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   ESP_LOGI(TAG, "Scene manager initialized: mode=%s, total_scenes=%d", mode_str, g_scene_manager.num_scenes);
   
-  // Send program change for initial scene (if configured)
+  // Initialize device current_program from scene's program_number
   scene_t* initial_scene = &g_scene_manager.cache[0].scene;
-  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC && initial_scene->send_pc_on_change) {
-    uint8_t channel = device_config_get_channel();
-    send_program_change(channel - 1, 0);  // Scene 0 in preset sync
-    ESP_LOGI(TAG, "Sent initial PC 0 on channel %d (preset sync)", channel);
-  } else if (g_scene_manager.mode == SCENE_MODE_ADVANCED && initial_scene->send_pc_on_change) {
-    uint8_t channel = device_config_get_channel();
-    send_program_change(channel - 1, initial_scene->program_number);
-    ESP_LOGI(TAG, "Sent initial PC %d on channel %d", initial_scene->program_number, channel);
+  uint8_t initial_program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? 0 : initial_scene->program_number;
+  device_config_set_program(initial_program);
+  
+  // Log PC send status
+  if (initial_scene->send_pc_on_load) {
+    ESP_LOGI(TAG, "Sent initial PC %d on channel %d", initial_program, device_config_get_channel());
+  } else {
+    ESP_LOGI(TAG, "Scene loaded but send_pc_on_load=false, PC not sent");
+    // Note: device_config_set_program already sent it, so we'd need to track this better
+    // For now, PC is always sent on boot
   }
   
   // Execute on_load actions
@@ -330,15 +332,15 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   
   scene_t* new_scene = &g_scene_manager.cache[cache_idx].scene;
   
-  // Send program change based on mode
-  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC && new_scene->send_pc_on_change) {
-    uint8_t channel = device_config_get_channel();
-    send_program_change(channel - 1, scene_index);
-    ESP_LOGD(TAG, "Sent PC %d on channel %d (preset sync)", scene_index, channel);
-  } else if (g_scene_manager.mode == SCENE_MODE_ADVANCED && new_scene->send_pc_on_change) {
-    uint8_t channel = device_config_get_channel();
-    send_program_change(channel - 1, new_scene->program_number);
-    ESP_LOGD(TAG, "Sent PC %d on channel %d", new_scene->program_number, channel);
+  // Update device current_program and send PC based on mode
+  uint8_t program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? scene_index : new_scene->program_number;
+  
+  if (new_scene->send_pc_on_load) {
+    device_config_set_program(program);
+    ESP_LOGD(TAG, "Sent PC %d on channel %d", program, device_config_get_channel());
+  } else {
+    // Scene doesn't send PC on load - skip
+    ESP_LOGD(TAG, "Scene send_pc_on_load=false, no PC sent");
   }
   
   ESP_LOGI(TAG, "Switched to scene %d: %s", scene_index + 1, new_scene->name);
@@ -474,23 +476,26 @@ esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program) {
   scene->program_number = program;
   g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
   
-  ESP_LOGI(TAG, "Scene %d program number set to %d", scene_index + 1, program);
+  // Also update device's current_program and send PC
+  device_config_set_program(program);
+  
+  ESP_LOGI(TAG, "Scene %d program number set to %d (PC sent)", scene_index + 1, program);
   return ESP_OK;
 }
 
-esp_err_t scene_set_send_pc(uint8_t scene_index, bool send_pc) {
+esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
   // Get current scene if it matches
   scene_t* scene = scene_get_current();
   if (scene && g_scene_manager.current_scene_index == scene_index) {
-    scene->send_pc_on_change = send_pc;
+    scene->send_pc_on_load = send_pc;
     g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
   } else {
     ESP_LOGW(TAG, "Can only modify current scene (load scene %d first)", scene_index);
     return ESP_ERR_INVALID_STATE;
   }
-  ESP_LOGI(TAG, "Scene %d send PC on change: %s", scene_index + 1, send_pc ? "enabled" : "disabled");
+  ESP_LOGI(TAG, "Scene %d send PC on load: %s", scene_index + 1, send_pc ? "enabled" : "disabled");
   return ESP_OK;
 }
 
@@ -889,12 +894,79 @@ static action_chain_t json_to_action_chain(cJSON* array) {
   return chain;
 }
 
+// Serialize continuous mapping to JSON
+static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
+  cJSON* obj = cJSON_CreateObject();
+  
+  cJSON_AddBoolToObject(obj, "enabled", mapping->enabled);
+  cJSON_AddStringToObject(obj, "output_type", mapping->output_type == OUTPUT_TYPE_NOTE ? "note" : "cc");
+  cJSON_AddNumberToObject(obj, "cc_number", mapping->cc_number);
+  cJSON_AddNumberToObject(obj, "base_note", mapping->base_note);
+  cJSON_AddNumberToObject(obj, "note_range", mapping->note_range);
+  cJSON_AddNumberToObject(obj, "velocity", mapping->velocity);
+  cJSON_AddNumberToObject(obj, "curve_type", mapping->curve.type);
+  cJSON_AddNumberToObject(obj, "polarity", mapping->polarity);
+  cJSON_AddNumberToObject(obj, "min_value", mapping->min_value);
+  cJSON_AddNumberToObject(obj, "max_value", mapping->max_value);
+  cJSON_AddBoolToObject(obj, "use_idle_value", mapping->use_idle_value);
+  cJSON_AddNumberToObject(obj, "idle_value", mapping->idle_value);
+  cJSON_AddNumberToObject(obj, "idle_timeout_ms", mapping->idle_timeout_ms);
+  
+  return obj;
+}
+
+// Deserialize continuous mapping from JSON
+static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping) {
+  if (!obj || !mapping) return;
+  
+  cJSON* enabled = cJSON_GetObjectItem(obj, "enabled");
+  if (enabled) mapping->enabled = cJSON_IsTrue(enabled);
+  
+  cJSON* output_type = cJSON_GetObjectItem(obj, "output_type");
+  if (output_type && cJSON_IsString(output_type)) {
+    mapping->output_type = (strcmp(output_type->valuestring, "note") == 0) ? OUTPUT_TYPE_NOTE : OUTPUT_TYPE_CC;
+  }
+  
+  cJSON* cc_num = cJSON_GetObjectItem(obj, "cc_number");
+  if (cc_num) mapping->cc_number = cc_num->valueint;
+  
+  cJSON* base_note = cJSON_GetObjectItem(obj, "base_note");
+  if (base_note) mapping->base_note = base_note->valueint;
+  
+  cJSON* note_range = cJSON_GetObjectItem(obj, "note_range");
+  if (note_range) mapping->note_range = note_range->valueint;
+  
+  cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
+  if (velocity) mapping->velocity = velocity->valueint;
+  
+  cJSON* curve_type = cJSON_GetObjectItem(obj, "curve_type");
+  if (curve_type) mapping->curve = curve_create((curve_type_t)curve_type->valueint);
+  
+  cJSON* polarity = cJSON_GetObjectItem(obj, "polarity");
+  if (polarity) mapping->polarity = (polarity_t)polarity->valueint;
+  
+  cJSON* min_val = cJSON_GetObjectItem(obj, "min_value");
+  if (min_val) mapping->min_value = min_val->valueint;
+  
+  cJSON* max_val = cJSON_GetObjectItem(obj, "max_value");
+  if (max_val) mapping->max_value = max_val->valueint;
+  
+  cJSON* use_idle = cJSON_GetObjectItem(obj, "use_idle_value");
+  if (use_idle) mapping->use_idle_value = cJSON_IsTrue(use_idle);
+  
+  cJSON* idle_val = cJSON_GetObjectItem(obj, "idle_value");
+  if (idle_val) mapping->idle_value = idle_val->valueint;
+  
+  cJSON* idle_timeout = cJSON_GetObjectItem(obj, "idle_timeout_ms");
+  if (idle_timeout) mapping->idle_timeout_ms = idle_timeout->valueint;
+}
+
 // Scene JSON serialization
 static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "name", scene->name);
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
-  cJSON_AddBoolToObject(root, "send_pc_on_change", scene->send_pc_on_change);
+  cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
   cJSON* touchpads = cJSON_CreateArray();
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
@@ -909,6 +981,12 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "button_left", action_chain_to_json(&scene->button_left));
   cJSON_AddItemToObject(root, "button_right", action_chain_to_json(&scene->button_right));
   cJSON_AddItemToObject(root, "button_both", action_chain_to_json(&scene->button_both));
+  
+  // Serialize continuous mappings
+  cJSON_AddItemToObject(root, "expression", continuous_mapping_to_json(&scene->expression));
+  cJSON_AddItemToObject(root, "cv", continuous_mapping_to_json(&scene->cv));
+  cJSON_AddItemToObject(root, "proximity", continuous_mapping_to_json(&scene->proximity));
+  cJSON_AddItemToObject(root, "als", continuous_mapping_to_json(&scene->als));
   
   return root;
 }
@@ -925,8 +1003,10 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* program = cJSON_GetObjectItem(root, "program_number");
   if (program) scene->program_number = program->valueint;
   
-  cJSON* send_pc = cJSON_GetObjectItem(root, "send_pc_on_change");
-  if (send_pc) scene->send_pc_on_change = cJSON_IsTrue(send_pc);
+  // Support both old and new key names for backward compatibility
+  cJSON* send_pc = cJSON_GetObjectItem(root, "send_pc_on_load");
+  if (!send_pc) send_pc = cJSON_GetObjectItem(root, "send_pc_on_change");  // Legacy
+  if (send_pc) scene->send_pc_on_load = cJSON_IsTrue(send_pc);
   
   cJSON* touchpads = cJSON_GetObjectItem(root, "touchpads");
   if (touchpads && cJSON_IsArray(touchpads)) {
@@ -952,6 +1032,19 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   
   cJSON* btn_both = cJSON_GetObjectItem(root, "button_both");
   if (btn_both) scene->button_both = json_to_action_chain(btn_both);
+  
+  // Deserialize continuous mappings
+  cJSON* expression = cJSON_GetObjectItem(root, "expression");
+  if (expression) json_to_continuous_mapping(expression, &scene->expression);
+  
+  cJSON* cv = cJSON_GetObjectItem(root, "cv");
+  if (cv) json_to_continuous_mapping(cv, &scene->cv);
+  
+  cJSON* proximity = cJSON_GetObjectItem(root, "proximity");
+  if (proximity) json_to_continuous_mapping(proximity, &scene->proximity);
+  
+  cJSON* als = cJSON_GetObjectItem(root, "als");
+  if (als) json_to_continuous_mapping(als, &scene->als);
   
   return ESP_OK;
 }

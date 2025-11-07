@@ -51,7 +51,7 @@ typedef struct {
   
   // Program change settings (modes 2 & 3)
   uint8_t program_number;     // PC value (0-127)
-  bool send_pc_on_change;     // Send PC when switching to this scene
+  bool send_pc_on_load;       // Send PC when loading this scene
   
   // Scene load actions
   action_chain_t on_load;     // Actions to execute when scene loads (e.g., initialize pedal state)
@@ -130,7 +130,7 @@ scene_change_mode_t scene_get_change_mode(void);
 esp_err_t scene_set_name(uint8_t scene_index, const char* name);
 esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode);
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
-esp_err_t scene_set_send_pc(uint8_t scene_index, bool send_pc);
+esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc);
 
 // Touchpad configuration
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, 

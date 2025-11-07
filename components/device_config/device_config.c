@@ -249,7 +249,9 @@ esp_err_t device_config_set_program(uint8_t program) {
   send_program_change(g_device_config.midi_channel - 1, program);
   ESP_LOGI(TAG, "Program changed to %d (sent on channel %d)", program, g_device_config.midi_channel);
   
-  return app_settings_save_u8(NVS_KEY_CURRENT_PROGRAM, program);
+  // Do NOT save to NVS - current program is ephemeral
+  // It resets to scene's program_number on next boot/scene load
+  return ESP_OK;
 }
 
 esp_err_t device_config_program_next(void) {

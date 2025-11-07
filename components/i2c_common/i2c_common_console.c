@@ -3,11 +3,12 @@
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
+#include <string.h>
 
 static const char* TAG = "i2c_console";
 
 static const char* registered_commands[] = {
-  "scan", "read", "write"
+  "scan", "read", "write", "debug", "stats", "stats_reset"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -137,6 +138,45 @@ static int cmd_write(int argc, char **argv) {
   return 0;
 }
 
+// Command: debug
+static struct {
+  struct arg_str *action;
+  struct arg_end *end;
+} debug_args;
+
+static int cmd_debug(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &debug_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, debug_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char *action = debug_args.action->sval[0];
+  
+  if (strcmp(action, "on") == 0) {
+    i2c_common_debug_enable(true);
+  } else if (strcmp(action, "off") == 0) {
+    i2c_common_debug_enable(false);
+  } else {
+    ESP_LOGE(TAG, "Invalid action. Use 'on' or 'off'");
+    return 1;
+  }
+  
+  return 0;
+}
+
+// Command: stats
+static int cmd_stats(int argc, char **argv) {
+  i2c_common_print_stats();
+  return 0;
+}
+
+// Command: stats_reset
+static int cmd_stats_reset(int argc, char **argv) {
+  i2c_common_reset_stats();
+  return 0;
+}
+
 esp_err_t i2c_common_console_init(void) {
   ESP_LOGI(TAG, "Registering i2c commands");
   
@@ -177,6 +217,37 @@ esp_err_t i2c_common_console_init(void) {
     .argtable = &write_args
   };
   esp_console_cmd_register(&write_cmd);
+  
+  // debug command
+  debug_args.action = arg_str1(NULL, NULL, "<on|off>", "Enable or disable debug logging");
+  debug_args.end = arg_end(2);
+  
+  const esp_console_cmd_t debug_cmd = {
+    .command = "debug",
+    .help = "Enable or disable I2C debug logging",
+    .hint = NULL,
+    .func = &cmd_debug,
+    .argtable = &debug_args
+  };
+  esp_console_cmd_register(&debug_cmd);
+  
+  // stats command
+  const esp_console_cmd_t stats_cmd = {
+    .command = "stats",
+    .help = "Print I2C transaction statistics",
+    .hint = NULL,
+    .func = &cmd_stats,
+  };
+  esp_console_cmd_register(&stats_cmd);
+  
+  // stats_reset command
+  const esp_console_cmd_t stats_reset_cmd = {
+    .command = "stats_reset",
+    .help = "Reset I2C transaction statistics",
+    .hint = NULL,
+    .func = &cmd_stats_reset,
+  };
+  esp_console_cmd_register(&stats_reset_cmd);
   
   return ESP_OK;
 }

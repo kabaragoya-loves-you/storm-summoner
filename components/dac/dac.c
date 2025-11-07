@@ -68,6 +68,9 @@ esp_err_t dac_init(void) {
     return ret;
   }
 
+  // Register device for debug tracking
+  i2c_common_register_device(s_dev_handle, I2C_ADDR_DAC, "MCP4725_DAC");
+
   ESP_LOGI(TAG, "MCP4725 DAC initialized at address 0x%02X", I2C_ADDR_DAC);
 
   // Try to load CV range from NVS

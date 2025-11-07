@@ -31,8 +31,8 @@ void scene_test_info(void) {
   ESP_LOGI(TAG, "Device MIDI channel: %d", device_channel);
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Current scene: %d - %s", index + 1, scene->name);
-  ESP_LOGI(TAG, "Program number: %d (send PC: %s)", scene->program_number, 
-           scene->send_pc_on_change ? "yes" : "no");
+  ESP_LOGI(TAG, "Program number: %d (send PC on load: %s)", scene->program_number, 
+           scene->send_pc_on_load ? "yes" : "no");
   ESP_LOGI(TAG, "Touchwheel: %s mode", 
            scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
   

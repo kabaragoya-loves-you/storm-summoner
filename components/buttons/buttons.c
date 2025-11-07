@@ -296,8 +296,8 @@ static void button_process_press(uint8_t button_id) {
     }
   }
 
-  // Notify screensaver of activity
-  screensaver_notify_activity();
+  // Notify screensaver of activity (ISR-safe version)
+  screensaver_notify_activity_from_isr(&higher_priority_woken);
   
   portYIELD_FROM_ISR(higher_priority_woken);
 }

@@ -249,6 +249,9 @@ void sensor_init(bool enable_logging) {
     return;
   }
 
+  // Register device for debug tracking
+  i2c_common_register_device(vcnl4040_dev, SENSOR_ADDR, "VCNL4040");
+
   // Configure proximity sensor
   // PS_CONF1 bits [7:0] and PS_CONF2 bits [15:8]:
   // [15] - Reserved

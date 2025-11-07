@@ -56,7 +56,11 @@ bool continuous_mapping_check_idle(continuous_mapping_t* mapping) {
 continuous_mapping_t continuous_mapping_create(uint8_t cc_number) {
   continuous_mapping_t mapping = {
     .enabled = true,
+    .output_type = OUTPUT_TYPE_CC,
     .cc_number = cc_number,
+    .base_note = 60,           // Middle C
+    .note_range = 24,          // 2 octaves
+    .velocity = 100,           // Default velocity
     .curve = curve_create(CURVE_LINEAR),
     .polarity = POLARITY_UNIPOLAR,
     .min_value = 0,
@@ -65,8 +69,26 @@ continuous_mapping_t continuous_mapping_create(uint8_t cc_number) {
     .idle_value = 64,
     .idle_timeout_ms = 1000,
     .last_activity_ms = 0,
-    .last_value = 0
+    .last_value = 0,
+    .note_active = false
   };
   return mapping;
+}
+
+uint8_t continuous_mapping_value_to_note(uint8_t value, const continuous_mapping_t* mapping) {
+  if (!mapping) return 60;  // Default to middle C
+  
+  // Map 0-127 value to note range
+  // Value 64 (center) should map to base_note
+  // Full range spans from (base_note - note_range/2) to (base_note + note_range/2)
+  
+  int16_t semitone_offset = ((int16_t)value - 64) * mapping->note_range / 127;
+  int16_t note = mapping->base_note + semitone_offset;
+  
+  // Clamp to valid MIDI note range
+  if (note < 0) note = 0;
+  if (note > 127) note = 127;
+  
+  return (uint8_t)note;
 }
 

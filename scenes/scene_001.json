@@ -1,7 +1,7 @@
 {
   "name": "Default Scene",
   "program_number": 0,
-  "send_pc_on_change": true,
+  "send_pc_on_load": true,
   "on_load": [
     {
       "type": "all_notes_off"
@@ -147,7 +147,11 @@
   ],
   "expression": {
     "enabled": true,
+    "output_type": "cc",
     "cc_number": 4,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
     "curve_type": 0,
     "polarity": 0,
     "min_value": 0,
@@ -155,7 +159,11 @@
   },
   "cv": {
     "enabled": true,
+    "output_type": "cc",
     "cc_number": 16,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
     "curve_type": 0,
     "polarity": 0,
     "min_value": 0,
@@ -163,7 +171,11 @@
   },
   "proximity": {
     "enabled": true,
+    "output_type": "cc",
     "cc_number": 17,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
     "curve_type": 0,
     "polarity": 1,
     "min_value": 0,
@@ -174,7 +186,11 @@
   },
   "als": {
     "enabled": true,
+    "output_type": "cc",
     "cc_number": 18,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
     "curve_type": 0,
     "polarity": 0,
     "min_value": 0,

@@ -16,8 +16,9 @@ static void handle_cv_event(const event_t* event, void* context) {
   scene_t* scene = scene_get_current();
   if (!scene || !scene->cv.enabled) return;
   
+  continuous_mapping_t* mapping = &scene->cv;
   uint8_t raw_value = event->data.cv.midi_value;
-  uint8_t processed_value = continuous_mapping_process(raw_value, &scene->cv);
+  uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
   
   bool value_changed = false;
   uint8_t output_value = smart_filter_process(&s_cv_filter, processed_value, &value_changed);
@@ -25,9 +26,24 @@ static void handle_cv_event(const event_t* event, void* context) {
   if (!value_changed) return;
   
   uint8_t channel = device_config_get_channel() - 1;
-  send_control_change(channel, scene->cv.cc_number, output_value);
   
-  ESP_LOGD(TAG, "CV: %d -> CC%d=%d", raw_value, scene->cv.cc_number, output_value);
+  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+    uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
+    
+    if (mapping->note_active && note != mapping->last_value) {
+      send_note_off(channel, mapping->last_value, 0);
+      ESP_LOGD(TAG, "CV Note Off: %d", mapping->last_value);
+    }
+    
+    send_note_on(channel, note, mapping->velocity);
+    mapping->note_active = true;
+    mapping->last_value = note;
+    
+    ESP_LOGD(TAG, "CV: %d -> Note %d vel=%d", raw_value, note, mapping->velocity);
+  } else {
+    send_control_change(channel, mapping->cc_number, output_value);
+    ESP_LOGD(TAG, "CV: %d -> CC%d=%d", raw_value, mapping->cc_number, output_value);
+  }
 }
 
 esp_err_t midi_cv_scene_handler_init(void) {

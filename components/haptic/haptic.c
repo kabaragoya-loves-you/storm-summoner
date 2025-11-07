@@ -32,6 +32,9 @@ esp_err_t haptic_setup(void) {
     return err;
   }
 
+  // Register device for debug tracking
+  i2c_common_register_device(haptic_dev, I2C_ADDR_HAPTIC, "DRV2605");
+
   // Retry mechanism for setting mode register
   err = ESP_FAIL; // Initialize err to a failing state
   for (int i = 0; i < HAPTIC_SETUP_RETRY_COUNT; ++i) {

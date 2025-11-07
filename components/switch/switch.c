@@ -44,6 +44,9 @@ void switch_init(void) {
     ESP_LOGE(TAG, "Failed to add I2C device: %s", esp_err_to_name(ret));
     return;
   }
+
+  // Register device for debug tracking
+  i2c_common_register_device(s_dev_handle, SWITCH_I2C_ADDR, "PCA9534");
   
   // Configure all pins as outputs (0 = output, 1 = input)
   i2c_common_write_reg(s_dev_handle, SWITCH_REG_CONFIG, 0x00);

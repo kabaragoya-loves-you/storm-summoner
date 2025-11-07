@@ -33,11 +33,25 @@ static void handle_als_event(const event_t* event, void* context) {
   
   if (!value_changed) return;
   
-  // Send MIDI CC
   uint8_t channel = device_config_get_channel() - 1;
-  send_control_change(channel, mapping->cc_number, output_value);
   
-  ESP_LOGD(TAG, "ALS: %d -> CC%d=%d", raw_value, mapping->cc_number, output_value);
+  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+    uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
+    
+    if (mapping->note_active && note != mapping->last_value) {
+      send_note_off(channel, mapping->last_value, 0);
+      ESP_LOGD(TAG, "ALS Note Off: %d", mapping->last_value);
+    }
+    
+    send_note_on(channel, note, mapping->velocity);
+    mapping->note_active = true;
+    mapping->last_value = note;
+    
+    ESP_LOGD(TAG, "ALS: %d -> Note %d vel=%d", raw_value, note, mapping->velocity);
+  } else {
+    send_control_change(channel, mapping->cc_number, output_value);
+    ESP_LOGD(TAG, "ALS: %d -> CC%d=%d", raw_value, mapping->cc_number, output_value);
+  }
 }
 
 esp_err_t midi_als_scene_handler_init(void) {

@@ -223,6 +223,9 @@ void bump_init(bool enable_logging) {
 
   ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_handle(), &dev_cfg, &s_bump_dev_handle));
 
+  // Register device for debug tracking
+  i2c_common_register_device(s_bump_dev_handle, LIS3DHTR_I2C_ADDR, "LIS3DHTR");
+
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_TEMP_CFG, 0x00); // Disable ADC
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CTRL1, 0x77); // 400Hz, Normal mode, X/Y/Z enabled
   i2c_common_write_reg(s_bump_dev_handle, LIS3DHTR_REG_CTRL4, 0x88); // BDU enabled, HR (High-Resolution) enabled
