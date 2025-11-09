@@ -11,8 +11,8 @@ set(ENABLE_PERFORMANCE_MONITORING 0)  # Enable performance monitoring across all
 # Hardware configuration: set ONE of these to 1
 # HW_CONFIG_PRODUCTION - Production hardware configuration  
 # HW_CONFIG_DEV_BOARD - Development board configuration
-set(HW_CONFIG_PRODUCTION 0)
-set(HW_CONFIG_DEV_BOARD 1)
+set(HW_CONFIG_PRODUCTION 1)
+set(HW_CONFIG_DEV_BOARD 0)
 
 project(storm-summoner)
 

@@ -289,10 +289,7 @@ static void button_process_press(uint8_t button_id) {
       // Start long press timer
       xTimerStartFromISR(button->long_press_timer, &higher_priority_woken);
       
-      if (g_logging_enabled) {
-        ESP_EARLY_LOGI(TAG, "Button %s pressed", 
-          (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT");
-      }
+      if (g_logging_enabled) ESP_EARLY_LOGI(TAG, "Button %s pressed", (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT");
     }
   }
 

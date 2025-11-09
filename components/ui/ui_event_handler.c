@@ -175,7 +175,8 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     if (is_wheel_pad_in_rotary_mode) {
       handle_rotary_press(pad_id, time_now_ms);
       ESP_LOGD(TAG, "Handled rotary press for wheel pad %d", pad_id);
-    } else {
+    } else if (pad_id != BUTTON_13_LOGICAL_PAD) {
+      // Button 13 should not generate haptic feedback
       event_t haptic_event = {
         .type = EVENT_HAPTIC_REQUEST,
         .priority = EVENT_PRIORITY_NORMAL,
