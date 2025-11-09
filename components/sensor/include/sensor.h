@@ -9,7 +9,7 @@
 #define SENSOR_ADDR             I2C_ADDR_SENSOR
 #define SENSOR_ALS_CONF         0x00
 #define SENSOR_PS_CONF1         0x03  // PS_CONF1 and PS_CONF2 as 16-bit register
-#define SENSOR_PS_CONF3         0x04  // PS_CONF3 and PS_MS as 16-bit register
+#define SENSOR_PS_CONF3         0x04  // PS_CONF3 and PS_MS as 16-bit register (NOTE: VCNL4040 uses command code 0x04, reads show as 0x05)
 #define SENSOR_PS_DATA          0x08
 #define SENSOR_ALS_DATA         0x09
 
@@ -87,6 +87,7 @@ bool als_get_use_white_channel(void);
 
 void sensor_reset(void);
 void sensor_dump_registers(void);
+void proximity_diagnostic_test(uint32_t duration_ms);
 
 // Hysteresis control functions
 void proximity_set_hysteresis_enabled(bool enabled);

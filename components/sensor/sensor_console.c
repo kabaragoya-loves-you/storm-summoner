@@ -7,7 +7,7 @@
 static const char* TAG = "sensor_console";
 
 static const char* registered_commands[] = {
-  "info", "calibrate_ps", "calibrate_als"
+  "info", "calibrate_ps", "calibrate_als", "ps_diag", "dump_regs"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -86,6 +86,33 @@ static int cmd_calibrate_als(int argc, char **argv) {
   return (ret == ESP_OK) ? 0 : 1;
 }
 
+// Command: ps_diag
+static struct {
+  struct arg_int *duration;
+  struct arg_end *end;
+} ps_diag_args;
+
+static int cmd_ps_diag(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &ps_diag_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, ps_diag_args.end, argv[0]);
+    return 1;
+  }
+  
+  int duration = ps_diag_args.duration->ival[0];
+  ESP_LOGI(TAG, "Running proximity diagnostic test for %d ms...", duration);
+  
+  proximity_diagnostic_test(duration);
+  
+  return 0;
+}
+
+// Command: dump_regs
+static int cmd_dump_regs(int argc, char **argv) {
+  sensor_dump_registers();
+  return 0;
+}
+
 esp_err_t sensor_console_init(void) {
   ESP_LOGI(TAG, "Registering sensor commands");
   
@@ -123,6 +150,28 @@ esp_err_t sensor_console_init(void) {
     .argtable = &calibrate_als_args
   };
   esp_console_cmd_register(&calibrate_als_cmd);
+  
+  // ps_diag command
+  ps_diag_args.duration = arg_int1(NULL, NULL, "<ms>", "Test duration in ms");
+  ps_diag_args.end = arg_end(2);
+  
+  const esp_console_cmd_t ps_diag_cmd = {
+    .command = "ps_diag",
+    .help = "Run proximity sensor diagnostic test",
+    .hint = NULL,
+    .func = &cmd_ps_diag,
+    .argtable = &ps_diag_args
+  };
+  esp_console_cmd_register(&ps_diag_cmd);
+  
+  // dump_regs command
+  const esp_console_cmd_t dump_regs_cmd = {
+    .command = "dump_regs",
+    .help = "Dump VCNL4040 registers",
+    .hint = NULL,
+    .func = &cmd_dump_regs,
+  };
+  esp_console_cmd_register(&dump_regs_cmd);
   
   return ESP_OK;
 }

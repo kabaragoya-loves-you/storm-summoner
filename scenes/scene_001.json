@@ -146,7 +146,7 @@
     }
   ],
   "expression": {
-    "enabled": true,
+    "enabled": false,
     "output_type": "cc",
     "cc_number": 4,
     "base_note": 60,
@@ -158,7 +158,7 @@
     "max_value": 127
   },
   "cv": {
-    "enabled": true,
+    "enabled": false,
     "output_type": "cc",
     "cc_number": 16,
     "base_note": 60,
@@ -170,7 +170,7 @@
     "max_value": 127
   },
   "proximity": {
-    "enabled": true,
+    "enabled": false,
     "output_type": "cc",
     "cc_number": 17,
     "base_note": 60,
@@ -185,7 +185,7 @@
     "idle_timeout_ms": 1000
   },
   "als": {
-    "enabled": true,
+    "enabled": false,
     "output_type": "cc",
     "cc_number": 18,
     "base_note": 60,
