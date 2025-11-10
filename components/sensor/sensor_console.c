@@ -3,29 +3,50 @@
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
+#include <string.h>
 
 static const char* TAG = "sensor_console";
 
 static const char* registered_commands[] = {
-  "info", "calibrate_ps", "calibrate_als", "ps_diag", "dump_regs"
+  "info", "calibrate_ps", "calibrate_als", "ps_diag", "dump_regs", "hysteresis"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
 // Command: info
 static int cmd_info(int argc, char **argv) {
-  uint16_t ps = get_ps();
-  uint16_t als = get_als();
+  uint16_t ps_raw = get_ps();
+  uint16_t als_raw = get_als();
   uint16_t ps_min, ps_max, als_min, als_max;
   
   proximity_get_calibration(&ps_min, &ps_max);
   als_get_calibration(&als_min, &als_max);
   
-  ESP_LOGI(TAG, "====== SENSOR ======");
-  ESP_LOGI(TAG, "Proximity: %u (cal: %u-%u)", (unsigned)ps, (unsigned)ps_min, (unsigned)ps_max);
-  ESP_LOGI(TAG, "ALS: %u (cal: %u-%u)", (unsigned)als, (unsigned)als_min, (unsigned)als_max);
-  ESP_LOGI(TAG, "PS deadzone: %u", (unsigned)proximity_get_deadzone());
-  ESP_LOGI(TAG, "ALS deadzone: %u", (unsigned)als_get_deadzone());
-  ESP_LOGI(TAG, "====================");
+  // Calculate MIDI values (0-127)
+  float ps_scaled = ((float)ps_raw - (float)ps_min) * 127.0f / ((float)ps_max - (float)ps_min);
+  if (ps_scaled < 0.0f) ps_scaled = 0.0f;
+  if (ps_scaled > 127.0f) ps_scaled = 127.0f;
+  uint8_t ps_midi = (uint8_t)(ps_scaled + 0.5f);
+  
+  float als_scaled = ((float)als_raw - (float)als_min) * 127.0f / ((float)als_max - (float)als_min);
+  if (als_scaled < 0.0f) als_scaled = 0.0f;
+  if (als_scaled > 127.0f) als_scaled = 127.0f;
+  uint8_t als_midi = (uint8_t)(als_scaled + 0.5f);
+  
+  ESP_LOGI(TAG, "========== SENSOR ==========");
+  ESP_LOGI(TAG, "Proximity:");
+  ESP_LOGI(TAG, "  Raw:  %u  (range: %u-%u)", (unsigned)ps_raw, (unsigned)ps_min, (unsigned)ps_max);
+  ESP_LOGI(TAG, "  MIDI: %u  (deadzone: %u)", (unsigned)ps_midi, (unsigned)proximity_get_deadzone());
+  ESP_LOGI(TAG, "  Hysteresis: %s", proximity_get_hysteresis_enabled() ? "ON" : "OFF");
+  if (proximity_get_hysteresis_enabled()) {
+    ESP_LOGI(TAG, "    Rest position: %u, Timeout: %u, Return speed: %u", 
+      (unsigned)proximity_get_rest_position(),
+      (unsigned)proximity_get_timeout(),
+      (unsigned)proximity_get_return_speed());
+  }
+  ESP_LOGI(TAG, "Ambient Light:");
+  ESP_LOGI(TAG, "  Raw:  %u  (range: %u-%u)", (unsigned)als_raw, (unsigned)als_min, (unsigned)als_max);
+  ESP_LOGI(TAG, "  MIDI: %u  (deadzone: %u)", (unsigned)als_midi, (unsigned)als_get_deadzone());
+  ESP_LOGI(TAG, "============================");
   
   return 0;
 }
@@ -113,6 +134,43 @@ static int cmd_dump_regs(int argc, char **argv) {
   return 0;
 }
 
+// Command: hysteresis - enable/disable proximity hysteresis
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} hysteresis_args;
+
+static int cmd_hysteresis(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &hysteresis_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, hysteresis_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* state = hysteresis_args.state->sval[0];
+  bool enable;
+  
+  if (strcmp(state, "on") == 0) {
+    enable = true;
+  } else if (strcmp(state, "off") == 0) {
+    enable = false;
+  } else {
+    ESP_LOGE(TAG, "Invalid argument. Use 'on' or 'off'");
+    return 1;
+  }
+  
+  proximity_set_hysteresis_enabled(enable);
+  
+  ESP_LOGI(TAG, "Hysteresis: %s", enable ? "ENABLED" : "DISABLED");
+  if (enable) {
+    ESP_LOGI(TAG, "  Rest position: %u", (unsigned)proximity_get_rest_position());
+    ESP_LOGI(TAG, "  Return speed: %u", (unsigned)proximity_get_return_speed());
+    ESP_LOGI(TAG, "  Timeout: %u", (unsigned)proximity_get_timeout());
+  }
+  
+  return 0;
+}
+
 esp_err_t sensor_console_init(void) {
   ESP_LOGI(TAG, "Registering sensor commands");
   
@@ -172,6 +230,19 @@ esp_err_t sensor_console_init(void) {
     .func = &cmd_dump_regs,
   };
   esp_console_cmd_register(&dump_regs_cmd);
+  
+  // hysteresis command
+  hysteresis_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable or disable hysteresis");
+  hysteresis_args.end = arg_end(2);
+  
+  const esp_console_cmd_t hysteresis_cmd = {
+    .command = "hysteresis",
+    .help = "Enable/disable proximity hysteresis",
+    .hint = NULL,
+    .func = &cmd_hysteresis,
+    .argtable = &hysteresis_args
+  };
+  esp_console_cmd_register(&hysteresis_cmd);
   
   return ESP_OK;
 }
