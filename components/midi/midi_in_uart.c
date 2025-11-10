@@ -28,12 +28,8 @@ static bool s_initialized = false;
 static void midi_in_uart_task(void *pvParameters) {
   uint8_t rx_buf[RX_BUF_SIZE];
   bool was_connected = false;
-  
-  // Majority voting debounce - collect samples over 50ms window
-  #define VOTE_WINDOW 50  // 50 samples = 50ms (short window for clean signal)
-  uint8_t vote_buffer[VOTE_WINDOW] = {0};
-  uint8_t vote_index = 0;
-  bool vote_buffer_filled = false;
+  uint8_t stable_count = 0;
+  const uint8_t DEBOUNCE_COUNT = 3;  // Require 3 consecutive stable readings
   
   while (1) {
     // Check if MIDI IN cable is connected
@@ -45,52 +41,22 @@ static void midi_in_uart_task(void *pvParameters) {
       current_reading = true;
     }
     
-    // Add to vote buffer (circular)
-    vote_buffer[vote_index] = current_reading ? 1 : 0;
-    vote_index = (vote_index + 1) % VOTE_WINDOW;
-    if (vote_index == 0) vote_buffer_filled = true;
-    
-    // Only process after buffer is filled
-    if (vote_buffer_filled) {
-      // Count votes
-      uint8_t high_count = 0;
-      for (int i = 0; i < VOTE_WINDOW; i++) {
-        high_count += vote_buffer[i];
-      }
-      
-      // Hysteresis thresholds to prevent oscillation
-      // Need >80% to transition to CONNECTED
-      // Need <20% to transition to DISCONNECTED
-      // In between: maintain current state (allows for occasional noise spikes)
-      bool voted_connected = was_connected;  // Default: keep current state
-      if (high_count > (VOTE_WINDOW * 4 / 5)) {
-        voted_connected = true;   // Strong HIGH signal (>80%)
-      } else if (high_count < (VOTE_WINDOW / 5)) {
-        voted_connected = false;  // Strong LOW signal (<20%)
-      }
-      // else: in hysteresis zone (20-80%), keep previous state
-      
-      // Debug: log every second
-      // static uint32_t last_log = 0;
-      // uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-      // if (now - last_log > 1000) {
-      //   ESP_LOGI(TAG, "GPIO=%d, high_votes=%d/%d (%.0f%%), state=%d", 
-      //     gpio_level, high_count, VOTE_WINDOW, (high_count * 100.0f / VOTE_WINDOW), voted_connected);
-      //   last_log = now;
-      // }
-      
-      // Check for state change
-      if (voted_connected != was_connected) {
-        was_connected = voted_connected;
+    // Simple debouncing - require N consecutive stable readings
+    if (current_reading != was_connected) {
+      stable_count++;
+      if (stable_count >= DEBOUNCE_COUNT) {
+        was_connected = current_reading;
+        stable_count = 0;
         
-        // Log connection state changes with vote percentage
-        float percentage = (high_count * 100.0f / VOTE_WINDOW);
-        if (voted_connected) {
-          ESP_LOGI(TAG, "*** MIDI IN cable CONNECTED (%.0f%% high votes) ***", percentage);
+        // Log connection state changes
+        if (was_connected) {
+          ESP_LOGI(TAG, "MIDI IN cable connected");
         } else {
-          ESP_LOGI(TAG, "*** MIDI IN cable DISCONNECTED (%.0f%% high votes) ***", percentage);
+          ESP_LOGI(TAG, "MIDI IN cable disconnected");
         }
       }
+    } else {
+      stable_count = 0;
     }
     
     // Only read UART when cable is connected
@@ -103,7 +69,10 @@ static void midi_in_uart_task(void *pvParameters) {
       }
     }
     
-    vTaskDelay(pdMS_TO_TICKS(1));
+    // Adaptive delay based on cable state:
+    // - Cable connected: 10ms (handles full MIDI bandwidth with 6.5x buffer margin, low latency)
+    // - Cable disconnected: 1000ms (minimal CPU usage)
+    vTaskDelay(was_connected ? pdMS_TO_TICKS(10) : pdMS_TO_TICKS(1000));
   }
 }
 
@@ -122,7 +91,7 @@ esp_err_t midi_in_uart_init(void) {
     .intr_type = GPIO_INTR_DISABLE
   };
   gpio_config(&io_conf);
-  
+
   // Create UART reading task
   xTaskCreate(midi_in_uart_task, "midi_in_uart", 4096, NULL, TASK_PRIORITY_MIDI_IN, NULL);
   

@@ -81,16 +81,19 @@ void app_main(void) {
   led_init();
   flicker_start();
   
-  midi_out_init();
-  midi_out_set_interfaces(MIDI_OUT_INTERFACE_BOTH);
-  midi_set_uart_transmit_mode(MIDI_TRANSMIT_BOTH);
-  midi_in_init();
-  midi_in_debug_enable();  // Enable MIDI IN debug logging
+  // Initialize scenes first to avoid priority inversion with MIDI task
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
   midi_cv_scene_handler_init();
   midi_proximity_scene_handler_init();
   midi_als_scene_handler_init();
+  
+  // Now initialize MIDI (creates high-priority tasks)
+  midi_out_init();
+  midi_out_set_interfaces(MIDI_OUT_INTERFACE_BOTH);
+  midi_set_uart_transmit_mode(MIDI_TRANSMIT_BOTH);
+  midi_in_init();
+  midi_in_debug_enable();  // Enable MIDI IN debug logging
   midi_passthrough_init();
   
   switch_init();
