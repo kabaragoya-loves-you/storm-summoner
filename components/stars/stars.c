@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 
 #define TAG "STARS_SCREEN"
 
@@ -144,10 +145,10 @@ void starfield_start(void) {
       return;
     }
     
-    ESP_LOGI(TAG, "Attempting to allocate %d bytes from LVGL heap...", required_size);
-    g_canvas_buf = lv_malloc(required_size);
+    ESP_LOGI(TAG, "Attempting to allocate %d bytes from internal RAM...", required_size);
+    g_canvas_buf = heap_caps_malloc(required_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!g_canvas_buf) {
-      ESP_LOGE(TAG, "Failed to allocate canvas buffer");
+      ESP_LOGE(TAG, "Failed to allocate canvas buffer from internal RAM");
       return;
     }
   }
@@ -196,7 +197,7 @@ void starfield_stop(void) {
   
   // Now free canvas buffer after screen switch is complete
   if (g_canvas_buf) {
-    lv_free(g_canvas_buf);
+    heap_caps_free(g_canvas_buf);
     g_canvas_buf = NULL;
     ESP_LOGI(TAG, "Freed canvas buffer (32KB)");
   }

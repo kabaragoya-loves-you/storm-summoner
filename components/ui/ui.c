@@ -2,6 +2,7 @@
 #include "../lvgl/src/display/lv_display_private.h"
 #include "ui.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include <string.h>
 
 void ui_event_handler_init(void);
@@ -13,6 +14,7 @@ static ui_draw_module_t* current_draw_module = NULL;
 static void *display_buf = NULL;
 static bool g_teardown_in_progress = false;
 static lv_timer_t *g_teardown_timer = NULL;  // Track pending teardown timer
+static void (*g_post_release_callback)(void) = NULL;  // Callback to run after release completes
 
 #define TAG "UI"
 
@@ -78,14 +80,15 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
 }
 
 void ui_init(void) {
-  // Allocate display buffer
+  // Allocate display buffer from internal RAM for performance (not LVGL heap)
   size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
   size_t buf_size = 128 * 128 * bytes_per_pixel;
-  display_buf = lv_malloc(buf_size);
+  display_buf = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (!display_buf) {
-    ESP_LOGE(TAG, "Failed to allocate display buffer!");
+    ESP_LOGE(TAG, "Failed to allocate display buffer from internal RAM!");
     return;
   }
+  ESP_LOGI(TAG, "Allocated %d KB canvas buffer from internal RAM", buf_size / 1024);
   
   // Standard canvas - using native color format
   canvas = lv_canvas_create(lv_scr_act());
@@ -178,7 +181,7 @@ static void deferred_ui_hide_and_free_cb(lv_timer_t *timer) {
     ESP_LOGI(TAG, "LVGL memory before UI free - used: %d, free: %d, frag: %d%%", 
       mon_before.total_size - mon_before.free_size, mon_before.free_size, mon_before.frag_pct);
     
-    lv_free(display_buf);
+    heap_caps_free(display_buf);
     display_buf = NULL;
     
     lv_mem_monitor_t mon_after;
@@ -190,9 +193,16 @@ static void deferred_ui_hide_and_free_cb(lv_timer_t *timer) {
   
   lv_timer_del(timer);
   ESP_LOGI(TAG, "UI hide and free callback complete");
+  
+  // Call post-release callback if one was registered
+  if (g_post_release_callback) {
+    void (*callback)(void) = g_post_release_callback;
+    g_post_release_callback = NULL;  // Clear before calling to prevent re-entry
+    callback();
+  }
 }
 
-bool ui_release_canvas_buffer(void) {
+bool ui_release_canvas_buffer(void (*post_release_cb)(void)) {
   ESP_LOGD(TAG, "Releasing UI canvas buffer (32KB)...");
   
   // Guard against multiple releases
@@ -200,6 +210,9 @@ bool ui_release_canvas_buffer(void) {
     ESP_LOGW(TAG, "Teardown already in progress, ignoring release request");
     return false;
   }
+  
+  // Store the callback to run after release completes
+  g_post_release_callback = post_release_cb;
   
   // If there's already a pending teardown timer, cancel it and create a new one
   if (g_teardown_timer != NULL) {
@@ -276,17 +289,18 @@ static void deferred_module_show_cb(lv_timer_t *timer) {
 void ui_reclaim_canvas_buffer(void) {
   ESP_LOGD(TAG, "Reclaiming UI canvas buffer...");
   
-  // Reallocate the buffer if needed
+  // Reallocate the buffer if needed (from internal RAM, not LVGL heap)
   if (!display_buf) {
     size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
     size_t buf_size = 128 * 128 * bytes_per_pixel;
-    display_buf = lv_malloc(buf_size);
+    display_buf = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!display_buf) {
-      ESP_LOGE(TAG, "Failed to reallocate display buffer!");
+      ESP_LOGE(TAG, "Failed to reallocate display buffer from internal RAM!");
       g_teardown_in_progress = false;  // Clear flag on error
       return;
     }
     memset(display_buf, 0, buf_size);
+    ESP_LOGI(TAG, "Reallocated %d KB canvas buffer from internal RAM", buf_size / 1024);
   }
   
   // Restore the canvas buffer

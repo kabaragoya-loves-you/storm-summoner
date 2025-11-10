@@ -68,7 +68,8 @@ void ui_graphics_resume(void);
 
 // Canvas buffer management for memory optimization
 // Returns true if release was initiated successfully, false if aborted
-bool ui_release_canvas_buffer(void);
+// post_release_cb: Optional callback to run after release completes (in LVGL context)
+bool ui_release_canvas_buffer(void (*post_release_cb)(void));
 void ui_reclaim_canvas_buffer(void);
 
 

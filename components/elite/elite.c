@@ -8,6 +8,7 @@
 #include "esp_random.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -316,9 +317,9 @@ void elite_start(void) {
       return;
     }
     
-    canvas_buf = lv_malloc(required_size);
+    canvas_buf = heap_caps_malloc(required_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!canvas_buf) {
-      ESP_LOGE(TAG, "Failed to allocate canvas buffer");
+      ESP_LOGE(TAG, "Failed to allocate canvas buffer from internal RAM");
       return;
     }
     ESP_LOGI(TAG, "Allocated canvas buffer (32KB)");
@@ -454,7 +455,7 @@ void elite_cleanup(void) {
   
   // Free canvas buffer
   if (canvas_buf) {
-    lv_free(canvas_buf);
+    heap_caps_free(canvas_buf);
     canvas_buf = NULL;
   }
   

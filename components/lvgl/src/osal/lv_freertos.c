@@ -15,7 +15,12 @@
 #include "lv_os.h"
 #if LV_USE_OS == LV_OS_FREERTOS
 
-#include "atomic.h"
+#include "freertos/FreeRTOS.h"
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "freertos/atomic.h"
+#pragma GCC diagnostic pop
 
 #include "../tick/lv_tick.h"
 #include "../misc/lv_log.h"

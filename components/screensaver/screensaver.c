@@ -29,6 +29,8 @@ static screensaver_mode_t g_selected_screensaver_mode = SCREENSAVER_MODE_STARFIE
 
 static TimerHandle_t g_screensaver_activity_timer = NULL;
 static bool g_screensaver_active = false;
+static lv_timer_t *g_pending_start_timer = NULL;
+static lv_timer_t *g_pending_stop_timer = NULL;
 
 static void screensaver_timer_callback(TimerHandle_t xTimer);
 
@@ -144,7 +146,8 @@ void screensaver_disable(void) {
 
 // LVGL timer for deferred screensaver stop
 static void stop_screensaver_deferred(lv_timer_t *timer) {
-  lv_timer_del(timer); // One-shot timer
+  lv_timer_del(timer);
+  g_pending_stop_timer = NULL;
   
   ESP_LOGI(TAG, "Stopping screensaver (deferred)");
   
@@ -191,10 +194,18 @@ void screensaver_notify_activity(void) {
   if (g_screensaver_active) {
     ESP_LOGD(TAG, "Activity detected - scheduling screensaver stop");
     
+    // Cancel any pending stop timer
+    if (g_pending_stop_timer != NULL) {
+      lv_timer_del(g_pending_stop_timer);
+      g_pending_stop_timer = NULL;
+    }
+    
     // Create a one-shot LVGL timer to stop the screensaver in the LVGL context
-    lv_timer_t *deferred_timer = lv_timer_create(stop_screensaver_deferred, 0, NULL);
-    if (deferred_timer) {
-      lv_timer_set_repeat_count(deferred_timer, 1);
+    g_pending_stop_timer = lv_timer_create(stop_screensaver_deferred, 0, NULL);
+    if (g_pending_stop_timer) {
+      lv_timer_set_repeat_count(g_pending_stop_timer, 1);
+    } else {
+      ESP_LOGE(TAG, "Failed to create stop timer");
     }
   }
 
@@ -204,7 +215,8 @@ void screensaver_notify_activity(void) {
 
 // LVGL timer for deferred screensaver start
 static void start_screensaver_deferred(lv_timer_t *timer) {
-  lv_timer_del(timer); // One-shot timer
+  lv_timer_del(timer);
+  g_pending_start_timer = NULL;
   
   ESP_LOGI(TAG, "Starting screensaver (deferred)");
   
@@ -218,7 +230,7 @@ static void start_screensaver_deferred(lv_timer_t *timer) {
   g_screensaver_active = true;
 }
 
-// Called from event handler in proper task context (not timer service task)
+// Called from event handler in event bus task
 void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
   if (g_screensaver_active) {
     ESP_LOGW(TAG, "Screensaver already active, ignoring timeout");
@@ -227,24 +239,36 @@ void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
 
   ESP_LOGI(TAG, "Processing screensaver timeout");
   
-  // Release UI canvas buffer to free up memory for screensaver
-  // This is safe here because we're in the event bus task, not timer service
-  bool release_ok = ui_release_canvas_buffer();
-  if (!release_ok) {
-    ESP_LOGE(TAG, "Failed to release UI canvas buffer (insufficient memory), aborting screensaver");
-    return;
+  // Cancel any pending start timer
+  if (g_pending_start_timer != NULL) {
+    lv_timer_del(g_pending_start_timer);
+    g_pending_start_timer = NULL;
   }
   
-  // Create a one-shot LVGL timer to start the screensaver in the LVGL context
-  lv_timer_t *deferred_timer = lv_timer_create(start_screensaver_deferred, 100, NULL);
-  if (deferred_timer) {
-    lv_timer_set_repeat_count(deferred_timer, 1);
-  } else {
+  // Create start timer (safe with FreeRTOS mutexes)
+  g_pending_start_timer = lv_timer_create(start_screensaver_deferred, 120, NULL);
+  if (!g_pending_start_timer) {
     ESP_LOGE(TAG, "Failed to create screensaver start timer, aborting");
     return;
   }
+  lv_timer_set_repeat_count(g_pending_start_timer, 1);
   
+  // Mark as active early to prevent overlapping attempts
   g_screensaver_active = true;
+  
+  // Release UI canvas buffer (no callback needed - timer already created)
+  bool release_ok = ui_release_canvas_buffer(NULL);
+  if (!release_ok) {
+    ESP_LOGE(TAG, "Failed to release UI canvas buffer, aborting screensaver");
+    if (g_pending_start_timer) {
+      lv_timer_del(g_pending_start_timer);
+      g_pending_start_timer = NULL;
+    }
+    g_screensaver_active = false;
+    return;
+  }
+  
+  ESP_LOGI(TAG, "Screensaver start timer created, UI release initiated");
 }
 
 // FreeRTOS timer callback - MUST be lightweight!
@@ -296,7 +320,7 @@ void screensaver_set_mode(screensaver_mode_t mode) {
     g_selected_screensaver_mode = mode;
     
     // Ensure UI buffer is released (in case switching called before starting)
-    ui_release_canvas_buffer();
+    ui_release_canvas_buffer(NULL);  // No callback needed
     
     // Start new mode
     if (mode == SCREENSAVER_MODE_STARFIELD) {

@@ -89,10 +89,13 @@ uint32_t esp_tick_cb(void);
 void lvgl_task(void *pvParameter);
 
 void display_init(void) {
+
   ESP_LOGI(TAG, "Free heap before display init: %zu bytes", heap_caps_get_free_size(MALLOC_CAP_DMA));
+  ESP_LOGI(TAG, "Free PSRAM: %zu bytes", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   ESP_LOGI(TAG, "Largest free block: %zu bytes", heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
   ESP_LOGI(TAG, "Buffer size needed: %d bytes each", BUFFER_SIZE);
 
+  // LVGL will allocate its 128KB heap from PSRAM via LV_MEM_POOL_ALLOC
   lv_init();
   
   #if LV_USE_LOG

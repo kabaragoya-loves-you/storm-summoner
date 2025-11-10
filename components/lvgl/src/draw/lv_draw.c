@@ -91,6 +91,15 @@ lv_draw_task_t * lv_draw_add_task(lv_layer_t * layer, const lv_area_t * coords)
 {
     LV_PROFILER_BEGIN;
     lv_draw_task_t * new_task = lv_malloc_zeroed(sizeof(lv_draw_task_t));
+    
+    if (!new_task) {
+      LV_LOG_ERROR("Failed to allocate draw task (%d bytes)", sizeof(lv_draw_task_t));
+      lv_mem_monitor_t mon;
+      lv_mem_monitor(&mon);
+      LV_LOG_ERROR("LVGL heap - total: %d, used: %d, free: %d, frag: %d%%",
+        mon.total_size, mon.total_size - mon.free_size, mon.free_size, mon.frag_pct);
+      return NULL;
+    }
 
     new_task->area = *coords;
     new_task->_real_area = *coords;

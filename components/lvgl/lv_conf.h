@@ -75,7 +75,7 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
-    #define LV_MEM_SIZE (64 * 1024U)          /**< [bytes] */
+    #define LV_MEM_SIZE (192 * 1024U)          /**< [bytes] - 192KB for widgets + FreeRTOS sync objects */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -113,7 +113,7 @@
  * - LV_OS_MQX
  * - LV_OS_SDL2
  * - LV_OS_CUSTOM */
-#define LV_USE_OS   LV_OS_NONE
+#define LV_USE_OS   LV_OS_FREERTOS
 
 #if LV_USE_OS == LV_OS_CUSTOM
     #define LV_OS_CUSTOM_INCLUDE <stdint.h>
@@ -124,7 +124,7 @@
 	 * than unblocking a task using an intermediary object such as a binary semaphore.
 	 * RTOS task notifications can only be used when there is only one task that can be the recipient of the event.
 	 */
-	#define LV_USE_FREERTOS_TASK_NOTIFY 1
+	#define LV_USE_FREERTOS_TASK_NOTIFY 0
 #endif
 
 /*========================
