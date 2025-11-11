@@ -10,6 +10,7 @@
 #include "midi_sysex_update.h"
 #include "midi_identity.h"
 #include "midi_passthrough.h"
+#include "transport.h"
 #include "esp_log.h"
 #include "event_bus.h"
 #include "tempo.h"
@@ -90,11 +91,15 @@ static void process_byte(uint8_t byte) {
     post_midi_event(event_type, 0, 0, 0, byte, NULL, 1);
     
     // Post transport events for Start/Stop/Continue
+    // Tag with TRANSPORT_SOURCE_MIDI so we don't echo if passthrough is enabled
     if (byte == 0xFA) { // Start
       event_t transport_event = {
         .type = EVENT_TRANSPORT_START,
         .priority = EVENT_PRIORITY_HIGH,
-        .timestamp = event_bus_get_current_timestamp()
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.transport = {
+          .source = TRANSPORT_SOURCE_MIDI
+        }
       };
       event_bus_post(&transport_event);
     }
@@ -102,7 +107,10 @@ static void process_byte(uint8_t byte) {
       event_t transport_event = {
         .type = EVENT_TRANSPORT_STOP,
         .priority = EVENT_PRIORITY_HIGH,
-        .timestamp = event_bus_get_current_timestamp()
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.transport = {
+          .source = TRANSPORT_SOURCE_MIDI
+        }
       };
       event_bus_post(&transport_event);
     }
@@ -110,7 +118,10 @@ static void process_byte(uint8_t byte) {
       event_t transport_event = {
         .type = EVENT_TRANSPORT_CONTINUE,
         .priority = EVENT_PRIORITY_HIGH,
-        .timestamp = event_bus_get_current_timestamp()
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.transport = {
+          .source = TRANSPORT_SOURCE_MIDI
+        }
       };
       event_bus_post(&transport_event);
     }

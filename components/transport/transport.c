@@ -1,6 +1,7 @@
 #include "transport.h"
 #include "event_bus.h"
 #include "midi_messages.h"
+#include "midi_passthrough.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -90,47 +91,84 @@ static void set_state(transport_state_t new_state, transport_source_t source) {
 static void transport_event_handler(const event_t* event, void* context) {
   if (!event) return;
   
-  transport_source_t source = TRANSPORT_SOURCE_INTERNAL;
-  
-  // Try to determine source from event data if available
-  if (event->type == EVENT_TRANSPORT_START ||
-      event->type == EVENT_TRANSPORT_STOP ||
-      event->type == EVENT_TRANSPORT_PAUSE ||
-      event->type == EVENT_TRANSPORT_CONTINUE ||
-      event->type == EVENT_TRANSPORT_RECORD) {
-    // These events might come from MIDI IN, UI, etc
-    // For now, assume MIDI if not specified
-    source = TRANSPORT_SOURCE_MIDI;
-  }
+  // Extract source from event data (default to INTERNAL if not specified)
+  transport_source_t source = event->data.transport.source;
   
   switch (event->type) {
     case EVENT_TRANSPORT_START:
-      ESP_LOGD(TAG, "Received START event");
+      ESP_LOGD(TAG, "Received START event (source=%d)", source);
       set_state(TRANSPORT_PLAYING, source);
+      // If source was MIDI and passthrough is enabled, don't echo (already forwarded)
+      // If source was INTERNAL, MIDI was already sent by transport_play()
+      // If source was MIDI and passthrough is OFF, we should echo
+      if (source == TRANSPORT_SOURCE_MIDI) {
+        // Check passthrough status
+        extern bool midi_passthrough_usb_to_uart_is_enabled(void);
+        extern bool midi_passthrough_uart_to_usb_is_enabled(void);
+        // If passthrough is disabled, echo the message
+        if (!midi_passthrough_usb_to_uart_is_enabled() && !midi_passthrough_uart_to_usb_is_enabled()) {
+          send_start();
+          send_mmc_play();
+          ESP_LOGD(TAG, "Echoed MIDI Start/MMC Play (passthrough disabled)");
+        }
+      }
       break;
       
     case EVENT_TRANSPORT_STOP:
-      ESP_LOGD(TAG, "Received STOP event");
+      ESP_LOGD(TAG, "Received STOP event (source=%d)", source);
       set_state(TRANSPORT_STOPPED, source);
+      if (source == TRANSPORT_SOURCE_MIDI) {
+        extern bool midi_passthrough_usb_to_uart_is_enabled(void);
+        extern bool midi_passthrough_uart_to_usb_is_enabled(void);
+        if (!midi_passthrough_usb_to_uart_is_enabled() && !midi_passthrough_uart_to_usb_is_enabled()) {
+          send_stop();
+          send_mmc_stop();
+          ESP_LOGD(TAG, "Echoed MIDI Stop/MMC Stop (passthrough disabled)");
+        }
+      }
       break;
       
     case EVENT_TRANSPORT_PAUSE:
-      ESP_LOGD(TAG, "Received PAUSE event");
+      ESP_LOGD(TAG, "Received PAUSE event (source=%d)", source);
       if (s_state == TRANSPORT_PLAYING || s_state == TRANSPORT_RECORDING) {
         set_state(TRANSPORT_PAUSED, source);
+        if (source == TRANSPORT_SOURCE_MIDI) {
+          extern bool midi_passthrough_usb_to_uart_is_enabled(void);
+          extern bool midi_passthrough_uart_to_usb_is_enabled(void);
+          if (!midi_passthrough_usb_to_uart_is_enabled() && !midi_passthrough_uart_to_usb_is_enabled()) {
+            send_mmc_pause();
+            ESP_LOGD(TAG, "Echoed MMC Pause (passthrough disabled)");
+          }
+        }
       }
       break;
       
     case EVENT_TRANSPORT_CONTINUE:
-      ESP_LOGD(TAG, "Received CONTINUE event");
+      ESP_LOGD(TAG, "Received CONTINUE event (source=%d)", source);
       if (s_state == TRANSPORT_PAUSED) {
         set_state(TRANSPORT_PLAYING, source);
+        if (source == TRANSPORT_SOURCE_MIDI) {
+          extern bool midi_passthrough_usb_to_uart_is_enabled(void);
+          extern bool midi_passthrough_uart_to_usb_is_enabled(void);
+          if (!midi_passthrough_usb_to_uart_is_enabled() && !midi_passthrough_uart_to_usb_is_enabled()) {
+            send_continue();
+            ESP_LOGD(TAG, "Echoed MIDI Continue (passthrough disabled)");
+          }
+        }
       }
       break;
       
     case EVENT_TRANSPORT_RECORD:
-      ESP_LOGD(TAG, "Received RECORD event");
+      ESP_LOGD(TAG, "Received RECORD event (source=%d)", source);
       set_state(TRANSPORT_RECORDING, source);
+      if (source == TRANSPORT_SOURCE_MIDI) {
+        extern bool midi_passthrough_usb_to_uart_is_enabled(void);
+        extern bool midi_passthrough_uart_to_usb_is_enabled(void);
+        if (!midi_passthrough_usb_to_uart_is_enabled() && !midi_passthrough_uart_to_usb_is_enabled()) {
+          send_mmc_record_strobe();
+          ESP_LOGD(TAG, "Echoed MMC Record Strobe (passthrough disabled)");
+        }
+      }
       break;
       
     default:
@@ -162,11 +200,14 @@ esp_err_t transport_play(void) {
   // Send MMC Play
   send_mmc_play();
   
-  // Post internal event
+  // Post internal event tagged as INTERNAL source (already sent MIDI)
   event_t event = {
     .type = EVENT_TRANSPORT_START,
     .priority = EVENT_PRIORITY_HIGH,
-    .timestamp = event_bus_get_current_timestamp()
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.transport = {
+      .source = TRANSPORT_SOURCE_INTERNAL
+    }
   };
   ESP_LOGI(TAG, "Play (sent MIDI Start + MMC Play)");
   return event_bus_post(&event);
@@ -179,11 +220,14 @@ esp_err_t transport_stop(void) {
   // Send MMC Stop
   send_mmc_stop();
   
-  // Post internal event
+  // Post internal event tagged as INTERNAL source (already sent MIDI)
   event_t event = {
     .type = EVENT_TRANSPORT_STOP,
     .priority = EVENT_PRIORITY_HIGH,
-    .timestamp = event_bus_get_current_timestamp()
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.transport = {
+      .source = TRANSPORT_SOURCE_INTERNAL
+    }
   };
   ESP_LOGI(TAG, "Stop (sent MIDI Stop + MMC Stop)");
   return event_bus_post(&event);
@@ -193,11 +237,14 @@ esp_err_t transport_pause(void) {
   // Send MMC Pause
   send_mmc_pause();
   
-  // Post internal event
+  // Post internal event tagged as INTERNAL source (already sent MIDI)
   event_t event = {
     .type = EVENT_TRANSPORT_PAUSE,
     .priority = EVENT_PRIORITY_HIGH,
-    .timestamp = event_bus_get_current_timestamp()
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.transport = {
+      .source = TRANSPORT_SOURCE_INTERNAL
+    }
   };
   ESP_LOGI(TAG, "Pause (sent MMC Pause)");
   return event_bus_post(&event);
@@ -207,11 +254,14 @@ esp_err_t transport_record(void) {
   // Send MMC Record Strobe
   send_mmc_record_strobe();
   
-  // Post internal event
+  // Post internal event tagged as INTERNAL source (already sent MIDI)
   event_t event = {
     .type = EVENT_TRANSPORT_RECORD,
     .priority = EVENT_PRIORITY_HIGH,
-    .timestamp = event_bus_get_current_timestamp()
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.transport = {
+      .source = TRANSPORT_SOURCE_INTERNAL
+    }
   };
   ESP_LOGI(TAG, "Record (sent MMC Record Strobe)");
   return event_bus_post(&event);
