@@ -23,6 +23,7 @@ bool led_get_flicker_preference(void);  // Check if user wants flicker (persiste
 void flash_led(uint32_t duration);  // Flash for duration (non-blocking)
 void led_set_on(void);              // Turn LED on (solid)
 void led_set_off(void);             // Turn LED off
+void led_restore_baseline(void);    // Restore LED to normal day/night mode state
 
 // Day/Night mode
 esp_err_t led_set_mode(led_mode_t mode);

@@ -47,7 +47,7 @@ static void handle_proximity_event(const event_t* event, void* context) {
     mapping->note_active = true;
     mapping->last_value = note;
     
-    ESP_LOGD(TAG, "Proximity: %d -> Note %d vel=%d", raw_value, note, mapping->velocity);
+    ESP_LOGD(TAG, "Proximity: raw=%d processed=%d -> Note %d vel=%d", raw_value, output_value, note, mapping->velocity);
   } else {
     send_control_change(channel, mapping->cc_number, output_value);
     ESP_LOGD(TAG, "Proximity: %d -> CC%d=%d", raw_value, mapping->cc_number, output_value);

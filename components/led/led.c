@@ -2,6 +2,7 @@
 #include "io.h"
 #include "event_bus.h"
 #include "tempo.h"
+#include "transport.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -52,12 +53,30 @@ static void als_event_handler(const event_t* event, void* context) {
   }
 }
 
+// Handle transport state changes to update LED baseline
+static void transport_state_handler(const event_t* event, void* context) {
+  if (event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
+  
+  transport_state_t state = event->data.transport.state;
+  
+  // Update LED baseline when transport stops
+  if (state == TRANSPORT_STOPPED) {
+    led_restore_baseline();
+    ESP_LOGD(TAG, "Transport stopped, LED baseline restored");
+  }
+}
+
 // Get the actual GPIO level based on mode (daylight vs nighttime inversion)
+// When transport is playing, force daylight mode for better visibility
 static int get_gpio_level_for_on(void) {
+  // Check if transport is active - if so, always use daylight mode (LED flash on)
+  if (transport_is_playing()) return 1;  // Force daylight mode when playing
   return (led_mode == LED_MODE_DAYLIGHT) ? 1 : 0;  // Nighttime inverts
 }
 
 static int get_gpio_level_for_off(void) {
+  // Check if transport is active - if so, always use daylight mode (LED off when not flashing)
+  if (transport_is_playing()) return 0;  // Force daylight mode when playing
   return (led_mode == LED_MODE_DAYLIGHT) ? 0 : 1;  // Nighttime inverts
 }
 
@@ -73,26 +92,58 @@ void led_set_off(void) {
   gpio_set_level(PIN_LED, get_gpio_level_for_off());
 }
 
+void led_restore_baseline(void) {
+  if (solid_on_mode) return;  // Don't override solid mode
+  
+  // Set LED to appropriate state based on current mode
+  // (ignoring transport state - this is for returning to normal)
+  if (led_mode == LED_MODE_NIGHTTIME && led_enabled) {
+    gpio_set_level(PIN_LED, 1);
+  } else {
+    gpio_set_level(PIN_LED, 0);
+  }
+}
+
+// LED flash task - handles flashing without blocking event dispatcher
+static TaskHandle_t s_flash_task_handle = NULL;
+
+static void led_flash_task(void *pvParameters) {
+  uint32_t duration_ms;
+  while (1) {
+    // Wait for notification with flash duration
+    if (xTaskNotifyWait(0, 0xFFFFFFFF, &duration_ms, portMAX_DELAY) == pdTRUE) {
+      if (led_enabled && !solid_on_mode) {
+        // Turn LED on (or off in nighttime mode)
+        gpio_set_level(PIN_LED, get_gpio_level_for_on());
+        
+        // Wait for flash duration
+        if (duration_ms < 60000) {
+          vTaskDelay(pdMS_TO_TICKS(duration_ms));
+          if (!solid_on_mode) {
+            // Return to baseline after flash
+            // If transport is playing, use get_gpio_level_for_off (respects transport override)
+            // If transport is stopped, this will restore normal day/night mode
+            gpio_set_level(PIN_LED, get_gpio_level_for_off());
+          }
+        } else {
+          solid_on_mode = true;  // Extremely long flash = solid on
+        }
+      }
+    }
+  }
+}
+
 void flash_led(uint32_t duration) {
   if (!led_enabled || solid_on_mode) return;
   
-  // In daylight mode: turn on, then off
-  // In nighttime mode: turn off, then on (inverted)
-  gpio_set_level(PIN_LED, get_gpio_level_for_on());
+  // Create flash task if it doesn't exist
+  if (!s_flash_task_handle) {
+    xTaskCreate(led_flash_task, "led_flash", 2048, NULL, TASK_PRIORITY_LED, &s_flash_task_handle);
+  }
   
-  // For very short flashes, do synchronous
-  if (duration < 10) {
-    vTaskDelay(pdMS_TO_TICKS(duration));
-    gpio_set_level(PIN_LED, get_gpio_level_for_off());
-  }
-  // For longer flashes, this is called from LED event handler task, so it's OK to block
-  else if (duration < 60000) {  // Less than 1 minute
-    vTaskDelay(pdMS_TO_TICKS(duration));
-    if (!solid_on_mode) gpio_set_level(PIN_LED, get_gpio_level_for_off());
-  }
-  // Extremely long "flashes" are treated as solid on
-  else {
-    solid_on_mode = true;
+  // Notify flash task (non-blocking)
+  if (s_flash_task_handle) {
+    xTaskNotify(s_flash_task_handle, duration, eSetValueWithOverwrite);
   }
 }
 
@@ -176,6 +227,9 @@ void led_init(void) {
   
   // Subscribe to ALS events for sundial mode
   event_bus_subscribe(EVENT_SENSOR_ALS, als_event_handler, NULL);
+  
+  // Subscribe to transport state changes
+  event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   
   // Initialize event handler (handles EVENT_LED_FLASH_REQUEST from tempo)
   led_event_handler_init();

@@ -24,6 +24,27 @@ void send_double_control_change(uint8_t channel, uint8_t msb_cc, uint8_t lsb_cc,
 void send_active_sensing();
 void send_song_position(uint16_t position);
 void send_mmc(uint8_t command);
+
+// MMC (MIDI Machine Control) command constants
+#define MMC_STOP              0x01
+#define MMC_PLAY              0x02
+#define MMC_DEFERRED_PLAY     0x03
+#define MMC_FAST_FORWARD      0x04
+#define MMC_REWIND            0x05
+#define MMC_RECORD_STROBE     0x06
+#define MMC_RECORD_EXIT       0x07
+#define MMC_RECORD_PAUSE      0x08
+#define MMC_PAUSE             0x09
+#define MMC_EJECT             0x0A
+#define MMC_CHASE             0x0B
+#define MMC_COMMAND_ERROR_RESET 0x0C
+#define MMC_RESET             0x0D
+
+// Helper functions for common MMC commands
+void send_mmc_play(void);
+void send_mmc_stop(void);
+void send_mmc_record_strobe(void);
+void send_mmc_pause(void);
 void send_note_on_optimized(uint8_t channel, uint8_t note, uint8_t velocity);
 void send_nrpn(uint8_t channel, uint16_t parameter, uint16_t value);
 void send_rpn(uint8_t channel, uint16_t parameter, uint16_t value);

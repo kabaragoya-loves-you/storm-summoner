@@ -132,6 +132,10 @@ bool cv_is_cable_connected(void) {
       // State has been stable for required count, accept the change
       last_state = current_reading;
       stable_count = 0;
+      
+      // Log state change with diagnostic info
+      ESP_LOGI(TAG, "CV cable %s (sw=%dmV, vcc=%dmV, delta=%dmV)", 
+        last_state ? "CONNECTED" : "DISCONNECTED", sw_mv, vcc_mv, delta);
     }
   } else {
     // Reading matches current state, reset counter

@@ -13,12 +13,12 @@ static const char* TAG = "scene_console";
 
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
-  "info", "next", "prev", "goto", "name", "mode", 
-  "change", "confirm", "cancel", "channel", "pad", "pc",
-  "expr_cc", "expr_curve", "expr_polarity", "expr_enable",
-  "cv_cc", "cv_curve", "cv_polarity", "cv_enable",
-  "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable",
-  "als_cc", "als_curve", "als_polarity", "als_enable"
+  "info", "next", "prev", "goto", "name", "save",
+  "confirm", "cancel", "channel", "pad", "pc",
+  "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity",
+  "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity",
+  "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
+  "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -32,19 +32,7 @@ static void cmd_scene_info(void) {
     return;
   }
   
-  scene_mode_t mode = scene_get_mode();
-  scene_change_mode_t change_mode = scene_get_change_mode();
-  uint8_t device_channel = device_config_get_channel();
-  
-  const char* mode_str = (mode == SCENE_MODE_SINGLE) ? "Single" :
-                         (mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
-  const char* change_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
-  
   ESP_LOGI(TAG, "====== SCENE INFO ======");
-  ESP_LOGI(TAG, "Scene mode: %s", mode_str);
-  ESP_LOGI(TAG, "Change mode: %s", change_str);
-  ESP_LOGI(TAG, "Device MIDI channel: %d", device_channel);
-  ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Current scene: %d - %s", index + 1, scene->name);
   ESP_LOGI(TAG, "Program number: %d (send PC on load: %s)", scene->program_number, 
            scene->send_pc_on_load ? "yes" : "no");
@@ -83,38 +71,63 @@ static void cmd_scene_info(void) {
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Continuous inputs:");
   if (scene->expression.enabled) {
-    ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
-             scene->expression.cc_number,
-             curve_type_to_string(scene->expression.curve.type),
-             scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
-             (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+    if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
+      ESP_LOGI(TAG, "  Expression: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
+               scene->expression.base_note, scene->expression.note_range, scene->expression.velocity,
+               curve_type_to_string(scene->expression.curve.type));
+    } else {
+      ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
+               scene->expression.cc_number,
+               curve_type_to_string(scene->expression.curve.type),
+               scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
+               (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+    }
   } else {
     ESP_LOGI(TAG, "  Expression: disabled");
   }
   
   if (scene->cv.enabled) {
-    ESP_LOGI(TAG, "  CV: CC%d, %s curve, %s", 
-             scene->cv.cc_number,
-             curve_type_to_string(scene->cv.curve.type),
-             scene->cv.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
-             (scene->cv.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+    if (scene->cv.output_type == OUTPUT_TYPE_NOTE) {
+      ESP_LOGI(TAG, "  CV: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
+               scene->cv.base_note, scene->cv.note_range, scene->cv.velocity,
+               curve_type_to_string(scene->cv.curve.type));
+    } else {
+      ESP_LOGI(TAG, "  CV: CC%d, %s curve, %s", 
+               scene->cv.cc_number,
+               curve_type_to_string(scene->cv.curve.type),
+               scene->cv.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
+               (scene->cv.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+    }
   } else {
     ESP_LOGI(TAG, "  CV: disabled");
   }
   
   if (scene->proximity.enabled) {
-    ESP_LOGI(TAG, "  Proximity: CC%d, %s curve, bipolar%s", 
-             scene->proximity.cc_number,
-             curve_type_to_string(scene->proximity.curve.type),
-             scene->proximity.use_idle_value ? " (idle timeout)" : "");
+    if (scene->proximity.output_type == OUTPUT_TYPE_NOTE) {
+      ESP_LOGI(TAG, "  Proximity: NOTE (base=%d, range=%d semitones, vel=%d), %s curve%s", 
+               scene->proximity.base_note, scene->proximity.note_range, scene->proximity.velocity,
+               curve_type_to_string(scene->proximity.curve.type),
+               scene->proximity.use_idle_value ? " (idle timeout)" : "");
+    } else {
+      ESP_LOGI(TAG, "  Proximity: CC%d, %s curve, bipolar%s", 
+               scene->proximity.cc_number,
+               curve_type_to_string(scene->proximity.curve.type),
+               scene->proximity.use_idle_value ? " (idle timeout)" : "");
+    }
   } else {
     ESP_LOGI(TAG, "  Proximity: disabled");
   }
   
   if (scene->als.enabled) {
-    ESP_LOGI(TAG, "  ALS: CC%d, %s curve", 
-             scene->als.cc_number,
-             curve_type_to_string(scene->als.curve.type));
+    if (scene->als.output_type == OUTPUT_TYPE_NOTE) {
+      ESP_LOGI(TAG, "  ALS: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
+               scene->als.base_note, scene->als.note_range, scene->als.velocity,
+               curve_type_to_string(scene->als.curve.type));
+    } else {
+      ESP_LOGI(TAG, "  ALS: CC%d, %s curve", 
+               scene->als.cc_number,
+               curve_type_to_string(scene->als.curve.type));
+    }
   } else {
     ESP_LOGI(TAG, "  ALS: disabled");
   }
@@ -210,6 +223,18 @@ static int cmd_goto(int argc, char **argv) {
   return 0;
 }
 
+// Command: save
+static int cmd_save(int argc, char **argv) {
+  uint8_t idx = scene_get_current_index();
+  esp_err_t ret = scene_save_to_flash(idx);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Scene %d saved to flash", idx + 1);
+  } else {
+    ESP_LOGE(TAG, "Failed to save scene: %s", esp_err_to_name(ret));
+  }
+  return 0;
+}
+
 // Command: name
 static struct {
   struct arg_str *scene_name;
@@ -226,63 +251,6 @@ static int cmd_name(int argc, char **argv) {
   const char* name = name_args.scene_name->sval[0];
   scene_set_name(scene_get_current_index(), name);
   ESP_LOGI(TAG, "Scene renamed to: %s", name);
-  return 0;
-}
-
-// Command: mode
-static struct {
-  struct arg_str *mode_type;
-  struct arg_end *end;
-} mode_args;
-
-static int cmd_mode(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &mode_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, mode_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char *mode = mode_args.mode_type->sval[0];
-  if (strcmp(mode, "single") == 0) {
-    scene_set_mode(SCENE_MODE_SINGLE);
-    ESP_LOGI(TAG, "Scene mode: Single");
-  } else if (strcmp(mode, "preset") == 0) {
-    scene_set_mode(SCENE_MODE_PRESET_SYNC);
-    ESP_LOGI(TAG, "Scene mode: Preset Sync");
-  } else if (strcmp(mode, "advanced") == 0) {
-    scene_set_mode(SCENE_MODE_ADVANCED);
-    ESP_LOGI(TAG, "Scene mode: Advanced");
-  } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: single, preset, or advanced");
-    return 1;
-  }
-  return 0;
-}
-
-// Command: change
-static struct {
-  struct arg_str *change_type;
-  struct arg_end *end;
-} change_args;
-
-static int cmd_change(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &change_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, change_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char *mode = change_args.change_type->sval[0];
-  if (strcmp(mode, "immediate") == 0) {
-    scene_set_change_mode(CHANGE_MODE_IMMEDIATE);
-    ESP_LOGI(TAG, "Change mode: Immediate");
-  } else if (strcmp(mode, "pending") == 0) {
-    scene_set_change_mode(CHANGE_MODE_PENDING);
-    ESP_LOGI(TAG, "Change mode: Pending");
-  } else {
-    ESP_LOGE(TAG, "Unknown change mode. Use: immediate or pending");
-    return 1;
-  }
   return 0;
 }
 
@@ -531,6 +499,118 @@ static int cmd_expr_enable(int argc, char **argv) {
   return 0;
 }
 
+// Command: expr_output - Set expression output type
+static struct {
+  struct arg_str *output_type;
+  struct arg_end *end;
+} expr_output_args;
+
+static int cmd_expr_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_output_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* type = expr_output_args.output_type->sval[0];
+  
+  if (strcmp(type, "cc") == 0) {
+    scene->expression.output_type = OUTPUT_TYPE_CC;
+  } else if (strcmp(type, "note") == 0) {
+    scene->expression.output_type = OUTPUT_TYPE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Expression output: %s", type);
+  return 0;
+}
+
+// Command: expr_base_note - Set expression base note
+static struct {
+  struct arg_int *note;
+  struct arg_end *end;
+} expr_base_note_args;
+
+static int cmd_expr_base_note(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_base_note_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_base_note_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int note = expr_base_note_args.note->ival[0];
+  if (note < 0 || note > 127) {
+    ESP_LOGE(TAG, "Note must be 0-127");
+    return 1;
+  }
+  
+  scene->expression.base_note = note;
+  ESP_LOGI(TAG, "Expression base note: %d", note);
+  return 0;
+}
+
+// Command: expr_note_range - Set expression note range
+static struct {
+  struct arg_int *range;
+  struct arg_end *end;
+} expr_note_range_args;
+
+static int cmd_expr_note_range(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_note_range_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_note_range_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int range = expr_note_range_args.range->ival[0];
+  if (range < 1 || range > 127) {
+    ESP_LOGE(TAG, "Note range must be 1-127 semitones");
+    return 1;
+  }
+  
+  scene->expression.note_range = range;
+  ESP_LOGI(TAG, "Expression note range: %d semitones", range);
+  return 0;
+}
+
+// Command: expr_velocity - Set expression note velocity
+static struct {
+  struct arg_int *velocity;
+  struct arg_end *end;
+} expr_velocity_args;
+
+static int cmd_expr_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_velocity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_velocity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int vel = expr_velocity_args.velocity->ival[0];
+  if (vel < 0 || vel > 127) {
+    ESP_LOGE(TAG, "Velocity must be 0-127");
+    return 1;
+  }
+  
+  scene->expression.velocity = vel;
+  ESP_LOGI(TAG, "Expression velocity: %d", vel);
+  return 0;
+}
+
 // Command: cv_cc - Set CV CC number
 static struct {
   struct arg_int *cc_num;
@@ -664,6 +744,118 @@ static int cmd_cv_enable(int argc, char **argv) {
   
   ESP_LOGI(TAG, "CV: %s", enable ? "enabled" : "disabled");
   
+  return 0;
+}
+
+// Command: cv_output - Set CV output type
+static struct {
+  struct arg_str *output_type;
+  struct arg_end *end;
+} cv_output_args;
+
+static int cmd_cv_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &cv_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, cv_output_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* type = cv_output_args.output_type->sval[0];
+  
+  if (strcmp(type, "cc") == 0) {
+    scene->cv.output_type = OUTPUT_TYPE_CC;
+  } else if (strcmp(type, "note") == 0) {
+    scene->cv.output_type = OUTPUT_TYPE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "CV output: %s", type);
+  return 0;
+}
+
+// Command: cv_base_note - Set CV base note
+static struct {
+  struct arg_int *note;
+  struct arg_end *end;
+} cv_base_note_args;
+
+static int cmd_cv_base_note(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &cv_base_note_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, cv_base_note_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int note = cv_base_note_args.note->ival[0];
+  if (note < 0 || note > 127) {
+    ESP_LOGE(TAG, "Note must be 0-127");
+    return 1;
+  }
+  
+  scene->cv.base_note = note;
+  ESP_LOGI(TAG, "CV base note: %d", note);
+  return 0;
+}
+
+// Command: cv_note_range - Set CV note range
+static struct {
+  struct arg_int *range;
+  struct arg_end *end;
+} cv_note_range_args;
+
+static int cmd_cv_note_range(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &cv_note_range_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, cv_note_range_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int range = cv_note_range_args.range->ival[0];
+  if (range < 1 || range > 127) {
+    ESP_LOGE(TAG, "Note range must be 1-127 semitones");
+    return 1;
+  }
+  
+  scene->cv.note_range = range;
+  ESP_LOGI(TAG, "CV note range: %d semitones", range);
+  return 0;
+}
+
+// Command: cv_velocity - Set CV note velocity
+static struct {
+  struct arg_int *velocity;
+  struct arg_end *end;
+} cv_velocity_args;
+
+static int cmd_cv_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &cv_velocity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, cv_velocity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int vel = cv_velocity_args.velocity->ival[0];
+  if (vel < 0 || vel > 127) {
+    ESP_LOGE(TAG, "Velocity must be 0-127");
+    return 1;
+  }
+  
+  scene->cv.velocity = vel;
+  ESP_LOGI(TAG, "CV velocity: %d", vel);
   return 0;
 }
 
@@ -801,6 +993,118 @@ static int cmd_proximity_enable(int argc, char **argv) {
   return 0;
 }
 
+// Command: proximity_output - Set proximity output type
+static struct {
+  struct arg_str *output_type;
+  struct arg_end *end;
+} proximity_output_args;
+
+static int cmd_proximity_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_output_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* type = proximity_output_args.output_type->sval[0];
+  
+  if (strcmp(type, "cc") == 0) {
+    scene->proximity.output_type = OUTPUT_TYPE_CC;
+  } else if (strcmp(type, "note") == 0) {
+    scene->proximity.output_type = OUTPUT_TYPE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Proximity output: %s", type);
+  return 0;
+}
+
+// Command: proximity_base_note - Set proximity base note
+static struct {
+  struct arg_int *note;
+  struct arg_end *end;
+} proximity_base_note_args;
+
+static int cmd_proximity_base_note(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_base_note_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_base_note_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int note = proximity_base_note_args.note->ival[0];
+  if (note < 0 || note > 127) {
+    ESP_LOGE(TAG, "Note must be 0-127");
+    return 1;
+  }
+  
+  scene->proximity.base_note = note;
+  ESP_LOGI(TAG, "Proximity base note: %d", note);
+  return 0;
+}
+
+// Command: proximity_note_range - Set proximity note range
+static struct {
+  struct arg_int *range;
+  struct arg_end *end;
+} proximity_note_range_args;
+
+static int cmd_proximity_note_range(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_note_range_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_note_range_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int range = proximity_note_range_args.range->ival[0];
+  if (range < 1 || range > 127) {
+    ESP_LOGE(TAG, "Note range must be 1-127 semitones");
+    return 1;
+  }
+  
+  scene->proximity.note_range = range;
+  ESP_LOGI(TAG, "Proximity note range: %d semitones", range);
+  return 0;
+}
+
+// Command: proximity_velocity - Set proximity note velocity
+static struct {
+  struct arg_int *velocity;
+  struct arg_end *end;
+} proximity_velocity_args;
+
+static int cmd_proximity_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_velocity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_velocity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int vel = proximity_velocity_args.velocity->ival[0];
+  if (vel < 0 || vel > 127) {
+    ESP_LOGE(TAG, "Velocity must be 0-127");
+    return 1;
+  }
+  
+  scene->proximity.velocity = vel;
+  ESP_LOGI(TAG, "Proximity velocity: %d", vel);
+  return 0;
+}
+
 // Command: als_cc - Set ALS CC number
 static struct {
   struct arg_int *cc_num;
@@ -935,6 +1239,118 @@ static int cmd_als_enable(int argc, char **argv) {
   return 0;
 }
 
+// Command: als_output - Set ALS output type
+static struct {
+  struct arg_str *output_type;
+  struct arg_end *end;
+} als_output_args;
+
+static int cmd_als_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_output_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* type = als_output_args.output_type->sval[0];
+  
+  if (strcmp(type, "cc") == 0) {
+    scene->als.output_type = OUTPUT_TYPE_CC;
+  } else if (strcmp(type, "note") == 0) {
+    scene->als.output_type = OUTPUT_TYPE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "ALS output: %s", type);
+  return 0;
+}
+
+// Command: als_base_note - Set ALS base note
+static struct {
+  struct arg_int *note;
+  struct arg_end *end;
+} als_base_note_args;
+
+static int cmd_als_base_note(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_base_note_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_base_note_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int note = als_base_note_args.note->ival[0];
+  if (note < 0 || note > 127) {
+    ESP_LOGE(TAG, "Note must be 0-127");
+    return 1;
+  }
+  
+  scene->als.base_note = note;
+  ESP_LOGI(TAG, "ALS base note: %d", note);
+  return 0;
+}
+
+// Command: als_note_range - Set ALS note range
+static struct {
+  struct arg_int *range;
+  struct arg_end *end;
+} als_note_range_args;
+
+static int cmd_als_note_range(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_note_range_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_note_range_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int range = als_note_range_args.range->ival[0];
+  if (range < 1 || range > 127) {
+    ESP_LOGE(TAG, "Note range must be 1-127 semitones");
+    return 1;
+  }
+  
+  scene->als.note_range = range;
+  ESP_LOGI(TAG, "ALS note range: %d semitones", range);
+  return 0;
+}
+
+// Command: als_velocity - Set ALS note velocity
+static struct {
+  struct arg_int *velocity;
+  struct arg_end *end;
+} als_velocity_args;
+
+static int cmd_als_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_velocity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_velocity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int vel = als_velocity_args.velocity->ival[0];
+  if (vel < 0 || vel > 127) {
+    ESP_LOGE(TAG, "Velocity must be 0-127");
+    return 1;
+  }
+  
+  scene->als.velocity = vel;
+  ESP_LOGI(TAG, "ALS velocity: %d", vel);
+  return 0;
+}
+
 esp_err_t scene_console_init(void) {
   ESP_LOGI(TAG, "Registering scene commands");
   
@@ -978,6 +1394,15 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&goto_cmd);
   
+  // save command
+  const esp_console_cmd_t save_cmd = {
+    .command = "save",
+    .help = "Save current scene to flash",
+    .hint = NULL,
+    .func = &cmd_save,
+  };
+  esp_console_cmd_register(&save_cmd);
+  
   // name command
   name_args.scene_name = arg_str1(NULL, NULL, "<name>", "Scene name");
   name_args.end = arg_end(2);
@@ -990,32 +1415,6 @@ esp_err_t scene_console_init(void) {
     .argtable = &name_args
   };
   esp_console_cmd_register(&name_cmd);
-  
-  // mode command
-  mode_args.mode_type = arg_str1(NULL, NULL, "<single|preset|advanced>", "Scene mode");
-  mode_args.end = arg_end(2);
-  
-  const esp_console_cmd_t mode_cmd = {
-    .command = "mode",
-    .help = "Set scene operational mode",
-    .hint = NULL,
-    .func = &cmd_mode,
-    .argtable = &mode_args
-  };
-  esp_console_cmd_register(&mode_cmd);
-  
-  // change command
-  change_args.change_type = arg_str1(NULL, NULL, "<immediate|pending>", "Change mode");
-  change_args.end = arg_end(2);
-  
-  const esp_console_cmd_t change_cmd = {
-    .command = "change",
-    .help = "Set scene change mode",
-    .hint = NULL,
-    .func = &cmd_change,
-    .argtable = &change_args
-  };
-  esp_console_cmd_register(&change_cmd);
   
   // confirm command
   const esp_console_cmd_t confirm_cmd = {
@@ -1128,6 +1527,58 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&expr_enable_cmd);
   
+  // expr_output command
+  expr_output_args.output_type = arg_str1(NULL, NULL, "<cc|note>", "Output type");
+  expr_output_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_output_cmd = {
+    .command = "expr_output",
+    .help = "Set expression output type (cc or note)",
+    .hint = NULL,
+    .func = &cmd_expr_output,
+    .argtable = &expr_output_args
+  };
+  esp_console_cmd_register(&expr_output_cmd);
+  
+  // expr_base_note command
+  expr_base_note_args.note = arg_int1(NULL, NULL, "<0-127>", "Base MIDI note");
+  expr_base_note_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_base_note_cmd = {
+    .command = "expr_base_note",
+    .help = "Set expression base note for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_expr_base_note,
+    .argtable = &expr_base_note_args
+  };
+  esp_console_cmd_register(&expr_base_note_cmd);
+  
+  // expr_note_range command
+  expr_note_range_args.range = arg_int1(NULL, NULL, "<1-127>", "Range in semitones");
+  expr_note_range_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_note_range_cmd = {
+    .command = "expr_note_range",
+    .help = "Set expression note range in semitones",
+    .hint = NULL,
+    .func = &cmd_expr_note_range,
+    .argtable = &expr_note_range_args
+  };
+  esp_console_cmd_register(&expr_note_range_cmd);
+  
+  // expr_velocity command
+  expr_velocity_args.velocity = arg_int1(NULL, NULL, "<0-127>", "Note velocity");
+  expr_velocity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_velocity_cmd = {
+    .command = "expr_velocity",
+    .help = "Set expression note velocity for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_expr_velocity,
+    .argtable = &expr_velocity_args
+  };
+  esp_console_cmd_register(&expr_velocity_cmd);
+  
   // cv_cc command
   cv_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
   cv_cc_args.end = arg_end(2);
@@ -1179,6 +1630,58 @@ esp_err_t scene_console_init(void) {
     .argtable = &cv_enable_args
   };
   esp_console_cmd_register(&cv_enable_cmd);
+  
+  // cv_output command
+  cv_output_args.output_type = arg_str1(NULL, NULL, "<cc|note>", "Output type");
+  cv_output_args.end = arg_end(2);
+  
+  const esp_console_cmd_t cv_output_cmd = {
+    .command = "cv_output",
+    .help = "Set CV output type (cc or note)",
+    .hint = NULL,
+    .func = &cmd_cv_output,
+    .argtable = &cv_output_args
+  };
+  esp_console_cmd_register(&cv_output_cmd);
+  
+  // cv_base_note command
+  cv_base_note_args.note = arg_int1(NULL, NULL, "<0-127>", "Base MIDI note");
+  cv_base_note_args.end = arg_end(2);
+  
+  const esp_console_cmd_t cv_base_note_cmd = {
+    .command = "cv_base_note",
+    .help = "Set CV base note for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_cv_base_note,
+    .argtable = &cv_base_note_args
+  };
+  esp_console_cmd_register(&cv_base_note_cmd);
+  
+  // cv_note_range command
+  cv_note_range_args.range = arg_int1(NULL, NULL, "<1-127>", "Range in semitones");
+  cv_note_range_args.end = arg_end(2);
+  
+  const esp_console_cmd_t cv_note_range_cmd = {
+    .command = "cv_note_range",
+    .help = "Set CV note range in semitones",
+    .hint = NULL,
+    .func = &cmd_cv_note_range,
+    .argtable = &cv_note_range_args
+  };
+  esp_console_cmd_register(&cv_note_range_cmd);
+  
+  // cv_velocity command
+  cv_velocity_args.velocity = arg_int1(NULL, NULL, "<0-127>", "Note velocity");
+  cv_velocity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t cv_velocity_cmd = {
+    .command = "cv_velocity",
+    .help = "Set CV note velocity for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_cv_velocity,
+    .argtable = &cv_velocity_args
+  };
+  esp_console_cmd_register(&cv_velocity_cmd);
   
   // proximity_cc command
   proximity_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
@@ -1232,6 +1735,58 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&proximity_enable_cmd);
   
+  // proximity_output command
+  proximity_output_args.output_type = arg_str1(NULL, NULL, "<cc|note>", "Output type");
+  proximity_output_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_output_cmd = {
+    .command = "proximity_output",
+    .help = "Set proximity output type (cc or note)",
+    .hint = NULL,
+    .func = &cmd_proximity_output,
+    .argtable = &proximity_output_args
+  };
+  esp_console_cmd_register(&proximity_output_cmd);
+  
+  // proximity_base_note command
+  proximity_base_note_args.note = arg_int1(NULL, NULL, "<0-127>", "Base MIDI note");
+  proximity_base_note_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_base_note_cmd = {
+    .command = "proximity_base_note",
+    .help = "Set proximity base note for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_proximity_base_note,
+    .argtable = &proximity_base_note_args
+  };
+  esp_console_cmd_register(&proximity_base_note_cmd);
+  
+  // proximity_note_range command
+  proximity_note_range_args.range = arg_int1(NULL, NULL, "<1-127>", "Range in semitones");
+  proximity_note_range_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_note_range_cmd = {
+    .command = "proximity_note_range",
+    .help = "Set proximity note range in semitones",
+    .hint = NULL,
+    .func = &cmd_proximity_note_range,
+    .argtable = &proximity_note_range_args
+  };
+  esp_console_cmd_register(&proximity_note_range_cmd);
+  
+  // proximity_velocity command
+  proximity_velocity_args.velocity = arg_int1(NULL, NULL, "<0-127>", "Note velocity");
+  proximity_velocity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_velocity_cmd = {
+    .command = "proximity_velocity",
+    .help = "Set proximity note velocity for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_proximity_velocity,
+    .argtable = &proximity_velocity_args
+  };
+  esp_console_cmd_register(&proximity_velocity_cmd);
+  
   // als_cc command
   als_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
   als_cc_args.end = arg_end(2);
@@ -1283,6 +1838,58 @@ esp_err_t scene_console_init(void) {
     .argtable = &als_enable_args
   };
   esp_console_cmd_register(&als_enable_cmd);
+  
+  // als_output command
+  als_output_args.output_type = arg_str1(NULL, NULL, "<cc|note>", "Output type");
+  als_output_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_output_cmd = {
+    .command = "als_output",
+    .help = "Set ALS output type (cc or note)",
+    .hint = NULL,
+    .func = &cmd_als_output,
+    .argtable = &als_output_args
+  };
+  esp_console_cmd_register(&als_output_cmd);
+  
+  // als_base_note command
+  als_base_note_args.note = arg_int1(NULL, NULL, "<0-127>", "Base MIDI note");
+  als_base_note_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_base_note_cmd = {
+    .command = "als_base_note",
+    .help = "Set ALS base note for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_als_base_note,
+    .argtable = &als_base_note_args
+  };
+  esp_console_cmd_register(&als_base_note_cmd);
+  
+  // als_note_range command
+  als_note_range_args.range = arg_int1(NULL, NULL, "<1-127>", "Range in semitones");
+  als_note_range_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_note_range_cmd = {
+    .command = "als_note_range",
+    .help = "Set ALS note range in semitones",
+    .hint = NULL,
+    .func = &cmd_als_note_range,
+    .argtable = &als_note_range_args
+  };
+  esp_console_cmd_register(&als_note_range_cmd);
+  
+  // als_velocity command
+  als_velocity_args.velocity = arg_int1(NULL, NULL, "<0-127>", "Note velocity");
+  als_velocity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_velocity_cmd = {
+    .command = "als_velocity",
+    .help = "Set ALS note velocity for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_als_velocity,
+    .argtable = &als_velocity_args
+  };
+  esp_console_cmd_register(&als_velocity_cmd);
   
   return ESP_OK;
 }

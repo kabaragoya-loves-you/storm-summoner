@@ -2,6 +2,7 @@
 #include "scene_console.h"
 #include "scene_assign_console.h"
 #include "console_completion.h"
+#include "config_console.h"
 #include "device_config_console.h"
 #include "app_settings_console.h"
 #include "revision_console.h"
@@ -228,6 +229,7 @@ esp_err_t console_repl_init(void) {
   midi_send_console_register();
   
   // Register all contexts
+  console_register_context("config", config_console_init, config_console_cleanup);
   console_register_context("scene", scene_console_init, scene_console_cleanup);
   console_register_context("device_config", device_config_console_init, device_config_console_cleanup);
   console_register_context("assign", scene_assign_console_init, scene_assign_console_cleanup);

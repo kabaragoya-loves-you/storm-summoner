@@ -23,6 +23,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index);
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
 #define NVS_KEY_CHANGE_MODE      "change_mode"
+#define NVS_KEY_AUTOSAVE_MODE    "autosave_mode"
 
 // Global scene manager instance
 static scene_manager_t g_scene_manager = {
@@ -34,6 +35,7 @@ static scene_manager_t g_scene_manager = {
   .num_scenes = 1,
   .mode = SCENE_MODE_SINGLE,
   .change_mode = CHANGE_MODE_IMMEDIATE,
+  .autosave_mode = SCENE_AUTOSAVE_MANUAL,
   .initialized = false
 };
 
@@ -145,6 +147,12 @@ esp_err_t scene_init(void) {
   uint8_t change_val;
   if (app_settings_load_u8(NVS_KEY_CHANGE_MODE, &change_val) == ESP_OK) {
     g_scene_manager.change_mode = (scene_change_mode_t)change_val;
+  }
+  
+  // Load autosave mode from NVS
+  uint8_t autosave_val;
+  if (app_settings_load_u8(NVS_KEY_AUTOSAVE_MODE, &autosave_val) == ESP_OK) {
+    g_scene_manager.autosave_mode = (scene_autosave_mode_t)autosave_val;
   }
   
   // Initialize cache
@@ -310,9 +318,14 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     // Find least recently used cache slot (for now, just use round-robin)
     cache_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
     
-    // Save current cache entry if dirty
+    // Save current cache entry if dirty (respects autosave mode)
     if (g_scene_manager.cache[cache_idx].valid && g_scene_manager.cache[cache_idx].dirty) {
-      scene_save_to_flash(g_scene_manager.cache[cache_idx].index);
+      if (g_scene_manager.autosave_mode == SCENE_AUTOSAVE_AUTO) {
+        scene_save_to_flash(g_scene_manager.cache[cache_idx].index);
+        ESP_LOGI(TAG, "Auto-saved scene %d", g_scene_manager.cache[cache_idx].index + 1);
+      } else {
+        ESP_LOGW(TAG, "Scene %d has unsaved changes (autosave=manual, use 'save' command)", g_scene_manager.cache[cache_idx].index + 1);
+      }
     }
     
     // Load new scene into cache
@@ -465,6 +478,19 @@ esp_err_t scene_set_change_mode(scene_change_mode_t mode) {
 
 scene_change_mode_t scene_get_change_mode(void) {
   return g_scene_manager.change_mode;
+}
+
+esp_err_t scene_set_autosave_mode(scene_autosave_mode_t mode) {
+  g_scene_manager.autosave_mode = mode;
+  
+  ESP_LOGI(TAG, "Autosave mode set to %s", mode == SCENE_AUTOSAVE_MANUAL ? "manual" : "auto");
+  
+  uint8_t mode_val = (uint8_t)mode;
+  return app_settings_save_u8(NVS_KEY_AUTOSAVE_MODE, mode_val);
+}
+
+scene_autosave_mode_t scene_get_autosave_mode(void) {
+  return g_scene_manager.autosave_mode;
 }
 
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program) {

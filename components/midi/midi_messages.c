@@ -161,16 +161,60 @@ void send_song_position(uint16_t position) {
   midi_send_message(message, sizeof(message));
 }
 
-/*
-MMC Command	Function
-0x06 0x01	Start
-0x06 0x02	Stop
-0x06 0x03	Pause
-0x06 0x04	Record
-*/
+// Send MMC (MIDI Machine Control) SysEx command
 void send_mmc(uint8_t command) {
   uint8_t message[] = {0xF0, 0x7F, 0x7F, 0x06, command, 0xF7};
   midi_send_message(message, sizeof(message));
+}
+
+// Helper functions for common MMC commands
+void send_mmc_play(void) {
+  send_mmc(MMC_PLAY);
+}
+
+void send_mmc_stop(void) {
+  send_mmc(MMC_STOP);
+}
+
+void send_mmc_record_strobe(void) {
+  send_mmc(MMC_RECORD_STROBE);
+}
+
+void send_mmc_pause(void) {
+  send_mmc(MMC_PAUSE);
+}
+
+// Additional MMC helper functions (not exported in header yet, use send_mmc() directly)
+void send_mmc_deferred_play(void) {
+  send_mmc(MMC_DEFERRED_PLAY);
+}
+
+void send_mmc_fast_forward(void) {
+  send_mmc(MMC_FAST_FORWARD);
+}
+
+void send_mmc_rewind(void) {
+  send_mmc(MMC_REWIND);
+}
+
+void send_mmc_record_exit(void) {
+  send_mmc(MMC_RECORD_EXIT);
+}
+
+void send_mmc_record_pause(void) {
+  send_mmc(MMC_RECORD_PAUSE);
+}
+
+void send_mmc_eject(void) {
+  send_mmc(MMC_EJECT);
+}
+
+void send_mmc_chase(void) {
+  send_mmc(MMC_CHASE);
+}
+
+void send_mmc_reset(void) {
+  send_mmc(MMC_RESET);
 }
 
 uint8_t last_status_byte = 0; // Tracks last status to avoid redundancy

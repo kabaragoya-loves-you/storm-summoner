@@ -3,6 +3,7 @@ idf_component_register(
   INCLUDE_DIRS "include"
   REQUIRES 
     console
+    config
     scene
     device_config
     app_settings

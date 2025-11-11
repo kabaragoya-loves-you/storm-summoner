@@ -64,5 +64,6 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_usb_mode>"
     "$<TARGET_FILE:__idf_event_bus>"
     "$<TARGET_FILE:__idf_action>"
+    "$<TARGET_FILE:__idf_config>"
     "LINKER:--no-whole-archive"
 )

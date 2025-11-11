@@ -1,5 +1,6 @@
 #include "transport.h"
 #include "event_bus.h"
+#include "midi_messages.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -153,44 +154,66 @@ bool transport_is_recording(void) {
   return (transport_get_state() == TRANSPORT_RECORDING);
 }
 
-// Transport control functions
+// Transport control functions - send both MIDI Clock and MMC messages
 esp_err_t transport_play(void) {
+  // Send MIDI Clock Start
+  send_start();
+  
+  // Send MMC Play
+  send_mmc_play();
+  
+  // Post internal event
   event_t event = {
     .type = EVENT_TRANSPORT_START,
     .priority = EVENT_PRIORITY_HIGH,
     .timestamp = event_bus_get_current_timestamp()
   };
-  ESP_LOGI(TAG, "Play");
+  ESP_LOGI(TAG, "Play (sent MIDI Start + MMC Play)");
   return event_bus_post(&event);
 }
 
 esp_err_t transport_stop(void) {
+  // Send MIDI Clock Stop
+  send_stop();
+  
+  // Send MMC Stop
+  send_mmc_stop();
+  
+  // Post internal event
   event_t event = {
     .type = EVENT_TRANSPORT_STOP,
     .priority = EVENT_PRIORITY_HIGH,
     .timestamp = event_bus_get_current_timestamp()
   };
-  ESP_LOGI(TAG, "Stop");
+  ESP_LOGI(TAG, "Stop (sent MIDI Stop + MMC Stop)");
   return event_bus_post(&event);
 }
 
 esp_err_t transport_pause(void) {
+  // Send MMC Pause
+  send_mmc_pause();
+  
+  // Post internal event
   event_t event = {
     .type = EVENT_TRANSPORT_PAUSE,
     .priority = EVENT_PRIORITY_HIGH,
     .timestamp = event_bus_get_current_timestamp()
   };
-  ESP_LOGI(TAG, "Pause");
+  ESP_LOGI(TAG, "Pause (sent MMC Pause)");
   return event_bus_post(&event);
 }
 
 esp_err_t transport_record(void) {
+  // Send MMC Record Strobe
+  send_mmc_record_strobe();
+  
+  // Post internal event
   event_t event = {
     .type = EVENT_TRANSPORT_RECORD,
     .priority = EVENT_PRIORITY_HIGH,
     .timestamp = event_bus_get_current_timestamp()
   };
-  ESP_LOGI(TAG, "Record");
+  ESP_LOGI(TAG, "Record (sent MMC Record Strobe)");
   return event_bus_post(&event);
 }
 
