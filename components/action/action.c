@@ -56,7 +56,9 @@ static const char* action_type_names[] = {
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
   [ACTION_CANCEL_PENDING] = "Cancel Pending",
   [ACTION_ALL_NOTES_OFF] = "All Notes Off",
-  [ACTION_ALL_SOUND_OFF] = "All Sound Off"
+  [ACTION_ALL_SOUND_OFF] = "All Sound Off",
+  [ACTION_SUSTAIN] = "Sustain",
+  [ACTION_SOSTENUTO] = "Sostenuto"
 };
 
 esp_err_t action_init(void) {
@@ -393,6 +395,18 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
+    case ACTION_SUSTAIN:
+      // Send CC64 = 127 on press, 0 on release
+      send_control_change(channel, 64, is_press ? 127 : 0);
+      ESP_LOGD(TAG, "Sustain: %s", is_press ? "on" : "off");
+      break;
+      
+    case ACTION_SOSTENUTO:
+      // Send CC66 = 127 on press, 0 on release
+      send_control_change(channel, 66, is_press ? 127 : 0);
+      ESP_LOGD(TAG, "Sostenuto: %s", is_press ? "on" : "off");
+      break;
+      
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
       return ESP_ERR_NOT_SUPPORTED;
@@ -482,6 +496,18 @@ action_t action_create_all_notes_off(void) {
 action_t action_create_all_sound_off(void) {
   action_t action = {0};
   action.type = ACTION_ALL_SOUND_OFF;
+  return action;
+}
+
+action_t action_create_sustain(void) {
+  action_t action = {0};
+  action.type = ACTION_SUSTAIN;
+  return action;
+}
+
+action_t action_create_sostenuto(void) {
+  action_t action = {0};
+  action.type = ACTION_SOSTENUTO;
   return action;
 }
 

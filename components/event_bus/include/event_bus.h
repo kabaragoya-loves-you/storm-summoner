@@ -171,8 +171,6 @@ typedef struct {
     
     struct {
       bool pressed;          // true = pressed, false = released
-      uint8_t cc_number;     // MIDI CC number
-      uint8_t cc_value;      // MIDI CC value (127 = pressed, 0 = released)
     } pedal;
     
     struct {

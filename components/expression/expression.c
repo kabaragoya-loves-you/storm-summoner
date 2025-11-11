@@ -24,8 +24,6 @@
 #define NVS_KEY_EXP_CC "exp_cc"
 #define NVS_KEY_EXP_MODE "exp_mode"
 #define NVS_KEY_EXP_POLARITY "exp_polarity"
-#define NVS_KEY_EXP_SUSTAIN_CC "exp_sustain_cc"
-#define NVS_KEY_EXP_SOSTENUTO_CC "exp_sostenuto_cc"
 #define NVS_KEY_EXP_PEDAL_SW_TYPE "exp_pedal_sw"
 
 // Default calibration values
@@ -33,8 +31,6 @@
 #define DEFAULT_MAX_VALUE 3500
 #define DEFAULT_DEADZONE 2
 #define DEFAULT_CC_NUMBER 4  // Foot Controller
-#define DEFAULT_SUSTAIN_CC 64  // Sustain pedal (standard)
-#define DEFAULT_SOSTENUTO_CC 66  // Sostenuto pedal (standard)
 
 // Thresholds for sustain/sostenuto/gate detection
 #define PEDAL_PRESSED_THRESHOLD 1000   // ADC < 1000 = pressed (tip shorted to ground)
@@ -55,8 +51,6 @@ static int16_t s_max_value = DEFAULT_MAX_VALUE;
 static uint8_t s_deadzone = DEFAULT_DEADZONE;
 static expression_mode_t s_mode = EXPRESSION_MODE_PEDAL;
 static expression_polarity_t s_polarity = EXPRESSION_POLARITY_TIP_ADC;
-static uint8_t s_sustain_cc = DEFAULT_SUSTAIN_CC;
-static uint8_t s_sostenuto_cc = DEFAULT_SOSTENUTO_CC;
 static pedal_switch_type_t s_pedal_switch_type = PEDAL_SWITCH_NO;  // Default: normally-open
 static bool s_gate_state = false;
 static bool s_pedal_state = false;  // For sustain/sostenuto (true = pressed)
@@ -81,14 +75,30 @@ static void expression_task(void *pvParameters) {
   bool first_reading = true;  // Flag to skip initial change detection
   bool last_pedal_state = false;  // For sustain/sostenuto
   bool last_gate_state = false;   // For gate mode
+  static uint32_t last_cable_check_ms = 0;  // Throttle cable checks when disconnected
+  
+  // Small initial delay for ADC settling
+  vTaskDelay(pdMS_TO_TICKS(100));
   
   while (1) {
-    // Check if cable is inserted
-    bool is_connected = gpio_get_level(PIN_EXP_SW) == 1;
+    // Check cable detection setting
+    bool cable_detect_enabled = input_get_cable_detection_enabled();
     
-    // If cable detection is disabled, treat as always connected
-    if (!input_get_cable_detection_enabled()) {
-      is_connected = true;
+    // Check if cable is inserted (throttled when disconnected)
+    bool is_connected = was_connected;  // Default to last state
+    uint32_t now_ms = esp_timer_get_time() / 1000;
+    
+    if (cable_detect_enabled) {
+      // When connected, check every loop
+      // When disconnected, only check every 1000ms
+      if (was_connected || (now_ms - last_cable_check_ms >= 1000)) {
+        is_connected = gpio_get_level(PIN_EXP_SW) == 1;
+        if (!was_connected) {
+          last_cable_check_ms = now_ms;
+        }
+      }
+    } else {
+      is_connected = true;  // Treat as always connected when detection disabled
     }
     
     // Handle connection state changes
@@ -122,22 +132,31 @@ static void expression_task(void *pvParameters) {
       int16_t raw;
       float ratio = 0.0f;
       
-      // Read expression pedal channel
+      // Read expression pedal channel with retry
       int raw_exp = 0;
       esp_err_t ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_exp);
       if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to read expression ADC: %s", esp_err_to_name(ret));
-        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-        continue;
+        // Retry once with small delay for ADC contention
+        vTaskDelay(1);
+        ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_exp);
+        if (ret != ESP_OK) {
+          ESP_LOGW(TAG, "Failed to read expression ADC: %s", esp_err_to_name(ret));
+          vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+          continue;
+        }
       }
       
-      // Read VCC reference channel
+      // Read VCC reference channel with retry
       int raw_ref = 0;
       ret = adc_manager_read(REF_ADC_CHANNEL, &raw_ref);
       if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to read reference ADC: %s", esp_err_to_name(ret));
-        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
-        continue;
+        vTaskDelay(1);
+        ret = adc_manager_read(REF_ADC_CHANNEL, &raw_ref);
+        if (ret != ESP_OK) {
+          ESP_LOGW(TAG, "Failed to read reference ADC: %s", esp_err_to_name(ret));
+          vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+          continue;
+        }
       }
       
       // Calculate ratio (protects against VCC fluctuations)
@@ -263,24 +282,20 @@ static void expression_task(void *pvParameters) {
             current_state ? "PRESSED" : "RELEASED",
             s_pedal_switch_type == PEDAL_SWITCH_NO ? "NO" : "NC");
         } else if (current_state != last_pedal_state) {
-          // Post event
+          // Post event (scene handler will execute actions)
           event_t pedal_event = {
             .type = s_mode == EXPRESSION_MODE_SUSTAIN ? EVENT_EXPRESSION_SUSTAIN : EVENT_EXPRESSION_SOSTENUTO,
             .priority = EVENT_PRIORITY_NORMAL,
             .timestamp = event_bus_get_current_timestamp(),
             .data.pedal = {
-              .pressed = current_state,
-              .cc_number = s_mode == EXPRESSION_MODE_SUSTAIN ? s_sustain_cc : s_sostenuto_cc,
-              .cc_value = current_state ? 127 : 0
+              .pressed = current_state
             }
           };
           
           if (event_bus_post(&pedal_event) == ESP_OK) {
-            ESP_LOGI(TAG, "%s: %s (CC%d = %d)", 
+            ESP_LOGI(TAG, "%s: %s", 
               s_mode == EXPRESSION_MODE_SUSTAIN ? "Sustain" : "Sostenuto",
-              current_state ? "PRESSED" : "RELEASED",
-              pedal_event.data.pedal.cc_number,
-              pedal_event.data.pedal.cc_value);
+              current_state ? "PRESSED" : "RELEASED");
             last_pedal_state = current_state;
           }
         }
@@ -316,12 +331,6 @@ static void expression_task(void *pvParameters) {
       vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
       
     } else {
-      // Debug: Log every 100 loops when disconnected
-      static int disconnect_counter = 0;
-      if (disconnect_counter++ % 100 == 0) {
-        ESP_LOGD(TAG, "Cable disconnected, waiting... (GPIO%d=%d)", PIN_EXP_SW, gpio_get_level(PIN_EXP_SW));
-      }
-      
       // Cable disconnected - reset state
       s_expression_value = 0.0f;
       s_midi_value = 0;
@@ -330,7 +339,8 @@ static void expression_task(void *pvParameters) {
       s_sum_samples = 0;
       first_reading = true;  // Reset flag when disconnected
       
-      vTaskDelay(pdMS_TO_TICKS(100));  // Check less frequently when disconnected
+      // Sleep for 1 second when disconnected (reduces ADC load)
+      vTaskDelay(pdMS_TO_TICKS(1000));
     }
   }
 }
@@ -373,20 +383,6 @@ void expression_init(bool enable_logging) {
     s_polarity = (expression_polarity_t)stored_u8;
   } else {
     app_settings_save_u8(NVS_KEY_EXP_POLARITY, (uint8_t)s_polarity);
-  }
-  
-  // Load sustain CC
-  if (app_settings_load_u8(NVS_KEY_EXP_SUSTAIN_CC, &stored_u8) == APP_SETTINGS_OK) {
-    s_sustain_cc = stored_u8;
-  } else {
-    app_settings_save_u8(NVS_KEY_EXP_SUSTAIN_CC, s_sustain_cc);
-  }
-  
-  // Load sostenuto CC
-  if (app_settings_load_u8(NVS_KEY_EXP_SOSTENUTO_CC, &stored_u8) == APP_SETTINGS_OK) {
-    s_sostenuto_cc = stored_u8;
-  } else {
-    app_settings_save_u8(NVS_KEY_EXP_SOSTENUTO_CC, s_sostenuto_cc);
   }
   
   // Load pedal switch type (used for both sustain and sostenuto)
@@ -580,26 +576,6 @@ void expression_set_polarity(expression_polarity_t polarity) {
 
 expression_polarity_t expression_get_polarity(void) {
   return s_polarity;
-}
-
-void expression_set_sustain_cc(uint8_t cc) {
-  s_sustain_cc = cc;
-  app_settings_save_u8(NVS_KEY_EXP_SUSTAIN_CC, cc);
-  ESP_LOGI(TAG, "Sustain CC set to %d", cc);
-}
-
-uint8_t expression_get_sustain_cc(void) {
-  return s_sustain_cc;
-}
-
-void expression_set_sostenuto_cc(uint8_t cc) {
-  s_sostenuto_cc = cc;
-  app_settings_save_u8(NVS_KEY_EXP_SOSTENUTO_CC, cc);
-  ESP_LOGI(TAG, "Sostenuto CC set to %d", cc);
-}
-
-uint8_t expression_get_sostenuto_cc(void) {
-  return s_sostenuto_cc;
 }
 
 void expression_set_pedal_switch_type(pedal_switch_type_t type) {

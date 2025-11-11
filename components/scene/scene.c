@@ -127,6 +127,17 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->proximity.idle_timeout_ms = 1000;
   scene->proximity.polarity = POLARITY_BIPOLAR;
   scene->als = continuous_mapping_create(18);          // CC18 = General Purpose 3
+  
+  // Expression jack configuration
+  scene->expression_mode = EXPRESSION_MODE_PEDAL;      // Default to expression pedal mode
+  
+  // Default sustain action: ACTION_SUSTAIN (CC64 toggle)
+  scene->sustain.num_actions = 1;
+  scene->sustain.actions[0] = action_create_sustain();
+  
+  // Default sostenuto action: ACTION_SOSTENUTO (CC66 toggle)
+  scene->sostenuto.num_actions = 1;
+  scene->sostenuto.actions[0] = action_create_sostenuto();
 }
 
 esp_err_t scene_init(void) {
@@ -357,6 +368,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   }
   
   ESP_LOGI(TAG, "Switched to scene %d: %s", scene_index + 1, new_scene->name);
+  
+  // Configure expression jack mode for this scene
+  expression_set_mode(new_scene->expression_mode);
   
   // Execute on_load actions
   if (new_scene->on_load.num_actions > 0) {
@@ -772,6 +786,66 @@ action_chain_t* scene_get_on_load(uint8_t scene_index) {
   return scene ? &scene->on_load : NULL;
 }
 
+esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->expression_mode = mode;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  // Update hardware configuration immediately if this is the current scene
+  expression_set_mode(mode);
+  
+  const char* mode_str = (mode == EXPRESSION_MODE_PEDAL) ? "expression" :
+                         (mode == EXPRESSION_MODE_SUSTAIN) ? "sustain" :
+                         (mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" : "gate";
+  ESP_LOGI(TAG, "Scene %d expression mode set to %s", scene_index + 1, mode_str);
+  return ESP_OK;
+}
+
+expression_mode_t scene_get_expression_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->expression_mode : EXPRESSION_MODE_PEDAL;
+}
+
+esp_err_t scene_assign_sustain(uint8_t scene_index, const action_chain_t* chain) {
+  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->sustain = *chain;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  ESP_LOGI(TAG, "Assigned %d sustain actions", chain->num_actions);
+  return ESP_OK;
+}
+
+esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_chain_t* chain) {
+  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->sostenuto = *chain;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  ESP_LOGI(TAG, "Assigned %d sostenuto actions", chain->num_actions);
+  return ESP_OK;
+}
+
+action_chain_t* scene_get_sustain(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->sustain : NULL;
+}
+
+action_chain_t* scene_get_sostenuto(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->sostenuto : NULL;
+}
+
 // Helper to get scene filename
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size) {
   snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
@@ -821,7 +895,9 @@ static const char* action_type_json_names[] = {
   [ACTION_CONFIRM_PENDING] = "confirm_pending",
   [ACTION_CANCEL_PENDING] = "cancel_pending",
   [ACTION_ALL_NOTES_OFF] = "all_notes_off",
-  [ACTION_ALL_SOUND_OFF] = "all_sound_off"
+  [ACTION_ALL_SOUND_OFF] = "all_sound_off",
+  [ACTION_SUSTAIN] = "sustain",
+  [ACTION_SOSTENUTO] = "sostenuto"
 };
 
 // Helper to convert action type string to enum
@@ -1014,6 +1090,14 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "proximity", continuous_mapping_to_json(&scene->proximity));
   cJSON_AddItemToObject(root, "als", continuous_mapping_to_json(&scene->als));
   
+  // Serialize expression jack mode and pedal actions
+  const char* mode_str = (scene->expression_mode == EXPRESSION_MODE_PEDAL) ? "expression" :
+                         (scene->expression_mode == EXPRESSION_MODE_SUSTAIN) ? "sustain" :
+                         (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" : "gate";
+  cJSON_AddStringToObject(root, "expression_mode", mode_str);
+  cJSON_AddItemToObject(root, "sustain", action_chain_to_json(&scene->sustain));
+  cJSON_AddItemToObject(root, "sostenuto", action_chain_to_json(&scene->sostenuto));
+  
   return root;
 }
 
@@ -1071,6 +1155,23 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   
   cJSON* als = cJSON_GetObjectItem(root, "als");
   if (als) json_to_continuous_mapping(als, &scene->als);
+  
+  // Deserialize expression jack mode
+  cJSON* expr_mode = cJSON_GetObjectItem(root, "expression_mode");
+  if (expr_mode && cJSON_IsString(expr_mode)) {
+    const char* mode_str = expr_mode->valuestring;
+    if (strcmp(mode_str, "sustain") == 0) scene->expression_mode = EXPRESSION_MODE_SUSTAIN;
+    else if (strcmp(mode_str, "sostenuto") == 0) scene->expression_mode = EXPRESSION_MODE_SOSTENUTO;
+    else if (strcmp(mode_str, "gate") == 0) scene->expression_mode = EXPRESSION_MODE_GATE;
+    else scene->expression_mode = EXPRESSION_MODE_PEDAL;
+  }
+  
+  // Deserialize pedal actions
+  cJSON* sustain = cJSON_GetObjectItem(root, "sustain");
+  if (sustain) scene->sustain = json_to_action_chain(sustain);
+  
+  cJSON* sostenuto = cJSON_GetObjectItem(root, "sostenuto");
+  if (sostenuto) scene->sostenuto = json_to_action_chain(sostenuto);
   
   return ESP_OK;
 }

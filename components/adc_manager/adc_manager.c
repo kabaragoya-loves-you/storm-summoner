@@ -138,24 +138,31 @@ esp_err_t adc_manager_read(adc_channel_t channel, int *raw_value) {
     return ESP_ERR_INVALID_ARG;
   }
   
-  // Verify channel is registered
+  // Verify channel is registered and perform read under mutex protection
+  // The mutex prevents concurrent ADC reads which cause ESP_ERR_TIMEOUT
   bool found = false;
+  esp_err_t ret;
+  
   xSemaphoreTake(s_mutex, portMAX_DELAY);
+  
   for (int i = 0; i < s_channel_count; i++) {
     if (s_channels[i].channel == channel && s_channels[i].registered) {
       found = true;
       break;
     }
   }
-  xSemaphoreGive(s_mutex);
   
   if (!found) {
+    xSemaphoreGive(s_mutex);
     ESP_LOGE(TAG, "Channel %d not registered", channel);
     return ESP_ERR_NOT_FOUND;
   }
   
-  // Read ADC (oneshot read is internally thread-safe in ESP-IDF)
-  esp_err_t ret = adc_oneshot_read(s_adc_handle, channel, raw_value);
+  // Read ADC while holding mutex to prevent concurrent access
+  ret = adc_oneshot_read(s_adc_handle, channel, raw_value);
+  
+  xSemaphoreGive(s_mutex);
+  
   if (ret != ESP_OK) {
     ESP_LOGD(TAG, "Failed to read channel %d: %s", channel, esp_err_to_name(ret));
     return ret;
@@ -175,11 +182,14 @@ esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv) {
     return ESP_ERR_INVALID_ARG;
   }
   
-  // Find channel and its calibration handle
+  // Find channel and perform read under mutex protection
   adc_cali_handle_t cali_handle = NULL;
   bool found = false;
+  int raw_value;
+  esp_err_t ret;
   
   xSemaphoreTake(s_mutex, portMAX_DELAY);
+  
   for (int i = 0; i < s_channel_count; i++) {
     if (s_channels[i].channel == channel && s_channels[i].registered) {
       found = true;
@@ -187,16 +197,18 @@ esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv) {
       break;
     }
   }
-  xSemaphoreGive(s_mutex);
   
   if (!found) {
+    xSemaphoreGive(s_mutex);
     ESP_LOGE(TAG, "Channel %d not registered", channel);
     return ESP_ERR_NOT_FOUND;
   }
   
-  // Read raw value
-  int raw_value;
-  esp_err_t ret = adc_oneshot_read(s_adc_handle, channel, &raw_value);
+  // Read ADC while holding mutex to prevent concurrent access
+  ret = adc_oneshot_read(s_adc_handle, channel, &raw_value);
+  
+  xSemaphoreGive(s_mutex);
+  
   if (ret != ESP_OK) {
     ESP_LOGD(TAG, "Failed to read channel %d: %s", channel, esp_err_to_name(ret));
     return ret;

@@ -1,78 +1,56 @@
 #include "midi_expression_scene_handler.h"
 #include "scene.h"
-#include "continuous_mapping.h"
-#include "smart_filter.h"
-#include "device_config.h"
-#include "midi_messages.h"
+#include "action.h"
 #include "event_bus.h"
 #include "esp_log.h"
 
-static const char* TAG = "expr_scene";
+static const char* TAG = "midi_expr_handler";
 
-static smart_filter_t s_expression_filter;
-
-// Handle expression pedal events through scene mapping
-static void handle_expression_event(const event_t* event, void* context) {
-  if (event->type != EVENT_EXPRESSION_VALUE) return;
+static void handle_sustain_event(const event_t* event, void* context) {
+  if (event->type != EVENT_EXPRESSION_SUSTAIN) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;
   
-  continuous_mapping_t* mapping = &scene->expression;
-  if (!mapping->enabled) return;
+  bool pressed = event->data.pedal.pressed;
   
-  // Get raw value from event (0-127)
-  uint8_t raw_value = event->data.expression.midi_value;
+  ESP_LOGI(TAG, "Sustain pedal %s, executing %d action(s)", 
+    pressed ? "pressed" : "released", scene->sustain.num_actions);
   
-  // Process through curve and polarity
-  uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
+  // Execute sustain action chain with press/release
+  action_execute_chain(&scene->sustain, pressed ? 127 : 0, pressed);
+}
+
+static void handle_sostenuto_event(const event_t* event, void* context) {
+  if (event->type != EVENT_EXPRESSION_SOSTENUTO) return;
   
-  // Apply smart filtering (handles extremes + deadzone)
-  bool value_changed = false;
-  uint8_t output_value = smart_filter_process(&s_expression_filter, processed_value, &value_changed);
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
   
-  if (!value_changed) return;  // No significant change, skip
+  bool pressed = event->data.pedal.pressed;
   
-  uint8_t channel = device_config_get_channel() - 1;
+  ESP_LOGI(TAG, "Sostenuto pedal %s, executing %d action(s)", 
+    pressed ? "pressed" : "released", scene->sostenuto.num_actions);
   
-  // Route based on output type
-  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
-    // Convert value to note number
-    uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
-    
-    // Turn off previous note if active
-    if (mapping->note_active && note != mapping->last_value) {
-      send_note_off(channel, mapping->last_value, 0);
-      ESP_LOGD(TAG, "Expression Note Off: %d", mapping->last_value);
-    }
-    
-    // Turn on new note (or re-trigger if same)
-    send_note_on(channel, note, mapping->velocity);
-    mapping->note_active = true;
-    mapping->last_value = note;
-    
-    ESP_LOGD(TAG, "Expression: %d -> Note %d vel=%d", raw_value, note, mapping->velocity);
-  } else {
-    // Send MIDI CC
-    send_control_change(channel, mapping->cc_number, output_value);
-    ESP_LOGD(TAG, "Expression: %d -> CC%d=%d", raw_value, mapping->cc_number, output_value);
-  }
+  // Execute sostenuto action chain
+  action_execute_chain(&scene->sostenuto, pressed ? 127 : 0, pressed);
 }
 
 esp_err_t midi_expression_scene_handler_init(void) {
-  ESP_LOGI(TAG, "Initializing expression scene handler");
+  ESP_LOGI(TAG, "Initializing MIDI expression scene handler");
   
-  // Initialize smart filter with deadzone=2 (good balance)
-  smart_filter_init(&s_expression_filter, 2);
-  
-  // Subscribe to expression value events
-  esp_err_t ret = event_bus_subscribe(EVENT_EXPRESSION_VALUE, handle_expression_event, NULL);
+  esp_err_t ret = event_bus_subscribe(EVENT_EXPRESSION_SUSTAIN, handle_sustain_event, NULL);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to subscribe to expression events");
+    ESP_LOGE(TAG, "Failed to subscribe to sustain events");
     return ret;
   }
   
-  ESP_LOGI(TAG, "Expression scene handler initialized (smart filtering enabled)");
+  ret = event_bus_subscribe(EVENT_EXPRESSION_SOSTENUTO, handle_sostenuto_event, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to sostenuto events");
+    return ret;
+  }
+  
+  ESP_LOGI(TAG, "Expression scene handler initialized");
   return ESP_OK;
 }
-

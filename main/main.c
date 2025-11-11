@@ -102,7 +102,6 @@ void app_main(void) {
   expression_enable();
   
   input_manager_init();
-  input_set_cable_detection_enabled(true);
   
   dac_calibrate_vref();
   

@@ -32,7 +32,7 @@
 // Constants
 #define TASK_PERIOD_MS 20        // 50 Hz sampling rate
 #define FILTER_ALPHA 0.4f        // IIR filter coefficient (fast response for musical performance)
-#define OVERSAMPLE_COUNT 16      // 16x oversampling for +2 bits effective resolution
+#define OVERSAMPLE_COUNT 4       // 4x oversampling for +1 bit effective resolution
 #define MEDIAN_WINDOW 5          // 5-sample median filter (better noise rejection for unstable signals)
 #define GATE_THRESHOLD 2048      // ~50% threshold for gate detection
 #define STARTUP_DELAY_MS 1000    // Delay before sending events after startup
@@ -226,13 +226,13 @@ void cv_enable(void) {
     } else {
       ESP_LOGI(TAG, "CV sampling enabled");
       
-      // Check initial cable state and set switch accordingly
-      bool connected = cv_is_cable_connected();
-      
       // Check cable detection setting from input manager
       extern bool input_get_cable_detection_enabled(void);
-      if (!input_get_cable_detection_enabled()) {
-        connected = true;  // Treat as always connected when cable detection disabled
+      bool connected = true;  // Default to connected
+      
+      if (input_get_cable_detection_enabled()) {
+        connected = cv_is_cable_connected();
+      } else {
         ESP_LOGI(TAG, "Cable detection disabled, treating as connected");
       }
       
@@ -272,8 +272,12 @@ static void cv_task(void *pvParameters) {
   s_filter_initialized = false;  // Reset filter on task start
   s_median_index = 0;             // Reset median filter
   
+  // Cable detection throttling when disconnected
+  static uint32_t last_cable_check_ms = 0;
+  
   // Add initial delay to ensure ADC is stable
-  vTaskDelay(pdMS_TO_TICKS(200));
+  // Stagger by 100ms from expression task to avoid ADC contention
+  vTaskDelay(pdMS_TO_TICKS(300));
   
   // Prime the median filter buffer with real readings (avoid zero contamination)
   int16_t initial_reading = oversample_read();
@@ -290,18 +294,27 @@ static void cv_task(void *pvParameters) {
     // Apply median filter to reject impulse noise
     int16_t raw = median_filter(raw_oversampled);
     
-    bool connected = cv_is_cable_connected();
-
     // Check cable detection setting from input manager
     extern bool input_get_cable_detection_enabled(void);
     bool cable_detect_enabled = input_get_cable_detection_enabled();
     
-    // If cable detection is disabled, treat as always connected
-    if (!cable_detect_enabled) {
-      connected = true;
+    // Only check cable if detection is enabled, otherwise assume connected
+    bool connected = s_connected;  // Default to last known state
+    if (cable_detect_enabled) {
+      // When connected, check every loop
+      // When disconnected, only check every 1000ms to reduce ADC load
+      uint32_t now_ms = esp_timer_get_time() / 1000;
+      if (s_connected || (now_ms - last_cable_check_ms >= 1000)) {
+        connected = cv_is_cable_connected();
+        if (!s_connected) {
+          last_cable_check_ms = now_ms;  // Update check time when disconnected
+        }
+      }
+    } else {
+      connected = true;  // Treat as always connected when detection disabled
     }
 
-      if (connected != s_connected) {
+    if (connected != s_connected) {
       s_connected = connected;
       
       if (!connected) {
@@ -746,14 +759,21 @@ esp_err_t cv_auto_calibrate(cv_range_t range, uint32_t duration_ms) {
 // Helper: Oversample ADC reading (4x for +1 bit effective resolution)
 static int16_t oversample_read(void) {
   int32_t sum = 0;
+  int successful_reads = 0;
   for (int i = 0; i < OVERSAMPLE_COUNT; i++) {
     int raw_adc = 0;
     esp_err_t ret = adc_manager_read(CV_ADC_CHANNEL, &raw_adc);
+    if (ret != ESP_OK) {
+      // Retry once on timeout
+      vTaskDelay(1);
+      ret = adc_manager_read(CV_ADC_CHANNEL, &raw_adc);
+    }
     if (ret == ESP_OK) {
       sum += raw_adc;
+      successful_reads++;
     }
   }
-  return (int16_t)(sum / OVERSAMPLE_COUNT);
+  return successful_reads > 0 ? (int16_t)(sum / successful_reads) : 0;
 }
 
 // Helper: 3-sample median filter (simple sort for noise rejection)

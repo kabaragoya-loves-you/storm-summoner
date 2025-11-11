@@ -65,6 +65,10 @@ typedef enum {
   ACTION_ALL_NOTES_OFF,       // Send CC123 (All Notes Off)
   ACTION_ALL_SOUND_OFF,       // Send CC120 (All Sound Off)
   
+  // Musical concepts (assignable to any input)
+  ACTION_SUSTAIN,             // Send CC64 (127 on press, 0 on release)
+  ACTION_SOSTENUTO,           // Send CC66 (127 on press, 0 on release)
+  
   ACTION_MAX
 } action_type_t;
 
@@ -173,6 +177,8 @@ action_t action_create_tap_tempo(void);
 action_t action_create_transport(action_type_t transport_type);
 action_t action_create_all_notes_off(void);
 action_t action_create_all_sound_off(void);
+action_t action_create_sustain(void);
+action_t action_create_sostenuto(void);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);

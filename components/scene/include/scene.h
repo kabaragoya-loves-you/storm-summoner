@@ -7,6 +7,7 @@
 #include "midi_messages.h"
 #include "action.h"
 #include "continuous_mapping.h"
+#include "expression.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -79,7 +80,12 @@ typedef struct {
   continuous_mapping_t proximity;
   continuous_mapping_t als;          // Ambient light sensor
   
-  // Future: sustain, sostenuto, envelope follower, LFO slots
+  // Expression jack configuration (shared jack, multiple modes)
+  expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE
+  action_chain_t sustain;            // Actions for sustain pedal events
+  action_chain_t sostenuto;          // Actions for sostenuto pedal events
+  
+  // Future: envelope follower, LFO slots
 } scene_t;
 
 // Scene cache entry
@@ -168,6 +174,13 @@ esp_err_t scene_cancel_pending(void);
 // Process touchpad events through scene mappings
 esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed);
 
+// Expression jack mode and pedal assignment
+esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode);
+expression_mode_t scene_get_expression_mode(uint8_t scene_index);
+esp_err_t scene_assign_sustain(uint8_t scene_index, const action_chain_t* chain);
+esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_chain_t* chain);
+action_chain_t* scene_get_sustain(uint8_t scene_index);
+action_chain_t* scene_get_sostenuto(uint8_t scene_index);
 
 // Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);

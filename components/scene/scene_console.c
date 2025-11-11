@@ -15,7 +15,7 @@ static const char* TAG = "scene_console";
 static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "save",
   "confirm", "cancel", "channel", "pad", "pc",
-  "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity",
+  "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity"
@@ -69,22 +69,45 @@ static void cmd_scene_info(void) {
   }
   
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Continuous inputs:");
-  if (scene->expression.enabled) {
-    if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
-      ESP_LOGI(TAG, "  Expression: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
-               scene->expression.base_note, scene->expression.note_range, scene->expression.velocity,
-               curve_type_to_string(scene->expression.curve.type));
+  ESP_LOGI(TAG, "Expression jack mode: %s", 
+           scene->expression_mode == EXPRESSION_MODE_PEDAL ? "expression" :
+           scene->expression_mode == EXPRESSION_MODE_SUSTAIN ? "sustain" :
+           scene->expression_mode == EXPRESSION_MODE_SOSTENUTO ? "sostenuto" : "gate");
+  
+  if (scene->expression_mode == EXPRESSION_MODE_PEDAL) {
+    if (scene->expression.enabled) {
+      if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
+        ESP_LOGI(TAG, "  Expression: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
+                 scene->expression.base_note, scene->expression.note_range, scene->expression.velocity,
+                 curve_type_to_string(scene->expression.curve.type));
+      } else {
+        ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
+                 scene->expression.cc_number,
+                 curve_type_to_string(scene->expression.curve.type),
+                 scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
+                 (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+      }
     } else {
-      ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
-               scene->expression.cc_number,
-               curve_type_to_string(scene->expression.curve.type),
-               scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
-               (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+      ESP_LOGI(TAG, "  Expression: disabled");
     }
-  } else {
-    ESP_LOGI(TAG, "  Expression: disabled");
+  } else if (scene->expression_mode == EXPRESSION_MODE_SUSTAIN) {
+    if (scene->sustain.num_actions > 0) {
+      ESP_LOGI(TAG, "  Sustain actions: %d (default: %s)", 
+               scene->sustain.num_actions, action_type_to_string(scene->sustain.actions[0].type));
+    } else {
+      ESP_LOGI(TAG, "  Sustain: no actions");
+    }
+  } else if (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) {
+    if (scene->sostenuto.num_actions > 0) {
+      ESP_LOGI(TAG, "  Sostenuto actions: %d (default: %s)", 
+               scene->sostenuto.num_actions, action_type_to_string(scene->sostenuto.actions[0].type));
+    } else {
+      ESP_LOGI(TAG, "  Sostenuto: no actions");
+    }
   }
+  
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Continuous inputs:");
   
   if (scene->cv.enabled) {
     if (scene->cv.output_type == OUTPUT_TYPE_NOTE) {
@@ -608,6 +631,41 @@ static int cmd_expr_velocity(int argc, char **argv) {
   
   scene->expression.velocity = vel;
   ESP_LOGI(TAG, "Expression velocity: %d", vel);
+  return 0;
+}
+
+// Command: expr_mode - Set expression jack mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} expr_mode_args;
+
+static int cmd_expr_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode_str = expr_mode_args.mode->sval[0];
+  expression_mode_t mode;
+  
+  if (strcmp(mode_str, "expression") == 0 || strcmp(mode_str, "expr") == 0) {
+    mode = EXPRESSION_MODE_PEDAL;
+  } else if (strcmp(mode_str, "sustain") == 0) {
+    mode = EXPRESSION_MODE_SUSTAIN;
+  } else if (strcmp(mode_str, "sostenuto") == 0) {
+    mode = EXPRESSION_MODE_SOSTENUTO;
+  } else if (strcmp(mode_str, "gate") == 0) {
+    mode = EXPRESSION_MODE_GATE;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode (use: expression, sustain, sostenuto, gate)");
+    return 1;
+  }
+  
+  uint8_t scene_idx = scene_get_current_index();
+  scene_set_expression_mode(scene_idx, mode);
+  
   return 0;
 }
 
@@ -1578,6 +1636,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &expr_velocity_args
   };
   esp_console_cmd_register(&expr_velocity_cmd);
+  
+  // expr_mode command
+  expr_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Expression jack mode");
+  expr_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expr_mode_cmd = {
+    .command = "expr_mode",
+    .help = "Set expression jack mode (expression/sustain/sostenuto/gate)",
+    .hint = NULL,
+    .func = &cmd_expr_mode,
+    .argtable = &expr_mode_args
+  };
+  esp_console_cmd_register(&expr_mode_cmd);
   
   // cv_cc command
   cv_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");

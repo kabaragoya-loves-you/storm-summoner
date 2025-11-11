@@ -156,29 +156,6 @@ void expression_set_polarity(expression_polarity_t polarity);
  */
 expression_polarity_t expression_get_polarity(void);
 
-/**
- * Set sustain pedal MIDI CC number
- * @param cc CC number (0-127)
- */
-void expression_set_sustain_cc(uint8_t cc);
-
-/**
- * Get sustain pedal MIDI CC number
- * @return Current sustain CC number
- */
-uint8_t expression_get_sustain_cc(void);
-
-/**
- * Set sostenuto pedal MIDI CC number
- * @param cc CC number (0-127)
- */
-void expression_set_sostenuto_cc(uint8_t cc);
-
-/**
- * Get sostenuto pedal MIDI CC number
- * @return Current sostenuto CC number
- */
-uint8_t expression_get_sostenuto_cc(void);
 
 /**
  * Set pedal switch type for sustain/sostenuto modes (NO/NC)

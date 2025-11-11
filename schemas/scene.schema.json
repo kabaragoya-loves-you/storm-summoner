@@ -66,6 +66,20 @@
     "als": {
       "$ref": "#/definitions/continuous_mapping",
       "description": "Ambient light sensor mapping"
+    },
+    "expression_mode": {
+      "type": "string",
+      "enum": ["expression", "sustain", "sostenuto", "gate"],
+      "default": "expression",
+      "description": "Expression jack operating mode"
+    },
+    "sustain": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Actions for sustain events (default: CC64 toggle)"
+    },
+    "sostenuto": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Actions for sostenuto events (default: CC66 toggle)"
     }
   },
   "definitions": {
@@ -228,7 +242,9 @@
             "confirm_pending",
             "cancel_pending",
             "all_notes_off",
-            "all_sound_off"
+            "all_sound_off",
+            "sustain",
+            "sostenuto"
           ],
           "description": "Action type name"
         }
