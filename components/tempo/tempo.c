@@ -20,6 +20,8 @@
 #define NVS_KEY_TIME_SIG_NUM "tempo_ts_num"
 #define NVS_KEY_TIME_SIG_DEN "tempo_ts_den"
 #define NVS_KEY_CLOCK_STD "tempo_clk_std"
+#define NVS_KEY_CLOCK_SRC "tempo_clk_src"
+#define NVS_KEY_BPM_DEADZONE "tempo_deadzone"
 
 // Constants
 #define MIN_BPM 30
@@ -36,6 +38,8 @@ static bool s_led_sync_enabled = false;
 static bool s_led_emphasize_downbeat = true;  // Make beat 1 different
 static uint8_t s_led_flash_ratio = 3;  // Flash duration as % of beat (1-10, default 3%)
 static tempo_note_divider_t s_note_divider = DIVIDER_QUARTER;
+static bool s_sync_processing_enabled = false;  // Scene-controlled sync override
+static uint8_t s_bpm_deadzone = 0;  // BPM change deadzone (0 = no deadzone, 1-5 = ignore ±N BPM changes)
 
 // Task and timing
 static TaskHandle_t s_tempo_task_handle = NULL;
@@ -106,17 +110,37 @@ void tempo_init(void) {
     app_settings_save_u8(NVS_KEY_CLOCK_STD, (uint8_t)s_clock_standard);
   }
   
+  // Load clock source
+  uint8_t clk_src = CLOCK_SOURCE_INTERNAL;
+  esp_err_t src_ret = app_settings_load_u8(NVS_KEY_CLOCK_SRC, &clk_src);
+  if (src_ret == ESP_OK) {
+    s_clock_source = (tempo_clock_source_t)clk_src;
+    ESP_LOGI(TAG, "Loaded clock source from NVS: %d", clk_src);
+  } else {
+    ESP_LOGW(TAG, "Clock source not in NVS (ret=%d), saving default", src_ret);
+    app_settings_save_u8(NVS_KEY_CLOCK_SRC, (uint8_t)s_clock_source);
+  }
+  
+  // Load BPM deadzone
+  uint8_t deadzone = 0;
+  if (app_settings_load_u8(NVS_KEY_BPM_DEADZONE, &deadzone) == ESP_OK) {
+    s_bpm_deadzone = deadzone;
+  } else {
+    app_settings_save_u8(NVS_KEY_BPM_DEADZONE, s_bpm_deadzone);
+  }
+  
   // Subscribe to transport state changes
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   
   const char* std_names[] = {"24ppqn", "16th", "Beat"};
-  ESP_LOGI(TAG, "Tempo initialized - BPM: %d, Time Sig: %d/%d, LED Sync: %s, Clock: %s",
-    s_bpm, s_time_signature.numerator, s_time_signature.denominator,
+  const char* src_names[] = {"Internal", "MIDI", "Sync"};
+  ESP_LOGI(TAG, "Tempo initialized - BPM: %d, Source: %s, Time Sig: %d/%d, LED Sync: %s, Clock: %s",
+    s_bpm, src_names[s_clock_source], s_time_signature.numerator, s_time_signature.denominator,
     s_led_sync_enabled ? "ON" : "OFF", std_names[s_clock_standard]);
 }
 
 static void tempo_task(void *pvParameters) {
-  ESP_LOGI(TAG, "Tempo task started");
+  ESP_LOGD(TAG, "Tempo task running");
   
   TickType_t last_wake_time = xTaskGetTickCount();
   uint8_t last_bpm = s_bpm;
@@ -319,7 +343,7 @@ void tempo_stop(void) {
   if (s_tempo_task_handle != NULL) {
     vTaskDelete(s_tempo_task_handle);
     s_tempo_task_handle = NULL;
-    ESP_LOGI(TAG, "Tempo stopped");
+    ESP_LOGD(TAG, "Tempo task stopped");
   }
 }
 
@@ -354,10 +378,25 @@ void tempo_set_source(tempo_clock_source_t source) {
   s_clock_source = source;
   xSemaphoreGive(s_state_mutex);
   
-  ESP_LOGI(TAG, "Clock source set to %d", source);
+  // Save to NVS
+  esp_err_t ret = app_settings_save_u8(NVS_KEY_CLOCK_SRC, (uint8_t)source);
+  
+  const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" : "MIDI";
+  ESP_LOGI(TAG, "Clock source set to %s (NVS save: %s)", source_str, ret == ESP_OK ? "OK" : "FAILED");
+}
+
+tempo_clock_source_t tempo_get_source(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  tempo_clock_source_t source = s_clock_source;
+  xSemaphoreGive(s_state_mutex);
+  return source;
 }
 
 void tempo_sync_pulse(void) {
+  // Only process sync pulses if scene has enabled sync processing
+  // This allows scenes to override the tempo_clock_source_t setting
+  if (!s_sync_processing_enabled) return;
+  
   xSemaphoreGive(s_sync_semaphore);
 }
 
@@ -400,32 +439,71 @@ void tempo_tap_event(void) {
 }
 
 void tempo_midi_clock_tick(void) {
-  if (s_clock_source != CLOCK_SOURCE_MIDI) return;
-  
   static uint32_t midi_tick_count = 0;
-  static uint32_t last_beat_time = 0;
+  static uint32_t long_term_start = 0;  // Tracks from first tick - never resets
+  
+  // Safety: Don't process if tempo not initialized yet
+  if (!s_state_mutex) return;
+  
+  // Only process if source is MIDI
+  if (s_clock_source != CLOCK_SOURCE_MIDI) return;
   
   midi_tick_count++;
   
-  // Check for beat
-  if (midi_tick_count % s_note_divider == 0) {
-    uint32_t now = esp_timer_get_time() / 1000;
+  uint32_t now = esp_timer_get_time() / 1000;
+  
+  // Initialize on first tick
+  if (long_term_start == 0) {
+    long_term_start = now;
+  }
+  
+  // Progressive refinement:
+  // Stage 1: Quick estimate at 2 quarters (~1 sec) - gets you in the ballpark
+  // Stage 2: Every 8 quarters after that - uses ALL ticks since start for maximum accuracy
+  
+  if (midi_tick_count == MIDI_CLOCKS_PER_QUARTER * 2) {
+    // Quick initial estimate
+    uint32_t total_ms = now - long_term_start;
+    if (total_ms >= 400 && total_ms <= 4000) {
+      uint8_t measured_bpm = (uint8_t)(120000 / total_ms);
+      if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
+        xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+        s_bpm = measured_bpm;
+        xSemaphoreGive(s_state_mutex);
+        publish_tempo_changed_event();
+      }
+    }
+  }
+  
+  // High-precision measurement every 8 quarters using cumulative averaging
+  if (midi_tick_count >= MIDI_CLOCKS_PER_QUARTER * 8 && 
+      midi_tick_count % (MIDI_CLOCKS_PER_QUARTER * 8) == 0) {
     
-    // Calculate BPM from MIDI clock
-    if (last_beat_time > 0) {
-      uint32_t interval = now - last_beat_time;
-      if (interval > 0) {
-        uint8_t new_bpm = (uint8_t)(60000 / interval);
-        if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM && new_bpm != s_bpm) {
+    // Measure from the very first tick to now - gets more accurate over time!
+    uint32_t total_ms = now - long_term_start;
+    uint32_t total_quarters = midi_tick_count / MIDI_CLOCKS_PER_QUARTER;
+    
+    if (total_ms > 0 && total_quarters > 0) {
+      // BPM = 60000 / (total_ms / total_quarters)
+      uint8_t measured_bpm = (uint8_t)((60000 * total_quarters) / total_ms);
+      ESP_LOGD(TAG, "Long-term average (%lu quarters, %lums): %u BPM (current: %u)", 
+               (unsigned long)total_quarters, (unsigned long)total_ms, 
+               (unsigned)measured_bpm, (unsigned)s_bpm);
+      
+      if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
+        int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
+        if (bpm_delta > s_bpm_deadzone) {
           xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-          s_bpm = new_bpm;
+          s_bpm = measured_bpm;
           xSemaphoreGive(s_state_mutex);
           publish_tempo_changed_event();
         }
       }
     }
-    last_beat_time = now;
-    
+  }
+  
+  // Check for beat (for beat events and LED sync)
+  if (midi_tick_count % s_note_divider == 0) {
     s_beat_counter++;
     if (s_beat_counter > s_time_signature.numerator) {
       s_beat_counter = 1;
@@ -555,4 +633,33 @@ tempo_clock_standard_t tempo_get_clock_standard(void) {
   tempo_clock_standard_t standard = s_clock_standard;
   xSemaphoreGive(s_state_mutex);
   return standard;
+}
+
+void tempo_enable_sync_processing(bool enable) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_sync_processing_enabled = enable;
+  xSemaphoreGive(s_state_mutex);
+  
+  ESP_LOGI(TAG, "Scene sync processing: %s", enable ? "enabled" : "disabled");
+}
+
+void tempo_set_bpm_deadzone(uint8_t deadzone) {
+  if (deadzone > 5) {
+    ESP_LOGW(TAG, "BPM deadzone clamped to max of 5");
+    deadzone = 5;
+  }
+  
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_bpm_deadzone = deadzone;
+  xSemaphoreGive(s_state_mutex);
+  
+  app_settings_save_u8(NVS_KEY_BPM_DEADZONE, deadzone);
+  ESP_LOGI(TAG, "BPM deadzone set to %u", (unsigned)deadzone);
+}
+
+uint8_t tempo_get_bpm_deadzone(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  uint8_t deadzone = s_bpm_deadzone;
+  xSemaphoreGive(s_state_mutex);
+  return deadzone;
 }

@@ -3,6 +3,7 @@
 #include "midi_passthrough.h"
 #include "midi_loopback.h"
 #include "midi_out_uart.h"
+#include "midi_in_debug.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -11,7 +12,7 @@
 static const char* TAG = "midi_console";
 
 static const char* registered_commands[] = {
-  "info", "interfaces", "uart_mode", "active_sensing", "passthrough", "loopback"
+  "info", "interfaces", "uart_mode", "active_sensing", "passthrough", "loopback", "debug"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -45,6 +46,7 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Passthrough UART→USB: %s", uart_to_usb_pass ? "enabled" : "disabled");
   ESP_LOGI(TAG, "Loopback UART: %s", uart_loop ? "enabled" : "disabled");
   ESP_LOGI(TAG, "Loopback USB: %s", usb_loop ? "enabled" : "disabled");
+  ESP_LOGI(TAG, "MIDI IN debug: %s", midi_in_debug_is_enabled() ? "enabled" : "disabled");
   ESP_LOGI(TAG, "=========================");
   
   return 0;
@@ -231,6 +233,35 @@ static int cmd_loopback(int argc, char **argv) {
   return 0;
 }
 
+// Command: debug
+static struct {
+  struct arg_str *enable;
+  struct arg_end *end;
+} debug_args;
+
+static int cmd_debug(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &debug_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, debug_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* enable_str = debug_args.enable->sval[0];
+  
+  if (strcmp(enable_str, "on") == 0 || strcmp(enable_str, "1") == 0) {
+    midi_in_debug_enable();
+    ESP_LOGI(TAG, "MIDI IN debug: enabled");
+  } else if (strcmp(enable_str, "off") == 0 || strcmp(enable_str, "0") == 0) {
+    midi_in_debug_disable();
+    ESP_LOGI(TAG, "MIDI IN debug: disabled");
+  } else {
+    ESP_LOGE(TAG, "Use: on or off");
+    return 1;
+  }
+  
+  return 0;
+}
+
 esp_err_t midi_console_init(void) {
   ESP_LOGI(TAG, "Registering midi commands");
   
@@ -309,6 +340,19 @@ esp_err_t midi_console_init(void) {
     .argtable = &loopback_args
   };
   esp_console_cmd_register(&loopback_cmd);
+  
+  // debug command
+  debug_args.enable = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  debug_args.end = arg_end(2);
+  
+  const esp_console_cmd_t debug_cmd = {
+    .command = "debug",
+    .help = "Enable/disable MIDI IN debug logging",
+    .hint = NULL,
+    .func = &cmd_debug,
+    .argtable = &debug_args
+  };
+  esp_console_cmd_register(&debug_cmd);
   
   return ESP_OK;
 }

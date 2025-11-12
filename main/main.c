@@ -67,6 +67,16 @@ void app_main(void) {
   curve_init();
   usb_mode_manager_init();
   tinyusb_init_and_start();
+  
+  // Initialize transport and tempo BEFORE MIDI IN so source is set correctly
+  transport_init();
+  tempo_init();
+  
+  // Initialize MIDI IN immediately after TinyUSB to catch clock bytes from boot
+  midi_in_init();
+  midi_in_debug_init();
+  midi_passthrough_init();
+  
   buttons_init(false);
   dac_init();
   display_init();
@@ -82,18 +92,12 @@ void app_main(void) {
   flicker_start();
   
   midi_out_init();
-  midi_out_set_interfaces(MIDI_OUT_INTERFACE_BOTH);
-  midi_set_uart_transmit_mode(MIDI_TRANSMIT_BOTH);
 
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
   midi_cv_scene_handler_init();
   midi_proximity_scene_handler_init();
   midi_als_scene_handler_init();
-  
-  midi_in_init();
-  midi_in_debug_enable();  // Enable MIDI IN debug logging
-  midi_passthrough_init();
   
   switch_init();
   cv_init(false);
@@ -105,10 +109,6 @@ void app_main(void) {
   
   dac_calibrate_vref();
   
-  input_set_mode(INPUT_MODE_CV);
-  cv_set_mode(CV_MODE_LINEAR);
-  // input_set_mode(INPUT_MODE_CLOCK_SYNC);  // Clock pulse detection
-  // input_set_mode(INPUT_MODE_AUDIO);       // Future: audio analysis
   cv_set_range(CV_RANGE_10V);
 
   
@@ -116,9 +116,6 @@ void app_main(void) {
   als_enable();
   ps_enable();
 
-  transport_init();
-  tempo_init();
-  tempo_set_source(CLOCK_SOURCE_INTERNAL);
   tempo_start();
 
   screensaver_init();

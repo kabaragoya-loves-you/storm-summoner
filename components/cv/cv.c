@@ -540,12 +540,6 @@ uint8_t cv_get_midi_value(void) {
   return s_last_midi_value;
 }
 
-void cv_set_mode(cv_mode_t mode) {
-  s_mode = mode;
-  app_settings_save_u8(NVS_KEY_CV_MODE, (uint8_t)mode);
-  ESP_LOGI(TAG, "CV mode set to %d", mode);
-}
-
 void cv_set_range(cv_range_t range) {
   s_range = range;
   app_settings_save_u8(NVS_KEY_CV_RANGE, (uint8_t)range);

@@ -8,12 +8,28 @@
 #include "midi_in_debug.h"
 #include "midi_in.h"
 #include "event_bus.h"
+#include "app_settings.h"
 #include "esp_log.h"
 #include <stdlib.h>
 
 #define TAG "MIDI_IN_DEBUG"
+#define NVS_KEY_MIDI_IN_DEBUG "midi_in_dbg"
 
 static bool s_initialized = false;
+
+// Forward declaration
+static void midi_in_debug_handler(const event_t* event, void* context);
+
+void midi_in_debug_init(void) {
+  // Load debug setting from NVS
+  uint8_t debug_enabled = 0;
+  if (app_settings_load_u8(NVS_KEY_MIDI_IN_DEBUG, &debug_enabled) == ESP_OK && debug_enabled) {
+    // Subscribe to MIDI IN events
+    event_bus_subscribe(EVENT_MIDI_IN, midi_in_debug_handler, NULL);
+    s_initialized = true;
+    ESP_LOGI(TAG, "MIDI IN debug logging enabled (from NVS)");
+  }
+}
 
 // Helper to get source name
 static const char* get_source_name(midi_source_t source) {
@@ -163,6 +179,10 @@ void midi_in_debug_enable(void) {
   event_bus_subscribe(EVENT_MIDI_IN, midi_in_debug_handler, NULL);
   
   s_initialized = true;
+  
+  // Save to NVS
+  app_settings_save_u8(NVS_KEY_MIDI_IN_DEBUG, 1);
+  
   ESP_LOGI(TAG, "MIDI IN debug logging enabled");
 }
 
@@ -175,6 +195,10 @@ void midi_in_debug_disable(void) {
   event_bus_unsubscribe(EVENT_MIDI_IN, midi_in_debug_handler);
   
   s_initialized = false;
+  
+  // Save to NVS
+  app_settings_save_u8(NVS_KEY_MIDI_IN_DEBUG, 0);
+  
   ESP_LOGI(TAG, "MIDI IN debug logging disabled");
 }
 

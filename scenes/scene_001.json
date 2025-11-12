@@ -206,6 +206,7 @@
     {
       "type": "sostenuto"
     }
-  ]
+  ],
+  "cv_input_mode": "cv"
 }
 

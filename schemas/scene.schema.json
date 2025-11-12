@@ -80,6 +80,12 @@
     "sostenuto": {
       "$ref": "#/definitions/action_chain",
       "description": "Actions for sostenuto events (default: CC66 toggle)"
+    },
+    "cv_input_mode": {
+      "type": "string",
+      "enum": ["cv", "clock_sync", "audio", "note"],
+      "default": "cv",
+      "description": "CV input interpretation mode"
     }
   },
   "definitions": {

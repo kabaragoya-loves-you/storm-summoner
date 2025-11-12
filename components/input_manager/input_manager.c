@@ -107,8 +107,7 @@ esp_err_t input_manager_init(void) {
       bool exp_connected = !s_cable_detection_enabled || gpio_get_level(PIN_EXP_SW) == 1;
       
       if (cv_connected && exp_connected) {
-        // Set CV to pitch mode
-        cv_set_mode(CV_MODE_PITCH);
+        // CV mode is now controlled by scenes
         cv_enable();
         
         // Set expression to gate mode
@@ -208,8 +207,7 @@ esp_err_t input_set_mode(input_mode_t mode) {
       bool exp_connected = !s_cable_detection_enabled || gpio_get_level(PIN_EXP_SW) == 1;
       
       if (cv_connected && exp_connected) {
-        // Set CV to pitch mode
-        cv_set_mode(CV_MODE_PITCH);
+        // CV mode is now controlled by scenes
         cv_enable();
         
         // Set expression to gate mode

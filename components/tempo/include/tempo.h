@@ -41,6 +41,7 @@ uint16_t tempo_get_bpm(void);
 
 // Set the clock source.
 void tempo_set_source(tempo_clock_source_t source);
+tempo_clock_source_t tempo_get_source(void);
 
 // Function to be called from the sync ISR.
 void tempo_sync_pulse(void);
@@ -73,5 +74,12 @@ uint8_t tempo_get_led_flash_ratio(void);
 // Clock standard control
 void tempo_set_clock_standard(tempo_clock_standard_t standard);
 tempo_clock_standard_t tempo_get_clock_standard(void);
+
+// Scene-controlled sync processing (overrides source setting when enabled)
+void tempo_enable_sync_processing(bool enable);
+
+// BPM change deadzone (0 = no deadzone, 1-5 = ignore ±N BPM changes after locking)
+void tempo_set_bpm_deadzone(uint8_t deadzone);
+uint8_t tempo_get_bpm_deadzone(void);
 
 #endif /* _TEMPO_H */

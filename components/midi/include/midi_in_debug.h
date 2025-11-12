@@ -8,6 +8,11 @@ extern "C" {
 #endif
 
 /**
+ * @brief Initialize MIDI IN debug (loads setting from NVS)
+ */
+void midi_in_debug_init(void);
+
+/**
  * @brief Enable MIDI IN debug logging
  * Subscribes to MIDI IN events and logs all messages with source interface
  */

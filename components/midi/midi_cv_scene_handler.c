@@ -16,6 +16,9 @@ static void handle_cv_event(const event_t* event, void* context) {
   scene_t* scene = scene_get_current();
   if (!scene || !scene->cv.enabled) return;
   
+  // Only process CV values in CV or NOTE mode (CLOCK_SYNC and AUDIO use different handlers)
+  if (scene->cv_input_mode != INPUT_MODE_CV && scene->cv_input_mode != INPUT_MODE_NOTE) return;
+  
   continuous_mapping_t* mapping = &scene->cv;
   uint8_t raw_value = event->data.cv.midi_value;
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);

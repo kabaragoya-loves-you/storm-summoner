@@ -10,22 +10,16 @@
 static const char* TAG = "cv_console";
 
 static const char* registered_commands[] = {
-  "info", "cv_mode", "range", "calibrate", "input_mode", "pitch_standard", "velocity_mode", "fixed_velocity"
+  "info", "range", "calibrate", "pitch_standard"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
 // Command: info
 static int cmd_info(int argc, char **argv) {
   bool connected = cv_is_cable_connected();
-  cv_mode_t cv_mode = cv_get_mode();
   cv_range_t range = cv_get_range();
-  input_mode_t input_mode = input_get_mode();
   cv_pitch_standard_t pitch_std = cv_get_pitch_standard();
-  velocity_mode_t vel_mode = input_get_velocity_mode();
-  uint8_t fixed_vel = input_get_fixed_velocity();
   uint8_t deadzone = cv_get_deadzone();
-  
-  const char* cv_mode_str = (cv_mode == CV_MODE_LINEAR) ? "Linear" : "Pitch";
   
   const char* range_str;
   switch (range) {
@@ -37,15 +31,6 @@ static int cmd_info(int argc, char **argv) {
     default: range_str = "Unknown"; break;
   }
   
-  const char* input_mode_str;
-  switch (input_mode) {
-    case INPUT_MODE_CV: input_mode_str = "CV"; break;
-    case INPUT_MODE_CLOCK_SYNC: input_mode_str = "Clock Sync"; break;
-    case INPUT_MODE_AUDIO: input_mode_str = "Audio"; break;
-    case INPUT_MODE_NOTE: input_mode_str = "Note"; break;
-    default: input_mode_str = "Unknown"; break;
-  }
-  
   const char* pitch_std_str;
   switch (pitch_std) {
     case CV_PITCH_1V_OCTAVE_C0: pitch_std_str = "1V/Oct (C0@0V)"; break;
@@ -54,55 +39,14 @@ static int cmd_info(int argc, char **argv) {
     default: pitch_std_str = "Unknown"; break;
   }
   
-  const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" : "Gate Voltage";
-  
-  ESP_LOGI(TAG, "====== CV INPUT ======");
-  ESP_LOGI(TAG, "Input mode: %s", input_mode_str);
-  ESP_LOGI(TAG, "CV mode: %s", cv_mode_str);
+  ESP_LOGI(TAG, "====== CV INPUT (Hardware) ======");
   ESP_LOGI(TAG, "Voltage range: %s", range_str);
-  if (cv_mode == CV_MODE_PITCH) {
-    ESP_LOGI(TAG, "Pitch standard: %s", pitch_std_str);
-  }
-  if (input_mode == INPUT_MODE_NOTE) {
-    ESP_LOGI(TAG, "Velocity mode: %s", vel_mode_str);
-    if (vel_mode == VELOCITY_MODE_FIXED) {
-      ESP_LOGI(TAG, "Fixed velocity: %u", (unsigned)fixed_vel);
-    }
-  }
+  ESP_LOGI(TAG, "Pitch standard: %s", pitch_std_str);
   ESP_LOGI(TAG, "Deadzone: %u", (unsigned)deadzone);
   ESP_LOGI(TAG, "Cable: %s", connected ? "connected" : "disconnected");
-  ESP_LOGI(TAG, "======================");
-  
-  return 0;
-}
-
-// Command: cv_mode
-static struct {
-  struct arg_str *mode_type;
-  struct arg_end *end;
-} cv_mode_args;
-
-static int cmd_cv_mode(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &cv_mode_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, cv_mode_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* mode_str = cv_mode_args.mode_type->sval[0];
-  cv_mode_t mode;
-  
-  if (strcmp(mode_str, "linear") == 0) {
-    mode = CV_MODE_LINEAR;
-  } else if (strcmp(mode_str, "pitch") == 0) {
-    mode = CV_MODE_PITCH;
-  } else {
-    ESP_LOGE(TAG, "Unknown CV mode. Use: linear or pitch");
-    return 1;
-  }
-  
-  cv_set_mode(mode);
-  ESP_LOGI(TAG, "CV mode set to: %s", mode_str);
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Note: Input mode is set in scene context");
+  ESP_LOGI(TAG, "=================================");
   
   return 0;
 }
@@ -192,45 +136,6 @@ static int cmd_calibrate(int argc, char **argv) {
   return (ret == ESP_OK) ? 0 : 1;
 }
 
-// Command: input_mode
-static struct {
-  struct arg_str *mode_type;
-  struct arg_end *end;
-} input_mode_args;
-
-static int cmd_input_mode(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &input_mode_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, input_mode_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* mode_str = input_mode_args.mode_type->sval[0];
-  input_mode_t mode;
-  
-  if (strcmp(mode_str, "cv") == 0) {
-    mode = INPUT_MODE_CV;
-  } else if (strcmp(mode_str, "clock") == 0 || strcmp(mode_str, "clock_sync") == 0) {
-    mode = INPUT_MODE_CLOCK_SYNC;
-  } else if (strcmp(mode_str, "audio") == 0) {
-    mode = INPUT_MODE_AUDIO;
-  } else if (strcmp(mode_str, "note") == 0) {
-    mode = INPUT_MODE_NOTE;
-  } else {
-    ESP_LOGE(TAG, "Unknown input mode. Use: cv, clock_sync, audio, or note");
-    return 1;
-  }
-  
-  esp_err_t ret = input_set_mode(mode);
-  if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Input mode set to: %s", mode_str);
-  } else {
-    ESP_LOGE(TAG, "Failed to set input mode");
-  }
-  
-  return (ret == ESP_OK) ? 0 : 1;
-}
-
 // Command: pitch_standard
 static struct {
   struct arg_str *standard_type;
@@ -264,62 +169,6 @@ static int cmd_pitch_standard(int argc, char **argv) {
   return 0;
 }
 
-// Command: velocity_mode
-static struct {
-  struct arg_str *mode_type;
-  struct arg_end *end;
-} velocity_mode_args;
-
-static int cmd_velocity_mode(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &velocity_mode_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, velocity_mode_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* mode_str = velocity_mode_args.mode_type->sval[0];
-  velocity_mode_t mode;
-  
-  if (strcmp(mode_str, "fixed") == 0) {
-    mode = VELOCITY_MODE_FIXED;
-  } else if (strcmp(mode_str, "gate") == 0 || strcmp(mode_str, "gate_voltage") == 0) {
-    mode = VELOCITY_MODE_GATE_VOLTAGE;
-  } else {
-    ESP_LOGE(TAG, "Unknown velocity mode. Use: fixed or gate");
-    return 1;
-  }
-  
-  input_set_velocity_mode(mode);
-  ESP_LOGI(TAG, "Velocity mode set to: %s", mode_str);
-  
-  return 0;
-}
-
-// Command: fixed_velocity
-static struct {
-  struct arg_int *velocity_val;
-  struct arg_end *end;
-} fixed_velocity_args;
-
-static int cmd_fixed_velocity(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &fixed_velocity_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, fixed_velocity_args.end, argv[0]);
-    return 1;
-  }
-  
-  int vel = fixed_velocity_args.velocity_val->ival[0];
-  if (vel < 1 || vel > 127) {
-    ESP_LOGE(TAG, "Velocity must be 1-127");
-    return 1;
-  }
-  
-  input_set_fixed_velocity((uint8_t)vel);
-  ESP_LOGI(TAG, "Fixed velocity set to: %d", vel);
-  
-  return 0;
-}
-
 esp_err_t cv_console_init(void) {
   ESP_LOGI(TAG, "Registering cv commands");
   
@@ -331,19 +180,6 @@ esp_err_t cv_console_init(void) {
     .func = &cmd_info,
   };
   esp_console_cmd_register(&info_cmd);
-  
-  // cv_mode command
-  cv_mode_args.mode_type = arg_str1(NULL, NULL, "<linear|pitch>", "CV processing mode");
-  cv_mode_args.end = arg_end(2);
-  
-  const esp_console_cmd_t cv_mode_cmd = {
-    .command = "cv_mode",
-    .help = "Set CV processing mode (linear or pitch)",
-    .hint = NULL,
-    .func = &cmd_cv_mode,
-    .argtable = &cv_mode_args
-  };
-  esp_console_cmd_register(&cv_mode_cmd);
   
   // range command
   range_args.range_type = arg_str1(NULL, NULL, "<10v|bi10v|5v|bi5v|3v3>", "Voltage range");
@@ -372,19 +208,6 @@ esp_err_t cv_console_init(void) {
   };
   esp_console_cmd_register(&calibrate_cmd);
   
-  // input_mode command
-  input_mode_args.mode_type = arg_str1(NULL, NULL, "<cv|clock_sync|audio|note>", "Input mode");
-  input_mode_args.end = arg_end(2);
-  
-  const esp_console_cmd_t input_mode_cmd = {
-    .command = "input_mode",
-    .help = "Set input mode (CV, clock sync, audio, or note)",
-    .hint = NULL,
-    .func = &cmd_input_mode,
-    .argtable = &input_mode_args
-  };
-  esp_console_cmd_register(&input_mode_cmd);
-  
   // pitch_standard command
   pitch_standard_args.standard_type = arg_str1(NULL, NULL, "<c0|c2|hz_v>", "Pitch standard");
   pitch_standard_args.end = arg_end(2);
@@ -397,32 +220,6 @@ esp_err_t cv_console_init(void) {
     .argtable = &pitch_standard_args
   };
   esp_console_cmd_register(&pitch_standard_cmd);
-  
-  // velocity_mode command
-  velocity_mode_args.mode_type = arg_str1(NULL, NULL, "<fixed|gate>", "Velocity mode");
-  velocity_mode_args.end = arg_end(2);
-  
-  const esp_console_cmd_t velocity_mode_cmd = {
-    .command = "velocity_mode",
-    .help = "Set velocity mode for NOTE input mode",
-    .hint = NULL,
-    .func = &cmd_velocity_mode,
-    .argtable = &velocity_mode_args
-  };
-  esp_console_cmd_register(&velocity_mode_cmd);
-  
-  // fixed_velocity command
-  fixed_velocity_args.velocity_val = arg_int1(NULL, NULL, "<1-127>", "Fixed velocity value");
-  fixed_velocity_args.end = arg_end(2);
-  
-  const esp_console_cmd_t fixed_velocity_cmd = {
-    .command = "fixed_velocity",
-    .help = "Set fixed velocity value (1-127)",
-    .hint = NULL,
-    .func = &cmd_fixed_velocity,
-    .argtable = &fixed_velocity_args
-  };
-  esp_console_cmd_register(&fixed_velocity_cmd);
   
   return ESP_OK;
 }

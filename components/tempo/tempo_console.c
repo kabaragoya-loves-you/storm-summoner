@@ -8,7 +8,7 @@
 static const char* TAG = "tempo_console";
 
 static const char* registered_commands[] = {
-  "info", "bpm", "source", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio"
+  "info", "bpm", "source", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio", "deadzone"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -18,6 +18,7 @@ static int cmd_info(int argc, char **argv) {
   tempo_note_divider_t divider = tempo_get_note_divider();
   time_signature_t sig = tempo_get_time_signature();
   tempo_clock_standard_t std = tempo_get_clock_standard();
+  tempo_clock_source_t source = tempo_get_source();
   bool led_sync = tempo_get_led_sync();
   
   const char* div_str = (divider == DIVIDER_QUARTER) ? "Quarter" :
@@ -26,8 +27,14 @@ static int cmd_info(int argc, char **argv) {
   const char* std_str = (std == CLOCK_STANDARD_24PPQN) ? "24PPQN" :
                         (std == CLOCK_STANDARD_16TH_NOTE) ? "16th Note" : "Beat";
   
+  const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" : "MIDI";
+  
+  uint8_t deadzone = tempo_get_bpm_deadzone();
+  
   ESP_LOGI(TAG, "====== TEMPO ======");
   ESP_LOGI(TAG, "BPM: %u", (unsigned)bpm);
+  ESP_LOGI(TAG, "Clock source: %s", source_str);
+  ESP_LOGI(TAG, "BPM deadzone: %u (0=off, 1-5=ignore ±N BPM)", (unsigned)deadzone);
   ESP_LOGI(TAG, "Divider: %s", div_str);
   ESP_LOGI(TAG, "Time signature: %u/%u", (unsigned)sig.numerator, (unsigned)sig.denominator);
   ESP_LOGI(TAG, "Clock standard: %s", std_str);
@@ -38,6 +45,8 @@ static int cmd_info(int argc, char **argv) {
     ESP_LOGI(TAG, "  Downbeat emphasis: %s", emphasize ? "yes" : "no");
     ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
   }
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Note: Scene can override with CV clock sync");
   ESP_LOGI(TAG, "===================");
   
   return 0;
@@ -88,10 +97,9 @@ static int cmd_source(int argc, char **argv) {
     src = CLOCK_SOURCE_INTERNAL;
   } else if (strcmp(src_str, "midi") == 0) {
     src = CLOCK_SOURCE_MIDI;
-  } else if (strcmp(src_str, "sync") == 0) {
-    src = CLOCK_SOURCE_SYNC;
   } else {
-    ESP_LOGE(TAG, "Unknown source. Use: internal, midi, or sync");
+    ESP_LOGE(TAG, "Unknown source. Use: internal or midi");
+    ESP_LOGE(TAG, "Note: Sync mode is set by scene cv_input_mode");
     return 1;
   }
   
@@ -191,6 +199,35 @@ static int cmd_led_ratio(int argc, char **argv) {
   return 0;
 }
 
+// Command: deadzone
+static struct {
+  struct arg_int *value;
+  struct arg_end *end;
+} deadzone_args;
+
+static int cmd_deadzone(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &deadzone_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, deadzone_args.end, argv[0]);
+    return 1;
+  }
+  
+  int dz = deadzone_args.value->ival[0];
+  if (dz < 0 || dz > 5) {
+    ESP_LOGE(TAG, "Deadzone must be 0-5");
+    return 1;
+  }
+  
+  tempo_set_bpm_deadzone((uint8_t)dz);
+  if (dz == 0) {
+    ESP_LOGI(TAG, "BPM deadzone: disabled (tracks all changes)");
+  } else {
+    ESP_LOGI(TAG, "BPM deadzone: %d (ignores ±%d BPM changes)", dz, dz);
+  }
+  
+  return 0;
+}
+
 esp_err_t tempo_console_init(void) {
   ESP_LOGI(TAG, "Registering tempo commands");
   
@@ -217,12 +254,12 @@ esp_err_t tempo_console_init(void) {
   esp_console_cmd_register(&bpm_cmd);
   
   // source command
-  source_args.src = arg_str1(NULL, NULL, "<internal|midi|sync>", "Clock source");
+  source_args.src = arg_str1(NULL, NULL, "<internal|midi>", "Clock source");
   source_args.end = arg_end(2);
   
   const esp_console_cmd_t source_cmd = {
     .command = "source",
-    .help = "Set clock source",
+    .help = "Set clock source (internal or MIDI)",
     .hint = NULL,
     .func = &cmd_source,
     .argtable = &source_args
@@ -294,6 +331,19 @@ esp_err_t tempo_console_init(void) {
     .argtable = &led_ratio_args
   };
   esp_console_cmd_register(&led_ratio_cmd);
+  
+  // deadzone command
+  deadzone_args.value = arg_int1(NULL, NULL, "<0-5>", "Deadzone value");
+  deadzone_args.end = arg_end(2);
+  
+  const esp_console_cmd_t deadzone_cmd = {
+    .command = "deadzone",
+    .help = "Set BPM change deadzone (0=off, 1-5=ignore ±N BPM)",
+    .hint = NULL,
+    .func = &cmd_deadzone,
+    .argtable = &deadzone_args
+  };
+  esp_console_cmd_register(&deadzone_cmd);
   
   return ESP_OK;
 }

@@ -917,6 +917,47 @@ static int cmd_cv_velocity(int argc, char **argv) {
   return 0;
 }
 
+// Command: cv_input_mode - Set CV input mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} cv_input_mode_args;
+
+static int cmd_cv_input_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &cv_input_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, cv_input_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* mode_str = cv_input_mode_args.mode->sval[0];
+  input_mode_t mode;
+  
+  if (strcmp(mode_str, "cv") == 0) {
+    mode = INPUT_MODE_CV;
+  } else if (strcmp(mode_str, "clock_sync") == 0 || strcmp(mode_str, "clock") == 0 || strcmp(mode_str, "sync") == 0) {
+    mode = INPUT_MODE_CLOCK_SYNC;
+  } else if (strcmp(mode_str, "audio") == 0) {
+    mode = INPUT_MODE_AUDIO;
+  } else if (strcmp(mode_str, "note") == 0) {
+    mode = INPUT_MODE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown CV input mode (use: cv, clock_sync, audio, note)");
+    return 1;
+  }
+  
+  scene_set_cv_input_mode(scene_get_current_index(), mode);
+  
+  const char* mode_name = (mode == INPUT_MODE_CV) ? "CV" :
+                          (mode == INPUT_MODE_CLOCK_SYNC) ? "Clock Sync" :
+                          (mode == INPUT_MODE_AUDIO) ? "Audio" : "Note";
+  ESP_LOGI(TAG, "CV input mode: %s", mode_name);
+  return 0;
+}
+
 // Command: proximity_cc - Set proximity CC number
 static struct {
   struct arg_int *cc_num;
@@ -1753,6 +1794,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &cv_velocity_args
   };
   esp_console_cmd_register(&cv_velocity_cmd);
+  
+  // cv_input_mode command
+  cv_input_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "CV input mode");
+  cv_input_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t cv_input_mode_cmd = {
+    .command = "cv_input_mode",
+    .help = "Set CV input mode (cv/clock_sync/audio/note)",
+    .hint = NULL,
+    .func = &cmd_cv_input_mode,
+    .argtable = &cv_input_mode_args
+  };
+  esp_console_cmd_register(&cv_input_mode_cmd);
   
   // proximity_cc command
   proximity_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");

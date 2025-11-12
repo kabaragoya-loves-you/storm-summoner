@@ -8,6 +8,7 @@
 #include "action.h"
 #include "continuous_mapping.h"
 #include "expression.h"
+#include "input_mode.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -84,6 +85,9 @@ typedef struct {
   expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE
   action_chain_t sustain;            // Actions for sustain pedal events
   action_chain_t sostenuto;          // Actions for sostenuto pedal events
+  
+  // CV input configuration
+  input_mode_t cv_input_mode;        // CV, CLOCK_SYNC, AUDIO, or NOTE
   
   // Future: envelope follower, LFO slots
 } scene_t;
@@ -181,6 +185,10 @@ esp_err_t scene_assign_sustain(uint8_t scene_index, const action_chain_t* chain)
 esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_chain_t* chain);
 action_chain_t* scene_get_sustain(uint8_t scene_index);
 action_chain_t* scene_get_sostenuto(uint8_t scene_index);
+
+// CV input mode configuration
+esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode);
+input_mode_t scene_get_cv_input_mode(uint8_t scene_index);
 
 // Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);

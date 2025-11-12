@@ -5,6 +5,7 @@
 #include "app_settings.h"
 #include "event_bus.h"
 #include "action.h"
+#include "tempo.h"
 #include "cJSON.h"
 #include <string.h>
 #include <stdio.h>
@@ -138,6 +139,9 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Default sostenuto action: ACTION_SOSTENUTO (CC66 toggle)
   scene->sostenuto.num_actions = 1;
   scene->sostenuto.actions[0] = action_create_sostenuto();
+  
+  // CV input configuration
+  scene->cv_input_mode = INPUT_MODE_CV;                // Default to CV mode
 }
 
 esp_err_t scene_init(void) {
@@ -371,6 +375,14 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   
   // Configure expression jack mode for this scene
   expression_set_mode(new_scene->expression_mode);
+  
+  // Configure CV input mode - enable/disable tempo sync processing
+  if (new_scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) {
+    tempo_enable_sync_processing(true);
+    ESP_LOGD(TAG, "Enabled tempo sync from CV clock");
+  } else {
+    tempo_enable_sync_processing(false);
+  }
   
   // Execute on_load actions
   if (new_scene->on_load.num_actions > 0) {
@@ -846,6 +858,34 @@ action_chain_t* scene_get_sostenuto(uint8_t scene_index) {
   return scene ? &scene->sostenuto : NULL;
 }
 
+esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->cv_input_mode = mode;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  // Update tempo sync processing immediately if this is the current scene
+  if (mode == INPUT_MODE_CLOCK_SYNC) {
+    tempo_enable_sync_processing(true);
+  } else {
+    tempo_enable_sync_processing(false);
+  }
+  
+  const char* mode_str = (mode == INPUT_MODE_CV) ? "cv" :
+                         (mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
+                         (mode == INPUT_MODE_AUDIO) ? "audio" : "note";
+  ESP_LOGI(TAG, "Scene %d CV input mode set to %s", scene_index + 1, mode_str);
+  return ESP_OK;
+}
+
+input_mode_t scene_get_cv_input_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->cv_input_mode : INPUT_MODE_CV;
+}
+
 // Helper to get scene filename
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size) {
   snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
@@ -1098,6 +1138,12 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "sustain", action_chain_to_json(&scene->sustain));
   cJSON_AddItemToObject(root, "sostenuto", action_chain_to_json(&scene->sostenuto));
   
+  // Serialize CV input mode
+  const char* cv_mode_str = (scene->cv_input_mode == INPUT_MODE_CV) ? "cv" :
+                            (scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
+                            (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" : "note";
+  cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
+  
   return root;
 }
 
@@ -1173,6 +1219,16 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* sostenuto = cJSON_GetObjectItem(root, "sostenuto");
   if (sostenuto) scene->sostenuto = json_to_action_chain(sostenuto);
   
+  // Deserialize CV input mode
+  cJSON* cv_mode = cJSON_GetObjectItem(root, "cv_input_mode");
+  if (cv_mode && cJSON_IsString(cv_mode)) {
+    const char* mode_str = cv_mode->valuestring;
+    if (strcmp(mode_str, "clock_sync") == 0) scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
+    else if (strcmp(mode_str, "audio") == 0) scene->cv_input_mode = INPUT_MODE_AUDIO;
+    else if (strcmp(mode_str, "note") == 0) scene->cv_input_mode = INPUT_MODE_NOTE;
+    else scene->cv_input_mode = INPUT_MODE_CV;
+  }
+
   return ESP_OK;
 }
 

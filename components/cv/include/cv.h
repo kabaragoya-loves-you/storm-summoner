@@ -42,18 +42,6 @@ float cv_get_value(void);
 uint8_t cv_get_midi_value(void);
 
 /**
- * Set the CV input mode
- * @param mode The CV mode to use
- */
-void cv_set_mode(cv_mode_t mode);
-
-/**
- * Get the current CV input mode
- * @return Current CV mode
- */
-cv_mode_t cv_get_mode(void);
-
-/**
  * Calibrate the CV input
  * @param offset Offset to add to raw readings
  * @param scale Scale factor to apply
