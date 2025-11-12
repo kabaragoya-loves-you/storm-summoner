@@ -9,6 +9,7 @@
 #include "continuous_mapping.h"
 #include "expression.h"
 #include "input_mode.h"
+#include "tempo.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -88,6 +89,9 @@ typedef struct {
   
   // CV input configuration
   input_mode_t cv_input_mode;        // CV, CLOCK_SYNC, AUDIO, or NOTE
+  
+  // Tempo configuration (per-scene clock source)
+  tempo_clock_source_t clock_source; // INTERNAL, MIDI, SYNC
   
   // Future: envelope follower, LFO slots
 } scene_t;
@@ -189,6 +193,10 @@ action_chain_t* scene_get_sostenuto(uint8_t scene_index);
 // CV input mode configuration
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode);
 input_mode_t scene_get_cv_input_mode(uint8_t scene_index);
+
+// Clock source (per-scene tempo control)
+esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source);
+tempo_clock_source_t scene_get_clock_source(uint8_t scene_index);
 
 // Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);

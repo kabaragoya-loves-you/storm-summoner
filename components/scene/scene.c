@@ -142,6 +142,9 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // CV input configuration
   scene->cv_input_mode = INPUT_MODE_CV;                // Default to CV mode
+  
+  // Tempo configuration
+  scene->clock_source = CLOCK_SOURCE_INTERNAL;         // Default to internal clock
 }
 
 esp_err_t scene_init(void) {
@@ -376,13 +379,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Configure expression jack mode for this scene
   expression_set_mode(new_scene->expression_mode);
   
-  // Configure CV input mode - enable/disable tempo sync processing
-  if (new_scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) {
-    tempo_enable_sync_processing(true);
-    ESP_LOGD(TAG, "Enabled tempo sync from CV clock");
-  } else {
-    tempo_enable_sync_processing(false);
-  }
+  // Configure clock source for this scene
+  tempo_set_source(new_scene->clock_source);
+  ESP_LOGD(TAG, "Set tempo clock source to %d", new_scene->clock_source);
   
   // Execute on_load actions
   if (new_scene->on_load.num_actions > 0) {
@@ -867,13 +866,6 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   scene->cv_input_mode = mode;
   g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
   
-  // Update tempo sync processing immediately if this is the current scene
-  if (mode == INPUT_MODE_CLOCK_SYNC) {
-    tempo_enable_sync_processing(true);
-  } else {
-    tempo_enable_sync_processing(false);
-  }
-  
   const char* mode_str = (mode == INPUT_MODE_CV) ? "cv" :
                          (mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
                          (mode == INPUT_MODE_AUDIO) ? "audio" : "note";
@@ -884,6 +876,35 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
 input_mode_t scene_get_cv_input_mode(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   return scene ? scene->cv_input_mode : INPUT_MODE_CV;
+}
+
+esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->clock_source = source;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  // If setting to SYNC, automatically set cv_input_mode to CLOCK_SYNC for coherence
+  if (source == CLOCK_SOURCE_SYNC) {
+    scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
+  }
+  
+  // Update tempo component immediately if this is the current scene
+  tempo_set_source(source);
+  
+  const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
+                           (source == CLOCK_SOURCE_MIDI) ? "MIDI" : "Sync";
+  ESP_LOGI(TAG, "Scene %d clock source set to %s", scene_index + 1, source_str);
+  
+  return ESP_OK;
+}
+
+tempo_clock_source_t scene_get_clock_source(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->clock_source : CLOCK_SOURCE_INTERNAL;
 }
 
 // Helper to get scene filename
@@ -1144,6 +1165,10 @@ static cJSON* scene_to_json(const scene_t* scene) {
                             (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
   
+  const char* clock_src_str = (scene->clock_source == CLOCK_SOURCE_INTERNAL) ? "internal" :
+                              (scene->clock_source == CLOCK_SOURCE_MIDI) ? "midi" : "sync";
+  cJSON_AddStringToObject(root, "clock_source", clock_src_str);
+  
   return root;
 }
 
@@ -1227,6 +1252,15 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(mode_str, "audio") == 0) scene->cv_input_mode = INPUT_MODE_AUDIO;
     else if (strcmp(mode_str, "note") == 0) scene->cv_input_mode = INPUT_MODE_NOTE;
     else scene->cv_input_mode = INPUT_MODE_CV;
+  }
+  
+  // Deserialize clock source
+  cJSON* clock_src = cJSON_GetObjectItem(root, "clock_source");
+  if (clock_src && cJSON_IsString(clock_src)) {
+    const char* src_str = clock_src->valuestring;
+    if (strcmp(src_str, "midi") == 0) scene->clock_source = CLOCK_SOURCE_MIDI;
+    else if (strcmp(src_str, "sync") == 0) scene->clock_source = CLOCK_SOURCE_SYNC;
+    else scene->clock_source = CLOCK_SOURCE_INTERNAL;
   }
 
   return ESP_OK;

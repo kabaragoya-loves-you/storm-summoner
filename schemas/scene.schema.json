@@ -86,6 +86,12 @@
       "enum": ["cv", "clock_sync", "audio", "note"],
       "default": "cv",
       "description": "CV input interpretation mode"
+    },
+    "clock_source": {
+      "type": "string",
+      "enum": ["internal", "midi", "sync"],
+      "default": "internal",
+      "description": "Tempo clock source for this scene"
     }
   },
   "definitions": {

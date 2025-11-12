@@ -207,6 +207,7 @@
       "type": "sostenuto"
     }
   ],
-  "cv_input_mode": "cv"
+  "cv_input_mode": "cv",
+  "clock_source": "internal"
 }
 

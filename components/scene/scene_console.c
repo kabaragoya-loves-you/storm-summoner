@@ -16,7 +16,7 @@ static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "save",
   "confirm", "cancel", "channel", "pad", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
-  "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity",
+  "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", "clock_source",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity"
 };
@@ -67,6 +67,11 @@ static void cmd_scene_info(void) {
   } else {
     ESP_LOGI(TAG, "  Both: no actions");
   }
+  
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Tempo clock source: %s",
+           scene->clock_source == CLOCK_SOURCE_INTERNAL ? "Internal" :
+           scene->clock_source == CLOCK_SOURCE_MIDI ? "MIDI" : "Sync");
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Expression jack mode: %s", 
@@ -958,6 +963,44 @@ static int cmd_cv_input_mode(int argc, char **argv) {
   return 0;
 }
 
+// Command: clock_source - Set tempo clock source
+static struct {
+  struct arg_str *source;
+  struct arg_end *end;
+} clock_source_args;
+
+static int cmd_clock_source(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &clock_source_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, clock_source_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* src_str = clock_source_args.source->sval[0];
+  tempo_clock_source_t source;
+  
+  if (strcmp(src_str, "internal") == 0 || strcmp(src_str, "int") == 0) {
+    source = CLOCK_SOURCE_INTERNAL;
+  } else if (strcmp(src_str, "midi") == 0) {
+    source = CLOCK_SOURCE_MIDI;
+  } else if (strcmp(src_str, "sync") == 0) {
+    source = CLOCK_SOURCE_SYNC;
+  } else {
+    ESP_LOGE(TAG, "Unknown clock source (use: internal, midi, sync)");
+    return 1;
+  }
+  
+  scene_set_clock_source(scene_get_current_index(), source);
+  
+  const char* source_name = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
+                            (source == CLOCK_SOURCE_MIDI) ? "MIDI" : "Sync";
+  ESP_LOGI(TAG, "Clock source: %s", source_name);
+  return 0;
+}
+
 // Command: proximity_cc - Set proximity CC number
 static struct {
   struct arg_int *cc_num;
@@ -1807,6 +1850,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &cv_input_mode_args
   };
   esp_console_cmd_register(&cv_input_mode_cmd);
+  
+  // clock_source command
+  clock_source_args.source = arg_str1(NULL, NULL, "<source>", "Clock source");
+  clock_source_args.end = arg_end(2);
+  
+  const esp_console_cmd_t clock_source_cmd = {
+    .command = "clock_source",
+    .help = "Set tempo clock source (internal/midi/sync)",
+    .hint = NULL,
+    .func = &cmd_clock_source,
+    .argtable = &clock_source_args
+  };
+  esp_console_cmd_register(&clock_source_cmd);
   
   // proximity_cc command
   proximity_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");

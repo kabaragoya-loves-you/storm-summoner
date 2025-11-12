@@ -82,9 +82,6 @@ uint8_t tempo_get_led_flash_ratio(void);
 void tempo_set_clock_standard(tempo_clock_standard_t standard);
 tempo_clock_standard_t tempo_get_clock_standard(void);
 
-// Scene-controlled sync processing (overrides source setting when enabled)
-void tempo_enable_sync_processing(bool enable);
-
 // BPM change deadzone (0 = no deadzone, 1-5 = ignore ±N BPM changes after locking)
 void tempo_set_bpm_deadzone(uint8_t deadzone);
 uint8_t tempo_get_bpm_deadzone(void);

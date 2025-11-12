@@ -8,7 +8,7 @@
 static const char* TAG = "tempo_console";
 
 static const char* registered_commands[] = {
-  "info", "bpm", "source", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio", "deadzone",
+  "info", "bpm", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio", "deadzone",
   "clock_output", "clock_always", "clock_no_passthrough"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
@@ -39,7 +39,7 @@ static int cmd_info(int argc, char **argv) {
   
   ESP_LOGI(TAG, "====== TEMPO ======");
   ESP_LOGI(TAG, "BPM: %u", (unsigned)bpm);
-  ESP_LOGI(TAG, "Clock source: %s", source_str);
+  ESP_LOGI(TAG, "Clock source: %s (set by current scene)", source_str);
   ESP_LOGI(TAG, "Clock output: %s", output_names[clk_out]);
   ESP_LOGI(TAG, "Always send clock: %s", always_send ? "yes" : "no");
   ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
@@ -55,7 +55,7 @@ static int cmd_info(int argc, char **argv) {
     ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
   }
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Note: Scene can override with CV clock sync");
+  ESP_LOGI(TAG, "Note: Use 'clock_source' command in scene context to change source");
   ESP_LOGI(TAG, "===================");
   
   return 0;
@@ -82,38 +82,6 @@ static int cmd_bpm(int argc, char **argv) {
   
   tempo_set_bpm((uint16_t)bpm);
   ESP_LOGI(TAG, "BPM set to %d", bpm);
-  
-  return 0;
-}
-
-// Command: source
-static struct {
-  struct arg_str *src;
-  struct arg_end *end;
-} source_args;
-
-static int cmd_source(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &source_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, source_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* src_str = source_args.src->sval[0];
-  tempo_clock_source_t src;
-  
-  if (strcmp(src_str, "internal") == 0) {
-    src = CLOCK_SOURCE_INTERNAL;
-  } else if (strcmp(src_str, "midi") == 0) {
-    src = CLOCK_SOURCE_MIDI;
-  } else {
-    ESP_LOGE(TAG, "Unknown source. Use: internal or midi");
-    ESP_LOGE(TAG, "Note: Sync mode is set by scene cv_input_mode");
-    return 1;
-  }
-  
-  tempo_set_source(src);
-  ESP_LOGI(TAG, "Clock source set to: %s", src_str);
   
   return 0;
 }
@@ -334,19 +302,6 @@ esp_err_t tempo_console_init(void) {
     .argtable = &bpm_args
   };
   esp_console_cmd_register(&bpm_cmd);
-  
-  // source command
-  source_args.src = arg_str1(NULL, NULL, "<internal|midi>", "Clock source");
-  source_args.end = arg_end(2);
-  
-  const esp_console_cmd_t source_cmd = {
-    .command = "source",
-    .help = "Set clock source (internal or MIDI)",
-    .hint = NULL,
-    .func = &cmd_source,
-    .argtable = &source_args
-  };
-  esp_console_cmd_register(&source_cmd);
   
   // tap command
   const esp_console_cmd_t tap_cmd = {
