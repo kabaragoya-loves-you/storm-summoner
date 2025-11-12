@@ -28,13 +28,13 @@
 #define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
 
 // Constants
-#define MIN_BPM 30
-#define MAX_BPM 250
+#define MIN_BPM 20
+#define MAX_BPM 300
 #define DEFAULT_BPM 120
 #define MIDI_CLOCKS_PER_QUARTER 24
 
 // State variables
-static uint8_t s_bpm = DEFAULT_BPM;
+static uint16_t s_bpm = DEFAULT_BPM;
 static tempo_clock_source_t s_clock_source = CLOCK_SOURCE_INTERNAL;
 static tempo_clock_standard_t s_clock_standard = CLOCK_STANDARD_24PPQN;  // Default to 24ppqn
 static time_signature_t s_time_signature = {4, 4};  // Default 4/4
@@ -91,7 +91,7 @@ void tempo_init(void) {
   // Load settings from NVS
   uint32_t bpm = DEFAULT_BPM;
   if (app_settings_load_u32(NVS_KEY_BPM, &bpm) == ESP_OK) {
-    s_bpm = (uint8_t)(bpm > MAX_BPM ? MAX_BPM : (bpm < MIN_BPM ? MIN_BPM : bpm));
+    s_bpm = (uint16_t)(bpm > MAX_BPM ? MAX_BPM : (bpm < MIN_BPM ? MIN_BPM : bpm));
   }
   
   uint8_t led_sync = 0;
@@ -187,7 +187,7 @@ static void tempo_task(void *pvParameters) {
   ESP_LOGD(TAG, "Tempo task running");
   
   TickType_t last_wake_time = xTaskGetTickCount();
-  uint8_t last_bpm = s_bpm;
+  uint16_t last_bpm = s_bpm;
   
   while (1) {
     // Check if we should be running based on clock_always_send setting
@@ -199,7 +199,7 @@ static void tempo_task(void *pvParameters) {
     }
     
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    uint8_t current_bpm = s_bpm;
+    uint16_t current_bpm = s_bpm;
     tempo_clock_source_t source = s_clock_source;
     tempo_clock_standard_t standard = s_clock_standard;
     xSemaphoreGive(s_state_mutex);
@@ -263,7 +263,7 @@ static void tempo_task(void *pvParameters) {
         if (s_last_sync_tick_ms > 0) {
           uint32_t interval_ms = now - s_last_sync_tick_ms;
           if (interval_ms > 0) {
-            uint8_t new_bpm = (uint8_t)(60000 / interval_ms);
+            uint16_t new_bpm = (uint16_t)(60000 / interval_ms);
             if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM && new_bpm != s_bpm) {
               xSemaphoreTake(s_state_mutex, portMAX_DELAY);
               s_bpm = new_bpm;
@@ -401,8 +401,8 @@ void tempo_set_bpm(uint16_t bpm) {
   if (bpm > MAX_BPM) bpm = MAX_BPM;
   
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-  if (s_bpm != (uint8_t)bpm) {
-    s_bpm = (uint8_t)bpm;
+  if (s_bpm != bpm) {
+    s_bpm = bpm;
     xSemaphoreGive(s_state_mutex);
     
     // Save to NVS
@@ -486,7 +486,10 @@ void tempo_tap_event(void) {
 
 void tempo_midi_clock_tick(void) {
   static uint32_t midi_tick_count = 0;
-  static uint32_t measurement_start = 0;  // Resets every 8 quarters for sliding window
+  static uint32_t last_quarter_time = 0;
+  static float ema_interval_ms = 0.0f;  // Exponential moving average of quarter note intervals
+  static bool ema_initialized = false;
+  static uint32_t last_update_time = 0;  // Rate limit BPM updates
   
   // Safety: Don't process if tempo not initialized yet
   if (!s_state_mutex) return;
@@ -498,74 +501,75 @@ void tempo_midi_clock_tick(void) {
   
   uint32_t now = esp_timer_get_time() / 1000;
   
-  // Initialize measurement window on first tick
-  if (measurement_start == 0) {
-    measurement_start = now;
-  }
+  // EMA-based tempo tracking with outlier rejection
+  // Updates smoothly every quarter note, but rate-limits BPM announcements
   
-  // Progressive refinement with multiple stages:
-  // Stage 1: 2 quarters (~1 sec at 120 BPM, ~6 sec at 20 BPM)
-  // Stage 2: 4 quarters (~2 sec at 120 BPM, ~12 sec at 20 BPM)
-  // Stage 3: 8 quarters (~4 sec at 120 BPM, ~24 sec at 20 BPM) - repeating
-  
-  if (midi_tick_count == MIDI_CLOCKS_PER_QUARTER * 2) {
-    // Quick initial estimate
-    uint32_t total_ms = now - measurement_start;
-    // At 20 BPM: 2 quarters = 6000ms; at 300 BPM: 2 quarters = 400ms
-    if (total_ms >= 400 && total_ms <= 6000) {
-      uint8_t measured_bpm = (uint8_t)(120000 / total_ms);
-      if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
-        xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-        s_bpm = measured_bpm;
-        xSemaphoreGive(s_state_mutex);
-        publish_tempo_changed_event();
-      }
-    }
-  }
-  
-  // Stage 2: Better estimate at 4 quarters (double the averaging)
-  if (midi_tick_count == MIDI_CLOCKS_PER_QUARTER * 4) {
-    uint32_t total_ms = now - measurement_start;
-    // At 20 BPM: 4 quarters = 12000ms; at 300 BPM: 4 quarters = 800ms
-    if (total_ms >= 800 && total_ms <= 12000) {
-      uint8_t measured_bpm = (uint8_t)(240000 / total_ms);
-      if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
-        int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
-        if (bpm_delta > s_bpm_deadzone) {
-          xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-          s_bpm = measured_bpm;
-          xSemaphoreGive(s_state_mutex);
-          publish_tempo_changed_event();
-        }
-      }
-    }
-  }
-  
-  // Stage 3: High-precision measurement every 8 quarters (sliding window)
-  if (midi_tick_count >= MIDI_CLOCKS_PER_QUARTER * 8 && 
-      midi_tick_count % (MIDI_CLOCKS_PER_QUARTER * 8) == 0) {
+  if (midi_tick_count % MIDI_CLOCKS_PER_QUARTER == 0) {
+    // Every quarter note: measure interval and update EMA
     
-    // Measure just the last 8 quarters (sliding window, not cumulative)
-    uint32_t total_ms = now - measurement_start;
-    
-    // BPM = 60000 / (total_ms / 8)  ->  BPM = 480000 / total_ms
-    // At 20 BPM: 8 quarters = 24000ms; at 300 BPM: 8 quarters = 1600ms
-    if (total_ms >= 1600 && total_ms <= 24000) {
-      uint8_t measured_bpm = (uint8_t)(480000 / total_ms);
+    if (last_quarter_time > 0) {
+      uint32_t interval_ms = now - last_quarter_time;
       
-      if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
-        int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
-        if (bpm_delta > s_bpm_deadzone) {
-          xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-          s_bpm = measured_bpm;
-          xSemaphoreGive(s_state_mutex);
-          publish_tempo_changed_event();
+      // Sanity check: 200ms (300 BPM) to 3000ms (20 BPM)
+      if (interval_ms >= 200 && interval_ms <= 3000) {
+        
+        if (!ema_initialized) {
+          // First measurement - initialize EMA
+          ema_interval_ms = (float)interval_ms;
+          ema_initialized = true;
+        } else {
+          // Adaptive outlier rejection:
+          // Small changes (±20%): Apply EMA smoothing
+          // Large changes (>20%): Reset EMA to adapt quickly to tempo changes
+          float deviation = (float)interval_ms / ema_interval_ms;
+          
+          if (deviation >= 0.80f && deviation <= 1.20f) {
+            // Within ±20% - valid measurement, update EMA with smoothing
+            // Adaptive alpha: higher at fast tempos for better jitter filtering
+            // Fast tempos (<300ms): alpha=0.5 (more smoothing needed)
+            // Normal tempos (300-1000ms): alpha=0.4 
+            // Slow tempos (>1000ms): alpha=0.3 (less data, need more history)
+            float alpha = (ema_interval_ms < 300.0f) ? 0.5f : 
+                         (ema_interval_ms > 1000.0f) ? 0.3f : 0.4f;
+            ema_interval_ms = alpha * (float)interval_ms + (1.0f - alpha) * ema_interval_ms;
+          } else {
+            // Beyond ±20% - likely tempo change
+            // Reset EMA immediately to adapt to new tempo
+            ema_interval_ms = (float)interval_ms;
+            ESP_LOGD(TAG, "Large tempo change: %.0f ms -> %lu ms", 
+                     ema_interval_ms, (unsigned long)interval_ms);
+          }
+        }
+        
+        // Calculate BPM from EMA interval
+        uint16_t calculated_bpm = (uint16_t)(60000.0f / ema_interval_ms);
+        
+        // Clamp to valid range (20-300 BPM)
+        if (calculated_bpm < MIN_BPM) calculated_bpm = MIN_BPM;
+        if (calculated_bpm > MAX_BPM) calculated_bpm = MAX_BPM;
+        
+        uint16_t measured_bpm = calculated_bpm;
+        
+        if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
+          int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
+          
+          // Apply deadzone if configured
+          if (bpm_delta > s_bpm_deadzone) {
+            // Rate limit updates: minimum 500ms between BPM announcements
+            // This prevents spam at fast tempos while still tracking smoothly
+            if (last_update_time == 0 || (now - last_update_time) >= 500) {
+              xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+              s_bpm = measured_bpm;
+              xSemaphoreGive(s_state_mutex);
+              publish_tempo_changed_event();
+              last_update_time = now;
+            }
+          }
         }
       }
     }
     
-    // Reset measurement window for next sliding window
-    measurement_start = now;
+    last_quarter_time = now;
   }
   
   // Check for beat (for beat events and LED sync)
