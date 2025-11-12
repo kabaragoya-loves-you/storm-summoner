@@ -222,8 +222,9 @@ static void tempo_task(void *pvParameters) {
           break;
       }
       
-      // Calculate tick interval
+      // Calculate tick interval (minimum 10ms to ensure at least 1 FreeRTOS tick)
       uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
+      if (tick_interval_ms < 10) tick_interval_ms = 10;
       
       // Send MIDI clock directly (low latency requirement)
       send_clock();
@@ -286,8 +287,52 @@ static void tempo_task(void *pvParameters) {
       }
     }
     else { // CLOCK_SOURCE_MIDI
-      // In MIDI clock mode, we don't generate clocks, just track them
-      vTaskDelay(pdMS_TO_TICKS(10));
+      // In MIDI clock mode, we track incoming clocks (in tempo_midi_clock_tick)
+      // but still send outgoing clocks based on the tracked BPM
+      
+      // Calculate pulses per quarter note based on clock standard
+      uint32_t ppqn;
+      switch (standard) {
+        case CLOCK_STANDARD_24PPQN:
+          ppqn = 24;  // Standard MIDI clock
+          break;
+        case CLOCK_STANDARD_16TH_NOTE:
+          ppqn = 6;   // 1 pulse per 16th note
+          break;
+        case CLOCK_STANDARD_BEAT:
+          ppqn = 1;   // 1 pulse per beat
+          break;
+        default:
+          ppqn = 24;
+          break;
+      }
+      
+      // Calculate tick interval based on tracked BPM (minimum 10ms to ensure at least 1 FreeRTOS tick)
+      uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
+      if (tick_interval_ms < 10) tick_interval_ms = 10;
+      
+      // Send MIDI clock
+      send_clock();
+      
+      // Track ticks and beats
+      s_tick_counter++;
+      
+      // Check if we've completed a beat
+      uint32_t beat_divisor = s_note_divider;
+      if (standard == CLOCK_STANDARD_16TH_NOTE) {
+        beat_divisor /= 4;
+      } else if (standard == CLOCK_STANDARD_BEAT) {
+        beat_divisor = 1;
+      }
+      
+      if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
+        s_beat_counter++;
+        if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+        publish_beat_event();
+      }
+      
+      // Delay until next tick
+      vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
     }
   }
 }
@@ -304,14 +349,14 @@ static void transport_state_handler(const event_t* event, void* context) {
       break;
       
     case TRANSPORT_STOPPED:
-      tempo_stop();
-      // Reset beat counter
+      // Don't stop tempo task - it respects clock_always_send setting
+      // Just reset counters
       s_beat_counter = 0;
       s_tick_counter = 0;
       break;
       
     case TRANSPORT_PAUSED:
-      tempo_stop();
+      // Don't stop tempo task
       // Don't reset counters - maintain position
       break;
   }

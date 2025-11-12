@@ -92,6 +92,7 @@ void app_main(void) {
   flicker_start();
   
   midi_out_init();
+  tempo_start();
 
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
@@ -115,8 +116,6 @@ void app_main(void) {
   sensor_init(false);
   als_enable();
   ps_enable();
-
-  tempo_start();
 
   screensaver_init();
   screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
