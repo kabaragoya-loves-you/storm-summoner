@@ -440,7 +440,7 @@ void tempo_tap_event(void) {
 
 void tempo_midi_clock_tick(void) {
   static uint32_t midi_tick_count = 0;
-  static uint32_t long_term_start = 0;  // Tracks from first tick - never resets
+  static uint32_t measurement_start = 0;  // Resets every 8 quarters for sliding window
   
   // Safety: Don't process if tempo not initialized yet
   if (!s_state_mutex) return;
@@ -452,18 +452,18 @@ void tempo_midi_clock_tick(void) {
   
   uint32_t now = esp_timer_get_time() / 1000;
   
-  // Initialize on first tick
-  if (long_term_start == 0) {
-    long_term_start = now;
+  // Initialize measurement window on first tick
+  if (measurement_start == 0) {
+    measurement_start = now;
   }
   
-  // Progressive refinement:
-  // Stage 1: Quick estimate at 2 quarters (~1 sec) - gets you in the ballpark
-  // Stage 2: Every 8 quarters after that - uses ALL ticks since start for maximum accuracy
+  // Progressive refinement with sliding window:
+  // Stage 1: Quick estimate at 2 quarters (~1 sec)
+  // Stage 2: Every 8 quarters - measure JUST those 8 quarters (sliding window)
   
   if (midi_tick_count == MIDI_CLOCKS_PER_QUARTER * 2) {
     // Quick initial estimate
-    uint32_t total_ms = now - long_term_start;
+    uint32_t total_ms = now - measurement_start;
     if (total_ms >= 400 && total_ms <= 4000) {
       uint8_t measured_bpm = (uint8_t)(120000 / total_ms);
       if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
@@ -475,20 +475,16 @@ void tempo_midi_clock_tick(void) {
     }
   }
   
-  // High-precision measurement every 8 quarters using cumulative averaging
+  // High-precision measurement every 8 quarters using sliding window
   if (midi_tick_count >= MIDI_CLOCKS_PER_QUARTER * 8 && 
       midi_tick_count % (MIDI_CLOCKS_PER_QUARTER * 8) == 0) {
     
-    // Measure from the very first tick to now - gets more accurate over time!
-    uint32_t total_ms = now - long_term_start;
-    uint32_t total_quarters = midi_tick_count / MIDI_CLOCKS_PER_QUARTER;
+    // Measure just the last 8 quarters (sliding window, not cumulative)
+    uint32_t total_ms = now - measurement_start;
     
-    if (total_ms > 0 && total_quarters > 0) {
-      // BPM = 60000 / (total_ms / total_quarters)
-      uint8_t measured_bpm = (uint8_t)((60000 * total_quarters) / total_ms);
-      ESP_LOGD(TAG, "Long-term average (%lu quarters, %lums): %u BPM (current: %u)", 
-               (unsigned long)total_quarters, (unsigned long)total_ms, 
-               (unsigned)measured_bpm, (unsigned)s_bpm);
+    // BPM = 60000 / (total_ms / 8)  ->  BPM = 480000 / total_ms
+    if (total_ms >= 1600 && total_ms <= 16000) {
+      uint8_t measured_bpm = (uint8_t)(480000 / total_ms);
       
       if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
         int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
@@ -500,6 +496,9 @@ void tempo_midi_clock_tick(void) {
         }
       }
     }
+    
+    // Reset measurement window for next sliding window
+    measurement_start = now;
   }
   
   // Check for beat (for beat events and LED sync)
