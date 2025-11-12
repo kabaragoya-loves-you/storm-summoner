@@ -12,6 +12,13 @@ typedef enum {
 } tempo_clock_source_t;
 
 typedef enum {
+  CLOCK_OUTPUT_NONE = 0,
+  CLOCK_OUTPUT_USB = 1,
+  CLOCK_OUTPUT_UART = 2,
+  CLOCK_OUTPUT_BOTH = 3
+} clock_output_t;
+
+typedef enum {
   CLOCK_STANDARD_24PPQN = 0,    // DIN Sync (24 pulses per quarter note)
   CLOCK_STANDARD_16TH_NOTE,     // Korg Volca (pulse per 16th note)
   CLOCK_STANDARD_BEAT           // Modular (1 pulse per beat)
@@ -81,5 +88,13 @@ void tempo_enable_sync_processing(bool enable);
 // BPM change deadzone (0 = no deadzone, 1-5 = ignore ±N BPM changes after locking)
 void tempo_set_bpm_deadzone(uint8_t deadzone);
 uint8_t tempo_get_bpm_deadzone(void);
+
+// Clock output control
+void tempo_set_clock_output(clock_output_t output);
+clock_output_t tempo_get_clock_output(void);
+void tempo_set_clock_always_send(bool always_send);
+bool tempo_get_clock_always_send(void);
+void tempo_set_disable_clock_on_passthrough(bool disable);
+bool tempo_get_disable_clock_on_passthrough(void);
 
 #endif /* _TEMPO_H */

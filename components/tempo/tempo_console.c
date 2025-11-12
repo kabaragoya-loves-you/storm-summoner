@@ -8,7 +8,8 @@
 static const char* TAG = "tempo_console";
 
 static const char* registered_commands[] = {
-  "info", "bpm", "source", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio", "deadzone"
+  "info", "bpm", "source", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio", "deadzone",
+  "clock_output", "clock_always", "clock_no_passthrough"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -30,10 +31,18 @@ static int cmd_info(int argc, char **argv) {
   const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" : "MIDI";
   
   uint8_t deadzone = tempo_get_bpm_deadzone();
+  clock_output_t clk_out = tempo_get_clock_output();
+  bool always_send = tempo_get_clock_always_send();
+  bool disable_on_pt = tempo_get_disable_clock_on_passthrough();
+  
+  const char* output_names[] = {"None", "USB", "UART", "Both"};
   
   ESP_LOGI(TAG, "====== TEMPO ======");
   ESP_LOGI(TAG, "BPM: %u", (unsigned)bpm);
   ESP_LOGI(TAG, "Clock source: %s", source_str);
+  ESP_LOGI(TAG, "Clock output: %s", output_names[clk_out]);
+  ESP_LOGI(TAG, "Always send clock: %s", always_send ? "yes" : "no");
+  ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
   ESP_LOGI(TAG, "BPM deadzone: %u (0=off, 1-5=ignore ±N BPM)", (unsigned)deadzone);
   ESP_LOGI(TAG, "Divider: %s", div_str);
   ESP_LOGI(TAG, "Time signature: %u/%u", (unsigned)sig.numerator, (unsigned)sig.denominator);
@@ -228,6 +237,79 @@ static int cmd_deadzone(int argc, char **argv) {
   return 0;
 }
 
+// Command: clock_output
+static struct {
+  struct arg_str *output;
+  struct arg_end *end;
+} clock_output_args;
+
+static int cmd_clock_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &clock_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, clock_output_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* out_str = clock_output_args.output->sval[0];
+  clock_output_t output;
+  
+  if (strcmp(out_str, "none") == 0) {
+    output = CLOCK_OUTPUT_NONE;
+  } else if (strcmp(out_str, "usb") == 0) {
+    output = CLOCK_OUTPUT_USB;
+  } else if (strcmp(out_str, "uart") == 0) {
+    output = CLOCK_OUTPUT_UART;
+  } else if (strcmp(out_str, "both") == 0) {
+    output = CLOCK_OUTPUT_BOTH;
+  } else {
+    ESP_LOGE(TAG, "Unknown output. Use: none, usb, uart, or both");
+    return 1;
+  }
+  
+  tempo_set_clock_output(output);
+  return 0;
+}
+
+// Command: clock_always
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} clock_always_args;
+
+static int cmd_clock_always(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &clock_always_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, clock_always_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* state_str = clock_always_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  tempo_set_clock_always_send(enable);
+  return 0;
+}
+
+// Command: clock_no_passthrough
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} clock_no_pt_args;
+
+static int cmd_clock_no_passthrough(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &clock_no_pt_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, clock_no_pt_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* state_str = clock_no_pt_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  tempo_set_disable_clock_on_passthrough(enable);
+  return 0;
+}
+
 esp_err_t tempo_console_init(void) {
   ESP_LOGI(TAG, "Registering tempo commands");
   
@@ -344,6 +426,45 @@ esp_err_t tempo_console_init(void) {
     .argtable = &deadzone_args
   };
   esp_console_cmd_register(&deadzone_cmd);
+  
+  // clock_output command
+  clock_output_args.output = arg_str1(NULL, NULL, "<none|usb|uart|both>", "Output interface");
+  clock_output_args.end = arg_end(2);
+  
+  const esp_console_cmd_t clock_output_cmd = {
+    .command = "clock_output",
+    .help = "Set clock output interface",
+    .hint = NULL,
+    .func = &cmd_clock_output,
+    .argtable = &clock_output_args
+  };
+  esp_console_cmd_register(&clock_output_cmd);
+  
+  // clock_always command
+  clock_always_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  clock_always_args.end = arg_end(2);
+  
+  const esp_console_cmd_t clock_always_cmd = {
+    .command = "clock_always",
+    .help = "Send clock even when transport stopped",
+    .hint = NULL,
+    .func = &cmd_clock_always,
+    .argtable = &clock_always_args
+  };
+  esp_console_cmd_register(&clock_always_cmd);
+  
+  // clock_no_passthrough command
+  clock_no_pt_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  clock_no_pt_args.end = arg_end(2);
+  
+  const esp_console_cmd_t clock_no_pt_cmd = {
+    .command = "clock_no_passthrough",
+    .help = "Disable clock output when passthrough active",
+    .hint = NULL,
+    .func = &cmd_clock_no_passthrough,
+    .argtable = &clock_no_pt_args
+  };
+  esp_console_cmd_register(&clock_no_pt_cmd);
   
   return ESP_OK;
 }

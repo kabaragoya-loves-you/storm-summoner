@@ -3,6 +3,8 @@
 #include "led.h"
 #include "event_bus.h"
 #include "midi_messages.h"
+#include "midi_out.h"
+#include "midi_passthrough.h"
 #include "app_settings.h"
 #include "task_priorities.h"
 #include "freertos/FreeRTOS.h"
@@ -22,6 +24,9 @@
 #define NVS_KEY_CLOCK_STD "tempo_clk_std"
 #define NVS_KEY_CLOCK_SRC "tempo_clk_src"
 #define NVS_KEY_BPM_DEADZONE "tempo_deadzone"
+#define NVS_KEY_CLOCK_OUTPUT "tempo_clk_out"
+#define NVS_KEY_CLOCK_ALWAYS "tempo_clk_always"
+#define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
 
 // Constants
 #define MIN_BPM 30
@@ -40,6 +45,9 @@ static uint8_t s_led_flash_ratio = 3;  // Flash duration as % of beat (1-10, def
 static tempo_note_divider_t s_note_divider = DIVIDER_QUARTER;
 static bool s_sync_processing_enabled = false;  // Scene-controlled sync override
 static uint8_t s_bpm_deadzone = 0;  // BPM change deadzone (0 = no deadzone, 1-5 = ignore ±N BPM changes)
+static clock_output_t s_clock_output = CLOCK_OUTPUT_BOTH;  // Where to send clock (USB, UART, BOTH, NONE)
+static bool s_clock_always_send = true;  // Send clock even when transport stopped
+static bool s_disable_clock_on_passthrough = true;  // Auto-disable clock when passthrough active
 
 // Task and timing
 static TaskHandle_t s_tempo_task_handle = NULL;
@@ -63,6 +71,7 @@ static void tempo_task(void *pvParameters);
 static void transport_state_handler(const event_t* event, void* context);
 static void publish_beat_event(void);
 static void publish_tempo_changed_event(void);
+static void update_midi_out_clock_settings(void);
 
 void tempo_init(void) {
   ESP_LOGI(TAG, "Initializing tempo component");
@@ -129,6 +138,31 @@ void tempo_init(void) {
     app_settings_save_u8(NVS_KEY_BPM_DEADZONE, s_bpm_deadzone);
   }
   
+  // Load clock output settings
+  uint8_t clk_out = CLOCK_OUTPUT_BOTH;
+  if (app_settings_load_u8(NVS_KEY_CLOCK_OUTPUT, &clk_out) == ESP_OK) {
+    s_clock_output = (clock_output_t)clk_out;
+  } else {
+    app_settings_save_u8(NVS_KEY_CLOCK_OUTPUT, (uint8_t)s_clock_output);
+  }
+  
+  uint8_t always_send = 1;
+  if (app_settings_load_u8(NVS_KEY_CLOCK_ALWAYS, &always_send) == ESP_OK) {
+    s_clock_always_send = (always_send != 0);
+  } else {
+    app_settings_save_u8(NVS_KEY_CLOCK_ALWAYS, s_clock_always_send ? 1 : 0);
+  }
+  
+  uint8_t no_pt = 1;
+  if (app_settings_load_u8(NVS_KEY_CLOCK_NO_PT, &no_pt) == ESP_OK) {
+    s_disable_clock_on_passthrough = (no_pt != 0);
+  } else {
+    app_settings_save_u8(NVS_KEY_CLOCK_NO_PT, s_disable_clock_on_passthrough ? 1 : 0);
+  }
+  
+  // Note: update_midi_out_clock_settings() will be called when tempo_start() is called
+  // Can't call it here because midi_out_init() hasn't run yet
+  
   // Subscribe to transport state changes
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   
@@ -139,6 +173,26 @@ void tempo_init(void) {
     s_led_sync_enabled ? "ON" : "OFF", std_names[s_clock_standard]);
 }
 
+// Helper to update MIDI out tempo settings based on our clock output config
+static void update_midi_out_clock_settings(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  clock_output_t output = s_clock_output;
+  bool disable_on_passthrough = s_disable_clock_on_passthrough;
+  xSemaphoreGive(s_state_mutex);
+  
+  // Check if we should disable due to passthrough
+  if (disable_on_passthrough && (midi_passthrough_usb_to_uart_is_enabled() || midi_passthrough_uart_to_usb_is_enabled())) {
+    output = CLOCK_OUTPUT_NONE;
+  }
+  
+  // Configure MIDI out interfaces based on clock_output setting
+  bool usb_enabled = (output == CLOCK_OUTPUT_USB || output == CLOCK_OUTPUT_BOTH);
+  bool uart_enabled = (output == CLOCK_OUTPUT_UART || output == CLOCK_OUTPUT_BOTH);
+  
+  midi_out_set_tempo_enabled(MIDI_OUT_INTERFACE_USB, usb_enabled);
+  midi_out_set_tempo_enabled(MIDI_OUT_INTERFACE_UART, uart_enabled);
+}
+
 static void tempo_task(void *pvParameters) {
   ESP_LOGD(TAG, "Tempo task running");
   
@@ -146,8 +200,10 @@ static void tempo_task(void *pvParameters) {
   uint8_t last_bpm = s_bpm;
   
   while (1) {
-    // Check if we should be running
-    if (!transport_is_playing()) {
+    // Check if we should be running based on clock_always_send setting
+    bool should_run = s_clock_always_send || transport_is_playing();
+    
+    if (!should_run) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
@@ -329,6 +385,9 @@ static void publish_tempo_changed_event(void) {
 // Public API functions
 void tempo_start(void) {
   if (s_tempo_task_handle == NULL) {
+    // Update MIDI out settings before starting task
+    update_midi_out_clock_settings();
+    
     BaseType_t ret = xTaskCreate(tempo_task, "tempo", 3072, NULL, TASK_PRIORITY_MIDI_TEMPO, &s_tempo_task_handle);
     if (ret != pdPASS) {
       ESP_LOGE(TAG, "Failed to create tempo task");
@@ -661,4 +720,60 @@ uint8_t tempo_get_bpm_deadzone(void) {
   uint8_t deadzone = s_bpm_deadzone;
   xSemaphoreGive(s_state_mutex);
   return deadzone;
+}
+
+void tempo_set_clock_output(clock_output_t output) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_clock_output = output;
+  xSemaphoreGive(s_state_mutex);
+  
+  app_settings_save_u8(NVS_KEY_CLOCK_OUTPUT, (uint8_t)output);
+  
+  const char* output_names[] = {"None", "USB", "UART", "Both"};
+  ESP_LOGI(TAG, "Clock output set to: %s", output_names[output]);
+  
+  // Update MIDI out settings immediately
+  update_midi_out_clock_settings();
+}
+
+clock_output_t tempo_get_clock_output(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  clock_output_t output = s_clock_output;
+  xSemaphoreGive(s_state_mutex);
+  return output;
+}
+
+void tempo_set_clock_always_send(bool always_send) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_clock_always_send = always_send;
+  xSemaphoreGive(s_state_mutex);
+  
+  app_settings_save_u8(NVS_KEY_CLOCK_ALWAYS, always_send ? 1 : 0);
+  ESP_LOGI(TAG, "Clock always send: %s", always_send ? "enabled" : "disabled");
+}
+
+bool tempo_get_clock_always_send(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool always_send = s_clock_always_send;
+  xSemaphoreGive(s_state_mutex);
+  return always_send;
+}
+
+void tempo_set_disable_clock_on_passthrough(bool disable) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_disable_clock_on_passthrough = disable;
+  xSemaphoreGive(s_state_mutex);
+  
+  app_settings_save_u8(NVS_KEY_CLOCK_NO_PT, disable ? 1 : 0);
+  ESP_LOGI(TAG, "Disable clock on passthrough: %s", disable ? "enabled" : "disabled");
+  
+  // Update MIDI out settings immediately
+  update_midi_out_clock_settings();
+}
+
+bool tempo_get_disable_clock_on_passthrough(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool disable = s_disable_clock_on_passthrough;
+  xSemaphoreGive(s_state_mutex);
+  return disable;
 }
