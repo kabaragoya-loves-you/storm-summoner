@@ -27,6 +27,7 @@ static int cmd_info(int argc, char **argv) {
     case CLOCK_SYNC_1PPQ: mode_str = "1PPQ"; break;
     case CLOCK_SYNC_2PPQ: mode_str = "2PPQ"; break;
     case CLOCK_SYNC_4PPQ: mode_str = "4PPQ"; break;
+    case CLOCK_SYNC_HALF_BEAT: mode_str = "Half-Beat"; break;
     default: mode_str = "Unknown"; break;
   }
   
@@ -91,8 +92,10 @@ static int cmd_mode(int argc, char **argv) {
     mode = CLOCK_SYNC_2PPQ;
   } else if (strcmp(mode_str, "4ppq") == 0) {
     mode = CLOCK_SYNC_4PPQ;
+  } else if (strcmp(mode_str, "half") == 0 || strcmp(mode_str, "halfbeat") == 0) {
+    mode = CLOCK_SYNC_HALF_BEAT;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: 24ppqn, 48ppqn, 96ppqn, 1ppq, 2ppq, or 4ppq");
+    ESP_LOGE(TAG, "Unknown mode. Use: 24ppqn, 48ppqn, 96ppqn, 1ppq, 2ppq, 4ppq, or half");
     return 1;
   }
   
@@ -133,12 +136,12 @@ esp_err_t clock_sync_console_init(void) {
   esp_console_cmd_register(&disable_cmd);
   
   // mode command
-  mode_args.sync_mode = arg_str1(NULL, NULL, "<24ppqn|48ppqn|96ppqn|1ppq|2ppq|4ppq>", "Sync mode");
+  mode_args.sync_mode = arg_str1(NULL, NULL, "<24ppqn|48ppqn|96ppqn|1ppq|2ppq|4ppq|half>", "Sync mode");
   mode_args.end = arg_end(2);
   
   const esp_console_cmd_t mode_cmd = {
     .command = "mode",
-    .help = "Set clock sync mode",
+    .help = "Set clock sync mode (half = 2 steps/beat like SQ-1)",
     .hint = NULL,
     .func = &cmd_mode,
     .argtable = &mode_args

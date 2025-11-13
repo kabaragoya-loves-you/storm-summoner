@@ -12,7 +12,8 @@ typedef enum {
   CLOCK_SYNC_96PPQN,      // 96 pulses per quarter note
   CLOCK_SYNC_1PPQ,        // 1 pulse per quarter note
   CLOCK_SYNC_2PPQ,        // 2 pulses per quarter note (eighth notes)
-  CLOCK_SYNC_4PPQ         // 4 pulses per quarter note (sixteenth notes)
+  CLOCK_SYNC_4PPQ,        // 4 pulses per quarter note (sixteenth notes)
+  CLOCK_SYNC_HALF_BEAT    // 1 pulse per half beat (SQ-1 style: doubles BPM)
 } clock_sync_mode_t;
 
 // Voltage range modes (maps to PCA9536 channels)

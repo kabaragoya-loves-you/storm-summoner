@@ -2,6 +2,7 @@
 #include "switch.h"
 #include "event_bus.h"
 #include "app_settings.h"
+#include "tempo.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -22,7 +23,7 @@
 #define MIN_BPM 30
 #define MAX_BPM 250
 #define PULSE_BUFFER_SIZE 8        // Average over last 8 pulse intervals
-#define DEBOUNCE_TIME_MS 1         // 1ms debounce for edge detection
+#define DEBOUNCE_TIME_MS 50        // 50ms debounce for edge detection (rejects glitches)
 
 // State
 static clock_sync_mode_t s_mode = CLOCK_SYNC_24PPQN;
@@ -36,6 +37,7 @@ static uint32_t s_last_pulse_time = 0;
 static uint32_t s_pulse_intervals[PULSE_BUFFER_SIZE] = {0};
 static uint8_t s_pulse_index = 0;
 static uint8_t s_pulse_count = 0;
+static uint32_t s_pulse_counter = 0;  // Count pulses for PPQN divider
 
 // ISR queue for edge detection
 static QueueHandle_t s_gpio_evt_queue = NULL;
@@ -129,7 +131,45 @@ static void clock_sync_task(void *pvParameters) {
       // Debounce - ignore pulses too close together
       if (last_pulse_time > 0 && (pulse_time - last_pulse_time) < DEBOUNCE_TIME_MS) continue;
       
-      // Post sync pulse event
+      s_pulse_counter++;
+      
+      // Handle different clock modes
+      if (s_mode == CLOCK_SYNC_HALF_BEAT) {
+        // Special mode: 1 pulse = half beat, so send 2 tempo pulses per received pulse
+        // Calculate half the interval for spacing
+        uint32_t half_interval = 0;
+        if (s_last_pulse_time > 0 && pulse_time > s_last_pulse_time) {
+          half_interval = (pulse_time - s_last_pulse_time) / 2;
+        }
+        
+        // Send first pulse immediately
+        tempo_sync_pulse();
+        
+        // Send second pulse after half the interval (if we have timing data)
+        if (half_interval > 0 && half_interval < 2000) {
+          vTaskDelay(pdMS_TO_TICKS(half_interval));
+          tempo_sync_pulse();
+        }
+      } else {
+        // Standard PPQN modes: divide incoming pulses
+        uint32_t ppqn = 1;
+        switch (s_mode) {
+          case CLOCK_SYNC_24PPQN: ppqn = 24; break;
+          case CLOCK_SYNC_48PPQN: ppqn = 48; break;
+          case CLOCK_SYNC_96PPQN: ppqn = 96; break;
+          case CLOCK_SYNC_1PPQ: ppqn = 1; break;
+          case CLOCK_SYNC_2PPQ: ppqn = 2; break;
+          case CLOCK_SYNC_4PPQ: ppqn = 4; break;
+          default: ppqn = 1; break;
+        }
+        
+        // Only notify tempo on quarter note boundaries
+        if (s_pulse_counter % ppqn == 0) {
+          tempo_sync_pulse();
+        }
+      }
+      
+      // Post sync pulse event for other components (every pulse)
       event_t sync_event = {
         .type = EVENT_CLOCK_SYNC_PULSE,
         .priority = EVENT_PRIORITY_HIGH,
@@ -221,6 +261,7 @@ static uint8_t calculate_bpm_from_interval(uint32_t interval_ms, clock_sync_mode
 void clock_sync_set_mode(clock_sync_mode_t mode) {
   s_mode = mode;
   s_pulse_count = 0; // Reset averaging on mode change
+  s_pulse_counter = 0; // Reset PPQN counter
   app_settings_save_u8(NVS_KEY_SYNC_MODE, (uint8_t)mode);
   ESP_LOGI(TAG, "Clock sync mode set to %d", mode);
 }

@@ -6,6 +6,7 @@
 #include "event_bus.h"
 #include "action.h"
 #include "tempo.h"
+#include "input_manager.h"
 #include "cJSON.h"
 #include <string.h>
 #include <stdio.h>
@@ -266,6 +267,10 @@ esp_err_t scene_init(void) {
     // Note: device_config_set_program already sent it, so we'd need to track this better
     // For now, PC is always sent on boot
   }
+  
+  // Configure clock source for initial scene
+  tempo_set_source(initial_scene->clock_source);
+  ESP_LOGD(TAG, "Set initial tempo clock source to %d", initial_scene->clock_source);
   
   // Execute on_load actions
   if (initial_scene->on_load.num_actions > 0) {
@@ -890,10 +895,22 @@ esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t sourc
   // If setting to SYNC, automatically set cv_input_mode to CLOCK_SYNC for coherence
   if (source == CLOCK_SOURCE_SYNC) {
     scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
+    
+    // Switch to clock sync mode if this is the current scene
+    if (scene_index == g_scene_manager.current_scene_index) {
+      input_set_mode(INPUT_MODE_CLOCK_SYNC);
+      ESP_LOGI(TAG, "Switched to clock sync input mode");
+    }
   }
   
   // Update tempo component immediately if this is the current scene
-  tempo_set_source(source);
+  if (scene_index == g_scene_manager.current_scene_index) {
+    ESP_LOGI(TAG, "Updating tempo to clock source %d (current scene)", source);
+    tempo_set_source(source);
+  } else {
+    ESP_LOGI(TAG, "Not updating tempo (scene %u is not current scene %u)", 
+             (unsigned)scene_index, (unsigned)g_scene_manager.current_scene_index);
+  }
   
   const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
                            (source == CLOCK_SOURCE_MIDI) ? "MIDI" : "Sync";

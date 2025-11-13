@@ -257,14 +257,20 @@ static void tempo_task(void *pvParameters) {
       vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
     }
     else if (source == CLOCK_SOURCE_SYNC) {
-      // Wait for sync pulse
-      if (xSemaphoreTake(s_sync_semaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      // In SYNC mode, we track incoming pulses (in tempo_sync_pulse)
+      // but still send outgoing clocks based on the tracked BPM (like MIDI mode)
+      
+      // Check for sync pulse (non-blocking) to update BPM
+      if (xSemaphoreTake(s_sync_semaphore, 0) == pdTRUE) {
         // Calculate BPM from sync interval
         uint32_t now = esp_timer_get_time() / 1000;
+        
         if (s_last_sync_tick_ms > 0) {
           uint32_t interval_ms = now - s_last_sync_tick_ms;
+          
           if (interval_ms > 0) {
             uint16_t new_bpm = (uint16_t)(60000 / interval_ms);
+            
             if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM && new_bpm != s_bpm) {
               xSemaphoreTake(s_state_mutex, portMAX_DELAY);
               s_bpm = new_bpm;
@@ -274,17 +280,46 @@ static void tempo_task(void *pvParameters) {
           }
         }
         s_last_sync_tick_ms = now;
-        
-        // Generate clocks for this beat
-        for (int i = 0; i < MIDI_CLOCKS_PER_QUARTER; i++) {
-          send_clock();
-          vTaskDelay(pdMS_TO_TICKS(1)); // Small delay between clocks
-        }
-        
+      }
+      
+      // Send clocks continuously based on current BPM (same as MIDI mode)
+      uint32_t ppqn;
+      switch (standard) {
+        case CLOCK_STANDARD_24PPQN:
+          ppqn = 24;
+          break;
+        case CLOCK_STANDARD_16TH_NOTE:
+          ppqn = 6;
+          break;
+        case CLOCK_STANDARD_BEAT:
+          ppqn = 1;
+          break;
+        default:
+          ppqn = 24;
+          break;
+      }
+      
+      uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
+      if (tick_interval_ms < 10) tick_interval_ms = 10;
+      
+      send_clock();
+      
+      s_tick_counter++;
+      
+      uint32_t beat_divisor = s_note_divider;
+      if (standard == CLOCK_STANDARD_16TH_NOTE) {
+        beat_divisor /= 4;
+      } else if (standard == CLOCK_STANDARD_BEAT) {
+        beat_divisor = 1;
+      }
+      
+      if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
         s_beat_counter++;
         if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
         publish_beat_event();
       }
+      
+      vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
     }
     else { // CLOCK_SOURCE_MIDI
       // In MIDI clock mode, we track incoming clocks (in tempo_midi_clock_tick)
@@ -414,7 +449,7 @@ static void publish_tempo_changed_event(void) {
   };
   event_bus_post(&tempo_event);
   
-  ESP_LOGI(TAG, "Tempo changed to %d BPM", s_bpm);
+  ESP_LOGI(TAG, "BPM: %d", s_bpm);
 }
 
 // Public API functions
@@ -475,7 +510,7 @@ void tempo_set_source(tempo_clock_source_t source) {
   // Note: No NVS save - clock source is now a per-scene setting
   const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
                            (source == CLOCK_SOURCE_MIDI) ? "MIDI" : "Sync";
-  ESP_LOGD(TAG, "Clock source set to %s", source_str);
+  ESP_LOGI(TAG, "Clock source set to %s", source_str);
 }
 
 tempo_clock_source_t tempo_get_source(void) {
