@@ -146,6 +146,9 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // Tempo configuration
   scene->clock_source = CLOCK_SOURCE_INTERNAL;         // Default to internal clock
+  scene->clock_standard = CLOCK_STANDARD_24PPQN;       // Default to MIDI standard
+  scene->time_signature.numerator = 4;                 // Default to 4/4 time
+  scene->time_signature.denominator = 4;
 }
 
 esp_err_t scene_init(void) {
@@ -268,9 +271,13 @@ esp_err_t scene_init(void) {
     // For now, PC is always sent on boot
   }
   
-  // Configure clock source for initial scene
+  // Configure tempo settings for initial scene
   tempo_set_source(initial_scene->clock_source);
-  ESP_LOGD(TAG, "Set initial tempo clock source to %d", initial_scene->clock_source);
+  tempo_set_clock_standard(initial_scene->clock_standard);
+  tempo_set_time_signature(initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
+  ESP_LOGD(TAG, "Set initial tempo: source=%d, standard=%d, time_sig=%d/%d", 
+           initial_scene->clock_source, initial_scene->clock_standard,
+           initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
   
   // Execute on_load actions
   if (initial_scene->on_load.num_actions > 0) {
@@ -384,9 +391,13 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Configure expression jack mode for this scene
   expression_set_mode(new_scene->expression_mode);
   
-  // Configure clock source for this scene
+  // Configure tempo settings for this scene
   tempo_set_source(new_scene->clock_source);
-  ESP_LOGD(TAG, "Set tempo clock source to %d", new_scene->clock_source);
+  tempo_set_clock_standard(new_scene->clock_standard);
+  tempo_set_time_signature(new_scene->time_signature.numerator, new_scene->time_signature.denominator);
+  ESP_LOGD(TAG, "Set tempo: source=%d, standard=%d, time_sig=%d/%d", 
+           new_scene->clock_source, new_scene->clock_standard,
+           new_scene->time_signature.numerator, new_scene->time_signature.denominator);
   
   // Execute on_load actions
   if (new_scene->on_load.num_actions > 0) {
@@ -924,6 +935,59 @@ tempo_clock_source_t scene_get_clock_source(uint8_t scene_index) {
   return scene ? scene->clock_source : CLOCK_SOURCE_INTERNAL;
 }
 
+esp_err_t scene_set_clock_standard(uint8_t scene_index, tempo_clock_standard_t standard) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->clock_standard = standard;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  // Update tempo component immediately if this is the current scene
+  if (scene_index == g_scene_manager.current_scene_index) {
+    tempo_set_clock_standard(standard);
+  }
+  
+  const char* std_str = (standard == CLOCK_STANDARD_24PPQN) ? "24PPQN" :
+                        (standard == CLOCK_STANDARD_16TH_NOTE) ? "16th Note" : "Beat";
+  ESP_LOGI(TAG, "Scene %d clock standard set to %s", scene_index + 1, std_str);
+  
+  return ESP_OK;
+}
+
+tempo_clock_standard_t scene_get_clock_standard(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->clock_standard : CLOCK_STANDARD_24PPQN;
+}
+
+esp_err_t scene_set_time_signature(uint8_t scene_index, uint8_t numerator, uint8_t denominator) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (numerator == 0 || numerator > 16 || denominator == 0 || denominator > 16) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->time_signature.numerator = numerator;
+  scene->time_signature.denominator = denominator;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  // Update tempo component immediately if this is the current scene
+  if (scene_index == g_scene_manager.current_scene_index) {
+    tempo_set_time_signature(numerator, denominator);
+  }
+  
+  ESP_LOGI(TAG, "Scene %d time signature set to %d/%d", scene_index + 1, numerator, denominator);
+  
+  return ESP_OK;
+}
+
+time_signature_t scene_get_time_signature(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  time_signature_t default_sig = {4, 4};
+  return scene ? scene->time_signature : default_sig;
+}
+
 // Helper to get scene filename
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size) {
   snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
@@ -1182,9 +1246,19 @@ static cJSON* scene_to_json(const scene_t* scene) {
                             (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
   
+  // Serialize tempo settings
   const char* clock_src_str = (scene->clock_source == CLOCK_SOURCE_INTERNAL) ? "internal" :
                               (scene->clock_source == CLOCK_SOURCE_MIDI) ? "midi" : "sync";
   cJSON_AddStringToObject(root, "clock_source", clock_src_str);
+  
+  const char* clock_std_str = (scene->clock_standard == CLOCK_STANDARD_24PPQN) ? "24ppqn" :
+                              (scene->clock_standard == CLOCK_STANDARD_16TH_NOTE) ? "16th_note" : "beat";
+  cJSON_AddStringToObject(root, "clock_standard", clock_std_str);
+  
+  cJSON* time_sig = cJSON_CreateObject();
+  cJSON_AddNumberToObject(time_sig, "numerator", scene->time_signature.numerator);
+  cJSON_AddNumberToObject(time_sig, "denominator", scene->time_signature.denominator);
+  cJSON_AddItemToObject(root, "time_signature", time_sig);
   
   return root;
 }
@@ -1271,13 +1345,29 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else scene->cv_input_mode = INPUT_MODE_CV;
   }
   
-  // Deserialize clock source
+  // Deserialize tempo settings
   cJSON* clock_src = cJSON_GetObjectItem(root, "clock_source");
   if (clock_src && cJSON_IsString(clock_src)) {
     const char* src_str = clock_src->valuestring;
     if (strcmp(src_str, "midi") == 0) scene->clock_source = CLOCK_SOURCE_MIDI;
     else if (strcmp(src_str, "sync") == 0) scene->clock_source = CLOCK_SOURCE_SYNC;
     else scene->clock_source = CLOCK_SOURCE_INTERNAL;
+  }
+  
+  cJSON* clock_std = cJSON_GetObjectItem(root, "clock_standard");
+  if (clock_std && cJSON_IsString(clock_std)) {
+    const char* std_str = clock_std->valuestring;
+    if (strcmp(std_str, "16th_note") == 0) scene->clock_standard = CLOCK_STANDARD_16TH_NOTE;
+    else if (strcmp(std_str, "beat") == 0) scene->clock_standard = CLOCK_STANDARD_BEAT;
+    else scene->clock_standard = CLOCK_STANDARD_24PPQN;
+  }
+  
+  cJSON* time_sig = cJSON_GetObjectItem(root, "time_signature");
+  if (time_sig && cJSON_IsObject(time_sig)) {
+    cJSON* numerator = cJSON_GetObjectItem(time_sig, "numerator");
+    cJSON* denominator = cJSON_GetObjectItem(time_sig, "denominator");
+    if (numerator) scene->time_signature.numerator = numerator->valueint;
+    if (denominator) scene->time_signature.denominator = denominator->valueint;
   }
 
   return ESP_OK;

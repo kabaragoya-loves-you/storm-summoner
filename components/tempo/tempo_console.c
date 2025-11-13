@@ -17,16 +17,11 @@ static const int num_registered_commands = sizeof(registered_commands) / sizeof(
 static int cmd_info(int argc, char **argv) {
   uint16_t bpm = tempo_get_bpm();
   tempo_note_divider_t divider = tempo_get_note_divider();
-  time_signature_t sig = tempo_get_time_signature();
-  tempo_clock_standard_t std = tempo_get_clock_standard();
   tempo_clock_source_t source = tempo_get_source();
   bool led_sync = tempo_get_led_sync();
   
   const char* div_str = (divider == DIVIDER_QUARTER) ? "Quarter" :
                         (divider == DIVIDER_EIGHTH) ? "Eighth" : "Sixteenth";
-  
-  const char* std_str = (std == CLOCK_STANDARD_24PPQN) ? "24PPQN" :
-                        (std == CLOCK_STANDARD_16TH_NOTE) ? "16th Note" : "Beat";
   
   const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
                            (source == CLOCK_SOURCE_MIDI) ? "MIDI" : "Sync";
@@ -46,8 +41,6 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
   ESP_LOGI(TAG, "BPM deadzone: %u (0=off, 1-5=ignore ±N BPM)", (unsigned)deadzone);
   ESP_LOGI(TAG, "Divider: %s", div_str);
-  ESP_LOGI(TAG, "Time signature: %u/%u", (unsigned)sig.numerator, (unsigned)sig.denominator);
-  ESP_LOGI(TAG, "Clock standard: %s", std_str);
   ESP_LOGI(TAG, "LED sync: %s", led_sync ? "enabled" : "disabled");
   if (led_sync) {
     bool emphasize = tempo_get_led_emphasize_downbeat();
@@ -56,7 +49,7 @@ static int cmd_info(int argc, char **argv) {
     ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
   }
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Note: Use 'clock_source' command in scene context to change source");
+  ESP_LOGI(TAG, "Note: Clock source, standard, and time signature set by scene context");
   ESP_LOGI(TAG, "===================");
   
   return 0;
@@ -203,48 +196,6 @@ static int cmd_deadzone(int argc, char **argv) {
     ESP_LOGI(TAG, "BPM deadzone: %d (ignores ±%d BPM changes)", dz, dz);
   }
   
-  return 0;
-}
-
-// Command: test_sync - Inject test sync pulses
-static struct {
-  struct arg_int *count;
-  struct arg_int *bpm;
-  struct arg_end *end;
-} test_sync_args;
-
-static int cmd_test_sync(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **)&test_sync_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, test_sync_args.end, argv[0]);
-    return 1;
-  }
-  
-  int count = test_sync_args.count->ival[0];
-  int bpm = test_sync_args.bpm->ival[0];
-  
-  if (count < 1 || count > 100) {
-    ESP_LOGE(TAG, "Count must be 1-100");
-    return 1;
-  }
-  
-  if (bpm < 20 || bpm > 300) {
-    ESP_LOGE(TAG, "BPM must be 20-300");
-    return 1;
-  }
-  
-  uint32_t interval_ms = 60000 / bpm;
-  ESP_LOGI(TAG, "Injecting %d sync pulses at %d BPM (interval: %lu ms)", 
-           count, bpm, (unsigned long)interval_ms);
-  
-  for (int i = 0; i < count; i++) {
-    tempo_sync_pulse();
-    if (i < count - 1) {
-      vTaskDelay(pdMS_TO_TICKS(interval_ms));
-    }
-  }
-  
-  ESP_LOGI(TAG, "Test sync complete");
   return 0;
 }
 
@@ -463,20 +414,6 @@ esp_err_t tempo_console_init(void) {
     .argtable = &clock_no_pt_args
   };
   esp_console_cmd_register(&clock_no_pt_cmd);
-  
-  // test_sync command
-  test_sync_args.count = arg_int1(NULL, NULL, "<count>", "Number of pulses");
-  test_sync_args.bpm = arg_int1(NULL, NULL, "<bpm>", "Target BPM");
-  test_sync_args.end = arg_end(3);
-  
-  const esp_console_cmd_t test_sync_cmd = {
-    .command = "test_sync",
-    .help = "Inject test sync pulses (count bpm)",
-    .hint = NULL,
-    .func = &cmd_test_sync,
-    .argtable = &test_sync_args
-  };
-  esp_console_cmd_register(&test_sync_cmd);
   
   return ESP_OK;
 }

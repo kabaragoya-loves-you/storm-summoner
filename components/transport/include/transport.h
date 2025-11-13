@@ -54,4 +54,11 @@ esp_err_t transport_pause(void);
 esp_err_t transport_record(void);
 esp_err_t transport_toggle(void);  // Toggle between play and stop
 
+/**
+ * Transport position tracking
+ */
+uint32_t transport_get_current_bar(void);    // Get current bar number (1-based)
+uint8_t transport_get_current_beat(void);    // Get current beat in bar (1-based)
+void transport_reset_position(void);         // Reset to bar 1, beat 1
+
 #endif /* _TRANSPORT_H */

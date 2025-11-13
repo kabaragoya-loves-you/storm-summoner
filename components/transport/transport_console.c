@@ -15,6 +15,8 @@ static int cmd_info(int argc, char **argv) {
   transport_state_t state = transport_get_state();
   bool playing = transport_is_playing();
   bool recording = transport_is_recording();
+  uint32_t bar = transport_get_current_bar();
+  uint8_t beat = transport_get_current_beat();
   
   const char* state_str;
   switch (state) {
@@ -29,6 +31,7 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "State: %s", state_str);
   ESP_LOGI(TAG, "Playing: %s", playing ? "yes" : "no");
   ESP_LOGI(TAG, "Recording: %s", recording ? "yes" : "no");
+  ESP_LOGI(TAG, "Position: Bar %lu, Beat %u", (unsigned long)bar, (unsigned)beat);
   ESP_LOGI(TAG, "=======================");
   
   return 0;

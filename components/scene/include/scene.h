@@ -90,8 +90,10 @@ typedef struct {
   // CV input configuration
   input_mode_t cv_input_mode;        // CV, CLOCK_SYNC, AUDIO, or NOTE
   
-  // Tempo configuration (per-scene clock source)
-  tempo_clock_source_t clock_source; // INTERNAL, MIDI, SYNC
+  // Tempo configuration (per-scene)
+  tempo_clock_source_t clock_source;     // INTERNAL, MIDI, SYNC
+  tempo_clock_standard_t clock_standard; // 24PPQN, 16TH_NOTE, BEAT
+  time_signature_t time_signature;       // Beats per bar and beat unit
   
   // Future: envelope follower, LFO slots
 } scene_t;
@@ -194,9 +196,13 @@ action_chain_t* scene_get_sostenuto(uint8_t scene_index);
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode);
 input_mode_t scene_get_cv_input_mode(uint8_t scene_index);
 
-// Clock source (per-scene tempo control)
+// Tempo configuration (per-scene)
 esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source);
 tempo_clock_source_t scene_get_clock_source(uint8_t scene_index);
+esp_err_t scene_set_clock_standard(uint8_t scene_index, tempo_clock_standard_t standard);
+tempo_clock_standard_t scene_get_clock_standard(uint8_t scene_index);
+esp_err_t scene_set_time_signature(uint8_t scene_index, uint8_t numerator, uint8_t denominator);
+time_signature_t scene_get_time_signature(uint8_t scene_index);
 
 // Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);

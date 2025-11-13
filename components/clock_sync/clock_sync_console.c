@@ -1,14 +1,17 @@
 #include "clock_sync_console.h"
 #include "clock_sync.h"
+#include "tempo.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 static const char* TAG = "clock_sync_console";
 
 static const char* registered_commands[] = {
-  "info", "enable", "disable", "mode"
+  "info", "enable", "disable", "mode", "test_sync"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -105,6 +108,48 @@ static int cmd_mode(int argc, char **argv) {
   return 0;
 }
 
+// Command: test_sync - Inject test sync pulses for debugging
+static struct {
+  struct arg_int *count;
+  struct arg_int *bpm;
+  struct arg_end *end;
+} test_sync_args;
+
+static int cmd_test_sync(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **)&test_sync_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, test_sync_args.end, argv[0]);
+    return 1;
+  }
+  
+  int count = test_sync_args.count->ival[0];
+  int bpm = test_sync_args.bpm->ival[0];
+  
+  if (count < 1 || count > 100) {
+    ESP_LOGE(TAG, "Count must be 1-100");
+    return 1;
+  }
+  
+  if (bpm < 20 || bpm > 300) {
+    ESP_LOGE(TAG, "BPM must be 20-300");
+    return 1;
+  }
+  
+  uint32_t interval_ms = 60000 / bpm;
+  ESP_LOGI(TAG, "Injecting %d sync pulses at %d BPM (interval: %lu ms)", 
+           count, bpm, (unsigned long)interval_ms);
+  
+  for (int i = 0; i < count; i++) {
+    tempo_sync_pulse();
+    if (i < count - 1) {
+      vTaskDelay(pdMS_TO_TICKS(interval_ms));
+    }
+  }
+  
+  ESP_LOGI(TAG, "Test sync complete");
+  return 0;
+}
+
 esp_err_t clock_sync_console_init(void) {
   ESP_LOGI(TAG, "Registering clock_sync commands");
   
@@ -147,6 +192,20 @@ esp_err_t clock_sync_console_init(void) {
     .argtable = &mode_args
   };
   esp_console_cmd_register(&mode_cmd);
+  
+  // test_sync command
+  test_sync_args.count = arg_int1(NULL, NULL, "<count>", "Number of pulses");
+  test_sync_args.bpm = arg_int1(NULL, NULL, "<bpm>", "Target BPM");
+  test_sync_args.end = arg_end(3);
+  
+  const esp_console_cmd_t test_sync_cmd = {
+    .command = "test_sync",
+    .help = "Inject test sync pulses (count bpm)",
+    .hint = NULL,
+    .func = &cmd_test_sync,
+    .argtable = &test_sync_args
+  };
+  esp_console_cmd_register(&test_sync_cmd);
   
   return ESP_OK;
 }

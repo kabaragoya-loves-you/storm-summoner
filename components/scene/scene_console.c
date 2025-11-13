@@ -16,7 +16,8 @@ static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "save",
   "confirm", "cancel", "channel", "pad", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
-  "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", "clock_source",
+  "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
+  "clock_source", "clock_standard", "time_sig",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity"
 };
@@ -69,9 +70,15 @@ static void cmd_scene_info(void) {
   }
   
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Tempo clock source: %s",
+  ESP_LOGI(TAG, "Tempo settings:");
+  ESP_LOGI(TAG, "  Clock source: %s",
            scene->clock_source == CLOCK_SOURCE_INTERNAL ? "Internal" :
            scene->clock_source == CLOCK_SOURCE_MIDI ? "MIDI" : "Sync");
+  ESP_LOGI(TAG, "  Clock standard: %s",
+           scene->clock_standard == CLOCK_STANDARD_24PPQN ? "24PPQN" :
+           scene->clock_standard == CLOCK_STANDARD_16TH_NOTE ? "16th Note" : "Beat");
+  ESP_LOGI(TAG, "  Time signature: %d/%d",
+           scene->time_signature.numerator, scene->time_signature.denominator);
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Expression jack mode: %s", 
@@ -1001,6 +1008,75 @@ static int cmd_clock_source(int argc, char **argv) {
   return 0;
 }
 
+// Command: clock_standard - Set clock output standard
+static struct {
+  struct arg_str *standard;
+  struct arg_end *end;
+} clock_standard_args;
+
+static int cmd_clock_standard(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &clock_standard_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, clock_standard_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* std_str = clock_standard_args.standard->sval[0];
+  tempo_clock_standard_t standard;
+  
+  if (strcmp(std_str, "24ppqn") == 0) {
+    standard = CLOCK_STANDARD_24PPQN;
+  } else if (strcmp(std_str, "16th") == 0 || strcmp(std_str, "16th_note") == 0) {
+    standard = CLOCK_STANDARD_16TH_NOTE;
+  } else if (strcmp(std_str, "beat") == 0) {
+    standard = CLOCK_STANDARD_BEAT;
+  } else {
+    ESP_LOGE(TAG, "Unknown clock standard (use: 24ppqn, 16th_note, beat)");
+    return 1;
+  }
+  
+  scene_set_clock_standard(scene_get_current_index(), standard);
+  
+  const char* std_name = (standard == CLOCK_STANDARD_24PPQN) ? "24PPQN" :
+                         (standard == CLOCK_STANDARD_16TH_NOTE) ? "16th Note" : "Beat";
+  ESP_LOGI(TAG, "Clock standard: %s", std_name);
+  return 0;
+}
+
+// Command: time_sig - Set time signature
+static struct {
+  struct arg_int *numerator;
+  struct arg_int *denominator;
+  struct arg_end *end;
+} time_sig_args;
+
+static int cmd_time_sig(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &time_sig_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, time_sig_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int num = time_sig_args.numerator->ival[0];
+  int denom = time_sig_args.denominator->ival[0];
+  
+  if (num < 1 || num > 16 || denom < 1 || denom > 16) {
+    ESP_LOGE(TAG, "Time signature values must be 1-16");
+    return 1;
+  }
+  
+  scene_set_time_signature(scene_get_current_index(), num, denom);
+  
+  ESP_LOGI(TAG, "Time signature: %d/%d", num, denom);
+  return 0;
+}
+
 // Command: proximity_cc - Set proximity CC number
 static struct {
   struct arg_int *cc_num;
@@ -1863,6 +1939,33 @@ esp_err_t scene_console_init(void) {
     .argtable = &clock_source_args
   };
   esp_console_cmd_register(&clock_source_cmd);
+  
+  // clock_standard command
+  clock_standard_args.standard = arg_str1(NULL, NULL, "<standard>", "Clock standard");
+  clock_standard_args.end = arg_end(2);
+  
+  const esp_console_cmd_t clock_standard_cmd = {
+    .command = "clock_standard",
+    .help = "Set clock output standard (24ppqn/16th_note/beat)",
+    .hint = NULL,
+    .func = &cmd_clock_standard,
+    .argtable = &clock_standard_args
+  };
+  esp_console_cmd_register(&clock_standard_cmd);
+  
+  // time_sig command
+  time_sig_args.numerator = arg_int1(NULL, NULL, "<num>", "Numerator (1-16)");
+  time_sig_args.denominator = arg_int1(NULL, NULL, "<denom>", "Denominator (1-16)");
+  time_sig_args.end = arg_end(3);
+  
+  const esp_console_cmd_t time_sig_cmd = {
+    .command = "time_sig",
+    .help = "Set time signature (num denom)",
+    .hint = NULL,
+    .func = &cmd_time_sig,
+    .argtable = &time_sig_args
+  };
+  esp_console_cmd_register(&time_sig_cmd);
   
   // proximity_cc command
   proximity_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");

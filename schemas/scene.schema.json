@@ -92,6 +92,32 @@
       "enum": ["internal", "midi", "sync"],
       "default": "internal",
       "description": "Tempo clock source for this scene"
+    },
+    "clock_standard": {
+      "type": "string",
+      "enum": ["24ppqn", "16th_note", "beat"],
+      "default": "24ppqn",
+      "description": "Clock output standard for this scene"
+    },
+    "time_signature": {
+      "type": "object",
+      "description": "Time signature for this scene",
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 4,
+          "description": "Beats per bar"
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 4,
+          "description": "Beat unit (4 = quarter note)"
+        }
+      }
     }
   },
   "definitions": {

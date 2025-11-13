@@ -208,6 +208,11 @@
     }
   ],
   "cv_input_mode": "cv",
-  "clock_source": "internal"
+  "clock_source": "internal",
+  "clock_standard": "24ppqn",
+  "time_signature": {
+    "numerator": 4,
+    "denominator": 4
+  }
 }
 

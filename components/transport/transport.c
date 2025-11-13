@@ -2,6 +2,7 @@
 #include "event_bus.h"
 #include "midi_messages.h"
 #include "midi_passthrough.h"
+#include "tempo.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -12,8 +13,14 @@
 static transport_state_t s_state = TRANSPORT_STOPPED;
 static SemaphoreHandle_t s_state_mutex = NULL;
 
+// Position tracking (bar/beat)
+static uint32_t s_current_bar = 1;     // Current bar number (1-based)
+static uint8_t s_current_beat = 1;     // Current beat in bar (1-based)
+static SemaphoreHandle_t s_position_mutex = NULL;
+
 // Forward declarations
 static void transport_event_handler(const event_t* event, void* context);
+static void tempo_beat_handler(const event_t* event, void* context);
 
 esp_err_t transport_init(void) {
   ESP_LOGI(TAG, "Initializing transport component");
@@ -22,6 +29,13 @@ esp_err_t transport_init(void) {
   s_state_mutex = xSemaphoreCreateMutex();
   if (!s_state_mutex) {
     ESP_LOGE(TAG, "Failed to create state mutex");
+    return ESP_ERR_NO_MEM;
+  }
+  
+  // Create mutex for position tracking
+  s_position_mutex = xSemaphoreCreateMutex();
+  if (!s_position_mutex) {
+    ESP_LOGE(TAG, "Failed to create position mutex");
     return ESP_ERR_NO_MEM;
   }
   
@@ -56,6 +70,13 @@ esp_err_t transport_init(void) {
     return ret;
   }
   
+  // Subscribe to tempo beat events for position tracking
+  ret = event_bus_subscribe(EVENT_BEAT, tempo_beat_handler, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to BEAT event");
+    return ret;
+  }
+  
   ESP_LOGI(TAG, "Transport initialized");
   return ESP_OK;
 }
@@ -68,6 +89,15 @@ static void set_state(transport_state_t new_state, transport_source_t source) {
     s_state = new_state;
     
     ESP_LOGI(TAG, "State changed: %d -> %d (source: %d)", old_state, new_state, source);
+    
+    // Reset position when starting playback from stopped state
+    if (old_state == TRANSPORT_STOPPED && (new_state == TRANSPORT_PLAYING || new_state == TRANSPORT_RECORDING)) {
+      xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+      s_current_bar = 1;
+      s_current_beat = 1;
+      xSemaphoreGive(s_position_mutex);
+      ESP_LOGD(TAG, "Position reset to bar 1, beat 1");
+    }
     
     // Post state change event
     event_t state_event = {
@@ -277,4 +307,51 @@ esp_err_t transport_toggle(void) {
     ESP_LOGI(TAG, "Toggle: Playing");
     return transport_play();
   }
+}
+
+// Tempo beat event handler - advances position tracking
+static void tempo_beat_handler(const event_t* event, void* context) {
+  if (!event) return;
+  
+  // Only track position when playing or recording
+  if (!transport_is_playing()) return;
+  
+  // Get current time signature from tempo
+  time_signature_t sig = tempo_get_time_signature();
+  
+  xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+  
+  // Advance beat
+  s_current_beat++;
+  
+  // Check if we've completed a bar
+  if (s_current_beat > sig.numerator) {
+    s_current_beat = 1;
+    s_current_bar++;
+  }
+  
+  xSemaphoreGive(s_position_mutex);
+}
+
+// Position tracking getters
+uint32_t transport_get_current_bar(void) {
+  xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+  uint32_t bar = s_current_bar;
+  xSemaphoreGive(s_position_mutex);
+  return bar;
+}
+
+uint8_t transport_get_current_beat(void) {
+  xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+  uint8_t beat = s_current_beat;
+  xSemaphoreGive(s_position_mutex);
+  return beat;
+}
+
+void transport_reset_position(void) {
+  xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+  s_current_bar = 1;
+  s_current_beat = 1;
+  xSemaphoreGive(s_position_mutex);
+  ESP_LOGI(TAG, "Position reset to bar 1, beat 1");
 }
