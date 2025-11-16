@@ -94,9 +94,7 @@ static int16_t median_filter(int16_t new_value);
 static int16_t oversample_read(void);
 
 bool cv_is_cable_connected(void) {
-  static bool last_state = true;  // Remember last state for hysteresis
-  static uint8_t stable_count = 0;  // Count consecutive readings in new state
-  static const uint8_t DEBOUNCE_COUNT = 3;  // Require 3 consecutive readings (~60ms)
+  static bool last_state = true;  // Remember last state
   
   // Read switch voltage
   int sw_raw = 0;
@@ -113,45 +111,37 @@ bool cv_is_cable_connected(void) {
   int vcc_mv = (vcc_raw * 3100) / 4095;
   int delta = vcc_mv - sw_mv;
   
-  // Hysteresis based on delta (voltage drop from VCC to switch)
-  // Cable plugged in: delta is small (~0-50mV, switch near VCC)
-  // Cable unplugged: delta is large (~400-500mV, op-amp pulls switch down)
-  bool current_reading;
-  if (last_state) {
-    // Currently connected - need delta > 350mV to consider disconnected
-    current_reading = (delta < 350);
-  } else {
-    // Currently disconnected - need delta < 200mV to consider connected
-    current_reading = (delta < 200);
-  }
+  // Hardware-specific detection (production PCB vs dev board)
+#if HW_CONFIG_PRODUCTION
+  // Production PCB: Disconnected signature is ROCK SOLID
+  //   DISCONNECTED: sw=1984-1990mV, delta=595-603mV
+  //   CONNECTED: anything else (sw much lower OR much higher, delta not in this range)
+  // Strategy: If we see the disconnect signature, it's disconnected. Otherwise, connected.
+  bool is_connected = !((sw_mv >= 1970 && sw_mv <= 2010) && (delta >= 580 && delta <= 620));
+#else
+  // Dev board behavior:
+  //   Cable CONNECTED:    delta is small (~0-50mV, switch near VCC)
+  //   Cable DISCONNECTED: delta is large (~400-500mV)
+  bool is_connected = (delta < 200);
+#endif
   
-  // Debouncing: Only change state after DEBOUNCE_COUNT consecutive readings
-  if (current_reading != last_state) {
-    stable_count++;
-    if (stable_count >= DEBOUNCE_COUNT) {
-      // State has been stable for required count, accept the change
-      last_state = current_reading;
-      stable_count = 0;
-      
-      // Log state change with diagnostic info
-      ESP_LOGI(TAG, "CV cable %s (sw=%dmV, vcc=%dmV, delta=%dmV)", 
-        last_state ? "CONNECTED" : "DISCONNECTED", sw_mv, vcc_mv, delta);
-    }
-  } else {
-    // Reading matches current state, reset counter
-    stable_count = 0;
+  // Detect state changes and log
+  if (is_connected != last_state) {
+    last_state = is_connected;
+    ESP_LOGI(TAG, "CV cable %s (sw=%dmV, vcc=%dmV, delta=%dmV)", 
+      is_connected ? "CONNECTED" : "DISCONNECTED", sw_mv, vcc_mv, delta);
   }
   
   // Debug logging (enable temporarily to diagnose)
   // static uint32_t last_log = 0;
   // uint32_t now = esp_timer_get_time() / 1000;
   // if (now - last_log > 1000) {  // Log every second
-  //   ESP_LOGI(TAG, "Cable detect: sw=%dmV, vcc=%dmV, delta=%dmV, state=%s (stable:%d)", 
-  //     sw_mv, vcc_mv, delta, last_state ? "CONN" : "DISC", stable_count);
+  //   ESP_LOGI(TAG, "Cable detect: sw=%dmV, vcc=%dmV, delta=%dmV, state=%s", 
+  //     sw_mv, vcc_mv, delta, is_connected ? "CONN" : "DISC");
   //   last_log = now;
   // }
   
-  return last_state;
+  return is_connected;
 }
 
 esp_err_t cv_init(bool enable_logging) {

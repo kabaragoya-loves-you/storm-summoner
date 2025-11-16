@@ -7,7 +7,7 @@
 static const char* TAG = "expression_console";
 
 static const char* registered_commands[] = {
-  "info", "mode", "calibrate", "polarity", "switch_type"
+  "info", "mode", "calibrate", "polarity", "switch_type", "gate_log"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -42,7 +42,9 @@ static int cmd_info(int argc, char **argv) {
     ESP_LOGI(TAG, "Switch type: %s", switch_str);
   } else if (mode == EXPRESSION_MODE_GATE) {
     bool gate_state = expression_get_gate_state();
+    bool gate_logging = expression_get_gate_logging();
     ESP_LOGI(TAG, "Gate state: %s", gate_state ? "HIGH" : "LOW");
+    ESP_LOGI(TAG, "Gate logging: %s", gate_logging ? "enabled" : "disabled");
   }
   
   ESP_LOGI(TAG, "");
@@ -182,6 +184,37 @@ static int cmd_switch_type(int argc, char **argv) {
   return 0;
 }
 
+// Command: gate_log
+static struct {
+  struct arg_str *enabled;
+  struct arg_end *end;
+} gate_log_args;
+
+static int cmd_gate_log(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &gate_log_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, gate_log_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* enabled_str = gate_log_args.enabled->sval[0];
+  bool enabled;
+  
+  if (strcmp(enabled_str, "on") == 0 || strcmp(enabled_str, "true") == 0 || strcmp(enabled_str, "1") == 0) {
+    enabled = true;
+  } else if (strcmp(enabled_str, "off") == 0 || strcmp(enabled_str, "false") == 0 || strcmp(enabled_str, "0") == 0) {
+    enabled = false;
+  } else {
+    ESP_LOGE(TAG, "Invalid value. Use: on/off, true/false, or 1/0");
+    return 1;
+  }
+  
+  expression_set_gate_logging(enabled);
+  ESP_LOGI(TAG, "Gate logging %s", enabled ? "enabled" : "disabled");
+  
+  return 0;
+}
+
 esp_err_t expression_console_init(void) {
   ESP_LOGI(TAG, "Registering expression commands");
   
@@ -245,6 +278,19 @@ esp_err_t expression_console_init(void) {
     .argtable = &switch_type_args
   };
   esp_console_cmd_register(&switch_type_cmd);
+  
+  // gate_log command
+  gate_log_args.enabled = arg_str1(NULL, NULL, "<on|off>", "Enable/disable gate logging");
+  gate_log_args.end = arg_end(2);
+  
+  const esp_console_cmd_t gate_log_cmd = {
+    .command = "gate_log",
+    .help = "Enable/disable gate change message logging",
+    .hint = NULL,
+    .func = &cmd_gate_log,
+    .argtable = &gate_log_args
+  };
+  esp_console_cmd_register(&gate_log_cmd);
   
   return ESP_OK;
 }

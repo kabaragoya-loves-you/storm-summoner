@@ -895,6 +895,13 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   
   // State machine: NOTE mode requires GATE expression mode
   if (mode == INPUT_MODE_NOTE) {
+    // Save current expression mode before changing to GATE
+    // (only if we're not already in GATE mode to avoid overwriting the saved mode)
+    if (scene->expression_mode != EXPRESSION_MODE_GATE) {
+      expression_save_previous_mode(scene->expression_mode);
+      ESP_LOGI(TAG, "Saved previous expression mode: %d", scene->expression_mode);
+    }
+    
     scene->expression_mode = EXPRESSION_MODE_GATE;
     ESP_LOGI(TAG, "Expression mode automatically set to GATE for NOTE input mode");
     
@@ -903,13 +910,14 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
       expression_set_mode(EXPRESSION_MODE_GATE);
     }
   } else if (old_mode == INPUT_MODE_NOTE) {
-    // Changing FROM NOTE mode - revert expression mode to PEDAL
-    scene->expression_mode = EXPRESSION_MODE_PEDAL;
-    ESP_LOGI(TAG, "Expression mode reverted to PEDAL (leaving NOTE mode)");
+    // Changing FROM NOTE mode - restore previous expression mode
+    expression_mode_t previous_mode = expression_get_previous_mode();
+    scene->expression_mode = previous_mode;
+    ESP_LOGI(TAG, "Expression mode restored to %d (leaving NOTE mode)", previous_mode);
     
     // Update hardware if this is the current scene
     if (scene_index == g_scene_manager.current_scene_index) {
-      expression_set_mode(EXPRESSION_MODE_PEDAL);
+      expression_set_mode(previous_mode);
     }
   }
   

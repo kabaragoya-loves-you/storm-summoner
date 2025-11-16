@@ -176,4 +176,28 @@ pedal_switch_type_t expression_get_pedal_switch_type(void);
  */
 bool expression_get_gate_state(void);
 
+/**
+ * Save previous expression mode to NVS (for restoration after NOTE mode)
+ * @param mode The mode to save
+ */
+void expression_save_previous_mode(expression_mode_t mode);
+
+/**
+ * Get previously saved expression mode from NVS
+ * @return Saved mode, or EXPRESSION_MODE_PEDAL if none saved
+ */
+expression_mode_t expression_get_previous_mode(void);
+
+/**
+ * Enable or disable gate change message logging
+ * @param enabled true to enable logging, false to disable
+ */
+void expression_set_gate_logging(bool enabled);
+
+/**
+ * Get current gate logging setting
+ * @return true if gate logging is enabled
+ */
+bool expression_get_gate_logging(void);
+
 #endif /* _EXPRESSION_H */

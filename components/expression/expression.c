@@ -25,6 +25,8 @@
 #define NVS_KEY_EXP_MODE "exp_mode"
 #define NVS_KEY_EXP_POLARITY "exp_polarity"
 #define NVS_KEY_EXP_PEDAL_SW_TYPE "exp_pedal_sw"
+#define NVS_KEY_EXP_PREV_MODE "exp_prev_mode"
+#define NVS_KEY_EXP_GATE_LOG "exp_gate_log"
 
 // Default calibration values
 #define DEFAULT_MIN_VALUE 100
@@ -55,6 +57,7 @@ static pedal_switch_type_t s_pedal_switch_type = PEDAL_SWITCH_NO;  // Default: n
 static bool s_gate_state = false;
 static bool s_pedal_state = false;  // For sustain/sostenuto (true = pressed)
 static bool s_logging_enabled = false;  // Control periodic value logging
+static bool s_gate_logging_enabled = false;  // Control gate change message logging
 
 // Filtering state
 static int s_samples[MOVING_AVG_LENGTH] = {0};
@@ -104,7 +107,10 @@ static void expression_task(void *pvParameters) {
     // Handle connection state changes
     if (is_connected != was_connected) {
       if (is_connected) {
-        ESP_LOGD(TAG, "Expression cable connected (mode %d)", s_mode);
+        const char* mode_str = (s_mode == EXPRESSION_MODE_PEDAL) ? "Expression Pedal" :
+                               (s_mode == EXPRESSION_MODE_SUSTAIN) ? "Sustain Pedal" :
+                               (s_mode == EXPRESSION_MODE_SOSTENUTO) ? "Sostenuto Pedal" : "Gate";
+        ESP_LOGI(TAG, "Expression cable connected (mode: %s)", mode_str);
         first_reading = true;  // Reset flag on connection
         expression_configure_switches();  // Configure switches for current mode
         // Post connection event
@@ -115,7 +121,7 @@ static void expression_task(void *pvParameters) {
         };
         event_bus_post(&conn_event);
       } else {
-        ESP_LOGD(TAG, "Expression cable disconnected");
+        ESP_LOGI(TAG, "Expression cable disconnected");
         // Post disconnection event
         event_t disc_event = {
           .type = EVENT_EXPRESSION_DISCONNECTED,
@@ -322,7 +328,9 @@ static void expression_task(void *pvParameters) {
           };
           
           if (event_bus_post(&gate_event) == ESP_OK) {
-            ESP_LOGD(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
+            if (s_gate_logging_enabled) {
+              ESP_LOGI(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
+            }
             last_gate_state = current_gate;
           }
         }
@@ -390,6 +398,13 @@ void expression_init(bool enable_logging) {
     s_pedal_switch_type = (pedal_switch_type_t)stored_u8;
   } else {
     app_settings_save_u8(NVS_KEY_EXP_PEDAL_SW_TYPE, (uint8_t)s_pedal_switch_type);
+  }
+  
+  // Load gate logging setting (defaults to false)
+  if (app_settings_load_u8(NVS_KEY_EXP_GATE_LOG, &stored_u8) == APP_SETTINGS_OK) {
+    s_gate_logging_enabled = (stored_u8 != 0);
+  } else {
+    app_settings_save_u8(NVS_KEY_EXP_GATE_LOG, 0);
   }
   
   // Configure cable detection GPIO
@@ -591,6 +606,35 @@ pedal_switch_type_t expression_get_pedal_switch_type(void) {
 
 bool expression_get_gate_state(void) {
   return s_gate_state;
+}
+
+void expression_save_previous_mode(expression_mode_t mode) {
+  app_settings_save_u8(NVS_KEY_EXP_PREV_MODE, (uint8_t)mode);
+  ESP_LOGI(TAG, "Saved previous expression mode to NVS: %d", mode);
+}
+
+expression_mode_t expression_get_previous_mode(void) {
+  uint8_t stored_mode;
+  if (app_settings_load_u8(NVS_KEY_EXP_PREV_MODE, &stored_mode) == APP_SETTINGS_OK) {
+    // Validate the stored mode
+    if (stored_mode <= EXPRESSION_MODE_GATE) {
+      ESP_LOGI(TAG, "Retrieved previous expression mode from NVS: %d", stored_mode);
+      return (expression_mode_t)stored_mode;
+    }
+  }
+  // Default to PEDAL if no valid saved mode
+  ESP_LOGI(TAG, "No valid previous expression mode found, defaulting to PEDAL");
+  return EXPRESSION_MODE_PEDAL;
+}
+
+void expression_set_gate_logging(bool enabled) {
+  s_gate_logging_enabled = enabled;
+  app_settings_save_u8(NVS_KEY_EXP_GATE_LOG, enabled ? 1 : 0);
+  ESP_LOGI(TAG, "Gate logging %s", enabled ? "enabled" : "disabled");
+}
+
+bool expression_get_gate_logging(void) {
+  return s_gate_logging_enabled;
 }
 
 // Helper: Compare function for qsort
