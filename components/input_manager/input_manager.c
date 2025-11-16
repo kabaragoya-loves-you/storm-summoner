@@ -5,6 +5,9 @@
 #include "expression.h"
 #include "event_bus.h"
 #include "app_settings.h"
+#include "scene.h"
+#include "midi_messages.h"
+#include "device_config.h"
 #include "driver/gpio.h"
 #include "io.h"
 #include "esp_log.h"
@@ -17,11 +20,7 @@ extern bool cv_is_cable_connected(void);
 // NVS keys
 #define NVS_KEY_INPUT_MODE "input_mode"
 #define NVS_KEY_CABLE_DETECT_EN "cable_det_en"
-#define NVS_KEY_VELOCITY_MODE "note_vel_mode"
-#define NVS_KEY_VELOCITY_FIXED "note_vel_fix"
-
-// Default velocity settings
-#define DEFAULT_VELOCITY_FIXED 100
+// Note: NVS_KEY_VELOCITY_MODE and NVS_KEY_VELOCITY_FIXED removed - now per-scene settings
 
 // State
 static input_mode_t s_current_mode = INPUT_MODE_CV;
@@ -29,10 +28,9 @@ static bool s_initialized = false;
 static bool s_cable_detection_enabled = true;  // Default: cable detection enabled
 
 // NOTE mode state
-static velocity_mode_t s_velocity_mode = VELOCITY_MODE_FIXED;
-static uint8_t s_fixed_velocity = DEFAULT_VELOCITY_FIXED;
 static bool s_note_active = false;
-static uint8_t s_last_note = 60;  // C4
+static uint8_t s_current_cv_note = 60;  // Current CV pitch reading
+static uint8_t s_active_note = 60;      // The note that was sent in last Note On
 
 // Forward declarations
 static void note_mode_cv_handler(const event_t* event, void* context);
@@ -55,20 +53,7 @@ esp_err_t input_manager_init(void) {
   
   ESP_LOGI(TAG, "Cable detection %s", s_cable_detection_enabled ? "enabled" : "disabled");
   
-  // Load velocity settings
-  uint8_t vel_mode = VELOCITY_MODE_FIXED;
-  if (app_settings_load_u8(NVS_KEY_VELOCITY_MODE, &vel_mode) == APP_SETTINGS_OK) {
-    s_velocity_mode = (velocity_mode_t)vel_mode;
-  } else {
-    app_settings_save_u8(NVS_KEY_VELOCITY_MODE, (uint8_t)s_velocity_mode);
-  }
-  
-  uint8_t vel_fixed = DEFAULT_VELOCITY_FIXED;
-  if (app_settings_load_u8(NVS_KEY_VELOCITY_FIXED, &vel_fixed) == APP_SETTINGS_OK) {
-    s_fixed_velocity = vel_fixed;
-  } else {
-    app_settings_save_u8(NVS_KEY_VELOCITY_FIXED, s_fixed_velocity);
-  }
+  // Note: Velocity settings moved to per-scene configuration
   
   // Initialize clock sync component
   clock_sync_init();
@@ -107,7 +92,9 @@ esp_err_t input_manager_init(void) {
       bool exp_connected = !s_cable_detection_enabled || gpio_get_level(PIN_EXP_SW) == 1;
       
       if (cv_connected && exp_connected) {
-        // CV mode is now controlled by scenes
+        // NOTE mode requires PITCH mode and 5V range for CV interpretation
+        cv_set_mode(CV_MODE_PITCH);
+        cv_set_range(CV_RANGE_5V);  // Standard modular synth CV is 0-5V
         cv_enable();
         
         // Set expression to gate mode
@@ -207,7 +194,9 @@ esp_err_t input_set_mode(input_mode_t mode) {
       bool exp_connected = !s_cable_detection_enabled || gpio_get_level(PIN_EXP_SW) == 1;
       
       if (cv_connected && exp_connected) {
-        // CV mode is now controlled by scenes
+        // NOTE mode requires PITCH mode and 5V range for CV interpretation
+        cv_set_mode(CV_MODE_PITCH);
+        cv_set_range(CV_RANGE_5V);  // Standard modular synth CV is 0-5V
         cv_enable();
         
         // Set expression to gate mode
@@ -293,8 +282,15 @@ bool input_get_cable_detection_enabled(void) {
 static void note_mode_cv_handler(const event_t* event, void* context) {
   if (event->type != EVENT_CV_VALUE) return;
   
-  // Update last note from CV pitch
-  s_last_note = cv_get_pitch_note();
+  // Update current CV pitch reading
+  uint8_t new_note = cv_get_pitch_note();
+  
+  // Log significant pitch changes for debugging
+  if (new_note != s_current_cv_note) {
+    ESP_LOGI(TAG, "CV pitch changed: %d -> %d (raw_adc=%d, midi_value=%d)", 
+             s_current_cv_note, new_note, event->data.cv.raw_value, event->data.cv.midi_value);
+    s_current_cv_note = new_note;
+  }
   
   // If a note is already active, we don't send note on again
   // (monophonic behavior - gate must go low then high for new note)
@@ -307,10 +303,15 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
   
   if (gate_high && !s_note_active) {
     // Gate went high - send note on
+    // Capture the current CV note value - this is what we'll use for both on and off
+    s_active_note = s_current_cv_note;
+    
+    // Get velocity from current scene
+    velocity_mode_t vel_mode = scene_get_note_velocity_mode(scene_get_current_index());
     uint8_t velocity;
     
-    if (s_velocity_mode == VELOCITY_MODE_FIXED) {
-      velocity = s_fixed_velocity;
+    if (vel_mode == VELOCITY_MODE_FIXED) {
+      velocity = scene_get_note_fixed_velocity(scene_get_current_index());
     } else {
       // VELOCITY_MODE_GATE_VOLTAGE - map ADC to velocity
       int16_t raw = event->data.gate.raw_value;
@@ -319,38 +320,20 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
       if (velocity > 127) velocity = 127;
     }
     
-    // TODO: Send MIDI Note On message
-    // For now, just log
-    ESP_LOGI(TAG, "NOTE ON: note=%d, velocity=%d", s_last_note, velocity);
+    // Send MIDI Note On on the scene's global channel
+    uint8_t channel = device_config_get_channel() - 1;  // device_config uses 1-based, MIDI uses 0-based
+    send_note_on(channel, s_active_note, velocity);
+    ESP_LOGI(TAG, "NOTE ON: ch=%d, note=%d, velocity=%d", channel + 1, s_active_note, velocity);
     s_note_active = true;
     
   } else if (!gate_high && s_note_active) {
-    // Gate went low - send note off
-    // TODO: Send MIDI Note Off message
-    ESP_LOGI(TAG, "NOTE OFF: note=%d", s_last_note);
+    // Gate went low - send note off using the SAME note that was sent on
+    uint8_t channel = device_config_get_channel() - 1;
+    send_note_off(channel, s_active_note, 0);
+    ESP_LOGI(TAG, "NOTE OFF: ch=%d, note=%d", channel + 1, s_active_note);
     s_note_active = false;
   }
 }
 
-// Velocity API functions
-void input_set_velocity_mode(velocity_mode_t mode) {
-  s_velocity_mode = mode;
-  app_settings_save_u8(NVS_KEY_VELOCITY_MODE, (uint8_t)mode);
-  ESP_LOGI(TAG, "Velocity mode set to %d", mode);
-}
-
-velocity_mode_t input_get_velocity_mode(void) {
-  return s_velocity_mode;
-}
-
-void input_set_fixed_velocity(uint8_t velocity) {
-  if (velocity < 1) velocity = 1;
-  if (velocity > 127) velocity = 127;
-  s_fixed_velocity = velocity;
-  app_settings_save_u8(NVS_KEY_VELOCITY_FIXED, velocity);
-  ESP_LOGI(TAG, "Fixed velocity set to %d", velocity);
-}
-
-uint8_t input_get_fixed_velocity(void) {
-  return s_fixed_velocity;
-}
+// Note: Velocity API functions removed - now accessed via scene_get_note_velocity_mode() 
+// and scene_get_note_fixed_velocity() for per-scene configuration

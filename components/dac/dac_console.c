@@ -8,7 +8,7 @@
 static const char* TAG = "dac_console";
 
 static const char* registered_commands[] = {
-  "info", "set", "range"
+  "info", "set", "readback"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -72,44 +72,9 @@ static int cmd_set(int argc, char **argv) {
   return (ret == ESP_OK) ? 0 : 1;
 }
 
-// Command: range
-static struct {
-  struct arg_str *range_type;
-  struct arg_end *end;
-} range_args;
-
-static int cmd_range(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &range_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, range_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* range_str = range_args.range_type->sval[0];
-  mcp4725_cv_range_t range;
-  
-  if (strcmp(range_str, "10v") == 0) {
-    range = MCP4725_RANGE_10V;
-  } else if (strcmp(range_str, "bi10v") == 0) {
-    range = MCP4725_RANGE_BIPOLAR_10V;
-  } else if (strcmp(range_str, "5v") == 0) {
-    range = MCP4725_RANGE_5V;
-  } else if (strcmp(range_str, "bi5v") == 0) {
-    range = MCP4725_RANGE_BIPOLAR_5V;
-  } else if (strcmp(range_str, "3v3") == 0) {
-    range = MCP4725_RANGE_3V3;
-  } else {
-    ESP_LOGE(TAG, "Unknown range. Use: 10v, bi10v, 5v, bi5v, or 3v3");
-    return 1;
-  }
-  
-  esp_err_t ret = dac_set_cv_range(range);
-  if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "DAC range set to: %s", range_str);
-  } else {
-    ESP_LOGE(TAG, "Failed to set range: %s", esp_err_to_name(ret));
-  }
-  
+// Command: readback
+static int cmd_readback(int argc, char **argv) {
+  esp_err_t ret = dac_debug_readback();
   return (ret == ESP_OK) ? 0 : 1;
 }
 
@@ -138,18 +103,14 @@ esp_err_t dac_console_init(void) {
   };
   esp_console_cmd_register(&set_cmd);
   
-  // range command
-  range_args.range_type = arg_str1(NULL, NULL, "<10v|bi10v|5v|bi5v|3v3>", "CV range");
-  range_args.end = arg_end(2);
-  
-  const esp_console_cmd_t range_cmd = {
-    .command = "range",
-    .help = "Set CV output range",
+  // readback command
+  const esp_console_cmd_t readback_cmd = {
+    .command = "readback",
+    .help = "Read back DAC register and EEPROM values",
     .hint = NULL,
-    .func = &cmd_range,
-    .argtable = &range_args
+    .func = &cmd_readback,
   };
-  esp_console_cmd_register(&range_cmd);
+  esp_console_cmd_register(&readback_cmd);
   
   return ESP_OK;
 }

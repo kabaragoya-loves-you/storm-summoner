@@ -42,6 +42,7 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_revision>"
     "$<TARGET_FILE:__idf_i2c_common>"
     "$<TARGET_FILE:__idf_input_manager>"
+    "$<TARGET_FILE:__idf_adc_manager>"
     "$<TARGET_FILE:__idf_buttons>"
     "$<TARGET_FILE:__idf_touch>"
     "$<TARGET_FILE:__idf_switch>"

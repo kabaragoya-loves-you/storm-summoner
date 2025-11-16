@@ -61,6 +61,12 @@ void cv_set_range(cv_range_t range);
 cv_range_t cv_get_range(void);
 
 /**
+ * Set the CV processing mode (LINEAR or PITCH)
+ * @param mode The mode to use
+ */
+void cv_set_mode(cv_mode_t mode);
+
+/**
  * Set the CV deadzone (MIDI value change threshold)
  * @param deadzone The deadzone value (0-127)
  */

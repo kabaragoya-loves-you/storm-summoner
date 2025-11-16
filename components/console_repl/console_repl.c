@@ -16,6 +16,7 @@
 #include "expression_console.h"
 #include "cv_console.h"
 #include "dac_console.h"
+#include "adc_manager_console.h"
 #include "midi_console.h"
 #include "midi_send_console.h"
 #include "tempo_console.h"
@@ -245,6 +246,7 @@ esp_err_t console_repl_init(void) {
   console_register_context("expression", expression_console_init, expression_console_cleanup);
   console_register_context("cv", cv_console_init, cv_console_cleanup);
   console_register_context("dac", dac_console_init, dac_console_cleanup);
+  console_register_context("adc_manager", adc_manager_console_init, adc_manager_console_cleanup);
   console_register_context("midi", midi_console_init, midi_console_cleanup);
   console_register_context("tempo", tempo_console_init, tempo_console_cleanup);
   console_register_context("transport", transport_console_init, transport_console_cleanup);

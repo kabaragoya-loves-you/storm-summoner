@@ -144,6 +144,10 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // CV input configuration
   scene->cv_input_mode = INPUT_MODE_CV;                // Default to CV mode
   
+  // NOTE mode configuration
+  scene->note_velocity_mode = VELOCITY_MODE_FIXED;     // Default to fixed velocity
+  scene->note_fixed_velocity = 100;                    // Default velocity value
+  
   // Tempo configuration
   scene->clock_source = CLOCK_SOURCE_INTERNAL;         // Default to internal clock
   scene->clock_standard = CLOCK_STANDARD_24PPQN;       // Default to MIDI standard
@@ -819,6 +823,12 @@ esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode)
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
+  // State machine: Cannot change expression mode when in NOTE input mode (except to GATE)
+  if (scene->cv_input_mode == INPUT_MODE_NOTE && mode != EXPRESSION_MODE_GATE) {
+    ESP_LOGE(TAG, "Cannot change expression mode - locked by NOTE input mode");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
   scene->expression_mode = mode;
   g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
   
@@ -879,8 +889,29 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
+  input_mode_t old_mode = scene->cv_input_mode;
   scene->cv_input_mode = mode;
   g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  // State machine: NOTE mode requires GATE expression mode
+  if (mode == INPUT_MODE_NOTE) {
+    scene->expression_mode = EXPRESSION_MODE_GATE;
+    ESP_LOGI(TAG, "Expression mode automatically set to GATE for NOTE input mode");
+    
+    // Update hardware if this is the current scene
+    if (scene_index == g_scene_manager.current_scene_index) {
+      expression_set_mode(EXPRESSION_MODE_GATE);
+    }
+  } else if (old_mode == INPUT_MODE_NOTE) {
+    // Changing FROM NOTE mode - revert expression mode to PEDAL
+    scene->expression_mode = EXPRESSION_MODE_PEDAL;
+    ESP_LOGI(TAG, "Expression mode reverted to PEDAL (leaving NOTE mode)");
+    
+    // Update hardware if this is the current scene
+    if (scene_index == g_scene_manager.current_scene_index) {
+      expression_set_mode(EXPRESSION_MODE_PEDAL);
+    }
+  }
   
   const char* mode_str = (mode == INPUT_MODE_CV) ? "cv" :
                          (mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
@@ -986,6 +1017,46 @@ time_signature_t scene_get_time_signature(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   time_signature_t default_sig = {4, 4};
   return scene ? scene->time_signature : default_sig;
+}
+
+esp_err_t scene_set_note_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->note_velocity_mode = mode;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  const char* mode_str = (mode == VELOCITY_MODE_FIXED) ? "Fixed" : "Gate Voltage";
+  ESP_LOGI(TAG, "Scene %d NOTE velocity mode set to %s", scene_index + 1, mode_str);
+  
+  return ESP_OK;
+}
+
+velocity_mode_t scene_get_note_velocity_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->note_velocity_mode : VELOCITY_MODE_FIXED;
+}
+
+esp_err_t scene_set_note_fixed_velocity(uint8_t scene_index, uint8_t velocity) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (velocity < 1 || velocity > 127) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->note_fixed_velocity = velocity;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  ESP_LOGI(TAG, "Scene %d NOTE fixed velocity set to %d", scene_index + 1, velocity);
+  
+  return ESP_OK;
+}
+
+uint8_t scene_get_note_fixed_velocity(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->note_fixed_velocity : 100;
 }
 
 // Helper to get scene filename
@@ -1246,6 +1317,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
                             (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
   
+  // Serialize NOTE mode velocity settings
+  const char* vel_mode_str = (scene->note_velocity_mode == VELOCITY_MODE_FIXED) ? "fixed" : "gate_voltage";
+  cJSON_AddStringToObject(root, "note_velocity_mode", vel_mode_str);
+  cJSON_AddNumberToObject(root, "note_fixed_velocity", scene->note_fixed_velocity);
+  
   // Serialize tempo settings
   const char* clock_src_str = (scene->clock_source == CLOCK_SOURCE_INTERNAL) ? "internal" :
                               (scene->clock_source == CLOCK_SOURCE_MIDI) ? "midi" : "sync";
@@ -1343,6 +1419,20 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(mode_str, "audio") == 0) scene->cv_input_mode = INPUT_MODE_AUDIO;
     else if (strcmp(mode_str, "note") == 0) scene->cv_input_mode = INPUT_MODE_NOTE;
     else scene->cv_input_mode = INPUT_MODE_CV;
+  }
+  
+  // Deserialize NOTE mode velocity settings
+  cJSON* vel_mode = cJSON_GetObjectItem(root, "note_velocity_mode");
+  if (vel_mode && cJSON_IsString(vel_mode)) {
+    const char* mode_str = vel_mode->valuestring;
+    if (strcmp(mode_str, "gate_voltage") == 0) scene->note_velocity_mode = VELOCITY_MODE_GATE_VOLTAGE;
+    else scene->note_velocity_mode = VELOCITY_MODE_FIXED;
+  }
+  
+  cJSON* fixed_vel = cJSON_GetObjectItem(root, "note_fixed_velocity");
+  if (fixed_vel) {
+    int vel = fixed_vel->valueint;
+    if (vel >= 1 && vel <= 127) scene->note_fixed_velocity = (uint8_t)vel;
   }
   
   // Deserialize tempo settings

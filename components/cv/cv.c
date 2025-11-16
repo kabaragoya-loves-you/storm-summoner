@@ -569,6 +569,13 @@ cv_mode_t cv_get_mode(void) {
   return s_mode;
 }
 
+void cv_set_mode(cv_mode_t mode) {
+  s_mode = mode;
+  app_settings_save_u8(NVS_KEY_CV_MODE, (uint8_t)mode);
+  const char* mode_str = (mode == CV_MODE_LINEAR) ? "Linear" : "Pitch";
+  ESP_LOGI(TAG, "CV mode set to %s", mode_str);
+}
+
 void cv_calibrate(float offset, float scale) {
   s_offset = offset;
   s_scale = scale;
@@ -767,6 +774,11 @@ static int16_t oversample_read(void) {
       successful_reads++;
     }
   }
+  
+  if (successful_reads == 0) {
+    ESP_LOGW(TAG, "CV ADC read failed - all %d samples timed out, returning 0", OVERSAMPLE_COUNT);
+  }
+  
   return successful_reads > 0 ? (int16_t)(sum / successful_reads) : 0;
 }
 

@@ -8,7 +8,7 @@
 static const char* TAG = "device_config_console";
 
 static const char* registered_commands[] = {
-  "info", "channel", "trs", "mode", "pedal", "custom", "program", "pc_mode", "save"
+  "info", "trs", "mode", "pedal", "custom", "program", "pc_mode", "save"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -43,11 +43,7 @@ static int cmd_info(int argc, char **argv) {
   return 0;
 }
 
-// Command: channel
-static struct {
-  struct arg_int *channel_num;
-  struct arg_end *end;
-} channel_args;
+// Note: channel command moved to midi context
 
 // Command: program
 static struct {
@@ -61,28 +57,7 @@ static struct {
   struct arg_end *end;
 } pc_mode_args;
 
-static int cmd_channel(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &channel_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, channel_args.end, argv[0]);
-    return 1;
-  }
-  
-  int ch = channel_args.channel_num->ival[0];
-  if (ch < 1 || ch > 16) {
-    ESP_LOGE(TAG, "Channel must be 1-16");
-    return 1;
-  }
-  
-  esp_err_t ret = device_config_set_channel(ch);
-  if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "MIDI channel set to %d", ch);
-  } else {
-    ESP_LOGE(TAG, "Failed to set channel: %s", esp_err_to_name(ret));
-  }
-  
-  return (ret == ESP_OK) ? 0 : 1;
-}
+// Note: cmd_channel moved to midi context
 
 // Command: trs
 static struct {
@@ -263,18 +238,7 @@ esp_err_t device_config_console_init(void) {
   };
   esp_console_cmd_register(&info_cmd);
   
-  // channel command
-  channel_args.channel_num = arg_int1(NULL, NULL, "<1-16>", "MIDI channel");
-  channel_args.end = arg_end(2);
-  
-  const esp_console_cmd_t channel_cmd = {
-    .command = "channel",
-    .help = "Set MIDI channel",
-    .hint = NULL,
-    .func = &cmd_channel,
-    .argtable = &channel_args
-  };
-  esp_console_cmd_register(&channel_cmd);
+  // Note: channel command moved to midi context
   
   // trs command
   trs_args.trs_type = arg_str1(NULL, NULL, "<a|b>", "TRS wiring type");

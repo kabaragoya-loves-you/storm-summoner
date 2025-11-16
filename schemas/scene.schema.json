@@ -87,6 +87,19 @@
       "default": "cv",
       "description": "CV input interpretation mode"
     },
+    "note_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage"],
+      "default": "fixed",
+      "description": "Velocity mode for NOTE input mode"
+    },
+    "note_fixed_velocity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 127,
+      "default": 100,
+      "description": "Fixed velocity value for NOTE mode"
+    },
     "clock_source": {
       "type": "string",
       "enum": ["internal", "midi", "sync"],

@@ -90,6 +90,10 @@ typedef struct {
   // CV input configuration
   input_mode_t cv_input_mode;        // CV, CLOCK_SYNC, AUDIO, or NOTE
   
+  // NOTE mode configuration (when cv_input_mode = NOTE)
+  velocity_mode_t note_velocity_mode;    // FIXED or GATE_VOLTAGE
+  uint8_t note_fixed_velocity;           // Velocity when mode = FIXED (1-127)
+  
   // Tempo configuration (per-scene)
   tempo_clock_source_t clock_source;     // INTERNAL, MIDI, SYNC
   tempo_clock_standard_t clock_standard; // 24PPQN, 16TH_NOTE, BEAT
@@ -195,6 +199,12 @@ action_chain_t* scene_get_sostenuto(uint8_t scene_index);
 // CV input mode configuration
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode);
 input_mode_t scene_get_cv_input_mode(uint8_t scene_index);
+
+// NOTE mode velocity configuration
+esp_err_t scene_set_note_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
+velocity_mode_t scene_get_note_velocity_mode(uint8_t scene_index);
+esp_err_t scene_set_note_fixed_velocity(uint8_t scene_index, uint8_t velocity);
+uint8_t scene_get_note_fixed_velocity(uint8_t scene_index);
 
 // Tempo configuration (per-scene)
 esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source);

@@ -119,6 +119,21 @@ static void cmd_scene_info(void) {
   }
   
   ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "CV Input Mode: %s",
+           scene->cv_input_mode == INPUT_MODE_CV ? "CV" :
+           scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC ? "Clock Sync" :
+           scene->cv_input_mode == INPUT_MODE_AUDIO ? "Audio" : "Note");
+  
+  // Display NOTE mode velocity settings when in NOTE input mode
+  if (scene->cv_input_mode == INPUT_MODE_NOTE) {
+    ESP_LOGI(TAG, "  NOTE velocity mode: %s",
+             scene->note_velocity_mode == VELOCITY_MODE_FIXED ? "Fixed" : "Gate Voltage");
+    if (scene->note_velocity_mode == VELOCITY_MODE_FIXED) {
+      ESP_LOGI(TAG, "  NOTE fixed velocity: %d", scene->note_fixed_velocity);
+    }
+  }
+  
+  ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Continuous inputs:");
   
   if (scene->cv.enabled) {
@@ -311,28 +326,7 @@ static int cmd_cancel(int argc, char **argv) {
   return 0;
 }
 
-// Command: channel
-static struct {
-  struct arg_int *channel_num;
-  struct arg_end *end;
-} channel_args;
-
-static int cmd_channel(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &channel_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, channel_args.end, argv[0]);
-    return 1;
-  }
-  
-  int ch = channel_args.channel_num->ival[0];
-  if (ch < 1 || ch > 16) {
-    ESP_LOGE(TAG, "Channel must be 1-16");
-    return 1;
-  }
-  device_config_set_channel(ch);
-  ESP_LOGI(TAG, "Device MIDI channel: %d", ch);
-  return 0;
-}
+// Note: channel command moved to midi context
 
 // Command: pad
 static struct {
@@ -963,10 +957,78 @@ static int cmd_cv_input_mode(int argc, char **argv) {
   
   scene_set_cv_input_mode(scene_get_current_index(), mode);
   
+  // Actually enable the hardware mode
+  esp_err_t ret = input_set_mode(mode);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to enable input mode: %s", esp_err_to_name(ret));
+    return 1;
+  }
+  
   const char* mode_name = (mode == INPUT_MODE_CV) ? "CV" :
                           (mode == INPUT_MODE_CLOCK_SYNC) ? "Clock Sync" :
                           (mode == INPUT_MODE_AUDIO) ? "Audio" : "Note";
   ESP_LOGI(TAG, "CV input mode: %s", mode_name);
+  return 0;
+}
+
+// Command: note_velocity_mode - Set NOTE mode velocity mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} note_velocity_mode_args;
+
+static int cmd_note_velocity_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &note_velocity_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, note_velocity_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* mode_str = note_velocity_mode_args.mode->sval[0];
+  velocity_mode_t mode;
+  
+  if (strcmp(mode_str, "fixed") == 0) mode = VELOCITY_MODE_FIXED;
+  else if (strcmp(mode_str, "gate") == 0 || strcmp(mode_str, "gate_voltage") == 0) mode = VELOCITY_MODE_GATE_VOLTAGE;
+  else {
+    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage)");
+    return 1;
+  }
+  
+  scene_set_note_velocity_mode(scene_get_current_index(), mode);
+  
+  const char* mode_name = (mode == VELOCITY_MODE_FIXED) ? "Fixed" : "Gate Voltage";
+  ESP_LOGI(TAG, "NOTE velocity mode: %s", mode_name);
+  return 0;
+}
+
+// Command: note_fixed_velocity - Set NOTE mode fixed velocity
+static struct {
+  struct arg_int *velocity;
+  struct arg_end *end;
+} note_fixed_velocity_args;
+
+static int cmd_note_fixed_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &note_fixed_velocity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, note_fixed_velocity_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int vel = note_fixed_velocity_args.velocity->ival[0];
+  if (vel < 1 || vel > 127) {
+    ESP_LOGE(TAG, "Velocity must be 1-127");
+    return 1;
+  }
+  
+  scene_set_note_fixed_velocity(scene_get_current_index(), (uint8_t)vel);
+  
+  ESP_LOGI(TAG, "NOTE fixed velocity: %d", vel);
   return 0;
 }
 
@@ -1652,18 +1714,7 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&cancel_cmd);
   
-  // channel command
-  channel_args.channel_num = arg_int1(NULL, NULL, "<1-16>", "MIDI channel");
-  channel_args.end = arg_end(2);
-  
-  const esp_console_cmd_t channel_cmd = {
-    .command = "channel",
-    .help = "Set device MIDI channel",
-    .hint = NULL,
-    .func = &cmd_channel,
-    .argtable = &channel_args
-  };
-  esp_console_cmd_register(&channel_cmd);
+  // Note: channel command moved to midi context
   
   // pad command
   pad_args.pad_num = arg_int1(NULL, NULL, "<pad>", "Pad number (0-11)");
@@ -1926,6 +1977,32 @@ esp_err_t scene_console_init(void) {
     .argtable = &cv_input_mode_args
   };
   esp_console_cmd_register(&cv_input_mode_cmd);
+  
+  // note_velocity_mode command
+  note_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
+  note_velocity_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t note_velocity_mode_cmd = {
+    .command = "note_velocity_mode",
+    .help = "Set NOTE mode velocity mode (fixed/gate_voltage)",
+    .hint = NULL,
+    .func = &cmd_note_velocity_mode,
+    .argtable = &note_velocity_mode_args
+  };
+  esp_console_cmd_register(&note_velocity_mode_cmd);
+  
+  // note_fixed_velocity command
+  note_fixed_velocity_args.velocity = arg_int1(NULL, NULL, "<1-127>", "Velocity value");
+  note_fixed_velocity_args.end = arg_end(2);
+  
+  const esp_console_cmd_t note_fixed_velocity_cmd = {
+    .command = "note_fixed_velocity",
+    .help = "Set NOTE mode fixed velocity value",
+    .hint = NULL,
+    .func = &cmd_note_fixed_velocity,
+    .argtable = &note_fixed_velocity_args
+  };
+  esp_console_cmd_register(&note_fixed_velocity_cmd);
   
   // clock_source command
   clock_source_args.source = arg_str1(NULL, NULL, "<source>", "Clock source");

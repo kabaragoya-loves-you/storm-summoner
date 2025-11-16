@@ -322,7 +322,7 @@ static void expression_task(void *pvParameters) {
           };
           
           if (event_bus_post(&gate_event) == ESP_OK) {
-            ESP_LOGI(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
+            ESP_LOGD(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
             last_gate_state = current_gate;
           }
         }

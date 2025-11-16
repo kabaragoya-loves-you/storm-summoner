@@ -208,6 +208,8 @@
     }
   ],
   "cv_input_mode": "cv",
+  "note_velocity_mode": "fixed",
+  "note_fixed_velocity": 100,
   "clock_source": "internal",
   "clock_standard": "24ppqn",
   "time_signature": {

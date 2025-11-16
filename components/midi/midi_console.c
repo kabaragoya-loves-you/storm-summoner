@@ -4,6 +4,7 @@
 #include "midi_loopback.h"
 #include "midi_out_uart.h"
 #include "midi_in_debug.h"
+#include "device_config.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -12,7 +13,7 @@
 static const char* TAG = "midi_console";
 
 static const char* registered_commands[] = {
-  "info", "interfaces", "uart_mode", "active_sensing", "passthrough", "loopback", "debug"
+  "info", "channel", "interfaces", "uart_mode", "active_sensing", "passthrough", "loopback", "debug"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -24,6 +25,7 @@ static int cmd_info(int argc, char **argv) {
   bool uart_loop = midi_loopback_uart_is_enabled();
   bool usb_loop = midi_loopback_usb_is_enabled();
   bool active_sensing = midi_active_sensing_is_enabled();
+  uint8_t channel = device_config_get_channel();
   
   const char* iface_str;
   switch (cfg.active_interfaces) {
@@ -35,6 +37,7 @@ static int cmd_info(int argc, char **argv) {
   }
   
   ESP_LOGI(TAG, "====== MIDI CONFIG ======");
+  ESP_LOGI(TAG, "MIDI channel: %d", channel);
   ESP_LOGI(TAG, "Active interfaces: %s", iface_str);
   ESP_LOGI(TAG, "UART tempo: %s", cfg.uart_send_tempo ? "enabled" : "disabled");
   ESP_LOGI(TAG, "UART transport: %s", cfg.uart_send_transport ? "enabled" : "disabled");
@@ -50,6 +53,35 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "=========================");
   
   return 0;
+}
+
+// Command: channel
+static struct {
+  struct arg_int *channel_num;
+  struct arg_end *end;
+} channel_args;
+
+static int cmd_channel(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &channel_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, channel_args.end, argv[0]);
+    return 1;
+  }
+  
+  int ch = channel_args.channel_num->ival[0];
+  if (ch < 1 || ch > 16) {
+    ESP_LOGE(TAG, "Channel must be 1-16");
+    return 1;
+  }
+  
+  esp_err_t ret = device_config_set_channel(ch);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "MIDI channel set to %d", ch);
+  } else {
+    ESP_LOGE(TAG, "Failed to set channel: %s", esp_err_to_name(ret));
+  }
+  
+  return (ret == ESP_OK) ? 0 : 1;
 }
 
 // Command: interfaces
@@ -273,6 +305,19 @@ esp_err_t midi_console_init(void) {
     .func = &cmd_info,
   };
   esp_console_cmd_register(&info_cmd);
+  
+  // channel command
+  channel_args.channel_num = arg_int1(NULL, NULL, "<1-16>", "MIDI channel");
+  channel_args.end = arg_end(2);
+  
+  const esp_console_cmd_t channel_cmd = {
+    .command = "channel",
+    .help = "Set global MIDI channel",
+    .hint = NULL,
+    .func = &cmd_channel,
+    .argtable = &channel_args
+  };
+  esp_console_cmd_register(&channel_cmd);
   
   // interfaces command
   interfaces_args.iface = arg_str1(NULL, NULL, "<none|uart|usb|both>", "Active interfaces");

@@ -18,6 +18,7 @@ idf_component_register(
     expression
     cv
     dac
+    adc_manager
     midi
     tempo
     transport

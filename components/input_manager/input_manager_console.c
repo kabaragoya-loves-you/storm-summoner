@@ -1,6 +1,7 @@
 #include "input_manager_console.h"
 #include "input_manager.h"
 #include "input_mode.h"
+#include "scene.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -17,8 +18,11 @@ static const int num_registered_commands = sizeof(registered_commands) / sizeof(
 static int cmd_info(int argc, char **argv) {
   input_mode_t mode = input_get_mode();
   bool cable_detect = input_get_cable_detection_enabled();
-  velocity_mode_t vel_mode = input_get_velocity_mode();
-  uint8_t fixed_vel = input_get_fixed_velocity();
+  
+  // Velocity is now per-scene
+  uint8_t current_scene = scene_get_current_index();
+  velocity_mode_t vel_mode = scene_get_note_velocity_mode(current_scene);
+  uint8_t fixed_vel = scene_get_note_fixed_velocity(current_scene);
   
   const char* mode_str;
   switch (mode) {
@@ -34,8 +38,8 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "====== INPUT MANAGER ======");
   ESP_LOGI(TAG, "Input mode: %s", mode_str);
   ESP_LOGI(TAG, "Cable detection: %s", cable_detect ? "enabled" : "disabled");
-  ESP_LOGI(TAG, "Velocity mode: %s", vel_str);
-  ESP_LOGI(TAG, "Fixed velocity: %u", (unsigned)fixed_vel);
+  ESP_LOGI(TAG, "NOTE velocity mode (scene %d): %s", current_scene + 1, vel_str);
+  ESP_LOGI(TAG, "NOTE fixed velocity (scene %d): %u", current_scene + 1, (unsigned)fixed_vel);
   ESP_LOGI(TAG, "===========================");
   
   return 0;
@@ -136,8 +140,11 @@ static int cmd_velocity(int argc, char **argv) {
     return 1;
   }
   
-  input_set_velocity_mode(mode);
-  ESP_LOGI(TAG, "Velocity mode: %s", (mode == VELOCITY_MODE_FIXED) ? "fixed" : "gate voltage");
+  // Velocity is now per-scene
+  uint8_t current_scene = scene_get_current_index();
+  scene_set_note_velocity_mode(current_scene, mode);
+  ESP_LOGI(TAG, "NOTE velocity mode (scene %d): %s", current_scene + 1, 
+           (mode == VELOCITY_MODE_FIXED) ? "fixed" : "gate voltage");
   
   return 0;
 }
@@ -161,8 +168,10 @@ static int cmd_fixed_vel(int argc, char **argv) {
     return 1;
   }
   
-  input_set_fixed_velocity((uint8_t)vel);
-  ESP_LOGI(TAG, "Fixed velocity: %d", vel);
+  // Velocity is now per-scene
+  uint8_t current_scene = scene_get_current_index();
+  scene_set_note_fixed_velocity(current_scene, (uint8_t)vel);
+  ESP_LOGI(TAG, "NOTE fixed velocity (scene %d): %d", current_scene + 1, vel);
   
   return 0;
 }
