@@ -38,6 +38,7 @@
 #include "midi_scene_handler.h"
 #include "midi_expression_scene_handler.h"
 #include "midi_cv_scene_handler.h"
+#include "midi_touchwheel_scene_handler.h"
 #include "midi_proximity_scene_handler.h"
 #include "midi_als_scene_handler.h"
 #include "scene_test.h"
@@ -97,6 +98,7 @@ void app_main(void) {
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
   midi_cv_scene_handler_init();
+  midi_touchwheel_scene_handler_init();
   midi_proximity_scene_handler_init();
   midi_als_scene_handler_init();
   

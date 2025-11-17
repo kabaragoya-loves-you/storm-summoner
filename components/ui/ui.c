@@ -1,6 +1,8 @@
 #include "lvgl.h"
 #include "../lvgl/src/display/lv_display_private.h"
 #include "ui.h"
+#include "touchwheel.h"
+#include "touch.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -20,6 +22,9 @@ static void (*g_post_release_callback)(void) = NULL;  // Callback to run after r
 
 app_mode_t g_app_mode = APP_MODE_PERFORMANCE;
 bool g_at_programming_top_level_menu = false;
+
+// Touchwheel instance for LVGL encoder in programming mode
+static touchwheel_instance_t* s_ui_touchwheel = NULL;
 
 void lvgl_timer_cb(lv_timer_t *timer) {
   LV_UNUSED(timer);
@@ -120,6 +125,35 @@ void ui_set_app_mode(app_mode_t mode) {
   const char* new_name = (mode < 3) ? mode_names[mode] : "Unknown";
   
   ESP_LOGI(TAG, "App mode changed: %s -> %s", prev_name, new_name);
+  
+  // Handle touchwheel instance for programming mode
+  if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING) {
+    // Entering programming mode - create LVGL encoder touchwheel
+    if (!s_ui_touchwheel) {
+      touchwheel_mode_processor_t* lvgl_mode = touchwheel_mode_create_endless();
+      lv_display_t* disp = lv_display_get_default();
+      touchwheel_output_t* lvgl_output = touchwheel_output_lvgl_create(disp);
+      
+      if (lvgl_mode && lvgl_output) {
+        s_ui_touchwheel = touchwheel_create(lvgl_mode, lvgl_output, 500);
+        if (s_ui_touchwheel) {
+          touch_register_touchwheel_instance(s_ui_touchwheel);
+          ESP_LOGI(TAG, "Created LVGL touchwheel instance for programming mode");
+        } else {
+          touchwheel_mode_destroy(lvgl_mode);
+          touchwheel_output_destroy(lvgl_output);
+        }
+      }
+    }
+  } else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
+    // Exiting programming mode - destroy LVGL encoder touchwheel
+    if (s_ui_touchwheel) {
+      touch_unregister_touchwheel_instance(s_ui_touchwheel);
+      touchwheel_destroy(s_ui_touchwheel);
+      s_ui_touchwheel = NULL;
+      ESP_LOGI(TAG, "Destroyed LVGL touchwheel instance (exiting programming mode)");
+    }
+  }
 }
 
 bool ui_is_programming_top_level(void) {

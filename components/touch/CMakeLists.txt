@@ -4,6 +4,10 @@ idf_component_register(
     "touch_thresholds.c"
     "touch_debug.c"
     "touch_console.c"
+    "touchwheel_core.c"
+    "touchwheel_modes.c"
+    "touchwheel_outputs.c"
+    "touchwheel.c"
   INCLUDE_DIRS 
     "include"
   REQUIRES 
@@ -16,6 +20,8 @@ idf_component_register(
     event_bus
     task_monitor
     console
+    lvgl
+    ui
   PRIV_REQUIRES 
     main
 )

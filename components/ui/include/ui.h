@@ -77,9 +77,6 @@ void ui_reclaim_canvas_buffer(void);
 bool ui_touch_is_button_pressed(uint8_t pad_id);
 uint32_t ui_get_button13_long_press_ms(void);
 void ui_set_button13_long_press_ms(uint32_t value_ms);
-uint32_t ui_get_rotary_inactivity_timeout_ms(void);
-void ui_set_rotary_inactivity_timeout_ms(uint32_t value_ms);
-int ui_get_rotary_value(void);
-void ui_reset_rotary_value(void);
+// Rotary functions removed - now handled by touchwheel system
 
 #endif // UI_H 

@@ -1,5 +1,7 @@
 #include "touch.h"
 #include "touch_thresholds.h"
+#include "touchwheel.h"
+#include "ui.h"
 #include "event_bus.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -14,8 +16,13 @@
 
 #define TAG "TOUCH"
 #define ENABLE_TOUCH_DEBUG_SUBSCRIBER false
+#define MAX_TOUCHWHEEL_INSTANCES 4
 
 static bool s_logging_enabled = false;
+
+// Active touchwheel instances (for routing pad 0-7 events)
+static touchwheel_instance_t* s_touchwheel_instances[MAX_TOUCHWHEEL_INSTANCES] = {NULL};
+static int s_num_touchwheel_instances = 0;
 
 // Touch pad mapping: Production hardware has reversed order
 #if HW_CONFIG_PRODUCTION
@@ -118,6 +125,21 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   if (pad_index < 0) {
     ESP_LOGW(TAG, "Unknown channel %d", chan_id);
     return;
+  }
+  
+  // Route pad 0-7 events to active touchwheel instances
+  // Only route in performance mode (or when explicitly enabled)
+  if (pad_index < 8 && s_num_touchwheel_instances > 0 && ui_get_app_mode() == APP_MODE_PERFORMANCE) {
+    uint32_t timestamp_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    for (int i = 0; i < s_num_touchwheel_instances; i++) {
+      if (s_touchwheel_instances[i]) {
+        if (is_pressed) {
+          touchwheel_process_press(s_touchwheel_instances[i], pad_index, timestamp_ms);
+        } else {
+          touchwheel_process_release(s_touchwheel_instances[i], pad_index, timestamp_ms);
+        }
+      }
+    }
   }
   
   // Detect spurious events (state mismatch)
@@ -825,4 +847,45 @@ void touch_enable_debug_logging(void) {
   touch_display_calibration_data();
   
   ESP_LOGI(TAG, "=== END DEBUG DATA ===");
+}
+
+esp_err_t touch_register_touchwheel_instance(struct touchwheel_instance* instance) {
+  if (!instance) return ESP_ERR_INVALID_ARG;
+  
+  if (s_num_touchwheel_instances >= MAX_TOUCHWHEEL_INSTANCES) {
+    ESP_LOGE(TAG, "Maximum touchwheel instances (%d) reached", MAX_TOUCHWHEEL_INSTANCES);
+    return ESP_ERR_NO_MEM;
+  }
+  
+  // Check if already registered
+  for (int i = 0; i < s_num_touchwheel_instances; i++) {
+    if (s_touchwheel_instances[i] == instance) {
+      ESP_LOGW(TAG, "Touchwheel instance already registered");
+      return ESP_OK;
+    }
+  }
+  
+  s_touchwheel_instances[s_num_touchwheel_instances++] = instance;
+  ESP_LOGI(TAG, "Registered touchwheel instance (%d total)", s_num_touchwheel_instances);
+  return ESP_OK;
+}
+
+esp_err_t touch_unregister_touchwheel_instance(struct touchwheel_instance* instance) {
+  if (!instance) return ESP_ERR_INVALID_ARG;
+  
+  for (int i = 0; i < s_num_touchwheel_instances; i++) {
+    if (s_touchwheel_instances[i] == instance) {
+      // Shift remaining instances down
+      for (int j = i; j < s_num_touchwheel_instances - 1; j++) {
+        s_touchwheel_instances[j] = s_touchwheel_instances[j + 1];
+      }
+      s_num_touchwheel_instances--;
+      s_touchwheel_instances[s_num_touchwheel_instances] = NULL;
+      ESP_LOGI(TAG, "Unregistered touchwheel instance (%d remaining)", s_num_touchwheel_instances);
+      return ESP_OK;
+    }
+  }
+  
+  ESP_LOGW(TAG, "Touchwheel instance not found for unregistration");
+  return ESP_ERR_NOT_FOUND;
 }

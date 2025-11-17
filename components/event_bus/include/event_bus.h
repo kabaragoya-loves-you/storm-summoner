@@ -68,6 +68,7 @@ typedef enum {
   EVENT_SCREENSAVER_TIMEOUT,
   EVENT_NOTE_ON,
   EVENT_NOTE_OFF,
+  EVENT_TOUCHWHEEL_VALUE,
   EVENT_TYPE_MAX
 } event_type_t;
 
@@ -221,6 +222,11 @@ typedef struct {
       uint8_t button_id;     // 0=left, 1=right, 2=both
       uint32_t duration_ms;  // Duration for long press
     } button;
+    
+    // Touchwheel value event data
+    struct {
+      int value;              // Processed touchwheel value
+    } touchwheel_value;
   } data;
 } event_t;
 

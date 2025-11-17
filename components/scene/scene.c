@@ -1,4 +1,6 @@
 #include "scene.h"
+#include "touchwheel.h"
+#include "touch.h"
 #include "esp_log.h"
 #include "midi_messages.h"
 #include "device_config.h"
@@ -40,6 +42,9 @@ static scene_manager_t g_scene_manager = {
   .autosave_mode = SCENE_AUTOSAVE_MANUAL,
   .initialized = false
 };
+
+// Touchwheel instance for scene encoder mode
+static touchwheel_instance_t* s_scene_touchwheel = NULL;
 
 // Default CC assignments for initial testing
 static const uint8_t DEFAULT_CC_NUMBERS[NUM_TOUCHPADS] = {
@@ -289,6 +294,23 @@ esp_err_t scene_init(void) {
     action_execute_chain(&initial_scene->on_load, 127, true);
   }
   
+  // Setup touchwheel instance for encoder mode
+  if (initial_scene->touchwheel_mode == TOUCHWHEEL_MODE_ENCODER) {
+    touchwheel_mode_processor_t* mode = touchwheel_mode_create_endless();
+    touchwheel_output_t* output = touchwheel_output_eventbus_create();
+    
+    if (mode && output) {
+      s_scene_touchwheel = touchwheel_create(mode, output, 500);
+      if (s_scene_touchwheel) {
+        touch_register_touchwheel_instance(s_scene_touchwheel);
+        ESP_LOGI(TAG, "Created touchwheel instance for initial scene encoder mode");
+      } else {
+        touchwheel_mode_destroy(mode);
+        touchwheel_output_destroy(output);
+      }
+    }
+  }
+  
   // Post event for scene change
   event_t event = {
     .type = EVENT_SCENE_CHANGED,
@@ -407,6 +429,34 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   if (new_scene->on_load.num_actions > 0) {
     ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->on_load.num_actions);
     action_execute_chain(&new_scene->on_load, 127, true);
+  }
+  
+  // Setup touchwheel instance for encoder mode
+  if (s_scene_touchwheel) {
+    touch_unregister_touchwheel_instance(s_scene_touchwheel);
+    touchwheel_destroy(s_scene_touchwheel);
+    s_scene_touchwheel = NULL;
+  }
+  
+  if (new_scene->touchwheel_mode == TOUCHWHEEL_MODE_ENCODER) {
+    // Create touchwheel instance with endless mode + event bus output
+    touchwheel_mode_processor_t* mode = touchwheel_mode_create_endless();
+    touchwheel_output_t* output = touchwheel_output_eventbus_create();
+    
+    if (mode && output) {
+      s_scene_touchwheel = touchwheel_create(mode, output, 500);  // 500ms timeout
+      if (s_scene_touchwheel) {
+        touch_register_touchwheel_instance(s_scene_touchwheel);
+        ESP_LOGI(TAG, "Created touchwheel instance for scene encoder mode");
+      } else {
+        touchwheel_mode_destroy(mode);
+        touchwheel_output_destroy(output);
+      }
+    } else {
+      if (mode) touchwheel_mode_destroy(mode);
+      if (output) touchwheel_output_destroy(output);
+      ESP_LOGE(TAG, "Failed to create touchwheel instance");
+    }
   }
   
   // Post event for scene change
@@ -701,10 +751,11 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
   if (!mapping->enabled) return ESP_OK;  // Pad is disabled
   
-  // Handle touchwheel encoder mode
+  // Handle touchwheel encoder mode - pad events are routed to touchwheel instance
+  // Touchwheel instance posts EVENT_TOUCHWHEEL_VALUE which is handled separately
   if (scene->touchwheel_mode == TOUCHWHEEL_MODE_ENCODER && pad_index <= TOUCHWHEEL_END) {
-    // TODO: Implement encoder logic with previous position tracking
-    ESP_LOGD(TAG, "Touchwheel encoder mode not yet implemented");
+    // Pad events are already routed to touchwheel instance via touch.c
+    // Don't process as individual button presses
     return ESP_OK;
   }
   

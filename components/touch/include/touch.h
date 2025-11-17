@@ -9,6 +9,10 @@
 
 typedef int touch_pad_t;
 
+// Forward declaration for touchwheel instance (defined in touchwheel.h)
+// Using incomplete type for function parameters
+struct touchwheel_instance;
+
 // Initialize touch sensor with calibration
 void touch_init(bool enable_logging);
 
@@ -32,5 +36,10 @@ esp_err_t touch_calibrate(bool force);
 
 // Check for sensor drift
 esp_err_t touch_check_drift(void);
+
+// Touchwheel instance registration (for routing pad 0-7 events)
+// Note: touchwheel_instance_t is defined in touchwheel.h
+esp_err_t touch_register_touchwheel_instance(struct touchwheel_instance* instance);
+esp_err_t touch_unregister_touchwheel_instance(struct touchwheel_instance* instance);
 
 #endif // TOUCH_H_
