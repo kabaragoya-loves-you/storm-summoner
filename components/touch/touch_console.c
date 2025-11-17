@@ -2,11 +2,12 @@
 #include "touch.h"
 #include "esp_log.h"
 #include "esp_console.h"
+#include <stdlib.h>
 
 static const char* TAG = "touch_console";
 
 static const char* registered_commands[] = {
-  "calibrate", "reset", "debug"
+  "calibrate", "reset", "debug", "query"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -30,6 +31,24 @@ static int cmd_reset(int argc, char **argv) {
 static int cmd_debug(int argc, char **argv) {
   ESP_LOGI(TAG, "Enabling touch debug logging");
   touch_enable_debug_logging();
+  return 0;
+}
+
+// Command: query
+static int cmd_query(int argc, char **argv) {
+  if (argc < 2) {
+    ESP_LOGI(TAG, "Usage: query <pad_index>");
+    ESP_LOGI(TAG, "  pad_index: 0-12 (logical pad number)");
+    return 1;
+  }
+  
+  int pad_index = atoi(argv[1]);
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) {
+    ESP_LOGE(TAG, "Invalid pad index %d. Must be 0-%d", pad_index, MAX_TOUCH_PADS - 1);
+    return 1;
+  }
+  
+  touch_query_pad(pad_index);
   return 0;
 }
 
@@ -62,6 +81,15 @@ esp_err_t touch_console_init(void) {
     .func = &cmd_debug,
   };
   esp_console_cmd_register(&debug_cmd);
+  
+  // query command
+  const esp_console_cmd_t query_cmd = {
+    .command = "query",
+    .help = "Query detailed info for a specific touch pad",
+    .hint = "<pad_index>",
+    .func = &cmd_query,
+  };
+  esp_console_cmd_register(&query_cmd);
   
   return ESP_OK;
 }

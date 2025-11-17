@@ -207,6 +207,9 @@ static esp_err_t apply_thresholds(void) {
     return ret;
   }
   
+  // Synchronize states after reconfig - clears spurious events from threshold changes
+  touch_sync_states_after_reconfig();
+  
   return (successful_pads > 0) ? ESP_OK : ESP_FAIL;
 }
 
@@ -751,6 +754,9 @@ esp_err_t touch_update_thresholds_from_benchmarks(void) {
     ESP_LOGE(TAG, "Failed to restart continuous scanning: %s", esp_err_to_name(ret));
     return ret;
   }
+  
+  // Synchronize states after reconfig
+  touch_sync_states_after_reconfig();
   
   ESP_LOGI(TAG, "Updated thresholds for %d pads", successful_pads);
   return (successful_pads > 0) ? ESP_OK : ESP_FAIL;

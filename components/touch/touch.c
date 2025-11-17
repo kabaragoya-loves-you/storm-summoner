@@ -10,6 +10,7 @@
 #include "driver/touch_sens.h"
 #include "driver/touch_version_types.h"
 #include <inttypes.h>
+#include <math.h>
 
 #define TAG "TOUCH"
 #define ENABLE_TOUCH_DEBUG_SUBSCRIBER false
@@ -60,12 +61,18 @@ static SemaphoreHandle_t s_config_mutex = NULL;
 static bool s_button_pressed_states[MAX_TOUCH_PADS] = {false};
 static QueueHandle_t s_touch_event_queue = NULL;
 static TaskHandle_t s_touch_event_task = NULL;
+static TaskHandle_t s_health_check_task = NULL;
+static bool s_health_check_running = false;
 
 // Statistics for debug logging
 static struct {
   uint32_t total_press_events;
   uint32_t total_release_events;
   uint32_t failed_posts;
+  uint32_t state_corrections;
+  uint32_t spurious_duplicates;
+  uint32_t orphaned_releases;
+  uint32_t missed_presses;
 } s_touch_stats = {0};
 
 typedef struct {
@@ -113,6 +120,40 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     return;
   }
   
+  // Detect spurious events (state mismatch)
+  if (s_button_pressed_states[pad_index] == is_pressed) {
+    if (is_pressed) {
+      // Duplicate PRESS - hardware sent PRESS twice
+      ESP_LOGD(TAG, "Spurious duplicate PRESS: pad %d already pressed (ignoring)", pad_index);
+      s_touch_stats.spurious_duplicates++;
+      return;  // Ignore duplicate
+    } else {
+      // Orphaned RELEASE - we got RELEASE but pad was already released
+      // This means we missed a PRESS event!
+      ESP_LOGD(TAG, "Orphaned RELEASE on pad %d - missed PRESS event! (correcting)", pad_index);
+      s_touch_stats.orphaned_releases++;
+      s_touch_stats.missed_presses++;
+      
+      // Treat this as a valid state transition: synthesize the missed PRESS first
+      // Set state to PRESSED, post PRESS event, then continue to process this RELEASE
+      s_button_pressed_states[pad_index] = true;
+      
+      event_t press_event = {
+        .type = EVENT_TOUCH_PRESS,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp() - 1,  // Slightly in the past
+        .data.touch = { .pad_id = pad_index }
+      };
+      esp_err_t ret = event_bus_post(&press_event);
+      if (ret == ESP_OK) {
+        s_touch_stats.total_press_events++;
+        ESP_LOGD(TAG, "Synthesized missed PRESS for pad %d", pad_index);
+      }
+      
+      // Now fall through to process the RELEASE normally
+    }
+  }
+  
   // Update button state
   s_button_pressed_states[pad_index] = is_pressed;
   
@@ -152,6 +193,138 @@ static void touch_event_task(void *pvParameters) {
   while (1) {
     if (xQueueReceive(s_touch_event_queue, &event, portMAX_DELAY) == pdTRUE) {
       handle_touch_event(event.chan_id, event.is_pressed);
+    }
+  }
+}
+
+// Lightweight periodic health check to catch missed events
+// Only fixes mismatches - doesn't run heavy operations
+static void touch_health_check_task(void *pvParameters) {
+  // Wait for initialization to complete
+  vTaskDelay(pdMS_TO_TICKS(5000));
+  
+  while (s_health_check_running) {
+    // Quick check for state mismatches
+    for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+      uint32_t smooth[1], benchmark[1];
+      touch_pad_calibration_t calib_data;
+      
+      esp_err_t err1 = touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+      esp_err_t err2 = touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+      esp_err_t calib_ret = touch_get_calibration_data(TOUCH_PADS[i], &calib_data);
+      
+      if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
+      
+      // Determine actual hardware state
+      int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
+      bool hardware_is_touching = false;
+      
+      if (TOUCH_PADS[i] == 14) {
+        int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
+        hardware_is_touching = (delta_14 > (int32_t)calib_data.threshold);
+      } else {
+        hardware_is_touching = (delta > (int32_t)calib_data.threshold);
+      }
+      
+      // Only fix if there's a mismatch
+      if (s_button_pressed_states[i] != hardware_is_touching) {
+        ESP_LOGD(TAG, "Health check: Fixing pad %d (SW=%s, HW=%s, delta=%+"PRId32")",
+          i,
+          s_button_pressed_states[i] ? "PRESSED" : "RELEASED",
+          hardware_is_touching ? "TOUCHING" : "IDLE",
+          delta);
+        
+        s_button_pressed_states[i] = hardware_is_touching;
+        
+        event_t event = {
+          .type = hardware_is_touching ? EVENT_TOUCH_PRESS : EVENT_TOUCH_RELEASE,
+          .priority = EVENT_PRIORITY_HIGH,
+          .timestamp = event_bus_get_current_timestamp(),
+          .data.touch = { .pad_id = i }
+        };
+        
+        esp_err_t ret = event_bus_post(&event);
+        if (ret == ESP_OK) {
+          s_touch_stats.state_corrections++;
+          if (hardware_is_touching) {
+            s_touch_stats.total_press_events++;
+          } else {
+            s_touch_stats.total_release_events++;
+          }
+        }
+      }
+    }
+    
+    // Run every second - lightweight operation (~26 register reads + comparisons)
+    // Estimated CPU impact: <0.5%
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+  
+  vTaskDelete(NULL);
+}
+
+// Synchronize software state with hardware after reconfig operations
+// This fixes spurious events that can occur during sensor enable/disable/threshold changes
+void touch_sync_states_after_reconfig(void) {
+  // Wait for sensor to stabilize after reconfig
+  vTaskDelay(pdMS_TO_TICKS(100));
+  
+  // Drain any stale events from the queue that fired during reconfig
+  touch_event_item_t stale_event;
+  int drained = 0;
+  while (xQueueReceive(s_touch_event_queue, &stale_event, 0) == pdTRUE) {
+    drained++;
+  }
+  if (drained > 0) {
+    ESP_LOGD(TAG, "Drained %d stale events from queue after reconfig", drained);
+  }
+  
+  // Now check each pad's actual hardware state
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    uint32_t smooth[1], benchmark[1];
+    touch_pad_calibration_t calib_data;
+    
+    esp_err_t err1 = touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+    esp_err_t err2 = touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+    esp_err_t calib_ret = touch_get_calibration_data(TOUCH_PADS[i], &calib_data);
+    
+    if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
+    
+    // Determine actual hardware state
+    int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
+    bool hardware_is_touching = false;
+    
+    if (TOUCH_PADS[i] == 14) {
+      // Channel 14 might decrease when touched - use signed math to avoid underflow
+      int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
+      hardware_is_touching = (delta_14 > (int32_t)calib_data.threshold);
+    } else {
+      hardware_is_touching = (delta > (int32_t)calib_data.threshold);
+    }
+    
+    // If software state doesn't match hardware, correct it
+    if (s_button_pressed_states[i] != hardware_is_touching) {
+      ESP_LOGD(TAG, "Sync: Correcting state mismatch on pad %d (SW=%s, HW=%s, delta=%+"PRId32", thresh=%"PRIu32")",
+        i,
+        s_button_pressed_states[i] ? "PRESSED" : "RELEASED",
+        hardware_is_touching ? "TOUCHING" : "IDLE",
+        delta,
+        calib_data.threshold);
+      
+      // Update state and post corrective event
+      s_button_pressed_states[i] = hardware_is_touching;
+      
+      event_t event = {
+        .type = hardware_is_touching ? EVENT_TOUCH_PRESS : EVENT_TOUCH_RELEASE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.touch = {
+          .pad_id = i
+        }
+      };
+      
+      event_bus_post(&event);
+      s_touch_stats.state_corrections++;
     }
   }
 }
@@ -234,6 +407,13 @@ void touch_init(bool enable_logging) {
   if (xTaskCreate(touch_event_task, "touch_event", 4096, NULL, 5, &s_touch_event_task) != pdPASS) {
     ESP_LOGE(TAG, "Failed to create touch event task");
     return;
+  }
+  
+  // Start health check task to catch missed events
+  s_health_check_running = true;
+  if (xTaskCreate(touch_health_check_task, "touch_health", 4096, NULL, 3, &s_health_check_task) != pdPASS) {
+    ESP_LOGW(TAG, "Failed to create health check task");
+    s_health_check_running = false;
   }
   
   // Step 6: Register callbacks BEFORE enabling the sensor
@@ -321,6 +501,9 @@ void touch_init(bool enable_logging) {
     app_settings_save_bool("calib_valid", false);
   }
   
+  // Synchronize states after initialization - clears any spurious events from init sequence
+  touch_sync_states_after_reconfig();
+  
 #if ENABLE_TOUCH_DEBUG_SUBSCRIBER
   // Register debug event subscriber
   event_subscription_t sub = {
@@ -381,6 +564,9 @@ void force_touch_calibration(void) {
   } else {
     ESP_LOGE(TAG, "Manual calibration failed: %s", esp_err_to_name(ret));
   }
+  
+  // Final state sync after calibration
+  touch_sync_states_after_reconfig();
 }
 
 void touch_reset_stuck_pads(void) {
@@ -443,7 +629,134 @@ void touch_reset_stuck_pads(void) {
     
     touch_sensor_enable(sens_handle);
     touch_sensor_start_continuous_scanning(sens_handle);
+    
+    // Synchronize states after reconfig
+    touch_sync_states_after_reconfig();
   }
+}
+
+void touch_query_pad(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) {
+    ESP_LOGE(TAG, "Invalid pad index %d", pad_index);
+    return;
+  }
+  
+  ESP_LOGI(TAG, "=== TOUCH PAD %d QUERY ===", pad_index);
+  
+  // Get channel and GPIO info
+  int chan_id = TOUCH_PADS[pad_index];
+  int gpio_num = chan_id + 1;
+  
+  ESP_LOGI(TAG, "Pad Configuration:");
+  ESP_LOGI(TAG, "  Logical Index: %d", pad_index);
+  ESP_LOGI(TAG, "  Channel ID: %d", chan_id);
+  ESP_LOGI(TAG, "  GPIO Number: %d", gpio_num);
+  
+  // Get current readings
+  uint32_t smooth[1], benchmark[1];
+  esp_err_t err1 = touch_channel_read_data(s_chan_handles[pad_index], TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+  esp_err_t err2 = touch_channel_read_data(s_chan_handles[pad_index], TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+  
+  if (err1 != ESP_OK || err2 != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read touch data (smooth_err=%d, bench_err=%d)", err1, err2);
+    return;
+  }
+  
+  ESP_LOGI(TAG, "Current Readings:");
+  ESP_LOGI(TAG, "  Smooth:    %"PRIu32" (0x%06"PRIX32")", smooth[0], smooth[0]);
+  ESP_LOGI(TAG, "  Benchmark: %"PRIu32" (0x%06"PRIX32")", benchmark[0], benchmark[0]);
+  
+  // Calculate delta
+  int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
+  ESP_LOGI(TAG, "  Delta:     %+"PRId32" (%s%.2f%%)", delta, 
+    delta >= 0 ? "+" : "", 
+    benchmark[0] > 0 ? (delta * 100.0f / benchmark[0]) : 0.0f);
+  
+  // Get calibration data
+  touch_pad_calibration_t calib_data;
+  esp_err_t calib_ret = touch_get_calibration_data(chan_id, &calib_data);
+  
+  if (calib_ret == ESP_OK && calib_data.valid) {
+    ESP_LOGI(TAG, "Calibration Data:");
+    ESP_LOGI(TAG, "  Baseline:  %"PRIu32, calib_data.baseline);
+    ESP_LOGI(TAG, "  Threshold: %"PRIu32, calib_data.threshold);
+    ESP_LOGI(TAG, "  Variance:  %"PRIu32, calib_data.variance);
+    
+    // Calculate threshold as percentage of baseline
+    float thresh_pct = calib_data.baseline > 0 ? 
+      (calib_data.threshold * 100.0f / calib_data.baseline) : 0.0f;
+    ESP_LOGI(TAG, "  Threshold %% of baseline: %.2f%%", thresh_pct);
+    
+    // Determine touch status
+    const char* status = "IDLE";
+    bool is_touching = false;
+    
+    if (chan_id == 14) {
+      // Channel 14 might decrease when touched - use signed math to avoid underflow
+      int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
+      if (delta_14 > (int32_t)calib_data.threshold) {
+        status = "TOUCHING";
+        is_touching = true;
+      }
+    } else {
+      // Normal channels increase when touched
+      if (delta > (int32_t)calib_data.threshold) {
+        status = "TOUCHING";
+        is_touching = true;
+      }
+    }
+    
+    ESP_LOGI(TAG, "Touch Status:");
+    ESP_LOGI(TAG, "  Hardware State: %s", status);
+    ESP_LOGI(TAG, "  Software State: %s", s_button_pressed_states[pad_index] ? "PRESSED" : "RELEASED");
+    
+    if (is_touching != s_button_pressed_states[pad_index]) {
+      ESP_LOGW(TAG, "  *** MISMATCH: Hardware and software states don't agree! ***");
+    }
+    
+    // Analysis
+    ESP_LOGI(TAG, "Analysis:");
+    
+    // Check for stuck condition
+    if (s_button_pressed_states[pad_index] && !is_touching) {
+      ESP_LOGW(TAG, "  STUCK: Pad is marked as pressed but hardware shows idle");
+      ESP_LOGW(TAG, "  Recommended action: Run 'reset' command");
+    } else if (!s_button_pressed_states[pad_index] && is_touching) {
+      ESP_LOGW(TAG, "  STUCK: Hardware shows touch but pad is marked as released");
+      ESP_LOGW(TAG, "  Possible cause: Threshold too low or actual touch detected");
+    }
+    
+    // Check delta vs threshold margin
+    int32_t margin = (int32_t)calib_data.threshold - delta;
+    float margin_pct = calib_data.threshold > 0 ? 
+      (margin * 100.0f / calib_data.threshold) : 0.0f;
+    
+    if (margin < 0) {
+      ESP_LOGI(TAG, "  Delta exceeds threshold by %"PRId32" (%.1f%%)", -margin, -margin_pct);
+    } else {
+      ESP_LOGI(TAG, "  Margin to threshold: %"PRId32" (%.1f%%)", margin, margin_pct);
+      if (margin_pct < 10.0f) {
+        ESP_LOGW(TAG, "  *** LOW MARGIN: Pad is close to triggering (<%%.1f%% margin)", margin_pct);
+      }
+    }
+    
+    // Check benchmark drift
+    if (calib_data.baseline > 0) {
+      int32_t drift = (int32_t)benchmark[0] - (int32_t)calib_data.baseline;
+      float drift_pct = drift * 100.0f / calib_data.baseline;
+      ESP_LOGI(TAG, "  Benchmark drift: %+"PRId32" (%+.1f%% from calibration)", drift, drift_pct);
+      
+      if (fabsf(drift_pct) > 5.0f) {
+        ESP_LOGW(TAG, "  *** SIGNIFICANT DRIFT: Benchmark has drifted >5%% from calibration");
+        ESP_LOGW(TAG, "  Recommended action: Run 'calibrate' command");
+      }
+    }
+    
+  } else {
+    ESP_LOGW(TAG, "No valid calibration data found for this pad");
+  }
+  
+  ESP_LOGI(TAG, "=== END PAD %d QUERY ===", pad_index);
 }
 
 void touch_enable_debug_logging(void) {
@@ -453,7 +766,12 @@ void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "Event statistics:");
   ESP_LOGI(TAG, "  Total PRESS events: %"PRIu32, (unsigned)s_touch_stats.total_press_events);
   ESP_LOGI(TAG, "  Total RELEASE events: %"PRIu32, (unsigned)s_touch_stats.total_release_events);
+  ESP_LOGI(TAG, "  Event balance: %"PRId32, (int32_t)s_touch_stats.total_press_events - (int32_t)s_touch_stats.total_release_events);
   ESP_LOGI(TAG, "  Failed event posts: %"PRIu32, (unsigned)s_touch_stats.failed_posts);
+  ESP_LOGI(TAG, "  State corrections: %"PRIu32, (unsigned)s_touch_stats.state_corrections);
+  ESP_LOGI(TAG, "  Spurious duplicates: %"PRIu32, (unsigned)s_touch_stats.spurious_duplicates);
+  ESP_LOGI(TAG, "  Orphaned releases: %"PRIu32, (unsigned)s_touch_stats.orphaned_releases);
+  ESP_LOGI(TAG, "  Missed presses (inferred): %"PRIu32, (unsigned)s_touch_stats.missed_presses);
   
   // Show current button states
   ESP_LOGI(TAG, "Current button states:");
@@ -488,7 +806,8 @@ void touch_enable_debug_logging(void) {
       if (calib_ret == ESP_OK && calib_data.valid) {
         // For channels 2-13, touch increases the value; for channel 14, it might decrease
         if (TOUCH_PADS[i] == 14) {
-          if (benchmark[0] - smooth[0] > calib_data.threshold) status = "TOUCH!";
+          int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
+          if (delta_14 > (int32_t)calib_data.threshold) status = "TOUCH!";
         } else {
           if (delta > (int32_t)calib_data.threshold) status = "TOUCH!";
         }

@@ -18,6 +18,12 @@ void force_touch_calibration(void);
 // Enable debug logging of touch events
 void touch_enable_debug_logging(void);
 
+// Query detailed information for a specific pad
+void touch_query_pad(int pad_index);
+
+// Synchronize software state with hardware (used after reconfig operations)
+void touch_sync_states_after_reconfig(void);
+
 // Reset stuck touch pads by resetting benchmarks
 void touch_reset_stuck_pads(void);
 
