@@ -56,6 +56,22 @@ touchwheel_mode_processor_t* touchwheel_mode_create_bipolar(void);
 int touchwheel_mode_process(touchwheel_mode_processor_t* mode, int raw_delta, int position);
 
 /**
+ * Map pad position(s) to value (for multi-pad releases)
+ * @param mode Mode processor instance
+ * @param pads Array of pad IDs
+ * @param num_pads Number of pads in array
+ * @return Mapped value, or -1 if invalid
+ */
+int touchwheel_mode_position_to_value(touchwheel_mode_processor_t* mode, const uint8_t* pads, int num_pads);
+
+/**
+ * Set value directly (for position-based value setting from multi-pad releases)
+ * @param mode Mode processor instance
+ * @param value Value to set
+ */
+void touchwheel_mode_set_value(touchwheel_mode_processor_t* mode, int value);
+
+/**
  * Destroy mode processor instance
  * @param mode Mode processor instance to destroy
  */

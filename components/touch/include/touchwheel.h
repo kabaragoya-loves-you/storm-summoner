@@ -4,8 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
-#include "touchwheel_core.h"
-#include "touchwheel_modes.h"
+#include "touchwheel_core.h"  // Includes touchwheel_modes.h
 #include "touchwheel_outputs.h"
 
 // Touchwheel instance combining core + mode + output
