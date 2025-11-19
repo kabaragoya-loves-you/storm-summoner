@@ -6,6 +6,8 @@
 #include "freertos/task.h"
 #include "app_settings.h"
 #include "task_priorities.h"
+#include "freertos/semphr.h"
+#include "freertos/portmacro.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -18,7 +20,7 @@
 #define DRIFT_CHECK_THRESHOLD 50
 #define STABILIZATION_DELAY_MS 50
 #define DRIFT_CHECK_INTERVAL_SECONDS 600
-#define AUTO_CALIBRATE_ON_DRIFT false
+#define AUTO_CALIBRATE_ON_DRIFT true
 #define NVS_BASELINE_KEY "touch_baselin"
 #define NVS_THRESHOLD_KEY "touch_thresh"
 #define NVS_VARIANCE_KEY "touch_varianc"
@@ -34,6 +36,25 @@ static TaskHandle_t s_drift_task_handle = NULL;
 static bool s_drift_task_running = false;
 static uint32_t s_backup_thresholds[MAX_TOUCH_PADS];
 static bool s_backup_valid = false;
+static SemaphoreHandle_t s_calibration_mutex = NULL;
+
+typedef struct {
+  bool pending;
+  bool force;
+  touch_calibration_reason_t reason;
+} calibration_request_t;
+
+static calibration_request_t s_pending_calibration = {
+  .pending = false,
+  .force = false,
+  .reason = TOUCH_CALIBRATION_REASON_NONE
+};
+static portMUX_TYPE s_calibration_request_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static void enqueue_calibration_request(touch_calibration_reason_t reason, bool force);
+static bool fetch_calibration_request(calibration_request_t* out_request);
+static void run_calibration_sequence(touch_calibration_reason_t reason, bool force);
+static const char* calibration_reason_to_string(touch_calibration_reason_t reason);
 
 static uint32_t calculate_mean(uint32_t *samples, size_t count) {
   uint64_t sum = 0;
@@ -52,6 +73,75 @@ static uint32_t calculate_variance(uint32_t *samples, size_t count, uint32_t mea
 
 static uint32_t calculate_std_dev(uint32_t variance) {
   return (uint32_t)sqrt((double)variance);
+}
+
+static const char* calibration_reason_to_string(touch_calibration_reason_t reason) {
+  switch (reason) {
+    case TOUCH_CALIBRATION_REASON_DRIFT:
+      return "drift";
+    case TOUCH_CALIBRATION_REASON_BENCHMARK_CORRUPTION:
+      return "benchmark corruption";
+    case TOUCH_CALIBRATION_REASON_MANUAL:
+      return "manual";
+    default:
+      return "unspecified";
+  }
+}
+
+static void enqueue_calibration_request(touch_calibration_reason_t reason, bool force) {
+  portENTER_CRITICAL(&s_calibration_request_lock);
+  s_pending_calibration.pending = true;
+  if (force) s_pending_calibration.force = true;
+  s_pending_calibration.reason = reason;
+  portEXIT_CRITICAL(&s_calibration_request_lock);
+  ESP_LOGI(TAG, "Calibration requested (%s)%s",
+    calibration_reason_to_string(reason), force ? " [force]" : "");
+}
+
+static bool fetch_calibration_request(calibration_request_t* out_request) {
+  bool has_request = false;
+  portENTER_CRITICAL(&s_calibration_request_lock);
+  if (s_pending_calibration.pending) {
+    if (out_request) *out_request = s_pending_calibration;
+    s_pending_calibration.pending = false;
+    s_pending_calibration.force = false;
+    s_pending_calibration.reason = TOUCH_CALIBRATION_REASON_NONE;
+    has_request = true;
+  }
+  portEXIT_CRITICAL(&s_calibration_request_lock);
+  return has_request;
+}
+
+static void run_calibration_sequence(touch_calibration_reason_t reason, bool force) {
+  const char* reason_str = calibration_reason_to_string(reason);
+  const int max_attempts = 3;
+  ESP_LOGI(TAG, "Starting calibration sequence (%s)%s", reason_str, force ? " [forced]" : "");
+  
+  for (int attempt = 0; attempt < max_attempts; attempt++) {
+    bool attempt_force = force || (attempt == max_attempts - 1);
+    esp_err_t ret = touch_calibrate(attempt_force);
+    
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "Calibration succeeded on attempt %d (%s)", attempt + 1, reason_str);
+      return;
+    }
+    
+    if (ret == ESP_ERR_INVALID_STATE) {
+      ESP_LOGW(TAG, "Calibration attempt %d blocked by active touches (%s)", attempt + 1, reason_str);
+      touch_sync_states_after_reconfig();
+      if (attempt == max_attempts - 2) {
+        ESP_LOGW(TAG, "Attempting stuck pad reset before final calibration try");
+        touch_reset_stuck_pads();
+      }
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
+    
+    ESP_LOGE(TAG, "Calibration failed (%s): %s", reason_str, esp_err_to_name(ret));
+    return;
+  }
+  
+  ESP_LOGE(TAG, "Calibration unsuccessful after %d attempts (%s)", max_attempts, reason_str);
 }
 
 static esp_err_t save_calibration_to_nvs(void) {
@@ -355,31 +445,32 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   return ESP_OK;
 }
 
-static void drift_monitor_task(void *pvParameters) {  
+static void drift_monitor_task(void *pvParameters) {
   vTaskDelay(pdMS_TO_TICKS(30000));
+  const TickType_t wait_ticks = pdMS_TO_TICKS(1000);
+  uint32_t elapsed_seconds = 0;
   
   while (s_drift_task_running) {
-    esp_err_t ret = touch_check_drift();
+    calibration_request_t request;
+    if (fetch_calibration_request(&request)) {
+      run_calibration_sequence(request.reason, request.force);
+      elapsed_seconds = 0;
+    }
     
-    if (ret == ESP_FAIL) {
-      ESP_LOGW(TAG, "Drift detected - checking again in %d seconds", DRIFT_CHECK_INTERVAL_SECONDS);
+    if (elapsed_seconds >= DRIFT_CHECK_INTERVAL_SECONDS) {
+      elapsed_seconds = 0;
+      esp_err_t ret = touch_check_drift();
       
-      if (AUTO_CALIBRATE_ON_DRIFT) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        
-        ESP_LOGI(TAG, "Auto-calibrating due to drift detection...");
-        esp_err_t calib_ret = touch_calibrate(true);
-        if (calib_ret == ESP_OK) {
-          ESP_LOGI(TAG, "Auto-calibration successful");
-        } else if (calib_ret == ESP_ERR_INVALID_STATE) {
-          ESP_LOGW(TAG, "Auto-calibration interrupted by touch");
-        } else {
-          ESP_LOGE(TAG, "Auto-calibration failed: %s", esp_err_to_name(calib_ret));
+      if (ret == ESP_FAIL) {
+        ESP_LOGW(TAG, "Drift detected - scheduling calibration");
+        if (AUTO_CALIBRATE_ON_DRIFT) {
+          enqueue_calibration_request(TOUCH_CALIBRATION_REASON_DRIFT, false);
         }
       }
     }
     
-    vTaskDelay(pdMS_TO_TICKS(DRIFT_CHECK_INTERVAL_SECONDS * 1000));
+    vTaskDelay(wait_ticks);
+    elapsed_seconds++;
   }
   
   ESP_LOGI(TAG, "Drift monitor task stopped");
@@ -429,6 +520,14 @@ void touch_thresholds_init(void) {
   if (sens_handle == NULL) {
     ESP_LOGE(TAG, "Touch sensor not initialized");
     return;
+  }
+
+  if (s_calibration_mutex == NULL) {
+    s_calibration_mutex = xSemaphoreCreateMutex();
+    if (s_calibration_mutex == NULL) {
+      ESP_LOGE(TAG, "Failed to create calibration mutex");
+      return;
+    }
   }
   
   // Try to load calibration from NVS
@@ -486,7 +585,7 @@ void touch_thresholds_init(void) {
   drift_task_start();
 }
 
-esp_err_t touch_calibrate(bool force) {
+static esp_err_t touch_calibrate_body(bool force) {
   ESP_LOGI(TAG, "Starting touch sensor calibration...");
   
   touch_sensor_handle_t sens_handle = touch_get_sensor_handle();
@@ -592,6 +691,17 @@ esp_err_t touch_calibrate(bool force) {
   
   ESP_LOGI(TAG, "Touch sensor calibration completed successfully");
   return ESP_OK;
+}
+
+esp_err_t touch_calibrate(bool force) {
+  if (s_calibration_mutex) {
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+  }
+  esp_err_t ret = touch_calibrate_body(force);
+  if (s_calibration_mutex) {
+    xSemaphoreGive(s_calibration_mutex);
+  }
+  return ret;
 }
 
 esp_err_t touch_check_drift(void) {
@@ -761,5 +871,9 @@ esp_err_t touch_update_thresholds_from_benchmarks(void) {
   
   ESP_LOGI(TAG, "Updated thresholds for %d pads", successful_pads);
   return (successful_pads > 0) ? ESP_OK : ESP_FAIL;
+}
+
+void touch_thresholds_request_calibration(touch_calibration_reason_t reason, bool force) {
+  enqueue_calibration_request(reason, force);
 }
 

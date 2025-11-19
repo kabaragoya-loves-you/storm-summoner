@@ -4,6 +4,7 @@
 #include "freertos/timers.h"
 #include "ui.h"
 #include "app_settings.h"
+#include "touch.h"
 
 #define TAG "UI_EVENT"
 #define MAX_TOUCH_PADS 13
@@ -17,9 +18,6 @@
 // Button 13 state management
 static TimerHandle_t s_button13_long_press_timer = NULL;
 static bool s_long_press_timer_fired = false;
-
-// Button state tracking (for Button 13 and other non-wheel pads)
-static bool s_button_pressed_states[MAX_TOUCH_PADS] = {false};
 
 // Configuration values
 static uint32_t s_button13_long_press_ms = BUTTON_13_LONG_PRESS_MS;
@@ -64,9 +62,6 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
   if (event->type == EVENT_TOUCH_PRESS) {
     uint8_t pad_id = event->data.touch.pad_id;
     
-    // Update button state
-    if (pad_id < MAX_TOUCH_PADS) s_button_pressed_states[pad_id] = true;
-    
     // Handle Button 13 long press detection
     if (pad_id == BUTTON_13_LOGICAL_PAD && ui_get_app_mode() == APP_MODE_PERFORMANCE) {
       s_long_press_timer_fired = false;
@@ -89,9 +84,6 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     
   } else if (event->type == EVENT_TOUCH_RELEASE) {
     uint8_t pad_id = event->data.touch.pad_id;
-    
-    // Update button state
-    if (pad_id < MAX_TOUCH_PADS) s_button_pressed_states[pad_id] = false;
     
     // Rotary wheel release is now handled by touchwheel system
     
@@ -162,7 +154,7 @@ void ui_event_handler_init(void) {
 
 // API functions for configuration and state access
 bool ui_touch_is_button_pressed(uint8_t pad_id) {
-  if (pad_id < MAX_TOUCH_PADS) return s_button_pressed_states[pad_id];
+  if (pad_id < MAX_TOUCH_PADS) return touch_is_pad_pressed(pad_id);
   return false;
 }
 

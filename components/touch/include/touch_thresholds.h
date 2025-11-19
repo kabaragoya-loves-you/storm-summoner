@@ -13,6 +13,13 @@ typedef struct {
   bool valid;           // Whether this pad's calibration is valid
 } touch_pad_calibration_t;
 
+typedef enum {
+  TOUCH_CALIBRATION_REASON_NONE = 0,
+  TOUCH_CALIBRATION_REASON_DRIFT,
+  TOUCH_CALIBRATION_REASON_BENCHMARK_CORRUPTION,
+  TOUCH_CALIBRATION_REASON_MANUAL,
+} touch_calibration_reason_t;
+
 void touch_thresholds_init(void);
 
 esp_err_t touch_calibrate(bool force);
@@ -25,6 +32,8 @@ void touch_display_calibration_data(void);
 
 // Update thresholds based on current benchmark values
 esp_err_t touch_update_thresholds_from_benchmarks(void);
+
+void touch_thresholds_request_calibration(touch_calibration_reason_t reason, bool force);
 
 #endif // TOUCH_THRESHOLDS_H_
 

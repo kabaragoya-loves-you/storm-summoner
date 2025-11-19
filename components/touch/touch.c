@@ -281,6 +281,32 @@ static void touch_health_check_task(void *pvParameters) {
       
       // Only fix if there's a mismatch
       if (s_button_pressed_states[i] != hardware_is_touching) {
+        // Check for catastrophic benchmark corruption FIRST
+        bool benchmark_corrupted = (benchmark[0] < 1000 || benchmark[0] > 100000);
+        
+        if (benchmark_corrupted) {
+          ESP_LOGE(TAG, "CRITICAL: Pad %d has corrupted benchmark=%"PRIu32" (expected ~%"PRIu32")",
+            i, benchmark[0], calib_data.baseline);
+          ESP_LOGE(TAG, "Attempting automatic benchmark recovery...");
+          
+          // Reset benchmark immediately
+          touch_chan_benchmark_config_t benchmark_cfg = { .do_reset = true };
+          esp_err_t reset_ret = touch_channel_config_benchmark(s_chan_handles[i], &benchmark_cfg);
+          
+          if (reset_ret == ESP_OK) {
+            ESP_LOGI(TAG, "Pad %d benchmark reset successfully", i);
+            vTaskDelay(pdMS_TO_TICKS(100));  // Let it stabilize
+            
+            // Re-read to verify
+            uint32_t new_benchmark[1];
+            touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_BENCHMARK, new_benchmark);
+            ESP_LOGI(TAG, "Pad %d new benchmark: %"PRIu32, i, new_benchmark[0]);
+            touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_BENCHMARK_CORRUPTION, true);
+          } else {
+            ESP_LOGE(TAG, "Failed to reset benchmark for pad %d", i);
+          }
+        }
+        
         ESP_LOGD(TAG, "Health check: Fixing pad %d (SW=%s, HW=%s, delta=%+"PRId32")",
           i,
           s_button_pressed_states[i] ? "PRESSED" : "RELEASED",
@@ -810,6 +836,15 @@ void touch_query_pad(int pad_index) {
   }
   
   ESP_LOGI(TAG, "=== END PAD %d QUERY ===", pad_index);
+}
+
+bool touch_is_pad_pressed(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return false;
+  return s_button_pressed_states[pad_index];
+}
+
+const bool *touch_get_pressed_states(void) {
+  return s_button_pressed_states;
 }
 
 void touch_enable_debug_logging(void) {
