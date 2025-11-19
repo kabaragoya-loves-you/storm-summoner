@@ -2,7 +2,9 @@
 #include "../lvgl/src/display/lv_display_private.h"
 #include "ui.h"
 #include "touchwheel.h"
+#include "touchwheel_outputs.h"
 #include "touch.h"
+#include "programming_menu.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -25,6 +27,10 @@ bool g_at_programming_top_level_menu = false;
 
 // Touchwheel instance for LVGL encoder in programming mode
 static touchwheel_instance_t* s_ui_touchwheel = NULL;
+static touchwheel_output_t* s_ui_touchwheel_output = NULL;
+
+// Saved Performance mode draw module when entering Programming mode
+static ui_draw_module_t* saved_draw_module = NULL;
 
 void lvgl_timer_cb(lv_timer_t *timer) {
   LV_UNUSED(timer);
@@ -84,6 +90,56 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
   lv_timer_del(timer);
 }
 
+// Deferred callback to enter Programming mode in LVGL context
+static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
+  lv_timer_del(timer);
+  
+  if (g_app_mode != APP_MODE_PROGRAMMING) {
+    ESP_LOGW(TAG, "Mode changed before Programming mode setup, aborting");
+    return;
+  }
+  
+  // Create LVGL encoder touchwheel if not already created (must be in LVGL context)
+  if (!s_ui_touchwheel) {
+    touchwheel_mode_processor_t* lvgl_mode = touchwheel_mode_create_endless();
+    lv_display_t* disp = lv_display_get_default();
+    s_ui_touchwheel_output = touchwheel_output_lvgl_create(disp);
+    
+    if (lvgl_mode && s_ui_touchwheel_output) {
+      s_ui_touchwheel = touchwheel_create(lvgl_mode, s_ui_touchwheel_output, 500);
+      if (s_ui_touchwheel) {
+        touch_register_touchwheel_instance(s_ui_touchwheel);
+        ESP_LOGI(TAG, "Created LVGL touchwheel instance for programming mode");
+      } else {
+        touchwheel_mode_destroy(lvgl_mode);
+        touchwheel_output_destroy(s_ui_touchwheel_output);
+        s_ui_touchwheel_output = NULL;
+      }
+    }
+  }
+  
+  // Hide canvas (must be in LVGL context)
+  if (canvas != NULL) {
+    lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+  }
+  
+  // Initialize and create menu
+  programming_menu_init();
+  programming_menu_create();
+  
+  // Attach encoder to menu group
+  if (s_ui_touchwheel_output) {
+    lv_indev_t* encoder_indev = touchwheel_output_get_lvgl_indev(s_ui_touchwheel_output);
+    if (encoder_indev) {
+      lv_group_t* menu_group = programming_menu_get_group();
+      if (menu_group) {
+        lv_indev_set_group(encoder_indev, menu_group);
+        ESP_LOGI(TAG, "Attached encoder to Programming menu group");
+      }
+    }
+  }
+}
+
 void ui_init(void) {
   // Allocate display buffer from internal RAM for performance (not LVGL heap)
   size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
@@ -126,32 +182,56 @@ void ui_set_app_mode(app_mode_t mode) {
   
   ESP_LOGI(TAG, "App mode changed: %s -> %s", prev_name, new_name);
   
-  // Handle touchwheel instance for programming mode
+  // Handle entering Programming mode
   if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING) {
-    // Entering programming mode - create LVGL encoder touchwheel
-    if (!s_ui_touchwheel) {
-      touchwheel_mode_processor_t* lvgl_mode = touchwheel_mode_create_endless();
-      lv_display_t* disp = lv_display_get_default();
-      touchwheel_output_t* lvgl_output = touchwheel_output_lvgl_create(disp);
-      
-      if (lvgl_mode && lvgl_output) {
-        s_ui_touchwheel = touchwheel_create(lvgl_mode, lvgl_output, 500);
-        if (s_ui_touchwheel) {
-          touch_register_touchwheel_instance(s_ui_touchwheel);
-          ESP_LOGI(TAG, "Created LVGL touchwheel instance for programming mode");
-        } else {
-          touchwheel_mode_destroy(lvgl_mode);
-          touchwheel_output_destroy(lvgl_output);
-        }
-      }
+    // Save current Performance mode draw module
+    saved_draw_module = current_draw_module;
+    
+    // Suspend Performance mode rendering (this creates a deferred timer, safe)
+    ui_graphics_suspend();
+    
+    // Defer ALL LVGL operations to LVGL context (cannot call LVGL from timer/ISR context)
+    // This includes: touchwheel creation, hiding canvas, and creating menu widgets
+    // Note: ui_set_app_mode() may be called from FreeRTOS timer callback context
+    lv_timer_t *enter_timer = lv_timer_create(deferred_programming_mode_enter_cb, 10, NULL);
+    if (enter_timer) {
+      lv_timer_set_repeat_count(enter_timer, 1);
+    } else {
+      ESP_LOGE(TAG, "Failed to create Programming mode enter timer");
     }
-  } else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
-    // Exiting programming mode - destroy LVGL encoder touchwheel
+  } 
+  // Handle exiting Programming mode
+  else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
+    // Cleanup Programming menu
+    programming_menu_cleanup();
+    
+    // Destroy LVGL encoder touchwheel
     if (s_ui_touchwheel) {
       touch_unregister_touchwheel_instance(s_ui_touchwheel);
       touchwheel_destroy(s_ui_touchwheel);
       s_ui_touchwheel = NULL;
+      // Note: output is destroyed by touchwheel_destroy, but we clear our reference
+      s_ui_touchwheel_output = NULL;
       ESP_LOGI(TAG, "Destroyed LVGL touchwheel instance (exiting programming mode)");
+    }
+    
+    // Restore Performance mode
+    if (saved_draw_module) {
+      current_draw_module = saved_draw_module;
+      saved_draw_module = NULL;
+    }
+    
+    // Show canvas
+    if (canvas != NULL) {
+      lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    }
+    
+    // Resume Performance mode rendering
+    ui_graphics_resume();
+    
+    // Redraw current module
+    if (current_draw_module && current_draw_module->draw_func) {
+      current_draw_module->draw_func();
     }
   }
 }

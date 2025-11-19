@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "ui.h"
+#include "programming_menu.h"
 #include "app_settings.h"
 #include "touch.h"
 
@@ -10,6 +11,7 @@
 #define MAX_TOUCH_PADS 13
 #define NUM_WHEEL_PADS 8
 #define BUTTON_13_LOGICAL_PAD 12
+#define BUTTON_8_LOGICAL_PAD 8
 #define BUTTON_13_LONG_PRESS_MS 1000
 
 // Settings keys
@@ -39,12 +41,11 @@ static void load_config_from_settings(void) {
 
 static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   if (ui_get_app_mode() == APP_MODE_PERFORMANCE) {
-    ui_set_app_mode(APP_MODE_PROGRAMMING);
-    ui_set_programming_top_level(true);
     s_long_press_timer_fired = true;
     ESP_LOGI(TAG, "Button 13 long press: Entering Programming Mode");
     
-    // Post mode change event
+    // Post mode change event - handle in event bus task context (safe for LVGL)
+    // Cannot call ui_set_app_mode() directly from timer callback (stack overflow risk)
     event_t event = {
       .type = EVENT_MODE_CHANGE_REQUEST,
       .priority = EVENT_PRIORITY_HIGH,
@@ -55,6 +56,20 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
       }
     };
     event_bus_post(&event);
+  }
+}
+
+// Handle mode change events in event bus task context (safe for LVGL operations)
+static void ui_handle_mode_change_event(const event_t* event, void* context) {
+  if (event->type != EVENT_MODE_CHANGE_REQUEST) return;
+  
+  if (event->data.custom.custom_type == 1) {
+    // Enter Programming mode
+    ui_set_app_mode(APP_MODE_PROGRAMMING);
+    ui_set_programming_top_level(true);
+  } else if (event->data.custom.custom_type == 0) {
+    // Exit Programming mode
+    ui_set_app_mode(APP_MODE_PERFORMANCE);
   }
 }
 
@@ -87,36 +102,34 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     
     // Rotary wheel release is now handled by touchwheel system
     
-    // Handle Button 13 release
-    if (pad_id == BUTTON_13_LOGICAL_PAD) {
-      xTimerStop(s_button13_long_press_timer, 0);
+    // Handle Programming mode input
+    if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
+      // Handle pad 8 (enter/confirm)
+      if (pad_id == BUTTON_8_LOGICAL_PAD) {
+        programming_menu_handle_enter();
+        ESP_LOGD(TAG, "Pad 8: Enter/Confirm");
+        return;
+      }
       
-      if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
+      // Handle Button 13 (back/cancel)
+      if (pad_id == BUTTON_13_LOGICAL_PAD) {
+        xTimerStop(s_button13_long_press_timer, 0);
+        
         if (s_long_press_timer_fired) {
           s_long_press_timer_fired = false;
           ESP_LOGD(TAG, "Button 13 released after long press");
         } else {
-          // Short tap in programming mode
-          if (ui_is_programming_top_level()) {
-            ui_set_app_mode(APP_MODE_PERFORMANCE);
-            ESP_LOGI(TAG, "Button 13 TAP: Exiting Programming Mode");
-            
-            // Post mode change event
-            event_t event = {
-              .type = EVENT_MODE_CHANGE_REQUEST,
-              .priority = EVENT_PRIORITY_HIGH,
-              .timestamp = event_bus_get_current_timestamp(),
-              .data.custom = {
-                .custom_type = 0,  // 0 = exit programming mode
-                .param1 = 0        // 0 = not applicable
-              }
-            };
-            event_bus_post(&event);
-          } else {
-            ESP_LOGI(TAG, "Button 13 TAP: UI should handle back navigation");
-          }
+          // Short tap in programming mode - handle back navigation
+          programming_menu_handle_back();
+          ESP_LOGD(TAG, "Pad 12: Back/Cancel");
         }
+        return;
       }
+    }
+    
+    // Handle Button 13 release (for Performance mode)
+    if (pad_id == BUTTON_13_LOGICAL_PAD) {
+      xTimerStop(s_button13_long_press_timer, 0);
     }
   }
 }
@@ -146,6 +159,13 @@ void ui_event_handler_init(void) {
   ret = event_bus_subscribe(EVENT_TOUCH_RELEASE, ui_handle_touch_event, NULL);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to subscribe to TOUCH_RELEASE events: %s", esp_err_to_name(ret));
+    return;
+  }
+  
+  // Subscribe to mode change events (handled in event bus task context, safe for LVGL)
+  ret = event_bus_subscribe(EVENT_MODE_CHANGE_REQUEST, ui_handle_mode_change_event, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to MODE_CHANGE_REQUEST events: %s", esp_err_to_name(ret));
     return;
   }
   
