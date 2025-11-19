@@ -1,5 +1,7 @@
 #include "touchwheel.h"
+#include "touchwheel_analog.h"
 #include "esp_log.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +26,75 @@ static void instance_position_callback(int value, void* user_data) {
   
   // Send position-based value directly to output (already mapped by mode)
   touchwheel_output_send(instance->output, value);
+}
+
+// Internal callback for analog position updates
+static void instance_analog_position_callback(float position, uint32_t timestamp_ms, void* user_data) {
+  touchwheel_instance_t* instance = (touchwheel_instance_t*)user_data;
+  if (!instance || !instance->enabled) return;
+  
+  // Handle reset signal (position < 0) from analog sampling stop
+  if (position < 0.0f) {
+    instance->core.last_analog_position = -1.0f;
+    instance->core.analog_mode_active = false;
+    return;
+  }
+  
+  // Reset last_analog_position if this is the first callback after analog restart
+  // This prevents huge jumps when analog sampling restarts
+  if (instance->core.last_analog_position < 0.0f) {
+    instance->core.last_analog_position = position;
+    instance->core.last_logical_wheel_pos = (int)floorf(position);
+    if (instance->core.last_logical_wheel_pos < 0) instance->core.last_logical_wheel_pos = 0;
+    if (instance->core.last_logical_wheel_pos >= NUM_WHEEL_PADS) instance->core.last_logical_wheel_pos = NUM_WHEEL_PADS - 1;
+    instance->core.last_wheel_interaction_time = timestamp_ms;
+    instance->core.interaction_active = true;
+    ESP_LOGD(TAG, "Analog callback initialized: pad %d, pos %.2f", instance->core.last_logical_wheel_pos, position);
+    return;  // Don't process delta on first position update
+  }
+  
+  ESP_LOGD(TAG, "Analog callback: pos %.2f (pad %d), last_pos %.2f (pad %d)", 
+    position, (int)floorf(position), instance->core.last_analog_position, (int)floorf(instance->core.last_analog_position));
+  
+  // Process analog position through core
+  touchwheel_core_process_analog_position(&instance->core, position, timestamp_ms);
+  
+  // For constrained modes, also map analog position directly to value
+  if (instance->core.mode_type == TOUCHWHEEL_MODE_ODOMETER || 
+      instance->core.mode_type == TOUCHWHEEL_MODE_BIPOLAR) {
+    // Map analog position (0.0-7.999) to mode-specific value
+    int value = 0;
+    
+    if (instance->core.mode_type == TOUCHWHEEL_MODE_ODOMETER) {
+      // Odometer: pad 4 (position 4.0) = 0%, pad 3 (position 3.0) = 100%
+      // Clockwise path: 4→5→6→7→0→1→2→3 = 0%→12.5%→25%→37.5%→50%→62.5%→75%→87.5%→100%
+      // Map position 4.0-11.999 to 0-100%
+      float normalized_pos = position;
+      if (normalized_pos < 4.0f) {
+        normalized_pos += 8.0f;  // Wrap: 0-3.999 becomes 8-11.999
+      }
+      normalized_pos -= 4.0f;  // Shift: 4.0 becomes 0.0, 11.999 becomes 7.999
+      value = (int)((normalized_pos / 8.0f) * 100.0f);
+      if (value < 0) value = 0;
+      if (value > 100) value = 100;
+    } else if (instance->core.mode_type == TOUCHWHEEL_MODE_BIPOLAR) {
+      // Bipolar: pad 4 (position 4.0) = -100, pads 7+0 (position 7.5) = 0, pad 3 (position 3.0) = +100
+      float normalized_pos = position;
+      if (normalized_pos >= 4.0f && normalized_pos < 8.0f) {
+        // Negative side: 4.0-7.999 maps to -100 to 0
+        normalized_pos -= 4.0f;
+        value = (int)((normalized_pos / 4.0f) * -100.0f);
+      } else {
+        // Positive side: 0.0-3.999 maps to 0 to +100
+        value = (int)((normalized_pos / 4.0f) * 100.0f);
+      }
+      if (value < -100) value = -100;
+      if (value > 100) value = 100;
+    }
+    
+    touchwheel_mode_set_value(instance->mode, value);
+    touchwheel_output_send(instance->output, value);
+  }
 }
 
 touchwheel_instance_t* touchwheel_create(touchwheel_mode_processor_t* mode, touchwheel_output_t* output, uint32_t inactivity_timeout_ms) {
@@ -51,6 +122,9 @@ touchwheel_instance_t* touchwheel_create(touchwheel_mode_processor_t* mode, touc
   touchwheel_core_set_callback(&instance->core, instance_delta_callback, instance);
   touchwheel_core_set_position_callback(&instance->core, instance_position_callback, instance);
   
+  // Register analog position callback
+  touchwheel_analog_set_position_callback(instance_analog_position_callback, instance);
+  
   // Store mode and output
   instance->mode = mode;
   instance->output = output;
@@ -62,6 +136,9 @@ touchwheel_instance_t* touchwheel_create(touchwheel_mode_processor_t* mode, touc
 
 void touchwheel_destroy(touchwheel_instance_t* instance) {
   if (!instance) return;
+  
+  // Remove analog callback
+  touchwheel_analog_remove_position_callback(instance);
   
   if (instance->mode) {
     touchwheel_mode_destroy(instance->mode);
@@ -108,6 +185,13 @@ void touchwheel_set_output(touchwheel_instance_t* instance, touchwheel_output_t*
 
 void touchwheel_process_press(touchwheel_instance_t* instance, uint8_t pad_id, uint32_t timestamp_ms) {
   if (!instance || !instance->enabled) return;
+  
+  // If analog sampling is active, disable discrete pad processing
+  // Analog mode takes precedence for smooth finger tracking
+  if (touchwheel_analog_is_active()) {
+    ESP_LOGD(TAG, "Analog mode active - skipping discrete pad processing");
+    return;
+  }
   
   // Check if this is a new interaction BEFORE processing (to detect state change)
   bool was_interaction_active = instance->core.interaction_active;

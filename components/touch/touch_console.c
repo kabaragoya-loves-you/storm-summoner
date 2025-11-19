@@ -77,7 +77,7 @@ static void test_value_callback(int value, void* user_data) {
     // Odometer/bipolar modes return absolute values - set directly
     s_test_state.current_value = value;
   }
-  ESP_LOGI(TAG, "Touchwheel value: %d", s_test_state.current_value);
+  ESP_LOGI(TAG, "Touchwheel value: %d (delta: %d)", s_test_state.current_value, value);
 }
 
 // Touch event handler for confirm/cancel pads

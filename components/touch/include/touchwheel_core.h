@@ -42,6 +42,10 @@ typedef struct {
   touchwheel_delta_cb_t delta_callback;
   touchwheel_position_cb_t position_callback;  // For multi-pad position-based value setting
   void* callback_user_data;
+  
+  // Analog position tracking
+  float last_analog_position;  // Last analog position (0.0-7.999)
+  bool analog_mode_active;     // True if analog sampling is active
 } touchwheel_core_t;
 
 /**
@@ -60,6 +64,14 @@ esp_err_t touchwheel_core_init(touchwheel_core_t* core, touchwheel_mode_type_t m
  * @param timestamp_ms Current timestamp in milliseconds
  */
 void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint32_t timestamp_ms);
+
+/**
+ * Process analog position update
+ * @param core Core driver instance
+ * @param analog_position Interpolated position (0.0 to 7.999)
+ * @param timestamp_ms Current timestamp in milliseconds
+ */
+void touchwheel_core_process_analog_position(touchwheel_core_t* core, float analog_position, uint32_t timestamp_ms);
 
 /**
  * Process pad release event

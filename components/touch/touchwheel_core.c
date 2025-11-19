@@ -2,6 +2,7 @@
 #include "event_bus.h"
 #include "esp_log.h"
 #include <stdlib.h>
+#include <math.h>
 
 #define TAG "TOUCHWHEEL_CORE"
 
@@ -20,6 +21,8 @@ esp_err_t touchwheel_core_init(touchwheel_core_t* core, touchwheel_mode_type_t m
   core->num_active_pads = 0;
   core->boundary_violated = false;
   core->boundary_violation_direction = 0;
+  core->last_analog_position = -1.0f;
+  core->analog_mode_active = false;
   
   for (int i = 0; i < NUM_WHEEL_PADS; i++) {
     core->pad_pressed_states[i] = false;
@@ -166,32 +169,30 @@ void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint
     // Set the new pad as pressed
     core->pad_pressed_states[pad_id] = true;
     
-    // For constrained modes, set value based on pad position
-    if (core->mode_type == TOUCHWHEEL_MODE_ODOMETER || core->mode_type == TOUCHWHEEL_MODE_BIPOLAR) {
-      // Call position callback to set value based on pad position
-      if (core->position_callback) {
-        uint8_t pads[1] = {pad_id};
-        // Position callback will be handled by instance which has access to mode processor
-        // For now, we'll set a flag that the instance can check
-      }
-    }
+    // For constrained modes, position-based value setting is handled by touchwheel.c
+    // when processing the press event
   }
   
   // Only calculate deltas if we have a previous position AND interaction is active
   // AND we haven't timed out AND this is not a new interaction
+  // IMPORTANT: For endless mode, only generate deltas on continuous movement (drag), not single taps
+  // Single taps should not generate deltas - only movement between pads
   if (core->last_logical_wheel_pos != -1 && core->interaction_active && 
-      !is_interaction_timed_out(core, timestamp_ms) && !is_new_interaction) {
+      !is_interaction_timed_out(core, timestamp_ms) && !is_new_interaction &&
+      core->last_logical_wheel_pos != current_logical_wheel_pos) {  // Only if pad changed
     
     // Calculate delta first to determine direction
+    // Clockwise path: 4→5→6→7→0→1→2→3 should increment value (positive delta)
+    // Counter-clockwise path: 4→3→2→1→0→7→6→5 should decrement value (negative delta)
     int delta = current_logical_wheel_pos - core->last_logical_wheel_pos;
     
     // Handle wrap-around for all modes
     // Clockwise path: 4→5→6→7→0→1→2→3
-    // For example: pad 7→0 clockwise = +1 (not -7)
+    // For example: pad 7→0 clockwise = +1 (wraps from -7)
     if (delta > (NUM_WHEEL_PADS / 2)) {
-      delta -= NUM_WHEEL_PADS;  // Large positive delta wraps to negative (counter-clockwise)
+      delta -= NUM_WHEEL_PADS;  // Large positive delta wraps to negative (counter-clockwise wrap)
     } else if (delta < -(NUM_WHEEL_PADS / 2)) {
-      delta += NUM_WHEEL_PADS;  // Large negative delta wraps to positive (clockwise)
+      delta += NUM_WHEEL_PADS;  // Large negative delta wraps to positive (clockwise wrap)
     }
     
     // If boundary was violated, check if we're trying to continue in the same direction
@@ -235,9 +236,11 @@ void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint
     if (delta != 0) {
       uint32_t time_diff_ms = timestamp_ms - core->last_wheel_interaction_time;
       int speed_multiplier = 1;
-      if (time_diff_ms < 75) speed_multiplier = 5;       // Ultra-fast
-      else if (time_diff_ms < 100) speed_multiplier = 3; // Very fast  
-      else if (time_diff_ms < 150) speed_multiplier = 2; // Fast
+      // Conservative speed multipliers - only for very fast swipes
+      // Most normal and slow speeds stay at 1x
+      if (time_diff_ms < 30) speed_multiplier = 3;       // Ultra-fast swipe
+      else if (time_diff_ms < 50) speed_multiplier = 2;  // Fast swipe
+      // Otherwise multiplier stays at 1 for normal and slow speeds
       
       int effective_delta = delta * speed_multiplier;
       
@@ -369,10 +372,126 @@ void touchwheel_core_reset(touchwheel_core_t* core) {
   core->num_active_pads = 0;
   core->boundary_violated = false;
   core->boundary_violation_direction = 0;
+  core->last_analog_position = -1.0f;
+  core->analog_mode_active = false;
   for (int i = 0; i < NUM_WHEEL_PADS; i++) {
     core->active_pads[i] = 0xFF;
     core->pad_release_times[i] = 0;
   }
+}
+
+void touchwheel_core_process_analog_position(touchwheel_core_t* core, float analog_position, uint32_t timestamp_ms) {
+  if (!core) return;
+  
+  core->analog_mode_active = true;
+  core->last_pad_touch_time = timestamp_ms;
+  
+  // Convert analog position to discrete pad ID for boundary checking
+  int current_pad = (int)floorf(analog_position);
+  if (current_pad < 0) current_pad = 0;
+  if (current_pad >= NUM_WHEEL_PADS) current_pad = NUM_WHEEL_PADS - 1;
+  
+  // Initialize position on first update - don't generate delta
+  if (core->last_analog_position < 0.0f) {
+    core->last_analog_position = analog_position;
+    core->last_logical_wheel_pos = current_pad;
+    core->last_wheel_interaction_time = timestamp_ms;
+    core->interaction_active = true;
+    ESP_LOGD(TAG, "Analog position initialized: pad %d, pos %.2f", current_pad, analog_position);
+    return;  // No delta on first position update
+  }
+  
+  // Calculate delta from last analog position
+  // Clockwise swipe should increment value (positive delta), counter-clockwise should decrement (negative delta)
+  {
+    float delta_f = analog_position - core->last_analog_position;
+    
+    // Handle wrap-around: deltas > 4 pads indicate wrap
+    // Clockwise 7.5→0.5: delta = -7.0, wrap to +1.0
+    // Counter-clockwise 0.5→7.5: delta = +7.0, wrap to -1.0
+    if (delta_f > 4.0f) {
+      delta_f -= 8.0f;  // Counter-clockwise wrap
+    } else if (delta_f < -4.0f) {
+      delta_f += 8.0f;  // Clockwise wrap
+    }
+    
+    // Convert to integer delta with conservative scaling
+    // Lower scaling = less sensitive = easier to increment by 1
+    float abs_delta_f = fabsf(delta_f);
+    
+    // Minimal deadzone: only filter true noise
+    if (abs_delta_f < 0.08f) {
+      // Too small - ignore noise, update position but don't generate delta
+      core->last_analog_position = analog_position;
+      return;
+    }
+    
+    // Scale by 3: 0.33 pad positions = 1 delta (easier slow control than 4x)
+    int delta = (int)roundf(delta_f * 3.0f);
+    
+    if (delta != 0) {
+      // Check for boundary violation (for constrained modes)
+      int last_pad = (int)floorf(core->last_analog_position);
+      if (last_pad < 0) last_pad = 0;
+      if (last_pad >= NUM_WHEEL_PADS) last_pad = NUM_WHEEL_PADS - 1;
+      
+      if (touchwheel_core_is_boundary_violation(core, last_pad, current_pad)) {
+        // Boundary violation - don't process delta
+        ESP_LOGD(TAG, "Analog boundary violation: pad %d -> %d", last_pad, current_pad);
+        core->boundary_violated = true;
+        core->boundary_violation_direction = (delta > 0) ? 1 : -1;
+        return;
+      }
+      
+      // Check if boundary was violated and we're continuing in same direction
+      if (core->boundary_violated) {
+        if ((delta > 0 && core->boundary_violation_direction > 0) ||
+            (delta < 0 && core->boundary_violation_direction < 0)) {
+          ESP_LOGD(TAG, "Blocking analog movement in boundary violation direction");
+          return;
+        }
+        
+        // Reversing direction - clear violation
+        if ((delta > 0 && core->boundary_violation_direction < 0) ||
+            (delta < 0 && core->boundary_violation_direction > 0)) {
+          core->boundary_violated = false;
+          core->boundary_violation_direction = 0;
+        }
+      }
+      
+      // Calculate speed multiplier based on delta magnitude
+      // Conservative - only for fast swipes (slow swipes always 1x)
+      int speed_multiplier = 1;
+      if (abs_delta_f > 1.0f) speed_multiplier = 2;   // Very fast swipe (> 1 pad)
+      // Otherwise multiplier stays at 1 for normal and slow speeds
+      
+      int effective_delta = delta * speed_multiplier;
+      
+      ESP_LOGD(TAG, "Analog delta: %.3f -> %d (pad %d, speed %dx)", 
+        delta_f, effective_delta, current_pad, speed_multiplier);
+      
+      // Generate haptic feedback
+      event_t haptic_event = {
+        .type = EVENT_HAPTIC_REQUEST,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.haptic = { 
+          .pattern = (delta > 0) ? HAPTIC_INCREMENT : HAPTIC_DECREMENT
+        }
+      };
+      event_bus_post(&haptic_event);
+      
+      // Call delta callback
+      if (core->delta_callback) {
+        core->delta_callback(effective_delta, current_pad, timestamp_ms, core->callback_user_data);
+      }
+    }
+  }
+  
+  core->last_analog_position = analog_position;
+  core->last_logical_wheel_pos = current_pad;
+  core->last_wheel_interaction_time = timestamp_ms;
+  core->interaction_active = true;
 }
 
 bool touchwheel_core_are_any_pads_pressed(const touchwheel_core_t* core) {

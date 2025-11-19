@@ -317,13 +317,14 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   
   // Special handling for specific pads
   if (pad_index == 12) {
-    // Pad 12 (GPIO15, channel 14) - copper screw needs extreme sensitivity
-    calculated_threshold = (uint32_t)(calculated_threshold * 0.6f);
+    // Pad 12 (GPIO3, channel 2) - copper screw needs sensitivity but prone to false positives
+    // Increased to 0.95x to reduce false positives (only 5% more sensitive than default)
+    calculated_threshold = (uint32_t)(calculated_threshold * 0.95f);
     // But ensure it's not too low to avoid instability
     if (calculated_threshold < 30) {
       calculated_threshold = 30;
     }
-    ESP_LOGI(TAG, "Pad 12: Applied sensitivity multiplier, threshold=%"PRIu32, calculated_threshold);
+    ESP_LOGI(TAG, "Pad 12: Applied sensitivity multiplier (0.95x), threshold=%"PRIu32, calculated_threshold);
   }
   
   // Ensure minimum threshold gap from baseline to prevent false triggers

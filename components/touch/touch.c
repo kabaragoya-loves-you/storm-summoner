@@ -1,6 +1,7 @@
 #include "touch.h"
 #include "touch_thresholds.h"
 #include "touchwheel.h"
+#include "touchwheel_analog.h"
 #include "ui.h"
 #include "event_bus.h"
 #include "esp_log.h"
@@ -23,6 +24,9 @@ static bool s_logging_enabled = false;
 // Active touchwheel instances (for routing pad 0-7 events)
 static touchwheel_instance_t* s_touchwheel_instances[MAX_TOUCHWHEEL_INSTANCES] = {NULL};
 static int s_num_touchwheel_instances = 0;
+
+// Track last touch time for pads 0-7 (for analog sampling timeout)
+static uint32_t s_wheel_pad_last_touch_time[8] = {0};
 
 // Touch pad mapping: Production hardware has reversed order
 #if HW_CONFIG_PRODUCTION
@@ -131,6 +135,33 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // Only route in performance mode (or when explicitly enabled)
   if (pad_index < 8 && s_num_touchwheel_instances > 0 && ui_get_app_mode() == APP_MODE_PERFORMANCE) {
     uint32_t timestamp_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    
+    // Start analog sampling if not already active
+    if (is_pressed && !touchwheel_analog_is_active()) {
+      ESP_LOGD(TAG, "Starting analog sampling (pad %d pressed)", pad_index);
+      touchwheel_analog_start();
+    }
+    
+    // Update last touch time for this pad
+    if (is_pressed) {
+      s_wheel_pad_last_touch_time[pad_index] = timestamp_ms;
+    }
+    
+    // Check if all pads 0-7 are released (for timeout detection)
+    bool any_wheel_pad_pressed = false;
+    for (int i = 0; i < 8; i++) {
+      if (s_button_pressed_states[i]) {
+        any_wheel_pad_pressed = true;
+        break;
+      }
+    }
+    
+    // If all pads released, start timeout check
+    if (!any_wheel_pad_pressed && touchwheel_analog_is_active()) {
+      // Analog sampling will stop itself after inactivity timeout
+      // No need to stop immediately - let it handle the timeout
+    }
+    
     for (int i = 0; i < s_num_touchwheel_instances; i++) {
       if (s_touchwheel_instances[i]) {
         if (is_pressed) {

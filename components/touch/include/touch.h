@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "driver/touch_sens.h"
 
 #define MAX_TOUCH_PADS 13
 
@@ -41,5 +42,8 @@ esp_err_t touch_check_drift(void);
 // Note: touchwheel_instance_t is defined in touchwheel.h
 esp_err_t touch_register_touchwheel_instance(struct touchwheel_instance* instance);
 esp_err_t touch_unregister_touchwheel_instance(struct touchwheel_instance* instance);
+
+// Internal accessor functions (exposed for touchwheel_analog.c)
+touch_channel_handle_t touch_get_channel_handle(int pad_index);
 
 #endif // TOUCH_H_
