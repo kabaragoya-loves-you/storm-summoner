@@ -419,8 +419,8 @@ void touchwheel_core_process_analog_position(touchwheel_core_t* core, float anal
     // Lower scaling = less sensitive = easier to increment by 1
     float abs_delta_f = fabsf(delta_f);
     
-    // Minimal deadzone: only filter true noise
-    if (abs_delta_f < 0.08f) {
+    // Very minimal deadzone: only filter true noise
+    if (abs_delta_f < 0.06f) {
       // Too small - ignore noise, update position but don't generate delta
       core->last_analog_position = analog_position;
       return;
@@ -428,6 +428,12 @@ void touchwheel_core_process_analog_position(touchwheel_core_t* core, float anal
     
     // Scale by 3: 0.33 pad positions = 1 delta (easier slow control than 4x)
     int delta = (int)roundf(delta_f * 3.0f);
+    
+    // Debug: Log when crossing pad 0 (position near 0 or near 8)
+    if ((analog_position < 1.0f || analog_position > 7.0f) && delta != 0) {
+      ESP_LOGD(TAG, "PAD 0 ZONE: pos %.3f→%.3f, delta_f=%.3f, delta=%d", 
+        core->last_analog_position, analog_position, delta_f, delta);
+    }
     
     if (delta != 0) {
       // Check for boundary violation (for constrained modes)

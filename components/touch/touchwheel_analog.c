@@ -279,10 +279,10 @@ static void analog_sampling_task(void* pvParameters) {
     // Debug: Log ALL pads when in wrap mode to see what's contributing to wrong position
     bool near_wrap_debug = (valid_pads[0] && deltas[0] > 0 && valid_pads[7] && deltas[7] > 0);
     if (near_wrap_debug) {
-      ESP_LOGI(TAG, "WRAP MODE: pos=%.3f | 0:%"PRId32" 1:%"PRId32" 2:%"PRId32" 3:%"PRId32" 4:%"PRId32" 5:%"PRId32" 6:%"PRId32" 7:%"PRId32,
+      ESP_LOGD(TAG, "WRAP MODE: pos=%.3f | 0:%"PRId32" 1:%"PRId32" 2:%"PRId32" 3:%"PRId32" 4:%"PRId32" 5:%"PRId32" 6:%"PRId32" 7:%"PRId32,
         position, deltas[0], deltas[1], deltas[2], deltas[3], deltas[4], deltas[5], deltas[6], deltas[7]);
     } else if ((valid_pads[0] && deltas[0] > 100) || (valid_pads[7] && deltas[7] > 1000)) {
-      ESP_LOGI(TAG, "POS: %.3f | P0:%"PRId32"(%d) P7:%"PRId32"(%d)",
+      ESP_LOGD(TAG, "POS: %.3f | P0:%"PRId32"(%d) P7:%"PRId32"(%d)",
         position, deltas[0], valid_pads[0], deltas[7], valid_pads[7]);
     }
     
@@ -340,9 +340,25 @@ static float calculate_weighted_centroid(const int32_t* deltas, bool* valid_pads
   int num_valid = 0;
   
   // First pass: collect valid pads and check for wrap-around
+  // Use hysteresis to prevent wrap mode from toggling rapidly
+  static bool was_in_wrap_mode = false;
+  
   bool has_pad0 = valid_pads[0] && deltas[0] > 0;
   bool has_pad7 = valid_pads[7] && deltas[7] > 0;
-  bool near_wrap = has_pad0 && has_pad7;
+  
+  // Hysteresis: 
+  // - Enter wrap mode if BOTH pads active (pad 7 > 300, pad 0 > 50)
+  // - Exit wrap mode only if pad 7 < 150 OR pad 0 < 50
+  bool near_wrap;
+  if (was_in_wrap_mode) {
+    // Currently in wrap mode - require stronger evidence to exit
+    near_wrap = (deltas[0] >= 50 && deltas[7] >= 150);
+  } else {
+    // Currently in normal mode - standard entry condition
+    near_wrap = has_pad0 && has_pad7;
+  }
+  
+  was_in_wrap_mode = near_wrap;
   
   // Simplified approach: always treat wrap-around properly
   // When both pad 0 and pad 7 are active, we're crossing the boundary
@@ -360,30 +376,43 @@ static float calculate_weighted_centroid(const int32_t* deltas, bool* valid_pads
     float expected_pos = (total_weight > 0.0f) ? (weighted_sum / total_weight) : 0.0f;
     ESP_LOGD(TAG, "Wrap calc: (8.0×%.0f + 7.0×%.0f) / %.0f = %.3f", weight0, weight7, total_weight, expected_pos);
   } else {
-    // Normal case: standard weighted average
-    // Only include pads with delta > 30% of max to filter residual signals from old touches
+    // Normal case: standard weighted average with spatial filtering
+    // Find the strongest signal as the anchor point
     int32_t max_delta_local = 0;
+    int max_pad_index = -1;
+    
     for (int i = 0; i < 8; i++) {
       if (valid_pads[i] && deltas[i] > max_delta_local) {
         max_delta_local = deltas[i];
+        max_pad_index = i;
       }
     }
     
-    // Adaptive threshold: 30% of max, but scale down for weak signals
-    int32_t threshold_for_calc = max_delta_local / 3;  // 30%
-    if (max_delta_local < 3000) {
-      // Weak signal - use lower threshold to avoid losing position
-      threshold_for_calc = 200;
-    } else if (threshold_for_calc < 800) {
-      threshold_for_calc = 800;
+    if (max_pad_index < 0) {
+      return -1.0f;  // No valid pads
     }
     
+    // Step 2: Only include pads within ±2 positions of the anchor AND > 25% of max
+    // Balance: aggressive enough to filter distant residuals, gentle enough to catch weak adjacents
+    int32_t threshold_pct = max_delta_local / 4;  // 25% of max
+    
     for (int i = 0; i < 8; i++) {
-      if (valid_pads[i] && deltas[i] >= threshold_for_calc) {
+      if (!valid_pads[i] || deltas[i] == 0) continue;
+      
+      // Calculate circular distance from anchor pad
+      int dist = abs(i - max_pad_index);
+      if (dist > 4) dist = 8 - dist;  // Wrap around (e.g., pad 0 to pad 7 = distance 1)
+      
+      // Only include if within ±2 pads of anchor AND above threshold
+      if (dist <= 2 && deltas[i] >= threshold_pct) {
         float weight = (float)deltas[i];
         weighted_sum += (float)i * weight;
         total_weight += weight;
         num_valid++;
+      } else if (deltas[i] >= threshold_pct) {
+        // Log filtered pads to diagnose residual signal issues
+        ESP_LOGD(TAG, "Filtered pad %d (delta %"PRId32", dist %d from anchor %d)", 
+          i, deltas[i], dist, max_pad_index);
       }
     }
   }
@@ -394,6 +423,12 @@ static float calculate_weighted_centroid(const int32_t* deltas, bool* valid_pads
   }
   
   float position = weighted_sum / total_weight;
+  
+  // Debug: log calculation details when position is near 0 (pad 0 zone)
+  if (position < 1.0f || position > 7.0f) {
+    ESP_LOGD(TAG, "Centroid calc: pos=%.3f, weighted_sum=%.1f, total_weight=%.1f, num_pads=%d",
+      position, weighted_sum, total_weight, num_valid);
+  }
   
   // Normalize to 0.0-7.999 range
   float original_position = position;
