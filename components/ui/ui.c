@@ -202,7 +202,18 @@ void ui_set_app_mode(app_mode_t mode) {
   } 
   // Handle exiting Programming mode
   else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
-    // Cleanup Programming menu
+    // CRITICAL: Switch back to default screen FIRST, before cleanup
+    // This prevents deleting the active screen, which causes crashes
+    lv_obj_t *default_screen = lv_scr_act();  // Get current default (canvas parent)
+    if (canvas != NULL) {
+      default_screen = lv_obj_get_parent(canvas);
+      if (default_screen && lv_obj_is_valid(default_screen)) {
+        lv_scr_load(default_screen);
+        ESP_LOGI(TAG, "Switched to default screen before Programming cleanup");
+      }
+    }
+    
+    // NOW it's safe to cleanup Programming menu (not the active screen anymore)
     programming_menu_cleanup();
     
     // Destroy LVGL encoder touchwheel
