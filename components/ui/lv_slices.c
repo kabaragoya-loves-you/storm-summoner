@@ -1,5 +1,6 @@
 #include "lv_slices.h"
-#include "ui.h"  // For ui_touch_is_button_pressed
+#include "event_bus.h"
+#include "touch.h"
 #include <math.h>
 #include <stdlib.h>
 #include "esp_log.h"
@@ -18,8 +19,18 @@ static void lv_slices_destructor_event_cb(lv_event_t * e);
 static bool default_state_cb(uint8_t slice_index, void* user_data);
 static void draw_slice(lv_layer_t * layer, lv_area_t * coords, uint8_t index, 
                       lv_slices_data_t * data, bool active);
-static void refresh_timer_cb(lv_timer_t * timer);
+static void lv_slices_async_flush(void * user_data);
+static void lv_slices_touch_event_handler(const event_t* event, void* context);
+static void lv_slices_register_instance(lv_slices_data_t *data);
+static void lv_slices_unregister_instance(lv_slices_data_t *data);
+static void lv_slices_schedule_flush(lv_slices_data_t *data);
 
+/**********************
+ *  STATIC VARIABLES
+ **********************/
+
+static lv_slices_data_t *s_slices_list_head = NULL;
+static bool s_touch_listener_registered = false;
 /**********************
  *   FUNCTIONS
  **********************/
@@ -48,8 +59,13 @@ lv_obj_t * lv_slices_create(lv_obj_t * parent) {
     slices_data->state_cb = default_state_cb;
     slices_data->state_cb_user_data = NULL;
     slices_data->active_slices = 0;
-    slices_data->prev_active_slices = 0;
-    slices_data->refresh_timer = NULL;
+    slices_data->pending_press_mask = 0;
+    slices_data->pending_release_mask = 0;
+    slices_data->invalidate_pending = false;
+    slices_data->registered = false;
+    slices_data->owner = obj;
+    slices_data->next = NULL;
+    slices_data->prev = NULL;
     
     // Store data as user data
     lv_obj_set_user_data(obj, slices_data);
@@ -66,12 +82,15 @@ lv_obj_t * lv_slices_create(lv_obj_t * parent) {
     lv_obj_add_event_cb(obj, lv_slices_draw_event_cb, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_add_event_cb(obj, lv_slices_destructor_event_cb, LV_EVENT_DELETE, NULL);
     
-    // Create refresh timer to check for touch state changes
-    // 10ms refresh for responsive touch (100Hz)
-    slices_data->refresh_timer = lv_timer_create(refresh_timer_cb, 10, obj);
-    if (slices_data->refresh_timer) {
-        lv_timer_set_repeat_count(slices_data->refresh_timer, -1);  // Infinite
+    // Initialize state from current touch readings
+    const bool *pressed_states = touch_get_pressed_states();
+    if (pressed_states) {
+        for (uint8_t i = 0; i < slices_data->slice_count; i++) {
+            if (pressed_states[i]) slices_data->active_slices |= (1U << i);
+        }
     }
+    
+    lv_slices_register_instance(slices_data);
     
     return obj;
 }
@@ -80,9 +99,8 @@ static void lv_slices_destructor_event_cb(lv_event_t * e) {
     lv_obj_t * obj = lv_event_get_target(e);
     lv_slices_data_t * slices_data = lv_obj_get_user_data(obj);
     if (slices_data) {
-        if (slices_data->refresh_timer) {
-            lv_timer_delete(slices_data->refresh_timer);
-        }
+        lv_slices_unregister_instance(slices_data);
+        slices_data->owner = NULL;
         free(slices_data);
         lv_obj_set_user_data(obj, NULL);
     }
@@ -91,7 +109,7 @@ static void lv_slices_destructor_event_cb(lv_event_t * e) {
 // Default state callback - uses touch input
 static bool default_state_cb(uint8_t slice_index, void* user_data) {
     (void)user_data;
-    return ui_touch_is_button_pressed(slice_index);
+    return touch_is_pad_pressed(slice_index);
 }
 
 static void draw_slice(lv_layer_t * layer, lv_area_t * coords, uint8_t index, 
@@ -173,11 +191,11 @@ static void lv_slices_draw_event_cb(lv_event_t * e) {
     for (uint8_t i = 0; i < slices_data->slice_count; i++) {
         bool is_active = false;
         
-        // First check internal bitmask (for testing)
-        is_active = (slices_data->active_slices & (1 << i)) != 0;
+        // First check internal bitmask (updated via touch events)
+        is_active = (slices_data->active_slices & (1U << i)) != 0;
         
-        // Then check state callback if no internal state is set
-        if (!is_active && slices_data->state_cb) {
+        // Allow optional override via callback
+        if (slices_data->state_cb) {
             is_active = slices_data->state_cb(i, slices_data->state_cb_user_data);
         }
         
@@ -246,13 +264,17 @@ void lv_slices_set_state_cb(lv_obj_t * obj, lv_slices_state_cb_t cb, void* user_
 void lv_slices_set_active(lv_obj_t * obj, uint8_t slice_index, bool active) {
     lv_slices_data_t * slices_data = lv_obj_get_user_data(obj);
     if (slices_data && slice_index < slices_data->slice_count) {
-        uint8_t mask = 1 << slice_index;
-        if (active) {
-            slices_data->active_slices |= mask;
-        } else {
-            slices_data->active_slices &= ~mask;
-        }
-        lv_obj_invalidate(obj);
+        uint16_t mask = 1U << slice_index;
+        bool currently = (slices_data->active_slices & mask) != 0;
+        if (active == currently) return;
+        
+        if (active) slices_data->active_slices |= mask;
+        else slices_data->active_slices &= ~mask;
+        
+        if (active) slices_data->pending_press_mask |= mask;
+        else slices_data->pending_release_mask |= mask;
+        
+        lv_slices_schedule_flush(slices_data);
     }
 }
 
@@ -290,55 +312,100 @@ uint8_t lv_slices_get_slice_at_point(lv_obj_t * obj, lv_point_t * point) {
     return (slice_index < slices_data->slice_count) ? slice_index : 0xFF;
 }
 
-static void refresh_timer_cb(lv_timer_t * timer) {
-    lv_obj_t * obj = (lv_obj_t *)lv_timer_get_user_data(timer);
+static void lv_slices_schedule_flush(lv_slices_data_t *data) {
+    if (data->invalidate_pending) return;
+    data->invalidate_pending = true;
+    lv_async_call(lv_slices_async_flush, data);
+}
+
+static void lv_slices_async_flush(void * user_data) {
+    lv_slices_data_t *data = user_data;
+    if (!data) return;
+    lv_obj_t *obj = data->owner;
     if (!obj) return;
     
-    lv_slices_data_t * slices_data = lv_obj_get_user_data(obj);
-    if (!slices_data) return;
+    uint16_t press_mask = data->pending_press_mask;
+    uint16_t release_mask = data->pending_release_mask;
+    data->pending_press_mask = 0;
+    data->pending_release_mask = 0;
+    data->invalidate_pending = false;
     
-    // Check current state of all slices
-    uint8_t current_state = 0;
-    for (uint8_t i = 0; i < slices_data->slice_count; i++) {
-        bool is_active = false;
-        
-        // First check internal bitmask
-        is_active = (slices_data->active_slices & (1 << i)) != 0;
-        
-        // Then check state callback if no internal state is set
-        if (!is_active && slices_data->state_cb) {
-            is_active = slices_data->state_cb(i, slices_data->state_cb_user_data);
+    uint16_t changed_mask = press_mask | release_mask;
+    if (changed_mask) {
+        for (uint8_t i = 0; i < data->slice_count; i++) {
+            uint16_t mask = 1U << i;
+            if (!(changed_mask & mask)) continue;
+            if (press_mask & mask) lv_obj_send_event(obj, LV_EVENT_SLICE_PRESSED, &i);
+            if (release_mask & mask) lv_obj_send_event(obj, LV_EVENT_SLICE_RELEASED, &i);
         }
-        
-        if (is_active) {
-            current_state |= (1 << i);
-        }
+        lv_obj_send_event(obj, LV_EVENT_SLICE_VALUE_CHANGED, &data->active_slices);
     }
     
-    // Check for changes and send events
-    if (current_state != slices_data->prev_active_slices) {
-        // Check each slice for changes
-        for (uint8_t i = 0; i < slices_data->slice_count; i++) {
-            uint8_t mask = 1 << i;
-            bool was_active = (slices_data->prev_active_slices & mask) != 0;
-            bool is_active = (current_state & mask) != 0;
-            
-            if (!was_active && is_active) {
-                // Slice was pressed
-                lv_obj_send_event(obj, LV_EVENT_SLICE_PRESSED, &i);
-            } else if (was_active && !is_active) {
-                // Slice was released
-                lv_obj_send_event(obj, LV_EVENT_SLICE_RELEASED, &i);
-            }
+    lv_obj_invalidate(obj);
+}
+
+static void lv_slices_register_instance(lv_slices_data_t *data) {
+    if (!data) return;
+    
+    // Insert at head of list
+    data->next = s_slices_list_head;
+    data->prev = NULL;
+    if (s_slices_list_head) s_slices_list_head->prev = data;
+    s_slices_list_head = data;
+    data->registered = true;
+    
+    if (!s_touch_listener_registered) {
+        if (event_bus_subscribe(EVENT_TOUCH_PRESS, lv_slices_touch_event_handler, NULL) == ESP_OK &&
+            event_bus_subscribe(EVENT_TOUCH_RELEASE, lv_slices_touch_event_handler, NULL) == ESP_OK) {
+            s_touch_listener_registered = true;
+        } else {
+            ESP_LOGE(TAG, "Failed to subscribe to touch events for slices widget");
+        }
+    }
+}
+
+static void lv_slices_unregister_instance(lv_slices_data_t *data) {
+    if (!data || !data->registered) return;
+    
+    if (data->prev) data->prev->next = data->next;
+    else s_slices_list_head = data->next;
+    if (data->next) data->next->prev = data->prev;
+    
+    data->registered = false;
+    data->next = NULL;
+    data->prev = NULL;
+    
+    if (s_touch_listener_registered && s_slices_list_head == NULL) {
+        event_bus_unsubscribe(EVENT_TOUCH_PRESS, lv_slices_touch_event_handler);
+        event_bus_unsubscribe(EVENT_TOUCH_RELEASE, lv_slices_touch_event_handler);
+        s_touch_listener_registered = false;
+    }
+}
+
+static void lv_slices_touch_event_handler(const event_t* event, void* context) {
+    (void)context;
+    if (!event) return;
+    
+    uint8_t pad_id = event->data.touch.pad_id;
+    bool is_press = (event->type == EVENT_TOUCH_PRESS);
+    
+    for (lv_slices_data_t *node = s_slices_list_head; node; node = node->next) {
+        if (!node->owner) continue;
+        if (pad_id >= node->slice_count) continue;
+        
+        uint16_t mask = 1U << pad_id;
+        bool currently = (node->active_slices & mask) != 0;
+        
+        if (is_press) {
+            if (currently) continue;
+            node->active_slices |= mask;
+            node->pending_press_mask |= mask;
+        } else {
+            if (!currently) continue;
+            node->active_slices &= ~mask;
+            node->pending_release_mask |= mask;
         }
         
-        // Send general value changed event
-        lv_obj_send_event(obj, LV_EVENT_SLICE_VALUE_CHANGED, &current_state);
-        
-        // Update previous state
-        slices_data->prev_active_slices = current_state;
-        
-        // Invalidate to redraw
-        lv_obj_invalidate(obj);
+        lv_slices_schedule_flush(node);
     }
 }

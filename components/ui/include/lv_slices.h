@@ -26,7 +26,7 @@ extern "C" {
 typedef bool (*lv_slices_state_cb_t)(uint8_t slice_index, void* user_data);
 
 /* Slices widget data */
-typedef struct {
+typedef struct lv_slices_data_t {
   uint8_t slice_count;
   lv_coord_t inner_radius;
   lv_coord_t outer_radius;
@@ -37,9 +37,14 @@ typedef struct {
   int16_t angle_offset;
   lv_slices_state_cb_t state_cb;
   void* state_cb_user_data;
-  uint8_t active_slices;  // Bitmask for touch state
-  uint8_t prev_active_slices;  // Previous state for change detection
-  lv_timer_t * refresh_timer;  // Timer to check for touch state changes
+  uint16_t active_slices;  // Bitmask for touch state
+  lv_obj_t * owner;        // Back reference to widget
+  uint16_t pending_press_mask;
+  uint16_t pending_release_mask;
+  bool invalidate_pending;
+  bool registered;
+  struct lv_slices_data_t *next;
+  struct lv_slices_data_t *prev;
 } lv_slices_data_t;
 
 /**********************
