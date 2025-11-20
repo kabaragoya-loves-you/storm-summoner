@@ -53,5 +53,14 @@ lv_obj_t* menu_get_current_screen(void);
 // Helper: Create a menu screen with title and items
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count);
 
+// Helper: Navigate to an info page
+void menu_navigate_to_info(const char* title, const char* info_text);
+
+// Helper: Create a scrollable info page with formatted text
+lv_obj_t* menu_create_info_page(const char* title, const char* info_text);
+
+// Helper: Create a page with action buttons
+lv_obj_t* menu_create_action_page(const char* title, const menu_item_t* items, int item_count);
+
 #endif // MENU_H
 

@@ -6,11 +6,65 @@ idf_component_register(
     "pages/device_config.c"
     "pages/settings.c"
     "pages/about.c"
+    "pages/config.c"
+    "pages/touch.c"
+    "pages/midi.c"
+    "pages/haptic.c"
+    "pages/screensaver.c"
+    "pages/dac.c"
+    "pages/adc_manager.c"
+    "pages/expression.c"
+    "pages/cv.c"
+    "pages/sensor.c"
+    "pages/tempo.c"
+    "pages/clock_sync.c"
+    "pages/transport.c"
+    "pages/input_manager.c"
+    "pages/led.c"
+    "pages/buttons.c"
+    "pages/bump.c"
+    "pages/switch.c"
+    "pages/i2c_common.c"
+    "pages/event_bus.c"
+    "pages/app_settings.c"
+    "pages/ui.c"
+    "pages/display.c"
+    "pages/usb_mode.c"
+    "pages/revision.c"
+    "pages/assets_manager.c"
+    "pages/firmware_update.c"
   INCLUDE_DIRS
     "include"
   REQUIRES
     lvgl
     ui
     scene
+    config
+    touch
+    midi
+    haptic
+    screensaver
+    dac
+    adc_manager
+    expression
+    cv
+    sensor
+    tempo
+    clock_sync
+    transport
+    input_manager
+    led
+    buttons
+    bump
+    switch
+    i2c_common
+    event_bus
+    app_settings
+    display
+    usb_mode
+    revision
+    assets_manager
+    firmware_update
+    device_config
+  PRIV_REQUIRES main
 )
-
