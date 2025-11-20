@@ -1,6 +1,7 @@
 #include "touchwheel_outputs.h"
 #include "event_bus.h"
 #include "esp_log.h"
+#include "ui.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,10 +23,52 @@ static void lvgl_encoder_read_cb(lv_indev_t * indev, lv_indev_data_t * data) {
     return;
   }
   
+  // Check if we're in Programming mode with a focused group object
+  bool suppress_haptic = false;
+  if (ui_get_app_mode() == APP_MODE_PROGRAMMING && output->data.lvgl.accumulated_diff != 0) {
+    lv_group_t* group = lv_indev_get_group(indev);
+    if (group) {
+      lv_obj_t* focused = lv_group_get_focused(group);
+      if (focused) {
+        // Get the parent list to check boundaries
+        lv_obj_t* list = lv_obj_get_parent(focused);
+        if (list && lv_obj_has_class(list, &lv_list_class)) {
+          uint32_t child_cnt = lv_obj_get_child_cnt(list);
+          uint32_t focused_index = lv_obj_get_index(focused);
+          
+          // Check if at boundaries
+          if (output->data.lvgl.accumulated_diff < 0 && focused_index == 0) {
+            // Trying to go up from first item
+            suppress_haptic = true;
+            output->data.lvgl.accumulated_diff = 0;  // Suppress navigation too
+          } else if (output->data.lvgl.accumulated_diff > 0 && focused_index == child_cnt - 1) {
+            // Trying to go down from last item
+            suppress_haptic = true;
+            output->data.lvgl.accumulated_diff = 0;  // Suppress navigation too
+          }
+        }
+      }
+    }
+  }
+  
   // Return accumulated diff and clear it
   data->enc_diff = output->data.lvgl.accumulated_diff;
+  int32_t diff_to_report = output->data.lvgl.accumulated_diff;
   output->data.lvgl.accumulated_diff = 0;
   data->state = LV_INDEV_STATE_RELEASED;  // Always released (no button)
+  
+  // Generate haptic feedback only if navigation will actually happen
+  if (diff_to_report != 0 && !suppress_haptic) {
+    event_t haptic_event = {
+      .type = EVENT_HAPTIC_REQUEST,
+      .priority = EVENT_PRIORITY_NORMAL,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.haptic = { 
+        .pattern = (diff_to_report > 0) ? HAPTIC_INCREMENT : HAPTIC_DECREMENT
+      }
+    };
+    event_bus_post(&haptic_event);
+  }
 }
 
 touchwheel_output_t* touchwheel_output_eventbus_create(void) {

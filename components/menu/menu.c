@@ -1,19 +1,16 @@
-#include "programming_menu.h"
+#include "menu.h"
 #include "ui.h"
-#include "touchwheel.h"
-#include "touchwheel_outputs.h"
 #include "esp_log.h"
 #include <string.h>
 
-#define TAG "PROG_MENU"
-#define MAX_MENU_STACK 8
-#define MAX_MENU_ITEMS 16
+#define TAG "MENU"
 
 // Menu navigation stack entry
 typedef struct {
   lv_obj_t* screen;
   lv_obj_t* list;
   const char* name;
+  menu_page_builder_t builder;
 } menu_stack_entry_t;
 
 // Menu state
@@ -31,49 +28,38 @@ static struct {
 };
 
 // Forward declarations
-static void create_top_level_menu(void);
 static void menu_item_event_cb(lv_event_t* e);
-static lv_obj_t* create_menu_screen(const char* title, const programming_menu_item_t* items, int item_count);
 static void update_top_level_flag(void);
+static lv_obj_t* find_list_in_screen(lv_obj_t* screen);
 
-// Top-level menu items
-static const programming_menu_item_t top_level_items[] = {
-  { "Scenes", NULL, true },
-  { "Device Config", NULL, true },
-  { "Settings", NULL, true },
-  { "About", NULL, true }
-};
-
-// Placeholder sub-menu items
-static const programming_menu_item_t scenes_submenu_items[] = {
-  { "Coming Soon", NULL, false }
-};
-
-static const programming_menu_item_t device_config_submenu_items[] = {
-  { "Coming Soon", NULL, false }
-};
-
-static const programming_menu_item_t settings_submenu_items[] = {
-  { "Coming Soon", NULL, false }
-};
-
-static const programming_menu_item_t about_submenu_items[] = {
-  { "Coming Soon", NULL, false }
-};
-
-void programming_menu_init(void) {
+void menu_init(void) {
   if (menu_state.initialized) {
-    ESP_LOGW(TAG, "Programming menu already initialized");
+    ESP_LOGW(TAG, "Menu already initialized");
     return;
   }
 
   memset(&menu_state, 0, sizeof(menu_state));
   menu_state.initialized = true;
   
-  ESP_LOGI(TAG, "Programming menu initialized");
+  // Create group for encoder navigation
+  menu_state.group = lv_group_create();
+  lv_group_set_wrap(menu_state.group, false);
+  
+  ESP_LOGI(TAG, "Menu system initialized");
 }
 
-static lv_obj_t* create_menu_screen(const char* title, const programming_menu_item_t* items, int item_count) {
+static lv_obj_t* find_list_in_screen(lv_obj_t* screen) {
+  if (!screen) return NULL;
+  
+  uint32_t child_cnt = lv_obj_get_child_cnt(screen);
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(screen, i);
+    if (child && lv_obj_has_class(child, &lv_list_class)) return child;
+  }
+  return NULL;
+}
+
+lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count) {
   // Create screen
   lv_obj_t* screen = lv_obj_create(NULL);
   lv_obj_set_size(screen, 128, 128);
@@ -82,27 +68,44 @@ static lv_obj_t* create_menu_screen(const char* title, const programming_menu_it
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Create title label
+  // Create title label (small, centered at top)
   lv_obj_t* title_label = lv_label_create(screen);
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);
+  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);  // Small header
+  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);  // Position from top
 
-  // Create list widget
+  // Create list widget - positioned below title
   lv_obj_t* list = lv_list_create(screen);
-  lv_obj_set_size(list, 120, 100);
-  lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, -4);
-  lv_obj_set_style_bg_color(list, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(list, LV_OPA_COVER, 0);
+  lv_obj_set_size(list, 100, 114);  // Size to fit remaining space
+  lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 14);  // Position below title
+  
+  // Minimal styling - transparent, no padding, no borders
+  lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(list, 0, 0);
-  lv_obj_set_style_pad_all(list, 2, 0);
+  lv_obj_set_style_pad_all(list, 0, 0);
+  lv_obj_set_style_pad_row(list, 2, 0);  // Small gap between items
+  lv_obj_set_style_text_color(list, lv_color_white(), 0);
 
   // Add menu items
   for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
-    lv_obj_t* btn = lv_list_add_button(list, LV_SYMBOL_FILE, items[i].label);
+    lv_obj_t* btn = lv_list_add_button(list, NULL, items[i].label);  // No icon, just text
+    
+    // Minimal button styling - white text on black, no background
     lv_obj_set_style_text_color(btn, lv_color_white(), 0);
-    lv_obj_set_style_text_font(btn, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(btn, &lv_font_montserrat_12, 0);  // Medium size for items
+    lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);  // Transparent background
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_pad_left(btn, 2, 0);
+    lv_obj_set_style_pad_right(btn, 2, 0);
+    lv_obj_set_style_pad_top(btn, (i == 0) ? 8 : 2, 0);
+    lv_obj_set_style_pad_bottom(btn, 0, 0);
+    // lv_obj_set_style_pad_all(btn, (i == 0) ? 10 : 2, 0);  // No padding on first item, minimal on rest
+    lv_obj_set_style_text_align(btn, LV_TEXT_ALIGN_CENTER, 0);  // Center text
+    
+    // Focused state - just slightly brighter text, no background
+    lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_10, LV_STATE_FOCUSED);  // Barely visible background
     
     // Store item index in user data
     lv_obj_set_user_data(btn, (void*)(intptr_t)i);
@@ -111,17 +114,13 @@ static lv_obj_t* create_menu_screen(const char* title, const programming_menu_it
     lv_obj_add_event_cb(btn, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
     
     // Add button to group for encoder navigation
-    if (menu_state.group) {
-      lv_group_add_obj(menu_state.group, btn);
-    }
+    if (menu_state.group) lv_group_add_obj(menu_state.group, btn);
   }
 
   // Focus first item
   if (menu_state.group && item_count > 0) {
     lv_obj_t* first_btn = lv_obj_get_child(list, 0);
-    if (first_btn) {
-      lv_group_focus_obj(first_btn);
-    }
+    if (first_btn) lv_group_focus_obj(first_btn);
   }
 
   return screen;
@@ -129,67 +128,42 @@ static lv_obj_t* create_menu_screen(const char* title, const programming_menu_it
 
 static void menu_item_event_cb(lv_event_t* e) {
   LV_UNUSED(lv_event_get_target(e));
-  programming_menu_item_t* item = (programming_menu_item_t*)lv_event_get_user_data(e);
+  menu_item_t* item = (menu_item_t*)lv_event_get_user_data(e);
   
   if (!item) return;
 
   ESP_LOGI(TAG, "Menu item selected: %s", item->label);
 
-  if (item->has_submenu) {
-    // Navigate to sub-menu based on label
-    if (strcmp(item->label, "Scenes") == 0) {
-      programming_menu_navigate_to("Scenes", scenes_submenu_items, 
-                                   sizeof(scenes_submenu_items) / sizeof(scenes_submenu_items[0]));
-    } else if (strcmp(item->label, "Device Config") == 0) {
-      programming_menu_navigate_to("Device Config", device_config_submenu_items,
-                                   sizeof(device_config_submenu_items) / sizeof(device_config_submenu_items[0]));
-    } else if (strcmp(item->label, "Settings") == 0) {
-      programming_menu_navigate_to("Settings", settings_submenu_items,
-                                   sizeof(settings_submenu_items) / sizeof(settings_submenu_items[0]));
-    } else if (strcmp(item->label, "About") == 0) {
-      programming_menu_navigate_to("About", about_submenu_items,
-                                   sizeof(about_submenu_items) / sizeof(about_submenu_items[0]));
-    }
+  if (item->has_submenu && item->callback) {
+    // Callback for submenu navigation
+    item->callback();
   } else if (item->callback) {
-    // Execute callback
+    // Execute action callback
     item->callback();
   }
 }
 
-static void create_top_level_menu(void) {
+void menu_create(void) {
+  if (!menu_state.initialized) menu_init();
+
   // Clear any existing stack
   menu_state.stack_depth = 0;
 
-  // Ensure group exists
-  if (!menu_state.group) {
-    menu_state.group = lv_group_create();
-    lv_group_set_wrap(menu_state.group, false);
-  } else {
-    // Clear group of any existing objects
-    lv_group_remove_all_objs(menu_state.group);
-  }
+  // Clear group of any existing objects
+  if (menu_state.group) lv_group_remove_all_objs(menu_state.group);
 
-  // Create top-level menu screen
-  lv_obj_t* screen = create_menu_screen("Menu", top_level_items,
-                                        sizeof(top_level_items) / sizeof(top_level_items[0]));
+  // Create top-level menu by importing the index page
+  extern lv_obj_t* menu_page_index_create(void);
+  lv_obj_t* screen = menu_page_index_create();
 
-  // Find the list widget (it's the second child of screen: title_label, then list)
-  lv_obj_t* list = NULL;
-  lv_obj_t* child = lv_obj_get_child(screen, 0);
-  int idx = 0;
-  while (child) {
-    if (lv_obj_has_class(child, &lv_list_class)) {
-      list = child;
-      break;
-    }
-    idx++;
-    child = lv_obj_get_child(screen, idx);
-  }
+  // Find the list widget
+  lv_obj_t* list = find_list_in_screen(screen);
 
   // Push to stack
   menu_state.stack[0].screen = screen;
   menu_state.stack[0].list = list;
   menu_state.stack[0].name = "Menu";
+  menu_state.stack[0].builder = NULL;  // Top level has no builder
   menu_state.stack_depth = 1;
 
   // Load screen
@@ -199,22 +173,14 @@ static void create_top_level_menu(void) {
   ESP_LOGI(TAG, "Top-level menu created");
 }
 
-static void update_top_level_flag(void) {
-  bool is_top_level = (menu_state.stack_depth == 1);
-  ui_set_programming_top_level(is_top_level);
-}
-
-void programming_menu_create(void) {
-  if (!menu_state.initialized) {
-    programming_menu_init();
-  }
-
-  create_top_level_menu();
-}
-
-void programming_menu_navigate_to(const char* menu_name, const programming_menu_item_t* items, int item_count) {
+void menu_navigate_to(const char* menu_name, menu_page_builder_t builder) {
   if (menu_state.stack_depth >= MAX_MENU_STACK) {
     ESP_LOGE(TAG, "Menu stack full, cannot navigate");
+    return;
+  }
+
+  if (!builder) {
+    ESP_LOGE(TAG, "NULL builder passed to menu_navigate_to");
     return;
   }
 
@@ -222,7 +188,6 @@ void programming_menu_navigate_to(const char* menu_name, const programming_menu_
   if (menu_state.group && menu_state.stack_depth > 0) {
     lv_obj_t* current_list = menu_state.stack[menu_state.stack_depth - 1].list;
     if (current_list) {
-      // Remove all buttons from current list
       uint32_t child_cnt = lv_obj_get_child_cnt(current_list);
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(current_list, i);
@@ -233,26 +198,21 @@ void programming_menu_navigate_to(const char* menu_name, const programming_menu_
     }
   }
 
-  // Create new menu screen
-  lv_obj_t* screen = create_menu_screen(menu_name, items, item_count);
+  // Create new menu screen using builder
+  lv_obj_t* screen = builder();
+  if (!screen) {
+    ESP_LOGE(TAG, "Builder failed to create screen");
+    return;
+  }
 
   // Find the list widget
-  lv_obj_t* list = NULL;
-  lv_obj_t* child = lv_obj_get_child(screen, 0);
-  int idx = 0;
-  while (child) {
-    if (lv_obj_has_class(child, &lv_list_class)) {
-      list = child;
-      break;
-    }
-    idx++;
-    child = lv_obj_get_child(screen, idx);
-  }
+  lv_obj_t* list = find_list_in_screen(screen);
 
   // Push to stack
   menu_state.stack[menu_state.stack_depth].screen = screen;
   menu_state.stack[menu_state.stack_depth].list = list;
   menu_state.stack[menu_state.stack_depth].name = menu_name;
+  menu_state.stack[menu_state.stack_depth].builder = builder;
   menu_state.stack_depth++;
 
   // Load screen
@@ -262,7 +222,7 @@ void programming_menu_navigate_to(const char* menu_name, const programming_menu_
   ESP_LOGI(TAG, "Navigated to menu: %s (depth: %d)", menu_name, menu_state.stack_depth);
 }
 
-void programming_menu_navigate_back(void) {
+void menu_navigate_back(void) {
   if (menu_state.stack_depth <= 1) {
     // At top level, exit Programming mode
     ESP_LOGI(TAG, "At top level, exiting Programming mode");
@@ -274,7 +234,6 @@ void programming_menu_navigate_back(void) {
   if (menu_state.group && menu_state.stack_depth > 0) {
     lv_obj_t* current_list = menu_state.stack[menu_state.stack_depth - 1].list;
     if (current_list) {
-      // Remove all buttons from current list
       uint32_t child_cnt = lv_obj_get_child_cnt(current_list);
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(current_list, i);
@@ -285,11 +244,13 @@ void programming_menu_navigate_back(void) {
     }
   }
 
-  // Pop current screen from stack
-  menu_state.stack_depth--;
-  lv_obj_t* prev_screen = menu_state.stack[menu_state.stack_depth - 1].screen;
+  // CRITICAL: Load previous screen FIRST before deleting current
+  // This prevents the "active screen was deleted" crash
+  lv_obj_t* prev_screen = menu_state.stack[menu_state.stack_depth - 2].screen;
+  lv_scr_load(prev_screen);
 
-  // Delete current screen
+  // NOW it's safe to delete current screen (not active anymore)
+  menu_state.stack_depth--;
   if (menu_state.stack[menu_state.stack_depth].screen) {
     lv_obj_del(menu_state.stack[menu_state.stack_depth].screen);
     menu_state.stack[menu_state.stack_depth].screen = NULL;
@@ -300,7 +261,6 @@ void programming_menu_navigate_back(void) {
   if (menu_state.group && menu_state.stack_depth > 0) {
     lv_obj_t* prev_list = menu_state.stack[menu_state.stack_depth - 1].list;
     if (prev_list) {
-      // Add all buttons from previous list
       uint32_t child_cnt = lv_obj_get_child_cnt(prev_list);
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(prev_list, i);
@@ -311,21 +271,17 @@ void programming_menu_navigate_back(void) {
       // Focus first item
       if (child_cnt > 0) {
         lv_obj_t* first_child = lv_obj_get_child(prev_list, 0);
-        if (first_child) {
-          lv_group_focus_obj(first_child);
-        }
+        if (first_child) lv_group_focus_obj(first_child);
       }
     }
   }
 
-  // Load previous screen
-  lv_scr_load(prev_screen);
   update_top_level_flag();
 
   ESP_LOGI(TAG, "Navigated back (depth: %d)", menu_state.stack_depth);
 }
 
-void programming_menu_handle_enter(void) {
+void menu_handle_enter(void) {
   if (menu_state.stack_depth == 0 || !menu_state.group) return;
 
   // Get focused object (selected item)
@@ -348,11 +304,11 @@ void programming_menu_handle_enter(void) {
   }
 }
 
-void programming_menu_handle_back(void) {
-  programming_menu_navigate_back();
+void menu_handle_back(void) {
+  menu_navigate_back();
 }
 
-void programming_menu_cleanup(void) {
+void menu_cleanup(void) {
   // Delete all screens in stack
   for (int i = 0; i < menu_state.stack_depth; i++) {
     if (menu_state.stack[i].screen) {
@@ -364,20 +320,29 @@ void programming_menu_cleanup(void) {
 
   menu_state.stack_depth = 0;
 
-  // Cleanup group (but don't delete, we'll reuse it)
-  if (menu_state.group) {
-    lv_group_remove_all_objs(menu_state.group);
-  }
+  // Cleanup group
+  if (menu_state.group) lv_group_remove_all_objs(menu_state.group);
 
-  ESP_LOGI(TAG, "Programming menu cleaned up");
+  ESP_LOGI(TAG, "Menu cleaned up");
 }
 
-bool programming_menu_is_top_level(void) {
+bool menu_is_top_level(void) {
   return (menu_state.stack_depth == 1);
 }
 
-// Get menu group for encoder attachment
-lv_group_t* programming_menu_get_group(void) {
+lv_group_t* menu_get_group(void) {
   return menu_state.group;
+}
+
+lv_obj_t* menu_get_current_screen(void) {
+  if (menu_state.stack_depth > 0 && menu_state.stack[menu_state.stack_depth - 1].screen) {
+    return menu_state.stack[menu_state.stack_depth - 1].screen;
+  }
+  return NULL;
+}
+
+static void update_top_level_flag(void) {
+  bool is_top_level = (menu_state.stack_depth == 1);
+  ui_set_programming_top_level(is_top_level);
 }
 

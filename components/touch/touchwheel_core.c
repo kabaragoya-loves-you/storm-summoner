@@ -1,5 +1,6 @@
 #include "touchwheel_core.h"
 #include "event_bus.h"
+#include "ui.h"
 #include "esp_log.h"
 #include <stdlib.h>
 #include <math.h>
@@ -247,16 +248,18 @@ void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint
       ESP_LOGD(TAG, "Delta: %d, Speed: %dx, Effective: %d (Pad %d -> Pad %d)",
         delta, speed_multiplier, effective_delta, core->last_logical_wheel_pos, current_logical_wheel_pos);
       
-      // Generate haptic feedback for scrolling
-      event_t haptic_event = {
-        .type = EVENT_HAPTIC_REQUEST,
-        .priority = EVENT_PRIORITY_NORMAL,
-        .timestamp = event_bus_get_current_timestamp(),
-        .data.haptic = { 
-          .pattern = (delta > 0) ? HAPTIC_INCREMENT : HAPTIC_DECREMENT
-        }
-      };
-      event_bus_post(&haptic_event);
+      // Generate haptic feedback for scrolling (except in Programming mode - handled by LVGL encoder)
+      if (ui_get_app_mode() != APP_MODE_PROGRAMMING) {
+        event_t haptic_event = {
+          .type = EVENT_HAPTIC_REQUEST,
+          .priority = EVENT_PRIORITY_NORMAL,
+          .timestamp = event_bus_get_current_timestamp(),
+          .data.haptic = { 
+            .pattern = (delta > 0) ? HAPTIC_INCREMENT : HAPTIC_DECREMENT
+          }
+        };
+        event_bus_post(&haptic_event);
+      }
       
       // Call callback if registered
       if (core->delta_callback) {
@@ -476,16 +479,18 @@ void touchwheel_core_process_analog_position(touchwheel_core_t* core, float anal
       ESP_LOGD(TAG, "Analog delta: %.3f -> %d (pad %d, speed %dx)", 
         delta_f, effective_delta, current_pad, speed_multiplier);
       
-      // Generate haptic feedback
-      event_t haptic_event = {
-        .type = EVENT_HAPTIC_REQUEST,
-        .priority = EVENT_PRIORITY_NORMAL,
-        .timestamp = event_bus_get_current_timestamp(),
-        .data.haptic = { 
-          .pattern = (delta > 0) ? HAPTIC_INCREMENT : HAPTIC_DECREMENT
-        }
-      };
-      event_bus_post(&haptic_event);
+      // Generate haptic feedback (except in Programming mode - handled by LVGL encoder)
+      if (ui_get_app_mode() != APP_MODE_PROGRAMMING) {
+        event_t haptic_event = {
+          .type = EVENT_HAPTIC_REQUEST,
+          .priority = EVENT_PRIORITY_NORMAL,
+          .timestamp = event_bus_get_current_timestamp(),
+          .data.haptic = { 
+            .pattern = (delta > 0) ? HAPTIC_INCREMENT : HAPTIC_DECREMENT
+          }
+        };
+        event_bus_post(&haptic_event);
+      }
       
       // Call delta callback
       if (core->delta_callback) {

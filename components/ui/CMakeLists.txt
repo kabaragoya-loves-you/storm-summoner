@@ -13,4 +13,5 @@ idf_component_register(
         "event_bus"
         "app_settings"
         "console"
+        "menu"
 )

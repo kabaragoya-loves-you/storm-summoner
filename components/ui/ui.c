@@ -4,7 +4,7 @@
 #include "touchwheel.h"
 #include "touchwheel_outputs.h"
 #include "touch.h"
-#include "programming_menu.h"
+#include "menu.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -124,19 +124,72 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
   }
   
   // Initialize and create menu
-  programming_menu_init();
-  programming_menu_create();
+  menu_init();
+  menu_create();
   
   // Attach encoder to menu group
   if (s_ui_touchwheel_output) {
     lv_indev_t* encoder_indev = touchwheel_output_get_lvgl_indev(s_ui_touchwheel_output);
     if (encoder_indev) {
-      lv_group_t* menu_group = programming_menu_get_group();
+      lv_group_t* menu_group = menu_get_group();
       if (menu_group) {
         lv_indev_set_group(encoder_indev, menu_group);
-        ESP_LOGI(TAG, "Attached encoder to Programming menu group");
+        ESP_LOGI(TAG, "Attached encoder to menu group");
       }
     }
+  }
+}
+
+// Deferred callback to exit Programming mode in LVGL context
+static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
+  lv_timer_del(timer);
+  
+  if (g_app_mode == APP_MODE_PROGRAMMING) {
+    ESP_LOGW(TAG, "Mode changed before Programming mode exit, aborting");
+    return;
+  }
+  
+  // Destroy LVGL encoder touchwheel FIRST (before cleanup, while menu is still valid)
+  if (s_ui_touchwheel) {
+    touch_unregister_touchwheel_instance(s_ui_touchwheel);
+    touchwheel_destroy(s_ui_touchwheel);
+    s_ui_touchwheel = NULL;
+    // Note: output is destroyed by touchwheel_destroy, but we clear our reference
+    s_ui_touchwheel_output = NULL;
+    ESP_LOGI(TAG, "Destroyed LVGL touchwheel instance (exiting programming mode)");
+  }
+  
+  // CRITICAL: Switch back to default screen BEFORE cleanup
+  // This prevents deleting the active screen, which causes crashes
+  lv_obj_t *default_screen = NULL;
+  if (canvas != NULL) {
+    default_screen = lv_obj_get_parent(canvas);
+    if (default_screen && lv_obj_is_valid(default_screen)) {
+      lv_scr_load(default_screen);
+      ESP_LOGI(TAG, "Switched to default screen before menu cleanup");
+    }
+  }
+  
+  // NOW it's safe to cleanup menu (not the active screen anymore)
+  menu_cleanup();
+  
+  // Restore Performance mode
+  if (saved_draw_module) {
+    current_draw_module = saved_draw_module;
+    saved_draw_module = NULL;
+  }
+  
+  // Show canvas
+  if (canvas != NULL) {
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+  }
+  
+  // Resume Performance mode rendering
+  ui_graphics_resume();
+  
+  // Redraw current module
+  if (current_draw_module && current_draw_module->draw_func) {
+    current_draw_module->draw_func();
   }
 }
 
@@ -202,47 +255,16 @@ void ui_set_app_mode(app_mode_t mode) {
   } 
   // Handle exiting Programming mode
   else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
-    // CRITICAL: Switch back to default screen FIRST, before cleanup
-    // This prevents deleting the active screen, which causes crashes
-    lv_obj_t *default_screen = lv_scr_act();  // Get current default (canvas parent)
-    if (canvas != NULL) {
-      default_screen = lv_obj_get_parent(canvas);
-      if (default_screen && lv_obj_is_valid(default_screen)) {
-        lv_scr_load(default_screen);
-        ESP_LOGI(TAG, "Switched to default screen before Programming cleanup");
-      }
-    }
+    // Suspend Performance mode rendering (this creates a deferred timer, safe)
+    ui_graphics_suspend();
     
-    // NOW it's safe to cleanup Programming menu (not the active screen anymore)
-    programming_menu_cleanup();
-    
-    // Destroy LVGL encoder touchwheel
-    if (s_ui_touchwheel) {
-      touch_unregister_touchwheel_instance(s_ui_touchwheel);
-      touchwheel_destroy(s_ui_touchwheel);
-      s_ui_touchwheel = NULL;
-      // Note: output is destroyed by touchwheel_destroy, but we clear our reference
-      s_ui_touchwheel_output = NULL;
-      ESP_LOGI(TAG, "Destroyed LVGL touchwheel instance (exiting programming mode)");
-    }
-    
-    // Restore Performance mode
-    if (saved_draw_module) {
-      current_draw_module = saved_draw_module;
-      saved_draw_module = NULL;
-    }
-    
-    // Show canvas
-    if (canvas != NULL) {
-      lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-    }
-    
-    // Resume Performance mode rendering
-    ui_graphics_resume();
-    
-    // Redraw current module
-    if (current_draw_module && current_draw_module->draw_func) {
-      current_draw_module->draw_func();
+    // Defer ALL LVGL operations to LVGL context (cannot call LVGL from event handler context)
+    // This includes: touchwheel destruction, screen switching, and menu cleanup
+    lv_timer_t *exit_timer = lv_timer_create(deferred_programming_mode_exit_cb, 10, NULL);
+    if (exit_timer) {
+      lv_timer_set_repeat_count(exit_timer, 1);
+    } else {
+      ESP_LOGE(TAG, "Failed to create Programming mode exit timer");
     }
   }
 }
@@ -414,6 +436,9 @@ static void deferred_module_show_cb(lv_timer_t *timer) {
 void ui_reclaim_canvas_buffer(void) {
   ESP_LOGD(TAG, "Reclaiming UI canvas buffer...");
   
+  // Check current mode to restore appropriate UI
+  app_mode_t current_mode = g_app_mode;
+  
   // Reallocate the buffer if needed (from internal RAM, not LVGL heap)
   if (!display_buf) {
     size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
@@ -428,32 +453,88 @@ void ui_reclaim_canvas_buffer(void) {
     ESP_LOGI(TAG, "Reallocated %d KB canvas buffer from internal RAM", buf_size / 1024);
   }
   
-  // Restore the canvas buffer
-  if (canvas != NULL && display_buf != NULL) {
-    lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
-    lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
-    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-    // Don't invalidate here - let the draw function handle it
-  }
-  
-  // Resume the refresh timer
-  if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
-  
-  // Clear teardown flag before recreating widgets
-  g_teardown_in_progress = false;
-  
-  // Defer module screen reload to LVGL context with a delay to allow memory to settle
-  lv_timer_t *show_timer = lv_timer_create(deferred_module_show_cb, 50, NULL);
-  if (!show_timer) {
-    ESP_LOGE(TAG, "Failed to create show timer, calling draw directly");
-    // Fallback: call draw function directly if timer creation fails
-    if (current_draw_module && current_draw_module->draw_func) {
-      current_draw_module->draw_func();
+  // Restore UI based on current mode
+  if (current_mode == APP_MODE_PROGRAMMING) {
+    // Restore Programming mode (menu was active)
+    ESP_LOGI(TAG, "Restoring Programming mode after screensaver");
+    
+    // Clear teardown flag before recreating widgets
+    g_teardown_in_progress = false;
+    
+    // The menu screens are still in memory - we just need to restore the active one
+    // Get the current menu screen from the menu system
+    lv_obj_t* menu_screen = menu_get_current_screen();
+    if (menu_screen && lv_obj_is_valid(menu_screen)) {
+      lv_scr_load(menu_screen);  // Load the menu screen
+      ESP_LOGI(TAG, "Menu screen restored");
+    } else {
+      // If somehow the menu screen was deleted, recreate it
+      ESP_LOGW(TAG, "Menu screen was deleted, recreating");
+      menu_init();
+      menu_create();
     }
-    return;
+    
+    // Recreate touchwheel if needed
+    if (!s_ui_touchwheel) {
+      touchwheel_mode_processor_t* lvgl_mode = touchwheel_mode_create_endless();
+      lv_display_t* disp = lv_display_get_default();
+      s_ui_touchwheel_output = touchwheel_output_lvgl_create(disp);
+      
+      if (lvgl_mode && s_ui_touchwheel_output) {
+        s_ui_touchwheel = touchwheel_create(lvgl_mode, s_ui_touchwheel_output, 500);
+        if (s_ui_touchwheel) {
+          touch_register_touchwheel_instance(s_ui_touchwheel);
+          ESP_LOGI(TAG, "Recreated LVGL touchwheel instance for programming mode");
+        } else {
+          touchwheel_mode_destroy(lvgl_mode);
+          touchwheel_output_destroy(s_ui_touchwheel_output);
+          s_ui_touchwheel_output = NULL;
+        }
+      }
+    }
+    
+    // Attach encoder to menu group
+    if (s_ui_touchwheel_output) {
+      lv_indev_t* encoder_indev = touchwheel_output_get_lvgl_indev(s_ui_touchwheel_output);
+      if (encoder_indev) {
+        lv_group_t* menu_group = menu_get_group();
+        if (menu_group) {
+          lv_indev_set_group(encoder_indev, menu_group);
+          ESP_LOGI(TAG, "Attached encoder to menu group");
+        }
+      }
+    }
+  } else {
+    // Restore Performance mode (normal UI)
+    ESP_LOGI(TAG, "Restoring Performance mode after screensaver");
+    
+    // Restore the canvas buffer
+    if (canvas != NULL && display_buf != NULL) {
+      lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
+      lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+      lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+      // Don't invalidate here - let the draw function handle it
+    }
+    
+    // Resume the refresh timer
+    if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
+    
+    // Clear teardown flag before recreating widgets
+    g_teardown_in_progress = false;
+    
+    // Defer module screen reload to LVGL context with a delay to allow memory to settle
+    lv_timer_t *show_timer = lv_timer_create(deferred_module_show_cb, 50, NULL);
+    if (!show_timer) {
+      ESP_LOGE(TAG, "Failed to create show timer, calling draw directly");
+      // Fallback: call draw function directly if timer creation fails
+      if (current_draw_module && current_draw_module->draw_func) {
+        current_draw_module->draw_func();
+      }
+      return;
+    }
+    
+    lv_timer_set_repeat_count(show_timer, 1);
   }
-  
-  lv_timer_set_repeat_count(show_timer, 1);
   
   ESP_LOGD(TAG, "UI canvas buffer reclaimed");
 }
