@@ -34,7 +34,7 @@ static lv_obj_t* find_list_in_screen(lv_obj_t* screen);
 
 void menu_init(void) {
   if (menu_state.initialized) {
-    ESP_LOGW(TAG, "Menu already initialized");
+    ESP_LOGD(TAG, "Menu already initialized, reusing existing state");
     return;
   }
 

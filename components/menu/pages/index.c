@@ -29,13 +29,12 @@ lv_obj_t* menu_page_index_create(void) {
   scene_mode_t mode = scene_get_mode();
   const char* scenes_label = (mode == SCENE_MODE_SINGLE) ? "Scene" : "Scenes";
   
-  // Build menu items dynamically
-  menu_item_t index_items[4] = {
-    { scenes_label, nav_to_scenes, true },
-    { "Device Config", nav_to_device_config, true },
-    { "Settings", nav_to_settings, true },
-    { "About", nav_to_about, true }
-  };
+  // Build menu items as static const so they persist after function returns
+  static menu_item_t index_items[4];
+  index_items[0] = (menu_item_t){ scenes_label, nav_to_scenes, true };
+  index_items[1] = (menu_item_t){ "Device Config", nav_to_device_config, true };
+  index_items[2] = (menu_item_t){ "Settings", nav_to_settings, true };
+  index_items[3] = (menu_item_t){ "About", nav_to_about, true };
   
   return menu_create_page("Menu", index_items, 4);
 }
