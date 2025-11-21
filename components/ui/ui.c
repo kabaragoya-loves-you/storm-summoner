@@ -75,7 +75,7 @@ ui_draw_module_t* ui_get_current_module(void) {
 
 static void deferred_canvas_hide_cb(lv_timer_t *timer) {
   if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
 }
 
 static void deferred_canvas_show_cb(lv_timer_t *timer) {
@@ -87,12 +87,12 @@ static void deferred_canvas_show_cb(lv_timer_t *timer) {
       lv_obj_invalidate(canvas);
     }
   }
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
 }
 
 // Deferred callback to enter Programming mode in LVGL context
 static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
   
   if (g_app_mode != APP_MODE_PROGRAMMING) {
     ESP_LOGW(TAG, "Mode changed before Programming mode setup, aborting");
@@ -142,7 +142,7 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
 
 // Deferred callback to exit Programming mode in LVGL context
 static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
   
   if (g_app_mode == APP_MODE_PROGRAMMING) {
     ESP_LOGW(TAG, "Mode changed before Programming mode exit, aborting");
@@ -165,7 +165,7 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
   if (canvas != NULL) {
     default_screen = lv_obj_get_parent(canvas);
     if (default_screen && lv_obj_is_valid(default_screen)) {
-      lv_scr_load(default_screen);
+      lv_screen_load(default_screen);
       ESP_LOGI(TAG, "Switched to default screen before menu cleanup");
     }
   }
@@ -195,9 +195,10 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
 
 void ui_init(void) {
   // Allocate display buffer from internal RAM for performance (not LVGL heap)
+  // Use 64-byte alignment for PPA hardware acceleration
   size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
   size_t buf_size = 128 * 128 * bytes_per_pixel;
-  display_buf = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  display_buf = heap_caps_aligned_alloc(64, buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (!display_buf) {
     ESP_LOGE(TAG, "Failed to allocate display buffer from internal RAM!");
     return;
@@ -205,7 +206,7 @@ void ui_init(void) {
   ESP_LOGI(TAG, "Allocated %d KB canvas buffer from internal RAM", buf_size / 1024);
   
   // Standard canvas - using native color format
-  canvas = lv_canvas_create(lv_scr_act());
+  canvas = lv_canvas_create(lv_screen_active());
   lv_obj_set_size(canvas, 128, 128);
   lv_obj_center(canvas);
   
@@ -304,7 +305,7 @@ static void deferred_ui_hide_and_free_cb(lv_timer_t *timer) {
   // Guard against multiple operations
   if (g_teardown_in_progress) {
     ESP_LOGW(TAG, "Operation already in progress, skipping");
-    lv_timer_del(timer);
+    lv_timer_delete(timer);
     return;
   }
   
@@ -314,7 +315,7 @@ static void deferred_ui_hide_and_free_cb(lv_timer_t *timer) {
   // DON'T delete widgets - just hide them to avoid fragmentation
   if (current_draw_module) {
     lv_obj_t *default_screen = lv_obj_get_parent(canvas);
-    if (default_screen && lv_obj_is_valid(default_screen)) lv_scr_load(default_screen);
+    if (default_screen && lv_obj_is_valid(default_screen)) lv_screen_load(default_screen);
     ESP_LOGI(TAG, "Switched to default screen, module widgets remain in memory");
   }
   
@@ -338,7 +339,7 @@ static void deferred_ui_hide_and_free_cb(lv_timer_t *timer) {
       mon_after.total_size - mon_after.free_size, mon_after.free_size, mon_after.frag_pct);
   }
   
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
   ESP_LOGI(TAG, "UI hide and free callback complete");
   
   // Call post-release callback if one was registered
@@ -380,7 +381,7 @@ bool ui_release_canvas_buffer(void (*post_release_cb)(void)) {
     ESP_LOGW(TAG, "Critically low memory detected - potential leak or stuck teardown");
     ESP_LOGW(TAG, "Force clearing teardown flag and attempting garbage collection");
     g_teardown_in_progress = false;
-    lv_obj_clean(lv_scr_act());  // Try to clean up any orphaned objects
+    lv_obj_clean(lv_screen_active());  // Try to clean up any orphaned objects
   }
   
   // Check if we have enough memory to create a timer
@@ -430,7 +431,7 @@ static void deferred_module_show_cb(lv_timer_t *timer) {
       ESP_LOGD(TAG, "Reloaded module '%s' screen", current_draw_module->name);
     }
   }
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
 }
 
 void ui_reclaim_canvas_buffer(void) {

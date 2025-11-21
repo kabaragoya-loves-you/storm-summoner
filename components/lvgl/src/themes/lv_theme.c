@@ -9,7 +9,7 @@
 #include "lv_theme_private.h"
 #include "../core/lv_obj_private.h"
 #include "../core/lv_obj_class_private.h"
-#include "../../lvgl.h"
+#include "../lvgl.h"
 
 /*********************
  *      DEFINES

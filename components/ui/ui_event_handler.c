@@ -13,7 +13,7 @@
 #define BUTTON_13_LOGICAL_PAD 12
 #define BUTTON_8_LOGICAL_PAD 8
 #define BUTTON_13_LONG_PRESS_MS 1000
-#define BUTTON_13_SHORT_PRESS_MIN_MS 50  // Minimum press duration for back/cancel
+#define BUTTON_13_SHORT_PRESS_MIN_MS 75  // Minimum press duration for back/cancel
 
 // Settings keys
 #define SETTINGS_KEY_BUTTON13_LONG_PRESS_MS "btn13_lp_ms"

@@ -2,6 +2,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_cache.h"
 #include "lvgl.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -181,6 +182,11 @@ void ssd1327_init(void) {
 void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   static uint32_t flush_count = 0;
   flush_count++;
+  
+  // CRITICAL: Invalidate cache before reading px_map to ensure we see PPA-modified data
+  // PPA writes via DMA, bypassing CPU cache, so we must invalidate to see updates
+  size_t flush_size = lv_area_get_width(area) * lv_area_get_height(area) * 2; // 2 bytes per RGB565 pixel
+  esp_cache_msync((void*)px_map, flush_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_INVALIDATE);
   
 #if ENABLE_SPI_DMA
   // Ensure buffer is allocated

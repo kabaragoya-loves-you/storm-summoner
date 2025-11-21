@@ -64,7 +64,7 @@ void menu_init(void) {
 static lv_obj_t* find_list_in_screen(lv_obj_t* screen) {
   if (!screen) return NULL;
   
-  uint32_t child_cnt = lv_obj_get_child_cnt(screen);
+  uint32_t child_cnt = lv_obj_get_child_count(screen);
   for (uint32_t i = 0; i < child_cnt; i++) {
     lv_obj_t* child = lv_obj_get_child(screen, i);
     if (child && lv_obj_has_class(child, &lv_list_class)) return child;
@@ -180,7 +180,7 @@ void menu_create(void) {
   menu_state.stack_depth = 1;
 
   // Load screen
-  lv_scr_load(screen);
+  lv_screen_load(screen);
   update_top_level_flag();
 
   ESP_LOGI(TAG, "Top-level menu created");
@@ -230,7 +230,7 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   menu_state.stack_depth++;
 
   // Load screen
-  lv_scr_load(screen);
+  lv_screen_load(screen);
   update_top_level_flag();
 
   ESP_LOGD(TAG, "Navigated to menu: %s (depth: %d)", menu_name, menu_state.stack_depth);
@@ -304,7 +304,7 @@ static void menu_navigate_back_internal(void) {
   // NOW it's safe to delete current screen (not active anymore)
   menu_state.stack_depth--;
   if (menu_state.stack[menu_state.stack_depth].screen) {
-    lv_obj_del(menu_state.stack[menu_state.stack_depth].screen);
+    lv_obj_delete(menu_state.stack[menu_state.stack_depth].screen);
     menu_state.stack[menu_state.stack_depth].screen = NULL;
     menu_state.stack[menu_state.stack_depth].list = NULL;
   }
@@ -386,7 +386,7 @@ void menu_cleanup(void) {
   // Delete all screens in stack
   for (int i = 0; i < menu_state.stack_depth; i++) {
     if (menu_state.stack[i].screen) {
-      lv_obj_del(menu_state.stack[i].screen);
+      lv_obj_delete(menu_state.stack[i].screen);
       menu_state.stack[i].screen = NULL;
       menu_state.stack[i].list = NULL;
     }

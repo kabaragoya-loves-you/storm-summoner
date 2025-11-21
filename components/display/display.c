@@ -119,7 +119,7 @@ void display_init(void) {
 
 #if DISPLAY_OPTIMIZATION_MODE == 0
   ESP_LOGI(TAG, "Using Original Full-Screen Single Buffer. Render Mode: FULL");
-  uint8_t *buf1 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+  uint8_t *buf1 = (uint8_t *)heap_caps_aligned_alloc(64, BUFFER_SIZE, MALLOC_CAP_DMA);
   if (!buf1) {
     ESP_LOGE(TAG, "Failed to allocate LVGL buffer for Mode 0. Cannot continue.");
     return;
@@ -128,8 +128,8 @@ void display_init(void) {
 #else
   // Modes 1, 2, and 3 use double buffering
   ESP_LOGI(TAG, "Allocating two buffers of %d bytes each for double buffering.", BUFFER_SIZE);
-  uint8_t *buf1 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
-  uint8_t *buf2 = (uint8_t *)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+  uint8_t *buf1 = (uint8_t *)heap_caps_aligned_alloc(64, BUFFER_SIZE, MALLOC_CAP_DMA);
+  uint8_t *buf2 = (uint8_t *)heap_caps_aligned_alloc(64, BUFFER_SIZE, MALLOC_CAP_DMA);
   if (!buf1 || !buf2) {
     ESP_LOGE(TAG, "Failed to allocate LVGL buffers for double buffering. Cannot continue.");
     if(buf1) heap_caps_free(buf1);
