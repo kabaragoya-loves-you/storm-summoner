@@ -117,9 +117,14 @@ void ssd1327_init(void) {
     return;
   }
   
-  #if DEBUG_FLUSH_MESSAGES
-  ESP_LOGI(TAG, "SPI initialized successfully - Clock: %d MHz, DMA: %s", devcfg.clock_speed_hz / 1000000, ENABLE_SPI_DMA ? "Enabled" : "Disabled");
+  // Always log SPI status for confirmation
+  ESP_LOGI(TAG, "SPI initialized successfully - Clock: %d MHz, DMA: %s", devcfg.clock_speed_hz / 1000000, 
+  #if ENABLE_SPI_DMA
+    "Enabled"
+  #else
+    "Disabled"
   #endif
+  );
 
 #if ENABLE_SPI_DMA
   // Allocate DMA-capable buffer for pixel data
