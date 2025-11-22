@@ -13,8 +13,8 @@ typedef struct {
   uint8_t slice_count;
   uint32_t active_slices;  // Bitmask for active slices
   uint8_t gray_tone;
-  lv_coord_t radius;
-  lv_coord_t bite_size;
+  int32_t radius;
+  int32_t bite_size;
   lv_pizza2_slice_state_provider_t state_provider;
   void * state_provider_data;
 } lv_pizza2_data_t;
@@ -24,8 +24,8 @@ static void lv_pizza2_draw_event_cb(lv_event_t * e);
 static void lv_pizza2_destructor_event_cb(lv_event_t * e);
 
 // Helper function to draw a filled slice
-static void draw_filled_slice(lv_layer_t * layer, lv_coord_t center_x, lv_coord_t center_y,
-  lv_coord_t outer_radius, lv_coord_t inner_radius,
+static void draw_filled_slice(lv_layer_t * layer, int32_t center_x, int32_t center_y,
+  int32_t outer_radius, int32_t inner_radius,
   float start_angle_deg, float end_angle_deg,
   lv_color_t color, lv_opa_t opa);
 
@@ -79,8 +79,8 @@ static void lv_pizza2_draw_event_cb(lv_event_t * e) {
   lv_obj_get_coords(obj, &obj_coords);
   
   // Calculate center
-  lv_coord_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
-  lv_coord_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
+  int32_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
+  int32_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
   
   // Convert gray tone to LVGL color
   uint8_t gray_value = (data->gray_tone * 255) / 15;
@@ -111,8 +111,8 @@ static void lv_pizza2_draw_event_cb(lv_event_t * e) {
   }
 }
 
-static void draw_filled_slice(lv_layer_t * layer, lv_coord_t center_x, lv_coord_t center_y,
-                             lv_coord_t outer_radius, lv_coord_t inner_radius,
+static void draw_filled_slice(lv_layer_t * layer, int32_t center_x, int32_t center_y,
+                             int32_t outer_radius, int32_t inner_radius,
                              float start_angle_deg, float end_angle_deg,
                              lv_color_t color, lv_opa_t opa) {
   // Draw filled wedge using many radial lines (same technique as lv_slices)
@@ -208,7 +208,7 @@ void lv_pizza2_set_gray_tone(lv_obj_t * obj, uint8_t gray_tone) {
   lv_obj_invalidate(obj);
 }
 
-void lv_pizza2_set_radius(lv_obj_t * obj, lv_coord_t radius) {
+void lv_pizza2_set_radius(lv_obj_t * obj, int32_t radius) {
   lv_pizza2_data_t * data = lv_obj_get_user_data(obj);
   if (!data) return;
   
@@ -216,7 +216,7 @@ void lv_pizza2_set_radius(lv_obj_t * obj, lv_coord_t radius) {
   lv_obj_invalidate(obj);
 }
 
-void lv_pizza2_set_bite_size(lv_obj_t * obj, lv_coord_t bite_size) {
+void lv_pizza2_set_bite_size(lv_obj_t * obj, int32_t bite_size) {
   lv_pizza2_data_t * data = lv_obj_get_user_data(obj);
   if (!data) return;
   

@@ -127,8 +127,8 @@ static void draw_slice(lv_layer_t * layer, lv_area_t * coords, uint8_t index,
     float end_angle = start_angle + slice_angle - gap_angle;
     
     // Get center point
-    lv_coord_t center_x = coords->x1 + lv_area_get_width(coords) / 2;
-    lv_coord_t center_y = coords->y1 + lv_area_get_height(coords) / 2;
+    int32_t center_x = coords->x1 + lv_area_get_width(coords) / 2;
+    int32_t center_y = coords->y1 + lv_area_get_height(coords) / 2;
     
     // Convert angles to radians
     float start_rad = start_angle * M_PI / 180.0f;
@@ -216,7 +216,7 @@ void lv_slices_set_count(lv_obj_t * obj, uint8_t count) {
     }
 }
 
-void lv_slices_set_radius(lv_obj_t * obj, lv_coord_t inner_radius, lv_coord_t outer_radius) {
+void lv_slices_set_radius(lv_obj_t * obj, int32_t inner_radius, int32_t outer_radius) {
     lv_slices_data_t * slices_data = lv_obj_get_user_data(obj);
     if (slices_data && (slices_data->inner_radius != inner_radius || 
                        slices_data->outer_radius != outer_radius)) {
@@ -287,8 +287,8 @@ uint8_t lv_slices_get_slice_at_point(lv_obj_t * obj, lv_point_t * point) {
     lv_obj_get_coords(obj, &obj_coords);
     
     // Calculate center point
-    lv_coord_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
-    lv_coord_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
+    int32_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
+    int32_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
     
     // Calculate relative position
     float dx = point->x - center_x;

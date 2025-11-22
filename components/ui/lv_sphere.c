@@ -25,7 +25,7 @@ typedef struct {
 
 // 2D projected vertex
 typedef struct {
-  lv_coord_t x, y;
+  int32_t x, y;
   float z;
 } vertex_2d_t;
 
@@ -44,7 +44,7 @@ typedef struct {
   int face_count;
   
   // Configuration
-  lv_coord_t radius;
+  int32_t radius;
   uint8_t divisions_u;
   uint8_t divisions_v;
   float scale;
@@ -62,7 +62,7 @@ typedef struct {
   
   // Appearance
   lv_color_t line_color;
-  lv_coord_t line_width;
+  int32_t line_width;
   
   // Animation
   lv_timer_t * anim_timer;
@@ -233,9 +233,9 @@ static void rotate_vertex(vertex_3d_t * src, vertex_3d_t * dst, float rx, float 
   dst->z = rot_z;
 }
 
-static void project_vertex(vertex_3d_t * v3d, vertex_2d_t * v2d, lv_coord_t center_x, lv_coord_t center_y, float scale) {
-  v2d->x = (lv_coord_t)(v3d->x * scale) + center_x;
-  v2d->y = (lv_coord_t)(v3d->y * scale) + center_y;
+static void project_vertex(vertex_3d_t * v3d, vertex_2d_t * v2d, int32_t center_x, int32_t center_y, float scale) {
+  v2d->x = (int32_t)(v3d->x * scale) + center_x;
+  v2d->y = (int32_t)(v3d->y * scale) + center_y;
   v2d->z = v3d->z;
 }
 
@@ -255,8 +255,8 @@ static void lv_sphere_draw_event_cb(lv_event_t * e) {
   // Get widget area
   lv_area_t obj_coords;
   lv_obj_get_coords(obj, &obj_coords);
-  lv_coord_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
-  lv_coord_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
+  int32_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
+  int32_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
   
   // Transform and project all vertices
   for (int i = 0; i < data->vertex_count; i++) {
@@ -325,7 +325,7 @@ static void lv_sphere_destructor_event_cb(lv_event_t * e) {
   lv_sphere_data_t * data = lv_obj_get_user_data(obj);
   if (data) {
     if (data->anim_timer) {
-      lv_timer_del(data->anim_timer);
+      lv_timer_delete(data->anim_timer);
     }
     free_sphere_geometry(data);
     lv_free(data);
@@ -368,7 +368,7 @@ void lv_sphere_set_line_color(lv_obj_t * obj, lv_color_t color) {
   lv_obj_invalidate(obj);
 }
 
-void lv_sphere_set_line_width(lv_obj_t * obj, lv_coord_t width) {
+void lv_sphere_set_line_width(lv_obj_t * obj, int32_t width) {
   lv_sphere_data_t * data = lv_obj_get_user_data(obj);
   if (!data) return;
   
@@ -394,12 +394,12 @@ void lv_sphere_set_animated(lv_obj_t * obj, bool animated) {
   if (animated && !data->anim_timer) {
     data->anim_timer = lv_timer_create(sphere_animation_cb, LV_SPHERE_TIMER_MS, obj);
   } else if (!animated && data->anim_timer) {
-    lv_timer_del(data->anim_timer);
+    lv_timer_delete(data->anim_timer);
     data->anim_timer = NULL;
   }
 }
 
-void lv_sphere_set_radius(lv_obj_t * obj, lv_coord_t radius) {
+void lv_sphere_set_radius(lv_obj_t * obj, int32_t radius) {
   lv_sphere_data_t * data = lv_obj_get_user_data(obj);
   if (!data) return;
   

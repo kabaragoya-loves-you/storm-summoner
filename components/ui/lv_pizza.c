@@ -12,9 +12,9 @@
 typedef struct {
   uint8_t slice_count;
   lv_color_t color;
-  lv_coord_t width;
+  int32_t width;
   lv_opa_t opa;
-  lv_coord_t margin;
+  int32_t margin;
   bool circle_enabled;
 } lv_pizza_data_t;
 
@@ -71,11 +71,11 @@ static void lv_pizza_draw_event_cb(lv_event_t * e) {
   lv_obj_get_coords(obj, &obj_coords);
   
   // Calculate center and radius
-  lv_coord_t width = lv_area_get_width(&obj_coords);
-  lv_coord_t height = lv_area_get_height(&obj_coords);
-  lv_coord_t center_x = obj_coords.x1 + width / 2;
-  lv_coord_t center_y = obj_coords.y1 + height / 2;
-  lv_coord_t radius = LV_MIN(width, height) / 2 - data->margin;
+  int32_t width = lv_area_get_width(&obj_coords);
+  int32_t height = lv_area_get_height(&obj_coords);
+  int32_t center_x = obj_coords.x1 + width / 2;
+  int32_t center_y = obj_coords.y1 + height / 2;
+  int32_t radius = LV_MIN(width, height) / 2 - data->margin;
   
   if (radius <= 0) return;
   
@@ -110,10 +110,10 @@ static void lv_pizza_draw_event_cb(lv_event_t * e) {
     float sin_angle = sinf(angle);
     
     // Calculate line endpoints
-    line_dsc.p1.x = center_x - (lv_coord_t)(radius * cos_angle);
-    line_dsc.p1.y = center_y - (lv_coord_t)(radius * sin_angle);
-    line_dsc.p2.x = center_x + (lv_coord_t)(radius * cos_angle);
-    line_dsc.p2.y = center_y + (lv_coord_t)(radius * sin_angle);
+    line_dsc.p1.x = center_x - (int32_t)(radius * cos_angle);
+    line_dsc.p1.y = center_y - (int32_t)(radius * sin_angle);
+    line_dsc.p2.x = center_x + (int32_t)(radius * cos_angle);
+    line_dsc.p2.y = center_y + (int32_t)(radius * sin_angle);
     
     lv_draw_line(layer, &line_dsc);
   }
@@ -143,7 +143,7 @@ void lv_pizza_set_color(lv_obj_t * obj, lv_color_t color) {
   lv_obj_invalidate(obj);
 }
 
-void lv_pizza_set_width(lv_obj_t * obj, lv_coord_t width) {
+void lv_pizza_set_width(lv_obj_t * obj, int32_t width) {
   lv_pizza_data_t * data = lv_obj_get_user_data(obj);
   if (!data) return;
   
@@ -159,7 +159,7 @@ void lv_pizza_set_opa(lv_obj_t * obj, lv_opa_t opa) {
   lv_obj_invalidate(obj);
 }
 
-void lv_pizza_set_margin(lv_obj_t * obj, lv_coord_t margin) {
+void lv_pizza_set_margin(lv_obj_t * obj, int32_t margin) {
   lv_pizza_data_t * data = lv_obj_get_user_data(obj);
   if (!data) return;
   

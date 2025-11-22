@@ -52,7 +52,7 @@ void lv_lizard_set_antialias(lv_obj_t * obj, bool antialias);
  * @param x X coordinate of pivot (relative to image)
  * @param y Y coordinate of pivot (relative to image)
  */
-void lv_lizard_set_pivot(lv_obj_t * obj, lv_coord_t x, lv_coord_t y);
+void lv_lizard_set_pivot(lv_obj_t * obj, int32_t x, int32_t y);
 
 #ifdef __cplusplus
 }

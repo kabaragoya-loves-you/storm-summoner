@@ -50,7 +50,7 @@ lv_obj_t * lv_radar_create(lv_obj_t * parent) {
     lv_obj_set_size(obj, LV_PCT(100), LV_PCT(100));
     
     // Make it non-clickable and remove background
-    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(obj, 0, 0);
     
@@ -82,8 +82,8 @@ static void lv_radar_draw_event_cb(lv_event_t * e) {
     lv_obj_get_coords(obj, &obj_coords);
     
     // Calculate center point
-    lv_coord_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
-    lv_coord_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
+    int32_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
+    int32_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
     
     // Calculate angle between lines
     float angle_step = 360.0f / radar_data->line_count;
@@ -144,17 +144,17 @@ static void lv_radar_draw_event_cb(lv_event_t * e) {
                     // For horizontal/vertical lines, snap to pixel grid
                     if (i == 0 || i == 4) {  // Vertical lines (0°, 180°)
                         dot_area.x1 = center_x;
-                        dot_area.y1 = (lv_coord_t)(center_y + dy * dot_start + 0.5f);
+                        dot_area.y1 = (int32_t)(center_y + dy * dot_start + 0.5f);
                         dot_area.x2 = center_x;
                         dot_area.y2 = dot_area.y1 + radar_data->dot_length - 1;
                     } else if (i == 2 || i == 6) {  // Horizontal lines (90°, 270°)
-                        dot_area.x1 = (lv_coord_t)(center_x + dx * dot_start + 0.5f);
+                        dot_area.x1 = (int32_t)(center_x + dx * dot_start + 0.5f);
                         dot_area.y1 = center_y;
                         dot_area.x2 = dot_area.x1 + radar_data->dot_length - 1;
                         dot_area.y2 = center_y;
                     } else {  // Diagonal lines
-                        dot_area.x1 = (lv_coord_t)(p1.x + 0.5f);
-                        dot_area.y1 = (lv_coord_t)(p1.y + 0.5f);
+                        dot_area.x1 = (int32_t)(p1.x + 0.5f);
+                        dot_area.y1 = (int32_t)(p1.y + 0.5f);
                         dot_area.x2 = dot_area.x1;
                         dot_area.y2 = dot_area.y1;
                     }
@@ -162,10 +162,10 @@ static void lv_radar_draw_event_cb(lv_event_t * e) {
                     lv_draw_rect(layer, &rect_dsc, &dot_area);
                 } else {
                     // Use line for longer segments
-                    line_dsc.p1.x = (lv_coord_t)(p1.x + 0.5f);
-                    line_dsc.p1.y = (lv_coord_t)(p1.y + 0.5f);
-                    line_dsc.p2.x = (lv_coord_t)(p2.x + 0.5f);
-                    line_dsc.p2.y = (lv_coord_t)(p2.y + 0.5f);
+                    line_dsc.p1.x = (int32_t)(p1.x + 0.5f);
+                    line_dsc.p1.y = (int32_t)(p1.y + 0.5f);
+                    line_dsc.p2.x = (int32_t)(p2.x + 0.5f);
+                    line_dsc.p2.y = (int32_t)(p2.y + 0.5f);
                     
                     lv_draw_line(layer, &line_dsc);
                 }
@@ -200,7 +200,7 @@ void lv_radar_set_line_style(lv_obj_t * obj, lv_color_t color, lv_opa_t opa) {
     }
 }
 
-void lv_radar_set_radius_range(lv_obj_t * obj, lv_coord_t start_radius, lv_coord_t end_radius) {
+void lv_radar_set_radius_range(lv_obj_t * obj, int32_t start_radius, int32_t end_radius) {
     lv_radar_data_t * radar_data = lv_obj_get_user_data(obj);
     if (radar_data && (radar_data->start_radius != start_radius || radar_data->end_radius != end_radius)) {
         radar_data->start_radius = start_radius;

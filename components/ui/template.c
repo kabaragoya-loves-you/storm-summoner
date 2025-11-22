@@ -13,7 +13,7 @@ static lv_obj_t *g_label = NULL;
 // Deferred drawing callback - called after LVGL is ready
 static void template_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
-    lv_timer_del(timer);
+    lv_timer_delete(timer);
     return;
   }
   
@@ -23,7 +23,7 @@ static void template_draw_deferred_cb(lv_timer_t *timer) {
     lv_display_t *disp = lv_obj_get_display(canvas);
     if (!disp) {
       ESP_LOGE(TAG, "Failed to get display from canvas");
-      lv_timer_del(timer);
+      lv_timer_delete(timer);
       return;
     }
     
@@ -48,7 +48,7 @@ static void template_draw_deferred_cb(lv_timer_t *timer) {
   lv_screen_load(g_screen);
   
   // Clean up the timer
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
 }
 
 // Macro creates the draw function that schedules deferred drawing

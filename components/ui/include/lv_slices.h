@@ -28,8 +28,8 @@ typedef bool (*lv_slices_state_cb_t)(uint8_t slice_index, void* user_data);
 /* Slices widget data */
 typedef struct lv_slices_data_t {
   uint8_t slice_count;
-  lv_coord_t inner_radius;
-  lv_coord_t outer_radius;
+  int32_t inner_radius;
+  int32_t outer_radius;
   lv_color_t active_color;
   lv_color_t inactive_color;
   lv_opa_t active_opa;
@@ -71,7 +71,7 @@ void lv_slices_set_count(lv_obj_t * obj, uint8_t count);
  * @param inner_radius inner radius (bite size)
  * @param outer_radius outer radius
  */
-void lv_slices_set_radius(lv_obj_t * obj, lv_coord_t inner_radius, lv_coord_t outer_radius);
+void lv_slices_set_radius(lv_obj_t * obj, int32_t inner_radius, int32_t outer_radius);
 
 /**
  * Set slice colors

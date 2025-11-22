@@ -30,7 +30,7 @@ void lv_boundary_circle_set_color(lv_obj_t * obj, lv_color_t color);
  * @param obj Boundary circle object
  * @param width Line width in pixels
  */
-void lv_boundary_circle_set_width(lv_obj_t * obj, lv_coord_t width);
+void lv_boundary_circle_set_width(lv_obj_t * obj, int32_t width);
 
 /**
  * @brief Set the circle opacity
@@ -44,7 +44,7 @@ void lv_boundary_circle_set_opa(lv_obj_t * obj, lv_opa_t opa);
  * @param obj Boundary circle object
  * @param margin Pixels to inset from widget edge
  */
-void lv_boundary_circle_set_margin(lv_obj_t * obj, lv_coord_t margin);
+void lv_boundary_circle_set_margin(lv_obj_t * obj, int32_t margin);
 
 #ifdef __cplusplus
 }

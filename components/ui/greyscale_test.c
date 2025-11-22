@@ -15,7 +15,7 @@ static lv_color_t *canvas_buf = NULL;
 
 static void greyscale_test_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
-    lv_timer_del(timer);
+    lv_timer_delete(timer);
     return;
   }
 
@@ -25,12 +25,12 @@ static void greyscale_test_draw_deferred_cb(lv_timer_t *timer) {
     canvas_buf = malloc(CANVAS_SIZE * CANVAS_SIZE * sizeof(lv_color_t));
     if (!canvas_buf) {
       ESP_LOGE(TAG, "Failed to allocate canvas buffer");
-      lv_timer_del(timer);
+      lv_timer_delete(timer);
       return;
     }
 
     // Create canvas
-    test_canvas = lv_canvas_create(lv_scr_act());
+    test_canvas = lv_canvas_create(lv_screen_active());
     lv_obj_remove_style_all(test_canvas);
     lv_obj_set_size(test_canvas, CANVAS_SIZE, CANVAS_SIZE);
     lv_obj_align(test_canvas, LV_ALIGN_CENTER, 0, 0);
@@ -44,7 +44,7 @@ static void greyscale_test_draw_deferred_cb(lv_timer_t *timer) {
     lv_canvas_set_buffer(test_canvas, canvas_buf, CANVAS_SIZE, CANVAS_SIZE, LV_COLOR_FORMAT_RGB565);
     
     // Set background to black
-    lv_obj_t *screen = lv_scr_act();
+    lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     
@@ -101,14 +101,14 @@ static void greyscale_test_draw_deferred_cb(lv_timer_t *timer) {
     ESP_LOGI(TAG, "Greyscale test display created - 16 swatches from black (0) to white (15)");
   }
   
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
 }
 
 UI_CREATE_DEFERRED_DRAW_FUNC(greyscale_test, greyscale_test_draw_deferred_cb)
 
 static void greyscale_test_teardown(void) {
   if (test_canvas) {
-    lv_obj_del(test_canvas);
+    lv_obj_delete(test_canvas);
     test_canvas = NULL;
   }
   

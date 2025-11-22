@@ -146,7 +146,7 @@ void screensaver_disable(void) {
 
 // LVGL timer for deferred screensaver stop
 static void stop_screensaver_deferred(lv_timer_t *timer) {
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
   g_pending_stop_timer = NULL;
   
   ESP_LOGI(TAG, "Stopping screensaver (deferred)");
@@ -196,7 +196,7 @@ void screensaver_notify_activity(void) {
     
     // Cancel any pending stop timer
     if (g_pending_stop_timer != NULL) {
-      lv_timer_del(g_pending_stop_timer);
+      lv_timer_delete(g_pending_stop_timer);
       g_pending_stop_timer = NULL;
     }
     
@@ -215,7 +215,7 @@ void screensaver_notify_activity(void) {
 
 // LVGL timer for deferred screensaver start
 static void start_screensaver_deferred(lv_timer_t *timer) {
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
   g_pending_start_timer = NULL;
   
   ESP_LOGI(TAG, "Starting screensaver (deferred)");
@@ -241,7 +241,7 @@ void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
   
   // Cancel any pending start timer
   if (g_pending_start_timer != NULL) {
-    lv_timer_del(g_pending_start_timer);
+    lv_timer_delete(g_pending_start_timer);
     g_pending_start_timer = NULL;
   }
   
@@ -261,7 +261,7 @@ void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
   if (!release_ok) {
     ESP_LOGE(TAG, "Failed to release UI canvas buffer, aborting screensaver");
     if (g_pending_start_timer) {
-      lv_timer_del(g_pending_start_timer);
+      lv_timer_delete(g_pending_start_timer);
       g_pending_start_timer = NULL;
     }
     g_screensaver_active = false;

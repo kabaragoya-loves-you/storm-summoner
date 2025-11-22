@@ -13,7 +13,7 @@ static lv_obj_t *g_pizza2 = NULL;
 
 static void pizza2_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
-    lv_timer_del(timer);
+    lv_timer_delete(timer);
     return;
   }
   
@@ -23,7 +23,7 @@ static void pizza2_draw_deferred_cb(lv_timer_t *timer) {
     lv_display_t *disp = lv_obj_get_display(canvas);
     if (!disp) {
       ESP_LOGE(TAG, "Failed to get display from canvas");
-      lv_timer_del(timer);
+      lv_timer_delete(timer);
       return;
     }
     
@@ -55,7 +55,7 @@ static void pizza2_draw_deferred_cb(lv_timer_t *timer) {
   // Load the screen (safe to call multiple times)
   lv_screen_load(g_screen);
   
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
 }
 
 UI_CREATE_DEFERRED_DRAW_FUNC(pizza2, pizza2_draw_deferred_cb)

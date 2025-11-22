@@ -33,7 +33,7 @@ static void lvgl_encoder_read_cb(lv_indev_t * indev, lv_indev_data_t * data) {
         // Get the parent list to check boundaries
         lv_obj_t* list = lv_obj_get_parent(focused);
         if (list && lv_obj_has_class(list, &lv_list_class)) {
-          uint32_t child_cnt = lv_obj_get_child_cnt(list);
+          uint32_t child_cnt = lv_obj_get_child_count(list);
           uint32_t focused_index = lv_obj_get_index(focused);
           
           // Check if at boundaries

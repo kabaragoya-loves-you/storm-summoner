@@ -123,7 +123,7 @@ void lv_lizard_set_antialias(lv_obj_t * obj, bool antialias) {
   lv_obj_invalidate(obj);
 }
 
-void lv_lizard_set_pivot(lv_obj_t * obj, lv_coord_t x, lv_coord_t y) {
+void lv_lizard_set_pivot(lv_obj_t * obj, int32_t x, int32_t y) {
   lv_lizard_data_t * data = lv_obj_get_user_data(obj);
   if (!data) return;
   

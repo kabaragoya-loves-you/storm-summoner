@@ -192,7 +192,7 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   // Ensure buffer is allocated
   if (ssd1327_buf == NULL) {
     ESP_LOGE(TAG, "DMA buffer not allocated!");
-    lv_disp_flush_ready(disp);
+    lv_display_flush_ready(disp);
     return;
   }
 #endif
@@ -208,7 +208,7 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   if (area->x1 < 0 || area->y1 < 0 || area->x2 >= 128 || area->y2 >= 128 || 
       area->x1 > area->x2 || area->y1 > area->y2) {
     ESP_LOGE(TAG, "Invalid area bounds: (%d,%d)-(%d,%d)", (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2);
-    lv_disp_flush_ready(disp);
+    lv_display_flush_ready(disp);
     return;
   }
   
@@ -234,7 +234,7 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   
   // If closest point is outside circle, entire area is invisible
   if ((dx * dx + dy * dy) > (radius * radius)) {
-    lv_disp_flush_ready(disp);
+    lv_display_flush_ready(disp);
     return;
   }
   
@@ -410,7 +410,7 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   #endif
 #endif
 
-  lv_disp_flush_ready(disp);
+  lv_display_flush_ready(disp);
 }
 
 

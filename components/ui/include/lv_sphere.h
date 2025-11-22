@@ -56,7 +56,7 @@ void lv_sphere_set_line_color(lv_obj_t * obj, lv_color_t color);
  * @param obj Sphere object
  * @param width Line width in pixels
  */
-void lv_sphere_set_line_width(lv_obj_t * obj, lv_coord_t width);
+void lv_sphere_set_line_width(lv_obj_t * obj, int32_t width);
 
 /**
  * @brief Set sphere detail level
@@ -78,7 +78,7 @@ void lv_sphere_set_animated(lv_obj_t * obj, bool animated);
  * @param obj Sphere object
  * @param radius Sphere radius in pixels
  */
-void lv_sphere_set_radius(lv_obj_t * obj, lv_coord_t radius);
+void lv_sphere_set_radius(lv_obj_t * obj, int32_t radius);
 
 #ifdef __cplusplus
 }

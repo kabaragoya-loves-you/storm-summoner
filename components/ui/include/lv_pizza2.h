@@ -52,14 +52,14 @@ void lv_pizza2_set_gray_tone(lv_obj_t * obj, uint8_t gray_tone);
  * @param obj Pizza2 object
  * @param radius Outer radius in pixels
  */
-void lv_pizza2_set_radius(lv_obj_t * obj, lv_coord_t radius);
+void lv_pizza2_set_radius(lv_obj_t * obj, int32_t radius);
 
 /**
  * @brief Set the bite size (inner radius)
  * @param obj Pizza2 object
  * @param bite_size Inner radius in pixels (0 = no bite, full slice)
  */
-void lv_pizza2_set_bite_size(lv_obj_t * obj, lv_coord_t bite_size);
+void lv_pizza2_set_bite_size(lv_obj_t * obj, int32_t bite_size);
 
 /**
  * @brief Set the slice state provider callback

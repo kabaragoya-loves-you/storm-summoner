@@ -36,7 +36,7 @@ void lvgl_timer_cb(lv_timer_t *timer) {
   LV_UNUSED(timer);
   // Only invalidate if not currently rendering to prevent feedback loops
   if (canvas != NULL) {
-    lv_display_t *disp = lv_obj_get_disp(canvas);
+    lv_display_t *disp = lv_obj_get_display(canvas);
     if (disp && !disp->rendering_in_progress) {
       lv_obj_invalidate(canvas);
     }
@@ -80,9 +80,9 @@ static void deferred_canvas_hide_cb(lv_timer_t *timer) {
 
 static void deferred_canvas_show_cb(lv_timer_t *timer) {
   if (canvas != NULL) {
-    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(canvas, LV_OBJ_FLAG_HIDDEN);
     // Only invalidate if not currently rendering to prevent feedback loops
-    lv_display_t *disp = lv_obj_get_disp(canvas);
+    lv_display_t *disp = lv_obj_get_display(canvas);
     if (disp && !disp->rendering_in_progress) {
       lv_obj_invalidate(canvas);
     }
@@ -181,7 +181,7 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
   
   // Show canvas
   if (canvas != NULL) {
-    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(canvas, LV_OBJ_FLAG_HIDDEN);
   }
   
   // Resume Performance mode rendering
@@ -365,7 +365,7 @@ bool ui_release_canvas_buffer(void (*post_release_cb)(void)) {
   // If there's already a pending teardown timer, cancel it and create a new one
   if (g_teardown_timer != NULL) {
     ESP_LOGW(TAG, "Cancelling existing teardown timer before creating new one");
-    lv_timer_del(g_teardown_timer);
+    lv_timer_delete(g_teardown_timer);
     g_teardown_timer = NULL;
   }
   
@@ -466,7 +466,7 @@ void ui_reclaim_canvas_buffer(void) {
     // Get the current menu screen from the menu system
     lv_obj_t* menu_screen = menu_get_current_screen();
     if (menu_screen && lv_obj_is_valid(menu_screen)) {
-      lv_scr_load(menu_screen);  // Load the menu screen
+      lv_screen_load(menu_screen);  // Load the menu screen
       ESP_LOGI(TAG, "Menu screen restored");
     } else {
       // If somehow the menu screen was deleted, recreate it
@@ -513,7 +513,7 @@ void ui_reclaim_canvas_buffer(void) {
     if (canvas != NULL && display_buf != NULL) {
       lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
       lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
-      lv_obj_clear_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_remove_flag(canvas, LV_OBJ_FLAG_HIDDEN);
       // Don't invalidate here - let the draw function handle it
     }
     

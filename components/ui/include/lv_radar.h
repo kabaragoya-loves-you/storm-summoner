@@ -26,8 +26,8 @@ typedef struct {
     uint8_t dot_length;
     lv_color_t line_color;
     lv_opa_t line_opa;
-    lv_coord_t start_radius;
-    lv_coord_t end_radius;
+    int32_t start_radius;
+    int32_t end_radius;
     int16_t angle_offset;
 } lv_radar_data_t;
 
@@ -71,7 +71,7 @@ void lv_radar_set_line_style(lv_obj_t * obj, lv_color_t color, lv_opa_t opa);
  * @param start_radius starting radius from center
  * @param end_radius ending radius
  */
-void lv_radar_set_radius_range(lv_obj_t * obj, lv_coord_t start_radius, lv_coord_t end_radius);
+void lv_radar_set_radius_range(lv_obj_t * obj, int32_t start_radius, int32_t end_radius);
 
 /**
  * Set the starting angle offset

@@ -12,7 +12,7 @@ static void lv_starfield_draw_event_cb(lv_event_t * e);
 static void lv_starfield_destructor_event_cb(lv_event_t * e);
 static void animation_timer_cb(lv_timer_t * timer);
 static void init_star(lv_star_t * star, lv_area_t * area);
-static bool check_sibling_exclusion(lv_obj_t * starfield, lv_coord_t x, lv_coord_t y);
+static bool check_sibling_exclusion(lv_obj_t * starfield, int32_t x, int32_t y);
 
 /**********************
  *   FUNCTIONS
@@ -56,7 +56,7 @@ lv_obj_t * lv_starfield_create(lv_obj_t * parent) {
     lv_obj_set_size(obj, LV_PCT(100), LV_PCT(100));
     
     // Make it non-clickable and transparent
-    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(obj, 0, 0);
     
@@ -100,8 +100,8 @@ static void lv_starfield_destructor_event_cb(lv_event_t * e) {
 }
 
 static void init_star(lv_star_t * star, lv_area_t * area) {
-    lv_coord_t width = lv_area_get_width(area);
-    lv_coord_t height = lv_area_get_height(area);
+    int32_t width = lv_area_get_width(area);
+    int32_t height = lv_area_get_height(area);
     
     star->x = (float)(rand() % width);
     star->y = (float)(rand() % height);
@@ -116,15 +116,15 @@ static void init_star(lv_star_t * star, lv_area_t * area) {
     star->move_counter = rand() % LV_STARFIELD_DEFAULT_MOVE_COUNTER_MAX;
 }
 
-static bool check_sibling_exclusion(lv_obj_t * starfield, lv_coord_t x, lv_coord_t y) {
+static bool check_sibling_exclusion(lv_obj_t * starfield, int32_t x, int32_t y) {
     lv_obj_t * parent = lv_obj_get_parent(starfield);
     if (!parent) return false;
     
     // Convert to parent coordinates
     lv_area_t starfield_coords;
     lv_obj_get_coords(starfield, &starfield_coords);
-    lv_coord_t abs_x = starfield_coords.x1 + x;
-    lv_coord_t abs_y = starfield_coords.y1 + y;
+    int32_t abs_x = starfield_coords.x1 + x;
+    int32_t abs_y = starfield_coords.y1 + y;
     
     // Check all siblings
     uint32_t child_cnt = lv_obj_get_child_count(parent);
@@ -165,8 +165,8 @@ static void lv_starfield_draw_event_cb(lv_event_t * e) {
         lv_star_t * star = &starfield_data->stars[i];
         
         // Calculate absolute position
-        lv_coord_t x = obj_coords.x1 + (lv_coord_t)star->x;
-        lv_coord_t y = obj_coords.y1 + (lv_coord_t)star->y;
+        int32_t x = obj_coords.x1 + (int32_t)star->x;
+        int32_t y = obj_coords.y1 + (int32_t)star->y;
         
         // Check custom exclusion zones
         bool excluded = false;
@@ -182,7 +182,7 @@ static void lv_starfield_draw_event_cb(lv_event_t * e) {
         
         // Check sibling exclusion
         if (!excluded && starfield_data->exclude_siblings) {
-            excluded = check_sibling_exclusion(obj, (lv_coord_t)star->x, (lv_coord_t)star->y);
+            excluded = check_sibling_exclusion(obj, (int32_t)star->x, (int32_t)star->y);
         }
         
         if (!excluded) {
@@ -212,8 +212,8 @@ static void animation_timer_cb(lv_timer_t * timer) {
     // Get object area for bounds
     lv_area_t area;
     lv_obj_get_coords(obj, &area);
-    lv_coord_t width = lv_area_get_width(&area);
-    lv_coord_t height = lv_area_get_height(&area);
+    int32_t width = lv_area_get_width(&area);
+    int32_t height = lv_area_get_height(&area);
     
     bool needs_redraw = false;
     

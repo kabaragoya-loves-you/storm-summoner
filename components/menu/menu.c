@@ -202,7 +202,7 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   if (menu_state.group && menu_state.stack_depth > 0) {
     lv_obj_t* current_list = menu_state.stack[menu_state.stack_depth - 1].list;
     if (current_list) {
-      uint32_t child_cnt = lv_obj_get_child_cnt(current_list);
+      uint32_t child_cnt = lv_obj_get_child_count(current_list);
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(current_list, i);
         if (child && lv_obj_has_class(child, &lv_list_button_class)) {
@@ -238,7 +238,7 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
 
 // Deferred navigation timer callback (runs in LVGL task context)
 static void deferred_nav_timer_cb(lv_timer_t* timer) {
-  lv_timer_del(timer);
+  lv_timer_delete(timer);
   
   if (menu_state.has_pending_nav) {
     if (menu_state.pending_nav.is_back) {
@@ -286,7 +286,7 @@ static void menu_navigate_back_internal(void) {
   if (menu_state.group && menu_state.stack_depth > 0) {
     lv_obj_t* current_list = menu_state.stack[menu_state.stack_depth - 1].list;
     if (current_list) {
-      uint32_t child_cnt = lv_obj_get_child_cnt(current_list);
+      uint32_t child_cnt = lv_obj_get_child_count(current_list);
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(current_list, i);
         if (child && lv_obj_has_class(child, &lv_list_button_class)) {
@@ -299,7 +299,7 @@ static void menu_navigate_back_internal(void) {
   // CRITICAL: Load previous screen FIRST before deleting current
   // This prevents the "active screen was deleted" crash
   lv_obj_t* prev_screen = menu_state.stack[menu_state.stack_depth - 2].screen;
-  lv_scr_load(prev_screen);
+  lv_screen_load(prev_screen);
 
   // NOW it's safe to delete current screen (not active anymore)
   menu_state.stack_depth--;
@@ -313,7 +313,7 @@ static void menu_navigate_back_internal(void) {
   if (menu_state.group && menu_state.stack_depth > 0) {
     lv_obj_t* prev_list = menu_state.stack[menu_state.stack_depth - 1].list;
     if (prev_list) {
-      uint32_t child_cnt = lv_obj_get_child_cnt(prev_list);
+      uint32_t child_cnt = lv_obj_get_child_count(prev_list);
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(prev_list, i);
         if (child && lv_obj_has_class(child, &lv_list_button_class)) {

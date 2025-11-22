@@ -115,11 +115,11 @@ lv_obj_t * lv_globe_create(lv_obj_t * parent) {
   lv_obj_set_user_data(obj, globe_data);
   
   // Set size based on radius
-  lv_coord_t size = (lv_coord_t)(globe_data->radius * 2 + 4);  // Add padding
+  int32_t size = (int32_t)(globe_data->radius * 2 + 4);  // Add padding
   lv_obj_set_size(obj, size, size);
   
   // Make it non-clickable by default
-  lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(obj, 0, 0);
   
@@ -172,8 +172,8 @@ static void lv_globe_draw_event_cb(lv_event_t * e) {
   lv_obj_get_coords(obj, &obj_coords);
   
   // Calculate center point
-  lv_coord_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
-  lv_coord_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
+  int32_t center_x = obj_coords.x1 + lv_area_get_width(&obj_coords) / 2;
+  int32_t center_y = obj_coords.y1 + lv_area_get_height(&obj_coords) / 2;
   
   // Since we can't directly draw a globe using LVGL primitives,
   // we need to render it pixel by pixel within the draw event
@@ -186,8 +186,8 @@ static void lv_globe_draw_event_cb(lv_event_t * e) {
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
       // Calculate screen position
-      lv_coord_t px = center_x - size/2 + x;
-      lv_coord_t py = center_y - size/2 + y;
+      int32_t px = center_x - size/2 + x;
+      int32_t py = center_y - size/2 + y;
       
       // Ray tracing calculation (simplified from globe.c)
       float world_x = ((x - size / 2) / globe_data->scale);
@@ -277,7 +277,7 @@ void lv_globe_set_radius(lv_obj_t * obj, float radius) {
   lv_globe_data_t * globe_data = lv_obj_get_user_data(obj);
   if (globe_data && globe_data->radius != radius) {
     globe_data->radius = radius;
-    lv_coord_t size = (lv_coord_t)(radius * 2 + 4);
+    int32_t size = (int32_t)(radius * 2 + 4);
     lv_obj_set_size(obj, size, size);
     lv_obj_invalidate(obj);
   }

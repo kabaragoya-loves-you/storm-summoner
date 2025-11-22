@@ -63,7 +63,7 @@ static void draw_wireframe_ship(void) {
   
   // Check if canvas is on the active screen
   lv_obj_t *canvas_screen = lv_obj_get_screen(canvas);
-  if (canvas_screen != lv_scr_act()) {
+  if (canvas_screen != lv_screen_active()) {
     ESP_LOGW(TAG, "Canvas is not on active screen, skipping draw");
     return;
   }
@@ -225,11 +225,11 @@ static void cleanup_ship_resources(void) {
   // This is only called on error during elite_start
   // Stop any active timers
   if (rotation_timer) {
-    lv_timer_del(rotation_timer);
+    lv_timer_delete(rotation_timer);
     rotation_timer = NULL;
   }
   if (g_ship_cycling_timer) {
-    lv_timer_del(g_ship_cycling_timer);
+    lv_timer_delete(g_ship_cycling_timer);
     g_ship_cycling_timer = NULL;
   }
   
@@ -241,7 +241,7 @@ static void cleanup_ship_resources(void) {
 void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale, int* faces, int face_cnt) {
   // Stop rotation timer for previous ship
   if (rotation_timer) {
-    lv_timer_del(rotation_timer);
+    lv_timer_delete(rotation_timer);
     rotation_timer = NULL;
   }
 
@@ -284,7 +284,7 @@ void elite_start(void) {
   g_elite_stopping = false;
   
   // Save current screen
-  g_previous_screen = lv_scr_act();
+  g_previous_screen = lv_screen_active();
   
   // Create screen if needed
   if (!g_elite_screen) {
@@ -364,7 +364,7 @@ void elite_start(void) {
   }
   
   // Load the screen
-  lv_scr_load(g_elite_screen);
+  lv_screen_load(g_elite_screen);
 
   // Display the first ship immediately
   next_random_ship(NULL); 
@@ -412,7 +412,7 @@ void elite_stop(void) {
   
   // Restore previous screen BEFORE freeing buffer
   if (g_previous_screen && lv_obj_is_valid(g_previous_screen)) {
-    lv_scr_load(g_previous_screen);
+    lv_screen_load(g_previous_screen);
     g_previous_screen = NULL;
   } else {
     ESP_LOGW(TAG, "Previous screen invalid or null, cannot restore");
@@ -437,11 +437,11 @@ void elite_cleanup(void) {
   
   // Stop any active timers
   if (rotation_timer) {
-    lv_timer_del(rotation_timer);
+    lv_timer_delete(rotation_timer);
     rotation_timer = NULL;
   }
   if (g_ship_cycling_timer) {
-    lv_timer_del(g_ship_cycling_timer);
+    lv_timer_delete(g_ship_cycling_timer);
     g_ship_cycling_timer = NULL;
   }
   

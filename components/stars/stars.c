@@ -83,7 +83,7 @@ void starfield_start(void) {
   ESP_LOGI(TAG, "Starting starfield screensaver (screen-based)...");
   
   // Save current screen
-  g_previous_screen = lv_scr_act();
+  g_previous_screen = lv_screen_active();
   
   // Create screen if it doesn't exist
   if (!g_stars_screen) {
@@ -164,7 +164,7 @@ void starfield_start(void) {
   init_all_stars();
   
   // Load the screen
-  lv_scr_load(g_stars_screen);
+  lv_screen_load(g_stars_screen);
   
   // Set flag to skip first invalidation
   g_skip_first_invalidate = true;
@@ -189,7 +189,7 @@ void starfield_stop(void) {
   
   // Restore previous screen BEFORE freeing buffer
   if (g_previous_screen && lv_obj_is_valid(g_previous_screen)) {
-    lv_scr_load(g_previous_screen);
+    lv_screen_load(g_previous_screen);
     g_previous_screen = NULL;
   } else {
     ESP_LOGW(TAG, "Previous screen invalid or null, cannot restore");
@@ -209,7 +209,7 @@ void starfield_cleanup(void) {
   ESP_LOGI(TAG, "Cleaning up starfield resources...");
   
   if (g_animation_timer) {
-    lv_timer_del(g_animation_timer);
+    lv_timer_delete(g_animation_timer);
     g_animation_timer = NULL;
   }
   

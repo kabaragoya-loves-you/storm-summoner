@@ -21,7 +21,7 @@ extern "C" {
 
 /* Type definition for exclusion zone check function
  * Returns true if point (x, y) should be excluded from drawing */
-typedef bool (*lv_starfield_exclusion_check_fn)(lv_coord_t x, lv_coord_t y, void* user_data);
+typedef bool (*lv_starfield_exclusion_check_fn)(int32_t x, int32_t y, void* user_data);
 
 /* Star structure */
 typedef struct {
