@@ -9,6 +9,7 @@
 
 #include "lv_draw_ppa_private.h"
 #include "lv_draw_ppa.h"
+#include <stdint.h>
 
 #if LV_USE_PPA
 
@@ -28,12 +29,26 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer);
 static int32_t ppa_delete(lv_draw_unit_t * draw_unit);
 static void  ppa_execute_drawing(lv_draw_ppa_unit_t * u);
 static bool ppa_isr(ppa_client_handle_t ppa_client, ppa_event_data_t * event_data, void * user_data);
+static bool ppa_buffer_aligned(const lv_draw_buf_t * buf);
 
 #if LV_PPA_NONBLOCKING_OPS
     static void ppa_thread(void * arg);
 #endif
 
 static bool g_ppa_complete = true;
+
+/**********************
+*   STATIC FUNCTIONS
+**********************/
+
+static bool ppa_buffer_aligned(const lv_draw_buf_t * buf)
+{
+    const uintptr_t align = CONFIG_CACHE_L1_CACHE_LINE_SIZE;
+    if(align == 0 || buf == NULL || buf->data == NULL) return false;
+
+    uintptr_t addr = (uintptr_t)buf->data;
+    return (addr % align) == 0 && (buf->data_size % align) == 0;
+}
 
 /**********************
 *   GLOBAL FUNCTIONS
@@ -130,6 +145,18 @@ static int32_t ppa_evaluate(lv_draw_unit_t * u, lv_draw_task_t * t)
     const lv_draw_dsc_base_t * base = (lv_draw_dsc_base_t *)t->draw_dsc;
 
     if(!ppa_dest_cf_supported(base->layer->color_format)) return 0;
+    if(!ppa_buffer_aligned(base->layer->draw_buf)) return 0;
+
+    // Check address alignment for the specific draw area
+    // PPA likely requires the start address of the operation to be aligned to cache line size
+    uint32_t bpp = lv_color_format_get_size(base->layer->color_format);
+    int32_t offset_x = t->area.x1 - base->layer->buf_area.x1;
+    int32_t offset_y = t->area.y1 - base->layer->buf_area.y1;
+    uintptr_t start_addr = (uintptr_t)base->layer->draw_buf->data;
+    start_addr += offset_y * base->layer->draw_buf->header.stride;
+    start_addr += offset_x * bpp;
+    
+    if(start_addr % CONFIG_CACHE_L1_CACHE_LINE_SIZE != 0) return 0;
 
     switch(t->type) {
         case LV_DRAW_TASK_TYPE_FILL: {

@@ -21,6 +21,20 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
         return;
     }
 
+    int pic_w = draw_buf->header.stride / lv_color_format_get_size(draw_buf->header.cf);
+    
+    // Debug logging for geometry
+    static int log_limiter = 0;
+    if (log_limiter++ < 20) {
+        LV_LOG_WARN("PPA FILL: Buf=%p Stride=%d PicW=%d Area=[%d,%d %dx%d] Offset=[%ld,%ld]", 
+            draw_buf->data, 
+            (int)draw_buf->header.stride,
+            pic_w,
+            (int)coords->x1, (int)coords->y1, width, height,
+            (long)(coords->x1 - t->target_layer->buf_area.x1),
+            (long)(coords->y1 - t->target_layer->buf_area.y1));
+    }
+
     ppa_fill_oper_config_t cfg = {
         .fill_argb_color.val = lv_color_to_u32(dsc->color),
         .fill_block_w    = width,
@@ -28,14 +42,16 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
         .out = {
             .buffer         = draw_buf->data,
             .buffer_size    = draw_buf->data_size,
-            .pic_w          = draw_buf->header.w,  // Full buffer width for stride calculation
+            // PPA calculates stride as pic_w * bytes_per_pixel.
+            // We must use the buffer's actual stride to ensure correct addressing.
+            .pic_w          = pic_w,
             .pic_h          = draw_buf->header.h,  // Full buffer height
             .block_offset_x = coords->x1 - t->target_layer->buf_area.x1,
             .block_offset_y = coords->y1 - t->target_layer->buf_area.y1,
             .fill_cm        = lv_color_format_to_ppa_fill(draw_buf->header.cf),
         },
 
-        .mode            = PPA_TRANS_MODE_NON_BLOCKING,
+        .mode            = PPA_TRANS_MODE_BLOCKING,
         .user_data       = u,
     };
 
@@ -43,7 +59,10 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
     if(ret != ESP_OK) {
         LV_LOG_ERROR("PPA fill failed: %d", ret);
     }
-    // Note: Cache sync happens in ISR after PPA completes (non-blocking mode)
+    
+    // In blocking mode, PPA is done when function returns.
+    // Sync cache immediately so CPU sees the result.
+    esp_cache_msync(draw_buf->data, draw_buf->data_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_INVALIDATE);
 }
 
 #endif /* LV_USE_PPA */
