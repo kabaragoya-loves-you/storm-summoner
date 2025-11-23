@@ -12,7 +12,7 @@
 #define SPEED_THRESHOLD_VERY_FAST  110    // ms (3x) - Fast scrolling
 #define SPEED_THRESHOLD_SUPER_FAST 75    // ms (4x) - Very fast scrolling
 #define SPEED_THRESHOLD_ULTRA_FAST 60    // ms (5x) - Maximum velocity
-#define STICKY_RELEASE_MS 100            // ms - Time to hold dual value after releasing one finger
+#define STICKY_RELEASE_MS 0              // ms - Disabled to allow single-pad values during slide
 
 // Mappings for absolute modes
 // Pad 4 is 0, Pad 3 is MAX
@@ -69,86 +69,69 @@ void touchwheel_strategy_binary_process_press(touchwheel_core_t* core, uint8_t p
         int target_value = 0;
         bool valid_touch = false;
         
-        // Check for multi-touch to interpolate
-        int active_pad_count = 0;
-        int first_pad_idx = -1;
-        int second_pad_idx = -1;
-        int first_physical_pad = -1;
-        int second_physical_pad = -1;
+        // Check for multi-touch to interpolate using active_pads stack (newest is last)
+        // This is robust against stuck pads because we prioritize the most recent touch
+        int p1_physical = -1;
+        int p2_physical = -1;
         
-        for (int i = 0; i < NUM_WHEEL_PADS; i++) {
-            if (core->pad_pressed_states[i]) {
-                active_pad_count++;
-                if (active_pad_count == 1) {
-                    first_pad_idx = PAD_TO_INDEX[i];
-                    first_physical_pad = i;
-                }
-                else if (active_pad_count == 2) {
-                    second_pad_idx = PAD_TO_INDEX[i];
-                    second_physical_pad = i;
-                }
+        if (core->num_active_pads > 0) {
+            p1_physical = core->active_pads[core->num_active_pads - 1];
+            if (p1_physical >= NUM_WHEEL_PADS) p1_physical = -1; // Safety check
+            
+            if (core->num_active_pads > 1) {
+                p2_physical = core->active_pads[core->num_active_pads - 2];
+                if (p2_physical >= NUM_WHEEL_PADS) p2_physical = -1;
             }
         }
         
-        if (active_pad_count == 1 && first_pad_idx != -1) {
-            // Check for sticky release: if any OTHER pad was released recently, ignore this single-pad update
-            // This prevents "snap back" when releasing one finger of a dual touch
-            bool recent_release = false;
-            for (int i = 0; i < NUM_WHEEL_PADS; i++) {
-                if (i != first_physical_pad && core->pad_release_times[i] > 0) {
-                    uint32_t age = timestamp_ms - core->pad_release_times[i];
-                    if (age < STICKY_RELEASE_MS) {
-                        recent_release = true;
-                        break;
+        if (p1_physical != -1) {
+            int p1_idx = PAD_TO_INDEX[p1_physical];
+            
+            // Try dual touch first
+            if (p2_physical != -1) {
+                int p2_idx = PAD_TO_INDEX[p2_physical];
+                int diff = abs(p1_idx - p2_idx);
+                
+                if (diff == 1) {
+                    // Adjacent! Interpolate.
+                    if (core->mode_type == TOUCHWHEEL_MODE_ODOMETER) {
+                        target_value = interpolate_value(ODOMETER_MAP[p1_idx], ODOMETER_MAP[p2_idx]);
+                    } else {
+                        target_value = interpolate_value(BIPOLAR_MAP[p1_idx], BIPOLAR_MAP[p2_idx]);
                     }
+                    valid_touch = true;
+                    
+                    ESP_LOGI(TAG, "%s: Pads [%d,%d] -> Value %d", 
+                        core->mode_type == TOUCHWHEEL_MODE_ODOMETER ? "Odometer" : "Bipolar",
+                        p2_physical, p1_physical, target_value); // Log older,newer
                 }
             }
             
-            if (recent_release) {
-                ESP_LOGI(TAG, "%s: Holding dual value (recent release)", 
-                    core->mode_type == TOUCHWHEEL_MODE_ODOMETER ? "Odometer" : "Bipolar");
-                return;
-            }
+            // Fallback to single touch if dual failed (not adjacent) or only 1 pad
+            if (!valid_touch) {
+                // Boundary check: don't allow crossing 3 <-> 4
+                if (core->last_logical_wheel_pos != -1 && 
+                    touchwheel_core_is_boundary_violation(core, core->last_logical_wheel_pos, p1_physical)) {
+                    ESP_LOGI(TAG, "%s: Boundary violation (Pad %d -> %d) - Blocked", 
+                        core->mode_type == TOUCHWHEEL_MODE_ODOMETER ? "Odometer" : "Bipolar",
+                        core->last_logical_wheel_pos, p1_physical);
+                    return;
+                }
 
-            // Boundary check: don't allow crossing 3 <-> 4
-            if (core->last_logical_wheel_pos != -1 && 
-                touchwheel_core_is_boundary_violation(core, core->last_logical_wheel_pos, first_physical_pad)) {
-                ESP_LOGI(TAG, "%s: Boundary violation (Pad %d -> %d) - Blocked", 
-                    core->mode_type == TOUCHWHEEL_MODE_ODOMETER ? "Odometer" : "Bipolar",
-                    core->last_logical_wheel_pos, first_physical_pad);
-                return;
-            }
-
-            // Single pad touch
-            if (core->mode_type == TOUCHWHEEL_MODE_ODOMETER) {
-                target_value = ODOMETER_MAP[first_pad_idx];
-            } else {
-                target_value = BIPOLAR_MAP[first_pad_idx];
-            }
-            valid_touch = true;
-        } else if (active_pad_count >= 2 && first_pad_idx != -1 && second_pad_idx != -1) {
-            // Dual (or more) pad touch - only interpolate if adjacent
-            // We use the first two detected pads to determine position
-            int diff = abs(first_pad_idx - second_pad_idx);
-            if (diff == 1) {
-                // Adjacent in our linear mapping
                 if (core->mode_type == TOUCHWHEEL_MODE_ODOMETER) {
-                    target_value = interpolate_value(ODOMETER_MAP[first_pad_idx], ODOMETER_MAP[second_pad_idx]);
+                    target_value = ODOMETER_MAP[p1_idx];
                 } else {
-                    target_value = interpolate_value(BIPOLAR_MAP[first_pad_idx], BIPOLAR_MAP[second_pad_idx]);
+                    target_value = BIPOLAR_MAP[p1_idx];
                 }
                 valid_touch = true;
+                
+                ESP_LOGI(TAG, "%s: Pad [%d] -> Value %d", 
+                    core->mode_type == TOUCHWHEEL_MODE_ODOMETER ? "Odometer" : "Bipolar",
+                    p1_physical, target_value);
             }
         }
         
         if (valid_touch) {
-            ESP_LOGI(TAG, "%s: Pads [%d%s] -> Value %d", 
-                core->mode_type == TOUCHWHEEL_MODE_ODOMETER ? "Odometer" : "Bipolar",
-                first_physical_pad, 
-                valid_touch && active_pad_count >= 2 ? (char[]){',', (char)('0' + second_physical_pad), '\0'} : "", 
-                target_value);
-
-            // For absolute modes, we send the absolute position update via position callback
             if (core->position_callback) {
                 core->position_callback(target_value, timestamp_ms, core->callback_user_data);
             }
@@ -203,6 +186,26 @@ void touchwheel_strategy_binary_process_press(touchwheel_core_t* core, uint8_t p
             if (core->delta_callback) {
                 core->delta_callback(effective_delta, current_logical_wheel_pos, timestamp_ms, core->callback_user_data);
             }
+        }
+    }
+}
+
+void touchwheel_strategy_binary_process_release(touchwheel_core_t* core, uint8_t pad_id, uint32_t timestamp_ms) {
+    // Re-run the press logic to recalculate value based on remaining pads
+    // Pass the pad_id that remains pressed (if any), or just use the first active pad
+    
+    if (core->mode_type == TOUCHWHEEL_MODE_ODOMETER || core->mode_type == TOUCHWHEEL_MODE_BIPOLAR) {
+        // Find any active pad to serve as the "current" pad for calculation
+        int active_pad = -1;
+        for (int i = 0; i < NUM_WHEEL_PADS; i++) {
+            if (core->pad_pressed_states[i]) {
+                active_pad = i;
+                break;
+            }
+        }
+        
+        if (active_pad != -1) {
+            touchwheel_strategy_binary_process_press(core, active_pad, timestamp_ms);
         }
     }
 }

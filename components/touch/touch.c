@@ -280,8 +280,6 @@ static void touch_health_check_task(void *pvParameters) {
       if (s_button_pressed_states[i] != hardware_is_touching) {
         ESP_LOGD(TAG, "Health check: Fixing pad %d (SW=%s, HW=%s)",
           i, s_button_pressed_states[i] ? "PRESSED" : "RELEASED", hardware_is_touching ? "TOUCHING" : "IDLE");
-        
-        // Update Software State
         s_button_pressed_states[i] = hardware_is_touching;
         
         // Post Event
@@ -298,8 +296,8 @@ static void touch_health_check_task(void *pvParameters) {
         // it means the release event was missed OR the signal drifted.
         // Queue it for recovery instead of acting immediately.
         if (!hardware_is_touching) { 
-             ESP_LOGD(TAG, "Health check: Pad %d unstuck - queueing for recovery", i);
-             s_pending_recovery_mask |= (1 << i);
+          ESP_LOGD(TAG, "Health check: Pad %d unstuck - queueing for recovery", i);
+          s_pending_recovery_mask |= (1 << i);
         }
       }
       
@@ -308,8 +306,8 @@ static void touch_health_check_task(void *pvParameters) {
         // If benchmark has drifted > 20% from baseline, update it
         int32_t drift = abs((int32_t)benchmark[0] - (int32_t)calib_data.baseline);
         if (calib_data.baseline > 0 && drift > (int32_t)(calib_data.baseline * 0.2f)) {
-             ESP_LOGD(TAG, "Pad %d drift detected, queueing for update...", i);
-             s_pending_recovery_mask |= (1 << i);
+          ESP_LOGD(TAG, "Pad %d drift detected, queueing for update...", i);
+          s_pending_recovery_mask |= (1 << i);
         }
       }
     }
@@ -330,13 +328,13 @@ static void touch_health_check_task(void *pvParameters) {
         }
         
         if (pad_to_recover >= 0) {
-            ESP_LOGD(TAG, "Executing queued recovery for pad %d (System Idle)", pad_to_recover);
-            touch_recover_pad_state(pad_to_recover);
-            s_pending_recovery_mask &= ~(1 << pad_to_recover); // Clear bit
-            
-            // Force a small extra delay to prevent back-to-back glitches if we have a queue
-            // This ensures we don't freeze the bus for too long at once
-            s_last_any_touch_time = xTaskGetTickCount() * portTICK_PERIOD_MS; 
+          ESP_LOGD(TAG, "Executing queued recovery for pad %d (System Idle)", pad_to_recover);
+          touch_recover_pad_state(pad_to_recover);
+          s_pending_recovery_mask &= ~(1 << pad_to_recover); // Clear bit
+          
+          // Force a small extra delay to prevent back-to-back glitches if we have a queue
+          // This ensures we don't freeze the bus for too long at once
+          s_last_any_touch_time = xTaskGetTickCount() * portTICK_PERIOD_MS; 
         }
       }
     }
@@ -357,12 +355,8 @@ void touch_sync_states_after_reconfig(void) {
   // Drain any stale events from the queue that fired during reconfig
   touch_event_item_t stale_event;
   int drained = 0;
-  while (xQueueReceive(s_touch_event_queue, &stale_event, 0) == pdTRUE) {
-    drained++;
-  }
-  if (drained > 0) {
-    ESP_LOGD(TAG, "Drained %d stale events from queue after reconfig", drained);
-  }
+  while (xQueueReceive(s_touch_event_queue, &stale_event, 0) == pdTRUE) drained++;
+  if (drained > 0) ESP_LOGD(TAG, "Drained %d stale events from queue after reconfig", drained);
   
   // Now check each pad's actual hardware state
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {

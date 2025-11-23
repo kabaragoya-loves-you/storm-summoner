@@ -143,11 +143,15 @@ void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint
   // to allow holding a pad for a long time before pressing a second one (multi-touch) without resetting.
   bool is_new_interaction = !touchwheel_core_are_any_pads_pressed(core);
   
+  // Outlier check disabled: It prevents recovery from stuck pads (e.g. if Pad 3 is stuck, Pad 1 is rejected)
+  // The strategy should handle disjoint pads by prioritizing recent touches.
+  /*
   if (!is_new_interaction && core->num_active_pads > 0 && !touchwheel_core_is_pad_contiguous(core, pad_id)) {
     ESP_LOGD(TAG, "Ignoring non-contiguous pad %d (active pads: %d)", pad_id, core->num_active_pads);
     // Don't update pad state - treat as outlier
     return;
   }
+  */
   
   // Update pad state (only if not an outlier)
   core->pad_pressed_states[pad_id] = true;
@@ -267,6 +271,11 @@ void touchwheel_core_process_release(touchwheel_core_t* core, uint8_t pad_id, ui
     } else {
       ESP_LOGD(TAG, "All pads released but within timeout - keeping interaction active");
     }
+  } else {
+    // Some pads still pressed - process update for remaining pads
+    // This handles the "slide" case where you release one pad but keep holding another
+    // We need to update the value to the remaining single pad
+    touchwheel_strategy_binary_process_release(core, pad_id, timestamp_ms);
   }
 }
 
