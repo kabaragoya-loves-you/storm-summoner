@@ -73,7 +73,6 @@ void app_main(void) {
   transport_init();
   tempo_init();
   
-  // Initialize MIDI IN immediately after TinyUSB to catch clock bytes from boot
   midi_in_init();
   midi_in_debug_init();
   midi_passthrough_init();
@@ -109,18 +108,14 @@ void app_main(void) {
   expression_enable();
   
   input_manager_init();
-  
-  dac_calibrate_vref();
-  
+  dac_calibrate_vref();  
   cv_set_range(CV_RANGE_10V);
 
-  
   sensor_init(false);
   als_enable();
   ps_enable();
 
   screensaver_init();
-  screensaver_set_mode(SCREENSAVER_MODE_STARFIELD);
 
   console_repl_init();
 

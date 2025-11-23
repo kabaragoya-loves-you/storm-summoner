@@ -33,6 +33,12 @@ void touch_display_calibration_data(void);
 // Update thresholds based on current benchmark values
 esp_err_t touch_update_thresholds_from_benchmarks(void);
 
+// Calibrate a single pad with thread safety (used by health check)
+esp_err_t touch_calibrate_pad(int pad_index);
+
+// Fast recovery for a single pad (resets benchmark, updates baseline/threshold instantly)
+esp_err_t touch_recover_pad_state(int pad_index);
+
 void touch_thresholds_request_calibration(touch_calibration_reason_t reason, bool force);
 
 #endif // TOUCH_THRESHOLDS_H_

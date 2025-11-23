@@ -1,4 +1,4 @@
-#include "touchwheel_analog.h"
+#include "touchwheel_strategy_analog.h"
 #include "touch.h"
 #include "touch_thresholds.h"
 #include "esp_log.h"

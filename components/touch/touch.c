@@ -1,7 +1,8 @@
 #include "touch.h"
 #include "touch_thresholds.h"
 #include "touchwheel.h"
-#include "touchwheel_analog.h"
+#include "touchwheel_strategy_analog.h"
+#include "touchwheel_strategy_binary.h"
 #include "ui.h"
 #include "event_bus.h"
 #include "esp_log.h"
@@ -74,6 +75,8 @@ static QueueHandle_t s_touch_event_queue = NULL;
 static TaskHandle_t s_touch_event_task = NULL;
 static TaskHandle_t s_health_check_task = NULL;
 static bool s_health_check_running = false;
+static volatile uint32_t s_last_any_touch_time = 0; // Global tracking of last activity
+static uint32_t s_pending_recovery_mask = 0;        // Bitmask of pads needing recovery
 
 // Statistics for debug logging
 static struct {
@@ -131,6 +134,10 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     return;
   }
   
+  // Update last touch time for ANY pad
+  uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  s_last_any_touch_time = now;
+  
   // Route pad 0-7 events to active touchwheel instances
   // Route in both performance mode AND programming mode
   if (pad_index < 8 && s_num_touchwheel_instances > 0) {
@@ -138,31 +145,12 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     if (mode == APP_MODE_PERFORMANCE || mode == APP_MODE_PROGRAMMING) {
       uint32_t timestamp_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
       
-      // Start analog sampling if not already active
-      if (is_pressed && !touchwheel_analog_is_active()) {
-        ESP_LOGD(TAG, "Starting analog sampling (pad %d pressed)", pad_index);
-        touchwheel_analog_start();
-      }
-      
       // Update last touch time for this pad
       if (is_pressed) {
         s_wheel_pad_last_touch_time[pad_index] = timestamp_ms;
       }
       
-      // Check if all pads 0-7 are released (for timeout detection)
-      bool any_wheel_pad_pressed = false;
-      for (int i = 0; i < 8; i++) {
-        if (s_button_pressed_states[i]) {
-          any_wheel_pad_pressed = true;
-          break;
-        }
-      }
-      
-      // If all pads released, start timeout check
-      if (!any_wheel_pad_pressed && touchwheel_analog_is_active()) {
-        // Analog sampling will stop itself after inactivity timeout
-        // No need to stop immediately - let it handle the timeout
-      }
+      // Removed analog sampling trigger and check - using binary strategy now
       
       for (int i = 0; i < s_num_touchwheel_instances; i++) {
         if (s_touchwheel_instances[i]) {
@@ -253,15 +241,14 @@ static void touch_event_task(void *pvParameters) {
   }
 }
 
-// Lightweight periodic health check to catch missed events
-// Only fixes mismatches - doesn't run heavy operations
+// Lightweight periodic health check to catch missed events and stuck pads
 static void touch_health_check_task(void *pvParameters) {
   // Wait for initialization to complete
   vTaskDelay(pdMS_TO_TICKS(5000));
   
   while (s_health_check_running) {
-    // Quick check for state mismatches
     for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+      // 1. Read Data
       uint32_t smooth[1], benchmark[1];
       touch_pad_calibration_t calib_data;
       
@@ -271,7 +258,14 @@ static void touch_health_check_task(void *pvParameters) {
       
       if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
       
-      // Determine actual hardware state
+      // 2. Check for Critical Benchmark Corruption
+      if (benchmark[0] < 1000 || benchmark[0] > 100000) {
+        ESP_LOGE(TAG, "CRITICAL: Pad %d benchmark corrupted (%"PRIu32"), resetting...", i, benchmark[0]);
+        touch_recover_pad_state(i);
+        continue; // Skip rest of logic for this pad, state will sync later
+      }
+      
+      // 3. Determine Hardware State
       int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
       bool hardware_is_touching = false;
       
@@ -282,64 +276,73 @@ static void touch_health_check_task(void *pvParameters) {
         hardware_is_touching = (delta > (int32_t)calib_data.threshold);
       }
       
-      // Only fix if there's a mismatch
+      // 4. Check State Mismatches
       if (s_button_pressed_states[i] != hardware_is_touching) {
-        // Check for catastrophic benchmark corruption FIRST
-        bool benchmark_corrupted = (benchmark[0] < 1000 || benchmark[0] > 100000);
+        ESP_LOGD(TAG, "Health check: Fixing pad %d (SW=%s, HW=%s)",
+          i, s_button_pressed_states[i] ? "PRESSED" : "RELEASED", hardware_is_touching ? "TOUCHING" : "IDLE");
         
-        if (benchmark_corrupted) {
-          ESP_LOGE(TAG, "CRITICAL: Pad %d has corrupted benchmark=%"PRIu32" (expected ~%"PRIu32")",
-            i, benchmark[0], calib_data.baseline);
-          ESP_LOGE(TAG, "Attempting automatic benchmark recovery...");
-          
-          // Reset benchmark immediately
-          touch_chan_benchmark_config_t benchmark_cfg = { .do_reset = true };
-          esp_err_t reset_ret = touch_channel_config_benchmark(s_chan_handles[i], &benchmark_cfg);
-          
-          if (reset_ret == ESP_OK) {
-            ESP_LOGI(TAG, "Pad %d benchmark reset successfully", i);
-            vTaskDelay(pdMS_TO_TICKS(100));  // Let it stabilize
-            
-            // Re-read to verify
-            uint32_t new_benchmark[1];
-            touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_BENCHMARK, new_benchmark);
-            ESP_LOGI(TAG, "Pad %d new benchmark: %"PRIu32, i, new_benchmark[0]);
-            touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_BENCHMARK_CORRUPTION, true);
-          } else {
-            ESP_LOGE(TAG, "Failed to reset benchmark for pad %d", i);
-          }
-        }
-        
-        ESP_LOGD(TAG, "Health check: Fixing pad %d (SW=%s, HW=%s, delta=%+"PRId32")",
-          i,
-          s_button_pressed_states[i] ? "PRESSED" : "RELEASED",
-          hardware_is_touching ? "TOUCHING" : "IDLE",
-          delta);
-        
+        // Update Software State
         s_button_pressed_states[i] = hardware_is_touching;
         
+        // Post Event
         event_t event = {
           .type = hardware_is_touching ? EVENT_TOUCH_PRESS : EVENT_TOUCH_RELEASE,
           .priority = EVENT_PRIORITY_HIGH,
           .timestamp = event_bus_get_current_timestamp(),
           .data.touch = { .pad_id = i }
         };
-        
-        esp_err_t ret = event_bus_post(&event);
-        if (ret == ESP_OK) {
-          s_touch_stats.state_corrections++;
-          if (hardware_is_touching) {
-            s_touch_stats.total_press_events++;
-          } else {
-            s_touch_stats.total_release_events++;
-          }
+        event_bus_post(&event);
+        s_touch_stats.state_corrections++;
+
+        // RECOVERY: If we just fixed a "Stuck" pad (SW=Pressed, HW=Released),
+        // it means the release event was missed OR the signal drifted.
+        // Queue it for recovery instead of acting immediately.
+        if (!hardware_is_touching) { 
+             ESP_LOGD(TAG, "Health check: Pad %d unstuck - queueing for recovery", i);
+             s_pending_recovery_mask |= (1 << i);
+        }
+      }
+      
+      // 5. Proactive Drift Check (When released)
+      if (!s_button_pressed_states[i]) {
+        // If benchmark has drifted > 20% from baseline, update it
+        int32_t drift = abs((int32_t)benchmark[0] - (int32_t)calib_data.baseline);
+        if (calib_data.baseline > 0 && drift > (int32_t)(calib_data.baseline * 0.2f)) {
+             ESP_LOGD(TAG, "Pad %d drift detected, queueing for update...", i);
+             s_pending_recovery_mask |= (1 << i);
         }
       }
     }
     
-    // Run every second - lightweight operation (~26 register reads + comparisons)
-    // Estimated CPU impact: <0.5%
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    // 6. Process Pending Recoveries (FIFO-ish, one at a time, only when idle)
+    if (s_pending_recovery_mask > 0) {
+      uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+      
+      // Wait for 500ms of silence before acting
+      if ((now - s_last_any_touch_time) > 500) {
+        // Find the lowest index needing recovery
+        int pad_to_recover = -1;
+        for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+          if (s_pending_recovery_mask & (1 << i)) {
+            pad_to_recover = i;
+            break;
+          }
+        }
+        
+        if (pad_to_recover >= 0) {
+            ESP_LOGD(TAG, "Executing queued recovery for pad %d (System Idle)", pad_to_recover);
+            touch_recover_pad_state(pad_to_recover);
+            s_pending_recovery_mask &= ~(1 << pad_to_recover); // Clear bit
+            
+            // Force a small extra delay to prevent back-to-back glitches if we have a queue
+            // This ensures we don't freeze the bus for too long at once
+            s_last_any_touch_time = xTaskGetTickCount() * portTICK_PERIOD_MS; 
+        }
+      }
+    }
+    
+    // Run every 500ms for better responsiveness
+    vTaskDelay(pdMS_TO_TICKS(500));
   }
   
   vTaskDelete(NULL);
@@ -841,15 +844,6 @@ void touch_query_pad(int pad_index) {
   ESP_LOGI(TAG, "=== END PAD %d QUERY ===", pad_index);
 }
 
-bool touch_is_pad_pressed(int pad_index) {
-  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return false;
-  return s_button_pressed_states[pad_index];
-}
-
-const bool *touch_get_pressed_states(void) {
-  return s_button_pressed_states;
-}
-
 void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "=== TOUCH DEBUG DATA ===");
   
@@ -957,4 +951,13 @@ esp_err_t touch_unregister_touchwheel_instance(struct touchwheel_instance* insta
   
   ESP_LOGW(TAG, "Touchwheel instance not found for unregistration");
   return ESP_ERR_NOT_FOUND;
+}
+
+bool touch_is_pad_pressed(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return false;
+  return s_button_pressed_states[pad_index];
+}
+
+const bool *touch_get_pressed_states(void) {
+  return s_button_pressed_states;
 }

@@ -20,7 +20,7 @@
 typedef void (*touchwheel_delta_cb_t)(int delta, int position, uint32_t timestamp_ms, void* user_data);
 
 // Callback type for position-based value setting (for multi-pad releases)
-typedef void (*touchwheel_position_cb_t)(int value, void* user_data);
+typedef void (*touchwheel_position_cb_t)(int value, uint32_t timestamp_ms, void* user_data);
 
 // Core touchwheel driver state
 typedef struct {
@@ -130,5 +130,3 @@ void touchwheel_core_reset(touchwheel_core_t* core);
 bool touchwheel_core_are_any_pads_pressed(const touchwheel_core_t* core);
 
 #endif // TOUCHWHEEL_CORE_H
-
-

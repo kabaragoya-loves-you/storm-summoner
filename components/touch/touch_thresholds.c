@@ -55,6 +55,7 @@ static void enqueue_calibration_request(touch_calibration_reason_t reason, bool 
 static bool fetch_calibration_request(calibration_request_t* out_request);
 static void run_calibration_sequence(touch_calibration_reason_t reason, bool force);
 static const char* calibration_reason_to_string(touch_calibration_reason_t reason);
+static esp_err_t calibrate_single_pad(int pad_index);
 
 static uint32_t calculate_mean(uint32_t *samples, size_t count) {
   uint64_t sum = 0;
@@ -181,7 +182,7 @@ static esp_err_t save_calibration_to_nvs(void) {
     return ret;
   }
   
-  ESP_LOGI(TAG, "Calibration data saved to NVS successfully");
+  ESP_LOGD(TAG, "Calibration data saved to NVS successfully");
   return ESP_OK;
 }
 
@@ -698,6 +699,120 @@ esp_err_t touch_calibrate(bool force) {
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
   }
   esp_err_t ret = touch_calibrate_body(force);
+  if (s_calibration_mutex) {
+    xSemaphoreGive(s_calibration_mutex);
+  }
+  return ret;
+}
+
+esp_err_t touch_calibrate_pad(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return ESP_ERR_INVALID_ARG;
+  
+  if (s_calibration_mutex) {
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+  }
+  
+  // Need to stop/start scanning around calibration?
+  // calibrate_single_pad reads SMOOTH data.
+  // If scanning is running, reading SMOOTH is fine.
+  // But to apply thresholds, we need to stop scanning.
+  // calibrate_single_pad does NOT apply thresholds, it just updates s_pad_calibration array.
+  // So we can run it while scanning.
+  
+  esp_err_t ret = calibrate_single_pad(pad_index);
+  
+  if (ret == ESP_OK) {
+    // To apply the new threshold, we need to call apply_thresholds which stops/starts scanning
+    // But apply_thresholds applies ALL pads. That's fine.
+    ret = apply_thresholds();
+    if (ret == ESP_OK) {
+      save_calibration_to_nvs(); // Save the update
+    }
+  }
+  
+  if (s_calibration_mutex) {
+    xSemaphoreGive(s_calibration_mutex);
+  }
+  return ret;
+}
+
+esp_err_t touch_recover_pad_state(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return ESP_ERR_INVALID_ARG;
+  
+  if (s_calibration_mutex) {
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+  }
+
+  ESP_LOGD(TAG, "Recovering pad %d (Fast Recalibration)...", pad_index);
+
+  touch_channel_handle_t chan_handle = touch_get_channel_handle(pad_index);
+  if (chan_handle == NULL) {
+    if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  // 1. Reset Benchmark to current value (fixes corruption and drift)
+  touch_chan_benchmark_config_t benchmark_cfg = {
+    .do_reset = true,
+  };
+  esp_err_t ret = touch_channel_config_benchmark(chan_handle, &benchmark_cfg);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to reset benchmark for pad %d: %s", pad_index, esp_err_to_name(ret));
+    if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+    return ret;
+  }
+  
+  // Wait briefly for reset to take effect
+  vTaskDelay(pdMS_TO_TICKS(20));
+
+  // 2. Read new Benchmark (should be close to Smooth)
+  uint32_t benchmark[1];
+  ret = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to read benchmark for pad %d", pad_index);
+    if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+    return ret;
+  }
+
+  // 3. Update Calibration Data
+  uint32_t new_baseline = benchmark[0];
+  
+  // Calculate new threshold using adaptive logic
+  float threshold_ratio = 0.07f; // Default 7%
+  if (new_baseline < 25000) threshold_ratio = 0.084f; // 20% higher (less sensitive) for low baseline
+  
+  // Pad 12 (Copper screw) specific handling
+  if (pad_index == 12) {
+     // Keep it sensitive but not too sensitive
+     threshold_ratio = 0.07f; 
+  }
+  
+  uint32_t new_threshold = (uint32_t)(new_baseline * threshold_ratio);
+  
+  // Ensure minimum threshold
+  if (pad_index != 12) {
+    uint32_t min_gap = (uint32_t)(new_baseline * 0.03f);
+    if (new_threshold < min_gap) new_threshold = min_gap;
+  }
+
+  if (new_threshold < MIN_THRESHOLD_VALUE) new_threshold = MIN_THRESHOLD_VALUE;
+  if (new_threshold > MAX_THRESHOLD_VALUE) new_threshold = MAX_THRESHOLD_VALUE;
+  
+  s_pad_calibration[pad_index].baseline = new_baseline;
+  s_pad_calibration[pad_index].threshold = new_threshold;
+  // Keep variance as is or zero it
+  s_pad_calibration[pad_index].valid = true;
+  
+  ESP_LOGD(TAG, "Pad %d recovered: baseline=%"PRIu32", threshold=%"PRIu32" (%.1f%%)", 
+           pad_index, new_baseline, new_threshold, threshold_ratio * 100.0f);
+  
+  // 4. Apply Thresholds (stops/starts sensor)
+  ret = apply_thresholds();
+  
+  if (ret == ESP_OK) {
+    save_calibration_to_nvs();
+  }
+
   if (s_calibration_mutex) {
     xSemaphoreGive(s_calibration_mutex);
   }

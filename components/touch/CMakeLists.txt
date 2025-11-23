@@ -7,7 +7,8 @@ idf_component_register(
     "touchwheel_core.c"
     "touchwheel_modes.c"
     "touchwheel_outputs.c"
-    "touchwheel_analog.c"
+    "touchwheel_strategy_binary.c"
+    "touchwheel_strategy_analog.c"
     "touchwheel.c"
   INCLUDE_DIRS 
     "include"
