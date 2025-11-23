@@ -121,9 +121,7 @@ static void draw_wireframe_ship(void) {
   }
   
   // Invalidate the canvas to trigger a redraw (unless we're stopping)
-  if (!g_elite_stopping && canvas && lv_obj_is_valid(canvas)) {
-    lv_obj_invalidate(canvas);
-  }
+  if (!g_elite_stopping && canvas && lv_obj_is_valid(canvas)) lv_obj_invalidate(canvas);
 }
 
 
@@ -256,9 +254,7 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
   scalefactor = 0;
   
   // Update label with new ship name
-  if (info_label) {
-    lv_label_set_text(info_label, ShipName);
-  }
+  if (info_label) lv_label_set_text(info_label, ShipName);
   
   // Clear canvas
   if (canvas_buf) {
@@ -303,26 +299,26 @@ void elite_start(void) {
     size_t required_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * bytes_per_pixel;
     
     ESP_LOGI(TAG, "Canvas dimensions: %dx%d, color format: %d, bytes per pixel: %d", 
-             ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_NATIVE, bytes_per_pixel);
+      ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_NATIVE, bytes_per_pixel);
     ESP_LOGI(TAG, "Free heap: %d bytes, need %d bytes for canvas", free_heap, required_size);
     
     // Check LVGL memory status
     lv_mem_monitor_t mon;
     lv_mem_monitor(&mon);
     ESP_LOGI(TAG, "LVGL memory - total: %d, used: %d, free: %d, frag: %d%%", 
-             mon.total_size, mon.total_size - mon.free_size, mon.free_size, mon.frag_pct);
+      mon.total_size, mon.total_size - mon.free_size, mon.free_size, mon.frag_pct);
     
     if (free_heap < required_size + 16384) { // Keep 16KB safety margin
       ESP_LOGE(TAG, "Not enough memory for Elite canvas");
       return;
     }
     
-    canvas_buf = heap_caps_malloc(required_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    canvas_buf = heap_caps_aligned_alloc(64, required_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!canvas_buf) {
-      ESP_LOGE(TAG, "Failed to allocate canvas buffer from internal RAM");
+      ESP_LOGE(TAG, "Failed to allocate aligned canvas buffer from internal RAM");
       return;
     }
-    ESP_LOGI(TAG, "Allocated canvas buffer (32KB)");
+    ESP_LOGI(TAG, "Allocated canvas buffer (32KB) with 64-byte alignment");
   }
   
   // Initialize style if needed
@@ -389,13 +385,9 @@ void elite_stop(void) {
   g_elite_stopping = true;
   
   // Pause timers IMMEDIATELY to prevent any callbacks from firing
-  if (rotation_timer) {
-    lv_timer_pause(rotation_timer);
-    // Note: We'll delete this in cleanup or when displaying a new ship
-  }
-  if (g_ship_cycling_timer) {
-    lv_timer_pause(g_ship_cycling_timer);  // Just pause, don't delete - we might restart
-  }
+  if (rotation_timer) lv_timer_pause(rotation_timer); // Note: We'll delete this in cleanup or when displaying a new ship
+
+  if (g_ship_cycling_timer) lv_timer_pause(g_ship_cycling_timer);  // Just pause, don't delete - we might restart
   
   // Give a moment for any in-flight timer callbacks to complete
   vTaskDelay(pdMS_TO_TICKS(10));
@@ -406,9 +398,7 @@ void elite_stop(void) {
   info_label = NULL;
   
   // Hide the canvas to prevent any rendering
-  if (old_canvas && lv_obj_is_valid(old_canvas)) {
-    lv_obj_add_flag(old_canvas, LV_OBJ_FLAG_HIDDEN);
-  }
+  if (old_canvas && lv_obj_is_valid(old_canvas)) lv_obj_add_flag(old_canvas, LV_OBJ_FLAG_HIDDEN);
   
   // Restore previous screen BEFORE freeing buffer
   if (g_previous_screen && lv_obj_is_valid(g_previous_screen)) {
