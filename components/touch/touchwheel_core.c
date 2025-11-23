@@ -2,9 +2,11 @@
 #include "touchwheel_strategy_binary.h"
 #include "event_bus.h"
 #include "ui.h"
+#include "touch.h"
 #include "esp_log.h"
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
 
 #define TAG "TOUCHWHEEL_CORE"
 
@@ -51,14 +53,10 @@ static bool is_adjacent_pad(uint8_t pad1, uint8_t pad2) {
 // Helper: Add pad to active set
 static void add_active_pad(touchwheel_core_t* core, uint8_t pad_id) {
   // Check if already in set
-  for (int i = 0; i < core->num_active_pads; i++) {
-    if (core->active_pads[i] == pad_id) return;
-  }
+  for (int i = 0; i < core->num_active_pads; i++) if (core->active_pads[i] == pad_id) return;
   
   // Add to set
-  if (core->num_active_pads < NUM_WHEEL_PADS) {
-    core->active_pads[core->num_active_pads++] = pad_id;
-  }
+  if (core->num_active_pads < NUM_WHEEL_PADS) core->active_pads[core->num_active_pads++] = pad_id;
 }
 
 // Helper: Remove pad from active set
@@ -66,12 +64,41 @@ static void remove_active_pad(touchwheel_core_t* core, uint8_t pad_id) {
   for (int i = 0; i < core->num_active_pads; i++) {
     if (core->active_pads[i] == pad_id) {
       // Shift remaining pads down
-      for (int j = i; j < core->num_active_pads - 1; j++) {
-        core->active_pads[j] = core->active_pads[j + 1];
-      }
+      for (int j = i; j < core->num_active_pads - 1; j++) core->active_pads[j] = core->active_pads[j + 1];
       core->num_active_pads--;
       core->active_pads[core->num_active_pads] = 0xFF;  // Clear last slot
       return;
+    }
+  }
+}
+
+static void log_active_pads(const touchwheel_core_t* core, const char* prefix) {
+  if (!core) return;
+  char pad_buf[48];
+  pad_buf[0] = '\0';
+  int offset = 0;
+  for (int i = 0; i < core->num_active_pads && offset < (int)(sizeof(pad_buf) - 1); i++) {
+    offset += snprintf(
+      pad_buf + offset,
+      sizeof(pad_buf) - offset,
+      "%s%d",
+      (i == 0) ? "" : ",",
+      core->active_pads[i]
+    );
+  }
+  ESP_LOGD(TAG, "%s active pads (%d): %s", prefix, core->num_active_pads, (core->num_active_pads > 0) ? pad_buf : "-");
+}
+
+static void touchwheel_core_sync_with_hw(touchwheel_core_t* core) {
+  if (!core) return;
+  const bool* hw_states = touch_get_pressed_states();
+  if (!hw_states) return;
+
+  for (int i = 0; i < NUM_WHEEL_PADS; i++) {
+    if (core->pad_pressed_states[i] && !hw_states[i]) {
+      ESP_LOGD(TAG, "Pad %d stuck pressed in core - forcing release sync", i);
+      core->pad_pressed_states[i] = false;
+      remove_active_pad(core, i);
     }
   }
 }
@@ -84,11 +111,7 @@ bool touchwheel_core_is_pad_contiguous(const touchwheel_core_t* core, uint8_t pa
   if (core->num_active_pads == 0) return true;
   
   // Check if pad is adjacent to any active pad
-  for (int i = 0; i < core->num_active_pads; i++) {
-    if (is_adjacent_pad(pad_id, core->active_pads[i])) {
-      return true;
-    }
-  }
+  for (int i = 0; i < core->num_active_pads; i++) if (is_adjacent_pad(pad_id, core->active_pads[i])) return true;
   
   return false;
 }
@@ -109,26 +132,18 @@ bool touchwheel_core_is_boundary_violation(const touchwheel_core_t* core, uint8_
   // Counter-clockwise from 4: 4→3 is invalid (would skip the whole rotation)
   if (core->mode_type == TOUCHWHEEL_MODE_ODOMETER) {
     // Direct jump from 4 to 3 (counter-clockwise wrap) is invalid
-    if (from_pad == 4 && to_pad == 3) {
-      return true;
-    }
+    if (from_pad == 4 && to_pad == 3) return true;
     // Direct jump from 3 to 4 (clockwise wrap) is invalid
-    if (from_pad == 3 && to_pad == 4) {
-      return true;
-    }
+    if (from_pad == 3 && to_pad == 4) return true;
   }
   
   // Bipolar mode: pad 4 (-100%) and pad 3 (+100%) are opposite ends
   // Cannot jump directly from 4 to 3 or 3 to 4
   if (core->mode_type == TOUCHWHEEL_MODE_BIPOLAR) {
     // Direct jump from 4 to 3 (counter-clockwise wrap) is invalid
-    if (from_pad == 4 && to_pad == 3) {
-      return true;
-    }
+    if (from_pad == 4 && to_pad == 3) return true;
     // Direct jump from 3 to 4 (clockwise wrap) is invalid
-    if (from_pad == 3 && to_pad == 4) {
-      return true;
-    }
+    if (from_pad == 3 && to_pad == 4) return true;
   }
   
   return false;
@@ -137,6 +152,9 @@ bool touchwheel_core_is_boundary_violation(const touchwheel_core_t* core, uint8_
 void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint32_t timestamp_ms) {
   if (!core || pad_id >= NUM_WHEEL_PADS) return;
   
+  // Ensure local state matches hardware to avoid stale pressed pads
+  touchwheel_core_sync_with_hw(core);
+
   // Check for outlier: if other pads are active and this pad is not contiguous, ignore it
   // But allow if this is a new interaction (all pads were released)
   // Note: We use touchwheel_core_are_any_pads_pressed() instead of just interaction_active/timeout
@@ -158,6 +176,15 @@ void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint
   
   // Add to active pad set
   add_active_pad(core, pad_id);
+  log_active_pads(core, "Press");
+  
+  // FAILSAFE: If active pads stack is full, it likely means we have accumulated stuck pads.
+  // Force a reset to clear the state and allow new interactions.
+  // This handles cases where release events were dropped and health check recovery failed.
+  if (!is_new_interaction && core->num_active_pads >= NUM_WHEEL_PADS) {
+    ESP_LOGD(TAG, "Active pads stack full (%d) - forcing reset!", core->num_active_pads);
+    is_new_interaction = true;
+  }
   
   if (is_new_interaction) {
     // Reset active pad set - this is a fresh start
@@ -182,10 +209,10 @@ void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint
   // Boundary Check: Prevent invalid jumps in constrained modes (e.g., Pad 3 <-> Pad 4)
   // This check must happen before the strategy runs to prevent it from seeing the invalid transition
   if (core->mode_type != TOUCHWHEEL_MODE_ENDLESS && core->last_logical_wheel_pos != -1 && !is_new_interaction) {
-      if (touchwheel_core_is_boundary_violation(core, core->last_logical_wheel_pos, pad_id)) {
-          ESP_LOGD(TAG, "Core blocking boundary violation %d -> %d", core->last_logical_wheel_pos, pad_id);
-          return;
-      }
+    if (touchwheel_core_is_boundary_violation(core, core->last_logical_wheel_pos, pad_id)) {
+      ESP_LOGD(TAG, "Core blocking boundary violation %d -> %d", core->last_logical_wheel_pos, pad_id);
+      return;
+    }
   }
   
   // Process using the binary strategy
@@ -201,15 +228,11 @@ void touchwheel_core_process_press(touchwheel_core_t* core, uint8_t pad_id, uint
 void touchwheel_core_process_release(touchwheel_core_t* core, uint8_t pad_id, uint32_t timestamp_ms, uint8_t* released_pads_out, int* num_released_out) {
   if (!core || pad_id >= NUM_WHEEL_PADS) return;
   
+  touchwheel_core_sync_with_hw(core);
+
   // Initialize output parameters
-  if (released_pads_out) {
-    for (int i = 0; i < NUM_WHEEL_PADS; i++) {
-      released_pads_out[i] = 0xFF;
-    }
-  }
-  if (num_released_out) {
-    *num_released_out = 0;
-  }
+  if (released_pads_out) for (int i = 0; i < NUM_WHEEL_PADS; i++) released_pads_out[i] = 0xFF;
+  if (num_released_out) *num_released_out = 0;
   
   // Update pad state
   core->pad_pressed_states[pad_id] = false;
@@ -219,6 +242,7 @@ void touchwheel_core_process_release(touchwheel_core_t* core, uint8_t pad_id, ui
   
   // Remove from active pad set
   remove_active_pad(core, pad_id);
+  log_active_pads(core, "Release");
   
   // Check for simultaneous releases (within 50ms)
   // If multiple pads released close together, might be multi-pad release
@@ -229,9 +253,7 @@ void touchwheel_core_process_release(touchwheel_core_t* core, uint8_t pad_id, ui
   for (int i = 0; i < NUM_WHEEL_PADS; i++) {
     if (!core->pad_pressed_states[i] && core->pad_release_times[i] > 0) {
       uint32_t release_age = timestamp_ms - core->pad_release_times[i];
-      if (release_age <= simultaneous_window_ms) {
-        released_pads[simultaneous_releases++] = i;
-      }
+      if (release_age <= simultaneous_window_ms) released_pads[simultaneous_releases++] = i;
     }
   }
   
@@ -253,9 +275,7 @@ void touchwheel_core_process_release(touchwheel_core_t* core, uint8_t pad_id, ui
       
       // Output released pads info
       if (released_pads_out && num_released_out) {
-        for (int i = 0; i < simultaneous_releases && i < NUM_WHEEL_PADS; i++) {
-          released_pads_out[i] = released_pads[i];
-        }
+        for (int i = 0; i < simultaneous_releases && i < NUM_WHEEL_PADS; i++) released_pads_out[i] = released_pads[i];
         *num_released_out = simultaneous_releases;
       }
     }
@@ -311,16 +331,14 @@ void touchwheel_core_reset(touchwheel_core_t* core) {
 // Analog position processing is now deprecated but kept for reference if needed
 // Strategy-based approach is preferred
 void touchwheel_core_process_analog_position(touchwheel_core_t* core, float analog_position, uint32_t timestamp_ms) {
-    // No-op in binary mode restoration
-    (void)core;
-    (void)analog_position;
-    (void)timestamp_ms;
+  // No-op in binary mode restoration
+  (void)core;
+  (void)analog_position;
+  (void)timestamp_ms;
 }
 
 bool touchwheel_core_are_any_pads_pressed(const touchwheel_core_t* core) {
   if (!core) return false;
-  for (int i = 0; i < NUM_WHEEL_PADS; i++) {
-    if (core->pad_pressed_states[i]) return true;
-  }
+  for (int i = 0; i < NUM_WHEEL_PADS; i++) if (core->pad_pressed_states[i]) return true;
   return false;
 }

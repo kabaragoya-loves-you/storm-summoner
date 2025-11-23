@@ -78,7 +78,7 @@ static void test_value_callback(int value, void* user_data) {
     s_test_state.current_value = value;
   }
   // Log removed - using detailed log in strategy binary instead
-  ESP_LOGI(TAG, "Touchwheel value: %d (delta: %d)", s_test_state.current_value, value);
+  ESP_LOGD(TAG, "Touchwheel value: %d (delta: %d)", s_test_state.current_value, value);
 }
 
 // Touch event handler for confirm/cancel pads
