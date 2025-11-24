@@ -1,7 +1,13 @@
 idf_component_register(
   SRCS "tinyusb_init.c"
   INCLUDE_DIRS "include"
-  REQUIRES esp_tinyusb_wrapper log
+  REQUIRES
+    espressif__tinyusb
+    esp_driver_gpio
+    esp_driver_usb_serial_jtag
+  PRIV_REQUIRES
+    main
+    usb
 )
 
 # Add tusb_config.h path

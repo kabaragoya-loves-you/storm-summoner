@@ -29,7 +29,6 @@
 #include "screensaver_console.h"
 #include "assets_manager_console.h"
 #include "firmware_update_console.h"
-#include "usb_mode_console.h"
 #include "event_bus_console.h"
 #include "esp_console.h"
 #include "esp_vfs_dev.h"
@@ -258,7 +257,6 @@ esp_err_t console_repl_init(void) {
   console_register_context("screensaver", screensaver_console_init, screensaver_console_cleanup);
   console_register_context("assets_manager", assets_manager_console_init, assets_manager_console_cleanup);
   console_register_context("firmware_update", firmware_update_console_init, firmware_update_console_cleanup);
-  console_register_context("usb_mode", usb_mode_console_init, usb_mode_console_cleanup);
   console_register_context("event_bus", event_bus_console_init, event_bus_console_cleanup);
   
   // Start the REPL

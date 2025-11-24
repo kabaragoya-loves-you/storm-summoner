@@ -7,7 +7,7 @@
 
 #include "midi_in_parser.h"
 #include "midi_in.h"
-#include "midi_sysex_update.h"
+// #include "midi_sysex_update.h" // Removed
 #include "midi_identity.h"
 #include "midi_passthrough.h"
 #include "transport.h"
@@ -184,11 +184,9 @@ static void process_byte(uint8_t byte) {
       // Check if it's an identity request and handle it
       midi_identity_handle_request(sys_ex_buffer, sys_ex_index);
       
-      // Try to process as firmware update command
-      esp_err_t update_ret = midi_sysex_update_process(sys_ex_buffer, sys_ex_index);
-      
-      // If not handled by update processor or identity handler, post as general SysEx event
-      if (update_ret != ESP_OK || sys_ex_buffer[1] != 0x7D) {
+      // If not handled by identity handler, post as general SysEx event
+      // SysEx firmware update functionality has been removed in favor of CDC
+      {
         uint8_t* sysex_copy = malloc(sys_ex_index);
         if (sysex_copy) {
           memcpy(sysex_copy, sys_ex_buffer, sys_ex_index);
@@ -348,8 +346,8 @@ void midi_in_parser_init(void) {
     ESP_LOGE(TAG, "Failed to allocate initial SysEx buffer");
   }
   
-  // Initialize SysEx update handler
-  midi_sysex_update_init();
+  // SysEx update handler has been removed
+  // midi_sysex_update_init();
   
   ESP_LOGI(TAG, "MIDI parser initialized");
 }

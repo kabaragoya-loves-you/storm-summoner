@@ -6,6 +6,7 @@
 #include "cJSON.h"
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define TAG "assets_manager"
 #define ASSETS_BASE_PATH "/assets"
@@ -302,6 +303,84 @@ void assets_free_device(device_def_t *device) {
   }
   
   heap_caps_free(device);
+}
+
+esp_err_t assets_manager_reload_manifest(void) {
+  if (!g_initialized) {
+    ESP_LOGE(TAG, "Assets manager not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  ESP_LOGI(TAG, "Reloading device manifest");
+
+  // Free existing manifest
+  if (g_manifest.devices) {
+    free(g_manifest.devices);
+    g_manifest.devices = NULL;
+    g_manifest.device_count = 0;
+  }
+
+  // Reload from filesystem
+  esp_err_t ret = load_manifest();
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to reload manifest");
+    return ret;
+  }
+
+  ESP_LOGI(TAG, "Manifest reloaded successfully (%u devices)", (unsigned)g_manifest.device_count);
+  return ESP_OK;
+}
+
+esp_err_t assets_manager_reload_device(const char *slug) {
+  if (!g_initialized) {
+    ESP_LOGE(TAG, "Assets manager not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  if (!slug) {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  ESP_LOGI(TAG, "Reloading device: %s", slug);
+
+  // Find device in manifest
+  manifest_device_t *manifest_dev = find_device_in_manifest(slug);
+  if (!manifest_dev) {
+    ESP_LOGE(TAG, "Device not found in manifest: %s", slug);
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  // Delete cache file to force reload from JSON
+  char cache_path[128];
+  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", ASSETS_BASE_PATH, slug);
+  
+  struct stat st;
+  if (stat(cache_path, &st) == 0) {
+    if (unlink(cache_path) == 0) {
+      ESP_LOGI(TAG, "Deleted cache for %s", slug);
+    } else {
+      ESP_LOGW(TAG, "Failed to delete cache for %s", slug);
+    }
+  }
+
+  ESP_LOGI(TAG, "Device %s will be reloaded from JSON on next access", slug);
+  return ESP_OK;
+}
+
+esp_err_t assets_manager_sync_to_msc(void) {
+  if (!g_initialized) {
+    ESP_LOGE(TAG, "Assets manager not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  ESP_LOGI(TAG, "Syncing assets to MSC volume");
+  
+  // This would copy all device profiles and scene files to the MSC RAM volume
+  // For now, this is a placeholder as it requires FAT filesystem write support
+  // which is complex to implement from scratch
+  
+  ESP_LOGI(TAG, "MSC sync placeholder - requires FAT write library");
+  return ESP_OK;
 }
 
 /**

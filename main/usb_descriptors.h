@@ -5,11 +5,7 @@
 extern "C" {
 #endif
 
-// Switch to MIDI-only mode (default)
-void usb_descriptors_set_midi_mode(void);
-
-// Switch to MSC-only mode (firmware update)
-void usb_descriptors_set_msc_mode(void);
+// USB descriptors are now composite (MIDI + CDC + MSC) - no mode switching needed
 
 #ifdef __cplusplus
 }

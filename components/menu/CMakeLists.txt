@@ -61,7 +61,6 @@ idf_component_register(
     event_bus
     app_settings
     display
-    usb_mode
     revision
     assets_manager
     firmware_update

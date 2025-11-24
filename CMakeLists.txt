@@ -31,6 +31,12 @@ else()
     idf_build_set_property(COMPILE_DEFINITIONS "-DHW_CONFIG_DEV_BOARD=1" APPEND)
 endif()
 
+# Force enable TinyUSB classes globally to ensure the library compiles with them
+# even if disabled in Kconfig to avoid wrapper interference
+idf_build_set_property(COMPILE_DEFINITIONS "-DCFG_TUD_MIDI=1" APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "-DCFG_TUD_CDC=1" APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "-DCFG_TUD_MSC=0" APPEND)
+
 # Add linker flags to include entire libraries for components with indirect calls
 target_link_options(${elf} PRIVATE 
     "LINKER:--whole-archive"
@@ -62,7 +68,7 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_screensaver>"
     "$<TARGET_FILE:__idf_assets_manager>"
     "$<TARGET_FILE:__idf_firmware_update>"
-    "$<TARGET_FILE:__idf_usb_mode>"
+    "$<TARGET_FILE:__idf_usb_cdc_update>"
     "$<TARGET_FILE:__idf_event_bus>"
     "$<TARGET_FILE:__idf_action>"
     "$<TARGET_FILE:__idf_config>"

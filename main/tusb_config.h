@@ -5,6 +5,9 @@
 extern "C" {
 #endif
 
+// Enable debug logging
+#define CFG_TUSB_DEBUG  2  // 0=none, 1=errors, 2=warnings, 3=info
+
 // Board specific configuration
 #define CFG_TUSB_RHPORT0_MODE   (OPT_MODE_DEVICE)
 #define CFG_TUSB_OS             OPT_OS_FREERTOS
@@ -21,18 +24,18 @@ extern "C" {
 // Device configuration
 #define CFG_TUD_ENDPOINT0_SIZE  64
 
-// Class support
+// Class support - must match CONFIG_TINYUSB_* settings in sdkconfig
 #define CFG_TUD_MIDI            1  // Enable MIDI class
-#define CFG_TUD_MSC             1  // Enable Mass Storage class for firmware updates
-
-// Disable ESP-IDF wrapper's MSC implementation - we provide our own
-#ifndef CONFIG_TINYUSB_MSC_ENABLED
-#define CONFIG_TINYUSB_MSC_ENABLED 0
-#endif
+#define CFG_TUD_CDC             1  // Enable CDC (serial) class for OTA updates
+#define CFG_TUD_MSC             0  // Disable Mass Storage class for firmware updates
 
 // MIDI FIFO size
 #define CFG_TUD_MIDI_RX_BUFSIZE 64
 #define CFG_TUD_MIDI_TX_BUFSIZE 64
+
+// CDC FIFO size
+#define CFG_TUD_CDC_RX_BUFSIZE  1024
+#define CFG_TUD_CDC_TX_BUFSIZE  1024
 
 // MSC configuration (for firmware upload mode)
 #define CFG_TUD_MSC_EP_BUFSIZE  512

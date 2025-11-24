@@ -30,7 +30,6 @@ idf_component_register(
     screensaver
     assets_manager
     firmware_update
-    usb_mode
     event_bus
     driver
 )

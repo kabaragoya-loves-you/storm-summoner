@@ -142,12 +142,12 @@ extern "C" {
 #define CFG_TUSB_DEBUG_PRINTF       esp_rom_printf // TinyUSB can print logs from ISR, so we must use esp_rom_printf()
 
 // CDC FIFO size of TX and RX
-#define CFG_TUD_CDC_RX_BUFSIZE      CONFIG_TINYUSB_CDC_RX_BUFSIZE
-#define CFG_TUD_CDC_TX_BUFSIZE      CONFIG_TINYUSB_CDC_TX_BUFSIZE
-#define CFG_TUD_CDC_EP_BUFSIZE      CONFIG_TINYUSB_CDC_EP_BUFSIZE
+#define CFG_TUD_CDC_RX_BUFSIZE      256
+#define CFG_TUD_CDC_TX_BUFSIZE      256
+#define CFG_TUD_CDC_EP_BUFSIZE      64
 
 // MSC Buffer size of Device Mass storage
-#define CFG_TUD_MSC_BUFSIZE         CONFIG_TINYUSB_MSC_BUFSIZE
+#define CFG_TUD_MSC_BUFSIZE         512
 
 // MIDI macros
 #define CFG_TUD_MIDI_EP_BUFSIZE     64
@@ -166,10 +166,10 @@ extern "C" {
 #define CFG_TUD_BTH_ISO_ALT_COUNT   CONFIG_TINYUSB_BTH_ISO_ALT_COUNT
 
 // Enabled device class driver
-#define CFG_TUD_CDC                 CONFIG_TINYUSB_CDC_COUNT
-#define CFG_TUD_MSC                 CONFIG_TINYUSB_MSC_ENABLED
+#define CFG_TUD_CDC                 1  // Force enable CDC
+#define CFG_TUD_MSC                 0  // Force disable MSC
 #define CFG_TUD_HID                 CONFIG_TINYUSB_HID_COUNT
-#define CFG_TUD_MIDI                CONFIG_TINYUSB_MIDI_COUNT
+#define CFG_TUD_MIDI                1  // Force enable MIDI
 #define CFG_TUD_VENDOR              CONFIG_TINYUSB_VENDOR_COUNT
 #define CFG_TUD_ECM_RNDIS           CONFIG_TINYUSB_NET_MODE_ECM_RNDIS
 #define CFG_TUD_NCM                 CONFIG_TINYUSB_NET_MODE_NCM

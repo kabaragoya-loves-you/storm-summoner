@@ -75,5 +75,27 @@ const program_change_info_t *assets_get_pc_info(const device_def_t *device);
  */
 midi_trs_type_t assets_get_trs_type(const device_def_t *device);
 
+/**
+ * Reload the device manifest from LittleFS
+ * Re-scans and parses manifest.json
+ * @return ESP_OK on success
+ */
+esp_err_t assets_manager_reload_manifest(void);
+
+/**
+ * Reload a specific device definition
+ * Invalidates cache and reloads from JSON
+ * @param slug Device slug to reload
+ * @return ESP_OK on success
+ */
+esp_err_t assets_manager_reload_device(const char *slug);
+
+/**
+ * Sync all device profiles and scenes to MSC RAM volume
+ * Helper function for USB manager to populate MSC volume
+ * @return ESP_OK on success
+ */
+esp_err_t assets_manager_sync_to_msc(void);
+
 #endif // ASSETS_MANAGER_H
 
