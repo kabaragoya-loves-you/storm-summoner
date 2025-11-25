@@ -52,10 +52,12 @@
 #include "console_repl.h"
 #include "action.h"
 #include "curve.h"
+#include "version.h"
 
 #define TAG "MAIN"
 
 void app_main(void) {
+  version_init();
   adc_manager_init();
   revision_init();
   gpio_install_isr_service(0);

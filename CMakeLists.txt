@@ -6,6 +6,38 @@ cmake_minimum_required(VERSION 3.5)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
+# =============================================================================
+# Firmware Version Configuration
+# =============================================================================
+set(FW_VERSION_MAJOR 0)
+set(FW_VERSION_MINOR 1)
+
+# Get short git hash (captured at configure time - rebuild after commits to update)
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE FW_GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  # Check for dirty working tree
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} diff --quiet HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RESULT_VARIABLE GIT_DIRTY
+  )
+  if(GIT_DIRTY)
+    set(FW_GIT_HASH "${FW_GIT_HASH}-dirty")
+  endif()
+else()
+  set(FW_GIT_HASH "unknown")
+endif()
+
+message(STATUS "Firmware Version: ${FW_VERSION_MAJOR}.${FW_VERSION_MINOR} (${FW_GIT_HASH})")
+# =============================================================================
+
 set(ENABLE_PERFORMANCE_MONITORING 0)  # Enable performance monitoring across all components
 
 # Hardware configuration: set ONE of these to 1
@@ -30,6 +62,26 @@ else()
     idf_build_set_property(COMPILE_DEFINITIONS "-DHW_CONFIG_PRODUCTION=0" APPEND)
     idf_build_set_property(COMPILE_DEFINITIONS "-DHW_CONFIG_DEV_BOARD=1" APPEND)
 endif()
+
+# Apply version information as global compile definitions
+idf_build_set_property(COMPILE_DEFINITIONS "-DFW_VERSION_MAJOR=${FW_VERSION_MAJOR}" APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "-DFW_VERSION_MINOR=${FW_VERSION_MINOR}" APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "-DFW_GIT_HASH=\"${FW_GIT_HASH}\"" APPEND)
+
+# Build number auto-increment: runs on every build via custom target
+set(BUILD_NUMBER_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
+set(BUILD_NUMBER_HEADER "${CMAKE_BINARY_DIR}/version_build.h")
+
+add_custom_target(increment_build_number ALL
+  COMMAND ${CMAKE_COMMAND} 
+    -DBUILD_NUMBER_FILE=${BUILD_NUMBER_FILE}
+    -DBUILD_NUMBER_HEADER=${BUILD_NUMBER_HEADER}
+    -P ${CMAKE_SOURCE_DIR}/cmake/increment_build.cmake
+  COMMENT "Incrementing build number"
+)
+
+# Make the ELF depend on the build number target
+add_dependencies(${elf} increment_build_number)
 
 # Force enable TinyUSB classes globally to ensure the library compiles with them
 # even if disabled in Kconfig to avoid wrapper interference
@@ -72,5 +124,6 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_event_bus>"
     "$<TARGET_FILE:__idf_action>"
     "$<TARGET_FILE:__idf_config>"
+    "$<TARGET_FILE:__idf_version>"
     "LINKER:--no-whole-archive"
 )

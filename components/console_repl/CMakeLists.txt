@@ -32,5 +32,6 @@ idf_component_register(
     firmware_update
     event_bus
     driver
+    version
 )
 
