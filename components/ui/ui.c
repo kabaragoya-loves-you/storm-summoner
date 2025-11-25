@@ -441,10 +441,11 @@ void ui_reclaim_canvas_buffer(void) {
   app_mode_t current_mode = g_app_mode;
   
   // Reallocate the buffer if needed (from internal RAM, not LVGL heap)
+  // Use 64-byte alignment for PPA hardware acceleration (must match ui_init)
   if (!display_buf) {
     size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
     size_t buf_size = 128 * 128 * bytes_per_pixel;
-    display_buf = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    display_buf = heap_caps_aligned_alloc(64, buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!display_buf) {
       ESP_LOGE(TAG, "Failed to reallocate display buffer from internal RAM!");
       g_teardown_in_progress = false;  // Clear flag on error

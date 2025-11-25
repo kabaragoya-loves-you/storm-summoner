@@ -45,7 +45,6 @@
 #include "buttons.h"
 #include "assets_manager.h"
 #include "firmware_update.h"
-// #include "usb_manager.h"
 #include "tinyusb_init.h"
 #include "usb_cdc_update.h"
 #include "device_config.h"
@@ -69,7 +68,6 @@ void app_main(void) {
   device_config_init();
   action_init();
   curve_init();
-  // usb_manager_init(); // MSC disabled for now
   tinyusb_init_and_start();
   usb_cdc_update_init();
   
