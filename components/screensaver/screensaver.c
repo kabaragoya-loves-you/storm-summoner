@@ -309,20 +309,18 @@ void screensaver_set_mode(screensaver_mode_t mode) {
 
   // If screensaver is active, switch modes
   if (g_screensaver_active) {
-    // Stop current mode
+    // Stop current mode (releases its use of shared buffer)
     if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {
       starfield_stop();
     } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
       elite_stop();
     }
-    
+
     // Update mode
     g_selected_screensaver_mode = mode;
-    
-    // Ensure UI buffer is released (in case switching called before starting)
-    ui_release_canvas_buffer(NULL);  // No callback needed
-    
-    // Start new mode
+
+    // Start new mode (takes over shared buffer)
+    // NOTE: No buffer allocation needed - both screensavers use the shared buffer
     if (mode == SCREENSAVER_MODE_STARFIELD) {
       starfield_start();
     } else if (mode == SCREENSAVER_MODE_ELITE) {

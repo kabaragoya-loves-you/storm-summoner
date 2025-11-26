@@ -13,6 +13,7 @@
 #include "tempo.h"
 #include "elite.h"
 #include "ui.h"
+#include "shared_canvas_buffer.h"
 #include "app_settings.h"
 #include "event_bus.h"
 #include "screensaver.h"
@@ -84,6 +85,7 @@ void app_main(void) {
   buttons_init(false);
   dac_init();
   display_init();
+  shared_canvas_buffer_init();  // Must be called before ui_init()
   ui_init();
   ui_set_draw_module(&buttons_module);
   

@@ -1,6 +1,7 @@
 #include "lvgl.h"
 #include "../lvgl/src/display/lv_display_private.h"
 #include "ui.h"
+#include "shared_canvas_buffer.h"
 #include "touchwheel.h"
 #include "touchwheel_outputs.h"
 #include "touch.h"
@@ -15,10 +16,11 @@ lv_obj_t *canvas = NULL;
 static lv_timer_t *g_ui_refresh_timer = NULL;
 static ui_draw_module_t* current_draw_module = NULL;
 
-static void *display_buf = NULL;
-static bool g_teardown_in_progress = false;
-static lv_timer_t *g_teardown_timer = NULL;  // Track pending teardown timer
-static void (*g_post_release_callback)(void) = NULL;  // Callback to run after release completes
+// Buffer handoff state - no allocation/deallocation, just coordination
+static bool g_ui_has_buffer = false;  // True when UI is actively using the shared buffer
+static bool g_handoff_in_progress = false;
+static lv_timer_t *g_handoff_timer = NULL;
+static void (*g_post_release_callback)(void) = NULL;
 
 #define TAG "UI"
 
@@ -194,31 +196,33 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
 }
 
 void ui_init(void) {
-  // Allocate display buffer from internal RAM for performance (not LVGL heap)
-  // Use 64-byte alignment for PPA hardware acceleration
-  size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
-  size_t buf_size = 128 * 128 * bytes_per_pixel;
-  display_buf = heap_caps_aligned_alloc(64, buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  if (!display_buf) {
-    ESP_LOGE(TAG, "Failed to allocate display buffer from internal RAM!");
+  // Verify shared buffer is available (must be initialized before ui_init)
+  if (!shared_canvas_buffer_is_valid()) {
+    ESP_LOGE(TAG, "Shared canvas buffer not initialized! Call shared_canvas_buffer_init() first.");
     return;
   }
-  ESP_LOGI(TAG, "Allocated %d KB canvas buffer from internal RAM", buf_size / 1024);
-  
+
+  void *shared_buf = shared_canvas_buffer_get();
+  size_t buf_size = shared_canvas_buffer_get_size();
+
+  ESP_LOGI(TAG, "Using shared canvas buffer: %d KB at %p", buf_size / 1024, shared_buf);
+
   // Standard canvas - using native color format
   canvas = lv_canvas_create(lv_screen_active());
-  lv_obj_set_size(canvas, 128, 128);
+  lv_obj_set_size(canvas, SHARED_CANVAS_WIDTH, SHARED_CANVAS_HEIGHT);
   lv_obj_center(canvas);
-  
-  memset(display_buf, 0, buf_size);
-  lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
-  ESP_LOGI(TAG, "Canvas created: %d bytes", (int)buf_size);
+
+  shared_canvas_buffer_clear();
+  lv_canvas_set_buffer(canvas, shared_buf, SHARED_CANVAS_WIDTH, SHARED_CANVAS_HEIGHT, 
+    shared_canvas_buffer_get_format());
+  ESP_LOGI(TAG, "Canvas created using shared buffer: %d bytes", (int)buf_size);
 
   g_ui_refresh_timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
 
   g_app_mode = APP_MODE_PERFORMANCE;
   g_at_programming_top_level_menu = false;
-  
+  g_ui_has_buffer = true;  // UI now owns the shared buffer
+
   ui_event_handler_init();
 }
 
@@ -295,128 +299,97 @@ void ui_graphics_resume(void) {
   if (show_timer != NULL) lv_timer_set_repeat_count(show_timer, 1);
 }
 
-// Deferred callback to hide UI and free canvas buffer (no teardown)
-static void deferred_ui_hide_and_free_cb(lv_timer_t *timer) {
-  ESP_LOGI(TAG, "UI hide and free callback executing");
-  
+// Deferred callback to release UI's use of the shared buffer (no memory free)
+static void deferred_ui_release_cb(lv_timer_t *timer) {
+  ESP_LOGI(TAG, "UI buffer release callback executing");
+
   // Clear the timer reference first
-  g_teardown_timer = NULL;
-  
+  g_handoff_timer = NULL;
+
   // Guard against multiple operations
-  if (g_teardown_in_progress) {
-    ESP_LOGW(TAG, "Operation already in progress, skipping");
+  if (g_handoff_in_progress) {
+    ESP_LOGW(TAG, "Handoff already in progress, skipping");
     lv_timer_delete(timer);
     return;
   }
-  
-  g_teardown_in_progress = true;
-  
+
+  g_handoff_in_progress = true;
+
   // Switch to default screen and hide module screen to stop rendering
-  // DON'T delete widgets - just hide them to avoid fragmentation
+  // DON'T delete widgets - just hide them
   if (current_draw_module) {
     lv_obj_t *default_screen = lv_obj_get_parent(canvas);
     if (default_screen && lv_obj_is_valid(default_screen)) lv_screen_load(default_screen);
     ESP_LOGI(TAG, "Switched to default screen, module widgets remain in memory");
   }
-  
+
   // Hide the canvas to stop rendering
   if (canvas != NULL) lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-  
-  // Now free only the canvas buffer
-  if (display_buf) {
-    lv_mem_monitor_t mon_before;
-    lv_mem_monitor(&mon_before);
-    ESP_LOGI(TAG, "LVGL memory before UI free - used: %d, free: %d, frag: %d%%", 
-      mon_before.total_size - mon_before.free_size, mon_before.free_size, mon_before.frag_pct);
-    
-    heap_caps_free(display_buf);
-    display_buf = NULL;
-    
-    lv_mem_monitor_t mon_after;
-    lv_mem_monitor(&mon_after);
-    ESP_LOGI(TAG, "UI canvas buffer freed (32KB)");
-    ESP_LOGI(TAG, "LVGL memory after UI free - used: %d, free: %d, frag: %d%%", 
-      mon_after.total_size - mon_after.free_size, mon_after.free_size, mon_after.frag_pct);
-  }
-  
+
+  // Mark that UI no longer owns the buffer (screensaver can now use it)
+  // NOTE: Buffer is NOT freed - it's the shared persistent buffer
+  g_ui_has_buffer = false;
+
   lv_timer_delete(timer);
-  ESP_LOGI(TAG, "UI hide and free callback complete");
-  
+  ESP_LOGI(TAG, "UI released shared buffer for screensaver use");
+
   // Call post-release callback if one was registered
   if (g_post_release_callback) {
     void (*callback)(void) = g_post_release_callback;
-    g_post_release_callback = NULL;  // Clear before calling to prevent re-entry
+    g_post_release_callback = NULL;
     callback();
   }
 }
 
 bool ui_release_canvas_buffer(void (*post_release_cb)(void)) {
-  ESP_LOGD(TAG, "Releasing UI canvas buffer (32KB)...");
-  
+  ESP_LOGD(TAG, "Releasing UI's use of shared canvas buffer...");
+
   // Guard against multiple releases
-  if (g_teardown_in_progress) {
-    ESP_LOGW(TAG, "Teardown already in progress, ignoring release request");
+  if (g_handoff_in_progress) {
+    ESP_LOGW(TAG, "Buffer handoff already in progress, ignoring release request");
     return false;
   }
-  
+
+  // Check if UI actually has the buffer
+  if (!g_ui_has_buffer) {
+    ESP_LOGW(TAG, "UI doesn't currently own the buffer, nothing to release");
+    // Still call the callback if provided
+    if (post_release_cb) post_release_cb();
+    return true;
+  }
+
   // Store the callback to run after release completes
   g_post_release_callback = post_release_cb;
-  
-  // If there's already a pending teardown timer, cancel it and create a new one
-  if (g_teardown_timer != NULL) {
-    ESP_LOGW(TAG, "Cancelling existing teardown timer before creating new one");
-    lv_timer_delete(g_teardown_timer);
-    g_teardown_timer = NULL;
+
+  // Cancel any pending handoff timer
+  if (g_handoff_timer != NULL) {
+    ESP_LOGW(TAG, "Cancelling existing handoff timer");
+    lv_timer_delete(g_handoff_timer);
+    g_handoff_timer = NULL;
   }
-  
-  // Check current memory state
-  lv_mem_monitor_t mon_initial;
-  lv_mem_monitor(&mon_initial);
-  ESP_LOGI(TAG, "LVGL memory at start of release - used: %d, free: %d, frag: %d%%", 
-    mon_initial.total_size - mon_initial.free_size, mon_initial.free_size, mon_initial.frag_pct);
-  
-  // If memory is critically low or badly fragmented, we may have a leak
-  // Force clear the flag in case it got stuck
-  if (mon_initial.free_size < 1024 && mon_initial.frag_pct > 40) {
-    ESP_LOGW(TAG, "Critically low memory detected - potential leak or stuck teardown");
-    ESP_LOGW(TAG, "Force clearing teardown flag and attempting garbage collection");
-    g_teardown_in_progress = false;
-    lv_obj_clean(lv_screen_active());  // Try to clean up any orphaned objects
-  }
-  
-  // Check if we have enough memory to create a timer
-  if (mon_initial.free_size < 512) {
-    ESP_LOGE(TAG, "Not enough LVGL memory to create teardown timer (%d bytes free), aborting", 
-      mon_initial.free_size);
-    g_teardown_in_progress = false;  // Clear flag to allow retry
-    return false;
-  }
-  
+
   // Pause the refresh timer to prevent new render cycles
-  // CRITICAL: We must ensure this gets resumed if anything fails
   if (g_ui_refresh_timer != NULL) lv_timer_pause(g_ui_refresh_timer);
-  
-  // Defer UI hiding to LVGL context (don't tear down widgets to avoid fragmentation)
-  // This ensures any in-flight render completes before we make changes
-  g_teardown_timer = lv_timer_create(deferred_ui_hide_and_free_cb, 10, NULL);
-  if (!g_teardown_timer) {
-    ESP_LOGE(TAG, "CRITICAL: Failed to create hide timer!");
-    ESP_LOGE(TAG, "Heap free: %d, frag: %d%% - timer creation failed", 
-      mon_initial.free_size, mon_initial.frag_pct);
-    
-    // MUST resume refresh timer to prevent UI freeze
+
+  // Defer UI release to LVGL context
+  // This ensures any in-flight render completes before we hand off
+  g_handoff_timer = lv_timer_create(deferred_ui_release_cb, 10, NULL);
+  if (!g_handoff_timer) {
+    ESP_LOGE(TAG, "Failed to create handoff timer!");
+
+    // Resume refresh timer to prevent UI freeze
     if (g_ui_refresh_timer != NULL) {
       lv_timer_resume(g_ui_refresh_timer);
       ESP_LOGI(TAG, "Resumed refresh timer to prevent UI freeze");
     }
-    
-    g_teardown_in_progress = false;
+
+    g_handoff_in_progress = false;
     return false;
   }
-  
-  lv_timer_set_repeat_count(g_teardown_timer, 1);
-  
-  ESP_LOGI(TAG, "UI hide timer created successfully");
+
+  lv_timer_set_repeat_count(g_handoff_timer, 1);
+
+  ESP_LOGI(TAG, "UI buffer release timer created");
   return true;
 }
 
@@ -435,59 +408,46 @@ static void deferred_module_show_cb(lv_timer_t *timer) {
 }
 
 void ui_reclaim_canvas_buffer(void) {
-  ESP_LOGD(TAG, "Reclaiming UI canvas buffer...");
-  
+  ESP_LOGD(TAG, "Reclaiming UI's use of shared canvas buffer...");
+
+  // Verify shared buffer is still valid
+  if (!shared_canvas_buffer_is_valid()) {
+    ESP_LOGE(TAG, "Shared canvas buffer is not valid!");
+    g_handoff_in_progress = false;
+    return;
+  }
+
+  void *shared_buf = shared_canvas_buffer_get();
+
   // Check current mode to restore appropriate UI
   app_mode_t current_mode = g_app_mode;
-  
-  // Reallocate the buffer if needed (from internal RAM, not LVGL heap)
-  // Use 64-byte alignment for PPA hardware acceleration (must match ui_init)
-  if (!display_buf) {
-    size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
-    size_t buf_size = 128 * 128 * bytes_per_pixel;
-    display_buf = heap_caps_aligned_alloc(64, buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!display_buf) {
-      // Aligned allocation can fail due to fragmentation - fall back to unaligned
-      // This may trigger LVGL alignment warnings but keeps the display functional
-      ESP_LOGW(TAG, "Aligned alloc failed, falling back to unaligned allocation");
-      display_buf = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-      if (!display_buf) {
-        ESP_LOGE(TAG, "Failed to reallocate display buffer from internal RAM!");
-        g_teardown_in_progress = false;  // Clear flag on error
-        return;
-      }
-    }
-    memset(display_buf, 0, buf_size);
-    ESP_LOGI(TAG, "Reallocated %d KB canvas buffer from internal RAM", buf_size / 1024);
-  }
-  
+
   // Restore UI based on current mode
   if (current_mode == APP_MODE_PROGRAMMING) {
     // Restore Programming mode (menu was active)
     ESP_LOGI(TAG, "Restoring Programming mode after screensaver");
-    
-    // Clear teardown flag before recreating widgets
-    g_teardown_in_progress = false;
-    
-    // The menu screens are still in memory - we just need to restore the active one
-    // Get the current menu screen from the menu system
+
+    // Mark UI as owning the buffer again
+    g_ui_has_buffer = true;
+    g_handoff_in_progress = false;
+
+    // The menu screens are still in memory - restore the active one
     lv_obj_t* menu_screen = menu_get_current_screen();
     if (menu_screen && lv_obj_is_valid(menu_screen)) {
-      lv_screen_load(menu_screen);  // Load the menu screen
+      lv_screen_load(menu_screen);
       ESP_LOGI(TAG, "Menu screen restored");
     } else {
-      // If somehow the menu screen was deleted, recreate it
       ESP_LOGW(TAG, "Menu screen was deleted, recreating");
       menu_init();
       menu_create();
     }
-    
+
     // Recreate touchwheel if needed
     if (!s_ui_touchwheel) {
       touchwheel_mode_processor_t* lvgl_mode = touchwheel_mode_create_endless();
       lv_display_t* disp = lv_display_get_default();
       s_ui_touchwheel_output = touchwheel_output_lvgl_create(disp);
-      
+
       if (lvgl_mode && s_ui_touchwheel_output) {
         s_ui_touchwheel = touchwheel_create(lvgl_mode, s_ui_touchwheel_output, 500);
         if (s_ui_touchwheel) {
@@ -500,7 +460,7 @@ void ui_reclaim_canvas_buffer(void) {
         }
       }
     }
-    
+
     // Attach encoder to menu group
     if (s_ui_touchwheel_output) {
       lv_indev_t* encoder_indev = touchwheel_output_get_lvgl_indev(s_ui_touchwheel_output);
@@ -515,34 +475,35 @@ void ui_reclaim_canvas_buffer(void) {
   } else {
     // Restore Performance mode (normal UI)
     ESP_LOGI(TAG, "Restoring Performance mode after screensaver");
-    
-    // Restore the canvas buffer
-    if (canvas != NULL && display_buf != NULL) {
-      lv_canvas_set_buffer(canvas, display_buf, 128, 128, LV_COLOR_FORMAT_NATIVE);
-      lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+
+    // Re-attach the shared buffer to the canvas (screensaver was using it)
+    if (canvas != NULL && shared_buf != NULL) {
+      // Clear the buffer before reattaching (screensaver left its content)
+      shared_canvas_buffer_clear();
+      lv_canvas_set_buffer(canvas, shared_buf, SHARED_CANVAS_WIDTH, SHARED_CANVAS_HEIGHT,
+        shared_canvas_buffer_get_format());
       lv_obj_remove_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-      // Don't invalidate here - let the draw function handle it
     }
-    
+
+    // Mark UI as owning the buffer again
+    g_ui_has_buffer = true;
+    g_handoff_in_progress = false;
+
     // Resume the refresh timer
     if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
-    
-    // Clear teardown flag before recreating widgets
-    g_teardown_in_progress = false;
-    
-    // Defer module screen reload to LVGL context with a delay to allow memory to settle
+
+    // Defer module screen reload to LVGL context
     lv_timer_t *show_timer = lv_timer_create(deferred_module_show_cb, 50, NULL);
     if (!show_timer) {
       ESP_LOGE(TAG, "Failed to create show timer, calling draw directly");
-      // Fallback: call draw function directly if timer creation fails
       if (current_draw_module && current_draw_module->draw_func) {
         current_draw_module->draw_func();
       }
       return;
     }
-    
+
     lv_timer_set_repeat_count(show_timer, 1);
   }
-  
-  ESP_LOGD(TAG, "UI canvas buffer reclaimed");
+
+  ESP_LOGI(TAG, "UI reclaimed shared canvas buffer");
 }

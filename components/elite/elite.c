@@ -5,6 +5,7 @@
 #include "lvgl.h"
 #include "elite.h"
 #include "ships.h"
+#include "shared_canvas_buffer.h"
 #include "esp_random.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -41,6 +42,8 @@ static lv_timer_t *g_ship_cycling_timer = NULL; // For cycling ships
 static lv_style_t style_default;
 static bool g_elite_style_initialized = false;
 
+// NOTE: We now use the shared canvas buffer instead of our own allocation
+// canvas_buf is a cached reference to the shared buffer for convenience
 static void *canvas_buf = NULL;
 static lv_obj_t *g_elite_screen = NULL;
 static lv_obj_t *g_previous_screen = NULL;
@@ -275,13 +278,23 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
 
 void elite_start(void) {
   ESP_LOGI(TAG, "Starting Elite screensaver...");
-  
+
   // Ensure stopping flag is cleared
   g_elite_stopping = false;
-  
+
+  // Verify shared buffer is available
+  if (!shared_canvas_buffer_is_valid()) {
+    ESP_LOGE(TAG, "Shared canvas buffer not available!");
+    return;
+  }
+
+  // Get reference to shared buffer
+  canvas_buf = shared_canvas_buffer_get();
+  ESP_LOGI(TAG, "Using shared canvas buffer at %p", canvas_buf);
+
   // Save current screen
   g_previous_screen = lv_screen_active();
-  
+
   // Create screen if needed
   if (!g_elite_screen) {
     g_elite_screen = lv_obj_create(NULL);
@@ -290,37 +303,7 @@ void elite_start(void) {
     lv_obj_set_style_bg_opa(g_elite_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_elite_screen, 0, 0);
   }
-  
-  // Check available memory before allocating canvas buffer
-  if (!canvas_buf) {
-    size_t free_heap = esp_get_free_heap_size();
-    // Calculate size based on the actual color format
-    size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
-    size_t required_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * bytes_per_pixel;
-    
-    ESP_LOGI(TAG, "Canvas dimensions: %dx%d, color format: %d, bytes per pixel: %d", 
-      ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_NATIVE, bytes_per_pixel);
-    ESP_LOGI(TAG, "Free heap: %d bytes, need %d bytes for canvas", free_heap, required_size);
-    
-    // Check LVGL memory status
-    lv_mem_monitor_t mon;
-    lv_mem_monitor(&mon);
-    ESP_LOGI(TAG, "LVGL memory - total: %d, used: %d, free: %d, frag: %d%%", 
-      mon.total_size, mon.total_size - mon.free_size, mon.free_size, mon.frag_pct);
-    
-    if (free_heap < required_size + 16384) { // Keep 16KB safety margin
-      ESP_LOGE(TAG, "Not enough memory for Elite canvas");
-      return;
-    }
-    
-    canvas_buf = heap_caps_aligned_alloc(64, required_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!canvas_buf) {
-      ESP_LOGE(TAG, "Failed to allocate aligned canvas buffer from internal RAM");
-      return;
-    }
-    ESP_LOGI(TAG, "Allocated canvas buffer (32KB) with 64-byte alignment");
-  }
-  
+
   // Initialize style if needed
   if (!g_elite_style_initialized) {
     lv_style_init(&style_default);
@@ -328,7 +311,7 @@ void elite_start(void) {
     lv_style_set_text_color(&style_default, lv_color_white());
     g_elite_style_initialized = true;
   }
-  
+
   // Create canvas on the screen if not already created
   if (!canvas) {
     canvas = lv_canvas_create(g_elite_screen);
@@ -336,35 +319,31 @@ void elite_start(void) {
     lv_obj_align(canvas, LV_ALIGN_CENTER, 0, 0);
     lv_obj_remove_style_all(canvas);
     lv_obj_set_style_pad_all(canvas, 0, 0);
-    
   }
-  
+
   // Create info label if not already created
   if (!info_label) {
     info_label = lv_label_create(g_elite_screen);
     lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_add_style(info_label, &style_default, 0);
   }
-  
-  // Always set buffer (needed on subsequent runs after buffer was freed)
+
+  // Attach the shared buffer to our canvas
   if (canvas && canvas_buf) {
-    ESP_LOGI(TAG, "Setting canvas buffer");
-    lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, LV_COLOR_FORMAT_NATIVE);
+    ESP_LOGI(TAG, "Attaching shared buffer to Elite canvas");
+    lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, 
+      shared_canvas_buffer_get_format());
   }
-  
+
   // Clear canvas
-  if (canvas_buf) {
-    // Use memset for safety and performance
-    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
-    memset(canvas_buf, 0, buf_size);
-  }
-  
+  shared_canvas_buffer_clear();
+
   // Load the screen
   lv_screen_load(g_elite_screen);
 
   // Display the first ship immediately
-  next_random_ship(NULL); 
-  
+  next_random_ship(NULL);
+
   if (g_ship_cycling_timer == NULL) {
     g_ship_cycling_timer = lv_timer_create(next_random_ship, ELITE_SHIP_CHANGE_INTERVAL_MS, NULL);
     if (g_ship_cycling_timer == NULL) {
@@ -380,51 +359,47 @@ void elite_start(void) {
 
 void elite_stop(void) {
   ESP_LOGI(TAG, "Stopping Elite screensaver...");
-  
+
   // Set flag to prevent any drawing
   g_elite_stopping = true;
-  
-  // Pause timers IMMEDIATELY to prevent any callbacks from firing
-  if (rotation_timer) lv_timer_pause(rotation_timer); // Note: We'll delete this in cleanup or when displaying a new ship
 
-  if (g_ship_cycling_timer) lv_timer_pause(g_ship_cycling_timer);  // Just pause, don't delete - we might restart
-  
+  // Pause timers IMMEDIATELY to prevent any callbacks from firing
+  if (rotation_timer) lv_timer_pause(rotation_timer);
+
+  if (g_ship_cycling_timer) lv_timer_pause(g_ship_cycling_timer);
+
   // Give a moment for any in-flight timer callbacks to complete
   vTaskDelay(pdMS_TO_TICKS(10));
-  
+
   // Clear the canvas pointer first to ensure draw functions bail out early
   lv_obj_t *old_canvas = canvas;
   canvas = NULL;
   info_label = NULL;
-  
+
   // Hide the canvas to prevent any rendering
   if (old_canvas && lv_obj_is_valid(old_canvas)) lv_obj_add_flag(old_canvas, LV_OBJ_FLAG_HIDDEN);
-  
-  // Restore previous screen BEFORE freeing buffer
+
+  // Restore previous screen
+  // NOTE: We do NOT free the canvas buffer - it's the shared persistent buffer
+  // that will be reclaimed by ui_reclaim_canvas_buffer()
   if (g_previous_screen && lv_obj_is_valid(g_previous_screen)) {
     lv_screen_load(g_previous_screen);
     g_previous_screen = NULL;
   } else {
     ESP_LOGW(TAG, "Previous screen invalid or null, cannot restore");
   }
-  
-  // Now free canvas buffer after screen switch is complete
-  if (canvas_buf) {
-    void *tmp = canvas_buf;
-    canvas_buf = NULL;  // Clear pointer first to prevent race conditions
-    lv_free(tmp);
-    ESP_LOGI(TAG, "Freed canvas buffer (32KB)");
-  }
-  
+
+  // Clear our local reference to the shared buffer (we don't own it)
+  canvas_buf = NULL;
+
   // DO NOT reset the stopping flag here - it will be reset in elite_start()
-  // This prevents any lingering timer callbacks from trying to draw
-  
-  ESP_LOGI(TAG, "Elite screensaver stopped");
+
+  ESP_LOGI(TAG, "Elite screensaver stopped (shared buffer released)");
 }
 
 void elite_cleanup(void) {
   ESP_LOGI(TAG, "Cleaning up Elite resources...");
-  
+
   // Stop any active timers
   if (rotation_timer) {
     lv_timer_delete(rotation_timer);
@@ -434,7 +409,7 @@ void elite_cleanup(void) {
     lv_timer_delete(g_ship_cycling_timer);
     g_ship_cycling_timer = NULL;
   }
-  
+
   // Delete screen and all children
   if (g_elite_screen) {
     lv_obj_delete(g_elite_screen);
@@ -442,15 +417,13 @@ void elite_cleanup(void) {
     canvas = NULL;
     info_label = NULL;
   }
-  
-  // Free canvas buffer
-  if (canvas_buf) {
-    heap_caps_free(canvas_buf);
-    canvas_buf = NULL;
-  }
-  
+
+  // NOTE: We do NOT free the canvas buffer here - it's the shared persistent buffer
+  // managed by shared_canvas_buffer module
+  canvas_buf = NULL;
+
   g_previous_screen = NULL;
-  
+
   ESP_LOGI(TAG, "Elite cleanup complete");
 }
 
