@@ -20,7 +20,7 @@ static const char* registered_commands[] = {
   "clock_source", "clock_standard", "time_sig",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity",
-  "touchwheel_mode", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note"
+  "touchwheel_mode", "touchwheel_style", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -46,7 +46,12 @@ static void cmd_scene_info(void) {
   }
   const char* tw_mode_str = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
                             (scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
-  ESP_LOGI(TAG, "Touchwheel mode: %s", tw_mode_str);
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
+    const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
+    ESP_LOGI(TAG, "Touchwheel mode: %s (%s)", tw_mode_str, tw_style_str);
+  } else {
+    ESP_LOGI(TAG, "Touchwheel mode: %s", tw_mode_str);
+  }
   
   if (scene_has_pending_change()) {
     ESP_LOGI(TAG, "PENDING CHANGE to scene %d", scene_get_pending_index() + 1);
@@ -1700,6 +1705,45 @@ static int cmd_touchwheel_mode(int argc, char **argv) {
   return 0;
 }
 
+// Command: touchwheel_style - Set touchwheel continuous style (odometer or endless)
+static struct {
+  struct arg_str *style;
+  struct arg_end *end;
+} touchwheel_style_args;
+
+static int cmd_touchwheel_style(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &touchwheel_style_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, touchwheel_style_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* style_str = touchwheel_style_args.style->sval[0];
+  touchwheel_style_t style;
+  
+  if (strcmp(style_str, "odometer") == 0) {
+    style = TOUCHWHEEL_STYLE_ODOMETER;
+  } else if (strcmp(style_str, "endless") == 0) {
+    style = TOUCHWHEEL_STYLE_ENDLESS;
+  } else {
+    ESP_LOGE(TAG, "Unknown style. Use: odometer or endless");
+    return 1;
+  }
+  
+  scene->touchwheel_style = style;
+  
+  // Re-setup touchwheel if currently in continuous mode
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
+    scene_set_touchwheel_mode(scene_get_current_index(), TOUCHWHEEL_MODE_CONTINUOUS);
+  }
+  
+  ESP_LOGI(TAG, "Touchwheel style: %s", style_str);
+  return 0;
+}
+
 // Command: touchwheel_enable - Enable/disable touchwheel continuous output
 static struct {
   struct arg_str *state;
@@ -2469,6 +2513,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &touchwheel_mode_args
   };
   esp_console_cmd_register(&touchwheel_mode_cmd);
+  
+  // touchwheel_style command
+  touchwheel_style_args.style = arg_str1(NULL, NULL, "<odometer|endless>", "Touchwheel style");
+  touchwheel_style_args.end = arg_end(2);
+  
+  const esp_console_cmd_t touchwheel_style_cmd = {
+    .command = "touchwheel_style",
+    .help = "Set touchwheel continuous style (odometer: ~15 positions, endless: full 0-127)",
+    .hint = NULL,
+    .func = &cmd_touchwheel_style,
+    .argtable = &touchwheel_style_args
+  };
+  esp_console_cmd_register(&touchwheel_style_cmd);
   
   // touchwheel_enable command
   touchwheel_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");

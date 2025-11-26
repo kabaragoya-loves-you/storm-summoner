@@ -78,8 +78,14 @@ def validate_scene(scene_file)
   end
   
   if scene_data['touchwheel_mode']
-    unless ['buttons', 'encoder'].include?(scene_data['touchwheel_mode'])
-      errors << "touchwheel_mode must be 'buttons' or 'encoder'"
+    unless ['buttons', 'program_change', 'continuous'].include?(scene_data['touchwheel_mode'])
+      errors << "touchwheel_mode must be 'buttons', 'program_change', or 'continuous'"
+    end
+  end
+  
+  if scene_data['touchwheel_style']
+    unless ['odometer', 'endless'].include?(scene_data['touchwheel_style'])
+      errors << "touchwheel_style must be 'odometer' or 'endless'"
     end
   end
   

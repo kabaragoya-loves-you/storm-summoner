@@ -3,6 +3,7 @@
   "program_number": 1,
   "send_pc_on_load": true,
   "touchwheel_mode": "buttons",
+  "touchwheel_style": "odometer",
   "touchwheel": {
     "enabled": false,
     "output_type": "cc",

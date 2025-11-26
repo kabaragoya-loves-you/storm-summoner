@@ -40,6 +40,12 @@
       "default": "buttons",
       "description": "Touchwheel behavior mode (buttons=individual pads, program_change=dial PC numbers, continuous=CC/Note output)"
     },
+    "touchwheel_style": {
+      "type": "string",
+      "enum": ["odometer", "endless"],
+      "default": "odometer",
+      "description": "Continuous mode style: odometer (~15 discrete positions) or endless (full 0-127 range)"
+    },
     "touchwheel": {
       "$ref": "#/definitions/continuous_mapping",
       "description": "Touchwheel continuous mapping (for TOUCHWHEEL_MODE_CONTINUOUS)"

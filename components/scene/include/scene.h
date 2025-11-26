@@ -46,8 +46,14 @@ typedef enum {
 typedef enum {
   TOUCHWHEEL_MODE_BUTTONS,        // Each pad acts as individual button
   TOUCHWHEEL_MODE_PROGRAM_CHANGE, // Endless encoder to dial program numbers
-  TOUCHWHEEL_MODE_CONTINUOUS      // Odometer mapped through continuous_mapping (CC or Note)
+  TOUCHWHEEL_MODE_CONTINUOUS      // Continuous data source mapped through continuous_mapping (CC or Note)
 } touchwheel_mode_t;
+
+// Touchwheel continuous style (for TOUCHWHEEL_MODE_CONTINUOUS)
+typedef enum {
+  TOUCHWHEEL_STYLE_ODOMETER,      // Position-based 0-100% (~15 discrete values)
+  TOUCHWHEEL_STYLE_ENDLESS        // Incremental encoder (full 0-127 range)
+} touchwheel_style_t;
 
 // Touchpad mapping
 typedef struct {
@@ -68,7 +74,8 @@ typedef struct {
   
   // Touchwheel configuration
   touchwheel_mode_t touchwheel_mode;
-  continuous_mapping_t touchwheel;    // For TOUCHWHEEL_MODE_CONTINUOUS (like proximity/cv/etc)
+  touchwheel_style_t touchwheel_style;  // For CONTINUOUS mode: odometer vs endless encoder
+  continuous_mapping_t touchwheel;      // For TOUCHWHEEL_MODE_CONTINUOUS (like proximity/cv/etc)
   
   // Discrete input assignments (action chains)
   touchpad_mapping_t touchpads[NUM_TOUCHPADS];

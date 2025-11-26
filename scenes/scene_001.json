@@ -8,6 +8,7 @@
     }
   ],
   "touchwheel_mode": "buttons",
+  "touchwheel_style": "odometer",
   "touchwheel": {
     "enabled": false,
     "output_type": "cc",

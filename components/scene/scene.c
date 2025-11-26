@@ -107,8 +107,9 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // Default touchwheel mode
   scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
-  scene->touchwheel = continuous_mapping_create(16);  // CC16 = General Purpose 1
-  scene->touchwheel.enabled = false;                  // Disabled by default (BUTTONS mode)
+  scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;  // Default: position-based (~15 values)
+  scene->touchwheel = continuous_mapping_create(16);    // CC16 = General Purpose 1
+  scene->touchwheel.enabled = false;                    // Disabled by default (BUTTONS mode)
   
   // Initialize touchpad mappings with default CC actions
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
@@ -238,13 +239,27 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   }
 }
 
+// Tracked value for endless encoder continuous mode
+static int s_touchwheel_endless_value = 64;  // Start at center
+
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
   scene_t* scene = (scene_t*)user_data;
   if (!scene || !scene->touchwheel.enabled) return;
   
-  // value is 0-100% from odometer, scale to 0-127
-  uint8_t midi_value = (uint8_t)((value * 127) / 100);
+  uint8_t midi_value;
+  
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    // Endless mode: value is a delta (+1, -1, etc.)
+    s_touchwheel_endless_value += value;
+    // Clamp to 0-127
+    if (s_touchwheel_endless_value < 0) s_touchwheel_endless_value = 0;
+    if (s_touchwheel_endless_value > 127) s_touchwheel_endless_value = 127;
+    midi_value = (uint8_t)s_touchwheel_endless_value;
+  } else {
+    // Odometer mode: value is 0-100%, scale to 0-127
+    midi_value = (uint8_t)((value * 127) / 100);
+  }
   
   // Process through continuous mapping (applies curve, polarity, scaling)
   uint8_t output = continuous_mapping_process(midi_value, &scene->touchwheel);
@@ -269,15 +284,24 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
   
   touchwheel_mode_processor_t* mode_proc = NULL;
   touchwheel_output_t* output = NULL;
+  const char* mode_desc = NULL;
   
   switch (scene->touchwheel_mode) {
     case TOUCHWHEEL_MODE_PROGRAM_CHANGE:
       mode_proc = touchwheel_mode_create_endless();
       output = touchwheel_output_callback_create(touchwheel_program_change_callback, NULL);
+      mode_desc = "program_change";
       break;
       
     case TOUCHWHEEL_MODE_CONTINUOUS:
-      mode_proc = touchwheel_mode_create_odometer();
+      // Choose between odometer and endless based on style setting
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "continuous (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "continuous (odometer)";
+      }
       output = touchwheel_output_callback_create(touchwheel_continuous_callback, (void*)scene);
       break;
       
@@ -291,8 +315,7 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
     s_scene_touchwheel = touchwheel_create(mode_proc, output, 500);  // 500ms timeout
     if (s_scene_touchwheel) {
       touch_register_touchwheel_instance(s_scene_touchwheel);
-      ESP_LOGI(TAG, "Created touchwheel instance for %s mode",
-               scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE ? "program_change" : "continuous");
+      ESP_LOGI(TAG, "Created touchwheel instance for %s mode", mode_desc);
     } else {
       touchwheel_mode_destroy(mode_proc);
       touchwheel_output_destroy(output);
@@ -1456,10 +1479,12 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
-  // Serialize touchwheel mode and continuous mapping
+  // Serialize touchwheel mode, style, and continuous mapping
   const char* tw_mode_str = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
                             (scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
   cJSON_AddStringToObject(root, "touchwheel_mode", tw_mode_str);
+  const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
+  cJSON_AddStringToObject(root, "touchwheel_style", tw_style_str);
   cJSON_AddItemToObject(root, "touchwheel", continuous_mapping_to_json(&scene->touchwheel));
   
   cJSON* touchpads = cJSON_CreateArray();
@@ -1542,6 +1567,14 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     if (strcmp(mode_str, "program_change") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
     else if (strcmp(mode_str, "continuous") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
     else scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
+  }
+  
+  // Deserialize touchwheel style (odometer vs endless)
+  cJSON* tw_style = cJSON_GetObjectItem(root, "touchwheel_style");
+  if (tw_style && cJSON_IsString(tw_style)) {
+    const char* style_str = tw_style->valuestring;
+    if (strcmp(style_str, "endless") == 0) scene->touchwheel_style = TOUCHWHEEL_STYLE_ENDLESS;
+    else scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;
   }
   
   // Deserialize touchwheel continuous mapping
