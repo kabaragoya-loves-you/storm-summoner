@@ -104,8 +104,11 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
     case ACTION_PROGRAM_BANK_SET:
       if (is_press) {
         // Send bank select + program change for presets > 127
-        send_bank_and_program(channel, action->params.target.number);
-        ESP_LOGI(TAG, "Sent bank+program for preset %d", action->params.target.number);
+        // Uses the current bank_select_mode setting
+        uint16_t preset = action->params.preset.preset_number;
+        device_config_set_preset(preset);
+        ESP_LOGI(TAG, "Set preset %u (bank %d, program %d)", 
+                 (unsigned)preset, preset / 128, preset % 128);
       }
       break;
       

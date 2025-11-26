@@ -16,7 +16,14 @@
       "minimum": 0,
       "maximum": 127,
       "default": 0,
-      "description": "Program change value for this scene"
+      "description": "Program change value for this scene (0-127)"
+    },
+    "bank_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 127,
+      "default": 0,
+      "description": "Bank number for this scene (0-127, used when bank_select_mode is enabled)"
     },
     "send_pc_on_load": {
       "type": "boolean",
@@ -386,7 +393,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["program_set", "program_bank_set", "scene_set", "send_pc", "send_song_select"]}
+              "type": {"enum": ["program_set", "scene_set", "send_pc", "send_song_select"]}
             }
           },
           "then": {
@@ -396,7 +403,25 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 127,
-                "description": "Program or scene number"
+                "description": "Program or scene number (0-127)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "program_bank_set"}
+            }
+          },
+          "then": {
+            "required": ["number"],
+            "properties": {
+              "number": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383,
+                "description": "Preset number (0-16383, bank = number/128, program = number%128)"
               }
             }
           }

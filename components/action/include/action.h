@@ -93,10 +93,15 @@ typedef struct {
       uint8_t velocity;
     } note;
     
-    // For target actions (program/scene set)
+    // For target actions (program/scene set, 0-127 range)
     struct {
       uint8_t number;
     } target;
+    
+    // For preset actions (bank+program, 0-16383 range)
+    struct {
+      uint16_t preset_number;
+    } preset;
     
     // For tempo actions
     struct {

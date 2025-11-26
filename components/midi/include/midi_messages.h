@@ -50,6 +50,7 @@ void send_nrpn(uint8_t channel, uint16_t parameter, uint16_t value);
 void send_rpn(uint8_t channel, uint16_t parameter, uint16_t value);
 void send_bank_select(uint8_t channel, uint8_t bank_msb, uint8_t bank_lsb);
 void send_bank_and_program(uint8_t channel, uint16_t preset_number);
+void send_bank_and_program_cc0_only(uint8_t channel, uint16_t preset_number);
 void send_mts_single(uint8_t channel, uint8_t note, int16_t pitch_offset);
 void send_mts_full(uint8_t channel, uint16_t *tuning_data);
 void send_tune_request();

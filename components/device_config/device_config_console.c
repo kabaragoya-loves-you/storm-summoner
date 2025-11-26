@@ -8,7 +8,7 @@
 static const char* TAG = "device_config_console";
 
 static const char* registered_commands[] = {
-  "info", "trs", "mode", "pedal", "custom", "program", "pc_mode", "save"
+  "info", "trs", "mode", "pedal", "custom", "program", "pc_mode", "bank_mode", "save"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -21,15 +21,37 @@ static int cmd_info(int argc, char **argv) {
   
   const char* pc_mode_str = (cfg->pc_mode == PC_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   
+  const char* bank_mode_str = "PC only";
+  switch (cfg->bank_select_mode) {
+    case BANK_SELECT_CC0: bank_mode_str = "CC0+PC"; break;
+    case BANK_SELECT_CC0_CC32: bank_mode_str = "CC0+CC32+PC"; break;
+    default: break;
+  }
+  
   ESP_LOGI(TAG, "====== DEVICE CONFIG ======");
   ESP_LOGI(TAG, "Mode: %s", mode_str);
   ESP_LOGI(TAG, "MIDI Channel: %d", cfg->midi_channel);
   ESP_LOGI(TAG, "TRS Type: %s", trs_str);
-  ESP_LOGI(TAG, "Current Program: %d", cfg->current_program);
+  ESP_LOGI(TAG, "Bank Mode: %s", bank_mode_str);
+  
+  if (cfg->bank_select_mode != BANK_SELECT_NONE) {
+    uint16_t preset = (cfg->current_bank * 128) + cfg->current_program;
+    ESP_LOGI(TAG, "Current Preset: %u (Bank %d, Program %d)", 
+             (unsigned)preset, cfg->current_bank, cfg->current_program);
+  } else {
+    ESP_LOGI(TAG, "Current Program: %d", cfg->current_program);
+  }
+  
   ESP_LOGI(TAG, "PC Mode: %s", pc_mode_str);
   
   if (cfg->has_pending_program) {
-    ESP_LOGI(TAG, "PENDING PROGRAM: %d", cfg->pending_program);
+    if (cfg->bank_select_mode != BANK_SELECT_NONE) {
+      uint16_t pending = (cfg->pending_bank * 128) + cfg->pending_program;
+      ESP_LOGI(TAG, "PENDING PRESET: %u (Bank %d, Program %d)", 
+               (unsigned)pending, cfg->pending_bank, cfg->pending_program);
+    } else {
+      ESP_LOGI(TAG, "PENDING PROGRAM: %d", cfg->pending_program);
+    }
   }
   
   ESP_LOGI(TAG, "");
@@ -56,6 +78,12 @@ static struct {
   struct arg_str *mode_name;
   struct arg_end *end;
 } pc_mode_args;
+
+// Command: bank_mode
+static struct {
+  struct arg_str *mode_name;
+  struct arg_end *end;
+} bank_mode_args;
 
 // Note: cmd_channel moved to midi context
 
@@ -226,6 +254,36 @@ static int cmd_pc_mode(int argc, char **argv) {
   return 0;
 }
 
+static int cmd_bank_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &bank_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, bank_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode = bank_mode_args.mode_name->sval[0];
+  bank_select_mode_t bank_mode;
+  
+  if (strcmp(mode, "none") == 0 || strcmp(mode, "pc") == 0) {
+    bank_mode = BANK_SELECT_NONE;
+  } else if (strcmp(mode, "cc0") == 0) {
+    bank_mode = BANK_SELECT_CC0;
+  } else if (strcmp(mode, "cc0_cc32") == 0 || strcmp(mode, "cc0+cc32") == 0) {
+    bank_mode = BANK_SELECT_CC0_CC32;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode: %s (use 'none', 'cc0', or 'cc0_cc32')", mode);
+    return 1;
+  }
+  
+  esp_err_t ret = device_config_set_bank_mode(bank_mode);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set bank mode: %s", esp_err_to_name(ret));
+    return 1;
+  }
+  
+  return 0;
+}
+
 esp_err_t device_config_console_init(void) {
   ESP_LOGI(TAG, "Registering device_config commands");
   
@@ -326,6 +384,19 @@ esp_err_t device_config_console_init(void) {
     .argtable = &pc_mode_args
   };
   esp_console_cmd_register(&pc_mode_cmd);
+  
+  // bank_mode command
+  bank_mode_args.mode_name = arg_str1(NULL, NULL, "<none|cc0|cc0_cc32>", "Bank select mode");
+  bank_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t bank_mode_cmd = {
+    .command = "bank_mode",
+    .help = "Set bank select protocol (none=PC only, cc0=CC0+PC, cc0_cc32=CC0+CC32+PC)",
+    .hint = NULL,
+    .func = &cmd_bank_mode,
+    .argtable = &bank_mode_args
+  };
+  esp_console_cmd_register(&bank_mode_cmd);
   
   return ESP_OK;
 }

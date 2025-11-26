@@ -21,7 +21,7 @@
 #define NVS_KEY_LED_RATIO "tempo_led_ratio"
 #define NVS_KEY_BPM_DEADZONE "tempo_deadzone"
 #define NVS_KEY_CLOCK_OUTPUT "tempo_clk_out"
-#define NVS_KEY_CLOCK_ALWAYS "tempo_clk_always"
+#define NVS_KEY_CLOCK_ALWAYS "tempo_clk_alws"
 #define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
 // Note: NVS_KEY_TIME_SIG_NUM, NVS_KEY_TIME_SIG_DEN, and NVS_KEY_CLOCK_STD removed
 // These are now per-scene settings stored in scene JSON files

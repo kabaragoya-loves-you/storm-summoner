@@ -179,7 +179,36 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   // value is delta from endless encoder (+1, -1, etc.)
   if (value == 0) return;
   
-  // Get current or pending program as the base
+  // Check if bank mode is enabled for extended preset range
+  bank_select_mode_t bank_mode = device_config_get_bank_mode();
+  
+  if (bank_mode != BANK_SELECT_NONE) {
+    // Bank mode: use preset-based calculation (0-16383 range)
+    uint16_t base_preset = device_config_has_pending_program()
+                           ? device_config_get_pending_preset()
+                           : device_config_get_preset();
+    int new_preset = (int)base_preset + value;
+    
+    // Clamp at boundaries (no wrap in bank mode)
+    if (new_preset < 0) new_preset = 0;
+    if (new_preset > 16383) new_preset = 16383;
+    
+    if ((uint16_t)new_preset == base_preset) return;
+    
+    // Respect immediate/pending mode
+    if (device_config_get_pc_mode() == PC_MODE_IMMEDIATE) {
+      device_config_set_preset((uint16_t)new_preset);
+      ESP_LOGD(TAG, "Touchwheel preset change: %u -> %d (bank %d, prog %d)", 
+               (unsigned)base_preset, new_preset, new_preset / 128, new_preset % 128);
+    } else {
+      device_config_set_pending_preset((uint16_t)new_preset);
+      ESP_LOGI(TAG, "Touchwheel pending preset: %d (bank %d, prog %d)", 
+               new_preset, new_preset / 128, new_preset % 128);
+    }
+    return;
+  }
+  
+  // No bank mode: original 0-127 behavior
   uint8_t base = device_config_has_pending_program() 
                  ? device_config_get_pending_program() 
                  : device_config_get_program();

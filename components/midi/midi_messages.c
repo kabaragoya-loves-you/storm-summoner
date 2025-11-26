@@ -323,3 +323,13 @@ void send_bank_and_program(uint8_t channel, uint16_t preset_number) {
   send_bank_select(channel, bank, 0);  // MSB = bank, LSB = 0
   send_program_change(channel, program);
 }
+
+// High-level helper: Send CC0 (bank MSB) + program change without CC32
+// Some devices only use CC0 for bank selection
+void send_bank_and_program_cc0_only(uint8_t channel, uint16_t preset_number) {
+  uint8_t bank = preset_number / 128;
+  uint8_t program = preset_number % 128;
+  
+  send_control_change(channel, 0, bank);  // CC0 = Bank Select MSB only
+  send_program_change(channel, program);
+}
