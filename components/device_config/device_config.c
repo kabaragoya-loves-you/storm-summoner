@@ -302,6 +302,16 @@ bool device_config_has_pending_program(void) {
   return g_device_config.has_pending_program;
 }
 
+esp_err_t device_config_set_pending_program(uint8_t program) {
+  if (program > 127) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  g_device_config.pending_program = program;
+  g_device_config.has_pending_program = true;
+  ESP_LOGI(TAG, "Pending program: %d (confirm to send)", program);
+  return ESP_OK;
+}
+
 esp_err_t device_config_confirm_program(void) {
   if (!g_device_config.has_pending_program) {
     ESP_LOGW(TAG, "No pending program change to confirm");

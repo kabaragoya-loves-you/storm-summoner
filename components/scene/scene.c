@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "midi_messages.h"
 #include "device_config.h"
+#include "config.h"
 #include "app_settings.h"
 #include "event_bus.h"
 #include "action.h"
@@ -23,6 +24,8 @@ static const char* TAG = "scene";
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size);
 static esp_err_t json_to_scene(cJSON* root, scene_t* scene);
 static void scene_init_defaults(scene_t* scene, uint8_t index);
+static void scene_cleanup_touchwheel(void);
+static void scene_setup_touchwheel_for_mode(const scene_t* scene);
 
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
@@ -104,8 +107,8 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // Default touchwheel mode
   scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
-  scene->touchwheel_actions.num_actions = 1;
-  scene->touchwheel_actions.actions[0] = action_create_send_cc(16, 64);  // GP Controller 1
+  scene->touchwheel = continuous_mapping_create(16);  // CC16 = General Purpose 1
+  scene->touchwheel.enabled = false;                  // Disabled by default (BUTTONS mode)
   
   // Initialize touchpad mappings with default CC actions
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
@@ -158,6 +161,119 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->clock_standard = CLOCK_STANDARD_24PPQN;       // Default to MIDI standard
   scene->time_signature.numerator = 4;                 // Default to 4/4 time
   scene->time_signature.denominator = 4;
+}
+
+// Cleanup existing touchwheel instance
+static void scene_cleanup_touchwheel(void) {
+  if (s_scene_touchwheel) {
+    touch_unregister_touchwheel_instance(s_scene_touchwheel);
+    touchwheel_destroy(s_scene_touchwheel);
+    s_scene_touchwheel = NULL;
+  }
+}
+
+// Callback for program change mode touchwheel
+static void touchwheel_program_change_callback(int value, void* user_data) {
+  (void)user_data;
+  
+  // value is delta from endless encoder (+1, -1, etc.)
+  if (value == 0) return;
+  
+  // Get current or pending program as the base
+  uint8_t base = device_config_has_pending_program() 
+                 ? device_config_get_pending_program() 
+                 : device_config_get_program();
+  int new_program = (int)base + value;
+  
+  // Apply wrap or clamp based on setting
+  if (config_get_program_wrap()) {
+    // Wrap around
+    while (new_program < 0) new_program += 128;
+    while (new_program > 127) new_program -= 128;
+  } else {
+    // Clamp at boundaries
+    if (new_program < 0) new_program = 0;
+    if (new_program > 127) new_program = 127;
+  }
+  
+  if ((uint8_t)new_program == base) return;
+  
+  // Respect immediate/pending mode
+  if (device_config_get_pc_mode() == PC_MODE_IMMEDIATE) {
+    device_config_set_program((uint8_t)new_program);
+    ESP_LOGD(TAG, "Touchwheel program change: %d -> %d", base, new_program);
+  } else {
+    // Set as pending - will be confirmed by confirm_pending action
+    device_config_set_pending_program((uint8_t)new_program);
+    ESP_LOGI(TAG, "Touchwheel pending program: %d (confirm to send)", new_program);
+  }
+}
+
+// Callback for continuous mode touchwheel (CC/Note output)
+static void touchwheel_continuous_callback(int value, void* user_data) {
+  scene_t* scene = (scene_t*)user_data;
+  if (!scene || !scene->touchwheel.enabled) return;
+  
+  // value is 0-100% from odometer, scale to 0-127
+  uint8_t midi_value = (uint8_t)((value * 127) / 100);
+  
+  // Process through continuous mapping (applies curve, polarity, scaling)
+  uint8_t output = continuous_mapping_process(midi_value, &scene->touchwheel);
+  
+  // Send MIDI based on output type
+  uint8_t channel = device_config_get_channel() - 1;
+  
+  if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
+    send_control_change(channel, scene->touchwheel.cc_number, output);
+    ESP_LOGD(TAG, "Touchwheel CC%d = %d", scene->touchwheel.cc_number, output);
+  } else {
+    // Note mode: convert value to note number
+    uint8_t note = continuous_mapping_value_to_note(output, &scene->touchwheel);
+    // Note handling is done via the touch events (on/off), this just updates the target note
+    ESP_LOGD(TAG, "Touchwheel note target: %d", note);
+  }
+}
+
+// Setup touchwheel instance based on scene mode
+static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
+  if (!scene) return;
+  
+  touchwheel_mode_processor_t* mode_proc = NULL;
+  touchwheel_output_t* output = NULL;
+  
+  switch (scene->touchwheel_mode) {
+    case TOUCHWHEEL_MODE_PROGRAM_CHANGE:
+      mode_proc = touchwheel_mode_create_endless();
+      output = touchwheel_output_callback_create(touchwheel_program_change_callback, NULL);
+      break;
+      
+    case TOUCHWHEEL_MODE_CONTINUOUS:
+      mode_proc = touchwheel_mode_create_odometer();
+      output = touchwheel_output_callback_create(touchwheel_continuous_callback, (void*)scene);
+      break;
+      
+    case TOUCHWHEEL_MODE_BUTTONS:
+    default:
+      // No touchwheel instance needed for buttons mode
+      return;
+  }
+  
+  if (mode_proc && output) {
+    s_scene_touchwheel = touchwheel_create(mode_proc, output, 500);  // 500ms timeout
+    if (s_scene_touchwheel) {
+      touch_register_touchwheel_instance(s_scene_touchwheel);
+      ESP_LOGI(TAG, "Created touchwheel instance for %s mode",
+               scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE ? "program_change" : "continuous");
+    } else {
+      touchwheel_mode_destroy(mode_proc);
+      touchwheel_output_destroy(output);
+      ESP_LOGE(TAG, "Failed to create touchwheel instance");
+    }
+  } else {
+    if (mode_proc) touchwheel_mode_destroy(mode_proc);
+    if (output) touchwheel_output_destroy(output);
+    ESP_LOGE(TAG, "Failed to create touchwheel mode or output");
+  }
 }
 
 esp_err_t scene_init(void) {
@@ -294,22 +410,8 @@ esp_err_t scene_init(void) {
     action_execute_chain(&initial_scene->on_load, 127, true);
   }
   
-  // Setup touchwheel instance for encoder mode
-  if (initial_scene->touchwheel_mode == TOUCHWHEEL_MODE_ENCODER) {
-    touchwheel_mode_processor_t* mode = touchwheel_mode_create_endless();
-    touchwheel_output_t* output = touchwheel_output_eventbus_create();
-    
-    if (mode && output) {
-      s_scene_touchwheel = touchwheel_create(mode, output, 500);
-      if (s_scene_touchwheel) {
-        touch_register_touchwheel_instance(s_scene_touchwheel);
-        ESP_LOGI(TAG, "Created touchwheel instance for initial scene encoder mode");
-      } else {
-        touchwheel_mode_destroy(mode);
-        touchwheel_output_destroy(output);
-      }
-    }
-  }
+  // Setup touchwheel instance for non-buttons modes
+  scene_setup_touchwheel_for_mode(initial_scene);
   
   // Post event for scene change
   event_t event = {
@@ -431,33 +533,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     action_execute_chain(&new_scene->on_load, 127, true);
   }
   
-  // Setup touchwheel instance for encoder mode
-  if (s_scene_touchwheel) {
-    touch_unregister_touchwheel_instance(s_scene_touchwheel);
-    touchwheel_destroy(s_scene_touchwheel);
-    s_scene_touchwheel = NULL;
-  }
-  
-  if (new_scene->touchwheel_mode == TOUCHWHEEL_MODE_ENCODER) {
-    // Create touchwheel instance with endless mode + event bus output
-    touchwheel_mode_processor_t* mode = touchwheel_mode_create_endless();
-    touchwheel_output_t* output = touchwheel_output_eventbus_create();
-    
-    if (mode && output) {
-      s_scene_touchwheel = touchwheel_create(mode, output, 500);  // 500ms timeout
-      if (s_scene_touchwheel) {
-        touch_register_touchwheel_instance(s_scene_touchwheel);
-        ESP_LOGI(TAG, "Created touchwheel instance for scene encoder mode");
-      } else {
-        touchwheel_mode_destroy(mode);
-        touchwheel_output_destroy(output);
-      }
-    } else {
-      if (mode) touchwheel_mode_destroy(mode);
-      if (output) touchwheel_output_destroy(output);
-      ESP_LOGE(TAG, "Failed to create touchwheel instance");
-    }
-  }
+  // Setup touchwheel instance for non-buttons modes
+  scene_cleanup_touchwheel();
+  scene_setup_touchwheel_for_mode(new_scene);
   
   // Post event for scene change
   event_t event = {
@@ -627,11 +705,18 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
   if (scene && g_scene_manager.current_scene_index == scene_index) {
     scene->touchwheel_mode = mode;
     g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+    
+    // Re-setup touchwheel instance for new mode
+    scene_cleanup_touchwheel();
+    scene_setup_touchwheel_for_mode(scene);
   } else {
     ESP_LOGW(TAG, "Can only modify current scene");
     return ESP_ERR_INVALID_STATE;
   }
-  ESP_LOGI(TAG, "Scene %d touchwheel mode set to %s", scene_index + 1, mode == TOUCHWHEEL_MODE_BUTTONS ? "buttons" : "encoder");
+  
+  const char* mode_str = (mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
+                         (mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
+  ESP_LOGI(TAG, "Scene %d touchwheel mode set to %s", scene_index + 1, mode_str);
   return ESP_OK;
 }
 
@@ -751,9 +836,9 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
   if (!mapping->enabled) return ESP_OK;  // Pad is disabled
   
-  // Handle touchwheel encoder mode - pad events are routed to touchwheel instance
-  // Touchwheel instance posts EVENT_TOUCHWHEEL_VALUE which is handled separately
-  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_ENCODER && pad_index <= TOUCHWHEEL_END) {
+  // Handle touchwheel modes - pads 0-7 are routed to touchwheel instance
+  // Touchwheel instance handles program change or continuous output
+  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_BUTTONS && pad_index <= TOUCHWHEEL_END) {
     // Pad events are already routed to touchwheel instance via touch.c
     // Don't process as individual button presses
     return ESP_OK;
@@ -1342,6 +1427,12 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
+  // Serialize touchwheel mode and continuous mapping
+  const char* tw_mode_str = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
+                            (scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
+  cJSON_AddStringToObject(root, "touchwheel_mode", tw_mode_str);
+  cJSON_AddItemToObject(root, "touchwheel", continuous_mapping_to_json(&scene->touchwheel));
+  
   cJSON* touchpads = cJSON_CreateArray();
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     cJSON* pad = cJSON_CreateObject();
@@ -1414,6 +1505,19 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* send_pc = cJSON_GetObjectItem(root, "send_pc_on_load");
   if (!send_pc) send_pc = cJSON_GetObjectItem(root, "send_pc_on_change");  // Legacy
   if (send_pc) scene->send_pc_on_load = cJSON_IsTrue(send_pc);
+  
+  // Deserialize touchwheel mode
+  cJSON* tw_mode = cJSON_GetObjectItem(root, "touchwheel_mode");
+  if (tw_mode && cJSON_IsString(tw_mode)) {
+    const char* mode_str = tw_mode->valuestring;
+    if (strcmp(mode_str, "program_change") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
+    else if (strcmp(mode_str, "continuous") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
+    else scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
+  }
+  
+  // Deserialize touchwheel continuous mapping
+  cJSON* touchwheel = cJSON_GetObjectItem(root, "touchwheel");
+  if (touchwheel) json_to_continuous_mapping(touchwheel, &scene->touchwheel);
   
   cJSON* touchpads = cJSON_GetObjectItem(root, "touchpads");
   if (touchpads && cJSON_IsArray(touchpads)) {

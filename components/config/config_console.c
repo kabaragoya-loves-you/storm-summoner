@@ -1,4 +1,5 @@
 #include "config_console.h"
+#include "config.h"
 #include "scene.h"
 #include "device_config.h"
 #include "esp_log.h"
@@ -10,7 +11,7 @@ static const char* TAG = "config_console";
 
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
-  "info", "scene_mode", "change_mode", "autosave"
+  "info", "scene_mode", "change_mode", "autosave", "program_wrap"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -21,15 +22,18 @@ static int cmd_config_info(int argc, char **argv) {
   scene_autosave_mode_t autosave = scene_get_autosave_mode();
   uint8_t channel = device_config_get_channel();
   uint8_t program = device_config_get_program();
+  bool program_wrap = config_get_program_wrap();
   
   const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Single" :
                                 (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   const char* autosave_str = (autosave == SCENE_AUTOSAVE_MANUAL) ? "Manual (use 'save' command)" : "Auto (on scene change)";
+  const char* program_wrap_str = program_wrap ? "On (wrap around)" : "Off (clamp at 0/127)";
   
   ESP_LOGI(TAG, "====== DEVICE CONFIG ======");
   ESP_LOGI(TAG, "MIDI channel: %d", channel);
   ESP_LOGI(TAG, "Current program: %d", program);
+  ESP_LOGI(TAG, "Program wrap: %s", program_wrap_str);
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Scene mode: %s", scene_mode_str);
   ESP_LOGI(TAG, "Change mode: %s", change_mode_str);
@@ -123,6 +127,33 @@ static int cmd_autosave(int argc, char **argv) {
   return 0;
 }
 
+// Command: program_wrap - Set program wrap mode
+static struct {
+  struct arg_str *wrap_type;
+  struct arg_end *end;
+} program_wrap_args;
+
+static int cmd_program_wrap(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &program_wrap_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, program_wrap_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char *mode = program_wrap_args.wrap_type->sval[0];
+  if (strcmp(mode, "on") == 0) {
+    config_set_program_wrap(true);
+    ESP_LOGI(TAG, "Program wrap: On (127->0, 0->127)");
+  } else if (strcmp(mode, "off") == 0) {
+    config_set_program_wrap(false);
+    ESP_LOGI(TAG, "Program wrap: Off (clamp at 0/127)");
+  } else {
+    ESP_LOGE(TAG, "Unknown wrap mode. Use: on or off");
+    return 1;
+  }
+  return 0;
+}
+
 esp_err_t config_console_init(void) {
   ESP_LOGI(TAG, "Registering config commands");
   
@@ -173,6 +204,19 @@ esp_err_t config_console_init(void) {
     .argtable = &autosave_args
   };
   esp_console_cmd_register(&autosave_cmd);
+  
+  // program_wrap command
+  program_wrap_args.wrap_type = arg_str1(NULL, NULL, "<on|off>", "Wrap mode");
+  program_wrap_args.end = arg_end(2);
+  
+  const esp_console_cmd_t program_wrap_cmd = {
+    .command = "program_wrap",
+    .help = "Set program number wrap mode (on=wrap around, off=clamp at 0/127)",
+    .hint = NULL,
+    .func = &cmd_program_wrap,
+    .argtable = &program_wrap_args
+  };
+  esp_console_cmd_register(&program_wrap_cmd);
   
   return ESP_OK;
 }

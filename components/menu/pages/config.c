@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "scene.h"
 #include "device_config.h"
+#include "config.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -14,22 +15,25 @@ static void show_info(void) {
   scene_autosave_mode_t autosave = scene_get_autosave_mode();
   uint8_t channel = device_config_get_channel();
   uint8_t program = device_config_get_program();
+  bool program_wrap = config_get_program_wrap();
   
   const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Single" :
                                 (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   const char* autosave_str = (autosave == SCENE_AUTOSAVE_MANUAL) ? "Manual" : "Auto";
+  const char* program_wrap_str = program_wrap ? "On" : "Off";
   
   char info_text[512];
   snprintf(info_text, sizeof(info_text),
     "DEVICE CONFIG\n"
     "MIDI channel: %d\n"
     "Current program: %d\n"
+    "Program wrap: %s\n"
     "\n"
     "Scene mode: %s\n"
     "Change mode: %s\n"
     "Autosave: %s",
-    channel, program, scene_mode_str, change_mode_str, autosave_str);
+    channel, program, program_wrap_str, scene_mode_str, change_mode_str, autosave_str);
   
   menu_navigate_to_info("Config Info", info_text);
 }
@@ -69,6 +73,16 @@ static void set_autosave_auto(void) {
   ESP_LOGI(TAG, "Autosave set to Auto");
 }
 
+static void set_program_wrap_on(void) {
+  config_set_program_wrap(true);
+  ESP_LOGI(TAG, "Program wrap set to On");
+}
+
+static void set_program_wrap_off(void) {
+  config_set_program_wrap(false);
+  ESP_LOGI(TAG, "Program wrap set to Off");
+}
+
 lv_obj_t* menu_page_config_create(void) {
   ESP_LOGI(TAG, "Creating config page");
   
@@ -80,7 +94,9 @@ lv_obj_t* menu_page_config_create(void) {
     { "Change: Immediate", set_change_mode_immediate, false },
     { "Change: Pending", set_change_mode_pending, false },
     { "Autosave: Manual", set_autosave_manual, false },
-    { "Autosave: Auto", set_autosave_auto, false }
+    { "Autosave: Auto", set_autosave_auto, false },
+    { "Prog Wrap: On", set_program_wrap_on, false },
+    { "Prog Wrap: Off", set_program_wrap_off, false }
   };
   
   return menu_create_page("Config", config_items, 

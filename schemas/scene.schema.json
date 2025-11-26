@@ -29,9 +29,13 @@
     },
     "touchwheel_mode": {
       "type": "string",
-      "enum": ["buttons", "encoder"],
+      "enum": ["buttons", "program_change", "continuous"],
       "default": "buttons",
-      "description": "Touchwheel behavior mode"
+      "description": "Touchwheel behavior mode (buttons=individual pads, program_change=dial PC numbers, continuous=CC/Note output)"
+    },
+    "touchwheel": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Touchwheel continuous mapping (for TOUCHWHEEL_MODE_CONTINUOUS)"
     },
     "touchpads": {
       "type": "array",

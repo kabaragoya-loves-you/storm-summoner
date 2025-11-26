@@ -87,6 +87,7 @@ pc_change_mode_t device_config_get_pc_mode(void);
 esp_err_t device_config_set_pc_mode(pc_change_mode_t mode);
 uint8_t device_config_get_pending_program(void);
 bool device_config_has_pending_program(void);
+esp_err_t device_config_set_pending_program(uint8_t program);
 esp_err_t device_config_confirm_program(void);
 esp_err_t device_config_cancel_pending_program(void);
 

@@ -48,6 +48,7 @@
 #include "tinyusb_init.h"
 #include "usb_cdc_update.h"
 #include "device_config.h"
+#include "config.h"
 #include "console_repl.h"
 #include "action.h"
 #include "curve.h"
@@ -66,6 +67,7 @@ void app_main(void) {
   event_bus_init();
   firmware_update_init();
   device_config_init();
+  config_init();
   action_init();
   curve_init();
   tinyusb_init_and_start();

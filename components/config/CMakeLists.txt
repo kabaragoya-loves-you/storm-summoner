@@ -1,6 +1,6 @@
 idf_component_register(
-  SRCS "config_console.c"
+  SRCS "config.c" "config_console.c"
   INCLUDE_DIRS "include"
-  REQUIRES console scene device_config
+  REQUIRES console scene device_config app_settings
 )
 

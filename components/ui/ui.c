@@ -447,9 +447,15 @@ void ui_reclaim_canvas_buffer(void) {
     size_t buf_size = 128 * 128 * bytes_per_pixel;
     display_buf = heap_caps_aligned_alloc(64, buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!display_buf) {
-      ESP_LOGE(TAG, "Failed to reallocate display buffer from internal RAM!");
-      g_teardown_in_progress = false;  // Clear flag on error
-      return;
+      // Aligned allocation can fail due to fragmentation - fall back to unaligned
+      // This may trigger LVGL alignment warnings but keeps the display functional
+      ESP_LOGW(TAG, "Aligned alloc failed, falling back to unaligned allocation");
+      display_buf = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      if (!display_buf) {
+        ESP_LOGE(TAG, "Failed to reallocate display buffer from internal RAM!");
+        g_teardown_in_progress = false;  // Clear flag on error
+        return;
+      }
     }
     memset(display_buf, 0, buf_size);
     ESP_LOGI(TAG, "Reallocated %d KB canvas buffer from internal RAM", buf_size / 1024);

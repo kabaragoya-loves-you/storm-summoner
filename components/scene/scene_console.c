@@ -19,7 +19,8 @@ static const char* registered_commands[] = {
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
   "clock_source", "clock_standard", "time_sig",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
-  "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity"
+  "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity",
+  "touchwheel_mode", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -43,7 +44,22 @@ static void cmd_scene_info(void) {
       ESP_LOGI(TAG, "  [%d] %s", i, action_type_to_string(scene->on_load.actions[i].type));
     }
   }
-  ESP_LOGI(TAG, "Touchwheel: %s mode", scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
+  const char* tw_mode_str = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
+                            (scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
+  ESP_LOGI(TAG, "Touchwheel mode: %s", tw_mode_str);
+  
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
+    if (scene->touchwheel.enabled) {
+      if (scene->touchwheel.output_type == OUTPUT_TYPE_NOTE) {
+        ESP_LOGI(TAG, "  Touchwheel: NOTE (base=%d, range=%d, vel=%d)", 
+                 scene->touchwheel.base_note, scene->touchwheel.note_range, scene->touchwheel.velocity);
+      } else {
+        ESP_LOGI(TAG, "  Touchwheel: CC%d", scene->touchwheel.cc_number);
+      }
+    } else {
+      ESP_LOGI(TAG, "  Touchwheel output: disabled");
+    }
+  }
   
   if (scene_has_pending_change()) {
     ESP_LOGI(TAG, "PENDING CHANGE to scene %d", scene_get_pending_index() + 1);
@@ -184,7 +200,14 @@ static void cmd_scene_info(void) {
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchpad mappings:");
-  for (int i = 0; i < NUM_TOUCHPADS; i++) {
+  
+  // Skip pads 0-7 if touchwheel is active (not in buttons mode)
+  int start_pad = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? 0 : TOUCHWHEEL_SIZE;
+  if (start_pad > 0) {
+    ESP_LOGI(TAG, "  Pads 0-7: (used by touchwheel)");
+  }
+  
+  for (int i = start_pad; i < NUM_TOUCHPADS; i++) {
     touchpad_mapping_t* map = &scene->touchpads[i];
     if (map->enabled) {
       if (map->actions.num_actions > 0) {
@@ -1631,6 +1654,179 @@ static int cmd_als_velocity(int argc, char **argv) {
   return 0;
 }
 
+// Command: touchwheel_mode - Set touchwheel mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} touchwheel_mode_args;
+
+static int cmd_touchwheel_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &touchwheel_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, touchwheel_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode_str = touchwheel_mode_args.mode->sval[0];
+  touchwheel_mode_t mode;
+  
+  if (strcmp(mode_str, "buttons") == 0) {
+    mode = TOUCHWHEEL_MODE_BUTTONS;
+  } else if (strcmp(mode_str, "program_change") == 0 || strcmp(mode_str, "pc") == 0) {
+    mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
+  } else if (strcmp(mode_str, "continuous") == 0 || strcmp(mode_str, "cc") == 0) {
+    mode = TOUCHWHEEL_MODE_CONTINUOUS;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode. Use: buttons, program_change (pc), or continuous (cc)");
+    return 1;
+  }
+  
+  uint8_t scene_index = scene_get_current_index();
+  esp_err_t ret = scene_set_touchwheel_mode(scene_index, mode);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set touchwheel mode");
+    return 1;
+  }
+  
+  return 0;
+}
+
+// Command: touchwheel_enable - Enable/disable touchwheel continuous output
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} touchwheel_enable_args;
+
+static int cmd_touchwheel_enable(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &touchwheel_enable_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, touchwheel_enable_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* state_str = touchwheel_enable_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  scene->touchwheel.enabled = enable;
+  
+  // If enabling and range is invalid, set defaults
+  if (enable && scene->touchwheel.max_value == 0) {
+    scene->touchwheel.max_value = 127;
+  }
+  
+  ESP_LOGI(TAG, "Touchwheel: %s", enable ? "enabled" : "disabled");
+  return 0;
+}
+
+// Command: touchwheel_output - Set touchwheel output type
+static struct {
+  struct arg_str *output_type;
+  struct arg_end *end;
+} touchwheel_output_args;
+
+static int cmd_touchwheel_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &touchwheel_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, touchwheel_output_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* type = touchwheel_output_args.output_type->sval[0];
+  
+  if (strcmp(type, "cc") == 0) {
+    scene->touchwheel.output_type = OUTPUT_TYPE_CC;
+  } else if (strcmp(type, "note") == 0) {
+    scene->touchwheel.output_type = OUTPUT_TYPE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Touchwheel output type: %s", type);
+  return 0;
+}
+
+// Command: touchwheel_cc - Set touchwheel CC number
+static struct {
+  struct arg_int *cc_num;
+  struct arg_end *end;
+} touchwheel_cc_args;
+
+static int cmd_touchwheel_cc(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &touchwheel_cc_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, touchwheel_cc_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int cc = touchwheel_cc_args.cc_num->ival[0];
+  if (cc < 0 || cc > 127) {
+    ESP_LOGE(TAG, "CC must be 0-127");
+    return 1;
+  }
+  
+  scene->touchwheel.cc_number = cc;
+  ESP_LOGI(TAG, "Touchwheel CC: %d", cc);
+  return 0;
+}
+
+// Command: touchwheel_note - Set touchwheel note parameters
+static struct {
+  struct arg_int *base_note;
+  struct arg_int *range;
+  struct arg_int *velocity;
+  struct arg_end *end;
+} touchwheel_note_args;
+
+static int cmd_touchwheel_note(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &touchwheel_note_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, touchwheel_note_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  int base = touchwheel_note_args.base_note->ival[0];
+  int range = touchwheel_note_args.range->ival[0];
+  
+  if (base < 0 || base > 127) {
+    ESP_LOGE(TAG, "Base note must be 0-127");
+    return 1;
+  }
+  if (range < 1 || range > 127) {
+    ESP_LOGE(TAG, "Range must be 1-127 semitones");
+    return 1;
+  }
+  
+  scene->touchwheel.base_note = base;
+  scene->touchwheel.note_range = range;
+  
+  // Optional velocity
+  if (touchwheel_note_args.velocity->count > 0) {
+    int vel = touchwheel_note_args.velocity->ival[0];
+    if (vel < 0 || vel > 127) {
+      ESP_LOGE(TAG, "Velocity must be 0-127");
+      return 1;
+    }
+    scene->touchwheel.velocity = vel;
+  }
+  
+  ESP_LOGI(TAG, "Touchwheel note: base=%d, range=%d, velocity=%d", 
+           scene->touchwheel.base_note, scene->touchwheel.note_range, scene->touchwheel.velocity);
+  return 0;
+}
+
 esp_err_t scene_console_init(void) {
   ESP_LOGI(TAG, "Registering scene commands");
   
@@ -2251,6 +2447,73 @@ esp_err_t scene_console_init(void) {
     .argtable = &als_velocity_args
   };
   esp_console_cmd_register(&als_velocity_cmd);
+  
+  // touchwheel_mode command
+  touchwheel_mode_args.mode = arg_str1(NULL, NULL, "<buttons|program_change|continuous>", "Touchwheel mode");
+  touchwheel_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t touchwheel_mode_cmd = {
+    .command = "touchwheel_mode",
+    .help = "Set touchwheel mode (buttons, program_change/pc, continuous/cc)",
+    .hint = NULL,
+    .func = &cmd_touchwheel_mode,
+    .argtable = &touchwheel_mode_args
+  };
+  esp_console_cmd_register(&touchwheel_mode_cmd);
+  
+  // touchwheel_enable command
+  touchwheel_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  touchwheel_enable_args.end = arg_end(2);
+  
+  const esp_console_cmd_t touchwheel_enable_cmd = {
+    .command = "touchwheel_enable",
+    .help = "Enable/disable touchwheel continuous output",
+    .hint = NULL,
+    .func = &cmd_touchwheel_enable,
+    .argtable = &touchwheel_enable_args
+  };
+  esp_console_cmd_register(&touchwheel_enable_cmd);
+  
+  // touchwheel_output command
+  touchwheel_output_args.output_type = arg_str1(NULL, NULL, "<cc|note>", "Output type");
+  touchwheel_output_args.end = arg_end(2);
+  
+  const esp_console_cmd_t touchwheel_output_cmd = {
+    .command = "touchwheel_output",
+    .help = "Set touchwheel output type (cc or note)",
+    .hint = NULL,
+    .func = &cmd_touchwheel_output,
+    .argtable = &touchwheel_output_args
+  };
+  esp_console_cmd_register(&touchwheel_output_cmd);
+  
+  // touchwheel_cc command
+  touchwheel_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
+  touchwheel_cc_args.end = arg_end(2);
+  
+  const esp_console_cmd_t touchwheel_cc_cmd = {
+    .command = "touchwheel_cc",
+    .help = "Set touchwheel CC number",
+    .hint = NULL,
+    .func = &cmd_touchwheel_cc,
+    .argtable = &touchwheel_cc_args
+  };
+  esp_console_cmd_register(&touchwheel_cc_cmd);
+  
+  // touchwheel_note command
+  touchwheel_note_args.base_note = arg_int1(NULL, NULL, "<0-127>", "Base note");
+  touchwheel_note_args.range = arg_int1(NULL, NULL, "<1-127>", "Range in semitones");
+  touchwheel_note_args.velocity = arg_int0(NULL, NULL, "<0-127>", "Velocity (optional)");
+  touchwheel_note_args.end = arg_end(4);
+  
+  const esp_console_cmd_t touchwheel_note_cmd = {
+    .command = "touchwheel_note",
+    .help = "Set touchwheel note parameters (base, range, [velocity])",
+    .hint = NULL,
+    .func = &cmd_touchwheel_note,
+    .argtable = &touchwheel_note_args
+  };
+  esp_console_cmd_register(&touchwheel_note_cmd);
   
   return ESP_OK;
 }

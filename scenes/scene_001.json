@@ -8,6 +8,18 @@
     }
   ],
   "touchwheel_mode": "buttons",
+  "touchwheel": {
+    "enabled": false,
+    "output_type": "cc",
+    "cc_number": 16,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "max_value": 127
+  },
   "touchpads": [
     {
       "enabled": true,

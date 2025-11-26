@@ -182,12 +182,31 @@ static int cmd_assign_pad(int argc, char **argv) {
   else if (strcmp(action_str, "scene_prev") == 0) {
     action = action_create_scene_prev();
   }
+  else if (strcmp(action_str, "confirm_pending") == 0) {
+    action.type = ACTION_CONFIRM_PENDING;
+  }
+  else if (strcmp(action_str, "cancel_pending") == 0) {
+    action.type = ACTION_CANCEL_PENDING;
+  }
+  else if (strcmp(action_str, "all_notes_off") == 0) {
+    action = action_create_all_notes_off();
+  }
+  else if (strcmp(action_str, "all_sound_off") == 0) {
+    action = action_create_all_sound_off();
+  }
+  else if (strcmp(action_str, "sustain") == 0) {
+    action = action_create_sustain();
+  }
+  else if (strcmp(action_str, "sostenuto") == 0) {
+    action = action_create_sostenuto();
+  }
   else {
     ESP_LOGE(TAG, "Unknown action type: %s", action_str);
     ESP_LOGE(TAG, "Available: cc, cc_toggle, cc_cycle, note_on, note_off, pc,");
     ESP_LOGE(TAG, "           randomize, tap_tempo, transport_play, transport_stop,");
     ESP_LOGE(TAG, "           transport_toggle, program_next, program_prev,");
-    ESP_LOGE(TAG, "           scene_next, scene_prev");
+    ESP_LOGE(TAG, "           scene_next, scene_prev, confirm_pending, cancel_pending,");
+    ESP_LOGE(TAG, "           all_notes_off, all_sound_off, sustain, sostenuto");
     ESP_LOGE(TAG, "Type 'list' for detailed help");
     return 1;
   }
@@ -298,14 +317,22 @@ static int cmd_assign_list(int argc, char **argv) {
   ESP_LOGI(TAG, "  program_prev                     - Previous program");
   ESP_LOGI(TAG, "  scene_next                       - Next scene");
   ESP_LOGI(TAG, "  scene_prev                       - Previous scene");
+  ESP_LOGI(TAG, "  confirm_pending                  - Confirm pending program/scene change");
+  ESP_LOGI(TAG, "  cancel_pending                   - Cancel pending change");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Tempo:");
   ESP_LOGI(TAG, "  tap_tempo                        - Tap tempo");
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Transport (not fully implemented yet):");
+  ESP_LOGI(TAG, "Transport:");
   ESP_LOGI(TAG, "  transport_play                   - Start transport");
   ESP_LOGI(TAG, "  transport_stop                   - Stop transport");
   ESP_LOGI(TAG, "  transport_toggle                 - Toggle play/stop");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "System:");
+  ESP_LOGI(TAG, "  all_notes_off                    - Send All Notes Off (CC123)");
+  ESP_LOGI(TAG, "  all_sound_off                    - Send All Sound Off (CC120)");
+  ESP_LOGI(TAG, "  sustain                          - Sustain pedal (CC64)");
+  ESP_LOGI(TAG, "  sostenuto                        - Sostenuto pedal (CC66)");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Examples:");
   ESP_LOGI(TAG, "  pad 0 cc 74 127                  - Filter cutoff");
