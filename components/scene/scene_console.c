@@ -48,19 +48,6 @@ static void cmd_scene_info(void) {
                             (scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
   ESP_LOGI(TAG, "Touchwheel mode: %s", tw_mode_str);
   
-  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
-    if (scene->touchwheel.enabled) {
-      if (scene->touchwheel.output_type == OUTPUT_TYPE_NOTE) {
-        ESP_LOGI(TAG, "  Touchwheel: NOTE (base=%d, range=%d, vel=%d)", 
-                 scene->touchwheel.base_note, scene->touchwheel.note_range, scene->touchwheel.velocity);
-      } else {
-        ESP_LOGI(TAG, "  Touchwheel: CC%d", scene->touchwheel.cc_number);
-      }
-    } else {
-      ESP_LOGI(TAG, "  Touchwheel output: disabled");
-    }
-  }
-  
   if (scene_has_pending_change()) {
     ESP_LOGI(TAG, "PENDING CHANGE to scene %d", scene_get_pending_index() + 1);
   }
@@ -96,41 +83,27 @@ static void cmd_scene_info(void) {
   ESP_LOGI(TAG, "  Time signature: %d/%d",
            scene->time_signature.numerator, scene->time_signature.denominator);
   
-  ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Expression jack mode: %s", 
-           scene->expression_mode == EXPRESSION_MODE_PEDAL ? "expression" :
-           scene->expression_mode == EXPRESSION_MODE_SUSTAIN ? "sustain" :
-           scene->expression_mode == EXPRESSION_MODE_SOSTENUTO ? "sostenuto" : "gate");
-  
-  if (scene->expression_mode == EXPRESSION_MODE_PEDAL) {
-    if (scene->expression.enabled) {
-      if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
-        ESP_LOGI(TAG, "  Expression: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
-                 scene->expression.base_note, scene->expression.note_range, scene->expression.velocity,
-                 curve_type_to_string(scene->expression.curve.type));
+  // Only show expression jack mode section for action-based modes (sustain/sostenuto/gate)
+  if (scene->expression_mode != EXPRESSION_MODE_PEDAL) {
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Expression jack mode: %s", 
+             scene->expression_mode == EXPRESSION_MODE_SUSTAIN ? "sustain" :
+             scene->expression_mode == EXPRESSION_MODE_SOSTENUTO ? "sostenuto" : "gate");
+    
+    if (scene->expression_mode == EXPRESSION_MODE_SUSTAIN) {
+      if (scene->sustain.num_actions > 0) {
+        ESP_LOGI(TAG, "  Sustain actions: %d (default: %s)", 
+                 scene->sustain.num_actions, action_type_to_string(scene->sustain.actions[0].type));
       } else {
-        ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
-                 scene->expression.cc_number,
-                 curve_type_to_string(scene->expression.curve.type),
-                 scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
-                 (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+        ESP_LOGI(TAG, "  Sustain: no actions");
       }
-    } else {
-      ESP_LOGI(TAG, "  Expression: disabled");
-    }
-  } else if (scene->expression_mode == EXPRESSION_MODE_SUSTAIN) {
-    if (scene->sustain.num_actions > 0) {
-      ESP_LOGI(TAG, "  Sustain actions: %d (default: %s)", 
-               scene->sustain.num_actions, action_type_to_string(scene->sustain.actions[0].type));
-    } else {
-      ESP_LOGI(TAG, "  Sustain: no actions");
-    }
-  } else if (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) {
-    if (scene->sostenuto.num_actions > 0) {
-      ESP_LOGI(TAG, "  Sostenuto actions: %d (default: %s)", 
-               scene->sostenuto.num_actions, action_type_to_string(scene->sostenuto.actions[0].type));
-    } else {
-      ESP_LOGI(TAG, "  Sostenuto: no actions");
+    } else if (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) {
+      if (scene->sostenuto.num_actions > 0) {
+        ESP_LOGI(TAG, "  Sostenuto actions: %d (default: %s)", 
+                 scene->sostenuto.num_actions, action_type_to_string(scene->sostenuto.actions[0].type));
+      } else {
+        ESP_LOGI(TAG, "  Sostenuto: no actions");
+      }
     }
   }
   
@@ -152,9 +125,43 @@ static void cmd_scene_info(void) {
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Continuous inputs:");
   
+  // Expression (only shown here when in pedal mode)
+  if (scene->expression_mode == EXPRESSION_MODE_PEDAL) {
+    if (scene->expression.enabled) {
+      if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
+        ESP_LOGI(TAG, "  Expression: NOTE (base=%d, range=%d, vel=%d), %s curve", 
+                 scene->expression.base_note, scene->expression.note_range, scene->expression.velocity,
+                 curve_type_to_string(scene->expression.curve.type));
+      } else {
+        ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
+                 scene->expression.cc_number,
+                 curve_type_to_string(scene->expression.curve.type),
+                 scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
+                 (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+      }
+    } else {
+      ESP_LOGI(TAG, "  Expression: disabled");
+    }
+  }
+  
+  // Touchwheel (only shown here when in continuous mode)
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
+    if (scene->touchwheel.enabled) {
+      if (scene->touchwheel.output_type == OUTPUT_TYPE_NOTE) {
+        ESP_LOGI(TAG, "  Touchwheel: NOTE (base=%d, range=%d, vel=%d)", 
+                 scene->touchwheel.base_note, scene->touchwheel.note_range, scene->touchwheel.velocity);
+      } else {
+        ESP_LOGI(TAG, "  Touchwheel: CC%d", scene->touchwheel.cc_number);
+      }
+    } else {
+      ESP_LOGI(TAG, "  Touchwheel: disabled");
+    }
+  }
+  
+  // CV
   if (scene->cv.enabled) {
     if (scene->cv.output_type == OUTPUT_TYPE_NOTE) {
-      ESP_LOGI(TAG, "  CV: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
+      ESP_LOGI(TAG, "  CV: NOTE (base=%d, range=%d, vel=%d), %s curve", 
                scene->cv.base_note, scene->cv.note_range, scene->cv.velocity,
                curve_type_to_string(scene->cv.curve.type));
     } else {
@@ -168,9 +175,10 @@ static void cmd_scene_info(void) {
     ESP_LOGI(TAG, "  CV: disabled");
   }
   
+  // Proximity
   if (scene->proximity.enabled) {
     if (scene->proximity.output_type == OUTPUT_TYPE_NOTE) {
-      ESP_LOGI(TAG, "  Proximity: NOTE (base=%d, range=%d semitones, vel=%d), %s curve%s", 
+      ESP_LOGI(TAG, "  Proximity: NOTE (base=%d, range=%d, vel=%d), %s curve%s", 
                scene->proximity.base_note, scene->proximity.note_range, scene->proximity.velocity,
                curve_type_to_string(scene->proximity.curve.type),
                scene->proximity.use_idle_value ? " (idle timeout)" : "");
@@ -184,9 +192,10 @@ static void cmd_scene_info(void) {
     ESP_LOGI(TAG, "  Proximity: disabled");
   }
   
+  // ALS
   if (scene->als.enabled) {
     if (scene->als.output_type == OUTPUT_TYPE_NOTE) {
-      ESP_LOGI(TAG, "  ALS: NOTE (base=%d, range=%d semitones, vel=%d), %s curve", 
+      ESP_LOGI(TAG, "  ALS: NOTE (base=%d, range=%d, vel=%d), %s curve", 
                scene->als.base_note, scene->als.note_range, scene->als.velocity,
                curve_type_to_string(scene->als.curve.type));
     } else {

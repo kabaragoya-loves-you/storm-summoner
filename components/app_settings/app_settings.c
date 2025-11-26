@@ -28,7 +28,9 @@ esp_err_t app_settings_init(void) {
 }
 
 esp_err_t app_settings_save_u8(const char* key, uint8_t value) {
-    return nvs_set_u8(app_nvs_handle, key, value);
+    esp_err_t ret = nvs_set_u8(app_nvs_handle, key, value);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_load_u8(const char* key, uint8_t* value) {
@@ -36,7 +38,9 @@ esp_err_t app_settings_load_u8(const char* key, uint8_t* value) {
 }
 
 esp_err_t app_settings_save_u16(const char* key, uint16_t value) {
-    return nvs_set_u16(app_nvs_handle, key, value);
+    esp_err_t ret = nvs_set_u16(app_nvs_handle, key, value);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_load_u16(const char* key, uint16_t* value) {
@@ -44,7 +48,9 @@ esp_err_t app_settings_load_u16(const char* key, uint16_t* value) {
 }
 
 esp_err_t app_settings_save_u32(const char* key, uint32_t value) {
-    return nvs_set_u32(app_nvs_handle, key, value);
+    esp_err_t ret = nvs_set_u32(app_nvs_handle, key, value);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_load_u32(const char* key, uint32_t* value) {
@@ -52,7 +58,9 @@ esp_err_t app_settings_load_u32(const char* key, uint32_t* value) {
 }
 
 esp_err_t app_settings_save_bool(const char* key, bool value) {
-    return nvs_set_u8(app_nvs_handle, key, value ? 1 : 0);
+    esp_err_t ret = nvs_set_u8(app_nvs_handle, key, value ? 1 : 0);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_load_bool(const char* key, bool* value) {
@@ -65,7 +73,9 @@ esp_err_t app_settings_load_bool(const char* key, bool* value) {
 }
 
 esp_err_t app_settings_save_str(const char* key, const char* value) {
-    return nvs_set_str(app_nvs_handle, key, value);
+    esp_err_t ret = nvs_set_str(app_nvs_handle, key, value);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_load_str(const char* key, char* value, size_t max_len) {
@@ -81,15 +91,21 @@ esp_err_t app_settings_load_str(const char* key, char* value, size_t max_len) {
 }
 
 esp_err_t app_settings_erase_key(const char* key) {
-    return nvs_erase_key(app_nvs_handle, key);
+    esp_err_t ret = nvs_erase_key(app_nvs_handle, key);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_erase_all(void) {
-    return nvs_erase_all(app_nvs_handle);
+    esp_err_t ret = nvs_erase_all(app_nvs_handle);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_save_blob(const char* key, const void* value, size_t length) {
-    return nvs_set_blob(app_nvs_handle, key, value, length);
+    esp_err_t ret = nvs_set_blob(app_nvs_handle, key, value, length);
+    if (ret == ESP_OK) nvs_commit(app_nvs_handle);
+    return ret;
 }
 
 esp_err_t app_settings_load_blob(const char* key, void* value, size_t max_length, size_t* actual_length) {
