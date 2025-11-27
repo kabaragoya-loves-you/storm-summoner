@@ -48,6 +48,11 @@ typedef struct {
   uint8_t current_bank;        // Current bank (CC0 value, 0-127)
   uint8_t pending_bank;        // Pending bank (for PC_MODE_PENDING)
   
+  // Display offset for program numbers (0 or 1)
+  // 0: presets display as 0-127 (what MIDI sends)
+  // 1: presets display as 1-128 (user-friendly, PC 0 shows as "1")
+  uint8_t preset_base;
+  
   bool initialized;
 } device_config_t;
 
@@ -116,6 +121,11 @@ uint16_t device_config_get_preset(void);
 esp_err_t device_config_set_preset(uint16_t preset);
 uint16_t device_config_get_pending_preset(void);
 esp_err_t device_config_set_pending_preset(uint16_t preset);
+
+// Preset display base (0 or 1)
+// For UI display: displayed_number = program + preset_base
+uint8_t device_config_get_preset_base(void);
+esp_err_t device_config_set_preset_base(uint8_t base);
 
 #endif // DEVICE_CONFIG_H
 

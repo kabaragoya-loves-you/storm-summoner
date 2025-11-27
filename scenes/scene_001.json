@@ -160,7 +160,7 @@
   ],
   "bump": [
     {
-      "type": "tap_tempo"
+      "type": "tap"
     }
   ],
   "expression": {

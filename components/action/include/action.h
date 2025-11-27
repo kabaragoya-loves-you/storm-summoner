@@ -12,11 +12,10 @@ typedef enum {
   // Program/Scene control
   ACTION_PROGRAM_NEXT,
   ACTION_PROGRAM_PREV,
-  ACTION_PROGRAM_SET,         // Jump to specific program (0-127)
-  ACTION_PROGRAM_BANK_SET,    // Jump to banked program (0-16383, sends bank select + PC)
+  ACTION_PROGRAM_SET,         // Smart PC: 0-127 or 0-16383 based on bank_select_mode
   ACTION_SCENE_NEXT,
   ACTION_SCENE_PREV,
-  ACTION_SCENE_SET,           // Jump to specific scene
+  ACTION_SCENE_SET,           // Jump to specific scene (1-128, user-facing)
   
   // Transport
   ACTION_TRANSPORT_PLAY,
@@ -26,9 +25,11 @@ typedef enum {
   ACTION_TRANSPORT_TOGGLE,
   
   // Tempo
-  ACTION_TAP_TEMPO,
-  ACTION_TEMPO_NUDGE_UP,
-  ACTION_TEMPO_NUDGE_DOWN,
+  ACTION_TAP,               // Send a single tap input (for tap tempo)
+  ACTION_TAP_TEMPO,         // Toggle/start/stop tap tempo session
+  ACTION_SET_TEMPO,         // Set BPM directly (uses tempo.bpm param)
+  ACTION_TEMPO_INC,         // Increment BPM by 1
+  ACTION_TEMPO_DEC,         // Decrement BPM by 1
   
   // Direct MIDI output
   ACTION_SEND_CC,             // Send CC with value (on press only)
@@ -39,7 +40,6 @@ typedef enum {
   ACTION_SEND_RPN,            // Registered Parameter Number
   ACTION_SEND_NOTE_ON,
   ACTION_SEND_NOTE_OFF,
-  ACTION_SEND_PC,
   ACTION_SEND_PITCH_BEND,
   ACTION_SEND_AFTERTOUCH,     // Channel aftertouch
   ACTION_SEND_POLY_AFTERTOUCH, // Polyphonic aftertouch
@@ -48,8 +48,7 @@ typedef enum {
   ACTION_SEND_MMC,            // MIDI Machine Control
   
   // Randomization
-  ACTION_RANDOMIZE_CC,        // Randomize single CC
-  ACTION_RANDOMIZE_MULTI,     // Randomize multiple CCs
+  ACTION_RANDOMIZE_CC,        // Randomize one or more CCs (uses multi_random params)
   
   // MIDI System
   ACTION_SEND_CLOCK_START,    // MIDI Clock Start
@@ -59,9 +58,7 @@ typedef enum {
   ACTION_SEND_TUNE_REQUEST,   // Tune Request
   
   // System
-  ACTION_SCREENSAVER_TOGGLE,
   ACTION_CONFIRM_PENDING,     // Confirm pending scene/program change
-  ACTION_CANCEL_PENDING,      // Cancel pending change
   ACTION_ALL_NOTES_OFF,       // Send CC123 (All Notes Off)
   ACTION_ALL_SOUND_OFF,       // Send CC120 (All Sound Off)
   
@@ -93,19 +90,19 @@ typedef struct {
       uint8_t velocity;
     } note;
     
-    // For target actions (program/scene set, 0-127 range)
+    // For scene set (0-127 range)
     struct {
       uint8_t number;
     } target;
     
-    // For preset actions (bank+program, 0-16383 range)
+    // For program set (0-127 or 0-16383 based on bank mode)
     struct {
-      uint16_t preset_number;
-    } preset;
+      uint16_t program;
+    } pc;
     
     // For tempo actions
     struct {
-      uint8_t bpm_delta;      // For nudge (default 1)
+      uint16_t bpm;           // For set_tempo (20-300)
     } tempo;
     
     // For pitch bend
@@ -142,13 +139,11 @@ typedef struct {
       uint8_t command;        // MMC command byte
     } mmc;
     
-    // For multi-randomize
+    // For randomize (one or more CCs, always 0-127 range)
     struct {
       uint8_t num_ccs;
       uint8_t cc_numbers[8];
-      uint8_t min_values[8];
-      uint8_t max_values[8];
-    } multi_random;
+    } randomize;
   } params;
 } action_t;
 
@@ -178,7 +173,9 @@ action_t action_create_program_next(void);
 action_t action_create_program_prev(void);
 action_t action_create_scene_next(void);
 action_t action_create_scene_prev(void);
+action_t action_create_tap(void);
 action_t action_create_tap_tempo(void);
+action_t action_create_set_tempo(uint16_t bpm);
 action_t action_create_transport(action_type_t transport_type);
 action_t action_create_all_notes_off(void);
 action_t action_create_all_sound_off(void);

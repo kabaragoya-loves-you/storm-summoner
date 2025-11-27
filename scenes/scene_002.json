@@ -161,7 +161,7 @@
   ],
   "bump": [
     {
-      "type": "tap_tempo"
+      "type": "tap"
     }
   ],
   "on_load": [

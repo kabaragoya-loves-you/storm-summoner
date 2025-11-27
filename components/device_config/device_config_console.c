@@ -8,7 +8,7 @@
 static const char* TAG = "device_config_console";
 
 static const char* registered_commands[] = {
-  "info", "trs", "mode", "pedal", "custom", "program", "pc_mode", "bank_mode", "save"
+  "info", "trs", "mode", "pedal", "custom", "program", "pc_mode", "bank_mode", "preset_base", "save"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -33,6 +33,8 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "MIDI Channel: %d", cfg->midi_channel);
   ESP_LOGI(TAG, "TRS Type: %s", trs_str);
   ESP_LOGI(TAG, "Bank Mode: %s", bank_mode_str);
+  ESP_LOGI(TAG, "Preset Base: %d (%s)", cfg->preset_base, 
+           cfg->preset_base == 0 ? "0-based" : "1-based");
   
   if (cfg->bank_select_mode != BANK_SELECT_NONE) {
     uint16_t preset = (cfg->current_bank * 128) + cfg->current_program;
@@ -284,6 +286,35 @@ static int cmd_bank_mode(int argc, char **argv) {
   return 0;
 }
 
+// Command: preset_base
+static struct {
+  struct arg_int *base;
+  struct arg_end *end;
+} preset_base_args;
+
+static int cmd_preset_base(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &preset_base_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, preset_base_args.end, argv[0]);
+    return 1;
+  }
+  
+  int base = preset_base_args.base->ival[0];
+  if (base != 0 && base != 1) {
+    ESP_LOGE(TAG, "Invalid base: %d (must be 0 or 1)", base);
+    return 1;
+  }
+  
+  esp_err_t ret = device_config_set_preset_base((uint8_t)base);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set preset base: %s", esp_err_to_name(ret));
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Preset display is now %d-based (PC 0 displays as %d)", base, base);
+  return 0;
+}
+
 esp_err_t device_config_console_init(void) {
   ESP_LOGI(TAG, "Registering device_config commands");
   
@@ -397,6 +428,19 @@ esp_err_t device_config_console_init(void) {
     .argtable = &bank_mode_args
   };
   esp_console_cmd_register(&bank_mode_cmd);
+  
+  // preset_base command
+  preset_base_args.base = arg_int1(NULL, NULL, "<0|1>", "Display base (0 or 1)");
+  preset_base_args.end = arg_end(2);
+  
+  const esp_console_cmd_t preset_base_cmd = {
+    .command = "preset_base",
+    .help = "Set preset display base (0=0-based, 1=1-based for Meris etc)",
+    .hint = NULL,
+    .func = &cmd_preset_base,
+    .argtable = &preset_base_args
+  };
+  esp_console_cmd_register(&preset_base_cmd);
   
   return ESP_OK;
 }

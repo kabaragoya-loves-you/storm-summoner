@@ -8,7 +8,8 @@
 static const char* TAG = "tempo_console";
 
 static const char* registered_commands[] = {
-  "info", "bpm", "tap", "start", "stop", "led_sync", "led_downbeat", "led_ratio", "deadzone",
+  "info", "bpm", "tap", "tap_tempo", "tap_mode", "tap_timeout", "start", "stop", 
+  "led_sync", "led_downbeat", "led_ratio", "deadzone",
   "clock_output", "clock_always", "clock_no_passthrough"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
@@ -33,6 +34,11 @@ static int cmd_info(int argc, char **argv) {
   
   const char* output_names[] = {"None", "USB", "UART", "Both"};
   
+  tap_tempo_mode_t tap_mode = tempo_get_tap_mode();
+  uint8_t tap_timeout = tempo_get_tap_timeout();
+  bool tap_sampling = tempo_is_tap_sampling();
+  const char* tap_mode_names[] = {"toggle", "time", "hold"};
+  
   ESP_LOGI(TAG, "====== TEMPO ======");
   ESP_LOGI(TAG, "BPM: %u", (unsigned)bpm);
   ESP_LOGI(TAG, "Clock source: %s (set by current scene)", source_str);
@@ -41,6 +47,13 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
   ESP_LOGI(TAG, "BPM deadzone: %u (0=off, 1-5=ignore ±N BPM)", (unsigned)deadzone);
   ESP_LOGI(TAG, "Divider: %s", div_str);
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Tap tempo mode: %s", tap_mode_names[tap_mode]);
+  if (tap_mode == TAP_MODE_TIME) {
+    ESP_LOGI(TAG, "  Timeout: %u seconds", (unsigned)tap_timeout);
+  }
+  ESP_LOGI(TAG, "  Session: %s", tap_sampling ? "ACTIVE" : "inactive");
+  ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "LED sync: %s", led_sync ? "enabled" : "disabled");
   if (led_sync) {
     bool emphasize = tempo_get_led_emphasize_downbeat();
@@ -82,8 +95,72 @@ static int cmd_bpm(int argc, char **argv) {
 
 // Command: tap
 static int cmd_tap(int argc, char **argv) {
-  ESP_LOGI(TAG, "Tap tempo event");
-  tempo_tap_event();
+  if (tempo_is_tap_sampling()) {
+    tempo_tap();
+    ESP_LOGI(TAG, "Tap registered");
+  } else {
+    ESP_LOGW(TAG, "Not in tap tempo session - use 'tap_tempo' to start");
+  }
+  return 0;
+}
+
+// Command: tap_tempo (toggle session)
+static int cmd_tap_tempo(int argc, char **argv) {
+  tempo_tap_session_toggle();
+  return 0;
+}
+
+// Command: tap_mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} tap_mode_args;
+
+static int cmd_tap_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &tap_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, tap_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode_str = tap_mode_args.mode->sval[0];
+  tap_tempo_mode_t mode;
+  
+  if (strcmp(mode_str, "toggle") == 0) {
+    mode = TAP_MODE_TOGGLE;
+  } else if (strcmp(mode_str, "time") == 0) {
+    mode = TAP_MODE_TIME;
+  } else if (strcmp(mode_str, "hold") == 0) {
+    mode = TAP_MODE_HOLD;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode. Use: toggle, time, or hold");
+    return 1;
+  }
+  
+  tempo_set_tap_mode(mode);
+  return 0;
+}
+
+// Command: tap_timeout
+static struct {
+  struct arg_int *seconds;
+  struct arg_end *end;
+} tap_timeout_args;
+
+static int cmd_tap_timeout(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &tap_timeout_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, tap_timeout_args.end, argv[0]);
+    return 1;
+  }
+  
+  int sec = tap_timeout_args.seconds->ival[0];
+  if (sec < 1 || sec > 60) {
+    ESP_LOGE(TAG, "Timeout must be 1-60 seconds");
+    return 1;
+  }
+  
+  tempo_set_tap_timeout((uint8_t)sec);
   return 0;
 }
 
@@ -300,11 +377,46 @@ esp_err_t tempo_console_init(void) {
   // tap command
   const esp_console_cmd_t tap_cmd = {
     .command = "tap",
-    .help = "Tap tempo",
+    .help = "Send a single tap (must be in tap tempo session)",
     .hint = NULL,
     .func = &cmd_tap,
   };
   esp_console_cmd_register(&tap_cmd);
+  
+  // tap_tempo command
+  const esp_console_cmd_t tap_tempo_cmd = {
+    .command = "tap_tempo",
+    .help = "Toggle tap tempo session",
+    .hint = NULL,
+    .func = &cmd_tap_tempo,
+  };
+  esp_console_cmd_register(&tap_tempo_cmd);
+  
+  // tap_mode command
+  tap_mode_args.mode = arg_str1(NULL, NULL, "<toggle|time|hold>", "Session mode");
+  tap_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t tap_mode_cmd = {
+    .command = "tap_mode",
+    .help = "Set tap tempo session mode",
+    .hint = NULL,
+    .func = &cmd_tap_mode,
+    .argtable = &tap_mode_args
+  };
+  esp_console_cmd_register(&tap_mode_cmd);
+  
+  // tap_timeout command
+  tap_timeout_args.seconds = arg_int1(NULL, NULL, "<1-60>", "Timeout in seconds");
+  tap_timeout_args.end = arg_end(2);
+  
+  const esp_console_cmd_t tap_timeout_cmd = {
+    .command = "tap_timeout",
+    .help = "Set tap tempo timeout for TIME mode (default 10s)",
+    .hint = NULL,
+    .func = &cmd_tap_timeout,
+    .argtable = &tap_timeout_args
+  };
+  esp_console_cmd_register(&tap_timeout_cmd);
   
   // start command
   const esp_console_cmd_t start_cmd = {

@@ -51,19 +51,50 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
     case ACTION_SEND_NOTE_OFF:
       snprintf(buf, buf_size, "Note Off %d", action->params.note.note);
       break;
-    case ACTION_SEND_PC:
-      snprintf(buf, buf_size, "PC %d", action->params.target.number);
-      break;
-    case ACTION_RANDOMIZE_CC:
-      snprintf(buf, buf_size, "Randomize CC%d", action->params.cc.cc_number);
-      break;
-    case ACTION_RANDOMIZE_MULTI: {
-      int pos = snprintf(buf, buf_size, "Randomize CCs:");
-      for (int i = 0; i < action->params.multi_random.num_ccs && pos < (int)buf_size - 4; i++) {
-        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "", action->params.multi_random.cc_numbers[i]);
+    case ACTION_RANDOMIZE_CC: {
+      int pos = snprintf(buf, buf_size, "Randomize CC");
+      for (int i = 0; i < action->params.randomize.num_ccs && pos < (int)buf_size - 4; i++) {
+        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "", action->params.randomize.cc_numbers[i]);
       }
       break;
     }
+    case ACTION_PROGRAM_SET:
+      snprintf(buf, buf_size, "PC %d", action->params.pc.program);
+      break;
+    case ACTION_SCENE_SET:
+      snprintf(buf, buf_size, "Scene %d", action->params.target.number);
+      break;
+    case ACTION_SET_TEMPO:
+      snprintf(buf, buf_size, "Tempo %d BPM", action->params.tempo.bpm);
+      break;
+    case ACTION_SEND_PITCH_BEND:
+      snprintf(buf, buf_size, "Bend %d", action->params.pitch_bend.value);
+      break;
+    case ACTION_SEND_AFTERTOUCH:
+      snprintf(buf, buf_size, "Aftertouch %d", action->params.aftertouch.pressure);
+      break;
+    case ACTION_SEND_POLY_AFTERTOUCH:
+      snprintf(buf, buf_size, "PolyAT n%d p%d", action->params.aftertouch.note, action->params.aftertouch.pressure);
+      break;
+    case ACTION_SEND_DOUBLE_CC:
+      snprintf(buf, buf_size, "14bit CC%d/%d=%d", action->params.double_cc.msb_cc, 
+               action->params.double_cc.lsb_cc, action->params.double_cc.value);
+      break;
+    case ACTION_SEND_NRPN:
+      snprintf(buf, buf_size, "NRPN %d=%d", action->params.nrpn.parameter, action->params.nrpn.value);
+      break;
+    case ACTION_SEND_RPN:
+      snprintf(buf, buf_size, "RPN %d=%d", action->params.nrpn.parameter, action->params.nrpn.value);
+      break;
+    case ACTION_SEND_SONG_SELECT:
+      snprintf(buf, buf_size, "Song %d", action->params.target.number);
+      break;
+    case ACTION_SEND_SONG_POSITION:
+      snprintf(buf, buf_size, "SongPos %d", action->params.song_pos.position);
+      break;
+    case ACTION_SEND_MMC:
+      snprintf(buf, buf_size, "MMC %d", action->params.mmc.command);
+      break;
     default:
       // For actions without parameters, just use the action name
       snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
@@ -514,11 +545,11 @@ static int cmd_pad(int argc, char **argv) {
   }
   else if (strcmp(action_str, "pc") == 0) {
     if (pad_args.param1->count < 1) {
-      ESP_LOGE(TAG, "Usage: pad <num> pc <program_number>");
+      ESP_LOGE(TAG, "Usage: pad <num> pc <program> (0-127 or 0-16383 with bank mode)");
       return 1;
     }
-    action.type = ACTION_SEND_PC;
-    action.params.target.number = pad_args.param1->ival[0];
+    action.type = ACTION_PROGRAM_SET;
+    action.params.pc.program = pad_args.param1->ival[0];
   }
   else if (strcmp(action_str, "randomize") == 0) {
     if (pad_args.param1->count < 1) {
@@ -526,30 +557,17 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    // Check if multiple CCs specified (via params array)
-    if (pad_args.params->count > 0) {
-      // Multi-CC randomize: param1 is first CC, params are additional CCs
-      action.type = ACTION_RANDOMIZE_MULTI;
-      action.params.multi_random.num_ccs = 0;
-      
-      // First CC from param1
-      action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param1->ival[0];
-      action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
-      action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
-      action.params.multi_random.num_ccs++;
-      
-      // Additional CCs from params array
-      for (int i = 0; i < pad_args.params->count && action.params.multi_random.num_ccs < 8; i++) {
-        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.params->ival[i];
-        action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
-        action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
-        action.params.multi_random.num_ccs++;
-      }
-      ESP_LOGI(TAG, "Multi-randomize %d CCs", action.params.multi_random.num_ccs);
-    } else {
-      action.type = ACTION_RANDOMIZE_CC;
-      action.params.cc.cc_number = pad_args.param1->ival[0];
+    action.type = ACTION_RANDOMIZE_CC;
+    action.params.randomize.num_ccs = 0;
+    
+    // First CC from param1
+    action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = pad_args.param1->ival[0];
+    
+    // Additional CCs from params array
+    for (int i = 0; i < pad_args.params->count && action.params.randomize.num_ccs < 8; i++) {
+      action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = pad_args.params->ival[i];
     }
+    ESP_LOGI(TAG, "Randomize %d CCs", action.params.randomize.num_ccs);
   }
   else if (strcmp(action_str, "cc_cycle") == 0) {
     if (pad_args.param1->count < 1 || pad_args.params->count < 2) {
@@ -568,8 +586,24 @@ static int cmd_pad(int argc, char **argv) {
     action.params.cc.current_index = 0;
     ESP_LOGI(TAG, "CC%d cycle with %d values", action.params.cc.cc_number, action.params.cc.num_values);
   }
+  else if (strcmp(action_str, "tap") == 0) {
+    action = action_create_tap();
+  }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
+  }
+  else if (strcmp(action_str, "set_tempo") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> set_tempo <bpm>");
+      return 1;
+    }
+    action = action_create_set_tempo(pad_args.param1->ival[0]);
+  }
+  else if (strcmp(action_str, "tempo_inc") == 0) {
+    action.type = ACTION_TEMPO_INC;
+  }
+  else if (strcmp(action_str, "tempo_dec") == 0) {
+    action.type = ACTION_TEMPO_DEC;
   }
   else if (strcmp(action_str, "transport_play") == 0) {
     action = action_create_transport(ACTION_TRANSPORT_PLAY);
@@ -595,9 +629,6 @@ static int cmd_pad(int argc, char **argv) {
   else if (strcmp(action_str, "confirm_pending") == 0) {
     action.type = ACTION_CONFIRM_PENDING;
   }
-  else if (strcmp(action_str, "cancel_pending") == 0) {
-    action.type = ACTION_CANCEL_PENDING;
-  }
   else if (strcmp(action_str, "all_notes_off") == 0) {
     action = action_create_all_notes_off();
   }
@@ -609,6 +640,118 @@ static int cmd_pad(int argc, char **argv) {
   }
   else if (strcmp(action_str, "sostenuto") == 0) {
     action = action_create_sostenuto();
+  }
+  // Transport (additional)
+  else if (strcmp(action_str, "transport_pause") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_PAUSE);
+  }
+  else if (strcmp(action_str, "transport_record") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_RECORD);
+  }
+  // Scene set
+  else if (strcmp(action_str, "scene_set") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> scene_set <1-128>");
+      return 1;
+    }
+    action.type = ACTION_SCENE_SET;
+    action.params.target.number = pad_args.param1->ival[0];
+  }
+  // MIDI System messages
+  else if (strcmp(action_str, "clock_start") == 0) {
+    action.type = ACTION_SEND_CLOCK_START;
+  }
+  else if (strcmp(action_str, "clock_stop") == 0) {
+    action.type = ACTION_SEND_CLOCK_STOP;
+  }
+  else if (strcmp(action_str, "clock_continue") == 0) {
+    action.type = ACTION_SEND_CLOCK_CONTINUE;
+  }
+  else if (strcmp(action_str, "reset") == 0) {
+    action.type = ACTION_SEND_RESET;
+  }
+  else if (strcmp(action_str, "tune_request") == 0) {
+    action.type = ACTION_SEND_TUNE_REQUEST;
+  }
+  // Song messages
+  else if (strcmp(action_str, "song_select") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> song_select <0-127>");
+      return 1;
+    }
+    action.type = ACTION_SEND_SONG_SELECT;
+    action.params.target.number = pad_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "song_position") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> song_position <0-16383>");
+      return 1;
+    }
+    action.type = ACTION_SEND_SONG_POSITION;
+    action.params.song_pos.position = pad_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "mmc") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> mmc <command>");
+      return 1;
+    }
+    action.type = ACTION_SEND_MMC;
+    action.params.mmc.command = pad_args.param1->ival[0];
+  }
+  // Expression messages
+  else if (strcmp(action_str, "pitch_bend") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> pitch_bend <-8192 to 8191>");
+      return 1;
+    }
+    action.type = ACTION_SEND_PITCH_BEND;
+    action.params.pitch_bend.value = pad_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "aftertouch") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> aftertouch <0-127>");
+      return 1;
+    }
+    action.type = ACTION_SEND_AFTERTOUCH;
+    action.params.aftertouch.pressure = pad_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "poly_aftertouch") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> poly_aftertouch <note> <pressure>");
+      return 1;
+    }
+    action.type = ACTION_SEND_POLY_AFTERTOUCH;
+    action.params.aftertouch.note = pad_args.param1->ival[0];
+    action.params.aftertouch.pressure = pad_args.params->ival[0];
+  }
+  // 14-bit MIDI
+  else if (strcmp(action_str, "double_cc") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: pad <num> double_cc <msb_cc> <lsb_cc> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_DOUBLE_CC;
+    action.params.double_cc.msb_cc = pad_args.param1->ival[0];
+    action.params.double_cc.lsb_cc = pad_args.params->ival[0];
+    action.params.double_cc.value = pad_args.params->ival[1];
+  }
+  else if (strcmp(action_str, "nrpn") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> nrpn <param> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NRPN;
+    action.params.nrpn.parameter = pad_args.param1->ival[0];
+    action.params.nrpn.value = pad_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "rpn") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> rpn <param> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_RPN;
+    action.params.nrpn.parameter = pad_args.param1->ival[0];
+    action.params.nrpn.value = pad_args.params->ival[0];
   }
   else {
     ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
@@ -675,8 +818,24 @@ static int cmd_button(int argc, char **argv) {
     }
     action.params.cc.current_index = 0;
   }
+  else if (strcmp(action_str, "tap") == 0) {
+    action = action_create_tap();
+  }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
+  }
+  else if (strcmp(action_str, "set_tempo") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> set_tempo <bpm>");
+      return 1;
+    }
+    action = action_create_set_tempo(button_args.param1->ival[0]);
+  }
+  else if (strcmp(action_str, "tempo_inc") == 0) {
+    action.type = ACTION_TEMPO_INC;
+  }
+  else if (strcmp(action_str, "tempo_dec") == 0) {
+    action.type = ACTION_TEMPO_DEC;
   }
   else if (strcmp(action_str, "program_next") == 0) {
     action = action_create_program_next();
@@ -693,8 +852,161 @@ static int cmd_button(int argc, char **argv) {
   else if (strcmp(action_str, "confirm_pending") == 0) {
     action.type = ACTION_CONFIRM_PENDING;
   }
-  else if (strcmp(action_str, "cancel_pending") == 0) {
-    action.type = ACTION_CANCEL_PENDING;
+  else if (strcmp(action_str, "all_notes_off") == 0) {
+    action = action_create_all_notes_off();
+  }
+  else if (strcmp(action_str, "all_sound_off") == 0) {
+    action = action_create_all_sound_off();
+  }
+  else if (strcmp(action_str, "sustain") == 0) {
+    action = action_create_sustain();
+  }
+  else if (strcmp(action_str, "sostenuto") == 0) {
+    action = action_create_sostenuto();
+  }
+  else if (strcmp(action_str, "transport_pause") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_PAUSE);
+  }
+  else if (strcmp(action_str, "transport_record") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_RECORD);
+  }
+  else if (strcmp(action_str, "scene_set") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> scene_set <1-128>");
+      return 1;
+    }
+    action.type = ACTION_SCENE_SET;
+    action.params.target.number = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "clock_start") == 0) {
+    action.type = ACTION_SEND_CLOCK_START;
+  }
+  else if (strcmp(action_str, "clock_stop") == 0) {
+    action.type = ACTION_SEND_CLOCK_STOP;
+  }
+  else if (strcmp(action_str, "clock_continue") == 0) {
+    action.type = ACTION_SEND_CLOCK_CONTINUE;
+  }
+  else if (strcmp(action_str, "reset") == 0) {
+    action.type = ACTION_SEND_RESET;
+  }
+  else if (strcmp(action_str, "tune_request") == 0) {
+    action.type = ACTION_SEND_TUNE_REQUEST;
+  }
+  else if (strcmp(action_str, "song_select") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> song_select <0-127>");
+      return 1;
+    }
+    action.type = ACTION_SEND_SONG_SELECT;
+    action.params.target.number = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "song_position") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> song_position <0-16383>");
+      return 1;
+    }
+    action.type = ACTION_SEND_SONG_POSITION;
+    action.params.song_pos.position = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "mmc") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> mmc <command>");
+      return 1;
+    }
+    action.type = ACTION_SEND_MMC;
+    action.params.mmc.command = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "pitch_bend") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> pitch_bend <-8192 to 8191>");
+      return 1;
+    }
+    action.type = ACTION_SEND_PITCH_BEND;
+    action.params.pitch_bend.value = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "aftertouch") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> aftertouch <0-127>");
+      return 1;
+    }
+    action.type = ACTION_SEND_AFTERTOUCH;
+    action.params.aftertouch.pressure = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "poly_aftertouch") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> poly_aftertouch <note> <pressure>");
+      return 1;
+    }
+    action.type = ACTION_SEND_POLY_AFTERTOUCH;
+    action.params.aftertouch.note = button_args.param1->ival[0];
+    action.params.aftertouch.pressure = button_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "double_cc") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: button <name> double_cc <msb_cc> <lsb_cc> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_DOUBLE_CC;
+    action.params.double_cc.msb_cc = button_args.param1->ival[0];
+    action.params.double_cc.lsb_cc = button_args.params->ival[0];
+    action.params.double_cc.value = button_args.params->ival[1];
+  }
+  else if (strcmp(action_str, "nrpn") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> nrpn <param> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NRPN;
+    action.params.nrpn.parameter = button_args.param1->ival[0];
+    action.params.nrpn.value = button_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "rpn") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> rpn <param> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_RPN;
+    action.params.nrpn.parameter = button_args.param1->ival[0];
+    action.params.nrpn.value = button_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "note_on") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> note_on <note> <velocity>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_ON;
+    action.params.note.note = button_args.param1->ival[0];
+    action.params.note.velocity = button_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "note_off") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> note_off <note>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_OFF;
+    action.params.note.note = button_args.param1->ival[0];
+    action.params.note.velocity = 0;
+  }
+  else if (strcmp(action_str, "pc") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> pc <program> (0-127 or 0-16383 with bank mode)");
+      return 1;
+    }
+    action.type = ACTION_PROGRAM_SET;
+    action.params.pc.program = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "randomize") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> randomize <cc_num> [cc2] ...");
+      return 1;
+    }
+    action.type = ACTION_RANDOMIZE_CC;
+    action.params.randomize.num_ccs = 0;
+    action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = button_args.param1->ival[0];
+    for (int i = 0; i < button_args.params->count && action.params.randomize.num_ccs < 8; i++) {
+      action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = button_args.params->ival[i];
+    }
   }
   else {
     ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
@@ -774,8 +1086,24 @@ static int cmd_bump(int argc, char **argv) {
     }
     action.params.cc.current_index = 0;
   }
+  else if (strcmp(action_str, "tap") == 0) {
+    action = action_create_tap();
+  }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
+  }
+  else if (strcmp(action_str, "set_tempo") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump set_tempo <bpm>");
+      return 1;
+    }
+    action = action_create_set_tempo(bump_args.param1->ival[0]);
+  }
+  else if (strcmp(action_str, "tempo_inc") == 0) {
+    action.type = ACTION_TEMPO_INC;
+  }
+  else if (strcmp(action_str, "tempo_dec") == 0) {
+    action.type = ACTION_TEMPO_DEC;
   }
   else if (strcmp(action_str, "program_next") == 0) {
     action = action_create_program_next();
@@ -792,8 +1120,164 @@ static int cmd_bump(int argc, char **argv) {
   else if (strcmp(action_str, "confirm_pending") == 0) {
     action.type = ACTION_CONFIRM_PENDING;
   }
-  else if (strcmp(action_str, "cancel_pending") == 0) {
-    action.type = ACTION_CANCEL_PENDING;
+  else if (strcmp(action_str, "all_notes_off") == 0) {
+    action = action_create_all_notes_off();
+  }
+  else if (strcmp(action_str, "all_sound_off") == 0) {
+    action = action_create_all_sound_off();
+  }
+  else if (strcmp(action_str, "sustain") == 0) {
+    action = action_create_sustain();
+  }
+  else if (strcmp(action_str, "sostenuto") == 0) {
+    action = action_create_sostenuto();
+  }
+  else if (strcmp(action_str, "transport_toggle") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_TOGGLE);
+  }
+  else if (strcmp(action_str, "transport_pause") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_PAUSE);
+  }
+  else if (strcmp(action_str, "transport_record") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_RECORD);
+  }
+  else if (strcmp(action_str, "scene_set") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump scene_set <1-128>");
+      return 1;
+    }
+    action.type = ACTION_SCENE_SET;
+    action.params.target.number = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "clock_start") == 0) {
+    action.type = ACTION_SEND_CLOCK_START;
+  }
+  else if (strcmp(action_str, "clock_stop") == 0) {
+    action.type = ACTION_SEND_CLOCK_STOP;
+  }
+  else if (strcmp(action_str, "clock_continue") == 0) {
+    action.type = ACTION_SEND_CLOCK_CONTINUE;
+  }
+  else if (strcmp(action_str, "reset") == 0) {
+    action.type = ACTION_SEND_RESET;
+  }
+  else if (strcmp(action_str, "tune_request") == 0) {
+    action.type = ACTION_SEND_TUNE_REQUEST;
+  }
+  else if (strcmp(action_str, "song_select") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump song_select <0-127>");
+      return 1;
+    }
+    action.type = ACTION_SEND_SONG_SELECT;
+    action.params.target.number = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "song_position") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump song_position <0-16383>");
+      return 1;
+    }
+    action.type = ACTION_SEND_SONG_POSITION;
+    action.params.song_pos.position = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "mmc") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump mmc <command>");
+      return 1;
+    }
+    action.type = ACTION_SEND_MMC;
+    action.params.mmc.command = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "pitch_bend") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump pitch_bend <-8192 to 8191>");
+      return 1;
+    }
+    action.type = ACTION_SEND_PITCH_BEND;
+    action.params.pitch_bend.value = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "aftertouch") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump aftertouch <0-127>");
+      return 1;
+    }
+    action.type = ACTION_SEND_AFTERTOUCH;
+    action.params.aftertouch.pressure = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "poly_aftertouch") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump poly_aftertouch <note> <pressure>");
+      return 1;
+    }
+    action.type = ACTION_SEND_POLY_AFTERTOUCH;
+    action.params.aftertouch.note = bump_args.param1->ival[0];
+    action.params.aftertouch.pressure = bump_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "double_cc") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: bump double_cc <msb_cc> <lsb_cc> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_DOUBLE_CC;
+    action.params.double_cc.msb_cc = bump_args.param1->ival[0];
+    action.params.double_cc.lsb_cc = bump_args.params->ival[0];
+    action.params.double_cc.value = bump_args.params->ival[1];
+  }
+  else if (strcmp(action_str, "nrpn") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump nrpn <param> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NRPN;
+    action.params.nrpn.parameter = bump_args.param1->ival[0];
+    action.params.nrpn.value = bump_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "rpn") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump rpn <param> <value>");
+      return 1;
+    }
+    action.type = ACTION_SEND_RPN;
+    action.params.nrpn.parameter = bump_args.param1->ival[0];
+    action.params.nrpn.value = bump_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "note_on") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump note_on <note> <velocity>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_ON;
+    action.params.note.note = bump_args.param1->ival[0];
+    action.params.note.velocity = bump_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "note_off") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump note_off <note>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_OFF;
+    action.params.note.note = bump_args.param1->ival[0];
+    action.params.note.velocity = 0;
+  }
+  else if (strcmp(action_str, "pc") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump pc <program> (0-127 or 0-16383 with bank mode)");
+      return 1;
+    }
+    action.type = ACTION_PROGRAM_SET;
+    action.params.pc.program = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "randomize") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump randomize <cc_num> [cc2] ...");
+      return 1;
+    }
+    action.type = ACTION_RANDOMIZE_CC;
+    action.params.randomize.num_ccs = 0;
+    action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = bump_args.param1->ival[0];
+    for (int i = 0; i < bump_args.params->count && action.params.randomize.num_ccs < 8; i++) {
+      action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = bump_args.params->ival[i];
+    }
   }
   else if (strcmp(action_str, "none") == 0) {
     // Clear bump assignment
@@ -825,43 +1309,56 @@ static int cmd_bump(int argc, char **argv) {
 static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "Available action types for pad/button/bump commands:");
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "MIDI Output:");
-  ESP_LOGI(TAG, "  cc <cc_num> <value>              - Send CC on press (one-shot)");
-  ESP_LOGI(TAG, "  cc_hold <cc> <press> <release>   - Send press value, then release value");
-  ESP_LOGI(TAG, "  cc_cycle <cc> <v1> <v2> ... <v8> - Cycle through 2-8 values each press");
+  ESP_LOGI(TAG, "MIDI CC:");
+  ESP_LOGI(TAG, "  cc <cc> <value>                  - Send CC on press (one-shot)");
+  ESP_LOGI(TAG, "  cc_hold <cc> <press> <release>   - Send press val, release val");
+  ESP_LOGI(TAG, "  cc_cycle <cc> <v1> <v2>...<v8>   - Cycle through 2-8 values");
+  ESP_LOGI(TAG, "  randomize <cc> [cc2]...[cc8]     - Randomize 1-8 CCs (0-127)");
+  ESP_LOGI(TAG, "  double_cc <msb> <lsb> <val>      - 14-bit CC (msb/lsb pair)");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "MIDI Notes:");
   ESP_LOGI(TAG, "  note_on <note> <velocity>        - Send Note On");
   ESP_LOGI(TAG, "  note_off <note>                  - Send Note Off");
-  ESP_LOGI(TAG, "  pc <program>                     - Send Program Change");
-  ESP_LOGI(TAG, "  randomize <cc> [cc2] [cc3]       - Randomize one or more CCs");
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Control:");
-  ESP_LOGI(TAG, "  program_next                     - Next program");
-  ESP_LOGI(TAG, "  program_prev                     - Previous program");
-  ESP_LOGI(TAG, "  scene_next                       - Next scene");
-  ESP_LOGI(TAG, "  scene_prev                       - Previous scene");
-  ESP_LOGI(TAG, "  confirm_pending                  - Confirm pending program/scene change");
-  ESP_LOGI(TAG, "  cancel_pending                   - Cancel pending change");
+  ESP_LOGI(TAG, "Program/Scene:");
+  ESP_LOGI(TAG, "  pc <program>                     - Program change (0-127 or 0-16383)");
+  ESP_LOGI(TAG, "  program_next / program_prev      - Inc/dec program");
+  ESP_LOGI(TAG, "  scene_next / scene_prev          - Inc/dec scene");
+  ESP_LOGI(TAG, "  scene_set <1-128>                - Set specific scene");
+  ESP_LOGI(TAG, "  confirm_pending                  - Confirm pending change");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Tempo:");
-  ESP_LOGI(TAG, "  tap_tempo                        - Tap tempo");
+  ESP_LOGI(TAG, "  tap                              - Single tap (for tap tempo)");
+  ESP_LOGI(TAG, "  tap_tempo                        - Toggle tap tempo session");
+  ESP_LOGI(TAG, "  set_tempo <bpm>                  - Set tempo (20-300)");
+  ESP_LOGI(TAG, "  tempo_inc / tempo_dec            - +/- 1 BPM");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Transport:");
-  ESP_LOGI(TAG, "  transport_play                   - Start transport");
-  ESP_LOGI(TAG, "  transport_stop                   - Stop transport");
-  ESP_LOGI(TAG, "  transport_toggle                 - Toggle play/stop");
+  ESP_LOGI(TAG, "  transport_play/stop/toggle       - Transport control");
+  ESP_LOGI(TAG, "  transport_pause / transport_record");
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "System:");
-  ESP_LOGI(TAG, "  all_notes_off                    - Send All Notes Off (CC123)");
-  ESP_LOGI(TAG, "  all_sound_off                    - Send All Sound Off (CC120)");
-  ESP_LOGI(TAG, "  sustain                          - Sustain pedal (CC64)");
-  ESP_LOGI(TAG, "  sostenuto                        - Sostenuto pedal (CC66)");
+  ESP_LOGI(TAG, "Expression:");
+  ESP_LOGI(TAG, "  pitch_bend <-8192..8191>         - Pitch bend");
+  ESP_LOGI(TAG, "  aftertouch <0-127>               - Channel pressure");
+  ESP_LOGI(TAG, "  poly_aftertouch <note> <press>   - Polyphonic aftertouch");
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Examples:");
-  ESP_LOGI(TAG, "  pad 0 cc 74 127                  - Filter cutoff on pad 0");
-  ESP_LOGI(TAG, "  pad 1 randomize 74 72 76         - Randomize 3 CCs on pad 1");
-  ESP_LOGI(TAG, "  pad 8 confirm_pending            - Confirm on pad 8");
-  ESP_LOGI(TAG, "  button left tap_tempo            - Tap with left button");
-  ESP_LOGI(TAG, "  button both confirm_pending      - Confirm with both buttons");
+  ESP_LOGI(TAG, "14-bit / RPN / NRPN:");
+  ESP_LOGI(TAG, "  nrpn <param> <value>             - Send NRPN (0-16383)");
+  ESP_LOGI(TAG, "  rpn <param> <value>              - Send RPN (0-16383)");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Song/System:");
+  ESP_LOGI(TAG, "  song_select <0-127>              - Song Select");
+  ESP_LOGI(TAG, "  song_position <0-16383>          - Song Position");
+  ESP_LOGI(TAG, "  mmc <command>                    - MMC command");
+  ESP_LOGI(TAG, "  clock_start/stop/continue        - MIDI clock control");
+  ESP_LOGI(TAG, "  reset                            - System Reset");
+  ESP_LOGI(TAG, "  tune_request                     - Tune Request");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Utility:");
+  ESP_LOGI(TAG, "  all_notes_off                    - CC123");
+  ESP_LOGI(TAG, "  all_sound_off                    - CC120");
+  ESP_LOGI(TAG, "  sustain / sostenuto              - CC64 / CC66");
+  ESP_LOGI(TAG, "  none                             - Clear assignment (bump only)");
   
   return 0;
 }

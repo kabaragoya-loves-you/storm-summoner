@@ -17,8 +17,7 @@ static const char* action_type_names[] = {
   [ACTION_NONE] = "None",
   [ACTION_PROGRAM_NEXT] = "Program Next",
   [ACTION_PROGRAM_PREV] = "Program Prev",
-  [ACTION_PROGRAM_SET] = "Program Set",
-  [ACTION_PROGRAM_BANK_SET] = "Program Bank Set",
+  [ACTION_PROGRAM_SET] = "PC",
   [ACTION_SCENE_NEXT] = "Scene Next",
   [ACTION_SCENE_PREV] = "Scene Prev",
   [ACTION_SCENE_SET] = "Scene Set",
@@ -27,17 +26,17 @@ static const char* action_type_names[] = {
   [ACTION_TRANSPORT_PAUSE] = "Transport Pause",
   [ACTION_TRANSPORT_RECORD] = "Transport Record",
   [ACTION_TRANSPORT_TOGGLE] = "Transport Toggle",
+  [ACTION_TAP] = "Tap",
   [ACTION_TAP_TEMPO] = "Tap Tempo",
-  [ACTION_TEMPO_NUDGE_UP] = "Tempo Nudge Up",
-  [ACTION_TEMPO_NUDGE_DOWN] = "Tempo Nudge Down",
+  [ACTION_SET_TEMPO] = "Set Tempo",
+  [ACTION_TEMPO_INC] = "Tempo +1",
+  [ACTION_TEMPO_DEC] = "Tempo -1",
   [ACTION_SEND_CC] = "Send CC",
   [ACTION_SEND_CC_HOLD] = "CC Hold",
   [ACTION_SEND_CC_CYCLE] = "CC Cycle",
   [ACTION_SEND_NOTE_ON] = "Note On",
   [ACTION_SEND_NOTE_OFF] = "Note Off",
-  [ACTION_SEND_PC] = "Send PC",
   [ACTION_RANDOMIZE_CC] = "Randomize CC",
-  [ACTION_RANDOMIZE_MULTI] = "Randomize Multi",
   [ACTION_SEND_DOUBLE_CC] = "Send 14-bit CC",
   [ACTION_SEND_NRPN] = "Send NRPN",
   [ACTION_SEND_RPN] = "Send RPN",
@@ -52,9 +51,7 @@ static const char* action_type_names[] = {
   [ACTION_SEND_CLOCK_CONTINUE] = "MIDI Continue",
   [ACTION_SEND_RESET] = "System Reset",
   [ACTION_SEND_TUNE_REQUEST] = "Tune Request",
-  [ACTION_SCREENSAVER_TOGGLE] = "Screensaver Toggle",
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
-  [ACTION_CANCEL_PENDING] = "Cancel Pending",
   [ACTION_ALL_NOTES_OFF] = "All Notes Off",
   [ACTION_ALL_SOUND_OFF] = "All Sound Off",
   [ACTION_SUSTAIN] = "Sustain",
@@ -98,17 +95,16 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       break;
       
     case ACTION_PROGRAM_SET:
-      if (is_press) device_config_set_program(action->params.target.number);
-      break;
-      
-    case ACTION_PROGRAM_BANK_SET:
       if (is_press) {
-        // Send bank select + program change for presets > 127
-        // Uses the current bank_select_mode setting
-        uint16_t preset = action->params.preset.preset_number;
-        device_config_set_preset(preset);
-        ESP_LOGI(TAG, "Set preset %u (bank %d, program %d)", 
-                 (unsigned)preset, preset / 128, preset % 128);
+        // Smart PC: uses bank mode setting to decide behavior
+        uint16_t program = action->params.pc.program;
+        if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
+          // Bank mode: treat as preset 0-16383
+          device_config_set_preset(program);
+        } else {
+          // No bank: treat as program 0-127
+          device_config_set_program(program & 0x7F);
+        }
       }
       break;
       
@@ -122,7 +118,10 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       break;
       
     case ACTION_SCENE_SET:
-      if (is_press) scene_set_current(action->params.target.number);
+      // Scene numbers are 1-based for users, 0-based internally
+      if (is_press && action->params.target.number >= 1) {
+        scene_set_current(action->params.target.number - 1);
+      }
       break;
       
     // Transport
@@ -147,23 +146,45 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       break;
       
     // Tempo
-    case ACTION_TAP_TEMPO:
-      if (is_press) tempo_tap_event();
+    case ACTION_TAP:
+      if (is_press) tempo_tap();
       break;
       
-    case ACTION_TEMPO_NUDGE_UP:
+    case ACTION_TAP_TEMPO:
+      // Toggle tap tempo session based on mode
       if (is_press) {
-        uint8_t delta = action->params.tempo.bpm_delta ? action->params.tempo.bpm_delta : 1;
-        uint16_t current_bpm = tempo_get_bpm();
-        tempo_set_bpm(current_bpm + delta);
+        tap_tempo_mode_t mode = tempo_get_tap_mode();
+        if (mode == TAP_MODE_HOLD) {
+          tempo_tap_session_start();
+        } else {
+          // Toggle or Time mode - toggle on press
+          tempo_tap_session_toggle();
+        }
+      } else {
+        // Release - only matters for HOLD mode
+        if (tempo_get_tap_mode() == TAP_MODE_HOLD) {
+          tempo_tap_session_stop();
+        }
       }
       break;
       
-    case ACTION_TEMPO_NUDGE_DOWN:
+    case ACTION_SET_TEMPO:
+      if (is_press && action->params.tempo.bpm > 0) {
+        tempo_set_bpm(action->params.tempo.bpm);
+      }
+      break;
+      
+    case ACTION_TEMPO_INC:
       if (is_press) {
-        uint8_t delta = action->params.tempo.bpm_delta ? action->params.tempo.bpm_delta : 1;
-        uint16_t current_bpm = tempo_get_bpm();
-        if (current_bpm > delta) tempo_set_bpm(current_bpm - delta);
+        uint16_t bpm = tempo_get_bpm();
+        if (bpm < 300) tempo_set_bpm(bpm + 1);
+      }
+      break;
+      
+    case ACTION_TEMPO_DEC:
+      if (is_press) {
+        uint16_t bpm = tempo_get_bpm();
+        if (bpm > 20) tempo_set_bpm(bpm - 1);
       }
       break;
       
@@ -213,13 +234,6 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       if (!is_press) {
         send_note_off(channel, action->params.note.note, 0);
         ESP_LOGD(TAG, "Note Off: %d", action->params.note.note);
-      }
-      break;
-      
-    case ACTION_SEND_PC:
-      if (is_press) {
-        send_program_change(channel, action->params.target.number);
-        ESP_LOGD(TAG, "Sent PC %d", action->params.target.number);
       }
       break;
       
@@ -329,37 +343,17 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
     // Randomization
     case ACTION_RANDOMIZE_CC:
       if (is_press) {
-        uint8_t random_val = esp_random() % 128;
-        send_control_change(channel, action->params.cc.cc_number, random_val);
-        ESP_LOGI(TAG, "Randomized CC%d to %d", action->params.cc.cc_number, random_val);
-      }
-      break;
-      
-    case ACTION_RANDOMIZE_MULTI:
-      if (is_press) {
-        for (int i = 0; i < action->params.multi_random.num_ccs; i++) {
-          uint8_t cc = action->params.multi_random.cc_numbers[i];
-          uint8_t min = action->params.multi_random.min_values[i];
-          uint8_t max = action->params.multi_random.max_values[i];
-          uint8_t range = max - min + 1;
-          uint8_t random_val = min + (esp_random() % range);
+        for (int i = 0; i < action->params.randomize.num_ccs; i++) {
+          uint8_t cc = action->params.randomize.cc_numbers[i];
+          uint8_t random_val = esp_random() % 128;
           send_control_change(channel, cc, random_val);
           ESP_LOGD(TAG, "Randomized CC%d to %d", cc, random_val);
         }
-        ESP_LOGI(TAG, "Randomized %d CCs", action->params.multi_random.num_ccs);
+        ESP_LOGI(TAG, "Randomized %d CCs", action->params.randomize.num_ccs);
       }
       break;
       
     // System
-    case ACTION_SCREENSAVER_TOGGLE:
-      if (is_press) {
-        // Toggle screensaver - check current state and switch
-        // For now just disable/enable (no toggle function exists)
-        ESP_LOGW(TAG, "Screensaver toggle not fully implemented");
-        // TODO: Track screensaver state and toggle
-      }
-      break;
-      
     case ACTION_CONFIRM_PENDING:
       if (is_press) {
         if (scene_get_mode() == SCENE_MODE_SINGLE) {
@@ -370,15 +364,6 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    case ACTION_CANCEL_PENDING:
-      if (is_press) {
-        if (scene_get_mode() == SCENE_MODE_SINGLE) {
-          if (device_config_has_pending_program()) device_config_cancel_pending_program();
-        } else {
-          if (scene_has_pending_change()) scene_cancel_pending();
-        }
-      }
-      break;
       
     case ACTION_ALL_NOTES_OFF:
       if (is_press) {
@@ -474,9 +459,22 @@ action_t action_create_scene_prev(void) {
   return action;
 }
 
+action_t action_create_tap(void) {
+  action_t action = {0};
+  action.type = ACTION_TAP;
+  return action;
+}
+
 action_t action_create_tap_tempo(void) {
   action_t action = {0};
   action.type = ACTION_TAP_TEMPO;
+  return action;
+}
+
+action_t action_create_set_tempo(uint16_t bpm) {
+  action_t action = {0};
+  action.type = ACTION_SET_TEMPO;
+  action.params.tempo.bpm = bpm;
   return action;
 }
 

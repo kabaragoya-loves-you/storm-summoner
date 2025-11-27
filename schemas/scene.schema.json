@@ -281,8 +281,7 @@
             "none",
             "program_next",
             "program_prev",
-            "program_set",
-            "program_bank_set",
+            "pc",
             "scene_next",
             "scene_prev",
             "scene_set",
@@ -291,9 +290,11 @@
             "transport_pause",
             "transport_record",
             "transport_toggle",
+            "tap",
             "tap_tempo",
-            "tempo_nudge_up",
-            "tempo_nudge_down",
+            "set_tempo",
+            "tempo_inc",
+            "tempo_dec",
             "send_cc",
             "send_cc_hold",
             "send_cc_cycle",
@@ -302,7 +303,6 @@
             "send_rpn",
             "send_note_on",
             "send_note_off",
-            "send_pc",
             "send_pitch_bend",
             "send_aftertouch",
             "send_poly_aftertouch",
@@ -310,15 +310,12 @@
             "send_song_position",
             "send_mmc",
             "randomize_cc",
-            "randomize_multi",
             "send_clock_start",
             "send_clock_stop",
             "send_clock_continue",
             "send_reset",
             "send_tune_request",
-            "screensaver_toggle",
             "confirm_pending",
-            "cancel_pending",
             "all_notes_off",
             "all_sound_off",
             "sustain",
@@ -409,7 +406,25 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["program_set", "scene_set", "send_pc", "send_song_select"]}
+              "type": {"const": "scene_set"}
+            }
+          },
+          "then": {
+            "required": ["number"],
+            "properties": {
+              "number": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 128,
+                "description": "Scene number (1-128)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "send_song_select"}
             }
           },
           "then": {
@@ -419,7 +434,7 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 127,
-                "description": "Program or scene number (0-127)"
+                "description": "Song number (0-127)"
               }
             }
           }
@@ -427,7 +442,7 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "program_bank_set"}
+              "type": {"const": "pc"}
             }
           },
           "then": {
@@ -437,7 +452,7 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 16383,
-                "description": "Preset number (0-16383, bank = number/128, program = number%128)"
+                "description": "Program number (0-127 without bank, 0-16383 with bank mode)"
               }
             }
           }
@@ -469,47 +484,22 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "randomize_multi"}
+              "type": {"const": "randomize_cc"}
             }
           },
           "then": {
-            "required": ["num_ccs", "cc_numbers", "min_values", "max_values"],
+            "required": ["cc_numbers"],
             "properties": {
-              "num_ccs": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 8,
-                "description": "Number of CCs to randomize"
-              },
               "cc_numbers": {
                 "type": "array",
+                "minItems": 1,
                 "maxItems": 8,
                 "items": {
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 127
                 },
-                "description": "CC numbers to randomize"
-              },
-              "min_values": {
-                "type": "array",
-                "maxItems": 8,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 127
-                },
-                "description": "Minimum value for each CC"
-              },
-              "max_values": {
-                "type": "array",
-                "maxItems": 8,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 127
-                },
-                "description": "Maximum value for each CC"
+                "description": "CC numbers to randomize (0-127)"
               }
             }
           }

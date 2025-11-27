@@ -161,6 +161,14 @@ esp_err_t device_config_init(void) {
     g_device_config.bank_select_mode = (bank_select_mode_t)bank_mode_val;
   }
   
+  // Load preset display base (0 or 1)
+  uint8_t preset_base_val;
+  if (app_settings_load_u8("preset_base", &preset_base_val) == ESP_OK && preset_base_val <= 1) {
+    g_device_config.preset_base = preset_base_val;
+  } else {
+    g_device_config.preset_base = 0;  // Default: 0-based
+  }
+  
   g_device_config.initialized = true;
   
   // Subscribe to MIDI IN events to track program changes
@@ -567,6 +575,23 @@ esp_err_t device_config_set_pending_preset(uint16_t preset) {
   
   ESP_LOGI(TAG, "Pending preset: %u (bank %d, program %d)", 
            (unsigned)preset, g_device_config.pending_bank, g_device_config.pending_program);
+  return ESP_OK;
+}
+
+uint8_t device_config_get_preset_base(void) {
+  return g_device_config.preset_base;
+}
+
+esp_err_t device_config_set_preset_base(uint8_t base) {
+  if (base > 1) {
+    ESP_LOGE(TAG, "Invalid preset_base %d (must be 0 or 1)", base);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  g_device_config.preset_base = base;
+  app_settings_save_u8("preset_base", base);
+  
+  ESP_LOGI(TAG, "Preset base set to %d (presets display as %d-based)", base, base);
   return ESP_OK;
 }
 

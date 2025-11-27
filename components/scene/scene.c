@@ -1282,8 +1282,7 @@ static const char* action_type_json_names[] = {
   [ACTION_NONE] = "none",
   [ACTION_PROGRAM_NEXT] = "program_next",
   [ACTION_PROGRAM_PREV] = "program_prev",
-  [ACTION_PROGRAM_SET] = "program_set",
-  [ACTION_PROGRAM_BANK_SET] = "program_bank_set",
+  [ACTION_PROGRAM_SET] = "pc",
   [ACTION_SCENE_NEXT] = "scene_next",
   [ACTION_SCENE_PREV] = "scene_prev",
   [ACTION_SCENE_SET] = "scene_set",
@@ -1292,9 +1291,11 @@ static const char* action_type_json_names[] = {
   [ACTION_TRANSPORT_PAUSE] = "transport_pause",
   [ACTION_TRANSPORT_RECORD] = "transport_record",
   [ACTION_TRANSPORT_TOGGLE] = "transport_toggle",
+  [ACTION_TAP] = "tap",
   [ACTION_TAP_TEMPO] = "tap_tempo",
-  [ACTION_TEMPO_NUDGE_UP] = "tempo_nudge_up",
-  [ACTION_TEMPO_NUDGE_DOWN] = "tempo_nudge_down",
+  [ACTION_SET_TEMPO] = "set_tempo",
+  [ACTION_TEMPO_INC] = "tempo_inc",
+  [ACTION_TEMPO_DEC] = "tempo_dec",
   [ACTION_SEND_CC] = "send_cc",
   [ACTION_SEND_CC_HOLD] = "send_cc_hold",
   [ACTION_SEND_CC_CYCLE] = "send_cc_cycle",
@@ -1303,7 +1304,6 @@ static const char* action_type_json_names[] = {
   [ACTION_SEND_RPN] = "send_rpn",
   [ACTION_SEND_NOTE_ON] = "send_note_on",
   [ACTION_SEND_NOTE_OFF] = "send_note_off",
-  [ACTION_SEND_PC] = "send_pc",
   [ACTION_SEND_PITCH_BEND] = "send_pitch_bend",
   [ACTION_SEND_AFTERTOUCH] = "send_aftertouch",
   [ACTION_SEND_POLY_AFTERTOUCH] = "send_poly_aftertouch",
@@ -1311,15 +1311,12 @@ static const char* action_type_json_names[] = {
   [ACTION_SEND_SONG_POSITION] = "send_song_position",
   [ACTION_SEND_MMC] = "send_mmc",
   [ACTION_RANDOMIZE_CC] = "randomize_cc",
-  [ACTION_RANDOMIZE_MULTI] = "randomize_multi",
   [ACTION_SEND_CLOCK_START] = "send_clock_start",
   [ACTION_SEND_CLOCK_STOP] = "send_clock_stop",
   [ACTION_SEND_CLOCK_CONTINUE] = "send_clock_continue",
   [ACTION_SEND_RESET] = "send_reset",
   [ACTION_SEND_TUNE_REQUEST] = "send_tune_request",
-  [ACTION_SCREENSAVER_TOGGLE] = "screensaver_toggle",
   [ACTION_CONFIRM_PENDING] = "confirm_pending",
-  [ACTION_CANCEL_PENDING] = "cancel_pending",
   [ACTION_ALL_NOTES_OFF] = "all_notes_off",
   [ACTION_ALL_SOUND_OFF] = "all_sound_off",
   [ACTION_SUSTAIN] = "sustain",
@@ -1357,8 +1354,10 @@ static cJSON* action_to_json(const action_t* action) {
   } else if (action->type == ACTION_SEND_NOTE_ON || action->type == ACTION_SEND_NOTE_OFF) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
-  } else if (action->type == ACTION_PROGRAM_SET || action->type == ACTION_SCENE_SET || action->type == ACTION_SEND_PC) {
+  } else if (action->type == ACTION_PROGRAM_SET || action->type == ACTION_SCENE_SET) {
     cJSON_AddNumberToObject(obj, "number", action->params.target.number);
+  } else if (action->type == ACTION_SET_TEMPO) {
+    cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
   }
   
   return obj;
@@ -1390,6 +1389,7 @@ static action_t json_to_action(cJSON* obj) {
   cJSON* note = cJSON_GetObjectItem(obj, "note");
   cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
   cJSON* number = cJSON_GetObjectItem(obj, "number");
+  cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
   
   if (cc) action.params.cc.cc_number = cc->valueint;
   if (value) action.params.cc.value = value->valueint;
@@ -1397,6 +1397,7 @@ static action_t json_to_action(cJSON* obj) {
   if (note) action.params.note.note = note->valueint;
   if (velocity) action.params.note.velocity = velocity->valueint;
   if (number) action.params.target.number = number->valueint;
+  if (bpm) action.params.tempo.bpm = bpm->valueint;
   
   return action;
 }
