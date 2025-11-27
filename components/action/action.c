@@ -42,7 +42,6 @@ static const char* action_type_names[] = {
   [ACTION_SEND_RPN] = "Send RPN",
   [ACTION_SEND_PITCH_BEND] = "Pitch Bend",
   [ACTION_SEND_AFTERTOUCH] = "Aftertouch",
-  [ACTION_SEND_POLY_AFTERTOUCH] = "Poly Aftertouch",
   [ACTION_SEND_SONG_SELECT] = "Song Select",
   [ACTION_SEND_SONG_POSITION] = "Song Position",
   [ACTION_SEND_MMC] = "MMC",
@@ -249,14 +248,6 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       if (is_press) {
         send_channel_aftertouch(channel, action->params.aftertouch.pressure);
         ESP_LOGD(TAG, "Sent aftertouch: %d", action->params.aftertouch.pressure);
-      }
-      break;
-      
-    case ACTION_SEND_POLY_AFTERTOUCH:
-      if (is_press) {
-        send_poly_aftertouch(channel, action->params.aftertouch.note, action->params.aftertouch.pressure);
-        ESP_LOGD(TAG, "Sent poly aftertouch: note=%d pressure=%d", 
-                 action->params.aftertouch.note, action->params.aftertouch.pressure);
       }
       break;
       

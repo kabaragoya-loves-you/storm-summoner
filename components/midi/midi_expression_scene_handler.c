@@ -83,6 +83,21 @@ static void handle_sostenuto_event(const event_t* event, void* context) {
   action_execute_chain(&scene->sostenuto, pressed ? 127 : 0, pressed);
 }
 
+static void handle_switch_event(const event_t* event, void* context) {
+  if (event->type != EVENT_EXPRESSION_SWITCH) return;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  bool pressed = event->data.pedal.pressed;
+  
+  ESP_LOGI(TAG, "Expression switch %s, executing %d action(s)", 
+    pressed ? "pressed" : "released", scene->expr_switch.num_actions);
+  
+  // Execute expr_switch action chain (up to 8 arbitrary actions)
+  action_execute_chain(&scene->expr_switch, pressed ? 127 : 0, pressed);
+}
+
 esp_err_t midi_expression_scene_handler_init(void) {
   ESP_LOGI(TAG, "Initializing MIDI expression scene handler");
   
@@ -105,6 +120,12 @@ esp_err_t midi_expression_scene_handler_init(void) {
   ret = event_bus_subscribe(EVENT_EXPRESSION_SOSTENUTO, handle_sostenuto_event, NULL);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to subscribe to sostenuto events");
+    return ret;
+  }
+  
+  ret = event_bus_subscribe(EVENT_EXPRESSION_SWITCH, handle_switch_event, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to switch events");
     return ret;
   }
   

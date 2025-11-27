@@ -36,15 +36,15 @@
     },
     "touchwheel_mode": {
       "type": "string",
-      "enum": ["buttons", "program_change", "continuous"],
+      "enum": ["buttons", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "nrpn", "rpn", "double_cc"],
       "default": "buttons",
-      "description": "Touchwheel behavior mode (buttons=individual pads, program_change=dial PC numbers, continuous=CC/Note output)"
+      "description": "Touchwheel behavior mode"
     },
     "touchwheel_style": {
       "type": "string",
-      "enum": ["odometer", "endless"],
+      "enum": ["odometer", "endless", "bipolar"],
       "default": "odometer",
-      "description": "Continuous mode style: odometer (~15 discrete positions) or endless (full 0-127 range)"
+      "description": "Touchwheel style: odometer (~15 positions), endless (full range), bipolar (pitch bend only)"
     },
     "touchwheel": {
       "$ref": "#/definitions/continuous_mapping",
@@ -90,7 +90,7 @@
     },
     "expression_mode": {
       "type": "string",
-      "enum": ["expression", "sustain", "sostenuto", "gate"],
+      "enum": ["expression", "sustain", "sostenuto", "gate", "switch"],
       "default": "expression",
       "description": "Expression jack operating mode"
     },
@@ -101,6 +101,10 @@
     "sostenuto": {
       "$ref": "#/definitions/action_chain",
       "description": "Actions for sostenuto events (default: CC66 toggle)"
+    },
+    "expr_switch": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Actions for expression switch mode (up to 8 arbitrary actions)"
     },
     "cv_input_mode": {
       "type": "string",
@@ -305,7 +309,6 @@
             "send_note_off",
             "send_pitch_bend",
             "send_aftertouch",
-            "send_poly_aftertouch",
             "send_song_select",
             "send_song_position",
             "send_mmc",
@@ -381,7 +384,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["send_note_on", "send_note_off", "send_poly_aftertouch"]}
+              "type": {"enum": ["send_note_on", "send_note_off"]}
             }
           },
           "then": {

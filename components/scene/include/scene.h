@@ -46,13 +46,20 @@ typedef enum {
 typedef enum {
   TOUCHWHEEL_MODE_BUTTONS,        // Each pad acts as individual button
   TOUCHWHEEL_MODE_PROGRAM_CHANGE, // Endless encoder to dial program numbers
-  TOUCHWHEEL_MODE_CONTINUOUS      // Continuous data source mapped through continuous_mapping (CC or Note)
+  TOUCHWHEEL_MODE_CONTINUOUS,     // Continuous CC data source (0-127)
+  TOUCHWHEEL_MODE_SET_TEMPO,      // Set BPM (20-300), default endless
+  TOUCHWHEEL_MODE_PITCH_BEND,     // Pitch bend (-8192 to 8191), bipolar only
+  TOUCHWHEEL_MODE_AFTERTOUCH,     // Channel aftertouch (0-127), default odometer
+  TOUCHWHEEL_MODE_NRPN,           // NRPN value (0-16383), default odometer
+  TOUCHWHEEL_MODE_RPN,            // RPN value (0-16383), default odometer
+  TOUCHWHEEL_MODE_DOUBLE_CC       // Double CC (0-16383), default odometer
 } touchwheel_mode_t;
 
-// Touchwheel continuous style (for TOUCHWHEEL_MODE_CONTINUOUS)
+// Touchwheel continuous style (for modes that use continuous input)
 typedef enum {
   TOUCHWHEEL_STYLE_ODOMETER,      // Position-based 0-100% (~15 discrete values)
-  TOUCHWHEEL_STYLE_ENDLESS        // Incremental encoder (full 0-127 range)
+  TOUCHWHEEL_STYLE_ENDLESS,       // Incremental encoder (full range)
+  TOUCHWHEEL_STYLE_BIPOLAR        // Bipolar center-return for pitch bend
 } touchwheel_style_t;
 
 // Touchpad mapping
@@ -91,9 +98,10 @@ typedef struct {
   continuous_mapping_t als;          // Ambient light sensor
   
   // Expression jack configuration (shared jack, multiple modes)
-  expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE
+  expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE, SWITCH
   action_chain_t sustain;            // Actions for sustain pedal events
   action_chain_t sostenuto;          // Actions for sostenuto pedal events
+  action_chain_t expr_switch;        // Actions for switch mode (flexible action trigger)
   
   // CV input configuration
   input_mode_t cv_input_mode;        // CV, CLOCK_SYNC, AUDIO, or NOTE
@@ -203,8 +211,10 @@ esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode)
 expression_mode_t scene_get_expression_mode(uint8_t scene_index);
 esp_err_t scene_assign_sustain(uint8_t scene_index, const action_chain_t* chain);
 esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_chain_t* chain);
+esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_chain_t* chain);
 action_chain_t* scene_get_sustain(uint8_t scene_index);
 action_chain_t* scene_get_sostenuto(uint8_t scene_index);
+action_chain_t* scene_get_expr_switch(uint8_t scene_index);
 
 // CV input mode configuration
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode);

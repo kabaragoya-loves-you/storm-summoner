@@ -109,7 +109,8 @@ static void expression_task(void *pvParameters) {
       if (is_connected) {
         const char* mode_str = (s_mode == EXPRESSION_MODE_PEDAL) ? "Expression Pedal" :
                                (s_mode == EXPRESSION_MODE_SUSTAIN) ? "Sustain Pedal" :
-                               (s_mode == EXPRESSION_MODE_SOSTENUTO) ? "Sostenuto Pedal" : "Gate";
+                               (s_mode == EXPRESSION_MODE_SOSTENUTO) ? "Sostenuto Pedal" :
+                               (s_mode == EXPRESSION_MODE_SWITCH) ? "Switch" : "Gate";
         ESP_LOGI(TAG, "Expression cable connected (mode: %s)", mode_str);
         first_reading = true;  // Reset flag on connection
         expression_configure_switches();  // Configure switches for current mode
@@ -251,9 +252,9 @@ static void expression_task(void *pvParameters) {
             }
           }
         }
-      } else if (s_mode == EXPRESSION_MODE_SUSTAIN || s_mode == EXPRESSION_MODE_SOSTENUTO) {
-        // Sustain/Sostenuto pedal mode - on/off detection
-        // Both modes use the same physical pedal switch
+      } else if (s_mode == EXPRESSION_MODE_SUSTAIN || s_mode == EXPRESSION_MODE_SOSTENUTO || s_mode == EXPRESSION_MODE_SWITCH) {
+        // Sustain/Sostenuto/Switch pedal mode - on/off detection
+        // All three modes use the same physical pedal switch detection
         bool current_state;
         
         // Detect pedal state with hysteresis
@@ -283,14 +284,19 @@ static void expression_task(void *pvParameters) {
         if (first_reading) {
           last_pedal_state = current_state;
           first_reading = false;
+          const char* mode_name = s_mode == EXPRESSION_MODE_SUSTAIN ? "Sustain" :
+                                  s_mode == EXPRESSION_MODE_SOSTENUTO ? "Sostenuto" : "Switch";
           ESP_LOGI(TAG, "%s initial: %s (%s switch)", 
-            s_mode == EXPRESSION_MODE_SUSTAIN ? "Sustain" : "Sostenuto",
+            mode_name,
             current_state ? "PRESSED" : "RELEASED",
             s_pedal_switch_type == PEDAL_SWITCH_NO ? "NO" : "NC");
         } else if (current_state != last_pedal_state) {
           // Post event (scene handler will execute actions)
+          event_type_t evt_type = s_mode == EXPRESSION_MODE_SUSTAIN ? EVENT_EXPRESSION_SUSTAIN :
+                                  s_mode == EXPRESSION_MODE_SOSTENUTO ? EVENT_EXPRESSION_SOSTENUTO :
+                                  EVENT_EXPRESSION_SWITCH;
           event_t pedal_event = {
-            .type = s_mode == EXPRESSION_MODE_SUSTAIN ? EVENT_EXPRESSION_SUSTAIN : EVENT_EXPRESSION_SOSTENUTO,
+            .type = evt_type,
             .priority = EVENT_PRIORITY_NORMAL,
             .timestamp = event_bus_get_current_timestamp(),
             .data.pedal = {
@@ -298,10 +304,10 @@ static void expression_task(void *pvParameters) {
             }
           };
           
+          const char* mode_name = s_mode == EXPRESSION_MODE_SUSTAIN ? "Sustain" :
+                                  s_mode == EXPRESSION_MODE_SOSTENUTO ? "Sostenuto" : "Switch";
           if (event_bus_post(&pedal_event) == ESP_OK) {
-            ESP_LOGI(TAG, "%s: %s", 
-              s_mode == EXPRESSION_MODE_SUSTAIN ? "Sustain" : "Sostenuto",
-              current_state ? "PRESSED" : "RELEASED");
+            ESP_LOGI(TAG, "%s: %s", mode_name, current_state ? "PRESSED" : "RELEASED");
             last_pedal_state = current_state;
           }
         }
@@ -454,7 +460,8 @@ static void expression_configure_switches(void) {
       
     case EXPRESSION_MODE_SUSTAIN:
     case EXPRESSION_MODE_SOSTENUTO:
-      // Sustain/Sostenuto mode: P4: Tip→ADC, P7: Tip→VCC (for switch detection)
+    case EXPRESSION_MODE_SWITCH:
+      // Sustain/Sostenuto/Switch mode: P4: Tip→ADC, P7: Tip→VCC (for switch detection)
       mask |= (1 << 4);       // Turn ON P4 (active high)
       mask |= (1 << 7);       // Turn ON P7 (active high)
       break;

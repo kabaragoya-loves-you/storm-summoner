@@ -73,9 +73,6 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
     case ACTION_SEND_AFTERTOUCH:
       snprintf(buf, buf_size, "Aftertouch %d", action->params.aftertouch.pressure);
       break;
-    case ACTION_SEND_POLY_AFTERTOUCH:
-      snprintf(buf, buf_size, "PolyAT n%d p%d", action->params.aftertouch.note, action->params.aftertouch.pressure);
-      break;
     case ACTION_SEND_DOUBLE_CC:
       snprintf(buf, buf_size, "14bit CC%d/%d=%d", action->params.double_cc.msb_cc, 
                action->params.double_cc.lsb_cc, action->params.double_cc.value);
@@ -105,7 +102,7 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "save",
-  "confirm", "cancel", "channel", "pad", "button", "bump", "actions", "pc",
+  "confirm", "cancel", "channel", "pad", "button", "bump", "expr_switch", "actions", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
   "clock_source", "clock_standard", "time_sig",
@@ -135,10 +132,22 @@ static void cmd_scene_info(void) {
       ESP_LOGI(TAG, "  [%d] %s", i, action_type_to_string(scene->on_load.actions[i].type));
     }
   }
-  const char* tw_mode_str = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
-                            (scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
-  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
-    const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
+  const char* tw_mode_str;
+  switch (scene->touchwheel_mode) {
+    case TOUCHWHEEL_MODE_BUTTONS: tw_mode_str = "buttons"; break;
+    case TOUCHWHEEL_MODE_PROGRAM_CHANGE: tw_mode_str = "program_change"; break;
+    case TOUCHWHEEL_MODE_SET_TEMPO: tw_mode_str = "set_tempo"; break;
+    case TOUCHWHEEL_MODE_PITCH_BEND: tw_mode_str = "pitch_bend"; break;
+    case TOUCHWHEEL_MODE_AFTERTOUCH: tw_mode_str = "aftertouch"; break;
+    case TOUCHWHEEL_MODE_NRPN: tw_mode_str = "nrpn"; break;
+    case TOUCHWHEEL_MODE_RPN: tw_mode_str = "rpn"; break;
+    case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
+    default: tw_mode_str = "continuous"; break;
+  }
+  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_BUTTONS && 
+      scene->touchwheel_mode != TOUCHWHEEL_MODE_PROGRAM_CHANGE) {
+    const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_BIPOLAR) ? "bipolar" :
+                               (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
     ESP_LOGI(TAG, "Touchwheel mode: %s (%s)", tw_mode_str, tw_style_str);
   } else {
     ESP_LOGI(TAG, "Touchwheel mode: %s", tw_mode_str);
@@ -190,12 +199,13 @@ static void cmd_scene_info(void) {
   ESP_LOGI(TAG, "  Time signature: %d/%d",
            scene->time_signature.numerator, scene->time_signature.denominator);
   
-  // Only show expression jack mode section for action-based modes (sustain/sostenuto/gate)
+  // Only show expression jack mode section for action-based modes (sustain/sostenuto/gate/switch)
   if (scene->expression_mode != EXPRESSION_MODE_PEDAL) {
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "Expression jack mode: %s", 
              scene->expression_mode == EXPRESSION_MODE_SUSTAIN ? "sustain" :
-             scene->expression_mode == EXPRESSION_MODE_SOSTENUTO ? "sostenuto" : "gate");
+             scene->expression_mode == EXPRESSION_MODE_SOSTENUTO ? "sostenuto" :
+             scene->expression_mode == EXPRESSION_MODE_SWITCH ? "switch" : "gate");
     
     if (scene->expression_mode == EXPRESSION_MODE_SUSTAIN) {
       if (scene->sustain.num_actions > 0) {
@@ -210,6 +220,13 @@ static void cmd_scene_info(void) {
                  scene->sostenuto.num_actions, action_type_to_string(scene->sostenuto.actions[0].type));
       } else {
         ESP_LOGI(TAG, "  Sostenuto: no actions");
+      }
+    } else if (scene->expression_mode == EXPRESSION_MODE_SWITCH) {
+      if (scene->expr_switch.num_actions > 0) {
+        ESP_LOGI(TAG, "  Switch actions: %d (default: %s)", 
+                 scene->expr_switch.num_actions, action_type_to_string(scene->expr_switch.actions[0].type));
+      } else {
+        ESP_LOGI(TAG, "  Switch: no actions");
       }
     }
   }
@@ -715,15 +732,6 @@ static int cmd_pad(int argc, char **argv) {
     action.type = ACTION_SEND_AFTERTOUCH;
     action.params.aftertouch.pressure = pad_args.param1->ival[0];
   }
-  else if (strcmp(action_str, "poly_aftertouch") == 0) {
-    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: pad <num> poly_aftertouch <note> <pressure>");
-      return 1;
-    }
-    action.type = ACTION_SEND_POLY_AFTERTOUCH;
-    action.params.aftertouch.note = pad_args.param1->ival[0];
-    action.params.aftertouch.pressure = pad_args.params->ival[0];
-  }
   // 14-bit MIDI
   else if (strcmp(action_str, "double_cc") == 0) {
     if (pad_args.param1->count < 1 || pad_args.params->count < 2) {
@@ -932,15 +940,6 @@ static int cmd_button(int argc, char **argv) {
     }
     action.type = ACTION_SEND_AFTERTOUCH;
     action.params.aftertouch.pressure = button_args.param1->ival[0];
-  }
-  else if (strcmp(action_str, "poly_aftertouch") == 0) {
-    if (button_args.param1->count < 1 || button_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: button <name> poly_aftertouch <note> <pressure>");
-      return 1;
-    }
-    action.type = ACTION_SEND_POLY_AFTERTOUCH;
-    action.params.aftertouch.note = button_args.param1->ival[0];
-    action.params.aftertouch.pressure = button_args.params->ival[0];
   }
   else if (strcmp(action_str, "double_cc") == 0) {
     if (button_args.param1->count < 1 || button_args.params->count < 2) {
@@ -1204,15 +1203,6 @@ static int cmd_bump(int argc, char **argv) {
     action.type = ACTION_SEND_AFTERTOUCH;
     action.params.aftertouch.pressure = bump_args.param1->ival[0];
   }
-  else if (strcmp(action_str, "poly_aftertouch") == 0) {
-    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: bump poly_aftertouch <note> <pressure>");
-      return 1;
-    }
-    action.type = ACTION_SEND_POLY_AFTERTOUCH;
-    action.params.aftertouch.note = bump_args.param1->ival[0];
-    action.params.aftertouch.pressure = bump_args.params->ival[0];
-  }
   else if (strcmp(action_str, "double_cc") == 0) {
     if (bump_args.param1->count < 1 || bump_args.params->count < 2) {
       ESP_LOGE(TAG, "Usage: bump double_cc <msb_cc> <lsb_cc> <value>");
@@ -1305,6 +1295,154 @@ static int cmd_bump(int argc, char **argv) {
   return 0;
 }
 
+// Command: expr_switch - Assign action(s) to expression switch mode
+static struct {
+  struct arg_str *action_type;
+  struct arg_int *param1;
+  struct arg_int *params;
+  struct arg_end *end;
+} expr_switch_args;
+
+static int cmd_expr_switch(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expr_switch_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expr_switch_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* action_str = expr_switch_args.action_type->sval[0];
+  
+  action_t action = {0};
+  
+  if (strcmp(action_str, "cc") == 0) {
+    if (expr_switch_args.param1->count < 1 || expr_switch_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch cc <cc_num> <value>");
+      return 1;
+    }
+    action = action_create_send_cc(expr_switch_args.param1->ival[0], expr_switch_args.params->ival[0]);
+  }
+  else if (strcmp(action_str, "cc_hold") == 0) {
+    if (expr_switch_args.param1->count < 1 || expr_switch_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: expr_switch cc_hold <cc_num> <press> <release>");
+      return 1;
+    }
+    action = action_create_cc_hold(expr_switch_args.param1->ival[0], 
+                                   expr_switch_args.params->ival[0],
+                                   expr_switch_args.params->ival[1]);
+  }
+  else if (strcmp(action_str, "cc_cycle") == 0) {
+    if (expr_switch_args.param1->count < 1 || expr_switch_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: expr_switch cc_cycle <cc_num> <v1> <v2> ... (up to 8 values)");
+      return 1;
+    }
+    action.type = ACTION_SEND_CC_CYCLE;
+    action.params.cc.cc_number = expr_switch_args.param1->ival[0];
+    action.params.cc.num_values = 0;
+    for (int i = 0; i < expr_switch_args.params->count && action.params.cc.num_values < 8; i++) {
+      action.params.cc.values[action.params.cc.num_values++] = expr_switch_args.params->ival[i];
+    }
+    action.params.cc.current_index = 0;
+  }
+  else if (strcmp(action_str, "tap") == 0) {
+    action = action_create_tap();
+  }
+  else if (strcmp(action_str, "tap_tempo") == 0) {
+    action = action_create_tap_tempo();
+  }
+  else if (strcmp(action_str, "set_tempo") == 0) {
+    if (expr_switch_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch set_tempo <bpm>");
+      return 1;
+    }
+    action = action_create_set_tempo(expr_switch_args.param1->ival[0]);
+  }
+  else if (strcmp(action_str, "tempo_inc") == 0) {
+    action.type = ACTION_TEMPO_INC;
+  }
+  else if (strcmp(action_str, "tempo_dec") == 0) {
+    action.type = ACTION_TEMPO_DEC;
+  }
+  else if (strcmp(action_str, "program_next") == 0) {
+    action = action_create_program_next();
+  }
+  else if (strcmp(action_str, "program_prev") == 0) {
+    action = action_create_program_prev();
+  }
+  else if (strcmp(action_str, "scene_next") == 0) {
+    action = action_create_scene_next();
+  }
+  else if (strcmp(action_str, "scene_prev") == 0) {
+    action = action_create_scene_prev();
+  }
+  else if (strcmp(action_str, "confirm_pending") == 0) {
+    action.type = ACTION_CONFIRM_PENDING;
+  }
+  else if (strcmp(action_str, "scene_set") == 0) {
+    if (expr_switch_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch scene_set <1-128>");
+      return 1;
+    }
+    action.type = ACTION_SCENE_SET;
+    action.params.target.number = expr_switch_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "sustain") == 0) {
+    action.type = ACTION_SUSTAIN;
+  }
+  else if (strcmp(action_str, "sostenuto") == 0) {
+    action.type = ACTION_SOSTENUTO;
+  }
+  else if (strcmp(action_str, "note_on") == 0) {
+    if (expr_switch_args.param1->count < 1 || expr_switch_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch note_on <note> <velocity>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_ON;
+    action.params.note.note = expr_switch_args.param1->ival[0];
+    action.params.note.velocity = expr_switch_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "note_off") == 0) {
+    if (expr_switch_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch note_off <note>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_OFF;
+    action.params.note.note = expr_switch_args.param1->ival[0];
+    action.params.note.velocity = 0;
+  }
+  else if (strcmp(action_str, "pc") == 0) {
+    if (expr_switch_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch pc <program>");
+      return 1;
+    }
+    action.type = ACTION_PROGRAM_SET;
+    action.params.pc.program = expr_switch_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "none") == 0) {
+    // Clear expr_switch assignment
+    action_chain_t empty = {0};
+    esp_err_t ret = scene_assign_expr_switch(scene_get_current_index(), &empty);
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "Cleared expr_switch assignment");
+    }
+    return 0;
+  }
+  else {
+    ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
+    return 1;
+  }
+  
+  action_chain_t chain = {0};
+  chain.num_actions = 1;
+  chain.actions[0] = action;
+  
+  esp_err_t ret = scene_assign_expr_switch(scene_get_current_index(), &chain);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Assigned '%s' to expr_switch", action_type_to_string(action.type));
+  }
+  
+  return 0;
+}
+
 // Command: actions - List available action types
 static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "Available action types for pad/button/bump commands:");
@@ -1340,7 +1478,6 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "Expression:");
   ESP_LOGI(TAG, "  pitch_bend <-8192..8191>         - Pitch bend");
   ESP_LOGI(TAG, "  aftertouch <0-127>               - Channel pressure");
-  ESP_LOGI(TAG, "  poly_aftertouch <note> <press>   - Polyphonic aftertouch");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "14-bit / RPN / NRPN:");
   ESP_LOGI(TAG, "  nrpn <param> <value>             - Send NRPN (0-16383)");
@@ -1670,8 +1807,10 @@ static int cmd_expr_mode(int argc, char **argv) {
     mode = EXPRESSION_MODE_SOSTENUTO;
   } else if (strcmp(mode_str, "gate") == 0) {
     mode = EXPRESSION_MODE_GATE;
+  } else if (strcmp(mode_str, "switch") == 0) {
+    mode = EXPRESSION_MODE_SWITCH;
   } else {
-    ESP_LOGE(TAG, "Unknown mode (use: expression, sustain, sostenuto, gate)");
+    ESP_LOGE(TAG, "Unknown mode (use: expression, sustain, sostenuto, gate, switch)");
     return 1;
   }
   
@@ -2686,6 +2825,7 @@ static int cmd_touchwheel_mode(int argc, char **argv) {
   
   const char* mode_str = touchwheel_mode_args.mode->sval[0];
   touchwheel_mode_t mode;
+  touchwheel_style_t default_style = TOUCHWHEEL_STYLE_ODOMETER;
   
   if (strcmp(mode_str, "buttons") == 0) {
     mode = TOUCHWHEEL_MODE_BUTTONS;
@@ -2693,12 +2833,33 @@ static int cmd_touchwheel_mode(int argc, char **argv) {
     mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
   } else if (strcmp(mode_str, "continuous") == 0 || strcmp(mode_str, "cc") == 0) {
     mode = TOUCHWHEEL_MODE_CONTINUOUS;
+  } else if (strcmp(mode_str, "set_tempo") == 0 || strcmp(mode_str, "tempo") == 0) {
+    mode = TOUCHWHEEL_MODE_SET_TEMPO;
+    default_style = TOUCHWHEEL_STYLE_ENDLESS;  // Tempo defaults to endless
+  } else if (strcmp(mode_str, "pitch_bend") == 0 || strcmp(mode_str, "pb") == 0) {
+    mode = TOUCHWHEEL_MODE_PITCH_BEND;
+    default_style = TOUCHWHEEL_STYLE_BIPOLAR;  // Pitch bend is always bipolar
+  } else if (strcmp(mode_str, "aftertouch") == 0 || strcmp(mode_str, "at") == 0) {
+    mode = TOUCHWHEEL_MODE_AFTERTOUCH;
+  } else if (strcmp(mode_str, "nrpn") == 0) {
+    mode = TOUCHWHEEL_MODE_NRPN;
+  } else if (strcmp(mode_str, "rpn") == 0) {
+    mode = TOUCHWHEEL_MODE_RPN;
+  } else if (strcmp(mode_str, "double_cc") == 0 || strcmp(mode_str, "14bit") == 0) {
+    mode = TOUCHWHEEL_MODE_DOUBLE_CC;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: buttons, program_change (pc), or continuous (cc)");
+    ESP_LOGE(TAG, "Unknown mode. Use: buttons, pc, cc, tempo, pb, at, nrpn, rpn, double_cc");
     return 1;
   }
   
   uint8_t scene_index = scene_get_current_index();
+  scene_t* scene = scene_get_current();
+  
+  // Set default style for the mode
+  if (scene) {
+    scene->touchwheel_style = default_style;
+  }
+  
   esp_err_t ret = scene_set_touchwheel_mode(scene_index, mode);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to set touchwheel mode");
@@ -2724,6 +2885,12 @@ static int cmd_touchwheel_style(int argc, char **argv) {
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
+  // Check for mode-locked styles
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_PITCH_BEND) {
+    ESP_LOGE(TAG, "Pitch bend mode requires bipolar style (cannot change)");
+    return 1;
+  }
+  
   const char* style_str = touchwheel_style_args.style->sval[0];
   touchwheel_style_t style;
   
@@ -2731,6 +2898,10 @@ static int cmd_touchwheel_style(int argc, char **argv) {
     style = TOUCHWHEEL_STYLE_ODOMETER;
   } else if (strcmp(style_str, "endless") == 0) {
     style = TOUCHWHEEL_STYLE_ENDLESS;
+  } else if (strcmp(style_str, "bipolar") == 0) {
+    // Bipolar only valid for pitch_bend mode
+    ESP_LOGE(TAG, "Bipolar style is only available in pitch_bend mode");
+    return 1;
   } else {
     ESP_LOGE(TAG, "Unknown style. Use: odometer or endless");
     return 1;
@@ -2738,9 +2909,12 @@ static int cmd_touchwheel_style(int argc, char **argv) {
   
   scene->touchwheel_style = style;
   
-  // Re-setup touchwheel if currently in continuous mode
-  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
-    scene_set_touchwheel_mode(scene_get_current_index(), TOUCHWHEEL_MODE_CONTINUOUS);
+  // Re-setup touchwheel if in a mode that uses style
+  touchwheel_mode_t mode = scene->touchwheel_mode;
+  if (mode == TOUCHWHEEL_MODE_CONTINUOUS || mode == TOUCHWHEEL_MODE_SET_TEMPO ||
+      mode == TOUCHWHEEL_MODE_AFTERTOUCH || mode == TOUCHWHEEL_MODE_NRPN ||
+      mode == TOUCHWHEEL_MODE_RPN || mode == TOUCHWHEEL_MODE_DOUBLE_CC) {
+    scene_set_touchwheel_mode(scene_get_current_index(), mode);
   }
   
   ESP_LOGI(TAG, "Touchwheel style: %s", style_str);
@@ -3039,6 +3213,21 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&bump_cmd);
   
+  // expr_switch command
+  expr_switch_args.action_type = arg_str1(NULL, NULL, "<action>", "Action type");
+  expr_switch_args.param1 = arg_int0(NULL, NULL, "<p1>", "CC/note number");
+  expr_switch_args.params = arg_intn(NULL, NULL, "<val>", 0, 8, "Values (up to 8 for cc_cycle)");
+  expr_switch_args.end = arg_end(12);
+  
+  const esp_console_cmd_t expr_switch_cmd = {
+    .command = "expr_switch",
+    .help = "Assign action to expr switch mode (type 'actions' for list, 'none' to clear)",
+    .hint = NULL,
+    .func = &cmd_expr_switch,
+    .argtable = &expr_switch_args
+  };
+  esp_console_cmd_register(&expr_switch_cmd);
+  
   // actions command
   const esp_console_cmd_t actions_cmd = {
     .command = "actions",
@@ -3171,7 +3360,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t expr_mode_cmd = {
     .command = "expr_mode",
-    .help = "Set expression jack mode (expression/sustain/sostenuto/gate)",
+    .help = "Set expression jack mode (expression/sustain/sostenuto/gate/switch)",
     .hint = NULL,
     .func = &cmd_expr_mode,
     .argtable = &expr_mode_args
@@ -3570,12 +3759,12 @@ esp_err_t scene_console_init(void) {
   esp_console_cmd_register(&als_velocity_cmd);
   
   // touchwheel_mode command
-  touchwheel_mode_args.mode = arg_str1(NULL, NULL, "<buttons|program_change|continuous>", "Touchwheel mode");
+  touchwheel_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Touchwheel mode");
   touchwheel_mode_args.end = arg_end(2);
   
   const esp_console_cmd_t touchwheel_mode_cmd = {
     .command = "touchwheel_mode",
-    .help = "Set touchwheel mode (buttons, program_change/pc, continuous/cc)",
+    .help = "Set touchwheel mode: buttons, pc, cc, tempo, pb, at, nrpn, rpn, double_cc",
     .hint = NULL,
     .func = &cmd_touchwheel_mode,
     .argtable = &touchwheel_mode_args
@@ -3588,7 +3777,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t touchwheel_style_cmd = {
     .command = "touchwheel_style",
-    .help = "Set touchwheel continuous style (odometer: ~15 positions, endless: full 0-127)",
+    .help = "Set touchwheel style (odometer: ~15 positions, endless: full range)",
     .hint = NULL,
     .func = &cmd_touchwheel_style,
     .argtable = &touchwheel_style_args

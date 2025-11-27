@@ -111,20 +111,6 @@ static int cmd_send(int argc, char **argv) {
     return 0;
   }
   
-  // poly_aftertouch <channel> <note> <pressure>
-  if (strcmp(msg_type, "poly_aftertouch") == 0) {
-    if (argc != 5) {
-      ESP_LOGE(TAG, "Usage: send poly_aftertouch <channel> <note> <pressure>");
-      return 1;
-    }
-    uint8_t ch = atoi(argv[2]);
-    uint8_t note = atoi(argv[3]);
-    uint8_t press = atoi(argv[4]);
-    send_poly_aftertouch(ch, note, press);
-    ESP_LOGI(TAG, "Sent poly aftertouch: ch=%d note=%d pressure=%d", ch, note, press);
-    return 0;
-  }
-  
   // all_notes_off <channel>
   if (strcmp(msg_type, "all_notes_off") == 0) {
     if (argc != 3) {

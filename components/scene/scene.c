@@ -242,6 +242,135 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
 // Tracked value for endless encoder continuous mode
 static int s_touchwheel_endless_value = 64;  // Start at center
 
+// Tracked values for new touchwheel modes
+static int s_touchwheel_tempo_bpm = 120;           // BPM 20-300
+static int s_touchwheel_pitch_bend = 0;            // -8192 to 8191, center at 0
+static int s_touchwheel_aftertouch = 0;            // 0-127
+static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
+
+// Callback for set_tempo mode touchwheel
+static void touchwheel_tempo_callback(int value, void* user_data) {
+  scene_t* scene = (scene_t*)user_data;
+  (void)scene;  // May use for style check later
+  
+  if (value == 0) return;
+  
+  s_touchwheel_tempo_bpm += value;
+  // Clamp to 20-300 BPM
+  if (s_touchwheel_tempo_bpm < 20) s_touchwheel_tempo_bpm = 20;
+  if (s_touchwheel_tempo_bpm > 300) s_touchwheel_tempo_bpm = 300;
+  
+  tempo_set_bpm((uint16_t)s_touchwheel_tempo_bpm);
+  ESP_LOGD(TAG, "Touchwheel tempo: %d BPM", s_touchwheel_tempo_bpm);
+}
+
+// Callback for pitch bend mode touchwheel (bipolar only)
+static void touchwheel_pitch_bend_callback(int value, void* user_data) {
+  (void)user_data;
+  
+  if (value == 0) return;
+  
+  // Scale delta for pitch bend sensitivity (larger steps)
+  int delta = value * 128;  // ~64 steps across full range
+  s_touchwheel_pitch_bend += delta;
+  
+  // Clamp to -8192 to 8191
+  if (s_touchwheel_pitch_bend < -8192) s_touchwheel_pitch_bend = -8192;
+  if (s_touchwheel_pitch_bend > 8191) s_touchwheel_pitch_bend = 8191;
+  
+  uint8_t channel = device_config_get_channel() - 1;
+  send_pitch_bend(channel, (int16_t)s_touchwheel_pitch_bend);
+  ESP_LOGD(TAG, "Touchwheel pitch bend: %d", s_touchwheel_pitch_bend);
+}
+
+// Callback for channel aftertouch mode touchwheel
+static void touchwheel_aftertouch_callback(int value, void* user_data) {
+  scene_t* scene = (scene_t*)user_data;
+  
+  uint8_t midi_value;
+  
+  if (scene && scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    // Endless mode: value is a delta
+    s_touchwheel_aftertouch += value;
+    if (s_touchwheel_aftertouch < 0) s_touchwheel_aftertouch = 0;
+    if (s_touchwheel_aftertouch > 127) s_touchwheel_aftertouch = 127;
+    midi_value = (uint8_t)s_touchwheel_aftertouch;
+  } else {
+    // Odometer mode: value is 0-100%, scale to 0-127
+    midi_value = (uint8_t)((value * 127) / 100);
+    s_touchwheel_aftertouch = midi_value;
+  }
+  
+  uint8_t channel = device_config_get_channel() - 1;
+  send_channel_aftertouch(channel, midi_value);
+  ESP_LOGD(TAG, "Touchwheel aftertouch: %d", midi_value);
+}
+
+// Callback for NRPN mode touchwheel (uses continuous_mapping for NRPN number)
+static void touchwheel_nrpn_callback(int value, void* user_data) {
+  scene_t* scene = (scene_t*)user_data;
+  if (!scene) return;
+  
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    // Endless mode: value is a delta, scale up for 14-bit range
+    s_touchwheel_14bit_value += value * 128;
+  } else {
+    // Odometer mode: value is 0-100%, scale to 0-16383
+    s_touchwheel_14bit_value = (value * 16383) / 100;
+  }
+  
+  // Clamp to 0-16383
+  if (s_touchwheel_14bit_value < 0) s_touchwheel_14bit_value = 0;
+  if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
+  
+  uint8_t channel = device_config_get_channel() - 1;
+  // Use first CC number from mapping as NRPN parameter
+  uint16_t param = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
+  send_nrpn(channel, param, (uint16_t)s_touchwheel_14bit_value);
+  ESP_LOGD(TAG, "Touchwheel NRPN[%u]: %d", (unsigned)param, s_touchwheel_14bit_value);
+}
+
+// Callback for RPN mode touchwheel (uses continuous_mapping for RPN number)
+static void touchwheel_rpn_callback(int value, void* user_data) {
+  scene_t* scene = (scene_t*)user_data;
+  if (!scene) return;
+  
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    s_touchwheel_14bit_value += value * 128;
+  } else {
+    s_touchwheel_14bit_value = (value * 16383) / 100;
+  }
+  
+  if (s_touchwheel_14bit_value < 0) s_touchwheel_14bit_value = 0;
+  if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
+  
+  uint8_t channel = device_config_get_channel() - 1;
+  uint16_t param = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
+  send_rpn(channel, param, (uint16_t)s_touchwheel_14bit_value);
+  ESP_LOGD(TAG, "Touchwheel RPN[%u]: %d", (unsigned)param, s_touchwheel_14bit_value);
+}
+
+// Callback for double CC mode touchwheel (14-bit CC, MSB=cc_numbers[0], LSB=cc_numbers[0]+32)
+static void touchwheel_double_cc_callback(int value, void* user_data) {
+  scene_t* scene = (scene_t*)user_data;
+  if (!scene) return;
+  
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    s_touchwheel_14bit_value += value * 128;
+  } else {
+    s_touchwheel_14bit_value = (value * 16383) / 100;
+  }
+  
+  if (s_touchwheel_14bit_value < 0) s_touchwheel_14bit_value = 0;
+  if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
+  
+  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t msb_cc = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
+  uint8_t lsb_cc = msb_cc + 32;  // Standard 14-bit CC: LSB = MSB + 32
+  send_double_control_change(channel, msb_cc, lsb_cc, (uint16_t)s_touchwheel_14bit_value);
+  ESP_LOGD(TAG, "Touchwheel DoubleCC[%d/%d]: %d", msb_cc, lsb_cc, s_touchwheel_14bit_value);
+}
+
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
   scene_t* scene = (scene_t*)user_data;
@@ -303,6 +432,79 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
         mode_desc = "continuous (odometer)";
       }
       output = touchwheel_output_callback_create(touchwheel_continuous_callback, (void*)scene);
+      break;
+      
+    case TOUCHWHEEL_MODE_SET_TEMPO:
+      // Tempo mode: default to endless, respects style
+      s_touchwheel_tempo_bpm = tempo_get_bpm();  // Initialize to current BPM
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "set_tempo (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "set_tempo (odometer)";
+      }
+      output = touchwheel_output_callback_create(touchwheel_tempo_callback, (void*)scene);
+      break;
+      
+    case TOUCHWHEEL_MODE_PITCH_BEND:
+      // Pitch bend: always bipolar (center-return)
+      s_touchwheel_pitch_bend = 0;  // Start centered
+      mode_proc = touchwheel_mode_create_endless();  // Endless for fine control
+      output = touchwheel_output_callback_create(touchwheel_pitch_bend_callback, NULL);
+      mode_desc = "pitch_bend (bipolar)";
+      break;
+      
+    case TOUCHWHEEL_MODE_AFTERTOUCH:
+      // Channel aftertouch: default to odometer, respects style
+      s_touchwheel_aftertouch = 0;
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "aftertouch (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "aftertouch (odometer)";
+      }
+      output = touchwheel_output_callback_create(touchwheel_aftertouch_callback, (void*)scene);
+      break;
+      
+    case TOUCHWHEEL_MODE_NRPN:
+      // NRPN: default to odometer, respects style
+      s_touchwheel_14bit_value = 0;
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "nrpn (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "nrpn (odometer)";
+      }
+      output = touchwheel_output_callback_create(touchwheel_nrpn_callback, (void*)scene);
+      break;
+      
+    case TOUCHWHEEL_MODE_RPN:
+      // RPN: default to odometer, respects style
+      s_touchwheel_14bit_value = 0;
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "rpn (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "rpn (odometer)";
+      }
+      output = touchwheel_output_callback_create(touchwheel_rpn_callback, (void*)scene);
+      break;
+      
+    case TOUCHWHEEL_MODE_DOUBLE_CC:
+      // Double CC (14-bit): default to odometer, respects style
+      s_touchwheel_14bit_value = 0;
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "double_cc (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "double_cc (odometer)";
+      }
+      output = touchwheel_output_callback_create(touchwheel_double_cc_callback, (void*)scene);
       break;
       
     case TOUCHWHEEL_MODE_BUTTONS:
@@ -1042,7 +1244,8 @@ esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode)
   
   const char* mode_str = (mode == EXPRESSION_MODE_PEDAL) ? "expression" :
                          (mode == EXPRESSION_MODE_SUSTAIN) ? "sustain" :
-                         (mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" : "gate";
+                         (mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" :
+                         (mode == EXPRESSION_MODE_SWITCH) ? "switch" : "gate";
   ESP_LOGI(TAG, "Scene %d expression mode set to %s", scene_index + 1, mode_str);
   return ESP_OK;
 }
@@ -1086,6 +1289,24 @@ action_chain_t* scene_get_sustain(uint8_t scene_index) {
 action_chain_t* scene_get_sostenuto(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   return scene ? &scene->sostenuto : NULL;
+}
+
+esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_chain_t* chain) {
+  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->expr_switch = *chain;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  ESP_LOGI(TAG, "Assigned %d expr_switch actions", chain->num_actions);
+  return ESP_OK;
+}
+
+action_chain_t* scene_get_expr_switch(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->expr_switch : NULL;
 }
 
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
@@ -1306,7 +1527,6 @@ static const char* action_type_json_names[] = {
   [ACTION_SEND_NOTE_OFF] = "send_note_off",
   [ACTION_SEND_PITCH_BEND] = "send_pitch_bend",
   [ACTION_SEND_AFTERTOUCH] = "send_aftertouch",
-  [ACTION_SEND_POLY_AFTERTOUCH] = "send_poly_aftertouch",
   [ACTION_SEND_SONG_SELECT] = "send_song_select",
   [ACTION_SEND_SONG_POSITION] = "send_song_position",
   [ACTION_SEND_MMC] = "send_mmc",
@@ -1498,10 +1718,21 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
   // Serialize touchwheel mode, style, and continuous mapping
-  const char* tw_mode_str = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
-                            (scene->touchwheel_mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
+  const char* tw_mode_str;
+  switch (scene->touchwheel_mode) {
+    case TOUCHWHEEL_MODE_BUTTONS: tw_mode_str = "buttons"; break;
+    case TOUCHWHEEL_MODE_PROGRAM_CHANGE: tw_mode_str = "program_change"; break;
+    case TOUCHWHEEL_MODE_SET_TEMPO: tw_mode_str = "set_tempo"; break;
+    case TOUCHWHEEL_MODE_PITCH_BEND: tw_mode_str = "pitch_bend"; break;
+    case TOUCHWHEEL_MODE_AFTERTOUCH: tw_mode_str = "aftertouch"; break;
+    case TOUCHWHEEL_MODE_NRPN: tw_mode_str = "nrpn"; break;
+    case TOUCHWHEEL_MODE_RPN: tw_mode_str = "rpn"; break;
+    case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
+    default: tw_mode_str = "continuous"; break;
+  }
   cJSON_AddStringToObject(root, "touchwheel_mode", tw_mode_str);
-  const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
+  const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_BIPOLAR) ? "bipolar" :
+                             (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
   cJSON_AddStringToObject(root, "touchwheel_style", tw_style_str);
   cJSON_AddItemToObject(root, "touchwheel", continuous_mapping_to_json(&scene->touchwheel));
   
@@ -1529,10 +1760,12 @@ static cJSON* scene_to_json(const scene_t* scene) {
   // Serialize expression jack mode and pedal actions
   const char* mode_str = (scene->expression_mode == EXPRESSION_MODE_PEDAL) ? "expression" :
                          (scene->expression_mode == EXPRESSION_MODE_SUSTAIN) ? "sustain" :
-                         (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" : "gate";
+                         (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" :
+                         (scene->expression_mode == EXPRESSION_MODE_SWITCH) ? "switch" : "gate";
   cJSON_AddStringToObject(root, "expression_mode", mode_str);
   cJSON_AddItemToObject(root, "sustain", action_chain_to_json(&scene->sustain));
   cJSON_AddItemToObject(root, "sostenuto", action_chain_to_json(&scene->sostenuto));
+  cJSON_AddItemToObject(root, "expr_switch", action_chain_to_json(&scene->expr_switch));
   
   // Serialize CV input mode
   const char* cv_mode_str = (scene->cv_input_mode == INPUT_MODE_CV) ? "cv" :
@@ -1585,14 +1818,21 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     const char* mode_str = tw_mode->valuestring;
     if (strcmp(mode_str, "program_change") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
     else if (strcmp(mode_str, "continuous") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
+    else if (strcmp(mode_str, "set_tempo") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_SET_TEMPO;
+    else if (strcmp(mode_str, "pitch_bend") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PITCH_BEND;
+    else if (strcmp(mode_str, "aftertouch") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_AFTERTOUCH;
+    else if (strcmp(mode_str, "nrpn") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_NRPN;
+    else if (strcmp(mode_str, "rpn") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_RPN;
+    else if (strcmp(mode_str, "double_cc") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_DOUBLE_CC;
     else scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
   }
   
-  // Deserialize touchwheel style (odometer vs endless)
+  // Deserialize touchwheel style (odometer, endless, or bipolar)
   cJSON* tw_style = cJSON_GetObjectItem(root, "touchwheel_style");
   if (tw_style && cJSON_IsString(tw_style)) {
     const char* style_str = tw_style->valuestring;
     if (strcmp(style_str, "endless") == 0) scene->touchwheel_style = TOUCHWHEEL_STYLE_ENDLESS;
+    else if (strcmp(style_str, "bipolar") == 0) scene->touchwheel_style = TOUCHWHEEL_STYLE_BIPOLAR;
     else scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;
   }
   
@@ -1648,6 +1888,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     if (strcmp(mode_str, "sustain") == 0) scene->expression_mode = EXPRESSION_MODE_SUSTAIN;
     else if (strcmp(mode_str, "sostenuto") == 0) scene->expression_mode = EXPRESSION_MODE_SOSTENUTO;
     else if (strcmp(mode_str, "gate") == 0) scene->expression_mode = EXPRESSION_MODE_GATE;
+    else if (strcmp(mode_str, "switch") == 0) scene->expression_mode = EXPRESSION_MODE_SWITCH;
     else scene->expression_mode = EXPRESSION_MODE_PEDAL;
   }
   
@@ -1657,6 +1898,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   
   cJSON* sostenuto = cJSON_GetObjectItem(root, "sostenuto");
   if (sostenuto) scene->sostenuto = json_to_action_chain(sostenuto);
+  
+  cJSON* expr_switch_json = cJSON_GetObjectItem(root, "expr_switch");
+  if (expr_switch_json) scene->expr_switch = json_to_action_chain(expr_switch_json);
   
   // Deserialize CV input mode
   cJSON* cv_mode = cJSON_GetObjectItem(root, "cv_input_mode");

@@ -42,7 +42,6 @@ typedef enum {
   ACTION_SEND_NOTE_OFF,
   ACTION_SEND_PITCH_BEND,
   ACTION_SEND_AFTERTOUCH,     // Channel aftertouch
-  ACTION_SEND_POLY_AFTERTOUCH, // Polyphonic aftertouch
   ACTION_SEND_SONG_SELECT,
   ACTION_SEND_SONG_POSITION,
   ACTION_SEND_MMC,            // MIDI Machine Control

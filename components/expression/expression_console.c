@@ -45,11 +45,14 @@ static int cmd_info(int argc, char **argv) {
     bool gate_logging = expression_get_gate_logging();
     ESP_LOGI(TAG, "Gate state: %s", gate_state ? "HIGH" : "LOW");
     ESP_LOGI(TAG, "Gate logging: %s", gate_logging ? "enabled" : "disabled");
+  } else if (mode == EXPRESSION_MODE_SWITCH) {
+    ESP_LOGI(TAG, "Switch type: %s", switch_str);
+    ESP_LOGI(TAG, "Action chain: (configured in scene context via expr_switch command)");
   }
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Note: Mode and MIDI routing set in scene context");
-  ESP_LOGI(TAG, "  cd scene -> expr_mode <expression|sustain|sostenuto|gate>");
+  ESP_LOGI(TAG, "  cd scene -> expr_mode <expression|sustain|sostenuto|gate|switch>");
   ESP_LOGI(TAG, "=============================");
   
   return 0;
@@ -79,8 +82,10 @@ static int cmd_mode(int argc, char **argv) {
     mode = EXPRESSION_MODE_SOSTENUTO;
   } else if (strcmp(mode_str, "gate") == 0) {
     mode = EXPRESSION_MODE_GATE;
+  } else if (strcmp(mode_str, "switch") == 0) {
+    mode = EXPRESSION_MODE_SWITCH;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: pedal, sustain, sostenuto, or gate");
+    ESP_LOGE(TAG, "Unknown mode. Use: pedal, sustain, sostenuto, gate, or switch");
     return 1;
   }
   
