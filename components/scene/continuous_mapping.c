@@ -1,6 +1,10 @@
 #include "continuous_mapping.h"
+#include "midi_messages.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+static const char* TAG = "continuous_mapping";
 
 uint8_t apply_polarity(uint8_t input, polarity_t polarity) {
   switch (polarity) {
@@ -90,5 +94,20 @@ uint8_t continuous_mapping_value_to_note(uint8_t value, const continuous_mapping
   if (note > 127) note = 127;
   
   return (uint8_t)note;
+}
+
+void continuous_mapping_send_cc(const continuous_mapping_t* mapping, uint8_t channel, uint8_t value) {
+  if (!mapping) return;
+  
+  if (mapping->num_cc_numbers > 0) {
+    // Multi-CC mode: send to all configured CCs
+    for (int i = 0; i < mapping->num_cc_numbers && i < MAX_MULTI_CC; i++) {
+      send_control_change(channel, mapping->cc_numbers[i], value);
+    }
+    ESP_LOGD(TAG, "Multi-CC (%d CCs) = %d", mapping->num_cc_numbers, value);
+  } else {
+    // Single CC mode (backward compatible)
+    send_control_change(channel, mapping->cc_number, value);
+  }
 }
 

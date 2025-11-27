@@ -18,13 +18,18 @@ typedef enum {
   OUTPUT_TYPE_NOTE          // Send MIDI Note On/Off messages
 } output_type_t;
 
+// Maximum number of CCs that can be controlled simultaneously
+#define MAX_MULTI_CC 4
+
 // Continuous input mapping configuration
 typedef struct {
   bool enabled;              // Whether this input is active
   output_type_t output_type; // CC or Note output
   
   // CC output parameters
-  uint8_t cc_number;         // MIDI CC to send (when output_type = CC)
+  uint8_t cc_number;         // Primary MIDI CC (for backward compatibility)
+  uint8_t cc_numbers[MAX_MULTI_CC];  // Additional CCs to send simultaneously
+  uint8_t num_cc_numbers;    // Number of CCs in cc_numbers array (0 = use cc_number only)
   
   // Note output parameters
   uint8_t base_note;         // Base MIDI note (typically 60 = middle C)
@@ -73,6 +78,10 @@ bool continuous_mapping_check_idle(continuous_mapping_t* mapping);
 
 // Create default continuous mapping
 continuous_mapping_t continuous_mapping_create(uint8_t cc_number);
+
+// Send CC value to all configured CCs in mapping
+// Uses multi-CC mode if num_cc_numbers > 0, otherwise uses cc_number
+void continuous_mapping_send_cc(const continuous_mapping_t* mapping, uint8_t channel, uint8_t value);
 
 #endif // CONTINUOUS_MAPPING_H
 

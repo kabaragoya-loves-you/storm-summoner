@@ -8,13 +8,30 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 static const char* TAG = "scene_console";
+
+// Helper to format CC numbers for display (handles multi-CC)
+static void format_cc_list(const continuous_mapping_t* mapping, char* buf, size_t buf_size) {
+  if (mapping->num_cc_numbers > 0) {
+    int pos = 0;
+    for (int i = 0; i < mapping->num_cc_numbers && i < MAX_MULTI_CC; i++) {
+      if (i == 0) {
+        pos += snprintf(buf + pos, buf_size - pos, "CC%d", mapping->cc_numbers[i]);
+      } else {
+        pos += snprintf(buf + pos, buf_size - pos, "+%d", mapping->cc_numbers[i]);
+      }
+    }
+  } else {
+    snprintf(buf, buf_size, "CC%d", mapping->cc_number);
+  }
+}
 
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "save",
-  "confirm", "cancel", "channel", "pad", "pc",
+  "confirm", "cancel", "channel", "pad", "button", "actions", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
   "clock_source", "clock_standard", "time_sig",
@@ -138,8 +155,10 @@ static void cmd_scene_info(void) {
                  scene->expression.base_note, scene->expression.note_range, scene->expression.velocity,
                  curve_type_to_string(scene->expression.curve.type));
       } else {
-        ESP_LOGI(TAG, "  Expression: CC%d, %s curve, %s", 
-                 scene->expression.cc_number,
+        char cc_buf[32];
+        format_cc_list(&scene->expression, cc_buf, sizeof(cc_buf));
+        ESP_LOGI(TAG, "  Expression: %s, %s curve, %s", 
+                 cc_buf,
                  curve_type_to_string(scene->expression.curve.type),
                  scene->expression.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
                  (scene->expression.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
@@ -156,7 +175,9 @@ static void cmd_scene_info(void) {
         ESP_LOGI(TAG, "  Touchwheel: NOTE (base=%d, range=%d, vel=%d)", 
                  scene->touchwheel.base_note, scene->touchwheel.note_range, scene->touchwheel.velocity);
       } else {
-        ESP_LOGI(TAG, "  Touchwheel: CC%d", scene->touchwheel.cc_number);
+        char cc_buf[32];
+        format_cc_list(&scene->touchwheel, cc_buf, sizeof(cc_buf));
+        ESP_LOGI(TAG, "  Touchwheel: %s", cc_buf);
       }
     } else {
       ESP_LOGI(TAG, "  Touchwheel: disabled");
@@ -170,8 +191,10 @@ static void cmd_scene_info(void) {
                scene->cv.base_note, scene->cv.note_range, scene->cv.velocity,
                curve_type_to_string(scene->cv.curve.type));
     } else {
-      ESP_LOGI(TAG, "  CV: CC%d, %s curve, %s", 
-               scene->cv.cc_number,
+      char cc_buf[32];
+      format_cc_list(&scene->cv, cc_buf, sizeof(cc_buf));
+      ESP_LOGI(TAG, "  CV: %s, %s curve, %s", 
+               cc_buf,
                curve_type_to_string(scene->cv.curve.type),
                scene->cv.polarity == POLARITY_UNIPOLAR ? "unipolar" : 
                (scene->cv.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
@@ -188,8 +211,10 @@ static void cmd_scene_info(void) {
                curve_type_to_string(scene->proximity.curve.type),
                scene->proximity.use_idle_value ? " (idle timeout)" : "");
     } else {
-      ESP_LOGI(TAG, "  Proximity: CC%d, %s curve, bipolar%s", 
-               scene->proximity.cc_number,
+      char cc_buf[32];
+      format_cc_list(&scene->proximity, cc_buf, sizeof(cc_buf));
+      ESP_LOGI(TAG, "  Proximity: %s, %s curve, bipolar%s", 
+               cc_buf,
                curve_type_to_string(scene->proximity.curve.type),
                scene->proximity.use_idle_value ? " (idle timeout)" : "");
     }
@@ -204,8 +229,10 @@ static void cmd_scene_info(void) {
                scene->als.base_note, scene->als.note_range, scene->als.velocity,
                curve_type_to_string(scene->als.curve.type));
     } else {
-      ESP_LOGI(TAG, "  ALS: CC%d, %s curve", 
-               scene->als.cc_number,
+      char cc_buf[32];
+      format_cc_list(&scene->als, cc_buf, sizeof(cc_buf));
+      ESP_LOGI(TAG, "  ALS: %s, %s curve", 
+               cc_buf,
                curve_type_to_string(scene->als.curve.type));
     }
   } else {
@@ -365,11 +392,18 @@ static int cmd_cancel(int argc, char **argv) {
 
 // Note: channel command moved to midi context
 
-// Command: pad
+// Command: pad <pad_num> <action_type> [params...]
+// Examples:
+//   pad 0 cc 74 127           - Send CC74=127
+//   pad 1 note_on 60 100      - Send Note On C4 vel 100
+//   pad 2 tap_tempo           - Tap tempo
+//   pad 3 randomize 74        - Randomize CC74
 static struct {
   struct arg_int *pad_num;
-  struct arg_int *cc_num;
-  struct arg_int *value;
+  struct arg_str *action_type;
+  struct arg_int *param1;
+  struct arg_int *param2;
+  struct arg_int *param3;
   struct arg_end *end;
 } pad_args;
 
@@ -381,24 +415,297 @@ static int cmd_pad(int argc, char **argv) {
   }
   
   int pad = pad_args.pad_num->ival[0];
-  int cc = pad_args.cc_num->ival[0];
-  int val = pad_args.value->ival[0];
+  const char* action_str = pad_args.action_type->sval[0];
   
   if (pad < 0 || pad >= NUM_TOUCHPADS) {
     ESP_LOGE(TAG, "Pad must be 0-%d", NUM_TOUCHPADS - 1);
     return 1;
   }
-  if (cc < 0 || cc > 127) {
-    ESP_LOGE(TAG, "CC must be 0-127");
-    return 1;
+  
+  action_t action = {0};
+  
+  // Parse action type and parameters
+  if (strcmp(action_str, "cc") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.param2->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> cc <cc_num> <value>");
+      return 1;
+    }
+    int cc_num = pad_args.param1->ival[0];
+    int value = pad_args.param2->ival[0];
+    if (cc_num < 0 || cc_num > 127 || value < 0 || value > 127) {
+      ESP_LOGE(TAG, "CC and value must be 0-127");
+      return 1;
+    }
+    action = action_create_send_cc(cc_num, value);
   }
-  if (val < 0 || val > 127) {
-    ESP_LOGE(TAG, "Value must be 0-127");
+  else if (strcmp(action_str, "cc_toggle") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.param2->count < 1 || pad_args.param3->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> cc_toggle <cc_num> <value1> <value2>");
+      return 1;
+    }
+    action = action_create_cc_toggle(pad_args.param1->ival[0], 
+                                    pad_args.param2->ival[0],
+                                    pad_args.param3->ival[0]);
+  }
+  else if (strcmp(action_str, "note_on") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.param2->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> note_on <note> <velocity>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_ON;
+    action.params.note.note = pad_args.param1->ival[0];
+    action.params.note.velocity = pad_args.param2->ival[0];
+  }
+  else if (strcmp(action_str, "note_off") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> note_off <note>");
+      return 1;
+    }
+    action.type = ACTION_SEND_NOTE_OFF;
+    action.params.note.note = pad_args.param1->ival[0];
+    action.params.note.velocity = 0;
+  }
+  else if (strcmp(action_str, "pc") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> pc <program_number>");
+      return 1;
+    }
+    action.type = ACTION_SEND_PC;
+    action.params.target.number = pad_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "randomize") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> randomize <cc_num> [cc2] [cc3]");
+      return 1;
+    }
+    
+    // Check if multiple CCs specified
+    if (pad_args.param2->count > 0 || pad_args.param3->count > 0) {
+      // Multi-CC randomize
+      action.type = ACTION_RANDOMIZE_MULTI;
+      action.params.multi_random.num_ccs = 0;
+      
+      if (pad_args.param1->count > 0) {
+        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param1->ival[0];
+        action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
+        action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
+        action.params.multi_random.num_ccs++;
+      }
+      if (pad_args.param2->count > 0 && action.params.multi_random.num_ccs < 8) {
+        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param2->ival[0];
+        action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
+        action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
+        action.params.multi_random.num_ccs++;
+      }
+      if (pad_args.param3->count > 0 && action.params.multi_random.num_ccs < 8) {
+        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param3->ival[0];
+        action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
+        action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
+        action.params.multi_random.num_ccs++;
+      }
+      ESP_LOGI(TAG, "Multi-randomize %d CCs", action.params.multi_random.num_ccs);
+    } else {
+      action.type = ACTION_RANDOMIZE_CC;
+      action.params.cc.cc_number = pad_args.param1->ival[0];
+    }
+  }
+  else if (strcmp(action_str, "cc_cycle") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.param2->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> cc_cycle <cc_num> <val1> <val2> [val3]");
+      return 1;
+    }
+    
+    action.type = ACTION_SEND_CC_CYCLE;
+    action.params.cc.cc_number = pad_args.param1->ival[0];
+    action.params.cc.num_values = 0;
+    
+    if (pad_args.param2->count > 0) {
+      action.params.cc.values[action.params.cc.num_values++] = pad_args.param2->ival[0];
+    }
+    if (pad_args.param3->count > 0 && action.params.cc.num_values < 8) {
+      action.params.cc.values[action.params.cc.num_values++] = pad_args.param3->ival[0];
+    }
+    action.params.cc.current_index = 0;
+  }
+  else if (strcmp(action_str, "tap_tempo") == 0) {
+    action = action_create_tap_tempo();
+  }
+  else if (strcmp(action_str, "transport_play") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_PLAY);
+  }
+  else if (strcmp(action_str, "transport_stop") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_STOP);
+  }
+  else if (strcmp(action_str, "transport_toggle") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_TOGGLE);
+  }
+  else if (strcmp(action_str, "program_next") == 0) {
+    action = action_create_program_next();
+  }
+  else if (strcmp(action_str, "program_prev") == 0) {
+    action = action_create_program_prev();
+  }
+  else if (strcmp(action_str, "scene_next") == 0) {
+    action = action_create_scene_next();
+  }
+  else if (strcmp(action_str, "scene_prev") == 0) {
+    action = action_create_scene_prev();
+  }
+  else if (strcmp(action_str, "confirm_pending") == 0) {
+    action.type = ACTION_CONFIRM_PENDING;
+  }
+  else if (strcmp(action_str, "cancel_pending") == 0) {
+    action.type = ACTION_CANCEL_PENDING;
+  }
+  else if (strcmp(action_str, "all_notes_off") == 0) {
+    action = action_create_all_notes_off();
+  }
+  else if (strcmp(action_str, "all_sound_off") == 0) {
+    action = action_create_all_sound_off();
+  }
+  else if (strcmp(action_str, "sustain") == 0) {
+    action = action_create_sustain();
+  }
+  else if (strcmp(action_str, "sostenuto") == 0) {
+    action = action_create_sostenuto();
+  }
+  else {
+    ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
     return 1;
   }
   
-  scene_set_touchpad_cc(scene_get_current_index(), pad, cc, val);
-  ESP_LOGI(TAG, "Pad %d: CC%d = %d", pad, cc, val);
+  esp_err_t ret = scene_assign_touchpad_action(scene_get_current_index(), pad, &action);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Assigned '%s' to pad %d", action_type_to_string(action.type), pad);
+  } else {
+    ESP_LOGE(TAG, "Failed to assign action");
+  }
+  
+  return 0;
+}
+
+// Command: button <left|right|both> <action_type> [params...]
+static struct {
+  struct arg_str *button_name;
+  struct arg_str *action_type;
+  struct arg_int *param1;
+  struct arg_int *param2;
+  struct arg_int *param3;
+  struct arg_end *end;
+} button_args;
+
+static int cmd_button(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &button_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, button_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* btn_name = button_args.button_name->sval[0];
+  const char* action_str = button_args.action_type->sval[0];
+  
+  action_t action = {0};
+  
+  if (strcmp(action_str, "cc") == 0) {
+    if (button_args.param1->count < 1 || button_args.param2->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <left|right|both> cc <cc_num> <value>");
+      return 1;
+    }
+    action = action_create_send_cc(button_args.param1->ival[0], button_args.param2->ival[0]);
+  }
+  else if (strcmp(action_str, "tap_tempo") == 0) {
+    action = action_create_tap_tempo();
+  }
+  else if (strcmp(action_str, "program_next") == 0) {
+    action = action_create_program_next();
+  }
+  else if (strcmp(action_str, "program_prev") == 0) {
+    action = action_create_program_prev();
+  }
+  else if (strcmp(action_str, "scene_next") == 0) {
+    action = action_create_scene_next();
+  }
+  else if (strcmp(action_str, "scene_prev") == 0) {
+    action = action_create_scene_prev();
+  }
+  else if (strcmp(action_str, "confirm_pending") == 0) {
+    action.type = ACTION_CONFIRM_PENDING;
+  }
+  else if (strcmp(action_str, "cancel_pending") == 0) {
+    action.type = ACTION_CANCEL_PENDING;
+  }
+  else {
+    ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
+    return 1;
+  }
+  
+  action_chain_t chain = {0};
+  chain.num_actions = 1;
+  chain.actions[0] = action;
+  
+  uint8_t scene_idx = scene_get_current_index();
+  esp_err_t ret = ESP_ERR_INVALID_ARG;
+  
+  if (strcmp(btn_name, "left") == 0) {
+    ret = scene_assign_button_left(scene_idx, &chain);
+  } else if (strcmp(btn_name, "right") == 0) {
+    ret = scene_assign_button_right(scene_idx, &chain);
+  } else if (strcmp(btn_name, "both") == 0) {
+    ret = scene_assign_button_both(scene_idx, &chain);
+  } else {
+    ESP_LOGE(TAG, "Unknown button: %s (use left, right, or both)", btn_name);
+    return 1;
+  }
+  
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Assigned '%s' to %s button", action_type_to_string(action.type), btn_name);
+  }
+  
+  return 0;
+}
+
+// Command: actions - List available action types
+static int cmd_actions(int argc, char **argv) {
+  ESP_LOGI(TAG, "Available action types for pad/button commands:");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "MIDI Output:");
+  ESP_LOGI(TAG, "  cc <cc_num> <value>              - Send CC (press=value, release=0)");
+  ESP_LOGI(TAG, "  cc_toggle <cc> <val1> <val2>     - Toggle CC between 2 values");
+  ESP_LOGI(TAG, "  cc_cycle <cc> <v1> <v2> [v3]     - Cycle through multiple values");
+  ESP_LOGI(TAG, "  note_on <note> <velocity>        - Send Note On");
+  ESP_LOGI(TAG, "  note_off <note>                  - Send Note Off");
+  ESP_LOGI(TAG, "  pc <program>                     - Send Program Change");
+  ESP_LOGI(TAG, "  randomize <cc> [cc2] [cc3]       - Randomize one or more CCs");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Control:");
+  ESP_LOGI(TAG, "  program_next                     - Next program");
+  ESP_LOGI(TAG, "  program_prev                     - Previous program");
+  ESP_LOGI(TAG, "  scene_next                       - Next scene");
+  ESP_LOGI(TAG, "  scene_prev                       - Previous scene");
+  ESP_LOGI(TAG, "  confirm_pending                  - Confirm pending program/scene change");
+  ESP_LOGI(TAG, "  cancel_pending                   - Cancel pending change");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Tempo:");
+  ESP_LOGI(TAG, "  tap_tempo                        - Tap tempo");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Transport:");
+  ESP_LOGI(TAG, "  transport_play                   - Start transport");
+  ESP_LOGI(TAG, "  transport_stop                   - Stop transport");
+  ESP_LOGI(TAG, "  transport_toggle                 - Toggle play/stop");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "System:");
+  ESP_LOGI(TAG, "  all_notes_off                    - Send All Notes Off (CC123)");
+  ESP_LOGI(TAG, "  all_sound_off                    - Send All Sound Off (CC120)");
+  ESP_LOGI(TAG, "  sustain                          - Sustain pedal (CC64)");
+  ESP_LOGI(TAG, "  sostenuto                        - Sostenuto pedal (CC66)");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Examples:");
+  ESP_LOGI(TAG, "  pad 0 cc 74 127                  - Filter cutoff on pad 0");
+  ESP_LOGI(TAG, "  pad 1 randomize 74 72 76         - Randomize 3 CCs on pad 1");
+  ESP_LOGI(TAG, "  pad 8 confirm_pending            - Confirm on pad 8");
+  ESP_LOGI(TAG, "  button left tap_tempo            - Tap with left button");
+  ESP_LOGI(TAG, "  button both confirm_pending      - Confirm with both buttons");
+  
   return 0;
 }
 
@@ -426,9 +733,9 @@ static int cmd_pc(int argc, char **argv) {
   return 0;
 }
 
-// Command: expr_cc - Set expression CC number
+// Command: expr_cc - Set expression CC number(s)
 static struct {
-  struct arg_int *cc_num;
+  struct arg_int *cc_nums;
   struct arg_end *end;
 } expr_cc_args;
 
@@ -442,18 +749,26 @@ static int cmd_expr_cc(int argc, char **argv) {
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  int cc = expr_cc_args.cc_num->ival[0];
-  if (cc < 0 || cc > 127) {
-    ESP_LOGE(TAG, "CC must be 0-127");
-    return 1;
+  int count = expr_cc_args.cc_nums->count;
+  for (int i = 0; i < count; i++) {
+    if (expr_cc_args.cc_nums->ival[i] < 0 || expr_cc_args.cc_nums->ival[i] > 127) {
+      ESP_LOGE(TAG, "CC must be 0-127");
+      return 1;
+    }
   }
   
-  scene->expression.cc_number = cc;
+  if (count == 1) {
+    scene->expression.cc_number = expr_cc_args.cc_nums->ival[0];
+    scene->expression.num_cc_numbers = 0;
+    ESP_LOGI(TAG, "Expression CC: %d", scene->expression.cc_number);
+  } else {
+    scene->expression.num_cc_numbers = (count > MAX_MULTI_CC) ? MAX_MULTI_CC : count;
+    for (int i = 0; i < scene->expression.num_cc_numbers; i++) {
+      scene->expression.cc_numbers[i] = expr_cc_args.cc_nums->ival[i];
+    }
+    ESP_LOGI(TAG, "Expression CCs: %d assigned", scene->expression.num_cc_numbers);
+  }
   
-  ESP_LOGI(TAG, "Expression CC: %d", cc);
-  
-  // Note: Scene modifications are tracked automatically
-  // The scene will be marked dirty and saved when needed
   return 0;
 }
 
@@ -712,9 +1027,9 @@ static int cmd_expr_mode(int argc, char **argv) {
   return 0;
 }
 
-// Command: cv_cc - Set CV CC number
+// Command: cv_cc - Set CV CC number(s)
 static struct {
-  struct arg_int *cc_num;
+  struct arg_int *cc_nums;
   struct arg_end *end;
 } cv_cc_args;
 
@@ -728,15 +1043,26 @@ static int cmd_cv_cc(int argc, char **argv) {
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  int cc = cv_cc_args.cc_num->ival[0];
-  if (cc < 0 || cc > 127) {
-    ESP_LOGE(TAG, "CC must be 0-127");
-    return 1;
+  int count = cv_cc_args.cc_nums->count;
+  for (int i = 0; i < count; i++) {
+    if (cv_cc_args.cc_nums->ival[i] < 0 || cv_cc_args.cc_nums->ival[i] > 127) {
+      ESP_LOGE(TAG, "CC must be 0-127");
+      return 1;
+    }
   }
   
-  scene->cv.cc_number = cc;
+  if (count == 1) {
+    scene->cv.cc_number = cv_cc_args.cc_nums->ival[0];
+    scene->cv.num_cc_numbers = 0;
+    ESP_LOGI(TAG, "CV CC: %d", scene->cv.cc_number);
+  } else {
+    scene->cv.num_cc_numbers = (count > MAX_MULTI_CC) ? MAX_MULTI_CC : count;
+    for (int i = 0; i < scene->cv.num_cc_numbers; i++) {
+      scene->cv.cc_numbers[i] = cv_cc_args.cc_nums->ival[i];
+    }
+    ESP_LOGI(TAG, "CV CCs: %d assigned", scene->cv.num_cc_numbers);
+  }
   
-  ESP_LOGI(TAG, "CV CC: %d", cc);
   return 0;
 }
 
@@ -1176,9 +1502,9 @@ static int cmd_time_sig(int argc, char **argv) {
   return 0;
 }
 
-// Command: proximity_cc - Set proximity CC number
+// Command: proximity_cc - Set proximity CC number(s)
 static struct {
-  struct arg_int *cc_num;
+  struct arg_int *cc_nums;
   struct arg_end *end;
 } proximity_cc_args;
 
@@ -1192,14 +1518,26 @@ static int cmd_proximity_cc(int argc, char **argv) {
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  int cc = proximity_cc_args.cc_num->ival[0];
-  if (cc < 0 || cc > 127) {
-    ESP_LOGE(TAG, "CC must be 0-127");
-    return 1;
+  int count = proximity_cc_args.cc_nums->count;
+  for (int i = 0; i < count; i++) {
+    if (proximity_cc_args.cc_nums->ival[i] < 0 || proximity_cc_args.cc_nums->ival[i] > 127) {
+      ESP_LOGE(TAG, "CC must be 0-127");
+      return 1;
+    }
   }
   
-  scene->proximity.cc_number = cc;
-  ESP_LOGI(TAG, "Proximity CC: %d", cc);
+  if (count == 1) {
+    scene->proximity.cc_number = proximity_cc_args.cc_nums->ival[0];
+    scene->proximity.num_cc_numbers = 0;
+    ESP_LOGI(TAG, "Proximity CC: %d", scene->proximity.cc_number);
+  } else {
+    scene->proximity.num_cc_numbers = (count > MAX_MULTI_CC) ? MAX_MULTI_CC : count;
+    for (int i = 0; i < scene->proximity.num_cc_numbers; i++) {
+      scene->proximity.cc_numbers[i] = proximity_cc_args.cc_nums->ival[i];
+    }
+    ESP_LOGI(TAG, "Proximity CCs: %d assigned", scene->proximity.num_cc_numbers);
+  }
+  
   return 0;
 }
 
@@ -1422,9 +1760,9 @@ static int cmd_proximity_velocity(int argc, char **argv) {
   return 0;
 }
 
-// Command: als_cc - Set ALS CC number
+// Command: als_cc - Set ALS CC number(s)
 static struct {
-  struct arg_int *cc_num;
+  struct arg_int *cc_nums;
   struct arg_end *end;
 } als_cc_args;
 
@@ -1438,14 +1776,25 @@ static int cmd_als_cc(int argc, char **argv) {
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  int cc = als_cc_args.cc_num->ival[0];
-  if (cc < 0 || cc > 127) {
-    ESP_LOGE(TAG, "CC must be 0-127");
-    return 1;
+  int count = als_cc_args.cc_nums->count;
+  for (int i = 0; i < count; i++) {
+    if (als_cc_args.cc_nums->ival[i] < 0 || als_cc_args.cc_nums->ival[i] > 127) {
+      ESP_LOGE(TAG, "CC must be 0-127");
+      return 1;
+    }
   }
   
-  scene->als.cc_number = cc;
-  ESP_LOGI(TAG, "ALS CC: %d", cc);
+  if (count == 1) {
+    scene->als.cc_number = als_cc_args.cc_nums->ival[0];
+    scene->als.num_cc_numbers = 0;
+    ESP_LOGI(TAG, "ALS CC: %d", scene->als.cc_number);
+  } else {
+    scene->als.num_cc_numbers = (count > MAX_MULTI_CC) ? MAX_MULTI_CC : count;
+    for (int i = 0; i < scene->als.num_cc_numbers; i++) {
+      scene->als.cc_numbers[i] = als_cc_args.cc_nums->ival[i];
+    }
+    ESP_LOGI(TAG, "ALS CCs: %d assigned", scene->als.num_cc_numbers);
+  }
   return 0;
 }
 
@@ -1805,9 +2154,9 @@ static int cmd_touchwheel_output(int argc, char **argv) {
   return 0;
 }
 
-// Command: touchwheel_cc - Set touchwheel CC number
+// Command: touchwheel_cc - Set touchwheel CC number(s)
 static struct {
-  struct arg_int *cc_num;
+  struct arg_int *cc_nums;
   struct arg_end *end;
 } touchwheel_cc_args;
 
@@ -1821,14 +2170,38 @@ static int cmd_touchwheel_cc(int argc, char **argv) {
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  int cc = touchwheel_cc_args.cc_num->ival[0];
-  if (cc < 0 || cc > 127) {
-    ESP_LOGE(TAG, "CC must be 0-127");
+  int count = touchwheel_cc_args.cc_nums->count;
+  if (count < 1) {
+    ESP_LOGE(TAG, "At least one CC number required");
     return 1;
   }
   
-  scene->touchwheel.cc_number = cc;
-  ESP_LOGI(TAG, "Touchwheel CC: %d", cc);
+  // Validate all CC numbers
+  for (int i = 0; i < count; i++) {
+    int cc = touchwheel_cc_args.cc_nums->ival[i];
+    if (cc < 0 || cc > 127) {
+      ESP_LOGE(TAG, "CC must be 0-127");
+      return 1;
+    }
+  }
+  
+  if (count == 1) {
+    // Single CC mode (backward compatible)
+    scene->touchwheel.cc_number = touchwheel_cc_args.cc_nums->ival[0];
+    scene->touchwheel.num_cc_numbers = 0;
+    ESP_LOGI(TAG, "Touchwheel CC: %d", scene->touchwheel.cc_number);
+  } else {
+    // Multi-CC mode
+    scene->touchwheel.num_cc_numbers = (count > MAX_MULTI_CC) ? MAX_MULTI_CC : count;
+    for (int i = 0; i < scene->touchwheel.num_cc_numbers; i++) {
+      scene->touchwheel.cc_numbers[i] = touchwheel_cc_args.cc_nums->ival[i];
+    }
+    ESP_LOGI(TAG, "Touchwheel CCs: %d CCs assigned", scene->touchwheel.num_cc_numbers);
+    for (int i = 0; i < scene->touchwheel.num_cc_numbers; i++) {
+      ESP_LOGI(TAG, "  CC%d", scene->touchwheel.cc_numbers[i]);
+    }
+  }
+  
   return 0;
 }
 
@@ -1965,20 +2338,48 @@ esp_err_t scene_console_init(void) {
   
   // Note: channel command moved to midi context
   
-  // pad command
+  // pad command (flexible action assignment)
   pad_args.pad_num = arg_int1(NULL, NULL, "<pad>", "Pad number (0-11)");
-  pad_args.cc_num = arg_int1(NULL, NULL, "<cc>", "CC number (0-127)");
-  pad_args.value = arg_int1(NULL, NULL, "<value>", "CC value (0-127)");
-  pad_args.end = arg_end(4);
+  pad_args.action_type = arg_str1(NULL, NULL, "<action>", "Action type");
+  pad_args.param1 = arg_int0(NULL, NULL, "<p1>", "Parameter 1");
+  pad_args.param2 = arg_int0(NULL, NULL, "<p2>", "Parameter 2");
+  pad_args.param3 = arg_int0(NULL, NULL, "<p3>", "Parameter 3");
+  pad_args.end = arg_end(6);
   
   const esp_console_cmd_t pad_cmd = {
     .command = "pad",
-    .help = "Set touchpad CC mapping",
+    .help = "Assign action to touchpad (type 'actions' for list)",
     .hint = NULL,
     .func = &cmd_pad,
     .argtable = &pad_args
   };
   esp_console_cmd_register(&pad_cmd);
+  
+  // button command
+  button_args.button_name = arg_str1(NULL, NULL, "<left|right|both>", "Button");
+  button_args.action_type = arg_str1(NULL, NULL, "<action>", "Action type");
+  button_args.param1 = arg_int0(NULL, NULL, "<p1>", "Parameter 1");
+  button_args.param2 = arg_int0(NULL, NULL, "<p2>", "Parameter 2");
+  button_args.param3 = arg_int0(NULL, NULL, "<p3>", "Parameter 3");
+  button_args.end = arg_end(6);
+  
+  const esp_console_cmd_t button_cmd = {
+    .command = "button",
+    .help = "Assign action to button (type 'actions' for list)",
+    .hint = NULL,
+    .func = &cmd_button,
+    .argtable = &button_args
+  };
+  esp_console_cmd_register(&button_cmd);
+  
+  // actions command
+  const esp_console_cmd_t actions_cmd = {
+    .command = "actions",
+    .help = "List available action types for pad/button",
+    .hint = NULL,
+    .func = &cmd_actions,
+  };
+  esp_console_cmd_register(&actions_cmd);
   
   // pc command
   pc_args.program_num = arg_int1(NULL, NULL, "<0-127>", "Program number");
@@ -1994,12 +2395,12 @@ esp_err_t scene_console_init(void) {
   esp_console_cmd_register(&pc_cmd);
   
   // expr_cc command
-  expr_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
-  expr_cc_args.end = arg_end(2);
+  expr_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");
+  expr_cc_args.end = arg_end(5);
   
   const esp_console_cmd_t expr_cc_cmd = {
     .command = "expr_cc",
-    .help = "Set expression pedal CC number",
+    .help = "Set expression CC(s) - multiple for simultaneous control",
     .hint = NULL,
     .func = &cmd_expr_cc,
     .argtable = &expr_cc_args
@@ -2111,12 +2512,12 @@ esp_err_t scene_console_init(void) {
   esp_console_cmd_register(&expr_mode_cmd);
   
   // cv_cc command
-  cv_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
-  cv_cc_args.end = arg_end(2);
+  cv_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");
+  cv_cc_args.end = arg_end(5);
   
   const esp_console_cmd_t cv_cc_cmd = {
     .command = "cv_cc",
-    .help = "Set CV input CC number",
+    .help = "Set CV CC(s) - multiple for simultaneous control",
     .hint = NULL,
     .func = &cmd_cv_cc,
     .argtable = &cv_cc_args
@@ -2294,12 +2695,12 @@ esp_err_t scene_console_init(void) {
   esp_console_cmd_register(&time_sig_cmd);
   
   // proximity_cc command
-  proximity_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
-  proximity_cc_args.end = arg_end(2);
+  proximity_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");
+  proximity_cc_args.end = arg_end(5);
   
   const esp_console_cmd_t proximity_cc_cmd = {
     .command = "proximity_cc",
-    .help = "Set proximity sensor CC number",
+    .help = "Set proximity CC(s) - multiple for simultaneous control",
     .hint = NULL,
     .func = &cmd_proximity_cc,
     .argtable = &proximity_cc_args
@@ -2398,12 +2799,12 @@ esp_err_t scene_console_init(void) {
   esp_console_cmd_register(&proximity_velocity_cmd);
   
   // als_cc command
-  als_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
-  als_cc_args.end = arg_end(2);
+  als_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");
+  als_cc_args.end = arg_end(5);
   
   const esp_console_cmd_t als_cc_cmd = {
     .command = "als_cc",
-    .help = "Set ALS CC number",
+    .help = "Set ALS CC(s) - multiple for simultaneous control",
     .hint = NULL,
     .func = &cmd_als_cc,
     .argtable = &als_cc_args
@@ -2553,13 +2954,13 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&touchwheel_output_cmd);
   
-  // touchwheel_cc command
-  touchwheel_cc_args.cc_num = arg_int1(NULL, NULL, "<0-127>", "CC number");
-  touchwheel_cc_args.end = arg_end(2);
+  // touchwheel_cc command (supports multiple CCs)
+  touchwheel_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s) (up to 4)");
+  touchwheel_cc_args.end = arg_end(5);
   
   const esp_console_cmd_t touchwheel_cc_cmd = {
     .command = "touchwheel_cc",
-    .help = "Set touchwheel CC number",
+    .help = "Set touchwheel CC number(s) - use multiple for simultaneous control",
     .hint = NULL,
     .func = &cmd_touchwheel_cc,
     .argtable = &touchwheel_cc_args

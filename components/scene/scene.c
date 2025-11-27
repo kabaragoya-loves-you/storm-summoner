@@ -268,8 +268,8 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   uint8_t channel = device_config_get_channel() - 1;
   
   if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
-    send_control_change(channel, scene->touchwheel.cc_number, output);
-    ESP_LOGD(TAG, "Touchwheel CC%d = %d", scene->touchwheel.cc_number, output);
+    continuous_mapping_send_cc(&scene->touchwheel, channel, output);
+    ESP_LOGD(TAG, "Touchwheel CC = %d", output);
   } else {
     // Note mode: convert value to note number
     uint8_t note = continuous_mapping_value_to_note(output, &scene->touchwheel);
