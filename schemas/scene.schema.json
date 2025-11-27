@@ -168,7 +168,13 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 127,
-          "description": "MIDI CC number (when output_type=cc)"
+          "description": "Primary MIDI CC number (when output_type=cc)"
+        },
+        "cc_numbers": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 127 },
+          "maxItems": 4,
+          "description": "Additional CC numbers for simultaneous control (up to 4 total)"
         },
         "base_note": {
           "type": "integer",
@@ -285,7 +291,7 @@
             "tempo_nudge_up",
             "tempo_nudge_down",
             "send_cc",
-            "send_cc_toggle",
+            "send_cc_hold",
             "send_cc_cycle",
             "send_double_cc",
             "send_nrpn",
@@ -321,7 +327,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["send_cc", "send_cc_toggle", "send_cc_cycle", "randomize_cc"]}
+              "type": {"enum": ["send_cc", "send_cc_hold", "send_cc_cycle", "randomize_cc"]}
             }
           },
           "then": {

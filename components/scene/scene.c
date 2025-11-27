@@ -1279,7 +1279,7 @@ static const char* action_type_json_names[] = {
   [ACTION_TEMPO_NUDGE_UP] = "tempo_nudge_up",
   [ACTION_TEMPO_NUDGE_DOWN] = "tempo_nudge_down",
   [ACTION_SEND_CC] = "send_cc",
-  [ACTION_SEND_CC_TOGGLE] = "send_cc_toggle",
+  [ACTION_SEND_CC_HOLD] = "send_cc_hold",
   [ACTION_SEND_CC_CYCLE] = "send_cc_cycle",
   [ACTION_SEND_DOUBLE_CC] = "send_double_cc",
   [ACTION_SEND_NRPN] = "send_nrpn",
@@ -1333,10 +1333,10 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddStringToObject(obj, "type", "none");
   }
   
-  if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_TOGGLE || action->type == ACTION_RANDOMIZE_CC) {
+  if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_HOLD || action->type == ACTION_RANDOMIZE_CC) {
     cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_number);
     cJSON_AddNumberToObject(obj, "value", action->params.cc.value);
-    if (action->type == ACTION_SEND_CC_TOGGLE) cJSON_AddNumberToObject(obj, "value2", action->params.cc.value2);
+    if (action->type == ACTION_SEND_CC_HOLD) cJSON_AddNumberToObject(obj, "value2", action->params.cc.value2);
   } else if (action->type == ACTION_SEND_NOTE_ON || action->type == ACTION_SEND_NOTE_OFF) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);

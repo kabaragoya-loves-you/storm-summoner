@@ -31,7 +31,7 @@ static const char* action_type_names[] = {
   [ACTION_TEMPO_NUDGE_UP] = "Tempo Nudge Up",
   [ACTION_TEMPO_NUDGE_DOWN] = "Tempo Nudge Down",
   [ACTION_SEND_CC] = "Send CC",
-  [ACTION_SEND_CC_TOGGLE] = "CC Toggle",
+  [ACTION_SEND_CC_HOLD] = "CC Hold",
   [ACTION_SEND_CC_CYCLE] = "CC Cycle",
   [ACTION_SEND_NOTE_ON] = "Note On",
   [ACTION_SEND_NOTE_OFF] = "Note Off",
@@ -169,23 +169,19 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       
     // MIDI CC actions
     case ACTION_SEND_CC:
-      // For discrete inputs: send value on press, 0 on release
-      // For continuous inputs: send trigger_value directly
-      {
-        uint8_t value = is_press ? action->params.cc.value : 0;
-        send_control_change(channel, action->params.cc.cc_number, value);
-        ESP_LOGD(TAG, "Sent CC%d=%d", action->params.cc.cc_number, value);
+      // Send CC value on press only (one-shot)
+      if (is_press) {
+        send_control_change(channel, action->params.cc.cc_number, action->params.cc.value);
+        ESP_LOGD(TAG, "Sent CC%d=%d", action->params.cc.cc_number, action->params.cc.value);
       }
       break;
       
-    case ACTION_SEND_CC_TOGGLE:
-      if (is_press) {
-        // Toggle between value and value2
-        static uint8_t toggle_state = 0;
-        uint8_t value = toggle_state ? action->params.cc.value2 : action->params.cc.value;
+    case ACTION_SEND_CC_HOLD:
+      // Send value1 on press, value2 on release (momentary hold behavior)
+      {
+        uint8_t value = is_press ? action->params.cc.value : action->params.cc.value2;
         send_control_change(channel, action->params.cc.cc_number, value);
-        toggle_state = !toggle_state;
-        ESP_LOGD(TAG, "Toggled CC%d to %d", action->params.cc.cc_number, value);
+        ESP_LOGD(TAG, "CC%d hold: %d", action->params.cc.cc_number, value);
       }
       break;
       
@@ -445,12 +441,12 @@ action_t action_create_send_cc(uint8_t cc_number, uint8_t value) {
   return action;
 }
 
-action_t action_create_cc_toggle(uint8_t cc_number, uint8_t value1, uint8_t value2) {
+action_t action_create_cc_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value) {
   action_t action = {0};
-  action.type = ACTION_SEND_CC_TOGGLE;
+  action.type = ACTION_SEND_CC_HOLD;
   action.params.cc.cc_number = cc_number;
-  action.params.cc.value = value1;
-  action.params.cc.value2 = value2;
+  action.params.cc.value = press_value;
+  action.params.cc.value2 = release_value;
   return action;
 }
 

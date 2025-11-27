@@ -31,8 +31,8 @@ typedef enum {
   ACTION_TEMPO_NUDGE_DOWN,
   
   // Direct MIDI output
-  ACTION_SEND_CC,             // Send CC with value
-  ACTION_SEND_CC_TOGGLE,      // Toggle between two CC values
+  ACTION_SEND_CC,             // Send CC with value (on press only)
+  ACTION_SEND_CC_HOLD,        // Send value1 on press, value2 on release
   ACTION_SEND_CC_CYCLE,       // Cycle through multiple CC values
   ACTION_SEND_DOUBLE_CC,      // 14-bit CC (high resolution)
   ACTION_SEND_NRPN,           // Non-Registered Parameter Number
@@ -173,7 +173,7 @@ esp_err_t action_execute_chain(const action_chain_t* chain, uint8_t trigger_valu
 
 // Helper functions to create common actions
 action_t action_create_send_cc(uint8_t cc_number, uint8_t value);
-action_t action_create_cc_toggle(uint8_t cc_number, uint8_t value1, uint8_t value2);
+action_t action_create_cc_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value);
 action_t action_create_program_next(void);
 action_t action_create_program_prev(void);
 action_t action_create_scene_next(void);

@@ -28,6 +28,49 @@ static void format_cc_list(const continuous_mapping_t* mapping, char* buf, size_
   }
 }
 
+// Helper to format action details for display
+static void format_action_details(const action_t* action, char* buf, size_t buf_size) {
+  switch (action->type) {
+    case ACTION_SEND_CC:
+      snprintf(buf, buf_size, "CC%d=%d", action->params.cc.cc_number, action->params.cc.value);
+      break;
+    case ACTION_SEND_CC_HOLD:
+      snprintf(buf, buf_size, "CC%d hold:%d/%d", action->params.cc.cc_number, 
+               action->params.cc.value, action->params.cc.value2);
+      break;
+    case ACTION_SEND_CC_CYCLE: {
+      int pos = snprintf(buf, buf_size, "CC%d cycle:", action->params.cc.cc_number);
+      for (int i = 0; i < action->params.cc.num_values && pos < (int)buf_size - 4; i++) {
+        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "", action->params.cc.values[i]);
+      }
+      break;
+    }
+    case ACTION_SEND_NOTE_ON:
+      snprintf(buf, buf_size, "Note %d vel=%d", action->params.note.note, action->params.note.velocity);
+      break;
+    case ACTION_SEND_NOTE_OFF:
+      snprintf(buf, buf_size, "Note Off %d", action->params.note.note);
+      break;
+    case ACTION_SEND_PC:
+      snprintf(buf, buf_size, "PC %d", action->params.target.number);
+      break;
+    case ACTION_RANDOMIZE_CC:
+      snprintf(buf, buf_size, "Randomize CC%d", action->params.cc.cc_number);
+      break;
+    case ACTION_RANDOMIZE_MULTI: {
+      int pos = snprintf(buf, buf_size, "Randomize CCs:");
+      for (int i = 0; i < action->params.multi_random.num_ccs && pos < (int)buf_size - 4; i++) {
+        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "", action->params.multi_random.cc_numbers[i]);
+      }
+      break;
+    }
+    default:
+      // For actions without parameters, just use the action name
+      snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
+      break;
+  }
+}
+
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "save",
@@ -76,20 +119,24 @@ static void cmd_scene_info(void) {
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Button assignments:");
+  char action_buf[64];
   if (scene->button_left.num_actions > 0) {
-    ESP_LOGI(TAG, "  Left: %s", action_type_to_string(scene->button_left.actions[0].type));
+    format_action_details(&scene->button_left.actions[0], action_buf, sizeof(action_buf));
+    ESP_LOGI(TAG, "  Left: %s%s", action_buf, scene->button_left.num_actions > 1 ? " +more" : "");
   } else {
     ESP_LOGI(TAG, "  Left: no actions");
   }
   
   if (scene->button_right.num_actions > 0) {
-    ESP_LOGI(TAG, "  Right: %s", action_type_to_string(scene->button_right.actions[0].type));
+    format_action_details(&scene->button_right.actions[0], action_buf, sizeof(action_buf));
+    ESP_LOGI(TAG, "  Right: %s%s", action_buf, scene->button_right.num_actions > 1 ? " +more" : "");
   } else {
     ESP_LOGI(TAG, "  Right: no actions");
   }
   
   if (scene->button_both.num_actions > 0) {
-    ESP_LOGI(TAG, "  Both: %s", action_type_to_string(scene->button_both.actions[0].type));
+    format_action_details(&scene->button_both.actions[0], action_buf, sizeof(action_buf));
+    ESP_LOGI(TAG, "  Both: %s%s", action_buf, scene->button_both.num_actions > 1 ? " +more" : "");
   } else {
     ESP_LOGI(TAG, "  Both: no actions");
   }
@@ -253,16 +300,10 @@ static void cmd_scene_info(void) {
     if (map->enabled) {
       if (map->actions.num_actions > 0) {
         action_t* first_action = &map->actions.actions[0];
-        const char* action_name = action_type_to_string(first_action->type);
-        
-        // Display first action details
-        if (first_action->type == ACTION_SEND_CC) {
-          ESP_LOGI(TAG, "  Pad %2d: %s (CC%d=%d) +%d more", 
-                   i, action_name, first_action->params.cc.cc_number, 
-                   first_action->params.cc.value, map->actions.num_actions - 1);
-        } else {
-          ESP_LOGI(TAG, "  Pad %2d: %s +%d more", i, action_name, map->actions.num_actions - 1);
-        }
+        char pad_action_buf[64];
+        format_action_details(first_action, pad_action_buf, sizeof(pad_action_buf));
+        ESP_LOGI(TAG, "  Pad %2d: %s%s", i, pad_action_buf, 
+                 map->actions.num_actions > 1 ? " +more" : "");
       } else {
         ESP_LOGI(TAG, "  Pad %2d: no actions", i);
       }
@@ -402,8 +443,7 @@ static struct {
   struct arg_int *pad_num;
   struct arg_str *action_type;
   struct arg_int *param1;
-  struct arg_int *param2;
-  struct arg_int *param3;
+  struct arg_int *params;  // Up to 8 values for cc_cycle, or 2 for cc_hold, etc.
   struct arg_end *end;
 } pad_args;
 
@@ -426,35 +466,35 @@ static int cmd_pad(int argc, char **argv) {
   
   // Parse action type and parameters
   if (strcmp(action_str, "cc") == 0) {
-    if (pad_args.param1->count < 1 || pad_args.param2->count < 1) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
       ESP_LOGE(TAG, "Usage: pad <num> cc <cc_num> <value>");
       return 1;
     }
     int cc_num = pad_args.param1->ival[0];
-    int value = pad_args.param2->ival[0];
+    int value = pad_args.params->ival[0];
     if (cc_num < 0 || cc_num > 127 || value < 0 || value > 127) {
       ESP_LOGE(TAG, "CC and value must be 0-127");
       return 1;
     }
     action = action_create_send_cc(cc_num, value);
   }
-  else if (strcmp(action_str, "cc_toggle") == 0) {
-    if (pad_args.param1->count < 1 || pad_args.param2->count < 1 || pad_args.param3->count < 1) {
-      ESP_LOGE(TAG, "Usage: pad <num> cc_toggle <cc_num> <value1> <value2>");
+  else if (strcmp(action_str, "cc_hold") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: pad <num> cc_hold <cc_num> <press_value> <release_value>");
       return 1;
     }
-    action = action_create_cc_toggle(pad_args.param1->ival[0], 
-                                    pad_args.param2->ival[0],
-                                    pad_args.param3->ival[0]);
+    action = action_create_cc_hold(pad_args.param1->ival[0], 
+                                   pad_args.params->ival[0],
+                                   pad_args.params->ival[1]);
   }
   else if (strcmp(action_str, "note_on") == 0) {
-    if (pad_args.param1->count < 1 || pad_args.param2->count < 1) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
       ESP_LOGE(TAG, "Usage: pad <num> note_on <note> <velocity>");
       return 1;
     }
     action.type = ACTION_SEND_NOTE_ON;
     action.params.note.note = pad_args.param1->ival[0];
-    action.params.note.velocity = pad_args.param2->ival[0];
+    action.params.note.velocity = pad_args.params->ival[0];
   }
   else if (strcmp(action_str, "note_off") == 0) {
     if (pad_args.param1->count < 1) {
@@ -475,30 +515,25 @@ static int cmd_pad(int argc, char **argv) {
   }
   else if (strcmp(action_str, "randomize") == 0) {
     if (pad_args.param1->count < 1) {
-      ESP_LOGE(TAG, "Usage: pad <num> randomize <cc_num> [cc2] [cc3]");
+      ESP_LOGE(TAG, "Usage: pad <num> randomize <cc_num> [cc2] [cc3] ...");
       return 1;
     }
     
-    // Check if multiple CCs specified
-    if (pad_args.param2->count > 0 || pad_args.param3->count > 0) {
-      // Multi-CC randomize
+    // Check if multiple CCs specified (via params array)
+    if (pad_args.params->count > 0) {
+      // Multi-CC randomize: param1 is first CC, params are additional CCs
       action.type = ACTION_RANDOMIZE_MULTI;
       action.params.multi_random.num_ccs = 0;
       
-      if (pad_args.param1->count > 0) {
-        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param1->ival[0];
-        action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
-        action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
-        action.params.multi_random.num_ccs++;
-      }
-      if (pad_args.param2->count > 0 && action.params.multi_random.num_ccs < 8) {
-        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param2->ival[0];
-        action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
-        action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
-        action.params.multi_random.num_ccs++;
-      }
-      if (pad_args.param3->count > 0 && action.params.multi_random.num_ccs < 8) {
-        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param3->ival[0];
+      // First CC from param1
+      action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.param1->ival[0];
+      action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
+      action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
+      action.params.multi_random.num_ccs++;
+      
+      // Additional CCs from params array
+      for (int i = 0; i < pad_args.params->count && action.params.multi_random.num_ccs < 8; i++) {
+        action.params.multi_random.cc_numbers[action.params.multi_random.num_ccs] = pad_args.params->ival[i];
         action.params.multi_random.min_values[action.params.multi_random.num_ccs] = 0;
         action.params.multi_random.max_values[action.params.multi_random.num_ccs] = 127;
         action.params.multi_random.num_ccs++;
@@ -510,8 +545,8 @@ static int cmd_pad(int argc, char **argv) {
     }
   }
   else if (strcmp(action_str, "cc_cycle") == 0) {
-    if (pad_args.param1->count < 1 || pad_args.param2->count < 1) {
-      ESP_LOGE(TAG, "Usage: pad <num> cc_cycle <cc_num> <val1> <val2> [val3]");
+    if (pad_args.param1->count < 1 || pad_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: pad <num> cc_cycle <cc_num> <val1> <val2> ... (up to 8 values)");
       return 1;
     }
     
@@ -519,13 +554,12 @@ static int cmd_pad(int argc, char **argv) {
     action.params.cc.cc_number = pad_args.param1->ival[0];
     action.params.cc.num_values = 0;
     
-    if (pad_args.param2->count > 0) {
-      action.params.cc.values[action.params.cc.num_values++] = pad_args.param2->ival[0];
-    }
-    if (pad_args.param3->count > 0 && action.params.cc.num_values < 8) {
-      action.params.cc.values[action.params.cc.num_values++] = pad_args.param3->ival[0];
+    // Collect all values from params array (up to 8)
+    for (int i = 0; i < pad_args.params->count && action.params.cc.num_values < 8; i++) {
+      action.params.cc.values[action.params.cc.num_values++] = pad_args.params->ival[i];
     }
     action.params.cc.current_index = 0;
+    ESP_LOGI(TAG, "CC%d cycle with %d values", action.params.cc.cc_number, action.params.cc.num_values);
   }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
@@ -589,8 +623,7 @@ static struct {
   struct arg_str *button_name;
   struct arg_str *action_type;
   struct arg_int *param1;
-  struct arg_int *param2;
-  struct arg_int *param3;
+  struct arg_int *params;  // Up to 8 values for cc_cycle, or 2 for cc_hold, etc.
   struct arg_end *end;
 } button_args;
 
@@ -607,11 +640,33 @@ static int cmd_button(int argc, char **argv) {
   action_t action = {0};
   
   if (strcmp(action_str, "cc") == 0) {
-    if (button_args.param1->count < 1 || button_args.param2->count < 1) {
+    if (button_args.param1->count < 1 || button_args.params->count < 1) {
       ESP_LOGE(TAG, "Usage: button <left|right|both> cc <cc_num> <value>");
       return 1;
     }
-    action = action_create_send_cc(button_args.param1->ival[0], button_args.param2->ival[0]);
+    action = action_create_send_cc(button_args.param1->ival[0], button_args.params->ival[0]);
+  }
+  else if (strcmp(action_str, "cc_hold") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: button <left|right|both> cc_hold <cc_num> <press> <release>");
+      return 1;
+    }
+    action = action_create_cc_hold(button_args.param1->ival[0], 
+                                   button_args.params->ival[0],
+                                   button_args.params->ival[1]);
+  }
+  else if (strcmp(action_str, "cc_cycle") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: button <left|right|both> cc_cycle <cc_num> <v1> <v2> ... (up to 8 values)");
+      return 1;
+    }
+    action.type = ACTION_SEND_CC_CYCLE;
+    action.params.cc.cc_number = button_args.param1->ival[0];
+    action.params.cc.num_values = 0;
+    for (int i = 0; i < button_args.params->count && action.params.cc.num_values < 8; i++) {
+      action.params.cc.values[action.params.cc.num_values++] = button_args.params->ival[i];
+    }
+    action.params.cc.current_index = 0;
   }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
@@ -669,9 +724,9 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "Available action types for pad/button commands:");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "MIDI Output:");
-  ESP_LOGI(TAG, "  cc <cc_num> <value>              - Send CC (press=value, release=0)");
-  ESP_LOGI(TAG, "  cc_toggle <cc> <val1> <val2>     - Toggle CC between 2 values");
-  ESP_LOGI(TAG, "  cc_cycle <cc> <v1> <v2> [v3]     - Cycle through multiple values");
+  ESP_LOGI(TAG, "  cc <cc_num> <value>              - Send CC on press (one-shot)");
+  ESP_LOGI(TAG, "  cc_hold <cc> <press> <release>   - Send press value, then release value");
+  ESP_LOGI(TAG, "  cc_cycle <cc> <v1> <v2> ... <v8> - Cycle through 2-8 values each press");
   ESP_LOGI(TAG, "  note_on <note> <velocity>        - Send Note On");
   ESP_LOGI(TAG, "  note_off <note>                  - Send Note Off");
   ESP_LOGI(TAG, "  pc <program>                     - Send Program Change");
@@ -2341,10 +2396,9 @@ esp_err_t scene_console_init(void) {
   // pad command (flexible action assignment)
   pad_args.pad_num = arg_int1(NULL, NULL, "<pad>", "Pad number (0-11)");
   pad_args.action_type = arg_str1(NULL, NULL, "<action>", "Action type");
-  pad_args.param1 = arg_int0(NULL, NULL, "<p1>", "Parameter 1");
-  pad_args.param2 = arg_int0(NULL, NULL, "<p2>", "Parameter 2");
-  pad_args.param3 = arg_int0(NULL, NULL, "<p3>", "Parameter 3");
-  pad_args.end = arg_end(6);
+  pad_args.param1 = arg_int0(NULL, NULL, "<p1>", "CC/note number");
+  pad_args.params = arg_intn(NULL, NULL, "<val>", 0, 8, "Values (up to 8 for cc_cycle)");
+  pad_args.end = arg_end(12);
   
   const esp_console_cmd_t pad_cmd = {
     .command = "pad",
@@ -2358,10 +2412,9 @@ esp_err_t scene_console_init(void) {
   // button command
   button_args.button_name = arg_str1(NULL, NULL, "<left|right|both>", "Button");
   button_args.action_type = arg_str1(NULL, NULL, "<action>", "Action type");
-  button_args.param1 = arg_int0(NULL, NULL, "<p1>", "Parameter 1");
-  button_args.param2 = arg_int0(NULL, NULL, "<p2>", "Parameter 2");
-  button_args.param3 = arg_int0(NULL, NULL, "<p3>", "Parameter 3");
-  button_args.end = arg_end(6);
+  button_args.param1 = arg_int0(NULL, NULL, "<p1>", "CC/note number");
+  button_args.params = arg_intn(NULL, NULL, "<val>", 0, 8, "Values (up to 8 for cc_cycle)");
+  button_args.end = arg_end(12);
   
   const esp_console_cmd_t button_cmd = {
     .command = "button",
