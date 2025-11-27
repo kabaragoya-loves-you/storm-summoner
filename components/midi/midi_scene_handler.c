@@ -65,6 +65,23 @@ static void handle_button_event(const event_t* event, void* context) {
   }
 }
 
+// Handle bump events using scene-based action assignments
+static void handle_bump_event(const event_t* event, void* context) {
+  if (!event) return;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  action_chain_t* chain = &scene->bump;
+  
+  if (chain->num_actions > 0) {
+    ESP_LOGI(TAG, "Bump detected - executing %d actions", chain->num_actions);
+    action_execute_chain(chain, 127, true);
+  } else {
+    ESP_LOGD(TAG, "Bump detected - no actions assigned");
+  }
+}
+
 esp_err_t midi_scene_handler_init(void) {
   ESP_LOGI(TAG, "Initializing MIDI scene handler");
   
@@ -96,6 +113,9 @@ esp_err_t midi_scene_handler_init(void) {
   event_bus_subscribe(EVENT_BUTTON_L_LONG_PRESS, handle_button_event, NULL);
   event_bus_subscribe(EVENT_BUTTON_R_LONG_PRESS, handle_button_event, NULL);
   event_bus_subscribe(EVENT_BUTTON_BOTH_LONG_PRESS, handle_button_event, NULL);
+  
+  // Subscribe to bump events
+  event_bus_subscribe(EVENT_BUMP_DETECTED, handle_bump_event, NULL);
   
   ESP_LOGI(TAG, "MIDI scene handler initialized");
   return ESP_OK;

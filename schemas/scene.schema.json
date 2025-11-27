@@ -68,6 +68,10 @@
     "button_both": {
       "$ref": "#/definitions/action_chain"
     },
+    "bump": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Bump sensor action chain"
+    },
     "expression": {
       "$ref": "#/definitions/continuous_mapping",
       "description": "Expression pedal mapping"

@@ -159,6 +159,11 @@
       "type": "confirm_pending"
     }
   ],
+  "bump": [
+    {
+      "type": "tap_tempo"
+    }
+  ],
   "on_load": [
     {
       "type": "all_notes_off"

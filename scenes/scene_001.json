@@ -158,6 +158,11 @@
       "type": "confirm_pending"
     }
   ],
+  "bump": [
+    {
+      "type": "tap_tempo"
+    }
+  ],
   "expression": {
     "enabled": false,
     "output_type": "cc",

@@ -181,10 +181,12 @@ esp_err_t scene_assign_touchpad_chain(uint8_t scene_index, uint8_t pad_index, co
 esp_err_t scene_assign_button_left(uint8_t scene_index, const action_chain_t* chain);
 esp_err_t scene_assign_button_right(uint8_t scene_index, const action_chain_t* chain);
 esp_err_t scene_assign_button_both(uint8_t scene_index, const action_chain_t* chain);
+esp_err_t scene_assign_bump(uint8_t scene_index, const action_chain_t* chain);
 esp_err_t scene_assign_on_load(uint8_t scene_index, const action_chain_t* chain);
 action_chain_t* scene_get_button_left(uint8_t scene_index);
 action_chain_t* scene_get_button_right(uint8_t scene_index);
 action_chain_t* scene_get_button_both(uint8_t scene_index);
+action_chain_t* scene_get_bump(uint8_t scene_index);
 action_chain_t* scene_get_on_load(uint8_t scene_index);
 
 // Pending change mode

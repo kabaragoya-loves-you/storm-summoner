@@ -987,6 +987,23 @@ action_chain_t* scene_get_button_both(uint8_t scene_index) {
   return scene ? &scene->button_both : NULL;
 }
 
+esp_err_t scene_assign_bump(uint8_t scene_index, const action_chain_t* chain) {
+  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->bump = *chain;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  ESP_LOGI(TAG, "Assigned %d actions to bump", chain->num_actions);
+  return ESP_OK;
+}
+
+action_chain_t* scene_get_bump(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->bump : NULL;
+}
+
 esp_err_t scene_assign_on_load(uint8_t scene_index, const action_chain_t* chain) {
   if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
   
@@ -1500,6 +1517,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "button_left", action_chain_to_json(&scene->button_left));
   cJSON_AddItemToObject(root, "button_right", action_chain_to_json(&scene->button_right));
   cJSON_AddItemToObject(root, "button_both", action_chain_to_json(&scene->button_both));
+  cJSON_AddItemToObject(root, "bump", action_chain_to_json(&scene->bump));
   
   // Serialize continuous mappings
   cJSON_AddItemToObject(root, "expression", continuous_mapping_to_json(&scene->expression));
@@ -1605,6 +1623,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   
   cJSON* btn_both = cJSON_GetObjectItem(root, "button_both");
   if (btn_both) scene->button_both = json_to_action_chain(btn_both);
+  
+  cJSON* bump = cJSON_GetObjectItem(root, "bump");
+  if (bump) scene->bump = json_to_action_chain(bump);
   
   // Deserialize continuous mappings
   cJSON* expression = cJSON_GetObjectItem(root, "expression");

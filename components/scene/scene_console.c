@@ -74,7 +74,7 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
   "info", "next", "prev", "goto", "name", "save",
-  "confirm", "cancel", "channel", "pad", "button", "actions", "pc",
+  "confirm", "cancel", "channel", "pad", "button", "bump", "actions", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
   "clock_source", "clock_standard", "time_sig",
@@ -139,6 +139,13 @@ static void cmd_scene_info(void) {
     ESP_LOGI(TAG, "  Both: %s%s", action_buf, scene->button_both.num_actions > 1 ? " +more" : "");
   } else {
     ESP_LOGI(TAG, "  Both: no actions");
+  }
+  
+  if (scene->bump.num_actions > 0) {
+    format_action_details(&scene->bump.actions[0], action_buf, sizeof(action_buf));
+    ESP_LOGI(TAG, "  Bump: %s%s", action_buf, scene->bump.num_actions > 1 ? " +more" : "");
+  } else {
+    ESP_LOGI(TAG, "  Bump: no actions");
   }
   
   ESP_LOGI(TAG, "");
@@ -719,9 +726,104 @@ static int cmd_button(int argc, char **argv) {
   return 0;
 }
 
+// Command: bump <action_type> [params...]
+static struct {
+  struct arg_str *action_type;
+  struct arg_int *param1;
+  struct arg_int *params;
+  struct arg_end *end;
+} bump_args;
+
+static int cmd_bump(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &bump_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, bump_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* action_str = bump_args.action_type->sval[0];
+  
+  action_t action = {0};
+  
+  if (strcmp(action_str, "cc") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump cc <cc_num> <value>");
+      return 1;
+    }
+    action = action_create_send_cc(bump_args.param1->ival[0], bump_args.params->ival[0]);
+  }
+  else if (strcmp(action_str, "cc_hold") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: bump cc_hold <cc_num> <press> <release>");
+      return 1;
+    }
+    action = action_create_cc_hold(bump_args.param1->ival[0], 
+                                   bump_args.params->ival[0],
+                                   bump_args.params->ival[1]);
+  }
+  else if (strcmp(action_str, "cc_cycle") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 2) {
+      ESP_LOGE(TAG, "Usage: bump cc_cycle <cc_num> <v1> <v2> ... (up to 8 values)");
+      return 1;
+    }
+    action.type = ACTION_SEND_CC_CYCLE;
+    action.params.cc.cc_number = bump_args.param1->ival[0];
+    action.params.cc.num_values = 0;
+    for (int i = 0; i < bump_args.params->count && action.params.cc.num_values < 8; i++) {
+      action.params.cc.values[action.params.cc.num_values++] = bump_args.params->ival[i];
+    }
+    action.params.cc.current_index = 0;
+  }
+  else if (strcmp(action_str, "tap_tempo") == 0) {
+    action = action_create_tap_tempo();
+  }
+  else if (strcmp(action_str, "program_next") == 0) {
+    action = action_create_program_next();
+  }
+  else if (strcmp(action_str, "program_prev") == 0) {
+    action = action_create_program_prev();
+  }
+  else if (strcmp(action_str, "scene_next") == 0) {
+    action = action_create_scene_next();
+  }
+  else if (strcmp(action_str, "scene_prev") == 0) {
+    action = action_create_scene_prev();
+  }
+  else if (strcmp(action_str, "confirm_pending") == 0) {
+    action.type = ACTION_CONFIRM_PENDING;
+  }
+  else if (strcmp(action_str, "cancel_pending") == 0) {
+    action.type = ACTION_CANCEL_PENDING;
+  }
+  else if (strcmp(action_str, "none") == 0) {
+    // Clear bump assignment
+    action_chain_t empty = {0};
+    esp_err_t ret = scene_assign_bump(scene_get_current_index(), &empty);
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "Cleared bump assignment");
+    }
+    return 0;
+  }
+  else {
+    ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
+    return 1;
+  }
+  
+  action_chain_t chain = {0};
+  chain.num_actions = 1;
+  chain.actions[0] = action;
+  
+  esp_err_t ret = scene_assign_bump(scene_get_current_index(), &chain);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Assigned '%s' to bump", action_type_to_string(action.type));
+  }
+  
+  return 0;
+}
+
 // Command: actions - List available action types
 static int cmd_actions(int argc, char **argv) {
-  ESP_LOGI(TAG, "Available action types for pad/button commands:");
+  ESP_LOGI(TAG, "Available action types for pad/button/bump commands:");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "MIDI Output:");
   ESP_LOGI(TAG, "  cc <cc_num> <value>              - Send CC on press (one-shot)");
@@ -2425,10 +2527,25 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&button_cmd);
   
+  // bump command
+  bump_args.action_type = arg_str1(NULL, NULL, "<action>", "Action type");
+  bump_args.param1 = arg_int0(NULL, NULL, "<p1>", "CC/note number");
+  bump_args.params = arg_intn(NULL, NULL, "<val>", 0, 8, "Values (up to 8 for cc_cycle)");
+  bump_args.end = arg_end(12);
+  
+  const esp_console_cmd_t bump_cmd = {
+    .command = "bump",
+    .help = "Assign action to bump sensor (type 'actions' for list, 'none' to clear)",
+    .hint = NULL,
+    .func = &cmd_bump,
+    .argtable = &bump_args
+  };
+  esp_console_cmd_register(&bump_cmd);
+  
   // actions command
   const esp_console_cmd_t actions_cmd = {
     .command = "actions",
-    .help = "List available action types for pad/button",
+    .help = "List available action types for pad/button/bump",
     .hint = NULL,
     .func = &cmd_actions,
   };
