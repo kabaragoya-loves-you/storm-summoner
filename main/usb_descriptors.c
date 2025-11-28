@@ -1,5 +1,6 @@
 #include "tusb.h"
 #include "esp_log.h"
+#include "version.h"
 #include <string.h>
 
 #define TAG "USB_DESC"
@@ -106,7 +107,15 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     // Convert ASCII string into UTF-16
     if (!(index < sizeof(string_desc_arr)/sizeof(string_desc_arr[0]))) return NULL;
 
-    const char* str = string_desc_arr[index];
+    const char* str;
+    if (index == 3) {
+      // Serial number: use last 8 chars of MAC-based serial (12 chars total)
+      const char* full_serial = version_get_serial();
+      size_t len = strlen(full_serial);
+      str = (len > 8) ? full_serial + (len - 8) : full_serial;
+    } else {
+      str = string_desc_arr[index];
+    }
 
     // Cap at max char
     chr_count = strlen(str);

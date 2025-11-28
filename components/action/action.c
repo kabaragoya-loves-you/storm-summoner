@@ -70,7 +70,9 @@ esp_err_t action_init(void) {
 }
 
 const char* action_type_to_string(action_type_t type) {
-  return (type < ACTION_MAX) ? action_type_names[type] : "Unknown";
+  if (type >= ACTION_MAX) return "Unknown";
+  const char* name = action_type_names[type];
+  return name ? name : "Unknown";
 }
 
 esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_press) {

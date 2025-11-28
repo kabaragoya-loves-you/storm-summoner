@@ -423,7 +423,7 @@ void expression_init(bool enable_logging) {
   };
   gpio_config(&io_conf);
   
-  const char* mode_names[] = {"PEDAL", "SUSTAIN", "SOSTENUTO", "GATE"};
+  const char* mode_names[] = {"PEDAL", "SUSTAIN", "SOSTENUTO", "GATE", "SWITCH"};
   ESP_LOGI(TAG, "Expression initialized - Mode: %s, Min: %d, Max: %d, Deadzone: %d (Ratiometric)", 
     mode_names[s_mode], s_min_value, s_max_value, s_deadzone);
   
