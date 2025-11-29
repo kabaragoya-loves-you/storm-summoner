@@ -773,6 +773,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Configure expression jack mode for this scene
   expression_set_mode(new_scene->expression_mode);
   
+  // Configure CV input mode for this scene
+  input_set_mode(new_scene->cv_input_mode);
+  
   // Configure tempo settings for this scene
   tempo_set_source(new_scene->clock_source);
   tempo_set_clock_standard(new_scene->clock_standard);

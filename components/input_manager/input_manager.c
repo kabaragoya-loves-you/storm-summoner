@@ -17,10 +17,8 @@
 // External function for ADC-based CV cable detection
 extern bool cv_is_cable_connected(void);
 
-// NVS keys
-#define NVS_KEY_INPUT_MODE "input_mode"
+// NVS keys (only cable detection is device-level; input mode is per-scene)
 #define NVS_KEY_CABLE_DETECT_EN "cable_det_en"
-// Note: NVS_KEY_VELOCITY_MODE and NVS_KEY_VELOCITY_FIXED removed - now per-scene settings
 
 // State
 static input_mode_t s_current_mode = INPUT_MODE_CV;
@@ -41,84 +39,22 @@ esp_err_t input_manager_init(void) {
   
   ESP_LOGI(TAG, "Initializing input manager");
   
-  // Load saved mode from NVS
-  uint8_t mode = INPUT_MODE_CV;
-  app_settings_load_u8(NVS_KEY_INPUT_MODE, &mode);
-  s_current_mode = (input_mode_t)mode;
-  
-  // Load cable detection setting from NVS
+  // Load cable detection setting from NVS (device-level setting)
   uint8_t cable_detect = 1;
   app_settings_load_u8(NVS_KEY_CABLE_DETECT_EN, &cable_detect);
   s_cable_detection_enabled = (cable_detect != 0);
   
   ESP_LOGI(TAG, "Cable detection %s", s_cable_detection_enabled ? "enabled" : "disabled");
   
-  // Note: Velocity settings moved to per-scene configuration
-  
   // Initialize clock sync component
   clock_sync_init();
   
-  // Enable the initial mode
-  switch (s_current_mode) {
-    case INPUT_MODE_CV:
-      cv_enable();
-      ESP_LOGI(TAG, "Enabled initial mode: CV");
-      break;
-      
-    case INPUT_MODE_CLOCK_SYNC:
-      // Check cable before enabling (if cable detection is enabled)
-      if (!s_cable_detection_enabled || cv_is_cable_connected()) {
-        switch_set_channel(2);  // Channel 2 for unipolar 5V (typical for clock sync)
-        clock_sync_enable();
-        ESP_LOGI(TAG, "Enabled initial mode: Clock sync%s", s_cable_detection_enabled ? "" : " (cable detection disabled)");
-      } else {
-        ESP_LOGW(TAG, "Cannot enable clock sync - no cable connected");
-        // Fall back to CV mode
-        s_current_mode = INPUT_MODE_CV;
-        cv_enable();
-      }
-      break;
-      
-    case INPUT_MODE_AUDIO:
-      ESP_LOGW(TAG, "Audio mode not yet implemented, defaulting to CV");
-      s_current_mode = INPUT_MODE_CV;
-      cv_enable();
-      break;
-      
-    case INPUT_MODE_NOTE: {
-      // NOTE mode: CV for pitch, Expression for gate
-      // Check cables before enabling
-      bool cv_connected = !s_cable_detection_enabled || cv_is_cable_connected();
-      bool exp_connected = !s_cable_detection_enabled || gpio_get_level(PIN_EXP_SW) == 1;
-      
-      if (cv_connected && exp_connected) {
-        // NOTE mode requires PITCH mode and 5V range for CV interpretation
-        cv_set_mode(CV_MODE_PITCH);
-        cv_set_range(CV_RANGE_5V);  // Standard modular synth CV is 0-5V
-        cv_enable();
-        
-        // Set expression to gate mode
-        expression_set_mode(EXPRESSION_MODE_GATE);
-        expression_enable();
-        
-        // Subscribe to events
-        event_bus_subscribe(EVENT_CV_VALUE, note_mode_cv_handler, NULL);
-        event_bus_subscribe(EVENT_EXPRESSION_GATE, note_mode_gate_handler, NULL);
-        
-        ESP_LOGI(TAG, "Enabled initial mode: NOTE (CV pitch + Expression gate)");
-      } else {
-        ESP_LOGW(TAG, "Cannot enable NOTE mode - cables not connected (CV:%d, Exp:%d)", 
-          cv_connected, exp_connected);
-        // Fall back to CV mode
-        s_current_mode = INPUT_MODE_CV;
-        cv_enable();
-      }
-      break;
-    }
-  }
+  // Start in CV mode as safe default - scene will override when loaded
+  s_current_mode = INPUT_MODE_CV;
+  cv_enable();
+  ESP_LOGI(TAG, "Enabled initial mode: CV (scene will override)");
   
   s_initialized = true;
-  ESP_LOGI(TAG, "Input manager initialized - Mode: %d", s_current_mode);
   
   return ESP_OK;
 }
@@ -154,9 +90,8 @@ esp_err_t input_set_mode(input_mode_t mode) {
       break;
   }
   
-  // Update the mode
+  // Update the mode (scene is the source of truth, no NVS save here)
   s_current_mode = mode;
-  app_settings_save_u8(NVS_KEY_INPUT_MODE, (uint8_t)mode);
   
   // Enable the new mode
   switch (mode) {
