@@ -5,6 +5,7 @@ idf_component_register(
   REQUIRES
     espressif__tinyusb
     firmware_update
+    console
   PRIV_REQUIRES
     main
 )

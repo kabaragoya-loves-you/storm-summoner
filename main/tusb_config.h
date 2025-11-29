@@ -30,7 +30,7 @@ extern "C" {
 #ifdef CFG_TUD_CDC
 #undef CFG_TUD_CDC
 #endif
-#define CFG_TUD_CDC             2  // Two CDC ports: Updates (0) and Console (1)
+#define CFG_TUD_CDC             1  // Single CDC port for updates and console
 
 #define CFG_TUD_MSC             0  // Disable Mass Storage class
 
