@@ -62,6 +62,9 @@ void app_main(void) {
   adc_manager_init();
   revision_init();
   gpio_install_isr_service(0);
+
+  bool boot_calibrate = buttons_check_boot_right();
+  
   i2c_common_scan();
   app_settings_init();
   assets_manager_init();
@@ -90,7 +93,11 @@ void app_main(void) {
   ui_set_draw_module(&buttons_module);
   
   touch_init(false);
-  // force_touch_calibration();
+  
+  if (boot_calibrate) {
+    ESP_LOGI(TAG, "Boot calibration triggered - running full touch calibration");
+    force_touch_calibration();
+  }
   
   bump_init(false);
   haptic_init();

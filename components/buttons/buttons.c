@@ -483,4 +483,25 @@ uint16_t buttons_get_long_press_threshold(void) {
   return g_long_press_ms;
 }
 
+bool buttons_check_boot_right(void) {
+  // Configure Right button GPIO as input with pull-up (no ISR)
+  gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << PIN_BUTTON_R),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE,
+  };
+  gpio_config(&io_conf);
+  
+  // Read the button state (active low)
+  int level = gpio_get_level(PIN_BUTTON_R);
+  bool pressed = (level == 0);
+  
+  if (pressed) {
+    ESP_LOGI(TAG, "Right button held at boot");
+  }
+  
+  return pressed;
+}
 

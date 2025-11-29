@@ -92,6 +92,15 @@ esp_err_t buttons_set_long_press_threshold(uint16_t long_press_ms);
  */
 uint16_t buttons_get_long_press_threshold(void);
 
+/**
+ * Check if the Right button is held during boot
+ * Must be called BEFORE buttons_init() for accurate reading.
+ * Configures GPIO temporarily to read the button state.
+ * 
+ * @return true if Right button is pressed (held) at boot
+ */
+bool buttons_check_boot_right(void);
+
 #endif // BUTTONS_H
 
 
