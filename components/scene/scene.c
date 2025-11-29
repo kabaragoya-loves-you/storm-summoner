@@ -1324,13 +1324,6 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   
   // State machine: NOTE mode requires GATE expression mode
   if (mode == INPUT_MODE_NOTE) {
-    // Save current expression mode before changing to GATE
-    // (only if we're not already in GATE mode to avoid overwriting the saved mode)
-    if (scene->expression_mode != EXPRESSION_MODE_GATE) {
-      expression_save_previous_mode(scene->expression_mode);
-      ESP_LOGI(TAG, "Saved previous expression mode: %d", scene->expression_mode);
-    }
-    
     scene->expression_mode = EXPRESSION_MODE_GATE;
     ESP_LOGI(TAG, "Expression mode automatically set to GATE for NOTE input mode");
     
@@ -1339,14 +1332,13 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
       expression_set_mode(EXPRESSION_MODE_GATE);
     }
   } else if (old_mode == INPUT_MODE_NOTE) {
-    // Changing FROM NOTE mode - restore previous expression mode
-    expression_mode_t previous_mode = expression_get_previous_mode();
-    scene->expression_mode = previous_mode;
-    ESP_LOGI(TAG, "Expression mode restored to %d (leaving NOTE mode)", previous_mode);
+    // Changing FROM NOTE mode - set expression to PEDAL mode
+    scene->expression_mode = EXPRESSION_MODE_PEDAL;
+    ESP_LOGI(TAG, "Expression mode set to PEDAL (leaving NOTE mode)");
     
     // Update hardware if this is the current scene
     if (scene_index == g_scene_manager.current_scene_index) {
-      expression_set_mode(previous_mode);
+      expression_set_mode(EXPRESSION_MODE_PEDAL);
     }
   }
   
@@ -1373,7 +1365,18 @@ esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t sourc
   
   // If setting to SYNC, automatically set cv_input_mode to CLOCK_SYNC for coherence
   if (source == CLOCK_SOURCE_SYNC) {
+    input_mode_t old_input_mode = scene->cv_input_mode;
     scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
+    
+    // If we were in NOTE mode, also reset expression mode to PEDAL
+    if (old_input_mode == INPUT_MODE_NOTE) {
+      scene->expression_mode = EXPRESSION_MODE_PEDAL;
+      ESP_LOGI(TAG, "Expression mode set to PEDAL (leaving NOTE mode for clock sync)");
+      
+      if (scene_index == g_scene_manager.current_scene_index) {
+        expression_set_mode(EXPRESSION_MODE_PEDAL);
+      }
+    }
     
     // Switch to clock sync mode if this is the current scene
     if (scene_index == g_scene_manager.current_scene_index) {

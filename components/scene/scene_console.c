@@ -2101,13 +2101,15 @@ static int cmd_cv_input_mode(int argc, char **argv) {
   if (strcmp(mode_str, "cv") == 0) {
     mode = INPUT_MODE_CV;
   } else if (strcmp(mode_str, "clock_sync") == 0 || strcmp(mode_str, "clock") == 0 || strcmp(mode_str, "sync") == 0) {
-    mode = INPUT_MODE_CLOCK_SYNC;
+    // clock_sync mode can only be set via clock_source sync
+    ESP_LOGE(TAG, "Cannot set clock_sync directly - use 'clock_source sync' instead");
+    return 1;
   } else if (strcmp(mode_str, "audio") == 0) {
     mode = INPUT_MODE_AUDIO;
   } else if (strcmp(mode_str, "note") == 0) {
     mode = INPUT_MODE_NOTE;
   } else {
-    ESP_LOGE(TAG, "Unknown CV input mode (use: cv, clock_sync, audio, note)");
+    ESP_LOGE(TAG, "Unknown CV input mode (use: cv, audio, note)");
     return 1;
   }
   
@@ -3477,7 +3479,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t cv_input_mode_cmd = {
     .command = "cv_input_mode",
-    .help = "Set CV input mode (cv/clock_sync/audio/note)",
+    .help = "Set CV input mode (cv/audio/note). Use clock_source for sync mode",
     .hint = NULL,
     .func = &cmd_cv_input_mode,
     .argtable = &cv_input_mode_args
