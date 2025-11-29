@@ -3,31 +3,33 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "lvgl.h"
 
 /**
  * Shared Canvas Buffer Module
  * 
- * Provides a single, persistent 32KB canvas buffer that is allocated once
+ * Provides a single, persistent canvas buffer that is allocated once
  * at startup and shared between UI and screensavers. This eliminates
  * memory fragmentation issues caused by repeated allocation/deallocation
  * cycles during mode transitions.
  * 
+ * The buffer size is determined at runtime based on the active display:
+ * - SSD1327: 128x128 x 2 bytes (RGB565) = 32KB
+ * - GC9A01A: 240x240 x 3 bytes (RGB888) = 172KB
+ * 
  * Usage:
- * 1. Call shared_canvas_buffer_init() early in system startup
- * 2. Use shared_canvas_buffer_get() to obtain the buffer pointer
- * 3. Coordinate access via the UI mode system (APP_MODE_PERFORMANCE,
- *    APP_MODE_PROGRAMMING, APP_MODE_SCREENSAVER)
+ * 1. Call display_driver_select() first to determine display type
+ * 2. Call shared_canvas_buffer_init() early in system startup
+ * 3. Use shared_canvas_buffer_get() to obtain the buffer pointer
+ * 4. Coordinate access via the UI mode system
  */
-
-// Canvas dimensions (must match display)
-#define SHARED_CANVAS_WIDTH  128
-#define SHARED_CANVAS_HEIGHT 128
 
 /**
  * Initialize the shared canvas buffer.
  * Allocates the buffer with 64-byte alignment for PPA hardware acceleration.
- * Must be called once during system startup, before ui_init().
+ * Must be called once during system startup, after display_driver_select()
+ * but before ui_init().
  * 
  * @return true if initialization succeeded, false on allocation failure
  */
@@ -48,7 +50,21 @@ void *shared_canvas_buffer_get(void);
 size_t shared_canvas_buffer_get_size(void);
 
 /**
- * Get the native color format used by the buffer.
+ * Get the canvas width in pixels.
+ * 
+ * @return Canvas width
+ */
+uint16_t shared_canvas_buffer_get_width(void);
+
+/**
+ * Get the canvas height in pixels.
+ * 
+ * @return Canvas height
+ */
+uint16_t shared_canvas_buffer_get_height(void);
+
+/**
+ * Get the color format used by the buffer.
  * 
  * @return LVGL color format constant
  */
@@ -68,4 +84,3 @@ bool shared_canvas_buffer_is_valid(void);
 void shared_canvas_buffer_clear(void);
 
 #endif // SHARED_CANVAS_BUFFER_H
-

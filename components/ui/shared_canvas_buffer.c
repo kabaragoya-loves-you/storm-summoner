@@ -1,4 +1,5 @@
 #include "shared_canvas_buffer.h"
+#include "display_driver.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -8,6 +9,9 @@
 // Single persistent buffer - allocated once, never freed during normal operation
 static void *s_shared_buffer = NULL;
 static size_t s_buffer_size = 0;
+static uint16_t s_width = 0;
+static uint16_t s_height = 0;
+static lv_color_format_t s_color_format = LV_COLOR_FORMAT_RGB565;
 
 bool shared_canvas_buffer_init(void) {
   if (s_shared_buffer != NULL) {
@@ -15,28 +19,42 @@ bool shared_canvas_buffer_init(void) {
     return true;
   }
 
-  // Calculate buffer size based on native color format
-  size_t bytes_per_pixel = lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
-  s_buffer_size = SHARED_CANVAS_WIDTH * SHARED_CANVAS_HEIGHT * bytes_per_pixel;
+  // Get dimensions and format from display driver
+  s_width = display_get_width();
+  s_height = display_get_height();
+  s_color_format = display_get_color_format();
+  
+  // Calculate buffer size based on display dimensions and color format
+  size_t bytes_per_pixel = lv_color_format_get_size(s_color_format);
+  s_buffer_size = s_width * s_height * bytes_per_pixel;
 
-  ESP_LOGI(TAG, "Allocating shared canvas buffer: %dx%d, %d bytes/pixel, total %d bytes",
-    SHARED_CANVAS_WIDTH, SHARED_CANVAS_HEIGHT, bytes_per_pixel, s_buffer_size);
+  ESP_LOGI(TAG, "Allocating shared canvas buffer: %dx%d, %zu bytes/pixel, total %zu bytes",
+    s_width, s_height, bytes_per_pixel, s_buffer_size);
 
   // Allocate with 64-byte alignment for PPA hardware acceleration
-  // Use internal RAM for best performance
+  // Use internal RAM for best performance, fall back to PSRAM for larger buffers
   s_shared_buffer = heap_caps_aligned_alloc(64, s_buffer_size, 
     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
   if (!s_shared_buffer) {
+    // Try PSRAM for larger buffers (GC9A01A needs ~172KB)
+    ESP_LOGW(TAG, "Internal RAM allocation failed, trying PSRAM");
+    s_shared_buffer = heap_caps_aligned_alloc(64, s_buffer_size, 
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  }
+
+  if (!s_shared_buffer) {
     ESP_LOGE(TAG, "Failed to allocate shared canvas buffer!");
     s_buffer_size = 0;
+    s_width = 0;
+    s_height = 0;
     return false;
   }
 
   // Initialize to black
   memset(s_shared_buffer, 0, s_buffer_size);
 
-  ESP_LOGI(TAG, "Shared canvas buffer allocated: %d KB at %p (64-byte aligned)",
+  ESP_LOGI(TAG, "Shared canvas buffer allocated: %zu KB at %p (64-byte aligned)",
     s_buffer_size / 1024, s_shared_buffer);
 
   return true;
@@ -50,8 +68,16 @@ size_t shared_canvas_buffer_get_size(void) {
   return s_buffer_size;
 }
 
+uint16_t shared_canvas_buffer_get_width(void) {
+  return s_width;
+}
+
+uint16_t shared_canvas_buffer_get_height(void) {
+  return s_height;
+}
+
 lv_color_format_t shared_canvas_buffer_get_format(void) {
-  return LV_COLOR_FORMAT_NATIVE;
+  return s_color_format;
 }
 
 bool shared_canvas_buffer_is_valid(void) {
@@ -63,4 +89,3 @@ void shared_canvas_buffer_clear(void) {
     memset(s_shared_buffer, 0, s_buffer_size);
   }
 }
-

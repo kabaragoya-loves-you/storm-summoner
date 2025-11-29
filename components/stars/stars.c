@@ -13,8 +13,9 @@ static lv_obj_t *g_stars_screen = NULL;
 static lv_obj_t *g_stars_canvas = NULL;
 static lv_timer_t *g_animation_timer = NULL;
 
-// NOTE: We now use the shared canvas buffer instead of our own allocation
-// The pointer below is just a cached reference to the shared buffer
+// Cached display dimensions
+static uint16_t s_disp_width = 128;
+static uint16_t s_disp_height = 128;
 
 // Star data
 static Star stars[MAX_STARS];
@@ -25,8 +26,10 @@ static lv_obj_t *g_previous_screen = NULL;
 static bool g_skip_first_invalidate = false;
 
 static void init_star(int i) {
-  stars[i].x = (esp_random() % 200) - 100;
-  stars[i].y = (esp_random() % 200) - 100;
+  // Scale star spawn range based on display size (larger display = wider spread)
+  int spread = (s_disp_width > 128) ? 300 : 200;
+  stars[i].x = (esp_random() % spread) - (spread / 2);
+  stars[i].y = (esp_random() % spread) - (spread / 2);
   stars[i].z = (esp_random() % 400) + 100;
   stars[i].brightness = esp_random() & 0xFF;
 }
@@ -41,18 +44,21 @@ static void starfield_animation_cb(lv_timer_t *timer) {
   // Clear canvas
   lv_canvas_fill_bg(g_stars_canvas, lv_color_black(), LV_OPA_COVER);
 
-  int center_x = DISP_HOR_RES / 2;
-  int center_y = DISP_VER_RES / 2;
+  int center_x = s_disp_width / 2;
+  int center_y = s_disp_height / 2;
+  
+  // Scale projection factor based on display size
+  float proj_scale = (s_disp_width > 128) ? 150.0f : 100.0f;
 
   for (int i = 0; i < MAX_STARS; i++) {
     stars[i].z -= 7;
     float depth = (float)stars[i].z;
 
-    int x_proj = (int)((stars[i].x / depth) * 100.0f) + center_x;
-    int y_proj = (int)((stars[i].y / depth) * 100.0f) + center_y;
+    int x_proj = (int)((stars[i].x / depth) * proj_scale) + center_x;
+    int y_proj = (int)((stars[i].y / depth) * proj_scale) + center_y;
 
-    if (x_proj < 0 || x_proj >= DISP_HOR_RES ||
-        y_proj < 0 || y_proj >= DISP_VER_RES ||
+    if (x_proj < 0 || x_proj >= s_disp_width ||
+        y_proj < 0 || y_proj >= s_disp_height ||
         stars[i].z < 1) {
       init_star(i);
       continue;
@@ -86,7 +92,10 @@ void starfield_start(void) {
   }
 
   void *shared_buf = shared_canvas_buffer_get();
-  ESP_LOGI(TAG, "Using shared canvas buffer at %p", shared_buf);
+  s_disp_width = shared_canvas_buffer_get_width();
+  s_disp_height = shared_canvas_buffer_get_height();
+  
+  ESP_LOGI(TAG, "Using shared canvas buffer at %p (%dx%d)", shared_buf, s_disp_width, s_disp_height);
 
   // Save current screen
   g_previous_screen = lv_screen_active();
@@ -101,14 +110,14 @@ void starfield_start(void) {
 
     g_stars_screen = lv_obj_create(NULL);
 
-    lv_obj_set_size(g_stars_screen, DISP_HOR_RES, DISP_VER_RES);
+    lv_obj_set_size(g_stars_screen, s_disp_width, s_disp_height);
     lv_obj_set_style_bg_color(g_stars_screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(g_stars_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_stars_screen, 0, 0);
 
     // Create canvas
     g_stars_canvas = lv_canvas_create(g_stars_screen);
-    lv_obj_set_size(g_stars_canvas, DISP_HOR_RES, DISP_VER_RES);
+    lv_obj_set_size(g_stars_canvas, s_disp_width, s_disp_height);
     lv_obj_center(g_stars_canvas);
   }
 
@@ -117,7 +126,7 @@ void starfield_start(void) {
   if (g_stars_canvas && shared_buf) {
     ESP_LOGI(TAG, "Attaching shared buffer to starfield canvas");
     shared_canvas_buffer_clear();
-    lv_canvas_set_buffer(g_stars_canvas, shared_buf, DISP_HOR_RES, DISP_VER_RES, 
+    lv_canvas_set_buffer(g_stars_canvas, shared_buf, s_disp_width, s_disp_height, 
       shared_canvas_buffer_get_format());
     lv_canvas_fill_bg(g_stars_canvas, lv_color_black(), LV_OPA_COVER);
   }

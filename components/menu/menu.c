@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "ui.h"
+#include "display_driver.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -73,9 +74,12 @@ static lv_obj_t* find_list_in_screen(lv_obj_t* screen) {
 }
 
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count) {
+  uint16_t disp_w = display_get_width();
+  uint16_t disp_h = display_get_height();
+  
   // Create screen
   lv_obj_t* screen = lv_obj_create(NULL);
-  lv_obj_set_size(screen, 128, 128);
+  lv_obj_set_size(screen, disp_w, disp_h);
   lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(screen, 0, 0);
@@ -88,9 +92,9 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);  // Small header
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);  // Position from top
 
-  // Create list widget - positioned below title
+  // Create list widget - positioned below title (sizes proportional to display)
   lv_obj_t* list = lv_list_create(screen);
-  lv_obj_set_size(list, 100, 114);  // Size to fit remaining space
+  lv_obj_set_size(list, disp_w * 100 / 128, disp_h - 14);  // Scale proportionally
   lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 14);  // Position below title
   
   // Minimal styling - transparent, no padding, no borders
@@ -447,9 +451,12 @@ void menu_navigate_to_info(const char* title, const char* info_text) {
 
 // Helper: Create a scrollable info page with formatted text
 lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
+  uint16_t disp_w = display_get_width();
+  uint16_t disp_h = display_get_height();
+  
   // Create screen
   lv_obj_t* screen = lv_obj_create(NULL);
-  lv_obj_set_size(screen, 128, 128);
+  lv_obj_set_size(screen, disp_w, disp_h);
   lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(screen, 0, 0);
@@ -462,9 +469,9 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);
 
-  // Create scrollable textarea for info
+  // Create scrollable textarea for info (sized proportionally)
   lv_obj_t* textarea = lv_textarea_create(screen);
-  lv_obj_set_size(textarea, 120, 110);
+  lv_obj_set_size(textarea, disp_w - 8, disp_h - 18);
   lv_obj_align(textarea, LV_ALIGN_TOP_MID, 0, 18);
   lv_textarea_set_text(textarea, info_text);
   lv_textarea_set_placeholder_text(textarea, "");
@@ -483,9 +490,12 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
 
 // Helper: Create a page with action buttons
 lv_obj_t* menu_create_action_page(const char* title, const menu_item_t* items, int item_count) {
+  uint16_t disp_w = display_get_width();
+  uint16_t disp_h = display_get_height();
+  
   // Create screen
   lv_obj_t* screen = lv_obj_create(NULL);
-  lv_obj_set_size(screen, 128, 128);
+  lv_obj_set_size(screen, disp_w, disp_h);
   lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(screen, 0, 0);
@@ -498,9 +508,9 @@ lv_obj_t* menu_create_action_page(const char* title, const menu_item_t* items, i
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);
 
-  // Create list widget
+  // Create list widget (sized proportionally)
   lv_obj_t* list = lv_list_create(screen);
-  lv_obj_set_size(list, 100, 114);
+  lv_obj_set_size(list, disp_w * 100 / 128, disp_h - 14);
   lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 14);
   
   lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);

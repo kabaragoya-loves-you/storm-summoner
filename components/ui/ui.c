@@ -1,5 +1,4 @@
 #include "lvgl.h"
-#include "../lvgl/src/display/lv_display_private.h"
 #include "ui.h"
 #include "shared_canvas_buffer.h"
 #include "touchwheel.h"
@@ -36,13 +35,7 @@ static ui_draw_module_t* saved_draw_module = NULL;
 
 void lvgl_timer_cb(lv_timer_t *timer) {
   LV_UNUSED(timer);
-  // Only invalidate if not currently rendering to prevent feedback loops
-  if (canvas != NULL) {
-    lv_display_t *disp = lv_obj_get_display(canvas);
-    if (disp && !disp->rendering_in_progress) {
-      lv_obj_invalidate(canvas);
-    }
-  }
+  if (canvas != NULL) lv_obj_invalidate(canvas);
 }
 
 void ui_set_draw_module(ui_draw_module_t* module) {
@@ -83,11 +76,7 @@ static void deferred_canvas_hide_cb(lv_timer_t *timer) {
 static void deferred_canvas_show_cb(lv_timer_t *timer) {
   if (canvas != NULL) {
     lv_obj_remove_flag(canvas, LV_OBJ_FLAG_HIDDEN);
-    // Only invalidate if not currently rendering to prevent feedback loops
-    lv_display_t *disp = lv_obj_get_display(canvas);
-    if (disp && !disp->rendering_in_progress) {
-      lv_obj_invalidate(canvas);
-    }
+    lv_obj_invalidate(canvas);
   }
   lv_timer_delete(timer);
 }
@@ -204,18 +193,21 @@ void ui_init(void) {
 
   void *shared_buf = shared_canvas_buffer_get();
   size_t buf_size = shared_canvas_buffer_get_size();
+  uint16_t canvas_width = shared_canvas_buffer_get_width();
+  uint16_t canvas_height = shared_canvas_buffer_get_height();
 
-  ESP_LOGI(TAG, "Using shared canvas buffer: %d KB at %p", buf_size / 1024, shared_buf);
+  ESP_LOGI(TAG, "Using shared canvas buffer: %zu KB at %p (%dx%d)", 
+           buf_size / 1024, shared_buf, canvas_width, canvas_height);
 
-  // Standard canvas - using native color format
+  // Standard canvas - using display's color format
   canvas = lv_canvas_create(lv_screen_active());
-  lv_obj_set_size(canvas, SHARED_CANVAS_WIDTH, SHARED_CANVAS_HEIGHT);
+  lv_obj_set_size(canvas, canvas_width, canvas_height);
   lv_obj_center(canvas);
 
   shared_canvas_buffer_clear();
-  lv_canvas_set_buffer(canvas, shared_buf, SHARED_CANVAS_WIDTH, SHARED_CANVAS_HEIGHT, 
+  lv_canvas_set_buffer(canvas, shared_buf, canvas_width, canvas_height, 
     shared_canvas_buffer_get_format());
-  ESP_LOGI(TAG, "Canvas created using shared buffer: %d bytes", (int)buf_size);
+  ESP_LOGI(TAG, "Canvas created using shared buffer: %zu bytes", buf_size);
 
   g_ui_refresh_timer = lv_timer_create(lvgl_timer_cb, 33, NULL);  // ~30fps
 
@@ -480,7 +472,8 @@ void ui_reclaim_canvas_buffer(void) {
     if (canvas != NULL && shared_buf != NULL) {
       // Clear the buffer before reattaching (screensaver left its content)
       shared_canvas_buffer_clear();
-      lv_canvas_set_buffer(canvas, shared_buf, SHARED_CANVAS_WIDTH, SHARED_CANVAS_HEIGHT,
+      lv_canvas_set_buffer(canvas, shared_buf, 
+        shared_canvas_buffer_get_width(), shared_canvas_buffer_get_height(),
         shared_canvas_buffer_get_format());
       lv_obj_remove_flag(canvas, LV_OBJ_FLAG_HIDDEN);
     }

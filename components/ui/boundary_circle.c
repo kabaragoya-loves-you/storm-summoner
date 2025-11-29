@@ -1,6 +1,7 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "lv_boundary_circle.h"
+#include "shared_canvas_buffer.h"
 #include "esp_log.h"
 
 #define TAG "BOUNDARY_CIRCLE"
@@ -11,11 +12,36 @@ extern lv_obj_t *canvas;
 static lv_obj_t *g_screen = NULL;
 static lv_obj_t *g_boundary = NULL;
 
+// Calibration values (accessible from console)
+static int32_t g_circle_size = 128;
+static int32_t g_circle_center_x = 120;
+static int32_t g_circle_center_y = 120;
+
+static void boundary_circle_update_position(void) {
+  if (!g_boundary || !g_screen) return;
+  
+  int disp_width = shared_canvas_buffer_get_width();
+  int disp_height = shared_canvas_buffer_get_height();
+  
+  // Calculate offset from display center
+  int32_t offset_x = g_circle_center_x - (disp_width / 2);
+  int32_t offset_y = g_circle_center_y - (disp_height / 2);
+  
+  lv_obj_set_size(g_boundary, g_circle_size, g_circle_size);
+  lv_obj_align(g_boundary, LV_ALIGN_CENTER, offset_x, offset_y);
+  lv_obj_invalidate(g_boundary);
+  
+  ESP_LOGI(TAG, "Circle: size=%ld, center=(%ld,%ld)", g_circle_size, g_circle_center_x, g_circle_center_y);
+}
+
 static void boundary_circle_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
     lv_timer_delete(timer);
     return;
   }
+  
+  int disp_width = shared_canvas_buffer_get_width();
+  int disp_height = shared_canvas_buffer_get_height();
   
   // Only create widgets if they don't exist
   if (g_screen == NULL) {
@@ -27,9 +53,9 @@ static void boundary_circle_draw_deferred_cb(lv_timer_t *timer) {
       return;
     }
     
-    // Create a screen
+    // Create a screen sized to the display
     g_screen = lv_obj_create(NULL);
-    lv_obj_set_size(g_screen, 128, 128);
+    lv_obj_set_size(g_screen, disp_width, disp_height);
     
     // Set black background
     lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
@@ -37,15 +63,16 @@ static void boundary_circle_draw_deferred_cb(lv_timer_t *timer) {
     
     // Create boundary circle widget
     g_boundary = lv_boundary_circle_create(g_screen);
-    lv_obj_set_size(g_boundary, 128, 128);
-    lv_obj_align(g_boundary, LV_ALIGN_CENTER, 0, 0);
     
-    // Configure to match original (white, 1px width, margin of 1 to get radius 63)
+    // Configure to match original (white, 1px width, margin of 1)
     lv_boundary_circle_set_color(g_boundary, lv_color_white());
     lv_boundary_circle_set_width(g_boundary, 1);
     lv_boundary_circle_set_margin(g_boundary, 1);
     
-    ESP_LOGI(TAG, "Boundary circle screen created");
+    // Apply calibration position
+    boundary_circle_update_position();
+    
+    ESP_LOGI(TAG, "Boundary circle screen created (%dx%d)", disp_width, disp_height);
   }
   
   // Load the screen (safe to call multiple times)
@@ -73,3 +100,23 @@ ui_draw_module_t boundary_circle_module = {
   .init_func = boundary_circle_init,
   .name = "boundary_circle"
 };
+
+// Calibration API
+void boundary_circle_set_size(int32_t size) {
+  g_circle_size = size;
+  boundary_circle_update_position();
+}
+
+void boundary_circle_set_left(int32_t x) {
+  g_circle_center_x = x;
+  boundary_circle_update_position();
+}
+
+void boundary_circle_set_top(int32_t y) {
+  g_circle_center_y = y;
+  boundary_circle_update_position();
+}
+
+int32_t boundary_circle_get_size(void) { return g_circle_size; }
+int32_t boundary_circle_get_left(void) { return g_circle_center_x; }
+int32_t boundary_circle_get_top(void) { return g_circle_center_y; }

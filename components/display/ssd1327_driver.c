@@ -1,4 +1,5 @@
 #include "ssd1327_driver.h"
+#include "display_driver.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -418,5 +419,12 @@ void ssd1327_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   lv_display_flush_ready(disp);
 }
 
-
-
+// Display driver interface implementation
+const display_driver_t ssd1327_driver = {
+  .name = "SSD1327",
+  .width = 128,
+  .height = 128,
+  .color_format = LV_COLOR_FORMAT_RGB565,  // LVGL uses RGB565, driver converts to 4-bit grey
+  .init = ssd1327_init,
+  .flush = ssd1327_flush,
+};

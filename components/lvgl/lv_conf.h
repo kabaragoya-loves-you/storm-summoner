@@ -25,8 +25,9 @@
 #define LV_TICK_CUSTOM 1
 
 #define LV_COLOR_DEPTH 16
-#define LV_HOR_RES_MAX 128
-#define LV_VER_RES_MAX 128
+/* Max resolution supports both SSD1327 (128x128) and GC9A01A (240x240) */
+#define LV_HOR_RES_MAX 240
+#define LV_VER_RES_MAX 240
 
 /*====================
    COLOR SETTINGS
@@ -190,7 +191,7 @@
     #define LV_DRAW_SW_SUPPORT_RGB565       1
     #define LV_DRAW_SW_SUPPORT_RGB565_SWAPPED       0
     #define LV_DRAW_SW_SUPPORT_RGB565A8     0
-    #define LV_DRAW_SW_SUPPORT_RGB888       0
+    #define LV_DRAW_SW_SUPPORT_RGB888       1   /* Enabled for GC9A01A display */
     #define LV_DRAW_SW_SUPPORT_XRGB8888     0
     #define LV_DRAW_SW_SUPPORT_ARGB8888     1
     #define LV_DRAW_SW_SUPPORT_ARGB8888_PREMULTIPLIED 0

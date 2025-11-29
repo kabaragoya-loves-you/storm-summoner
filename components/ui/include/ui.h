@@ -32,6 +32,15 @@ extern app_mode_t g_app_mode;
 extern bool g_at_programming_top_level_menu;
 
 extern ui_draw_module_t boundary_circle_module;
+
+// Boundary circle calibration API
+void boundary_circle_set_size(int32_t size);
+void boundary_circle_set_left(int32_t x);
+void boundary_circle_set_top(int32_t y);
+int32_t boundary_circle_get_size(void);
+int32_t boundary_circle_get_left(void);
+int32_t boundary_circle_get_top(void);
+
 extern ui_draw_module_t pizza_module;
 extern ui_draw_module_t pizza2_module;
 extern ui_draw_module_t draw_lizard_module;

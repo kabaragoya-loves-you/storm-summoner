@@ -60,7 +60,7 @@
 void app_main(void) {
   version_init();
   adc_manager_init();
-  revision_init();
+  revision_init(2);
   gpio_install_isr_service(0);
 
   bool boot_calibrate = buttons_check_boot_right();
@@ -90,7 +90,8 @@ void app_main(void) {
   display_init();
   shared_canvas_buffer_init();  // Must be called before ui_init()
   ui_init();
-  ui_set_draw_module(&buttons_module);
+  ui_set_draw_module(&boundary_circle_module);
+  display_start();  // Start LVGL rendering after UI is set up
   
   touch_init(false);
   

@@ -38,28 +38,37 @@ static hw_revision_t map_adc_to_revision(uint16_t adc_value) {
   }
 }
 
-esp_err_t revision_init(void) {
+esp_err_t revision_init(int force_revision) {
   if (s_initialized) {
     ESP_LOGW(TAG, "Revision already initialized");
     return ESP_OK;
   }
-  
+
+  // Check for forced revision (valid range 1-5)
+  if (force_revision >= HW_REV_1 && force_revision <= HW_REV_5) {
+    s_hw_revision = (hw_revision_t)force_revision;
+    s_raw_adc_value = 0;
+    s_initialized = true;
+    ESP_LOGI(TAG, "Hardware revision forced: %s", revision_get_string());
+    return ESP_OK;
+  }
+
   ESP_LOGI(TAG, "Starting hardware revision detection");
-  
+
   // Register our ADC channel with the manager
   esp_err_t ret = adc_manager_register_channel(REV_ADC_CHANNEL, ADC_ATTEN);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register ADC channel: %s", esp_err_to_name(ret));
     return ret;
   }
-  
+
   // Let ADC settle
   vTaskDelay(pdMS_TO_TICKS(10));
-  
+
   // Read and average multiple samples
   uint32_t sum = 0;
   int valid_samples = 0;
-  
+
   for (int i = 0; i < NUM_SAMPLES; i++) {
     int raw = 0;
     ret = adc_manager_read(REV_ADC_CHANNEL, &raw);
@@ -68,22 +77,22 @@ esp_err_t revision_init(void) {
       valid_samples++;
     }
   }
-  
+
   if (valid_samples > 0) {
     s_raw_adc_value = (uint16_t)(sum / valid_samples);
   } else {
     ESP_LOGE(TAG, "Failed to read revision ADC");
     return ESP_FAIL;
   }
-  
+
   // Map to hardware revision
   s_hw_revision = map_adc_to_revision(s_raw_adc_value);
-  
+
   s_initialized = true;
-  
+
   ESP_LOGI(TAG, "Hardware revision detected: %s (raw ADC: %u)", revision_get_string(), s_raw_adc_value);
   ESP_LOGI(TAG, "Expected ADC ranges: Rev1:<234, Rev2:<590, Rev3:<934, Rev4:<1278, Rev5:>=1278");
-  
+
   return ESP_OK;
 }
 

@@ -22,6 +22,7 @@
 #define REV_ADC_CHANNEL     ADC_CHANNEL_4  // GPIO53 (Board revision resistor divider)
 
 #define PIN_MIDI_RXD       2
+#define PIN_BACKLIGHT      23
 #define PIN_DC             28
 #define PIN_MOSI           29
 #define PIN_SCLK           30

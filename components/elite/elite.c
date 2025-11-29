@@ -27,8 +27,11 @@ static int ship_vertices_cnt, ship_faces_cnt;
 static int ship_vertices[43][3];
 static int ship_faces[23][9];
 
-static const int originx = ELITE_DISPLAY_WIDTH / 2;
-static const int originy = ELITE_DISPLAY_HEIGHT / 2;
+// Cached display dimensions (set at runtime)
+static uint16_t s_disp_width = 128;
+static uint16_t s_disp_height = 128;
+static int s_origin_x = 64;
+static int s_origin_y = 64;
 
 static float vector;
 static float scalefactor = 0;
@@ -73,7 +76,7 @@ static void draw_wireframe_ship(void) {
   
   if (canvas_buf) {
     // Use memset for safety and performance
-    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    size_t buf_size = shared_canvas_buffer_get_size();
     memset(canvas_buf, 0, buf_size);
   }
   
@@ -143,7 +146,7 @@ static void draw_line_on_canvas(int x0, int y0, int x1, int y1, lv_color_t color
     if (!canvas || !canvas_buf || g_elite_stopping) return;
     
     // Draw pixel if within bounds
-    if (x0 >= 0 && x0 < ELITE_DISPLAY_WIDTH && y0 >= 0 && y0 < ELITE_DISPLAY_HEIGHT) {
+    if (x0 >= 0 && x0 < s_disp_width && y0 >= 0 && y0 < s_disp_height) {
       // Extra check: ensure canvas is valid and not being rendered
       if (canvas && lv_obj_is_valid(canvas) && !g_elite_stopping) {
         lv_canvas_set_px(canvas, x0, y0, color, LV_OPA_COVER);
@@ -174,7 +177,7 @@ static void rotate_ship_cb(lv_timer_t *timer) {
   
   if (canvas_buf) {
     // Use memset for safety and performance
-    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    size_t buf_size = shared_canvas_buffer_get_size();
     memset(canvas_buf, 0, buf_size);
   }
 
@@ -202,9 +205,10 @@ static void rotate_ship_cb(lv_timer_t *timer) {
     rotyyy = rotxx * sin(rot) + rotyy * cos(rot);
     rotzzz = rotzz;
 
-    // orthographic projection
-    rotxxx = rotxxx * scalefactor + originx;
-    rotyyy = rotyyy * scalefactor + originy;
+    // orthographic projection - scale factor based on display size
+    float display_scale = (s_disp_width > 128) ? 1.875f : 1.0f;  // Scale up for 240x240
+    rotxxx = rotxxx * scalefactor * display_scale + s_origin_x;
+    rotyyy = rotyyy * scalefactor * display_scale + s_origin_y;
 
     // store new vertices values for wireframe drawing
     wireframe[i][0] = rotxxx;
@@ -261,8 +265,7 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
   
   // Clear canvas
   if (canvas_buf) {
-    // Use memset for safety and performance
-    size_t buf_size = ELITE_DISPLAY_WIDTH * ELITE_DISPLAY_HEIGHT * lv_color_format_get_size(LV_COLOR_FORMAT_NATIVE);
+    size_t buf_size = shared_canvas_buffer_get_size();
     memset(canvas_buf, 0, buf_size);
   }
   
@@ -288,9 +291,14 @@ void elite_start(void) {
     return;
   }
 
-  // Get reference to shared buffer
+  // Get reference to shared buffer and cache dimensions
   canvas_buf = shared_canvas_buffer_get();
-  ESP_LOGI(TAG, "Using shared canvas buffer at %p", canvas_buf);
+  s_disp_width = shared_canvas_buffer_get_width();
+  s_disp_height = shared_canvas_buffer_get_height();
+  s_origin_x = s_disp_width / 2;
+  s_origin_y = s_disp_height / 2;
+  
+  ESP_LOGI(TAG, "Using shared canvas buffer at %p (%dx%d)", canvas_buf, s_disp_width, s_disp_height);
 
   // Save current screen
   g_previous_screen = lv_screen_active();
@@ -298,7 +306,7 @@ void elite_start(void) {
   // Create screen if needed
   if (!g_elite_screen) {
     g_elite_screen = lv_obj_create(NULL);
-    lv_obj_set_size(g_elite_screen, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT);
+    lv_obj_set_size(g_elite_screen, s_disp_width, s_disp_height);
     lv_obj_set_style_bg_color(g_elite_screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(g_elite_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_elite_screen, 0, 0);
@@ -315,7 +323,7 @@ void elite_start(void) {
   // Create canvas on the screen if not already created
   if (!canvas) {
     canvas = lv_canvas_create(g_elite_screen);
-    lv_obj_set_size(canvas, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT);
+    lv_obj_set_size(canvas, s_disp_width, s_disp_height);
     lv_obj_align(canvas, LV_ALIGN_CENTER, 0, 0);
     lv_obj_remove_style_all(canvas);
     lv_obj_set_style_pad_all(canvas, 0, 0);
@@ -324,14 +332,16 @@ void elite_start(void) {
   // Create info label if not already created
   if (!info_label) {
     info_label = lv_label_create(g_elite_screen);
-    lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, 20);
+    // Adjust label position based on display size
+    int label_y = (s_disp_height > 128) ? 30 : 20;
+    lv_obj_align(info_label, LV_ALIGN_TOP_MID, 0, label_y);
     lv_obj_add_style(info_label, &style_default, 0);
   }
 
   // Attach the shared buffer to our canvas
   if (canvas && canvas_buf) {
     ESP_LOGI(TAG, "Attaching shared buffer to Elite canvas");
-    lv_canvas_set_buffer(canvas, canvas_buf, ELITE_DISPLAY_WIDTH, ELITE_DISPLAY_HEIGHT, 
+    lv_canvas_set_buffer(canvas, canvas_buf, s_disp_width, s_disp_height, 
       shared_canvas_buffer_get_format());
   }
 

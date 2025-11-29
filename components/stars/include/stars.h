@@ -3,8 +3,6 @@
 
 #include "lvgl.h"
 
-#define DISP_HOR_RES 128
-#define DISP_VER_RES 128
 #define MAX_STARS 200
 
 typedef struct {
