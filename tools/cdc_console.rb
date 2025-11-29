@@ -12,6 +12,7 @@ class CDCConsole
     @port = nil
     @running = false
     @interrupted = false
+    @last_command = nil  # Track last command to filter device echo
   end
 
   def connect
@@ -135,10 +136,32 @@ class CDCConsole
     
     # Start a reader thread
     reader_thread = Thread.new do
+      line_buffer = ""
       while @running
         begin
           data = read_available
-          print data unless data.empty?
+          unless data.empty?
+            # Process line by line to filter echoes
+            line_buffer += data
+            while line_buffer.include?("\n")
+              idx = line_buffer.index("\n")
+              line = line_buffer[0...idx].gsub("\r", "")
+              line_buffer = line_buffer[(idx + 1)..]
+              
+              # Skip if this line is just an echo of our last command
+              if @last_command && line == @last_command
+                @last_command = nil  # Only filter once
+                next
+              end
+              
+              puts line
+            end
+            # Print any partial line (prompt, etc)
+            unless line_buffer.empty?
+              print line_buffer
+              line_buffer = ""
+            end
+          end
         rescue => e
           # Ignore
         end
@@ -158,7 +181,8 @@ class CDCConsole
         
         line = line.chomp
         
-        # Send to device
+        # Track command to filter echo, then send
+        @last_command = line
         send_line(line)
         
         # If user types 'exit', we should stop

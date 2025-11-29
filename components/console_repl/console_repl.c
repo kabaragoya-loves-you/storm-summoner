@@ -150,12 +150,12 @@ static int cmd_cd(int argc, char **argv) {
 
 // Command: contexts - List available contexts
 static int cmd_contexts(int argc, char **argv) {
-  ESP_LOGI(TAG, "Available contexts:");
+  printf("Available contexts:\r\n");
   for (int i = 0; i < g_console_state.context_count; i++) {
-    ESP_LOGI(TAG, "  %s%s", g_console_state.contexts[i].name,
-             g_console_state.contexts[i].active ? " (active)" : "");
+    printf("  %s%s\r\n", g_console_state.contexts[i].name,
+           g_console_state.contexts[i].active ? " (active)" : "");
   }
-  ESP_LOGI(TAG, "Use 'cd <context>' to enter, 'cd ..' to exit");
+  printf("Use 'cd <context>' to enter, 'cd ..' to exit\r\n");
   return 0;
 }
 
