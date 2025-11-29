@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 // Enable debug logging
-#define CFG_TUSB_DEBUG  2  // 0=none, 1=errors, 2=warnings, 3=info
+#define CFG_TUSB_DEBUG  3  // 0=none, 1=errors, 2=warnings, 3=info
 
 // Board specific configuration
 #define CFG_TUSB_RHPORT0_MODE   (OPT_MODE_DEVICE)
@@ -24,10 +24,15 @@ extern "C" {
 // Device configuration
 #define CFG_TUD_ENDPOINT0_SIZE  64
 
-// Class support - must match CONFIG_TINYUSB_* settings in sdkconfig
+// Class support - override sdkconfig defaults
 #define CFG_TUD_MIDI            1  // Enable MIDI class
-#define CFG_TUD_CDC             1  // Enable CDC (serial) class for OTA updates
-#define CFG_TUD_MSC             0  // Disable Mass Storage class for firmware updates
+
+#ifdef CFG_TUD_CDC
+#undef CFG_TUD_CDC
+#endif
+#define CFG_TUD_CDC             2  // Two CDC ports: Updates (0) and Console (1)
+
+#define CFG_TUD_MSC             0  // Disable Mass Storage class
 
 // MIDI FIFO size
 #define CFG_TUD_MIDI_RX_BUFSIZE 64
