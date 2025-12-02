@@ -1,5 +1,6 @@
 #include "display_console.h"
 #include "display_driver.h"
+#include "gc9a01a_driver.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "driver/ledc.h"
@@ -21,7 +22,8 @@ static uint8_t s_current_brightness = 70;  // Default 70% to reduce power draw
 
 static const char* registered_commands[] = {
   "info",
-  "brightness"
+  "brightness",
+  "viewport"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -146,6 +148,33 @@ static int cmd_brightness(int argc, char **argv) {
   return 0;
 }
 
+// Command: viewport [offset_x offset_y width height]
+static int cmd_viewport(int argc, char **argv) {
+  if (display_driver_get_type() != DISPLAY_TYPE_GC9A01A) {
+    printf("Viewport configuration only available for GC9A01A display\n");
+    return 1;
+  }
+  
+  if (argc < 5) {
+    // Show current viewport
+    printf("Viewport: offset=(%d,%d) size=%dx%d\n",
+      gc9a01a_get_viewport_offset_x(), gc9a01a_get_viewport_offset_y(),
+      gc9a01a_get_viewport_width(), gc9a01a_get_viewport_height());
+    printf("Usage: viewport <offset_x> <offset_y> <width> <height>\n");
+    return 0;
+  }
+  
+  int16_t offset_x = atoi(argv[1]);
+  int16_t offset_y = atoi(argv[2]);
+  uint16_t width = atoi(argv[3]);
+  uint16_t height = atoi(argv[4]);
+  
+  gc9a01a_set_viewport(offset_x, offset_y, width, height);
+  printf("Viewport set: offset=(%d,%d) size=%dx%d\n", offset_x, offset_y, width, height);
+  printf("Note: Restart required for LVGL to use new dimensions\n");
+  return 0;
+}
+
 esp_err_t display_console_init(void) {
   ESP_LOGI(TAG, "Registering display commands");
   
@@ -173,6 +202,15 @@ esp_err_t display_console_init(void) {
     .argtable = &brightness_args
   };
   esp_console_cmd_register(&brightness_cmd);
+  
+  // viewport command
+  const esp_console_cmd_t viewport_cmd = {
+    .command = "viewport",
+    .help = "Get or set display viewport (offset_x offset_y width height)",
+    .hint = NULL,
+    .func = &cmd_viewport,
+  };
+  esp_console_cmd_register(&viewport_cmd);
   
   return ESP_OK;
 }

@@ -38,21 +38,41 @@ void lvgl_timer_cb(lv_timer_t *timer) {
   if (canvas != NULL) lv_obj_invalidate(canvas);
 }
 
-void ui_set_draw_module(ui_draw_module_t* module) {
+// Pending module for deferred switch
+static ui_draw_module_t* pending_module = NULL;
+
+// Deferred callback to switch modules in LVGL context
+static void deferred_module_switch_cb(lv_timer_t *timer) {
+  lv_timer_delete(timer);
+  
+  ui_draw_module_t* module = pending_module;
+  pending_module = NULL;
+  
   if (!module) {
-    ESP_LOGW(TAG, "Attempted to set NULL module");
+    ESP_LOGW(TAG, "No pending module to switch to");
     return;
   }
 
-  if (current_draw_module && current_draw_module->teardown_func) current_draw_module->teardown_func();
+  // Switch to default screen BEFORE teardown to avoid deleting active screen
+  if (canvas) {
+    lv_obj_t *default_screen = lv_obj_get_parent(canvas);
+    if (default_screen && lv_obj_is_valid(default_screen)) {
+      lv_screen_load(default_screen);
+    }
+  }
 
+  // Now safe to teardown - module's screen is no longer active
+  if (current_draw_module && current_draw_module->teardown_func) {
+    current_draw_module->teardown_func();
+  }
+
+  // Clear canvas for new module
   if (canvas) {
     lv_layer_t layer;
     lv_canvas_init_layer(canvas, &layer);
     if (layer.draw_buf) {
       lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
       lv_canvas_finish_layer(canvas, &layer);
-      lv_obj_invalidate(canvas);
     }
   }
 
@@ -60,8 +80,25 @@ void ui_set_draw_module(ui_draw_module_t* module) {
   ESP_LOGI(TAG, "Switched to module: %s", module->name);
 
   if (module->init_func) module->init_func();
-
   if (module->draw_func) module->draw_func();
+}
+
+void ui_set_draw_module(ui_draw_module_t* module) {
+  if (!module) {
+    ESP_LOGW(TAG, "Attempted to set NULL module");
+    return;
+  }
+
+  // Store pending module and defer switch to LVGL context
+  pending_module = module;
+  
+  lv_timer_t *switch_timer = lv_timer_create(deferred_module_switch_cb, 10, NULL);
+  if (switch_timer) {
+    lv_timer_set_repeat_count(switch_timer, 1);
+  } else {
+    ESP_LOGE(TAG, "Failed to create module switch timer");
+    pending_module = NULL;
+  }
 }
 
 ui_draw_module_t* ui_get_current_module(void) {

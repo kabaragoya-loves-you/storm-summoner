@@ -421,9 +421,9 @@
 #endif
 
 /** Draw using espressif PPA accelerator */
-#define LV_USE_PPA  0
+#define LV_USE_PPA  1
 #if LV_USE_PPA
-    #define LV_USE_PPA_IMG 0
+    #define LV_USE_PPA_IMG 1
 #endif
 
 /* Use EVE FT81X GPU. */
@@ -930,11 +930,11 @@
 #endif
 
 /** API for open, read, etc. */
-#define LV_USE_FS_POSIX 0
+#define LV_USE_FS_POSIX 1
 #if LV_USE_FS_POSIX
-    #define LV_FS_POSIX_LETTER '\0'     /**< Set an upper-case driver-identifier letter for this driver (e.g. 'A'). */
-    #define LV_FS_POSIX_PATH ""         /**< Set the working directory. File/directory paths will be appended to it. */
-    #define LV_FS_POSIX_CACHE_SIZE 0    /**< >0 to cache this number of bytes in lv_fs_read() */
+    #define LV_FS_POSIX_LETTER 'A'       /**< Set an upper-case driver-identifier letter for this driver (e.g. 'A'). */
+    #define LV_FS_POSIX_PATH "/assets/"  /**< Set the working directory. File/directory paths will be appended to it. */
+    #define LV_FS_POSIX_CACHE_SIZE 512   /**< >0 to cache this number of bytes in lv_fs_read() */
 #endif
 
 /** API for CreateFile, ReadFile, etc. */
@@ -1019,7 +1019,7 @@
 #define LV_USE_GSTREAMER 0
 
 /** Decode bin images to RAM */
-#define LV_BIN_DECODER_RAM_LOAD 0
+#define LV_BIN_DECODER_RAM_LOAD 1
 
 /** RLE decompress library */
 #define LV_USE_RLE 0

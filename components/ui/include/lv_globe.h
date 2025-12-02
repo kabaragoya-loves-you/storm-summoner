@@ -89,6 +89,46 @@ void lv_globe_set_auto_rotate(lv_obj_t * obj, bool enable);
  */
 void lv_globe_get_rotation(lv_obj_t * obj, float * rx, float * ry, float * rz);
 
+/**
+ * Set ambient light level (global setting for all globes)
+ * @param ambient light level (0.0 = dark, 1.0 = full brightness)
+ */
+void lv_globe_set_ambient_light(float ambient);
+
+/**
+ * Get current ambient light level
+ * @return ambient light level (0.0-1.0)
+ */
+float lv_globe_get_ambient_light(void);
+
+/**
+ * Set the texture to use (global setting)
+ * @param path LittleFS path like "A:images/earth.bin"
+ */
+void lv_globe_set_texture(const char* path);
+
+/**
+ * Get current texture path
+ * @return current texture path
+ */
+const char* lv_globe_get_texture(void);
+
+/**
+ * Set global rotation speeds (affects new globes and can be applied to existing)
+ * @param rx X-axis rotation speed (radians/frame) - vertical tilt
+ * @param ry Y-axis rotation speed (radians/frame) - horizontal spin
+ * @param rz Z-axis rotation speed (radians/frame) - roll
+ */
+void lv_globe_set_global_rotation_speed(float rx, float ry, float rz);
+
+/**
+ * Get global rotation speeds
+ * @param rx pointer to store X speed (can be NULL)
+ * @param ry pointer to store Y speed (can be NULL)
+ * @param rz pointer to store Z speed (can be NULL)
+ */
+void lv_globe_get_global_rotation_speed(float* rx, float* ry, float* rz);
+
 #ifdef __cplusplus
 }
 #endif

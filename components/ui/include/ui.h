@@ -48,6 +48,8 @@ extern ui_draw_module_t sphere_module;
 extern ui_draw_module_t greyscale_test_module;
 extern ui_draw_module_t buttons_module;
 extern ui_draw_module_t template_module;
+extern ui_draw_module_t kabaragoya_module;
+extern ui_draw_module_t plasma_module;
 
 void ui_init(void);
 

@@ -19,7 +19,9 @@ void display_driver_select(void) {
   if (rev == HW_REV_2) {
     s_active_driver = &gc9a01a_driver;
     s_display_type = DISPLAY_TYPE_GC9A01A;
-    ESP_LOGI(TAG, "Selected GC9A01A driver (240x240 RGB IPS)");
+    ESP_LOGI(TAG, "Selected GC9A01A driver (viewport %dx%d @ offset %d,%d)", 
+      gc9a01a_get_viewport_width(), gc9a01a_get_viewport_height(),
+      gc9a01a_get_viewport_offset_x(), gc9a01a_get_viewport_offset_y());
   } else {
     s_active_driver = &ssd1327_driver;
     s_display_type = DISPLAY_TYPE_SSD1327;
@@ -36,13 +38,21 @@ display_type_t display_driver_get_type(void) {
 }
 
 uint16_t display_get_width(void) {
-  if (s_active_driver) return s_active_driver->width;
-  return 128;  // Default fallback
+  if (!s_active_driver) return 128;  // Default fallback
+  // GC9A01A uses viewport dimensions
+  if (s_display_type == DISPLAY_TYPE_GC9A01A) {
+    return gc9a01a_get_viewport_width();
+  }
+  return s_active_driver->width;
 }
 
 uint16_t display_get_height(void) {
-  if (s_active_driver) return s_active_driver->height;
-  return 128;  // Default fallback
+  if (!s_active_driver) return 128;  // Default fallback
+  // GC9A01A uses viewport dimensions
+  if (s_display_type == DISPLAY_TYPE_GC9A01A) {
+    return gc9a01a_get_viewport_height();
+  }
+  return s_active_driver->height;
 }
 
 lv_color_format_t display_get_color_format(void) {

@@ -73,8 +73,8 @@ lv_obj_t * lv_slices_create(lv_obj_t * parent) {
     // Set size to full parent by default
     lv_obj_set_size(obj, LV_PCT(100), LV_PCT(100));
     
-    // Make it clickable for interaction
-    lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    // Make it clickable for interaction and allow overflow for edge-to-edge drawing
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(obj, 0, 0);
     
@@ -112,6 +112,21 @@ static bool default_state_cb(uint8_t slice_index, void* user_data) {
     return touch_is_pad_pressed(slice_index);
 }
 
+// Get warm color for slice based on index (reds, oranges, yellows)
+static lv_color_t get_slice_color(uint8_t index) {
+    switch (index % 8) {
+        case 0: return lv_color_make(220, 60, 60);    // Red
+        case 1: return lv_color_make(235, 100, 50);   // Red-orange
+        case 2: return lv_color_make(245, 140, 40);   // Orange
+        case 3: return lv_color_make(250, 180, 30);   // Orange-yellow
+        case 4: return lv_color_make(255, 210, 50);   // Yellow
+        case 5: return lv_color_make(250, 180, 30);   // Orange-yellow
+        case 6: return lv_color_make(245, 140, 40);   // Orange
+        case 7: return lv_color_make(235, 100, 50);   // Red-orange
+        default: return lv_color_make(200, 200, 200); // Grey fallback
+    }
+}
+
 static void draw_slice(lv_layer_t * layer, lv_area_t * coords, uint8_t index, 
                       lv_slices_data_t * data, bool active) {
     if (!active && data->inactive_opa == LV_OPA_TRANSP) return;
@@ -121,55 +136,46 @@ static void draw_slice(lv_layer_t * layer, lv_area_t * coords, uint8_t index,
     float gap_angle = 2.0f;  // 2 degree gap at each radar line
     
     // Each slice starts right after its radar line and ends right before the next
-    // Radar lines are at 0°, 45°, 90°, etc.
-    // So slice 0 goes from 1° to 44°, slice 1 from 46° to 89°, etc.
     float start_angle = index * slice_angle + data->angle_offset + (gap_angle / 2.0f);
     float end_angle = start_angle + slice_angle - gap_angle;
+    
+    // Normalize angles to 0-360 range (LVGL arc doesn't handle negative angles)
+    while (start_angle < 0) start_angle += 360.0f;
+    while (end_angle < 0) end_angle += 360.0f;
+    while (start_angle >= 360.0f) start_angle -= 360.0f;
+    while (end_angle >= 360.0f) end_angle -= 360.0f;
     
     // Get center point
     int32_t center_x = coords->x1 + lv_area_get_width(coords) / 2;
     int32_t center_y = coords->y1 + lv_area_get_height(coords) / 2;
     
-    // Convert angles to radians
-    float start_rad = start_angle * M_PI / 180.0f;
-    float end_rad = end_angle * M_PI / 180.0f;
-    
-    // Set up colors
-    lv_color_t color = active ? data->active_color : data->inactive_color;
+    // Set up colors - use warm palette for active slices
+    lv_color_t color;
+    if (active) {
+        color = get_slice_color(index);
+    } else {
+        color = data->inactive_color;
+    }
     lv_opa_t opa = active ? data->active_opa : data->inactive_opa;
     
-    // Draw filled wedge using radial lines
-    // This is a workaround since LVGL doesn't have native wedge/pie drawing
+    // Use LVGL's native arc drawing - much more efficient than radial lines
+    // Arc width = difference between outer and inner radius
+    int32_t arc_width = data->outer_radius - data->inner_radius;
+    int32_t arc_radius = data->inner_radius + arc_width / 2;  // Center of the arc band
     
-    // Draw using many thin lines from inner to outer radius
-    // This creates a smooth filled appearance
-    // Calculate optimal line count based on arc length
-    float arc_length = fabs(end_rad - start_rad) * data->outer_radius;
-    int line_count = (int)(arc_length * 2);  // ~2 lines per pixel for smooth edges
-    if (line_count < 32) line_count = 32;   // Minimum for quality
-    if (line_count > 64) line_count = 64;   // Maximum to avoid overdraw
+    lv_draw_arc_dsc_t arc_dsc;
+    lv_draw_arc_dsc_init(&arc_dsc);
+    arc_dsc.color = color;
+    arc_dsc.opa = opa;
+    arc_dsc.width = arc_width;
+    arc_dsc.center.x = center_x;
+    arc_dsc.center.y = center_y;
+    arc_dsc.radius = arc_radius;
+    arc_dsc.start_angle = (int32_t)start_angle;
+    arc_dsc.end_angle = (int32_t)end_angle;
+    arc_dsc.rounded = 0;  // Sharp edges
     
-    for (int i = 0; i <= line_count; i++) {
-        float angle = start_rad + (end_rad - start_rad) * i / line_count;
-        
-        // Calculate line endpoints
-        lv_point_precise_t p1, p2;
-        p1.x = center_x + cosf(angle) * data->inner_radius;
-        p1.y = center_y + sinf(angle) * data->inner_radius;
-        p2.x = center_x + cosf(angle) * data->outer_radius;
-        p2.y = center_y + sinf(angle) * data->outer_radius;
-        
-        // Draw the line
-        lv_draw_line_dsc_t line_dsc;
-        lv_draw_line_dsc_init(&line_dsc);
-        line_dsc.color = color;
-        line_dsc.opa = opa;
-        line_dsc.width = 2;  // Slightly thick to avoid gaps
-        line_dsc.p1 = p1;
-        line_dsc.p2 = p2;
-        
-        lv_draw_line(layer, &line_dsc);
-    }
+    lv_draw_arc(layer, &arc_dsc);
 }
 
 static void lv_slices_draw_event_cb(lv_event_t * e) {

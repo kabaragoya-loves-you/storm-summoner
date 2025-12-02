@@ -14,6 +14,17 @@
 // Debug flag for flush logging
 #define DEBUG_FLUSH_MESSAGES 0
 
+// Physical display dimensions
+#define GC9A01A_PHYSICAL_WIDTH  240
+#define GC9A01A_PHYSICAL_HEIGHT 240
+
+// Viewport configuration (virtual display within physical)
+// These define the visible area through the aperture
+static int16_t viewport_offset_x = 15;   // Physical X where viewport starts (left edge)
+static int16_t viewport_offset_y = 9;    // Physical Y where viewport starts (top edge)
+static uint16_t viewport_width = 198;    // Visible width through aperture
+static uint16_t viewport_height = 198;   // Visible height through aperture
+
 // GC9A01A command definitions
 #define GC9A01A_NOP       0x00
 #define GC9A01A_SWRESET   0x01
@@ -45,6 +56,9 @@
 
 static spi_device_handle_t spi;
 static uint8_t *gc9a01a_line_buf = NULL;
+
+// Forward declaration
+static void gc9a01a_set_addr_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
 
 // Send a command byte
 static void gc9a01a_cmd(uint8_t cmd) {
@@ -192,7 +206,7 @@ void gc9a01a_init(void) {
   gc9a01a_data_byte(0x00);
   
   gc9a01a_cmd(GC9A01A_MADCTL);  // Memory access control
-  gc9a01a_data_byte(MADCTL_MX | MADCTL_BGR);  // Adjust for your orientation
+  gc9a01a_data_byte(MADCTL_MX);  // RGB order (LVGL sends RGB, not BGR)
   
   gc9a01a_cmd(GC9A01A_COLMOD);  // Pixel format
   gc9a01a_data_byte(0x66);  // 18-bit color (RGB666) - closest to RGB888
@@ -373,6 +387,17 @@ void gc9a01a_init(void) {
   gc9a01a_cmd(GC9A01A_SLPOUT);  // Exit sleep mode
   vTaskDelay(pdMS_TO_TICKS(120));
   
+  // Fill entire physical display with black before showing
+  // This prevents garbage pixels outside the viewport from being visible
+  gc9a01a_set_addr_window(0, 0, GC9A01A_PHYSICAL_WIDTH - 1, GC9A01A_PHYSICAL_HEIGHT - 1);
+  gpio_set_level(PIN_DC, 1);
+  memset(gc9a01a_line_buf, 0, GC9A01A_PHYSICAL_WIDTH * 3);  // One line of black pixels
+  for (int y = 0; y < GC9A01A_PHYSICAL_HEIGHT; y++) {
+    spi_transaction_t t = { .length = GC9A01A_PHYSICAL_WIDTH * 3 * 8, .tx_buffer = gc9a01a_line_buf };
+    spi_device_polling_transmit(spi, &t);
+  }
+  ESP_LOGI(TAG, "Display cleared to black");
+
   gc9a01a_cmd(GC9A01A_DISPON);  // Display on
   vTaskDelay(pdMS_TO_TICKS(50));  // Let power stabilize before heavy operations
 
@@ -398,6 +423,20 @@ static void gc9a01a_set_addr_window(uint16_t x0, uint16_t y0, uint16_t x1, uint1
   gc9a01a_cmd(GC9A01A_RAMWR);  // Memory write
 }
 
+// Viewport getters/setters
+void gc9a01a_set_viewport(int16_t offset_x, int16_t offset_y, uint16_t width, uint16_t height) {
+  viewport_offset_x = offset_x;
+  viewport_offset_y = offset_y;
+  viewport_width = width;
+  viewport_height = height;
+  ESP_LOGI(TAG, "Viewport set: offset=(%d,%d) size=%dx%d", offset_x, offset_y, width, height);
+}
+
+uint16_t gc9a01a_get_viewport_width(void) { return viewport_width; }
+uint16_t gc9a01a_get_viewport_height(void) { return viewport_height; }
+int16_t gc9a01a_get_viewport_offset_x(void) { return viewport_offset_x; }
+int16_t gc9a01a_get_viewport_offset_y(void) { return viewport_offset_y; }
+
 // Flush pixels to the display
 void gc9a01a_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   static uint32_t flush_count = 0;
@@ -409,8 +448,8 @@ void gc9a01a_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     return;
   }
 
-  // Validate area bounds
-  if (area->x1 < 0 || area->y1 < 0 || area->x2 >= GC9A01A_WIDTH || area->y2 >= GC9A01A_HEIGHT ||
+  // Validate area bounds against viewport
+  if (area->x1 < 0 || area->y1 < 0 || area->x2 >= viewport_width || area->y2 >= viewport_height ||
       area->x1 > area->x2 || area->y1 > area->y2) {
     ESP_LOGE(TAG, "Invalid area bounds: (%d,%d)-(%d,%d)", 
              (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2);
@@ -420,13 +459,21 @@ void gc9a01a_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
 
   #if DEBUG_FLUSH_MESSAGES
   if (flush_count % 100 == 0) {
-    ESP_LOGI(TAG, "Flush #%lu: area (%d,%d)-(%d,%d)", 
-             (unsigned long)flush_count, (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2);
+    ESP_LOGI(TAG, "Flush #%lu: area (%d,%d)-(%d,%d) -> phys (%d,%d)-(%d,%d)", 
+             (unsigned long)flush_count, 
+             (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2,
+             (int)(area->x1 + viewport_offset_x), (int)(area->y1 + viewport_offset_y),
+             (int)(area->x2 + viewport_offset_x), (int)(area->y2 + viewport_offset_y));
   }
   #endif
 
-  // Set the address window
-  gc9a01a_set_addr_window(area->x1, area->y1, area->x2, area->y2);
+  // Set the address window with viewport offset applied
+  gc9a01a_set_addr_window(
+    area->x1 + viewport_offset_x, 
+    area->y1 + viewport_offset_y, 
+    area->x2 + viewport_offset_x, 
+    area->y2 + viewport_offset_y
+  );
 
   int32_t w = lv_area_get_width(area);
   int32_t h = lv_area_get_height(area);
@@ -462,8 +509,8 @@ void gc9a01a_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
 // Display driver interface implementation
 const display_driver_t gc9a01a_driver = {
   .name = "GC9A01A",
-  .width = GC9A01A_WIDTH,
-  .height = GC9A01A_HEIGHT,
+  .width = 198,  // Default viewport width (will be overridden by get functions)
+  .height = 198, // Default viewport height
   .color_format = LV_COLOR_FORMAT_RGB888,
   .init = gc9a01a_init,
   .flush = gc9a01a_flush,

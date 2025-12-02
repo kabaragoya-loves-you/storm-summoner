@@ -69,6 +69,13 @@ void app_main(void) {
   app_settings_init();
   assets_manager_init();
   event_bus_init();
+
+  display_init();
+  shared_canvas_buffer_init();  // Must be called before ui_init()
+  ui_init();
+  ui_set_draw_module(&kabaragoya_module);
+  display_start();
+
   firmware_update_init();
   device_config_init();
   config_init();
@@ -87,11 +94,6 @@ void app_main(void) {
   
   buttons_init(false);
   dac_init();
-  display_init();
-  shared_canvas_buffer_init();  // Must be called before ui_init()
-  ui_init();
-  ui_set_draw_module(&boundary_circle_module);
-  display_start();  // Start LVGL rendering after UI is set up
   
   touch_init(false);
   

@@ -13,12 +13,14 @@ idf_component_register(
 # Collect all JSON files from midi-devices and scenes directories
 file(GLOB_RECURSE MIDI_DEVICE_FILES "${CMAKE_SOURCE_DIR}/midi-devices/*.json")
 file(GLOB_RECURSE SCENE_FILES "${CMAKE_SOURCE_DIR}/scenes/*.json")
+file(GLOB_RECURSE IMAGE_FILES "${CMAKE_SOURCE_DIR}/images/*.bin")
 
 # Create a temporary combined assets directory at build time
 set(ASSETS_BUILD_DIR "${CMAKE_BINARY_DIR}/assets_combined")
 file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}")
 file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/devices")
 file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/scenes")
+file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/images")
 
 # Copy midi-devices to assets/devices
 add_custom_command(
@@ -47,10 +49,22 @@ add_custom_command(
   COMMENT "Copying scene files to build assets"
 )
 
+# Copy images to assets/images
+add_custom_command(
+  OUTPUT "${ASSETS_BUILD_DIR}/images/.copied"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/images"
+    "${ASSETS_BUILD_DIR}/images"
+  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/images/.copied"
+  DEPENDS ${IMAGE_FILES}
+  COMMENT "Copying image files to build assets"
+)
+
 # Create LittleFS partition image from combined assets directory
 # To flash: idf.py assets-flash
 littlefs_create_partition_image(assets ${ASSETS_BUILD_DIR}
   DEPENDS 
     "${ASSETS_BUILD_DIR}/devices/.copied"
     "${ASSETS_BUILD_DIR}/scenes/.copied"
+    "${ASSETS_BUILD_DIR}/images/.copied"
 )

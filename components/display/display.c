@@ -28,29 +28,29 @@
 #if LV_USE_LOG
 // Custom log callback to redirect LVGL logs to ESP_LOG
 static void lvgl_log_cb(lv_log_level_t level, const char * buf) {
-  // Always show sysmon performance logs regardless of level
-  if (strstr(buf, "sysmon:") != NULL) {
-    ESP_LOGI("LVGL", "%s", buf);
-    return;
-  }
-  
-  switch(level) {
-    case LV_LOG_LEVEL_ERROR:
-      ESP_LOGE("LVGL", "%s", buf);
-      break;
-    case LV_LOG_LEVEL_WARN:
-      ESP_LOGW("LVGL", "%s", buf);
-      break;
-    case LV_LOG_LEVEL_INFO:
-      ESP_LOGI("LVGL", "%s", buf);
-      break;
-    case LV_LOG_LEVEL_TRACE:
-      ESP_LOGD("LVGL", "%s", buf);
-      break;
-    default:
-      ESP_LOGI("LVGL", "%s", buf);
-      break;
-  }
+    // Always show sysmon performance logs regardless of level
+    if (strstr(buf, "sysmon:") != NULL) {
+        ESP_LOGI("LVGL", "%s", buf);
+        return;
+    }
+    
+    switch(level) {
+        case LV_LOG_LEVEL_ERROR:
+            ESP_LOGE("LVGL", "%s", buf);
+            break;
+        case LV_LOG_LEVEL_WARN:
+            ESP_LOGW("LVGL", "%s", buf);
+            break;
+        case LV_LOG_LEVEL_INFO:
+            ESP_LOGI("LVGL", "%s", buf);
+            break;
+        case LV_LOG_LEVEL_TRACE:
+            ESP_LOGD("LVGL", "%s", buf);
+            break;
+        default:
+            ESP_LOGI("LVGL", "%s", buf);
+            break;
+    }
 }
 #endif
 
@@ -92,9 +92,10 @@ void display_init(void) {
     return;
   }
   
-  uint16_t screen_width = driver->width;
-  uint16_t screen_height = driver->height;
-  lv_color_format_t color_format = driver->color_format;
+  // Use display_get_width/height which respect viewport for GC9A01A
+  uint16_t screen_width = display_get_width();
+  uint16_t screen_height = display_get_height();
+  lv_color_format_t color_format = display_get_color_format();
   display_type_t disp_type = display_driver_get_type();
   size_t bytes_per_pixel = lv_color_format_get_size(color_format);
   size_t buffer_size = calculate_buffer_size(screen_width, screen_height, color_format, disp_type);
@@ -149,38 +150,38 @@ void display_init(void) {
 #if DISPLAY_OPTIMIZATION_MODE == 0
     ESP_LOGI(TAG, "SSD1327: Using Full-Screen Single Buffer. Render Mode: FULL");
     uint8_t *buf1 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
-    if (!buf1) {
-      ESP_LOGE(TAG, "Failed to allocate LVGL buffer for Mode 0. Cannot continue.");
-      return;
-    }
+  if (!buf1) {
+    ESP_LOGE(TAG, "Failed to allocate LVGL buffer for Mode 0. Cannot continue.");
+    return;
+  }
     lv_display_set_buffers(display, buf1, NULL, buffer_size, LV_DISPLAY_RENDER_MODE_FULL);
 #else
     // Modes 1, 2, 3, 4, 5 use double buffering
     ESP_LOGI(TAG, "SSD1327: Allocating two buffers of %zu bytes each for double buffering.", buffer_size);
     uint8_t *buf1 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
     uint8_t *buf2 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
-    if (!buf1 || !buf2) {
-      ESP_LOGE(TAG, "Failed to allocate LVGL buffers for double buffering. Cannot continue.");
+  if (!buf1 || !buf2) {
+    ESP_LOGE(TAG, "Failed to allocate LVGL buffers for double buffering. Cannot continue.");
       if (buf1) heap_caps_free(buf1);
       if (buf2) heap_caps_free(buf2);
-      return;
-    }
+    return;
+  }
   #if DISPLAY_OPTIMIZATION_MODE == 1
-      ESP_LOGI(TAG, "Using Dynamic Calculation. Render Mode: PARTIAL");
+    ESP_LOGI(TAG, "Using Dynamic Calculation. Render Mode: PARTIAL");
       lv_display_set_buffers(display, buf1, buf2, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
   #elif DISPLAY_OPTIMIZATION_MODE == 2
-      ESP_LOGI(TAG, "Using Coordinate Map. Render Mode: PARTIAL");
+    ESP_LOGI(TAG, "Using Coordinate Map. Render Mode: PARTIAL");
       lv_display_set_buffers(display, buf1, buf2, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
   #elif DISPLAY_OPTIMIZATION_MODE == 3
-      ESP_LOGI(TAG, "Using LVGL-Integrated Circular Display. Render Mode: PARTIAL");
+    ESP_LOGI(TAG, "Using LVGL-Integrated Circular Display. Render Mode: PARTIAL");
       lv_display_set_buffers(display, buf1, buf2, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
-      circular_display_init(display);
+    circular_display_init(display);
   #elif DISPLAY_OPTIMIZATION_MODE == 4
-      ESP_LOGI(TAG, "Using Sparse Buffer with Compressed Storage. Render Mode: PARTIAL");
+    ESP_LOGI(TAG, "Using Sparse Buffer with Compressed Storage. Render Mode: PARTIAL");
       lv_display_set_buffers(display, buf1, buf2, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
-      sparse_buffer_init(display);
+    sparse_buffer_init(display);
   #elif DISPLAY_OPTIMIZATION_MODE == 5
-      ESP_LOGI(TAG, "Using RGB565 with I4 Display Driver Conversion. Render Mode: PARTIAL");
+    ESP_LOGI(TAG, "Using RGB565 with I4 Display Driver Conversion. Render Mode: PARTIAL");
       lv_display_set_buffers(display, buf1, buf2, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
   #endif
 #endif
@@ -210,7 +211,7 @@ void display_init(void) {
 }
 
 void display_start(void) {
-  BaseType_t task_result = xTaskCreate(&lvgl_task, "lvgl", 8192, NULL, TASK_PRIORITY_DISPLAY, NULL);
+      BaseType_t task_result = xTaskCreate(&lvgl_task, "lvgl", 8192, NULL, TASK_PRIORITY_DISPLAY, NULL);
   if (task_result != pdPASS) {
     ESP_LOGE(TAG, "Failed to create LVGL task");
     return;

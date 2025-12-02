@@ -12,10 +12,10 @@ extern lv_obj_t *canvas;
 static lv_obj_t *g_screen = NULL;
 static lv_obj_t *g_boundary = NULL;
 
-// Calibration values (accessible from console)
-static int32_t g_circle_size = 128;
-static int32_t g_circle_center_x = 120;
-static int32_t g_circle_center_y = 120;
+// Calibration values - 0 means "use display dimensions"
+static int32_t g_circle_size = 0;     // 0 = use viewport size
+static int32_t g_circle_center_x = 0; // 0 = center of viewport
+static int32_t g_circle_center_y = 0; // 0 = center of viewport
 
 static void boundary_circle_update_position(void) {
   if (!g_boundary || !g_screen) return;
@@ -23,15 +23,21 @@ static void boundary_circle_update_position(void) {
   int disp_width = shared_canvas_buffer_get_width();
   int disp_height = shared_canvas_buffer_get_height();
   
-  // Calculate offset from display center
-  int32_t offset_x = g_circle_center_x - (disp_width / 2);
-  int32_t offset_y = g_circle_center_y - (disp_height / 2);
+  // Use viewport dimensions if not explicitly set
+  int32_t size = g_circle_size > 0 ? g_circle_size : disp_width;
+  int32_t center_x = g_circle_center_x > 0 ? g_circle_center_x : (disp_width / 2);
+  int32_t center_y = g_circle_center_y > 0 ? g_circle_center_y : (disp_height / 2);
   
-  lv_obj_set_size(g_boundary, g_circle_size, g_circle_size);
+  // Calculate offset from display center
+  int32_t offset_x = center_x - (disp_width / 2);
+  int32_t offset_y = center_y - (disp_height / 2);
+  
+  lv_obj_set_size(g_boundary, size, size);
   lv_obj_align(g_boundary, LV_ALIGN_CENTER, offset_x, offset_y);
   lv_obj_invalidate(g_boundary);
   
-  ESP_LOGI(TAG, "Circle: size=%ld, center=(%ld,%ld)", g_circle_size, g_circle_center_x, g_circle_center_y);
+  ESP_LOGI(TAG, "Circle: size=%ld, center=(%ld,%ld) offset=(%ld,%ld)", 
+    size, center_x, center_y, offset_x, offset_y);
 }
 
 static void boundary_circle_draw_deferred_cb(lv_timer_t *timer) {
