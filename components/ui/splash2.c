@@ -6,38 +6,45 @@
 #include "esp_log.h"
 #include <math.h>
 
-#define TAG "PLASMA"
+#define TAG "SPLASH2"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
 
 //=============================================================================
-// PLASMA MODULE CONFIGURATION
+// SPLASH2 MODULE CONFIGURATION
 //=============================================================================
 
-// Tendril appearance
-#define PLASMA_SEGMENTS       10       // Segments per tendril (fewer = faster)
-#define PLASMA_DISPLACEMENT   20.0f   // Jaggedness (pixels)
-#define PLASMA_ANIM_SPEED     4.0f    // Animation speed multiplier
+// Sunburst gradient colors (gold center to darker gold edge)
+#define SPLASH2_CENTER_R  0xF0
+#define SPLASH2_CENTER_G  0xA6
+#define SPLASH2_CENTER_B  0x47
 
-// Pad positions
-#define PLASMA_PAD_RADIUS     0.49f   // Pad distance from center (fraction of display)
+#define SPLASH2_EDGE_R    0xC9
+#define SPLASH2_EDGE_G    0x8A
+#define SPLASH2_EDGE_B    0x40
 
-// Center point of plasma globe (where tendrils originate)
-// Set to -1 to use display center, or specify exact pixel coordinates
-#define PLASMA_CENTER_X       -1      // X coordinate (-1 = display center)
-#define PLASMA_CENTER_Y       -1      // Y coordinate (-1 = display center)
+// SVG overlay
+#define SPLASH2_SVG_PATH  "A:images/kabaragoya.svg"
 
-// Background image
-#define PLASMA_ENABLE_BACKGROUND  0   // 1 = show kabaragoya image, 0 = black background
+// Plasma settings (copied from plasma.c)
+#define PLASMA_SEGMENTS       10
+#define PLASMA_DISPLACEMENT   20.0f
+#define PLASMA_ANIM_SPEED     4.0f
+#define PLASMA_PAD_RADIUS     0.49f
+#define PLASMA_CENTER_X       120
+#define PLASMA_CENTER_Y       90
 
 //=============================================================================
 
 extern lv_obj_t *canvas;
 
 static lv_obj_t *g_screen = NULL;
+static lv_obj_t *g_svg_image = NULL;
 static lv_obj_t *g_plasma = NULL;
+static lv_style_t style_grad;
+static lv_grad_dsc_t grad;
 
 // Keypad positions (8 pads arranged in a circle)
 static int32_t pad_positions[8][2];
@@ -52,20 +59,17 @@ static void calculate_pad_positions(uint16_t width, uint16_t height) {
   float radius = (width < height ? width : height) * PLASMA_PAD_RADIUS;
   
   for (int i = 0; i < 8; i++) {
-    // Angle: start at -67.5° (22.5° clockwise from 12 o'clock) and go clockwise
     float angle = (-67.5f + i * 45.0f) * M_PI / 180.0f;
     pad_positions[i][0] = display_center_x + (int32_t)(cosf(angle) * radius);
     pad_positions[i][1] = display_center_y + (int32_t)(sinf(angle) * radius);
   }
 }
 
-// State callback - returns true if tendril should be active
 static bool plasma_state_cb(uint8_t tendril_index, void* user_data) {
   (void)user_data;
   return touch_is_pad_pressed(tendril_index);
 }
 
-// Target callback - returns x,y position for tendril endpoint
 static void plasma_target_cb(uint8_t tendril_index, int32_t* x, int32_t* y, void* user_data) {
   (void)user_data;
   if (tendril_index < 8) {
@@ -74,7 +78,7 @@ static void plasma_target_cb(uint8_t tendril_index, int32_t* x, int32_t* y, void
   }
 }
 
-static void plasma_draw_deferred_cb(lv_timer_t *timer) {
+static void splash2_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
     lv_timer_delete(timer);
     return;
@@ -92,69 +96,83 @@ static void plasma_draw_deferred_cb(lv_timer_t *timer) {
     g_disp_width = shared_canvas_buffer_get_width();
     g_disp_height = shared_canvas_buffer_get_height();
     
-    // Calculate center point (where tendrils originate)
-    int32_t center_x = (PLASMA_CENTER_X < 0) ? g_disp_width / 2 : PLASMA_CENTER_X;
-    int32_t center_y = (PLASMA_CENTER_Y < 0) ? g_disp_height / 2 : PLASMA_CENTER_Y;
-    
     // Calculate pad positions at display edge (fixed locations)
     calculate_pad_positions(g_disp_width, g_disp_height);
+    
+    // Plasma center can be offset from display center
+    int32_t center_x = (PLASMA_CENTER_X < 0) ? g_disp_width / 2 : PLASMA_CENTER_X;
+    int32_t center_y = (PLASMA_CENTER_Y < 0) ? g_disp_height / 2 : PLASMA_CENTER_Y;
     
     // Create screen
     g_screen = lv_obj_create(NULL);
     lv_obj_set_size(g_screen, g_disp_width, g_disp_height);
-    lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(g_screen, LV_OBJ_FLAG_SCROLLABLE);
     
-#if PLASMA_ENABLE_BACKGROUND
-    // Use image as screen background (more efficient than image widget)
-    lv_obj_set_style_bg_image_src(g_screen, "A:images/kabaragoya.bin", 0);
-    lv_obj_set_style_bg_image_opa(g_screen, LV_OPA_COVER, 0);
-#endif
+    // Layer 1: Radial gradient background
+    lv_grad_radial_init(&grad, 
+      LV_PCT(50), LV_PCT(50),
+      LV_PCT(100), LV_PCT(50),
+      LV_GRAD_EXTEND_PAD);
     
-    // Create plasma widget
+    lv_color_t colors[2] = {
+      lv_color_make(SPLASH2_CENTER_R, SPLASH2_CENTER_G, SPLASH2_CENTER_B),
+      lv_color_make(SPLASH2_EDGE_R, SPLASH2_EDGE_G, SPLASH2_EDGE_B)
+    };
+    lv_opa_t opas[2] = { LV_OPA_COVER, LV_OPA_COVER };
+    uint8_t fracs[2] = { 0, 255 };
+    lv_grad_init_stops(&grad, colors, opas, fracs, 2);
+    
+    lv_style_init(&style_grad);
+    lv_style_set_bg_grad(&style_grad, &grad);
+    lv_style_set_bg_opa(&style_grad, LV_OPA_COVER);
+    lv_obj_add_style(g_screen, &style_grad, 0);
+    
+    // Layer 2: SVG image
+    g_svg_image = lv_image_create(g_screen);
+    lv_image_set_src(g_svg_image, SPLASH2_SVG_PATH);
+    lv_obj_center(g_svg_image);
+    ESP_LOGI(TAG, "SVG set: %s", SPLASH2_SVG_PATH);
+    
+    // Layer 3: Plasma widget (on top)
     g_plasma = lv_plasma_create(g_screen);
     lv_obj_set_size(g_plasma, g_disp_width, g_disp_height);
     lv_obj_align(g_plasma, LV_ALIGN_CENTER, 0, 0);
     
-    // Set center point (same as used for pad positions)
     lv_plasma_set_center(g_plasma, center_x, center_y);
-    
-    // Configure appearance
     lv_plasma_set_style(g_plasma, PLASMA_SEGMENTS, PLASMA_DISPLACEMENT);
     lv_plasma_set_colors(g_plasma, 
-                         lv_color_make(220, 180, 255),  // Light purple/pink core
-                         lv_color_make(120, 60, 200));  // Deep purple glow
+                         lv_color_make(220, 180, 255),
+                         lv_color_make(120, 60, 200));
     lv_plasma_set_animation_speed(g_plasma, PLASMA_ANIM_SPEED);
-    
-    // Set callbacks to poll touch state (like lv_slices does)
     lv_plasma_set_state_cb(g_plasma, plasma_state_cb, plasma_target_cb, NULL);
     
-    ESP_LOGI(TAG, "Plasma screen created");
+    ESP_LOGI(TAG, "Splash2 screen created");
   }
   
   lv_screen_load(g_screen);
   lv_timer_delete(timer);
 }
 
-UI_CREATE_DEFERRED_DRAW_FUNC(plasma, plasma_draw_deferred_cb)
+UI_CREATE_DEFERRED_DRAW_FUNC(splash2, splash2_draw_deferred_cb)
 
-static void plasma_teardown(void) {
+static void splash2_teardown(void) {
   if (g_screen) {
     lv_obj_delete(g_screen);
     g_screen = NULL;
+    g_svg_image = NULL;
     g_plasma = NULL;
   }
-  ESP_LOGD(TAG, "Plasma module teardown complete");
+  ESP_LOGD(TAG, "Splash2 module teardown complete");
 }
 
-static void plasma_init(void) {
-  ESP_LOGI(TAG, "Plasma module initialized");
+static void splash2_init(void) {
+  ESP_LOGI(TAG, "Splash2 module initialized");
 }
 
-ui_draw_module_t plasma_module = {
-  .draw_func = plasma_draw,
-  .teardown_func = plasma_teardown,
-  .init_func = plasma_init,
-  .name = "plasma"
+ui_draw_module_t splash2_module = {
+  .draw_func = splash2_draw,
+  .teardown_func = splash2_teardown,
+  .init_func = splash2_init,
+  .name = "splash2"
 };
 

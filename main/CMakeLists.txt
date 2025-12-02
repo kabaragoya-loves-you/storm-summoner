@@ -13,7 +13,7 @@ idf_component_register(
 # Collect all JSON files from midi-devices and scenes directories
 file(GLOB_RECURSE MIDI_DEVICE_FILES "${CMAKE_SOURCE_DIR}/midi-devices/*.json")
 file(GLOB_RECURSE SCENE_FILES "${CMAKE_SOURCE_DIR}/scenes/*.json")
-file(GLOB_RECURSE IMAGE_FILES "${CMAKE_SOURCE_DIR}/images/*.bin")
+file(GLOB_RECURSE IMAGE_FILES "${CMAKE_SOURCE_DIR}/images/*.bin" "${CMAKE_SOURCE_DIR}/images/*.bin.z" "${CMAKE_SOURCE_DIR}/images/*.svg")
 
 # Create a temporary combined assets directory at build time
 set(ASSETS_BUILD_DIR "${CMAKE_BINARY_DIR}/assets_combined")

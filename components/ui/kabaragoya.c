@@ -27,7 +27,7 @@ static void kabaragoya_draw_deferred_cb(lv_timer_t *timer) {
     lv_obj_set_style_bg_image_src(g_screen, "A:images/kabaragoya.bin", 0);
     lv_obj_set_style_bg_image_opa(g_screen, LV_OPA_COVER, 0);
     
-    ESP_LOGI(TAG, "Kabaragoya screen created, loading from LittleFS");
+    ESP_LOGI(TAG, "Kabaragoya screen created");
   }
   
   lv_screen_load(g_screen);

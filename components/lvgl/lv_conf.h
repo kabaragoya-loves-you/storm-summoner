@@ -168,7 +168,7 @@
 /** Stack size of drawing thread.
  * NOTE: If FreeType or ThorVG is enabled, it is recommended to set it to 32KB or more.
  */
-#define LV_DRAW_THREAD_STACK_SIZE    (8 * 1024)         /**< [bytes]*/
+#define LV_DRAW_THREAD_STACK_SIZE    (32 * 1024)        /**< [bytes] - 32KB for ThorVG/SVG support */
 
 /** Thread priority of the drawing task.
  *  Higher values mean higher priority.
@@ -239,7 +239,7 @@
     #endif
 
     /** Enable drawing complex gradients in software: linear at an angle, radial or conical */
-    #define LV_USE_DRAW_SW_COMPLEX_GRADIENTS    0
+    #define LV_USE_DRAW_SW_COMPLEX_GRADIENTS    1
 #endif
 
 /*Use TSi's aka (Think Silicon) NemaGFX */
@@ -646,11 +646,11 @@
 #define LV_ATTRIBUTE_EXTERN_DATA
 
 /** Use `float` as `lv_value_precise_t` */
-#define LV_USE_FLOAT            0
+#define LV_USE_FLOAT            1
 
 /** Enable matrix support
  *  - Requires `LV_USE_FLOAT = 1` */
-#define LV_USE_MATRIX           0
+#define LV_USE_MATRIX           1
 
 /** Include `lvgl_private.h` in `lvgl.h` to access internal data and functions by default */
 #ifndef LV_USE_PRIVATE_API
@@ -1057,11 +1057,11 @@
 
 /** Enable Vector Graphic APIs
  *  Requires `LV_USE_MATRIX = 1` */
-#define LV_USE_VECTOR_GRAPHIC  0
+#define LV_USE_VECTOR_GRAPHIC  1
 
 /** Enable ThorVG (vector graphics library) from the src/libs folder.
  *  Requires LV_USE_VECTOR_GRAPHIC */
-#define LV_USE_THORVG_INTERNAL 0
+#define LV_USE_THORVG_INTERNAL 1
 
 /** Enable ThorVG by assuming that its installed and linked to the project
  *  Requires LV_USE_VECTOR_GRAPHIC */
@@ -1075,7 +1075,7 @@
 
 /*SVG library
  *  - Requires `LV_USE_VECTOR_GRAPHIC = 1` */
-#define LV_USE_SVG 0
+#define LV_USE_SVG 1
 #define LV_USE_SVG_ANIMATION 0
 #define LV_USE_SVG_DEBUG 0
 
@@ -1102,8 +1102,8 @@
 /** 1: Enable system monitor component */
 #define LV_USE_SYSMON ENABLE_PERFORMANCE_MONITORING
 #if LV_USE_SYSMON
-    /** Get the idle percentage. E.g. uint32_t my_get_idle(void); */
-    #define LV_SYSMON_GET_IDLE lv_os_get_idle_percent
+    /** Get the idle percentage - disabled, use 'cpu' command for accurate FreeRTOS stats */
+    // #define LV_SYSMON_GET_IDLE lv_os_get_idle_percent
     /** 1: Enable usage of lv_os_get_proc_idle_percent.*/
     #define LV_SYSMON_PROC_IDLE_AVAILABLE 0
     #if LV_SYSMON_PROC_IDLE_AVAILABLE
@@ -1119,7 +1119,7 @@
         #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
 
         /** 0: Displays performance data on the screen; 1: Prints performance data using log. */
-        #define LV_USE_PERF_MONITOR_LOG_MODE 1
+        #define LV_USE_PERF_MONITOR_LOG_MODE 0
     #endif
 
     /** 1: Show used memory and memory fragmentation.

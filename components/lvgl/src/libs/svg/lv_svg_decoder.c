@@ -13,6 +13,7 @@
 #include "lv_svg_decoder.h"
 
 #include "lv_svg.h"
+#include "lv_svg_render.h"
 #include "../../draw/lv_draw_buf_private.h"
 #include "../../display/lv_display_private.h"
 
@@ -317,7 +318,7 @@ static uint8_t * alloc_file(const char * filename, uint32_t * size)
     /*Read file to buffer*/
     data = lv_malloc(data_size);
     if(data == NULL) {
-        LV_LOG_WARN("malloc failed for data size %u", data_size);
+        LV_LOG_WARN("malloc failed for data size %lu", (unsigned long)data_size);
         goto failed;
     }
 

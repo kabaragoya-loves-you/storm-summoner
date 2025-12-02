@@ -18,4 +18,5 @@ idf_component_register(
         "console"
         "menu"
         "display"
+        "miniz"
 )

@@ -1,15 +1,30 @@
 #include "ui_console.h"
 #include "ui.h"
-#include "lv_globe.h"
 #include "esp_log.h"
 #include "esp_console.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "sdkconfig.h"
 #include <stdlib.h>
 #include <string.h>
+
+// splash5 API (defined in splash5.c)
+void splash5_set_planet(const char *name);
+void splash5_set_rotation(float speed);
+const char *splash5_get_planet(void);
+float splash5_get_rotation(void);
+
+// buttons API (defined in buttons.c)
+void buttons_set_planet(const char *name);
+const char *buttons_get_planet(void);
+void buttons_set_rotation(float speed);
+float buttons_get_rotation(void);
 
 static const char* TAG = "ui_console";
 
 static const char* registered_commands[] = {
-  "info", "size", "top", "left", "module", "planet", "ambient", "spin"
+  "info", "size", "top", "left", "module", "planet", "rotation", "perf", "cpu"
 };
 
 // Available planet textures
@@ -29,6 +44,12 @@ static ui_draw_module_t* available_modules[] = {
   &pizza2_module,
   &plasma_module,
   &sphere_module,
+  &splash_module,
+  &splash2_module,
+  &splash3_module,
+  &splash4_module,
+  &splash5_module,
+  &pixel_art_module,
   &greyscale_test_module,
   &template_module,
 };
@@ -91,26 +112,33 @@ static int cmd_left(int argc, char **argv) {
 
 // Command: planet [name]
 static int cmd_planet(int argc, char **argv) {
+  ui_draw_module_t *current_mod = ui_get_current_module();
+  bool is_splash5 = (current_mod && strcmp(current_mod->name, "splash5") == 0);
+  bool is_buttons = (current_mod && strcmp(current_mod->name, "buttons") == 0);
+  
+  if (!is_splash5 && !is_buttons) {
+    printf("Planet command only works for 'splash5' or 'buttons' modules.\n");
+    return 1;
+  }
+  
   if (argc < 2) {
-    // List planets and show current
-    const char* current = lv_globe_get_texture();
+    const char* current = is_splash5 ? splash5_get_planet() : buttons_get_planet();
     printf("Available planets:\n");
     for (int i = 0; i < num_planets; i++) {
-      char path[32];
-      snprintf(path, sizeof(path), "A:images/%s.bin", planet_textures[i]);
-      const char* marker = (current && strstr(current, planet_textures[i])) ? " *" : "";
+      const char* marker = (current && strcmp(current, planet_textures[i]) == 0) ? " *" : "";
       printf("  %s%s\n", planet_textures[i], marker);
     }
     return 0;
   }
   
-  // Find and switch to named planet
   const char* target = argv[1];
   for (int i = 0; i < num_planets; i++) {
     if (strcmp(planet_textures[i], target) == 0) {
-      char path[32];
-      snprintf(path, sizeof(path), "A:images/%s.bin", target);
-      lv_globe_set_texture(path);
+      if (is_splash5) {
+        splash5_set_planet(target);
+      } else {
+        buttons_set_planet(target);
+      }
       printf("Planet set to: %s\n", target);
       return 0;
     }
@@ -121,45 +149,30 @@ static int cmd_planet(int argc, char **argv) {
   return 1;
 }
 
-// Command: ambient [0.0-1.0]
-static int cmd_ambient(int argc, char **argv) {
+// Command: rotation [speed] - animation speed (positive=right, negative=left)
+static int cmd_rotation(int argc, char **argv) {
+  ui_draw_module_t *current_mod = ui_get_current_module();
+  bool is_splash5 = (current_mod && strcmp(current_mod->name, "splash5") == 0);
+  bool is_buttons = (current_mod && strcmp(current_mod->name, "buttons") == 0);
+  
+  if (!is_splash5 && !is_buttons) {
+    printf("Rotation command only works for 'splash5' or 'buttons' modules.\n");
+    return 1;
+  }
+  
   if (argc < 2) {
-    printf("Ambient light: %.2f\n", lv_globe_get_ambient_light());
+    float current = is_splash5 ? splash5_get_rotation() : buttons_get_rotation();
+    printf("Rotation speed: %.2f (positive=right, negative=left, try 0.25-1.0)\n", current);
     return 0;
   }
   
-  float val = strtof(argv[1], NULL);
-  lv_globe_set_ambient_light(val);
-  printf("Ambient light set to: %.2f\n", lv_globe_get_ambient_light());
-  return 0;
-}
-
-// Command: spin [x y z] - rotation speeds in radians/frame
-static int cmd_spin(int argc, char **argv) {
-  float rx, ry, rz;
-  lv_globe_get_global_rotation_speed(&rx, &ry, &rz);
-  
-  if (argc < 2) {
-    printf("Rotation speed: X=%.4f (tilt) Y=%.4f (spin) Z=%.4f (roll)\n", rx, ry, rz);
-    return 0;
-  }
-  
-  if (argc == 2) {
-    // Single value sets Y (main horizontal spin)
-    ry = strtof(argv[1], NULL);
-  } else if (argc == 3) {
-    // Two values set X and Y
-    rx = strtof(argv[1], NULL);
-    ry = strtof(argv[2], NULL);
+  float speed = strtof(argv[1], NULL);
+  if (is_splash5) {
+    splash5_set_rotation(speed);
   } else {
-    // Three values set all
-    rx = strtof(argv[1], NULL);
-    ry = strtof(argv[2], NULL);
-    rz = strtof(argv[3], NULL);
+    buttons_set_rotation(speed);
   }
-  
-  lv_globe_set_global_rotation_speed(rx, ry, rz);
-  printf("Rotation speed set: X=%.4f Y=%.4f Z=%.4f\n", rx, ry, rz);
+  printf("Rotation speed set to: %.2f\n", speed);
   return 0;
 }
 
@@ -190,6 +203,78 @@ static int cmd_module(int argc, char **argv) {
   printf("Unknown module: %s\n", target);
   printf("Use 'module' with no args to list available modules.\n");
   return 1;
+}
+
+// Command: cpu - show per-task CPU usage
+static int cmd_cpu(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  
+#ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+  // Get number of tasks
+  UBaseType_t num_tasks = uxTaskGetNumberOfTasks();
+  
+  // Allocate buffer for stats (about 40 chars per task)
+  size_t buf_size = num_tasks * 50;
+  char *buf = malloc(buf_size);
+  if (!buf) {
+    printf("Failed to allocate stats buffer\n");
+    return 1;
+  }
+  
+  // Get runtime stats
+  vTaskGetRunTimeStats(buf);
+  printf("Task            Abs Time      %% Time\n");
+  printf("-------------------------------------\n");
+  printf("%s", buf);
+  
+  free(buf);
+#else
+  printf("Enable CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS in menuconfig\n");
+#endif
+  
+  return 0;
+}
+
+// Command: perf [show|hide|dump]
+static int cmd_perf(int argc, char **argv) {
+  // Show heap stats
+  size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+  size_t min_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT);
+  printf("Heap: free=%u min_ever=%u\n", (unsigned)free_heap, (unsigned)min_heap);
+  
+  // Show LVGL memory stats
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+  printf("LVGL mem: total=%lu used=%lu free=%lu frag=%u%%\n",
+         (unsigned long)mon.total_size, (unsigned long)mon.used_cnt,
+         (unsigned long)mon.free_cnt, (unsigned)mon.frag_pct);
+
+#if LV_USE_SYSMON && LV_USE_PERF_MONITOR
+  if (argc < 2) {
+    lv_sysmon_performance_dump(NULL);
+    return 0;
+  }
+  
+  const char* action = argv[1];
+  if (strcmp(action, "show") == 0) {
+    lv_sysmon_show_performance(NULL);
+    printf("Performance monitor shown on display\n");
+  } else if (strcmp(action, "hide") == 0) {
+    lv_sysmon_hide_performance(NULL);
+    printf("Performance monitor hidden\n");
+  } else if (strcmp(action, "dump") == 0) {
+    lv_sysmon_performance_dump(NULL);
+  } else {
+    printf("Usage: perf [show|hide|dump]\n");
+    return 1;
+  }
+#else
+  if (argc >= 2) {
+    printf("LVGL sysmon not enabled (LV_USE_SYSMON/LV_USE_PERF_MONITOR)\n");
+  }
+#endif
+  return 0;
 }
 
 esp_err_t ui_console_init(void) {
@@ -249,23 +334,32 @@ esp_err_t ui_console_init(void) {
   };
   esp_console_cmd_register(&planet_cmd);
   
-  // ambient command
-  const esp_console_cmd_t ambient_cmd = {
-    .command = "ambient",
-    .help = "Get/set globe ambient light (0.0-1.0)",
-    .hint = "[value]",
-    .func = &cmd_ambient,
+  // rotation command (for splash5)
+  const esp_console_cmd_t rotation_cmd = {
+    .command = "rotation",
+    .help = "Get/set planet rotation speed (positive=right, negative=left)",
+    .hint = "[speed]",
+    .func = &cmd_rotation,
   };
-  esp_console_cmd_register(&ambient_cmd);
+  esp_console_cmd_register(&rotation_cmd);
   
-  // spin command
-  const esp_console_cmd_t spin_cmd = {
-    .command = "spin",
-    .help = "Get/set globe rotation (rad/frame): spin [y] or spin [x y] or spin [x y z]",
-    .hint = "[x] [y] [z]",
-    .func = &cmd_spin,
+  // perf command
+  const esp_console_cmd_t perf_cmd = {
+    .command = "perf",
+    .help = "Show performance stats (perf show/hide for on-screen display)",
+    .hint = "[show|hide|dump]",
+    .func = &cmd_perf,
   };
-  esp_console_cmd_register(&spin_cmd);
+  esp_console_cmd_register(&perf_cmd);
+  
+  // cpu command
+  const esp_console_cmd_t cpu_cmd = {
+    .command = "cpu",
+    .help = "Show per-task CPU usage",
+    .hint = NULL,
+    .func = &cmd_cpu,
+  };
+  esp_console_cmd_register(&cpu_cmd);
   
   return ESP_OK;
 }
