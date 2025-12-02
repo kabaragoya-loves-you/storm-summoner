@@ -15,7 +15,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <math.h>
-#include "flyer_venice_14.h"
+#include "flyer_venice_20.h"
 
 #define TAG "ELITE"
 
@@ -315,7 +315,7 @@ void elite_start(void) {
   // Initialize style if needed
   if (!g_elite_style_initialized) {
     lv_style_init(&style_default);
-    lv_style_set_text_font(&style_default, &flyer_venice_14);
+    lv_style_set_text_font(&style_default, &flyer_venice_20);
     lv_style_set_text_color(&style_default, lv_color_white());
     g_elite_style_initialized = true;
   }

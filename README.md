@@ -10,14 +10,14 @@ Firmware for the **Kabaragoya Storm Summoner** - a touch-based MIDI controller d
 - **Expression Pedal Jack**: Traditional foot control integration
 - **3.5mm CV/Analog Clock Sync Input**: Seamless sync with modular systems and other gear
 - **USB MIDI and ¼" TRS MIDI Output**: Connect to any pedal supporting MIDI, regardless of Type A/B polarity
-- **128x128 OLED Display**: High-contrast 16-tone greyscale SSD1327 display with custom UI
+- **240x240 IPS Display**: Vibrant GC9A01A color display with custom UI
 - **Tripod Mounting**: Attach to microphone stands, drum racks, or lighting boards
 - **Open-Source Firmware**: Update via drag-and-drop over USB
 
 ## Hardware
 
 - **MCU**: ESP32-P4 (custom PCB)
-- **Display**: 128x128 SSD1327 16-tone greyscale OLED
+- **Display**: 240x240 GC9A01A RGB888 color IPS
 - **Platform**: ESP-IDF v5.5.1
 - **UI Framework**: LVGL v9.3 (locally forked)
 
@@ -66,7 +66,7 @@ Replace `PORT` with your device's serial port (e.g., `COM3` on Windows or `/dev/
   - `touch/`: 8-zone capacitive touch wheel driver
   - `buttons/`: Button input handling
   - `midi/`: MIDI input/output, scene handling, passthrough
-  - `display/`: SSD1327 driver and display management
+  - `display/`: GC9A01A driver and display management
   - `ui/`: LVGL-based user interface
   - `sensor/`: Proximity and ambient light sensors
   - `expression/`: Expression pedal support

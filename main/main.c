@@ -60,7 +60,7 @@
 void app_main(void) {
   version_init();
   adc_manager_init();
-  revision_init(2);
+  revision_init(-1);
   gpio_install_isr_service(0);
 
   bool boot_calibrate = buttons_check_boot_right();

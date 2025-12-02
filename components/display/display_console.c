@@ -150,11 +150,6 @@ static int cmd_brightness(int argc, char **argv) {
 
 // Command: viewport [offset_x offset_y width height]
 static int cmd_viewport(int argc, char **argv) {
-  if (display_driver_get_type() != DISPLAY_TYPE_GC9A01A) {
-    printf("Viewport configuration only available for GC9A01A display\n");
-    return 1;
-  }
-  
   if (argc < 5) {
     // Show current viewport
     printf("Viewport: offset=(%d,%d) size=%dx%d\n",

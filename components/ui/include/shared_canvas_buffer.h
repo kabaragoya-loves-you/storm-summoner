@@ -14,8 +14,7 @@
  * memory fragmentation issues caused by repeated allocation/deallocation
  * cycles during mode transitions.
  * 
- * The buffer size is determined at runtime based on the active display:
- * - SSD1327: 128x128 x 2 bytes (RGB565) = 32KB
+ * The buffer size is determined at runtime based on the display:
  * - GC9A01A: 240x240 x 3 bytes (RGB888) = 172KB
  * 
  * Usage:

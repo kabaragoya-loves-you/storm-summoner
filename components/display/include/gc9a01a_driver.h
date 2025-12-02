@@ -9,8 +9,7 @@
  * GC9A01A 240x240 Round IPS Display Driver
  * 
  * This driver supports the GC9A01A display controller commonly found in
- * round 1.28" 240x240 IPS LCD modules. It uses SPI for communication
- * with the same pinout as the SSD1327 OLED.
+ * round 1.28" 240x240 IPS LCD modules. It uses SPI for communication.
  * 
  * Color format: RGB888 (24-bit color)
  */

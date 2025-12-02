@@ -8,13 +8,10 @@
 #include "esp_heap_caps.h"
 #include "lvgl.h"
 #include "display.h"
-#include "ssd1327_driver.h"
+#include "display_driver.h"
 #include "task_priorities.h"
 
 static const char *TAG = "PERF";
-
-// Store current display mode
-static int current_display_mode = DISPLAY_OPTIMIZATION_MODE;
 
 // Custom log callback to route LVGL logs through ESP-IDF logging
 static void lvgl_log_cb(lv_log_level_t level, const char *buf) {
@@ -37,27 +34,24 @@ static void lvgl_log_cb(lv_log_level_t level, const char *buf) {
 }
 
 static void performance_monitor_task(void *pvParameters) {
-  #if LV_USE_LOG
-    lv_log_register_print_cb(lvgl_log_cb);
-    ESP_LOGI(TAG, "LVGL logging enabled and redirected to ESP-IDF");
-  #endif
+#if LV_USE_LOG
+  lv_log_register_print_cb(lvgl_log_cb);
+  ESP_LOGI(TAG, "LVGL logging enabled and redirected to ESP-IDF");
+#endif
   
   TickType_t last_wake_time = xTaskGetTickCount();
   const TickType_t period_ticks = pdMS_TO_TICKS(5000); // Log every 5 seconds
   
   // Log initial configuration
   ESP_LOGI(TAG, "=== DISPLAY PERFORMANCE MONITOR STARTED ===");
-  ESP_LOGI(TAG, "Display Optimization Mode: %d", current_display_mode);
+  ESP_LOGI(TAG, "Display: GC9A01A 240x240 RGB888 IPS");
   ESP_LOGI(TAG, "LVGL version: %d.%d.%d", LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
-  ESP_LOGI(TAG, "Screen: 128x128, Circular mask radius: 64px");
-  ESP_LOGI(TAG, "Visible pixels: 12,929 of 16,384 (78.9%%)");
   
-  // Log DMA status
-  #if ENABLE_SPI_DMA
-    ESP_LOGI(TAG, "SPI DMA: ENABLED (23 MHz)");
-  #else
-    ESP_LOGI(TAG, "SPI DMA: DISABLED (20 MHz)");
-  #endif
+#if ENABLE_SPI_DMA
+  ESP_LOGI(TAG, "SPI DMA: ENABLED");
+#else
+  ESP_LOGI(TAG, "SPI DMA: DISABLED");
+#endif
   
   // Log display configuration
   lv_display_t *disp = lv_display_get_default();
@@ -67,30 +61,6 @@ static void performance_monitor_task(void *pvParameters) {
              (long)lv_display_get_vertical_resolution(disp));
   }
   
-  // Log mode-specific information
-  switch(current_display_mode) {
-    case 0:
-      ESP_LOGI(TAG, "Mode 0: Baseline - Full screen single buffer");
-      break;
-    case 1:
-      ESP_LOGI(TAG, "Mode 1: Dynamic visibility check");
-      break;
-    case 2:
-      ESP_LOGI(TAG, "Mode 2: Pre-calculated coordinate map");
-      break;
-    case 3:
-      ESP_LOGI(TAG, "Mode 3: LVGL callback wrapper");
-      break;
-    case 4:
-      ESP_LOGI(TAG, "Mode 4: Sparse buffer analysis (demonstration)");
-      ESP_LOGI(TAG, "This mode shows compression potential but doesn't modify buffers");
-      break;
-    case 5:
-      ESP_LOGI(TAG, "Mode 5: RGB565 with I4 display driver conversion");
-      ESP_LOGI(TAG, "Partial double buffering with hardware-level I4 conversion");
-      break;
-  }
-  
   while (1) {
     vTaskDelayUntil(&last_wake_time, period_ticks);
 
@@ -98,11 +68,6 @@ static void performance_monitor_task(void *pvParameters) {
     if (disp != NULL) {
       uint32_t inactive_time = lv_display_get_inactive_time(disp);
       ESP_LOGI(TAG, "Display inactive time: %lu ms", inactive_time);
-      
-      lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
-      if (refr_timer != NULL) {
-        ESP_LOGI(TAG, "Refresh timer exists");
-      }
     }
     
     ESP_LOGI(TAG, "Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
@@ -119,8 +84,4 @@ void performance_init(void) {
   }
 }
 
-int performance_get_display_mode(void) {
-  return current_display_mode;
-}
-
-#endif // ENABLE_PERFORMANCE_MONITORING 
+#endif // ENABLE_PERFORMANCE_MONITORING
