@@ -32,7 +32,7 @@
 // Constants
 #define TASK_PERIOD_MS 20        // 50 Hz sampling rate
 #define FILTER_ALPHA 0.4f        // IIR filter coefficient (fast response for musical performance)
-#define OVERSAMPLE_COUNT 4       // 4x oversampling for +1 bit effective resolution
+#define OVERSAMPLE_COUNT 2       // 2x oversampling - faster transient tracking, median filter handles noise
 #define MEDIAN_WINDOW 5          // 5-sample median filter (better noise rejection for unstable signals)
 #define GATE_THRESHOLD 2048      // ~50% threshold for gate detection
 #define STARTUP_DELAY_MS 1000    // Delay before sending events after startup
@@ -266,8 +266,8 @@ static void cv_task(void *pvParameters) {
   s_filter_initialized = false;  // Reset filter on task start
   s_median_index = 0;             // Reset median filter
   
-  // Cable detection throttling
-  uint32_t last_cable_check_ms = 0;
+  // Cable detection throttling (static to persist across loop iterations)
+  static uint32_t last_cable_check_ms = 0;
   
   // Add initial delay to ensure ADC is stable
   // Stagger by 100ms from expression task to avoid ADC contention
@@ -282,7 +282,7 @@ static void cv_task(void *pvParameters) {
   
   while (1) {
     
-    // Read with 4x oversampling for improved resolution and noise rejection
+    // Read with 2x oversampling for noise reduction while tracking fast transients
     int16_t raw_oversampled = oversample_read();
     
     // Apply median filter to reject impulse noise
@@ -750,7 +750,7 @@ esp_err_t cv_auto_calibrate(cv_range_t range, uint32_t duration_ms) {
   return ESP_OK;
 }
 
-// Helper: Oversample ADC reading (4x for +1 bit effective resolution)
+// Helper: Oversample ADC reading (2x for noise reduction while preserving transient response)
 static int16_t oversample_read(void) {
   int32_t sum = 0;
   int successful_reads = 0;
@@ -769,7 +769,7 @@ static int16_t oversample_read(void) {
   }
   
   if (successful_reads == 0) {
-    ESP_LOGW(TAG, "CV ADC read failed - all %d samples timed out, returning 0", OVERSAMPLE_COUNT);
+    ESP_LOGW(TAG, "CV ADC read failed - all samples timed out, returning 0");
   }
   
   return successful_reads > 0 ? (int16_t)(sum / successful_reads) : 0;
