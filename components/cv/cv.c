@@ -256,14 +256,18 @@ void cv_disable(void) {
   }
 }
 
+// Cable detection intervals (ms)
+#define CABLE_CHECK_CONNECTED_MS    500   // Check every 500ms when connected
+#define CABLE_CHECK_DISCONNECTED_MS 1000  // Check every 1000ms when disconnected
+
 static void cv_task(void *pvParameters) {
   ESP_LOGI(TAG, "CV task started");
   s_task_start_time = esp_timer_get_time() / 1000; // ms
   s_filter_initialized = false;  // Reset filter on task start
   s_median_index = 0;             // Reset median filter
   
-  // Cable detection throttling when disconnected
-  static uint32_t last_cable_check_ms = 0;
+  // Cable detection throttling
+  uint32_t last_cable_check_ms = 0;
   
   // Add initial delay to ensure ADC is stable
   // Stagger by 100ms from expression task to avoid ADC contention
@@ -284,6 +288,9 @@ static void cv_task(void *pvParameters) {
     // Apply median filter to reject impulse noise
     int16_t raw = median_filter(raw_oversampled);
     
+    // Get current time once per loop (avoid multiple esp_timer calls)
+    uint32_t now_ms = esp_timer_get_time() / 1000;
+    
     // Check cable detection setting from input manager
     extern bool input_get_cable_detection_enabled(void);
     bool cable_detect_enabled = input_get_cable_detection_enabled();
@@ -291,14 +298,11 @@ static void cv_task(void *pvParameters) {
     // Only check cable if detection is enabled, otherwise assume connected
     bool connected = s_connected;  // Default to last known state
     if (cable_detect_enabled) {
-      // When connected, check every loop
-      // When disconnected, only check every 1000ms to reduce ADC load
-      uint32_t now_ms = esp_timer_get_time() / 1000;
-      if (s_connected || (now_ms - last_cable_check_ms >= 1000)) {
+      // Throttle cable checks - connection state changes are slow human-scale events
+      uint32_t check_interval = s_connected ? CABLE_CHECK_CONNECTED_MS : CABLE_CHECK_DISCONNECTED_MS;
+      if (now_ms - last_cable_check_ms >= check_interval) {
         connected = cv_is_cable_connected();
-        if (!s_connected) {
-          last_cable_check_ms = now_ms;  // Update check time when disconnected
-        }
+        last_cable_check_ms = now_ms;
       }
     } else {
       connected = true;  // Treat as always connected when detection disabled
@@ -384,9 +388,8 @@ static void cv_task(void *pvParameters) {
         midi_value = convert_to_midi((int16_t)s_filtered_value, s_mode);
       }
       
-      // Check if we're past startup delay
-      uint32_t now = esp_timer_get_time() / 1000;
-      bool past_startup = (now - s_task_start_time) > STARTUP_DELAY_MS;
+      // Check if we're past startup delay (reuse cached now_ms)
+      bool past_startup = (now_ms - s_task_start_time) > STARTUP_DELAY_MS;
       
       // Check if value changed beyond deadzone
       int midi_delta = abs((int)midi_value - (int)s_last_midi_value);
@@ -414,7 +417,7 @@ static void cv_task(void *pvParameters) {
         // During startup, just log periodically
         static int startup_log_counter = 0;
         if (startup_log_counter++ % 10 == 0) {
-          ESP_LOGI(TAG, "CV startup: raw=%d, filtered=%.1f (waiting %lu ms)", raw, s_filtered_value, (unsigned long)(STARTUP_DELAY_MS - (now - s_task_start_time)));
+          ESP_LOGI(TAG, "CV startup: raw=%d, filtered=%.1f (waiting %lu ms)", raw, s_filtered_value, (unsigned long)(STARTUP_DELAY_MS - (now_ms - s_task_start_time)));
         }
       }
     }
@@ -772,31 +775,32 @@ static int16_t oversample_read(void) {
   return successful_reads > 0 ? (int16_t)(sum / successful_reads) : 0;
 }
 
-// Helper: 3-sample median filter (simple sort for noise rejection)
+// Helper: 5-sample median filter using sorting network (9 comparisons vs bubble sort's 10)
 static int16_t median_filter(int16_t new_value) {
-  // Update circular buffer
   s_median_buffer[s_median_index] = new_value;
   s_median_index = (s_median_index + 1) % MEDIAN_WINDOW;
   
-  // Sort buffer copy to find median
-  int16_t sorted[MEDIAN_WINDOW];
-  for (int i = 0; i < MEDIAN_WINDOW; i++) {
-    sorted[i] = s_median_buffer[i];
-  }
+  // Load buffer into registers
+  int16_t a = s_median_buffer[0];
+  int16_t b = s_median_buffer[1];
+  int16_t c = s_median_buffer[2];
+  int16_t d = s_median_buffer[3];
+  int16_t e = s_median_buffer[4];
   
-  // Simple bubble sort (only 3 elements)
-  for (int i = 0; i < MEDIAN_WINDOW - 1; i++) {
-    for (int j = 0; j < MEDIAN_WINDOW - i - 1; j++) {
-      if (sorted[j] > sorted[j + 1]) {
-        int16_t temp = sorted[j];
-        sorted[j] = sorted[j + 1];
-        sorted[j + 1] = temp;
-      }
-    }
-  }
+  // Optimal sorting network for 5 elements (Batcher's odd-even mergesort)
+  #define SORT2(x, y) if (x > y) { int16_t t = x; x = y; y = t; }
+  SORT2(a, b);
+  SORT2(d, e);
+  SORT2(c, e);
+  SORT2(c, d);
+  SORT2(a, d);
+  SORT2(a, c);
+  SORT2(b, e);
+  SORT2(b, d);
+  SORT2(b, c);
+  #undef SORT2
   
-  // Return middle value
-  return sorted[MEDIAN_WINDOW / 2];
+  return c;  // Middle element after sort
 }
 
 // ADC initialization - register CV channel with ADC manager
