@@ -2,9 +2,15 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
+// Suppress warnings from miniz header's unused static functions
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+
 // Use local miniz component (has full mz_uncompress API)
 // Path includes "miniz/" to avoid conflict with ESP-IDF's esp_rom/miniz.h
 #include "miniz/miniz.h"
+
+#pragma GCC diagnostic pop
 
 #include <stdio.h>
 #include <stdlib.h>

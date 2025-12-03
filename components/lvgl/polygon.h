@@ -21,8 +21,9 @@ typedef struct {
  * @param vertices Array of polygon vertices
  * @param vertex_count Number of vertices
  * @param color Fill color
+ * @param opa Opacity (LV_OPA_TRANSP for cutouts/holes)
  */
-void polygon_fill(lv_obj_t *canvas, polygon_point_t *vertices, int vertex_count, lv_color_t color);
+void polygon_fill(lv_obj_t *canvas, polygon_point_t *vertices, int vertex_count, lv_color_t color, lv_opa_t opa);
 
 /**
  * Create arc vertices for use in polygons

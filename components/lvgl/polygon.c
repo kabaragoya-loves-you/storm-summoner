@@ -1,6 +1,7 @@
 #include "polygon.h"
 #include "lvgl.h"
 #include <math.h>
+#include <string.h>
 
 // Define M_PI if not available
 #ifndef M_PI
@@ -10,8 +11,26 @@
 // 🎯 REUSABLE POLYGON RASTERIZER - 1980s style pixel-perfect control!
 
 // Scanline polygon fill algorithm
-void polygon_fill(lv_obj_t *canvas, polygon_point_t *vertices, int vertex_count, lv_color_t color) {
+void polygon_fill(lv_obj_t *canvas, polygon_point_t *vertices, int vertex_count, lv_color_t color, lv_opa_t opa) {
   if (vertex_count < 3 || !canvas) return;
+  
+  // Get canvas dimensions
+  int32_t canvas_w = lv_obj_get_width(canvas);
+  int32_t canvas_h = lv_obj_get_height(canvas);
+  
+  // For transparent fills (holes), we need direct buffer access
+  // because lv_canvas_set_px does alpha blending, not replacement
+  uint8_t *buf = NULL;
+  uint32_t stride = 0;
+  bool is_hole = (opa == LV_OPA_TRANSP);
+  
+  if (is_hole) {
+    lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(canvas);
+    if (draw_buf) {
+      buf = draw_buf->data;
+      stride = draw_buf->header.stride;
+    }
+  }
   
   // Find bounding box
   float min_y = vertices[0].y, max_y = vertices[0].y;
@@ -22,7 +41,7 @@ void polygon_fill(lv_obj_t *canvas, polygon_point_t *vertices, int vertex_count,
   
   // Clamp to canvas bounds  
   int start_y = (int)fmaxf(0, floorf(min_y));
-  int end_y = (int)fminf(127, ceilf(max_y));
+  int end_y = (int)fminf(canvas_h - 1, ceilf(max_y));
   
   // For each scanline
   for (int y = start_y; y <= end_y; y++) {
@@ -63,10 +82,22 @@ void polygon_fill(lv_obj_t *canvas, polygon_point_t *vertices, int vertex_count,
     for (int i = 0; i < intersection_count; i += 2) {
       if (i + 1 < intersection_count) {
         int start_x = (int)fmaxf(0, floorf(intersections[i] + 0.5f));
-        int end_x = (int)fminf(127, floorf(intersections[i + 1] + 0.5f));
+        int end_x = (int)fminf(canvas_w - 1, floorf(intersections[i + 1] + 0.5f));
         
-        for (int x = start_x; x <= end_x; x++) {
-          lv_canvas_set_px(canvas, x, y, color, LV_OPA_COVER);
+        if (is_hole && buf) {
+          // For holes: directly write transparent pixels (ARGB8888: B,G,R,A)
+          for (int x = start_x; x <= end_x; x++) {
+            uint8_t *px = buf + y * stride + x * 4;
+            px[0] = 0;  // B
+            px[1] = 0;  // G
+            px[2] = 0;  // R
+            px[3] = 0;  // A = transparent
+          }
+        } else {
+          // Normal fill
+          for (int x = start_x; x <= end_x; x++) {
+            lv_canvas_set_px(canvas, x, y, color, opa);
+          }
         }
       }
     }
