@@ -27,6 +27,11 @@ void touch_enable_debug_logging(void);
 bool touch_is_pad_pressed(int pad_index);
 const bool *touch_get_pressed_states(void);
 
+// Stuck touch timeout configuration (how long a pad can be held before forcing release)
+// Set to 0 to disable stuck touch detection
+uint32_t touch_get_stuck_timeout_ms(void);
+void touch_set_stuck_timeout_ms(uint32_t timeout_ms);
+
 // Query detailed information for a specific pad
 void touch_query_pad(int pad_index);
 

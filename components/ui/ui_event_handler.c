@@ -12,7 +12,7 @@
 #define NUM_WHEEL_PADS 8
 #define BUTTON_13_LOGICAL_PAD 12
 #define BUTTON_8_LOGICAL_PAD 8
-#define BUTTON_13_LONG_PRESS_MS 1000
+#define BUTTON_13_LONG_PRESS_MS 2000  // 2 seconds for intentional menu access
 #define BUTTON_13_SHORT_PRESS_MIN_MS 75  // Minimum press duration for back/cancel
 
 // Settings keys

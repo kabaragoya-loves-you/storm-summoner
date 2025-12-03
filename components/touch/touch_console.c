@@ -7,11 +7,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdlib.h>
+#include <inttypes.h>
 
 static const char* TAG = "touch_console";
 
 static const char* registered_commands[] = {
-  "calibrate", "reset", "debug", "query", "endless", "odometer", "bipolar"
+  "calibrate", "reset", "debug", "query", "endless", "odometer", "bipolar", "stucktimeout"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -22,10 +23,12 @@ static struct {
   bool active;
   TaskHandle_t task_handle;
   bool is_endless_mode;  // Track mode type for callback handling
-} s_test_state = {NULL, 0, false, NULL, false};
+  uint32_t cancel_press_time;  // When cancel pad was pressed (for hold detection)
+} s_test_state = {NULL, 0, false, NULL, false, 0};
 
 #define CONFIRM_PAD 8
 #define CANCEL_PAD 12
+#define CANCEL_HOLD_MS 300  // Must hold cancel pad this long to actually cancel
 
 // Command: calibrate
 static int cmd_calibrate(int argc, char **argv) {
@@ -85,15 +88,29 @@ static void test_value_callback(int value, void* user_data) {
 static void test_touch_event_handler(const event_t* event, void* context) {
   if (!s_test_state.active) return;
   
+  uint8_t pad_id = event->data.touch.pad_id;
+  
   if (event->type == EVENT_TOUCH_PRESS) {
-    uint8_t pad_id = event->data.touch.pad_id;
-    
     if (pad_id == CONFIRM_PAD) {
       ESP_LOGI(TAG, "=== CONFIRMED: Final value = %d ===", s_test_state.current_value);
       s_test_state.active = false;
     } else if (pad_id == CANCEL_PAD) {
-      ESP_LOGI(TAG, "=== CANCELLED ===");
-      s_test_state.active = false;
+      // Start tracking hold time for cancel
+      s_test_state.cancel_press_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    }
+  } else if (event->type == EVENT_TOUCH_RELEASE) {
+    if (pad_id == CANCEL_PAD && s_test_state.cancel_press_time > 0) {
+      uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+      uint32_t hold_duration = now - s_test_state.cancel_press_time;
+      s_test_state.cancel_press_time = 0;
+      
+      if (hold_duration >= CANCEL_HOLD_MS) {
+        ESP_LOGI(TAG, "=== CANCELLED (held %"PRIu32"ms) ===", hold_duration);
+        s_test_state.active = false;
+      } else {
+        ESP_LOGD(TAG, "Cancel ignored - hold too short (%"PRIu32"ms < %dms)", 
+          hold_duration, CANCEL_HOLD_MS);
+      }
     }
   }
 }
@@ -288,6 +305,33 @@ static int cmd_bipolar(int argc, char **argv) {
   return 0;
 }
 
+// Command: stucktimeout
+static int cmd_stucktimeout(int argc, char **argv) {
+  if (argc < 2) {
+    // Show current value
+    uint32_t current = touch_get_stuck_timeout_ms();
+    if (current == 0) {
+      ESP_LOGI(TAG, "Stuck touch detection: DISABLED");
+    } else {
+      ESP_LOGI(TAG, "Stuck touch timeout: %"PRIu32" ms (%"PRIu32" seconds)", 
+        current, current / 1000);
+    }
+    ESP_LOGI(TAG, "Usage: stucktimeout <ms>  (set timeout, 0 to disable)");
+    return 0;
+  }
+  
+  uint32_t timeout_ms = (uint32_t)atoi(argv[1]);
+  touch_set_stuck_timeout_ms(timeout_ms);
+  
+  if (timeout_ms == 0) {
+    ESP_LOGI(TAG, "Stuck touch detection DISABLED");
+  } else {
+    ESP_LOGI(TAG, "Stuck touch timeout set to %"PRIu32" ms (%"PRIu32" seconds)", 
+      timeout_ms, timeout_ms / 1000);
+  }
+  return 0;
+}
+
 esp_err_t touch_console_init(void) {
   ESP_LOGI(TAG, "Registering touch commands");
   
@@ -353,6 +397,15 @@ esp_err_t touch_console_init(void) {
     .func = &cmd_bipolar,
   };
   esp_console_cmd_register(&bipolar_cmd);
+  
+  // stucktimeout command
+  const esp_console_cmd_t stucktimeout_cmd = {
+    .command = "stucktimeout",
+    .help = "Get/set stuck touch timeout in ms (0 to disable, default 10000)",
+    .hint = "[ms]",
+    .func = &cmd_stucktimeout,
+  };
+  esp_console_cmd_register(&stucktimeout_cmd);
   
   return ESP_OK;
 }

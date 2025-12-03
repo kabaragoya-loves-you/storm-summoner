@@ -77,6 +77,18 @@ static TaskHandle_t s_health_check_task = NULL;
 static bool s_health_check_running = false;
 static volatile uint32_t s_last_any_touch_time = 0; // Global tracking of last activity
 static uint32_t s_pending_recovery_mask = 0;        // Bitmask of pads needing recovery
+static uint32_t s_pad_press_timestamps[MAX_TOUCH_PADS] = {0}; // When each pad was pressed
+static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pad was last recovered
+
+// Timing constants for health check
+#define HEALTH_CHECK_INTERVAL_MS 250      // How often to run health check
+#define RECOVERY_IDLE_TIME_MS 1500        // Wait this long after last touch before recovery
+#define RECOVERY_COOLDOWN_MS 5000         // Don't re-queue pad for recovery within this time
+#define STUCK_TOUCH_TIMEOUT_DEFAULT_MS 10000  // Default: 10 seconds (allows musical holds)
+#define NVS_STUCK_TIMEOUT_KEY "stuck_timeout"
+
+// Configurable stuck touch timeout (loaded from NVS)
+static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 
 // Statistics for debug logging
 static struct {
@@ -137,6 +149,13 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // Update last touch time for ANY pad
   uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
   s_last_any_touch_time = now;
+  
+  // Track per-pad press timestamps for stuck detection
+  if (is_pressed) {
+    s_pad_press_timestamps[pad_index] = now;
+  } else {
+    s_pad_press_timestamps[pad_index] = 0; // Clear on release
+  }
   
   // Route pad 0-7 events to active touchwheel instances
   // Route in both performance mode AND programming mode
@@ -241,12 +260,16 @@ static void touch_event_task(void *pvParameters) {
   }
 }
 
-// Lightweight periodic health check to catch missed events and stuck pads
+// Lightweight periodic health check to catch missed events and sync state
+// Key insight: State mismatches (SW≠HW) are software bugs, not hardware issues.
+// Fixing the software state IS the solution - no recalibration needed.
 static void touch_health_check_task(void *pvParameters) {
   // Wait for initialization to complete
   vTaskDelay(pdMS_TO_TICKS(5000));
   
   while (s_health_check_running) {
+    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    
     for (int i = 0; i < MAX_TOUCH_PADS; i++) {
       // 1. Read Data
       uint32_t smooth[1], benchmark[1];
@@ -258,11 +281,13 @@ static void touch_health_check_task(void *pvParameters) {
       
       if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
       
-      // 2. Check for Critical Benchmark Corruption
+      // 2. Check for Critical Benchmark Corruption (rare, hardware-level issue)
       if (benchmark[0] < 1000 || benchmark[0] > 100000) {
         ESP_LOGE(TAG, "CRITICAL: Pad %d benchmark corrupted (%"PRIu32"), resetting...", i, benchmark[0]);
         touch_recover_pad_state(i);
-        continue; // Skip rest of logic for this pad, state will sync later
+        s_pad_press_timestamps[i] = 0;
+        s_pad_recovery_timestamps[i] = now;
+        continue;
       }
       
       // 3. Determine Hardware State
@@ -276,13 +301,18 @@ static void touch_health_check_task(void *pvParameters) {
         hardware_is_touching = (delta > (int32_t)calib_data.threshold);
       }
       
-      // 4. Check State Mismatches
+      // 4. State Mismatch Correction (SW≠HW)
+      // This is the primary job: if SW thinks pad is pressed but HW says idle (or vice versa),
+      // just correct the software state. This fixes missed press/release events.
+      // NO RECOVERY NEEDED - the pad is fine, just the state got out of sync.
       if (s_button_pressed_states[i] != hardware_is_touching) {
-        ESP_LOGD(TAG, "Health check: Fixing pad %d (SW=%s, HW=%s)",
-          i, s_button_pressed_states[i] ? "PRESSED" : "RELEASED", hardware_is_touching ? "TOUCHING" : "IDLE");
+        ESP_LOGD(TAG, "Health check: Pad %d state sync (SW=%s -> HW=%s)",
+          i, s_button_pressed_states[i] ? "PRESSED" : "RELEASED", 
+          hardware_is_touching ? "TOUCHING" : "IDLE");
+        
         s_button_pressed_states[i] = hardware_is_touching;
         
-        // Post Event
+        // Post corrective event
         event_t event = {
           .type = hardware_is_touching ? EVENT_TOUCH_PRESS : EVENT_TOUCH_RELEASE,
           .priority = EVENT_PRIORITY_HIGH,
@@ -292,55 +322,85 @@ static void touch_health_check_task(void *pvParameters) {
         event_bus_post(&event);
         s_touch_stats.state_corrections++;
 
-        // RECOVERY: If we just fixed a "Stuck" pad (SW=Pressed, HW=Released),
-        // it means the release event was missed OR the signal drifted.
-        // Queue it for recovery instead of acting immediately.
-        if (!hardware_is_touching) { 
-          ESP_LOGD(TAG, "Health check: Pad %d unstuck - queueing for recovery", i);
-          s_pending_recovery_mask |= (1 << i);
+        // Update timestamp tracking
+        if (hardware_is_touching) {
+          s_pad_press_timestamps[i] = now;
+        } else {
+          s_pad_press_timestamps[i] = 0;
         }
+        // Note: We do NOT queue for recovery here. The state correction IS the fix.
       }
       
-      // 5. Proactive Drift Check (When released)
-      if (!s_button_pressed_states[i]) {
-        // If benchmark has drifted > 20% from baseline, update it
-        int32_t drift = abs((int32_t)benchmark[0] - (int32_t)calib_data.baseline);
-        if (calib_data.baseline > 0 && drift > (int32_t)(calib_data.baseline * 0.2f)) {
-          ESP_LOGD(TAG, "Pad %d drift detected, queueing for update...", i);
-          s_pending_recovery_mask |= (1 << i);
-        }
-      }
-    }
-    
-    // 6. Process Pending Recoveries (FIFO-ish, one at a time, only when idle)
-    if (s_pending_recovery_mask > 0) {
-      uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-      
-      // Wait for 500ms of silence before acting
-      if ((now - s_last_any_touch_time) > 500) {
-        // Find the lowest index needing recovery
-        int pad_to_recover = -1;
-        for (int i = 0; i < MAX_TOUCH_PADS; i++) {
-          if (s_pending_recovery_mask & (1 << i)) {
-            pad_to_recover = i;
-            break;
+      // 5. Stuck Touch Detection (HW+SW both agree pad is touched, but for way too long)
+      // This catches phantom touches where the threshold might be miscalibrated.
+      // Only triggers after a VERY long time (default 10s) to allow musical holds.
+      if (s_stuck_touch_timeout_ms > 0 && 
+          s_button_pressed_states[i] && hardware_is_touching && 
+          s_pad_press_timestamps[i] > 0) {
+        // Use fresh timestamp to avoid race condition
+        uint32_t fresh_now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        
+        // Only proceed if timestamp is valid (in the past)
+        if (s_pad_press_timestamps[i] <= fresh_now) {
+          uint32_t press_duration = fresh_now - s_pad_press_timestamps[i];
+          
+          // Sanity check + timeout check
+          if (press_duration <= 3600000 && press_duration > s_stuck_touch_timeout_ms) {
+            ESP_LOGW(TAG, "Health check: Pad %d phantom touch (held %"PRIu32"ms), forcing release", 
+              i, press_duration);
+            
+            // Force release - this clears the phantom touch
+            s_button_pressed_states[i] = false;
+            s_pad_press_timestamps[i] = 0;
+            
+            event_t event = {
+              .type = EVENT_TOUCH_RELEASE,
+              .priority = EVENT_PRIORITY_HIGH,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.touch = { .pad_id = i }
+            };
+            event_bus_post(&event);
+            s_touch_stats.state_corrections++;
+            
+            // Queue for recovery ONLY for phantom touches (threshold issue)
+            // Check cooldown to avoid recovery cascade
+            uint32_t since_last_recovery = fresh_now - s_pad_recovery_timestamps[i];
+            if (s_pad_recovery_timestamps[i] == 0 || since_last_recovery > RECOVERY_COOLDOWN_MS) {
+              ESP_LOGI(TAG, "Health check: Pad %d may need recalibration", i);
+              s_pending_recovery_mask |= (1 << i);
+            }
           }
         }
-        
-        if (pad_to_recover >= 0) {
-          ESP_LOGD(TAG, "Executing queued recovery for pad %d (System Idle)", pad_to_recover);
-          touch_recover_pad_state(pad_to_recover);
-          s_pending_recovery_mask &= ~(1 << pad_to_recover); // Clear bit
-          
-          // Force a small extra delay to prevent back-to-back glitches if we have a queue
-          // This ensures we don't freeze the bus for too long at once
-          s_last_any_touch_time = xTaskGetTickCount() * portTICK_PERIOD_MS; 
+      }
+      
+      // NOTE: Drift checking is intentionally NOT done here.
+      // Real drift happens over minutes/hours, not seconds.
+      // The drift_monitor_task in touch_thresholds.c handles this (checks every 10 minutes).
+    }
+    
+    // 6. Process Pending Recoveries (one at a time, only when system is truly idle)
+    if (s_pending_recovery_mask > 0) {
+      uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+      uint32_t idle_time = current_time - s_last_any_touch_time;
+      
+      // Only proceed if idle time is sane and sufficient
+      if (idle_time <= 3600000 && idle_time > RECOVERY_IDLE_TIME_MS) {
+        // Find first pad needing recovery
+        for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+          if (s_pending_recovery_mask & (1 << i)) {
+            ESP_LOGI(TAG, "Recovering pad %d (idle %"PRIu32"ms)", i, idle_time);
+            touch_recover_pad_state(i);
+            s_pending_recovery_mask &= ~(1 << i);
+            s_pad_press_timestamps[i] = 0;
+            s_pad_recovery_timestamps[i] = current_time;
+            s_last_any_touch_time = current_time; // Prevent back-to-back
+            break; // Only one per cycle
+          }
         }
       }
     }
     
-    // Run every 500ms for better responsiveness
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(HEALTH_CHECK_INTERVAL_MS));
   }
   
   vTaskDelete(NULL);
@@ -432,6 +492,16 @@ void touch_init(bool enable_logging) {
   esp_err_t ret;
   
   s_logging_enabled = enable_logging;
+  
+  // Load stuck touch timeout from NVS (or use default)
+  uint32_t saved_timeout;
+  if (app_settings_load_u32(NVS_STUCK_TIMEOUT_KEY, &saved_timeout) == ESP_OK) {
+    s_stuck_touch_timeout_ms = saved_timeout;
+    ESP_LOGI(TAG, "Loaded stuck touch timeout from NVS: %"PRIu32" ms", saved_timeout);
+  } else {
+    s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
+    ESP_LOGI(TAG, "Using default stuck touch timeout: %"PRIu32" ms", s_stuck_touch_timeout_ms);
+  }
   
   // Step 1: Create touch sensor controller with sample configuration
   touch_sensor_sample_config_t sample_cfg[1] = {
@@ -954,4 +1024,21 @@ bool touch_is_pad_pressed(int pad_index) {
 
 const bool *touch_get_pressed_states(void) {
   return s_button_pressed_states;
+}
+
+uint32_t touch_get_stuck_timeout_ms(void) {
+  return s_stuck_touch_timeout_ms;
+}
+
+void touch_set_stuck_timeout_ms(uint32_t timeout_ms) {
+  s_stuck_touch_timeout_ms = timeout_ms;
+  
+  // Save to NVS
+  esp_err_t err = app_settings_save_u32(NVS_STUCK_TIMEOUT_KEY, timeout_ms);
+  if (err == ESP_OK) {
+    ESP_LOGI(TAG, "Stuck touch timeout set to %"PRIu32" ms (saved to NVS)", timeout_ms);
+  } else {
+    ESP_LOGW(TAG, "Stuck touch timeout set to %"PRIu32" ms (NVS save failed: %s)", 
+      timeout_ms, esp_err_to_name(err));
+  }
 }
