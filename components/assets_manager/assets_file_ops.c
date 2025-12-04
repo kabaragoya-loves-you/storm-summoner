@@ -171,7 +171,8 @@ static void replace_underscores(char *str) {
   }
 }
 
-// Helper: Compute SHA256 hex string for a file (PSRAM-based to avoid stack overflow)
+// Helper: Compute full SHA256 hex string for a file (matches Ruby build_manifest.rb)
+// PSRAM-based to avoid stack overflow
 static bool compute_file_sha256(const char *path, char *hex_out, size_t hex_size) {
   if (hex_size < 65) return false;  // Need 64 hex chars + null
   
@@ -203,7 +204,7 @@ static bool compute_file_sha256(const char *path, char *hex_out, size_t hex_size
   mbedtls_sha256_finish(ctx, hash);
   mbedtls_sha256_free(ctx);
   
-  // Convert to hex string
+  // Convert to full 64-char hex string (matches Ruby hexdigest)
   for (int i = 0; i < 32; i++) {
     snprintf(hex_out + (i * 2), 3, "%02x", hash[i]);
   }
@@ -255,7 +256,7 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   char *vendor_display = psram_malloc(128);
   char *product_display = psram_malloc(128);
   char *path = psram_malloc(MAX_PATH_LEN);
-  char *sha256 = psram_malloc(65);
+  char *sha256 = psram_malloc(65);  // 64 hex chars + null (full SHA256)
   
   if (!product || !slug || !vendor_display || !product_display || !path || !sha256) {
     cJSON_Delete(device_json);
@@ -288,7 +289,7 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   // Build path: devices/vendor/product.json
   snprintf(path, MAX_PATH_LEN, "devices/%s/%s", vendor_dir, filename);
   
-  // Compute SHA256
+  // Compute full SHA256 (matches Ruby build_manifest.rb)
   if (!compute_file_sha256(device_path, sha256, 65)) {
     sha256[0] = '\0';
   }
