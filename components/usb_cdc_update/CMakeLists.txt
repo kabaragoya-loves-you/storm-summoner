@@ -6,6 +6,9 @@ idf_component_register(
     espressif__tinyusb
     firmware_update
     console
+    assets_manager
+    joltwallet__littlefs
+    miniz
   PRIV_REQUIRES
     main
 )
