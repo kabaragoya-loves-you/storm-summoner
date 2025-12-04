@@ -42,20 +42,13 @@ int32_t boundary_circle_get_left(void);
 int32_t boundary_circle_get_top(void);
 
 extern ui_draw_module_t pizza_module;
-extern ui_draw_module_t pizza2_module;
-extern ui_draw_module_t draw_lizard_module;
+extern ui_draw_module_t slices_module;
 extern ui_draw_module_t sphere_module;
-extern ui_draw_module_t greyscale_test_module;
 extern ui_draw_module_t buttons_module;
 extern ui_draw_module_t template_module;
-extern ui_draw_module_t kabaragoya_module;
-extern ui_draw_module_t plasma_module;
 extern ui_draw_module_t splash_module;
-extern ui_draw_module_t splash2_module;
-extern ui_draw_module_t splash3_module;
-extern ui_draw_module_t splash4_module;
-extern ui_draw_module_t splash5_module;
-extern ui_draw_module_t pixel_art_module;
+extern ui_draw_module_t summoner_module;
+extern ui_draw_module_t pixels_module;
 
 void ui_init(void);
 

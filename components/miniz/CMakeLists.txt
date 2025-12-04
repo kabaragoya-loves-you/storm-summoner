@@ -17,3 +17,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-type-limits
 )
 
+# Disable miniz file I/O features we don't use (silences #pragma message)
+# NOTE: Do NOT disable ARCHIVE_APIS or ARCHIVE_WRITING_APIS - we need them for ZIP support
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    MINIZ_NO_STDIO=1
+)
+

@@ -6,27 +6,27 @@
 #include "esp_log.h"
 #include <math.h>
 
-#define TAG "SPLASH2"
+#define TAG "SUMMONER"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
 
 //=============================================================================
-// SPLASH2 MODULE CONFIGURATION
+// SUMMONER MODULE CONFIGURATION
 //=============================================================================
 
 // Sunburst gradient colors (gold center to darker gold edge)
-#define SPLASH2_CENTER_R  255
-#define SPLASH2_CENTER_G  200
-#define SPLASH2_CENTER_B  100
+#define SUMMONER_CENTER_R  255
+#define SUMMONER_CENTER_G  200
+#define SUMMONER_CENTER_B  100
 
-#define SPLASH2_EDGE_R    180
-#define SPLASH2_EDGE_G    100
-#define SPLASH2_EDGE_B    40
+#define SUMMONER_EDGE_R    180
+#define SUMMONER_EDGE_G    100
+#define SUMMONER_EDGE_B    40
 
 // Vector art overlay
-#define SPLASH2_VECTOR_PATH "/assets/images/kabaragoya_vec.bin.z"
+#define SUMMONER_VECTOR_PATH "/assets/images/kabaragoya_vec.bin.z"
 
 // Plasma settings (copied from plasma.c)
 #define PLASMA_SEGMENTS       10
@@ -75,7 +75,7 @@ static void plasma_target_cb(uint8_t tendril_index, int32_t* x, int32_t* y, void
   }
 }
 
-static void splash2_draw_deferred_cb(lv_timer_t *timer) {
+static void summoner_draw_deferred_cb(lv_timer_t *timer) {
   if (g_screen != NULL) {
     lv_screen_load(g_screen);
     lv_timer_delete(timer);
@@ -105,8 +105,8 @@ static void splash2_draw_deferred_cb(lv_timer_t *timer) {
     LV_GRAD_EXTEND_PAD);
   
   lv_color_t colors[2] = {
-    lv_color_make(SPLASH2_CENTER_R, SPLASH2_CENTER_G, SPLASH2_CENTER_B),
-    lv_color_make(SPLASH2_EDGE_R, SPLASH2_EDGE_G, SPLASH2_EDGE_B)
+    lv_color_make(SUMMONER_CENTER_R, SUMMONER_CENTER_G, SUMMONER_CENTER_B),
+    lv_color_make(SUMMONER_EDGE_R, SUMMONER_EDGE_G, SUMMONER_EDGE_B)
   };
   lv_opa_t opas[2] = { LV_OPA_COVER, LV_OPA_COVER };
   uint8_t fracs[2] = { 0, 255 };
@@ -122,7 +122,7 @@ static void splash2_draw_deferred_cb(lv_timer_t *timer) {
   
   float scale = (float)g_disp_width / 198.0f;
   lv_vector_art_set_scale(g_vector_art, scale);
-  lv_vector_art_set_src(g_vector_art, SPLASH2_VECTOR_PATH);
+  lv_vector_art_set_src(g_vector_art, SUMMONER_VECTOR_PATH);
   
   // Layer 3: Plasma widget (on top)
   g_plasma = lv_plasma_create(g_screen);
@@ -137,32 +137,32 @@ static void splash2_draw_deferred_cb(lv_timer_t *timer) {
   lv_plasma_set_animation_speed(g_plasma, PLASMA_ANIM_SPEED);
   lv_plasma_set_state_cb(g_plasma, plasma_state_cb, plasma_target_cb, NULL);
   
-  ESP_LOGI(TAG, "Splash2 screen created with vector art");
+  ESP_LOGI(TAG, "Summoner screen created with vector art");
   
   lv_screen_load(g_screen);
   lv_timer_delete(timer);
 }
 
-UI_CREATE_DEFERRED_DRAW_FUNC(splash2, splash2_draw_deferred_cb)
+UI_CREATE_DEFERRED_DRAW_FUNC(summoner, summoner_draw_deferred_cb)
 
-static void splash2_teardown(void) {
+static void summoner_teardown(void) {
   if (g_screen) {
     lv_obj_delete(g_screen);
     g_screen = NULL;
     g_vector_art = NULL;
     g_plasma = NULL;
   }
-  ESP_LOGD(TAG, "Splash2 module teardown complete");
+  ESP_LOGD(TAG, "Summoner teardown complete");
 }
 
-static void splash2_init(void) {
-  ESP_LOGI(TAG, "Splash2 module initialized");
+static void summoner_init(void) {
+  ESP_LOGI(TAG, "Summoner module initialized");
 }
 
-ui_draw_module_t splash2_module = {
-  .draw_func = splash2_draw,
-  .teardown_func = splash2_teardown,
-  .init_func = splash2_init,
-  .name = "splash2"
+ui_draw_module_t summoner_module = {
+  .draw_func = summoner_draw,
+  .teardown_func = summoner_teardown,
+  .init_func = summoner_init,
+  .name = "summoner"
 };
 

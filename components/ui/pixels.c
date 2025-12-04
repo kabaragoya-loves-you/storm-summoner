@@ -1,22 +1,23 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "shared_canvas_buffer.h"
+#include "compressed_loader.h"
 #include "touch.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#define TAG "SPLASH4"
+#define TAG "PIXELS"
 
 //=============================================================================
-// SPLASH4 MODULE - Pre-computed tendrils + pixel art loaded from LittleFS
+// PIXELS MODULE - Pre-computed tendrils + pixel art loaded from LittleFS
 // Zero runtime math - maximum performance!
 //=============================================================================
 
-// File paths on LittleFS
-#define PIXELS_FILE   "/assets/images/lizard_pixels.bin"
-#define TENDRILS_FILE "/assets/images/tendrils.bin"
+// File paths on LittleFS (compressed)
+#define PIXELS_FILE   "/assets/images/lizard_pixels.bin.z"
+#define TENDRILS_FILE "/assets/images/tendrils.bin.z"
 
 // Animation settings
 #define ANIM_SPEED 1
@@ -75,12 +76,14 @@ static void *g_buffer = NULL;
 static uint16_t g_disp_width = 0;
 static uint16_t g_disp_height = 0;
 
-// Loaded data
+// Loaded data (decompressed from LittleFS to PSRAM)
+static uint8_t *g_pixel_data = NULL;  // Raw decompressed data
 static pixel_coord_t *g_pixels = NULL;
 static uint32_t g_pixel_count = 0;
 static uint16_t g_pixel_width = 0;
 static uint16_t g_pixel_height = 0;
 
+static uint8_t *g_tendril_data = NULL;  // Raw decompressed data
 static tendril_segment_t *g_tendrils = NULL;
 static uint8_t g_num_pads = 0;
 static uint8_t g_num_frames = 0;
@@ -92,101 +95,59 @@ static uint8_t g_frame_indices[8] = {0};
 //=============================================================================
 
 static bool load_pixels(const char *path) {
-  FILE *f = fopen(path, "rb");
-  if (!f) {
-    ESP_LOGE(TAG, "Failed to open %s", path);
+  size_t data_size;
+  g_pixel_data = (uint8_t *)compressed_load(path, &data_size);
+  if (!g_pixel_data) {
+    ESP_LOGE(TAG, "Failed to load %s", path);
     return false;
   }
   
-  // Read header
-  pixel_header_t header;
-  if (fread(&header, sizeof(header), 1, f) != 1) {
-    ESP_LOGE(TAG, "Failed to read pixel header");
-    fclose(f);
-    return false;
-  }
+  // Parse header from decompressed data
+  pixel_header_t *header = (pixel_header_t *)g_pixel_data;
+  g_pixel_width = header->width;
+  g_pixel_height = header->height;
+  g_pixel_count = header->count;
   
-  g_pixel_width = header.width;
-  g_pixel_height = header.height;
-  g_pixel_count = header.count;
+  // Point to pixel data after header
+  g_pixels = (pixel_coord_t *)(g_pixel_data + sizeof(pixel_header_t));
   
-  ESP_LOGI(TAG, "Loading %lu pixels (%dx%d)", (unsigned long)g_pixel_count, g_pixel_width, g_pixel_height);
-  
-  // Allocate and read pixel data
-  size_t data_size = g_pixel_count * sizeof(pixel_coord_t);
-  g_pixels = (pixel_coord_t *)malloc(data_size);
-  if (!g_pixels) {
-    ESP_LOGE(TAG, "Failed to allocate %d bytes for pixels", (int)data_size);
-    fclose(f);
-    return false;
-  }
-  
-  if (fread(g_pixels, sizeof(pixel_coord_t), g_pixel_count, f) != g_pixel_count) {
-    ESP_LOGE(TAG, "Failed to read pixel data");
-    free(g_pixels);
-    g_pixels = NULL;
-    fclose(f);
-    return false;
-  }
-  
-  fclose(f);
-  ESP_LOGI(TAG, "Loaded pixels: %lu coords, %d bytes", (unsigned long)g_pixel_count, (int)data_size);
+  ESP_LOGI(TAG, "Loaded pixels: %lu coords (%dx%d)", 
+           (unsigned long)g_pixel_count, g_pixel_width, g_pixel_height);
   return true;
 }
 
 static bool load_tendrils(const char *path) {
-  FILE *f = fopen(path, "rb");
-  if (!f) {
-    ESP_LOGE(TAG, "Failed to open %s", path);
+  size_t data_size;
+  g_tendril_data = (uint8_t *)compressed_load(path, &data_size);
+  if (!g_tendril_data) {
+    ESP_LOGE(TAG, "Failed to load %s", path);
     return false;
   }
   
-  // Read header
-  tendril_header_t header;
-  if (fread(&header, sizeof(header), 1, f) != 1) {
-    ESP_LOGE(TAG, "Failed to read tendril header");
-    fclose(f);
-    return false;
-  }
+  // Parse header from decompressed data
+  tendril_header_t *header = (tendril_header_t *)g_tendril_data;
+  g_num_pads = header->num_pads;
+  g_num_frames = header->num_frames;
+  g_max_segments = header->max_segments;
   
-  g_num_pads = header.num_pads;
-  g_num_frames = header.num_frames;
-  g_max_segments = header.max_segments;
+  // Point to tendril data after header
+  g_tendrils = (tendril_segment_t *)(g_tendril_data + sizeof(tendril_header_t));
   
-  ESP_LOGI(TAG, "Loading tendrils: %d pads, %d frames, %d segments/frame", 
+  ESP_LOGI(TAG, "Loaded tendrils: %d pads, %d frames, %d segments/frame", 
            g_num_pads, g_num_frames, g_max_segments);
-  
-  // Allocate and read tendril data
-  size_t data_size = g_num_pads * g_num_frames * g_max_segments * sizeof(tendril_segment_t);
-  g_tendrils = (tendril_segment_t *)malloc(data_size);
-  if (!g_tendrils) {
-    ESP_LOGE(TAG, "Failed to allocate %d bytes for tendrils", (int)data_size);
-    fclose(f);
-    return false;
-  }
-  
-  size_t total_segments = g_num_pads * g_num_frames * g_max_segments;
-  if (fread(g_tendrils, sizeof(tendril_segment_t), total_segments, f) != total_segments) {
-    ESP_LOGE(TAG, "Failed to read tendril data");
-    free(g_tendrils);
-    g_tendrils = NULL;
-    fclose(f);
-    return false;
-  }
-  
-  fclose(f);
-  ESP_LOGI(TAG, "Loaded tendrils: %d bytes", (int)data_size);
   return true;
 }
 
 static void free_data(void) {
-  if (g_pixels) {
-    free(g_pixels);
-    g_pixels = NULL;
+  if (g_pixel_data) {
+    compressed_free(g_pixel_data);
+    g_pixel_data = NULL;
+    g_pixels = NULL;  // Was pointing into g_pixel_data
   }
-  if (g_tendrils) {
-    free(g_tendrils);
-    g_tendrils = NULL;
+  if (g_tendril_data) {
+    compressed_free(g_tendril_data);
+    g_tendril_data = NULL;
+    g_tendrils = NULL;  // Was pointing into g_tendril_data
   }
 }
 
@@ -287,7 +248,7 @@ static void anim_timer_cb(lv_timer_t *timer) {
 // Module lifecycle
 //=============================================================================
 
-static void splash4_draw_deferred_cb(lv_timer_t *timer) {
+static void pixels_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
     lv_timer_delete(timer);
     return;
@@ -330,16 +291,16 @@ static void splash4_draw_deferred_cb(lv_timer_t *timer) {
     
     g_anim_timer = lv_timer_create(anim_timer_cb, ANIM_INTERVAL_MS, NULL);
     
-    ESP_LOGI(TAG, "Splash4 ready - data loaded from LittleFS");
+    ESP_LOGI(TAG, "Pixels ready - data loaded from LittleFS");
   }
   
   lv_screen_load(g_screen);
   lv_timer_delete(timer);
 }
 
-UI_CREATE_DEFERRED_DRAW_FUNC(splash4, splash4_draw_deferred_cb)
+UI_CREATE_DEFERRED_DRAW_FUNC(pixels, pixels_draw_deferred_cb)
 
-static void splash4_teardown(void) {
+static void pixels_teardown(void) {
   if (g_anim_timer) {
     lv_timer_delete(g_anim_timer);
     g_anim_timer = NULL;
@@ -351,16 +312,16 @@ static void splash4_teardown(void) {
     g_buffer = NULL;
   }
   free_data();
-  ESP_LOGD(TAG, "Splash4 teardown complete");
+  ESP_LOGD(TAG, "Pixels teardown complete");
 }
 
-static void splash4_init(void) {
-  ESP_LOGI(TAG, "Splash4 module initialized");
+static void pixels_init(void) {
+  ESP_LOGI(TAG, "Pixels module initialized");
 }
 
-ui_draw_module_t splash4_module = {
-  .draw_func = splash4_draw,
-  .teardown_func = splash4_teardown,
-  .init_func = splash4_init,
-  .name = "splash4"
+ui_draw_module_t pixels_module = {
+  .draw_func = pixels_draw,
+  .teardown_func = pixels_teardown,
+  .init_func = pixels_init,
+  .name = "pixels"
 };

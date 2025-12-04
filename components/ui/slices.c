@@ -3,15 +3,15 @@
 #include "lv_pizza2.h"
 #include "esp_log.h"
 
-#define TAG "PIZZA2"
+#define TAG "SLICES"
 
 extern lv_obj_t *canvas;
 
 // Widget references
 static lv_obj_t *g_screen = NULL;
-static lv_obj_t *g_pizza2 = NULL;
+static lv_obj_t *g_slices_widget = NULL;
 
-static void pizza2_draw_deferred_cb(lv_timer_t *timer) {
+static void slices_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
     lv_timer_delete(timer);
     return;
@@ -35,21 +35,21 @@ static void pizza2_draw_deferred_cb(lv_timer_t *timer) {
     lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
     
-    // Create pizza2 widget
-    g_pizza2 = lv_pizza2_create(g_screen);
-    lv_obj_set_size(g_pizza2, 128, 128);
-    lv_obj_align(g_pizza2, LV_ALIGN_CENTER, 0, 0);
+    // Create slices widget (uses lv_pizza2 internally)
+    g_slices_widget = lv_pizza2_create(g_screen);
+    lv_obj_set_size(g_slices_widget, 128, 128);
+    lv_obj_align(g_slices_widget, LV_ALIGN_CENTER, 0, 0);
     
-    // Configure to match original
-    lv_pizza2_set_slice_count(g_pizza2, 8);
-    lv_pizza2_set_gray_tone(g_pizza2, 6);
-    lv_pizza2_set_radius(g_pizza2, 60);
-    lv_pizza2_set_bite_size(g_pizza2, 25);
+    // Configure slices
+    lv_pizza2_set_slice_count(g_slices_widget, 8);
+    lv_pizza2_set_gray_tone(g_slices_widget, 6);
+    lv_pizza2_set_radius(g_slices_widget, 60);
+    lv_pizza2_set_bite_size(g_slices_widget, 25);
     
     // Set alternating pattern (0xAA = 10101010 binary)
-    lv_pizza2_set_active_slices(g_pizza2, 0xAA);
+    lv_pizza2_set_active_slices(g_slices_widget, 0xAA);
     
-    ESP_LOGI(TAG, "Pizza2 screen created");
+    ESP_LOGI(TAG, "Slices screen created");
   }
   
   // Load the screen (safe to call multiple times)
@@ -58,24 +58,24 @@ static void pizza2_draw_deferred_cb(lv_timer_t *timer) {
   lv_timer_delete(timer);
 }
 
-UI_CREATE_DEFERRED_DRAW_FUNC(pizza2, pizza2_draw_deferred_cb)
+UI_CREATE_DEFERRED_DRAW_FUNC(slices, slices_draw_deferred_cb)
 
-static void pizza2_teardown(void) {
+static void slices_teardown(void) {
   if (g_screen) {
     lv_obj_delete(g_screen);
     g_screen = NULL;
-    g_pizza2 = NULL;
+    g_slices_widget = NULL;
   }
-  ESP_LOGD(TAG, "Pizza2 module teardown complete");
+  ESP_LOGD(TAG, "Slices teardown complete");
 }
 
-static void pizza2_init(void) {
+static void slices_init(void) {
   // No init needed
 }
 
-ui_draw_module_t pizza2_module = {
-  .draw_func = pizza2_draw,
-  .teardown_func = pizza2_teardown,
-  .init_func = pizza2_init,
-  .name = "pizza2"
+ui_draw_module_t slices_module = {
+  .draw_func = slices_draw,
+  .teardown_func = slices_teardown,
+  .init_func = slices_init,
+  .name = "slices"
 };

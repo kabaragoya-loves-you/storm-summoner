@@ -1,13 +1,25 @@
 #include "assets_file_ops.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "cJSON.h"
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include "mbedtls/sha256.h"
 
 #define TAG "assets_file_ops"
+
+// PSRAM allocation helpers
+static void *psram_malloc(size_t size) {
+  return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+}
+
+static void psram_free(void *ptr) {
+  heap_caps_free(ptr);
+}
 #define ASSETS_BASE_PATH "/assets"
 #define MAX_PATH_LEN 320  // Must accommodate base path + d_name (255) + separators
 
@@ -89,7 +101,7 @@ esp_err_t assets_regenerate_scenes_manifest(void) {
       continue;
     }
     
-    char *json_buf = malloc(fsize + 1);
+    char *json_buf = psram_malloc(fsize + 1);
     if (!json_buf) {
       fclose(f);
       continue;
@@ -101,7 +113,7 @@ esp_err_t assets_regenerate_scenes_manifest(void) {
     
     // Parse to get name
     cJSON *scene_json = cJSON_Parse(json_buf);
-    free(json_buf);
+    psram_free(json_buf);
     
     char name[64] = "";
     if (scene_json) {
@@ -152,105 +164,289 @@ esp_err_t assets_regenerate_scenes_manifest(void) {
   return ESP_OK;
 }
 
+// Helper: Replace underscores with hyphens in a string (modifies in place)
+static void replace_underscores(char *str) {
+  for (char *p = str; *p; p++) {
+    if (*p == '_') *p = '-';
+  }
+}
+
+// Helper: Compute SHA256 hex string for a file (PSRAM-based to avoid stack overflow)
+static bool compute_file_sha256(const char *path, char *hex_out, size_t hex_size) {
+  if (hex_size < 65) return false;  // Need 64 hex chars + null
+  
+  FILE *f = fopen(path, "rb");
+  if (!f) return false;
+  
+  // Allocate mbedtls context and buffer in PSRAM
+  mbedtls_sha256_context *ctx = psram_malloc(sizeof(mbedtls_sha256_context));
+  uint8_t *buf = psram_malloc(1024);  // Larger buffer is fine in PSRAM
+  uint8_t *hash = psram_malloc(32);
+  
+  if (!ctx || !buf || !hash) {
+    fclose(f);
+    psram_free(ctx);
+    psram_free(buf);
+    psram_free(hash);
+    return false;
+  }
+  
+  mbedtls_sha256_init(ctx);
+  mbedtls_sha256_starts(ctx, 0);  // 0 = SHA256 (not SHA224)
+  
+  size_t bytes_read;
+  while ((bytes_read = fread(buf, 1, 1024, f)) > 0) {
+    mbedtls_sha256_update(ctx, buf, bytes_read);
+  }
+  fclose(f);
+  
+  mbedtls_sha256_finish(ctx, hash);
+  mbedtls_sha256_free(ctx);
+  
+  // Convert to hex string
+  for (int i = 0; i < 32; i++) {
+    snprintf(hex_out + (i * 2), 3, "%02x", hash[i]);
+  }
+  hex_out[64] = '\0';
+  
+  psram_free(ctx);
+  psram_free(buf);
+  psram_free(hash);
+  return true;
+}
+
+// Helper: Add device JSON file to manifest array (MIDI-RTC Schema format)
+// Uses heap allocation to avoid stack overflow in console task
+static void add_device_to_manifest(const char *device_path, const char *vendor_dir, 
+                                   const char *filename, cJSON *devices, int *count) {
+  struct stat st;
+  if (stat(device_path, &st) != 0) return;
+  
+  FILE *f = fopen(device_path, "r");
+  if (!f) return;
+  
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  
+  if (fsize > 65536) {
+    fclose(f);
+    return;
+  }
+  
+  char *json_buf = psram_malloc(fsize + 1);
+  if (!json_buf) {
+    fclose(f);
+    return;
+  }
+  
+  fread(json_buf, 1, fsize, f);
+  fclose(f);
+  json_buf[fsize] = '\0';
+  
+  cJSON *device_json = cJSON_Parse(json_buf);
+  psram_free(json_buf);
+  
+  if (!device_json) return;
+  
+  // Allocate string buffers in PSRAM
+  char *product = psram_malloc(128);
+  char *slug = psram_malloc(256);
+  char *vendor_display = psram_malloc(128);
+  char *product_display = psram_malloc(128);
+  char *path = psram_malloc(MAX_PATH_LEN);
+  char *sha256 = psram_malloc(65);
+  
+  if (!product || !slug || !vendor_display || !product_display || !path || !sha256) {
+    cJSON_Delete(device_json);
+    psram_free(product); psram_free(slug); psram_free(vendor_display);
+    psram_free(product_display); psram_free(path); psram_free(sha256);
+    return;
+  }
+  
+  // Extract product name from filename (without .json extension)
+  strncpy(product, filename, 127);
+  product[127] = '\0';
+  char *dot = strrchr(product, '.');
+  if (dot) *dot = '\0';
+  
+  // Get implementationVersion from JSON
+  cJSON *version_item = cJSON_GetObjectItem(device_json, "implementationVersion");
+  const char *version = (version_item && cJSON_IsString(version_item)) ? version_item->valuestring : "0";
+  
+  // Build slug: vendor.product@version (using original names with underscores)
+  snprintf(slug, 256, "%s.%s@%s", vendor_dir, product, version);
+  
+  // Build vendor and product with hyphens (for display)
+  strncpy(vendor_display, vendor_dir, 127);
+  vendor_display[127] = '\0';
+  strncpy(product_display, product, 127);
+  product_display[127] = '\0';
+  replace_underscores(vendor_display);
+  replace_underscores(product_display);
+  
+  // Build path: devices/vendor/product.json
+  snprintf(path, MAX_PATH_LEN, "devices/%s/%s", vendor_dir, filename);
+  
+  // Compute SHA256
+  if (!compute_file_sha256(device_path, sha256, 65)) {
+    sha256[0] = '\0';
+  }
+  
+  // Get receives and transmits arrays
+  cJSON *receives = cJSON_GetObjectItem(device_json, "receives");
+  cJSON *transmits = cJSON_GetObjectItem(device_json, "transmits");
+  
+  // Count CC and NRPN commands
+  cJSON *cc_commands = cJSON_GetObjectItem(device_json, "controlChangeCommands");
+  cJSON *nrpn_commands = cJSON_GetObjectItem(device_json, "nrpnCommands");
+  int cc_count = cJSON_IsArray(cc_commands) ? cJSON_GetArraySize(cc_commands) : 0;
+  int nrpn_count = cJSON_IsArray(nrpn_commands) ? cJSON_GetArraySize(nrpn_commands) : 0;
+  
+  // Get x_pc if present
+  cJSON *x_pc = cJSON_GetObjectItem(device_json, "x_pc");
+  
+  // Create manifest entry
+  cJSON *entry_obj = cJSON_CreateObject();
+  cJSON_AddStringToObject(entry_obj, "slug", slug);
+  cJSON_AddStringToObject(entry_obj, "vendor", vendor_display);
+  cJSON_AddStringToObject(entry_obj, "product", product_display);
+  cJSON_AddStringToObject(entry_obj, "version", version);
+  cJSON_AddStringToObject(entry_obj, "path", path);
+  if (sha256[0]) {
+    cJSON_AddStringToObject(entry_obj, "sha256", sha256);
+  }
+  cJSON_AddNumberToObject(entry_obj, "size", (double)st.st_size);
+  
+  // Add receives array (copy items)
+  cJSON *receives_copy = cJSON_CreateArray();
+  if (receives && cJSON_IsArray(receives)) {
+    cJSON *item;
+    cJSON_ArrayForEach(item, receives) {
+      if (cJSON_IsString(item)) {
+        cJSON_AddItemToArray(receives_copy, cJSON_CreateString(item->valuestring));
+      }
+    }
+  }
+  cJSON_AddItemToObject(entry_obj, "receives", receives_copy);
+  
+  // Add transmits array (copy items)
+  cJSON *transmits_copy = cJSON_CreateArray();
+  if (transmits && cJSON_IsArray(transmits)) {
+    cJSON *item;
+    cJSON_ArrayForEach(item, transmits) {
+      if (cJSON_IsString(item)) {
+        cJSON_AddItemToArray(transmits_copy, cJSON_CreateString(item->valuestring));
+      }
+    }
+  }
+  cJSON_AddItemToObject(entry_obj, "transmits", transmits_copy);
+  
+  cJSON_AddNumberToObject(entry_obj, "ccCount", cc_count);
+  cJSON_AddNumberToObject(entry_obj, "nrpnCount", nrpn_count);
+  
+  // Add x_pc if it's an object (deep copy)
+  if (x_pc && cJSON_IsObject(x_pc)) {
+    cJSON *x_pc_copy = cJSON_CreateObject();
+    cJSON *x_pc_item;
+    cJSON_ArrayForEach(x_pc_item, x_pc) {
+      if (cJSON_IsNumber(x_pc_item)) {
+        cJSON_AddNumberToObject(x_pc_copy, x_pc_item->string, x_pc_item->valuedouble);
+      } else if (cJSON_IsString(x_pc_item)) {
+        cJSON_AddStringToObject(x_pc_copy, x_pc_item->string, x_pc_item->valuestring);
+      }
+    }
+    cJSON_AddItemToObject(entry_obj, "x_pc", x_pc_copy);
+  }
+  
+  cJSON_AddItemToArray(devices, entry_obj);
+  cJSON_Delete(device_json);
+  (*count)++;
+  
+  // Free PSRAM-allocated strings
+  psram_free(product);
+  psram_free(slug);
+  psram_free(vendor_display);
+  psram_free(product_display);
+  psram_free(path);
+  psram_free(sha256);
+}
+
+// Helper: Recursively scan directory for device JSON files
+// Uses PSRAM allocation for path buffer to reduce stack usage in recursion
+static void scan_devices_dir(const char *base_dir, const char *vendor_name, cJSON *devices, int *count) {
+  DIR *dir = opendir(base_dir);
+  if (!dir) return;
+  
+  char *full_path = psram_malloc(MAX_PATH_LEN);
+  if (!full_path) {
+    closedir(dir);
+    return;
+  }
+  
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (entry->d_name[0] == '.') continue;  // Skip hidden files
+    if (strcmp(entry->d_name, "manifest.json") == 0) continue;
+    if (strcmp(entry->d_name, "LICENSE") == 0) continue;
+    if (strcmp(entry->d_name, "README.md") == 0) continue;
+    if (strcmp(entry->d_name, "cache") == 0) continue;  // Skip cache directory
+    if (strcmp(entry->d_name, "tools") == 0) continue;  // Skip tools directory
+    
+    snprintf(full_path, MAX_PATH_LEN, "%s/%s", base_dir, entry->d_name);
+    
+    struct stat st;
+    if (stat(full_path, &st) != 0) continue;
+    
+    if (S_ISDIR(st.st_mode)) {
+      // This is a vendor directory - recurse with vendor name
+      scan_devices_dir(full_path, entry->d_name, devices, count);
+    } else if (vendor_name[0] != '\0') {
+      // We're inside a vendor directory - check if it's a JSON file
+      char *ext = strstr(entry->d_name, ".json");
+      if (ext && strcmp(ext, ".json") == 0) {
+        add_device_to_manifest(full_path, vendor_name, entry->d_name, devices, count);
+      }
+    }
+  }
+  
+  psram_free(full_path);
+  closedir(dir);
+}
+
 esp_err_t assets_regenerate_devices_manifest(void) {
-  const char *devices_dir = ASSETS_BASE_PATH "/devices";
+  // The midi-devices repo structure: /devices/devices/<vendor>/<device>.json
+  const char *devices_dir = ASSETS_BASE_PATH "/devices/devices";
   const char *manifest_path = ASSETS_BASE_PATH "/devices/manifest.json";
   
   ESP_LOGI(TAG, "Regenerating devices manifest");
   
-  DIR *dir = opendir(devices_dir);
-  if (!dir) {
-    ESP_LOGW(TAG, "Cannot open devices directory");
-    return ESP_ERR_NOT_FOUND;
+  // Check if nested devices folder exists
+  struct stat st;
+  if (stat(devices_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    // Fall back to checking directly in /devices/
+    devices_dir = ASSETS_BASE_PATH "/devices";
+    if (stat(devices_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+      ESP_LOGW(TAG, "Cannot find devices directory");
+      return ESP_ERR_NOT_FOUND;
+    }
   }
+  
+  // Get current time for generatedAt
+  time_t now = time(NULL);
+  struct tm *tm_info = gmtime(&now);
+  char timestamp[32];
+  strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
   
   // Create JSON structure
   cJSON *root = cJSON_CreateObject();
   cJSON_AddNumberToObject(root, "schema", 1);
+  cJSON_AddStringToObject(root, "generatedAt", timestamp);
   cJSON *devices = cJSON_CreateArray();
   int count = 0;
   
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != NULL) {
-    // Skip non-JSON files and manifest
-    char *ext = strstr(entry->d_name, ".json");
-    if (!ext || strcmp(ext, ".json") != 0) continue;
-    if (strcmp(entry->d_name, "manifest.json") == 0) continue;
-    
-    // Build full path
-    char device_path[MAX_PATH_LEN];
-    snprintf(device_path, sizeof(device_path), "%s/%s", devices_dir, entry->d_name);
-    
-    struct stat st;
-    if (stat(device_path, &st) != 0) continue;
-    
-    // Read device file to extract metadata
-    FILE *f = fopen(device_path, "r");
-    if (!f) continue;
-    
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    if (fsize > 65536) {  // Sanity check
-      fclose(f);
-      continue;
-    }
-    
-    char *json_buf = malloc(fsize + 1);
-    if (!json_buf) {
-      fclose(f);
-      continue;
-    }
-    
-    fread(json_buf, 1, fsize, f);
-    fclose(f);
-    json_buf[fsize] = '\0';
-    
-    cJSON *device_json = cJSON_Parse(json_buf);
-    free(json_buf);
-    
-    if (!device_json) continue;
-    
-    // Extract metadata
-    cJSON *slug_item = cJSON_GetObjectItem(device_json, "slug");
-    cJSON *name_item = cJSON_GetObjectItem(device_json, "name");
-    cJSON *vendor_item = cJSON_GetObjectItem(device_json, "vendor");
-    cJSON *version_item = cJSON_GetObjectItem(device_json, "version");
-    
-    // Build manifest entry
-    cJSON *entry_obj = cJSON_CreateObject();
-    
-    if (slug_item && cJSON_IsString(slug_item)) {
-      cJSON_AddStringToObject(entry_obj, "slug", slug_item->valuestring);
-    } else {
-      // Generate slug from filename
-      char slug[64];
-      strncpy(slug, entry->d_name, sizeof(slug) - 1);
-      char *dot = strrchr(slug, '.');
-      if (dot) *dot = '\0';
-      cJSON_AddStringToObject(entry_obj, "slug", slug);
-    }
-    
-    if (name_item && cJSON_IsString(name_item)) {
-      cJSON_AddStringToObject(entry_obj, "name", name_item->valuestring);
-    }
-    if (vendor_item && cJSON_IsString(vendor_item)) {
-      cJSON_AddStringToObject(entry_obj, "vendor", vendor_item->valuestring);
-    }
-    if (version_item && cJSON_IsString(version_item)) {
-      cJSON_AddStringToObject(entry_obj, "version", version_item->valuestring);
-    }
-    
-    cJSON_AddStringToObject(entry_obj, "file", entry->d_name);
-    cJSON_AddNumberToObject(entry_obj, "size", (double)st.st_size);
-    
-    cJSON_AddItemToArray(devices, entry_obj);
-    cJSON_Delete(device_json);
-    count++;
-  }
-  
-  closedir(dir);
+  // Recursively scan for device files (start with empty vendor name)
+  scan_devices_dir(devices_dir, "", devices, &count);
   
   cJSON_AddNumberToObject(root, "count", count);
   cJSON_AddItemToObject(root, "devices", devices);

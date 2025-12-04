@@ -73,7 +73,7 @@ void app_main(void) {
   display_init();
   shared_canvas_buffer_init();  // Must be called before ui_init()
   ui_init();
-  ui_set_draw_module(&kabaragoya_module);
+  ui_set_draw_module(&splash_module);
   display_start();
 
   firmware_update_init();
@@ -125,7 +125,6 @@ void app_main(void) {
   
   input_manager_init();
   dac_calibrate_vref();  
-  cv_set_range(CV_RANGE_10V);
 
   sensor_init(false);
   als_enable();

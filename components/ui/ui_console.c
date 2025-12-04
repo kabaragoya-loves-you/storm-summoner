@@ -9,12 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// splash5 API (defined in splash5.c)
-void splash5_set_planet(const char *name);
-void splash5_set_rotation(float speed);
-const char *splash5_get_planet(void);
-float splash5_get_rotation(void);
-
 // buttons API (defined in buttons.c)
 void buttons_set_planet(const char *name);
 const char *buttons_get_planet(void);
@@ -38,19 +32,12 @@ static const int num_registered_commands = sizeof(registered_commands) / sizeof(
 static ui_draw_module_t* available_modules[] = {
   &boundary_circle_module,
   &buttons_module,
-  &draw_lizard_module,
-  &kabaragoya_module,
+  &pixels_module,
   &pizza_module,
-  &pizza2_module,
-  &plasma_module,
+  &slices_module,
   &sphere_module,
   &splash_module,
-  &splash2_module,
-  &splash3_module,
-  &splash4_module,
-  &splash5_module,
-  &pixel_art_module,
-  &greyscale_test_module,
+  &summoner_module,
   &template_module,
 };
 static const int num_modules = sizeof(available_modules) / sizeof(available_modules[0]);
@@ -113,16 +100,15 @@ static int cmd_left(int argc, char **argv) {
 // Command: planet [name]
 static int cmd_planet(int argc, char **argv) {
   ui_draw_module_t *current_mod = ui_get_current_module();
-  bool is_splash5 = (current_mod && strcmp(current_mod->name, "splash5") == 0);
   bool is_buttons = (current_mod && strcmp(current_mod->name, "buttons") == 0);
   
-  if (!is_splash5 && !is_buttons) {
-    printf("Planet command only works for 'splash5' or 'buttons' modules.\n");
+  if (!is_buttons) {
+    printf("Planet command only works for 'buttons' module.\n");
     return 1;
   }
   
   if (argc < 2) {
-    const char* current = is_splash5 ? splash5_get_planet() : buttons_get_planet();
+    const char* current = buttons_get_planet();
     printf("Available planets:\n");
     for (int i = 0; i < num_planets; i++) {
       const char* marker = (current && strcmp(current, planet_textures[i]) == 0) ? " *" : "";
@@ -134,11 +120,7 @@ static int cmd_planet(int argc, char **argv) {
   const char* target = argv[1];
   for (int i = 0; i < num_planets; i++) {
     if (strcmp(planet_textures[i], target) == 0) {
-      if (is_splash5) {
-        splash5_set_planet(target);
-      } else {
-        buttons_set_planet(target);
-      }
+      buttons_set_planet(target);
       printf("Planet set to: %s\n", target);
       return 0;
     }
@@ -152,26 +134,21 @@ static int cmd_planet(int argc, char **argv) {
 // Command: rotation [speed] - animation speed (positive=right, negative=left)
 static int cmd_rotation(int argc, char **argv) {
   ui_draw_module_t *current_mod = ui_get_current_module();
-  bool is_splash5 = (current_mod && strcmp(current_mod->name, "splash5") == 0);
   bool is_buttons = (current_mod && strcmp(current_mod->name, "buttons") == 0);
   
-  if (!is_splash5 && !is_buttons) {
-    printf("Rotation command only works for 'splash5' or 'buttons' modules.\n");
+  if (!is_buttons) {
+    printf("Rotation command only works for 'buttons' module.\n");
     return 1;
   }
   
   if (argc < 2) {
-    float current = is_splash5 ? splash5_get_rotation() : buttons_get_rotation();
+    float current = buttons_get_rotation();
     printf("Rotation speed: %.2f (positive=right, negative=left, try 0.25-1.0)\n", current);
     return 0;
   }
   
   float speed = strtof(argv[1], NULL);
-  if (is_splash5) {
-    splash5_set_rotation(speed);
-  } else {
-    buttons_set_rotation(speed);
-  }
+  buttons_set_rotation(speed);
   printf("Rotation speed set to: %.2f\n", speed);
   return 0;
 }
