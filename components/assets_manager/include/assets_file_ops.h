@@ -67,5 +67,23 @@ bool assets_is_valid_path(const char *path);
  */
 const char *assets_get_folder_type(const char *path);
 
+/**
+ * @brief Recursively delete a directory and all its contents
+ * 
+ * @param path Full path to directory to delete
+ * @return ESP_OK on success
+ */
+esp_err_t assets_recursive_delete(const char *path);
+
+/**
+ * @brief Extract a ZIP archive from memory to filesystem
+ * 
+ * @param zip_data Pointer to ZIP data in memory (PSRAM recommended)
+ * @param zip_size Size of ZIP data in bytes
+ * @param dest_path Destination directory path
+ * @return ESP_OK on success
+ */
+esp_err_t assets_extract_zip(const uint8_t *zip_data, size_t zip_size, const char *dest_path);
+
 #endif // ASSETS_FILE_OPS_H
 

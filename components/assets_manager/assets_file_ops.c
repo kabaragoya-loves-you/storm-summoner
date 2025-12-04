@@ -8,7 +8,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 #include "mbedtls/sha256.h"
+
+// Suppress warnings from miniz header
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "miniz/miniz.h"
+#pragma GCC diagnostic pop
 
 #define TAG "assets_file_ops"
 
@@ -586,6 +593,204 @@ esp_err_t assets_regenerate_images_manifest(void) {
   
   ESP_LOGI(TAG, "Images manifest updated (%d images)", count);
   return ESP_OK;
+}
+
+// ============================================================================
+// Recursive delete
+// ============================================================================
+
+esp_err_t assets_recursive_delete(const char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0) {
+    ESP_LOGW(TAG, "Path not found: %s", path);
+    return ESP_ERR_NOT_FOUND;
+  }
+  
+  // If it's a file, just delete it
+  if (!S_ISDIR(st.st_mode)) {
+    if (unlink(path) == 0) {
+      return ESP_OK;
+    }
+    ESP_LOGE(TAG, "Failed to delete file: %s", path);
+    return ESP_FAIL;
+  }
+  
+  // It's a directory - recurse
+  DIR *dir = opendir(path);
+  if (!dir) {
+    ESP_LOGE(TAG, "Cannot open directory: %s", path);
+    return ESP_FAIL;
+  }
+  
+  char *child_path = psram_malloc(MAX_PATH_LEN);
+  if (!child_path) {
+    closedir(dir);
+    return ESP_ERR_NO_MEM;
+  }
+  
+  esp_err_t result = ESP_OK;
+  struct dirent *entry;
+  
+  while ((entry = readdir(dir)) != NULL) {
+    // Skip . and ..
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    
+    snprintf(child_path, MAX_PATH_LEN, "%s/%s", path, entry->d_name);
+    
+    // Recursively delete
+    esp_err_t child_result = assets_recursive_delete(child_path);
+    if (child_result != ESP_OK) {
+      result = child_result;
+      // Continue trying to delete other entries
+    }
+  }
+  
+  psram_free(child_path);
+  closedir(dir);
+  
+  // Now remove the empty directory
+  if (rmdir(path) != 0) {
+    ESP_LOGE(TAG, "Failed to remove directory: %s", path);
+    return ESP_FAIL;
+  }
+  
+  return result;
+}
+
+// ============================================================================
+// ZIP extraction (from PSRAM buffer to filesystem)
+// ============================================================================
+
+esp_err_t assets_extract_zip(const uint8_t *zip_data, size_t zip_size, const char *dest_path) {
+  ESP_LOGI(TAG, "Extracting ZIP (%zu bytes) to %s", zip_size, dest_path);
+  
+  mz_zip_archive *zip = psram_malloc(sizeof(mz_zip_archive));
+  if (!zip) {
+    ESP_LOGE(TAG, "Failed to allocate ZIP archive struct");
+    return ESP_ERR_NO_MEM;
+  }
+  
+  memset(zip, 0, sizeof(mz_zip_archive));
+  
+  // Initialize from memory buffer
+  if (!mz_zip_reader_init_mem(zip, zip_data, zip_size, 0)) {
+    ESP_LOGE(TAG, "Failed to open ZIP archive");
+    psram_free(zip);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  int num_files = (int)mz_zip_reader_get_num_files(zip);
+  ESP_LOGI(TAG, "ZIP contains %d entries", num_files);
+  
+  char *file_path = psram_malloc(MAX_PATH_LEN);
+  char *full_path = psram_malloc(MAX_PATH_LEN);
+  uint8_t *file_buf = NULL;
+  
+  if (!file_path || !full_path) {
+    mz_zip_reader_end(zip);
+    psram_free(zip);
+    psram_free(file_path);
+    psram_free(full_path);
+    return ESP_ERR_NO_MEM;
+  }
+  
+  esp_err_t result = ESP_OK;
+  
+  for (int i = 0; i < num_files; i++) {
+    mz_zip_archive_file_stat file_stat;
+    if (!mz_zip_reader_file_stat(zip, i, &file_stat)) {
+      ESP_LOGW(TAG, "Failed to stat ZIP entry %d", i);
+      continue;
+    }
+    
+    // Check path length before building full path
+    size_t dest_len = strlen(dest_path);
+    size_t name_len = strlen(file_stat.m_filename);
+    if (dest_len + 1 + name_len >= MAX_PATH_LEN) {
+      ESP_LOGW(TAG, "Path too long, skipping: %s", file_stat.m_filename);
+      continue;
+    }
+    
+    // Build destination path (length already validated above)
+    // Copy in two steps to avoid format-truncation warning
+    strcpy(full_path, dest_path);
+    strcat(full_path, "/");
+    strcat(full_path, file_stat.m_filename);
+    
+    // Check if it's a directory
+    if (mz_zip_reader_is_file_a_directory(zip, i)) {
+      // Create directory
+      mkdir(full_path, 0755);
+      ESP_LOGD(TAG, "Created directory: %s", full_path);
+      continue;
+    }
+    
+    // It's a file - ensure parent directory exists
+    strncpy(file_path, full_path, MAX_PATH_LEN - 1);
+    file_path[MAX_PATH_LEN - 1] = '\0';
+    char *last_slash = strrchr(file_path, '/');
+    if (last_slash) {
+      *last_slash = '\0';
+      // Create parent directories recursively
+      char *p = file_path;
+      while (*p) {
+        if (*p == '/') {
+          *p = '\0';
+          mkdir(file_path, 0755);
+          *p = '/';
+        }
+        p++;
+      }
+      mkdir(file_path, 0755);
+    }
+    
+    // Extract file to PSRAM buffer first
+    size_t file_size = (size_t)file_stat.m_uncomp_size;
+    file_buf = psram_malloc(file_size);
+    if (!file_buf) {
+      ESP_LOGE(TAG, "Failed to allocate %zu bytes for %s", file_size, file_stat.m_filename);
+      result = ESP_ERR_NO_MEM;
+      break;
+    }
+    
+    if (!mz_zip_reader_extract_to_mem(zip, i, file_buf, file_size, 0)) {
+      ESP_LOGE(TAG, "Failed to extract: %s", file_stat.m_filename);
+      psram_free(file_buf);
+      file_buf = NULL;
+      continue;
+    }
+    
+    // Write to filesystem
+    FILE *f = fopen(full_path, "wb");
+    if (!f) {
+      ESP_LOGE(TAG, "Failed to create: %s", full_path);
+      psram_free(file_buf);
+      file_buf = NULL;
+      continue;
+    }
+    
+    size_t written = fwrite(file_buf, 1, file_size, f);
+    fclose(f);
+    psram_free(file_buf);
+    file_buf = NULL;
+    
+    if (written != file_size) {
+      ESP_LOGE(TAG, "Failed to write %s (wrote %zu of %zu)", full_path, written, file_size);
+      continue;
+    }
+    
+    ESP_LOGD(TAG, "Extracted: %s (%zu bytes)", file_stat.m_filename, file_size);
+  }
+  
+  mz_zip_reader_end(zip);
+  psram_free(zip);
+  psram_free(file_path);
+  psram_free(full_path);
+  
+  ESP_LOGI(TAG, "ZIP extraction complete");
+  return result;
 }
 
 // ============================================================================

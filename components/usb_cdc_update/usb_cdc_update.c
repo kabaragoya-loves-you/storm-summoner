@@ -73,6 +73,14 @@ static TaskHandle_t s_zip_task_handle = NULL;
 static volatile bool s_zip_in_progress = false;
 static char s_zip_path[MAX_PATH_LEN];     // Path for ZIP operation
 
+// EXTRACT state (for receiving ZIP data)
+static uint8_t *s_extract_buffer = NULL;  // PSRAM buffer for incoming ZIP
+static size_t s_extract_size = 0;         // Size of received ZIP data
+static char s_extract_dest[MAX_PATH_LEN]; // Destination path for extraction
+static bool s_extract_mode = false;       // Whether in EXTRACT receive mode
+static TaskHandle_t s_extract_task_handle = NULL;
+static volatile bool s_extract_in_progress = false;
+
 // ============================================================================
 // VFS wrapper for CDC stdout redirect
 // ============================================================================
@@ -197,6 +205,9 @@ static void assets_cmd_put(const char *path, size_t size);
 static void assets_cmd_get(const char *path);
 static void assets_cmd_manifest(const char *type);
 static void assets_cmd_zip(const char *path);
+static void assets_cmd_rmrf(const char *path);
+static void assets_cmd_extract(const char *path, size_t size);
+static void extract_task(void *arg);
 
 // Log redirect function - sends to CDC when in console mode
 static int cdc_log_vprintf(const char *fmt, va_list args) {
@@ -268,6 +279,13 @@ void usb_cdc_task(void) {
         fclose(s_assets_file);
         s_assets_file = NULL;
       }
+      if (s_extract_buffer) {
+        heap_caps_free(s_extract_buffer);
+        s_extract_buffer = NULL;
+      }
+      s_extract_mode = false;
+      s_extract_in_progress = false;
+      // Note: extract_task will handle its own cleanup if still running
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting assets mode");
     }
@@ -812,6 +830,12 @@ static void process_assets_command(const char *cmd) {
     return;
   }
   
+  // RMRF <path> - recursive delete
+  if (strncmp(cmd, "RMRF ", 5) == 0) {
+    assets_cmd_rmrf(cmd + 5);
+    return;
+  }
+  
   // MV <src> <dst>
   if (strncmp(cmd, "MV ", 3) == 0) {
     const char *args = cmd + 3;
@@ -858,6 +882,19 @@ static void process_assets_command(const char *cmd) {
   // ZIP <path>
   if (strncmp(cmd, "ZIP ", 4) == 0) {
     assets_cmd_zip(cmd + 4);
+    return;
+  }
+  
+  // EXTRACT <path> <size> - upload and extract ZIP
+  if (strncmp(cmd, "EXTRACT ", 8) == 0) {
+    const char *args = cmd + 8;
+    char path[MAX_PATH_LEN];
+    size_t size = 0;
+    if (sscanf(args, "%255s %zu", path, &size) == 2) {
+      assets_cmd_extract(path, size);
+    } else {
+      send_response("ERROR: Usage: EXTRACT <dest_path> <size>");
+    }
     return;
   }
   
@@ -1043,6 +1080,30 @@ static void assets_cmd_rm(const char *path) {
   }
 }
 
+// RMRF - recursive delete
+static void assets_cmd_rmrf(const char *path) {
+  char full_path[MAX_PATH_LEN];
+  build_full_path(full_path, sizeof(full_path), path);
+  
+  struct stat st;
+  if (stat(full_path, &st) != 0) {
+    send_response("ERROR: Path not found");
+    return;
+  }
+  
+  esp_err_t result = assets_recursive_delete(full_path);
+  
+  if (result == ESP_OK) {
+    // Trigger manifest update for the folder
+    assets_file_deleted(full_path);
+    send_response("OK");
+  } else {
+    char resp[128];
+    snprintf(resp, sizeof(resp), "ERROR: Recursive delete failed: %s", esp_err_to_name(result));
+    send_response(resp);
+  }
+}
+
 // MV - move/rename
 static void assets_cmd_mv(const char *src, const char *dst) {
   char full_src[MAX_PATH_LEN], full_dst[MAX_PATH_LEN];
@@ -1187,42 +1248,88 @@ static void handle_assets_send(void) {
 
 // Handle binary data for file upload
 static void handle_assets_binary_data(const uint8_t *data, size_t len) {
-  if (!s_assets_file) {
-    ESP_LOGE(TAG, "No file open for writing");
-    s_state = CDC_STATE_ASSETS;
-    send_response("ERROR: No file open");
-    return;
-  }
-  
   size_t remaining = s_assets_file_size - s_assets_bytes_transferred;
-  size_t to_write = (len > remaining) ? remaining : len;
+  size_t to_copy = (len > remaining) ? remaining : len;
   
-  size_t written = fwrite(data, 1, to_write, s_assets_file);
-  s_assets_bytes_transferred += written;
-  
-  if (written != to_write) {
-    ESP_LOGE(TAG, "Write error at %u bytes", (unsigned)s_assets_bytes_transferred);
-    fclose(s_assets_file);
-    s_assets_file = NULL;
-    unlink(s_assets_path);
-    s_state = CDC_STATE_ASSETS;
-    send_response("ERROR: Write failed");
-    return;
-  }
-  
-  // Check if done
-  if (s_assets_bytes_transferred >= s_assets_file_size) {
-    fclose(s_assets_file);
-    s_assets_file = NULL;
+  if (s_extract_mode) {
+    // EXTRACT mode: copy to PSRAM buffer
+    if (!s_extract_buffer) {
+      ESP_LOGE(TAG, "No extract buffer allocated");
+      s_state = CDC_STATE_ASSETS;
+      s_extract_mode = false;
+      send_response("ERROR: No buffer");
+      return;
+    }
     
-    ESP_LOGI(TAG, "File receive complete: %s (%u bytes)", 
-      s_assets_path, (unsigned)s_assets_bytes_transferred);
+    memcpy(s_extract_buffer + s_assets_bytes_transferred, data, to_copy);
+    s_assets_bytes_transferred += to_copy;
     
-    // Trigger manifest update
-    assets_file_created(s_assets_path);
+    // Check if done
+    if (s_assets_bytes_transferred >= s_assets_file_size) {
+      ESP_LOGI(TAG, "ZIP receive complete: %u bytes", (unsigned)s_assets_bytes_transferred);
+      
+      // Store size for the extract task
+      s_extract_size = s_assets_file_size;
+      s_extract_mode = false;
+      s_extract_in_progress = true;
+      s_state = CDC_STATE_ASSETS;
+      
+      // Spawn extract task with large stack (miniz needs significant stack)
+      BaseType_t ret = xTaskCreate(
+        extract_task,       // Task function
+        "extract_task",     // Task name
+        16384,              // Stack size (16KB internal RAM)
+        NULL,               // Task parameter
+        4,                  // Priority
+        &s_extract_task_handle
+      );
+      
+      if (ret != pdPASS) {
+        // Failed to create task - cleanup
+        heap_caps_free(s_extract_buffer);
+        s_extract_buffer = NULL;
+        s_extract_in_progress = false;
+        ESP_LOGE(TAG, "Failed to create extract task");
+        send_response("ERROR: Failed to create extract task");
+      }
+      // Response will be sent by extract_task
+    }
+  } else {
+    // Normal PUT mode: write to file
+    if (!s_assets_file) {
+      ESP_LOGE(TAG, "No file open for writing");
+      s_state = CDC_STATE_ASSETS;
+      send_response("ERROR: No file open");
+      return;
+    }
     
-    s_state = CDC_STATE_ASSETS;
-    send_response("OK");
+    size_t written = fwrite(data, 1, to_copy, s_assets_file);
+    s_assets_bytes_transferred += written;
+    
+    if (written != to_copy) {
+      ESP_LOGE(TAG, "Write error at %u bytes", (unsigned)s_assets_bytes_transferred);
+      fclose(s_assets_file);
+      s_assets_file = NULL;
+      unlink(s_assets_path);
+      s_state = CDC_STATE_ASSETS;
+      send_response("ERROR: Write failed");
+      return;
+    }
+    
+    // Check if done
+    if (s_assets_bytes_transferred >= s_assets_file_size) {
+      fclose(s_assets_file);
+      s_assets_file = NULL;
+      
+      ESP_LOGI(TAG, "File receive complete: %s (%u bytes)", 
+        s_assets_path, (unsigned)s_assets_bytes_transferred);
+      
+      // Trigger manifest update
+      assets_file_created(s_assets_path);
+      
+      s_state = CDC_STATE_ASSETS;
+      send_response("OK");
+    }
   }
 }
 
@@ -1382,6 +1489,36 @@ static bool zip_add_directory(mz_zip_archive *zip, const char *base_path, const 
   return true;
 }
 
+// EXTRACT task - runs with large stack, deletes itself when done
+static void extract_task(void *arg) {
+  (void)arg;  // Unused
+  
+  ESP_LOGI(TAG, "Extract task started for %s", s_extract_dest);
+  
+  // Extract the ZIP from PSRAM buffer
+  esp_err_t result = assets_extract_zip(s_extract_buffer, s_extract_size, s_extract_dest);
+  
+  // Free the buffer
+  heap_caps_free(s_extract_buffer);
+  s_extract_buffer = NULL;
+  
+  if (result == ESP_OK) {
+    // Trigger manifest updates for the destination folder
+    assets_file_created(s_extract_dest);
+    send_response("OK");
+    ESP_LOGI(TAG, "Extract completed successfully");
+  } else {
+    char resp[128];
+    snprintf(resp, sizeof(resp), "ERROR: Extract failed: %s", esp_err_to_name(result));
+    send_response(resp);
+    ESP_LOGE(TAG, "Extract failed: %s", esp_err_to_name(result));
+  }
+  
+  s_extract_in_progress = false;
+  s_extract_task_handle = NULL;
+  vTaskDelete(NULL);  // Delete self
+}
+
 // ZIP task - runs with large stack, deletes itself when done
 static void zip_task(void *arg) {
   const char *full_path = (const char *)arg;
@@ -1483,5 +1620,43 @@ static void assets_cmd_zip(const char *path) {
     send_response("ERROR: Failed to create ZIP task");
   }
   // Response will be sent by zip_task
+}
+
+// EXTRACT - receive ZIP and extract to destination
+static void assets_cmd_extract(const char *path, size_t size) {
+  // Build destination path
+  build_full_path(s_extract_dest, sizeof(s_extract_dest), path);
+  
+  // Verify destination exists and is a directory
+  struct stat st;
+  if (stat(s_extract_dest, &st) != 0) {
+    // Try to create it
+    if (mkdir(s_extract_dest, 0755) != 0) {
+      char resp[128];
+      snprintf(resp, sizeof(resp), "ERROR: Cannot create destination: %s", path);
+      send_response(resp);
+      return;
+    }
+  } else if (!S_ISDIR(st.st_mode)) {
+    send_response("ERROR: Destination must be a directory");
+    return;
+  }
+  
+  // Allocate PSRAM buffer for ZIP data
+  s_extract_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+  if (!s_extract_buffer) {
+    char resp[128];
+    snprintf(resp, sizeof(resp), "ERROR: Cannot allocate %u bytes in PSRAM", (unsigned)size);
+    send_response(resp);
+    return;
+  }
+  
+  s_assets_file_size = size;
+  s_assets_bytes_transferred = 0;
+  s_extract_mode = true;
+  s_state = CDC_STATE_ASSETS_RECEIVING;
+  
+  ESP_LOGI(TAG, "Receiving ZIP for extraction: %u bytes -> %s", (unsigned)size, s_extract_dest);
+  send_response("READY");
 }
 

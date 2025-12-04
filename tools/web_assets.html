@@ -514,6 +514,13 @@
           <wa-icon name="folder-plus" slot="prefix"></wa-icon>
           New Folder
         </wa-button>
+        
+        <wa-button size="small" variant="neutral" appearance="outlined" 
+                   data-action="click->assets#selectZipFile" data-assets-target="uploadZipBtn" disabled>
+          <wa-icon name="file-earmark-zip" slot="prefix"></wa-icon>
+          Upload ZIP
+        </wa-button>
+        <input type="file" accept=".zip" hidden data-assets-target="zipInput" data-action="change->assets#extractZip">
       </div>
 
       <div class="file-list" data-assets-target="fileList">
@@ -604,7 +611,7 @@
     application.register("assets", class extends Controller {
       static targets = [
         "statusDot", "statusText", "connectBtn", "disconnectBtn",
-        "breadcrumb", "fileList", "refreshBtn", "newFolderBtn",
+        "breadcrumb", "fileList", "refreshBtn", "newFolderBtn", "uploadZipBtn", "zipInput",
         "uploadZone", "fileInput", "statsBar", "usageBar", "usageText", "fileCount",
         "logContent", "newFolderModal", "newFolderInput", "renameModal", "renameInput"
       ];
@@ -678,6 +685,7 @@
         this.disconnectBtnTarget.disabled = !connected;
         this.refreshBtnTarget.disabled = !connected;
         this.newFolderBtnTarget.disabled = !connected;
+        this.uploadZipBtnTarget.disabled = !connected;
         this.statsBarTarget.style.display = connected ? "flex" : "none";
       }
 
@@ -1039,7 +1047,36 @@
         event.stopPropagation();
         const path = event.currentTarget.dataset.path;
         const name = path.split("/").pop();
+        const type = event.currentTarget.closest(".file-item")?.dataset.type;
         
+        // For directories, check if empty first
+        if (type === "dir") {
+          try {
+            const lsResponse = await this.sendCommand(`LS ${path}`);
+            const contents = JSON.parse(lsResponse);
+            
+            if (contents.length > 0) {
+              // Non-empty directory - need recursive delete
+              if (!confirm(`"${name}" contains ${contents.length} item(s).\n\nDelete folder and ALL contents?`)) {
+                return;
+              }
+              
+              const response = await this.sendCommand(`RMRF ${path}`);
+              if (response === "OK") {
+                this.log(`Deleted ${name} and contents`, "success");
+                await this.loadDirectory();
+                await this.loadStats();
+              } else {
+                this.log(response, "error");
+              }
+              return;
+            }
+          } catch (err) {
+            // If LS fails, try normal delete anyway
+          }
+        }
+        
+        // Regular delete (file or empty directory)
         if (!confirm(`Delete "${name}"?`)) return;
         
         try {
@@ -1103,6 +1140,53 @@
           
         } catch (err) {
           this.log(`Archive failed: ${err.message}`, "error");
+        }
+      }
+
+      selectZipFile() {
+        this.zipInputTarget.click();
+      }
+
+      async extractZip(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        // Reset the input so the same file can be selected again
+        event.target.value = "";
+        
+        const destPath = this.currentPath;
+        this.log(`Uploading ${file.name} (${this.formatSize(file.size)}) for extraction...`);
+        
+        try {
+          // Read the file
+          const data = new Uint8Array(await file.arrayBuffer());
+          
+          // Send EXTRACT command
+          const response = await this.sendCommand(`EXTRACT ${destPath} ${data.length}`);
+          
+          if (response !== "READY") {
+            this.log(`Device not ready: ${response}`, "error");
+            return;
+          }
+          
+          // Send ZIP data using the proper sendBinary method
+          await this.sendBinary(data);
+          
+          this.log("Extracting...");
+          
+          // Wait for extraction result (can take time)
+          const result = await this.readLine(60000);
+          
+          if (result === "OK") {
+            this.log(`Extracted ${file.name} to ${destPath}`, "success");
+            await this.loadDirectory();
+            await this.loadStats();
+          } else {
+            this.log(`Extraction failed: ${result}`, "error");
+          }
+          
+        } catch (err) {
+          this.log(`Extract failed: ${err.message}`, "error");
         }
       }
 

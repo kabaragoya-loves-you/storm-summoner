@@ -13,12 +13,14 @@
 #   cat <path>                   - Display file contents (text files <4KB)
 #   mkdir <path>                 - Create directory
 #   rm <path>                    - Remove file or empty directory
+#   rmrf <path>                  - Recursively delete directory and contents
 #   mv <src> <dst>               - Move/rename file or directory
 #   cp <src> <dst>               - Copy file
 #   upload <local> <remote>      - Upload file to device
 #   download <remote> <local>    - Download file from device
 #   manifest [scenes|devices|images] - Show manifest
 #   zip <remote_path> [local.zip] - Download folder as ZIP archive
+#   extract <local.zip> <remote_path> - Upload and extract ZIP to folder
 #   interactive                  - Enter interactive mode
 
 require 'serialport'
@@ -244,6 +246,11 @@ class AssetsManager
     puts response
   end
 
+  def cmd_rmrf(path)
+    response = assets_command("RMRF #{path}")
+    puts response
+  end
+
   def cmd_mv(src, dst)
     response = assets_command("MV #{src} #{dst}")
     puts response
@@ -411,6 +418,44 @@ class AssetsManager
     end
   end
 
+  def cmd_extract(local_path, remote_path)
+    unless File.exist?(local_path)
+      puts "ERROR: Local file not found: #{local_path}"
+      return
+    end
+    
+    file_size = File.size(local_path)
+    puts "Extracting #{local_path} (#{format_size(file_size)}) to #{remote_path}..."
+    
+    enter_assets_mode unless @in_assets_mode
+    
+    send_line("EXTRACT #{remote_path} #{file_size}")
+    response = read_line
+    
+    unless response == "READY"
+      puts "ERROR: Device not ready: #{response}"
+      return
+    end
+    
+    # Send ZIP data
+    File.open(local_path, "rb") do |f|
+      sent = 0
+      while (chunk = f.read(4096))
+        @port.write(chunk)
+        @port.flush
+        sent += chunk.length
+        
+        progress = (sent.to_f / file_size * 100).round
+        print "\rUploading: #{progress}% (#{format_size(sent)})   "
+      end
+    end
+    puts ""
+    
+    puts "Extracting..."
+    response = read_line(TIMEOUT_LONG)  # Extraction can take time
+    puts response == "OK" ? "Extraction complete." : "Extraction failed: #{response}"
+  end
+
   def cmd_interactive
     enter_assets_mode
     
@@ -418,9 +463,9 @@ class AssetsManager
     puts "=" * 50
     puts "Interactive Assets Mode"
     puts "=" * 50
-    puts "Commands: ls, stat, df, cat, mkdir, rm, mv, cp, manifest"
+    puts "Commands: ls, stat, df, cat, mkdir, rm, rmrf, mv, cp, manifest"
     puts "          upload <local> <remote>, download <remote> <local>"
-    puts "          zip <path> [output.zip]"
+    puts "          zip <path> [output.zip], extract <local.zip> <path>"
     puts "Type 'exit' or 'quit' to leave"
     puts "=" * 50
     puts ""
@@ -449,6 +494,8 @@ class AssetsManager
         cmd_mkdir(args[0]) if args[0]
       when "rm"
         cmd_rm(args[0]) if args[0]
+      when "rmrf"
+        cmd_rmrf(args[0]) if args[0]
       when "mv"
         cmd_mv(args[0], args[1]) if args[0] && args[1]
       when "cp"
@@ -461,8 +508,10 @@ class AssetsManager
         cmd_download(args[0], args[1]) if args[0] && args[1]
       when "zip"
         cmd_zip(args[0], args[1]) if args[0]
+      when "extract"
+        cmd_extract(args[0], args[1]) if args[0] && args[1]
       when "help"
-        puts "Commands: ls, stat, df, cat, mkdir, rm, mv, cp, manifest, upload, download, zip, exit"
+        puts "Commands: ls, stat, df, cat, mkdir, rm, rmrf, mv, cp, manifest, upload, download, zip, extract, exit"
       else
         puts "Unknown command: #{cmd}" unless cmd.to_s.empty?
       end
@@ -503,12 +552,14 @@ def print_usage
       cat <path>                   - Display file contents (text files <4KB)
       mkdir <path>                 - Create directory
       rm <path>                    - Remove file or empty directory
+      rmrf <path>                  - Recursively delete directory and contents
       mv <src> <dst>               - Move/rename file or directory
       cp <src> <dst>               - Copy file
       upload <local> <remote>      - Upload file to device
       download <remote> <local>    - Download file from device
       manifest [type]              - Show manifest (scenes|devices|images)
       zip <path> [output.zip]      - Download folder as ZIP archive
+      extract <local.zip> <path>   - Upload and extract ZIP to folder
       interactive                  - Enter interactive mode
     
     Examples:
@@ -566,6 +617,12 @@ begin
     else
       puts "ERROR: rm requires a path argument"
     end
+  when "rmrf"
+    if args[0]
+      manager.cmd_rmrf(args[0])
+    else
+      puts "ERROR: rmrf requires a path argument"
+    end
   when "mv"
     if args[0] && args[1]
       manager.cmd_mv(args[0], args[1])
@@ -597,6 +654,12 @@ begin
       manager.cmd_zip(args[0], args[1])
     else
       puts "ERROR: zip requires a path argument"
+    end
+  when "extract"
+    if args[0] && args[1]
+      manager.cmd_extract(args[0], args[1])
+    else
+      puts "ERROR: extract requires local ZIP and remote path arguments"
     end
   when "interactive", "i"
     manager.cmd_interactive
