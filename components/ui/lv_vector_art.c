@@ -327,13 +327,13 @@ static void render_to_canvas(lv_obj_t *obj) {
     polygon_fill(obj, poly_points, num_points, color, opa);
     
     const char *type = (shape->a == 0) ? "hole" : "fill";
-    ESP_LOGI(TAG, "Drew shape %d (%s): %d points, color=#%02X%02X%02X", 
+    ESP_LOGD(TAG, "Drew shape %d (%s): %d points, color=#%02X%02X%02X", 
              i, type, num_points, shape->r, shape->g, shape->b);
   }
   
   free(poly_points);
   lv_obj_invalidate(obj);
-  ESP_LOGI(TAG, "Render complete: %d shapes to %ldx%ld canvas", 
+  ESP_LOGD(TAG, "Render complete: %d shapes to %ldx%ld canvas", 
            data->shape_count, (long)canvas_w, (long)canvas_h);
 }
 

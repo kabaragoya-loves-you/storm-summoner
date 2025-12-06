@@ -4,7 +4,7 @@
 #include "lvgl.h"
 
 #define MAX_MENU_STACK 8
-#define MAX_MENU_ITEMS 16
+#define MAX_MENU_ITEMS 32
 
 // Menu item callback function type
 typedef void (*menu_item_cb_t)(void);

@@ -1597,7 +1597,7 @@ static action_t json_to_action(cJSON* obj) {
     if (cJSON_IsString(type)) {
       // New format: string name
       action.type = action_type_from_string(type->valuestring);
-      ESP_LOGI(TAG, "Loaded action: %s -> %d", type->valuestring, action.type);
+      ESP_LOGD(TAG, "Loaded action: %s -> %d", type->valuestring, action.type);
     } else if (cJSON_IsNumber(type)) {
       // Legacy format: integer (for backward compatibility)
       action.type = (action_type_t)type->valueint;

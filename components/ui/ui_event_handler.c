@@ -6,6 +6,9 @@
 #include "menu.h"
 #include "app_settings.h"
 #include "touch.h"
+#include "touch_thresholds.h"
+#include "driver/touch_sens.h"
+#include <inttypes.h>
 
 #define TAG "UI_EVENT"
 #define MAX_TOUCH_PADS 13
@@ -14,6 +17,7 @@
 #define BUTTON_8_LOGICAL_PAD 8
 #define BUTTON_13_LONG_PRESS_MS 2000  // 2 seconds for intentional menu access
 #define BUTTON_13_SHORT_PRESS_MIN_MS 75  // Minimum press duration for back/cancel
+#define BOOT_GRACE_PERIOD_MS 8000         // Ignore pad 12 long press within this time after boot
 
 // Settings keys
 #define SETTINGS_KEY_BUTTON13_LONG_PRESS_MS "btn13_lp_ms"
@@ -42,23 +46,63 @@ static void load_config_from_settings(void) {
 }
 
 static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
-  if (ui_get_app_mode() == APP_MODE_PERFORMANCE) {
-    s_long_press_timer_fired = true;
-    ESP_LOGI(TAG, "Button 13 long press: Entering Programming Mode");
-    
-    // Post mode change event - handle in event bus task context (safe for LVGL)
-    // Cannot call ui_set_app_mode() directly from timer callback (stack overflow risk)
-    event_t event = {
-      .type = EVENT_MODE_CHANGE_REQUEST,
-      .priority = EVENT_PRIORITY_HIGH,
-      .timestamp = event_bus_get_current_timestamp(),
-      .data.custom = {
-        .custom_type = 1,  // 1 = enter programming mode
-        .param1 = 1        // 1 = top level
-      }
-    };
-    event_bus_post(&event);
+  if (ui_get_app_mode() != APP_MODE_PERFORMANCE) return;
+  
+  uint32_t uptime_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  
+  // Guard against boot-time false positives: if we're within the boot grace period,
+  // pad 12 might be registering spurious touches during sensor initialization.
+  if (uptime_ms < BOOT_GRACE_PERIOD_MS) {
+    ESP_LOGW(TAG, "Pad 12 long press ignored - within boot grace period (%"PRIu32"ms < %dms)",
+      uptime_ms, BOOT_GRACE_PERIOD_MS);
+    return;
   }
+  
+  // Verify hardware actually shows pad 12 as touched RIGHT NOW.
+  // This catches spurious press events that didn't have a corresponding release.
+  if (!touch_is_pad_pressed(BUTTON_13_LOGICAL_PAD)) {
+    ESP_LOGW(TAG, "Pad 12 long press ignored - software state shows released");
+    return;
+  }
+  
+  // Additional hardware verification: read the actual sensor values
+  touch_channel_handle_t chan_handle = touch_get_channel_handle(BUTTON_13_LOGICAL_PAD);
+  if (chan_handle) {
+    uint32_t smooth[1], benchmark[1];
+    touch_pad_calibration_t calib_data;
+    
+    esp_err_t err1 = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+    esp_err_t err2 = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+    touch_pad_t channel = touch_get_channel_for_pad(BUTTON_13_LOGICAL_PAD);
+    esp_err_t calib_ret = touch_get_calibration_data(channel, &calib_data);
+    
+    if (err1 == ESP_OK && err2 == ESP_OK && calib_ret == ESP_OK && calib_data.valid) {
+      int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
+      bool hardware_touched = (delta > (int32_t)calib_data.threshold);
+      
+      if (!hardware_touched) {
+        ESP_LOGW(TAG, "Pad 12 long press ignored - hardware shows idle (delta=%"PRId32", thresh=%"PRIu32")",
+          delta, calib_data.threshold);
+        return;
+      }
+    }
+  }
+  
+  // All checks passed - this is a legitimate long press
+  s_long_press_timer_fired = true;
+  ESP_LOGI(TAG, "Button 13 long press: Entering Programming Mode");
+  
+  // Post mode change event - handle in event bus task context (safe for LVGL)
+  event_t event = {
+    .type = EVENT_MODE_CHANGE_REQUEST,
+    .priority = EVENT_PRIORITY_HIGH,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.custom = {
+      .custom_type = 1,  // 1 = enter programming mode
+      .param1 = 1        // 1 = top level
+    }
+  };
+  event_bus_post(&event);
 }
 
 // Handle mode change events in event bus task context (safe for LVGL operations)

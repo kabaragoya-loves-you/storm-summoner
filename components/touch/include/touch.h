@@ -55,4 +55,7 @@ esp_err_t touch_unregister_touchwheel_instance(struct touchwheel_instance* insta
 // Internal accessor functions (exposed for touchwheel_analog.c)
 touch_channel_handle_t touch_get_channel_handle(int pad_index);
 
+// Get the hardware channel number for a logical pad index
+touch_pad_t touch_get_channel_for_pad(int pad_index);
+
 #endif // TOUCH_H_

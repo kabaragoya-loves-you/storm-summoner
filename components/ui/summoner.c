@@ -33,8 +33,10 @@
 #define PLASMA_DISPLACEMENT   20.0f
 #define PLASMA_ANIM_SPEED     4.0f
 #define PLASMA_PAD_RADIUS     0.49f
-#define PLASMA_CENTER_X       120
-#define PLASMA_CENTER_Y       90
+// #define PLASMA_CENTER_X       120 guitar
+// #define PLASMA_CENTER_Y       90
+#define PLASMA_CENTER_X       67
+#define PLASMA_CENTER_Y       75
 
 //=============================================================================
 

@@ -408,19 +408,20 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   
   // Special handling for specific pads
   if (pad_index == 12) {
-    // Pad 12 (GPIO3, channel 2) - copper screw needs sensitivity but prone to false positives
-    // Use 1.0x (same as default) to minimize false positives
-    // calculated_threshold = (uint32_t)(calculated_threshold * 1.0f);  // No adjustment
-    // But ensure it's not too low to avoid instability
-    if (calculated_threshold < 30) {
-      calculated_threshold = 30;
+    // Pad 12 (GPIO3, channel 2) - copper screw contact for menu access
+    // Needs to be sensitive enough for reliable detection but not so sensitive
+    // that it stays triggered after release (causing phantom touches).
+    // Apply the same 3% minimum gap as other pads - no special exception.
+    uint32_t min_gap = (uint32_t)(mean * 0.03f);
+    if (calculated_threshold < min_gap) {
+      calculated_threshold = min_gap;
     }
-    ESP_LOGI(TAG, "Pad 12: Using default threshold (no sensitivity adjustment), threshold=%"PRIu32, calculated_threshold);
+    ESP_LOGI(TAG, "Pad 12: threshold=%"PRIu32" (%.1f%% of baseline %"PRIu32")", 
+      calculated_threshold, (calculated_threshold * 100.0f / mean), mean);
   }
   
   // Ensure minimum threshold gap from baseline to prevent false triggers
-  // Except for pad 12 which needs extreme sensitivity
-  if (pad_index != 12) {
+  if (pad_index != 12) {  // Pad 12 handled above
     uint32_t min_gap = (uint32_t)(mean * 0.03f);  // At least 3% gap
     if (calculated_threshold < min_gap) {
       calculated_threshold = min_gap;
@@ -781,19 +782,11 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   float threshold_ratio = 0.07f; // Default 7%
   if (new_baseline < 25000) threshold_ratio = 0.084f; // 20% higher (less sensitive) for low baseline
   
-  // Pad 12 (Copper screw) specific handling
-  if (pad_index == 12) {
-     // Keep it sensitive but not too sensitive
-     threshold_ratio = 0.07f; 
-  }
-  
   uint32_t new_threshold = (uint32_t)(new_baseline * threshold_ratio);
   
-  // Ensure minimum threshold
-  if (pad_index != 12) {
-    uint32_t min_gap = (uint32_t)(new_baseline * 0.03f);
-    if (new_threshold < min_gap) new_threshold = min_gap;
-  }
+  // Ensure minimum threshold gap (all pads including pad 12)
+  uint32_t min_gap = (uint32_t)(new_baseline * 0.03f);
+  if (new_threshold < min_gap) new_threshold = min_gap;
 
   if (new_threshold < MIN_THRESHOLD_VALUE) new_threshold = MIN_THRESHOLD_VALUE;
   if (new_threshold > MAX_THRESHOLD_VALUE) new_threshold = MAX_THRESHOLD_VALUE;

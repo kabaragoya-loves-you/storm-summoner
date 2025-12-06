@@ -9,9 +9,10 @@
 // Menu navigation stack entry
 typedef struct {
   lv_obj_t* screen;
-  lv_obj_t* list;
+  lv_obj_t* container;  // Scroll container (was list)
   const char* name;
   menu_page_builder_t builder;
+  int32_t focused_index;  // Remember position when navigating away
 } menu_stack_entry_t;
 
 // Deferred navigation context
@@ -30,21 +31,27 @@ static struct {
   lv_indev_t* encoder_indev;
   deferred_nav_t pending_nav;
   bool has_pending_nav;
+  bool skip_focus_scroll;  // Skip scroll in focus_event_cb during restore
 } menu_state = {
   .initialized = false,
   .stack_depth = 0,
   .group = NULL,
   .encoder_indev = NULL,
-  .has_pending_nav = false
+  .has_pending_nav = false,
+  .skip_focus_scroll = false
 };
 
 // Forward declarations
 static void menu_item_event_cb(lv_event_t* e);
 static void update_top_level_flag(void);
-static lv_obj_t* find_list_in_screen(lv_obj_t* screen);
+static lv_obj_t* find_container_in_screen(lv_obj_t* screen);
 static void deferred_nav_timer_cb(lv_timer_t* timer);
 static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t builder);
 static void menu_navigate_back_internal(void);
+static void scroll_event_cb(lv_event_t* e);
+static void focus_event_cb(lv_event_t* e);
+static void update_scroll_visuals(lv_obj_t* cont);
+static void save_focused_index(void);
 
 void menu_init(void) {
   if (menu_state.initialized) {
@@ -62,15 +69,134 @@ void menu_init(void) {
   ESP_LOGI(TAG, "Menu system initialized");
 }
 
-static lv_obj_t* find_list_in_screen(lv_obj_t* screen) {
+// Find the scroll container in a screen (first scrollable child)
+static lv_obj_t* find_container_in_screen(lv_obj_t* screen) {
   if (!screen) return NULL;
   
   uint32_t child_cnt = lv_obj_get_child_count(screen);
+  ESP_LOGD(TAG, "find_container: screen=%p has %u children", (void*)screen, (unsigned)child_cnt);
+  
   for (uint32_t i = 0; i < child_cnt; i++) {
     lv_obj_t* child = lv_obj_get_child(screen, i);
-    if (child && lv_obj_has_class(child, &lv_list_class)) return child;
+    if (!child) continue;
+    bool scrollable = lv_obj_has_flag(child, LV_OBJ_FLAG_SCROLLABLE);
+    uint32_t child_children = lv_obj_get_child_count(child);
+    ESP_LOGD(TAG, "  child[%u]=%p scrollable=%d children=%u", 
+             (unsigned)i, (void*)child, scrollable, (unsigned)child_children);
+    if (scrollable) return child;
   }
   return NULL;
+}
+
+// Save the currently focused item index before navigating away
+static void save_focused_index(void) {
+  if (menu_state.stack_depth <= 0) return;
+  
+  menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
+  if (!entry->container) return;
+  
+  lv_obj_t* focused = lv_group_get_focused(menu_state.group);
+  if (!focused) return;
+  
+  // Find the index of the focused object
+  uint32_t child_cnt = lv_obj_get_child_count(entry->container);
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    if (lv_obj_get_child(entry->container, i) == focused) {
+      entry->focused_index = (int32_t)i;
+      ESP_LOGD(TAG, "Saved focused index: %ld", (long)entry->focused_index);
+      return;
+    }
+  }
+}
+
+// Update visual styling for scroll container (translation, opacity, font size)
+static void update_scroll_visuals(lv_obj_t* cont) {
+  if (!cont) return;
+
+  lv_area_t cont_a;
+  lv_obj_get_coords(cont, &cont_a);
+  int32_t cont_y_center = cont_a.y1 + lv_area_get_height(&cont_a) / 2;
+  int32_t r = lv_obj_get_height(cont) * 7 / 10;
+
+  int32_t child_cnt = (int32_t)lv_obj_get_child_count(cont);
+
+  // First pass: find the active item (closest to center)
+  int32_t active_idx = 0;
+  int32_t min_dist = INT32_MAX;
+
+  for (int32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(cont, i);
+    lv_area_t child_a;
+    lv_obj_get_coords(child, &child_a);
+    int32_t child_y_center = child_a.y1 + lv_area_get_height(&child_a) / 2;
+    int32_t dist = LV_ABS(child_y_center - cont_y_center);
+
+    if (dist < min_dist) {
+      min_dist = dist;
+      active_idx = i;
+    }
+  }
+
+  // Second pass: apply styling
+  for (int32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(cont, i);
+    lv_area_t child_a;
+    lv_obj_get_coords(child, &child_a);
+
+    int32_t child_y_center = child_a.y1 + lv_area_get_height(&child_a) / 2;
+    int32_t diff_y = LV_ABS(child_y_center - cont_y_center);
+
+    // Calculate x translation for circular effect
+    int32_t x;
+    if (diff_y >= r) {
+      x = r;
+    } else {
+      uint32_t x_sqr = r * r - diff_y * diff_y;
+      lv_sqrt_res_t res;
+      lv_sqrt(x_sqr, &res, 0x8000);
+      x = r - res.i;
+    }
+    lv_obj_set_style_translate_x(child, x, 0);
+
+    // Set opacity based on index distance from active item
+    int32_t idx_dist = LV_ABS(i - active_idx);
+    lv_opa_t opa;
+    switch (idx_dist) {
+      case 0: opa = LV_OPA_COVER; break;            // 100%
+      case 1: opa = (LV_OPA_COVER * 3) / 4; break;  // 75%
+      case 2: opa = LV_OPA_50; break;               // 50%
+      default: opa = LV_OPA_COVER / 4; break;       // 25%
+    }
+    lv_obj_set_style_opa(child, opa, 0);
+
+    // Active item gets larger font
+    if (i == active_idx) {
+      lv_obj_set_style_text_font(child, &lv_font_montserrat_20, 0);
+    } else {
+      lv_obj_set_style_text_font(child, &lv_font_montserrat_14, 0);
+    }
+  }
+}
+
+// Scroll event callback - update visuals
+static void scroll_event_cb(lv_event_t* e) {
+  if (menu_state.skip_focus_scroll) return;
+  
+  lv_obj_t* cont = lv_event_get_target_obj(e);
+  if (!cont) return;
+
+  update_scroll_visuals(cont);
+}
+
+// Focus handler - scroll focused item to center
+static void focus_event_cb(lv_event_t* e) {
+  if (menu_state.skip_focus_scroll) return;
+  
+  lv_obj_t* obj = lv_event_get_target_obj(e);
+  lv_obj_t* parent = lv_obj_get_parent(obj);
+  if (parent) {
+    lv_obj_scroll_to_view(obj, LV_ANIM_ON);
+  }
 }
 
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count) {
@@ -85,60 +211,101 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Create title label (small, centered at top)
-  lv_obj_t* title_label = lv_label_create(screen);
-  lv_label_set_text(title_label, title);
-  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);  // Small header
-  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);  // Position from top
-
-  // Create list widget - positioned below title (sizes proportional to display)
-  lv_obj_t* list = lv_list_create(screen);
-  lv_obj_set_size(list, disp_w * 100 / 128, disp_h - 14);  // Scale proportionally
-  lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 14);  // Position below title
+  // Title bar height
+  const int title_bar_h = 22;
   
-  // Minimal styling - transparent, no padding, no borders
-  lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(list, 0, 0);
-  lv_obj_set_style_pad_all(list, 0, 0);
-  lv_obj_set_style_pad_row(list, 2, 0);  // Small gap between items
-  lv_obj_set_style_text_color(list, lv_color_white(), 0);
+  // Create title bar container with woody brown gradient
+  lv_obj_t* title_bar = lv_obj_create(screen);
+  lv_obj_set_size(title_bar, disp_w, title_bar_h);
+  lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);  // Dark woody brown
+  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(139, 90, 43), 0);  // Lighter brown
+  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(title_bar, 0, 0);
+  lv_obj_set_style_pad_all(title_bar, 0, 0);
+  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
+  
+  // Create title label inside title bar
+  lv_obj_t* title_label = lv_label_create(title_bar);
+  lv_label_set_text(title_label, title);
+  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
+  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+  lv_obj_center(title_label);
+  lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
-  // Add menu items
+  // Create scrollable container with flex layout
+  lv_obj_t* cont = lv_obj_create(screen);
+  lv_obj_set_size(cont, disp_w, disp_h - title_bar_h);
+  lv_obj_align(cont, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+  // Container styling - black background
+  lv_obj_set_style_bg_color(cont, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(cont, 0, 0);
+  lv_obj_set_style_pad_all(cont, 4, 0);
+  lv_obj_set_style_pad_row(cont, 6, 0);
+
+  // Enable flex column layout
+  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  // Circular clipping for the curved effect
+  lv_obj_set_style_radius(cont, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_clip_corner(cont, true, 0);
+
+  // Scroll settings
+  lv_obj_set_scroll_dir(cont, LV_DIR_VER);
+  lv_obj_set_scroll_snap_y(cont, LV_SCROLL_SNAP_CENTER);
+  lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
+
+  // Add scroll event callback
+  lv_obj_add_event_cb(cont, scroll_event_cb, LV_EVENT_SCROLL, NULL);
+
+  // Create labels for menu items
   for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
-    lv_obj_t* btn = lv_list_add_button(list, NULL, items[i].label);  // No icon, just text
-    
-    // Minimal button styling - white text on black, no background
-    lv_obj_set_style_text_color(btn, lv_color_white(), 0);
-    lv_obj_set_style_text_font(btn, &lv_font_montserrat_12, 0);  // Medium size for items
-    lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);  // Transparent background
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_pad_left(btn, 2, 0);
-    lv_obj_set_style_pad_right(btn, 2, 0);
-    lv_obj_set_style_pad_top(btn, (i == 0) ? 8 : 2, 0);
-    lv_obj_set_style_pad_bottom(btn, 0, 0);
-    // lv_obj_set_style_pad_all(btn, (i == 0) ? 10 : 2, 0);  // No padding on first item, minimal on rest
-    lv_obj_set_style_text_align(btn, LV_TEXT_ALIGN_CENTER, 0);  // Center text
-    
-    // Focused state - just slightly brighter text, no background
-    lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), LV_STATE_FOCUSED);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_10, LV_STATE_FOCUSED);  // Barely visible background
-    
-    // Store item index in user data
-    lv_obj_set_user_data(btn, (void*)(intptr_t)i);
-    
-    // Add event callback
-    lv_obj_add_event_cb(btn, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
-    
-    // Add button to group for encoder navigation
-    if (menu_state.group) lv_group_add_obj(menu_state.group, btn);
+    lv_obj_t* label = lv_label_create(cont);
+    lv_label_set_text(label, items[i].label);
+    lv_obj_set_width(label, lv_pct(100));
+
+    // Label styling
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_ver(label, 4, 0);
+
+    // Make label focusable for encoder navigation
+    lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(label, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+
+    // Add focus handler to scroll to this item
+    lv_obj_add_event_cb(label, focus_event_cb, LV_EVENT_FOCUSED, NULL);
+
+    // Add click event callback
+    lv_obj_add_event_cb(label, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
+
+    // Add to menu group
+    if (menu_state.group) lv_group_add_obj(menu_state.group, label);
   }
 
-  // Focus first item
-  if (menu_state.group && item_count > 0) {
-    lv_obj_t* first_btn = lv_obj_get_child(list, 0);
-    if (first_btn) lv_group_focus_obj(first_btn);
+  // Scroll to center on first item (skip focus animation)
+  if (item_count > 0) {
+    lv_obj_t* first = lv_obj_get_child(cont, 0);
+    if (first) {
+      menu_state.skip_focus_scroll = true;
+      lv_obj_scroll_to_view(first, LV_ANIM_OFF);
+      if (menu_state.group) lv_group_focus_obj(first);
+      menu_state.skip_focus_scroll = false;
+    }
   }
+
+  // Initial visual update
+  update_scroll_visuals(cont);
+
+  // Debug: log what we created
+  uint32_t created_children = lv_obj_get_child_count(cont);
+  ESP_LOGD(TAG, "menu_create_page: title='%s', screen=%p, cont=%p, children=%u",
+           title, (void*)screen, (void*)cont, (unsigned)created_children);
 
   return screen;
 }
@@ -151,11 +318,7 @@ static void menu_item_event_cb(lv_event_t* e) {
 
   ESP_LOGD(TAG, "Menu item selected: %s", item->label);
 
-  if (item->has_submenu && item->callback) {
-    // Callback for submenu navigation
-    item->callback();
-  } else if (item->callback) {
-    // Execute action callback
+  if (item->callback) {
     item->callback();
   }
 }
@@ -173,14 +336,15 @@ void menu_create(void) {
   extern lv_obj_t* menu_page_index_create(void);
   lv_obj_t* screen = menu_page_index_create();
 
-  // Find the list widget
-  lv_obj_t* list = find_list_in_screen(screen);
+  // Find the container widget
+  lv_obj_t* container = find_container_in_screen(screen);
 
   // Push to stack
   menu_state.stack[0].screen = screen;
-  menu_state.stack[0].list = list;
+  menu_state.stack[0].container = container;
   menu_state.stack[0].name = "Menu";
-  menu_state.stack[0].builder = NULL;  // Top level has no builder
+  menu_state.stack[0].builder = NULL;
+  menu_state.stack[0].focused_index = 0;
   menu_state.stack_depth = 1;
 
   // Load screen
@@ -202,16 +366,17 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
     return;
   }
 
+  // Save the focused index before navigating away
+  save_focused_index();
+
   // Remove current menu items from group
   if (menu_state.group && menu_state.stack_depth > 0) {
-    lv_obj_t* current_list = menu_state.stack[menu_state.stack_depth - 1].list;
-    if (current_list) {
-      uint32_t child_cnt = lv_obj_get_child_count(current_list);
+    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
+    if (current_cont) {
+      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
       for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(current_list, i);
-        if (child && lv_obj_has_class(child, &lv_list_button_class)) {
-          lv_group_remove_obj(child);
-        }
+        lv_obj_t* child = lv_obj_get_child(current_cont, i);
+        if (child) lv_group_remove_obj(child);
       }
     }
   }
@@ -223,21 +388,27 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
     return;
   }
 
-  // Find the list widget
-  lv_obj_t* list = find_list_in_screen(screen);
+  // Find the container widget
+  lv_obj_t* container = find_container_in_screen(screen);
+  
+  // Debug: log what we're storing
+  uint32_t cont_children = container ? lv_obj_get_child_count(container) : 0;
+  ESP_LOGI(TAG, "Nav to %s: screen=%p, container=%p, children=%u", 
+           menu_name, (void*)screen, (void*)container, (unsigned)cont_children);
 
   // Push to stack
   menu_state.stack[menu_state.stack_depth].screen = screen;
-  menu_state.stack[menu_state.stack_depth].list = list;
+  menu_state.stack[menu_state.stack_depth].container = container;
   menu_state.stack[menu_state.stack_depth].name = menu_name;
   menu_state.stack[menu_state.stack_depth].builder = builder;
+  menu_state.stack[menu_state.stack_depth].focused_index = 0;
   menu_state.stack_depth++;
 
   // Load screen
   lv_screen_load(screen);
   update_top_level_flag();
 
-  ESP_LOGD(TAG, "Navigated to menu: %s (depth: %d)", menu_name, menu_state.stack_depth);
+  ESP_LOGI(TAG, "Navigated to menu: %s (depth: %d)", menu_name, menu_state.stack_depth);
 }
 
 // Deferred navigation timer callback (runs in LVGL task context)
@@ -288,20 +459,17 @@ static void menu_navigate_back_internal(void) {
 
   // Remove current menu items from group
   if (menu_state.group && menu_state.stack_depth > 0) {
-    lv_obj_t* current_list = menu_state.stack[menu_state.stack_depth - 1].list;
-    if (current_list) {
-      uint32_t child_cnt = lv_obj_get_child_count(current_list);
+    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
+    if (current_cont) {
+      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
       for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(current_list, i);
-        if (child && lv_obj_has_class(child, &lv_list_button_class)) {
-          lv_group_remove_obj(child);
-        }
+        lv_obj_t* child = lv_obj_get_child(current_cont, i);
+        if (child) lv_group_remove_obj(child);
       }
     }
   }
 
   // CRITICAL: Load previous screen FIRST before deleting current
-  // This prevents the "active screen was deleted" crash
   lv_obj_t* prev_screen = menu_state.stack[menu_state.stack_depth - 2].screen;
   lv_screen_load(prev_screen);
 
@@ -310,24 +478,49 @@ static void menu_navigate_back_internal(void) {
   if (menu_state.stack[menu_state.stack_depth].screen) {
     lv_obj_delete(menu_state.stack[menu_state.stack_depth].screen);
     menu_state.stack[menu_state.stack_depth].screen = NULL;
-    menu_state.stack[menu_state.stack_depth].list = NULL;
+    menu_state.stack[menu_state.stack_depth].container = NULL;
   }
 
   // Restore previous menu items to group
   if (menu_state.group && menu_state.stack_depth > 0) {
-    lv_obj_t* prev_list = menu_state.stack[menu_state.stack_depth - 1].list;
-    if (prev_list) {
-      uint32_t child_cnt = lv_obj_get_child_count(prev_list);
+    menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
+    lv_obj_t* prev_cont = entry->container;
+    
+    // Debug: log what we're restoring to
+    ESP_LOGD(TAG, "Back nav to %s: container=%p", entry->name ? entry->name : "NULL", (void*)prev_cont);
+    
+    if (prev_cont) {
+      uint32_t child_cnt = lv_obj_get_child_count(prev_cont);
+      
+      // Debug: log scroll position BEFORE we try to reset
+      int32_t scroll_y_before = lv_obj_get_scroll_y(prev_cont);
+      ESP_LOGD(TAG, "Back nav: child_cnt=%u, scroll_y_before=%ld", (unsigned)child_cnt, (long)scroll_y_before);
+      
       for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(prev_list, i);
-        if (child && lv_obj_has_class(child, &lv_list_button_class)) {
-          lv_group_add_obj(menu_state.group, child);
-        }
+        lv_obj_t* child = lv_obj_get_child(prev_cont, i);
+        if (child) lv_group_add_obj(menu_state.group, child);
       }
-      // Focus first item
-      if (child_cnt > 0) {
-        lv_obj_t* first_child = lv_obj_get_child(prev_list, 0);
-        if (first_child) lv_group_focus_obj(first_child);
+      
+      // Restore focus to saved position
+      int32_t focus_idx = entry->focused_index;
+      lv_obj_t* focus_target = NULL;
+      
+      if (focus_idx >= 0 && focus_idx < (int32_t)child_cnt) {
+        focus_target = lv_obj_get_child(prev_cont, focus_idx);
+      }
+      if (!focus_target && child_cnt > 0) {
+        focus_target = lv_obj_get_child(prev_cont, 0);
+      }
+      
+      if (focus_target) {
+        menu_state.skip_focus_scroll = true;
+        lv_group_focus_obj(focus_target);
+        lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
+        menu_state.skip_focus_scroll = false;
+        
+        update_scroll_visuals(prev_cont);
+        
+        ESP_LOGD(TAG, "Restored focus to index: %ld", (long)focus_idx);
       }
     }
   }
@@ -366,18 +559,20 @@ void menu_handle_enter(void) {
   lv_obj_t* focused = lv_group_get_focused(menu_state.group);
   if (!focused) {
     // If no focused object, focus first item
-    lv_obj_t* list = menu_state.stack[menu_state.stack_depth - 1].list;
-    if (list) {
-      lv_obj_t* first_child = lv_obj_get_child(list, 0);
-      if (first_child) {
-        lv_group_focus_obj(first_child);
-        focused = first_child;
+    if (menu_state.stack_depth > 0) {
+      lv_obj_t* cont = menu_state.stack[menu_state.stack_depth - 1].container;
+      if (cont) {
+        lv_obj_t* first_child = lv_obj_get_child(cont, 0);
+        if (first_child) {
+          lv_group_focus_obj(first_child);
+          focused = first_child;
+        }
       }
     }
   }
 
-  // If focused object is a button, trigger click event
-  if (focused && lv_obj_has_class(focused, &lv_list_button_class)) {
+  // Trigger click event on focused object
+  if (focused) {
     lv_obj_send_event(focused, LV_EVENT_CLICKED, NULL);
   }
 }
@@ -392,7 +587,7 @@ void menu_cleanup(void) {
     if (menu_state.stack[i].screen) {
       lv_obj_delete(menu_state.stack[i].screen);
       menu_state.stack[i].screen = NULL;
-      menu_state.stack[i].list = NULL;
+      menu_state.stack[i].container = NULL;
     }
   }
 
@@ -462,17 +657,33 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Create title label
-  lv_obj_t* title_label = lv_label_create(screen);
+  // Title bar height
+  const int title_bar_h = 22;
+  
+  // Create title bar container with woody brown gradient
+  lv_obj_t* title_bar = lv_obj_create(screen);
+  lv_obj_set_size(title_bar, disp_w, title_bar_h);
+  lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);  // Dark woody brown
+  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(139, 90, 43), 0);  // Lighter brown
+  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(title_bar, 0, 0);
+  lv_obj_set_style_pad_all(title_bar, 0, 0);
+  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
+  
+  // Create title label inside title bar
+  lv_obj_t* title_label = lv_label_create(title_bar);
   lv_label_set_text(title_label, title);
-  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
-  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);
+  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
+  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+  lv_obj_center(title_label);
+  lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
-  // Create scrollable textarea for info (sized proportionally)
+  // Create scrollable textarea for info
   lv_obj_t* textarea = lv_textarea_create(screen);
-  lv_obj_set_size(textarea, disp_w - 8, disp_h - 18);
-  lv_obj_align(textarea, LV_ALIGN_TOP_MID, 0, 18);
+  lv_obj_set_size(textarea, disp_w - 8, disp_h - title_bar_h - 4);
+  lv_obj_align(textarea, LV_ALIGN_TOP_MID, 0, title_bar_h + 2);
   lv_textarea_set_text(textarea, info_text);
   lv_textarea_set_placeholder_text(textarea, "");
   lv_obj_set_style_text_color(textarea, lv_color_white(), 0);
@@ -488,65 +699,8 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   return screen;
 }
 
-// Helper: Create a page with action buttons
+// Helper: Create a page with action buttons (uses same style as menu pages)
 lv_obj_t* menu_create_action_page(const char* title, const menu_item_t* items, int item_count) {
-  uint16_t disp_w = display_get_width();
-  uint16_t disp_h = display_get_height();
-  
-  // Create screen
-  lv_obj_t* screen = lv_obj_create(NULL);
-  lv_obj_set_size(screen, disp_w, disp_h);
-  lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(screen, 0, 0);
-  lv_obj_set_style_pad_all(screen, 0, 0);
-
-  // Create title label
-  lv_obj_t* title_label = lv_label_create(screen);
-  lv_label_set_text(title_label, title);
-  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_10, 0);
-  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 4);
-
-  // Create list widget (sized proportionally)
-  lv_obj_t* list = lv_list_create(screen);
-  lv_obj_set_size(list, disp_w * 100 / 128, disp_h - 14);
-  lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 14);
-  
-  lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(list, 0, 0);
-  lv_obj_set_style_pad_all(list, 0, 0);
-  lv_obj_set_style_pad_row(list, 2, 0);
-  lv_obj_set_style_text_color(list, lv_color_white(), 0);
-
-  // Add action buttons
-  for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
-    lv_obj_t* btn = lv_list_add_button(list, NULL, items[i].label);
-    
-    lv_obj_set_style_text_color(btn, lv_color_white(), 0);
-    lv_obj_set_style_text_font(btn, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_pad_left(btn, 2, 0);
-    lv_obj_set_style_pad_right(btn, 2, 0);
-    lv_obj_set_style_pad_top(btn, (i == 0) ? 8 : 2, 0);
-    lv_obj_set_style_pad_bottom(btn, 0, 0);
-    lv_obj_set_style_text_align(btn, LV_TEXT_ALIGN_CENTER, 0);
-    
-    lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), LV_STATE_FOCUSED);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_10, LV_STATE_FOCUSED);
-    
-    lv_obj_set_user_data(btn, (void*)(intptr_t)i);
-    lv_obj_add_event_cb(btn, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
-    
-    if (menu_state.group) lv_group_add_obj(menu_state.group, btn);
-  }
-
-  if (menu_state.group && item_count > 0) {
-    lv_obj_t* first_btn = lv_obj_get_child(list, 0);
-    if (first_btn) lv_group_focus_obj(first_btn);
-  }
-
-  return screen;
+  // Action pages use the same style as regular menu pages
+  return menu_create_page(title, items, item_count);
 }
-

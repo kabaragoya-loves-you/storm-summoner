@@ -30,10 +30,11 @@ static void lvgl_encoder_read_cb(lv_indev_t * indev, lv_indev_data_t * data) {
     if (group) {
       lv_obj_t* focused = lv_group_get_focused(group);
       if (focused) {
-        // Get the parent list to check boundaries
-        lv_obj_t* list = lv_obj_get_parent(focused);
-        if (list && lv_obj_has_class(list, &lv_list_class)) {
-          uint32_t child_cnt = lv_obj_get_child_count(list);
+        // Get the parent container to check boundaries
+        lv_obj_t* container = lv_obj_get_parent(focused);
+        // Check if parent is a scrollable container (our menu containers)
+        if (container && lv_obj_has_flag(container, LV_OBJ_FLAG_SCROLLABLE)) {
+          uint32_t child_cnt = lv_obj_get_child_count(container);
           uint32_t focused_index = lv_obj_get_index(focused);
           
           // Check if at boundaries

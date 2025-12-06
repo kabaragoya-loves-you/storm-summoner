@@ -127,6 +127,11 @@ touch_channel_handle_t touch_get_channel_handle(int pad_index) {
   return NULL;
 }
 
+touch_pad_t touch_get_channel_for_pad(int pad_index) {
+  if (pad_index >= 0 && pad_index < MAX_TOUCH_PADS) return TOUCH_PADS[pad_index];
+  return -1;
+}
+
 static int get_pad_index(int chan_id) {
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {
     if (TOUCH_PADS[i] == chan_id) {
@@ -525,8 +530,11 @@ void touch_init(bool enable_logging) {
   }
   
   // Step 3: Create channels with initial configuration
+  // Use a very high initial threshold to prevent false triggers during init.
+  // Real thresholds will be applied later from NVS or calibration.
+  // Typical baselines are 20000-35000, so 50000 ensures no false triggers.
   touch_channel_config_t chan_cfg = {
-    .active_thresh = {1000}  // Initial threshold, will be updated after calibration
+    .active_thresh = {50000}
   };
   
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {
@@ -614,6 +622,34 @@ void touch_init(bool enable_logging) {
   // Step 9: Initialize thresholds (loads from NVS or calibrates)
   // Now that benchmarks are reset, we can properly apply thresholds
   touch_thresholds_init();
+  
+  // Step 9b: Reset benchmarks AGAIN after thresholds are applied
+  // This is critical because loading new thresholds can cause transient glitches,
+  // and stored calibration baselines may not match current hardware state at boot.
+  // The benchmark reset ensures we start clean with current readings.
+  ESP_LOGI(TAG, "Resetting benchmarks after threshold init...");
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    touch_chan_benchmark_config_t benchmark_cfg = { .do_reset = true };
+    touch_channel_config_benchmark(s_chan_handles[i], &benchmark_cfg);
+  }
+  vTaskDelay(pdMS_TO_TICKS(200));  // Let benchmarks stabilize
+  
+  // Step 9c: Diagnostic check for pad 12 (prone to phantom touches)
+  {
+    uint32_t smooth[1], benchmark[1];
+    touch_pad_calibration_t calib_data;
+    esp_err_t err1 = touch_channel_read_data(s_chan_handles[12], TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+    esp_err_t err2 = touch_channel_read_data(s_chan_handles[12], TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+    esp_err_t calib_ret = touch_get_calibration_data(TOUCH_PADS[12], &calib_data);
+    
+    if (err1 == ESP_OK && err2 == ESP_OK && calib_ret == ESP_OK && calib_data.valid) {
+      int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
+      bool would_trigger = (delta > (int32_t)calib_data.threshold);
+      ESP_LOGI(TAG, "Pad 12 boot check: smooth=%"PRIu32" bench=%"PRIu32" delta=%"PRId32" thresh=%"PRIu32" baseline=%"PRIu32" -> %s",
+        smooth[0], benchmark[0], delta, calib_data.threshold, calib_data.baseline,
+        would_trigger ? "WOULD TRIGGER!" : "OK");
+    }
+  }
   
   // Step 10: Log pad mapping
   if (s_logging_enabled) {
