@@ -49,6 +49,7 @@ extern ui_draw_module_t template_module;
 extern ui_draw_module_t splash_module;
 extern ui_draw_module_t summoner_module;
 extern ui_draw_module_t pixels_module;
+extern ui_draw_module_t tempo_module;
 
 void ui_init(void);
 

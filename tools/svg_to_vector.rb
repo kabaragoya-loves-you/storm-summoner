@@ -2,7 +2,9 @@
 # SVG to LVGL Vector Art Binary Converter
 # Converts simple SVG path data to a compact binary format for lv_vector_art widget
 #
-# Usage: ruby svg_to_vector.rb <input.svg> <output.bin>
+# Usage:
+#   Static:   ruby svg_to_vector.rb <input.svg> <output.bin>
+#   Animated: ruby svg_to_vector.rb <input.zip> <output.bin> [fps]
 #
 # Supported SVG path commands:
 #   M/m - moveto (absolute/relative)
@@ -11,8 +13,8 @@
 #   V/v - vertical line (absolute/relative)
 #   Z/z - close path
 #
-# Binary format:
-#   Header (12 bytes):
+# Binary format (static, version 1):
+#   Header (14 bytes):
 #     uint16_t version (1)
 #     uint16_t width, height (viewbox)
 #     uint16_t shape_count
@@ -25,11 +27,75 @@
 #     uint8_t  r, g, b, a
 #     uint16_t point_count
 #     int16_t  points[point_count * 2]
+#
+# Binary format (animated, version 2):
+#   Header (18 bytes):
+#     uint16_t version (2)
+#     uint16_t width, height (viewbox)
+#     uint16_t frame_count
+#     uint16_t fps
+#     uint32_t reserved
+#     uint32_t frame_table_offset
+#
+#   Frame Table:
+#     uint32_t offsets[frame_count]  // byte offset to each frame's data
+#
+#   Frame Data (per frame):
+#     uint16_t shape_count
+#     Shape entries (same as static format)
 
 require 'rexml/document'
+require 'zip' if defined?(Zip) || begin
+  require 'zip'
+  true
+rescue LoadError
+  false
+end
+
+# Parse transform attribute - supports translate(x, y) and scale(sx [, sy])
+def parse_transform(transform_str)
+  return { translate_x: 0, translate_y: 0, scale_x: 1, scale_y: 1 } if transform_str.nil? || transform_str.empty?
+  
+  result = { translate_x: 0, translate_y: 0, scale_x: 1, scale_y: 1 }
+  
+  # Parse translate(x, y) or translate(x y)
+  if transform_str =~ /translate\s*\(\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*\)/
+    result[:translate_x] = $1.to_f
+    result[:translate_y] = $2.to_f
+  elsif transform_str =~ /translate\s*\(\s*(-?[\d.]+)\s*\)/
+    result[:translate_x] = $1.to_f
+  end
+  
+  # Parse scale(sx, sy) or scale(s)
+  if transform_str =~ /scale\s*\(\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*\)/
+    result[:scale_x] = $1.to_f
+    result[:scale_y] = $2.to_f
+  elsif transform_str =~ /scale\s*\(\s*(-?[\d.]+)\s*\)/
+    result[:scale_x] = $1.to_f
+    result[:scale_y] = $1.to_f
+  end
+  
+  result
+end
+
+# Apply transform to a point
+def apply_transform(x, y, transform)
+  new_x = x * transform[:scale_x] + transform[:translate_x]
+  new_y = y * transform[:scale_y] + transform[:translate_y]
+  [new_x, new_y]
+end
+
+# Check if a path is a background rectangle (heuristic: short d attribute)
+def is_background_path?(d)
+  return false if d.nil?
+  # Background paths from Rive are typically simple rectangles like "M0 0L198 0L198 198L0 198L0 0Z"
+  d.length < 100
+end
 
 # Parse SVG path 'd' attribute into array of sub-paths (each sub-path is an array of points)
-def parse_svg_path(d)
+def parse_svg_path(d, transform = nil)
+  transform ||= { translate_x: 0, translate_y: 0, scale_x: 1, scale_y: 1 }
+  
   subpaths = []
   current_subpath = []
   current_x = 0.0
@@ -68,7 +134,8 @@ def parse_svg_path(d)
       current_y = y
       start_x = x
       start_y = y
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 2
       current_cmd = 'L' # Subsequent coordinates are lineto
       
@@ -85,7 +152,8 @@ def parse_svg_path(d)
       current_y += y
       start_x = current_x
       start_y = current_y
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 2
       current_cmd = 'l' # Subsequent coordinates are lineto
       
@@ -94,7 +162,8 @@ def parse_svg_path(d)
       y = tokens[i + 1].to_f
       current_x = x
       current_y = y
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 2
       
     when 'l' # Relative lineto
@@ -102,31 +171,36 @@ def parse_svg_path(d)
       y = tokens[i + 1].to_f
       current_x += x
       current_y += y
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 2
       
     when 'H' # Absolute horizontal line
       x = tokens[i].to_f
       current_x = x
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 1
       
     when 'h' # Relative horizontal line
       x = tokens[i].to_f
       current_x += x
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 1
       
     when 'V' # Absolute vertical line
       y = tokens[i].to_f
       current_y = y
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 1
       
     when 'v' # Relative vertical line
       y = tokens[i].to_f
       current_y += y
-      current_subpath << [current_x, current_y]
+      tx, ty = apply_transform(current_x, current_y, transform)
+      current_subpath << [tx, ty]
       i += 1
       
     when 'Z', 'z' # Close path
@@ -200,30 +274,32 @@ def parse_color(fill)
   [0, 0, 0, 255]
 end
 
-# Parse viewBox attribute
-def parse_viewbox(viewbox)
-  return [0, 0, 240, 240] if viewbox.nil? || viewbox.empty?
+# Parse viewBox attribute - handles both viewBox and width/height attributes
+def parse_viewbox(svg)
+  viewbox = svg.attributes['viewBox']
   
-  parts = viewbox.split(/[\s,]+/).map(&:to_f)
-  if parts.length >= 4
-    [parts[0], parts[1], parts[2], parts[3]]
-  else
-    [0, 0, 240, 240]
+  if viewbox && !viewbox.empty?
+    parts = viewbox.split(/[\s,]+/).map(&:to_f)
+    if parts.length >= 4
+      return [parts[0], parts[1], parts[2], parts[3]]
+    end
   end
+  
+  # Fall back to width/height attributes
+  width = svg.attributes['width']&.to_f || 240
+  height = svg.attributes['height']&.to_f || 240
+  [0, 0, width, height]
 end
 
-def convert_svg_to_binary(input_path, output_path)
-  puts "Loading SVG: #{input_path}"
-  
-  doc = REXML::Document.new(File.read(input_path))
+# Parse a single SVG and return shapes array and viewbox
+def parse_svg(svg_content, skip_backgrounds: false)
+  doc = REXML::Document.new(svg_content)
   
   # Get viewBox from svg element
   svg = doc.root
-  viewbox = parse_viewbox(svg.attributes['viewBox'])
+  viewbox = parse_viewbox(svg)
   width = viewbox[2].to_i
   height = viewbox[3].to_i
-  
-  puts "ViewBox: #{width}x#{height}"
   
   # Extract all path elements
   shapes = []
@@ -233,18 +309,24 @@ def convert_svg_to_binary(input_path, output_path)
     d = path.attributes['d']
     next if d.nil? || d.empty?
     
+    # Skip background paths if requested
+    if skip_backgrounds && is_background_path?(d)
+      puts "  Skipping background path (#{d.length} chars)"
+      next
+    end
+    
     fill = path.attributes['fill'] || '#000000'
     fill_rule = path.attributes['fill-rule'] || 'nonzero'
     base_id = path.attributes['id'] || "path#{path_index}"
+    transform = parse_transform(path.attributes['transform'])
     
-    subpaths = parse_svg_path(d)
+    subpaths = parse_svg_path(d, transform)
     next if subpaths.empty?
     
     color = parse_color(fill)
     
     # Each sub-path becomes a separate shape
     # For compound paths: first sub-path is outer boundary, rest are holes
-    # (This applies to both evenodd and nonzero - we're decomposing, not ray-casting)
     subpaths.each_with_index do |points, sub_idx|
       shape_id = subpaths.length > 1 ? "#{base_id}_#{sub_idx}" : base_id
       is_hole = sub_idx > 0  # All sub-paths after the first are holes
@@ -257,31 +339,16 @@ def convert_svg_to_binary(input_path, output_path)
         color: shape_color,
         points: points
       }
-      
-      hole_marker = is_hole ? " [HOLE]" : ""
-      puts "  Shape '#{shape_id}': #{points.length} points, color=#{'%02X%02X%02X' % color[0..2]}#{hole_marker}"
     end
     
     path_index += 1
   end
   
-  if shapes.empty?
-    puts "Error: No valid paths found in SVG"
-    exit 1
-  end
-  
-  puts "Found #{shapes.length} shapes"
-  
-  # Build binary data
-  version = 1
-  shape_count = shapes.length
-  # Header: version(2) + width(2) + height(2) + shape_count(2) + reserved(2) + offset(4) = 14 bytes
-  header_size = 14
-  
-  # Calculate shape table offset (right after header)
-  shape_table_offset = header_size
-  
-  # Build shape data
+  { shapes: shapes, width: width, height: height }
+end
+
+# Build binary data for shapes (used by both static and animated formats)
+def build_shape_data(shapes)
   shape_data = []
   shapes.each do |shape|
     name_bytes = shape[:name].bytes
@@ -302,6 +369,43 @@ def convert_svg_to_binary(input_path, output_path)
     
     shape_data << entry.join
   end
+  shape_data
+end
+
+# Convert static SVG to binary
+def convert_svg_to_binary(input_path, output_path)
+  puts "Loading SVG: #{input_path}"
+  
+  result = parse_svg(File.read(input_path), skip_backgrounds: false)
+  shapes = result[:shapes]
+  width = result[:width]
+  height = result[:height]
+  
+  puts "ViewBox: #{width}x#{height}"
+  
+  if shapes.empty?
+    puts "Error: No valid paths found in SVG"
+    exit 1
+  end
+  
+  shapes.each do |shape|
+    hole_marker = shape[:color][3] == 0 ? " [HOLE]" : ""
+    puts "  Shape '#{shape[:name]}': #{shape[:points].length} points, color=#{'%02X%02X%02X' % shape[:color][0..2]}#{hole_marker}"
+  end
+  
+  puts "Found #{shapes.length} shapes"
+  
+  # Build binary data
+  version = 1
+  shape_count = shapes.length
+  # Header: version(2) + width(2) + height(2) + shape_count(2) + reserved(2) + offset(4) = 14 bytes
+  header_size = 14
+  
+  # Calculate shape table offset (right after header)
+  shape_table_offset = header_size
+  
+  # Build shape data
+  shape_data = build_shape_data(shapes)
   
   # Write binary file
   File.open(output_path, 'wb') do |f|
@@ -329,23 +433,150 @@ def convert_svg_to_binary(input_path, output_path)
   puts "Viewbox: #{width}x#{height}"
 end
 
+# Convert animated ZIP to binary
+def convert_zip_to_binary(input_path, output_path, fps = 24)
+  puts "Loading ZIP: #{input_path}"
+  puts "Target FPS: #{fps}"
+  
+  unless defined?(Zip)
+    puts "Error: rubyzip gem is required for ZIP support"
+    puts "Install with: gem install rubyzip"
+    exit 1
+  end
+  
+  frames = []
+  width = 0
+  height = 0
+  
+  Zip::File.open(input_path) do |zip_file|
+    # Get all SVG files sorted by name
+    svg_entries = zip_file.entries
+      .select { |e| e.name =~ /\.svg$/i && !e.name.include?('__MACOSX') }
+      .sort_by { |e| e.name }
+    
+    if svg_entries.empty?
+      puts "Error: No SVG files found in ZIP"
+      exit 1
+    end
+    
+    puts "Found #{svg_entries.length} SVG frames"
+    
+    svg_entries.each_with_index do |entry, idx|
+      puts "  Processing frame #{idx}: #{entry.name}"
+      
+      svg_content = entry.get_input_stream.read
+      result = parse_svg(svg_content, skip_backgrounds: true)
+      
+      if idx == 0
+        width = result[:width]
+        height = result[:height]
+        puts "  ViewBox: #{width}x#{height}"
+      end
+      
+      frames << result[:shapes]
+      puts "    #{result[:shapes].length} shapes"
+    end
+  end
+  
+  if frames.empty?
+    puts "Error: No valid frames found"
+    exit 1
+  end
+  
+  puts "\nBuilding animated binary..."
+  
+  # Build binary data
+  version = 2
+  frame_count = frames.length
+  
+  # Header: version(2) + width(2) + height(2) + frame_count(2) + fps(2) + reserved(4) + frame_table_offset(4) = 18 bytes
+  header_size = 18
+  
+  # Frame table: frame_count * 4 bytes (uint32 offsets)
+  frame_table_size = frame_count * 4
+  
+  # Frame table offset (right after header)
+  frame_table_offset = header_size
+  
+  # Build frame data and calculate offsets
+  frame_data_list = []
+  frame_offsets = []
+  current_offset = header_size + frame_table_size
+  
+  frames.each_with_index do |shapes, idx|
+    frame_offsets << current_offset
+    
+    # Build frame data: shape_count(2) + shape_data
+    shape_data = build_shape_data(shapes)
+    frame_binary = [shapes.length].pack('S<') + shape_data.join
+    frame_data_list << frame_binary
+    
+    current_offset += frame_binary.length
+  end
+  
+  # Write binary file
+  File.open(output_path, 'wb') do |f|
+    # Header
+    f.write([version].pack('S<'))                    # version
+    f.write([width, height].pack('S<S<'))            # width, height
+    f.write([frame_count].pack('S<'))                # frame_count
+    f.write([fps].pack('S<'))                        # fps
+    f.write([0].pack('L<'))                          # reserved
+    f.write([frame_table_offset].pack('L<'))         # frame_table_offset
+    
+    # Frame table
+    frame_offsets.each do |offset|
+      f.write([offset].pack('L<'))
+    end
+    
+    # Frame data
+    frame_data_list.each do |data|
+      f.write(data)
+    end
+  end
+  
+  file_size = File.size(output_path)
+  total_shapes = frames.sum(&:length)
+  total_points = frames.sum { |f| f.sum { |s| s[:points].length } }
+  
+  puts "\n=== Conversion Complete ==="
+  puts "Output: #{output_path}"
+  puts "File size: #{file_size} bytes"
+  puts "Frames: #{frame_count}"
+  puts "Total shapes: #{total_shapes}"
+  puts "Total points: #{total_points}"
+  puts "FPS: #{fps}"
+  puts "Viewbox: #{width}x#{height}"
+end
+
 # Main
-if ARGV.length != 2
-  puts "Usage: ruby svg_to_vector.rb <input.svg> <output.bin>"
+if ARGV.length < 2
+  puts "Usage:"
+  puts "  Static:   ruby svg_to_vector.rb <input.svg> <output.bin>"
+  puts "  Animated: ruby svg_to_vector.rb <input.zip> <output.bin> [fps]"
   puts ""
-  puts "Converts simple SVG paths to LVGL vector art binary format."
+  puts "Converts SVG paths to LVGL vector art binary format."
+  puts "ZIP files containing numbered SVG frames (00.svg, 01.svg, etc.) are"
+  puts "converted to an animated binary format."
   puts ""
   puts "Supported path commands: M, m, L, l, H, h, V, v, Z, z"
+  puts "Supported transforms: translate(x, y), scale(sx, sy)"
   puts "NOT supported: curves (C, S, Q, T, A)"
   exit 1
 end
 
 input_path = ARGV[0]
 output_path = ARGV[1]
+fps = (ARGV[2] || 24).to_i
 
 unless File.exist?(input_path)
   puts "Error: Input file not found: #{input_path}"
   exit 1
 end
 
-convert_svg_to_binary(input_path, output_path)
+# Detect input type by extension
+if input_path =~ /\.zip$/i
+  convert_zip_to_binary(input_path, output_path, fps)
+else
+  convert_svg_to_binary(input_path, output_path)
+end

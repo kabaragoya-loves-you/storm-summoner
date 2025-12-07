@@ -38,6 +38,7 @@ static ui_draw_module_t* available_modules[] = {
   &sphere_module,
   &splash_module,
   &summoner_module,
+  &tempo_module,
   &template_module,
 };
 static const int num_modules = sizeof(available_modules) / sizeof(available_modules[0]);
