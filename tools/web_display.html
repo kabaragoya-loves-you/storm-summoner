@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storm Summoner Display Viewer</title>
+  
+  <!-- Web Awesome -->
+  <link rel="stylesheet" href="https://early.webawesome.com/webawesome@3.0.0-beta.4/dist/themes/default.css">
+  <script type="module" src="https://early.webawesome.com/webawesome@3.0.0-beta.4/dist/webawesome.loader.js"></script>
+  
+  <!-- Stimulus -->
+  <script src="https://unpkg.com/@hotwired/stimulus/dist/stimulus.umd.js"></script>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Crimson+Pro:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-deep: #0f0f0f;
+      --bg-card: #1a1a1a;
+      --bg-hover: #252525;
+      --border: #333;
+      --text: #e8e8e8;
+      --text-dim: #888;
+      --accent: #f59e0b;
+      --accent-glow: rgba(245, 158, 11, 0.2);
+      --success: #22c55e;
+      --error: #ef4444;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: 'Crimson Pro', Georgia, serif;
+      background: var(--bg-deep);
+      background-image: 
+        radial-gradient(ellipse at top left, rgba(245, 158, 11, 0.03) 0%, transparent 50%),
+        radial-gradient(ellipse at bottom right, rgba(167, 139, 250, 0.03) 0%, transparent 50%);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(180deg, rgba(26, 26, 26, 0.95) 0%, rgba(26, 26, 26, 0.8) 100%);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .logo svg {
+      width: 36px;
+      height: 36px;
+    }
+
+    .logo h1 {
+      font-family: 'Crimson Pro', Georgia, serif;
+      font-size: 1.5rem;
+      font-weight: 500;
+      margin: 0;
+    }
+
+    .logo h1 span { color: var(--accent); }
+
+    .connection {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: all 0.3s;
+    }
+
+    .status-dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .status-dot.streaming {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    main {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+      gap: 1.5rem;
+    }
+
+    .display-container {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .display-frame {
+      background: #000;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 
+        inset 0 2px 4px rgba(0,0,0,0.5),
+        0 0 20px rgba(245, 158, 11, 0.1);
+    }
+
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .scale-control {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    .scale-control select {
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      padding: 0.25rem 0.5rem;
+      font-family: inherit;
+    }
+
+    .stats-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.5rem;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.85rem;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 2rem;
+      min-width: 600px;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .stat-label {
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+    }
+
+    .stat-value {
+      font-size: 1.1rem;
+      color: var(--accent);
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dim);
+      padding: 3rem;
+      text-align: center;
+    }
+
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 1rem;
+      opacity: 0.3;
+    }
+
+    .log-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 800px;
+      overflow: hidden;
+    }
+
+    .log-header {
+      padding: 0.75rem 1rem;
+      background: rgba(0, 0, 0, 0.3);
+      border-bottom: 1px solid var(--border);
+      font-family: 'Space Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .log-content {
+      padding: 1rem;
+      max-height: 150px;
+      overflow-y: auto;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.8rem;
+      line-height: 1.6;
+    }
+
+    .log-entry { color: var(--text-dim); }
+    .log-entry.error { color: var(--error); }
+    .log-entry.success { color: var(--success); }
+
+    wa-button {
+      --wa-button-font-family: 'Space Mono', monospace;
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div data-controller="viewer">
+    <header>
+      <div class="logo">
+        <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M18 3L22 11L31 13L24 21L26 30L18 25L10 30L12 21L5 13L14 11L18 3Z" 
+                fill="url(#logoGrad)" stroke="var(--accent)" stroke-width="1.5"/>
+          <defs>
+            <linearGradient id="logoGrad" x1="18" y1="3" x2="18" y2="30" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.4"/>
+              <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.1"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <h1>Storm <span>Display</span></h1>
+      </div>
+      
+      <div class="connection">
+        <div class="status">
+          <span class="status-dot" data-viewer-target="statusDot"></span>
+          <span data-viewer-target="statusText">Disconnected</span>
+        </div>
+        <wa-button variant="brand" data-action="click->viewer#connect" data-viewer-target="connectBtn">
+          Connect
+        </wa-button>
+        <wa-button variant="neutral" appearance="outlined" data-action="click->viewer#disconnect" 
+                   data-viewer-target="disconnectBtn" disabled>
+          Disconnect
+        </wa-button>
+      </div>
+    </header>
+
+    <main>
+      <div class="display-container">
+        <div class="display-frame">
+          <canvas data-viewer-target="canvas" width="198" height="198"></canvas>
+        </div>
+        
+        <div class="controls">
+          <div class="scale-control">
+            <label>Scale:</label>
+            <select data-viewer-target="scaleSelect" data-action="change->viewer#changeScale">
+              <option value="1">1x</option>
+              <option value="2">2x</option>
+              <option value="3" selected>3x</option>
+              <option value="4">4x</option>
+            </select>
+          </div>
+          
+          <wa-button size="small" variant="neutral" appearance="outlined" 
+                     data-action="click->viewer#toggleStats" data-viewer-target="statsBtn">
+            Show Stats
+          </wa-button>
+          
+          <wa-button size="small" variant="neutral" appearance="outlined" 
+                     data-action="click->viewer#saveFrame" data-viewer-target="saveBtn" disabled>
+            Save Frame
+          </wa-button>
+        </div>
+      </div>
+
+      <div class="stats-panel hidden" data-viewer-target="statsPanel">
+        <div class="stat">
+          <span class="stat-label">Resolution</span>
+          <span class="stat-value" data-viewer-target="resolution">--</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Frames Received</span>
+          <span class="stat-value" data-viewer-target="frameCount">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Frame Rate</span>
+          <span class="stat-value" data-viewer-target="fps">0 fps</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Data Rate</span>
+          <span class="stat-value" data-viewer-target="dataRate">0 KB/s</span>
+        </div>
+      </div>
+
+      <div class="log-panel">
+        <div class="log-header">
+          <span>Activity Log</span>
+          <wa-button size="small" variant="neutral" appearance="text" data-action="click->viewer#clearLog">
+            Clear
+          </wa-button>
+        </div>
+        <div class="log-content" data-viewer-target="logContent"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const { Application, Controller } = Stimulus;
+    const application = Application.start();
+
+    // Protocol constants
+    const MAGIC = 0xAC01;
+    const HEADER_SIZE = 16;
+
+    application.register("viewer", class extends Controller {
+      static targets = [
+        "statusDot", "statusText", "connectBtn", "disconnectBtn",
+        "canvas", "scaleSelect", "statsBtn", "saveBtn",
+        "statsPanel", "resolution", "frameCount", "fps", "dataRate",
+        "logContent"
+      ];
+
+      initialize() {
+        this.port = null;
+        this.reader = null;
+        this.streaming = false;
+        this.width = 198;
+        this.height = 198;
+        this.scale = 3;
+        this.showStats = false;
+        
+        // Stats
+        this.frames = 0;
+        this.bytes = 0;
+        this.startTime = null;
+        
+        // Buffer for incoming data
+        this.buffer = new Uint8Array(0);
+        
+        // Canvas setup
+        this.ctx = this.canvasTarget.getContext('2d');
+        this.imageData = null;
+        
+        this.updateCanvasSize();
+      }
+
+      updateCanvasSize() {
+        this.canvasTarget.width = this.width;
+        this.canvasTarget.height = this.height;
+        this.canvasTarget.style.width = `${this.width * this.scale}px`;
+        this.canvasTarget.style.height = `${this.height * this.scale}px`;
+        this.imageData = this.ctx.createImageData(this.width, this.height);
+        // Fill with black
+        for (let i = 3; i < this.imageData.data.length; i += 4) {
+          this.imageData.data[i] = 255; // Alpha
+        }
+        this.ctx.putImageData(this.imageData, 0, 0);
+      }
+
+      changeScale() {
+        this.scale = parseInt(this.scaleSelectTarget.value);
+        this.canvasTarget.style.width = `${this.width * this.scale}px`;
+        this.canvasTarget.style.height = `${this.height * this.scale}px`;
+      }
+
+      toggleStats() {
+        this.showStats = !this.showStats;
+        this.statsPanelTarget.classList.toggle('hidden', !this.showStats);
+        this.statsBtnTarget.textContent = this.showStats ? 'Hide Stats' : 'Show Stats';
+      }
+
+      async connect() {
+        try {
+          this.log("Requesting serial port...");
+          this.port = await navigator.serial.requestPort({
+            filters: [{ usbVendorId: 0x303A }]
+          });
+          
+          await this.port.open({ baudRate: 115200 });
+          this.log("Connected to serial port");
+          this.setConnected(true);
+          
+          // Wait a moment then start streaming
+          await this.sleep(500);
+          await this.startStream();
+          
+        } catch (err) {
+          this.log(`Connection failed: ${err.message}`, "error");
+        }
+      }
+
+      async disconnect() {
+        this.streaming = false;
+        
+        try {
+          if (this.reader) {
+            await this.reader.cancel();
+            this.reader = null;
+          }
+          
+          // Send EXIT command
+          if (this.port && this.port.writable) {
+            const writer = this.port.writable.getWriter();
+            await writer.write(new TextEncoder().encode("EXIT\n"));
+            writer.releaseLock();
+          }
+          
+          if (this.port) {
+            await this.port.close();
+            this.port = null;
+          }
+          
+        } catch (err) {
+          // Ignore disconnect errors
+        }
+        
+        this.log("Disconnected");
+        this.setConnected(false);
+      }
+
+      setConnected(connected) {
+        this.connectBtnTarget.disabled = connected;
+        this.disconnectBtnTarget.disabled = !connected;
+        this.saveBtnTarget.disabled = !connected;
+        
+        if (!connected) {
+          this.statusDotTarget.classList.remove("connected", "streaming");
+          this.statusTextTarget.textContent = "Disconnected";
+        }
+      }
+
+      async startStream() {
+        try {
+          // Drain any stale data
+          await this.drainInput();
+          
+          // Send DISPLAY command
+          this.log("Sending DISPLAY command...");
+          const writer = this.port.writable.getWriter();
+          await writer.write(new TextEncoder().encode("DISPLAY\n"));
+          writer.releaseLock();
+          
+          // Read response
+          const response = await this.readLine(5000);
+          this.log(`Response: ${response}`);
+          
+          if (response.startsWith("DISPLAY_STARTED")) {
+            const parts = response.split(" ");
+            this.width = parseInt(parts[1]);
+            this.height = parseInt(parts[2]);
+            
+            this.updateCanvasSize();
+            this.resolutionTarget.textContent = `${this.width}×${this.height}`;
+            
+            this.streaming = true;
+            this.frames = 0;
+            this.bytes = 0;
+            this.startTime = Date.now();
+            this.buffer = new Uint8Array(0);
+            
+            this.statusDotTarget.classList.add("connected", "streaming");
+            this.statusTextTarget.textContent = "Streaming";
+            
+            this.log(`Streaming started: ${this.width}x${this.height}`, "success");
+            
+            // Start reading loop
+            this.readLoop();
+            
+            // Start stats update
+            this.statsInterval = setInterval(() => this.updateStats(), 1000);
+            
+          } else {
+            this.log(`Failed to start stream: ${response}`, "error");
+          }
+          
+        } catch (err) {
+          this.log(`Stream start failed: ${err.message}`, "error");
+        }
+      }
+
+      async readLoop() {
+        this.reader = this.port.readable.getReader();
+        
+        try {
+          while (this.streaming) {
+            const { value, done } = await this.reader.read();
+            if (done) break;
+            
+            if (value && value.length > 0) {
+              this.appendBuffer(value);
+              this.processFrames();
+            }
+          }
+        } catch (err) {
+          if (this.streaming) {
+            this.log(`Read error: ${err.message}`, "error");
+          }
+        } finally {
+          this.reader.releaseLock();
+          this.reader = null;
+          
+          if (this.statsInterval) {
+            clearInterval(this.statsInterval);
+            this.statsInterval = null;
+          }
+        }
+      }
+
+      appendBuffer(data) {
+        const newBuffer = new Uint8Array(this.buffer.length + data.length);
+        newBuffer.set(this.buffer);
+        newBuffer.set(data, this.buffer.length);
+        this.buffer = newBuffer;
+      }
+
+      processFrames() {
+        while (this.buffer.length >= HEADER_SIZE) {
+          // Find magic bytes (0x01, 0xAC in little-endian)
+          let magicPos = -1;
+          for (let i = 0; i <= this.buffer.length - 2; i++) {
+            if (this.buffer[i] === 0x01 && this.buffer[i + 1] === 0xAC) {
+              magicPos = i;
+              break;
+            }
+          }
+          
+          if (magicPos === -1) {
+            // No magic found, keep last byte in case it's partial magic
+            this.buffer = this.buffer.slice(-1);
+            return;
+          }
+          
+          if (magicPos > 0) {
+            // Discard data before magic
+            this.buffer = this.buffer.slice(magicPos);
+          }
+          
+          if (this.buffer.length < HEADER_SIZE) return;
+          
+          // Parse header
+          const view = new DataView(this.buffer.buffer, this.buffer.byteOffset);
+          const magic = view.getUint16(0, true);
+          const type = view.getUint8(2);
+          const format = view.getUint8(3);
+          const x = view.getUint16(4, true);
+          const y = view.getUint16(6, true);
+          const w = view.getUint16(8, true);
+          const h = view.getUint16(10, true);
+          const payloadLen = view.getUint32(12, true);
+          
+          // Validate header
+          if (!this.validHeader(x, y, w, h, payloadLen)) {
+            // Invalid header, skip magic bytes
+            this.buffer = this.buffer.slice(2);
+            continue;
+          }
+          
+          const totalSize = HEADER_SIZE + payloadLen;
+          if (this.buffer.length < totalSize) return; // Need more data
+          
+          // Extract payload
+          const payload = this.buffer.slice(HEADER_SIZE, totalSize);
+          this.buffer = this.buffer.slice(totalSize);
+          
+          // Update framebuffer
+          this.updateFramebuffer(x, y, w, h, payload);
+          
+          this.frames++;
+          this.bytes += totalSize;
+        }
+      }
+
+      validHeader(x, y, w, h, payloadLen) {
+        return x < this.width && y < this.height &&
+               w > 0 && h > 0 &&
+               x + w <= this.width && y + h <= this.height &&
+               payloadLen === w * h * 3;
+      }
+
+      updateFramebuffer(x, y, w, h, payload) {
+        let src = 0;
+        for (let row = 0; row < h; row++) {
+          for (let col = 0; col < w; col++) {
+            const px = x + col;
+            const py = y + row;
+            const dst = (py * this.width + px) * 4;
+            
+            // BGR -> RGBA
+            this.imageData.data[dst + 2] = payload[src];     // B -> B
+            this.imageData.data[dst + 1] = payload[src + 1]; // G -> G
+            this.imageData.data[dst] = payload[src + 2];     // R -> R
+            this.imageData.data[dst + 3] = 255;              // A
+            src += 3;
+          }
+        }
+        
+        // Render to canvas
+        this.ctx.putImageData(this.imageData, 0, 0);
+      }
+
+      updateStats() {
+        if (!this.startTime) return;
+        
+        const elapsed = (Date.now() - this.startTime) / 1000;
+        const fps = elapsed > 0 ? (this.frames / elapsed).toFixed(1) : 0;
+        const kbps = elapsed > 0 ? ((this.bytes / 1024) / elapsed).toFixed(1) : 0;
+        
+        this.frameCountTarget.textContent = this.frames.toLocaleString();
+        this.fpsTarget.textContent = `${fps} fps`;
+        this.dataRateTarget.textContent = `${kbps} KB/s`;
+      }
+
+      async drainInput() {
+        if (!this.port || !this.port.readable) return;
+        
+        const reader = this.port.readable.getReader();
+        try {
+          while (true) {
+            const result = await Promise.race([
+              reader.read(),
+              this.sleep(200).then(() => ({ timeout: true }))
+            ]);
+            if (result.timeout || result.done) break;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+
+      async readLine(timeout = 5000) {
+        const reader = this.port.readable.getReader();
+        const decoder = new TextDecoder();
+        let line = "";
+        const startTime = Date.now();
+        
+        try {
+          while (Date.now() - startTime < timeout) {
+            const result = await Promise.race([
+              reader.read(),
+              this.sleep(50).then(() => ({ timeout: true }))
+            ]);
+            
+            if (result.timeout) continue;
+            if (result.done) break;
+            
+            line += decoder.decode(result.value, { stream: true });
+            const idx = line.indexOf("\n");
+            if (idx !== -1) {
+              return line.substring(0, idx).replace(/\r/g, "").trim();
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        
+        return line.replace(/\r/g, "").trim();
+      }
+
+      saveFrame() {
+        const link = document.createElement('a');
+        link.download = `frame_${Date.now()}.png`;
+        link.href = this.canvasTarget.toDataURL('image/png');
+        link.click();
+        this.log("Frame saved", "success");
+      }
+
+      sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+      }
+
+      log(message, type = "") {
+        const entry = document.createElement("div");
+        entry.className = `log-entry ${type}`;
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        this.logContentTarget.appendChild(entry);
+        this.logContentTarget.scrollTop = this.logContentTarget.scrollHeight;
+      }
+
+      clearLog() {
+        this.logContentTarget.innerHTML = "";
+      }
+    });
+
+    // Check for Web Serial support
+    if (!navigator.serial) {
+      document.body.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: center; height: 100vh; text-align: center; padding: 2rem;">
+          <div>
+            <h1 style="color: var(--error); margin-bottom: 1rem;">Web Serial API Not Supported</h1>
+            <p style="color: var(--text-dim);">Please use Chrome or Edge browser to access this tool.</p>
+          </div>
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>
