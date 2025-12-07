@@ -3,14 +3,12 @@
 #include "touch.h"
 #include "bump.h"
 #include "haptic_manager.h"
-#include "led.h"
 #include "sensor.h"
 #include "midi_out.h"
 #include "midi_messages.h"
 #include "midi_in.h"
 #include "midi_in_debug.h"
 #include "midi_passthrough.h"
-#include "tempo.h"
 #include "elite.h"
 #include "ui.h"
 #include "shared_canvas_buffer.h"
@@ -73,7 +71,11 @@ void app_main(void) {
   display_init();
   shared_canvas_buffer_init();  // Must be called before ui_init()
   ui_init();
-  ui_set_draw_module(&summoner_module);
+  
+  transport_init();
+  tempo_init();
+  
+  ui_set_draw_module(&splash_module);
   display_start();
 
   firmware_update_init();
@@ -83,10 +85,6 @@ void app_main(void) {
   curve_init();
   tinyusb_init_and_start();
   usb_cdc_update_init();
-  
-  // Initialize transport and tempo BEFORE MIDI IN so source is set correctly
-  transport_init();
-  tempo_init();
   
   midi_in_init();
   midi_in_debug_init();
@@ -105,7 +103,6 @@ void app_main(void) {
   bump_init(false);
   haptic_init();
   led_init();
-  flicker_start();
   
   midi_out_init();
   tempo_start();
@@ -133,6 +130,11 @@ void app_main(void) {
   screensaver_init();
 
   console_repl_init();
+
+  // Now that all tasks are created and memory is settled, load the UI module
+  // The tempo module triggers decompression of animated vector art which
+  // uses significant memory - doing this last prevents resource contention
+  ui_set_draw_module(&tempo_module);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();

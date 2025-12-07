@@ -4,7 +4,7 @@
 // System priorities (higher number = higher priority)
 #define TASK_PRIORITY_MONITOR         2
 #define TASK_PRIORITY_DEFAULT         5
-#define TASK_PRIORITY_LED             tskIDLE_PRIORITY
+#define TASK_PRIORITY_LED             4  // Slightly below default to sync with event bus
 
 // Component-specific priorities
 #define TASK_PRIORITY_SENSOR_ALS      TASK_PRIORITY_DEFAULT

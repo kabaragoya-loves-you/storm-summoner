@@ -21,7 +21,6 @@
 #include "tempo_console.h"
 #include "transport_console.h"
 #include "clock_sync_console.h"
-#include "led_console.h"
 #include "haptic_console.h"
 #include "display_console.h"
 #include "ui_console.h"
@@ -249,7 +248,7 @@ esp_err_t console_repl_init(void) {
   console_register_context("tempo", tempo_console_init, tempo_console_cleanup);
   console_register_context("transport", transport_console_init, transport_console_cleanup);
   console_register_context("clock_sync", clock_sync_console_init, clock_sync_console_cleanup);
-  console_register_context("led", led_console_init, led_console_cleanup);
+  // Note: LED commands are now part of the tempo context
   console_register_context("haptic", haptic_console_init, haptic_console_cleanup);
   console_register_context("display", display_console_init, display_console_cleanup);
   console_register_context("ui", ui_console_init, ui_console_cleanup);

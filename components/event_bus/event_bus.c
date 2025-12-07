@@ -280,7 +280,15 @@ esp_err_t event_bus_post(const event_t* event) {
   event_bus_state.stats.events_posted++;
   #endif
   
-  if (xQueueSend(event_bus_state.queue, event, pdMS_TO_TICKS(10)) != pdTRUE) {
+  // Critical priority events jump to the front of the queue for minimal latency
+  BaseType_t result;
+  if (event->priority == EVENT_PRIORITY_CRITICAL) {
+    result = xQueueSendToFront(event_bus_state.queue, event, pdMS_TO_TICKS(10));
+  } else {
+    result = xQueueSend(event_bus_state.queue, event, pdMS_TO_TICKS(10));
+  }
+  
+  if (result != pdTRUE) {
     #if EVENT_BUS_ENABLE_STATISTICS
     event_bus_state.stats.events_dropped++;
     #endif

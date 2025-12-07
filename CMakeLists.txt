@@ -113,7 +113,6 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_tempo>"
     "$<TARGET_FILE:__idf_transport>"
     "$<TARGET_FILE:__idf_clock_sync>"
-    "$<TARGET_FILE:__idf_led>"
     "$<TARGET_FILE:__idf_haptic>"
     "$<TARGET_FILE:__idf_display>"
     "$<TARGET_FILE:__idf_ui>"

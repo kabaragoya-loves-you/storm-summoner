@@ -3,6 +3,6 @@ idf_component_register(
     "tempo.c"
     "tempo_console.c"
   INCLUDE_DIRS "include"
-  REQUIRES log app_settings event_bus transport midi freertos esp_timer console led
+  REQUIRES log app_settings event_bus transport midi freertos esp_timer console driver
   PRIV_REQUIRES main
 )

@@ -19,4 +19,6 @@ idf_component_register(
         "menu"
         "display"
         "miniz"
+        "tempo"
+        "transport"
 )

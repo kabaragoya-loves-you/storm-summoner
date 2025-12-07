@@ -1,6 +1,5 @@
 #include "tempo.h"
 #include "transport.h"
-#include "led.h"
 #include "event_bus.h"
 #include "midi_messages.h"
 #include "midi_out.h"
@@ -12,12 +11,15 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "driver/gpio.h"
+#include "io.h"
 #include <string.h>
 
 #define TAG "TEMPO"
+
+// Tempo NVS keys
 #define NVS_KEY_BPM "tempo_bpm"
 #define NVS_KEY_LED_SYNC "tempo_led_sync"
-#define NVS_KEY_LED_EMPHASIZE "tempo_led_emph"
 #define NVS_KEY_LED_RATIO "tempo_led_ratio"
 #define NVS_KEY_BPM_DEADZONE "tempo_deadzone"
 #define NVS_KEY_CLOCK_OUTPUT "tempo_clk_out"
@@ -25,6 +27,12 @@
 #define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
 #define NVS_KEY_TAP_MODE "tempo_tap_mode"
 #define NVS_KEY_TAP_TIMEOUT "tempo_tap_to"
+
+// LED NVS keys
+#define LED_ENABLED_KEY "led_enabled"
+#define LED_MODE_KEY "led_mode"
+#define LED_SUNDIAL_KEY "led_sundial"
+
 // Note: NVS_KEY_TIME_SIG_NUM, NVS_KEY_TIME_SIG_DEN, and NVS_KEY_CLOCK_STD removed
 // These are now per-scene settings stored in scene JSON files
 
@@ -40,13 +48,24 @@ static tempo_clock_source_t s_clock_source = CLOCK_SOURCE_INTERNAL;
 static tempo_clock_standard_t s_clock_standard = CLOCK_STANDARD_24PPQN;  // Default to 24ppqn
 static time_signature_t s_time_signature = {4, 4};  // Default 4/4
 static bool s_led_sync_enabled = false;
-static bool s_led_emphasize_downbeat = true;  // Make beat 1 different
 static uint8_t s_led_flash_ratio = 3;  // Flash duration as % of beat (1-10, default 3%)
 static tempo_note_divider_t s_note_divider = DIVIDER_QUARTER;
 static uint8_t s_bpm_deadzone = 0;  // BPM change deadzone (0 = no deadzone, 1-5 = ignore ±N BPM changes)
 static clock_output_t s_clock_output = CLOCK_OUTPUT_BOTH;  // Where to send clock (USB, UART, BOTH, NONE)
 static bool s_clock_always_send = true;  // Send clock even when transport stopped
 static bool s_disable_clock_on_passthrough = true;  // Auto-disable clock when passthrough active
+
+// LED state variables
+static bool s_led_enabled = true;
+static bool s_led_solid_on_mode = false;
+static led_mode_t s_led_mode = LED_MODE_DAYLIGHT;
+static bool s_led_sundial_mode = true;   // Default: sundial on for magical first experience
+static esp_timer_handle_t s_led_off_timer = NULL;
+
+// Sundial mode thresholds (ALS CC value 0-127)
+#define ALS_DARK_THRESHOLD 32    // Below this = nighttime
+#define ALS_LIGHT_THRESHOLD 64   // Above this = daylight
+// Hysteresis prevents rapid switching
 
 // Task and timing
 static TaskHandle_t s_tempo_task_handle = NULL;
@@ -80,6 +99,13 @@ static void publish_beat_event(void);
 static void publish_tempo_changed_event(void);
 static void update_midi_out_clock_settings(void);
 
+// LED forward declarations
+static void led_als_event_handler(const event_t* event, void* context);
+static void led_transport_state_handler(const event_t* event, void* context);
+static void led_off_timer_callback(void* arg);
+static int get_gpio_level_for_on(void);
+static int get_gpio_level_for_off(void);
+
 void tempo_init(void) {
   ESP_LOGI(TAG, "Initializing tempo component");
   
@@ -105,9 +131,6 @@ void tempo_init(void) {
   
   uint8_t led_sync = 0;
   if (app_settings_load_u8(NVS_KEY_LED_SYNC, &led_sync) == ESP_OK) s_led_sync_enabled = (led_sync != 0);
-  
-  uint8_t led_emphasize = 1;
-  if (app_settings_load_u8(NVS_KEY_LED_EMPHASIZE, &led_emphasize) == ESP_OK) s_led_emphasize_downbeat = (led_emphasize != 0);
   
   uint8_t led_ratio = 3;
   if (app_settings_load_u8(NVS_KEY_LED_RATIO, &led_ratio) == ESP_OK && led_ratio >= 1 && led_ratio <= 10) s_led_flash_ratio = led_ratio;
@@ -410,10 +433,22 @@ static void transport_state_handler(const event_t* event, void* context) {
 }
 
 static void publish_beat_event(void) {
-  // Publish beat event
+  // Flash LED FIRST if sync is enabled - flash_led() is now synchronous (no task)
+  if (s_led_sync_enabled && s_led_enabled && !s_led_solid_on_mode) {
+    uint32_t beat_duration_ms = 60000 / s_bpm;
+    uint32_t flash_duration_ms = (beat_duration_ms * s_led_flash_ratio) / 100;
+    if (flash_duration_ms < 10) flash_duration_ms = 10;  // Minimum 10ms
+    if (flash_duration_ms > 200) flash_duration_ms = 200;  // Maximum 200ms
+    flash_led(flash_duration_ms);  // Turns LED on immediately, schedules timer for off
+  }
+  
+  // Log beat timing for synchronization debugging
+  ESP_LOGD(TAG, "BEAT %d/%d", s_beat_counter, s_time_signature.numerator);
+  
+  // Publish beat event with CRITICAL priority to minimize UI latency
   event_t beat_event = {
     .type = EVENT_BEAT,
-    .priority = EVENT_PRIORITY_NORMAL,
+    .priority = EVENT_PRIORITY_CRITICAL,
     .timestamp = event_bus_get_current_timestamp(),
     .data.beat = {
       .beat_in_bar = s_beat_counter,
@@ -421,33 +456,6 @@ static void publish_beat_event(void) {
     }
   };
   event_bus_post(&beat_event);
-  
-  // Handle LED sync if enabled
-  if (s_led_sync_enabled) {
-    uint32_t duration_ms;
-    
-    // Calculate beat duration
-    uint32_t beat_duration_ms = 60000 / s_bpm;
-    
-    // Calculate flash duration based on ratio (percentage of beat)
-    duration_ms = (beat_duration_ms * s_led_flash_ratio) / 100;
-    
-    // Emphasize downbeat if enabled (2x longer)
-    if (s_led_emphasize_downbeat && s_beat_counter == 1) {
-      duration_ms *= 2;
-    }
-    
-    // Request LED flash
-    event_t led_event = {
-      .type = EVENT_LED_FLASH_REQUEST,
-      .priority = EVENT_PRIORITY_NORMAL,
-      .timestamp = event_bus_get_current_timestamp(),
-      .data.led_flash = {
-        .duration_ms = duration_ms
-      }
-    };
-    event_bus_post(&led_event);
-  }
 }
 
 static void publish_tempo_changed_event(void) {
@@ -838,20 +846,6 @@ void tempo_set_led_sync(bool enabled) {
   // Save to NVS
   app_settings_save_u8(NVS_KEY_LED_SYNC, enabled ? 1 : 0);
   
-  // If enabling LED sync, stop flicker (will restore when disabled)
-  if (enabled) {
-    if (flicker_is_running()) {
-      flicker_stop();
-      ESP_LOGI(TAG, "Stopped flicker for tempo sync");
-    }
-  } else {
-    // If disabling and user had flicker preference enabled, restart it
-    if (led_get_flicker_preference()) {
-      flicker_start();
-      ESP_LOGI(TAG, "Restored flicker based on user preference");
-    }
-  }
-  
   ESP_LOGI(TAG, "LED sync %s", enabled ? "enabled" : "disabled");
 }
 
@@ -862,21 +856,6 @@ bool tempo_get_led_sync(void) {
   return enabled;
 }
 
-void tempo_set_led_emphasize_downbeat(bool emphasize) {
-  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-  s_led_emphasize_downbeat = emphasize;
-  xSemaphoreGive(s_state_mutex);
-  
-  app_settings_save_u8(NVS_KEY_LED_EMPHASIZE, emphasize ? 1 : 0);
-  ESP_LOGI(TAG, "LED downbeat emphasis %s", emphasize ? "enabled" : "disabled");
-}
-
-bool tempo_get_led_emphasize_downbeat(void) {
-  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-  bool emphasize = s_led_emphasize_downbeat;
-  xSemaphoreGive(s_state_mutex);
-  return emphasize;
-}
 
 void tempo_set_led_flash_ratio(uint8_t ratio) {
   if (ratio < 1 || ratio > 10) {
@@ -991,4 +970,204 @@ bool tempo_get_disable_clock_on_passthrough(void) {
   bool disable = s_disable_clock_on_passthrough;
   xSemaphoreGive(s_state_mutex);
   return disable;
+}
+
+// ============================================================================
+// LED Implementation (merged from led component)
+// ============================================================================
+
+// Get the actual GPIO level based on mode (daylight vs nighttime inversion)
+// When transport is playing, force daylight mode for better visibility
+static int get_gpio_level_for_on(void) {
+  // Check if transport is active - if so, always use daylight mode (LED flash on)
+  if (transport_is_playing()) return 1;  // Force daylight mode when playing
+  return (s_led_mode == LED_MODE_DAYLIGHT) ? 1 : 0;  // Nighttime inverts
+}
+
+static int get_gpio_level_for_off(void) {
+  // Check if transport is active - if so, always use daylight mode (LED off when not flashing)
+  if (transport_is_playing()) return 0;  // Force daylight mode when playing
+  return (s_led_mode == LED_MODE_DAYLIGHT) ? 0 : 1;  // Nighttime inverts
+}
+
+// Handle ALS events for sundial mode
+static void led_als_event_handler(const event_t* event, void* context) {
+  if (!s_led_sundial_mode) return;
+  if (event->type != EVENT_SENSOR_ALS) return;
+  
+  uint8_t als_value = event->data.sensor.value;
+  
+  // Switch to nighttime if dark
+  if (als_value < ALS_DARK_THRESHOLD && s_led_mode == LED_MODE_DAYLIGHT) {
+    ESP_LOGI(TAG, "Sundial: Switching to nighttime mode (ALS=%d)", als_value);
+    led_set_mode(LED_MODE_NIGHTTIME);
+  }
+  // Switch to daylight if bright
+  else if (als_value > ALS_LIGHT_THRESHOLD && s_led_mode == LED_MODE_NIGHTTIME) {
+    ESP_LOGI(TAG, "Sundial: Switching to daylight mode (ALS=%d)", als_value);
+    led_set_mode(LED_MODE_DAYLIGHT);
+  }
+}
+
+// Handle transport state changes to update LED baseline
+static void led_transport_state_handler(const event_t* event, void* context) {
+  if (event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
+  
+  transport_state_t state = event->data.transport.state;
+  
+  // Update LED baseline when transport stops
+  if (state == TRANSPORT_STOPPED) {
+    led_restore_baseline();
+    ESP_LOGD(TAG, "Transport stopped, LED baseline restored (mode=%s, enabled=%s)",
+      s_led_mode == LED_MODE_NIGHTTIME ? "nighttime" : "daylight",
+      s_led_enabled ? "yes" : "no");
+  }
+}
+
+// LED off timer callback - turns LED off after flash duration
+static void led_off_timer_callback(void* arg) {
+  if (!s_led_solid_on_mode) {
+    gpio_set_level(PIN_LED, get_gpio_level_for_off());
+  }
+}
+
+void led_init(void) {
+  gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << PIN_LED),
+    .mode = GPIO_MODE_OUTPUT,
+    .pull_up_en = GPIO_PULLUP_DISABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE
+  };
+  gpio_config(&io_conf);
+
+  // Create one-shot timer for LED off
+  const esp_timer_create_args_t timer_args = {
+    .callback = led_off_timer_callback,
+    .name = "led_off"
+  };
+  esp_err_t timer_err = esp_timer_create(&timer_args, &s_led_off_timer);
+  if (timer_err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create LED off timer: %s", esp_err_to_name(timer_err));
+    s_led_off_timer = NULL;
+  }
+
+  // Load settings from NVS
+  bool saved_enabled;
+  if (app_settings_load_bool(LED_ENABLED_KEY, &saved_enabled) == ESP_OK) {
+    s_led_enabled = saved_enabled;
+  }
+  
+  uint8_t mode_val;
+  if (app_settings_load_u8(LED_MODE_KEY, &mode_val) == ESP_OK) {
+    s_led_mode = (led_mode_t)mode_val;
+  }
+  
+  bool saved_sundial;
+  if (app_settings_load_bool(LED_SUNDIAL_KEY, &saved_sundial) == ESP_OK) {
+    s_led_sundial_mode = saved_sundial;
+  }
+  
+  // Set initial LED state based on mode
+  gpio_set_level(PIN_LED, (s_led_mode == LED_MODE_NIGHTTIME && s_led_enabled) ? 1 : 0);
+
+  ESP_LOGI(TAG, "UV LED initialized: enabled=%s, mode=%s, sundial=%s", 
+           s_led_enabled ? "yes" : "no",
+           s_led_mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime",
+           s_led_sundial_mode ? "yes" : "no");
+  
+  if (s_led_sundial_mode) {
+    ESP_LOGI(TAG, "Sundial mode enabled - will auto-switch based on ambient light");
+  }
+  
+  // Subscribe to ALS events for sundial mode
+  event_bus_subscribe(EVENT_SENSOR_ALS, led_als_event_handler, NULL);
+  
+  // Subscribe to transport state changes for LED baseline restore
+  event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, led_transport_state_handler, NULL);
+}
+
+void led_set_on(void) {
+  if (!s_led_enabled) return;
+  s_led_solid_on_mode = true;
+  gpio_set_level(PIN_LED, get_gpio_level_for_on());
+}
+
+void led_set_off(void) {
+  s_led_solid_on_mode = false;
+  gpio_set_level(PIN_LED, get_gpio_level_for_off());
+}
+
+void led_restore_baseline(void) {
+  if (s_led_solid_on_mode) return;  // Don't override solid mode
+  
+  // Set LED to appropriate state based on current mode
+  // (ignoring transport state - this is for returning to normal)
+  if (s_led_mode == LED_MODE_NIGHTTIME && s_led_enabled) {
+    gpio_set_level(PIN_LED, 1);
+  } else {
+    gpio_set_level(PIN_LED, 0);
+  }
+}
+
+void flash_led(uint32_t duration) {
+  if (!s_led_enabled || s_led_solid_on_mode || !s_led_off_timer) return;
+  
+  // Turn LED on immediately
+  gpio_set_level(PIN_LED, get_gpio_level_for_on());
+  
+  // Stop any pending timer and start new one-shot for LED off
+  esp_timer_stop(s_led_off_timer);  // Safe even if not running
+  esp_timer_start_once(s_led_off_timer, duration * 1000);  // Convert ms to us
+}
+
+void led_set_enabled(bool enabled) {
+  s_led_enabled = enabled;
+  esp_err_t ret = app_settings_save_bool(LED_ENABLED_KEY, enabled);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to save LED enabled state: %s", esp_err_to_name(ret));
+  } else {
+    ESP_LOGI(TAG, "LED enabled state set to: %s", enabled ? "true" : "false");
+  }
+}
+
+bool led_get_enabled(void) {
+  return s_led_enabled;
+}
+
+esp_err_t led_set_mode(led_mode_t mode) {
+  s_led_mode = mode;
+  
+  // Update LED state to match new mode
+  if (!s_led_solid_on_mode) {
+    gpio_set_level(PIN_LED, (s_led_mode == LED_MODE_NIGHTTIME && s_led_enabled) ? 1 : 0);
+    ESP_LOGD(TAG, "LED baseline set to: %s", (s_led_mode == LED_MODE_NIGHTTIME) ? "on (nighttime)" : "off (daylight)");
+  }
+  
+  esp_err_t ret = app_settings_save_u8(LED_MODE_KEY, (uint8_t)mode);
+  
+  ESP_LOGI(TAG, "LED mode set to: %s", mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime");
+  return ret;
+}
+
+led_mode_t led_get_mode(void) {
+  return s_led_mode;
+}
+
+esp_err_t led_set_sundial_mode(bool enabled) {
+  s_led_sundial_mode = enabled;
+  
+  esp_err_t ret = app_settings_save_bool(LED_SUNDIAL_KEY, enabled);
+  
+  ESP_LOGI(TAG, "Sundial mode %s", enabled ? "enabled" : "disabled");
+  if (enabled) {
+    ESP_LOGI(TAG, "Will auto-switch day/night based on ambient light");
+    ESP_LOGI(TAG, "Dark threshold: %d, Light threshold: %d", ALS_DARK_THRESHOLD, ALS_LIGHT_THRESHOLD);
+  }
+  
+  return ret;
+}
+
+bool led_get_sundial_mode(void) {
+  return s_led_sundial_mode;
 }

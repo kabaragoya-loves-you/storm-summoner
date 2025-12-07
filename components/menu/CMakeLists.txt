@@ -53,7 +53,6 @@ idf_component_register(
     clock_sync
     transport
     input_manager
-    led
     buttons
     bump
     switch

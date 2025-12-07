@@ -5,11 +5,18 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
+// Clock source types
 typedef enum {
   CLOCK_SOURCE_INTERNAL,
   CLOCK_SOURCE_MIDI,
   CLOCK_SOURCE_SYNC
 } tempo_clock_source_t;
+
+// LED operational modes (day/night)
+typedef enum {
+  LED_MODE_DAYLIGHT,    // Off by default, turn on explicitly
+  LED_MODE_NIGHTTIME    // On by default, turn off explicitly (inverted)
+} led_mode_t;
 
 typedef enum {
   CLOCK_OUTPUT_NONE = 0,
@@ -93,8 +100,6 @@ time_signature_t tempo_get_time_signature(void);
 // LED sync control
 void tempo_set_led_sync(bool enabled);
 bool tempo_get_led_sync(void);
-void tempo_set_led_emphasize_downbeat(bool emphasize);
-bool tempo_get_led_emphasize_downbeat(void);
 void tempo_set_led_flash_ratio(uint8_t ratio);
 uint8_t tempo_get_led_flash_ratio(void);
 
@@ -113,5 +118,31 @@ void tempo_set_clock_always_send(bool always_send);
 bool tempo_get_clock_always_send(void);
 void tempo_set_disable_clock_on_passthrough(bool disable);
 bool tempo_get_disable_clock_on_passthrough(void);
+
+// ============================================================================
+// LED Control (merged from led component)
+// ============================================================================
+
+// Initialize LED hardware and settings (call after tempo_init)
+void led_init(void);
+
+// Direct LED control
+void flash_led(uint32_t duration);  // Flash for duration (non-blocking)
+void led_set_on(void);              // Turn LED on (solid)
+void led_set_off(void);             // Turn LED off
+void led_restore_baseline(void);    // Restore LED to normal day/night mode state
+
+// Day/Night mode
+esp_err_t led_set_mode(led_mode_t mode);
+led_mode_t led_get_mode(void);
+
+// Sundial mode - auto-switch day/night based on ambient light sensor
+// Note: Requires sensor_init() and als_enable() to be called
+esp_err_t led_set_sundial_mode(bool enabled);
+bool led_get_sundial_mode(void);
+
+// Global enable/disable
+void led_set_enabled(bool enabled);
+bool led_get_enabled(void);
 
 #endif /* _TEMPO_H */

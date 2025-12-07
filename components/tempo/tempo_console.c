@@ -9,8 +9,10 @@ static const char* TAG = "tempo_console";
 
 static const char* registered_commands[] = {
   "info", "bpm", "tap", "tap_tempo", "tap_mode", "tap_timeout", "start", "stop", 
-  "led_sync", "led_downbeat", "led_ratio", "deadzone",
-  "clock_output", "clock_always", "clock_no_passthrough"
+  "led_sync", "led_ratio", "deadzone",
+  "clock_output", "clock_always", "clock_no_passthrough",
+  // LED commands (merged from led component)
+  "led_on", "led_off", "led_flash", "led_enable", "led_mode", "led_sundial", "led_info"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -56,9 +58,7 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "LED sync: %s", led_sync ? "enabled" : "disabled");
   if (led_sync) {
-    bool emphasize = tempo_get_led_emphasize_downbeat();
     uint8_t ratio = tempo_get_led_flash_ratio();
-    ESP_LOGI(TAG, "  Downbeat emphasis: %s", emphasize ? "yes" : "no");
     ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
   }
   ESP_LOGI(TAG, "");
@@ -200,28 +200,6 @@ static int cmd_led_sync(int argc, char **argv) {
   return 0;
 }
 
-// Command: led_downbeat
-static struct {
-  struct arg_str *state;
-  struct arg_end *end;
-} led_downbeat_args;
-
-static int cmd_led_downbeat(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &led_downbeat_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, led_downbeat_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* state_str = led_downbeat_args.state->sval[0];
-  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
-  
-  tempo_set_led_emphasize_downbeat(enable);
-  ESP_LOGI(TAG, "Downbeat emphasis: %s (beat 1 %s)", enable ? "enabled" : "disabled", enable ? "2x longer" : "same length");
-  
-  return 0;
-}
-
 // Command: led_ratio
 static struct {
   struct arg_int *ratio;
@@ -349,6 +327,147 @@ static int cmd_clock_no_passthrough(int argc, char **argv) {
   return 0;
 }
 
+// ============================================================================
+// LED Commands (merged from led component)
+// ============================================================================
+
+// Command: led_on
+static int cmd_led_on(int argc, char **argv) {
+  ESP_LOGI(TAG, "LED on");
+  led_set_on();
+  return 0;
+}
+
+// Command: led_off
+static int cmd_led_off(int argc, char **argv) {
+  ESP_LOGI(TAG, "LED off");
+  led_set_off();
+  return 0;
+}
+
+// Command: led_flash
+static struct {
+  struct arg_int *duration;
+  struct arg_end *end;
+} led_flash_args;
+
+static int cmd_led_flash(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &led_flash_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, led_flash_args.end, argv[0]);
+    return 1;
+  }
+  
+  int duration = led_flash_args.duration->ival[0];
+  ESP_LOGI(TAG, "Flashing LED for %d ms", duration);
+  flash_led((uint32_t)duration);
+  
+  return 0;
+}
+
+// Command: led_enable
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} led_enable_args;
+
+static int cmd_led_enable(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &led_enable_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, led_enable_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* state_str = led_enable_args.state->sval[0];
+  bool enable;
+  
+  if (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0) {
+    enable = true;
+  } else if (strcmp(state_str, "off") == 0 || strcmp(state_str, "0") == 0) {
+    enable = false;
+  } else {
+    ESP_LOGE(TAG, "Use: on or off");
+    return 1;
+  }
+  
+  led_set_enabled(enable);
+  ESP_LOGI(TAG, "LED %s", enable ? "enabled" : "disabled");
+  
+  return 0;
+}
+
+// Command: led_info
+static int cmd_led_info(int argc, char **argv) {
+  bool enabled = led_get_enabled();
+  led_mode_t mode = led_get_mode();
+  bool sundial = led_get_sundial_mode();
+  bool led_sync = tempo_get_led_sync();
+  
+  ESP_LOGI(TAG, "====== LED STATUS ======");
+  ESP_LOGI(TAG, "Enabled: %s", enabled ? "yes" : "no");
+  ESP_LOGI(TAG, "Mode: %s", mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime");
+  ESP_LOGI(TAG, "Sundial mode: %s", sundial ? "yes" : "no");
+  ESP_LOGI(TAG, "Tempo sync: %s", led_sync ? "yes" : "no");
+  if (led_sync) {
+    uint8_t ratio = tempo_get_led_flash_ratio();
+    ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
+  }
+  ESP_LOGI(TAG, "========================");
+  
+  return 0;
+}
+
+// Command: led_mode
+static struct {
+  struct arg_str *mode_name;
+  struct arg_end *end;
+} led_mode_args;
+
+static int cmd_led_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &led_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, led_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode_str = led_mode_args.mode_name->sval[0];
+  
+  if (strcmp(mode_str, "daylight") == 0 || strcmp(mode_str, "day") == 0) {
+    led_set_mode(LED_MODE_DAYLIGHT);
+    ESP_LOGI(TAG, "LED mode: Daylight (off by default)");
+  } else if (strcmp(mode_str, "nighttime") == 0 || strcmp(mode_str, "night") == 0) {
+    led_set_mode(LED_MODE_NIGHTTIME);
+    ESP_LOGI(TAG, "LED mode: Nighttime (on by default, inverted)");
+  } else {
+    ESP_LOGE(TAG, "Unknown mode: %s (use 'daylight' or 'nighttime')", mode_str);
+    return 1;
+  }
+  
+  return 0;
+}
+
+// Command: led_sundial
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} led_sundial_args;
+
+static int cmd_led_sundial(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &led_sundial_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, led_sundial_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* state_str = led_sundial_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  
+  led_set_sundial_mode(enable);
+  ESP_LOGI(TAG, "Sundial mode: %s (auto day/night based on ambient light)", enable ? "enabled" : "disabled");
+  
+  return 0;
+}
+
 esp_err_t tempo_console_init(void) {
   ESP_LOGI(TAG, "Registering tempo commands");
   
@@ -449,19 +568,6 @@ esp_err_t tempo_console_init(void) {
   };
   esp_console_cmd_register(&led_sync_cmd);
   
-  // led_downbeat command
-  led_downbeat_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
-  led_downbeat_args.end = arg_end(2);
-  
-  const esp_console_cmd_t led_downbeat_cmd = {
-    .command = "led_downbeat",
-    .help = "Emphasize beat 1 (2x longer flash)",
-    .hint = NULL,
-    .func = &cmd_led_downbeat,
-    .argtable = &led_downbeat_args
-  };
-  esp_console_cmd_register(&led_downbeat_cmd);
-  
   // led_ratio command
   led_ratio_args.ratio = arg_int1(NULL, NULL, "<1-10>", "Flash % of beat");
   led_ratio_args.end = arg_end(2);
@@ -526,6 +632,87 @@ esp_err_t tempo_console_init(void) {
     .argtable = &clock_no_pt_args
   };
   esp_console_cmd_register(&clock_no_pt_cmd);
+  
+  // ========== LED Commands ==========
+  
+  // led_on command
+  const esp_console_cmd_t led_on_cmd = {
+    .command = "led_on",
+    .help = "Turn LED on",
+    .hint = NULL,
+    .func = &cmd_led_on,
+  };
+  esp_console_cmd_register(&led_on_cmd);
+  
+  // led_off command
+  const esp_console_cmd_t led_off_cmd = {
+    .command = "led_off",
+    .help = "Turn LED off",
+    .hint = NULL,
+    .func = &cmd_led_off,
+  };
+  esp_console_cmd_register(&led_off_cmd);
+  
+  // led_flash command
+  led_flash_args.duration = arg_int1(NULL, NULL, "<ms>", "Flash duration in ms");
+  led_flash_args.end = arg_end(2);
+  
+  const esp_console_cmd_t led_flash_cmd = {
+    .command = "led_flash",
+    .help = "Flash LED",
+    .hint = NULL,
+    .func = &cmd_led_flash,
+    .argtable = &led_flash_args
+  };
+  esp_console_cmd_register(&led_flash_cmd);
+  
+  // led_enable command
+  led_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  led_enable_args.end = arg_end(2);
+  
+  const esp_console_cmd_t led_enable_cmd = {
+    .command = "led_enable",
+    .help = "Enable/disable LED",
+    .hint = NULL,
+    .func = &cmd_led_enable,
+    .argtable = &led_enable_args
+  };
+  esp_console_cmd_register(&led_enable_cmd);
+  
+  // led_info command
+  const esp_console_cmd_t led_info_cmd = {
+    .command = "led_info",
+    .help = "Show LED status",
+    .hint = NULL,
+    .func = &cmd_led_info,
+  };
+  esp_console_cmd_register(&led_info_cmd);
+  
+  // led_mode command
+  led_mode_args.mode_name = arg_str1(NULL, NULL, "<daylight|nighttime>", "LED mode");
+  led_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t led_mode_cmd = {
+    .command = "led_mode",
+    .help = "Set LED mode (daylight/nighttime)",
+    .hint = NULL,
+    .func = &cmd_led_mode,
+    .argtable = &led_mode_args
+  };
+  esp_console_cmd_register(&led_mode_cmd);
+  
+  // led_sundial command
+  led_sundial_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  led_sundial_args.end = arg_end(2);
+  
+  const esp_console_cmd_t led_sundial_cmd = {
+    .command = "led_sundial",
+    .help = "Auto day/night mode based on ambient light",
+    .hint = NULL,
+    .func = &cmd_led_sundial,
+    .argtable = &led_sundial_args
+  };
+  esp_console_cmd_register(&led_sundial_cmd);
   
   return ESP_OK;
 }

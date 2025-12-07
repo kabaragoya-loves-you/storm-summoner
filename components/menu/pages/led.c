@@ -1,6 +1,6 @@
 #include "menu.h"
 #include "menu_pages.h"
-#include "led.h"
+#include "tempo.h"
 #include "esp_log.h"
 #include <stdio.h>
 
@@ -10,19 +10,16 @@ static void show_info(void) {
   bool enabled = led_get_enabled();
   led_mode_t mode = led_get_mode();
   bool sundial = led_get_sundial_mode();
-  bool flicker_running = flicker_is_running();
   
   char info_text[256];
   snprintf(info_text, sizeof(info_text),
     "LED STATUS\n"
     "Enabled: %s\n"
     "Mode: %s\n"
-    "Sundial mode: %s\n"
-    "Flicker: %s",
+    "Sundial mode: %s",
     enabled ? "yes" : "no",
     mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime",
-    sundial ? "yes" : "no",
-    flicker_running ? "running" : "stopped");
+    sundial ? "yes" : "no");
   
   menu_navigate_to_info("LED Info", info_text);
 }
@@ -30,12 +27,9 @@ static void show_info(void) {
 static void action_on(void) { led_set_on(); ESP_LOGI(TAG, "LED on"); }
 static void action_off(void) { led_set_off(); ESP_LOGI(TAG, "LED off"); }
 static void action_flash(void) {
-  // TODO: Implement flash duration selector
   flash_led(100); // Default 100ms
   ESP_LOGI(TAG, "LED flashed");
 }
-static void action_flicker_start(void) { flicker_start(); ESP_LOGI(TAG, "Flicker started"); }
-static void action_flicker_stop(void) { flicker_stop(); ESP_LOGI(TAG, "Flicker stopped"); }
 static void toggle_enable(void) {
   bool enabled = led_get_enabled();
   led_set_enabled(!enabled);
@@ -57,8 +51,6 @@ lv_obj_t* menu_page_led_create(void) {
     { "On", action_on, false },
     { "Off", action_off, false },
     { "Flash", action_flash, false },
-    { "Flicker Start", action_flicker_start, false },
-    { "Flicker Stop", action_flicker_stop, false },
     { "Enable", toggle_enable, false },
     { "Mode: Daylight", set_mode_daylight, false },
     { "Mode: Nighttime", set_mode_nighttime, false },
@@ -68,4 +60,3 @@ lv_obj_t* menu_page_led_create(void) {
   return menu_create_page("LED", led_items, 
     sizeof(led_items) / sizeof(led_items[0]));
 }
-

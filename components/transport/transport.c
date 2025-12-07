@@ -90,8 +90,9 @@ static void set_state(transport_state_t new_state, transport_source_t source) {
     
     ESP_LOGI(TAG, "State changed: %d -> %d (source: %d)", old_state, new_state, source);
     
-    // Reset position when starting playback from stopped state
-    if (old_state == TRANSPORT_STOPPED && (new_state == TRANSPORT_PLAYING || new_state == TRANSPORT_RECORDING)) {
+    // Reset position when stopping - "stop" means return to beginning
+    // Play/Record from stopped or paused continues from current position
+    if (new_state == TRANSPORT_STOPPED) {
       xSemaphoreTake(s_position_mutex, portMAX_DELAY);
       s_current_bar = 1;
       s_current_beat = 1;
@@ -309,26 +310,24 @@ esp_err_t transport_toggle(void) {
   }
 }
 
-// Tempo beat event handler - advances position tracking
+// Tempo beat event handler - syncs position with tempo
 static void tempo_beat_handler(const event_t* event, void* context) {
   if (!event) return;
   
   // Only track position when playing or recording
   if (!transport_is_playing()) return;
   
-  // Get current time signature from tempo
-  time_signature_t sig = tempo_get_time_signature();
-  
   xSemaphoreTake(s_position_mutex, portMAX_DELAY);
   
-  // Advance beat
-  s_current_beat++;
+  // Sync beat with tempo's beat counter from the event
+  uint8_t beat_in_bar = event->data.beat.beat_in_bar;
   
-  // Check if we've completed a bar
-  if (s_current_beat > sig.numerator) {
-    s_current_beat = 1;
+  // If beat wrapped to 1, we've completed a bar
+  if (beat_in_bar == 1 && s_current_beat > 1) {
     s_current_bar++;
   }
+  
+  s_current_beat = beat_in_bar;
   
   xSemaphoreGive(s_position_mutex);
 }
