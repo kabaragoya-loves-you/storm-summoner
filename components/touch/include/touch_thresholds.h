@@ -41,5 +41,9 @@ esp_err_t touch_recover_pad_state(int pad_index);
 
 void touch_thresholds_request_calibration(touch_calibration_reason_t reason, bool force);
 
+// Process any pending calibration requests (called from health check task)
+// Returns true if a calibration was processed
+bool touch_thresholds_process_pending(void);
+
 #endif // TOUCH_THRESHOLDS_H_
 

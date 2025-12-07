@@ -87,6 +87,11 @@ static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pa
 #define STUCK_TOUCH_TIMEOUT_DEFAULT_MS 10000  // Default: 10 seconds (allows musical holds)
 #define NVS_STUCK_TIMEOUT_KEY "stuck_timeout"
 
+// Drift monitoring timing (integrated into health check to save memory)
+#define DRIFT_CHECK_INTERVAL_SECONDS 600  // Check for drift every 10 minutes
+#define DRIFT_STARTUP_DELAY_SECONDS 30    // Wait this long after boot before drift checks
+#define AUTO_CALIBRATE_ON_DRIFT true      // Auto-calibrate when drift detected
+
 // Configurable stuck touch timeout (loaded from NVS)
 static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 
@@ -265,12 +270,19 @@ static void touch_event_task(void *pvParameters) {
   }
 }
 
-// Lightweight periodic health check to catch missed events and sync state
+// Lightweight periodic health check to catch missed events, sync state, and monitor drift
 // Key insight: State mismatches (SW≠HW) are software bugs, not hardware issues.
 // Fixing the software state IS the solution - no recalibration needed.
+// Also handles drift monitoring (previously in separate task) to save ~6KB heap.
 static void touch_health_check_task(void *pvParameters) {
   // Wait for initialization to complete
   vTaskDelay(pdMS_TO_TICKS(5000));
+  
+  // Drift monitoring state (runs ~4x per second, so 4 iterations = 1 second)
+  uint32_t drift_check_counter = 0;
+  const uint32_t iterations_per_second = 1000 / HEALTH_CHECK_INTERVAL_MS;
+  const uint32_t startup_iterations = DRIFT_STARTUP_DELAY_SECONDS * iterations_per_second;
+  const uint32_t drift_check_iterations = DRIFT_CHECK_INTERVAL_SECONDS * iterations_per_second;
   
   while (s_health_check_running) {
     uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -378,9 +390,6 @@ static void touch_health_check_task(void *pvParameters) {
         }
       }
       
-      // NOTE: Drift checking is intentionally NOT done here.
-      // Real drift happens over minutes/hours, not seconds.
-      // The drift_monitor_task in touch_thresholds.c handles this (checks every 10 minutes).
     }
     
     // 6. Process Pending Recoveries (one at a time, only when system is truly idle)
@@ -401,6 +410,29 @@ static void touch_health_check_task(void *pvParameters) {
             s_last_any_touch_time = current_time; // Prevent back-to-back
             break; // Only one per cycle
           }
+        }
+      }
+    }
+    
+    // 7. Drift monitoring (integrated from former drift_monitor_task to save ~6KB heap)
+    drift_check_counter++;
+    
+    // Process any pending calibration requests (roughly once per second)
+    if ((drift_check_counter % iterations_per_second) == 0) {
+      if (touch_thresholds_process_pending()) {
+        drift_check_counter = startup_iterations; // Reset drift timer after calibration
+      }
+    }
+    
+    // After startup delay, check for drift periodically
+    if (drift_check_counter >= startup_iterations + drift_check_iterations) {
+      drift_check_counter = startup_iterations; // Reset to just past startup
+      
+      esp_err_t ret = touch_check_drift();
+      if (ret == ESP_FAIL) {
+        ESP_LOGW(TAG, "Drift detected - scheduling calibration");
+        if (AUTO_CALIBRATE_ON_DRIFT) {
+          touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_DRIFT, false);
         }
       }
     }

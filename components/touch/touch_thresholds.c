@@ -447,6 +447,20 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   return ESP_OK;
 }
 
+// Process any pending calibration requests
+// Called from the health check task in touch.c (merged to save memory)
+bool touch_thresholds_process_pending(void) {
+  calibration_request_t request;
+  if (fetch_calibration_request(&request)) {
+    run_calibration_sequence(request.reason, request.force);
+    return true;
+  }
+  return false;
+}
+
+// Legacy drift task code - kept for reference but no longer used
+// Drift monitoring is now handled by touch_health_check_task in touch.c
+#if 0
 static void drift_monitor_task(void *pvParameters) {
   vTaskDelay(pdMS_TO_TICKS(30000));
   const TickType_t wait_ticks = pdMS_TO_TICKS(1000);
@@ -499,7 +513,6 @@ static esp_err_t drift_task_start(void) {
   return ESP_OK;
 }
 
-__attribute__((unused))
 static esp_err_t drift_task_stop(void) {
   if (!s_drift_task_running) {
     ESP_LOGW(TAG, "Drift task not running");
@@ -516,6 +529,7 @@ static esp_err_t drift_task_stop(void) {
   ESP_LOGI(TAG, "Drift monitor task stopped successfully");
   return ESP_OK;
 }
+#endif
 
 void touch_thresholds_init(void) {
   touch_sensor_handle_t sens_handle = touch_get_sensor_handle();
@@ -583,8 +597,8 @@ void touch_thresholds_init(void) {
     touch_sensor_start_continuous_scanning(sens_handle);
   }
   
-  // Start drift monitoring (it will wait 30s before first check)
-  drift_task_start();
+  // Note: Drift monitoring is now handled by touch_health_check_task in touch.c
+  // to save memory (combined into one task instead of two)
 }
 
 static esp_err_t touch_calibrate_body(bool force) {
