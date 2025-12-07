@@ -113,7 +113,9 @@ uint32_t task_monitor_get_stack_hwm(TaskHandle_t task) {
 }
 
 void task_monitor_print_heap_info(void) {
-  ESP_LOGI(TAG, "=== Heap Usage Report ===");
+  ESP_LOGI(TAG, "============================================");
+  ESP_LOGI(TAG, "           HEAP USAGE REPORT");
+  ESP_LOGI(TAG, "============================================");
   
   // Total heap info
   uint32_t total_heap = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
@@ -126,34 +128,53 @@ void task_monitor_print_heap_info(void) {
   ESP_LOGI(TAG, "Min free heap ever: %u bytes", (unsigned)min_free_heap);
   ESP_LOGI(TAG, "Largest free block: %u bytes", (unsigned)largest_block);
   
+  ESP_LOGI(TAG, "--------------------------------------------");
+  ESP_LOGI(TAG, "INTERNAL RAM (critical for FreeRTOS stacks)");
+  ESP_LOGI(TAG, "--------------------------------------------");
+  
+  // Internal RAM breakdown - this is critical for FreeRTOS
+  uint32_t internal_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  uint32_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  uint32_t internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  uint32_t internal_used = internal_total - internal_free;
+  
+  ESP_LOGI(TAG, "Internal total:   %6u bytes", (unsigned)internal_total);
+  ESP_LOGI(TAG, "Internal used:    %6u bytes (%.1f%%)", (unsigned)internal_used, (internal_used * 100.0f) / internal_total);
+  ESP_LOGI(TAG, "Internal free:    %6u bytes (%.1f%%)", (unsigned)internal_free, (internal_free * 100.0f) / internal_total);
+  ESP_LOGI(TAG, "Largest block:    %6u bytes", (unsigned)internal_largest);
+  
+  // Warning if low on internal RAM
+  if (internal_free < 4096) {
+    ESP_LOGW(TAG, "*** WARNING: Internal RAM critically low! ***");
+    ESP_LOGW(TAG, "    Cannot create new FreeRTOS tasks!");
+  } else if (internal_free < 8192) {
+    ESP_LOGW(TAG, "*** CAUTION: Internal RAM low ***");
+  }
+  
+  // DMA-capable memory
+  uint32_t dma_total = heap_caps_get_total_size(MALLOC_CAP_DMA);
+  uint32_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA);
+  uint32_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+  ESP_LOGI(TAG, "--------------------------------------------");
+  ESP_LOGI(TAG, "DMA-capable: %u free / %u total (largest: %u)", 
+    (unsigned)dma_free, (unsigned)dma_total, (unsigned)dma_largest);
+  
   // PSRAM info if available
-  #ifdef CONFIG_SPIRAM
+  ESP_LOGI(TAG, "--------------------------------------------");
+  ESP_LOGI(TAG, "PSRAM (external)");
+  ESP_LOGI(TAG, "--------------------------------------------");
   uint32_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
   if (psram_total > 0) {
     uint32_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "PSRAM total: %u bytes", (unsigned)psram_total);
-    ESP_LOGI(TAG, "PSRAM free: %u bytes (%.1f%%)", (unsigned)psram_free, (psram_free * 100.0f) / psram_total);
+    uint32_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    uint32_t psram_used = psram_total - psram_free;
+    ESP_LOGI(TAG, "PSRAM total:      %10u bytes (%.1f MB)", (unsigned)psram_total, psram_total / (1024.0f * 1024.0f));
+    ESP_LOGI(TAG, "PSRAM used:       %10u bytes (%.1f%%)", (unsigned)psram_used, (psram_used * 100.0f) / psram_total);
+    ESP_LOGI(TAG, "PSRAM free:       %10u bytes (%.1f%%)", (unsigned)psram_free, (psram_free * 100.0f) / psram_total);
+    ESP_LOGI(TAG, "Largest block:    %10u bytes", (unsigned)psram_largest);
+  } else {
+    ESP_LOGI(TAG, "PSRAM not available");
   }
-  #endif
   
-  // Internal RAM breakdown
-  uint32_t dram_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  uint32_t dram_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  ESP_LOGI(TAG, "Internal DRAM: %u / %u bytes free", (unsigned)dram_free, (unsigned)dram_total);
-  
-  // Display buffer analysis
-  ESP_LOGI(TAG, "=== Display Buffer Analysis ===");
-  #define SCREEN_WIDTH 128
-  #define SCREEN_HEIGHT 128
-  #define LV_BYTES_PER_PIXEL 2
-  
-  uint32_t full_buffer = SCREEN_WIDTH * SCREEN_HEIGHT * LV_BYTES_PER_PIXEL;
-  uint32_t half_buffer = full_buffer / 2;
-  uint32_t quarter_buffer = full_buffer / 4;
-  uint32_t eighth_buffer = full_buffer / 8;
-  
-  ESP_LOGI(TAG, "Full screen buffer: %u bytes", (unsigned)full_buffer);
-  ESP_LOGI(TAG, "1/2 screen buffer: %u bytes (saves %u)", (unsigned)half_buffer, (unsigned)(full_buffer - half_buffer));
-  ESP_LOGI(TAG, "1/4 screen buffer: %u bytes (saves %u)", (unsigned)quarter_buffer, (unsigned)(full_buffer - quarter_buffer));
-  ESP_LOGI(TAG, "1/8 screen buffer: %u bytes (saves %u)", (unsigned)eighth_buffer, (unsigned)(full_buffer - eighth_buffer));
+  ESP_LOGI(TAG, "============================================");
 }

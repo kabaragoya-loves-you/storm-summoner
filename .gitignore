@@ -12,3 +12,4 @@ dependencies.lock
 
 # MIDI device cache (auto-generated)
 midi-devices/cache/*.bin
+captures/

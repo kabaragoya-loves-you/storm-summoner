@@ -4,7 +4,7 @@ idf_component_register(
   SRCS
     ${DISPLAY_SRC_FILES}
   INCLUDE_DIRS "include"
-  REQUIRES driver lvgl esp_timer log console
+  REQUIRES driver lvgl esp_timer log console lvgl_stream
   PRIV_REQUIRES main
 )
 

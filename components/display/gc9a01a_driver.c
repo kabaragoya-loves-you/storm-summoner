@@ -1,5 +1,6 @@
 #include "gc9a01a_driver.h"
 #include "display_driver.h"
+#include "lvgl_stream.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -460,12 +461,17 @@ void gc9a01a_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   #if DEBUG_FLUSH_MESSAGES
   if (flush_count % 100 == 0) {
     ESP_LOGI(TAG, "Flush #%lu: area (%d,%d)-(%d,%d) -> phys (%d,%d)-(%d,%d)", 
-             (unsigned long)flush_count, 
-             (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2,
-             (int)(area->x1 + viewport_offset_x), (int)(area->y1 + viewport_offset_y),
-             (int)(area->x2 + viewport_offset_x), (int)(area->y2 + viewport_offset_y));
+      (unsigned long)flush_count, 
+      (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2,
+      (int)(area->x1 + viewport_offset_x), (int)(area->y1 + viewport_offset_y),
+      (int)(area->x2 + viewport_offset_x), (int)(area->y2 + viewport_offset_y));
   }
   #endif
+
+  // Mirror to USB stream if active (do this before SPI transfer to avoid delay)
+  if (lvgl_stream_is_active()) {
+    lvgl_stream_queue_flush(area, px_map);
+  }
 
   // Set the address window with viewport offset applied
   gc9a01a_set_addr_window(

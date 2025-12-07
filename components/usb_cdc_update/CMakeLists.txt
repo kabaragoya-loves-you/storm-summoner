@@ -9,6 +9,8 @@ idf_component_register(
     assets_manager
     joltwallet__littlefs
     miniz
+    lvgl_stream
+    display
   PRIV_REQUIRES
     main
 )

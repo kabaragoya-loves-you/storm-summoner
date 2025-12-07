@@ -1,6 +1,8 @@
 #include "usb_cdc_update.h"
 #include "firmware_update.h"
 #include "assets_file_ops.h"
+#include "lvgl_stream.h"
+#include "display_driver.h"
 #include "tusb.h"
 #include "esp_log.h"
 #include "esp_console.h"
@@ -43,6 +45,7 @@ typedef enum {
   CDC_STATE_ASSETS,   // Assets management mode
   CDC_STATE_ASSETS_RECEIVING,  // Receiving file data in assets mode
   CDC_STATE_ASSETS_SENDING,    // Sending file data in assets mode
+  CDC_STATE_DISPLAY,  // LVGL display streaming mode
   CDC_STATE_ERROR
 } cdc_update_state_t;
 
@@ -289,6 +292,12 @@ void usb_cdc_task(void) {
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting assets mode");
     }
+    // If we were in display streaming mode and disconnected, cleanup
+    if (s_state == CDC_STATE_DISPLAY) {
+      lvgl_stream_stop();
+      s_state = CDC_STATE_IDLE;
+      ESP_LOGI(TAG, "CDC disconnected, exiting display mode");
+    }
     return;
   }
   
@@ -372,6 +381,24 @@ void usb_cdc_task(void) {
       } else if (s_state == CDC_STATE_ASSETS_RECEIVING) {
         // Receiving file data in assets mode
         handle_assets_binary_data(buf, count);
+      } else if (s_state == CDC_STATE_DISPLAY) {
+        // In display mode, only handle EXIT command
+        for (uint32_t i = 0; i < count; i++) {
+          if (buf[i] == '\n' || buf[i] == '\r') {
+            if (s_cmd_pos > 0) {
+              s_cmd_buffer[s_cmd_pos] = '\0';
+              if (strcmp(s_cmd_buffer, "EXIT") == 0 || strcmp(s_cmd_buffer, "exit") == 0) {
+                ESP_LOGI(TAG, "Exiting display mode");
+                lvgl_stream_stop();
+                s_state = CDC_STATE_IDLE;
+                send_response("DISPLAY_STOPPED");
+              }
+              s_cmd_pos = 0;
+            }
+          } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
+            s_cmd_buffer[s_cmd_pos++] = buf[i];
+          }
+        }
       }
     }
   }
@@ -668,6 +695,35 @@ static void process_command(const char *cmd) {
     s_assets_file_size = 0;
     s_assets_bytes_transferred = 0;
     send_response("ASSETS_STARTED");
+
+  } else if (strcmp(cmd, "DISPLAY") == 0) {
+    ESP_LOGI(TAG, "Entering display streaming mode");
+    
+    // Initialize stream if not already done
+    esp_err_t err = lvgl_stream_init();
+    if (err != ESP_OK) {
+      send_response("ERROR: Failed to initialize display stream");
+      return;
+    }
+    
+    // Set dimensions from display driver
+    uint16_t w = display_get_width();
+    uint16_t h = display_get_height();
+    lvgl_stream_set_dimensions(w, h);
+    
+    // Start streaming
+    err = lvgl_stream_start();
+    if (err != ESP_OK) {
+      send_response("ERROR: Failed to start display stream");
+      return;
+    }
+    
+    s_state = CDC_STATE_DISPLAY;
+    
+    // Send dimensions so client knows what to expect
+    char resp[64];
+    snprintf(resp, sizeof(resp), "DISPLAY_STARTED %u %u", (unsigned)w, (unsigned)h);
+    send_response(resp);
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);

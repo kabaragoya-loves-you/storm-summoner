@@ -134,14 +134,14 @@ void app_main(void) {
   // Now that all tasks are created and memory is settled, load the UI module
   // The tempo module triggers decompression of animated vector art which
   // uses significant memory - doing this last prevents resource contention
-  ui_set_draw_module(&tempo_module);
+  // ui_set_draw_module(&tempo_module);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
   #endif
   
   // task_monitor_init();
-  // vTaskDelay(pdMS_TO_TICKS(3000));
+  // vTaskDelay(pdMS_TO_TICKS(5000));  // Wait for system to stabilize
   // task_monitor_print_heap_info();
   // task_monitor_print_report();
 
