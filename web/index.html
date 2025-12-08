@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storm Summoner</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+
+  <!-- Vendored Dependencies -->
+  <link rel="stylesheet" href="/assets/webawesome/styles/themes/default.css">
+  <script type="module" src="/assets/webawesome/dist-cdn/webawesome.loader.js"></script>
+  <script src="/assets/stimulus.umd.js"></script>
+  <script defer src="/assets/fontawesome/fontawesome.min.js"></script>
+  <script defer src="/assets/fontawesome/sharp-solid.min.js"></script>
+
+  <!-- App Styles -->
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app-container" data-controller="app">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="app-logo">
+        <img src="/assets/kabaragoya.svg" alt="Storm Summoner" class="logo-img">
+        <h1>Storm Summoner</h1>
+      </div>
+
+      <div class="connection-controls">
+        <div class="status-indicator">
+          <span class="status-dot" data-app-target="statusDot"></span>
+          <span data-app-target="statusText">Disconnected</span>
+        </div>
+        <wa-button variant="brand" data-action="click->app#connectDevice" data-app-target="connectBtn">
+          Connect
+        </wa-button>
+        <wa-button variant="neutral" appearance="outlined" data-action="click->app#disconnectDevice"
+                   data-app-target="disconnectBtn" disabled>
+          Disconnect
+        </wa-button>
+      </div>
+    </header>
+
+    <!-- Tab Container -->
+    <div class="tab-container">
+      <wa-tab-group>
+        <wa-tab slot="nav" panel="assets">Assets</wa-tab>
+        <wa-tab slot="nav" panel="console">Console</wa-tab>
+        <wa-tab slot="nav" panel="display">Display</wa-tab>
+        <wa-tab slot="nav" panel="updater">Updater</wa-tab>
+
+        <!-- Assets Tab -->
+        <wa-tab-panel name="assets">
+          <div class="tab-content" data-controller="assets">
+            <div class="toolbar">
+              <div class="breadcrumb" data-assets-target="breadcrumb">
+                <button data-action="click->assets#navigateTo" data-path="/">/assets</button>
+              </div>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->assets#refresh" data-assets-target="refreshBtn" disabled>
+                <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
+                Refresh
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->assets#showNewFolder" data-assets-target="newFolderBtn" disabled>
+                <wa-icon name="folder-plus" slot="prefix"></wa-icon>
+                New Folder
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->assets#selectZipFile" data-assets-target="uploadZipBtn" disabled>
+                <wa-icon name="file-zipper" slot="prefix"></wa-icon>
+                Upload ZIP
+              </wa-button>
+              <input type="file" accept=".zip" hidden data-assets-target="zipInput"
+                     data-action="change->assets#extractZip">
+            </div>
+
+            <div class="file-list" data-assets-target="fileList">
+              <div class="file-header">
+                <span>Name</span>
+                <span style="text-align: right">Size</span>
+                <span style="text-align: right">Actions</span>
+              </div>
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                </svg>
+                <p>Connect to view files</p>
+              </div>
+            </div>
+
+            <div class="upload-zone" data-assets-target="uploadZone"
+                 data-action="click->assets#selectFiles dragover->assets#dragOver dragleave->assets#dragLeave drop->assets#drop">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0-12L8 8m4-4l4 4"/>
+              </svg>
+              <p>Drop files here to upload</p>
+              <p class="hint">or click to select files</p>
+              <input type="file" multiple hidden data-assets-target="fileInput"
+                     data-action="change->assets#uploadFiles">
+            </div>
+
+            <div class="stats-bar" data-assets-target="statsBar" style="display: none;">
+              <div class="usage">
+                <span>Storage:</span>
+                <div class="usage-bar">
+                  <div class="usage-bar-fill" data-assets-target="usageBar" style="width: 0%"></div>
+                </div>
+                <span data-assets-target="usageText">-- / --</span>
+              </div>
+              <span data-assets-target="fileCount">-- files</span>
+            </div>
+
+            <div class="log-panel mt-3">
+              <div class="log-header">
+                <span>Activity Log</span>
+                <wa-button size="small" variant="neutral" appearance="text"
+                           data-action="click->assets#clearLog">Clear</wa-button>
+              </div>
+              <div class="log-content" data-assets-target="logContent"></div>
+            </div>
+
+            <!-- New Folder Modal -->
+            <div class="modal-backdrop" data-assets-target="newFolderModal">
+              <div class="modal">
+                <h2>New Folder</h2>
+                <input type="text" placeholder="Folder name" data-assets-target="newFolderInput"
+                       data-action="keydown.enter->assets#createFolder">
+                <div class="modal-actions">
+                  <wa-button variant="neutral" appearance="outlined"
+                             data-action="click->assets#hideNewFolder">Cancel</wa-button>
+                  <wa-button variant="brand" data-action="click->assets#createFolder">Create</wa-button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rename Modal -->
+            <div class="modal-backdrop" data-assets-target="renameModal">
+              <div class="modal">
+                <h2>Rename</h2>
+                <input type="text" placeholder="New name" data-assets-target="renameInput"
+                       data-action="keydown.enter->assets#doRename">
+                <div class="modal-actions">
+                  <wa-button variant="neutral" appearance="outlined"
+                             data-action="click->assets#hideRename">Cancel</wa-button>
+                  <wa-button variant="brand" data-action="click->assets#doRename">Rename</wa-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- Console Tab -->
+        <wa-tab-panel name="console">
+          <div class="tab-content" data-controller="console">
+            <div class="terminal" data-console-target="terminal"
+                 data-action="click->console#focusInput"></div>
+            <div class="input-container">
+              <span class="prompt-label">&gt;</span>
+              <input type="text" class="command-input" data-console-target="commandInput"
+                     placeholder="Type a command..." disabled autocomplete="off" spellcheck="false"
+                     data-action="keydown->console#handleKeydown">
+            </div>
+            <div class="console-hint">
+              Type <kbd>help</kbd> for commands, <kbd>contexts</kbd> for subsystems,
+              <kbd>exit</kbd> to leave console mode
+            </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- Display Tab -->
+        <wa-tab-panel name="display">
+          <div class="tab-content display-content" data-controller="display">
+            <div class="display-container">
+              <div class="display-frame">
+                <canvas data-display-target="canvas" width="128" height="128"></canvas>
+              </div>
+              <div class="display-controls">
+                <div class="scale-control">
+                  <label>Scale:</label>
+                  <select data-display-target="scaleSelect" data-action="change->display#changeScale">
+                    <option value="1">1x</option>
+                    <option value="2">2x</option>
+                    <option value="3" selected>3x</option>
+                    <option value="4">4x</option>
+                  </select>
+                </div>
+                <wa-button size="small" variant="neutral" appearance="outlined"
+                           data-action="click->display#toggleStats" data-display-target="statsBtn">
+                  Show Stats
+                </wa-button>
+                <wa-button size="small" variant="neutral" appearance="outlined"
+                           data-action="click->display#saveFrame" data-display-target="saveBtn" disabled>
+                  Save Frame
+                </wa-button>
+              </div>
+            </div>
+
+            <div class="stats-panel hidden" data-display-target="statsPanel">
+              <div class="stat">
+                <span class="stat-label">Resolution</span>
+                <span class="stat-value" data-display-target="resolution">--</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Frames Received</span>
+                <span class="stat-value" data-display-target="frameCount">0</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Frame Rate</span>
+                <span class="stat-value" data-display-target="fps">0 fps</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Data Rate</span>
+                <span class="stat-value" data-display-target="dataRate">0 KB/s</span>
+              </div>
+            </div>
+
+            <div class="log-panel" style="width: 100%; max-width: 800px;">
+              <div class="log-header">
+                <span>Activity Log</span>
+                <wa-button size="small" variant="neutral" appearance="text"
+                           data-action="click->display#clearLog">Clear</wa-button>
+              </div>
+              <div class="log-content" data-display-target="logContent"></div>
+            </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- Updater Tab -->
+        <wa-tab-panel name="updater">
+          <div class="tab-content" data-controller="updater">
+            <div class="card updater-section">
+              <h3>Firmware Update</h3>
+              <p>Select <code>storm-summoner.bin</code></p>
+              <input type="file" accept=".bin" data-updater-target="fwInput"
+                     data-action="change->updater#fwFileSelected">
+              <wa-button variant="brand" data-updater-target="fwBtn" disabled
+                         data-action="click->updater#startFirmwareUpdate">
+                Update Firmware
+              </wa-button>
+              <div class="progress-bar">
+                <div class="progress-fill" data-updater-target="fwProgress"></div>
+              </div>
+            </div>
+
+            <div class="card updater-section">
+              <h3>Assets Update</h3>
+              <p>Select <code>assets.bin</code> (This may take several minutes)</p>
+              <input type="file" accept=".bin" data-updater-target="assetsInput"
+                     data-action="change->updater#assetsFileSelected">
+              <wa-button variant="brand" data-updater-target="assetsBtn" disabled
+                         data-action="click->updater#startAssetsUpdate">
+                Update Assets
+              </wa-button>
+              <div class="progress-bar">
+                <div class="progress-fill" data-updater-target="assetsProgress"></div>
+              </div>
+            </div>
+
+            <div class="card updater-section">
+              <h3>Reset Device</h3>
+              <p>Restart the device to apply changes.</p>
+              <wa-button variant="neutral" appearance="outlined" data-updater-target="resetBtn" disabled
+                         data-action="click->updater#triggerReset">
+                Reset Device
+              </wa-button>
+            </div>
+
+            <div class="log-panel">
+              <div class="log-header">
+                <span>Update Log</span>
+                <wa-button size="small" variant="neutral" appearance="text"
+                           data-action="click->updater#clearLog">Clear</wa-button>
+              </div>
+              <div class="log-content" data-updater-target="logContent"></div>
+            </div>
+          </div>
+        </wa-tab-panel>
+      </wa-tab-group>
+    </div>
+
+  </div>
+
+  <!-- App Scripts -->
+  <script src="/js/app.js"></script>
+  <script src="/js/assets.js"></script>
+  <script src="/js/console.js"></script>
+  <script src="/js/display.js"></script>
+  <script src="/js/updater.js"></script>
+
+  <script>
+    if (!navigator.serial) {
+      document.body.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: center; height: 100vh;
+                    text-align: center; padding: 2rem; background: var(--bg-deep); color: var(--text);">
+          <div>
+            <h1 style="color: var(--error); margin-bottom: 1rem;">Web Serial API Not Supported</h1>
+            <p style="color: var(--text-dim);">Please use Chrome or Edge browser to access this tool.</p>
+          </div>
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>

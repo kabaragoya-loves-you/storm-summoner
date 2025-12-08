@@ -12,7 +12,7 @@
 
 // Queue configuration
 #define STREAM_QUEUE_SIZE     2      // Number of pending flush items
-#define STREAM_TASK_STACK   2048     // TX task stack size
+#define STREAM_TASK_STACK   4096     // TX task stack size
 #define STREAM_TASK_PRIO      5      // TX task priority
 #define BYTES_PER_PIXEL       3      // RGB888
 
