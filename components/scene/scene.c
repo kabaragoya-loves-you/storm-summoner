@@ -158,8 +158,9 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->note_fixed_velocity = 100;                    // Default velocity value
   
   // Tempo configuration
+  scene->bpm = 120;                                    // Default to 120 BPM
   scene->clock_source = CLOCK_SOURCE_INTERNAL;         // Default to internal clock
-  scene->clock_standard = CLOCK_STANDARD_24PPQN;       // Default to MIDI standard
+  scene->beat_divider = DIVIDER_QUARTER;               // Default to quarter note beats
   scene->time_signature.numerator = 4;                 // Default to 4/4 time
   scene->time_signature.denominator = 4;
 }
@@ -651,11 +652,12 @@ esp_err_t scene_init(void) {
   }
   
   // Configure tempo settings for initial scene
+  tempo_set_bpm(initial_scene->bpm);
   tempo_set_source(initial_scene->clock_source);
-  tempo_set_clock_standard(initial_scene->clock_standard);
+  tempo_set_note_divider(initial_scene->beat_divider);
   tempo_set_time_signature(initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
-  ESP_LOGD(TAG, "Set initial tempo: source=%d, standard=%d, time_sig=%d/%d", 
-           initial_scene->clock_source, initial_scene->clock_standard,
+  ESP_LOGD(TAG, "Set initial tempo: bpm=%d, source=%d, beat_divider=%d, time_sig=%d/%d", 
+           initial_scene->bpm, initial_scene->clock_source, initial_scene->beat_divider,
            initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
   
   // Execute on_load actions
@@ -777,11 +779,12 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   input_set_mode(new_scene->cv_input_mode);
   
   // Configure tempo settings for this scene
+  tempo_set_bpm(new_scene->bpm);
   tempo_set_source(new_scene->clock_source);
-  tempo_set_clock_standard(new_scene->clock_standard);
+  tempo_set_note_divider(new_scene->beat_divider);
   tempo_set_time_signature(new_scene->time_signature.numerator, new_scene->time_signature.denominator);
-  ESP_LOGD(TAG, "Set tempo: source=%d, standard=%d, time_sig=%d/%d", 
-           new_scene->clock_source, new_scene->clock_standard,
+  ESP_LOGD(TAG, "Set tempo: bpm=%d, source=%d, beat_divider=%d, time_sig=%d/%d", 
+           new_scene->bpm, new_scene->clock_source, new_scene->beat_divider,
            new_scene->time_signature.numerator, new_scene->time_signature.denominator);
   
   // Execute on_load actions
@@ -1354,6 +1357,30 @@ input_mode_t scene_get_cv_input_mode(uint8_t scene_index) {
   return scene ? scene->cv_input_mode : INPUT_MODE_CV;
 }
 
+esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (bpm < 20 || bpm > 300) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->bpm = bpm;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  // Update tempo component immediately if this is the current scene
+  if (scene_index == g_scene_manager.current_scene_index) {
+    tempo_set_bpm(bpm);
+  }
+  
+  ESP_LOGI(TAG, "Scene %d BPM set to %d", scene_index + 1, bpm);
+  return ESP_OK;
+}
+
+uint16_t scene_get_bpm(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->bpm : 120;
+}
+
 esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
@@ -1406,30 +1433,30 @@ tempo_clock_source_t scene_get_clock_source(uint8_t scene_index) {
   return scene ? scene->clock_source : CLOCK_SOURCE_INTERNAL;
 }
 
-esp_err_t scene_set_clock_standard(uint8_t scene_index, tempo_clock_standard_t standard) {
+esp_err_t scene_set_beat_divider(uint8_t scene_index, tempo_note_divider_t divider) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->clock_standard = standard;
+  scene->beat_divider = divider;
   g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
   
   // Update tempo component immediately if this is the current scene
   if (scene_index == g_scene_manager.current_scene_index) {
-    tempo_set_clock_standard(standard);
+    tempo_set_note_divider(divider);
   }
   
-  const char* std_str = (standard == CLOCK_STANDARD_24PPQN) ? "24PPQN" :
-                        (standard == CLOCK_STANDARD_16TH_NOTE) ? "16th Note" : "Beat";
-  ESP_LOGI(TAG, "Scene %d clock standard set to %s", scene_index + 1, std_str);
+  const char* div_str = (divider == DIVIDER_QUARTER) ? "Quarter" :
+                        (divider == DIVIDER_EIGHTH) ? "Eighth" : "Sixteenth";
+  ESP_LOGI(TAG, "Scene %d beat divider set to %s", scene_index + 1, div_str);
   
   return ESP_OK;
 }
 
-tempo_clock_standard_t scene_get_clock_standard(uint8_t scene_index) {
+tempo_note_divider_t scene_get_beat_divider(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? scene->clock_standard : CLOCK_STANDARD_24PPQN;
+  return scene ? scene->beat_divider : DIVIDER_QUARTER;
 }
 
 esp_err_t scene_set_time_signature(uint8_t scene_index, uint8_t numerator, uint8_t denominator) {
@@ -1784,13 +1811,15 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddNumberToObject(root, "note_fixed_velocity", scene->note_fixed_velocity);
   
   // Serialize tempo settings
+  cJSON_AddNumberToObject(root, "bpm", scene->bpm);
+  
   const char* clock_src_str = (scene->clock_source == CLOCK_SOURCE_INTERNAL) ? "internal" :
                               (scene->clock_source == CLOCK_SOURCE_MIDI) ? "midi" : "sync";
   cJSON_AddStringToObject(root, "clock_source", clock_src_str);
   
-  const char* clock_std_str = (scene->clock_standard == CLOCK_STANDARD_24PPQN) ? "24ppqn" :
-                              (scene->clock_standard == CLOCK_STANDARD_16TH_NOTE) ? "16th_note" : "beat";
-  cJSON_AddStringToObject(root, "clock_standard", clock_std_str);
+  const char* beat_div_str = (scene->beat_divider == DIVIDER_QUARTER) ? "quarter" :
+                             (scene->beat_divider == DIVIDER_EIGHTH) ? "eighth" : "sixteenth";
+  cJSON_AddStringToObject(root, "beat_divider", beat_div_str);
   
   cJSON* time_sig = cJSON_CreateObject();
   cJSON_AddNumberToObject(time_sig, "numerator", scene->time_signature.numerator);
@@ -1932,6 +1961,12 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   }
   
   // Deserialize tempo settings
+  cJSON* bpm_json = cJSON_GetObjectItem(root, "bpm");
+  if (bpm_json && cJSON_IsNumber(bpm_json)) {
+    int bpm = bpm_json->valueint;
+    if (bpm >= 20 && bpm <= 300) scene->bpm = (uint16_t)bpm;
+  }
+  
   cJSON* clock_src = cJSON_GetObjectItem(root, "clock_source");
   if (clock_src && cJSON_IsString(clock_src)) {
     const char* src_str = clock_src->valuestring;
@@ -1940,12 +1975,12 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else scene->clock_source = CLOCK_SOURCE_INTERNAL;
   }
   
-  cJSON* clock_std = cJSON_GetObjectItem(root, "clock_standard");
-  if (clock_std && cJSON_IsString(clock_std)) {
-    const char* std_str = clock_std->valuestring;
-    if (strcmp(std_str, "16th_note") == 0) scene->clock_standard = CLOCK_STANDARD_16TH_NOTE;
-    else if (strcmp(std_str, "beat") == 0) scene->clock_standard = CLOCK_STANDARD_BEAT;
-    else scene->clock_standard = CLOCK_STANDARD_24PPQN;
+  cJSON* beat_div = cJSON_GetObjectItem(root, "beat_divider");
+  if (beat_div && cJSON_IsString(beat_div)) {
+    const char* div_str = beat_div->valuestring;
+    if (strcmp(div_str, "eighth") == 0) scene->beat_divider = DIVIDER_EIGHTH;
+    else if (strcmp(div_str, "sixteenth") == 0) scene->beat_divider = DIVIDER_SIXTEENTH;
+    else scene->beat_divider = DIVIDER_QUARTER;
   }
   
   cJSON* time_sig = cJSON_GetObjectItem(root, "time_signature");

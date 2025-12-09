@@ -228,8 +228,9 @@
   "cv_input_mode": "cv",
   "note_velocity_mode": "fixed",
   "note_fixed_velocity": 100,
+  "bpm": 120,
   "clock_source": "internal",
-  "clock_standard": "24ppqn",
+  "beat_divider": "quarter",
   "time_signature": {
     "numerator": 4,
     "denominator": 4

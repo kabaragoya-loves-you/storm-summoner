@@ -105,7 +105,7 @@ static const char* registered_commands[] = {
   "confirm", "cancel", "channel", "pad", "button", "bump", "expr_switch", "actions", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
-  "clock_source", "clock_standard", "time_sig",
+  "bpm", "clock_source", "beat_divider", "time_sig",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity",
   "touchwheel_mode", "touchwheel_style", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note"
@@ -190,12 +190,13 @@ static void cmd_scene_info(void) {
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Tempo settings:");
+  ESP_LOGI(TAG, "  BPM: %d", scene->bpm);
   ESP_LOGI(TAG, "  Clock source: %s",
            scene->clock_source == CLOCK_SOURCE_INTERNAL ? "Internal" :
            scene->clock_source == CLOCK_SOURCE_MIDI ? "MIDI" : "Sync");
-  ESP_LOGI(TAG, "  Clock standard: %s",
-           scene->clock_standard == CLOCK_STANDARD_24PPQN ? "24PPQN" :
-           scene->clock_standard == CLOCK_STANDARD_16TH_NOTE ? "16th Note" : "Beat");
+  ESP_LOGI(TAG, "  Beat divider: %s",
+           scene->beat_divider == DIVIDER_QUARTER ? "Quarter" :
+           scene->beat_divider == DIVIDER_EIGHTH ? "Eighth" : "Sixteenth");
   ESP_LOGI(TAG, "  Time signature: %d/%d",
            scene->time_signature.numerator, scene->time_signature.denominator);
   
@@ -2223,41 +2224,69 @@ static int cmd_clock_source(int argc, char **argv) {
   return 0;
 }
 
-// Command: clock_standard - Set clock output standard
+// Command: beat_divider - Set beat division for this scene
+// Command: bpm - Set scene tempo
 static struct {
-  struct arg_str *standard;
+  struct arg_int *bpm;
   struct arg_end *end;
-} clock_standard_args;
+} scene_bpm_args;
 
-static int cmd_clock_standard(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &clock_standard_args);
+static int cmd_scene_bpm(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &scene_bpm_args);
   if (nerrors != 0) {
-    arg_print_errors(stderr, clock_standard_args.end, argv[0]);
+    arg_print_errors(stderr, scene_bpm_args.end, argv[0]);
     return 1;
   }
   
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  const char* std_str = clock_standard_args.standard->sval[0];
-  tempo_clock_standard_t standard;
-  
-  if (strcmp(std_str, "24ppqn") == 0) {
-    standard = CLOCK_STANDARD_24PPQN;
-  } else if (strcmp(std_str, "16th") == 0 || strcmp(std_str, "16th_note") == 0) {
-    standard = CLOCK_STANDARD_16TH_NOTE;
-  } else if (strcmp(std_str, "beat") == 0) {
-    standard = CLOCK_STANDARD_BEAT;
-  } else {
-    ESP_LOGE(TAG, "Unknown clock standard (use: 24ppqn, 16th_note, beat)");
+  int bpm = scene_bpm_args.bpm->ival[0];
+  if (bpm < 20 || bpm > 300) {
+    ESP_LOGE(TAG, "BPM must be 20-300");
     return 1;
   }
   
-  scene_set_clock_standard(scene_get_current_index(), standard);
+  scene_set_bpm(scene_get_current_index(), (uint16_t)bpm);
+  ESP_LOGI(TAG, "BPM: %d", bpm);
+  return 0;
+}
+
+// Command: beat_divider - Set beat division for this scene
+static struct {
+  struct arg_str *divider;
+  struct arg_end *end;
+} beat_divider_args;
+
+static int cmd_beat_divider(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &beat_divider_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, beat_divider_args.end, argv[0]);
+    return 1;
+  }
   
-  const char* std_name = (standard == CLOCK_STANDARD_24PPQN) ? "24PPQN" :
-                         (standard == CLOCK_STANDARD_16TH_NOTE) ? "16th Note" : "Beat";
-  ESP_LOGI(TAG, "Clock standard: %s", std_name);
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* div_str = beat_divider_args.divider->sval[0];
+  tempo_note_divider_t divider;
+  
+  if (strcmp(div_str, "quarter") == 0 || strcmp(div_str, "q") == 0) {
+    divider = DIVIDER_QUARTER;
+  } else if (strcmp(div_str, "eighth") == 0 || strcmp(div_str, "8th") == 0) {
+    divider = DIVIDER_EIGHTH;
+  } else if (strcmp(div_str, "sixteenth") == 0 || strcmp(div_str, "16th") == 0) {
+    divider = DIVIDER_SIXTEENTH;
+  } else {
+    ESP_LOGE(TAG, "Unknown beat divider (use: quarter, eighth, sixteenth)");
+    return 1;
+  }
+  
+  scene_set_beat_divider(scene_get_current_index(), divider);
+  
+  const char* div_name = (divider == DIVIDER_QUARTER) ? "Quarter" :
+                         (divider == DIVIDER_EIGHTH) ? "Eighth" : "Sixteenth";
+  ESP_LOGI(TAG, "Beat divider: %s", div_name);
   return 0;
 }
 
@@ -3520,19 +3549,36 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&clock_source_cmd);
   
-  // clock_standard command
-  clock_standard_args.standard = arg_str1(NULL, NULL, "<standard>", "Clock standard");
-  clock_standard_args.end = arg_end(2);
+  // beat_divider command
+  beat_divider_args.divider = arg_str1(NULL, NULL, "<divider>", "Beat divider");
+  beat_divider_args.end = arg_end(2);
   
-  const esp_console_cmd_t clock_standard_cmd = {
-    .command = "clock_standard",
-    .help = "Set clock output standard (24ppqn/16th_note/beat)",
+  // bpm command
+  scene_bpm_args.bpm = arg_int1(NULL, NULL, "<bpm>", "Tempo (20-300)");
+  scene_bpm_args.end = arg_end(2);
+  
+  const esp_console_cmd_t scene_bpm_cmd = {
+    .command = "bpm",
+    .help = "Set scene tempo (20-300 BPM)",
     .hint = NULL,
-    .func = &cmd_clock_standard,
-    .argtable = &clock_standard_args
+    .func = &cmd_scene_bpm,
+    .argtable = &scene_bpm_args
   };
-  esp_console_cmd_register(&clock_standard_cmd);
+  esp_console_cmd_register(&scene_bpm_cmd);
   
+  // beat_divider command
+  beat_divider_args.divider = arg_str1(NULL, NULL, "<divider>", "Beat divider");
+  beat_divider_args.end = arg_end(2);
+  
+  const esp_console_cmd_t beat_divider_cmd = {
+    .command = "beat_divider",
+    .help = "Set beat division (quarter/eighth/sixteenth)",
+    .hint = NULL,
+    .func = &cmd_beat_divider,
+    .argtable = &beat_divider_args
+  };
+  esp_console_cmd_register(&beat_divider_cmd);
+
   // time_sig command
   time_sig_args.numerator = arg_int1(NULL, NULL, "<num>", "Numerator (1-16)");
   time_sig_args.denominator = arg_int1(NULL, NULL, "<denom>", "Denominator (1-16)");

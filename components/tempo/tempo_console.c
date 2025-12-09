@@ -10,7 +10,7 @@ static const char* TAG = "tempo_console";
 static const char* registered_commands[] = {
   "info", "bpm", "tap", "tap_tempo", "tap_mode", "tap_timeout", "start", "stop", 
   "led_sync", "led_ratio", "deadzone",
-  "clock_output", "clock_always", "clock_no_passthrough",
+  "clock_output", "clock_always", "clock_no_passthrough", "clock_standard",
   // LED commands (merged from led component)
   "led_on", "led_off", "led_flash", "led_enable", "led_mode", "led_sundial", "led_info"
 };
@@ -19,15 +19,15 @@ static const int num_registered_commands = sizeof(registered_commands) / sizeof(
 // Command: info
 static int cmd_info(int argc, char **argv) {
   uint16_t bpm = tempo_get_bpm();
-  tempo_note_divider_t divider = tempo_get_note_divider();
   tempo_clock_source_t source = tempo_get_source();
+  tempo_clock_standard_t standard = tempo_get_clock_standard();
   bool led_sync = tempo_get_led_sync();
-  
-  const char* div_str = (divider == DIVIDER_QUARTER) ? "Quarter" :
-                        (divider == DIVIDER_EIGHTH) ? "Eighth" : "Sixteenth";
   
   const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
                            (source == CLOCK_SOURCE_MIDI) ? "MIDI" : "Sync";
+  
+  const char* std_str = (standard == CLOCK_STANDARD_24PPQN) ? "24PPQN (DIN)" :
+                        (standard == CLOCK_STANDARD_16TH_NOTE) ? "16th (Volca)" : "Beat (Modular)";
   
   uint8_t deadzone = tempo_get_bpm_deadzone();
   clock_output_t clk_out = tempo_get_clock_output();
@@ -42,13 +42,13 @@ static int cmd_info(int argc, char **argv) {
   const char* tap_mode_names[] = {"toggle", "time", "hold"};
   
   ESP_LOGI(TAG, "====== TEMPO ======");
-  ESP_LOGI(TAG, "BPM: %u", (unsigned)bpm);
+  ESP_LOGI(TAG, "BPM: %u (set by current scene)", (unsigned)bpm);
   ESP_LOGI(TAG, "Clock source: %s (set by current scene)", source_str);
+  ESP_LOGI(TAG, "Clock standard: %s", std_str);
   ESP_LOGI(TAG, "Clock output: %s", output_names[clk_out]);
   ESP_LOGI(TAG, "Always send clock: %s", always_send ? "yes" : "no");
   ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
   ESP_LOGI(TAG, "BPM deadzone: %u (0=off, 1-5=ignore ±N BPM)", (unsigned)deadzone);
-  ESP_LOGI(TAG, "Divider: %s", div_str);
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Tap tempo mode: %s", tap_mode_names[tap_mode]);
   if (tap_mode == TAP_MODE_TIME) {
@@ -62,7 +62,7 @@ static int cmd_info(int argc, char **argv) {
     ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
   }
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Note: Clock source, standard, and time signature set by scene context");
+  ESP_LOGI(TAG, "Note: BPM, clock source, beat divider, and time signature set by scene");
   ESP_LOGI(TAG, "===================");
   
   return 0;
@@ -88,7 +88,7 @@ static int cmd_bpm(int argc, char **argv) {
   }
   
   tempo_set_bpm((uint16_t)bpm);
-  ESP_LOGI(TAG, "BPM set to %d", bpm);
+  ESP_LOGI(TAG, "BPM set to %d (use 'scene bpm' to persist)", bpm);
   
   return 0;
 }
@@ -324,6 +324,37 @@ static int cmd_clock_no_passthrough(int argc, char **argv) {
   bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
   
   tempo_set_disable_clock_on_passthrough(enable);
+  return 0;
+}
+
+// Command: clock_standard
+static struct {
+  struct arg_str *standard;
+  struct arg_end *end;
+} clock_standard_args;
+
+static int cmd_clock_standard(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &clock_standard_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, clock_standard_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* std_str = clock_standard_args.standard->sval[0];
+  tempo_clock_standard_t standard;
+  
+  if (strcmp(std_str, "24ppqn") == 0 || strcmp(std_str, "din") == 0) {
+    standard = CLOCK_STANDARD_24PPQN;
+  } else if (strcmp(std_str, "16th") == 0 || strcmp(std_str, "volca") == 0) {
+    standard = CLOCK_STANDARD_16TH_NOTE;
+  } else if (strcmp(std_str, "beat") == 0 || strcmp(std_str, "modular") == 0) {
+    standard = CLOCK_STANDARD_BEAT;
+  } else {
+    ESP_LOGE(TAG, "Unknown clock standard (use: 24ppqn, 16th, beat)");
+    return 1;
+  }
+  
+  tempo_set_clock_standard(standard);
   return 0;
 }
 
@@ -632,6 +663,19 @@ esp_err_t tempo_console_init(void) {
     .argtable = &clock_no_pt_args
   };
   esp_console_cmd_register(&clock_no_pt_cmd);
+  
+  // clock_standard command
+  clock_standard_args.standard = arg_str1(NULL, NULL, "<standard>", "Clock standard");
+  clock_standard_args.end = arg_end(2);
+  
+  const esp_console_cmd_t clock_standard_cmd = {
+    .command = "clock_standard",
+    .help = "Set clock output standard (24ppqn/16th/beat)",
+    .hint = NULL,
+    .func = &cmd_clock_standard,
+    .argtable = &clock_standard_args
+  };
+  esp_console_cmd_register(&clock_standard_cmd);
   
   // ========== LED Commands ==========
   

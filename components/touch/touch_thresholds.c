@@ -32,8 +32,6 @@ extern const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS];
 
 static touch_pad_calibration_t s_pad_calibration[MAX_TOUCH_PADS];
 static bool s_calibration_loaded = false;
-static TaskHandle_t s_drift_task_handle = NULL;
-static bool s_drift_task_running = false;
 static uint32_t s_backup_thresholds[MAX_TOUCH_PADS];
 static bool s_backup_valid = false;
 static SemaphoreHandle_t s_calibration_mutex = NULL;

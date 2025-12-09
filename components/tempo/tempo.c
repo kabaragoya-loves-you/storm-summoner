@@ -17,8 +17,7 @@
 
 #define TAG "TEMPO"
 
-// Tempo NVS keys
-#define NVS_KEY_BPM "tempo_bpm"
+// Tempo NVS keys (BPM is now per-scene, not stored here)
 #define NVS_KEY_LED_SYNC "tempo_led_sync"
 #define NVS_KEY_LED_RATIO "tempo_led_ratio"
 #define NVS_KEY_BPM_DEADZONE "tempo_deadzone"
@@ -27,14 +26,15 @@
 #define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
 #define NVS_KEY_TAP_MODE "tempo_tap_mode"
 #define NVS_KEY_TAP_TIMEOUT "tempo_tap_to"
+#define NVS_KEY_CLOCK_STD "tempo_clk_std"
 
 // LED NVS keys
 #define LED_ENABLED_KEY "led_enabled"
 #define LED_MODE_KEY "led_mode"
 #define LED_SUNDIAL_KEY "led_sundial"
 
-// Note: NVS_KEY_TIME_SIG_NUM, NVS_KEY_TIME_SIG_DEN, and NVS_KEY_CLOCK_STD removed
-// These are now per-scene settings stored in scene JSON files
+// Note: NVS_KEY_TIME_SIG_NUM and NVS_KEY_TIME_SIG_DEN removed
+// Time signature is now a per-scene setting stored in scene JSON files
 
 // Constants
 #define MIN_BPM 20
@@ -123,22 +123,24 @@ void tempo_init(void) {
     return;
   }
   
-  // Load settings from NVS
-  uint32_t bpm = DEFAULT_BPM;
-  if (app_settings_load_u32(NVS_KEY_BPM, &bpm) == ESP_OK) {
-    s_bpm = (uint16_t)(bpm > MAX_BPM ? MAX_BPM : (bpm < MIN_BPM ? MIN_BPM : bpm));
-  }
-  
+  // Load settings from NVS (BPM is now per-scene, loaded when scene loads)
   uint8_t led_sync = 0;
   if (app_settings_load_u8(NVS_KEY_LED_SYNC, &led_sync) == ESP_OK) s_led_sync_enabled = (led_sync != 0);
   
   uint8_t led_ratio = 3;
   if (app_settings_load_u8(NVS_KEY_LED_RATIO, &led_ratio) == ESP_OK && led_ratio >= 1 && led_ratio <= 10) s_led_flash_ratio = led_ratio;
   
-  // Note: Time signature and clock standard are now per-scene settings (no NVS persistence here)
+  // Load clock standard (global hardware setting)
+  uint8_t clk_std = CLOCK_STANDARD_24PPQN;
+  if (app_settings_load_u8(NVS_KEY_CLOCK_STD, &clk_std) == ESP_OK) {
+    s_clock_standard = (tempo_clock_standard_t)clk_std;
+  } else {
+    app_settings_save_u8(NVS_KEY_CLOCK_STD, (uint8_t)s_clock_standard);
+  }
+  
+  // Note: Time signature is now a per-scene setting (no NVS persistence here)
   // Note: Clock source is now set by scenes (no NVS persistence here)
-  // The scene system calls tempo_set_source(), tempo_set_clock_standard(), 
-  // and tempo_set_time_signature() when a scene loads
+  // The scene system calls tempo_set_source() and tempo_set_time_signature() when a scene loads
   
   // Load BPM deadzone
   uint8_t deadzone = 0;
@@ -505,9 +507,7 @@ void tempo_set_bpm(uint16_t bpm) {
     s_bpm = bpm;
     xSemaphoreGive(s_state_mutex);
     
-    // Save to NVS
-    app_settings_save_u32(NVS_KEY_BPM, bpm);
-    
+    // Note: BPM is now per-scene, saved in scene JSON files
     // Notify about change
     publish_tempo_changed_event();
   } else {
@@ -883,7 +883,9 @@ void tempo_set_clock_standard(tempo_clock_standard_t standard) {
   s_clock_standard = standard;
   xSemaphoreGive(s_state_mutex);
   
-  // Note: No NVS save - clock standard is now a per-scene setting
+  // Save to NVS (global hardware setting)
+  app_settings_save_u8(NVS_KEY_CLOCK_STD, (uint8_t)standard);
+  
   const char* std_names[] = {"24ppqn (DIN Sync)", "16th note (Korg Volca)", "Beat (Modular)"};
   ESP_LOGI(TAG, "Clock standard set to %s", std_names[standard]);
 }

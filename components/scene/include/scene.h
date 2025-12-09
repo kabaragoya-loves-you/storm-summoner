@@ -111,8 +111,9 @@ typedef struct {
   uint8_t note_fixed_velocity;           // Velocity when mode = FIXED (1-127)
   
   // Tempo configuration (per-scene)
+  uint16_t bpm;                          // Tempo in beats per minute (20-300)
   tempo_clock_source_t clock_source;     // INTERNAL, MIDI, SYNC
-  tempo_clock_standard_t clock_standard; // 24PPQN, 16TH_NOTE, BEAT
+  tempo_note_divider_t beat_divider;     // QUARTER, EIGHTH, SIXTEENTH
   time_signature_t time_signature;       // Beats per bar and beat unit
   
   // Future: envelope follower, LFO slots
@@ -227,10 +228,12 @@ esp_err_t scene_set_note_fixed_velocity(uint8_t scene_index, uint8_t velocity);
 uint8_t scene_get_note_fixed_velocity(uint8_t scene_index);
 
 // Tempo configuration (per-scene)
+esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm);
+uint16_t scene_get_bpm(uint8_t scene_index);
 esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source);
 tempo_clock_source_t scene_get_clock_source(uint8_t scene_index);
-esp_err_t scene_set_clock_standard(uint8_t scene_index, tempo_clock_standard_t standard);
-tempo_clock_standard_t scene_get_clock_standard(uint8_t scene_index);
+esp_err_t scene_set_beat_divider(uint8_t scene_index, tempo_note_divider_t divider);
+tempo_note_divider_t scene_get_beat_divider(uint8_t scene_index);
 esp_err_t scene_set_time_signature(uint8_t scene_index, uint8_t numerator, uint8_t denominator);
 time_signature_t scene_get_time_signature(uint8_t scene_index);
 

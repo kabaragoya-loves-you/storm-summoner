@@ -125,17 +125,24 @@
       "default": 100,
       "description": "Fixed velocity value for NOTE mode"
     },
+    "bpm": {
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 300,
+      "default": 120,
+      "description": "Tempo in beats per minute for this scene"
+    },
     "clock_source": {
       "type": "string",
       "enum": ["internal", "midi", "sync"],
       "default": "internal",
       "description": "Tempo clock source for this scene"
     },
-    "clock_standard": {
+    "beat_divider": {
       "type": "string",
-      "enum": ["24ppqn", "16th_note", "beat"],
-      "default": "24ppqn",
-      "description": "Clock output standard for this scene"
+      "enum": ["quarter", "eighth", "sixteenth"],
+      "default": "quarter",
+      "description": "Beat division for this scene (what note value triggers beat events)"
     },
     "time_signature": {
       "type": "object",
