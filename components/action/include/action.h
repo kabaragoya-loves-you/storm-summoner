@@ -17,12 +17,11 @@ typedef enum {
   ACTION_SCENE_PREV,
   ACTION_SCENE_SET,           // Jump to specific scene (1-128, user-facing)
   
-  // Transport
-  ACTION_TRANSPORT_PLAY,
+  // Transport (Play and Record are toggles)
+  ACTION_TRANSPORT_PLAY,      // Toggle: playing → stop, else → play
   ACTION_TRANSPORT_STOP,
-  ACTION_TRANSPORT_PAUSE,
-  ACTION_TRANSPORT_RECORD,
-  ACTION_TRANSPORT_TOGGLE,
+  ACTION_TRANSPORT_PAUSE,     // Pause only (does not unpause)
+  ACTION_TRANSPORT_RECORD,    // Toggle: recording → stop, else → record
   
   // Tempo
   ACTION_TAP,               // Send a single tap input (for tap tempo)

@@ -1517,7 +1517,6 @@ static const char* action_type_json_names[] = {
   [ACTION_TRANSPORT_STOP] = "transport_stop",
   [ACTION_TRANSPORT_PAUSE] = "transport_pause",
   [ACTION_TRANSPORT_RECORD] = "transport_record",
-  [ACTION_TRANSPORT_TOGGLE] = "transport_toggle",
   [ACTION_TAP] = "tap",
   [ACTION_TAP_TEMPO] = "tap_tempo",
   [ACTION_SET_TEMPO] = "set_tempo",

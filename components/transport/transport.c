@@ -224,14 +224,23 @@ bool transport_is_recording(void) {
 }
 
 // Transport control functions - send both MIDI Clock and MMC messages
+// play() and record() are toggles
 esp_err_t transport_play(void) {
-  // Send MIDI Clock Start
-  send_start();
+  transport_state_t current = transport_get_state();
   
-  // Send MMC Play
+  // If already playing, pause
+  if (current == TRANSPORT_PLAYING || current == TRANSPORT_RECORDING) {
+    return transport_pause();
+  }
+  
+  // Otherwise start playing
+  if (current == TRANSPORT_PAUSED) {
+    send_continue();
+  } else {
+    send_start();
+  }
   send_mmc_play();
   
-  // Post internal event tagged as INTERNAL source (already sent MIDI)
   event_t event = {
     .type = EVENT_TRANSPORT_START,
     .priority = EVENT_PRIORITY_HIGH,
@@ -240,7 +249,8 @@ esp_err_t transport_play(void) {
       .source = TRANSPORT_SOURCE_INTERNAL
     }
   };
-  ESP_LOGI(TAG, "Play (sent MIDI Start + MMC Play)");
+  ESP_LOGI(TAG, "Play toggle → playing (sent MIDI %s + MMC Play)",
+    current == TRANSPORT_PAUSED ? "Continue" : "Start");
   return event_bus_post(&event);
 }
 
@@ -265,10 +275,16 @@ esp_err_t transport_stop(void) {
 }
 
 esp_err_t transport_pause(void) {
-  // Send MMC Pause
+  transport_state_t current = transport_get_state();
+  
+  // Only pause if playing or recording
+  if (current != TRANSPORT_PLAYING && current != TRANSPORT_RECORDING) {
+    ESP_LOGD(TAG, "Pause ignored - not playing or recording");
+    return ESP_OK;
+  }
+  
   send_mmc_pause();
   
-  // Post internal event tagged as INTERNAL source (already sent MIDI)
   event_t event = {
     .type = EVENT_TRANSPORT_PAUSE,
     .priority = EVENT_PRIORITY_HIGH,
@@ -282,10 +298,21 @@ esp_err_t transport_pause(void) {
 }
 
 esp_err_t transport_record(void) {
-  // Send MMC Record Strobe
+  transport_state_t current = transport_get_state();
+  
+  // If already recording, pause
+  if (current == TRANSPORT_RECORDING) {
+    return transport_pause();
+  }
+  
+  // Otherwise start recording
+  if (current == TRANSPORT_PAUSED) {
+    send_continue();
+  } else if (current == TRANSPORT_STOPPED) {
+    send_start();
+  }
   send_mmc_record_strobe();
   
-  // Post internal event tagged as INTERNAL source (already sent MIDI)
   event_t event = {
     .type = EVENT_TRANSPORT_RECORD,
     .priority = EVENT_PRIORITY_HIGH,
@@ -294,20 +321,8 @@ esp_err_t transport_record(void) {
       .source = TRANSPORT_SOURCE_INTERNAL
     }
   };
-  ESP_LOGI(TAG, "Record (sent MMC Record Strobe)");
+  ESP_LOGI(TAG, "Record toggle → recording (sent MMC Record Strobe)");
   return event_bus_post(&event);
-}
-
-esp_err_t transport_toggle(void) {
-  transport_state_t current = transport_get_state();
-  
-  if (current == TRANSPORT_PLAYING || current == TRANSPORT_RECORDING) {
-    ESP_LOGI(TAG, "Toggle: Stopping");
-    return transport_stop();
-  } else {
-    ESP_LOGI(TAG, "Toggle: Playing");
-    return transport_play();
-  }
 }
 
 // Tempo beat event handler - syncs position with tempo

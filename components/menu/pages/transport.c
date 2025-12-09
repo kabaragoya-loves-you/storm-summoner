@@ -35,11 +35,10 @@ static void show_info(void) {
   menu_navigate_to_info("Transport Info", info_text);
 }
 
-static void action_play(void) { transport_play(); ESP_LOGI(TAG, "Play"); }
+static void action_play(void) { transport_play(); }
 static void action_stop(void) { transport_stop(); ESP_LOGI(TAG, "Stop"); }
-static void action_pause(void) { transport_pause(); ESP_LOGI(TAG, "Pause"); }
-static void action_record(void) { transport_record(); ESP_LOGI(TAG, "Record"); }
-static void action_toggle(void) { transport_toggle(); ESP_LOGI(TAG, "Toggle"); }
+static void action_pause(void) { transport_pause(); }
+static void action_record(void) { transport_record(); }
 
 lv_obj_t* menu_page_transport_create(void) {
   ESP_LOGI(TAG, "Creating transport page");
@@ -49,8 +48,7 @@ lv_obj_t* menu_page_transport_create(void) {
     { "Play", action_play, false },
     { "Stop", action_stop, false },
     { "Pause", action_pause, false },
-    { "Record", action_record, false },
-    { "Toggle", action_toggle, false }
+    { "Record", action_record, false }
   };
   
   return menu_create_action_page("Transport", transport_items, 

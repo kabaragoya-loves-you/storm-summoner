@@ -628,8 +628,11 @@ static int cmd_pad(int argc, char **argv) {
   else if (strcmp(action_str, "transport_stop") == 0) {
     action = action_create_transport(ACTION_TRANSPORT_STOP);
   }
-  else if (strcmp(action_str, "transport_toggle") == 0) {
-    action = action_create_transport(ACTION_TRANSPORT_TOGGLE);
+  else if (strcmp(action_str, "transport_pause") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_PAUSE);
+  }
+  else if (strcmp(action_str, "transport_record") == 0) {
+    action = action_create_transport(ACTION_TRANSPORT_RECORD);
   }
   else if (strcmp(action_str, "program_next") == 0) {
     action = action_create_program_next();
@@ -657,13 +660,6 @@ static int cmd_pad(int argc, char **argv) {
   }
   else if (strcmp(action_str, "sostenuto") == 0) {
     action = action_create_sostenuto();
-  }
-  // Transport (additional)
-  else if (strcmp(action_str, "transport_pause") == 0) {
-    action = action_create_transport(ACTION_TRANSPORT_PAUSE);
-  }
-  else if (strcmp(action_str, "transport_record") == 0) {
-    action = action_create_transport(ACTION_TRANSPORT_RECORD);
   }
   // Scene set
   else if (strcmp(action_str, "scene_set") == 0) {
@@ -1131,9 +1127,6 @@ static int cmd_bump(int argc, char **argv) {
   else if (strcmp(action_str, "sostenuto") == 0) {
     action = action_create_sostenuto();
   }
-  else if (strcmp(action_str, "transport_toggle") == 0) {
-    action = action_create_transport(ACTION_TRANSPORT_TOGGLE);
-  }
   else if (strcmp(action_str, "transport_pause") == 0) {
     action = action_create_transport(ACTION_TRANSPORT_PAUSE);
   }
@@ -1472,8 +1465,10 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "  tempo_inc / tempo_dec            - +/- 1 BPM");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Transport:");
-  ESP_LOGI(TAG, "  transport_play/stop/toggle       - Transport control");
-  ESP_LOGI(TAG, "  transport_pause / transport_record");
+  ESP_LOGI(TAG, "  transport_play                   - Toggle play/pause");
+  ESP_LOGI(TAG, "  transport_stop                   - Stop");
+  ESP_LOGI(TAG, "  transport_pause                  - Pause");
+  ESP_LOGI(TAG, "  transport_record                 - Toggle record/pause");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Expression:");
   ESP_LOGI(TAG, "  pitch_bend <-8192..8191>         - Pitch bend");

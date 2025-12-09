@@ -293,7 +293,6 @@
             "transport_stop",
             "transport_pause",
             "transport_record",
-            "transport_toggle",
             "tap",
             "tap_tempo",
             "set_tempo",

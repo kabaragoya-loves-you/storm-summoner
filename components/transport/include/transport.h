@@ -47,12 +47,12 @@ bool transport_is_recording(void);
 
 /**
  * Transport control functions
+ * Note: play() and record() are toggles - they pause if already in that state
  */
-esp_err_t transport_play(void);
+esp_err_t transport_play(void);    // Toggle: playing → pause, else → play
 esp_err_t transport_stop(void);
-esp_err_t transport_pause(void);
-esp_err_t transport_record(void);
-esp_err_t transport_toggle(void);  // Toggle between play and stop
+esp_err_t transport_pause(void);   // Pause only (does not unpause)
+esp_err_t transport_record(void);  // Toggle: recording → pause, else → record
 
 /**
  * Transport position tracking

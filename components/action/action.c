@@ -25,7 +25,6 @@ static const char* action_type_names[] = {
   [ACTION_TRANSPORT_STOP] = "Transport Stop",
   [ACTION_TRANSPORT_PAUSE] = "Transport Pause",
   [ACTION_TRANSPORT_RECORD] = "Transport Record",
-  [ACTION_TRANSPORT_TOGGLE] = "Transport Toggle",
   [ACTION_TAP] = "Tap",
   [ACTION_TAP_TEMPO] = "Tap Tempo",
   [ACTION_SET_TEMPO] = "Set Tempo",
@@ -125,7 +124,7 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    // Transport
+    // Transport (Play and Record are toggles)
     case ACTION_TRANSPORT_PLAY:
       if (is_press) transport_play();
       break;
@@ -140,10 +139,6 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       
     case ACTION_TRANSPORT_RECORD:
       if (is_press) transport_record();
-      break;
-      
-    case ACTION_TRANSPORT_TOGGLE:
-      if (is_press) transport_toggle();
       break;
       
     // Tempo
