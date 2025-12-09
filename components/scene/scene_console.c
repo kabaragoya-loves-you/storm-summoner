@@ -2247,8 +2247,17 @@ static int cmd_scene_bpm(int argc, char **argv) {
     return 1;
   }
   
-  scene_set_bpm(scene_get_current_index(), (uint16_t)bpm);
-  ESP_LOGI(TAG, "BPM: %d", bpm);
+  esp_err_t err = scene_set_bpm(scene_get_current_index(), (uint16_t)bpm);
+  if (err == ESP_ERR_INVALID_STATE) {
+    ESP_LOGE(TAG, "Scene BPM can only be modified in programming mode");
+    ESP_LOGI(TAG, "Use 'tempo bpm %d' for a live tempo change (won't persist)", bpm);
+    return 1;
+  } else if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set BPM");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Scene BPM: %d (persisted)", bpm);
   return 0;
 }
 
@@ -3559,7 +3568,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t scene_bpm_cmd = {
     .command = "bpm",
-    .help = "Set scene tempo (20-300 BPM)",
+    .help = "Set scene tempo (20-300 BPM, programming mode only)",
     .hint = NULL,
     .func = &cmd_scene_bpm,
     .argtable = &scene_bpm_args

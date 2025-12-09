@@ -10,6 +10,7 @@
 #include "action.h"
 #include "tempo.h"
 #include "input_manager.h"
+#include "ui.h"
 #include "cJSON.h"
 #include <string.h>
 #include <stdio.h>
@@ -1360,6 +1361,13 @@ input_mode_t scene_get_cv_input_mode(uint8_t scene_index) {
 esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   if (bpm < 20 || bpm > 300) return ESP_ERR_INVALID_ARG;
+  
+  // Scene BPM can only be modified in programming mode
+  // Performance tempo changes should use tempo_set_bpm() directly
+  if (!ui_is_in_programming_mode()) {
+    ESP_LOGW(TAG, "Cannot modify scene BPM outside programming mode (use tempo bpm for live changes)");
+    return ESP_ERR_INVALID_STATE;
+  }
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;

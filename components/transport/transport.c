@@ -305,12 +305,17 @@ esp_err_t transport_record(void) {
     return transport_pause();
   }
   
-  // Otherwise start recording
+  // Send appropriate MIDI clock message based on current state
+  const char* midi_msg = NULL;
   if (current == TRANSPORT_PAUSED) {
     send_continue();
+    midi_msg = "Continue";
   } else if (current == TRANSPORT_STOPPED) {
     send_start();
+    midi_msg = "Start";
   }
+  // If PLAYING, clock is already running - no MIDI clock message needed
+  
   send_mmc_record_strobe();
   
   event_t event = {
@@ -321,7 +326,12 @@ esp_err_t transport_record(void) {
       .source = TRANSPORT_SOURCE_INTERNAL
     }
   };
-  ESP_LOGI(TAG, "Record toggle → recording (sent MMC Record Strobe)");
+  
+  if (midi_msg) {
+    ESP_LOGI(TAG, "Record toggle → recording (sent MIDI %s + MMC Record Strobe)", midi_msg);
+  } else {
+    ESP_LOGI(TAG, "Record toggle → recording (sent MMC Record Strobe, clock already running)");
+  }
   return event_bus_post(&event);
 }
 

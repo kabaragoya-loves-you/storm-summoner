@@ -92,12 +92,32 @@ static TimerHandle_t s_tap_timeout_timer = NULL;
 static uint32_t s_last_sync_tick_ms = 0;
 static SemaphoreHandle_t s_sync_semaphore = NULL;
 
+// External clock dropout protection (for MIDI and SYNC sources)
+#define EXTERNAL_CLOCK_HISTORY_SIZE 8
+#define EXTERNAL_CLOCK_MIN_SAMPLES 4      // Minimum samples before trusting average
+#define EXTERNAL_CLOCK_DROPOUT_FACTOR 5   // Dropout if interval > expected * this factor
+#define EXTERNAL_CLOCK_REASONABLE_FACTOR 3 // Discard if interval > expected * this factor
+
+static uint32_t s_sync_pulse_intervals[EXTERNAL_CLOCK_HISTORY_SIZE];
+static uint8_t s_sync_pulse_history_idx = 0;
+static uint8_t s_sync_pulse_history_count = 0;
+static uint16_t s_sync_last_known_good_bpm = DEFAULT_BPM;
+static uint32_t s_sync_last_pulse_time_ms = 0;
+static bool s_sync_clock_active = false;
+
+static uint16_t s_midi_last_known_good_bpm = DEFAULT_BPM;
+static uint32_t s_midi_last_tick_time_ms = 0;
+static bool s_midi_clock_active = false;
+
 // Forward declarations
 static void tempo_task(void *pvParameters);
 static void transport_state_handler(const event_t* event, void* context);
 static void publish_beat_event(void);
 static void publish_tempo_changed_event(void);
 static void update_midi_out_clock_settings(void);
+static void process_sync_pulse_interval(uint32_t interval_ms);
+static bool check_sync_clock_dropout(uint32_t now_ms);
+static void reset_sync_pulse_tracking(void);
 
 // LED forward declarations
 static void led_als_event_handler(const event_t* event, void* context);
@@ -220,6 +240,112 @@ static void update_midi_out_clock_settings(void) {
   midi_out_set_tempo_enabled(MIDI_OUT_INTERFACE_UART, uart_enabled);
 }
 
+// Reset sync pulse tracking (called on clock source change or recovery)
+static void reset_sync_pulse_tracking(void) {
+  s_sync_pulse_history_idx = 0;
+  s_sync_pulse_history_count = 0;
+  s_sync_last_pulse_time_ms = 0;
+  s_sync_clock_active = false;
+  for (int i = 0; i < EXTERNAL_CLOCK_HISTORY_SIZE; i++) {
+    s_sync_pulse_intervals[i] = 0;
+  }
+}
+
+// Process an incoming sync pulse interval and update last known good BPM
+static void process_sync_pulse_interval(uint32_t interval_ms) {
+  if (interval_ms == 0) return;
+  
+  // Calculate expected interval based on last known good BPM
+  // At 24 PPQN: expected_interval = 60000 / (24 * BPM) = 2500 / BPM
+  // But sync pulses are typically 1 per quarter note, so: 60000 / BPM
+  uint32_t expected_interval = 60000 / s_sync_last_known_good_bpm;
+  
+  // Check if interval is "reasonable" (within factor of expected)
+  // This filters out glitches and first pulse after dropout
+  uint32_t max_reasonable = expected_interval * EXTERNAL_CLOCK_REASONABLE_FACTOR;
+  uint32_t min_reasonable = expected_interval / EXTERNAL_CLOCK_REASONABLE_FACTOR;
+  
+  // Also enforce absolute bounds (20-300 BPM = 3000-200ms intervals)
+  if (interval_ms < 200 || interval_ms > 3000) {
+    ESP_LOGD(TAG, "Sync pulse interval %lu ms outside BPM range, ignoring",
+      (unsigned long)interval_ms);
+    return;
+  }
+  
+  if (interval_ms < min_reasonable || interval_ms > max_reasonable) {
+    // Interval is unreasonable - could be first pulse after dropout or glitch
+    // Don't add to history, but if we have no history, initialize with it
+    if (s_sync_pulse_history_count == 0) {
+      s_sync_pulse_intervals[0] = interval_ms;
+      s_sync_pulse_history_idx = 1;
+      s_sync_pulse_history_count = 1;
+      ESP_LOGD(TAG, "Sync: initializing with interval %lu ms", (unsigned long)interval_ms);
+    } else {
+      ESP_LOGD(TAG, "Sync: discarding unreasonable interval %lu ms (expected ~%lu ms)",
+        (unsigned long)interval_ms, (unsigned long)expected_interval);
+    }
+    return;
+  }
+  
+  // Add to rolling history
+  s_sync_pulse_intervals[s_sync_pulse_history_idx] = interval_ms;
+  s_sync_pulse_history_idx = (s_sync_pulse_history_idx + 1) % EXTERNAL_CLOCK_HISTORY_SIZE;
+  if (s_sync_pulse_history_count < EXTERNAL_CLOCK_HISTORY_SIZE) {
+    s_sync_pulse_history_count++;
+  }
+  
+  // Calculate average from history
+  if (s_sync_pulse_history_count >= EXTERNAL_CLOCK_MIN_SAMPLES) {
+    uint32_t total = 0;
+    for (int i = 0; i < s_sync_pulse_history_count; i++) {
+      total += s_sync_pulse_intervals[i];
+    }
+    uint32_t avg_interval = total / s_sync_pulse_history_count;
+    
+    if (avg_interval > 0) {
+      uint16_t new_bpm = (uint16_t)(60000 / avg_interval);
+      if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM) {
+        s_sync_last_known_good_bpm = new_bpm;
+        s_sync_clock_active = true;
+        
+        // Update live tempo
+        if (new_bpm != s_bpm) {
+          xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+          s_bpm = new_bpm;
+          xSemaphoreGive(s_state_mutex);
+          publish_tempo_changed_event();
+        }
+      }
+    }
+  }
+}
+
+// Check if sync clock has dropped out (returns true if dropout detected)
+static bool check_sync_clock_dropout(uint32_t now_ms) {
+  if (s_sync_last_pulse_time_ms == 0) return false;  // No pulses received yet
+  
+  uint32_t elapsed = now_ms - s_sync_last_pulse_time_ms;
+  
+  // Calculate expected interval based on last known good BPM
+  uint32_t expected_interval = 60000 / s_sync_last_known_good_bpm;
+  uint32_t dropout_threshold = expected_interval * EXTERNAL_CLOCK_DROPOUT_FACTOR;
+  
+  // Minimum threshold of 1 second to avoid false positives at very fast tempos
+  if (dropout_threshold < 1000) dropout_threshold = 1000;
+  
+  if (elapsed > dropout_threshold) {
+    if (s_sync_clock_active) {
+      ESP_LOGW(TAG, "Sync clock dropout detected (no pulse for %lu ms, expected ~%lu ms)",
+        (unsigned long)elapsed, (unsigned long)expected_interval);
+      s_sync_clock_active = false;
+      // Keep s_sync_last_known_good_bpm - this is the value we hold at
+    }
+    return true;
+  }
+  
+  return false;
+}
+
 static void tempo_task(void *pvParameters) {
   ESP_LOGD(TAG, "Tempo task running");
   
@@ -294,32 +420,28 @@ static void tempo_task(void *pvParameters) {
       vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
     }
     else if (source == CLOCK_SOURCE_SYNC) {
-      // In SYNC mode, we track incoming pulses (in tempo_sync_pulse)
-      // but still send outgoing clocks based on the tracked BPM (like MIDI mode)
+      // In SYNC mode, we track incoming pulses with dropout protection
+      // Tempo holds at last known good BPM if external clock stops
+      
+      uint32_t now = esp_timer_get_time() / 1000;
+      
+      // Check for dropout first
+      check_sync_clock_dropout(now);
       
       // Check for sync pulse (non-blocking) to update BPM
       if (xSemaphoreTake(s_sync_semaphore, 0) == pdTRUE) {
-        // Calculate BPM from sync interval
-        uint32_t now = esp_timer_get_time() / 1000;
-        
-        if (s_last_sync_tick_ms > 0) {
-          uint32_t interval_ms = now - s_last_sync_tick_ms;
-          
-          if (interval_ms > 0) {
-            uint16_t new_bpm = (uint16_t)(60000 / interval_ms);
-            
-            if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM && new_bpm != s_bpm) {
-              xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-              s_bpm = new_bpm;
-              xSemaphoreGive(s_state_mutex);
-              publish_tempo_changed_event();
-            }
-          }
+        if (s_sync_last_pulse_time_ms > 0) {
+          uint32_t interval_ms = now - s_sync_last_pulse_time_ms;
+          process_sync_pulse_interval(interval_ms);
+        } else {
+          // First pulse - just record time, initialize last known good from current
+          s_sync_last_known_good_bpm = s_bpm;
         }
-        s_last_sync_tick_ms = now;
+        s_sync_last_pulse_time_ms = now;
       }
       
-      // Send clocks continuously based on current BPM (same as MIDI mode)
+      // Send clocks continuously based on current BPM
+      // During dropout, s_bpm holds at last known good value
       uint32_t ppqn;
       switch (standard) {
         case CLOCK_STANDARD_24PPQN:
@@ -360,7 +482,27 @@ static void tempo_task(void *pvParameters) {
     }
     else { // CLOCK_SOURCE_MIDI
       // In MIDI clock mode, we track incoming clocks (in tempo_midi_clock_tick)
-      // but still send outgoing clocks based on the tracked BPM
+      // with dropout protection - tempo holds at last known good BPM if clock stops
+      
+      uint32_t now = esp_timer_get_time() / 1000;
+      
+      // Check for MIDI clock dropout
+      if (s_midi_last_tick_time_ms > 0) {
+        uint32_t elapsed = now - s_midi_last_tick_time_ms;
+        // Expected interval at 24 PPQN: 60000 / (24 * BPM)
+        // At 120 BPM = ~21ms between ticks
+        // Use quarter note interval (24 ticks) as base for dropout detection
+        uint32_t expected_quarter_interval = 60000 / s_midi_last_known_good_bpm;
+        uint32_t dropout_threshold = expected_quarter_interval * EXTERNAL_CLOCK_DROPOUT_FACTOR;
+        if (dropout_threshold < 1000) dropout_threshold = 1000;
+        
+        if (elapsed > dropout_threshold && s_midi_clock_active) {
+          ESP_LOGW(TAG, "MIDI clock dropout detected (no tick for %lu ms)",
+            (unsigned long)elapsed);
+          s_midi_clock_active = false;
+          // Keep s_midi_last_known_good_bpm - BPM continues at this value
+        }
+      }
       
       // Calculate pulses per quarter note based on clock standard
       uint32_t ppqn;
@@ -380,6 +522,7 @@ static void tempo_task(void *pvParameters) {
       }
       
       // Calculate tick interval based on tracked BPM (minimum 10ms to ensure at least 1 FreeRTOS tick)
+      // During dropout, s_bpm holds at last known good value
       uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
       if (tick_interval_ms < 10) tick_interval_ms = 10;
       
@@ -526,6 +669,17 @@ void tempo_set_source(tempo_clock_source_t source) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
   s_clock_source = source;
   xSemaphoreGive(s_state_mutex);
+  
+  // Reset external clock tracking when source changes
+  // Initialize last known good BPM from current BPM
+  if (source == CLOCK_SOURCE_SYNC) {
+    reset_sync_pulse_tracking();
+    s_sync_last_known_good_bpm = s_bpm;
+  } else if (source == CLOCK_SOURCE_MIDI) {
+    s_midi_last_tick_time_ms = 0;
+    s_midi_clock_active = false;
+    s_midi_last_known_good_bpm = s_bpm;
+  }
   
   // Note: No NVS save - clock source is now a per-scene setting
   const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
@@ -725,6 +879,16 @@ void tempo_midi_clock_tick(void) {
   
   uint32_t now = esp_timer_get_time() / 1000;
   
+  // Track last tick time for dropout detection
+  s_midi_last_tick_time_ms = now;
+  
+  // If we were in dropout, we're now receiving again
+  if (!s_midi_clock_active) {
+    ESP_LOGI(TAG, "MIDI clock resumed");
+    s_midi_clock_active = true;
+    // Don't reset EMA - let it adapt naturally
+  }
+  
   // EMA-based tempo tracking with outlier rejection
   // Updates smoothly every quarter note, but rate-limits BPM announcements
   
@@ -775,6 +939,9 @@ void tempo_midi_clock_tick(void) {
         uint16_t measured_bpm = calculated_bpm;
         
         if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
+          // Update last known good BPM for dropout protection
+          s_midi_last_known_good_bpm = measured_bpm;
+          
           int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
           
           // Apply deadzone if configured
