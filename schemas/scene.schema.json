@@ -11,6 +11,11 @@
       "maxLength": 32,
       "description": "Scene display name"
     },
+    "device_id": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Device slug"
+    },
     "program_number": {
       "type": "integer",
       "minimum": 0,

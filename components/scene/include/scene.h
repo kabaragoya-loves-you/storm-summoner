@@ -71,6 +71,7 @@ typedef struct {
 // Scene structure
 typedef struct {
   char name[32];              // Scene name
+  char device_id[64];         // Device slug (empty = use global device_config)
   
   // Program change settings (modes 2 & 3)
   uint8_t program_number;     // PC value (0-127)
@@ -177,6 +178,22 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name);
 esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode);
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
 esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc);
+
+// Device association (per-scene device targeting)
+esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id);
+const char* scene_get_device_id(uint8_t scene_index);
+esp_err_t scene_clear_device_id(uint8_t scene_index);
+
+// Forward declaration for device_def_t (from assets_types.h)
+struct device_def_t;
+
+// Get the active device for a scene (loads device if needed)
+// Returns device from scene's device_id, or global device_config if empty
+// Caller must NOT free the returned pointer (managed internally)
+const struct device_def_t* scene_get_device(uint8_t scene_index);
+
+// Get the effective device slug for a scene (resolves to global if scene doesn't specify)
+const char* scene_get_effective_device_slug(uint8_t scene_index);
 
 // Touchpad configuration
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, 

@@ -176,8 +176,9 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
         return NULL;
       }
       
-      // Calculate total string size needed
+      // Calculate total string size needed (including discrete value names)
       size_t string_size = 0;
+      size_t total_discrete_count = 0;
       cJSON *cc_item;
       cJSON_ArrayForEach(cc_item, cc_array) {
         cJSON *name = cJSON_GetObjectItem(cc_item, "name");
@@ -187,6 +188,28 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
         cJSON *info = cJSON_GetObjectItem(cc_item, "additionalInfo");
         if (info && cJSON_IsString(info))
           string_size += strlen(info->valuestring) + 1;
+        
+        // Count discrete values and their string sizes
+        cJSON *range = cJSON_GetObjectItem(cc_item, "valueRange");
+        if (range) {
+          cJSON *discrete_arr = cJSON_GetObjectItem(range, "discreteValues");
+          if (discrete_arr && cJSON_IsArray(discrete_arr)) {
+            int dv_count = cJSON_GetArraySize(discrete_arr);
+            if (dv_count > MAX_DISCRETE_VALUES)
+              dv_count = MAX_DISCRETE_VALUES;
+            total_discrete_count += dv_count;
+            
+            cJSON *dv_item;
+            int dv_idx = 0;
+            cJSON_ArrayForEach(dv_item, discrete_arr) {
+              if (dv_idx >= MAX_DISCRETE_VALUES) break;
+              cJSON *dv_name = cJSON_GetObjectItem(dv_item, "name");
+              if (dv_name && cJSON_IsString(dv_name))
+                string_size += strlen(dv_name->valuestring) + 1;
+              dv_idx++;
+            }
+          }
+        }
       }
       
       // Allocate string blob in PSRAM
@@ -198,6 +221,17 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
         free_smart(device);
         cJSON_Delete(root);
         return NULL;
+      }
+      
+      // Allocate discrete values array if needed
+      discrete_value_t *all_discrete = NULL;
+      discrete_value_t *discrete_ptr = NULL;
+      if (total_discrete_count > 0) {
+        all_discrete = calloc_prefer_psram(total_discrete_count, sizeof(discrete_value_t));
+        discrete_ptr = all_discrete;
+        if (!all_discrete) {
+          ESP_LOGW(TAG, "Failed to allocate discrete values, continuing without them");
+        }
       }
       
       // Parse each control
@@ -241,6 +275,37 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
             ctrl->min = min->valueint;
           if (max && cJSON_IsNumber(max))
             ctrl->max = max->valueint;
+          
+          // Parse discrete values
+          cJSON *discrete_arr = cJSON_GetObjectItem(range, "discreteValues");
+          if (discrete_arr && cJSON_IsArray(discrete_arr) && discrete_ptr) {
+            int dv_count = cJSON_GetArraySize(discrete_arr);
+            if (dv_count > MAX_DISCRETE_VALUES)
+              dv_count = MAX_DISCRETE_VALUES;
+            
+            if (dv_count > 0) {
+              ctrl->discrete_values = discrete_ptr;
+              ctrl->discrete_count = 0;
+              
+              cJSON *dv_item;
+              cJSON_ArrayForEach(dv_item, discrete_arr) {
+                if (ctrl->discrete_count >= MAX_DISCRETE_VALUES) break;
+                
+                cJSON *dv_name = cJSON_GetObjectItem(dv_item, "name");
+                cJSON *dv_value = cJSON_GetObjectItem(dv_item, "value");
+                
+                if (dv_name && cJSON_IsString(dv_name) && dv_value && cJSON_IsNumber(dv_value)) {
+                  size_t len = strlen(dv_name->valuestring) + 1;
+                  memcpy(string_ptr, dv_name->valuestring, len);
+                  discrete_ptr->name = string_ptr;
+                  discrete_ptr->value = dv_value->valueint;
+                  string_ptr += len;
+                  discrete_ptr++;
+                  ctrl->discrete_count++;
+                }
+              }
+            }
+          }
         }
         
         idx++;

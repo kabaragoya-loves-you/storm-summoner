@@ -76,6 +76,61 @@ const program_change_info_t *assets_get_pc_info(const device_def_t *device);
 midi_trs_type_t assets_get_trs_type(const device_def_t *device);
 
 /**
+ * Get CC name from device profile
+ * Returns control name or "Undefined" if CC not in profile, NULL if device is NULL
+ */
+const char *assets_get_cc_name(const device_def_t *device, uint8_t cc_num);
+
+/**
+ * Get the index of the discrete value that matches or contains the given value
+ * Returns index (0 to discrete_count-1) or -1 if not found or not discrete
+ */
+int assets_get_discrete_index(const device_def_t *device, uint8_t cc_num, uint16_t value);
+
+/**
+ * Get discrete value name for a given MIDI value
+ * Returns name string or NULL if not discrete or not found
+ */
+const char *assets_get_discrete_name(const device_def_t *device, uint8_t cc_num, uint16_t value);
+
+/**
+ * Snap a value to the nearest discrete value for a CC
+ * Returns snapped value, or original value if CC has no discrete values
+ */
+uint16_t assets_snap_to_discrete(const device_def_t *device, uint8_t cc_num, uint16_t value);
+
+/**
+ * Get next discrete value (for cycling through options)
+ * Returns next value, wrapping to first if at end
+ * Returns current value if CC has no discrete values
+ */
+uint16_t assets_get_next_discrete(const device_def_t *device, uint8_t cc_num, uint16_t current);
+
+/**
+ * Get previous discrete value (for cycling through options)
+ * Returns previous value, wrapping to last if at start
+ * Returns current value if CC has no discrete values
+ */
+uint16_t assets_get_prev_discrete(const device_def_t *device, uint8_t cc_num, uint16_t current);
+
+/**
+ * Check if value is valid for a CC according to device min/max
+ * Returns true if valid or if device/CC not found (permissive)
+ */
+bool assets_validate_cc_value(const device_def_t *device, uint8_t cc_num, uint16_t value);
+
+/**
+ * Clamp value to device min/max for a CC
+ * Returns clamped value, or original if device/CC not found
+ */
+uint16_t assets_clamp_cc_value(const device_def_t *device, uint8_t cc_num, uint16_t value);
+
+/**
+ * Check if a CC has discrete values defined
+ */
+bool assets_cc_has_discrete_values(const device_def_t *device, uint8_t cc_num);
+
+/**
  * Reload the device manifest from LittleFS
  * Re-scans and parses manifest.json
  * @return ESP_OK on success

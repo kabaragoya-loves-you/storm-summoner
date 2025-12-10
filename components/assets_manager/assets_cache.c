@@ -52,6 +52,12 @@ esp_err_t generate_device_cache(const device_def_t *device, const char *cache_pa
     return ESP_FAIL;
   }
   
+  // Count total discrete values
+  uint32_t total_discrete_count = 0;
+  for (uint16_t i = 0; i < device->control_count; i++) {
+    total_discrete_count += device->controls[i].discrete_count;
+  }
+  
   // Prepare header (CRC will be calculated later)
   cache_header_t header = {
     .magic = CACHE_MAGIC,
@@ -85,6 +91,7 @@ esp_err_t generate_device_cache(const device_def_t *device, const char *cache_pa
     rec.min = ctrl->min;
     rec.max = ctrl->max;
     rec.flags = ctrl->flags;
+    rec.discrete_count = ctrl->discrete_count;
     
     // Calculate offsets into string blob
     if (ctrl->name && device->string_blob) {
@@ -95,6 +102,20 @@ esp_err_t generate_device_cache(const device_def_t *device, const char *cache_pa
     }
     
     fwrite(&rec, sizeof(rec), 1, f);
+  }
+  
+  // Write discrete value records
+  for (uint16_t i = 0; i < device->control_count; i++) {
+    const midi_control_t *ctrl = &device->controls[i];
+    for (uint8_t j = 0; j < ctrl->discrete_count; j++) {
+      discrete_value_record_t dv_rec = {0};
+      dv_rec.value = ctrl->discrete_values[j].value;
+      if (ctrl->discrete_values[j].name && device->string_blob) {
+        dv_rec.name_offset = (uint32_t)((const char *)ctrl->discrete_values[j].name -
+          (const char *)device->string_blob);
+      }
+      fwrite(&dv_rec, sizeof(dv_rec), 1, f);
+    }
   }
   
   // Write string blob
@@ -129,7 +150,7 @@ esp_err_t generate_device_cache(const device_def_t *device, const char *cache_pa
   }
   
   fclose(f);
-  ESP_LOGI(TAG, "Cache generated successfully");
+  ESP_LOGI(TAG, "Cache generated successfully (%u discrete values)", (unsigned)total_discrete_count);
   return ESP_OK;
 }
 
@@ -175,31 +196,59 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     return NULL;
   }
   
-  // Calculate data size
+  // Read control records first to count discrete values
   size_t control_data_size = header.control_count * sizeof(control_record_t);
-  size_t total_data_size = control_data_size + header.string_blob_size;
-  
-  // Allocate buffer for data in PSRAM
-  uint8_t *data_buf = malloc_prefer_psram(total_data_size);
-  if (!data_buf) {
-    ESP_LOGE(TAG, "Failed to allocate %u bytes for cache data", (unsigned)total_data_size);
+  control_record_t *records = malloc_prefer_psram(control_data_size);
+  if (!records) {
+    ESP_LOGE(TAG, "Failed to allocate control records buffer");
     fclose(f);
     return NULL;
   }
   
-  // Read all data
-  if (fread(data_buf, 1, total_data_size, f) != total_data_size) {
-    ESP_LOGE(TAG, "Failed to read cache data");
-    free_smart(data_buf);
+  if (fread(records, 1, control_data_size, f) != control_data_size) {
+    ESP_LOGE(TAG, "Failed to read control records");
+    free_smart(records);
     fclose(f);
     return NULL;
   }
   
-  // Validate CRC32
-  uint32_t calculated_crc = calculate_crc32(data_buf, total_data_size);
-  if (calculated_crc != header.crc32) {
-    ESP_LOGW(TAG, "Cache CRC mismatch: 0x%08lx vs 0x%08lx", (unsigned long)calculated_crc, (unsigned long)header.crc32);
-    free_smart(data_buf);
+  // Count total discrete values
+  uint32_t total_discrete_count = 0;
+  for (uint32_t i = 0; i < header.control_count; i++) {
+    total_discrete_count += records[i].discrete_count;
+  }
+  
+  // Read discrete value records
+  size_t discrete_data_size = total_discrete_count * sizeof(discrete_value_record_t);
+  discrete_value_record_t *dv_records = NULL;
+  if (total_discrete_count > 0) {
+    dv_records = malloc_prefer_psram(discrete_data_size);
+    if (!dv_records) {
+      ESP_LOGW(TAG, "Failed to allocate discrete value records, continuing without them");
+      total_discrete_count = 0;
+    } else if (fread(dv_records, 1, discrete_data_size, f) != discrete_data_size) {
+      ESP_LOGW(TAG, "Failed to read discrete value records");
+      free_smart(dv_records);
+      dv_records = NULL;
+      total_discrete_count = 0;
+    }
+  }
+  
+  // Read string blob
+  uint8_t *string_blob = malloc_prefer_psram(header.string_blob_size);
+  if (!string_blob) {
+    ESP_LOGE(TAG, "Failed to allocate string blob");
+    free_smart(dv_records);
+    free_smart(records);
+    fclose(f);
+    return NULL;
+  }
+  
+  if (fread(string_blob, 1, header.string_blob_size, f) != header.string_blob_size) {
+    ESP_LOGE(TAG, "Failed to read string blob");
+    free_smart(string_blob);
+    free_smart(dv_records);
+    free_smart(records);
     fclose(f);
     return NULL;
   }
@@ -210,38 +259,41 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   device_def_t *device = calloc_prefer_psram(1, sizeof(device_def_t));
   if (!device) {
     ESP_LOGE(TAG, "Failed to allocate device_def_t");
-    free_smart(data_buf);
+    free_smart(string_blob);
+    free_smart(dv_records);
+    free_smart(records);
     return NULL;
   }
   
   strncpy(device->slug, slug, sizeof(device->slug) - 1);
   device->control_count = header.control_count;
   device->string_blob_size = header.string_blob_size;
+  device->string_blob = string_blob;
   
   // Allocate controls array
   device->controls = calloc_prefer_psram(device->control_count, sizeof(midi_control_t));
   if (!device->controls) {
     ESP_LOGE(TAG, "Failed to allocate controls array");
-    free_smart(data_buf);
+    free_smart(device->string_blob);
     free_smart(device);
+    free_smart(dv_records);
+    free_smart(records);
     return NULL;
   }
   
-  // Allocate string blob
-  device->string_blob = malloc_prefer_psram(device->string_blob_size);
-  if (!device->string_blob) {
-    ESP_LOGE(TAG, "Failed to allocate string blob");
-    free_smart(device->controls);
-    free_smart(data_buf);
-    free_smart(device);
-    return NULL;
+  // Allocate discrete values array if needed
+  discrete_value_t *all_discrete = NULL;
+  discrete_value_t *discrete_ptr = NULL;
+  if (total_discrete_count > 0 && dv_records) {
+    all_discrete = calloc_prefer_psram(total_discrete_count, sizeof(discrete_value_t));
+    discrete_ptr = all_discrete;
+    if (!all_discrete) {
+      ESP_LOGW(TAG, "Failed to allocate discrete values, continuing without them");
+    }
   }
   
-  // Copy string blob
-  memcpy(device->string_blob, data_buf + control_data_size, device->string_blob_size);
-  
-  // Parse control records
-  control_record_t *records = (control_record_t *)data_buf;
+  // Parse control records and discrete values
+  uint32_t dv_idx = 0;
   for (uint16_t i = 0; i < device->control_count; i++) {
     midi_control_t *ctrl = &device->controls[i];
     control_record_t *rec = &records[i];
@@ -251,6 +303,7 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     ctrl->min = rec->min;
     ctrl->max = rec->max;
     ctrl->flags = rec->flags;
+    ctrl->discrete_count = rec->discrete_count;
     
     // Set name pointer
     if (rec->name_offset < device->string_blob_size)
@@ -259,7 +312,22 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     // Set info pointer
     if (rec->info_offset > 0 && rec->info_offset < device->string_blob_size)
       ctrl->additional_info = (const char *)device->string_blob + rec->info_offset;
+    
+    // Set discrete values
+    if (rec->discrete_count > 0 && discrete_ptr && dv_records) {
+      ctrl->discrete_values = discrete_ptr;
+      for (uint8_t j = 0; j < rec->discrete_count; j++) {
+        discrete_value_record_t *dv_rec = &dv_records[dv_idx++];
+        discrete_ptr->value = dv_rec->value;
+        if (dv_rec->name_offset < device->string_blob_size)
+          discrete_ptr->name = (const char *)device->string_blob + dv_rec->name_offset;
+        discrete_ptr++;
+      }
+    }
   }
+  
+  free_smart(records);
+  free_smart(dv_records);
   
   // Build CC lookup table
   device->cc_lookup = malloc_prefer_psram(128 * sizeof(int16_t));
@@ -273,9 +341,8 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     }
   }
   
-  free_smart(data_buf);
-  
-  ESP_LOGI(TAG, "Cache loaded successfully: %u controls", (unsigned)device->control_count);
+  ESP_LOGI(TAG, "Cache loaded successfully: %u controls, %u discrete values",
+    (unsigned)device->control_count, (unsigned)total_discrete_count);
   return device;
 }
 

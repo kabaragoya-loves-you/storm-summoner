@@ -22,6 +22,15 @@ typedef enum {
 #define CACHE_MAGIC 0x4D444343  // 'MDCC'
 #define CACHE_SCHEMA_VERSION 1
 
+// Maximum discrete values per control
+#define MAX_DISCRETE_VALUES 16
+
+// Discrete value entry (for controls with named preset values)
+typedef struct {
+  const char *name;       // Value name (points into PSRAM string blob)
+  uint16_t value;         // MIDI value (0-127 for CC, 0-16383 for NRPN)
+} discrete_value_t;
+
 // Individual MIDI control definition
 typedef struct {
   uint8_t type;           // 0=CC, 1=NRPN
@@ -31,6 +40,8 @@ typedef struct {
   const char *name;       // Control name (points into PSRAM string blob)
   const char *additional_info;  // Optional additional info
   uint8_t flags;          // Reserved for taper, stepped, etc.
+  discrete_value_t *discrete_values;  // Array of discrete values (NULL if continuous)
+  uint8_t discrete_count;             // Number of discrete values (0 if continuous)
 } midi_control_t;
 
 // Program change configuration
@@ -86,8 +97,16 @@ typedef struct {
   uint32_t name_offset;  // Offset into string blob
   uint32_t info_offset;  // Offset into string blob (0 if none)
   uint8_t flags;
-  uint8_t padding[3];    // Align to 16 bytes
+  uint8_t discrete_count;  // Number of discrete values (0 if continuous)
+  uint16_t padding;        // Align to 16 bytes
 } __attribute__((packed)) control_record_t;
+
+// Packed binary discrete value record for cache files
+typedef struct {
+  uint32_t name_offset;  // Offset into string blob
+  uint16_t value;        // MIDI value
+  uint16_t padding;      // Align to 8 bytes
+} __attribute__((packed)) discrete_value_record_t;
 
 // Manifest device entry
 typedef struct {

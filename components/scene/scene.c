@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "midi_messages.h"
 #include "device_config.h"
+#include "assets_manager.h"
 #include "config.h"
 #include "app_settings.h"
 #include "event_bus.h"
@@ -49,6 +50,10 @@ static scene_manager_t g_scene_manager = {
 
 // Touchwheel instance for scene encoder mode
 static touchwheel_instance_t* s_scene_touchwheel = NULL;
+
+// Cached device definition for current scene
+static device_def_t* s_cached_device = NULL;
+static char s_cached_device_slug[64] = "";
 
 // Default CC assignments for initial testing
 static const uint8_t DEFAULT_CC_NUMBERS[NUM_TOUCHPADS] = {
@@ -378,18 +383,66 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   scene_t* scene = (scene_t*)user_data;
   if (!scene || !scene->touchwheel.enabled) return;
   
+  // Get device for discrete value handling
+  const device_def_t* device = s_cached_device;
+  uint8_t cc_num = scene->touchwheel.cc_number;
+  bool has_discrete = (device && scene->touchwheel.output_type == OUTPUT_TYPE_CC &&
+    assets_cc_has_discrete_values(device, cc_num));
+  
   uint8_t midi_value;
   
   if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
     // Endless mode: value is a delta (+1, -1, etc.)
-    s_touchwheel_endless_value += value;
-    // Clamp to 0-127
-    if (s_touchwheel_endless_value < 0) s_touchwheel_endless_value = 0;
-    if (s_touchwheel_endless_value > 127) s_touchwheel_endless_value = 127;
-    midi_value = (uint8_t)s_touchwheel_endless_value;
+    if (has_discrete) {
+      // For discrete CCs, cycle through discrete values
+      if (value > 0) {
+        s_touchwheel_endless_value = assets_get_next_discrete(device, cc_num, s_touchwheel_endless_value);
+      } else if (value < 0) {
+        s_touchwheel_endless_value = assets_get_prev_discrete(device, cc_num, s_touchwheel_endless_value);
+      }
+      midi_value = (uint8_t)s_touchwheel_endless_value;
+    } else {
+      // Standard continuous: increment by delta
+      s_touchwheel_endless_value += value;
+      // Clamp to device min/max or 0-127
+      int min_val = 0, max_val = 127;
+      if (device) {
+        const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+        if (ctrl) {
+          min_val = ctrl->min;
+          max_val = ctrl->max;
+        }
+      }
+      if (s_touchwheel_endless_value < min_val) s_touchwheel_endless_value = min_val;
+      if (s_touchwheel_endless_value > max_val) s_touchwheel_endless_value = max_val;
+      midi_value = (uint8_t)s_touchwheel_endless_value;
+    }
   } else {
-    // Odometer mode: value is 0-100%, scale to 0-127
-    midi_value = (uint8_t)((value * 127) / 100);
+    // Odometer mode: value is 0-100%, scale to appropriate range
+    if (has_discrete) {
+      // Map odometer position to discrete value index
+      const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+      if (ctrl && ctrl->discrete_count > 0) {
+        int idx = (value * (ctrl->discrete_count - 1)) / 100;
+        if (idx >= ctrl->discrete_count) idx = ctrl->discrete_count - 1;
+        if (idx < 0) idx = 0;
+        midi_value = ctrl->discrete_values[idx].value;
+        s_touchwheel_endless_value = midi_value;  // Update for display
+      } else {
+        midi_value = (uint8_t)((value * 127) / 100);
+      }
+    } else {
+      // Scale to device min/max range or 0-127
+      int min_val = 0, max_val = 127;
+      if (device) {
+        const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+        if (ctrl) {
+          min_val = ctrl->min;
+          max_val = ctrl->max;
+        }
+      }
+      midi_value = (uint8_t)(min_val + ((value * (max_val - min_val)) / 100));
+    }
   }
   
   // Process through continuous mapping (applies curve, polarity, scaling)
@@ -400,7 +453,12 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   
   if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
     continuous_mapping_send_cc(&scene->touchwheel, channel, output);
-    ESP_LOGD(TAG, "Touchwheel CC = %d", output);
+    if (has_discrete) {
+      const char* name = assets_get_discrete_name(device, cc_num, output);
+      ESP_LOGD(TAG, "Touchwheel CC%d = %d (%s)", cc_num, output, name ? name : "");
+    } else {
+      ESP_LOGD(TAG, "Touchwheel CC = %d", output);
+    }
   } else {
     // Note mode: convert value to note number
     uint8_t note = continuous_mapping_value_to_note(output, &scene->touchwheel);
@@ -758,6 +816,13 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   g_scene_manager.current_cache_idx = cache_idx;
   g_scene_manager.current_scene_index = scene_index;
   
+  // Invalidate cached device so it reloads for the new scene
+  if (s_cached_device) {
+    assets_free_device(s_cached_device);
+    s_cached_device = NULL;
+    s_cached_device_slug[0] = '\0';
+  }
+  
   scene_t* new_scene = &g_scene_manager.cache[cache_idx].scene;
   
   // Update device current_program and send PC based on mode
@@ -874,16 +939,111 @@ esp_err_t scene_previous(void) {
 
 esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
   if (scene_index > MAX_SCENE_INDEX || !name) return ESP_ERR_INVALID_ARG;
-  
+
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
-  
+
   strncpy(scene->name, name, sizeof(scene->name) - 1);
   scene->name[sizeof(scene->name) - 1] = '\0';
   g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
-  
+
   ESP_LOGI(TAG, "Scene %d renamed to: %s", scene_index + 1, name);
   return ESP_OK;
+}
+
+esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  if (device_id && device_id[0] != '\0') {
+    strncpy(scene->device_id, device_id, sizeof(scene->device_id) - 1);
+    scene->device_id[sizeof(scene->device_id) - 1] = '\0';
+    ESP_LOGI(TAG, "Scene %d device set to: %s", scene_index + 1, device_id);
+  } else {
+    scene->device_id[0] = '\0';
+    ESP_LOGI(TAG, "Scene %d device cleared (using global)", scene_index + 1);
+  }
+
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+
+  // Invalidate cached device so it reloads on next access
+  if (s_cached_device) {
+    assets_free_device(s_cached_device);
+    s_cached_device = NULL;
+    s_cached_device_slug[0] = '\0';
+  }
+
+  return ESP_OK;
+}
+
+const char* scene_get_device_id(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return NULL;
+
+  if (scene_index != g_scene_manager.current_scene_index) {
+    // Can only get device_id for current scene
+    return NULL;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  return scene->device_id;
+}
+
+esp_err_t scene_clear_device_id(uint8_t scene_index) {
+  return scene_set_device_id(scene_index, NULL);
+}
+
+const char* scene_get_effective_device_slug(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return NULL;
+
+  if (scene_index != g_scene_manager.current_scene_index) {
+    return NULL;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  // If scene has a device_id, use it; otherwise use global
+  if (scene->device_id[0] != '\0') {
+    return scene->device_id;
+  }
+
+  // Fall back to global device_config
+  return device_config_get_pedal_slug();
+}
+
+const struct device_def_t* scene_get_device(uint8_t scene_index) {
+  const char* slug = scene_get_effective_device_slug(scene_index);
+  if (!slug || slug[0] == '\0') {
+    return NULL;  // No device configured
+  }
+
+  // Check if already cached
+  if (s_cached_device && strcmp(s_cached_device_slug, slug) == 0) {
+    return (const struct device_def_t*)s_cached_device;
+  }
+
+  // Free old cached device if any
+  if (s_cached_device) {
+    assets_free_device(s_cached_device);
+    s_cached_device = NULL;
+    s_cached_device_slug[0] = '\0';
+  }
+
+  // Load new device
+  s_cached_device = assets_load_device(slug);
+  if (s_cached_device) {
+    strncpy(s_cached_device_slug, slug, sizeof(s_cached_device_slug) - 1);
+    s_cached_device_slug[sizeof(s_cached_device_slug) - 1] = '\0';
+    ESP_LOGI(TAG, "Loaded device: %s", slug);
+  } else {
+    ESP_LOGW(TAG, "Failed to load device: %s", slug);
+  }
+
+  return (const struct device_def_t*)s_cached_device;
 }
 
 esp_err_t scene_set_mode(scene_mode_t mode) {
@@ -1754,6 +1914,12 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
 static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "name", scene->name);
+
+  // Only write device_id if it's set (non-empty)
+  if (scene->device_id[0] != '\0') {
+    cJSON_AddStringToObject(root, "device_id", scene->device_id);
+  }
+
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
@@ -1839,13 +2005,22 @@ static cJSON* scene_to_json(const scene_t* scene) {
 
 static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   if (!root || !scene) return ESP_ERR_INVALID_ARG;
-  
+
   cJSON* name = cJSON_GetObjectItem(root, "name");
   if (name && cJSON_IsString(name)) {
     strncpy(scene->name, name->valuestring, sizeof(scene->name) - 1);
     scene->name[sizeof(scene->name) - 1] = '\0';
   }
-  
+
+  // Parse device_id (optional - empty means use global device_config)
+  cJSON* device_id = cJSON_GetObjectItem(root, "device_id");
+  if (device_id && cJSON_IsString(device_id)) {
+    strncpy(scene->device_id, device_id->valuestring, sizeof(scene->device_id) - 1);
+    scene->device_id[sizeof(scene->device_id) - 1] = '\0';
+  } else {
+    scene->device_id[0] = '\0';  // Use global
+  }
+
   cJSON* program = cJSON_GetObjectItem(root, "program_number");
   if (program) scene->program_number = program->valueint;
   

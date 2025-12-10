@@ -1,6 +1,7 @@
 #include "scene_console.h"
 #include "scene.h"
 #include "device_config.h"
+#include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -28,20 +29,59 @@ static void format_cc_list(const continuous_mapping_t* mapping, char* buf, size_
   }
 }
 
-// Helper to format action details for display
-static void format_action_details(const action_t* action, char* buf, size_t buf_size) {
+// Helper to format CC value with optional discrete name
+static void format_cc_value_with_discrete(const device_def_t* device, uint8_t cc_num,
+  uint16_t value, char* buf, size_t buf_size) {
+  if (device) {
+    const char* discrete_name = assets_get_discrete_name(device, cc_num, value);
+    if (discrete_name) {
+      snprintf(buf, buf_size, "%d (%s)", value, discrete_name);
+      return;
+    }
+  }
+  snprintf(buf, buf_size, "%d", value);
+}
+
+// Helper to format action details for display (device-aware version)
+static void format_action_details_with_device(const action_t* action, const device_def_t* device,
+  char* buf, size_t buf_size) {
   switch (action->type) {
-    case ACTION_SEND_CC:
-      snprintf(buf, buf_size, "CC%d=%d", action->params.cc.cc_number, action->params.cc.value);
+    case ACTION_SEND_CC: {
+      uint8_t cc = action->params.cc.cc_number;
+      const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
+      char val_buf[32];
+      format_cc_value_with_discrete(device, cc, action->params.cc.value, val_buf, sizeof(val_buf));
+      if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+        snprintf(buf, buf_size, "CC%d %s - %s", cc, cc_name, val_buf);
+      } else {
+        snprintf(buf, buf_size, "CC%d=%s", cc, val_buf);
+      }
       break;
-    case ACTION_SEND_CC_HOLD:
-      snprintf(buf, buf_size, "CC%d hold:%d/%d", action->params.cc.cc_number, 
-               action->params.cc.value, action->params.cc.value2);
+    }
+    case ACTION_SEND_CC_HOLD: {
+      uint8_t cc = action->params.cc.cc_number;
+      const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
+      if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+        snprintf(buf, buf_size, "CC%d %s hold:%d/%d", cc, cc_name,
+          action->params.cc.value, action->params.cc.value2);
+      } else {
+        snprintf(buf, buf_size, "CC%d hold:%d/%d", cc,
+          action->params.cc.value, action->params.cc.value2);
+      }
       break;
+    }
     case ACTION_SEND_CC_CYCLE: {
-      int pos = snprintf(buf, buf_size, "CC%d cycle:", action->params.cc.cc_number);
+      uint8_t cc = action->params.cc.cc_number;
+      const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
+      int pos;
+      if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+        pos = snprintf(buf, buf_size, "CC%d %s cycle:", cc, cc_name);
+      } else {
+        pos = snprintf(buf, buf_size, "CC%d cycle:", cc);
+      }
       for (int i = 0; i < action->params.cc.num_values && pos < (int)buf_size - 4; i++) {
-        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "", action->params.cc.values[i]);
+        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
+          action->params.cc.values[i]);
       }
       break;
     }
@@ -54,7 +94,8 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
     case ACTION_RANDOMIZE_CC: {
       int pos = snprintf(buf, buf_size, "Randomize CC");
       for (int i = 0; i < action->params.randomize.num_ccs && pos < (int)buf_size - 4; i++) {
-        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "", action->params.randomize.cc_numbers[i]);
+        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
+          action->params.randomize.cc_numbers[i]);
       }
       break;
     }
@@ -74,8 +115,8 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
       snprintf(buf, buf_size, "Aftertouch %d", action->params.aftertouch.pressure);
       break;
     case ACTION_SEND_DOUBLE_CC:
-      snprintf(buf, buf_size, "14bit CC%d/%d=%d", action->params.double_cc.msb_cc, 
-               action->params.double_cc.lsb_cc, action->params.double_cc.value);
+      snprintf(buf, buf_size, "14bit CC%d/%d=%d", action->params.double_cc.msb_cc,
+        action->params.double_cc.lsb_cc, action->params.double_cc.value);
       break;
     case ACTION_SEND_NRPN:
       snprintf(buf, buf_size, "NRPN %d=%d", action->params.nrpn.parameter, action->params.nrpn.value);
@@ -99,9 +140,14 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
   }
 }
 
+// Helper to format action details for display (legacy wrapper)
+static void format_action_details(const action_t* action, char* buf, size_t buf_size) {
+  format_action_details_with_device(action, NULL, buf, buf_size);
+}
+
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
-  "info", "next", "prev", "goto", "name", "save",
+  "info", "next", "prev", "goto", "name", "save", "device",
   "confirm", "cancel", "channel", "pad", "button", "bump", "expr_switch", "actions", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
@@ -122,8 +168,26 @@ static void cmd_scene_info(void) {
     return;
   }
   
+  // Get device for enhanced info display
+  const device_def_t* device = (const device_def_t*)scene_get_device(index);
+  
   ESP_LOGI(TAG, "====== SCENE INFO ======");
   ESP_LOGI(TAG, "Current scene: %d - %s", index + 1, scene->name);
+  
+  // Display device info
+  const char* effective_slug = scene_get_effective_device_slug(index);
+  if (scene->device_id[0] != '\0') {
+    ESP_LOGI(TAG, "Device: %s (scene-specific)", scene->device_id);
+  } else if (effective_slug && effective_slug[0] != '\0') {
+    ESP_LOGI(TAG, "Device: %s (global)", effective_slug);
+  } else {
+    ESP_LOGI(TAG, "Device: (none configured)");
+  }
+  if (device) {
+    ESP_LOGI(TAG, "  Name: %s", device->name[0] ? device->name : "(unknown)");
+    ESP_LOGI(TAG, "  Controls: %u CCs defined", (unsigned)device->control_count);
+  }
+  
   ESP_LOGI(TAG, "Program number: %d (send PC on load: %s)", scene->program_number, 
            scene->send_pc_on_load ? "yes" : "no");
   ESP_LOGI(TAG, "On-load actions: %d", scene->on_load.num_actions);
@@ -356,8 +420,8 @@ static void cmd_scene_info(void) {
     if (map->enabled) {
       if (map->actions.num_actions > 0) {
         action_t* first_action = &map->actions.actions[0];
-        char pad_action_buf[64];
-        format_action_details(first_action, pad_action_buf, sizeof(pad_action_buf));
+        char pad_action_buf[96];  // Larger buffer for device names
+        format_action_details_with_device(first_action, device, pad_action_buf, sizeof(pad_action_buf));
         ESP_LOGI(TAG, "  Pad %2d: %s%s", i, pad_action_buf, 
                  map->actions.num_actions > 1 ? " +more" : "");
       } else {
@@ -458,10 +522,78 @@ static int cmd_name(int argc, char **argv) {
     arg_print_errors(stderr, name_args.end, argv[0]);
     return 1;
   }
-  
+
   const char* name = name_args.scene_name->sval[0];
   scene_set_name(scene_get_current_index(), name);
   ESP_LOGI(TAG, "Scene renamed to: %s", name);
+  return 0;
+}
+
+// Command: device [slug | --clear]
+// Show current device, set device, or clear (use global)
+static struct {
+  struct arg_str *slug;
+  struct arg_lit *clear;
+  struct arg_end *end;
+} device_args;
+
+static int cmd_device(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &device_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, device_args.end, argv[0]);
+    return 1;
+  }
+
+  uint8_t index = scene_get_current_index();
+
+  // Handle --clear flag
+  if (device_args.clear->count > 0) {
+    scene_clear_device_id(index);
+    ESP_LOGI(TAG, "Device cleared for scene %d (now using global)", index + 1);
+    return 0;
+  }
+
+  // Handle setting device
+  if (device_args.slug->count > 0) {
+    const char* slug = device_args.slug->sval[0];
+
+    // Verify device exists before setting
+    device_def_t* dev = assets_load_device(slug);
+    if (!dev) {
+      ESP_LOGE(TAG, "Device not found: %s", slug);
+      ESP_LOGI(TAG, "Use 'device_list' in device context to see available devices");
+      return 1;
+    }
+    assets_free_device(dev);
+
+    scene_set_device_id(index, slug);
+    ESP_LOGI(TAG, "Device set to: %s", slug);
+    return 0;
+  }
+
+  // Show current device
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    ESP_LOGE(TAG, "Scene not loaded");
+    return 1;
+  }
+
+  const char* effective_slug = scene_get_effective_device_slug(index);
+  if (scene->device_id[0] != '\0') {
+    ESP_LOGI(TAG, "Scene device: %s (scene-specific)", scene->device_id);
+  } else if (effective_slug && effective_slug[0] != '\0') {
+    ESP_LOGI(TAG, "Scene device: %s (from global config)", effective_slug);
+  } else {
+    ESP_LOGI(TAG, "Scene device: (none configured)");
+  }
+
+  const device_def_t* device = (const device_def_t*)scene_get_device(index);
+  if (device) {
+    ESP_LOGI(TAG, "  Name: %s", device->name[0] ? device->name : "(unknown)");
+    ESP_LOGI(TAG, "  Vendor: %s", device->vendor[0] ? device->vendor : "(unknown)");
+    ESP_LOGI(TAG, "  Controls: %u", (unsigned)device->control_count);
+  }
+
   return 0;
 }
 
@@ -518,6 +650,10 @@ static int cmd_pad(int argc, char **argv) {
     return 1;
   }
   
+  // Get device for value validation (may be NULL)
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  
   action_t action = {0};
   
   // Parse action type and parameters
@@ -532,6 +668,24 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "CC and value must be 0-127");
       return 1;
     }
+    
+    // Device-aware validation: clamp and snap to discrete
+    if (device) {
+      uint16_t clamped = assets_clamp_cc_value(device, cc_num, value);
+      if (clamped != value) {
+        ESP_LOGW(TAG, "Value %d clamped to %d (device min/max)", value, clamped);
+        value = clamped;
+      }
+      if (assets_cc_has_discrete_values(device, cc_num)) {
+        uint16_t snapped = assets_snap_to_discrete(device, cc_num, value);
+        if (snapped != value) {
+          const char* name = assets_get_discrete_name(device, cc_num, snapped);
+          ESP_LOGI(TAG, "Value snapped to %d (%s)", snapped, name ? name : "");
+          value = snapped;
+        }
+      }
+    }
+    
     action = action_create_send_cc(cc_num, value);
   }
   else if (strcmp(action_str, "cc_hold") == 0) {
@@ -539,9 +693,21 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: pad <num> cc_hold <cc_num> <press_value> <release_value>");
       return 1;
     }
-    action = action_create_cc_hold(pad_args.param1->ival[0], 
-                                   pad_args.params->ival[0],
-                                   pad_args.params->ival[1]);
+    int cc_num = pad_args.param1->ival[0];
+    int press_val = pad_args.params->ival[0];
+    int release_val = pad_args.params->ival[1];
+    
+    // Device-aware validation for hold values
+    if (device) {
+      press_val = assets_clamp_cc_value(device, cc_num, press_val);
+      release_val = assets_clamp_cc_value(device, cc_num, release_val);
+      if (assets_cc_has_discrete_values(device, cc_num)) {
+        press_val = assets_snap_to_discrete(device, cc_num, press_val);
+        release_val = assets_snap_to_discrete(device, cc_num, release_val);
+      }
+    }
+    
+    action = action_create_cc_hold(cc_num, press_val, release_val);
   }
   else if (strcmp(action_str, "note_on") == 0) {
     if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
@@ -593,13 +759,21 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
+    int cc_num = pad_args.param1->ival[0];
     action.type = ACTION_SEND_CC_CYCLE;
-    action.params.cc.cc_number = pad_args.param1->ival[0];
+    action.params.cc.cc_number = cc_num;
     action.params.cc.num_values = 0;
     
-    // Collect all values from params array (up to 8)
+    // Collect all values from params array (up to 8), with device validation
     for (int i = 0; i < pad_args.params->count && action.params.cc.num_values < 8; i++) {
-      action.params.cc.values[action.params.cc.num_values++] = pad_args.params->ival[i];
+      int val = pad_args.params->ival[i];
+      if (device) {
+        val = assets_clamp_cc_value(device, cc_num, val);
+        if (assets_cc_has_discrete_values(device, cc_num)) {
+          val = assets_snap_to_discrete(device, cc_num, val);
+        }
+      }
+      action.params.cc.values[action.params.cc.num_values++] = val;
     }
     action.params.cc.current_index = 0;
     ESP_LOGI(TAG, "CC%d cycle with %d values", action.params.cc.cc_number, action.params.cc.num_values);
@@ -3171,7 +3345,7 @@ esp_err_t scene_console_init(void) {
   // name command
   name_args.scene_name = arg_str1(NULL, NULL, "<name>", "Scene name");
   name_args.end = arg_end(2);
-  
+
   const esp_console_cmd_t name_cmd = {
     .command = "name",
     .help = "Set current scene name",
@@ -3180,7 +3354,21 @@ esp_err_t scene_console_init(void) {
     .argtable = &name_args
   };
   esp_console_cmd_register(&name_cmd);
-  
+
+  // device command
+  device_args.slug = arg_str0(NULL, NULL, "<slug>", "Device slug (e.g., chase_bliss.mood_mkii@0)");
+  device_args.clear = arg_lit0(NULL, "clear", "Clear scene device (use global)");
+  device_args.end = arg_end(3);
+
+  const esp_console_cmd_t device_cmd = {
+    .command = "device",
+    .help = "Show/set device for current scene",
+    .hint = NULL,
+    .func = &cmd_device,
+    .argtable = &device_args
+  };
+  esp_console_cmd_register(&device_cmd);
+
   // confirm command
   const esp_console_cmd_t confirm_cmd = {
     .command = "confirm",

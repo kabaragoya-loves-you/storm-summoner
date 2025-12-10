@@ -23,22 +23,18 @@ static bool s_bank_msb_received = false;
 static bool s_bank_lsb_received = false;
 
 // NVS keys
-#define NVS_KEY_DEVICE_MODE     "dev_mode"
 #define NVS_KEY_MIDI_CHANNEL    "dev_channel"
 #define NVS_KEY_TRS_TYPE        "dev_trs"
 #define NVS_KEY_PEDAL_SLUG      "dev_slug"
-#define NVS_KEY_CUSTOM_NAME     "dev_custom"
 #define NVS_KEY_CURRENT_PROGRAM "dev_program"
 #define NVS_KEY_PC_MODE         "dev_pc_mode"
 #define NVS_KEY_BANK_MODE       "dev_bank_mode"
 
 // Global device configuration
 static device_config_t g_device_config = {
-  .mode = DEVICE_MODE_CUSTOM,
   .midi_channel = 1,
   .trs_type = MIDI_TRS_TYPE_BOTH,
   .pedal_slug = "",
-  .custom_name = "Generic MIDI Device",
   .current_program = 0,
   .pending_program = 0,
   .has_pending_program = false,
@@ -117,11 +113,6 @@ esp_err_t device_config_init(void) {
   ESP_LOGI(TAG, "Initializing device configuration");
   
   // Try to load from NVS
-  uint8_t mode_val;
-  if (app_settings_load_u8(NVS_KEY_DEVICE_MODE, &mode_val) == ESP_OK) {
-    g_device_config.mode = (device_mode_t)mode_val;
-  }
-  
   uint8_t channel;
   if (app_settings_load_u8(NVS_KEY_MIDI_CHANNEL, &channel) == ESP_OK && channel >= 1 && channel <= 16) {
     g_device_config.midi_channel = channel;
@@ -136,12 +127,6 @@ esp_err_t device_config_init(void) {
   if (app_settings_load_str(NVS_KEY_PEDAL_SLUG, slug, sizeof(slug)) == ESP_OK) {
     strncpy(g_device_config.pedal_slug, slug, sizeof(g_device_config.pedal_slug) - 1);
     g_device_config.pedal_slug[sizeof(g_device_config.pedal_slug) - 1] = '\0';
-  }
-  
-  char custom[64];
-  if (app_settings_load_str(NVS_KEY_CUSTOM_NAME, custom, sizeof(custom)) == ESP_OK) {
-    strncpy(g_device_config.custom_name, custom, sizeof(g_device_config.custom_name) - 1);
-    g_device_config.custom_name[sizeof(g_device_config.custom_name) - 1] = '\0';
   }
   
   // Load program tracking
@@ -174,17 +159,11 @@ esp_err_t device_config_init(void) {
   // Subscribe to MIDI IN events to track program changes
   event_bus_subscribe(EVENT_MIDI_IN, midi_in_event_handler, NULL);
   
-  ESP_LOGI(TAG, "Device config initialized: mode=%s, channel=%d, trs=%d, program=%d",
-           g_device_config.mode == DEVICE_MODE_DATABASE ? "database" : "custom",
+  ESP_LOGI(TAG, "Device config initialized: channel=%d, trs=%d, program=%d, pedal=%s",
            g_device_config.midi_channel,
            g_device_config.trs_type,
-           g_device_config.current_program);
-  
-  if (g_device_config.mode == DEVICE_MODE_DATABASE) {
-    ESP_LOGI(TAG, "  Pedal: %s", g_device_config.pedal_slug);
-  } else {
-    ESP_LOGI(TAG, "  Custom: %s", g_device_config.custom_name);
-  }
+           g_device_config.current_program,
+           g_device_config.pedal_slug[0] ? g_device_config.pedal_slug : "(none)");
   
   return ESP_OK;
 }
@@ -227,10 +206,6 @@ esp_err_t device_config_set_trs_type(midi_trs_type_t type) {
   return app_settings_save_u8(NVS_KEY_TRS_TYPE, type_val);
 }
 
-device_mode_t device_config_get_mode(void) {
-  return g_device_config.mode;
-}
-
 esp_err_t device_config_set_pedal(const char* slug) {
   if (!slug) {
     return ESP_ERR_INVALID_ARG;
@@ -238,43 +213,14 @@ esp_err_t device_config_set_pedal(const char* slug) {
   
   strncpy(g_device_config.pedal_slug, slug, sizeof(g_device_config.pedal_slug) - 1);
   g_device_config.pedal_slug[sizeof(g_device_config.pedal_slug) - 1] = '\0';
-  g_device_config.mode = DEVICE_MODE_DATABASE;
   
-  ESP_LOGI(TAG, "Device set to database pedal: %s", slug);
-  
-  // Save both mode and slug
-  uint8_t mode_val = (uint8_t)g_device_config.mode;
-  esp_err_t ret = app_settings_save_u8(NVS_KEY_DEVICE_MODE, mode_val);
-  if (ret != ESP_OK) return ret;
+  ESP_LOGI(TAG, "Device set to: %s", slug);
   
   return app_settings_save_str(NVS_KEY_PEDAL_SLUG, g_device_config.pedal_slug);
 }
 
-esp_err_t device_config_set_custom(const char* name) {
-  if (!name) {
-    return ESP_ERR_INVALID_ARG;
-  }
-  
-  strncpy(g_device_config.custom_name, name, sizeof(g_device_config.custom_name) - 1);
-  g_device_config.custom_name[sizeof(g_device_config.custom_name) - 1] = '\0';
-  g_device_config.mode = DEVICE_MODE_CUSTOM;
-  
-  ESP_LOGI(TAG, "Device set to custom: %s", name);
-  
-  // Save both mode and custom name
-  uint8_t mode_val = (uint8_t)g_device_config.mode;
-  esp_err_t ret = app_settings_save_u8(NVS_KEY_DEVICE_MODE, mode_val);
-  if (ret != ESP_OK) return ret;
-  
-  return app_settings_save_str(NVS_KEY_CUSTOM_NAME, g_device_config.custom_name);
-}
-
 const char* device_config_get_pedal_slug(void) {
-  return g_device_config.mode == DEVICE_MODE_DATABASE ? g_device_config.pedal_slug : NULL;
-}
-
-const char* device_config_get_custom_name(void) {
-  return g_device_config.mode == DEVICE_MODE_CUSTOM ? g_device_config.custom_name : NULL;
+  return g_device_config.pedal_slug;
 }
 
 const device_config_t* device_config_get(void) {
@@ -284,22 +230,14 @@ const device_config_t* device_config_get(void) {
 esp_err_t device_config_save(void) {
   ESP_LOGI(TAG, "Saving device configuration to NVS");
   
-  uint8_t mode_val = (uint8_t)g_device_config.mode;
-  esp_err_t ret = app_settings_save_u8(NVS_KEY_DEVICE_MODE, mode_val);
-  if (ret != ESP_OK) return ret;
-  
-  ret = app_settings_save_u8(NVS_KEY_MIDI_CHANNEL, g_device_config.midi_channel);
+  esp_err_t ret = app_settings_save_u8(NVS_KEY_MIDI_CHANNEL, g_device_config.midi_channel);
   if (ret != ESP_OK) return ret;
   
   uint8_t trs_val = (uint8_t)g_device_config.trs_type;
   ret = app_settings_save_u8(NVS_KEY_TRS_TYPE, trs_val);
   if (ret != ESP_OK) return ret;
   
-  if (g_device_config.mode == DEVICE_MODE_DATABASE) {
-    ret = app_settings_save_str(NVS_KEY_PEDAL_SLUG, g_device_config.pedal_slug);
-  } else {
-    ret = app_settings_save_str(NVS_KEY_CUSTOM_NAME, g_device_config.custom_name);
-  }
+  ret = app_settings_save_str(NVS_KEY_PEDAL_SLUG, g_device_config.pedal_slug);
   
   return ret;
 }

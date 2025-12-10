@@ -10,23 +10,19 @@
 static void show_info(void) {
   const device_config_t* cfg = device_config_get();
   
-  const char* mode_str = (cfg->mode == DEVICE_MODE_DATABASE) ? "Database" : "Custom";
   const char* trs_str = (cfg->trs_type == MIDI_TRS_TYPE_A) ? "Type A" : "Type B";
   const char* pc_mode_str = (cfg->pc_mode == PC_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   
   char info_text[512];
   snprintf(info_text, sizeof(info_text),
     "DEVICE CONFIG\n"
-    "Mode: %s\n"
+    "Pedal: %s\n"
     "MIDI Channel: %d\n"
     "TRS Type: %s\n"
     "Current Program: %d\n"
-    "PC Mode: %s\n"
-    "\n"
-    "%s: %s",
-    mode_str, cfg->midi_channel, trs_str, cfg->current_program, pc_mode_str,
-    (cfg->mode == DEVICE_MODE_DATABASE) ? "Pedal" : "Custom Name",
-    (cfg->mode == DEVICE_MODE_DATABASE) ? cfg->pedal_slug : cfg->custom_name);
+    "PC Mode: %s",
+    cfg->pedal_slug[0] ? cfg->pedal_slug : "(none)",
+    cfg->midi_channel, trs_str, cfg->current_program, pc_mode_str);
   
   menu_navigate_to_info("Device Info", info_text);
 }
@@ -61,11 +57,6 @@ static void action_set_pedal(void) {
   ESP_LOGI(TAG, "Set pedal - TODO: implement input");
 }
 
-static void action_set_custom(void) {
-  // TODO: Implement custom name input
-  ESP_LOGI(TAG, "Set custom name - TODO: implement input");
-}
-
 static void action_save(void) {
   device_config_save();
   ESP_LOGI(TAG, "Device configuration saved");
@@ -82,7 +73,6 @@ lv_obj_t* menu_page_device_config_create(void) {
     { "PC Mode: Pending", set_pc_mode_pending, false },
     { "Set Program", action_set_program, false },
     { "Set Pedal", action_set_pedal, false },
-    { "Set Custom", action_set_custom, false },
     { "Save", action_save, false }
   };
   

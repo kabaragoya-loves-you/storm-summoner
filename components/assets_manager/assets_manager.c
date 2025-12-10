@@ -427,3 +427,149 @@ midi_trs_type_t assets_get_trs_type(const device_def_t *device) {
   return device->trs_type;
 }
 
+/**
+ * Get CC name from device profile
+ */
+const char *assets_get_cc_name(const device_def_t *device, uint8_t cc_num) {
+  if (!device)
+    return NULL;
+  
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl || !ctrl->name)
+    return "Undefined";
+  
+  return ctrl->name;
+}
+
+/**
+ * Get the index of the discrete value that matches or contains the given value
+ * For ranges (e.g., 0-24 = "Stretch", 25-50 = "Blur"), finds which range contains the value
+ */
+int assets_get_discrete_index(const device_def_t *device, uint8_t cc_num, uint16_t value) {
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
+    return -1;
+  
+  // Find the discrete value range that contains this value
+  // Discrete values are sorted by value; the active one is the highest that doesn't exceed the input
+  int best_idx = -1;
+  for (int i = 0; i < ctrl->discrete_count; i++) {
+    if (ctrl->discrete_values[i].value <= value) {
+      best_idx = i;
+    } else {
+      break;  // Since values are sorted ascending
+    }
+  }
+  
+  return best_idx;
+}
+
+/**
+ * Get discrete value name for a given MIDI value
+ */
+const char *assets_get_discrete_name(const device_def_t *device, uint8_t cc_num, uint16_t value) {
+  int idx = assets_get_discrete_index(device, cc_num, value);
+  if (idx < 0)
+    return NULL;
+  
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl)
+    return NULL;
+  
+  return ctrl->discrete_values[idx].name;
+}
+
+/**
+ * Snap a value to the nearest discrete value for a CC
+ */
+uint16_t assets_snap_to_discrete(const device_def_t *device, uint8_t cc_num, uint16_t value) {
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
+    return value;  // No discrete values, return original
+  
+  // Find nearest discrete value
+  uint16_t nearest = ctrl->discrete_values[0].value;
+  uint16_t min_diff = (value > nearest) ? (value - nearest) : (nearest - value);
+  
+  for (int i = 1; i < ctrl->discrete_count; i++) {
+    uint16_t dv = ctrl->discrete_values[i].value;
+    uint16_t diff = (value > dv) ? (value - dv) : (dv - value);
+    if (diff < min_diff) {
+      min_diff = diff;
+      nearest = dv;
+    }
+  }
+  
+  return nearest;
+}
+
+/**
+ * Get next discrete value (for cycling through options)
+ */
+uint16_t assets_get_next_discrete(const device_def_t *device, uint8_t cc_num, uint16_t current) {
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
+    return current;  // No discrete values
+  
+  // Find current position
+  int idx = assets_get_discrete_index(device, cc_num, current);
+  if (idx < 0)
+    idx = 0;  // Default to first if not found
+  else
+    idx = (idx + 1) % ctrl->discrete_count;  // Wrap to start
+  
+  return ctrl->discrete_values[idx].value;
+}
+
+/**
+ * Get previous discrete value (for cycling through options)
+ */
+uint16_t assets_get_prev_discrete(const device_def_t *device, uint8_t cc_num, uint16_t current) {
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
+    return current;  // No discrete values
+  
+  // Find current position
+  int idx = assets_get_discrete_index(device, cc_num, current);
+  if (idx < 0)
+    idx = ctrl->discrete_count - 1;  // Default to last if not found
+  else
+    idx = (idx == 0) ? ctrl->discrete_count - 1 : idx - 1;  // Wrap to end
+  
+  return ctrl->discrete_values[idx].value;
+}
+
+/**
+ * Check if value is valid for a CC according to device min/max
+ */
+bool assets_validate_cc_value(const device_def_t *device, uint8_t cc_num, uint16_t value) {
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl)
+    return true;  // Permissive: allow if not defined
+  
+  return (value >= ctrl->min && value <= ctrl->max);
+}
+
+/**
+ * Clamp value to device min/max for a CC
+ */
+uint16_t assets_clamp_cc_value(const device_def_t *device, uint8_t cc_num, uint16_t value) {
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl)
+    return value;  // Return original if not defined
+  
+  if (value < ctrl->min)
+    return ctrl->min;
+  if (value > ctrl->max)
+    return ctrl->max;
+  return value;
+}
+
+/**
+ * Check if a CC has discrete values defined
+ */
+bool assets_cc_has_discrete_values(const device_def_t *device, uint8_t cc_num) {
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  return (ctrl && ctrl->discrete_values && ctrl->discrete_count > 0);
+}
+
