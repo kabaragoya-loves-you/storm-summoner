@@ -220,6 +220,12 @@ static void update_tempo_labels(void) {
 static void beat_event_handler(const event_t* event, void* context) {
   if (!event || !g_module_active) return;
   
+  // Only update state when transport is actively playing
+  // This prevents state drift while stopped/paused
+  if (g_transport_state != TRANSPORT_PLAYING && g_transport_state != TRANSPORT_RECORDING) {
+    return;
+  }
+  
   // Just update volatile state - LVGL updates happen in timer callback
   g_current_beat = event->data.beat.beat_in_bar;
   g_bar_length = event->data.beat.bar_length;
@@ -256,7 +262,8 @@ static void interp_timer_cb(lv_timer_t *timer) {
     switch (g_transport_state) {
       case TRANSPORT_PLAYING:
       case TRANSPORT_RECORDING:
-        // Timer is already running
+        // Reset timing to start clean - prevents "catch up" animation
+        g_last_beat_time_ms = esp_timer_get_time() / 1000;
         break;
         
       case TRANSPORT_STOPPED:
