@@ -11,6 +11,8 @@
 #   L/l - lineto (absolute/relative)
 #   H/h - horizontal line (absolute/relative)
 #   V/v - vertical line (absolute/relative)
+#   C/c - cubic Bezier curve (flattened to line segments)
+#   Q/q - quadratic Bezier curve (flattened to line segments)
 #   Z/z - close path
 #
 # Binary format (static, version 1):
@@ -83,6 +85,58 @@ def apply_transform(x, y, transform)
   new_x = x * transform[:scale_x] + transform[:translate_x]
   new_y = y * transform[:scale_y] + transform[:translate_y]
   [new_x, new_y]
+end
+
+# Flatten a cubic Bezier curve to line segments
+# p0, p1, p2, p3 are [x, y] arrays
+# Returns array of points (not including p0, ending with p3)
+def flatten_cubic_bezier(p0, p1, p2, p3, tolerance = 1.0)
+  # Check if curve is flat enough using simple distance heuristic
+  # Distance from control points to line p0->p3
+  dx = p3[0] - p0[0]
+  dy = p3[1] - p0[1]
+  len_sq = dx * dx + dy * dy
+  
+  if len_sq < 0.0001
+    # Degenerate case - start and end are same point
+    return [p3]
+  end
+  
+  len = Math.sqrt(len_sq)
+  
+  # Distance from p1 to line p0-p3
+  d1 = ((p1[0] - p0[0]) * dy - (p1[1] - p0[1]) * dx).abs / len
+  # Distance from p2 to line p0-p3
+  d2 = ((p2[0] - p0[0]) * dy - (p2[1] - p0[1]) * dx).abs / len
+  
+  if d1 < tolerance && d2 < tolerance
+    # Flat enough - just return endpoint
+    return [p3]
+  end
+  
+  # Subdivide using de Casteljau algorithm
+  p01 = [(p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0]
+  p12 = [(p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0]
+  p23 = [(p2[0] + p3[0]) / 2.0, (p2[1] + p3[1]) / 2.0]
+  p012 = [(p01[0] + p12[0]) / 2.0, (p01[1] + p12[1]) / 2.0]
+  p123 = [(p12[0] + p23[0]) / 2.0, (p12[1] + p23[1]) / 2.0]
+  p0123 = [(p012[0] + p123[0]) / 2.0, (p012[1] + p123[1]) / 2.0]
+  
+  # Recursively flatten both halves
+  left = flatten_cubic_bezier(p0, p01, p012, p0123, tolerance)
+  right = flatten_cubic_bezier(p0123, p123, p23, p3, tolerance)
+  
+  left + right
+end
+
+# Flatten a quadratic Bezier curve to line segments
+def flatten_quadratic_bezier(p0, p1, p2, tolerance = 1.0)
+  # Convert quadratic to cubic: cubic control points are:
+  # cp1 = p0 + 2/3 * (p1 - p0)
+  # cp2 = p2 + 2/3 * (p1 - p2)
+  cp1 = [p0[0] + (2.0/3.0) * (p1[0] - p0[0]), p0[1] + (2.0/3.0) * (p1[1] - p0[1])]
+  cp2 = [p2[0] + (2.0/3.0) * (p1[0] - p2[0]), p2[1] + (2.0/3.0) * (p1[1] - p2[1])]
+  flatten_cubic_bezier(p0, cp1, cp2, p2, tolerance)
 end
 
 # Check if a path is a background rectangle (heuristic: short d attribute)
@@ -217,13 +271,97 @@ def parse_svg_path(d, transform = nil)
       end
       # Don't consume a token for Z - but don't save yet, wait for next M/m
       
-    when 'C', 'c', 'S', 's', 'Q', 'q', 'T', 't', 'A', 'a'
-      # Skip unsupported curve commands
+    when 'C' # Absolute cubic Bezier
+      x1 = tokens[i].to_f
+      y1 = tokens[i + 1].to_f
+      x2 = tokens[i + 2].to_f
+      y2 = tokens[i + 3].to_f
+      x = tokens[i + 4].to_f
+      y = tokens[i + 5].to_f
+      
+      p0 = [current_x, current_y]
+      p1 = [x1, y1]
+      p2 = [x2, y2]
+      p3 = [x, y]
+      
+      points = flatten_cubic_bezier(p0, p1, p2, p3)
+      points.each do |pt|
+        tx, ty = apply_transform(pt[0], pt[1], transform)
+        current_subpath << [tx, ty]
+      end
+      
+      current_x = x
+      current_y = y
+      i += 6
+      
+    when 'c' # Relative cubic Bezier
+      x1 = current_x + tokens[i].to_f
+      y1 = current_y + tokens[i + 1].to_f
+      x2 = current_x + tokens[i + 2].to_f
+      y2 = current_y + tokens[i + 3].to_f
+      x = current_x + tokens[i + 4].to_f
+      y = current_y + tokens[i + 5].to_f
+      
+      p0 = [current_x, current_y]
+      p1 = [x1, y1]
+      p2 = [x2, y2]
+      p3 = [x, y]
+      
+      points = flatten_cubic_bezier(p0, p1, p2, p3)
+      points.each do |pt|
+        tx, ty = apply_transform(pt[0], pt[1], transform)
+        current_subpath << [tx, ty]
+      end
+      
+      current_x = x
+      current_y = y
+      i += 6
+      
+    when 'Q' # Absolute quadratic Bezier
+      x1 = tokens[i].to_f
+      y1 = tokens[i + 1].to_f
+      x = tokens[i + 2].to_f
+      y = tokens[i + 3].to_f
+      
+      p0 = [current_x, current_y]
+      p1 = [x1, y1]
+      p2 = [x, y]
+      
+      points = flatten_quadratic_bezier(p0, p1, p2)
+      points.each do |pt|
+        tx, ty = apply_transform(pt[0], pt[1], transform)
+        current_subpath << [tx, ty]
+      end
+      
+      current_x = x
+      current_y = y
+      i += 4
+      
+    when 'q' # Relative quadratic Bezier
+      x1 = current_x + tokens[i].to_f
+      y1 = current_y + tokens[i + 1].to_f
+      x = current_x + tokens[i + 2].to_f
+      y = current_y + tokens[i + 3].to_f
+      
+      p0 = [current_x, current_y]
+      p1 = [x1, y1]
+      p2 = [x, y]
+      
+      points = flatten_quadratic_bezier(p0, p1, p2)
+      points.each do |pt|
+        tx, ty = apply_transform(pt[0], pt[1], transform)
+        current_subpath << [tx, ty]
+      end
+      
+      current_x = x
+      current_y = y
+      i += 4
+      
+    when 'S', 's', 'T', 't', 'A', 'a'
+      # Skip remaining unsupported curve commands
       puts "  Warning: Unsupported command '#{current_cmd}' - skipping"
       skip = case current_cmd.upcase
-             when 'C' then 6
              when 'S' then 4
-             when 'Q' then 4
              when 'T' then 2
              when 'A' then 7
              else 0
@@ -559,9 +697,10 @@ if ARGV.length < 2
   puts "ZIP files containing numbered SVG frames (00.svg, 01.svg, etc.) are"
   puts "converted to an animated binary format."
   puts ""
-  puts "Supported path commands: M, m, L, l, H, h, V, v, Z, z"
+  puts "Supported path commands: M, m, L, l, H, h, V, v, C, c, Q, q, Z, z"
   puts "Supported transforms: translate(x, y), scale(sx, sy)"
-  puts "NOT supported: curves (C, S, Q, T, A)"
+  puts "Curves (C, Q) are flattened to line segments automatically"
+  puts "NOT supported: S, s, T, t, A, a (smooth curves and arcs)"
   exit 1
 end
 
