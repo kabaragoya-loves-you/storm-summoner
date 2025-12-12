@@ -21,7 +21,7 @@ static int cmd_info(int argc, char **argv) {
   switch (cfg->trs_type) {
     case MIDI_TRS_TYPE_A: trs_str = "Type A"; break;
     case MIDI_TRS_TYPE_B: trs_str = "Type B"; break;
-    case MIDI_TRS_TYPE_CS: trs_str = "Type CS"; break;
+    case MIDI_TRS_TYPE_TS: trs_str = "Type TS"; break;
     case MIDI_TRS_TYPE_BOTH: trs_str = "Both (A+B)"; break;
     default: break;
   }

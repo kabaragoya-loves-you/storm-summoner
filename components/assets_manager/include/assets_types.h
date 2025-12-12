@@ -14,7 +14,7 @@ typedef enum {
   MIDI_TRS_UNKNOWN = 0,    // Not specified or unknown
   MIDI_TRS_TYPE_A,         // MIDI signal on tip (Empress, 1010music, Red Panda, etc.)
   MIDI_TRS_TYPE_B,         // MIDI signal on ring (Chase Bliss Audio)
-  MIDI_TRS_TYPE_CS,        // Two-wire connection (Disaster Area, Source Audio, etc.)
+  MIDI_TRS_TYPE_TS,        // Tip/Sleeve (Disaster Area, Source Audio, etc.)
   MIDI_TRS_TYPE_BOTH       // Transmit both Type A and Type B simultaneously
 } midi_trs_type_t;
 

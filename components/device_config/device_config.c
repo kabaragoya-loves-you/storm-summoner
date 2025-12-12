@@ -200,8 +200,8 @@ esp_err_t device_config_set_trs_type(midi_trs_type_t type) {
   switch (type) {
     case MIDI_TRS_TYPE_A: type_str = "Type A"; break;
     case MIDI_TRS_TYPE_B: type_str = "Type B"; break;
-    case MIDI_TRS_TYPE_CS: type_str = "Type CS (two-wire)"; break;
-    case MIDI_TRS_TYPE_BOTH: type_str = "Both (Type A + Type B)"; break;
+    case MIDI_TRS_TYPE_TS: type_str = "Type TS"; break;
+    case MIDI_TRS_TYPE_BOTH: type_str = "Type A+B"; break;
     default: break;
   }
   

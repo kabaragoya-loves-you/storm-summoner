@@ -138,8 +138,8 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
       device->trs_type = MIDI_TRS_TYPE_A;
     else if (strcmp(trs_str, "TYPE_B") == 0)
       device->trs_type = MIDI_TRS_TYPE_B;
-    else if (strcmp(trs_str, "TYPE_CS") == 0)
-      device->trs_type = MIDI_TRS_TYPE_CS;
+    else if (strcmp(trs_str, "TYPE_TS") == 0)
+      device->trs_type = MIDI_TRS_TYPE_TS;
     else if (strcmp(trs_str, "BOTH") == 0)
       device->trs_type = MIDI_TRS_TYPE_BOTH;
   }

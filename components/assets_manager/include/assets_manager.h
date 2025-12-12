@@ -10,7 +10,7 @@ static inline int assets_trs_type_to_transmit_mode(midi_trs_type_t trs_type) {
   switch (trs_type) {
     case MIDI_TRS_TYPE_A:    return 1;  // MIDI_TRANSMIT_TYPE_A
     case MIDI_TRS_TYPE_B:    return 2;  // MIDI_TRANSMIT_TYPE_B
-    case MIDI_TRS_TYPE_CS:   return 3;  // MIDI_TRANSMIT_TS
+    case MIDI_TRS_TYPE_TS:   return 3;  // MIDI_TRANSMIT_TS
     case MIDI_TRS_TYPE_BOTH: return 0;  // MIDI_TRANSMIT_BOTH
     case MIDI_TRS_UNKNOWN:
     default:                 return 0;  // MIDI_TRANSMIT_BOTH (fallback)
@@ -71,7 +71,7 @@ const program_change_info_t *assets_get_pc_info(const device_def_t *device);
 
 /**
  * Get MIDI TRS wiring type for device
- * Returns the TRS type (TYPE_A, TYPE_B, TYPE_CS, or UNKNOWN)
+ * Returns the TRS type (TYPE_A, TYPE_B, TYPE_TS, or UNKNOWN)
  */
 midi_trs_type_t assets_get_trs_type(const device_def_t *device);
 
