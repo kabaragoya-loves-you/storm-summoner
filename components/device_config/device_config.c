@@ -1,6 +1,8 @@
 #include "device_config.h"
+#include "assets_manager.h"
 #include "app_settings.h"
 #include "midi_messages.h"
+#include "midi_out.h"
 #include "event_bus.h"
 #include "esp_log.h"
 #include <string.h>
@@ -156,6 +158,9 @@ esp_err_t device_config_init(void) {
   
   g_device_config.initialized = true;
   
+  // Note: TRS type will be applied to MIDI layer when midi_out_init() is called
+  // (it queries device_config_get_trs_type())
+  
   // Subscribe to MIDI IN events to track program changes
   event_bus_subscribe(EVENT_MIDI_IN, midi_in_event_handler, NULL);
   
@@ -202,6 +207,10 @@ esp_err_t device_config_set_trs_type(midi_trs_type_t type) {
   
   ESP_LOGI(TAG, "TRS wiring type set to %s", type_str);
   
+  // Apply to MIDI output layer
+  midi_transmit_mode_t mode = (midi_transmit_mode_t)assets_trs_type_to_transmit_mode(type);
+  midi_set_uart_transmit_mode(mode);
+  
   uint8_t type_val = (uint8_t)type;
   return app_settings_save_u8(NVS_KEY_TRS_TYPE, type_val);
 }
@@ -215,6 +224,52 @@ esp_err_t device_config_set_pedal(const char* slug) {
   g_device_config.pedal_slug[sizeof(g_device_config.pedal_slug) - 1] = '\0';
   
   ESP_LOGI(TAG, "Device set to: %s", slug);
+  
+  // Load device profile and apply settings
+  device_def_t *device = assets_load_device(slug);
+  if (device) {
+    // Apply TRS type via setter (also updates MIDI layer)
+    // UNKNOWN means use BOTH as default
+    midi_trs_type_t trs = (device->trs_type != MIDI_TRS_UNKNOWN) 
+                           ? device->trs_type : MIDI_TRS_TYPE_BOTH;
+    device_config_set_trs_type(trs);
+    
+    // Apply MIDI channel if specified (1-16, 0 means not specified)
+    if (device->midi_channel >= 1 && device->midi_channel <= 16) {
+      device_config_set_channel(device->midi_channel);
+    }
+    
+    // Apply program change settings from x_pc
+    if (device->pc_info) {
+      // Preset base (0 or 1)
+      g_device_config.preset_base = (device->pc_info->index_base <= 1) 
+                                     ? device->pc_info->index_base : 0;
+      ESP_LOGI(TAG, "  Preset base: %d", g_device_config.preset_base);
+      
+      // Bank select mode (map from pc_bank_select_mode_t to bank_select_mode_t)
+      switch (device->pc_info->bank_mode) {
+        case PC_BANK_SELECT_CC0:
+          g_device_config.bank_select_mode = BANK_SELECT_CC0;
+          break;
+        case PC_BANK_SELECT_CC0_CC32:
+          g_device_config.bank_select_mode = BANK_SELECT_CC0_CC32;
+          break;
+        default:
+          g_device_config.bank_select_mode = BANK_SELECT_NONE;
+          break;
+      }
+      ESP_LOGI(TAG, "  Bank mode: %d", g_device_config.bank_select_mode);
+    } else {
+      // No x_pc - set defaults
+      g_device_config.preset_base = 0;
+      g_device_config.bank_select_mode = BANK_SELECT_NONE;
+      ESP_LOGI(TAG, "  Using defaults: preset_base=0, bank_mode=none");
+    }
+    
+    assets_free_device(device);
+  } else {
+    ESP_LOGW(TAG, "Could not load device profile, using current settings");
+  }
   
   return app_settings_save_str(NVS_KEY_PEDAL_SLUG, g_device_config.pedal_slug);
 }

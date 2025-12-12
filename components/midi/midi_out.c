@@ -1,6 +1,8 @@
 #include "midi_out.h"
 #include "midi_out_uart.h"
 #include "midi_out_usb.h"
+#include "device_config.h"
+#include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "nvs.h"
@@ -52,11 +54,11 @@ void midi_out_init(void) {
     esp_err_t ret = midi_out_uart_init();
     if (ret != ESP_OK) ESP_LOGE(TAG, "Failed to initialize UART MIDI: %s", esp_err_to_name(ret));
     
-    // Load and set UART transmit mode
-    uint16_t mode_val = (uint16_t)MIDI_TRANSMIT_BOTH;
-    esp_err_t err_mode = app_settings_load_u16(NVS_KEY_MIDI_MODE, &mode_val);
-    if (err_mode != ESP_OK) app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)MIDI_TRANSMIT_BOTH);
-    midi_out_uart_set_mode((midi_transmit_mode_t)mode_val);
+    // Get TRS type from device_config (source of truth) and apply to UART
+    midi_trs_type_t trs_type = device_config_get_trs_type();
+    midi_transmit_mode_t mode = (midi_transmit_mode_t)assets_trs_type_to_transmit_mode(trs_type);
+    midi_out_uart_set_mode(mode);
+    ESP_LOGI(TAG, "UART TRS mode set from device_config: %d", mode);
   }
 
   // TODO: Initialize USB MIDI if enabled

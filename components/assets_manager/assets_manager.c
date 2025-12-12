@@ -73,7 +73,9 @@ static esp_err_t parse_manifest(const char *json_str) {
     if (item && cJSON_IsString(item))
       strncpy(dev->slug, item->valuestring, sizeof(dev->slug) - 1);
     
+    // Try "name" first, then "product" (Ruby outputs product, we store as name)
     item = cJSON_GetObjectItem(dev_item, "name");
+    if (!item) item = cJSON_GetObjectItem(dev_item, "product");
     if (item && cJSON_IsString(item))
       strncpy(dev->name, item->valuestring, sizeof(dev->name) - 1);
     
@@ -85,7 +87,9 @@ static esp_err_t parse_manifest(const char *json_str) {
     if (item && cJSON_IsString(item))
       strncpy(dev->version, item->valuestring, sizeof(dev->version) - 1);
     
+    // Try "file" first, then "path" (Ruby outputs path, we store as file)
     item = cJSON_GetObjectItem(dev_item, "file");
+    if (!item) item = cJSON_GetObjectItem(dev_item, "path");
     if (item && cJSON_IsString(item))
       strncpy(dev->file, item->valuestring, sizeof(dev->file) - 1);
     
@@ -303,6 +307,32 @@ void assets_free_device(device_def_t *device) {
   }
   
   heap_caps_free(device);
+}
+
+// Forward declaration from assets_file_ops.c
+extern esp_err_t assets_regenerate_devices_manifest(void);
+
+/**
+ * Rebuild manifest by scanning devices directory
+ * This is a convenience wrapper around assets_regenerate_devices_manifest()
+ */
+esp_err_t assets_rebuild_manifest(void) {
+  if (!g_initialized) {
+    ESP_LOGE(TAG, "Assets manager not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  ESP_LOGI(TAG, "Rebuilding device manifest...");
+  
+  // Use the existing implementation from assets_file_ops
+  esp_err_t ret = assets_regenerate_devices_manifest();
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to regenerate devices manifest");
+    return ret;
+  }
+  
+  // Reload the manifest into memory
+  return assets_manager_reload_manifest();
 }
 
 esp_err_t assets_manager_reload_manifest(void) {

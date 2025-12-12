@@ -1,4 +1,5 @@
 #include "assets_file_ops.h"
+#include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "cJSON.h"
@@ -171,13 +172,6 @@ esp_err_t assets_regenerate_scenes_manifest(void) {
   return ESP_OK;
 }
 
-// Helper: Replace underscores with hyphens in a string (modifies in place)
-static void replace_underscores(char *str) {
-  for (char *p = str; *p; p++) {
-    if (*p == '_') *p = '-';
-  }
-}
-
 // Helper: Compute full SHA256 hex string for a file (matches Ruby build_manifest.rb)
 // PSRAM-based to avoid stack overflow
 static bool compute_file_sha256(const char *path, char *hex_out, size_t hex_size) {
@@ -282,16 +276,14 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   cJSON *version_item = cJSON_GetObjectItem(device_json, "implementationVersion");
   const char *version = (version_item && cJSON_IsString(version_item)) ? version_item->valuestring : "0";
   
-  // Build slug: vendor.product@version (using original names with underscores)
+  // Build slug: vendor.product@version
   snprintf(slug, 256, "%s.%s@%s", vendor_dir, product, version);
   
-  // Build vendor and product with hyphens (for display)
+  // Keep vendor and product matching the slug format (underscores)
   strncpy(vendor_display, vendor_dir, 127);
   vendor_display[127] = '\0';
   strncpy(product_display, product, 127);
   product_display[127] = '\0';
-  replace_underscores(vendor_display);
-  replace_underscores(product_display);
   
   // Build path: devices/vendor/product.json
   snprintf(path, MAX_PATH_LEN, "devices/%s/%s", vendor_dir, filename);
@@ -810,6 +802,7 @@ void assets_file_created(const char *path) {
   } else if (strcmp(folder_type, "devices") == 0) {
     if (strstr(path, "manifest.json")) return;
     assets_regenerate_devices_manifest();
+    assets_manager_reload_manifest();  // Reload into memory
   } else if (strcmp(folder_type, "images") == 0) {
     if (strstr(path, "manifest.json")) return;
     assets_regenerate_images_manifest();
@@ -828,6 +821,7 @@ void assets_file_deleted(const char *path) {
   } else if (strcmp(folder_type, "devices") == 0) {
     if (strstr(path, "manifest.json")) return;
     assets_regenerate_devices_manifest();
+    assets_manager_reload_manifest();  // Reload into memory
   } else if (strcmp(folder_type, "images") == 0) {
     if (strstr(path, "manifest.json")) return;
     assets_regenerate_images_manifest();

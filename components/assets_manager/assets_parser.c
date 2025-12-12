@@ -130,7 +130,7 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
     strncpy(device->name, display_name->valuestring, sizeof(device->name) - 1);
   
   // Parse x_midiTrs extension
-  device->trs_type = MIDI_TRS_UNKNOWN;  // Default
+  device->trs_type = MIDI_TRS_UNKNOWN;  // Default (caller should treat as BOTH)
   cJSON *midi_trs = cJSON_GetObjectItem(root, "x_midiTrs");
   if (midi_trs && cJSON_IsString(midi_trs)) {
     const char *trs_str = midi_trs->valuestring;
@@ -140,6 +140,17 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
       device->trs_type = MIDI_TRS_TYPE_B;
     else if (strcmp(trs_str, "TYPE_CS") == 0)
       device->trs_type = MIDI_TRS_TYPE_CS;
+    else if (strcmp(trs_str, "BOTH") == 0)
+      device->trs_type = MIDI_TRS_TYPE_BOTH;
+  }
+  
+  // Parse x_midiChannel extension (1-16, 0 means not specified)
+  device->midi_channel = 0;  // Default: not specified
+  cJSON *midi_channel = cJSON_GetObjectItem(root, "x_midiChannel");
+  if (midi_channel && cJSON_IsNumber(midi_channel)) {
+    int ch = midi_channel->valueint;
+    if (ch >= 1 && ch <= 16)
+      device->midi_channel = (uint8_t)ch;
   }
   
   // Parse receives/transmits arrays
@@ -330,6 +341,11 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
   if (x_pc) {
     device->pc_info = calloc_prefer_psram(1, sizeof(program_change_info_t));
     if (device->pc_info) {
+      // Set defaults
+      device->pc_info->index_base = 0;
+      device->pc_info->count = 128;
+      device->pc_info->bank_mode = PC_BANK_SELECT_NONE;
+      
       cJSON *index_base = cJSON_GetObjectItem(x_pc, "indexBase");
       if (index_base && cJSON_IsNumber(index_base))
         device->pc_info->index_base = index_base->valueint;
@@ -338,9 +354,21 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
       if (count && cJSON_IsNumber(count))
         device->pc_info->count = count->valueint;
       
+      // Parse bankSelect - can be string ("none", "cc0", "cc0_cc32") or bool for legacy
       cJSON *bank_sel = cJSON_GetObjectItem(x_pc, "bankSelect");
-      if (bank_sel && cJSON_IsBool(bank_sel))
-        device->pc_info->bank_select = cJSON_IsTrue(bank_sel);
+      if (bank_sel) {
+        if (cJSON_IsString(bank_sel)) {
+          const char *bs_str = bank_sel->valuestring;
+          if (strcmp(bs_str, "cc0") == 0)
+            device->pc_info->bank_mode = PC_BANK_SELECT_CC0;
+          else if (strcmp(bs_str, "cc0_cc32") == 0)
+            device->pc_info->bank_mode = PC_BANK_SELECT_CC0_CC32;
+          // "none" or any other value stays as PC_BANK_SELECT_NONE
+        } else if (cJSON_IsBool(bank_sel) && cJSON_IsTrue(bank_sel)) {
+          // Legacy bool support: true = cc0
+          device->pc_info->bank_mode = PC_BANK_SELECT_CC0;
+        }
+      }
       
       // Parse names array if present
       cJSON *names = cJSON_GetObjectItem(x_pc, "names");

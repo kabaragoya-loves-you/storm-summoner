@@ -5,6 +5,7 @@
 #include "rom/crc.h"
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define TAG "assets_cache"
 
@@ -44,6 +45,25 @@ static uint32_t calculate_crc32(const uint8_t *data, size_t len) {
  */
 esp_err_t generate_device_cache(const device_def_t *device, const char *cache_path) {
   ESP_LOGI(TAG, "Generating cache: %s", cache_path);
+  
+  // Ensure cache directory exists
+  // Extract directory from cache_path (e.g., "/assets/cache" from "/assets/cache/foo.bin")
+  char dir_path[128];
+  strncpy(dir_path, cache_path, sizeof(dir_path) - 1);
+  dir_path[sizeof(dir_path) - 1] = '\0';
+  char *last_slash = strrchr(dir_path, '/');
+  if (last_slash) {
+    *last_slash = '\0';
+    struct stat st;
+    if (stat(dir_path, &st) != 0) {
+      // Directory doesn't exist, create it
+      if (mkdir(dir_path, 0755) != 0) {
+        ESP_LOGW(TAG, "Failed to create cache directory: %s", dir_path);
+      } else {
+        ESP_LOGI(TAG, "Created cache directory: %s", dir_path);
+      }
+    }
+  }
   
   // Open cache file for writing
   FILE *f = fopen(cache_path, "wb");

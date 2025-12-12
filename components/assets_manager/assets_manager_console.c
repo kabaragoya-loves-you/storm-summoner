@@ -26,9 +26,11 @@ static int cmd_info(int argc, char **argv) {
 // Command: regenerate_devices
 static int cmd_regenerate_devices(int argc, char **argv) {
   ESP_LOGI(TAG, "Regenerating devices manifest...");
-  esp_err_t ret = assets_regenerate_devices_manifest();
+  // Use assets_rebuild_manifest() which regenerates AND reloads into memory
+  esp_err_t ret = assets_rebuild_manifest();
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Devices manifest regenerated successfully");
+    ESP_LOGI(TAG, "Devices manifest regenerated and reloaded (%u devices)", 
+             (unsigned)assets_get_device_count());
   } else {
     ESP_LOGE(TAG, "Failed to regenerate devices manifest: %s", esp_err_to_name(ret));
   }

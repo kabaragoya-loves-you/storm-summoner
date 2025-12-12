@@ -44,12 +44,19 @@ typedef struct {
   uint8_t discrete_count;             // Number of discrete values (0 if continuous)
 } midi_control_t;
 
+// Bank select mode for program changes (matches device_config.h)
+typedef enum {
+  PC_BANK_SELECT_NONE = 0,   // PC only (default, 0-127)
+  PC_BANK_SELECT_CC0,        // CC0 + PC (128 banks × 128 programs)
+  PC_BANK_SELECT_CC0_CC32    // CC0 + CC32 + PC (explicit LSB)
+} pc_bank_select_mode_t;
+
 // Program change configuration
 typedef struct {
-  uint16_t index_base;    // Starting index (usually 0)
-  uint16_t count;         // Number of program changes
-  bool bank_select;       // Whether device uses bank select
-  const char **names;     // Optional array of preset names (NULL if not provided)
+  uint16_t index_base;           // Starting index (0 or 1)
+  uint16_t count;                // Number of program changes (default 128)
+  pc_bank_select_mode_t bank_mode;  // Bank select protocol
+  const char **names;            // Optional array of preset names (NULL if not provided)
 } program_change_info_t;
 
 // Full device definition
@@ -71,6 +78,7 @@ typedef struct {
   bool transmits_pc;      // Transmits program change
   
   midi_trs_type_t trs_type;  // MIDI TRS wiring type (x_midiTrs extension)
+  uint8_t midi_channel;      // Preferred MIDI channel (1-16, 0 = not specified)
   
   void *string_blob;      // PSRAM blob containing all strings
   size_t string_blob_size;

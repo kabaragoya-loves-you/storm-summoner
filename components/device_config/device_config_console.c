@@ -1,5 +1,6 @@
 #include "device_config_console.h"
 #include "device_config.h"
+#include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -8,7 +9,7 @@
 static const char* TAG = "device_config_console";
 
 static const char* registered_commands[] = {
-  "info", "trs", "pedal", "program", "pc_mode", "bank_mode", "preset_base", "save"
+  "info", "trs", "pedal", "company", "program", "pc_mode", "bank_mode", "preset_base", "save"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -16,7 +17,14 @@ static const int num_registered_commands = sizeof(registered_commands) / sizeof(
 static int cmd_info(int argc, char **argv) {
   const device_config_t* cfg = device_config_get();
   
-  const char* trs_str = (cfg->trs_type == MIDI_TRS_TYPE_A) ? "Type A" : "Type B";
+  const char* trs_str = "Unknown";
+  switch (cfg->trs_type) {
+    case MIDI_TRS_TYPE_A: trs_str = "Type A"; break;
+    case MIDI_TRS_TYPE_B: trs_str = "Type B"; break;
+    case MIDI_TRS_TYPE_CS: trs_str = "Type CS"; break;
+    case MIDI_TRS_TYPE_BOTH: trs_str = "Both (A+B)"; break;
+    default: break;
+  }
   const char* pc_mode_str = (cfg->pc_mode == PC_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   
   const char* bank_mode_str = "PC only";
@@ -121,6 +129,18 @@ static struct {
   struct arg_end *end;
 } pedal_args;
 
+// Helper to check if a slug exists in the device database
+static bool slug_exists_in_database(const char* slug) {
+  uint32_t count = assets_get_device_count();
+  for (uint32_t i = 0; i < count; i++) {
+    const char* db_slug = NULL;
+    if (assets_get_device_info(i, &db_slug, NULL, NULL) == ESP_OK) {
+      if (db_slug && strcmp(db_slug, slug) == 0) return true;
+    }
+  }
+  return false;
+}
+
 static int cmd_pedal(int argc, char **argv) {
   int nerrors = arg_parse(argc, argv, (void **) &pedal_args);
   if (nerrors != 0) {
@@ -129,6 +149,14 @@ static int cmd_pedal(int argc, char **argv) {
   }
   
   const char* slug = pedal_args.pedal_slug->sval[0];
+  
+  // Validate slug exists in database
+  if (!slug_exists_in_database(slug)) {
+    ESP_LOGE(TAG, "Unknown pedal: %s", slug);
+    ESP_LOGI(TAG, "Use 'company' to list available vendors, or 'company <vendor>' to list pedals");
+    return 1;
+  }
+  
   esp_err_t ret = device_config_set_pedal(slug);
   
   if (ret == ESP_OK) {
@@ -138,6 +166,86 @@ static int cmd_pedal(int argc, char **argv) {
   }
   
   return (ret == ESP_OK) ? 0 : 1;
+}
+
+// Command: company - list vendors or pedals by vendor
+static struct {
+  struct arg_str *vendor;
+  struct arg_end *end;
+} company_args;
+
+static int cmd_company(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &company_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, company_args.end, argv[0]);
+    return 1;
+  }
+  
+  uint32_t count = assets_get_device_count();
+  
+  if (company_args.vendor->count == 0) {
+    // No vendor specified - list unique vendors
+    ESP_LOGI(TAG, "====== VENDORS (%u devices total) ======", (unsigned)count);
+    
+    // Collect unique vendors (simple O(n²) approach, fine for small lists)
+    const char* seen_vendors[128];
+    int seen_count = 0;
+    
+    for (uint32_t i = 0; i < count && seen_count < 128; i++) {
+      const char* vendor = NULL;
+      if (assets_get_device_info(i, NULL, NULL, &vendor) == ESP_OK && vendor) {
+        // Check if we've seen this vendor
+        bool found = false;
+        for (int j = 0; j < seen_count; j++) {
+          if (strcmp(seen_vendors[j], vendor) == 0) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          seen_vendors[seen_count++] = vendor;
+          // Count pedals for this vendor
+          int pedal_count = 0;
+          for (uint32_t k = 0; k < count; k++) {
+            const char* v = NULL;
+            if (assets_get_device_info(k, NULL, NULL, &v) == ESP_OK && v) {
+              if (strcmp(v, vendor) == 0) pedal_count++;
+            }
+          }
+          ESP_LOGI(TAG, "  %s (%d)", vendor, pedal_count);
+        }
+      }
+    }
+    ESP_LOGI(TAG, "========================================");
+  } else {
+    // Vendor specified - list pedals by that vendor
+    const char* filter_vendor = company_args.vendor->sval[0];
+    ESP_LOGI(TAG, "====== PEDALS by %s ======", filter_vendor);
+    
+    bool found_any = false;
+    for (uint32_t i = 0; i < count; i++) {
+      const char* slug = NULL;
+      const char* name = NULL;
+      const char* vendor = NULL;
+      if (assets_get_device_info(i, &slug, &name, &vendor) == ESP_OK) {
+        if (vendor && strcmp(vendor, filter_vendor) == 0) {
+          found_any = true;
+          // Extract version from slug (format: vendor.model@version)
+          const char* at = strchr(slug, '@');
+          const char* version = at ? at + 1 : "0";
+          ESP_LOGI(TAG, "  %s [v%s]", slug, version);
+        }
+      }
+    }
+    
+    if (!found_any) {
+      ESP_LOGW(TAG, "No pedals found for vendor: %s", filter_vendor);
+      ESP_LOGI(TAG, "Use 'company' with no arguments to list available vendors");
+    }
+    ESP_LOGI(TAG, "==============================");
+  }
+  
+  return 0;
 }
 
 // Command: save
@@ -281,17 +389,30 @@ esp_err_t device_config_console_init(void) {
   esp_console_cmd_register(&trs_cmd);
   
   // pedal command
-  pedal_args.pedal_slug = arg_str1(NULL, NULL, "<slug>", "Pedal slug from database");
+  pedal_args.pedal_slug = arg_str1(NULL, NULL, "<slug>", "e.g. chase_bliss.mood_mkii@0");
   pedal_args.end = arg_end(2);
   
   const esp_console_cmd_t pedal_cmd = {
     .command = "pedal",
-    .help = "Set pedal from database",
+    .help = "Set pedal from database (use 'company' to browse)",
     .hint = NULL,
     .func = &cmd_pedal,
     .argtable = &pedal_args
   };
   esp_console_cmd_register(&pedal_cmd);
+  
+  // company command
+  company_args.vendor = arg_str0(NULL, NULL, "[vendor]", "Vendor name to filter by");
+  company_args.end = arg_end(2);
+  
+  const esp_console_cmd_t company_cmd = {
+    .command = "company",
+    .help = "List vendors, or pedals by vendor",
+    .hint = NULL,
+    .func = &cmd_company,
+    .argtable = &company_args
+  };
+  esp_console_cmd_register(&company_cmd);
   
   // save command
   const esp_console_cmd_t save_cmd = {

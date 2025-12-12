@@ -138,6 +138,14 @@ bool assets_cc_has_discrete_values(const device_def_t *device, uint8_t cc_num);
 esp_err_t assets_manager_reload_manifest(void);
 
 /**
+ * Rebuild the device manifest by scanning /assets/devices/ directory
+ * Scans all vendor subdirectories for .json device files and generates
+ * a new manifest.json. Call this after adding/removing device files.
+ * @return ESP_OK on success
+ */
+esp_err_t assets_rebuild_manifest(void);
+
+/**
  * Reload a specific device definition
  * Invalidates cache and reloads from JSON
  * @param slug Device slug to reload
