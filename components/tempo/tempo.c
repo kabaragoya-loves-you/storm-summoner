@@ -89,7 +89,6 @@ static uint32_t s_tap_session_start_ms = 0;
 static TimerHandle_t s_tap_timeout_timer = NULL;
 
 // External sync tracking
-static uint32_t s_last_sync_tick_ms = 0;
 static SemaphoreHandle_t s_sync_semaphore = NULL;
 
 // External clock dropout protection (for MIDI and SYNC sources)
