@@ -1,9 +1,11 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "lv_vector_art.h"
+#include "ui_module_settings.h"
 #include "event_bus.h"
 #include "tempo.h"
 #include "transport.h"
+#include "scene.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <math.h>
@@ -71,6 +73,17 @@ static uint16_t g_disp_height = 0;
 // Body-to-tail animation ratio (configurable)
 static uint8_t g_body_ratio = DEFAULT_BODY_RATIO;
 
+// Module settings (registered with ui_module_settings)
+static bool g_animation_enabled = true;
+static bool g_pulse_enabled = true;
+
+static ui_module_setting_t tempo2_settings[] = {
+  { "animation", UI_SETTING_BOOL, &g_animation_enabled, "Enable/disable animation" },
+  { "pulse", UI_SETTING_BOOL, &g_pulse_enabled, "Red pulse on beat 1" },
+  { "body_ratio", UI_SETTING_U8, &g_body_ratio, "Body loops per tail cycle" },
+};
+static const size_t tempo2_settings_count = sizeof(tempo2_settings) / sizeof(tempo2_settings[0]);
+
 // Beat tracking (volatile - updated from event handler context)
 static volatile uint8_t g_current_beat = 1;      // 1-based beat position
 static volatile uint8_t g_bar_length = 4;        // Beats per bar
@@ -136,7 +149,7 @@ static void update_gradient(float phase, bool is_beat_one) {
   uint8_t edge_b = BASE_EDGE_B;
   
   // Red shift on beat 1 - fade in at start of beat, fade out at end
-  if (is_beat_one) {
+  if (is_beat_one && g_pulse_enabled) {
     // Red blend factor: 1.0 at phase=0, fades to 0 as phase approaches 1
     float red_blend = 1.0f - phase;
     red_blend = red_blend * red_blend; // Ease out for smoother transition
@@ -175,6 +188,12 @@ static void update_gradient(float phase, bool is_beat_one) {
 //=============================================================================
 
 static lv_color_t get_transport_color(void) {
+  // When not using transport controls, always show white (animation is running)
+  bool use_transport = scene_get_use_transport(scene_get_current_index());
+  if (!use_transport) {
+    return lv_color_make(255, 255, 255);  // White
+  }
+  
   switch (g_transport_state) {
     case TRANSPORT_STOPPED:
       return lv_color_make(0, 0, 0);        // Black
@@ -232,10 +251,16 @@ static void update_tempo_labels(void) {
 static void beat_event_handler(const event_t* event, void* context) {
   if (!event || !g_module_active) return;
   
-  // Only update state when transport is actively playing
-  // This prevents state drift while stopped/paused
-  if (g_transport_state != TRANSPORT_PLAYING && g_transport_state != TRANSPORT_RECORDING) {
-    return;
+  // Check if transport controls are in use
+  bool use_transport = scene_get_use_transport(scene_get_current_index());
+  
+  // Only filter by transport state when use_transport is enabled
+  if (use_transport) {
+    // Only update state when transport is actively playing
+    // This prevents state drift while stopped/paused
+    if (g_transport_state != TRANSPORT_PLAYING && g_transport_state != TRANSPORT_RECORDING) {
+      return;
+    }
   }
   
   // Just update volatile state - LVGL updates happen in timer callback
@@ -267,8 +292,23 @@ static void transport_state_handler(const event_t* event, void* context) {
 static void interp_timer_cb(lv_timer_t *timer) {
   if (!g_module_active) return;
   
-  // Handle transport state changes
-  if (g_transport_dirty) {
+  // Check if animation is enabled at all
+  if (!g_animation_enabled) {
+    // Still update labels
+    if (g_beat_dirty || g_tempo_dirty || g_transport_dirty) {
+      g_beat_dirty = false;
+      g_tempo_dirty = false;
+      g_transport_dirty = false;
+      update_tempo_labels();
+    }
+    return;
+  }
+  
+  // Check scene's use_transport setting
+  bool use_transport = scene_get_use_transport(scene_get_current_index());
+  
+  // Handle transport state changes (only if use_transport is enabled)
+  if (use_transport && g_transport_dirty) {
     g_transport_dirty = false;
     
     switch (g_transport_state) {
@@ -296,10 +336,16 @@ static void interp_timer_cb(lv_timer_t *timer) {
         update_tempo_labels();
         return;
     }
+  } else if (!use_transport) {
+    g_transport_dirty = false; // Clear without processing
   }
   
-  // Don't animate when stopped or paused
-  if (g_transport_state == TRANSPORT_STOPPED || g_transport_state == TRANSPORT_PAUSED) {
+  // Check if we should animate
+  bool should_animate = use_transport
+    ? (g_transport_state == TRANSPORT_PLAYING || g_transport_state == TRANSPORT_RECORDING)
+    : true; // Always animate when use_transport is false
+  
+  if (!should_animate) {
     // Still update label if dirty
     if (g_beat_dirty || g_tempo_dirty) {
       g_beat_dirty = false;
@@ -311,15 +357,37 @@ static void interp_timer_cb(lv_timer_t *timer) {
   
   // Calculate phase within current beat
   uint32_t now = esp_timer_get_time() / 1000;
-  uint32_t elapsed = now - g_last_beat_time_ms;
-  float beat_phase = (float)elapsed / (float)g_beat_duration_ms;
-  if (beat_phase > 1.0f) beat_phase = 1.0f;
+  float bar_phase;
   
-  // Calculate bar phase (0-1 over entire bar) for gradient pulse and tail animation
-  float bar_phase = ((float)(g_current_beat - 1) + beat_phase) / (float)g_bar_length;
+  if (!use_transport) {
+    // When not using transport, calculate phase from continuous time
+    // This makes animation self-driving, not dependent on beat events
+    uint32_t bar_duration_ms = g_beat_duration_ms * g_bar_length;
+    bar_phase = fmodf((float)now / (float)bar_duration_ms, 1.0f);
+    
+    // Derive current beat from bar_phase for label display
+    uint8_t derived_beat = 1 + (uint8_t)(bar_phase * g_bar_length);
+    if (derived_beat > g_bar_length) derived_beat = g_bar_length;
+    if (derived_beat != g_current_beat) {
+      g_current_beat = derived_beat;
+      g_beat_dirty = true;
+    }
+  } else {
+    // When using transport, use beat events for timing
+    uint32_t elapsed = now - g_last_beat_time_ms;
+    float beat_phase = (float)elapsed / (float)g_beat_duration_ms;
+    if (beat_phase > 1.0f) beat_phase = 1.0f;
+    
+    // Calculate bar phase (0-1 over entire bar) for gradient pulse and tail animation
+    bar_phase = ((float)(g_current_beat - 1) + beat_phase) / (float)g_bar_length;
+  }
   
   // Update gradient with pulse (one full cycle per bar)
-  update_gradient(bar_phase, g_current_beat == 1 && beat_phase < 0.5f);
+  // Note: is_beat_one detection uses bar_phase for non-transport mode
+  bool is_beat_one = use_transport
+    ? (g_current_beat == 1 && bar_phase < (1.0f / g_bar_length / 2.0f))
+    : (bar_phase < (0.5f / g_bar_length));
+  update_gradient(bar_phase, is_beat_one);
   
   // Update label if dirty
   if (g_beat_dirty || g_tempo_dirty) {
@@ -484,6 +552,9 @@ static void tempo2_teardown(void) {
   // Mark module as inactive first
   g_module_active = false;
   
+  // Unregister settings
+  ui_module_unregister_settings("tempo2");
+  
   // Unsubscribe from events to prevent duplicate handlers on re-init
   event_bus_unsubscribe(EVENT_BEAT, beat_event_handler);
   event_bus_unsubscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler);
@@ -513,6 +584,9 @@ static void tempo2_teardown(void) {
 }
 
 static void tempo2_ui_init(void) {
+  // Register module settings
+  ui_module_register_settings("tempo2", tempo2_settings, tempo2_settings_count);
+  
   // Subscribe to events
   event_bus_subscribe(EVENT_BEAT, beat_event_handler, NULL);
   event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);

@@ -200,7 +200,7 @@ typedef struct {
     
     // Tempo event data
     struct {
-      uint8_t bpm;           // Current tempo in BPM (30-250)
+      uint16_t bpm;          // Current tempo in BPM (20-300)
     } tempo;
     
     // Scene event data

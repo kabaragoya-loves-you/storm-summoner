@@ -169,6 +169,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->beat_divider = DIVIDER_QUARTER;               // Default to quarter note beats
   scene->time_signature.numerator = 4;                 // Default to 4/4 time
   scene->time_signature.denominator = 4;
+  scene->use_transport = false;                        // Default: animation always runs
 }
 
 // Cleanup existing touchwheel instance
@@ -1654,6 +1655,26 @@ time_signature_t scene_get_time_signature(uint8_t scene_index) {
   return scene ? scene->time_signature : default_sig;
 }
 
+esp_err_t scene_set_use_transport(uint8_t scene_index, bool use_transport) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->use_transport = use_transport;
+  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  
+  ESP_LOGI(TAG, "Scene %d use_transport set to %s", scene_index + 1, 
+           use_transport ? "true" : "false");
+  
+  return ESP_OK;
+}
+
+bool scene_get_use_transport(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->use_transport : false;
+}
+
 esp_err_t scene_set_note_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
@@ -2000,6 +2021,8 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddNumberToObject(time_sig, "denominator", scene->time_signature.denominator);
   cJSON_AddItemToObject(root, "time_signature", time_sig);
   
+  cJSON_AddBoolToObject(root, "use_transport", scene->use_transport);
+  
   return root;
 }
 
@@ -2172,6 +2195,11 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     cJSON* denominator = cJSON_GetObjectItem(time_sig, "denominator");
     if (numerator) scene->time_signature.numerator = numerator->valueint;
     if (denominator) scene->time_signature.denominator = denominator->valueint;
+  }
+  
+  cJSON* use_transport = cJSON_GetObjectItem(root, "use_transport");
+  if (use_transport && cJSON_IsBool(use_transport)) {
+    scene->use_transport = cJSON_IsTrue(use_transport);
   }
 
   return ESP_OK;

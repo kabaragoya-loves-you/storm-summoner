@@ -151,7 +151,7 @@ static const char* registered_commands[] = {
   "confirm", "cancel", "channel", "pad", "button", "bump", "expr_switch", "actions", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
-  "bpm", "clock_source", "beat_divider", "time_sig",
+  "bpm", "clock_source", "beat_divider", "time_sig", "use_transport",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity",
   "touchwheel_mode", "touchwheel_style", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note"
@@ -2504,6 +2504,42 @@ static int cmd_time_sig(int argc, char **argv) {
   return 0;
 }
 
+// Command: use_transport - Set whether transport controls affect animation
+static struct {
+  struct arg_str *on_off;
+  struct arg_end *end;
+} use_transport_args;
+
+static int cmd_use_transport(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &use_transport_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, use_transport_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* val = use_transport_args.on_off->sval[0];
+  bool use_transport;
+  
+  if (strcmp(val, "on") == 0 || strcmp(val, "true") == 0 || strcmp(val, "1") == 0) {
+    use_transport = true;
+  } else if (strcmp(val, "off") == 0 || strcmp(val, "false") == 0 || strcmp(val, "0") == 0) {
+    use_transport = false;
+  } else {
+    ESP_LOGE(TAG, "Invalid value (use: on/off)");
+    return 1;
+  }
+  
+  scene_set_use_transport(scene_get_current_index(), use_transport);
+  
+  ESP_LOGI(TAG, "use_transport: %s (animation %s)", 
+           use_transport ? "on" : "off",
+           use_transport ? "follows transport" : "always runs");
+  return 0;
+}
+
 // Command: proximity_cc - Set proximity CC number(s)
 static struct {
   struct arg_int *cc_nums;
@@ -3789,6 +3825,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &time_sig_args
   };
   esp_console_cmd_register(&time_sig_cmd);
+  
+  // use_transport command
+  use_transport_args.on_off = arg_str1(NULL, NULL, "<on|off>", "Enable/disable transport controls");
+  use_transport_args.end = arg_end(2);
+  
+  const esp_console_cmd_t use_transport_cmd = {
+    .command = "use_transport",
+    .help = "Control animation behavior (on: follows transport, off: always runs)",
+    .hint = NULL,
+    .func = &cmd_use_transport,
+    .argtable = &use_transport_args
+  };
+  esp_console_cmd_register(&use_transport_cmd);
   
   // proximity_cc command
   proximity_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");

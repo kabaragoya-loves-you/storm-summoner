@@ -116,6 +116,7 @@ typedef struct {
   tempo_clock_source_t clock_source;     // INTERNAL, MIDI, SYNC
   tempo_note_divider_t beat_divider;     // QUARTER, EIGHTH, SIXTEENTH
   time_signature_t time_signature;       // Beats per bar and beat unit
+  bool use_transport;                    // If false, animation runs continuously at BPM
   
   // Future: envelope follower, LFO slots
 } scene_t;
@@ -253,6 +254,10 @@ esp_err_t scene_set_beat_divider(uint8_t scene_index, tempo_note_divider_t divid
 tempo_note_divider_t scene_get_beat_divider(uint8_t scene_index);
 esp_err_t scene_set_time_signature(uint8_t scene_index, uint8_t numerator, uint8_t denominator);
 time_signature_t scene_get_time_signature(uint8_t scene_index);
+
+// Transport mode (animation behavior)
+esp_err_t scene_set_use_transport(uint8_t scene_index, bool use_transport);
+bool scene_get_use_transport(uint8_t scene_index);
 
 // Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);

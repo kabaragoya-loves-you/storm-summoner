@@ -168,6 +168,11 @@
           "description": "Beat unit (4 = quarter note)"
         }
       }
+    },
+    "use_transport": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, animation follows transport controls (play/pause/stop). When false, animation always runs at current BPM."
     }
   },
   "definitions": {

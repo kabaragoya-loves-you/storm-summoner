@@ -1,5 +1,6 @@
 #include "ui_console.h"
 #include "ui.h"
+#include "ui_module_settings.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
@@ -18,7 +19,8 @@ float buttons_get_rotation(void);
 static const char* TAG = "ui_console";
 
 static const char* registered_commands[] = {
-  "info", "size", "top", "left", "module", "planet", "rotation", "perf", "cpu"
+  "info", "size", "top", "left", "module", "planet", "rotation", "perf", "cpu", 
+  "settings", "set"
 };
 
 // Available planet textures
@@ -256,6 +258,108 @@ static int cmd_perf(int argc, char **argv) {
   return 0;
 }
 
+// Command: settings - List module settings
+static int cmd_settings(int argc, char **argv) {
+  const char* module_name = NULL;
+  
+  if (argc >= 2) {
+    module_name = argv[1];
+  } else {
+    // Use current module
+    ui_draw_module_t* current = ui_get_current_module();
+    if (current) {
+      module_name = current->name;
+    }
+  }
+  
+  if (!module_name) {
+    // List all registered modules with settings
+    const char* names[UI_MAX_MODULES_WITH_SETTINGS];
+    size_t count = ui_module_list_registered(names, UI_MAX_MODULES_WITH_SETTINGS);
+    
+    if (count == 0) {
+      printf("No modules have registered settings\n");
+      return 0;
+    }
+    
+    printf("Modules with settings:\n");
+    for (size_t i = 0; i < count; i++) {
+      printf("  %s\n", names[i]);
+    }
+    return 0;
+  }
+  
+  size_t count = 0;
+  ui_module_setting_t* settings = ui_module_get_settings(module_name, &count);
+  
+  if (!settings || count == 0) {
+    printf("Module '%s' has no registered settings\n", module_name);
+    return 0;
+  }
+  
+  printf("Settings for '%s':\n", module_name);
+  for (size_t i = 0; i < count; i++) {
+    char value[32];
+    ui_module_get_setting_str(module_name, settings[i].name, value, sizeof(value));
+    
+    const char* type_str;
+    switch (settings[i].type) {
+      case UI_SETTING_BOOL: type_str = "bool"; break;
+      case UI_SETTING_U8: type_str = "u8"; break;
+      case UI_SETTING_U16: type_str = "u16"; break;
+      case UI_SETTING_FLOAT: type_str = "float"; break;
+      default: type_str = "?"; break;
+    }
+    
+    printf("  %-15s = %-10s [%s] %s\n", 
+           settings[i].name, value, type_str, 
+           settings[i].description ? settings[i].description : "");
+  }
+  
+  return 0;
+}
+
+// Command: set - Set a module setting
+static int cmd_set(int argc, char **argv) {
+  if (argc < 3) {
+    printf("Usage: set <module.setting> <value>\n");
+    printf("       set <setting> <value>  (uses current module)\n");
+    return 1;
+  }
+  
+  const char* setting_spec = argv[1];
+  const char* value = argv[2];
+  
+  // Parse module.setting format
+  char module_name[32] = {0};
+  char setting_name[32] = {0};
+  
+  char* dot = strchr(setting_spec, '.');
+  if (dot) {
+    size_t module_len = dot - setting_spec;
+    if (module_len >= sizeof(module_name)) module_len = sizeof(module_name) - 1;
+    strncpy(module_name, setting_spec, module_len);
+    strncpy(setting_name, dot + 1, sizeof(setting_name) - 1);
+  } else {
+    // Use current module
+    ui_draw_module_t* current = ui_get_current_module();
+    if (!current) {
+      printf("No current module - specify module.setting\n");
+      return 1;
+    }
+    strncpy(module_name, current->name, sizeof(module_name) - 1);
+    strncpy(setting_name, setting_spec, sizeof(setting_name) - 1);
+  }
+  
+  if (!ui_module_set_setting(module_name, setting_name, value)) {
+    printf("Failed to set %s.%s = %s\n", module_name, setting_name, value);
+    return 1;
+  }
+  
+  printf("Set %s.%s = %s\n", module_name, setting_name, value);
+  return 0;
+}
+
 esp_err_t ui_console_init(void) {
   ESP_LOGI(TAG, "Registering ui commands");
   
@@ -339,6 +443,24 @@ esp_err_t ui_console_init(void) {
     .func = &cmd_cpu,
   };
   esp_console_cmd_register(&cpu_cmd);
+  
+  // settings command
+  const esp_console_cmd_t settings_cmd = {
+    .command = "settings",
+    .help = "List module settings",
+    .hint = "[module]",
+    .func = &cmd_settings,
+  };
+  esp_console_cmd_register(&settings_cmd);
+  
+  // set command
+  const esp_console_cmd_t set_cmd = {
+    .command = "set",
+    .help = "Set a module setting",
+    .hint = "<module.setting|setting> <value>",
+    .func = &cmd_set,
+  };
+  esp_console_cmd_register(&set_cmd);
   
   return ESP_OK;
 }
