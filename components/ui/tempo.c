@@ -263,6 +263,10 @@ static void tempo_changed_handler(const event_t* event, void* context) {
   g_current_bpm = event->data.tempo.bpm;
   g_beat_duration_ms = 60000 / g_current_bpm;
   g_tempo_dirty = true;
+  
+  // Update bar length from current time signature
+  time_signature_t sig = tempo_get_time_signature();
+  g_bar_length = sig.numerator;
 }
 
 static void transport_state_handler(const event_t* event, void* context) {

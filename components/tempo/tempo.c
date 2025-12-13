@@ -974,8 +974,14 @@ void tempo_midi_clock_tick(void) {
 
 void tempo_set_note_divider(tempo_note_divider_t divider) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool changed = (s_note_divider != divider);
   s_note_divider = divider;
   xSemaphoreGive(s_state_mutex);
+  
+  // Notify listeners (e.g., UI modules that calculate bops per bar)
+  if (changed) {
+    publish_tempo_changed_event();
+  }
 }
 
 tempo_note_divider_t tempo_get_note_divider(void) {
@@ -987,6 +993,8 @@ tempo_note_divider_t tempo_get_note_divider(void) {
 
 void tempo_set_time_signature(uint8_t numerator, uint8_t denominator) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool changed = (s_time_signature.numerator != numerator || 
+                  s_time_signature.denominator != denominator);
   s_time_signature.numerator = numerator;
   s_time_signature.denominator = denominator;
   // Reset beat counter when time signature changes
@@ -995,6 +1003,11 @@ void tempo_set_time_signature(uint8_t numerator, uint8_t denominator) {
   
   // Note: No NVS save - time signature is now a per-scene setting
   ESP_LOGI(TAG, "Time signature set to %d/%d", numerator, denominator);
+  
+  // Notify listeners (e.g., UI modules that calculate bops per bar)
+  if (changed) {
+    publish_tempo_changed_event();
+  }
 }
 
 time_signature_t tempo_get_time_signature(void) {

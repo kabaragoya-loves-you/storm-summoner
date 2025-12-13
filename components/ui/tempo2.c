@@ -54,6 +54,79 @@
 #define INTERP_TIMER_PERIOD_MS 16
 
 //=============================================================================
+// BOP SOLVER - Calculates body animation rate from time signature
+//=============================================================================
+
+typedef enum {
+  METER_SIMPLE,
+  METER_COMPOUND
+} meter_type_t;
+
+// Classify meter type based on time signature
+// Compound meters: 6/8, 9/8, 12/8 (numerator divisible by 3, denominator is 8)
+static meter_type_t classify_meter(uint8_t numerator, uint8_t denominator) {
+  if ((numerator == 6 || numerator == 9 || numerator == 12) && denominator == 8) {
+    return METER_COMPOUND;
+  }
+  return METER_SIMPLE;
+}
+
+// Calculate felt beats per bar based on meter type
+// Simple meter: beats = numerator (4/4 -> 4, 3/4 -> 3)
+// Compound meter: beats = numerator / 3 (6/8 -> 2, 9/8 -> 3, 12/8 -> 4)
+static uint8_t get_beats_per_bar(uint8_t numerator, uint8_t denominator) {
+  if (classify_meter(numerator, denominator) == METER_COMPOUND) {
+    return numerator / 3;
+  }
+  return numerator;
+}
+
+// Calculate sub-bops per beat based on beat divider and meter type
+// Simple meter: 8ths = 2 per beat (for quarter-note beats), 16ths = 4
+// Compound meter: 8ths = 3 per beat (dotted note = 3 eighths), 16ths = 6
+static uint8_t get_sub_bops_per_beat(uint8_t denominator, tempo_note_divider_t divider, meter_type_t meter) {
+  if (divider == DIVIDER_QUARTER) {
+    return 1;  // One bop per felt beat
+  }
+  
+  if (meter == METER_SIMPLE) {
+    // Simple meter: beat = denominator note value
+    if (divider == DIVIDER_EIGHTH) {
+      return (denominator >= 8) ? 1 : 8 / denominator;  // 4/4: 8/4 = 2 eighths per quarter
+    }
+    if (divider == DIVIDER_SIXTEENTH) {
+      return (denominator >= 16) ? 1 : 16 / denominator;  // 4/4: 16/4 = 4 sixteenths per quarter
+    }
+  } else {
+    // Compound meter: beat = dotted note (3 x denominator notes)
+    if (divider == DIVIDER_EIGHTH) {
+      return 3;  // Each dotted beat has 3 eighths
+    }
+    if (divider == DIVIDER_SIXTEENTH) {
+      return 6;  // Each dotted beat has 6 sixteenths (3 eighths x 2)
+    }
+  }
+  
+  return 1;  // Fallback
+}
+
+// Main bop solver: calculate total bops per bar from current tempo settings
+// Returns beats_per_bar * sub_bops_per_beat
+static uint8_t calculate_bops_per_bar(void) {
+  time_signature_t sig = tempo_get_time_signature();
+  tempo_note_divider_t divider = tempo_get_note_divider();
+  meter_type_t meter = classify_meter(sig.numerator, sig.denominator);
+  
+  uint8_t beats = get_beats_per_bar(sig.numerator, sig.denominator);
+  uint8_t subs = get_sub_bops_per_beat(sig.denominator, divider, meter);
+  
+  uint8_t bops = beats * subs;
+  
+  // Sanity check: ensure at least 1 bop per bar
+  return (bops > 0) ? bops : 1;
+}
+
+//=============================================================================
 // STATE
 //=============================================================================
 
@@ -276,6 +349,13 @@ static void tempo_changed_handler(const event_t* event, void* context) {
   g_current_bpm = event->data.tempo.bpm;
   g_beat_duration_ms = 60000 / g_current_bpm;
   g_tempo_dirty = true;
+  
+  // Update bar length from current time signature
+  time_signature_t sig = tempo_get_time_signature();
+  g_bar_length = sig.numerator;
+  
+  // Recalculate bops per bar in case time signature or beat divider changed
+  g_body_ratio = calculate_bops_per_bar();
 }
 
 static void transport_state_handler(const event_t* event, void* context) {
@@ -527,6 +607,11 @@ static void tempo2_draw_deferred_cb(lv_timer_t *timer) {
   g_bar_length = sig.numerator;
   g_current_beat = transport_get_current_beat();
   if (g_current_beat == 0) g_current_beat = 1;
+  
+  // Calculate body animation rate from time signature
+  g_body_ratio = calculate_bops_per_bar();
+  ESP_LOGI(TAG, "Bop solver: %d/%d -> %d bops per bar", 
+           sig.numerator, sig.denominator, g_body_ratio);
   
   // Force label update
   g_last_label_beat = 0;
