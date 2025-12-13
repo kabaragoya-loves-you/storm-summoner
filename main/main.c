@@ -161,4 +161,8 @@ void app_main(void) {
   //   
   //   assets_free_device(device);
   // }
+
+  // Wait for splash animation to complete before switching to main UI
+  vTaskDelay(pdMS_TO_TICKS(1500));
+  ui_set_draw_module(&scene_ui_module);
 }
