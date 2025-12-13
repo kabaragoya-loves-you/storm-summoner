@@ -10,7 +10,7 @@
 #include "esp_timer.h"
 #include <math.h>
 
-#define TAG "TEMPO2_UI"
+#define TAG "SCENE_UI"
 
 //=============================================================================
 // CONFIGURATION
@@ -150,12 +150,12 @@ static uint8_t g_body_ratio = DEFAULT_BODY_RATIO;
 static bool g_animation_enabled = true;
 static bool g_pulse_enabled = true;
 
-static ui_module_setting_t tempo2_settings[] = {
+static ui_module_setting_t scene_settings[] = {
   { "animation", UI_SETTING_BOOL, &g_animation_enabled, "Enable/disable animation" },
   { "pulse", UI_SETTING_BOOL, &g_pulse_enabled, "Red pulse on beat 1" },
   { "body_ratio", UI_SETTING_U8, &g_body_ratio, "Body loops per tail cycle" },
 };
-static const size_t tempo2_settings_count = sizeof(tempo2_settings) / sizeof(tempo2_settings[0]);
+static const size_t scene_settings_count = sizeof(scene_settings) / sizeof(scene_settings[0]);
 
 // Beat tracking (volatile - updated from event handler context)
 static volatile uint8_t g_current_beat = 1;      // 1-based beat position
@@ -497,7 +497,7 @@ static void interp_timer_cb(lv_timer_t *timer) {
 // MODULE CALLBACKS
 //=============================================================================
 
-static void tempo2_draw_deferred_cb(lv_timer_t *timer) {
+static void scene_draw_deferred_cb(lv_timer_t *timer) {
   if (g_screen != NULL) {
     lv_screen_load(g_screen);
     lv_timer_delete(timer);
@@ -624,21 +624,21 @@ static void tempo2_draw_deferred_cb(lv_timer_t *timer) {
   // Mark module as active
   g_module_active = true;
   
-  ESP_LOGI(TAG, "Tempo2 UI screen created - BPM: %d, Time Sig: %d/%d, Body ratio: %d",
+  ESP_LOGI(TAG, "Scene UI screen created - BPM: %d, Time Sig: %d/%d, Body ratio: %d",
            g_current_bpm, sig.numerator, sig.denominator, g_body_ratio);
   
   lv_screen_load(g_screen);
   lv_timer_delete(timer);
 }
 
-UI_CREATE_DEFERRED_DRAW_FUNC(tempo2, tempo2_draw_deferred_cb)
+UI_CREATE_DEFERRED_DRAW_FUNC(scene_ui, scene_draw_deferred_cb)
 
-static void tempo2_teardown(void) {
+static void scene_ui_teardown(void) {
   // Mark module as inactive first
   g_module_active = false;
   
   // Unregister settings
-  ui_module_unregister_settings("tempo2");
+  ui_module_unregister_settings("scene");
   
   // Unsubscribe from events to prevent duplicate handlers on re-init
   event_bus_unsubscribe(EVENT_BEAT, beat_event_handler);
@@ -668,22 +668,22 @@ static void tempo2_teardown(void) {
   g_last_label_state = TRANSPORT_STOPPED;
 }
 
-static void tempo2_ui_init(void) {
+static void scene_ui_init(void) {
   // Register module settings
-  ui_module_register_settings("tempo2", tempo2_settings, tempo2_settings_count);
+  ui_module_register_settings("scene", scene_settings, scene_settings_count);
   
   // Subscribe to events
   event_bus_subscribe(EVENT_BEAT, beat_event_handler, NULL);
   event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   
-  ESP_LOGI(TAG, "Tempo2 UI module initialized");
+  ESP_LOGI(TAG, "Scene UI module initialized");
 }
 
-ui_draw_module_t tempo2_module = {
-  .draw_func = tempo2_draw,
-  .teardown_func = tempo2_teardown,
-  .init_func = tempo2_ui_init,
-  .name = "tempo2"
+ui_draw_module_t scene_ui_module = {
+  .draw_func = scene_ui_draw,
+  .teardown_func = scene_ui_teardown,
+  .init_func = scene_ui_init,
+  .name = "scene"
 };
 

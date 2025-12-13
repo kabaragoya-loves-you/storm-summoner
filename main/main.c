@@ -132,9 +132,9 @@ void app_main(void) {
   console_repl_init();
 
   // Now that all tasks are created and memory is settled, load the UI module
-  // The tempo module triggers decompression of animated vector art which
+  // The scene module triggers decompression of animated vector art which
   // uses significant memory - doing this last prevents resource contention
-  // ui_set_draw_module(&tempo_module);
+  // ui_set_draw_module(&scene_ui_module);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
