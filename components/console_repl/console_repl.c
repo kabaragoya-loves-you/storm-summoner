@@ -35,6 +35,7 @@
 #include "linenoise/linenoise.h"
 #include "argtable3/argtable3.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include <string.h>
 
 static const char* TAG = "console_repl";
@@ -158,6 +159,14 @@ static int cmd_contexts(int argc, char **argv) {
   return 0;
 }
 
+// Command: reset - Restart the device
+static int cmd_reset(int argc, char **argv) {
+  printf("Restarting...\r\n");
+  vTaskDelay(pdMS_TO_TICKS(100)); // Brief delay for output to flush
+  esp_restart();
+  return 0; // Never reached
+}
+
 esp_err_t console_register_context(const char* name, context_init_fn init_fn, context_cleanup_fn cleanup_fn) {
   if (g_console_state.context_count >= MAX_CONTEXTS) {
     ESP_LOGE(TAG, "Maximum contexts reached");
@@ -220,6 +229,15 @@ esp_err_t console_repl_init(void) {
     .func = &cmd_contexts,
   };
   ESP_ERROR_CHECK(esp_console_cmd_register(&contexts_cmd));
+  
+  // Register reset command
+  const esp_console_cmd_t reset_cmd = {
+    .command = "reset",
+    .help = "Restart the device",
+    .hint = NULL,
+    .func = &cmd_reset,
+  };
+  ESP_ERROR_CHECK(esp_console_cmd_register(&reset_cmd));
   
   // Initialize completion system
   console_completion_init();
