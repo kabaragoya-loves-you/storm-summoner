@@ -6,7 +6,8 @@
 
 #define TAG "MENU_BUTTONS"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   button_state_t state = buttons_get_state();
   uint16_t debounce = buttons_get_debounce();
   uint16_t chord = buttons_get_chord_window();
@@ -29,7 +30,8 @@ static void show_info(void) {
   menu_navigate_to_info("Buttons Info", info_text);
 }
 
-static void action_set_debounce(void) {
+static void action_set_debounce(void* user_data) {
+  (void)user_data;
   // TODO: Implement debounce slider
   ESP_LOGI(TAG, "Set debounce - TODO: implement");
 }
@@ -38,11 +40,10 @@ lv_obj_t* menu_page_buttons_create(void) {
   ESP_LOGI(TAG, "Creating buttons page");
   
   static menu_item_t buttons_items[] = {
-    { "Info", show_info, false },
-    { "Set Debounce", action_set_debounce, false }
+    { "Info", show_info, NULL, false },
+    { "Set Debounce", action_set_debounce, NULL, false }
   };
   
   return menu_create_page("Buttons", buttons_items, 
     sizeof(buttons_items) / sizeof(buttons_items[0]));
 }
-

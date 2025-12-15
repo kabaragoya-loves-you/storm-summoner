@@ -6,7 +6,8 @@
 
 #define TAG "MENU_TRANSPORT"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   transport_state_t state = transport_get_state();
   bool playing = transport_is_playing();
   bool recording = transport_is_recording();
@@ -35,23 +36,22 @@ static void show_info(void) {
   menu_navigate_to_info("Transport Info", info_text);
 }
 
-static void action_play(void) { transport_play(); }
-static void action_stop(void) { transport_stop(); ESP_LOGI(TAG, "Stop"); }
-static void action_pause(void) { transport_pause(); }
-static void action_record(void) { transport_record(); }
+static void action_play(void* user_data) { (void)user_data; transport_play(); }
+static void action_stop(void* user_data) { (void)user_data; transport_stop(); ESP_LOGI(TAG, "Stop"); }
+static void action_pause(void* user_data) { (void)user_data; transport_pause(); }
+static void action_record(void* user_data) { (void)user_data; transport_record(); }
 
 lv_obj_t* menu_page_transport_create(void) {
   ESP_LOGI(TAG, "Creating transport page");
   
   static menu_item_t transport_items[] = {
-    { "Info", show_info, false },
-    { "Play", action_play, false },
-    { "Stop", action_stop, false },
-    { "Pause", action_pause, false },
-    { "Record", action_record, false }
+    { "Info", show_info, NULL, false },
+    { "Play", action_play, NULL, false },
+    { "Stop", action_stop, NULL, false },
+    { "Pause", action_pause, NULL, false },
+    { "Record", action_record, NULL, false }
   };
   
   return menu_create_action_page("Transport", transport_items, 
     sizeof(transport_items) / sizeof(transport_items[0]));
 }
-

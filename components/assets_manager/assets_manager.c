@@ -5,6 +5,8 @@
 #include "esp_heap_caps.h"
 #include "cJSON.h"
 #include <string.h>
+#include <strings.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -97,6 +99,53 @@ static esp_err_t parse_manifest(const char *json_str) {
     if (item && cJSON_IsNumber(item))
       dev->size = item->valueint;
     
+    // Parse trsType
+    item = cJSON_GetObjectItem(dev_item, "trsType");
+    if (item && cJSON_IsString(item)) {
+      const char *trs = item->valuestring;
+      if (strcmp(trs, "TYPE_A") == 0) dev->trs_type = MIDI_TRS_TYPE_A;
+      else if (strcmp(trs, "TYPE_B") == 0) dev->trs_type = MIDI_TRS_TYPE_B;
+      else if (strcmp(trs, "TYPE_TS") == 0) dev->trs_type = MIDI_TRS_TYPE_TS;
+      else if (strcmp(trs, "BOTH") == 0) dev->trs_type = MIDI_TRS_TYPE_BOTH;
+      else dev->trs_type = MIDI_TRS_UNKNOWN;
+    }
+    
+    // Parse midiChannel
+    item = cJSON_GetObjectItem(dev_item, "midiChannel");
+    if (item && cJSON_IsNumber(item)) {
+      int ch = item->valueint;
+      if (ch >= 1 && ch <= 16) dev->midi_channel = (uint8_t)ch;
+    }
+    
+    // Parse receives array for flags
+    cJSON *receives = cJSON_GetObjectItem(dev_item, "receives");
+    if (receives && cJSON_IsArray(receives)) {
+      cJSON *recv_item;
+      cJSON_ArrayForEach(recv_item, receives) {
+        if (cJSON_IsString(recv_item)) {
+          if (strcmp(recv_item->valuestring, "PROGRAM_CHANGE") == 0)
+            dev->receives_pc = true;
+          else if (strcmp(recv_item->valuestring, "CLOCK") == 0)
+            dev->receives_clock = true;
+          else if (strcmp(recv_item->valuestring, "NOTE_ON") == 0 ||
+                   strcmp(recv_item->valuestring, "NOTE_OFF") == 0)
+            dev->receives_notes = true;
+        }
+      }
+    }
+    
+    // Parse transmits array for flags
+    cJSON *transmits = cJSON_GetObjectItem(dev_item, "transmits");
+    if (transmits && cJSON_IsArray(transmits)) {
+      cJSON *trans_item;
+      cJSON_ArrayForEach(trans_item, transmits) {
+        if (cJSON_IsString(trans_item)) {
+          if (strcmp(trans_item->valuestring, "PROGRAM_CHANGE") == 0)
+            dev->transmits_pc = true;
+        }
+      }
+    }
+    
     idx++;
   }
   
@@ -162,13 +211,29 @@ static esp_err_t load_manifest(void) {
 /**
  * Initialize assets manager
  */
+// PSRAM allocation for cJSON (set once globally)
+static void *cjson_psram_malloc(size_t size) {
+  return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+}
+
+static void cjson_psram_free(void *ptr) {
+  heap_caps_free(ptr);
+}
+
 esp_err_t assets_manager_init(void) {
   if (g_initialized) {
     ESP_LOGW(TAG, "Already initialized");
     return ESP_OK;
   }
-  
+
   ESP_LOGI(TAG, "Initializing assets manager");
+  
+  // Configure cJSON to use PSRAM globally
+  cJSON_Hooks psram_hooks = {
+    .malloc_fn = cjson_psram_malloc,
+    .free_fn = cjson_psram_free
+  };
+  cJSON_InitHooks(&psram_hooks);
   
   // Configure LittleFS
   esp_vfs_littlefs_conf_t conf = {
@@ -258,9 +323,19 @@ device_def_t *assets_load_device(const char *slug) {
   // Try to load from cache first
   char cache_path[128];
   snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", ASSETS_BASE_PATH, slug);
-  
+
   device_def_t *device = load_device_cache(cache_path, slug);
   if (device) {
+    // Cache doesn't store device metadata - fill in from manifest
+    strncpy(device->name, manifest_dev->name, sizeof(device->name) - 1);
+    strncpy(device->vendor, manifest_dev->vendor, sizeof(device->vendor) - 1);
+    strncpy(device->version, manifest_dev->version, sizeof(device->version) - 1);
+    device->trs_type = (midi_trs_type_t)manifest_dev->trs_type;
+    device->midi_channel = manifest_dev->midi_channel;
+    device->receives_pc = manifest_dev->receives_pc;
+    device->receives_clock = manifest_dev->receives_clock;
+    device->receives_notes = manifest_dev->receives_notes;
+    device->transmits_pc = manifest_dev->transmits_pc;
     ESP_LOGI(TAG, "Loaded from cache");
     return device;
   }
@@ -601,5 +676,112 @@ uint16_t assets_clamp_cc_value(const device_def_t *device, uint8_t cc_num, uint1
 bool assets_cc_has_discrete_values(const device_def_t *device, uint8_t cc_num) {
   const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
   return (ctrl && ctrl->discrete_values && ctrl->discrete_count > 0);
+}
+
+// ============================================================================
+// Vendor enumeration functions
+// ============================================================================
+
+// Maximum vendors we expect (can adjust if needed)
+#define MAX_VENDORS 64
+
+// Cached vendor list (built on first access)
+static char* s_vendor_list[MAX_VENDORS];
+static uint32_t s_vendor_count = 0;
+static bool s_vendors_cached = false;
+
+// Comparison function for qsort (case-insensitive alphabetical)
+static int vendor_compare(const void* a, const void* b) {
+  const char* va = *(const char**)a;
+  const char* vb = *(const char**)b;
+  return strcasecmp(va, vb);
+}
+
+// Build the cached vendor list from manifest
+static void build_vendor_cache(void) {
+  if (s_vendors_cached) return;
+  
+  s_vendor_count = 0;
+  
+  // Iterate through all devices and collect unique vendors
+  for (uint32_t i = 0; i < g_manifest.device_count; i++) {
+    const char* vendor = g_manifest.devices[i].vendor;
+    if (!vendor || vendor[0] == '\0') continue;
+    
+    // Check if vendor already in list
+    bool found = false;
+    for (uint32_t j = 0; j < s_vendor_count; j++) {
+      if (strcmp(s_vendor_list[j], vendor) == 0) {
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found && s_vendor_count < MAX_VENDORS) {
+      s_vendor_list[s_vendor_count++] = g_manifest.devices[i].vendor;
+    }
+  }
+  
+  // Sort alphabetically
+  if (s_vendor_count > 1) {
+    qsort(s_vendor_list, s_vendor_count, sizeof(char*), vendor_compare);
+  }
+  
+  s_vendors_cached = true;
+  ESP_LOGI(TAG, "Built vendor cache: %lu unique vendors", (unsigned long)s_vendor_count);
+}
+
+/**
+ * Get count of unique vendors
+ */
+uint32_t assets_get_vendor_count(void) {
+  build_vendor_cache();
+  return s_vendor_count;
+}
+
+/**
+ * Get vendor name by index (alphabetically sorted)
+ */
+const char* assets_get_vendor_by_index(uint32_t idx) {
+  build_vendor_cache();
+  if (idx >= s_vendor_count) return NULL;
+  return s_vendor_list[idx];
+}
+
+/**
+ * Get device count for a specific vendor
+ */
+uint32_t assets_get_device_count_for_vendor(const char* vendor) {
+  if (!vendor) return 0;
+  
+  uint32_t count = 0;
+  for (uint32_t i = 0; i < g_manifest.device_count; i++) {
+    if (strcmp(g_manifest.devices[i].vendor, vendor) == 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Get device info by vendor and index within that vendor
+ */
+esp_err_t assets_get_device_for_vendor(const char* vendor, uint32_t idx,
+  const char** slug, const char** name) {
+  if (!vendor) return ESP_ERR_INVALID_ARG;
+  
+  uint32_t current = 0;
+  for (uint32_t i = 0; i < g_manifest.device_count; i++) {
+    if (strcmp(g_manifest.devices[i].vendor, vendor) == 0) {
+      if (current == idx) {
+        if (slug) *slug = g_manifest.devices[i].slug;
+        if (name) *name = g_manifest.devices[i].name;
+        return ESP_OK;
+      }
+      current++;
+    }
+  }
+  
+  return ESP_ERR_NOT_FOUND;
 }
 

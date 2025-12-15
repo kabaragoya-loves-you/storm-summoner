@@ -9,7 +9,8 @@
 
 #define TAG "MENU_CONFIG"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
   scene_autosave_mode_t autosave = scene_get_autosave_mode();
@@ -38,47 +39,56 @@ static void show_info(void) {
   menu_navigate_to_info("Config Info", info_text);
 }
 
-static void set_scene_mode_single(void) {
+static void set_scene_mode_single(void* user_data) {
+  (void)user_data;
   scene_set_mode(SCENE_MODE_SINGLE);
   ESP_LOGI(TAG, "Scene mode set to Single");
 }
 
-static void set_scene_mode_preset(void) {
+static void set_scene_mode_preset(void* user_data) {
+  (void)user_data;
   scene_set_mode(SCENE_MODE_PRESET_SYNC);
   ESP_LOGI(TAG, "Scene mode set to Preset Sync");
 }
 
-static void set_scene_mode_advanced(void) {
+static void set_scene_mode_advanced(void* user_data) {
+  (void)user_data;
   scene_set_mode(SCENE_MODE_ADVANCED);
   ESP_LOGI(TAG, "Scene mode set to Advanced");
 }
 
-static void set_change_mode_immediate(void) {
+static void set_change_mode_immediate(void* user_data) {
+  (void)user_data;
   scene_set_change_mode(CHANGE_MODE_IMMEDIATE);
   ESP_LOGI(TAG, "Change mode set to Immediate");
 }
 
-static void set_change_mode_pending(void) {
+static void set_change_mode_pending(void* user_data) {
+  (void)user_data;
   scene_set_change_mode(CHANGE_MODE_PENDING);
   ESP_LOGI(TAG, "Change mode set to Pending");
 }
 
-static void set_autosave_manual(void) {
+static void set_autosave_manual(void* user_data) {
+  (void)user_data;
   scene_set_autosave_mode(SCENE_AUTOSAVE_MANUAL);
   ESP_LOGI(TAG, "Autosave set to Manual");
 }
 
-static void set_autosave_auto(void) {
+static void set_autosave_auto(void* user_data) {
+  (void)user_data;
   scene_set_autosave_mode(SCENE_AUTOSAVE_AUTO);
   ESP_LOGI(TAG, "Autosave set to Auto");
 }
 
-static void set_program_wrap_on(void) {
+static void set_program_wrap_on(void* user_data) {
+  (void)user_data;
   config_set_program_wrap(true);
   ESP_LOGI(TAG, "Program wrap set to On");
 }
 
-static void set_program_wrap_off(void) {
+static void set_program_wrap_off(void* user_data) {
+  (void)user_data;
   config_set_program_wrap(false);
   ESP_LOGI(TAG, "Program wrap set to Off");
 }
@@ -87,19 +97,18 @@ lv_obj_t* menu_page_config_create(void) {
   ESP_LOGI(TAG, "Creating config page");
   
   static menu_item_t config_items[] = {
-    { "Info", show_info, false },
-    { "Scene Mode: Single", set_scene_mode_single, false },
-    { "Scene Mode: Preset", set_scene_mode_preset, false },
-    { "Scene Mode: Advanced", set_scene_mode_advanced, false },
-    { "Change: Immediate", set_change_mode_immediate, false },
-    { "Change: Pending", set_change_mode_pending, false },
-    { "Autosave: Manual", set_autosave_manual, false },
-    { "Autosave: Auto", set_autosave_auto, false },
-    { "Prog Wrap: On", set_program_wrap_on, false },
-    { "Prog Wrap: Off", set_program_wrap_off, false }
+    { "Info", show_info, NULL, false },
+    { "Scene Mode: Single", set_scene_mode_single, NULL, false },
+    { "Scene Mode: Preset", set_scene_mode_preset, NULL, false },
+    { "Scene Mode: Advanced", set_scene_mode_advanced, NULL, false },
+    { "Change: Immediate", set_change_mode_immediate, NULL, false },
+    { "Change: Pending", set_change_mode_pending, NULL, false },
+    { "Autosave: Manual", set_autosave_manual, NULL, false },
+    { "Autosave: Auto", set_autosave_auto, NULL, false },
+    { "Prog Wrap: On", set_program_wrap_on, NULL, false },
+    { "Prog Wrap: Off", set_program_wrap_off, NULL, false }
   };
   
   return menu_create_page("Config", config_items, 
     sizeof(config_items) / sizeof(config_items[0]));
 }
-

@@ -6,7 +6,8 @@
 
 #define TAG "MENU_SENSOR"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   uint16_t ps_raw = get_ps();
   uint16_t als_raw = get_als();
   uint16_t ps_min, ps_max, als_min, als_max;
@@ -31,12 +32,14 @@ static void show_info(void) {
   menu_navigate_to_info("Sensor Info", info_text);
 }
 
-static void action_calibrate_ps(void) {
+static void action_calibrate_ps(void* user_data) {
+  (void)user_data;
   // TODO: Implement calibration UI with progress bar
   ESP_LOGI(TAG, "Calibrate PS - TODO: implement");
 }
 
-static void action_calibrate_als(void) {
+static void action_calibrate_als(void* user_data) {
+  (void)user_data;
   // TODO: Implement calibration UI with progress bar
   ESP_LOGI(TAG, "Calibrate ALS - TODO: implement");
 }
@@ -45,12 +48,11 @@ lv_obj_t* menu_page_sensor_create(void) {
   ESP_LOGI(TAG, "Creating sensor page");
   
   static menu_item_t sensor_items[] = {
-    { "Info", show_info, false },
-    { "Calibrate PS", action_calibrate_ps, false },
-    { "Calibrate ALS", action_calibrate_als, false }
+    { "Info", show_info, NULL, false },
+    { "Calibrate PS", action_calibrate_ps, NULL, false },
+    { "Calibrate ALS", action_calibrate_als, NULL, false }
   };
   
   return menu_create_page("Sensor", sensor_items, 
     sizeof(sensor_items) / sizeof(sensor_items[0]));
 }
-

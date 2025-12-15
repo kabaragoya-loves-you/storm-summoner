@@ -6,6 +6,13 @@
 #include "event_bus.h"
 #include "esp_log.h"
 #include <string.h>
+#include <sys/stat.h>
+#include <stdio.h>
+
+// Default pedal slug when none is configured
+#define DEFAULT_PEDAL_SLUG "user.default@0"
+#define DEFAULT_DEVICE_DIR "/assets/devices/user"
+#define DEFAULT_DEVICE_PATH "/assets/devices/user/default.json"
 
 static const char* TAG = "device_config";
 
@@ -106,6 +113,73 @@ static void midi_in_event_handler(const event_t* event, void* context) {
   }
 }
 
+// Default device JSON content (matches midi-devices/devices/user/default.json)
+static const char* DEFAULT_DEVICE_JSON = 
+  "{\n"
+  "  \"schemaVersion\": \"0.1.1\",\n"
+  "  \"title\": \"Custom Device\",\n"
+  "  \"displayName\": \"Custom Device\",\n"
+  "  \"implementationVersion\": \"0\",\n"
+  "  \"device\": {\n"
+  "    \"displayName\": \"Custom Device\",\n"
+  "    \"manufacturer\": \"User\",\n"
+  "    \"model\": \"Custom\",\n"
+  "    \"version\": \"1.0\"\n"
+  "  },\n"
+  "  \"receives\": [\"PROGRAM_CHANGE\"],\n"
+  "  \"transmits\": [],\n"
+  "  \"controlChangeCommands\": [],\n"
+  "  \"x_pc\": {\n"
+  "    \"indexBase\": 0,\n"
+  "    \"count\": 128,\n"
+  "    \"bankSelect\": \"none\"\n"
+  "  },\n"
+  "  \"x_midiTrs\": \"BOTH\",\n"
+  "  \"x_midiChannel\": 1\n"
+  "}\n";
+
+// Ensure the default device JSON exists in LittleFS
+static esp_err_t ensure_default_device_exists(void) {
+  struct stat st;
+  
+  // Check if default device already exists
+  if (stat(DEFAULT_DEVICE_PATH, &st) == 0) {
+    ESP_LOGD(TAG, "Default device already exists");
+    return ESP_OK;
+  }
+  
+  ESP_LOGI(TAG, "Creating default device: %s", DEFAULT_DEVICE_PATH);
+  
+  // Create user directory if it doesn't exist
+  if (stat(DEFAULT_DEVICE_DIR, &st) != 0) {
+    if (mkdir(DEFAULT_DEVICE_DIR, 0755) != 0) {
+      ESP_LOGE(TAG, "Failed to create directory: %s", DEFAULT_DEVICE_DIR);
+      return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Created directory: %s", DEFAULT_DEVICE_DIR);
+  }
+  
+  // Write the default device JSON
+  FILE* f = fopen(DEFAULT_DEVICE_PATH, "w");
+  if (!f) {
+    ESP_LOGE(TAG, "Failed to create default device file");
+    return ESP_FAIL;
+  }
+  
+  fputs(DEFAULT_DEVICE_JSON, f);
+  fclose(f);
+  
+  ESP_LOGI(TAG, "Default device created successfully");
+  
+  // Rebuild manifest to include the new device
+  esp_err_t ret = assets_rebuild_manifest();
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to rebuild manifest after creating default device");
+  }
+  
+  return ESP_OK;
+}
+
 esp_err_t device_config_init(void) {
   if (g_device_config.initialized) {
     ESP_LOGW(TAG, "Device config already initialized");
@@ -113,6 +187,9 @@ esp_err_t device_config_init(void) {
   }
   
   ESP_LOGI(TAG, "Initializing device configuration");
+  
+  // Ensure default device exists before loading config
+  ensure_default_device_exists();
   
   // Try to load from NVS
   uint8_t channel;
@@ -126,9 +203,14 @@ esp_err_t device_config_init(void) {
   }
   
   char slug[64];
-  if (app_settings_load_str(NVS_KEY_PEDAL_SLUG, slug, sizeof(slug)) == ESP_OK) {
+  if (app_settings_load_str(NVS_KEY_PEDAL_SLUG, slug, sizeof(slug)) == ESP_OK && slug[0] != '\0') {
     strncpy(g_device_config.pedal_slug, slug, sizeof(g_device_config.pedal_slug) - 1);
     g_device_config.pedal_slug[sizeof(g_device_config.pedal_slug) - 1] = '\0';
+  } else {
+    // Default to user.default@0 if no pedal configured
+    strncpy(g_device_config.pedal_slug, DEFAULT_PEDAL_SLUG, sizeof(g_device_config.pedal_slug) - 1);
+    g_device_config.pedal_slug[sizeof(g_device_config.pedal_slug) - 1] = '\0';
+    ESP_LOGI(TAG, "No pedal configured, defaulting to %s", DEFAULT_PEDAL_SLUG);
   }
   
   // Load program tracking

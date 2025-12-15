@@ -8,7 +8,7 @@
 
 // Placeholder submenu items
 static const menu_item_t about_items[] = {
-  { "Coming Soon", NULL, false }
+  { "Coming Soon", NULL, NULL, false }
 };
 
 lv_obj_t* menu_page_about_create(void) {

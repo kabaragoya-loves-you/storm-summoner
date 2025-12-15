@@ -158,8 +158,15 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
   if (receives && cJSON_IsArray(receives)) {
     cJSON *item;
     cJSON_ArrayForEach(item, receives) {
-      if (cJSON_IsString(item) && strcmp(item->valuestring, "PROGRAM_CHANGE") == 0)
-        device->receives_pc = true;
+      if (cJSON_IsString(item)) {
+        if (strcmp(item->valuestring, "PROGRAM_CHANGE") == 0)
+          device->receives_pc = true;
+        else if (strcmp(item->valuestring, "CLOCK") == 0)
+          device->receives_clock = true;
+        else if (strcmp(item->valuestring, "NOTE_ON") == 0 ||
+                 strcmp(item->valuestring, "NOTE_OFF") == 0)
+          device->receives_notes = true;
+      }
     }
   }
   

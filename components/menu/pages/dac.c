@@ -6,7 +6,8 @@
 
 #define TAG "MENU_DAC"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   uint16_t value = 0;
   mcp4725_cv_range_t range;
   
@@ -38,12 +39,14 @@ static void show_info(void) {
   menu_navigate_to_info("DAC Info", info_text);
 }
 
-static void action_set(void) {
+static void action_set(void* user_data) {
+  (void)user_data;
   // TODO: Implement slider UI for DAC value
   ESP_LOGI(TAG, "Set DAC value - TODO: implement slider");
 }
 
-static void action_readback(void) {
+static void action_readback(void* user_data) {
+  (void)user_data;
   dac_debug_readback();
   ESP_LOGI(TAG, "DAC readback executed");
 }
@@ -52,12 +55,11 @@ lv_obj_t* menu_page_dac_create(void) {
   ESP_LOGI(TAG, "Creating DAC page");
   
   static menu_item_t dac_items[] = {
-    { "Info", show_info, false },
-    { "Set Value", action_set, false },
-    { "Readback", action_readback, false }
+    { "Info", show_info, NULL, false },
+    { "Set Value", action_set, NULL, false },
+    { "Readback", action_readback, NULL, false }
   };
   
   return menu_create_page("DAC", dac_items, 
     sizeof(dac_items) / sizeof(dac_items[0]));
 }
-

@@ -160,5 +160,36 @@ esp_err_t assets_manager_reload_device(const char *slug);
  */
 esp_err_t assets_manager_sync_to_msc(void);
 
+/**
+ * Get count of unique vendors in the manifest
+ * @return Number of unique vendors
+ */
+uint32_t assets_get_vendor_count(void);
+
+/**
+ * Get vendor name by index (alphabetically sorted)
+ * @param idx Index (0 to vendor_count-1)
+ * @return Vendor name or NULL if index out of range
+ */
+const char* assets_get_vendor_by_index(uint32_t idx);
+
+/**
+ * Get device count for a specific vendor
+ * @param vendor Vendor name to filter by
+ * @return Number of devices for this vendor
+ */
+uint32_t assets_get_device_count_for_vendor(const char* vendor);
+
+/**
+ * Get device info by vendor and index within that vendor
+ * @param vendor Vendor name to filter by
+ * @param idx Index within vendor's devices (0 to count-1)
+ * @param slug Output: device slug
+ * @param name Output: device display name
+ * @return ESP_OK on success
+ */
+esp_err_t assets_get_device_for_vendor(const char* vendor, uint32_t idx,
+  const char** slug, const char** name);
+
 #endif // ASSETS_MANAGER_H
 

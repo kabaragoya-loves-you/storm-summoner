@@ -6,7 +6,8 @@
 
 #define TAG "MENU_FW_UPDATE"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   firmware_update_state_t fw_state = firmware_update_get_state();
   assets_update_state_t assets_state = assets_update_get_state();
   uint8_t fw_progress = firmware_update_get_progress();
@@ -46,10 +47,9 @@ lv_obj_t* menu_page_firmware_update_create(void) {
   ESP_LOGI(TAG, "Creating firmware update page");
   
   static menu_item_t fw_items[] = {
-    { "Info", show_info, false }
+    { "Info", show_info, NULL, false }
   };
   
   return menu_create_page("Firmware", fw_items, 
     sizeof(fw_items) / sizeof(fw_items[0]));
 }
-

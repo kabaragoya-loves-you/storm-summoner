@@ -76,6 +76,8 @@ typedef struct {
   
   bool receives_pc;       // Receives program change
   bool transmits_pc;      // Transmits program change
+  bool receives_clock;    // Receives MIDI clock
+  bool receives_notes;    // Receives NOTE_ON/NOTE_OFF
   
   midi_trs_type_t trs_type;  // MIDI TRS wiring type (x_midiTrs extension)
   uint8_t midi_channel;      // Preferred MIDI channel (1-16, 0 = not specified)
@@ -125,6 +127,13 @@ typedef struct {
   char file[128];
   uint8_t sha256[32];
   uint32_t size;
+  // Device metadata (for display without loading full device)
+  uint8_t trs_type;       // midi_trs_type_t
+  uint8_t midi_channel;   // 1-16, 0 = not specified
+  bool receives_pc;
+  bool receives_clock;
+  bool receives_notes;
+  bool transmits_pc;
 } manifest_device_t;
 
 // Manifest structure

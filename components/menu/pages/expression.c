@@ -6,7 +6,8 @@
 
 #define TAG "MENU_EXPRESSION"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   bool connected = expression_is_connected();
   expression_mode_t mode = expression_get_mode();
   int16_t min, max;
@@ -30,12 +31,13 @@ static void show_info(void) {
   menu_navigate_to_info("Expression Info", info_text);
 }
 
-static void set_mode_pedal(void) { expression_set_mode(EXPRESSION_MODE_PEDAL); ESP_LOGI(TAG, "Mode: Pedal"); }
-static void set_mode_sustain(void) { expression_set_mode(EXPRESSION_MODE_SUSTAIN); ESP_LOGI(TAG, "Mode: Sustain"); }
-static void set_mode_sostenuto(void) { expression_set_mode(EXPRESSION_MODE_SOSTENUTO); ESP_LOGI(TAG, "Mode: Sostenuto"); }
-static void set_mode_gate(void) { expression_set_mode(EXPRESSION_MODE_GATE); ESP_LOGI(TAG, "Mode: Gate"); }
+static void set_mode_pedal(void* user_data) { (void)user_data; expression_set_mode(EXPRESSION_MODE_PEDAL); ESP_LOGI(TAG, "Mode: Pedal"); }
+static void set_mode_sustain(void* user_data) { (void)user_data; expression_set_mode(EXPRESSION_MODE_SUSTAIN); ESP_LOGI(TAG, "Mode: Sustain"); }
+static void set_mode_sostenuto(void* user_data) { (void)user_data; expression_set_mode(EXPRESSION_MODE_SOSTENUTO); ESP_LOGI(TAG, "Mode: Sostenuto"); }
+static void set_mode_gate(void* user_data) { (void)user_data; expression_set_mode(EXPRESSION_MODE_GATE); ESP_LOGI(TAG, "Mode: Gate"); }
 
-static void action_calibrate(void) {
+static void action_calibrate(void* user_data) {
+  (void)user_data;
   // TODO: Implement calibration UI with progress bar
   ESP_LOGI(TAG, "Calibrate - TODO: implement");
 }
@@ -44,15 +46,14 @@ lv_obj_t* menu_page_expression_create(void) {
   ESP_LOGI(TAG, "Creating expression page");
   
   static menu_item_t expr_items[] = {
-    { "Info", show_info, false },
-    { "Mode: Pedal", set_mode_pedal, false },
-    { "Mode: Sustain", set_mode_sustain, false },
-    { "Mode: Sostenuto", set_mode_sostenuto, false },
-    { "Mode: Gate", set_mode_gate, false },
-    { "Calibrate", action_calibrate, false }
+    { "Info", show_info, NULL, false },
+    { "Mode: Pedal", set_mode_pedal, NULL, false },
+    { "Mode: Sustain", set_mode_sustain, NULL, false },
+    { "Mode: Sostenuto", set_mode_sostenuto, NULL, false },
+    { "Mode: Gate", set_mode_gate, NULL, false },
+    { "Calibrate", action_calibrate, NULL, false }
   };
   
   return menu_create_page("Expression", expr_items, 
     sizeof(expr_items) / sizeof(expr_items[0]));
 }
-

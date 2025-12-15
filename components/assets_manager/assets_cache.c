@@ -290,6 +290,9 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   device->string_blob_size = header.string_blob_size;
   device->string_blob = string_blob;
   
+  // Note: Cache doesn't store device metadata (trs_type, midi_channel, etc.)
+  // These will be filled in by assets_load_device from the manifest
+  
   // Allocate controls array
   device->controls = calloc_prefer_psram(device->control_count, sizeof(midi_control_t));
   if (!device->controls) {

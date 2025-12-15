@@ -6,7 +6,8 @@
 
 #define TAG "MENU_CLOCK_SYNC"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   clock_sync_mode_t mode = clock_sync_get_mode();
   sync_voltage_range_t range = clock_sync_get_voltage_range();
   uint8_t bpm = clock_sync_get_bpm();
@@ -45,17 +46,20 @@ static void show_info(void) {
   menu_navigate_to_info("Clock Sync Info", info_text);
 }
 
-static void action_enable(void) {
+static void action_enable(void* user_data) {
+  (void)user_data;
   clock_sync_enable();
   ESP_LOGI(TAG, "Clock sync enabled");
 }
 
-static void action_disable(void) {
+static void action_disable(void* user_data) {
+  (void)user_data;
   clock_sync_disable();
   ESP_LOGI(TAG, "Clock sync disabled");
 }
 
-static void action_test_sync(void) {
+static void action_test_sync(void* user_data) {
+  (void)user_data;
   // TODO: Implement test sync action
   ESP_LOGI(TAG, "Test sync - TODO: implement");
 }
@@ -64,13 +68,12 @@ lv_obj_t* menu_page_clock_sync_create(void) {
   ESP_LOGI(TAG, "Creating clock sync page");
   
   static menu_item_t clock_sync_items[] = {
-    { "Info", show_info, false },
-    { "Enable", action_enable, false },
-    { "Disable", action_disable, false },
-    { "Test Sync", action_test_sync, false }
+    { "Info", show_info, NULL, false },
+    { "Enable", action_enable, NULL, false },
+    { "Disable", action_disable, NULL, false },
+    { "Test Sync", action_test_sync, NULL, false }
   };
   
   return menu_create_page("Clock Sync", clock_sync_items, 
     sizeof(clock_sync_items) / sizeof(clock_sync_items[0]));
 }
-

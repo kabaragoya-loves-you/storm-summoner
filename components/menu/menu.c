@@ -20,6 +20,7 @@ typedef struct {
   const char* menu_name;
   menu_page_builder_t builder;
   bool is_back;
+  int back_levels;  // For multi-level back navigation
 } deferred_nav_t;
 
 // Menu state
@@ -313,13 +314,13 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
 static void menu_item_event_cb(lv_event_t* e) {
   LV_UNUSED(lv_event_get_target(e));
   menu_item_t* item = (menu_item_t*)lv_event_get_user_data(e);
-  
+
   if (!item) return;
 
   ESP_LOGD(TAG, "Menu item selected: %s", item->label);
 
   if (item->callback) {
-    item->callback();
+    item->callback(item->user_data);
   }
 }
 
@@ -414,12 +415,27 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
 // Deferred navigation timer callback (runs in LVGL task context)
 static void deferred_nav_timer_cb(lv_timer_t* timer) {
   lv_timer_delete(timer);
-  
+
   if (menu_state.has_pending_nav) {
     if (menu_state.pending_nav.is_back) {
-      menu_navigate_back_internal();
+      // Handle multi-level back navigation
+      int levels = menu_state.pending_nav.back_levels;
+      if (levels <= 0) levels = 1;
+      
+      for (int i = 0; i < levels; i++) {
+        // menu_navigate_back_internal handles exit at top level (depth=1)
+        menu_navigate_back_internal();
+        // If we exited programming mode, stop further navigation
+        if (menu_state.stack_depth == 0) break;
+      }
+      
+      // If there's also a forward navigation after the backs (and we didn't exit)
+      if (menu_state.pending_nav.builder && menu_state.stack_depth > 0) {
+        menu_navigate_to_internal(menu_state.pending_nav.menu_name,
+                                 menu_state.pending_nav.builder);
+      }
     } else {
-      menu_navigate_to_internal(menu_state.pending_nav.menu_name, 
+      menu_navigate_to_internal(menu_state.pending_nav.menu_name,
                                menu_state.pending_nav.builder);
     }
     menu_state.has_pending_nav = false;
@@ -455,6 +471,11 @@ static void menu_navigate_back_internal(void) {
     ESP_LOGI(TAG, "At top level, exiting Programming mode");
     ui_set_app_mode(APP_MODE_PERFORMANCE);
     return;
+  }
+
+  // Reset editing mode (info pages set this to true for scrolling)
+  if (menu_state.group) {
+    lv_group_set_editing(menu_state.group, false);
   }
 
   // Remove current menu items from group
@@ -536,12 +557,13 @@ void menu_navigate_back(void) {
     ESP_LOGW(TAG, "Navigation already pending, dropping back request");
     return;
   }
-  
+
   menu_state.pending_nav.is_back = true;
+  menu_state.pending_nav.back_levels = 1;
   menu_state.pending_nav.menu_name = NULL;
   menu_state.pending_nav.builder = NULL;
   menu_state.has_pending_nav = true;
-  
+
   // Create a one-shot timer to execute navigation in LVGL task context
   lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 0, NULL);
   if (!nav_timer) {
@@ -550,6 +572,111 @@ void menu_navigate_back(void) {
     return;
   }
   lv_timer_set_repeat_count(nav_timer, 1);
+}
+
+void menu_navigate_back_then_to(int levels, const char* menu_name,
+  menu_page_builder_t builder) {
+  // Defer to LVGL task context to avoid stack overflow
+  if (menu_state.has_pending_nav) {
+    ESP_LOGW(TAG, "Navigation already pending, dropping back_then_to request");
+    return;
+  }
+
+  menu_state.pending_nav.is_back = true;
+  menu_state.pending_nav.back_levels = levels;
+  menu_state.pending_nav.menu_name = menu_name;
+  menu_state.pending_nav.builder = builder;
+  menu_state.has_pending_nav = true;
+
+  // Create a one-shot timer to execute navigation in LVGL task context
+  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 0, NULL);
+  if (!nav_timer) {
+    ESP_LOGE(TAG, "Failed to create back_then_to navigation timer");
+    menu_state.has_pending_nav = false;
+    return;
+  }
+  lv_timer_set_repeat_count(nav_timer, 1);
+}
+
+void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
+  // Synchronous replacement - for use when already in LVGL context (callbacks)
+  // This replaces the current page without going through deferred navigation
+  
+  if (menu_state.stack_depth < 1 || !builder) {
+    ESP_LOGW(TAG, "Cannot replace current: invalid state");
+    return;
+  }
+  
+  ESP_LOGI(TAG, "Replacing current page with: %s", menu_name);
+  
+  // Remove current page from group
+  if (menu_state.group) {
+    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
+    if (current_cont) {
+      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
+      for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(current_cont, i);
+        if (child) lv_group_remove_obj(child);
+      }
+    }
+  }
+  
+  // Delete current screen
+  lv_obj_t* old_screen = menu_state.stack[menu_state.stack_depth - 1].screen;
+  
+  // Decrement stack depth (pop current page)
+  menu_state.stack_depth--;
+  
+  // Build new page
+  lv_obj_t* new_screen = builder();
+  if (!new_screen) {
+    ESP_LOGE(TAG, "Failed to create replacement page");
+    // Try to restore old screen
+    menu_state.stack_depth++;
+    lv_screen_load(old_screen);
+    return;
+  }
+  
+  // Find container in new screen
+  lv_obj_t* new_container = NULL;
+  uint32_t child_cnt = lv_obj_get_child_count(new_screen);
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(new_screen, i);
+    if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_SCROLLABLE)) {
+      new_container = child;
+      break;
+    }
+  }
+  
+  // Push new page onto stack
+  menu_state.stack[menu_state.stack_depth].screen = new_screen;
+  menu_state.stack[menu_state.stack_depth].container = new_container;
+  menu_state.stack[menu_state.stack_depth].name = menu_name;
+  menu_state.stack[menu_state.stack_depth].builder = builder;
+  menu_state.stack[menu_state.stack_depth].focused_index = 0;
+  menu_state.stack_depth++;
+  
+  // Add new items to group
+  if (menu_state.group && new_container) {
+    uint32_t new_child_cnt = lv_obj_get_child_count(new_container);
+    for (uint32_t i = 0; i < new_child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(new_container, i);
+      if (child) lv_group_add_obj(menu_state.group, child);
+    }
+    // Focus first item
+    if (new_child_cnt > 0) {
+      lv_obj_t* first = lv_obj_get_child(new_container, 0);
+      if (first) lv_group_focus_obj(first);
+    }
+  }
+  
+  // Load new screen
+  lv_screen_load(new_screen);
+  
+  // Delete old screen after loading new one
+  if (old_screen) lv_obj_delete(old_screen);
+  
+  ESP_LOGI(TAG, "Replaced current page with: %s", menu_name);
 }
 
 void menu_handle_enter(void) {
@@ -680,21 +807,44 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   lv_obj_center(title_label);
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
-  // Create scrollable textarea for info
-  lv_obj_t* textarea = lv_textarea_create(screen);
-  lv_obj_set_size(textarea, disp_w - 8, disp_h - title_bar_h - 4);
-  lv_obj_align(textarea, LV_ALIGN_TOP_MID, 0, title_bar_h + 2);
-  lv_textarea_set_text(textarea, info_text);
-  lv_textarea_set_placeholder_text(textarea, "");
-  lv_obj_set_style_text_color(textarea, lv_color_white(), 0);
-  lv_obj_set_style_text_font(textarea, &lv_font_montserrat_10, 0);
-  lv_obj_set_style_bg_opa(textarea, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(textarea, 0, 0);
-  lv_obj_set_scroll_dir(textarea, LV_DIR_VER);
-  lv_textarea_set_cursor_click_pos(textarea, false);
+  // Margins for content
+  const int left_margin = 20;
+  const int top_margin = 4;
 
-  // Add to group for scrolling
-  if (menu_state.group) lv_group_add_obj(menu_state.group, textarea);
+  // Create scrollable label (simpler than textarea, better for read-only)
+  lv_obj_t* scroll_cont = lv_obj_create(screen);
+  lv_obj_set_size(scroll_cont, disp_w - 4, disp_h - title_bar_h - 4);
+  lv_obj_align(scroll_cont, LV_ALIGN_TOP_LEFT, 2, title_bar_h + 2);
+  lv_obj_set_style_bg_opa(scroll_cont, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(scroll_cont, 0, 0);
+  lv_obj_set_style_pad_left(scroll_cont, left_margin, 0);
+  lv_obj_set_style_pad_top(scroll_cont, top_margin, 0);
+  lv_obj_set_style_pad_right(scroll_cont, 4, 0);
+  lv_obj_set_style_pad_bottom(scroll_cont, 4, 0);
+  lv_obj_set_scroll_dir(scroll_cont, LV_DIR_VER);
+  lv_obj_add_flag(scroll_cont, LV_OBJ_FLAG_SCROLLABLE);
+  // Remove focus border styling
+  lv_obj_set_style_border_width(scroll_cont, 0, LV_STATE_FOCUSED);
+  lv_obj_set_style_outline_width(scroll_cont, 0, LV_STATE_FOCUSED);
+  lv_obj_set_style_border_width(scroll_cont, 0, LV_STATE_FOCUS_KEY);
+  lv_obj_set_style_outline_width(scroll_cont, 0, LV_STATE_FOCUS_KEY);
+  
+  // Create label inside scroll container
+  lv_obj_t* label = lv_label_create(scroll_cont);
+  lv_label_set_text(label, info_text);
+  lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+  lv_obj_set_width(label, disp_w - left_margin - 12);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+  lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  // Add container to group and set edit mode for encoder scrolling
+  // In edit mode, encoder rotation scrolls the focused object
+  if (menu_state.group) {
+    lv_group_add_obj(menu_state.group, scroll_cont);
+    lv_group_focus_obj(scroll_cont);
+    lv_group_set_editing(menu_state.group, true);
+  }
 
   return screen;
 }

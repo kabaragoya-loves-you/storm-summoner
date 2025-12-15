@@ -3,6 +3,8 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "cJSON.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -159,49 +161,36 @@ esp_err_t assets_regenerate_scenes_manifest(void) {
   
   FILE *f = fopen(manifest_path, "w");
   if (!f) {
-    free(json_str);
+    psram_free(json_str);
     ESP_LOGE(TAG, "Failed to open manifest for writing");
     return ESP_FAIL;
   }
   
   fputs(json_str, f);
   fclose(f);
-  free(json_str);
+  psram_free(json_str);
   
   ESP_LOGI(TAG, "Scenes manifest updated");
   return ESP_OK;
 }
 
-// Helper: Compute full SHA256 hex string for a file (matches Ruby build_manifest.rb)
-// PSRAM-based to avoid stack overflow
-static bool compute_file_sha256(const char *path, char *hex_out, size_t hex_size) {
+// Helper: Compute SHA256 from a memory buffer (avoids re-opening file)
+static bool compute_buffer_sha256(const uint8_t *data, size_t len, char *hex_out, size_t hex_size) {
   if (hex_size < 65) return false;  // Need 64 hex chars + null
   
-  FILE *f = fopen(path, "rb");
-  if (!f) return false;
-  
-  // Allocate mbedtls context and buffer in PSRAM
+  // Allocate in PSRAM to avoid stack pressure
   mbedtls_sha256_context *ctx = psram_malloc(sizeof(mbedtls_sha256_context));
-  uint8_t *buf = psram_malloc(1024);  // Larger buffer is fine in PSRAM
   uint8_t *hash = psram_malloc(32);
   
-  if (!ctx || !buf || !hash) {
-    fclose(f);
+  if (!ctx || !hash) {
     psram_free(ctx);
-    psram_free(buf);
     psram_free(hash);
     return false;
   }
   
   mbedtls_sha256_init(ctx);
   mbedtls_sha256_starts(ctx, 0);  // 0 = SHA256 (not SHA224)
-  
-  size_t bytes_read;
-  while ((bytes_read = fread(buf, 1, 1024, f)) > 0) {
-    mbedtls_sha256_update(ctx, buf, bytes_read);
-  }
-  fclose(f);
-  
+  mbedtls_sha256_update(ctx, data, len);
   mbedtls_sha256_finish(ctx, hash);
   mbedtls_sha256_free(ctx);
   
@@ -212,7 +201,6 @@ static bool compute_file_sha256(const char *path, char *hex_out, size_t hex_size
   hex_out[64] = '\0';
   
   psram_free(ctx);
-  psram_free(buf);
   psram_free(hash);
   return true;
 }
@@ -246,11 +234,6 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   fclose(f);
   json_buf[fsize] = '\0';
   
-  cJSON *device_json = cJSON_Parse(json_buf);
-  psram_free(json_buf);
-  
-  if (!device_json) return;
-  
   // Allocate string buffers in PSRAM
   char *product = psram_malloc(128);
   char *slug = psram_malloc(256);
@@ -260,13 +243,27 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   char *sha256 = psram_malloc(65);  // 64 hex chars + null (full SHA256)
   
   if (!product || !slug || !vendor_display || !product_display || !path || !sha256) {
-    cJSON_Delete(device_json);
+    psram_free(json_buf);
     psram_free(product); psram_free(slug); psram_free(vendor_display);
     psram_free(product_display); psram_free(path); psram_free(sha256);
     return;
   }
   
-  // Extract product name from filename (without .json extension)
+  // Compute SHA256 from buffer before parsing (avoids re-opening file)
+  if (!compute_buffer_sha256((const uint8_t *)json_buf, fsize, sha256, 65)) {
+    sha256[0] = '\0';
+  }
+  
+  cJSON *device_json = cJSON_Parse(json_buf);
+  psram_free(json_buf);
+  
+  if (!device_json) {
+    psram_free(product); psram_free(slug); psram_free(vendor_display);
+    psram_free(product_display); psram_free(path); psram_free(sha256);
+    return;
+  }
+  
+  // Extract product name from filename (without .json extension) for slug
   strncpy(product, filename, 127);
   product[127] = '\0';
   char *dot = strrchr(product, '.');
@@ -276,22 +273,34 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   cJSON *version_item = cJSON_GetObjectItem(device_json, "implementationVersion");
   const char *version = (version_item && cJSON_IsString(version_item)) ? version_item->valuestring : "0";
   
-  // Build slug: vendor.product@version
+  // Build slug: vendor.product@version (using filesystem names)
   snprintf(slug, 256, "%s.%s@%s", vendor_dir, product, version);
   
-  // Keep vendor and product matching the slug format (underscores)
-  strncpy(vendor_display, vendor_dir, 127);
+  // Get properly-cased display names from JSON
+  // Vendor: device.manufacturer or fallback to vendor_dir
+  cJSON *device_obj = cJSON_GetObjectItem(device_json, "device");
+  cJSON *manufacturer = device_obj ? cJSON_GetObjectItem(device_obj, "manufacturer") : NULL;
+  if (manufacturer && cJSON_IsString(manufacturer)) {
+    strncpy(vendor_display, manufacturer->valuestring, 127);
+  } else {
+    strncpy(vendor_display, vendor_dir, 127);
+  }
   vendor_display[127] = '\0';
-  strncpy(product_display, product, 127);
+  
+  // Product: displayName or title or fallback to filename
+  cJSON *display_name = cJSON_GetObjectItem(device_json, "displayName");
+  cJSON *title = cJSON_GetObjectItem(device_json, "title");
+  if (display_name && cJSON_IsString(display_name)) {
+    strncpy(product_display, display_name->valuestring, 127);
+  } else if (title && cJSON_IsString(title)) {
+    strncpy(product_display, title->valuestring, 127);
+  } else {
+    strncpy(product_display, product, 127);
+  }
   product_display[127] = '\0';
   
   // Build path: devices/vendor/product.json
   snprintf(path, MAX_PATH_LEN, "devices/%s/%s", vendor_dir, filename);
-  
-  // Compute full SHA256 (matches Ruby build_manifest.rb)
-  if (!compute_file_sha256(device_path, sha256, 65)) {
-    sha256[0] = '\0';
-  }
   
   // Get receives and transmits arrays
   cJSON *receives = cJSON_GetObjectItem(device_json, "receives");
@@ -305,6 +314,10 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   
   // Get x_pc if present
   cJSON *x_pc = cJSON_GetObjectItem(device_json, "x_pc");
+  
+  // Get x_midiTrs and x_midiChannel
+  cJSON *x_midiTrs = cJSON_GetObjectItem(device_json, "x_midiTrs");
+  cJSON *x_midiChannel = cJSON_GetObjectItem(device_json, "x_midiChannel");
   
   // Create manifest entry
   cJSON *entry_obj = cJSON_CreateObject();
@@ -344,6 +357,14 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   
   cJSON_AddNumberToObject(entry_obj, "ccCount", cc_count);
   cJSON_AddNumberToObject(entry_obj, "nrpnCount", nrpn_count);
+  
+  // Add x_midiTrs and x_midiChannel if present
+  if (x_midiTrs && cJSON_IsString(x_midiTrs)) {
+    cJSON_AddStringToObject(entry_obj, "trsType", x_midiTrs->valuestring);
+  }
+  if (x_midiChannel && cJSON_IsNumber(x_midiChannel)) {
+    cJSON_AddNumberToObject(entry_obj, "midiChannel", x_midiChannel->valueint);
+  }
   
   // Add x_pc if it's an object (deep copy)
   if (x_pc && cJSON_IsObject(x_pc)) {
@@ -406,6 +427,8 @@ static void scan_devices_dir(const char *base_dir, const char *vendor_name, cJSO
       char *ext = strstr(entry->d_name, ".json");
       if (ext && strcmp(ext, ".json") == 0) {
         add_device_to_manifest(full_path, vendor_name, entry->d_name, devices, count);
+        // Yield to let display task run (prevents DMA starvation)
+        vTaskDelay(1);
       }
     }
   }
@@ -418,7 +441,7 @@ esp_err_t assets_regenerate_devices_manifest(void) {
   // The midi-devices repo structure: /devices/devices/<vendor>/<device>.json
   const char *devices_dir = ASSETS_BASE_PATH "/devices/devices";
   const char *manifest_path = ASSETS_BASE_PATH "/devices/manifest.json";
-  
+
   ESP_LOGI(TAG, "Regenerating devices manifest");
   
   // Check if nested devices folder exists
@@ -462,14 +485,14 @@ esp_err_t assets_regenerate_devices_manifest(void) {
   
   FILE *f = fopen(manifest_path, "w");
   if (!f) {
-    free(json_str);
+    psram_free(json_str);
     ESP_LOGE(TAG, "Failed to open manifest for writing");
     return ESP_FAIL;
   }
   
   fputs(json_str, f);
   fclose(f);
-  free(json_str);
+  psram_free(json_str);
   
   ESP_LOGI(TAG, "Devices manifest updated (%d devices)", count);
   return ESP_OK;
@@ -573,7 +596,7 @@ esp_err_t assets_regenerate_images_manifest(void) {
   
   FILE *f = fopen(manifest_path, "w");
   if (!f) {
-    free(json_str);
+    psram_free(json_str);
     // If directory exists but can't write, log but don't fail
     ESP_LOGW(TAG, "Failed to write images manifest");
     return ESP_FAIL;
@@ -581,7 +604,7 @@ esp_err_t assets_regenerate_images_manifest(void) {
   
   fputs(json_str, f);
   fclose(f);
-  free(json_str);
+  psram_free(json_str);
   
   ESP_LOGI(TAG, "Images manifest updated (%d images)", count);
   return ESP_OK;

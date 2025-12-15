@@ -11,7 +11,8 @@
 
 #define TAG "MENU_MIDI"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   midi_out_config_t cfg = midi_out_get_config();
   bool usb_to_uart_pass = midi_passthrough_usb_to_uart_is_enabled();
   bool uart_to_usb_pass = midi_passthrough_uart_to_usb_is_enabled();
@@ -60,27 +61,32 @@ static void show_info(void) {
   menu_navigate_to_info("MIDI Info", info_text);
 }
 
-static void set_interfaces_none(void) {
+static void set_interfaces_none(void* user_data) {
+  (void)user_data;
   midi_out_set_interfaces(MIDI_OUT_INTERFACE_NONE);
   ESP_LOGI(TAG, "MIDI interfaces set to: None");
 }
 
-static void set_interfaces_uart(void) {
+static void set_interfaces_uart(void* user_data) {
+  (void)user_data;
   midi_out_set_interfaces(MIDI_OUT_INTERFACE_UART);
   ESP_LOGI(TAG, "MIDI interfaces set to: UART");
 }
 
-static void set_interfaces_usb(void) {
+static void set_interfaces_usb(void* user_data) {
+  (void)user_data;
   midi_out_set_interfaces(MIDI_OUT_INTERFACE_USB);
   ESP_LOGI(TAG, "MIDI interfaces set to: USB");
 }
 
-static void set_interfaces_both(void) {
+static void set_interfaces_both(void* user_data) {
+  (void)user_data;
   midi_out_set_interfaces(MIDI_OUT_INTERFACE_BOTH);
   ESP_LOGI(TAG, "MIDI interfaces set to: Both");
 }
 
-static void toggle_active_sensing(void) {
+static void toggle_active_sensing(void* user_data) {
+  (void)user_data;
   bool enabled = midi_active_sensing_is_enabled();
   if (enabled) {
     midi_active_sensing_stop();
@@ -91,31 +97,36 @@ static void toggle_active_sensing(void) {
   }
 }
 
-static void toggle_passthrough_usb_uart(void) {
+static void toggle_passthrough_usb_uart(void* user_data) {
+  (void)user_data;
   bool enabled = midi_passthrough_usb_to_uart_is_enabled();
   midi_passthrough_usb_to_uart_enable(!enabled);
   ESP_LOGI(TAG, "USB->UART passthrough: %s", !enabled ? "enabled" : "disabled");
 }
 
-static void toggle_passthrough_uart_usb(void) {
+static void toggle_passthrough_uart_usb(void* user_data) {
+  (void)user_data;
   bool enabled = midi_passthrough_uart_to_usb_is_enabled();
   midi_passthrough_uart_to_usb_enable(!enabled);
   ESP_LOGI(TAG, "UART->USB passthrough: %s", !enabled ? "enabled" : "disabled");
 }
 
-static void toggle_loopback_uart(void) {
+static void toggle_loopback_uart(void* user_data) {
+  (void)user_data;
   bool enabled = midi_loopback_uart_is_enabled();
   midi_loopback_uart_enable(!enabled);
   ESP_LOGI(TAG, "Loopback UART: %s", !enabled ? "enabled" : "disabled");
 }
 
-static void toggle_loopback_usb(void) {
+static void toggle_loopback_usb(void* user_data) {
+  (void)user_data;
   bool enabled = midi_loopback_usb_is_enabled();
   midi_loopback_usb_enable(!enabled);
   ESP_LOGI(TAG, "Loopback USB: %s", !enabled ? "enabled" : "disabled");
 }
 
-static void toggle_debug(void) {
+static void toggle_debug(void* user_data) {
+  (void)user_data;
   bool enabled = midi_in_debug_is_enabled();
   if (enabled) {
     midi_in_debug_disable();
@@ -130,20 +141,19 @@ lv_obj_t* menu_page_midi_create(void) {
   ESP_LOGD(TAG, "Creating MIDI page");
   
   static menu_item_t midi_items[] = {
-    { "Info", show_info, false },
-    { "Interfaces: None", set_interfaces_none, false },
-    { "Interfaces: UART", set_interfaces_uart, false },
-    { "Interfaces: USB", set_interfaces_usb, false },
-    { "Interfaces: Both", set_interfaces_both, false },
-    { "Active Sensing", toggle_active_sensing, false },
-    { "Passthrough USB->UART", toggle_passthrough_usb_uart, false },
-    { "Passthrough UART->USB", toggle_passthrough_uart_usb, false },
-    { "Loopback UART", toggle_loopback_uart, false },
-    { "Loopback USB", toggle_loopback_usb, false },
-    { "Debug", toggle_debug, false }
+    { "Info", show_info, NULL, false },
+    { "Interfaces: None", set_interfaces_none, NULL, false },
+    { "Interfaces: UART", set_interfaces_uart, NULL, false },
+    { "Interfaces: USB", set_interfaces_usb, NULL, false },
+    { "Interfaces: Both", set_interfaces_both, NULL, false },
+    { "Active Sensing", toggle_active_sensing, NULL, false },
+    { "Passthrough USB->UART", toggle_passthrough_usb_uart, NULL, false },
+    { "Passthrough UART->USB", toggle_passthrough_uart_usb, NULL, false },
+    { "Loopback UART", toggle_loopback_uart, NULL, false },
+    { "Loopback USB", toggle_loopback_usb, NULL, false },
+    { "Debug", toggle_debug, NULL, false }
   };
   
   return menu_create_page("MIDI", midi_items, 
     sizeof(midi_items) / sizeof(midi_items[0]));
 }
-

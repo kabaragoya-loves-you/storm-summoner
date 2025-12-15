@@ -6,7 +6,8 @@
 
 #define TAG "MENU_BUMP"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   uint8_t threshold = bump_get_threshold();
   uint32_t debounce = bump_get_debounce();
   uint32_t intensity = bump_get_intensity_threshold();
@@ -24,7 +25,8 @@ static void show_info(void) {
   menu_navigate_to_info("Bump Info", info_text);
 }
 
-static void action_set_threshold(void) {
+static void action_set_threshold(void* user_data) {
+  (void)user_data;
   // TODO: Implement threshold slider
   ESP_LOGI(TAG, "Set threshold - TODO: implement");
 }
@@ -33,11 +35,10 @@ lv_obj_t* menu_page_bump_create(void) {
   ESP_LOGI(TAG, "Creating bump page");
   
   static menu_item_t bump_items[] = {
-    { "Info", show_info, false },
-    { "Set Threshold", action_set_threshold, false }
+    { "Info", show_info, NULL, false },
+    { "Set Threshold", action_set_threshold, NULL, false }
   };
   
   return menu_create_page("Bump", bump_items, 
     sizeof(bump_items) / sizeof(bump_items[0]));
 }
-

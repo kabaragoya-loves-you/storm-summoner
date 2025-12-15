@@ -6,7 +6,8 @@
 
 #define TAG "MENU_USB_MODE"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   bool ready = tinyusb_is_mounted();
   
   char info_text[128];
@@ -20,10 +21,9 @@ lv_obj_t* menu_page_usb_mode_create(void) {
   ESP_LOGI(TAG, "Creating USB status page");
   
   static menu_item_t usb_items[] = {
-    { "Info", show_info, false }
+    { "Info", show_info, NULL, false }
   };
   
   return menu_create_page("USB Status", usb_items, 
     sizeof(usb_items) / sizeof(usb_items[0]));
 }
-

@@ -6,7 +6,8 @@
 
 #define TAG "MENU_SWITCH"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   switch_channel_t ch = switch_get_channel();
   uint8_t mask = switch_get_channels_mask();
   
@@ -20,12 +21,14 @@ static void show_info(void) {
   menu_navigate_to_info("Switch Info", info_text);
 }
 
-static void action_set_channel(void) {
+static void action_set_channel(void* user_data) {
+  (void)user_data;
   // TODO: Implement channel selector (0-7)
   ESP_LOGI(TAG, "Set channel - TODO: implement");
 }
 
-static void action_off(void) {
+static void action_off(void* user_data) {
+  (void)user_data;
   switch_all_off();
   ESP_LOGI(TAG, "All channels off");
 }
@@ -34,12 +37,11 @@ lv_obj_t* menu_page_switch_create(void) {
   ESP_LOGI(TAG, "Creating switch page");
   
   static menu_item_t switch_items[] = {
-    { "Info", show_info, false },
-    { "Set Channel", action_set_channel, false },
-    { "All Off", action_off, false }
+    { "Info", show_info, NULL, false },
+    { "Set Channel", action_set_channel, NULL, false },
+    { "All Off", action_off, NULL, false }
   };
   
   return menu_create_page("Switch", switch_items, 
     sizeof(switch_items) / sizeof(switch_items[0]));
 }
-

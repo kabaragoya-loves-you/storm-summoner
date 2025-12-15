@@ -1,16 +1,27 @@
 #include "assets_manager_console.h"
 #include "assets_manager.h"
 #include "assets_file_ops.h"
+#include "ui.h"
 #include "esp_log.h"
 #include "esp_console.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string.h>
 
 static const char* TAG = "assets_mgr_console";
+
+// Set message on working module
+extern void working_set_message(const char *msg);
 
 static const char* registered_commands[] = {
   "info",
   "regenerate_devices",
   "regenerate_scenes",
-  "regenerate_images"
+  "regenerate_images",
+  "wipe_cache"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -26,6 +37,15 @@ static int cmd_info(int argc, char **argv) {
 // Command: regenerate_devices
 static int cmd_regenerate_devices(int argc, char **argv) {
   ESP_LOGI(TAG, "Regenerating devices manifest...");
+  
+  // Switch to lightweight working module to free display resources
+  ui_draw_module_t* prev_module = ui_get_current_module();
+  working_set_message("Scanning\ndevices...");
+  ui_set_draw_module(&working_module);
+  
+  // Give LVGL time to switch and render the simple screen
+  vTaskDelay(pdMS_TO_TICKS(100));
+  
   // Use assets_rebuild_manifest() which regenerates AND reloads into memory
   esp_err_t ret = assets_rebuild_manifest();
   if (ret == ESP_OK) {
@@ -34,6 +54,12 @@ static int cmd_regenerate_devices(int argc, char **argv) {
   } else {
     ESP_LOGE(TAG, "Failed to regenerate devices manifest: %s", esp_err_to_name(ret));
   }
+  
+  // Switch back to previous module
+  if (prev_module) {
+    ui_set_draw_module(prev_module);
+  }
+  
   return (ret == ESP_OK) ? 0 : 1;
 }
 
@@ -59,6 +85,37 @@ static int cmd_regenerate_images(int argc, char **argv) {
     ESP_LOGE(TAG, "Failed to regenerate images manifest: %s", esp_err_to_name(ret));
   }
   return (ret == ESP_OK) ? 0 : 1;
+}
+
+// Command: wipe_cache
+static int cmd_wipe_cache(int argc, char **argv) {
+  const char* cache_dir = "/assets/cache";
+  
+  DIR* dir = opendir(cache_dir);
+  if (!dir) {
+    ESP_LOGI(TAG, "Cache directory does not exist or is empty");
+    return 0;
+  }
+  
+  int deleted = 0;
+  struct dirent* entry;
+  char path[280];
+  
+  while ((entry = readdir(dir)) != NULL) {
+    if (entry->d_type == DT_REG) {
+      snprintf(path, sizeof(path), "%s/%s", cache_dir, entry->d_name);
+      if (unlink(path) == 0) {
+        deleted++;
+        ESP_LOGD(TAG, "Deleted: %s", path);
+      } else {
+        ESP_LOGW(TAG, "Failed to delete: %s", path);
+      }
+    }
+  }
+  closedir(dir);
+  
+  ESP_LOGI(TAG, "Wiped %d cache files", deleted);
+  return 0;
 }
 
 esp_err_t assets_manager_console_init(void) {
@@ -99,6 +156,15 @@ esp_err_t assets_manager_console_init(void) {
     .func = &cmd_regenerate_images,
   };
   esp_console_cmd_register(&regen_images_cmd);
+  
+  // wipe_cache command
+  const esp_console_cmd_t wipe_cache_cmd = {
+    .command = "wipe_cache",
+    .help = "Delete all device cache files in /assets/cache/",
+    .hint = NULL,
+    .func = &cmd_wipe_cache,
+  };
+  esp_console_cmd_register(&wipe_cache_cmd);
   
   return ESP_OK;
 }

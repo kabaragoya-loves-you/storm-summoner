@@ -6,13 +6,14 @@
 #define MAX_MENU_STACK 8
 #define MAX_MENU_ITEMS 32
 
-// Menu item callback function type
-typedef void (*menu_item_cb_t)(void);
+// Menu item callback function type (receives optional user data)
+typedef void (*menu_item_cb_t)(void* user_data);
 
 // Menu item structure
 typedef struct {
   const char* label;
   menu_item_cb_t callback;
+  void* user_data;         // Optional data passed to callback
   bool has_submenu;
 } menu_item_t;
 
@@ -31,6 +32,15 @@ void menu_navigate_to(const char* menu_name, menu_page_builder_t builder);
 
 // Navigate back one level
 void menu_navigate_back(void);
+
+// Navigate back N levels, then optionally navigate to a new page
+// If builder is NULL, just navigates back N levels
+void menu_navigate_back_then_to(int levels, const char* menu_name,
+  menu_page_builder_t builder);
+
+// Replace the current menu page with a new one (synchronous, for use in callbacks)
+// Removes current page from stack and pushes a new one
+void menu_replace_current(const char* menu_name, menu_page_builder_t builder);
 
 // Handle enter key (activate selected item)
 void menu_handle_enter(void);

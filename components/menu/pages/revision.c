@@ -6,7 +6,8 @@
 
 #define TAG "MENU_REVISION"
 
-static void show_info(void) {
+static void show_info(void* user_data) {
+  (void)user_data;
   hw_revision_t rev = revision_get();
   const char* rev_str = revision_get_string();
   
@@ -16,7 +17,8 @@ static void show_info(void) {
   menu_navigate_to_info("Revision Info", info_text);
 }
 
-static void show_raw(void) {
+static void show_raw(void* user_data) {
+  (void)user_data;
   uint16_t raw_adc = revision_get_raw_adc();
   const char* rev_str = revision_get_string();
   
@@ -31,11 +33,10 @@ lv_obj_t* menu_page_revision_create(void) {
   ESP_LOGI(TAG, "Creating revision page");
   
   static menu_item_t revision_items[] = {
-    { "Info", show_info, false },
-    { "Raw ADC", show_raw, false }
+    { "Info", show_info, NULL, false },
+    { "Raw ADC", show_raw, NULL, false }
   };
   
   return menu_create_page("Revision", revision_items, 
     sizeof(revision_items) / sizeof(revision_items[0]));
 }
-
