@@ -1,5 +1,6 @@
 #include "assets_manager.h"
 #include "assets_types.h"
+#include "memory_utils.h"
 #include "esp_log.h"
 #include "esp_littlefs.h"
 #include "esp_heap_caps.h"
@@ -55,8 +56,8 @@ static esp_err_t parse_manifest(const char *json_str) {
     return ESP_OK;
   }
   
-  // Allocate devices array in regular heap (manifest is small)
-  g_manifest.devices = calloc(g_manifest.device_count, sizeof(manifest_device_t));
+  // Allocate devices array in PSRAM (persistent for app lifetime)
+  g_manifest.devices = calloc_prefer_psram(g_manifest.device_count, sizeof(manifest_device_t));
   if (!g_manifest.devices) {
     ESP_LOGE(TAG, "Failed to allocate devices array");
     cJSON_Delete(root);

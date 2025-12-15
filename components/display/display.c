@@ -47,7 +47,7 @@ static void lvgl_log_cb(lv_log_level_t level, const char * buf) {
 uint32_t esp_tick_cb(void);
 void lvgl_task(void *pvParameter);
 
-// Calculate buffer size for GC9A01A (240x240 RGB888)
+// Calculate buffer size for GC9A01A (240x240 RGB565)
 // Use 1/10 of screen = 240 * 24 * 3 = 17,280 bytes per buffer
 static size_t calculate_buffer_size(uint16_t width, uint16_t height, lv_color_format_t cf) {
   size_t bytes_per_pixel = lv_color_format_get_size(cf);

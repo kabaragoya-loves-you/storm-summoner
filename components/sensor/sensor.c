@@ -24,6 +24,12 @@
 #define ALS_IIR_ALPHA 0.8f           // Filter coefficient for smoothing (higher = less smoothing, more responsive)
 #define DEFAULT_ALS_DEADZONE 2       // Minimum change in MIDI value (0-127) required to send
 
+// Adaptive sampling constants
+#define PS_STABILITY_THRESHOLD 20    // Consecutive stable readings before slowing PS
+#define ALS_STABILITY_THRESHOLD 10   // Consecutive stable readings before slowing ALS
+#define PS_SLOW_INTERVAL_MS 60       // Slow PS interval when stable (~17Hz)
+#define ALS_SLOW_INTERVAL_MS 400     // Slow ALS interval when stable (~2.5Hz)
+
 // NVS keys for rate limiting and calibration
 #define NVS_KEY_ALS_RATE "als_rate"
 #define NVS_KEY_PS_RATE "ps_rate"
@@ -770,16 +776,27 @@ static void sensor_task(void *arg) {
   uint32_t ps_last_read_time = 0;
   uint32_t als_last_read_time = 0;
   
+  // Adaptive sampling state
+  uint8_t ps_stability_count = 0;
+  uint8_t als_stability_count = 0;
+  bool ps_use_slow_rate = false;
+  bool als_use_slow_rate = false;
+  
   while (1) {
     uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
     
     // Determine which sensor is ready to read
     // Enforce minimum intervals to respect sensor integration times
+    // Use adaptive rate - slower when stable
     uint32_t ps_min_interval_ms = ps_rate_limit > 0 ? 1000 / ps_rate_limit : 20;
     if (ps_min_interval_ms < 20) ps_min_interval_ms = 20;  // Never faster than 50Hz (8T integration ~16ms)
+    if (ps_use_slow_rate && ps_min_interval_ms < PS_SLOW_INTERVAL_MS)
+      ps_min_interval_ms = PS_SLOW_INTERVAL_MS;
     
     uint32_t als_min_interval_ms = als_rate_limit > 0 ? 1000 / als_rate_limit : 200;
     if (als_min_interval_ms < 200) als_min_interval_ms = 200;  // Never faster than 5Hz (respect 160ms integration)
+    if (als_use_slow_rate && als_min_interval_ms < ALS_SLOW_INTERVAL_MS)
+      als_min_interval_ms = ALS_SLOW_INTERVAL_MS;
     
     bool ps_ready = ps_enabled_flag && (current_time - ps_last_read_time >= ps_min_interval_ms);
     bool als_ready = als_enabled_flag && (current_time - als_last_read_time >= als_min_interval_ms);
@@ -990,6 +1007,17 @@ static void sensor_task(void *arg) {
             
             ps_last_sent_midi = output_value;  // Update last sent value immediately after posting
             ps_last_send_time = current_time;  // Update rate limiting timestamp
+            
+            // Value changed - reset to fast polling
+            ps_stability_count = 0;
+            ps_use_slow_rate = false;
+          } else {
+            // Value stable - increment counter and potentially slow down
+            if (ps_stability_count < PS_STABILITY_THRESHOLD) {
+              ps_stability_count++;
+            } else if (!ps_use_slow_rate) {
+              ps_use_slow_rate = true;
+            }
           }
         }  // End of CC mode / theremin mode if-else
       } else {
@@ -1065,6 +1093,17 @@ static void sensor_task(void *arg) {
           
           als_last_sent_midi = midi_value;  // Update last sent value immediately after posting
           als_last_send_time = current_time;  // Update rate limiting timestamp
+          
+          // Value changed - reset to fast polling
+          als_stability_count = 0;
+          als_use_slow_rate = false;
+        } else {
+          // Value stable - increment counter and potentially slow down
+          if (als_stability_count < ALS_STABILITY_THRESHOLD) {
+            als_stability_count++;
+          } else if (!als_use_slow_rate) {
+            als_use_slow_rate = true;
+          }
         }
       } else {
         // I2C read failed

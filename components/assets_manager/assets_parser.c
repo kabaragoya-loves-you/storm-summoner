@@ -1,5 +1,6 @@
 #include "assets_manager.h"
 #include "assets_types.h"
+#include "memory_utils.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "cJSON.h"
@@ -10,30 +11,6 @@
 
 // Forward declarations
 extern device_def_t *parse_device_json(const char *json_str, size_t json_len, const char *slug);
-
-// Helper: try PSRAM first, fall back to regular heap
-static void *malloc_prefer_psram(size_t size) {
-  void *ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-  if (!ptr) {
-    ESP_LOGD(TAG, "PSRAM unavailable, using regular heap for %u bytes", (unsigned)size);
-    ptr = malloc(size);
-  }
-  return ptr;
-}
-
-static void *calloc_prefer_psram(size_t count, size_t size) {
-  void *ptr = heap_caps_calloc(count, size, MALLOC_CAP_SPIRAM);
-  if (!ptr) {
-    ESP_LOGD(TAG, "PSRAM unavailable, using regular heap for %u bytes", (unsigned)(count * size));
-    ptr = calloc(count, size);
-  }
-  return ptr;
-}
-
-static void free_smart(void *ptr) {
-  if (ptr)
-    heap_caps_free(ptr);
-}
 
 /**
  * Parse a device JSON file from filesystem
@@ -81,7 +58,7 @@ device_def_t *assets_parse_device_file(const char *filepath, const char *slug) {
   // Parse JSON
   device_def_t *device = parse_device_json(json_buf, file_size, slug);
   
-  free_smart(json_buf);
+  free(json_buf);
   return device;
 }
 
@@ -190,7 +167,7 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
       if (!device->controls) {
         ESP_LOGE(TAG, "Failed to allocate controls array");
         cJSON_Delete(root);
-        free_smart(device);
+        free(device);
         return NULL;
       }
       
@@ -235,8 +212,8 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
       device->string_blob = malloc_prefer_psram(string_size);
       if (!device->string_blob) {
         ESP_LOGE(TAG, "Failed to allocate string blob");
-        free_smart(device->controls);
-        free_smart(device);
+        free(device->controls);
+        free(device);
         cJSON_Delete(root);
         return NULL;
       }

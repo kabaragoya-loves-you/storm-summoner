@@ -27,7 +27,7 @@ uint16_t display_get_height(void) {
 
 lv_color_format_t display_get_color_format(void) {
   if (s_active_driver) return s_active_driver->color_format;
-  return LV_COLOR_FORMAT_RGB888;
+  return LV_COLOR_FORMAT_RGB565;
 }
 
 bool display_is_circular(void) {

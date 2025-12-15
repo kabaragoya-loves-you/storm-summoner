@@ -119,7 +119,7 @@ void gc9a01a_init(void) {
     .sclk_io_num = PIN_SCLK,
     .quadwp_io_num = -1,
     .quadhd_io_num = -1,
-    .max_transfer_sz = GC9A01A_WIDTH * GC9A01A_HEIGHT * 3,  // RGB888
+    .max_transfer_sz = GC9A01A_WIDTH * GC9A01A_HEIGHT * 2,  // RGB565
   };
 
   esp_err_t ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
@@ -144,8 +144,8 @@ void gc9a01a_init(void) {
 
   ESP_LOGI(TAG, "SPI initialized at 60 MHz with DMA");
 
-  // Allocate line buffer for RGB888 data (3 bytes per pixel)
-  size_t line_buf_size = GC9A01A_WIDTH * 3;
+  // Allocate line buffer for RGB565 data (2 bytes per pixel)
+  size_t line_buf_size = GC9A01A_WIDTH * 2;
   gc9a01a_line_buf = heap_caps_malloc(line_buf_size, MALLOC_CAP_DMA);
   if (!gc9a01a_line_buf) {
     ESP_LOGE(TAG, "Failed to allocate line buffer");
@@ -207,10 +207,10 @@ void gc9a01a_init(void) {
   gc9a01a_data_byte(0x00);
   
   gc9a01a_cmd(GC9A01A_MADCTL);  // Memory access control
-  gc9a01a_data_byte(MADCTL_MX);  // RGB order (LVGL sends RGB, not BGR)
+  gc9a01a_data_byte(MADCTL_MX | MADCTL_BGR);  // Column order + BGR for RGB565
   
   gc9a01a_cmd(GC9A01A_COLMOD);  // Pixel format
-  gc9a01a_data_byte(0x66);  // 18-bit color (RGB666) - closest to RGB888
+  gc9a01a_data_byte(0x55);  // 16-bit color (RGB565)
   
   gc9a01a_cmd(0x90);
   gc9a01a_data_byte(0x08);
@@ -392,9 +392,9 @@ void gc9a01a_init(void) {
   // This prevents garbage pixels outside the viewport from being visible
   gc9a01a_set_addr_window(0, 0, GC9A01A_PHYSICAL_WIDTH - 1, GC9A01A_PHYSICAL_HEIGHT - 1);
   gpio_set_level(PIN_DC, 1);
-  memset(gc9a01a_line_buf, 0, GC9A01A_PHYSICAL_WIDTH * 3);  // One line of black pixels
+  memset(gc9a01a_line_buf, 0, GC9A01A_PHYSICAL_WIDTH * 2);  // One line of black pixels
   for (int y = 0; y < GC9A01A_PHYSICAL_HEIGHT; y++) {
-    spi_transaction_t t = { .length = GC9A01A_PHYSICAL_WIDTH * 3 * 8, .tx_buffer = gc9a01a_line_buf };
+    spi_transaction_t t = { .length = GC9A01A_PHYSICAL_WIDTH * 2 * 8, .tx_buffer = gc9a01a_line_buf };
     spi_device_polling_transmit(spi, &t);
   }
   ESP_LOGI(TAG, "Display cleared to black");
@@ -484,16 +484,21 @@ void gc9a01a_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   int32_t w = lv_area_get_width(area);
   int32_t h = lv_area_get_height(area);
 
-  // The px_map is in RGB888 format (3 bytes per pixel)
+  // The px_map is in RGB565 format (2 bytes per pixel)
   // Send data line by line for better DMA handling
   gpio_set_level(PIN_DC, 1);  // Data mode
 
-  size_t line_size = w * 3;  // RGB888 = 3 bytes per pixel
+  size_t line_size = w * 2;  // RGB565 = 2 bytes per pixel
   uint8_t *src = px_map;
 
   for (int32_t y = 0; y < h; y++) {
-    // Copy line to DMA buffer
-    memcpy(gc9a01a_line_buf, src, line_size);
+    // Copy line to DMA buffer with byte swap for big-endian display
+    // GC9A01A expects big-endian RGB565, ESP32/LVGL outputs little-endian
+    uint16_t *src16 = (uint16_t *)src;
+    uint16_t *dst16 = (uint16_t *)gc9a01a_line_buf;
+    for (int32_t x = 0; x < w; x++) {
+      dst16[x] = __builtin_bswap16(src16[x]);
+    }
     
     spi_transaction_t t = {
       .length = line_size * 8,
@@ -517,7 +522,7 @@ const display_driver_t gc9a01a_driver = {
   .name = "GC9A01A",
   .width = 198,  // Default viewport width (will be overridden by get functions)
   .height = 198, // Default viewport height
-  .color_format = LV_COLOR_FORMAT_RGB888,
+  .color_format = LV_COLOR_FORMAT_RGB565,
   .init = gc9a01a_init,
   .flush = gc9a01a_flush,
 };

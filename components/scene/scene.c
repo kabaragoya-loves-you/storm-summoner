@@ -12,6 +12,7 @@
 #include "tempo.h"
 #include "input_manager.h"
 #include "ui.h"
+#include "memory_utils.h"
 #include "cJSON.h"
 #include <string.h>
 #include <stdio.h>
@@ -628,8 +629,8 @@ esp_err_t scene_init(void) {
   esp_err_t ret = scene_load_manifest();
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to load manifest, creating default");
-    // Create default manifest with one scene
-    g_scene_manager.manifest = malloc(sizeof(scene_manifest_entry_t));
+    // Create default manifest with one scene (use PSRAM for persistent data)
+    g_scene_manager.manifest = malloc_prefer_psram(sizeof(scene_manifest_entry_t));
     if (!g_scene_manager.manifest) {
       ESP_LOGE(TAG, "Failed to allocate manifest");
       return ESP_ERR_NO_MEM;
@@ -2294,7 +2295,7 @@ esp_err_t scene_load_manifest(void) {
   if (!scenes || !cJSON_IsArray(scenes)) { cJSON_Delete(root); return ESP_ERR_INVALID_ARG; }
   
   int count = cJSON_GetArraySize(scenes);
-  g_scene_manager.manifest = malloc(count * sizeof(scene_manifest_entry_t));
+  g_scene_manager.manifest = malloc_prefer_psram(count * sizeof(scene_manifest_entry_t));
   if (!g_scene_manager.manifest) { cJSON_Delete(root); return ESP_ERR_NO_MEM; }
   
   g_scene_manager.num_scenes = count;
@@ -2361,9 +2362,9 @@ esp_err_t scene_create_new(const char* name) {
     if (!exists) { new_index = i; break; }
   }
   
-  // Expand manifest
-  scene_manifest_entry_t* new_manifest = realloc(g_scene_manager.manifest, 
-                                                  (g_scene_manager.num_scenes + 1) * sizeof(scene_manifest_entry_t));
+  // Expand manifest (use PSRAM for persistent data)
+  scene_manifest_entry_t* new_manifest = realloc_prefer_psram(g_scene_manager.manifest, 
+                                                               (g_scene_manager.num_scenes + 1) * sizeof(scene_manifest_entry_t));
   if (!new_manifest) return ESP_ERR_NO_MEM;
   
   g_scene_manager.manifest = new_manifest;

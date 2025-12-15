@@ -10,12 +10,13 @@
 #define LVGL_STREAM_MAGIC      0xAC01
 #define LVGL_STREAM_TYPE_RECT  0x00
 #define LVGL_STREAM_FMT_RGB888 0x00
+#define LVGL_STREAM_FMT_RGB565 0x01
 
 // Wire protocol header (16 bytes, packed)
 typedef struct __attribute__((packed)) {
   uint16_t magic;        // 0xAC01
   uint8_t  type;         // 0 = RECT
-  uint8_t  format;       // 0 = RGB888
+  uint8_t  format;       // 0 = RGB888, 1 = RGB565
   uint16_t x;            // Top-left X
   uint16_t y;            // Top-left Y
   uint16_t w;            // Width

@@ -24,7 +24,7 @@
 
 #define LV_TICK_CUSTOM 1
 
-#define LV_COLOR_DEPTH 24
+#define LV_COLOR_DEPTH 16
 #define LV_HOR_RES_MAX 240
 #define LV_VER_RES_MAX 240
 

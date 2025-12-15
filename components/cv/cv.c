@@ -30,7 +30,9 @@
 // CV modes are defined in the header file
 
 // Constants
-#define TASK_PERIOD_MS 20        // 50 Hz sampling rate
+#define TASK_PERIOD_MS_FAST 20   // 50 Hz sampling rate when value changing
+#define TASK_PERIOD_MS_SLOW 60   // ~17 Hz sampling rate when value stable
+#define STABILITY_THRESHOLD 15    // Consecutive stable readings before slowing down
 #define FILTER_ALPHA 0.4f        // IIR filter coefficient (fast response for musical performance)
 #define OVERSAMPLE_COUNT 2       // 2x oversampling - faster transient tracking, median filter handles noise
 #define MEDIAN_WINDOW 5          // 5-sample median filter (better noise rejection for unstable signals)
@@ -269,6 +271,10 @@ static void cv_task(void *pvParameters) {
   // Cable detection throttling (static to persist across loop iterations)
   static uint32_t last_cable_check_ms = 0;
   
+  // Adaptive sampling state
+  uint8_t stability_count = 0;
+  uint32_t task_period_ms = TASK_PERIOD_MS_FAST;
+  
   // Add initial delay to ensure ADC is stable
   // Stagger by 100ms from expression task to avoid ADC contention
   vTaskDelay(pdMS_TO_TICKS(300));
@@ -408,12 +414,23 @@ static void cv_task(void *pvParameters) {
             .mode = s_mode
           }
         };
-          event_bus_post(&cv_event);
-          
-          if (s_logging_enabled) {
-            ESP_LOGI(TAG, "raw=%d, filtered=%.1f, midi=%d", raw, s_filtered_value, midi_value);
-          }
-        } else if (!past_startup) {
+        event_bus_post(&cv_event);
+        
+        if (s_logging_enabled) {
+          ESP_LOGI(TAG, "raw=%d, filtered=%.1f, midi=%d", raw, s_filtered_value, midi_value);
+        }
+        
+        // Value changed - reset to fast polling
+        stability_count = 0;
+        task_period_ms = TASK_PERIOD_MS_FAST;
+      } else if (past_startup) {
+        // Value stable - increment counter and potentially slow down
+        if (stability_count < STABILITY_THRESHOLD) {
+          stability_count++;
+        } else if (task_period_ms != TASK_PERIOD_MS_SLOW) {
+          task_period_ms = TASK_PERIOD_MS_SLOW;
+        }
+      } else {
         // During startup, just log periodically
         static int startup_log_counter = 0;
         if (startup_log_counter++ % 10 == 0) {
@@ -422,7 +439,7 @@ static void cv_task(void *pvParameters) {
       }
     }
     
-    vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_MS));
+    vTaskDelay(pdMS_TO_TICKS(task_period_ms));
   }
 }
 

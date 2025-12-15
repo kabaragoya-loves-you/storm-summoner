@@ -1,6 +1,7 @@
 #include "lv_vector_art.h"
 #include "compressed_loader.h"
 #include "polygon.h"
+#include "memory_utils.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <stdlib.h>
@@ -35,7 +36,7 @@ lv_obj_t *lv_vector_art_create(lv_obj_t *parent) {
   lv_obj_t *obj = lv_canvas_create(parent);
   if (obj == NULL) return NULL;
   
-  lv_vector_art_data_t *data = malloc(sizeof(lv_vector_art_data_t));
+  lv_vector_art_data_t *data = malloc_prefer_psram(sizeof(lv_vector_art_data_t));
   if (data == NULL) {
     lv_obj_delete(obj);
     return NULL;
@@ -176,7 +177,7 @@ bool lv_vector_art_set_src(lv_obj_t *obj, const char *path) {
     data->raw_data_size = ftell(f);
     fseek(f, 0, SEEK_SET);
     
-    data->raw_data = (uint8_t *)malloc(data->raw_data_size);
+    data->raw_data = (uint8_t *)malloc_prefer_psram(data->raw_data_size);
     if (!data->raw_data) {
       ESP_LOGE(TAG, "Failed to allocate %lu bytes", (unsigned long)data->raw_data_size);
       fclose(f);
@@ -271,7 +272,7 @@ static bool parse_binary_data(lv_vector_art_data_t *data) {
     }
     
     // Allocate frames array
-    data->frames = calloc(data->frame_count, sizeof(lv_vector_art_frame_t));
+    data->frames = calloc_prefer_psram(data->frame_count, sizeof(lv_vector_art_frame_t));
     if (!data->frames) {
       ESP_LOGE(TAG, "Failed to allocate frames array");
       return false;
@@ -368,7 +369,7 @@ static bool parse_static_shapes(lv_vector_art_data_t *data, uint8_t *ptr, uint8_
     }
     
     // Allocate and convert points
-    shape->points = (lv_point_t *)malloc(shape->point_count * sizeof(lv_point_t));
+    shape->points = (lv_point_t *)malloc_prefer_psram(shape->point_count * sizeof(lv_point_t));
     if (!shape->points) {
       ESP_LOGE(TAG, "Failed to allocate points for shape %d", count);
       return false;
@@ -450,7 +451,7 @@ static void render_shapes_to_canvas(lv_obj_t *obj, lv_vector_art_shape_t *shapes
   int32_t center_offset_y = (canvas_h - (int32_t)(content_height * scale)) / 2;
   
   // Temporary polygon points buffer
-  polygon_point_t *poly_points = malloc(MAX_POLYGON_POINTS * sizeof(polygon_point_t));
+  polygon_point_t *poly_points = malloc_prefer_psram(MAX_POLYGON_POINTS * sizeof(polygon_point_t));
   if (!poly_points) {
     ESP_LOGE(TAG, "Failed to allocate polygon buffer");
     return;

@@ -1,4 +1,5 @@
 #include "lv_starfield.h"
+#include "memory_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
@@ -23,8 +24,8 @@ lv_obj_t * lv_starfield_create(lv_obj_t * parent) {
     lv_obj_t * obj = lv_obj_create(parent);
     if (obj == NULL) return NULL;
     
-    // Allocate and initialize starfield data
-    lv_starfield_data_t * starfield_data = malloc(sizeof(lv_starfield_data_t));
+    // Allocate and initialize starfield data (prefer PSRAM for larger allocations)
+    lv_starfield_data_t * starfield_data = malloc_prefer_psram(sizeof(lv_starfield_data_t));
     if (starfield_data == NULL) {
         lv_obj_delete(obj);
         return NULL;
@@ -41,8 +42,8 @@ lv_obj_t * lv_starfield_create(lv_obj_t * parent) {
     starfield_data->exclusion_user_data = NULL;
     starfield_data->exclude_siblings = true;  // Default to excluding siblings
     
-    // Allocate stars
-    starfield_data->stars = malloc(starfield_data->star_count * sizeof(lv_star_t));
+    // Allocate stars (prefer PSRAM for larger allocations)
+    starfield_data->stars = malloc_prefer_psram(starfield_data->star_count * sizeof(lv_star_t));
     if (starfield_data->stars == NULL) {
         free(starfield_data);
         lv_obj_delete(obj);
@@ -263,8 +264,8 @@ void lv_starfield_set_count(lv_obj_t * obj, uint16_t count) {
     lv_starfield_data_t * starfield_data = lv_obj_get_user_data(obj);
     if (!starfield_data || starfield_data->star_count == count) return;
     
-    // Reallocate stars array
-    lv_star_t * new_stars = realloc(starfield_data->stars, count * sizeof(lv_star_t));
+    // Reallocate stars array (prefer PSRAM)
+    lv_star_t * new_stars = realloc_prefer_psram(starfield_data->stars, count * sizeof(lv_star_t));
     if (!new_stars) {
         ESP_LOGE(TAG, "Failed to reallocate stars");
         return;

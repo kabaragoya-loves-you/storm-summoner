@@ -43,7 +43,9 @@
 // Filtering parameters
 #define MOVING_AVG_LENGTH 10
 #define IIR_ALPHA 0.3f
-#define TASK_DELAY_MS 30
+#define TASK_DELAY_MS_FAST 30    // Fast polling when value changing
+#define TASK_DELAY_MS_SLOW 100   // Slow polling when value stable
+#define STABILITY_THRESHOLD 10    // Consecutive stable readings before slowing down
 
 // Static variables
 static TaskHandle_t s_task_handle = NULL;
@@ -80,6 +82,10 @@ static void expression_task(void *pvParameters) {
   bool last_pedal_state = false;  // For sustain/sostenuto
   bool last_gate_state = false;   // For gate mode
   static uint32_t last_cable_check_ms = 0;  // Throttle cable checks when disconnected
+  
+  // Adaptive sampling state
+  uint8_t stability_count = 0;
+  uint32_t task_delay_ms = TASK_DELAY_MS_FAST;
   
   // Small initial delay for ADC settling
   vTaskDelay(pdMS_TO_TICKS(100));
@@ -149,7 +155,7 @@ static void expression_task(void *pvParameters) {
         ret = adc_manager_read(EXP_ADC_CHANNEL, &raw_exp);
         if (ret != ESP_OK) {
           ESP_LOGW(TAG, "Failed to read expression ADC: %s", esp_err_to_name(ret));
-          vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+          vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS_FAST));
           continue;
         }
       }
@@ -162,7 +168,7 @@ static void expression_task(void *pvParameters) {
         ret = adc_manager_read(REF_ADC_CHANNEL, &raw_ref);
         if (ret != ESP_OK) {
           ESP_LOGW(TAG, "Failed to read reference ADC: %s", esp_err_to_name(ret));
-          vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+          vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS_FAST));
           continue;
         }
       }
@@ -173,7 +179,7 @@ static void expression_task(void *pvParameters) {
         raw = (int16_t)(ratio * 4095.0f);
       } else {
         ESP_LOGW(TAG, "Reference voltage too low: %d", raw_ref);
-        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+        vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS_FAST));
         continue;
       }
       
@@ -250,6 +256,17 @@ static void expression_task(void *pvParameters) {
                 ESP_LOGI(TAG, "MIDI: %d -> %d (raw value %d)", last_midi_value, s_midi_value, raw);
               }
               last_midi_value = s_midi_value;
+            }
+            
+            // Value changed - reset to fast polling
+            stability_count = 0;
+            task_delay_ms = TASK_DELAY_MS_FAST;
+          } else {
+            // Value stable - increment counter and potentially slow down
+            if (stability_count < STABILITY_THRESHOLD) {
+              stability_count++;
+            } else if (task_delay_ms != TASK_DELAY_MS_SLOW) {
+              task_delay_ms = TASK_DELAY_MS_SLOW;
             }
           }
         }
@@ -343,7 +360,7 @@ static void expression_task(void *pvParameters) {
         }
       }
       
-      vTaskDelay(pdMS_TO_TICKS(TASK_DELAY_MS));
+      vTaskDelay(pdMS_TO_TICKS(task_delay_ms));
       
     } else {
       // Cable disconnected - reset state
@@ -353,6 +370,8 @@ static void expression_task(void *pvParameters) {
       s_num_samples = 0;
       s_sum_samples = 0;
       first_reading = true;  // Reset flag when disconnected
+      stability_count = 0;
+      task_delay_ms = TASK_DELAY_MS_FAST;  // Reset to fast on reconnect
       
       // Sleep for 1 second when disconnected (reduces ADC load)
       vTaskDelay(pdMS_TO_TICKS(1000));

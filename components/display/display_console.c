@@ -102,7 +102,8 @@ static int cmd_info(int argc, char **argv) {
     printf("Resolution: %dx%d\n", driver->width, driver->height);
     printf("Color format: %s\n", 
            driver->color_format == LV_COLOR_FORMAT_RGB888 ? "RGB888 (24-bit)" :
-           driver->color_format == LV_COLOR_FORMAT_RGB565 ? "RGB565 (16-bit)" : "Other");
+           driver->color_format == LV_COLOR_FORMAT_RGB565 ? "RGB565 (16-bit)" :
+           driver->color_format == LV_COLOR_FORMAT_RGB565_SWAPPED ? "RGB565 Swapped (16-bit)" : "Other");
   } else {
     printf("No display driver initialized\n");
   }

@@ -14,7 +14,7 @@
 #define STREAM_QUEUE_SIZE     2      // Number of pending flush items
 #define STREAM_TASK_STACK   4096     // TX task stack size
 #define STREAM_TASK_PRIO      5      // TX task priority
-#define BYTES_PER_PIXEL       3      // RGB888
+#define BYTES_PER_PIXEL       2      // RGB565
 
 // Queue item: header + pointer to pixel data in PSRAM
 typedef struct {
@@ -170,7 +170,7 @@ esp_err_t lvgl_stream_queue_flush(const lv_area_t *area, const uint8_t *px_map) 
     .header = {
       .magic = LVGL_STREAM_MAGIC,
       .type = LVGL_STREAM_TYPE_RECT,
-      .format = LVGL_STREAM_FMT_RGB888,
+      .format = LVGL_STREAM_FMT_RGB565,
       .x = (uint16_t)area->x1,
       .y = (uint16_t)area->y1,
       .w = (uint16_t)w,

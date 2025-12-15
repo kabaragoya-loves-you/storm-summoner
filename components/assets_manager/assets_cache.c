@@ -1,5 +1,6 @@
 #include "assets_manager.h"
 #include "assets_types.h"
+#include "memory_utils.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "rom/crc.h"
@@ -8,30 +9,6 @@
 #include <unistd.h>
 
 #define TAG "assets_cache"
-
-// Helper: try PSRAM first, fall back to regular heap
-static void *malloc_prefer_psram(size_t size) {
-  void *ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-  if (!ptr) {
-    ESP_LOGD(TAG, "PSRAM unavailable, using regular heap for %u bytes", (unsigned)size);
-    ptr = malloc(size);
-  }
-  return ptr;
-}
-
-static void *calloc_prefer_psram(size_t count, size_t size) {
-  void *ptr = heap_caps_calloc(count, size, MALLOC_CAP_SPIRAM);
-  if (!ptr) {
-    ESP_LOGD(TAG, "PSRAM unavailable, using regular heap for %u bytes", (unsigned)(count * size));
-    ptr = calloc(count, size);
-  }
-  return ptr;
-}
-
-static void free_smart(void *ptr) {
-  if (ptr)
-    heap_caps_free(ptr);
-}
 
 /**
  * Calculate CRC32 for cache validation
@@ -227,7 +204,7 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   
   if (fread(records, 1, control_data_size, f) != control_data_size) {
     ESP_LOGE(TAG, "Failed to read control records");
-    free_smart(records);
+    free(records);
     fclose(f);
     return NULL;
   }
@@ -248,7 +225,7 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
       total_discrete_count = 0;
     } else if (fread(dv_records, 1, discrete_data_size, f) != discrete_data_size) {
       ESP_LOGW(TAG, "Failed to read discrete value records");
-      free_smart(dv_records);
+      free(dv_records);
       dv_records = NULL;
       total_discrete_count = 0;
     }
@@ -258,17 +235,17 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   uint8_t *string_blob = malloc_prefer_psram(header.string_blob_size);
   if (!string_blob) {
     ESP_LOGE(TAG, "Failed to allocate string blob");
-    free_smart(dv_records);
-    free_smart(records);
+    free(dv_records);
+    free(records);
     fclose(f);
     return NULL;
   }
   
   if (fread(string_blob, 1, header.string_blob_size, f) != header.string_blob_size) {
     ESP_LOGE(TAG, "Failed to read string blob");
-    free_smart(string_blob);
-    free_smart(dv_records);
-    free_smart(records);
+    free(string_blob);
+    free(dv_records);
+    free(records);
     fclose(f);
     return NULL;
   }
@@ -279,9 +256,9 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   device_def_t *device = calloc_prefer_psram(1, sizeof(device_def_t));
   if (!device) {
     ESP_LOGE(TAG, "Failed to allocate device_def_t");
-    free_smart(string_blob);
-    free_smart(dv_records);
-    free_smart(records);
+    free(string_blob);
+    free(dv_records);
+    free(records);
     return NULL;
   }
   
@@ -297,10 +274,10 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   device->controls = calloc_prefer_psram(device->control_count, sizeof(midi_control_t));
   if (!device->controls) {
     ESP_LOGE(TAG, "Failed to allocate controls array");
-    free_smart(device->string_blob);
-    free_smart(device);
-    free_smart(dv_records);
-    free_smart(records);
+    free(device->string_blob);
+    free(device);
+    free(dv_records);
+    free(records);
     return NULL;
   }
   
@@ -349,8 +326,8 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     }
   }
   
-  free_smart(records);
-  free_smart(dv_records);
+  free(records);
+  free(dv_records);
   
   // Build CC lookup table
   device->cc_lookup = malloc_prefer_psram(128 * sizeof(int16_t));

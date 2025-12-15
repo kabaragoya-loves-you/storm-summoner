@@ -19,4 +19,5 @@ idf_component_register(
         "transport"
         "scene"
         "version"
+        "memory_utils"
 )
