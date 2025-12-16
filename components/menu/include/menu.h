@@ -43,7 +43,8 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
 void menu_replace_current(const char* menu_name, menu_page_builder_t builder);
 
 // Handle enter key (activate selected item)
-void menu_handle_enter(void);
+// Returns true if an action was performed (item was clickable)
+bool menu_handle_enter(void);
 
 // Handle back key
 void menu_handle_back(void);
@@ -71,6 +72,18 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text);
 
 // Helper: Create a page with action buttons
 lv_obj_t* menu_create_action_page(const char* title, const menu_item_t* items, int item_count);
+
+// Roller page callback - called when value is confirmed
+// Parameters: selected_index (0-based), user_data
+typedef void (*menu_roller_confirm_cb_t)(uint32_t selected_index, void* user_data);
+
+// Helper: Create a roller selection page
+// options: newline-separated string of options (e.g., "1\n2\n3")
+// initial_index: 0-based index of initially selected item
+// confirm_cb: called when user confirms selection (pad 8)
+// user_data: passed to confirm_cb
+lv_obj_t* menu_create_roller_page(const char* title, const char* options, 
+  uint32_t initial_index, menu_roller_confirm_cb_t confirm_cb, void* user_data);
 
 #endif // MENU_H
 

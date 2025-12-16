@@ -3,6 +3,7 @@
 #include "device_config.h"
 #include "action.h"
 #include "event_bus.h"
+#include "ui.h"
 #include "esp_log.h"
 
 static const char* TAG = "midi_scene";
@@ -10,6 +11,9 @@ static const char* TAG = "midi_scene";
 // Handle touch events and convert to MIDI based on scene mappings
 static void handle_touch_event(const event_t* event, void* context) {
   if (!event) return;
+  
+  // Don't process scene actions in programming mode
+  if (ui_get_app_mode() == APP_MODE_PROGRAMMING) return;
   
   uint8_t pad_id = event->data.touch.pad_id;
   bool is_pressed = (event->type == EVENT_TOUCH_PRESS);
@@ -27,6 +31,9 @@ static void handle_touch_event(const event_t* event, void* context) {
 // Handle button events using scene-based action assignments
 static void handle_button_event(const event_t* event, void* context) {
   if (!event) return;
+  
+  // Don't process scene actions in programming mode
+  if (ui_get_app_mode() == APP_MODE_PROGRAMMING) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -68,6 +75,9 @@ static void handle_button_event(const event_t* event, void* context) {
 // Handle bump events using scene-based action assignments
 static void handle_bump_event(const event_t* event, void* context) {
   if (!event) return;
+  
+  // Don't process scene actions in programming mode
+  if (ui_get_app_mode() == APP_MODE_PROGRAMMING) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;

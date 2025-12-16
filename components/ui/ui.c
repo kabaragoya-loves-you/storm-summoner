@@ -5,6 +5,7 @@
 #include "touchwheel_outputs.h"
 #include "touch.h"
 #include "menu.h"
+#include "scene.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -271,12 +272,15 @@ void ui_set_app_mode(app_mode_t mode) {
   
   // Handle entering Programming mode
   if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING) {
+    // Suspend scene input processing (disables scene touchwheel and actions)
+    scene_suspend_input();
+    
     // Save current Performance mode draw module
     saved_draw_module = current_draw_module;
-    
+
     // Suspend Performance mode rendering (this creates a deferred timer, safe)
     ui_graphics_suspend();
-    
+
     // Defer ALL LVGL operations to LVGL context (cannot call LVGL from timer/ISR context)
     // This includes: touchwheel creation, hiding canvas, and creating menu widgets
     // Note: ui_set_app_mode() may be called from FreeRTOS timer callback context
@@ -286,12 +290,15 @@ void ui_set_app_mode(app_mode_t mode) {
     } else {
       ESP_LOGE(TAG, "Failed to create Programming mode enter timer");
     }
-  } 
+  }
   // Handle exiting Programming mode
   else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
+    // Resume scene input processing (re-enables scene touchwheel and actions)
+    scene_resume_input();
+    
     // Suspend Performance mode rendering (this creates a deferred timer, safe)
     ui_graphics_suspend();
-    
+
     // Defer ALL LVGL operations to LVGL context (cannot call LVGL from event handler context)
     // This includes: touchwheel destruction, screen switching, and menu cleanup
     lv_timer_t *exit_timer = lv_timer_create(deferred_programming_mode_exit_cb, 10, NULL);

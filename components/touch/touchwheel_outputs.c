@@ -28,24 +28,28 @@ static void lvgl_encoder_read_cb(lv_indev_t * indev, lv_indev_data_t * data) {
   if (ui_get_app_mode() == APP_MODE_PROGRAMMING && output->data.lvgl.accumulated_diff != 0) {
     lv_group_t* group = lv_indev_get_group(indev);
     if (group) {
-      lv_obj_t* focused = lv_group_get_focused(group);
-      if (focused) {
-        // Get the parent container to check boundaries
-        lv_obj_t* container = lv_obj_get_parent(focused);
-        // Check if parent is a scrollable container (our menu containers)
-        if (container && lv_obj_has_flag(container, LV_OBJ_FLAG_SCROLLABLE)) {
-          uint32_t child_cnt = lv_obj_get_child_count(container);
-          uint32_t focused_index = lv_obj_get_index(focused);
-          
-          // Check if at boundaries
-          if (output->data.lvgl.accumulated_diff < 0 && focused_index == 0) {
-            // Trying to go up from first item
-            suppress_haptic = true;
-            output->data.lvgl.accumulated_diff = 0;  // Suppress navigation too
-          } else if (output->data.lvgl.accumulated_diff > 0 && focused_index == child_cnt - 1) {
-            // Trying to go down from last item
-            suppress_haptic = true;
-            output->data.lvgl.accumulated_diff = 0;  // Suppress navigation too
+      // Skip boundary detection if in editing mode (e.g., scrolling within a roller)
+      // In editing mode, encoder controls the widget internally, not menu navigation
+      if (!lv_group_get_editing(group)) {
+        lv_obj_t* focused = lv_group_get_focused(group);
+        if (focused) {
+          // Get the parent container to check boundaries
+          lv_obj_t* container = lv_obj_get_parent(focused);
+          // Check if parent is a scrollable container (our menu containers)
+          if (container && lv_obj_has_flag(container, LV_OBJ_FLAG_SCROLLABLE)) {
+            uint32_t child_cnt = lv_obj_get_child_count(container);
+            uint32_t focused_index = lv_obj_get_index(focused);
+            
+            // Check if at boundaries
+            if (output->data.lvgl.accumulated_diff < 0 && focused_index == 0) {
+              // Trying to go up from first item
+              suppress_haptic = true;
+              output->data.lvgl.accumulated_diff = 0;  // Suppress navigation too
+            } else if (output->data.lvgl.accumulated_diff > 0 && focused_index == child_cnt - 1) {
+              // Trying to go down from last item
+              suppress_haptic = true;
+              output->data.lvgl.accumulated_diff = 0;  // Suppress navigation too
+            }
           }
         }
       }

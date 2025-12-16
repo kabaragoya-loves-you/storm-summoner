@@ -136,8 +136,11 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     }
     
     // Rotary wheel logic is now handled by touchwheel system (touch.c routes pad 0-7 events)
-    // Only generate haptic feedback for non-wheel pads (and not Button 13)
-    if (!is_wheel_pad(pad_id) && pad_id != BUTTON_13_LOGICAL_PAD) {
+    // Generate haptic feedback for non-wheel pads (except Button 13 and Pad 8 in programming mode)
+    // Pad 8 haptic is deferred to release to check if focused item is clickable
+    bool skip_haptic = is_wheel_pad(pad_id) || pad_id == BUTTON_13_LOGICAL_PAD ||
+      (pad_id == BUTTON_8_LOGICAL_PAD && ui_get_app_mode() == APP_MODE_PROGRAMMING);
+    if (!skip_haptic) {
       event_t haptic_event = {
         .type = EVENT_HAPTIC_REQUEST,
         .priority = EVENT_PRIORITY_NORMAL,
@@ -157,8 +160,18 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
       // Handle pad 8 (enter/confirm)
       if (pad_id == BUTTON_8_LOGICAL_PAD) {
-        menu_handle_enter();
-        ESP_LOGD(TAG, "Pad 8: Enter/Confirm");
+        bool action_taken = menu_handle_enter();
+        if (action_taken) {
+          // Generate haptic only if a clickable item was activated
+          event_t haptic_event = {
+            .type = EVENT_HAPTIC_REQUEST,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.haptic = { .pattern = HAPTIC_CLICK }
+          };
+          event_bus_post(&haptic_event);
+        }
+        ESP_LOGD(TAG, "Pad 8: Enter/Confirm (action=%s)", action_taken ? "yes" : "no");
         return;
       }
       

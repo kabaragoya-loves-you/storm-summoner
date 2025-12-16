@@ -265,38 +265,66 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
 
   // Create labels for menu items
   for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
+    const char* item_label = items[i].label;
+    bool is_divider = (item_label && strncmp(item_label, "---", 3) == 0);
+    bool is_readonly = (items[i].callback == NULL && !is_divider);
+    
+    if (is_divider) {
+      // Create a horizontal line divider
+      lv_obj_t* line = lv_obj_create(cont);
+      lv_obj_set_size(line, lv_pct(80), 2);
+      lv_obj_set_style_bg_color(line, lv_color_make(80, 80, 80), 0);
+      lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
+      lv_obj_set_style_border_width(line, 0, 0);
+      lv_obj_set_style_radius(line, 1, 0);
+      lv_obj_set_style_pad_all(line, 0, 0);
+      lv_obj_remove_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+      // Dividers are not focusable or clickable
+      continue;
+    }
+    
     lv_obj_t* label = lv_label_create(cont);
-    lv_label_set_text(label, items[i].label);
+    lv_label_set_text(label, item_label);
     lv_obj_set_width(label, lv_pct(100));
 
-    // Label styling
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    // Label styling - dimmer color for read-only items
+    if (is_readonly) {
+      lv_obj_set_style_text_color(label, lv_color_make(160, 160, 160), 0);
+    } else {
+      lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    }
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_pad_ver(label, 4, 0);
 
-    // Make label focusable for encoder navigation
-    lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+    // All items are focusable for encoder navigation
     lv_obj_add_flag(label, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
-
-    // Add focus handler to scroll to this item
     lv_obj_add_event_cb(label, focus_event_cb, LV_EVENT_FOCUSED, NULL);
-
-    // Add click event callback
-    lv_obj_add_event_cb(label, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
-
-    // Add to menu group
-    if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+    
+    if (is_readonly) {
+      // Read-only items: in group for scrolling, but not clickable
+      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+    } else {
+      // Clickable items: in group and respond to enter
+      lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_add_event_cb(label, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
+      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+    }
   }
 
-  // Scroll to center on first item (skip focus animation)
-  if (item_count > 0) {
-    lv_obj_t* first = lv_obj_get_child(cont, 0);
-    if (first) {
-      menu_state.skip_focus_scroll = true;
-      lv_obj_scroll_to_view(first, LV_ANIM_OFF);
-      if (menu_state.group) lv_group_focus_obj(first);
-      menu_state.skip_focus_scroll = false;
+  // Scroll to center on first focusable item
+  if (item_count > 0 && menu_state.group) {
+    // Find the first clickable child (first focusable item)
+    uint32_t child_cnt = lv_obj_get_child_count(cont);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(cont, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        menu_state.skip_focus_scroll = true;
+        lv_obj_scroll_to_view(child, LV_ANIM_OFF);
+        lv_group_focus_obj(child);
+        menu_state.skip_focus_scroll = false;
+        break;
+      }
     }
   }
 
@@ -679,8 +707,8 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   ESP_LOGI(TAG, "Replaced current page with: %s", menu_name);
 }
 
-void menu_handle_enter(void) {
-  if (menu_state.stack_depth == 0 || !menu_state.group) return;
+bool menu_handle_enter(void) {
+  if (menu_state.stack_depth == 0 || !menu_state.group) return false;
 
   // Get focused object (selected item)
   lv_obj_t* focused = lv_group_get_focused(menu_state.group);
@@ -698,10 +726,13 @@ void menu_handle_enter(void) {
     }
   }
 
-  // Trigger click event on focused object
-  if (focused) {
+  // Only trigger click if the object is clickable (not a read-only label)
+  if (focused && lv_obj_has_flag(focused, LV_OBJ_FLAG_CLICKABLE)) {
     lv_obj_send_event(focused, LV_EVENT_CLICKED, NULL);
+    return true;
   }
+  
+  return false;
 }
 
 void menu_handle_back(void) {
@@ -853,4 +884,97 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
 lv_obj_t* menu_create_action_page(const char* title, const menu_item_t* items, int item_count) {
   // Action pages use the same style as regular menu pages
   return menu_create_page(title, items, item_count);
+}
+
+// Static context for roller page callback
+static struct {
+  menu_roller_confirm_cb_t confirm_cb;
+  void* user_data;
+} s_roller_context = {0};
+
+// Roller click event handler
+static void roller_click_cb(lv_event_t* e) {
+  lv_obj_t* roller = lv_event_get_target(e);
+  uint32_t selected = lv_roller_get_selected(roller);
+
+  ESP_LOGI(TAG, "Roller confirmed: index=%lu", (unsigned long)selected);
+
+  // Call the confirm callback - callback is responsible for navigation
+  if (s_roller_context.confirm_cb) {
+    s_roller_context.confirm_cb(selected, s_roller_context.user_data);
+  } else {
+    // No callback, just navigate back
+    menu_navigate_back();
+  }
+}
+
+lv_obj_t* menu_create_roller_page(const char* title, const char* options,
+  uint32_t initial_index, menu_roller_confirm_cb_t confirm_cb, void* user_data) {
+  
+  uint16_t disp_w = display_get_width();
+  uint16_t disp_h = display_get_height();
+  
+  // Store callback context
+  s_roller_context.confirm_cb = confirm_cb;
+  s_roller_context.user_data = user_data;
+  
+  // Create screen
+  lv_obj_t* screen = lv_obj_create(NULL);
+  lv_obj_set_size(screen, disp_w, disp_h);
+  lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(screen, 0, 0);
+  lv_obj_set_style_pad_all(screen, 0, 0);
+
+  // Title bar
+  const int title_bar_h = 22;
+  lv_obj_t* title_bar = lv_obj_create(screen);
+  lv_obj_set_size(title_bar, disp_w, title_bar_h);
+  lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);
+  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(139, 90, 43), 0);
+  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(title_bar, 0, 0);
+  lv_obj_set_style_pad_all(title_bar, 0, 0);
+  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
+  
+  lv_obj_t* title_label = lv_label_create(title_bar);
+  lv_label_set_text(title_label, title);
+  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
+  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+  lv_obj_center(title_label);
+
+  // Create roller centered below title
+  lv_obj_t* roller = lv_roller_create(screen);
+  lv_roller_set_options(roller, options, LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(roller, 3);
+  lv_roller_set_selected(roller, initial_index, LV_ANIM_OFF);
+  lv_obj_align(roller, LV_ALIGN_CENTER, 0, 10);
+  
+  // Roller styling
+  lv_obj_set_style_bg_color(roller, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(roller, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(roller, 0, 0);
+  lv_obj_set_style_text_color(roller, lv_color_make(160, 160, 160), 0);
+  lv_obj_set_style_text_font(roller, &lv_font_montserrat_14, 0);
+  
+  // Selected item styling
+  lv_obj_set_style_bg_color(roller, lv_color_make(60, 60, 60), LV_PART_SELECTED);
+  lv_obj_set_style_text_color(roller, lv_color_white(), LV_PART_SELECTED);
+  
+  // Add click event for confirmation
+  lv_obj_add_event_cb(roller, roller_click_cb, LV_EVENT_CLICKED, NULL);
+  
+  // Add roller to menu group for encoder navigation
+  if (menu_state.group) {
+    lv_group_add_obj(menu_state.group, roller);
+    lv_group_focus_obj(roller);
+    // Put group in editing mode so encoder scrolls the roller
+    lv_group_set_editing(menu_state.group, true);
+  }
+  
+  ESP_LOGI(TAG, "Roller page created: %s, initial=%lu", title, (unsigned long)initial_index);
+  
+  return screen;
 }

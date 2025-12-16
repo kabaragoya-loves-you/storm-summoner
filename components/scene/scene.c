@@ -51,6 +51,7 @@ static scene_manager_t g_scene_manager = {
 
 // Touchwheel instance for scene encoder mode
 static touchwheel_instance_t* s_scene_touchwheel = NULL;
+static bool s_input_suspended = false;  // True when in programming mode
 
 // Cached device definition for current scene
 static device_def_t* s_cached_device = NULL;
@@ -2435,4 +2436,42 @@ esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {
   scene_save_manifest();
   
   return ESP_OK;
+}
+
+// ============================================================================
+// Input suspension for programming mode
+// ============================================================================
+
+esp_err_t scene_suspend_input(void) {
+  if (s_input_suspended) return ESP_OK;  // Already suspended
+  
+  ESP_LOGI(TAG, "Suspending scene input (entering programming mode)");
+  
+  // Unregister scene touchwheel so it doesn't receive input
+  if (s_scene_touchwheel) {
+    touch_unregister_touchwheel_instance(s_scene_touchwheel);
+    ESP_LOGD(TAG, "Scene touchwheel unregistered");
+  }
+  
+  s_input_suspended = true;
+  return ESP_OK;
+}
+
+esp_err_t scene_resume_input(void) {
+  if (!s_input_suspended) return ESP_OK;  // Not suspended
+  
+  ESP_LOGI(TAG, "Resuming scene input (leaving programming mode)");
+  
+  // Re-register scene touchwheel if it exists
+  if (s_scene_touchwheel) {
+    touch_register_touchwheel_instance(s_scene_touchwheel);
+    ESP_LOGD(TAG, "Scene touchwheel re-registered");
+  }
+  
+  s_input_suspended = false;
+  return ESP_OK;
+}
+
+bool scene_is_input_suspended(void) {
+  return s_input_suspended;
 }

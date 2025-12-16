@@ -10,9 +10,12 @@
 
 #define TAG "MENU_DEVICE_CONFIG"
 
-// Small static storage for the main menu (always needed, minimal size)
-static menu_item_t s_device_config_items[4];
+// Static storage for main menu (14 items max: name, refresh, midi ch, divider, 10 info labels)
+#define MAX_DEVICE_CONFIG_ITEMS 14
+static menu_item_t s_device_config_items[MAX_DEVICE_CONFIG_ITEMS];
 static char s_current_pedal_label[80];
+static char s_midi_ch_label[24];
+static char s_info_labels[10][48];  // TRS, CC count, Clock, Notes, Transmits, Slots, Bank, First preset, etc.
 
 // Dynamic storage - allocated in PSRAM only when needed
 typedef struct {
@@ -77,82 +80,37 @@ static bool dynamic_menu_alloc(dynamic_menu_t* menu, uint32_t count) {
 }
 
 // ============================================================================
-// Pedal Info Display
+// MIDI Channel Selection (Roller)
 // ============================================================================
 
-static void show_pedal_info(void* user_data) {
+// Roller confirmation callback - save channel to NVS and rebuild menu
+static void midi_channel_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
+  uint8_t new_channel = (uint8_t)(selected_index + 1);  // Convert to 1-16
+  
+  ESP_LOGI(TAG, "MIDI channel changed to: %u", (unsigned)new_channel);
+  device_config_set_channel(new_channel);
+  device_config_save();
+  
+  // Navigate back 2 levels (roller -> old Pedal Setup -> Index) 
+  // then navigate to fresh Pedal Setup to show new channel
+  menu_navigate_back_then_to(2, "Pedal Setup", menu_page_device_config_create);
+}
+
+// Builder function for roller page
+static lv_obj_t* midi_channel_roller_create(void) {
   const device_config_t* cfg = device_config_get();
+  uint32_t current_channel = cfg->midi_channel;
   
-  // Load the device to get full info
-  device_def_t* device = assets_load_device(cfg->pedal_slug);
-  
-  // Allocate info text in PSRAM
-  char* info_text = heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
-  if (!info_text) {
-    ESP_LOGE(TAG, "Failed to allocate info text");
-    return;
-  }
-  
-  if (!device) {
-    snprintf(info_text, 512,
-      "PEDAL INFO\n\n"
-      "Slug: %s\n\n"
-      "Device not found in database",
-      cfg->pedal_slug[0] ? cfg->pedal_slug : "(none)");
-    menu_navigate_to_info("Pedal Info", info_text);
-    heap_caps_free(info_text);
-    return;
-  }
-  
-  // Build TRS type string
-  const char* trs_str;
-  switch (device->trs_type) {
-    case MIDI_TRS_TYPE_A: trs_str = "Type A"; break;
-    case MIDI_TRS_TYPE_B: trs_str = "Type B"; break;
-    case MIDI_TRS_TYPE_TS: trs_str = "TS"; break;
-    case MIDI_TRS_TYPE_BOTH: trs_str = "Both"; break;
-    case MIDI_TRS_UNKNOWN:
-    default: trs_str = "Not specified"; break;
-  }
-  
-  // Build bank mode string
-  const char* bank_str = "None";
-  if (device->pc_info) {
-    switch (device->pc_info->bank_mode) {
-      case PC_BANK_SELECT_CC0: bank_str = "CC0"; break;
-      case PC_BANK_SELECT_CC0_CC32: bank_str = "CC0+CC32"; break;
-      default: break;
-    }
-  }
-  
-  snprintf(info_text, 512,
-    "%s\n"
-    "%s\n\n"
-    "TRS: %s\n"
-    "MIDI Ch: %d\n"
-    "CC commands: %u\n"
-    "Clock: %s\n"
-    "Notes: %s\n"
-    "Transmits: %s\n"
-    "Preset slots: %u\n"
-    "Bank mode: %s\n"
-    "First preset: %d",
-    device->name[0] ? device->name : "Unknown",
-    device->vendor[0] ? device->vendor : "Unknown",
-    trs_str,
-    cfg->midi_channel,
-    (unsigned)device->control_count,
-    device->receives_clock ? "supported" : "unsupported",
-    device->receives_notes ? "supported" : "unsupported",
-    device->transmits_pc ? "yes" : "no",
-    device->pc_info ? (unsigned)device->pc_info->count : 128,
-    bank_str,
-    device->pc_info ? (int)device->pc_info->index_base : 0);
-  
-  assets_free_device(device);
-  menu_navigate_to_info("Pedal Info", info_text);
-  heap_caps_free(info_text);
+  return menu_create_roller_page("MIDI Channel",
+    "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16",
+    current_channel - 1,  // 0-based index
+    midi_channel_confirm_cb, NULL);
+}
+
+static void nav_to_midi_channel_select(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("MIDI Channel", midi_channel_roller_create);
 }
 
 // ============================================================================
@@ -330,22 +288,107 @@ lv_obj_t* menu_page_device_config_create(void) {
   cleanup_submenus();
   
   const device_config_t* cfg = device_config_get();
-  
-  // Get display name for current pedal (no "Pedal:" prefix)
   device_def_t* device = assets_load_device(cfg->pedal_slug);
+  
+  int item_idx = 0;
+  
+  // Item 0: Current pedal name (clickable -> vendor select)
   if (device && device->name[0]) {
     strncpy(s_current_pedal_label, device->name, sizeof(s_current_pedal_label) - 1);
     s_current_pedal_label[sizeof(s_current_pedal_label) - 1] = '\0';
   } else {
     strncpy(s_current_pedal_label, "(no pedal)", sizeof(s_current_pedal_label) - 1);
-    s_current_pedal_label[sizeof(s_current_pedal_label) - 1] = '\0';
   }
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_current_pedal_label, nav_to_vendor_select, NULL, true };
+  
+  // Item 1: MIDI Channel (clickable -> roller)
+  snprintf(s_midi_ch_label, sizeof(s_midi_ch_label), "MIDI Ch: %d", cfg->midi_channel);
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_midi_ch_label, nav_to_midi_channel_select, NULL, false };
+  
+  // Item 2: Divider
+  s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false };
+  
+  // Build info labels (read-only, NULL callback)
+  int info_idx = 0;
+  
+  // TRS Type
+  const char* trs_str = "Not specified";
+  if (device) {
+    switch (device->trs_type) {
+      case MIDI_TRS_TYPE_A: trs_str = "Type A"; break;
+      case MIDI_TRS_TYPE_B: trs_str = "Type B"; break;
+      case MIDI_TRS_TYPE_TS: trs_str = "TS"; break;
+      case MIDI_TRS_TYPE_BOTH: trs_str = "Both"; break;
+      default: break;
+    }
+  }
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "TRS: %s", trs_str);
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // CC commands count
+  unsigned cc_count = device ? (unsigned)device->control_count : 0;
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "CC commands: %u", cc_count);
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // Clock support
+  bool clock = device ? device->receives_clock : false;
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), 
+    "Clock: %s", clock ? "supported" : "unsupported");
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // Notes support
+  bool notes = device ? device->receives_notes : false;
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), 
+    "Notes: %s", notes ? "supported" : "unsupported");
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // Transmits PC
+  bool transmits = device ? device->transmits_pc : false;
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), 
+    "Transmits: %s", transmits ? "yes" : "no");
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // Preset slots
+  unsigned slots = (device && device->pc_info) ? (unsigned)device->pc_info->count : 128;
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "Preset slots: %u", slots);
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // Bank mode
+  const char* bank_str = "None";
+  if (device && device->pc_info) {
+    switch (device->pc_info->bank_mode) {
+      case PC_BANK_SELECT_CC0: bank_str = "CC0"; break;
+      case PC_BANK_SELECT_CC0_CC32: bank_str = "CC0+CC32"; break;
+      default: break;
+    }
+  }
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "Bank mode: %s", bank_str);
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // First preset
+  int first_preset = (device && device->pc_info) ? (int)device->pc_info->index_base : 0;
+  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "First preset: %d", first_preset);
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  
+  // Second divider after info labels
+  s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false };
+  
+  // Refresh command at bottom (clickable)
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ "Refresh", refresh_pedal, NULL, false };
+  
   if (device) assets_free_device(device);
   
-  // Build menu items (small static array)
-  s_device_config_items[0] = (menu_item_t){ s_current_pedal_label, nav_to_vendor_select, NULL, true };
-  s_device_config_items[1] = (menu_item_t){ "Pedal Info", show_pedal_info, NULL, false };
-  s_device_config_items[2] = (menu_item_t){ "Refresh", refresh_pedal, NULL, false };
-  
-  return menu_create_page("Pedal Setup", s_device_config_items, 3);
+  ESP_LOGI(TAG, "Device config page: %d items", item_idx);
+  return menu_create_page("Pedal Setup", s_device_config_items, item_idx);
 }
