@@ -430,9 +430,10 @@ static void touch_health_check_task(void *pvParameters) {
       
       esp_err_t ret = touch_check_drift();
       if (ret == ESP_FAIL) {
-        ESP_LOGW(TAG, "Drift detected - scheduling calibration");
+        ESP_LOGW(TAG, "Drift detected - scheduling forced recalibration");
         if (AUTO_CALIBRATE_ON_DRIFT) {
-          touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_DRIFT, false);
+          // Force=true because drift means the current calibration is stale
+          touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_DRIFT, true);
         }
       }
     }
