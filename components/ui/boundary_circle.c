@@ -1,5 +1,6 @@
 #include "lvgl.h"
 #include "ui.h"
+#include "ui_module_settings.h"
 #include "lv_boundary_circle.h"
 #include "shared_canvas_buffer.h"
 #include "esp_log.h"
@@ -16,6 +17,18 @@ static lv_obj_t *g_boundary = NULL;
 static int32_t g_circle_size = 0;     // 0 = use viewport size
 static int32_t g_circle_center_x = 0; // 0 = center of viewport
 static int32_t g_circle_center_y = 0; // 0 = center of viewport
+
+// Forward declaration for callback
+static void boundary_circle_update_position(void);
+
+// Module settings
+static ui_module_setting_t boundary_circle_settings[] = {
+  { "size", UI_SETTING_I32, &g_circle_size, "Circle diameter (0=auto)", boundary_circle_update_position, NULL },
+  { "left", UI_SETTING_I32, &g_circle_center_x, "Center X position (0=center)", boundary_circle_update_position, NULL },
+  { "top", UI_SETTING_I32, &g_circle_center_y, "Center Y position (0=center)", boundary_circle_update_position, NULL },
+};
+static const size_t boundary_circle_settings_count = 
+  sizeof(boundary_circle_settings) / sizeof(boundary_circle_settings[0]);
 
 static void boundary_circle_update_position(void) {
   if (!g_boundary || !g_screen) return;
@@ -98,7 +111,10 @@ static void boundary_circle_teardown(void) {
   ESP_LOGD(TAG, "Boundary circle module teardown complete");
 }
 
-static void boundary_circle_init(void) {}
+static void boundary_circle_init(void) {
+  ui_module_register_settings("boundary_circle", boundary_circle_settings, 
+                               boundary_circle_settings_count);
+}
 
 ui_draw_module_t boundary_circle_module = {
   .draw_func = boundary_circle_draw,

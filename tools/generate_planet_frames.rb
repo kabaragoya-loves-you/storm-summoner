@@ -1,5 +1,5 @@
 #!/usr/bin/env ruby
-# Generate pre-rendered planet rotation frames as sparse pixel data
+# Generate pre-rendered planet rotation frames as sparse pixel data (RGB565)
 # Usage: ruby generate_planet_frames.rb texture.png output.bin [options]
 #
 # Options:
@@ -21,7 +21,7 @@
 #     uint32_t pixel_count
 #
 #   Pixel data (variable):
-#     For each pixel: uint8_t x, uint8_t y, uint8_t r, uint8_t g, uint8_t b
+#     For each pixel: uint8_t x, uint8_t y, uint16_t rgb565 (little-endian)
 
 require 'chunky_png'
 
@@ -29,7 +29,7 @@ require 'chunky_png'
 # Configuration (can be overridden by command line)
 #=============================================================================
 
-DEFAULT_DIAMETER = 80
+DEFAULT_DIAMETER = 35
 DEFAULT_FRAMES = 36
 DEFAULT_AMBIENT = 0.3
 
@@ -160,7 +160,9 @@ num_frames.times do |frame_idx|
       # Skip very dark pixels (optional, saves space)
       next if r < 8 && g < 8 && b < 8
       
-      pixels << { x: px, y: py, r: r, g: g, b: b }
+      # Convert to RGB565: RRRRRGGG GGGBBBBB
+      rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+      pixels << { x: px, y: py, rgb565: rgb565 }
     end
   end
   
@@ -189,10 +191,10 @@ frames.each do |pixels|
   frame_table << { offset: current_offset, count: pixels.length }
   
   pixels.each do |p|
-    pixel_data << [p[:x], p[:y], p[:r], p[:g], p[:b]].pack('CCCCC')
+    pixel_data << [p[:x], p[:y], p[:rgb565]].pack('CCS<')
   end
   
-  current_offset += pixels.length * 5
+  current_offset += pixels.length * 4
 end
 
 # Write file

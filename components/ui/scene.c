@@ -38,7 +38,7 @@
 #define PULSE_DEPTH    0.2f
 
 // Asset paths
-#define STATIC_PATH "/assets/images/static.bin.z"
+#define STATIC_PATH "/assets/images/mountain.bin.z"
 #define BODY_PATH   "/assets/images/body.bin.z"
 #define TAIL_PATH   "/assets/images/tail.bin.z"
 
@@ -151,9 +151,9 @@ static bool g_animation_enabled = true;
 static bool g_pulse_enabled = true;
 
 static ui_module_setting_t scene_settings[] = {
-  { "animation", UI_SETTING_BOOL, &g_animation_enabled, "Enable/disable animation" },
-  { "pulse", UI_SETTING_BOOL, &g_pulse_enabled, "Red pulse on beat 1" },
-  { "body_ratio", UI_SETTING_U8, &g_body_ratio, "Body loops per tail cycle" },
+  { "animation", UI_SETTING_BOOL, &g_animation_enabled, "Enable/disable animation", NULL, NULL },
+  { "pulse", UI_SETTING_BOOL, &g_pulse_enabled, "Red pulse on beat 1", NULL, NULL },
+  { "body_ratio", UI_SETTING_U8, &g_body_ratio, "Body loops per tail cycle", NULL, NULL },
 };
 static const size_t scene_settings_count = sizeof(scene_settings) / sizeof(scene_settings[0]);
 
@@ -620,7 +620,12 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   
   // Create interpolation timer (always running - checks state internally)
   g_interp_timer = lv_timer_create(interp_timer_cb, INTERP_TIMER_PERIOD_MS, NULL);
-  
+
+  // Subscribe to events now that we're active
+  event_bus_subscribe(EVENT_BEAT, beat_event_handler, NULL);
+  event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);
+  event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
+
   // Mark module as active
   g_module_active = true;
   
@@ -636,11 +641,8 @@ UI_CREATE_DEFERRED_DRAW_FUNC(scene_ui, scene_draw_deferred_cb)
 static void scene_ui_teardown(void) {
   // Mark module as inactive first
   g_module_active = false;
-  
-  // Unregister settings
-  ui_module_unregister_settings("scene");
-  
-  // Unsubscribe from events to prevent duplicate handlers on re-init
+
+  // Unsubscribe from events (we subscribe when activated, unsubscribe when deactivated)
   event_bus_unsubscribe(EVENT_BEAT, beat_event_handler);
   event_bus_unsubscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler);
   event_bus_unsubscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler);
@@ -669,15 +671,13 @@ static void scene_ui_teardown(void) {
 }
 
 static void scene_ui_init(void) {
-  // Register module settings
+  static bool s_settings_registered = false;
+  if (s_settings_registered) return;
+  s_settings_registered = true;
+  
+  // Register module settings (once at startup, so they're always available)
   ui_module_register_settings("scene", scene_settings, scene_settings_count);
-  
-  // Subscribe to events
-  event_bus_subscribe(EVENT_BEAT, beat_event_handler, NULL);
-  event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);
-  event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
-  
-  ESP_LOGI(TAG, "Scene UI module initialized");
+  ESP_LOGI(TAG, "Scene UI module settings registered");
 }
 
 ui_draw_module_t scene_ui_module = {

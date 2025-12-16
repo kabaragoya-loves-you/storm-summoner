@@ -169,7 +169,7 @@ void touchwheel_strategy_binary_process_press(touchwheel_core_t* core, uint8_t p
             
             int effective_delta = delta * speed_multiplier;
             
-            ESP_LOGI(TAG, "Touchwheel: %d x %dx = %d (time: %lu ms)", delta, speed_multiplier, effective_delta, time_diff_ms);
+            ESP_LOGD(TAG, "Touchwheel: %d x %dx = %d (time: %lu ms)", delta, speed_multiplier, effective_delta, time_diff_ms);
             
             if (ui_get_app_mode() != APP_MODE_PROGRAMMING) {
                 event_t haptic_event = {

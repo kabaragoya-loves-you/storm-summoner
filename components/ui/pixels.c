@@ -23,6 +23,10 @@
 #define ANIM_SPEED 1
 #define ANIM_INTERVAL_MS 40  // 25 FPS animation
 
+// Tendril center point (set to -1 to use display center)
+#define TENDRILS_CENTER_X  62
+#define TENDRILS_CENTER_Y  75
+
 // Tendril colors
 #define TENDRIL_CORE_R  220
 #define TENDRIL_CORE_G  180
@@ -89,6 +93,10 @@ static uint8_t g_num_pads = 0;
 static uint8_t g_num_frames = 0;
 static uint8_t g_max_segments = 0;
 static uint8_t g_frame_indices[8] = {0};
+
+// Tendril origin offset (calculated from TENDRILS_CENTER_X/Y)
+static int16_t g_tendril_offset_x = 0;
+static int16_t g_tendril_offset_y = 0;
 
 //=============================================================================
 // Data loading
@@ -230,7 +238,8 @@ static void anim_timer_cb(lv_timer_t *timer) {
           if (s->x1 == 0 && s->y1 == 0 && s->x2 == 0 && s->y2 == 0) continue;
           
           lv_color_t color = s->is_branch ? branch_color : core_color;
-          draw_line(s->x1, s->y1, s->x2, s->y2, color);
+          draw_line(s->x1 + g_tendril_offset_x, s->y1 + g_tendril_offset_y,
+            s->x2 + g_tendril_offset_x, s->y2 + g_tendril_offset_y, color);
         }
         
         // Advance animation
@@ -288,6 +297,12 @@ static void pixels_draw_deferred_cb(lv_timer_t *timer) {
     lv_canvas_fill_bg(g_canvas, lv_color_black(), LV_OPA_COVER);
     
     memset(g_frame_indices, 0, sizeof(g_frame_indices));
+    
+    // Calculate tendril origin offset from display center
+    int16_t display_cx = g_disp_width / 2;
+    int16_t display_cy = g_disp_height / 2;
+    g_tendril_offset_x = (TENDRILS_CENTER_X < 0) ? 0 : (TENDRILS_CENTER_X - display_cx);
+    g_tendril_offset_y = (TENDRILS_CENTER_Y < 0) ? 0 : (TENDRILS_CENTER_Y - display_cy);
     
     g_anim_timer = lv_timer_create(anim_timer_cb, ANIM_INTERVAL_MS, NULL);
     

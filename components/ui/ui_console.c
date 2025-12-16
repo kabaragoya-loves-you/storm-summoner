@@ -10,24 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-// buttons API (defined in buttons.c)
-void buttons_set_planet(const char *name);
-const char *buttons_get_planet(void);
-void buttons_set_rotation(float speed);
-float buttons_get_rotation(void);
 
 static const char* TAG = "ui_console";
 
 static const char* registered_commands[] = {
-  "info", "size", "top", "left", "module", "planet", "rotation", "perf", "cpu", 
-  "settings", "set"
+  "info", "module", "perf", "cpu", "settings", "set"
 };
-
-// Available planet textures
-static const char* planet_textures[] = {
-  "earth", "moon", "mars", "jupiter"
-};
-static const int num_planets = sizeof(planet_textures) / sizeof(planet_textures[0]);
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
 // Registry of available modules for runtime switching
@@ -62,98 +50,6 @@ static int cmd_info(int argc, char **argv) {
     boundary_circle_get_size(), boundary_circle_get_left(), boundary_circle_get_top());
   ESP_LOGI(TAG, "================");
   
-  return 0;
-}
-
-// Command: size <n>
-static int cmd_size(int argc, char **argv) {
-  if (argc < 2) {
-    ESP_LOGI(TAG, "size: %ld", boundary_circle_get_size());
-    return 0;
-  }
-  int32_t val = atoi(argv[1]);
-  boundary_circle_set_size(val);
-  ESP_LOGI(TAG, "size: %ld", val);
-  return 0;
-}
-
-// Command: top <n>
-static int cmd_top(int argc, char **argv) {
-  if (argc < 2) {
-    ESP_LOGI(TAG, "top: %ld", boundary_circle_get_top());
-    return 0;
-  }
-  int32_t val = atoi(argv[1]);
-  boundary_circle_set_top(val);
-  ESP_LOGI(TAG, "top: %ld", val);
-  return 0;
-}
-
-// Command: left <n>
-static int cmd_left(int argc, char **argv) {
-  if (argc < 2) {
-    ESP_LOGI(TAG, "left: %ld", boundary_circle_get_left());
-    return 0;
-  }
-  int32_t val = atoi(argv[1]);
-  boundary_circle_set_left(val);
-  ESP_LOGI(TAG, "left: %ld", val);
-  return 0;
-}
-
-// Command: planet [name]
-static int cmd_planet(int argc, char **argv) {
-  ui_draw_module_t *current_mod = ui_get_current_module();
-  bool is_buttons = (current_mod && strcmp(current_mod->name, "buttons") == 0);
-  
-  if (!is_buttons) {
-    printf("Planet command only works for 'buttons' module.\n");
-    return 1;
-  }
-  
-  if (argc < 2) {
-    const char* current = buttons_get_planet();
-    printf("Available planets:\n");
-    for (int i = 0; i < num_planets; i++) {
-      const char* marker = (current && strcmp(current, planet_textures[i]) == 0) ? " *" : "";
-      printf("  %s%s\n", planet_textures[i], marker);
-    }
-    return 0;
-  }
-  
-  const char* target = argv[1];
-  for (int i = 0; i < num_planets; i++) {
-    if (strcmp(planet_textures[i], target) == 0) {
-      buttons_set_planet(target);
-      printf("Planet set to: %s\n", target);
-      return 0;
-    }
-  }
-  
-  printf("Unknown planet: %s\n", target);
-  printf("Use 'planet' with no args to list available planets.\n");
-  return 1;
-}
-
-// Command: rotation [speed] - animation speed (positive=right, negative=left)
-static int cmd_rotation(int argc, char **argv) {
-  ui_draw_module_t *current_mod = ui_get_current_module();
-  bool is_buttons = (current_mod && strcmp(current_mod->name, "buttons") == 0);
-  
-  if (!is_buttons) {
-    printf("Rotation command only works for 'buttons' module.\n");
-    return 1;
-  }
-  
-  if (argc < 2) {
-    float current = buttons_get_rotation();
-    printf("Rotation speed: %.2f (positive=right, negative=left, try 0.25-1.0)\n", current);
-    return 0;
-  }
-  
-  float speed = strtof(argv[1], NULL);
-  buttons_set_rotation(speed);
-  printf("Rotation speed set to: %.2f\n", speed);
   return 0;
 }
 
@@ -307,13 +203,24 @@ static int cmd_settings(int argc, char **argv) {
       case UI_SETTING_BOOL: type_str = "bool"; break;
       case UI_SETTING_U8: type_str = "u8"; break;
       case UI_SETTING_U16: type_str = "u16"; break;
+      case UI_SETTING_I16: type_str = "i16"; break;
+      case UI_SETTING_I32: type_str = "i32"; break;
       case UI_SETTING_FLOAT: type_str = "float"; break;
+      case UI_SETTING_ENUM: type_str = "enum"; break;
       default: type_str = "?"; break;
     }
     
     printf("  %-15s = %-10s [%s] %s\n", 
            settings[i].name, value, type_str, 
            settings[i].description ? settings[i].description : "");
+    
+    // For enum types, list valid values
+    if (settings[i].type == UI_SETTING_ENUM && settings[i].enum_values) {
+      printf("                   options: ");
+      for (const char** p = settings[i].enum_values; *p != NULL; p++) {
+        printf("%s%s", *p, *(p + 1) ? ", " : "\n");
+      }
+    }
   }
   
   return 0;
@@ -362,7 +269,15 @@ static int cmd_set(int argc, char **argv) {
 
 esp_err_t ui_console_init(void) {
   ESP_LOGI(TAG, "Registering ui commands");
-  
+
+  // Initialize all modules to register their settings
+  // This allows settings to be modified before a module is activated
+  for (int i = 0; i < num_modules; i++) {
+    if (available_modules[i]->init_func) {
+      available_modules[i]->init_func();
+    }
+  }
+
   // info command
   const esp_console_cmd_t info_cmd = {
     .command = "info",
@@ -372,33 +287,6 @@ esp_err_t ui_console_init(void) {
   };
   esp_console_cmd_register(&info_cmd);
   
-  // size command
-  const esp_console_cmd_t size_cmd = {
-    .command = "size",
-    .help = "Get/set boundary circle diameter",
-    .hint = "[n]",
-    .func = &cmd_size,
-  };
-  esp_console_cmd_register(&size_cmd);
-  
-  // top command
-  const esp_console_cmd_t top_cmd = {
-    .command = "top",
-    .help = "Get/set boundary circle center Y",
-    .hint = "[n]",
-    .func = &cmd_top,
-  };
-  esp_console_cmd_register(&top_cmd);
-  
-  // left command
-  const esp_console_cmd_t left_cmd = {
-    .command = "left",
-    .help = "Get/set boundary circle center X",
-    .hint = "[n]",
-    .func = &cmd_left,
-  };
-  esp_console_cmd_register(&left_cmd);
-  
   // module command
   const esp_console_cmd_t module_cmd = {
     .command = "module",
@@ -407,24 +295,6 @@ esp_err_t ui_console_init(void) {
     .func = &cmd_module,
   };
   esp_console_cmd_register(&module_cmd);
-  
-  // planet command
-  const esp_console_cmd_t planet_cmd = {
-    .command = "planet",
-    .help = "List or switch planet textures",
-    .hint = "[earth|moon|mars|jupiter]",
-    .func = &cmd_planet,
-  };
-  esp_console_cmd_register(&planet_cmd);
-  
-  // rotation command (for splash5)
-  const esp_console_cmd_t rotation_cmd = {
-    .command = "rotation",
-    .help = "Get/set planet rotation speed (positive=right, negative=left)",
-    .hint = "[speed]",
-    .func = &cmd_rotation,
-  };
-  esp_console_cmd_register(&rotation_cmd);
   
   // perf command
   const esp_console_cmd_t perf_cmd = {

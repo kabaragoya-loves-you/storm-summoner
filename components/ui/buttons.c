@@ -1,5 +1,6 @@
 #include "lvgl.h"
 #include "ui.h"
+#include "ui_module_settings.h"
 #include "lv_radar.h"
 #include "lv_slices.h"
 #include "lv_starfield.h"
@@ -49,9 +50,7 @@ typedef struct {
 typedef struct {
   uint8_t x;
   uint8_t y;
-  uint8_t r;
-  uint8_t g;
-  uint8_t b;
+  uint16_t rgb565;
 } __attribute__((packed)) pixel_data_t;
 
 //=============================================================================
@@ -78,6 +77,36 @@ static void *g_planet_buffer = NULL;
 // Rotation control
 static float g_rotation_speed = 0.5f;
 static float g_frame_accumulator = 0.0f;
+
+// Forward declarations for settings callbacks
+static bool load_planet(const char *path);
+static void free_planet(void);
+
+// Planet enum options
+static const char* planet_options[] = { "earth", "moon", "mars", "jupiter", NULL };
+
+// Callback when planet setting changes
+static void on_planet_change(void) {
+  if (!g_screen) return;  // Module not active, planet will load on draw
+  
+  char planet_path[64];
+  snprintf(planet_path, sizeof(planet_path), PLANET_FILE_FMT, g_planet_name);
+  
+  free_planet();
+  if (!load_planet(planet_path)) {
+    ESP_LOGE(TAG, "Failed to load planet: %s", g_planet_name);
+  }
+  g_current_frame = 0;
+  g_frame_accumulator = 0.0f;
+}
+
+// Module settings
+static ui_module_setting_t buttons_settings[] = {
+  { "rotation", UI_SETTING_FLOAT, &g_rotation_speed, "Planet rotation speed", NULL, NULL },
+  { "planet", UI_SETTING_ENUM, g_planet_name, "Planet texture", on_planet_change, planet_options },
+};
+static const size_t buttons_settings_count = 
+  sizeof(buttons_settings) / sizeof(buttons_settings[0]);
 
 // Display info
 static uint16_t g_disp_width = 0;
@@ -144,11 +173,15 @@ static void planet_anim_cb(lv_timer_t *timer) {
   pixel_data_t *pixels = get_frame_pixels(g_current_frame, &pixel_count);
   if (!pixels) return;
   
-  // Draw pixels
+  // Draw pixels (data is already RGB565)
   for (uint32_t i = 0; i < pixel_count; i++) {
     pixel_data_t *p = &pixels[i];
     if (p->x < g_planet_header.diameter && p->y < g_planet_header.diameter) {
-      lv_color_t color = lv_color_make(p->r, p->g, p->b);
+      // Extract RGB from RGB565: RRRRRGGG GGGBBBBB
+      uint8_t r = (p->rgb565 >> 11) << 3;
+      uint8_t g = ((p->rgb565 >> 5) & 0x3F) << 2;
+      uint8_t b = (p->rgb565 & 0x1F) << 3;
+      lv_color_t color = lv_color_make(r, g, b);
       lv_canvas_set_px(g_planet_canvas, p->x, p->y, color, LV_OPA_COVER);
     }
   }
@@ -295,6 +328,7 @@ static void buttons_teardown(void) {
 }
 
 static void buttons_init(void) {
+  ui_module_register_settings("buttons", buttons_settings, buttons_settings_count);
   ESP_LOGI(TAG, "Buttons module initialized");
 }
 

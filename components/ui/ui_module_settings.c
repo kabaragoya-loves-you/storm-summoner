@@ -146,14 +146,60 @@ bool ui_module_set_setting(const char* module_name, const char* setting_name,
       *(uint16_t*)setting->value_ptr = (uint16_t)val;
       break;
     }
+    case UI_SETTING_I16: {
+      int val = atoi(value);
+      if (val < -32768 || val > 32767) {
+        ESP_LOGW(TAG, "Value out of range for i16: %s", value);
+        return false;
+      }
+      *(int16_t*)setting->value_ptr = (int16_t)val;
+      break;
+    }
+    case UI_SETTING_I32: {
+      long val = strtol(value, NULL, 10);
+      *(int32_t*)setting->value_ptr = (int32_t)val;
+      break;
+    }
     case UI_SETTING_FLOAT: {
       float val = atof(value);
       *(float*)setting->value_ptr = val;
       break;
     }
+    case UI_SETTING_ENUM: {
+      if (!setting->enum_values) {
+        ESP_LOGW(TAG, "Enum setting '%s' has no values defined", setting_name);
+        return false;
+      }
+      // Validate against enum values
+      bool valid = false;
+      for (const char** p = setting->enum_values; *p != NULL; p++) {
+        if (strcmp(*p, value) == 0) {
+          valid = true;
+          break;
+        }
+      }
+      if (!valid) {
+        ESP_LOGW(TAG, "Invalid enum value '%s' for setting '%s'", value, setting_name);
+        // List valid values
+        printf("Valid values: ");
+        for (const char** p = setting->enum_values; *p != NULL; p++) {
+          printf("%s%s", *p, *(p + 1) ? ", " : "\n");
+        }
+        return false;
+      }
+      // Copy string to buffer (assumes value_ptr points to char array)
+      strncpy((char*)setting->value_ptr, value, 31);
+      ((char*)setting->value_ptr)[31] = '\0';
+      break;
+    }
     default:
       ESP_LOGW(TAG, "Unknown setting type");
       return false;
+  }
+  
+  // Call on_change callback if defined
+  if (setting->on_change) {
+    setting->on_change();
   }
   
   ESP_LOGI(TAG, "Set %s.%s = %s", module_name, setting_name, value);
@@ -178,8 +224,17 @@ bool ui_module_get_setting_str(const char* module_name, const char* setting_name
     case UI_SETTING_U16:
       snprintf(buffer, buffer_size, "%u", *(uint16_t*)setting->value_ptr);
       break;
+    case UI_SETTING_I16:
+      snprintf(buffer, buffer_size, "%d", *(int16_t*)setting->value_ptr);
+      break;
+    case UI_SETTING_I32:
+      snprintf(buffer, buffer_size, "%ld", (long)*(int32_t*)setting->value_ptr);
+      break;
     case UI_SETTING_FLOAT:
       snprintf(buffer, buffer_size, "%.2f", *(float*)setting->value_ptr);
+      break;
+    case UI_SETTING_ENUM:
+      snprintf(buffer, buffer_size, "%s", (char*)setting->value_ptr);
       break;
     default:
       return false;

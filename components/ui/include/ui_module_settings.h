@@ -10,15 +10,23 @@ typedef enum {
   UI_SETTING_BOOL,
   UI_SETTING_U8,
   UI_SETTING_U16,
-  UI_SETTING_FLOAT
+  UI_SETTING_I16,
+  UI_SETTING_I32,
+  UI_SETTING_FLOAT,
+  UI_SETTING_ENUM      // String enum - uses enum_values array
 } ui_setting_type_t;
+
+// Optional callback when setting changes
+typedef void (*ui_setting_callback_t)(void);
 
 // Individual setting definition
 typedef struct {
-  const char* name;           // Setting name (e.g., "pulse", "body_ratio")
-  ui_setting_type_t type;     // Value type
-  void* value_ptr;            // Pointer to the actual value
-  const char* description;    // Human-readable description
+  const char* name;              // Setting name (e.g., "pulse", "body_ratio")
+  ui_setting_type_t type;        // Value type
+  void* value_ptr;               // Pointer to the actual value
+  const char* description;       // Human-readable description
+  ui_setting_callback_t on_change; // Optional: called after value is set
+  const char** enum_values;      // For ENUM type: NULL-terminated array of valid strings
 } ui_module_setting_t;
 
 // Maximum settings per module

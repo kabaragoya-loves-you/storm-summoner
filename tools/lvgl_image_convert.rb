@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 # LVGL 9.x Image Converter
-# Converts PNG/JPG images to LVGL binary format (RGB888)
+# Converts PNG/JPG images to LVGL binary format (RGB565 default)
 #
 # Usage: ruby lvgl_image_convert.rb input.png [output.bin]
 #
@@ -208,7 +208,7 @@ if ARGV.empty?
   puts "Usage: ruby #{$0} <input_image> [output.bin] [--format FORMAT]"
   puts ""
   puts "Options:"
-  puts "  --format FORMAT   Color format: RGB888 (default), ARGB8888, RGB565"
+  puts "  --format FORMAT   Color format: RGB565 (default), RGB888, ARGB8888"
   puts ""
   puts "Examples:"
   puts "  ruby #{$0} earth.png"
@@ -223,7 +223,7 @@ end
 
 input_path = ARGV[0]
 output_path = ARGV[1]
-color_format = 'RGB888'
+color_format = 'RGB565'
 
 # Parse --format option
 if idx = ARGV.index('--format')
