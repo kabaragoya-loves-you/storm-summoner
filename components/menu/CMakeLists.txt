@@ -61,6 +61,8 @@ idf_component_register(
     app_settings
     display
     revision
+    version
+    littlefs
     assets_manager
     firmware_update
     device_config

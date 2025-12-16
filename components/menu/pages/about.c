@@ -1,19 +1,56 @@
 #include "menu.h"
 #include "menu_pages.h"
+#include "version.h"
+#include "revision.h"
+#include "esp_littlefs.h"
 #include "esp_log.h"
+#include <stdio.h>
 
 #define TAG "MENU_ABOUT"
 
-// TODO: Add about/info items here
-
-// Placeholder submenu items
-static const menu_item_t about_items[] = {
-  { "Coming Soon", NULL, NULL, false }
-};
+// Static storage for menu items and labels
+#define MAX_ABOUT_ITEMS 8
+static menu_item_t s_about_items[MAX_ABOUT_ITEMS];
+static char s_labels[MAX_ABOUT_ITEMS][48];
 
 lv_obj_t* menu_page_about_create(void) {
   ESP_LOGI(TAG, "Creating about page");
-  return menu_create_page("About", about_items, 
-    sizeof(about_items) / sizeof(about_items[0]));
+  
+  int idx = 0;
+  
+  // Version
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Version: %s", version_get_string());
+  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  idx++;
+  
+  // Serial
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Serial: %s", version_get_serial());
+  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  idx++;
+  
+  // Build number
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Build: %lu", (unsigned long)version_get_build());
+  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  idx++;
+  
+  // Hardware revision
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Hardware: %s", revision_get_string());
+  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  idx++;
+  
+  // LittleFS storage
+  size_t total_bytes = 0, used_bytes = 0;
+  if (esp_littlefs_info("assets", &total_bytes, &used_bytes) == ESP_OK) {
+    // Convert to KB for readability
+    snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage: %uK / %uK", 
+      (unsigned)(used_bytes / 1024), (unsigned)(total_bytes / 1024));
+  } else {
+    snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage: unavailable");
+  }
+  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  idx++;
+  
+  ESP_LOGI(TAG, "About page: %d items", idx);
+  return menu_create_page("About", s_about_items, idx);
 }
 
