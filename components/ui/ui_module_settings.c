@@ -69,7 +69,7 @@ void ui_module_register_settings(const char* module_name,
   s_registry[s_registry_count].count = count;
   s_registry_count++;
   
-  ESP_LOGI(TAG, "Registered %d settings for module '%s'", (int)count, module_name);
+  ESP_LOGD(TAG, "Registered %d settings for module '%s'", (int)count, module_name);
 }
 
 void ui_module_unregister_settings(const char* module_name) {

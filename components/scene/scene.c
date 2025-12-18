@@ -33,7 +33,6 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene);
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
 #define NVS_KEY_CHANGE_MODE      "change_mode"
-#define NVS_KEY_AUTOSAVE_MODE    "autosave_mode"
 
 // Global scene manager instance
 static scene_manager_t g_scene_manager = {
@@ -45,9 +44,22 @@ static scene_manager_t g_scene_manager = {
   .num_scenes = 1,
   .mode = SCENE_MODE_SINGLE,
   .change_mode = CHANGE_MODE_IMMEDIATE,
-  .autosave_mode = SCENE_AUTOSAVE_MANUAL,
   .initialized = false
 };
+
+// Helper: Save current scene immediately if in programming mode
+// Programming mode changes are always persisted; performance mode changes are temporary
+static void scene_persist_if_programming(void) {
+  if (ui_is_in_programming_mode()) {
+    uint8_t scene_index = g_scene_manager.current_scene_index;
+    esp_err_t ret = scene_save_to_flash(scene_index);
+    if (ret == ESP_OK) {
+      ESP_LOGD(TAG, "Scene %d saved (programming mode)", scene_index + 1);
+    } else {
+      ESP_LOGW(TAG, "Failed to save scene %d: %s", scene_index + 1, esp_err_to_name(ret));
+    }
+  }
+}
 
 // Touchwheel instance for scene encoder mode
 static touchwheel_instance_t* s_scene_touchwheel = NULL;
@@ -613,16 +625,9 @@ esp_err_t scene_init(void) {
     g_scene_manager.change_mode = (scene_change_mode_t)change_val;
   }
   
-  // Load autosave mode from NVS
-  uint8_t autosave_val;
-  if (app_settings_load_u8(NVS_KEY_AUTOSAVE_MODE, &autosave_val) == ESP_OK) {
-    g_scene_manager.autosave_mode = (scene_autosave_mode_t)autosave_val;
-  }
-  
   // Initialize cache
   for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
     g_scene_manager.cache[i].valid = false;
-    g_scene_manager.cache[i].dirty = false;
     g_scene_manager.cache[i].index = 0;
   }
   
@@ -691,8 +696,7 @@ esp_err_t scene_init(void) {
   
   g_scene_manager.cache[0].index = 0;
   g_scene_manager.cache[0].valid = true;
-  g_scene_manager.cache[0].dirty = false;
-  
+
   g_scene_manager.initialized = true;
   
   const char* mode_str = (g_scene_manager.mode == SCENE_MODE_SINGLE) ? "Single" :
@@ -794,16 +798,6 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     // Find least recently used cache slot (for now, just use round-robin)
     cache_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
     
-    // Save current cache entry if dirty (respects autosave mode)
-    if (g_scene_manager.cache[cache_idx].valid && g_scene_manager.cache[cache_idx].dirty) {
-      if (g_scene_manager.autosave_mode == SCENE_AUTOSAVE_AUTO) {
-        scene_save_to_flash(g_scene_manager.cache[cache_idx].index);
-        ESP_LOGI(TAG, "Auto-saved scene %d", g_scene_manager.cache[cache_idx].index + 1);
-      } else {
-        ESP_LOGW(TAG, "Scene %d has unsaved changes (autosave=manual, use 'save' command)", g_scene_manager.cache[cache_idx].index + 1);
-      }
-    }
-    
     // Load new scene into cache
     esp_err_t ret = scene_load_from_flash(scene_index);
     if (ret != ESP_OK) {
@@ -813,7 +807,6 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     
     g_scene_manager.cache[cache_idx].index = scene_index;
     g_scene_manager.cache[cache_idx].valid = true;
-    g_scene_manager.cache[cache_idx].dirty = false;
   }
   
   g_scene_manager.current_cache_idx = cache_idx;
@@ -948,7 +941,7 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
 
   strncpy(scene->name, name, sizeof(scene->name) - 1);
   scene->name[sizeof(scene->name) - 1] = '\0';
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
 
   ESP_LOGI(TAG, "Scene %d renamed to: %s", scene_index + 1, name);
   return ESP_OK;
@@ -969,7 +962,7 @@ esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id) {
     ESP_LOGI(TAG, "Scene %d device cleared (using global)", scene_index + 1);
   }
 
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
 
   // Invalidate cached device so it reloads on next access
   if (s_cached_device) {
@@ -1077,18 +1070,7 @@ scene_change_mode_t scene_get_change_mode(void) {
   return g_scene_manager.change_mode;
 }
 
-esp_err_t scene_set_autosave_mode(scene_autosave_mode_t mode) {
-  g_scene_manager.autosave_mode = mode;
-  
-  ESP_LOGI(TAG, "Autosave mode set to %s", mode == SCENE_AUTOSAVE_MANUAL ? "manual" : "auto");
-  
-  uint8_t mode_val = (uint8_t)mode;
-  return app_settings_save_u8(NVS_KEY_AUTOSAVE_MODE, mode_val);
-}
-
-scene_autosave_mode_t scene_get_autosave_mode(void) {
-  return g_scene_manager.autosave_mode;
-}
+// Autosave mode removed - programming mode changes are always persisted immediately
 
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program) {
   if (scene_index > MAX_SCENE_INDEX || program > 127) return ESP_ERR_INVALID_ARG;
@@ -1097,7 +1079,7 @@ esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program) {
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->program_number = program;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   // Also update device's current_program and send PC
   device_config_set_program(program);
@@ -1113,7 +1095,7 @@ esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc) {
   scene_t* scene = scene_get_current();
   if (scene && g_scene_manager.current_scene_index == scene_index) {
     scene->send_pc_on_load = send_pc;
-    g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+    scene_persist_if_programming();
   } else {
     ESP_LOGW(TAG, "Can only modify current scene (load scene %d first)", scene_index);
     return ESP_ERR_INVALID_STATE;
@@ -1128,7 +1110,7 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
   scene_t* scene = scene_get_current();
   if (scene && g_scene_manager.current_scene_index == scene_index) {
     scene->touchwheel_mode = mode;
-    g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+    scene_persist_if_programming();
     
     // Re-setup touchwheel instance for new mode
     scene_cleanup_touchwheel();
@@ -1156,7 +1138,7 @@ esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t 
   mapping->actions.num_actions = 1;
   mapping->actions.actions[0] = action_create_send_cc(cc_number, value);
   
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Scene %d pad %d: CC%d value %d", 
     scene_index + 1, pad_index, cc_number, value);
@@ -1170,7 +1152,7 @@ esp_err_t scene_enable_touchpad(uint8_t scene_index, uint8_t pad_index, bool ena
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->touchpads[pad_index].enabled = enabled;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Scene %d pad %d %s", scene_index + 1, pad_index, enabled ? "enabled" : "disabled");
   return ESP_OK;
@@ -1286,7 +1268,7 @@ esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, c
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
   mapping->actions.num_actions = 1;
   mapping->actions.actions[0] = *action;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Assigned action '%s' to pad %d", action_type_to_string(action->type), pad_index);
   return ESP_OK;
@@ -1302,7 +1284,7 @@ esp_err_t scene_assign_touchpad_chain(uint8_t scene_index, uint8_t pad_index, co
   
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
   mapping->actions = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Assigned %d actions to pad %d", chain->num_actions, pad_index);
   return ESP_OK;
@@ -1315,7 +1297,7 @@ esp_err_t scene_assign_button_left(uint8_t scene_index, const action_chain_t* ch
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->button_left = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   ESP_LOGI(TAG, "Assigned %d actions to left button", chain->num_actions);
   return ESP_OK;
 }
@@ -1327,7 +1309,7 @@ esp_err_t scene_assign_button_right(uint8_t scene_index, const action_chain_t* c
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->button_right = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   ESP_LOGI(TAG, "Assigned %d actions to right button", chain->num_actions);
   return ESP_OK;
 }
@@ -1339,7 +1321,7 @@ esp_err_t scene_assign_button_both(uint8_t scene_index, const action_chain_t* ch
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->button_both = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   ESP_LOGI(TAG, "Assigned %d actions to both buttons", chain->num_actions);
   return ESP_OK;
 }
@@ -1366,7 +1348,7 @@ esp_err_t scene_assign_bump(uint8_t scene_index, const action_chain_t* chain) {
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->bump = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   ESP_LOGI(TAG, "Assigned %d actions to bump", chain->num_actions);
   return ESP_OK;
 }
@@ -1383,7 +1365,7 @@ esp_err_t scene_assign_on_load(uint8_t scene_index, const action_chain_t* chain)
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->on_load = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Assigned %d on_load actions", chain->num_actions);
   return ESP_OK;
@@ -1407,7 +1389,7 @@ esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode)
   }
   
   scene->expression_mode = mode;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   // Update hardware configuration immediately if this is the current scene
   expression_set_mode(mode);
@@ -1432,7 +1414,7 @@ esp_err_t scene_assign_sustain(uint8_t scene_index, const action_chain_t* chain)
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->sustain = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Assigned %d sustain actions", chain->num_actions);
   return ESP_OK;
@@ -1445,7 +1427,7 @@ esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_chain_t* chai
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->sostenuto = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Assigned %d sostenuto actions", chain->num_actions);
   return ESP_OK;
@@ -1468,7 +1450,7 @@ esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_chain_t* ch
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->expr_switch = *chain;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Assigned %d expr_switch actions", chain->num_actions);
   return ESP_OK;
@@ -1487,7 +1469,7 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   
   input_mode_t old_mode = scene->cv_input_mode;
   scene->cv_input_mode = mode;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   // State machine: NOTE mode requires GATE expression mode
   if (mode == INPUT_MODE_NOTE) {
@@ -1536,7 +1518,7 @@ esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->bpm = bpm;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   // Update tempo component immediately if this is the current scene
   if (scene_index == g_scene_manager.current_scene_index) {
@@ -1559,7 +1541,7 @@ esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t sourc
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->clock_source = source;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   // If setting to SYNC, automatically set cv_input_mode to CLOCK_SYNC for coherence
   if (source == CLOCK_SOURCE_SYNC) {
@@ -1611,7 +1593,7 @@ esp_err_t scene_set_beat_divider(uint8_t scene_index, tempo_note_divider_t divid
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->beat_divider = divider;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   // Update tempo component immediately if this is the current scene
   if (scene_index == g_scene_manager.current_scene_index) {
@@ -1639,7 +1621,7 @@ esp_err_t scene_set_time_signature(uint8_t scene_index, uint8_t numerator, uint8
   
   scene->time_signature.numerator = numerator;
   scene->time_signature.denominator = denominator;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   // Update tempo component immediately if this is the current scene
   if (scene_index == g_scene_manager.current_scene_index) {
@@ -1664,7 +1646,7 @@ esp_err_t scene_set_use_transport(uint8_t scene_index, bool use_transport) {
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->use_transport = use_transport;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Scene %d use_transport set to %s", scene_index + 1, 
            use_transport ? "true" : "false");
@@ -1684,7 +1666,7 @@ esp_err_t scene_set_note_velocity_mode(uint8_t scene_index, velocity_mode_t mode
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->note_velocity_mode = mode;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   const char* mode_str = (mode == VELOCITY_MODE_FIXED) ? "Fixed" : "Gate Voltage";
   ESP_LOGI(TAG, "Scene %d NOTE velocity mode set to %s", scene_index + 1, mode_str);
@@ -1705,7 +1687,7 @@ esp_err_t scene_set_note_fixed_velocity(uint8_t scene_index, uint8_t velocity) {
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   scene->note_fixed_velocity = velocity;
-  g_scene_manager.cache[g_scene_manager.current_cache_idx].dirty = true;
+  scene_persist_if_programming();
   
   ESP_LOGI(TAG, "Scene %d NOTE fixed velocity set to %d", scene_index + 1, velocity);
   
@@ -2238,7 +2220,6 @@ esp_err_t scene_load_from_flash(uint8_t scene_index) {
   if (ret == ESP_OK) {
     g_scene_manager.cache[cache_idx].index = scene_index;
     g_scene_manager.cache[cache_idx].valid = true;
-    g_scene_manager.cache[cache_idx].dirty = false;
   }
   
   return ret;

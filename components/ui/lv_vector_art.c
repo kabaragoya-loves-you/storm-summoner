@@ -203,11 +203,11 @@ bool lv_vector_art_set_src(lv_obj_t *obj, const char *path) {
   data->loaded = true;
   
   if (data->is_animated) {
-    ESP_LOGI(TAG, "Loaded animated vector art: %dx%d, %d frames, %d fps", 
+    ESP_LOGD(TAG, "Loaded animated vector art: %dx%d, %d frames, %d fps", 
              data->anim_header.width, data->anim_header.height, 
              data->frame_count, data->fps);
   } else {
-    ESP_LOGI(TAG, "Loaded static vector art: %dx%d, %d shapes", 
+    ESP_LOGD(TAG, "Loaded static vector art: %dx%d, %d shapes", 
              data->header.width, data->header.height, data->shape_count);
   }
   

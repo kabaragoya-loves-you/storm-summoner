@@ -36,12 +36,6 @@ typedef enum {
   CHANGE_MODE_PENDING       // Show pending, confirm with separate action
 } scene_change_mode_t;
 
-// Scene autosave modes
-typedef enum {
-  SCENE_AUTOSAVE_MANUAL = 0,  // Save only when 'save' command is used
-  SCENE_AUTOSAVE_AUTO         // Save automatically on scene change
-} scene_autosave_mode_t;
-
 // Touchwheel behavior modes
 typedef enum {
   TOUCHWHEEL_MODE_BUTTONS,        // Each pad acts as individual button
@@ -126,7 +120,6 @@ typedef struct {
   scene_t scene;
   uint8_t index;        // Which scene this is (0-127)
   bool valid;           // Whether this cache entry contains valid data
-  bool dirty;           // Whether scene needs to be saved to flash
 } scene_cache_entry_t;
 
 // Scene manifest entry (lightweight metadata)
@@ -152,7 +145,6 @@ typedef struct {
   
   scene_mode_t mode;
   scene_change_mode_t change_mode;
-  scene_autosave_mode_t autosave_mode;
   bool initialized;
 } scene_manager_t;
 
@@ -171,8 +163,6 @@ esp_err_t scene_set_mode(scene_mode_t mode);
 scene_mode_t scene_get_mode(void);
 esp_err_t scene_set_change_mode(scene_change_mode_t mode);
 scene_change_mode_t scene_get_change_mode(void);
-esp_err_t scene_set_autosave_mode(scene_autosave_mode_t mode);
-scene_autosave_mode_t scene_get_autosave_mode(void);
 
 // Scene configuration
 esp_err_t scene_set_name(uint8_t scene_index, const char* name);

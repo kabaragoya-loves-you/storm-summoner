@@ -441,6 +441,50 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
 }
 
 // Deferred navigation timer callback (runs in LVGL task context)
+// Storage for screens pending deletion (to avoid deleting active screen)
+#define MAX_PENDING_DELETES 4
+static lv_obj_t* s_pending_delete_screens[MAX_PENDING_DELETES];
+static int s_pending_delete_count = 0;
+
+// Internal function to pop current page without triggering top-level exit
+// Does NOT delete the screen immediately - caller must call menu_flush_pending_deletes()
+static void menu_pop_current_page(void) {
+  if (menu_state.stack_depth < 1) return;
+  
+  // Remove current page from group
+  if (menu_state.group) {
+    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
+    if (current_cont) {
+      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
+      for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(current_cont, i);
+        if (child) lv_group_remove_obj(child);
+      }
+    }
+  }
+  
+  // Queue screen for deletion (don't delete yet - might be active)
+  lv_obj_t* screen = menu_state.stack[menu_state.stack_depth - 1].screen;
+  if (screen && s_pending_delete_count < MAX_PENDING_DELETES) {
+    s_pending_delete_screens[s_pending_delete_count++] = screen;
+  }
+  
+  menu_state.stack[menu_state.stack_depth - 1].screen = NULL;
+  menu_state.stack[menu_state.stack_depth - 1].container = NULL;
+  menu_state.stack_depth--;
+}
+
+// Delete all screens that were queued for deletion
+static void menu_flush_pending_deletes(void) {
+  for (int i = 0; i < s_pending_delete_count; i++) {
+    if (s_pending_delete_screens[i]) {
+      lv_obj_delete(s_pending_delete_screens[i]);
+      s_pending_delete_screens[i] = NULL;
+    }
+  }
+  s_pending_delete_count = 0;
+}
+
 static void deferred_nav_timer_cb(lv_timer_t* timer) {
   lv_timer_delete(timer);
 
@@ -449,18 +493,55 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
       // Handle multi-level back navigation
       int levels = menu_state.pending_nav.back_levels;
       if (levels <= 0) levels = 1;
-      
+
+      bool has_forward = (menu_state.pending_nav.builder != NULL);
+      int32_t saved_focus_idx = -1;
+
       for (int i = 0; i < levels; i++) {
-        // menu_navigate_back_internal handles exit at top level (depth=1)
-        menu_navigate_back_internal();
-        // If we exited programming mode, stop further navigation
+        if (has_forward) {
+          // If we have a forward nav pending, pop without triggering exit
+          // We'll push a new page, so we won't actually be at top level
+          menu_pop_current_page();
+        } else {
+          // Pure back navigation - use normal back which handles exit
+          menu_navigate_back_internal();
+        }
         if (menu_state.stack_depth == 0) break;
       }
-      
-      // If there's also a forward navigation after the backs (and we didn't exit)
-      if (menu_state.pending_nav.builder && menu_state.stack_depth > 0) {
+
+      // If there's a forward navigation, REPLACE current page (pop + push)
+      if (has_forward && menu_state.stack_depth > 0) {
+        // Save the focus index from the page we're about to replace
+        menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
+        saved_focus_idx = entry->focused_index;
+
+        // Pop the page we're replacing (queued for deletion, not deleted yet)
+        menu_pop_current_page();
+        // Push the new page at the same depth (this loads the new screen)
         menu_navigate_to_internal(menu_state.pending_nav.menu_name,
                                  menu_state.pending_nav.builder);
+        
+        // NOW it's safe to delete the old screens (new screen is active)
+        menu_flush_pending_deletes();
+
+        // Restore focus to saved position
+        if (saved_focus_idx >= 0 && menu_state.stack_depth > 0) {
+          menu_stack_entry_t* new_entry = &menu_state.stack[menu_state.stack_depth - 1];
+          new_entry->focused_index = saved_focus_idx;
+
+          // Apply the focus
+          if (new_entry->container && menu_state.group) {
+            uint32_t child_cnt = lv_obj_get_child_count(new_entry->container);
+            if (saved_focus_idx < (int32_t)child_cnt) {
+              lv_obj_t* focus_target = lv_obj_get_child(new_entry->container, saved_focus_idx);
+              if (focus_target) {
+                lv_group_focus_obj(focus_target);
+                // Scroll to show the focused item
+                lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
+              }
+            }
+          }
+        }
       }
     } else {
       menu_navigate_to_internal(menu_state.pending_nav.menu_name,
@@ -735,7 +816,18 @@ bool menu_handle_enter(void) {
   return false;
 }
 
+// Custom back handler for special pages
+static menu_custom_back_cb_t s_custom_back_handler = NULL;
+
+void menu_set_custom_back_handler(menu_custom_back_cb_t handler) {
+  s_custom_back_handler = handler;
+}
+
 void menu_handle_back(void) {
+  // Check for custom back handler first
+  if (s_custom_back_handler && s_custom_back_handler()) {
+    return;  // Handled by custom handler
+  }
   menu_navigate_back();
 }
 

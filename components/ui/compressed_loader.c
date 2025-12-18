@@ -48,7 +48,7 @@ void *compressed_load(const char *path, size_t *out_size) {
   
   size_t compressed_size = file_size - 4;
   
-  ESP_LOGI(TAG, "Loading %s: %lu compressed -> %lu bytes", 
+  ESP_LOGD(TAG, "Loading %s: %lu compressed -> %lu bytes", 
            path, (unsigned long)compressed_size, (unsigned long)original_size);
   
   // Allocate buffer for compressed data (can use regular heap, temporary)
@@ -95,13 +95,11 @@ void *compressed_load(const char *path, size_t *out_size) {
   }
   
   *out_size = dest_len;
-  ESP_LOGI(TAG, "Decompressed %lu bytes to PSRAM", (unsigned long)dest_len);
+  ESP_LOGD(TAG, "Decompressed %lu bytes to PSRAM", (unsigned long)dest_len);
   
   return decompressed;
 }
 
 void compressed_free(void *data) {
-  if (data) {
-    heap_caps_free(data);
-  }
+  if (data) heap_caps_free(data);
 }

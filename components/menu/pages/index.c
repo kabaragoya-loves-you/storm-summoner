@@ -6,9 +6,16 @@
 #define TAG "MENU_INDEX"
 
 // Navigation callbacks
-static void nav_to_scenes(void* user_data) {
+static void nav_to_scene_or_scenes(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Scenes", menu_page_scenes_create);
+  scene_mode_t mode = scene_get_mode();
+  if (mode == SCENE_MODE_SINGLE) {
+    // Single mode: go directly to the current scene
+    menu_navigate_to("Scene", menu_page_current_scene_create);
+  } else {
+    // Multi-scene modes: go to scenes manager
+    menu_navigate_to("Scenes", menu_page_scenes_create);
+  }
 }
 
 static void nav_to_device_config(void* user_data) {
@@ -35,7 +42,7 @@ lv_obj_t* menu_page_index_create(void) {
   
   // Build menu items as static const so they persist after function returns
   static menu_item_t index_items[4];
-  index_items[0] = (menu_item_t){ scenes_label, nav_to_scenes, NULL, true };
+  index_items[0] = (menu_item_t){ scenes_label, nav_to_scene_or_scenes, NULL, true };
   index_items[1] = (menu_item_t){ "Pedal Setup", nav_to_device_config, NULL, true };
   index_items[2] = (menu_item_t){ "Settings", nav_to_settings, NULL, true };
   index_items[3] = (menu_item_t){ "About", nav_to_about, NULL, true };

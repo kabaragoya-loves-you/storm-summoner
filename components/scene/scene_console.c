@@ -147,7 +147,7 @@ static void format_action_details(const action_t* action, char* buf, size_t buf_
 
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
-  "info", "next", "prev", "goto", "name", "save", "device",
+  "info", "next", "prev", "goto", "name", "device",
   "confirm", "cancel", "channel", "pad", "button", "bump", "expr_switch", "actions", "pc",
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode", 
@@ -494,18 +494,6 @@ static int cmd_goto(int argc, char **argv) {
     ESP_LOGI(TAG, "Pending change to scene %d", scene_num);
   } else {
     ESP_LOGI(TAG, "Switched to scene %d", scene_num);
-  }
-  return 0;
-}
-
-// Command: save
-static int cmd_save(int argc, char **argv) {
-  uint8_t idx = scene_get_current_index();
-  esp_err_t ret = scene_save_to_flash(idx);
-  if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Scene %d saved to flash", idx + 1);
-  } else {
-    ESP_LOGE(TAG, "Failed to save scene: %s", esp_err_to_name(ret));
   }
   return 0;
 }
@@ -3368,15 +3356,6 @@ esp_err_t scene_console_init(void) {
     .argtable = &goto_args
   };
   esp_console_cmd_register(&goto_cmd);
-  
-  // save command
-  const esp_console_cmd_t save_cmd = {
-    .command = "save",
-    .help = "Save current scene to flash",
-    .hint = NULL,
-    .func = &cmd_save,
-  };
-  esp_console_cmd_register(&save_cmd);
   
   // name command
   name_args.scene_name = arg_str1(NULL, NULL, "<name>", "Scene name");

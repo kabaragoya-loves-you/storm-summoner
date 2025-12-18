@@ -49,6 +49,14 @@ bool menu_handle_enter(void);
 // Handle back key
 void menu_handle_back(void);
 
+// Custom back handler callback type
+// Returns true if handled (skip normal back navigation), false to continue
+typedef bool (*menu_custom_back_cb_t)(void);
+
+// Set a custom back handler (for special pages like dual rollers)
+// Pass NULL to clear the handler
+void menu_set_custom_back_handler(menu_custom_back_cb_t handler);
+
 // Cleanup menu widgets
 void menu_cleanup(void);
 

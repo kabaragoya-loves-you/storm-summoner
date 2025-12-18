@@ -147,6 +147,28 @@ static esp_err_t parse_manifest(const char *json_str) {
       }
     }
     
+    // Parse x_pc for PC info (needed when loading from cache)
+    dev->pc_index_base = 0;
+    dev->pc_count = 128;
+    dev->pc_bank_mode = PC_BANK_SELECT_NONE;
+    cJSON *x_pc = cJSON_GetObjectItem(dev_item, "x_pc");
+    if (x_pc && cJSON_IsObject(x_pc)) {
+      cJSON *index_base = cJSON_GetObjectItem(x_pc, "indexBase");
+      if (index_base && cJSON_IsNumber(index_base))
+        dev->pc_index_base = (uint16_t)index_base->valueint;
+      
+      cJSON *count = cJSON_GetObjectItem(x_pc, "count");
+      if (count && cJSON_IsNumber(count))
+        dev->pc_count = (uint16_t)count->valueint;
+      
+      cJSON *bank_mode = cJSON_GetObjectItem(x_pc, "bankSelectMode");
+      if (bank_mode && cJSON_IsString(bank_mode)) {
+        const char *mode = bank_mode->valuestring;
+        if (strcmp(mode, "CC0") == 0) dev->pc_bank_mode = PC_BANK_SELECT_CC0;
+        else if (strcmp(mode, "CC0_CC32") == 0) dev->pc_bank_mode = PC_BANK_SELECT_CC0_CC32;
+      }
+    }
+    
     idx++;
   }
   
@@ -337,6 +359,15 @@ device_def_t *assets_load_device(const char *slug) {
     device->receives_clock = manifest_dev->receives_clock;
     device->receives_notes = manifest_dev->receives_notes;
     device->transmits_pc = manifest_dev->transmits_pc;
+    
+    // Create pc_info from manifest data
+    device->pc_info = calloc_prefer_psram(1, sizeof(program_change_info_t));
+    if (device->pc_info) {
+      device->pc_info->index_base = manifest_dev->pc_index_base;
+      device->pc_info->count = manifest_dev->pc_count;
+      device->pc_info->bank_mode = (pc_bank_select_mode_t)manifest_dev->pc_bank_mode;
+    }
+    
     ESP_LOGI(TAG, "Loaded from cache");
     return device;
   }

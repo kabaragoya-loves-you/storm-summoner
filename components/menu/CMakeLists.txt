@@ -3,6 +3,7 @@ idf_component_register(
     "menu.c"
     "pages/index.c"
     "pages/scenes.c"
+    "pages/current_scene.c"
     "pages/device_config.c"
     "pages/settings.c"
     "pages/about.c"

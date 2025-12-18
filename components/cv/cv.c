@@ -434,7 +434,7 @@ static void cv_task(void *pvParameters) {
         // During startup, just log periodically
         static int startup_log_counter = 0;
         if (startup_log_counter++ % 10 == 0) {
-          ESP_LOGI(TAG, "CV startup: raw=%d, filtered=%.1f (waiting %lu ms)", raw, s_filtered_value, (unsigned long)(STARTUP_DELAY_MS - (now_ms - s_task_start_time)));
+          ESP_LOGD(TAG, "CV startup: raw=%d, filtered=%.1f (waiting %lu ms)", raw, s_filtered_value, (unsigned long)(STARTUP_DELAY_MS - (now_ms - s_task_start_time)));
         }
       }
     }

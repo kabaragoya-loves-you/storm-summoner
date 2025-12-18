@@ -540,7 +540,7 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   lv_vector_art_set_scale(g_static_art, scale);
   
   if (lv_vector_art_set_src(g_static_art, STATIC_PATH)) {
-    ESP_LOGI(TAG, "Loaded static layer from %s", STATIC_PATH);
+    ESP_LOGD(TAG, "Loaded static layer from %s", STATIC_PATH);
   } else {
     ESP_LOGE(TAG, "Failed to load static layer from %s", STATIC_PATH);
   }
@@ -553,7 +553,7 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   
   if (lv_vector_art_set_src(g_body_art, BODY_PATH)) {
     if (lv_vector_art_is_animated(g_body_art)) {
-      ESP_LOGI(TAG, "Loaded body animation: %d frames",
+      ESP_LOGD(TAG, "Loaded body animation: %d frames",
                lv_vector_art_get_frame_count(g_body_art));
       lv_vector_art_pause(g_body_art);
       lv_vector_art_set_frame(g_body_art, 0);
@@ -572,7 +572,7 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   
   if (lv_vector_art_set_src(g_tail_art, TAIL_PATH)) {
     if (lv_vector_art_is_animated(g_tail_art)) {
-      ESP_LOGI(TAG, "Loaded tail animation: %d frames",
+      ESP_LOGD(TAG, "Loaded tail animation: %d frames",
                lv_vector_art_get_frame_count(g_tail_art));
       lv_vector_art_pause(g_tail_art);
       lv_vector_art_set_frame(g_tail_art, 0);
@@ -610,7 +610,7 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   
   // Calculate body animation rate from time signature
   g_body_ratio = calculate_bops_per_bar();
-  ESP_LOGI(TAG, "Bop solver: %d/%d -> %d bops per bar", 
+  ESP_LOGD(TAG, "Bop solver: %d/%d -> %d bops per bar", 
            sig.numerator, sig.denominator, g_body_ratio);
   
   // Force label update
@@ -677,7 +677,7 @@ static void scene_ui_init(void) {
   
   // Register module settings (once at startup, so they're always available)
   ui_module_register_settings("scene", scene_settings, scene_settings_count);
-  ESP_LOGI(TAG, "Scene UI module settings registered");
+  ESP_LOGD(TAG, "Scene UI module settings registered");
 }
 
 ui_draw_module_t scene_ui_module = {

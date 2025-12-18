@@ -105,7 +105,6 @@ void app_main(void) {
   led_init();
   
   midi_out_init();
-  tempo_start();
 
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
@@ -165,4 +164,5 @@ void app_main(void) {
   // Wait for splash animation to complete before switching to main UI
   vTaskDelay(pdMS_TO_TICKS(1500));
   ui_set_draw_module(&scene_ui_module);
+  tempo_start();
 }

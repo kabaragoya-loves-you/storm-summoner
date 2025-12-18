@@ -13,7 +13,6 @@ static void show_info(void* user_data) {
   (void)user_data;
   scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
-  scene_autosave_mode_t autosave = scene_get_autosave_mode();
   uint8_t channel = device_config_get_channel();
   uint8_t program = device_config_get_program();
   bool program_wrap = config_get_program_wrap();
@@ -21,7 +20,6 @@ static void show_info(void* user_data) {
   const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Single" :
                                 (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
-  const char* autosave_str = (autosave == SCENE_AUTOSAVE_MANUAL) ? "Manual" : "Auto";
   const char* program_wrap_str = program_wrap ? "On" : "Off";
   
   char info_text[512];
@@ -32,9 +30,8 @@ static void show_info(void* user_data) {
     "Program wrap: %s\n"
     "\n"
     "Scene mode: %s\n"
-    "Change mode: %s\n"
-    "Autosave: %s",
-    channel, program, program_wrap_str, scene_mode_str, change_mode_str, autosave_str);
+    "Change mode: %s",
+    channel, program, program_wrap_str, scene_mode_str, change_mode_str);
   
   menu_navigate_to_info("Config Info", info_text);
 }
@@ -69,18 +66,6 @@ static void set_change_mode_pending(void* user_data) {
   ESP_LOGI(TAG, "Change mode set to Pending");
 }
 
-static void set_autosave_manual(void* user_data) {
-  (void)user_data;
-  scene_set_autosave_mode(SCENE_AUTOSAVE_MANUAL);
-  ESP_LOGI(TAG, "Autosave set to Manual");
-}
-
-static void set_autosave_auto(void* user_data) {
-  (void)user_data;
-  scene_set_autosave_mode(SCENE_AUTOSAVE_AUTO);
-  ESP_LOGI(TAG, "Autosave set to Auto");
-}
-
 static void set_program_wrap_on(void* user_data) {
   (void)user_data;
   config_set_program_wrap(true);
@@ -103,8 +88,6 @@ lv_obj_t* menu_page_config_create(void) {
     { "Scene Mode: Advanced", set_scene_mode_advanced, NULL, false },
     { "Change: Immediate", set_change_mode_immediate, NULL, false },
     { "Change: Pending", set_change_mode_pending, NULL, false },
-    { "Autosave: Manual", set_autosave_manual, NULL, false },
-    { "Autosave: Auto", set_autosave_auto, NULL, false },
     { "Prog Wrap: On", set_program_wrap_on, NULL, false },
     { "Prog Wrap: Off", set_program_wrap_off, NULL, false }
   };
