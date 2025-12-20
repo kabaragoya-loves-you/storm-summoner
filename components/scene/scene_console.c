@@ -133,6 +133,20 @@ static void format_action_details_with_device(const action_t* action, const devi
     case ACTION_SEND_MMC:
       snprintf(buf, buf_size, "MMC %d", action->params.mmc.command);
       break;
+    case ACTION_TOUCHWHEEL_MODE:
+      snprintf(buf, buf_size, "TW Mode %d", action->params.tw_mode.mode);
+      break;
+    case ACTION_TOUCHWHEEL_MODE_HOLD:
+      snprintf(buf, buf_size, "TW Mode %d/%d", action->params.tw_mode.mode, action->params.tw_mode.mode2);
+      break;
+    case ACTION_TOUCHWHEEL_MODE_CYCLE: {
+      int pos = snprintf(buf, buf_size, "TW Mode cycle:");
+      for (int i = 0; i < action->params.tw_mode.num_modes && pos < (int)buf_size - 4; i++) {
+        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
+          action->params.tw_mode.modes[i]);
+      }
+      break;
+    }
     default:
       // For actions without parameters, just use the action name
       snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
@@ -920,6 +934,36 @@ static int cmd_pad(int argc, char **argv) {
     action.params.nrpn.parameter = pad_args.param1->ival[0];
     action.params.nrpn.value = pad_args.params->ival[0];
   }
+  // Touchwheel mode actions
+  else if (strcmp(action_str, "tw_mode") == 0) {
+    if (pad_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> tw_mode <mode> (0-8)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE;
+    action.params.tw_mode.mode = pad_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> tw_mode_hold <press_mode> <release_mode>");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.params.tw_mode.mode = pad_args.param1->ival[0];
+    action.params.tw_mode.mode2 = pad_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_cycle") == 0) {
+    if (pad_args.param1->count < 1 || pad_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.params.tw_mode.modes[0] = pad_args.param1->ival[0];
+    action.params.tw_mode.num_modes = 1;
+    for (int i = 0; i < pad_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
+      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] = pad_args.params->ival[i];
+    }
+  }
   else {
     ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
     return 1;
@@ -1164,6 +1208,36 @@ static int cmd_button(int argc, char **argv) {
     action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = button_args.param1->ival[0];
     for (int i = 0; i < button_args.params->count && action.params.randomize.num_ccs < 8; i++) {
       action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = button_args.params->ival[i];
+    }
+  }
+  // Touchwheel mode actions
+  else if (strcmp(action_str, "tw_mode") == 0) {
+    if (button_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> tw_mode <mode> (0-8)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE;
+    action.params.tw_mode.mode = button_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> tw_mode_hold <press_mode> <release_mode>");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.params.tw_mode.mode = button_args.param1->ival[0];
+    action.params.tw_mode.mode2 = button_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_cycle") == 0) {
+    if (button_args.param1->count < 1 || button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.params.tw_mode.modes[0] = button_args.param1->ival[0];
+    action.params.tw_mode.num_modes = 1;
+    for (int i = 0; i < button_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
+      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] = button_args.params->ival[i];
     }
   }
   else {
@@ -1425,6 +1499,36 @@ static int cmd_bump(int argc, char **argv) {
       action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] = bump_args.params->ival[i];
     }
   }
+  // Touchwheel mode actions
+  else if (strcmp(action_str, "tw_mode") == 0) {
+    if (bump_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump tw_mode <mode> (0-8)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE;
+    action.params.tw_mode.mode = bump_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump tw_mode_hold <press_mode> <release_mode>");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.params.tw_mode.mode = bump_args.param1->ival[0];
+    action.params.tw_mode.mode2 = bump_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_cycle") == 0) {
+    if (bump_args.param1->count < 1 || bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.params.tw_mode.modes[0] = bump_args.param1->ival[0];
+    action.params.tw_mode.num_modes = 1;
+    for (int i = 0; i < bump_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
+      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] = bump_args.params->ival[i];
+    }
+  }
   else if (strcmp(action_str, "none") == 0) {
     // Clear bump assignment
     action_chain_t empty = {0};
@@ -1573,6 +1677,36 @@ static int cmd_expr_switch(int argc, char **argv) {
     action.type = ACTION_PROGRAM_SET;
     action.params.pc.program = expr_switch_args.param1->ival[0];
   }
+  // Touchwheel mode actions
+  else if (strcmp(action_str, "tw_mode") == 0) {
+    if (expr_switch_args.param1->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch tw_mode <mode> (0-8)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE;
+    action.params.tw_mode.mode = expr_switch_args.param1->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (expr_switch_args.param1->count < 1 || expr_switch_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch tw_mode_hold <press_mode> <release_mode>");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.params.tw_mode.mode = expr_switch_args.param1->ival[0];
+    action.params.tw_mode.mode2 = expr_switch_args.params->ival[0];
+  }
+  else if (strcmp(action_str, "tw_mode_cycle") == 0) {
+    if (expr_switch_args.param1->count < 1 || expr_switch_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
+      return 1;
+    }
+    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.params.tw_mode.modes[0] = expr_switch_args.param1->ival[0];
+    action.params.tw_mode.num_modes = 1;
+    for (int i = 0; i < expr_switch_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
+      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] = expr_switch_args.params->ival[i];
+    }
+  }
   else if (strcmp(action_str, "none") == 0) {
     // Clear expr_switch assignment
     action_chain_t empty = {0};
@@ -1654,6 +1788,13 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "  all_sound_off                    - CC120");
   ESP_LOGI(TAG, "  sustain / sostenuto              - CC64 / CC66");
   ESP_LOGI(TAG, "  none                             - Clear assignment (bump only)");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "Touchwheel Mode:");
+  ESP_LOGI(TAG, "  tw_mode <mode>                   - Set touchwheel mode (0-8)");
+  ESP_LOGI(TAG, "  tw_mode_hold <press> <release>   - Mode on press, restore on release");
+  ESP_LOGI(TAG, "  tw_mode_cycle <m1> <m2>...<m8>   - Cycle through 2-8 modes");
+  ESP_LOGI(TAG, "    Modes: 0=buttons 1=pc 2=cc 3=tempo 4=pitch_bend");
+  ESP_LOGI(TAG, "           5=aftertouch 6=nrpn 7=rpn 8=double_cc");
   
   return 0;
 }

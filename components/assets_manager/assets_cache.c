@@ -155,7 +155,7 @@ esp_err_t generate_device_cache(const device_def_t *device, const char *cache_pa
  * Load device from binary cache
  */
 device_def_t *load_device_cache(const char *cache_path, const char *slug) {
-  ESP_LOGI(TAG, "Loading cache: %s", cache_path);
+  ESP_LOGD(TAG, "Loading cache: %s", cache_path);
   
   // Check if cache file exists
   struct stat st;
@@ -341,7 +341,7 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     }
   }
   
-  ESP_LOGI(TAG, "Cache loaded successfully: %u controls, %u discrete values",
+  ESP_LOGD(TAG, "Cache loaded successfully: %u controls, %u discrete values",
     (unsigned)device->control_count, (unsigned)total_discrete_count);
   return device;
 }

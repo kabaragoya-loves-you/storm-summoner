@@ -4,6 +4,8 @@
 #include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -108,8 +110,27 @@ static lv_obj_t* midi_channel_roller_create(void) {
     midi_channel_confirm_cb, NULL);
 }
 
+// ============================================================================
+// Shared Debounce - prevent duplicate callbacks within 100ms
+// ============================================================================
+
+static uint32_t s_last_action_time = 0;
+#define ACTION_DEBOUNCE_MS 100
+
+// Returns true if action should be allowed, false if debounced
+static bool debounce_action(const char* action_name) {
+  uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+  if (now - s_last_action_time < ACTION_DEBOUNCE_MS) {
+    ESP_LOGD(TAG, "Debouncing: %s", action_name);
+    return false;
+  }
+  s_last_action_time = now;
+  return true;
+}
+
 static void nav_to_midi_channel_select(void* user_data) {
   (void)user_data;
+  if (!debounce_action("MIDI channel select")) return;
   menu_navigate_to("MIDI Channel", midi_channel_roller_create);
 }
 
@@ -118,6 +139,8 @@ static void nav_to_midi_channel_select(void* user_data) {
 // ============================================================================
 
 static void select_pedal_callback(void* user_data) {
+  if (!debounce_action("pedal selection")) return;
+  
   uint32_t idx = *(uint32_t*)user_data;
   
   const char* slug = NULL;
@@ -127,19 +150,17 @@ static void select_pedal_callback(void* user_data) {
     ESP_LOGI(TAG, "Selected pedal: %s", slug);
     device_config_set_pedal(slug);
     device_config_save();
-    
-    // Free both menus before navigating
-    dynamic_menu_free(&s_pedal_menu);
-    dynamic_menu_free(&s_vendor_menu);
-    
+
     // Navigate back 3 levels (Pedal -> Vendor -> Pedal Setup -> Menu)
     // then forward to rebuild Pedal Setup with the new pedal name
+    // Note: don't free menus here - cleanup_submenus() handles it safely
+    // after old screens are deleted to avoid use-after-free
     menu_navigate_back_then_to(3, "Pedal Setup", menu_page_device_config_create);
   }
 }
 
 static lv_obj_t* menu_page_pedal_select_create(void) {
-  ESP_LOGI(TAG, "Creating pedal select page for vendor: %s", s_selected_vendor);
+  ESP_LOGD(TAG, "Creating pedal select page for vendor: %s", s_selected_vendor);
   
   uint32_t pedal_count = assets_get_device_count_for_vendor(s_selected_vendor);
   
@@ -183,6 +204,8 @@ static lv_obj_t* menu_page_pedal_select_create(void) {
 // ============================================================================
 
 static void select_vendor_callback(void* user_data) {
+  if (!debounce_action("vendor selection")) return;
+  
   uint32_t idx = *(uint32_t*)user_data;
   
   const char* vendor = assets_get_vendor_by_index(idx);
@@ -235,6 +258,7 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
 
 static void nav_to_vendor_select(void* user_data) {
   (void)user_data;
+  if (!debounce_action("vendor select nav")) return;
   menu_navigate_to("Select Vendor", menu_page_vendor_select_create);
 }
 
@@ -250,12 +274,19 @@ static void cleanup_submenus(void) {
   dynamic_menu_free(&s_pedal_menu);
 }
 
+// Public cleanup function - call after menu teardown to free PSRAM
+void menu_page_device_config_cleanup(void) {
+  cleanup_submenus();
+}
+
 // ============================================================================
 // Refresh - reload pedal data from JSON
 // ============================================================================
 
 static void refresh_pedal(void* user_data) {
   (void)user_data;
+  if (!debounce_action("refresh pedal")) return;
+  
   const device_config_t* cfg = device_config_get();
   
   ESP_LOGI(TAG, "Refreshing pedal data for: %s", cfg->pedal_slug);
@@ -282,10 +313,11 @@ static void refresh_pedal(void* user_data) {
 // ============================================================================
 
 lv_obj_t* menu_page_device_config_create(void) {
-  ESP_LOGI(TAG, "Creating device config page");
+  ESP_LOGD(TAG, "Creating device config page");
   
-  // Clean up any leftover submenu allocations from previous navigation
-  cleanup_submenus();
+  // Note: Don't call cleanup_submenus() here! Old screens (being deleted after this)
+  // still have event handlers pointing to that memory. The submenus will be freed
+  // when recreated via dynamic_menu_alloc() (which frees first) or on menu teardown.
   
   const device_config_t* cfg = device_config_get();
   device_def_t* device = assets_load_device(cfg->pedal_slug);
@@ -389,6 +421,6 @@ lv_obj_t* menu_page_device_config_create(void) {
   
   if (device) assets_free_device(device);
   
-  ESP_LOGI(TAG, "Device config page: %d items", item_idx);
+  ESP_LOGD(TAG, "Device config page: %d items", item_idx);
   return menu_create_page("Pedal Setup", s_device_config_items, item_idx);
 }

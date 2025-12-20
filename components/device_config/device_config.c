@@ -266,7 +266,7 @@ esp_err_t device_config_set_channel(uint8_t channel) {
   }
   
   g_device_config.midi_channel = channel;
-  ESP_LOGI(TAG, "MIDI channel set to %d", channel);
+  ESP_LOGD(TAG, "MIDI channel set to %d", channel);
   
   return app_settings_save_u8(NVS_KEY_MIDI_CHANNEL, channel);
 }

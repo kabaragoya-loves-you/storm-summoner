@@ -53,7 +53,10 @@ static const char* action_type_names[] = {
   [ACTION_ALL_NOTES_OFF] = "All Notes Off",
   [ACTION_ALL_SOUND_OFF] = "All Sound Off",
   [ACTION_SUSTAIN] = "Sustain",
-  [ACTION_SOSTENUTO] = "Sostenuto"
+  [ACTION_SOSTENUTO] = "Sostenuto",
+  [ACTION_TOUCHWHEEL_MODE] = "TW Mode",
+  [ACTION_TOUCHWHEEL_MODE_HOLD] = "TW Mode Hold",
+  [ACTION_TOUCHWHEEL_MODE_CYCLE] = "TW Mode Cycle"
 };
 
 esp_err_t action_init(void) {
@@ -379,6 +382,44 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       ESP_LOGD(TAG, "Sostenuto: %s", is_press ? "on" : "off");
       break;
       
+    // Touchwheel mode control
+    case ACTION_TOUCHWHEEL_MODE:
+      // Set touchwheel mode on press only
+      if (is_press) {
+        uint8_t scene_index = scene_get_current_index();
+        scene_set_touchwheel_mode(scene_index, (touchwheel_mode_t)action->params.tw_mode.mode);
+        ESP_LOGD(TAG, "Set touchwheel mode to %d", action->params.tw_mode.mode);
+      }
+      break;
+      
+    case ACTION_TOUCHWHEEL_MODE_HOLD:
+      // Set mode on press, restore mode2 on release
+      {
+        uint8_t scene_index = scene_get_current_index();
+        uint8_t mode = is_press ? action->params.tw_mode.mode : action->params.tw_mode.mode2;
+        scene_set_touchwheel_mode(scene_index, (touchwheel_mode_t)mode);
+        ESP_LOGD(TAG, "Touchwheel mode hold: %d", mode);
+      }
+      break;
+      
+    case ACTION_TOUCHWHEEL_MODE_CYCLE:
+      if (is_press) {
+        action_t* mutable_action = (action_t*)action;
+        uint8_t idx = mutable_action->params.tw_mode.current_index;
+        uint8_t mode = mutable_action->params.tw_mode.modes[idx];
+        
+        uint8_t scene_index = scene_get_current_index();
+        scene_set_touchwheel_mode(scene_index, (touchwheel_mode_t)mode);
+        
+        // Advance to next mode
+        mutable_action->params.tw_mode.current_index =
+          (idx + 1) % mutable_action->params.tw_mode.num_modes;
+        
+        ESP_LOGD(TAG, "Cycled touchwheel mode to %d (next idx: %d)", mode,
+          mutable_action->params.tw_mode.current_index);
+      }
+      break;
+      
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
       return ESP_ERR_NOT_SUPPORTED;
@@ -493,6 +534,21 @@ action_t action_create_sustain(void) {
 action_t action_create_sostenuto(void) {
   action_t action = {0};
   action.type = ACTION_SOSTENUTO;
+  return action;
+}
+
+action_t action_create_touchwheel_mode(uint8_t mode) {
+  action_t action = {0};
+  action.type = ACTION_TOUCHWHEEL_MODE;
+  action.params.tw_mode.mode = mode;
+  return action;
+}
+
+action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_mode) {
+  action_t action = {0};
+  action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+  action.params.tw_mode.mode = press_mode;
+  action.params.tw_mode.mode2 = release_mode;
   return action;
 }
 

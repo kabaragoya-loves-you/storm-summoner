@@ -495,9 +495,8 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
       if (levels <= 0) levels = 1;
 
       bool has_forward = (menu_state.pending_nav.builder != NULL);
-      int32_t saved_focus_idx = -1;
 
-      for (int i = 0; i < levels; i++) {
+      for (int i = 0; i < levels && menu_state.stack_depth > 0; i++) {
         if (has_forward) {
           // If we have a forward nav pending, pop without triggering exit
           // We'll push a new page, so we won't actually be at top level
@@ -506,42 +505,17 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
           // Pure back navigation - use normal back which handles exit
           menu_navigate_back_internal();
         }
-        if (menu_state.stack_depth == 0) break;
       }
 
-      // If there's a forward navigation, REPLACE current page (pop + push)
-      if (has_forward && menu_state.stack_depth > 0) {
-        // Save the focus index from the page we're about to replace
-        menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
-        saved_focus_idx = entry->focused_index;
-
-        // Pop the page we're replacing (queued for deletion, not deleted yet)
-        menu_pop_current_page();
-        // Push the new page at the same depth (this loads the new screen)
+      // If there's a forward navigation, push the new page ON TOP of where we landed
+      // (back_then_to means: go back N levels, then navigate TO a new page)
+      if (has_forward) {
+        // Flush pending deletes before creating new page
+        menu_flush_pending_deletes();
+        
+        // Push the new page on top of current stack
         menu_navigate_to_internal(menu_state.pending_nav.menu_name,
                                  menu_state.pending_nav.builder);
-        
-        // NOW it's safe to delete the old screens (new screen is active)
-        menu_flush_pending_deletes();
-
-        // Restore focus to saved position
-        if (saved_focus_idx >= 0 && menu_state.stack_depth > 0) {
-          menu_stack_entry_t* new_entry = &menu_state.stack[menu_state.stack_depth - 1];
-          new_entry->focused_index = saved_focus_idx;
-
-          // Apply the focus
-          if (new_entry->container && menu_state.group) {
-            uint32_t child_cnt = lv_obj_get_child_count(new_entry->container);
-            if (saved_focus_idx < (int32_t)child_cnt) {
-              lv_obj_t* focus_target = lv_obj_get_child(new_entry->container, saved_focus_idx);
-              if (focus_target) {
-                lv_group_focus_obj(focus_target);
-                // Scroll to show the focused item
-                lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
-              }
-            }
-          }
-        }
       }
     } else {
       menu_navigate_to_internal(menu_state.pending_nav.menu_name,

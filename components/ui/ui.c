@@ -5,6 +5,7 @@
 #include "touchwheel_outputs.h"
 #include "touch.h"
 #include "menu.h"
+#include "menu_pages.h"
 #include "scene.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -202,6 +203,9 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
   // NOW it's safe to cleanup menu (not the active screen anymore)
   menu_cleanup();
   
+  // Free PSRAM allocations from menu pages (safe now that screens are deleted)
+  menu_page_device_config_cleanup();
+  
   // Restore Performance mode
   if (saved_draw_module) {
     current_draw_module = saved_draw_module;
@@ -316,7 +320,7 @@ bool ui_is_programming_top_level(void) {
 
 void ui_set_programming_top_level(bool is_top_level) {
   g_at_programming_top_level_menu = is_top_level;
-  ESP_LOGI(TAG, "Programming menu level set to: %s", is_top_level ? "Top Level" : "Sub-Level");
+  ESP_LOGD(TAG, "Programming menu level set to: %s", is_top_level ? "Top Level" : "Sub-Level");
 }
 
 void ui_graphics_suspend(void) {

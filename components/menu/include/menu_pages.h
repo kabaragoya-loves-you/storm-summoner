@@ -8,6 +8,7 @@ lv_obj_t* menu_page_index_create(void);
 lv_obj_t* menu_page_scenes_create(void);
 lv_obj_t* menu_page_current_scene_create(void);
 lv_obj_t* menu_page_device_config_create(void);
+void menu_page_device_config_cleanup(void);  // Free PSRAM allocations after menu teardown
 lv_obj_t* menu_page_settings_create(void);
 lv_obj_t* menu_page_about_create(void);
 

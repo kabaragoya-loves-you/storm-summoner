@@ -64,6 +64,11 @@ typedef enum {
   ACTION_SUSTAIN,             // Send CC64 (127 on press, 0 on release)
   ACTION_SOSTENUTO,           // Send CC66 (127 on press, 0 on release)
   
+  // Touchwheel mode control
+  ACTION_TOUCHWHEEL_MODE,       // Set touchwheel mode to specific value
+  ACTION_TOUCHWHEEL_MODE_HOLD,  // Set mode on press, restore on release
+  ACTION_TOUCHWHEEL_MODE_CYCLE, // Cycle through touchwheel modes
+  
   ACTION_MAX
 } action_type_t;
 
@@ -142,6 +147,15 @@ typedef struct {
       uint8_t num_ccs;
       uint8_t cc_numbers[8];
     } randomize;
+    
+    // For touchwheel mode actions
+    struct {
+      uint8_t mode;           // Primary mode (touchwheel_mode_t)
+      uint8_t mode2;          // For hold: release mode
+      uint8_t num_modes;      // For cycle: number of modes (2-8)
+      uint8_t modes[8];       // For cycle: mode values
+      uint8_t current_index;  // Current position in cycle
+    } tw_mode;
   } params;
 } action_t;
 
@@ -179,6 +193,8 @@ action_t action_create_all_notes_off(void);
 action_t action_create_all_sound_off(void);
 action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);
+action_t action_create_touchwheel_mode(uint8_t mode);
+action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_mode);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);

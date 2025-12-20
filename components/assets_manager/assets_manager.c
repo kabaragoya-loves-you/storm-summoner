@@ -341,7 +341,7 @@ device_def_t *assets_load_device(const char *slug) {
     return NULL;
   }
   
-  ESP_LOGI(TAG, "Loading device: %s", slug);
+  ESP_LOGD(TAG, "Loading device: %s", slug);
   
   // Try to load from cache first
   char cache_path[128];
@@ -368,7 +368,7 @@ device_def_t *assets_load_device(const char *slug) {
       device->pc_info->bank_mode = (pc_bank_select_mode_t)manifest_dev->pc_bank_mode;
     }
     
-    ESP_LOGI(TAG, "Loaded from cache");
+    ESP_LOGD(TAG, "Loaded from cache");
     return device;
   }
   

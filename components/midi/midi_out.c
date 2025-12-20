@@ -193,7 +193,7 @@ void midi_set_uart_transmit_mode(midi_transmit_mode_t mode) {
   if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
     midi_out_uart_set_mode(mode);
     app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)mode);
-    ESP_LOGI(TAG, "UART transmit mode: %d", mode);
+    ESP_LOGD(TAG, "UART transmit mode: %d", mode);
     xSemaphoreGive(midi_out_mutex);
   }
 }

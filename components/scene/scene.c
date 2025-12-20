@@ -510,14 +510,14 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       break;
       
     case TOUCHWHEEL_MODE_SET_TEMPO:
-      // Tempo mode: default to endless, respects style
+      // Tempo mode: default to endless (only use odometer if explicitly set)
       s_touchwheel_tempo_bpm = tempo_get_bpm();  // Initialize to current BPM
-      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-        mode_proc = touchwheel_mode_create_endless();
-        mode_desc = "set_tempo (endless)";
-      } else {
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "set_tempo (odometer)";
+      } else {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "set_tempo (endless)";
       }
       output = touchwheel_output_callback_create(touchwheel_tempo_callback, (void*)scene);
       break;
@@ -544,40 +544,40 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       break;
       
     case TOUCHWHEEL_MODE_NRPN:
-      // NRPN: default to odometer, respects style
+      // NRPN: default to endless for fine 14-bit control
       s_touchwheel_14bit_value = 0;
-      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-        mode_proc = touchwheel_mode_create_endless();
-        mode_desc = "nrpn (endless)";
-      } else {
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "nrpn (odometer)";
+      } else {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "nrpn (endless)";
       }
       output = touchwheel_output_callback_create(touchwheel_nrpn_callback, (void*)scene);
       break;
       
     case TOUCHWHEEL_MODE_RPN:
-      // RPN: default to odometer, respects style
+      // RPN: default to endless for fine 14-bit control
       s_touchwheel_14bit_value = 0;
-      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-        mode_proc = touchwheel_mode_create_endless();
-        mode_desc = "rpn (endless)";
-      } else {
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "rpn (odometer)";
+      } else {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "rpn (endless)";
       }
       output = touchwheel_output_callback_create(touchwheel_rpn_callback, (void*)scene);
       break;
       
     case TOUCHWHEEL_MODE_DOUBLE_CC:
-      // Double CC (14-bit): default to odometer, respects style
+      // Double CC (14-bit): default to endless for fine control
       s_touchwheel_14bit_value = 0;
-      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-        mode_proc = touchwheel_mode_create_endless();
-        mode_desc = "double_cc (endless)";
-      } else {
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "double_cc (odometer)";
+      } else {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "double_cc (endless)";
       }
       output = touchwheel_output_callback_create(touchwheel_double_cc_callback, (void*)scene);
       break;
@@ -1745,7 +1745,10 @@ static const char* action_type_json_names[] = {
   [ACTION_ALL_NOTES_OFF] = "all_notes_off",
   [ACTION_ALL_SOUND_OFF] = "all_sound_off",
   [ACTION_SUSTAIN] = "sustain",
-  [ACTION_SOSTENUTO] = "sostenuto"
+  [ACTION_SOSTENUTO] = "sostenuto",
+  [ACTION_TOUCHWHEEL_MODE] = "tw_mode",
+  [ACTION_TOUCHWHEEL_MODE_HOLD] = "tw_mode_hold",
+  [ACTION_TOUCHWHEEL_MODE_CYCLE] = "tw_mode_cycle"
 };
 
 // Helper to convert action type string to enum
@@ -1783,6 +1786,18 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddNumberToObject(obj, "number", action->params.target.number);
   } else if (action->type == ACTION_SET_TEMPO) {
     cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
+  } else if (action->type == ACTION_TOUCHWHEEL_MODE) {
+    cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
+  } else if (action->type == ACTION_TOUCHWHEEL_MODE_HOLD) {
+    cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
+    cJSON_AddNumberToObject(obj, "mode2", action->params.tw_mode.mode2);
+  } else if (action->type == ACTION_TOUCHWHEEL_MODE_CYCLE) {
+    cJSON_AddNumberToObject(obj, "num_modes", action->params.tw_mode.num_modes);
+    cJSON* modes = cJSON_CreateArray();
+    for (int i = 0; i < action->params.tw_mode.num_modes; i++) {
+      cJSON_AddItemToArray(modes, cJSON_CreateNumber(action->params.tw_mode.modes[i]));
+    }
+    cJSON_AddItemToObject(obj, "modes", modes);
   }
   
   return obj;
@@ -1815,6 +1830,10 @@ static action_t json_to_action(cJSON* obj) {
   cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
   cJSON* number = cJSON_GetObjectItem(obj, "number");
   cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
+  cJSON* mode = cJSON_GetObjectItem(obj, "mode");
+  cJSON* mode2 = cJSON_GetObjectItem(obj, "mode2");
+  cJSON* num_modes = cJSON_GetObjectItem(obj, "num_modes");
+  cJSON* modes = cJSON_GetObjectItem(obj, "modes");
   
   if (cc) action.params.cc.cc_number = cc->valueint;
   if (value) action.params.cc.value = value->valueint;
@@ -1823,6 +1842,17 @@ static action_t json_to_action(cJSON* obj) {
   if (velocity) action.params.note.velocity = velocity->valueint;
   if (number) action.params.target.number = number->valueint;
   if (bpm) action.params.tempo.bpm = bpm->valueint;
+  if (mode) action.params.tw_mode.mode = mode->valueint;
+  if (mode2) action.params.tw_mode.mode2 = mode2->valueint;
+  if (num_modes) action.params.tw_mode.num_modes = num_modes->valueint;
+  if (modes && cJSON_IsArray(modes)) {
+    int count = cJSON_GetArraySize(modes);
+    if (count > 8) count = 8;
+    for (int i = 0; i < count; i++) {
+      cJSON* item = cJSON_GetArrayItem(modes, i);
+      if (item) action.params.tw_mode.modes[i] = item->valueint;
+    }
+  }
   
   return action;
 }

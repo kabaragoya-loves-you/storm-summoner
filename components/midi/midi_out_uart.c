@@ -121,7 +121,7 @@ esp_err_t midi_out_uart_send(const uint8_t *data, size_t len) {
 
 void midi_out_uart_set_mode(midi_transmit_mode_t mode) {
   s_current_mode = mode;
-  ESP_LOGI(TAG, "UART transmit mode set to %d", mode);
+  ESP_LOGD(TAG, "UART transmit mode set to %d", mode);
 }
 
 midi_transmit_mode_t midi_out_uart_get_mode(void) {
