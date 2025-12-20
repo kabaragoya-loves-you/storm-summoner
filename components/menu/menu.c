@@ -2,9 +2,15 @@
 #include "ui.h"
 #include "display_driver.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 #define TAG "MENU"
+
+// Centralized callback debounce - prevents double-firing from LVGL events
+#define MENU_CALLBACK_DEBOUNCE_MS 100
+static uint32_t s_last_callback_time = 0;
 
 // Menu navigation stack entry
 typedef struct {
@@ -307,6 +313,8 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     } else {
       // Clickable items: in group and respond to enter
       lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+      // Store menu_item_t* on the object so we can retrieve from focused object
+      lv_obj_set_user_data(label, (void*)&items[i]);
       lv_obj_add_event_cb(label, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
       if (menu_state.group) lv_group_add_obj(menu_state.group, label);
     }
@@ -340,10 +348,41 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
 }
 
 static void menu_item_event_cb(lv_event_t* e) {
-  LV_UNUSED(lv_event_get_target(e));
-  menu_item_t* item = (menu_item_t*)lv_event_get_user_data(e);
+  // With encoder navigation, the click fires on the focused object.
+  // Use the focused object from the group to ensure we get the right item
+  // (scroll snap animation might not have finished updating focus)
+  lv_obj_t* focused = NULL;
+  menu_item_t* item = NULL;
+  
+  if (menu_state.group) {
+    focused = lv_group_get_focused(menu_state.group);
+    if (focused) {
+      // Get the user_data from the focused object's event callback
+      // We stored the menu_item_t* when we added the callback
+      item = (menu_item_t*)lv_obj_get_user_data(focused);
+    }
+  }
+  
+  // Fallback to event's user_data if group focus didn't work
+  if (!item) {
+    item = (menu_item_t*)lv_event_get_user_data(e);
+  }
 
   if (!item) return;
+  
+  // Centralized debounce - prevent LVGL double-firing events
+  uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+  if (now - s_last_callback_time < MENU_CALLBACK_DEBOUNCE_MS) {
+    ESP_LOGD(TAG, "Debouncing menu callback: %s", item->label);
+    return;
+  }
+  s_last_callback_time = now;
+  
+  // Don't fire callbacks if navigation is already pending
+  if (menu_state.has_pending_nav) {
+    ESP_LOGD(TAG, "Navigation pending, ignoring: %s", item->label);
+    return;
+  }
 
   ESP_LOGD(TAG, "Menu item selected: %s", item->label);
 
@@ -510,12 +549,12 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
       // If there's a forward navigation, push the new page ON TOP of where we landed
       // (back_then_to means: go back N levels, then navigate TO a new page)
       if (has_forward) {
-        // Flush pending deletes before creating new page
-        menu_flush_pending_deletes();
-        
-        // Push the new page on top of current stack
+        // Create new page FIRST (this becomes the active screen)
         menu_navigate_to_internal(menu_state.pending_nav.menu_name,
                                  menu_state.pending_nav.builder);
+        
+        // NOW it's safe to delete old screens (new screen is active)
+        menu_flush_pending_deletes();
       }
     } else {
       menu_navigate_to_internal(menu_state.pending_nav.menu_name,

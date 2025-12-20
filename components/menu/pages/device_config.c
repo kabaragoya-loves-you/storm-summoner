@@ -4,8 +4,6 @@
 #include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -110,27 +108,8 @@ static lv_obj_t* midi_channel_roller_create(void) {
     midi_channel_confirm_cb, NULL);
 }
 
-// ============================================================================
-// Shared Debounce - prevent duplicate callbacks within 100ms
-// ============================================================================
-
-static uint32_t s_last_action_time = 0;
-#define ACTION_DEBOUNCE_MS 100
-
-// Returns true if action should be allowed, false if debounced
-static bool debounce_action(const char* action_name) {
-  uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-  if (now - s_last_action_time < ACTION_DEBOUNCE_MS) {
-    ESP_LOGD(TAG, "Debouncing: %s", action_name);
-    return false;
-  }
-  s_last_action_time = now;
-  return true;
-}
-
 static void nav_to_midi_channel_select(void* user_data) {
   (void)user_data;
-  if (!debounce_action("MIDI channel select")) return;
   menu_navigate_to("MIDI Channel", midi_channel_roller_create);
 }
 
@@ -139,8 +118,6 @@ static void nav_to_midi_channel_select(void* user_data) {
 // ============================================================================
 
 static void select_pedal_callback(void* user_data) {
-  if (!debounce_action("pedal selection")) return;
-  
   uint32_t idx = *(uint32_t*)user_data;
   
   const char* slug = NULL;
@@ -204,8 +181,6 @@ static lv_obj_t* menu_page_pedal_select_create(void) {
 // ============================================================================
 
 static void select_vendor_callback(void* user_data) {
-  if (!debounce_action("vendor selection")) return;
-  
   uint32_t idx = *(uint32_t*)user_data;
   
   const char* vendor = assets_get_vendor_by_index(idx);
@@ -258,7 +233,6 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
 
 static void nav_to_vendor_select(void* user_data) {
   (void)user_data;
-  if (!debounce_action("vendor select nav")) return;
   menu_navigate_to("Select Vendor", menu_page_vendor_select_create);
 }
 
@@ -285,8 +259,6 @@ void menu_page_device_config_cleanup(void) {
 
 static void refresh_pedal(void* user_data) {
   (void)user_data;
-  if (!debounce_action("refresh pedal")) return;
-  
   const device_config_t* cfg = device_config_get();
   
   ESP_LOGI(TAG, "Refreshing pedal data for: %s", cfg->pedal_slug);
