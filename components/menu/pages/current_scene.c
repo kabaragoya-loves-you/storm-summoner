@@ -21,6 +21,7 @@ static char s_bpm_label[24];
 static char s_time_sig_label[16];
 static char s_divider_label[24];
 static char s_clock_label[24];
+static char s_transport_label[24];
 
 // Forward declarations for stub submenus
 static lv_obj_t* stub_submenu_create(void);
@@ -506,6 +507,30 @@ static void nav_to_clock(void* user_data) {
   menu_navigate_to("Clock Source", clock_roller_create);
 }
 
+// Use transport toggle
+static void transport_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_current_index();
+  bool use_transport = (selected_index == 0);  // Yes=0, No=1
+  esp_err_t ret = scene_set_use_transport(scene_index, use_transport);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to set use_transport: %s", esp_err_to_name(ret));
+  }
+  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+}
+
+static lv_obj_t* transport_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  uint32_t current = (scene && scene->use_transport) ? 0 : 1;  // Yes=0, No=1
+
+  return menu_create_roller_page("Use Transport", "Yes\nNo", current, transport_confirm_cb, NULL);
+}
+
+static void nav_to_transport(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Use Transport", transport_roller_create);
+}
+
 // ============================================================================
 // Main Current Scene Page
 // ============================================================================
@@ -598,7 +623,12 @@ lv_obj_t* menu_page_current_scene_create(void) {
   }
   snprintf(s_clock_label, sizeof(s_clock_label), "Clock: %s", clock_str);
   s_scene_items[idx++] = (menu_item_t){ s_clock_label, nav_to_clock, NULL, false };
-  
+
+  // Use transport
+  snprintf(s_transport_label, sizeof(s_transport_label), "Transport: %s",
+    (scene && scene->use_transport) ? "Yes" : "No");
+  s_scene_items[idx++] = (menu_item_t){ s_transport_label, nav_to_transport, NULL, false };
+
   ESP_LOGI(TAG, "Current scene page: %d items", idx);
   return menu_create_page(s_page_title, s_scene_items, idx);
 }

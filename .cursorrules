@@ -1,0 +1,12 @@
+# Git Commit Message Guidelines
+
+## CRITICAL: Ignore Build Number Changes
+
+When generating git commit messages:
+
+1. **NEVER mention build number changes** - The file `build_number.txt` is auto-incremented by the build system and is NOT a meaningful change
+2. **DO NOT include** phrases like "bump build number", "increment build", "update build to X", or any reference to build numbers
+3. **COMPLETELY IGNORE** any changes to `build_number.txt` - treat this file as if it doesn't exist in the diff
+4. **Focus ONLY on meaningful code changes** - new features, bug fixes, refactoring, etc.
+
+The build number is automated infrastructure noise, not a feature. Mentioning it in commit messages makes them less useful.
