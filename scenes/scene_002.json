@@ -30,12 +30,10 @@
       "enabled": true,
       "actions": [
         {
-          "type": "randomize_multi",
-          "num_ccs": 3,
-          "cc_numbers": [74, 72, 76],
-          "min_values": [0, 0, 0],
-          "max_values": [127, 127, 127],
-          "comment": "Randomize filter, resonance, envelope"
+          "type": "randomize_cc",
+          "cc": 74,
+          "value": 127,
+          "comment": "Randomize filter CC"
         }
       ]
     },
