@@ -161,6 +161,11 @@ void touchwheel_process_release(touchwheel_instance_t* instance, uint8_t pad_id,
       touchwheel_output_send(instance->output, position_value);
     }
   }
+  
+  // If all pads are now released, notify the output adapter
+  if (!touchwheel_core_are_any_pads_pressed(&instance->core)) {
+    touchwheel_output_send_release(instance->output);
+  }
 }
 
 bool touchwheel_is_enabled(const touchwheel_instance_t* instance) {

@@ -15,6 +15,9 @@ typedef enum {
 // Callback function type for callback output adapter
 typedef void (*touchwheel_value_cb_t)(int value, void* user_data);
 
+// Release callback function type (called when all pads are released)
+typedef void (*touchwheel_release_cb_t)(void* user_data);
+
 // Output adapter structure
 typedef struct {
   touchwheel_output_type_t type;
@@ -28,6 +31,7 @@ typedef struct {
     } lvgl;
     struct {
       touchwheel_value_cb_t callback;
+      touchwheel_release_cb_t release_callback;
       void* user_data;
     } callback;
   } data;
@@ -63,6 +67,19 @@ touchwheel_output_t* touchwheel_output_callback_create(touchwheel_value_cb_t cal
  * @param value Processed value from mode processor
  */
 void touchwheel_output_send(touchwheel_output_t* output, int value);
+
+/**
+ * Set release callback for callback output adapter
+ * @param output Output adapter instance (must be CALLBACK type)
+ * @param callback Release callback function
+ */
+void touchwheel_output_set_release_callback(touchwheel_output_t* output, touchwheel_release_cb_t callback);
+
+/**
+ * Send release notification to output adapter
+ * @param output Output adapter instance
+ */
+void touchwheel_output_send_release(touchwheel_output_t* output);
 
 /**
  * Get LVGL input device from LVGL output adapter

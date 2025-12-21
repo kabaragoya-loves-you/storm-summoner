@@ -287,6 +287,31 @@ static int s_touchwheel_pitch_bend = 0;            // -8192 to 8191, center at 0
 static int s_touchwheel_aftertouch = 0;            // 0-127
 static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
 
+// Continuous note mode state
+static bool s_touchwheel_note_active = false;      // Is a note currently playing?
+static uint8_t s_touchwheel_current_note = 0;      // Current note being played
+
+// Clean up any active touchwheel notes (call before mode changes, suspend, disable, etc.)
+static void touchwheel_cleanup_active_notes(void) {
+  if (s_touchwheel_note_active) {
+    uint8_t channel = device_config_get_channel() - 1;
+    send_note_off(channel, s_touchwheel_current_note, 0);
+    ESP_LOGI(TAG, "Touchwheel Note OFF (cleanup): %d", s_touchwheel_current_note);
+    s_touchwheel_note_active = false;
+  }
+}
+
+// Public wrapper for cleanup (called from console commands, etc.)
+void scene_touchwheel_cleanup_notes(void) {
+  touchwheel_cleanup_active_notes();
+}
+
+// Release callback for continuous mode touchwheel (note off)
+static void touchwheel_continuous_release_callback(void* user_data) {
+  (void)user_data;
+  touchwheel_cleanup_active_notes();
+}
+
 // Callback for set_tempo mode touchwheel
 static void touchwheel_tempo_callback(int value, void* user_data) {
   scene_t* scene = (scene_t*)user_data;
@@ -492,10 +517,22 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
       ESP_LOGD(TAG, "Touchwheel CC = %d", output);
     }
   } else {
-    // Note mode: convert value to note number
+    // Note mode: convert value to note number and play
     uint8_t note = continuous_mapping_value_to_note(output, &scene->touchwheel);
-    // Note handling is done via the touch events (on/off), this just updates the target note
-    ESP_LOGD(TAG, "Touchwheel note target: %d", note);
+    
+    if (!s_touchwheel_note_active) {
+      // First touch - send note on
+      send_note_on(channel, note, scene->touchwheel.velocity);
+      s_touchwheel_note_active = true;
+      s_touchwheel_current_note = note;
+      ESP_LOGD(TAG, "Touchwheel Note ON: %d vel=%d", note, scene->touchwheel.velocity);
+    } else if (note != s_touchwheel_current_note) {
+      // Note changed while holding - retrigger
+      send_note_off(channel, s_touchwheel_current_note, 0);
+      send_note_on(channel, note, scene->touchwheel.velocity);
+      s_touchwheel_current_note = note;
+      ESP_LOGD(TAG, "Touchwheel Note change: %d -> %d", s_touchwheel_current_note, note);
+    }
   }
 }
 
@@ -524,6 +561,12 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
         mode_desc = "continuous (odometer)";
       }
       output = touchwheel_output_callback_create(touchwheel_continuous_callback, (void*)scene);
+      // Register release callback for note mode (sends note off when touch is released)
+      if (output) {
+        touchwheel_output_set_release_callback(output, touchwheel_continuous_release_callback);
+      }
+      // Reset note state when mode is initialized
+      s_touchwheel_note_active = false;
       break;
       
     case TOUCHWHEEL_MODE_SET_TEMPO:
@@ -800,6 +843,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   if (g_scene_manager.current_scene_index == scene_index) {
     return ESP_OK;  // Already on this scene
   }
+  
+  // Clean up any active notes before switching scenes
+  touchwheel_cleanup_active_notes();
   
   // Check if scene is already in cache
   int cache_idx = -1;
@@ -1123,12 +1169,15 @@ esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc) {
 
 esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
-  
+
   scene_t* scene = scene_get_current();
   if (scene && g_scene_manager.current_scene_index == scene_index) {
+    // Clean up any active notes before changing mode
+    touchwheel_cleanup_active_notes();
+    
     scene->touchwheel_mode = mode;
     scene_persist_if_programming();
-    
+
     // Re-setup touchwheel instance for new mode
     scene_cleanup_touchwheel();
     scene_setup_touchwheel_for_mode(scene);
@@ -2472,15 +2521,18 @@ esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {
 
 esp_err_t scene_suspend_input(void) {
   if (s_input_suspended) return ESP_OK;  // Already suspended
-  
+
   ESP_LOGI(TAG, "Suspending scene input (entering programming mode)");
-  
+
+  // Clean up any active notes before suspending
+  touchwheel_cleanup_active_notes();
+
   // Unregister scene touchwheel so it doesn't receive input
   if (s_scene_touchwheel) {
     touch_unregister_touchwheel_instance(s_scene_touchwheel);
     ESP_LOGD(TAG, "Scene touchwheel unregistered");
   }
-  
+
   s_input_suspended = true;
   return ESP_OK;
 }

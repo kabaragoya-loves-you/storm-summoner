@@ -270,6 +270,9 @@ esp_err_t scene_suspend_input(void);
 esp_err_t scene_resume_input(void);
 bool scene_is_input_suspended(void);
 
+// Clean up any active touchwheel notes (call when disabling touchwheel, changing modes, etc.)
+void scene_touchwheel_cleanup_notes(void);
+
 #endif // SCENE_H
 
 

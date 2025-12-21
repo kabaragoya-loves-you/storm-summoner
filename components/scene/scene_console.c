@@ -3307,20 +3307,25 @@ static int cmd_touchwheel_enable(int argc, char **argv) {
     arg_print_errors(stderr, touchwheel_enable_args.end, argv[0]);
     return 1;
   }
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
-  
+
   const char* state_str = touchwheel_enable_args.state->sval[0];
   bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
-  
+
+  // Clean up any active notes before disabling
+  if (!enable) {
+    scene_touchwheel_cleanup_notes();
+  }
+
   scene->touchwheel.enabled = enable;
-  
+
   // If enabling and range is invalid, set defaults
   if (enable && scene->touchwheel.max_value == 0) {
     scene->touchwheel.max_value = 127;
   }
-  
+
   ESP_LOGI(TAG, "Touchwheel: %s", enable ? "enabled" : "disabled");
   return 0;
 }
@@ -3337,12 +3342,15 @@ static int cmd_touchwheel_output(int argc, char **argv) {
     arg_print_errors(stderr, touchwheel_output_args.end, argv[0]);
     return 1;
   }
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
-  
+
   const char* type = touchwheel_output_args.output_type->sval[0];
-  
+
+  // Clean up any active notes before changing output type
+  scene_touchwheel_cleanup_notes();
+
   if (strcmp(type, "cc") == 0) {
     scene->touchwheel.output_type = OUTPUT_TYPE_CC;
   } else if (strcmp(type, "note") == 0) {
@@ -3351,7 +3359,7 @@ static int cmd_touchwheel_output(int argc, char **argv) {
     ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
     return 1;
   }
-  
+
   ESP_LOGI(TAG, "Touchwheel output type: %s", type);
   return 0;
 }
@@ -4173,7 +4181,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t touchwheel_mode_cmd = {
     .command = "touchwheel_mode",
-    .help = "Set touchwheel mode: buttons, pc, cc, tempo, pb, at, nrpn, rpn, double_cc",
+    .help = "Set touchwheel mode: buttons, pc, continuous/cc, tempo, pb, at, nrpn, rpn, double_cc",
     .hint = NULL,
     .func = &cmd_touchwheel_mode,
     .argtable = &touchwheel_mode_args

@@ -180,3 +180,16 @@ void touchwheel_output_destroy(touchwheel_output_t* output) {
   free(output);
 }
 
+void touchwheel_output_set_release_callback(touchwheel_output_t* output, touchwheel_release_cb_t callback) {
+  if (!output || output->type != TOUCHWHEEL_OUTPUT_CALLBACK) return;
+  output->data.callback.release_callback = callback;
+}
+
+void touchwheel_output_send_release(touchwheel_output_t* output) {
+  if (!output) return;
+  
+  if (output->type == TOUCHWHEEL_OUTPUT_CALLBACK && output->data.callback.release_callback) {
+    output->data.callback.release_callback(output->data.callback.user_data);
+  }
+}
+
