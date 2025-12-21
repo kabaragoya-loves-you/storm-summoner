@@ -338,20 +338,15 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
       if (count && cJSON_IsNumber(count))
         device->pc_info->count = count->valueint;
       
-      // Parse bankSelect - can be string ("none", "cc0", "cc0_cc32") or bool for legacy
-      cJSON *bank_sel = cJSON_GetObjectItem(x_pc, "bankSelect");
-      if (bank_sel) {
-        if (cJSON_IsString(bank_sel)) {
-          const char *bs_str = bank_sel->valuestring;
-          if (strcmp(bs_str, "cc0") == 0)
-            device->pc_info->bank_mode = PC_BANK_SELECT_CC0;
-          else if (strcmp(bs_str, "cc0_cc32") == 0)
-            device->pc_info->bank_mode = PC_BANK_SELECT_CC0_CC32;
-          // "none" or any other value stays as PC_BANK_SELECT_NONE
-        } else if (cJSON_IsBool(bank_sel) && cJSON_IsTrue(bank_sel)) {
-          // Legacy bool support: true = cc0
+      // Parse bankSelectMode - string values: "CC0", "CC0_CC32", or omit for none
+      cJSON *bank_sel = cJSON_GetObjectItem(x_pc, "bankSelectMode");
+      if (bank_sel && cJSON_IsString(bank_sel)) {
+        const char *bs_str = bank_sel->valuestring;
+        if (strcmp(bs_str, "CC0") == 0)
           device->pc_info->bank_mode = PC_BANK_SELECT_CC0;
-        }
+        else if (strcmp(bs_str, "CC0_CC32") == 0)
+          device->pc_info->bank_mode = PC_BANK_SELECT_CC0_CC32;
+        // Any other value stays as PC_BANK_SELECT_NONE
       }
       
       // Parse names array if present

@@ -10,11 +10,12 @@
 
 #define TAG "MENU_DEVICE_CONFIG"
 
-// Static storage for main menu (14 items max: name, refresh, midi ch, divider, 10 info labels)
-#define MAX_DEVICE_CONFIG_ITEMS 14
+// Static storage for main menu (16 items max: name, refresh, midi ch, preset lock, divider, 10 info labels)
+#define MAX_DEVICE_CONFIG_ITEMS 16
 static menu_item_t s_device_config_items[MAX_DEVICE_CONFIG_ITEMS];
 static char s_current_pedal_label[80];
 static char s_midi_ch_label[24];
+static char s_preset_lock_label[32];
 static char s_info_labels[10][48];  // TRS, CC count, Clock, Notes, Transmits, Slots, Bank, First preset, etc.
 
 // Dynamic storage - allocated in PSRAM only when needed
@@ -111,6 +112,35 @@ static lv_obj_t* midi_channel_roller_create(void) {
 static void nav_to_midi_channel_select(void* user_data) {
   (void)user_data;
   menu_navigate_to("MIDI Channel", midi_channel_roller_create);
+}
+
+// ============================================================================
+// Preset Lock Toggle
+// ============================================================================
+
+static void preset_lock_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  bool lock = (selected_index == 0);  // On=0, Off=1
+  
+  ESP_LOGI(TAG, "Preset lock set to: %s", lock ? "On" : "Off");
+  device_config_set_lock_preset_range(lock);
+  
+  // Navigate back to rebuilt Pedal Setup
+  menu_navigate_back_then_to(2, "Pedal Setup", menu_page_device_config_create);
+}
+
+static lv_obj_t* preset_lock_roller_create(void) {
+  bool current_lock = device_config_get_lock_preset_range();
+  
+  return menu_create_roller_page("Preset Lock",
+    "On\nOff",
+    current_lock ? 0 : 1,  // On=0, Off=1
+    preset_lock_confirm_cb, NULL);
+}
+
+static void nav_to_preset_lock(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Preset Lock", preset_lock_roller_create);
 }
 
 // ============================================================================
@@ -311,7 +341,14 @@ lv_obj_t* menu_page_device_config_create(void) {
   s_device_config_items[item_idx++] = 
     (menu_item_t){ s_midi_ch_label, nav_to_midi_channel_select, NULL, false };
   
-  // Item 2: Divider
+  // Item 2: Preset Lock toggle (clickable -> roller)
+  bool preset_lock = device_config_get_lock_preset_range();
+  snprintf(s_preset_lock_label, sizeof(s_preset_lock_label), "Preset lock: %s",
+    preset_lock ? "On" : "Off");
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_preset_lock_label, nav_to_preset_lock, NULL, false };
+  
+  // Divider
   s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false };
   
   // Build info labels (read-only, NULL callback)

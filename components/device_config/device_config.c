@@ -38,6 +38,7 @@ static bool s_bank_lsb_received = false;
 #define NVS_KEY_CURRENT_PROGRAM "dev_program"
 #define NVS_KEY_PC_MODE         "dev_pc_mode"
 #define NVS_KEY_BANK_MODE       "dev_bank_mode"
+#define NVS_KEY_PRESET_LOCK     "dev_plock"
 
 // Global device configuration
 static device_config_t g_device_config = {
@@ -51,6 +52,9 @@ static device_config_t g_device_config = {
   .bank_select_mode = BANK_SELECT_NONE,
   .current_bank = 0,
   .pending_bank = 0,
+  .preset_base = 0,
+  .preset_count = 128,
+  .lock_preset_range = true,  // Default: respect device's preset count
   .initialized = false
 };
 
@@ -132,7 +136,7 @@ static const char* DEFAULT_DEVICE_JSON =
   "  \"x_pc\": {\n"
   "    \"indexBase\": 0,\n"
   "    \"count\": 128,\n"
-  "    \"bankSelect\": \"none\"\n"
+  "    \"bankSelectMode\": \"none\"\n"
   "  },\n"
   "  \"x_midiTrs\": \"BOTH\",\n"
   "  \"x_midiChannel\": 1\n"
@@ -238,6 +242,41 @@ esp_err_t device_config_init(void) {
     g_device_config.preset_base = 0;  // Default: 0-based
   }
   
+  // Load preset range lock setting
+  uint8_t preset_lock_val;
+  if (app_settings_load_u8(NVS_KEY_PRESET_LOCK, &preset_lock_val) == ESP_OK) {
+    g_device_config.lock_preset_range = (preset_lock_val != 0);
+  }
+  
+  // Load device definition to get preset count, bank mode, etc.
+  if (g_device_config.pedal_slug[0] != '\0') {
+    device_def_t* device = assets_load_device(g_device_config.pedal_slug);
+    if (device) {
+      // Get preset info from device
+      if (device->pc_info) {
+        g_device_config.preset_base = (device->pc_info->index_base > 0)
+                                       ? device->pc_info->index_base : 0;
+        g_device_config.preset_count = (device->pc_info->count > 0)
+                                        ? device->pc_info->count : 128;
+        // Bank select mode
+        switch (device->pc_info->bank_mode) {
+          case PC_BANK_SELECT_CC0:
+            g_device_config.bank_select_mode = BANK_SELECT_CC0;
+            break;
+          case PC_BANK_SELECT_CC0_CC32:
+            g_device_config.bank_select_mode = BANK_SELECT_CC0_CC32;
+            break;
+          default:
+            g_device_config.bank_select_mode = BANK_SELECT_NONE;
+            break;
+        }
+        ESP_LOGI(TAG, "Loaded device info: preset_count=%u, bank_mode=%d",
+                 (unsigned)g_device_config.preset_count, g_device_config.bank_select_mode);
+      }
+      assets_free_device(device);
+    }
+  }
+  
   g_device_config.initialized = true;
   
   // Note: TRS type will be applied to MIDI layer when midi_out_init() is called
@@ -328,6 +367,11 @@ esp_err_t device_config_set_pedal(const char* slug) {
                                      ? device->pc_info->index_base : 0;
       ESP_LOGI(TAG, "  Preset base: %d", g_device_config.preset_base);
       
+      // Preset count (number of presets)
+      g_device_config.preset_count = (device->pc_info->count > 0)
+                                      ? device->pc_info->count : 128;
+      ESP_LOGI(TAG, "  Preset count: %u", (unsigned)g_device_config.preset_count);
+      
       // Bank select mode (map from pc_bank_select_mode_t to bank_select_mode_t)
       switch (device->pc_info->bank_mode) {
         case PC_BANK_SELECT_CC0:
@@ -344,8 +388,9 @@ esp_err_t device_config_set_pedal(const char* slug) {
     } else {
       // No x_pc - set defaults
       g_device_config.preset_base = 0;
+      g_device_config.preset_count = 128;
       g_device_config.bank_select_mode = BANK_SELECT_NONE;
-      ESP_LOGI(TAG, "  Using defaults: preset_base=0, bank_mode=none");
+      ESP_LOGI(TAG, "  Using defaults: preset_base=0, preset_count=128, bank_mode=none");
     }
     
     assets_free_device(device);
@@ -435,8 +480,9 @@ esp_err_t device_config_program_next(void) {
     uint16_t base_preset = g_device_config.has_pending_program 
                            ? (g_device_config.pending_bank * 128 + g_device_config.pending_program)
                            : device_config_get_preset();
+    uint16_t max_preset = device_config_get_max_preset();
     uint16_t next_preset = base_preset + 1;
-    if (next_preset > 16383) next_preset = 16383;  // Clamp at max (no wrap)
+    if (next_preset > max_preset) next_preset = max_preset;  // Clamp at max (no wrap)
     
     if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
       return device_config_set_preset(next_preset);
@@ -450,13 +496,16 @@ esp_err_t device_config_program_next(void) {
     }
   }
   
-  // No bank mode: original 0-127 behavior with wrap
+  // No bank mode: respect preset count if locked, otherwise 0-127
+  // Cap at 127 since non-bank mode can't exceed that
+  uint16_t max_preset = device_config_get_max_preset();
+  uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
   // Use pending program if one exists, otherwise current
   uint8_t base = g_device_config.has_pending_program 
                  ? g_device_config.pending_program 
                  : g_device_config.current_program;
   uint8_t next = base + 1;
-  if (next > 127) next = 0;  // Wrap around
+  if (next > max_prog) next = max_prog;  // Clamp at max (no wrap with preset lock)
   
   if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
     return device_config_set_program(next);
@@ -489,12 +538,12 @@ esp_err_t device_config_program_prev(void) {
     }
   }
   
-  // No bank mode: original 0-127 behavior with wrap
+  // No bank mode: clamp at 0 (no wrap when preset lock active)
   // Use pending program if one exists, otherwise current
   uint8_t base = g_device_config.has_pending_program 
                  ? g_device_config.pending_program 
                  : g_device_config.current_program;
-  uint8_t prev = (base == 0) ? 127 : base - 1;
+  uint8_t prev = (base == 0) ? 0 : base - 1;
   
   if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
     return device_config_set_program(prev);
@@ -616,9 +665,11 @@ uint16_t device_config_get_preset(void) {
 }
 
 esp_err_t device_config_set_preset(uint16_t preset) {
-  if (preset > 16383) {
-    ESP_LOGE(TAG, "Invalid preset number %u (must be 0-16383)", (unsigned)preset);
-    return ESP_ERR_INVALID_ARG;
+  uint16_t max_preset = device_config_get_max_preset();
+  
+  if (preset > max_preset) {
+    ESP_LOGD(TAG, "Preset %u exceeds max %u, clamping", (unsigned)preset, (unsigned)max_preset);
+    preset = max_preset;
   }
   
   g_device_config.current_bank = (uint8_t)(preset / 128);
@@ -628,8 +679,9 @@ esp_err_t device_config_set_preset(uint16_t preset) {
   uint8_t channel = g_device_config.midi_channel - 1;
   send_program_with_bank(channel, g_device_config.current_bank, g_device_config.current_program);
   
-  ESP_LOGI(TAG, "Preset changed to %u (bank %d, program %d) on channel %d",
-           (unsigned)preset, g_device_config.current_bank, 
+  // Display preset as 1-based for user (internal preset 0 = display preset 1)
+  ESP_LOGI(TAG, "Preset %u (bank %d, PC %d) on channel %d",
+           (unsigned)(preset + 1), g_device_config.current_bank, 
            g_device_config.current_program, g_device_config.midi_channel);
   
   return ESP_OK;
@@ -668,6 +720,41 @@ esp_err_t device_config_set_preset_base(uint8_t base) {
   
   ESP_LOGI(TAG, "Preset base set to %d (presets display as %d-based)", base, base);
   return ESP_OK;
+}
+
+uint16_t device_config_get_preset_count(void) {
+  return g_device_config.preset_count;
+}
+
+esp_err_t device_config_set_preset_count(uint16_t count) {
+  if (count == 0 || count > 16384) {
+    ESP_LOGE(TAG, "Invalid preset count %u (must be 1-16384)", (unsigned)count);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  g_device_config.preset_count = count;
+  ESP_LOGI(TAG, "Preset count set to %u", (unsigned)count);
+  return ESP_OK;
+}
+
+bool device_config_get_lock_preset_range(void) {
+  return g_device_config.lock_preset_range;
+}
+
+esp_err_t device_config_set_lock_preset_range(bool lock) {
+  g_device_config.lock_preset_range = lock;
+  ESP_LOGI(TAG, "Preset range lock: %s", lock ? "enabled" : "disabled");
+  return app_settings_save_u8(NVS_KEY_PRESET_LOCK, lock ? 1 : 0);
+}
+
+uint16_t device_config_get_max_preset(void) {
+  // Always respect the device's preset count
+  // Lock setting only controls clamp vs wrap, not the range itself
+  if (g_device_config.preset_count > 0) {
+    return g_device_config.preset_count - 1;
+  }
+  // Fallback if no preset count defined
+  return (g_device_config.bank_select_mode != BANK_SELECT_NONE) ? 16383 : 127;
 }
 
 

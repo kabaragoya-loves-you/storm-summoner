@@ -517,7 +517,8 @@ static void menu_pop_current_page(void) {
 static void menu_flush_pending_deletes(void) {
   for (int i = 0; i < s_pending_delete_count; i++) {
     if (s_pending_delete_screens[i]) {
-      lv_obj_delete(s_pending_delete_screens[i]);
+      // Use async delete to let LVGL finish processing any pending events
+      lv_obj_delete_async(s_pending_delete_screens[i]);
       s_pending_delete_screens[i] = NULL;
     }
   }
@@ -577,7 +578,7 @@ void menu_navigate_to(const char* menu_name, menu_page_builder_t builder) {
   menu_state.has_pending_nav = true;
   
   // Create a one-shot timer to execute navigation in LVGL task context
-  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 0, NULL);
+  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 10, NULL);
   if (!nav_timer) {
     ESP_LOGE(TAG, "Failed to create navigation timer");
     menu_state.has_pending_nav = false;
@@ -619,7 +620,7 @@ static void menu_navigate_back_internal(void) {
   // NOW it's safe to delete current screen (not active anymore)
   menu_state.stack_depth--;
   if (menu_state.stack[menu_state.stack_depth].screen) {
-    lv_obj_delete(menu_state.stack[menu_state.stack_depth].screen);
+    lv_obj_delete_async(menu_state.stack[menu_state.stack_depth].screen);
     menu_state.stack[menu_state.stack_depth].screen = NULL;
     menu_state.stack[menu_state.stack_depth].container = NULL;
   }
@@ -687,7 +688,7 @@ void menu_navigate_back(void) {
   menu_state.has_pending_nav = true;
 
   // Create a one-shot timer to execute navigation in LVGL task context
-  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 0, NULL);
+  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 10, NULL);
   if (!nav_timer) {
     ESP_LOGE(TAG, "Failed to create back navigation timer");
     menu_state.has_pending_nav = false;
@@ -711,7 +712,7 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
   menu_state.has_pending_nav = true;
 
   // Create a one-shot timer to execute navigation in LVGL task context
-  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 0, NULL);
+  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 10, NULL);
   if (!nav_timer) {
     ESP_LOGE(TAG, "Failed to create back_then_to navigation timer");
     menu_state.has_pending_nav = false;
@@ -795,8 +796,11 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   // Load new screen
   lv_screen_load(new_screen);
   
-  // Delete old screen after loading new one
-  if (old_screen) lv_obj_delete(old_screen);
+  // Delete old screen after loading new one (async to let events finish)
+  if (old_screen) lv_obj_delete_async(old_screen);
+  
+  // Reset debounce timer to prevent double-clicks after replacement
+  s_last_callback_time = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
   
   ESP_LOGI(TAG, "Replaced current page with: %s", menu_name);
 }
@@ -845,10 +849,10 @@ void menu_handle_back(void) {
 }
 
 void menu_cleanup(void) {
-  // Delete all screens in stack
+  // Delete all screens in stack (async to let events finish)
   for (int i = 0; i < menu_state.stack_depth; i++) {
     if (menu_state.stack[i].screen) {
-      lv_obj_delete(menu_state.stack[i].screen);
+      lv_obj_delete_async(menu_state.stack[i].screen);
       menu_state.stack[i].screen = NULL;
       menu_state.stack[i].container = NULL;
     }

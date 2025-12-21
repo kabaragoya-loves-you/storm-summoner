@@ -204,17 +204,31 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   
   // Check if bank mode is enabled for extended preset range
   bank_select_mode_t bank_mode = device_config_get_bank_mode();
+  uint16_t max_preset = device_config_get_max_preset();
+  
+  ESP_LOGD(TAG, "PC touchwheel: bank_mode=%d, max_preset=%u, lock=%d, count=%u",
+    bank_mode, (unsigned)max_preset, device_config_get_lock_preset_range(),
+    (unsigned)device_config_get_preset_count());
   
   if (bank_mode != BANK_SELECT_NONE) {
-    // Bank mode: use preset-based calculation (0-16383 range)
+    // Bank mode: use preset-based calculation, respecting device preset count
     uint16_t base_preset = device_config_has_pending_program()
                            ? device_config_get_pending_preset()
                            : device_config_get_preset();
     int new_preset = (int)base_preset + value;
     
-    // Clamp at boundaries (no wrap in bank mode)
-    if (new_preset < 0) new_preset = 0;
-    if (new_preset > 16383) new_preset = 16383;
+    // Clamp or wrap at boundaries based on lock setting
+    bool locked = device_config_get_lock_preset_range();
+    if (locked) {
+      // Clamp at boundaries (no wrap when locked)
+      if (new_preset < 0) new_preset = 0;
+      if (new_preset > (int)max_preset) new_preset = (int)max_preset;
+    } else {
+      // Wrap around when not locked
+      int range = (int)max_preset + 1;
+      while (new_preset < 0) new_preset += range;
+      while (new_preset > (int)max_preset) new_preset -= range;
+    }
     
     if ((uint16_t)new_preset == base_preset) return;
     
@@ -231,21 +245,24 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
     return;
   }
   
-  // No bank mode: original 0-127 behavior
+  // No bank mode: 0-127 behavior (can't exceed 127 without bank select)
   uint8_t base = device_config_has_pending_program() 
                  ? device_config_get_pending_program() 
                  : device_config_get_program();
   int new_program = (int)base + value;
   
-  // Apply wrap or clamp based on setting
-  if (config_get_program_wrap()) {
-    // Wrap around
-    while (new_program < 0) new_program += 128;
-    while (new_program > 127) new_program -= 128;
-  } else {
-    // Clamp at boundaries
+  // Cap max at 127 for non-bank mode (can't send higher without bank select)
+  uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
+  bool should_clamp = device_config_get_lock_preset_range() || !config_get_program_wrap();
+  
+  if (should_clamp) {
+    // Clamp at boundaries (no wrap)
     if (new_program < 0) new_program = 0;
-    if (new_program > 127) new_program = 127;
+    if (new_program > (int)max_prog) new_program = (int)max_prog;
+  } else {
+    // Wrap around (only if not locked)
+    while (new_program < 0) new_program += (max_prog + 1);
+    while (new_program > (int)max_prog) new_program -= (max_prog + 1);
   }
   
   if ((uint8_t)new_program == base) return;
