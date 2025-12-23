@@ -65,6 +65,9 @@ continuous_mapping_t continuous_mapping_create(uint8_t cc_number) {
     .base_note = 60,           // Middle C
     .note_range = 24,          // 2 octaves
     .velocity = 100,           // Default velocity
+    .note_latch = false,       // No latching by default
+    .note_release_ms = 500,    // 500ms default release
+    .polyphony = POLYPHONY_MONO, // Mono by default
     .curve = curve_create(CURVE_LINEAR),
     .polarity = POLARITY_UNIPOLAR,
     .min_value = 0,
@@ -98,16 +101,21 @@ uint8_t continuous_mapping_value_to_note(uint8_t value, const continuous_mapping
 
 void continuous_mapping_send_cc(const continuous_mapping_t* mapping, uint8_t channel, uint8_t value) {
   if (!mapping) return;
-  
+
   if (mapping->num_cc_numbers > 0) {
-    // Multi-CC mode: send to all configured CCs
-    for (int i = 0; i < mapping->num_cc_numbers && i < MAX_MULTI_CC; i++) {
-      send_control_change(channel, mapping->cc_numbers[i], value);
+    // Multi-CC mode: send to all configured CCs (skip 0-value slots)
+    int sent = 0;
+    for (int i = 0; i < MAX_MULTI_CC; i++) {
+      if (mapping->cc_numbers[i] > 0) {
+        send_control_change(channel, mapping->cc_numbers[i], value);
+        sent++;
+      }
     }
-    ESP_LOGD(TAG, "Multi-CC (%d CCs) = %d", mapping->num_cc_numbers, value);
-  } else {
-    // Single CC mode (backward compatible)
+    ESP_LOGD(TAG, "Multi-CC (%d CCs) = %d", sent, value);
+  } else if (mapping->cc_number > 0) {
+    // Single CC mode (backward compatible) - only send if cc_number is configured
     send_control_change(channel, mapping->cc_number, value);
   }
+  // If num_cc_numbers == 0 and cc_number == 0, don't send anything
 }
 

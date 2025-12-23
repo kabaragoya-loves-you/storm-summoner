@@ -14,6 +14,7 @@
 #include "ui.h"
 #include "memory_utils.h"
 #include "cJSON.h"
+#include "esp_timer.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -64,6 +65,9 @@ static void scene_persist_if_programming(void) {
 // Touchwheel instance for scene encoder mode
 static touchwheel_instance_t* s_scene_touchwheel = NULL;
 static bool s_input_suspended = false;  // True when in programming mode
+
+// Pitch bend return-to-center animation (declared early for cleanup function)
+static esp_timer_handle_t s_pitch_bend_timer = NULL;
 
 // Cached device definition for current scene
 static device_def_t* s_cached_device = NULL;
@@ -126,7 +130,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->send_pc_on_load = true;
   
   // Default touchwheel mode
-  scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
+  scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;
   scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;  // Default: position-based (~15 values)
   scene->touchwheel = continuous_mapping_create(16);    // CC16 = General Purpose 1
   scene->touchwheel.enabled = false;                    // Disabled by default (BUTTONS mode)
@@ -188,6 +192,13 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
 
 // Cleanup existing touchwheel instance
 static void scene_cleanup_touchwheel(void) {
+  // Stop and delete pitch bend return timer
+  if (s_pitch_bend_timer) {
+    esp_timer_stop(s_pitch_bend_timer);
+    esp_timer_delete(s_pitch_bend_timer);
+    s_pitch_bend_timer = NULL;
+  }
+  
   if (s_scene_touchwheel) {
     touch_unregister_touchwheel_instance(s_scene_touchwheel);
     touchwheel_destroy(s_scene_touchwheel);
@@ -280,21 +291,95 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
 
 // Tracked value for endless encoder continuous mode
 static int s_touchwheel_endless_value = 64;  // Start at center
+static int s_touchwheel_last_sent_cc = -1;   // Last sent CC value (-1 = none sent yet)
 
 // Tracked values for new touchwheel modes
 static int s_touchwheel_tempo_bpm = 120;           // BPM 20-300
 static int s_touchwheel_pitch_bend = 0;            // -8192 to 8191, center at 0
+static int s_touchwheel_prev_pitch_bend = 0;       // Previous value for smooth interpolation
 static int s_touchwheel_aftertouch = 0;            // 0-127
 static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
 
-// Continuous note mode state
-static bool s_touchwheel_note_active = false;      // Is a note currently playing?
-static uint8_t s_touchwheel_current_note = 0;      // Current note being played
+// Pitch bend return-to-center animation
+// Precalculated eased return sequences for each distance bucket
+// Uses ease-out curve (fast start, slow finish) for natural feel
+#define PB_ANIM_INTERVAL_US  10000  // 10ms between frames (100Hz)
+
+// Return sequences for 7 distance buckets (1=closest to center, 7=furthest)
+// Each sequence eases from the bucket's value down to 0
+static const int16_t pb_return_1[] = {1024, 0};  // 2 frames
+static const int16_t pb_return_2[] = {1600, 800, 0};  // 3 frames
+static const int16_t pb_return_3[] = {2800, 1800, 900, 0};  // 4 frames
+static const int16_t pb_return_4[] = {4200, 3000, 1800, 800, 0};  // 5 frames
+static const int16_t pb_return_5[] = {5400, 4200, 3000, 1900, 900, 0};  // 6 frames
+static const int16_t pb_return_6[] = {6400, 5200, 4000, 2800, 1700, 800, 0};  // 7 frames
+static const int16_t pb_return_7[] = {7200, 6000, 4800, 3600, 2500, 1500, 700, 0};  // 8 frames
+
+static const int16_t* pb_return_sequences[] = {
+  pb_return_1, pb_return_2, pb_return_3, pb_return_4,
+  pb_return_5, pb_return_6, pb_return_7
+};
+static const uint8_t pb_return_lengths[] = {2, 3, 4, 5, 6, 7, 8};
+
+// Animation state
+static const int16_t* s_pb_anim_sequence = NULL;  // Current sequence being played
+static uint8_t s_pb_anim_length = 0;              // Length of current sequence
+static uint8_t s_pb_anim_index = 0;               // Current frame index
+static bool s_pb_anim_negative = false;           // True if returning from negative value
+
+// Continuous note mode state - supports polyphony up to 4 voices
+typedef struct {
+  uint8_t note;
+  bool active;
+  esp_timer_handle_t release_timer;  // For latch mode delayed release
+} poly_voice_t;
+
+static poly_voice_t s_poly_voices[MAX_POLY_VOICES] = {0};
+static uint8_t s_current_voice_idx = 0;  // Round-robin for poly mode
+
+// Legacy mono mode state (for compatibility)
+static bool s_touchwheel_note_active = false;
+static uint8_t s_touchwheel_current_note = 0;
+
+// Forward declaration for timer callback
+static void latch_release_timer_cb(void* arg);
+
+// Get the next available voice for poly mode
+static int get_next_poly_voice(uint8_t note) {
+  // First, check if this note is already playing
+  for (int i = 0; i < MAX_POLY_VOICES; i++) {
+    if (s_poly_voices[i].active && s_poly_voices[i].note == note) {
+      return i;  // Retrigger same voice
+    }
+  }
+  // Find an inactive voice
+  for (int i = 0; i < MAX_POLY_VOICES; i++) {
+    if (!s_poly_voices[i].active) return i;
+  }
+  // All voices active, steal oldest (round-robin)
+  int victim = s_current_voice_idx;
+  s_current_voice_idx = (s_current_voice_idx + 1) % MAX_POLY_VOICES;
+  return victim;
+}
 
 // Clean up any active touchwheel notes (call before mode changes, suspend, disable, etc.)
 static void touchwheel_cleanup_active_notes(void) {
+  uint8_t channel = device_config_get_channel() - 1;
+  
+  // Clean up poly voices
+  for (int i = 0; i < MAX_POLY_VOICES; i++) {
+    if (s_poly_voices[i].active) {
+      send_note_off(channel, s_poly_voices[i].note, 0);
+      ESP_LOGI(TAG, "Touchwheel Note OFF (cleanup): %d", s_poly_voices[i].note);
+      s_poly_voices[i].active = false;
+    }
+    if (s_poly_voices[i].release_timer) {
+      esp_timer_stop(s_poly_voices[i].release_timer);
+    }
+  }
+  
+  // Clean up mono state
   if (s_touchwheel_note_active) {
-    uint8_t channel = device_config_get_channel() - 1;
     send_note_off(channel, s_touchwheel_current_note, 0);
     ESP_LOGI(TAG, "Touchwheel Note OFF (cleanup): %d", s_touchwheel_current_note);
     s_touchwheel_note_active = false;
@@ -306,9 +391,67 @@ void scene_touchwheel_cleanup_notes(void) {
   touchwheel_cleanup_active_notes();
 }
 
+// Timer callback for latch mode delayed note release
+static void latch_release_timer_cb(void* arg) {
+  int voice_idx = (int)(intptr_t)arg;
+  if (voice_idx < 0 || voice_idx >= MAX_POLY_VOICES) return;
+  
+  poly_voice_t* voice = &s_poly_voices[voice_idx];
+  if (voice->active) {
+    uint8_t channel = device_config_get_channel() - 1;
+    send_note_off(channel, voice->note, 0);
+    ESP_LOGD(TAG, "Latch release: Note OFF %d (voice %d)", voice->note, voice_idx);
+    voice->active = false;
+  }
+}
+
 // Release callback for continuous mode touchwheel (note off)
 static void touchwheel_continuous_release_callback(void* user_data) {
-  (void)user_data;
+  scene_t* scene = (scene_t*)user_data;
+  
+  // In latch mode, don't release immediately - start timers
+  if (scene && scene->touchwheel.note_latch) {
+    uint16_t release_ms = scene->touchwheel.note_release_ms;
+    if (release_ms < 100) release_ms = 500;  // Default
+    
+    // Start release timers for all active voices
+    for (int i = 0; i < MAX_POLY_VOICES; i++) {
+      if (s_poly_voices[i].active) {
+        // Create timer if needed
+        if (!s_poly_voices[i].release_timer) {
+          esp_timer_create_args_t args = {
+            .callback = latch_release_timer_cb,
+            .arg = (void*)(intptr_t)i,
+            .name = "latch_rel"
+          };
+          esp_timer_create(&args, &s_poly_voices[i].release_timer);
+        }
+        esp_timer_stop(s_poly_voices[i].release_timer);
+        esp_timer_start_once(s_poly_voices[i].release_timer, release_ms * 1000);
+      }
+    }
+    
+    // Handle mono mode latch
+    if (s_touchwheel_note_active) {
+      // For mono, just use voice 0's timer
+      if (!s_poly_voices[0].release_timer) {
+        esp_timer_create_args_t args = {
+          .callback = latch_release_timer_cb,
+          .arg = (void*)(intptr_t)0,
+          .name = "latch_rel"
+        };
+        esp_timer_create(&args, &s_poly_voices[0].release_timer);
+      }
+      s_poly_voices[0].note = s_touchwheel_current_note;
+      s_poly_voices[0].active = true;
+      s_touchwheel_note_active = false;  // Transfer to poly tracking
+      esp_timer_stop(s_poly_voices[0].release_timer);
+      esp_timer_start_once(s_poly_voices[0].release_timer, release_ms * 1000);
+    }
+    return;
+  }
+  
+  // Non-latch mode: immediate release
   touchwheel_cleanup_active_notes();
 }
 
@@ -328,23 +471,128 @@ static void touchwheel_tempo_callback(int value, void* user_data) {
   ESP_LOGD(TAG, "Touchwheel tempo: %d BPM", s_touchwheel_tempo_bpm);
 }
 
-// Callback for pitch bend mode touchwheel (bipolar only)
+// Callback for pitch bend mode touchwheel (true bipolar - position maps directly to value)
 static void touchwheel_pitch_bend_callback(int value, void* user_data) {
   (void)user_data;
   
-  if (value == 0) return;
+  // Stop any running return animation when finger touches
+  if (s_pitch_bend_timer) {
+    esp_timer_stop(s_pitch_bend_timer);
+  }
   
-  // Scale delta for pitch bend sensitivity (larger steps)
-  int delta = value * 128;  // ~64 steps across full range
-  s_touchwheel_pitch_bend += delta;
+  // Bipolar mode: value is position from -100 to +100 (approx)
+  // Scale to pitch bend range -8192 to +8191
+  int new_pitch_bend = (value * 8192) / 100;
   
-  // Clamp to -8192 to 8191
-  if (s_touchwheel_pitch_bend < -8192) s_touchwheel_pitch_bend = -8192;
-  if (s_touchwheel_pitch_bend > 8191) s_touchwheel_pitch_bend = 8191;
+  // Clamp to valid range
+  if (new_pitch_bend < -8192) new_pitch_bend = -8192;
+  if (new_pitch_bend > 8191) new_pitch_bend = 8191;
   
   uint8_t channel = device_config_get_channel() - 1;
+  
+  // Calculate delta from previous position
+  int delta = new_pitch_bend - s_touchwheel_prev_pitch_bend;
+  if (delta < 0) delta = -delta;
+  
+  // Smooth interpolation for large jumps
+  if (delta > 800) {
+    // Determine number of intermediate steps based on delta size
+    int steps = (delta > 4000) ? 5 : (delta > 2500) ? 4 : (delta > 1500) ? 3 : 2;
+    
+    // Send intermediate values
+    for (int i = 1; i < steps; i++) {
+      int interp = s_touchwheel_prev_pitch_bend + 
+        ((new_pitch_bend - s_touchwheel_prev_pitch_bend) * i) / steps;
+      send_pitch_bend(channel, (int16_t)interp);
+    }
+  }
+  
+  // Send final value and update state
+  s_touchwheel_pitch_bend = new_pitch_bend;
+  s_touchwheel_prev_pitch_bend = new_pitch_bend;
   send_pitch_bend(channel, (int16_t)s_touchwheel_pitch_bend);
   ESP_LOGD(TAG, "Touchwheel pitch bend: %d", s_touchwheel_pitch_bend);
+}
+
+// Timer callback for pitch bend return-to-center animation (table-driven)
+static void pitch_bend_return_timer_cb(void* arg) {
+  (void)arg;
+  
+  // Safety check
+  if (!s_pb_anim_sequence || s_pb_anim_index >= s_pb_anim_length) {
+    s_touchwheel_pitch_bend = 0;
+    s_touchwheel_prev_pitch_bend = 0;
+    uint8_t channel = device_config_get_channel() - 1;
+    send_pitch_bend(channel, 0);
+    esp_timer_stop(s_pitch_bend_timer);
+    return;
+  }
+  
+  // Get the next value from the sequence
+  int16_t value = s_pb_anim_sequence[s_pb_anim_index];
+  
+  // Apply sign if returning from negative
+  s_touchwheel_pitch_bend = s_pb_anim_negative ? -value : value;
+  
+  // Send the pitch bend
+  uint8_t channel = device_config_get_channel() - 1;
+  send_pitch_bend(channel, (int16_t)s_touchwheel_pitch_bend);
+  
+  // Advance to next frame
+  s_pb_anim_index++;
+  
+  // Stop when we've played all frames (last frame is always 0)
+  if (s_pb_anim_index >= s_pb_anim_length) {
+    esp_timer_stop(s_pitch_bend_timer);
+    s_pb_anim_sequence = NULL;
+    s_touchwheel_prev_pitch_bend = 0;  // Reset for next touch
+    ESP_LOGD(TAG, "Pitch bend return complete");
+  }
+}
+
+// Release callback for pitch bend - starts return-to-center animation
+static void touchwheel_pitch_bend_release_callback(void* user_data) {
+  (void)user_data;
+  
+  // Already at center, nothing to do
+  if (s_touchwheel_pitch_bend == 0) return;
+  
+  // Create timer if needed
+  if (!s_pitch_bend_timer) {
+    const esp_timer_create_args_t timer_args = {
+      .callback = pitch_bend_return_timer_cb,
+      .name = "pb_return"
+    };
+    if (esp_timer_create(&timer_args, &s_pitch_bend_timer) != ESP_OK) {
+      // Fallback: immediate return
+      s_touchwheel_pitch_bend = 0;
+      uint8_t channel = device_config_get_channel() - 1;
+      send_pitch_bend(channel, 0);
+      return;
+    }
+  }
+  
+  // Determine if negative and get absolute value
+  int abs_value = s_touchwheel_pitch_bend;
+  s_pb_anim_negative = (abs_value < 0);
+  if (abs_value < 0) abs_value = -abs_value;
+  
+  // Map absolute value to bucket (0-6)
+  // Buckets: 0=0-1170, 1=1171-2340, 2=2341-3510, 3=3511-4680,
+  //          4=4681-5850, 5=5851-7020, 6=7021-8192
+  int bucket = (abs_value * 7) / 8192;
+  if (bucket > 6) bucket = 6;
+  
+  // Select the return sequence for this bucket
+  s_pb_anim_sequence = pb_return_sequences[bucket];
+  s_pb_anim_length = pb_return_lengths[bucket];
+  s_pb_anim_index = 0;
+  
+  ESP_LOGD(TAG, "Pitch bend return: from %d, bucket %d, %d frames",
+    s_touchwheel_pitch_bend, bucket, s_pb_anim_length);
+  
+  // Start the periodic timer
+  esp_timer_start_periodic(s_pitch_bend_timer, PB_ANIM_INTERVAL_US);
 }
 
 // Callback for channel aftertouch mode touchwheel
@@ -354,8 +602,11 @@ static void touchwheel_aftertouch_callback(int value, void* user_data) {
   uint8_t midi_value;
   
   if (scene && scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-    // Endless mode: value is a delta
-    s_touchwheel_aftertouch += value;
+    // Endless mode: value is speed-multiplied delta (can be up to ±20)
+    // Scale so ~2 rotations at normal speed = full range
+    // 2 rotations * 8 steps = 16 steps, 127/16 ≈ 8
+    int scaled_delta = value * 8;
+    s_touchwheel_aftertouch += scaled_delta;
     if (s_touchwheel_aftertouch < 0) s_touchwheel_aftertouch = 0;
     if (s_touchwheel_aftertouch > 127) s_touchwheel_aftertouch = 127;
     midi_value = (uint8_t)s_touchwheel_aftertouch;
@@ -370,69 +621,31 @@ static void touchwheel_aftertouch_callback(int value, void* user_data) {
   ESP_LOGD(TAG, "Touchwheel aftertouch: %d", midi_value);
 }
 
-// Callback for NRPN mode touchwheel (uses continuous_mapping for NRPN number)
-static void touchwheel_nrpn_callback(int value, void* user_data) {
-  scene_t* scene = (scene_t*)user_data;
-  if (!scene) return;
-  
-  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-    // Endless mode: value is a delta, scale up for 14-bit range
-    s_touchwheel_14bit_value += value * 128;
-  } else {
-    // Odometer mode: value is 0-100%, scale to 0-16383
-    s_touchwheel_14bit_value = (value * 16383) / 100;
-  }
-  
-  // Clamp to 0-16383
-  if (s_touchwheel_14bit_value < 0) s_touchwheel_14bit_value = 0;
-  if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
-  
-  uint8_t channel = device_config_get_channel() - 1;
-  // Use first CC number from mapping as NRPN parameter
-  uint16_t param = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
-  send_nrpn(channel, param, (uint16_t)s_touchwheel_14bit_value);
-  ESP_LOGD(TAG, "Touchwheel NRPN[%u]: %d", (unsigned)param, s_touchwheel_14bit_value);
-}
-
-// Callback for RPN mode touchwheel (uses continuous_mapping for RPN number)
-static void touchwheel_rpn_callback(int value, void* user_data) {
-  scene_t* scene = (scene_t*)user_data;
-  if (!scene) return;
-  
-  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-    s_touchwheel_14bit_value += value * 128;
-  } else {
-    s_touchwheel_14bit_value = (value * 16383) / 100;
-  }
-  
-  if (s_touchwheel_14bit_value < 0) s_touchwheel_14bit_value = 0;
-  if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
-  
-  uint8_t channel = device_config_get_channel() - 1;
-  uint16_t param = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
-  send_rpn(channel, param, (uint16_t)s_touchwheel_14bit_value);
-  ESP_LOGD(TAG, "Touchwheel RPN[%u]: %d", (unsigned)param, s_touchwheel_14bit_value);
-}
-
 // Callback for double CC mode touchwheel (14-bit CC, MSB=cc_numbers[0], LSB=cc_numbers[0]+32)
 static void touchwheel_double_cc_callback(int value, void* user_data) {
   scene_t* scene = (scene_t*)user_data;
   if (!scene) return;
-  
+
   if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
-    s_touchwheel_14bit_value += value * 128;
+    // Endless mode: value is speed-multiplied delta
+    // Scale so ~4 rotations at normal speed = full 14-bit range
+    // Use 500 (not a multiple of 128) so both MSB and LSB visibly change
+    s_touchwheel_14bit_value += value * 500;
   } else {
+    // Odometer mode: value is 0-100%, scale to 0-16383
     s_touchwheel_14bit_value = (value * 16383) / 100;
   }
-  
+
   if (s_touchwheel_14bit_value < 0) s_touchwheel_14bit_value = 0;
   if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
-  
+
   uint8_t channel = device_config_get_channel() - 1;
   uint8_t msb_cc = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
   uint8_t lsb_cc = msb_cc + 32;  // Standard 14-bit CC: LSB = MSB + 32
   send_double_control_change(channel, msb_cc, lsb_cc, (uint16_t)s_touchwheel_14bit_value);
-  ESP_LOGD(TAG, "Touchwheel DoubleCC[%d/%d]: %d", msb_cc, lsb_cc, s_touchwheel_14bit_value);
+  ESP_LOGD(TAG, "Touchwheel DoubleCC[%d/%d]: %d (MSB=%d, LSB=%d)", 
+    msb_cc, lsb_cc, s_touchwheel_14bit_value,
+    (s_touchwheel_14bit_value >> 7) & 0x7F, s_touchwheel_14bit_value & 0x7F);
 }
 
 // Callback for continuous mode touchwheel (CC/Note output)
@@ -507,8 +720,19 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   
   // Send MIDI based on output type
   uint8_t channel = device_config_get_channel() - 1;
-  
+
   if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
+    // Don't send if no CCs are configured (neither multi-CC slots nor single CC)
+    if (scene->touchwheel.num_cc_numbers == 0 && scene->touchwheel.cc_number == 0) {
+      return;
+    }
+    
+    // Skip sending if value hasn't changed (prevents spam at min/max)
+    if ((int)output == s_touchwheel_last_sent_cc) {
+      return;
+    }
+    s_touchwheel_last_sent_cc = (int)output;
+    
     continuous_mapping_send_cc(&scene->touchwheel, channel, output);
     if (has_discrete) {
       const char* name = assets_get_discrete_name(device, cc_num, output);
@@ -519,19 +743,47 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   } else {
     // Note mode: convert value to note number and play
     uint8_t note = continuous_mapping_value_to_note(output, &scene->touchwheel);
+    uint8_t vel = scene->touchwheel.velocity;
+    if (vel == 0) vel = 100;
     
-    if (!s_touchwheel_note_active) {
-      // First touch - send note on
-      send_note_on(channel, note, scene->touchwheel.velocity);
-      s_touchwheel_note_active = true;
-      s_touchwheel_current_note = note;
-      ESP_LOGD(TAG, "Touchwheel Note ON: %d vel=%d", note, scene->touchwheel.velocity);
-    } else if (note != s_touchwheel_current_note) {
-      // Note changed while holding - retrigger
-      send_note_off(channel, s_touchwheel_current_note, 0);
-      send_note_on(channel, note, scene->touchwheel.velocity);
-      s_touchwheel_current_note = note;
-      ESP_LOGD(TAG, "Touchwheel Note change: %d -> %d", s_touchwheel_current_note, note);
+    if (scene->touchwheel.polyphony == POLYPHONY_POLY) {
+      // Polyphonic mode: each position can trigger a new voice
+      int voice_idx = get_next_poly_voice(note);
+      poly_voice_t* voice = &s_poly_voices[voice_idx];
+      
+      // Stop any pending release timer for this voice
+      if (voice->release_timer) {
+        esp_timer_stop(voice->release_timer);
+      }
+      
+      // If voice was playing a different note, turn it off
+      if (voice->active && voice->note != note) {
+        send_note_off(channel, voice->note, 0);
+      }
+      
+      // If this note isn't already playing on this voice, send note on
+      if (!voice->active || voice->note != note) {
+        send_note_on(channel, note, vel);
+        ESP_LOGD(TAG, "Poly Note ON: %d vel=%d (voice %d)", note, vel, voice_idx);
+      }
+      
+      voice->note = note;
+      voice->active = true;
+    } else {
+      // Mono mode: single voice
+      if (!s_touchwheel_note_active) {
+        // First touch - send note on
+        send_note_on(channel, note, vel);
+        s_touchwheel_note_active = true;
+        s_touchwheel_current_note = note;
+        ESP_LOGD(TAG, "Touchwheel Note ON: %d vel=%d", note, vel);
+      } else if (note != s_touchwheel_current_note) {
+        // Note changed while holding - retrigger
+        send_note_off(channel, s_touchwheel_current_note, 0);
+        send_note_on(channel, note, vel);
+        s_touchwheel_current_note = note;
+        ESP_LOGD(TAG, "Touchwheel Note change: %d -> %d", s_touchwheel_current_note, note);
+      }
     }
   }
 }
@@ -565,8 +817,9 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       if (output) {
         touchwheel_output_set_release_callback(output, touchwheel_continuous_release_callback);
       }
-      // Reset note state when mode is initialized
+      // Reset state when mode is initialized
       s_touchwheel_note_active = false;
+      s_touchwheel_last_sent_cc = -1;  // Reset so first value is always sent
       break;
       
     case TOUCHWHEEL_MODE_SET_TEMPO:
@@ -583,10 +836,13 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       break;
       
     case TOUCHWHEEL_MODE_PITCH_BEND:
-      // Pitch bend: always bipolar (center-return)
+      // Pitch bend: true bipolar - position directly maps to value
       s_touchwheel_pitch_bend = 0;  // Start centered
-      mode_proc = touchwheel_mode_create_endless();  // Endless for fine control
+      mode_proc = touchwheel_mode_create_bipolar();  // Position-based bipolar
       output = touchwheel_output_callback_create(touchwheel_pitch_bend_callback, NULL);
+      if (output) {
+        touchwheel_output_set_release_callback(output, touchwheel_pitch_bend_release_callback);
+      }
       mode_desc = "pitch_bend (bipolar)";
       break;
       
@@ -603,32 +859,6 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       output = touchwheel_output_callback_create(touchwheel_aftertouch_callback, (void*)scene);
       break;
       
-    case TOUCHWHEEL_MODE_NRPN:
-      // NRPN: default to endless for fine 14-bit control
-      s_touchwheel_14bit_value = 0;
-      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
-        mode_proc = touchwheel_mode_create_odometer();
-        mode_desc = "nrpn (odometer)";
-      } else {
-        mode_proc = touchwheel_mode_create_endless();
-        mode_desc = "nrpn (endless)";
-      }
-      output = touchwheel_output_callback_create(touchwheel_nrpn_callback, (void*)scene);
-      break;
-      
-    case TOUCHWHEEL_MODE_RPN:
-      // RPN: default to endless for fine 14-bit control
-      s_touchwheel_14bit_value = 0;
-      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
-        mode_proc = touchwheel_mode_create_odometer();
-        mode_desc = "rpn (odometer)";
-      } else {
-        mode_proc = touchwheel_mode_create_endless();
-        mode_desc = "rpn (endless)";
-      }
-      output = touchwheel_output_callback_create(touchwheel_rpn_callback, (void*)scene);
-      break;
-      
     case TOUCHWHEEL_MODE_DOUBLE_CC:
       // Double CC (14-bit): default to endless for fine control
       s_touchwheel_14bit_value = 0;
@@ -642,9 +872,9 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       output = touchwheel_output_callback_create(touchwheel_double_cc_callback, (void*)scene);
       break;
       
-    case TOUCHWHEEL_MODE_BUTTONS:
+    case TOUCHWHEEL_MODE_PADS:
     default:
-      // No touchwheel instance needed for buttons mode
+      // No touchwheel instance needed for pads mode
       return;
   }
   
@@ -1186,8 +1416,17 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
     return ESP_ERR_INVALID_STATE;
   }
   
-  const char* mode_str = (mode == TOUCHWHEEL_MODE_BUTTONS) ? "buttons" :
-                         (mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE) ? "program_change" : "continuous";
+  const char* mode_str;
+  switch (mode) {
+    case TOUCHWHEEL_MODE_PADS: mode_str = "pads"; break;
+    case TOUCHWHEEL_MODE_PROGRAM_CHANGE: mode_str = "program_change"; break;
+    case TOUCHWHEEL_MODE_SET_TEMPO: mode_str = "set_tempo"; break;
+    case TOUCHWHEEL_MODE_PITCH_BEND: mode_str = "pitch_bend"; break;
+    case TOUCHWHEEL_MODE_AFTERTOUCH: mode_str = "aftertouch"; break;
+    case TOUCHWHEEL_MODE_DOUBLE_CC: mode_str = "double_cc"; break;
+    case TOUCHWHEEL_MODE_CONTINUOUS: mode_str = "continuous"; break;
+    default: mode_str = "unknown"; break;
+  }
   ESP_LOGI(TAG, "Scene %d touchwheel mode set to %s", scene_index + 1, mode_str);
   return ESP_OK;
 }
@@ -1310,9 +1549,9 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
   
   // Handle touchwheel modes - pads 0-7 are routed to touchwheel instance
   // Touchwheel instance handles program change or continuous output
-  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_BUTTONS && pad_index <= TOUCHWHEEL_END) {
+  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_PADS && pad_index <= TOUCHWHEEL_END) {
     // Pad events are already routed to touchwheel instance via touch.c
-    // Don't process as individual button presses
+    // Don't process as individual pad presses
     return ESP_OK;
   }
   
@@ -1951,9 +2190,24 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
   cJSON_AddBoolToObject(obj, "enabled", mapping->enabled);
   cJSON_AddStringToObject(obj, "output_type", mapping->output_type == OUTPUT_TYPE_NOTE ? "note" : "cc");
   cJSON_AddNumberToObject(obj, "cc_number", mapping->cc_number);
+  
+  // Multi-CC array - always save all 4 slots to preserve positions
+  // (0 values indicate inactive slots)
+  if (mapping->num_cc_numbers > 0) {
+    cJSON* cc_arr = cJSON_CreateArray();
+    for (int i = 0; i < MAX_MULTI_CC; i++) {
+      cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(mapping->cc_numbers[i]));
+    }
+    cJSON_AddItemToObject(obj, "cc_numbers", cc_arr);
+  }
+  
   cJSON_AddNumberToObject(obj, "base_note", mapping->base_note);
   cJSON_AddNumberToObject(obj, "note_range", mapping->note_range);
   cJSON_AddNumberToObject(obj, "velocity", mapping->velocity);
+  cJSON_AddBoolToObject(obj, "note_latch", mapping->note_latch);
+  cJSON_AddNumberToObject(obj, "note_release_ms", mapping->note_release_ms);
+  cJSON_AddStringToObject(obj, "polyphony", 
+    mapping->polyphony == POLYPHONY_POLY ? "poly" : "mono");
   cJSON_AddNumberToObject(obj, "curve_type", mapping->curve.type);
   cJSON_AddNumberToObject(obj, "polarity", mapping->polarity);
   cJSON_AddNumberToObject(obj, "min_value", mapping->min_value);
@@ -1980,6 +2234,36 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
   cJSON* cc_num = cJSON_GetObjectItem(obj, "cc_number");
   if (cc_num) mapping->cc_number = cc_num->valueint;
   
+  // Multi-CC array - load all slots and recalculate num_cc_numbers
+  cJSON* cc_arr = cJSON_GetObjectItem(obj, "cc_numbers");
+  if (cc_arr && cJSON_IsArray(cc_arr)) {
+    int count = cJSON_GetArraySize(cc_arr);
+    if (count > MAX_MULTI_CC) count = MAX_MULTI_CC;
+    
+    // Load values into slots
+    for (int i = 0; i < count; i++) {
+      cJSON* item = cJSON_GetArrayItem(cc_arr, i);
+      if (item) mapping->cc_numbers[i] = (uint8_t)item->valueint;
+    }
+    // Clear remaining slots
+    for (int i = count; i < MAX_MULTI_CC; i++) {
+      mapping->cc_numbers[i] = 0;
+    }
+    
+    // Calculate num_cc_numbers from non-zero entries
+    mapping->num_cc_numbers = 0;
+    for (int i = 0; i < MAX_MULTI_CC; i++) {
+      if (mapping->cc_numbers[i] > 0) {
+        mapping->num_cc_numbers++;
+      }
+    }
+  } else {
+    mapping->num_cc_numbers = 0;
+    for (int i = 0; i < MAX_MULTI_CC; i++) {
+      mapping->cc_numbers[i] = 0;
+    }
+  }
+  
   cJSON* base_note = cJSON_GetObjectItem(obj, "base_note");
   if (base_note) mapping->base_note = base_note->valueint;
   
@@ -1988,6 +2272,18 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
   
   cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
   if (velocity) mapping->velocity = velocity->valueint;
+  
+  cJSON* note_latch = cJSON_GetObjectItem(obj, "note_latch");
+  if (note_latch) mapping->note_latch = cJSON_IsTrue(note_latch);
+  
+  cJSON* note_release = cJSON_GetObjectItem(obj, "note_release_ms");
+  if (note_release) mapping->note_release_ms = note_release->valueint;
+  
+  cJSON* polyphony_json = cJSON_GetObjectItem(obj, "polyphony");
+  if (polyphony_json && cJSON_IsString(polyphony_json)) {
+    mapping->polyphony = (strcmp(polyphony_json->valuestring, "poly") == 0) ? 
+      POLYPHONY_POLY : POLYPHONY_MONO;
+  }
   
   cJSON* curve_type = cJSON_GetObjectItem(obj, "curve_type");
   if (curve_type) mapping->curve = curve_create((curve_type_t)curve_type->valueint);
@@ -2027,13 +2323,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
   // Serialize touchwheel mode, style, and continuous mapping
   const char* tw_mode_str;
   switch (scene->touchwheel_mode) {
-    case TOUCHWHEEL_MODE_BUTTONS: tw_mode_str = "buttons"; break;
+    case TOUCHWHEEL_MODE_PADS: tw_mode_str = "pads"; break;
     case TOUCHWHEEL_MODE_PROGRAM_CHANGE: tw_mode_str = "program_change"; break;
     case TOUCHWHEEL_MODE_SET_TEMPO: tw_mode_str = "set_tempo"; break;
     case TOUCHWHEEL_MODE_PITCH_BEND: tw_mode_str = "pitch_bend"; break;
     case TOUCHWHEEL_MODE_AFTERTOUCH: tw_mode_str = "aftertouch"; break;
-    case TOUCHWHEEL_MODE_NRPN: tw_mode_str = "nrpn"; break;
-    case TOUCHWHEEL_MODE_RPN: tw_mode_str = "rpn"; break;
     case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
     default: tw_mode_str = "continuous"; break;
   }
@@ -2136,15 +2430,20 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* tw_mode = cJSON_GetObjectItem(root, "touchwheel_mode");
   if (tw_mode && cJSON_IsString(tw_mode)) {
     const char* mode_str = tw_mode->valuestring;
-    if (strcmp(mode_str, "program_change") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
+    if (strcmp(mode_str, "pads") == 0 || strcmp(mode_str, "buttons") == 0) {
+      scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;  // "buttons" for backwards compatibility
+    }
+    else if (strcmp(mode_str, "program_change") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
     else if (strcmp(mode_str, "continuous") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
     else if (strcmp(mode_str, "set_tempo") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_SET_TEMPO;
     else if (strcmp(mode_str, "pitch_bend") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PITCH_BEND;
     else if (strcmp(mode_str, "aftertouch") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_AFTERTOUCH;
-    else if (strcmp(mode_str, "nrpn") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_NRPN;
-    else if (strcmp(mode_str, "rpn") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_RPN;
     else if (strcmp(mode_str, "double_cc") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_DOUBLE_CC;
-    else scene->touchwheel_mode = TOUCHWHEEL_MODE_BUTTONS;
+    // Legacy: nrpn/rpn modes removed, map to continuous for backwards compatibility
+    else if (strcmp(mode_str, "nrpn") == 0 || strcmp(mode_str, "rpn") == 0) {
+      scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
+    }
+    else scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;
   }
   
   // Deserialize touchwheel style (odometer, endless, or bipolar)

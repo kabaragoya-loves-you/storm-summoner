@@ -34,7 +34,7 @@ void scene_test_info(void) {
   ESP_LOGI(TAG, "Program number: %d (send PC on load: %s)", scene->program_number, 
            scene->send_pc_on_load ? "yes" : "no");
   ESP_LOGI(TAG, "Touchwheel: %s mode", 
-           scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS ? "button" : "encoder");
+           scene->touchwheel_mode == TOUCHWHEEL_MODE_PADS ? "pads" : "encoder");
   
   if (scene_has_pending_change()) {
     ESP_LOGI(TAG, "PENDING CHANGE to scene %d", scene_get_pending_index() + 1);

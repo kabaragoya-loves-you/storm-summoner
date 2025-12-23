@@ -212,17 +212,15 @@ static void cmd_scene_info(void) {
   }
   const char* tw_mode_str;
   switch (scene->touchwheel_mode) {
-    case TOUCHWHEEL_MODE_BUTTONS: tw_mode_str = "buttons"; break;
+    case TOUCHWHEEL_MODE_PADS: tw_mode_str = "pads"; break;
     case TOUCHWHEEL_MODE_PROGRAM_CHANGE: tw_mode_str = "program_change"; break;
     case TOUCHWHEEL_MODE_SET_TEMPO: tw_mode_str = "set_tempo"; break;
     case TOUCHWHEEL_MODE_PITCH_BEND: tw_mode_str = "pitch_bend"; break;
     case TOUCHWHEEL_MODE_AFTERTOUCH: tw_mode_str = "aftertouch"; break;
-    case TOUCHWHEEL_MODE_NRPN: tw_mode_str = "nrpn"; break;
-    case TOUCHWHEEL_MODE_RPN: tw_mode_str = "rpn"; break;
     case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
     default: tw_mode_str = "continuous"; break;
   }
-  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_BUTTONS && 
+  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_PADS && 
       scene->touchwheel_mode != TOUCHWHEEL_MODE_PROGRAM_CHANGE) {
     const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_BIPOLAR) ? "bipolar" :
                                (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
@@ -423,8 +421,8 @@ static void cmd_scene_info(void) {
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchpad mappings:");
   
-  // Skip pads 0-7 if touchwheel is active (not in buttons mode)
-  int start_pad = (scene->touchwheel_mode == TOUCHWHEEL_MODE_BUTTONS) ? 0 : TOUCHWHEEL_SIZE;
+  // Skip pads 0-7 if touchwheel is active (not in pads mode)
+  int start_pad = (scene->touchwheel_mode == TOUCHWHEEL_MODE_PADS) ? 0 : TOUCHWHEEL_SIZE;
   if (start_pad > 0) {
     ESP_LOGI(TAG, "  Pads 0-7: (used by touchwheel)");
   }
@@ -1790,11 +1788,11 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "  none                             - Clear assignment (bump only)");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchwheel Mode:");
-  ESP_LOGI(TAG, "  tw_mode <mode>                   - Set touchwheel mode (0-8)");
+  ESP_LOGI(TAG, "  tw_mode <mode>                   - Set touchwheel mode (0-6)");
   ESP_LOGI(TAG, "  tw_mode_hold <press> <release>   - Mode on press, restore on release");
   ESP_LOGI(TAG, "  tw_mode_cycle <m1> <m2>...<m8>   - Cycle through 2-8 modes");
-  ESP_LOGI(TAG, "    Modes: 0=buttons 1=pc 2=cc 3=tempo 4=pitch_bend");
-  ESP_LOGI(TAG, "           5=aftertouch 6=nrpn 7=rpn 8=double_cc");
+  ESP_LOGI(TAG, "    Modes: 0=pads 1=pc 2=cc 3=tempo 4=pitch_bend");
+  ESP_LOGI(TAG, "           5=aftertouch 6=double_cc");
   
   return 0;
 }
@@ -3201,8 +3199,8 @@ static int cmd_touchwheel_mode(int argc, char **argv) {
   touchwheel_mode_t mode;
   touchwheel_style_t default_style = TOUCHWHEEL_STYLE_ODOMETER;
   
-  if (strcmp(mode_str, "buttons") == 0) {
-    mode = TOUCHWHEEL_MODE_BUTTONS;
+  if (strcmp(mode_str, "pads") == 0) {
+    mode = TOUCHWHEEL_MODE_PADS;
   } else if (strcmp(mode_str, "program_change") == 0 || strcmp(mode_str, "pc") == 0) {
     mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
   } else if (strcmp(mode_str, "continuous") == 0 || strcmp(mode_str, "cc") == 0) {
@@ -3215,14 +3213,10 @@ static int cmd_touchwheel_mode(int argc, char **argv) {
     default_style = TOUCHWHEEL_STYLE_BIPOLAR;  // Pitch bend is always bipolar
   } else if (strcmp(mode_str, "aftertouch") == 0 || strcmp(mode_str, "at") == 0) {
     mode = TOUCHWHEEL_MODE_AFTERTOUCH;
-  } else if (strcmp(mode_str, "nrpn") == 0) {
-    mode = TOUCHWHEEL_MODE_NRPN;
-  } else if (strcmp(mode_str, "rpn") == 0) {
-    mode = TOUCHWHEEL_MODE_RPN;
   } else if (strcmp(mode_str, "double_cc") == 0 || strcmp(mode_str, "14bit") == 0) {
     mode = TOUCHWHEEL_MODE_DOUBLE_CC;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: buttons, pc, cc, tempo, pb, at, nrpn, rpn, double_cc");
+    ESP_LOGE(TAG, "Unknown mode. Use: pads, pc, cc, tempo, pb, at, double_cc");
     return 1;
   }
   
@@ -3286,8 +3280,7 @@ static int cmd_touchwheel_style(int argc, char **argv) {
   // Re-setup touchwheel if in a mode that uses style
   touchwheel_mode_t mode = scene->touchwheel_mode;
   if (mode == TOUCHWHEEL_MODE_CONTINUOUS || mode == TOUCHWHEEL_MODE_SET_TEMPO ||
-      mode == TOUCHWHEEL_MODE_AFTERTOUCH || mode == TOUCHWHEEL_MODE_NRPN ||
-      mode == TOUCHWHEEL_MODE_RPN || mode == TOUCHWHEEL_MODE_DOUBLE_CC) {
+      mode == TOUCHWHEEL_MODE_AFTERTOUCH || mode == TOUCHWHEEL_MODE_DOUBLE_CC) {
     scene_set_touchwheel_mode(scene_get_current_index(), mode);
   }
   
@@ -4181,7 +4174,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t touchwheel_mode_cmd = {
     .command = "touchwheel_mode",
-    .help = "Set touchwheel mode: buttons, pc, continuous/cc, tempo, pb, at, nrpn, rpn, double_cc",
+    .help = "Set touchwheel mode: pads, pc, continuous/cc, tempo, pb, at, double_cc",
     .hint = NULL,
     .func = &cmd_touchwheel_mode,
     .argtable = &touchwheel_mode_args

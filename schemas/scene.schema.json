@@ -41,8 +41,8 @@
     },
     "touchwheel_mode": {
       "type": "string",
-      "enum": ["buttons", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "nrpn", "rpn", "double_cc"],
-      "default": "buttons",
+      "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc"],
+      "default": "pads",
       "description": "Touchwheel behavior mode"
     },
     "touchwheel_style": {
@@ -221,6 +221,24 @@
           "maximum": 127,
           "default": 100,
           "description": "Note velocity (when output_type=note)"
+        },
+        "note_latch": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, notes hold until release timer expires (when output_type=note)"
+        },
+        "note_release_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 4000,
+          "default": 500,
+          "description": "Release delay in ms when latch is on (when output_type=note)"
+        },
+        "polyphony": {
+          "type": "string",
+          "enum": ["mono", "poly"],
+          "default": "mono",
+          "description": "Polyphony mode: mono (single voice) or poly (up to 4 voices)"
         },
         "curve_type": {
           "type": "integer",

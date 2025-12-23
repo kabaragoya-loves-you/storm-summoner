@@ -18,6 +18,15 @@ typedef enum {
   OUTPUT_TYPE_NOTE          // Send MIDI Note On/Off messages
 } output_type_t;
 
+// Polyphony mode for note output
+typedef enum {
+  POLYPHONY_MONO = 0,       // Single voice (default)
+  POLYPHONY_POLY            // Up to 4 voices
+} polyphony_mode_t;
+
+// Maximum polyphonic voices
+#define MAX_POLY_VOICES 4
+
 // Maximum number of CCs that can be controlled simultaneously
 #define MAX_MULTI_CC 4
 
@@ -35,6 +44,9 @@ typedef struct {
   uint8_t base_note;         // Base MIDI note (typically 60 = middle C)
   uint8_t note_range;        // Range in semitones (e.g., 24 = 2 octaves)
   uint8_t velocity;          // Note velocity (0-127)
+  bool note_latch;           // If true, notes hold until manually released
+  uint16_t note_release_ms;  // Release delay in ms (100-4000, only used when latch is on)
+  polyphony_mode_t polyphony; // Mono (1 voice) or Poly (up to 4 voices)
   
   // Value transformation
   curve_t curve;             // Curve to apply before polarity

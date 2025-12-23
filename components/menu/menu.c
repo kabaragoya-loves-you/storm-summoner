@@ -39,13 +39,15 @@ static struct {
   deferred_nav_t pending_nav;
   bool has_pending_nav;
   bool skip_focus_scroll;  // Skip scroll in focus_event_cb during restore
+  int restore_focus_index;  // Index to focus after next page creation (-1 = default)
 } menu_state = {
   .initialized = false,
   .stack_depth = 0,
   .group = NULL,
   .encoder_indev = NULL,
   .has_pending_nav = false,
-  .skip_focus_scroll = false
+  .skip_focus_scroll = false,
+  .restore_focus_index = -1
 };
 
 // Forward declarations
@@ -96,6 +98,7 @@ static lv_obj_t* find_container_in_screen(lv_obj_t* screen) {
 }
 
 // Save the currently focused item index before navigating away
+// Saves the clickable item index (not raw child index) for consistency with restore
 static void save_focused_index(void) {
   if (menu_state.stack_depth <= 0) return;
   
@@ -105,13 +108,18 @@ static void save_focused_index(void) {
   lv_obj_t* focused = lv_group_get_focused(menu_state.group);
   if (!focused) return;
   
-  // Find the index of the focused object
+  // Find the clickable item index of the focused object
   uint32_t child_cnt = lv_obj_get_child_count(entry->container);
+  int clickable_idx = 0;
   for (uint32_t i = 0; i < child_cnt; i++) {
-    if (lv_obj_get_child(entry->container, i) == focused) {
-      entry->focused_index = (int32_t)i;
-      ESP_LOGD(TAG, "Saved focused index: %ld", (long)entry->focused_index);
+    lv_obj_t* child = lv_obj_get_child(entry->container, i);
+    if (child == focused) {
+      entry->focused_index = (int32_t)clickable_idx;
+      ESP_LOGD(TAG, "Saved focused index: %ld (clickable)", (long)entry->focused_index);
       return;
+    }
+    if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+      clickable_idx++;
     }
   }
 }
@@ -292,6 +300,13 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     lv_obj_t* label = lv_label_create(cont);
     lv_label_set_text(label, item_label);
     lv_obj_set_width(label, lv_pct(100));
+    
+    // Fixed height to prevent layout shifts when font size changes
+    // 28px accommodates 20px font with padding
+    lv_obj_set_height(label, 28);
+    
+    // Clip long text to prevent wrapping/overflow
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
 
     // Label styling - dimmer color for read-only items
     if (is_readonly) {
@@ -561,6 +576,48 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
       menu_navigate_to_internal(menu_state.pending_nav.menu_name,
                                menu_state.pending_nav.builder);
     }
+    
+    // Apply restore focus if set
+    if (menu_state.restore_focus_index >= 0 && menu_state.stack_depth > 0) {
+      menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
+      if (entry->container && menu_state.group) {
+        uint32_t child_cnt = lv_obj_get_child_count(entry->container);
+        int focus_idx = menu_state.restore_focus_index;
+        
+        // Count clickable children and find the target
+        int clickable_count = 0;
+        lv_obj_t* focus_target = NULL;
+        lv_obj_t* last_clickable = NULL;
+        
+        for (uint32_t i = 0; i < child_cnt; i++) {
+          lv_obj_t* child = lv_obj_get_child(entry->container, i);
+          if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+            last_clickable = child;
+            if (clickable_count == focus_idx) {
+              focus_target = child;
+            }
+            clickable_count++;
+          }
+        }
+        
+        // If focus_idx was beyond available items, use last clickable
+        if (!focus_target && last_clickable) {
+          focus_target = last_clickable;
+          ESP_LOGD(TAG, "Focus index %d clamped to last item", focus_idx);
+        }
+        
+        if (focus_target) {
+          menu_state.skip_focus_scroll = true;
+          lv_group_focus_obj(focus_target);
+          lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
+          menu_state.skip_focus_scroll = false;
+          update_scroll_visuals(entry->container);
+          ESP_LOGD(TAG, "Restored focus to clickable index: %d", focus_idx);
+        }
+      }
+      menu_state.restore_focus_index = -1;  // Clear after use
+    }
+    
     menu_state.has_pending_nav = false;
   }
 }
@@ -636,24 +693,36 @@ static void menu_navigate_back_internal(void) {
     if (prev_cont) {
       uint32_t child_cnt = lv_obj_get_child_count(prev_cont);
       
-      // Debug: log scroll position BEFORE we try to reset
-      int32_t scroll_y_before = lv_obj_get_scroll_y(prev_cont);
-      ESP_LOGD(TAG, "Back nav: child_cnt=%u, scroll_y_before=%ld", (unsigned)child_cnt, (long)scroll_y_before);
-      
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(prev_cont, i);
         if (child) lv_group_add_obj(menu_state.group, child);
       }
       
-      // Restore focus to saved position
+      // Restore focus to saved clickable index
       int32_t focus_idx = entry->focused_index;
       lv_obj_t* focus_target = NULL;
+      int clickable_count = 0;
       
-      if (focus_idx >= 0 && focus_idx < (int32_t)child_cnt) {
-        focus_target = lv_obj_get_child(prev_cont, focus_idx);
+      for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(prev_cont, i);
+        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+          if (clickable_count == focus_idx) {
+            focus_target = child;
+            break;
+          }
+          clickable_count++;
+        }
       }
-      if (!focus_target && child_cnt > 0) {
-        focus_target = lv_obj_get_child(prev_cont, 0);
+      
+      // Fallback to first clickable if saved index not found
+      if (!focus_target) {
+        for (uint32_t i = 0; i < child_cnt; i++) {
+          lv_obj_t* child = lv_obj_get_child(prev_cont, i);
+          if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+            focus_target = child;
+            break;
+          }
+        }
       }
       
       if (focus_target) {
@@ -664,7 +733,7 @@ static void menu_navigate_back_internal(void) {
         
         update_scroll_visuals(prev_cont);
         
-        ESP_LOGD(TAG, "Restored focus to index: %ld", (long)focus_idx);
+        ESP_LOGD(TAG, "Restored focus to clickable index: %ld", (long)focus_idx);
       }
     }
   }
@@ -705,6 +774,21 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
     return;
   }
 
+  // Auto-capture focus from the page being replaced (if not manually set)
+  // When doing back_then_to(2, ...), the page at stack_depth-2 is being replaced
+  if (menu_state.restore_focus_index < 0 && levels >= 2 && 
+      menu_state.stack_depth >= levels) {
+    int target_depth = menu_state.stack_depth - levels;
+    if (target_depth >= 0) {
+      menu_stack_entry_t* target_entry = &menu_state.stack[target_depth];
+      if (target_entry->focused_index >= 0) {
+        menu_state.restore_focus_index = (int)target_entry->focused_index;
+        ESP_LOGD(TAG, "Auto-captured restore focus: %d", 
+                 menu_state.restore_focus_index);
+      }
+    }
+  }
+
   menu_state.pending_nav.is_back = true;
   menu_state.pending_nav.back_levels = levels;
   menu_state.pending_nav.menu_name = menu_name;
@@ -719,6 +803,11 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
     return;
   }
   lv_timer_set_repeat_count(nav_timer, 1);
+}
+
+void menu_set_restore_focus(int index) {
+  menu_state.restore_focus_index = index;
+  ESP_LOGD(TAG, "Set restore focus index: %d", index);
 }
 
 void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
@@ -999,10 +1088,22 @@ lv_obj_t* menu_create_action_page(const char* title, const menu_item_t* items, i
 static struct {
   menu_roller_confirm_cb_t confirm_cb;
   void* user_data;
+  uint32_t create_time_ms;  // Time when roller was created (for debounce)
 } s_roller_context = {0};
+
+// Minimum time between roller creation and confirmation (ms)
+#define ROLLER_DEBOUNCE_MS 100
 
 // Roller click event handler
 static void roller_click_cb(lv_event_t* e) {
+  // Debounce: ignore confirmations that happen too soon after creation
+  uint32_t now = lv_tick_get();
+  if (now - s_roller_context.create_time_ms < ROLLER_DEBOUNCE_MS) {
+    ESP_LOGW(TAG, "Roller confirmation ignored (debounce: %lums)", 
+             (unsigned long)(now - s_roller_context.create_time_ms));
+    return;
+  }
+  
   lv_obj_t* roller = lv_event_get_target(e);
   uint32_t selected = lv_roller_get_selected(roller);
 
@@ -1026,7 +1127,8 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
   // Store callback context
   s_roller_context.confirm_cb = confirm_cb;
   s_roller_context.user_data = user_data;
-  
+  s_roller_context.create_time_ms = lv_tick_get();
+
   // Create screen
   lv_obj_t* screen = lv_obj_create(NULL);
   lv_obj_set_size(screen, disp_w, disp_h);

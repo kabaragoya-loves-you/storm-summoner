@@ -38,6 +38,10 @@ void menu_navigate_back(void);
 void menu_navigate_back_then_to(int levels, const char* menu_name,
   menu_page_builder_t builder);
 
+// Set the focus index to restore after the next page creation
+// Pass -1 to use default focus (first item)
+void menu_set_restore_focus(int index);
+
 // Replace the current menu page with a new one (synchronous, for use in callbacks)
 // Removes current page from stack and pushes a new one
 void menu_replace_current(const char* menu_name, menu_page_builder_t builder);

@@ -38,14 +38,12 @@ typedef enum {
 
 // Touchwheel behavior modes
 typedef enum {
-  TOUCHWHEEL_MODE_BUTTONS,        // Each pad acts as individual button
+  TOUCHWHEEL_MODE_PADS,           // Each pad acts as individual pad
   TOUCHWHEEL_MODE_PROGRAM_CHANGE, // Endless encoder to dial program numbers
   TOUCHWHEEL_MODE_CONTINUOUS,     // Continuous CC data source (0-127)
   TOUCHWHEEL_MODE_SET_TEMPO,      // Set BPM (20-300), default endless
   TOUCHWHEEL_MODE_PITCH_BEND,     // Pitch bend (-8192 to 8191), bipolar only
   TOUCHWHEEL_MODE_AFTERTOUCH,     // Channel aftertouch (0-127), default odometer
-  TOUCHWHEEL_MODE_NRPN,           // NRPN value (0-16383), default odometer
-  TOUCHWHEEL_MODE_RPN,            // RPN value (0-16383), default odometer
   TOUCHWHEEL_MODE_DOUBLE_CC       // Double CC (0-16383), default odometer
 } touchwheel_mode_t;
 

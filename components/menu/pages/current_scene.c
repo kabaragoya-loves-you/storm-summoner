@@ -42,8 +42,7 @@ static lv_obj_t* stub_submenu_create(void) {
 // Navigation callbacks for assignment submenus
 static void nav_to_touchwheel(void* user_data) {
   (void)user_data;
-  s_stub_title = "Touchwheel";
-  menu_navigate_to("Touchwheel", stub_submenu_create);
+  menu_navigate_to("Touchwheel", menu_page_touchwheel_create);
 }
 
 static void nav_to_pads(void* user_data) {
