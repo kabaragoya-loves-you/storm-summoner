@@ -47,8 +47,7 @@ static void nav_to_touchwheel(void* user_data) {
 
 static void nav_to_pads(void* user_data) {
   (void)user_data;
-  s_stub_title = "Pads";
-  menu_navigate_to("Pads", stub_submenu_create);
+  menu_navigate_to("Pads", menu_page_pads_create);
 }
 
 static void nav_to_expression(void* user_data) {

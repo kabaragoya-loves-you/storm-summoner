@@ -35,6 +35,7 @@ idf_component_register(
     "pages/assets_manager.c"
     "pages/firmware_update.c"
     "pages/touchwheel_menu.c"
+    "pages/pads_menu.c"
   INCLUDE_DIRS
     "include"
   REQUIRES
