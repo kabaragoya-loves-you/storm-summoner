@@ -145,9 +145,9 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Set default button assignments
   set_default_button_assignments(scene);
   
-  // Initialize on_load actions (default: All Notes Off for clean slate)
+  // Initialize on_load actions (default: reset for clean slate)
   scene->on_load.num_actions = 1;
-  scene->on_load.actions[0] = action_create_all_notes_off();
+  scene->on_load.actions[0] = action_create_reset();
   
   // Initialize discrete trigger inputs
   scene->bump.num_actions = 1;
@@ -2009,19 +2009,20 @@ static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_
   snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
 }
 
-// Action type name lookup table
+// Action type name lookup table (for JSON serialization)
+// Note: ACTION_NONE is NULL - we skip serializing empty actions
 static const char* action_type_json_names[] = {
-  [ACTION_NONE] = "none",
+  [ACTION_NONE] = NULL,  // Don't serialize empty actions
   [ACTION_PROGRAM_NEXT] = "program_next",
   [ACTION_PROGRAM_PREV] = "program_prev",
   [ACTION_PROGRAM_SET] = "pc",
   [ACTION_SCENE_NEXT] = "scene_next",
   [ACTION_SCENE_PREV] = "scene_prev",
   [ACTION_SCENE_SET] = "scene_set",
-  [ACTION_TRANSPORT_PLAY] = "transport_play",
-  [ACTION_TRANSPORT_STOP] = "transport_stop",
-  [ACTION_TRANSPORT_PAUSE] = "transport_pause",
-  [ACTION_TRANSPORT_RECORD] = "transport_record",
+  [ACTION_PLAY] = "play",
+  [ACTION_STOP] = "stop",
+  [ACTION_PAUSE] = "pause",
+  [ACTION_RECORD] = "record",
   [ACTION_TAP] = "tap",
   [ACTION_TAP_TEMPO] = "tap_tempo",
   [ACTION_SET_TEMPO] = "set_tempo",
@@ -2030,25 +2031,11 @@ static const char* action_type_json_names[] = {
   [ACTION_SEND_CC] = "send_cc",
   [ACTION_SEND_CC_HOLD] = "send_cc_hold",
   [ACTION_SEND_CC_CYCLE] = "send_cc_cycle",
-  [ACTION_SEND_DOUBLE_CC] = "send_double_cc",
-  [ACTION_SEND_NRPN] = "send_nrpn",
-  [ACTION_SEND_RPN] = "send_rpn",
   [ACTION_SEND_NOTE_ON] = "send_note_on",
   [ACTION_SEND_NOTE_OFF] = "send_note_off",
-  [ACTION_SEND_PITCH_BEND] = "send_pitch_bend",
-  [ACTION_SEND_AFTERTOUCH] = "send_aftertouch",
-  [ACTION_SEND_SONG_SELECT] = "send_song_select",
-  [ACTION_SEND_SONG_POSITION] = "send_song_position",
-  [ACTION_SEND_MMC] = "send_mmc",
   [ACTION_RANDOMIZE_CC] = "randomize_cc",
-  [ACTION_SEND_CLOCK_START] = "send_clock_start",
-  [ACTION_SEND_CLOCK_STOP] = "send_clock_stop",
-  [ACTION_SEND_CLOCK_CONTINUE] = "send_clock_continue",
-  [ACTION_SEND_RESET] = "send_reset",
-  [ACTION_SEND_TUNE_REQUEST] = "send_tune_request",
   [ACTION_CONFIRM_PENDING] = "confirm_pending",
-  [ACTION_ALL_NOTES_OFF] = "all_notes_off",
-  [ACTION_ALL_SOUND_OFF] = "all_sound_off",
+  [ACTION_RESET] = "reset",
   [ACTION_SUSTAIN] = "sustain",
   [ACTION_SOSTENUTO] = "sostenuto",
   [ACTION_TOUCHWHEEL_MODE] = "tw_mode",
@@ -2060,24 +2047,42 @@ static const char* action_type_json_names[] = {
 static action_type_t action_type_from_string(const char* name) {
   if (!name) return ACTION_NONE;
   
+  // Check current names
   for (int i = 0; i < ACTION_MAX; i++) {
     if (action_type_json_names[i] && strcmp(name, action_type_json_names[i]) == 0) {
       return (action_type_t)i;
     }
   }
   
+  // Backward compatibility for old action names
+  if (strcmp(name, "transport_play") == 0) return ACTION_PLAY;
+  if (strcmp(name, "transport_stop") == 0) return ACTION_STOP;
+  if (strcmp(name, "transport_pause") == 0) return ACTION_PAUSE;
+  if (strcmp(name, "transport_record") == 0) return ACTION_RECORD;
+  if (strcmp(name, "all_notes_off") == 0) return ACTION_RESET;
+  if (strcmp(name, "all_sound_off") == 0) return ACTION_RESET;
+  if (strcmp(name, "send_reset") == 0) return ACTION_RESET;
+  
   return ACTION_NONE;
 }
 
 // Serialize/deserialize actions
+// Returns NULL for ACTION_NONE (empty actions should be skipped)
 static cJSON* action_to_json(const action_t* action) {
+  // Don't serialize empty actions
+  if (!action || action->type == ACTION_NONE) {
+    return NULL;
+  }
+  
   cJSON* obj = cJSON_CreateObject();
   
   // Use string name instead of integer
   if (action->type < ACTION_MAX && action_type_json_names[action->type]) {
     cJSON_AddStringToObject(obj, "type", action_type_json_names[action->type]);
   } else {
-    cJSON_AddStringToObject(obj, "type", "none");
+    // Unknown action type - skip it
+    cJSON_Delete(obj);
+    return NULL;
   }
   
   if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_HOLD || action->type == ACTION_RANDOMIZE_CC) {
@@ -2165,7 +2170,10 @@ static action_t json_to_action(cJSON* obj) {
 static cJSON* action_chain_to_json(const action_chain_t* chain) {
   cJSON* array = cJSON_CreateArray();
   for (int i = 0; i < chain->num_actions; i++) {
-    cJSON_AddItemToArray(array, action_to_json(&chain->actions[i]));
+    cJSON* action_json = action_to_json(&chain->actions[i]);
+    if (action_json) {  // Skip ACTION_NONE (returns NULL)
+      cJSON_AddItemToArray(array, action_json);
+    }
   }
   return array;
 }

@@ -18,47 +18,31 @@ typedef enum {
   ACTION_SCENE_SET,           // Jump to specific scene (1-128, user-facing)
   
   // Transport (Play and Record are toggles)
-  ACTION_TRANSPORT_PLAY,      // Toggle: playing → stop, else → play
-  ACTION_TRANSPORT_STOP,
-  ACTION_TRANSPORT_PAUSE,     // Pause only (does not unpause)
-  ACTION_TRANSPORT_RECORD,    // Toggle: recording → stop, else → record
+  ACTION_PLAY,                // Toggle: playing -> stop, else -> play
+  ACTION_STOP,
+  ACTION_PAUSE,               // Pause only (does not unpause)
+  ACTION_RECORD,              // Toggle: recording -> stop, else -> record
   
   // Tempo
-  ACTION_TAP,               // Send a single tap input (for tap tempo)
-  ACTION_TAP_TEMPO,         // Toggle/start/stop tap tempo session
-  ACTION_SET_TEMPO,         // Set BPM directly (uses tempo.bpm param)
-  ACTION_TEMPO_INC,         // Increment BPM by 1
-  ACTION_TEMPO_DEC,         // Decrement BPM by 1
+  ACTION_TAP,                 // Send a single tap input (for tap tempo)
+  ACTION_TAP_TEMPO,           // Toggle/start/stop tap tempo session
+  ACTION_SET_TEMPO,           // Set BPM directly (uses tempo.bpm param)
+  ACTION_TEMPO_INC,           // Increment BPM by 1
+  ACTION_TEMPO_DEC,           // Decrement BPM by 1
   
   // Direct MIDI output
   ACTION_SEND_CC,             // Send CC with value (on press only)
   ACTION_SEND_CC_HOLD,        // Send value1 on press, value2 on release
   ACTION_SEND_CC_CYCLE,       // Cycle through multiple CC values
-  ACTION_SEND_DOUBLE_CC,      // 14-bit CC (high resolution)
-  ACTION_SEND_NRPN,           // Non-Registered Parameter Number
-  ACTION_SEND_RPN,            // Registered Parameter Number
   ACTION_SEND_NOTE_ON,
   ACTION_SEND_NOTE_OFF,
-  ACTION_SEND_PITCH_BEND,
-  ACTION_SEND_AFTERTOUCH,     // Channel aftertouch
-  ACTION_SEND_SONG_SELECT,
-  ACTION_SEND_SONG_POSITION,
-  ACTION_SEND_MMC,            // MIDI Machine Control
   
   // Randomization
   ACTION_RANDOMIZE_CC,        // Randomize one or more CCs (uses multi_random params)
   
-  // MIDI System
-  ACTION_SEND_CLOCK_START,    // MIDI Clock Start
-  ACTION_SEND_CLOCK_STOP,     // MIDI Clock Stop
-  ACTION_SEND_CLOCK_CONTINUE, // MIDI Clock Continue
-  ACTION_SEND_RESET,          // System Reset
-  ACTION_SEND_TUNE_REQUEST,   // Tune Request
-  
   // System
   ACTION_CONFIRM_PENDING,     // Confirm pending scene/program change
-  ACTION_ALL_NOTES_OFF,       // Send CC123 (All Notes Off)
-  ACTION_ALL_SOUND_OFF,       // Send CC120 (All Sound Off)
+  ACTION_RESET,               // Send CC123 + CC120 + System Reset (0xFF)
   
   // Musical concepts (assignable to any input)
   ACTION_SUSTAIN,             // Send CC64 (127 on press, 0 on release)
@@ -77,11 +61,11 @@ typedef struct {
   action_type_t type;
   
   union {
-    // For CC actions (SEND_CC, TOGGLE, CYCLE, RANDOMIZE)
+    // For CC actions (SEND_CC, HOLD, CYCLE, RANDOMIZE)
     struct {
       uint8_t cc_number;
       uint8_t value;          // Primary value
-      uint8_t value2;         // For toggle (second value)
+      uint8_t value2;         // For hold (release value)
       uint8_t num_values;     // For cycle (2-8 values)
       uint8_t values[8];      // For cycle
       uint8_t current_index;  // Current position in cycle
@@ -107,40 +91,6 @@ typedef struct {
     struct {
       uint16_t bpm;           // For set_tempo (20-300)
     } tempo;
-    
-    // For pitch bend
-    struct {
-      int16_t value;          // -8192 to +8191
-    } pitch_bend;
-    
-    // For aftertouch
-    struct {
-      uint8_t note;           // For poly aftertouch
-      uint8_t pressure;       // 0-127
-    } aftertouch;
-    
-    // For NRPN/RPN
-    struct {
-      uint16_t parameter;     // 14-bit parameter number
-      uint16_t value;         // 14-bit value
-    } nrpn;
-    
-    // For 14-bit CC
-    struct {
-      uint8_t msb_cc;         // MSB controller number
-      uint8_t lsb_cc;         // LSB controller number
-      uint16_t value;         // 14-bit value
-    } double_cc;
-    
-    // For song position
-    struct {
-      uint16_t position;      // 14-bit position
-    } song_pos;
-    
-    // For MMC
-    struct {
-      uint8_t command;        // MMC command byte
-    } mmc;
     
     // For randomize (one or more CCs, always 0-127 range)
     struct {
@@ -189,8 +139,7 @@ action_t action_create_tap(void);
 action_t action_create_tap_tempo(void);
 action_t action_create_set_tempo(uint16_t bpm);
 action_t action_create_transport(action_type_t transport_type);
-action_t action_create_all_notes_off(void);
-action_t action_create_all_sound_off(void);
+action_t action_create_reset(void);
 action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);
 action_t action_create_touchwheel_mode(uint8_t mode);
@@ -200,4 +149,3 @@ action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_
 const char* action_type_to_string(action_type_t type);
 
 #endif // ACTION_H
-

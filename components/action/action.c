@@ -21,10 +21,10 @@ static const char* action_type_names[] = {
   [ACTION_SCENE_NEXT] = "Scene Next",
   [ACTION_SCENE_PREV] = "Scene Prev",
   [ACTION_SCENE_SET] = "Scene Set",
-  [ACTION_TRANSPORT_PLAY] = "Transport Play",
-  [ACTION_TRANSPORT_STOP] = "Transport Stop",
-  [ACTION_TRANSPORT_PAUSE] = "Transport Pause",
-  [ACTION_TRANSPORT_RECORD] = "Transport Record",
+  [ACTION_PLAY] = "Play",
+  [ACTION_STOP] = "Stop",
+  [ACTION_PAUSE] = "Pause",
+  [ACTION_RECORD] = "Record",
   [ACTION_TAP] = "Tap",
   [ACTION_TAP_TEMPO] = "Tap Tempo",
   [ACTION_SET_TEMPO] = "Set Tempo",
@@ -36,22 +36,8 @@ static const char* action_type_names[] = {
   [ACTION_SEND_NOTE_ON] = "Note On",
   [ACTION_SEND_NOTE_OFF] = "Note Off",
   [ACTION_RANDOMIZE_CC] = "Randomize CC",
-  [ACTION_SEND_DOUBLE_CC] = "Send 14-bit CC",
-  [ACTION_SEND_NRPN] = "Send NRPN",
-  [ACTION_SEND_RPN] = "Send RPN",
-  [ACTION_SEND_PITCH_BEND] = "Pitch Bend",
-  [ACTION_SEND_AFTERTOUCH] = "Aftertouch",
-  [ACTION_SEND_SONG_SELECT] = "Song Select",
-  [ACTION_SEND_SONG_POSITION] = "Song Position",
-  [ACTION_SEND_MMC] = "MMC",
-  [ACTION_SEND_CLOCK_START] = "MIDI Start",
-  [ACTION_SEND_CLOCK_STOP] = "MIDI Stop",
-  [ACTION_SEND_CLOCK_CONTINUE] = "MIDI Continue",
-  [ACTION_SEND_RESET] = "System Reset",
-  [ACTION_SEND_TUNE_REQUEST] = "Tune Request",
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
-  [ACTION_ALL_NOTES_OFF] = "All Notes Off",
-  [ACTION_ALL_SOUND_OFF] = "All Sound Off",
+  [ACTION_RESET] = "Reset",
   [ACTION_SUSTAIN] = "Sustain",
   [ACTION_SOSTENUTO] = "Sostenuto",
   [ACTION_TOUCHWHEEL_MODE] = "TW Mode",
@@ -127,20 +113,20 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    // Transport (Play and Record are toggles)
-    case ACTION_TRANSPORT_PLAY:
+    // Transport
+    case ACTION_PLAY:
       if (is_press) transport_play();
       break;
       
-    case ACTION_TRANSPORT_STOP:
+    case ACTION_STOP:
       if (is_press) transport_stop();
       break;
       
-    case ACTION_TRANSPORT_PAUSE:
+    case ACTION_PAUSE:
       if (is_press) transport_pause();
       break;
       
-    case ACTION_TRANSPORT_RECORD:
+    case ACTION_RECORD:
       if (is_press) transport_record();
       break;
       
@@ -236,101 +222,6 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    // Extended MIDI messages
-    case ACTION_SEND_PITCH_BEND:
-      if (is_press) {
-        send_pitch_bend(channel, action->params.pitch_bend.value);
-        ESP_LOGD(TAG, "Sent pitch bend: %d", action->params.pitch_bend.value);
-      }
-      break;
-      
-    case ACTION_SEND_AFTERTOUCH:
-      if (is_press) {
-        send_channel_aftertouch(channel, action->params.aftertouch.pressure);
-        ESP_LOGD(TAG, "Sent aftertouch: %d", action->params.aftertouch.pressure);
-      }
-      break;
-      
-    case ACTION_SEND_DOUBLE_CC:
-      if (is_press) {
-        send_double_control_change(channel, action->params.double_cc.msb_cc, 
-                                   action->params.double_cc.lsb_cc, action->params.double_cc.value);
-        ESP_LOGD(TAG, "Sent 14-bit CC%d/%d: %d", action->params.double_cc.msb_cc, 
-                 action->params.double_cc.lsb_cc, action->params.double_cc.value);
-      }
-      break;
-      
-    case ACTION_SEND_NRPN:
-      if (is_press) {
-        send_nrpn(channel, action->params.nrpn.parameter, action->params.nrpn.value);
-        ESP_LOGD(TAG, "Sent NRPN %d: %d", action->params.nrpn.parameter, action->params.nrpn.value);
-      }
-      break;
-      
-    case ACTION_SEND_RPN:
-      if (is_press) {
-        send_rpn(channel, action->params.nrpn.parameter, action->params.nrpn.value);
-        ESP_LOGD(TAG, "Sent RPN %d: %d", action->params.nrpn.parameter, action->params.nrpn.value);
-      }
-      break;
-      
-    case ACTION_SEND_SONG_SELECT:
-      if (is_press) {
-        send_song_select(action->params.target.number);
-        ESP_LOGD(TAG, "Sent song select: %d", action->params.target.number);
-      }
-      break;
-      
-    case ACTION_SEND_SONG_POSITION:
-      if (is_press) {
-        send_song_position(action->params.song_pos.position);
-        ESP_LOGD(TAG, "Sent song position: %d", action->params.song_pos.position);
-      }
-      break;
-      
-    case ACTION_SEND_MMC:
-      if (is_press) {
-        send_mmc(action->params.mmc.command);
-        ESP_LOGD(TAG, "Sent MMC command: 0x%02X", action->params.mmc.command);
-      }
-      break;
-      
-    // MIDI System messages
-    case ACTION_SEND_CLOCK_START:
-      if (is_press) {
-        send_start();
-        ESP_LOGD(TAG, "Sent MIDI Clock Start");
-      }
-      break;
-      
-    case ACTION_SEND_CLOCK_STOP:
-      if (is_press) {
-        send_stop();
-        ESP_LOGD(TAG, "Sent MIDI Clock Stop");
-      }
-      break;
-      
-    case ACTION_SEND_CLOCK_CONTINUE:
-      if (is_press) {
-        send_continue();
-        ESP_LOGD(TAG, "Sent MIDI Clock Continue");
-      }
-      break;
-      
-    case ACTION_SEND_RESET:
-      if (is_press) {
-        send_reset();
-        ESP_LOGD(TAG, "Sent System Reset");
-      }
-      break;
-      
-    case ACTION_SEND_TUNE_REQUEST:
-      if (is_press) {
-        send_tune_request();
-        ESP_LOGD(TAG, "Sent Tune Request");
-      }
-      break;
-      
     // Randomization
     case ACTION_RANDOMIZE_CC:
       if (is_press) {
@@ -355,18 +246,13 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-      
-    case ACTION_ALL_NOTES_OFF:
+    case ACTION_RESET:
+      // Combined reset: CC123 (All Notes Off) + CC120 (All Sound Off) + System Reset
       if (is_press) {
-        send_control_change(channel, 123, 0);  // CC123 = All Notes Off
-        ESP_LOGD(TAG, "Sent All Notes Off");
-      }
-      break;
-      
-    case ACTION_ALL_SOUND_OFF:
-      if (is_press) {
-        send_control_change(channel, 120, 0);  // CC120 = All Sound Off
-        ESP_LOGD(TAG, "Sent All Sound Off");
+        send_control_change(channel, 123, 0);  // All Notes Off
+        send_control_change(channel, 120, 0);  // All Sound Off
+        send_reset();                          // System Reset (0xFF)
+        ESP_LOGD(TAG, "Sent Reset (CC123 + CC120 + 0xFF)");
       }
       break;
       
@@ -509,19 +395,13 @@ action_t action_create_set_tempo(uint16_t bpm) {
 
 action_t action_create_transport(action_type_t transport_type) {
   action_t action = {0};
-  action.type = transport_type;  // ACTION_TRANSPORT_PLAY, STOP, etc.
+  action.type = transport_type;  // ACTION_PLAY, STOP, etc.
   return action;
 }
 
-action_t action_create_all_notes_off(void) {
+action_t action_create_reset(void) {
   action_t action = {0};
-  action.type = ACTION_ALL_NOTES_OFF;
-  return action;
-}
-
-action_t action_create_all_sound_off(void) {
-  action_t action = {0};
-  action.type = ACTION_ALL_SOUND_OFF;
+  action.type = ACTION_RESET;
   return action;
 }
 
@@ -551,4 +431,3 @@ action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_
   action.params.tw_mode.mode2 = release_mode;
   return action;
 }
-

@@ -4,7 +4,7 @@
   "send_pc_on_load": true,
   "on_load": [
     {
-      "type": "all_notes_off"
+      "type": "reset"
     }
   ],
   "touchwheel_mode": "pads",
