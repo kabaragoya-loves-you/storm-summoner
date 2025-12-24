@@ -61,14 +61,15 @@ typedef struct {
   action_type_t type;
   
   union {
-    // For CC actions (SEND_CC, HOLD, CYCLE, RANDOMIZE)
+    // For CC actions (SEND_CC, HOLD, CYCLE) - supports 1-4 CC numbers
     struct {
-      uint8_t cc_number;
-      uint8_t value;          // Primary value
-      uint8_t value2;         // For hold (release value)
-      uint8_t num_values;     // For cycle (2-8 values)
-      uint8_t values[8];      // For cycle
-      uint8_t current_index;  // Current position in cycle
+      uint8_t num_ccs;            // 1-4 CC numbers (1 = single CC mode)
+      uint8_t cc_numbers[4];      // The CC numbers
+      uint8_t values[4];          // Primary values for SEND_CC (one per CC)
+      uint8_t values2[4];         // Release values for SEND_CC_HOLD (one per CC)
+      uint8_t num_cycle_steps;    // For cycle: 2-8 steps (shared across all CCs)
+      uint8_t cycle_values[4][8]; // For cycle: [cc_idx][step]
+      uint8_t current_index;      // Current position in cycle (shared)
     } cc;
     
     // For note actions
@@ -109,13 +110,8 @@ typedef struct {
   } params;
 } action_t;
 
-// Action chain - multiple actions triggered sequentially
-#define MAX_ACTIONS_PER_INPUT 4  // Reduced from 8 to save memory
-
-typedef struct {
-  uint8_t num_actions;
-  action_t actions[MAX_ACTIONS_PER_INPUT];
-} action_chain_t;
+// Maximum on_load actions per scene
+#define MAX_ON_LOAD_ACTIONS 4
 
 // Initialize the action system
 esp_err_t action_init(void);
@@ -124,9 +120,6 @@ esp_err_t action_init(void);
 // trigger_value: for discrete inputs this is boolean (0/1), for continuous it's the value (0-127)
 // is_press: true for press/on, false for release/off (only for discrete inputs)
 esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_press);
-
-// Execute an action chain
-esp_err_t action_execute_chain(const action_chain_t* chain, uint8_t trigger_value, bool is_press);
 
 // Helper functions to create common actions
 action_t action_create_send_cc(uint8_t cc_number, uint8_t value);
@@ -147,5 +140,9 @@ action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);
+
+// Check if action type requires hold (press/release) behavior
+// These actions should NOT be assigned to bump or on_load
+bool action_requires_hold(action_type_t type);
 
 #endif // ACTION_H

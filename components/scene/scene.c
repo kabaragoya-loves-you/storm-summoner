@@ -97,24 +97,14 @@ static void set_default_button_assignments(scene_t* scene) {
   
   if (mode == SCENE_MODE_SINGLE) {
     // Mode 1: Buttons control program changes
-    scene->button_left.num_actions = 1;
-    scene->button_left.actions[0] = action_create_program_prev();
-    
-    scene->button_right.num_actions = 1;
-    scene->button_right.actions[0] = action_create_program_next();
-    
-    scene->button_both.num_actions = 1;
-    scene->button_both.actions[0].type = ACTION_CONFIRM_PENDING;
+    scene->button_left = action_create_program_prev();
+    scene->button_right = action_create_program_next();
+    scene->button_both.type = ACTION_CONFIRM_PENDING;
   } else {
     // Modes 2 & 3: Buttons control scene navigation
-    scene->button_left.num_actions = 1;
-    scene->button_left.actions[0] = action_create_scene_prev();
-    
-    scene->button_right.num_actions = 1;
-    scene->button_right.actions[0] = action_create_scene_next();
-    
-    scene->button_both.num_actions = 1;
-    scene->button_both.actions[0].type = ACTION_CONFIRM_PENDING;
+    scene->button_left = action_create_scene_prev();
+    scene->button_right = action_create_scene_next();
+    scene->button_both.type = ACTION_CONFIRM_PENDING;
   }
 }
 
@@ -138,20 +128,18 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Initialize touchpad mappings with default CC actions
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     scene->touchpads[i].enabled = true;
-    scene->touchpads[i].actions.num_actions = 1;
-    scene->touchpads[i].actions.actions[0] = action_create_send_cc(DEFAULT_CC_NUMBERS[i], 127);
+    scene->touchpads[i].action = action_create_send_cc(DEFAULT_CC_NUMBERS[i], 127);
   }
   
   // Set default button assignments
   set_default_button_assignments(scene);
   
   // Initialize on_load actions (default: reset for clean slate)
-  scene->on_load.num_actions = 1;
-  scene->on_load.actions[0] = action_create_reset();
+  scene->num_on_load_actions = 1;
+  scene->on_load[0] = action_create_reset();
   
   // Initialize discrete trigger inputs
-  scene->bump.num_actions = 1;
-  scene->bump.actions[0] = action_create_tap_tempo();  // Default: tap tempo on bump
+  scene->bump = action_create_tap_tempo();  // Default: tap tempo on bump
   
   // Initialize continuous input mappings with defaults
   scene->expression = continuous_mapping_create(4);    // CC4 = Foot Controller (expression pedal)
@@ -167,12 +155,10 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->expression_mode = EXPRESSION_MODE_PEDAL;      // Default to expression pedal mode
   
   // Default sustain action: ACTION_SUSTAIN (CC64 toggle)
-  scene->sustain.num_actions = 1;
-  scene->sustain.actions[0] = action_create_sustain();
+  scene->sustain = action_create_sustain();
   
   // Default sostenuto action: ACTION_SOSTENUTO (CC66 toggle)
-  scene->sostenuto.num_actions = 1;
-  scene->sostenuto.actions[0] = action_create_sostenuto();
+  scene->sostenuto = action_create_sostenuto();
   
   // CV input configuration
   scene->cv_input_mode = INPUT_MODE_CV;                // Default to CV mode
@@ -1017,9 +1003,11 @@ esp_err_t scene_init(void) {
            initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
   
   // Execute on_load actions
-  if (initial_scene->on_load.num_actions > 0) {
-    ESP_LOGI(TAG, "Executing %d on_load action(s)", initial_scene->on_load.num_actions);
-    action_execute_chain(&initial_scene->on_load, 127, true);
+  if (initial_scene->num_on_load_actions > 0) {
+    ESP_LOGI(TAG, "Executing %d on_load action(s)", initial_scene->num_on_load_actions);
+    for (int i = 0; i < initial_scene->num_on_load_actions; i++) {
+      action_execute(&initial_scene->on_load[i], 127, true);
+    }
   }
   
   // Setup touchwheel instance for non-buttons modes
@@ -1143,9 +1131,11 @@ esp_err_t scene_set_current(uint8_t scene_index) {
            new_scene->time_signature.numerator, new_scene->time_signature.denominator);
   
   // Execute on_load actions
-  if (new_scene->on_load.num_actions > 0) {
-    ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->on_load.num_actions);
-    action_execute_chain(&new_scene->on_load, 127, true);
+  if (new_scene->num_on_load_actions > 0) {
+    ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->num_on_load_actions);
+    for (int i = 0; i < new_scene->num_on_load_actions; i++) {
+      action_execute(&new_scene->on_load[i], 127, true);
+    }
   }
   
   // Setup touchwheel instance for non-buttons modes
@@ -1440,8 +1430,7 @@ esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t 
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
   
   // Create simple CC action
-  mapping->actions.num_actions = 1;
-  mapping->actions.actions[0] = action_create_send_cc(cc_number, value);
+  mapping->action = action_create_send_cc(cc_number, value);
   
   scene_persist_if_programming();
   
@@ -1555,130 +1544,151 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
     return ESP_OK;
   }
   
-  // Execute action chain
-  ESP_LOGD(TAG, "Pad %d %s: executing %d action(s)", pad_index, 
-           pressed ? "pressed" : "released", mapping->actions.num_actions);
+  // Execute action
+  ESP_LOGD(TAG, "Pad %d %s: executing %s", pad_index, 
+           pressed ? "pressed" : "released", action_type_to_string(mapping->action.type));
   
-  return action_execute_chain(&mapping->actions, pressed ? 127 : 0, pressed);
+  return action_execute(&mapping->action, pressed ? 127 : 0, pressed);
 }
 
 esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS || !action) {
     return ESP_ERR_INVALID_ARG;
   }
-  
+
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
-  
+
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
-  mapping->actions.num_actions = 1;
-  mapping->actions.actions[0] = *action;
+  mapping->action = *action;
   scene_persist_if_programming();
-  
+
   ESP_LOGI(TAG, "Assigned action '%s' to pad %d", action_type_to_string(action->type), pad_index);
   return ESP_OK;
 }
 
-esp_err_t scene_assign_touchpad_chain(uint8_t scene_index, uint8_t pad_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS || !chain) {
-    return ESP_ERR_INVALID_ARG;
+esp_err_t scene_assign_button_left(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->button_left = *action;
+  scene_persist_if_programming();
+  ESP_LOGI(TAG, "Assigned action to left button: %s", action_type_to_string(action->type));
+  return ESP_OK;
+}
+
+esp_err_t scene_assign_button_right(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->button_right = *action;
+  scene_persist_if_programming();
+  ESP_LOGI(TAG, "Assigned action to right button: %s", action_type_to_string(action->type));
+  return ESP_OK;
+}
+
+esp_err_t scene_assign_button_both(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->button_both = *action;
+  scene_persist_if_programming();
+  ESP_LOGI(TAG, "Assigned action to both buttons: %s", action_type_to_string(action->type));
+  return ESP_OK;
+}
+
+action_t* scene_get_button_left(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->button_left : NULL;
+}
+
+action_t* scene_get_button_right(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->button_right : NULL;
+}
+
+action_t* scene_get_button_both(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->button_both : NULL;
+}
+
+esp_err_t scene_assign_bump(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  // Reject hold actions for bump (no release event)
+  if (action->type != ACTION_NONE && action_requires_hold(action->type)) {
+    ESP_LOGW(TAG, "Cannot assign hold action '%s' to bump", action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
   }
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
-  mapping->actions = *chain;
+  scene->bump = *action;
   scene_persist_if_programming();
-  
-  ESP_LOGI(TAG, "Assigned %d actions to pad %d", chain->num_actions, pad_index);
+  ESP_LOGI(TAG, "Assigned action to bump: %s", action_type_to_string(action->type));
   return ESP_OK;
 }
 
-esp_err_t scene_assign_button_left(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
-  
-  scene_t* scene = get_scene_for_modification(scene_index);
-  if (!scene) return ESP_ERR_INVALID_STATE;
-  
-  scene->button_left = *chain;
-  scene_persist_if_programming();
-  ESP_LOGI(TAG, "Assigned %d actions to left button", chain->num_actions);
-  return ESP_OK;
-}
-
-esp_err_t scene_assign_button_right(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
-  
-  scene_t* scene = get_scene_for_modification(scene_index);
-  if (!scene) return ESP_ERR_INVALID_STATE;
-  
-  scene->button_right = *chain;
-  scene_persist_if_programming();
-  ESP_LOGI(TAG, "Assigned %d actions to right button", chain->num_actions);
-  return ESP_OK;
-}
-
-esp_err_t scene_assign_button_both(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
-  
-  scene_t* scene = get_scene_for_modification(scene_index);
-  if (!scene) return ESP_ERR_INVALID_STATE;
-  
-  scene->button_both = *chain;
-  scene_persist_if_programming();
-  ESP_LOGI(TAG, "Assigned %d actions to both buttons", chain->num_actions);
-  return ESP_OK;
-}
-
-action_chain_t* scene_get_button_left(uint8_t scene_index) {
-  scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? &scene->button_left : NULL;
-}
-
-action_chain_t* scene_get_button_right(uint8_t scene_index) {
-  scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? &scene->button_right : NULL;
-}
-
-action_chain_t* scene_get_button_both(uint8_t scene_index) {
-  scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? &scene->button_both : NULL;
-}
-
-esp_err_t scene_assign_bump(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
-  
-  scene_t* scene = get_scene_for_modification(scene_index);
-  if (!scene) return ESP_ERR_INVALID_STATE;
-  
-  scene->bump = *chain;
-  scene_persist_if_programming();
-  ESP_LOGI(TAG, "Assigned %d actions to bump", chain->num_actions);
-  return ESP_OK;
-}
-
-action_chain_t* scene_get_bump(uint8_t scene_index) {
+action_t* scene_get_bump(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   return scene ? &scene->bump : NULL;
 }
 
-esp_err_t scene_assign_on_load(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+esp_err_t scene_add_on_load_action(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  // Reject hold actions for on_load (no release event)
+  if (action_requires_hold(action->type)) {
+    ESP_LOGW(TAG, "Cannot add hold action '%s' to on_load", action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->on_load = *chain;
+  if (scene->num_on_load_actions >= MAX_ON_LOAD_ACTIONS) {
+    ESP_LOGW(TAG, "on_load already has %d actions (max)", MAX_ON_LOAD_ACTIONS);
+    return ESP_ERR_NO_MEM;
+  }
+  
+  scene->on_load[scene->num_on_load_actions++] = *action;
   scene_persist_if_programming();
   
-  ESP_LOGI(TAG, "Assigned %d on_load actions", chain->num_actions);
+  ESP_LOGI(TAG, "Added on_load action: %s (now %d total)",
+    action_type_to_string(action->type), scene->num_on_load_actions);
   return ESP_OK;
 }
 
-action_chain_t* scene_get_on_load(uint8_t scene_index) {
+esp_err_t scene_clear_on_load_actions(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
   scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? &scene->on_load : NULL;
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->num_on_load_actions = 0;
+  memset(scene->on_load, 0, sizeof(scene->on_load));
+  scene_persist_if_programming();
+  
+  ESP_LOGI(TAG, "Cleared on_load actions");
+  return ESP_OK;
+}
+
+uint8_t scene_get_num_on_load_actions(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->num_on_load_actions : 0;
+}
+
+action_t* scene_get_on_load_action(uint8_t scene_index, uint8_t action_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene || action_index >= scene->num_on_load_actions) return NULL;
+  return &scene->on_load[action_index];
 }
 
 esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode) {
@@ -1712,56 +1722,56 @@ expression_mode_t scene_get_expression_mode(uint8_t scene_index) {
   return scene ? scene->expression_mode : EXPRESSION_MODE_PEDAL;
 }
 
-esp_err_t scene_assign_sustain(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+esp_err_t scene_assign_sustain(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->sustain = *chain;
+  scene->sustain = *action;
   scene_persist_if_programming();
   
-  ESP_LOGI(TAG, "Assigned %d sustain actions", chain->num_actions);
+  ESP_LOGI(TAG, "Assigned sustain action: %s", action_type_to_string(action->type));
   return ESP_OK;
 }
 
-esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->sostenuto = *chain;
+  scene->sostenuto = *action;
   scene_persist_if_programming();
   
-  ESP_LOGI(TAG, "Assigned %d sostenuto actions", chain->num_actions);
+  ESP_LOGI(TAG, "Assigned sostenuto action: %s", action_type_to_string(action->type));
   return ESP_OK;
 }
 
-action_chain_t* scene_get_sustain(uint8_t scene_index) {
+action_t* scene_get_sustain(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   return scene ? &scene->sustain : NULL;
 }
 
-action_chain_t* scene_get_sostenuto(uint8_t scene_index) {
+action_t* scene_get_sostenuto(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   return scene ? &scene->sostenuto : NULL;
 }
 
-esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_chain_t* chain) {
-  if (scene_index > MAX_SCENE_INDEX || !chain) return ESP_ERR_INVALID_ARG;
+esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->expr_switch = *chain;
+  scene->expr_switch = *action;
   scene_persist_if_programming();
   
-  ESP_LOGI(TAG, "Assigned %d expr_switch actions", chain->num_actions);
+  ESP_LOGI(TAG, "Assigned expr_switch action: %s", action_type_to_string(action->type));
   return ESP_OK;
 }
 
-action_chain_t* scene_get_expr_switch(uint8_t scene_index) {
+action_t* scene_get_expr_switch(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   return scene ? &scene->expr_switch : NULL;
 }
@@ -2085,10 +2095,68 @@ static cJSON* action_to_json(const action_t* action) {
     return NULL;
   }
   
-  if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_HOLD || action->type == ACTION_RANDOMIZE_CC) {
-    cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_number);
-    cJSON_AddNumberToObject(obj, "value", action->params.cc.value);
-    if (action->type == ACTION_SEND_CC_HOLD) cJSON_AddNumberToObject(obj, "value2", action->params.cc.value2);
+  if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_HOLD) {
+    uint8_t num_ccs = action->params.cc.num_ccs;
+    if (num_ccs == 0) num_ccs = 1;  // Backward compat
+    
+    if (num_ccs == 1) {
+      // Single CC: use simple format for backward compatibility
+      cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_numbers[0]);
+      cJSON_AddNumberToObject(obj, "value", action->params.cc.values[0]);
+      if (action->type == ACTION_SEND_CC_HOLD) {
+        cJSON_AddNumberToObject(obj, "value2", action->params.cc.values2[0]);
+      }
+    } else {
+      // Multi-CC: use array format
+      cJSON* cc_arr = cJSON_CreateArray();
+      cJSON* val_arr = cJSON_CreateArray();
+      cJSON* val2_arr = (action->type == ACTION_SEND_CC_HOLD) ? cJSON_CreateArray() : NULL;
+      for (int i = 0; i < num_ccs && i < 4; i++) {
+        cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.cc.cc_numbers[i]));
+        cJSON_AddItemToArray(val_arr, cJSON_CreateNumber(action->params.cc.values[i]));
+        if (val2_arr) {
+          cJSON_AddItemToArray(val2_arr, cJSON_CreateNumber(action->params.cc.values2[i]));
+        }
+      }
+      cJSON_AddItemToObject(obj, "cc", cc_arr);
+      cJSON_AddItemToObject(obj, "value", val_arr);
+      if (val2_arr) cJSON_AddItemToObject(obj, "value2", val2_arr);
+    }
+  } else if (action->type == ACTION_SEND_CC_CYCLE) {
+    uint8_t num_ccs = action->params.cc.num_ccs;
+    if (num_ccs == 0) num_ccs = 1;
+    uint8_t num_steps = action->params.cc.num_cycle_steps;
+    
+    if (num_ccs == 1) {
+      // Single CC cycle: simple format
+      cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_numbers[0]);
+      cJSON* vals = cJSON_CreateArray();
+      for (int i = 0; i < num_steps && i < 8; i++) {
+        cJSON_AddItemToArray(vals, cJSON_CreateNumber(action->params.cc.cycle_values[0][i]));
+      }
+      cJSON_AddItemToObject(obj, "values", vals);
+    } else {
+      // Multi-CC cycle: array of arrays
+      cJSON* cc_arr = cJSON_CreateArray();
+      cJSON* vals_arr = cJSON_CreateArray();
+      for (int i = 0; i < num_ccs && i < 4; i++) {
+        cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.cc.cc_numbers[i]));
+        cJSON* steps = cJSON_CreateArray();
+        for (int j = 0; j < num_steps && j < 8; j++) {
+          cJSON_AddItemToArray(steps, cJSON_CreateNumber(action->params.cc.cycle_values[i][j]));
+        }
+        cJSON_AddItemToArray(vals_arr, steps);
+      }
+      cJSON_AddItemToObject(obj, "cc", cc_arr);
+      cJSON_AddItemToObject(obj, "values", vals_arr);
+    }
+  } else if (action->type == ACTION_RANDOMIZE_CC) {
+    // Randomize uses a different struct
+    cJSON* cc_arr = cJSON_CreateArray();
+    for (int i = 0; i < action->params.randomize.num_ccs && i < 8; i++) {
+      cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.randomize.cc_numbers[i]));
+    }
+    cJSON_AddItemToObject(obj, "cc", cc_arr);
   } else if (action->type == ACTION_SEND_NOTE_ON || action->type == ACTION_SEND_NOTE_OFF) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
@@ -2133,25 +2201,108 @@ static action_t json_to_action(cJSON* obj) {
     ESP_LOGE(TAG, "Action missing 'type' field!");
   }
   
+  // Parse CC actions (supports both single and multi-CC formats)
   cJSON* cc = cJSON_GetObjectItem(obj, "cc");
   cJSON* value = cJSON_GetObjectItem(obj, "value");
   cJSON* value2 = cJSON_GetObjectItem(obj, "value2");
+  cJSON* values = cJSON_GetObjectItem(obj, "values");
+  
+  if (cc) {
+    if (cJSON_IsArray(cc)) {
+      // Multi-CC format: cc is array
+      int num_ccs = cJSON_GetArraySize(cc);
+      if (num_ccs > 4) num_ccs = 4;
+      action.params.cc.num_ccs = num_ccs;
+      for (int i = 0; i < num_ccs; i++) {
+        cJSON* item = cJSON_GetArrayItem(cc, i);
+        if (item) action.params.cc.cc_numbers[i] = item->valueint;
+      }
+      // Parse value array
+      if (value && cJSON_IsArray(value)) {
+        for (int i = 0; i < num_ccs; i++) {
+          cJSON* item = cJSON_GetArrayItem(value, i);
+          if (item) action.params.cc.values[i] = item->valueint;
+        }
+      }
+      // Parse value2 array (for hold)
+      if (value2 && cJSON_IsArray(value2)) {
+        for (int i = 0; i < num_ccs; i++) {
+          cJSON* item = cJSON_GetArrayItem(value2, i);
+          if (item) action.params.cc.values2[i] = item->valueint;
+        }
+      }
+      // Parse cycle values (array of arrays)
+      if (values && cJSON_IsArray(values)) {
+        cJSON* first = cJSON_GetArrayItem(values, 0);
+        if (first && cJSON_IsArray(first)) {
+          // Multi-CC cycle: values is array of arrays
+          int num_steps = cJSON_GetArraySize(first);
+          if (num_steps > 8) num_steps = 8;
+          action.params.cc.num_cycle_steps = num_steps;
+          for (int i = 0; i < num_ccs; i++) {
+            cJSON* steps = cJSON_GetArrayItem(values, i);
+            if (steps && cJSON_IsArray(steps)) {
+              for (int j = 0; j < num_steps; j++) {
+                cJSON* item = cJSON_GetArrayItem(steps, j);
+                if (item) action.params.cc.cycle_values[i][j] = item->valueint;
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // Single CC format (backward compatible)
+      action.params.cc.num_ccs = 1;
+      action.params.cc.cc_numbers[0] = cc->valueint;
+      if (value && cJSON_IsNumber(value)) {
+        action.params.cc.values[0] = value->valueint;
+      }
+      if (value2 && cJSON_IsNumber(value2)) {
+        action.params.cc.values2[0] = value2->valueint;
+      }
+      // Parse single CC cycle values
+      if (values && cJSON_IsArray(values)) {
+        int num_steps = cJSON_GetArraySize(values);
+        if (num_steps > 8) num_steps = 8;
+        action.params.cc.num_cycle_steps = num_steps;
+        for (int i = 0; i < num_steps; i++) {
+          cJSON* item = cJSON_GetArrayItem(values, i);
+          if (item) action.params.cc.cycle_values[0][i] = item->valueint;
+        }
+      }
+    }
+  }
+  
+  // Parse randomize CC (uses different struct, always array format)
+  if (action.type == ACTION_RANDOMIZE_CC && cc && cJSON_IsArray(cc)) {
+    int num_ccs = cJSON_GetArraySize(cc);
+    if (num_ccs > 8) num_ccs = 8;
+    action.params.randomize.num_ccs = num_ccs;
+    for (int i = 0; i < num_ccs; i++) {
+      cJSON* item = cJSON_GetArrayItem(cc, i);
+      if (item) action.params.randomize.cc_numbers[i] = item->valueint;
+    }
+  }
+  
+  // Parse note actions
   cJSON* note = cJSON_GetObjectItem(obj, "note");
   cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
+  if (note) action.params.note.note = note->valueint;
+  if (velocity) action.params.note.velocity = velocity->valueint;
+  
+  // Parse target/scene/program actions
   cJSON* number = cJSON_GetObjectItem(obj, "number");
+  if (number) action.params.target.number = number->valueint;
+  
+  // Parse tempo actions
   cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
+  if (bpm) action.params.tempo.bpm = bpm->valueint;
+  
+  // Parse touchwheel mode actions
   cJSON* mode = cJSON_GetObjectItem(obj, "mode");
   cJSON* mode2 = cJSON_GetObjectItem(obj, "mode2");
   cJSON* num_modes = cJSON_GetObjectItem(obj, "num_modes");
   cJSON* modes = cJSON_GetObjectItem(obj, "modes");
-  
-  if (cc) action.params.cc.cc_number = cc->valueint;
-  if (value) action.params.cc.value = value->valueint;
-  if (value2) action.params.cc.value2 = value2->valueint;
-  if (note) action.params.note.note = note->valueint;
-  if (velocity) action.params.note.velocity = velocity->valueint;
-  if (number) action.params.target.number = number->valueint;
-  if (bpm) action.params.tempo.bpm = bpm->valueint;
   if (mode) action.params.tw_mode.mode = mode->valueint;
   if (mode2) action.params.tw_mode.mode2 = mode2->valueint;
   if (num_modes) action.params.tw_mode.num_modes = num_modes->valueint;
@@ -2167,28 +2318,44 @@ static action_t json_to_action(cJSON* obj) {
   return action;
 }
 
-static cJSON* action_chain_to_json(const action_chain_t* chain) {
+// Serialize on_load actions array to JSON
+static cJSON* on_load_to_json(const scene_t* scene) {
   cJSON* array = cJSON_CreateArray();
-  for (int i = 0; i < chain->num_actions; i++) {
-    cJSON* action_json = action_to_json(&chain->actions[i]);
-    if (action_json) {  // Skip ACTION_NONE (returns NULL)
+  for (int i = 0; i < scene->num_on_load_actions && i < MAX_ON_LOAD_ACTIONS; i++) {
+    cJSON* action_json = action_to_json(&scene->on_load[i]);
+    if (action_json) {
       cJSON_AddItemToArray(array, action_json);
     }
   }
   return array;
 }
 
-static action_chain_t json_to_action_chain(cJSON* array) {
-  action_chain_t chain = {0};
-  if (!cJSON_IsArray(array)) return chain;
+// Parse on_load actions array from JSON
+static void json_to_on_load(cJSON* array, scene_t* scene) {
+  scene->num_on_load_actions = 0;
+  if (!cJSON_IsArray(array)) return;
   
   int count = cJSON_GetArraySize(array);
-  chain.num_actions = (count > MAX_ACTIONS_PER_INPUT) ? MAX_ACTIONS_PER_INPUT : count;
   
-  for (int i = 0; i < chain.num_actions; i++) {
-    chain.actions[i] = json_to_action(cJSON_GetArrayItem(array, i));
+  for (int i = 0; i < count && scene->num_on_load_actions < MAX_ON_LOAD_ACTIONS; i++) {
+    action_t action = json_to_action(cJSON_GetArrayItem(array, i));
+    if (action.type == ACTION_NONE) continue;
+    
+    // Skip hold actions (not valid for on_load)
+    if (action_requires_hold(action.type)) {
+      ESP_LOGW(TAG, "Ignoring hold action '%s' in on_load", action_type_to_string(action.type));
+      continue;
+    }
+    
+    scene->on_load[scene->num_on_load_actions++] = action;
   }
-  return chain;
+}
+
+// For backward compatibility: parse array format to single action (takes first action)
+static action_t json_array_to_single_action(cJSON* array) {
+  if (!cJSON_IsArray(array)) return (action_t){0};
+  if (cJSON_GetArraySize(array) == 0) return (action_t){0};
+  return json_to_action(cJSON_GetArrayItem(array, 0));
 }
 
 // Serialize continuous mapping to JSON
@@ -2349,16 +2516,26 @@ static cJSON* scene_to_json(const scene_t* scene) {
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     cJSON* pad = cJSON_CreateObject();
     cJSON_AddBoolToObject(pad, "enabled", scene->touchpads[i].enabled);
-    cJSON_AddItemToObject(pad, "actions", action_chain_to_json(&scene->touchpads[i].actions));
+    cJSON* action_json = action_to_json(&scene->touchpads[i].action);
+    if (action_json) {
+      cJSON_AddItemToObject(pad, "action", action_json);
+    }
     cJSON_AddItemToArray(touchpads, pad);
   }
   cJSON_AddItemToObject(root, "touchpads", touchpads);
   
-  cJSON_AddItemToObject(root, "on_load", action_chain_to_json(&scene->on_load));
-  cJSON_AddItemToObject(root, "button_left", action_chain_to_json(&scene->button_left));
-  cJSON_AddItemToObject(root, "button_right", action_chain_to_json(&scene->button_right));
-  cJSON_AddItemToObject(root, "button_both", action_chain_to_json(&scene->button_both));
-  cJSON_AddItemToObject(root, "bump", action_chain_to_json(&scene->bump));
+  // on_load is an array (up to 4 actions)
+  cJSON_AddItemToObject(root, "on_load", on_load_to_json(scene));
+  
+  // Discrete inputs are single actions
+  cJSON* btn_l = action_to_json(&scene->button_left);
+  if (btn_l) cJSON_AddItemToObject(root, "button_left", btn_l);
+  cJSON* btn_r = action_to_json(&scene->button_right);
+  if (btn_r) cJSON_AddItemToObject(root, "button_right", btn_r);
+  cJSON* btn_b = action_to_json(&scene->button_both);
+  if (btn_b) cJSON_AddItemToObject(root, "button_both", btn_b);
+  cJSON* bump_json = action_to_json(&scene->bump);
+  if (bump_json) cJSON_AddItemToObject(root, "bump", bump_json);
   
   // Serialize continuous mappings
   cJSON_AddItemToObject(root, "expression", continuous_mapping_to_json(&scene->expression));
@@ -2372,9 +2549,12 @@ static cJSON* scene_to_json(const scene_t* scene) {
                          (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" :
                          (scene->expression_mode == EXPRESSION_MODE_SWITCH) ? "switch" : "gate";
   cJSON_AddStringToObject(root, "expression_mode", mode_str);
-  cJSON_AddItemToObject(root, "sustain", action_chain_to_json(&scene->sustain));
-  cJSON_AddItemToObject(root, "sostenuto", action_chain_to_json(&scene->sostenuto));
-  cJSON_AddItemToObject(root, "expr_switch", action_chain_to_json(&scene->expr_switch));
+  cJSON* sustain_json = action_to_json(&scene->sustain);
+  if (sustain_json) cJSON_AddItemToObject(root, "sustain", sustain_json);
+  cJSON* sostenuto_json = action_to_json(&scene->sostenuto);
+  if (sostenuto_json) cJSON_AddItemToObject(root, "sostenuto", sostenuto_json);
+  cJSON* expr_sw_json = action_to_json(&scene->expr_switch);
+  if (expr_sw_json) cJSON_AddItemToObject(root, "expr_switch", expr_sw_json);
   
   // Serialize CV input mode
   const char* cv_mode_str = (scene->cv_input_mode == INPUT_MODE_CV) ? "cv" :
@@ -2475,25 +2655,51 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
       cJSON* enabled = cJSON_GetObjectItem(pad, "enabled");
       if (enabled) scene->touchpads[i].enabled = cJSON_IsTrue(enabled);
       
-      cJSON* actions = cJSON_GetObjectItem(pad, "actions");
-      if (actions) scene->touchpads[i].actions = json_to_action_chain(actions);
+      // Try new format first (single "action"), fall back to old format ("actions" array)
+      cJSON* action = cJSON_GetObjectItem(pad, "action");
+      if (action) {
+        scene->touchpads[i].action = json_to_action(action);
+      } else {
+        cJSON* actions = cJSON_GetObjectItem(pad, "actions");
+        if (actions) scene->touchpads[i].action = json_array_to_single_action(actions);
+      }
     }
   }
   
+  // on_load is an array of up to 4 actions
   cJSON* on_load = cJSON_GetObjectItem(root, "on_load");
-  if (on_load) scene->on_load = json_to_action_chain(on_load);
+  if (on_load) json_to_on_load(on_load, scene);
   
+  // Discrete inputs: try object first (new format), fall back to array (old format)
   cJSON* btn_l = cJSON_GetObjectItem(root, "button_left");
-  if (btn_l) scene->button_left = json_to_action_chain(btn_l);
+  if (btn_l) {
+    scene->button_left = cJSON_IsArray(btn_l) ?
+      json_array_to_single_action(btn_l) : json_to_action(btn_l);
+  }
   
   cJSON* btn_r = cJSON_GetObjectItem(root, "button_right");
-  if (btn_r) scene->button_right = json_to_action_chain(btn_r);
+  if (btn_r) {
+    scene->button_right = cJSON_IsArray(btn_r) ?
+      json_array_to_single_action(btn_r) : json_to_action(btn_r);
+  }
   
   cJSON* btn_both = cJSON_GetObjectItem(root, "button_both");
-  if (btn_both) scene->button_both = json_to_action_chain(btn_both);
+  if (btn_both) {
+    scene->button_both = cJSON_IsArray(btn_both) ?
+      json_array_to_single_action(btn_both) : json_to_action(btn_both);
+  }
   
   cJSON* bump = cJSON_GetObjectItem(root, "bump");
-  if (bump) scene->bump = json_to_action_chain(bump);
+  if (bump) {
+    action_t bump_action = cJSON_IsArray(bump) ?
+      json_array_to_single_action(bump) : json_to_action(bump);
+    if (action_requires_hold(bump_action.type)) {
+      ESP_LOGW(TAG, "Ignoring hold action '%s' for bump",
+        action_type_to_string(bump_action.type));
+    } else {
+      scene->bump = bump_action;
+    }
+  }
   
   // Deserialize continuous mappings
   cJSON* expression = cJSON_GetObjectItem(root, "expression");
@@ -2519,15 +2725,24 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else scene->expression_mode = EXPRESSION_MODE_PEDAL;
   }
   
-  // Deserialize pedal actions
+  // Deserialize pedal actions (try object first, fall back to array for backward compat)
   cJSON* sustain = cJSON_GetObjectItem(root, "sustain");
-  if (sustain) scene->sustain = json_to_action_chain(sustain);
+  if (sustain) {
+    scene->sustain = cJSON_IsArray(sustain) ?
+      json_array_to_single_action(sustain) : json_to_action(sustain);
+  }
   
   cJSON* sostenuto = cJSON_GetObjectItem(root, "sostenuto");
-  if (sostenuto) scene->sostenuto = json_to_action_chain(sostenuto);
+  if (sostenuto) {
+    scene->sostenuto = cJSON_IsArray(sostenuto) ?
+      json_array_to_single_action(sostenuto) : json_to_action(sostenuto);
+  }
   
   cJSON* expr_switch_json = cJSON_GetObjectItem(root, "expr_switch");
-  if (expr_switch_json) scene->expr_switch = json_to_action_chain(expr_switch_json);
+  if (expr_switch_json) {
+    scene->expr_switch = cJSON_IsArray(expr_switch_json) ?
+      json_array_to_single_action(expr_switch_json) : json_to_action(expr_switch_json);
+  }
   
   // Deserialize CV input mode
   cJSON* cv_mode = cJSON_GetObjectItem(root, "cv_input_mode");

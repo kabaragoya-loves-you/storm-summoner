@@ -360,38 +360,78 @@
             "required": ["cc"],
             "properties": {
               "cc": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
-                "description": "MIDI CC number"
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 127,
+                    "description": "Single MIDI CC number"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "description": "Array of MIDI CC numbers (multi-CC)"
+                  }
+                ]
               },
               "value": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
-                "description": "CC value"
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 127,
+                    "description": "Single CC value"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "description": "Array of CC values (multi-CC)"
+                  }
+                ]
               },
               "value2": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
-                "description": "Second value for toggle"
-              },
-              "num_values": {
-                "type": "integer",
-                "minimum": 2,
-                "maximum": 8,
-                "description": "Number of values in cycle"
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 127,
+                    "description": "Single release value for hold"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "description": "Array of release values (multi-CC hold)"
+                  }
+                ]
               },
               "values": {
-                "type": "array",
-                "maxItems": 8,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 127
-                },
-                "description": "Values for cycle"
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 8,
+                    "items": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "description": "Cycle values for single CC"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 8,
+                      "items": {"type": "integer", "minimum": 0, "maximum": 127}
+                    },
+                    "description": "Array of cycle values (multi-CC cycle)"
+                  }
+                ]
               },
               "current_index": {
                 "type": "integer",

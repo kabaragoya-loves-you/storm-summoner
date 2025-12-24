@@ -38,22 +38,22 @@ static void handle_button_event(const event_t* event, void* context) {
   scene_t* scene = scene_get_current();
   if (!scene) return;
   
-  action_chain_t* chain = NULL;
+  action_t* action = NULL;
   
   switch (event->type) {
     case EVENT_BUTTON_L_PRESS:
-      chain = &scene->button_left;
-      ESP_LOGI(TAG, "Left button pressed - %d actions", chain->num_actions);
+      action = &scene->button_left;
+      ESP_LOGI(TAG, "Left button pressed - %s", action_type_to_string(action->type));
       break;
       
     case EVENT_BUTTON_R_PRESS:
-      chain = &scene->button_right;
-      ESP_LOGI(TAG, "Right button pressed - %d actions", chain->num_actions);
+      action = &scene->button_right;
+      ESP_LOGI(TAG, "Right button pressed - %s", action_type_to_string(action->type));
       break;
       
     case EVENT_BUTTON_BOTH_PRESS:
-      chain = &scene->button_both;
-      ESP_LOGI(TAG, "Both buttons pressed - %d actions", chain->num_actions);
+      action = &scene->button_both;
+      ESP_LOGI(TAG, "Both buttons pressed - %s", action_type_to_string(action->type));
       break;
       
     case EVENT_BUTTON_L_LONG_PRESS:
@@ -67,8 +67,8 @@ static void handle_button_event(const event_t* event, void* context) {
       return;
   }
   
-  if (chain && chain->num_actions > 0) {
-    action_execute_chain(chain, 127, true);
+  if (action && action->type != ACTION_NONE) {
+    action_execute(action, 127, true);
   }
 }
 
@@ -82,13 +82,13 @@ static void handle_bump_event(const event_t* event, void* context) {
   scene_t* scene = scene_get_current();
   if (!scene) return;
   
-  action_chain_t* chain = &scene->bump;
+  action_t* action = &scene->bump;
   
-  if (chain->num_actions > 0) {
-    ESP_LOGI(TAG, "Bump detected - executing %d actions", chain->num_actions);
-    action_execute_chain(chain, 127, true);
+  if (action->type != ACTION_NONE) {
+    ESP_LOGI(TAG, "Bump detected - executing %s", action_type_to_string(action->type));
+    action_execute(action, 127, true);
   } else {
-    ESP_LOGD(TAG, "Bump detected - no actions assigned");
+    ESP_LOGD(TAG, "Bump detected - no action assigned");
   }
 }
 

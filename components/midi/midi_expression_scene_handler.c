@@ -61,11 +61,11 @@ static void handle_sustain_event(const event_t* event, void* context) {
   
   bool pressed = event->data.pedal.pressed;
   
-  ESP_LOGI(TAG, "Sustain pedal %s, executing %d action(s)", 
-    pressed ? "pressed" : "released", scene->sustain.num_actions);
+  ESP_LOGI(TAG, "Sustain pedal %s, executing %s", 
+    pressed ? "pressed" : "released", action_type_to_string(scene->sustain.type));
   
-  // Execute sustain action chain with press/release
-  action_execute_chain(&scene->sustain, pressed ? 127 : 0, pressed);
+  // Execute sustain action with press/release
+  action_execute(&scene->sustain, pressed ? 127 : 0, pressed);
 }
 
 static void handle_sostenuto_event(const event_t* event, void* context) {
@@ -76,11 +76,11 @@ static void handle_sostenuto_event(const event_t* event, void* context) {
   
   bool pressed = event->data.pedal.pressed;
   
-  ESP_LOGI(TAG, "Sostenuto pedal %s, executing %d action(s)", 
-    pressed ? "pressed" : "released", scene->sostenuto.num_actions);
+  ESP_LOGI(TAG, "Sostenuto pedal %s, executing %s", 
+    pressed ? "pressed" : "released", action_type_to_string(scene->sostenuto.type));
   
-  // Execute sostenuto action chain
-  action_execute_chain(&scene->sostenuto, pressed ? 127 : 0, pressed);
+  // Execute sostenuto action
+  action_execute(&scene->sostenuto, pressed ? 127 : 0, pressed);
 }
 
 static void handle_switch_event(const event_t* event, void* context) {
@@ -91,11 +91,11 @@ static void handle_switch_event(const event_t* event, void* context) {
   
   bool pressed = event->data.pedal.pressed;
   
-  ESP_LOGI(TAG, "Expression switch %s, executing %d action(s)", 
-    pressed ? "pressed" : "released", scene->expr_switch.num_actions);
+  ESP_LOGI(TAG, "Expression switch %s, executing %s", 
+    pressed ? "pressed" : "released", action_type_to_string(scene->expr_switch.type));
   
-  // Execute expr_switch action chain (up to 8 arbitrary actions)
-  action_execute_chain(&scene->expr_switch, pressed ? 127 : 0, pressed);
+  // Execute expr_switch action
+  action_execute(&scene->expr_switch, pressed ? 127 : 0, pressed);
 }
 
 esp_err_t midi_expression_scene_handler_init(void) {

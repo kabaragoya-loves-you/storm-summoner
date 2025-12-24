@@ -57,7 +57,7 @@ typedef enum {
 // Touchpad mapping
 typedef struct {
   bool enabled;               // Whether this touchpad is active
-  action_chain_t actions;     // Action chain to execute
+  action_t action;            // Action to execute
 } touchpad_mapping_t;
 
 // Scene structure
@@ -69,20 +69,21 @@ typedef struct {
   uint8_t program_number;     // PC value (0-127)
   bool send_pc_on_load;       // Send PC when loading this scene
   
-  // Scene load actions
-  action_chain_t on_load;     // Actions to execute when scene loads (e.g., initialize pedal state)
+  // Scene load actions (up to 4 actions executed when scene loads)
+  uint8_t num_on_load_actions;
+  action_t on_load[MAX_ON_LOAD_ACTIONS];
   
   // Touchwheel configuration
   touchwheel_mode_t touchwheel_mode;
   touchwheel_style_t touchwheel_style;  // For CONTINUOUS mode: odometer vs endless encoder
   continuous_mapping_t touchwheel;      // For TOUCHWHEEL_MODE_CONTINUOUS (like proximity/cv/etc)
   
-  // Discrete input assignments (action chains)
+  // Discrete input assignments (single action per input)
   touchpad_mapping_t touchpads[NUM_TOUCHPADS];
-  action_chain_t button_left;
-  action_chain_t button_right;
-  action_chain_t button_both;
-  action_chain_t bump;               // Bump detector (one-shot trigger)
+  action_t button_left;
+  action_t button_right;
+  action_t button_both;
+  action_t bump;               // Bump detector (one-shot trigger)
   
   // Continuous input mappings
   continuous_mapping_t expression;
@@ -92,9 +93,9 @@ typedef struct {
   
   // Expression jack configuration (shared jack, multiple modes)
   expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE, SWITCH
-  action_chain_t sustain;            // Actions for sustain pedal events
-  action_chain_t sostenuto;          // Actions for sostenuto pedal events
-  action_chain_t expr_switch;        // Actions for switch mode (flexible action trigger)
+  action_t sustain;            // Action for sustain pedal events
+  action_t sostenuto;          // Action for sostenuto pedal events
+  action_t expr_switch;        // Action for switch mode (flexible action trigger)
   
   // CV input configuration
   input_mode_t cv_input_mode;        // CV, CLOCK_SYNC, AUDIO, or NOTE
@@ -190,19 +191,22 @@ esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index,
 esp_err_t scene_enable_touchpad(uint8_t scene_index, uint8_t pad_index, bool enabled);
 touchpad_mapping_t* scene_get_touchpad_mapping(uint8_t scene_index, uint8_t pad_index);
 
-// Action-based assignment API
+// Action-based assignment API (single action per discrete input)
 esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, const action_t* action);
-esp_err_t scene_assign_touchpad_chain(uint8_t scene_index, uint8_t pad_index, const action_chain_t* chain);
-esp_err_t scene_assign_button_left(uint8_t scene_index, const action_chain_t* chain);
-esp_err_t scene_assign_button_right(uint8_t scene_index, const action_chain_t* chain);
-esp_err_t scene_assign_button_both(uint8_t scene_index, const action_chain_t* chain);
-esp_err_t scene_assign_bump(uint8_t scene_index, const action_chain_t* chain);
-esp_err_t scene_assign_on_load(uint8_t scene_index, const action_chain_t* chain);
-action_chain_t* scene_get_button_left(uint8_t scene_index);
-action_chain_t* scene_get_button_right(uint8_t scene_index);
-action_chain_t* scene_get_button_both(uint8_t scene_index);
-action_chain_t* scene_get_bump(uint8_t scene_index);
-action_chain_t* scene_get_on_load(uint8_t scene_index);
+esp_err_t scene_assign_button_left(uint8_t scene_index, const action_t* action);
+esp_err_t scene_assign_button_right(uint8_t scene_index, const action_t* action);
+esp_err_t scene_assign_button_both(uint8_t scene_index, const action_t* action);
+esp_err_t scene_assign_bump(uint8_t scene_index, const action_t* action);
+action_t* scene_get_button_left(uint8_t scene_index);
+action_t* scene_get_button_right(uint8_t scene_index);
+action_t* scene_get_button_both(uint8_t scene_index);
+action_t* scene_get_bump(uint8_t scene_index);
+
+// On-load actions (up to 4 actions per scene)
+esp_err_t scene_add_on_load_action(uint8_t scene_index, const action_t* action);
+esp_err_t scene_clear_on_load_actions(uint8_t scene_index);
+uint8_t scene_get_num_on_load_actions(uint8_t scene_index);
+action_t* scene_get_on_load_action(uint8_t scene_index, uint8_t action_index);
 
 // Pending change mode
 uint8_t scene_get_pending_index(void);
@@ -216,12 +220,12 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed);
 // Expression jack mode and pedal assignment
 esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode);
 expression_mode_t scene_get_expression_mode(uint8_t scene_index);
-esp_err_t scene_assign_sustain(uint8_t scene_index, const action_chain_t* chain);
-esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_chain_t* chain);
-esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_chain_t* chain);
-action_chain_t* scene_get_sustain(uint8_t scene_index);
-action_chain_t* scene_get_sostenuto(uint8_t scene_index);
-action_chain_t* scene_get_expr_switch(uint8_t scene_index);
+esp_err_t scene_assign_sustain(uint8_t scene_index, const action_t* action);
+esp_err_t scene_assign_sostenuto(uint8_t scene_index, const action_t* action);
+esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_t* action);
+action_t* scene_get_sustain(uint8_t scene_index);
+action_t* scene_get_sostenuto(uint8_t scene_index);
+action_t* scene_get_expr_switch(uint8_t scene_index);
 
 // CV input mode configuration
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode);

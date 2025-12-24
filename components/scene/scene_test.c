@@ -45,19 +45,20 @@ void scene_test_info(void) {
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     touchpad_mapping_t* map = &scene->touchpads[i];
     if (map->enabled) {
-      if (map->actions.num_actions > 0) {
-        action_t* first_action = &map->actions.actions[0];
-        const char* action_name = action_type_to_string(first_action->type);
+      if (map->action.type != ACTION_NONE) {
+        const char* action_name = action_type_to_string(map->action.type);
         
-        if (first_action->type == ACTION_SEND_CC) {
-          ESP_LOGI(TAG, "  Pad %2d: %s (CC%d=%d) +%d more", 
-                   i, action_name, first_action->params.cc.cc_number, 
-                   first_action->params.cc.value, map->actions.num_actions - 1);
+        if (map->action.type == ACTION_SEND_CC) {
+          uint8_t num_ccs = map->action.params.cc.num_ccs;
+          if (num_ccs == 0) num_ccs = 1;
+          ESP_LOGI(TAG, "  Pad %2d: %s (CC%d=%d)", 
+                   i, action_name, map->action.params.cc.cc_numbers[0], 
+                   map->action.params.cc.values[0]);
         } else {
-          ESP_LOGI(TAG, "  Pad %2d: %s +%d more", i, action_name, map->actions.num_actions - 1);
+          ESP_LOGI(TAG, "  Pad %2d: %s", i, action_name);
         }
       } else {
-        ESP_LOGI(TAG, "  Pad %2d: no actions", i);
+        ESP_LOGI(TAG, "  Pad %2d: no action", i);
       }
     } else {
       ESP_LOGI(TAG, "  Pad %2d: disabled", i);

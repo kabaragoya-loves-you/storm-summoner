@@ -173,37 +173,53 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    // MIDI CC actions
+    // MIDI CC actions (supports multi-CC: 1-4 CCs per action)
     case ACTION_SEND_CC:
-      // Send CC value on press only (one-shot)
+      // Send CC value(s) on press only (one-shot)
       if (is_press) {
-        send_control_change(channel, action->params.cc.cc_number, action->params.cc.value);
-        ESP_LOGD(TAG, "Sent CC%d=%d", action->params.cc.cc_number, action->params.cc.value);
+        uint8_t num_ccs = action->params.cc.num_ccs;
+        if (num_ccs == 0) num_ccs = 1;  // Backward compat
+        for (int i = 0; i < num_ccs && i < 4; i++) {
+          send_control_change(channel, action->params.cc.cc_numbers[i], action->params.cc.values[i]);
+          ESP_LOGD(TAG, "Sent CC%d=%d", action->params.cc.cc_numbers[i], action->params.cc.values[i]);
+        }
       }
       break;
       
     case ACTION_SEND_CC_HOLD:
-      // Send value1 on press, value2 on release (momentary hold behavior)
+      // Send value on press, value2 on release (momentary hold behavior)
       {
-        uint8_t value = is_press ? action->params.cc.value : action->params.cc.value2;
-        send_control_change(channel, action->params.cc.cc_number, value);
-        ESP_LOGD(TAG, "CC%d hold: %d", action->params.cc.cc_number, value);
+        uint8_t num_ccs = action->params.cc.num_ccs;
+        if (num_ccs == 0) num_ccs = 1;  // Backward compat
+        for (int i = 0; i < num_ccs && i < 4; i++) {
+          uint8_t value = is_press ? action->params.cc.values[i] : action->params.cc.values2[i];
+          send_control_change(channel, action->params.cc.cc_numbers[i], value);
+          ESP_LOGD(TAG, "CC%d hold: %d", action->params.cc.cc_numbers[i], value);
+        }
       }
       break;
       
     case ACTION_SEND_CC_CYCLE:
       if (is_press) {
-        // Note: This modifies the action state - works because action is passed by pointer through the chain
         action_t* mutable_action = (action_t*)action;  // Cast away const for state tracking
+        uint8_t num_steps = mutable_action->params.cc.num_cycle_steps;
+        if (num_steps == 0) {
+          ESP_LOGW(TAG, "CC cycle has no steps defined, skipping");
+          break;
+        }
         uint8_t idx = mutable_action->params.cc.current_index;
-        uint8_t value = mutable_action->params.cc.values[idx];
-        send_control_change(channel, mutable_action->params.cc.cc_number, value);
+        uint8_t num_ccs = mutable_action->params.cc.num_ccs;
+        if (num_ccs == 0) num_ccs = 1;  // Backward compat
         
-        // Advance to next value
-        mutable_action->params.cc.current_index = (idx + 1) % mutable_action->params.cc.num_values;
+        // Send current cycle value for each CC
+        for (int i = 0; i < num_ccs && i < 4; i++) {
+          uint8_t value = mutable_action->params.cc.cycle_values[i][idx];
+          send_control_change(channel, mutable_action->params.cc.cc_numbers[i], value);
+          ESP_LOGD(TAG, "Cycled CC%d to %d", mutable_action->params.cc.cc_numbers[i], value);
+        }
         
-        ESP_LOGD(TAG, "Cycled CC%d to %d (next: %d)", mutable_action->params.cc.cc_number, value, 
-                 mutable_action->params.cc.values[mutable_action->params.cc.current_index]);
+        // Advance to next step (shared across all CCs)
+        mutable_action->params.cc.current_index = (idx + 1) % num_steps;
       }
       break;
       
@@ -314,39 +330,23 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
   return ESP_OK;
 }
 
-esp_err_t action_execute_chain(const action_chain_t* chain, uint8_t trigger_value, bool is_press) {
-  if (!chain || chain->num_actions == 0) {
-    return ESP_OK;
-  }
-  
-  ESP_LOGD(TAG, "Executing action chain with %d actions", chain->num_actions);
-  
-  for (int i = 0; i < chain->num_actions; i++) {
-    esp_err_t ret = action_execute(&chain->actions[i], trigger_value, is_press);
-    if (ret != ESP_OK && ret != ESP_ERR_NOT_SUPPORTED) {
-      ESP_LOGE(TAG, "Action %d in chain failed: %s", i, esp_err_to_name(ret));
-      // Continue executing remaining actions even if one fails
-    }
-  }
-  
-  return ESP_OK;
-}
-
 // Helper functions to create common actions
 action_t action_create_send_cc(uint8_t cc_number, uint8_t value) {
   action_t action = {0};
   action.type = ACTION_SEND_CC;
-  action.params.cc.cc_number = cc_number;
-  action.params.cc.value = value;
+  action.params.cc.num_ccs = 1;
+  action.params.cc.cc_numbers[0] = cc_number;
+  action.params.cc.values[0] = value;
   return action;
 }
 
 action_t action_create_cc_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value) {
   action_t action = {0};
   action.type = ACTION_SEND_CC_HOLD;
-  action.params.cc.cc_number = cc_number;
-  action.params.cc.value = press_value;
-  action.params.cc.value2 = release_value;
+  action.params.cc.num_ccs = 1;
+  action.params.cc.cc_numbers[0] = cc_number;
+  action.params.cc.values[0] = press_value;
+  action.params.cc.values2[0] = release_value;
   return action;
 }
 
@@ -430,4 +430,20 @@ action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_
   action.params.tw_mode.mode = press_mode;
   action.params.tw_mode.mode2 = release_mode;
   return action;
+}
+
+// Actions that require press/release (hold) behavior
+// These should NOT be assigned to bump or on_load
+static const action_type_t hold_actions[] = {
+  ACTION_SEND_CC_HOLD,
+  ACTION_TOUCHWHEEL_MODE_HOLD,
+  ACTION_SUSTAIN,
+  ACTION_SOSTENUTO,
+};
+
+bool action_requires_hold(action_type_t type) {
+  for (size_t i = 0; i < sizeof(hold_actions) / sizeof(hold_actions[0]); i++) {
+    if (hold_actions[i] == type) return true;
+  }
+  return false;
 }
