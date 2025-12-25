@@ -3,6 +3,8 @@
 #include "assets_file_ops.h"
 #include "lvgl_stream.h"
 #include "display_driver.h"
+#include "event_bus.h"
+#include "midi_in.h"
 #include "tusb.h"
 #include "esp_log.h"
 #include "esp_console.h"
@@ -46,6 +48,7 @@ typedef enum {
   CDC_STATE_ASSETS_RECEIVING,  // Receiving file data in assets mode
   CDC_STATE_ASSETS_SENDING,    // Sending file data in assets mode
   CDC_STATE_DISPLAY,  // LVGL display streaming mode
+  CDC_STATE_MIDI_RELAY, // MIDI IN relay mode
   CDC_STATE_ERROR
 } cdc_update_state_t;
 
@@ -83,6 +86,14 @@ static char s_extract_dest[MAX_PATH_LEN]; // Destination path for extraction
 static bool s_extract_mode = false;       // Whether in EXTRACT receive mode
 static TaskHandle_t s_extract_task_handle = NULL;
 static volatile bool s_extract_in_progress = false;
+
+// MIDI relay state
+static bool s_midi_relay_active = false;
+static bool s_midi_relay_show_clock = false;
+
+// Forward declarations for MIDI relay
+static void midi_relay_event_handler(const event_t* event, void* context);
+static void midi_relay_stop(void);
 
 // ============================================================================
 // VFS wrapper for CDC stdout redirect
@@ -298,6 +309,12 @@ void usb_cdc_task(void) {
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting display mode");
     }
+    // If we were in MIDI relay mode and disconnected, cleanup
+    if (s_state == CDC_STATE_MIDI_RELAY) {
+      midi_relay_stop();
+      s_state = CDC_STATE_IDLE;
+      ESP_LOGI(TAG, "CDC disconnected, exiting MIDI relay mode");
+    }
     return;
   }
   
@@ -392,6 +409,24 @@ void usb_cdc_task(void) {
                 lvgl_stream_stop();
                 s_state = CDC_STATE_IDLE;
                 send_response("DISPLAY_STOPPED");
+              }
+              s_cmd_pos = 0;
+            }
+          } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
+            s_cmd_buffer[s_cmd_pos++] = buf[i];
+          }
+        }
+      } else if (s_state == CDC_STATE_MIDI_RELAY) {
+        // In MIDI relay mode, only handle EXIT command
+        for (uint32_t i = 0; i < count; i++) {
+          if (buf[i] == '\n' || buf[i] == '\r') {
+            if (s_cmd_pos > 0) {
+              s_cmd_buffer[s_cmd_pos] = '\0';
+              if (strcmp(s_cmd_buffer, "EXIT") == 0 || strcmp(s_cmd_buffer, "exit") == 0) {
+                ESP_LOGI(TAG, "Exiting MIDI relay mode");
+                midi_relay_stop();
+                s_state = CDC_STATE_IDLE;
+                send_response("MIDI_STOPPED");
               }
               s_cmd_pos = 0;
             }
@@ -724,6 +759,28 @@ static void process_command(const char *cmd) {
     char resp[64];
     snprintf(resp, sizeof(resp), "DISPLAY_STARTED %u %u", (unsigned)w, (unsigned)h);
     send_response(resp);
+
+  } else if (strcmp(cmd, "MIDI") == 0) {
+    ESP_LOGI(TAG, "Entering MIDI relay mode");
+    s_state = CDC_STATE_MIDI_RELAY;
+    s_midi_relay_active = true;
+    s_midi_relay_show_clock = false;
+    
+    // Subscribe to MIDI IN events
+    event_bus_subscribe(EVENT_MIDI_IN, midi_relay_event_handler, NULL);
+    
+    send_response("MIDI_STARTED");
+
+  } else if (strncmp(cmd, "MIDI ", 5) == 0) {
+    // MIDI with options, e.g., "MIDI CLOCK"
+    ESP_LOGI(TAG, "Entering MIDI relay mode with options");
+    s_state = CDC_STATE_MIDI_RELAY;
+    s_midi_relay_active = true;
+    s_midi_relay_show_clock = (strstr(cmd + 5, "CLOCK") != NULL);
+    
+    event_bus_subscribe(EVENT_MIDI_IN, midi_relay_event_handler, NULL);
+    
+    send_response("MIDI_STARTED");
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);
@@ -1716,3 +1773,59 @@ static void assets_cmd_extract(const char *path, size_t size) {
   send_response("READY");
 }
 
+// ============================================================================
+// MIDI Relay Mode
+// ============================================================================
+
+static void midi_relay_stop(void) {
+  if (s_midi_relay_active) {
+    event_bus_unsubscribe(EVENT_MIDI_IN, midi_relay_event_handler);
+    s_midi_relay_active = false;
+    ESP_LOGI(TAG, "MIDI relay stopped");
+  }
+}
+
+static void midi_relay_event_handler(const event_t* event, void* context) {
+  (void)context;
+  
+  if (!s_midi_relay_active || s_state != CDC_STATE_MIDI_RELAY) return;
+  if (event->type != EVENT_MIDI_IN) return;
+  
+  uint8_t type = event->data.midi_in.type;
+  uint8_t channel = event->data.midi_in.channel;
+  uint8_t data1 = event->data.midi_in.data1;
+  uint8_t data2 = event->data.midi_in.data2;
+  uint16_t length = event->data.midi_in.length;
+  
+  // Skip clock unless enabled
+  if (type == MIDI_EVENT_REALTIME_CLOCK && !s_midi_relay_show_clock) return;
+  
+  // Skip active sensing
+  if (type == MIDI_EVENT_ACTIVE_SENSING) return;
+  
+  // Format: M:<type>,<channel>,<data1>,<data2>,<length>[,<hex_sysex>]
+  char buf[256];
+  
+  if (type == MIDI_EVENT_SYS_EX && event->data.midi_in.sysex_data && length > 0) {
+    // Include hex SysEx data (limited to first 64 bytes)
+    int pos = snprintf(buf, sizeof(buf), "M:%d,%d,%d,%d,%d,", 
+      type, channel, data1, data2, length);
+    
+    size_t hex_len = (length > 64) ? 64 : length;
+    for (size_t i = 0; i < hex_len && pos < (int)sizeof(buf) - 3; i++) {
+      pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X", 
+        event->data.midi_in.sysex_data[i]);
+    }
+    if (length > 64) {
+      strncat(buf, "...", sizeof(buf) - strlen(buf) - 1);
+    }
+  } else {
+    snprintf(buf, sizeof(buf), "M:%d,%d,%d,%d,%d", 
+      type, channel, data1, data2, length);
+  }
+  
+  // Send over CDC with newline
+  tud_cdc_write(buf, strlen(buf));
+  tud_cdc_write("\n", 1);
+  tud_cdc_write_flush();
+}

@@ -86,6 +86,7 @@ void app_main(void) {
   tinyusb_init_and_start();
   usb_cdc_update_init();
   
+  midi_out_init();
   midi_in_init();
   midi_in_debug_init();
   midi_passthrough_init();
@@ -103,8 +104,6 @@ void app_main(void) {
   bump_init(false);
   haptic_init();
   led_init();
-  
-  midi_out_init();
 
   midi_scene_handler_init();
   midi_expression_scene_handler_init();

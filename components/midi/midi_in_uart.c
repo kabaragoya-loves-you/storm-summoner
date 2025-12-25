@@ -64,7 +64,8 @@ static void midi_in_uart_task(void *pvParameters) {
       int len = uart_read_bytes(MIDI_NUM, rx_buf, RX_BUF_SIZE,
                                 UART_READ_TIMEOUT / portTICK_PERIOD_MS);
       if (len > 0) {
-        // ESP_LOG_BUFFER_HEX(TAG, rx_buf, len);
+        // ESP_LOGI(TAG, "Received %d bytes", len);
+        // ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buf, len, ESP_LOG_DEBUG);
         midi_in_process_stream(rx_buf, len, MIDI_SOURCE_UART);
       }
     }

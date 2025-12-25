@@ -11,6 +11,8 @@ idf_component_register(
     miniz
     lvgl_stream
     display
+    event_bus
+    midi
   PRIV_REQUIRES
     main
 )
