@@ -5,6 +5,7 @@
 #include "display_driver.h"
 #include "event_bus.h"
 #include "midi_in.h"
+#include "device_config.h"
 #include "tusb.h"
 #include "esp_log.h"
 #include "esp_console.h"
@@ -758,6 +759,12 @@ static void process_command(const char *cmd) {
     // Send dimensions so client knows what to expect
     char resp[64];
     snprintf(resp, sizeof(resp), "DISPLAY_STARTED %u %u", (unsigned)w, (unsigned)h);
+    send_response(resp);
+
+  } else if (strcmp(cmd, "DEVICE") == 0) {
+    const char* slug = device_config_get_pedal_slug();
+    char resp[80];
+    snprintf(resp, sizeof(resp), "DEVICE %s", slug ? slug : "user.default@0");
     send_response(resp);
 
   } else if (strcmp(cmd, "MIDI") == 0) {

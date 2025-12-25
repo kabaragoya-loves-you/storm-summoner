@@ -50,6 +50,7 @@
       <wa-tab-group>
         <wa-tab slot="nav" panel="assets">Assets</wa-tab>
         <wa-tab slot="nav" panel="console">Console</wa-tab>
+        <wa-tab slot="nav" panel="midi">MIDI</wa-tab>
         <wa-tab slot="nav" panel="display">Display</wa-tab>
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
 
@@ -172,6 +173,43 @@
           </div>
         </wa-tab-panel>
 
+        <!-- MIDI Tab -->
+        <wa-tab-panel name="midi">
+          <div class="tab-content" data-controller="midi">
+            <div class="toolbar">
+              <div class="midi-status-info">
+                <span class="status-dot" data-midi-target="statusDot"></span>
+                <span data-midi-target="statusText">Waiting for WebMIDI...</span>
+              </div>
+              <div class="toolbar-spacer"></div>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->midi#toggleClock" data-midi-target="clockBtn">
+                <wa-icon name="clock" slot="prefix"></wa-icon>
+                Clock
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->midi#clear">
+                <wa-icon name="trash" slot="prefix"></wa-icon>
+                Clear
+              </wa-button>
+            </div>
+
+            <div class="midi-list" data-midi-target="messageList">
+              <div class="midi-list-header">
+                <span>Time</span>
+                <span>Dir</span>
+                <span>Ch</span>
+                <span>Message</span>
+                <span style="text-align: right">Value</span>
+              </div>
+              <div class="midi-empty-state" data-midi-target="emptyState">
+                <wa-icon name="wave-pulse"></wa-icon>
+                <p>Waiting for MIDI messages</p>
+              </div>
+            </div>
+          </div>
+        </wa-tab-panel>
+
         <!-- Display Tab -->
         <wa-tab-panel name="display">
           <div class="tab-content display-content" data-controller="display">
@@ -289,6 +327,7 @@
   <script src="/js/app.js"></script>
   <script src="/js/assets.js"></script>
   <script src="/js/console.js"></script>
+  <script src="/js/midi.js"></script>
   <script src="/js/display.js"></script>
   <script src="/js/updater.js"></script>
 

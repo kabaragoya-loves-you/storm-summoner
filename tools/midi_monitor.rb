@@ -142,7 +142,7 @@ class MidiMonitor
 
   SYSEX_BUFFER_SIZE = 256
 
-  def initialize(device_slug, show_clock: false, cdc_port: nil)
+  def initialize(device_slug: nil, show_clock: false, cdc_port: nil)
     @device_slug = device_slug
     @show_clock = show_clock
     @cdc_port = cdc_port
@@ -154,12 +154,25 @@ class MidiMonitor
     @sysex_header_ptr = nil
     @cdc_thread = nil
     @cdc_serial = nil
+    @device_detected = false
   end
 
   def run
     $stdout.sync = true
 
-    load_device_definition
+    # Try to detect device slug via CDC if not provided
+    if @device_slug.nil? && @cdc_port && SERIALPORT_AVAILABLE
+      detect_device_via_cdc
+    end
+
+    # Load device definition if we have a slug
+    if @device_slug
+      load_device_definition
+    else
+      puts "No device profile specified. CC names will not be resolved."
+      puts "(Connect via CDC or provide device_slug to enable CC name resolution)"
+    end
+
     device_id = select_midi_device
     return unless device_id
 
@@ -234,6 +247,40 @@ class MidiMonitor
     stop_cdc_relay
 
     puts "\nExiting."
+  end
+
+  def detect_device_via_cdc
+    return unless @cdc_port && SERIALPORT_AVAILABLE
+
+    begin
+      serial = SerialPort.new(@cdc_port, 115200, 8, 1, SerialPort::NONE)
+      serial.read_timeout = 500
+
+      sleep 0.2
+      serial.write("DEVICE\n")
+      serial.flush
+
+      # Read response
+      start_time = Time.now
+      loop do
+        line = serial.gets&.chomp
+        if line&.start_with?("DEVICE ")
+          slug = line[7..].strip
+          # Strip @N instance suffix
+          @device_slug = slug.sub(/@\d+$/, '')
+          @device_detected = true
+          puts "Detected device: #{@device_slug}"
+          break
+        end
+        break if Time.now - start_time > 1
+      end
+
+      serial.close
+    rescue Errno::EACCES, Errno::EBUSY
+      puts "CDC port #{@cdc_port} in use - cannot auto-detect device"
+    rescue => e
+      puts "CDC error during device detection: #{e.message}"
+    end
   end
 
   def start_cdc_relay
@@ -399,10 +446,12 @@ class MidiMonitor
   private
 
   def load_device_definition
+    return unless @device_slug
+
     vendor, pedal = @device_slug.split(".", 2)
     unless vendor && pedal
       puts "Invalid device slug format. Expected: vendor.pedal"
-      exit 1
+      return
     end
 
     script_dir = File.dirname(File.expand_path(__FILE__))
@@ -410,7 +459,7 @@ class MidiMonitor
 
     unless File.exist?(json_path)
       puts "Device definition not found: #{json_path}"
-      exit 1
+      return
     end
 
     begin
@@ -428,7 +477,6 @@ class MidiMonitor
       end
     rescue JSON::ParserError => e
       puts "Failed to parse device JSON: #{e.message}"
-      exit 1
     end
   end
 
@@ -587,11 +635,12 @@ def print_usage
   puts <<~USAGE
     MIDI Monitor for Storm Summoner
 
-    Usage: ruby midi_monitor.rb <device_slug> [--port PORT] [--clock]
+    Usage: ruby midi_monitor.rb [device_slug] [--port PORT] [--clock]
 
     Arguments:
       device_slug   Device identifier (e.g., meris.ottobit_jr)
                     Resolves to midi-devices/devices/<vendor>/<pedal>.json
+                    If omitted, auto-detected via CDC DEVICE command
 
     Options:
       --port PORT   CDC serial port for MIDI IN relay (e.g., COM3)
@@ -604,18 +653,18 @@ def print_usage
         IN  = Messages received by Storm Summoner (via CDC relay)
 
     Examples:
-      ruby midi_monitor.rb meris.ottobit_jr
-      ruby midi_monitor.rb meris.ottobit_jr --port COM3
-      ruby midi_monitor.rb chase_bliss.mood_mkii --clock
+      ruby midi_monitor.rb                          # Auto-detect device via CDC
+      ruby midi_monitor.rb meris.ottobit_jr         # Specify device explicitly
+      ruby midi_monitor.rb --port COM3 --clock      # Auto-detect with options
   USAGE
 end
 
-if ARGV.empty? || ARGV.include?("-h") || ARGV.include?("--help")
+if ARGV.include?("-h") || ARGV.include?("--help")
   print_usage
   exit 0
 end
 
-device_slug = ARGV.find { |arg| !arg.start_with?("-") }
+device_slug = ARGV.find { |arg| !arg.start_with?("-") && !ARGV[ARGV.index(arg) - 1]&.start_with?("--port") rescue true }
 show_clock = ARGV.include?("--clock")
 
 # Try to read CDC port from .vscode/settings.json
@@ -647,11 +696,5 @@ if cdc_port && !SERIALPORT_AVAILABLE
   cdc_port = nil
 end
 
-unless device_slug
-  puts "Error: device_slug is required"
-  print_usage
-  exit 1
-end
-
-monitor = MidiMonitor.new(device_slug, show_clock: show_clock, cdc_port: cdc_port)
+monitor = MidiMonitor.new(device_slug: device_slug, show_clock: show_clock, cdc_port: cdc_port)
 monitor.run

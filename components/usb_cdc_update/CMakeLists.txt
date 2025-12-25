@@ -13,6 +13,7 @@ idf_component_register(
     display
     event_bus
     midi
+    device_config
   PRIV_REQUIRES
     main
 )
