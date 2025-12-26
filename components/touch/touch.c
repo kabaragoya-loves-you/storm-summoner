@@ -103,7 +103,6 @@ static struct {
   uint32_t state_corrections;
   uint32_t spurious_duplicates;
   uint32_t orphaned_releases;
-  uint32_t missed_presses;
 } s_touch_stats = {0};
 
 typedef struct {
@@ -163,8 +162,33 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // Track per-pad press timestamps for stuck detection
   if (is_pressed) {
     s_pad_press_timestamps[pad_index] = now;
-  } else {
-    s_pad_press_timestamps[pad_index] = 0; // Clear on release
+  }
+  
+  // Special handling for inverted polarity channel
+  // The ESP-IDF driver can generate spurious RELEASE events for this channel
+  // because its value decreases when touched (opposite of normal channels).
+  // Verify the actual hardware state before processing RELEASE.
+  if (!is_pressed && TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL) {
+    uint32_t smooth[1], benchmark[1];
+    touch_pad_calibration_t calib_data;
+    
+    esp_err_t err1 = touch_channel_read_data(s_chan_handles[pad_index], 
+      TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+    esp_err_t err2 = touch_channel_read_data(s_chan_handles[pad_index], 
+      TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+    esp_err_t calib_ret = touch_get_calibration_data(INVERTED_TOUCH_CHANNEL, &calib_data);
+    
+    if (err1 == ESP_OK && err2 == ESP_OK && calib_ret == ESP_OK && calib_data.valid) {
+      // For inverted channel, delta is (benchmark - smooth) because value decreases when touched
+      int32_t delta = (int32_t)benchmark[0] - (int32_t)smooth[0];
+      bool hardware_still_touching = (delta > (int32_t)calib_data.threshold);
+      
+      if (hardware_still_touching) {
+        ESP_LOGD(TAG, "Inverted channel spurious RELEASE ignored (delta=%"PRId32", thresh=%"PRIu32")",
+          delta, calib_data.threshold);
+        return;  // Ignore this spurious release - hardware says still touching
+      }
+    }
   }
   
   // Route pad 0-7 events to active touchwheel instances
@@ -202,33 +226,20 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
       return;  // Ignore duplicate
     } else {
       // Orphaned RELEASE - we got RELEASE but pad was already released
-      // This means we missed a PRESS event!
-      ESP_LOGD(TAG, "Orphaned RELEASE on pad %d - missed PRESS event! (correcting)", pad_index);
+      // This is spurious hardware noise, ignore it
+      ESP_LOGD(TAG, "Spurious orphaned RELEASE: pad %d already released (ignoring)", pad_index);
       s_touch_stats.orphaned_releases++;
-      s_touch_stats.missed_presses++;
-      
-      // Treat this as a valid state transition: synthesize the missed PRESS first
-      // Set state to PRESSED, post PRESS event, then continue to process this RELEASE
-      s_button_pressed_states[pad_index] = true;
-      
-      event_t press_event = {
-        .type = EVENT_TOUCH_PRESS,
-        .priority = EVENT_PRIORITY_HIGH,
-        .timestamp = event_bus_get_current_timestamp() - 1,  // Slightly in the past
-        .data.touch = { .pad_id = pad_index }
-      };
-      esp_err_t ret = event_bus_post(&press_event);
-      if (ret == ESP_OK) {
-        s_touch_stats.total_press_events++;
-        ESP_LOGD(TAG, "Synthesized missed PRESS for pad %d", pad_index);
-      }
-      
-      // Now fall through to process the RELEASE normally
+      return;  // Ignore orphaned release
     }
   }
   
   // Update button state
   s_button_pressed_states[pad_index] = is_pressed;
+  
+  // Clear press timestamp on release
+  if (!is_pressed) {
+    s_pad_press_timestamps[pad_index] = 0;
+  }
   
   if (s_logging_enabled) {
     ESP_LOGI(TAG, "Touch %s: GPIO%d (chan_id=%d) -> pad_index=%d", 
@@ -311,9 +322,9 @@ static void touch_health_check_task(void *pvParameters) {
       int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
       bool hardware_is_touching = false;
       
-      if (TOUCH_PADS[i] == 14) {
-        int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
-        hardware_is_touching = (delta_14 > (int32_t)calib_data.threshold);
+      if (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL) {
+        int32_t inverted_delta = (int32_t)benchmark[0] - (int32_t)smooth[0];
+        hardware_is_touching = (inverted_delta > (int32_t)calib_data.threshold);
       } else {
         hardware_is_touching = (delta > (int32_t)calib_data.threshold);
       }
@@ -471,10 +482,10 @@ void touch_sync_states_after_reconfig(void) {
     int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
     bool hardware_is_touching = false;
     
-    if (TOUCH_PADS[i] == 14) {
-      // Channel 14 might decrease when touched - use signed math to avoid underflow
-      int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
-      hardware_is_touching = (delta_14 > (int32_t)calib_data.threshold);
+    if (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL) {
+      // Inverted channel decreases when touched - use signed math to avoid underflow
+      int32_t inverted_delta = (int32_t)benchmark[0] - (int32_t)smooth[0];
+      hardware_is_touching = (inverted_delta > (int32_t)calib_data.threshold);
     } else {
       hardware_is_touching = (delta > (int32_t)calib_data.threshold);
     }
@@ -909,10 +920,10 @@ void touch_query_pad(int pad_index) {
     const char* status = "IDLE";
     bool is_touching = false;
     
-    if (chan_id == 14) {
-      // Channel 14 might decrease when touched - use signed math to avoid underflow
-      int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
-      if (delta_14 > (int32_t)calib_data.threshold) {
+    if (chan_id == INVERTED_TOUCH_CHANNEL) {
+      // Inverted channel decreases when touched - use signed math to avoid underflow
+      int32_t inverted_delta = (int32_t)benchmark[0] - (int32_t)smooth[0];
+      if (inverted_delta > (int32_t)calib_data.threshold) {
         status = "TOUCHING";
         is_touching = true;
       }
@@ -988,8 +999,7 @@ void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "  Failed event posts: %"PRIu32, (unsigned)s_touch_stats.failed_posts);
   ESP_LOGI(TAG, "  State corrections: %"PRIu32, (unsigned)s_touch_stats.state_corrections);
   ESP_LOGI(TAG, "  Spurious duplicates: %"PRIu32, (unsigned)s_touch_stats.spurious_duplicates);
-  ESP_LOGI(TAG, "  Orphaned releases: %"PRIu32, (unsigned)s_touch_stats.orphaned_releases);
-  ESP_LOGI(TAG, "  Missed presses (inferred): %"PRIu32, (unsigned)s_touch_stats.missed_presses);
+  ESP_LOGI(TAG, "  Orphaned releases (ignored): %"PRIu32, (unsigned)s_touch_stats.orphaned_releases);
   
   // Show current button states
   ESP_LOGI(TAG, "Current button states:");
@@ -1022,10 +1032,10 @@ void touch_enable_debug_logging(void) {
       const char* status = "IDLE";
       
       if (calib_ret == ESP_OK && calib_data.valid) {
-        // For channels 2-13, touch increases the value; for channel 14, it might decrease
-        if (TOUCH_PADS[i] == 14) {
-          int32_t delta_14 = (int32_t)benchmark[0] - (int32_t)smooth[0];
-          if (delta_14 > (int32_t)calib_data.threshold) status = "TOUCH!";
+        // For most channels, touch increases the value; for inverted channel, it decreases
+        if (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL) {
+          int32_t inverted_delta = (int32_t)benchmark[0] - (int32_t)smooth[0];
+          if (inverted_delta > (int32_t)calib_data.threshold) status = "TOUCH!";
         } else {
           if (delta > (int32_t)calib_data.threshold) status = "TOUCH!";
         }

@@ -626,8 +626,8 @@ static esp_err_t touch_calibrate_body(bool force) {
         ret = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
         // For most channels, touch increases the value. But check for corrupt benchmarks too.
         bool appears_touched = false;
-        if (TOUCH_PADS[i] == 14) {
-          // Channel 14 might decrease when touched
+        if (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL) {
+          // Inverted channel decreases when touched
           appears_touched = (benchmark[0] > data[0] * 1.1f);
         } else {
           // Normal channels increase when touched

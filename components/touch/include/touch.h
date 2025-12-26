@@ -8,7 +8,20 @@
 
 #define MAX_TOUCH_PADS 13
 
+// One channel may have inverted polarity (value decreases when touched instead of increasing)
+// Set to -1 to disable inversion handling entirely
+#if HW_CONFIG_PRODUCTION
+#define INVERTED_TOUCH_CHANNEL (-1)  // No inverted channel on production hardware
+#elif HW_CONFIG_DEV_BOARD
+#define INVERTED_TOUCH_CHANNEL 14    // Channel 14 is inverted on dev board
+#else
+#define INVERTED_TOUCH_CHANNEL (-1)  // Default: no inversion
+#endif
+
 typedef int touch_pad_t;
+
+// Touch pad channel mapping (defined in touch.c)
+extern const touch_pad_t TOUCH_PADS[MAX_TOUCH_PADS];
 
 // Forward declaration for touchwheel instance (defined in touchwheel.h)
 // Using incomplete type for function parameters

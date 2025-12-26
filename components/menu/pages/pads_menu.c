@@ -41,6 +41,12 @@ static menu_item_t s_detail_items[MAX_DETAIL_ITEMS];
 static char s_action_label[LABEL_BUFFER_SETS][48];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 
+// CC Hold slot submenu
+static menu_item_t s_cc_hold_items[3];
+static char s_cc_hold_cc_label[LABEL_BUFFER_SETS][40];
+static char s_cc_hold_press_label[LABEL_BUFFER_SETS][40];
+static char s_cc_hold_release_label[LABEL_BUFFER_SETS][40];
+
 // Get current label buffer set and advance to next
 static int get_next_buffer_set(void) {
   int set = s_current_buffer_set;
@@ -296,6 +302,58 @@ static const char* get_cc_slot_display(action_t* action, uint8_t slot) {
   } else {
     // Fallback: "CC21: 64"
     snprintf(buf, sizeof(buf), "CC%u: %u", (unsigned)cc_num, (unsigned)cc_val);
+  }
+  return buf;
+}
+
+// Get display name for a CC Hold slot: "Filter: 64>0"
+static const char* get_cc_hold_slot_display(action_t* action, uint8_t slot) {
+  if (!action || slot >= 4) return "Inactive";
+  
+  // Slot is inactive if it's beyond num_ccs
+  if (slot >= action->params.cc.num_ccs) {
+    return "Inactive";
+  }
+  
+  uint8_t cc_num = action->params.cc.cc_numbers[slot];
+  uint8_t press_val = action->params.cc.values[slot];
+  uint8_t release_val = action->params.cc.values2[slot];
+  
+  // Get device and control info
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  static char buf[48];
+  
+  const char* ctrl_name = (ctrl && ctrl->name) ? ctrl->name : NULL;
+  
+  // Get discrete value names if available
+  const char* press_name = assets_get_discrete_name(device, cc_num, press_val);
+  const char* release_name = assets_get_discrete_name(device, cc_num, release_val);
+  
+  if (ctrl_name) {
+    if (press_name && release_name) {
+      snprintf(buf, sizeof(buf), "%.12s: %.10s>%.10s", ctrl_name, press_name, release_name);
+    } else {
+      snprintf(buf, sizeof(buf), "%.20s: %u>%u", ctrl_name, 
+        (unsigned)press_val, (unsigned)release_val);
+    }
+  } else {
+    snprintf(buf, sizeof(buf), "CC%u: %u>%u", 
+      (unsigned)cc_num, (unsigned)press_val, (unsigned)release_val);
+  }
+  return buf;
+}
+
+// Get value display string for CC Hold submenu items
+static const char* get_value_display(const device_def_t* device, uint8_t cc_num, uint8_t value) {
+  const char* discrete_name = assets_get_discrete_name(device, cc_num, value);
+  static char buf[24];
+  if (discrete_name) {
+    snprintf(buf, sizeof(buf), "%.20s", discrete_name);
+  } else {
+    snprintf(buf, sizeof(buf), "%u", (unsigned)value);
   }
   return buf;
 }
@@ -653,10 +711,431 @@ static lv_obj_t* cc_number_roller_create(void) {
     cc_number_confirm_cb, NULL);
 }
 
+static void nav_to_cc_slot(void* user_data);  // Forward declaration
+
+// ============================================================================
+// CC Hold Slot Submenu and Rollers
+// ============================================================================
+
+static lv_obj_t* cc_hold_slot_page_create(void);  // Forward declaration
+
+// --- CC Hold: CC Number Roller ---
+
+static void cc_hold_cc_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  uint8_t slot = s_editing_cc_slot;
+  
+  if (selected_index == 0) {
+    // "Inactive" selected - clear this slot and compact
+    uint8_t num_ccs = mapping->action.params.cc.num_ccs;
+    if (slot < num_ccs) {
+      for (int i = slot; i < 3; i++) {
+        mapping->action.params.cc.cc_numbers[i] = mapping->action.params.cc.cc_numbers[i + 1];
+        mapping->action.params.cc.values[i] = mapping->action.params.cc.values[i + 1];
+        mapping->action.params.cc.values2[i] = mapping->action.params.cc.values2[i + 1];
+      }
+      mapping->action.params.cc.cc_numbers[3] = 0;
+      mapping->action.params.cc.values[3] = 0;
+      mapping->action.params.cc.values2[3] = 0;
+      if (num_ccs > 0) {
+        mapping->action.params.cc.num_ccs = num_ccs - 1;
+      }
+      persist_scene_changes();
+      ESP_LOGI(TAG, "Pad %s CC Hold slot %u cleared",
+        get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1));
+    }
+    
+    s_callback_in_progress = false;
+    const char* title = get_pad_display_name(s_editing_pad_index);
+    menu_navigate_back_then_to(3, title, pad_detail_page_create);
+    return;
+  }
+  
+  // CC selected from device list
+  if (selected_index < s_cc_options.count) {
+    uint8_t cc_num = s_cc_options.cc_numbers[selected_index];
+    mapping->action.params.cc.cc_numbers[slot] = cc_num;
+    
+    // If this is a new slot, set default values and increment num_ccs
+    if (slot >= mapping->action.params.cc.num_ccs) {
+      mapping->action.params.cc.values[slot] = 127;   // Default press value
+      mapping->action.params.cc.values2[slot] = 0;    // Default release value
+      mapping->action.params.cc.num_ccs = slot + 1;
+    }
+    
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Pad %s CC Hold slot %u CC set to %u",
+      get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1), (unsigned)cc_num);
+  }
+  
+  s_callback_in_progress = false;
+  
+  // Go back to CC Hold slot submenu
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_navigate_back_then_to(2, title, cc_hold_slot_page_create);
+}
+
+static lv_obj_t* cc_hold_cc_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  if (!s_cc_options.options_str || s_cc_options.count == 0) {
+    if (!load_cc_options()) {
+      return menu_create_page("Error", NULL, 0);
+    }
+  }
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint32_t current_idx = 0;
+  
+  if (slot < mapping->action.params.cc.num_ccs) {
+    uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+    current_idx = cc_number_to_option_index(cc_num);
+  }
+  
+  return menu_create_roller_page("CC", s_cc_options.options_str, current_idx,
+    cc_hold_cc_confirm_cb, NULL);
+}
+
+static void nav_to_cc_hold_cc(void* user_data) {
+  (void)user_data;
+  if (!s_cc_options.options_str) load_cc_options();
+  menu_navigate_to("CC", cc_hold_cc_roller_create);
+}
+
+// --- CC Hold: Press Value Roller ---
+
+static void cc_hold_press_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  
+  // Get device and control to determine actual value
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  uint8_t press_val;
+  if (ctrl && ctrl->discrete_count > 0) {
+    if (selected_index < ctrl->discrete_count) {
+      press_val = (uint8_t)ctrl->discrete_values[selected_index].value;
+    } else {
+      press_val = 0;
+    }
+  } else if (ctrl) {
+    press_val = (uint8_t)(ctrl->min + selected_index);
+  } else {
+    press_val = (uint8_t)selected_index;
+  }
+  
+  mapping->action.params.cc.values[slot] = press_val;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %s CC Hold slot %u press value set to %u",
+    get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1), (unsigned)press_val);
+  
+  s_callback_in_progress = false;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_navigate_back_then_to(2, title, cc_hold_slot_page_create);
+}
+
+static lv_obj_t* cc_hold_press_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  uint8_t current_val = mapping->action.params.cc.values[slot];
+  
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  static char options[1024];
+  options[0] = '\0';
+  uint32_t current_idx = 0;
+  
+  if (ctrl && ctrl->discrete_count > 0) {
+    for (int i = 0; i < ctrl->discrete_count; i++) {
+      if (i > 0) strcat(options, "\n");
+      const char* name = ctrl->discrete_values[i].name;
+      if (name) {
+        char truncated[28];
+        strncpy(truncated, name, 27);
+        truncated[27] = '\0';
+        strcat(options, truncated);
+      } else {
+        char num[8];
+        snprintf(num, sizeof(num), "%u", (unsigned)ctrl->discrete_values[i].value);
+        strcat(options, num);
+      }
+      if (ctrl->discrete_values[i].value == current_val) {
+        current_idx = (uint32_t)i;
+      }
+    }
+  } else if (ctrl) {
+    uint16_t min_val = ctrl->min;
+    uint16_t max_val = ctrl->max > 127 ? 127 : ctrl->max;
+    for (uint16_t i = min_val; i <= max_val; i++) {
+      if (i > min_val) strcat(options, "\n");
+      char num[8];
+      snprintf(num, sizeof(num), "%u", (unsigned)i);
+      strcat(options, num);
+    }
+    if (current_val >= min_val && current_val <= max_val) {
+      current_idx = current_val - min_val;
+    }
+  } else {
+    for (int i = 0; i <= 127; i++) {
+      if (i > 0) strcat(options, "\n");
+      char num[8];
+      snprintf(num, sizeof(num), "%d", i);
+      strcat(options, num);
+    }
+    current_idx = current_val;
+  }
+  
+  return menu_create_roller_page("Press", options, current_idx, cc_hold_press_confirm_cb, NULL);
+}
+
+static void nav_to_cc_hold_press(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Press", cc_hold_press_roller_create);
+}
+
+// --- CC Hold: Release Value Roller ---
+
+static void cc_hold_release_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  uint8_t release_val;
+  if (ctrl && ctrl->discrete_count > 0) {
+    if (selected_index < ctrl->discrete_count) {
+      release_val = (uint8_t)ctrl->discrete_values[selected_index].value;
+    } else {
+      release_val = 0;
+    }
+  } else if (ctrl) {
+    release_val = (uint8_t)(ctrl->min + selected_index);
+  } else {
+    release_val = (uint8_t)selected_index;
+  }
+  
+  mapping->action.params.cc.values2[slot] = release_val;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %s CC Hold slot %u release value set to %u",
+    get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1), (unsigned)release_val);
+  
+  s_callback_in_progress = false;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_navigate_back_then_to(2, title, cc_hold_slot_page_create);
+}
+
+static lv_obj_t* cc_hold_release_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  uint8_t current_val = mapping->action.params.cc.values2[slot];
+  
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  static char options[1024];
+  options[0] = '\0';
+  uint32_t current_idx = 0;
+  
+  if (ctrl && ctrl->discrete_count > 0) {
+    for (int i = 0; i < ctrl->discrete_count; i++) {
+      if (i > 0) strcat(options, "\n");
+      const char* name = ctrl->discrete_values[i].name;
+      if (name) {
+        char truncated[28];
+        strncpy(truncated, name, 27);
+        truncated[27] = '\0';
+        strcat(options, truncated);
+      } else {
+        char num[8];
+        snprintf(num, sizeof(num), "%u", (unsigned)ctrl->discrete_values[i].value);
+        strcat(options, num);
+      }
+      if (ctrl->discrete_values[i].value == current_val) {
+        current_idx = (uint32_t)i;
+      }
+    }
+  } else if (ctrl) {
+    uint16_t min_val = ctrl->min;
+    uint16_t max_val = ctrl->max > 127 ? 127 : ctrl->max;
+    for (uint16_t i = min_val; i <= max_val; i++) {
+      if (i > min_val) strcat(options, "\n");
+      char num[8];
+      snprintf(num, sizeof(num), "%u", (unsigned)i);
+      strcat(options, num);
+    }
+    if (current_val >= min_val && current_val <= max_val) {
+      current_idx = current_val - min_val;
+    }
+  } else {
+    for (int i = 0; i <= 127; i++) {
+      if (i > 0) strcat(options, "\n");
+      char num[8];
+      snprintf(num, sizeof(num), "%d", i);
+      strcat(options, num);
+    }
+    current_idx = current_val;
+  }
+  
+  return menu_create_roller_page("Release", options, current_idx, cc_hold_release_confirm_cb, NULL);
+}
+
+static void nav_to_cc_hold_release(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Release", cc_hold_release_roller_create);
+}
+
+// --- CC Hold Slot Submenu Page ---
+
+static lv_obj_t* cc_hold_slot_page_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return menu_create_page("Error", NULL, 0);
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return menu_create_page("Error", NULL, 0);
+  
+  int buf = get_next_buffer_set();
+  uint8_t slot = s_editing_cc_slot;
+  
+  // Get current values
+  bool is_active = (slot < mapping->action.params.cc.num_ccs);
+  uint8_t cc_num = is_active ? mapping->action.params.cc.cc_numbers[slot] : 0;
+  uint8_t press_val = is_active ? mapping->action.params.cc.values[slot] : 0;
+  uint8_t release_val = is_active ? mapping->action.params.cc.values2[slot] : 0;
+  
+  // Get device for control names
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  
+  // Build labels
+  if (is_active) {
+    const char* cc_name = assets_get_cc_name(device, cc_num);
+    if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+      snprintf(s_cc_hold_cc_label[buf], sizeof(s_cc_hold_cc_label[buf]), "CC: %.30s", cc_name);
+    } else {
+      snprintf(s_cc_hold_cc_label[buf], sizeof(s_cc_hold_cc_label[buf]), "CC: %u", (unsigned)cc_num);
+    }
+    
+    const char* press_disp = get_value_display(device, cc_num, press_val);
+    snprintf(s_cc_hold_press_label[buf], sizeof(s_cc_hold_press_label[buf]), "Press: %s", press_disp);
+    
+    const char* release_disp = get_value_display(device, cc_num, release_val);
+    snprintf(s_cc_hold_release_label[buf], sizeof(s_cc_hold_release_label[buf]), "Release: %s", release_disp);
+  } else {
+    snprintf(s_cc_hold_cc_label[buf], sizeof(s_cc_hold_cc_label[buf]), "CC: <none>");
+    snprintf(s_cc_hold_press_label[buf], sizeof(s_cc_hold_press_label[buf]), "Press: <none>");
+    snprintf(s_cc_hold_release_label[buf], sizeof(s_cc_hold_release_label[buf]), "Release: <none>");
+  }
+  
+  s_cc_hold_items[0] = (menu_item_t){s_cc_hold_cc_label[buf], nav_to_cc_hold_cc, NULL, true};
+  s_cc_hold_items[1] = (menu_item_t){s_cc_hold_press_label[buf], nav_to_cc_hold_press, NULL, is_active};
+  s_cc_hold_items[2] = (menu_item_t){s_cc_hold_release_label[buf], nav_to_cc_hold_release, NULL, is_active};
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  
+  return menu_create_page(title, s_cc_hold_items, 3);
+}
+
+// ============================================================================
+// CC Slot Navigation (routes to correct handler based on action type)
+// ============================================================================
+
 static void nav_to_cc_slot(void* user_data) {
   uint8_t clicked_slot = (uint8_t)(uintptr_t)user_data;
   
-  // Get current num_ccs to determine if this is an active slot or "add new"
   scene_t* scene = scene_get_current();
   if (!scene) return;
   
@@ -667,11 +1146,10 @@ static void nav_to_cc_slot(void* user_data) {
   uint8_t num_ccs = mapping->action.params.cc.num_ccs;
   
   // If clicking on an inactive slot, redirect to the next available slot
-  // (due to compaction, new CCs must go at position num_ccs)
   if (clicked_slot >= num_ccs) {
-    s_editing_cc_slot = num_ccs;  // Next available slot
+    s_editing_cc_slot = num_ccs;
   } else {
-    s_editing_cc_slot = clicked_slot;  // Edit existing slot
+    s_editing_cc_slot = clicked_slot;
   }
   
   // Ensure CC options are loaded
@@ -680,8 +1158,17 @@ static void nav_to_cc_slot(void* user_data) {
   }
   
   static char title[24];
-  snprintf(title, sizeof(title), "CC Slot %u", (unsigned)(s_editing_cc_slot + 1));
-  menu_navigate_to(title, cc_number_roller_create);
+  
+  // Route based on action type
+  if (mapping->action.type == ACTION_SEND_CC_HOLD) {
+    // CC Hold: open submenu with CC/Press/Release
+    snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
+    menu_navigate_to(title, cc_hold_slot_page_create);
+  } else {
+    // Regular CC: open CC number roller directly
+    snprintf(title, sizeof(title), "CC Slot %u", (unsigned)(s_editing_cc_slot + 1));
+    menu_navigate_to(title, cc_number_roller_create);
+  }
 }
 
 // ============================================================================
@@ -718,7 +1205,13 @@ static lv_obj_t* pad_detail_page_create(void) {
       mapping->action.type == ACTION_SEND_CC_CYCLE) {
     
     for (int i = 0; i < 4; i++) {
-      const char* slot_display = get_cc_slot_display(&mapping->action, (uint8_t)i);
+      // Use appropriate display function based on action type
+      const char* slot_display;
+      if (mapping->action.type == ACTION_SEND_CC_HOLD) {
+        slot_display = get_cc_hold_slot_display(&mapping->action, (uint8_t)i);
+      } else {
+        slot_display = get_cc_slot_display(&mapping->action, (uint8_t)i);
+      }
       if (strcmp(slot_display, "Inactive") == 0) {
         // Inactive slot: show slot number
         snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]), 
