@@ -174,13 +174,9 @@ class MidiMonitor
       puts "(Connect via CDC or provide device_slug to enable CC name resolution)"
     end
 
-    device_id = select_midi_device
-    return unless device_id
-
-    device_name = WinMM.get_device_name(device_id)
     puts ""
     puts "Monitoring MIDI:"
-    puts "  USB MIDI output: #{device_name}"
+    puts "  USB MIDI output: Storm Summoner (auto-reconnect)"
     puts "  CDC relay input: #{@cdc_port || '(not connected)'}"
     puts "  Device profile: #{@device_title}" if @device_title
     puts "Press Ctrl+C to exit"
@@ -188,52 +184,34 @@ class MidiMonitor
     print_header
 
     @running = true
+    @midi_connected = false
+    @midi_reconnect_needed = false
+    @last_midi_check = Time.at(0)  # Force immediate check
     trap("INT") { @running = false }
-
-    # Open MIDI input first (before CDC, so we fail early if device is busy)
-    handle_ptr = FFI::MemoryPointer.new(:pointer)
-    result = WinMM.midiInOpen(handle_ptr, device_id, MidiCallback, 0, WinMM::CALLBACK_FUNCTION)
-    unless result == WinMM::MMSYSERR_NOERROR
-      error_msg = case result
-        when 7 then "device already in use by another application"
-        when 2 then "device ID out of range"
-        when 4 then "insufficient memory"
-        else "error code #{result}"
-      end
-      puts "Failed to open MIDI device: #{error_msg}"
-      return
-    end
-    @handle = handle_ptr.read_pointer
 
     # Start CDC relay thread if port specified
     start_cdc_relay if @cdc_port
 
-    setup_sysex_buffer
-
-    result = WinMM.midiInStart(@handle)
-    unless result == WinMM::MMSYSERR_NOERROR
-      puts "Failed to start MIDI input (error #{result})"
-      cleanup_sysex_buffer
-      WinMM.midiInClose(@handle)
-      stop_cdc_relay
-      return
-    end
-
-    # Main processing loop
+    # Main processing loop with USB MIDI reconnection
     begin
       while @running
-        # Process USB MIDI output messages (OUT direction)
-        messages = $midi_queue.pop_all
-        messages.each { |data| process_short_message(data, :out) }
+        # Check/reconnect USB MIDI periodically
+        ensure_midi_connected
 
-        sysex_signals = $sysex_queue.pop_all
-        sysex_signals.each { read_and_process_sysex(:out) }
+        # Process USB MIDI output messages (OUT direction)
+        if @midi_connected
+          messages = $midi_queue.pop_all
+          messages.each { |data| process_short_message(data, :out) }
+
+          sysex_signals = $sysex_queue.pop_all
+          sysex_signals.each { read_and_process_sysex(:out) }
+        end
 
         # Process CDC relay messages (IN direction)
         cdc_messages = $cdc_queue.pop_all
         cdc_messages.each { |msg| process_cdc_message(msg) }
 
-        sleep 0.005 if messages.empty? && sysex_signals.empty? && cdc_messages.empty?
+        sleep 0.005
       end
     rescue => e
       puts "\nError: #{e.message}"
@@ -241,13 +219,82 @@ class MidiMonitor
     end
 
     # Cleanup
-    WinMM.midiInStop(@handle)
-    WinMM.midiInReset(@handle)
-    cleanup_sysex_buffer
-    WinMM.midiInClose(@handle)
+    close_midi_device
     stop_cdc_relay
 
     puts "\nExiting."
+  end
+
+  def ensure_midi_connected
+    # Force reconnect if signaled (e.g., CDC detected MCU reset)
+    if @midi_reconnect_needed && @midi_connected
+      close_midi_device
+      @midi_reconnect_needed = false
+      sleep 0.5  # Brief pause for device to stabilize
+    end
+
+    now = Time.now
+    # Only check every second to avoid overhead
+    return if @midi_connected && (now - @last_midi_check) < 1.0
+    @last_midi_check = now
+
+    # Check if our device is still in the list
+    if @midi_connected
+      storm_id = find_storm_summoner_device
+      close_midi_device if storm_id.nil?
+    end
+
+    # Try to connect if not connected
+    unless @midi_connected
+      storm_id = find_storm_summoner_device
+      if storm_id
+        open_midi_device(storm_id)
+      end
+    end
+  end
+
+  def find_storm_summoner_device
+    num_devices = WinMM.midiInGetNumDevs
+    num_devices.times do |i|
+      name = WinMM.get_device_name(i)
+      return i if name && name =~ /storm.?summoner/i
+    end
+    nil
+  end
+
+  def open_midi_device(device_id)
+    handle_ptr = FFI::MemoryPointer.new(:pointer)
+    result = WinMM.midiInOpen(handle_ptr, device_id, MidiCallback, 0, WinMM::CALLBACK_FUNCTION)
+    unless result == WinMM::MMSYSERR_NOERROR
+      return false  # Silently fail, will retry
+    end
+    @handle = handle_ptr.read_pointer
+
+    setup_sysex_buffer
+
+    result = WinMM.midiInStart(@handle)
+    unless result == WinMM::MMSYSERR_NOERROR
+      cleanup_sysex_buffer
+      WinMM.midiInClose(@handle)
+      @handle = nil
+      return false
+    end
+
+    @midi_connected = true
+  end
+
+  def close_midi_device
+    return unless @handle
+    begin
+      WinMM.midiInStop(@handle)
+      WinMM.midiInReset(@handle)
+      cleanup_sysex_buffer
+      WinMM.midiInClose(@handle)
+    rescue
+      # Ignore errors during cleanup
+    end
+    @handle = nil
+    @midi_connected = false
   end
 
   def detect_device_via_cdc
@@ -288,55 +335,72 @@ class MidiMonitor
     return unless @cdc_port && SERIALPORT_AVAILABLE
 
     @cdc_thread = Thread.new do
-      begin
-        @cdc_serial = SerialPort.new(@cdc_port, 115200, 8, 1, SerialPort::NONE)
-        @cdc_serial.read_timeout = 100
-
-        # Enter MIDI relay mode
-        sleep 0.3
-        @cdc_serial.write("MIDI#{@show_clock ? ' CLOCK' : ''}\n")
-        @cdc_serial.flush
-
-        # Wait for MIDI_STARTED response
-        start_time = Time.now
-        loop do
-          line = @cdc_serial.gets&.chomp
-          break if line&.include?("MIDI_STARTED")
-          break if Time.now - start_time > 2
-        end
-
-        # Read relay messages
-        while @running
-          begin
-            line = @cdc_serial.gets
-            if line
-              line = line.chomp.strip
-              $cdc_queue.push(line) if line.start_with?("M:")
-            end
-          rescue Errno::EAGAIN, IOError
-            break unless @running
-            sleep 0.01
-          end
-        end
-
-        # Exit relay mode gracefully
+      first_connect = true
+      while @running
         begin
-          @cdc_serial.write("EXIT\n")
+          @cdc_serial = SerialPort.new(@cdc_port, 115200, 8, 1, SerialPort::NONE)
+          @cdc_serial.read_timeout = 100
+
+          # If this is a reconnect (not first connect), signal MIDI to reconnect too
+          unless first_connect
+            @midi_reconnect_needed = true
+          end
+          first_connect = false
+
+          # Enter MIDI relay mode
+          sleep 0.3
+          @cdc_serial.write("MIDI#{@show_clock ? ' CLOCK' : ''}\n")
           @cdc_serial.flush
-          sleep 0.1
+
+          # Wait for MIDI_STARTED response
+          start_time = Time.now
+          loop do
+            line = @cdc_serial.gets&.chomp
+            break if line&.include?("MIDI_STARTED")
+            break if Time.now - start_time > 2
+          end
+
+          # Read relay messages
+          while @running
+            begin
+              line = @cdc_serial.gets
+              if line
+                line = line.chomp.strip
+                $cdc_queue.push(line) if line.start_with?("M:")
+              end
+            rescue Errno::EAGAIN
+              # Non-blocking read with no data - normal, continue
+            rescue IOError, Errno::EIO, SystemCallError
+              # Actual disconnect - signal MIDI to reconnect too
+              @midi_reconnect_needed = true
+              break
+            end
+          end
+
+          # Exit relay mode gracefully
+          begin
+            @cdc_serial.write("EXIT\n")
+            @cdc_serial.flush
+            sleep 0.1
+          rescue
+            # Ignore errors during shutdown
+          end
+          @cdc_serial&.close rescue nil
+          @cdc_serial = nil
+          sleep 1 if @running  # Brief pause before reconnect
+        rescue Errno::EACCES, Errno::EBUSY
+          # Port is in use - retry every 5 seconds
+          @cdc_serial&.close rescue nil
+          @cdc_serial = nil
+          5.times { sleep 1; break unless @running }
         rescue
-          # Ignore errors during shutdown
+          # Other errors - also retry after delay
+          @cdc_serial&.close rescue nil
+          @cdc_serial = nil
+          5.times { sleep 1; break unless @running }
         end
-      rescue Errno::EACCES, Errno::EBUSY => e
-        # Port is in use by another application (e.g., IDF Monitor)
-        puts "CDC relay unavailable: port #{@cdc_port} in use (close IDF Monitor?)"
-        @cdc_port = nil  # Disable CDC relay
-      rescue => e
-        # Only report errors if we're still supposed to be running
-        puts "CDC error: #{e.message}" if @running && !e.message.include?("closed")
-      ensure
-        @cdc_serial&.close rescue nil
       end
+      @cdc_serial&.close rescue nil
     end
   end
 

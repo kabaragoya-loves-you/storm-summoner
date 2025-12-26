@@ -36,9 +36,10 @@ static menu_item_t s_pad_items[MAX_PAD_ITEMS];
 static char s_pad_labels[LABEL_BUFFER_SETS][MAX_PAD_ITEMS][32];
 
 // Pad detail page
-#define MAX_DETAIL_ITEMS 8
+#define MAX_DETAIL_ITEMS 10  // action + steps + 4 slots + extra
 static menu_item_t s_detail_items[MAX_DETAIL_ITEMS];
 static char s_action_label[LABEL_BUFFER_SETS][48];
+static char s_steps_label[LABEL_BUFFER_SETS][24];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 
 // CC Hold slot submenu
@@ -46,6 +47,12 @@ static menu_item_t s_cc_hold_items[3];
 static char s_cc_hold_cc_label[LABEL_BUFFER_SETS][40];
 static char s_cc_hold_press_label[LABEL_BUFFER_SETS][40];
 static char s_cc_hold_release_label[LABEL_BUFFER_SETS][40];
+
+// CC Cycle slot submenu (CC + up to 8 steps)
+#define MAX_CYCLE_STEPS 8
+static menu_item_t s_cc_cycle_items[MAX_CYCLE_STEPS + 1];  // CC + 8 steps
+static char s_cc_cycle_cc_label[LABEL_BUFFER_SETS][40];
+static char s_cc_cycle_step_labels[LABEL_BUFFER_SETS][MAX_CYCLE_STEPS][40];
 
 // Get current label buffer set and advance to next
 static int get_next_buffer_set(void) {
@@ -57,6 +64,7 @@ static int get_next_buffer_set(void) {
 // Editing state
 static uint8_t s_editing_pad_index = 0;
 static uint8_t s_editing_cc_slot = 0;
+static uint8_t s_editing_step = 0;  // For CC Cycle step editing
 static uint8_t s_pending_cc_number = 0;
 static const midi_control_t* s_pending_control = NULL;  // For value roller
 
@@ -306,7 +314,7 @@ static const char* get_cc_slot_display(action_t* action, uint8_t slot) {
   return buf;
 }
 
-// Get display name for a CC Hold slot: "Filter: 64>0"
+// Get display name for a CC Hold slot: just the CC name
 static const char* get_cc_hold_slot_display(action_t* action, uint8_t slot) {
   if (!action || slot >= 4) return "Inactive";
   
@@ -316,37 +324,23 @@ static const char* get_cc_hold_slot_display(action_t* action, uint8_t slot) {
   }
   
   uint8_t cc_num = action->params.cc.cc_numbers[slot];
-  uint8_t press_val = action->params.cc.values[slot];
-  uint8_t release_val = action->params.cc.values2[slot];
   
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
   
-  static char buf[48];
+  static char buf[32];
   
-  const char* ctrl_name = (ctrl && ctrl->name) ? ctrl->name : NULL;
-  
-  // Get discrete value names if available
-  const char* press_name = assets_get_discrete_name(device, cc_num, press_val);
-  const char* release_name = assets_get_discrete_name(device, cc_num, release_val);
-  
-  if (ctrl_name) {
-    if (press_name && release_name) {
-      snprintf(buf, sizeof(buf), "%.12s: %.10s>%.10s", ctrl_name, press_name, release_name);
-    } else {
-      snprintf(buf, sizeof(buf), "%.20s: %u>%u", ctrl_name, 
-        (unsigned)press_val, (unsigned)release_val);
-    }
+  if (ctrl && ctrl->name) {
+    snprintf(buf, sizeof(buf), "%.28s", ctrl->name);
   } else {
-    snprintf(buf, sizeof(buf), "CC%u: %u>%u", 
-      (unsigned)cc_num, (unsigned)press_val, (unsigned)release_val);
+    snprintf(buf, sizeof(buf), "CC %u", (unsigned)cc_num);
   }
   return buf;
 }
 
-// Get value display string for CC Hold submenu items
+// Get value display string for CC Hold/Cycle submenu items
 static const char* get_value_display(const device_def_t* device, uint8_t cc_num, uint8_t value) {
   const char* discrete_name = assets_get_discrete_name(device, cc_num, value);
   static char buf[24];
@@ -354,6 +348,32 @@ static const char* get_value_display(const device_def_t* device, uint8_t cc_num,
     snprintf(buf, sizeof(buf), "%.20s", discrete_name);
   } else {
     snprintf(buf, sizeof(buf), "%u", (unsigned)value);
+  }
+  return buf;
+}
+
+// Get display name for a CC Cycle slot: just the CC name
+static const char* get_cc_cycle_slot_display(action_t* action, uint8_t slot) {
+  if (!action || slot >= 4) return "Inactive";
+  
+  // Slot is inactive if it's beyond num_ccs
+  if (slot >= action->params.cc.num_ccs) {
+    return "Inactive";
+  }
+  
+  uint8_t cc_num = action->params.cc.cc_numbers[slot];
+  
+  // Get device and control info
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  static char buf[32];
+  
+  if (ctrl && ctrl->name) {
+    snprintf(buf, sizeof(buf), "%.28s", ctrl->name);
+  } else {
+    snprintf(buf, sizeof(buf), "CC %u", (unsigned)cc_num);
   }
   return buf;
 }
@@ -404,6 +424,10 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     mapping->enabled = (new_type != ACTION_NONE);
     
     // CC slots are already 0 (inactive) from memset
+    // Set default cycle steps for CC Cycle
+    if (new_type == ACTION_SEND_CC_CYCLE) {
+      mapping->action.params.cc.num_cycle_steps = 2;
+    }
     
     persist_scene_changes();
     ESP_LOGI(TAG, "Pad %s action set to: %s", 
@@ -789,10 +813,9 @@ static void cc_hold_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   
   s_callback_in_progress = false;
   
-  // Go back to CC Hold slot submenu
-  static char title[24];
-  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
-  menu_navigate_back_then_to(2, title, cc_hold_slot_page_create);
+  // Go back to pad detail page (refreshes slot display)
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(3, title, pad_detail_page_create);
 }
 
 static lv_obj_t* cc_hold_cc_roller_create(void) {
@@ -1130,6 +1153,380 @@ static lv_obj_t* cc_hold_slot_page_create(void) {
 }
 
 // ============================================================================
+// CC Cycle Slot Submenu and Rollers
+// ============================================================================
+
+static lv_obj_t* cc_cycle_slot_page_create(void);  // Forward declaration
+
+// --- CC Cycle: CC Number Roller ---
+
+static void cc_cycle_cc_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  uint8_t slot = s_editing_cc_slot;
+  
+  if (selected_index == 0) {
+    // "Inactive" selected - clear this slot and compact
+    uint8_t num_ccs = mapping->action.params.cc.num_ccs;
+    if (slot < num_ccs) {
+      for (int i = slot; i < 3; i++) {
+        mapping->action.params.cc.cc_numbers[i] = mapping->action.params.cc.cc_numbers[i + 1];
+        for (int s = 0; s < MAX_CYCLE_STEPS; s++) {
+          mapping->action.params.cc.cycle_values[i][s] = 
+            mapping->action.params.cc.cycle_values[i + 1][s];
+        }
+      }
+      mapping->action.params.cc.cc_numbers[3] = 0;
+      memset(mapping->action.params.cc.cycle_values[3], 0, MAX_CYCLE_STEPS);
+      if (num_ccs > 0) {
+        mapping->action.params.cc.num_ccs = num_ccs - 1;
+      }
+      persist_scene_changes();
+      ESP_LOGI(TAG, "Pad %s CC Cycle slot %u cleared",
+        get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1));
+    }
+    
+    s_callback_in_progress = false;
+    const char* title = get_pad_display_name(s_editing_pad_index);
+    menu_navigate_back_then_to(3, title, pad_detail_page_create);
+    return;
+  }
+  
+  // CC selected from device list
+  if (selected_index < s_cc_options.count) {
+    uint8_t cc_num = s_cc_options.cc_numbers[selected_index];
+    mapping->action.params.cc.cc_numbers[slot] = cc_num;
+    
+    // If this is a new slot, set default values and increment num_ccs
+    if (slot >= mapping->action.params.cc.num_ccs) {
+      // Default cycle values: 0, 127 for 2 steps
+      uint8_t steps = mapping->action.params.cc.num_cycle_steps;
+      if (steps < 2) {
+        mapping->action.params.cc.num_cycle_steps = 2;
+        steps = 2;
+      }
+      mapping->action.params.cc.cycle_values[slot][0] = 0;
+      mapping->action.params.cc.cycle_values[slot][1] = 127;
+      mapping->action.params.cc.num_ccs = slot + 1;
+    }
+    
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Pad %s CC Cycle slot %u CC set to %u",
+      get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1), (unsigned)cc_num);
+  }
+  
+  s_callback_in_progress = false;
+  
+  // Go back to pad detail page (refreshes slot display)
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(3, title, pad_detail_page_create);
+}
+
+static lv_obj_t* cc_cycle_cc_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  if (!s_cc_options.options_str || s_cc_options.count == 0) {
+    if (!load_cc_options()) {
+      return menu_create_page("Error", NULL, 0);
+    }
+  }
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint32_t current_idx = 0;
+  
+  if (slot < mapping->action.params.cc.num_ccs) {
+    uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+    current_idx = cc_number_to_option_index(cc_num);
+  }
+  
+  return menu_create_roller_page("CC", s_cc_options.options_str, current_idx,
+    cc_cycle_cc_confirm_cb, NULL);
+}
+
+static void nav_to_cc_cycle_cc(void* user_data) {
+  (void)user_data;
+  if (!s_cc_options.options_str) load_cc_options();
+  menu_navigate_to("CC", cc_cycle_cc_roller_create);
+}
+
+// --- CC Cycle: Step Value Roller ---
+
+static void cc_cycle_step_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint8_t step = s_editing_step;
+  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  
+  // Get device and control to determine actual value
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  uint8_t step_val;
+  if (ctrl && ctrl->discrete_count > 0) {
+    if (selected_index < ctrl->discrete_count) {
+      step_val = (uint8_t)ctrl->discrete_values[selected_index].value;
+    } else {
+      step_val = 0;
+    }
+  } else if (ctrl) {
+    step_val = (uint8_t)(ctrl->min + selected_index);
+  } else {
+    step_val = (uint8_t)selected_index;
+  }
+  
+  mapping->action.params.cc.cycle_values[slot][step] = step_val;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %s CC Cycle slot %u step %u value set to %u",
+    get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1), 
+    (unsigned)(step + 1), (unsigned)step_val);
+  
+  s_callback_in_progress = false;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_navigate_back_then_to(2, title, cc_cycle_slot_page_create);
+}
+
+static lv_obj_t* cc_cycle_step_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint8_t slot = s_editing_cc_slot;
+  uint8_t step = s_editing_step;
+  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  uint8_t current_val = mapping->action.params.cc.cycle_values[slot][step];
+  
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  
+  static char options[1024];
+  options[0] = '\0';
+  uint32_t current_idx = 0;
+  
+  if (ctrl && ctrl->discrete_count > 0) {
+    for (int i = 0; i < ctrl->discrete_count; i++) {
+      if (i > 0) strcat(options, "\n");
+      const char* name = ctrl->discrete_values[i].name;
+      if (name) {
+        char truncated[28];
+        strncpy(truncated, name, 27);
+        truncated[27] = '\0';
+        strcat(options, truncated);
+      } else {
+        char num[8];
+        snprintf(num, sizeof(num), "%u", (unsigned)ctrl->discrete_values[i].value);
+        strcat(options, num);
+      }
+      if (ctrl->discrete_values[i].value == current_val) {
+        current_idx = (uint32_t)i;
+      }
+    }
+  } else if (ctrl) {
+    uint16_t min_val = ctrl->min;
+    uint16_t max_val = ctrl->max > 127 ? 127 : ctrl->max;
+    for (uint16_t i = min_val; i <= max_val; i++) {
+      if (i > min_val) strcat(options, "\n");
+      char num[8];
+      snprintf(num, sizeof(num), "%u", (unsigned)i);
+      strcat(options, num);
+    }
+    if (current_val >= min_val && current_val <= max_val) {
+      current_idx = current_val - min_val;
+    }
+  } else {
+    for (int i = 0; i <= 127; i++) {
+      if (i > 0) strcat(options, "\n");
+      char num[8];
+      snprintf(num, sizeof(num), "%d", i);
+      strcat(options, num);
+    }
+    current_idx = current_val;
+  }
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
+  return menu_create_roller_page(title, options, current_idx, cc_cycle_step_confirm_cb, NULL);
+}
+
+static void nav_to_cc_cycle_step(void* user_data) {
+  s_editing_step = (uint8_t)(uintptr_t)user_data;
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_step + 1));
+  menu_navigate_to(title, cc_cycle_step_roller_create);
+}
+
+// --- CC Cycle Slot Submenu Page ---
+
+static lv_obj_t* cc_cycle_slot_page_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return menu_create_page("Error", NULL, 0);
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return menu_create_page("Error", NULL, 0);
+  
+  int buf = get_next_buffer_set();
+  uint8_t slot = s_editing_cc_slot;
+  
+  // Get current values
+  bool is_active = (slot < mapping->action.params.cc.num_ccs);
+  uint8_t cc_num = is_active ? mapping->action.params.cc.cc_numbers[slot] : 0;
+  uint8_t num_steps = mapping->action.params.cc.num_cycle_steps;
+  if (num_steps < 2) num_steps = 2;
+  
+  // Get device for control names
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  
+  int item_count = 0;
+  
+  // CC selector
+  if (is_active) {
+    const char* cc_name = assets_get_cc_name(device, cc_num);
+    if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+      snprintf(s_cc_cycle_cc_label[buf], sizeof(s_cc_cycle_cc_label[buf]), "CC: %.30s", cc_name);
+    } else {
+      snprintf(s_cc_cycle_cc_label[buf], sizeof(s_cc_cycle_cc_label[buf]), "CC: %u", (unsigned)cc_num);
+    }
+  } else {
+    snprintf(s_cc_cycle_cc_label[buf], sizeof(s_cc_cycle_cc_label[buf]), "CC: <none>");
+  }
+  s_cc_cycle_items[item_count++] = (menu_item_t){s_cc_cycle_cc_label[buf], nav_to_cc_cycle_cc, NULL, true};
+  
+  // Step value items (only if slot is active)
+  if (is_active) {
+    for (int i = 0; i < num_steps && i < MAX_CYCLE_STEPS; i++) {
+      uint8_t step_val = mapping->action.params.cc.cycle_values[slot][i];
+      const char* val_disp = get_value_display(device, cc_num, step_val);
+      snprintf(s_cc_cycle_step_labels[buf][i], sizeof(s_cc_cycle_step_labels[buf][i]), 
+        "Step %d: %s", i + 1, val_disp);
+      s_cc_cycle_items[item_count++] = (menu_item_t){
+        s_cc_cycle_step_labels[buf][i], nav_to_cc_cycle_step, (void*)(uintptr_t)i, true
+      };
+    }
+  }
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  
+  return menu_create_page(title, s_cc_cycle_items, item_count);
+}
+
+// ============================================================================
+// CC Cycle Steps Roller (on pad detail page)
+// ============================================================================
+
+static void cc_cycle_steps_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // Steps roller shows 2-8, so index 0 = 2 steps
+  uint8_t new_steps = (uint8_t)(selected_index + 2);
+  mapping->action.params.cc.num_cycle_steps = new_steps;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %s CC Cycle steps set to %u",
+    get_pad_display_name(s_editing_pad_index), (unsigned)new_steps);
+  
+  s_callback_in_progress = false;
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* cc_cycle_steps_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Build options: 2, 3, 4, 5, 6, 7, 8
+  static char options[32];
+  snprintf(options, sizeof(options), "2\n3\n4\n5\n6\n7\n8");
+  
+  uint8_t current_steps = mapping->action.params.cc.num_cycle_steps;
+  if (current_steps < 2) current_steps = 2;
+  if (current_steps > 8) current_steps = 8;
+  uint32_t current_idx = current_steps - 2;  // 2 steps = index 0
+  
+  return menu_create_roller_page("Steps", options, current_idx, 
+    cc_cycle_steps_confirm_cb, NULL);
+}
+
+static void nav_to_cc_cycle_steps(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Steps", cc_cycle_steps_roller_create);
+}
+
+// ============================================================================
 // CC Slot Navigation (routes to correct handler based on action type)
 // ============================================================================
 
@@ -1164,6 +1561,10 @@ static void nav_to_cc_slot(void* user_data) {
     // CC Hold: open submenu with CC/Press/Release
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
     menu_navigate_to(title, cc_hold_slot_page_create);
+  } else if (mapping->action.type == ACTION_SEND_CC_CYCLE) {
+    // CC Cycle: open submenu with CC/Step values
+    snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
+    menu_navigate_to(title, cc_cycle_slot_page_create);
   } else {
     // Regular CC: open CC number roller directly
     snprintf(title, sizeof(title), "CC Slot %u", (unsigned)(s_editing_cc_slot + 1));
@@ -1204,11 +1605,23 @@ static lv_obj_t* pad_detail_page_create(void) {
       mapping->action.type == ACTION_SEND_CC_HOLD ||
       mapping->action.type == ACTION_SEND_CC_CYCLE) {
     
+    // For CC Cycle, show Steps selector before the CC slots
+    if (mapping->action.type == ACTION_SEND_CC_CYCLE) {
+      uint8_t steps = mapping->action.params.cc.num_cycle_steps;
+      if (steps < 2) steps = 2;
+      snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps: %u", (unsigned)steps);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true
+      };
+    }
+    
     for (int i = 0; i < 4; i++) {
       // Use appropriate display function based on action type
       const char* slot_display;
       if (mapping->action.type == ACTION_SEND_CC_HOLD) {
         slot_display = get_cc_hold_slot_display(&mapping->action, (uint8_t)i);
+      } else if (mapping->action.type == ACTION_SEND_CC_CYCLE) {
+        slot_display = get_cc_cycle_slot_display(&mapping->action, (uint8_t)i);
       } else {
         slot_display = get_cc_slot_display(&mapping->action, (uint8_t)i);
       }
