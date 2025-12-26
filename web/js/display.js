@@ -398,6 +398,7 @@ application.register(
 
         // Parse header
         const view = new DataView(this.buffer.buffer, this.buffer.byteOffset)
+        const format = this.buffer[3] // byte 3 = format (0=RGB888, 1=RGB565)
         const x = view.getUint16(4, true)
         const y = view.getUint16(6, true)
         const w = view.getUint16(8, true)
@@ -405,7 +406,7 @@ application.register(
         const payloadLen = view.getUint32(12, true)
 
         // Validate header
-        if (!this.validHeader(x, y, w, h, payloadLen)) {
+        if (!this.validHeader(x, y, w, h, format, payloadLen)) {
           this.buffer = this.buffer.slice(2)
           continue
         }
@@ -418,26 +419,24 @@ application.register(
         this.buffer = this.buffer.slice(totalSize)
 
         // Update framebuffer
-        this.updateFramebuffer(x, y, w, h, payload)
+        this.updateFramebuffer(x, y, w, h, format, payload)
 
         this.frames++
         this.bytes += totalSize
       }
     }
 
-    validHeader (x, y, w, h, payloadLen) {
-      return (
-        x < this.width &&
-        y < this.height &&
-        w > 0 &&
-        h > 0 &&
-        x + w <= this.width &&
-        y + h <= this.height &&
-        payloadLen === w * h * 3
-      )
+    validHeader (x, y, w, h, format, payloadLen) {
+      if (x >= this.width || y >= this.height) return false
+      if (w <= 0 || h <= 0) return false
+      if (x + w > this.width || y + h > this.height) return false
+
+      // Validate payload length based on format (0 = RGB888, 1 = RGB565)
+      const bpp = format === 1 ? 2 : 3
+      return payloadLen === w * h * bpp
     }
 
-    updateFramebuffer (x, y, w, h, payload) {
+    updateFramebuffer (x, y, w, h, format, payload) {
       let src = 0
       for (let row = 0; row < h; row++) {
         for (let col = 0; col < w; col++) {
@@ -445,12 +444,25 @@ application.register(
           const py = y + row
           const dst = (py * this.width + px) * 4
 
-          // BGR -> RGBA
-          this.imageData.data[dst + 2] = payload[src] // B -> B
-          this.imageData.data[dst + 1] = payload[src + 1] // G -> G
-          this.imageData.data[dst] = payload[src + 2] // R -> R
-          this.imageData.data[dst + 3] = 255 // A
-          src += 3
+          if (format === 1) {
+            // RGB565 (little-endian) -> RGBA
+            const lo = payload[src]
+            const hi = payload[src + 1]
+            const rgb565 = (hi << 8) | lo
+
+            this.imageData.data[dst] = ((rgb565 >> 11) & 0x1f) * 255 / 31 // R
+            this.imageData.data[dst + 1] = ((rgb565 >> 5) & 0x3f) * 255 / 63 // G
+            this.imageData.data[dst + 2] = (rgb565 & 0x1f) * 255 / 31 // B
+            this.imageData.data[dst + 3] = 255 // A
+            src += 2
+          } else {
+            // RGB888 (BGR order) -> RGBA
+            this.imageData.data[dst + 2] = payload[src] // B -> B
+            this.imageData.data[dst + 1] = payload[src + 1] // G -> G
+            this.imageData.data[dst] = payload[src + 2] // R -> R
+            this.imageData.data[dst + 3] = 255 // A
+            src += 3
+          }
         }
       }
 

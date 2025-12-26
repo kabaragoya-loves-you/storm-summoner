@@ -156,31 +156,47 @@ class DisplayViewer < Gosu::Window
   end
 
   def valid_header?(h)
-    h[:magic] == MAGIC &&
-    h[:x] < @width && h[:y] < @height &&
-    h[:w] > 0 && h[:h] > 0 &&
-    h[:x] + h[:w] <= @width && h[:y] + h[:h] <= @height &&
-    h[:payload_len] == h[:w] * h[:h] * 3
+    return false unless h[:magic] == MAGIC
+    return false unless h[:x] < @width && h[:y] < @height
+    return false unless h[:w] > 0 && h[:h] > 0
+    return false unless h[:x] + h[:w] <= @width && h[:y] + h[:h] <= @height
+    
+    # Validate payload length based on format
+    bpp = (h[:format] == 1) ? 2 : 3  # RGB565 = 2, RGB888 = 3
+    h[:payload_len] == h[:w] * h[:h] * bpp
   end
 
   def update_framebuffer(header, payload)
     x, y, w, h = header[:x], header[:y], header[:w], header[:h]
+    format = header[:format]
     
     src = 0
     h.times do |row|
       dst_row = (y + row) * @width + x
       w.times do |col|
-        # BGR -> RGBA
-        b = payload.getbyte(src) || 0
-        g = payload.getbyte(src + 1) || 0
-        r = payload.getbyte(src + 2) || 0
+        if format == 1
+          # RGB565 (little-endian) -> RGBA
+          lo = payload.getbyte(src) || 0
+          hi = payload.getbyte(src + 1) || 0
+          rgb565 = (hi << 8) | lo
+          
+          r = ((rgb565 >> 11) & 0x1F) * 255 / 31
+          g = ((rgb565 >> 5) & 0x3F) * 255 / 63
+          b = (rgb565 & 0x1F) * 255 / 31
+          src += 2
+        else
+          # RGB888 (BGR order) -> RGBA
+          b = payload.getbyte(src) || 0
+          g = payload.getbyte(src + 1) || 0
+          r = payload.getbyte(src + 2) || 0
+          src += 3
+        end
         
         dst = (dst_row + col) * 4
         @framebuffer[dst] = r.chr
         @framebuffer[dst + 1] = g.chr
         @framebuffer[dst + 2] = b.chr
         @framebuffer[dst + 3] = "\xFF".b
-        src += 3
       end
     end
   end
