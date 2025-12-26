@@ -5,6 +5,7 @@
 
 require 'serialport'
 require 'io/console'
+require_relative 'ss_config'
 
 class CDCConsole
   def initialize(port_name)
@@ -273,18 +274,9 @@ class CDCConsole
   end
 end
 
-if ARGV.length < 1
-  puts "Usage: ruby cdc_console.rb <serial_port> [--test]"
-  puts ""
-  puts "Examples:"
-  puts "  ruby cdc_console.rb COM3           # Interactive console session"
-  puts "  ruby cdc_console.rb COM3 --test    # Quick test of console mode"
-  puts "  ruby cdc_console.rb /dev/ttyACM0   # Linux example"
-  exit 1
-end
-
-port_name = ARGV[0]
-test_mode = ARGV[1] == "--test"
+test_mode = ARGV.include?("--test")
+port_name = ARGV.find { |a| !a.start_with?('-') } || SSConfig.default_port
+puts "Using port: #{port_name}" if SSConfig.cdc_port && !ARGV.find { |a| !a.start_with?('-') }
 
 console = CDCConsole.new(port_name)
 

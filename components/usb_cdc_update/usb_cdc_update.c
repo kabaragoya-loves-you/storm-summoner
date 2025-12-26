@@ -400,7 +400,7 @@ void usb_cdc_task(void) {
         // Receiving file data in assets mode
         handle_assets_binary_data(buf, count);
       } else if (s_state == CDC_STATE_DISPLAY) {
-        // In display mode, only handle EXIT command
+        // In display mode, handle EXIT, SYNC, and STATS commands
         for (uint32_t i = 0; i < count; i++) {
           if (buf[i] == '\n' || buf[i] == '\r') {
             if (s_cmd_pos > 0) {
@@ -410,6 +410,21 @@ void usb_cdc_task(void) {
                 lvgl_stream_stop();
                 s_state = CDC_STATE_IDLE;
                 send_response("DISPLAY_STOPPED");
+              } else if (strcmp(s_cmd_buffer, "SYNC") == 0 || strcmp(s_cmd_buffer, "sync") == 0) {
+                // Request full screen redraw - no response to avoid contending with pixel stream
+                lvgl_stream_request_sync();
+              } else if (strcmp(s_cmd_buffer, "STATS") == 0 || strcmp(s_cmd_buffer, "stats") == 0) {
+                // Return streaming statistics
+                // Format: STATS <sent> <dropped> <bytes> <queue_now> <queue_max>
+                uint32_t sent, dropped, bytes;
+                lvgl_stream_get_stats(&sent, &dropped, &bytes);
+                uint32_t queue_now = lvgl_stream_get_current_queue_depth();
+                uint32_t queue_max = lvgl_stream_get_max_queue_depth();
+                char resp[128];
+                snprintf(resp, sizeof(resp), "STATS %u %u %u %u %u",
+                  (unsigned)sent, (unsigned)dropped, (unsigned)bytes,
+                  (unsigned)queue_now, (unsigned)queue_max);
+                send_response(resp);
               }
               s_cmd_pos = 0;
             }
@@ -735,6 +750,13 @@ static void process_command(const char *cmd) {
   } else if (strcmp(cmd, "DISPLAY") == 0) {
     ESP_LOGI(TAG, "Entering display streaming mode");
     
+    // If already streaming (e.g. previous client disconnected uncleanly), stop first
+    if (lvgl_stream_is_active()) {
+      ESP_LOGI(TAG, "Stopping previous stream session");
+      lvgl_stream_stop();
+      vTaskDelay(pdMS_TO_TICKS(50));  // Let TX task clean up
+    }
+    
     // Initialize stream if not already done
     esp_err_t err = lvgl_stream_init();
     if (err != ESP_OK) {
@@ -746,6 +768,9 @@ static void process_command(const char *cmd) {
     uint16_t w = display_get_width();
     uint16_t h = display_get_height();
     lvgl_stream_set_dimensions(w, h);
+    
+    // Reset stats for new session
+    lvgl_stream_reset_stats();
     
     // Start streaming
     err = lvgl_stream_start();

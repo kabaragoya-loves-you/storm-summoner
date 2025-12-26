@@ -1,17 +1,13 @@
 #!/usr/bin/env ruby
 
 # Reset Storm Summoner Device via CDC
-# Usage: ruby reset_device.rb <serial_port>
+# Usage: ruby reset_device.rb [serial_port]
 
 require 'serialport'
+require_relative 'ss_config'
 
-if ARGV.length != 1
-  puts "Usage: ruby reset_device.rb <serial_port>"
-  puts "Example: ruby reset_device.rb COM3"
-  exit 1
-end
-
-port_name = ARGV[0]
+port_name = ARGV[0] || SSConfig.default_port
+puts "Using port: #{port_name}" if ARGV.empty? && SSConfig.cdc_port
 
 begin
   puts "Connecting to #{port_name}..."

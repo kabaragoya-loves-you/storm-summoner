@@ -327,7 +327,7 @@ window.BaseController = class extends Controller {
 application.register(
   'app',
   class extends Controller {
-    static targets = ['statusDot', 'statusText', 'connectBtn', 'disconnectBtn']
+    static targets = ['statusDot', 'statusText', 'connectionBtn']
 
     connect () {
       this.connection = ConnectionManager.getInstance()
@@ -339,7 +339,7 @@ application.register(
       // Check WebSerial support
       if (!navigator.serial) {
         this.statusTextTarget.textContent = 'WebSerial not supported'
-        this.connectBtnTarget.disabled = true
+        this.connectionBtnTarget.disabled = true
       }
 
       // Listen for tab changes on the wa-tab-group
@@ -354,8 +354,16 @@ application.register(
       this.statusTextTarget.textContent = connected
         ? 'Connected'
         : 'Disconnected'
-      this.connectBtnTarget.disabled = connected
-      this.disconnectBtnTarget.disabled = !connected
+
+      // Update button appearance and text
+      const btn = this.connectionBtnTarget
+      if (connected) {
+        btn.textContent = 'Disconnect'
+        btn.variant = 'danger'
+      } else {
+        btn.textContent = 'Connect'
+        btn.variant = 'success'
+      }
 
       // If connected, activate the currently visible tab
       if (connected) {
@@ -384,16 +392,16 @@ application.register(
       )
     }
 
-    async connectDevice () {
+    async toggleConnection () {
       try {
-        await this.connection.connect()
+        if (this.connection.isConnected) {
+          await this.connection.disconnect()
+        } else {
+          await this.connection.connect()
+        }
       } catch (err) {
-        console.error('Connection failed:', err)
+        console.error('Connection toggle failed:', err)
       }
-    }
-
-    async disconnectDevice () {
-      await this.connection.disconnect()
     }
 
     // Navigate to a specific tab

@@ -1,6 +1,7 @@
 #include "lvgl.h"
 #include "display_driver.h"
 #include "gc9a01a_driver.h"
+#include "lvgl_stream.h"
 #if ENABLE_PERFORMANCE_MONITORING
 #include "../lvgl/src/others/sysmon/lv_sysmon.h"
 #endif
@@ -132,6 +133,16 @@ void display_start(void) {
 void lvgl_task(void *pvParameter) {
   (void) pvParameter;
   while (1) {
+    // Check for stream sync request - invalidate entire display to force full redraw
+    // Also check for deferred sync after frame drops have settled
+    if (lvgl_stream_sync_pending() || lvgl_stream_needs_deferred_sync()) {
+      lv_obj_t *screen = lv_screen_active();
+      if (screen) {
+        lv_obj_invalidate(screen);
+        lvgl_stream_sync_done();
+      }
+    }
+    
     lv_timer_handler();
     vTaskDelay(pdMS_TO_TICKS(10));
   }

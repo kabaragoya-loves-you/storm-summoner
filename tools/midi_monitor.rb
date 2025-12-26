@@ -15,6 +15,7 @@
 require 'ffi'
 require 'json'
 require 'thread'
+require_relative 'ss_config'
 
 # Optional serialport for CDC relay
 begin
@@ -667,27 +668,12 @@ end
 device_slug = ARGV.find { |arg| !arg.start_with?("-") && !ARGV[ARGV.index(arg) - 1]&.start_with?("--port") rescue true }
 show_clock = ARGV.include?("--clock")
 
-# Try to read CDC port from .vscode/settings.json
-def detect_cdc_port
-  script_dir = File.dirname(File.expand_path(__FILE__))
-  settings_path = File.join(script_dir, "..", ".vscode", "settings.json")
-  return nil unless File.exist?(settings_path)
-
-  begin
-    settings = JSON.parse(File.read(settings_path))
-    settings["ss.cdcPort"]
-  rescue
-    nil
-  end
-end
-
-# Parse --port option or auto-detect
-cdc_port = nil
+# Parse --port option or use settings.json
 port_idx = ARGV.index("--port")
-if port_idx && ARGV[port_idx + 1]
-  cdc_port = ARGV[port_idx + 1]
+cdc_port = if port_idx && ARGV[port_idx + 1]
+  ARGV[port_idx + 1]
 else
-  cdc_port = detect_cdc_port
+  SSConfig.cdc_port
 end
 
 if cdc_port && !SERIALPORT_AVAILABLE

@@ -12,6 +12,7 @@ application.register(
       'scaleSelect',
       'statsBtn',
       'saveBtn',
+      'syncBtn',
       'statsPanel',
       'resolution',
       'frameCount',
@@ -34,6 +35,11 @@ application.register(
       this.bytes = 0
       this.startTime = null
       this.statsInterval = null
+      this.syncInterval = null
+
+      // Auto-sync interval (ms) - resync periodically to recover from dropped frames
+      // Disabled by default (0) - queue size 16 should suffice; enable with positive value if needed
+      this.autoSyncIntervalMs = 0
 
       // Buffer for incoming data
       this.buffer = new Uint8Array(0)
@@ -240,6 +246,12 @@ application.register(
 
           // Start stats update
           this.statsInterval = setInterval(() => this.updateStats(), 1000)
+
+          // Start auto-sync to recover from dropped frames
+          if (this.autoSyncIntervalMs > 0) {
+            this.syncInterval = setInterval(() => this.requestSync(), this.autoSyncIntervalMs)
+          }
+
           return true
         } else {
           this.log(`Unexpected response: ${response || '(empty)'}`, 'error')
@@ -259,6 +271,11 @@ application.register(
         this.statsInterval = null
       }
 
+      if (this.syncInterval) {
+        clearInterval(this.syncInterval)
+        this.syncInterval = null
+      }
+
       if (this.reader) {
         try {
           this.reader.cancel()
@@ -267,6 +284,22 @@ application.register(
           this.reader.releaseLock()
         } catch (e) {}
         this.reader = null
+      }
+    }
+
+    async requestSync () {
+      if (!this.streaming || !this.connection.isConnected) return
+
+      try {
+        // Send SYNC command through the active reader's stream
+        // We need to write without interfering with the read loop
+        const encoder = new TextEncoder()
+        const writer = this.connection.port.writable.getWriter()
+        await writer.write(encoder.encode('SYNC\n'))
+        writer.releaseLock()
+        this.log('Sync requested')
+      } catch (err) {
+        // Ignore sync errors - stream might be busy
       }
     }
 

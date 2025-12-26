@@ -32,4 +32,16 @@ bool lvgl_stream_is_active(void);
 esp_err_t lvgl_stream_queue_flush(const lv_area_t *area, const uint8_t *px_map);
 void lvgl_stream_get_dimensions(uint16_t *width, uint16_t *height);
 
+// Sync support - forces full screen redraw
+void lvgl_stream_request_sync(void);
+bool lvgl_stream_sync_pending(void);
+void lvgl_stream_sync_done(void);
+bool lvgl_stream_needs_deferred_sync(void);  // Check if drops occurred and debounce expired
+
+// Statistics
+void lvgl_stream_get_stats(uint32_t *sent, uint32_t *dropped, uint32_t *bytes);
+uint32_t lvgl_stream_get_max_queue_depth(void);
+uint32_t lvgl_stream_get_current_queue_depth(void);
+void lvgl_stream_reset_stats(void);
+
 #endif // LVGL_STREAM_H

@@ -35,12 +35,8 @@
           <span class="status-dot" data-app-target="statusDot"></span>
           <span data-app-target="statusText">Disconnected</span>
         </div>
-        <wa-button variant="brand" data-action="click->app#connectDevice" data-app-target="connectBtn">
+        <wa-button variant="success" data-action="click->app#toggleConnection" data-app-target="connectionBtn">
           Connect
-        </wa-button>
-        <wa-button variant="neutral" appearance="outlined" data-action="click->app#disconnectDevice"
-                   data-app-target="disconnectBtn" disabled>
-          Disconnect
         </wa-button>
       </div>
     </header>
@@ -234,6 +230,10 @@
                 <wa-button size="small" variant="neutral" appearance="outlined"
                            data-action="click->display#saveFrame" data-display-target="saveBtn" disabled>
                   Save Frame
+                </wa-button>
+                <wa-button size="small" variant="neutral" appearance="outlined"
+                           data-action="click->display#requestSync" data-display-target="syncBtn">
+                  Sync
                 </wa-button>
               </div>
             </div>

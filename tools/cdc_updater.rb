@@ -2,6 +2,7 @@
 
 # CDC Firmware Updater for Storm Summoner
 require 'serialport'
+require_relative 'ss_config'
 begin
   require 'ruby-progressbar'
   HAS_PROGRESSBAR = true
@@ -171,16 +172,31 @@ class CDCUpdater
   end
 end
 
-if ARGV.length < 2
-  puts "Usage: ruby cdc_updater.rb <serial_port> [firmware_file] [assets_file]"
-  puts "Example: ruby cdc_updater.rb COM3 build/firmware.bin"
-  puts "         ruby cdc_updater.rb COM3 nil build/assets.bin"
-  exit 1
+# Parse args - port is optional if ss.cdcPort is set
+args = ARGV.dup
+port_name = nil
+firmware_path = nil
+assets_path = nil
+
+# Check if first arg looks like a port (COMx, /dev/...)
+if args[0] && (args[0] =~ /^COM\d+$/i || args[0].start_with?('/dev/'))
+  port_name = args.shift
+else
+  port_name = SSConfig.default_port
+  puts "Using port: #{port_name}" if SSConfig.cdc_port
 end
 
-port_name = ARGV[0]
-firmware_path = ARGV[1] == "nil" ? nil : ARGV[1]
-assets_path = ARGV[2]
+firmware_path = args.shift
+firmware_path = nil if firmware_path == "nil"
+assets_path = args.shift
+
+if firmware_path.nil? && assets_path.nil?
+  puts "Usage: ruby cdc_updater.rb [serial_port] <firmware_file> [assets_file]"
+  puts "       Port defaults to ss.cdcPort from .vscode/settings.json"
+  puts "Example: ruby cdc_updater.rb build/firmware.bin"
+  puts "         ruby cdc_updater.rb COM3 build/firmware.bin"
+  exit 1
+end
 
 updater = CDCUpdater.new(port_name, firmware_path)
 if assets_path
