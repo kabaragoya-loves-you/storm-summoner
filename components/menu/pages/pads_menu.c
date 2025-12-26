@@ -54,6 +54,12 @@ static menu_item_t s_cc_cycle_items[MAX_CYCLE_STEPS + 1];  // CC + 8 steps
 static char s_cc_cycle_cc_label[LABEL_BUFFER_SETS][40];
 static char s_cc_cycle_step_labels[LABEL_BUFFER_SETS][MAX_CYCLE_STEPS][40];
 
+// Program Set
+static char s_preset_label[LABEL_BUFFER_SETS][32];
+
+// Scene Set
+static char s_scene_label[LABEL_BUFFER_SETS][40];
+
 // Get current label buffer set and advance to next
 static int get_next_buffer_set(void) {
   int set = s_current_buffer_set;
@@ -100,8 +106,8 @@ static const char* get_pad_display_name(uint8_t index) {
 // Action Type Names for Roller
 // ============================================================================
 
-// Action types in display order
-static const action_type_t s_action_types[] = {
+// All action types in display order (filtered at runtime)
+static const action_type_t s_all_action_types[] = {
   ACTION_NONE,
   ACTION_SEND_CC,
   ACTION_SEND_CC_HOLD,
@@ -112,6 +118,7 @@ static const action_type_t s_action_types[] = {
   ACTION_SCENE_NEXT,
   ACTION_SCENE_PREV,
   ACTION_SCENE_SET,
+  ACTION_CONFIRM_PENDING,
   ACTION_PLAY,
   ACTION_STOP,
   ACTION_PAUSE,
@@ -132,7 +139,41 @@ static const action_type_t s_action_types[] = {
   ACTION_TOUCHWHEEL_MODE_HOLD,
   ACTION_TOUCHWHEEL_MODE_CYCLE,
 };
-#define NUM_ACTION_TYPES (sizeof(s_action_types) / sizeof(s_action_types[0]))
+#define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
+
+// Filtered action types (built at runtime based on mode)
+static action_type_t s_filtered_action_types[NUM_ALL_ACTION_TYPES];
+static size_t s_num_filtered_action_types = 0;
+
+// Check if action should be shown based on current mode
+static bool is_action_visible(action_type_t type) {
+  scene_mode_t scene_mode = scene_get_mode();
+  scene_change_mode_t change_mode = scene_get_change_mode();
+  
+  // Scene actions hidden in single scene mode
+  if (scene_mode == SCENE_MODE_SINGLE) {
+    if (type == ACTION_SCENE_NEXT || type == ACTION_SCENE_PREV || type == ACTION_SCENE_SET) {
+      return false;
+    }
+  }
+  
+  // Confirm pending only visible in pending change mode
+  if (type == ACTION_CONFIRM_PENDING && change_mode != CHANGE_MODE_PENDING) {
+    return false;
+  }
+  
+  return true;
+}
+
+// Build filtered action type list
+static void build_filtered_action_types(void) {
+  s_num_filtered_action_types = 0;
+  for (size_t i = 0; i < NUM_ALL_ACTION_TYPES; i++) {
+    if (is_action_visible(s_all_action_types[i])) {
+      s_filtered_action_types[s_num_filtered_action_types++] = s_all_action_types[i];
+    }
+  }
+}
 
 static const char* get_action_display_name(action_type_t type) {
   switch (type) {
@@ -170,8 +211,8 @@ static const char* get_action_display_name(action_type_t type) {
 }
 
 static uint32_t action_type_to_roller_index(action_type_t type) {
-  for (size_t i = 0; i < NUM_ACTION_TYPES; i++) {
-    if (s_action_types[i] == type) return (uint32_t)i;
+  for (size_t i = 0; i < s_num_filtered_action_types; i++) {
+    if (s_filtered_action_types[i] == type) return (uint32_t)i;
   }
   return 0;
 }
@@ -401,13 +442,13 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
   s_callback_in_progress = true;
   
   scene_t* scene = scene_get_current();
-  if (!scene || selected_index >= NUM_ACTION_TYPES) {
+  if (!scene || selected_index >= s_num_filtered_action_types) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
   
-  action_type_t new_type = s_action_types[selected_index];
+  action_type_t new_type = s_filtered_action_types[selected_index];
   
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
@@ -429,6 +470,19 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.cc.num_cycle_steps = 2;
     }
     
+    // Set default preset for Program Set (preset 1 = index_base)
+    if (new_type == ACTION_PROGRAM_SET) {
+      uint8_t scene_index = scene_get_current_index();
+      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+      mapping->action.params.pc.program = index_base;  // Preset 1
+    }
+    
+    // Set default scene for Scene Set (first scene in manifest)
+    if (new_type == ACTION_SCENE_SET) {
+      mapping->action.params.target.number = scene_get_index_by_position(0);
+    }
+    
     persist_scene_changes();
     ESP_LOGI(TAG, "Pad %s action set to: %s", 
       get_pad_display_name(s_editing_pad_index), get_action_display_name(new_type));
@@ -448,12 +502,15 @@ static lv_obj_t* action_type_roller_create(void) {
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return NULL;
   
-  // Build options string
+  // Build filtered action type list based on current mode
+  build_filtered_action_types();
+  
+  // Build options string from filtered list
   static char options[512];
   options[0] = '\0';
-  for (size_t i = 0; i < NUM_ACTION_TYPES; i++) {
+  for (size_t i = 0; i < s_num_filtered_action_types; i++) {
     if (i > 0) strcat(options, "\n");
-    strcat(options, get_action_display_name(s_action_types[i]));
+    strcat(options, get_action_display_name(s_filtered_action_types[i]));
   }
   
   uint32_t current_idx = action_type_to_roller_index(mapping->action.type);
@@ -1527,6 +1584,189 @@ static void nav_to_cc_cycle_steps(void* user_data) {
 }
 
 // ============================================================================
+// Program Set Roller
+// ============================================================================
+
+static void program_set_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // Get device to check index_base
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  // Roller shows 1 to count, but internal value is (selected_index + index_base)
+  uint16_t program = (uint16_t)(selected_index + index_base);
+  mapping->action.params.pc.program = program;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %s Program Set preset set to %u",
+    get_pad_display_name(s_editing_pad_index), (unsigned)(selected_index + 1));
+  
+  s_callback_in_progress = false;
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* program_set_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Get device for preset count
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  
+  uint16_t count = 128;  // Default
+  uint16_t index_base = 0;
+  if (device && device->pc_info) {
+    count = device->pc_info->count;
+    index_base = device->pc_info->index_base;
+  }
+  
+  // Build options: 1, 2, 3, ... count
+  // Allocate enough for "128\n" * 128 entries = ~640 bytes
+  static char options[1024];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+  
+  for (uint16_t i = 1; i <= count && remaining > 8; i++) {
+    int written = snprintf(pos, remaining, "%s%u", i > 1 ? "\n" : "", (unsigned)i);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+  
+  // Current selection: convert internal value to roller index
+  uint16_t current_program = mapping->action.params.pc.program;
+  uint32_t current_idx = 0;
+  if (current_program >= index_base) {
+    current_idx = current_program - index_base;
+    if (current_idx >= count) current_idx = 0;
+  }
+  
+  return menu_create_roller_page("Preset", options, current_idx, 
+    program_set_confirm_cb, NULL);
+}
+
+static void nav_to_program_set(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Preset", program_set_roller_create);
+}
+
+// ============================================================================
+// Scene Set Roller
+// ============================================================================
+
+static void scene_set_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // Get scene index from manifest position
+  uint8_t scene_index = scene_get_index_by_position((uint16_t)selected_index);
+  mapping->action.params.target.number = scene_index;
+  persist_scene_changes();
+  
+  const char* scene_name = scene_get_name_by_position((uint16_t)selected_index);
+  ESP_LOGI(TAG, "Pad %s Scene Set target set to %s (index %u)",
+    get_pad_display_name(s_editing_pad_index), 
+    scene_name ? scene_name : "?", (unsigned)scene_index);
+  
+  s_callback_in_progress = false;
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* scene_set_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint16_t count = scene_get_count();
+  if (count == 0) {
+    return menu_create_page("No Scenes", NULL, 0);
+  }
+  
+  // Build options from scene names
+  static char options[1024];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+  
+  uint32_t current_idx = 0;
+  uint8_t target_scene = mapping->action.params.target.number;
+  
+  for (uint16_t i = 0; i < count && remaining > 40; i++) {
+    const char* name = scene_get_name_by_position(i);
+    if (!name) name = "?";
+    
+    int written = snprintf(pos, remaining, "%s%s", i > 0 ? "\n" : "", name);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+    
+    // Find current selection
+    if (scene_get_index_by_position(i) == target_scene) {
+      current_idx = i;
+    }
+  }
+  
+  return menu_create_roller_page("Scene", options, current_idx, 
+    scene_set_confirm_cb, NULL);
+}
+
+static void nav_to_scene_set(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Scene", scene_set_roller_create);
+}
+
+// ============================================================================
 // CC Slot Navigation (routes to correct handler based on action type)
 // ============================================================================
 
@@ -1640,7 +1880,48 @@ static lv_obj_t* pad_detail_page_create(void) {
     }
   }
   
-  // TODO: Add parameter UI for other action types (PC, Scene Set, Note, etc.)
+  // Show Preset selector for Program Set
+  if (mapping->action.type == ACTION_PROGRAM_SET) {
+    uint16_t program = mapping->action.params.pc.program;
+    
+    // Get device for index_base
+    uint8_t scene_index = scene_get_current_index();
+    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+    uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+    
+    // Display as 1-based for user
+    uint16_t display_num = program - index_base + 1;
+    snprintf(s_preset_label[buf], sizeof(s_preset_label[buf]), "Preset: %u", (unsigned)display_num);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_preset_label[buf], nav_to_program_set, NULL, true
+    };
+  }
+  
+  // Show Scene selector for Scene Set
+  if (mapping->action.type == ACTION_SCENE_SET) {
+    uint8_t target = mapping->action.params.target.number;
+    
+    // Find scene name from manifest
+    const char* target_name = NULL;
+    uint16_t count = scene_get_count();
+    for (uint16_t i = 0; i < count; i++) {
+      if (scene_get_index_by_position(i) == target) {
+        target_name = scene_get_name_by_position(i);
+        break;
+      }
+    }
+    
+    if (target_name) {
+      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene: %.28s", target_name);
+    } else {
+      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene: %u", (unsigned)target);
+    }
+    s_detail_items[item_count++] = (menu_item_t){
+      s_scene_label[buf], nav_to_scene_set, NULL, true
+    };
+  }
+  
+  // TODO: Add parameter UI for other action types (Note, etc.)
   
   const char* title = get_pad_display_name(s_editing_pad_index);
   

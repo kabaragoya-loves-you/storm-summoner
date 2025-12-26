@@ -2951,6 +2951,20 @@ uint16_t scene_get_count(void) {
   return g_scene_manager.num_scenes;
 }
 
+const char* scene_get_name_by_position(uint16_t position) {
+  if (position >= g_scene_manager.num_scenes || !g_scene_manager.manifest) {
+    return NULL;
+  }
+  return g_scene_manager.manifest[position].name;
+}
+
+uint8_t scene_get_index_by_position(uint16_t position) {
+  if (position >= g_scene_manager.num_scenes || !g_scene_manager.manifest) {
+    return 0;
+  }
+  return g_scene_manager.manifest[position].index;
+}
+
 esp_err_t scene_create_new(const char* name) {
   // Find next available index
   uint8_t new_index = 0;

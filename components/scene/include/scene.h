@@ -265,6 +265,8 @@ esp_err_t scene_delete(uint8_t scene_index);
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name);
 esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index);
 uint16_t scene_get_count(void);
+const char* scene_get_name_by_position(uint16_t position);
+uint8_t scene_get_index_by_position(uint16_t position);
 
 // Suspend/resume scene input processing (for programming mode)
 // When suspended, the scene's touchwheel is unregistered and actions are disabled
