@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "scene.h"
 #include "action.h"
+#include "tempo.h"
 #include "ui.h"
 #include "assets_manager.h"
 #include "assets_types.h"
@@ -191,10 +192,24 @@ static size_t s_num_filtered_action_types = 0;
 static bool is_action_visible(action_type_t type) {
   scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
+  tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
   
-  // Scene actions hidden in single scene mode
-  if (scene_mode == SCENE_MODE_SINGLE) {
-    if (type == ACTION_SCENE_INC || type == ACTION_SCENE_DEC || type == ACTION_SCENE) {
+  // Preset actions (all 5) only in single or advanced mode
+  if (type == ACTION_PRESET_INC || type == ACTION_PRESET_DEC || 
+      type == ACTION_PRESET || type == ACTION_PRESET_HOLD || type == ACTION_PRESET_CYCLE) {
+    if (scene_mode != SCENE_MODE_SINGLE && scene_mode != SCENE_MODE_ADVANCED) {
+      return false;
+    }
+  }
+  
+  // Preset Hold only available in immediate change mode
+  if (type == ACTION_PRESET_HOLD && change_mode != CHANGE_MODE_IMMEDIATE) {
+    return false;
+  }
+  
+  // Scene actions only in preset_sync or advanced mode
+  if (type == ACTION_SCENE_INC || type == ACTION_SCENE_DEC || type == ACTION_SCENE) {
+    if (scene_mode != SCENE_MODE_PRESET_SYNC && scene_mode != SCENE_MODE_ADVANCED) {
       return false;
     }
   }
@@ -202,6 +217,14 @@ static bool is_action_visible(action_type_t type) {
   // Confirm pending only visible in pending change mode
   if (type == ACTION_CONFIRM_PENDING && change_mode != CHANGE_MODE_PENDING) {
     return false;
+  }
+  
+  // Tempo actions only available with internal clock
+  if (type == ACTION_TAP || type == ACTION_TAP_TEMPO || type == ACTION_SET_TEMPO ||
+      type == ACTION_TEMPO_INC || type == ACTION_TEMPO_DEC) {
+    if (clock_source != CLOCK_SOURCE_INTERNAL) {
+      return false;
+    }
   }
   
   return true;
