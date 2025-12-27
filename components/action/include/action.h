@@ -13,6 +13,8 @@ typedef enum {
   ACTION_PRESET_INC,
   ACTION_PRESET_DEC,
   ACTION_PRESET,              // Smart PC: 0-127 or 0-16383 based on bank_select_mode
+  ACTION_PRESET_HOLD,         // Press: set one preset, Release: set another
+  ACTION_PRESET_CYCLE,        // Cycle through presets on each press
   ACTION_SCENE_INC,
   ACTION_SCENE_DEC,
   ACTION_SCENE,               // Jump to specific scene (1-128, user-facing)
@@ -86,6 +88,15 @@ typedef struct {
     struct {
       uint16_t program;
     } preset;
+    
+    // For preset hold/cycle
+    struct {
+      uint16_t press_preset;      // Preset to set on press (hold)
+      uint16_t release_preset;    // Preset to set on release (hold)
+      uint8_t num_presets;        // Number of presets in cycle (2-8)
+      uint16_t cycle_presets[8];  // Preset values for cycle
+      uint8_t current_index;      // Current position in cycle
+    } preset_cycle;
     
     // For tempo actions
     struct {

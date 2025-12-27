@@ -320,6 +320,8 @@
             "preset_inc",
             "preset_dec",
             "preset",
+            "preset_hold",
+            "preset_cycle",
             "scene_inc",
             "scene_dec",
             "scene",
@@ -522,6 +524,59 @@
                   "maximum": 127
                 },
                 "description": "CC numbers to randomize (0-127)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "preset_hold"}
+            }
+          },
+          "then": {
+            "required": ["press_preset", "release_preset"],
+            "properties": {
+              "press_preset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383,
+                "description": "Preset to set on press"
+              },
+              "release_preset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383,
+                "description": "Preset to set on release"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "preset_cycle"}
+            }
+          },
+          "then": {
+            "required": ["num_presets", "presets"],
+            "properties": {
+              "num_presets": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8,
+                "description": "Number of presets in cycle"
+              },
+              "presets": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 16383
+                },
+                "description": "Preset values to cycle through"
               }
             }
           }

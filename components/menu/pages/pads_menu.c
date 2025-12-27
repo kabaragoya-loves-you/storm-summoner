@@ -57,6 +57,17 @@ static char s_cc_cycle_step_labels[LABEL_BUFFER_SETS][MAX_CYCLE_STEPS][40];
 // Program Set
 static char s_preset_label[LABEL_BUFFER_SETS][32];
 
+// Preset Hold submenu
+static menu_item_t s_preset_hold_items[2];
+static char s_preset_hold_press_label[LABEL_BUFFER_SETS][32];
+static char s_preset_hold_release_label[LABEL_BUFFER_SETS][32];
+
+// Preset Cycle
+#define MAX_PRESET_CYCLE_STEPS 8
+static char s_preset_cycle_steps_label[LABEL_BUFFER_SETS][24];
+static char s_preset_cycle_step_labels[LABEL_BUFFER_SETS][MAX_PRESET_CYCLE_STEPS][32];
+static uint8_t s_editing_preset_step = 0;
+
 // Scene Set
 static char s_scene_label[LABEL_BUFFER_SETS][40];
 
@@ -146,6 +157,8 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PRESET_INC,
   ACTION_PRESET_DEC,
   ACTION_PRESET,
+  ACTION_PRESET_HOLD,
+  ACTION_PRESET_CYCLE,
   ACTION_SCENE_INC,
   ACTION_SCENE_DEC,
   ACTION_SCENE,
@@ -213,6 +226,8 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_PRESET_INC: return "Preset +1";
     case ACTION_PRESET_DEC: return "Preset -1";
     case ACTION_PRESET: return "Set Preset";
+    case ACTION_PRESET_HOLD: return "Preset Hold";
+    case ACTION_PRESET_CYCLE: return "Preset Cycle";
     case ACTION_SCENE_INC: return "Scene +1";
     case ACTION_SCENE_DEC: return "Scene -1";
     case ACTION_SCENE: return "Set Scene";
@@ -520,6 +535,25 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     if (new_type == ACTION_NOTE) {
       mapping->action.params.note.note = 60;
       mapping->action.params.note.velocity = 100;
+    }
+    
+    // Set defaults for Preset Hold (preset 1 for both press and release)
+    if (new_type == ACTION_PRESET_HOLD) {
+      uint8_t scene_index = scene_get_current_index();
+      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+      mapping->action.params.preset_cycle.press_preset = index_base;
+      mapping->action.params.preset_cycle.release_preset = index_base;
+    }
+    
+    // Set defaults for Preset Cycle (2 steps, preset 1 for both)
+    if (new_type == ACTION_PRESET_CYCLE) {
+      uint8_t scene_index = scene_get_current_index();
+      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+      mapping->action.params.preset_cycle.num_presets = 2;
+      mapping->action.params.preset_cycle.cycle_presets[0] = index_base;
+      mapping->action.params.preset_cycle.cycle_presets[1] = index_base;
     }
     
     persist_scene_changes();
@@ -1971,6 +2005,301 @@ static void nav_to_note(void* user_data) {
 }
 
 // ============================================================================
+// Preset Hold (for ACTION_PRESET_HOLD)
+// ============================================================================
+
+static lv_obj_t* preset_hold_page_create(void);  // Forward declaration
+
+// Helper to build preset options string for roller
+static void build_preset_options(char* buf, size_t buf_size, uint16_t* count) {
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  
+  uint16_t preset_count = 128;  // Default
+  if (device && device->pc_info) {
+    preset_count = device->pc_info->count;
+  }
+  
+  buf[0] = '\0';
+  char* pos = buf;
+  size_t remaining = buf_size;
+  
+  for (uint16_t i = 0; i < preset_count && remaining > 8; i++) {
+    uint16_t display_num = i + 1;  // 1-based for user
+    int written = snprintf(pos, remaining, "%s%u", i > 0 ? "\n" : "", (unsigned)display_num);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+  
+  *count = preset_count;
+}
+
+static void preset_hold_press_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  // Get device for index_base
+  const device_def_t* device = (const device_def_t*)scene_get_device(
+    scene_get_current_index());
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  mapping->action.params.preset_cycle.press_preset = index_base + selected_idx;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Preset Hold press set to %u", (unsigned)(index_base + selected_idx));
+  
+  // Go back to preset hold submenu
+  menu_navigate_back_then_to(2, "Preset Hold", preset_hold_page_create);
+}
+
+static lv_obj_t* preset_hold_press_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[2048];
+  uint16_t count;
+  build_preset_options(options, sizeof(options), &count);
+  
+  // Get device for index_base
+  const device_def_t* device = (const device_def_t*)scene_get_device(
+    scene_get_current_index());
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  uint16_t current = mapping->action.params.preset_cycle.press_preset;
+  uint32_t current_idx = (current >= index_base) ? (current - index_base) : 0;
+  if (current_idx >= count) current_idx = 0;
+  
+  return menu_create_roller_page("Press", options, current_idx,
+    preset_hold_press_confirm_cb, NULL);
+}
+
+static void nav_to_preset_hold_press(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Press", preset_hold_press_roller_create);
+}
+
+static void preset_hold_release_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  // Get device for index_base
+  const device_def_t* device = (const device_def_t*)scene_get_device(
+    scene_get_current_index());
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  mapping->action.params.preset_cycle.release_preset = index_base + selected_idx;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Preset Hold release set to %u", (unsigned)(index_base + selected_idx));
+  
+  // Go back to preset hold submenu
+  menu_navigate_back_then_to(2, "Preset Hold", preset_hold_page_create);
+}
+
+static lv_obj_t* preset_hold_release_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[2048];
+  uint16_t count;
+  build_preset_options(options, sizeof(options), &count);
+  
+  // Get device for index_base
+  const device_def_t* device = (const device_def_t*)scene_get_device(
+    scene_get_current_index());
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  uint16_t current = mapping->action.params.preset_cycle.release_preset;
+  uint32_t current_idx = (current >= index_base) ? (current - index_base) : 0;
+  if (current_idx >= count) current_idx = 0;
+  
+  return menu_create_roller_page("Release", options, current_idx,
+    preset_hold_release_confirm_cb, NULL);
+}
+
+static void nav_to_preset_hold_release(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Release", preset_hold_release_roller_create);
+}
+
+static bool preset_hold_handle_back(void) {
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+  return true;
+}
+
+static lv_obj_t* preset_hold_page_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  int buf = get_next_buffer_set();
+  
+  // Get device for display
+  const device_def_t* device = (const device_def_t*)scene_get_device(
+    scene_get_current_index());
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  uint16_t press = mapping->action.params.preset_cycle.press_preset;
+  uint16_t release = mapping->action.params.preset_cycle.release_preset;
+  
+  snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
+    "Press: %u", (unsigned)(press - index_base + 1));
+  snprintf(s_preset_hold_release_label[buf], sizeof(s_preset_hold_release_label[buf]),
+    "Release: %u", (unsigned)(release - index_base + 1));
+  
+  s_preset_hold_items[0] = (menu_item_t){
+    s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
+  };
+  s_preset_hold_items[1] = (menu_item_t){
+    s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true
+  };
+  
+  menu_set_custom_back_handler(preset_hold_handle_back);
+  
+  return menu_create_page("Preset Hold", s_preset_hold_items, 2);
+}
+
+// ============================================================================
+// Preset Cycle (for ACTION_PRESET_CYCLE)
+// ============================================================================
+
+static void preset_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t new_steps = selected_idx + 2;  // Range 2-8
+  mapping->action.params.preset_cycle.num_presets = new_steps;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Preset Cycle steps set to %u", (unsigned)new_steps);
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* preset_cycle_steps_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Options: 2, 3, 4, 5, 6, 7, 8
+  static const char* options = "2\n3\n4\n5\n6\n7\n8";
+  
+  uint8_t current_steps = mapping->action.params.preset_cycle.num_presets;
+  if (current_steps < 2) current_steps = 2;
+  if (current_steps > 8) current_steps = 8;
+  uint32_t current_idx = current_steps - 2;
+  
+  return menu_create_roller_page("Steps", options, current_idx,
+    preset_cycle_steps_confirm_cb, NULL);
+}
+
+static void nav_to_preset_cycle_steps(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Steps", preset_cycle_steps_roller_create);
+}
+
+static void preset_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  // Get device for index_base
+  const device_def_t* device = (const device_def_t*)scene_get_device(
+    scene_get_current_index());
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  uint8_t step = s_editing_preset_step;
+  if (step < MAX_PRESET_CYCLE_STEPS) {
+    mapping->action.params.preset_cycle.cycle_presets[step] = index_base + selected_idx;
+    persist_scene_changes();
+    
+    ESP_LOGI(TAG, "Preset Cycle step %u set to preset %u", 
+      (unsigned)step, (unsigned)(index_base + selected_idx));
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* preset_cycle_step_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[2048];
+  uint16_t count;
+  build_preset_options(options, sizeof(options), &count);
+  
+  // Get device for index_base
+  const device_def_t* device = (const device_def_t*)scene_get_device(
+    scene_get_current_index());
+  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+  
+  uint8_t step = s_editing_preset_step;
+  uint16_t current = mapping->action.params.preset_cycle.cycle_presets[step];
+  uint32_t current_idx = (current >= index_base) ? (current - index_base) : 0;
+  if (current_idx >= count) current_idx = 0;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
+  
+  return menu_create_roller_page(title, options, current_idx,
+    preset_cycle_step_confirm_cb, NULL);
+}
+
+static void nav_to_preset_cycle_step(void* user_data) {
+  s_editing_preset_step = (uint8_t)(uintptr_t)user_data;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_preset_step + 1));
+  menu_navigate_to(title, preset_cycle_step_roller_create);
+}
+
+// ============================================================================
 // Randomize Slot Roller (for ACTION_RANDOMIZE)
 // ============================================================================
 
@@ -2347,6 +2676,58 @@ static lv_obj_t* pad_detail_page_create(void) {
     s_detail_items[item_count++] = (menu_item_t){
       s_scene_label[buf], nav_to_scene_set, NULL, true
     };
+  }
+  
+  // Show Preset Hold submenu link
+  if (mapping->action.type == ACTION_PRESET_HOLD) {
+    // Get device for index_base
+    const device_def_t* device = (const device_def_t*)scene_get_device(
+      scene_get_current_index());
+    uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+    
+    uint16_t press = mapping->action.params.preset_cycle.press_preset;
+    uint16_t release = mapping->action.params.preset_cycle.release_preset;
+    
+    snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
+      "Press: %u", (unsigned)(press - index_base + 1));
+    snprintf(s_preset_hold_release_label[buf], sizeof(s_preset_hold_release_label[buf]),
+      "Release: %u", (unsigned)(release - index_base + 1));
+    
+    s_detail_items[item_count++] = (menu_item_t){
+      s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
+    };
+    s_detail_items[item_count++] = (menu_item_t){
+      s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true
+    };
+  }
+  
+  // Show Preset Cycle submenu items
+  if (mapping->action.type == ACTION_PRESET_CYCLE) {
+    // Get device for index_base
+    const device_def_t* device = (const device_def_t*)scene_get_device(
+      scene_get_current_index());
+    uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+    
+    uint8_t num_steps = mapping->action.params.preset_cycle.num_presets;
+    if (num_steps < 2) num_steps = 2;
+    if (num_steps > 8) num_steps = 8;
+    
+    // Steps selector
+    snprintf(s_preset_cycle_steps_label[buf], sizeof(s_preset_cycle_steps_label[buf]),
+      "Steps: %u", (unsigned)num_steps);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true
+    };
+    
+    // Individual step items
+    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+      uint16_t preset = mapping->action.params.preset_cycle.cycle_presets[i];
+      snprintf(s_preset_cycle_step_labels[buf][i], sizeof(s_preset_cycle_step_labels[buf][i]),
+        "Step %d: %u", i + 1, (unsigned)(preset - index_base + 1));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true
+      };
+    }
   }
   
   // Show Tempo selector for Set Tempo

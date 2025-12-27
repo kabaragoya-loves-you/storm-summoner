@@ -19,6 +19,8 @@ static const char* action_type_names[] = {
   [ACTION_PRESET_INC] = "Preset +1",
   [ACTION_PRESET_DEC] = "Preset -1",
   [ACTION_PRESET] = "Set Preset",
+  [ACTION_PRESET_HOLD] = "Preset Hold",
+  [ACTION_PRESET_CYCLE] = "Preset Cycle",
   [ACTION_SCENE_INC] = "Scene +1",
   [ACTION_SCENE_DEC] = "Scene -1",
   [ACTION_SCENE] = "Set Scene",
@@ -94,6 +96,45 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
           // No bank: treat as program 0-127
           device_config_set_program(program & 0x7F);
         }
+      }
+      break;
+      
+    case ACTION_PRESET_HOLD:
+      // Set press_preset on press, release_preset on release
+      {
+        uint16_t program = is_press ? 
+          action->params.preset_cycle.press_preset : 
+          action->params.preset_cycle.release_preset;
+        if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
+          device_config_set_preset(program);
+        } else {
+          device_config_set_program(program & 0x7F);
+        }
+        ESP_LOGD(TAG, "Preset hold: %s -> %u", is_press ? "press" : "release", 
+          (unsigned)program);
+      }
+      break;
+      
+    case ACTION_PRESET_CYCLE:
+      if (is_press) {
+        action_t* mutable_action = (action_t*)action;
+        uint8_t num_presets = mutable_action->params.preset_cycle.num_presets;
+        if (num_presets == 0) {
+          ESP_LOGW(TAG, "Preset cycle has no presets defined, skipping");
+          break;
+        }
+        uint8_t idx = mutable_action->params.preset_cycle.current_index;
+        uint16_t program = mutable_action->params.preset_cycle.cycle_presets[idx];
+        
+        if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
+          device_config_set_preset(program);
+        } else {
+          device_config_set_program(program & 0x7F);
+        }
+        ESP_LOGD(TAG, "Preset cycle step %u: preset %u", (unsigned)idx, (unsigned)program);
+        
+        // Advance to next step
+        mutable_action->params.preset_cycle.current_index = (idx + 1) % num_presets;
       }
       break;
       
@@ -457,6 +498,7 @@ action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode)
 // These should NOT be assigned to bump or on_load
 static const action_type_t hold_actions[] = {
   ACTION_CONTROL_HOLD,
+  ACTION_PRESET_HOLD,
   ACTION_NOTE,
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_SUSTAIN,

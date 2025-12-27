@@ -2026,6 +2026,8 @@ static const char* action_type_json_names[] = {
   [ACTION_PRESET_INC] = "preset_inc",
   [ACTION_PRESET_DEC] = "preset_dec",
   [ACTION_PRESET] = "preset",
+  [ACTION_PRESET_HOLD] = "preset_hold",
+  [ACTION_PRESET_CYCLE] = "preset_cycle",
   [ACTION_SCENE_INC] = "scene_inc",
   [ACTION_SCENE_DEC] = "scene_dec",
   [ACTION_SCENE] = "scene",
@@ -2182,6 +2184,17 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
   } else if (action->type == ACTION_PRESET || action->type == ACTION_SCENE) {
     cJSON_AddNumberToObject(obj, "number", action->params.target.number);
+  } else if (action->type == ACTION_PRESET_HOLD) {
+    cJSON_AddNumberToObject(obj, "press_preset", action->params.preset_cycle.press_preset);
+    cJSON_AddNumberToObject(obj, "release_preset", action->params.preset_cycle.release_preset);
+  } else if (action->type == ACTION_PRESET_CYCLE) {
+    uint8_t num_presets = action->params.preset_cycle.num_presets;
+    cJSON_AddNumberToObject(obj, "num_presets", num_presets);
+    cJSON* presets = cJSON_CreateArray();
+    for (int i = 0; i < num_presets && i < 8; i++) {
+      cJSON_AddItemToArray(presets, cJSON_CreateNumber(action->params.preset_cycle.cycle_presets[i]));
+    }
+    cJSON_AddItemToObject(obj, "presets", presets);
   } else if (action->type == ACTION_SET_TEMPO) {
     cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
   } else if (action->type == ACTION_TOUCHWHEEL_MODE) {
@@ -2313,6 +2326,29 @@ static action_t json_to_action(cJSON* obj) {
   // Parse target/scene/program actions
   cJSON* number = cJSON_GetObjectItem(obj, "number");
   if (number) action.params.target.number = number->valueint;
+  
+  // Parse preset hold/cycle actions
+  if (action.type == ACTION_PRESET_HOLD) {
+    cJSON* press = cJSON_GetObjectItem(obj, "press_preset");
+    cJSON* release = cJSON_GetObjectItem(obj, "release_preset");
+    if (press) action.params.preset_cycle.press_preset = press->valueint;
+    if (release) action.params.preset_cycle.release_preset = release->valueint;
+  }
+  if (action.type == ACTION_PRESET_CYCLE) {
+    cJSON* num_presets = cJSON_GetObjectItem(obj, "num_presets");
+    cJSON* presets = cJSON_GetObjectItem(obj, "presets");
+    if (num_presets) {
+      action.params.preset_cycle.num_presets = num_presets->valueint;
+    }
+    if (presets && cJSON_IsArray(presets)) {
+      int count = cJSON_GetArraySize(presets);
+      if (count > 8) count = 8;
+      for (int i = 0; i < count; i++) {
+        cJSON* item = cJSON_GetArrayItem(presets, i);
+        if (item) action.params.preset_cycle.cycle_presets[i] = item->valueint;
+      }
+    }
+  }
   
   // Parse tempo actions
   cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
