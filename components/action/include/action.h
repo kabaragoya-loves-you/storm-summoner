@@ -9,13 +9,13 @@
 typedef enum {
   ACTION_NONE = 0,
   
-  // Program/Scene control
-  ACTION_PROGRAM_NEXT,
-  ACTION_PROGRAM_PREV,
-  ACTION_PROGRAM_SET,         // Smart PC: 0-127 or 0-16383 based on bank_select_mode
-  ACTION_SCENE_NEXT,
-  ACTION_SCENE_PREV,
-  ACTION_SCENE_SET,           // Jump to specific scene (1-128, user-facing)
+  // Preset/Scene control
+  ACTION_PRESET_INC,
+  ACTION_PRESET_DEC,
+  ACTION_PRESET,              // Smart PC: 0-127 or 0-16383 based on bank_select_mode
+  ACTION_SCENE_INC,
+  ACTION_SCENE_DEC,
+  ACTION_SCENE,               // Jump to specific scene (1-128, user-facing)
   
   // Transport (Play and Record are toggles)
   ACTION_PLAY,                // Toggle: playing -> stop, else -> play
@@ -31,14 +31,13 @@ typedef enum {
   ACTION_TEMPO_DEC,           // Decrement BPM by 1
   
   // Direct MIDI output
-  ACTION_SEND_CC,             // Send CC with value (on press only)
-  ACTION_SEND_CC_HOLD,        // Send value1 on press, value2 on release
-  ACTION_SEND_CC_CYCLE,       // Cycle through multiple CC values
-  ACTION_SEND_NOTE_ON,
-  ACTION_SEND_NOTE_OFF,
+  ACTION_CONTROL,             // Send CC with value (on press only)
+  ACTION_CONTROL_HOLD,        // Send value1 on press, value2 on release
+  ACTION_CONTROL_CYCLE,       // Cycle through multiple CC values
+  ACTION_NOTE,                // Send Note On on press, Note Off on release
   
   // Randomization
-  ACTION_RANDOMIZE_CC,        // Randomize one or more CCs (uses multi_random params)
+  ACTION_RANDOMIZE,           // Randomize one or more CCs (uses multi_random params)
   
   // System
   ACTION_CONFIRM_PENDING,     // Confirm pending scene/program change
@@ -49,9 +48,9 @@ typedef enum {
   ACTION_SOSTENUTO,           // Send CC66 (127 on press, 0 on release)
   
   // Touchwheel mode control
-  ACTION_TOUCHWHEEL_MODE,       // Set touchwheel mode to specific value
-  ACTION_TOUCHWHEEL_MODE_HOLD,  // Set mode on press, restore on release
-  ACTION_TOUCHWHEEL_MODE_CYCLE, // Cycle through touchwheel modes
+  ACTION_TOUCHWHEEL_MODE,     // Set touchwheel mode to specific value
+  ACTION_TOUCHWHEEL_HOLD,     // Set mode on press, restore on release
+  ACTION_TOUCHWHEEL_CYCLE,    // Cycle through touchwheel modes
   
   ACTION_MAX
 } action_type_t;
@@ -61,18 +60,18 @@ typedef struct {
   action_type_t type;
   
   union {
-    // For CC actions (SEND_CC, HOLD, CYCLE) - supports 1-4 CC numbers
+    // For Control actions (CONTROL, CONTROL_HOLD, CONTROL_CYCLE) - supports 1-4 CC numbers
     struct {
       uint8_t num_ccs;            // 1-4 CC numbers (1 = single CC mode)
       uint8_t cc_numbers[4];      // The CC numbers
-      uint8_t values[4];          // Primary values for SEND_CC (one per CC)
-      uint8_t values2[4];         // Release values for SEND_CC_HOLD (one per CC)
+      uint8_t values[4];          // Primary values for CONTROL (one per CC)
+      uint8_t values2[4];         // Release values for CONTROL_HOLD (one per CC)
       uint8_t num_cycle_steps;    // For cycle: 2-8 steps (shared across all CCs)
       uint8_t cycle_values[4][8]; // For cycle: [cc_idx][step]
       uint8_t current_index;      // Current position in cycle (shared)
-    } cc;
+    } control;
     
-    // For note actions
+    // For note actions (hold-style: press=on, release=off)
     struct {
       uint8_t note;
       uint8_t velocity;
@@ -83,10 +82,10 @@ typedef struct {
       uint8_t number;
     } target;
     
-    // For program set (0-127 or 0-16383 based on bank mode)
+    // For preset set (0-127 or 0-16383 based on bank mode)
     struct {
       uint16_t program;
-    } pc;
+    } preset;
     
     // For tempo actions
     struct {
@@ -122,12 +121,12 @@ esp_err_t action_init(void);
 esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_press);
 
 // Helper functions to create common actions
-action_t action_create_send_cc(uint8_t cc_number, uint8_t value);
-action_t action_create_cc_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value);
-action_t action_create_program_next(void);
-action_t action_create_program_prev(void);
-action_t action_create_scene_next(void);
-action_t action_create_scene_prev(void);
+action_t action_create_control(uint8_t cc_number, uint8_t value);
+action_t action_create_control_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value);
+action_t action_create_preset_inc(void);
+action_t action_create_preset_dec(void);
+action_t action_create_scene_inc(void);
+action_t action_create_scene_dec(void);
 action_t action_create_tap(void);
 action_t action_create_tap_tempo(void);
 action_t action_create_set_tempo(uint16_t bpm);
@@ -136,7 +135,7 @@ action_t action_create_reset(void);
 action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);
 action_t action_create_touchwheel_mode(uint8_t mode);
-action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_mode);
+action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);

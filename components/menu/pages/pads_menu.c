@@ -36,7 +36,7 @@ static menu_item_t s_pad_items[MAX_PAD_ITEMS];
 static char s_pad_labels[LABEL_BUFFER_SETS][MAX_PAD_ITEMS][32];
 
 // Pad detail page
-#define MAX_DETAIL_ITEMS 10  // action + steps + 4 slots + extra
+#define MAX_DETAIL_ITEMS 12  // action + up to 8 slots + extra
 static menu_item_t s_detail_items[MAX_DETAIL_ITEMS];
 static char s_action_label[LABEL_BUFFER_SETS][48];
 static char s_steps_label[LABEL_BUFFER_SETS][24];
@@ -62,6 +62,26 @@ static char s_scene_label[LABEL_BUFFER_SETS][40];
 
 // Set Tempo
 static char s_tempo_label[LABEL_BUFFER_SETS][24];
+
+// Note action
+static char s_note_label[LABEL_BUFFER_SETS][24];
+
+// Randomize action (8 CC slots)
+#define MAX_RANDOMIZE_SLOTS 8
+static char s_randomize_slot_labels[LABEL_BUFFER_SETS][MAX_RANDOMIZE_SLOTS][40];
+static uint8_t s_editing_randomize_slot = 0;
+
+// Filtered CC options for randomize roller (excludes already-selected CCs)
+typedef struct {
+  char* options_str;      // Filtered options string for roller
+  uint8_t* cc_numbers;    // Filtered CC number mapping
+  uint16_t count;         // Number of filtered options
+} filtered_cc_options_t;
+
+static filtered_cc_options_t s_randomize_cc_options = {0};
+
+// Note name lookup table
+static const char* NOTE_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
 // Get current label buffer set and advance to next
 static int get_next_buffer_set(void) {
@@ -120,15 +140,15 @@ static const char* get_pad_display_name(uint8_t index) {
 // All action types in display order (filtered at runtime)
 static const action_type_t s_all_action_types[] = {
   ACTION_NONE,
-  ACTION_SEND_CC,
-  ACTION_SEND_CC_HOLD,
-  ACTION_SEND_CC_CYCLE,
-  ACTION_PROGRAM_NEXT,
-  ACTION_PROGRAM_PREV,
-  ACTION_PROGRAM_SET,
-  ACTION_SCENE_NEXT,
-  ACTION_SCENE_PREV,
-  ACTION_SCENE_SET,
+  ACTION_CONTROL,
+  ACTION_CONTROL_HOLD,
+  ACTION_CONTROL_CYCLE,
+  ACTION_PRESET_INC,
+  ACTION_PRESET_DEC,
+  ACTION_PRESET,
+  ACTION_SCENE_INC,
+  ACTION_SCENE_DEC,
+  ACTION_SCENE,
   ACTION_CONFIRM_PENDING,
   ACTION_PLAY,
   ACTION_STOP,
@@ -139,16 +159,14 @@ static const action_type_t s_all_action_types[] = {
   ACTION_SET_TEMPO,
   ACTION_TEMPO_INC,
   ACTION_TEMPO_DEC,
-  ACTION_SEND_NOTE_ON,
-  ACTION_SEND_NOTE_OFF,
-  ACTION_RANDOMIZE_CC,
-  ACTION_CONFIRM_PENDING,
+  ACTION_NOTE,
+  ACTION_RANDOMIZE,
   ACTION_RESET,
   ACTION_SUSTAIN,
   ACTION_SOSTENUTO,
   ACTION_TOUCHWHEEL_MODE,
-  ACTION_TOUCHWHEEL_MODE_HOLD,
-  ACTION_TOUCHWHEEL_MODE_CYCLE,
+  ACTION_TOUCHWHEEL_HOLD,
+  ACTION_TOUCHWHEEL_CYCLE,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -163,7 +181,7 @@ static bool is_action_visible(action_type_t type) {
   
   // Scene actions hidden in single scene mode
   if (scene_mode == SCENE_MODE_SINGLE) {
-    if (type == ACTION_SCENE_NEXT || type == ACTION_SCENE_PREV || type == ACTION_SCENE_SET) {
+    if (type == ACTION_SCENE_INC || type == ACTION_SCENE_DEC || type == ACTION_SCENE) {
       return false;
     }
   }
@@ -189,15 +207,15 @@ static void build_filtered_action_types(void) {
 static const char* get_action_display_name(action_type_t type) {
   switch (type) {
     case ACTION_NONE: return "<None>";
-    case ACTION_SEND_CC: return "Send CC";
-    case ACTION_SEND_CC_HOLD: return "CC Hold";
-    case ACTION_SEND_CC_CYCLE: return "CC Cycle";
-    case ACTION_PROGRAM_NEXT: return "Program Next";
-    case ACTION_PROGRAM_PREV: return "Program Prev";
-    case ACTION_PROGRAM_SET: return "PC";
-    case ACTION_SCENE_NEXT: return "Scene Next";
-    case ACTION_SCENE_PREV: return "Scene Prev";
-    case ACTION_SCENE_SET: return "Scene Set";
+    case ACTION_CONTROL: return "Control";
+    case ACTION_CONTROL_HOLD: return "Control Hold";
+    case ACTION_CONTROL_CYCLE: return "Control Cycle";
+    case ACTION_PRESET_INC: return "Preset +1";
+    case ACTION_PRESET_DEC: return "Preset -1";
+    case ACTION_PRESET: return "Set Preset";
+    case ACTION_SCENE_INC: return "Scene +1";
+    case ACTION_SCENE_DEC: return "Scene -1";
+    case ACTION_SCENE: return "Set Scene";
     case ACTION_PLAY: return "Play";
     case ACTION_STOP: return "Stop";
     case ACTION_PAUSE: return "Pause";
@@ -207,16 +225,15 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_SET_TEMPO: return "Set Tempo";
     case ACTION_TEMPO_INC: return "Tempo +1";
     case ACTION_TEMPO_DEC: return "Tempo -1";
-    case ACTION_SEND_NOTE_ON: return "Note On";
-    case ACTION_SEND_NOTE_OFF: return "Note Off";
-    case ACTION_RANDOMIZE_CC: return "Randomize CC";
+    case ACTION_NOTE: return "Note";
+    case ACTION_RANDOMIZE: return "Randomize";
     case ACTION_CONFIRM_PENDING: return "Confirm Pending";
     case ACTION_RESET: return "Reset";
     case ACTION_SUSTAIN: return "Sustain";
     case ACTION_SOSTENUTO: return "Sostenuto";
-    case ACTION_TOUCHWHEEL_MODE: return "TW Mode";
-    case ACTION_TOUCHWHEEL_MODE_HOLD: return "TW Mode Hold";
-    case ACTION_TOUCHWHEEL_MODE_CYCLE: return "TW Mode Cycle";
+    case ACTION_TOUCHWHEEL_MODE: return "Touchwheel";
+    case ACTION_TOUCHWHEEL_HOLD: return "Touchwheel Hold";
+    case ACTION_TOUCHWHEEL_CYCLE: return "Touchwheel Cycle";
     default: return "Unknown";
   }
 }
@@ -331,12 +348,12 @@ static const char* get_cc_slot_display(action_t* action, uint8_t slot) {
   if (!action || slot >= 4) return "Inactive";
   
   // Slot is inactive if it's beyond num_ccs (consecutive slots from 0)
-  if (slot >= action->params.cc.num_ccs) {
+  if (slot >= action->params.control.num_ccs) {
     return "Inactive";
   }
   
-  uint8_t cc_num = action->params.cc.cc_numbers[slot];
-  uint8_t cc_val = action->params.cc.values[slot];
+  uint8_t cc_num = action->params.control.cc_numbers[slot];
+  uint8_t cc_val = action->params.control.values[slot];
   
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
@@ -371,11 +388,11 @@ static const char* get_cc_hold_slot_display(action_t* action, uint8_t slot) {
   if (!action || slot >= 4) return "Inactive";
   
   // Slot is inactive if it's beyond num_ccs
-  if (slot >= action->params.cc.num_ccs) {
+  if (slot >= action->params.control.num_ccs) {
     return "Inactive";
   }
   
-  uint8_t cc_num = action->params.cc.cc_numbers[slot];
+  uint8_t cc_num = action->params.control.cc_numbers[slot];
   
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
@@ -409,11 +426,11 @@ static const char* get_cc_cycle_slot_display(action_t* action, uint8_t slot) {
   if (!action || slot >= 4) return "Inactive";
   
   // Slot is inactive if it's beyond num_ccs
-  if (slot >= action->params.cc.num_ccs) {
+  if (slot >= action->params.control.num_ccs) {
     return "Inactive";
   }
   
-  uint8_t cc_num = action->params.cc.cc_numbers[slot];
+  uint8_t cc_num = action->params.control.cc_numbers[slot];
   
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
@@ -477,26 +494,32 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     
     // CC slots are already 0 (inactive) from memset
     // Set default cycle steps for CC Cycle
-    if (new_type == ACTION_SEND_CC_CYCLE) {
-      mapping->action.params.cc.num_cycle_steps = 2;
+    if (new_type == ACTION_CONTROL_CYCLE) {
+      mapping->action.params.control.num_cycle_steps = 2;
     }
     
     // Set default preset for Program Set (preset 1 = index_base)
-    if (new_type == ACTION_PROGRAM_SET) {
+    if (new_type == ACTION_PRESET) {
       uint8_t scene_index = scene_get_current_index();
       const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
       uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-      mapping->action.params.pc.program = index_base;  // Preset 1
+      mapping->action.params.preset.program = index_base;  // Preset 1
     }
     
     // Set default scene for Scene Set (first scene in manifest)
-    if (new_type == ACTION_SCENE_SET) {
+    if (new_type == ACTION_SCENE) {
       mapping->action.params.target.number = scene_get_index_by_position(0);
     }
     
     // Set default tempo for Set Tempo (120 BPM)
     if (new_type == ACTION_SET_TEMPO) {
       mapping->action.params.tempo.bpm = 120;
+    }
+    
+    // Set default note for Note action (C4 = MIDI 60, middle C)
+    if (new_type == ACTION_NOTE) {
+      mapping->action.params.note.note = 60;
+      mapping->action.params.note.velocity = 100;
     }
     
     persist_scene_changes();
@@ -588,13 +611,13 @@ static void cc_value_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   // Save CC number and value to the slot
-  mapping->action.params.cc.cc_numbers[slot] = s_pending_cc_number;
-  mapping->action.params.cc.values[slot] = cc_value;
+  mapping->action.params.control.cc_numbers[slot] = s_pending_cc_number;
+  mapping->action.params.control.values[slot] = cc_value;
   
   // If this slot was inactive (slot >= num_ccs), we're adding a new CC
   // New CCs always go at position num_ccs, so just increment
-  if (slot >= mapping->action.params.cc.num_ccs) {
-    mapping->action.params.cc.num_ccs = slot + 1;
+  if (slot >= mapping->action.params.control.num_ccs) {
+    mapping->action.params.control.num_ccs = slot + 1;
   }
   
   persist_scene_changes();
@@ -629,7 +652,7 @@ static lv_obj_t* cc_value_roller_create(void) {
   static char options[1024];
   options[0] = '\0';
   uint32_t current_idx = 0;
-  uint8_t current_val = mapping->action.params.cc.values[slot];
+  uint8_t current_val = mapping->action.params.control.values[slot];
   
   if (s_pending_control && s_pending_control->discrete_count > 0) {
     // Discrete values - show names
@@ -711,30 +734,30 @@ static void cc_number_confirm_cb(uint32_t selected_index, void* user_data) {
         scene_get_current_index(), s_editing_pad_index);
       if (mapping) {
         uint8_t slot = s_editing_cc_slot;
-        uint8_t num_ccs = mapping->action.params.cc.num_ccs;
+        uint8_t num_ccs = mapping->action.params.control.num_ccs;
         
         // Only clear if this slot is actually active
         if (slot < num_ccs) {
           // Compact: shift slots after this one down
           for (int i = slot; i < 3; i++) {
-            mapping->action.params.cc.cc_numbers[i] = mapping->action.params.cc.cc_numbers[i + 1];
-            mapping->action.params.cc.values[i] = mapping->action.params.cc.values[i + 1];
-            mapping->action.params.cc.values2[i] = mapping->action.params.cc.values2[i + 1];
+            mapping->action.params.control.cc_numbers[i] = mapping->action.params.control.cc_numbers[i + 1];
+            mapping->action.params.control.values[i] = mapping->action.params.control.values[i + 1];
+            mapping->action.params.control.values2[i] = mapping->action.params.control.values2[i + 1];
           }
           // Clear the last slot
-          mapping->action.params.cc.cc_numbers[3] = 0;
-          mapping->action.params.cc.values[3] = 0;
-          mapping->action.params.cc.values2[3] = 0;
+          mapping->action.params.control.cc_numbers[3] = 0;
+          mapping->action.params.control.values[3] = 0;
+          mapping->action.params.control.values2[3] = 0;
           
           // Decrement num_ccs
           if (num_ccs > 0) {
-            mapping->action.params.cc.num_ccs = num_ccs - 1;
+            mapping->action.params.control.num_ccs = num_ccs - 1;
           }
           
           persist_scene_changes();
           ESP_LOGI(TAG, "Pad %s CC slot %u cleared (compacted to %u)",
             get_pad_display_name(s_editing_pad_index), (unsigned)(slot + 1),
-            (unsigned)mapping->action.params.cc.num_ccs);
+            (unsigned)mapping->action.params.control.num_ccs);
         }
       }
     }
@@ -787,8 +810,8 @@ static lv_obj_t* cc_number_roller_create(void) {
       uint32_t current_idx = 0;  // Default to "Inactive"
       
       // Only look up CC if this slot is active
-      if (slot < mapping->action.params.cc.num_ccs) {
-        uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+      if (slot < mapping->action.params.control.num_ccs) {
+        uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
         current_idx = cc_num + 1;  // +1 for "Inactive" at index 0
       }
       
@@ -802,8 +825,8 @@ static lv_obj_t* cc_number_roller_create(void) {
   uint32_t current_idx = 0;  // Default to "Inactive"
   
   // Only look up CC if this slot is active
-  if (slot < mapping->action.params.cc.num_ccs) {
-    uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  if (slot < mapping->action.params.control.num_ccs) {
+    uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
     current_idx = cc_number_to_option_index(cc_num);
   }
   
@@ -849,18 +872,18 @@ static void cc_hold_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   
   if (selected_index == 0) {
     // "Inactive" selected - clear this slot and compact
-    uint8_t num_ccs = mapping->action.params.cc.num_ccs;
+    uint8_t num_ccs = mapping->action.params.control.num_ccs;
     if (slot < num_ccs) {
       for (int i = slot; i < 3; i++) {
-        mapping->action.params.cc.cc_numbers[i] = mapping->action.params.cc.cc_numbers[i + 1];
-        mapping->action.params.cc.values[i] = mapping->action.params.cc.values[i + 1];
-        mapping->action.params.cc.values2[i] = mapping->action.params.cc.values2[i + 1];
+        mapping->action.params.control.cc_numbers[i] = mapping->action.params.control.cc_numbers[i + 1];
+        mapping->action.params.control.values[i] = mapping->action.params.control.values[i + 1];
+        mapping->action.params.control.values2[i] = mapping->action.params.control.values2[i + 1];
       }
-      mapping->action.params.cc.cc_numbers[3] = 0;
-      mapping->action.params.cc.values[3] = 0;
-      mapping->action.params.cc.values2[3] = 0;
+      mapping->action.params.control.cc_numbers[3] = 0;
+      mapping->action.params.control.values[3] = 0;
+      mapping->action.params.control.values2[3] = 0;
       if (num_ccs > 0) {
-        mapping->action.params.cc.num_ccs = num_ccs - 1;
+        mapping->action.params.control.num_ccs = num_ccs - 1;
       }
       persist_scene_changes();
       ESP_LOGI(TAG, "Pad %s CC Hold slot %u cleared",
@@ -877,13 +900,13 @@ static void cc_hold_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   // CC selected from device list
   if (selected_index < s_cc_options.count) {
     uint8_t cc_num = s_cc_options.cc_numbers[selected_index];
-    mapping->action.params.cc.cc_numbers[slot] = cc_num;
+    mapping->action.params.control.cc_numbers[slot] = cc_num;
     
     // If this is a new slot, set default values and increment num_ccs
-    if (slot >= mapping->action.params.cc.num_ccs) {
-      mapping->action.params.cc.values[slot] = 127;   // Default press value
-      mapping->action.params.cc.values2[slot] = 0;    // Default release value
-      mapping->action.params.cc.num_ccs = slot + 1;
+    if (slot >= mapping->action.params.control.num_ccs) {
+      mapping->action.params.control.values[slot] = 127;   // Default press value
+      mapping->action.params.control.values2[slot] = 0;    // Default release value
+      mapping->action.params.control.num_ccs = slot + 1;
     }
     
     persist_scene_changes();
@@ -915,8 +938,8 @@ static lv_obj_t* cc_hold_cc_roller_create(void) {
   uint8_t slot = s_editing_cc_slot;
   uint32_t current_idx = 0;
   
-  if (slot < mapping->action.params.cc.num_ccs) {
-    uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  if (slot < mapping->action.params.control.num_ccs) {
+    uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
     current_idx = cc_number_to_option_index(cc_num);
   }
   
@@ -954,7 +977,7 @@ static void cc_hold_press_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   uint8_t slot = s_editing_cc_slot;
-  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
   
   // Get device and control to determine actual value
   uint8_t scene_index = scene_get_current_index();
@@ -974,7 +997,7 @@ static void cc_hold_press_confirm_cb(uint32_t selected_index, void* user_data) {
     press_val = (uint8_t)selected_index;
   }
   
-  mapping->action.params.cc.values[slot] = press_val;
+  mapping->action.params.control.values[slot] = press_val;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Pad %s CC Hold slot %u press value set to %u",
@@ -996,8 +1019,8 @@ static lv_obj_t* cc_hold_press_roller_create(void) {
   if (!mapping) return NULL;
   
   uint8_t slot = s_editing_cc_slot;
-  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
-  uint8_t current_val = mapping->action.params.cc.values[slot];
+  uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
+  uint8_t current_val = mapping->action.params.control.values[slot];
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -1079,7 +1102,7 @@ static void cc_hold_release_confirm_cb(uint32_t selected_index, void* user_data)
   }
   
   uint8_t slot = s_editing_cc_slot;
-  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -1098,7 +1121,7 @@ static void cc_hold_release_confirm_cb(uint32_t selected_index, void* user_data)
     release_val = (uint8_t)selected_index;
   }
   
-  mapping->action.params.cc.values2[slot] = release_val;
+  mapping->action.params.control.values2[slot] = release_val;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Pad %s CC Hold slot %u release value set to %u",
@@ -1120,8 +1143,8 @@ static lv_obj_t* cc_hold_release_roller_create(void) {
   if (!mapping) return NULL;
   
   uint8_t slot = s_editing_cc_slot;
-  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
-  uint8_t current_val = mapping->action.params.cc.values2[slot];
+  uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
+  uint8_t current_val = mapping->action.params.control.values2[slot];
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -1193,10 +1216,10 @@ static lv_obj_t* cc_hold_slot_page_create(void) {
   uint8_t slot = s_editing_cc_slot;
   
   // Get current values
-  bool is_active = (slot < mapping->action.params.cc.num_ccs);
-  uint8_t cc_num = is_active ? mapping->action.params.cc.cc_numbers[slot] : 0;
-  uint8_t press_val = is_active ? mapping->action.params.cc.values[slot] : 0;
-  uint8_t release_val = is_active ? mapping->action.params.cc.values2[slot] : 0;
+  bool is_active = (slot < mapping->action.params.control.num_ccs);
+  uint8_t cc_num = is_active ? mapping->action.params.control.cc_numbers[slot] : 0;
+  uint8_t press_val = is_active ? mapping->action.params.control.values[slot] : 0;
+  uint8_t release_val = is_active ? mapping->action.params.control.values2[slot] : 0;
   
   // Get device for control names
   uint8_t scene_index = scene_get_current_index();
@@ -1265,19 +1288,19 @@ static void cc_cycle_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   
   if (selected_index == 0) {
     // "Inactive" selected - clear this slot and compact
-    uint8_t num_ccs = mapping->action.params.cc.num_ccs;
+    uint8_t num_ccs = mapping->action.params.control.num_ccs;
     if (slot < num_ccs) {
       for (int i = slot; i < 3; i++) {
-        mapping->action.params.cc.cc_numbers[i] = mapping->action.params.cc.cc_numbers[i + 1];
+        mapping->action.params.control.cc_numbers[i] = mapping->action.params.control.cc_numbers[i + 1];
         for (int s = 0; s < MAX_CYCLE_STEPS; s++) {
-          mapping->action.params.cc.cycle_values[i][s] = 
-            mapping->action.params.cc.cycle_values[i + 1][s];
+          mapping->action.params.control.cycle_values[i][s] = 
+            mapping->action.params.control.cycle_values[i + 1][s];
         }
       }
-      mapping->action.params.cc.cc_numbers[3] = 0;
-      memset(mapping->action.params.cc.cycle_values[3], 0, MAX_CYCLE_STEPS);
+      mapping->action.params.control.cc_numbers[3] = 0;
+      memset(mapping->action.params.control.cycle_values[3], 0, MAX_CYCLE_STEPS);
       if (num_ccs > 0) {
-        mapping->action.params.cc.num_ccs = num_ccs - 1;
+        mapping->action.params.control.num_ccs = num_ccs - 1;
       }
       persist_scene_changes();
       ESP_LOGI(TAG, "Pad %s CC Cycle slot %u cleared",
@@ -1294,19 +1317,19 @@ static void cc_cycle_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   // CC selected from device list
   if (selected_index < s_cc_options.count) {
     uint8_t cc_num = s_cc_options.cc_numbers[selected_index];
-    mapping->action.params.cc.cc_numbers[slot] = cc_num;
+    mapping->action.params.control.cc_numbers[slot] = cc_num;
     
     // If this is a new slot, set default values and increment num_ccs
-    if (slot >= mapping->action.params.cc.num_ccs) {
+    if (slot >= mapping->action.params.control.num_ccs) {
       // Default cycle values: 0, 127 for 2 steps
-      uint8_t steps = mapping->action.params.cc.num_cycle_steps;
+      uint8_t steps = mapping->action.params.control.num_cycle_steps;
       if (steps < 2) {
-        mapping->action.params.cc.num_cycle_steps = 2;
+        mapping->action.params.control.num_cycle_steps = 2;
         steps = 2;
       }
-      mapping->action.params.cc.cycle_values[slot][0] = 0;
-      mapping->action.params.cc.cycle_values[slot][1] = 127;
-      mapping->action.params.cc.num_ccs = slot + 1;
+      mapping->action.params.control.cycle_values[slot][0] = 0;
+      mapping->action.params.control.cycle_values[slot][1] = 127;
+      mapping->action.params.control.num_ccs = slot + 1;
     }
     
     persist_scene_changes();
@@ -1338,8 +1361,8 @@ static lv_obj_t* cc_cycle_cc_roller_create(void) {
   uint8_t slot = s_editing_cc_slot;
   uint32_t current_idx = 0;
   
-  if (slot < mapping->action.params.cc.num_ccs) {
-    uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  if (slot < mapping->action.params.control.num_ccs) {
+    uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
     current_idx = cc_number_to_option_index(cc_num);
   }
   
@@ -1378,7 +1401,7 @@ static void cc_cycle_step_confirm_cb(uint32_t selected_index, void* user_data) {
   
   uint8_t slot = s_editing_cc_slot;
   uint8_t step = s_editing_step;
-  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
+  uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
   
   // Get device and control to determine actual value
   uint8_t scene_index = scene_get_current_index();
@@ -1398,7 +1421,7 @@ static void cc_cycle_step_confirm_cb(uint32_t selected_index, void* user_data) {
     step_val = (uint8_t)selected_index;
   }
   
-  mapping->action.params.cc.cycle_values[slot][step] = step_val;
+  mapping->action.params.control.cycle_values[slot][step] = step_val;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Pad %s CC Cycle slot %u step %u value set to %u",
@@ -1422,8 +1445,8 @@ static lv_obj_t* cc_cycle_step_roller_create(void) {
   
   uint8_t slot = s_editing_cc_slot;
   uint8_t step = s_editing_step;
-  uint8_t cc_num = mapping->action.params.cc.cc_numbers[slot];
-  uint8_t current_val = mapping->action.params.cc.cycle_values[slot][step];
+  uint8_t cc_num = mapping->action.params.control.cc_numbers[slot];
+  uint8_t current_val = mapping->action.params.control.cycle_values[slot][step];
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -1499,9 +1522,9 @@ static lv_obj_t* cc_cycle_slot_page_create(void) {
   uint8_t slot = s_editing_cc_slot;
   
   // Get current values
-  bool is_active = (slot < mapping->action.params.cc.num_ccs);
-  uint8_t cc_num = is_active ? mapping->action.params.cc.cc_numbers[slot] : 0;
-  uint8_t num_steps = mapping->action.params.cc.num_cycle_steps;
+  bool is_active = (slot < mapping->action.params.control.num_ccs);
+  uint8_t cc_num = is_active ? mapping->action.params.control.cc_numbers[slot] : 0;
+  uint8_t num_steps = mapping->action.params.control.num_cycle_steps;
   if (num_steps < 2) num_steps = 2;
   
   // Get device for control names
@@ -1526,7 +1549,7 @@ static lv_obj_t* cc_cycle_slot_page_create(void) {
   // Step value items (only if slot is active)
   if (is_active) {
     for (int i = 0; i < num_steps && i < MAX_CYCLE_STEPS; i++) {
-      uint8_t step_val = mapping->action.params.cc.cycle_values[slot][i];
+      uint8_t step_val = mapping->action.params.control.cycle_values[slot][i];
       const char* val_disp = get_value_display(device, cc_num, step_val);
       snprintf(s_cc_cycle_step_labels[buf][i], sizeof(s_cc_cycle_step_labels[buf][i]), 
         "Step %d: %s", i + 1, val_disp);
@@ -1569,7 +1592,7 @@ static void cc_cycle_steps_confirm_cb(uint32_t selected_index, void* user_data) 
   
   // Steps roller shows 2-8, so index 0 = 2 steps
   uint8_t new_steps = (uint8_t)(selected_index + 2);
-  mapping->action.params.cc.num_cycle_steps = new_steps;
+  mapping->action.params.control.num_cycle_steps = new_steps;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Pad %s CC Cycle steps set to %u",
@@ -1594,7 +1617,7 @@ static lv_obj_t* cc_cycle_steps_roller_create(void) {
   static char options[32];
   snprintf(options, sizeof(options), "2\n3\n4\n5\n6\n7\n8");
   
-  uint8_t current_steps = mapping->action.params.cc.num_cycle_steps;
+  uint8_t current_steps = mapping->action.params.control.num_cycle_steps;
   if (current_steps < 2) current_steps = 2;
   if (current_steps > 8) current_steps = 8;
   uint32_t current_idx = current_steps - 2;  // 2 steps = index 0
@@ -1640,7 +1663,7 @@ static void program_set_confirm_cb(uint32_t selected_index, void* user_data) {
   
   // Roller shows 1 to count, but internal value is (selected_index + index_base)
   uint16_t program = (uint16_t)(selected_index + index_base);
-  mapping->action.params.pc.program = program;
+  mapping->action.params.preset.program = program;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Pad %s Program Set preset set to %u",
@@ -1688,7 +1711,7 @@ static lv_obj_t* program_set_roller_create(void) {
   }
   
   // Current selection: convert internal value to roller index
-  uint16_t current_program = mapping->action.params.pc.program;
+  uint16_t current_program = mapping->action.params.preset.program;
   uint32_t current_idx = 0;
   if (current_program >= index_base) {
     current_idx = current_program - index_base;
@@ -1871,6 +1894,307 @@ static void nav_to_set_tempo(void* user_data) {
 }
 
 // ============================================================================
+// Note Roller (for ACTION_NOTE)
+// ============================================================================
+
+// Helper to get note display name from MIDI number
+static void get_note_display_name(uint8_t midi_note, char* buf, size_t buf_size) {
+  int octave = (midi_note / 12) - 1;  // C4 (60) = octave 4
+  int note_idx = midi_note % 12;
+  snprintf(buf, buf_size, "%s%d", NOTE_NAMES[note_idx], octave);
+}
+
+static void note_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  // Convert roller index to MIDI note (C2=36 is index 0)
+  uint8_t midi_note = 36 + selected_idx;
+  if (midi_note > 96) midi_note = 96;
+  
+  mapping->action.params.note.note = midi_note;
+  persist_scene_changes();
+  
+  char note_name[8];
+  get_note_display_name(midi_note, note_name, sizeof(note_name));
+  ESP_LOGI(TAG, "Pad %s note set to %s (MIDI %u)",
+    get_pad_display_name(s_editing_pad_index), note_name, (unsigned)midi_note);
+  
+  // Go back 2: pop note roller, old pad detail, push fresh pad detail
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* note_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Build options: C2, C#2, D2, ... C7 (MIDI 36-96 = 61 notes)
+  static char options[512];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+  
+  for (uint8_t midi = 36; midi <= 96 && remaining > 8; midi++) {
+    char note_name[8];
+    get_note_display_name(midi, note_name, sizeof(note_name));
+    int written = snprintf(pos, remaining, "%s%s", midi > 36 ? "\n" : "", note_name);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+  
+  // Current selection: convert MIDI note to roller index
+  uint8_t current_note = mapping->action.params.note.note;
+  if (current_note < 36) current_note = 60;  // Default to C4
+  if (current_note > 96) current_note = 96;
+  uint32_t current_idx = current_note - 36;
+  
+  return menu_create_roller_page("Note", options, current_idx, 
+    note_confirm_cb, NULL);
+}
+
+static void nav_to_note(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Note", note_roller_create);
+}
+
+// ============================================================================
+// Randomize Slot Roller (for ACTION_RANDOMIZE)
+// ============================================================================
+
+// Free filtered randomize CC options
+static void free_randomize_cc_options(void) {
+  if (s_randomize_cc_options.options_str) {
+    heap_caps_free(s_randomize_cc_options.options_str);
+    s_randomize_cc_options.options_str = NULL;
+  }
+  if (s_randomize_cc_options.cc_numbers) {
+    heap_caps_free(s_randomize_cc_options.cc_numbers);
+    s_randomize_cc_options.cc_numbers = NULL;
+  }
+  s_randomize_cc_options.count = 0;
+}
+
+// Check if a CC is already used in another randomize slot
+static bool is_cc_used_in_randomize(const action_t* action, uint8_t cc_num, uint8_t exclude_slot) {
+  uint8_t num_ccs = action->params.randomize.num_ccs;
+  for (uint8_t i = 0; i < num_ccs && i < MAX_RANDOMIZE_SLOTS; i++) {
+    if (i != exclude_slot && action->params.randomize.cc_numbers[i] == cc_num) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Build filtered CC options for randomize (excludes already-selected CCs)
+static bool build_randomize_cc_options(const action_t* action, uint8_t editing_slot) {
+  free_randomize_cc_options();
+  
+  // Ensure base CC options are loaded
+  if (!s_cc_options.options_str || s_cc_options.count == 0) {
+    if (!load_cc_options()) return false;
+  }
+  
+  // Allocate storage (same size as full options - we'll use less)
+  s_randomize_cc_options.cc_numbers = heap_caps_calloc(
+    s_cc_options.count, sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+  s_randomize_cc_options.options_str = heap_caps_calloc(
+    s_cc_options.count * 28, 1, MALLOC_CAP_SPIRAM);
+  
+  if (!s_randomize_cc_options.cc_numbers || !s_randomize_cc_options.options_str) {
+    ESP_LOGE(TAG, "Failed to allocate filtered CC options");
+    free_randomize_cc_options();
+    return false;
+  }
+  
+  // Always include "Inactive" as first option
+  strcpy(s_randomize_cc_options.options_str, "Inactive");
+  s_randomize_cc_options.cc_numbers[0] = 0xFF;
+  s_randomize_cc_options.count = 1;
+  
+  size_t pos = strlen("Inactive");
+  
+  // Add CCs that aren't already used in other slots
+  for (uint16_t i = 1; i < s_cc_options.count; i++) {
+    uint8_t cc_num = s_cc_options.cc_numbers[i];
+    
+    // Skip if already used in another slot
+    if (is_cc_used_in_randomize(action, cc_num, editing_slot)) {
+      continue;
+    }
+    
+    // Find the CC name from the original options string
+    const char* src = s_cc_options.options_str;
+    uint16_t line = 0;
+    const char* line_start = src;
+    
+    // Find the i-th line in the original options
+    while (*src && line < i) {
+      if (*src == '\n') {
+        line++;
+        line_start = src + 1;
+      }
+      src++;
+    }
+    
+    // Find end of this line
+    const char* line_end = line_start;
+    while (*line_end && *line_end != '\n') line_end++;
+    
+    size_t name_len = line_end - line_start;
+    if (name_len > 24) name_len = 24;
+    
+    // Append to filtered options
+    s_randomize_cc_options.options_str[pos++] = '\n';
+    memcpy(s_randomize_cc_options.options_str + pos, line_start, name_len);
+    pos += name_len;
+    s_randomize_cc_options.options_str[pos] = '\0';
+    
+    s_randomize_cc_options.cc_numbers[s_randomize_cc_options.count] = cc_num;
+    s_randomize_cc_options.count++;
+  }
+  
+  ESP_LOGD(TAG, "Built filtered randomize options: %u of %u CCs available",
+    (unsigned)(s_randomize_cc_options.count - 1), (unsigned)(s_cc_options.count - 1));
+  
+  return true;
+}
+
+static void randomize_cc_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t slot = s_editing_randomize_slot;
+  if (slot >= MAX_RANDOMIZE_SLOTS) return;
+  
+  uint8_t num_ccs = mapping->action.params.randomize.num_ccs;
+  
+  if (selected_index == 0) {
+    // "Inactive" selected - remove this slot by compacting
+    if (slot < num_ccs) {
+      // Shift all slots after this one down
+      for (uint8_t i = slot; i < num_ccs - 1 && i < MAX_RANDOMIZE_SLOTS - 1; i++) {
+        mapping->action.params.randomize.cc_numbers[i] = 
+          mapping->action.params.randomize.cc_numbers[i + 1];
+      }
+      mapping->action.params.randomize.cc_numbers[num_ccs - 1] = 0;
+      mapping->action.params.randomize.num_ccs = num_ccs - 1;
+      ESP_LOGI(TAG, "Randomize slot %u cleared, %u slots remain", 
+        (unsigned)slot, (unsigned)(num_ccs - 1));
+    }
+  } else {
+    // CC selected from filtered list - use filtered mapping
+    if (selected_index < s_randomize_cc_options.count) {
+      uint8_t cc_num = s_randomize_cc_options.cc_numbers[selected_index];
+      mapping->action.params.randomize.cc_numbers[slot] = cc_num;
+      
+      // If this is a new slot, increment num_ccs
+      if (slot >= num_ccs && slot < MAX_RANDOMIZE_SLOTS) {
+        mapping->action.params.randomize.num_ccs = slot + 1;
+      }
+      
+      const device_def_t* device = (const device_def_t*)scene_get_device(
+        scene_get_current_index());
+      const char* cc_name = assets_get_cc_name(device, cc_num);
+      ESP_LOGI(TAG, "Randomize slot %u set to CC%u (%s)", 
+        (unsigned)slot, (unsigned)cc_num, cc_name ? cc_name : "?");
+    }
+  }
+  
+  // Free filtered options
+  free_randomize_cc_options();
+  
+  persist_scene_changes();
+  
+  // Go back 2: pop roller, old pad detail, push fresh pad detail
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* randomize_cc_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint8_t slot = s_editing_randomize_slot;
+  
+  // Build filtered options (excludes CCs already used in other slots)
+  if (!build_randomize_cc_options(&mapping->action, slot)) {
+    return menu_create_page("Error", NULL, 0);
+  }
+  
+  // Find current selection in filtered list
+  uint32_t current_idx = 0;  // Default to "Inactive"
+  uint8_t num_ccs = mapping->action.params.randomize.num_ccs;
+  if (slot < num_ccs) {
+    uint8_t cc_num = mapping->action.params.randomize.cc_numbers[slot];
+    // Search in filtered list
+    for (uint16_t i = 1; i < s_randomize_cc_options.count; i++) {
+      if (s_randomize_cc_options.cc_numbers[i] == cc_num) {
+        current_idx = i;
+        break;
+      }
+    }
+  }
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  
+  return menu_create_roller_page(title, s_randomize_cc_options.options_str, current_idx,
+    randomize_cc_confirm_cb, NULL);
+}
+
+static void nav_to_randomize_slot(void* user_data) {
+  uint8_t clicked_slot = (uint8_t)(uintptr_t)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t num_ccs = mapping->action.params.randomize.num_ccs;
+  
+  // If clicking on an inactive slot, redirect to the next available slot
+  if (clicked_slot >= num_ccs) {
+    s_editing_randomize_slot = num_ccs;
+  } else {
+    s_editing_randomize_slot = clicked_slot;
+  }
+  
+  // Ensure CC options are loaded
+  if (!s_cc_options.options_str) {
+    load_cc_options();
+  }
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_randomize_slot + 1));
+  menu_navigate_to(title, randomize_cc_roller_create);
+}
+
+// ============================================================================
 // CC Slot Navigation (routes to correct handler based on action type)
 // ============================================================================
 
@@ -1884,7 +2208,7 @@ static void nav_to_cc_slot(void* user_data) {
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return;
   
-  uint8_t num_ccs = mapping->action.params.cc.num_ccs;
+  uint8_t num_ccs = mapping->action.params.control.num_ccs;
   
   // If clicking on an inactive slot, redirect to the next available slot
   if (clicked_slot >= num_ccs) {
@@ -1901,11 +2225,11 @@ static void nav_to_cc_slot(void* user_data) {
   static char title[24];
   
   // Route based on action type
-  if (mapping->action.type == ACTION_SEND_CC_HOLD) {
+  if (mapping->action.type == ACTION_CONTROL_HOLD) {
     // CC Hold: open submenu with CC/Press/Release
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
     menu_navigate_to(title, cc_hold_slot_page_create);
-  } else if (mapping->action.type == ACTION_SEND_CC_CYCLE) {
+  } else if (mapping->action.type == ACTION_CONTROL_CYCLE) {
     // CC Cycle: open submenu with CC/Step values
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
     menu_navigate_to(title, cc_cycle_slot_page_create);
@@ -1945,13 +2269,13 @@ static lv_obj_t* pad_detail_page_create(void) {
   s_detail_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_action_type, NULL, true};
   
   // Show CC slots for CC actions
-  if (mapping->action.type == ACTION_SEND_CC ||
-      mapping->action.type == ACTION_SEND_CC_HOLD ||
-      mapping->action.type == ACTION_SEND_CC_CYCLE) {
+  if (mapping->action.type == ACTION_CONTROL ||
+      mapping->action.type == ACTION_CONTROL_HOLD ||
+      mapping->action.type == ACTION_CONTROL_CYCLE) {
     
     // For CC Cycle, show Steps selector before the CC slots
-    if (mapping->action.type == ACTION_SEND_CC_CYCLE) {
-      uint8_t steps = mapping->action.params.cc.num_cycle_steps;
+    if (mapping->action.type == ACTION_CONTROL_CYCLE) {
+      uint8_t steps = mapping->action.params.control.num_cycle_steps;
       if (steps < 2) steps = 2;
       snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps: %u", (unsigned)steps);
       s_detail_items[item_count++] = (menu_item_t){
@@ -1962,9 +2286,9 @@ static lv_obj_t* pad_detail_page_create(void) {
     for (int i = 0; i < 4; i++) {
       // Use appropriate display function based on action type
       const char* slot_display;
-      if (mapping->action.type == ACTION_SEND_CC_HOLD) {
+      if (mapping->action.type == ACTION_CONTROL_HOLD) {
         slot_display = get_cc_hold_slot_display(&mapping->action, (uint8_t)i);
-      } else if (mapping->action.type == ACTION_SEND_CC_CYCLE) {
+      } else if (mapping->action.type == ACTION_CONTROL_CYCLE) {
         slot_display = get_cc_cycle_slot_display(&mapping->action, (uint8_t)i);
       } else {
         slot_display = get_cc_slot_display(&mapping->action, (uint8_t)i);
@@ -1985,8 +2309,8 @@ static lv_obj_t* pad_detail_page_create(void) {
   }
   
   // Show Preset selector for Program Set
-  if (mapping->action.type == ACTION_PROGRAM_SET) {
-    uint16_t program = mapping->action.params.pc.program;
+  if (mapping->action.type == ACTION_PRESET) {
+    uint16_t program = mapping->action.params.preset.program;
     
     // Get device for index_base
     uint8_t scene_index = scene_get_current_index();
@@ -2002,7 +2326,7 @@ static lv_obj_t* pad_detail_page_create(void) {
   }
   
   // Show Scene selector for Scene Set
-  if (mapping->action.type == ACTION_SCENE_SET) {
+  if (mapping->action.type == ACTION_SCENE) {
     uint8_t target = mapping->action.params.target.number;
     
     // Find scene name from manifest
@@ -2035,7 +2359,60 @@ static lv_obj_t* pad_detail_page_create(void) {
     };
   }
   
-  // TODO: Add parameter UI for other action types (Note, etc.)
+  // Show Note selector for Note action
+  if (mapping->action.type == ACTION_NOTE) {
+    uint8_t midi_note = mapping->action.params.note.note;
+    if (midi_note < 36 || midi_note > 96) midi_note = 60;  // Default to C4
+    char note_name[8];
+    get_note_display_name(midi_note, note_name, sizeof(note_name));
+    snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note: %s", note_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_note_label[buf], nav_to_note, NULL, true
+    };
+  }
+  
+  // Show CC slots for Randomize action (limited by available device CCs)
+  if (mapping->action.type == ACTION_RANDOMIZE) {
+    uint8_t num_ccs = mapping->action.params.randomize.num_ccs;
+    const device_def_t* device = (const device_def_t*)scene_get_device(
+      scene_get_current_index());
+    
+    // Count available CC controls from device
+    uint8_t available_ccs = 0;
+    if (device) {
+      for (uint16_t c = 0; c < device->control_count; c++) {
+        if (device->controls[c].type == MIDI_CONTROL_TYPE_CC) {
+          available_ccs++;
+        }
+      }
+    }
+    
+    // Limit slots to min(MAX_RANDOMIZE_SLOTS, available_ccs)
+    uint8_t max_slots = available_ccs < MAX_RANDOMIZE_SLOTS ? available_ccs : MAX_RANDOMIZE_SLOTS;
+    if (max_slots == 0) max_slots = MAX_RANDOMIZE_SLOTS;  // Fallback if no device
+    
+    for (int i = 0; i < max_slots && item_count < MAX_DETAIL_ITEMS; i++) {
+      if (i < num_ccs) {
+        // Active slot: show CC name
+        uint8_t cc_num = mapping->action.params.randomize.cc_numbers[i];
+        const char* cc_name = assets_get_cc_name(device, cc_num);
+        if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+          snprintf(s_randomize_slot_labels[buf][i], 
+            sizeof(s_randomize_slot_labels[buf][i]), "%s", cc_name);
+        } else {
+          snprintf(s_randomize_slot_labels[buf][i], 
+            sizeof(s_randomize_slot_labels[buf][i]), "CC%u", (unsigned)cc_num);
+        }
+      } else {
+        // Inactive slot
+        snprintf(s_randomize_slot_labels[buf][i], 
+          sizeof(s_randomize_slot_labels[buf][i]), "Slot %d: Inactive", i + 1);
+      }
+      s_detail_items[item_count++] = (menu_item_t){
+        s_randomize_slot_labels[buf][i], nav_to_randomize_slot, (void*)(uintptr_t)i, true
+      };
+    }
+  }
   
   const char* title = get_pad_display_name(s_editing_pad_index);
   

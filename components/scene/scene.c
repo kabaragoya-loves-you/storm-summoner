@@ -97,13 +97,13 @@ static void set_default_button_assignments(scene_t* scene) {
   
   if (mode == SCENE_MODE_SINGLE) {
     // Mode 1: Buttons control program changes
-    scene->button_left = action_create_program_prev();
-    scene->button_right = action_create_program_next();
+    scene->button_left = action_create_preset_dec();
+    scene->button_right = action_create_preset_inc();
     scene->button_both.type = ACTION_CONFIRM_PENDING;
   } else {
     // Modes 2 & 3: Buttons control scene navigation
-    scene->button_left = action_create_scene_prev();
-    scene->button_right = action_create_scene_next();
+    scene->button_left = action_create_scene_dec();
+    scene->button_right = action_create_scene_inc();
     scene->button_both.type = ACTION_CONFIRM_PENDING;
   }
 }
@@ -128,7 +128,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Initialize touchpad mappings with default CC actions
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     scene->touchpads[i].enabled = true;
-    scene->touchpads[i].action = action_create_send_cc(DEFAULT_CC_NUMBERS[i], 127);
+    scene->touchpads[i].action = action_create_control(DEFAULT_CC_NUMBERS[i], 127);
   }
   
   // Set default button assignments
@@ -1430,7 +1430,7 @@ esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t 
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
   
   // Create simple CC action
-  mapping->action = action_create_send_cc(cc_number, value);
+  mapping->action = action_create_control(cc_number, value);
   
   scene_persist_if_programming();
   
@@ -2023,12 +2023,12 @@ static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_
 // Note: ACTION_NONE is NULL - we skip serializing empty actions
 static const char* action_type_json_names[] = {
   [ACTION_NONE] = NULL,  // Don't serialize empty actions
-  [ACTION_PROGRAM_NEXT] = "program_next",
-  [ACTION_PROGRAM_PREV] = "program_prev",
-  [ACTION_PROGRAM_SET] = "pc",
-  [ACTION_SCENE_NEXT] = "scene_next",
-  [ACTION_SCENE_PREV] = "scene_prev",
-  [ACTION_SCENE_SET] = "scene_set",
+  [ACTION_PRESET_INC] = "preset_inc",
+  [ACTION_PRESET_DEC] = "preset_dec",
+  [ACTION_PRESET] = "preset",
+  [ACTION_SCENE_INC] = "scene_inc",
+  [ACTION_SCENE_DEC] = "scene_dec",
+  [ACTION_SCENE] = "scene",
   [ACTION_PLAY] = "play",
   [ACTION_STOP] = "stop",
   [ACTION_PAUSE] = "pause",
@@ -2038,19 +2038,18 @@ static const char* action_type_json_names[] = {
   [ACTION_SET_TEMPO] = "set_tempo",
   [ACTION_TEMPO_INC] = "tempo_inc",
   [ACTION_TEMPO_DEC] = "tempo_dec",
-  [ACTION_SEND_CC] = "send_cc",
-  [ACTION_SEND_CC_HOLD] = "send_cc_hold",
-  [ACTION_SEND_CC_CYCLE] = "send_cc_cycle",
-  [ACTION_SEND_NOTE_ON] = "send_note_on",
-  [ACTION_SEND_NOTE_OFF] = "send_note_off",
-  [ACTION_RANDOMIZE_CC] = "randomize_cc",
+  [ACTION_CONTROL] = "control",
+  [ACTION_CONTROL_HOLD] = "control_hold",
+  [ACTION_CONTROL_CYCLE] = "control_cycle",
+  [ACTION_NOTE] = "note",
+  [ACTION_RANDOMIZE] = "randomize",
   [ACTION_CONFIRM_PENDING] = "confirm_pending",
   [ACTION_RESET] = "reset",
   [ACTION_SUSTAIN] = "sustain",
   [ACTION_SOSTENUTO] = "sostenuto",
-  [ACTION_TOUCHWHEEL_MODE] = "tw_mode",
-  [ACTION_TOUCHWHEEL_MODE_HOLD] = "tw_mode_hold",
-  [ACTION_TOUCHWHEEL_MODE_CYCLE] = "tw_mode_cycle"
+  [ACTION_TOUCHWHEEL_MODE] = "touchwheel",
+  [ACTION_TOUCHWHEEL_HOLD] = "touchwheel_hold",
+  [ACTION_TOUCHWHEEL_CYCLE] = "touchwheel_cycle"
 };
 
 // Helper to convert action type string to enum
@@ -2072,6 +2071,27 @@ static action_type_t action_type_from_string(const char* name) {
   if (strcmp(name, "all_notes_off") == 0) return ACTION_RESET;
   if (strcmp(name, "all_sound_off") == 0) return ACTION_RESET;
   if (strcmp(name, "send_reset") == 0) return ACTION_RESET;
+  // Old preset/program names
+  if (strcmp(name, "program_next") == 0) return ACTION_PRESET_INC;
+  if (strcmp(name, "program_prev") == 0) return ACTION_PRESET_DEC;
+  if (strcmp(name, "pc") == 0) return ACTION_PRESET;
+  // Old scene names
+  if (strcmp(name, "scene_next") == 0) return ACTION_SCENE_INC;
+  if (strcmp(name, "scene_prev") == 0) return ACTION_SCENE_DEC;
+  if (strcmp(name, "scene_set") == 0) return ACTION_SCENE;
+  // Old CC/control names
+  if (strcmp(name, "send_cc") == 0) return ACTION_CONTROL;
+  if (strcmp(name, "send_cc_hold") == 0) return ACTION_CONTROL_HOLD;
+  if (strcmp(name, "send_cc_cycle") == 0) return ACTION_CONTROL_CYCLE;
+  // Old note names (both map to the new hold-style ACTION_NOTE)
+  if (strcmp(name, "send_note_on") == 0) return ACTION_NOTE;
+  if (strcmp(name, "send_note_off") == 0) return ACTION_NOTE;
+  // Old randomize name
+  if (strcmp(name, "randomize_cc") == 0) return ACTION_RANDOMIZE;
+  // Old touchwheel names
+  if (strcmp(name, "tw_mode") == 0) return ACTION_TOUCHWHEEL_MODE;
+  if (strcmp(name, "tw_mode_hold") == 0) return ACTION_TOUCHWHEEL_HOLD;
+  if (strcmp(name, "tw_mode_cycle") == 0) return ACTION_TOUCHWHEEL_CYCLE;
   
   return ACTION_NONE;
 }
@@ -2095,44 +2115,44 @@ static cJSON* action_to_json(const action_t* action) {
     return NULL;
   }
   
-  if (action->type == ACTION_SEND_CC || action->type == ACTION_SEND_CC_HOLD) {
-    uint8_t num_ccs = action->params.cc.num_ccs;
+  if (action->type == ACTION_CONTROL || action->type == ACTION_CONTROL_HOLD) {
+    uint8_t num_ccs = action->params.control.num_ccs;
     if (num_ccs == 0) num_ccs = 1;  // Backward compat
     
     if (num_ccs == 1) {
       // Single CC: use simple format for backward compatibility
-      cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_numbers[0]);
-      cJSON_AddNumberToObject(obj, "value", action->params.cc.values[0]);
-      if (action->type == ACTION_SEND_CC_HOLD) {
-        cJSON_AddNumberToObject(obj, "value2", action->params.cc.values2[0]);
+      cJSON_AddNumberToObject(obj, "cc", action->params.control.cc_numbers[0]);
+      cJSON_AddNumberToObject(obj, "value", action->params.control.values[0]);
+      if (action->type == ACTION_CONTROL_HOLD) {
+        cJSON_AddNumberToObject(obj, "value2", action->params.control.values2[0]);
       }
     } else {
       // Multi-CC: use array format
       cJSON* cc_arr = cJSON_CreateArray();
       cJSON* val_arr = cJSON_CreateArray();
-      cJSON* val2_arr = (action->type == ACTION_SEND_CC_HOLD) ? cJSON_CreateArray() : NULL;
+      cJSON* val2_arr = (action->type == ACTION_CONTROL_HOLD) ? cJSON_CreateArray() : NULL;
       for (int i = 0; i < num_ccs && i < 4; i++) {
-        cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.cc.cc_numbers[i]));
-        cJSON_AddItemToArray(val_arr, cJSON_CreateNumber(action->params.cc.values[i]));
+        cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.control.cc_numbers[i]));
+        cJSON_AddItemToArray(val_arr, cJSON_CreateNumber(action->params.control.values[i]));
         if (val2_arr) {
-          cJSON_AddItemToArray(val2_arr, cJSON_CreateNumber(action->params.cc.values2[i]));
+          cJSON_AddItemToArray(val2_arr, cJSON_CreateNumber(action->params.control.values2[i]));
         }
       }
       cJSON_AddItemToObject(obj, "cc", cc_arr);
       cJSON_AddItemToObject(obj, "value", val_arr);
       if (val2_arr) cJSON_AddItemToObject(obj, "value2", val2_arr);
     }
-  } else if (action->type == ACTION_SEND_CC_CYCLE) {
-    uint8_t num_ccs = action->params.cc.num_ccs;
+  } else if (action->type == ACTION_CONTROL_CYCLE) {
+    uint8_t num_ccs = action->params.control.num_ccs;
     if (num_ccs == 0) num_ccs = 1;
-    uint8_t num_steps = action->params.cc.num_cycle_steps;
+    uint8_t num_steps = action->params.control.num_cycle_steps;
     
     if (num_ccs == 1) {
       // Single CC cycle: simple format
-      cJSON_AddNumberToObject(obj, "cc", action->params.cc.cc_numbers[0]);
+      cJSON_AddNumberToObject(obj, "cc", action->params.control.cc_numbers[0]);
       cJSON* vals = cJSON_CreateArray();
       for (int i = 0; i < num_steps && i < 8; i++) {
-        cJSON_AddItemToArray(vals, cJSON_CreateNumber(action->params.cc.cycle_values[0][i]));
+        cJSON_AddItemToArray(vals, cJSON_CreateNumber(action->params.control.cycle_values[0][i]));
       }
       cJSON_AddItemToObject(obj, "values", vals);
     } else {
@@ -2140,36 +2160,36 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON* cc_arr = cJSON_CreateArray();
       cJSON* vals_arr = cJSON_CreateArray();
       for (int i = 0; i < num_ccs && i < 4; i++) {
-        cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.cc.cc_numbers[i]));
+        cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.control.cc_numbers[i]));
         cJSON* steps = cJSON_CreateArray();
         for (int j = 0; j < num_steps && j < 8; j++) {
-          cJSON_AddItemToArray(steps, cJSON_CreateNumber(action->params.cc.cycle_values[i][j]));
+          cJSON_AddItemToArray(steps, cJSON_CreateNumber(action->params.control.cycle_values[i][j]));
         }
         cJSON_AddItemToArray(vals_arr, steps);
       }
       cJSON_AddItemToObject(obj, "cc", cc_arr);
       cJSON_AddItemToObject(obj, "values", vals_arr);
     }
-  } else if (action->type == ACTION_RANDOMIZE_CC) {
+  } else if (action->type == ACTION_RANDOMIZE) {
     // Randomize uses a different struct
     cJSON* cc_arr = cJSON_CreateArray();
     for (int i = 0; i < action->params.randomize.num_ccs && i < 8; i++) {
       cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.randomize.cc_numbers[i]));
     }
     cJSON_AddItemToObject(obj, "cc", cc_arr);
-  } else if (action->type == ACTION_SEND_NOTE_ON || action->type == ACTION_SEND_NOTE_OFF) {
+  } else if (action->type == ACTION_NOTE) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
-  } else if (action->type == ACTION_PROGRAM_SET || action->type == ACTION_SCENE_SET) {
+  } else if (action->type == ACTION_PRESET || action->type == ACTION_SCENE) {
     cJSON_AddNumberToObject(obj, "number", action->params.target.number);
   } else if (action->type == ACTION_SET_TEMPO) {
     cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
   } else if (action->type == ACTION_TOUCHWHEEL_MODE) {
     cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
-  } else if (action->type == ACTION_TOUCHWHEEL_MODE_HOLD) {
+  } else if (action->type == ACTION_TOUCHWHEEL_HOLD) {
     cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
     cJSON_AddNumberToObject(obj, "mode2", action->params.tw_mode.mode2);
-  } else if (action->type == ACTION_TOUCHWHEEL_MODE_CYCLE) {
+  } else if (action->type == ACTION_TOUCHWHEEL_CYCLE) {
     cJSON_AddNumberToObject(obj, "num_modes", action->params.tw_mode.num_modes);
     cJSON* modes = cJSON_CreateArray();
     for (int i = 0; i < action->params.tw_mode.num_modes; i++) {
@@ -2212,23 +2232,23 @@ static action_t json_to_action(cJSON* obj) {
       // Multi-CC format: cc is array
       int num_ccs = cJSON_GetArraySize(cc);
       if (num_ccs > 4) num_ccs = 4;
-      action.params.cc.num_ccs = num_ccs;
+      action.params.control.num_ccs = num_ccs;
       for (int i = 0; i < num_ccs; i++) {
         cJSON* item = cJSON_GetArrayItem(cc, i);
-        if (item) action.params.cc.cc_numbers[i] = item->valueint;
+        if (item) action.params.control.cc_numbers[i] = item->valueint;
       }
       // Parse value array
       if (value && cJSON_IsArray(value)) {
         for (int i = 0; i < num_ccs; i++) {
           cJSON* item = cJSON_GetArrayItem(value, i);
-          if (item) action.params.cc.values[i] = item->valueint;
+          if (item) action.params.control.values[i] = item->valueint;
         }
       }
       // Parse value2 array (for hold)
       if (value2 && cJSON_IsArray(value2)) {
         for (int i = 0; i < num_ccs; i++) {
           cJSON* item = cJSON_GetArrayItem(value2, i);
-          if (item) action.params.cc.values2[i] = item->valueint;
+          if (item) action.params.control.values2[i] = item->valueint;
         }
       }
       // Parse cycle values (array of arrays)
@@ -2238,13 +2258,13 @@ static action_t json_to_action(cJSON* obj) {
           // Multi-CC cycle: values is array of arrays
           int num_steps = cJSON_GetArraySize(first);
           if (num_steps > 8) num_steps = 8;
-          action.params.cc.num_cycle_steps = num_steps;
+          action.params.control.num_cycle_steps = num_steps;
           for (int i = 0; i < num_ccs; i++) {
             cJSON* steps = cJSON_GetArrayItem(values, i);
             if (steps && cJSON_IsArray(steps)) {
               for (int j = 0; j < num_steps; j++) {
                 cJSON* item = cJSON_GetArrayItem(steps, j);
-                if (item) action.params.cc.cycle_values[i][j] = item->valueint;
+                if (item) action.params.control.cycle_values[i][j] = item->valueint;
               }
             }
           }
@@ -2252,29 +2272,29 @@ static action_t json_to_action(cJSON* obj) {
       }
     } else {
       // Single CC format (backward compatible)
-      action.params.cc.num_ccs = 1;
-      action.params.cc.cc_numbers[0] = cc->valueint;
+      action.params.control.num_ccs = 1;
+      action.params.control.cc_numbers[0] = cc->valueint;
       if (value && cJSON_IsNumber(value)) {
-        action.params.cc.values[0] = value->valueint;
+        action.params.control.values[0] = value->valueint;
       }
       if (value2 && cJSON_IsNumber(value2)) {
-        action.params.cc.values2[0] = value2->valueint;
+        action.params.control.values2[0] = value2->valueint;
       }
       // Parse single CC cycle values
       if (values && cJSON_IsArray(values)) {
         int num_steps = cJSON_GetArraySize(values);
         if (num_steps > 8) num_steps = 8;
-        action.params.cc.num_cycle_steps = num_steps;
+        action.params.control.num_cycle_steps = num_steps;
         for (int i = 0; i < num_steps; i++) {
           cJSON* item = cJSON_GetArrayItem(values, i);
-          if (item) action.params.cc.cycle_values[0][i] = item->valueint;
+          if (item) action.params.control.cycle_values[0][i] = item->valueint;
         }
       }
     }
   }
   
   // Parse randomize CC (uses different struct, always array format)
-  if (action.type == ACTION_RANDOMIZE_CC && cc && cJSON_IsArray(cc)) {
+  if (action.type == ACTION_RANDOMIZE && cc && cJSON_IsArray(cc)) {
     int num_ccs = cJSON_GetArraySize(cc);
     if (num_ccs > 8) num_ccs = 8;
     action.params.randomize.num_ccs = num_ccs;

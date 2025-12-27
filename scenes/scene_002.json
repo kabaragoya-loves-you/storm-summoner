@@ -33,7 +33,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "randomize_cc",
+          "type": "randomize",
           "cc": 74,
           "value": 127,
           "comment": "Randomize filter CC"
@@ -44,7 +44,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc_cycle",
+          "type": "control_cycle",
           "cc": 1,
           "num_values": 4,
           "values": [0, 64, 99, 127],
@@ -57,7 +57,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_note_on",
+          "type": "note",
           "note": 60,
           "velocity": 100,
           "comment": "Send middle C"
@@ -68,7 +68,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 5,
           "value": 127
         }
@@ -78,7 +78,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 6,
           "value": 127
         }
@@ -88,7 +88,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 7,
           "value": 127
         }
@@ -98,7 +98,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 8,
           "value": 127
         }
@@ -108,7 +108,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 9,
           "value": 127
         }
@@ -118,7 +118,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 10,
           "value": 127
         }
@@ -128,7 +128,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 11,
           "value": 127
         }
@@ -138,7 +138,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "send_cc",
+          "type": "control",
           "cc": 12,
           "value": 127
         }
@@ -147,12 +147,12 @@
   ],
   "button_left": [
     {
-      "type": "program_prev"
+      "type": "preset_dec"
     }
   ],
   "button_right": [
     {
-      "type": "program_next"
+      "type": "preset_inc"
     }
   ],
   "button_both": [

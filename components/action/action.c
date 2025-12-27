@@ -5,6 +5,7 @@
 #include "transport.h"
 #include "tempo.h"
 #include "screensaver.h"
+#include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_random.h"
 
@@ -15,12 +16,12 @@ static bool s_initialized = false;
 // Action type names for debugging
 static const char* action_type_names[] = {
   [ACTION_NONE] = "None",
-  [ACTION_PROGRAM_NEXT] = "Program Next",
-  [ACTION_PROGRAM_PREV] = "Program Prev",
-  [ACTION_PROGRAM_SET] = "PC",
-  [ACTION_SCENE_NEXT] = "Scene Next",
-  [ACTION_SCENE_PREV] = "Scene Prev",
-  [ACTION_SCENE_SET] = "Scene Set",
+  [ACTION_PRESET_INC] = "Preset +1",
+  [ACTION_PRESET_DEC] = "Preset -1",
+  [ACTION_PRESET] = "Set Preset",
+  [ACTION_SCENE_INC] = "Scene +1",
+  [ACTION_SCENE_DEC] = "Scene -1",
+  [ACTION_SCENE] = "Set Scene",
   [ACTION_PLAY] = "Play",
   [ACTION_STOP] = "Stop",
   [ACTION_PAUSE] = "Pause",
@@ -30,19 +31,18 @@ static const char* action_type_names[] = {
   [ACTION_SET_TEMPO] = "Set Tempo",
   [ACTION_TEMPO_INC] = "Tempo +1",
   [ACTION_TEMPO_DEC] = "Tempo -1",
-  [ACTION_SEND_CC] = "Send CC",
-  [ACTION_SEND_CC_HOLD] = "CC Hold",
-  [ACTION_SEND_CC_CYCLE] = "CC Cycle",
-  [ACTION_SEND_NOTE_ON] = "Note On",
-  [ACTION_SEND_NOTE_OFF] = "Note Off",
-  [ACTION_RANDOMIZE_CC] = "Randomize CC",
+  [ACTION_CONTROL] = "Control",
+  [ACTION_CONTROL_HOLD] = "Control Hold",
+  [ACTION_CONTROL_CYCLE] = "Control Cycle",
+  [ACTION_NOTE] = "Note",
+  [ACTION_RANDOMIZE] = "Randomize",
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
   [ACTION_RESET] = "Reset",
   [ACTION_SUSTAIN] = "Sustain",
   [ACTION_SOSTENUTO] = "Sostenuto",
-  [ACTION_TOUCHWHEEL_MODE] = "TW Mode",
-  [ACTION_TOUCHWHEEL_MODE_HOLD] = "TW Mode Hold",
-  [ACTION_TOUCHWHEEL_MODE_CYCLE] = "TW Mode Cycle"
+  [ACTION_TOUCHWHEEL_MODE] = "Touchwheel",
+  [ACTION_TOUCHWHEEL_HOLD] = "Touchwheel Hold",
+  [ACTION_TOUCHWHEEL_CYCLE] = "Touchwheel Cycle"
 };
 
 esp_err_t action_init(void) {
@@ -74,19 +74,19 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
   uint8_t channel = device_config_get_channel() - 1;  // MIDI uses 0-based channels
   
   switch (action->type) {
-    // Program control
-    case ACTION_PROGRAM_NEXT:
+    // Preset control
+    case ACTION_PRESET_INC:
       if (is_press) device_config_program_next();
       break;
       
-    case ACTION_PROGRAM_PREV:
+    case ACTION_PRESET_DEC:
       if (is_press) device_config_program_prev();
       break;
       
-    case ACTION_PROGRAM_SET:
+    case ACTION_PRESET:
       if (is_press) {
         // Smart PC: uses bank mode setting to decide behavior
-        uint16_t program = action->params.pc.program;
+        uint16_t program = action->params.preset.program;
         if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
           // Bank mode: treat as preset 0-16383
           device_config_set_preset(program);
@@ -98,15 +98,15 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       break;
       
     // Scene control
-    case ACTION_SCENE_NEXT:
+    case ACTION_SCENE_INC:
       if (is_press) scene_next();
       break;
       
-    case ACTION_SCENE_PREV:
+    case ACTION_SCENE_DEC:
       if (is_press) scene_previous();
       break;
       
-    case ACTION_SCENE_SET:
+    case ACTION_SCENE:
       // Scene numbers are 1-based for users, 0-based internally
       if (is_press && action->params.target.number >= 1) {
         scene_set_current(action->params.target.number - 1);
@@ -173,81 +173,102 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    // MIDI CC actions (supports multi-CC: 1-4 CCs per action)
-    case ACTION_SEND_CC:
+    // MIDI Control actions (supports multi-CC: 1-4 CCs per action)
+    case ACTION_CONTROL:
       // Send CC value(s) on press only (one-shot)
       if (is_press) {
-        uint8_t num_ccs = action->params.cc.num_ccs;
+        uint8_t num_ccs = action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
         for (int i = 0; i < num_ccs && i < 4; i++) {
-          send_control_change(channel, action->params.cc.cc_numbers[i], action->params.cc.values[i]);
-          ESP_LOGD(TAG, "Sent CC%d=%d", action->params.cc.cc_numbers[i], action->params.cc.values[i]);
+          send_control_change(channel, action->params.control.cc_numbers[i],
+            action->params.control.values[i]);
+          ESP_LOGD(TAG, "Sent CC%d=%d", action->params.control.cc_numbers[i],
+            action->params.control.values[i]);
         }
       }
       break;
       
-    case ACTION_SEND_CC_HOLD:
+    case ACTION_CONTROL_HOLD:
       // Send value on press, value2 on release (momentary hold behavior)
       {
-        uint8_t num_ccs = action->params.cc.num_ccs;
+        uint8_t num_ccs = action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
         for (int i = 0; i < num_ccs && i < 4; i++) {
-          uint8_t value = is_press ? action->params.cc.values[i] : action->params.cc.values2[i];
-          send_control_change(channel, action->params.cc.cc_numbers[i], value);
-          ESP_LOGD(TAG, "CC%d hold: %d", action->params.cc.cc_numbers[i], value);
+          uint8_t value = is_press ?
+            action->params.control.values[i] : action->params.control.values2[i];
+          send_control_change(channel, action->params.control.cc_numbers[i], value);
+          ESP_LOGD(TAG, "CC%d hold: %d", action->params.control.cc_numbers[i], value);
         }
       }
       break;
       
-    case ACTION_SEND_CC_CYCLE:
+    case ACTION_CONTROL_CYCLE:
       if (is_press) {
         action_t* mutable_action = (action_t*)action;  // Cast away const for state tracking
-        uint8_t num_steps = mutable_action->params.cc.num_cycle_steps;
+        uint8_t num_steps = mutable_action->params.control.num_cycle_steps;
         if (num_steps == 0) {
-          ESP_LOGW(TAG, "CC cycle has no steps defined, skipping");
+          ESP_LOGW(TAG, "Control cycle has no steps defined, skipping");
           break;
         }
-        uint8_t idx = mutable_action->params.cc.current_index;
-        uint8_t num_ccs = mutable_action->params.cc.num_ccs;
+        uint8_t idx = mutable_action->params.control.current_index;
+        uint8_t num_ccs = mutable_action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
         
         // Send current cycle value for each CC
         for (int i = 0; i < num_ccs && i < 4; i++) {
-          uint8_t value = mutable_action->params.cc.cycle_values[i][idx];
-          send_control_change(channel, mutable_action->params.cc.cc_numbers[i], value);
-          ESP_LOGD(TAG, "Cycled CC%d to %d", mutable_action->params.cc.cc_numbers[i], value);
+          uint8_t value = mutable_action->params.control.cycle_values[i][idx];
+          send_control_change(channel, mutable_action->params.control.cc_numbers[i], value);
+          ESP_LOGD(TAG, "Cycled CC%d to %d", mutable_action->params.control.cc_numbers[i], value);
         }
         
         // Advance to next step (shared across all CCs)
-        mutable_action->params.cc.current_index = (idx + 1) % num_steps;
+        mutable_action->params.control.current_index = (idx + 1) % num_steps;
       }
       break;
       
-    // Note actions
-    case ACTION_SEND_NOTE_ON:
+    // Note action (hold-style: press=on, release=off)
+    case ACTION_NOTE:
       if (is_press) {
         send_note_on(channel, action->params.note.note, action->params.note.velocity);
         ESP_LOGD(TAG, "Note On: %d vel=%d", action->params.note.note, action->params.note.velocity);
-      }
-      break;
-      
-    case ACTION_SEND_NOTE_OFF:
-      if (!is_press) {
+      } else {
         send_note_off(channel, action->params.note.note, 0);
         ESP_LOGD(TAG, "Note Off: %d", action->params.note.note);
       }
       break;
       
     // Randomization
-    case ACTION_RANDOMIZE_CC:
+    case ACTION_RANDOMIZE:
       if (is_press) {
+        // Get device definition for control constraints
+        uint8_t scene_index = scene_get_current_index();
+        const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+        
         for (int i = 0; i < action->params.randomize.num_ccs; i++) {
           uint8_t cc = action->params.randomize.cc_numbers[i];
-          uint8_t random_val = esp_random() % 128;
+          uint8_t random_val;
+          
+          // Look up control definition
+          const midi_control_t* ctrl = device ? 
+            assets_get_control_by_cc(device, cc) : NULL;
+          
+          if (ctrl && ctrl->discrete_count > 0 && ctrl->discrete_values) {
+            // Has discrete values: pick one randomly
+            uint8_t idx = esp_random() % ctrl->discrete_count;
+            random_val = ctrl->discrete_values[idx].value;
+          } else if (ctrl) {
+            // Use min/max range
+            uint8_t range = ctrl->max - ctrl->min + 1;
+            random_val = ctrl->min + (esp_random() % range);
+          } else {
+            // Fallback: full 0-127 range
+            random_val = esp_random() % 128;
+          }
+          
           send_control_change(channel, cc, random_val);
           ESP_LOGD(TAG, "Randomized CC%d to %d", cc, random_val);
         }
-        ESP_LOGI(TAG, "Randomized %d CCs", action->params.randomize.num_ccs);
+        ESP_LOGD(TAG, "Randomized %d CCs", action->params.randomize.num_ccs);
       }
       break;
       
@@ -294,7 +315,7 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    case ACTION_TOUCHWHEEL_MODE_HOLD:
+    case ACTION_TOUCHWHEEL_HOLD:
       // Set mode on press, restore mode2 on release
       {
         uint8_t scene_index = scene_get_current_index();
@@ -304,7 +325,7 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       }
       break;
       
-    case ACTION_TOUCHWHEEL_MODE_CYCLE:
+    case ACTION_TOUCHWHEEL_CYCLE:
       if (is_press) {
         action_t* mutable_action = (action_t*)action;
         uint8_t idx = mutable_action->params.tw_mode.current_index;
@@ -331,46 +352,46 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
 }
 
 // Helper functions to create common actions
-action_t action_create_send_cc(uint8_t cc_number, uint8_t value) {
+action_t action_create_control(uint8_t cc_number, uint8_t value) {
   action_t action = {0};
-  action.type = ACTION_SEND_CC;
-  action.params.cc.num_ccs = 1;
-  action.params.cc.cc_numbers[0] = cc_number;
-  action.params.cc.values[0] = value;
+  action.type = ACTION_CONTROL;
+  action.params.control.num_ccs = 1;
+  action.params.control.cc_numbers[0] = cc_number;
+  action.params.control.values[0] = value;
   return action;
 }
 
-action_t action_create_cc_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value) {
+action_t action_create_control_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value) {
   action_t action = {0};
-  action.type = ACTION_SEND_CC_HOLD;
-  action.params.cc.num_ccs = 1;
-  action.params.cc.cc_numbers[0] = cc_number;
-  action.params.cc.values[0] = press_value;
-  action.params.cc.values2[0] = release_value;
+  action.type = ACTION_CONTROL_HOLD;
+  action.params.control.num_ccs = 1;
+  action.params.control.cc_numbers[0] = cc_number;
+  action.params.control.values[0] = press_value;
+  action.params.control.values2[0] = release_value;
   return action;
 }
 
-action_t action_create_program_next(void) {
+action_t action_create_preset_inc(void) {
   action_t action = {0};
-  action.type = ACTION_PROGRAM_NEXT;
+  action.type = ACTION_PRESET_INC;
   return action;
 }
 
-action_t action_create_program_prev(void) {
+action_t action_create_preset_dec(void) {
   action_t action = {0};
-  action.type = ACTION_PROGRAM_PREV;
+  action.type = ACTION_PRESET_DEC;
   return action;
 }
 
-action_t action_create_scene_next(void) {
+action_t action_create_scene_inc(void) {
   action_t action = {0};
-  action.type = ACTION_SCENE_NEXT;
+  action.type = ACTION_SCENE_INC;
   return action;
 }
 
-action_t action_create_scene_prev(void) {
+action_t action_create_scene_dec(void) {
   action_t action = {0};
-  action.type = ACTION_SCENE_PREV;
+  action.type = ACTION_SCENE_DEC;
   return action;
 }
 
@@ -424,9 +445,9 @@ action_t action_create_touchwheel_mode(uint8_t mode) {
   return action;
 }
 
-action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_mode) {
+action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode) {
   action_t action = {0};
-  action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+  action.type = ACTION_TOUCHWHEEL_HOLD;
   action.params.tw_mode.mode = press_mode;
   action.params.tw_mode.mode2 = release_mode;
   return action;
@@ -435,8 +456,9 @@ action_t action_create_touchwheel_mode_hold(uint8_t press_mode, uint8_t release_
 // Actions that require press/release (hold) behavior
 // These should NOT be assigned to bump or on_load
 static const action_type_t hold_actions[] = {
-  ACTION_SEND_CC_HOLD,
-  ACTION_TOUCHWHEEL_MODE_HOLD,
+  ACTION_CONTROL_HOLD,
+  ACTION_NOTE,
+  ACTION_TOUCHWHEEL_HOLD,
   ACTION_SUSTAIN,
   ACTION_SOSTENUTO,
 };

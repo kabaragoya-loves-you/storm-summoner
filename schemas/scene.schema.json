@@ -317,12 +317,12 @@
         "type": {
           "type": "string",
           "enum": [
-            "program_next",
-            "program_prev",
-            "pc",
-            "scene_next",
-            "scene_prev",
-            "scene_set",
+            "preset_inc",
+            "preset_dec",
+            "preset",
+            "scene_inc",
+            "scene_dec",
+            "scene",
             "play",
             "stop",
             "pause",
@@ -332,19 +332,18 @@
             "set_tempo",
             "tempo_inc",
             "tempo_dec",
-            "send_cc",
-            "send_cc_hold",
-            "send_cc_cycle",
-            "send_note_on",
-            "send_note_off",
-            "randomize_cc",
+            "control",
+            "control_hold",
+            "control_cycle",
+            "note",
+            "randomize",
             "confirm_pending",
             "reset",
             "sustain",
             "sostenuto",
-            "tw_mode",
-            "tw_mode_hold",
-            "tw_mode_cycle"
+            "touchwheel",
+            "touchwheel_hold",
+            "touchwheel_cycle"
           ],
           "description": "Action type name"
         }
@@ -353,7 +352,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["send_cc", "send_cc_hold", "send_cc_cycle", "randomize_cc"]}
+              "type": {"enum": ["control", "control_hold", "control_cycle"]}
             }
           },
           "then": {
@@ -446,7 +445,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["send_note_on", "send_note_off"]}
+              "type": {"enum": ["note"]}
             }
           },
           "then": {
@@ -471,7 +470,7 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "scene_set"}
+              "type": {"const": "scene"}
             }
           },
           "then": {
@@ -489,25 +488,7 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "send_song_select"}
-            }
-          },
-          "then": {
-            "required": ["number"],
-            "properties": {
-              "number": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
-                "description": "Song number (0-127)"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {"const": "pc"}
+              "type": {"const": "preset"}
             }
           },
           "then": {
@@ -525,31 +506,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["send_nrpn", "send_rpn"]}
-            }
-          },
-          "then": {
-            "required": ["parameter", "value"],
-            "properties": {
-              "parameter": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 16383,
-                "description": "NRPN/RPN parameter number"
-              },
-              "value": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 16383,
-                "description": "14-bit value"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {"const": "randomize_cc"}
+              "type": {"const": "randomize"}
             }
           },
           "then": {

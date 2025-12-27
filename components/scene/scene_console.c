@@ -46,14 +46,14 @@ static void format_cc_value_with_discrete(const device_def_t* device, uint8_t cc
 static void format_action_details_with_device(const action_t* action, const device_def_t* device,
   char* buf, size_t buf_size) {
   switch (action->type) {
-    case ACTION_SEND_CC: {
-      uint8_t num_ccs = action->params.cc.num_ccs;
+    case ACTION_CONTROL: {
+      uint8_t num_ccs = action->params.control.num_ccs;
       if (num_ccs == 0) num_ccs = 1;  // Backward compat
       if (num_ccs == 1) {
-        uint8_t cc = action->params.cc.cc_numbers[0];
+        uint8_t cc = action->params.control.cc_numbers[0];
         const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
         char val_buf[32];
-        format_cc_value_with_discrete(device, cc, action->params.cc.values[0], val_buf, sizeof(val_buf));
+        format_cc_value_with_discrete(device, cc, action->params.control.values[0], val_buf, sizeof(val_buf));
         if (cc_name && strcmp(cc_name, "Undefined") != 0) {
           snprintf(buf, buf_size, "CC%d %s - %s", cc, cc_name, val_buf);
         } else {
@@ -63,37 +63,37 @@ static void format_action_details_with_device(const action_t* action, const devi
         int pos = snprintf(buf, buf_size, "MultiCC:");
         for (int i = 0; i < num_ccs && i < 4 && pos < (int)buf_size - 10; i++) {
           pos += snprintf(buf + pos, buf_size - pos, " %d=%d",
-            action->params.cc.cc_numbers[i], action->params.cc.values[i]);
+            action->params.control.cc_numbers[i], action->params.control.values[i]);
         }
       }
       break;
     }
-    case ACTION_SEND_CC_HOLD: {
-      uint8_t num_ccs = action->params.cc.num_ccs;
+    case ACTION_CONTROL_HOLD: {
+      uint8_t num_ccs = action->params.control.num_ccs;
       if (num_ccs == 0) num_ccs = 1;
       if (num_ccs == 1) {
-        uint8_t cc = action->params.cc.cc_numbers[0];
+        uint8_t cc = action->params.control.cc_numbers[0];
         const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
         if (cc_name && strcmp(cc_name, "Undefined") != 0) {
           snprintf(buf, buf_size, "CC%d %s hold:%d/%d", cc, cc_name,
-            action->params.cc.values[0], action->params.cc.values2[0]);
+            action->params.control.values[0], action->params.control.values2[0]);
         } else {
           snprintf(buf, buf_size, "CC%d hold:%d/%d", cc,
-            action->params.cc.values[0], action->params.cc.values2[0]);
+            action->params.control.values[0], action->params.control.values2[0]);
         }
       } else {
         int pos = snprintf(buf, buf_size, "MultiCC hold:");
         for (int i = 0; i < num_ccs && i < 4 && pos < (int)buf_size - 15; i++) {
           pos += snprintf(buf + pos, buf_size - pos, " %d:%d/%d",
-            action->params.cc.cc_numbers[i], action->params.cc.values[i], action->params.cc.values2[i]);
+            action->params.control.cc_numbers[i], action->params.control.values[i], action->params.control.values2[i]);
         }
       }
       break;
     }
-    case ACTION_SEND_CC_CYCLE: {
-      uint8_t num_ccs = action->params.cc.num_ccs;
+    case ACTION_CONTROL_CYCLE: {
+      uint8_t num_ccs = action->params.control.num_ccs;
       if (num_ccs == 0) num_ccs = 1;
-      uint8_t cc = action->params.cc.cc_numbers[0];
+      uint8_t cc = action->params.control.cc_numbers[0];
       const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
       int pos;
       if (num_ccs == 1) {
@@ -102,23 +102,20 @@ static void format_action_details_with_device(const action_t* action, const devi
         } else {
           pos = snprintf(buf, buf_size, "CC%d cycle:", cc);
         }
-        for (int i = 0; i < action->params.cc.num_cycle_steps && pos < (int)buf_size - 4; i++) {
+        for (int i = 0; i < action->params.control.num_cycle_steps && pos < (int)buf_size - 4; i++) {
           pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
-            action->params.cc.cycle_values[0][i]);
+            action->params.control.cycle_values[0][i]);
         }
       } else {
         pos = snprintf(buf, buf_size, "MultiCC cycle (%d CCs, %d steps)",
-          num_ccs, action->params.cc.num_cycle_steps);
+          num_ccs, action->params.control.num_cycle_steps);
       }
       break;
     }
-    case ACTION_SEND_NOTE_ON:
+    case ACTION_NOTE:
       snprintf(buf, buf_size, "Note %d vel=%d", action->params.note.note, action->params.note.velocity);
       break;
-    case ACTION_SEND_NOTE_OFF:
-      snprintf(buf, buf_size, "Note Off %d", action->params.note.note);
-      break;
-    case ACTION_RANDOMIZE_CC: {
+    case ACTION_RANDOMIZE: {
       int pos = snprintf(buf, buf_size, "Randomize CC");
       for (int i = 0; i < action->params.randomize.num_ccs && pos < (int)buf_size - 4; i++) {
         pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
@@ -126,10 +123,10 @@ static void format_action_details_with_device(const action_t* action, const devi
       }
       break;
     }
-    case ACTION_PROGRAM_SET:
-      snprintf(buf, buf_size, "PC %d", action->params.pc.program);
+    case ACTION_PRESET:
+      snprintf(buf, buf_size, "PC %d", action->params.preset.program);
       break;
-    case ACTION_SCENE_SET:
+    case ACTION_SCENE:
       snprintf(buf, buf_size, "Scene %d", action->params.target.number);
       break;
     case ACTION_SET_TEMPO:
@@ -138,10 +135,10 @@ static void format_action_details_with_device(const action_t* action, const devi
     case ACTION_TOUCHWHEEL_MODE:
       snprintf(buf, buf_size, "TW Mode %d", action->params.tw_mode.mode);
       break;
-    case ACTION_TOUCHWHEEL_MODE_HOLD:
-      snprintf(buf, buf_size, "TW Mode %d/%d", action->params.tw_mode.mode, action->params.tw_mode.mode2);
+    case ACTION_TOUCHWHEEL_HOLD:
+      snprintf(buf, buf_size, "Touchwheel Hold %d/%d", action->params.tw_mode.mode, action->params.tw_mode.mode2);
       break;
-    case ACTION_TOUCHWHEEL_MODE_CYCLE: {
+    case ACTION_TOUCHWHEEL_CYCLE: {
       int pos = snprintf(buf, buf_size, "TW Mode cycle:");
       for (int i = 0; i < action->params.tw_mode.num_modes && pos < (int)buf_size - 4; i++) {
         pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
@@ -792,8 +789,8 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_SEND_CC;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       int cc_num = mcc.cc_numbers[i];
       int value = mcc.values[i];
@@ -813,8 +810,8 @@ static int cmd_pad(int argc, char **argv) {
           }
         }
       }
-      action.params.cc.cc_numbers[i] = cc_num;
-      action.params.cc.values[i] = value;
+      action.params.control.cc_numbers[i] = cc_num;
+      action.params.control.values[i] = value;
     }
     ESP_LOGI(TAG, "CC action with %d CC(s)", mcc.num_ccs);
   }
@@ -830,8 +827,8 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_SEND_CC_HOLD;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL_HOLD;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       int cc_num = mcc.cc_numbers[i];
       int press_val = mcc.values[i];
@@ -845,9 +842,9 @@ static int cmd_pad(int argc, char **argv) {
           release_val = assets_snap_to_discrete(device, cc_num, release_val);
         }
       }
-      action.params.cc.cc_numbers[i] = cc_num;
-      action.params.cc.values[i] = press_val;
-      action.params.cc.values2[i] = release_val;
+      action.params.control.cc_numbers[i] = cc_num;
+      action.params.control.values[i] = press_val;
+      action.params.control.values2[i] = release_val;
     }
     ESP_LOGI(TAG, "CC Hold action with %d CC(s)", mcc.num_ccs);
   }
@@ -856,7 +853,7 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: pad <num> note_on <note> <velocity>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_ON;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(pad_args.params->sval[0]);
     action.params.note.velocity = atoi(pad_args.params->sval[1]);
   }
@@ -865,7 +862,7 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: pad <num> note_off <note>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_OFF;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(pad_args.params->sval[0]);
     action.params.note.velocity = 0;
   }
@@ -874,8 +871,8 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: pad <num> pc <program> (0-127 or 0-16383 with bank mode)");
       return 1;
     }
-    action.type = ACTION_PROGRAM_SET;
-    action.params.pc.program = atoi(pad_args.params->sval[0]);
+    action.type = ACTION_PRESET;
+    action.params.preset.program = atoi(pad_args.params->sval[0]);
   }
   else if (strcmp(action_str, "randomize") == 0) {
     if (pad_args.params->count < 1) {
@@ -883,7 +880,7 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_RANDOMIZE_CC;
+    action.type = ACTION_RANDOMIZE;
     action.params.randomize.num_ccs = 0;
     
     // Collect all CC numbers from params array
@@ -905,14 +902,14 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_SEND_CC_CYCLE;
-    action.params.cc.num_ccs = mcc.num_ccs;
-    action.params.cc.num_cycle_steps = mcc.num_cycle_steps;
-    action.params.cc.current_index = 0;
+    action.type = ACTION_CONTROL_CYCLE;
+    action.params.control.num_ccs = mcc.num_ccs;
+    action.params.control.num_cycle_steps = mcc.num_cycle_steps;
+    action.params.control.current_index = 0;
     
     for (int i = 0; i < mcc.num_ccs; i++) {
       int cc_num = mcc.cc_numbers[i];
-      action.params.cc.cc_numbers[i] = cc_num;
+      action.params.control.cc_numbers[i] = cc_num;
       // Device-aware validation for each cycle value
       for (int j = 0; j < mcc.num_cycle_steps; j++) {
         int val = mcc.cycle_values[i][j];
@@ -922,7 +919,7 @@ static int cmd_pad(int argc, char **argv) {
             val = assets_snap_to_discrete(device, cc_num, val);
           }
         }
-        action.params.cc.cycle_values[i][j] = val;
+        action.params.control.cycle_values[i][j] = val;
       }
     }
     ESP_LOGI(TAG, "CC Cycle with %d CC(s), %d steps", mcc.num_ccs, mcc.num_cycle_steps);
@@ -959,16 +956,16 @@ static int cmd_pad(int argc, char **argv) {
     action = action_create_transport(ACTION_RECORD);
   }
   else if (strcmp(action_str, "program_next") == 0) {
-    action = action_create_program_next();
+    action = action_create_preset_inc();
   }
   else if (strcmp(action_str, "program_prev") == 0) {
-    action = action_create_program_prev();
+    action = action_create_preset_dec();
   }
   else if (strcmp(action_str, "scene_next") == 0) {
-    action = action_create_scene_next();
+    action = action_create_scene_inc();
   }
   else if (strcmp(action_str, "scene_prev") == 0) {
-    action = action_create_scene_prev();
+    action = action_create_scene_dec();
   }
   else if (strcmp(action_str, "confirm_pending") == 0) {
     action.type = ACTION_CONFIRM_PENDING;
@@ -989,7 +986,7 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: pad <num> scene_set <1-128>");
       return 1;
     }
-    action.type = ACTION_SCENE_SET;
+    action.type = ACTION_SCENE;
     action.params.target.number = atoi(pad_args.params->sval[0]);
   }
   // Touchwheel mode actions
@@ -1006,7 +1003,7 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: pad <num> tw_mode_hold <press_mode> <release_mode>");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.type = ACTION_TOUCHWHEEL_HOLD;
     action.params.tw_mode.mode = atoi(pad_args.params->sval[0]);
     action.params.tw_mode.mode2 = atoi(pad_args.params->sval[1]);
   }
@@ -1015,7 +1012,7 @@ static int cmd_pad(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: pad <num> tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.type = ACTION_TOUCHWHEEL_CYCLE;
     action.params.tw_mode.num_modes = 0;
     for (int i = 0; i < pad_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
       action.params.tw_mode.modes[action.params.tw_mode.num_modes++] = atoi(pad_args.params->sval[i]);
@@ -1066,11 +1063,11 @@ static int cmd_button(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
-      action.params.cc.values[i] = mcc.values[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.values[i] = mcc.values[i];
     }
   }
   else if (strcmp(action_str, "cc_hold") == 0) {
@@ -1083,12 +1080,12 @@ static int cmd_button(int argc, char **argv) {
         MULTI_CC_MODE_CC_HOLD, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC_HOLD;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL_HOLD;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
-      action.params.cc.values[i] = mcc.values[i];
-      action.params.cc.values2[i] = mcc.values2[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.values[i] = mcc.values[i];
+      action.params.control.values2[i] = mcc.values2[i];
     }
   }
   else if (strcmp(action_str, "cc_cycle") == 0) {
@@ -1101,14 +1098,14 @@ static int cmd_button(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC_CYCLE;
-    action.params.cc.num_ccs = mcc.num_ccs;
-    action.params.cc.num_cycle_steps = mcc.num_cycle_steps;
-    action.params.cc.current_index = 0;
+    action.type = ACTION_CONTROL_CYCLE;
+    action.params.control.num_ccs = mcc.num_ccs;
+    action.params.control.num_cycle_steps = mcc.num_cycle_steps;
+    action.params.control.current_index = 0;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
       for (int j = 0; j < mcc.num_cycle_steps; j++) {
-        action.params.cc.cycle_values[i][j] = mcc.cycle_values[i][j];
+        action.params.control.cycle_values[i][j] = mcc.cycle_values[i][j];
       }
     }
   }
@@ -1132,16 +1129,16 @@ static int cmd_button(int argc, char **argv) {
     action.type = ACTION_TEMPO_DEC;
   }
   else if (strcmp(action_str, "program_next") == 0) {
-    action = action_create_program_next();
+    action = action_create_preset_inc();
   }
   else if (strcmp(action_str, "program_prev") == 0) {
-    action = action_create_program_prev();
+    action = action_create_preset_dec();
   }
   else if (strcmp(action_str, "scene_next") == 0) {
-    action = action_create_scene_next();
+    action = action_create_scene_inc();
   }
   else if (strcmp(action_str, "scene_prev") == 0) {
-    action = action_create_scene_prev();
+    action = action_create_scene_dec();
   }
   else if (strcmp(action_str, "confirm_pending") == 0) {
     action.type = ACTION_CONFIRM_PENDING;
@@ -1167,7 +1164,7 @@ static int cmd_button(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: button <name> scene_set <1-128>");
       return 1;
     }
-    action.type = ACTION_SCENE_SET;
+    action.type = ACTION_SCENE;
     action.params.target.number = atoi(button_args.params->sval[0]);
   }
   else if (strcmp(action_str, "note_on") == 0) {
@@ -1175,7 +1172,7 @@ static int cmd_button(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: button <name> note_on <note> <velocity>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_ON;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(button_args.params->sval[0]);
     action.params.note.velocity = atoi(button_args.params->sval[1]);
   }
@@ -1184,7 +1181,7 @@ static int cmd_button(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: button <name> note_off <note>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_OFF;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(button_args.params->sval[0]);
     action.params.note.velocity = 0;
   }
@@ -1193,15 +1190,15 @@ static int cmd_button(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: button <name> pc <program> (0-127 or 0-16383 with bank mode)");
       return 1;
     }
-    action.type = ACTION_PROGRAM_SET;
-    action.params.pc.program = atoi(button_args.params->sval[0]);
+    action.type = ACTION_PRESET;
+    action.params.preset.program = atoi(button_args.params->sval[0]);
   }
   else if (strcmp(action_str, "randomize") == 0) {
     if (button_args.params->count < 1) {
       ESP_LOGE(TAG, "Usage: button <name> randomize <cc_num> [cc2] ...");
       return 1;
     }
-    action.type = ACTION_RANDOMIZE_CC;
+    action.type = ACTION_RANDOMIZE;
     action.params.randomize.num_ccs = 0;
     for (int i = 0; i < button_args.params->count && action.params.randomize.num_ccs < 8; i++) {
       action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] =
@@ -1222,7 +1219,7 @@ static int cmd_button(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: button <name> tw_mode_hold <press_mode> <release_mode>");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.type = ACTION_TOUCHWHEEL_HOLD;
     action.params.tw_mode.mode = atoi(button_args.params->sval[0]);
     action.params.tw_mode.mode2 = atoi(button_args.params->sval[1]);
   }
@@ -1231,7 +1228,7 @@ static int cmd_button(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: button <name> tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.type = ACTION_TOUCHWHEEL_CYCLE;
     action.params.tw_mode.num_modes = 0;
     for (int i = 0; i < button_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
       action.params.tw_mode.modes[action.params.tw_mode.num_modes++] =
@@ -1292,11 +1289,11 @@ static int cmd_bump(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
-      action.params.cc.values[i] = mcc.values[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.values[i] = mcc.values[i];
     }
   }
   else if (strcmp(action_str, "cc_hold") == 0) {
@@ -1310,12 +1307,12 @@ static int cmd_bump(int argc, char **argv) {
         MULTI_CC_MODE_CC_HOLD, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC_HOLD;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL_HOLD;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
-      action.params.cc.values[i] = mcc.values[i];
-      action.params.cc.values2[i] = mcc.values2[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.values[i] = mcc.values[i];
+      action.params.control.values2[i] = mcc.values2[i];
     }
   }
   else if (strcmp(action_str, "cc_cycle") == 0) {
@@ -1328,14 +1325,14 @@ static int cmd_bump(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC_CYCLE;
-    action.params.cc.num_ccs = mcc.num_ccs;
-    action.params.cc.num_cycle_steps = mcc.num_cycle_steps;
-    action.params.cc.current_index = 0;
+    action.type = ACTION_CONTROL_CYCLE;
+    action.params.control.num_ccs = mcc.num_ccs;
+    action.params.control.num_cycle_steps = mcc.num_cycle_steps;
+    action.params.control.current_index = 0;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
       for (int j = 0; j < mcc.num_cycle_steps; j++) {
-        action.params.cc.cycle_values[i][j] = mcc.cycle_values[i][j];
+        action.params.control.cycle_values[i][j] = mcc.cycle_values[i][j];
       }
     }
   }
@@ -1359,16 +1356,16 @@ static int cmd_bump(int argc, char **argv) {
     action.type = ACTION_TEMPO_DEC;
   }
   else if (strcmp(action_str, "program_next") == 0) {
-    action = action_create_program_next();
+    action = action_create_preset_inc();
   }
   else if (strcmp(action_str, "program_prev") == 0) {
-    action = action_create_program_prev();
+    action = action_create_preset_dec();
   }
   else if (strcmp(action_str, "scene_next") == 0) {
-    action = action_create_scene_next();
+    action = action_create_scene_inc();
   }
   else if (strcmp(action_str, "scene_prev") == 0) {
-    action = action_create_scene_prev();
+    action = action_create_scene_dec();
   }
   else if (strcmp(action_str, "confirm_pending") == 0) {
     action.type = ACTION_CONFIRM_PENDING;
@@ -1394,7 +1391,7 @@ static int cmd_bump(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: bump scene_set <1-128>");
       return 1;
     }
-    action.type = ACTION_SCENE_SET;
+    action.type = ACTION_SCENE;
     action.params.target.number = atoi(bump_args.params->sval[0]);
   }
   else if (strcmp(action_str, "note_on") == 0) {
@@ -1402,7 +1399,7 @@ static int cmd_bump(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: bump note_on <note> <velocity>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_ON;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(bump_args.params->sval[0]);
     action.params.note.velocity = atoi(bump_args.params->sval[1]);
   }
@@ -1411,7 +1408,7 @@ static int cmd_bump(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: bump note_off <note>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_OFF;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(bump_args.params->sval[0]);
     action.params.note.velocity = 0;
   }
@@ -1420,15 +1417,15 @@ static int cmd_bump(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: bump pc <program> (0-127 or 0-16383 with bank mode)");
       return 1;
     }
-    action.type = ACTION_PROGRAM_SET;
-    action.params.pc.program = atoi(bump_args.params->sval[0]);
+    action.type = ACTION_PRESET;
+    action.params.preset.program = atoi(bump_args.params->sval[0]);
   }
   else if (strcmp(action_str, "randomize") == 0) {
     if (bump_args.params->count < 1) {
       ESP_LOGE(TAG, "Usage: bump randomize <cc_num> [cc2] ...");
       return 1;
     }
-    action.type = ACTION_RANDOMIZE_CC;
+    action.type = ACTION_RANDOMIZE;
     action.params.randomize.num_ccs = 0;
     for (int i = 0; i < bump_args.params->count && action.params.randomize.num_ccs < 8; i++) {
       action.params.randomize.cc_numbers[action.params.randomize.num_ccs++] =
@@ -1450,7 +1447,7 @@ static int cmd_bump(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: bump tw_mode_hold <press_mode> <release_mode>");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.type = ACTION_TOUCHWHEEL_HOLD;
     action.params.tw_mode.mode = atoi(bump_args.params->sval[0]);
     action.params.tw_mode.mode2 = atoi(bump_args.params->sval[1]);
   }
@@ -1459,7 +1456,7 @@ static int cmd_bump(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: bump tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.type = ACTION_TOUCHWHEEL_CYCLE;
     action.params.tw_mode.num_modes = 0;
     for (int i = 0; i < bump_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
       action.params.tw_mode.modes[action.params.tw_mode.num_modes++] =
@@ -1522,11 +1519,11 @@ static int cmd_expr_switch(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
-      action.params.cc.values[i] = mcc.values[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.values[i] = mcc.values[i];
     }
   }
   else if (strcmp(action_str, "cc_hold") == 0) {
@@ -1539,12 +1536,12 @@ static int cmd_expr_switch(int argc, char **argv) {
         MULTI_CC_MODE_CC_HOLD, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC_HOLD;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL_HOLD;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
-      action.params.cc.values[i] = mcc.values[i];
-      action.params.cc.values2[i] = mcc.values2[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.values[i] = mcc.values[i];
+      action.params.control.values2[i] = mcc.values2[i];
     }
   }
   else if (strcmp(action_str, "cc_cycle") == 0) {
@@ -1557,14 +1554,14 @@ static int cmd_expr_switch(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC_CYCLE;
-    action.params.cc.num_ccs = mcc.num_ccs;
-    action.params.cc.num_cycle_steps = mcc.num_cycle_steps;
-    action.params.cc.current_index = 0;
+    action.type = ACTION_CONTROL_CYCLE;
+    action.params.control.num_ccs = mcc.num_ccs;
+    action.params.control.num_cycle_steps = mcc.num_cycle_steps;
+    action.params.control.current_index = 0;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
       for (int j = 0; j < mcc.num_cycle_steps; j++) {
-        action.params.cc.cycle_values[i][j] = mcc.cycle_values[i][j];
+        action.params.control.cycle_values[i][j] = mcc.cycle_values[i][j];
       }
     }
   }
@@ -1588,16 +1585,16 @@ static int cmd_expr_switch(int argc, char **argv) {
     action.type = ACTION_TEMPO_DEC;
   }
   else if (strcmp(action_str, "program_next") == 0) {
-    action = action_create_program_next();
+    action = action_create_preset_inc();
   }
   else if (strcmp(action_str, "program_prev") == 0) {
-    action = action_create_program_prev();
+    action = action_create_preset_dec();
   }
   else if (strcmp(action_str, "scene_next") == 0) {
-    action = action_create_scene_next();
+    action = action_create_scene_inc();
   }
   else if (strcmp(action_str, "scene_prev") == 0) {
-    action = action_create_scene_prev();
+    action = action_create_scene_dec();
   }
   else if (strcmp(action_str, "confirm_pending") == 0) {
     action.type = ACTION_CONFIRM_PENDING;
@@ -1607,7 +1604,7 @@ static int cmd_expr_switch(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: expr_switch scene_set <1-128>");
       return 1;
     }
-    action.type = ACTION_SCENE_SET;
+    action.type = ACTION_SCENE;
     action.params.target.number = atoi(expr_switch_args.params->sval[0]);
   }
   else if (strcmp(action_str, "sustain") == 0) {
@@ -1621,7 +1618,7 @@ static int cmd_expr_switch(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: expr_switch note_on <note> <velocity>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_ON;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(expr_switch_args.params->sval[0]);
     action.params.note.velocity = atoi(expr_switch_args.params->sval[1]);
   }
@@ -1630,7 +1627,7 @@ static int cmd_expr_switch(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: expr_switch note_off <note>");
       return 1;
     }
-    action.type = ACTION_SEND_NOTE_OFF;
+    action.type = ACTION_NOTE;
     action.params.note.note = atoi(expr_switch_args.params->sval[0]);
     action.params.note.velocity = 0;
   }
@@ -1639,8 +1636,8 @@ static int cmd_expr_switch(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: expr_switch pc <program>");
       return 1;
     }
-    action.type = ACTION_PROGRAM_SET;
-    action.params.pc.program = atoi(expr_switch_args.params->sval[0]);
+    action.type = ACTION_PRESET;
+    action.params.preset.program = atoi(expr_switch_args.params->sval[0]);
   }
   // Touchwheel mode actions
   else if (strcmp(action_str, "tw_mode") == 0) {
@@ -1656,7 +1653,7 @@ static int cmd_expr_switch(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: expr_switch tw_mode_hold <press_mode> <release_mode>");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_HOLD;
+    action.type = ACTION_TOUCHWHEEL_HOLD;
     action.params.tw_mode.mode = atoi(expr_switch_args.params->sval[0]);
     action.params.tw_mode.mode2 = atoi(expr_switch_args.params->sval[1]);
   }
@@ -1665,7 +1662,7 @@ static int cmd_expr_switch(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: expr_switch tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_MODE_CYCLE;
+    action.type = ACTION_TOUCHWHEEL_CYCLE;
     action.params.tw_mode.num_modes = 0;
     for (int i = 0; i < expr_switch_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
       action.params.tw_mode.modes[action.params.tw_mode.num_modes++] =
@@ -1753,11 +1750,11 @@ static int cmd_on_load(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC;
-    action.params.cc.num_ccs = mcc.num_ccs;
+    action.type = ACTION_CONTROL;
+    action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
-      action.params.cc.values[i] = mcc.values[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.values[i] = mcc.values[i];
     }
   }
   else if (strcmp(subcmd, "cc_cycle") == 0) {
@@ -1771,14 +1768,14 @@ static int cmd_on_load(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_SEND_CC_CYCLE;
-    action.params.cc.num_ccs = mcc.num_ccs;
-    action.params.cc.num_cycle_steps = mcc.num_cycle_steps;
-    action.params.cc.current_index = 0;
+    action.type = ACTION_CONTROL_CYCLE;
+    action.params.control.num_ccs = mcc.num_ccs;
+    action.params.control.num_cycle_steps = mcc.num_cycle_steps;
+    action.params.control.current_index = 0;
     for (int i = 0; i < mcc.num_ccs; i++) {
-      action.params.cc.cc_numbers[i] = mcc.cc_numbers[i];
+      action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
       for (int j = 0; j < mcc.num_cycle_steps; j++) {
-        action.params.cc.cycle_values[i][j] = mcc.cycle_values[i][j];
+        action.params.control.cycle_values[i][j] = mcc.cycle_values[i][j];
       }
     }
   }
@@ -1786,23 +1783,23 @@ static int cmd_on_load(int argc, char **argv) {
     action = action_create_reset();
   }
   else if (strcmp(subcmd, "program_next") == 0) {
-    action = action_create_program_next();
+    action = action_create_preset_inc();
   }
   else if (strcmp(subcmd, "program_prev") == 0) {
-    action = action_create_program_prev();
+    action = action_create_preset_dec();
   }
   else if (strcmp(subcmd, "scene_next") == 0) {
-    action = action_create_scene_next();
+    action = action_create_scene_inc();
   }
   else if (strcmp(subcmd, "scene_prev") == 0) {
-    action = action_create_scene_prev();
+    action = action_create_scene_dec();
   }
   else if (strcmp(subcmd, "scene_set") == 0) {
     if (on_load_args.params->count < 1) {
       ESP_LOGE(TAG, "Usage: on_load scene_set <1-128>");
       return 1;
     }
-    action.type = ACTION_SCENE_SET;
+    action.type = ACTION_SCENE;
     action.params.target.number = atoi(on_load_args.params->sval[0]);
   }
   else if (strcmp(subcmd, "pc") == 0) {
@@ -1810,8 +1807,8 @@ static int cmd_on_load(int argc, char **argv) {
       ESP_LOGE(TAG, "Usage: on_load pc <program>");
       return 1;
     }
-    action.type = ACTION_PROGRAM_SET;
-    action.params.pc.program = atoi(on_load_args.params->sval[0]);
+    action.type = ACTION_PRESET;
+    action.params.preset.program = atoi(on_load_args.params->sval[0]);
   }
   else if (strcmp(subcmd, "tw_mode") == 0) {
     if (on_load_args.params->count < 1) {
