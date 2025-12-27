@@ -60,6 +60,9 @@ static char s_preset_label[LABEL_BUFFER_SETS][32];
 // Scene Set
 static char s_scene_label[LABEL_BUFFER_SETS][40];
 
+// Set Tempo
+static char s_tempo_label[LABEL_BUFFER_SETS][24];
+
 // Get current label buffer set and advance to next
 static int get_next_buffer_set(void) {
   int set = s_current_buffer_set;
@@ -76,6 +79,14 @@ static const midi_control_t* s_pending_control = NULL;  // For value roller
 
 // Re-entry guard
 static bool s_callback_in_progress = false;
+
+// Custom back handler for pad detail page - recreates Pads list when going back
+static bool pad_detail_handle_back(void) {
+  menu_set_custom_back_handler(NULL);  // Clear handler before navigation
+  // Pop 2: pad detail AND old Pads, then push fresh Pads at same depth
+  menu_navigate_back_then_to(2, "Pads", menu_page_pads_create);
+  return true;  // Handled, don't do normal back
+}
 
 // Dynamic CC options (loaded from device)
 typedef struct {
@@ -483,13 +494,22 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.target.number = scene_get_index_by_position(0);
     }
     
+    // Set default tempo for Set Tempo (120 BPM)
+    if (new_type == ACTION_SET_TEMPO) {
+      mapping->action.params.tempo.bpm = 120;
+    }
+    
     persist_scene_changes();
-    ESP_LOGI(TAG, "Pad %s action set to: %s", 
+    ESP_LOGI(TAG, "Pad %s action changed to: %s", 
+      get_pad_display_name(s_editing_pad_index), get_action_display_name(new_type));
+  } else {
+    ESP_LOGD(TAG, "Pad %s action unchanged: %s", 
       get_pad_display_name(s_editing_pad_index), get_action_display_name(new_type));
   }
   
   s_callback_in_progress = false;
   
+  // Go back 2: pop roller AND old pad detail, push fresh pad detail
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(2, title, pad_detail_page_create);
 }
@@ -586,6 +606,7 @@ static void cc_value_confirm_cb(uint32_t selected_index, void* user_data) {
   s_pending_control = NULL;
   s_callback_in_progress = false;
   
+  // Go back 3: pop CC value roller, CC number roller, old pad detail, push fresh pad detail
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(3, title, pad_detail_page_create);
 }
@@ -720,6 +741,7 @@ static void cc_number_confirm_cb(uint32_t selected_index, void* user_data) {
     
     s_callback_in_progress = false;
     
+    // Go back 2: pop CC number roller, old pad detail, push fresh pad detail
     const char* title = get_pad_display_name(s_editing_pad_index);
     menu_navigate_back_then_to(2, title, pad_detail_page_create);
     return;
@@ -846,6 +868,7 @@ static void cc_hold_cc_confirm_cb(uint32_t selected_index, void* user_data) {
     }
     
     s_callback_in_progress = false;
+    // Go back 3: pop CC roller, slot submenu, old pad detail, push fresh pad detail
     const char* title = get_pad_display_name(s_editing_pad_index);
     menu_navigate_back_then_to(3, title, pad_detail_page_create);
     return;
@@ -870,7 +893,7 @@ static void cc_hold_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   
   s_callback_in_progress = false;
   
-  // Go back to pad detail page (refreshes slot display)
+  // Go back 3: pop CC roller, slot submenu, old pad detail, push fresh pad detail
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(3, title, pad_detail_page_create);
 }
@@ -1262,6 +1285,7 @@ static void cc_cycle_cc_confirm_cb(uint32_t selected_index, void* user_data) {
     }
     
     s_callback_in_progress = false;
+    // Go back 3: pop CC roller, slot submenu, old pad detail, push fresh pad detail
     const char* title = get_pad_display_name(s_editing_pad_index);
     menu_navigate_back_then_to(3, title, pad_detail_page_create);
     return;
@@ -1292,7 +1316,7 @@ static void cc_cycle_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   
   s_callback_in_progress = false;
   
-  // Go back to pad detail page (refreshes slot display)
+  // Go back 3: pop CC roller, slot submenu, old pad detail, push fresh pad detail
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(3, title, pad_detail_page_create);
 }
@@ -1553,6 +1577,7 @@ static void cc_cycle_steps_confirm_cb(uint32_t selected_index, void* user_data) 
   
   s_callback_in_progress = false;
   
+  // Go back 2: pop steps roller, old pad detail, push fresh pad detail
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(2, title, pad_detail_page_create);
 }
@@ -1623,6 +1648,7 @@ static void program_set_confirm_cb(uint32_t selected_index, void* user_data) {
   
   s_callback_in_progress = false;
   
+  // Go back 2: pop preset roller, old pad detail, push fresh pad detail
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(2, title, pad_detail_page_create);
 }
@@ -1715,6 +1741,7 @@ static void scene_set_confirm_cb(uint32_t selected_index, void* user_data) {
   
   s_callback_in_progress = false;
   
+  // Go back 2: pop scene roller, old pad detail, push fresh pad detail
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(2, title, pad_detail_page_create);
 }
@@ -1764,6 +1791,83 @@ static lv_obj_t* scene_set_roller_create(void) {
 static void nav_to_scene_set(void* user_data) {
   (void)user_data;
   menu_navigate_to("Scene", scene_set_roller_create);
+}
+
+// ============================================================================
+// Set Tempo Roller
+// ============================================================================
+
+static void set_tempo_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // Roller shows 20-300, so index 0 = 20 BPM
+  uint16_t bpm = (uint16_t)(selected_index + 20);
+  mapping->action.params.tempo.bpm = bpm;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %s Set Tempo set to %u BPM",
+    get_pad_display_name(s_editing_pad_index), (unsigned)bpm);
+  
+  s_callback_in_progress = false;
+  
+  // Go back 2: pop tempo roller, old pad detail, push fresh pad detail
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* set_tempo_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Build options: 20, 21, 22, ... 300
+  static char options[2048];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+  
+  for (uint16_t bpm = 20; bpm <= 300 && remaining > 8; bpm++) {
+    int written = snprintf(pos, remaining, "%s%u", bpm > 20 ? "\n" : "", (unsigned)bpm);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+  
+  // Current selection: convert BPM to roller index
+  uint16_t current_bpm = mapping->action.params.tempo.bpm;
+  if (current_bpm < 20) current_bpm = 120;  // Default
+  if (current_bpm > 300) current_bpm = 300;
+  uint32_t current_idx = current_bpm - 20;
+  
+  return menu_create_roller_page("Tempo", options, current_idx, 
+    set_tempo_confirm_cb, NULL);
+}
+
+static void nav_to_set_tempo(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Tempo", set_tempo_roller_create);
 }
 
 // ============================================================================
@@ -1921,9 +2025,22 @@ static lv_obj_t* pad_detail_page_create(void) {
     };
   }
   
+  // Show Tempo selector for Set Tempo
+  if (mapping->action.type == ACTION_SET_TEMPO) {
+    uint16_t bpm = mapping->action.params.tempo.bpm;
+    if (bpm < 20 || bpm > 300) bpm = 120;  // Fallback to default
+    snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo: %u", (unsigned)bpm);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tempo_label[buf], nav_to_set_tempo, NULL, true
+    };
+  }
+  
   // TODO: Add parameter UI for other action types (Note, etc.)
   
   const char* title = get_pad_display_name(s_editing_pad_index);
+  
+  // Set custom back handler to recreate Pads list when going back
+  menu_set_custom_back_handler(pad_detail_handle_back);
   
   return menu_create_page(title, s_detail_items, item_count);
 }
