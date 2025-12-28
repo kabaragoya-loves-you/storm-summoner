@@ -69,6 +69,17 @@ static char s_preset_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_preset_cycle_step_labels[LABEL_BUFFER_SETS][MAX_PRESET_CYCLE_STEPS][32];
 static uint8_t s_editing_preset_step = 0;
 
+// Tempo Hold submenu
+static menu_item_t s_tempo_hold_items[2];
+static char s_tempo_hold_press_label[LABEL_BUFFER_SETS][32];
+static char s_tempo_hold_release_label[LABEL_BUFFER_SETS][32];
+
+// Tempo Cycle
+#define MAX_TEMPO_CYCLE_STEPS 8
+static char s_tempo_cycle_steps_label[LABEL_BUFFER_SETS][24];
+static char s_tempo_cycle_step_labels[LABEL_BUFFER_SETS][MAX_TEMPO_CYCLE_STEPS][32];
+static uint8_t s_editing_tempo_step = 0;
+
 // Scene Set
 static char s_scene_label[LABEL_BUFFER_SETS][40];
 
@@ -173,6 +184,8 @@ static const action_type_t s_all_action_types[] = {
   ACTION_SET_TEMPO,
   ACTION_TEMPO_INC,
   ACTION_TEMPO_DEC,
+  ACTION_TEMPO_HOLD,
+  ACTION_TEMPO_CYCLE,
   ACTION_NOTE,
   ACTION_RANDOMIZE,
   ACTION_RESET,
@@ -221,7 +234,8 @@ static bool is_action_visible(action_type_t type) {
   
   // Tempo actions only available with internal clock
   if (type == ACTION_TAP || type == ACTION_TAP_TEMPO || type == ACTION_SET_TEMPO ||
-      type == ACTION_TEMPO_INC || type == ACTION_TEMPO_DEC) {
+      type == ACTION_TEMPO_INC || type == ACTION_TEMPO_DEC ||
+      type == ACTION_TEMPO_HOLD || type == ACTION_TEMPO_CYCLE) {
     if (clock_source != CLOCK_SOURCE_INTERNAL) {
       return false;
     }
@@ -263,6 +277,8 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_SET_TEMPO: return "Set Tempo";
     case ACTION_TEMPO_INC: return "Tempo +1";
     case ACTION_TEMPO_DEC: return "Tempo -1";
+    case ACTION_TEMPO_HOLD: return "Tempo Hold";
+    case ACTION_TEMPO_CYCLE: return "Tempo Cycle";
     case ACTION_NOTE: return "Note";
     case ACTION_RANDOMIZE: return "Randomize";
     case ACTION_CONFIRM_PENDING: return "Confirm Pending";
@@ -577,6 +593,19 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.preset_cycle.num_presets = 2;
       mapping->action.params.preset_cycle.cycle_presets[0] = index_base;
       mapping->action.params.preset_cycle.cycle_presets[1] = index_base;
+    }
+    
+    // Set defaults for Tempo Hold (120 BPM for both press and release)
+    if (new_type == ACTION_TEMPO_HOLD) {
+      mapping->action.params.tempo.press_bpm = 120;
+      mapping->action.params.tempo.release_bpm = 120;
+    }
+    
+    // Set defaults for Tempo Cycle (2 steps, 120 BPM for both)
+    if (new_type == ACTION_TEMPO_CYCLE) {
+      mapping->action.params.tempo.num_tempos = 2;
+      mapping->action.params.tempo.cycle_tempos[0] = 120;
+      mapping->action.params.tempo.cycle_tempos[1] = 120;
     }
     
     persist_scene_changes();
@@ -2323,6 +2352,263 @@ static void nav_to_preset_cycle_step(void* user_data) {
 }
 
 // ============================================================================
+// Tempo Hold (for ACTION_TEMPO_HOLD)
+// ============================================================================
+
+static lv_obj_t* tempo_hold_page_create(void);  // Forward declaration
+
+// Helper to build tempo options string for roller (20-300 BPM)
+static void build_tempo_options(char* buf, size_t buf_size) {
+  buf[0] = '\0';
+  char* pos = buf;
+  size_t remaining = buf_size;
+  
+  for (uint16_t bpm = 20; bpm <= 300 && remaining > 8; bpm++) {
+    int written = snprintf(pos, remaining, "%s%u", bpm > 20 ? "\n" : "", (unsigned)bpm);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+}
+
+static void tempo_hold_press_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint16_t bpm = 20 + selected_idx;  // Range 20-300
+  mapping->action.params.tempo.press_bpm = bpm;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Tempo Hold press set to %u BPM", (unsigned)bpm);
+  
+  // Go back to tempo hold submenu
+  menu_navigate_back_then_to(2, "Tempo Hold", tempo_hold_page_create);
+}
+
+static lv_obj_t* tempo_hold_press_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[2048];
+  build_tempo_options(options, sizeof(options));
+  
+  uint16_t current = mapping->action.params.tempo.press_bpm;
+  if (current < 20) current = 120;
+  if (current > 300) current = 120;
+  uint32_t current_idx = current - 20;
+  
+  return menu_create_roller_page("Press", options, current_idx,
+    tempo_hold_press_confirm_cb, NULL);
+}
+
+static void nav_to_tempo_hold_press(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Press", tempo_hold_press_roller_create);
+}
+
+static void tempo_hold_release_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint16_t bpm = 20 + selected_idx;  // Range 20-300
+  mapping->action.params.tempo.release_bpm = bpm;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Tempo Hold release set to %u BPM", (unsigned)bpm);
+  
+  // Go back to tempo hold submenu
+  menu_navigate_back_then_to(2, "Tempo Hold", tempo_hold_page_create);
+}
+
+static lv_obj_t* tempo_hold_release_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[2048];
+  build_tempo_options(options, sizeof(options));
+  
+  uint16_t current = mapping->action.params.tempo.release_bpm;
+  if (current < 20) current = 120;
+  if (current > 300) current = 120;
+  uint32_t current_idx = current - 20;
+  
+  return menu_create_roller_page("Release", options, current_idx,
+    tempo_hold_release_confirm_cb, NULL);
+}
+
+static void nav_to_tempo_hold_release(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Release", tempo_hold_release_roller_create);
+}
+
+static bool tempo_hold_handle_back(void) {
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+  return true;
+}
+
+static lv_obj_t* tempo_hold_page_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  int buf = get_next_buffer_set();
+  
+  uint16_t press = mapping->action.params.tempo.press_bpm;
+  uint16_t release = mapping->action.params.tempo.release_bpm;
+  if (press < 20 || press > 300) press = 120;
+  if (release < 20 || release > 300) release = 120;
+  
+  snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
+    "Press: %u BPM", (unsigned)press);
+  snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
+    "Release: %u BPM", (unsigned)release);
+  
+  s_tempo_hold_items[0] = (menu_item_t){
+    s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
+  };
+  s_tempo_hold_items[1] = (menu_item_t){
+    s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
+  };
+  
+  menu_set_custom_back_handler(tempo_hold_handle_back);
+  
+  return menu_create_page("Tempo Hold", s_tempo_hold_items, 2);
+}
+
+static void nav_to_tempo_hold(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Tempo Hold", tempo_hold_page_create);
+}
+
+// ============================================================================
+// Tempo Cycle (for ACTION_TEMPO_CYCLE)
+// ============================================================================
+
+static void tempo_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t new_steps = selected_idx + 2;  // Range 2-8
+  mapping->action.params.tempo.num_tempos = new_steps;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Tempo Cycle steps set to %u", (unsigned)new_steps);
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* tempo_cycle_steps_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Options: 2, 3, 4, 5, 6, 7, 8
+  static const char* options = "2\n3\n4\n5\n6\n7\n8";
+  
+  uint8_t current_steps = mapping->action.params.tempo.num_tempos;
+  if (current_steps < 2) current_steps = 2;
+  if (current_steps > 8) current_steps = 8;
+  uint32_t current_idx = current_steps - 2;
+  
+  return menu_create_roller_page("Steps", options, current_idx,
+    tempo_cycle_steps_confirm_cb, NULL);
+}
+
+static void nav_to_tempo_cycle_steps(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Steps", tempo_cycle_steps_roller_create);
+}
+
+static void tempo_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t step = s_editing_tempo_step;
+  if (step < MAX_TEMPO_CYCLE_STEPS) {
+    uint16_t bpm = 20 + selected_idx;  // Range 20-300
+    mapping->action.params.tempo.cycle_tempos[step] = bpm;
+    persist_scene_changes();
+    
+    ESP_LOGI(TAG, "Tempo Cycle step %u set to %u BPM", (unsigned)step, (unsigned)bpm);
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* tempo_cycle_step_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[2048];
+  build_tempo_options(options, sizeof(options));
+  
+  uint8_t step = s_editing_tempo_step;
+  uint16_t current = mapping->action.params.tempo.cycle_tempos[step];
+  if (current < 20 || current > 300) current = 120;
+  uint32_t current_idx = current - 20;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
+  
+  return menu_create_roller_page(title, options, current_idx,
+    tempo_cycle_step_confirm_cb, NULL);
+}
+
+static void nav_to_tempo_cycle_step(void* user_data) {
+  s_editing_tempo_step = (uint8_t)(uintptr_t)user_data;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_tempo_step + 1));
+  menu_navigate_to(title, tempo_cycle_step_roller_create);
+}
+
+// ============================================================================
 // Randomize Slot Roller (for ACTION_RANDOMIZE)
 // ============================================================================
 
@@ -2749,6 +3035,51 @@ static lv_obj_t* pad_detail_page_create(void) {
         "Step %d: %u", i + 1, (unsigned)(preset - index_base + 1));
       s_detail_items[item_count++] = (menu_item_t){
         s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true
+      };
+    }
+  }
+  
+  // Show Tempo Hold submenu items
+  if (mapping->action.type == ACTION_TEMPO_HOLD) {
+    uint16_t press = mapping->action.params.tempo.press_bpm;
+    uint16_t release = mapping->action.params.tempo.release_bpm;
+    if (press < 20 || press > 300) press = 120;
+    if (release < 20 || release > 300) release = 120;
+    
+    snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
+      "Press: %u BPM", (unsigned)press);
+    snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
+      "Release: %u BPM", (unsigned)release);
+    
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
+    };
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
+    };
+  }
+  
+  // Show Tempo Cycle submenu items
+  if (mapping->action.type == ACTION_TEMPO_CYCLE) {
+    uint8_t num_steps = mapping->action.params.tempo.num_tempos;
+    if (num_steps < 2) num_steps = 2;
+    if (num_steps > 8) num_steps = 8;
+    
+    // Steps selector
+    snprintf(s_tempo_cycle_steps_label[buf], sizeof(s_tempo_cycle_steps_label[buf]),
+      "Steps: %u", (unsigned)num_steps);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true
+    };
+    
+    // Individual step items
+    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+      uint16_t bpm = mapping->action.params.tempo.cycle_tempos[i];
+      if (bpm < 20 || bpm > 300) bpm = 120;
+      snprintf(s_tempo_cycle_step_labels[buf][i], sizeof(s_tempo_cycle_step_labels[buf][i]),
+        "Step %d: %u BPM", i + 1, (unsigned)bpm);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true
       };
     }
   }

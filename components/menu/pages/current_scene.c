@@ -559,8 +559,8 @@ lv_obj_t* menu_page_current_scene_create(void) {
   }
   
   // Assignment submenus
-  s_scene_items[idx++] = (menu_item_t){ "Touchwheel", nav_to_touchwheel, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Pads", nav_to_pads, NULL, true };
+  s_scene_items[idx++] = (menu_item_t){ "Touchwheel", nav_to_touchwheel, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Expression", nav_to_expression, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "CV", nav_to_cv, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Proximity", nav_to_proximity, NULL, true };

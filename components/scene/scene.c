@@ -2040,6 +2040,8 @@ static const char* action_type_json_names[] = {
   [ACTION_SET_TEMPO] = "set_tempo",
   [ACTION_TEMPO_INC] = "tempo_inc",
   [ACTION_TEMPO_DEC] = "tempo_dec",
+  [ACTION_TEMPO_HOLD] = "tempo_hold",
+  [ACTION_TEMPO_CYCLE] = "tempo_cycle",
   [ACTION_CONTROL] = "control",
   [ACTION_CONTROL_HOLD] = "control_hold",
   [ACTION_CONTROL_CYCLE] = "control_cycle",
@@ -2197,6 +2199,17 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddItemToObject(obj, "presets", presets);
   } else if (action->type == ACTION_SET_TEMPO) {
     cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
+  } else if (action->type == ACTION_TEMPO_HOLD) {
+    cJSON_AddNumberToObject(obj, "press_bpm", action->params.tempo.press_bpm);
+    cJSON_AddNumberToObject(obj, "release_bpm", action->params.tempo.release_bpm);
+  } else if (action->type == ACTION_TEMPO_CYCLE) {
+    uint8_t num_tempos = action->params.tempo.num_tempos;
+    cJSON_AddNumberToObject(obj, "num_tempos", num_tempos);
+    cJSON* tempos = cJSON_CreateArray();
+    for (int i = 0; i < num_tempos && i < 8; i++) {
+      cJSON_AddItemToArray(tempos, cJSON_CreateNumber(action->params.tempo.cycle_tempos[i]));
+    }
+    cJSON_AddItemToObject(obj, "tempos", tempos);
   } else if (action->type == ACTION_TOUCHWHEEL_MODE) {
     cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
   } else if (action->type == ACTION_TOUCHWHEEL_HOLD) {
@@ -2353,6 +2366,29 @@ static action_t json_to_action(cJSON* obj) {
   // Parse tempo actions
   cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
   if (bpm) action.params.tempo.bpm = bpm->valueint;
+  
+  // Parse tempo hold/cycle actions
+  if (action.type == ACTION_TEMPO_HOLD) {
+    cJSON* press_bpm = cJSON_GetObjectItem(obj, "press_bpm");
+    cJSON* release_bpm = cJSON_GetObjectItem(obj, "release_bpm");
+    if (press_bpm) action.params.tempo.press_bpm = press_bpm->valueint;
+    if (release_bpm) action.params.tempo.release_bpm = release_bpm->valueint;
+  }
+  if (action.type == ACTION_TEMPO_CYCLE) {
+    cJSON* num_tempos = cJSON_GetObjectItem(obj, "num_tempos");
+    cJSON* tempos = cJSON_GetObjectItem(obj, "tempos");
+    if (num_tempos) {
+      action.params.tempo.num_tempos = num_tempos->valueint;
+    }
+    if (tempos && cJSON_IsArray(tempos)) {
+      int count = cJSON_GetArraySize(tempos);
+      if (count > 8) count = 8;
+      for (int i = 0; i < count; i++) {
+        cJSON* item = cJSON_GetArrayItem(tempos, i);
+        if (item) action.params.tempo.cycle_tempos[i] = item->valueint;
+      }
+    }
+  }
   
   // Parse touchwheel mode actions
   cJSON* mode = cJSON_GetObjectItem(obj, "mode");

@@ -334,6 +334,8 @@
             "set_tempo",
             "tempo_inc",
             "tempo_dec",
+            "tempo_hold",
+            "tempo_cycle",
             "control",
             "control_hold",
             "control_cycle",
@@ -577,6 +579,59 @@
                   "maximum": 16383
                 },
                 "description": "Preset values to cycle through"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "tempo_hold"}
+            }
+          },
+          "then": {
+            "required": ["press_bpm", "release_bpm"],
+            "properties": {
+              "press_bpm": {
+                "type": "integer",
+                "minimum": 20,
+                "maximum": 300,
+                "description": "Tempo to set on press (BPM)"
+              },
+              "release_bpm": {
+                "type": "integer",
+                "minimum": 20,
+                "maximum": 300,
+                "description": "Tempo to set on release (BPM)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "tempo_cycle"}
+            }
+          },
+          "then": {
+            "required": ["num_tempos", "tempos"],
+            "properties": {
+              "num_tempos": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8,
+                "description": "Number of tempos in cycle"
+              },
+              "tempos": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 20,
+                  "maximum": 300
+                },
+                "description": "Tempo values (BPM) to cycle through"
               }
             }
           }

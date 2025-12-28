@@ -31,6 +31,8 @@ typedef enum {
   ACTION_SET_TEMPO,           // Set BPM directly (uses tempo.bpm param)
   ACTION_TEMPO_INC,           // Increment BPM by 1
   ACTION_TEMPO_DEC,           // Decrement BPM by 1
+  ACTION_TEMPO_HOLD,          // Set tempo on press, different tempo on release
+  ACTION_TEMPO_CYCLE,         // Cycle through tempo values on each press
   
   // Direct MIDI output
   ACTION_CONTROL,             // Send CC with value (on press only)
@@ -98,9 +100,14 @@ typedef struct {
       uint8_t current_index;      // Current position in cycle
     } preset_cycle;
     
-    // For tempo actions
+    // For tempo actions (set, hold, cycle)
     struct {
-      uint16_t bpm;           // For set_tempo (20-300)
+      uint16_t bpm;               // For set_tempo (20-300)
+      uint16_t press_bpm;         // For hold: tempo on press
+      uint16_t release_bpm;       // For hold: tempo on release
+      uint8_t num_tempos;         // For cycle: number of tempos (2-8)
+      uint16_t cycle_tempos[8];   // For cycle: tempo values
+      uint8_t current_index;      // Current position in cycle
     } tempo;
     
     // For randomize (one or more CCs, always 0-127 range)

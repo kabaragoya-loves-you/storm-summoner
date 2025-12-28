@@ -33,6 +33,8 @@ static const char* action_type_names[] = {
   [ACTION_SET_TEMPO] = "Set Tempo",
   [ACTION_TEMPO_INC] = "Tempo +1",
   [ACTION_TEMPO_DEC] = "Tempo -1",
+  [ACTION_TEMPO_HOLD] = "Tempo Hold",
+  [ACTION_TEMPO_CYCLE] = "Tempo Cycle",
   [ACTION_CONTROL] = "Control",
   [ACTION_CONTROL_HOLD] = "Control Hold",
   [ACTION_CONTROL_CYCLE] = "Control Cycle",
@@ -43,8 +45,8 @@ static const char* action_type_names[] = {
   [ACTION_SUSTAIN] = "Sustain",
   [ACTION_SOSTENUTO] = "Sostenuto",
   [ACTION_TOUCHWHEEL_MODE] = "Touchwheel",
-  [ACTION_TOUCHWHEEL_HOLD] = "Touchwheel Hold",
-  [ACTION_TOUCHWHEEL_CYCLE] = "Touchwheel Cycle"
+  [ACTION_TOUCHWHEEL_HOLD] = "TW Hold",
+  [ACTION_TOUCHWHEEL_CYCLE] = "TW Cycle"
 };
 
 esp_err_t action_init(void) {
@@ -211,6 +213,40 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       if (is_press) {
         uint16_t bpm = tempo_get_bpm();
         if (bpm > 20) tempo_set_bpm(bpm - 1);
+      }
+      break;
+      
+    case ACTION_TEMPO_HOLD:
+      // Set press_bpm on press, release_bpm on release
+      {
+        uint16_t bpm = is_press ? 
+          action->params.tempo.press_bpm : action->params.tempo.release_bpm;
+        if (bpm >= 20 && bpm <= 300) {
+          tempo_set_bpm(bpm);
+          ESP_LOGD(TAG, "Tempo hold: %s -> %u BPM", is_press ? "press" : "release", 
+            (unsigned)bpm);
+        }
+      }
+      break;
+      
+    case ACTION_TEMPO_CYCLE:
+      if (is_press) {
+        action_t* mutable_action = (action_t*)action;
+        uint8_t num_tempos = mutable_action->params.tempo.num_tempos;
+        if (num_tempos == 0) {
+          ESP_LOGW(TAG, "Tempo cycle has no tempos defined, skipping");
+          break;
+        }
+        uint8_t idx = mutable_action->params.tempo.current_index;
+        uint16_t bpm = mutable_action->params.tempo.cycle_tempos[idx];
+        
+        if (bpm >= 20 && bpm <= 300) {
+          tempo_set_bpm(bpm);
+          ESP_LOGD(TAG, "Tempo cycle step %u: %u BPM", (unsigned)idx, (unsigned)bpm);
+        }
+        
+        // Advance to next step
+        mutable_action->params.tempo.current_index = (idx + 1) % num_tempos;
       }
       break;
       
@@ -499,6 +535,7 @@ action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode)
 static const action_type_t hold_actions[] = {
   ACTION_CONTROL_HOLD,
   ACTION_PRESET_HOLD,
+  ACTION_TEMPO_HOLD,
   ACTION_NOTE,
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_SUSTAIN,
