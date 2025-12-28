@@ -2091,7 +2091,7 @@ static const char* action_type_json_names[] = {
   [ACTION_TEMPO_DEC] = "tempo_dec",
   [ACTION_TEMPO_HOLD] = "tempo_hold",
   [ACTION_TEMPO_CYCLE] = "tempo_cycle",
-  [ACTION_CONTROL] = "control",
+  [ACTION_CONTROL_CHANGE] = "control_change",
   [ACTION_CONTROL_HOLD] = "control_hold",
   [ACTION_CONTROL_CYCLE] = "control_cycle",
   [ACTION_NOTE] = "note",
@@ -2132,8 +2132,9 @@ static action_type_t action_type_from_string(const char* name) {
   if (strcmp(name, "scene_next") == 0) return ACTION_SCENE_INC;
   if (strcmp(name, "scene_prev") == 0) return ACTION_SCENE_DEC;
   if (strcmp(name, "scene_set") == 0) return ACTION_SCENE;
-  // Old CC/control names
-  if (strcmp(name, "send_cc") == 0) return ACTION_CONTROL;
+  // Old CC/control names (backward compatibility)
+  if (strcmp(name, "control") == 0) return ACTION_CONTROL_CHANGE;
+  if (strcmp(name, "send_cc") == 0) return ACTION_CONTROL_CHANGE;
   if (strcmp(name, "send_cc_hold") == 0) return ACTION_CONTROL_HOLD;
   if (strcmp(name, "send_cc_cycle") == 0) return ACTION_CONTROL_CYCLE;
   // Old note names (both map to the new hold-style ACTION_NOTE)
@@ -2168,7 +2169,7 @@ static cJSON* action_to_json(const action_t* action) {
     return NULL;
   }
   
-  if (action->type == ACTION_CONTROL || action->type == ACTION_CONTROL_HOLD) {
+  if (action->type == ACTION_CONTROL_CHANGE || action->type == ACTION_CONTROL_HOLD) {
     uint8_t num_ccs = action->params.control.num_ccs;
     if (num_ccs == 0) num_ccs = 1;  // Backward compat
     

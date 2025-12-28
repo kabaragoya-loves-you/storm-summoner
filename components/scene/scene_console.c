@@ -46,7 +46,7 @@ static void format_cc_value_with_discrete(const device_def_t* device, uint8_t cc
 static void format_action_details_with_device(const action_t* action, const device_def_t* device,
   char* buf, size_t buf_size) {
   switch (action->type) {
-    case ACTION_CONTROL: {
+    case ACTION_CONTROL_CHANGE: {
       uint8_t num_ccs = action->params.control.num_ccs;
       if (num_ccs == 0) num_ccs = 1;  // Backward compat
       if (num_ccs == 1) {
@@ -789,7 +789,7 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_CONTROL;
+    action.type = ACTION_CONTROL_CHANGE;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       int cc_num = mcc.cc_numbers[i];
@@ -1063,7 +1063,7 @@ static int cmd_button(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL;
+    action.type = ACTION_CONTROL_CHANGE;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1289,7 +1289,7 @@ static int cmd_bump(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL;
+    action.type = ACTION_CONTROL_CHANGE;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1519,7 +1519,7 @@ static int cmd_expr_switch(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL;
+    action.type = ACTION_CONTROL_CHANGE;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1750,7 +1750,7 @@ static int cmd_on_load(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL;
+    action.type = ACTION_CONTROL_CHANGE;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];

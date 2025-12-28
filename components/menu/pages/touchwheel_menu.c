@@ -396,8 +396,8 @@ static lv_obj_t* cc_slot_roller_create(void) {
     current_idx = cc_number_to_option_index(scene->touchwheel.cc_numbers[slot]);
   }
   
-  static char title[24];
-  snprintf(title, sizeof(title), "CC Slot %u", (unsigned)(slot + 1));
+  static char title[32];
+  snprintf(title, sizeof(title), "Control Change %u", (unsigned)(slot + 1));
   
   ESP_LOGI(TAG, "Creating CC slot roller: slot=%u, current_idx=%lu", 
            (unsigned)slot, (unsigned long)current_idx);
@@ -415,8 +415,8 @@ static void nav_to_cc_slot(void* user_data) {
     load_cc_options();
   }
   
-  static char title[24];
-  snprintf(title, sizeof(title), "CC Slot %u", (unsigned)(s_editing_cc_slot + 1));
+  static char title[32];
+  snprintf(title, sizeof(title), "Control Change %u", (unsigned)(s_editing_cc_slot + 1));
   menu_navigate_to(title, cc_slot_roller_create);
 }
 
@@ -794,7 +794,7 @@ static const char* get_cc_slot_display(scene_t* scene, uint8_t slot) {
   }
   
   // Fallback to CC number
-  static char fallback[16];
+  static char fallback[24];
   snprintf(fallback, sizeof(fallback), "CC %u", (unsigned)cc_num);
   return fallback;
 }
@@ -803,7 +803,7 @@ lv_obj_t* menu_page_touchwheel_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) {
     ESP_LOGW(TAG, "No current scene");
-    return menu_create_page("Touchwheel", NULL, 0);
+    return menu_create_page_2line("Touchwheel", NULL, 0);
   }
   
   int mode_idx = get_current_mode_index();
@@ -811,8 +811,8 @@ lv_obj_t* menu_page_touchwheel_create(void) {
   
   int item_count = 0;
   
-  // Mode is always first
-  snprintf(s_mode_label, sizeof(s_mode_label), "Mode: %s", mapping->display_name);
+  // Mode is always first (2-line format)
+  snprintf(s_mode_label, sizeof(s_mode_label), "Mode\n%s", mapping->display_name);
   s_tw_items[item_count++] = (menu_item_t){s_mode_label, nav_to_mode, NULL, true};
   
   // Mode-specific items
@@ -823,35 +823,35 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       
     case TOUCHWHEEL_MODE_CONTINUOUS:
       if (mapping->output_type == OUTPUT_TYPE_CC) {
-        // Control Change mode: 4 CC slots + Style
+        // Control Change mode: 4 CC slots + Style (2-line format)
         for (int i = 0; i < MAX_MULTI_CC; i++) {
           const char* cc_name = get_cc_slot_display(scene, (uint8_t)i);
           snprintf(s_cc_slot_labels[i], sizeof(s_cc_slot_labels[i]), 
-                   "CC %d: %s", i + 1, cc_name);
+                   "Control Change %d\n%s", i + 1, cc_name);
           s_tw_items[item_count++] = (menu_item_t){
             s_cc_slot_labels[i], nav_to_cc_slot, (void*)(uintptr_t)i, true
           };
         }
       } else {
-        // Notes mode: Base Note, Range, Velocity, Latch, [Release], [Polyphony]
+        // Notes mode: Base Note, Range, Velocity, Latch, [Release], [Polyphony] (2-line format)
         char note_name[8];
         get_note_name(scene->touchwheel.base_note, note_name, sizeof(note_name));
-        snprintf(s_base_note_label, sizeof(s_base_note_label), "Base Note: %s", note_name);
+        snprintf(s_base_note_label, sizeof(s_base_note_label), "Base Note\n%s", note_name);
         s_tw_items[item_count++] = (menu_item_t){s_base_note_label, nav_to_base_note, NULL, true};
         
         uint8_t octaves = scene->touchwheel.note_range / 12;
         if (octaves == 0) octaves = 1;
-        snprintf(s_range_label, sizeof(s_range_label), "Range: %u Octave%s", 
+        snprintf(s_range_label, sizeof(s_range_label), "Range\n%u Octave%s", 
                  (unsigned)octaves, octaves > 1 ? "s" : "");
         s_tw_items[item_count++] = (menu_item_t){s_range_label, nav_to_range, NULL, true};
         
         uint8_t vel = scene->touchwheel.velocity;
         if (vel == 0) vel = 100;
-        snprintf(s_velocity_label, sizeof(s_velocity_label), "Velocity: %u", (unsigned)vel);
+        snprintf(s_velocity_label, sizeof(s_velocity_label), "Velocity\n%u", (unsigned)vel);
         s_tw_items[item_count++] = (menu_item_t){s_velocity_label, nav_to_velocity, NULL, true};
         
         // Latch
-        snprintf(s_latch_label, sizeof(s_latch_label), "Latch: %s", 
+        snprintf(s_latch_label, sizeof(s_latch_label), "Latch\n%s", 
                  scene->touchwheel.note_latch ? "On" : "Off");
         s_tw_items[item_count++] = (menu_item_t){s_latch_label, nav_to_latch, NULL, true};
         
@@ -859,13 +859,13 @@ lv_obj_t* menu_page_touchwheel_create(void) {
         if (scene->touchwheel.note_latch) {
           uint16_t release = scene->touchwheel.note_release_ms;
           if (release < 100) release = 500;
-          snprintf(s_release_label, sizeof(s_release_label), "Release: %u ms", (unsigned)release);
+          snprintf(s_release_label, sizeof(s_release_label), "Release\n%u ms", (unsigned)release);
           s_tw_items[item_count++] = (menu_item_t){s_release_label, nav_to_release, NULL, true};
         }
         
         // Polyphony (only shown when style is Odometer)
         if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
-          snprintf(s_polyphony_label, sizeof(s_polyphony_label), "Polyphony: %s",
+          snprintf(s_polyphony_label, sizeof(s_polyphony_label), "Polyphony\n%s",
                    scene->touchwheel.polyphony == POLYPHONY_MONO ? "Mono" : "Poly");
           s_tw_items[item_count++] = (menu_item_t){s_polyphony_label, nav_to_polyphony, NULL, true};
         }
@@ -873,13 +873,13 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       break;
       
     case TOUCHWHEEL_MODE_DOUBLE_CC:
-      // Parameter selection
+      // Parameter selection (2-line format)
       {
         const char* param_name = "Inactive";
         if (scene->touchwheel.num_cc_numbers > 0) {
           param_name = get_cc_slot_display(scene, 0);
         }
-        snprintf(s_param_label, sizeof(s_param_label), "Parameter: %s", param_name);
+        snprintf(s_param_label, sizeof(s_param_label), "Parameter\n%s", param_name);
         s_tw_items[item_count++] = (menu_item_t){s_param_label, nav_to_double_cc_param, NULL, true};
       }
       break;
@@ -898,14 +898,14 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       break;
   }
   
-  // Style roller (if mode supports it)
+  // Style roller (if mode supports it) (2-line format)
   if (mapping->supports_style_selection) {
-    snprintf(s_style_label, sizeof(s_style_label), "Style: %s", 
+    snprintf(s_style_label, sizeof(s_style_label), "Style\n%s", 
              style_to_string(scene->touchwheel_style));
     s_tw_items[item_count++] = (menu_item_t){s_style_label, nav_to_style, NULL, true};
   }
   
-  return menu_create_page("Touchwheel", s_tw_items, item_count);
+  return menu_create_page_2line("Touchwheel", s_tw_items, item_count);
 }
 
 // Cleanup function (call when leaving touchwheel menu)

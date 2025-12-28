@@ -35,7 +35,7 @@ typedef enum {
   ACTION_TEMPO_CYCLE,         // Cycle through tempo values on each press
   
   // Direct MIDI output
-  ACTION_CONTROL,             // Send CC with value (on press only)
+  ACTION_CONTROL_CHANGE,      // Send CC with value (on press only)
   ACTION_CONTROL_HOLD,        // Send value1 on press, value2 on release
   ACTION_CONTROL_CYCLE,       // Cycle through multiple CC values
   ACTION_NOTE,                // Send Note On on press, Note Off on release

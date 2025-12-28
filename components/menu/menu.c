@@ -362,6 +362,134 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   return screen;
 }
 
+// Two-line variant of menu_create_page
+// Labels can contain newlines for two-line display
+lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, int item_count) {
+  uint16_t disp_w = display_get_width();
+  uint16_t disp_h = display_get_height();
+  
+  // Create screen
+  lv_obj_t* screen = lv_obj_create(NULL);
+  lv_obj_set_size(screen, disp_w, disp_h);
+  lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(screen, 0, 0);
+  lv_obj_set_style_pad_all(screen, 0, 0);
+
+  // Title bar height
+  const int title_bar_h = 22;
+  
+  // Create title bar container with woody brown gradient
+  lv_obj_t* title_bar = lv_obj_create(screen);
+  lv_obj_set_size(title_bar, disp_w, title_bar_h);
+  lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);
+  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(60, 40, 20), 0);
+  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(title_bar, 0, 0);
+  lv_obj_set_style_pad_all(title_bar, 0, 0);
+  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
+  
+  // Create title label inside title bar
+  lv_obj_t* title_label = lv_label_create(title_bar);
+  lv_label_set_text(title_label, title);
+  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
+  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+  lv_obj_center(title_label);
+  lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Create scrollable container with flex layout
+  lv_obj_t* cont = lv_obj_create(screen);
+  lv_obj_set_size(cont, disp_w, disp_h - title_bar_h);
+  lv_obj_align(cont, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+  // Container styling - black background
+  lv_obj_set_style_bg_color(cont, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(cont, 0, 0);
+  lv_obj_set_style_pad_all(cont, 4, 0);
+  lv_obj_set_style_pad_row(cont, 6, 0);
+
+  // Enable flex column layout
+  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  // Circular clipping for the curved effect
+  lv_obj_set_style_radius(cont, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_clip_corner(cont, true, 0);
+
+  // Scroll settings
+  lv_obj_set_scroll_dir(cont, LV_DIR_VER);
+  lv_obj_set_scroll_snap_y(cont, LV_SCROLL_SNAP_CENTER);
+  lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
+
+  // Add scroll event callback for visual effects
+  lv_obj_add_event_cb(cont, scroll_event_cb, LV_EVENT_SCROLL, NULL);
+
+  // Create labels for menu items
+  for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
+    const char* item_label = items[i].label;
+    bool is_readonly = (items[i].callback == NULL);
+    
+    lv_obj_t* label = lv_label_create(cont);
+    lv_label_set_text(label, item_label);
+    lv_obj_set_width(label, lv_pct(100));
+    
+    // Taller fixed height for two-line items (accommodates 20px focused font)
+    lv_obj_set_height(label, 56);
+    
+    // Clip text (newlines handled naturally)
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+
+    // Label styling
+    if (is_readonly) {
+      lv_obj_set_style_text_color(label, lv_color_make(160, 160, 160), 0);
+    } else {
+      lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    }
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_ver(label, 4, 0);
+
+    // All items are focusable for encoder navigation
+    lv_obj_add_flag(label, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    lv_obj_add_event_cb(label, focus_event_cb, LV_EVENT_FOCUSED, NULL);
+    
+    if (is_readonly) {
+      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+    } else {
+      lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_user_data(label, (void*)&items[i]);
+      lv_obj_add_event_cb(label, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
+      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+    }
+  }
+
+  // Scroll to center on first focusable item
+  if (item_count > 0 && menu_state.group) {
+    uint32_t child_cnt = lv_obj_get_child_count(cont);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(cont, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        menu_state.skip_focus_scroll = true;
+        lv_obj_scroll_to_view(child, LV_ANIM_OFF);
+        lv_group_focus_obj(child);
+        menu_state.skip_focus_scroll = false;
+        break;
+      }
+    }
+  }
+
+  // Initial visual update
+  update_scroll_visuals(cont);
+
+  ESP_LOGD(TAG, "menu_create_page_2line: title='%s', screen=%p, children=%u",
+           title, (void*)screen, (unsigned)lv_obj_get_child_count(cont));
+
+  return screen;
+}
+
 static void menu_item_event_cb(lv_event_t* e) {
   // With encoder navigation, the click fires on the focused object.
   // Use the focused object from the group to ensure we get the right item

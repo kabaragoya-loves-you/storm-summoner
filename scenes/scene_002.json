@@ -68,7 +68,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 5,
           "value": 127
         }
@@ -78,7 +78,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 6,
           "value": 127
         }
@@ -88,7 +88,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 7,
           "value": 127
         }
@@ -98,7 +98,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 8,
           "value": 127
         }
@@ -108,7 +108,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 9,
           "value": 127
         }
@@ -118,7 +118,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 10,
           "value": 127
         }
@@ -128,7 +128,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 11,
           "value": 127
         }
@@ -138,7 +138,7 @@
       "enabled": true,
       "actions": [
         {
-          "type": "control",
+          "type": "control_change",
           "cc": 12,
           "value": 127
         }

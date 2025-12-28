@@ -161,7 +161,7 @@ static cc_options_t s_cc_options = {0};
 
 static const char* get_pad_display_name(uint8_t index) {
   static const char* names[] = {
-    "1", "2", "3", "4", "5", "6", "7", "8",  // Touchwheel segments
+    "Pad 1", "Pad 2", "Pad 3", "Pad 4", "Pad 5", "Pad 6", "Pad 7", "Pad 8",  // Touchwheel segments
     "Omega",   // Pad 8 - main activation
     "Alpha",   // Pad 9
     "Beta",    // Pad 10
@@ -178,7 +178,7 @@ static const char* get_pad_display_name(uint8_t index) {
 // All action types in display order (filtered at runtime)
 static const action_type_t s_all_action_types[] = {
   ACTION_NONE,
-  ACTION_CONTROL,
+  ACTION_CONTROL_CHANGE,
   ACTION_CONTROL_HOLD,
   ACTION_CONTROL_CYCLE,
   ACTION_PRESET_INC,
@@ -272,7 +272,7 @@ static void build_filtered_action_types(void) {
 static const char* get_action_display_name(action_type_t type) {
   switch (type) {
     case ACTION_NONE: return "<None>";
-    case ACTION_CONTROL: return "Control";
+    case ACTION_CONTROL_CHANGE: return "Control Change";
     case ACTION_CONTROL_HOLD: return "Control Hold";
     case ACTION_CONTROL_CYCLE: return "Control Cycle";
     case ACTION_PRESET_INC: return "Preset +1";
@@ -406,9 +406,9 @@ static void format_pad_label(uint8_t index, action_t* action, char* buf, size_t 
   const char* name = get_pad_display_name(index);
   if (action && action->type != ACTION_NONE) {
     const char* action_name = get_action_display_name(action->type);
-    snprintf(buf, buf_size, "%s [%s]", name, action_name);
+    snprintf(buf, buf_size, "%s\n%s", name, action_name);
   } else {
-    snprintf(buf, buf_size, "%s []", name);
+    snprintf(buf, buf_size, "%s\n<None>", name);
   }
 }
 
@@ -2533,11 +2533,6 @@ static lv_obj_t* tempo_hold_page_create(void) {
   return menu_create_page("Tempo Hold", s_tempo_hold_items, 2);
 }
 
-static void nav_to_tempo_hold(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Tempo Hold", tempo_hold_page_create);
-}
-
 // ============================================================================
 // Tempo Cycle (for ACTION_TEMPO_CYCLE)
 // ============================================================================
@@ -3223,13 +3218,13 @@ static lv_obj_t* pad_detail_page_create(void) {
   
   int item_count = 0;
   
-  // Action selector (always first)
+  // Action selector (always first) - 2-line format
   const char* action_name = get_action_display_name(mapping->action.type);
-  snprintf(s_action_label[buf], sizeof(s_action_label[buf]), "Action: %s", action_name);
+  snprintf(s_action_label[buf], sizeof(s_action_label[buf]), "Action\n%s", action_name);
   s_detail_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_action_type, NULL, true};
   
   // Show CC slots for CC actions
-  if (mapping->action.type == ACTION_CONTROL ||
+  if (mapping->action.type == ACTION_CONTROL_CHANGE ||
       mapping->action.type == ACTION_CONTROL_HOLD ||
       mapping->action.type == ACTION_CONTROL_CYCLE) {
     
@@ -3237,7 +3232,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     if (mapping->action.type == ACTION_CONTROL_CYCLE) {
       uint8_t steps = mapping->action.params.control.num_cycle_steps;
       if (steps < 2) steps = 2;
-      snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps: %u", (unsigned)steps);
+      snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps\n%u", (unsigned)steps);
       s_detail_items[item_count++] = (menu_item_t){
         s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true
       };
@@ -3254,13 +3249,13 @@ static lv_obj_t* pad_detail_page_create(void) {
         slot_display = get_cc_slot_display(&mapping->action, (uint8_t)i);
       }
       if (strcmp(slot_display, "Inactive") == 0) {
-        // Inactive slot: show slot number
+        // Inactive slot: show slot number (2-line format)
         snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]), 
-          "Slot %d: Inactive", i + 1);
+          "Slot %d\nInactive", i + 1);
       } else {
-        // Active slot: just show "ControlName: Value"
+        // Active slot: show slot number + control name (2-line format)
         snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]), 
-          "%s", slot_display);
+          "Slot %d\n%s", i + 1, slot_display);
       }
       s_detail_items[item_count++] = (menu_item_t){
         s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
@@ -3279,7 +3274,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     
     // Display as 1-based for user
     uint16_t display_num = program - index_base + 1;
-    snprintf(s_preset_label[buf], sizeof(s_preset_label[buf]), "Preset: %u", (unsigned)display_num);
+    snprintf(s_preset_label[buf], sizeof(s_preset_label[buf]), "Preset\n%u", (unsigned)display_num);
     s_detail_items[item_count++] = (menu_item_t){
       s_preset_label[buf], nav_to_program_set, NULL, true
     };
@@ -3300,9 +3295,9 @@ static lv_obj_t* pad_detail_page_create(void) {
     }
     
     if (target_name) {
-      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene: %.28s", target_name);
+      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%.28s", target_name);
     } else {
-      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene: %u", (unsigned)target);
+      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%u", (unsigned)target);
     }
     s_detail_items[item_count++] = (menu_item_t){
       s_scene_label[buf], nav_to_scene_set, NULL, true
@@ -3320,9 +3315,9 @@ static lv_obj_t* pad_detail_page_create(void) {
     uint16_t release = mapping->action.params.preset_cycle.release_preset;
     
     snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
-      "Press: %u", (unsigned)(press - index_base + 1));
+      "Press\n%u", (unsigned)(press - index_base + 1));
     snprintf(s_preset_hold_release_label[buf], sizeof(s_preset_hold_release_label[buf]),
-      "Release: %u", (unsigned)(release - index_base + 1));
+      "Release\n%u", (unsigned)(release - index_base + 1));
     
     s_detail_items[item_count++] = (menu_item_t){
       s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
@@ -3345,7 +3340,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     
     // Steps selector
     snprintf(s_preset_cycle_steps_label[buf], sizeof(s_preset_cycle_steps_label[buf]),
-      "Steps: %u", (unsigned)num_steps);
+      "Steps\n%u", (unsigned)num_steps);
     s_detail_items[item_count++] = (menu_item_t){
       s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true
     };
@@ -3354,7 +3349,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
       uint16_t preset = mapping->action.params.preset_cycle.cycle_presets[i];
       snprintf(s_preset_cycle_step_labels[buf][i], sizeof(s_preset_cycle_step_labels[buf][i]),
-        "Step %d: %u", i + 1, (unsigned)(preset - index_base + 1));
+        "Step %d\n%u", i + 1, (unsigned)(preset - index_base + 1));
       s_detail_items[item_count++] = (menu_item_t){
         s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true
       };
@@ -3369,9 +3364,9 @@ static lv_obj_t* pad_detail_page_create(void) {
     if (release < 20 || release > 300) release = 120;
     
     snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
-      "Press: %u BPM", (unsigned)press);
+      "Press\n%u BPM", (unsigned)press);
     snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
-      "Release: %u BPM", (unsigned)release);
+      "Release\n%u BPM", (unsigned)release);
     
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
@@ -3389,7 +3384,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     
     // Steps selector
     snprintf(s_tempo_cycle_steps_label[buf], sizeof(s_tempo_cycle_steps_label[buf]),
-      "Steps: %u", (unsigned)num_steps);
+      "Steps\n%u", (unsigned)num_steps);
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true
     };
@@ -3399,7 +3394,7 @@ static lv_obj_t* pad_detail_page_create(void) {
       uint16_t bpm = mapping->action.params.tempo.cycle_tempos[i];
       if (bpm < 20 || bpm > 300) bpm = 120;
       snprintf(s_tempo_cycle_step_labels[buf][i], sizeof(s_tempo_cycle_step_labels[buf][i]),
-        "Step %d: %u BPM", i + 1, (unsigned)bpm);
+        "Step %d\n%u BPM", i + 1, (unsigned)bpm);
       s_detail_items[item_count++] = (menu_item_t){
         s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true
       };
@@ -3411,7 +3406,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     uint8_t mode_idx = mapping->action.params.tw_mode.mode;
     if (mode_idx >= NUM_TOUCHWHEEL_USER_MODES) mode_idx = 0;
     snprintf(s_tw_mode_label[buf], sizeof(s_tw_mode_label[buf]),
-      "Mode: %s", touchwheel_get_mode_name(mode_idx));
+      "Mode\n%s", touchwheel_get_mode_name(mode_idx));
     s_detail_items[item_count++] = (menu_item_t){
       s_tw_mode_label[buf], nav_to_tw_mode, NULL, true
     };
@@ -3425,9 +3420,9 @@ static lv_obj_t* pad_detail_page_create(void) {
     if (release_idx >= NUM_TOUCHWHEEL_USER_MODES) release_idx = 0;
     
     snprintf(s_tw_hold_press_label[buf], sizeof(s_tw_hold_press_label[buf]),
-      "Press: %s", touchwheel_get_mode_name(press_idx));
+      "Press\n%s", touchwheel_get_mode_name(press_idx));
     snprintf(s_tw_hold_release_label[buf], sizeof(s_tw_hold_release_label[buf]),
-      "Release: %s", touchwheel_get_mode_name(release_idx));
+      "Release\n%s", touchwheel_get_mode_name(release_idx));
     
     s_detail_items[item_count++] = (menu_item_t){
       s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
@@ -3445,7 +3440,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     
     // Steps selector
     snprintf(s_tw_cycle_steps_label[buf], sizeof(s_tw_cycle_steps_label[buf]),
-      "Steps: %u", (unsigned)num_steps);
+      "Steps\n%u", (unsigned)num_steps);
     s_detail_items[item_count++] = (menu_item_t){
       s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true
     };
@@ -3455,7 +3450,7 @@ static lv_obj_t* pad_detail_page_create(void) {
       uint8_t mode_idx = mapping->action.params.tw_mode.modes[i];
       if (mode_idx >= NUM_TOUCHWHEEL_USER_MODES) mode_idx = 0;
       snprintf(s_tw_cycle_step_labels[buf][i], sizeof(s_tw_cycle_step_labels[buf][i]),
-        "Step %d: %s", i + 1, touchwheel_get_mode_name(mode_idx));
+        "Step %d\n%s", i + 1, touchwheel_get_mode_name(mode_idx));
       s_detail_items[item_count++] = (menu_item_t){
         s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true
       };
@@ -3466,7 +3461,7 @@ static lv_obj_t* pad_detail_page_create(void) {
   if (mapping->action.type == ACTION_SET_TEMPO) {
     uint16_t bpm = mapping->action.params.tempo.bpm;
     if (bpm < 20 || bpm > 300) bpm = 120;  // Fallback to default
-    snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo: %u", (unsigned)bpm);
+    snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%u BPM", (unsigned)bpm);
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_label[buf], nav_to_set_tempo, NULL, true
     };
@@ -3478,7 +3473,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     if (midi_note < 36 || midi_note > 96) midi_note = 60;  // Default to C4
     char note_name[8];
     get_note_display_name(midi_note, note_name, sizeof(note_name));
-    snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note: %s", note_name);
+    snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note\n%s", note_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_note_label[buf], nav_to_note, NULL, true
     };
@@ -3506,20 +3501,20 @@ static lv_obj_t* pad_detail_page_create(void) {
     
     for (int i = 0; i < max_slots && item_count < MAX_DETAIL_ITEMS; i++) {
       if (i < num_ccs) {
-        // Active slot: show CC name
+        // Active slot: show slot + CC name (2-line format)
         uint8_t cc_num = mapping->action.params.randomize.cc_numbers[i];
         const char* cc_name = assets_get_cc_name(device, cc_num);
         if (cc_name && strcmp(cc_name, "Undefined") != 0) {
           snprintf(s_randomize_slot_labels[buf][i], 
-            sizeof(s_randomize_slot_labels[buf][i]), "%s", cc_name);
+            sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\n%s", i + 1, cc_name);
         } else {
           snprintf(s_randomize_slot_labels[buf][i], 
-            sizeof(s_randomize_slot_labels[buf][i]), "CC%u", (unsigned)cc_num);
+            sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\nCC%u", i + 1, (unsigned)cc_num);
         }
       } else {
         // Inactive slot
         snprintf(s_randomize_slot_labels[buf][i], 
-          sizeof(s_randomize_slot_labels[buf][i]), "Slot %d: Inactive", i + 1);
+          sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\nInactive", i + 1);
       }
       s_detail_items[item_count++] = (menu_item_t){
         s_randomize_slot_labels[buf][i], nav_to_randomize_slot, (void*)(uintptr_t)i, true
@@ -3532,7 +3527,7 @@ static lv_obj_t* pad_detail_page_create(void) {
   // Set custom back handler to recreate Pads list when going back
   menu_set_custom_back_handler(pad_detail_handle_back);
   
-  return menu_create_page(title, s_detail_items, item_count);
+  return menu_create_page_2line(title, s_detail_items, item_count);
 }
 
 // ============================================================================
@@ -3590,7 +3585,7 @@ lv_obj_t* menu_page_pads_create(void) {
   ESP_LOGI(TAG, "Pads page: showing %d pads (mode=%s)", item_count,
     show_touchwheel_pads ? "pads" : "other");
   
-  return menu_create_page("Pads", s_pad_items, item_count);
+  return menu_create_page_2line("Pads", s_pad_items, item_count);
 }
 
 // Cleanup function (call when leaving pads menu)

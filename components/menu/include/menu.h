@@ -76,6 +76,9 @@ lv_obj_t* menu_get_current_screen(void);
 // Helper: Create a menu screen with title and items
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count);
 
+// Two-line menu page - labels can contain newlines for two-line display
+lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, int item_count);
+
 // Helper: Navigate to an info page
 void menu_navigate_to_info(const char* title, const char* info_text);
 

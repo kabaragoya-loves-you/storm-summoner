@@ -336,7 +336,7 @@
             "tempo_dec",
             "tempo_hold",
             "tempo_cycle",
-            "control",
+            "control_change",
             "control_hold",
             "control_cycle",
             "note",
@@ -356,7 +356,7 @@
         {
           "if": {
             "properties": {
-              "type": {"enum": ["control", "control_hold", "control_cycle"]}
+              "type": {"enum": ["control_change", "control_hold", "control_cycle"]}
             }
           },
           "then": {

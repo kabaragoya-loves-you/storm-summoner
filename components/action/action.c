@@ -35,7 +35,7 @@ static const char* action_type_names[] = {
   [ACTION_TEMPO_DEC] = "Tempo -1",
   [ACTION_TEMPO_HOLD] = "Tempo Hold",
   [ACTION_TEMPO_CYCLE] = "Tempo Cycle",
-  [ACTION_CONTROL] = "Control",
+  [ACTION_CONTROL_CHANGE] = "Control Change",
   [ACTION_CONTROL_HOLD] = "Control Hold",
   [ACTION_CONTROL_CYCLE] = "Control Cycle",
   [ACTION_NOTE] = "Note",
@@ -45,8 +45,8 @@ static const char* action_type_names[] = {
   [ACTION_SUSTAIN] = "Sustain",
   [ACTION_SOSTENUTO] = "Sostenuto",
   [ACTION_TOUCHWHEEL_MODE] = "Touchwheel",
-  [ACTION_TOUCHWHEEL_HOLD] = "TW Hold",
-  [ACTION_TOUCHWHEEL_CYCLE] = "TW Cycle"
+  [ACTION_TOUCHWHEEL_HOLD] = "Touchwheel Hold",
+  [ACTION_TOUCHWHEEL_CYCLE] = "Touchwheel Cycle"
 };
 
 esp_err_t action_init(void) {
@@ -251,7 +251,7 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       break;
       
     // MIDI Control actions (supports multi-CC: 1-4 CCs per action)
-    case ACTION_CONTROL:
+    case ACTION_CONTROL_CHANGE:
       // Send CC value(s) on press only (one-shot)
       if (is_press) {
         uint8_t num_ccs = action->params.control.num_ccs;
@@ -491,7 +491,7 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
 // Helper functions to create common actions
 action_t action_create_control(uint8_t cc_number, uint8_t value) {
   action_t action = {0};
-  action.type = ACTION_CONTROL;
+  action.type = ACTION_CONTROL_CHANGE;
   action.params.control.num_ccs = 1;
   action.params.control.cc_numbers[0] = cc_number;
   action.params.control.values[0] = value;
