@@ -166,6 +166,9 @@ scene_change_mode_t scene_get_change_mode(void);
 // Scene configuration
 esp_err_t scene_set_name(uint8_t scene_index, const char* name);
 esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode);
+esp_err_t scene_set_touchwheel_mode_runtime(uint8_t scene_index, touchwheel_mode_t mode);  // No persistence
+touchwheel_mode_t scene_get_persisted_touchwheel_mode(uint8_t scene_index);  // Read from JSON
+output_type_t scene_get_persisted_touchwheel_output_type(uint8_t scene_index);  // Read from JSON
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
 esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc);
 

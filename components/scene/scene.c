@@ -194,6 +194,9 @@ static void scene_cleanup_touchwheel(void) {
 
 // Callback for program change mode touchwheel
 static void touchwheel_program_change_callback(int value, void* user_data) {
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   (void)user_data;
   
   // value is delta from endless encoder (+1, -1, etc.)
@@ -393,6 +396,9 @@ static void latch_release_timer_cb(void* arg) {
 
 // Release callback for continuous mode touchwheel (note off)
 static void touchwheel_continuous_release_callback(void* user_data) {
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   scene_t* scene = (scene_t*)user_data;
   
   // In latch mode, don't release immediately - start timers
@@ -443,6 +449,9 @@ static void touchwheel_continuous_release_callback(void* user_data) {
 
 // Callback for set_tempo mode touchwheel
 static void touchwheel_tempo_callback(int value, void* user_data) {
+  // Don't change tempo in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   scene_t* scene = (scene_t*)user_data;
   (void)scene;  // May use for style check later
   
@@ -459,6 +468,9 @@ static void touchwheel_tempo_callback(int value, void* user_data) {
 
 // Callback for pitch bend mode touchwheel (true bipolar - position maps directly to value)
 static void touchwheel_pitch_bend_callback(int value, void* user_data) {
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   (void)user_data;
   
   // Stop any running return animation when finger touches
@@ -538,6 +550,9 @@ static void pitch_bend_return_timer_cb(void* arg) {
 
 // Release callback for pitch bend - starts return-to-center animation
 static void touchwheel_pitch_bend_release_callback(void* user_data) {
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   (void)user_data;
   
   // Already at center, nothing to do
@@ -583,6 +598,9 @@ static void touchwheel_pitch_bend_release_callback(void* user_data) {
 
 // Callback for channel aftertouch mode touchwheel
 static void touchwheel_aftertouch_callback(int value, void* user_data) {
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   scene_t* scene = (scene_t*)user_data;
   
   uint8_t midi_value;
@@ -609,6 +627,9 @@ static void touchwheel_aftertouch_callback(int value, void* user_data) {
 
 // Callback for double CC mode touchwheel (14-bit CC, MSB=cc_numbers[0], LSB=cc_numbers[0]+32)
 static void touchwheel_double_cc_callback(int value, void* user_data) {
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   scene_t* scene = (scene_t*)user_data;
   if (!scene) return;
 
@@ -636,6 +657,9 @@ static void touchwheel_double_cc_callback(int value, void* user_data) {
 
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
+  
   scene_t* scene = (scene_t*)user_data;
   if (!scene || !scene->touchwheel.enabled) return;
   
@@ -1418,6 +1442,31 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
     default: mode_str = "unknown"; break;
   }
   ESP_LOGI(TAG, "Scene %d touchwheel mode set to %s", scene_index + 1, mode_str);
+  return ESP_OK;
+}
+
+// Runtime-only touchwheel mode change (no persistence)
+// Used by touchwheel actions during performance - changes are temporary
+esp_err_t scene_set_touchwheel_mode_runtime(uint8_t scene_index, touchwheel_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = scene_get_current();
+  if (scene && g_scene_manager.current_scene_index == scene_index) {
+    // Clean up any active notes before changing mode
+    touchwheel_cleanup_active_notes();
+    
+    scene->touchwheel_mode = mode;
+    // NOTE: No persistence - this is a runtime-only change
+
+    // Re-setup touchwheel instance for new mode
+    scene_cleanup_touchwheel();
+    scene_setup_touchwheel_for_mode(scene);
+  } else {
+    ESP_LOGW(TAG, "Can only modify current scene");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  ESP_LOGD(TAG, "Touchwheel mode set to %d (runtime, no persist)", mode);
   return ESP_OK;
 }
 
@@ -2933,6 +2982,93 @@ esp_err_t scene_load_from_flash(uint8_t scene_index) {
   }
   
   return ret;
+}
+
+// Read persisted touchwheel_mode from JSON without loading entire scene
+// Used by menu to show configured (not runtime) value
+touchwheel_mode_t scene_get_persisted_touchwheel_mode(uint8_t scene_index) {
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+  
+  FILE* f = fopen(filepath, "r");
+  if (!f) return TOUCHWHEEL_MODE_PADS;  // Default if file not found
+  
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  
+  char* json_str = malloc(fsize + 1);
+  if (!json_str) { fclose(f); return TOUCHWHEEL_MODE_PADS; }
+  
+  fread(json_str, 1, fsize, f);
+  fclose(f);
+  json_str[fsize] = '\0';
+  
+  cJSON* root = cJSON_Parse(json_str);
+  free(json_str);
+  if (!root) return TOUCHWHEEL_MODE_PADS;
+  
+  touchwheel_mode_t mode = TOUCHWHEEL_MODE_PADS;
+  cJSON* tw_mode = cJSON_GetObjectItem(root, "touchwheel_mode");
+  if (tw_mode && cJSON_IsString(tw_mode)) {
+    const char* mode_str = tw_mode->valuestring;
+    if (strcmp(mode_str, "pads") == 0 || strcmp(mode_str, "buttons") == 0) {
+      mode = TOUCHWHEEL_MODE_PADS;
+    } else if (strcmp(mode_str, "program_change") == 0) {
+      mode = TOUCHWHEEL_MODE_PROGRAM_CHANGE;
+    } else if (strcmp(mode_str, "continuous") == 0) {
+      mode = TOUCHWHEEL_MODE_CONTINUOUS;
+    } else if (strcmp(mode_str, "set_tempo") == 0) {
+      mode = TOUCHWHEEL_MODE_SET_TEMPO;
+    } else if (strcmp(mode_str, "pitch_bend") == 0) {
+      mode = TOUCHWHEEL_MODE_PITCH_BEND;
+    } else if (strcmp(mode_str, "aftertouch") == 0) {
+      mode = TOUCHWHEEL_MODE_AFTERTOUCH;
+    } else if (strcmp(mode_str, "double_cc") == 0) {
+      mode = TOUCHWHEEL_MODE_DOUBLE_CC;
+    }
+  }
+  
+  cJSON_Delete(root);
+  return mode;
+}
+
+// Read persisted touchwheel output_type from JSON without loading entire scene
+output_type_t scene_get_persisted_touchwheel_output_type(uint8_t scene_index) {
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+  
+  FILE* f = fopen(filepath, "r");
+  if (!f) return OUTPUT_TYPE_CC;  // Default
+  
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  
+  char* json_str = malloc(fsize + 1);
+  if (!json_str) { fclose(f); return OUTPUT_TYPE_CC; }
+  
+  fread(json_str, 1, fsize, f);
+  fclose(f);
+  json_str[fsize] = '\0';
+  
+  cJSON* root = cJSON_Parse(json_str);
+  free(json_str);
+  if (!root) return OUTPUT_TYPE_CC;
+  
+  output_type_t output_type = OUTPUT_TYPE_CC;
+  cJSON* tw = cJSON_GetObjectItem(root, "touchwheel");
+  if (tw) {
+    cJSON* ot = cJSON_GetObjectItem(tw, "output_type");
+    if (ot && cJSON_IsString(ot)) {
+      if (strcmp(ot->valuestring, "note") == 0) {
+        output_type = OUTPUT_TYPE_NOTE;
+      }
+    }
+  }
+  
+  cJSON_Delete(root);
+  return output_type;
 }
 
 esp_err_t scene_save_to_flash(uint8_t scene_index) {

@@ -635,6 +635,77 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "touchwheel"}
+            }
+          },
+          "then": {
+            "required": ["mode"],
+            "properties": {
+              "mode": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7,
+                "description": "User-facing touchwheel mode index (0=Pads, 1=CC, 2=PC, 3=Tempo, 4=Pitch Bend, 5=Aftertouch, 6=Notes, 7=Double CC)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "touchwheel_hold"}
+            }
+          },
+          "then": {
+            "required": ["mode", "mode2"],
+            "properties": {
+              "mode": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7,
+                "description": "User-facing touchwheel mode index on press"
+              },
+              "mode2": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7,
+                "description": "User-facing touchwheel mode index on release"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "touchwheel_cycle"}
+            }
+          },
+          "then": {
+            "required": ["num_modes", "modes"],
+            "properties": {
+              "num_modes": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8,
+                "description": "Number of modes in cycle"
+              },
+              "modes": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 7
+                },
+                "description": "User-facing touchwheel mode indices to cycle through"
+              }
+            }
+          }
         }
       ]
     }

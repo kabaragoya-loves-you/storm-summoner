@@ -2,9 +2,9 @@
 #include "midi_messages.h"
 #include "device_config.h"
 #include "scene.h"
+#include "touchwheel_mode_mapping.h"
 #include "transport.h"
 #include "tempo.h"
-#include "screensaver.h"
 #include "assets_manager.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -384,39 +384,99 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       
     // Touchwheel mode control
     case ACTION_TOUCHWHEEL_MODE:
-      // Set touchwheel mode on press only
+      // Set touchwheel mode on press only (using user-facing mode index)
+      // Uses runtime function - no persistence (changes are temporary)
       if (is_press) {
-        uint8_t scene_index = scene_get_current_index();
-        scene_set_touchwheel_mode(scene_index, (touchwheel_mode_t)action->params.tw_mode.mode);
-        ESP_LOGD(TAG, "Set touchwheel mode to %d", action->params.tw_mode.mode);
+        uint8_t user_mode_idx = action->params.tw_mode.mode;
+        const touchwheel_mode_mapping_t* mapping = touchwheel_get_mode_mapping(user_mode_idx);
+        if (mapping) {
+          uint8_t scene_index = scene_get_current_index();
+          scene_t* scene = scene_get_current();
+          if (scene) {
+            // Apply mode's default style so touchwheel setup uses correct processor
+            scene->touchwheel_style = mapping->default_style;
+            // Enable touchwheel for all modes except Pads
+            scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
+            if (mapping->use_output_type) {
+              scene->touchwheel.output_type = mapping->output_type;
+              // For Notes mode, ensure sensible defaults if not configured
+              if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+                if (scene->touchwheel.base_note == 0) scene->touchwheel.base_note = 60;
+                if (scene->touchwheel.note_range == 0) scene->touchwheel.note_range = 24;
+                if (scene->touchwheel.velocity == 0) scene->touchwheel.velocity = 100;
+              }
+            }
+          }
+          scene_set_touchwheel_mode_runtime(scene_index, mapping->mode);
+          ESP_LOGD(TAG, "Set touchwheel mode to %s", mapping->display_name);
+        }
       }
       break;
       
     case ACTION_TOUCHWHEEL_HOLD:
-      // Set mode on press, restore mode2 on release
+      // Set mode on press, restore mode2 on release (using user-facing mode indices)
+      // Uses runtime function - no persistence (changes are temporary)
       {
-        uint8_t scene_index = scene_get_current_index();
-        uint8_t mode = is_press ? action->params.tw_mode.mode : action->params.tw_mode.mode2;
-        scene_set_touchwheel_mode(scene_index, (touchwheel_mode_t)mode);
-        ESP_LOGD(TAG, "Touchwheel mode hold: %d", mode);
+        uint8_t user_mode_idx = is_press ? 
+          action->params.tw_mode.mode : action->params.tw_mode.mode2;
+        const touchwheel_mode_mapping_t* mapping = touchwheel_get_mode_mapping(user_mode_idx);
+        if (mapping) {
+          uint8_t scene_index = scene_get_current_index();
+          scene_t* scene = scene_get_current();
+          if (scene) {
+            // Apply mode's default style so touchwheel setup uses correct processor
+            scene->touchwheel_style = mapping->default_style;
+            // Enable touchwheel for all modes except Pads
+            scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
+            if (mapping->use_output_type) {
+              scene->touchwheel.output_type = mapping->output_type;
+              // For Notes mode, ensure sensible defaults if not configured
+              if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+                if (scene->touchwheel.base_note == 0) scene->touchwheel.base_note = 60;
+                if (scene->touchwheel.note_range == 0) scene->touchwheel.note_range = 24;
+                if (scene->touchwheel.velocity == 0) scene->touchwheel.velocity = 100;
+              }
+            }
+          }
+          scene_set_touchwheel_mode_runtime(scene_index, mapping->mode);
+          ESP_LOGD(TAG, "Touchwheel mode hold: %s", mapping->display_name);
+        }
       }
       break;
       
     case ACTION_TOUCHWHEEL_CYCLE:
+      // Uses runtime function - no persistence (changes are temporary)
       if (is_press) {
         action_t* mutable_action = (action_t*)action;
         uint8_t idx = mutable_action->params.tw_mode.current_index;
-        uint8_t mode = mutable_action->params.tw_mode.modes[idx];
+        uint8_t user_mode_idx = mutable_action->params.tw_mode.modes[idx];
+        const touchwheel_mode_mapping_t* mapping = touchwheel_get_mode_mapping(user_mode_idx);
         
-        uint8_t scene_index = scene_get_current_index();
-        scene_set_touchwheel_mode(scene_index, (touchwheel_mode_t)mode);
+        if (mapping) {
+          uint8_t scene_index = scene_get_current_index();
+          scene_t* scene = scene_get_current();
+          if (scene) {
+            // Apply mode's default style so touchwheel setup uses correct processor
+            scene->touchwheel_style = mapping->default_style;
+            // Enable touchwheel for all modes except Pads
+            scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
+            if (mapping->use_output_type) {
+              scene->touchwheel.output_type = mapping->output_type;
+              // For Notes mode, ensure sensible defaults if not configured
+              if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+                if (scene->touchwheel.base_note == 0) scene->touchwheel.base_note = 60;
+                if (scene->touchwheel.note_range == 0) scene->touchwheel.note_range = 24;
+                if (scene->touchwheel.velocity == 0) scene->touchwheel.velocity = 100;
+              }
+            }
+          }
+          scene_set_touchwheel_mode_runtime(scene_index, mapping->mode);
+          ESP_LOGD(TAG, "Cycled touchwheel mode to %s", mapping->display_name);
+        }
         
         // Advance to next mode
         mutable_action->params.tw_mode.current_index =
           (idx + 1) % mutable_action->params.tw_mode.num_modes;
-        
-        ESP_LOGD(TAG, "Cycled touchwheel mode to %d (next idx: %d)", mode,
-          mutable_action->params.tw_mode.current_index);
       }
       break;
       

@@ -1,6 +1,7 @@
 #include "menu.h"
 #include "menu_pages.h"
 #include "scene.h"
+#include "touchwheel_mode_mapping.h"
 #include "tempo.h"
 #include "device_config.h"
 #include "assets_manager.h"
@@ -56,47 +57,26 @@ typedef struct {
 static cc_options_t s_cc_options = {0};
 
 // ============================================================================
-// Mode Mapping
+// Mode Mapping (uses shared definitions from touchwheel_modes.h)
 // ============================================================================
 
-// User-facing mode names and their internal representation
-typedef struct {
-  const char* display_name;
-  touchwheel_mode_t mode;
-  output_type_t output_type;      // Only relevant for CONTINUOUS mode
-  bool use_output_type;           // Whether to also set output_type
-  touchwheel_style_t default_style;
-  bool supports_style_selection;  // User can change style
-} mode_mapping_t;
+#define NUM_BASE_MODES NUM_TOUCHWHEEL_USER_MODES
 
-// Mode mappings - order determines roller display order
-static const mode_mapping_t s_mode_mappings[] = {
-  { "Pads",           TOUCHWHEEL_MODE_PADS,           OUTPUT_TYPE_CC, false, TOUCHWHEEL_STYLE_ODOMETER, false },
-  { "Control Change", TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_CC, true,  TOUCHWHEEL_STYLE_ENDLESS,  true  },
-  { "Program Change", TOUCHWHEEL_MODE_PROGRAM_CHANGE, OUTPUT_TYPE_CC, false, TOUCHWHEEL_STYLE_ENDLESS,  false },
-  { "Tempo",          TOUCHWHEEL_MODE_SET_TEMPO,      OUTPUT_TYPE_CC, false, TOUCHWHEEL_STYLE_ENDLESS,  true  },
-  { "Pitch Bend",     TOUCHWHEEL_MODE_PITCH_BEND,     OUTPUT_TYPE_CC, false, TOUCHWHEEL_STYLE_BIPOLAR,  false },
-  { "After Touch",    TOUCHWHEEL_MODE_AFTERTOUCH,     OUTPUT_TYPE_CC, false, TOUCHWHEEL_STYLE_ODOMETER, true  },
-  { "Notes",          TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_NOTE, true, TOUCHWHEEL_STYLE_ODOMETER, true  },
-  { "Double CC",      TOUCHWHEEL_MODE_DOUBLE_CC,      OUTPUT_TYPE_CC, false, TOUCHWHEEL_STYLE_ENDLESS,  true  },
-};
-
-#define NUM_BASE_MODES (sizeof(s_mode_mappings) / sizeof(s_mode_mappings[0]))
-
-// Get current mode mapping index (-1 if not found)
+// Get current mode mapping index from PERSISTED JSON (not runtime memory)
+// This ensures the menu shows the configured value, not temporary runtime changes
 static int get_current_mode_index(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return 0;
+  uint8_t scene_index = scene_get_current_index();
   
-  touchwheel_mode_t mode = scene->touchwheel_mode;
-  output_type_t output = scene->touchwheel.output_type;
+  // Read persisted values from JSON file
+  touchwheel_mode_t mode = scene_get_persisted_touchwheel_mode(scene_index);
+  output_type_t output = scene_get_persisted_touchwheel_output_type(scene_index);
   
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
-    if (s_mode_mappings[i].mode == mode) {
+    if (g_touchwheel_mode_mappings[i].mode == mode) {
       // For CONTINUOUS mode, also check output type
       if (mode == TOUCHWHEEL_MODE_CONTINUOUS) {
-        if (s_mode_mappings[i].use_output_type && 
-            s_mode_mappings[i].output_type == output) {
+        if (g_touchwheel_mode_mappings[i].use_output_type && 
+            g_touchwheel_mode_mappings[i].output_type == output) {
           return (int)i;
         }
       } else {
@@ -206,7 +186,7 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   
   // Check if Tempo was selected but clock is not internal
   // (This shouldn't happen if we built the roller correctly, but be safe)
-  const mode_mapping_t* mapping = &s_mode_mappings[selected_index];
+  const touchwheel_mode_mapping_t* mapping = &g_touchwheel_mode_mappings[selected_index];
   if (mapping->mode == TOUCHWHEEL_MODE_SET_TEMPO) {
     if (scene->clock_source != CLOCK_SOURCE_INTERNAL) {
       ESP_LOGW(TAG, "Tempo mode requires internal clock");
@@ -256,7 +236,7 @@ static lv_obj_t* mode_roller_create(void) {
   
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal
-    if (s_mode_mappings[i].mode == TOUCHWHEEL_MODE_SET_TEMPO && !show_tempo) {
+    if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_SET_TEMPO && !show_tempo) {
       // Adjust current index if we're skipping an option before it
       if ((int)i < current_mode_idx) {
         // Don't adjust - we handle this below
@@ -265,7 +245,7 @@ static lv_obj_t* mode_roller_create(void) {
     }
     
     if (option_count > 0) strcat(options, "\n");
-    strcat(options, s_mode_mappings[i].display_name);
+    strcat(options, g_touchwheel_mode_mappings[i].display_name);
     
     if ((int)i == current_mode_idx) {
       roller_index = option_count;
@@ -313,7 +293,7 @@ static void style_confirm_cb(uint32_t selected_index, void* user_data) {
     TOUCHWHEEL_STYLE_ENDLESS : TOUCHWHEEL_STYLE_ODOMETER;
   
   int mode_idx = get_current_mode_index();
-  touchwheel_mode_t mode = s_mode_mappings[mode_idx].mode;
+  touchwheel_mode_t mode = g_touchwheel_mode_mappings[mode_idx].mode;
   
   // Re-setup the touchwheel to apply the new style
   uint8_t scene_index = scene_get_current_index();
@@ -331,7 +311,7 @@ static lv_obj_t* style_roller_create(void) {
   if (!scene) return NULL;
   
   int mode_idx = get_current_mode_index();
-  touchwheel_mode_t mode = s_mode_mappings[mode_idx].mode;
+  touchwheel_mode_t mode = g_touchwheel_mode_mappings[mode_idx].mode;
   output_type_t output = scene->touchwheel.output_type;
   
   const char* options;
@@ -827,7 +807,7 @@ lv_obj_t* menu_page_touchwheel_create(void) {
   }
   
   int mode_idx = get_current_mode_index();
-  const mode_mapping_t* mapping = &s_mode_mappings[mode_idx];
+  const touchwheel_mode_mapping_t* mapping = &g_touchwheel_mode_mappings[mode_idx];
   
   int item_count = 0;
   

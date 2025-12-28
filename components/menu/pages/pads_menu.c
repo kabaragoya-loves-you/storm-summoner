@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "scene.h"
 #include "action.h"
+#include "touchwheel_mode_mapping.h"
 #include "tempo.h"
 #include "ui.h"
 #include "assets_manager.h"
@@ -79,6 +80,20 @@ static char s_tempo_hold_release_label[LABEL_BUFFER_SETS][32];
 static char s_tempo_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_cycle_step_labels[LABEL_BUFFER_SETS][MAX_TEMPO_CYCLE_STEPS][32];
 static uint8_t s_editing_tempo_step = 0;
+
+// Touchwheel Mode
+static char s_tw_mode_label[LABEL_BUFFER_SETS][32];
+
+// TW Hold submenu
+static menu_item_t s_tw_hold_items[2];
+static char s_tw_hold_press_label[LABEL_BUFFER_SETS][32];
+static char s_tw_hold_release_label[LABEL_BUFFER_SETS][32];
+
+// TW Cycle
+#define MAX_TW_CYCLE_STEPS 8
+static char s_tw_cycle_steps_label[LABEL_BUFFER_SETS][24];
+static char s_tw_cycle_step_labels[LABEL_BUFFER_SETS][MAX_TW_CYCLE_STEPS][32];
+static uint8_t s_editing_tw_step = 0;
 
 // Scene Set
 static char s_scene_label[LABEL_BUFFER_SETS][40];
@@ -606,6 +621,24 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.tempo.num_tempos = 2;
       mapping->action.params.tempo.cycle_tempos[0] = 120;
       mapping->action.params.tempo.cycle_tempos[1] = 120;
+    }
+    
+    // Set defaults for Touchwheel Mode (Pads = index 0)
+    if (new_type == ACTION_TOUCHWHEEL_MODE) {
+      mapping->action.params.tw_mode.mode = 0;  // Pads
+    }
+    
+    // Set defaults for TW Hold (Pads for both press and release)
+    if (new_type == ACTION_TOUCHWHEEL_HOLD) {
+      mapping->action.params.tw_mode.mode = 0;   // Pads on press
+      mapping->action.params.tw_mode.mode2 = 0;  // Pads on release
+    }
+    
+    // Set defaults for TW Cycle (2 steps, Pads for both)
+    if (new_type == ACTION_TOUCHWHEEL_CYCLE) {
+      mapping->action.params.tw_mode.num_modes = 2;
+      mapping->action.params.tw_mode.modes[0] = 0;  // Pads
+      mapping->action.params.tw_mode.modes[1] = 0;  // Pads
     }
     
     persist_scene_changes();
@@ -2609,6 +2642,295 @@ static void nav_to_tempo_cycle_step(void* user_data) {
 }
 
 // ============================================================================
+// Touchwheel Mode (for ACTION_TOUCHWHEEL_MODE)
+// ============================================================================
+
+// Helper to build touchwheel mode options string for roller
+static void build_tw_mode_options(char* buf, size_t buf_size) {
+  buf[0] = '\0';
+  char* pos = buf;
+  size_t remaining = buf_size;
+  
+  for (uint8_t i = 0; i < NUM_TOUCHWHEEL_USER_MODES && remaining > 20; i++) {
+    const char* name = touchwheel_get_mode_name(i);
+    int written = snprintf(pos, remaining, "%s%s", i > 0 ? "\n" : "", name);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+}
+
+static void tw_mode_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  if (selected_idx < NUM_TOUCHWHEEL_USER_MODES) {
+    mapping->action.params.tw_mode.mode = (uint8_t)selected_idx;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Touchwheel mode set to %s", touchwheel_get_mode_name(selected_idx));
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* tw_mode_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[512];
+  build_tw_mode_options(options, sizeof(options));
+  
+  uint8_t current = mapping->action.params.tw_mode.mode;
+  if (current >= NUM_TOUCHWHEEL_USER_MODES) current = 0;
+  
+  return menu_create_roller_page("Mode", options, current, tw_mode_confirm_cb, NULL);
+}
+
+static void nav_to_tw_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Mode", tw_mode_roller_create);
+}
+
+// ============================================================================
+// TW Hold (for ACTION_TOUCHWHEEL_HOLD)
+// ============================================================================
+
+static lv_obj_t* tw_hold_page_create(void);  // Forward declaration
+
+static void tw_hold_press_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  if (selected_idx < NUM_TOUCHWHEEL_USER_MODES) {
+    mapping->action.params.tw_mode.mode = (uint8_t)selected_idx;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "TW Hold press set to %s", touchwheel_get_mode_name(selected_idx));
+  }
+  
+  menu_navigate_back_then_to(2, "TW Hold", tw_hold_page_create);
+}
+
+static lv_obj_t* tw_hold_press_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[512];
+  build_tw_mode_options(options, sizeof(options));
+  
+  uint8_t current = mapping->action.params.tw_mode.mode;
+  if (current >= NUM_TOUCHWHEEL_USER_MODES) current = 0;
+  
+  return menu_create_roller_page("Press", options, current, tw_hold_press_confirm_cb, NULL);
+}
+
+static void nav_to_tw_hold_press(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Press", tw_hold_press_roller_create);
+}
+
+static void tw_hold_release_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  if (selected_idx < NUM_TOUCHWHEEL_USER_MODES) {
+    mapping->action.params.tw_mode.mode2 = (uint8_t)selected_idx;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "TW Hold release set to %s", touchwheel_get_mode_name(selected_idx));
+  }
+  
+  menu_navigate_back_then_to(2, "TW Hold", tw_hold_page_create);
+}
+
+static lv_obj_t* tw_hold_release_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[512];
+  build_tw_mode_options(options, sizeof(options));
+  
+  uint8_t current = mapping->action.params.tw_mode.mode2;
+  if (current >= NUM_TOUCHWHEEL_USER_MODES) current = 0;
+  
+  return menu_create_roller_page("Release", options, current, tw_hold_release_confirm_cb, NULL);
+}
+
+static void nav_to_tw_hold_release(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Release", tw_hold_release_roller_create);
+}
+
+static bool tw_hold_handle_back(void) {
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+  return true;
+}
+
+static lv_obj_t* tw_hold_page_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  int buf = get_next_buffer_set();
+  
+  uint8_t press_idx = mapping->action.params.tw_mode.mode;
+  uint8_t release_idx = mapping->action.params.tw_mode.mode2;
+  if (press_idx >= NUM_TOUCHWHEEL_USER_MODES) press_idx = 0;
+  if (release_idx >= NUM_TOUCHWHEEL_USER_MODES) release_idx = 0;
+  
+  snprintf(s_tw_hold_press_label[buf], sizeof(s_tw_hold_press_label[buf]),
+    "Press: %s", touchwheel_get_mode_name(press_idx));
+  snprintf(s_tw_hold_release_label[buf], sizeof(s_tw_hold_release_label[buf]),
+    "Release: %s", touchwheel_get_mode_name(release_idx));
+  
+  s_tw_hold_items[0] = (menu_item_t){
+    s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
+  };
+  s_tw_hold_items[1] = (menu_item_t){
+    s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true
+  };
+  
+  menu_set_custom_back_handler(tw_hold_handle_back);
+  
+  return menu_create_page("TW Hold", s_tw_hold_items, 2);
+}
+
+// ============================================================================
+// TW Cycle (for ACTION_TOUCHWHEEL_CYCLE)
+// ============================================================================
+
+static void tw_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t new_steps = selected_idx + 2;  // Range 2-8
+  mapping->action.params.tw_mode.num_modes = new_steps;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "TW Cycle steps set to %u", (unsigned)new_steps);
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* tw_cycle_steps_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Options: 2, 3, 4, 5, 6, 7, 8
+  static const char* options = "2\n3\n4\n5\n6\n7\n8";
+  
+  uint8_t current_steps = mapping->action.params.tw_mode.num_modes;
+  if (current_steps < 2) current_steps = 2;
+  if (current_steps > 8) current_steps = 8;
+  uint32_t current_idx = current_steps - 2;
+  
+  return menu_create_roller_page("Steps", options, current_idx,
+    tw_cycle_steps_confirm_cb, NULL);
+}
+
+static void nav_to_tw_cycle_steps(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Steps", tw_cycle_steps_roller_create);
+}
+
+static void tw_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t step = s_editing_tw_step;
+  if (step < MAX_TW_CYCLE_STEPS && selected_idx < NUM_TOUCHWHEEL_USER_MODES) {
+    mapping->action.params.tw_mode.modes[step] = (uint8_t)selected_idx;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "TW Cycle step %u set to %s", 
+      (unsigned)step, touchwheel_get_mode_name(selected_idx));
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* tw_cycle_step_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[512];
+  build_tw_mode_options(options, sizeof(options));
+  
+  uint8_t step = s_editing_tw_step;
+  uint8_t current = mapping->action.params.tw_mode.modes[step];
+  if (current >= NUM_TOUCHWHEEL_USER_MODES) current = 0;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
+  
+  return menu_create_roller_page(title, options, current,
+    tw_cycle_step_confirm_cb, NULL);
+}
+
+static void nav_to_tw_cycle_step(void* user_data) {
+  s_editing_tw_step = (uint8_t)(uintptr_t)user_data;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_tw_step + 1));
+  menu_navigate_to(title, tw_cycle_step_roller_create);
+}
+
+// ============================================================================
 // Randomize Slot Roller (for ACTION_RANDOMIZE)
 // ============================================================================
 
@@ -3080,6 +3402,62 @@ static lv_obj_t* pad_detail_page_create(void) {
         "Step %d: %u BPM", i + 1, (unsigned)bpm);
       s_detail_items[item_count++] = (menu_item_t){
         s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true
+      };
+    }
+  }
+  
+  // Show Mode selector for Touchwheel Mode action
+  if (mapping->action.type == ACTION_TOUCHWHEEL_MODE) {
+    uint8_t mode_idx = mapping->action.params.tw_mode.mode;
+    if (mode_idx >= NUM_TOUCHWHEEL_USER_MODES) mode_idx = 0;
+    snprintf(s_tw_mode_label[buf], sizeof(s_tw_mode_label[buf]),
+      "Mode: %s", touchwheel_get_mode_name(mode_idx));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tw_mode_label[buf], nav_to_tw_mode, NULL, true
+    };
+  }
+  
+  // Show TW Hold submenu items
+  if (mapping->action.type == ACTION_TOUCHWHEEL_HOLD) {
+    uint8_t press_idx = mapping->action.params.tw_mode.mode;
+    uint8_t release_idx = mapping->action.params.tw_mode.mode2;
+    if (press_idx >= NUM_TOUCHWHEEL_USER_MODES) press_idx = 0;
+    if (release_idx >= NUM_TOUCHWHEEL_USER_MODES) release_idx = 0;
+    
+    snprintf(s_tw_hold_press_label[buf], sizeof(s_tw_hold_press_label[buf]),
+      "Press: %s", touchwheel_get_mode_name(press_idx));
+    snprintf(s_tw_hold_release_label[buf], sizeof(s_tw_hold_release_label[buf]),
+      "Release: %s", touchwheel_get_mode_name(release_idx));
+    
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
+    };
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true
+    };
+  }
+  
+  // Show TW Cycle submenu items
+  if (mapping->action.type == ACTION_TOUCHWHEEL_CYCLE) {
+    uint8_t num_steps = mapping->action.params.tw_mode.num_modes;
+    if (num_steps < 2) num_steps = 2;
+    if (num_steps > 8) num_steps = 8;
+    
+    // Steps selector
+    snprintf(s_tw_cycle_steps_label[buf], sizeof(s_tw_cycle_steps_label[buf]),
+      "Steps: %u", (unsigned)num_steps);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true
+    };
+    
+    // Individual step items
+    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+      uint8_t mode_idx = mapping->action.params.tw_mode.modes[i];
+      if (mode_idx >= NUM_TOUCHWHEEL_USER_MODES) mode_idx = 0;
+      snprintf(s_tw_cycle_step_labels[buf][i], sizeof(s_tw_cycle_step_labels[buf][i]),
+        "Step %d: %s", i + 1, touchwheel_get_mode_name(mode_idx));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true
       };
     }
   }
