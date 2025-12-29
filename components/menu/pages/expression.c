@@ -5,6 +5,7 @@
 #include "scene.h"
 #include "action.h"
 #include "curve.h"
+#include "continuous_mapping.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "assets_types.h"
@@ -32,7 +33,7 @@ static menu_item_t s_expr_items[MAX_EXPR_ITEMS];
 static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_output_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
-static char s_polarity_label[LABEL_BUFFER_SETS][40];
+static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
 static char s_base_note_label[LABEL_BUFFER_SETS][32];
 static char s_range_label[LABEL_BUFFER_SETS][32];
@@ -323,8 +324,17 @@ static void nav_to_cc_slot(void* user_data) {
 }
 
 // ============================================================================
-// TRS Polarity Roller
+// Signal Polarity Roller (Unipolar/Bipolar/Inverted)
 // ============================================================================
+
+static const char* polarity_to_string(polarity_t polarity) {
+  switch (polarity) {
+    case POLARITY_UNIPOLAR: return "Unipolar";
+    case POLARITY_BIPOLAR: return "Bipolar";
+    case POLARITY_INVERTED: return "Inverted";
+    default: return "Unknown";
+  }
+}
 
 static void polarity_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -332,28 +342,35 @@ static void polarity_confirm_cb(uint32_t selected_index, void* user_data) {
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
   
-  expression_polarity_t polarity = (selected_index == 0) ? 
-    EXPRESSION_POLARITY_TIP_ADC : EXPRESSION_POLARITY_RING_ADC;
-  expression_set_polarity(polarity);
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
   
-  ESP_LOGI(TAG, "TRS polarity set to: %s", 
-    polarity == EXPRESSION_POLARITY_TIP_ADC ? "Tip->ADC" : "Ring->ADC");
+  scene->expression.polarity = (polarity_t)selected_index;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Expression polarity set to: %s", polarity_to_string(scene->expression.polarity));
   
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, "Expression", menu_page_expression_create);
 }
 
 static lv_obj_t* polarity_roller_create(void) {
-  expression_polarity_t current = expression_get_polarity();
-  uint32_t current_idx = (current == EXPRESSION_POLARITY_TIP_ADC) ? 0 : 1;
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
   
-  return menu_create_roller_page("TRS Polarity", 
-    "Tip\n", current_idx, polarity_confirm_cb, NULL);
+  uint32_t current = (uint32_t)scene->expression.polarity;
+  if (current > 2) current = 0;
+  
+  return menu_create_roller_page("Polarity", "Unipolar\nBipolar\nInverted", current, polarity_confirm_cb, NULL);
 }
 
 static void nav_to_polarity(void* user_data) {
   (void)user_data;
-  menu_navigate_to("TRS Polarity", polarity_roller_create);
+  menu_navigate_to("Polarity", polarity_roller_create);
 }
 
 // ============================================================================
@@ -627,7 +644,12 @@ lv_obj_t* menu_page_expression_create(void) {
           };
         }
         
-        // Curve (CC mode only)
+        // Polarity (envelope shaping)
+        snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
+          "Polarity\n%s", polarity_to_string(scene->expression.polarity));
+        s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+        
+        // Curve
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->expression.curve.type));
         s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
@@ -651,13 +673,17 @@ lv_obj_t* menu_page_expression_create(void) {
         snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
           "Velocity\n%u", (unsigned)vel);
         s_expr_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true};
+        
+        // Polarity (envelope shaping - also applies to notes)
+        snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
+          "Polarity\n%s", polarity_to_string(scene->expression.polarity));
+        s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+        
+        // Curve (also applies to notes)
+        snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
+          "Curve\n%s", curve_type_to_string(scene->expression.curve.type));
+        s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
       }
-      
-      // TRS Polarity (available for both CC and Notes modes)
-      expression_polarity_t polarity = expression_get_polarity();
-      snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
-        "TRS Polarity\n%s", polarity == EXPRESSION_POLARITY_TIP_ADC ? "Tip->ADC" : "Ring->ADC");
-      s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
       
       break;
     }

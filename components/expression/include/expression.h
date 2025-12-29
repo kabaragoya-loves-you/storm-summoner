@@ -202,4 +202,16 @@ void expression_set_gate_logging(bool enabled);
  */
 bool expression_get_gate_logging(void);
 
+/**
+ * Set slow polling delay (when pedal is stable)
+ * @param delay_ms Delay in ms (10-200, clamped)
+ */
+void expression_set_slow_delay(uint8_t delay_ms);
+
+/**
+ * Get current slow polling delay
+ * @return Delay in ms
+ */
+uint8_t expression_get_slow_delay(void);
+
 #endif /* _EXPRESSION_H */

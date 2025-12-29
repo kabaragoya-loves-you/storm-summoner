@@ -2875,8 +2875,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else scene->expression_mode = EXPRESSION_MODE_PEDAL;
   }
   
-  // Sync expression.enabled with mode (only PEDAL mode needs continuous routing)
-  scene->expression.enabled = (scene->expression_mode == EXPRESSION_MODE_PEDAL);
+  // Note: expression.enabled is loaded from JSON by json_to_continuous_mapping()
+  // and should NOT be overwritten here. The auto-management of enabled only
+  // happens when the mode is actively changed via scene_set_expression_mode().
   
   // Deserialize pedal actions (try object first, fall back to array for backward compat)
   cJSON* sustain = cJSON_GetObjectItem(root, "sustain");

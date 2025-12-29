@@ -15,6 +15,7 @@ idf_component_register(
     "pages/dac.c"
     "pages/adc_manager.c"
     "pages/expression.c"
+    "pages/settings_expression.c"
     "pages/cv.c"
     "pages/sensor.c"
     "pages/tempo.c"

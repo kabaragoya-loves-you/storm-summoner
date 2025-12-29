@@ -28,6 +28,7 @@
 #define NVS_KEY_EXP_PEDAL_SW_TYPE "exp_pedal_sw"
 #define NVS_KEY_EXP_PREV_MODE "exp_prev_mode"
 #define NVS_KEY_EXP_GATE_LOG "exp_gate_log"
+#define NVS_KEY_EXP_SLOW_DELAY "exp_slow_dly"
 
 // Default calibration values
 #define DEFAULT_MIN_VALUE 100
@@ -44,7 +45,7 @@
 #define MOVING_AVG_LENGTH 10
 #define IIR_ALPHA 0.3f
 #define TASK_DELAY_MS_FAST 30    // Fast polling when value changing
-#define TASK_DELAY_MS_SLOW 100   // Slow polling when value stable
+#define DEFAULT_SLOW_DELAY 50    // Default slow polling when value stable (was 100)
 #define STABILITY_THRESHOLD 10    // Consecutive stable readings before slowing down
 
 // Static variables
@@ -61,6 +62,7 @@ static bool s_gate_state = false;
 static bool s_pedal_state = false;  // For sustain/sostenuto (true = pressed)
 static bool s_logging_enabled = false;  // Control periodic value logging
 static bool s_gate_logging_enabled = false;  // Control gate change message logging
+static uint8_t s_slow_delay_ms = DEFAULT_SLOW_DELAY;  // Configurable slow polling delay
 
 // Filtering state
 static int s_samples[MOVING_AVG_LENGTH] = {0};
@@ -187,15 +189,6 @@ static void expression_task(void *pvParameters) {
       // Process based on mode
       if (s_mode == EXPRESSION_MODE_PEDAL) {
         // Standard expression pedal mode - continuous CC values
-        static int16_t last_raw = -1;
-        
-        // Detect wrap-around or large jumps
-        if (last_raw >= 0) {
-          int delta = raw - last_raw;
-          if (abs(delta) > 3000) continue;
-        }
-        last_raw = raw;
-        
         if (raw >= 0) {
           // Moving average filter
           if (s_num_samples < MOVING_AVG_LENGTH) {
@@ -240,7 +233,7 @@ static void expression_task(void *pvParameters) {
             ESP_LOGI(TAG, "Expression pedal initial: %d (raw: %d)", s_midi_value, raw);
           }
           // Check if change exceeds deadzone
-          else if (abs(s_midi_value - last_midi_value) >= s_deadzone) {
+          if (abs(s_midi_value - last_midi_value) >= s_deadzone) {
             event_t expr_event = {
               .type = EVENT_EXPRESSION_VALUE,
               .priority = EVENT_PRIORITY_NORMAL,
@@ -266,8 +259,8 @@ static void expression_task(void *pvParameters) {
             // Value stable - increment counter and potentially slow down
             if (stability_count < STABILITY_THRESHOLD) {
               stability_count++;
-            } else if (task_delay_ms != TASK_DELAY_MS_SLOW) {
-              task_delay_ms = TASK_DELAY_MS_SLOW;
+            } else if (task_delay_ms != s_slow_delay_ms) {
+              task_delay_ms = s_slow_delay_ms;
             }
           }
         }
@@ -432,6 +425,15 @@ void expression_init(bool enable_logging) {
     s_gate_logging_enabled = (stored_u8 != 0);
   } else {
     app_settings_save_u8(NVS_KEY_EXP_GATE_LOG, 0);
+  }
+  
+  // Load slow delay setting
+  if (app_settings_load_u8(NVS_KEY_EXP_SLOW_DELAY, &stored_u8) == APP_SETTINGS_OK) {
+    s_slow_delay_ms = stored_u8;
+    if (s_slow_delay_ms < 10) s_slow_delay_ms = 10;  // Minimum 10ms
+    if (s_slow_delay_ms > 200) s_slow_delay_ms = 200;  // Maximum 200ms
+  } else {
+    app_settings_save_u8(NVS_KEY_EXP_SLOW_DELAY, s_slow_delay_ms);
   }
   
   // Configure cable detection GPIO
@@ -667,6 +669,18 @@ void expression_set_gate_logging(bool enabled) {
 
 bool expression_get_gate_logging(void) {
   return s_gate_logging_enabled;
+}
+
+void expression_set_slow_delay(uint8_t delay_ms) {
+  if (delay_ms < 10) delay_ms = 10;
+  if (delay_ms > 200) delay_ms = 200;
+  s_slow_delay_ms = delay_ms;
+  app_settings_save_u8(NVS_KEY_EXP_SLOW_DELAY, delay_ms);
+  ESP_LOGI(TAG, "Slow polling delay set to %u ms", (unsigned)delay_ms);
+}
+
+uint8_t expression_get_slow_delay(void) {
+  return s_slow_delay_ms;
 }
 
 // Helper: Compare function for qsort

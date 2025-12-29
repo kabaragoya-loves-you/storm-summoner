@@ -42,7 +42,7 @@ static void nav_to_adc_manager(void* user_data) {
 
 static void nav_to_expression(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Expression", menu_page_expression_create);
+  menu_navigate_to("Expression", menu_page_settings_expression_create);
 }
 
 static void nav_to_cv(void* user_data) {
