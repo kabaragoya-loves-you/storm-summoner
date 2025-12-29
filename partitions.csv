@@ -2,6 +2,6 @@
 nvs,         data, nvs,     ,          0x6000
 otadata,     data, ota,     ,          0x2000
 phy_init,    data, phy,     ,          0x1000
-ota_0,       app,  ota_0,   ,          0x180000
-ota_1,       app,  ota_1,   ,          0x180000
+ota_0,       app,  ota_0,   ,          0x1A0000
+ota_1,       app,  ota_1,   ,          0x1A0000
 assets,      data, littlefs, ,          0xA00000
