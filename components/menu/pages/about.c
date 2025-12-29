@@ -18,23 +18,29 @@ lv_obj_t* menu_page_about_create(void) {
   
   int idx = 0;
   
-  // Version
-  snprintf(s_labels[idx], sizeof(s_labels[0]), "Version: %s", version_get_string());
+  // Version (major.minor only)
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Version\n%u.%u",
+    version_get_major(), version_get_minor());
+  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  idx++;
+  
+  // Git Commit
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Git Commit\n%s", version_get_git_hash());
   s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
   idx++;
   
   // Serial
-  snprintf(s_labels[idx], sizeof(s_labels[0]), "Serial: %s", version_get_serial());
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Serial\n%s", version_get_serial());
   s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
   idx++;
   
   // Build number
-  snprintf(s_labels[idx], sizeof(s_labels[0]), "Build: %lu", (unsigned long)version_get_build());
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Build\n%lu", (unsigned long)version_get_build());
   s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
   idx++;
   
   // Hardware revision
-  snprintf(s_labels[idx], sizeof(s_labels[0]), "Hardware: %s", revision_get_string());
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Hardware\n%s", revision_get_string());
   s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
   idx++;
   
@@ -42,15 +48,19 @@ lv_obj_t* menu_page_about_create(void) {
   size_t total_bytes = 0, used_bytes = 0;
   if (esp_littlefs_info("assets", &total_bytes, &used_bytes) == ESP_OK) {
     // Convert to KB for readability
-    snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage: %uK / %uK", 
+    snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage\n%uK / %uK", 
       (unsigned)(used_bytes / 1024), (unsigned)(total_bytes / 1024));
   } else {
-    snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage: unavailable");
+    snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage\nunavailable");
   }
   s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
   idx++;
+
+  // Identity
+  s_about_items[idx] = (menu_item_t){ "Lizard\nVoronox", NULL, NULL, false };
+  idx++;
   
   ESP_LOGI(TAG, "About page: %d items", idx);
-  return menu_create_page("About", s_about_items, idx);
+  return menu_create_page_2line("About", s_about_items, idx);
 }
 
