@@ -63,7 +63,8 @@ typedef struct {
   
   // State tracking
   uint32_t last_activity_ms; // Last time value changed (for idle timeout)
-  uint8_t last_value;        // Last sent value (CC or note number)
+  uint8_t last_value;        // Last sent CC value (0-127)
+  uint8_t last_note;         // Last sent note number (for NOTE output)
   bool note_active;          // For NOTE output: whether a note is currently on
 } continuous_mapping_t;
 

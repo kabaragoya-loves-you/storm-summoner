@@ -2190,7 +2190,9 @@ static int cmd_expr_mode(int argc, char **argv) {
   const char* mode_str = expr_mode_args.mode->sval[0];
   expression_mode_t mode;
   
-  if (strcmp(mode_str, "expression") == 0 || strcmp(mode_str, "expr") == 0) {
+  if (strcmp(mode_str, "none") == 0 || strcmp(mode_str, "off") == 0) {
+    mode = EXPRESSION_MODE_NONE;
+  } else if (strcmp(mode_str, "expression") == 0 || strcmp(mode_str, "expr") == 0) {
     mode = EXPRESSION_MODE_PEDAL;
   } else if (strcmp(mode_str, "sustain") == 0) {
     mode = EXPRESSION_MODE_SUSTAIN;
@@ -2201,7 +2203,7 @@ static int cmd_expr_mode(int argc, char **argv) {
   } else if (strcmp(mode_str, "switch") == 0) {
     mode = EXPRESSION_MODE_SWITCH;
   } else {
-    ESP_LOGE(TAG, "Unknown mode (use: expression, sustain, sostenuto, gate, switch)");
+    ESP_LOGE(TAG, "Unknown mode (use: none, expression, sustain, sostenuto, gate, switch)");
     return 1;
   }
   
@@ -3844,7 +3846,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t expr_mode_cmd = {
     .command = "expr_mode",
-    .help = "Set expression jack mode (expression/sustain/sostenuto/gate/switch)",
+    .help = "Set expression jack mode (none/expression/sustain/sostenuto/gate/switch)",
     .hint = NULL,
     .func = &cmd_expr_mode,
     .argtable = &expr_mode_args

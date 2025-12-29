@@ -52,8 +52,7 @@ static void nav_to_pads(void* user_data) {
 
 static void nav_to_expression(void* user_data) {
   (void)user_data;
-  s_stub_title = "Expression";
-  menu_navigate_to("Expression", stub_submenu_create);
+  menu_navigate_to("Expression", menu_page_expression_create);
 }
 
 static void nav_to_cv(void* user_data) {

@@ -37,16 +37,19 @@ static void handle_expression_value(const event_t* event, void* context) {
   if (mapping->output_type == OUTPUT_TYPE_NOTE) {
     uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
     
-    if (mapping->note_active && note != mapping->last_value) {
-      send_note_off(channel, mapping->last_value, 0);
-      ESP_LOGD(TAG, "Expression Note Off: %d", mapping->last_value);
+    // Only send note_off/note_on if note actually changed
+    if (mapping->note_active && note != mapping->last_note) {
+      send_note_off(channel, mapping->last_note, 0);
+      ESP_LOGD(TAG, "Expression Note Off: %d", mapping->last_note);
     }
     
-    send_note_on(channel, note, mapping->velocity);
-    mapping->note_active = true;
-    mapping->last_value = note;
+    if (!mapping->note_active || note != mapping->last_note) {
+      send_note_on(channel, note, mapping->velocity);
+      ESP_LOGD(TAG, "Expression: %d -> Note %d vel=%d", raw_value, note, mapping->velocity);
+    }
     
-    ESP_LOGD(TAG, "Expression: %d -> Note %d vel=%d", raw_value, note, mapping->velocity);
+    mapping->note_active = true;
+    mapping->last_note = note;
   } else {
     continuous_mapping_send_cc(mapping, channel, output_value);
     ESP_LOGD(TAG, "Expression: %d -> CC=%d", raw_value, output_value);

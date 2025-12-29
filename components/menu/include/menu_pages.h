@@ -25,6 +25,7 @@ lv_obj_t* menu_page_screensaver_create(void);
 lv_obj_t* menu_page_dac_create(void);
 lv_obj_t* menu_page_adc_manager_create(void);
 lv_obj_t* menu_page_expression_create(void);
+void menu_page_expression_cleanup(void);      // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_cv_create(void);
 lv_obj_t* menu_page_sensor_create(void);
 lv_obj_t* menu_page_tempo_create(void);

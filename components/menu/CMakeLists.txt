@@ -36,12 +36,15 @@ idf_component_register(
     "pages/firmware_update.c"
     "pages/touchwheel_menu.c"
     "pages/pads_menu.c"
+    "pages/action_config.c"
   INCLUDE_DIRS
     "include"
   REQUIRES
     lvgl
     ui
     scene
+    action
+    curve
     config
     touch
     midi

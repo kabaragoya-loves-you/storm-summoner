@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "menu_pages.h"
+#include "action_config.h"
 #include "scene.h"
 #include "action.h"
 #include "touchwheel_mode_mapping.h"
@@ -134,6 +135,9 @@ static uint8_t s_editing_cc_slot = 0;
 static uint8_t s_editing_step = 0;  // For CC Cycle step editing
 static uint8_t s_pending_cc_number = 0;
 static const midi_control_t* s_pending_control = NULL;  // For value roller
+
+// Action config context for pad actions
+static action_config_context_t s_pad_action_ctx;
 
 // Re-entry guard
 static bool s_callback_in_progress = false;
@@ -523,9 +527,25 @@ static const char* get_cc_cycle_slot_display(action_t* action, uint8_t slot) {
 static void nav_to_pad_detail(void* user_data) {
   s_editing_pad_index = (uint8_t)(uintptr_t)user_data;
   
-  // Use a fixed title from the names array (string literals, safe)
+  // Get the pad's action for configuration
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) {
+    ESP_LOGW(TAG, "No mapping for pad %u", (unsigned)s_editing_pad_index);
+    return;
+  }
+  
+  // Set up action config context
   const char* title = get_pad_display_name(s_editing_pad_index);
-  menu_navigate_to(title, pad_detail_page_create);
+  s_pad_action_ctx.target_action = &mapping->action;
+  s_pad_action_ctx.source_title = "Pads";
+  s_pad_action_ctx.detail_title = title;
+  s_pad_action_ctx.return_page = menu_page_pads_create;
+  s_pad_action_ctx.return_depth = 2;  // Pop detail + old Pads, push fresh Pads
+  s_pad_action_ctx.on_complete = NULL;
+  s_pad_action_ctx.user_data = NULL;
+  
+  action_config_start(&s_pad_action_ctx);
 }
 
 // ============================================================================
@@ -3592,4 +3612,5 @@ lv_obj_t* menu_page_pads_create(void) {
 void menu_page_pads_cleanup(void) {
   free_cc_options();
   s_pending_control = NULL;
+  action_config_cleanup();
 }

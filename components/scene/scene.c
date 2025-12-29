@@ -1753,12 +1753,18 @@ esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode)
   }
   
   scene->expression_mode = mode;
+  
+  // Auto-manage expression.enabled based on mode
+  // Only EXPRESSION_MODE_PEDAL needs continuous value routing
+  scene->expression.enabled = (mode == EXPRESSION_MODE_PEDAL);
+  
   scene_persist_if_programming();
   
   // Update hardware configuration immediately if this is the current scene
   expression_set_mode(mode);
   
-  const char* mode_str = (mode == EXPRESSION_MODE_PEDAL) ? "expression" :
+  const char* mode_str = (mode == EXPRESSION_MODE_NONE) ? "none" :
+                         (mode == EXPRESSION_MODE_PEDAL) ? "expression" :
                          (mode == EXPRESSION_MODE_SUSTAIN) ? "sustain" :
                          (mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" :
                          (mode == EXPRESSION_MODE_SWITCH) ? "switch" : "gate";
@@ -2686,7 +2692,8 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "als", continuous_mapping_to_json(&scene->als));
   
   // Serialize expression jack mode and pedal actions
-  const char* mode_str = (scene->expression_mode == EXPRESSION_MODE_PEDAL) ? "expression" :
+  const char* mode_str = (scene->expression_mode == EXPRESSION_MODE_NONE) ? "none" :
+                         (scene->expression_mode == EXPRESSION_MODE_PEDAL) ? "expression" :
                          (scene->expression_mode == EXPRESSION_MODE_SUSTAIN) ? "sustain" :
                          (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO) ? "sostenuto" :
                          (scene->expression_mode == EXPRESSION_MODE_SWITCH) ? "switch" : "gate";
@@ -2860,12 +2867,16 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* expr_mode = cJSON_GetObjectItem(root, "expression_mode");
   if (expr_mode && cJSON_IsString(expr_mode)) {
     const char* mode_str = expr_mode->valuestring;
-    if (strcmp(mode_str, "sustain") == 0) scene->expression_mode = EXPRESSION_MODE_SUSTAIN;
+    if (strcmp(mode_str, "none") == 0) scene->expression_mode = EXPRESSION_MODE_NONE;
+    else if (strcmp(mode_str, "sustain") == 0) scene->expression_mode = EXPRESSION_MODE_SUSTAIN;
     else if (strcmp(mode_str, "sostenuto") == 0) scene->expression_mode = EXPRESSION_MODE_SOSTENUTO;
     else if (strcmp(mode_str, "gate") == 0) scene->expression_mode = EXPRESSION_MODE_GATE;
     else if (strcmp(mode_str, "switch") == 0) scene->expression_mode = EXPRESSION_MODE_SWITCH;
     else scene->expression_mode = EXPRESSION_MODE_PEDAL;
   }
+  
+  // Sync expression.enabled with mode (only PEDAL mode needs continuous routing)
+  scene->expression.enabled = (scene->expression_mode == EXPRESSION_MODE_PEDAL);
   
   // Deserialize pedal actions (try object first, fall back to array for backward compat)
   cJSON* sustain = cJSON_GetObjectItem(root, "sustain");

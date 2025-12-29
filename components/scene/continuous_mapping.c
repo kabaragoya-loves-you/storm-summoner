@@ -77,6 +77,7 @@ continuous_mapping_t continuous_mapping_create(uint8_t cc_number) {
     .idle_timeout_ms = 1000,
     .last_activity_ms = 0,
     .last_value = 0,
+    .last_note = 0,
     .note_active = false
   };
   return mapping;

@@ -22,7 +22,8 @@
  * Expression modes
  */
 typedef enum {
-  EXPRESSION_MODE_PEDAL = 0,    // Standard expression pedal
+  EXPRESSION_MODE_NONE = 0,     // Disabled - no expression processing
+  EXPRESSION_MODE_PEDAL,        // Standard expression pedal
   EXPRESSION_MODE_SUSTAIN,      // Sustain pedal (CC64 default)
   EXPRESSION_MODE_SOSTENUTO,    // Sostenuto pedal (CC66 default)
   EXPRESSION_MODE_GATE,         // Gate detection for MIDI notes

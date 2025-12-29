@@ -21,10 +21,12 @@ static int cmd_info(int argc, char **argv) {
   expression_get_range(&min, &max);
   uint8_t deadzone = expression_get_deadzone();
   
-  const char* mode_str = (mode == EXPRESSION_MODE_PEDAL) ? "Expression Pedal" :
+  const char* mode_str = (mode == EXPRESSION_MODE_NONE) ? "Disabled" :
+                         (mode == EXPRESSION_MODE_PEDAL) ? "Expression Pedal" :
                          (mode == EXPRESSION_MODE_SUSTAIN) ? "Sustain Pedal" :
-                         (mode == EXPRESSION_MODE_SOSTENUTO) ? "Sostenuto Pedal" : "Gate";
-  const char* polarity_str = (polarity == EXPRESSION_POLARITY_TIP_ADC) ? "Tip→ADC, Ring→VCC" : "Ring→ADC, Tip→VCC";
+                         (mode == EXPRESSION_MODE_SOSTENUTO) ? "Sostenuto Pedal" :
+                         (mode == EXPRESSION_MODE_SWITCH) ? "Switch" : "Gate";
+  const char* polarity_str = (polarity == EXPRESSION_POLARITY_TIP_ADC) ? "Tip->ADC, Ring->VCC" : "Ring->ADC, Tip->VCC";
   const char* switch_str = (switch_type == PEDAL_SWITCH_NO) ? "NO (Normally Open)" : "NC (Normally Closed)";
   
   ESP_LOGI(TAG, "====== EXPRESSION JACK ======");
@@ -32,7 +34,9 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Cable: %s", connected ? "connected" : "disconnected");
   ESP_LOGI(TAG, "");
   
-  if (mode == EXPRESSION_MODE_PEDAL) {
+  if (mode == EXPRESSION_MODE_NONE) {
+    ESP_LOGI(TAG, "Expression jack is disabled for this scene");
+  } else if (mode == EXPRESSION_MODE_PEDAL) {
     ESP_LOGI(TAG, "TRS polarity: %s", polarity_str);
     ESP_LOGI(TAG, "Calibration: %d to %d", min, max);
     ESP_LOGI(TAG, "Deadzone: %d", deadzone);
@@ -52,7 +56,7 @@ static int cmd_info(int argc, char **argv) {
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Note: Mode and MIDI routing set in scene context");
-  ESP_LOGI(TAG, "  cd scene -> expr_mode <expression|sustain|sostenuto|gate|switch>");
+  ESP_LOGI(TAG, "  cd scene -> expr_mode <none|expression|sustain|sostenuto|gate|switch>");
   ESP_LOGI(TAG, "=============================");
   
   return 0;
@@ -74,7 +78,9 @@ static int cmd_mode(int argc, char **argv) {
   const char* mode_str = mode_args.mode_type->sval[0];
   expression_mode_t mode;
   
-  if (strcmp(mode_str, "pedal") == 0) {
+  if (strcmp(mode_str, "none") == 0 || strcmp(mode_str, "off") == 0) {
+    mode = EXPRESSION_MODE_NONE;
+  } else if (strcmp(mode_str, "pedal") == 0) {
     mode = EXPRESSION_MODE_PEDAL;
   } else if (strcmp(mode_str, "sustain") == 0) {
     mode = EXPRESSION_MODE_SUSTAIN;
@@ -85,7 +91,7 @@ static int cmd_mode(int argc, char **argv) {
   } else if (strcmp(mode_str, "switch") == 0) {
     mode = EXPRESSION_MODE_SWITCH;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: pedal, sustain, sostenuto, gate, or switch");
+    ESP_LOGE(TAG, "Unknown mode. Use: none, pedal, sustain, sostenuto, gate, or switch");
     return 1;
   }
   
@@ -233,7 +239,7 @@ esp_err_t expression_console_init(void) {
   esp_console_cmd_register(&info_cmd);
   
   // mode command
-  mode_args.mode_type = arg_str1(NULL, NULL, "<pedal|sustain|sostenuto|gate>", "Expression mode");
+  mode_args.mode_type = arg_str1(NULL, NULL, "<none|pedal|sustain|sostenuto|gate|switch>", "Expression mode");
   mode_args.end = arg_end(2);
   
   const esp_console_cmd_t mode_cmd = {

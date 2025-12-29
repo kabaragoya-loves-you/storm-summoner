@@ -114,7 +114,8 @@ static void expression_task(void *pvParameters) {
     // Handle connection state changes
     if (is_connected != was_connected) {
       if (is_connected) {
-        const char* mode_str = (s_mode == EXPRESSION_MODE_PEDAL) ? "Expression Pedal" :
+        const char* mode_str = (s_mode == EXPRESSION_MODE_NONE) ? "Disabled" :
+                               (s_mode == EXPRESSION_MODE_PEDAL) ? "Expression Pedal" :
                                (s_mode == EXPRESSION_MODE_SUSTAIN) ? "Sustain Pedal" :
                                (s_mode == EXPRESSION_MODE_SOSTENUTO) ? "Sostenuto Pedal" :
                                (s_mode == EXPRESSION_MODE_SWITCH) ? "Switch" : "Gate";
@@ -465,6 +466,10 @@ static void expression_configure_switches(void) {
   uint8_t mask = (1 << 5) | (1 << 6);
   
   switch (s_mode) {
+    case EXPRESSION_MODE_NONE:
+      // Disabled - leave all channels off (default mask keeps P5/P6 high = off)
+      break;
+      
     case EXPRESSION_MODE_PEDAL:
       // Expression pedal mode - configure based on polarity
       if (s_polarity == EXPRESSION_POLARITY_TIP_ADC) {
