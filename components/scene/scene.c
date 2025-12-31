@@ -163,9 +163,14 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // CV input configuration
   scene->cv_input_mode = INPUT_MODE_CV;                // Default to CV mode
   
-  // NOTE mode configuration
-  scene->note_velocity_mode = VELOCITY_MODE_FIXED;     // Default to fixed velocity
-  scene->note_fixed_velocity = 100;                    // Default velocity value
+  // CV NOTE mode velocity configuration
+  scene->cv_velocity_mode = VELOCITY_MODE_FIXED;       // Default to fixed velocity
+  scene->cv_velocity = 100;                            // Default velocity value
+  
+  // Velocity modes for other continuous inputs (all default to fixed)
+  scene->expression_velocity_mode = VELOCITY_MODE_FIXED;
+  scene->proximity_velocity_mode = VELOCITY_MODE_FIXED;
+  scene->als_velocity_mode = VELOCITY_MODE_FIXED;
   
   // Tempo configuration
   scene->bpm = 120;                                    // Default to 120 BPM
@@ -288,6 +293,7 @@ static int s_touchwheel_pitch_bend = 0;            // -8192 to 8191, center at 0
 static int s_touchwheel_prev_pitch_bend = 0;       // Previous value for smooth interpolation
 static int s_touchwheel_aftertouch = 0;            // 0-127
 static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
+static volatile uint8_t s_touchwheel_velocity = 100; // For TOUCHWHEEL_MODE_VELOCITY
 
 // Pitch bend return-to-center animation
 // Precalculated eased return sequences for each distance bucket
@@ -655,6 +661,31 @@ static void touchwheel_double_cc_callback(int value, void* user_data) {
     (s_touchwheel_14bit_value >> 7) & 0x7F, s_touchwheel_14bit_value & 0x7F);
 }
 
+// Callback for velocity mode touchwheel (internal only - no MIDI output)
+static void touchwheel_velocity_callback(int value, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  uint8_t new_velocity;
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    // Endless mode: value is delta, accumulate
+    int current = (int)s_touchwheel_velocity;
+    current += value * 4;  // Scale delta for reasonable speed
+    if (current < 1) current = 1;
+    if (current > 127) current = 127;
+    new_velocity = (uint8_t)current;
+  } else {
+    // Odometer mode: value is 0-100%, scale to 1-127
+    new_velocity = 1 + (value * 126) / 100;
+    if (new_velocity > 127) new_velocity = 127;
+  }
+  
+  s_touchwheel_velocity = new_velocity;
+  ESP_LOGD(TAG, "Touchwheel velocity: %d", new_velocity);
+}
+
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
   // Don't send MIDI in programming mode
@@ -882,6 +913,20 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       output = touchwheel_output_callback_create(touchwheel_double_cc_callback, (void*)scene);
       break;
       
+    case TOUCHWHEEL_MODE_VELOCITY:
+      // Velocity mode: internal only - no MIDI output, just provides velocity value
+      // Default to odometer for discrete velocity steps
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "velocity (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "velocity (odometer)";
+      }
+      // Velocity callback just updates the internal velocity value
+      output = touchwheel_output_callback_create(touchwheel_velocity_callback, NULL);
+      break;
+      
     case TOUCHWHEEL_MODE_PADS:
     default:
       // No touchwheel instance needed for pads mode
@@ -971,6 +1016,9 @@ esp_err_t scene_init(void) {
       free(json_str);
       
       if (root) {
+        // Initialize with defaults first to ensure all fields have valid values,
+        // even if JSON file is missing newer fields (e.g., velocity modes)
+        scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
         ret = json_to_scene(root, &g_scene_manager.cache[0].scene);
         cJSON_Delete(root);
         
@@ -1439,6 +1487,7 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
     case TOUCHWHEEL_MODE_AFTERTOUCH: mode_str = "aftertouch"; break;
     case TOUCHWHEEL_MODE_DOUBLE_CC: mode_str = "double_cc"; break;
     case TOUCHWHEEL_MODE_CONTINUOUS: mode_str = "continuous"; break;
+    case TOUCHWHEEL_MODE_VELOCITY: mode_str = "velocity"; break;
     default: mode_str = "unknown"; break;
   }
   ESP_LOGI(TAG, "Scene %d touchwheel mode set to %s", scene_index + 1, mode_str);
@@ -2040,44 +2089,113 @@ bool scene_get_use_transport(uint8_t scene_index) {
   return scene ? scene->use_transport : false;
 }
 
-esp_err_t scene_set_note_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
+// Helper to get velocity mode name
+static const char* velocity_mode_to_string(velocity_mode_t mode) {
+  switch (mode) {
+    case VELOCITY_MODE_FIXED: return "Fixed";
+    case VELOCITY_MODE_GATE_VOLTAGE: return "Gate Voltage";
+    case VELOCITY_MODE_TOUCHWHEEL: return "Touchwheel";
+    default: return "Unknown";
+  }
+}
+
+esp_err_t scene_set_cv_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->note_velocity_mode = mode;
+  scene->cv_velocity_mode = mode;
   scene_persist_if_programming();
   
-  const char* mode_str = (mode == VELOCITY_MODE_FIXED) ? "Fixed" : "Gate Voltage";
-  ESP_LOGI(TAG, "Scene %d NOTE velocity mode set to %s", scene_index + 1, mode_str);
-  
+  ESP_LOGI(TAG, "Scene %d CV velocity mode set to %s", scene_index + 1, velocity_mode_to_string(mode));
   return ESP_OK;
 }
 
-velocity_mode_t scene_get_note_velocity_mode(uint8_t scene_index) {
+velocity_mode_t scene_get_cv_velocity_mode(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? scene->note_velocity_mode : VELOCITY_MODE_FIXED;
+  return scene ? scene->cv_velocity_mode : VELOCITY_MODE_FIXED;
 }
 
-esp_err_t scene_set_note_fixed_velocity(uint8_t scene_index, uint8_t velocity) {
+esp_err_t scene_set_cv_velocity(uint8_t scene_index, uint8_t velocity) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   if (velocity < 1 || velocity > 127) return ESP_ERR_INVALID_ARG;
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->note_fixed_velocity = velocity;
+  scene->cv_velocity = velocity;
   scene_persist_if_programming();
   
-  ESP_LOGI(TAG, "Scene %d NOTE fixed velocity set to %d", scene_index + 1, velocity);
-  
+  ESP_LOGI(TAG, "Scene %d CV velocity set to %d", scene_index + 1, velocity);
   return ESP_OK;
 }
 
-uint8_t scene_get_note_fixed_velocity(uint8_t scene_index) {
+uint8_t scene_get_cv_velocity(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? scene->note_fixed_velocity : 100;
+  return scene ? scene->cv_velocity : 100;
+}
+
+esp_err_t scene_set_expression_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->expression_velocity_mode = mode;
+  scene_persist_if_programming();
+  
+  ESP_LOGI(TAG, "Scene %d expression velocity mode set to %s", scene_index + 1, velocity_mode_to_string(mode));
+  return ESP_OK;
+}
+
+velocity_mode_t scene_get_expression_velocity_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->expression_velocity_mode : VELOCITY_MODE_FIXED;
+}
+
+esp_err_t scene_set_proximity_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->proximity_velocity_mode = mode;
+  scene_persist_if_programming();
+  
+  ESP_LOGI(TAG, "Scene %d proximity velocity mode set to %s", scene_index + 1, velocity_mode_to_string(mode));
+  return ESP_OK;
+}
+
+velocity_mode_t scene_get_proximity_velocity_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->proximity_velocity_mode : VELOCITY_MODE_FIXED;
+}
+
+esp_err_t scene_set_als_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->als_velocity_mode = mode;
+  scene_persist_if_programming();
+  
+  ESP_LOGI(TAG, "Scene %d ALS velocity mode set to %s", scene_index + 1, velocity_mode_to_string(mode));
+  return ESP_OK;
+}
+
+velocity_mode_t scene_get_als_velocity_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->als_velocity_mode : VELOCITY_MODE_FIXED;
+}
+
+uint8_t scene_get_touchwheel_velocity(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) {
+    return 100;  // Default velocity when not in velocity mode
+  }
+  return s_touchwheel_velocity;
 }
 
 // Helper to get scene filename
@@ -2663,6 +2781,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
     case TOUCHWHEEL_MODE_PITCH_BEND: tw_mode_str = "pitch_bend"; break;
     case TOUCHWHEEL_MODE_AFTERTOUCH: tw_mode_str = "aftertouch"; break;
     case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
+    case TOUCHWHEEL_MODE_VELOCITY: tw_mode_str = "velocity"; break;
     default: tw_mode_str = "continuous"; break;
   }
   cJSON_AddStringToObject(root, "touchwheel_mode", tw_mode_str);
@@ -2723,10 +2842,20 @@ static cJSON* scene_to_json(const scene_t* scene) {
                             (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
   
-  // Serialize NOTE mode velocity settings
-  const char* vel_mode_str = (scene->note_velocity_mode == VELOCITY_MODE_FIXED) ? "fixed" : "gate_voltage";
-  cJSON_AddStringToObject(root, "note_velocity_mode", vel_mode_str);
-  cJSON_AddNumberToObject(root, "note_fixed_velocity", scene->note_fixed_velocity);
+  // Serialize velocity mode settings (helper inline)
+  #define VEL_MODE_STR(m) ((m) == VELOCITY_MODE_GATE_VOLTAGE ? "gate_voltage" : \
+                           (m) == VELOCITY_MODE_TOUCHWHEEL ? "touchwheel" : "fixed")
+  
+  // CV velocity mode and value
+  cJSON_AddStringToObject(root, "cv_velocity_mode", VEL_MODE_STR(scene->cv_velocity_mode));
+  cJSON_AddNumberToObject(root, "cv_velocity", scene->cv_velocity);
+  
+  // Other continuous input velocity modes
+  cJSON_AddStringToObject(root, "expression_velocity_mode", VEL_MODE_STR(scene->expression_velocity_mode));
+  cJSON_AddStringToObject(root, "proximity_velocity_mode", VEL_MODE_STR(scene->proximity_velocity_mode));
+  cJSON_AddStringToObject(root, "als_velocity_mode", VEL_MODE_STR(scene->als_velocity_mode));
+  
+  #undef VEL_MODE_STR
   
   // Serialize tempo settings
   cJSON_AddNumberToObject(root, "bpm", scene->bpm);
@@ -2788,6 +2917,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(mode_str, "pitch_bend") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_PITCH_BEND;
     else if (strcmp(mode_str, "aftertouch") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_AFTERTOUCH;
     else if (strcmp(mode_str, "double_cc") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_DOUBLE_CC;
+    else if (strcmp(mode_str, "velocity") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_VELOCITY;
     // Legacy: nrpn/rpn modes removed, map to continuous for backwards compatibility
     else if (strcmp(mode_str, "nrpn") == 0 || strcmp(mode_str, "rpn") == 0) {
       scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
@@ -2921,19 +3051,34 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else scene->cv_input_mode = INPUT_MODE_CV;
   }
   
-  // Deserialize NOTE mode velocity settings
-  cJSON* vel_mode = cJSON_GetObjectItem(root, "note_velocity_mode");
-  if (vel_mode && cJSON_IsString(vel_mode)) {
-    const char* mode_str = vel_mode->valuestring;
-    if (strcmp(mode_str, "gate_voltage") == 0) scene->note_velocity_mode = VELOCITY_MODE_GATE_VOLTAGE;
-    else scene->note_velocity_mode = VELOCITY_MODE_FIXED;
+  // Helper to parse velocity mode from JSON string
+  #define PARSE_VEL_MODE(json_obj, target) do { \
+    if ((json_obj) && cJSON_IsString(json_obj)) { \
+      const char* _mode_str = (json_obj)->valuestring; \
+      if (strcmp(_mode_str, "gate_voltage") == 0) (target) = VELOCITY_MODE_GATE_VOLTAGE; \
+      else if (strcmp(_mode_str, "touchwheel") == 0) (target) = VELOCITY_MODE_TOUCHWHEEL; \
+      else (target) = VELOCITY_MODE_FIXED; \
+    } \
+  } while(0)
+  
+  // Deserialize CV velocity mode settings (check both old and new field names)
+  cJSON* cv_vel_mode = cJSON_GetObjectItem(root, "cv_velocity_mode");
+  if (!cv_vel_mode) cv_vel_mode = cJSON_GetObjectItem(root, "note_velocity_mode");  // Backward compat
+  PARSE_VEL_MODE(cv_vel_mode, scene->cv_velocity_mode);
+  
+  cJSON* cv_vel = cJSON_GetObjectItem(root, "cv_velocity");
+  if (!cv_vel) cv_vel = cJSON_GetObjectItem(root, "note_fixed_velocity");  // Backward compat
+  if (cv_vel && cJSON_IsNumber(cv_vel)) {
+    int vel = cv_vel->valueint;
+    if (vel >= 1 && vel <= 127) scene->cv_velocity = (uint8_t)vel;
   }
   
-  cJSON* fixed_vel = cJSON_GetObjectItem(root, "note_fixed_velocity");
-  if (fixed_vel) {
-    int vel = fixed_vel->valueint;
-    if (vel >= 1 && vel <= 127) scene->note_fixed_velocity = (uint8_t)vel;
-  }
+  // Deserialize other velocity modes
+  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "expression_velocity_mode"), scene->expression_velocity_mode);
+  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "proximity_velocity_mode"), scene->proximity_velocity_mode);
+  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "als_velocity_mode"), scene->als_velocity_mode);
+  
+  #undef PARSE_VEL_MODE
   
   // Deserialize tempo settings
   cJSON* bpm_json = cJSON_GetObjectItem(root, "bpm");
@@ -2999,6 +3144,9 @@ esp_err_t scene_load_from_flash(uint8_t scene_index) {
   
   // Load into cache
   int cache_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
+  // Initialize with defaults first to ensure all fields have valid values,
+  // even if JSON file is missing newer fields (e.g., velocity modes)
+  scene_init_defaults(&g_scene_manager.cache[cache_idx].scene, scene_index);
   esp_err_t ret = json_to_scene(root, &g_scene_manager.cache[cache_idx].scene);
   cJSON_Delete(root);
   
@@ -3052,6 +3200,8 @@ touchwheel_mode_t scene_get_persisted_touchwheel_mode(uint8_t scene_index) {
       mode = TOUCHWHEEL_MODE_AFTERTOUCH;
     } else if (strcmp(mode_str, "double_cc") == 0) {
       mode = TOUCHWHEEL_MODE_DOUBLE_CC;
+    } else if (strcmp(mode_str, "velocity") == 0) {
+      mode = TOUCHWHEEL_MODE_VELOCITY;
     }
   }
   

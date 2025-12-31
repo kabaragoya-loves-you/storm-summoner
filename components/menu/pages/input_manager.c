@@ -12,11 +12,12 @@ static void show_info(void* user_data) {
   input_mode_t mode = input_get_mode();
   bool cable_detect = input_get_cable_detection_enabled();
   uint8_t current_scene = scene_get_current_index();
-  velocity_mode_t vel_mode = scene_get_note_velocity_mode(current_scene);
-  uint8_t fixed_vel = scene_get_note_fixed_velocity(current_scene);
+  velocity_mode_t vel_mode = scene_get_cv_velocity_mode(current_scene);
+  uint8_t fixed_vel = scene_get_cv_velocity(current_scene);
   
   const char* mode_str;
   switch (mode) {
+    case INPUT_MODE_NONE: mode_str = "None"; break;
     case INPUT_MODE_CV: mode_str = "CV"; break;
     case INPUT_MODE_CLOCK_SYNC: mode_str = "Clock Sync"; break;
     case INPUT_MODE_AUDIO: mode_str = "Audio"; break;
@@ -24,15 +25,16 @@ static void show_info(void* user_data) {
     default: mode_str = "Unknown"; break;
   }
   
-  const char* vel_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" : "Gate Voltage";
+  const char* vel_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
+                        (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
   
   char info_text[256];
   snprintf(info_text, sizeof(info_text),
     "INPUT MANAGER\n"
     "Input mode: %s\n"
     "Cable detection: %s\n"
-    "NOTE velocity (scene %d): %s\n"
-    "NOTE fixed velocity: %u",
+    "CV velocity (scene %d): %s\n"
+    "CV fixed velocity: %u",
     mode_str, cable_detect ? "enabled" : "disabled",
     current_scene + 1, vel_str, (unsigned)fixed_vel);
   

@@ -253,18 +253,27 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
     // Capture the current CV note value - this is what we'll use for both on and off
     s_active_note = s_current_cv_note;
     
-    // Get velocity from current scene
-    velocity_mode_t vel_mode = scene_get_note_velocity_mode(scene_get_current_index());
+    // Get velocity from current scene based on velocity mode
+    velocity_mode_t vel_mode = scene_get_cv_velocity_mode(scene_get_current_index());
     uint8_t velocity;
     
-    if (vel_mode == VELOCITY_MODE_FIXED) {
-      velocity = scene_get_note_fixed_velocity(scene_get_current_index());
-    } else {
-      // VELOCITY_MODE_GATE_VOLTAGE - map ADC to velocity
-      int16_t raw = event->data.gate.raw_value;
-      velocity = (uint8_t)((raw * 127) / 4095);
-      if (velocity < 1) velocity = 1;  // MIDI velocity must be 1-127
-      if (velocity > 127) velocity = 127;
+    switch (vel_mode) {
+      case VELOCITY_MODE_TOUCHWHEEL:
+        velocity = scene_get_touchwheel_velocity();
+        break;
+      case VELOCITY_MODE_GATE_VOLTAGE:
+        // Map ADC to velocity
+        {
+          int16_t raw = event->data.gate.raw_value;
+          velocity = (uint8_t)((raw * 127) / 4095);
+          if (velocity < 1) velocity = 1;  // MIDI velocity must be 1-127
+          if (velocity > 127) velocity = 127;
+        }
+        break;
+      case VELOCITY_MODE_FIXED:
+      default:
+        velocity = scene_get_cv_velocity(scene_get_current_index());
+        break;
     }
     
     // Send MIDI Note On on the scene's global channel
@@ -282,5 +291,5 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
   }
 }
 
-// Note: Velocity API functions removed - now accessed via scene_get_note_velocity_mode() 
-// and scene_get_note_fixed_velocity() for per-scene configuration
+// Note: Velocity API functions removed - now accessed via scene_get_cv_velocity_mode() 
+// and scene_get_cv_velocity() for per-scene configuration

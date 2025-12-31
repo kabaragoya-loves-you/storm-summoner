@@ -44,7 +44,8 @@ typedef enum {
   TOUCHWHEEL_MODE_SET_TEMPO,      // Set BPM (20-300), default endless
   TOUCHWHEEL_MODE_PITCH_BEND,     // Pitch bend (-8192 to 8191), bipolar only
   TOUCHWHEEL_MODE_AFTERTOUCH,     // Channel aftertouch (0-127), default odometer
-  TOUCHWHEEL_MODE_DOUBLE_CC       // Double CC (0-16383), default odometer
+  TOUCHWHEEL_MODE_DOUBLE_CC,      // Double CC (0-16383), default odometer
+  TOUCHWHEEL_MODE_VELOCITY        // Velocity source for note-generating modules (internal only)
 } touchwheel_mode_t;
 
 // Touchwheel continuous style (for modes that use continuous input)
@@ -100,9 +101,14 @@ typedef struct {
   // CV input configuration
   input_mode_t cv_input_mode;        // CV, CLOCK_SYNC, AUDIO, or NOTE
   
-  // NOTE mode configuration (when cv_input_mode = NOTE)
-  velocity_mode_t note_velocity_mode;    // FIXED or GATE_VOLTAGE
-  uint8_t note_fixed_velocity;           // Velocity when mode = FIXED (1-127)
+  // CV NOTE mode velocity configuration (when cv_input_mode = NOTE)
+  velocity_mode_t cv_velocity_mode;      // FIXED, GATE_VOLTAGE, or TOUCHWHEEL
+  uint8_t cv_velocity;                   // Fixed velocity value (1-127)
+  
+  // Velocity mode for continuous input note outputs
+  velocity_mode_t expression_velocity_mode;  // For expression note output
+  velocity_mode_t proximity_velocity_mode;   // For proximity note output
+  velocity_mode_t als_velocity_mode;         // For ambient light note output
   
   // Tempo configuration (per-scene)
   uint16_t bpm;                          // Tempo in beats per minute (20-300)
@@ -234,11 +240,26 @@ action_t* scene_get_expr_switch(uint8_t scene_index);
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode);
 input_mode_t scene_get_cv_input_mode(uint8_t scene_index);
 
-// NOTE mode velocity configuration
-esp_err_t scene_set_note_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
-velocity_mode_t scene_get_note_velocity_mode(uint8_t scene_index);
-esp_err_t scene_set_note_fixed_velocity(uint8_t scene_index, uint8_t velocity);
-uint8_t scene_get_note_fixed_velocity(uint8_t scene_index);
+// CV NOTE mode velocity configuration
+esp_err_t scene_set_cv_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
+velocity_mode_t scene_get_cv_velocity_mode(uint8_t scene_index);
+esp_err_t scene_set_cv_velocity(uint8_t scene_index, uint8_t velocity);
+uint8_t scene_get_cv_velocity(uint8_t scene_index);
+
+// Expression note output velocity mode
+esp_err_t scene_set_expression_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
+velocity_mode_t scene_get_expression_velocity_mode(uint8_t scene_index);
+
+// Proximity note output velocity mode
+esp_err_t scene_set_proximity_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
+velocity_mode_t scene_get_proximity_velocity_mode(uint8_t scene_index);
+
+// ALS note output velocity mode
+esp_err_t scene_set_als_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
+velocity_mode_t scene_get_als_velocity_mode(uint8_t scene_index);
+
+// Touchwheel velocity (when in TOUCHWHEEL_MODE_VELOCITY)
+uint8_t scene_get_touchwheel_velocity(void);
 
 // Tempo configuration (per-scene)
 esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm);

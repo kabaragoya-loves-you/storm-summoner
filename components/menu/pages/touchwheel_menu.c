@@ -178,15 +178,36 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   s_callback_in_progress = true;
   
   scene_t* scene = scene_get_current();
-  if (!scene || selected_index >= NUM_BASE_MODES) {
+  if (!scene) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
   
-  // Check if Tempo was selected but clock is not internal
-  // (This shouldn't happen if we built the roller correctly, but be safe)
-  const touchwheel_mode_mapping_t* mapping = &g_touchwheel_mode_mappings[selected_index];
+  // Convert roller index to mapping index (accounting for skipped Tempo)
+  bool show_tempo = (scene->clock_source == CLOCK_SOURCE_INTERNAL);
+  uint32_t mapping_index = 0;
+  uint32_t roller_count = 0;
+  
+  for (size_t i = 0; i < NUM_BASE_MODES; i++) {
+    // Skip Tempo if clock is not internal (same logic as mode_roller_create)
+    if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_SET_TEMPO && !show_tempo) {
+      continue;
+    }
+    if (roller_count == selected_index) {
+      mapping_index = (uint32_t)i;
+      break;
+    }
+    roller_count++;
+  }
+  
+  if (mapping_index >= NUM_BASE_MODES) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  const touchwheel_mode_mapping_t* mapping = &g_touchwheel_mode_mappings[mapping_index];
   if (mapping->mode == TOUCHWHEEL_MODE_SET_TEMPO) {
     if (scene->clock_source != CLOCK_SOURCE_INTERNAL) {
       ESP_LOGW(TAG, "Tempo mode requires internal clock");
@@ -886,7 +907,8 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       
     case TOUCHWHEEL_MODE_PROGRAM_CHANGE:
     case TOUCHWHEEL_MODE_PITCH_BEND:
-      // No additional items
+    case TOUCHWHEEL_MODE_VELOCITY:
+      // No additional items for these modes
       break;
       
     case TOUCHWHEEL_MODE_SET_TEMPO:

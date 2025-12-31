@@ -6,10 +6,32 @@
 #include "device_config.h"
 #include "midi_messages.h"
 #include "event_bus.h"
+#include "expression.h"
 #include "esp_log.h"
 
 static const char* TAG = "midi_expr_handler";
 static smart_filter_t s_expression_filter;
+
+// Get velocity based on velocity mode setting
+static uint8_t get_expression_velocity(continuous_mapping_t* mapping) {
+  velocity_mode_t vel_mode = scene_get_expression_velocity_mode(scene_get_current_index());
+  
+  switch (vel_mode) {
+    case VELOCITY_MODE_TOUCHWHEEL:
+      return scene_get_touchwheel_velocity();
+    case VELOCITY_MODE_GATE_VOLTAGE:
+      // Use current expression value (0.0-1.0) as velocity source
+      {
+        float expr_value = expression_get_value();
+        uint8_t vel = 1 + (uint8_t)(expr_value * 126.0f);
+        if (vel > 127) vel = 127;
+        return vel;
+      }
+    case VELOCITY_MODE_FIXED:
+    default:
+      return mapping->velocity;
+  }
+}
 
 // Handle continuous expression pedal events
 static void handle_expression_value(const event_t* event, void* context) {
@@ -44,8 +66,9 @@ static void handle_expression_value(const event_t* event, void* context) {
     }
     
     if (!mapping->note_active || note != mapping->last_note) {
-      send_note_on(channel, note, mapping->velocity);
-      ESP_LOGD(TAG, "Expression: %d -> Note %d vel=%d", raw_value, note, mapping->velocity);
+      uint8_t velocity = get_expression_velocity(mapping);
+      send_note_on(channel, note, velocity);
+      ESP_LOGD(TAG, "Expression: %d -> Note %d vel=%d", raw_value, note, velocity);
     }
     
     mapping->note_active = true;

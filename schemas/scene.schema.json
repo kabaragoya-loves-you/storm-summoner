@@ -41,7 +41,7 @@
     },
     "touchwheel_mode": {
       "type": "string",
-      "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc"],
+      "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc", "velocity"],
       "default": "pads",
       "description": "Touchwheel behavior mode"
     },
@@ -113,22 +113,40 @@
     },
     "cv_input_mode": {
       "type": "string",
-      "enum": ["cv", "clock_sync", "audio", "note"],
+      "enum": ["none", "cv", "clock_sync", "audio", "note"],
       "default": "cv",
       "description": "CV input interpretation mode"
     },
-    "note_velocity_mode": {
+    "cv_velocity_mode": {
       "type": "string",
-      "enum": ["fixed", "gate_voltage"],
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
       "default": "fixed",
-      "description": "Velocity mode for NOTE input mode"
+      "description": "Velocity mode for CV NOTE input mode"
     },
-    "note_fixed_velocity": {
+    "cv_velocity": {
       "type": "integer",
       "minimum": 1,
       "maximum": 127,
       "default": 100,
-      "description": "Fixed velocity value for NOTE mode"
+      "description": "Fixed velocity value for CV NOTE mode"
+    },
+    "expression_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "default": "fixed",
+      "description": "Velocity mode for expression note output"
+    },
+    "proximity_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "default": "fixed",
+      "description": "Velocity mode for proximity note output"
+    },
+    "als_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "default": "fixed",
+      "description": "Velocity mode for ambient light sensor note output"
     },
     "bpm": {
       "type": "integer",

@@ -35,6 +35,7 @@ static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
 static char s_base_note_label[LABEL_BUFFER_SETS][32];
 static char s_range_label[LABEL_BUFFER_SETS][32];
+static char s_velocity_mode_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_label[LABEL_BUFFER_SETS][32];
 
 // CC options from device
@@ -499,7 +500,55 @@ static void nav_to_range(void* user_data) {
 }
 
 // ============================================================================
-// Velocity Roller (for Notes mode)
+// Velocity Mode Roller (for Notes mode)
+// ============================================================================
+
+static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  velocity_mode_t mode;
+  switch (selected_index) {
+    case 0: mode = VELOCITY_MODE_FIXED; break;
+    case 1: mode = VELOCITY_MODE_GATE_VOLTAGE; break;
+    case 2: mode = VELOCITY_MODE_TOUCHWHEEL; break;
+    default: mode = VELOCITY_MODE_FIXED; break;
+  }
+  
+  scene_set_proximity_velocity_mode(scene_get_current_index(), mode);
+  
+  const char* mode_str = (mode == VELOCITY_MODE_FIXED) ? "Fixed" :
+                         (mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
+  ESP_LOGI(TAG, "Proximity velocity mode set to: %s", mode_str);
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Proximity", menu_page_proximity_scene_create);
+}
+
+static lv_obj_t* velocity_mode_roller_create(void) {
+  velocity_mode_t current = scene_get_proximity_velocity_mode(scene_get_current_index());
+  
+  uint32_t current_idx;
+  switch (current) {
+    case VELOCITY_MODE_FIXED: current_idx = 0; break;
+    case VELOCITY_MODE_GATE_VOLTAGE: current_idx = 1; break;
+    case VELOCITY_MODE_TOUCHWHEEL: current_idx = 2; break;
+    default: current_idx = 0; break;
+  }
+  
+  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage\nTouchwheel", current_idx,
+    velocity_mode_confirm_cb, NULL);
+}
+
+static void nav_to_velocity_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Velocity Mode", velocity_mode_roller_create);
+}
+
+// ============================================================================
+// Velocity Roller (for Notes mode, only when velocity mode is Fixed)
 // ============================================================================
 
 static void velocity_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -618,7 +667,7 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     s_prox_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
     
   } else {
-    // Notes (Theremin) output mode: Base Note, Range, Velocity
+    // Notes (Theremin) output mode: Base Note, Range, Velocity Mode, (Fixed) Velocity
     char note_name[8];
     get_note_name(scene->proximity.base_note, note_name, sizeof(note_name));
     snprintf(s_base_note_label[buf], sizeof(s_base_note_label[buf]),
@@ -631,11 +680,22 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
       "Range\n%u Octave%s", (unsigned)octaves, octaves > 1 ? "s" : "");
     s_prox_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true};
     
-    uint8_t vel = scene->proximity.velocity;
-    if (vel == 0) vel = 100;
-    snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
-      "Velocity\n%u", (unsigned)vel);
-    s_prox_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true};
+    // Velocity mode
+    velocity_mode_t vel_mode = scene_get_proximity_velocity_mode(scene_get_current_index());
+    const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
+                               (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
+    snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
+      "Velocity Mode\n%s", vel_mode_str);
+    s_prox_items[item_count++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true};
+    
+    // Fixed velocity (only shown when mode is FIXED)
+    if (vel_mode == VELOCITY_MODE_FIXED) {
+      uint8_t vel = scene->proximity.velocity;
+      if (vel == 0) vel = 100;
+      snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
+        "Velocity\n%u", (unsigned)vel);
+      s_prox_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true};
+    }
     
     // Polarity (also applies to notes)
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),

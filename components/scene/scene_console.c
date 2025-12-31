@@ -311,12 +311,13 @@ static void cmd_scene_info(void) {
            scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC ? "Clock Sync" :
            scene->cv_input_mode == INPUT_MODE_AUDIO ? "Audio" : "Note");
   
-  // Display NOTE mode velocity settings when in NOTE input mode
+  // Display CV velocity settings when in NOTE input mode
   if (scene->cv_input_mode == INPUT_MODE_NOTE) {
-    ESP_LOGI(TAG, "  NOTE velocity mode: %s",
-             scene->note_velocity_mode == VELOCITY_MODE_FIXED ? "Fixed" : "Gate Voltage");
-    if (scene->note_velocity_mode == VELOCITY_MODE_FIXED) {
-      ESP_LOGI(TAG, "  NOTE fixed velocity: %d", scene->note_fixed_velocity);
+    const char* cv_vel_mode_str = scene->cv_velocity_mode == VELOCITY_MODE_FIXED ? "Fixed" :
+                                  scene->cv_velocity_mode == VELOCITY_MODE_GATE_VOLTAGE ? "Gate Voltage" : "Touchwheel";
+    ESP_LOGI(TAG, "  CV velocity mode: %s", cv_vel_mode_str);
+    if (scene->cv_velocity_mode == VELOCITY_MODE_FIXED) {
+      ESP_LOGI(TAG, "  CV velocity: %d", scene->cv_velocity);
     }
   }
   
@@ -2525,64 +2526,161 @@ static int cmd_cv_input_mode(int argc, char **argv) {
   return 0;
 }
 
-// Command: note_velocity_mode - Set NOTE mode velocity mode
+// Helper to parse velocity mode string
+static velocity_mode_t parse_velocity_mode(const char* mode_str, bool* valid) {
+  *valid = true;
+  if (strcmp(mode_str, "fixed") == 0) return VELOCITY_MODE_FIXED;
+  if (strcmp(mode_str, "gate") == 0 || strcmp(mode_str, "gate_voltage") == 0) return VELOCITY_MODE_GATE_VOLTAGE;
+  if (strcmp(mode_str, "touchwheel") == 0 || strcmp(mode_str, "tw") == 0) return VELOCITY_MODE_TOUCHWHEEL;
+  *valid = false;
+  return VELOCITY_MODE_FIXED;
+}
+
+static const char* velocity_mode_name(velocity_mode_t mode) {
+  switch (mode) {
+    case VELOCITY_MODE_FIXED: return "Fixed";
+    case VELOCITY_MODE_GATE_VOLTAGE: return "Gate Voltage";
+    case VELOCITY_MODE_TOUCHWHEEL: return "Touchwheel";
+    default: return "Unknown";
+  }
+}
+
+// Command: cv_velocity_mode - Set CV NOTE mode velocity mode
 static struct {
   struct arg_str *mode;
   struct arg_end *end;
-} note_velocity_mode_args;
+} cv_velocity_mode_args;
 
-static int cmd_note_velocity_mode(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &note_velocity_mode_args);
+static int cmd_cv_velocity_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &cv_velocity_mode_args);
   if (nerrors != 0) {
-    arg_print_errors(stderr, note_velocity_mode_args.end, argv[0]);
+    arg_print_errors(stderr, cv_velocity_mode_args.end, argv[0]);
     return 1;
   }
   
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  const char* mode_str = note_velocity_mode_args.mode->sval[0];
-  velocity_mode_t mode;
-  
-  if (strcmp(mode_str, "fixed") == 0) mode = VELOCITY_MODE_FIXED;
-  else if (strcmp(mode_str, "gate") == 0 || strcmp(mode_str, "gate_voltage") == 0) mode = VELOCITY_MODE_GATE_VOLTAGE;
-  else {
-    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage)");
+  bool valid;
+  velocity_mode_t mode = parse_velocity_mode(cv_velocity_mode_args.mode->sval[0], &valid);
+  if (!valid) {
+    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage, touchwheel)");
     return 1;
   }
   
-  scene_set_note_velocity_mode(scene_get_current_index(), mode);
-  
-  const char* mode_name = (mode == VELOCITY_MODE_FIXED) ? "Fixed" : "Gate Voltage";
-  ESP_LOGI(TAG, "NOTE velocity mode: %s", mode_name);
+  scene_set_cv_velocity_mode(scene_get_current_index(), mode);
+  ESP_LOGI(TAG, "CV velocity mode: %s", velocity_mode_name(mode));
   return 0;
 }
 
-// Command: note_fixed_velocity - Set NOTE mode fixed velocity
+// Command: cv_note_velocity - Set CV NOTE input mode fixed velocity value
 static struct {
   struct arg_int *velocity;
   struct arg_end *end;
-} note_fixed_velocity_args;
+} cv_note_velocity_args;
 
-static int cmd_note_fixed_velocity(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &note_fixed_velocity_args);
+static int cmd_cv_note_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &cv_note_velocity_args);
   if (nerrors != 0) {
-    arg_print_errors(stderr, note_fixed_velocity_args.end, argv[0]);
+    arg_print_errors(stderr, cv_note_velocity_args.end, argv[0]);
     return 1;
   }
   
   scene_t* scene = scene_get_current();
   if (!scene) return 1;
   
-  int vel = note_fixed_velocity_args.velocity->ival[0];
+  int vel = cv_note_velocity_args.velocity->ival[0];
   if (vel < 1 || vel > 127) {
     ESP_LOGE(TAG, "Velocity must be 1-127");
     return 1;
   }
   
-  scene_set_note_fixed_velocity(scene_get_current_index(), (uint8_t)vel);
+  scene_set_cv_velocity(scene_get_current_index(), (uint8_t)vel);
+  ESP_LOGI(TAG, "CV NOTE input velocity: %d", vel);
+  return 0;
+}
+
+// Command: expression_velocity_mode - Set expression note output velocity mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} expression_velocity_mode_args;
+
+static int cmd_expression_velocity_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &expression_velocity_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, expression_velocity_mode_args.end, argv[0]);
+    return 1;
+  }
   
-  ESP_LOGI(TAG, "NOTE fixed velocity: %d", vel);
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  bool valid;
+  velocity_mode_t mode = parse_velocity_mode(expression_velocity_mode_args.mode->sval[0], &valid);
+  if (!valid) {
+    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage, touchwheel)");
+    return 1;
+  }
+  
+  scene_set_expression_velocity_mode(scene_get_current_index(), mode);
+  ESP_LOGI(TAG, "Expression velocity mode: %s", velocity_mode_name(mode));
+  return 0;
+}
+
+// Command: proximity_velocity_mode - Set proximity note output velocity mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} proximity_velocity_mode_args;
+
+static int cmd_proximity_velocity_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &proximity_velocity_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, proximity_velocity_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  bool valid;
+  velocity_mode_t mode = parse_velocity_mode(proximity_velocity_mode_args.mode->sval[0], &valid);
+  if (!valid) {
+    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage, touchwheel)");
+    return 1;
+  }
+  
+  scene_set_proximity_velocity_mode(scene_get_current_index(), mode);
+  ESP_LOGI(TAG, "Proximity velocity mode: %s", velocity_mode_name(mode));
+  return 0;
+}
+
+// Command: als_velocity_mode - Set ALS note output velocity mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} als_velocity_mode_args;
+
+static int cmd_als_velocity_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &als_velocity_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, als_velocity_mode_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  bool valid;
+  velocity_mode_t mode = parse_velocity_mode(als_velocity_mode_args.mode->sval[0], &valid);
+  if (!valid) {
+    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage, touchwheel)");
+    return 1;
+  }
+  
+  scene_set_als_velocity_mode(scene_get_current_index(), mode);
+  ESP_LOGI(TAG, "ALS velocity mode: %s", velocity_mode_name(mode));
   return 0;
 }
 
@@ -3973,31 +4071,70 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&cv_input_mode_cmd);
   
-  // note_velocity_mode command
-  note_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
-  note_velocity_mode_args.end = arg_end(2);
+  // cv_velocity_mode command
+  cv_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
+  cv_velocity_mode_args.end = arg_end(2);
   
-  const esp_console_cmd_t note_velocity_mode_cmd = {
-    .command = "note_velocity_mode",
-    .help = "Set NOTE mode velocity mode (fixed/gate_voltage)",
+  const esp_console_cmd_t cv_velocity_mode_cmd = {
+    .command = "cv_velocity_mode",
+    .help = "Set CV NOTE input mode velocity mode (fixed/gate_voltage/touchwheel)",
     .hint = NULL,
-    .func = &cmd_note_velocity_mode,
-    .argtable = &note_velocity_mode_args
+    .func = &cmd_cv_velocity_mode,
+    .argtable = &cv_velocity_mode_args
   };
-  esp_console_cmd_register(&note_velocity_mode_cmd);
+  esp_console_cmd_register(&cv_velocity_mode_cmd);
   
-  // note_fixed_velocity command
-  note_fixed_velocity_args.velocity = arg_int1(NULL, NULL, "<1-127>", "Velocity value");
-  note_fixed_velocity_args.end = arg_end(2);
+  // cv_note_velocity command (for NOTE input mode fixed velocity)
+  cv_note_velocity_args.velocity = arg_int1(NULL, NULL, "<1-127>", "Velocity value");
+  cv_note_velocity_args.end = arg_end(2);
   
-  const esp_console_cmd_t note_fixed_velocity_cmd = {
-    .command = "note_fixed_velocity",
-    .help = "Set NOTE mode fixed velocity value",
+  const esp_console_cmd_t cv_note_velocity_cmd = {
+    .command = "cv_note_velocity",
+    .help = "Set CV NOTE input mode fixed velocity value",
     .hint = NULL,
-    .func = &cmd_note_fixed_velocity,
-    .argtable = &note_fixed_velocity_args
+    .func = &cmd_cv_note_velocity,
+    .argtable = &cv_note_velocity_args
   };
-  esp_console_cmd_register(&note_fixed_velocity_cmd);
+  esp_console_cmd_register(&cv_note_velocity_cmd);
+  
+  // expression_velocity_mode command
+  expression_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
+  expression_velocity_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t expression_velocity_mode_cmd = {
+    .command = "expression_velocity_mode",
+    .help = "Set expression note output velocity mode (fixed/gate_voltage/touchwheel)",
+    .hint = NULL,
+    .func = &cmd_expression_velocity_mode,
+    .argtable = &expression_velocity_mode_args
+  };
+  esp_console_cmd_register(&expression_velocity_mode_cmd);
+  
+  // proximity_velocity_mode command
+  proximity_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
+  proximity_velocity_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t proximity_velocity_mode_cmd = {
+    .command = "proximity_velocity_mode",
+    .help = "Set proximity note output velocity mode (fixed/gate_voltage/touchwheel)",
+    .hint = NULL,
+    .func = &cmd_proximity_velocity_mode,
+    .argtable = &proximity_velocity_mode_args
+  };
+  esp_console_cmd_register(&proximity_velocity_mode_cmd);
+  
+  // als_velocity_mode command
+  als_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
+  als_velocity_mode_args.end = arg_end(2);
+  
+  const esp_console_cmd_t als_velocity_mode_cmd = {
+    .command = "als_velocity_mode",
+    .help = "Set ALS note output velocity mode (fixed/gate_voltage/touchwheel)",
+    .hint = NULL,
+    .func = &cmd_als_velocity_mode,
+    .argtable = &als_velocity_mode_args
+  };
+  esp_console_cmd_register(&als_velocity_mode_cmd);
   
   // clock_source command
   clock_source_args.source = arg_str1(NULL, NULL, "<source>", "Clock source");

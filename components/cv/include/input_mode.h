@@ -14,10 +14,11 @@ typedef enum {
   INPUT_MODE_NOTE           // CV pitch + Expression gate → MIDI notes
 } input_mode_t;
 
-// Velocity mode for NOTE mode
+// Velocity mode for note output from continuous inputs
 typedef enum {
   VELOCITY_MODE_FIXED = 0,        // Use fixed velocity value
-  VELOCITY_MODE_GATE_VOLTAGE      // Derive from gate voltage
+  VELOCITY_MODE_GATE_VOLTAGE,     // Derive from gate voltage (expression jack ADC)
+  VELOCITY_MODE_TOUCHWHEEL        // Derive from touchwheel position (when in velocity mode)
 } velocity_mode_t;
 
 // CV voltage ranges (only relevant when INPUT_MODE_CV is selected)
