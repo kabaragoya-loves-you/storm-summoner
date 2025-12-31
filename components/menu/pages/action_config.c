@@ -196,7 +196,34 @@ const char* action_config_get_display_name(action_type_t type) {
   }
 }
 
+// Actions allowed for on-load (no hold/cycle, no scene-level settings)
+static bool is_on_load_allowed(action_type_t type) {
+  switch (type) {
+    case ACTION_NONE:
+    case ACTION_CONTROL_CHANGE:
+    case ACTION_PLAY:
+    case ACTION_STOP:
+    case ACTION_PAUSE:
+    case ACTION_RECORD:
+    case ACTION_RANDOMIZE:
+    case ACTION_RESET:
+      return true;
+    default:
+      return false;
+  }
+}
+
 static bool is_action_visible(action_type_t type) {
+  // On-load filter: only allow specific actions
+  if (s_ctx && s_ctx->on_load_filter && !is_on_load_allowed(type)) {
+    return false;
+  }
+  
+  // Filter out hold-requiring actions when context requests it (for bump)
+  if (s_ctx && s_ctx->exclude_hold_actions && action_requires_hold(type)) {
+    return false;
+  }
+  
   scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
   tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
@@ -433,6 +460,9 @@ void action_config_cleanup(void) {
 // ============================================================================
 // Return Navigation
 // ============================================================================
+
+// Forward declaration for nav_to_subpage (defined later with other navigation helpers)
+static void nav_to_subpage(const char* title, menu_page_builder_t builder);
 
 // Return to the action detail page (used by parameter rollers)
 static void return_to_detail_page(uint8_t depth) {
@@ -764,7 +794,7 @@ static void cc_number_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   s_callback_in_progress = false;
-  menu_navigate_to("Value", cc_value_roller_create);
+  nav_to_subpage("Value", cc_value_roller_create);
 }
 
 static lv_obj_t* cc_number_roller_create(void) {
@@ -814,13 +844,13 @@ static void nav_to_cc_slot(void* user_data) {
   
   if (action->type == ACTION_CONTROL_HOLD) {
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
-    menu_navigate_to(title, cc_hold_slot_page_create);
+    nav_to_subpage(title, cc_hold_slot_page_create);
   } else if (action->type == ACTION_CONTROL_CYCLE) {
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
-    menu_navigate_to(title, cc_cycle_slot_page_create);
+    nav_to_subpage(title, cc_cycle_slot_page_create);
   } else {
     snprintf(title, sizeof(title), "CC Slot %u", (unsigned)(s_editing_cc_slot + 1));
-    menu_navigate_to(title, cc_number_roller_create);
+    nav_to_subpage(title, cc_number_roller_create);
   }
 }
 
@@ -922,7 +952,7 @@ static lv_obj_t* cc_hold_cc_roller_create(void) {
 static void nav_to_cc_hold_cc(void* user_data) {
   (void)user_data;
   if (!s_cc_options.options_str) load_cc_options();
-  menu_navigate_to("CC", cc_hold_cc_roller_create);
+  nav_to_subpage("CC", cc_hold_cc_roller_create);
 }
 
 // --- CC Hold: Press Value Roller ---
@@ -1034,7 +1064,7 @@ static lv_obj_t* cc_hold_press_roller_create(void) {
 
 static void nav_to_cc_hold_press(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Press", cc_hold_press_roller_create);
+  nav_to_subpage("Press", cc_hold_press_roller_create);
 }
 
 // --- CC Hold: Release Value Roller ---
@@ -1145,7 +1175,7 @@ static lv_obj_t* cc_hold_release_roller_create(void) {
 
 static void nav_to_cc_hold_release(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Release", cc_hold_release_roller_create);
+  nav_to_subpage("Release", cc_hold_release_roller_create);
 }
 
 // --- CC Hold Slot Page ---
@@ -1301,7 +1331,7 @@ static lv_obj_t* cc_cycle_cc_roller_create(void) {
 static void nav_to_cc_cycle_cc(void* user_data) {
   (void)user_data;
   if (!s_cc_options.options_str) load_cc_options();
-  menu_navigate_to("CC", cc_cycle_cc_roller_create);
+  nav_to_subpage("CC", cc_cycle_cc_roller_create);
 }
 
 // --- CC Cycle: Step Value Roller ---
@@ -1419,7 +1449,7 @@ static void nav_to_cc_cycle_step(void* user_data) {
   s_editing_step = (uint8_t)(uintptr_t)user_data;
   static char title[24];
   snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_step + 1));
-  menu_navigate_to(title, cc_cycle_step_roller_create);
+  nav_to_subpage(title, cc_cycle_step_roller_create);
 }
 
 // --- CC Cycle Slot Page ---
@@ -1516,7 +1546,7 @@ static lv_obj_t* cc_cycle_steps_roller_create(void) {
 
 static void nav_to_cc_cycle_steps(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Steps", cc_cycle_steps_roller_create);
+  nav_to_subpage("Steps", cc_cycle_steps_roller_create);
 }
 
 // ============================================================================
@@ -1593,7 +1623,7 @@ static lv_obj_t* preset_set_roller_create(void) {
 
 static void nav_to_preset_set(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Preset", preset_set_roller_create);
+  nav_to_subpage("Preset", preset_set_roller_create);
 }
 
 // ============================================================================
@@ -1667,7 +1697,7 @@ static lv_obj_t* preset_hold_press_roller_create(void) {
 
 static void nav_to_preset_hold_press(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Press", preset_hold_press_roller_create);
+  nav_to_subpage("Press", preset_hold_press_roller_create);
 }
 
 static void preset_hold_release_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -1737,7 +1767,7 @@ static lv_obj_t* preset_hold_release_roller_create(void) {
 
 static void nav_to_preset_hold_release(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Release", preset_hold_release_roller_create);
+  nav_to_subpage("Release", preset_hold_release_roller_create);
 }
 
 // ============================================================================
@@ -1781,7 +1811,7 @@ static lv_obj_t* preset_cycle_steps_roller_create(void) {
 
 static void nav_to_preset_cycle_steps(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Steps", preset_cycle_steps_roller_create);
+  nav_to_subpage("Steps", preset_cycle_steps_roller_create);
 }
 
 static void preset_cycle_step_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -1857,7 +1887,7 @@ static void nav_to_preset_cycle_step(void* user_data) {
   s_editing_preset_step = (uint8_t)(uintptr_t)user_data;
   static char title[24];
   snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_preset_step + 1));
-  menu_navigate_to(title, preset_cycle_step_roller_create);
+  nav_to_subpage(title, preset_cycle_step_roller_create);
 }
 
 // ============================================================================
@@ -1913,7 +1943,7 @@ static lv_obj_t* tempo_set_roller_create(void) {
 
 static void nav_to_tempo_set(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Tempo", tempo_set_roller_create);
+  nav_to_subpage("Tempo", tempo_set_roller_create);
 }
 
 // ============================================================================
@@ -1967,7 +1997,7 @@ static lv_obj_t* tempo_hold_press_roller_create(void) {
 
 static void nav_to_tempo_hold_press(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Press", tempo_hold_press_roller_create);
+  nav_to_subpage("Press", tempo_hold_press_roller_create);
 }
 
 static void tempo_hold_release_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -2017,7 +2047,7 @@ static lv_obj_t* tempo_hold_release_roller_create(void) {
 
 static void nav_to_tempo_hold_release(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Release", tempo_hold_release_roller_create);
+  nav_to_subpage("Release", tempo_hold_release_roller_create);
 }
 
 // ============================================================================
@@ -2061,7 +2091,7 @@ static lv_obj_t* tempo_cycle_steps_roller_create(void) {
 
 static void nav_to_tempo_cycle_steps(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Steps", tempo_cycle_steps_roller_create);
+  nav_to_subpage("Steps", tempo_cycle_steps_roller_create);
 }
 
 static void tempo_cycle_step_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -2120,7 +2150,7 @@ static void nav_to_tempo_cycle_step(void* user_data) {
   s_editing_tempo_step = (uint8_t)(uintptr_t)user_data;
   static char title[24];
   snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_tempo_step + 1));
-  menu_navigate_to(title, tempo_cycle_step_roller_create);
+  nav_to_subpage(title, tempo_cycle_step_roller_create);
 }
 
 // ============================================================================
@@ -2186,7 +2216,7 @@ static lv_obj_t* scene_set_roller_create(void) {
 
 static void nav_to_scene_set(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Scene", scene_set_roller_create);
+  nav_to_subpage("Scene", scene_set_roller_create);
 }
 
 // ============================================================================
@@ -2247,7 +2277,7 @@ static lv_obj_t* note_roller_create(void) {
 
 static void nav_to_note(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Note", note_roller_create);
+  nav_to_subpage("Note", note_roller_create);
 }
 
 // ============================================================================
@@ -2304,7 +2334,7 @@ static lv_obj_t* tw_mode_roller_create(void) {
 
 static void nav_to_tw_mode(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Mode", tw_mode_roller_create);
+  nav_to_subpage("Mode", tw_mode_roller_create);
 }
 
 // ============================================================================
@@ -2346,7 +2376,7 @@ static lv_obj_t* tw_hold_press_roller_create(void) {
 
 static void nav_to_tw_hold_press(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Press", tw_hold_press_roller_create);
+  nav_to_subpage("Press", tw_hold_press_roller_create);
 }
 
 static void tw_hold_release_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -2384,7 +2414,7 @@ static lv_obj_t* tw_hold_release_roller_create(void) {
 
 static void nav_to_tw_hold_release(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Release", tw_hold_release_roller_create);
+  nav_to_subpage("Release", tw_hold_release_roller_create);
 }
 
 // ============================================================================
@@ -2428,7 +2458,7 @@ static lv_obj_t* tw_cycle_steps_roller_create(void) {
 
 static void nav_to_tw_cycle_steps(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Steps", tw_cycle_steps_roller_create);
+  nav_to_subpage("Steps", tw_cycle_steps_roller_create);
 }
 
 static void tw_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -2476,7 +2506,7 @@ static void nav_to_tw_cycle_step(void* user_data) {
   s_editing_tw_step = (uint8_t)(uintptr_t)user_data;
   static char title[24];
   snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_tw_step + 1));
-  menu_navigate_to(title, tw_cycle_step_roller_create);
+  nav_to_subpage(title, tw_cycle_step_roller_create);
 }
 
 // ============================================================================
@@ -2670,20 +2700,35 @@ static void nav_to_randomize_slot(void* user_data) {
   
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_randomize_slot + 1));
-  menu_navigate_to(title, randomize_cc_roller_create);
+  nav_to_subpage(title, randomize_cc_roller_create);
 }
 
 // ============================================================================
 // Navigation Helpers
 // ============================================================================
 
+// Track when we're actually on the detail page
+static bool s_on_detail_page = false;
+
+// Helper to navigate to sub-page - clears back handler so it doesn't intercept
+static void nav_to_subpage(const char* title, menu_page_builder_t builder) {
+  s_on_detail_page = false;
+  menu_set_custom_back_handler(NULL);
+  menu_navigate_to(title, builder);
+}
+
 static void nav_to_action_type(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Action", action_config_type_roller_create);
+  nav_to_subpage("Action", action_config_type_roller_create);
 }
 
 // Back handler for detail page - returns to source
 static bool detail_page_handle_back(void) {
+  // Only handle if we're actually on the detail page
+  if (!s_on_detail_page) {
+    return false;  // Let normal back navigation happen
+  }
+  s_on_detail_page = false;
   menu_set_custom_back_handler(NULL);
   return_to_source();
   return true;
@@ -3000,6 +3045,7 @@ lv_obj_t* action_config_detail_page_create(void) {
   
   const char* title = s_ctx->detail_title ? s_ctx->detail_title : "Action";
   
+  s_on_detail_page = true;
   menu_set_custom_back_handler(detail_page_handle_back);
   
   return menu_create_page_2line(title, s_detail_items, item_count);

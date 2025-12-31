@@ -38,6 +38,7 @@ void menu_page_als_scene_cleanup(void);
 lv_obj_t* menu_page_settings_proximity_create(void);  // Settings -> Proximity
 lv_obj_t* menu_page_settings_als_create(void);        // Settings -> Ambient Light
 lv_obj_t* menu_page_buttons_scene_create(void);       // Scene -> Buttons
+lv_obj_t* menu_page_on_load_scene_create(void);       // Scene -> On-Load
 lv_obj_t* menu_page_tempo_create(void);
 lv_obj_t* menu_page_clock_sync_create(void);
 lv_obj_t* menu_page_transport_create(void);

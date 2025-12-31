@@ -21,6 +21,8 @@ struct action_config_context {
   uint8_t return_depth;              // How many menu levels to pop when returning
   action_config_complete_cb_t on_complete; // Optional callback when done
   void* user_data;                   // Optional user data
+  bool exclude_hold_actions;         // Filter out hold-requiring actions (for bump)
+  bool on_load_filter;               // Only show actions valid for on-load (CC, transport, etc.)
 };
 
 // Initialize action configuration module

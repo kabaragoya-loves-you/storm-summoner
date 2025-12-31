@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "menu_pages.h"
+#include "action_config.h"
 #include "scene.h"
 #include "tempo.h"
 #include "assets_types.h"
@@ -81,16 +82,31 @@ static void nav_to_lfo(void* user_data) {
   menu_navigate_to("LFO", stub_submenu_create);
 }
 
+// Action config context for bump (single action, skip intermediate page)
+static action_config_context_t s_bump_action_ctx;
+
 static void nav_to_bump(void* user_data) {
   (void)user_data;
-  s_stub_title = "Bump";
-  menu_navigate_to("Bump", stub_submenu_create);
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  s_bump_action_ctx.target_action = &scene->bump;
+  s_bump_action_ctx.source_title = "Scene";
+  s_bump_action_ctx.detail_title = "Bump";
+  s_bump_action_ctx.return_page = menu_page_current_scene_create;
+  s_bump_action_ctx.return_depth = 2;  // Pop detail and old Scene, create new Scene
+  s_bump_action_ctx.on_complete = NULL;
+  s_bump_action_ctx.user_data = NULL;
+  s_bump_action_ctx.exclude_hold_actions = true;  // No hold actions for bump
+  s_bump_action_ctx.on_load_filter = false;
+  
+  action_config_start(&s_bump_action_ctx);
 }
 
 static void nav_to_on_load(void* user_data) {
   (void)user_data;
-  s_stub_title = "On-Load";
-  menu_navigate_to("On-Load", stub_submenu_create);
+  menu_navigate_to("On-Load", menu_page_on_load_scene_create);
 }
 
 // ============================================================================
