@@ -7,6 +7,7 @@
 
 // Main input modes (what the user selects)
 typedef enum {
+  INPUT_MODE_NONE = -1,     // CV disabled for this scene
   INPUT_MODE_CV = 0,        // Control Voltage mode
   INPUT_MODE_CLOCK_SYNC,    // Clock sync detection mode
   INPUT_MODE_AUDIO,         // Audio analysis mode (future)

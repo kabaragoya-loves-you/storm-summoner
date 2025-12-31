@@ -306,6 +306,7 @@ static void cmd_scene_info(void) {
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "CV Input Mode: %s",
+           scene->cv_input_mode == INPUT_MODE_NONE ? "<None>" :
            scene->cv_input_mode == INPUT_MODE_CV ? "CV" :
            scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC ? "Clock Sync" :
            scene->cv_input_mode == INPUT_MODE_AUDIO ? "Audio" : "Note");
@@ -2491,7 +2492,9 @@ static int cmd_cv_input_mode(int argc, char **argv) {
   const char* mode_str = cv_input_mode_args.mode->sval[0];
   input_mode_t mode;
   
-  if (strcmp(mode_str, "cv") == 0) {
+  if (strcmp(mode_str, "none") == 0 || strcmp(mode_str, "off") == 0) {
+    mode = INPUT_MODE_NONE;
+  } else if (strcmp(mode_str, "cv") == 0) {
     mode = INPUT_MODE_CV;
   } else if (strcmp(mode_str, "clock_sync") == 0 || strcmp(mode_str, "clock") == 0 || strcmp(mode_str, "sync") == 0) {
     // clock_sync mode can only be set via clock_source sync
@@ -2502,7 +2505,7 @@ static int cmd_cv_input_mode(int argc, char **argv) {
   } else if (strcmp(mode_str, "note") == 0) {
     mode = INPUT_MODE_NOTE;
   } else {
-    ESP_LOGE(TAG, "Unknown CV input mode (use: cv, audio, note)");
+    ESP_LOGE(TAG, "Unknown CV input mode (use: none, cv, audio, note)");
     return 1;
   }
   
@@ -3963,7 +3966,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t cv_input_mode_cmd = {
     .command = "cv_input_mode",
-    .help = "Set CV input mode (cv/audio/note). Use clock_source for sync mode",
+    .help = "Set CV input mode (none/cv/audio/note). Use clock_source for sync mode",
     .hint = NULL,
     .func = &cmd_cv_input_mode,
     .argtable = &cv_input_mode_args

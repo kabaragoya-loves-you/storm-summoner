@@ -50,9 +50,14 @@ static void nav_to_cv(void* user_data) {
   menu_navigate_to("CV", menu_page_cv_create);
 }
 
-static void nav_to_sensor(void* user_data) {
+static void nav_to_proximity(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Sensor", menu_page_sensor_create);
+  menu_navigate_to("Proximity", menu_page_settings_proximity_create);
+}
+
+static void nav_to_ambient_light(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Ambient Light", menu_page_settings_als_create);
 }
 
 static void nav_to_tempo(void* user_data) {
@@ -153,7 +158,8 @@ lv_obj_t* menu_page_settings_create(void) {
     { "ADC", nav_to_adc_manager, NULL, true },
     { "Expression", nav_to_expression, NULL, true },
     { "CV", nav_to_cv, NULL, true },
-    { "Sensor", nav_to_sensor, NULL, true },
+    { "Proximity", nav_to_proximity, NULL, true },
+    { "Ambient Light", nav_to_ambient_light, NULL, true },
     { "Tempo", nav_to_tempo, NULL, true },
     { "Clock Sync", nav_to_clock_sync, NULL, true },
     { "Transport", nav_to_transport, NULL, true },

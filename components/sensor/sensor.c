@@ -8,6 +8,8 @@
 #include "esp_log.h"
 #include "event_bus.h"
 #include "app_settings.h"
+#include "scene.h"
+#include "ui.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include "task_priorities.h"
@@ -47,12 +49,8 @@
 #define NVS_KEY_TIMEOUT "prox_timeout"
 #define DEFAULT_REST_POSITION 65
 #define NVS_KEY_PROXIMITY_MODE "prox_mode"
-#define NVS_KEY_THEREMIN_BASE "ther_base"
-#define NVS_KEY_THEREMIN_RANGE "ther_range"
-#define NVS_KEY_THEREMIN_VEL "ther_vel"
-#define DEFAULT_THEREMIN_BASE_NOTE 48  // C3
-#define DEFAULT_THEREMIN_RANGE 24      // 2 octaves
-#define DEFAULT_THEREMIN_VELOCITY 100
+#define NVS_KEY_NOTE_SILENCE "prox_note_sil"
+// Theremin settings now come from scene->proximity mapping (base_note, note_range, velocity)
 
 static TaskHandle_t sensor_task_handle = NULL;
 static volatile bool als_enabled_flag = false;
@@ -96,13 +94,9 @@ static volatile bool returning_to_rest = false;
 static volatile float return_start_value = 0.0f;  // MIDI value when return began
 static volatile uint32_t return_start_time = 0;   // When return started
 
-// Mode and theremin settings
+// Mode settings (note generation now handled by midi_proximity_scene_handler)
 static proximity_mode_t proximity_mode = PROXIMITY_MODE_CC;
-static uint8_t theremin_base_note = DEFAULT_THEREMIN_BASE_NOTE;
-static uint8_t theremin_range = DEFAULT_THEREMIN_RANGE;
-static uint8_t theremin_velocity = DEFAULT_THEREMIN_VELOCITY;
-static volatile uint8_t current_theremin_note = 0;  // Currently playing note (0 = none)
-static volatile bool theremin_note_active = false;
+static volatile bool note_silence_on_low = true;  // Send note_off when sensor is out of range
 
 void sensor_init(bool enable_logging) {
   esp_err_t err;
@@ -214,7 +208,7 @@ void sensor_init(bool enable_logging) {
     timeout_setting = (proximity_timeout_t)stored_val;
   }
 
-  // Load mode and theremin settings
+  // Load proximity mode (theremin note settings come from scene->proximity)
   err = app_settings_load_u32(NVS_KEY_PROXIMITY_MODE, &stored_val);
   if (err != ESP_OK) {
     app_settings_save_u32(NVS_KEY_PROXIMITY_MODE, PROXIMITY_MODE_CC);
@@ -222,25 +216,12 @@ void sensor_init(bool enable_logging) {
     proximity_mode = (proximity_mode_t)stored_val;
   }
 
-  err = app_settings_load_u32(NVS_KEY_THEREMIN_BASE, &stored_val);
+  // Load note silence on low setting
+  err = app_settings_load_u32(NVS_KEY_NOTE_SILENCE, &stored_val);
   if (err != ESP_OK) {
-    app_settings_save_u32(NVS_KEY_THEREMIN_BASE, DEFAULT_THEREMIN_BASE_NOTE);
+    app_settings_save_u32(NVS_KEY_NOTE_SILENCE, 1);  // Default: enabled
   } else {
-    theremin_base_note = (uint8_t)stored_val;
-  }
-
-  err = app_settings_load_u32(NVS_KEY_THEREMIN_RANGE, &stored_val);
-  if (err != ESP_OK) {
-    app_settings_save_u32(NVS_KEY_THEREMIN_RANGE, DEFAULT_THEREMIN_RANGE);
-  } else {
-    theremin_range = (uint8_t)stored_val;
-  }
-
-  err = app_settings_load_u32(NVS_KEY_THEREMIN_VEL, &stored_val);
-  if (err != ESP_OK) {
-    app_settings_save_u32(NVS_KEY_THEREMIN_VEL, DEFAULT_THEREMIN_VELOCITY);
-  } else {
-    theremin_velocity = (uint8_t)stored_val;
+    note_silence_on_low = (stored_val != 0);
   }
 
   i2c_device_config_t dev_cfg = {
@@ -672,23 +653,8 @@ proximity_timeout_t proximity_get_timeout(void) {
 }
 
 void proximity_set_mode(proximity_mode_t mode) {
-  // Turn off any active theremin note when switching modes
-  if (proximity_mode == PROXIMITY_MODE_THEREMIN && mode != PROXIMITY_MODE_THEREMIN && theremin_note_active) {
-    event_t note_off_event = {
-      .type = EVENT_NOTE_OFF,
-      .priority = EVENT_PRIORITY_NORMAL,
-      .timestamp = event_bus_get_current_timestamp(),
-      .data.note = {
-        .channel = 0,
-        .note = current_theremin_note,
-        .velocity = 0
-      }
-    };
-    event_bus_post(&note_off_event);
-    theremin_note_active = false;
-    current_theremin_note = 0;
-  }
-  
+  // Note: Note-off handling when switching modes is now handled by
+  // midi_proximity_scene_handler based on scene->proximity.output_type
   proximity_mode = mode;
   app_settings_save_u32(NVS_KEY_PROXIMITY_MODE, mode);
   const char* names[] = {"CC", "Theremin"};
@@ -699,37 +665,77 @@ proximity_mode_t proximity_get_mode(void) {
   return proximity_mode;
 }
 
+// Theremin settings are now per-scene (in scene->proximity mapping)
+// These functions now delegate to the scene system
+
+static void persist_scene_if_programming(void) {
+  if (ui_is_in_programming_mode()) {
+    scene_save_to_flash(scene_get_current_index());
+  }
+}
+
 void proximity_set_theremin_base_note(uint8_t note) {
   if (note > 127) note = 127;
-  theremin_base_note = note;
-  app_settings_save_u32(NVS_KEY_THEREMIN_BASE, note);
-  ESP_LOGI(TAG, "Theremin base note set to %u", note);
+  scene_t* scene = scene_get_current();
+  if (scene) {
+    scene->proximity.base_note = note;
+    persist_scene_if_programming();
+    ESP_LOGI(TAG, "Scene proximity base note set to %u", note);
+  }
 }
 
 uint8_t proximity_get_theremin_base_note(void) {
-  return theremin_base_note;
+  scene_t* scene = scene_get_current();
+  return scene ? scene->proximity.base_note : 48;  // Default C3
 }
 
 void proximity_set_theremin_range(uint8_t semitones) {
   if (semitones > 127) semitones = 127;
-  theremin_range = semitones;
-  app_settings_save_u32(NVS_KEY_THEREMIN_RANGE, semitones);
-  ESP_LOGI(TAG, "Theremin range set to %u semitones", semitones);
+  scene_t* scene = scene_get_current();
+  if (scene) {
+    scene->proximity.note_range = semitones;
+    persist_scene_if_programming();
+    ESP_LOGI(TAG, "Scene proximity note range set to %u semitones", semitones);
+  }
 }
 
 uint8_t proximity_get_theremin_range(void) {
-  return theremin_range;
+  scene_t* scene = scene_get_current();
+  return scene ? scene->proximity.note_range : 24;  // Default 2 octaves
 }
 
 void proximity_set_theremin_velocity(uint8_t velocity) {
   if (velocity > 127) velocity = 127;
-  theremin_velocity = velocity;
-  app_settings_save_u32(NVS_KEY_THEREMIN_VEL, velocity);
-  ESP_LOGI(TAG, "Theremin velocity set to %u", velocity);
+  scene_t* scene = scene_get_current();
+  if (scene) {
+    scene->proximity.velocity = velocity;
+    persist_scene_if_programming();
+    ESP_LOGI(TAG, "Scene proximity velocity set to %u", velocity);
+  }
 }
 
 uint8_t proximity_get_theremin_velocity(void) {
-  return theremin_velocity;
+  scene_t* scene = scene_get_current();
+  return scene ? scene->proximity.velocity : 100;  // Default velocity
+}
+
+void proximity_set_note_silence_on_low(bool enabled) {
+  note_silence_on_low = enabled;
+  app_settings_save_u32(NVS_KEY_NOTE_SILENCE, enabled ? 1 : 0);
+  ESP_LOGI(TAG, "Note silence on low set to: %s", enabled ? "enabled" : "disabled");
+}
+
+bool proximity_get_note_silence_on_low(void) {
+  return note_silence_on_low;
+}
+
+uint32_t proximity_get_timeout_ms(void) {
+  switch (timeout_setting) {
+    case PROXIMITY_TIMEOUT_FAST: return 500;
+    case PROXIMITY_TIMEOUT_MEDIUM: return 1000;
+    case PROXIMITY_TIMEOUT_SLOW: return 5000;
+    default: return 1000;
+  }
 }
 
 void als_set_raw_mode(bool enable) {
@@ -834,85 +840,10 @@ static void sensor_task(void *arg) {
         // Convert to MIDI value (polarity now handled by scene mapping)
         uint8_t midi_value = (uint8_t)(scaled + 0.5f);
         
-        // Branch based on mode
-        if (proximity_mode == PROXIMITY_MODE_THEREMIN) {
-          // === THEREMIN MODE ===
-          // Determine if proximity is in detectable range
-          bool in_range = (midi_value >= 5);  // Threshold for note detection
-          
-          if (in_range) {
-            // Map MIDI value (5-127) to note number
-            // Scale to 0-1 range, then to semitone range
-            float note_scaled = ((float)midi_value - 5.0f) / 122.0f;  // 5 to 127 -> 0 to 1
-            uint8_t semitone_offset = (uint8_t)(note_scaled * (float)theremin_range);
-            uint8_t new_note = theremin_base_note + semitone_offset;
-            if (new_note > 127) new_note = 127;
-            
-            // Check if note changed or if we need to start a new note
-            if (!theremin_note_active || new_note != current_theremin_note) {
-              // Turn off previous note if active
-              if (theremin_note_active) {
-                event_t note_off_event = {
-                  .type = EVENT_NOTE_OFF,
-                  .priority = EVENT_PRIORITY_NORMAL,
-                  .timestamp = event_bus_get_current_timestamp(),
-                  .data.note = {
-                    .channel = 0,
-                    .note = current_theremin_note,
-                    .velocity = 0
-                  }
-                };
-                event_bus_post(&note_off_event);
-                ESP_LOGI(TAG, "Theremin note OFF: %u", current_theremin_note);
-              }
-              
-              // Turn on new note
-              event_t note_on_event = {
-                .type = EVENT_NOTE_ON,
-                .priority = EVENT_PRIORITY_NORMAL,
-                .timestamp = event_bus_get_current_timestamp(),
-                .data.note = {
-                  .channel = 0,
-                  .note = new_note,
-                  .velocity = theremin_velocity
-                }
-              };
-              event_bus_post(&note_on_event);
-              ESP_LOGI(TAG, "Theremin note ON: %u, velocity: %u", new_note, theremin_velocity);
-              
-              current_theremin_note = new_note;
-              theremin_note_active = true;
-            }
-          } else {
-            // Out of range - turn off note if active
-            if (theremin_note_active) {
-              event_t note_off_event = {
-                .type = EVENT_NOTE_OFF,
-                .priority = EVENT_PRIORITY_NORMAL,
-                .timestamp = event_bus_get_current_timestamp(),
-                .data.note = {
-                  .channel = 0,
-                  .note = current_theremin_note,
-                  .velocity = 0
-                }
-              };
-              event_bus_post(&note_off_event);
-              ESP_LOGI(TAG, "Theremin note OFF (out of range): %u", current_theremin_note);
-              theremin_note_active = false;
-              current_theremin_note = 0;
-            }
-          }
-          
-          // Logging for theremin mode
-          if (current_time - ps_last_log_time >= 500) {
-            ESP_LOGD(TAG, "PS (Theremin): raw=%u, filtered=%.1f, MIDI=%u, note=%u, active=%d", 
-              ps_raw_value, filtered_proximity, midi_value, current_theremin_note, theremin_note_active);
-            ps_last_log_time = current_time;
-          }
-        } else {
-          // === CC MODE ===
-          // Hysteresis logic - determine output value
-          uint8_t output_value = midi_value;  // Default to sensor reading
+        // Hysteresis logic - determine output value
+        // Note: Theremin/note mode is now handled by midi_proximity_scene_handler
+        // based on scene->proximity.output_type
+        uint8_t output_value = midi_value;  // Default to sensor reading
           
           if (hysteresis_enabled) {
             // Determine if sensor is "at rest" (nothing detected = near minimum)
@@ -1019,7 +950,6 @@ static void sensor_task(void *arg) {
               ps_use_slow_rate = true;
             }
           }
-        }  // End of CC mode / theremin mode if-else
       } else {
         // I2C read failed
         ps_consecutive_errors++;

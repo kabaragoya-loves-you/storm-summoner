@@ -71,6 +71,9 @@ esp_err_t input_set_mode(input_mode_t mode) {
   
   // First, disable the current mode
   switch (s_current_mode) {
+    case INPUT_MODE_NONE:
+      // Nothing to disable
+      break;
     case INPUT_MODE_CV:
       cv_disable();
       break;
@@ -95,6 +98,11 @@ esp_err_t input_set_mode(input_mode_t mode) {
   
   // Enable the new mode
   switch (mode) {
+    case INPUT_MODE_NONE:
+      // CV disabled for this scene - nothing to enable
+      ESP_LOGI(TAG, "CV input disabled for this scene");
+      break;
+      
     case INPUT_MODE_CV:
       // CV mode uses ADC - pin will be configured as ADC by cv_enable()
       cv_enable();
@@ -181,6 +189,10 @@ void input_manager_cable_changed(bool connected) {
   } else {
     // Cable connected - re-enable current mode
     switch (s_current_mode) {
+      case INPUT_MODE_NONE:
+        // CV disabled - nothing to do
+        break;
+        
       case INPUT_MODE_CV:
         // CV mode manages its own switch based on range
         // The CV component will have already set the appropriate channel

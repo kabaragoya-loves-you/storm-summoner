@@ -205,6 +205,12 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
   
   // Free PSRAM allocations from menu pages (safe now that screens are deleted)
   menu_page_device_config_cleanup();
+  menu_page_touchwheel_cleanup();
+  menu_page_pads_cleanup();
+  menu_page_expression_cleanup();
+  menu_page_cv_scene_cleanup();
+  menu_page_proximity_scene_cleanup();
+  menu_page_als_scene_cleanup();
   
   // Restore Performance mode
   if (saved_draw_module) {

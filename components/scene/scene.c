@@ -1839,6 +1839,16 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   
   input_mode_t old_mode = scene->cv_input_mode;
   scene->cv_input_mode = mode;
+  
+  // Auto-manage cv.enabled based on mode
+  if (mode == INPUT_MODE_NONE) {
+    scene->cv.enabled = false;
+  } else if (mode == INPUT_MODE_CV) {
+    scene->cv.enabled = true;
+  }
+  // INPUT_MODE_NOTE: enabled is managed by input_manager
+  // INPUT_MODE_CLOCK_SYNC: CV is used for tempo, not continuous routing
+  
   scene_persist_if_programming();
   
   // State machine: NOTE mode requires GATE expression mode
@@ -1861,7 +1871,8 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
     }
   }
   
-  const char* mode_str = (mode == INPUT_MODE_CV) ? "cv" :
+  const char* mode_str = (mode == INPUT_MODE_NONE) ? "none" :
+                         (mode == INPUT_MODE_CV) ? "cv" :
                          (mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
                          (mode == INPUT_MODE_AUDIO) ? "audio" : "note";
   ESP_LOGI(TAG, "Scene %d CV input mode set to %s", scene_index + 1, mode_str);
@@ -2706,7 +2717,8 @@ static cJSON* scene_to_json(const scene_t* scene) {
   if (expr_sw_json) cJSON_AddItemToObject(root, "expr_switch", expr_sw_json);
   
   // Serialize CV input mode
-  const char* cv_mode_str = (scene->cv_input_mode == INPUT_MODE_CV) ? "cv" :
+  const char* cv_mode_str = (scene->cv_input_mode == INPUT_MODE_NONE) ? "none" :
+                            (scene->cv_input_mode == INPUT_MODE_CV) ? "cv" :
                             (scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
                             (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
@@ -2902,7 +2914,8 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* cv_mode = cJSON_GetObjectItem(root, "cv_input_mode");
   if (cv_mode && cJSON_IsString(cv_mode)) {
     const char* mode_str = cv_mode->valuestring;
-    if (strcmp(mode_str, "clock_sync") == 0) scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
+    if (strcmp(mode_str, "none") == 0) scene->cv_input_mode = INPUT_MODE_NONE;
+    else if (strcmp(mode_str, "clock_sync") == 0) scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
     else if (strcmp(mode_str, "audio") == 0) scene->cv_input_mode = INPUT_MODE_AUDIO;
     else if (strcmp(mode_str, "note") == 0) scene->cv_input_mode = INPUT_MODE_NOTE;
     else scene->cv_input_mode = INPUT_MODE_CV;

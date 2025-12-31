@@ -27,8 +27,17 @@ lv_obj_t* menu_page_adc_manager_create(void);
 lv_obj_t* menu_page_expression_create(void);
 void menu_page_expression_cleanup(void);      // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_settings_expression_create(void);  // Global expression settings
-lv_obj_t* menu_page_cv_create(void);
+lv_obj_t* menu_page_cv_create(void);  // Settings -> CV (global settings)
+lv_obj_t* menu_page_cv_scene_create(void);  // Scene -> CV
+void menu_page_cv_scene_cleanup(void);      // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_sensor_create(void);
+lv_obj_t* menu_page_proximity_scene_create(void);  // Scene -> Proximity
+void menu_page_proximity_scene_cleanup(void);
+lv_obj_t* menu_page_als_scene_create(void);        // Scene -> Ambient Light
+void menu_page_als_scene_cleanup(void);
+lv_obj_t* menu_page_settings_proximity_create(void);  // Settings -> Proximity
+lv_obj_t* menu_page_settings_als_create(void);        // Settings -> Ambient Light
+lv_obj_t* menu_page_buttons_scene_create(void);       // Scene -> Buttons
 lv_obj_t* menu_page_tempo_create(void);
 lv_obj_t* menu_page_clock_sync_create(void);
 lv_obj_t* menu_page_transport_create(void);

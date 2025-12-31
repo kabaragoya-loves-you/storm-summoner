@@ -111,4 +111,11 @@ uint8_t proximity_get_theremin_range(void);
 void proximity_set_theremin_velocity(uint8_t velocity);
 uint8_t proximity_get_theremin_velocity(void);
 
+// Note mode silence setting (for when sensor is out of range)
+void proximity_set_note_silence_on_low(bool enabled);
+bool proximity_get_note_silence_on_low(void);
+
+// Helper to get timeout in milliseconds
+uint32_t proximity_get_timeout_ms(void);
+
 #endif // SENSOR_H

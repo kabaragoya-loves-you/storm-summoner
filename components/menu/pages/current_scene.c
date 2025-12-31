@@ -57,26 +57,22 @@ static void nav_to_expression(void* user_data) {
 
 static void nav_to_cv(void* user_data) {
   (void)user_data;
-  s_stub_title = "CV";
-  menu_navigate_to("CV", stub_submenu_create);
+  menu_navigate_to("CV", menu_page_cv_scene_create);
 }
 
 static void nav_to_proximity(void* user_data) {
   (void)user_data;
-  s_stub_title = "Proximity";
-  menu_navigate_to("Proximity", stub_submenu_create);
+  menu_navigate_to("Proximity", menu_page_proximity_scene_create);
 }
 
 static void nav_to_ambient_light(void* user_data) {
   (void)user_data;
-  s_stub_title = "Ambient Light";
-  menu_navigate_to("Ambient Light", stub_submenu_create);
+  menu_navigate_to("Ambient Light", menu_page_als_scene_create);
 }
 
 static void nav_to_buttons(void* user_data) {
   (void)user_data;
-  s_stub_title = "Buttons";
-  menu_navigate_to("Buttons", stub_submenu_create);
+  menu_navigate_to("Buttons", menu_page_buttons_scene_create);
 }
 
 static void nav_to_lfo(void* user_data) {
