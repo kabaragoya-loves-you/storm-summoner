@@ -280,7 +280,7 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
 }
 
 void elite_start(void) {
-  ESP_LOGI(TAG, "Starting Elite screensaver...");
+  ESP_LOGD(TAG, "Starting Elite screensaver...");
 
   // Ensure stopping flag is cleared
   g_elite_stopping = false;
@@ -298,7 +298,7 @@ void elite_start(void) {
   s_origin_x = s_disp_width / 2;
   s_origin_y = s_disp_height / 2;
   
-  ESP_LOGI(TAG, "Using shared canvas buffer at %p (%dx%d)", canvas_buf, s_disp_width, s_disp_height);
+  ESP_LOGD(TAG, "Using shared canvas buffer at %p (%dx%d)", canvas_buf, s_disp_width, s_disp_height);
 
   // Save current screen
   g_previous_screen = lv_screen_active();
@@ -340,7 +340,7 @@ void elite_start(void) {
 
   // Attach the shared buffer to our canvas
   if (canvas && canvas_buf) {
-    ESP_LOGI(TAG, "Attaching shared buffer to Elite canvas");
+    ESP_LOGD(TAG, "Attaching shared buffer to Elite canvas");
     lv_canvas_set_buffer(canvas, canvas_buf, s_disp_width, s_disp_height, 
       shared_canvas_buffer_get_format());
   }
@@ -404,11 +404,11 @@ void elite_stop(void) {
 
   // DO NOT reset the stopping flag here - it will be reset in elite_start()
 
-  ESP_LOGI(TAG, "Elite screensaver stopped (shared buffer released)");
+  ESP_LOGD(TAG, "Elite screensaver stopped (shared buffer released)");
 }
 
 void elite_cleanup(void) {
-  ESP_LOGI(TAG, "Cleaning up Elite resources...");
+  ESP_LOGD(TAG, "Cleaning up Elite resources...");
 
   // Stop any active timers
   if (rotation_timer) {

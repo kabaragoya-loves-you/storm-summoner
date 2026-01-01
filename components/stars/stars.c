@@ -83,7 +83,7 @@ static void starfield_animation_cb(lv_timer_t *timer) {
 }
 
 void starfield_start(void) {
-  ESP_LOGI(TAG, "Starting starfield screensaver (screen-based)...");
+  ESP_LOGD(TAG, "Starting starfield screensaver (screen-based)...");
 
   // Verify shared buffer is available
   if (!shared_canvas_buffer_is_valid()) {
@@ -95,7 +95,7 @@ void starfield_start(void) {
   s_disp_width = shared_canvas_buffer_get_width();
   s_disp_height = shared_canvas_buffer_get_height();
   
-  ESP_LOGI(TAG, "Using shared canvas buffer at %p (%dx%d)", shared_buf, s_disp_width, s_disp_height);
+  ESP_LOGD(TAG, "Using shared canvas buffer at %p (%dx%d)", shared_buf, s_disp_width, s_disp_height);
 
   // Save current screen
   g_previous_screen = lv_screen_active();
@@ -124,7 +124,7 @@ void starfield_start(void) {
   // Attach the shared buffer to our canvas
   // NOTE: No allocation needed - we're using the shared persistent buffer
   if (g_stars_canvas && shared_buf) {
-    ESP_LOGI(TAG, "Attaching shared buffer to starfield canvas");
+    ESP_LOGD(TAG, "Attaching shared buffer to starfield canvas");
     shared_canvas_buffer_clear();
     lv_canvas_set_buffer(g_stars_canvas, shared_buf, s_disp_width, s_disp_height, 
       shared_canvas_buffer_get_format());
@@ -151,7 +151,7 @@ void starfield_start(void) {
 }
 
 void starfield_stop(void) {
-  ESP_LOGI(TAG, "Stopping starfield screensaver...");
+  ESP_LOGD(TAG, "Stopping starfield screensaver...");
 
   // Pause animation timer FIRST to prevent any more invalidations
   if (g_animation_timer) lv_timer_pause(g_animation_timer);
@@ -166,11 +166,11 @@ void starfield_stop(void) {
     ESP_LOGW(TAG, "Previous screen invalid or null, cannot restore");
   }
 
-  ESP_LOGI(TAG, "Starfield screensaver stopped (shared buffer released)");
+  ESP_LOGD(TAG, "Starfield screensaver stopped (shared buffer released)");
 }
 
 void starfield_cleanup(void) {
-  ESP_LOGI(TAG, "Cleaning up starfield resources...");
+  ESP_LOGD(TAG, "Cleaning up starfield resources...");
 
   if (g_animation_timer) {
     lv_timer_delete(g_animation_timer);

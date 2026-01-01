@@ -80,7 +80,7 @@ static void handle_als_event(const event_t* event, void* context) {
 }
 
 esp_err_t midi_als_scene_handler_init(void) {
-  ESP_LOGI(TAG, "Initializing ALS scene handler");
+  ESP_LOGD(TAG, "Initializing ALS scene handler");
   
   // Initialize smart filter with deadzone=2
   smart_filter_init(&s_als_filter, 2);

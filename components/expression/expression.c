@@ -520,11 +520,11 @@ void expression_enable(void) {
       ESP_LOGE(TAG, "Failed to create expression task! Return code: %d", task_ret);
       expression_adc_deinit();
     } else {
-      ESP_LOGI(TAG, "Expression task created");
+      ESP_LOGD(TAG, "Expression task created");
     }
   } else {
     vTaskResume(s_task_handle);
-    ESP_LOGI(TAG, "Expression task resumed");
+    ESP_LOGD(TAG, "Expression task resumed");
   }
 }
 

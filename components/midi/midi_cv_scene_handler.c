@@ -52,7 +52,7 @@ static void handle_cv_event(const event_t* event, void* context) {
 }
 
 esp_err_t midi_cv_scene_handler_init(void) {
-  ESP_LOGI(TAG, "Initializing CV scene handler");
+  ESP_LOGD(TAG, "Initializing CV scene handler");
   
   smart_filter_init(&s_cv_filter, 2);
   

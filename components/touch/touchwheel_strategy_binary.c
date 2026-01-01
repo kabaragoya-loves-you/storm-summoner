@@ -9,9 +9,10 @@
 
 // Configuration
 #define SPEED_THRESHOLD_FAST       150   // ms (2x) - Brisk scrolling
-#define SPEED_THRESHOLD_VERY_FAST  110    // ms (3x) - Fast scrolling
+#define SPEED_THRESHOLD_VERY_FAST  110   // ms (3x) - Fast scrolling
 #define SPEED_THRESHOLD_SUPER_FAST 75    // ms (4x) - Very fast scrolling
 #define SPEED_THRESHOLD_ULTRA_FAST 60    // ms (5x) - Maximum velocity
+#define SPEED_MIN_TIME_FOR_MULTIPLIER 40 // ms - Minimum time before speed multiplier applies
 #define STICKY_RELEASE_MS 0              // ms - Disabled to allow single-pad values during slide
 
 // Mappings for absolute modes
@@ -162,10 +163,16 @@ void touchwheel_strategy_binary_process_press(touchwheel_core_t* core, uint8_t p
             uint32_t time_diff_ms = timestamp_ms - core->last_wheel_interaction_time;
             int speed_multiplier = 1;
             
-            if (time_diff_ms < SPEED_THRESHOLD_ULTRA_FAST) speed_multiplier = 5;
-            else if (time_diff_ms < SPEED_THRESHOLD_SUPER_FAST) speed_multiplier = 4;
-            else if (time_diff_ms < SPEED_THRESHOLD_VERY_FAST) speed_multiplier = 3;
-            else if (time_diff_ms < SPEED_THRESHOLD_FAST) speed_multiplier = 2;
+            // Only apply speed multiplier if enough time has passed since last interaction.
+            // Very short time_diff (< 40ms) typically means this is the first delta after
+            // a new interaction started, not actual fast scrolling. Applying 5x multiplier
+            // in this case causes unwanted menu jumps.
+            if (time_diff_ms >= SPEED_MIN_TIME_FOR_MULTIPLIER) {
+                if (time_diff_ms < SPEED_THRESHOLD_ULTRA_FAST) speed_multiplier = 5;
+                else if (time_diff_ms < SPEED_THRESHOLD_SUPER_FAST) speed_multiplier = 4;
+                else if (time_diff_ms < SPEED_THRESHOLD_VERY_FAST) speed_multiplier = 3;
+                else if (time_diff_ms < SPEED_THRESHOLD_FAST) speed_multiplier = 2;
+            }
             
             int effective_delta = delta * speed_multiplier;
             

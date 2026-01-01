@@ -39,7 +39,7 @@ static void load_config_from_settings(void) {
   
   err = app_settings_load_u32(SETTINGS_KEY_BUTTON13_LONG_PRESS_MS, &s_button13_long_press_ms);
   if (err == APP_SETTINGS_OK) {
-    ESP_LOGI(TAG, "Loaded Button 13 long press timeout: %lu ms", s_button13_long_press_ms);
+    ESP_LOGD(TAG, "Loaded Button 13 long press timeout: %lu ms", s_button13_long_press_ms);
   } else if (err != APP_SETTINGS_ERR_NOT_FOUND) {
     ESP_LOGW(TAG, "Failed to load Button 13 long press timeout: %s", esp_err_to_name(err));
   }
@@ -90,7 +90,7 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   
   // All checks passed - this is a legitimate long press
   s_long_press_timer_fired = true;
-  ESP_LOGI(TAG, "Button 13 long press: Entering Programming Mode");
+  ESP_LOGD(TAG, "Button 13 long press: Entering Programming Mode");
   
   // Post mode change event - handle in event bus task context (safe for LVGL)
   event_t event = {
@@ -257,7 +257,7 @@ void ui_set_button13_long_press_ms(uint32_t value_ms) {
   s_button13_long_press_ms = value_ms;
   // Update timer period if it exists
   if (s_button13_long_press_timer != NULL) xTimerChangePeriod(s_button13_long_press_timer, pdMS_TO_TICKS(value_ms), 0);
-  ESP_LOGI(TAG, "Button 13 long press timeout set to %lu ms", value_ms);
+  ESP_LOGD(TAG, "Button 13 long press timeout set to %lu ms", value_ms);
 
   esp_err_t err = app_settings_save_u32(SETTINGS_KEY_BUTTON13_LONG_PRESS_MS, value_ms);
   if (err != APP_SETTINGS_OK) ESP_LOGE(TAG, "Failed to save Button 13 long press timeout: %s", esp_err_to_name(err));

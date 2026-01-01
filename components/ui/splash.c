@@ -237,7 +237,7 @@ static void start_animations(void) {
   lv_anim_set_path_cb(&bubble_scale_anim, lv_anim_path_overshoot);
   lv_anim_start(&bubble_scale_anim);
   
-  ESP_LOGI(TAG, "Splash animations started");
+  ESP_LOGD(TAG, "Splash animations started");
 }
 
 //=============================================================================

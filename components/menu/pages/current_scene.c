@@ -545,7 +545,7 @@ static void nav_to_transport(void* user_data) {
 // ============================================================================
 
 lv_obj_t* menu_page_current_scene_create(void) {
-  ESP_LOGI(TAG, "Creating current scene page");
+  ESP_LOGD(TAG, "Creating current scene page");
   
   scene_t* scene = scene_get_current();
   uint8_t scene_index = scene_get_current_index();
@@ -640,6 +640,6 @@ lv_obj_t* menu_page_current_scene_create(void) {
     (scene && scene->use_transport) ? "Yes" : "No");
   s_scene_items[idx++] = (menu_item_t){ s_transport_label, nav_to_transport, NULL, false };
 
-  ESP_LOGI(TAG, "Current scene page: %d items", idx);
+  ESP_LOGD(TAG, "Current scene page: %d items", idx);
   return menu_create_page(s_page_title, s_scene_items, idx);
 }

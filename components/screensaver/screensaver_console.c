@@ -52,7 +52,7 @@ static int cmd_mode(int argc, char **argv) {
   }
   
   screensaver_set_mode(mode);
-  ESP_LOGI(TAG, "Screensaver mode set to: %s", mode_str);
+  ESP_LOGD(TAG, "Screensaver mode set to: %s", mode_str);
   
   return 0;
 }
@@ -72,7 +72,7 @@ static int cmd_delay(int argc, char **argv) {
   
   int delay = delay_args.seconds->ival[0];
   screensaver_set_delay((uint16_t)delay);
-  ESP_LOGI(TAG, "Screensaver delay set to %d seconds", delay);
+  ESP_LOGD(TAG, "Screensaver delay set to %d seconds", delay);
   
   return 0;
 }

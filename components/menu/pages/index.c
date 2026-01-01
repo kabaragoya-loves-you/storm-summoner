@@ -34,7 +34,7 @@ static void nav_to_about(void* user_data) {
 }
 
 lv_obj_t* menu_page_index_create(void) {
-  ESP_LOGI(TAG, "Creating index page");
+  ESP_LOGD(TAG, "Creating index page");
   
   // Check scene mode to determine label
   scene_mode_t mode = scene_get_mode();

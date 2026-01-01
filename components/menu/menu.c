@@ -562,7 +562,7 @@ void menu_create(void) {
   lv_screen_load(screen);
   update_top_level_flag();
 
-  ESP_LOGI(TAG, "Top-level menu created");
+  ESP_LOGD(TAG, "Top-level menu created");
 }
 
 // Internal navigation function (called from LVGL task context)
@@ -604,7 +604,7 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   
   // Debug: log what we're storing
   uint32_t cont_children = container ? lv_obj_get_child_count(container) : 0;
-  ESP_LOGI(TAG, "Nav to %s: screen=%p, container=%p, children=%u", 
+  ESP_LOGD(TAG, "Nav to %s: screen=%p, container=%p, children=%u", 
            menu_name, (void*)screen, (void*)container, (unsigned)cont_children);
 
   // Push to stack

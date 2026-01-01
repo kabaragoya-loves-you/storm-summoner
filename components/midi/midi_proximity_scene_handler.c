@@ -113,7 +113,7 @@ static void handle_proximity_event(const event_t* event, void* context) {
 }
 
 esp_err_t midi_proximity_scene_handler_init(void) {
-  ESP_LOGI(TAG, "Initializing proximity scene handler");
+  ESP_LOGD(TAG, "Initializing proximity scene handler");
   
   // Initialize smart filter with deadzone=2
   smart_filter_init(&s_proximity_filter, 2);

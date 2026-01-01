@@ -114,7 +114,7 @@ touchwheel_output_t* touchwheel_output_lvgl_create(lv_display_t* disp) {
   
   output->data.lvgl.indev = indev;
   
-  ESP_LOGI(TAG, "Created LVGL encoder output adapter");
+  ESP_LOGD(TAG, "Created LVGL encoder output adapter");
   return output;
 }
 

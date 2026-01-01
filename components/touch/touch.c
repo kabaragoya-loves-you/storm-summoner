@@ -1072,7 +1072,7 @@ esp_err_t touch_register_touchwheel_instance(struct touchwheel_instance* instanc
   }
   
   s_touchwheel_instances[s_num_touchwheel_instances++] = instance;
-  ESP_LOGI(TAG, "Registered touchwheel instance (%d total)", s_num_touchwheel_instances);
+  ESP_LOGD(TAG, "Registered touchwheel instance (%d total)", s_num_touchwheel_instances);
   return ESP_OK;
 }
 

@@ -216,7 +216,7 @@ void cv_enable(void) {
       ESP_LOGE(TAG, "Failed to create CV task");
       cv_adc_deinit();
     } else {
-      ESP_LOGI(TAG, "CV sampling enabled");
+      ESP_LOGD(TAG, "CV sampling enabled");
       
       // Check cable detection setting from input manager
       extern bool input_get_cable_detection_enabled(void);
@@ -254,7 +254,7 @@ void cv_disable(void) {
     // Never turn off all channels - hardware requires one channel active at all times
     switch_set_channel(0);
     
-    ESP_LOGI(TAG, "CV sampling disabled - switch set to default channel 0");
+    ESP_LOGD(TAG, "CV sampling disabled - switch set to default channel 0");
   }
 }
 

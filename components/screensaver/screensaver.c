@@ -111,7 +111,7 @@ void screensaver_enable(void) {
   }
   
   if (!g_screensaver_enabled_in_settings || g_screensaver_delay_seconds == 0) {
-    ESP_LOGI(TAG, "Screensaver is disabled in settings or delay is 0.");
+    ESP_LOGD(TAG, "Screensaver is disabled in settings or delay is 0.");
     return;
   }
 
@@ -140,7 +140,7 @@ void screensaver_disable(void) {
     // Reclaim UI canvas buffer
     ui_reclaim_canvas_buffer();
     
-    ESP_LOGI(TAG, "Screensaver stopped.");
+    ESP_LOGD(TAG, "Screensaver stopped.");
   }
 }
 
@@ -149,7 +149,7 @@ static void stop_screensaver_deferred(lv_timer_t *timer) {
   lv_timer_delete(timer);
   g_pending_stop_timer = NULL;
   
-  ESP_LOGI(TAG, "Stopping screensaver (deferred)");
+  ESP_LOGD(TAG, "Stopping screensaver (deferred)");
   
   if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {
     starfield_stop();
@@ -218,7 +218,7 @@ static void start_screensaver_deferred(lv_timer_t *timer) {
   lv_timer_delete(timer);
   g_pending_start_timer = NULL;
   
-  ESP_LOGI(TAG, "Starting screensaver (deferred)");
+  ESP_LOGD(TAG, "Starting screensaver (deferred)");
   
   // Start the selected screensaver
   if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {
@@ -237,7 +237,7 @@ void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
     return;
   }
 
-  ESP_LOGI(TAG, "Processing screensaver timeout");
+  ESP_LOGD(TAG, "Processing screensaver timeout");
   
   // Cancel any pending start timer
   if (g_pending_start_timer != NULL) {
@@ -268,7 +268,7 @@ void screensaver_handle_timeout_internal(screensaver_mode_t mode) {
     return;
   }
   
-  ESP_LOGI(TAG, "Screensaver start timer created, UI release initiated");
+  ESP_LOGD(TAG, "Screensaver start timer created, UI release initiated");
 }
 
 // FreeRTOS timer callback - MUST be lightweight!
@@ -386,7 +386,7 @@ void screensaver_set_delay(uint16_t delay_seconds) {
   if (g_screensaver_activity_timer != NULL) {
     TickType_t new_period = pdMS_TO_TICKS(delay_seconds * 1000);
     if (xTimerChangePeriod(g_screensaver_activity_timer, new_period, portMAX_DELAY) == pdPASS) {
-      ESP_LOGI(TAG, "Timer period updated to %u seconds.", delay_seconds);
+      ESP_LOGD(TAG, "Timer period updated to %u seconds.", delay_seconds);
       // Also make sure we're enabled if we weren't before
       if (!g_screensaver_enabled_in_settings) {
         g_screensaver_enabled_in_settings = true;

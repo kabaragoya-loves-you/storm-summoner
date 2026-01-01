@@ -139,7 +139,7 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
       s_ui_touchwheel = touchwheel_create(lvgl_mode, s_ui_touchwheel_output, 500);
       if (s_ui_touchwheel) {
         touch_register_touchwheel_instance(s_ui_touchwheel);
-        ESP_LOGI(TAG, "Created LVGL touchwheel instance for programming mode");
+        ESP_LOGD(TAG, "Created LVGL touchwheel instance for programming mode");
       } else {
         touchwheel_mode_destroy(lvgl_mode);
         touchwheel_output_destroy(s_ui_touchwheel_output);
@@ -164,7 +164,7 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
       lv_group_t* menu_group = menu_get_group();
       if (menu_group) {
         lv_indev_set_group(encoder_indev, menu_group);
-        ESP_LOGI(TAG, "Attached encoder to menu group");
+        ESP_LOGD(TAG, "Attached encoder to menu group");
       }
     }
   }
@@ -347,7 +347,7 @@ void ui_graphics_resume(void) {
 
 // Deferred callback to release UI's use of the shared buffer (no memory free)
 static void deferred_ui_release_cb(lv_timer_t *timer) {
-  ESP_LOGI(TAG, "UI buffer release callback executing");
+  ESP_LOGD(TAG, "UI buffer release callback executing");
 
   // Clear the timer reference first
   g_handoff_timer = NULL;
@@ -366,7 +366,7 @@ static void deferred_ui_release_cb(lv_timer_t *timer) {
   if (current_draw_module) {
     lv_obj_t *default_screen = lv_obj_get_parent(canvas);
     if (default_screen && lv_obj_is_valid(default_screen)) lv_screen_load(default_screen);
-    ESP_LOGI(TAG, "Switched to default screen, module widgets remain in memory");
+    ESP_LOGD(TAG, "Switched to default screen, module widgets remain in memory");
   }
 
   // Hide the canvas to stop rendering
@@ -377,7 +377,7 @@ static void deferred_ui_release_cb(lv_timer_t *timer) {
   g_ui_has_buffer = false;
 
   lv_timer_delete(timer);
-  ESP_LOGI(TAG, "UI released shared buffer for screensaver use");
+  ESP_LOGD(TAG, "UI released shared buffer for screensaver use");
 
   // Call post-release callback if one was registered
   if (g_post_release_callback) {
@@ -435,7 +435,7 @@ bool ui_release_canvas_buffer(void (*post_release_cb)(void)) {
 
   lv_timer_set_repeat_count(g_handoff_timer, 1);
 
-  ESP_LOGI(TAG, "UI buffer release timer created");
+  ESP_LOGD(TAG, "UI buffer release timer created");
   return true;
 }
 
@@ -514,7 +514,7 @@ void ui_reclaim_canvas_buffer(void) {
         lv_group_t* menu_group = menu_get_group();
         if (menu_group) {
           lv_indev_set_group(encoder_indev, menu_group);
-          ESP_LOGI(TAG, "Attached encoder to menu group");
+          ESP_LOGD(TAG, "Attached encoder to menu group");
         }
       }
     }
@@ -552,5 +552,5 @@ void ui_reclaim_canvas_buffer(void) {
     lv_timer_set_repeat_count(show_timer, 1);
   }
 
-  ESP_LOGI(TAG, "UI reclaimed shared canvas buffer");
+  ESP_LOGD(TAG, "UI reclaimed shared canvas buffer");
 }

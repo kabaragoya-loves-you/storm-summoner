@@ -53,7 +53,7 @@ static void IRAM_ATTR clock_sync_isr(void *arg) {
 }
 
 esp_err_t clock_sync_init(void) {
-  ESP_LOGI(TAG, "Initializing clock sync component");
+  ESP_LOGD(TAG, "Initializing clock sync component");
   
   // Load settings from NVS
   uint8_t mode = CLOCK_SYNC_24PPQN;

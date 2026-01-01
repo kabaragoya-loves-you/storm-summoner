@@ -17,7 +17,7 @@ static void handle_touchwheel_event(const event_t* event, void* context) {
 }
 
 esp_err_t midi_touchwheel_scene_handler_init(void) {
-  ESP_LOGI(TAG, "Initializing touchwheel scene handler");
+  ESP_LOGD(TAG, "Initializing touchwheel scene handler");
   
   esp_err_t ret = event_bus_subscribe(EVENT_TOUCHWHEEL_VALUE, handle_touchwheel_event, NULL);
   if (ret != ESP_OK) {

@@ -125,7 +125,7 @@ static void handle_switch_event(const event_t* event, void* context) {
 }
 
 esp_err_t midi_expression_scene_handler_init(void) {
-  ESP_LOGI(TAG, "Initializing MIDI expression scene handler");
+  ESP_LOGD(TAG, "Initializing MIDI expression scene handler");
   
   // Initialize smart filter for expression pedal
   smart_filter_init(&s_expression_filter, 2);

@@ -19,7 +19,7 @@ static void screensaver_handle_event(const event_t* event, void* context) {
       
     case EVENT_SCREENSAVER_TIMEOUT:
       // This runs in the event bus task context, safe to call LVGL/UI functions
-      ESP_LOGI(TAG, "Handling screensaver timeout event");
+      ESP_LOGD(TAG, "Handling screensaver timeout event");
       screensaver_handle_timeout_internal((screensaver_mode_t)event->data.custom.param1);
       break;
       

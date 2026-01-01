@@ -34,7 +34,7 @@ esp_err_t touchwheel_core_init(touchwheel_core_t* core, touchwheel_mode_type_t m
     core->pad_release_times[i] = 0;
   }
   
-  ESP_LOGI(TAG, "Touchwheel core initialized (mode: %d, timeout: %lu ms)", mode_type, inactivity_timeout_ms);
+  ESP_LOGD(TAG, "Touchwheel core initialized (mode: %d, timeout: %lu ms)", mode_type, inactivity_timeout_ms);
   return ESP_OK;
 }
 
