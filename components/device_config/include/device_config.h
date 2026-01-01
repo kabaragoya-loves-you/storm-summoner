@@ -45,6 +45,9 @@ typedef struct {
   uint16_t preset_count;         // Number of presets (from device JSON, default 128)
   bool preset_wrap;              // If true, wrap around at boundaries; if false, clamp
   
+  // MIDI clock output
+  bool send_clock;               // Whether to send MIDI clock to this device
+  
   bool initialized;
 } device_config_t;
 
@@ -115,6 +118,10 @@ esp_err_t device_config_set_preset_count(uint16_t count);
 bool device_config_get_preset_wrap(void);
 esp_err_t device_config_set_preset_wrap(bool wrap);
 uint16_t device_config_get_max_preset(void);  // Returns preset_count-1
+
+// MIDI clock output control
+bool device_config_get_send_clock(void);
+esp_err_t device_config_set_send_clock(bool send);
 
 #endif // DEVICE_CONFIG_H
 

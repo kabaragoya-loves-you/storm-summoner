@@ -258,7 +258,7 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   
   // Cap max at 127 for non-bank mode (can't send higher without bank select)
   uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
-  bool should_clamp = !device_config_get_preset_wrap();
+  bool should_clamp = !device_config_get_preset_wrap() || !config_get_program_wrap();
   
   if (should_clamp) {
     // Clamp at boundaries (no wrap)

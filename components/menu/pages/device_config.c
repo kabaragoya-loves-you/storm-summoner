@@ -10,11 +10,12 @@
 
 #define TAG "MENU_DEVICE_CONFIG"
 
-// Static storage for main menu (16 items max: name, refresh, midi ch, preset wrap, divider, 10 info labels)
-#define MAX_DEVICE_CONFIG_ITEMS 16
+// Static storage for main menu (17 items max: name, refresh, midi ch, send clock, preset wrap, divider, 10 info labels)
+#define MAX_DEVICE_CONFIG_ITEMS 17
 static menu_item_t s_device_config_items[MAX_DEVICE_CONFIG_ITEMS];
 static char s_current_pedal_label[80];
 static char s_midi_ch_label[24];
+static char s_send_clock_label[24];
 static char s_preset_wrap_label[32];
 static char s_info_labels[10][48];  // TRS, CC count, Clock, Notes, Transmits, Slots, Bank, First preset, etc.
 
@@ -112,6 +113,35 @@ static lv_obj_t* midi_channel_roller_create(void) {
 static void nav_to_midi_channel_select(void* user_data) {
   (void)user_data;
   menu_navigate_to("MIDI Channel", midi_channel_roller_create);
+}
+
+// ============================================================================
+// Send Clock Toggle
+// ============================================================================
+
+static void send_clock_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  bool send = (selected_index == 0);  // Yes=0, No=1
+  
+  ESP_LOGD(TAG, "Send clock set to: %s", send ? "Yes" : "No");
+  device_config_set_send_clock(send);
+  
+  // Navigate back to rebuilt Pedal Setup
+  menu_navigate_back_then_to(2, "Pedal Setup", menu_page_device_config_create);
+}
+
+static lv_obj_t* send_clock_roller_create(void) {
+  bool current_send_clock = device_config_get_send_clock();
+  
+  return menu_create_roller_page("Send Clock",
+    "Yes\nNo",
+    current_send_clock ? 0 : 1,  // Yes=0, No=1
+    send_clock_confirm_cb, NULL);
+}
+
+static void nav_to_send_clock(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Send Clock", send_clock_roller_create);
 }
 
 // ============================================================================
@@ -341,7 +371,14 @@ lv_obj_t* menu_page_device_config_create(void) {
   s_device_config_items[item_idx++] = 
     (menu_item_t){ s_midi_ch_label, nav_to_midi_channel_select, NULL, false };
   
-  // Item 2: Preset Wrap toggle (clickable -> roller)
+  // Item 2: Send Clock toggle (clickable -> roller)
+  bool send_clock = device_config_get_send_clock();
+  snprintf(s_send_clock_label, sizeof(s_send_clock_label), "Send Clock: %s",
+    send_clock ? "Yes" : "No");
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_send_clock_label, nav_to_send_clock, NULL, false };
+  
+  // Item 3: Preset Wrap toggle (clickable -> roller)
   bool preset_wrap = device_config_get_preset_wrap();
   snprintf(s_preset_wrap_label, sizeof(s_preset_wrap_label), "Preset Wrap: %s",
     preset_wrap ? "On" : "Off");

@@ -39,6 +39,7 @@ static bool s_bank_lsb_received = false;
 #define NVS_KEY_PC_MODE         "dev_pc_mode"
 #define NVS_KEY_BANK_MODE       "dev_bank_mode"
 #define NVS_KEY_PRESET_WRAP     "dev_pwrap"
+#define NVS_KEY_SEND_CLOCK      "dev_clock"
 
 // Global device configuration
 static device_config_t g_device_config = {
@@ -55,6 +56,7 @@ static device_config_t g_device_config = {
   .preset_base = 0,
   .preset_count = 128,
   .preset_wrap = false,  // Default: clamp at boundaries (no wrap)
+  .send_clock = true,    // Default: send MIDI clock
   .initialized = false
 };
 
@@ -248,6 +250,13 @@ esp_err_t device_config_init(void) {
     g_device_config.preset_wrap = (preset_wrap_val != 0);
   }
   
+  // Load send clock setting (track if we have an NVS override)
+  bool send_clock_val;
+  bool send_clock_has_nvs = (app_settings_load_bool(NVS_KEY_SEND_CLOCK, &send_clock_val) == ESP_OK);
+  if (send_clock_has_nvs) {
+    g_device_config.send_clock = send_clock_val;
+  }
+  
   // Load device definition to get preset count, bank mode, etc.
   if (g_device_config.pedal_slug[0] != '\0') {
     device_def_t* device = assets_load_device(g_device_config.pedal_slug);
@@ -273,6 +282,14 @@ esp_err_t device_config_init(void) {
         ESP_LOGI(TAG, "Loaded device info: preset_count=%u, bank_mode=%d",
                  (unsigned)g_device_config.preset_count, g_device_config.bank_select_mode);
       }
+      
+      // If no NVS override, use device's receives_clock as default
+      if (!send_clock_has_nvs) {
+        g_device_config.send_clock = device->receives_clock;
+        ESP_LOGI(TAG, "Send clock from device: %s", 
+                 g_device_config.send_clock ? "yes" : "no");
+      }
+      
       assets_free_device(device);
     }
   }
@@ -392,6 +409,12 @@ esp_err_t device_config_set_pedal(const char* slug) {
       g_device_config.bank_select_mode = BANK_SELECT_NONE;
       ESP_LOGI(TAG, "  Using defaults: preset_base=0, preset_count=128, bank_mode=none");
     }
+    
+    // Set send_clock from device's receives_clock capability
+    // Clear any NVS override so the new device's default applies on next boot
+    g_device_config.send_clock = device->receives_clock;
+    app_settings_erase_key(NVS_KEY_SEND_CLOCK);
+    ESP_LOGI(TAG, "  Send clock: %s", g_device_config.send_clock ? "yes" : "no");
     
     assets_free_device(device);
   } else {
@@ -774,6 +797,16 @@ uint16_t device_config_get_max_preset(void) {
   }
   // Fallback if no preset count defined
   return (g_device_config.bank_select_mode != BANK_SELECT_NONE) ? 16383 : 127;
+}
+
+bool device_config_get_send_clock(void) {
+  return g_device_config.send_clock;
+}
+
+esp_err_t device_config_set_send_clock(bool send) {
+  g_device_config.send_clock = send;
+  ESP_LOGI(TAG, "Send clock: %s", send ? "enabled" : "disabled");
+  return app_settings_save_bool(NVS_KEY_SEND_CLOCK, send);
 }
 
 
