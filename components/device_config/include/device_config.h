@@ -43,7 +43,7 @@ typedef struct {
   
   // Preset range limiting
   uint16_t preset_count;         // Number of presets (from device JSON, default 128)
-  bool lock_preset_range;        // If true, clamp presets to 0..(preset_count-1)
+  bool preset_wrap;              // If true, wrap around at boundaries; if false, clamp
   
   bool initialized;
 } device_config_t;
@@ -112,9 +112,9 @@ esp_err_t device_config_set_preset_base(uint8_t base);
 // Preset range limiting
 uint16_t device_config_get_preset_count(void);
 esp_err_t device_config_set_preset_count(uint16_t count);
-bool device_config_get_lock_preset_range(void);
-esp_err_t device_config_set_lock_preset_range(bool lock);
-uint16_t device_config_get_max_preset(void);  // Returns preset_count-1 if locked, else max theoretical
+bool device_config_get_preset_wrap(void);
+esp_err_t device_config_set_preset_wrap(bool wrap);
+uint16_t device_config_get_max_preset(void);  // Returns preset_count-1
 
 #endif // DEVICE_CONFIG_H
 

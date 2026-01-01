@@ -776,7 +776,7 @@ void menu_navigate_to(const char* menu_name, menu_page_builder_t builder) {
 static void menu_navigate_back_internal(void) {
   if (menu_state.stack_depth <= 1) {
     // At top level, exit Programming mode
-    ESP_LOGI(TAG, "At top level, exiting Programming mode");
+    ESP_LOGD(TAG, "At top level, exiting Programming mode");
     ui_set_app_mode(APP_MODE_PERFORMANCE);
     return;
   }
@@ -1080,7 +1080,7 @@ void menu_cleanup(void) {
   // Cleanup group
   if (menu_state.group) lv_group_remove_all_objs(menu_state.group);
 
-  ESP_LOGI(TAG, "Menu cleaned up");
+  ESP_LOGD(TAG, "Menu cleaned up");
 }
 
 bool menu_is_top_level(void) {
@@ -1235,7 +1235,7 @@ static void roller_click_cb(lv_event_t* e) {
   lv_obj_t* roller = lv_event_get_target(e);
   uint32_t selected = lv_roller_get_selected(roller);
 
-  ESP_LOGI(TAG, "Roller confirmed: index=%lu", (unsigned long)selected);
+  ESP_LOGD(TAG, "Roller confirmed: index=%lu", (unsigned long)selected);
 
   // Call the confirm callback - callback is responsible for navigation
   if (s_roller_context.confirm_cb) {
@@ -1313,7 +1313,7 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
     lv_group_set_editing(menu_state.group, true);
   }
   
-  ESP_LOGI(TAG, "Roller page created: %s, initial=%lu", title, (unsigned long)initial_index);
+  ESP_LOGD(TAG, "Roller page created: %s, initial=%lu", title, (unsigned long)initial_index);
   
   return screen;
 }

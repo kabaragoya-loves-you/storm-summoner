@@ -1087,7 +1087,7 @@ esp_err_t touch_unregister_touchwheel_instance(struct touchwheel_instance* insta
       }
       s_num_touchwheel_instances--;
       s_touchwheel_instances[s_num_touchwheel_instances] = NULL;
-      ESP_LOGI(TAG, "Unregistered touchwheel instance (%d remaining)", s_num_touchwheel_instances);
+      ESP_LOGD(TAG, "Unregistered touchwheel instance (%d remaining)", s_num_touchwheel_instances);
       return ESP_OK;
     }
   }

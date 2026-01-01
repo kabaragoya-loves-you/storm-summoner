@@ -188,7 +188,7 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
           if (press_duration >= BUTTON_13_SHORT_PRESS_MIN_MS) {
             // Valid short press - handle back navigation
             menu_handle_back();
-            ESP_LOGI(TAG, "Pad 12: Back/Cancel (held %lu ms)", (unsigned long)press_duration);
+            ESP_LOGD(TAG, "Pad 12: Back/Cancel (held %lu ms)", (unsigned long)press_duration);
           } else {
             // Too short - ignore to prevent accidental touches
             ESP_LOGD(TAG, "Button 13 press too short (%lu ms), ignoring", (unsigned long)press_duration);

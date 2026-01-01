@@ -186,7 +186,7 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
     s_ui_touchwheel = NULL;
     // Note: output is destroyed by touchwheel_destroy, but we clear our reference
     s_ui_touchwheel_output = NULL;
-    ESP_LOGI(TAG, "Destroyed LVGL touchwheel instance (exiting programming mode)");
+    ESP_LOGD(TAG, "Destroyed LVGL touchwheel instance (exiting programming mode)");
   }
   
   // CRITICAL: Switch back to default screen BEFORE cleanup
@@ -196,7 +196,7 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
     default_screen = lv_obj_get_parent(canvas);
     if (default_screen && lv_obj_is_valid(default_screen)) {
       lv_screen_load(default_screen);
-      ESP_LOGI(TAG, "Switched to default screen before menu cleanup");
+      ESP_LOGD(TAG, "Switched to default screen before menu cleanup");
     }
   }
   

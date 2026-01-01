@@ -38,7 +38,7 @@ static bool s_bank_lsb_received = false;
 #define NVS_KEY_CURRENT_PROGRAM "dev_program"
 #define NVS_KEY_PC_MODE         "dev_pc_mode"
 #define NVS_KEY_BANK_MODE       "dev_bank_mode"
-#define NVS_KEY_PRESET_LOCK     "dev_plock"
+#define NVS_KEY_PRESET_WRAP     "dev_pwrap"
 
 // Global device configuration
 static device_config_t g_device_config = {
@@ -54,7 +54,7 @@ static device_config_t g_device_config = {
   .pending_bank = 0,
   .preset_base = 0,
   .preset_count = 128,
-  .lock_preset_range = true,  // Default: respect device's preset count
+  .preset_wrap = false,  // Default: clamp at boundaries (no wrap)
   .initialized = false
 };
 
@@ -242,10 +242,10 @@ esp_err_t device_config_init(void) {
     g_device_config.preset_base = 0;  // Default: 0-based
   }
   
-  // Load preset range lock setting
-  uint8_t preset_lock_val;
-  if (app_settings_load_u8(NVS_KEY_PRESET_LOCK, &preset_lock_val) == ESP_OK) {
-    g_device_config.lock_preset_range = (preset_lock_val != 0);
+  // Load preset wrap setting
+  uint8_t preset_wrap_val;
+  if (app_settings_load_u8(NVS_KEY_PRESET_WRAP, &preset_wrap_val) == ESP_OK) {
+    g_device_config.preset_wrap = (preset_wrap_val != 0);
   }
   
   // Load device definition to get preset count, bank mode, etc.
@@ -474,6 +474,8 @@ esp_err_t device_config_set_program(uint8_t program) {
 }
 
 esp_err_t device_config_program_next(void) {
+  bool wrap = g_device_config.preset_wrap;
+  
   if (g_device_config.bank_select_mode != BANK_SELECT_NONE) {
     // Bank mode: use preset-based logic
     // Use pending preset if one exists, otherwise current
@@ -482,7 +484,9 @@ esp_err_t device_config_program_next(void) {
                            : device_config_get_preset();
     uint16_t max_preset = device_config_get_max_preset();
     uint16_t next_preset = base_preset + 1;
-    if (next_preset > max_preset) next_preset = max_preset;  // Clamp at max (no wrap)
+    if (next_preset > max_preset) {
+      next_preset = wrap ? 0 : max_preset;  // Wrap to 0 or clamp at max
+    }
     
     if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
       return device_config_set_preset(next_preset);
@@ -496,8 +500,7 @@ esp_err_t device_config_program_next(void) {
     }
   }
   
-  // No bank mode: respect preset count if locked, otherwise 0-127
-  // Cap at 127 since non-bank mode can't exceed that
+  // No bank mode: respect preset count, cap at 127
   uint16_t max_preset = device_config_get_max_preset();
   uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
   // Use pending program if one exists, otherwise current
@@ -505,7 +508,9 @@ esp_err_t device_config_program_next(void) {
                  ? g_device_config.pending_program 
                  : g_device_config.current_program;
   uint8_t next = base + 1;
-  if (next > max_prog) next = max_prog;  // Clamp at max (no wrap with preset lock)
+  if (next > max_prog) {
+    next = wrap ? 0 : max_prog;  // Wrap to 0 or clamp at max
+  }
   
   if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
     return device_config_set_program(next);
@@ -518,13 +523,21 @@ esp_err_t device_config_program_next(void) {
 }
 
 esp_err_t device_config_program_prev(void) {
+  bool wrap = g_device_config.preset_wrap;
+  
   if (g_device_config.bank_select_mode != BANK_SELECT_NONE) {
     // Bank mode: use preset-based logic
     // Use pending preset if one exists, otherwise current
     uint16_t base_preset = g_device_config.has_pending_program 
                            ? (g_device_config.pending_bank * 128 + g_device_config.pending_program)
                            : device_config_get_preset();
-    uint16_t prev_preset = (base_preset > 0) ? base_preset - 1 : 0;  // Clamp at 0 (no wrap)
+    uint16_t max_preset = device_config_get_max_preset();
+    uint16_t prev_preset;
+    if (base_preset == 0) {
+      prev_preset = wrap ? max_preset : 0;  // Wrap to max or stay at 0
+    } else {
+      prev_preset = base_preset - 1;
+    }
     
     if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
       return device_config_set_preset(prev_preset);
@@ -538,12 +551,19 @@ esp_err_t device_config_program_prev(void) {
     }
   }
   
-  // No bank mode: clamp at 0 (no wrap when preset lock active)
+  // No bank mode: respect preset count, cap at 127
+  uint16_t max_preset = device_config_get_max_preset();
+  uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
   // Use pending program if one exists, otherwise current
   uint8_t base = g_device_config.has_pending_program 
                  ? g_device_config.pending_program 
                  : g_device_config.current_program;
-  uint8_t prev = (base == 0) ? 0 : base - 1;
+  uint8_t prev;
+  if (base == 0) {
+    prev = wrap ? max_prog : 0;  // Wrap to max or stay at 0
+  } else {
+    prev = base - 1;
+  }
   
   if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
     return device_config_set_program(prev);
@@ -737,19 +757,18 @@ esp_err_t device_config_set_preset_count(uint16_t count) {
   return ESP_OK;
 }
 
-bool device_config_get_lock_preset_range(void) {
-  return g_device_config.lock_preset_range;
+bool device_config_get_preset_wrap(void) {
+  return g_device_config.preset_wrap;
 }
 
-esp_err_t device_config_set_lock_preset_range(bool lock) {
-  g_device_config.lock_preset_range = lock;
-  ESP_LOGI(TAG, "Preset range lock: %s", lock ? "enabled" : "disabled");
-  return app_settings_save_u8(NVS_KEY_PRESET_LOCK, lock ? 1 : 0);
+esp_err_t device_config_set_preset_wrap(bool wrap) {
+  g_device_config.preset_wrap = wrap;
+  ESP_LOGI(TAG, "Preset wrap: %s", wrap ? "enabled" : "disabled");
+  return app_settings_save_u8(NVS_KEY_PRESET_WRAP, wrap ? 1 : 0);
 }
 
 uint16_t device_config_get_max_preset(void) {
   // Always respect the device's preset count
-  // Lock setting only controls clamp vs wrap, not the range itself
   if (g_device_config.preset_count > 0) {
     return g_device_config.preset_count - 1;
   }

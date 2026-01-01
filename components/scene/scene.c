@@ -211,8 +211,8 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   bank_select_mode_t bank_mode = device_config_get_bank_mode();
   uint16_t max_preset = device_config_get_max_preset();
   
-  ESP_LOGD(TAG, "PC touchwheel: bank_mode=%d, max_preset=%u, lock=%d, count=%u",
-    bank_mode, (unsigned)max_preset, device_config_get_lock_preset_range(),
+  ESP_LOGD(TAG, "PC touchwheel: bank_mode=%d, max_preset=%u, wrap=%d, count=%u",
+    bank_mode, (unsigned)max_preset, device_config_get_preset_wrap(),
     (unsigned)device_config_get_preset_count());
   
   if (bank_mode != BANK_SELECT_NONE) {
@@ -222,17 +222,17 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
                            : device_config_get_preset();
     int new_preset = (int)base_preset + value;
     
-    // Clamp or wrap at boundaries based on lock setting
-    bool locked = device_config_get_lock_preset_range();
-    if (locked) {
-      // Clamp at boundaries (no wrap when locked)
-      if (new_preset < 0) new_preset = 0;
-      if (new_preset > (int)max_preset) new_preset = (int)max_preset;
-    } else {
-      // Wrap around when not locked
+    // Clamp or wrap at boundaries based on wrap setting
+    bool wrap = device_config_get_preset_wrap();
+    if (wrap) {
+      // Wrap around
       int range = (int)max_preset + 1;
       while (new_preset < 0) new_preset += range;
       while (new_preset > (int)max_preset) new_preset -= range;
+    } else {
+      // Clamp at boundaries (no wrap)
+      if (new_preset < 0) new_preset = 0;
+      if (new_preset > (int)max_preset) new_preset = (int)max_preset;
     }
     
     if ((uint16_t)new_preset == base_preset) return;
@@ -258,7 +258,7 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   
   // Cap max at 127 for non-bank mode (can't send higher without bank select)
   uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
-  bool should_clamp = device_config_get_lock_preset_range() || !config_get_program_wrap();
+  bool should_clamp = !device_config_get_preset_wrap();
   
   if (should_clamp) {
     // Clamp at boundaries (no wrap)
@@ -3480,7 +3480,7 @@ esp_err_t scene_suspend_input(void) {
 esp_err_t scene_resume_input(void) {
   if (!s_input_suspended) return ESP_OK;  // Not suspended
   
-  ESP_LOGI(TAG, "Resuming scene input (leaving programming mode)");
+  ESP_LOGD(TAG, "Resuming scene input (leaving programming mode)");
   
   // Re-register scene touchwheel if it exists
   if (s_scene_touchwheel) {

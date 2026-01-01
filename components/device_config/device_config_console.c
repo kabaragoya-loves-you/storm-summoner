@@ -39,8 +39,8 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "MIDI Channel: %d", cfg->midi_channel);
   ESP_LOGI(TAG, "TRS Type: %s", trs_str);
   ESP_LOGI(TAG, "Bank Mode: %s", bank_mode_str);
-  ESP_LOGI(TAG, "Preset Count: %u (range lock: %s)", 
-           (unsigned)cfg->preset_count, cfg->lock_preset_range ? "ON" : "OFF");
+  ESP_LOGI(TAG, "Preset Count: %u (wrap: %s)", 
+           (unsigned)cfg->preset_count, cfg->preset_wrap ? "ON" : "OFF");
   ESP_LOGI(TAG, "Preset Base: %d (%s)", cfg->preset_base, 
            cfg->preset_base == 0 ? "0-based" : "1-based");
   
@@ -135,42 +135,42 @@ static int cmd_pedal(int argc, char **argv) {
   return (ret == ESP_OK) ? 0 : 1;
 }
 
-// Command: preset_lock
+// Command: preset_wrap
 static struct {
   struct arg_str *on_off;
   struct arg_end *end;
-} preset_lock_args;
+} preset_wrap_args;
 
-static int cmd_preset_lock(int argc, char **argv) {
+static int cmd_preset_wrap(int argc, char **argv) {
   // If no arguments, show current status
   if (argc == 1) {
-    bool locked = device_config_get_lock_preset_range();
+    bool wrap = device_config_get_preset_wrap();
     uint16_t count = device_config_get_preset_count();
     uint16_t max = device_config_get_max_preset();
-    ESP_LOGI(TAG, "Preset range lock: %s", locked ? "ON" : "OFF");
+    ESP_LOGI(TAG, "Preset wrap: %s", wrap ? "ON" : "OFF");
     ESP_LOGI(TAG, "Preset count: %u, max preset: %u", (unsigned)count, (unsigned)max);
     return 0;
   }
   
-  int nerrors = arg_parse(argc, argv, (void **) &preset_lock_args);
+  int nerrors = arg_parse(argc, argv, (void **) &preset_wrap_args);
   if (nerrors != 0) {
-    arg_print_errors(stderr, preset_lock_args.end, argv[0]);
+    arg_print_errors(stderr, preset_wrap_args.end, argv[0]);
     return 1;
   }
   
-  const char* val = preset_lock_args.on_off->sval[0];
-  bool lock;
+  const char* val = preset_wrap_args.on_off->sval[0];
+  bool wrap;
   
   if (strcmp(val, "on") == 0 || strcmp(val, "1") == 0 || strcmp(val, "true") == 0) {
-    lock = true;
+    wrap = true;
   } else if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0 || strcmp(val, "false") == 0) {
-    lock = false;
+    wrap = false;
   } else {
     ESP_LOGE(TAG, "Invalid value: %s (use on/off)", val);
     return 1;
   }
   
-  device_config_set_lock_preset_range(lock);
+  device_config_set_preset_wrap(wrap);
   return 0;
 }
 
@@ -236,18 +236,18 @@ esp_err_t device_config_console_init(void) {
   };
   esp_console_cmd_register(&program_cmd);
   
-  // preset_lock command
-  preset_lock_args.on_off = arg_str0(NULL, NULL, "<on|off>", "Enable/disable preset range lock");
-  preset_lock_args.end = arg_end(2);
+  // preset_wrap command
+  preset_wrap_args.on_off = arg_str0(NULL, NULL, "<on|off>", "Enable/disable preset wrap-around");
+  preset_wrap_args.end = arg_end(2);
   
-  const esp_console_cmd_t preset_lock_cmd = {
-    .command = "preset_lock",
-    .help = "Lock presets to device's defined range (shows status if no arg)",
+  const esp_console_cmd_t preset_wrap_cmd = {
+    .command = "preset_wrap",
+    .help = "Wrap presets at boundaries (shows status if no arg)",
     .hint = NULL,
-    .func = &cmd_preset_lock,
-    .argtable = &preset_lock_args
+    .func = &cmd_preset_wrap,
+    .argtable = &preset_wrap_args
   };
-  esp_console_cmd_register(&preset_lock_cmd);
+  esp_console_cmd_register(&preset_wrap_cmd);
   
   return ESP_OK;
 }
