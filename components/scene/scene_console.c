@@ -1957,6 +1957,12 @@ static int cmd_expr_cc(int argc, char **argv) {
     ESP_LOGI(TAG, "Expression CCs: %d assigned", scene->expression.num_cc_numbers);
   }
   
+  // Auto-enable expression mapping when CC is assigned
+  if (!scene->expression.enabled) {
+    scene->expression.enabled = true;
+    ESP_LOGI(TAG, "Expression mapping auto-enabled");
+  }
+  
   return 0;
 }
 
@@ -2093,6 +2099,12 @@ static int cmd_expr_output(int argc, char **argv) {
   } else {
     ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
     return 1;
+  }
+  
+  // Auto-enable expression mapping when output type is set
+  if (!scene->expression.enabled) {
+    scene->expression.enabled = true;
+    ESP_LOGI(TAG, "Expression mapping auto-enabled");
   }
   
   ESP_LOGI(TAG, "Expression output: %s", type);
@@ -2255,6 +2267,12 @@ static int cmd_cv_cc(int argc, char **argv) {
     ESP_LOGI(TAG, "CV CCs: %d assigned", scene->cv.num_cc_numbers);
   }
   
+  // Auto-enable CV mapping when CC is assigned
+  if (!scene->cv.enabled) {
+    scene->cv.enabled = true;
+    ESP_LOGI(TAG, "CV mapping auto-enabled");
+  }
+  
   return 0;
 }
 
@@ -2391,6 +2409,12 @@ static int cmd_cv_output(int argc, char **argv) {
   } else {
     ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
     return 1;
+  }
+  
+  // Auto-enable CV mapping when output type is set
+  if (!scene->cv.enabled) {
+    scene->cv.enabled = true;
+    ESP_LOGI(TAG, "CV mapping auto-enabled");
   }
   
   ESP_LOGI(TAG, "CV output: %s", type);
@@ -2904,6 +2928,12 @@ static int cmd_proximity_cc(int argc, char **argv) {
     ESP_LOGI(TAG, "Proximity CCs: %d assigned", scene->proximity.num_cc_numbers);
   }
   
+  // Auto-enable proximity mapping when CC is assigned
+  if (!scene->proximity.enabled) {
+    scene->proximity.enabled = true;
+    ESP_LOGI(TAG, "Proximity mapping auto-enabled");
+  }
+  
   return 0;
 }
 
@@ -3041,6 +3071,12 @@ static int cmd_proximity_output(int argc, char **argv) {
     return 1;
   }
   
+  // Auto-enable proximity mapping when output type is set
+  if (!scene->proximity.enabled) {
+    scene->proximity.enabled = true;
+    ESP_LOGI(TAG, "Proximity mapping auto-enabled");
+  }
+  
   ESP_LOGI(TAG, "Proximity output: %s", type);
   return 0;
 }
@@ -3161,6 +3197,13 @@ static int cmd_als_cc(int argc, char **argv) {
     }
     ESP_LOGI(TAG, "ALS CCs: %d assigned", scene->als.num_cc_numbers);
   }
+  
+  // Auto-enable ALS mapping when CC is assigned
+  if (!scene->als.enabled) {
+    scene->als.enabled = true;
+    ESP_LOGI(TAG, "ALS mapping auto-enabled");
+  }
+  
   return 0;
 }
 
@@ -3296,6 +3339,12 @@ static int cmd_als_output(int argc, char **argv) {
   } else {
     ESP_LOGE(TAG, "Unknown output type (use: cc, note)");
     return 1;
+  }
+  
+  // Auto-enable ALS mapping when output type is set
+  if (!scene->als.enabled) {
+    scene->als.enabled = true;
+    ESP_LOGI(TAG, "ALS mapping auto-enabled");
   }
   
   ESP_LOGI(TAG, "ALS output: %s", type);
