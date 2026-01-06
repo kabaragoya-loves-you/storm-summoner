@@ -13,10 +13,10 @@
 // ADC threshold ranges for each revision (with hysteresis)
 // Based on 10k top resistor, variable bottom resistor, 3.3V supply
 // Using midpoints between expected values for thresholds
-#define REV1_THRESHOLD_MAX  234   // Midpoint between Rev1 (71) and Rev2 (396)
-#define REV2_THRESHOLD_MAX  590   // Midpoint between Rev2 (396) and Rev3 (785)
-#define REV3_THRESHOLD_MAX  934   // Midpoint between Rev3 (785) and Rev4 (1083)
-#define REV4_THRESHOLD_MAX  1278  // Midpoint between Rev4 (1083) and Rev5 (1473)
+#define REV9_THRESHOLD_MAX  234   // Midpoint between Rev9 (71) and Rev10 (396)
+#define REV10_THRESHOLD_MAX  590   // Midpoint between Rev10 (396) and Rev11 (785)
+#define REV11_THRESHOLD_MAX  934   // Midpoint between Rev11 (785) and Rev12 (1083)
+#define REV12_THRESHOLD_MAX  1278  // Midpoint between Rev12 (1083) and Rev13 (1473)
 
 // Global state
 static hw_revision_t s_hw_revision = HW_REV_UNKNOWN;
@@ -25,16 +25,16 @@ static bool s_initialized = false;
 
 // Map ADC value to hardware revision
 static hw_revision_t map_adc_to_revision(uint16_t adc_value) {
-  if (adc_value < REV1_THRESHOLD_MAX) {
-    return HW_REV_1;
-  } else if (adc_value < REV2_THRESHOLD_MAX) {
-    return HW_REV_2;
-  } else if (adc_value < REV3_THRESHOLD_MAX) {
-    return HW_REV_3;
-  } else if (adc_value < REV4_THRESHOLD_MAX) {
-    return HW_REV_4;
+  if (adc_value < REV9_THRESHOLD_MAX) {
+    return HW_REV_9;
+  } else if (adc_value < REV10_THRESHOLD_MAX) {
+    return HW_REV_10;
+  } else if (adc_value < REV11_THRESHOLD_MAX) {
+    return HW_REV_11;
+  } else if (adc_value < REV12_THRESHOLD_MAX) {
+    return HW_REV_12;
   } else {
-    return HW_REV_5;
+    return HW_REV_13;
   }
 }
 
@@ -44,8 +44,8 @@ esp_err_t revision_init(int force_revision) {
     return ESP_OK;
   }
 
-  // Check for forced revision (valid range 1-5)
-  if (force_revision >= HW_REV_1 && force_revision <= HW_REV_5) {
+  // Check for forced revision (enum values 1-5 map to Rev 9-13)
+  if (force_revision >= HW_REV_9 && force_revision <= HW_REV_13) {
     s_hw_revision = (hw_revision_t)force_revision;
     s_raw_adc_value = 0;
     s_initialized = true;
@@ -91,7 +91,7 @@ esp_err_t revision_init(int force_revision) {
   s_initialized = true;
 
   ESP_LOGI(TAG, "Hardware revision detected: %s (raw ADC: %u)", revision_get_string(), s_raw_adc_value);
-  ESP_LOGI(TAG, "Expected ADC ranges: Rev1:<234, Rev2:<590, Rev3:<934, Rev4:<1278, Rev5:>=1278");
+  ESP_LOGI(TAG, "Expected ADC ranges: Rev9:<234, Rev10:<590, Rev11:<934, Rev12:<1278, Rev13:>=1278");
 
   return ESP_OK;
 }
@@ -106,11 +106,11 @@ hw_revision_t revision_get(void) {
 
 const char* revision_get_string(void) {
   switch (s_hw_revision) {
-    case HW_REV_1: return "Rev 1";
-    case HW_REV_2: return "Rev 2";
-    case HW_REV_3: return "Rev 3";
-    case HW_REV_4: return "Rev 4";
-    case HW_REV_5: return "Rev 5";
+    case HW_REV_9: return "Rev 9";
+    case HW_REV_10: return "Rev 10";
+    case HW_REV_11: return "Rev 11";
+    case HW_REV_12: return "Rev 12";
+    case HW_REV_13: return "Rev 13";
     case HW_REV_UNKNOWN:
     default:
       return "Unknown";

@@ -51,8 +51,9 @@ esp_err_t input_manager_init(void) {
   
   // Start in CV mode as safe default - scene will override when loaded
   s_current_mode = INPUT_MODE_CV;
+  cv_set_mode(CV_MODE_LINEAR);  // Ensure LINEAR mode for CC output
   cv_enable();
-  ESP_LOGI(TAG, "Enabled initial mode: CV (scene will override)");
+  ESP_LOGI(TAG, "Enabled initial mode: CV LINEAR (scene will override)");
   
   s_initialized = true;
   
@@ -105,9 +106,11 @@ esp_err_t input_set_mode(input_mode_t mode) {
       
     case INPUT_MODE_CV:
       // CV mode uses ADC - pin will be configured as ADC by cv_enable()
+      // Ensure LINEAR mode for continuous CC output (PITCH mode is only for NOTE mode)
+      cv_set_mode(CV_MODE_LINEAR);
       cv_enable();
       // CV component will manage switch based on its range setting
-      ESP_LOGI(TAG, "Enabled CV mode (ADC input)");
+      ESP_LOGI(TAG, "Enabled CV mode (ADC input, LINEAR)");
       break;
       
     case INPUT_MODE_CLOCK_SYNC:

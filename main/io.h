@@ -15,6 +15,7 @@
 #define ADC_BITWIDTH        ADC_BITWIDTH_12
 #define ADC_ATTEN           ADC_ATTEN_DB_12
 
+// ESP32-P4 ADC2 channel mapping
 #define CV_ADC_CHANNEL      ADC_CHANNEL_0  // GPIO49 (Control voltage/envelope follower)
 #define EXP_ADC_CHANNEL     ADC_CHANNEL_1  // GPIO50 (Expression/sustain)
 #define REF_ADC_CHANNEL     ADC_CHANNEL_2  // GPIO51 (VCC reference for ratiometric)
@@ -61,6 +62,8 @@
 #define REF_ADC_CHANNEL     ADC_CHANNEL_2  // GPIO18
 #define REV_ADC_CHANNEL     ADC_CHANNEL_3  // GPIO19
 #define CV_SW_ADC_CHANNEL   ADC_CHANNEL_4  // GPIO20
+
+#define PIN_BACKLIGHT      2 // not actually in use (yet?)
 
 #define PIN_CV_CLOCK       16
 #define PIN_EXPRESSION     17

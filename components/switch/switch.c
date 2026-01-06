@@ -1,9 +1,17 @@
 #include "switch.h"
 #include "i2c_common.h"
 #include "io.h"
+#include "revision.h"
 #include "esp_log.h"
 
 #define TAG "SWITCH"
+
+// TMUX1113 (used in rev 10+) has inverted logic on channels 2 and 3 (SEL2/SEL3)
+// For CV switches (P0-P3): P1 and P2 are inverted
+// For Expression switches (P4-P7): P5 and P6 are inverted
+// This means: to turn ON these channels, the bit must be LOW (0)
+//             to turn OFF these channels, the bit must be HIGH (1)
+#define TMUX1113_INVERTED_MASK 0x66  // Bits 1,2,5,6 = 0b01100110
 
 // PCA9534 configuration
 #define SWITCH_I2C_ADDR        I2C_ADDR_SWITCH
@@ -19,14 +27,36 @@
 // Static variables
 static i2c_master_dev_handle_t s_dev_handle = NULL;
 static switch_channel_t s_current_channel = SWITCH_CHANNEL_NONE;
-static uint8_t s_current_mask = 0x00;
+static uint8_t s_current_mask = 0x00;  // Logical mask (what the caller requested)
 static bool s_initialized = false;
+static bool s_use_tmux1113_logic = false;  // Set during init based on revision
+
+// Convert logical mask to physical mask for I2C output
+// On TMUX1113 (rev 10+), channels 1,2,5,6 have inverted logic
+static uint8_t logical_to_physical_mask(uint8_t logical_mask) {
+  if (!s_use_tmux1113_logic) return logical_mask;
+  
+  // For TMUX1113: invert bits 1,2,5,6
+  // If logical bit is 1 (ON), physical should be 0 for inverted channels
+  // If logical bit is 0 (OFF), physical should be 1 for inverted channels
+  // Also: inverted channels need to be HIGH when OFF (idle state)
+  uint8_t physical = logical_mask;
+  physical ^= TMUX1113_INVERTED_MASK;  // XOR to invert the relevant bits
+  return physical;
+}
 
 void switch_init(void) {
   // Guard against double-initialization
   if (s_initialized) {
     ESP_LOGD(TAG, "Switch already initialized, skipping");
     return;
+  }
+  
+  // Detect if we need TMUX1113 inverted logic (revision 10+)
+  hw_revision_t rev = revision_get();
+  s_use_tmux1113_logic = (rev >= HW_REV_10);
+  if (s_use_tmux1113_logic) {
+    ESP_LOGI(TAG, "Using TMUX1113 logic (rev %s): P1,P2,P5,P6 inverted", revision_get_string());
   }
   
   // Get I2C bus handle
@@ -54,11 +84,13 @@ void switch_init(void) {
   // Ensure polarity is non-inverted (0 = non-inverted)
   i2c_common_write_reg(s_dev_handle, SWITCH_REG_POLARITY, 0x00);
   
-  // Set all outputs LOW initially (all channels OFF)
-  i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, 0x00);
+  // Set initial output state (all channels OFF)
+  // For TMUX1113: inverted channels need HIGH to be OFF
+  uint8_t initial_mask = logical_to_physical_mask(0x00);
+  i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, initial_mask);
   
   s_initialized = true;
-  s_current_mask = 0x00;  // Reset mask tracking
+  s_current_mask = 0x00;  // Logical mask tracking (all OFF)
   
   ESP_LOGI(TAG, "Switch initialized (%s at 0x%02X, %d channels)", 
            SWITCH_IC_NAME, SWITCH_I2C_ADDR, SWITCH_NUM_CHANNELS);
@@ -76,7 +108,7 @@ bool switch_set_channel(switch_channel_t channel) {
     return false;
   }
   
-  // Read current state to preserve expression channels (4-7)
+  // Work with logical mask (what the caller wants)
   uint8_t current_mask = s_current_mask;
   
   // Clear CV channels (bits 0-3), preserve expression channels (bits 4-7)
@@ -87,17 +119,19 @@ bool switch_set_channel(switch_channel_t channel) {
     new_mask |= (1 << channel);
   }
   
-  // Write the new mask
-  esp_err_t ret = i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, new_mask);
+  // Convert logical mask to physical and write
+  uint8_t physical_mask = logical_to_physical_mask(new_mask);
+  esp_err_t ret = i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, physical_mask);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to set CV channel %d: %s", channel, esp_err_to_name(ret));
     return false;
   }
   
   s_current_channel = channel;
-  s_current_mask = new_mask;
+  s_current_mask = new_mask;  // Store logical mask
   
-  ESP_LOGD(TAG, "CV channel set to %d, full mask: 0x%02X", channel, new_mask);
+  ESP_LOGD(TAG, "CV channel set to %d, logical: 0x%02X, physical: 0x%02X", 
+    channel, new_mask, physical_mask);
   
   return true;
 }
@@ -108,7 +142,7 @@ bool switch_set_expression_mask(uint8_t expression_mask) {
     return false;
   }
   
-  // Read current state to preserve CV channels (0-3)
+  // Work with logical mask
   uint8_t current_mask = s_current_mask;
   
   // Clear expression channels (bits 4-7), preserve CV channels (bits 0-3)
@@ -117,14 +151,15 @@ bool switch_set_expression_mask(uint8_t expression_mask) {
   // Set the requested expression channels (only bits 4-7 are valid)
   new_mask |= (expression_mask & 0xF0);
   
-  // Write the new mask
-  esp_err_t ret = i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, new_mask);
+  // Convert logical mask to physical and write
+  uint8_t physical_mask = logical_to_physical_mask(new_mask);
+  esp_err_t ret = i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, physical_mask);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to set expression mask 0x%02X: %s", expression_mask, esp_err_to_name(ret));
     return false;
   }
   
-  s_current_mask = new_mask;
+  s_current_mask = new_mask;  // Store logical mask
   
   // Update s_current_channel (only meaningful if single CV channel active)
   int cv_bits = new_mask & 0x0F;
@@ -143,7 +178,8 @@ bool switch_set_expression_mask(uint8_t expression_mask) {
     s_current_channel = (bit_count == 1) ? (switch_channel_t)single_channel : SWITCH_CHANNEL_NONE;
   }
   
-  ESP_LOGD(TAG, "Expression mask set to 0x%02X, full mask: 0x%02X", expression_mask, new_mask);
+  ESP_LOGD(TAG, "Expression mask set to 0x%02X, logical: 0x%02X, physical: 0x%02X", 
+    expression_mask, new_mask, physical_mask);
   
   return true;
 }
@@ -154,14 +190,15 @@ bool switch_set_channels_mask(uint8_t mask) {
     return false;
   }
   
-  // Write the mask directly to output register
-  esp_err_t ret = i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, mask);
+  // Convert logical mask to physical and write
+  uint8_t physical_mask = logical_to_physical_mask(mask);
+  esp_err_t ret = i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, physical_mask);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to set channel mask 0x%02X: %s", mask, esp_err_to_name(ret));
     return false;
   }
   
-  s_current_mask = mask;
+  s_current_mask = mask;  // Store logical mask
   
   // Update s_current_channel for compatibility
   // If exactly one bit is set, store that channel, otherwise NONE

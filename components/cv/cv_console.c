@@ -10,7 +10,7 @@
 static const char* TAG = "cv_console";
 
 static const char* registered_commands[] = {
-  "info", "range", "calibrate", "pitch_standard"
+  "info", "range", "calibrate", "calibrate_detect", "pitch_standard"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -39,11 +39,15 @@ static int cmd_info(int argc, char **argv) {
     default: pitch_std_str = "Unknown"; break;
   }
   
+  int16_t disc_sig;
+  cv_get_disc_signature(range, &disc_sig);
+  
   ESP_LOGI(TAG, "====== CV INPUT (Hardware) ======");
   ESP_LOGI(TAG, "Voltage range: %s", range_str);
   ESP_LOGI(TAG, "Pitch standard: %s", pitch_std_str);
   ESP_LOGI(TAG, "Deadzone: %u", (unsigned)deadzone);
   ESP_LOGI(TAG, "Cable: %s", connected ? "connected" : "disconnected");
+  ESP_LOGI(TAG, "Disconnect signature: %dmV (for current range)", disc_sig);
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Note: Input mode is set in scene context");
   ESP_LOGI(TAG, "=================================");
@@ -136,6 +140,32 @@ static int cmd_calibrate(int argc, char **argv) {
   return (ret == ESP_OK) ? 0 : 1;
 }
 
+// Command: calibrate_detect
+static int cmd_calibrate_detect(int argc, char **argv) {
+  ESP_LOGI(TAG, "Starting cable detection calibration...");
+  ESP_LOGI(TAG, "REMOVE ANY CABLE FROM THE CV JACK NOW!");
+  
+  esp_err_t ret = cv_calibrate_cable_detect();
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Cable detection calibration complete. Signatures stored:");
+    int16_t sig;
+    cv_get_disc_signature(CV_RANGE_BIPOLAR_10V, &sig);
+    ESP_LOGI(TAG, "  ±10V:    %dmV", sig);
+    cv_get_disc_signature(CV_RANGE_10V, &sig);
+    ESP_LOGI(TAG, "  0-10V:   %dmV", sig);
+    cv_get_disc_signature(CV_RANGE_BIPOLAR_5V, &sig);
+    ESP_LOGI(TAG, "  ±5V:     %dmV", sig);
+    cv_get_disc_signature(CV_RANGE_5V, &sig);
+    ESP_LOGI(TAG, "  0-5V:    %dmV", sig);
+    cv_get_disc_signature(CV_RANGE_3V3, &sig);
+    ESP_LOGI(TAG, "  0-3.3V:  %dmV", sig);
+  } else {
+    ESP_LOGE(TAG, "Cable detection calibration failed");
+  }
+  
+  return (ret == ESP_OK) ? 0 : 1;
+}
+
 // Command: pitch_standard
 static struct {
   struct arg_str *standard_type;
@@ -207,6 +237,15 @@ esp_err_t cv_console_init(void) {
     .argtable = &calibrate_args
   };
   esp_console_cmd_register(&calibrate_cmd);
+  
+  // calibrate_detect command
+  const esp_console_cmd_t calibrate_detect_cmd = {
+    .command = "calibrate_detect",
+    .help = "Calibrate cable detection (remove cable first!)",
+    .hint = NULL,
+    .func = &cmd_calibrate_detect,
+  };
+  esp_console_cmd_register(&calibrate_detect_cmd);
   
   // pitch_standard command
   pitch_standard_args.standard_type = arg_str1(NULL, NULL, "<c0|c2|hz_v>", "Pitch standard");

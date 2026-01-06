@@ -26,6 +26,7 @@
 #define NVS_KEY_CV_MIN_PREFIX "cv_min_"  // cv_min_0, cv_min_1, etc.
 #define NVS_KEY_CV_MAX_PREFIX "cv_max_"  // cv_max_0, cv_max_1, etc.
 #define NVS_KEY_CV_PITCH_STD "cv_pitch_std"
+#define NVS_KEY_CV_DISC_PREFIX "cv_disc_"  // cv_disc_0 through cv_disc_4 (disconnected signatures)
 
 // CV modes are defined in the header file
 
@@ -52,6 +53,17 @@
 #define DEFAULT_MAX_5V 3248          // 0V input → highest ADC (inverted)
 #define DEFAULT_MIN_3V3 95          // 3.3V input → lowest ADC (inverted)
 #define DEFAULT_MAX_3V3 3440         // 0V input → highest ADC (inverted)
+
+// Default disconnected signature values (mV) for each range
+// These are the switch pin voltages observed when NO cable is connected
+// Values are stable and predictable based on the op-amp output for each range
+#define DEFAULT_DISC_BIPOLAR_10V 1094  // ±10V range disconnected signature
+#define DEFAULT_DISC_10V         1918  // 0-10V range disconnected signature
+#define DEFAULT_DISC_BIPOLAR_5V  959   // ±5V range disconnected signature
+#define DEFAULT_DISC_5V          1533  // 0-5V range disconnected signature
+#define DEFAULT_DISC_3V3         1276  // 0-3.3V range disconnected signature
+#define DISC_SIGNATURE_TOLERANCE 50    // mV tolerance for signature matching
+#define DISC_RANGE_THRESHOLD     15    // Max variance (mV) to confirm disconnected
 
 // Switch channel mapping for voltage ranges
 // Note: Multiple CV ranges can share a switch channel (distinguished by DAC voltage)
@@ -83,6 +95,11 @@ static int16_t s_min_values[5] = {
 static int16_t s_max_values[5] = {
   DEFAULT_MAX_BIPOLAR_10V, DEFAULT_MAX_10V, DEFAULT_MAX_BIPOLAR_5V, DEFAULT_MAX_5V, DEFAULT_MAX_3V3
 };
+// Disconnected signature values (mV) - indexed by cv_range_t enum
+static int16_t s_disc_signatures[5] = {
+  DEFAULT_DISC_BIPOLAR_10V, DEFAULT_DISC_10V, DEFAULT_DISC_BIPOLAR_5V, DEFAULT_DISC_5V, DEFAULT_DISC_3V3
+};
+static bool s_cable_detect_reset_pending = false;  // Set when range changes to clear variance history
 static uint32_t s_task_start_time = 0;
 
 // Forward declarations
@@ -115,11 +132,60 @@ bool cv_is_cable_connected(void) {
   
   // Hardware-specific detection (production PCB vs dev board)
 #if HW_CONFIG_PRODUCTION
-  // Production PCB: Disconnected signature is ROCK SOLID
-  //   DISCONNECTED: sw=1984-1990mV, delta=595-603mV
-  //   CONNECTED: anything else (sw much lower OR much higher, delta not in this range)
-  // Strategy: If we see the disconnect signature, it's disconnected. Otherwise, connected.
-  bool is_connected = !((sw_mv >= 1970 && sw_mv <= 2010) && (delta >= 580 && delta <= 620));
+  // Production PCB rev2: Signature + Variance cable detection
+  //   When NO cable: switch is electrically connected to tip inside jack
+  //     → sw voltage is stable at a predictable value based on current range
+  //     → sw_range over time is SMALL (<15mV)
+  //   When cable INSERTED: switch is mechanically disconnected from tip
+  //     → sw floats on high-impedance node, picks up noise
+  //     → sw voltage is NOT at the expected signature
+  //     → sw_range over time is LARGE (often >50mV, sometimes >200mV)
+  //
+  // Detection strategy: DISCONNECTED if BOTH conditions are met:
+  //   1. sw is within tolerance of the expected disconnected signature for current range
+  //   2. variance is low (range < 15mV over the sample window)
+  // Otherwise, we assume CONNECTED (safer default)
+  #define VARIANCE_WINDOW_SIZE 4
+  
+  static int16_t sw_history[VARIANCE_WINDOW_SIZE] = {0};
+  static uint8_t history_index = 0;
+  static bool history_filled = false;
+  
+  // Clear history when range changes (avoids false detection from stale data)
+  if (s_cable_detect_reset_pending) {
+    for (int i = 0; i < VARIANCE_WINDOW_SIZE; i++) sw_history[i] = (int16_t)sw_mv;
+    history_index = 1;  // Next sample will go to slot 1
+    history_filled = true;  // All slots are valid (filled with current reading)
+    s_cable_detect_reset_pending = false;
+  }
+  
+  // Add current reading to history
+  sw_history[history_index] = (int16_t)sw_mv;
+  history_index = (history_index + 1) % VARIANCE_WINDOW_SIZE;
+  if (history_index == 0) history_filled = true;
+  
+  // Calculate range (max - min) over the window
+  int count = history_filled ? VARIANCE_WINDOW_SIZE : history_index;
+  if (count < 2) return last_state;  // Not enough samples yet
+  
+  int min_sw = sw_history[0], max_sw = sw_history[0];
+  for (int i = 1; i < count; i++) {
+    if (sw_history[i] < min_sw) min_sw = sw_history[i];
+    if (sw_history[i] > max_sw) max_sw = sw_history[i];
+  }
+  int sw_range = max_sw - min_sw;
+  
+  // Get expected disconnected signature for current range
+  int16_t expected_sig = s_disc_signatures[s_range];
+  int sig_delta = abs(sw_mv - expected_sig);
+  
+  // Check both conditions for disconnected detection
+  bool sig_matches = (sig_delta <= DISC_SIGNATURE_TOLERANCE);
+  bool variance_low = (sw_range <= DISC_RANGE_THRESHOLD);
+  
+  // DISCONNECTED = signature matches AND variance is low
+  // CONNECTED = anything else (default to connected if uncertain)
+  bool is_connected = !(sig_matches && variance_low);
 #else
   // Dev board behavior:
   //   Cable CONNECTED:    delta is small (~0-50mV, switch near VCC)
@@ -130,18 +196,14 @@ bool cv_is_cable_connected(void) {
   // Detect state changes and log
   if (is_connected != last_state) {
     last_state = is_connected;
+#if HW_CONFIG_PRODUCTION
+    ESP_LOGI(TAG, "CV cable %s (sw=%dmV, exp=%dmV, range=%dmV)", 
+      is_connected ? "CONNECTED" : "DISCONNECTED", sw_mv, expected_sig, sw_range);
+#else
     ESP_LOGI(TAG, "CV cable %s (sw=%dmV, vcc=%dmV, delta=%dmV)", 
       is_connected ? "CONNECTED" : "DISCONNECTED", sw_mv, vcc_mv, delta);
+#endif
   }
-  
-  // Debug logging (enable temporarily to diagnose)
-  // static uint32_t last_log = 0;
-  // uint32_t now = esp_timer_get_time() / 1000;
-  // if (now - last_log > 1000) {  // Log every second
-  //   ESP_LOGI(TAG, "Cable detect: sw=%dmV, vcc=%dmV, delta=%dmV, state=%s", 
-  //     sw_mv, vcc_mv, delta, is_connected ? "CONN" : "DISC");
-  //   last_log = now;
-  // }
   
   return is_connected;
 }
@@ -195,6 +257,13 @@ esp_err_t cv_init(bool enable_logging) {
     snprintf(key, sizeof(key), "%s%d", NVS_KEY_CV_MAX_PREFIX, i);
     app_settings_load_u16(key, (uint16_t*)&s_max_values[i]);
     ESP_LOGI(TAG, "Loaded calibration for range %d: min=%d, max=%d", i, s_min_values[i], s_max_values[i]);
+  }
+  
+  // Load disconnected signature values for cable detection (if calibrated)
+  for (int i = 0; i < 5; i++) {
+    char key[16];
+    snprintf(key, sizeof(key), "%s%d", NVS_KEY_CV_DISC_PREFIX, i);
+    app_settings_load_u16(key, (uint16_t*)&s_disc_signatures[i]);
   }
   
   ESP_LOGI(TAG, "CV initialized - Mode: %d, Range: %d, Offset: %.3f, Scale: %.3f", s_mode, s_range, s_offset, s_scale);
@@ -350,6 +419,10 @@ static void cv_task(void *pvParameters) {
           s_median_buffer[i] = reconnect_reading;
         }
         
+        // IMPORTANT: Update raw to use the freshly primed median buffer
+        // The old 'raw' was computed before priming and is stale
+        raw = reconnect_reading;
+        
         // Notify input manager
         extern void input_manager_cable_changed(bool connected);
         input_manager_cable_changed(true);
@@ -389,6 +462,7 @@ static void cv_task(void *pvParameters) {
         // Input voltage increases → ADC voltage decreases → ADC count decreases
         // So we invert the MIDI value to maintain proper mapping
         midi_value = 127 - midi_value;
+        
       } else {
         // CV_MODE_PITCH - use the mode-specific conversion
         midi_value = convert_to_midi((int16_t)s_filtered_value, s_mode);
@@ -552,6 +626,7 @@ uint8_t cv_get_midi_value(void) {
 
 void cv_set_range(cv_range_t range) {
   s_range = range;
+  s_cable_detect_reset_pending = true;  // Clear variance history on next detection
   app_settings_save_u8(NVS_KEY_CV_RANGE, (uint8_t)range);
   
   // Set DAC reference voltage for the range (enum values match 1:1)
@@ -614,14 +689,14 @@ void cv_set_calibration(cv_range_t range, int16_t min_value, int16_t max_value) 
   
   s_min_values[range] = min_value;
   s_max_values[range] = max_value;
-  
+
   // Save to NVS
   char key[16];
   snprintf(key, sizeof(key), "%s%d", NVS_KEY_CV_MIN_PREFIX, range);
   app_settings_save_u16(key, (uint16_t)min_value);
   snprintf(key, sizeof(key), "%s%d", NVS_KEY_CV_MAX_PREFIX, range);
   app_settings_save_u16(key, (uint16_t)max_value);
-  
+
   ESP_LOGI(TAG, "CV range %d calibrated - Min: %d, Max: %d", range, min_value, max_value);
 }
 
@@ -651,6 +726,55 @@ uint8_t cv_get_pitch_note(void) {
 // Helper: Compare function for qsort
 static int compare_int16_cv(const void *a, const void *b) {
   return (*(int16_t*)a - *(int16_t*)b);
+}
+
+esp_err_t cv_calibrate_cable_detect(void) {
+  ESP_LOGI(TAG, "=== Cable Detection Calibration ===");
+  ESP_LOGI(TAG, "IMPORTANT: Remove any cable from the CV jack!");
+  ESP_LOGI(TAG, "Waiting 3 seconds for you to disconnect...");
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  
+  cv_range_t original_range = s_range;
+  
+  // Cycle through all 5 ranges and capture disconnected signature
+  for (int range = 0; range < 5; range++) {
+    // Switch to this range
+    cv_set_range((cv_range_t)range);
+    vTaskDelay(pdMS_TO_TICKS(200));  // Allow DAC and switch to settle
+    
+    // Take multiple samples and average
+    int32_t sum = 0;
+    const int num_samples = 16;
+    for (int i = 0; i < num_samples; i++) {
+      int sw_raw = 0;
+      adc_manager_read(CV_SW_ADC_CHANNEL, &sw_raw);
+      int sw_mv = (sw_raw * 3100) / 4095;
+      sum += sw_mv;
+      vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    int16_t avg = (int16_t)(sum / num_samples);
+    
+    // Store the calibrated value
+    s_disc_signatures[range] = avg;
+    
+    // Save to NVS
+    char key[16];
+    snprintf(key, sizeof(key), "%s%d", NVS_KEY_CV_DISC_PREFIX, range);
+    app_settings_save_u16(key, (uint16_t)avg);
+    
+    ESP_LOGI(TAG, "Range %d (%s): disconnected signature = %dmV",
+      range, cv_range_to_string((cv_range_t)range), avg);
+  }
+  
+  // Restore original range
+  cv_set_range(original_range);
+  
+  ESP_LOGI(TAG, "=== Cable detection calibration complete ===");
+  return ESP_OK;
+}
+
+void cv_get_disc_signature(cv_range_t range, int16_t *signature) {
+  if (range < 5 && signature) *signature = s_disc_signatures[range];
 }
 
 esp_err_t cv_auto_calibrate(cv_range_t range, uint32_t duration_ms) {

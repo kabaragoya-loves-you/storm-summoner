@@ -458,30 +458,30 @@ void expression_init(bool enable_logging) {
 }
 
 // Configure PCA9534 switches based on mode and polarity
-// TMUX1113 quirk: Channels 2+3 are active LOW, Channels 1+4 are active HIGH
-// P4 → Switch Ch1 (active HIGH)
-// P5 → Switch Ch2 (active LOW - inverted logic)
-// P6 → Switch Ch3 (active LOW - inverted logic)
-// P7 → Switch Ch4 (active HIGH)
+// Expression uses P4-P7 (channels 4-7 of the PCA9534)
+// P4 → Tip to ADC
+// P5 → Ring to ADC  
+// P6 → Ring to VCC
+// P7 → Tip to VCC
+// Note: Physical TMUX logic (TMUX1112 vs TMUX1113) is handled by switch component
 static void expression_configure_switches(void) {
-  // Start with P5 and P6 HIGH to keep those channels OFF (active-low)
-  uint8_t mask = (1 << 5) | (1 << 6);
+  // Logical mask: bit set = channel ON, bit clear = channel OFF
+  // Switch component handles physical conversion for TMUX1113 if needed
+  uint8_t mask = 0;
   
   switch (s_mode) {
     case EXPRESSION_MODE_NONE:
-      // Disabled - leave all channels off (default mask keeps P5/P6 high = off)
+      // Disabled - all channels off
       break;
       
     case EXPRESSION_MODE_PEDAL:
       // Expression pedal mode - configure based on polarity
       if (s_polarity == EXPRESSION_POLARITY_TIP_ADC) {
-        // P4: Tip→ADC (set HIGH), P6: Ring→VCC (clear to LOW for active-low)
-        mask |= (1 << 4);     // Turn ON P4 (active high)
-        mask &= ~(1 << 6);    // Turn ON P6 (active low - clear bit)
+        // P4: Tip→ADC, P6: Ring→VCC
+        mask = (1 << 4) | (1 << 6);
       } else {
-        // P5: Ring→ADC (clear to LOW for active-low), P7: Tip→VCC (set HIGH)
-        mask &= ~(1 << 5);    // Turn ON P5 (active low - clear bit)
-        mask |= (1 << 7);     // Turn ON P7 (active high)
+        // P5: Ring→ADC, P7: Tip→VCC
+        mask = (1 << 5) | (1 << 7);
       }
       break;
       
@@ -489,13 +489,12 @@ static void expression_configure_switches(void) {
     case EXPRESSION_MODE_SOSTENUTO:
     case EXPRESSION_MODE_SWITCH:
       // Sustain/Sostenuto/Switch mode: P4: Tip→ADC, P7: Tip→VCC (for switch detection)
-      mask |= (1 << 4);       // Turn ON P4 (active high)
-      mask |= (1 << 7);       // Turn ON P7 (active high)
+      mask = (1 << 4) | (1 << 7);
       break;
       
     case EXPRESSION_MODE_GATE:
       // Gate mode: P4 only (Tip→ADC)
-      mask |= (1 << 4);       // Turn ON P4 (active high)
+      mask = (1 << 4);
       break;
   }
   

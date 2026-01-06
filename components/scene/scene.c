@@ -3051,6 +3051,16 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else scene->cv_input_mode = INPUT_MODE_CV;
   }
   
+  // Auto-manage cv.enabled based on cv_input_mode (same logic as scene_set_cv_input_mode)
+  // This ensures cv_input_mode is the source of truth, regardless of what the JSON cv.enabled says
+  if (scene->cv_input_mode == INPUT_MODE_NONE) {
+    scene->cv.enabled = false;
+  } else if (scene->cv_input_mode == INPUT_MODE_CV) {
+    scene->cv.enabled = true;
+  }
+  // INPUT_MODE_NOTE: enabled is managed by input_manager at runtime
+  // INPUT_MODE_CLOCK_SYNC: CV is used for tempo, not continuous routing
+  
   // Helper to parse velocity mode from JSON string
   #define PARSE_VEL_MODE(json_obj, target) do { \
     if ((json_obj) && cJSON_IsString(json_obj)) { \

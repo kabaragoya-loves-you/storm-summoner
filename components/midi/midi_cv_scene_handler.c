@@ -5,6 +5,7 @@
 #include "device_config.h"
 #include "midi_messages.h"
 #include "event_bus.h"
+#include "ui.h"
 #include "esp_log.h"
 
 static const char* TAG = "cv_scene";
@@ -12,6 +13,9 @@ static smart_filter_t s_cv_filter;
 
 static void handle_cv_event(const event_t* event, void* context) {
   if (event->type != EVENT_CV_VALUE) return;
+  
+  // Don't send MIDI in programming mode
+  if (ui_is_in_programming_mode()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene || !scene->cv.enabled) return;

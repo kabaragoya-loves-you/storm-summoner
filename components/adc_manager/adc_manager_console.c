@@ -10,7 +10,7 @@
 static const char* TAG = "adc_mgr_console";
 
 static const char* registered_commands[] = {
-  "info", "sample_ref"
+  "info", "sample_ref", "sample_all"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -93,6 +93,40 @@ static int cmd_sample_ref(int argc, char **argv) {
   return 0;
 }
 
+// Command: sample_all - sample all registered ADC channels
+static int cmd_sample_all(int argc, char **argv) {
+  if (!adc_manager_is_initialized()) {
+    ESP_LOGE(TAG, "ADC manager not initialized");
+    return 1;
+  }
+  
+  ESP_LOGI(TAG, "Sampling all ADC channels...");
+  
+  struct {
+    const char* name;
+    int channel;
+    int gpio;
+  } channels[] = {
+    {"CV",        CV_ADC_CHANNEL,     49},
+    {"Expression", EXP_ADC_CHANNEL,   50},
+    {"Reference",  REF_ADC_CHANNEL,   51},
+    {"CV Switch",  CV_SW_ADC_CHANNEL, 52},
+  };
+  
+  for (int i = 0; i < 4; i++) {
+    int raw = 0;
+    int mv = 0;
+    esp_err_t ret = adc_manager_read(channels[i].channel, &raw);
+    adc_manager_read_calibrated(channels[i].channel, &mv);
+    
+    ESP_LOGI(TAG, "  %-10s: CH%d (GPIO%d) -> raw=%4d, %4dmV %s",
+      channels[i].name, channels[i].channel, channels[i].gpio,
+      raw, mv, ret == ESP_OK ? "" : "(ERR)");
+  }
+  
+  return 0;
+}
+
 esp_err_t adc_manager_console_init(void) {
   ESP_LOGI(TAG, "Registering adc_manager commands");
   
@@ -113,6 +147,15 @@ esp_err_t adc_manager_console_init(void) {
     .func = &cmd_sample_ref,
   };
   esp_console_cmd_register(&sample_ref_cmd);
+  
+  // sample_all command
+  const esp_console_cmd_t sample_all_cmd = {
+    .command = "sample_all",
+    .help = "Sample all ADC channels for diagnostics",
+    .hint = NULL,
+    .func = &cmd_sample_all,
+  };
+  esp_console_cmd_register(&sample_all_cmd);
   
   return ESP_OK;
 }

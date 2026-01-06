@@ -105,6 +105,22 @@ void cv_get_calibration(cv_range_t range, int16_t *min_value, int16_t *max_value
 esp_err_t cv_auto_calibrate(cv_range_t range, uint32_t duration_ms);
 
 /**
+ * Calibrate cable detection by capturing disconnected signatures for all ranges
+ * User must remove any cable from the CV jack before calling this function.
+ * The function cycles through all 5 voltage ranges and captures the switch pin
+ * voltage when no cable is connected, storing these signatures in NVS.
+ * @return ESP_OK on success
+ */
+esp_err_t cv_calibrate_cable_detect(void);
+
+/**
+ * Get the disconnected signature value for a specific range
+ * @param range The voltage range to query
+ * @param signature Pointer to store the signature value (mV)
+ */
+void cv_get_disc_signature(cv_range_t range, int16_t *signature);
+
+/**
  * Set the CV pitch standard (for CV_MODE_PITCH)
  * @param standard The pitch standard to use
  */
