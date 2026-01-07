@@ -58,7 +58,7 @@ static void nav_to_expression(void* user_data) {
 
 static void nav_to_cv(void* user_data) {
   (void)user_data;
-  menu_navigate_to("CV", menu_page_cv_scene_create);
+  menu_navigate_to("Control Voltage", menu_page_cv_scene_create);
 }
 
 static void nav_to_proximity(void* user_data) {
@@ -573,7 +573,7 @@ lv_obj_t* menu_page_current_scene_create(void) {
   s_scene_items[idx++] = (menu_item_t){ "Pads", nav_to_pads, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Touchwheel", nav_to_touchwheel, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Expression", nav_to_expression, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "CV", nav_to_cv, NULL, true };
+  s_scene_items[idx++] = (menu_item_t){ "Control Voltage", nav_to_cv, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Proximity", nav_to_proximity, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Ambient Light", nav_to_ambient_light, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Buttons", nav_to_buttons, NULL, true };

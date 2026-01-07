@@ -20,8 +20,9 @@ static void handle_cv_event(const event_t* event, void* context) {
   scene_t* scene = scene_get_current();
   if (!scene || !scene->cv.enabled) return;
   
-  // Only process CV values in CV or NOTE mode (CLOCK_SYNC and AUDIO use different handlers)
-  if (scene->cv_input_mode != INPUT_MODE_CV && scene->cv_input_mode != INPUT_MODE_NOTE) return;
+  // Only process CV values in CV mode (Control Voltage)
+  // CV/Gate mode (INPUT_MODE_NOTE) is handled by input_manager's note handlers
+  if (scene->cv_input_mode != INPUT_MODE_CV) return;
   
   continuous_mapping_t* mapping = &scene->cv;
   uint8_t raw_value = event->data.cv.midi_value;
@@ -68,5 +69,18 @@ esp_err_t midi_cv_scene_handler_init(void) {
   
   ESP_LOGI(TAG, "CV scene handler initialized");
   return ESP_OK;
+}
+
+void midi_cv_scene_handler_release_notes(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  continuous_mapping_t* mapping = &scene->cv;
+  if (mapping->note_active) {
+    uint8_t channel = device_config_get_channel() - 1;
+    send_note_off(channel, mapping->last_note, 0);
+    ESP_LOGI(TAG, "CV Note Off (programming mode): %d", mapping->last_note);
+    mapping->note_active = false;
+  }
 }
 

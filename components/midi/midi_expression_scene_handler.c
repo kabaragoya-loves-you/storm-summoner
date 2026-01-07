@@ -79,6 +79,19 @@ static void handle_expression_value(const event_t* event, void* context) {
   }
 }
 
+void midi_expression_scene_handler_release_notes(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  continuous_mapping_t* mapping = &scene->expression;
+  if (mapping->note_active) {
+    uint8_t channel = device_config_get_channel() - 1;
+    send_note_off(channel, mapping->last_note, 0);
+    ESP_LOGI(TAG, "Expression Note Off (programming mode): %d", mapping->last_note);
+    mapping->note_active = false;
+  }
+}
+
 static void handle_sustain_event(const event_t* event, void* context) {
   if (event->type != EVENT_EXPRESSION_SUSTAIN) return;
   

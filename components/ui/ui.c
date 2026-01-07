@@ -7,6 +7,11 @@
 #include "menu.h"
 #include "menu_pages.h"
 #include "scene.h"
+#include "input_manager.h"
+#include "midi_cv_scene_handler.h"
+#include "midi_expression_scene_handler.h"
+#include "midi_als_scene_handler.h"
+#include "midi_proximity_scene_handler.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -128,6 +133,13 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
     ESP_LOGW(TAG, "Mode changed before Programming mode setup, aborting");
     return;
   }
+  
+  // Release any active notes to prevent stuck notes in programming mode
+  input_manager_release_active_notes();           // CV/Gate mode notes
+  midi_cv_scene_handler_release_notes();          // CV mode Notes output
+  midi_expression_scene_handler_release_notes();  // Expression Notes output
+  midi_als_scene_handler_release_notes();         // ALS Notes output
+  midi_proximity_scene_handler_release_notes();   // Proximity Notes output
   
   // Create LVGL encoder touchwheel if not already created (must be in LVGL context)
   if (!s_ui_touchwheel) {

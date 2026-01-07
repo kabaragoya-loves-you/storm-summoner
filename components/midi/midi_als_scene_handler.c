@@ -79,6 +79,19 @@ static void handle_als_event(const event_t* event, void* context) {
   }
 }
 
+void midi_als_scene_handler_release_notes(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  continuous_mapping_t* mapping = &scene->als;
+  if (mapping->note_active) {
+    uint8_t channel = device_config_get_channel() - 1;
+    send_note_off(channel, mapping->last_note, 0);
+    ESP_LOGI(TAG, "ALS Note Off (programming mode): %d", mapping->last_note);
+    mapping->note_active = false;
+  }
+}
+
 esp_err_t midi_als_scene_handler_init(void) {
   ESP_LOGD(TAG, "Initializing ALS scene handler");
   

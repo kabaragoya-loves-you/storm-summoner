@@ -47,7 +47,7 @@ static void nav_to_expression(void* user_data) {
 
 static void nav_to_cv(void* user_data) {
   (void)user_data;
-  menu_navigate_to("CV", menu_page_cv_create);
+  menu_navigate_to("Control Voltage", menu_page_cv_create);
 }
 
 static void nav_to_proximity(void* user_data) {
@@ -157,7 +157,7 @@ lv_obj_t* menu_page_settings_create(void) {
     { "DAC", nav_to_dac, NULL, true },
     { "ADC", nav_to_adc_manager, NULL, true },
     { "Expression", nav_to_expression, NULL, true },
-    { "CV", nav_to_cv, NULL, true },
+    { "Control Voltage", nav_to_cv, NULL, true },
     { "Proximity", nav_to_proximity, NULL, true },
     { "Ambient Light", nav_to_ambient_light, NULL, true },
     { "Tempo", nav_to_tempo, NULL, true },

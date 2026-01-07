@@ -11,10 +11,16 @@
 esp_err_t input_manager_init(void);
 
 /**
- * Notify input manager of cable connection change
+ * Notify input manager of CV cable connection change
  * @param connected true if cable connected, false if disconnected
  */
 void input_manager_cable_changed(bool connected);
+
+/**
+ * Notify input manager of Expression cable connection change
+ * @param connected true if cable connected, false if disconnected
+ */
+void input_manager_expression_cable_changed(bool connected);
 
 /**
  * Enable or disable cable detection for CV/clock sync processing
@@ -57,5 +63,11 @@ void input_set_fixed_velocity(uint8_t velocity);
  * @return Fixed velocity value
  */
 uint8_t input_get_fixed_velocity(void);
+
+/**
+ * Send NOTE OFF for any active CV/Gate note and reset state
+ * Call this when entering programming mode to prevent stuck notes
+ */
+void input_manager_release_active_notes(void);
 
 #endif /* _INPUT_MANAGER_H */

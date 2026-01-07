@@ -79,7 +79,7 @@ static void range_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_create);
 }
 
 static lv_obj_t* range_roller_create(void) {
@@ -126,7 +126,7 @@ static void pitch_std_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_create);
 }
 
 static lv_obj_t* pitch_std_roller_create(void) {
@@ -163,7 +163,7 @@ static void deadzone_confirm_cb(uint32_t selected_index, void* user_data) {
   ESP_LOGI(TAG, "CV deadzone set to: %u", (unsigned)selected_index);
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_create);
 }
 
 static lv_obj_t* deadzone_roller_create(void) {
@@ -230,5 +230,5 @@ lv_obj_t* menu_page_cv_create(void) {
   // Calibrate
   s_cv_items[item_count++] = (menu_item_t){"Calibrate\n(Console)", nav_to_calibrate, NULL, true};
   
-  return menu_create_page_2line("CV", s_cv_items, item_count);
+  return menu_create_page_2line("Control Voltage", s_cv_items, item_count);
 }

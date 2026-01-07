@@ -41,6 +41,7 @@
 #include "midi_proximity_scene_handler.h"
 #include "midi_als_scene_handler.h"
 #include "scene_test.h"
+#include "scene.h"
 #include "buttons.h"
 #include "assets_manager.h"
 #include "firmware_update.h"
@@ -119,6 +120,14 @@ void app_main(void) {
   expression_enable();
   
   input_manager_init();
+  
+  // Apply initial scene's input mode now that input_manager is ready
+  scene_t* initial_scene = scene_get_current();
+  if (initial_scene) {
+    expression_set_mode(initial_scene->expression_mode);
+    input_set_mode(initial_scene->cv_input_mode);
+  }
+  
   dac_calibrate_vref();  
 
   sensor_init(false);

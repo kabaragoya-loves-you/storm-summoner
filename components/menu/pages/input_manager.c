@@ -18,10 +18,10 @@ static void show_info(void* user_data) {
   const char* mode_str;
   switch (mode) {
     case INPUT_MODE_NONE: mode_str = "None"; break;
-    case INPUT_MODE_CV: mode_str = "CV"; break;
+    case INPUT_MODE_CV: mode_str = "Control Voltage"; break;
     case INPUT_MODE_CLOCK_SYNC: mode_str = "Clock Sync"; break;
     case INPUT_MODE_AUDIO: mode_str = "Audio"; break;
-    case INPUT_MODE_NOTE: mode_str = "Note"; break;
+    case INPUT_MODE_NOTE: mode_str = "CV/Gate"; break;
     default: mode_str = "Unknown"; break;
   }
   

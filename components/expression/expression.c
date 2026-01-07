@@ -39,6 +39,7 @@
 // Thresholds for sustain/sostenuto/gate detection
 #define PEDAL_PRESSED_THRESHOLD 1000   // ADC < 1000 = pressed (tip shorted to ground)
 #define PEDAL_RELEASED_THRESHOLD 3000  // ADC > 3000 = released (tip pulled high)
+
 #define GATE_HIGH_THRESHOLD 2048        // ADC > 2048 = gate high
 
 // Filtering parameters
@@ -131,6 +132,9 @@ static void expression_task(void *pvParameters) {
           .timestamp = event_bus_get_current_timestamp()
         };
         event_bus_post(&conn_event);
+        // Notify input manager (for CV/Gate mode cable checking)
+        extern void input_manager_expression_cable_changed(bool connected);
+        input_manager_expression_cable_changed(true);
       } else {
         ESP_LOGI(TAG, "Expression cable disconnected");
         // Post disconnection event
@@ -140,6 +144,9 @@ static void expression_task(void *pvParameters) {
           .timestamp = event_bus_get_current_timestamp()
         };
         event_bus_post(&disc_event);
+        // Notify input manager
+        extern void input_manager_expression_cable_changed(bool connected);
+        input_manager_expression_cable_changed(false);
       }
       was_connected = is_connected;
     }
@@ -325,14 +332,15 @@ static void expression_task(void *pvParameters) {
         }
       } else if (s_mode == EXPRESSION_MODE_GATE) {
         // Gate mode - high/low detection for MIDI notes
-        bool current_gate = (raw > GATE_HIGH_THRESHOLD);
+        // Use raw_exp directly (not ratiometric) - gate signals are absolute voltages
+        bool current_gate = (raw_exp > GATE_HIGH_THRESHOLD);
         s_gate_state = current_gate;
         
         // Detect gate transitions
         if (first_reading) {
           last_gate_state = current_gate;
           first_reading = false;
-          ESP_LOGI(TAG, "Gate initial: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
+          ESP_LOGI(TAG, "Gate initial: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw_exp);
         } else if (current_gate != last_gate_state) {
           // Post gate event
           event_t gate_event = {
@@ -341,13 +349,13 @@ static void expression_task(void *pvParameters) {
             .timestamp = event_bus_get_current_timestamp(),
             .data.gate = {
               .high = current_gate,
-              .raw_value = raw
+              .raw_value = raw_exp
             }
           };
           
           if (event_bus_post(&gate_event) == ESP_OK) {
             if (s_gate_logging_enabled) {
-              ESP_LOGI(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw);
+              ESP_LOGI(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw_exp);
             }
             last_gate_state = current_gate;
           }

@@ -138,4 +138,11 @@ cv_pitch_standard_t cv_get_pitch_standard(void);
  */
 uint8_t cv_get_pitch_note(void);
 
+/**
+ * Read pitch note directly from ADC (bypasses caching/filtering)
+ * Use this for time-critical pitch capture like gate triggering
+ * @return MIDI note number (0-127)
+ */
+uint8_t cv_read_pitch_note_now(void);
+
 #endif /* _CV_H */

@@ -88,29 +88,29 @@ esp_err_t midi_out_uart_send(const uint8_t *data, size_t len) {
 
   switch (s_current_mode) {
     case MIDI_TRANSMIT_BOTH:
-      gpio_set_level(PIN_POLARITY, TYPE_A);
-      gpio_set_level(PIN_MIDI_TS, TYPE_A);
+      gpio_set_level(PIN_POLARITY, TRS_TYPE_A);
+      gpio_set_level(PIN_MIDI_TS, TRS_TYPE_A);
       uart_write_bytes(MIDI_NUM, data, len);
       vTaskDelay(MIDI_MIN_INTERVAL);
-      gpio_set_level(PIN_POLARITY, TYPE_B);
-      gpio_set_level(PIN_MIDI_TS, TYPE_B);
+      gpio_set_level(PIN_POLARITY, TRS_TYPE_B);
+      gpio_set_level(PIN_MIDI_TS, TRS_TYPE_B);
       uart_write_bytes(MIDI_NUM, data, len);
       break;
       
     case MIDI_TRANSMIT_TYPE_A:
-      gpio_set_level(PIN_POLARITY, TYPE_A);
-      gpio_set_level(PIN_MIDI_TS, TYPE_A);
+      gpio_set_level(PIN_POLARITY, TRS_TYPE_A);
+      gpio_set_level(PIN_MIDI_TS, TRS_TYPE_A);
       uart_write_bytes(MIDI_NUM, data, len);
       break;
       
     case MIDI_TRANSMIT_TYPE_B:
-      gpio_set_level(PIN_POLARITY, TYPE_B);
-      gpio_set_level(PIN_MIDI_TS, TYPE_B);
+      gpio_set_level(PIN_POLARITY, TRS_TYPE_B);
+      gpio_set_level(PIN_MIDI_TS, TRS_TYPE_B);
       uart_write_bytes(MIDI_NUM, data, len);
       break;
 
     case MIDI_TRANSMIT_TS:
-      gpio_set_level(PIN_POLARITY, TYPE_A);
+      gpio_set_level(PIN_POLARITY, TRS_TYPE_A);
       gpio_set_level(PIN_MIDI_TS, 1);
       uart_write_bytes(MIDI_NUM, data, len);
       break;

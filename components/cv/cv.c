@@ -127,8 +127,7 @@ bool cv_is_cable_connected(void) {
   
   // Convert to mV (ADC_ATTEN_DB_12 → 0-3100mV range)
   int sw_mv = (sw_raw * 3100) / 4095;
-  int vcc_mv = (vcc_raw * 3100) / 4095;
-  int delta = vcc_mv - sw_mv;
+  (void)vcc_raw;  // VCC reading reserved for future use
   
   // Hardware-specific detection (production PCB vs dev board)
 #if HW_CONFIG_PRODUCTION
@@ -721,6 +720,25 @@ cv_pitch_standard_t cv_get_pitch_standard(void) {
 
 uint8_t cv_get_pitch_note(void) {
   return s_last_pitch_note;
+}
+
+uint8_t cv_read_pitch_note_now(void) {
+  // Force a fresh ADC read and calculate pitch (bypasses task/filter caching)
+  int raw_adc = 0;
+  esp_err_t ret = adc_manager_read(CV_ADC_CHANNEL, &raw_adc);
+  if (ret != ESP_OK) {
+    ESP_LOGW("CV", "Fresh ADC read failed, using cached value");
+    return s_last_pitch_note;
+  }
+  
+  // Apply calibration (same as cv_task)
+  int16_t calibrated = (int16_t)(((float)raw_adc + s_offset) * s_scale);
+  
+  // Use the same pitch calculation as the regular CV task
+  uint8_t midi_note = convert_to_midi(calibrated, CV_MODE_PITCH);
+  
+  ESP_LOGD("CV", "Fresh pitch read: raw=%d, calibrated=%d, note=%d", raw_adc, calibrated, midi_note);
+  return midi_note;
 }
 
 // Helper: Compare function for qsort

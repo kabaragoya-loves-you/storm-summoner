@@ -7,9 +7,9 @@
 #include "esp_err.h"
 
 typedef enum {
-  TYPE_A,
-  TYPE_B
-} polarity_t;
+  TRS_TYPE_A,
+  TRS_TYPE_B
+} trs_polarity_t;
 
 typedef enum {
   MIDI_TRANSMIT_BOTH,

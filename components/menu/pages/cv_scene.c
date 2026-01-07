@@ -81,10 +81,10 @@ static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
 static const char* get_cv_mode_display_name(input_mode_t mode) {
   switch (mode) {
     case INPUT_MODE_NONE: return "<None>";
-    case INPUT_MODE_CV: return "CV";
+    case INPUT_MODE_CV: return "Control Voltage";
     case INPUT_MODE_CLOCK_SYNC: return "Clock Sync";
     case INPUT_MODE_AUDIO: return "Audio";
-    case INPUT_MODE_NOTE: return "Note Mode";
+    case INPUT_MODE_NOTE: return "CV/Gate";
     default: return "Unknown";
   }
 }
@@ -173,7 +173,7 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   s_callback_in_progress = true;
   
   // Map index to mode
-  // 0=None, 1=CV, 2=Note Mode, 3=Audio (not selectable)
+  // 0=None, 1=Control Voltage, 2=CV/Gate, 3=Audio (not selectable)
   input_mode_t modes[] = {
     INPUT_MODE_NONE,
     INPUT_MODE_CV,
@@ -204,12 +204,12 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* mode_roller_create(void) {
-  // Options: None, CV, Note Mode, Audio (coming soon)
-  static const char* options = "<None>\nCV\nNote Mode\nAudio (coming soon)";
+  // Options: None, Control Voltage, CV/Gate, Audio (coming soon)
+  static const char* options = "<None>\nControl Voltage\nCV/Gate\nAudio (coming soon)";
   
   uint8_t scene_index = scene_get_current_index();
   input_mode_t current = scene_get_cv_input_mode(scene_index);
@@ -232,7 +232,7 @@ static void nav_to_mode(void* user_data) {
 }
 
 // ============================================================================
-// Output Type Roller (CC vs Notes) - For CV Mode
+// Output Type Roller (CC vs Notes) - For Control Voltage Mode
 // ============================================================================
 
 static void output_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -255,7 +255,7 @@ static void output_confirm_cb(uint32_t selected_index, void* user_data) {
     scene->cv.output_type == OUTPUT_TYPE_CC ? "CC" : "Notes");
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* output_roller_create(void) {
@@ -305,7 +305,7 @@ static void cc_slot_confirm_cb(uint32_t selected_index, void* user_data) {
   persist_scene_changes();
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* cc_slot_roller_create(void) {
@@ -360,7 +360,7 @@ static void polarity_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* polarity_roller_create(void) {
@@ -408,7 +408,7 @@ static void curve_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* curve_roller_create(void) {
@@ -434,7 +434,7 @@ static void nav_to_curve(void* user_data) {
 }
 
 // ============================================================================
-// Base Note Roller (for CV Note Output)
+// Base Note Roller (for Control Voltage Notes Output)
 // ============================================================================
 
 static void base_note_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -458,7 +458,7 @@ static void base_note_confirm_cb(uint32_t selected_index, void* user_data) {
   ESP_LOGI(TAG, "CV base note set to: %s (%d)", note_name, scene->cv.base_note);
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* base_note_roller_create(void) {
@@ -486,7 +486,7 @@ static void nav_to_base_note(void* user_data) {
 }
 
 // ============================================================================
-// Range Roller (for CV Note Output)
+// Range Roller (for Control Voltage Notes Output)
 // ============================================================================
 
 static void range_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -511,7 +511,7 @@ static void range_confirm_cb(uint32_t selected_index, void* user_data) {
     octaves, octaves > 1 ? "s" : "", scene->cv.note_range);
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* range_roller_create(void) {
@@ -534,7 +534,7 @@ static void nav_to_range(void* user_data) {
 }
 
 // ============================================================================
-// Velocity Roller (for CV Note Output)
+// Velocity Roller (for Control Voltage Notes Output)
 // ============================================================================
 
 static void velocity_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -556,7 +556,7 @@ static void velocity_confirm_cb(uint32_t selected_index, void* user_data) {
   ESP_LOGI(TAG, "CV velocity set to: %d", scene->cv.velocity);
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* velocity_roller_create(void) {
@@ -587,7 +587,7 @@ static void nav_to_velocity(void* user_data) {
 }
 
 // ============================================================================
-// Note Mode Velocity Settings (for INPUT_MODE_NOTE)
+// CV/Gate Mode Velocity Settings (for INPUT_MODE_NOTE)
 // ============================================================================
 
 static void note_vel_mode_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -612,7 +612,7 @@ static void note_vel_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   ESP_LOGI(TAG, "CV velocity mode set to: %s", mode_str);
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* note_vel_mode_roller_create(void) {
@@ -653,7 +653,7 @@ static void note_fixed_vel_confirm_cb(uint32_t selected_index, void* user_data) 
   ESP_LOGI(TAG, "CV fixed velocity set to: %d", velocity);
   
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "CV", menu_page_cv_scene_create);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
 }
 
 static lv_obj_t* note_fixed_vel_roller_create(void) {
@@ -688,7 +688,7 @@ static void nav_to_note_fixed_vel(void* user_data) {
 lv_obj_t* menu_page_cv_scene_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) {
-    return menu_create_page_2line("CV", NULL, 0);
+    return menu_create_page_2line("Control Voltage", NULL, 0);
   }
   
   load_cc_options();
@@ -710,7 +710,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
     s_cv_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false};
     
     // Show info that CV is controlled by tempo
-    return menu_create_page_2line("CV", s_cv_items, item_count);
+    return menu_create_page_2line("Control Voltage", s_cv_items, item_count);
   }
   
   // Mode selector (always first)
@@ -721,7 +721,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
   // Mode-specific items
   switch (mode) {
     case INPUT_MODE_CV: {
-      // Output type selector
+      // Control Voltage mode: Output selector (CC or Notes)
       const char* output_name = (scene->cv.output_type == OUTPUT_TYPE_CC) ? 
         "Control Change" : "Notes";
       snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
@@ -796,7 +796,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
     }
     
     case INPUT_MODE_NOTE: {
-      // Note Mode: CV pitch + Expression gate
+      // CV/Gate Mode: CV pitch + Expression gate
       // Show velocity mode
       velocity_mode_t vel_mode = scene_get_cv_velocity_mode(scene_index);
       const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
@@ -838,7 +838,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
       break;
   }
   
-  return menu_create_page_2line("CV", s_cv_items, item_count);
+  return menu_create_page_2line("Control Voltage", s_cv_items, item_count);
 }
 
 // Cleanup function

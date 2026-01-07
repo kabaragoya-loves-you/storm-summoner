@@ -3,6 +3,7 @@
 #include "action_config.h"
 #include "expression.h"
 #include "scene.h"
+#include "cv.h"
 #include "action.h"
 #include "curve.h"
 #include "continuous_mapping.h"
@@ -658,10 +659,20 @@ lv_obj_t* menu_page_expression_create(void) {
   uint8_t scene_index = scene_get_current_index();
   expression_mode_t mode = scene_get_expression_mode(scene_index);
   
+  // Check if CV is in CV/Gate mode (locks expression to Gate)
+  input_mode_t cv_mode = scene_get_cv_input_mode(scene_index);
+  bool locked_by_cv_gate = (cv_mode == INPUT_MODE_NOTE);
+  
   // Mode selector (always first)
-  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s", 
-    get_mode_display_name(mode));
-  s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], nav_to_mode, NULL, true};
+  if (locked_by_cv_gate) {
+    // Show read-only mode indicating CV/Gate controls this
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\nGate (Locked)");
+    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false};
+  } else {
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s", 
+      get_mode_display_name(mode));
+    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], nav_to_mode, NULL, true};
+  }
   
   // Mode-specific items
   switch (mode) {
