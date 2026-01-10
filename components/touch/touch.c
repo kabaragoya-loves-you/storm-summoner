@@ -1126,6 +1126,10 @@ void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "=== END DEBUG DATA ===");
 }
 
+bool touch_is_logging_enabled(void) {
+  return s_logging_enabled;
+}
+
 esp_err_t touch_register_touchwheel_instance(struct touchwheel_instance* instance) {
   if (!instance) return ESP_ERR_INVALID_ARG;
   

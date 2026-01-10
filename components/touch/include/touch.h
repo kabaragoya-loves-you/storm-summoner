@@ -36,6 +36,9 @@ void force_touch_calibration(void);
 // Enable debug logging of touch events
 void touch_enable_debug_logging(void);
 
+// Check if logging is enabled (for conditional logging in related modules)
+bool touch_is_logging_enabled(void);
+
 // Query current pressed state
 bool touch_is_pad_pressed(int pad_index);
 const bool *touch_get_pressed_states(void);

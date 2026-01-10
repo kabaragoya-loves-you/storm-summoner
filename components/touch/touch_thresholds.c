@@ -441,8 +441,10 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   s_pad_calibration[pad_index].variance = variance;
   s_pad_calibration[pad_index].valid = true;
   
-  ESP_LOGI(TAG, "Pad %d (Channel %d): baseline=%"PRIu32", threshold=%"PRIu32" (%.1f%%), noise=%.2f%% (%s)",
-    pad_index, TOUCH_PADS[pad_index], mean, calculated_threshold, threshold_ratio * 100.0f, noise_ratio * 100.0f, noise_level);
+  if (touch_is_logging_enabled()) {
+    ESP_LOGI(TAG, "Pad %d (Channel %d): baseline=%"PRIu32", threshold=%"PRIu32" (%.1f%%), noise=%.2f%% (%s)",
+      pad_index, TOUCH_PADS[pad_index], mean, calculated_threshold, threshold_ratio * 100.0f, noise_ratio * 100.0f, noise_level);
+  }
   
   return ESP_OK;
 }
@@ -705,7 +707,7 @@ static esp_err_t touch_calibrate_body(bool force) {
   ret = save_calibration_to_nvs();
   if (ret != ESP_OK) ESP_LOGW(TAG, "Failed to save calibration to NVS: %s", esp_err_to_name(ret));
   
-  ESP_LOGI(TAG, "Touch sensor calibration completed successfully");
+  ESP_LOGD(TAG, "Touch sensor calibration completed successfully");
   return ESP_OK;
 }
 
