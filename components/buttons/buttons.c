@@ -4,6 +4,7 @@
 #include "app_settings.h"
 #include "io.h"
 #include "driver/gpio.h"
+#include "driver/gpio_filter.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,6 +14,24 @@
 #define NVS_KEY_CHORD_WINDOW "btn_chord_ms"
 #define NVS_KEY_DEBOUNCE "btn_debounce"
 #define NVS_KEY_LONG_PRESS "btn_long_ms"
+#define NVS_KEY_GLITCH_FILTER "btn_glitch"
+#define NVS_KEY_GLITCH_WINDOW "btn_glitch_ns"
+
+// Glitch filter modes
+// Mode 0: No glitch filter (hysteresis only)
+// Mode 1: Simple glitch filter (filters based on APB clock cycles - very short pulses)
+// Mode 2: Flex glitch filter (configurable window in nanoseconds)
+#define GLITCH_FILTER_MODE_NONE   0
+#define GLITCH_FILTER_MODE_SIMPLE 1
+#define GLITCH_FILTER_MODE_FLEX   2
+
+// Flex glitch filter window limits (ESP32-P4 hardware constraint)
+// The flex filter uses a counter clocked by the source clock.
+// Maximum window depends on clock frequency and counter width.
+// Practical range is roughly 100ns - 4000ns (0.1µs - 4µs)
+#define GLITCH_FILTER_WINDOW_DEFAULT_NS 1000   // 1µs default for flex filter
+#define GLITCH_FILTER_WINDOW_MIN_NS     100    // 100ns minimum
+#define GLITCH_FILTER_WINDOW_MAX_NS     4000   // 4µs maximum (hardware limit)
 
 // Button state tracking
 typedef struct {
@@ -34,6 +53,12 @@ static uint16_t g_long_press_ms = BUTTON_LONG_PRESS_MS_DEFAULT;
 static uint8_t g_first_button_pressed = 0xFF; // 0xFF = none, 0 = left, 1 = right
 static bool g_logging_enabled = false;
 
+// Glitch filter state
+static uint8_t g_glitch_filter_mode = GLITCH_FILTER_MODE_NONE;
+static uint32_t g_glitch_filter_window_ns = GLITCH_FILTER_WINDOW_DEFAULT_NS;
+static gpio_glitch_filter_handle_t g_filter_left = NULL;
+static gpio_glitch_filter_handle_t g_filter_right = NULL;
+
 // Forward declarations
 static void button_l_isr_handler(void* arg);
 static void button_r_isr_handler(void* arg);
@@ -41,6 +66,7 @@ static void button_process_press(uint8_t button_id);
 static void button_process_release(uint8_t button_id);
 static void button_long_press_timer_callback(TimerHandle_t xTimer);
 static void button_chord_timer_callback(TimerHandle_t xTimer);
+static esp_err_t apply_glitch_filter(void);
 
 esp_err_t buttons_init(bool enable_logging) {
   if (g_initialized) {
@@ -101,11 +127,26 @@ esp_err_t buttons_init(bool enable_logging) {
     ESP_LOGW(TAG, "Failed to load long press: %s, using default: %u ms", esp_err_to_name(ret), g_long_press_ms);
   }
 
+  // Load glitch filter mode from NVS
+  uint8_t glitch_mode;
+  ret = app_settings_load_u8(NVS_KEY_GLITCH_FILTER, &glitch_mode);
+  if (ret == ESP_OK && glitch_mode <= GLITCH_FILTER_MODE_FLEX) {
+    g_glitch_filter_mode = glitch_mode;
+  }
+
+  // Load glitch filter window from NVS
+  uint32_t glitch_window;
+  ret = app_settings_load_u32(NVS_KEY_GLITCH_WINDOW, &glitch_window);
+  if (ret == ESP_OK && glitch_window >= GLITCH_FILTER_WINDOW_MIN_NS && 
+      glitch_window <= GLITCH_FILTER_WINDOW_MAX_NS) {
+    g_glitch_filter_window_ns = glitch_window;
+  }
+
   // Configure GPIO pins
   gpio_config_t io_conf = {
     .pin_bit_mask = (1ULL << PIN_BUTTON_L) | (1ULL << PIN_BUTTON_R),
     .mode = GPIO_MODE_INPUT,
-    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_up_en = GPIO_PULLUP_DISABLE,
     .pull_down_en = GPIO_PULLDOWN_DISABLE,
     .intr_type = GPIO_INTR_ANYEDGE,  // Both edges for press and release detection
     .hys_ctrl_mode = GPIO_HYS_SOFT_ENABLE  // Enable hysteresis for debouncing
@@ -171,9 +212,21 @@ esp_err_t buttons_init(bool enable_logging) {
     return ret;
   }
 
+  // Apply glitch filter if configured
+  if (g_glitch_filter_mode != GLITCH_FILTER_MODE_NONE) {
+    ret = apply_glitch_filter();
+    if (ret != ESP_OK) {
+      ESP_LOGW(TAG, "Failed to apply glitch filter: %s", esp_err_to_name(ret));
+      g_glitch_filter_mode = GLITCH_FILTER_MODE_NONE;
+    }
+  }
+
   g_initialized = true;
-  ESP_LOGI(TAG, "Buttons initialized (L: GPIO%d, R: GPIO%d, debounce: %ums, long: %ums, chord: %ums)", 
-    PIN_BUTTON_L, PIN_BUTTON_R, g_debounce_ms, g_long_press_ms, g_chord_window_ms);
+  
+  const char* filter_mode_str = (g_glitch_filter_mode == GLITCH_FILTER_MODE_NONE) ? "none" :
+    (g_glitch_filter_mode == GLITCH_FILTER_MODE_SIMPLE) ? "simple" : "flex";
+  ESP_LOGI(TAG, "Buttons initialized (L: GPIO%d, R: GPIO%d, debounce: %ums, long: %ums, chord: %ums, glitch: %s)", 
+    PIN_BUTTON_L, PIN_BUTTON_R, g_debounce_ms, g_long_press_ms, g_chord_window_ms, filter_mode_str);
   
   return ESP_OK;
 }
@@ -505,3 +558,136 @@ bool buttons_check_boot_right(void) {
   return pressed;
 }
 
+// Helper to remove existing glitch filters
+static void remove_glitch_filters(void) {
+  if (g_filter_left) {
+    gpio_glitch_filter_disable(g_filter_left);
+    gpio_del_glitch_filter(g_filter_left);
+    g_filter_left = NULL;
+  }
+  if (g_filter_right) {
+    gpio_glitch_filter_disable(g_filter_right);
+    gpio_del_glitch_filter(g_filter_right);
+    g_filter_right = NULL;
+  }
+}
+
+// Apply glitch filter based on current mode
+static esp_err_t apply_glitch_filter(void) {
+  esp_err_t ret = ESP_OK;
+  
+  // First remove any existing filters
+  remove_glitch_filters();
+  
+  if (g_glitch_filter_mode == GLITCH_FILTER_MODE_NONE) {
+    ESP_LOGI(TAG, "Glitch filter disabled");
+    return ESP_OK;
+  }
+  
+  if (g_glitch_filter_mode == GLITCH_FILTER_MODE_SIMPLE) {
+    // Simple glitch filter - uses APB clock cycles
+    gpio_pin_glitch_filter_config_t cfg_l = {
+      .clk_src = GLITCH_FILTER_CLK_SRC_DEFAULT,
+      .gpio_num = PIN_BUTTON_L,
+    };
+    gpio_pin_glitch_filter_config_t cfg_r = {
+      .clk_src = GLITCH_FILTER_CLK_SRC_DEFAULT,
+      .gpio_num = PIN_BUTTON_R,
+    };
+    
+    ret = gpio_new_pin_glitch_filter(&cfg_l, &g_filter_left);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to create simple glitch filter for left button: %s", esp_err_to_name(ret));
+      return ret;
+    }
+    
+    ret = gpio_new_pin_glitch_filter(&cfg_r, &g_filter_right);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to create simple glitch filter for right button: %s", esp_err_to_name(ret));
+      gpio_del_glitch_filter(g_filter_left);
+      g_filter_left = NULL;
+      return ret;
+    }
+    
+    gpio_glitch_filter_enable(g_filter_left);
+    gpio_glitch_filter_enable(g_filter_right);
+    
+    ESP_LOGI(TAG, "Simple glitch filter enabled");
+  } else if (g_glitch_filter_mode == GLITCH_FILTER_MODE_FLEX) {
+    // Flex glitch filter - configurable window
+    gpio_flex_glitch_filter_config_t cfg_l = {
+      .clk_src = GLITCH_FILTER_CLK_SRC_DEFAULT,
+      .gpio_num = PIN_BUTTON_L,
+      .window_thres_ns = g_glitch_filter_window_ns,
+      .window_width_ns = g_glitch_filter_window_ns,
+    };
+    gpio_flex_glitch_filter_config_t cfg_r = {
+      .clk_src = GLITCH_FILTER_CLK_SRC_DEFAULT,
+      .gpio_num = PIN_BUTTON_R,
+      .window_thres_ns = g_glitch_filter_window_ns,
+      .window_width_ns = g_glitch_filter_window_ns,
+    };
+    
+    ret = gpio_new_flex_glitch_filter(&cfg_l, &g_filter_left);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to create flex glitch filter for left button: %s", esp_err_to_name(ret));
+      return ret;
+    }
+    
+    ret = gpio_new_flex_glitch_filter(&cfg_r, &g_filter_right);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to create flex glitch filter for right button: %s", esp_err_to_name(ret));
+      gpio_del_glitch_filter(g_filter_left);
+      g_filter_left = NULL;
+      return ret;
+    }
+    
+    gpio_glitch_filter_enable(g_filter_left);
+    gpio_glitch_filter_enable(g_filter_right);
+    
+    ESP_LOGI(TAG, "Flex glitch filter enabled (window: %lu ns)", (unsigned long)g_glitch_filter_window_ns);
+  }
+  
+  return ESP_OK;
+}
+
+uint8_t buttons_get_glitch_filter_mode(void) {
+  return g_glitch_filter_mode;
+}
+
+uint32_t buttons_get_glitch_filter_window_ns(void) {
+  return g_glitch_filter_window_ns;
+}
+
+esp_err_t buttons_set_glitch_filter(uint8_t mode, uint32_t window_ns) {
+  if (mode > GLITCH_FILTER_MODE_FLEX) {
+    ESP_LOGE(TAG, "Invalid glitch filter mode: %u (0=none, 1=simple, 2=flex)", mode);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  if (mode == GLITCH_FILTER_MODE_FLEX && 
+      (window_ns < GLITCH_FILTER_WINDOW_MIN_NS || window_ns > GLITCH_FILTER_WINDOW_MAX_NS)) {
+    ESP_LOGE(TAG, "Invalid glitch filter window: %lu ns (range: %d-%d)", 
+      (unsigned long)window_ns, GLITCH_FILTER_WINDOW_MIN_NS, GLITCH_FILTER_WINDOW_MAX_NS);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  g_glitch_filter_mode = mode;
+  if (mode == GLITCH_FILTER_MODE_FLEX) {
+    g_glitch_filter_window_ns = window_ns;
+  }
+  
+  // Apply the new filter settings
+  esp_err_t ret = apply_glitch_filter();
+  if (ret != ESP_OK) {
+    return ret;
+  }
+  
+  // Save to NVS
+  app_settings_save_u8(NVS_KEY_GLITCH_FILTER, mode);
+  if (mode == GLITCH_FILTER_MODE_FLEX) {
+    app_settings_save_u32(NVS_KEY_GLITCH_WINDOW, window_ns);
+  }
+  
+  return ESP_OK;
+}

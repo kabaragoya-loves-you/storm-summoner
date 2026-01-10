@@ -345,7 +345,7 @@ static esp_err_t calibrate_single_pad(int pad_index) {
     return ESP_ERR_INVALID_ARG;
   }
   
-  ESP_LOGI(TAG, "Calibrating pad index %d (Channel %d)...", pad_index, TOUCH_PADS[pad_index]);
+  ESP_LOGD(TAG, "Calibrating pad index %d (Channel %d)...", pad_index, TOUCH_PADS[pad_index]);
   
   for (int sample = 0; sample < CALIBRATION_SAMPLES; sample++) {
     uint32_t data[1];
@@ -416,7 +416,7 @@ static esp_err_t calibrate_single_pad(int pad_index) {
     if (calculated_threshold < min_gap) {
       calculated_threshold = min_gap;
     }
-    ESP_LOGI(TAG, "Pad 12: threshold=%"PRIu32" (%.1f%% of baseline %"PRIu32")", 
+    ESP_LOGD(TAG, "Pad 12: threshold=%"PRIu32" (%.1f%% of baseline %"PRIu32")", 
       calculated_threshold, (calculated_threshold * 100.0f / mean), mean);
   }
   
@@ -441,8 +441,8 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   s_pad_calibration[pad_index].variance = variance;
   s_pad_calibration[pad_index].valid = true;
   
-  ESP_LOGI(TAG, "Pad %d: baseline=%"PRIu32", threshold=%"PRIu32" (%.1f%%), noise=%.2f%% (%s)",
-    pad_index, mean, calculated_threshold, threshold_ratio * 100.0f, noise_ratio * 100.0f, noise_level);
+  ESP_LOGI(TAG, "Pad %d (Channel %d): baseline=%"PRIu32", threshold=%"PRIu32" (%.1f%%), noise=%.2f%% (%s)",
+    pad_index, TOUCH_PADS[pad_index], mean, calculated_threshold, threshold_ratio * 100.0f, noise_ratio * 100.0f, noise_level);
   
   return ESP_OK;
 }

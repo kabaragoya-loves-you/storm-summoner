@@ -6,7 +6,7 @@
 #include "esp_err.h"
 
 // Configuration
-#define BUTTON_DEBOUNCE_MS_DEFAULT 10
+#define BUTTON_DEBOUNCE_MS_DEFAULT 3
 #define BUTTON_DEBOUNCE_MS_MIN 0
 #define BUTTON_DEBOUNCE_MS_MAX 100
 #define BUTTON_LONG_PRESS_MS_DEFAULT 500
@@ -100,6 +100,40 @@ uint16_t buttons_get_long_press_threshold(void);
  * @return true if Right button is pressed (held) at boot
  */
 bool buttons_check_boot_right(void);
+
+/**
+ * Glitch filter modes for hardware debouncing
+ * 0 = None (software debounce + hysteresis only)
+ * 1 = Simple (filters very short pulses based on APB clock cycles)
+ * 2 = Flex (configurable window in nanoseconds)
+ */
+#define BUTTON_GLITCH_FILTER_MODE_NONE   0
+#define BUTTON_GLITCH_FILTER_MODE_SIMPLE 1
+#define BUTTON_GLITCH_FILTER_MODE_FLEX   2
+
+/**
+ * Get the current glitch filter mode
+ * 
+ * @return Current mode (0=none, 1=simple, 2=flex)
+ */
+uint8_t buttons_get_glitch_filter_mode(void);
+
+/**
+ * Get the current glitch filter window for flex mode
+ * 
+ * @return Window in nanoseconds
+ */
+uint32_t buttons_get_glitch_filter_window_ns(void);
+
+/**
+ * Set the glitch filter mode and window
+ * Changes take effect immediately. Setting is saved to NVS.
+ * 
+ * @param mode Filter mode (0=none, 1=simple, 2=flex)
+ * @param window_ns Window in nanoseconds (only used for flex mode, 100-4000ns)
+ * @return ESP_OK on success
+ */
+esp_err_t buttons_set_glitch_filter(uint8_t mode, uint32_t window_ns);
 
 #endif // BUTTONS_H
 

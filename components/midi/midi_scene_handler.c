@@ -85,7 +85,7 @@ static void handle_bump_event(const event_t* event, void* context) {
   action_t* action = &scene->bump;
   
   if (action->type != ACTION_NONE) {
-    ESP_LOGI(TAG, "Bump detected - executing %s", action_type_to_string(action->type));
+    ESP_LOGD(TAG, "Bump detected - executing %s", action_type_to_string(action->type));
     action_execute(action, 127, true);
   } else {
     ESP_LOGD(TAG, "Bump detected - no action assigned");

@@ -127,10 +127,11 @@ bool cv_is_cable_connected(void) {
   
   // Convert to mV (ADC_ATTEN_DB_12 → 0-3100mV range)
   int sw_mv = (sw_raw * 3100) / 4095;
-  (void)vcc_raw;  // VCC reading reserved for future use
+  int vcc_mv = (vcc_raw * 3100) / 4095;
   
   // Hardware-specific detection (production PCB vs dev board)
 #if HW_CONFIG_PRODUCTION
+  (void)vcc_mv;  // Production uses signature-based detection, not VCC comparison
   // Production PCB rev2: Signature + Variance cable detection
   //   When NO cable: switch is electrically connected to tip inside jack
   //     → sw voltage is stable at a predictable value based on current range
@@ -189,6 +190,7 @@ bool cv_is_cable_connected(void) {
   // Dev board behavior:
   //   Cable CONNECTED:    delta is small (~0-50mV, switch near VCC)
   //   Cable DISCONNECTED: delta is large (~400-500mV)
+  int delta = vcc_mv - sw_mv;
   bool is_connected = (delta < 200);
 #endif
   
