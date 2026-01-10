@@ -95,7 +95,7 @@ static void enqueue_calibration_request(touch_calibration_reason_t reason, bool 
   if (force) s_pending_calibration.force = true;
   s_pending_calibration.reason = reason;
   portEXIT_CRITICAL(&s_calibration_request_lock);
-  ESP_LOGI(TAG, "Calibration requested (%s)%s",
+  ESP_LOGD(TAG, "Calibration requested (%s)%s",
     calibration_reason_to_string(reason), force ? " [force]" : "");
 }
 
@@ -116,14 +116,14 @@ static bool fetch_calibration_request(calibration_request_t* out_request) {
 static void run_calibration_sequence(touch_calibration_reason_t reason, bool force) {
   const char* reason_str = calibration_reason_to_string(reason);
   const int max_attempts = 3;
-  ESP_LOGI(TAG, "Starting calibration sequence (%s)%s", reason_str, force ? " [forced]" : "");
+  ESP_LOGD(TAG, "Starting calibration sequence (%s)%s", reason_str, force ? " [forced]" : "");
   
   for (int attempt = 0; attempt < max_attempts; attempt++) {
     bool attempt_force = force || (attempt == max_attempts - 1);
     esp_err_t ret = touch_calibrate(attempt_force);
     
     if (ret == ESP_OK) {
-      ESP_LOGI(TAG, "Calibration succeeded on attempt %d (%s)", attempt + 1, reason_str);
+      ESP_LOGD(TAG, "Calibration succeeded on attempt %d (%s)", attempt + 1, reason_str);
       return;
     }
     
@@ -313,7 +313,7 @@ static esp_err_t backup_current_thresholds(void) {
   }
   
   s_backup_valid = true;
-  ESP_LOGI(TAG, "Current thresholds backed up successfully");
+  ESP_LOGD(TAG, "Current thresholds backed up successfully");
   return ESP_OK;
 }
 
@@ -602,7 +602,7 @@ void touch_thresholds_init(void) {
 }
 
 static esp_err_t touch_calibrate_body(bool force) {
-  ESP_LOGI(TAG, "Starting touch sensor calibration...");
+  ESP_LOGD(TAG, "Starting touch sensor calibration...");
   
   touch_sensor_handle_t sens_handle = touch_get_sensor_handle();
   if (sens_handle == NULL) {
@@ -671,7 +671,7 @@ static esp_err_t touch_calibrate_body(bool force) {
   
   vTaskDelay(pdMS_TO_TICKS(500));
   
-  ESP_LOGI(TAG, "Performing new calibration...");
+  ESP_LOGD(TAG, "Performing new calibration...");
   
   memset(s_pad_calibration, 0, sizeof(s_pad_calibration));
   

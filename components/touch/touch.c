@@ -473,7 +473,7 @@ static void touch_health_check_task(void *pvParameters) {
       if (touch_idle_time <= 86400000) {  // Max 24 hours
         // Trigger if no touch events for the configured interval
         if (touch_idle_time >= s_idle_calibration_interval_ms) {
-          ESP_LOGI(TAG, "Proactive idle calibration: no touch activity for %"PRIu32"ms",
+          ESP_LOGD(TAG, "Proactive idle calibration: no touch activity for %"PRIu32"ms",
             touch_idle_time);
           // Force=true to actually recalibrate, not just re-apply existing thresholds
           touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_IDLE, true);
