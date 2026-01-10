@@ -33,6 +33,17 @@
 #define GLITCH_FILTER_WINDOW_MIN_NS     100    // 100ns minimum
 #define GLITCH_FILTER_WINDOW_MAX_NS     4000   // 4µs maximum (hardware limit)
 
+// Debounce strategy modes
+// Mode 0: Symmetric - same debounce for press and release (default)
+// Mode 1: Asymmetric - full debounce on press, reduced on release
+#define DEBOUNCE_MODE_SYMMETRIC    0
+#define DEBOUNCE_MODE_ASYMMETRIC   1
+
+#define NVS_KEY_DEBOUNCE_MODE "btn_db_mode"
+#define NVS_KEY_DEBOUNCE_RELEASE "btn_db_rel"
+
+#define DEBOUNCE_RELEASE_MS_DEFAULT 1   // Default release debounce for asymmetric mode
+
 // Button state tracking
 typedef struct {
   bool pressed;
@@ -58,6 +69,13 @@ static uint8_t g_glitch_filter_mode = GLITCH_FILTER_MODE_NONE;
 static uint32_t g_glitch_filter_window_ns = GLITCH_FILTER_WINDOW_DEFAULT_NS;
 static gpio_glitch_filter_handle_t g_filter_left = NULL;
 static gpio_glitch_filter_handle_t g_filter_right = NULL;
+
+// Debounce strategy state
+static uint8_t g_debounce_mode = DEBOUNCE_MODE_SYMMETRIC;
+static uint16_t g_debounce_release_ms = DEBOUNCE_RELEASE_MS_DEFAULT;
+
+// Debug timing for button press rate testing
+static uint32_t g_last_press_time_ms = 0;
 
 // Forward declarations
 static void button_l_isr_handler(void* arg);
@@ -140,6 +158,20 @@ esp_err_t buttons_init(bool enable_logging) {
   if (ret == ESP_OK && glitch_window >= GLITCH_FILTER_WINDOW_MIN_NS && 
       glitch_window <= GLITCH_FILTER_WINDOW_MAX_NS) {
     g_glitch_filter_window_ns = glitch_window;
+  }
+
+  // Load debounce mode from NVS
+  uint8_t debounce_mode;
+  ret = app_settings_load_u8(NVS_KEY_DEBOUNCE_MODE, &debounce_mode);
+  if (ret == ESP_OK && debounce_mode <= DEBOUNCE_MODE_ASYMMETRIC) {
+    g_debounce_mode = debounce_mode;
+  }
+
+  // Load release debounce from NVS (for asymmetric mode)
+  uint16_t debounce_release;
+  ret = app_settings_load_u16(NVS_KEY_DEBOUNCE_RELEASE, &debounce_release);
+  if (ret == ESP_OK && debounce_release <= BUTTON_DEBOUNCE_MS_MAX) {
+    g_debounce_release_ms = debounce_release;
   }
 
   // Configure GPIO pins
@@ -225,8 +257,10 @@ esp_err_t buttons_init(bool enable_logging) {
   
   const char* filter_mode_str = (g_glitch_filter_mode == GLITCH_FILTER_MODE_NONE) ? "none" :
     (g_glitch_filter_mode == GLITCH_FILTER_MODE_SIMPLE) ? "simple" : "flex";
-  ESP_LOGI(TAG, "Buttons initialized (L: GPIO%d, R: GPIO%d, debounce: %ums, long: %ums, chord: %ums, glitch: %s)", 
-    PIN_BUTTON_L, PIN_BUTTON_R, g_debounce_ms, g_long_press_ms, g_chord_window_ms, filter_mode_str);
+  const char* debounce_mode_str = (g_debounce_mode == DEBOUNCE_MODE_SYMMETRIC) ? "sym" :
+    (g_debounce_mode == DEBOUNCE_MODE_ASYMMETRIC) ? "asym" : "edge";
+  ESP_LOGI(TAG, "Buttons initialized (L: GPIO%d, R: GPIO%d, debounce: %ums/%s, long: %ums, chord: %ums, glitch: %s)", 
+    PIN_BUTTON_L, PIN_BUTTON_R, g_debounce_ms, debounce_mode_str, g_long_press_ms, g_chord_window_ms, filter_mode_str);
   
   return ESP_OK;
 }
@@ -243,19 +277,23 @@ button_state_t buttons_get_state(void) {
 // ISR handler for left button
 static void IRAM_ATTR button_l_isr_handler(void* arg) {
   uint32_t now = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
+  int level = gpio_get_level(PIN_BUTTON_L);
+  bool is_press = (level == 0);  // Active low
   
-  // Debounce check
-  if (now - g_button_left.last_isr_timestamp < g_debounce_ms) {
+  // Determine debounce time based on mode
+  uint16_t debounce_time = g_debounce_ms;
+  if (g_debounce_mode == DEBOUNCE_MODE_ASYMMETRIC && !is_press) {
+    debounce_time = g_debounce_release_ms;
+  }
+  
+  if (now - g_button_left.last_isr_timestamp < debounce_time) {
     return;
   }
   g_button_left.last_isr_timestamp = now;
-
-  // Read current state (active low)
-  int level = gpio_get_level(PIN_BUTTON_L);
   
-  if (level == 0) {  // Button pressed (active low)
+  if (is_press) {
     button_process_press(BUTTON_ID_LEFT);
-  } else {  // Button released
+  } else {
     button_process_release(BUTTON_ID_LEFT);
   }
 }
@@ -263,19 +301,23 @@ static void IRAM_ATTR button_l_isr_handler(void* arg) {
 // ISR handler for right button
 static void IRAM_ATTR button_r_isr_handler(void* arg) {
   uint32_t now = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
+  int level = gpio_get_level(PIN_BUTTON_R);
+  bool is_press = (level == 0);  // Active low
   
-  // Debounce check
-  if (now - g_button_right.last_isr_timestamp < g_debounce_ms) {
+  // Determine debounce time based on mode
+  uint16_t debounce_time = g_debounce_ms;
+  if (g_debounce_mode == DEBOUNCE_MODE_ASYMMETRIC && !is_press) {
+    debounce_time = g_debounce_release_ms;
+  }
+  
+  if (now - g_button_right.last_isr_timestamp < debounce_time) {
     return;
   }
   g_button_right.last_isr_timestamp = now;
-
-  // Read current state (active low)
-  int level = gpio_get_level(PIN_BUTTON_R);
   
-  if (level == 0) {  // Button pressed (active low)
+  if (is_press) {
     button_process_press(BUTTON_ID_RIGHT);
-  } else {  // Button released
+  } else {
     button_process_release(BUTTON_ID_RIGHT);
   }
 }
@@ -342,7 +384,12 @@ static void button_process_press(uint8_t button_id) {
       // Start long press timer
       xTimerStartFromISR(button->long_press_timer, &higher_priority_woken);
       
-      if (g_logging_enabled) ESP_EARLY_LOGI(TAG, "Button %s pressed", (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT");
+      if (g_logging_enabled) {
+        uint32_t delta = now - g_last_press_time_ms;
+        g_last_press_time_ms = now;
+        ESP_EARLY_LOGI(TAG, "Button %s pressed (+%lu ms)", 
+          (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT", (unsigned long)delta);
+      }
     }
   }
 
@@ -448,8 +495,10 @@ static void button_chord_timer_callback(TimerHandle_t xTimer) {
     xTimerStart(button->long_press_timer, 0);
     
     if (g_logging_enabled) {
-      ESP_LOGI(TAG, "Button %s pressed", 
-        (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT");
+      uint32_t delta = now - g_last_press_time_ms;
+      g_last_press_time_ms = now;
+      ESP_LOGI(TAG, "Button %s pressed (+%lu ms)", 
+        (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT", (unsigned long)delta);
     }
   }
 }
@@ -688,6 +737,53 @@ esp_err_t buttons_set_glitch_filter(uint8_t mode, uint32_t window_ns) {
   if (mode == GLITCH_FILTER_MODE_FLEX) {
     app_settings_save_u32(NVS_KEY_GLITCH_WINDOW, window_ns);
   }
+  
+  return ESP_OK;
+}
+
+uint8_t buttons_get_debounce_mode(void) {
+  return g_debounce_mode;
+}
+
+uint16_t buttons_get_debounce_release(void) {
+  return g_debounce_release_ms;
+}
+
+esp_err_t buttons_set_debounce_mode(uint8_t mode) {
+  if (mode > DEBOUNCE_MODE_ASYMMETRIC) {
+    ESP_LOGE(TAG, "Invalid debounce mode: %u (0=symmetric, 1=asymmetric)", mode);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  g_debounce_mode = mode;
+  
+  // Save to NVS
+  esp_err_t ret = app_settings_save_u8(NVS_KEY_DEBOUNCE_MODE, mode);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to save debounce mode to NVS: %s", esp_err_to_name(ret));
+  }
+  
+  const char* mode_str = (mode == DEBOUNCE_MODE_SYMMETRIC) ? "symmetric" : "asymmetric";
+  ESP_LOGI(TAG, "Debounce mode set to %s", mode_str);
+  
+  return ESP_OK;
+}
+
+esp_err_t buttons_set_debounce_release(uint16_t release_ms) {
+  if (release_ms > BUTTON_DEBOUNCE_MS_MAX) {
+    ESP_LOGE(TAG, "Invalid release debounce: %u ms (max: %u)", release_ms, BUTTON_DEBOUNCE_MS_MAX);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
+  g_debounce_release_ms = release_ms;
+  
+  // Save to NVS
+  esp_err_t ret = app_settings_save_u16(NVS_KEY_DEBOUNCE_RELEASE, release_ms);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to save release debounce to NVS: %s", esp_err_to_name(ret));
+  }
+  
+  ESP_LOGI(TAG, "Release debounce set to %u ms", release_ms);
   
   return ESP_OK;
 }

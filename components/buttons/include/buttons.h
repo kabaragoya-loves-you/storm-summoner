@@ -12,7 +12,7 @@
 #define BUTTON_LONG_PRESS_MS_DEFAULT 500
 #define BUTTON_LONG_PRESS_MS_MIN 100
 #define BUTTON_LONG_PRESS_MS_MAX 5000
-#define BUTTON_CHORD_WINDOW_MS_DEFAULT 100
+#define BUTTON_CHORD_WINDOW_MS_DEFAULT 50
 #define BUTTON_CHORD_WINDOW_MS_MIN 0
 #define BUTTON_CHORD_WINDOW_MS_MAX 500
 
@@ -134,6 +134,46 @@ uint32_t buttons_get_glitch_filter_window_ns(void);
  * @return ESP_OK on success
  */
 esp_err_t buttons_set_glitch_filter(uint8_t mode, uint32_t window_ns);
+
+/**
+ * Debounce strategy modes
+ * 0 = Symmetric: same debounce for press and release (default)
+ * 1 = Asymmetric: full debounce on press, reduced on release (default 1ms)
+ */
+#define BUTTON_DEBOUNCE_MODE_SYMMETRIC    0
+#define BUTTON_DEBOUNCE_MODE_ASYMMETRIC   1
+
+/**
+ * Get the current debounce mode
+ * 
+ * @return Current mode (0=symmetric, 1=asymmetric)
+ */
+uint8_t buttons_get_debounce_mode(void);
+
+/**
+ * Get the release debounce time (for asymmetric mode)
+ * 
+ * @return Release debounce in milliseconds
+ */
+uint16_t buttons_get_debounce_release(void);
+
+/**
+ * Set the debounce mode
+ * Changes take effect immediately. Setting is saved to NVS.
+ * 
+ * @param mode Debounce mode (0=symmetric, 1=asymmetric)
+ * @return ESP_OK on success
+ */
+esp_err_t buttons_set_debounce_mode(uint8_t mode);
+
+/**
+ * Set the release debounce time (for asymmetric mode)
+ * Changes take effect immediately. Setting is saved to NVS.
+ * 
+ * @param release_ms Release debounce in milliseconds (0-100)
+ * @return ESP_OK on success
+ */
+esp_err_t buttons_set_debounce_release(uint16_t release_ms);
 
 #endif // BUTTONS_H
 

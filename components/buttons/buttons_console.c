@@ -7,7 +7,7 @@
 static const char* TAG = "buttons_console";
 
 static const char* registered_commands[] = {
-  "info", "debounce", "chord", "longpress", "glitchfilter"
+  "info", "debounce", "chord", "longpress", "glitchfilter", "debouncemode"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -19,15 +19,21 @@ static int cmd_info(int argc, char **argv) {
   uint16_t longpress = buttons_get_long_press_threshold();
   uint8_t glitch_mode = buttons_get_glitch_filter_mode();
   uint32_t glitch_window = buttons_get_glitch_filter_window_ns();
+  uint8_t debounce_mode = buttons_get_debounce_mode();
+  uint16_t debounce_release = buttons_get_debounce_release();
   
   const char* glitch_mode_str = (glitch_mode == BUTTON_GLITCH_FILTER_MODE_NONE) ? "none" :
     (glitch_mode == BUTTON_GLITCH_FILTER_MODE_SIMPLE) ? "simple" : "flex";
+  const char* debounce_mode_str = (debounce_mode == BUTTON_DEBOUNCE_MODE_SYMMETRIC) ? "symmetric" : "asymmetric";
   
   ESP_LOGI(TAG, "====== BUTTONS ======");
   ESP_LOGI(TAG, "Left: %s", state.left_pressed ? "pressed" : "released");
   ESP_LOGI(TAG, "Right: %s", state.right_pressed ? "pressed" : "released");
   ESP_LOGI(TAG, "Both: %s", state.both_pressed ? "pressed" : "released");
-  ESP_LOGI(TAG, "Debounce: %u ms", (unsigned)debounce);
+  ESP_LOGI(TAG, "Debounce: %u ms (%s)", (unsigned)debounce, debounce_mode_str);
+  if (debounce_mode == BUTTON_DEBOUNCE_MODE_ASYMMETRIC) {
+    ESP_LOGI(TAG, "  Release debounce: %u ms", (unsigned)debounce_release);
+  }
   ESP_LOGI(TAG, "Chord window: %u ms", (unsigned)chord);
   ESP_LOGI(TAG, "Long press: %u ms", (unsigned)longpress);
   if (glitch_mode == BUTTON_GLITCH_FILTER_MODE_FLEX) {
@@ -174,6 +180,64 @@ static int cmd_glitchfilter(int argc, char **argv) {
   return (ret == ESP_OK) ? 0 : 1;
 }
 
+// Command: debouncemode
+static int cmd_debouncemode(int argc, char **argv) {
+  if (argc < 2) {
+    // Show current value and usage
+    uint8_t mode = buttons_get_debounce_mode();
+    uint16_t release = buttons_get_debounce_release();
+    uint16_t press = buttons_get_debounce();
+    
+    const char* mode_str = (mode == BUTTON_DEBOUNCE_MODE_SYMMETRIC) ?
+      "symmetric (same for press/release)" : "asymmetric (different press/release)";
+    
+    ESP_LOGI(TAG, "Debounce mode: %s", mode_str);
+    ESP_LOGI(TAG, "  Press debounce: %u ms", (unsigned)press);
+    if (mode == BUTTON_DEBOUNCE_MODE_ASYMMETRIC) {
+      ESP_LOGI(TAG, "  Release debounce: %u ms", (unsigned)release);
+    }
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Usage: debouncemode <mode> [release_ms]");
+    ESP_LOGI(TAG, "  mode 0 = symmetric (same debounce for press and release)");
+    ESP_LOGI(TAG, "  mode 1 = asymmetric (full press debounce, configurable release, default 1ms)");
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Examples:");
+    ESP_LOGI(TAG, "  debouncemode 0        - symmetric mode (default)");
+    ESP_LOGI(TAG, "  debouncemode 1        - asymmetric with 1ms release debounce");
+    ESP_LOGI(TAG, "  debouncemode 1 0      - asymmetric with 0ms release debounce");
+    return 0;
+  }
+  
+  uint8_t mode = (uint8_t)atoi(argv[1]);
+  
+  esp_err_t ret = buttons_set_debounce_mode(mode);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set debounce mode: %s", esp_err_to_name(ret));
+    return 1;
+  }
+  
+  // If asymmetric mode and release time specified, set it
+  if (mode == BUTTON_DEBOUNCE_MODE_ASYMMETRIC && argc >= 3) {
+    uint16_t release_ms = (uint16_t)atoi(argv[2]);
+    ret = buttons_set_debounce_release(release_ms);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to set release debounce: %s", esp_err_to_name(ret));
+      return 1;
+    }
+  }
+  
+  const char* mode_str = (mode == BUTTON_DEBOUNCE_MODE_SYMMETRIC) ? "symmetric" : "asymmetric";
+  
+  if (mode == BUTTON_DEBOUNCE_MODE_ASYMMETRIC) {
+    ESP_LOGI(TAG, "Debounce mode set to %s (release: %u ms)", 
+      mode_str, (unsigned)buttons_get_debounce_release());
+  } else {
+    ESP_LOGI(TAG, "Debounce mode set to %s", mode_str);
+  }
+  
+  return 0;
+}
+
 esp_err_t buttons_console_init(void) {
   ESP_LOGI(TAG, "Registering buttons commands");
   
@@ -233,6 +297,15 @@ esp_err_t buttons_console_init(void) {
     .func = &cmd_glitchfilter,
   };
   esp_console_cmd_register(&glitchfilter_cmd);
+  
+  // debouncemode command
+  const esp_console_cmd_t debouncemode_cmd = {
+    .command = "debouncemode",
+    .help = "Get/set debounce strategy (0=symmetric, 1=asymmetric [release_ms])",
+    .hint = "[mode] [release_ms]",
+    .func = &cmd_debouncemode,
+  };
+  esp_console_cmd_register(&debouncemode_cmd);
   
   return ESP_OK;
 }
