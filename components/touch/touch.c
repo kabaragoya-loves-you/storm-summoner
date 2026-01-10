@@ -87,6 +87,11 @@ static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pa
 #define STUCK_TOUCH_TIMEOUT_DEFAULT_MS 10000  // Default: 10 seconds (allows musical holds)
 #define NVS_STUCK_TIMEOUT_KEY "stuck_timeout"
 
+// Proactive idle calibration: recalibrate if device has been idle for too long
+// This prevents drift from accumulating during long idle periods
+#define IDLE_CALIBRATION_INTERVAL_DEFAULT_MS (15 * 60 * 1000)  // Default: 15 minutes
+#define NVS_IDLE_CALIBRATION_KEY "idle_calib_ms"
+
 // Drift monitoring timing (integrated into health check to save memory)
 #define DRIFT_CHECK_INTERVAL_SECONDS 600  // Check for drift every 10 minutes
 #define DRIFT_STARTUP_DELAY_SECONDS 30    // Wait this long after boot before drift checks
@@ -94,6 +99,10 @@ static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pa
 
 // Configurable stuck touch timeout (loaded from NVS)
 static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
+
+// Proactive idle calibration tracking
+static uint32_t s_idle_calibration_interval_ms = IDLE_CALIBRATION_INTERVAL_DEFAULT_MS;
+static uint32_t s_last_calibration_time = 0;  // When calibration last completed
 
 // Statistics for debug logging
 static struct {
@@ -431,6 +440,8 @@ static void touch_health_check_task(void *pvParameters) {
     // Process any pending calibration requests (roughly once per second)
     if ((drift_check_counter % iterations_per_second) == 0) {
       if (touch_thresholds_process_pending()) {
+        // Calibration completed - update last calibration time
+        s_last_calibration_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
         drift_check_counter = startup_iterations; // Reset drift timer after calibration
       }
     }
@@ -445,6 +456,31 @@ static void touch_health_check_task(void *pvParameters) {
         if (AUTO_CALIBRATE_ON_DRIFT) {
           // Force=true because drift means the current calibration is stale
           touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_DRIFT, true);
+        }
+      }
+    }
+    
+    // 8. Proactive idle calibration - recalibrate if pads haven't been touched in a while
+    // This prevents drift from accumulating during extended idle periods (e.g. overnight)
+    // and ensures the device is always ready for input without surprising the user.
+    // "Idle" here means ONLY touch idle - MIDI, UART, CV activity is irrelevant.
+    // The countdown resets every time the user touches a pad.
+    if (s_idle_calibration_interval_ms > 0) {
+      uint32_t idle_now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+      uint32_t touch_idle_time = idle_now - s_last_any_touch_time;
+      
+      // Only proceed if timestamp is sane (protect against rollover/corruption)
+      if (touch_idle_time <= 86400000) {  // Max 24 hours
+        // Trigger if no touch events for the configured interval
+        if (touch_idle_time >= s_idle_calibration_interval_ms) {
+          ESP_LOGI(TAG, "Proactive idle calibration: no touch activity for %"PRIu32"ms",
+            touch_idle_time);
+          // Force=true to actually recalibrate, not just re-apply existing thresholds
+          touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_IDLE, true);
+          // Reset the touch timer to prevent repeated triggers every 250ms
+          // This effectively restarts the countdown
+          s_last_any_touch_time = idle_now;
+          s_last_calibration_time = idle_now;
         }
       }
     }
@@ -550,6 +586,18 @@ void touch_init(bool enable_logging) {
   } else {
     s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
     ESP_LOGI(TAG, "Using default stuck touch timeout: %"PRIu32" ms", s_stuck_touch_timeout_ms);
+  }
+  
+  // Load idle calibration interval from NVS (or use default)
+  uint32_t saved_idle_interval;
+  if (app_settings_load_u32(NVS_IDLE_CALIBRATION_KEY, &saved_idle_interval) == ESP_OK) {
+    s_idle_calibration_interval_ms = saved_idle_interval;
+    ESP_LOGI(TAG, "Loaded idle calibration interval from NVS: %"PRIu32" ms (%"PRIu32" min)",
+      saved_idle_interval, saved_idle_interval / 60000);
+  } else {
+    s_idle_calibration_interval_ms = IDLE_CALIBRATION_INTERVAL_DEFAULT_MS;
+    ESP_LOGI(TAG, "Using default idle calibration interval: %"PRIu32" ms (%"PRIu32" min)",
+      s_idle_calibration_interval_ms, s_idle_calibration_interval_ms / 60000);
   }
   
   // Step 1: Create touch sensor controller with sample configuration
@@ -666,6 +714,9 @@ void touch_init(bool enable_logging) {
   // Step 9: Initialize thresholds (loads from NVS or calibrates)
   // Now that benchmarks are reset, we can properly apply thresholds
   touch_thresholds_init();
+  
+  // Initialize calibration timestamp (used for proactive idle recalibration)
+  s_last_calibration_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
   
   // Step 9b: Reset benchmarks AGAIN after thresholds are applied
   // This is critical because loading new thresholds can cause transient glitches,
@@ -991,6 +1042,26 @@ void touch_query_pad(int pad_index) {
 void touch_enable_debug_logging(void) {
   ESP_LOGI(TAG, "=== TOUCH DEBUG DATA ===");
   
+  // Show timing information
+  uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  uint32_t touch_idle = now - s_last_any_touch_time;
+  
+  ESP_LOGI(TAG, "Timing:");
+  ESP_LOGI(TAG, "  Time since last touch: %"PRIu32" sec", touch_idle / 1000);
+  if (s_idle_calibration_interval_ms > 0) {
+    if (touch_idle >= s_idle_calibration_interval_ms) {
+      ESP_LOGI(TAG, "  Idle calibration: PENDING (interval=%"PRIu32" min)", 
+        s_idle_calibration_interval_ms / 60000);
+    } else {
+      uint32_t remaining = (s_idle_calibration_interval_ms - touch_idle) / 1000;
+      ESP_LOGI(TAG, "  Idle calibration: in %"PRIu32"m %"PRIu32"s if no touch",
+        remaining / 60, remaining % 60);
+    }
+  } else {
+    ESP_LOGI(TAG, "  Idle calibration: DISABLED");
+  }
+  ESP_LOGI(TAG, "  Stuck timeout: %"PRIu32" ms", s_stuck_touch_timeout_ms);
+  
   // Show statistics
   ESP_LOGI(TAG, "Event statistics:");
   ESP_LOGI(TAG, "  Total PRESS events: %"PRIu32, (unsigned)s_touch_stats.total_press_events);
@@ -1120,4 +1191,34 @@ void touch_set_stuck_timeout_ms(uint32_t timeout_ms) {
     ESP_LOGW(TAG, "Stuck touch timeout set to %"PRIu32" ms (NVS save failed: %s)", 
       timeout_ms, esp_err_to_name(err));
   }
+}
+
+uint32_t touch_get_idle_calibration_interval_ms(void) {
+  return s_idle_calibration_interval_ms;
+}
+
+void touch_set_idle_calibration_interval_ms(uint32_t interval_ms) {
+  s_idle_calibration_interval_ms = interval_ms;
+  
+  // Save to NVS
+  esp_err_t err = app_settings_save_u32(NVS_IDLE_CALIBRATION_KEY, interval_ms);
+  if (err == ESP_OK) {
+    if (interval_ms == 0) {
+      ESP_LOGI(TAG, "Idle calibration disabled (saved to NVS)");
+    } else {
+      ESP_LOGI(TAG, "Idle calibration interval set to %"PRIu32" ms (%"PRIu32" min) (saved to NVS)",
+        interval_ms, interval_ms / 60000);
+    }
+  } else {
+    ESP_LOGW(TAG, "Idle calibration interval set to %"PRIu32" ms (NVS save failed: %s)",
+      interval_ms, esp_err_to_name(err));
+  }
+}
+
+uint32_t touch_get_last_calibration_time_ms(void) {
+  return s_last_calibration_time;
+}
+
+uint32_t touch_get_last_touch_time_ms(void) {
+  return s_last_any_touch_time;
 }

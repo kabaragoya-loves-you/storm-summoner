@@ -18,6 +18,7 @@ typedef enum {
   TOUCH_CALIBRATION_REASON_DRIFT,
   TOUCH_CALIBRATION_REASON_BENCHMARK_CORRUPTION,
   TOUCH_CALIBRATION_REASON_MANUAL,
+  TOUCH_CALIBRATION_REASON_IDLE,  // Proactive calibration during idle period
 } touch_calibration_reason_t;
 
 void touch_thresholds_init(void);

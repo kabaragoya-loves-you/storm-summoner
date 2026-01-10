@@ -12,7 +12,7 @@
 static const char* TAG = "touch_console";
 
 static const char* registered_commands[] = {
-  "calibrate", "reset", "debug", "query", "endless", "odometer", "bipolar", "stucktimeout"
+  "calibrate", "reset", "debug", "query", "endless", "odometer", "bipolar", "stucktimeout", "idlecalib"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -332,6 +332,52 @@ static int cmd_stucktimeout(int argc, char **argv) {
   return 0;
 }
 
+// Command: idlecalib
+static int cmd_idlecalib(int argc, char **argv) {
+  if (argc < 2) {
+    // Show current value and status
+    uint32_t interval = touch_get_idle_calibration_interval_ms();
+    uint32_t last_touch = touch_get_last_touch_time_ms();
+    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    
+    if (interval == 0) {
+      ESP_LOGI(TAG, "Idle calibration: DISABLED");
+    } else {
+      ESP_LOGI(TAG, "Idle calibration: recalibrate after %"PRIu32" min without touch",
+        interval / 60000);
+    }
+    
+    uint32_t touch_idle = now - last_touch;
+    ESP_LOGI(TAG, "  Time since last touch: %"PRIu32" sec", touch_idle / 1000);
+    
+    if (interval > 0) {
+      if (touch_idle >= interval) {
+        ESP_LOGI(TAG, "  Status: Will calibrate on next health check cycle");
+      } else {
+        uint32_t remaining = (interval - touch_idle) / 1000;
+        uint32_t min = remaining / 60;
+        uint32_t sec = remaining % 60;
+        ESP_LOGI(TAG, "  Status: Next idle calibration in %"PRIu32"m %"PRIu32"s (if no touch)",
+          min, sec);
+      }
+    }
+    
+    ESP_LOGI(TAG, "Usage: idlecalib <minutes>  (set interval, 0 to disable)");
+    return 0;
+  }
+  
+  uint32_t minutes = (uint32_t)atoi(argv[1]);
+  uint32_t interval_ms = minutes * 60000;
+  touch_set_idle_calibration_interval_ms(interval_ms);
+  
+  if (interval_ms == 0) {
+    ESP_LOGI(TAG, "Idle calibration DISABLED");
+  } else {
+    ESP_LOGI(TAG, "Idle calibration: will recalibrate after %"PRIu32" min without touch", minutes);
+  }
+  return 0;
+}
+
 esp_err_t touch_console_init(void) {
   ESP_LOGI(TAG, "Registering touch commands");
   
@@ -406,6 +452,15 @@ esp_err_t touch_console_init(void) {
     .func = &cmd_stucktimeout,
   };
   esp_console_cmd_register(&stucktimeout_cmd);
+  
+  // idlecalib command
+  const esp_console_cmd_t idlecalib_cmd = {
+    .command = "idlecalib",
+    .help = "Get/set idle calibration interval in minutes (0 to disable, default 15)",
+    .hint = "[minutes]",
+    .func = &cmd_idlecalib,
+  };
+  esp_console_cmd_register(&idlecalib_cmd);
   
   return ESP_OK;
 }

@@ -45,6 +45,17 @@ const bool *touch_get_pressed_states(void);
 uint32_t touch_get_stuck_timeout_ms(void);
 void touch_set_stuck_timeout_ms(uint32_t timeout_ms);
 
+// Idle calibration interval configuration (how long device can be idle before recalibrating)
+// This prevents drift from accumulating during extended idle periods.
+// Set to 0 to disable proactive idle calibration.
+// Default: 15 minutes (900000 ms)
+uint32_t touch_get_idle_calibration_interval_ms(void);
+void touch_set_idle_calibration_interval_ms(uint32_t interval_ms);
+
+// Get timestamps for debugging/monitoring
+uint32_t touch_get_last_calibration_time_ms(void);
+uint32_t touch_get_last_touch_time_ms(void);
+
 // Query detailed information for a specific pad
 void touch_query_pad(int pad_index);
 

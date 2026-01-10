@@ -82,6 +82,8 @@ static const char* calibration_reason_to_string(touch_calibration_reason_t reaso
       return "benchmark corruption";
     case TOUCH_CALIBRATION_REASON_MANUAL:
       return "manual";
+    case TOUCH_CALIBRATION_REASON_IDLE:
+      return "idle";
     default:
       return "unspecified";
   }
