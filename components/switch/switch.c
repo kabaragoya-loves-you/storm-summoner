@@ -6,12 +6,11 @@
 
 #define TAG "SWITCH"
 
-// TMUX1113 (used in rev 10+) has inverted logic on channels 2 and 3 (SEL2/SEL3)
-// For CV switches (P0-P3): P1 and P2 are inverted
-// For Expression switches (P4-P7): P5 and P6 are inverted
-// This means: to turn ON these channels, the bit must be LOW (0)
-//             to turn OFF these channels, the bit must be HIGH (1)
-#define TMUX1113_INVERTED_MASK 0x66  // Bits 1,2,5,6 = 0b01100110
+// TMUX1113 has inverted logic on channels 2 and 3 (active-low select)
+// Expression switches (P4-P7): TMUX1113 on ALL boards - P5,P6 inverted
+// CV switches (P0-P3): SN74HC4066 on Rev 9 (no inversion), TMUX1113 on Rev 10+ (P1,P2 inverted)
+#define EXPRESSION_INVERTED_MASK 0x60  // Bits 5,6 = 0b01100000 (always applied)
+#define CV_INVERTED_MASK         0x06  // Bits 1,2 = 0b00000110 (Rev 10+ only)
 
 // PCA9534 configuration
 #define SWITCH_I2C_ADDR        I2C_ADDR_SWITCH
@@ -32,16 +31,19 @@ static bool s_initialized = false;
 static bool s_use_tmux1113_logic = false;  // Set during init based on revision
 
 // Convert logical mask to physical mask for I2C output
-// On TMUX1113 (rev 10+), channels 1,2,5,6 have inverted logic
+// Expression (P4-P7): TMUX1113 on ALL boards - always invert P5,P6
+// CV (P0-P3): SN74HC4066 on Rev 9 (no inversion), TMUX1113 on Rev 10+ (invert P1,P2)
 static uint8_t logical_to_physical_mask(uint8_t logical_mask) {
-  if (!s_use_tmux1113_logic) return logical_mask;
-  
-  // For TMUX1113: invert bits 1,2,5,6
-  // If logical bit is 1 (ON), physical should be 0 for inverted channels
-  // If logical bit is 0 (OFF), physical should be 1 for inverted channels
-  // Also: inverted channels need to be HIGH when OFF (idle state)
   uint8_t physical = logical_mask;
-  physical ^= TMUX1113_INVERTED_MASK;  // XOR to invert the relevant bits
+  
+  // Expression channels: always apply TMUX1113 inversion (all boards have TMUX1113 for expression)
+  physical ^= EXPRESSION_INVERTED_MASK;
+  
+  // CV channels: only apply inversion on Rev 10+ (Rev 9 uses SN74HC4066 which is all active-high)
+  if (s_use_tmux1113_logic) {
+    physical ^= CV_INVERTED_MASK;
+  }
+  
   return physical;
 }
 
@@ -52,12 +54,14 @@ void switch_init(void) {
     return;
   }
   
-  // Detect if we need TMUX1113 inverted logic (revision 10+)
+  // Detect hardware revision for CV switch type
+  // - Rev 9: CV uses SN74HC4066 (all active-high), Expression uses TMUX1113
+  // - Rev 10+: Both CV and Expression use TMUX1113 (channels 2,3 are active-low)
+  // Expression TMUX1113 inversion is always applied; s_use_tmux1113_logic controls CV only
   hw_revision_t rev = revision_get();
-  s_use_tmux1113_logic = (rev >= HW_REV_10);
-  if (s_use_tmux1113_logic) {
-    ESP_LOGI(TAG, "Using TMUX1113 logic (rev %s): P1,P2,P5,P6 inverted", revision_get_string());
-  }
+  s_use_tmux1113_logic = (rev >= HW_REV_10);  // CV inversion only on Rev 10+
+  ESP_LOGI(TAG, "Switch config: Expression=TMUX1113 (P5,P6 inverted), CV=%s",
+    s_use_tmux1113_logic ? "TMUX1113 (P1,P2 inverted)" : "SN74HC4066 (no inversion)");
   
   // Get I2C bus handle
   i2c_master_bus_handle_t bus_handle = i2c_bus_handle();
