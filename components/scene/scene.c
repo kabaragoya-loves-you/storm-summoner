@@ -3529,9 +3529,11 @@ touchwheel_mode_t scene_get_persisted_touchwheel_mode(uint8_t scene_index) {
       mode = TOUCHWHEEL_MODE_DOUBLE_CC;
     } else if (strcmp(mode_str, "velocity") == 0) {
       mode = TOUCHWHEEL_MODE_VELOCITY;
+    } else if (strcmp(mode_str, "lfo_rate") == 0) {
+      mode = TOUCHWHEEL_MODE_LFO_RATE;
     }
   }
-  
+
   cJSON_Delete(root);
   return mode;
 }

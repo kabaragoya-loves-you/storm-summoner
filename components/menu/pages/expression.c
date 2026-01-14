@@ -10,6 +10,7 @@
 #include "device_config.h"
 #include "assets_manager.h"
 #include "assets_types.h"
+#include "lfo.h"
 #include "ui.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -662,11 +663,19 @@ lv_obj_t* menu_page_expression_create(void) {
   // Check if CV is in CV/Gate mode (locks expression to Gate)
   input_mode_t cv_mode = scene_get_cv_input_mode(scene_index);
   bool locked_by_cv_gate = (cv_mode == INPUT_MODE_NOTE);
-  
+
+  // Check if either LFO is using expression for rate control
+  bool locked_by_lfo = (scene->lfo1_config.rate_mode == LFO_RATE_MODE_EXPRESSION) ||
+                       (scene->lfo2_config.rate_mode == LFO_RATE_MODE_EXPRESSION);
+
   // Mode selector (always first)
   if (locked_by_cv_gate) {
     // Show read-only mode indicating CV/Gate controls this
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\nGate (Locked)");
+    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false};
+  } else if (locked_by_lfo) {
+    // Show read-only mode indicating LFO controls this
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\nLFO Rate (Locked)");
     s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false};
   } else {
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s", 
