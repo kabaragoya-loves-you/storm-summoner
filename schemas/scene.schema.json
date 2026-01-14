@@ -191,6 +191,34 @@
       "type": "boolean",
       "default": false,
       "description": "When true, animation follows transport controls (play/pause/stop). When false, animation always runs at current BPM."
+    },
+    "lfo1_config": {
+      "$ref": "#/definitions/lfo_config",
+      "description": "LFO1 waveform and rate configuration"
+    },
+    "lfo2_config": {
+      "$ref": "#/definitions/lfo_config",
+      "description": "LFO2 waveform and rate configuration"
+    },
+    "lfo1": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "LFO1 output mapping (CC/note, curve, polarity)"
+    },
+    "lfo2": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "LFO2 output mapping (CC/note, curve, polarity)"
+    },
+    "lfo1_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "default": "fixed",
+      "description": "Velocity mode for LFO1 note output"
+    },
+    "lfo2_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "default": "fixed",
+      "description": "Velocity mode for LFO2 note output"
     }
   },
   "definitions": {
@@ -304,6 +332,72 @@
           "minimum": 100,
           "maximum": 10000,
           "default": 1000
+        }
+      }
+    },
+    "lfo_config": {
+      "type": "object",
+      "description": "LFO waveform and rate configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this LFO is active"
+        },
+        "waveform": {
+          "type": "string",
+          "enum": ["sine", "triangle", "square", "saw_up", "saw_down", "sample_hold", "custom"],
+          "default": "sine",
+          "description": "LFO waveform shape"
+        },
+        "rate_mode": {
+          "type": "string",
+          "enum": ["free", "tempo", "touchwheel", "expression", "cv", "als", "proximity"],
+          "default": "free",
+          "description": "Rate mode: free (Hz-based), tempo (note division sync), touchwheel, expression, cv, als, or proximity (sensor-controlled)"
+        },
+        "start_mode": {
+          "type": "string",
+          "enum": ["running", "paused", "transport"],
+          "default": "running",
+          "description": "Start mode: running (starts when scene loads), paused (requires action to start), or transport (follows transport state)"
+        },
+        "reset_phase": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, LFO restarts from beginning on enable. When false, continues from previous position."
+        },
+        "restore_on_stop": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, sends the waveform's starting value (phase 0) when LFO stops."
+        },
+        "rate_hz": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 20.0,
+          "default": 1.0,
+          "description": "Free-running rate in Hz (when rate_mode=free)"
+        },
+        "division": {
+          "type": "string",
+          "enum": ["4_bars", "2_bars", "1_bar", "half", "quarter", "eighth", "sixteenth", "32nd"],
+          "default": "quarter",
+          "description": "Tempo-synced note division (when rate_mode=tempo)"
+        },
+        "phase_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 0,
+          "description": "Phase offset (0-255 = 0-360 degrees)"
+        },
+        "duty_cycle": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 64,
+          "description": "Square wave duty cycle (0-127 = 0-100%)"
         }
       }
     },

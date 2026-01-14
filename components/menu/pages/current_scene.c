@@ -24,22 +24,6 @@ static char s_divider_label[24];
 static char s_clock_label[24];
 static char s_transport_label[24];
 
-// Forward declarations for stub submenus
-static lv_obj_t* stub_submenu_create(void);
-
-// ============================================================================
-// Stub Submenu (placeholder for unimplemented features)
-// ============================================================================
-
-static const char* s_stub_title = "Coming Soon";
-
-static lv_obj_t* stub_submenu_create(void) {
-  static menu_item_t stub_items[] = {
-    { "Not yet implemented", NULL, NULL, false }
-  };
-  return menu_create_page(s_stub_title, stub_items, 1);
-}
-
 // Navigation callbacks for assignment submenus
 static void nav_to_touchwheel(void* user_data) {
   (void)user_data;
@@ -76,10 +60,27 @@ static void nav_to_buttons(void* user_data) {
   menu_navigate_to("Buttons", menu_page_buttons_scene_create);
 }
 
+static void nav_to_lfo1(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("LFO1", menu_page_lfo1_scene_create);
+}
+
+static void nav_to_lfo2(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("LFO2", menu_page_lfo2_scene_create);
+}
+
+static menu_item_t s_lfo_menu_items[2];
+
+static lv_obj_t* lfo_submenu_create(void) {
+  s_lfo_menu_items[0] = (menu_item_t){ "LFO1", nav_to_lfo1, NULL, true };
+  s_lfo_menu_items[1] = (menu_item_t){ "LFO2", nav_to_lfo2, NULL, true };
+  return menu_create_page_2line("LFO", s_lfo_menu_items, 2);
+}
+
 static void nav_to_lfo(void* user_data) {
   (void)user_data;
-  s_stub_title = "LFO";
-  menu_navigate_to("LFO", stub_submenu_create);
+  menu_navigate_to("LFO", lfo_submenu_create);
 }
 
 // Action config context for bump (single action, skip intermediate page)

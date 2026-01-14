@@ -1,11 +1,13 @@
 #include "action.h"
 #include "midi_messages.h"
+#include "midi_lfo_scene_handler.h"
 #include "device_config.h"
 #include "scene.h"
 #include "touchwheel_mode_mapping.h"
 #include "transport.h"
 #include "tempo.h"
 #include "assets_manager.h"
+#include "lfo.h"
 #include "esp_log.h"
 #include "esp_random.h"
 
@@ -46,7 +48,11 @@ static const char* action_type_names[] = {
   [ACTION_SOSTENUTO] = "Sostenuto",
   [ACTION_TOUCHWHEEL_MODE] = "Touchwheel",
   [ACTION_TOUCHWHEEL_HOLD] = "Touchwheel Hold",
-  [ACTION_TOUCHWHEEL_CYCLE] = "Touchwheel Cycle"
+  [ACTION_TOUCHWHEEL_CYCLE] = "Touchwheel Cycle",
+  [ACTION_LFO_START] = "LFO Start",
+  [ACTION_LFO_STOP] = "LFO Stop",
+  [ACTION_LFO_TOGGLE] = "LFO Toggle",
+  [ACTION_LFO_SHAPE] = "LFO Shape"
 };
 
 esp_err_t action_init(void) {
@@ -479,6 +485,98 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
           (idx + 1) % mutable_action->params.tw_mode.num_modes;
       }
       break;
+
+    case ACTION_LFO_START:
+      if (is_press) {
+        uint8_t slot = action->params.lfo.slot;
+        scene_t* scene = scene_get_current();
+        if (slot == 1 || slot == 3) {
+          lfo_enable(0, true);
+          if (scene) scene->lfo1.enabled = true;
+        }
+        if (slot == 2 || slot == 3) {
+          lfo_enable(1, true);
+          if (scene) scene->lfo2.enabled = true;
+        }
+        ESP_LOGI(TAG, "LFO Start: slot %d", slot);
+      }
+      break;
+
+    case ACTION_LFO_STOP:
+      if (is_press) {
+        uint8_t slot = action->params.lfo.slot;
+        scene_t* scene = scene_get_current();
+        if (slot == 1 || slot == 3) {
+          // Restore CC value before disabling if configured
+          if (lfo_get_restore_on_stop(0)) {
+            midi_lfo_scene_handler_restore_value(0);
+          }
+          lfo_enable(0, false);
+          if (scene) scene->lfo1.enabled = false;
+        }
+        if (slot == 2 || slot == 3) {
+          if (lfo_get_restore_on_stop(1)) {
+            midi_lfo_scene_handler_restore_value(1);
+          }
+          lfo_enable(1, false);
+          if (scene) scene->lfo2.enabled = false;
+        }
+        ESP_LOGI(TAG, "LFO Stop: slot %d", slot);
+      }
+      break;
+
+    case ACTION_LFO_TOGGLE:
+      if (is_press) {
+        uint8_t slot = action->params.lfo.slot;
+        scene_t* scene = scene_get_current();
+        if (slot == 1 || slot == 3) {
+          bool new_state = !lfo_is_enabled(0);
+          // Restore CC value before disabling if configured
+          if (!new_state && lfo_get_restore_on_stop(0)) {
+            midi_lfo_scene_handler_restore_value(0);
+          }
+          lfo_enable(0, new_state);
+          if (scene) scene->lfo1.enabled = new_state;
+        }
+        if (slot == 2 || slot == 3) {
+          bool new_state = !lfo_is_enabled(1);
+          if (!new_state && lfo_get_restore_on_stop(1)) {
+            midi_lfo_scene_handler_restore_value(1);
+          }
+          lfo_enable(1, new_state);
+          if (scene) scene->lfo2.enabled = new_state;
+        }
+        ESP_LOGI(TAG, "LFO Toggle: slot %d", slot);
+      }
+      break;
+
+    case ACTION_LFO_SHAPE:
+      if (is_press) {
+        action_t* mutable_action = (action_t*)action;
+        uint8_t num_shapes = mutable_action->params.lfo.num_shapes;
+
+        // Safety: clamp num_shapes to valid range (2-8)
+        if (num_shapes < 2 || num_shapes > 8) {
+          ESP_LOGW(TAG, "LFO Shape: num_shapes=%d invalid, skipping", num_shapes);
+          break;
+        }
+
+        uint8_t idx = mutable_action->params.lfo.current_index;
+        // Bounds check against both num_shapes and array size
+        if (idx >= num_shapes || idx >= 8) idx = 0;
+
+        uint8_t shape = mutable_action->params.lfo.shapes[idx];
+        uint8_t slot = mutable_action->params.lfo.slot;
+        
+        if (slot == 1 || slot == 3) lfo_set_waveform(0, (lfo_waveform_t)shape);
+        if (slot == 2 || slot == 3) lfo_set_waveform(1, (lfo_waveform_t)shape);
+        
+        ESP_LOGI(TAG, "LFO Shape: slot %d, shape %d", slot, shape);
+        
+        // Advance to next shape
+        mutable_action->params.lfo.current_index = (idx + 1) % num_shapes;
+      }
+      break;
       
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
@@ -590,6 +688,27 @@ action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode)
   return action;
 }
 
+action_t action_create_lfo_start(uint8_t slot) {
+  action_t action = {0};
+  action.type = ACTION_LFO_START;
+  action.params.lfo.slot = slot;
+  return action;
+}
+
+action_t action_create_lfo_stop(uint8_t slot) {
+  action_t action = {0};
+  action.type = ACTION_LFO_STOP;
+  action.params.lfo.slot = slot;
+  return action;
+}
+
+action_t action_create_lfo_toggle(uint8_t slot) {
+  action_t action = {0};
+  action.type = ACTION_LFO_TOGGLE;
+  action.params.lfo.slot = slot;
+  return action;
+}
+
 // Actions that require press/release (hold) behavior
 // These should NOT be assigned to bump or on_load
 static const action_type_t hold_actions[] = {
@@ -600,6 +719,8 @@ static const action_type_t hold_actions[] = {
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_SUSTAIN,
   ACTION_SOSTENUTO,
+  ACTION_LFO_TOGGLE,  // Toggle needs discrete press
+  ACTION_LFO_SHAPE,   // Shape cycle needs discrete press
 };
 
 bool action_requires_hold(action_type_t type) {

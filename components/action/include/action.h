@@ -56,6 +56,12 @@ typedef enum {
   ACTION_TOUCHWHEEL_HOLD,     // Set mode on press, restore on release
   ACTION_TOUCHWHEEL_CYCLE,    // Cycle through touchwheel modes
   
+  // LFO control
+  ACTION_LFO_START,           // Start LFO (slot: 1, 2, or 3=both)
+  ACTION_LFO_STOP,            // Stop LFO
+  ACTION_LFO_TOGGLE,          // Toggle LFO state
+  ACTION_LFO_SHAPE,           // Cycle through waveform shapes
+  
   ACTION_MAX
 } action_type_t;
 
@@ -124,6 +130,14 @@ typedef struct {
       uint8_t modes[8];       // For cycle: mode values
       uint8_t current_index;  // Current position in cycle
     } tw_mode;
+    
+    // For LFO actions (start, stop, toggle, shape)
+    struct {
+      uint8_t slot;           // 1, 2, or 3 (both)
+      uint8_t num_shapes;     // For shape cycle: 2-8 shapes
+      uint8_t shapes[8];      // lfo_waveform_t values
+      uint8_t current_index;  // Current position in cycle
+    } lfo;
   } params;
 } action_t;
 
@@ -154,6 +168,9 @@ action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);
 action_t action_create_touchwheel_mode(uint8_t mode);
 action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode);
+action_t action_create_lfo_start(uint8_t slot);
+action_t action_create_lfo_stop(uint8_t slot);
+action_t action_create_lfo_toggle(uint8_t slot);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);

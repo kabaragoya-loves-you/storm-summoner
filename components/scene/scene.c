@@ -2,6 +2,7 @@
 #include "touchwheel.h"
 #include "touch.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "midi_messages.h"
 #include "device_config.h"
 #include "assets_manager.h"
@@ -13,6 +14,7 @@
 #include "input_manager.h"
 #include "ui.h"
 #include "memory_utils.h"
+#include "lfo.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -37,6 +39,7 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene);
 
 // Global scene manager instance
 static scene_manager_t g_scene_manager = {
+  .cache = NULL,  // Allocated from PSRAM in scene_init()
   .current_cache_idx = 0,
   .current_scene_index = 0,
   .pending_scene_index = 0,
@@ -179,6 +182,16 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->time_signature.numerator = 4;                 // Default to 4/4 time
   scene->time_signature.denominator = 4;
   scene->use_transport = false;                        // Default: animation always runs
+  
+  // LFO configuration
+  scene->lfo1_config = lfo_config_create_default();
+  scene->lfo2_config = lfo_config_create_default();
+  scene->lfo1 = continuous_mapping_create(80);         // CC80 = General Purpose 5
+  scene->lfo1.enabled = false;                         // Disabled by default
+  scene->lfo2 = continuous_mapping_create(81);         // CC81 = General Purpose 6
+  scene->lfo2.enabled = false;                         // Disabled by default
+  scene->lfo1_velocity_mode = VELOCITY_MODE_FIXED;
+  scene->lfo2_velocity_mode = VELOCITY_MODE_FIXED;
 }
 
 // Cleanup existing touchwheel instance
@@ -209,14 +222,15 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   
   // Check if bank mode is enabled for extended preset range
   bank_select_mode_t bank_mode = device_config_get_bank_mode();
+  uint16_t min_preset = device_config_get_min_preset();
   uint16_t max_preset = device_config_get_max_preset();
   
-  ESP_LOGD(TAG, "PC touchwheel: bank_mode=%d, max_preset=%u, wrap=%d, count=%u",
-    bank_mode, (unsigned)max_preset, device_config_get_preset_wrap(),
-    (unsigned)device_config_get_preset_count());
+  ESP_LOGD(TAG, "PC touchwheel: bank_mode=%d, min=%u, max=%u, wrap=%d, count=%u",
+    bank_mode, (unsigned)min_preset, (unsigned)max_preset,
+    device_config_get_preset_wrap(), (unsigned)device_config_get_preset_count());
   
   if (bank_mode != BANK_SELECT_NONE) {
-    // Bank mode: use preset-based calculation, respecting device preset count
+    // Bank mode: use preset-based calculation, respecting device preset count and indexBase
     uint16_t base_preset = device_config_has_pending_program()
                            ? device_config_get_pending_preset()
                            : device_config_get_preset();
@@ -224,14 +238,14 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
     
     // Clamp or wrap at boundaries based on wrap setting
     bool wrap = device_config_get_preset_wrap();
+    int range = (int)max_preset - (int)min_preset + 1;
     if (wrap) {
-      // Wrap around
-      int range = (int)max_preset + 1;
-      while (new_preset < 0) new_preset += range;
+      // Wrap around within valid range
+      while (new_preset < (int)min_preset) new_preset += range;
       while (new_preset > (int)max_preset) new_preset -= range;
     } else {
       // Clamp at boundaries (no wrap)
-      if (new_preset < 0) new_preset = 0;
+      if (new_preset < (int)min_preset) new_preset = (int)min_preset;
       if (new_preset > (int)max_preset) new_preset = (int)max_preset;
     }
     
@@ -250,24 +264,25 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
     return;
   }
   
-  // No bank mode: 0-127 behavior (can't exceed 127 without bank select)
+  // No bank mode: respect indexBase, cap at 127
+  uint8_t min_prog = (uint8_t)min_preset;
+  uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
   uint8_t base = device_config_has_pending_program() 
                  ? device_config_get_pending_program() 
                  : device_config_get_program();
   int new_program = (int)base + value;
   
-  // Cap max at 127 for non-bank mode (can't send higher without bank select)
-  uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
   bool should_clamp = !device_config_get_preset_wrap() || !config_get_program_wrap();
+  int range = (int)max_prog - (int)min_prog + 1;
   
   if (should_clamp) {
     // Clamp at boundaries (no wrap)
-    if (new_program < 0) new_program = 0;
+    if (new_program < (int)min_prog) new_program = (int)min_prog;
     if (new_program > (int)max_prog) new_program = (int)max_prog;
   } else {
-    // Wrap around (only if not locked)
-    while (new_program < 0) new_program += (max_prog + 1);
-    while (new_program > (int)max_prog) new_program -= (max_prog + 1);
+    // Wrap around within valid range (only if not locked)
+    while (new_program < (int)min_prog) new_program += range;
+    while (new_program > (int)max_prog) new_program -= range;
   }
   
   if ((uint8_t)new_program == base) return;
@@ -294,6 +309,13 @@ static int s_touchwheel_prev_pitch_bend = 0;       // Previous value for smooth 
 static int s_touchwheel_aftertouch = 0;            // 0-127
 static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
 static volatile uint8_t s_touchwheel_velocity = 100; // For TOUCHWHEEL_MODE_VELOCITY
+static volatile uint8_t s_touchwheel_lfo_rate = 64;   // For TOUCHWHEEL_MODE_LFO_RATE (64 = center/default)
+
+// External LFO rate sources (updated from sensor events)
+static volatile uint8_t s_expression_lfo_rate = 64;
+static volatile uint8_t s_cv_lfo_rate = 64;
+static volatile uint8_t s_als_lfo_rate = 64;
+static volatile uint8_t s_proximity_lfo_rate = 64;
 
 // Pitch bend return-to-center animation
 // Precalculated eased return sequences for each distance bucket
@@ -686,6 +708,31 @@ static void touchwheel_velocity_callback(int value, void* user_data) {
   ESP_LOGD(TAG, "Touchwheel velocity: %d", new_velocity);
 }
 
+// Callback for LFO rate mode touchwheel (internal only - modulates LFO speed)
+static void touchwheel_lfo_rate_callback(int value, void* user_data) {
+  (void)user_data;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  uint8_t new_rate;
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    // Endless mode: value is delta, accumulate
+    int current = (int)s_touchwheel_lfo_rate;
+    current += value * 2;  // Scale delta
+    if (current < 0) current = 0;
+    if (current > 127) current = 127;
+    new_rate = (uint8_t)current;
+  } else {
+    // Odometer mode: value is 0-100%, scale to 0-127
+    new_rate = (value * 127) / 100;
+    if (new_rate > 127) new_rate = 127;
+  }
+
+  s_touchwheel_lfo_rate = new_rate;
+  ESP_LOGD(TAG, "Touchwheel LFO rate: %d", new_rate);
+}
+
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
   // Don't send MIDI in programming mode
@@ -926,7 +973,20 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       // Velocity callback just updates the internal velocity value
       output = touchwheel_output_callback_create(touchwheel_velocity_callback, NULL);
       break;
-      
+
+    case TOUCHWHEEL_MODE_LFO_RATE:
+      // LFO rate mode: internal only - modulates LFO speed
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "lfo_rate (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "lfo_rate (odometer)";
+      }
+      // LFO rate callback just updates the internal LFO rate value
+      output = touchwheel_output_callback_create(touchwheel_lfo_rate_callback, NULL);
+      break;
+
     case TOUCHWHEEL_MODE_PADS:
     default:
       // No touchwheel instance needed for pads mode
@@ -950,6 +1010,28 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
   }
 }
 
+// Event handler for LFO rate source inputs
+static void lfo_rate_source_event_handler(const event_t* event, void* context) {
+  (void)context;
+  
+  switch (event->type) {
+    case EVENT_EXPRESSION_VALUE:
+      s_expression_lfo_rate = event->data.sensor.value;
+      break;
+    case EVENT_CV_VALUE:
+      s_cv_lfo_rate = event->data.sensor.value;
+      break;
+    case EVENT_SENSOR_ALS:
+      s_als_lfo_rate = event->data.sensor.value;
+      break;
+    case EVENT_SENSOR_PROXIMITY:
+      s_proximity_lfo_rate = event->data.sensor.value;
+      break;
+    default:
+      break;
+  }
+}
+
 esp_err_t scene_init(void) {
   if (g_scene_manager.initialized) {
     ESP_LOGW(TAG, "Scene manager already initialized");
@@ -968,6 +1050,18 @@ esp_err_t scene_init(void) {
   uint8_t change_val;
   if (app_settings_load_u8(NVS_KEY_CHANGE_MODE, &change_val) == ESP_OK) {
     g_scene_manager.change_mode = (scene_change_mode_t)change_val;
+  }
+  
+  // Allocate scene cache from PSRAM to preserve internal RAM for SPI DMA
+  if (g_scene_manager.cache == NULL) {
+    g_scene_manager.cache = heap_caps_malloc(SCENE_CACHE_SIZE * sizeof(scene_cache_entry_t),
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (g_scene_manager.cache == NULL) {
+      ESP_LOGE(TAG, "Failed to allocate scene cache from PSRAM");
+      return ESP_ERR_NO_MEM;
+    }
+    ESP_LOGI(TAG, "Allocated scene cache (%d bytes) from PSRAM", 
+      SCENE_CACHE_SIZE * (int)sizeof(scene_cache_entry_t));
   }
   
   // Initialize cache
@@ -1045,15 +1139,24 @@ esp_err_t scene_init(void) {
   g_scene_manager.cache[0].index = 0;
   g_scene_manager.cache[0].valid = true;
 
+  // Subscribe to sensor events for LFO rate sources
+  event_bus_subscribe(EVENT_EXPRESSION_VALUE, lfo_rate_source_event_handler, NULL);
+  event_bus_subscribe(EVENT_CV_VALUE, lfo_rate_source_event_handler, NULL);
+  event_bus_subscribe(EVENT_SENSOR_ALS, lfo_rate_source_event_handler, NULL);
+  event_bus_subscribe(EVENT_SENSOR_PROXIMITY, lfo_rate_source_event_handler, NULL);
+
   g_scene_manager.initialized = true;
-  
+
   const char* mode_str = (g_scene_manager.mode == SCENE_MODE_SINGLE) ? "Single" :
                          (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   ESP_LOGI(TAG, "Scene manager initialized: mode=%s, total_scenes=%d", mode_str, g_scene_manager.num_scenes);
   
   // Initialize device current_program from scene's program_number
+  // For PRESET_SYNC mode, use min_preset (respects device's indexBase)
   scene_t* initial_scene = &g_scene_manager.cache[0].scene;
-  uint8_t initial_program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? 0 : initial_scene->program_number;
+  uint8_t initial_program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC)
+                            ? (uint8_t)device_config_get_min_preset()
+                            : initial_scene->program_number;
   device_config_set_program(initial_program);
   
   // Log PC send status
@@ -1081,6 +1184,11 @@ esp_err_t scene_init(void) {
       action_execute(&initial_scene->on_load[i], 127, true);
     }
   }
+  
+  // Apply LFO configurations from scene to LFO engine, then apply start modes
+  lfo_apply_config(0, &initial_scene->lfo1_config);
+  lfo_apply_config(1, &initial_scene->lfo2_config);
+  lfo_apply_start_modes();
   
   // Setup touchwheel instance for non-buttons modes
   scene_setup_touchwheel_for_mode(initial_scene);
@@ -1175,7 +1283,10 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   scene_t* new_scene = &g_scene_manager.cache[cache_idx].scene;
   
   // Update device current_program and send PC based on mode
-  uint8_t program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? scene_index : new_scene->program_number;
+  // For PRESET_SYNC mode, offset scene_index by device's indexBase
+  uint8_t program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC)
+                    ? (uint8_t)(scene_index + device_config_get_min_preset())
+                    : new_scene->program_number;
   
   if (new_scene->send_pc_on_load) {
     device_config_set_program(program);
@@ -1209,6 +1320,11 @@ esp_err_t scene_set_current(uint8_t scene_index) {
       action_execute(&new_scene->on_load[i], 127, true);
     }
   }
+  
+  // Apply LFO configurations from scene to LFO engine, then apply start modes
+  lfo_apply_config(0, &new_scene->lfo1_config);
+  lfo_apply_config(1, &new_scene->lfo2_config);
+  lfo_apply_start_modes();
   
   // Setup touchwheel instance for non-buttons modes
   scene_cleanup_touchwheel();
@@ -1488,6 +1604,7 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
     case TOUCHWHEEL_MODE_DOUBLE_CC: mode_str = "double_cc"; break;
     case TOUCHWHEEL_MODE_CONTINUOUS: mode_str = "continuous"; break;
     case TOUCHWHEEL_MODE_VELOCITY: mode_str = "velocity"; break;
+    case TOUCHWHEEL_MODE_LFO_RATE: mode_str = "lfo_rate"; break;
     default: mode_str = "unknown"; break;
   }
   ESP_LOGI(TAG, "Scene %d touchwheel mode set to %s", scene_index + 1, mode_str);
@@ -2198,6 +2315,30 @@ uint8_t scene_get_touchwheel_velocity(void) {
   return s_touchwheel_velocity;
 }
 
+uint8_t scene_get_touchwheel_lfo_rate(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_LFO_RATE) {
+    return 64;  // Default center value when not in LFO rate mode
+  }
+  return s_touchwheel_lfo_rate;
+}
+
+uint8_t scene_get_expression_lfo_rate(void) {
+  return s_expression_lfo_rate;
+}
+
+uint8_t scene_get_cv_lfo_rate(void) {
+  return s_cv_lfo_rate;
+}
+
+uint8_t scene_get_als_lfo_rate(void) {
+  return s_als_lfo_rate;
+}
+
+uint8_t scene_get_proximity_lfo_rate(void) {
+  return s_proximity_lfo_rate;
+}
+
 // Helper to get scene filename
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size) {
   snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
@@ -2237,7 +2378,11 @@ static const char* action_type_json_names[] = {
   [ACTION_SOSTENUTO] = "sostenuto",
   [ACTION_TOUCHWHEEL_MODE] = "touchwheel",
   [ACTION_TOUCHWHEEL_HOLD] = "touchwheel_hold",
-  [ACTION_TOUCHWHEEL_CYCLE] = "touchwheel_cycle"
+  [ACTION_TOUCHWHEEL_CYCLE] = "touchwheel_cycle",
+  [ACTION_LFO_START] = "lfo_start",
+  [ACTION_LFO_STOP] = "lfo_stop",
+  [ACTION_LFO_TOGGLE] = "lfo_toggle",
+  [ACTION_LFO_SHAPE] = "lfo_shape"
 };
 
 // Helper to convert action type string to enum
@@ -2407,8 +2552,19 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddItemToArray(modes, cJSON_CreateNumber(action->params.tw_mode.modes[i]));
     }
     cJSON_AddItemToObject(obj, "modes", modes);
+  } else if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||
+             action->type == ACTION_LFO_TOGGLE) {
+    cJSON_AddNumberToObject(obj, "slot", action->params.lfo.slot);
+  } else if (action->type == ACTION_LFO_SHAPE) {
+    cJSON_AddNumberToObject(obj, "slot", action->params.lfo.slot);
+    cJSON_AddNumberToObject(obj, "num_shapes", action->params.lfo.num_shapes);
+    cJSON* shapes = cJSON_CreateArray();
+    for (int i = 0; i < action->params.lfo.num_shapes && i < 8; i++) {
+      cJSON_AddItemToArray(shapes, cJSON_CreateNumber(action->params.lfo.shapes[i]));
+    }
+    cJSON_AddItemToObject(obj, "shapes", shapes);
   }
-  
+
   return obj;
 }
 
@@ -2592,6 +2748,37 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
+  // Parse LFO actions
+  if (action.type == ACTION_LFO_START || action.type == ACTION_LFO_STOP ||
+      action.type == ACTION_LFO_TOGGLE || action.type == ACTION_LFO_SHAPE) {
+    cJSON* slot = cJSON_GetObjectItem(obj, "slot");
+    if (slot) action.params.lfo.slot = slot->valueint;
+    
+    if (action.type == ACTION_LFO_SHAPE) {
+      cJSON* num_shapes = cJSON_GetObjectItem(obj, "num_shapes");
+      cJSON* shapes = cJSON_GetObjectItem(obj, "shapes");
+      if (num_shapes) {
+        int ns = num_shapes->valueint;
+        // Clamp to valid range: 2-8 (need at least 2 shapes to cycle)
+        if (ns < 2) ns = 2;
+        if (ns > 8) ns = 8;
+        action.params.lfo.num_shapes = (uint8_t)ns;
+      }
+      if (shapes && cJSON_IsArray(shapes)) {
+        int count = cJSON_GetArraySize(shapes);
+        if (count > 8) count = 8;
+        for (int i = 0; i < count; i++) {
+          cJSON* item = cJSON_GetArrayItem(shapes, i);
+          if (item) action.params.lfo.shapes[i] = (uint8_t)item->valueint;
+        }
+        // Ensure num_shapes doesn't exceed actual array count
+        if (action.params.lfo.num_shapes > count) {
+          action.params.lfo.num_shapes = (uint8_t)count;
+        }
+      }
+    }
+  }
+  
   return action;
 }
 
@@ -2759,6 +2946,80 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
   if (idle_timeout) mapping->idle_timeout_ms = idle_timeout->valueint;
 }
 
+// Serialize LFO config to JSON
+static cJSON* lfo_config_to_json(const lfo_config_t* config) {
+  cJSON* obj = cJSON_CreateObject();
+
+  cJSON_AddBoolToObject(obj, "enabled", config->enabled);
+  cJSON_AddStringToObject(obj, "waveform", lfo_waveform_to_string(config->waveform));
+  cJSON_AddStringToObject(obj, "rate_mode", lfo_rate_mode_to_string(config->rate_mode));
+  cJSON_AddStringToObject(obj, "start_mode", lfo_start_mode_to_string(config->start_mode));
+  cJSON_AddBoolToObject(obj, "reset_phase", config->reset_phase);
+  cJSON_AddBoolToObject(obj, "restore_on_stop", config->restore_on_stop);
+  cJSON_AddNumberToObject(obj, "rate_hz", config->rate_hz_x100 / 100.0);
+  cJSON_AddStringToObject(obj, "division", lfo_division_to_string(config->division));
+  cJSON_AddNumberToObject(obj, "phase_offset", config->phase_offset);
+  cJSON_AddNumberToObject(obj, "duty_cycle", config->duty_cycle);
+  cJSON_AddNumberToObject(obj, "floor", config->floor);
+  cJSON_AddNumberToObject(obj, "ceiling", config->ceiling);
+
+  return obj;
+}
+
+// Deserialize LFO config from JSON
+static void json_to_lfo_config(cJSON* obj, lfo_config_t* config) {
+  if (!obj || !config) return;
+  
+  cJSON* enabled = cJSON_GetObjectItem(obj, "enabled");
+  if (enabled) config->enabled = cJSON_IsTrue(enabled);
+  
+  cJSON* waveform = cJSON_GetObjectItem(obj, "waveform");
+  if (waveform && cJSON_IsString(waveform)) {
+    config->waveform = lfo_waveform_from_string(waveform->valuestring);
+  }
+  
+  cJSON* rate_mode = cJSON_GetObjectItem(obj, "rate_mode");
+  if (rate_mode && cJSON_IsString(rate_mode)) {
+    config->rate_mode = lfo_rate_mode_from_string(rate_mode->valuestring);
+  }
+
+  cJSON* start_mode = cJSON_GetObjectItem(obj, "start_mode");
+  if (start_mode && cJSON_IsString(start_mode)) {
+    config->start_mode = lfo_start_mode_from_string(start_mode->valuestring);
+  }
+
+  cJSON* reset_phase = cJSON_GetObjectItem(obj, "reset_phase");
+  if (reset_phase) config->reset_phase = cJSON_IsTrue(reset_phase);
+
+  cJSON* restore_on_stop = cJSON_GetObjectItem(obj, "restore_on_stop");
+  if (restore_on_stop) config->restore_on_stop = cJSON_IsTrue(restore_on_stop);
+
+  cJSON* rate_hz = cJSON_GetObjectItem(obj, "rate_hz");
+  if (rate_hz && cJSON_IsNumber(rate_hz)) {
+    float hz = (float)rate_hz->valuedouble;
+    if (hz < 0.05f) hz = 0.05f;
+    if (hz > 20.0f) hz = 20.0f;
+    config->rate_hz_x100 = (uint16_t)(hz * 100.0f);
+  }
+  
+  cJSON* division = cJSON_GetObjectItem(obj, "division");
+  if (division && cJSON_IsString(division)) {
+    config->division = lfo_division_from_string(division->valuestring);
+  }
+  
+  cJSON* phase_offset = cJSON_GetObjectItem(obj, "phase_offset");
+  if (phase_offset) config->phase_offset = (uint8_t)phase_offset->valueint;
+
+  cJSON* duty_cycle = cJSON_GetObjectItem(obj, "duty_cycle");
+  if (duty_cycle) config->duty_cycle = (uint8_t)duty_cycle->valueint;
+
+  cJSON* floor_val = cJSON_GetObjectItem(obj, "floor");
+  if (floor_val) config->floor = (uint8_t)floor_val->valueint;
+
+  cJSON* ceiling_val = cJSON_GetObjectItem(obj, "ceiling");
+  if (ceiling_val) config->ceiling = (uint8_t)ceiling_val->valueint;
+}
+
 // Scene JSON serialization
 static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* root = cJSON_CreateObject();
@@ -2782,6 +3043,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
     case TOUCHWHEEL_MODE_AFTERTOUCH: tw_mode_str = "aftertouch"; break;
     case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
     case TOUCHWHEEL_MODE_VELOCITY: tw_mode_str = "velocity"; break;
+    case TOUCHWHEEL_MODE_LFO_RATE: tw_mode_str = "lfo_rate"; break;
     default: tw_mode_str = "continuous"; break;
   }
   cJSON_AddStringToObject(root, "touchwheel_mode", tw_mode_str);
@@ -2875,6 +3137,21 @@ static cJSON* scene_to_json(const scene_t* scene) {
   
   cJSON_AddBoolToObject(root, "use_transport", scene->use_transport);
   
+  // Serialize LFO configurations and mappings
+  cJSON_AddItemToObject(root, "lfo1_config", lfo_config_to_json(&scene->lfo1_config));
+  cJSON_AddItemToObject(root, "lfo2_config", lfo_config_to_json(&scene->lfo2_config));
+  cJSON_AddItemToObject(root, "lfo1", continuous_mapping_to_json(&scene->lfo1));
+  cJSON_AddItemToObject(root, "lfo2", continuous_mapping_to_json(&scene->lfo2));
+  
+  // Serialize LFO velocity modes
+  const char* lfo1_vel_str = (scene->lfo1_velocity_mode == VELOCITY_MODE_FIXED) ? "fixed" :
+                             (scene->lfo1_velocity_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "gate_voltage" : "touchwheel";
+  cJSON_AddStringToObject(root, "lfo1_velocity_mode", lfo1_vel_str);
+  
+  const char* lfo2_vel_str = (scene->lfo2_velocity_mode == VELOCITY_MODE_FIXED) ? "fixed" :
+                             (scene->lfo2_velocity_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "gate_voltage" : "touchwheel";
+  cJSON_AddStringToObject(root, "lfo2_velocity_mode", lfo2_vel_str);
+  
   return root;
 }
 
@@ -2918,6 +3195,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(mode_str, "aftertouch") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_AFTERTOUCH;
     else if (strcmp(mode_str, "double_cc") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_DOUBLE_CC;
     else if (strcmp(mode_str, "velocity") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_VELOCITY;
+    else if (strcmp(mode_str, "lfo_rate") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_LFO_RATE;
     // Legacy: nrpn/rpn modes removed, map to continuous for backwards compatibility
     else if (strcmp(mode_str, "nrpn") == 0 || strcmp(mode_str, "rpn") == 0) {
       scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
@@ -3124,6 +3402,45 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* use_transport = cJSON_GetObjectItem(root, "use_transport");
   if (use_transport && cJSON_IsBool(use_transport)) {
     scene->use_transport = cJSON_IsTrue(use_transport);
+  }
+
+  // Deserialize LFO configurations and mappings
+  cJSON* lfo1_config = cJSON_GetObjectItem(root, "lfo1_config");
+  if (lfo1_config) json_to_lfo_config(lfo1_config, &scene->lfo1_config);
+  
+  cJSON* lfo2_config = cJSON_GetObjectItem(root, "lfo2_config");
+  if (lfo2_config) json_to_lfo_config(lfo2_config, &scene->lfo2_config);
+  
+  cJSON* lfo1_mapping = cJSON_GetObjectItem(root, "lfo1");
+  if (lfo1_mapping) json_to_continuous_mapping(lfo1_mapping, &scene->lfo1);
+
+  cJSON* lfo2_mapping = cJSON_GetObjectItem(root, "lfo2");
+  if (lfo2_mapping) json_to_continuous_mapping(lfo2_mapping, &scene->lfo2);
+
+  // Force LFO curves to LINEAR (curves don't apply to LFO waveforms)
+  // Also force min/max to 0/127 - floor/ceiling is now applied in lfo_config at full resolution
+  scene->lfo1.curve.type = CURVE_LINEAR;
+  scene->lfo1.min_value = 0;
+  scene->lfo1.max_value = 127;
+  scene->lfo2.curve.type = CURVE_LINEAR;
+  scene->lfo2.min_value = 0;
+  scene->lfo2.max_value = 127;
+
+  // Deserialize LFO velocity modes
+  cJSON* lfo1_vel_mode = cJSON_GetObjectItem(root, "lfo1_velocity_mode");
+  if (lfo1_vel_mode && cJSON_IsString(lfo1_vel_mode)) {
+    const char* s = lfo1_vel_mode->valuestring;
+    if (strcmp(s, "fixed") == 0) scene->lfo1_velocity_mode = VELOCITY_MODE_FIXED;
+    else if (strcmp(s, "gate_voltage") == 0) scene->lfo1_velocity_mode = VELOCITY_MODE_GATE_VOLTAGE;
+    else if (strcmp(s, "touchwheel") == 0) scene->lfo1_velocity_mode = VELOCITY_MODE_TOUCHWHEEL;
+  }
+  
+  cJSON* lfo2_vel_mode = cJSON_GetObjectItem(root, "lfo2_velocity_mode");
+  if (lfo2_vel_mode && cJSON_IsString(lfo2_vel_mode)) {
+    const char* s = lfo2_vel_mode->valuestring;
+    if (strcmp(s, "fixed") == 0) scene->lfo2_velocity_mode = VELOCITY_MODE_FIXED;
+    else if (strcmp(s, "gate_voltage") == 0) scene->lfo2_velocity_mode = VELOCITY_MODE_GATE_VOLTAGE;
+    else if (strcmp(s, "touchwheel") == 0) scene->lfo2_velocity_mode = VELOCITY_MODE_TOUCHWHEEL;
   }
 
   return ESP_OK;

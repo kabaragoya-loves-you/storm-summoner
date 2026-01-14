@@ -117,7 +117,8 @@ uint16_t device_config_get_preset_count(void);
 esp_err_t device_config_set_preset_count(uint16_t count);
 bool device_config_get_preset_wrap(void);
 esp_err_t device_config_set_preset_wrap(bool wrap);
-uint16_t device_config_get_max_preset(void);  // Returns preset_count-1
+uint16_t device_config_get_min_preset(void);  // Returns preset_base (0 or 1 based on device)
+uint16_t device_config_get_max_preset(void);  // Returns preset_base + preset_count - 1
 
 // MIDI clock output control
 bool device_config_get_send_clock(void);

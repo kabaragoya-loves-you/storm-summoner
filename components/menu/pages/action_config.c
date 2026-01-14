@@ -3,6 +3,7 @@
 #include "menu_pages.h"
 #include "scene.h"
 #include "action.h"
+#include "lfo.h"
 #include "touchwheel_mode_mapping.h"
 #include "tempo.h"
 #include "device_config.h"
@@ -87,6 +88,7 @@ static char s_scene_label[LABEL_BUFFER_SETS][40];
 static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
+static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 
 // Menu items for submenu pages
 #define MAX_DETAIL_ITEMS 12
@@ -134,6 +136,10 @@ static const action_type_t s_all_action_types[] = {
   ACTION_TOUCHWHEEL_MODE,
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_TOUCHWHEEL_CYCLE,
+  ACTION_LFO_START,
+  ACTION_LFO_STOP,
+  ACTION_LFO_TOGGLE,
+  ACTION_LFO_SHAPE,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -192,6 +198,10 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_TOUCHWHEEL_MODE: return "Touchwheel";
     case ACTION_TOUCHWHEEL_HOLD: return "Touchwheel Hold";
     case ACTION_TOUCHWHEEL_CYCLE: return "Touchwheel Cycle";
+    case ACTION_LFO_START: return "LFO Start";
+    case ACTION_LFO_STOP: return "LFO Stop";
+    case ACTION_LFO_TOGGLE: return "LFO Toggle";
+    case ACTION_LFO_SHAPE: return "LFO Shape";
     default: return "Unknown";
   }
 }
@@ -207,6 +217,8 @@ static bool is_on_load_allowed(action_type_t type) {
     case ACTION_RECORD:
     case ACTION_RANDOMIZE:
     case ACTION_RESET:
+    case ACTION_LFO_START:
+    case ACTION_LFO_STOP:
       return true;
     default:
       return false;
@@ -589,6 +601,21 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.tw_mode.num_modes = 2;
       action->params.tw_mode.modes[0] = 0;
       action->params.tw_mode.modes[1] = 0;
+    }
+    
+    // Set defaults for LFO actions (slot 1 = LFO1)
+    if (new_type == ACTION_LFO_START || new_type == ACTION_LFO_STOP ||
+        new_type == ACTION_LFO_TOGGLE) {
+      action->params.lfo.slot = 1;  // LFO1
+    }
+    
+    // Set defaults for LFO Shape (cycle between sine and triangle)
+    if (new_type == ACTION_LFO_SHAPE) {
+      action->params.lfo.slot = 1;  // LFO1
+      action->params.lfo.num_shapes = 2;
+      action->params.lfo.shapes[0] = LFO_WAVEFORM_SINE;
+      action->params.lfo.shapes[1] = LFO_WAVEFORM_TRIANGLE;
+      action->params.lfo.current_index = 0;
     }
     
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
@@ -2704,6 +2731,52 @@ static void nav_to_randomize_slot(void* user_data) {
 }
 
 // ============================================================================
+// LFO Slot Roller (for LFO actions)
+// ============================================================================
+
+static const char* LFO_SLOT_OPTIONS = "LFO 1\nLFO 2\nBoth";
+
+static void lfo_slot_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // Map roller index to slot value: 0->1, 1->2, 2->3
+  action_t* action = s_ctx->target_action;
+  action->params.lfo.slot = (uint8_t)(selected_index + 1);
+  
+  ESP_LOGI(TAG, "LFO slot set to %u", (unsigned)action->params.lfo.slot);
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_slot_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  uint8_t slot = action->params.lfo.slot;
+  
+  // Map slot value to roller index: 1->0, 2->1, 3->2
+  uint32_t current_idx = (slot > 0 && slot <= 3) ? slot - 1 : 0;
+  
+  return menu_create_roller_page("Target", LFO_SLOT_OPTIONS, current_idx,
+    lfo_slot_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_slot(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Target", lfo_slot_roller_create);
+}
+
+// ============================================================================
 // Navigation Helpers
 // ============================================================================
 
@@ -3041,6 +3114,23 @@ lv_obj_t* action_config_detail_page_create(void) {
         s_randomize_slot_labels[buf][i], nav_to_randomize_slot, (void*)(uintptr_t)i, true
       };
     }
+  }
+  
+  // Show LFO slot selector for LFO actions
+  if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||
+      action->type == ACTION_LFO_TOGGLE || action->type == ACTION_LFO_SHAPE) {
+    uint8_t slot = action->params.lfo.slot;
+    const char* slot_name;
+    switch (slot) {
+      case 1: slot_name = "LFO 1"; break;
+      case 2: slot_name = "LFO 2"; break;
+      case 3: slot_name = "Both"; break;
+      default: slot_name = "LFO 1"; action->params.lfo.slot = 1; break;  // Fix invalid default
+    }
+    snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
+    };
   }
   
   const char* title = s_ctx->detail_title ? s_ctx->detail_title : "Action";

@@ -473,9 +473,19 @@ static void send_program_with_bank(uint8_t channel, uint8_t bank, uint8_t progra
 }
 
 esp_err_t device_config_set_program(uint8_t program) {
-  if (program > 127) {
-    ESP_LOGE(TAG, "Invalid program number %d (must be 0-127)", program);
-    return ESP_ERR_INVALID_ARG;
+  // For non-bank mode, clamp to device's valid program range
+  uint16_t min_preset = device_config_get_min_preset();
+  uint16_t max_preset = device_config_get_max_preset();
+  uint8_t min_prog = (uint8_t)min_preset;
+  uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
+  
+  if (program < min_prog) {
+    ESP_LOGD(TAG, "Program %d below min %d, clamping", program, min_prog);
+    program = min_prog;
+  }
+  if (program > max_prog) {
+    ESP_LOGD(TAG, "Program %d exceeds max %d, clamping", program, max_prog);
+    program = max_prog;
   }
   
   g_device_config.current_program = program;
@@ -498,6 +508,8 @@ esp_err_t device_config_set_program(uint8_t program) {
 
 esp_err_t device_config_program_next(void) {
   bool wrap = g_device_config.preset_wrap;
+  uint16_t min_preset = device_config_get_min_preset();
+  uint16_t max_preset = device_config_get_max_preset();
   
   if (g_device_config.bank_select_mode != BANK_SELECT_NONE) {
     // Bank mode: use preset-based logic
@@ -505,10 +517,9 @@ esp_err_t device_config_program_next(void) {
     uint16_t base_preset = g_device_config.has_pending_program 
                            ? (g_device_config.pending_bank * 128 + g_device_config.pending_program)
                            : device_config_get_preset();
-    uint16_t max_preset = device_config_get_max_preset();
     uint16_t next_preset = base_preset + 1;
     if (next_preset > max_preset) {
-      next_preset = wrap ? 0 : max_preset;  // Wrap to 0 or clamp at max
+      next_preset = wrap ? min_preset : max_preset;  // Wrap to min or clamp at max
     }
     
     if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
@@ -523,8 +534,8 @@ esp_err_t device_config_program_next(void) {
     }
   }
   
-  // No bank mode: respect preset count, cap at 127
-  uint16_t max_preset = device_config_get_max_preset();
+  // No bank mode: respect preset count and indexBase, cap at 127
+  uint8_t min_prog = (uint8_t)min_preset;
   uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
   // Use pending program if one exists, otherwise current
   uint8_t base = g_device_config.has_pending_program 
@@ -532,7 +543,7 @@ esp_err_t device_config_program_next(void) {
                  : g_device_config.current_program;
   uint8_t next = base + 1;
   if (next > max_prog) {
-    next = wrap ? 0 : max_prog;  // Wrap to 0 or clamp at max
+    next = wrap ? min_prog : max_prog;  // Wrap to min or clamp at max
   }
   
   if (g_device_config.pc_mode == PC_MODE_IMMEDIATE) {
@@ -547,6 +558,8 @@ esp_err_t device_config_program_next(void) {
 
 esp_err_t device_config_program_prev(void) {
   bool wrap = g_device_config.preset_wrap;
+  uint16_t min_preset = device_config_get_min_preset();
+  uint16_t max_preset = device_config_get_max_preset();
   
   if (g_device_config.bank_select_mode != BANK_SELECT_NONE) {
     // Bank mode: use preset-based logic
@@ -554,10 +567,9 @@ esp_err_t device_config_program_prev(void) {
     uint16_t base_preset = g_device_config.has_pending_program 
                            ? (g_device_config.pending_bank * 128 + g_device_config.pending_program)
                            : device_config_get_preset();
-    uint16_t max_preset = device_config_get_max_preset();
     uint16_t prev_preset;
-    if (base_preset == 0) {
-      prev_preset = wrap ? max_preset : 0;  // Wrap to max or stay at 0
+    if (base_preset <= min_preset) {
+      prev_preset = wrap ? max_preset : min_preset;  // Wrap to max or stay at min
     } else {
       prev_preset = base_preset - 1;
     }
@@ -574,16 +586,16 @@ esp_err_t device_config_program_prev(void) {
     }
   }
   
-  // No bank mode: respect preset count, cap at 127
-  uint16_t max_preset = device_config_get_max_preset();
+  // No bank mode: respect preset count and indexBase, cap at 127
+  uint8_t min_prog = (uint8_t)min_preset;
   uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
   // Use pending program if one exists, otherwise current
   uint8_t base = g_device_config.has_pending_program 
                  ? g_device_config.pending_program 
                  : g_device_config.current_program;
   uint8_t prev;
-  if (base == 0) {
-    prev = wrap ? max_prog : 0;  // Wrap to max or stay at 0
+  if (base <= min_prog) {
+    prev = wrap ? max_prog : min_prog;  // Wrap to max or stay at min
   } else {
     prev = base - 1;
   }
@@ -620,9 +632,15 @@ bool device_config_has_pending_program(void) {
 }
 
 esp_err_t device_config_set_pending_program(uint8_t program) {
-  if (program > 127) {
-    return ESP_ERR_INVALID_ARG;
-  }
+  // Clamp to device's valid program range
+  uint16_t min_preset = device_config_get_min_preset();
+  uint16_t max_preset = device_config_get_max_preset();
+  uint8_t min_prog = (uint8_t)min_preset;
+  uint8_t max_prog = (max_preset > 127) ? 127 : (uint8_t)max_preset;
+  
+  if (program < min_prog) program = min_prog;
+  if (program > max_prog) program = max_prog;
+  
   g_device_config.pending_program = program;
   g_device_config.has_pending_program = true;
   ESP_LOGI(TAG, "Pending program: %d (confirm to send)", program);
@@ -708,8 +726,14 @@ uint16_t device_config_get_preset(void) {
 }
 
 esp_err_t device_config_set_preset(uint16_t preset) {
+  uint16_t min_preset = device_config_get_min_preset();
   uint16_t max_preset = device_config_get_max_preset();
   
+  // Clamp to valid range based on device's indexBase and preset count
+  if (preset < min_preset) {
+    ESP_LOGD(TAG, "Preset %u below min %u, clamping", (unsigned)preset, (unsigned)min_preset);
+    preset = min_preset;
+  }
   if (preset > max_preset) {
     ESP_LOGD(TAG, "Preset %u exceeds max %u, clamping", (unsigned)preset, (unsigned)max_preset);
     preset = max_preset;
@@ -722,9 +746,8 @@ esp_err_t device_config_set_preset(uint16_t preset) {
   uint8_t channel = g_device_config.midi_channel - 1;
   send_program_with_bank(channel, g_device_config.current_bank, g_device_config.current_program);
   
-  // Display preset as 1-based for user (internal preset 0 = display preset 1)
   ESP_LOGI(TAG, "Preset %u (bank %d, PC %d) on channel %d",
-           (unsigned)(preset + 1), g_device_config.current_bank, 
+           (unsigned)preset, g_device_config.current_bank, 
            g_device_config.current_program, g_device_config.midi_channel);
   
   return ESP_OK;
@@ -735,9 +758,12 @@ uint16_t device_config_get_pending_preset(void) {
 }
 
 esp_err_t device_config_set_pending_preset(uint16_t preset) {
-  if (preset > 16383) {
-    return ESP_ERR_INVALID_ARG;
-  }
+  uint16_t min_preset = device_config_get_min_preset();
+  uint16_t max_preset = device_config_get_max_preset();
+  
+  // Clamp to valid range based on device's indexBase and preset count
+  if (preset < min_preset) preset = min_preset;
+  if (preset > max_preset) preset = max_preset;
   
   g_device_config.pending_bank = (uint8_t)(preset / 128);
   g_device_config.pending_program = (uint8_t)(preset % 128);
@@ -790,10 +816,17 @@ esp_err_t device_config_set_preset_wrap(bool wrap) {
   return app_settings_save_u8(NVS_KEY_PRESET_WRAP, wrap ? 1 : 0);
 }
 
+uint16_t device_config_get_min_preset(void) {
+  // Return the preset base (0 or 1 depending on device's indexBase)
+  return g_device_config.preset_base;
+}
+
 uint16_t device_config_get_max_preset(void) {
-  // Always respect the device's preset count
+  // Account for indexBase: max = base + count - 1
+  // For indexBase=0, count=16: max = 0 + 16 - 1 = 15 (valid range 0-15)
+  // For indexBase=1, count=16: max = 1 + 16 - 1 = 16 (valid range 1-16)
   if (g_device_config.preset_count > 0) {
-    return g_device_config.preset_count - 1;
+    return g_device_config.preset_base + g_device_config.preset_count - 1;
   }
   // Fallback if no preset count defined
   return (g_device_config.bank_select_mode != BANK_SELECT_NONE) ? 16383 : 127;

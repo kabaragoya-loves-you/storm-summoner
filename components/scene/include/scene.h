@@ -10,6 +10,7 @@
 #include "expression.h"
 #include "input_mode.h"
 #include "tempo.h"
+#include "lfo.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -45,7 +46,8 @@ typedef enum {
   TOUCHWHEEL_MODE_PITCH_BEND,     // Pitch bend (-8192 to 8191), bipolar only
   TOUCHWHEEL_MODE_AFTERTOUCH,     // Channel aftertouch (0-127), default odometer
   TOUCHWHEEL_MODE_DOUBLE_CC,      // Double CC (0-16383), default odometer
-  TOUCHWHEEL_MODE_VELOCITY        // Velocity source for note-generating modules (internal only)
+  TOUCHWHEEL_MODE_VELOCITY,       // Velocity source for note-generating modules (internal only)
+  TOUCHWHEEL_MODE_LFO_RATE        // LFO rate modulation source (internal only)
 } touchwheel_mode_t;
 
 // Touchwheel continuous style (for modes that use continuous input)
@@ -117,7 +119,13 @@ typedef struct {
   time_signature_t time_signature;       // Beats per bar and beat unit
   bool use_transport;                    // If false, animation runs continuously at BPM
   
-  // Future: envelope follower, LFO slots
+  // LFO configuration (per-scene)
+  lfo_config_t lfo1_config;              // LFO1 waveform, rate, etc.
+  lfo_config_t lfo2_config;              // LFO2 waveform, rate, etc.
+  continuous_mapping_t lfo1;             // LFO1 output mapping (CC/note, curve, polarity)
+  continuous_mapping_t lfo2;             // LFO2 output mapping (CC/note, curve, polarity)
+  velocity_mode_t lfo1_velocity_mode;    // For LFO1 note output
+  velocity_mode_t lfo2_velocity_mode;    // For LFO2 note output
 } scene_t;
 
 // Scene cache entry
@@ -137,7 +145,8 @@ typedef struct {
 // Scene manager state
 typedef struct {
   // Scene cache (current + neighbors for fast navigation)
-  scene_cache_entry_t cache[SCENE_CACHE_SIZE];
+  // Allocated from PSRAM to preserve internal RAM for SPI DMA
+  scene_cache_entry_t* cache;
   int current_cache_idx;        // Which cache slot is current scene
   
   uint8_t current_scene_index;  // Current scene number (0-127)
@@ -260,6 +269,15 @@ velocity_mode_t scene_get_als_velocity_mode(uint8_t scene_index);
 
 // Touchwheel velocity (when in TOUCHWHEEL_MODE_VELOCITY)
 uint8_t scene_get_touchwheel_velocity(void);
+
+// Touchwheel LFO rate (when in TOUCHWHEEL_MODE_LFO_RATE)
+uint8_t scene_get_touchwheel_lfo_rate(void);
+
+// External LFO rate sources (updated from sensor events)
+uint8_t scene_get_expression_lfo_rate(void);
+uint8_t scene_get_cv_lfo_rate(void);
+uint8_t scene_get_als_lfo_rate(void);
+uint8_t scene_get_proximity_lfo_rate(void);
 
 // Tempo configuration (per-scene)
 esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm);

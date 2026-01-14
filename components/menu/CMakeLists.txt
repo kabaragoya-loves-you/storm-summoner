@@ -45,6 +45,8 @@ idf_component_register(
     "pages/touchwheel_menu.c"
     "pages/pads_menu.c"
     "pages/action_config.c"
+    "pages/lfo1_scene.c"
+    "pages/lfo2_scene.c"
   INCLUDE_DIRS
     "include"
   REQUIRES
@@ -80,5 +82,6 @@ idf_component_register(
     assets_manager
     firmware_update
     device_config
+    lfo
   PRIV_REQUIRES main
 )

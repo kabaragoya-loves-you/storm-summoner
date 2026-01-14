@@ -95,6 +95,7 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_stars>"
     "$<TARGET_FILE:__idf_elite>"
     "$<TARGET_FILE:__idf_scene>"
+    "$<TARGET_FILE:__idf_lfo>"
     "$<TARGET_FILE:__idf_device_config>"
     "$<TARGET_FILE:__idf_app_settings>"
     "$<TARGET_FILE:__idf_revision>"

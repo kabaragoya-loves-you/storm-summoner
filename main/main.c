@@ -40,6 +40,8 @@
 #include "midi_touchwheel_scene_handler.h"
 #include "midi_proximity_scene_handler.h"
 #include "midi_als_scene_handler.h"
+#include "midi_lfo_scene_handler.h"
+#include "lfo.h"
 #include "scene_test.h"
 #include "scene.h"
 #include "buttons.h"
@@ -106,13 +108,18 @@ void app_main(void) {
   haptic_init();
   led_init();
 
+  // Initialize LFO component BEFORE scene loads (so configs exist when scene applies start modes)
+  lfo_init();
+  midi_lfo_scene_handler_init();
+
+  // Scene handlers (midi_scene_handler_init loads the scene, which applies LFO start modes)
   midi_scene_handler_init();
   midi_expression_scene_handler_init();
   midi_cv_scene_handler_init();
   midi_touchwheel_scene_handler_init();
   midi_proximity_scene_handler_init();
   midi_als_scene_handler_init();
-  
+
   switch_init();
   cv_init(false);
   
@@ -171,6 +178,10 @@ void app_main(void) {
 
   // Wait for splash animation to complete before switching to main UI
   vTaskDelay(pdMS_TO_TICKS(1500));
+  
   ui_set_draw_module(&scene_ui_module);
   tempo_start();
+
+  // Start LFO task (component was initialized earlier with other MIDI handlers)
+  lfo_start();
 }

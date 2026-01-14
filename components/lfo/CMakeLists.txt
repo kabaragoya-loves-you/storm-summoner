@@ -1,0 +1,18 @@
+idf_component_register(
+  SRCS
+    "lfo.c"
+    "lfo_console.c"
+  INCLUDE_DIRS
+    "include"
+  REQUIRES
+    event_bus
+    tempo
+    transport
+    curve
+    esp_timer
+    freertos
+    console
+  PRIV_REQUIRES
+    scene
+    ui
+)

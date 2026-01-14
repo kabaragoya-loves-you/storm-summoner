@@ -32,5 +32,6 @@ idf_component_register(
     event_bus
     driver
     version
+    lfo
 )
 
