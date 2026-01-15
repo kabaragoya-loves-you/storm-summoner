@@ -5,7 +5,6 @@
 #include "touch.h"
 #include "esp_log.h"
 #include <string.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #define TAG "PIXELS"
@@ -200,7 +199,7 @@ static void draw_line(int x0, int y0, int x1, int y1, lv_color_t color) {
 
 static void anim_timer_cb(lv_timer_t *timer) {
   (void)timer;
-  
+  if (ui_is_in_screensaver_mode()) return;
   if (!g_canvas || !g_buffer) return;
   
   // Clear canvas

@@ -371,6 +371,7 @@ static void transport_state_handler(const event_t* event, void* context) {
 
 static void interp_timer_cb(lv_timer_t *timer) {
   if (!g_module_active) return;
+  if (ui_is_in_screensaver_mode()) return;
   
   // Check if animation is enabled at all
   if (!g_animation_enabled) {

@@ -137,6 +137,9 @@ void screensaver_disable(void) {
     }
     g_screensaver_active = false;
     
+    // Restore app mode to performance
+    ui_set_app_mode(APP_MODE_PERFORMANCE);
+    
     // Reclaim UI canvas buffer
     ui_reclaim_canvas_buffer();
     
@@ -158,6 +161,9 @@ static void stop_screensaver_deferred(lv_timer_t *timer) {
   }
   
   g_screensaver_active = false;
+  
+  // Restore app mode to performance
+  ui_set_app_mode(APP_MODE_PERFORMANCE);
   
   // Reclaim UI canvas buffer
   ui_reclaim_canvas_buffer();
@@ -219,6 +225,9 @@ static void start_screensaver_deferred(lv_timer_t *timer) {
   g_pending_start_timer = NULL;
   
   ESP_LOGD(TAG, "Starting screensaver (deferred)");
+  
+  // Set app mode to screensaver so other modules know to pause
+  ui_set_app_mode(APP_MODE_SCREENSAVER);
   
   // Start the selected screensaver
   if (g_selected_screensaver_mode == SCREENSAVER_MODE_STARFIELD) {

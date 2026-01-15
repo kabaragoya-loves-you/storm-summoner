@@ -161,6 +161,7 @@ static pixel_data_t *get_frame_pixels(uint8_t frame_idx, uint32_t *count) {
 
 static void planet_anim_cb(lv_timer_t *timer) {
   (void)timer;
+  if (ui_is_in_screensaver_mode()) return;
   if (!g_planet_canvas || !g_planet_buffer || !g_planet_data) return;
   
   // Clear planet canvas to transparent
