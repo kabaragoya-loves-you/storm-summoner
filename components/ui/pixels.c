@@ -23,9 +23,12 @@
 #define ANIM_SPEED 1
 #define ANIM_INTERVAL_MS 40  // 25 FPS animation
 
-// Tendril center point (set to -1 to use display center)
-#define TENDRILS_CENTER_X  62
-#define TENDRILS_CENTER_Y  75
+// Tendril center point offset (set to -1 to disable offset)
+// Note: Tendrils are now generated with the target position baked in,
+// so offset should be disabled. Only use non-negative values if you need
+// to shift the tendrils from their generated position.
+#define TENDRILS_CENTER_X  -1
+#define TENDRILS_CENTER_Y  -1
 
 // Tendril colors
 #define TENDRIL_CORE_R  220

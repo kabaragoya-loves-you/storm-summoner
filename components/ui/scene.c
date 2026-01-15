@@ -530,8 +530,8 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   lv_obj_set_style_bg_grad(g_screen, &g_grad, 0);
   lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
   
-  // Scale factor for 198x198 source art
-  float scale = (float)g_disp_width / 198.0f;
+  // Scale factor for 240x240 source art
+  float scale = (float)g_disp_width / 240.0f;
   
   // Layer 2: Static vector art (bottom layer)
   g_static_art = lv_vector_art_create(g_screen);

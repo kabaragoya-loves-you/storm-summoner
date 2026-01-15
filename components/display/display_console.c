@@ -1,6 +1,6 @@
 #include "display_console.h"
 #include "display_driver.h"
-#include "gc9a01a_driver.h"
+#include "st7789v3_driver.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "driver/ledc.h"
@@ -154,8 +154,8 @@ static int cmd_viewport(int argc, char **argv) {
   if (argc < 5) {
     // Show current viewport
     printf("Viewport: offset=(%d,%d) size=%dx%d\n",
-      gc9a01a_get_viewport_offset_x(), gc9a01a_get_viewport_offset_y(),
-      gc9a01a_get_viewport_width(), gc9a01a_get_viewport_height());
+      st7789v3_get_viewport_offset_x(), st7789v3_get_viewport_offset_y(),
+      st7789v3_get_viewport_width(), st7789v3_get_viewport_height());
     printf("Usage: viewport <offset_x> <offset_y> <width> <height>\n");
     return 0;
   }
@@ -165,7 +165,7 @@ static int cmd_viewport(int argc, char **argv) {
   uint16_t width = atoi(argv[3]);
   uint16_t height = atoi(argv[4]);
   
-  gc9a01a_set_viewport(offset_x, offset_y, width, height);
+  st7789v3_set_viewport(offset_x, offset_y, width, height);
   printf("Viewport set: offset=(%d,%d) size=%dx%d\n", offset_x, offset_y, width, height);
   printf("Note: Restart required for LVGL to use new dimensions\n");
   return 0;

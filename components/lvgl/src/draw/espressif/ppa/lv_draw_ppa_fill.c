@@ -22,18 +22,6 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
     }
 
     int pic_w = draw_buf->header.stride / lv_color_format_get_size(draw_buf->header.cf);
-    
-    // Debug logging for geometry
-    static int log_limiter = 0;
-    if (log_limiter++ < 20) {
-        LV_LOG_WARN("PPA FILL: Buf=%p Stride=%d PicW=%d Area=[%d,%d %dx%d] Offset=[%ld,%ld]", 
-            draw_buf->data, 
-            (int)draw_buf->header.stride,
-            pic_w,
-            (int)coords->x1, (int)coords->y1, width, height,
-            (long)(coords->x1 - t->target_layer->buf_area.x1),
-            (long)(coords->y1 - t->target_layer->buf_area.y1));
-    }
 
     ppa_fill_oper_config_t cfg = {
         .fill_argb_color.val = lv_color_to_u32(dsc->color),

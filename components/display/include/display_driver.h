@@ -8,7 +8,7 @@
 /**
  * Display Driver Interface
  * 
- * Provides the interface for the GC9A01A 240x240 RGB color IPS display.
+ * Provides the interface for the ST7789V3 240x240 RGB color IPS display.
  */
 
 // Display driver interface structure
@@ -58,11 +58,11 @@ lv_color_format_t display_get_color_format(void);
 /**
  * Check if the display is circular (round)
  * 
- * @return true (GC9A01A is a round display)
+ * @return true (ST7789V3 is viewed through a circular aperture)
  */
 bool display_is_circular(void);
 
 // Driver declaration
-extern const display_driver_t gc9a01a_driver;
+extern const display_driver_t st7789v3_driver;
 
 #endif // DISPLAY_DRIVER_H

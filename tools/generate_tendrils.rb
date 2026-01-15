@@ -19,8 +19,10 @@
 
 DISPLAY_WIDTH = 240
 DISPLAY_HEIGHT = 240
-CENTER_X = 120
-CENTER_Y = 90
+# Tendril convergence point - set to lizard's hand position on 240x240 display
+# After updating, regenerate tendrils.bin and run compress_assets.rb
+CENTER_X = 120  # TODO: Update to actual hand X position
+CENTER_Y = 120  # TODO: Update to actual hand Y position
 
 # Tendril parameters
 NUM_PADS = 8

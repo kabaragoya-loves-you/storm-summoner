@@ -37,8 +37,8 @@ bool shared_canvas_buffer_init(void) {
     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
   if (!s_shared_buffer) {
-    // Try PSRAM for larger buffers (GC9A01A needs ~172KB)
-    ESP_LOGW(TAG, "Internal RAM allocation failed, trying PSRAM");
+    // Internal RAM insufficient - use PSRAM (normal for 240x240 displays)
+    ESP_LOGI(TAG, "Using PSRAM for canvas buffer (internal RAM insufficient)");
     s_shared_buffer = heap_caps_aligned_alloc(64, s_buffer_size, 
       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   }

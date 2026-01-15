@@ -13,8 +13,8 @@
 
 #define TAG "BUTTONS"
 
-// Base dimensions for scaling (original 128x128 OLED)
-#define BASE_SIZE 128
+// Base dimensions for scaling (240x240 IPS display)
+#define BASE_SIZE 240
 
 // Planet animation
 #define USE_COMPRESSED 1

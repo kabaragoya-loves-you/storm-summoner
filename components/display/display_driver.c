@@ -1,5 +1,5 @@
 #include "display_driver.h"
-#include "gc9a01a_driver.h"
+#include "st7789v3_driver.h"
 #include "esp_log.h"
 
 #define TAG "DISP_DRV"
@@ -7,10 +7,10 @@
 static const display_driver_t *s_active_driver = NULL;
 
 void display_driver_select(void) {
-  s_active_driver = &gc9a01a_driver;
-  ESP_LOGI(TAG, "Selected GC9A01A driver (viewport %dx%d @ offset %d,%d)", 
-    gc9a01a_get_viewport_width(), gc9a01a_get_viewport_height(),
-    gc9a01a_get_viewport_offset_x(), gc9a01a_get_viewport_offset_y());
+  s_active_driver = &st7789v3_driver;
+  ESP_LOGI(TAG, "Selected ST7789V3 driver (viewport %dx%d @ offset %d,%d)", 
+    st7789v3_get_viewport_width(), st7789v3_get_viewport_height(),
+    st7789v3_get_viewport_offset_x(), st7789v3_get_viewport_offset_y());
 }
 
 const display_driver_t *display_driver_get(void) {
@@ -18,11 +18,11 @@ const display_driver_t *display_driver_get(void) {
 }
 
 uint16_t display_get_width(void) {
-  return gc9a01a_get_viewport_width();
+  return st7789v3_get_viewport_width();
 }
 
 uint16_t display_get_height(void) {
-  return gc9a01a_get_viewport_height();
+  return st7789v3_get_viewport_height();
 }
 
 lv_color_format_t display_get_color_format(void) {
@@ -31,5 +31,5 @@ lv_color_format_t display_get_color_format(void) {
 }
 
 bool display_is_circular(void) {
-  return true;  // GC9A01A is a round display
+  return true;  // ST7789V3 is viewed through a circular aperture
 }

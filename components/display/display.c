@@ -1,6 +1,6 @@
 #include "lvgl.h"
 #include "display_driver.h"
-#include "gc9a01a_driver.h"
+#include "st7789v3_driver.h"
 #include "lvgl_stream.h"
 #if ENABLE_PERFORMANCE_MONITORING
 #include "../lvgl/src/others/sysmon/lv_sysmon.h"
@@ -48,8 +48,8 @@ static void lvgl_log_cb(lv_log_level_t level, const char * buf) {
 uint32_t esp_tick_cb(void);
 void lvgl_task(void *pvParameter);
 
-// Calculate buffer size for GC9A01A (240x240 RGB565)
-// Use 1/10 of screen = 240 * 24 * 3 = 17,280 bytes per buffer
+// Calculate buffer size for ST7789V3 (240x240 RGB565)
+// Use 1/10 of screen = 240 * 24 * 2 = 11,520 bytes per buffer
 static size_t calculate_buffer_size(uint16_t width, uint16_t height, lv_color_format_t cf) {
   size_t bytes_per_pixel = lv_color_format_get_size(cf);
   return width * (height / 10) * bytes_per_pixel;
@@ -101,7 +101,7 @@ void display_init(void) {
   esp_task_wdt_deinit();
 
   // Double buffering with partial mode for memory efficiency
-  ESP_LOGI(TAG, "GC9A01A: Using double buffering with partial mode (%zu bytes each)", buffer_size);
+  ESP_LOGI(TAG, "ST7789V3: Using double buffering with partial mode (%zu bytes each)", buffer_size);
   uint8_t *buf1 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
   uint8_t *buf2 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
   if (!buf1 || !buf2) {

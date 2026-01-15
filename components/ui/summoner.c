@@ -28,15 +28,16 @@
 // Vector art overlay
 #define SUMMONER_VECTOR_PATH "/assets/images/kabaragoya_vec.bin.z"
 
-// Plasma settings (copied from plasma.c)
+// Plasma settings
 #define PLASMA_SEGMENTS       10
 #define PLASMA_DISPLACEMENT   20.0f
 #define PLASMA_ANIM_SPEED     4.0f
 #define PLASMA_PAD_RADIUS     0.49f
-// #define PLASMA_CENTER_X       120 guitar
-// #define PLASMA_CENTER_Y       90
-#define PLASMA_CENTER_X       67
-#define PLASMA_CENTER_Y       75
+// Plasma origin point - set to lizard's hand position on 240x240 display
+// Use -1 for display center, or explicit coordinates for off-center origin
+// TODO: Calibrate to actual hand position on new 240x240 lizard image
+#define PLASMA_CENTER_X       120
+#define PLASMA_CENTER_Y       120
 
 //=============================================================================
 
@@ -122,7 +123,7 @@ static void summoner_draw_deferred_cb(lv_timer_t *timer) {
   lv_obj_set_size(g_vector_art, g_disp_width, g_disp_height);
   lv_obj_center(g_vector_art);
   
-  float scale = (float)g_disp_width / 198.0f;
+  float scale = (float)g_disp_width / 240.0f;
   lv_vector_art_set_scale(g_vector_art, scale);
   lv_vector_art_set_src(g_vector_art, SUMMONER_VECTOR_PATH);
   

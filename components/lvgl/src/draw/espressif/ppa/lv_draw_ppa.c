@@ -162,7 +162,10 @@ static int32_t ppa_evaluate(lv_draw_unit_t * u, lv_draw_task_t * t)
         case LV_DRAW_TASK_TYPE_FILL: {
                 const lv_draw_fill_dsc_t * dsc = (lv_draw_fill_dsc_t *)t->draw_dsc;
                 if((dsc->radius != 0 || dsc->grad.dir != LV_GRAD_DIR_NONE)) return 0;
-                if(dsc->opa <= (lv_opa_t)LV_OPA_MAX) return 0;
+                // PPA fill only supports fully opaque fills (no alpha blending)
+                // LV_OPA_MAX=253, so opa >= 253 is considered "fully opaque" per LVGL convention
+                // Original code had "<=" which incorrectly rejected opa=253; fixed to "<"
+                if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
 
                 if(t->preference_score > DRAW_UNIT_PPA_PREF_SCORE) {
                     t->preference_score = DRAW_UNIT_PPA_PREF_SCORE;
@@ -181,6 +184,8 @@ static int32_t ppa_evaluate(lv_draw_unit_t * u, lv_draw_task_t * t)
                      && dsc->tile == 0
                      && dsc->blend_mode == LV_BLEND_MODE_NORMAL
                      && dsc->recolor_opa <= LV_OPA_MIN
+                     // TODO: This condition seems inverted - should be ">= LV_OPA_MAX" to
+                     // require fully opaque images? Currently accepts opa 0-253, rejects 254-255.
                      && dsc->opa <= (lv_opa_t)LV_OPA_MAX
                      && dsc->skew_y == 0
                      && dsc->skew_x == 0
