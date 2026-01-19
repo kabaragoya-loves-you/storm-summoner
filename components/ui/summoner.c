@@ -36,8 +36,8 @@
 // Plasma origin point - set to lizard's hand position on 240x240 display
 // Use -1 for display center, or explicit coordinates for off-center origin
 // TODO: Calibrate to actual hand position on new 240x240 lizard image
-#define PLASMA_CENTER_X       120
-#define PLASMA_CENTER_Y       120
+#define PLASMA_CENTER_X       82
+#define PLASMA_CENTER_Y       88
 
 //=============================================================================
 

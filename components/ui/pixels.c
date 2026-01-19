@@ -26,8 +26,8 @@
 // Note: Tendrils are now generated with the target position baked in,
 // so offset should be disabled. Only use non-negative values if you need
 // to shift the tendrils from their generated position.
-#define TENDRILS_CENTER_X  -1
-#define TENDRILS_CENTER_Y  -1
+#define TENDRILS_CENTER_X  95
+#define TENDRILS_CENTER_Y  80
 
 // Tendril colors
 #define TENDRIL_CORE_R  220
