@@ -1017,6 +1017,23 @@ time_signature_t tempo_get_time_signature(void) {
   return sig;
 }
 
+bool tempo_is_compound_meter(void) {
+  time_signature_t sig = tempo_get_time_signature();
+  // Compound meters: 6/8, 9/8, 12/8 (numerator divisible by 3, denominator is 8)
+  return (sig.numerator == 6 || sig.numerator == 9 || sig.numerator == 12) &&
+         sig.denominator == 8;
+}
+
+uint8_t tempo_get_felt_beats_per_bar(void) {
+  time_signature_t sig = tempo_get_time_signature();
+  // Compound meters: felt beats = numerator / 3 (6/8 -> 2, 9/8 -> 3, 12/8 -> 4)
+  // Simple meters: felt beats = numerator (4/4 -> 4, 3/4 -> 3)
+  if (tempo_is_compound_meter()) {
+    return sig.numerator / 3;
+  }
+  return sig.numerator;
+}
+
 void tempo_set_led_sync(bool enabled) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
   s_led_sync_enabled = enabled;

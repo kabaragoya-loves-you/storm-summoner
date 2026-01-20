@@ -97,6 +97,11 @@ tempo_note_divider_t tempo_get_note_divider(void);
 void tempo_set_time_signature(uint8_t numerator, uint8_t denominator);
 time_signature_t tempo_get_time_signature(void);
 
+// Meter classification and felt beats
+// Compound meters (6/8, 9/8, 12/8) have fewer "felt" beats than written beats
+bool tempo_is_compound_meter(void);
+uint8_t tempo_get_felt_beats_per_bar(void);
+
 // LED sync control
 void tempo_set_led_sync(bool enabled);
 bool tempo_get_led_sync(void);

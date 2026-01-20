@@ -170,6 +170,8 @@ static const char* registered_commands[] = {
   "proximity_velocity_mode",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity",
   "als_velocity_mode",
+  "lfo1_cc", "lfo1_curve", "lfo1_polarity", "lfo1_enable", "lfo1_output", "lfo1_base_note", "lfo1_note_range", "lfo1_velocity", "lfo1_velocity_mode",
+  "lfo2_cc", "lfo2_curve", "lfo2_polarity", "lfo2_enable", "lfo2_output", "lfo2_base_note", "lfo2_note_range", "lfo2_velocity", "lfo2_velocity_mode",
   "touchwheel_mode", "touchwheel_style", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note",
   "on_load", "expression_velocity_mode"
 };
@@ -419,7 +421,45 @@ static void cmd_scene_info(void) {
   } else {
     ESP_LOGI(TAG, "  ALS: disabled");
   }
-  
+
+  // LFO1
+  if (scene->lfo1.enabled) {
+    if (scene->lfo1.output_type == OUTPUT_TYPE_NOTE) {
+      ESP_LOGI(TAG, "  LFO1: NOTE (base=%d, range=%d, vel=%d), %s curve",
+               scene->lfo1.base_note, scene->lfo1.note_range, scene->lfo1.velocity,
+               curve_type_to_string(scene->lfo1.curve.type));
+    } else {
+      char cc_buf[32];
+      format_cc_list(&scene->lfo1, cc_buf, sizeof(cc_buf));
+      ESP_LOGI(TAG, "  LFO1: %s, %s curve, %s",
+               cc_buf,
+               curve_type_to_string(scene->lfo1.curve.type),
+               scene->lfo1.polarity == POLARITY_UNIPOLAR ? "unipolar" :
+               (scene->lfo1.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+    }
+  } else {
+    ESP_LOGI(TAG, "  LFO1: disabled");
+  }
+
+  // LFO2
+  if (scene->lfo2.enabled) {
+    if (scene->lfo2.output_type == OUTPUT_TYPE_NOTE) {
+      ESP_LOGI(TAG, "  LFO2: NOTE (base=%d, range=%d, vel=%d), %s curve",
+               scene->lfo2.base_note, scene->lfo2.note_range, scene->lfo2.velocity,
+               curve_type_to_string(scene->lfo2.curve.type));
+    } else {
+      char cc_buf[32];
+      format_cc_list(&scene->lfo2, cc_buf, sizeof(cc_buf));
+      ESP_LOGI(TAG, "  LFO2: %s, %s curve, %s",
+               cc_buf,
+               curve_type_to_string(scene->lfo2.curve.type),
+               scene->lfo2.polarity == POLARITY_UNIPOLAR ? "unipolar" :
+               (scene->lfo2.polarity == POLARITY_BIPOLAR ? "bipolar" : "inverted"));
+    }
+  } else {
+    ESP_LOGI(TAG, "  LFO2: disabled");
+  }
+
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchpad mappings:");
   
@@ -3432,6 +3472,592 @@ static int cmd_als_velocity(int argc, char **argv) {
   return 0;
 }
 
+//=============================================================================
+// LFO1 Commands
+//=============================================================================
+
+// Command: lfo1_enable - Enable/disable LFO1 MIDI output
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} lfo1_enable_args;
+
+static int cmd_lfo1_enable(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_enable_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_enable_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* state_str = lfo1_enable_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+
+  scene->lfo1.enabled = enable;
+
+  if (enable && scene->lfo1.max_value == 0) {
+    scene->lfo1.min_value = 0;
+    scene->lfo1.max_value = 127;
+    ESP_LOGI(TAG, "Initialized range to 0-127");
+  }
+
+  ESP_LOGI(TAG, "LFO1 MIDI output: %s", enable ? "enabled" : "disabled");
+  return 0;
+}
+
+// Command: lfo1_cc - Set LFO1 CC number(s)
+static struct {
+  struct arg_int *cc;
+  struct arg_end *end;
+} lfo1_cc_args;
+
+static int cmd_lfo1_cc(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_cc_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_cc_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int count = lfo1_cc_args.cc->count;
+  if (count < 1 || count > MAX_MULTI_CC) {
+    ESP_LOGE(TAG, "Provide 1-%d CC numbers", MAX_MULTI_CC);
+    return 1;
+  }
+
+  scene->lfo1.num_cc_numbers = count;
+  for (int i = 0; i < count; i++) {
+    int cc = lfo1_cc_args.cc->ival[i];
+    if (cc < 0 || cc > 127) {
+      ESP_LOGE(TAG, "CC must be 0-127");
+      return 1;
+    }
+    scene->lfo1.cc_numbers[i] = (uint8_t)cc;
+  }
+  scene->lfo1.cc_number = scene->lfo1.cc_numbers[0];
+
+  char cc_buf[32];
+  format_cc_list(&scene->lfo1, cc_buf, sizeof(cc_buf));
+  ESP_LOGI(TAG, "LFO1 CC: %s", cc_buf);
+  return 0;
+}
+
+// Command: lfo1_curve - Set LFO1 curve
+static struct {
+  struct arg_str *curve;
+  struct arg_end *end;
+} lfo1_curve_args;
+
+static int cmd_lfo1_curve(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_curve_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_curve_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* curve = lfo1_curve_args.curve->sval[0];
+
+  if (strcmp(curve, "linear") == 0) {
+    scene->lfo1.curve = curve_create(CURVE_LINEAR);
+  } else if (strcmp(curve, "exp") == 0 || strcmp(curve, "exponential") == 0) {
+    scene->lfo1.curve = curve_create(CURVE_EXPONENTIAL);
+  } else if (strcmp(curve, "log") == 0 || strcmp(curve, "logarithmic") == 0) {
+    scene->lfo1.curve = curve_create(CURVE_LOGARITHMIC);
+  } else if (strcmp(curve, "s") == 0 || strcmp(curve, "s_curve") == 0) {
+    scene->lfo1.curve = curve_create(CURVE_S_CURVE);
+  } else if (strcmp(curve, "quad") == 0 || strcmp(curve, "quadratic") == 0) {
+    scene->lfo1.curve = curve_create(CURVE_QUADRATIC);
+  } else if (strcmp(curve, "sqrt") == 0) {
+    scene->lfo1.curve = curve_create(CURVE_SQUARE_ROOT);
+  } else if (strcmp(curve, "sine") == 0) {
+    scene->lfo1.curve = curve_create(CURVE_SINE);
+  } else {
+    ESP_LOGE(TAG, "Unknown curve. Use: linear, exp, log, s_curve, quad, sqrt, sine");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO1 curve: %s", curve);
+  return 0;
+}
+
+// Command: lfo1_polarity - Set LFO1 polarity
+static struct {
+  struct arg_str *polarity;
+  struct arg_end *end;
+} lfo1_polarity_args;
+
+static int cmd_lfo1_polarity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_polarity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_polarity_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* pol = lfo1_polarity_args.polarity->sval[0];
+
+  if (strcmp(pol, "unipolar") == 0) {
+    scene->lfo1.polarity = POLARITY_UNIPOLAR;
+  } else if (strcmp(pol, "bipolar") == 0) {
+    scene->lfo1.polarity = POLARITY_BIPOLAR;
+  } else if (strcmp(pol, "inverted") == 0) {
+    scene->lfo1.polarity = POLARITY_INVERTED;
+  } else {
+    ESP_LOGE(TAG, "Unknown polarity. Use: unipolar, bipolar, inverted");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO1 polarity: %s", pol);
+  return 0;
+}
+
+// Command: lfo1_output - Set LFO1 output type
+static struct {
+  struct arg_str *output_type;
+  struct arg_end *end;
+} lfo1_output_args;
+
+static int cmd_lfo1_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_output_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* type = lfo1_output_args.output_type->sval[0];
+
+  if (strcmp(type, "cc") == 0) {
+    scene->lfo1.output_type = OUTPUT_TYPE_CC;
+  } else if (strcmp(type, "note") == 0) {
+    scene->lfo1.output_type = OUTPUT_TYPE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown output type. Use: cc, note");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO1 output: %s", type);
+  return 0;
+}
+
+// Command: lfo1_base_note - Set LFO1 base note
+static struct {
+  struct arg_int *note;
+  struct arg_end *end;
+} lfo1_base_note_args;
+
+static int cmd_lfo1_base_note(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_base_note_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_base_note_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int note = lfo1_base_note_args.note->ival[0];
+  if (note < 0 || note > 127) {
+    ESP_LOGE(TAG, "Note must be 0-127");
+    return 1;
+  }
+
+  scene->lfo1.base_note = (uint8_t)note;
+  ESP_LOGI(TAG, "LFO1 base note: %d", note);
+  return 0;
+}
+
+// Command: lfo1_note_range - Set LFO1 note range
+static struct {
+  struct arg_int *range;
+  struct arg_end *end;
+} lfo1_note_range_args;
+
+static int cmd_lfo1_note_range(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_note_range_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_note_range_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int range = lfo1_note_range_args.range->ival[0];
+  if (range < 1 || range > 127) {
+    ESP_LOGE(TAG, "Range must be 1-127");
+    return 1;
+  }
+
+  scene->lfo1.note_range = (uint8_t)range;
+  ESP_LOGI(TAG, "LFO1 note range: %d semitones", range);
+  return 0;
+}
+
+// Command: lfo1_velocity - Set LFO1 note velocity
+static struct {
+  struct arg_int *velocity;
+  struct arg_end *end;
+} lfo1_velocity_args;
+
+static int cmd_lfo1_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_velocity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_velocity_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int vel = lfo1_velocity_args.velocity->ival[0];
+  if (vel < 0 || vel > 127) {
+    ESP_LOGE(TAG, "Velocity must be 0-127");
+    return 1;
+  }
+
+  scene->lfo1.velocity = (uint8_t)vel;
+  ESP_LOGI(TAG, "LFO1 velocity: %d", vel);
+  return 0;
+}
+
+// Command: lfo1_velocity_mode - Set LFO1 velocity mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} lfo1_velocity_mode_args;
+
+static int cmd_lfo1_velocity_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_velocity_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_velocity_mode_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* mode = lfo1_velocity_mode_args.mode->sval[0];
+
+  if (strcmp(mode, "fixed") == 0) {
+    scene->lfo1_velocity_mode = VELOCITY_MODE_FIXED;
+  } else if (strcmp(mode, "gate_voltage") == 0 || strcmp(mode, "gate") == 0) {
+    scene->lfo1_velocity_mode = VELOCITY_MODE_GATE_VOLTAGE;
+  } else if (strcmp(mode, "touchwheel") == 0 || strcmp(mode, "tw") == 0) {
+    scene->lfo1_velocity_mode = VELOCITY_MODE_TOUCHWHEEL;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode. Use: fixed, gate_voltage, touchwheel");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO1 velocity mode: %s", mode);
+  return 0;
+}
+
+//=============================================================================
+// LFO2 Commands
+//=============================================================================
+
+// Command: lfo2_enable - Enable/disable LFO2 MIDI output
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} lfo2_enable_args;
+
+static int cmd_lfo2_enable(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_enable_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_enable_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* state_str = lfo2_enable_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+
+  scene->lfo2.enabled = enable;
+
+  if (enable && scene->lfo2.max_value == 0) {
+    scene->lfo2.min_value = 0;
+    scene->lfo2.max_value = 127;
+    ESP_LOGI(TAG, "Initialized range to 0-127");
+  }
+
+  ESP_LOGI(TAG, "LFO2 MIDI output: %s", enable ? "enabled" : "disabled");
+  return 0;
+}
+
+// Command: lfo2_cc - Set LFO2 CC number(s)
+static struct {
+  struct arg_int *cc;
+  struct arg_end *end;
+} lfo2_cc_args;
+
+static int cmd_lfo2_cc(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_cc_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_cc_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int count = lfo2_cc_args.cc->count;
+  if (count < 1 || count > MAX_MULTI_CC) {
+    ESP_LOGE(TAG, "Provide 1-%d CC numbers", MAX_MULTI_CC);
+    return 1;
+  }
+
+  scene->lfo2.num_cc_numbers = count;
+  for (int i = 0; i < count; i++) {
+    int cc = lfo2_cc_args.cc->ival[i];
+    if (cc < 0 || cc > 127) {
+      ESP_LOGE(TAG, "CC must be 0-127");
+      return 1;
+    }
+    scene->lfo2.cc_numbers[i] = (uint8_t)cc;
+  }
+  scene->lfo2.cc_number = scene->lfo2.cc_numbers[0];
+
+  char cc_buf[32];
+  format_cc_list(&scene->lfo2, cc_buf, sizeof(cc_buf));
+  ESP_LOGI(TAG, "LFO2 CC: %s", cc_buf);
+  return 0;
+}
+
+// Command: lfo2_curve - Set LFO2 curve
+static struct {
+  struct arg_str *curve;
+  struct arg_end *end;
+} lfo2_curve_args;
+
+static int cmd_lfo2_curve(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_curve_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_curve_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* curve = lfo2_curve_args.curve->sval[0];
+
+  if (strcmp(curve, "linear") == 0) {
+    scene->lfo2.curve = curve_create(CURVE_LINEAR);
+  } else if (strcmp(curve, "exp") == 0 || strcmp(curve, "exponential") == 0) {
+    scene->lfo2.curve = curve_create(CURVE_EXPONENTIAL);
+  } else if (strcmp(curve, "log") == 0 || strcmp(curve, "logarithmic") == 0) {
+    scene->lfo2.curve = curve_create(CURVE_LOGARITHMIC);
+  } else if (strcmp(curve, "s") == 0 || strcmp(curve, "s_curve") == 0) {
+    scene->lfo2.curve = curve_create(CURVE_S_CURVE);
+  } else if (strcmp(curve, "quad") == 0 || strcmp(curve, "quadratic") == 0) {
+    scene->lfo2.curve = curve_create(CURVE_QUADRATIC);
+  } else if (strcmp(curve, "sqrt") == 0) {
+    scene->lfo2.curve = curve_create(CURVE_SQUARE_ROOT);
+  } else if (strcmp(curve, "sine") == 0) {
+    scene->lfo2.curve = curve_create(CURVE_SINE);
+  } else {
+    ESP_LOGE(TAG, "Unknown curve. Use: linear, exp, log, s_curve, quad, sqrt, sine");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO2 curve: %s", curve);
+  return 0;
+}
+
+// Command: lfo2_polarity - Set LFO2 polarity
+static struct {
+  struct arg_str *polarity;
+  struct arg_end *end;
+} lfo2_polarity_args;
+
+static int cmd_lfo2_polarity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_polarity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_polarity_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* pol = lfo2_polarity_args.polarity->sval[0];
+
+  if (strcmp(pol, "unipolar") == 0) {
+    scene->lfo2.polarity = POLARITY_UNIPOLAR;
+  } else if (strcmp(pol, "bipolar") == 0) {
+    scene->lfo2.polarity = POLARITY_BIPOLAR;
+  } else if (strcmp(pol, "inverted") == 0) {
+    scene->lfo2.polarity = POLARITY_INVERTED;
+  } else {
+    ESP_LOGE(TAG, "Unknown polarity. Use: unipolar, bipolar, inverted");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO2 polarity: %s", pol);
+  return 0;
+}
+
+// Command: lfo2_output - Set LFO2 output type
+static struct {
+  struct arg_str *output_type;
+  struct arg_end *end;
+} lfo2_output_args;
+
+static int cmd_lfo2_output(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_output_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_output_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* type = lfo2_output_args.output_type->sval[0];
+
+  if (strcmp(type, "cc") == 0) {
+    scene->lfo2.output_type = OUTPUT_TYPE_CC;
+  } else if (strcmp(type, "note") == 0) {
+    scene->lfo2.output_type = OUTPUT_TYPE_NOTE;
+  } else {
+    ESP_LOGE(TAG, "Unknown output type. Use: cc, note");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO2 output: %s", type);
+  return 0;
+}
+
+// Command: lfo2_base_note - Set LFO2 base note
+static struct {
+  struct arg_int *note;
+  struct arg_end *end;
+} lfo2_base_note_args;
+
+static int cmd_lfo2_base_note(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_base_note_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_base_note_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int note = lfo2_base_note_args.note->ival[0];
+  if (note < 0 || note > 127) {
+    ESP_LOGE(TAG, "Note must be 0-127");
+    return 1;
+  }
+
+  scene->lfo2.base_note = (uint8_t)note;
+  ESP_LOGI(TAG, "LFO2 base note: %d", note);
+  return 0;
+}
+
+// Command: lfo2_note_range - Set LFO2 note range
+static struct {
+  struct arg_int *range;
+  struct arg_end *end;
+} lfo2_note_range_args;
+
+static int cmd_lfo2_note_range(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_note_range_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_note_range_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int range = lfo2_note_range_args.range->ival[0];
+  if (range < 1 || range > 127) {
+    ESP_LOGE(TAG, "Range must be 1-127");
+    return 1;
+  }
+
+  scene->lfo2.note_range = (uint8_t)range;
+  ESP_LOGI(TAG, "LFO2 note range: %d semitones", range);
+  return 0;
+}
+
+// Command: lfo2_velocity - Set LFO2 note velocity
+static struct {
+  struct arg_int *velocity;
+  struct arg_end *end;
+} lfo2_velocity_args;
+
+static int cmd_lfo2_velocity(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_velocity_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_velocity_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  int vel = lfo2_velocity_args.velocity->ival[0];
+  if (vel < 0 || vel > 127) {
+    ESP_LOGE(TAG, "Velocity must be 0-127");
+    return 1;
+  }
+
+  scene->lfo2.velocity = (uint8_t)vel;
+  ESP_LOGI(TAG, "LFO2 velocity: %d", vel);
+  return 0;
+}
+
+// Command: lfo2_velocity_mode - Set LFO2 velocity mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} lfo2_velocity_mode_args;
+
+static int cmd_lfo2_velocity_mode(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_velocity_mode_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_velocity_mode_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* mode = lfo2_velocity_mode_args.mode->sval[0];
+
+  if (strcmp(mode, "fixed") == 0) {
+    scene->lfo2_velocity_mode = VELOCITY_MODE_FIXED;
+  } else if (strcmp(mode, "gate_voltage") == 0 || strcmp(mode, "gate") == 0) {
+    scene->lfo2_velocity_mode = VELOCITY_MODE_GATE_VOLTAGE;
+  } else if (strcmp(mode, "touchwheel") == 0 || strcmp(mode, "tw") == 0) {
+    scene->lfo2_velocity_mode = VELOCITY_MODE_TOUCHWHEEL;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode. Use: fixed, gate_voltage, touchwheel");
+    return 1;
+  }
+
+  ESP_LOGI(TAG, "LFO2 velocity mode: %s", mode);
+  return 0;
+}
+
 // Command: touchwheel_mode - Set touchwheel mode
 static struct {
   struct arg_str *mode;
@@ -4466,7 +5092,249 @@ esp_err_t scene_console_init(void) {
     .argtable = &als_velocity_args
   };
   esp_console_cmd_register(&als_velocity_cmd);
-  
+
+  //=============================================================================
+  // LFO1 Commands Registration
+  //=============================================================================
+
+  // lfo1_enable command
+  lfo1_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  lfo1_enable_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_enable_cmd = {
+    .command = "lfo1_enable",
+    .help = "Enable/disable LFO1 MIDI output routing",
+    .hint = NULL,
+    .func = &cmd_lfo1_enable,
+    .argtable = &lfo1_enable_args
+  };
+  esp_console_cmd_register(&lfo1_enable_cmd);
+
+  // lfo1_cc command
+  lfo1_cc_args.cc = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");
+  lfo1_cc_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_cc_cmd = {
+    .command = "lfo1_cc",
+    .help = "Set LFO1 CC(s) - multiple for simultaneous control",
+    .hint = NULL,
+    .func = &cmd_lfo1_cc,
+    .argtable = &lfo1_cc_args
+  };
+  esp_console_cmd_register(&lfo1_cc_cmd);
+
+  // lfo1_curve command
+  lfo1_curve_args.curve = arg_str1(NULL, NULL, "<curve>", "Curve type");
+  lfo1_curve_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_curve_cmd = {
+    .command = "lfo1_curve",
+    .help = "Set LFO1 curve (linear/exp/log/s_curve/quad/sqrt/sine)",
+    .hint = NULL,
+    .func = &cmd_lfo1_curve,
+    .argtable = &lfo1_curve_args
+  };
+  esp_console_cmd_register(&lfo1_curve_cmd);
+
+  // lfo1_polarity command
+  lfo1_polarity_args.polarity = arg_str1(NULL, NULL, "<polarity>", "Polarity type");
+  lfo1_polarity_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_polarity_cmd = {
+    .command = "lfo1_polarity",
+    .help = "Set LFO1 polarity (unipolar/bipolar/inverted)",
+    .hint = NULL,
+    .func = &cmd_lfo1_polarity,
+    .argtable = &lfo1_polarity_args
+  };
+  esp_console_cmd_register(&lfo1_polarity_cmd);
+
+  // lfo1_output command
+  lfo1_output_args.output_type = arg_str1(NULL, NULL, "<cc|note>", "Output type");
+  lfo1_output_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_output_cmd = {
+    .command = "lfo1_output",
+    .help = "Set LFO1 output type (cc or note)",
+    .hint = NULL,
+    .func = &cmd_lfo1_output,
+    .argtable = &lfo1_output_args
+  };
+  esp_console_cmd_register(&lfo1_output_cmd);
+
+  // lfo1_base_note command
+  lfo1_base_note_args.note = arg_int1(NULL, NULL, "<0-127>", "Base MIDI note");
+  lfo1_base_note_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_base_note_cmd = {
+    .command = "lfo1_base_note",
+    .help = "Set LFO1 base note for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_lfo1_base_note,
+    .argtable = &lfo1_base_note_args
+  };
+  esp_console_cmd_register(&lfo1_base_note_cmd);
+
+  // lfo1_note_range command
+  lfo1_note_range_args.range = arg_int1(NULL, NULL, "<1-127>", "Range in semitones");
+  lfo1_note_range_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_note_range_cmd = {
+    .command = "lfo1_note_range",
+    .help = "Set LFO1 note range in semitones",
+    .hint = NULL,
+    .func = &cmd_lfo1_note_range,
+    .argtable = &lfo1_note_range_args
+  };
+  esp_console_cmd_register(&lfo1_note_range_cmd);
+
+  // lfo1_velocity command
+  lfo1_velocity_args.velocity = arg_int1(NULL, NULL, "<0-127>", "Note velocity");
+  lfo1_velocity_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_velocity_cmd = {
+    .command = "lfo1_velocity",
+    .help = "Set LFO1 note velocity for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_lfo1_velocity,
+    .argtable = &lfo1_velocity_args
+  };
+  esp_console_cmd_register(&lfo1_velocity_cmd);
+
+  // lfo1_velocity_mode command
+  lfo1_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
+  lfo1_velocity_mode_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_velocity_mode_cmd = {
+    .command = "lfo1_velocity_mode",
+    .help = "Set LFO1 note output velocity mode (fixed/gate_voltage/touchwheel)",
+    .hint = NULL,
+    .func = &cmd_lfo1_velocity_mode,
+    .argtable = &lfo1_velocity_mode_args
+  };
+  esp_console_cmd_register(&lfo1_velocity_mode_cmd);
+
+  //=============================================================================
+  // LFO2 Commands Registration
+  //=============================================================================
+
+  // lfo2_enable command
+  lfo2_enable_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  lfo2_enable_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_enable_cmd = {
+    .command = "lfo2_enable",
+    .help = "Enable/disable LFO2 MIDI output routing",
+    .hint = NULL,
+    .func = &cmd_lfo2_enable,
+    .argtable = &lfo2_enable_args
+  };
+  esp_console_cmd_register(&lfo2_enable_cmd);
+
+  // lfo2_cc command
+  lfo2_cc_args.cc = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");
+  lfo2_cc_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_cc_cmd = {
+    .command = "lfo2_cc",
+    .help = "Set LFO2 CC(s) - multiple for simultaneous control",
+    .hint = NULL,
+    .func = &cmd_lfo2_cc,
+    .argtable = &lfo2_cc_args
+  };
+  esp_console_cmd_register(&lfo2_cc_cmd);
+
+  // lfo2_curve command
+  lfo2_curve_args.curve = arg_str1(NULL, NULL, "<curve>", "Curve type");
+  lfo2_curve_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_curve_cmd = {
+    .command = "lfo2_curve",
+    .help = "Set LFO2 curve (linear/exp/log/s_curve/quad/sqrt/sine)",
+    .hint = NULL,
+    .func = &cmd_lfo2_curve,
+    .argtable = &lfo2_curve_args
+  };
+  esp_console_cmd_register(&lfo2_curve_cmd);
+
+  // lfo2_polarity command
+  lfo2_polarity_args.polarity = arg_str1(NULL, NULL, "<polarity>", "Polarity type");
+  lfo2_polarity_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_polarity_cmd = {
+    .command = "lfo2_polarity",
+    .help = "Set LFO2 polarity (unipolar/bipolar/inverted)",
+    .hint = NULL,
+    .func = &cmd_lfo2_polarity,
+    .argtable = &lfo2_polarity_args
+  };
+  esp_console_cmd_register(&lfo2_polarity_cmd);
+
+  // lfo2_output command
+  lfo2_output_args.output_type = arg_str1(NULL, NULL, "<cc|note>", "Output type");
+  lfo2_output_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_output_cmd = {
+    .command = "lfo2_output",
+    .help = "Set LFO2 output type (cc or note)",
+    .hint = NULL,
+    .func = &cmd_lfo2_output,
+    .argtable = &lfo2_output_args
+  };
+  esp_console_cmd_register(&lfo2_output_cmd);
+
+  // lfo2_base_note command
+  lfo2_base_note_args.note = arg_int1(NULL, NULL, "<0-127>", "Base MIDI note");
+  lfo2_base_note_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_base_note_cmd = {
+    .command = "lfo2_base_note",
+    .help = "Set LFO2 base note for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_lfo2_base_note,
+    .argtable = &lfo2_base_note_args
+  };
+  esp_console_cmd_register(&lfo2_base_note_cmd);
+
+  // lfo2_note_range command
+  lfo2_note_range_args.range = arg_int1(NULL, NULL, "<1-127>", "Range in semitones");
+  lfo2_note_range_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_note_range_cmd = {
+    .command = "lfo2_note_range",
+    .help = "Set LFO2 note range in semitones",
+    .hint = NULL,
+    .func = &cmd_lfo2_note_range,
+    .argtable = &lfo2_note_range_args
+  };
+  esp_console_cmd_register(&lfo2_note_range_cmd);
+
+  // lfo2_velocity command
+  lfo2_velocity_args.velocity = arg_int1(NULL, NULL, "<0-127>", "Note velocity");
+  lfo2_velocity_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_velocity_cmd = {
+    .command = "lfo2_velocity",
+    .help = "Set LFO2 note velocity for NOTE mode",
+    .hint = NULL,
+    .func = &cmd_lfo2_velocity,
+    .argtable = &lfo2_velocity_args
+  };
+  esp_console_cmd_register(&lfo2_velocity_cmd);
+
+  // lfo2_velocity_mode command
+  lfo2_velocity_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Velocity mode");
+  lfo2_velocity_mode_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_velocity_mode_cmd = {
+    .command = "lfo2_velocity_mode",
+    .help = "Set LFO2 note output velocity mode (fixed/gate_voltage/touchwheel)",
+    .hint = NULL,
+    .func = &cmd_lfo2_velocity_mode,
+    .argtable = &lfo2_velocity_mode_args
+  };
+  esp_console_cmd_register(&lfo2_velocity_mode_cmd);
+
   // touchwheel_mode command
   touchwheel_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Touchwheel mode");
   touchwheel_mode_args.end = arg_end(2);

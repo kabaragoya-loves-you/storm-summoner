@@ -57,39 +57,15 @@
 // BOP SOLVER - Calculates body animation rate from time signature
 //=============================================================================
 
-typedef enum {
-  METER_SIMPLE,
-  METER_COMPOUND
-} meter_type_t;
-
-// Classify meter type based on time signature
-// Compound meters: 6/8, 9/8, 12/8 (numerator divisible by 3, denominator is 8)
-static meter_type_t classify_meter(uint8_t numerator, uint8_t denominator) {
-  if ((numerator == 6 || numerator == 9 || numerator == 12) && denominator == 8) {
-    return METER_COMPOUND;
-  }
-  return METER_SIMPLE;
-}
-
-// Calculate felt beats per bar based on meter type
-// Simple meter: beats = numerator (4/4 -> 4, 3/4 -> 3)
-// Compound meter: beats = numerator / 3 (6/8 -> 2, 9/8 -> 3, 12/8 -> 4)
-static uint8_t get_beats_per_bar(uint8_t numerator, uint8_t denominator) {
-  if (classify_meter(numerator, denominator) == METER_COMPOUND) {
-    return numerator / 3;
-  }
-  return numerator;
-}
-
 // Calculate sub-bops per beat based on beat divider and meter type
 // Simple meter: 8ths = 2 per beat (for quarter-note beats), 16ths = 4
 // Compound meter: 8ths = 3 per beat (dotted note = 3 eighths), 16ths = 6
-static uint8_t get_sub_bops_per_beat(uint8_t denominator, tempo_note_divider_t divider, meter_type_t meter) {
+static uint8_t get_sub_bops_per_beat(uint8_t denominator, tempo_note_divider_t divider, bool is_compound) {
   if (divider == DIVIDER_QUARTER) {
     return 1;  // One bop per felt beat
   }
-  
-  if (meter == METER_SIMPLE) {
+
+  if (!is_compound) {
     // Simple meter: beat = denominator note value
     if (divider == DIVIDER_EIGHTH) {
       return (denominator >= 8) ? 1 : 8 / denominator;  // 4/4: 8/4 = 2 eighths per quarter
@@ -106,22 +82,22 @@ static uint8_t get_sub_bops_per_beat(uint8_t denominator, tempo_note_divider_t d
       return 6;  // Each dotted beat has 6 sixteenths (3 eighths x 2)
     }
   }
-  
+
   return 1;  // Fallback
 }
 
 // Main bop solver: calculate total bops per bar from current tempo settings
-// Returns beats_per_bar * sub_bops_per_beat
+// Returns felt_beats_per_bar * sub_bops_per_beat
 static uint8_t calculate_bops_per_bar(void) {
   time_signature_t sig = tempo_get_time_signature();
   tempo_note_divider_t divider = tempo_get_note_divider();
-  meter_type_t meter = classify_meter(sig.numerator, sig.denominator);
-  
-  uint8_t beats = get_beats_per_bar(sig.numerator, sig.denominator);
-  uint8_t subs = get_sub_bops_per_beat(sig.denominator, divider, meter);
-  
+
+  // Use shared tempo functions for meter classification and felt beats
+  uint8_t beats = tempo_get_felt_beats_per_bar();
+  uint8_t subs = get_sub_bops_per_beat(sig.denominator, divider, tempo_is_compound_meter());
+
   uint8_t bops = beats * subs;
-  
+
   // Sanity check: ensure at least 1 bop per bar
   return (bops > 0) ? bops : 1;
 }

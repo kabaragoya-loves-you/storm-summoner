@@ -57,11 +57,12 @@ static uint8_t get_lfo2_velocity(continuous_mapping_t* mapping) {
 // Handle LFO1 events through scene mapping
 static void handle_lfo1_event(const event_t* event, void* context) {
   if (event->type != EVENT_LFO1_VALUE) return;
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return;
-  
+
   continuous_mapping_t* mapping = &scene->lfo1;
+
   if (!mapping->enabled) return;
   
   // Get raw value from event (0-127)
@@ -74,9 +75,9 @@ static void handle_lfo1_event(const event_t* event, void* context) {
   // Apply smart filtering (handles extremes + deadzone)
   bool value_changed = false;
   uint8_t output_value = smart_filter_process(&s_lfo1_filter, processed_value, &value_changed);
-  
+
   if (!value_changed) return;
-  
+
   if (mapping->output_type == OUTPUT_TYPE_NOTE) {
     uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
     
