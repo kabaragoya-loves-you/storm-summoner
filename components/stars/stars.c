@@ -1,5 +1,6 @@
 #include "stars.h"
 #include "shared_canvas_buffer.h"
+#include "event_bus.h"
 #include <stdlib.h>
 #include "esp_log.h"
 #include "esp_random.h"
@@ -7,6 +8,10 @@
 #include "esp_heap_caps.h"
 
 #define TAG "STARS_SCREEN"
+
+// Auto-recovery: track consecutive draw failures
+#define STARFIELD_MAX_DRAW_FAILURES 5
+static int g_consecutive_draw_failures = 0;
 
 // Screen and widget references
 static lv_obj_t *g_stars_screen = NULL;
@@ -40,6 +45,42 @@ static void init_all_stars(void) {
 
 static void starfield_animation_cb(lv_timer_t *timer) {
   if (!g_stars_canvas || !shared_canvas_buffer_is_valid()) return;
+
+  // Verify canvas has a valid buffer before proceeding
+  if (!lv_canvas_get_buf(g_stars_canvas)) {
+    ESP_LOGW(TAG, "Canvas buffer not set yet, skipping draw");
+    g_consecutive_draw_failures++;
+    if (g_consecutive_draw_failures >= STARFIELD_MAX_DRAW_FAILURES) {
+      ESP_LOGE(TAG, "Too many draw failures, auto-recovering from screensaver");
+      event_t event = {
+        .type = EVENT_UI_ACTION,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS
+      };
+      event_bus_post(&event);
+    }
+    return;
+  }
+
+  // Check if canvas is on the active screen
+  lv_obj_t *canvas_screen = lv_obj_get_screen(g_stars_canvas);
+  if (canvas_screen != lv_screen_active()) {
+    ESP_LOGW(TAG, "Canvas is not on active screen, skipping draw");
+    g_consecutive_draw_failures++;
+    if (g_consecutive_draw_failures >= STARFIELD_MAX_DRAW_FAILURES) {
+      ESP_LOGE(TAG, "Too many draw failures, auto-recovering from screensaver");
+      event_t event = {
+        .type = EVENT_UI_ACTION,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS
+      };
+      event_bus_post(&event);
+    }
+    return;
+  }
+
+  // Reset failure counter on successful draw setup
+  g_consecutive_draw_failures = 0;
 
   // Clear canvas
   lv_canvas_fill_bg(g_stars_canvas, lv_color_black(), LV_OPA_COVER);
@@ -84,6 +125,9 @@ static void starfield_animation_cb(lv_timer_t *timer) {
 
 void starfield_start(void) {
   ESP_LOGD(TAG, "Starting starfield screensaver (screen-based)...");
+
+  // Reset failure counter
+  g_consecutive_draw_failures = 0;
 
   // Verify shared buffer is available
   if (!shared_canvas_buffer_is_valid()) {

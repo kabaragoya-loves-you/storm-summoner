@@ -6,6 +6,7 @@
 #include "elite.h"
 #include "ships.h"
 #include "shared_canvas_buffer.h"
+#include "event_bus.h"
 #include "esp_random.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -52,6 +53,10 @@ static lv_obj_t *g_elite_screen = NULL;
 static lv_obj_t *g_previous_screen = NULL;
 static volatile bool g_elite_stopping = false;
 
+// Auto-recovery: track consecutive draw failures
+#define ELITE_MAX_DRAW_FAILURES 5
+static int g_consecutive_draw_failures = 0;
+
 static void next_random_ship(lv_timer_t *timer);
 static void draw_wireframe_ship(void);
 static void rotate_ship_cb(lv_timer_t *timer);
@@ -64,6 +69,17 @@ static void draw_wireframe_ship(void) {
   // Verify canvas has a valid buffer before proceeding
   if (!lv_canvas_get_buf(canvas)) {
     ESP_LOGW(TAG, "Canvas buffer not set yet, skipping draw");
+    g_consecutive_draw_failures++;
+    if (g_consecutive_draw_failures >= ELITE_MAX_DRAW_FAILURES) {
+      ESP_LOGE(TAG, "Too many draw failures, auto-recovering from screensaver");
+      // Post UI_ACTION event to trigger screensaver exit (avoids circular dependency)
+      event_t event = {
+        .type = EVENT_UI_ACTION,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS
+      };
+      event_bus_post(&event);
+    }
     return;
   }
   
@@ -71,8 +87,22 @@ static void draw_wireframe_ship(void) {
   lv_obj_t *canvas_screen = lv_obj_get_screen(canvas);
   if (canvas_screen != lv_screen_active()) {
     ESP_LOGW(TAG, "Canvas is not on active screen, skipping draw");
+    g_consecutive_draw_failures++;
+    if (g_consecutive_draw_failures >= ELITE_MAX_DRAW_FAILURES) {
+      ESP_LOGE(TAG, "Too many draw failures, auto-recovering from screensaver");
+      // Post UI_ACTION event to trigger screensaver exit (avoids circular dependency)
+      event_t event = {
+        .type = EVENT_UI_ACTION,
+        .priority = EVENT_PRIORITY_NORMAL,
+        .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS
+      };
+      event_bus_post(&event);
+    }
     return;
   }
+  
+  // Reset failure counter on successful draw setup
+  g_consecutive_draw_failures = 0;
   
   if (canvas_buf) {
     // Use memset for safety and performance
@@ -282,8 +312,9 @@ void display_ship(const char* name, int* vertices, int vert_cnt, int vert_scale,
 void elite_start(void) {
   ESP_LOGD(TAG, "Starting Elite screensaver...");
 
-  // Ensure stopping flag is cleared
+  // Ensure stopping flag is cleared and reset failure counter
   g_elite_stopping = false;
+  g_consecutive_draw_failures = 0;
 
   // Verify shared buffer is available
   if (!shared_canvas_buffer_is_valid()) {

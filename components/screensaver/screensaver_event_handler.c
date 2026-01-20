@@ -14,6 +14,7 @@ static void screensaver_handle_event(const event_t* event, void* context) {
     case EVENT_BUMP_DETECTED:
     case EVENT_ENCODER_ROTATE:
     case EVENT_GESTURE_ROTARY:
+    case EVENT_UI_ACTION:
       screensaver_notify_activity();
       break;
       
@@ -37,6 +38,7 @@ void screensaver_event_handler_init(void) {
   event_bus_subscribe(EVENT_ENCODER_ROTATE, screensaver_handle_event, NULL);
   event_bus_subscribe(EVENT_GESTURE_ROTARY, screensaver_handle_event, NULL);
   event_bus_subscribe(EVENT_SCREENSAVER_TIMEOUT, screensaver_handle_event, NULL);
+  event_bus_subscribe(EVENT_UI_ACTION, screensaver_handle_event, NULL);
   
   ESP_LOGD(TAG, "Screensaver event handler initialized");
 }

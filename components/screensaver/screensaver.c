@@ -31,6 +31,7 @@ static TimerHandle_t g_screensaver_activity_timer = NULL;
 static bool g_screensaver_active = false;
 static lv_timer_t *g_pending_start_timer = NULL;
 static lv_timer_t *g_pending_stop_timer = NULL;
+static app_mode_t g_mode_before_screensaver = APP_MODE_PERFORMANCE;
 
 static void screensaver_timer_callback(TimerHandle_t xTimer);
 
@@ -137,8 +138,8 @@ void screensaver_disable(void) {
     }
     g_screensaver_active = false;
     
-    // Restore app mode to performance
-    ui_set_app_mode(APP_MODE_PERFORMANCE);
+    // Restore app mode to whatever it was before screensaver started
+    ui_set_app_mode(g_mode_before_screensaver);
     
     // Reclaim UI canvas buffer
     ui_reclaim_canvas_buffer();
@@ -162,8 +163,8 @@ static void stop_screensaver_deferred(lv_timer_t *timer) {
   
   g_screensaver_active = false;
   
-  // Restore app mode to performance
-  ui_set_app_mode(APP_MODE_PERFORMANCE);
+  // Restore app mode to whatever it was before screensaver started
+  ui_set_app_mode(g_mode_before_screensaver);
   
   // Reclaim UI canvas buffer
   ui_reclaim_canvas_buffer();
@@ -225,6 +226,9 @@ static void start_screensaver_deferred(lv_timer_t *timer) {
   g_pending_start_timer = NULL;
   
   ESP_LOGD(TAG, "Starting screensaver (deferred)");
+  
+  // Save current mode so we can restore it when screensaver exits
+  g_mode_before_screensaver = ui_get_app_mode();
   
   // Set app mode to screensaver so other modules know to pause
   ui_set_app_mode(APP_MODE_SCREENSAVER);

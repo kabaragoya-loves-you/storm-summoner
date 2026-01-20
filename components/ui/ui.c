@@ -191,6 +191,24 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
     return;
   }
   
+  // If we transitioned to screensaver mode, don't load the default screen -
+  // the screensaver will load its own screen. Just do minimal cleanup.
+  if (g_app_mode == APP_MODE_SCREENSAVER) {
+    ESP_LOGI(TAG, "Exiting Programming to Screensaver - deferring to screensaver");
+    
+    // Destroy LVGL encoder touchwheel (will be recreated by ui_reclaim_canvas_buffer)
+    if (s_ui_touchwheel) {
+      touch_unregister_touchwheel_instance(s_ui_touchwheel);
+      touchwheel_destroy(s_ui_touchwheel);
+      s_ui_touchwheel = NULL;
+      s_ui_touchwheel_output = NULL;
+    }
+    
+    // Scene input stays suspended - we'll return to Programming mode later
+    // Menu stays in memory - ui_reclaim_canvas_buffer will restore it
+    return;
+  }
+  
   // Destroy LVGL encoder touchwheel FIRST (before cleanup, while menu is still valid)
   if (s_ui_touchwheel) {
     touch_unregister_touchwheel_instance(s_ui_touchwheel);
@@ -292,8 +310,10 @@ void ui_set_app_mode(app_mode_t mode) {
   
   ESP_LOGI(TAG, "App mode changed: %s -> %s", prev_name, new_name);
   
-  // Handle entering Programming mode
-  if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING) {
+  // Handle entering Programming mode (but NOT when returning from screensaver)
+  // When returning from screensaver, ui_reclaim_canvas_buffer will restore menu/touchwheel
+  if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING
+      && previous_mode != APP_MODE_SCREENSAVER) {
     // Suspend scene input processing (disables scene touchwheel and actions)
     scene_suspend_input();
     
@@ -315,8 +335,11 @@ void ui_set_app_mode(app_mode_t mode) {
   }
   // Handle exiting Programming mode
   else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
-    // Resume scene input processing (re-enables scene touchwheel and actions)
-    scene_resume_input();
+    // Resume scene input processing ONLY if going to Performance mode (not Screensaver)
+    // When going to Screensaver, we'll return to Programming mode later with scene still suspended
+    if (mode == APP_MODE_PERFORMANCE) {
+      scene_resume_input();
+    }
     
     // Suspend Performance mode rendering (this creates a deferred timer, safe)
     ui_graphics_suspend();
