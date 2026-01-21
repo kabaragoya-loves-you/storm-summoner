@@ -171,7 +171,9 @@ static const char* registered_commands[] = {
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity",
   "als_velocity_mode",
   "lfo1_cc", "lfo1_curve", "lfo1_polarity", "lfo1_enable", "lfo1_output", "lfo1_base_note", "lfo1_note_range", "lfo1_velocity", "lfo1_velocity_mode",
+  "lfo1_repeat", "lfo1_trigger",
   "lfo2_cc", "lfo2_curve", "lfo2_polarity", "lfo2_enable", "lfo2_output", "lfo2_base_note", "lfo2_note_range", "lfo2_velocity", "lfo2_velocity_mode",
+  "lfo2_repeat", "lfo2_trigger",
   "touchwheel_mode", "touchwheel_style", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note",
   "on_load", "expression_velocity_mode"
 };
@@ -3765,6 +3767,58 @@ static int cmd_lfo1_velocity_mode(int argc, char **argv) {
   return 0;
 }
 
+// Command: lfo1_repeat - Set LFO1 repeat mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} lfo1_repeat_args;
+
+static int cmd_lfo1_repeat(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_repeat_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_repeat_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* mode = lfo1_repeat_args.mode->sval[0];
+  bool repeat = (strcmp(mode, "loop") == 0 || strcmp(mode, "on") == 0 ||
+                 strcmp(mode, "1") == 0 || strcmp(mode, "true") == 0);
+
+  scene->lfo1_config.repeat = repeat;
+  lfo_set_repeat(0, repeat);  // Also update running LFO
+
+  ESP_LOGI(TAG, "LFO1 repeat: %s", repeat ? "loop" : "one-shot");
+  return 0;
+}
+
+// Command: lfo1_trigger - Set LFO1 trigger timing
+static struct {
+  struct arg_str *timing;
+  struct arg_end *end;
+} lfo1_trigger_args;
+
+static int cmd_lfo1_trigger(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo1_trigger_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo1_trigger_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  lfo_trigger_timing_t timing = lfo_trigger_timing_from_string(lfo1_trigger_args.timing->sval[0]);
+
+  scene->lfo1_config.trigger_timing = timing;
+  lfo_set_trigger_timing(0, timing);  // Also update running LFO
+
+  ESP_LOGI(TAG, "LFO1 trigger timing: %s", lfo_trigger_timing_to_string(timing));
+  return 0;
+}
+
 //=============================================================================
 // LFO2 Commands
 //=============================================================================
@@ -4055,6 +4109,58 @@ static int cmd_lfo2_velocity_mode(int argc, char **argv) {
   }
 
   ESP_LOGI(TAG, "LFO2 velocity mode: %s", mode);
+  return 0;
+}
+
+// Command: lfo2_repeat - Set LFO2 repeat mode
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} lfo2_repeat_args;
+
+static int cmd_lfo2_repeat(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_repeat_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_repeat_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  const char* mode = lfo2_repeat_args.mode->sval[0];
+  bool repeat = (strcmp(mode, "loop") == 0 || strcmp(mode, "on") == 0 ||
+                 strcmp(mode, "1") == 0 || strcmp(mode, "true") == 0);
+
+  scene->lfo2_config.repeat = repeat;
+  lfo_set_repeat(1, repeat);  // Also update running LFO
+
+  ESP_LOGI(TAG, "LFO2 repeat: %s", repeat ? "loop" : "one-shot");
+  return 0;
+}
+
+// Command: lfo2_trigger - Set LFO2 trigger timing
+static struct {
+  struct arg_str *timing;
+  struct arg_end *end;
+} lfo2_trigger_args;
+
+static int cmd_lfo2_trigger(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &lfo2_trigger_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, lfo2_trigger_args.end, argv[0]);
+    return 1;
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+
+  lfo_trigger_timing_t timing = lfo_trigger_timing_from_string(lfo2_trigger_args.timing->sval[0]);
+
+  scene->lfo2_config.trigger_timing = timing;
+  lfo_set_trigger_timing(1, timing);  // Also update running LFO
+
+  ESP_LOGI(TAG, "LFO2 trigger timing: %s", lfo_trigger_timing_to_string(timing));
   return 0;
 }
 
@@ -5214,6 +5320,32 @@ esp_err_t scene_console_init(void) {
   };
   esp_console_cmd_register(&lfo1_velocity_mode_cmd);
 
+  // lfo1_repeat command
+  lfo1_repeat_args.mode = arg_str1(NULL, NULL, "<loop|one-shot>", "Repeat mode");
+  lfo1_repeat_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_repeat_cmd = {
+    .command = "lfo1_repeat",
+    .help = "Set LFO1 repeat mode (loop or one-shot)",
+    .hint = NULL,
+    .func = &cmd_lfo1_repeat,
+    .argtable = &lfo1_repeat_args
+  };
+  esp_console_cmd_register(&lfo1_repeat_cmd);
+
+  // lfo1_trigger command
+  lfo1_trigger_args.timing = arg_str1(NULL, NULL, "<immediate|beat|bar>", "Trigger timing");
+  lfo1_trigger_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo1_trigger_cmd = {
+    .command = "lfo1_trigger",
+    .help = "Set LFO1 start trigger timing (immediate/beat/bar)",
+    .hint = NULL,
+    .func = &cmd_lfo1_trigger,
+    .argtable = &lfo1_trigger_args
+  };
+  esp_console_cmd_register(&lfo1_trigger_cmd);
+
   //=============================================================================
   // LFO2 Commands Registration
   //=============================================================================
@@ -5334,6 +5466,32 @@ esp_err_t scene_console_init(void) {
     .argtable = &lfo2_velocity_mode_args
   };
   esp_console_cmd_register(&lfo2_velocity_mode_cmd);
+
+  // lfo2_repeat command
+  lfo2_repeat_args.mode = arg_str1(NULL, NULL, "<loop|one-shot>", "Repeat mode");
+  lfo2_repeat_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_repeat_cmd = {
+    .command = "lfo2_repeat",
+    .help = "Set LFO2 repeat mode (loop or one-shot)",
+    .hint = NULL,
+    .func = &cmd_lfo2_repeat,
+    .argtable = &lfo2_repeat_args
+  };
+  esp_console_cmd_register(&lfo2_repeat_cmd);
+
+  // lfo2_trigger command
+  lfo2_trigger_args.timing = arg_str1(NULL, NULL, "<immediate|beat|bar>", "Trigger timing");
+  lfo2_trigger_args.end = arg_end(2);
+
+  const esp_console_cmd_t lfo2_trigger_cmd = {
+    .command = "lfo2_trigger",
+    .help = "Set LFO2 start trigger timing (immediate/beat/bar)",
+    .hint = NULL,
+    .func = &cmd_lfo2_trigger,
+    .argtable = &lfo2_trigger_args
+  };
+  esp_console_cmd_register(&lfo2_trigger_cmd);
 
   // touchwheel_mode command
   touchwheel_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Touchwheel mode");

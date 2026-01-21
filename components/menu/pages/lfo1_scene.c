@@ -23,11 +23,13 @@ lv_obj_t* menu_page_lfo1_scene_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_LFO_ITEMS 16
+#define MAX_LFO_ITEMS 18
 static menu_item_t s_lfo_items[MAX_LFO_ITEMS];
 
 static char s_enabled_label[LABEL_BUFFER_SETS][32];
 static char s_start_mode_label[LABEL_BUFFER_SETS][32];
+static char s_trigger_timing_label[LABEL_BUFFER_SETS][32];
+static char s_repeat_label[LABEL_BUFFER_SETS][32];
 static char s_phase_reset_label[LABEL_BUFFER_SETS][32];
 static char s_restore_on_stop_label[LABEL_BUFFER_SETS][32];
 static char s_waveform_label[LABEL_BUFFER_SETS][32];
@@ -39,6 +41,8 @@ static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_floor_label[LABEL_BUFFER_SETS][32];
 static char s_ceiling_label[LABEL_BUFFER_SETS][32];
+static char s_resolution_label[LABEL_BUFFER_SETS][32];
+static char s_steps_label[LABEL_BUFFER_SETS][32];
 
 // CC options from device
 typedef struct {
@@ -109,6 +113,15 @@ static const char* start_mode_to_display_string(lfo_start_mode_t mode) {
     case LFO_START_PAUSED: return "Paused";
     case LFO_START_TRANSPORT: return "Follow Transport";
     default: return "Running";
+  }
+}
+
+static const char* trigger_timing_to_display_string(lfo_trigger_timing_t timing) {
+  switch (timing) {
+    case LFO_TRIGGER_IMMEDIATE: return "Immediate";
+    case LFO_TRIGGER_NEXT_BEAT: return "Next Beat";
+    case LFO_TRIGGER_NEXT_BAR: return "Next Bar";
+    default: return "Immediate";
   }
 }
 
@@ -421,6 +434,92 @@ static lv_obj_t* start_mode_roller_create(void) {
 static void nav_to_start_mode(void* user_data) {
   (void)user_data;
   menu_navigate_to("Start Mode", start_mode_roller_create);
+}
+
+// ============================================================================
+// Trigger Timing Roller
+// ============================================================================
+
+static void trigger_timing_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  lfo_trigger_timing_t timings[] = { LFO_TRIGGER_IMMEDIATE, LFO_TRIGGER_NEXT_BEAT, LFO_TRIGGER_NEXT_BAR };
+  if (selected_index < 3) {
+    scene->lfo1_config.trigger_timing = timings[selected_index];
+    lfo_apply_config(0, &scene->lfo1_config);
+    persist_scene_changes();
+  }
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "LFO1", menu_page_lfo1_scene_create);
+}
+
+static lv_obj_t* trigger_timing_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  uint32_t current = 0;
+  switch (scene->lfo1_config.trigger_timing) {
+    case LFO_TRIGGER_IMMEDIATE: current = 0; break;
+    case LFO_TRIGGER_NEXT_BEAT: current = 1; break;
+    case LFO_TRIGGER_NEXT_BAR: current = 2; break;
+  }
+  return menu_create_roller_page("Trigger", "Immediate\nNext Beat\nNext Bar", 
+    current, trigger_timing_confirm_cb, NULL);
+}
+
+static void nav_to_trigger_timing(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Trigger", trigger_timing_roller_create);
+}
+
+// ============================================================================
+// Repeat Mode Roller
+// ============================================================================
+
+static void repeat_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  scene->lfo1_config.repeat = (selected_index == 0);  // 0=Loop, 1=One-Shot
+  lfo_apply_config(0, &scene->lfo1_config);
+  persist_scene_changes();
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "LFO1", menu_page_lfo1_scene_create);
+}
+
+static lv_obj_t* repeat_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  uint32_t current = scene->lfo1_config.repeat ? 0 : 1;
+  return menu_create_roller_page("Repeat", "Loop\nOne-Shot", 
+    current, repeat_confirm_cb, NULL);
+}
+
+static void nav_to_repeat(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Repeat", repeat_roller_create);
 }
 
 // ============================================================================
@@ -841,6 +940,111 @@ static void nav_to_ceiling(void* user_data) {
 }
 
 // ============================================================================
+// Resolution Roller
+// ============================================================================
+
+static const char* resolution_to_display_string(lfo_resolution_mode_t mode) {
+  switch (mode) {
+    case LFO_RESOLUTION_AUTO: return "Auto";
+    case LFO_RESOLUTION_COARSE: return "Coarse";
+    case LFO_RESOLUTION_MEDIUM: return "Medium";
+    case LFO_RESOLUTION_FINE: return "Fine";
+    case LFO_RESOLUTION_MANUAL: return "Manual";
+    default: return "Auto";
+  }
+}
+
+static void resolution_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  lfo_resolution_mode_t modes[] = {
+    LFO_RESOLUTION_AUTO, LFO_RESOLUTION_COARSE, LFO_RESOLUTION_MEDIUM,
+    LFO_RESOLUTION_FINE, LFO_RESOLUTION_MANUAL
+  };
+  if (selected_index < 5) {
+    scene->lfo1_config.resolution_mode = modes[selected_index];
+    lfo_apply_config(0, &scene->lfo1_config);
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "LFO1", menu_page_lfo1_scene_create);
+}
+
+static lv_obj_t* resolution_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = (uint32_t)scene->lfo1_config.resolution_mode;
+  if (current > 4) current = 0;
+
+  return menu_create_roller_page("Resolution",
+    "Auto\nCoarse\nMedium\nFine\nManual", current, resolution_confirm_cb, NULL);
+}
+
+static void nav_to_resolution(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Resolution", resolution_roller_create);
+}
+
+// ============================================================================
+// Steps Roller (Manual mode only)
+// ============================================================================
+
+static void steps_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  uint8_t steps_values[] = {16, 32, 64, 128};
+  if (selected_index < 4) {
+    scene->lfo1_config.manual_steps = steps_values[selected_index];
+    lfo_apply_config(0, &scene->lfo1_config);
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "LFO1", menu_page_lfo1_scene_create);
+}
+
+static lv_obj_t* steps_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = 1;  // Default to 32
+  uint8_t steps = scene->lfo1_config.manual_steps;
+  if (steps <= 16) current = 0;
+  else if (steps <= 32) current = 1;
+  else if (steps <= 64) current = 2;
+  else current = 3;
+
+  return menu_create_roller_page("Steps", "16\n32\n64\n128", current, steps_confirm_cb, NULL);
+}
+
+static void nav_to_steps(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Steps", steps_roller_create);
+}
+
+// ============================================================================
 // Main LFO1 Scene Page
 // ============================================================================
 
@@ -858,13 +1062,27 @@ lv_obj_t* menu_page_lfo1_scene_create(void) {
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   
-  // Enable/Disable
-  snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "LFO1\n%s",
-    scene->lfo1_config.enabled ? "Enabled" : "Disabled");
+  // Enable/Disable - show actual runtime state for accuracy
+  const char* enabled_status;
+  bool show_full_menu;
+  if (lfo_is_enabled(0)) {
+    enabled_status = "Running";
+    show_full_menu = true;
+  } else if (lfo_is_pending_start(0)) {
+    enabled_status = "Pending";
+    show_full_menu = true;
+  } else if (scene->lfo1_config.enabled) {
+    enabled_status = "Enabled";
+    show_full_menu = true;
+  } else {
+    enabled_status = "Disabled";
+    show_full_menu = false;
+  }
+  snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "LFO1\n%s", enabled_status);
   s_lfo_items[item_count++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true};
   
-  // Only show more options if enabled
-  if (!scene->lfo1_config.enabled) {
+  // Only show more options if enabled/running/pending
+  if (!show_full_menu) {
     return menu_create_page_2line("LFO1", s_lfo_items, item_count);
   }
   
@@ -872,6 +1090,18 @@ lv_obj_t* menu_page_lfo1_scene_create(void) {
   snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start Mode\n%s",
     start_mode_to_display_string(scene->lfo1_config.start_mode));
   s_lfo_items[item_count++] = (menu_item_t){s_start_mode_label[buf], nav_to_start_mode, NULL, true};
+  
+  // Trigger Timing (only show if start_mode is paused - controlled by action)
+  if (scene->lfo1_config.start_mode == LFO_START_PAUSED) {
+    snprintf(s_trigger_timing_label[buf], sizeof(s_trigger_timing_label[buf]), "Trigger\n%s",
+      trigger_timing_to_display_string(scene->lfo1_config.trigger_timing));
+    s_lfo_items[item_count++] = (menu_item_t){s_trigger_timing_label[buf], nav_to_trigger_timing, NULL, true};
+  }
+  
+  // Repeat Mode
+  snprintf(s_repeat_label[buf], sizeof(s_repeat_label[buf]), "Repeat\n%s",
+    scene->lfo1_config.repeat ? "Loop" : "One-Shot");
+  s_lfo_items[item_count++] = (menu_item_t){s_repeat_label[buf], nav_to_repeat, NULL, true};
   
   // Phase Reset
   snprintf(s_phase_reset_label[buf], sizeof(s_phase_reset_label[buf]), "On Restart\n%s",
@@ -948,6 +1178,18 @@ lv_obj_t* menu_page_lfo1_scene_create(void) {
   snprintf(s_ceiling_label[buf], sizeof(s_ceiling_label[buf]),
     "Ceiling\n%d", scene->lfo1_config.ceiling);
   s_lfo_items[item_count++] = (menu_item_t){s_ceiling_label[buf], nav_to_ceiling, NULL, true};
+
+  // Resolution
+  snprintf(s_resolution_label[buf], sizeof(s_resolution_label[buf]),
+    "Resolution\n%s", resolution_to_display_string(scene->lfo1_config.resolution_mode));
+  s_lfo_items[item_count++] = (menu_item_t){s_resolution_label[buf], nav_to_resolution, NULL, true};
+
+  // Steps (only show when Manual mode is selected)
+  if (scene->lfo1_config.resolution_mode == LFO_RESOLUTION_MANUAL) {
+    snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]),
+      "Steps\n%d", scene->lfo1_config.manual_steps);
+    s_lfo_items[item_count++] = (menu_item_t){s_steps_label[buf], nav_to_steps, NULL, true};
+  }
 
   return menu_create_page_2line("LFO1", s_lfo_items, item_count);
 }

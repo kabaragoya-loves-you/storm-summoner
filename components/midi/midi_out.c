@@ -17,7 +17,6 @@
 #define TAG "MIDI_OUT"
 #define MIDI_QUEUE_LENGTH   50
 #define MIDI_QUEUE_ITEM_SIZE sizeof(midi_out_job_t *)
-#define MIDI_MIN_INTERVAL   pdMS_TO_TICKS(10)
 #define ACTIVE_SENSING_INTERVAL pdMS_TO_TICKS(250)
 
 // NVS Keys
@@ -31,7 +30,6 @@
 
 static QueueHandle_t   midi_out_queue  = NULL;
 static SemaphoreHandle_t midi_out_mutex = NULL;
-static TickType_t        last_send_tick  = 0;
 static TaskHandle_t active_sensing_task_handle = NULL;
 static midi_out_config_t s_config = {0};
 
@@ -295,14 +293,6 @@ static void midi_out_task(void *pvParameters) {
   midi_out_job_t *job;
   for (;;) {
     if (xQueueReceive(midi_out_queue, &job, portMAX_DELAY) == pdPASS) {
-      TickType_t current_tick = xTaskGetTickCount();
-      if (last_send_tick != 0) {
-        TickType_t elapsed = current_tick - last_send_tick;
-        if (elapsed < MIDI_MIN_INTERVAL) {
-          vTaskDelay(MIDI_MIN_INTERVAL - elapsed);
-        }
-      }
-
       if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
         // Detect message type
         uint8_t status = job->data[0];
@@ -328,7 +318,6 @@ static void midi_out_task(void *pvParameters) {
         if (send_to_uart) midi_out_uart_send(job->data, job->len);
         if (send_to_usb) midi_out_usb_send(job->data, job->len);
         
-        last_send_tick = xTaskGetTickCount();
         xSemaphoreGive(midi_out_mutex);
       }
       free(job->data);

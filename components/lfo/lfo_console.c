@@ -29,16 +29,28 @@ static void print_lfo_info(uint8_t slot) {
   ESP_LOGI(TAG, "LFO%d:", slot + 1);
   ESP_LOGI(TAG, "  Enabled:     %s", config.enabled ? "YES" : "NO");
   ESP_LOGI(TAG, "  Waveform:    %s", lfo_waveform_to_string(config.waveform));
-  ESP_LOGI(TAG, "  Rate Mode:   %s", config.rate_mode == LFO_RATE_MODE_TEMPO ? "tempo" : "free");
+  ESP_LOGI(TAG, "  Repeat:      %s", config.repeat ? "loop" : "one-shot");
+  ESP_LOGI(TAG, "  Trigger:     %s", lfo_trigger_timing_to_string(config.trigger_timing));
+  ESP_LOGI(TAG, "  Rate Mode:   %s", lfo_rate_mode_to_string(config.rate_mode));
   if (config.rate_mode == LFO_RATE_MODE_FREE) {
     ESP_LOGI(TAG, "  Rate:        %.2f Hz", config.rate_hz_x100 / 100.0f);
-  } else {
+  } else if (config.rate_mode == LFO_RATE_MODE_TEMPO) {
     ESP_LOGI(TAG, "  Division:    %s", lfo_division_to_string(config.division));
   }
   ESP_LOGI(TAG, "  Phase:       %d (%.1f°)", config.phase_offset, config.phase_offset * 360.0f / 256.0f);
   ESP_LOGI(TAG, "  Duty Cycle:  %d (%.0f%%)", config.duty_cycle, config.duty_cycle * 100.0f / 127.0f);
+  ESP_LOGI(TAG, "  Resolution:  %s", lfo_resolution_mode_to_string(config.resolution_mode));
+  if (config.resolution_mode == LFO_RESOLUTION_MANUAL) {
+    ESP_LOGI(TAG, "  Steps:       %d", config.manual_steps);
+  }
   ESP_LOGI(TAG, "  Value:       %d", lfo_get_value(slot));
   ESP_LOGI(TAG, "  Phase Now:   %d", lfo_get_phase(slot));
+  if (lfo_is_pending_start(slot)) {
+    ESP_LOGI(TAG, "  (Pending start)");
+  }
+  if (lfo_is_cycle_completed(slot)) {
+    ESP_LOGI(TAG, "  (Cycle completed)");
+  }
 }
 
 static int cmd_lfo(int argc, char **argv) {
@@ -60,7 +72,9 @@ static int cmd_lfo(int argc, char **argv) {
   if (strcmp(subcmd, "enable") == 0 || strcmp(subcmd, "waveform") == 0 ||
       strcmp(subcmd, "rate") == 0 || strcmp(subcmd, "sync") == 0 ||
       strcmp(subcmd, "mode") == 0 || strcmp(subcmd, "phase") == 0 ||
-      strcmp(subcmd, "duty") == 0 || strcmp(subcmd, "reset") == 0) {
+      strcmp(subcmd, "duty") == 0 || strcmp(subcmd, "reset") == 0 ||
+      strcmp(subcmd, "repeat") == 0 || strcmp(subcmd, "trigger") == 0 ||
+      strcmp(subcmd, "resolution") == 0 || strcmp(subcmd, "steps") == 0) {
     
     if (lfo_args.slot->count == 0) {
       ESP_LOGE(TAG, "Missing LFO slot (1 or 2)");
@@ -151,30 +165,72 @@ static int cmd_lfo(int argc, char **argv) {
     } else if (strcmp(subcmd, "reset") == 0) {
       lfo_reset_phase(slot);
       ESP_LOGI(TAG, "LFO%d phase reset", slot + 1);
+      
+    } else if (strcmp(subcmd, "repeat") == 0) {
+      if (lfo_args.value->count == 0) {
+        ESP_LOGE(TAG, "Missing value (loop/one-shot or on/off)");
+        return 1;
+      }
+      const char* val = lfo_args.value->sval[0];
+      bool repeat = (strcmp(val, "loop") == 0 || strcmp(val, "on") == 0 ||
+                     strcmp(val, "1") == 0 || strcmp(val, "true") == 0);
+      lfo_set_repeat(slot, repeat);
+      ESP_LOGI(TAG, "LFO%d repeat: %s", slot + 1, repeat ? "loop" : "one-shot");
+      
+    } else if (strcmp(subcmd, "trigger") == 0) {
+      if (lfo_args.value->count == 0) {
+        ESP_LOGE(TAG, "Missing value (immediate/beat/bar)");
+        return 1;
+      }
+      lfo_trigger_timing_t timing = lfo_trigger_timing_from_string(lfo_args.value->sval[0]);
+      lfo_set_trigger_timing(slot, timing);
+      ESP_LOGI(TAG, "LFO%d trigger timing: %s", slot + 1, lfo_trigger_timing_to_string(timing));
+
+    } else if (strcmp(subcmd, "resolution") == 0) {
+      if (lfo_args.value->count == 0) {
+        ESP_LOGE(TAG, "Missing resolution (auto/coarse/medium/fine/manual)");
+        return 1;
+      }
+      lfo_resolution_mode_t res = lfo_resolution_mode_from_string(lfo_args.value->sval[0]);
+      lfo_set_resolution_mode(slot, res);
+      ESP_LOGI(TAG, "LFO%d resolution: %s", slot + 1, lfo_resolution_mode_to_string(res));
+
+    } else if (strcmp(subcmd, "steps") == 0) {
+      if (lfo_args.value->count == 0) {
+        ESP_LOGE(TAG, "Missing steps (16/32/64/128)");
+        return 1;
+      }
+      int steps = atoi(lfo_args.value->sval[0]);
+      lfo_set_manual_steps(slot, (uint8_t)steps);
+      lfo_set_resolution_mode(slot, LFO_RESOLUTION_MANUAL);  // Auto-set to manual mode
+      ESP_LOGI(TAG, "LFO%d steps: %d (manual mode)", slot + 1, lfo_get_manual_steps(slot));
     }
-    
+
     return 0;
   }
   
   ESP_LOGE(TAG, "Unknown subcommand: %s", subcmd);
-  ESP_LOGI(TAG, "Usage: lfo <info|enable|waveform|rate|sync|mode|phase|duty|reset> [slot] [value]");
+  ESP_LOGI(TAG, "Usage: lfo <info|enable|waveform|rate|sync|mode|phase|duty|reset|repeat|trigger|resolution|steps> [slot] [value]");
   return 1;
 }
 
 esp_err_t lfo_console_init(void) {
   ESP_LOGI(TAG, "Registering LFO console commands");
   
-  lfo_args.subcmd = arg_str0(NULL, NULL, "<subcmd>", "Subcommand (info, enable, waveform, rate, sync, mode, phase, duty, reset)");
+  lfo_args.subcmd = arg_str0(NULL, NULL, "<subcmd>",
+    "Subcommand (info, enable, waveform, rate, sync, mode, phase, duty, reset, repeat, trigger, resolution, steps)");
   lfo_args.slot = arg_int0(NULL, NULL, "<slot>", "LFO slot (1 or 2)");
   lfo_args.value = arg_str0(NULL, NULL, "<value>", "Value (depends on subcommand)");
   lfo_args.rate = arg_dbl0(NULL, NULL, "<hz>", "Rate in Hz (for rate subcommand)");
   lfo_args.end = arg_end(5);
-  
+
   const esp_console_cmd_t lfo_cmd = {
     .command = "lfo",
     .help = "LFO control: lfo info | lfo enable <1|2> <on|off> | lfo waveform <1|2> <type> | "
             "lfo rate <1|2> <hz> | lfo sync <1|2> <division> | lfo mode <1|2> <free|tempo> | "
-            "lfo phase <1|2> <0-255> | lfo duty <1|2> <0-127> | lfo reset <1|2>",
+            "lfo phase <1|2> <0-255> | lfo duty <1|2> <0-127> | lfo reset <1|2> | "
+            "lfo repeat <1|2> <loop|one-shot> | lfo trigger <1|2> <immediate|beat|bar> | "
+            "lfo resolution <1|2> <auto|coarse|medium|fine|manual> | lfo steps <1|2> <16|32|64|128>",
     .hint = NULL,
     .func = &cmd_lfo,
     .argtable = &lfo_args

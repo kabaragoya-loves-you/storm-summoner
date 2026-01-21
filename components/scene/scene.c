@@ -2954,6 +2954,8 @@ static cJSON* lfo_config_to_json(const lfo_config_t* config) {
   cJSON_AddStringToObject(obj, "waveform", lfo_waveform_to_string(config->waveform));
   cJSON_AddStringToObject(obj, "rate_mode", lfo_rate_mode_to_string(config->rate_mode));
   cJSON_AddStringToObject(obj, "start_mode", lfo_start_mode_to_string(config->start_mode));
+  cJSON_AddStringToObject(obj, "trigger_timing", lfo_trigger_timing_to_string(config->trigger_timing));
+  cJSON_AddBoolToObject(obj, "repeat", config->repeat);
   cJSON_AddBoolToObject(obj, "reset_phase", config->reset_phase);
   cJSON_AddBoolToObject(obj, "restore_on_stop", config->restore_on_stop);
   cJSON_AddNumberToObject(obj, "rate_hz", config->rate_hz_x100 / 100.0);
@@ -2962,6 +2964,8 @@ static cJSON* lfo_config_to_json(const lfo_config_t* config) {
   cJSON_AddNumberToObject(obj, "duty_cycle", config->duty_cycle);
   cJSON_AddNumberToObject(obj, "floor", config->floor);
   cJSON_AddNumberToObject(obj, "ceiling", config->ceiling);
+  cJSON_AddStringToObject(obj, "resolution", lfo_resolution_mode_to_string(config->resolution_mode));
+  cJSON_AddNumberToObject(obj, "manual_steps", config->manual_steps);
 
   return obj;
 }
@@ -2987,6 +2991,14 @@ static void json_to_lfo_config(cJSON* obj, lfo_config_t* config) {
   if (start_mode && cJSON_IsString(start_mode)) {
     config->start_mode = lfo_start_mode_from_string(start_mode->valuestring);
   }
+
+  cJSON* trigger_timing = cJSON_GetObjectItem(obj, "trigger_timing");
+  if (trigger_timing && cJSON_IsString(trigger_timing)) {
+    config->trigger_timing = lfo_trigger_timing_from_string(trigger_timing->valuestring);
+  }
+
+  cJSON* repeat = cJSON_GetObjectItem(obj, "repeat");
+  if (repeat) config->repeat = cJSON_IsTrue(repeat);
 
   cJSON* reset_phase = cJSON_GetObjectItem(obj, "reset_phase");
   if (reset_phase) config->reset_phase = cJSON_IsTrue(reset_phase);
@@ -3018,6 +3030,22 @@ static void json_to_lfo_config(cJSON* obj, lfo_config_t* config) {
 
   cJSON* ceiling_val = cJSON_GetObjectItem(obj, "ceiling");
   if (ceiling_val) config->ceiling = (uint8_t)ceiling_val->valueint;
+
+  cJSON* resolution = cJSON_GetObjectItem(obj, "resolution");
+  if (resolution && cJSON_IsString(resolution)) {
+    config->resolution_mode = lfo_resolution_mode_from_string(resolution->valuestring);
+  }
+
+  cJSON* manual_steps = cJSON_GetObjectItem(obj, "manual_steps");
+  if (manual_steps) {
+    uint8_t steps = (uint8_t)manual_steps->valueint;
+    // Clamp to valid values
+    if (steps <= 16) steps = 16;
+    else if (steps <= 32) steps = 32;
+    else if (steps <= 64) steps = 64;
+    else steps = 128;
+    config->manual_steps = steps;
+  }
 }
 
 // Scene JSON serialization

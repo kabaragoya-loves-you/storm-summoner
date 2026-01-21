@@ -8,7 +8,12 @@
 
 #define TAG "MIDI_OUT_UART"
 #define MIDI_NUM UART_NUM_1
-#define MIDI_MIN_INTERVAL pdMS_TO_TICKS(10)
+
+// MIDI timing: 31250 baud, 10 bits/byte = 0.32ms per byte
+// Calculate minimum ticks needed for UART TX to complete + 1ms margin for GPIO settling
+// Formula: ceil((len * 10 * 1000) / 31250) + 1 = ceil(len * 0.32) + 1
+// Simplified: (len + 3) covers transmission time + margin (safe for up to 256 bytes)
+#define MIDI_TX_DELAY_TICKS(len) pdMS_TO_TICKS(((len) + 3))
 
 static bool s_initialized = false;
 static midi_transmit_mode_t s_current_mode = MIDI_TRANSMIT_BOTH;
@@ -91,7 +96,8 @@ esp_err_t midi_out_uart_send(const uint8_t *data, size_t len) {
       gpio_set_level(PIN_POLARITY, TRS_TYPE_A);
       gpio_set_level(PIN_MIDI_TS, TRS_TYPE_A);
       uart_write_bytes(MIDI_NUM, data, len);
-      vTaskDelay(MIDI_MIN_INTERVAL);
+      // Wait for TX to complete before switching polarity (length-based delay)
+      vTaskDelay(MIDI_TX_DELAY_TICKS(len));
       gpio_set_level(PIN_POLARITY, TRS_TYPE_B);
       gpio_set_level(PIN_MIDI_TS, TRS_TYPE_B);
       uart_write_bytes(MIDI_NUM, data, len);

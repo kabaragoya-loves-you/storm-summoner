@@ -174,7 +174,19 @@ void touchwheel_output_destroy(touchwheel_output_t* output) {
   if (!output) return;
   
   if (output->type == TOUCHWHEEL_OUTPUT_LVGL && output->data.lvgl.indev) {
-    lv_indev_delete(output->data.lvgl.indev);
+    lv_indev_t* indev = output->data.lvgl.indev;
+    
+    // Clear our reference first to prevent any callbacks from using stale pointer
+    output->data.lvgl.indev = NULL;
+    
+    // Detach from group before deletion to prevent stale group references
+    lv_group_t* group = lv_indev_get_group(indev);
+    if (group) lv_indev_set_group(indev, NULL);
+    
+    // Clear the driver data to prevent read callback from using stale output pointer
+    lv_indev_set_driver_data(indev, NULL);
+    
+    lv_indev_delete(indev);
   }
   
   free(output);

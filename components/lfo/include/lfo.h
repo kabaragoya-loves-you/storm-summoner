@@ -39,6 +39,13 @@ typedef enum {
   LFO_START_TRANSPORT       // Follow transport state (play/stop)
 } lfo_start_mode_t;
 
+// LFO trigger timing (when LFO Start action is triggered)
+typedef enum {
+  LFO_TRIGGER_IMMEDIATE = 0,  // Start immediately (default)
+  LFO_TRIGGER_NEXT_BEAT,      // Wait for next beat
+  LFO_TRIGGER_NEXT_BAR        // Wait for next bar
+} lfo_trigger_timing_t;
+
 // Note divisions for tempo sync mode
 typedef enum {
   LFO_DIVISION_4_BARS = 0,  // 4 bars per cycle
@@ -52,12 +59,23 @@ typedef enum {
   LFO_DIVISION_MAX
 } lfo_note_division_t;
 
+// LFO resolution mode (controls MIDI output density)
+typedef enum {
+  LFO_RESOLUTION_AUTO = 0,  // Smart: 30Hz for slow, 32 steps for fast (default)
+  LFO_RESOLUTION_COARSE,    // 16 steps per cycle
+  LFO_RESOLUTION_MEDIUM,    // 32 steps per cycle
+  LFO_RESOLUTION_FINE,      // 64 steps per cycle
+  LFO_RESOLUTION_MANUAL     // User-specified steps (16/32/64/128)
+} lfo_resolution_mode_t;
+
 // LFO configuration (stored per-scene)
 typedef struct {
   bool enabled;
   lfo_waveform_t waveform;
   lfo_rate_mode_t rate_mode;
   lfo_start_mode_t start_mode;
+  lfo_trigger_timing_t trigger_timing;  // When to start after LFO Start action
+  bool repeat;  // true = loop infinitely (default), false = one-shot (run once)
   bool reset_phase;  // true = restart from beginning, false = continue from previous position
   bool restore_on_stop;  // true = send phase-0 value when LFO stops
 
@@ -77,6 +95,10 @@ typedef struct {
   // Output range (floor/ceiling) - applied at full resolution before MIDI conversion
   uint8_t floor;    // Minimum output value (0-127, default 0)
   uint8_t ceiling;  // Maximum output value (0-127, default 127)
+
+  // Resolution mode (controls MIDI output density)
+  lfo_resolution_mode_t resolution_mode;  // Default: AUTO
+  uint8_t manual_steps;  // 16, 32, 64, or 128 (only used when MANUAL)
 
   // Custom curve pointer (for CUSTOM waveform)
   custom_curve_t* custom_curve;
@@ -102,6 +124,12 @@ lfo_rate_mode_t lfo_get_rate_mode(uint8_t slot);
 
 void lfo_set_start_mode(uint8_t slot, lfo_start_mode_t mode);
 lfo_start_mode_t lfo_get_start_mode(uint8_t slot);
+
+void lfo_set_trigger_timing(uint8_t slot, lfo_trigger_timing_t timing);
+lfo_trigger_timing_t lfo_get_trigger_timing(uint8_t slot);
+
+void lfo_set_repeat(uint8_t slot, bool repeat);
+bool lfo_get_repeat(uint8_t slot);
 
 void lfo_set_reset_phase(uint8_t slot, bool reset);
 bool lfo_get_reset_phase(uint8_t slot);
@@ -130,6 +158,12 @@ uint8_t lfo_get_ceiling(uint8_t slot);
 void lfo_set_custom_curve(uint8_t slot, custom_curve_t* curve);
 custom_curve_t* lfo_get_custom_curve(uint8_t slot);
 
+void lfo_set_resolution_mode(uint8_t slot, lfo_resolution_mode_t mode);
+lfo_resolution_mode_t lfo_get_resolution_mode(uint8_t slot);
+
+void lfo_set_manual_steps(uint8_t slot, uint8_t steps);
+uint8_t lfo_get_manual_steps(uint8_t slot);
+
 // Reset phase to 0
 void lfo_reset_phase(uint8_t slot);
 
@@ -154,13 +188,30 @@ lfo_config_t lfo_config_create_default(void);
 const char* lfo_waveform_to_string(lfo_waveform_t waveform);
 const char* lfo_division_to_string(lfo_note_division_t division);
 const char* lfo_start_mode_to_string(lfo_start_mode_t mode);
+const char* lfo_trigger_timing_to_string(lfo_trigger_timing_t timing);
 const char* lfo_rate_mode_to_string(lfo_rate_mode_t mode);
 lfo_waveform_t lfo_waveform_from_string(const char* str);
 lfo_note_division_t lfo_division_from_string(const char* str);
 lfo_start_mode_t lfo_start_mode_from_string(const char* str);
+lfo_trigger_timing_t lfo_trigger_timing_from_string(const char* str);
 lfo_rate_mode_t lfo_rate_mode_from_string(const char* str);
+const char* lfo_resolution_mode_to_string(lfo_resolution_mode_t mode);
+lfo_resolution_mode_t lfo_resolution_mode_from_string(const char* str);
 
 // Apply start mode settings (called on scene load)
 void lfo_apply_start_modes(void);
+
+// Trigger LFO start (respects trigger_timing setting)
+// Returns true if started immediately, false if pending
+bool lfo_trigger_start(uint8_t slot);
+
+// Queue an additional cycle for one-shot LFO
+void lfo_queue_cycle(uint8_t slot);
+
+// Check if LFO has completed its one-shot cycle
+bool lfo_is_cycle_completed(uint8_t slot);
+
+// Check if LFO has a pending start
+bool lfo_is_pending_start(uint8_t slot);
 
 #endif // LFO_H

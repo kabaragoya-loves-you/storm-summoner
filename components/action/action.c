@@ -491,11 +491,11 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
         uint8_t slot = action->params.lfo.slot;
         scene_t* scene = scene_get_current();
         if (slot == 1 || slot == 3) {
-          lfo_enable(0, true);
+          lfo_trigger_start(0);
           if (scene) scene->lfo1.enabled = true;
         }
         if (slot == 2 || slot == 3) {
-          lfo_enable(1, true);
+          lfo_trigger_start(1);
           if (scene) scene->lfo2.enabled = true;
         }
         ESP_LOGI(TAG, "LFO Start: slot %d", slot);
@@ -507,19 +507,28 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
         uint8_t slot = action->params.lfo.slot;
         scene_t* scene = scene_get_current();
         if (slot == 1 || slot == 3) {
-          // Restore CC value before disabling if configured
-          if (lfo_get_restore_on_stop(0)) {
-            midi_lfo_scene_handler_restore_value(0);
+          // Only restore if actually running
+          if (lfo_is_enabled(0)) {
+            if (lfo_get_restore_on_stop(0)) {
+              midi_lfo_scene_handler_restore_value(0);
+            }
+            lfo_enable(0, false);
+            if (scene) scene->lfo1.enabled = false;
+          } else if (lfo_is_pending_start(0)) {
+            // Cancel pending start
+            lfo_enable(0, false);
           }
-          lfo_enable(0, false);
-          if (scene) scene->lfo1.enabled = false;
         }
         if (slot == 2 || slot == 3) {
-          if (lfo_get_restore_on_stop(1)) {
-            midi_lfo_scene_handler_restore_value(1);
+          if (lfo_is_enabled(1)) {
+            if (lfo_get_restore_on_stop(1)) {
+              midi_lfo_scene_handler_restore_value(1);
+            }
+            lfo_enable(1, false);
+            if (scene) scene->lfo2.enabled = false;
+          } else if (lfo_is_pending_start(1)) {
+            lfo_enable(1, false);
           }
-          lfo_enable(1, false);
-          if (scene) scene->lfo2.enabled = false;
         }
         ESP_LOGI(TAG, "LFO Stop: slot %d", slot);
       }

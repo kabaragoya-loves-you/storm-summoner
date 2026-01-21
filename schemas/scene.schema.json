@@ -362,6 +362,17 @@
           "default": "running",
           "description": "Start mode: running (starts when scene loads), paused (requires action to start), or transport (follows transport state)"
         },
+        "trigger_timing": {
+          "type": "string",
+          "enum": ["immediate", "beat", "bar"],
+          "default": "immediate",
+          "description": "When LFO Start action is triggered: immediate (start now), beat (wait for next beat), bar (wait for bar start)"
+        },
+        "repeat": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, LFO loops infinitely. When false, runs one cycle and stops (one-shot mode)."
+        },
         "reset_phase": {
           "type": "boolean",
           "default": true,

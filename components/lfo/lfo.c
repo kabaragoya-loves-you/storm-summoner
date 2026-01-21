@@ -20,7 +20,6 @@
 #define LFO_TASK_STACK_SIZE 4096
 #define LFO_TASK_PRIORITY 5
 #define LFO_UPDATE_RATE_HZ 100  // Internal update rate
-#define LFO_MIDI_RATE_LIMIT_HZ 30  // Max MIDI output rate
 
 // Phase is stored as 16-bit for precision, output as 8-bit
 #define PHASE_MAX 65536
@@ -39,11 +38,16 @@ static const uint8_t SINE_TABLE[64] = {
 typedef struct {
   lfo_config_t config;
   uint16_t phase;           // Current phase (0-65535)
+  uint16_t prev_phase;      // Previous phase (for cycle wrap detection)
   uint8_t last_value;       // Last calculated value
   uint8_t last_sent_value;  // Last value sent to event bus
   uint32_t last_send_time;  // Timestamp of last event post
   uint8_t sample_hold_value; // Held value for S&H waveform
   bool sample_hold_triggered; // Whether S&H has triggered this cycle
+  bool cycle_completed;     // True when one-shot has finished its cycle
+  uint8_t queued_cycles;    // Number of additional cycles queued (for retrigger)
+  bool pending_start;       // LFO Start was triggered, waiting for timing
+  bool just_started;        // Skip first one-shot detection after restart (race protection)
 } lfo_state_t;
 
 static lfo_state_t s_lfo[LFO_NUM_SLOTS];
@@ -66,6 +70,70 @@ static uint8_t calculate_waveform(lfo_state_t* lfo);
 static void handle_beat_event(const event_t* event, void* context);
 static void handle_transport_event(const event_t* event, void* context);
 
+// Calculate LFO cycle duration in milliseconds
+static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm) {
+  if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
+    float rate_hz = lfo->config.rate_hz_x100 / 100.0f;
+    if (rate_hz < 0.01f) rate_hz = 0.01f;  // Avoid division by zero
+    return 1000.0f / rate_hz;
+  }
+
+  // For sensor-controlled modes, estimate based on mid-range rate (~1Hz)
+  if (lfo->config.rate_mode != LFO_RATE_MODE_TEMPO) {
+    return 1000.0f;  // Default 1 second cycle for sensor modes
+  }
+
+  // Tempo sync: calculate from division and BPM
+  if (bpm == 0) bpm = 120;  // Fallback
+  float beat_ms = 60000.0f / bpm;
+  uint8_t felt_beats = tempo_get_felt_beats_per_bar();
+  if (felt_beats == 0) felt_beats = 4;
+
+  switch (lfo->config.division) {
+    case LFO_DIVISION_32ND:     return beat_ms / 8.0f;
+    case LFO_DIVISION_SIXTEENTH: return beat_ms / 4.0f;
+    case LFO_DIVISION_EIGHTH:   return beat_ms / 2.0f;
+    case LFO_DIVISION_QUARTER:  return beat_ms;
+    case LFO_DIVISION_HALF:     return beat_ms * 2.0f;
+    case LFO_DIVISION_1_BAR:    return beat_ms * felt_beats;
+    case LFO_DIVISION_2_BARS:   return beat_ms * felt_beats * 2;
+    case LFO_DIVISION_4_BARS:   return beat_ms * felt_beats * 4;
+    default: return beat_ms;
+  }
+}
+
+// Get effective steps per cycle based on resolution mode
+static uint8_t get_effective_steps(lfo_state_t* lfo, float cycle_ms) {
+  switch (lfo->config.resolution_mode) {
+    case LFO_RESOLUTION_AUTO:
+      // Smart auto: use 30Hz for slow LFOs, 32 steps for fast LFOs
+      // Threshold: 800ms cycle = 24 steps at 30Hz
+      return (cycle_ms >= 800.0f) ? 0 : 32;  // 0 = use constant 30Hz
+    case LFO_RESOLUTION_COARSE:  return 16;
+    case LFO_RESOLUTION_MEDIUM:  return 32;
+    case LFO_RESOLUTION_FINE:    return 64;
+    case LFO_RESOLUTION_MANUAL:  return lfo->config.manual_steps;
+    default: return 0;
+  }
+}
+
+// Calculate send interval for an LFO based on resolution mode
+static uint32_t get_send_interval_ms(lfo_state_t* lfo, uint16_t bpm) {
+  float cycle_ms = calculate_cycle_duration_ms(lfo, bpm);
+  uint8_t steps = get_effective_steps(lfo, cycle_ms);
+
+  if (steps == 0) return 33;  // Constant 30Hz rate
+
+  // Calculate interval from steps per cycle
+  uint32_t interval = (uint32_t)(cycle_ms / steps);
+
+  // Clamp to 10-60Hz bounds (16-100ms)
+  if (interval < 16) interval = 16;   // Max 60Hz
+  if (interval > 100) interval = 100; // Min 10Hz
+
+  return interval;
+}
+
 esp_err_t lfo_init(void) {
   ESP_LOGI(TAG, "Initializing LFO component");
 
@@ -73,11 +141,16 @@ esp_err_t lfo_init(void) {
   for (int i = 0; i < LFO_NUM_SLOTS; i++) {
     s_lfo[i].config = lfo_config_create_default();
     s_lfo[i].phase = 0;
+    s_lfo[i].prev_phase = 0;
     s_lfo[i].last_value = 0;
     s_lfo[i].last_sent_value = 0;
     s_lfo[i].last_send_time = 0;
     s_lfo[i].sample_hold_value = 64;
     s_lfo[i].sample_hold_triggered = false;
+    s_lfo[i].cycle_completed = false;
+    s_lfo[i].queued_cycles = 0;
+    s_lfo[i].pending_start = false;
+    s_lfo[i].just_started = false;
   }
 
   // Subscribe to beat events for tempo sync
@@ -168,6 +241,34 @@ static void handle_beat_event(const event_t* event, void* context) {
   // Store bar length for use in main task
   if (event->data.beat.bar_length > 0) {
     s_beats_per_bar = event->data.beat.bar_length;
+  }
+
+  // Check for pending starts based on trigger timing
+  for (int i = 0; i < LFO_NUM_SLOTS; i++) {
+    lfo_state_t* lfo = &s_lfo[i];
+    if (!lfo->pending_start) continue;
+
+    bool should_start = false;
+
+    if (lfo->config.trigger_timing == LFO_TRIGGER_NEXT_BEAT) {
+      // Start on any beat
+      should_start = true;
+    } else if (lfo->config.trigger_timing == LFO_TRIGGER_NEXT_BAR) {
+      // Start only at bar beginning (beat 1)
+      should_start = (s_beat_in_bar == 1);
+    }
+
+    if (should_start) {
+      lfo->pending_start = false;
+      lfo->phase = 0;
+      lfo->prev_phase = 0;
+      lfo->cycle_completed = false;
+      lfo->just_started = true;  // Skip first one-shot check (race protection)
+      lfo->config.enabled = true;
+      lfo->last_sent_value = 255;  // Force first send
+      ESP_LOGI(TAG, "LFO%d: started on %s", i + 1,
+        lfo->config.trigger_timing == LFO_TRIGGER_NEXT_BEAT ? "beat" : "bar");
+    }
   }
 
   // Phase calculation is now done in lfo_task for smooth interpolation
@@ -289,7 +390,6 @@ static uint8_t calculate_waveform(lfo_state_t* lfo) {
 static void lfo_task(void* arg) {
   uint32_t last_update_time = 0;
   const uint32_t update_interval_ms = 1000 / LFO_UPDATE_RATE_HZ;
-  const uint32_t send_interval_ms = 1000 / LFO_MIDI_RATE_LIMIT_HZ;
 
   while (s_running) {
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
@@ -297,10 +397,17 @@ static void lfo_task(void* arg) {
     if (now - last_update_time >= update_interval_ms) {
       last_update_time = now;
 
+      // Get current BPM for dynamic send interval calculation
+      uint16_t bpm = tempo_get_bpm();
+      if (bpm == 0) bpm = 120;
+
       for (int i = 0; i < LFO_NUM_SLOTS; i++) {
         lfo_state_t* lfo = &s_lfo[i];
 
         if (!lfo->config.enabled) continue;
+
+        // Save previous phase for cycle wrap detection
+        lfo->prev_phase = lfo->phase;
 
         // Update phase based on rate mode
         if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
@@ -406,11 +513,49 @@ static void lfo_task(void* arg) {
           }
         }
 
+        // One-shot mode: detect cycle completion (phase wrapped from high to low)
+        // Skip detection on first tick after start to avoid race condition where
+        // prev_phase was stored before reset but phase was read after reset
+        if (lfo->just_started) {
+          lfo->just_started = false;  // Clear flag, next tick will check normally
+        } else if (!lfo->config.repeat && lfo->phase < lfo->prev_phase) {
+          // Cycle just completed
+          if (lfo->queued_cycles > 0) {
+            // More cycles queued, continue running
+            lfo->queued_cycles--;
+            ESP_LOGD(TAG, "LFO%d: one-shot cycle completed, %d cycles remaining", i + 1, lfo->queued_cycles);
+          } else {
+            // No more cycles, stop the LFO
+            // If restore_on_stop is enabled, post the phase-0 value before stopping
+            if (lfo->config.restore_on_stop && !ui_is_in_programming_mode()) {
+              uint8_t restore_value = lfo_get_value_at_phase(i, 0);
+              event_t event = {
+                .type = (i == 0) ? EVENT_LFO1_VALUE : EVENT_LFO2_VALUE,
+                .priority = EVENT_PRIORITY_NORMAL,
+                .timestamp = event_bus_get_current_timestamp(),
+                .data.sensor = {
+                  .channel = 0,
+                  .controller = (uint8_t)(80 + i),
+                  .value = restore_value
+                }
+              };
+              event_bus_post(&event);
+            }
+            lfo->cycle_completed = true;
+            lfo->config.enabled = false;
+            ESP_LOGI(TAG, "LFO%d: one-shot completed, stopping", i + 1);
+            continue;  // Skip waveform calculation and event posting
+          }
+        }
+
         // Calculate waveform value
         lfo->last_value = calculate_waveform(lfo);
 
         // Skip event posting in programming mode (LFO keeps running internally)
         if (!ui_is_in_programming_mode()) {
+          // Calculate dynamic send interval for this LFO based on resolution mode
+          uint32_t send_interval_ms = get_send_interval_ms(lfo, bpm);
+
           // Rate-limited event posting
           if (now - lfo->last_send_time >= send_interval_ms) {
             if (lfo->last_value != lfo->last_sent_value) {
@@ -445,6 +590,10 @@ static void lfo_task(void* arg) {
 void lfo_enable(uint8_t slot, bool enabled) {
   if (slot >= LFO_NUM_SLOTS) return;
   s_lfo[slot].config.enabled = enabled;
+  if (!enabled) {
+    // Clear pending start when disabling
+    s_lfo[slot].pending_start = false;
+  }
   if (enabled) {
     if (s_lfo[slot].config.reset_phase) {
       // Check if we should snap to current bar position (tempo sync with beat events)
@@ -611,6 +760,34 @@ custom_curve_t* lfo_get_custom_curve(uint8_t slot) {
   return s_lfo[slot].config.custom_curve;
 }
 
+void lfo_set_resolution_mode(uint8_t slot, lfo_resolution_mode_t mode) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  if (mode > LFO_RESOLUTION_MANUAL) mode = LFO_RESOLUTION_AUTO;
+  s_lfo[slot].config.resolution_mode = mode;
+  ESP_LOGD(TAG, "LFO%d resolution mode: %s", slot + 1, lfo_resolution_mode_to_string(mode));
+}
+
+lfo_resolution_mode_t lfo_get_resolution_mode(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return LFO_RESOLUTION_AUTO;
+  return s_lfo[slot].config.resolution_mode;
+}
+
+void lfo_set_manual_steps(uint8_t slot, uint8_t steps) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  // Clamp to valid values: 16, 32, 64, or 128
+  if (steps <= 16) steps = 16;
+  else if (steps <= 32) steps = 32;
+  else if (steps <= 64) steps = 64;
+  else steps = 128;
+  s_lfo[slot].config.manual_steps = steps;
+  ESP_LOGD(TAG, "LFO%d manual steps: %d", slot + 1, steps);
+}
+
+uint8_t lfo_get_manual_steps(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return 32;
+  return s_lfo[slot].config.manual_steps;
+}
+
 void lfo_reset_phase(uint8_t slot) {
   if (slot >= LFO_NUM_SLOTS) return;
   s_lfo[slot].phase = 0;
@@ -717,6 +894,8 @@ lfo_config_t lfo_config_create_default(void) {
     .waveform = LFO_WAVEFORM_SINE,
     .rate_mode = LFO_RATE_MODE_FREE,
     .start_mode = LFO_START_RUNNING,
+    .trigger_timing = LFO_TRIGGER_IMMEDIATE,
+    .repeat = true,  // Loop infinitely by default
     .reset_phase = true,  // Restart from beginning by default
     .restore_on_stop = false,  // Don't send restore value by default
     .rate_hz_x100 = 100,  // 1.0 Hz
@@ -725,6 +904,8 @@ lfo_config_t lfo_config_create_default(void) {
     .duty_cycle = 64,  // 50%
     .floor = 0,        // Minimum output value
     .ceiling = 127,    // Maximum output value
+    .resolution_mode = LFO_RESOLUTION_AUTO,  // Smart auto mode
+    .manual_steps = 32,  // Default manual steps
     .custom_curve = NULL
   };
   return config;
@@ -812,6 +993,23 @@ lfo_start_mode_t lfo_start_mode_from_string(const char* str) {
   return LFO_START_RUNNING;
 }
 
+const char* lfo_trigger_timing_to_string(lfo_trigger_timing_t timing) {
+  switch (timing) {
+    case LFO_TRIGGER_IMMEDIATE: return "immediate";
+    case LFO_TRIGGER_NEXT_BEAT: return "beat";
+    case LFO_TRIGGER_NEXT_BAR: return "bar";
+    default: return "immediate";
+  }
+}
+
+lfo_trigger_timing_t lfo_trigger_timing_from_string(const char* str) {
+  if (!str) return LFO_TRIGGER_IMMEDIATE;
+  if (strcmp(str, "immediate") == 0) return LFO_TRIGGER_IMMEDIATE;
+  if (strcmp(str, "beat") == 0) return LFO_TRIGGER_NEXT_BEAT;
+  if (strcmp(str, "bar") == 0) return LFO_TRIGGER_NEXT_BAR;
+  return LFO_TRIGGER_IMMEDIATE;
+}
+
 lfo_rate_mode_t lfo_rate_mode_from_string(const char* str) {
   if (!str) return LFO_RATE_MODE_FREE;
   if (strcmp(str, "free") == 0) return LFO_RATE_MODE_FREE;
@@ -824,6 +1022,27 @@ lfo_rate_mode_t lfo_rate_mode_from_string(const char* str) {
   return LFO_RATE_MODE_FREE;
 }
 
+const char* lfo_resolution_mode_to_string(lfo_resolution_mode_t mode) {
+  switch (mode) {
+    case LFO_RESOLUTION_AUTO: return "auto";
+    case LFO_RESOLUTION_COARSE: return "coarse";
+    case LFO_RESOLUTION_MEDIUM: return "medium";
+    case LFO_RESOLUTION_FINE: return "fine";
+    case LFO_RESOLUTION_MANUAL: return "manual";
+    default: return "auto";
+  }
+}
+
+lfo_resolution_mode_t lfo_resolution_mode_from_string(const char* str) {
+  if (!str) return LFO_RESOLUTION_AUTO;
+  if (strcmp(str, "auto") == 0) return LFO_RESOLUTION_AUTO;
+  if (strcmp(str, "coarse") == 0) return LFO_RESOLUTION_COARSE;
+  if (strcmp(str, "medium") == 0) return LFO_RESOLUTION_MEDIUM;
+  if (strcmp(str, "fine") == 0) return LFO_RESOLUTION_FINE;
+  if (strcmp(str, "manual") == 0) return LFO_RESOLUTION_MANUAL;
+  return LFO_RESOLUTION_AUTO;
+}
+
 void lfo_set_start_mode(uint8_t slot, lfo_start_mode_t mode) {
   if (slot >= LFO_NUM_SLOTS) return;
   s_lfo[slot].config.start_mode = mode;
@@ -833,6 +1052,28 @@ void lfo_set_start_mode(uint8_t slot, lfo_start_mode_t mode) {
 lfo_start_mode_t lfo_get_start_mode(uint8_t slot) {
   if (slot >= LFO_NUM_SLOTS) return LFO_START_RUNNING;
   return s_lfo[slot].config.start_mode;
+}
+
+void lfo_set_trigger_timing(uint8_t slot, lfo_trigger_timing_t timing) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  s_lfo[slot].config.trigger_timing = timing;
+  ESP_LOGD(TAG, "LFO%d trigger timing: %s", slot + 1, lfo_trigger_timing_to_string(timing));
+}
+
+lfo_trigger_timing_t lfo_get_trigger_timing(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return LFO_TRIGGER_IMMEDIATE;
+  return s_lfo[slot].config.trigger_timing;
+}
+
+void lfo_set_repeat(uint8_t slot, bool repeat) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  s_lfo[slot].config.repeat = repeat;
+  ESP_LOGD(TAG, "LFO%d repeat: %s", slot + 1, repeat ? "loop" : "one-shot");
+}
+
+bool lfo_get_repeat(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return true;
+  return s_lfo[slot].config.repeat;
 }
 
 void lfo_set_reset_phase(uint8_t slot, bool reset) {
@@ -860,8 +1101,32 @@ static void handle_transport_event(const event_t* event, void* context) {
   
   bool playing = transport_is_playing();
   
+  // Reset beat tracking on transport start for clean sync
+  if (playing) {
+    s_beat_count = 0;
+    s_beat_in_bar = 1;  // Will be updated by first beat event
+    s_last_beat_time = 0;
+  }
+  
   for (int i = 0; i < LFO_NUM_SLOTS; i++) {
     if (s_lfo[i].config.start_mode == LFO_START_TRANSPORT) {
+      // If stopping and restore_on_stop is enabled, post the phase-0 value first
+      if (!playing && s_lfo[i].config.enabled && s_lfo[i].config.restore_on_stop) {
+        if (!ui_is_in_programming_mode()) {
+          uint8_t restore_value = lfo_get_value_at_phase(i, 0);
+          event_t event = {
+            .type = (i == 0) ? EVENT_LFO1_VALUE : EVENT_LFO2_VALUE,
+            .priority = EVENT_PRIORITY_NORMAL,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.sensor = {
+              .channel = 0,
+              .controller = (uint8_t)(80 + i),
+              .value = restore_value
+            }
+          };
+          event_bus_post(&event);
+        }
+      }
       lfo_enable(i, playing);
       ESP_LOGD(TAG, "LFO%d %s (transport)", i + 1, playing ? "started" : "stopped");
     }
@@ -900,4 +1165,56 @@ void lfo_apply_start_modes(void) {
         break;
     }
   }
+}
+
+bool lfo_trigger_start(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return false;
+
+  lfo_state_t* lfo = &s_lfo[slot];
+
+  // If LFO is already running in one-shot mode, queue another cycle
+  if (lfo->config.enabled && !lfo->config.repeat) {
+    lfo->queued_cycles++;
+    ESP_LOGI(TAG, "LFO%d: queued cycle (total: %d)", slot + 1, lfo->queued_cycles);
+    return true;  // Treated as immediate since it's already running
+  }
+
+  // Check trigger timing
+  if (lfo->config.trigger_timing == LFO_TRIGGER_IMMEDIATE) {
+    // Start immediately
+    lfo->phase = 0;
+    lfo->prev_phase = 0;
+    lfo->cycle_completed = false;
+    lfo->just_started = true;  // Skip first one-shot check (race protection)
+    lfo->queued_cycles = 0;
+    lfo->pending_start = false;
+    lfo->config.enabled = true;
+    lfo->last_sent_value = 255;  // Force first send
+    ESP_LOGI(TAG, "LFO%d: started immediately", slot + 1);
+    return true;
+  } else {
+    // Set pending start, will be activated on beat/bar
+    lfo->pending_start = true;
+    lfo->cycle_completed = false;
+    lfo->queued_cycles = 0;
+    ESP_LOGI(TAG, "LFO%d: pending start on %s", slot + 1,
+      lfo->config.trigger_timing == LFO_TRIGGER_NEXT_BEAT ? "beat" : "bar");
+    return false;
+  }
+}
+
+void lfo_queue_cycle(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  s_lfo[slot].queued_cycles++;
+  ESP_LOGD(TAG, "LFO%d: queued cycle (total: %d)", slot + 1, s_lfo[slot].queued_cycles);
+}
+
+bool lfo_is_cycle_completed(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return false;
+  return s_lfo[slot].cycle_completed;
+}
+
+bool lfo_is_pending_start(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return false;
+  return s_lfo[slot].pending_start;
 }

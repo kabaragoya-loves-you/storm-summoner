@@ -108,6 +108,22 @@ static uint16_t s_midi_last_known_good_bpm = DEFAULT_BPM;
 static uint32_t s_midi_last_tick_time_ms = 0;
 static bool s_midi_clock_active = false;
 
+// MIDI clock tick tracking (for tempo_midi_clock_tick)
+static uint32_t s_midi_tick_last_quarter_time = 0;
+static float s_midi_tick_ema_interval_ms = 0.0f;
+static bool s_midi_tick_ema_initialized = false;
+static uint32_t s_midi_tick_last_update_time = 0;
+
+// Tempo lock state (stabilizes BPM during playback)
+#define TEMPO_LOCK_BEATS 4              // Beats before locking tempo
+#define TEMPO_LOCK_CHANGE_THRESHOLD 2   // BPM difference required to unlock
+#define TEMPO_LOCK_CONFIRM_COUNT 3      // Consecutive measurements needed to confirm change
+static uint8_t s_tempo_lock_beat_count = 0;     // Beats since transport start
+static bool s_tempo_locked = false;             // Whether tempo is locked
+static uint16_t s_tempo_locked_bpm = 0;         // The locked BPM value
+static uint8_t s_tempo_change_confirm = 0;      // Consecutive measurements confirming change
+static uint16_t s_tempo_change_candidate = 0;   // Candidate BPM for tempo change
+
 // Forward declarations
 static void tempo_task(void *pvParameters);
 static void transport_state_handler(const event_t* event, void* context);
@@ -350,14 +366,23 @@ static void tempo_task(void *pvParameters) {
   
   TickType_t last_wake_time = xTaskGetTickCount();
   uint16_t last_bpm = s_bpm;
+  bool was_running = false;  // Track state transitions
   
   while (1) {
     // Check if we should be running based on clock_always_send setting
     bool should_run = s_clock_always_send || transport_is_playing();
     
     if (!should_run) {
+      was_running = false;
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
+    }
+    
+    // Reset timing reference when transitioning from idle to running
+    // This prevents vTaskDelayUntil from "catching up" with a stale timestamp
+    if (!was_running) {
+      last_wake_time = xTaskGetTickCount();
+      was_running = true;
     }
     
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
@@ -480,8 +505,9 @@ static void tempo_task(void *pvParameters) {
       vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
     }
     else { // CLOCK_SOURCE_MIDI
-      // In MIDI clock mode, we track incoming clocks (in tempo_midi_clock_tick)
-      // with dropout protection - tempo holds at last known good BPM if clock stops
+      // In MIDI clock mode, beat/tick tracking is handled ENTIRELY by tempo_midi_clock_tick()
+      // which is called directly from the MIDI parser for each 0xF8 clock message.
+      // This task only monitors for dropout and handles optional clock re-transmission.
       
       uint32_t now = esp_timer_get_time() / 1000;
       
@@ -503,50 +529,10 @@ static void tempo_task(void *pvParameters) {
         }
       }
       
-      // Calculate pulses per quarter note based on clock standard
-      uint32_t ppqn;
-      switch (standard) {
-        case CLOCK_STANDARD_24PPQN:
-          ppqn = 24;  // Standard MIDI clock
-          break;
-        case CLOCK_STANDARD_16TH_NOTE:
-          ppqn = 6;   // 1 pulse per 16th note
-          break;
-        case CLOCK_STANDARD_BEAT:
-          ppqn = 1;   // 1 pulse per beat
-          break;
-        default:
-          ppqn = 24;
-          break;
-      }
-      
-      // Calculate tick interval based on tracked BPM (minimum 10ms to ensure at least 1 FreeRTOS tick)
-      // During dropout, s_bpm holds at last known good value
-      uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
-      if (tick_interval_ms < 10) tick_interval_ms = 10;
-      
-      // Send MIDI clock
-      send_clock();
-      
-      // Track ticks and beats
-      s_tick_counter++;
-      
-      // Check if we've completed a beat
-      uint32_t beat_divisor = s_note_divider;
-      if (standard == CLOCK_STANDARD_16TH_NOTE) {
-        beat_divisor /= 4;
-      } else if (standard == CLOCK_STANDARD_BEAT) {
-        beat_divisor = 1;
-      }
-      
-      if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
-        s_beat_counter++;
-        if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
-        publish_beat_event();
-      }
-      
-      // Delay until next tick
-      vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
+      // In MIDI mode, we do NOT generate our own clock or beat events here.
+      // All timing comes from tempo_midi_clock_tick() called by MIDI parser.
+      // Just sleep and check for dropout periodically.
+      vTaskDelay(pdMS_TO_TICKS(50));
     }
   }
 }
@@ -559,7 +545,23 @@ static void transport_state_handler(const event_t* event, void* context) {
   switch (state) {
     case TRANSPORT_PLAYING:
     case TRANSPORT_RECORDING:
+      // Reset counters for clean start
+      // Start at beat 1, tick 0 - MIDI Start means we're ON beat 1 immediately
+      s_beat_counter = 1;
+      s_tick_counter = 0;
+      // Reset MIDI tick tracking for clean tempo detection
+      s_midi_tick_last_quarter_time = 0;
+      s_midi_tick_ema_initialized = false;
+      s_midi_tick_last_update_time = 0;
+      // Reset tempo lock state - will lock after TEMPO_LOCK_BEATS
+      s_tempo_lock_beat_count = 0;
+      s_tempo_locked = false;
+      s_tempo_locked_bpm = 0;
+      s_tempo_change_confirm = 0;
+      s_tempo_change_candidate = 0;
       tempo_start();
+      // Immediately publish beat 1 - transport start = beat 1 begins now
+      publish_beat_event();
       break;
       
     case TRANSPORT_STOPPED:
@@ -567,6 +569,8 @@ static void transport_state_handler(const event_t* event, void* context) {
       // Just reset counters
       s_beat_counter = 0;
       s_tick_counter = 0;
+      // Unlock tempo for next playback
+      s_tempo_locked = false;
       break;
       
     case TRANSPORT_PAUSED:
@@ -585,9 +589,6 @@ static void publish_beat_event(void) {
     if (flash_duration_ms > 200) flash_duration_ms = 200;  // Maximum 200ms
     flash_led(flash_duration_ms);  // Turns LED on immediately, schedules timer for off
   }
-  
-  // Log beat timing for synchronization debugging
-  ESP_LOGD(TAG, "BEAT %d/%d", s_beat_counter, s_time_signature.numerator);
   
   // Publish beat event with CRITICAL priority to minimize UI latency
   event_t beat_event = {
@@ -862,19 +863,14 @@ void tempo_tap_event(void) {
 }
 
 void tempo_midi_clock_tick(void) {
-  static uint32_t midi_tick_count = 0;
-  static uint32_t last_quarter_time = 0;
-  static float ema_interval_ms = 0.0f;  // Exponential moving average of quarter note intervals
-  static bool ema_initialized = false;
-  static uint32_t last_update_time = 0;  // Rate limit BPM updates
-  
   // Safety: Don't process if tempo not initialized yet
   if (!s_state_mutex) return;
   
   // Only process if source is MIDI
   if (s_clock_source != CLOCK_SOURCE_MIDI) return;
   
-  midi_tick_count++;
+  // Use global tick counter (reset by transport_state_handler on start/stop)
+  s_tick_counter++;
   
   uint32_t now = esp_timer_get_time() / 1000;
   
@@ -891,24 +887,24 @@ void tempo_midi_clock_tick(void) {
   // EMA-based tempo tracking with outlier rejection
   // Updates smoothly every quarter note, but rate-limits BPM announcements
   
-  if (midi_tick_count % MIDI_CLOCKS_PER_QUARTER == 0) {
+  if (s_tick_counter % MIDI_CLOCKS_PER_QUARTER == 0) {
     // Every quarter note: measure interval and update EMA
     
-    if (last_quarter_time > 0) {
-      uint32_t interval_ms = now - last_quarter_time;
+    if (s_midi_tick_last_quarter_time > 0) {
+      uint32_t interval_ms = now - s_midi_tick_last_quarter_time;
       
       // Sanity check: 200ms (300 BPM) to 3000ms (20 BPM)
       if (interval_ms >= 200 && interval_ms <= 3000) {
         
-        if (!ema_initialized) {
+        if (!s_midi_tick_ema_initialized) {
           // First measurement - initialize EMA
-          ema_interval_ms = (float)interval_ms;
-          ema_initialized = true;
+          s_midi_tick_ema_interval_ms = (float)interval_ms;
+          s_midi_tick_ema_initialized = true;
         } else {
           // Adaptive outlier rejection:
           // Small changes (±20%): Apply EMA smoothing
           // Large changes (>20%): Reset EMA to adapt quickly to tempo changes
-          float deviation = (float)interval_ms / ema_interval_ms;
+          float deviation = (float)interval_ms / s_midi_tick_ema_interval_ms;
           
           if (deviation >= 0.80f && deviation <= 1.20f) {
             // Within ±20% - valid measurement, update EMA with smoothing
@@ -916,20 +912,21 @@ void tempo_midi_clock_tick(void) {
             // Fast tempos (<300ms): alpha=0.5 (more smoothing needed)
             // Normal tempos (300-1000ms): alpha=0.4 
             // Slow tempos (>1000ms): alpha=0.3 (less data, need more history)
-            float alpha = (ema_interval_ms < 300.0f) ? 0.5f : 
-                         (ema_interval_ms > 1000.0f) ? 0.3f : 0.4f;
-            ema_interval_ms = alpha * (float)interval_ms + (1.0f - alpha) * ema_interval_ms;
+            float alpha = (s_midi_tick_ema_interval_ms < 300.0f) ? 0.5f : 
+                         (s_midi_tick_ema_interval_ms > 1000.0f) ? 0.3f : 0.4f;
+            s_midi_tick_ema_interval_ms = alpha * (float)interval_ms +
+              (1.0f - alpha) * s_midi_tick_ema_interval_ms;
           } else {
             // Beyond ±20% - likely tempo change
             // Reset EMA immediately to adapt to new tempo
-            ema_interval_ms = (float)interval_ms;
+            s_midi_tick_ema_interval_ms = (float)interval_ms;
             ESP_LOGD(TAG, "Large tempo change: %.0f ms -> %lu ms", 
-                     ema_interval_ms, (unsigned long)interval_ms);
+                     s_midi_tick_ema_interval_ms, (unsigned long)interval_ms);
           }
         }
         
-        // Calculate BPM from EMA interval
-        uint16_t calculated_bpm = (uint16_t)(60000.0f / ema_interval_ms);
+        // Calculate BPM from EMA interval (use rounding, not truncation)
+        uint16_t calculated_bpm = (uint16_t)(60000.0f / s_midi_tick_ema_interval_ms + 0.5f);
         
         // Clamp to valid range (20-300 BPM)
         if (calculated_bpm < MIN_BPM) calculated_bpm = MIN_BPM;
@@ -941,32 +938,83 @@ void tempo_midi_clock_tick(void) {
           // Update last known good BPM for dropout protection
           s_midi_last_known_good_bpm = measured_bpm;
           
-          int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
+          // Tempo lock logic: Once locked, require significant sustained change
+          bool should_update = false;
           
-          // Apply deadzone if configured
-          if (bpm_delta > s_bpm_deadzone) {
+          if (!s_tempo_locked) {
+            // Check if we should lock now (based on beat count, independent of BPM change)
+            if (s_tempo_lock_beat_count >= TEMPO_LOCK_BEATS) {
+              s_tempo_locked = true;
+              s_tempo_locked_bpm = measured_bpm;
+              ESP_LOGI(TAG, "Tempo LOCKED at %d BPM", s_tempo_locked_bpm);
+            }
+            
+            // Not locked yet - use normal update logic
+            int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
+            if (bpm_delta > s_bpm_deadzone) {
+              should_update = true;
+            }
+          } else {
+            // Tempo is locked - require significant change with confirmation
+            int delta_from_locked = abs((int)measured_bpm - (int)s_tempo_locked_bpm);
+            
+            if (delta_from_locked >= TEMPO_LOCK_CHANGE_THRESHOLD) {
+              // Potential tempo change detected
+              if (s_tempo_change_candidate == 0 ||
+                  abs((int)measured_bpm - (int)s_tempo_change_candidate) <= 1) {
+                // Same candidate (within ±1 BPM) - increment confirmation
+                s_tempo_change_candidate = measured_bpm;
+                s_tempo_change_confirm++;
+                
+                if (s_tempo_change_confirm >= TEMPO_LOCK_CONFIRM_COUNT) {
+                  // Confirmed tempo change - update and re-lock
+                  s_tempo_locked_bpm = measured_bpm;
+                  s_tempo_change_confirm = 0;
+                  s_tempo_change_candidate = 0;
+                  should_update = true;
+                  ESP_LOGI(TAG, "Tempo change confirmed, re-locked at %d BPM",
+                    s_tempo_locked_bpm);
+                }
+              } else {
+                // Different candidate - reset confirmation
+                s_tempo_change_candidate = measured_bpm;
+                s_tempo_change_confirm = 1;
+              }
+            } else {
+              // Within lock threshold - reset any pending change
+              s_tempo_change_confirm = 0;
+              s_tempo_change_candidate = 0;
+            }
+          }
+          
+          if (should_update) {
             // Rate limit updates: minimum 500ms between BPM announcements
-            // This prevents spam at fast tempos while still tracking smoothly
-            if (last_update_time == 0 || (now - last_update_time) >= 500) {
+            if (s_midi_tick_last_update_time == 0 ||
+                (now - s_midi_tick_last_update_time) >= 500) {
               xSemaphoreTake(s_state_mutex, portMAX_DELAY);
               s_bpm = measured_bpm;
               xSemaphoreGive(s_state_mutex);
               publish_tempo_changed_event();
-              last_update_time = now;
+              s_midi_tick_last_update_time = now;
             }
           }
         }
       }
     }
     
-    last_quarter_time = now;
+    s_midi_tick_last_quarter_time = now;
   }
   
   // Check for beat (for beat events and LED sync)
-  if (midi_tick_count % s_note_divider == 0) {
+  // Use global s_tick_counter which is now the authoritative tick source
+  if (s_tick_counter % s_note_divider == 0) {
     s_beat_counter++;
     if (s_beat_counter > s_time_signature.numerator) {
       s_beat_counter = 1;
+    }
+    // Track beats for tempo lock (saturate at 255 to avoid overflow)
+    if (s_tempo_lock_beat_count < 255) {
+      s_tempo_lock_beat_count++;
     }
     publish_beat_event();
   }
