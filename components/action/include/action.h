@@ -95,6 +95,7 @@ typedef struct {
   uint8_t timing_beat;                 // Target beat 1-16 (only used when timing == SPECIFIC_BEAT)
   bool repeat_enabled;                 // Whether action repeats at repeat_division
   action_repeat_division_t repeat_division;  // Repeat interval (when repeat_enabled == true)
+  uint8_t probability;                 // Chance of firing 10-100% (default 100, only for repeating)
   
   union {
     // For Control actions (CONTROL, CONTROL_HOLD, CONTROL_CYCLE) - supports 1-4 CC numbers

@@ -2588,6 +2588,10 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddBoolToObject(obj, "repeat", true);
     cJSON_AddStringToObject(obj, "repeat_division",
       action_repeat_division_to_string(action->repeat_division));
+    // Only serialize probability if not default (100%)
+    if (action->probability > 0 && action->probability < 100) {
+      cJSON_AddNumberToObject(obj, "probability", action->probability);
+    }
   }
 
   return obj;
@@ -2818,6 +2822,16 @@ static action_t json_to_action(cJSON* obj) {
   cJSON* repeat_div = cJSON_GetObjectItem(obj, "repeat_division");
   if (repeat_div && cJSON_IsString(repeat_div)) {
     action.repeat_division = action_repeat_division_from_string(repeat_div->valuestring);
+  }
+  
+  // Parse probability (default: 100%)
+  action.probability = 100;  // Default
+  cJSON* prob = cJSON_GetObjectItem(obj, "probability");
+  if (prob && cJSON_IsNumber(prob)) {
+    int prob_val = prob->valueint;
+    if (prob_val >= 10 && prob_val <= 100) {
+      action.probability = (uint8_t)prob_val;
+    }
   }
   
   return action;

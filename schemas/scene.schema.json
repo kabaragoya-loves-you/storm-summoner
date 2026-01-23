@@ -490,6 +490,14 @@
           "enum": ["16_bars", "12_bars", "8_bars", "4_bars", "2_bars", "1_bar", "half", "quarter", "eighth", "sixteenth", "32nd"],
           "default": "quarter",
           "description": "Repeat interval (only used when repeat=true)"
+        },
+        "probability": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100,
+          "multipleOf": 10,
+          "default": 100,
+          "description": "Chance of firing on each repeat (10-100%, only used when repeat=true)"
         }
       },
       "allOf": [

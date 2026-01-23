@@ -91,6 +91,7 @@ static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
+static char s_probability_label[LABEL_BUFFER_SETS][24];
 
 // Menu items for submenu pages
 #define MAX_DETAIL_ITEMS 12
@@ -2964,6 +2965,51 @@ static void nav_to_repeat(void* user_data) {
 }
 
 // ============================================================================
+// Probability Roller (only shown when repeat is enabled)
+// ============================================================================
+
+static const char* get_probability_display(uint8_t prob) {
+  static char buf[8];
+  if (prob == 0 || prob >= 100) return "100%";
+  snprintf(buf, sizeof(buf), "%d%%", prob);
+  return buf;
+}
+
+static void probability_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  // Index 0 = 10%, 1 = 20%, ... 9 = 100%
+  uint8_t prob = (uint8_t)((selected_index + 1) * 10);
+  s_ctx->target_action->probability = prob;
+  ESP_LOGD(TAG, "Set probability: %d%%", prob);
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* probability_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Probability", "Error", 0, NULL, NULL);
+  }
+  
+  uint8_t prob = s_ctx->target_action->probability;
+  if (prob == 0) prob = 100;  // Default to 100%
+  
+  // Convert probability to index: 10% = 0, 20% = 1, ... 100% = 9
+  uint32_t current_idx = (prob / 10) - 1;
+  if (current_idx > 9) current_idx = 9;
+  
+  return menu_create_roller_page("Probability",
+    "10%\n20%\n30%\n40%\n50%\n60%\n70%\n80%\n90%\n100%",
+    current_idx, probability_confirm_cb, NULL);
+}
+
+static void nav_to_probability(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Probability", probability_roller_create);
+}
+
+// ============================================================================
 // Action Detail Page (stub - parameters will be added in subsequent phases)
 // ============================================================================
 
@@ -3308,6 +3354,16 @@ lv_obj_t* action_config_detail_page_create(void) {
     s_detail_items[item_count++] = (menu_item_t){
       s_repeat_label[buf], nav_to_repeat, NULL, true
     };
+    
+    // Show Probability option only when repeat is enabled
+    if (action->repeat_enabled && item_count < MAX_DETAIL_ITEMS) {
+      const char* prob_display = get_probability_display(action->probability);
+      snprintf(s_probability_label[buf], sizeof(s_probability_label[buf]),
+        "Probability\n%s", prob_display);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_probability_label[buf], nav_to_probability, NULL, true
+      };
+    }
   }
   
   const char* title = s_ctx->detail_title ? s_ctx->detail_title : "Action";

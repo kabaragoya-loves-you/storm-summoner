@@ -145,41 +145,59 @@ static void handle_beat_event(const event_t* event, void* context) {
     }
     
     if (should_fire) {
-      ESP_LOGD(TAG, "Firing pending action %s on beat %d",
-        action_type_to_string(pending->action.type), current_beat);
-      
-      // Execute immediately (press only - releases are never queued)
-      action_execute_immediate(&pending->action, pending->trigger_value, true);
-      
-      // Sync cycle state back to original action (for CYCLE actions)
-      if (pending->original) {
-        switch (pending->action.type) {
-          case ACTION_CONTROL_CYCLE:
-            pending->original->params.control.current_index =
-              pending->action.params.control.current_index;
-            break;
-          case ACTION_PRESET_CYCLE:
-            pending->original->params.preset_cycle.current_index =
-              pending->action.params.preset_cycle.current_index;
-            break;
-          case ACTION_TEMPO_CYCLE:
-            pending->original->params.tempo.current_index =
-              pending->action.params.tempo.current_index;
-            break;
-          case ACTION_TOUCHWHEEL_CYCLE:
-            pending->original->params.tw_mode.current_index =
-              pending->action.params.tw_mode.current_index;
-            break;
-          case ACTION_LFO_SHAPE:
-            pending->original->params.lfo.current_index =
-              pending->action.params.lfo.current_index;
-            break;
-          default:
-            break;
+      // For repeating actions, check probability (default 100 = always fire)
+      bool probability_passed = true;
+      if (pending->repeating) {
+        uint8_t prob = pending->action.probability;
+        if (prob == 0) prob = 100;  // Default to 100% if not set
+        if (prob < 100) {
+          // Roll 0-99, pass if roll < probability
+          uint8_t roll = (uint8_t)(esp_random() % 100);
+          probability_passed = (roll < prob);
+          if (!probability_passed) {
+            ESP_LOGD(TAG, "Probability check failed (%d%%, rolled %d) for %s",
+              prob, roll, action_type_to_string(pending->action.type));
+          }
         }
       }
       
-      // Handle repeating actions - re-queue for next interval
+      if (probability_passed) {
+        ESP_LOGD(TAG, "Firing pending action %s on beat %d",
+          action_type_to_string(pending->action.type), current_beat);
+        
+        // Execute immediately (press only - releases are never queued)
+        action_execute_immediate(&pending->action, pending->trigger_value, true);
+        
+        // Sync cycle state back to original action (for CYCLE actions)
+        if (pending->original) {
+          switch (pending->action.type) {
+            case ACTION_CONTROL_CYCLE:
+              pending->original->params.control.current_index =
+                pending->action.params.control.current_index;
+              break;
+            case ACTION_PRESET_CYCLE:
+              pending->original->params.preset_cycle.current_index =
+                pending->action.params.preset_cycle.current_index;
+              break;
+            case ACTION_TEMPO_CYCLE:
+              pending->original->params.tempo.current_index =
+                pending->action.params.tempo.current_index;
+              break;
+            case ACTION_TOUCHWHEEL_CYCLE:
+              pending->original->params.tw_mode.current_index =
+                pending->action.params.tw_mode.current_index;
+              break;
+            case ACTION_LFO_SHAPE:
+              pending->original->params.lfo.current_index =
+                pending->action.params.lfo.current_index;
+              break;
+            default:
+              break;
+          }
+        }
+      }
+      
+      // Handle repeating actions - re-queue for next interval (even if probability failed)
       if (pending->repeating && !pending->hold_released) {
         // Calculate beats until next fire based on division
         uint8_t interval_beats = action_repeat_division_to_beats(
