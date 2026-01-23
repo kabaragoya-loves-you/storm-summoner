@@ -73,7 +73,7 @@ touchwheel_instance_t* touchwheel_create(touchwheel_mode_processor_t* mode, touc
   instance->output = output;
   instance->enabled = true;
   
-  ESP_LOGI(TAG, "Created touchwheel instance (mode: %s)", mode->name);
+  ESP_LOGD(TAG, "Created touchwheel instance (mode: %s)", mode->name);
   return instance;
 }
 

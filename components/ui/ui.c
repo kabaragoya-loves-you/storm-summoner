@@ -506,7 +506,7 @@ void ui_reclaim_canvas_buffer(void) {
   // Restore UI based on current mode
   if (current_mode == APP_MODE_PROGRAMMING) {
     // Restore Programming mode (menu was active)
-    ESP_LOGI(TAG, "Restoring Programming mode after screensaver");
+    ESP_LOGD(TAG, "Restoring Programming mode after screensaver");
 
     // Mark UI as owning the buffer again
     g_ui_has_buffer = true;
@@ -555,7 +555,7 @@ void ui_reclaim_canvas_buffer(void) {
     }
   } else {
     // Restore Performance mode (normal UI)
-    ESP_LOGI(TAG, "Restoring Performance mode after screensaver");
+    ESP_LOGD(TAG, "Restoring Performance mode after screensaver");
 
     // Re-attach the shared buffer to the canvas (screensaver was using it)
     if (canvas != NULL && shared_buf != NULL) {

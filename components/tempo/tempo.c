@@ -1392,7 +1392,7 @@ esp_err_t led_set_mode(led_mode_t mode) {
   
   esp_err_t ret = app_settings_save_u8(LED_MODE_KEY, (uint8_t)mode);
   
-  ESP_LOGI(TAG, "LED mode set to: %s", mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime");
+  ESP_LOGD(TAG, "LED mode set to: %s", mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime");
   return ret;
 }
 

@@ -997,7 +997,7 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
     s_scene_touchwheel = touchwheel_create(mode_proc, output, 500);  // 500ms timeout
     if (s_scene_touchwheel) {
       touch_register_touchwheel_instance(s_scene_touchwheel);
-      ESP_LOGI(TAG, "Created touchwheel instance for %s mode", mode_desc);
+      ESP_LOGD(TAG, "Created touchwheel instance for %s mode", mode_desc);
     } else {
       touchwheel_mode_destroy(mode_proc);
       touchwheel_output_destroy(output);
@@ -3819,7 +3819,7 @@ esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {
 esp_err_t scene_suspend_input(void) {
   if (s_input_suspended) return ESP_OK;  // Already suspended
 
-  ESP_LOGI(TAG, "Suspending scene input (entering programming mode)");
+  ESP_LOGD(TAG, "Suspending scene input (entering programming mode)");
 
   // Clean up any active notes before suspending
   touchwheel_cleanup_active_notes();
