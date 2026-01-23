@@ -191,7 +191,7 @@ void starfield_start(void) {
     lv_timer_resume(g_animation_timer);
   }
 
-  ESP_LOGI(TAG, "Starfield screensaver started successfully");
+  ESP_LOGD(TAG, "Starfield screensaver started successfully");
 }
 
 void starfield_stop(void) {
@@ -232,7 +232,7 @@ void starfield_cleanup(void) {
 
   g_previous_screen = NULL;
 
-  ESP_LOGI(TAG, "Starfield cleanup complete");
+  ESP_LOGD(TAG, "Starfield cleanup complete");
 }
 
 // Legacy function kept for compatibility

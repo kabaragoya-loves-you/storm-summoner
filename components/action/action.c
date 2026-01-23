@@ -8,12 +8,139 @@
 #include "tempo.h"
 #include "assets_manager.h"
 #include "lfo.h"
+#include "event_bus.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include <string.h>
+#include <stdlib.h>
 
 static const char* TAG = "action";
 
 static bool s_initialized = false;
+
+// ============================================================================
+// Pending Action Queue (for delayed trigger timing)
+// ============================================================================
+
+#define MAX_PENDING_ACTIONS 4
+
+typedef struct {
+  action_t action;
+  action_t* original;         // Pointer to original action for state sync
+  uint8_t trigger_value;
+  bool valid;
+  
+  // Phase 1: Trigger timing
+  uint8_t target_beat;        // 0 = any beat, 1-16 = specific beat
+  
+  // Phase 2: Repeating (placeholder for future)
+  // bool repeating;          // True if this action repeats after firing
+  // uint8_t repeat_division; // Subdivision for repeat interval
+  // uint32_t next_fire_tick; // Tick count for next fire (multi-bar tracking)
+  
+  // Phase 3: Probability (placeholder for future)
+  // uint8_t probability;     // 0-100 chance of firing
+  
+  // Phase 4: Step patterns (placeholder for future)
+  // uint8_t pattern_length;  // 1-8 steps in pattern
+  // uint8_t pattern_mask;    // Bitmask of active steps
+  // uint8_t pattern_step;    // Current position in pattern
+} pending_action_t;
+
+static pending_action_t s_pending_actions[MAX_PENDING_ACTIONS];
+
+// Forward declaration for internal execute (bypasses timing check)
+static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value, bool is_press);
+
+// Beat event handler - fires pending actions when beat matches
+static void handle_beat_event(const event_t* event, void* context) {
+  if (event->type != EVENT_BEAT) return;
+  
+  uint8_t current_beat = event->data.beat.beat_in_bar;
+  
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (!s_pending_actions[i].valid) continue;
+    
+    pending_action_t* pending = &s_pending_actions[i];
+    bool should_fire = false;
+    
+    if (pending->target_beat == 0) {
+      // Any beat triggers
+      should_fire = true;
+    } else if (pending->target_beat == current_beat) {
+      // Specific beat matches
+      should_fire = true;
+    }
+    
+    if (should_fire) {
+      ESP_LOGD(TAG, "Firing pending action %s on beat %d",
+        action_type_to_string(pending->action.type), current_beat);
+      
+      // Execute immediately (press only - releases are never queued)
+      action_execute_immediate(&pending->action, pending->trigger_value, true);
+      
+      // Sync cycle state back to original action (for CYCLE actions)
+      if (pending->original) {
+        switch (pending->action.type) {
+          case ACTION_CONTROL_CYCLE:
+            pending->original->params.control.current_index =
+              pending->action.params.control.current_index;
+            break;
+          case ACTION_PRESET_CYCLE:
+            pending->original->params.preset_cycle.current_index =
+              pending->action.params.preset_cycle.current_index;
+            break;
+          case ACTION_TEMPO_CYCLE:
+            pending->original->params.tempo.current_index =
+              pending->action.params.tempo.current_index;
+            break;
+          case ACTION_TOUCHWHEEL_CYCLE:
+            pending->original->params.tw_mode.current_index =
+              pending->action.params.tw_mode.current_index;
+            break;
+          case ACTION_LFO_SHAPE:
+            pending->original->params.lfo.current_index =
+              pending->action.params.lfo.current_index;
+            break;
+          default:
+            break;
+        }
+      }
+      
+      // Clear this slot (Phase 2 would re-queue here for repeating actions)
+      pending->valid = false;
+    }
+  }
+}
+
+// Enqueue an action for delayed execution
+static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint8_t target_beat) {
+  // Find empty slot
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (!s_pending_actions[i].valid) {
+      s_pending_actions[i].action = *action;
+      s_pending_actions[i].original = action;  // Store pointer to original for state sync
+      s_pending_actions[i].trigger_value = trigger_value;
+      s_pending_actions[i].target_beat = target_beat;
+      s_pending_actions[i].valid = true;
+      
+      ESP_LOGD(TAG, "Queued action %s for beat %d (slot %d)",
+        action_type_to_string(action->type),
+        target_beat == 0 ? -1 : target_beat, i);
+      return true;
+    }
+  }
+  
+  ESP_LOGW(TAG, "Pending action queue full, executing immediately");
+  return false;
+}
+
+void action_clear_pending(void) {
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    s_pending_actions[i].valid = false;
+  }
+  ESP_LOGD(TAG, "Cleared pending action queue");
+}
 
 // Action type names for debugging
 static const char* action_type_names[] = {
@@ -62,6 +189,16 @@ esp_err_t action_init(void) {
   }
   
   ESP_LOGI(TAG, "Initializing action system");
+  
+  // Initialize pending action queue
+  action_clear_pending();
+  
+  // Subscribe to beat events for delayed action triggering
+  esp_err_t ret = event_bus_subscribe(EVENT_BEAT, handle_beat_event, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to subscribe to beat events: %s", esp_err_to_name(ret));
+  }
+  
   s_initialized = true;
   
   return ESP_OK;
@@ -73,7 +210,39 @@ const char* action_type_to_string(action_type_t type) {
   return name ? name : "Unknown";
 }
 
+// Public action_execute - handles timing, may queue for delayed execution
 esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_press) {
+  if (!action || action->type == ACTION_NONE) {
+    return ESP_OK;
+  }
+  
+  // Releases always execute immediately (to complete press/release pairs)
+  // HOLD actions always execute immediately (need press/release pairing)
+  // IMMEDIATE timing executes immediately
+  bool should_queue = is_press &&
+                      action_supports_timing(action->type) &&
+                      action->timing != ACTION_TIMING_IMMEDIATE;
+  
+  if (should_queue) {
+    uint8_t target_beat;
+    if (action->timing == ACTION_TIMING_NEXT_BEAT) {
+      target_beat = 0;  // 0 = any beat
+    } else {
+      target_beat = action->timing_beat;  // Specific beat 1-16
+    }
+    
+    // Cast away const - cycle actions need state sync back to original
+    if (action_enqueue_pending((action_t*)action, trigger_value, target_beat)) {
+      return ESP_OK;  // Successfully queued
+    }
+    // Fall through to immediate execution if queue is full
+  }
+  
+  return action_execute_immediate(action, trigger_value, is_press);
+}
+
+// Internal immediate execute - bypasses timing check
+static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value, bool is_press) {
   if (!action || action->type == ACTION_NONE) {
     return ESP_OK;
   }
@@ -737,4 +906,100 @@ bool action_requires_hold(action_type_t type) {
     if (hold_actions[i] == type) return true;
   }
   return false;
+}
+
+// Returns true for actions that support timing options (non-HOLD actions)
+// HOLD actions must execute immediately to preserve press/release pairing
+bool action_supports_timing(action_type_t type) {
+  return !action_requires_hold(type) && type != ACTION_NONE;
+}
+
+// Static buffer for timing string
+static char s_timing_str[16];
+
+const char* action_timing_to_string(action_timing_t timing, uint8_t beat) {
+  switch (timing) {
+    case ACTION_TIMING_IMMEDIATE:
+      return "immediate";
+    case ACTION_TIMING_NEXT_BEAT:
+      return "beat";
+    case ACTION_TIMING_SPECIFIC_BEAT:
+      snprintf(s_timing_str, sizeof(s_timing_str), "beat_%d", beat);
+      return s_timing_str;
+    default:
+      return "immediate";
+  }
+}
+
+void action_timing_from_string(const char* str, action_timing_t* timing, uint8_t* beat) {
+  // Default to immediate
+  *timing = ACTION_TIMING_IMMEDIATE;
+  *beat = 1;
+  
+  if (!str || str[0] == '\0') return;
+  
+  if (strcmp(str, "immediate") == 0) {
+    *timing = ACTION_TIMING_IMMEDIATE;
+  } else if (strcmp(str, "beat") == 0) {
+    *timing = ACTION_TIMING_NEXT_BEAT;
+  } else if (strncmp(str, "beat_", 5) == 0) {
+    // Parse beat number from "beat_N"
+    int beat_num = atoi(str + 5);
+    if (beat_num >= 1 && beat_num <= 16) {
+      *timing = ACTION_TIMING_SPECIFIC_BEAT;
+      *beat = (uint8_t)beat_num;
+    } else {
+      // Invalid beat number, default to beat 1
+      *timing = ACTION_TIMING_SPECIFIC_BEAT;
+      *beat = 1;
+    }
+  }
+}
+
+bool action_validate_timing(action_t* action, uint8_t beats_per_bar) {
+  if (!action) return false;
+  if (action->timing != ACTION_TIMING_SPECIFIC_BEAT) return false;
+  if (action->timing_beat <= beats_per_bar) return false;
+  
+  ESP_LOGW(TAG, "Beat %d invalid for %d-beat bar, remapping to beat 1",
+    action->timing_beat, beats_per_bar);
+  action->timing_beat = 1;
+  return true;  // Remapping occurred
+}
+
+// Validate all action timings in a scene against its time signature
+void action_validate_scene_timings(scene_t* scene) {
+  if (!scene) return;
+  
+  uint8_t beats = scene->time_signature.numerator;
+  if (beats == 0) beats = 4;  // Default to 4/4
+  
+  int remapped = 0;
+  
+  // Validate touchpad actions
+  for (int i = 0; i < NUM_TOUCHPADS; i++) {
+    if (action_validate_timing(&scene->touchpads[i].action, beats)) remapped++;
+  }
+  
+  // Validate button actions
+  if (action_validate_timing(&scene->button_left, beats)) remapped++;
+  if (action_validate_timing(&scene->button_right, beats)) remapped++;
+  if (action_validate_timing(&scene->button_both, beats)) remapped++;
+  
+  // Validate bump action
+  if (action_validate_timing(&scene->bump, beats)) remapped++;
+  
+  // Validate on_load actions
+  for (int i = 0; i < scene->num_on_load_actions && i < MAX_ON_LOAD_ACTIONS; i++) {
+    if (action_validate_timing(&scene->on_load[i], beats)) remapped++;
+  }
+  
+  // Validate expression mode actions
+  if (action_validate_timing(&scene->sustain, beats)) remapped++;
+  if (action_validate_timing(&scene->sostenuto, beats)) remapped++;
+  if (action_validate_timing(&scene->expr_switch, beats)) remapped++;
+  
+  if (remapped > 0) {
+    ESP_LOGW(TAG, "Remapped %d action(s) with invalid beat timings to beat 1", remapped);
+  }
 }

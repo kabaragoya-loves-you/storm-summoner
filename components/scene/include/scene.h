@@ -165,6 +165,11 @@ typedef struct {
 // Initialize the scene manager
 esp_err_t scene_init(void);
 
+// Validate all action timings in a scene against its time signature
+// Call after scene load and when time signature changes
+// (Defined in action.c but declared here to avoid circular includes)
+void action_validate_scene_timings(scene_t* scene);
+
 // Scene navigation
 esp_err_t scene_set_current(uint8_t scene_index);
 uint8_t scene_get_current_index(void);

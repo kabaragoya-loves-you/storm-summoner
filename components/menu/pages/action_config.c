@@ -89,6 +89,7 @@ static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
+static char s_timing_label[LABEL_BUFFER_SETS][32];
 
 // Menu items for submenu pages
 #define MAX_DETAIL_ITEMS 12
@@ -2808,6 +2809,96 @@ static bool detail_page_handle_back(void) {
 }
 
 // ============================================================================
+// Timing Roller
+// ============================================================================
+
+// Forward declaration for roller
+static lv_obj_t* timing_roller_create(void);
+
+static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  action_t* action = s_ctx->target_action;
+  
+  if (selected_index == 0) {
+    // Immediate
+    action->timing = ACTION_TIMING_IMMEDIATE;
+    action->timing_beat = 0;
+  } else if (selected_index == 1) {
+    // Next Beat
+    action->timing = ACTION_TIMING_NEXT_BEAT;
+    action->timing_beat = 0;
+  } else {
+    // Specific beat: index 2 = Beat 1, index 3 = Beat 2, etc.
+    action->timing = ACTION_TIMING_SPECIFIC_BEAT;
+    action->timing_beat = (uint8_t)(selected_index - 1);  // index 2 -> beat 1
+  }
+  
+  ESP_LOGD(TAG, "Set timing: %s", action_timing_to_string(action->timing, action->timing_beat));
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* timing_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Timing", "Error", 0, NULL, NULL);
+  }
+  
+  // Build options based on current time signature
+  time_signature_t sig = tempo_get_time_signature();
+  uint8_t beats = sig.numerator;
+  if (beats == 0) beats = 4;
+  if (beats > 16) beats = 16;
+  
+  // Buffer for roller options: "Immediate\nNext Beat\nBeat 1\nBeat 2\n..."
+  static char timing_options[256];
+  int pos = snprintf(timing_options, sizeof(timing_options), "Immediate\nNext Beat");
+  for (int i = 1; i <= beats; i++) {
+    pos += snprintf(timing_options + pos, sizeof(timing_options) - pos, "\nBeat %d", i);
+  }
+  
+  // Determine current index
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = 0;
+  if (action->timing == ACTION_TIMING_IMMEDIATE) {
+    current_idx = 0;
+  } else if (action->timing == ACTION_TIMING_NEXT_BEAT) {
+    current_idx = 1;
+  } else if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
+    // Beat N -> index N+1 (Beat 1 = index 2)
+    current_idx = action->timing_beat + 1;
+    if (current_idx > (uint32_t)(beats + 1)) current_idx = 2;  // Clamp to valid range
+  }
+  
+  return menu_create_roller_page("Timing", timing_options, current_idx, timing_confirm_cb, NULL);
+}
+
+static void nav_to_timing(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Timing", timing_roller_create);
+}
+
+// Get display string for current timing setting
+static const char* get_timing_display(action_t* action) {
+  if (!action) return "Immediate";
+  
+  switch (action->timing) {
+    case ACTION_TIMING_IMMEDIATE:
+      return "Immediate";
+    case ACTION_TIMING_NEXT_BEAT:
+      return "Next Beat";
+    case ACTION_TIMING_SPECIFIC_BEAT: {
+      static char beat_buf[16];
+      snprintf(beat_buf, sizeof(beat_buf), "Beat %d", action->timing_beat);
+      return beat_buf;
+    }
+    default:
+      return "Immediate";
+  }
+}
+
+// ============================================================================
 // Action Detail Page (stub - parameters will be added in subsequent phases)
 // ============================================================================
 
@@ -3130,6 +3221,15 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
+    };
+  }
+  
+  // Show Timing selector for non-HOLD actions (actions that support timing)
+  if (action_supports_timing(action->type) && item_count < MAX_DETAIL_ITEMS) {
+    const char* timing_display = get_timing_display(action);
+    snprintf(s_timing_label[buf], sizeof(s_timing_label[buf]), "Timing\n%s", timing_display);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_timing_label[buf], nav_to_timing, NULL, true
     };
   }
   

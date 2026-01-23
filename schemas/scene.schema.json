@@ -473,6 +473,12 @@
             "touchwheel_cycle"
           ],
           "description": "Action type name"
+        },
+        "timing": {
+          "type": "string",
+          "pattern": "^(immediate|beat|beat_[1-9]|beat_1[0-6])$",
+          "default": "immediate",
+          "description": "When action takes effect: immediate (default), beat (next beat), beat_N (specific beat 1-16)"
         }
       },
       "allOf": [

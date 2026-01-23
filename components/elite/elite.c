@@ -395,11 +395,11 @@ void elite_start(void) {
     lv_timer_resume(g_ship_cycling_timer);
   }
 
-  ESP_LOGI(TAG, "Elite screensaver started");
+  ESP_LOGD(TAG, "Elite screensaver started");
 }
 
 void elite_stop(void) {
-  ESP_LOGI(TAG, "Stopping Elite screensaver...");
+  ESP_LOGD(TAG, "Stopping Elite screensaver...");
 
   // Set flag to prevent any drawing
   g_elite_stopping = true;
@@ -465,7 +465,7 @@ void elite_cleanup(void) {
 
   g_previous_screen = NULL;
 
-  ESP_LOGI(TAG, "Elite cleanup complete");
+  ESP_LOGD(TAG, "Elite cleanup complete");
 }
 
 static void next_random_ship(lv_timer_t *timer) {

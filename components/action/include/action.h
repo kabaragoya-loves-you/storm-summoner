@@ -65,9 +65,18 @@ typedef enum {
   ACTION_MAX
 } action_type_t;
 
+// Action trigger timing (when action takes effect)
+typedef enum {
+  ACTION_TIMING_IMMEDIATE = 0,   // Execute on trigger (default)
+  ACTION_TIMING_NEXT_BEAT,       // Wait for any next beat
+  ACTION_TIMING_SPECIFIC_BEAT    // Wait for specific beat (uses timing_beat field)
+} action_timing_t;
+
 // Action parameters (flexible union for different action types)
 typedef struct {
   action_type_t type;
+  action_timing_t timing;    // When to execute (default: IMMEDIATE)
+  uint8_t timing_beat;       // Target beat 1-16 (only used when timing == SPECIFIC_BEAT)
   
   union {
     // For Control actions (CONTROL, CONTROL_HOLD, CONTROL_CYCLE) - supports 1-4 CC numbers
@@ -178,5 +187,24 @@ const char* action_type_to_string(action_type_t type);
 // Check if action type requires hold (press/release) behavior
 // These actions should NOT be assigned to bump or on_load
 bool action_requires_hold(action_type_t type);
+
+// Check if action type supports timing options (non-HOLD actions)
+// Returns false for HOLD actions that must execute immediately
+bool action_supports_timing(action_type_t type);
+
+// String conversion for timing (for JSON/display)
+// Returns static buffer - copy if needed
+const char* action_timing_to_string(action_timing_t timing, uint8_t beat);
+
+// Parse timing from string (e.g., "immediate", "beat", "beat_3")
+// Sets timing and beat; defaults to IMMEDIATE if str is NULL or invalid
+void action_timing_from_string(const char* str, action_timing_t* timing, uint8_t* beat);
+
+// Validate timing against time signature, remap invalid beats to 1
+// Returns true if remapping occurred
+bool action_validate_timing(action_t* action, uint8_t beats_per_bar);
+
+// Clear all pending actions (call on scene change)
+void action_clear_pending(void);
 
 #endif // ACTION_H

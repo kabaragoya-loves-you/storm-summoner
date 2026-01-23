@@ -27,7 +27,8 @@
 			"action":	{
 				"type":	"control_change",
 				"cc":	1,
-				"value":	127
+				"value":	127,
+				"timing":	"beat_1"
 			}
 		}, {
 			"enabled":	true,

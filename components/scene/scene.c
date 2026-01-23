@@ -1177,6 +1177,9 @@ esp_err_t scene_init(void) {
            initial_scene->bpm, initial_scene->clock_source, initial_scene->beat_divider,
            initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
   
+  // Validate action timings against time signature (remap invalid beats to beat 1)
+  action_validate_scene_timings(initial_scene);
+  
   // Execute on_load actions
   if (initial_scene->num_on_load_actions > 0) {
     ESP_LOGI(TAG, "Executing %d on_load action(s)", initial_scene->num_on_load_actions);
@@ -1245,6 +1248,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Clean up any active notes before switching scenes
   touchwheel_cleanup_active_notes();
   
+  // Clear any pending timed actions from the previous scene
+  action_clear_pending();
+  
   // Check if scene is already in cache
   int cache_idx = -1;
   for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
@@ -1312,6 +1318,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   ESP_LOGD(TAG, "Set tempo: bpm=%d, source=%d, beat_divider=%d, time_sig=%d/%d", 
            new_scene->bpm, new_scene->clock_source, new_scene->beat_divider,
            new_scene->time_signature.numerator, new_scene->time_signature.denominator);
+  
+  // Validate action timings against time signature (remap invalid beats to beat 1)
+  action_validate_scene_timings(new_scene);
   
   // Execute on_load actions
   if (new_scene->num_on_load_actions > 0) {
@@ -2170,6 +2179,9 @@ esp_err_t scene_set_time_signature(uint8_t scene_index, uint8_t numerator, uint8
   scene->time_signature.denominator = denominator;
   scene_persist_if_programming();
   
+  // Validate action timings against new time signature (remap invalid beats to beat 1)
+  action_validate_scene_timings(scene);
+  
   // Update tempo component immediately if this is the current scene
   if (scene_index == g_scene_manager.current_scene_index) {
     tempo_set_time_signature(numerator, denominator);
@@ -2564,6 +2576,12 @@ static cJSON* action_to_json(const action_t* action) {
     }
     cJSON_AddItemToObject(obj, "shapes", shapes);
   }
+  
+  // Serialize timing (only if not immediate default)
+  if (action->timing != ACTION_TIMING_IMMEDIATE) {
+    const char* timing_str = action_timing_to_string(action->timing, action->timing_beat);
+    cJSON_AddStringToObject(obj, "timing", timing_str);
+  }
 
   return obj;
 }
@@ -2777,6 +2795,12 @@ static action_t json_to_action(cJSON* obj) {
         }
       }
     }
+  }
+  
+  // Parse timing (default: immediate)
+  cJSON* timing = cJSON_GetObjectItem(obj, "timing");
+  if (timing && cJSON_IsString(timing)) {
+    action_timing_from_string(timing->valuestring, &action.timing, &action.timing_beat);
   }
   
   return action;
