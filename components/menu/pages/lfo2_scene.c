@@ -95,6 +95,9 @@ static const char* waveform_to_display_string(lfo_waveform_t wf) {
 
 static const char* division_to_display_string(lfo_note_division_t div) {
   switch (div) {
+    case LFO_DIVISION_16_BARS: return "16 Bars";
+    case LFO_DIVISION_12_BARS: return "12 Bars";
+    case LFO_DIVISION_8_BARS: return "8 Bars";
     case LFO_DIVISION_4_BARS: return "4 Bars";
     case LFO_DIVISION_2_BARS: return "2 Bars";
     case LFO_DIVISION_1_BAR: return "1 Bar";
@@ -687,7 +690,7 @@ static lv_obj_t* division_roller_create(void) {
   
   uint32_t current = (uint32_t)scene->lfo2_config.division;
   return menu_create_roller_page("Division", 
-    "4 Bars\n2 Bars\n1 Bar\n1/2 Note\n1/4 Note\n1/8 Note\n1/16 Note\n1/32 Note",
+    "16 Bars\n12 Bars\n8 Bars\n4 Bars\n2 Bars\n1 Bar\n1/2 Note\n1/4 Note\n1/8 Note\n1/16 Note\n1/32 Note",
     current, division_confirm_cb, NULL);
 }
 

@@ -33,10 +33,10 @@ typedef struct {
   // Phase 1: Trigger timing
   uint8_t target_beat;        // 0 = any beat, 1-16 = specific beat
   
-  // Phase 2: Repeating (placeholder for future)
-  // bool repeating;          // True if this action repeats after firing
-  // uint8_t repeat_division; // Subdivision for repeat interval
-  // uint32_t next_fire_tick; // Tick count for next fire (multi-bar tracking)
+  // Phase 2: Repeating
+  bool repeating;             // True if this action should re-queue after firing
+  uint16_t beats_remaining;   // Beats until next fire (for multi-bar divisions)
+  bool hold_released;         // For HOLD actions: true when user released (stop after current fires)
   
   // Phase 3: Probability (placeholder for future)
   // uint8_t probability;     // 0-100 chance of firing
@@ -49,6 +49,70 @@ typedef struct {
 
 static pending_action_t s_pending_actions[MAX_PENDING_ACTIONS];
 
+// ============================================================================
+// Active Repeating Actions Tracking (for toggle behavior)
+// ============================================================================
+
+#define MAX_ACTIVE_REPEATS 4
+static action_t* s_active_repeating[MAX_ACTIVE_REPEATS];
+
+// Check if an action is currently repeating
+static bool is_action_repeating(action_t* action) {
+  if (!action) return false;
+  for (int i = 0; i < MAX_ACTIVE_REPEATS; i++) {
+    if (s_active_repeating[i] == action) return true;
+  }
+  return false;
+}
+
+// Mark an action as actively repeating
+static bool start_repeating(action_t* action) {
+  if (!action) return false;
+  // Check if already repeating
+  if (is_action_repeating(action)) return true;
+  // Find empty slot
+  for (int i = 0; i < MAX_ACTIVE_REPEATS; i++) {
+    if (s_active_repeating[i] == NULL) {
+      s_active_repeating[i] = action;
+      ESP_LOGD(TAG, "Started repeating action %s", action_type_to_string(action->type));
+      return true;
+    }
+  }
+  ESP_LOGW(TAG, "No slot available for repeating action");
+  return false;
+}
+
+// Stop repeating an action
+static void stop_repeating_internal(action_t* action) {
+  if (!action) return;
+  for (int i = 0; i < MAX_ACTIVE_REPEATS; i++) {
+    if (s_active_repeating[i] == action) {
+      s_active_repeating[i] = NULL;
+      ESP_LOGD(TAG, "Stopped repeating action %s", action_type_to_string(action->type));
+      
+      // Also clear any pending instances of this action
+      for (int j = 0; j < MAX_PENDING_ACTIONS; j++) {
+        if (s_pending_actions[j].valid && s_pending_actions[j].original == action) {
+          s_pending_actions[j].valid = false;
+        }
+      }
+      return;
+    }
+  }
+}
+
+// Public function to stop repeating (called from outside)
+void action_stop_repeating(action_t* action) {
+  stop_repeating_internal(action);
+}
+
+// Clear all active repeating actions
+static void clear_all_repeating(void) {
+  for (int i = 0; i < MAX_ACTIVE_REPEATS; i++) {
+    s_active_repeating[i] = NULL;
+  }
+}
+
 // Forward declaration for internal execute (bypasses timing check)
 static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value, bool is_press);
 
@@ -57,12 +121,20 @@ static void handle_beat_event(const event_t* event, void* context) {
   if (event->type != EVENT_BEAT) return;
   
   uint8_t current_beat = event->data.beat.beat_in_bar;
+  uint8_t beats_per_bar = event->data.beat.bar_length;
+  if (beats_per_bar == 0) beats_per_bar = 4;
   
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     if (!s_pending_actions[i].valid) continue;
     
     pending_action_t* pending = &s_pending_actions[i];
     bool should_fire = false;
+    
+    // For repeating actions with multi-bar divisions, decrement beats_remaining
+    if (pending->repeating && pending->beats_remaining > 1) {
+      pending->beats_remaining--;
+      continue;  // Not time to fire yet
+    }
     
     if (pending->target_beat == 0) {
       // Any beat triggers
@@ -107,14 +179,36 @@ static void handle_beat_event(const event_t* event, void* context) {
         }
       }
       
-      // Clear this slot (Phase 2 would re-queue here for repeating actions)
-      pending->valid = false;
+      // Handle repeating actions - re-queue for next interval
+      if (pending->repeating && !pending->hold_released) {
+        // Calculate beats until next fire based on division
+        uint8_t interval_beats = action_repeat_division_to_beats(
+          pending->action.repeat_division, beats_per_bar);
+        
+        if (interval_beats > 0) {
+          // Multi-beat or multi-bar division
+          pending->beats_remaining = interval_beats;
+          // Keep same target_beat for bar-aligned repeats, or 0 for any-beat
+          ESP_LOGD(TAG, "Re-queued repeating action for %d beats", interval_beats);
+        } else {
+          // Sub-beat divisions (eighth, sixteenth, 32nd) - not yet supported
+          // For now, treat as every beat
+          pending->beats_remaining = 1;
+        }
+        // Keep slot valid for next fire
+      } else {
+        // Not repeating, or HOLD was released - clear slot
+        pending->valid = false;
+        if (pending->original) {
+          stop_repeating_internal(pending->original);
+        }
+      }
     }
   }
 }
 
 // Enqueue an action for delayed execution
-static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint8_t target_beat) {
+static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint8_t target_beat, bool repeating) {
   // Find empty slot
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     if (!s_pending_actions[i].valid) {
@@ -123,10 +217,13 @@ static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint
       s_pending_actions[i].trigger_value = trigger_value;
       s_pending_actions[i].target_beat = target_beat;
       s_pending_actions[i].valid = true;
+      s_pending_actions[i].repeating = repeating;
+      s_pending_actions[i].beats_remaining = 1;  // Fire on first matching beat
+      s_pending_actions[i].hold_released = false;
       
-      ESP_LOGD(TAG, "Queued action %s for beat %d (slot %d)",
+      ESP_LOGD(TAG, "Queued action %s for beat %d (slot %d, repeating=%d)",
         action_type_to_string(action->type),
-        target_beat == 0 ? -1 : target_beat, i);
+        target_beat == 0 ? -1 : target_beat, i, repeating);
       return true;
     }
   }
@@ -139,7 +236,8 @@ void action_clear_pending(void) {
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     s_pending_actions[i].valid = false;
   }
-  ESP_LOGD(TAG, "Cleared pending action queue");
+  clear_all_repeating();
+  ESP_LOGD(TAG, "Cleared pending action queue and repeating actions");
 }
 
 // Action type names for debugging
@@ -216,6 +314,35 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
     return ESP_OK;
   }
   
+  action_t* mutable_action = (action_t*)action;  // Cast away const for state tracking
+  
+  // Handle HOLD action release for repeating actions - mark hold_released
+  if (!is_press && action_requires_hold(action->type) && action->repeat_enabled) {
+    // Find pending action and mark as released
+    for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+      if (s_pending_actions[i].valid && s_pending_actions[i].original == mutable_action) {
+        s_pending_actions[i].hold_released = true;
+        ESP_LOGD(TAG, "HOLD action released, will stop after pending fire");
+        break;
+      }
+    }
+    // Still execute the release immediately for HOLD actions
+    return action_execute_immediate(action, trigger_value, is_press);
+  }
+  
+  // Handle non-HOLD repeating actions - toggle behavior
+  if (is_press && action->repeat_enabled && !action_requires_hold(action->type)) {
+    if (is_action_repeating(mutable_action)) {
+      // Currently repeating - stop it
+      stop_repeating_internal(mutable_action);
+      ESP_LOGD(TAG, "Stopped repeating action (toggle off)");
+      return ESP_OK;  // Don't fire again
+    } else {
+      // Not currently repeating - start it
+      start_repeating(mutable_action);
+    }
+  }
+  
   // Releases always execute immediately (to complete press/release pairs)
   // HOLD actions always execute immediately (need press/release pairing)
   // IMMEDIATE timing executes immediately
@@ -231,8 +358,10 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
       target_beat = action->timing_beat;  // Specific beat 1-16
     }
     
-    // Cast away const - cycle actions need state sync back to original
-    if (action_enqueue_pending((action_t*)action, trigger_value, target_beat)) {
+    // Determine if this is a repeating action
+    bool repeating = action->repeat_enabled;
+    
+    if (action_enqueue_pending(mutable_action, trigger_value, target_beat, repeating)) {
       return ESP_OK;  // Successfully queued
     }
     // Fall through to immediate execution if queue is full
@@ -1001,5 +1130,64 @@ void action_validate_scene_timings(scene_t* scene) {
   
   if (remapped > 0) {
     ESP_LOGW(TAG, "Remapped %d action(s) with invalid beat timings to beat 1", remapped);
+  }
+}
+
+// ============================================================================
+// Repeat Division Helpers
+// ============================================================================
+
+const char* action_repeat_division_to_string(action_repeat_division_t div) {
+  switch (div) {
+    case ACTION_REPEAT_16_BARS:   return "16_bars";
+    case ACTION_REPEAT_12_BARS:   return "12_bars";
+    case ACTION_REPEAT_8_BARS:    return "8_bars";
+    case ACTION_REPEAT_4_BARS:    return "4_bars";
+    case ACTION_REPEAT_2_BARS:    return "2_bars";
+    case ACTION_REPEAT_1_BAR:     return "1_bar";
+    case ACTION_REPEAT_HALF:      return "half";
+    case ACTION_REPEAT_QUARTER:   return "quarter";
+    case ACTION_REPEAT_EIGHTH:    return "eighth";
+    case ACTION_REPEAT_SIXTEENTH: return "sixteenth";
+    case ACTION_REPEAT_32ND:      return "32nd";
+    default: return "quarter";
+  }
+}
+
+action_repeat_division_t action_repeat_division_from_string(const char* str) {
+  if (!str) return ACTION_REPEAT_QUARTER;
+  if (strcmp(str, "16_bars") == 0) return ACTION_REPEAT_16_BARS;
+  if (strcmp(str, "12_bars") == 0) return ACTION_REPEAT_12_BARS;
+  if (strcmp(str, "8_bars") == 0) return ACTION_REPEAT_8_BARS;
+  if (strcmp(str, "4_bars") == 0) return ACTION_REPEAT_4_BARS;
+  if (strcmp(str, "2_bars") == 0) return ACTION_REPEAT_2_BARS;
+  if (strcmp(str, "1_bar") == 0) return ACTION_REPEAT_1_BAR;
+  if (strcmp(str, "half") == 0) return ACTION_REPEAT_HALF;
+  if (strcmp(str, "quarter") == 0) return ACTION_REPEAT_QUARTER;
+  if (strcmp(str, "eighth") == 0) return ACTION_REPEAT_EIGHTH;
+  if (strcmp(str, "sixteenth") == 0) return ACTION_REPEAT_SIXTEENTH;
+  if (strcmp(str, "32nd") == 0) return ACTION_REPEAT_32ND;
+  return ACTION_REPEAT_QUARTER;
+}
+
+// Get repeat interval in beats
+// For divisions >= 1 bar, returns beats_per_bar * bars
+// For divisions < 1 bar, returns 0 (will use sub-beat timing)
+uint8_t action_repeat_division_to_beats(action_repeat_division_t div, uint8_t beats_per_bar) {
+  if (beats_per_bar == 0) beats_per_bar = 4;
+  
+  switch (div) {
+    case ACTION_REPEAT_16_BARS:   return beats_per_bar * 16;
+    case ACTION_REPEAT_12_BARS:   return beats_per_bar * 12;
+    case ACTION_REPEAT_8_BARS:    return beats_per_bar * 8;
+    case ACTION_REPEAT_4_BARS:    return beats_per_bar * 4;
+    case ACTION_REPEAT_2_BARS:    return beats_per_bar * 2;
+    case ACTION_REPEAT_1_BAR:     return beats_per_bar;
+    case ACTION_REPEAT_HALF:      return 2;  // 2 quarter notes
+    case ACTION_REPEAT_QUARTER:   return 1;  // 1 quarter note
+    case ACTION_REPEAT_EIGHTH:    return 0;  // Sub-beat (handled separately)
+    case ACTION_REPEAT_SIXTEENTH: return 0;
+    case ACTION_REPEAT_32ND:      return 0;
+    default: return 1;
   }
 }

@@ -90,6 +90,7 @@ static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 static char s_timing_label[LABEL_BUFFER_SETS][32];
+static char s_repeat_label[LABEL_BUFFER_SETS][24];
 
 // Menu items for submenu pages
 #define MAX_DETAIL_ITEMS 12
@@ -2899,6 +2900,70 @@ static const char* get_timing_display(action_t* action) {
 }
 
 // ============================================================================
+// Repeat Roller (combined Off + divisions)
+// ============================================================================
+
+// Display names: index 0 = Off, indices 1-11 = divisions
+static const char* repeat_display_names[] = {
+  "Off",
+  "16 Bars", "12 Bars", "8 Bars", "4 Bars", "2 Bars", "1 Bar",
+  "1/2 Note", "1/4 Note", "1/8 Note", "1/16 Note", "1/32 Note"
+};
+
+static const char* get_repeat_display(action_t* action) {
+  if (!action || !action->repeat_enabled) return "Off";
+  if (action->repeat_division >= ACTION_REPEAT_MAX) return "1/4 Note";
+  return repeat_display_names[action->repeat_division + 1];  // +1 to skip "Off"
+}
+
+static void repeat_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  action_t* action = s_ctx->target_action;
+  
+  if (selected_index == 0) {
+    // Off selected
+    action->repeat_enabled = false;
+    ESP_LOGD(TAG, "Set repeat: Off");
+  } else {
+    // Division selected (index 1-11 maps to division 0-10)
+    action->repeat_enabled = true;
+    action->repeat_division = (action_repeat_division_t)(selected_index - 1);
+    ESP_LOGD(TAG, "Set repeat: %s",
+      action_repeat_division_to_string(action->repeat_division));
+  }
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* repeat_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Repeat", "Error", 0, NULL, NULL);
+  }
+  
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx;
+  
+  if (!action->repeat_enabled) {
+    current_idx = 0;  // Off
+  } else {
+    // Division index + 1 (to account for Off at index 0)
+    current_idx = (uint32_t)action->repeat_division + 1;
+    if (current_idx > ACTION_REPEAT_MAX) current_idx = ACTION_REPEAT_QUARTER + 1;
+  }
+  
+  return menu_create_roller_page("Repeat",
+    "Off\n16 Bars\n12 Bars\n8 Bars\n4 Bars\n2 Bars\n1 Bar\n1/2 Note\n1/4 Note\n1/8 Note\n1/16 Note\n1/32 Note",
+    current_idx, repeat_confirm_cb, NULL);
+}
+
+static void nav_to_repeat(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Repeat", repeat_roller_create);
+}
+
+// ============================================================================
 // Action Detail Page (stub - parameters will be added in subsequent phases)
 // ============================================================================
 
@@ -3230,6 +3295,18 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_timing_label[buf], sizeof(s_timing_label[buf]), "Timing\n%s", timing_display);
     s_detail_items[item_count++] = (menu_item_t){
       s_timing_label[buf], nav_to_timing, NULL, true
+    };
+  }
+  
+  // Show Repeat option for non-HOLD actions only
+  // HOLD actions don't support repeat (use Cycle actions instead for rhythmic alternation)
+  if (action->type != ACTION_NONE && 
+      !action_requires_hold(action->type) && 
+      item_count < MAX_DETAIL_ITEMS) {
+    const char* repeat_display = get_repeat_display(action);
+    snprintf(s_repeat_label[buf], sizeof(s_repeat_label[buf]), "Repeat\n%s", repeat_display);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_repeat_label[buf], nav_to_repeat, NULL, true
     };
   }
   

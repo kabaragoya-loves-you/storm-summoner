@@ -2582,6 +2582,13 @@ static cJSON* action_to_json(const action_t* action) {
     const char* timing_str = action_timing_to_string(action->timing, action->timing_beat);
     cJSON_AddStringToObject(obj, "timing", timing_str);
   }
+  
+  // Serialize repeat settings (only if enabled)
+  if (action->repeat_enabled) {
+    cJSON_AddBoolToObject(obj, "repeat", true);
+    cJSON_AddStringToObject(obj, "repeat_division",
+      action_repeat_division_to_string(action->repeat_division));
+  }
 
   return obj;
 }
@@ -2801,6 +2808,16 @@ static action_t json_to_action(cJSON* obj) {
   cJSON* timing = cJSON_GetObjectItem(obj, "timing");
   if (timing && cJSON_IsString(timing)) {
     action_timing_from_string(timing->valuestring, &action.timing, &action.timing_beat);
+  }
+  
+  // Parse repeat settings (default: disabled)
+  cJSON* repeat = cJSON_GetObjectItem(obj, "repeat");
+  if (repeat && cJSON_IsBool(repeat)) {
+    action.repeat_enabled = cJSON_IsTrue(repeat);
+  }
+  cJSON* repeat_div = cJSON_GetObjectItem(obj, "repeat_division");
+  if (repeat_div && cJSON_IsString(repeat_div)) {
+    action.repeat_division = action_repeat_division_from_string(repeat_div->valuestring);
   }
   
   return action;

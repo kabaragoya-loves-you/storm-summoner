@@ -48,7 +48,10 @@ typedef enum {
 
 // Note divisions for tempo sync mode
 typedef enum {
-  LFO_DIVISION_4_BARS = 0,  // 4 bars per cycle
+  LFO_DIVISION_16_BARS = 0, // 16 bars per cycle
+  LFO_DIVISION_12_BARS,     // 12 bars per cycle
+  LFO_DIVISION_8_BARS,      // 8 bars per cycle
+  LFO_DIVISION_4_BARS,      // 4 bars per cycle
   LFO_DIVISION_2_BARS,      // 2 bars per cycle
   LFO_DIVISION_1_BAR,       // 1 bar per cycle
   LFO_DIVISION_HALF,        // 1/2 note

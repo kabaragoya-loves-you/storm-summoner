@@ -98,6 +98,9 @@ static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm) {
     case LFO_DIVISION_1_BAR:    return beat_ms * felt_beats;
     case LFO_DIVISION_2_BARS:   return beat_ms * felt_beats * 2;
     case LFO_DIVISION_4_BARS:   return beat_ms * felt_beats * 4;
+    case LFO_DIVISION_8_BARS:   return beat_ms * felt_beats * 8;
+    case LFO_DIVISION_12_BARS:  return beat_ms * felt_beats * 12;
+    case LFO_DIVISION_16_BARS:  return beat_ms * felt_beats * 16;
     default: return beat_ms;
   }
 }
@@ -471,6 +474,9 @@ static void lfo_task(void* arg) {
               case LFO_DIVISION_1_BAR:    cycles_per_beat = 1.0f / felt_beats; break;
               case LFO_DIVISION_2_BARS:   cycles_per_beat = 1.0f / (felt_beats * 2); break;
               case LFO_DIVISION_4_BARS:   cycles_per_beat = 1.0f / (felt_beats * 4); break;
+              case LFO_DIVISION_8_BARS:   cycles_per_beat = 1.0f / (felt_beats * 8); break;
+              case LFO_DIVISION_12_BARS:  cycles_per_beat = 1.0f / (felt_beats * 12); break;
+              case LFO_DIVISION_16_BARS:  cycles_per_beat = 1.0f / (felt_beats * 16); break;
               default: cycles_per_beat = 1.0f; break;
             }
 
@@ -618,6 +624,9 @@ void lfo_enable(uint8_t slot, bool enabled) {
             case LFO_DIVISION_1_BAR:    cycles_per_beat = 1.0f / felt_beats; break;
             case LFO_DIVISION_2_BARS:   cycles_per_beat = 1.0f / (felt_beats * 2); break;
             case LFO_DIVISION_4_BARS:   cycles_per_beat = 1.0f / (felt_beats * 4); break;
+            case LFO_DIVISION_8_BARS:   cycles_per_beat = 1.0f / (felt_beats * 8); break;
+            case LFO_DIVISION_12_BARS:  cycles_per_beat = 1.0f / (felt_beats * 12); break;
+            case LFO_DIVISION_16_BARS:  cycles_per_beat = 1.0f / (felt_beats * 16); break;
             default: cycles_per_beat = 1.0f; break;
           }
 
@@ -926,6 +935,9 @@ const char* lfo_waveform_to_string(lfo_waveform_t waveform) {
 
 const char* lfo_division_to_string(lfo_note_division_t division) {
   switch (division) {
+    case LFO_DIVISION_16_BARS: return "16_bars";
+    case LFO_DIVISION_12_BARS: return "12_bars";
+    case LFO_DIVISION_8_BARS: return "8_bars";
     case LFO_DIVISION_4_BARS: return "4_bars";
     case LFO_DIVISION_2_BARS: return "2_bars";
     case LFO_DIVISION_1_BAR: return "1_bar";
@@ -952,6 +964,9 @@ lfo_waveform_t lfo_waveform_from_string(const char* str) {
 
 lfo_note_division_t lfo_division_from_string(const char* str) {
   if (!str) return LFO_DIVISION_QUARTER;
+  if (strcmp(str, "16_bars") == 0) return LFO_DIVISION_16_BARS;
+  if (strcmp(str, "12_bars") == 0) return LFO_DIVISION_12_BARS;
+  if (strcmp(str, "8_bars") == 0) return LFO_DIVISION_8_BARS;
   if (strcmp(str, "4_bars") == 0) return LFO_DIVISION_4_BARS;
   if (strcmp(str, "2_bars") == 0) return LFO_DIVISION_2_BARS;
   if (strcmp(str, "1_bar") == 0) return LFO_DIVISION_1_BAR;

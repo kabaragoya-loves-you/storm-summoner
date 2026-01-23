@@ -72,11 +72,29 @@ typedef enum {
   ACTION_TIMING_SPECIFIC_BEAT    // Wait for specific beat (uses timing_beat field)
 } action_timing_t;
 
+// Repeat division (matches LFO divisions for consistency)
+typedef enum {
+  ACTION_REPEAT_16_BARS = 0,  // Every 16 bars
+  ACTION_REPEAT_12_BARS,      // Every 12 bars
+  ACTION_REPEAT_8_BARS,       // Every 8 bars
+  ACTION_REPEAT_4_BARS,       // Every 4 bars
+  ACTION_REPEAT_2_BARS,       // Every 2 bars
+  ACTION_REPEAT_1_BAR,        // Every bar
+  ACTION_REPEAT_HALF,         // Every half note
+  ACTION_REPEAT_QUARTER,      // Every quarter note
+  ACTION_REPEAT_EIGHTH,       // Every eighth note
+  ACTION_REPEAT_SIXTEENTH,    // Every sixteenth note
+  ACTION_REPEAT_32ND,         // Every 32nd note
+  ACTION_REPEAT_MAX
+} action_repeat_division_t;
+
 // Action parameters (flexible union for different action types)
 typedef struct {
   action_type_t type;
-  action_timing_t timing;    // When to execute (default: IMMEDIATE)
-  uint8_t timing_beat;       // Target beat 1-16 (only used when timing == SPECIFIC_BEAT)
+  action_timing_t timing;              // When to execute (default: IMMEDIATE)
+  uint8_t timing_beat;                 // Target beat 1-16 (only used when timing == SPECIFIC_BEAT)
+  bool repeat_enabled;                 // Whether action repeats at repeat_division
+  action_repeat_division_t repeat_division;  // Repeat interval (when repeat_enabled == true)
   
   union {
     // For Control actions (CONTROL, CONTROL_HOLD, CONTROL_CYCLE) - supports 1-4 CC numbers
@@ -204,7 +222,18 @@ void action_timing_from_string(const char* str, action_timing_t* timing, uint8_t
 // Returns true if remapping occurred
 bool action_validate_timing(action_t* action, uint8_t beats_per_bar);
 
+// Repeat division string conversion
+const char* action_repeat_division_to_string(action_repeat_division_t div);
+action_repeat_division_t action_repeat_division_from_string(const char* str);
+
+// Get repeat interval in beats (for scheduling)
+// Returns quarter notes equivalent (e.g., 1 bar in 4/4 = 4 beats)
+uint8_t action_repeat_division_to_beats(action_repeat_division_t div, uint8_t beats_per_bar);
+
 // Clear all pending actions (call on scene change)
 void action_clear_pending(void);
+
+// Stop all repeating instances of a specific action (call on toggle-off or scene change)
+void action_stop_repeating(action_t* action);
 
 #endif // ACTION_H
