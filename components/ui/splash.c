@@ -24,10 +24,9 @@
 #define SPLASH_VECTOR_PATH "/assets/images/kabaragoya_vec.bin.z"
 #define BUBBLE_VECTOR_PATH "/assets/images/bubble.bin.z"
 
-// Bubble SVG dimensions (from viewBox)
-#define BUBBLE_SVG_WIDTH   85.704f
-#define BUBBLE_SVG_HEIGHT  64.542f
-#define BUBBLE_TARGET_WIDTH 37
+// Bubble dimensions (pre-scaled to target size)
+#define BUBBLE_WIDTH   41
+#define BUBBLE_HEIGHT  31
 
 // Animation timing (milliseconds)
 #define ANIM_FADE_IN_DURATION     1000   // 0-1s: backlight and background fade
@@ -42,7 +41,7 @@
 
 // Shadow offset
 #define SHADOW_OFFSET_X  2
-#define SHADOW_OFFSET_Y  2
+#define SHADOW_OFFSET_Y  3
 
 //=============================================================================
 // STATE
@@ -300,7 +299,7 @@ static void splash_draw_deferred_cb(lv_timer_t *timer) {
   lv_vector_art_set_scale(g_vector_art, scale);
   
   if (lv_vector_art_set_src(g_vector_art, SPLASH_VECTOR_PATH)) {
-    ESP_LOGI(TAG, "Vector art loaded");
+    ESP_LOGD(TAG, "Vector art loaded");
   } else {
     ESP_LOGE(TAG, "Failed to load vector art");
   }
@@ -318,6 +317,7 @@ static void splash_draw_deferred_cb(lv_timer_t *timer) {
   lv_obj_set_style_text_font(g_storm_shadow, &flyer_venice_24, 0);
   lv_obj_set_style_text_color(g_storm_shadow, lv_color_black(), 0);
   lv_obj_set_style_text_opa(g_storm_shadow, LV_OPA_TRANSP, 0);  // Start invisible
+  lv_obj_update_layout(g_storm_shadow);
   lv_obj_set_pos(g_storm_shadow, 
     (g_disp_width - lv_obj_get_width(g_storm_shadow)) / 2 + SHADOW_OFFSET_X,
     storm_y + SHADOW_OFFSET_Y);
@@ -374,27 +374,23 @@ static void splash_draw_deferred_cb(lv_timer_t *timer) {
     (g_disp_width - lv_obj_get_width(g_version_label)) / 2,
     g_disp_height - lv_obj_get_height(g_version_label) - 10);
   
-  // === Speech bubble - comic book style using SVG ===
-  // Calculate scale for bubble SVG
-  float bubble_scale = (float)BUBBLE_TARGET_WIDTH / BUBBLE_SVG_WIDTH;
-  int32_t bubble_height = (int32_t)(BUBBLE_SVG_HEIGHT * bubble_scale);
-  
+  // === Speech bubble - comic book style using pre-scaled vector ===
   // Create transparent container to hold bubble art + text
   g_bubble_container = lv_obj_create(g_screen);
   lv_obj_remove_flag(g_bubble_container, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_opa(g_bubble_container, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(g_bubble_container, 0, 0);
   lv_obj_set_style_pad_all(g_bubble_container, 0, 0);
-  lv_obj_set_size(g_bubble_container, BUBBLE_TARGET_WIDTH, bubble_height);
+  lv_obj_set_size(g_bubble_container, BUBBLE_WIDTH, BUBBLE_HEIGHT);
   
-  // Position: upper right, with tail pointing toward lizard (tail is bottom-left of SVG)
-  lv_obj_set_pos(g_bubble_container, g_disp_width - BUBBLE_TARGET_WIDTH - 45, 13);
+  // Position: upper right, with tail pointing toward lizard
+  lv_obj_set_pos(g_bubble_container, g_disp_width - BUBBLE_WIDTH - 58, 21);
   
-  // Create vector art widget for bubble shape
+  // Create vector art widget for bubble shape (1:1 scale, pre-sized source)
   g_bubble_art = lv_vector_art_create(g_bubble_container);
-  lv_obj_set_size(g_bubble_art, BUBBLE_TARGET_WIDTH, bubble_height);
+  lv_obj_set_size(g_bubble_art, BUBBLE_WIDTH, BUBBLE_HEIGHT);
   lv_obj_set_pos(g_bubble_art, 0, 0);
-  lv_vector_art_set_scale(g_bubble_art, bubble_scale);
+  lv_vector_art_set_scale(g_bubble_art, 1.0f);
   
   if (!lv_vector_art_set_src(g_bubble_art, BUBBLE_VECTOR_PATH)) {
     ESP_LOGE(TAG, "Failed to load bubble vector art");
@@ -404,13 +400,13 @@ static void splash_draw_deferred_cb(lv_timer_t *timer) {
   g_bubble_label = lv_label_create(g_bubble_container);
   lv_label_set_text(g_bubble_label, "LET'S\nGO!");
   lv_obj_set_style_text_font(g_bubble_label, &chalet_ny_8, 0);
-  lv_obj_set_style_text_color(g_bubble_label, lv_color_make(100, 200, 100), 0);  // Light green text
+  lv_obj_set_style_text_color(g_bubble_label, lv_color_make(0, 180, 220), 0);
   lv_obj_set_style_text_align(g_bubble_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_update_layout(g_bubble_label);
   // Center horizontally, position in upper half of bubble
   lv_obj_set_pos(g_bubble_label,
-    (BUBBLE_TARGET_WIDTH - lv_obj_get_width(g_bubble_label)) / 2 + 2,
-    (bubble_height - lv_obj_get_height(g_bubble_label)) / 2 - 1);  // Offset up from center (scaled for smaller bubble)
+    (BUBBLE_WIDTH - lv_obj_get_width(g_bubble_label)) / 2 + 2,
+    (BUBBLE_HEIGHT - lv_obj_get_height(g_bubble_label)) / 2 - 1);
   
   // Hide completely until animation starts
   lv_obj_add_flag(g_bubble_container, LV_OBJ_FLAG_HIDDEN);
