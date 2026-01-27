@@ -127,11 +127,14 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     if (pad_id == BUTTON_13_LOGICAL_PAD) {
       s_button13_press_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
       
-      // Start long press timer only in Performance mode
-      if (ui_get_app_mode() == APP_MODE_PERFORMANCE) {
+      // Start long press timer in Performance or Screensaver mode (not Programming mode)
+      // When in Screensaver, the screensaver will exit on touch and by the time the
+      // 2-second timer fires, mode will be Performance.
+      app_mode_t mode = ui_get_app_mode();
+      if (mode == APP_MODE_PERFORMANCE || mode == APP_MODE_SCREENSAVER) {
         s_long_press_timer_fired = false;
         xTimerStart(s_button13_long_press_timer, 0);
-        ESP_LOGD(TAG, "Started Button 13 long press timer");
+        ESP_LOGD(TAG, "Started Button 13 long press timer (mode=%d)", mode);
       }
     }
     
