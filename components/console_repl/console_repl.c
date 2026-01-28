@@ -37,6 +37,7 @@
 #include "argtable3/argtable3.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "nvs_flash.h"
 #include <string.h>
 
 static const char* TAG = "console_repl";
@@ -168,6 +169,27 @@ static int cmd_reset(int argc, char **argv) {
   return 0; // Never reached
 }
 
+// Command: factory_reset - Erase all NVS settings and restart
+static int cmd_factory_reset(int argc, char **argv) {
+  if (argc != 2 || strcmp(argv[1], "confirm") != 0) {
+    printf("WARNING: This will erase ALL settings and restart!\r\n");
+    printf("To confirm, run: factory_reset confirm\r\n");
+    return 0;
+  }
+  
+  printf("Erasing all NVS settings...\r\n");
+  esp_err_t ret = nvs_flash_erase();
+  if (ret != ESP_OK) {
+    printf("Failed to erase NVS: %s\r\n", esp_err_to_name(ret));
+    return 1;
+  }
+  
+  printf("Restarting...\r\n");
+  vTaskDelay(pdMS_TO_TICKS(100));
+  esp_restart();
+  return 0;
+}
+
 esp_err_t console_register_context(const char* name, context_init_fn init_fn, context_cleanup_fn cleanup_fn) {
   if (g_console_state.context_count >= MAX_CONTEXTS) {
     ESP_LOGE(TAG, "Maximum contexts reached");
@@ -240,6 +262,15 @@ esp_err_t console_repl_init(void) {
     .func = &cmd_reset,
   };
   ESP_ERROR_CHECK(esp_console_cmd_register(&reset_cmd));
+  
+  // Register factory_reset command
+  const esp_console_cmd_t factory_reset_cmd = {
+    .command = "factory_reset",
+    .help = "Erase all NVS settings and restart (requires confirmation)",
+    .hint = "[confirm]",
+    .func = &cmd_factory_reset,
+  };
+  ESP_ERROR_CHECK(esp_console_cmd_register(&factory_reset_cmd));
   
   // Initialize completion system
   console_completion_init();

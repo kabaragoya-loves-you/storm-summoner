@@ -1,6 +1,8 @@
 #include "menu.h"
 #include "menu_pages.h"
 #include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_system.h"
 
 #define TAG "MENU_SETTINGS"
 
@@ -145,6 +147,28 @@ static void nav_to_firmware_update(void* user_data) {
   menu_navigate_to("Firmware", menu_page_firmware_update_create);
 }
 
+// Factory Reset confirmation
+static void factory_reset_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (selected_index == 1) {  // "Reset" selected
+    ESP_LOGW(TAG, "Factory reset confirmed - erasing NVS and restarting");
+    nvs_flash_erase();
+    esp_restart();
+  }
+  // selected_index == 0 means "Cancel" - just go back
+  menu_navigate_back();
+}
+
+static lv_obj_t* factory_reset_roller_create(void) {
+  return menu_create_roller_page("Factory Reset?", "Cancel\nReset", 0,
+    factory_reset_confirm_cb, NULL);
+}
+
+static void nav_to_factory_reset(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Factory Reset", factory_reset_roller_create);
+}
+
 lv_obj_t* menu_page_settings_create(void) {
   ESP_LOGI(TAG, "Creating settings page");
   
@@ -176,7 +200,8 @@ lv_obj_t* menu_page_settings_create(void) {
     { "USB Mode", nav_to_usb_mode, NULL, true },
     { "Revision", nav_to_revision, NULL, true },
     { "Assets", nav_to_assets_manager, NULL, true },
-    { "Firmware", nav_to_firmware_update, NULL, true }
+    { "Firmware", nav_to_firmware_update, NULL, true },
+    { "Factory Reset", nav_to_factory_reset, NULL, true }
   };
   
   return menu_create_page("Settings", settings_items, 
