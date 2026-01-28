@@ -2918,9 +2918,10 @@ static void json_to_on_load(cJSON* array, scene_t* scene) {
     action_t action = json_to_action(cJSON_GetArrayItem(array, i));
     if (action.type == ACTION_NONE) continue;
     
-    // Skip hold actions (not valid for on_load)
-    if (action_requires_hold(action.type)) {
-      ESP_LOGW(TAG, "Ignoring hold action '%s' in on_load", action_type_to_string(action.type));
+    // Validate action is allowed for on_load trigger
+    if (!action_is_valid_for_trigger(action.type, ACTION_TRIGGER_ON_LOAD)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' in on_load",
+        action_type_to_string(action.type));
       continue;
     }
     
@@ -3365,14 +3366,28 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
       cJSON* enabled = cJSON_GetObjectItem(pad, "enabled");
       if (enabled) scene->touchpads[i].enabled = cJSON_IsTrue(enabled);
       
+      // Determine trigger type based on pad index
+      action_trigger_type_t trigger = (i <= 7) ?
+        ACTION_TRIGGER_TOUCHPAD_0_7 : ACTION_TRIGGER_TOUCHPAD_8_11;
+      
       // Try new format first (single "action"), fall back to old format ("actions" array)
       cJSON* action = cJSON_GetObjectItem(pad, "action");
+      action_t parsed_action = {0};
       if (action) {
-        scene->touchpads[i].action = json_to_action(action);
+        parsed_action = json_to_action(action);
       } else {
         cJSON* actions = cJSON_GetObjectItem(pad, "actions");
-        if (actions) scene->touchpads[i].action = json_array_to_single_action(actions);
+        if (actions) parsed_action = json_array_to_single_action(actions);
       }
+      
+      // Validate action is allowed for this pad's trigger type
+      if (parsed_action.type != ACTION_NONE &&
+          !action_is_valid_for_trigger(parsed_action.type, trigger)) {
+        ESP_LOGW(TAG, "Ignoring invalid action '%s' on pad %d",
+          action_type_to_string(parsed_action.type), i);
+        parsed_action.type = ACTION_NONE;
+      }
+      scene->touchpads[i].action = parsed_action;
     }
   }
   
@@ -3383,28 +3398,50 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   // Discrete inputs: try object first (new format), fall back to array (old format)
   cJSON* btn_l = cJSON_GetObjectItem(root, "button_left");
   if (btn_l) {
-    scene->button_left = cJSON_IsArray(btn_l) ?
+    action_t action = cJSON_IsArray(btn_l) ?
       json_array_to_single_action(btn_l) : json_to_action(btn_l);
+    if (action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for button_left",
+        action_type_to_string(action.type));
+      action.type = ACTION_NONE;
+    }
+    scene->button_left = action;
   }
   
   cJSON* btn_r = cJSON_GetObjectItem(root, "button_right");
   if (btn_r) {
-    scene->button_right = cJSON_IsArray(btn_r) ?
+    action_t action = cJSON_IsArray(btn_r) ?
       json_array_to_single_action(btn_r) : json_to_action(btn_r);
+    if (action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for button_right",
+        action_type_to_string(action.type));
+      action.type = ACTION_NONE;
+    }
+    scene->button_right = action;
   }
   
   cJSON* btn_both = cJSON_GetObjectItem(root, "button_both");
   if (btn_both) {
-    scene->button_both = cJSON_IsArray(btn_both) ?
+    action_t action = cJSON_IsArray(btn_both) ?
       json_array_to_single_action(btn_both) : json_to_action(btn_both);
+    if (action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for button_both",
+        action_type_to_string(action.type));
+      action.type = ACTION_NONE;
+    }
+    scene->button_both = action;
   }
   
   cJSON* bump = cJSON_GetObjectItem(root, "bump");
   if (bump) {
     action_t bump_action = cJSON_IsArray(bump) ?
       json_array_to_single_action(bump) : json_to_action(bump);
-    if (action_requires_hold(bump_action.type)) {
-      ESP_LOGW(TAG, "Ignoring hold action '%s' for bump",
+    if (bump_action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger(bump_action.type, ACTION_TRIGGER_BUMP)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for bump",
         action_type_to_string(bump_action.type));
     } else {
       scene->bump = bump_action;
@@ -3441,22 +3478,44 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   // happens when the mode is actively changed via scene_set_expression_mode().
   
   // Deserialize pedal actions (try object first, fall back to array for backward compat)
+  // Sustain/sostenuto are essentially button-like triggers (press/release)
   cJSON* sustain = cJSON_GetObjectItem(root, "sustain");
   if (sustain) {
-    scene->sustain = cJSON_IsArray(sustain) ?
+    action_t action = cJSON_IsArray(sustain) ?
       json_array_to_single_action(sustain) : json_to_action(sustain);
+    if (action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for sustain",
+        action_type_to_string(action.type));
+      action.type = ACTION_NONE;
+    }
+    scene->sustain = action;
   }
   
   cJSON* sostenuto = cJSON_GetObjectItem(root, "sostenuto");
   if (sostenuto) {
-    scene->sostenuto = cJSON_IsArray(sostenuto) ?
+    action_t action = cJSON_IsArray(sostenuto) ?
       json_array_to_single_action(sostenuto) : json_to_action(sostenuto);
+    if (action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for sostenuto",
+        action_type_to_string(action.type));
+      action.type = ACTION_NONE;
+    }
+    scene->sostenuto = action;
   }
   
   cJSON* expr_switch_json = cJSON_GetObjectItem(root, "expr_switch");
   if (expr_switch_json) {
-    scene->expr_switch = cJSON_IsArray(expr_switch_json) ?
+    action_t action = cJSON_IsArray(expr_switch_json) ?
       json_array_to_single_action(expr_switch_json) : json_to_action(expr_switch_json);
+    if (action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_EXPR_SWITCH)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for expr_switch",
+        action_type_to_string(action.type));
+      action.type = ACTION_NONE;
+    }
+    scene->expr_switch = action;
   }
   
   // Deserialize CV input mode
