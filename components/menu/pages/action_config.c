@@ -92,6 +92,7 @@ static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
+static char s_pattern_label[LABEL_BUFFER_SETS][24];
 
 // Menu items for submenu pages
 #define MAX_DETAIL_ITEMS 12
@@ -954,6 +955,7 @@ static void cc_hold_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   // Return to slot submenu
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_set_restore_focus(0);  // Focus on CC item
   menu_navigate_back_then_to(2, title, cc_hold_slot_page_create);
 }
 
@@ -1030,6 +1032,7 @@ static void cc_hold_press_confirm_cb(uint32_t selected_index, void* user_data) {
   
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_set_restore_focus(1);  // Focus on Press item
   menu_navigate_back_then_to(2, title, cc_hold_slot_page_create);
 }
 
@@ -1141,6 +1144,7 @@ static void cc_hold_release_confirm_cb(uint32_t selected_index, void* user_data)
   
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_set_restore_focus(2);  // Focus on Release item
   menu_navigate_back_then_to(2, title, cc_hold_slot_page_create);
 }
 
@@ -1208,10 +1212,20 @@ static void nav_to_cc_hold_release(void* user_data) {
   nav_to_subpage("Release", cc_hold_release_roller_create);
 }
 
+// Custom back handler for slot submenus - recreates detail page with fresh labels
+static bool slot_submenu_back_handler(void) {
+  menu_set_custom_back_handler(NULL);  // Clear handler before navigating
+  return_to_detail_page(2);  // Pop submenu + old detail, push fresh detail
+  return true;  // We handled the back
+}
+
 // --- CC Hold Slot Page ---
 
 static lv_obj_t* cc_hold_slot_page_create(void) {
   if (!s_ctx || !s_ctx->target_action) return menu_create_page("Error", NULL, 0);
+  
+  // Set custom back handler to recreate detail page with fresh labels
+  menu_set_custom_back_handler(slot_submenu_back_handler);
   
   action_t* action = s_ctx->target_action;
   int buf = get_next_buffer_set();
@@ -1333,6 +1347,7 @@ static void cc_cycle_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   // Return to slot submenu
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_set_restore_focus(0);  // Focus on CC item
   menu_navigate_back_then_to(2, title, cc_cycle_slot_page_create);
 }
 
@@ -1410,6 +1425,7 @@ static void cc_cycle_step_confirm_cb(uint32_t selected_index, void* user_data) {
   
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
+  menu_set_restore_focus(1 + step);  // Focus on the edited step item
   menu_navigate_back_then_to(2, title, cc_cycle_slot_page_create);
 }
 
@@ -1486,6 +1502,9 @@ static void nav_to_cc_cycle_step(void* user_data) {
 
 static lv_obj_t* cc_cycle_slot_page_create(void) {
   if (!s_ctx || !s_ctx->target_action) return menu_create_page("Error", NULL, 0);
+  
+  // Set custom back handler to recreate detail page with fresh labels
+  menu_set_custom_back_handler(slot_submenu_back_handler);
   
   action_t* action = s_ctx->target_action;
   int buf = get_next_buffer_set();
@@ -3010,6 +3029,134 @@ static void nav_to_probability(void* user_data) {
 }
 
 // ============================================================================
+// Pattern Length Roller
+// ============================================================================
+
+// Get visual pattern display string (e.g., "X.X.X.X.")
+static const char* get_pattern_display(uint8_t length, uint8_t mask) {
+  static char buf[12];
+  if (length < 2) return "Off";
+  for (int i = 0; i < length && i < 8; i++) {
+    buf[i] = (mask & (1 << i)) ? 'X' : '.';
+  }
+  buf[length] = '\0';
+  return buf;
+}
+
+static void pattern_length_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  action_t* action = s_ctx->target_action;
+  
+  if (selected_index == 0) {
+    // Off selected
+    action->pattern_length = 0;
+    ESP_LOGD(TAG, "Set pattern: Off");
+  } else {
+    // Length 2-8 selected (index 1-7 maps to length 2-8)
+    uint8_t new_length = (uint8_t)(selected_index + 1);
+    if (action->pattern_length != new_length) {
+      action->pattern_length = new_length;
+      // Reset mask to all steps enabled for new length
+      action->pattern_mask = (1 << new_length) - 1;
+    }
+    ESP_LOGD(TAG, "Set pattern length: %d", new_length);
+  }
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* pattern_length_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Steps", "Error", 0, NULL, NULL);
+  }
+  
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx;
+  
+  if (action->pattern_length < 2) {
+    current_idx = 0;  // Off
+  } else {
+    // Length 2-8 maps to index 1-7
+    current_idx = action->pattern_length - 1;
+    if (current_idx > 7) current_idx = 7;
+  }
+  
+  return menu_create_roller_page("Steps",
+    "Off\n2\n3\n4\n5\n6\n7\n8",
+    current_idx, pattern_length_confirm_cb, NULL);
+}
+
+static void nav_to_pattern_length(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Steps", pattern_length_roller_create);
+}
+
+// ============================================================================
+// Pattern Editor (toggle individual steps)
+// ============================================================================
+
+static menu_item_t s_pattern_step_items[8];
+static char s_pattern_step_labels[8][16];
+
+static lv_obj_t* pattern_editor_create(void);  // Forward declaration
+
+// Custom back handler for pattern editor - recreates detail page with fresh labels
+static bool pattern_editor_back_handler(void) {
+  menu_set_custom_back_handler(NULL);  // Clear handler before navigating
+  return_to_detail_page(2);  // Pop editor + old detail, push fresh detail
+  return true;  // We handled the back
+}
+
+static void pattern_step_toggle_cb(void* user_data) {
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  uint8_t step = (uint8_t)(uintptr_t)user_data;
+  action_t* action = s_ctx->target_action;
+  
+  // Toggle the bit for this step
+  action->pattern_mask ^= (1 << step);
+  
+  ESP_LOGD(TAG, "Toggled step %d, mask now: 0x%02X", step + 1, action->pattern_mask);
+  
+  // Refresh the pattern editor page, preserving focus on the toggled step
+  menu_set_restore_focus((int)step);
+  menu_replace_current("Pattern", pattern_editor_create);
+}
+
+static lv_obj_t* pattern_editor_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_page_2line("Error", NULL, 0);
+  }
+  
+  // Set custom back handler to recreate detail page with fresh pattern display
+  menu_set_custom_back_handler(pattern_editor_back_handler);
+  
+  action_t* action = s_ctx->target_action;
+  uint8_t length = action->pattern_length;
+  if (length < 2) length = 2;
+  if (length > 8) length = 8;
+  
+  // Build menu items for each step
+  for (int i = 0; i < length; i++) {
+    bool enabled = (action->pattern_mask >> i) & 1;
+    snprintf(s_pattern_step_labels[i], sizeof(s_pattern_step_labels[i]),
+      "Step %d\n%s", i + 1, enabled ? "On" : "Off");
+    s_pattern_step_items[i] = (menu_item_t){
+      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, true
+    };
+  }
+  
+  return menu_create_page_2line("Pattern", s_pattern_step_items, length);
+}
+
+static void nav_to_pattern_editor(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Pattern", pattern_editor_create);
+}
+
+// ============================================================================
 // Action Detail Page (stub - parameters will be added in subsequent phases)
 // ============================================================================
 
@@ -3363,6 +3510,24 @@ lv_obj_t* action_config_detail_page_create(void) {
       s_detail_items[item_count++] = (menu_item_t){
         s_probability_label[buf], nav_to_probability, NULL, true
       };
+      
+      // Show Pattern options only when repeat is enabled
+      if (item_count < MAX_DETAIL_ITEMS) {
+        const char* pattern_display = get_pattern_display(
+          action->pattern_length, action->pattern_mask);
+        snprintf(s_pattern_label[buf], sizeof(s_pattern_label[buf]),
+          "Pattern\n%s", pattern_display);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_pattern_label[buf], nav_to_pattern_length, NULL, true
+        };
+      }
+      
+      // Show Pattern Editor when pattern is enabled
+      if (action->pattern_length >= 2 && item_count < MAX_DETAIL_ITEMS) {
+        s_detail_items[item_count++] = (menu_item_t){
+          "Edit Pattern", nav_to_pattern_editor, NULL, true
+        };
+      }
     }
   }
   

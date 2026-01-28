@@ -2592,6 +2592,11 @@ static cJSON* action_to_json(const action_t* action) {
     if (action->probability > 0 && action->probability < 100) {
       cJSON_AddNumberToObject(obj, "probability", action->probability);
     }
+    // Only serialize pattern if enabled (length >= 2)
+    if (action->pattern_length >= 2) {
+      cJSON_AddNumberToObject(obj, "pattern_length", action->pattern_length);
+      cJSON_AddNumberToObject(obj, "pattern_mask", action->pattern_mask);
+    }
   }
 
   return obj;
@@ -2832,6 +2837,21 @@ static action_t json_to_action(cJSON* obj) {
     if (prob_val >= 10 && prob_val <= 100) {
       action.probability = (uint8_t)prob_val;
     }
+  }
+  
+  // Parse pattern settings (default: disabled)
+  action.pattern_length = 0;  // Default: no pattern
+  action.pattern_mask = 0xFF; // Default: all steps enabled
+  cJSON* pattern_len = cJSON_GetObjectItem(obj, "pattern_length");
+  if (pattern_len && cJSON_IsNumber(pattern_len)) {
+    int len = pattern_len->valueint;
+    if (len >= 2 && len <= 8) {
+      action.pattern_length = (uint8_t)len;
+    }
+  }
+  cJSON* pattern_mask = cJSON_GetObjectItem(obj, "pattern_mask");
+  if (pattern_mask && cJSON_IsNumber(pattern_mask)) {
+    action.pattern_mask = (uint8_t)(pattern_mask->valueint & 0xFF);
   }
   
   return action;

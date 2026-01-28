@@ -96,6 +96,8 @@ typedef struct {
   bool repeat_enabled;                 // Whether action repeats at repeat_division
   action_repeat_division_t repeat_division;  // Repeat interval (when repeat_enabled == true)
   uint8_t probability;                 // Chance of firing 10-100% (default 100, only for repeating)
+  uint8_t pattern_length;              // Step pattern length 2-8 (0 = disabled, only for repeating)
+  uint8_t pattern_mask;                // Bitmask of active steps (bit 0 = step 1)
   
   union {
     // For Control actions (CONTROL, CONTROL_HOLD, CONTROL_CYCLE) - supports 1-4 CC numbers

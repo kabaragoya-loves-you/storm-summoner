@@ -59,7 +59,7 @@ void midi_out_init(void) {
     ESP_LOGI(TAG, "UART TRS mode set from device_config: %d", mode);
   }
 
-  // TODO: Initialize USB MIDI if enabled
+  // Initialize USB MIDI if enabled
   if (s_config.active_interfaces & MIDI_OUT_INTERFACE_USB) {
     esp_err_t ret = midi_out_usb_init();
     if (ret != ESP_OK) ESP_LOGE(TAG, "Failed to initialize USB MIDI: %s", esp_err_to_name(ret));
@@ -102,8 +102,8 @@ void midi_out_init(void) {
 }
 
 static void load_config_from_nvs(void) {
-  // Default configuration: UART only, all messages enabled
-  s_config.active_interfaces = MIDI_OUT_INTERFACE_UART;
+  // Default configuration: both interfaces, all messages enabled
+  s_config.active_interfaces = MIDI_OUT_INTERFACE_BOTH;
   s_config.uart_send_tempo = true;
   s_config.uart_send_transport = true;
   s_config.usb_send_tempo = true;
@@ -200,6 +200,27 @@ void midi_out_set_interfaces(midi_out_interface_t interfaces) {
   if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
     s_config.active_interfaces = interfaces;
     save_config_to_nvs();
+    
+    // Initialize USB if newly enabled and not already initialized
+    if ((interfaces & MIDI_OUT_INTERFACE_USB) && !midi_out_usb_is_initialized()) {
+      esp_err_t ret = midi_out_usb_init();
+      if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize USB MIDI: %s", esp_err_to_name(ret));
+      }
+    }
+    
+    // Initialize UART if newly enabled and not already initialized
+    if ((interfaces & MIDI_OUT_INTERFACE_UART) && !midi_out_uart_is_initialized()) {
+      esp_err_t ret = midi_out_uart_init();
+      if (ret == ESP_OK) {
+        midi_trs_type_t trs_type = device_config_get_trs_type();
+        midi_transmit_mode_t mode = (midi_transmit_mode_t)assets_trs_type_to_transmit_mode(trs_type);
+        midi_out_uart_set_mode(mode);
+      } else {
+        ESP_LOGE(TAG, "Failed to initialize UART MIDI: %s", esp_err_to_name(ret));
+      }
+    }
+    
     ESP_LOGI(TAG, "Active interfaces set to: UART=%s USB=%s",
       (interfaces & MIDI_OUT_INTERFACE_UART) ? "ON" : "OFF",
       (interfaces & MIDI_OUT_INTERFACE_USB) ? "ON" : "OFF");

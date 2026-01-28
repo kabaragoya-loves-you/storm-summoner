@@ -997,21 +997,38 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   menu_state.stack_depth++;
   
   // Add new items to group
+  // Track focus target for after screen load
+  lv_obj_t* focus_target = NULL;
+  
   if (menu_state.group && new_container) {
     uint32_t new_child_cnt = lv_obj_get_child_count(new_container);
     for (uint32_t i = 0; i < new_child_cnt; i++) {
       lv_obj_t* child = lv_obj_get_child(new_container, i);
       if (child) lv_group_add_obj(menu_state.group, child);
     }
-    // Focus first item
-    if (new_child_cnt > 0) {
+    
+    // Apply restore focus if set, otherwise focus first item
+    int focus_idx = menu_state.restore_focus_index;
+    if (focus_idx >= 0 && focus_idx < (int)new_child_cnt) {
+      focus_target = lv_obj_get_child(new_container, focus_idx);
+      if (focus_target) {
+        lv_group_focus_obj(focus_target);
+        ESP_LOGD(TAG, "Restored focus to index: %d", focus_idx);
+      }
+    } else if (new_child_cnt > 0) {
       lv_obj_t* first = lv_obj_get_child(new_container, 0);
       if (first) lv_group_focus_obj(first);
     }
+    menu_state.restore_focus_index = -1;  // Clear after use
   }
   
   // Load new screen
   lv_screen_load(new_screen);
+  
+  // Scroll to focus target after screen is loaded
+  if (focus_target) {
+    lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
+  }
   
   // Delete old screen after loading new one (async to let events finish)
   if (old_screen) lv_obj_delete_async(old_screen);

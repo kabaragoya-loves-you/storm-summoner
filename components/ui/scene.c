@@ -564,17 +564,17 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   // Time signature label
   g_time_sig_label = lv_label_create(g_screen);
   lv_obj_set_style_text_font(g_time_sig_label, &flyer_venice_20, 0);
-  lv_obj_set_pos(g_time_sig_label, 40, 31);
+  lv_obj_set_pos(g_time_sig_label, 47, 31);
   
   // BPM label
   g_bpm_label = lv_label_create(g_screen);
   lv_obj_set_style_text_font(g_bpm_label, &flyer_venice_20, 0);
-  lv_obj_set_pos(g_bpm_label, 22, 55);
+  lv_obj_set_pos(g_bpm_label, 26, 55);
   
   // Beat label - top right area, larger font
   g_beat_label = lv_label_create(g_screen);
   lv_obj_set_style_text_font(g_beat_label, &flyer_venice_24, 0);
-  lv_obj_set_pos(g_beat_label, 145, 30);
+  lv_obj_set_pos(g_beat_label, 155, 30);
   
   // Initialize state from tempo/transport
   g_current_bpm = tempo_get_bpm();

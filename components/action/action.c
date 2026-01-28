@@ -38,13 +38,8 @@ typedef struct {
   uint16_t beats_remaining;   // Beats until next fire (for multi-bar divisions)
   bool hold_released;         // For HOLD actions: true when user released (stop after current fires)
   
-  // Phase 3: Probability (placeholder for future)
-  // uint8_t probability;     // 0-100 chance of firing
-  
-  // Phase 4: Step patterns (placeholder for future)
-  // uint8_t pattern_length;  // 1-8 steps in pattern
-  // uint8_t pattern_mask;    // Bitmask of active steps
-  // uint8_t pattern_step;    // Current position in pattern
+  // Phase 4: Step patterns
+  uint8_t pattern_step;       // Current position in pattern (0 to length-1)
 } pending_action_t;
 
 static pending_action_t s_pending_actions[MAX_PENDING_ACTIONS];
@@ -145,9 +140,22 @@ static void handle_beat_event(const event_t* event, void* context) {
     }
     
     if (should_fire) {
+      // For repeating actions, check pattern first (before probability)
+      bool pattern_passed = true;
+      if (pending->repeating && pending->action.pattern_length >= 2) {
+        // Check if current step is active in the pattern mask
+        pattern_passed = (pending->action.pattern_mask >> pending->pattern_step) & 1;
+        if (!pattern_passed) {
+          ESP_LOGD(TAG, "Pattern step %d skipped for %s",
+            pending->pattern_step + 1, action_type_to_string(pending->action.type));
+        }
+        // Advance to next step (wrap around)
+        pending->pattern_step = (pending->pattern_step + 1) % pending->action.pattern_length;
+      }
+      
       // For repeating actions, check probability (default 100 = always fire)
       bool probability_passed = true;
-      if (pending->repeating) {
+      if (pattern_passed && pending->repeating) {
         uint8_t prob = pending->action.probability;
         if (prob == 0) prob = 100;  // Default to 100% if not set
         if (prob < 100) {
@@ -161,7 +169,7 @@ static void handle_beat_event(const event_t* event, void* context) {
         }
       }
       
-      if (probability_passed) {
+      if (pattern_passed && probability_passed) {
         ESP_LOGD(TAG, "Firing pending action %s on beat %d",
           action_type_to_string(pending->action.type), current_beat);
         
@@ -197,7 +205,7 @@ static void handle_beat_event(const event_t* event, void* context) {
         }
       }
       
-      // Handle repeating actions - re-queue for next interval (even if probability failed)
+      // Handle repeating actions - re-queue for next interval (even if pattern/probability failed)
       if (pending->repeating && !pending->hold_released) {
         // Calculate beats until next fire based on division
         uint8_t interval_beats = action_repeat_division_to_beats(
@@ -238,6 +246,7 @@ static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint
       s_pending_actions[i].repeating = repeating;
       s_pending_actions[i].beats_remaining = 1;  // Fire on first matching beat
       s_pending_actions[i].hold_released = false;
+      s_pending_actions[i].pattern_step = 0;     // Start at first step in pattern
       
       ESP_LOGD(TAG, "Queued action %s for beat %d (slot %d, repeating=%d)",
         action_type_to_string(action->type),
