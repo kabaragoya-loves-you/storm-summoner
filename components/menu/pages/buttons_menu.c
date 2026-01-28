@@ -57,6 +57,7 @@ static void nav_to_left(void* user_data) {
   s_left_action_ctx.return_depth = 2;
   s_left_action_ctx.on_complete = NULL;
   s_left_action_ctx.user_data = NULL;
+  s_left_action_ctx.trigger_type = ACTION_TRIGGER_BUTTON;
   
   action_config_start(&s_left_action_ctx);
 }
@@ -74,6 +75,7 @@ static void nav_to_right(void* user_data) {
   s_right_action_ctx.return_depth = 2;
   s_right_action_ctx.on_complete = NULL;
   s_right_action_ctx.user_data = NULL;
+  s_right_action_ctx.trigger_type = ACTION_TRIGGER_BUTTON;
   
   action_config_start(&s_right_action_ctx);
 }
@@ -91,6 +93,7 @@ static void nav_to_both(void* user_data) {
   s_both_action_ctx.return_depth = 2;
   s_both_action_ctx.on_complete = NULL;
   s_both_action_ctx.user_data = NULL;
+  s_both_action_ctx.trigger_type = ACTION_TRIGGER_BUTTON;
   
   action_config_start(&s_both_action_ctx);
 }

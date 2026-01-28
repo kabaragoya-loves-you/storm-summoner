@@ -132,9 +132,6 @@ static void format_action_details_with_device(const action_t* action, const devi
     case ACTION_SET_TEMPO:
       snprintf(buf, buf_size, "Tempo %d BPM", action->params.tempo.bpm);
       break;
-    case ACTION_TOUCHWHEEL_MODE:
-      snprintf(buf, buf_size, "TW Mode %d", action->params.tw_mode.mode);
-      break;
     case ACTION_TOUCHWHEEL_HOLD:
       snprintf(buf, buf_size, "Touchwheel Hold %d/%d", action->params.tw_mode.mode, action->params.tw_mode.mode2);
       break;
@@ -1038,14 +1035,6 @@ static int cmd_pad(int argc, char **argv) {
     action.params.target.number = atoi(pad_args.params->sval[0]);
   }
   // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode") == 0) {
-    if (pad_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: pad <num> tw_mode <mode> (0-6)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_MODE;
-    action.params.tw_mode.mode = atoi(pad_args.params->sval[0]);
-  }
   else if (strcmp(action_str, "tw_mode_hold") == 0) {
     if (pad_args.params->count < 2) {
       ESP_LOGE(TAG, "Usage: pad <num> tw_mode_hold <press_mode> <release_mode>");
@@ -1074,6 +1063,8 @@ static int cmd_pad(int argc, char **argv) {
   esp_err_t ret = scene_assign_touchpad_action(scene_get_current_index(), pad, &action);
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Assigned '%s' to pad %d", action_type_to_string(action.type), pad);
+  } else if (ret == ESP_ERR_NOT_SUPPORTED) {
+    ESP_LOGE(TAG, "Action '%s' is not valid for pad %d", action_type_to_string(action.type), pad);
   } else {
     ESP_LOGE(TAG, "Failed to assign action");
   }
@@ -1254,14 +1245,6 @@ static int cmd_button(int argc, char **argv) {
     }
   }
   // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode") == 0) {
-    if (button_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: button <name> tw_mode <mode> (0-8)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_MODE;
-    action.params.tw_mode.mode = atoi(button_args.params->sval[0]);
-  }
   else if (strcmp(action_str, "tw_mode_hold") == 0) {
     if (button_args.params->count < 2) {
       ESP_LOGE(TAG, "Usage: button <name> tw_mode_hold <press_mode> <release_mode>");
@@ -1304,6 +1287,10 @@ static int cmd_button(int argc, char **argv) {
   
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Assigned '%s' to %s button", action_type_to_string(action.type), btn_name);
+  } else if (ret == ESP_ERR_NOT_SUPPORTED) {
+    ESP_LOGE(TAG, "Action '%s' is not valid for %s button", action_type_to_string(action.type), btn_name);
+  } else {
+    ESP_LOGE(TAG, "Failed to assign action");
   }
   
   return 0;
@@ -1481,14 +1468,6 @@ static int cmd_bump(int argc, char **argv) {
     }
   }
   // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode") == 0) {
-    if (bump_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: bump tw_mode <mode> (0-8)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_MODE;
-    action.params.tw_mode.mode = atoi(bump_args.params->sval[0]);
-  }
   else if (strcmp(action_str, "tw_mode_hold") == 0) {
     // Note: will be rejected by action_requires_hold check
     if (bump_args.params->count < 2) {
@@ -1525,15 +1504,19 @@ static int cmd_bump(int argc, char **argv) {
     return 1;
   }
   
-  // Reject hold actions for bump (no release event)
-  if (action_requires_hold(action.type)) {
-    ESP_LOGE(TAG, "'%s' requires hold behavior - not allowed for bump", action_str);
+  // Validate action against bump trigger
+  if (!action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUMP)) {
+    ESP_LOGE(TAG, "'%s' is not valid for bump", action_str);
     return 1;
   }
   
   esp_err_t ret = scene_assign_bump(scene_get_current_index(), &action);
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Assigned '%s' to bump", action_type_to_string(action.type));
+  } else if (ret == ESP_ERR_NOT_SUPPORTED) {
+    ESP_LOGE(TAG, "Action '%s' is not valid for bump", action_type_to_string(action.type));
+  } else {
+    ESP_LOGE(TAG, "Failed to assign action");
   }
   
   return 0;
@@ -1688,14 +1671,6 @@ static int cmd_expr_switch(int argc, char **argv) {
     action.params.preset.program = atoi(expr_switch_args.params->sval[0]);
   }
   // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode") == 0) {
-    if (expr_switch_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: expr_switch tw_mode <mode> (0-8)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_MODE;
-    action.params.tw_mode.mode = atoi(expr_switch_args.params->sval[0]);
-  }
   else if (strcmp(action_str, "tw_mode_hold") == 0) {
     if (expr_switch_args.params->count < 2) {
       ESP_LOGE(TAG, "Usage: expr_switch tw_mode_hold <press_mode> <release_mode>");
@@ -1734,6 +1709,10 @@ static int cmd_expr_switch(int argc, char **argv) {
   esp_err_t ret = scene_assign_expr_switch(scene_get_current_index(), &action);
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Assigned '%s' to expr_switch", action_type_to_string(action.type));
+  } else if (ret == ESP_ERR_NOT_SUPPORTED) {
+    ESP_LOGE(TAG, "Action '%s' is not valid for expr_switch", action_type_to_string(action.type));
+  } else {
+    ESP_LOGE(TAG, "Failed to assign action");
   }
   
   return 0;
@@ -1858,14 +1837,6 @@ static int cmd_on_load(int argc, char **argv) {
     action.type = ACTION_PRESET;
     action.params.preset.program = atoi(on_load_args.params->sval[0]);
   }
-  else if (strcmp(subcmd, "tw_mode") == 0) {
-    if (on_load_args.params->count < 1) {
-      ESP_LOGE(TAG, "Usage: on_load tw_mode <mode>");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_MODE;
-    action.params.tw_mode.mode = atoi(on_load_args.params->sval[0]);
-  }
   else {
     ESP_LOGE(TAG, "Usage: on_load <show|clear|action_type> [params...]");
     ESP_LOGI(TAG, "  show/list           - Show current on_load actions");
@@ -1873,7 +1844,6 @@ static int cmd_on_load(int argc, char **argv) {
     ESP_LOGI(TAG, "  reset               - Add reset action");
     ESP_LOGI(TAG, "  cc <cc> <val> ...   - Add CC action (multi-CC with /)");
     ESP_LOGI(TAG, "  cc_cycle <cc> <v1> <v2> ... - Add CC cycle");
-    ESP_LOGI(TAG, "  tw_mode <mode>      - Set touchwheel mode");
     ESP_LOGI(TAG, "  pc <program>        - Add program change");
     ESP_LOGI(TAG, "(Hold actions like cc_hold/sustain not allowed)");
     return 1;
@@ -1930,7 +1900,6 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "  none                             - Clear assignment");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchwheel Mode:");
-  ESP_LOGI(TAG, "  tw_mode <mode>                   - Set touchwheel mode (0-6)");
   ESP_LOGI(TAG, "  tw_mode_hold <press> <release>   - Mode on press, restore on release");
   ESP_LOGI(TAG, "  tw_mode_cycle <m1> <m2>...<m8>   - Cycle through 2-8 modes");
   ESP_LOGI(TAG, "    Modes: 0=pads 1=pc 2=cc 3=tempo 4=pitch_bend");

@@ -79,7 +79,6 @@ static char s_tempo_hold_press_label[LABEL_BUFFER_SETS][32];
 static char s_tempo_hold_release_label[LABEL_BUFFER_SETS][32];
 static char s_tempo_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
-static char s_tw_mode_label[LABEL_BUFFER_SETS][32];
 static char s_tw_hold_press_label[LABEL_BUFFER_SETS][32];
 static char s_tw_hold_release_label[LABEL_BUFFER_SETS][32];
 static char s_tw_cycle_steps_label[LABEL_BUFFER_SETS][24];
@@ -137,7 +136,6 @@ static const action_type_t s_all_action_types[] = {
   ACTION_RESET,
   ACTION_SUSTAIN,
   ACTION_SOSTENUTO,
-  ACTION_TOUCHWHEEL_MODE,
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_TOUCHWHEEL_CYCLE,
   ACTION_LFO_START,
@@ -199,7 +197,6 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_RESET: return "Reset";
     case ACTION_SUSTAIN: return "Sustain";
     case ACTION_SOSTENUTO: return "Sostenuto";
-    case ACTION_TOUCHWHEEL_MODE: return "Touchwheel";
     case ACTION_TOUCHWHEEL_HOLD: return "Touchwheel Hold";
     case ACTION_TOUCHWHEEL_CYCLE: return "Touchwheel Cycle";
     case ACTION_LFO_START: return "LFO Start";
@@ -237,6 +234,11 @@ static bool is_action_visible(action_type_t type) {
   
   // Filter out hold-requiring actions when context requests it (for bump)
   if (s_ctx && s_ctx->exclude_hold_actions && action_requires_hold(type)) {
+    return false;
+  }
+  
+  // Validate against trigger type if context provides one
+  if (s_ctx && !action_is_valid_for_trigger(type, s_ctx->trigger_type)) {
     return false;
   }
   
@@ -590,10 +592,6 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.tempo.num_tempos = 2;
       action->params.tempo.cycle_tempos[0] = 120;
       action->params.tempo.cycle_tempos[1] = 120;
-    }
-    
-    if (new_type == ACTION_TOUCHWHEEL_MODE) {
-      action->params.tw_mode.mode = 0;
     }
     
     if (new_type == ACTION_TOUCHWHEEL_HOLD) {
@@ -2330,7 +2328,7 @@ static void nav_to_note(void* user_data) {
 }
 
 // ============================================================================
-// Touchwheel Mode Rollers
+// Touchwheel Mode Helpers (shared by Hold and Cycle)
 // ============================================================================
 
 static void build_tw_mode_options(char* buf, size_t buf_size) {
@@ -2346,44 +2344,6 @@ static void build_tw_mode_options(char* buf, size_t buf_size) {
       remaining -= written;
     }
   }
-}
-
-static void tw_mode_confirm_cb(uint32_t selected_idx, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  if (!s_ctx || !s_ctx->target_action) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-  
-  if (selected_idx < NUM_TOUCHWHEEL_USER_MODES) {
-    s_ctx->target_action->params.tw_mode.mode = (uint8_t)selected_idx;
-    ESP_LOGI(TAG, "Touchwheel mode set to %s", touchwheel_get_mode_name(selected_idx));
-  }
-  
-  s_callback_in_progress = false;
-  return_to_detail_page(2);
-}
-
-static lv_obj_t* tw_mode_roller_create(void) {
-  if (!s_ctx || !s_ctx->target_action) return NULL;
-  
-  static char options[512];
-  build_tw_mode_options(options, sizeof(options));
-  
-  uint8_t current = s_ctx->target_action->params.tw_mode.mode;
-  if (current >= NUM_TOUCHWHEEL_USER_MODES) current = 0;
-  
-  return menu_create_roller_page("Mode", options, current, tw_mode_confirm_cb, NULL);
-}
-
-static void nav_to_tw_mode(void* user_data) {
-  (void)user_data;
-  nav_to_subpage("Mode", tw_mode_roller_create);
 }
 
 // ============================================================================
@@ -3365,18 +3325,6 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note\n%s", note_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_note_label[buf], nav_to_note, NULL, true
-    };
-  }
-  
-  // Show Touchwheel Mode selector
-  if (action->type == ACTION_TOUCHWHEEL_MODE) {
-    uint8_t mode_idx = action->params.tw_mode.mode;
-    if (mode_idx >= NUM_TOUCHWHEEL_USER_MODES) mode_idx = 0;
-    
-    snprintf(s_tw_mode_label[buf], sizeof(s_tw_mode_label[buf]),
-      "Mode\n%s", touchwheel_get_mode_name(mode_idx));
-    s_detail_items[item_count++] = (menu_item_t){
-      s_tw_mode_label[buf], nav_to_tw_mode, NULL, true
     };
   }
   

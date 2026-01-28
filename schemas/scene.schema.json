@@ -468,7 +468,6 @@
             "reset",
             "sustain",
             "sostenuto",
-            "touchwheel",
             "touchwheel_hold",
             "touchwheel_cycle"
           ],
@@ -794,24 +793,6 @@
                   "maximum": 300
                 },
                 "description": "Tempo values (BPM) to cycle through"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {"const": "touchwheel"}
-            }
-          },
-          "then": {
-            "required": ["mode"],
-            "properties": {
-              "mode": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 7,
-                "description": "User-facing touchwheel mode index (0=Pads, 1=CC, 2=PC, 3=Tempo, 4=Pitch Bend, 5=Aftertouch, 6=Notes, 7=Double CC)"
               }
             }
           }

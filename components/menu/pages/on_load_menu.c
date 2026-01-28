@@ -97,6 +97,7 @@ static void nav_to_slot(void* user_data) {
   s_slot_action_ctx[slot].user_data = NULL;
   s_slot_action_ctx[slot].exclude_hold_actions = false;
   s_slot_action_ctx[slot].on_load_filter = true;  // Only allow on-load compatible actions
+  s_slot_action_ctx[slot].trigger_type = ACTION_TRIGGER_ON_LOAD;
   
   action_config_start(&s_slot_action_ctx[slot]);
 }

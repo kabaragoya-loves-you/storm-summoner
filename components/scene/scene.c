@@ -1779,6 +1779,16 @@ esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, c
   if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS || !action) {
     return ESP_ERR_INVALID_ARG;
   }
+  
+  // Validate action against trigger type
+  action_trigger_type_t trigger = (pad_index <= 7) ?
+    ACTION_TRIGGER_TOUCHPAD_0_7 : ACTION_TRIGGER_TOUCHPAD_8_11;
+  
+  if (!action_is_valid_for_trigger(action->type, trigger)) {
+    ESP_LOGW(TAG, "Cannot assign '%s' to pad %d (invalid for this trigger)",
+      action_type_to_string(action->type), pad_index);
+    return ESP_ERR_NOT_SUPPORTED;
+  }
 
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
@@ -1794,6 +1804,13 @@ esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, c
 esp_err_t scene_assign_button_left(uint8_t scene_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
+  // Validate action against button trigger
+  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUTTON)) {
+    ESP_LOGW(TAG, "Cannot assign '%s' to left button (invalid for this trigger)",
+      action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
@@ -1806,6 +1823,13 @@ esp_err_t scene_assign_button_left(uint8_t scene_index, const action_t* action) 
 esp_err_t scene_assign_button_right(uint8_t scene_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
+  // Validate action against button trigger
+  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUTTON)) {
+    ESP_LOGW(TAG, "Cannot assign '%s' to right button (invalid for this trigger)",
+      action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
@@ -1817,6 +1841,13 @@ esp_err_t scene_assign_button_right(uint8_t scene_index, const action_t* action)
 
 esp_err_t scene_assign_button_both(uint8_t scene_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  // Validate action against button trigger
+  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUTTON)) {
+    ESP_LOGW(TAG, "Cannot assign '%s' to both buttons (invalid for this trigger)",
+      action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
@@ -1845,9 +1876,10 @@ action_t* scene_get_button_both(uint8_t scene_index) {
 esp_err_t scene_assign_bump(uint8_t scene_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
-  // Reject hold actions for bump (no release event)
-  if (action->type != ACTION_NONE && action_requires_hold(action->type)) {
-    ESP_LOGW(TAG, "Cannot assign hold action '%s' to bump", action_type_to_string(action->type));
+  // Validate action against bump trigger
+  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUMP)) {
+    ESP_LOGW(TAG, "Cannot assign '%s' to bump (invalid for this trigger)",
+      action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
   }
   
@@ -1868,9 +1900,10 @@ action_t* scene_get_bump(uint8_t scene_index) {
 esp_err_t scene_add_on_load_action(uint8_t scene_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
-  // Reject hold actions for on_load (no release event)
-  if (action_requires_hold(action->type)) {
-    ESP_LOGW(TAG, "Cannot add hold action '%s' to on_load", action_type_to_string(action->type));
+  // Validate action against on_load trigger
+  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_ON_LOAD)) {
+    ESP_LOGW(TAG, "Cannot add '%s' to on_load (invalid for this trigger)",
+      action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
   }
   
@@ -1990,6 +2023,13 @@ action_t* scene_get_sostenuto(uint8_t scene_index) {
 
 esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  // Validate action against expression switch trigger
+  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_EXPR_SWITCH)) {
+    ESP_LOGW(TAG, "Cannot assign '%s' to expr_switch (invalid for this trigger)",
+      action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
   
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
@@ -2388,7 +2428,6 @@ static const char* action_type_json_names[] = {
   [ACTION_RESET] = "reset",
   [ACTION_SUSTAIN] = "sustain",
   [ACTION_SOSTENUTO] = "sostenuto",
-  [ACTION_TOUCHWHEEL_MODE] = "touchwheel",
   [ACTION_TOUCHWHEEL_HOLD] = "touchwheel_hold",
   [ACTION_TOUCHWHEEL_CYCLE] = "touchwheel_cycle",
   [ACTION_LFO_START] = "lfo_start",
@@ -2434,8 +2473,9 @@ static action_type_t action_type_from_string(const char* name) {
   if (strcmp(name, "send_note_off") == 0) return ACTION_NOTE;
   // Old randomize name
   if (strcmp(name, "randomize_cc") == 0) return ACTION_RANDOMIZE;
-  // Old touchwheel names
-  if (strcmp(name, "tw_mode") == 0) return ACTION_TOUCHWHEEL_MODE;
+  // Old touchwheel names (tw_mode removed, map to NONE for backward compat)
+  if (strcmp(name, "tw_mode") == 0) return ACTION_NONE;
+  if (strcmp(name, "touchwheel") == 0) return ACTION_NONE;  // Old JSON name
   if (strcmp(name, "tw_mode_hold") == 0) return ACTION_TOUCHWHEEL_HOLD;
   if (strcmp(name, "tw_mode_cycle") == 0) return ACTION_TOUCHWHEEL_CYCLE;
   
@@ -2552,8 +2592,6 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddItemToArray(tempos, cJSON_CreateNumber(action->params.tempo.cycle_tempos[i]));
     }
     cJSON_AddItemToObject(obj, "tempos", tempos);
-  } else if (action->type == ACTION_TOUCHWHEEL_MODE) {
-    cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
   } else if (action->type == ACTION_TOUCHWHEEL_HOLD) {
     cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
     cJSON_AddNumberToObject(obj, "mode2", action->params.tw_mode.mode2);

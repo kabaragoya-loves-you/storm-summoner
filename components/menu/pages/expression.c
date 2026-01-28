@@ -638,6 +638,7 @@ static void nav_to_switch_action(void* user_data) {
   s_switch_action_ctx.return_depth = 2;
   s_switch_action_ctx.on_complete = NULL;
   s_switch_action_ctx.user_data = NULL;
+  s_switch_action_ctx.trigger_type = ACTION_TRIGGER_EXPR_SWITCH;
   
   action_config_start(&s_switch_action_ctx);
 }

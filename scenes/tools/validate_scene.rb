@@ -21,7 +21,7 @@ VALID_ACTION_TYPES = %w[
   confirm_pending
   all_notes_off all_sound_off
   sustain sostenuto
-  tw_mode tw_mode_hold tw_mode_cycle
+  tw_mode_hold tw_mode_cycle
 ].freeze
 
 # Valid touchwheel modes
@@ -83,10 +83,6 @@ def validate_action(action, context, errors)
     end
     if action['value'] && !(action['value'].is_a?(Integer) && action['value'].between?(0, 16383))
       errors << "#{context}: 'value' must be 0-16383"
-    end
-  when 'tw_mode'
-    unless action['mode'].is_a?(Integer) && action['mode'].between?(0, 8)
-      errors << "#{context}: requires 'mode' (0-8)"
     end
   when 'tw_mode_hold'
     unless action['mode'].is_a?(Integer) && action['mode'].between?(0, 8)

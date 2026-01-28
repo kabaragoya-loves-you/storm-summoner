@@ -101,6 +101,7 @@ static void nav_to_bump(void* user_data) {
   s_bump_action_ctx.user_data = NULL;
   s_bump_action_ctx.exclude_hold_actions = true;  // No hold actions for bump
   s_bump_action_ctx.on_load_filter = false;
+  s_bump_action_ctx.trigger_type = ACTION_TRIGGER_BUMP;
   
   action_config_start(&s_bump_action_ctx);
 }

@@ -298,7 +298,6 @@ static const char* action_type_names[] = {
   [ACTION_RESET] = "Reset",
   [ACTION_SUSTAIN] = "Sustain",
   [ACTION_SOSTENUTO] = "Sostenuto",
-  [ACTION_TOUCHWHEEL_MODE] = "Touchwheel",
   [ACTION_TOUCHWHEEL_HOLD] = "Touchwheel Hold",
   [ACTION_TOUCHWHEEL_CYCLE] = "Touchwheel Cycle",
   [ACTION_LFO_START] = "LFO Start",
@@ -714,36 +713,6 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       break;
       
     // Touchwheel mode control
-    case ACTION_TOUCHWHEEL_MODE:
-      // Set touchwheel mode on press only (using user-facing mode index)
-      // Uses runtime function - no persistence (changes are temporary)
-      if (is_press) {
-        uint8_t user_mode_idx = action->params.tw_mode.mode;
-        const touchwheel_mode_mapping_t* mapping = touchwheel_get_mode_mapping(user_mode_idx);
-        if (mapping) {
-          uint8_t scene_index = scene_get_current_index();
-          scene_t* scene = scene_get_current();
-          if (scene) {
-            // Apply mode's default style so touchwheel setup uses correct processor
-            scene->touchwheel_style = mapping->default_style;
-            // Enable touchwheel for all modes except Pads
-            scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
-            if (mapping->use_output_type) {
-              scene->touchwheel.output_type = mapping->output_type;
-              // For Notes mode, ensure sensible defaults if not configured
-              if (mapping->output_type == OUTPUT_TYPE_NOTE) {
-                if (scene->touchwheel.base_note == 0) scene->touchwheel.base_note = 60;
-                if (scene->touchwheel.note_range == 0) scene->touchwheel.note_range = 24;
-                if (scene->touchwheel.velocity == 0) scene->touchwheel.velocity = 100;
-              }
-            }
-          }
-          scene_set_touchwheel_mode_runtime(scene_index, mapping->mode);
-          ESP_LOGD(TAG, "Set touchwheel mode to %s", mapping->display_name);
-        }
-      }
-      break;
-      
     case ACTION_TOUCHWHEEL_HOLD:
       // Set mode on press, restore mode2 on release (using user-facing mode indices)
       // Uses runtime function - no persistence (changes are temporary)
@@ -1007,13 +976,6 @@ action_t action_create_sostenuto(void) {
   return action;
 }
 
-action_t action_create_touchwheel_mode(uint8_t mode) {
-  action_t action = {0};
-  action.type = ACTION_TOUCHWHEEL_MODE;
-  action.params.tw_mode.mode = mode;
-  return action;
-}
-
 action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode) {
   action_t action = {0};
   action.type = ACTION_TOUCHWHEEL_HOLD;
@@ -1062,6 +1024,51 @@ bool action_requires_hold(action_type_t type) {
     if (hold_actions[i] == type) return true;
   }
   return false;
+}
+
+// Check if an action type is valid for a specific trigger
+// Enforces restrictions for touchwheel mode actions and hold actions
+bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigger) {
+  // ACTION_NONE is always valid (clear assignment)
+  if (type == ACTION_NONE) return true;
+  
+  // Hold actions are invalid for bump and on_load (no release event)
+  if (action_requires_hold(type)) {
+    if (trigger == ACTION_TRIGGER_BUMP || trigger == ACTION_TRIGGER_ON_LOAD) {
+      return false;
+    }
+  }
+  
+  // Touchwheel Hold restrictions:
+  // - Valid: Pads 8-11, Buttons, Expression switch
+  // - Invalid: Pads 0-7, Bump, on_load
+  if (type == ACTION_TOUCHWHEEL_HOLD) {
+    switch (trigger) {
+      case ACTION_TRIGGER_TOUCHPAD_8_11:
+      case ACTION_TRIGGER_BUTTON:
+      case ACTION_TRIGGER_EXPR_SWITCH:
+        return true;
+      default:
+        return false;
+    }
+  }
+  
+  // Touchwheel Cycle restrictions:
+  // - Valid: Pads 8-11, Buttons, Bump, Expression switch
+  // - Invalid: Pads 0-7, on_load
+  if (type == ACTION_TOUCHWHEEL_CYCLE) {
+    switch (trigger) {
+      case ACTION_TRIGGER_TOUCHPAD_8_11:
+      case ACTION_TRIGGER_BUTTON:
+      case ACTION_TRIGGER_BUMP:
+      case ACTION_TRIGGER_EXPR_SWITCH:
+        return true;
+      default:
+        return false;
+    }
+  }
+  
+  return true;
 }
 
 // Returns true for actions that support timing options (non-HOLD actions)

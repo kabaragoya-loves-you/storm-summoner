@@ -52,7 +52,6 @@ typedef enum {
   ACTION_SOSTENUTO,           // Send CC66 (127 on press, 0 on release)
   
   // Touchwheel mode control
-  ACTION_TOUCHWHEEL_MODE,     // Set touchwheel mode to specific value
   ACTION_TOUCHWHEEL_HOLD,     // Set mode on press, restore on release
   ACTION_TOUCHWHEEL_CYCLE,    // Cycle through touchwheel modes
   
@@ -196,7 +195,6 @@ action_t action_create_transport(action_type_t transport_type);
 action_t action_create_reset(void);
 action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);
-action_t action_create_touchwheel_mode(uint8_t mode);
 action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode);
 action_t action_create_lfo_start(uint8_t slot);
 action_t action_create_lfo_stop(uint8_t slot);
@@ -208,6 +206,20 @@ const char* action_type_to_string(action_type_t type);
 // Check if action type requires hold (press/release) behavior
 // These actions should NOT be assigned to bump or on_load
 bool action_requires_hold(action_type_t type);
+
+// Action trigger types for validation
+typedef enum {
+  ACTION_TRIGGER_TOUCHPAD_0_7,   // Touchwheel pads (0-7)
+  ACTION_TRIGGER_TOUCHPAD_8_11,  // Discrete pads (Alpha, Bravo, Charlie, Delta)
+  ACTION_TRIGGER_BUTTON,         // Left, Right, Both buttons
+  ACTION_TRIGGER_BUMP,           // Bump detector (no release event)
+  ACTION_TRIGGER_EXPR_SWITCH,    // Expression in switch mode
+  ACTION_TRIGGER_ON_LOAD         // Scene load actions
+} action_trigger_type_t;
+
+// Check if an action type is valid for a specific trigger
+// Returns true if the action can be assigned to the trigger, false otherwise
+bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigger);
 
 // Check if action type supports timing options (non-HOLD actions)
 // Returns false for HOLD actions that must execute immediately
