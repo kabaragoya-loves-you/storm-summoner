@@ -6,6 +6,8 @@
 #include "event_bus.h"
 #include "midi_in.h"
 #include "device_config.h"
+#include "app_settings.h"
+#include "mbedtls/base64.h"
 #include "tusb.h"
 #include "esp_log.h"
 #include "esp_console.h"
@@ -50,6 +52,7 @@ typedef enum {
   CDC_STATE_ASSETS_SENDING,    // Sending file data in assets mode
   CDC_STATE_DISPLAY,  // LVGL display streaming mode
   CDC_STATE_MIDI_RELAY, // MIDI IN relay mode
+  CDC_STATE_SETTINGS, // NVS settings mode
   CDC_STATE_ERROR
 } cdc_update_state_t;
 
@@ -199,6 +202,7 @@ static void console_redirect_stdout(bool enable) {
 static void process_command(const char *cmd);
 static void process_console_command(const char *cmd);
 static void process_assets_command(const char *cmd);
+static void process_settings_command(const char *cmd);
 static void send_response(const char *msg);
 static void send_binary(const uint8_t *data, size_t len);
 static void handle_binary_data(const uint8_t *data, size_t len);
@@ -315,6 +319,11 @@ void usb_cdc_task(void) {
       midi_relay_stop();
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting MIDI relay mode");
+    }
+    // If we were in settings mode and disconnected, cleanup
+    if (s_state == CDC_STATE_SETTINGS) {
+      s_state = CDC_STATE_IDLE;
+      ESP_LOGI(TAG, "CDC disconnected, exiting settings mode");
     }
     return;
   }
@@ -444,6 +453,19 @@ void usb_cdc_task(void) {
                 s_state = CDC_STATE_IDLE;
                 send_response("MIDI_STOPPED");
               }
+              s_cmd_pos = 0;
+            }
+          } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
+            s_cmd_buffer[s_cmd_pos++] = buf[i];
+          }
+        }
+      } else if (s_state == CDC_STATE_SETTINGS) {
+        // In settings mode, parse commands (text mode, no echo)
+        for (uint32_t i = 0; i < count; i++) {
+          if (buf[i] == '\n' || buf[i] == '\r') {
+            if (s_cmd_pos > 0) {
+              s_cmd_buffer[s_cmd_pos] = '\0';
+              process_settings_command(s_cmd_buffer);
               s_cmd_pos = 0;
             }
           } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
@@ -813,6 +835,11 @@ static void process_command(const char *cmd) {
     event_bus_subscribe(EVENT_MIDI_IN, midi_relay_event_handler, NULL);
     
     send_response("MIDI_STARTED");
+
+  } else if (strcmp(cmd, "SETTINGS") == 0) {
+    ESP_LOGI(TAG, "Entering settings mode");
+    s_state = CDC_STATE_SETTINGS;
+    send_response("SETTINGS_STARTED");
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);
@@ -1860,4 +1887,376 @@ static void midi_relay_event_handler(const event_t* event, void* context) {
   tud_cdc_write(buf, strlen(buf));
   tud_cdc_write("\n", 1);
   tud_cdc_write_flush();
+}
+
+// ============================================================================
+// Settings Mode - Direct NVS access without console REPL overhead
+// ============================================================================
+
+#define NVS_NAMESPACE "app_settings"
+
+// Helper to get type string from NVS type
+static const char* nvs_type_to_str(nvs_type_t type) {
+  switch (type) {
+    case NVS_TYPE_U8: return "u8";
+    case NVS_TYPE_I8: return "i8";
+    case NVS_TYPE_U16: return "u16";
+    case NVS_TYPE_I16: return "i16";
+    case NVS_TYPE_U32: return "u32";
+    case NVS_TYPE_I32: return "i32";
+    case NVS_TYPE_U64: return "u64";
+    case NVS_TYPE_I64: return "i64";
+    case NVS_TYPE_STR: return "str";
+    case NVS_TYPE_BLOB: return "blob";
+    default: return "unknown";
+  }
+}
+
+// LIST - enumerate all NVS keys
+static void settings_cmd_list(void) {
+  nvs_iterator_t it = NULL;
+  esp_err_t err = nvs_entry_find("nvs", NVS_NAMESPACE, NVS_TYPE_ANY, &it);
+  
+  if (err == ESP_ERR_NVS_NOT_FOUND || it == NULL) {
+    send_response("END");
+    return;
+  }
+  
+  char line[80];
+  while (it != NULL) {
+    nvs_entry_info_t info;
+    nvs_entry_info(it, &info);
+    
+    snprintf(line, sizeof(line), "%s:%s", info.key, nvs_type_to_str(info.type));
+    send_response(line);
+    
+    err = nvs_entry_next(&it);
+    if (err != ESP_OK) break;
+  }
+  
+  nvs_release_iterator(it);
+  send_response("END");
+}
+
+// GET <key> - get value for a key
+static void settings_cmd_get(const char *key) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    send_response("ERROR: Cannot open NVS");
+    return;
+  }
+  
+  // Try to find the key and its type
+  nvs_iterator_t it = NULL;
+  err = nvs_entry_find("nvs", NVS_NAMESPACE, NVS_TYPE_ANY, &it);
+  
+  nvs_type_t key_type = NVS_TYPE_ANY;
+  bool found = false;
+  
+  while (it != NULL) {
+    nvs_entry_info_t info;
+    nvs_entry_info(it, &info);
+    
+    if (strcmp(info.key, key) == 0) {
+      key_type = info.type;
+      found = true;
+      break;
+    }
+    
+    err = nvs_entry_next(&it);
+    if (err != ESP_OK) break;
+  }
+  nvs_release_iterator(it);
+  
+  if (!found) {
+    nvs_close(handle);
+    send_response("ERROR: Key not found");
+    return;
+  }
+  
+  char resp[256];
+  
+  switch (key_type) {
+    case NVS_TYPE_U8: {
+      uint8_t val;
+      if (nvs_get_u8(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%u", val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_I8: {
+      int8_t val;
+      if (nvs_get_i8(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%d", val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_U16: {
+      uint16_t val;
+      if (nvs_get_u16(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%u", val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_I16: {
+      int16_t val;
+      if (nvs_get_i16(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%d", val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_U32: {
+      uint32_t val;
+      if (nvs_get_u32(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%u", (unsigned)val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_I32: {
+      int32_t val;
+      if (nvs_get_i32(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%d", (int)val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_U64: {
+      uint64_t val;
+      if (nvs_get_u64(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%llu", (unsigned long long)val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_I64: {
+      int64_t val;
+      if (nvs_get_i64(handle, key, &val) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "%lld", (long long)val);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    case NVS_TYPE_STR: {
+      size_t len = 0;
+      if (nvs_get_str(handle, key, NULL, &len) == ESP_OK && len < 256) {
+        char *str = malloc(len);
+        if (str && nvs_get_str(handle, key, str, &len) == ESP_OK) {
+          send_response(str);
+        } else {
+          send_response("ERROR: Read failed");
+        }
+        free(str);
+      } else {
+        send_response("ERROR: String too long");
+      }
+      break;
+    }
+    case NVS_TYPE_BLOB: {
+      size_t len = 0;
+      if (nvs_get_blob(handle, key, NULL, &len) == ESP_OK) {
+        snprintf(resp, sizeof(resp), "BLOB:%u", (unsigned)len);
+        send_response(resp);
+      } else {
+        send_response("ERROR: Read failed");
+      }
+      break;
+    }
+    default:
+      send_response("ERROR: Unknown type");
+      break;
+  }
+  
+  nvs_close(handle);
+}
+
+// SET <type> <key> <value> - set a value
+static void settings_cmd_set(const char *args) {
+  char type[16], key[64], value[384];  // Larger buffer for base64 blobs
+  
+  if (sscanf(args, "%15s %63s %383[^\n]", type, key, value) < 3) {
+    send_response("ERROR: Usage: SET <type> <key> <value>");
+    return;
+  }
+  
+  esp_err_t err = ESP_FAIL;
+  
+  if (strcmp(type, "u8") == 0) {
+    err = app_settings_save_u8(key, (uint8_t)atoi(value));
+  } else if (strcmp(type, "u16") == 0) {
+    err = app_settings_save_u16(key, (uint16_t)atoi(value));
+  } else if (strcmp(type, "u32") == 0) {
+    err = app_settings_save_u32(key, (uint32_t)strtoul(value, NULL, 10));
+  } else if (strcmp(type, "bool") == 0) {
+    bool bval = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
+    err = app_settings_save_bool(key, bval);
+  } else if (strcmp(type, "str") == 0) {
+    err = app_settings_save_str(key, value);
+  } else if (strcmp(type, "blob") == 0) {
+    // Decode base64 blob
+    size_t b64_len = strlen(value);
+    size_t decoded_len = 0;
+    
+    // Calculate max decoded size (base64 is ~4/3 ratio)
+    size_t max_decoded = (b64_len * 3) / 4 + 4;
+    uint8_t *decoded = malloc(max_decoded);
+    
+    if (!decoded) {
+      send_response("ERROR: Out of memory");
+      return;
+    }
+    
+    int ret = mbedtls_base64_decode(decoded, max_decoded, &decoded_len,
+      (const unsigned char *)value, b64_len);
+    
+    if (ret != 0) {
+      free(decoded);
+      send_response("ERROR: Invalid base64");
+      return;
+    }
+    
+    err = app_settings_save_blob(key, decoded, decoded_len);
+    free(decoded);
+  } else {
+    send_response("ERROR: Unknown type (use u8/u16/u32/bool/str/blob)");
+    return;
+  }
+  
+  if (err == ESP_OK) {
+    send_response("OK");
+  } else {
+    char resp[64];
+    snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+    send_response(resp);
+  }
+}
+
+// ERASE <key> - erase a single key
+static void settings_cmd_erase(const char *key) {
+  esp_err_t err = app_settings_erase_key(key);
+  if (err == ESP_OK) {
+    send_response("OK");
+  } else {
+    char resp[64];
+    snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+    send_response(resp);
+  }
+}
+
+// DUMP - export all settings as JSON
+static void settings_cmd_dump(void) {
+  char *json = app_settings_export_json_string(false);
+  if (json) {
+    send_response(json);
+    cJSON_free(json);
+  } else {
+    send_response("{}");
+  }
+}
+
+// LOAD <json> - import settings from JSON
+static void settings_cmd_load(const char *json_str) {
+  cJSON *json = cJSON_Parse(json_str);
+  if (!json) {
+    send_response("ERROR: Invalid JSON");
+    return;
+  }
+  
+  int count = app_settings_import_json(json);
+  cJSON_Delete(json);
+  
+  if (count >= 0) {
+    char resp[32];
+    snprintf(resp, sizeof(resp), "OK:%d", count);
+    send_response(resp);
+  } else {
+    send_response("ERROR: Import failed");
+  }
+}
+
+// Process settings mode commands
+static void process_settings_command(const char *cmd) {
+  ESP_LOGD(TAG, "Settings cmd: %s", cmd);
+  
+  if (strlen(cmd) == 0) return;
+  
+  // EXIT - leave settings mode
+  if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
+    ESP_LOGI(TAG, "Exiting settings mode");
+    s_state = CDC_STATE_IDLE;
+    send_response("SETTINGS_STOPPED");
+    return;
+  }
+  
+  // LIST - enumerate all keys
+  if (strcmp(cmd, "LIST") == 0) {
+    settings_cmd_list();
+    return;
+  }
+  
+  // GET <key>
+  if (strncmp(cmd, "GET ", 4) == 0) {
+    settings_cmd_get(cmd + 4);
+    return;
+  }
+  
+  // SET <type> <key> <value>
+  if (strncmp(cmd, "SET ", 4) == 0) {
+    settings_cmd_set(cmd + 4);
+    return;
+  }
+  
+  // ERASE <key>
+  if (strncmp(cmd, "ERASE ", 6) == 0) {
+    settings_cmd_erase(cmd + 6);
+    return;
+  }
+  
+  // ERASE_ALL
+  if (strcmp(cmd, "ERASE_ALL") == 0) {
+    esp_err_t err = app_settings_erase_all();
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // DUMP - export as JSON
+  if (strcmp(cmd, "DUMP") == 0) {
+    settings_cmd_dump();
+    return;
+  }
+  
+  // LOAD <json>
+  if (strncmp(cmd, "LOAD ", 5) == 0) {
+    settings_cmd_load(cmd + 5);
+    return;
+  }
+  
+  send_response("ERROR: Unknown settings command");
 }

@@ -14,6 +14,8 @@ idf_component_register(
     event_bus
     midi
     device_config
+    app_settings
+    mbedtls
   PRIV_REQUIRES
     main
 )

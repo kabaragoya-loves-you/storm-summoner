@@ -4,14 +4,17 @@
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
 #include "nvs_flash.h"
+#include "cJSON.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 static const char* TAG = "app_settings_console";
-static const char* NVS_NAMESPACE = "storage";
+static const char* NVS_NAMESPACE = "app_settings";
 
 static const char* registered_commands[] = {
-  "list", "get", "set_u8", "set_u16", "set_u32", "set_bool", "set_str", "erase", "erase_all"
+  "list", "get", "set_u8", "set_u16", "set_u32", "set_bool", "set_str", "erase", "erase_all",
+  "dump", "load"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -310,6 +313,52 @@ static int cmd_erase_all(int argc, char **argv) {
   return 0;
 }
 
+// Command: dump - Export all settings as JSON
+static int cmd_dump(int argc, char **argv) {
+  char* json_str = app_settings_export_json_string(true);  // pretty print
+  if (json_str) {
+    printf("%s\r\n", json_str);  // No ESP_LOGI - clean output for parsing
+    cJSON_free(json_str);
+    return 0;
+  }
+  printf("Error: Failed to export settings\r\n");
+  return 1;
+}
+
+// Command: load - Import settings from JSON
+// Usage: load <json_string>
+// Note: For multi-line JSON, use the web interface or Ruby script
+static struct {
+  struct arg_str *json;
+  struct arg_end *end;
+} load_args;
+
+static int cmd_load(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &load_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, load_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* json_str = load_args.json->sval[0];
+  cJSON* json = cJSON_Parse(json_str);
+  if (!json) {
+    printf("Error: Invalid JSON\r\n");
+    return 1;
+  }
+  
+  int count = app_settings_import_json(json);
+  cJSON_Delete(json);
+  
+  if (count >= 0) {
+    printf("Imported %d settings\r\n", count);
+    return 0;
+  }
+  
+  printf("Error: Failed to import settings\r\n");
+  return 1;
+}
+
 esp_err_t app_settings_console_init(void) {
   ESP_LOGI(TAG, "Registering app_settings commands");
   
@@ -426,6 +475,28 @@ esp_err_t app_settings_console_init(void) {
     .func = &cmd_erase_all,
   };
   esp_console_cmd_register(&erase_all_cmd);
+  
+  // dump command
+  const esp_console_cmd_t dump_cmd = {
+    .command = "dump",
+    .help = "Export all settings as JSON",
+    .hint = NULL,
+    .func = &cmd_dump,
+  };
+  esp_console_cmd_register(&dump_cmd);
+  
+  // load command
+  load_args.json = arg_str1(NULL, NULL, "<json>", "JSON string to import");
+  load_args.end = arg_end(2);
+  
+  const esp_console_cmd_t load_cmd = {
+    .command = "load",
+    .help = "Import settings from JSON string",
+    .hint = NULL,
+    .func = &cmd_load,
+    .argtable = &load_args
+  };
+  esp_console_cmd_register(&load_cmd);
   
   return ESP_OK;
 }

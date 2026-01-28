@@ -49,6 +49,7 @@
         <wa-tab slot="nav" panel="midi">MIDI</wa-tab>
         <wa-tab slot="nav" panel="display">Display</wa-tab>
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
+        <wa-tab slot="nav" panel="settings">Settings</wa-tab>
 
         <!-- Assets Tab -->
         <wa-tab-panel name="assets">
@@ -318,6 +319,48 @@
             </div>
           </div>
         </wa-tab-panel>
+
+        <!-- Settings Tab -->
+        <wa-tab-panel name="settings">
+          <div class="tab-content" data-controller="settings">
+            <div class="toolbar">
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->settings#refresh" data-settings-target="refreshBtn" disabled>
+                <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
+                Refresh
+              </wa-button>
+              <div class="toolbar-spacer"></div>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->settings#downloadJson" data-settings-target="downloadBtn" disabled>
+                <wa-icon name="download" slot="prefix"></wa-icon>
+                Export JSON
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->settings#selectJsonFile" data-settings-target="uploadBtn" disabled>
+                <wa-icon name="upload" slot="prefix"></wa-icon>
+                Import JSON
+              </wa-button>
+              <input type="file" accept=".json" hidden data-settings-target="jsonInput"
+                     data-action="change->settings#importJson">
+            </div>
+
+            <div class="settings-list" data-settings-target="settingsList">
+              <div class="empty-state">
+                <wa-icon name="sliders"></wa-icon>
+                <p>Connect to view settings</p>
+              </div>
+            </div>
+
+            <div class="log-panel mt-3">
+              <div class="log-header">
+                <span>Activity Log</span>
+                <wa-button size="small" variant="neutral" appearance="text"
+                           data-action="click->settings#clearLog">Clear</wa-button>
+              </div>
+              <div class="log-content" data-settings-target="logContent"></div>
+            </div>
+          </div>
+        </wa-tab-panel>
       </wa-tab-group>
     </div>
 
@@ -330,6 +373,7 @@
   <script src="/js/midi.js"></script>
   <script src="/js/display.js"></script>
   <script src="/js/updater.js"></script>
+  <script src="/js/settings.js"></script>
 
   <script>
     if (!navigator.serial) {

@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 #include "nvs_flash.h"
+#include "cJSON.h"
 
 // Abstracted error codes - use these instead of NVS-specific errors
 #define APP_SETTINGS_OK ESP_OK
@@ -50,5 +51,18 @@ esp_err_t app_settings_load_blob(const char* key, void* value, size_t max_length
 // Erase functions
 esp_err_t app_settings_erase_key(const char* key);
 esp_err_t app_settings_erase_all(void);
+
+// JSON export/import functions
+// Returns a cJSON object with all settings (caller must free with cJSON_Delete)
+cJSON* app_settings_export_json(void);
+
+// Import settings from a cJSON object
+// Returns number of keys imported, or -1 on error
+int app_settings_import_json(const cJSON* json);
+
+// Export settings as JSON string
+// Returns the JSON string (caller must free with cJSON_free)
+// If pretty is true, output is formatted with indentation
+char* app_settings_export_json_string(bool pretty);
 
 #endif /* _APP_SETTINGS_H */ 
