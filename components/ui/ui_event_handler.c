@@ -46,7 +46,11 @@ static void load_config_from_settings(void) {
 }
 
 static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
-  if (ui_get_app_mode() != APP_MODE_PERFORMANCE) return;
+  app_mode_t mode = ui_get_app_mode();
+  if (mode != APP_MODE_PERFORMANCE) {
+    ESP_LOGW(TAG, "Pad 12 long press ignored - mode is %d (expected Performance)", mode);
+    return;
+  }
   
   uint32_t uptime_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
   
@@ -90,7 +94,7 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   
   // All checks passed - this is a legitimate long press
   s_long_press_timer_fired = true;
-  ESP_LOGD(TAG, "Button 13 long press: Entering Programming Mode");
+  ESP_LOGI(TAG, "Pad 12 long press detected - entering Programming Mode");
   
   // Post mode change event - handle in event bus task context (safe for LVGL)
   event_t event = {
@@ -134,7 +138,9 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       if (mode == APP_MODE_PERFORMANCE || mode == APP_MODE_SCREENSAVER) {
         s_long_press_timer_fired = false;
         xTimerStart(s_button13_long_press_timer, 0);
-        ESP_LOGD(TAG, "Started Button 13 long press timer (mode=%d)", mode);
+        ESP_LOGI(TAG, "Pad 12 pressed - long press timer started (mode=%d)", mode);
+      } else {
+        ESP_LOGD(TAG, "Pad 12 pressed in Programming mode - long press timer not started");
       }
     }
     
