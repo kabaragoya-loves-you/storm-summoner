@@ -118,6 +118,7 @@ typedef struct {
   tempo_note_divider_t beat_divider;     // QUARTER, EIGHTH, SIXTEENTH
   time_signature_t time_signature;       // Beats per bar and beat unit
   bool use_transport;                    // If false, animation runs continuously at BPM
+  bool send_clock;                       // If false, scene does not send MIDI clock
   
   // LFO configuration (per-scene)
   lfo_config_t lfo1_config;              // LFO1 waveform, rate, etc.
@@ -297,6 +298,10 @@ time_signature_t scene_get_time_signature(uint8_t scene_index);
 // Transport mode (animation behavior)
 esp_err_t scene_set_use_transport(uint8_t scene_index, bool use_transport);
 bool scene_get_use_transport(uint8_t scene_index);
+
+// Clock sending (per-scene)
+esp_err_t scene_set_send_clock(uint8_t scene_index, bool send_clock);
+bool scene_get_send_clock(uint8_t scene_index);
 
 // Save/load scene mode configuration to/from NVS
 esp_err_t scene_save_config(void);

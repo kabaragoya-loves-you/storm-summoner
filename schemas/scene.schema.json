@@ -192,6 +192,11 @@
       "default": false,
       "description": "When true, animation follows transport controls (play/pause/stop). When false, animation always runs at current BPM."
     },
+    "send_clock": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true, scene sends MIDI clock messages. When false, no MIDI clock is sent regardless of tempo settings."
+    },
     "lfo1_config": {
       "$ref": "#/definitions/lfo_config",
       "description": "LFO1 waveform and rate configuration"
@@ -469,7 +474,16 @@
             "sustain",
             "sostenuto",
             "touchwheel_hold",
-            "touchwheel_cycle"
+            "touchwheel_cycle",
+            "lfo_start",
+            "lfo_stop",
+            "lfo_toggle",
+            "lfo_shape",
+            "clock_toggle",
+            "clock_hold",
+            "clock_burst",
+            "cut_toggle",
+            "cut_hold"
           ],
           "description": "Action type name"
         },
@@ -846,6 +860,56 @@
                   "maximum": 7
                 },
                 "description": "User-facing touchwheel mode indices to cycle through"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"enum": ["clock_toggle", "clock_hold"]}
+            }
+          },
+          "then": {
+            "properties": {
+              "start_enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "For toggle: first press disables clock (since clock runs by default). For hold: press disables clock."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "clock_burst"}
+            }
+          },
+          "then": {
+            "properties": {
+              "speed_percent": {
+                "type": "integer",
+                "enum": [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300],
+                "default": 100,
+                "description": "Speed multiplier for burst (25-300% in 25% increments)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"enum": ["cut_toggle", "cut_hold"]}
+            }
+          },
+          "then": {
+            "properties": {
+              "cut_mode": {
+                "type": "string",
+                "enum": ["local", "passthrough", "both"],
+                "default": "both",
+                "description": "What to cut: local (device-generated), passthrough (MIDI IN), or both"
               }
             }
           }

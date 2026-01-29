@@ -162,7 +162,7 @@ static const char* registered_commands[] = {
   "expr_cc", "expr_curve", "expr_polarity", "expr_enable", "expr_output", "expr_base_note", "expr_note_range", "expr_velocity", "expr_mode",
   "cv_cc", "cv_curve", "cv_polarity", "cv_enable", "cv_output", "cv_base_note", "cv_note_range", "cv_velocity", "cv_input_mode",
   "cv_velocity_mode", "cv_note_velocity",
-  "bpm", "clock_source", "beat_divider", "time_sig", "use_transport",
+  "bpm", "clock_source", "beat_divider", "time_sig", "use_transport", "send_clock",
   "proximity_cc", "proximity_curve", "proximity_polarity", "proximity_enable", "proximity_output", "proximity_base_note", "proximity_note_range", "proximity_velocity",
   "proximity_velocity_mode",
   "als_cc", "als_curve", "als_polarity", "als_enable", "als_output", "als_base_note", "als_note_range", "als_velocity",
@@ -279,6 +279,7 @@ static void cmd_scene_info(void) {
            scene->beat_divider == DIVIDER_EIGHTH ? "Eighth" : "Sixteenth");
   ESP_LOGI(TAG, "  Time signature: %d/%d",
            scene->time_signature.numerator, scene->time_signature.denominator);
+  ESP_LOGI(TAG, "  Send clock: %s", scene->send_clock ? "Yes" : "No");
   
   // Only show expression jack mode section for action-based modes (sustain/sostenuto/gate/switch)
   if (scene->expression_mode != EXPRESSION_MODE_PEDAL) {
@@ -2903,6 +2904,42 @@ static int cmd_use_transport(int argc, char **argv) {
   return 0;
 }
 
+// Command: send_clock - Set whether scene sends MIDI clock
+static struct {
+  struct arg_str *on_off;
+  struct arg_end *end;
+} send_clock_args;
+
+static int cmd_send_clock(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &send_clock_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, send_clock_args.end, argv[0]);
+    return 1;
+  }
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return 1;
+  
+  const char* val = send_clock_args.on_off->sval[0];
+  bool send_clock;
+  
+  if (strcmp(val, "on") == 0 || strcmp(val, "true") == 0 || strcmp(val, "1") == 0) {
+    send_clock = true;
+  } else if (strcmp(val, "off") == 0 || strcmp(val, "false") == 0 || strcmp(val, "0") == 0) {
+    send_clock = false;
+  } else {
+    ESP_LOGE(TAG, "Invalid value (use: on/off)");
+    return 1;
+  }
+  
+  scene_set_send_clock(scene_get_current_index(), send_clock);
+  
+  ESP_LOGI(TAG, "send_clock: %s (scene %s MIDI clock)",
+    send_clock ? "on" : "off",
+    send_clock ? "sends" : "does not send");
+  return 0;
+}
+
 // Command: proximity_cc - Set proximity CC number(s)
 static struct {
   struct arg_int *cc_nums;
@@ -4959,6 +4996,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &use_transport_args
   };
   esp_console_cmd_register(&use_transport_cmd);
+  
+  // send_clock command
+  send_clock_args.on_off = arg_str1(NULL, NULL, "<on|off>", "Enable/disable MIDI clock sending");
+  send_clock_args.end = arg_end(2);
+  
+  const esp_console_cmd_t send_clock_cmd = {
+    .command = "send_clock",
+    .help = "Control whether scene sends MIDI clock (on: send, off: don't send)",
+    .hint = NULL,
+    .func = &cmd_send_clock,
+    .argtable = &send_clock_args
+  };
+  esp_console_cmd_register(&send_clock_cmd);
   
   // proximity_cc command
   proximity_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");

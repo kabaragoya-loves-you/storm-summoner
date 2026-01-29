@@ -88,6 +88,9 @@ static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
+static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
+static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
+static char s_cut_mode_label[LABEL_BUFFER_SETS][32];
 static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
@@ -142,6 +145,11 @@ static const action_type_t s_all_action_types[] = {
   ACTION_LFO_STOP,
   ACTION_LFO_TOGGLE,
   ACTION_LFO_SHAPE,
+  ACTION_CLOCK_TOGGLE,
+  ACTION_CLOCK_HOLD,
+  ACTION_CLOCK_BURST,
+  ACTION_CUT_TOGGLE,
+  ACTION_CUT_HOLD,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -203,6 +211,11 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_LFO_STOP: return "LFO Stop";
     case ACTION_LFO_TOGGLE: return "LFO Toggle";
     case ACTION_LFO_SHAPE: return "LFO Shape";
+    case ACTION_CLOCK_TOGGLE: return "Clock Toggle";
+    case ACTION_CLOCK_HOLD: return "Clock Hold";
+    case ACTION_CLOCK_BURST: return "Clock Burst";
+    case ACTION_CUT_TOGGLE: return "Cut Toggle";
+    case ACTION_CUT_HOLD: return "Cut Hold";
     default: return "Unknown";
   }
 }
@@ -618,6 +631,22 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.lfo.shapes[0] = LFO_WAVEFORM_SINE;
       action->params.lfo.shapes[1] = LFO_WAVEFORM_TRIANGLE;
       action->params.lfo.current_index = 0;
+    }
+    
+    // Set defaults for clock toggle/hold (start_enabled = false means press disables clock)
+    // Default to disable since clock is running by default
+    if (new_type == ACTION_CLOCK_TOGGLE || new_type == ACTION_CLOCK_HOLD) {
+      action->params.clock.start_enabled = false;
+    }
+    
+    // Set defaults for clock burst (100% = double the clock rate)
+    if (new_type == ACTION_CLOCK_BURST) {
+      action->params.clock_burst.speed_percent = 100;
+    }
+    
+    // Set defaults for cut actions (both = cut local and passthrough)
+    if (new_type == ACTION_CUT_TOGGLE || new_type == ACTION_CUT_HOLD) {
+      action->params.cut.cut_mode = 2;  // Both
     }
     
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
@@ -2759,6 +2788,148 @@ static void nav_to_lfo_slot(void* user_data) {
 }
 
 // ============================================================================
+// Clock Mode Roller (for clock toggle/hold actions)
+// ============================================================================
+
+static const char* CLOCK_MODE_OPTIONS_TOGGLE = "Enable First\nDisable First";
+static const char* CLOCK_MODE_OPTIONS_HOLD = "Enable\nDisable";
+
+static void clock_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // 0 = Enable First (start_enabled = true), 1 = Disable First (start_enabled = false)
+  action_t* action = s_ctx->target_action;
+  action->params.clock.start_enabled = (selected_index == 0);
+  
+  ESP_LOGI(TAG, "Clock mode set to %s", action->params.clock.start_enabled ? "Enable First" : "Disable First");
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* clock_mode_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = action->params.clock.start_enabled ? 0 : 1;
+  
+  bool is_hold = (action->type == ACTION_CLOCK_HOLD);
+  const char* title = is_hold ? "Press" : "First Action";
+  const char* options = is_hold ? CLOCK_MODE_OPTIONS_HOLD : CLOCK_MODE_OPTIONS_TOGGLE;
+  
+  return menu_create_roller_page(title, options, current_idx, clock_mode_confirm_cb, NULL);
+}
+
+static void nav_to_clock_mode(void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  bool is_hold = (s_ctx->target_action->type == ACTION_CLOCK_HOLD);
+  nav_to_subpage(is_hold ? "Press" : "First Action", clock_mode_roller_create);
+}
+
+// ============================================================================
+// Clock Burst Speed Roller
+// ============================================================================
+
+static const char* CLOCK_BURST_OPTIONS = "25%\n50%\n75%\n100%\n125%\n150%\n175%\n200%\n225%\n250%\n275%\n300%";
+
+static void clock_burst_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // Map index to percentage: 0=25%, 1=50%, ..., 11=300%
+  action_t* action = s_ctx->target_action;
+  action->params.clock_burst.speed_percent = (uint16_t)((selected_index + 1) * 25);
+  
+  ESP_LOGI(TAG, "Clock burst speed set to %u%%", (unsigned)action->params.clock_burst.speed_percent);
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* clock_burst_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  uint8_t speed = action->params.clock_burst.speed_percent;
+  
+  // Map percentage to index: 25->0, 50->1, ..., 300->11
+  uint32_t current_idx = (speed >= 25 && speed <= 300) ? (speed / 25) - 1 : 3;  // Default to 100%
+  if (current_idx > 11) current_idx = 3;
+  
+  return menu_create_roller_page("Speed", CLOCK_BURST_OPTIONS, current_idx,
+    clock_burst_confirm_cb, NULL);
+}
+
+static void nav_to_clock_burst(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Speed", clock_burst_roller_create);
+}
+
+// ============================================================================
+// Cut Mode Roller (for cut toggle/hold actions)
+// ============================================================================
+
+static const char* CUT_MODE_OPTIONS = "Local Only\nPassthrough\nBoth";
+
+static void cut_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  // 0=local, 1=passthrough, 2=both
+  action_t* action = s_ctx->target_action;
+  action->params.cut.cut_mode = (uint8_t)selected_index;
+  
+  const char* mode_names[] = {"Local Only", "Passthrough", "Both"};
+  ESP_LOGI(TAG, "Cut mode set to %s", mode_names[selected_index]);
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* cut_mode_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = action->params.cut.cut_mode;
+  if (current_idx > 2) current_idx = 2;  // Default to "Both"
+  
+  return menu_create_roller_page("Cut Target", CUT_MODE_OPTIONS, current_idx,
+    cut_mode_confirm_cb, NULL);
+}
+
+static void nav_to_cut_mode(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Cut Target", cut_mode_roller_create);
+}
+
+// ============================================================================
 // Navigation Helpers
 // ============================================================================
 
@@ -3427,6 +3598,44 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
+    };
+  }
+  
+  // Show clock mode selector for clock toggle/hold actions
+  if ((action->type == ACTION_CLOCK_TOGGLE || action->type == ACTION_CLOCK_HOLD) &&
+      item_count < MAX_DETAIL_ITEMS) {
+    bool is_hold = (action->type == ACTION_CLOCK_HOLD);
+    const char* label = is_hold ? "Press" : "First Action";
+    const char* mode_name = is_hold ?
+      (action->params.clock.start_enabled ? "Enable" : "Disable") :
+      (action->params.clock.start_enabled ? "Enable First" : "Disable First");
+    snprintf(s_clock_mode_label[buf], sizeof(s_clock_mode_label[buf]), "%s\n%s", label, mode_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_clock_mode_label[buf], nav_to_clock_mode, NULL, true
+    };
+  }
+  
+  // Show clock burst speed selector
+  if (action->type == ACTION_CLOCK_BURST && item_count < MAX_DETAIL_ITEMS) {
+    snprintf(s_clock_burst_label[buf], sizeof(s_clock_burst_label[buf]), "Speed\n%u%%",
+      (unsigned)action->params.clock_burst.speed_percent);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_clock_burst_label[buf], nav_to_clock_burst, NULL, true
+    };
+  }
+  
+  // Show cut mode selector for cut toggle/hold actions
+  if ((action->type == ACTION_CUT_TOGGLE || action->type == ACTION_CUT_HOLD) &&
+      item_count < MAX_DETAIL_ITEMS) {
+    const char* mode_name;
+    switch (action->params.cut.cut_mode) {
+      case 0: mode_name = "Local Only"; break;
+      case 1: mode_name = "Passthrough"; break;
+      default: mode_name = "Both"; break;
+    }
+    snprintf(s_cut_mode_label[buf], sizeof(s_cut_mode_label[buf]), "Cut Target\n%s", mode_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_cut_mode_label[buf], nav_to_cut_mode, NULL, true
     };
   }
   

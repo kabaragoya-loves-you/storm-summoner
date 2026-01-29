@@ -45,6 +45,14 @@ void midi_out_set_transport_enabled(midi_out_interface_t interface, bool enabled
 bool midi_out_get_tempo_enabled(midi_out_interface_t interface);
 bool midi_out_get_transport_enabled(midi_out_interface_t interface);
 
+// Cut control (temporary runtime mute for MIDI output)
+// These are NOT persisted - reset on scene change
+void midi_out_set_cut_local(bool cut);      // Cut locally-generated MIDI messages
+void midi_out_set_cut_passthrough(bool cut); // Cut passthrough MIDI messages
+bool midi_out_get_cut_local(void);
+bool midi_out_get_cut_passthrough(void);
+void midi_out_reset_cut(void);              // Reset both cut states to false
+
 // Get current configuration
 midi_out_config_t midi_out_get_config(void);
 

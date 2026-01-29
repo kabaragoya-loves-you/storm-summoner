@@ -1,6 +1,7 @@
 #include "action.h"
 #include "midi_messages.h"
 #include "midi_lfo_scene_handler.h"
+#include "midi_out.h"
 #include "device_config.h"
 #include "scene.h"
 #include "touchwheel_mode_mapping.h"
@@ -11,12 +12,82 @@
 #include "event_bus.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include <string.h>
 #include <stdlib.h>
 
 static const char* TAG = "action";
 
 static bool s_initialized = false;
+
+// ============================================================================
+// Clock Burst Timer (for sending extra clock pulses)
+// ============================================================================
+
+static esp_timer_handle_t s_clock_burst_timer = NULL;
+static uint8_t s_clock_burst_speed_percent = 100;
+static bool s_clock_burst_active = false;
+
+static void clock_burst_timer_callback(void* arg) {
+  (void)arg;
+  if (s_clock_burst_active) {
+    // Send an extra clock pulse (0xF8) directly
+    // Note: This bypasses the scene's send_clock check intentionally
+    // because the burst is a deliberate performance effect
+    const uint8_t message = 0xF8;
+    midi_send_message(&message, 1);
+  }
+}
+
+static void clock_burst_start(uint8_t speed_percent) {
+  if (s_clock_burst_active) return;  // Already running
+  
+  // Timer must exist to start burst
+  if (!s_clock_burst_timer) {
+    ESP_LOGW(TAG, "Clock Burst timer not initialized");
+    return;
+  }
+  
+  // Get current BPM from tempo
+  uint16_t current_bpm = tempo_get_bpm();
+  
+  // Calculate the base tick interval (for 24 PPQN)
+  // Base ticks per second = (bpm * 24) / 60 = bpm * 0.4
+  // Base tick interval = 60000000 / (bpm * 24) microseconds
+  // For the burst, we need to add (speed_percent / 100) of that rate
+  // So burst interval = base_interval * 100 / speed_percent
+  
+  // If speed_percent is 100%, we match the existing tempo (double the clocks)
+  // If speed_percent is 200%, we send twice as many extra clocks (triple total)
+  // If speed_percent is 50%, we send half as many extra clocks (1.5x total)
+  
+  uint64_t base_interval_us = (60 * 1000000ULL) / (current_bpm * 24);
+  uint64_t burst_interval_us = (base_interval_us * 100) / speed_percent;
+  
+  // Minimum interval of 1ms to avoid overloading
+  if (burst_interval_us < 1000) burst_interval_us = 1000;
+  
+  s_clock_burst_speed_percent = speed_percent;
+  
+  esp_err_t ret = esp_timer_start_periodic(s_clock_burst_timer, burst_interval_us);
+  if (ret == ESP_OK) {
+    s_clock_burst_active = true;
+    ESP_LOGI(TAG, "Clock Burst started: %d%% speed, interval %llu us",
+      speed_percent, (unsigned long long)burst_interval_us);
+  } else {
+    ESP_LOGE(TAG, "Failed to start Clock Burst timer: %s", esp_err_to_name(ret));
+  }
+}
+
+static void clock_burst_stop(void) {
+  if (!s_clock_burst_active) return;
+  
+  s_clock_burst_active = false;
+  if (s_clock_burst_timer) {
+    esp_timer_stop(s_clock_burst_timer);
+    ESP_LOGI(TAG, "Clock Burst stopped");
+  }
+}
 
 // ============================================================================
 // Pending Action Queue (for delayed trigger timing)
@@ -303,7 +374,12 @@ static const char* action_type_names[] = {
   [ACTION_LFO_START] = "LFO Start",
   [ACTION_LFO_STOP] = "LFO Stop",
   [ACTION_LFO_TOGGLE] = "LFO Toggle",
-  [ACTION_LFO_SHAPE] = "LFO Shape"
+  [ACTION_LFO_SHAPE] = "LFO Shape",
+  [ACTION_CLOCK_TOGGLE] = "Clock Toggle",
+  [ACTION_CLOCK_HOLD] = "Clock Hold",
+  [ACTION_CLOCK_BURST] = "Clock Burst",
+  [ACTION_CUT_TOGGLE] = "Cut Toggle",
+  [ACTION_CUT_HOLD] = "Cut Hold"
 };
 
 esp_err_t action_init(void) {
@@ -321,6 +397,18 @@ esp_err_t action_init(void) {
   esp_err_t ret = event_bus_subscribe(EVENT_BEAT, handle_beat_event, NULL);
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to subscribe to beat events: %s", esp_err_to_name(ret));
+  }
+  
+  // Create clock burst timer
+  esp_timer_create_args_t timer_args = {
+    .callback = clock_burst_timer_callback,
+    .arg = NULL,
+    .dispatch_method = ESP_TIMER_TASK,
+    .name = "clock_burst"
+  };
+  ret = esp_timer_create(&timer_args, &s_clock_burst_timer);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to create clock burst timer: %s", esp_err_to_name(ret));
   }
   
   s_initialized = true;
@@ -880,6 +968,76 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
         mutable_action->params.lfo.current_index = (idx + 1) % num_shapes;
       }
       break;
+
+    case ACTION_CLOCK_TOGGLE:
+      if (is_press) {
+        scene_t* scene = scene_get_current();
+        if (scene) {
+          // Toggle the current scene's send_clock state
+          scene->send_clock = !scene->send_clock;
+          ESP_LOGI(TAG, "Clock Toggle: send_clock now %s",
+            scene->send_clock ? "enabled" : "disabled");
+        }
+      }
+      break;
+
+    case ACTION_CLOCK_HOLD:
+      {
+        scene_t* scene = scene_get_current();
+        if (scene) {
+          // start_enabled determines what happens on press
+          // If start_enabled=true: press enables clock, release disables
+          // If start_enabled=false: press disables clock, release enables
+          bool press_state = action->params.clock.start_enabled;
+          scene->send_clock = is_press ? press_state : !press_state;
+          ESP_LOGI(TAG, "Clock Hold: send_clock now %s",
+            scene->send_clock ? "enabled" : "disabled");
+        }
+      }
+      break;
+
+    case ACTION_CLOCK_BURST:
+      if (is_press) {
+        // Start sending extra clock pulses at the configured speed
+        clock_burst_start(action->params.clock_burst.speed_percent);
+      } else {
+        // Stop the burst
+        clock_burst_stop();
+      }
+      break;
+
+    case ACTION_CUT_TOGGLE:
+      if (is_press) {
+        uint8_t cut_mode = action->params.cut.cut_mode;
+        // Toggle cut state based on mode
+        if (cut_mode == 0 || cut_mode == 2) {
+          // Toggle local cut
+          bool current = midi_out_get_cut_local();
+          midi_out_set_cut_local(!current);
+        }
+        if (cut_mode == 1 || cut_mode == 2) {
+          // Toggle passthrough cut
+          bool current = midi_out_get_cut_passthrough();
+          midi_out_set_cut_passthrough(!current);
+        }
+        ESP_LOGI(TAG, "Cut Toggle: mode %d", cut_mode);
+      }
+      break;
+
+    case ACTION_CUT_HOLD:
+      {
+        uint8_t cut_mode = action->params.cut.cut_mode;
+        bool cut_active = is_press;  // Cut when pressed, restore on release
+        if (cut_mode == 0 || cut_mode == 2) {
+          midi_out_set_cut_local(cut_active);
+        }
+        if (cut_mode == 1 || cut_mode == 2) {
+          midi_out_set_cut_passthrough(cut_active);
+        }
+        ESP_LOGI(TAG, "Cut Hold: mode %d, cut %s",
+          cut_mode, cut_active ? "active" : "released");
+      }
+      break;
       
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
@@ -1005,6 +1163,41 @@ action_t action_create_lfo_toggle(uint8_t slot) {
   return action;
 }
 
+action_t action_create_clock_toggle(bool start_enabled) {
+  action_t action = {0};
+  action.type = ACTION_CLOCK_TOGGLE;
+  action.params.clock.start_enabled = start_enabled;
+  return action;
+}
+
+action_t action_create_clock_hold(bool press_enables) {
+  action_t action = {0};
+  action.type = ACTION_CLOCK_HOLD;
+  action.params.clock.start_enabled = press_enables;
+  return action;
+}
+
+action_t action_create_clock_burst(uint8_t speed_percent) {
+  action_t action = {0};
+  action.type = ACTION_CLOCK_BURST;
+  action.params.clock_burst.speed_percent = speed_percent;
+  return action;
+}
+
+action_t action_create_cut_toggle(uint8_t cut_mode) {
+  action_t action = {0};
+  action.type = ACTION_CUT_TOGGLE;
+  action.params.cut.cut_mode = cut_mode;
+  return action;
+}
+
+action_t action_create_cut_hold(uint8_t cut_mode) {
+  action_t action = {0};
+  action.type = ACTION_CUT_HOLD;
+  action.params.cut.cut_mode = cut_mode;
+  return action;
+}
+
 // Actions that require press/release (hold) behavior
 // These should NOT be assigned to bump or on_load
 static const action_type_t hold_actions[] = {
@@ -1017,6 +1210,9 @@ static const action_type_t hold_actions[] = {
   ACTION_SOSTENUTO,
   ACTION_LFO_TOGGLE,  // Toggle needs discrete press
   ACTION_LFO_SHAPE,   // Shape cycle needs discrete press
+  ACTION_CLOCK_HOLD,
+  ACTION_CLOCK_BURST,
+  ACTION_CUT_HOLD,
 };
 
 bool action_requires_hold(action_type_t type) {

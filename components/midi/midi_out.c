@@ -33,6 +33,10 @@ static SemaphoreHandle_t midi_out_mutex = NULL;
 static TaskHandle_t active_sensing_task_handle = NULL;
 static midi_out_config_t s_config = {0};
 
+// Cut state (temporary runtime mute, not persisted)
+static bool s_cut_local = false;       // Cut locally-generated MIDI messages
+static bool s_cut_passthrough = false; // Cut passthrough MIDI messages
+
 static void midi_out_task(void *pvParameters);
 static void active_sensing_task(void *pvParameters);
 static void load_config_from_nvs(void);
@@ -143,6 +147,9 @@ void midi_send_message(const uint8_t *stream, size_t len) {
     ESP_LOGE(TAG, "MIDI queue not initialized! Call midi_out_init() first");
     return;
   }
+
+  // Check cut state for locally-generated messages
+  if (s_cut_local) return;
 
   midi_out_job_t *job = malloc(sizeof(midi_out_job_t));
   if (!job) {
@@ -378,4 +385,29 @@ void midi_active_sensing_stop(void) {
 
 bool midi_active_sensing_is_enabled(void) {
   return active_sensing_task_handle != NULL;
+}
+
+// Cut control functions (temporary runtime mute)
+void midi_out_set_cut_local(bool cut) {
+  s_cut_local = cut;
+  ESP_LOGI(TAG, "Cut local: %s", cut ? "active" : "inactive");
+}
+
+void midi_out_set_cut_passthrough(bool cut) {
+  s_cut_passthrough = cut;
+  ESP_LOGI(TAG, "Cut passthrough: %s", cut ? "active" : "inactive");
+}
+
+bool midi_out_get_cut_local(void) {
+  return s_cut_local;
+}
+
+bool midi_out_get_cut_passthrough(void) {
+  return s_cut_passthrough;
+}
+
+void midi_out_reset_cut(void) {
+  s_cut_local = false;
+  s_cut_passthrough = false;
+  ESP_LOGD(TAG, "Cut states reset");
 }

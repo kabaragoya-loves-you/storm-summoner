@@ -61,6 +61,15 @@ typedef enum {
   ACTION_LFO_TOGGLE,          // Toggle LFO state
   ACTION_LFO_SHAPE,           // Cycle through waveform shapes
   
+  // Clock control (per-scene clock sending)
+  ACTION_CLOCK_TOGGLE,        // Toggle clock sending on/off
+  ACTION_CLOCK_HOLD,          // Press: one state, Release: opposite state
+  ACTION_CLOCK_BURST,         // Hold: send extra clock pulses at multiplier
+  
+  // MIDI cut control (temporary runtime state)
+  ACTION_CUT_TOGGLE,          // Toggle MIDI cut on/off
+  ACTION_CUT_HOLD,            // Hold: cut while pressed
+  
   ACTION_MAX
 } action_type_t;
 
@@ -167,6 +176,21 @@ typedef struct {
       uint8_t shapes[8];      // lfo_waveform_t values
       uint8_t current_index;  // Current position in cycle
     } lfo;
+    
+    // For clock actions (toggle, hold)
+    struct {
+      bool start_enabled;     // For toggle: what state is "first" (press enables if true)
+    } clock;
+    
+    // For clock burst action
+    struct {
+      uint16_t speed_percent;  // Speed multiplier: 25, 50, 75, 100, 125, ... 300
+    } clock_burst;
+    
+    // For cut actions (toggle, hold)
+    struct {
+      uint8_t cut_mode;       // 0=local only, 1=passthrough only, 2=both
+    } cut;
   } params;
 } action_t;
 
@@ -199,6 +223,11 @@ action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode)
 action_t action_create_lfo_start(uint8_t slot);
 action_t action_create_lfo_stop(uint8_t slot);
 action_t action_create_lfo_toggle(uint8_t slot);
+action_t action_create_clock_toggle(bool start_enabled);
+action_t action_create_clock_hold(bool press_enables);
+action_t action_create_clock_burst(uint8_t speed_percent);
+action_t action_create_cut_toggle(uint8_t cut_mode);
+action_t action_create_cut_hold(uint8_t cut_mode);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);

@@ -100,6 +100,9 @@ static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pa
 // Configurable stuck touch timeout (loaded from NVS)
 static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 
+// Hold action suppression - when a hold action is active, suppress health check interventions
+static bool s_hold_active[MAX_TOUCH_PADS] = {false};
+
 // Proactive idle calibration tracking
 static uint32_t s_idle_calibration_interval_ms = IDLE_CALIBRATION_INTERVAL_DEFAULT_MS;
 static uint32_t s_last_calibration_time = 0;  // When calibration last completed
@@ -319,11 +322,17 @@ static void touch_health_check_task(void *pvParameters) {
       if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
       
       // 2. Check for Critical Benchmark Corruption (rare, hardware-level issue)
+      // Skip if a hold action is active on this pad - long holds can cause benchmark drift
       if (benchmark[0] < 1000 || benchmark[0] > 100000) {
-        ESP_LOGE(TAG, "CRITICAL: Pad %d benchmark corrupted (%"PRIu32"), resetting...", i, benchmark[0]);
-        touch_recover_pad_state(i);
-        s_pad_press_timestamps[i] = 0;
-        s_pad_recovery_timestamps[i] = now;
+        if (s_hold_active[i]) {
+          ESP_LOGD(TAG, "Pad %d benchmark out of range (%"PRIu32") - hold active, skipping recovery",
+            i, benchmark[0]);
+        } else {
+          ESP_LOGE(TAG, "CRITICAL: Pad %d benchmark corrupted (%"PRIu32"), resetting...", i, benchmark[0]);
+          touch_recover_pad_state(i);
+          s_pad_press_timestamps[i] = 0;
+          s_pad_recovery_timestamps[i] = now;
+        }
         continue;
       }
       
@@ -371,7 +380,8 @@ static void touch_health_check_task(void *pvParameters) {
       // 5. Stuck Touch Detection (HW+SW both agree pad is touched, but for way too long)
       // This catches phantom touches where the threshold might be miscalibrated.
       // Only triggers after a VERY long time (default 10s) to allow musical holds.
-      if (s_stuck_touch_timeout_ms > 0 && 
+      // Skip if a hold action is active - we expect the pad to be held intentionally.
+      if (s_stuck_touch_timeout_ms > 0 && !s_hold_active[i] &&
           s_button_pressed_states[i] && hardware_is_touching && 
           s_pad_press_timestamps[i] > 0) {
         // Use fresh timestamp to avoid race condition
@@ -1195,6 +1205,17 @@ void touch_set_stuck_timeout_ms(uint32_t timeout_ms) {
     ESP_LOGW(TAG, "Stuck touch timeout set to %"PRIu32" ms (NVS save failed: %s)", 
       timeout_ms, esp_err_to_name(err));
   }
+}
+
+void touch_set_hold_active(int pad_index, bool active) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
+  s_hold_active[pad_index] = active;
+  ESP_LOGD(TAG, "Pad %d hold active: %s", pad_index, active ? "yes" : "no");
+}
+
+bool touch_is_hold_active(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return false;
+  return s_hold_active[pad_index];
 }
 
 uint32_t touch_get_idle_calibration_interval_ms(void) {

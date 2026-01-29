@@ -1,6 +1,7 @@
 #include "midi_out.h"
 #include "midi_messages.h"
 #include "device_config.h"
+#include "scene.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -108,7 +109,12 @@ void send_sysex(const uint8_t *data, size_t length) {
 
 // Send MIDI Clock (24 messages per beat for sync)
 void send_clock() {
+  // Check device-level clock setting first
   if (!device_config_get_send_clock()) return;
+  
+  // Check per-scene clock setting
+  scene_t* scene = scene_get_current();
+  if (scene && !scene->send_clock) return;
   
   const uint8_t message = 0xF8; // Timing Clock
   midi_send_message(&message, 1);

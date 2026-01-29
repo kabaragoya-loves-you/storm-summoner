@@ -68,6 +68,12 @@ void touch_sync_states_after_reconfig(void);
 // Reset stuck touch pads by resetting benchmarks
 void touch_reset_stuck_pads(void);
 
+// Hold action suppression - when a hold action is active on a pad,
+// suppress health check interventions (benchmark corruption, stuck touch)
+// to allow intentional long presses without triggering recovery
+void touch_set_hold_active(int pad_index, bool active);
+bool touch_is_hold_active(int pad_index);
+
 // Manual calibration function (exposed for external calls)
 esp_err_t touch_calibrate(bool force);
 

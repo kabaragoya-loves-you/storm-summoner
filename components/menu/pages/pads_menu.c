@@ -217,6 +217,11 @@ static const action_type_t s_all_action_types[] = {
   ACTION_LFO_STOP,
   ACTION_LFO_TOGGLE,
   ACTION_LFO_SHAPE,
+  ACTION_CLOCK_TOGGLE,
+  ACTION_CLOCK_HOLD,
+  ACTION_CLOCK_BURST,
+  ACTION_CUT_TOGGLE,
+  ACTION_CUT_HOLD,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -322,6 +327,11 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_LFO_STOP: return "LFO Stop";
     case ACTION_LFO_TOGGLE: return "LFO Toggle";
     case ACTION_LFO_SHAPE: return "LFO Shape";
+    case ACTION_CLOCK_TOGGLE: return "Clock Toggle";
+    case ACTION_CLOCK_HOLD: return "Clock Hold";
+    case ACTION_CLOCK_BURST: return "Clock Burst";
+    case ACTION_CUT_TOGGLE: return "Cut Toggle";
+    case ACTION_CUT_HOLD: return "Cut Hold";
     default: return "Unknown";
   }
 }
@@ -686,6 +696,22 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.lfo.shapes[0] = LFO_WAVEFORM_SINE;
       mapping->action.params.lfo.shapes[1] = LFO_WAVEFORM_TRIANGLE;
       mapping->action.params.lfo.current_index = 0;
+    }
+    
+    // Set defaults for clock toggle/hold (start_enabled = false means press disables clock)
+    // Default to disable since clock is running by default
+    if (new_type == ACTION_CLOCK_TOGGLE || new_type == ACTION_CLOCK_HOLD) {
+      mapping->action.params.clock.start_enabled = false;
+    }
+    
+    // Set defaults for clock burst (100% = double the clock rate)
+    if (new_type == ACTION_CLOCK_BURST) {
+      mapping->action.params.clock_burst.speed_percent = 100;
+    }
+    
+    // Set defaults for cut actions (both = cut local and passthrough)
+    if (new_type == ACTION_CUT_TOGGLE || new_type == ACTION_CUT_HOLD) {
+      mapping->action.params.cut.cut_mode = 2;  // Both
     }
     
     persist_scene_changes();

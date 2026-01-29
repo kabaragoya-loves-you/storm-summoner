@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "midi_messages.h"
+#include "midi_out.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "config.h"
@@ -182,6 +183,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->time_signature.numerator = 4;                 // Default to 4/4 time
   scene->time_signature.denominator = 4;
   scene->use_transport = false;                        // Default: animation always runs
+  scene->send_clock = true;                            // Default: send MIDI clock
   
   // LFO configuration
   scene->lfo1_config = lfo_config_create_default();
@@ -1322,6 +1324,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Validate action timings against time signature (remap invalid beats to beat 1)
   action_validate_scene_timings(new_scene);
   
+  // Reset cut states on scene change (cut is a temporary runtime state)
+  midi_out_reset_cut();
+  
   // Execute on_load actions
   if (new_scene->num_on_load_actions > 0) {
     ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->num_on_load_actions);
@@ -1771,6 +1776,11 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
   // Execute action
   ESP_LOGD(TAG, "Pad %d %s: executing %s", pad_index, 
            pressed ? "pressed" : "released", action_type_to_string(mapping->action.type));
+  
+  // Notify touch component when hold actions start/end to suppress health check interventions
+  if (action_requires_hold(mapping->action.type)) {
+    touch_set_hold_active(pad_index, pressed);
+  }
   
   return action_execute(&mapping->action, pressed ? 127 : 0, pressed);
 }
@@ -2258,6 +2268,26 @@ bool scene_get_use_transport(uint8_t scene_index) {
   return scene ? scene->use_transport : false;
 }
 
+esp_err_t scene_set_send_clock(uint8_t scene_index, bool send_clock) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->send_clock = send_clock;
+  scene_persist_if_programming();
+  
+  ESP_LOGI(TAG, "Scene %d send_clock set to %s", scene_index + 1,
+    send_clock ? "true" : "false");
+  
+  return ESP_OK;
+}
+
+bool scene_get_send_clock(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->send_clock : true;  // Default to true if no scene
+}
+
 // Helper to get velocity mode name
 static const char* velocity_mode_to_string(velocity_mode_t mode) {
   switch (mode) {
@@ -2433,7 +2463,12 @@ static const char* action_type_json_names[] = {
   [ACTION_LFO_START] = "lfo_start",
   [ACTION_LFO_STOP] = "lfo_stop",
   [ACTION_LFO_TOGGLE] = "lfo_toggle",
-  [ACTION_LFO_SHAPE] = "lfo_shape"
+  [ACTION_LFO_SHAPE] = "lfo_shape",
+  [ACTION_CLOCK_TOGGLE] = "clock_toggle",
+  [ACTION_CLOCK_HOLD] = "clock_hold",
+  [ACTION_CLOCK_BURST] = "clock_burst",
+  [ACTION_CUT_TOGGLE] = "cut_toggle",
+  [ACTION_CUT_HOLD] = "cut_hold"
 };
 
 // Helper to convert action type string to enum
@@ -2613,6 +2648,14 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddItemToArray(shapes, cJSON_CreateNumber(action->params.lfo.shapes[i]));
     }
     cJSON_AddItemToObject(obj, "shapes", shapes);
+  } else if (action->type == ACTION_CLOCK_TOGGLE || action->type == ACTION_CLOCK_HOLD) {
+    cJSON_AddBoolToObject(obj, "start_enabled", action->params.clock.start_enabled);
+  } else if (action->type == ACTION_CLOCK_BURST) {
+    cJSON_AddNumberToObject(obj, "speed_percent", action->params.clock_burst.speed_percent);
+  } else if (action->type == ACTION_CUT_TOGGLE || action->type == ACTION_CUT_HOLD) {
+    const char* mode_str = (action->params.cut.cut_mode == 0) ? "local" :
+                           (action->params.cut.cut_mode == 1) ? "passthrough" : "both";
+    cJSON_AddStringToObject(obj, "cut_mode", mode_str);
   }
   
   // Serialize timing (only if not immediate default)
@@ -2848,6 +2891,39 @@ static action_t json_to_action(cJSON* obj) {
           action.params.lfo.num_shapes = (uint8_t)count;
         }
       }
+    }
+  }
+  
+  // Parse clock toggle/hold actions
+  if (action.type == ACTION_CLOCK_TOGGLE || action.type == ACTION_CLOCK_HOLD) {
+    cJSON* start_enabled = cJSON_GetObjectItem(obj, "start_enabled");
+    // Default to false (press disables clock, since clock is running by default)
+    action.params.clock.start_enabled = start_enabled ? cJSON_IsTrue(start_enabled) : false;
+  }
+  
+  // Parse clock burst action
+  if (action.type == ACTION_CLOCK_BURST) {
+    cJSON* speed = cJSON_GetObjectItem(obj, "speed_percent");
+    // Default to 100% (double the clock rate)
+    action.params.clock_burst.speed_percent = speed ? speed->valueint : 100;
+  }
+  
+  // Parse cut toggle/hold actions
+  if (action.type == ACTION_CUT_TOGGLE || action.type == ACTION_CUT_HOLD) {
+    cJSON* cut_mode = cJSON_GetObjectItem(obj, "cut_mode");
+    if (cut_mode && cJSON_IsString(cut_mode)) {
+      const char* mode_str = cut_mode->valuestring;
+      if (strcmp(mode_str, "local") == 0) {
+        action.params.cut.cut_mode = 0;
+      } else if (strcmp(mode_str, "passthrough") == 0) {
+        action.params.cut.cut_mode = 1;
+      } else {
+        // Default: "both"
+        action.params.cut.cut_mode = 2;
+      }
+    } else {
+      // Default to "both"
+      action.params.cut.cut_mode = 2;
     }
   }
   
@@ -3278,6 +3354,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "time_signature", time_sig);
   
   cJSON_AddBoolToObject(root, "use_transport", scene->use_transport);
+  cJSON_AddBoolToObject(root, "send_clock", scene->send_clock);
   
   // Serialize LFO configurations and mappings
   cJSON_AddItemToObject(root, "lfo1_config", lfo_config_to_json(&scene->lfo1_config));
@@ -3602,6 +3679,11 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* use_transport = cJSON_GetObjectItem(root, "use_transport");
   if (use_transport && cJSON_IsBool(use_transport)) {
     scene->use_transport = cJSON_IsTrue(use_transport);
+  }
+
+  cJSON* send_clock = cJSON_GetObjectItem(root, "send_clock");
+  if (send_clock && cJSON_IsBool(send_clock)) {
+    scene->send_clock = cJSON_IsTrue(send_clock);
   }
 
   // Deserialize LFO configurations and mappings

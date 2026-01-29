@@ -9,6 +9,7 @@
  */
 
 #include "midi_passthrough.h"
+#include "midi_out.h"
 #include "midi_out_uart.h"
 #include "midi_out_usb.h"
 #include "app_settings.h"
@@ -106,6 +107,9 @@ bool midi_passthrough_uart_to_usb_is_enabled(void) {
 void midi_passthrough_forward_from_usb(const uint8_t *data, size_t len) {
   if (!s_usb_to_uart_enabled || !data || len == 0) return;
   
+  // Check if passthrough is cut
+  if (midi_out_get_cut_passthrough()) return;
+  
   // Forward USB MIDI data to UART
   midi_out_uart_send(data, len);
   
@@ -117,6 +121,9 @@ void midi_passthrough_forward_from_usb(const uint8_t *data, size_t len) {
 
 void midi_passthrough_forward_from_uart(const uint8_t *data, size_t len) {
   if (!s_uart_to_usb_enabled || !data || len == 0) return;
+  
+  // Check if passthrough is cut
+  if (midi_out_get_cut_passthrough()) return;
   
   // Forward UART MIDI data to USB
   if (midi_out_usb_is_connected()) {
