@@ -525,6 +525,42 @@
           "maximum": 255,
           "default": 255,
           "description": "Bitmask of active steps (bit 0=step 1, only used when pattern_length>=2)"
+        },
+        "morph": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable smooth value transition (for control_hold, control_cycle, randomize)"
+        },
+        "morph_steps": {
+          "type": "string",
+          "enum": ["auto", "coarse", "medium", "fine", "manual"],
+          "default": "auto",
+          "description": "Step resolution for morph: auto (smart), coarse (8), medium (16), fine (32), manual"
+        },
+        "morph_manual_steps": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 128,
+          "default": 32,
+          "description": "Custom step count when morph_steps=manual"
+        },
+        "morph_timing": {
+          "type": "string",
+          "enum": ["feel", "duration", "sync"],
+          "default": "feel",
+          "description": "Timing mode: feel (curated), duration (lasts FOR N), sync (ends ON moment)"
+        },
+        "morph_feel": {
+          "type": "string",
+          "enum": ["fast", "medium", "slow"],
+          "default": "medium",
+          "description": "Curated feel preset (when morph_timing=feel)"
+        },
+        "morph_division": {
+          "type": "string",
+          "enum": ["beat", "bar", "2_bars", "4_bars", "beat_2", "beat_3", "beat_4"],
+          "default": "bar",
+          "description": "Musical division (when morph_timing=duration or sync)"
         }
       },
       "allOf": [

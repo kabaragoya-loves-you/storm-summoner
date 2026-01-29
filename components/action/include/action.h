@@ -96,6 +96,45 @@ typedef enum {
   ACTION_REPEAT_MAX
 } action_repeat_division_t;
 
+// ============================================================================
+// Morph (interpolation) configuration for CC-based actions
+// ============================================================================
+
+// Morph step resolution (how many intermediate values)
+typedef enum {
+  MORPH_STEPS_AUTO = 0,   // Smart: based on value delta and duration
+  MORPH_STEPS_COARSE,     // 8 steps
+  MORPH_STEPS_MEDIUM,     // 16 steps
+  MORPH_STEPS_FINE,       // 32 steps
+  MORPH_STEPS_MANUAL      // User-specified (8-128)
+} morph_steps_mode_t;
+
+// Morph timing mode (how duration is determined)
+typedef enum {
+  MORPH_TIMING_FEEL = 0,  // Curated feel-based timing (fast/medium/slow)
+  MORPH_TIMING_DURATION,  // Fixed musical duration (lasts FOR N beats/bars)
+  MORPH_TIMING_SYNC       // Sync to moment (ends ON target beat/bar)
+} morph_timing_mode_t;
+
+// Curated feel presets (for MORPH_TIMING_FEEL)
+typedef enum {
+  MORPH_FEEL_FAST = 0,    // ~1/16th note feel
+  MORPH_FEEL_MEDIUM,      // ~1 beat feel
+  MORPH_FEEL_SLOW         // ~half note feel
+} morph_feel_t;
+
+// Musical divisions (for MORPH_TIMING_DURATION and MORPH_TIMING_SYNC)
+typedef enum {
+  MORPH_DIV_BEAT = 0,     // 1 beat / next beat
+  MORPH_DIV_BAR,          // 1 bar / next bar
+  MORPH_DIV_2_BARS,       // 2 bars
+  MORPH_DIV_4_BARS,       // 4 bars
+  MORPH_DIV_BEAT_2,       // Specific beat 2
+  MORPH_DIV_BEAT_3,       // Specific beat 3
+  MORPH_DIV_BEAT_4,       // Specific beat 4
+  MORPH_DIV_MAX
+} morph_division_t;
+
 // Action parameters (flexible union for different action types)
 typedef struct {
   action_type_t type;
@@ -106,6 +145,14 @@ typedef struct {
   uint8_t probability;                 // Chance of firing 10-100% (default 100, only for repeating)
   uint8_t pattern_length;              // Step pattern length 2-8 (0 = disabled, only for repeating)
   uint8_t pattern_mask;                // Bitmask of active steps (bit 0 = step 1)
+  
+  // Morph configuration (for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
+  bool morph_enabled;                  // Enable smooth value transition
+  morph_steps_mode_t morph_steps_mode; // Step resolution
+  uint8_t morph_manual_steps;          // 8-128, used when steps_mode=MANUAL
+  morph_timing_mode_t morph_timing_mode; // How duration is determined
+  morph_feel_t morph_feel;             // Curated feel preset (when timing_mode=FEEL)
+  morph_division_t morph_division;     // Musical division (when timing_mode=DURATION or SYNC)
   
   union {
     // For Control actions (CONTROL, CONTROL_HOLD, CONTROL_CYCLE) - supports 1-4 CC numbers
@@ -279,5 +326,31 @@ void action_clear_pending(void);
 
 // Stop all repeating instances of a specific action (call on toggle-off or scene change)
 void action_stop_repeating(action_t* action);
+
+// ============================================================================
+// Morph string conversion functions
+// ============================================================================
+
+// Morph steps mode
+const char* morph_steps_mode_to_string(morph_steps_mode_t mode);
+morph_steps_mode_t morph_steps_mode_from_string(const char* str);
+
+// Morph timing mode
+const char* morph_timing_mode_to_string(morph_timing_mode_t mode);
+morph_timing_mode_t morph_timing_mode_from_string(const char* str);
+
+// Morph feel
+const char* morph_feel_to_string(morph_feel_t feel);
+morph_feel_t morph_feel_from_string(const char* str);
+
+// Morph division
+const char* morph_division_to_string(morph_division_t div);
+morph_division_t morph_division_from_string(const char* str);
+
+// Check if action type supports morphing
+bool action_supports_morph(action_type_t type);
+
+// Clear all active morphs (call on scene change)
+void action_clear_morphs(void);
 
 #endif // ACTION_H

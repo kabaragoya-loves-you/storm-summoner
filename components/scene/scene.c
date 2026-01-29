@@ -1253,6 +1253,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Clear any pending timed actions from the previous scene
   action_clear_pending();
   
+  // Clear any active morphs from the previous scene
+  action_clear_morphs();
+  
   // Check if scene is already in cache
   int cache_idx = -1;
   for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
@@ -2679,6 +2682,32 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddNumberToObject(obj, "pattern_mask", action->pattern_mask);
     }
   }
+  
+  // Serialize morph settings (only if enabled, for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
+  if (action->morph_enabled && action_supports_morph(action->type)) {
+    cJSON_AddBoolToObject(obj, "morph", true);
+    // Only serialize non-default values
+    if (action->morph_steps_mode != MORPH_STEPS_AUTO) {
+      cJSON_AddStringToObject(obj, "morph_steps", 
+        morph_steps_mode_to_string(action->morph_steps_mode));
+    }
+    if (action->morph_steps_mode == MORPH_STEPS_MANUAL && action->morph_manual_steps != 32) {
+      cJSON_AddNumberToObject(obj, "morph_manual_steps", action->morph_manual_steps);
+    }
+    if (action->morph_timing_mode != MORPH_TIMING_FEEL) {
+      cJSON_AddStringToObject(obj, "morph_timing",
+        morph_timing_mode_to_string(action->morph_timing_mode));
+    }
+    if (action->morph_timing_mode == MORPH_TIMING_FEEL && 
+        action->morph_feel != MORPH_FEEL_MEDIUM) {
+      cJSON_AddStringToObject(obj, "morph_feel", morph_feel_to_string(action->morph_feel));
+    }
+    if (action->morph_timing_mode != MORPH_TIMING_FEEL && 
+        action->morph_division != MORPH_DIV_BAR) {
+      cJSON_AddStringToObject(obj, "morph_division", 
+        morph_division_to_string(action->morph_division));
+    }
+  }
 
   return obj;
 }
@@ -2966,6 +2995,42 @@ static action_t json_to_action(cJSON* obj) {
   cJSON* pattern_mask = cJSON_GetObjectItem(obj, "pattern_mask");
   if (pattern_mask && cJSON_IsNumber(pattern_mask)) {
     action.pattern_mask = (uint8_t)(pattern_mask->valueint & 0xFF);
+  }
+  
+  // Parse morph settings (default: disabled, only for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
+  action.morph_enabled = false;
+  action.morph_steps_mode = MORPH_STEPS_AUTO;
+  action.morph_manual_steps = 32;
+  action.morph_timing_mode = MORPH_TIMING_FEEL;
+  action.morph_feel = MORPH_FEEL_MEDIUM;
+  action.morph_division = MORPH_DIV_BAR;
+  
+  cJSON* morph = cJSON_GetObjectItem(obj, "morph");
+  if (morph && cJSON_IsBool(morph)) {
+    action.morph_enabled = cJSON_IsTrue(morph);
+  }
+  cJSON* morph_steps = cJSON_GetObjectItem(obj, "morph_steps");
+  if (morph_steps && cJSON_IsString(morph_steps)) {
+    action.morph_steps_mode = morph_steps_mode_from_string(morph_steps->valuestring);
+  }
+  cJSON* morph_manual = cJSON_GetObjectItem(obj, "morph_manual_steps");
+  if (morph_manual && cJSON_IsNumber(morph_manual)) {
+    int val = morph_manual->valueint;
+    if (val >= 8 && val <= 128) {
+      action.morph_manual_steps = (uint8_t)val;
+    }
+  }
+  cJSON* morph_timing = cJSON_GetObjectItem(obj, "morph_timing");
+  if (morph_timing && cJSON_IsString(morph_timing)) {
+    action.morph_timing_mode = morph_timing_mode_from_string(morph_timing->valuestring);
+  }
+  cJSON* morph_feel = cJSON_GetObjectItem(obj, "morph_feel");
+  if (morph_feel && cJSON_IsString(morph_feel)) {
+    action.morph_feel = morph_feel_from_string(morph_feel->valuestring);
+  }
+  cJSON* morph_div = cJSON_GetObjectItem(obj, "morph_division");
+  if (morph_div && cJSON_IsString(morph_div)) {
+    action.morph_division = morph_division_from_string(morph_div->valuestring);
   }
   
   return action;
@@ -3520,9 +3585,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
         !action_is_valid_for_trigger(bump_action.type, ACTION_TRIGGER_BUMP)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for bump",
         action_type_to_string(bump_action.type));
-    } else {
-      scene->bump = bump_action;
+      bump_action.type = ACTION_NONE;
     }
+    scene->bump = bump_action;
   }
   
   // Deserialize continuous mappings

@@ -25,24 +25,32 @@
 	"touchpads":	[{
 			"enabled":	true,
 			"action":	{
-				"type":	"control_change",
+				"type":	"control_hold",
 				"cc":	1,
 				"value":	127,
-				"timing":	"beat_1"
+				"value2":	0,
+				"morph":	true,
+				"morph_timing":	"feel",
+				"morph_feel":	"medium"
 			}
 		}, {
 			"enabled":	true,
 			"action":	{
-				"type":	"control_change",
+				"type":	"control_cycle",
 				"cc":	2,
-				"value":	127
+				"values":	[0, 64, 127],
+				"morph":	true,
+				"morph_timing":	"duration",
+				"morph_division":	"bar"
 			}
 		}, {
 			"enabled":	true,
 			"action":	{
-				"type":	"control_change",
-				"cc":	3,
-				"value":	127
+				"type":	"randomize",
+				"cc":	[3, 74],
+				"morph":	true,
+				"morph_timing":	"sync",
+				"morph_division":	"bar"
 			}
 		}, {
 			"enabled":	true,

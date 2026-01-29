@@ -34,9 +34,12 @@
       "actions": [
         {
           "type": "randomize",
-          "cc": 74,
-          "value": 127,
-          "comment": "Randomize filter CC"
+          "cc": [74, 71],
+          "morph": true,
+          "morph_steps": "fine",
+          "morph_timing": "sync",
+          "morph_division": "bar",
+          "comment": "Randomize filter/resonance with morph to next bar"
         }
       ]
     },
@@ -49,7 +52,10 @@
           "num_values": 4,
           "values": [0, 64, 99, 127],
           "current_index": 0,
-          "comment": "Cycle modulation wheel"
+          "morph": true,
+          "morph_timing": "feel",
+          "morph_feel": "slow",
+          "comment": "Cycle modulation wheel with slow morph"
         }
       ]
     },

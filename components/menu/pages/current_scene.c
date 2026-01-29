@@ -23,6 +23,7 @@ static char s_time_sig_label[16];
 static char s_divider_label[24];
 static char s_clock_label[24];
 static char s_transport_label[24];
+static char s_send_clock_label[24];
 
 // Navigation callbacks for assignment submenus
 static void nav_to_touchwheel(void* user_data) {
@@ -542,6 +543,30 @@ static void nav_to_transport(void* user_data) {
   menu_navigate_to("Use Transport", transport_roller_create);
 }
 
+// Send clock toggle
+static void send_clock_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_current_index();
+  bool send_clock = (selected_index == 0);  // Yes=0, No=1
+  esp_err_t ret = scene_set_send_clock(scene_index, send_clock);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to set send_clock: %s", esp_err_to_name(ret));
+  }
+  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+}
+
+static lv_obj_t* send_clock_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  uint32_t current = (scene && scene->send_clock) ? 0 : 1;  // Yes=0, No=1
+
+  return menu_create_roller_page("Send Clock", "Yes\nNo", current, send_clock_confirm_cb, NULL);
+}
+
+static void nav_to_send_clock(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Send Clock", send_clock_roller_create);
+}
+
 // ============================================================================
 // Main Current Scene Page
 // ============================================================================
@@ -641,6 +666,11 @@ lv_obj_t* menu_page_current_scene_create(void) {
   snprintf(s_transport_label, sizeof(s_transport_label), "Transport: %s",
     (scene && scene->use_transport) ? "Yes" : "No");
   s_scene_items[idx++] = (menu_item_t){ s_transport_label, nav_to_transport, NULL, false };
+
+  // Send clock
+  snprintf(s_send_clock_label, sizeof(s_send_clock_label), "Send Clock: %s",
+    (scene && scene->send_clock) ? "Yes" : "No");
+  s_scene_items[idx++] = (menu_item_t){ s_send_clock_label, nav_to_send_clock, NULL, false };
 
   ESP_LOGD(TAG, "Current scene page: %d items", idx);
   return menu_create_page(s_page_title, s_scene_items, idx);

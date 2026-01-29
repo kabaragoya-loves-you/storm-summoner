@@ -122,6 +122,48 @@ static pending_action_t s_pending_actions[MAX_PENDING_ACTIONS];
 #define MAX_ACTIVE_REPEATS 4
 static action_t* s_active_repeating[MAX_ACTIVE_REPEATS];
 
+// ============================================================================
+// Morph (interpolation) System
+// ============================================================================
+
+#define MAX_ACTIVE_MORPHS 4
+
+typedef struct {
+  bool active;
+  action_t* action;           // For state sync (cycle index)
+  uint8_t num_ccs;
+  uint8_t cc_numbers[4];
+  uint8_t start_values[4];    // Values at morph start
+  uint8_t target_values[4];   // Values at morph end
+  uint8_t current_step;       // 0 to total_steps-1
+  uint8_t total_steps;
+  uint32_t step_interval_ms;  // Time between steps
+  uint32_t next_step_time;    // When to send next value (ms timestamp)
+  
+  // For SYNC mode: target moment tracking
+  morph_timing_mode_t timing_mode;
+  uint8_t sync_target_beat;   // Target beat (1-16, 0=any/bar start)
+  bool sync_waiting_final;    // True when waiting for beat event to send final value
+} active_morph_t;
+
+static active_morph_t s_active_morphs[MAX_ACTIVE_MORPHS];
+static esp_timer_handle_t s_morph_timer = NULL;
+static uint8_t s_last_cc_values[128];  // Track last sent CC values for morph start
+
+// Forward declarations for morph functions
+static void morph_timer_callback(void* arg);
+static void morph_beat_event_handler(const event_t* event, void* context);
+static void morph_advance_step(active_morph_t* m);
+static void morph_send_final_values(active_morph_t* m);
+static uint8_t calculate_auto_steps(uint8_t value_delta, uint32_t duration_ms);
+static uint32_t get_feel_duration_ms(morph_feel_t feel, uint16_t bpm);
+static uint32_t get_duration_ms(morph_division_t div, uint16_t bpm);
+static uint32_t get_sync_duration_ms(morph_division_t div, uint16_t bpm,
+  uint8_t current_beat, uint8_t beats_per_bar);
+static bool morph_start(const action_t* action, uint8_t num_ccs,
+  const uint8_t* cc_numbers, const uint8_t* target_values);
+static void morph_update_timer(void);
+
 // Check if an action is currently repeating
 static bool is_action_repeating(action_t* action) {
   if (!action) return false;
@@ -411,6 +453,30 @@ esp_err_t action_init(void) {
     ESP_LOGW(TAG, "Failed to create clock burst timer: %s", esp_err_to_name(ret));
   }
   
+  // Initialize morph system
+  for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+    s_active_morphs[i].active = false;
+  }
+  memset(s_last_cc_values, 64, sizeof(s_last_cc_values));  // Default to center
+  
+  // Create morph timer (periodic, checks for morphs needing advancement)
+  esp_timer_create_args_t morph_timer_args = {
+    .callback = morph_timer_callback,
+    .arg = NULL,
+    .dispatch_method = ESP_TIMER_TASK,
+    .name = "morph"
+  };
+  ret = esp_timer_create(&morph_timer_args, &s_morph_timer);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to create morph timer: %s", esp_err_to_name(ret));
+  }
+  
+  // Subscribe to beat events for SYNC mode morph completion
+  ret = event_bus_subscribe(EVENT_BEAT, morph_beat_event_handler, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to subscribe to beat events for morph: %s", esp_err_to_name(ret));
+  }
+  
   s_initialized = true;
   
   return ESP_OK;
@@ -675,10 +741,11 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
         uint8_t num_ccs = action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
         for (int i = 0; i < num_ccs && i < 4; i++) {
-          send_control_change(channel, action->params.control.cc_numbers[i],
-            action->params.control.values[i]);
-          ESP_LOGD(TAG, "Sent CC%d=%d", action->params.control.cc_numbers[i],
-            action->params.control.values[i]);
+          uint8_t cc = action->params.control.cc_numbers[i];
+          uint8_t value = action->params.control.values[i];
+          send_control_change(channel, cc, value);
+          s_last_cc_values[cc] = value;  // Track for morph start values
+          ESP_LOGD(TAG, "Sent CC%d=%d", cc, value);
         }
       }
       break;
@@ -688,11 +755,29 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       {
         uint8_t num_ccs = action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
+        
+        // Determine target values based on press/release
+        uint8_t target_values[4];
         for (int i = 0; i < num_ccs && i < 4; i++) {
-          uint8_t value = is_press ?
+          target_values[i] = is_press ?
             action->params.control.values[i] : action->params.control.values2[i];
-          send_control_change(channel, action->params.control.cc_numbers[i], value);
-          ESP_LOGD(TAG, "CC%d hold: %d", action->params.control.cc_numbers[i], value);
+        }
+        
+        // Use morphing if enabled
+        if (action->morph_enabled) {
+          if (morph_start(action, num_ccs, action->params.control.cc_numbers, target_values)) {
+            ESP_LOGD(TAG, "CC%d hold morph started -> %d", 
+              action->params.control.cc_numbers[0], target_values[0]);
+            break;  // Morph will handle sending values
+          }
+          // Fall through to immediate send if morph failed
+        }
+        
+        // Immediate send (no morph)
+        for (int i = 0; i < num_ccs && i < 4; i++) {
+          send_control_change(channel, action->params.control.cc_numbers[i], target_values[i]);
+          s_last_cc_values[action->params.control.cc_numbers[i]] = target_values[i];
+          ESP_LOGD(TAG, "CC%d hold: %d", action->params.control.cc_numbers[i], target_values[i]);
         }
       }
       break;
@@ -709,11 +794,32 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
         uint8_t num_ccs = mutable_action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
         
-        // Send current cycle value for each CC
+        // Get target values for this cycle step
+        uint8_t target_values[4];
         for (int i = 0; i < num_ccs && i < 4; i++) {
-          uint8_t value = mutable_action->params.control.cycle_values[i][idx];
-          send_control_change(channel, mutable_action->params.control.cc_numbers[i], value);
-          ESP_LOGD(TAG, "Cycled CC%d to %d", mutable_action->params.control.cc_numbers[i], value);
+          target_values[i] = mutable_action->params.control.cycle_values[i][idx];
+        }
+        
+        // Use morphing if enabled
+        if (action->morph_enabled) {
+          if (morph_start(action, num_ccs, mutable_action->params.control.cc_numbers, 
+              target_values)) {
+            ESP_LOGD(TAG, "CC%d cycle morph started -> %d", 
+              mutable_action->params.control.cc_numbers[0], target_values[0]);
+            // Advance to next step (shared across all CCs)
+            mutable_action->params.control.current_index = (idx + 1) % num_steps;
+            break;  // Morph will handle sending values
+          }
+          // Fall through to immediate send if morph failed
+        }
+        
+        // Immediate send (no morph)
+        for (int i = 0; i < num_ccs && i < 4; i++) {
+          send_control_change(channel, mutable_action->params.control.cc_numbers[i], 
+            target_values[i]);
+          s_last_cc_values[mutable_action->params.control.cc_numbers[i]] = target_values[i];
+          ESP_LOGD(TAG, "Cycled CC%d to %d", mutable_action->params.control.cc_numbers[i], 
+            target_values[i]);
         }
         
         // Advance to next step (shared across all CCs)
@@ -739,7 +845,12 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
         uint8_t scene_index = scene_get_current_index();
         const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
         
-        for (int i = 0; i < action->params.randomize.num_ccs; i++) {
+        uint8_t num_ccs = action->params.randomize.num_ccs;
+        if (num_ccs > 8) num_ccs = 8;
+        
+        // Calculate random target values for all CCs
+        uint8_t target_values[8];
+        for (int i = 0; i < num_ccs; i++) {
           uint8_t cc = action->params.randomize.cc_numbers[i];
           uint8_t random_val;
           
@@ -760,10 +871,36 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
             random_val = esp_random() % 128;
           }
           
-          send_control_change(channel, cc, random_val);
-          ESP_LOGD(TAG, "Randomized CC%d to %d", cc, random_val);
+          target_values[i] = random_val;
         }
-        ESP_LOGD(TAG, "Randomized %d CCs", action->params.randomize.num_ccs);
+        
+        // Use morphing if enabled (limited to first 4 CCs)
+        if (action->morph_enabled && num_ccs > 0) {
+          uint8_t morph_ccs = (num_ccs > 4) ? 4 : num_ccs;
+          if (morph_start(action, morph_ccs, action->params.randomize.cc_numbers, 
+              target_values)) {
+            ESP_LOGD(TAG, "Randomize morph started for %d CCs", morph_ccs);
+            
+            // Send remaining CCs (5-8) immediately if any
+            for (int i = 4; i < num_ccs; i++) {
+              uint8_t cc = action->params.randomize.cc_numbers[i];
+              send_control_change(channel, cc, target_values[i]);
+              s_last_cc_values[cc] = target_values[i];
+              ESP_LOGD(TAG, "Randomized CC%d to %d (immediate)", cc, target_values[i]);
+            }
+            break;  // Morph will handle first 4 CCs
+          }
+          // Fall through to immediate send if morph failed
+        }
+        
+        // Immediate send (no morph)
+        for (int i = 0; i < num_ccs; i++) {
+          uint8_t cc = action->params.randomize.cc_numbers[i];
+          send_control_change(channel, cc, target_values[i]);
+          s_last_cc_values[cc] = target_values[i];
+          ESP_LOGD(TAG, "Randomized CC%d to %d", cc, target_values[i]);
+        }
+        ESP_LOGD(TAG, "Randomized %d CCs", num_ccs);
       }
       break;
       
@@ -1420,4 +1557,518 @@ uint8_t action_repeat_division_to_beats(action_repeat_division_t div, uint8_t be
     case ACTION_REPEAT_32ND:      return 0;
     default: return 1;
   }
+}
+
+// ============================================================================
+// Morph System Implementation
+// ============================================================================
+
+// Calculate optimal step count based on value delta and duration
+static uint8_t calculate_auto_steps(uint8_t value_delta, uint32_t duration_ms) {
+  // Base: 1 step per 2 values of delta for smoothness
+  uint8_t delta_based = (value_delta + 1) / 2;
+  
+  // Duration modifier: ~20-40ms per step is musically smooth
+  uint8_t duration_based = (uint8_t)(duration_ms / 25);
+  
+  // Use the smaller of the two to avoid excessive MIDI traffic
+  // but ensure enough steps for smooth transitions
+  uint8_t steps = (delta_based < duration_based) ? delta_based : duration_based;
+  
+  // Clamp to reasonable range
+  if (steps < 4) steps = 4;
+  if (steps > 64) steps = 64;
+  
+  return steps;
+}
+
+// Get morph duration for FEEL mode (curated, tempo-scaled)
+static uint32_t get_feel_duration_ms(morph_feel_t feel, uint16_t bpm) {
+  if (bpm == 0) bpm = 120;
+  uint32_t beat_ms = 60000 / bpm;
+  
+  switch (feel) {
+    case MORPH_FEEL_FAST:   return beat_ms / 4;  // 16th note
+    case MORPH_FEEL_MEDIUM: return beat_ms;       // Quarter note
+    case MORPH_FEEL_SLOW:   return beat_ms * 2;   // Half note
+    default: return beat_ms;
+  }
+}
+
+// Get morph duration for DURATION mode (fixed musical duration)
+static uint32_t get_duration_ms(morph_division_t div, uint16_t bpm) {
+  if (bpm == 0) bpm = 120;
+  uint32_t beat_ms = 60000 / bpm;
+  uint8_t felt_beats = tempo_get_felt_beats_per_bar();
+  if (felt_beats == 0) felt_beats = 4;
+  
+  switch (div) {
+    case MORPH_DIV_BEAT:   return beat_ms;
+    case MORPH_DIV_BAR:    return beat_ms * felt_beats;
+    case MORPH_DIV_2_BARS: return beat_ms * felt_beats * 2;
+    case MORPH_DIV_4_BARS: return beat_ms * felt_beats * 4;
+    // Beat targets not applicable for duration mode, default to 1 beat
+    default: return beat_ms;
+  }
+}
+
+// Get morph duration for SYNC mode (time until target moment)
+static uint32_t get_sync_duration_ms(morph_division_t div, uint16_t bpm,
+    uint8_t current_beat, uint8_t beats_per_bar) {
+  if (bpm == 0) bpm = 120;
+  if (beats_per_bar == 0) beats_per_bar = 4;
+  if (current_beat == 0) current_beat = 1;
+  
+  uint32_t beat_ms = 60000 / bpm;
+  uint8_t target_beat;
+  uint8_t beats_remaining;
+  
+  switch (div) {
+    case MORPH_DIV_BEAT:
+      // Next beat (any) - minimum 1 beat
+      return beat_ms;
+      
+    case MORPH_DIV_BAR:
+      // Next bar (beat 1)
+      target_beat = 1;
+      if (current_beat >= target_beat) {
+        beats_remaining = beats_per_bar - current_beat + target_beat;
+      } else {
+        beats_remaining = target_beat - current_beat;
+      }
+      if (beats_remaining == 0) beats_remaining = beats_per_bar;
+      return beat_ms * beats_remaining;
+      
+    case MORPH_DIV_2_BARS:
+      // Next bar start + 1 more bar
+      beats_remaining = beats_per_bar - current_beat + 1;
+      beats_remaining += beats_per_bar;
+      return beat_ms * beats_remaining;
+      
+    case MORPH_DIV_4_BARS:
+      // Next bar start + 3 more bars
+      beats_remaining = beats_per_bar - current_beat + 1;
+      beats_remaining += beats_per_bar * 3;
+      return beat_ms * beats_remaining;
+      
+    case MORPH_DIV_BEAT_2:
+    case MORPH_DIV_BEAT_3:
+    case MORPH_DIV_BEAT_4:
+      // Specific beat target
+      target_beat = (div - MORPH_DIV_BEAT_2) + 2;
+      if (target_beat > beats_per_bar) target_beat = beats_per_bar;
+      if (current_beat >= target_beat) {
+        // Target is in next bar
+        beats_remaining = beats_per_bar - current_beat + target_beat;
+      } else {
+        beats_remaining = target_beat - current_beat;
+      }
+      if (beats_remaining == 0) beats_remaining = beats_per_bar;
+      return beat_ms * beats_remaining;
+      
+    default:
+      return beat_ms;
+  }
+}
+
+// Get the target beat for SYNC mode
+static uint8_t get_sync_target_beat(morph_division_t div) {
+  switch (div) {
+    case MORPH_DIV_BEAT:   return 0;  // Any beat
+    case MORPH_DIV_BAR:    return 1;  // Beat 1 (bar start)
+    case MORPH_DIV_2_BARS: return 1;  // Beat 1
+    case MORPH_DIV_4_BARS: return 1;  // Beat 1
+    case MORPH_DIV_BEAT_2: return 2;
+    case MORPH_DIV_BEAT_3: return 3;
+    case MORPH_DIV_BEAT_4: return 4;
+    default: return 0;
+  }
+}
+
+// Get step count based on mode
+static uint8_t get_morph_steps(const action_t* action, uint8_t value_delta, 
+    uint32_t duration_ms) {
+  switch (action->morph_steps_mode) {
+    case MORPH_STEPS_AUTO:
+      return calculate_auto_steps(value_delta, duration_ms);
+    case MORPH_STEPS_COARSE:
+      return 8;
+    case MORPH_STEPS_MEDIUM:
+      return 16;
+    case MORPH_STEPS_FINE:
+      return 32;
+    case MORPH_STEPS_MANUAL:
+      return (action->morph_manual_steps >= 8 && action->morph_manual_steps <= 128) ?
+        action->morph_manual_steps : 32;
+    default:
+      return 16;
+  }
+}
+
+// Start or restart the morph timer if any morphs are active
+static void morph_update_timer(void) {
+  // Timer must exist to update
+  if (!s_morph_timer) {
+    ESP_LOGW(TAG, "Morph timer not initialized");
+    return;
+  }
+  
+  bool any_active = false;
+  for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+    if (s_active_morphs[i].active && !s_active_morphs[i].sync_waiting_final) {
+      any_active = true;
+      break;
+    }
+  }
+  
+  if (any_active) {
+    if (!esp_timer_is_active(s_morph_timer)) {
+      // Start timer at 10ms interval for responsive updates
+      esp_timer_start_periodic(s_morph_timer, 10000);  // 10ms in microseconds
+    }
+  } else {
+    if (esp_timer_is_active(s_morph_timer)) {
+      esp_timer_stop(s_morph_timer);
+    }
+  }
+}
+
+// Send the final target values for a morph
+static void morph_send_final_values(active_morph_t* m) {
+  uint8_t channel = device_config_get_channel() - 1;
+  
+  for (int i = 0; i < m->num_ccs && i < 4; i++) {
+    send_control_change(channel, m->cc_numbers[i], m->target_values[i]);
+    s_last_cc_values[m->cc_numbers[i]] = m->target_values[i];
+  }
+  
+  ESP_LOGD(TAG, "Morph completed: CC%d -> %d", 
+    m->cc_numbers[0], m->target_values[0]);
+}
+
+// Advance a morph by one step
+static void morph_advance_step(active_morph_t* m) {
+  if (!m->active) return;
+  
+  m->current_step++;
+  
+  // Check if this is the final step
+  if (m->current_step >= m->total_steps) {
+    if (m->timing_mode == MORPH_TIMING_SYNC && m->sync_target_beat != 0) {
+      // SYNC mode: wait for beat event to send final value
+      m->sync_waiting_final = true;
+      ESP_LOGD(TAG, "Morph waiting for beat %d to complete", m->sync_target_beat);
+    } else {
+      // Send final values immediately
+      morph_send_final_values(m);
+      m->active = false;
+    }
+    return;
+  }
+  
+  // Calculate intermediate values using linear interpolation
+  uint8_t channel = device_config_get_channel() - 1;
+  
+  for (int i = 0; i < m->num_ccs && i < 4; i++) {
+    int16_t start = m->start_values[i];
+    int16_t target = m->target_values[i];
+    int16_t range = target - start;
+    
+    // Linear interpolation: value = start + (range * step / total_steps)
+    int16_t value = start + (range * m->current_step) / m->total_steps;
+    
+    // Clamp to 0-127
+    if (value < 0) value = 0;
+    if (value > 127) value = 127;
+    
+    send_control_change(channel, m->cc_numbers[i], (uint8_t)value);
+    s_last_cc_values[m->cc_numbers[i]] = (uint8_t)value;
+  }
+}
+
+// Timer callback - check and advance all active morphs
+static void morph_timer_callback(void* arg) {
+  (void)arg;
+  uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);  // Convert to ms
+  
+  bool any_active = false;
+  
+  for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+    active_morph_t* m = &s_active_morphs[i];
+    if (!m->active) continue;
+    if (m->sync_waiting_final) continue;  // Waiting for beat event
+    
+    any_active = true;
+    
+    // Check if it's time for next step
+    if (now >= m->next_step_time) {
+      morph_advance_step(m);
+      m->next_step_time = now + m->step_interval_ms;
+    }
+  }
+  
+  // Stop timer if no more active morphs
+  if (!any_active) {
+    morph_update_timer();
+  }
+}
+
+// Beat event handler for SYNC mode completion
+static void morph_beat_event_handler(const event_t* event, void* context) {
+  (void)context;
+  if (event->type != EVENT_BEAT) return;
+  
+  uint8_t current_beat = event->data.beat.beat_in_bar;
+  
+  for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+    active_morph_t* m = &s_active_morphs[i];
+    if (!m->active) continue;
+    if (!m->sync_waiting_final) continue;
+    
+    bool hit_target = false;
+    
+    if (m->sync_target_beat == 0) {
+      // Any beat triggers completion
+      hit_target = true;
+    } else if (m->sync_target_beat == current_beat) {
+      // Specific beat matches
+      hit_target = true;
+    }
+    
+    if (hit_target) {
+      morph_send_final_values(m);
+      m->active = false;
+      ESP_LOGD(TAG, "Morph SYNC completed on beat %d", current_beat);
+    }
+  }
+}
+
+// Find an existing morph for the same CC(s) or an empty slot
+static active_morph_t* find_or_create_morph_slot(uint8_t num_ccs,
+    const uint8_t* cc_numbers) {
+  // First, look for existing morph on same CC(s) to cancel it
+  for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+    if (s_active_morphs[i].active) {
+      // Check if any CC overlaps
+      for (int j = 0; j < s_active_morphs[i].num_ccs && j < 4; j++) {
+        for (int k = 0; k < num_ccs && k < 4; k++) {
+          if (s_active_morphs[i].cc_numbers[j] == cc_numbers[k]) {
+            // Found overlap - reuse this slot
+            ESP_LOGD(TAG, "Canceling existing morph for CC%d", cc_numbers[k]);
+            return &s_active_morphs[i];
+          }
+        }
+      }
+    }
+  }
+  
+  // Find empty slot
+  for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+    if (!s_active_morphs[i].active) {
+      return &s_active_morphs[i];
+    }
+  }
+  
+  ESP_LOGW(TAG, "No morph slot available");
+  return NULL;
+}
+
+// Start a morph transition
+static bool morph_start(const action_t* action, uint8_t num_ccs,
+    const uint8_t* cc_numbers, const uint8_t* target_values) {
+  if (!action->morph_enabled) return false;
+  if (num_ccs == 0 || num_ccs > 4) return false;
+  
+  active_morph_t* m = find_or_create_morph_slot(num_ccs, cc_numbers);
+  if (!m) return false;
+  
+  // Get current tempo and beat info
+  uint16_t bpm = tempo_get_bpm();
+  if (bpm == 0) bpm = 120;
+  
+  time_signature_t sig = tempo_get_time_signature();
+  uint8_t beats_per_bar = sig.numerator;
+  if (beats_per_bar == 0) beats_per_bar = 4;
+  
+  uint8_t current_beat = transport_get_current_beat();
+  if (current_beat == 0) current_beat = 1;
+  
+  // Calculate duration based on timing mode
+  uint32_t duration_ms;
+  switch (action->morph_timing_mode) {
+    case MORPH_TIMING_FEEL:
+      duration_ms = get_feel_duration_ms(action->morph_feel, bpm);
+      break;
+    case MORPH_TIMING_DURATION:
+      duration_ms = get_duration_ms(action->morph_division, bpm);
+      break;
+    case MORPH_TIMING_SYNC:
+      duration_ms = get_sync_duration_ms(action->morph_division, bpm,
+        current_beat, beats_per_bar);
+      break;
+    default:
+      duration_ms = 500;
+      break;
+  }
+  
+  // Calculate max value delta across all CCs
+  uint8_t max_delta = 0;
+  for (int i = 0; i < num_ccs && i < 4; i++) {
+    uint8_t start = s_last_cc_values[cc_numbers[i]];
+    uint8_t target = target_values[i];
+    uint8_t delta = (start > target) ? (start - target) : (target - start);
+    if (delta > max_delta) max_delta = delta;
+  }
+  
+  // Get step count
+  uint8_t steps = get_morph_steps(action, max_delta, duration_ms);
+  
+  // Avoid division by zero
+  if (steps == 0) steps = 1;
+  
+  // Calculate step interval
+  uint32_t step_interval = duration_ms / steps;
+  if (step_interval < 10) step_interval = 10;  // Minimum 10ms between steps
+  
+  // Initialize morph state
+  m->active = true;
+  m->action = (action_t*)action;
+  m->num_ccs = num_ccs;
+  m->current_step = 0;
+  m->total_steps = steps;
+  m->step_interval_ms = step_interval;
+  m->timing_mode = action->morph_timing_mode;
+  m->sync_target_beat = (action->morph_timing_mode == MORPH_TIMING_SYNC) ?
+    get_sync_target_beat(action->morph_division) : 0;
+  m->sync_waiting_final = false;
+  
+  for (int i = 0; i < num_ccs && i < 4; i++) {
+    m->cc_numbers[i] = cc_numbers[i];
+    m->start_values[i] = s_last_cc_values[cc_numbers[i]];
+    m->target_values[i] = target_values[i];
+  }
+  
+  // Set first step time
+  uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+  m->next_step_time = now + step_interval;
+  
+  // Send first value immediately (start value)
+  uint8_t channel = device_config_get_channel() - 1;
+  for (int i = 0; i < num_ccs && i < 4; i++) {
+    send_control_change(channel, cc_numbers[i], m->start_values[i]);
+  }
+  
+  // Start/update timer
+  morph_update_timer();
+  
+  ESP_LOGD(TAG, "Morph started: CC%d %d->%d, %d steps, %lu ms interval",
+    cc_numbers[0], m->start_values[0], m->target_values[0],
+    (int)steps, (unsigned long)step_interval);
+  
+  return true;
+}
+
+// Clear all active morphs
+void action_clear_morphs(void) {
+  for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+    s_active_morphs[i].active = false;
+  }
+  morph_update_timer();
+  ESP_LOGD(TAG, "Cleared all active morphs");
+}
+
+// Check if action type supports morphing
+bool action_supports_morph(action_type_t type) {
+  switch (type) {
+    case ACTION_CONTROL_HOLD:
+    case ACTION_CONTROL_CYCLE:
+    case ACTION_RANDOMIZE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// ============================================================================
+// Morph String Conversion Functions
+// ============================================================================
+
+const char* morph_steps_mode_to_string(morph_steps_mode_t mode) {
+  switch (mode) {
+    case MORPH_STEPS_AUTO:   return "auto";
+    case MORPH_STEPS_COARSE: return "coarse";
+    case MORPH_STEPS_MEDIUM: return "medium";
+    case MORPH_STEPS_FINE:   return "fine";
+    case MORPH_STEPS_MANUAL: return "manual";
+    default: return "auto";
+  }
+}
+
+morph_steps_mode_t morph_steps_mode_from_string(const char* str) {
+  if (!str) return MORPH_STEPS_AUTO;
+  if (strcmp(str, "auto") == 0) return MORPH_STEPS_AUTO;
+  if (strcmp(str, "coarse") == 0) return MORPH_STEPS_COARSE;
+  if (strcmp(str, "medium") == 0) return MORPH_STEPS_MEDIUM;
+  if (strcmp(str, "fine") == 0) return MORPH_STEPS_FINE;
+  if (strcmp(str, "manual") == 0) return MORPH_STEPS_MANUAL;
+  return MORPH_STEPS_AUTO;
+}
+
+const char* morph_timing_mode_to_string(morph_timing_mode_t mode) {
+  switch (mode) {
+    case MORPH_TIMING_FEEL:     return "feel";
+    case MORPH_TIMING_DURATION: return "duration";
+    case MORPH_TIMING_SYNC:     return "sync";
+    default: return "feel";
+  }
+}
+
+morph_timing_mode_t morph_timing_mode_from_string(const char* str) {
+  if (!str) return MORPH_TIMING_FEEL;
+  if (strcmp(str, "feel") == 0) return MORPH_TIMING_FEEL;
+  if (strcmp(str, "duration") == 0) return MORPH_TIMING_DURATION;
+  if (strcmp(str, "sync") == 0) return MORPH_TIMING_SYNC;
+  return MORPH_TIMING_FEEL;
+}
+
+const char* morph_feel_to_string(morph_feel_t feel) {
+  switch (feel) {
+    case MORPH_FEEL_FAST:   return "fast";
+    case MORPH_FEEL_MEDIUM: return "medium";
+    case MORPH_FEEL_SLOW:   return "slow";
+    default: return "medium";
+  }
+}
+
+morph_feel_t morph_feel_from_string(const char* str) {
+  if (!str) return MORPH_FEEL_MEDIUM;
+  if (strcmp(str, "fast") == 0) return MORPH_FEEL_FAST;
+  if (strcmp(str, "medium") == 0) return MORPH_FEEL_MEDIUM;
+  if (strcmp(str, "slow") == 0) return MORPH_FEEL_SLOW;
+  return MORPH_FEEL_MEDIUM;
+}
+
+const char* morph_division_to_string(morph_division_t div) {
+  switch (div) {
+    case MORPH_DIV_BEAT:   return "beat";
+    case MORPH_DIV_BAR:    return "bar";
+    case MORPH_DIV_2_BARS: return "2_bars";
+    case MORPH_DIV_4_BARS: return "4_bars";
+    case MORPH_DIV_BEAT_2: return "beat_2";
+    case MORPH_DIV_BEAT_3: return "beat_3";
+    case MORPH_DIV_BEAT_4: return "beat_4";
+    default: return "bar";
+  }
+}
+
+morph_division_t morph_division_from_string(const char* str) {
+  if (!str) return MORPH_DIV_BAR;
+  if (strcmp(str, "beat") == 0) return MORPH_DIV_BEAT;
+  if (strcmp(str, "bar") == 0) return MORPH_DIV_BAR;
+  if (strcmp(str, "2_bars") == 0) return MORPH_DIV_2_BARS;
+  if (strcmp(str, "4_bars") == 0) return MORPH_DIV_4_BARS;
+  if (strcmp(str, "beat_2") == 0) return MORPH_DIV_BEAT_2;
+  if (strcmp(str, "beat_3") == 0) return MORPH_DIV_BEAT_3;
+  if (strcmp(str, "beat_4") == 0) return MORPH_DIV_BEAT_4;
+  return MORPH_DIV_BAR;
 }

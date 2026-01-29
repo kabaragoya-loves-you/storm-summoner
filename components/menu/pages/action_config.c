@@ -95,9 +95,15 @@ static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
 static char s_pattern_label[LABEL_BUFFER_SETS][24];
+static char s_morph_label[LABEL_BUFFER_SETS][24];
+static char s_morph_steps_label[LABEL_BUFFER_SETS][24];
+static char s_morph_manual_label[LABEL_BUFFER_SETS][24];
+static char s_morph_timing_label[LABEL_BUFFER_SETS][24];
+static char s_morph_feel_label[LABEL_BUFFER_SETS][24];
+static char s_morph_division_label[LABEL_BUFFER_SETS][24];
 
 // Menu items for submenu pages
-#define MAX_DETAIL_ITEMS 12
+#define MAX_DETAIL_ITEMS 20
 static menu_item_t s_detail_items[MAX_DETAIL_ITEMS];
 static menu_item_t s_cc_hold_items[3];
 static menu_item_t s_cc_cycle_items[9];
@@ -2869,7 +2875,7 @@ static lv_obj_t* clock_burst_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   
   action_t* action = s_ctx->target_action;
-  uint8_t speed = action->params.clock_burst.speed_percent;
+  uint16_t speed = action->params.clock_burst.speed_percent;
   
   // Map percentage to index: 25->0, 50->1, ..., 300->11
   uint32_t current_idx = (speed >= 25 && speed <= 300) ? (speed / 25) - 1 : 3;  // Default to 100%
@@ -3288,6 +3294,265 @@ static void nav_to_pattern_editor(void* user_data) {
 }
 
 // ============================================================================
+// Morph Toggle Roller (On/Off)
+// ============================================================================
+
+static const char* get_morph_display(action_t* action) {
+  if (!action) return "Off";
+  return action->morph_enabled ? "On" : "Off";
+}
+
+static void morph_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  s_ctx->target_action->morph_enabled = (selected_index == 1);
+  ESP_LOGD(TAG, "Set morph: %s", selected_index ? "On" : "Off");
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* morph_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Morph", "Error", 0, NULL, NULL);
+  }
+  
+  uint32_t current_idx = s_ctx->target_action->morph_enabled ? 1 : 0;
+  
+  return menu_create_roller_page("Morph", "Off\nOn", current_idx,
+    morph_confirm_cb, NULL);
+}
+
+static void nav_to_morph(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Morph", morph_roller_create);
+}
+
+// ============================================================================
+// Morph Steps Roller
+// ============================================================================
+
+static const char* morph_steps_display_names[] = {
+  "Auto", "Coarse (8)", "Medium (16)", "Fine (32)", "Manual"
+};
+
+static const char* get_morph_steps_display(action_t* action) {
+  if (!action) return "Auto";
+  if (action->morph_steps_mode >= MORPH_STEPS_MANUAL + 1) return "Auto";
+  return morph_steps_display_names[action->morph_steps_mode];
+}
+
+static void morph_steps_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  s_ctx->target_action->morph_steps_mode = (morph_steps_mode_t)selected_index;
+  ESP_LOGD(TAG, "Set morph steps: %s", 
+    morph_steps_mode_to_string(s_ctx->target_action->morph_steps_mode));
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* morph_steps_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Steps", "Error", 0, NULL, NULL);
+  }
+  
+  uint32_t current_idx = (uint32_t)s_ctx->target_action->morph_steps_mode;
+  if (current_idx > MORPH_STEPS_MANUAL) current_idx = 0;
+  
+  return menu_create_roller_page("Steps",
+    "Auto\nCoarse (8)\nMedium (16)\nFine (32)\nManual",
+    current_idx, morph_steps_confirm_cb, NULL);
+}
+
+static void nav_to_morph_steps(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Steps", morph_steps_roller_create);
+}
+
+// ============================================================================
+// Morph Manual Steps Roller (8-128)
+// ============================================================================
+
+static const char* get_morph_manual_display(action_t* action) {
+  static char buf[8];
+  if (!action) return "32";
+  snprintf(buf, sizeof(buf), "%d", action->morph_manual_steps);
+  return buf;
+}
+
+// Manual steps options: 8, 12, 16, 24, 32, 48, 64, 96, 128
+static const uint8_t morph_manual_values[] = {8, 12, 16, 24, 32, 48, 64, 96, 128};
+static const int morph_manual_count = 9;
+
+static void morph_manual_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  if (selected_index >= (uint32_t)morph_manual_count) selected_index = 4;  // Default to 32
+  
+  s_ctx->target_action->morph_manual_steps = morph_manual_values[selected_index];
+  ESP_LOGD(TAG, "Set morph manual steps: %d", 
+    s_ctx->target_action->morph_manual_steps);
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* morph_manual_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Steps", "Error", 0, NULL, NULL);
+  }
+  
+  // Find current index
+  uint8_t current = s_ctx->target_action->morph_manual_steps;
+  uint32_t current_idx = 4;  // Default to 32
+  for (int i = 0; i < morph_manual_count; i++) {
+    if (morph_manual_values[i] == current) {
+      current_idx = i;
+      break;
+    }
+  }
+  
+  return menu_create_roller_page("Manual Steps",
+    "8\n12\n16\n24\n32\n48\n64\n96\n128",
+    current_idx, morph_manual_confirm_cb, NULL);
+}
+
+static void nav_to_morph_manual(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Manual Steps", morph_manual_roller_create);
+}
+
+// ============================================================================
+// Morph Timing Mode Roller (Feel/Duration/Sync)
+// ============================================================================
+
+static const char* morph_timing_display_names[] = {
+  "Feel", "Duration", "Sync"
+};
+
+static const char* get_morph_timing_display(action_t* action) {
+  if (!action) return "Feel";
+  if (action->morph_timing_mode > MORPH_TIMING_SYNC) return "Feel";
+  return morph_timing_display_names[action->morph_timing_mode];
+}
+
+static void morph_timing_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  s_ctx->target_action->morph_timing_mode = (morph_timing_mode_t)selected_index;
+  ESP_LOGD(TAG, "Set morph timing: %s", 
+    morph_timing_mode_to_string(s_ctx->target_action->morph_timing_mode));
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* morph_timing_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Timing", "Error", 0, NULL, NULL);
+  }
+  
+  uint32_t current_idx = (uint32_t)s_ctx->target_action->morph_timing_mode;
+  if (current_idx > MORPH_TIMING_SYNC) current_idx = 0;
+  
+  return menu_create_roller_page("Morph Timing",
+    "Feel\nDuration\nSync",
+    current_idx, morph_timing_confirm_cb, NULL);
+}
+
+static void nav_to_morph_timing(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Morph Timing", morph_timing_roller_create);
+}
+
+// ============================================================================
+// Morph Feel Roller (Fast/Medium/Slow) - only when timing=feel
+// ============================================================================
+
+static const char* morph_feel_display_names[] = {
+  "Fast", "Medium", "Slow"
+};
+
+static const char* get_morph_feel_display(action_t* action) {
+  if (!action) return "Medium";
+  if (action->morph_feel > MORPH_FEEL_SLOW) return "Medium";
+  return morph_feel_display_names[action->morph_feel];
+}
+
+static void morph_feel_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  s_ctx->target_action->morph_feel = (morph_feel_t)selected_index;
+  ESP_LOGD(TAG, "Set morph feel: %s", 
+    morph_feel_to_string(s_ctx->target_action->morph_feel));
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* morph_feel_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Feel", "Error", 0, NULL, NULL);
+  }
+  
+  uint32_t current_idx = (uint32_t)s_ctx->target_action->morph_feel;
+  if (current_idx > MORPH_FEEL_SLOW) current_idx = 1;  // Default to medium
+  
+  return menu_create_roller_page("Feel",
+    "Fast\nMedium\nSlow",
+    current_idx, morph_feel_confirm_cb, NULL);
+}
+
+static void nav_to_morph_feel(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Feel", morph_feel_roller_create);
+}
+
+// ============================================================================
+// Morph Division Roller - only when timing=duration or sync
+// ============================================================================
+
+static const char* morph_division_display_names[] = {
+  "Beat", "Bar", "2 Bars", "4 Bars", "Beat 2", "Beat 3", "Beat 4"
+};
+
+static const char* get_morph_division_display(action_t* action) {
+  if (!action) return "Bar";
+  if (action->morph_division >= MORPH_DIV_MAX) return "Bar";
+  return morph_division_display_names[action->morph_division];
+}
+
+static void morph_division_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  s_ctx->target_action->morph_division = (morph_division_t)selected_index;
+  ESP_LOGD(TAG, "Set morph division: %s", 
+    morph_division_to_string(s_ctx->target_action->morph_division));
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* morph_division_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Division", "Error", 0, NULL, NULL);
+  }
+  
+  uint32_t current_idx = (uint32_t)s_ctx->target_action->morph_division;
+  if (current_idx >= MORPH_DIV_MAX) current_idx = 1;  // Default to bar
+  
+  return menu_create_roller_page("Division",
+    "Beat\nBar\n2 Bars\n4 Bars\nBeat 2\nBeat 3\nBeat 4",
+    current_idx, morph_division_confirm_cb, NULL);
+}
+
+static void nav_to_morph_division(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Division", morph_division_roller_create);
+}
+
+// ============================================================================
 // Action Detail Page (stub - parameters will be added in subsequent phases)
 // ============================================================================
 
@@ -3683,6 +3948,69 @@ lv_obj_t* action_config_detail_page_create(void) {
       if (action->pattern_length >= 2 && item_count < MAX_DETAIL_ITEMS) {
         s_detail_items[item_count++] = (menu_item_t){
           "Edit Pattern", nav_to_pattern_editor, NULL, true
+        };
+      }
+    }
+  }
+  
+  // Show Morph option for actions that support it (CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
+  if (action_supports_morph(action->type) && item_count < MAX_DETAIL_ITEMS) {
+    const char* morph_display = get_morph_display(action);
+    snprintf(s_morph_label[buf], sizeof(s_morph_label[buf]), "Morph\n%s", morph_display);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_morph_label[buf], nav_to_morph, NULL, true
+    };
+    
+    // Show morph sub-options only when morph is enabled
+    if (action->morph_enabled) {
+      // Steps mode selector
+      if (item_count < MAX_DETAIL_ITEMS) {
+        const char* steps_display = get_morph_steps_display(action);
+        snprintf(s_morph_steps_label[buf], sizeof(s_morph_steps_label[buf]),
+          "Steps\n%s", steps_display);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_morph_steps_label[buf], nav_to_morph_steps, NULL, true
+        };
+      }
+      
+      // Manual steps value (only when steps mode is Manual)
+      if (action->morph_steps_mode == MORPH_STEPS_MANUAL && item_count < MAX_DETAIL_ITEMS) {
+        const char* manual_display = get_morph_manual_display(action);
+        snprintf(s_morph_manual_label[buf], sizeof(s_morph_manual_label[buf]),
+          "Manual Steps\n%s", manual_display);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_morph_manual_label[buf], nav_to_morph_manual, NULL, true
+        };
+      }
+      
+      // Timing mode selector
+      if (item_count < MAX_DETAIL_ITEMS) {
+        const char* timing_display = get_morph_timing_display(action);
+        snprintf(s_morph_timing_label[buf], sizeof(s_morph_timing_label[buf]),
+          "Morph Timing\n%s", timing_display);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_morph_timing_label[buf], nav_to_morph_timing, NULL, true
+        };
+      }
+      
+      // Feel selector (only when timing mode is Feel)
+      if (action->morph_timing_mode == MORPH_TIMING_FEEL && item_count < MAX_DETAIL_ITEMS) {
+        const char* feel_display = get_morph_feel_display(action);
+        snprintf(s_morph_feel_label[buf], sizeof(s_morph_feel_label[buf]),
+          "Feel\n%s", feel_display);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_morph_feel_label[buf], nav_to_morph_feel, NULL, true
+        };
+      }
+      
+      // Division selector (only when timing mode is Duration or Sync)
+      if ((action->morph_timing_mode == MORPH_TIMING_DURATION || 
+           action->morph_timing_mode == MORPH_TIMING_SYNC) && item_count < MAX_DETAIL_ITEMS) {
+        const char* div_display = get_morph_division_display(action);
+        snprintf(s_morph_division_label[buf], sizeof(s_morph_division_label[buf]),
+          "Division\n%s", div_display);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_morph_division_label[buf], nav_to_morph_division, NULL, true
         };
       }
     }
