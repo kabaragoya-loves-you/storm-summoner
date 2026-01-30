@@ -128,6 +128,9 @@ static action_t* s_active_repeating[MAX_ACTIVE_REPEATS];
 
 #define MAX_ACTIVE_MORPHS 4
 
+// Max discrete values to track per CC (keep small for memory)
+#define MORPH_MAX_DISCRETE 8
+
 typedef struct {
   bool active;
   action_t* action;           // For state sync (cycle index)
@@ -144,6 +147,12 @@ typedef struct {
   morph_timing_mode_t timing_mode;
   uint8_t sync_target_beat;   // Target beat (1-16, 0=any/bar start)
   bool sync_waiting_final;    // True when waiting for beat event to send final value
+  
+  // Per-CC control metadata (looked up at morph start)
+  uint8_t last_sent_values[4];           // Avoid redundant sends
+  uint8_t discrete_counts[4];            // 0 = continuous, 1+ = discrete
+  uint8_t discrete_values[4][MORPH_MAX_DISCRETE];  // Discrete values per CC
+  bool delay_final[4];                   // True for low-count discrete CCs (≤4 values)
 } active_morph_t;
 
 static active_morph_t s_active_morphs[MAX_ACTIVE_MORPHS];
@@ -163,6 +172,7 @@ static uint32_t get_sync_duration_ms(morph_division_t div, uint16_t bpm,
 static bool morph_start(const action_t* action, uint8_t num_ccs,
   const uint8_t* cc_numbers, const uint8_t* target_values);
 static void morph_update_timer(void);
+static int find_discrete_index(const uint8_t* values, uint8_t count, uint8_t target);
 
 // Check if an action is currently repeating
 static bool is_action_repeating(action_t* action) {
@@ -1582,6 +1592,25 @@ static uint8_t calculate_auto_steps(uint8_t value_delta, uint32_t duration_ms) {
   return steps;
 }
 
+// Find the index of a value in a discrete values array
+// Returns the index of the closest matching value, or 0 if not found
+static int find_discrete_index(const uint8_t* values, uint8_t count, uint8_t target) {
+  if (!values || count == 0) return 0;
+  
+  int best_idx = 0;
+  int best_diff = 255;
+  
+  for (int i = 0; i < count; i++) {
+    int diff = (target > values[i]) ? (target - values[i]) : (values[i] - target);
+    if (diff < best_diff) {
+      best_diff = diff;
+      best_idx = i;
+    }
+  }
+  
+  return best_idx;
+}
+
 // Get morph duration for FEEL mode (curated, tempo-scaled)
 static uint32_t get_feel_duration_ms(morph_feel_t feel, uint16_t bpm) {
   if (bpm == 0) bpm = 120;
@@ -1738,8 +1767,14 @@ static void morph_send_final_values(active_morph_t* m) {
   uint8_t channel = device_config_get_channel() - 1;
   
   for (int i = 0; i < m->num_ccs && i < 4; i++) {
-    send_control_change(channel, m->cc_numbers[i], m->target_values[i]);
-    s_last_cc_values[m->cc_numbers[i]] = m->target_values[i];
+    uint8_t target = m->target_values[i];
+    
+    // Only send if value differs from last sent (deduplication)
+    if (target != m->last_sent_values[i]) {
+      send_control_change(channel, m->cc_numbers[i], target);
+      s_last_cc_values[m->cc_numbers[i]] = target;
+      m->last_sent_values[i] = target;
+    }
   }
   
   ESP_LOGD(TAG, "Morph completed: CC%d -> %d", 
@@ -1766,23 +1801,59 @@ static void morph_advance_step(active_morph_t* m) {
     return;
   }
   
-  // Calculate intermediate values using linear interpolation
+  // Calculate intermediate values with discrete-aware interpolation
   uint8_t channel = device_config_get_channel() - 1;
   
   for (int i = 0; i < m->num_ccs && i < 4; i++) {
-    int16_t start = m->start_values[i];
-    int16_t target = m->target_values[i];
-    int16_t range = target - start;
+    uint8_t new_value;
     
-    // Linear interpolation: value = start + (range * step / total_steps)
-    int16_t value = start + (range * m->current_step) / m->total_steps;
+    if (m->discrete_counts[i] > 0) {
+      // Discrete parameter: interpolate between discrete indices
+      
+      // For delay_final params (≤4 discrete values), stay on start until last step
+      if (m->delay_final[i]) {
+        // Stay on start value until the very last step (handled by final values)
+        new_value = m->start_values[i];
+      } else {
+        // Multiple discrete values: interpolate between indices
+        float progress = (float)m->current_step / m->total_steps;
+        
+        int start_idx = find_discrete_index(m->discrete_values[i],
+          m->discrete_counts[i], m->start_values[i]);
+        int target_idx = find_discrete_index(m->discrete_values[i],
+          m->discrete_counts[i], m->target_values[i]);
+        
+        // Interpolate between discrete indices
+        int idx_range = target_idx - start_idx;
+        int current_idx = start_idx + (int)(idx_range * progress);
+        
+        // Clamp to valid range
+        if (current_idx < 0) current_idx = 0;
+        if (current_idx >= m->discrete_counts[i]) current_idx = m->discrete_counts[i] - 1;
+        
+        new_value = m->discrete_values[i][current_idx];
+      }
+    } else {
+      // Continuous parameter: linear interpolation
+      int16_t start = m->start_values[i];
+      int16_t target = m->target_values[i];
+      int16_t range = target - start;
+      
+      int16_t value = start + (range * m->current_step) / m->total_steps;
+      
+      // Clamp to 0-127
+      if (value < 0) value = 0;
+      if (value > 127) value = 127;
+      
+      new_value = (uint8_t)value;
+    }
     
-    // Clamp to 0-127
-    if (value < 0) value = 0;
-    if (value > 127) value = 127;
-    
-    send_control_change(channel, m->cc_numbers[i], (uint8_t)value);
-    s_last_cc_values[m->cc_numbers[i]] = (uint8_t)value;
+    // Only send if value changed (deduplication)
+    if (new_value != m->last_sent_values[i]) {
+      send_control_change(channel, m->cc_numbers[i], new_value);
+      s_last_cc_values[m->cc_numbers[i]] = new_value;
+      m->last_sent_values[i] = new_value;
+    }
   }
 }
 
@@ -1942,20 +2013,46 @@ static bool morph_start(const action_t* action, uint8_t num_ccs,
     get_sync_target_beat(action->morph_division) : 0;
   m->sync_waiting_final = false;
   
+  // Get device definition for discrete value lookup
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  
   for (int i = 0; i < num_ccs && i < 4; i++) {
     m->cc_numbers[i] = cc_numbers[i];
     m->start_values[i] = s_last_cc_values[cc_numbers[i]];
     m->target_values[i] = target_values[i];
+    m->last_sent_values[i] = m->start_values[i];  // Track for deduplication
+    
+    // Look up control definition for discrete values
+    const midi_control_t* ctrl = device ?
+      assets_get_control_by_cc(device, cc_numbers[i]) : NULL;
+    
+    if (ctrl && ctrl->discrete_count > 0 && ctrl->discrete_values) {
+      // Copy discrete values (up to MORPH_MAX_DISCRETE)
+      uint8_t dcount = ctrl->discrete_count;
+      if (dcount > MORPH_MAX_DISCRETE) dcount = MORPH_MAX_DISCRETE;
+      m->discrete_counts[i] = dcount;
+      for (int j = 0; j < dcount; j++) {
+        m->discrete_values[i][j] = (uint8_t)ctrl->discrete_values[j].value;
+      }
+      // Delay final value for params with ≤4 discrete values
+      m->delay_final[i] = (ctrl->discrete_count <= 4);
+    } else {
+      // Continuous parameter
+      m->discrete_counts[i] = 0;
+      m->delay_final[i] = false;
+    }
   }
   
   // Set first step time
   uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
   m->next_step_time = now + step_interval;
   
-  // Send first value immediately (start value)
+  // Send first value immediately (start value) - track for deduplication
   uint8_t channel = device_config_get_channel() - 1;
   for (int i = 0; i < num_ccs && i < 4; i++) {
     send_control_change(channel, cc_numbers[i], m->start_values[i]);
+    m->last_sent_values[i] = m->start_values[i];
   }
   
   // Start/update timer
