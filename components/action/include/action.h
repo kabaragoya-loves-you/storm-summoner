@@ -124,16 +124,28 @@ typedef enum {
 } morph_feel_t;
 
 // Musical divisions (for MORPH_TIMING_DURATION and MORPH_TIMING_SYNC)
+// Note: Values 0-6 preserved for backward compatibility with saved scenes
 typedef enum {
-  MORPH_DIV_BEAT = 0,     // 1 beat / next beat
-  MORPH_DIV_BAR,          // 1 bar / next bar
+  // Original values (backward compatible)
+  MORPH_DIV_1_BEAT = 0,   // 1 beat duration / next beat (was MORPH_DIV_BEAT)
+  MORPH_DIV_1_BAR,        // 1 bar duration / next bar (was MORPH_DIV_BAR)
   MORPH_DIV_2_BARS,       // 2 bars
   MORPH_DIV_4_BARS,       // 4 bars
-  MORPH_DIV_BEAT_2,       // Specific beat 2
-  MORPH_DIV_BEAT_3,       // Specific beat 3
-  MORPH_DIV_BEAT_4,       // Specific beat 4
+  MORPH_DIV_BEAT_2,       // SYNC: land on beat 2
+  MORPH_DIV_BEAT_3,       // SYNC: land on beat 3
+  MORPH_DIV_BEAT_4,       // SYNC: land on beat 4
+  
+  // New duration values (added for DURATION mode)
+  MORPH_DIV_2_BEATS,      // 2 beats duration
+  MORPH_DIV_3_BEATS,      // 3 beats duration
+  MORPH_DIV_3_BARS,       // 3 bars duration
+  
   MORPH_DIV_MAX
 } morph_division_t;
+
+// Backward compatibility aliases
+#define MORPH_DIV_BEAT MORPH_DIV_1_BEAT
+#define MORPH_DIV_BAR  MORPH_DIV_1_BAR
 
 // Action parameters (flexible union for different action types)
 typedef struct {

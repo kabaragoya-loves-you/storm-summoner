@@ -1632,10 +1632,17 @@ static uint32_t get_duration_ms(morph_division_t div, uint16_t bpm) {
   if (felt_beats == 0) felt_beats = 4;
   
   switch (div) {
-    case MORPH_DIV_BEAT:   return beat_ms;
-    case MORPH_DIV_BAR:    return beat_ms * felt_beats;
-    case MORPH_DIV_2_BARS: return beat_ms * felt_beats * 2;
-    case MORPH_DIV_4_BARS: return beat_ms * felt_beats * 4;
+    // Beat-based durations
+    case MORPH_DIV_1_BEAT:  return beat_ms;
+    case MORPH_DIV_2_BEATS: return beat_ms * 2;
+    case MORPH_DIV_3_BEATS: return beat_ms * 3;
+    
+    // Bar-based durations
+    case MORPH_DIV_1_BAR:   return beat_ms * felt_beats;
+    case MORPH_DIV_2_BARS:  return beat_ms * felt_beats * 2;
+    case MORPH_DIV_3_BARS:  return beat_ms * felt_beats * 3;
+    case MORPH_DIV_4_BARS:  return beat_ms * felt_beats * 4;
+    
     // Beat targets not applicable for duration mode, default to 1 beat
     default: return beat_ms;
   }
@@ -2147,25 +2154,35 @@ morph_feel_t morph_feel_from_string(const char* str) {
 
 const char* morph_division_to_string(morph_division_t div) {
   switch (div) {
-    case MORPH_DIV_BEAT:   return "beat";
-    case MORPH_DIV_BAR:    return "bar";
-    case MORPH_DIV_2_BARS: return "2_bars";
-    case MORPH_DIV_4_BARS: return "4_bars";
-    case MORPH_DIV_BEAT_2: return "beat_2";
-    case MORPH_DIV_BEAT_3: return "beat_3";
-    case MORPH_DIV_BEAT_4: return "beat_4";
-    default: return "bar";
+    case MORPH_DIV_1_BEAT:  return "1_beat";
+    case MORPH_DIV_1_BAR:   return "1_bar";
+    case MORPH_DIV_2_BARS:  return "2_bars";
+    case MORPH_DIV_4_BARS:  return "4_bars";
+    case MORPH_DIV_BEAT_2:  return "beat_2";
+    case MORPH_DIV_BEAT_3:  return "beat_3";
+    case MORPH_DIV_BEAT_4:  return "beat_4";
+    case MORPH_DIV_2_BEATS: return "2_beats";
+    case MORPH_DIV_3_BEATS: return "3_beats";
+    case MORPH_DIV_3_BARS:  return "3_bars";
+    default: return "1_bar";
   }
 }
 
 morph_division_t morph_division_from_string(const char* str) {
-  if (!str) return MORPH_DIV_BAR;
-  if (strcmp(str, "beat") == 0) return MORPH_DIV_BEAT;
-  if (strcmp(str, "bar") == 0) return MORPH_DIV_BAR;
+  if (!str) return MORPH_DIV_1_BAR;
+  // New format
+  if (strcmp(str, "1_beat") == 0) return MORPH_DIV_1_BEAT;
+  if (strcmp(str, "1_bar") == 0) return MORPH_DIV_1_BAR;
+  if (strcmp(str, "2_beats") == 0) return MORPH_DIV_2_BEATS;
+  if (strcmp(str, "3_beats") == 0) return MORPH_DIV_3_BEATS;
+  if (strcmp(str, "3_bars") == 0) return MORPH_DIV_3_BARS;
+  // Legacy format (backward compatibility)
+  if (strcmp(str, "beat") == 0) return MORPH_DIV_1_BEAT;
+  if (strcmp(str, "bar") == 0) return MORPH_DIV_1_BAR;
   if (strcmp(str, "2_bars") == 0) return MORPH_DIV_2_BARS;
   if (strcmp(str, "4_bars") == 0) return MORPH_DIV_4_BARS;
   if (strcmp(str, "beat_2") == 0) return MORPH_DIV_BEAT_2;
   if (strcmp(str, "beat_3") == 0) return MORPH_DIV_BEAT_3;
   if (strcmp(str, "beat_4") == 0) return MORPH_DIV_BEAT_4;
-  return MORPH_DIV_BAR;
+  return MORPH_DIV_1_BAR;
 }

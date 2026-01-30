@@ -3510,26 +3510,62 @@ static void nav_to_morph_feel(void* user_data) {
 }
 
 // ============================================================================
-// Morph Division Roller - only when timing=duration or sync
+// Morph Division Roller - context-aware based on timing mode
 // ============================================================================
 
-static const char* morph_division_display_names[] = {
-  "Beat", "Bar", "2 Bars", "4 Bars", "Beat 2", "Beat 3", "Beat 4"
+// Duration mode options: 1 Beat, 2 Beats, 3 Beats, 1 Bar, 2 Bars, 3 Bars, 4 Bars
+static const morph_division_t duration_divisions[] = {
+  MORPH_DIV_1_BEAT, MORPH_DIV_2_BEATS, MORPH_DIV_3_BEATS,
+  MORPH_DIV_1_BAR, MORPH_DIV_2_BARS, MORPH_DIV_3_BARS, MORPH_DIV_4_BARS
 };
+static const char* duration_division_names =
+  "1 Beat\n2 Beats\n3 Beats\n1 Bar\n2 Bars\n3 Bars\n4 Bars";
+#define DURATION_DIV_COUNT 7
+
+// Sync mode options: Next Beat, Next Bar, Two Bars, Four Bars, Beat 2, Beat 3, Beat 4
+static const morph_division_t sync_divisions[] = {
+  MORPH_DIV_1_BEAT, MORPH_DIV_1_BAR, MORPH_DIV_2_BARS, MORPH_DIV_4_BARS,
+  MORPH_DIV_BEAT_2, MORPH_DIV_BEAT_3, MORPH_DIV_BEAT_4
+};
+static const char* sync_division_names =
+  "Next Beat\nNext Bar\nTwo Bars\nFour Bars\nBeat 2\nBeat 3\nBeat 4";
+#define SYNC_DIV_COUNT 7
 
 static const char* get_morph_division_display(action_t* action) {
-  if (!action) return "Bar";
-  if (action->morph_division >= MORPH_DIV_MAX) return "Bar";
-  return morph_division_display_names[action->morph_division];
+  if (!action) return "1 Bar";
+  
+  morph_division_t div = action->morph_division;
+  switch (div) {
+    case MORPH_DIV_1_BEAT:  return "1 Beat";
+    case MORPH_DIV_2_BEATS: return "2 Beats";
+    case MORPH_DIV_3_BEATS: return "3 Beats";
+    case MORPH_DIV_1_BAR:   return "1 Bar";
+    case MORPH_DIV_2_BARS:  return "2 Bars";
+    case MORPH_DIV_3_BARS:  return "3 Bars";
+    case MORPH_DIV_4_BARS:  return "4 Bars";
+    case MORPH_DIV_BEAT_2:  return "Beat 2";
+    case MORPH_DIV_BEAT_3:  return "Beat 3";
+    case MORPH_DIV_BEAT_4:  return "Beat 4";
+    default: return "1 Bar";
+  }
 }
 
 static void morph_division_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   if (!s_ctx || !s_ctx->target_action) return;
   
-  s_ctx->target_action->morph_division = (morph_division_t)selected_index;
-  ESP_LOGD(TAG, "Set morph division: %s", 
-    morph_division_to_string(s_ctx->target_action->morph_division));
+  // Map roller index to actual enum value based on timing mode
+  morph_division_t div;
+  if (s_ctx->target_action->morph_timing_mode == MORPH_TIMING_SYNC) {
+    div = (selected_index < SYNC_DIV_COUNT) ?
+      sync_divisions[selected_index] : MORPH_DIV_1_BAR;
+  } else {
+    div = (selected_index < DURATION_DIV_COUNT) ?
+      duration_divisions[selected_index] : MORPH_DIV_1_BAR;
+  }
+  
+  s_ctx->target_action->morph_division = div;
+  ESP_LOGD(TAG, "Set morph division: %s", morph_division_to_string(div));
   
   return_to_detail_page(2);
 }
@@ -3539,11 +3575,34 @@ static lv_obj_t* morph_division_roller_create(void) {
     return menu_create_roller_page("Division", "Error", 0, NULL, NULL);
   }
   
-  uint32_t current_idx = (uint32_t)s_ctx->target_action->morph_division;
-  if (current_idx >= MORPH_DIV_MAX) current_idx = 1;  // Default to bar
+  action_t* action = s_ctx->target_action;
+  morph_division_t current_div = action->morph_division;
   
-  return menu_create_roller_page("Division",
-    "Beat\nBar\n2 Bars\n4 Bars\nBeat 2\nBeat 3\nBeat 4",
+  // Choose options based on timing mode
+  const morph_division_t* divisions;
+  const char* names;
+  int count;
+  
+  if (action->morph_timing_mode == MORPH_TIMING_SYNC) {
+    divisions = sync_divisions;
+    names = sync_division_names;
+    count = SYNC_DIV_COUNT;
+  } else {
+    divisions = duration_divisions;
+    names = duration_division_names;
+    count = DURATION_DIV_COUNT;
+  }
+  
+  // Find current division in the appropriate list
+  uint32_t current_idx = 0;
+  for (int i = 0; i < count; i++) {
+    if (divisions[i] == current_div) {
+      current_idx = i;
+      break;
+    }
+  }
+  
+  return menu_create_roller_page("Division", names,
     current_idx, morph_division_confirm_cb, NULL);
 }
 
