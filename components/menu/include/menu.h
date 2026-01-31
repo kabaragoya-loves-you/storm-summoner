@@ -73,6 +73,9 @@ lv_group_t* menu_get_group(void);
 // Get current menu screen (for restoration after screensaver)
 lv_obj_t* menu_get_current_screen(void);
 
+// Get current menu container (for expression pedal navigation)
+lv_obj_t* menu_get_current_container(void);
+
 // Helper: Create a menu screen with title and items
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count);
 

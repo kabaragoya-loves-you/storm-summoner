@@ -29,6 +29,7 @@
 #define NVS_KEY_EXP_PREV_MODE "exp_prev_mode"
 #define NVS_KEY_EXP_GATE_LOG "exp_gate_log"
 #define NVS_KEY_EXP_SLOW_DELAY "exp_slow_dly"
+#define NVS_KEY_EXP_MENU_NAV "exp_menu_nav"
 
 // Default calibration values
 #define DEFAULT_MIN_VALUE 100
@@ -64,6 +65,7 @@ static bool s_pedal_state = false;  // For sustain/sostenuto (true = pressed)
 static bool s_logging_enabled = false;  // Control periodic value logging
 static bool s_gate_logging_enabled = false;  // Control gate change message logging
 static uint8_t s_slow_delay_ms = DEFAULT_SLOW_DELAY;  // Configurable slow polling delay
+static expression_menu_nav_mode_t s_menu_nav_mode = EXPR_MENU_NAV_HEEL_MIN;  // Menu navigation mode
 
 // Filtering state
 static int s_samples[MOVING_AVG_LENGTH] = {0};
@@ -444,6 +446,13 @@ void expression_init(bool enable_logging) {
     app_settings_save_u8(NVS_KEY_EXP_SLOW_DELAY, s_slow_delay_ms);
   }
   
+  // Load menu navigation mode
+  if (app_settings_load_u8(NVS_KEY_EXP_MENU_NAV, &stored_u8) == APP_SETTINGS_OK) {
+    if (stored_u8 <= EXPR_MENU_NAV_TOE_MIN) {
+      s_menu_nav_mode = (expression_menu_nav_mode_t)stored_u8;
+    }
+  }
+  
   // Configure cable detection GPIO
   gpio_config_t io_conf = {
     .pin_bit_mask = (1ULL << PIN_EXP_SW),
@@ -688,6 +697,19 @@ void expression_set_slow_delay(uint8_t delay_ms) {
 
 uint8_t expression_get_slow_delay(void) {
   return s_slow_delay_ms;
+}
+
+void expression_set_menu_nav_mode(expression_menu_nav_mode_t mode) {
+  if (mode > EXPR_MENU_NAV_TOE_MIN) mode = EXPR_MENU_NAV_OFF;
+  s_menu_nav_mode = mode;
+  app_settings_save_u8(NVS_KEY_EXP_MENU_NAV, (uint8_t)mode);
+  const char* mode_str = (mode == EXPR_MENU_NAV_OFF) ? "Off" :
+    (mode == EXPR_MENU_NAV_HEEL_MIN) ? "Heel Min" : "Toe Min";
+  ESP_LOGI(TAG, "Menu navigation mode set to: %s", mode_str);
+}
+
+expression_menu_nav_mode_t expression_get_menu_nav_mode(void) {
+  return s_menu_nav_mode;
 }
 
 // Helper: Compare function for qsort

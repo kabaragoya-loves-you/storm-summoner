@@ -49,6 +49,15 @@ typedef enum {
 } pedal_switch_type_t;
 
 /**
+ * Menu navigation mode for expression pedal in programming mode
+ */
+typedef enum {
+  EXPR_MENU_NAV_OFF = 0,          // Menu navigation disabled
+  EXPR_MENU_NAV_HEEL_MIN,         // Heel = first item, Toe = last item (default)
+  EXPR_MENU_NAV_TOE_MIN           // Toe = first item, Heel = last item (reversed)
+} expression_menu_nav_mode_t;
+
+/**
  * Initialize expression pedal component
  * Sets up GPIO for cable detection
  * Loads calibration from NVS
@@ -213,5 +222,17 @@ void expression_set_slow_delay(uint8_t delay_ms);
  * @return Delay in ms
  */
 uint8_t expression_get_slow_delay(void);
+
+/**
+ * Set menu navigation mode for programming mode
+ * @param mode The navigation mode to set
+ */
+void expression_set_menu_nav_mode(expression_menu_nav_mode_t mode);
+
+/**
+ * Get current menu navigation mode
+ * @return Current navigation mode
+ */
+expression_menu_nav_mode_t expression_get_menu_nav_mode(void);
 
 #endif /* _EXPRESSION_H */

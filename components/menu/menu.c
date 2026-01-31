@@ -1115,6 +1115,13 @@ lv_obj_t* menu_get_current_screen(void) {
   return NULL;
 }
 
+lv_obj_t* menu_get_current_container(void) {
+  if (menu_state.stack_depth > 0) {
+    return menu_state.stack[menu_state.stack_depth - 1].container;
+  }
+  return NULL;
+}
+
 static void update_top_level_flag(void) {
   bool is_top_level = (menu_state.stack_depth == 1);
   ui_set_programming_top_level(is_top_level);

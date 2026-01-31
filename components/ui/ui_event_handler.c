@@ -8,6 +8,8 @@
 #include "touch.h"
 #include "touch_thresholds.h"
 #include "driver/touch_sens.h"
+#include "expression.h"
+#include "misc/lv_async.h"
 #include <inttypes.h>
 
 #define TAG "UI_EVENT"
@@ -214,6 +216,116 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
   }
 }
 
+// ============================================================================
+// Expression pedal menu navigation
+// ============================================================================
+
+// Pending expression value for async LVGL updates
+static volatile uint8_t s_pending_expr_value = 0;
+static volatile bool s_expr_async_pending = false;
+
+// Map MIDI value (0-127) to item index, with end-zone expansion for calibration tolerance
+static uint32_t map_midi_to_index(uint8_t midi_value, uint32_t item_count) {
+  if (item_count == 0) return 0;
+  if (item_count == 1) return 0;
+  
+  // Expand ends to compensate for calibration margins (ensure full range coverage)
+  // Values near 0 snap to 0, values near 127 snap to 127
+  if (midi_value <= 3) midi_value = 0;
+  else if (midi_value >= 124) midi_value = 127;
+  
+  // Map 0-127 to 0-(count-1)
+  return (midi_value * (item_count - 1)) / 127;
+}
+
+// Async callback to perform LVGL operations in the LVGL task context
+static void expression_menu_nav_async(void* user_data) {
+  (void)user_data;
+  s_expr_async_pending = false;
+  
+  // Re-check conditions in LVGL context
+  if (ui_get_app_mode() != APP_MODE_PROGRAMMING) return;
+  
+  expression_menu_nav_mode_t nav_mode = expression_get_menu_nav_mode();
+  if (nav_mode == EXPR_MENU_NAV_OFF) return;
+  
+  lv_group_t* group = menu_get_group();
+  if (!group) return;
+  
+  uint8_t midi_value = s_pending_expr_value;
+  
+  // Handle reversed direction
+  if (nav_mode == EXPR_MENU_NAV_TOE_MIN) {
+    midi_value = 127 - midi_value;
+  }
+  
+  if (lv_group_get_editing(group)) {
+    // Roller page - direct index mapping
+    lv_obj_t* focused = lv_group_get_focused(group);
+    if (!focused) return;
+    if (!lv_obj_check_type(focused, &lv_roller_class)) return;
+    
+    uint32_t option_count = lv_roller_get_option_count(focused);
+    uint32_t new_index = map_midi_to_index(midi_value, option_count);
+    lv_roller_set_selected(focused, new_index, LV_ANIM_OFF);
+  } else {
+    // Menu list - focus navigation
+    lv_obj_t* container = menu_get_current_container();
+    if (!container) return;
+    
+    // Count clickable items
+    uint32_t child_cnt = lv_obj_get_child_count(container);
+    uint32_t clickable_count = 0;
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(container, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        clickable_count++;
+      }
+    }
+    if (clickable_count == 0) return;
+    
+    uint32_t target_idx = map_midi_to_index(midi_value, clickable_count);
+    
+    // Find and focus the target item
+    uint32_t current_idx = 0;
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(container, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        if (current_idx == target_idx) {
+          lv_group_focus_obj(child);
+          lv_obj_scroll_to_view(child, LV_ANIM_OFF);
+          break;
+        }
+        current_idx++;
+      }
+    }
+  }
+}
+
+// Handle expression pedal value changes for menu/roller navigation
+static void expression_value_handler(const event_t* event, void* context) {
+  (void)context;
+  
+  // Only process in programming mode
+  if (ui_get_app_mode() != APP_MODE_PROGRAMMING) return;
+  
+  // Check menu nav mode early (before more expensive checks)
+  expression_menu_nav_mode_t nav_mode = expression_get_menu_nav_mode();
+  if (nav_mode == EXPR_MENU_NAV_OFF) return;
+  
+  // Only process if expression pedal is connected and in PEDAL mode
+  if (!expression_is_connected()) return;
+  if (expression_get_mode() != EXPRESSION_MODE_PEDAL) return;
+  
+  // Store value and schedule async LVGL update (coalesce rapid updates)
+  s_pending_expr_value = event->data.expression.midi_value;
+  
+  if (!s_expr_async_pending) {
+    s_expr_async_pending = true;
+    lv_async_call(expression_menu_nav_async, NULL);
+  }
+}
+
 void ui_event_handler_init(void) {
   ESP_LOGI(TAG, "Initializing UI event handler");
 
@@ -246,6 +358,13 @@ void ui_event_handler_init(void) {
   ret = event_bus_subscribe(EVENT_MODE_CHANGE_REQUEST, ui_handle_mode_change_event, NULL);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to subscribe to MODE_CHANGE_REQUEST events: %s", esp_err_to_name(ret));
+    return;
+  }
+  
+  // Subscribe to expression pedal events for menu navigation
+  ret = event_bus_subscribe(EVENT_EXPRESSION_VALUE, expression_value_handler, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to EXPRESSION_VALUE events: %s", esp_err_to_name(ret));
     return;
   }
   

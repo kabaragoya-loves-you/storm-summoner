@@ -18,13 +18,14 @@ static lv_obj_t* calibration_page_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_EXPR_ITEMS 5
+#define MAX_EXPR_ITEMS 6
 static menu_item_t s_expr_items[MAX_EXPR_ITEMS];
 
 static char s_polarity_label[LABEL_BUFFER_SETS][40];
 static char s_slow_delay_label[LABEL_BUFFER_SETS][32];
 static char s_switch_type_label[LABEL_BUFFER_SETS][40];
 static char s_calibrate_label[LABEL_BUFFER_SETS][32];
+static char s_menu_nav_label[LABEL_BUFFER_SETS][40];
 
 static bool s_callback_in_progress = false;
 
@@ -160,6 +161,39 @@ static lv_obj_t* slow_delay_roller_create(void) {
 static void nav_to_slow_delay(void* user_data) {
   (void)user_data;
   menu_navigate_to("Slow Delay", slow_delay_roller_create);
+}
+
+// ============================================================================
+// Menu Navigation Mode Roller
+// ============================================================================
+
+static void menu_nav_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  expression_menu_nav_mode_t mode = (expression_menu_nav_mode_t)selected_index;
+  expression_set_menu_nav_mode(mode);
+  
+  ESP_LOGI(TAG, "Menu navigation mode set to: %u", (unsigned)selected_index);
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Expression", menu_page_settings_expression_create);
+}
+
+static lv_obj_t* menu_nav_roller_create(void) {
+  expression_menu_nav_mode_t current = expression_get_menu_nav_mode();
+  uint32_t current_idx = (uint32_t)current;
+  if (current_idx > 2) current_idx = 1;  // Default to Heel Min
+  
+  return menu_create_roller_page("Menu Navigation",
+    "Off\nHeel Min\nToe Min", current_idx, menu_nav_confirm_cb, NULL);
+}
+
+static void nav_to_menu_nav(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Menu Navigation", menu_nav_roller_create);
 }
 
 // ============================================================================
@@ -475,6 +509,14 @@ lv_obj_t* menu_page_settings_expression_create(void) {
   snprintf(s_slow_delay_label[buf], sizeof(s_slow_delay_label[buf]),
     "Slow Delay\n%u ms", (unsigned)slow_delay);
   s_expr_items[item_count++] = (menu_item_t){s_slow_delay_label[buf], nav_to_slow_delay, NULL, true};
+  
+  // Menu Navigation
+  expression_menu_nav_mode_t menu_nav = expression_get_menu_nav_mode();
+  const char* nav_str = (menu_nav == EXPR_MENU_NAV_OFF) ? "Off" :
+    (menu_nav == EXPR_MENU_NAV_HEEL_MIN) ? "Heel Min" : "Toe Min";
+  snprintf(s_menu_nav_label[buf], sizeof(s_menu_nav_label[buf]),
+    "Menu Navigation\n%s", nav_str);
+  s_expr_items[item_count++] = (menu_item_t){s_menu_nav_label[buf], nav_to_menu_nav, NULL, true};
   
   return menu_create_page_2line("Expression", s_expr_items, item_count);
 }

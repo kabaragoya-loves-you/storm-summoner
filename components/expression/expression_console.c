@@ -7,7 +7,7 @@
 static const char* TAG = "expression_console";
 
 static const char* registered_commands[] = {
-  "info", "calibrate", "polarity", "switch_type", "gate_log", "slow_delay"
+  "info", "calibrate", "polarity", "switch_type", "gate_log", "slow_delay", "menu_nav"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -43,6 +43,10 @@ static int cmd_info(int argc, char **argv) {
     ESP_LOGI(TAG, "Slow delay: %u ms", (unsigned)expression_get_slow_delay());
     uint8_t midi_val = expression_get_midi_value();
     ESP_LOGI(TAG, "Current value: %d (0-127)", midi_val);
+    expression_menu_nav_mode_t nav_mode = expression_get_menu_nav_mode();
+    const char* nav_str = (nav_mode == EXPR_MENU_NAV_OFF) ? "Off" :
+      (nav_mode == EXPR_MENU_NAV_HEEL_MIN) ? "Heel Min" : "Toe Min";
+    ESP_LOGI(TAG, "Menu navigation: %s", nav_str);
   } else if (mode == EXPRESSION_MODE_SUSTAIN || mode == EXPRESSION_MODE_SOSTENUTO) {
     ESP_LOGI(TAG, "Switch type: %s", switch_str);
   } else if (mode == EXPRESSION_MODE_GATE) {
@@ -209,6 +213,38 @@ static int cmd_slow_delay(int argc, char **argv) {
   return 0;
 }
 
+// Command: menu_nav
+static struct {
+  struct arg_str *mode;
+  struct arg_end *end;
+} menu_nav_args;
+
+static int cmd_menu_nav(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &menu_nav_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, menu_nav_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* mode_str = menu_nav_args.mode->sval[0];
+  expression_menu_nav_mode_t mode;
+  
+  if (strcmp(mode_str, "off") == 0) {
+    mode = EXPR_MENU_NAV_OFF;
+  } else if (strcmp(mode_str, "heel_min") == 0 || strcmp(mode_str, "heel") == 0) {
+    mode = EXPR_MENU_NAV_HEEL_MIN;
+  } else if (strcmp(mode_str, "toe_min") == 0 || strcmp(mode_str, "toe") == 0) {
+    mode = EXPR_MENU_NAV_TOE_MIN;
+  } else {
+    ESP_LOGE(TAG, "Unknown mode. Use: off, heel_min, or toe_min");
+    return 1;
+  }
+  
+  expression_set_menu_nav_mode(mode);
+  
+  return 0;
+}
+
 esp_err_t expression_console_init(void) {
   ESP_LOGI(TAG, "Registering expression commands");
   
@@ -285,6 +321,19 @@ esp_err_t expression_console_init(void) {
     .argtable = &slow_delay_args
   };
   esp_console_cmd_register(&slow_delay_cmd);
+  
+  // menu_nav command
+  menu_nav_args.mode = arg_str1(NULL, NULL, "<off|heel_min|toe_min>", "Menu navigation mode");
+  menu_nav_args.end = arg_end(2);
+  
+  const esp_console_cmd_t menu_nav_cmd = {
+    .command = "menu_nav",
+    .help = "Set menu navigation mode (off, heel_min, toe_min)",
+    .hint = NULL,
+    .func = &cmd_menu_nav,
+    .argtable = &menu_nav_args
+  };
+  esp_console_cmd_register(&menu_nav_cmd);
   
   return ESP_OK;
 }
