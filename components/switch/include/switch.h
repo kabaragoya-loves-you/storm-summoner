@@ -36,6 +36,15 @@ void switch_init(void);
 bool switch_set_channel(switch_channel_t channel);
 
 /**
+ * Set CV channels using a bitmask (channels 0-3)
+ * Allows multiple channels to be active at once
+ * Preserves expression channels (4-7)
+ * @param mask Bitmask of channels 0-3 to set (bit 0 = P0, bit 1 = P1, etc.)
+ * @return true on success, false on I2C error
+ */
+bool switch_set_cv_mask(uint8_t mask);
+
+/**
  * Set expression channels using a bitmask (channels 4-7)
  * Allows multiple channels to be active at once
  * Preserves CV channels (0-3)

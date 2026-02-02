@@ -220,7 +220,7 @@ esp_err_t console_repl_init(void) {
   esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
   repl_config.prompt = g_console_state.prompt;
   repl_config.max_cmdline_length = 256;
-  repl_config.task_stack_size = 5120;
+  repl_config.task_stack_size = 6144;
   
   esp_console_dev_usb_serial_jtag_config_t usb_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
   esp_err_t ret = esp_console_new_repl_usb_serial_jtag(&usb_config, &repl_config, &g_repl);

@@ -8,9 +8,9 @@
 
 // TMUX1113 has inverted logic on channels 2 and 3 (active-low select)
 // Expression switches (P4-P7): TMUX1113 on ALL boards - P5,P6 inverted
-// CV switches (P0-P3): SN74HC4066 on Rev 9 (no inversion), TMUX1113 on Rev 10+ (P1,P2 inverted)
+// CV switches (P0-P3): SN74HC4066 on Rev 9 (no inversion), TMUX1113 on Rev 10+ (P2,P3 inverted)
 #define EXPRESSION_INVERTED_MASK 0x60  // Bits 5,6 = 0b01100000 (always applied)
-#define CV_INVERTED_MASK         0x06  // Bits 1,2 = 0b00000110 (Rev 10+ only)
+#define CV_INVERTED_MASK         0x0C  // Bits 2,3 = 0b00001100 (Rev 10+ only)
 
 // PCA9534 configuration
 #define SWITCH_I2C_ADDR        I2C_ADDR_SWITCH
@@ -136,6 +136,54 @@ bool switch_set_channel(switch_channel_t channel) {
   
   ESP_LOGD(TAG, "CV channel set to %d, logical: 0x%02X, physical: 0x%02X", 
     channel, new_mask, physical_mask);
+  
+  return true;
+}
+
+bool switch_set_cv_mask(uint8_t cv_mask) {
+  if (!s_dev_handle) {
+    ESP_LOGE(TAG, "Switch not initialized");
+    return false;
+  }
+  
+  // Work with logical mask
+  uint8_t current_mask = s_current_mask;
+  
+  // Clear CV channels (bits 0-3), preserve expression channels (bits 4-7)
+  uint8_t new_mask = current_mask & 0xF0;
+  
+  // Set the requested CV channels (only bits 0-3 are valid)
+  new_mask |= (cv_mask & 0x0F);
+  
+  // Convert logical mask to physical and write
+  uint8_t physical_mask = logical_to_physical_mask(new_mask);
+  esp_err_t ret = i2c_common_write_reg(s_dev_handle, SWITCH_REG_OUTPUT, physical_mask);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set CV mask 0x%02X: %s", cv_mask, esp_err_to_name(ret));
+    return false;
+  }
+  
+  s_current_mask = new_mask;  // Store logical mask
+  
+  // Update s_current_channel (only meaningful if single CV channel active)
+  int cv_bits = new_mask & 0x0F;
+  if (cv_bits == 0) {
+    s_current_channel = SWITCH_CHANNEL_NONE;
+  } else {
+    // Check if exactly one CV bit is set
+    int bit_count = 0;
+    int single_channel = -1;
+    for (int i = 0; i < 4; i++) {
+      if (cv_bits & (1 << i)) {
+        bit_count++;
+        single_channel = i;
+      }
+    }
+    s_current_channel = (bit_count == 1) ? (switch_channel_t)single_channel : SWITCH_CHANNEL_NONE;
+  }
+  
+  ESP_LOGD(TAG, "CV mask set to 0x%02X, logical: 0x%02X, physical: 0x%02X", 
+    cv_mask, new_mask, physical_mask);
   
   return true;
 }

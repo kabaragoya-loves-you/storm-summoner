@@ -134,8 +134,6 @@ void app_main(void) {
     expression_set_mode(initial_scene->expression_mode);
     input_set_mode(initial_scene->cv_input_mode);
   }
-  
-  dac_calibrate_vref();  
 
   sensor_init(false);
   als_enable();
@@ -181,6 +179,9 @@ void app_main(void) {
   
   ui_set_draw_module(&scene_ui_module);
   tempo_start();
+
+  // Schedule VREF calibration after system has fully settled
+  dac_schedule_calibration(2000);
 
   // Start LFO task (component was initialized earlier with other MIDI handlers)
   lfo_start();

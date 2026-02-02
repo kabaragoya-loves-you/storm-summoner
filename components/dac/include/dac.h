@@ -90,6 +90,14 @@ esp_err_t dac_calibrate_vref(void);
 float dac_get_vref(void);
 
 /**
+ * Schedule VREF calibration after a delay
+ * Use this to defer calibration until after boot has fully settled
+ * @param delay_ms Delay in milliseconds before calibration runs
+ * @return ESP_OK on success
+ */
+esp_err_t dac_schedule_calibration(uint32_t delay_ms);
+
+/**
  * Set the power-down mode (fast write)
  * @param power_down Power-down mode
  * @return ESP_OK on success

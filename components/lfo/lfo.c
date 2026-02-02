@@ -391,6 +391,12 @@ static uint8_t calculate_waveform(lfo_state_t* lfo) {
 }
 
 static void lfo_task(void* arg) {
+  // Allow lfo_start() to complete before this task consumes CPU.
+  // Without this yield, lfo_start() is preempted mid-function and
+  // lower-priority tasks (like app_main) may never get scheduled again.
+  // Note: Must use 1 tick directly, as pdMS_TO_TICKS(1) rounds to 0 at 100Hz.
+  vTaskDelay(1);
+
   uint32_t last_update_time = 0;
   const uint32_t update_interval_ms = 1000 / LFO_UPDATE_RATE_HZ;
 

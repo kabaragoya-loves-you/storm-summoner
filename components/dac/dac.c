@@ -5,6 +5,7 @@
 #include "adc_manager.h"
 #include "hal/adc_types.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -22,9 +23,13 @@
 static float s_vref = 3.3f;  // Default assumed value
 
 // ADC calibration correction factor (multiply measured voltage by this)
-// The ESP32-P4 ADC tends to read slightly high at the top of its range
-// Adjust this value to fine-tune DAC output accuracy
-#define ADC_VREF_CORRECTION 0.970f  // 3.14V / 3.24V based on empirical measurement
+// Set to 1.0 - ADC reads VDD accurately
+#define ADC_VREF_CORRECTION 1.0f
+
+// DAC output correction factor (multiply calculated DAC code by this)
+// Compensates for ~0.5% gain in the CV output path (op-amp, resistor tolerances)
+// Empirically tuned to match measured codes at VDD=3.306V
+#define DAC_OUTPUT_CORRECTION 0.9950f
 
 // Target voltages for each CV range mode (ideal reference voltages)
 // Order matches mcp4725_cv_range_t enum
@@ -36,15 +41,14 @@ static const float cv_range_target_voltages[] = {
   1.650f   // MCP4725_RANGE_3V3         (switch ch 3)
 };
 
-// DAC codes calculated for ideal 3.3V VDD (used during initialization)
-// These provide reasonable output until calibration runs
-// Values = (target_voltage / 3.3V) * 4095, rounded to nearest integer
+// DAC codes empirically calibrated at VDD=3.31V with output correction applied
+// These provide accurate output until VREF calibration runs
 static const uint16_t cv_range_initial_codes[] = {
-  1757,  // MCP4725_RANGE_BIPOLAR_10V: 1.416V @ 3.3V
-  3080,  // MCP4725_RANGE_10V:         2.481V @ 3.3V
-  1540,  // MCP4725_RANGE_BIPOLAR_5V:  1.241V @ 3.3V
-  2461,  // MCP4725_RANGE_5V:          1.983V @ 3.3V
-  2048   // MCP4725_RANGE_3V3:         1.650V @ 3.3V
+  1746,  // MCP4725_RANGE_BIPOLAR_10V: 1.416V
+  3058,  // MCP4725_RANGE_10V:         2.481V
+  1528,  // MCP4725_RANGE_BIPOLAR_5V:  1.241V
+  2444,  // MCP4725_RANGE_5V:          1.983V
+  2034   // MCP4725_RANGE_3V3:         1.650V
 };
 
 static i2c_master_dev_handle_t s_dev_handle = NULL;
@@ -122,12 +126,12 @@ esp_err_t dac_set_value(uint16_t value) {
     value = MCP4725_MAX_VALUE;
   }
 
-  // Fast write mode: 2 bytes
-  // Byte 0: Command (0x40) + power-down bits (normal operation = 0) + upper 4 bits of value
-  // Byte 1: Lower 8 bits of value
+  // MCP4725 Fast write mode: 2 bytes (no command prefix)
+  // Byte 0: [0 0 PD1 PD0 D11 D10 D9 D8] - bits 7:6=00 for fast write, 5:4=power-down
+  // Byte 1: [D7 D6 D5 D4 D3 D2 D1 D0]
   uint8_t data[2];
-  data[0] = MCP4725_CMD_WRITE_DAC | ((value >> 8) & 0x0F);
-  data[1] = value & 0xFF;
+  data[0] = (value >> 8) & 0x0F;  // PD=00 (normal), upper 4 bits of 12-bit value
+  data[1] = value & 0xFF;         // Lower 8 bits
 
   esp_err_t ret = i2c_master_transmit(s_dev_handle, data, sizeof(data), -1);
   if (ret != ESP_OK) {
@@ -289,7 +293,9 @@ uint16_t dac_voltage_to_value(float voltage, float vref) {
   if (voltage > vref) voltage = vref;
   
   float ratio = voltage / vref;
-  uint16_t value = (uint16_t)(ratio * MCP4725_MAX_VALUE + 0.5f);  // Round to nearest
+  // Apply output correction factor to compensate for CV output path gain
+  float corrected = ratio * MCP4725_MAX_VALUE * DAC_OUTPUT_CORRECTION;
+  uint16_t value = (uint16_t)(corrected + 0.5f);  // Round to nearest
   
   if (value > MCP4725_MAX_VALUE) value = MCP4725_MAX_VALUE;
   
@@ -299,7 +305,9 @@ uint16_t dac_voltage_to_value(float voltage, float vref) {
 float dac_value_to_voltage(uint16_t value, float vref) {
   if (value > MCP4725_MAX_VALUE) value = MCP4725_MAX_VALUE;
   
-  return ((float)value / MCP4725_MAX_VALUE) * vref;
+  // Apply inverse of output correction to get actual output voltage
+  // (compensates for CV output path gain when displaying expected voltage)
+  return ((float)value / MCP4725_MAX_VALUE) * vref / DAC_OUTPUT_CORRECTION;
 }
 
 esp_err_t dac_set_cv_range(mcp4725_cv_range_t range) {
@@ -409,13 +417,17 @@ esp_err_t dac_calibrate_vref(void) {
   // Recalculate and update current DAC value with measured VREF
   float target_voltage = cv_range_target_voltages[s_current_cv_range];
   uint16_t new_dac_value = dac_voltage_to_value(target_voltage, s_vref);
-  uint16_t old_dac_value = cv_range_initial_codes[s_current_cv_range];
   
-  if (new_dac_value != old_dac_value) {
-    ret = dac_set_value(new_dac_value);
+  // Get current DAC value to see if update is needed
+  uint16_t current_dac_value = 0;
+  dac_get_value(&current_dac_value);
+  
+  if (new_dac_value != current_dac_value) {
+    // Write to both RAM and EEPROM so calibrated value persists
+    ret = dac_set_value_eeprom(new_dac_value, MCP4725_PD_NORMAL);
     if (ret == ESP_OK) {
-      ESP_LOGI(TAG, "Updated DAC: %u → %u (%.3fV target)", 
-        old_dac_value, new_dac_value, target_voltage);
+      ESP_LOGI(TAG, "Updated DAC: %u → %u (%.3fV target, written to EEPROM)", 
+        current_dac_value, new_dac_value, target_voltage);
     } else {
       ESP_LOGW(TAG, "Failed to update DAC after calibration: %s", esp_err_to_name(ret));
     }
@@ -426,4 +438,51 @@ esp_err_t dac_calibrate_vref(void) {
 
 float dac_get_vref(void) {
   return s_vref;
+}
+
+// Static handle for deferred VREF calibration timer
+static esp_timer_handle_t s_vref_timer = NULL;
+
+// Timer callback for deferred VREF calibration
+static void vref_calibration_timer_cb(void* arg) {
+  (void)arg;
+  ESP_LOGI(TAG, "Running deferred VREF calibration");
+  dac_calibrate_vref();
+  
+  // Clean up the one-shot timer
+  if (s_vref_timer) {
+    esp_timer_delete(s_vref_timer);
+    s_vref_timer = NULL;
+  }
+}
+
+esp_err_t dac_schedule_calibration(uint32_t delay_ms) {
+  // If a calibration is already scheduled, don't create another
+  if (s_vref_timer != NULL) {
+    ESP_LOGW(TAG, "VREF calibration already scheduled");
+    return ESP_OK;
+  }
+  
+  const esp_timer_create_args_t timer_args = {
+    .callback = vref_calibration_timer_cb,
+    .name = "vref_cal"
+  };
+  
+  esp_err_t ret = esp_timer_create(&timer_args, &s_vref_timer);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create VREF timer: %s", esp_err_to_name(ret));
+    s_vref_timer = NULL;
+    return ret;
+  }
+  
+  ret = esp_timer_start_once(s_vref_timer, delay_ms * 1000);  // Convert ms to us
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to start VREF timer: %s", esp_err_to_name(ret));
+    esp_timer_delete(s_vref_timer);
+    s_vref_timer = NULL;
+    return ret;
+  }
+  
+  ESP_LOGI(TAG, "VREF calibration scheduled for %lu ms from now", (unsigned long)delay_ms);
+  return ESP_OK;
 }
