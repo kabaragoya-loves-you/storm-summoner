@@ -39,6 +39,94 @@ static bool is_wheel_pad(uint8_t pad_id) {
   return pad_id < NUM_WHEEL_PADS;  // Pads 0-7 are wheel pads
 }
 
+// Helper to post haptic click feedback (reduces stack usage in handlers)
+static void post_haptic_click(void) {
+  event_t evt = {
+    .type = EVENT_HAPTIC_REQUEST,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.haptic = { .pattern = HAPTIC_CLICK }
+  };
+  event_bus_post(&evt);
+}
+
+// ============================================================================
+// Pad navigation async handlers (execute LVGL ops in LVGL task context)
+// ============================================================================
+
+// Pending navigation action for async execution
+typedef enum {
+  NAV_ACTION_NONE = 0,
+  NAV_ACTION_UP,
+  NAV_ACTION_DOWN,
+  NAV_ACTION_JUMP
+} nav_action_t;
+
+static volatile nav_action_t s_pending_nav_action = NAV_ACTION_NONE;
+
+// Async callback for pad 9/11 up/down navigation
+static void pad_nav_async(void* user_data) {
+  nav_action_t action = s_pending_nav_action;
+  s_pending_nav_action = NAV_ACTION_NONE;
+  
+  if (ui_get_app_mode() != APP_MODE_PROGRAMMING) return;
+  
+  lv_group_t* group = menu_get_group();
+  if (!group) return;
+  
+  if (action == NAV_ACTION_UP || action == NAV_ACTION_DOWN) {
+    bool is_up = (action == NAV_ACTION_UP);
+    
+    if (lv_group_get_editing(group)) {
+      // Editing mode - change roller selection
+      lv_obj_t* focused = lv_group_get_focused(group);
+      if (focused && lv_obj_check_type(focused, &lv_roller_class)) {
+        uint32_t count = lv_roller_get_option_count(focused);
+        uint32_t current = lv_roller_get_selected(focused);
+        uint32_t new_sel = is_up
+          ? (current > 0 ? current - 1 : 0)
+          : (current < count - 1 ? current + 1 : count - 1);
+        if (new_sel != current) {
+          lv_roller_set_selected(focused, new_sel, LV_ANIM_OFF);
+          post_haptic_click();
+        }
+      }
+    } else {
+      // Menu navigation mode
+      if (is_up) lv_group_focus_prev(group);
+      else lv_group_focus_next(group);
+      post_haptic_click();
+    }
+  } else if (action == NAV_ACTION_JUMP) {
+    if (lv_group_get_editing(group)) return;  // No jump in edit mode
+    
+    lv_obj_t* container = menu_get_current_container();
+    if (!container) return;
+    
+    lv_obj_t* focused = lv_group_get_focused(group);
+    uint32_t child_cnt = lv_obj_get_child_count(container);
+    
+    // Find first and last focusable items
+    lv_obj_t* first_focusable = NULL;
+    lv_obj_t* last_focusable = NULL;
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(container, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        if (!first_focusable) first_focusable = child;
+        last_focusable = child;
+      }
+    }
+    
+    // Toggle between first and last
+    if (first_focusable && last_focusable) {
+      lv_obj_t* target = (focused == first_focusable) ? last_focusable : first_focusable;
+      lv_group_focus_obj(target);
+      lv_obj_scroll_to_view(target, LV_ANIM_OFF);
+      post_haptic_click();
+    }
+  }
+}
+
 static void load_config_from_settings(void) {
   esp_err_t err;
   
@@ -149,22 +237,32 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       }
     }
     
+    // Handle pads 9/10/11 on PRESS for immediate response (async to LVGL task)
+    if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
+      if (pad_id == PAD_9_LOGICAL) {
+        s_pending_nav_action = NAV_ACTION_UP;
+        lv_async_call(pad_nav_async, NULL);
+        return;
+      }
+      if (pad_id == PAD_11_LOGICAL) {
+        s_pending_nav_action = NAV_ACTION_DOWN;
+        lv_async_call(pad_nav_async, NULL);
+        return;
+      }
+      if (pad_id == PAD_10_LOGICAL) {
+        s_pending_nav_action = NAV_ACTION_JUMP;
+        lv_async_call(pad_nav_async, NULL);
+        return;
+      }
+    }
+    
     // Rotary wheel logic is now handled by touchwheel system (touch.c routes pad 0-7 events)
-    // Generate haptic feedback for non-wheel pads (except Button 13 and navigation pads in programming mode)
-    // Pads 8-11 haptic is deferred to release to check if navigation actually happens
-    app_mode_t current_mode = ui_get_app_mode();
-    bool is_nav_pad = (pad_id == BUTTON_8_LOGICAL_PAD || pad_id == PAD_9_LOGICAL ||
-      pad_id == PAD_10_LOGICAL || pad_id == PAD_11_LOGICAL);
+    // Generate haptic feedback for non-wheel pads (except Button 13 and Pad 8 in programming mode)
+    // Pad 8 haptic is deferred to release to check if focused item is clickable
     bool skip_haptic = is_wheel_pad(pad_id) || pad_id == BUTTON_13_LOGICAL_PAD ||
-      (is_nav_pad && current_mode == APP_MODE_PROGRAMMING);
+      (pad_id == BUTTON_8_LOGICAL_PAD && ui_get_app_mode() == APP_MODE_PROGRAMMING);
     if (!skip_haptic) {
-      event_t haptic_event = {
-        .type = EVENT_HAPTIC_REQUEST,
-        .priority = EVENT_PRIORITY_NORMAL,
-        .timestamp = event_bus_get_current_timestamp(),
-        .data.haptic = { .pattern = HAPTIC_CLICK }
-      };
-      event_bus_post(&haptic_event);
+      post_haptic_click();
       ESP_LOGD(TAG, "Posted haptic event for pad %d", pad_id);
     }
     
@@ -178,106 +276,8 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       // Handle pad 8 (enter/confirm)
       if (pad_id == BUTTON_8_LOGICAL_PAD) {
         bool action_taken = menu_handle_enter();
-        if (action_taken) {
-          // Generate haptic only if a clickable item was activated
-          event_t haptic_event = {
-            .type = EVENT_HAPTIC_REQUEST,
-            .priority = EVENT_PRIORITY_NORMAL,
-            .timestamp = event_bus_get_current_timestamp(),
-            .data.haptic = { .pattern = HAPTIC_CLICK }
-          };
-          event_bus_post(&haptic_event);
-        }
+        if (action_taken) post_haptic_click();
         ESP_LOGD(TAG, "Pad 8: Enter/Confirm (action=%s)", action_taken ? "yes" : "no");
-        return;
-      }
-      
-      // Handle pad 9 (up) and pad 11 (down) - menu/roller navigation
-      if (pad_id == PAD_9_LOGICAL || pad_id == PAD_11_LOGICAL) {
-        lv_group_t* group = menu_get_group();
-        if (group) {
-          bool is_up = (pad_id == PAD_9_LOGICAL);
-          
-          if (lv_group_get_editing(group)) {
-            // Editing mode - change roller selection
-            lv_obj_t* focused = lv_group_get_focused(group);
-            if (focused && lv_obj_check_type(focused, &lv_roller_class)) {
-              uint32_t count = lv_roller_get_option_count(focused);
-              uint32_t current = lv_roller_get_selected(focused);
-              uint32_t new_sel;
-              if (is_up) {
-                new_sel = (current > 0) ? current - 1 : 0;
-              } else {
-                new_sel = (current < count - 1) ? current + 1 : count - 1;
-              }
-              if (new_sel != current) {
-                lv_roller_set_selected(focused, new_sel, LV_ANIM_OFF);
-                // Haptic feedback
-                event_t haptic_event = {
-                  .type = EVENT_HAPTIC_REQUEST,
-                  .priority = EVENT_PRIORITY_NORMAL,
-                  .timestamp = event_bus_get_current_timestamp(),
-                  .data.haptic = { .pattern = HAPTIC_CLICK }
-                };
-                event_bus_post(&haptic_event);
-              }
-            }
-          } else {
-            // Menu navigation mode
-            if (is_up) {
-              lv_group_focus_prev(group);
-            } else {
-              lv_group_focus_next(group);
-            }
-            // Haptic feedback
-            event_t haptic_event = {
-              .type = EVENT_HAPTIC_REQUEST,
-              .priority = EVENT_PRIORITY_NORMAL,
-              .timestamp = event_bus_get_current_timestamp(),
-              .data.haptic = { .pattern = HAPTIC_CLICK }
-            };
-            event_bus_post(&haptic_event);
-          }
-          ESP_LOGD(TAG, "Pad %d: %s", pad_id, is_up ? "Up" : "Down");
-        }
-        return;
-      }
-      
-      // Handle pad 10 (jump first/last)
-      if (pad_id == PAD_10_LOGICAL) {
-        lv_group_t* group = menu_get_group();
-        lv_obj_t* container = menu_get_current_container();
-        if (group && container && !lv_group_get_editing(group)) {
-          lv_obj_t* focused = lv_group_get_focused(group);
-          uint32_t child_cnt = lv_obj_get_child_count(container);
-          
-          // Find first and last focusable items
-          lv_obj_t* first_focusable = NULL;
-          lv_obj_t* last_focusable = NULL;
-          for (uint32_t i = 0; i < child_cnt; i++) {
-            lv_obj_t* child = lv_obj_get_child(container, i);
-            if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
-              if (!first_focusable) first_focusable = child;
-              last_focusable = child;
-            }
-          }
-          
-          // Toggle between first and last
-          if (first_focusable && last_focusable) {
-            lv_obj_t* target = (focused == first_focusable) ? last_focusable : first_focusable;
-            lv_group_focus_obj(target);
-            lv_obj_scroll_to_view(target, LV_ANIM_OFF);
-            // Haptic feedback
-            event_t haptic_event = {
-              .type = EVENT_HAPTIC_REQUEST,
-              .priority = EVENT_PRIORITY_NORMAL,
-              .timestamp = event_bus_get_current_timestamp(),
-              .data.haptic = { .pattern = HAPTIC_CLICK }
-            };
-            event_bus_post(&haptic_event);
-            ESP_LOGD(TAG, "Pad 10: Jump to %s", (target == first_focusable) ? "first" : "last");
-          }
-        }
         return;
       }
       
