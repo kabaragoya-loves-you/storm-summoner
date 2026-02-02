@@ -43,16 +43,16 @@
 
 // Default calibration values for each range (5 ranges total)
 // All signals are inverted by the op-amp, so "min" is actually the high reading
-#define DEFAULT_MIN_BIPOLAR_10V 51   // +10V input → lowest voltage at ADC pin
-#define DEFAULT_MAX_BIPOLAR_10V 3248 // -10V input → highest voltage at ADC pin
-#define DEFAULT_MIN_10V 115           // 10V input → lowest ADC (inverted)
-#define DEFAULT_MAX_10V 3249         // 0V input → highest ADC (inverted)
-#define DEFAULT_MIN_BIPOLAR_5V 48    // +5V input → lowest voltage at ADC pin
-#define DEFAULT_MAX_BIPOLAR_5V 3300  // -5V input → highest voltage at ADC pin
-#define DEFAULT_MIN_5V 60            // 5V input → lowest ADC (inverted)
-#define DEFAULT_MAX_5V 3248          // 0V input → highest ADC (inverted)
-#define DEFAULT_MIN_3V3 95          // 3.3V input → lowest ADC (inverted)
-#define DEFAULT_MAX_3V3 3440         // 0V input → highest ADC (inverted)
+#define DEFAULT_MIN_BIPOLAR_10V 2    // +10V input → lowest voltage at ADC pin
+#define DEFAULT_MAX_BIPOLAR_10V 3367 // -10V input → highest voltage at ADC pin
+#define DEFAULT_MIN_10V 9            // 10V input → lowest ADC (inverted)
+#define DEFAULT_MAX_10V 3342         // 0V input → highest ADC (inverted)
+#define DEFAULT_MIN_BIPOLAR_5V 3     // +5V input → lowest voltage at ADC pin
+#define DEFAULT_MAX_BIPOLAR_5V 3370  // -5V input → highest voltage at ADC pin
+#define DEFAULT_MIN_5V 0             // 5V input → lowest ADC (inverted)
+#define DEFAULT_MAX_5V 3323          // 0V input → highest ADC (inverted)
+#define DEFAULT_MIN_3V3 12           // 3.3V input → lowest ADC (inverted)
+#define DEFAULT_MAX_3V3 3295         // 0V input → highest ADC (inverted)
 
 // Default disconnected signature values (mV) for each range
 // These are the switch pin voltages observed when NO cable is connected
@@ -885,28 +885,13 @@ esp_err_t cv_auto_calibrate(cv_range_t range, uint32_t duration_ms) {
     ESP_LOGW(TAG, "Insufficient swing detected (%d counts). Calibration may be inaccurate.", swing);
   }
   
-  // Apply 1% margin on each extreme for headroom
-  float margin = swing * 0.01f;
-  int16_t final_min = min_reading + (int16_t)margin;
-  int16_t final_max = max_reading - (int16_t)margin;
-  
-  // Ensure min < max after applying margins
-  if (final_min >= final_max) {
-    ESP_LOGE(TAG, "Calibration failed: min >= max after applying margins");
-    if (s_range != old_range) {
-      cv_set_range(old_range);
-    }
-    return ESP_FAIL;
-  }
-  
   ESP_LOGI(TAG, "Calibration complete: %u samples", (unsigned)sample_count);
   ESP_LOGI(TAG, "  Absolute range:   %d - %d", absolute_min, absolute_max);
   ESP_LOGI(TAG, "  Trimmed range:    %d - %d (%d counts, discarded %u extreme samples)", 
     min_reading, max_reading, swing, trim_count * 2);
-  ESP_LOGI(TAG, "  Final range:      %d - %d (1%% margins applied)", final_min, final_max);
-  
-  // Store calibration
-  cv_set_calibration(range, final_min, final_max);
+
+  // Store calibration using trimmed range directly
+  cv_set_calibration(range, min_reading, max_reading);
   
   return ESP_OK;
 }

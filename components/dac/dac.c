@@ -172,7 +172,7 @@ esp_err_t dac_set_value_eeprom(uint16_t value, mcp4725_power_down_t power_down) 
   // EEPROM write takes up to 50ms to complete
   vTaskDelay(pdMS_TO_TICKS(60));
 
-  ESP_LOGI(TAG, "Wrote value %u to DAC and EEPROM", (unsigned)value);
+  ESP_LOGD(TAG, "Wrote value %u to DAC and EEPROM", (unsigned)value);
   return ESP_OK;
 }
 
@@ -446,7 +446,7 @@ static esp_timer_handle_t s_vref_timer = NULL;
 // Timer callback for deferred VREF calibration
 static void vref_calibration_timer_cb(void* arg) {
   (void)arg;
-  ESP_LOGI(TAG, "Running deferred VREF calibration");
+  ESP_LOGD(TAG, "Running deferred VREF calibration");
   dac_calibrate_vref();
   
   // Clean up the one-shot timer
@@ -483,6 +483,6 @@ esp_err_t dac_schedule_calibration(uint32_t delay_ms) {
     return ret;
   }
   
-  ESP_LOGI(TAG, "VREF calibration scheduled for %lu ms from now", (unsigned long)delay_ms);
+  ESP_LOGD(TAG, "VREF calibration scheduled for %lu ms from now", (unsigned long)delay_ms);
   return ESP_OK;
 }
