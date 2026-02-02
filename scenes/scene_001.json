@@ -213,6 +213,14 @@
 	"cv_input_mode":	"cv",
 	"cv_velocity_mode":	"fixed",
 	"cv_velocity":	100,
+	"audio_config":	{
+		"range":	"bi5v",
+		"sensitivity":	128,
+		"attack_ms":	10,
+		"release_ms":	200,
+		"threshold":	5,
+		"polarity":	"attract"
+	},
 	"expression_velocity_mode":	"fixed",
 	"proximity_velocity_mode":	"fixed",
 	"als_velocity_mode":	"fixed",

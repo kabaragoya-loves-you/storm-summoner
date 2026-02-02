@@ -44,6 +44,22 @@ typedef enum {
   CV_PITCH_HZ_V               // Hz/V (Buchla standard)
 } cv_pitch_standard_t;
 
+// Audio envelope follower polarity (for INPUT_MODE_AUDIO)
+typedef enum {
+  AUDIO_POLARITY_ATTRACT = 0,  // Louder = higher CC value
+  AUDIO_POLARITY_REPEL = 1     // Louder = lower CC value (ducking)
+} audio_polarity_t;
+
+// Audio envelope follower configuration (for INPUT_MODE_AUDIO)
+typedef struct audio_config_t {
+  cv_range_t range;           // CV_RANGE_BIPOLAR_5V or CV_RANGE_BIPOLAR_10V
+  uint8_t sensitivity;        // 0-255 maps to 0.25x - 64x gain (exponential curve)
+  uint16_t attack_ms;         // 5-100ms
+  uint16_t release_ms;        // 50-2000ms
+  uint8_t threshold;          // 0-127 (0 = no threshold, signals below ignored)
+  audio_polarity_t polarity;  // ATTRACT or REPEL
+} audio_config_t;
+
 /**
  * Set the main input mode
  * @param mode The input mode to use

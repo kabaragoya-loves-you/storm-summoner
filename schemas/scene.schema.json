@@ -148,6 +148,52 @@
       "default": "fixed",
       "description": "Velocity mode for ambient light sensor note output"
     },
+    "audio_config": {
+      "type": "object",
+      "description": "Audio envelope follower configuration (when cv_input_mode=audio)",
+      "properties": {
+        "range": {
+          "type": "string",
+          "enum": ["bi5v", "bi10v"],
+          "default": "bi5v",
+          "description": "Input voltage range for audio (bipolar ranges only)"
+        },
+        "sensitivity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 128,
+          "description": "Gain (0-255 maps to 0.25x-64x exponential curve, set by calibration)"
+        },
+        "attack_ms": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 100,
+          "default": 10,
+          "description": "Envelope attack time in milliseconds"
+        },
+        "release_ms": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 2000,
+          "default": 200,
+          "description": "Envelope release time in milliseconds"
+        },
+        "threshold": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 5,
+          "description": "Noise gate threshold (0=off, 1-127=increasing gate)"
+        },
+        "polarity": {
+          "type": "string",
+          "enum": ["attract", "repel"],
+          "default": "attract",
+          "description": "Output polarity (attract=louder is higher, repel=louder is lower/ducking)"
+        }
+      }
+    },
     "bpm": {
       "type": "integer",
       "minimum": 20,

@@ -174,14 +174,14 @@ void app_main(void) {
   //   assets_free_device(device);
   // }
 
-  // Wait for splash animation to complete before switching to main UI
-  vTaskDelay(pdMS_TO_TICKS(1500));
-  
-  ui_set_draw_module(&scene_ui_module);
-  tempo_start();
-
   // Schedule VREF calibration after system has fully settled
   dac_schedule_calibration(2000);
+
+  // Wait for splash animation to complete before switching to main UI
+  vTaskDelay(pdMS_TO_TICKS(1500));
+
+  ui_set_draw_module(&scene_ui_module);
+  tempo_start();
 
   // Start LFO task (component was initialized earlier with other MIDI handlers)
   lfo_start();

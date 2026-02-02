@@ -85,7 +85,9 @@ esp_err_t input_set_mode(input_mode_t mode) {
       clock_sync_disable();
       break;
     case INPUT_MODE_AUDIO:
-      // Future: disable audio mode
+      // Disable audio envelope follower
+      cv_disable_audio_mode();
+      cv_disable();
       break;
     case INPUT_MODE_NOTE:
       // Disable NOTE mode
@@ -131,11 +133,25 @@ esp_err_t input_set_mode(input_mode_t mode) {
       }
       break;
       
-    case INPUT_MODE_AUDIO:
-      // Future: enable audio mode
-      // For audio, we might use bipolar mode for AC-coupled signals
-      ESP_LOGW(TAG, "Audio mode not yet implemented");
-      return ESP_ERR_NOT_SUPPORTED;
+    case INPUT_MODE_AUDIO: {
+      // Audio envelope follower mode
+      // Check cable before enabling (if cable detection is enabled)
+      if (!s_cable_detection_enabled || cv_is_cable_connected()) {
+        // Get audio config from current scene
+        uint8_t scene_index = scene_get_current_index();
+        audio_config_t* audio_cfg = scene_get_audio_config(scene_index);
+        
+        // Enable CV sampling with audio mode
+        cv_enable();
+        cv_enable_audio_mode(audio_cfg);
+        
+        ESP_LOGI(TAG, "Enabled audio envelope follower mode");
+      } else {
+        ESP_LOGW(TAG, "Cannot enable audio mode - no cable connected");
+        return ESP_FAIL;
+      }
+      break;
+    }
       
     case INPUT_MODE_NOTE: {
       // NOTE mode: CV for pitch, Expression for gate
@@ -212,6 +228,13 @@ void input_manager_cable_changed(bool connected) {
       s_note_mode_hw_enabled = false;
       ESP_LOGI(TAG, "CV cable disconnected - disabled CV/Gate mode");
     }
+    
+    // If in AUDIO mode, disable the envelope follower
+    if (s_current_mode == INPUT_MODE_AUDIO && cv_is_audio_mode_active()) {
+      cv_disable_audio_mode();
+      cv_disable();
+      ESP_LOGI(TAG, "CV cable disconnected - disabled audio envelope follower");
+    }
   } else {
     // Cable connected - re-enable current mode
     switch (s_current_mode) {
@@ -228,10 +251,15 @@ void input_manager_cable_changed(bool connected) {
         switch_set_channel(2);  // Unipolar 5V for clock sync (switch channel 2)
         break;
         
-      case INPUT_MODE_AUDIO:
-        // Future: set appropriate channel for audio mode
-        // For now, do nothing
+      case INPUT_MODE_AUDIO: {
+        // Re-enable audio mode on cable reconnect
+        uint8_t scene_index = scene_get_current_index();
+        audio_config_t* audio_cfg = scene_get_audio_config(scene_index);
+        cv_enable();
+        cv_enable_audio_mode(audio_cfg);
+        ESP_LOGI(TAG, "Cable reconnected - re-enabled audio envelope follower");
         break;
+      }
         
       case INPUT_MODE_NOTE: {
         // NOTE mode requires both CV and Expression cables

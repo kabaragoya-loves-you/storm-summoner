@@ -1,16 +1,18 @@
 #include "cv_console.h"
 #include "cv.h"
+#include "scene.h"
 #include "input_mode.h"
 #include "input_manager.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
 #include <string.h>
+#include <math.h>
 
 static const char* TAG = "cv_console";
 
 static const char* registered_commands[] = {
-  "info", "range", "calibrate", "calibrate_detect", "pitch_standard"
+  "info", "range", "calibrate", "calibrate_detect", "pitch_standard", "audio"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -48,6 +50,10 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Deadzone: %u", (unsigned)deadzone);
   ESP_LOGI(TAG, "Cable: %s", connected ? "connected" : "disconnected");
   ESP_LOGI(TAG, "Disconnect signature: %dmV (for current range)", disc_sig);
+  ESP_LOGI(TAG, "Audio mode: %s", cv_is_audio_mode_active() ? "ACTIVE" : "inactive");
+  if (cv_is_audio_mode_active()) {
+    ESP_LOGI(TAG, "Envelope value: %.3f", cv_get_envelope_value());
+  }
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Note: Input mode is set in scene context");
   ESP_LOGI(TAG, "=================================");
@@ -199,6 +205,134 @@ static int cmd_pitch_standard(int argc, char **argv) {
   return 0;
 }
 
+// Command: audio - Show or set audio envelope config
+static struct {
+  struct arg_str *param;
+  struct arg_int *value;
+  struct arg_end *end;
+} audio_args;
+
+static int cmd_audio(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &audio_args);
+  
+  // If no args, show audio status
+  if (nerrors != 0 || audio_args.param->count == 0) {
+    uint8_t scene_index = scene_get_current_index();
+    audio_config_t* cfg = scene_get_audio_config(scene_index);
+    
+    ESP_LOGI(TAG, "====== AUDIO ENVELOPE FOLLOWER ======");
+    ESP_LOGI(TAG, "Active: %s", cv_is_audio_mode_active() ? "yes" : "no");
+    if (cfg) {
+      // Calculate actual gain: 0.25 * 256^(sensitivity/255)
+      float gain = 0.25f * powf(256.0f, cfg->sensitivity / 255.0f);
+      ESP_LOGI(TAG, "Range: %s", cfg->range == CV_RANGE_BIPOLAR_10V ? "±10V" : "±5V");
+      ESP_LOGI(TAG, "Sensitivity: %u (%.1fx gain)", (unsigned)cfg->sensitivity, gain);
+      ESP_LOGI(TAG, "Attack: %ums", cfg->attack_ms);
+      ESP_LOGI(TAG, "Release: %ums", cfg->release_ms);
+      ESP_LOGI(TAG, "Threshold: %u", (unsigned)cfg->threshold);
+      ESP_LOGI(TAG, "Polarity: %s", cfg->polarity == AUDIO_POLARITY_REPEL ? "Repel" : "Attract");
+      ESP_LOGI(TAG, "Current envelope: %.3f", cv_get_envelope_value());
+    }
+    ESP_LOGI(TAG, "=====================================");
+    ESP_LOGI(TAG, "Set: audio <range|sens|attack|release|thresh|pol|calibrate> <value>");
+    return 0;
+  }
+  
+  const char* param = audio_args.param->sval[0];
+  uint8_t scene_index = scene_get_current_index();
+  
+  if (strcmp(param, "range") == 0) {
+    if (audio_args.value->count == 0) {
+      ESP_LOGE(TAG, "Usage: audio range <5|10>");
+      return 1;
+    }
+    int val = audio_args.value->ival[0];
+    cv_range_t range = (val == 10) ? CV_RANGE_BIPOLAR_10V : CV_RANGE_BIPOLAR_5V;
+    scene_set_audio_range(scene_index, range);
+    if (cv_is_audio_mode_active()) {
+      cv_update_audio_config(scene_get_audio_config(scene_index));
+    }
+    ESP_LOGI(TAG, "Audio range set to ±%dV", val);
+  } else if (strcmp(param, "sens") == 0 || strcmp(param, "sensitivity") == 0) {
+    if (audio_args.value->count == 0) {
+      ESP_LOGE(TAG, "Usage: audio sens <0-255>");
+      return 1;
+    }
+    uint8_t sens = (uint8_t)audio_args.value->ival[0];
+    scene_set_audio_sensitivity(scene_index, sens);
+    if (cv_is_audio_mode_active()) {
+      cv_update_audio_config(scene_get_audio_config(scene_index));
+    }
+    ESP_LOGI(TAG, "Audio sensitivity set to %u", (unsigned)sens);
+  } else if (strcmp(param, "attack") == 0) {
+    if (audio_args.value->count == 0) {
+      ESP_LOGE(TAG, "Usage: audio attack <5-100 ms>");
+      return 1;
+    }
+    uint16_t attack = (uint16_t)audio_args.value->ival[0];
+    scene_set_audio_attack(scene_index, attack);
+    if (cv_is_audio_mode_active()) {
+      cv_update_audio_config(scene_get_audio_config(scene_index));
+    }
+    ESP_LOGI(TAG, "Audio attack set to %ums", attack);
+  } else if (strcmp(param, "release") == 0) {
+    if (audio_args.value->count == 0) {
+      ESP_LOGE(TAG, "Usage: audio release <50-2000 ms>");
+      return 1;
+    }
+    uint16_t release = (uint16_t)audio_args.value->ival[0];
+    scene_set_audio_release(scene_index, release);
+    if (cv_is_audio_mode_active()) {
+      cv_update_audio_config(scene_get_audio_config(scene_index));
+    }
+    ESP_LOGI(TAG, "Audio release set to %ums", release);
+  } else if (strcmp(param, "thresh") == 0 || strcmp(param, "threshold") == 0) {
+    if (audio_args.value->count == 0) {
+      ESP_LOGE(TAG, "Usage: audio thresh <0-127>");
+      return 1;
+    }
+    uint8_t thresh = (uint8_t)audio_args.value->ival[0];
+    scene_set_audio_threshold(scene_index, thresh);
+    if (cv_is_audio_mode_active()) {
+      cv_update_audio_config(scene_get_audio_config(scene_index));
+    }
+    ESP_LOGI(TAG, "Audio threshold set to %u", (unsigned)thresh);
+  } else if (strcmp(param, "pol") == 0 || strcmp(param, "polarity") == 0) {
+    if (audio_args.value->count == 0) {
+      ESP_LOGE(TAG, "Usage: audio pol <0=attract|1=repel>");
+      return 1;
+    }
+    audio_polarity_t pol = (audio_args.value->ival[0] == 1) ? AUDIO_POLARITY_REPEL : AUDIO_POLARITY_ATTRACT;
+    scene_set_audio_polarity(scene_index, pol);
+    if (cv_is_audio_mode_active()) {
+      cv_update_audio_config(scene_get_audio_config(scene_index));
+    }
+    ESP_LOGI(TAG, "Audio polarity set to %s", pol == AUDIO_POLARITY_REPEL ? "Repel" : "Attract");
+  } else if (strcmp(param, "calibrate") == 0 || strcmp(param, "cal") == 0) {
+    if (!cv_is_audio_mode_active()) {
+      ESP_LOGE(TAG, "Audio mode must be active to calibrate");
+      return 1;
+    }
+    // Duration defaults to 3000ms, or user-specified
+    uint32_t duration = 3000;
+    if (audio_args.value->count > 0) {
+      duration = (uint32_t)audio_args.value->ival[0];
+      if (duration < 1000) duration = 1000;
+      if (duration > 10000) duration = 10000;
+    }
+    uint8_t recommended = cv_audio_calibrate(duration);
+    scene_set_audio_sensitivity(scene_index, recommended);
+    cv_update_audio_config(scene_get_audio_config(scene_index));
+    ESP_LOGI(TAG, "Sensitivity auto-set to %u", (unsigned)recommended);
+  } else {
+    ESP_LOGE(TAG, "Unknown parameter: %s", param);
+    ESP_LOGI(TAG, "Valid params: range, sens, attack, release, thresh, pol, calibrate");
+    return 1;
+  }
+  
+  return 0;
+}
+
 esp_err_t cv_console_init(void) {
   ESP_LOGI(TAG, "Registering cv commands");
   
@@ -259,6 +393,20 @@ esp_err_t cv_console_init(void) {
     .argtable = &pitch_standard_args
   };
   esp_console_cmd_register(&pitch_standard_cmd);
+  
+  // audio command
+  audio_args.param = arg_str0(NULL, NULL, "<param>", "Parameter (range/sens/attack/release/thresh/pol)");
+  audio_args.value = arg_int0(NULL, NULL, "<value>", "Value to set");
+  audio_args.end = arg_end(3);
+  
+  const esp_console_cmd_t audio_cmd = {
+    .command = "audio",
+    .help = "Show or set audio envelope follower config",
+    .hint = NULL,
+    .func = &cmd_audio,
+    .argtable = &audio_args
+  };
+  esp_console_cmd_register(&audio_cmd);
   
   return ESP_OK;
 }

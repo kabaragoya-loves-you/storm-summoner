@@ -69,6 +69,7 @@ static esp_timer_handle_t s_led_off_timer = NULL;
 
 // Task and timing
 static TaskHandle_t s_tempo_task_handle = NULL;
+static esp_timer_handle_t s_start_timer = NULL;  // Deferred start timer
 static SemaphoreHandle_t s_state_mutex = NULL;
 static uint32_t s_tick_counter = 0;
 static uint8_t s_beat_counter = 0;  // Counts beats within bar
@@ -617,23 +618,85 @@ static void publish_tempo_changed_event(void) {
   ESP_LOGI(TAG, "BPM: %d", s_bpm);
 }
 
-// Public API functions
-void tempo_start(void) {
-  if (s_tempo_task_handle == NULL) {
-    // Update MIDI out settings before starting task
-    update_midi_out_clock_settings();
-    
-    BaseType_t ret = xTaskCreate(tempo_task, "tempo", 3072, NULL, TASK_PRIORITY_MIDI_TEMPO, &s_tempo_task_handle);
-    if (ret != pdPASS) {
-      ESP_LOGE(TAG, "Failed to create tempo task");
-    } else {
-      // Publish initial tempo
-      publish_tempo_changed_event();
-    }
+// Timer callback that actually creates the tempo task
+static void tempo_start_timer_cb(void* arg) {
+  (void)arg;
+
+  if (s_tempo_task_handle != NULL) {
+    ESP_LOGW(TAG, "Tempo task already running");
+    goto cleanup;
+  }
+
+  // Update MIDI out settings before starting task
+  update_midi_out_clock_settings();
+
+  BaseType_t ret = xTaskCreate(tempo_task, "tempo", 3072, NULL,
+    TASK_PRIORITY_MIDI_TEMPO, &s_tempo_task_handle);
+  if (ret != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create tempo task");
+    goto cleanup;
+  }
+
+  // Publish initial tempo
+  publish_tempo_changed_event();
+  ESP_LOGI(TAG, "Tempo task started");
+
+cleanup:
+  // Clean up the one-shot timer
+  if (s_start_timer != NULL) {
+    esp_timer_delete(s_start_timer);
+    s_start_timer = NULL;
   }
 }
 
+// Public API functions
+void tempo_start(void) {
+  if (s_tempo_task_handle != NULL) {
+    ESP_LOGW(TAG, "Tempo task already running");
+    return;
+  }
+
+  if (s_start_timer != NULL) {
+    ESP_LOGW(TAG, "Tempo start already scheduled");
+    return;
+  }
+
+  // Schedule task creation via timer to avoid priority inversion.
+  // Creating a high-priority task from app_main (priority 1) causes the new
+  // task to immediately preempt, potentially starving the calling context.
+  const esp_timer_create_args_t timer_args = {
+    .callback = tempo_start_timer_cb,
+    .arg = NULL,
+    .dispatch_method = ESP_TIMER_TASK,
+    .name = "tempo_start"
+  };
+
+  esp_err_t ret = esp_timer_create(&timer_args, &s_start_timer);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create tempo start timer: %s", esp_err_to_name(ret));
+    return;
+  }
+
+  // Start after a brief delay to let app_main complete
+  ret = esp_timer_start_once(s_start_timer, 10 * 1000);  // 10ms in microseconds
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to start tempo timer: %s", esp_err_to_name(ret));
+    esp_timer_delete(s_start_timer);
+    s_start_timer = NULL;
+    return;
+  }
+
+  ESP_LOGI(TAG, "Tempo task scheduled");
+}
+
 void tempo_stop(void) {
+  // Cancel pending start if scheduled
+  if (s_start_timer != NULL) {
+    esp_timer_stop(s_start_timer);
+    esp_timer_delete(s_start_timer);
+    s_start_timer = NULL;
+  }
+
   if (s_tempo_task_handle != NULL) {
     vTaskDelete(s_tempo_task_handle);
     s_tempo_task_handle = NULL;

@@ -145,4 +145,46 @@ uint8_t cv_get_pitch_note(void);
  */
 uint8_t cv_read_pitch_note_now(void);
 
+/**
+ * Enable audio envelope follower mode
+ * @param config Audio configuration (copied internally)
+ */
+void cv_enable_audio_mode(const audio_config_t* config);
+
+/**
+ * Disable audio envelope follower mode
+ */
+void cv_disable_audio_mode(void);
+
+/**
+ * Check if audio mode is currently active
+ * @return true if audio envelope follower is running
+ */
+bool cv_is_audio_mode_active(void);
+
+/**
+ * Update audio configuration while running
+ * @param config New audio configuration
+ */
+void cv_update_audio_config(const audio_config_t* config);
+
+/**
+ * Get the current envelope follower value
+ * @return Envelope value (0.0 - 1.0)
+ */
+float cv_get_envelope_value(void);
+
+/**
+ * Calibrate audio sensitivity by measuring peak amplitude
+ * @param duration_ms How long to sample (user should play loudest audio)
+ * @return Recommended sensitivity value (0-255)
+ */
+uint8_t cv_audio_calibrate(uint32_t duration_ms);
+
+/**
+ * Read raw ADC value immediately (for calibration UI)
+ * @return Raw ADC value
+ */
+int16_t cv_read_raw_now(void);
+
 #endif /* _CV_H */

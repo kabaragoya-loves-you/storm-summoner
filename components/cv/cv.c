@@ -1,4 +1,5 @@
 #include "cv.h"
+#include "scene.h"
 #include "event_bus.h"
 #include "app_settings.h"
 #include "task_priorities.h"
@@ -33,6 +34,7 @@
 // Constants
 #define TASK_PERIOD_MS_FAST 20   // 50 Hz sampling rate when value changing
 #define TASK_PERIOD_MS_SLOW 60   // ~17 Hz sampling rate when value stable
+#define TASK_PERIOD_MS_AUDIO 4   // 250 Hz sampling rate for audio envelope following
 #define STABILITY_THRESHOLD 15    // Consecutive stable readings before slowing down
 #define FILTER_ALPHA 0.4f        // IIR filter coefficient (fast response for musical performance)
 #define OVERSAMPLE_COUNT 2       // 2x oversampling - faster transient tracking, median filter handles noise
@@ -40,6 +42,9 @@
 #define GATE_THRESHOLD 2048      // ~50% threshold for gate detection
 #define STARTUP_DELAY_MS 1000    // Delay before sending events after startup
 #define DEFAULT_DEADZONE 2       // Default MIDI deadzone
+
+// Audio envelope follower constants
+#define AUDIO_STARTUP_DELAY_MS 500  // Shorter startup delay for audio mode
 
 // Default calibration values for each range (5 ranges total)
 // All signals are inverted by the op-amp, so "min" is actually the high reading
@@ -101,6 +106,24 @@ static int16_t s_disc_signatures[5] = {
 };
 static bool s_cable_detect_reset_pending = false;  // Set when range changes to clear variance history
 static uint32_t s_task_start_time = 0;
+
+// Audio envelope follower state
+static bool s_audio_mode_active = false;           // True when running in audio envelope mode
+static float s_envelope = 0.0f;                    // Current envelope value (0.0 - 1.0)
+static float s_sensitivity_factor = 1.0f;          // Pre-computed: 0.25 * 256^(sens/255), updated on config change
+static audio_config_t s_audio_config = {           // Runtime audio config (copied from scene)
+  .range = CV_RANGE_BIPOLAR_5V,
+  .sensitivity = 128,
+  .attack_ms = 10,
+  .release_ms = 200,
+  .threshold = 5,
+  .polarity = AUDIO_POLARITY_ATTRACT
+};
+
+// Helper to update cached sensitivity factor (call when config changes)
+static void update_sensitivity_factor(void) {
+  s_sensitivity_factor = 0.25f * powf(256.0f, s_audio_config.sensitivity / 255.0f);
+}
 
 // Forward declarations
 static void cv_task(void *pvParameters);
@@ -434,87 +457,174 @@ static void cv_task(void *pvParameters) {
     }
     
     if (connected) {
-      // Apply calibration
-      float calibrated = (raw + s_offset) * s_scale;
-      
-      // IIR filter - initialize to first reading to avoid warm-up transient
-      if (!s_filter_initialized) {
-        s_filtered_value = calibrated;
-        s_filter_initialized = true;
-      } else {
-        s_filtered_value = FILTER_ALPHA * calibrated + (1.0f - FILTER_ALPHA) * s_filtered_value;
-      }
-      
-      // Convert to MIDI using min/max calibration for current range
-      int16_t min_val = s_min_values[s_range];
-      int16_t max_val = s_max_values[s_range];
-      
-      // Clamp filtered value to calibrated range
-      float clamped = s_filtered_value;
-      if (clamped < min_val) clamped = min_val;
-      if (clamped > max_val) clamped = max_val;
-      
-      // Map to MIDI 0-127
-      uint8_t midi_value;
-      if (s_mode == CV_MODE_LINEAR) {
-        midi_value = (uint8_t)(((clamped - min_val) * 127.0f) / (max_val - min_val));
+      if (s_audio_mode_active) {
+        // ===== AUDIO ENVELOPE FOLLOWER MODE =====
+        // Get calibration for current audio range
+        int16_t min_val = s_min_values[s_audio_config.range];
+        int16_t max_val = s_max_values[s_audio_config.range];
+        int16_t center = (min_val + max_val) / 2;
+        int16_t half_range = (max_val - min_val) / 2;
         
-        // All ranges are inverted by the op-amp circuit
-        // Input voltage increases → ADC voltage decreases → ADC count decreases
-        // So we invert the MIDI value to maintain proper mapping
-        midi_value = 127 - midi_value;
+        // Rectify: get amplitude relative to center (absolute value)
+        int16_t amplitude = abs(raw - center);
         
-      } else {
-        // CV_MODE_PITCH - use the mode-specific conversion
-        midi_value = convert_to_midi((int16_t)s_filtered_value, s_mode);
-      }
-      
-      // Check if we're past startup delay (reuse cached now_ms)
-      bool past_startup = (now_ms - s_task_start_time) > STARTUP_DELAY_MS;
-      
-      // Check if value changed beyond deadzone
-      int midi_delta = abs((int)midi_value - (int)s_last_midi_value);
-      
-      if (past_startup && midi_delta >= s_deadzone) {
-        s_last_midi_value = midi_value;
+        // Apply threshold (noise gate) - threshold is 0-127, scale to ADC range
+        int16_t threshold_adc = (s_audio_config.threshold * half_range) / 127;
+        if (amplitude < threshold_adc) amplitude = 0;
         
-        // Post CV value event with LOW priority to avoid blocking critical events
-        event_t cv_event = {
-          .type = EVENT_CV_VALUE,
-          .priority = EVENT_PRIORITY_LOW,
-          .timestamp = event_bus_get_current_timestamp(),
-          .data.cv = {
-            .raw_value = raw,
-            .midi_value = midi_value,
-            .mode = s_mode
+        // Normalize amplitude to 0.0 - 1.0
+        float amplitude_normalized = (float)amplitude / (float)half_range;
+        if (amplitude_normalized > 1.0f) amplitude_normalized = 1.0f;
+        
+        // Apply sensitivity using pre-computed factor (updated when config changes)
+        // sensitivity 0 = 0.25x, 128 = 4x, 255 = 64x
+        float scaled = amplitude_normalized * s_sensitivity_factor;
+        if (scaled > 1.0f) scaled = 1.0f;
+        
+        // Envelope follower with asymmetric attack/release
+        // Convert ms to alpha (higher alpha = faster response)
+        // alpha = 1 - exp(-period / time_constant)
+        // For simplicity, use: alpha ≈ period_ms / time_constant_ms (for small ratios)
+        float attack_alpha = (float)TASK_PERIOD_MS_AUDIO / (float)s_audio_config.attack_ms;
+        float release_alpha = (float)TASK_PERIOD_MS_AUDIO / (float)s_audio_config.release_ms;
+        if (attack_alpha > 1.0f) attack_alpha = 1.0f;
+        if (release_alpha > 1.0f) release_alpha = 1.0f;
+        
+        if (scaled > s_envelope) {
+          // Attack: rising
+          s_envelope += (scaled - s_envelope) * attack_alpha;
+        } else {
+          // Release: falling
+          s_envelope += (scaled - s_envelope) * release_alpha;
+        }
+        
+        // Convert envelope to MIDI
+        uint8_t midi_value = (uint8_t)(s_envelope * 127.0f);
+        if (midi_value > 127) midi_value = 127;
+        
+        // Apply polarity
+        if (s_audio_config.polarity == AUDIO_POLARITY_REPEL) {
+          midi_value = 127 - midi_value;
+        }
+        
+        // Check if we're past startup delay
+        bool past_startup = (now_ms - s_task_start_time) > AUDIO_STARTUP_DELAY_MS;
+        
+        // Check if value changed beyond deadzone
+        int midi_delta = abs((int)midi_value - (int)s_last_midi_value);
+        
+        if (past_startup && midi_delta >= s_deadzone) {
+          s_last_midi_value = midi_value;
+          
+          // Post CV value event
+          event_t cv_event = {
+            .type = EVENT_CV_VALUE,
+            .priority = EVENT_PRIORITY_LOW,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.cv = {
+              .raw_value = raw,
+              .midi_value = midi_value,
+              .mode = s_mode
+            }
+          };
+          event_bus_post(&cv_event);
+          
+          if (s_logging_enabled) {
+            ESP_LOGI(TAG, "audio: raw=%d, amp=%d, env=%.3f, midi=%d", 
+              raw, amplitude, s_envelope, midi_value);
           }
-        };
-        event_bus_post(&cv_event);
-        
-        if (s_logging_enabled) {
-          ESP_LOGI(TAG, "raw=%d, filtered=%.1f, midi=%d", raw, s_filtered_value, midi_value);
         }
         
-        // Value changed - reset to fast polling
-        stability_count = 0;
-        task_period_ms = TASK_PERIOD_MS_FAST;
-      } else if (past_startup) {
-        // Value stable - increment counter and potentially slow down
-        if (stability_count < STABILITY_THRESHOLD) {
-          stability_count++;
-        } else if (task_period_ms != TASK_PERIOD_MS_SLOW) {
-          task_period_ms = TASK_PERIOD_MS_SLOW;
-        }
+        // Audio mode always uses fast period
+        task_period_ms = TASK_PERIOD_MS_AUDIO;
+        
       } else {
-        // During startup, just log periodically
-        static int startup_log_counter = 0;
-        if (startup_log_counter++ % 10 == 0) {
-          ESP_LOGD(TAG, "CV startup: raw=%d, filtered=%.1f (waiting %lu ms)", raw, s_filtered_value, (unsigned long)(STARTUP_DELAY_MS - (now_ms - s_task_start_time)));
+        // ===== STANDARD CV/PITCH MODE =====
+        // Apply calibration
+        float calibrated = (raw + s_offset) * s_scale;
+        
+        // IIR filter - initialize to first reading to avoid warm-up transient
+        if (!s_filter_initialized) {
+          s_filtered_value = calibrated;
+          s_filter_initialized = true;
+        } else {
+          s_filtered_value = FILTER_ALPHA * calibrated + (1.0f - FILTER_ALPHA) * s_filtered_value;
+        }
+        
+        // Convert to MIDI using min/max calibration for current range
+        int16_t min_val = s_min_values[s_range];
+        int16_t max_val = s_max_values[s_range];
+        
+        // Clamp filtered value to calibrated range
+        float clamped = s_filtered_value;
+        if (clamped < min_val) clamped = min_val;
+        if (clamped > max_val) clamped = max_val;
+        
+        // Map to MIDI 0-127
+        uint8_t midi_value;
+        if (s_mode == CV_MODE_LINEAR) {
+          midi_value = (uint8_t)(((clamped - min_val) * 127.0f) / (max_val - min_val));
+          
+          // All ranges are inverted by the op-amp circuit
+          // Input voltage increases → ADC voltage decreases → ADC count decreases
+          // So we invert the MIDI value to maintain proper mapping
+          midi_value = 127 - midi_value;
+          
+        } else {
+          // CV_MODE_PITCH - use the mode-specific conversion
+          midi_value = convert_to_midi((int16_t)s_filtered_value, s_mode);
+        }
+        
+        // Check if we're past startup delay (reuse cached now_ms)
+        bool past_startup = (now_ms - s_task_start_time) > STARTUP_DELAY_MS;
+        
+        // Check if value changed beyond deadzone
+        int midi_delta = abs((int)midi_value - (int)s_last_midi_value);
+        
+        if (past_startup && midi_delta >= s_deadzone) {
+          s_last_midi_value = midi_value;
+          
+          // Post CV value event with LOW priority to avoid blocking critical events
+          event_t cv_event = {
+            .type = EVENT_CV_VALUE,
+            .priority = EVENT_PRIORITY_LOW,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.cv = {
+              .raw_value = raw,
+              .midi_value = midi_value,
+              .mode = s_mode
+            }
+          };
+          event_bus_post(&cv_event);
+          
+          if (s_logging_enabled) {
+            ESP_LOGI(TAG, "raw=%d, filtered=%.1f, midi=%d", raw, s_filtered_value, midi_value);
+          }
+          
+          // Value changed - reset to fast polling
+          stability_count = 0;
+          task_period_ms = TASK_PERIOD_MS_FAST;
+        } else if (past_startup) {
+          // Value stable - increment counter and potentially slow down
+          if (stability_count < STABILITY_THRESHOLD) {
+            stability_count++;
+          } else if (task_period_ms != TASK_PERIOD_MS_SLOW) {
+            task_period_ms = TASK_PERIOD_MS_SLOW;
+          }
+        } else {
+          // During startup, just log periodically
+          static int startup_log_counter = 0;
+          if (startup_log_counter++ % 10 == 0) {
+            ESP_LOGD(TAG, "CV startup: raw=%d, filtered=%.1f (waiting %lu ms)", raw, s_filtered_value, (unsigned long)(STARTUP_DELAY_MS - (now_ms - s_task_start_time)));
+          }
         }
       }
     }
     
-    vTaskDelay(pdMS_TO_TICKS(task_period_ms));
+    // Ensure at least 1 tick delay to yield CPU.
+    // Note: pdMS_TO_TICKS(4) = 0 at 100Hz tick rate, causing CPU starvation.
+    TickType_t delay_ticks = pdMS_TO_TICKS(task_period_ms);
+    vTaskDelay(delay_ticks > 0 ? delay_ticks : 1);
   }
 }
 
@@ -741,6 +851,155 @@ uint8_t cv_read_pitch_note_now(void) {
   
   ESP_LOGD("CV", "Fresh pitch read: raw=%d, calibrated=%d, note=%d", raw_adc, calibrated, midi_note);
   return midi_note;
+}
+
+// ============================================================================
+// Audio Envelope Follower Functions
+// ============================================================================
+
+void cv_enable_audio_mode(const audio_config_t* config) {
+  if (config) {
+    // Copy config to local state
+    s_audio_config = *config;
+  }
+  
+  // Always set the hardware range to match s_audio_config.range
+  // This ensures calibration lookups use correct min/max values
+  cv_range_t audio_range = s_audio_config.range;
+  if (audio_range != CV_RANGE_BIPOLAR_5V && audio_range != CV_RANGE_BIPOLAR_10V) {
+    audio_range = CV_RANGE_BIPOLAR_5V;  // Force bipolar for audio
+    s_audio_config.range = audio_range;
+  }
+  cv_set_range(audio_range);
+  
+  // Reset envelope follower state
+  s_envelope = 0.0f;
+  s_last_midi_value = (s_audio_config.polarity == AUDIO_POLARITY_REPEL) ? 127 : 0;
+  s_filter_initialized = false;
+  s_task_start_time = esp_timer_get_time() / 1000;
+  
+  // Pre-compute sensitivity factor (avoids expensive powf in hot loop)
+  update_sensitivity_factor();
+  
+  s_audio_mode_active = true;
+  
+  ESP_LOGI(TAG, "Audio mode enabled: range=%s, sens=%d (%.1fx), attack=%ums, release=%ums, thresh=%d, pol=%s",
+    s_audio_config.range == CV_RANGE_BIPOLAR_10V ? "±10V" : "±5V",
+    s_audio_config.sensitivity, s_sensitivity_factor,
+    s_audio_config.attack_ms,
+    s_audio_config.release_ms,
+    s_audio_config.threshold,
+    s_audio_config.polarity == AUDIO_POLARITY_REPEL ? "Repel" : "Attract");
+}
+
+void cv_disable_audio_mode(void) {
+  s_audio_mode_active = false;
+  s_envelope = 0.0f;
+  ESP_LOGD(TAG, "Audio mode disabled");
+}
+
+bool cv_is_audio_mode_active(void) {
+  return s_audio_mode_active;
+}
+
+void cv_update_audio_config(const audio_config_t* config) {
+  if (!config) return;
+  
+  // Update config while running
+  s_audio_config = *config;
+  
+  // Re-compute cached sensitivity factor
+  update_sensitivity_factor();
+  
+  // Update range if it changed (and is valid for audio)
+  if (s_audio_mode_active) {
+    cv_range_t audio_range = config->range;
+    if (audio_range != CV_RANGE_BIPOLAR_5V && audio_range != CV_RANGE_BIPOLAR_10V) {
+      audio_range = CV_RANGE_BIPOLAR_5V;
+    }
+    if (s_range != audio_range) {
+      cv_set_range(audio_range);
+    }
+  }
+  
+  ESP_LOGD(TAG, "Audio config updated: sens=%d, attack=%ums, release=%ums, thresh=%d, pol=%s",
+    config->sensitivity, config->attack_ms, config->release_ms, config->threshold,
+    config->polarity == AUDIO_POLARITY_REPEL ? "Repel" : "Attract");
+}
+
+float cv_get_envelope_value(void) {
+  return s_envelope;
+}
+
+uint8_t cv_audio_calibrate(uint32_t duration_ms) {
+  // Calibrate audio sensitivity by measuring peak amplitude
+  // Returns the recommended sensitivity value (0-255)
+  
+  if (!s_audio_mode_active) {
+    ESP_LOGW(TAG, "Audio calibration requires audio mode to be active");
+    return 128;  // Return middle value
+  }
+  
+  // Get calibration for current audio range
+  int16_t min_val = s_min_values[s_audio_config.range];
+  int16_t max_val = s_max_values[s_audio_config.range];
+  int16_t center = (min_val + max_val) / 2;
+  int16_t half_range = (max_val - min_val) / 2;
+  
+  ESP_LOGI(TAG, "Audio calibration: measuring for %lu ms...", (unsigned long)duration_ms);
+  ESP_LOGI(TAG, "Play your LOUDEST audio now!");
+  
+  int16_t peak_amplitude = 0;
+  uint32_t start_time = esp_timer_get_time() / 1000;
+  uint32_t sample_count = 0;
+  
+  while ((esp_timer_get_time() / 1000) - start_time < duration_ms) {
+    int16_t raw = median_filter(oversample_read());
+    int16_t amplitude = abs(raw - center);
+    if (amplitude > peak_amplitude) {
+      peak_amplitude = amplitude;
+    }
+    sample_count++;
+    vTaskDelay(1);  // Minimum 1 tick (pdMS_TO_TICKS(4) = 0 at 100Hz tick rate)
+  }
+  
+  ESP_LOGI(TAG, "Calibration complete: %u samples, peak amplitude = %d (of %d max)",
+    (unsigned)sample_count, peak_amplitude, half_range);
+  
+  if (peak_amplitude < 5) {
+    ESP_LOGW(TAG, "No significant audio detected. Using maximum sensitivity.");
+    return 255;
+  }
+  
+  // Calculate sensitivity so peak amplitude maps to ~130 on the 0-127 scale
+  // Target 1.4 to ensure 127 is easily reachable with normal playing
+  // (peak/half_range) * sensitivity_factor = 1.4 → MIDI ~130 before clamping
+  
+  float target_gain = 1.4f * (float)half_range / (float)peak_amplitude;
+  
+  // sensitivity_factor = 0.25 * 256^(sens/255) = target_gain
+  // 256^(sens/255) = target_gain / 0.25 = target_gain * 4
+  // sens/255 = log(target_gain * 4) / log(256)
+  // sens = 255 * log(target_gain * 4) / log(256)
+  
+  float sens_float = 255.0f * logf(target_gain * 4.0f) / logf(256.0f);
+  
+  // Clamp to valid range
+  if (sens_float < 0) sens_float = 0;
+  if (sens_float > 255) sens_float = 255;
+  
+  uint8_t sensitivity = (uint8_t)(sens_float + 0.5f);
+  
+  // Calculate and show the resulting gain
+  float actual_gain = 0.25f * powf(256.0f, sensitivity / 255.0f);
+  ESP_LOGI(TAG, "Recommended sensitivity: %u (%.1fx gain)", (unsigned)sensitivity, actual_gain);
+  
+  return sensitivity;
+}
+
+int16_t cv_read_raw_now(void) {
+  // Read raw ADC value immediately (for calibration UI)
+  return median_filter(oversample_read());
 }
 
 // Helper: Compare function for qsort

@@ -107,6 +107,9 @@ typedef struct {
   velocity_mode_t cv_velocity_mode;      // FIXED, GATE_VOLTAGE, or TOUCHWHEEL
   uint8_t cv_velocity;                   // Fixed velocity value (1-127)
   
+  // Audio envelope follower configuration (when cv_input_mode = AUDIO)
+  audio_config_t audio_config;
+  
   // Velocity mode for continuous input note outputs
   velocity_mode_t expression_velocity_mode;  // For expression note output
   velocity_mode_t proximity_velocity_mode;   // For proximity note output
@@ -260,6 +263,21 @@ esp_err_t scene_set_cv_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
 velocity_mode_t scene_get_cv_velocity_mode(uint8_t scene_index);
 esp_err_t scene_set_cv_velocity(uint8_t scene_index, uint8_t velocity);
 uint8_t scene_get_cv_velocity(uint8_t scene_index);
+
+// Audio envelope follower configuration (when cv_input_mode = AUDIO)
+esp_err_t scene_set_audio_range(uint8_t scene_index, cv_range_t range);
+cv_range_t scene_get_audio_range(uint8_t scene_index);
+esp_err_t scene_set_audio_sensitivity(uint8_t scene_index, uint8_t sensitivity);
+uint8_t scene_get_audio_sensitivity(uint8_t scene_index);
+esp_err_t scene_set_audio_attack(uint8_t scene_index, uint16_t attack_ms);
+uint16_t scene_get_audio_attack(uint8_t scene_index);
+esp_err_t scene_set_audio_release(uint8_t scene_index, uint16_t release_ms);
+uint16_t scene_get_audio_release(uint8_t scene_index);
+esp_err_t scene_set_audio_threshold(uint8_t scene_index, uint8_t threshold);
+uint8_t scene_get_audio_threshold(uint8_t scene_index);
+esp_err_t scene_set_audio_polarity(uint8_t scene_index, audio_polarity_t polarity);
+audio_polarity_t scene_get_audio_polarity(uint8_t scene_index);
+audio_config_t* scene_get_audio_config(uint8_t scene_index);
 
 // Expression note output velocity mode
 esp_err_t scene_set_expression_velocity_mode(uint8_t scene_index, velocity_mode_t mode);

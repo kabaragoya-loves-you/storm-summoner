@@ -20,4 +20,5 @@ idf_component_register(
         "scene"
         "version"
         "memory_utils"
+        "cv"
 )

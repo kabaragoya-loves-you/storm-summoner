@@ -20,9 +20,9 @@ static void handle_cv_event(const event_t* event, void* context) {
   scene_t* scene = scene_get_current();
   if (!scene || !scene->cv.enabled) return;
   
-  // Only process CV values in CV mode (Control Voltage)
+  // Only process CV values in CV or Audio mode
   // CV/Gate mode (INPUT_MODE_NOTE) is handled by input_manager's note handlers
-  if (scene->cv_input_mode != INPUT_MODE_CV) return;
+  if (scene->cv_input_mode != INPUT_MODE_CV && scene->cv_input_mode != INPUT_MODE_AUDIO) return;
   
   continuous_mapping_t* mapping = &scene->cv;
   uint8_t raw_value = event->data.cv.midi_value;

@@ -171,6 +171,14 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->cv_velocity_mode = VELOCITY_MODE_FIXED;       // Default to fixed velocity
   scene->cv_velocity = 100;                            // Default velocity value
   
+  // Audio envelope follower defaults (when cv_input_mode = AUDIO)
+  scene->audio_config.range = CV_RANGE_BIPOLAR_5V;     // Default to ±5V for audio
+  scene->audio_config.sensitivity = 128;              // 1.0x gain (middle)
+  scene->audio_config.attack_ms = 10;                 // Fast attack for transients
+  scene->audio_config.release_ms = 200;               // Medium release
+  scene->audio_config.threshold = 5;                  // Small noise gate
+  scene->audio_config.polarity = AUDIO_POLARITY_ATTRACT;  // Louder = higher value
+  
   // Velocity modes for other continuous inputs (all default to fixed)
   scene->expression_velocity_mode = VELOCITY_MODE_FIXED;
   scene->proximity_velocity_mode = VELOCITY_MODE_FIXED;
@@ -2338,6 +2346,114 @@ uint8_t scene_get_cv_velocity(uint8_t scene_index) {
   return scene ? scene->cv_velocity : 100;
 }
 
+// Audio envelope follower configuration
+esp_err_t scene_set_audio_range(uint8_t scene_index, cv_range_t range) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  // Only bipolar ranges are valid for audio
+  if (range != CV_RANGE_BIPOLAR_5V && range != CV_RANGE_BIPOLAR_10V) {
+    ESP_LOGW(TAG, "Audio mode requires bipolar range, defaulting to ±5V");
+    range = CV_RANGE_BIPOLAR_5V;
+  }
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->audio_config.range = range;
+  scene_persist_if_programming();
+  ESP_LOGD(TAG, "Scene %d audio range set to %s", scene_index + 1,
+    range == CV_RANGE_BIPOLAR_10V ? "±10V" : "±5V");
+  return ESP_OK;
+}
+
+cv_range_t scene_get_audio_range(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->audio_config.range : CV_RANGE_BIPOLAR_5V;
+}
+
+esp_err_t scene_set_audio_sensitivity(uint8_t scene_index, uint8_t sensitivity) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->audio_config.sensitivity = sensitivity;
+  scene_persist_if_programming();
+  ESP_LOGD(TAG, "Scene %d audio sensitivity set to %d", scene_index + 1, sensitivity);
+  return ESP_OK;
+}
+
+uint8_t scene_get_audio_sensitivity(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->audio_config.sensitivity : 128;
+}
+
+esp_err_t scene_set_audio_attack(uint8_t scene_index, uint16_t attack_ms) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (attack_ms < 5) attack_ms = 5;
+  if (attack_ms > 100) attack_ms = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->audio_config.attack_ms = attack_ms;
+  scene_persist_if_programming();
+  ESP_LOGD(TAG, "Scene %d audio attack set to %ums", scene_index + 1, attack_ms);
+  return ESP_OK;
+}
+
+uint16_t scene_get_audio_attack(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->audio_config.attack_ms : 10;
+}
+
+esp_err_t scene_set_audio_release(uint8_t scene_index, uint16_t release_ms) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (release_ms < 50) release_ms = 50;
+  if (release_ms > 2000) release_ms = 2000;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->audio_config.release_ms = release_ms;
+  scene_persist_if_programming();
+  ESP_LOGD(TAG, "Scene %d audio release set to %ums", scene_index + 1, release_ms);
+  return ESP_OK;
+}
+
+uint16_t scene_get_audio_release(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->audio_config.release_ms : 200;
+}
+
+esp_err_t scene_set_audio_threshold(uint8_t scene_index, uint8_t threshold) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (threshold > 127) threshold = 127;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->audio_config.threshold = threshold;
+  scene_persist_if_programming();
+  ESP_LOGD(TAG, "Scene %d audio threshold set to %d", scene_index + 1, threshold);
+  return ESP_OK;
+}
+
+uint8_t scene_get_audio_threshold(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->audio_config.threshold : 5;
+}
+
+esp_err_t scene_set_audio_polarity(uint8_t scene_index, audio_polarity_t polarity) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->audio_config.polarity = polarity;
+  scene_persist_if_programming();
+  ESP_LOGD(TAG, "Scene %d audio polarity set to %s", scene_index + 1,
+    polarity == AUDIO_POLARITY_ATTRACT ? "Attract" : "Repel");
+  return ESP_OK;
+}
+
+audio_polarity_t scene_get_audio_polarity(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->audio_config.polarity : AUDIO_POLARITY_ATTRACT;
+}
+
+audio_config_t* scene_get_audio_config(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->audio_config : NULL;
+}
+
 esp_err_t scene_set_expression_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
@@ -3395,6 +3511,18 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddStringToObject(root, "cv_velocity_mode", VEL_MODE_STR(scene->cv_velocity_mode));
   cJSON_AddNumberToObject(root, "cv_velocity", scene->cv_velocity);
   
+  // Audio envelope follower configuration
+  cJSON* audio_config = cJSON_CreateObject();
+  const char* audio_range_str = (scene->audio_config.range == CV_RANGE_BIPOLAR_10V) ? "bi10v" : "bi5v";
+  cJSON_AddStringToObject(audio_config, "range", audio_range_str);
+  cJSON_AddNumberToObject(audio_config, "sensitivity", scene->audio_config.sensitivity);
+  cJSON_AddNumberToObject(audio_config, "attack_ms", scene->audio_config.attack_ms);
+  cJSON_AddNumberToObject(audio_config, "release_ms", scene->audio_config.release_ms);
+  cJSON_AddNumberToObject(audio_config, "threshold", scene->audio_config.threshold);
+  const char* audio_pol_str = (scene->audio_config.polarity == AUDIO_POLARITY_REPEL) ? "repel" : "attract";
+  cJSON_AddStringToObject(audio_config, "polarity", audio_pol_str);
+  cJSON_AddItemToObject(root, "audio_config", audio_config);
+  
   // Other continuous input velocity modes
   cJSON_AddStringToObject(root, "expression_velocity_mode", VEL_MODE_STR(scene->expression_velocity_mode));
   cJSON_AddStringToObject(root, "proximity_velocity_mode", VEL_MODE_STR(scene->proximity_velocity_mode));
@@ -3701,6 +3829,52 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   if (cv_vel && cJSON_IsNumber(cv_vel)) {
     int vel = cv_vel->valueint;
     if (vel >= 1 && vel <= 127) scene->cv_velocity = (uint8_t)vel;
+  }
+  
+  // Deserialize audio envelope follower configuration
+  cJSON* audio_cfg = cJSON_GetObjectItem(root, "audio_config");
+  if (audio_cfg && cJSON_IsObject(audio_cfg)) {
+    cJSON* range_json = cJSON_GetObjectItem(audio_cfg, "range");
+    if (range_json && cJSON_IsString(range_json)) {
+      if (strcmp(range_json->valuestring, "bi10v") == 0) {
+        scene->audio_config.range = CV_RANGE_BIPOLAR_10V;
+      } else {
+        scene->audio_config.range = CV_RANGE_BIPOLAR_5V;
+      }
+    }
+    cJSON* sens = cJSON_GetObjectItem(audio_cfg, "sensitivity");
+    if (sens && cJSON_IsNumber(sens)) {
+      scene->audio_config.sensitivity = (uint8_t)sens->valueint;
+    }
+    cJSON* attack = cJSON_GetObjectItem(audio_cfg, "attack_ms");
+    if (attack && cJSON_IsNumber(attack)) {
+      int val = attack->valueint;
+      if (val < 5) val = 5;
+      if (val > 100) val = 100;
+      scene->audio_config.attack_ms = (uint16_t)val;
+    }
+    cJSON* release = cJSON_GetObjectItem(audio_cfg, "release_ms");
+    if (release && cJSON_IsNumber(release)) {
+      int val = release->valueint;
+      if (val < 50) val = 50;
+      if (val > 2000) val = 2000;
+      scene->audio_config.release_ms = (uint16_t)val;
+    }
+    cJSON* thresh = cJSON_GetObjectItem(audio_cfg, "threshold");
+    if (thresh && cJSON_IsNumber(thresh)) {
+      int val = thresh->valueint;
+      if (val < 0) val = 0;
+      if (val > 127) val = 127;
+      scene->audio_config.threshold = (uint8_t)val;
+    }
+    cJSON* pol = cJSON_GetObjectItem(audio_cfg, "polarity");
+    if (pol && cJSON_IsString(pol)) {
+      if (strcmp(pol->valuestring, "repel") == 0) {
+        scene->audio_config.polarity = AUDIO_POLARITY_REPEL;
+      } else {
+        scene->audio_config.polarity = AUDIO_POLARITY_ATTRACT;
+      }
+    }
   }
   
   // Deserialize other velocity modes

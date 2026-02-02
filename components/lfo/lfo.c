@@ -64,7 +64,11 @@ static volatile uint8_t s_beat_in_bar = 1;  // 1-based position within current b
 static StaticTask_t s_lfo_task_tcb;
 static StackType_t* s_lfo_task_stack = NULL;
 
+// Deferred start timer
+static esp_timer_handle_t s_start_timer = NULL;
+
 // Forward declarations
+static void lfo_start_timer_cb(void* arg);
 static void lfo_task(void* arg);
 static uint8_t calculate_waveform(lfo_state_t* lfo);
 static void handle_beat_event(const event_t* event, void* context);
@@ -172,10 +176,13 @@ esp_err_t lfo_init(void) {
   return ESP_OK;
 }
 
-void lfo_start(void) {
+// Timer callback that actually creates the LFO task
+static void lfo_start_timer_cb(void* arg) {
+  (void)arg;
+
   if (s_lfo_task_handle != NULL) {
     ESP_LOGW(TAG, "LFO task already running");
-    return;
+    goto cleanup;
   }
 
   // Allocate task stack from PSRAM to preserve internal RAM for SPI DMA
@@ -184,7 +191,7 @@ void lfo_start(void) {
       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (s_lfo_task_stack == NULL) {
       ESP_LOGE(TAG, "Failed to allocate LFO task stack from PSRAM");
-      return;
+      goto cleanup;
     }
   }
 
@@ -204,13 +211,66 @@ void lfo_start(void) {
   if (s_lfo_task_handle == NULL) {
     ESP_LOGE(TAG, "Failed to create LFO task");
     s_running = false;
-    return;
+    goto cleanup;
   }
 
   ESP_LOGI(TAG, "LFO task started");
+
+cleanup:
+  // Clean up the one-shot timer
+  if (s_start_timer != NULL) {
+    esp_timer_delete(s_start_timer);
+    s_start_timer = NULL;
+  }
+}
+
+void lfo_start(void) {
+  if (s_lfo_task_handle != NULL) {
+    ESP_LOGW(TAG, "LFO task already running");
+    return;
+  }
+
+  if (s_start_timer != NULL) {
+    ESP_LOGW(TAG, "LFO start already scheduled");
+    return;
+  }
+
+  // Schedule task creation via timer to avoid priority inversion.
+  // Creating a high-priority task from app_main (priority 1) causes the new
+  // task to immediately preempt, potentially starving the calling context.
+  const esp_timer_create_args_t timer_args = {
+    .callback = lfo_start_timer_cb,
+    .arg = NULL,
+    .dispatch_method = ESP_TIMER_TASK,
+    .name = "lfo_start"
+  };
+
+  esp_err_t ret = esp_timer_create(&timer_args, &s_start_timer);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create LFO start timer: %s", esp_err_to_name(ret));
+    return;
+  }
+
+  // Start after a brief delay to let app_main complete
+  ret = esp_timer_start_once(s_start_timer, 10 * 1000);  // 10ms in microseconds
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to start LFO timer: %s", esp_err_to_name(ret));
+    esp_timer_delete(s_start_timer);
+    s_start_timer = NULL;
+    return;
+  }
+
+  ESP_LOGI(TAG, "LFO task scheduled");
 }
 
 void lfo_stop(void) {
+  // Cancel pending start if scheduled
+  if (s_start_timer != NULL) {
+    esp_timer_stop(s_start_timer);
+    esp_timer_delete(s_start_timer);
+    s_start_timer = NULL;
+  }
+
   if (s_lfo_task_handle == NULL) return;
 
   s_running = false;
@@ -391,12 +451,6 @@ static uint8_t calculate_waveform(lfo_state_t* lfo) {
 }
 
 static void lfo_task(void* arg) {
-  // Allow lfo_start() to complete before this task consumes CPU.
-  // Without this yield, lfo_start() is preempted mid-function and
-  // lower-priority tasks (like app_main) may never get scheduled again.
-  // Note: Must use 1 tick directly, as pdMS_TO_TICKS(1) rounds to 0 at 100Hz.
-  vTaskDelay(1);
-
   uint32_t last_update_time = 0;
   const uint32_t update_interval_ms = 1000 / LFO_UPDATE_RATE_HZ;
 
