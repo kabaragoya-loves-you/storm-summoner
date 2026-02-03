@@ -4161,8 +4161,9 @@ esp_err_t scene_load_manifest(void) {
     
     if (idx) g_scene_manager.manifest[i].index = idx->valueint;
     if (name && cJSON_IsString(name)) {
-      strncpy(g_scene_manager.manifest[i].name, name->valuestring, 31);
-      g_scene_manager.manifest[i].name[31] = '\0';
+      strncpy(g_scene_manager.manifest[i].name, name->valuestring,
+        sizeof(g_scene_manager.manifest[i].name) - 1);
+      g_scene_manager.manifest[i].name[sizeof(g_scene_manager.manifest[i].name) - 1] = '\0';
     }
     if (filename && cJSON_IsString(filename)) {
       strncpy(g_scene_manager.manifest[i].filename, filename->valuestring, 63);
@@ -4237,14 +4238,16 @@ esp_err_t scene_create_new(const char* name) {
   
   g_scene_manager.manifest = new_manifest;
   g_scene_manager.manifest[g_scene_manager.num_scenes].index = new_index;
-  strncpy(g_scene_manager.manifest[g_scene_manager.num_scenes].name, name, 31);
+  strncpy(g_scene_manager.manifest[g_scene_manager.num_scenes].name, name,
+    sizeof(g_scene_manager.manifest[g_scene_manager.num_scenes].name) - 1);
   snprintf(g_scene_manager.manifest[g_scene_manager.num_scenes].filename, 63, "scene_%03d.json", new_index + 1);
   g_scene_manager.num_scenes++;
   
   // Create and save default scene
   scene_t new_scene;
   scene_init_defaults(&new_scene, new_index);
-  strncpy(new_scene.name, name, 31);
+  strncpy(new_scene.name, name, sizeof(new_scene.name) - 1);
+  new_scene.name[sizeof(new_scene.name) - 1] = '\0';
   
   int temp_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
   g_scene_manager.cache[temp_idx].scene = new_scene;

@@ -2,6 +2,7 @@
 #include "event_bus.h"
 #include "esp_log.h"
 #include "ui.h"
+#include "text_edit.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -135,6 +136,12 @@ touchwheel_output_t* touchwheel_output_callback_create(touchwheel_value_cb_t cal
 
 void touchwheel_output_send(touchwheel_output_t* output, int value) {
   if (!output) return;
+  
+  // Intercept wheel events for text editor when active
+  if (output->type == TOUCHWHEEL_OUTPUT_LVGL && text_edit_is_active()) {
+    text_edit_handle_wheel(value);
+    return;
+  }
   
   switch (output->type) {
     case TOUCHWHEEL_OUTPUT_EVENTBUS: {

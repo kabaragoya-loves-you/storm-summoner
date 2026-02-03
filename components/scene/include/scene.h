@@ -65,7 +65,7 @@ typedef struct {
 
 // Scene structure
 typedef struct {
-  char name[32];              // Scene name
+  char name[17];              // Scene name (max 16 chars + null)
   char device_id[64];         // Device slug (empty = use global device_config)
   
   // Program change settings (modes 2 & 3)
@@ -142,7 +142,7 @@ typedef struct {
 // Scene manifest entry (lightweight metadata)
 typedef struct {
   uint8_t index;
-  char name[32];
+  char name[17];              // Scene name (max 16 chars + null)
   char filename[64];
 } scene_manifest_entry_t;
 

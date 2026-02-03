@@ -8,7 +8,7 @@
   "properties": {
     "name": {
       "type": "string",
-      "maxLength": 32,
+      "maxLength": 16,
       "description": "Scene display name"
     },
     "device_id": {

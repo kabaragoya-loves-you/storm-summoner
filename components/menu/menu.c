@@ -1,4 +1,5 @@
 #include "menu.h"
+#include "menu_pages.h"
 #include "ui.h"
 #include "display_driver.h"
 #include "esp_log.h"
@@ -226,8 +227,8 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Title bar height
-  const int title_bar_h = 22;
+  // Title bar height (slightly taller to account for circular display clipping at top)
+  const int title_bar_h = 27;
   
   // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
@@ -246,7 +247,7 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_center(title_label);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Create scrollable container with flex layout
@@ -376,8 +377,8 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Title bar height
-  const int title_bar_h = 22;
+  // Title bar height (slightly taller to account for circular display clipping at top)
+  const int title_bar_h = 27;
   
   // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
@@ -396,7 +397,7 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_center(title_label);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Create scrollable container with flex layout
@@ -878,6 +879,16 @@ void menu_navigate_back(void) {
     return;
   }
 
+  // Special case: leaving Scene Name menu should rebuild the parent Scene page
+  // to pick up any name changes that affect the Scene page title
+  if (menu_state.stack_depth > 0) {
+    const char* current_name = menu_state.stack[menu_state.stack_depth - 1].name;
+    if (current_name && strcmp(current_name, "Scene Name") == 0) {
+      menu_navigate_back_then_to(2, "Scene", menu_page_current_scene_create);
+      return;
+    }
+  }
+
   menu_state.pending_nav.is_back = true;
   menu_state.pending_nav.back_levels = 1;
   menu_state.pending_nav.menu_name = NULL;
@@ -1165,8 +1176,8 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Title bar height
-  const int title_bar_h = 22;
+  // Title bar height (slightly taller to account for circular display clipping at top)
+  const int title_bar_h = 27;
   
   // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
@@ -1185,7 +1196,7 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_center(title_label);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Margins for content
@@ -1306,7 +1317,7 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_center(title_label);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
 
   // Create roller centered below title
   lv_obj_t* roller = lv_roller_create(screen);

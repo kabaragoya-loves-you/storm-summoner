@@ -4,6 +4,7 @@
 #include "freertos/timers.h"
 #include "ui.h"
 #include "menu.h"
+#include "text_edit.h"
 #include "app_settings.h"
 #include "touch.h"
 #include "touch_thresholds.h"
@@ -237,6 +238,13 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       }
     }
     
+    // Handle text editor mode (intercepts most pads when active)
+    if (text_edit_is_active()) {
+      if (text_edit_handle_pad(pad_id, true)) {
+        return;  // Text editor consumed this event
+      }
+    }
+    
     // Handle pads 9/10/11 on PRESS for immediate response (async to LVGL task)
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
       if (pad_id == PAD_9_LOGICAL) {
@@ -275,6 +283,10 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
       // Handle pad 8 (enter/confirm)
       if (pad_id == BUTTON_8_LOGICAL_PAD) {
+        // If text editor exit is pending, consume the release to prevent menu activation
+        if (text_edit_exit_pending()) {
+          return;
+        }
         bool action_taken = menu_handle_enter();
         if (action_taken) post_haptic_click();
         ESP_LOGD(TAG, "Pad 8: Enter/Confirm (action=%s)", action_taken ? "yes" : "no");

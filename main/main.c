@@ -44,6 +44,7 @@
 #include "lfo.h"
 #include "scene_test.h"
 #include "scene.h"
+#include "scene_name_gen.h"
 #include "buttons.h"
 #include "assets_manager.h"
 #include "firmware_update.h"
@@ -69,6 +70,7 @@ void app_main(void) {
   i2c_common_scan();
   app_settings_init();
   assets_manager_init();
+  scene_name_gen_init();  // Load wordlist for random name generation
   event_bus_init();
 
   display_init();

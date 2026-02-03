@@ -1,5 +1,6 @@
 #include "scene_console.h"
 #include "scene.h"
+#include "scene_name_gen.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "esp_log.h"
@@ -550,8 +551,9 @@ static int cmd_goto(int argc, char **argv) {
   return 0;
 }
 
-// Command: name
+// Command: name [--generate | "name string"]
 static struct {
+  struct arg_lit *generate;
   struct arg_str *scene_name;
   struct arg_end *end;
 } name_args;
@@ -563,9 +565,37 @@ static int cmd_name(int argc, char **argv) {
     return 1;
   }
 
-  const char* name = name_args.scene_name->sval[0];
-  scene_set_name(scene_get_current_index(), name);
-  ESP_LOGI(TAG, "Scene renamed to: %s", name);
+  uint8_t scene_index = scene_get_current_index();
+
+  // Handle --generate flag
+  if (name_args.generate->count > 0) {
+    if (!scene_name_gen_ready()) {
+      ESP_LOGE(TAG, "Name generator not initialized");
+      return 1;
+    }
+    char new_name[SCENE_NAME_MAX_LEN + 1];
+    scene_name_generate(new_name, sizeof(new_name));
+    scene_set_name(scene_index, new_name);
+    ESP_LOGI(TAG, "Generated name: %s", new_name);
+    return 0;
+  }
+
+  // Handle setting name directly
+  if (name_args.scene_name->count > 0) {
+    const char* name = name_args.scene_name->sval[0];
+    scene_set_name(scene_index, name);
+    ESP_LOGI(TAG, "Scene renamed to: %s", name);
+    return 0;
+  }
+
+  // Show current name
+  scene_t* scene = scene_get_current();
+  if (scene && scene->name[0]) {
+    ESP_LOGI(TAG, "Current name: %s", scene->name);
+  } else {
+    ESP_LOGI(TAG, "Scene has no name set");
+  }
+  ESP_LOGI(TAG, "Usage: name \"new name\" | name --generate");
   return 0;
 }
 
@@ -4488,12 +4518,13 @@ esp_err_t scene_console_init(void) {
   esp_console_cmd_register(&goto_cmd);
   
   // name command
-  name_args.scene_name = arg_str1(NULL, NULL, "<name>", "Scene name");
-  name_args.end = arg_end(2);
+  name_args.generate = arg_lit0("g", "generate", "Generate random name");
+  name_args.scene_name = arg_str0(NULL, NULL, "<name>", "Scene name");
+  name_args.end = arg_end(3);
 
   const esp_console_cmd_t name_cmd = {
     .command = "name",
-    .help = "Set current scene name",
+    .help = "Set or generate scene name",
     .hint = NULL,
     .func = &cmd_name,
     .argtable = &name_args

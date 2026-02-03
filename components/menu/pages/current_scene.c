@@ -2,6 +2,9 @@
 #include "menu_pages.h"
 #include "action_config.h"
 #include "scene.h"
+#include "scene_name_gen.h"
+#include "name_edit.h"
+#include "ui.h"
 #include "tempo.h"
 #include "assets_types.h"
 #include "display_driver.h"
@@ -12,9 +15,8 @@
 #define TAG "MENU_CURRENT_SCENE"
 
 // Static storage for menu items and labels
-#define MAX_SCENE_ITEMS 24
+#define MAX_SCENE_ITEMS 26
 static menu_item_t s_scene_items[MAX_SCENE_ITEMS];
-static char s_scene_title[48];
 static char s_page_title[24];
 static char s_preset_label[32];
 static char s_send_pc_label[24];
@@ -110,6 +112,58 @@ static void nav_to_bump(void* user_data) {
 static void nav_to_on_load(void* user_data) {
   (void)user_data;
   menu_navigate_to("On-Load", menu_page_on_load_scene_create);
+}
+
+// ============================================================================
+// Name Submenu (Regenerate / Edit)
+// ============================================================================
+
+static menu_item_t s_name_menu_items[3];
+static char s_current_name_display[24];
+
+// Forward declaration
+static lv_obj_t* name_submenu_create(void);
+
+static void regenerate_name_action(void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_current_index();
+  char new_name[SCENE_NAME_MAX_LEN + 1];
+  scene_name_generate(new_name, sizeof(new_name));
+  scene_set_name(scene_index, new_name);
+  ESP_LOGI(TAG, "Regenerated scene name: %s", new_name);
+  // Refresh current submenu to show new name, keeping focus on Regenerate (index 1)
+  menu_set_restore_focus(1);
+  menu_replace_current("Scene Name", name_submenu_create);
+}
+
+static void edit_name_action(void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  uint8_t scene_index = scene_get_current_index();
+  name_edit_set_name(scene ? scene->name : "", scene_index);
+  ui_set_draw_module(&name_edit_module);
+}
+
+// Public function for external navigation (e.g., from text editor)
+lv_obj_t* menu_page_scene_name_create(void) {
+  scene_t* scene = scene_get_current();
+  const char* name = (scene && scene->name[0]) ? scene->name : "<unnamed>";
+  snprintf(s_current_name_display, sizeof(s_current_name_display), "%s", name);
+  
+  s_name_menu_items[0] = (menu_item_t){ s_current_name_display, NULL, NULL, false };  // Read-only
+  s_name_menu_items[1] = (menu_item_t){ "Regenerate", regenerate_name_action, NULL, false };
+  s_name_menu_items[2] = (menu_item_t){ "Edit", edit_name_action, NULL, false };
+  return menu_create_page("Scene Name", s_name_menu_items, 3);
+}
+
+// Internal alias for forward declaration compatibility
+static lv_obj_t* name_submenu_create(void) {
+  return menu_page_scene_name_create();
+}
+
+static void nav_to_name(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Scene Name", menu_page_scene_name_create);
 }
 
 // ============================================================================
@@ -581,19 +635,13 @@ lv_obj_t* menu_page_current_scene_create(void) {
   
   int idx = 0;
   
-  // Build page title based on mode
-  if (mode == SCENE_MODE_SINGLE) {
+  // Build page title: use scene name if available, otherwise "Scene" or "Scene N"
+  if (scene && scene->name[0]) {
+    snprintf(s_page_title, sizeof(s_page_title), "%s", scene->name);
+  } else if (mode == SCENE_MODE_SINGLE) {
     snprintf(s_page_title, sizeof(s_page_title), "Scene");
   } else {
     snprintf(s_page_title, sizeof(s_page_title), "Scene %d", scene_index + 1);
-  }
-  
-  // In Preset/Advanced mode, show scene name if defined
-  if (mode != SCENE_MODE_SINGLE && scene && scene->name[0]) {
-    snprintf(s_scene_title, sizeof(s_scene_title), "%s", scene->name);
-    s_scene_items[idx++] = (menu_item_t){ s_scene_title, NULL, NULL, false };
-    // Divider after name
-    s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
   }
   
   // Assignment submenus
@@ -610,6 +658,9 @@ lv_obj_t* menu_page_current_scene_create(void) {
   
   // Divider
   s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
+  
+  // Scene Name menu item
+  s_scene_items[idx++] = (menu_item_t){ "Scene Name", nav_to_name, NULL, true };
   
   // Current preset - convert PC to user-friendly 1-based preset number
   // PC 0 with indexBase=0 → Preset 1, PC 16 with indexBase=1 → Preset 16
