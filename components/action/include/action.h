@@ -147,6 +147,12 @@ typedef enum {
 #define MORPH_DIV_BEAT MORPH_DIV_1_BEAT
 #define MORPH_DIV_BAR  MORPH_DIV_1_BAR
 
+// Confirm pending target (Advanced mode only)
+typedef enum {
+  CONFIRM_TARGET_PRESET = 0,  // Default: confirm preset changes
+  CONFIRM_TARGET_SCENE        // Confirm scene changes
+} confirm_target_t;
+
 // Action parameters (flexible union for different action types)
 typedef struct {
   action_type_t type;
@@ -250,6 +256,11 @@ typedef struct {
     struct {
       uint8_t cut_mode;       // 0=local only, 1=passthrough only, 2=both
     } cut;
+    
+    // For confirm_pending action (Advanced mode only)
+    struct {
+      uint8_t target;         // confirm_target_t: 0=preset, 1=scene
+    } confirm;
   } params;
 } action_t;
 

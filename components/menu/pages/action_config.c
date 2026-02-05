@@ -91,6 +91,7 @@ static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
 static char s_cut_mode_label[LABEL_BUFFER_SETS][32];
+static char s_confirm_target_label[LABEL_BUFFER_SETS][32];
 static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
@@ -2936,6 +2937,44 @@ static void nav_to_cut_mode(void* user_data) {
 }
 
 // ============================================================================
+// Confirm Target Roller (for ACTION_CONFIRM_PENDING in Advanced mode)
+// ============================================================================
+
+static const char* CONFIRM_TARGET_OPTIONS = "Preset\nScene";
+
+static void confirm_target_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action || s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  action_t* action = s_ctx->target_action;
+  action->params.confirm.target = (selected_index == 0) ?
+    CONFIRM_TARGET_PRESET : CONFIRM_TARGET_SCENE;
+  
+  persist_scene_changes();
+  ESP_LOGI(TAG, "Confirm target set to: %s",
+    (action->params.confirm.target == CONFIRM_TARGET_SCENE) ? "Scene" : "Preset");
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* confirm_target_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = (action->params.confirm.target == CONFIRM_TARGET_SCENE) ? 1 : 0;
+  
+  return menu_create_roller_page("Confirms", CONFIRM_TARGET_OPTIONS, current_idx,
+    confirm_target_confirm_cb, NULL);
+}
+
+static void nav_to_confirm_target(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Confirms", confirm_target_roller_create);
+}
+
+// ============================================================================
 // Navigation Helpers
 // ============================================================================
 
@@ -3960,6 +3999,19 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_cut_mode_label[buf], sizeof(s_cut_mode_label[buf]), "Cut Target\n%s", mode_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_cut_mode_label[buf], nav_to_cut_mode, NULL, true
+    };
+  }
+  
+  // Show confirm target selector for confirm_pending action in Advanced mode only
+  if (action->type == ACTION_CONFIRM_PENDING &&
+      scene_get_mode() == SCENE_MODE_ADVANCED &&
+      item_count < MAX_DETAIL_ITEMS) {
+    const char* target_name = (action->params.confirm.target == CONFIRM_TARGET_SCENE) ?
+      "Scene" : "Preset";
+    snprintf(s_confirm_target_label[buf], sizeof(s_confirm_target_label[buf]),
+      "Confirms\n%s", target_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_confirm_target_label[buf], nav_to_confirm_target, NULL, true
     };
   }
   

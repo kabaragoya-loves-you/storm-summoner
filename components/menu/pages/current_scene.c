@@ -635,13 +635,23 @@ lv_obj_t* menu_page_current_scene_create(void) {
   
   int idx = 0;
   
-  // Build page title: use scene name if available, otherwise "Scene" or "Scene N"
-  if (scene && scene->name[0]) {
-    snprintf(s_page_title, sizeof(s_page_title), "%s", scene->name);
-  } else if (mode == SCENE_MODE_SINGLE) {
-    snprintf(s_page_title, sizeof(s_page_title), "Scene");
+  // Build page title: prefix with ordinal in non-Simple modes
+  if (mode == SCENE_MODE_SINGLE) {
+    snprintf(s_page_title, sizeof(s_page_title), "%s",
+      (scene && scene->name[0]) ? scene->name : "Scene");
   } else {
-    snprintf(s_page_title, sizeof(s_page_title), "Scene %d", scene_index + 1);
+    // Find position in manifest for 1-based ordinal
+    uint16_t position = 0;
+    uint16_t count = scene_get_count();
+    for (uint16_t i = 0; i < count; i++) {
+      if (scene_get_index_by_position(i) == scene_index) {
+        position = i;
+        break;
+      }
+    }
+    snprintf(s_page_title, sizeof(s_page_title), "%u. %s",
+      (unsigned)(position + 1),
+      (scene && scene->name[0]) ? scene->name : "Untitled");
   }
   
   // Assignment submenus
@@ -659,8 +669,10 @@ lv_obj_t* menu_page_current_scene_create(void) {
   // Divider
   s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
   
-  // Scene Name menu item
-  s_scene_items[idx++] = (menu_item_t){ "Scene Name", nav_to_name, NULL, true };
+  // Scene Name menu item (hidden in Simple mode - only one scene, name less relevant)
+  if (mode != SCENE_MODE_SINGLE) {
+    s_scene_items[idx++] = (menu_item_t){ "Scene Name", nav_to_name, NULL, true };
+  }
   
   // Current preset - convert PC to user-friendly 1-based preset number
   // PC 0 with indexBase=0 → Preset 1, PC 16 with indexBase=1 → Preset 16

@@ -1301,6 +1301,11 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   
   scene_t* new_scene = &g_scene_manager.cache[cache_idx].scene;
   
+  // Clear pending preset state - scene change supersedes preset changes
+  if (device_config_has_pending_program()) {
+    device_config_cancel_pending_program();
+  }
+  
   // Update device current_program and send PC based on mode
   // For PRESET_SYNC mode, offset scene_index by device's indexBase
   uint8_t program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC)
@@ -2775,6 +2780,11 @@ static cJSON* action_to_json(const action_t* action) {
     const char* mode_str = (action->params.cut.cut_mode == 0) ? "local" :
                            (action->params.cut.cut_mode == 1) ? "passthrough" : "both";
     cJSON_AddStringToObject(obj, "cut_mode", mode_str);
+  } else if (action->type == ACTION_CONFIRM_PENDING) {
+    // Only serialize if not default (preset = 0)
+    if (action->params.confirm.target == CONFIRM_TARGET_SCENE) {
+      cJSON_AddStringToObject(obj, "confirm_target", "scene");
+    }
   }
   
   // Serialize timing (only if not immediate default)
@@ -3069,6 +3079,21 @@ static action_t json_to_action(cJSON* obj) {
     } else {
       // Default to "both"
       action.params.cut.cut_mode = 2;
+    }
+  }
+  
+  // Parse confirm_pending action (Advanced mode target)
+  if (action.type == ACTION_CONFIRM_PENDING) {
+    cJSON* confirm_target = cJSON_GetObjectItem(obj, "confirm_target");
+    if (confirm_target && cJSON_IsString(confirm_target)) {
+      if (strcmp(confirm_target->valuestring, "scene") == 0) {
+        action.params.confirm.target = CONFIRM_TARGET_SCENE;
+      } else {
+        action.params.confirm.target = CONFIRM_TARGET_PRESET;
+      }
+    } else {
+      // Default to preset
+      action.params.confirm.target = CONFIRM_TARGET_PRESET;
     }
   }
   
@@ -4221,6 +4246,10 @@ uint8_t scene_get_index_by_position(uint16_t position) {
 }
 
 esp_err_t scene_create_new(const char* name) {
+  return scene_create_new_at_position(name, g_scene_manager.num_scenes);
+}
+
+esp_err_t scene_create_new_at_position(const char* name, uint16_t position) {
   // Find next available index
   uint8_t new_index = 0;
   for (uint8_t i = 0; i <= MAX_SCENE_INDEX; i++) {
@@ -4235,22 +4264,30 @@ esp_err_t scene_create_new(const char* name) {
   scene_manifest_entry_t* new_manifest = realloc_prefer_psram(g_scene_manager.manifest, 
                                                                (g_scene_manager.num_scenes + 1) * sizeof(scene_manifest_entry_t));
   if (!new_manifest) return ESP_ERR_NO_MEM;
-  
   g_scene_manager.manifest = new_manifest;
-  g_scene_manager.manifest[g_scene_manager.num_scenes].index = new_index;
-  strncpy(g_scene_manager.manifest[g_scene_manager.num_scenes].name, name,
-    sizeof(g_scene_manager.manifest[g_scene_manager.num_scenes].name) - 1);
-  snprintf(g_scene_manager.manifest[g_scene_manager.num_scenes].filename, 63, "scene_%03d.json", new_index + 1);
+  
+  // Clamp position to valid range
+  if (position > g_scene_manager.num_scenes) position = g_scene_manager.num_scenes;
+  
+  // Shift entries down to make room at position
+  for (int i = g_scene_manager.num_scenes; i > (int)position; i--) {
+    g_scene_manager.manifest[i] = g_scene_manager.manifest[i - 1];
+  }
+  
+  // Insert new entry at position
+  g_scene_manager.manifest[position].index = new_index;
+  strncpy(g_scene_manager.manifest[position].name, name,
+    sizeof(g_scene_manager.manifest[position].name) - 1);
+  g_scene_manager.manifest[position].name[sizeof(g_scene_manager.manifest[position].name) - 1] = '\0';
+  snprintf(g_scene_manager.manifest[position].filename, 63, "scene_%03d.json", new_index + 1);
   g_scene_manager.num_scenes++;
   
-  // Create and save default scene
-  scene_t new_scene;
-  scene_init_defaults(&new_scene, new_index);
-  strncpy(new_scene.name, name, sizeof(new_scene.name) - 1);
-  new_scene.name[sizeof(new_scene.name) - 1] = '\0';
-  
+  // Create and save default scene - initialize directly in cache to avoid stack allocation
   int temp_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
-  g_scene_manager.cache[temp_idx].scene = new_scene;
+  scene_init_defaults(&g_scene_manager.cache[temp_idx].scene, new_index);
+  strncpy(g_scene_manager.cache[temp_idx].scene.name, name,
+    sizeof(g_scene_manager.cache[temp_idx].scene.name) - 1);
+  g_scene_manager.cache[temp_idx].scene.name[sizeof(g_scene_manager.cache[temp_idx].scene.name) - 1] = '\0';
   g_scene_manager.cache[temp_idx].index = new_index;
   g_scene_manager.cache[temp_idx].valid = true;
   

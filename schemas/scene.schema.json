@@ -995,6 +995,23 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "confirm_pending"}
+            }
+          },
+          "then": {
+            "properties": {
+              "confirm_target": {
+                "type": "string",
+                "enum": ["preset", "scene"],
+                "default": "preset",
+                "description": "What to confirm in Advanced mode: preset change or scene change"
+              }
+            }
+          }
         }
       ]
     }

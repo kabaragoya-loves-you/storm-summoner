@@ -184,14 +184,20 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  // Convert roller index to mapping index (accounting for skipped Tempo)
+  // Convert roller index to mapping index (accounting for skipped Tempo and Program Change)
   bool show_tempo = (scene->clock_source == CLOCK_SOURCE_INTERNAL);
+  scene_mode_t scene_mode = scene_get_mode();
+  bool show_program_change = (scene_mode != SCENE_MODE_PRESET_SYNC);
   uint32_t mapping_index = 0;
   uint32_t roller_count = 0;
   
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal (same logic as mode_roller_create)
     if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_SET_TEMPO && !show_tempo) {
+      continue;
+    }
+    // Skip Program Change in Preset Sync mode (same logic as mode_roller_create)
+    if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE && !show_program_change) {
       continue;
     }
     if (roller_count == selected_index) {
@@ -246,8 +252,10 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* mode_roller_create(void) {
   scene_t* scene = scene_get_current();
   bool show_tempo = (scene && scene->clock_source == CLOCK_SOURCE_INTERNAL);
+  scene_mode_t scene_mode = scene_get_mode();
+  bool show_program_change = (scene_mode != SCENE_MODE_PRESET_SYNC);
   
-  // Build options string, conditionally including Tempo
+  // Build options string, conditionally including Tempo and Program Change
   static char options[256];
   options[0] = '\0';
   
@@ -258,10 +266,10 @@ static lv_obj_t* mode_roller_create(void) {
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal
     if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_SET_TEMPO && !show_tempo) {
-      // Adjust current index if we're skipping an option before it
-      if ((int)i < current_mode_idx) {
-        // Don't adjust - we handle this below
-      }
+      continue;
+    }
+    // Skip Program Change in Preset Sync mode (presets tied to scenes)
+    if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE && !show_program_change) {
       continue;
     }
     

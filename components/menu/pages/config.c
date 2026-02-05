@@ -9,89 +9,132 @@
 
 #define TAG "MENU_CONFIG"
 
-static void show_info(void* user_data) {
+// Forward declaration (uses public declaration from menu_pages.h)
+
+// Label buffers
+static char s_scene_mode_label[40];
+static char s_change_mode_label[40];
+static char s_program_wrap_label[40];
+static menu_item_t s_config_items[4];
+
+// ============================================================================
+// Scene Mode Roller
+// ============================================================================
+
+static const char* SCENE_MODE_OPTIONS = "Simple\nPreset Sync\nAdvanced";
+
+static void scene_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
-  scene_mode_t scene_mode = scene_get_mode();
-  scene_change_mode_t change_mode = scene_get_change_mode();
-  uint8_t channel = device_config_get_channel();
-  uint8_t program = device_config_get_program();
-  bool program_wrap = config_get_program_wrap();
+  scene_mode_t mode;
+  switch (selected_index) {
+    case 0: mode = SCENE_MODE_SINGLE; break;
+    case 1: mode = SCENE_MODE_PRESET_SYNC; break;
+    default: mode = SCENE_MODE_ADVANCED; break;
+  }
+  scene_set_mode(mode);
+  ESP_LOGI(TAG, "Scene mode set to %s",
+    (mode == SCENE_MODE_SINGLE) ? "Simple" :
+    (mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced");
   
-  const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Single" :
-                                (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
-  const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
-  const char* program_wrap_str = program_wrap ? "On" : "Off";
+  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+}
+
+static lv_obj_t* scene_mode_roller_create(void) {
+  scene_mode_t mode = scene_get_mode();
+  uint32_t current_idx = (mode == SCENE_MODE_SINGLE) ? 0 :
+                         (mode == SCENE_MODE_PRESET_SYNC) ? 1 : 2;
+  return menu_create_roller_page("Scene Mode", SCENE_MODE_OPTIONS, current_idx,
+    scene_mode_confirm_cb, NULL);
+}
+
+static void nav_to_scene_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Scene Mode", scene_mode_roller_create);
+}
+
+// ============================================================================
+// Change Mode Roller (for scene changes)
+// ============================================================================
+
+static const char* CHANGE_MODE_OPTIONS = "Immediate\nPending";
+
+static void change_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  scene_change_mode_t mode = (selected_index == 0) ?
+    CHANGE_MODE_IMMEDIATE : CHANGE_MODE_PENDING;
+  scene_set_change_mode(mode);
+  ESP_LOGI(TAG, "Change mode set to %s",
+    (mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending");
   
-  char info_text[512];
-  snprintf(info_text, sizeof(info_text),
-    "DEVICE CONFIG\n"
-    "MIDI channel: %d\n"
-    "Current program: %d\n"
-    "Program wrap: %s\n"
-    "\n"
-    "Scene mode: %s\n"
-    "Change mode: %s",
-    channel, program, program_wrap_str, scene_mode_str, change_mode_str);
+  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+}
+
+static lv_obj_t* change_mode_roller_create(void) {
+  scene_change_mode_t mode = scene_get_change_mode();
+  uint32_t current_idx = (mode == CHANGE_MODE_IMMEDIATE) ? 0 : 1;
+  return menu_create_roller_page("Confirm Change", CHANGE_MODE_OPTIONS, current_idx,
+    change_mode_confirm_cb, NULL);
+}
+
+static void nav_to_change_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Confirm Change", change_mode_roller_create);
+}
+
+// ============================================================================
+// Program Wrap Roller
+// ============================================================================
+
+static const char* PROGRAM_WRAP_OPTIONS = "On\nOff";
+
+static void program_wrap_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  bool wrap = (selected_index == 0);
+  config_set_program_wrap(wrap);
+  ESP_LOGI(TAG, "Program wrap set to %s", wrap ? "On" : "Off");
   
-  menu_navigate_to_info("Config Info", info_text);
+  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
 }
 
-static void set_scene_mode_single(void* user_data) {
-  (void)user_data;
-  scene_set_mode(SCENE_MODE_SINGLE);
-  ESP_LOGI(TAG, "Scene mode set to Single");
+static lv_obj_t* program_wrap_roller_create(void) {
+  bool wrap = config_get_program_wrap();
+  uint32_t current_idx = wrap ? 0 : 1;
+  return menu_create_roller_page("Program Wrap", PROGRAM_WRAP_OPTIONS, current_idx,
+    program_wrap_confirm_cb, NULL);
 }
 
-static void set_scene_mode_preset(void* user_data) {
+static void nav_to_program_wrap(void* user_data) {
   (void)user_data;
-  scene_set_mode(SCENE_MODE_PRESET_SYNC);
-  ESP_LOGI(TAG, "Scene mode set to Preset Sync");
+  menu_navigate_to("Program Wrap", program_wrap_roller_create);
 }
 
-static void set_scene_mode_advanced(void* user_data) {
-  (void)user_data;
-  scene_set_mode(SCENE_MODE_ADVANCED);
-  ESP_LOGI(TAG, "Scene mode set to Advanced");
-}
-
-static void set_change_mode_immediate(void* user_data) {
-  (void)user_data;
-  scene_set_change_mode(CHANGE_MODE_IMMEDIATE);
-  ESP_LOGI(TAG, "Change mode set to Immediate");
-}
-
-static void set_change_mode_pending(void* user_data) {
-  (void)user_data;
-  scene_set_change_mode(CHANGE_MODE_PENDING);
-  ESP_LOGI(TAG, "Change mode set to Pending");
-}
-
-static void set_program_wrap_on(void* user_data) {
-  (void)user_data;
-  config_set_program_wrap(true);
-  ESP_LOGI(TAG, "Program wrap set to On");
-}
-
-static void set_program_wrap_off(void* user_data) {
-  (void)user_data;
-  config_set_program_wrap(false);
-  ESP_LOGI(TAG, "Program wrap set to Off");
-}
+// ============================================================================
+// Config Menu Page
+// ============================================================================
 
 lv_obj_t* menu_page_config_create(void) {
   ESP_LOGI(TAG, "Creating config page");
   
-  static menu_item_t config_items[] = {
-    { "Info", show_info, NULL, false },
-    { "Scene Mode: Single", set_scene_mode_single, NULL, false },
-    { "Scene Mode: Preset", set_scene_mode_preset, NULL, false },
-    { "Scene Mode: Advanced", set_scene_mode_advanced, NULL, false },
-    { "Change: Immediate", set_change_mode_immediate, NULL, false },
-    { "Change: Pending", set_change_mode_pending, NULL, false },
-    { "Prog Wrap: On", set_program_wrap_on, NULL, false },
-    { "Prog Wrap: Off", set_program_wrap_off, NULL, false }
-  };
+  int idx = 0;
   
-  return menu_create_page("Config", config_items, 
-    sizeof(config_items) / sizeof(config_items[0]));
+  // Scene Mode with current value
+  scene_mode_t scene_mode = scene_get_mode();
+  const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Simple" :
+    (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
+  snprintf(s_scene_mode_label, sizeof(s_scene_mode_label), "Scene Mode\n%s", scene_mode_str);
+  s_config_items[idx++] = (menu_item_t){ s_scene_mode_label, nav_to_scene_mode, NULL, true };
+  
+  // Confirm Change with current value
+  scene_change_mode_t change_mode = scene_get_change_mode();
+  const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
+  snprintf(s_change_mode_label, sizeof(s_change_mode_label), "Confirm Change\n%s", change_mode_str);
+  s_config_items[idx++] = (menu_item_t){ s_change_mode_label, nav_to_change_mode, NULL, true };
+  
+  // Program Wrap with current value
+  bool program_wrap = config_get_program_wrap();
+  snprintf(s_program_wrap_label, sizeof(s_program_wrap_label), "Program Wrap\n%s",
+    program_wrap ? "On" : "Off");
+  s_config_items[idx++] = (menu_item_t){ s_program_wrap_label, nav_to_program_wrap, NULL, true };
+  
+  return menu_create_page_2line("Scene", s_config_items, idx);
 }

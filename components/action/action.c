@@ -917,10 +917,20 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
     // System
     case ACTION_CONFIRM_PENDING:
       if (is_press) {
-        if (scene_get_mode() == SCENE_MODE_SINGLE) {
+        scene_mode_t mode = scene_get_mode();
+        if (mode == SCENE_MODE_SINGLE) {
+          // Simple mode: only preset changes possible
           if (device_config_has_pending_program()) device_config_confirm_program();
-        } else {
+        } else if (mode == SCENE_MODE_PRESET_SYNC) {
+          // Preset Sync: only scene changes possible (presets tied to scenes)
           if (scene_has_pending_change()) scene_confirm_change();
+        } else {
+          // Advanced mode: check action's target setting
+          if (action->params.confirm.target == CONFIRM_TARGET_SCENE) {
+            if (scene_has_pending_change()) scene_confirm_change();
+          } else {
+            if (device_config_has_pending_program()) device_config_confirm_program();
+          }
         }
       }
       break;

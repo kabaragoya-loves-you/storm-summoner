@@ -331,6 +331,7 @@ esp_err_t scene_save_to_flash(uint8_t scene_index);
 esp_err_t scene_load_manifest(void);
 esp_err_t scene_save_manifest(void);
 esp_err_t scene_create_new(const char* name);
+esp_err_t scene_create_new_at_position(const char* name, uint16_t position);
 esp_err_t scene_delete(uint8_t scene_index);
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name);
 esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index);

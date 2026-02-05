@@ -6,6 +6,7 @@
 #include "tempo.h"
 #include "transport.h"
 #include "scene.h"
+#include "device_config.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <math.h>
@@ -113,8 +114,12 @@ static lv_obj_t *g_tail_art = NULL;     // Top layer (48 frames)
 static lv_obj_t *g_bpm_label = NULL;
 static lv_obj_t *g_time_sig_label = NULL;
 static lv_obj_t *g_beat_label = NULL;
+static lv_obj_t *g_scene_info_label = NULL;  // Scene/preset info (non-Simple modes)
 static lv_grad_dsc_t g_grad;
 static lv_timer_t *g_interp_timer = NULL;
+
+// Scene info state
+static char g_scene_info_text[64];
 
 static uint16_t g_disp_width = 0;
 static uint16_t g_disp_height = 0;
@@ -167,9 +172,11 @@ LV_FONT_DECLARE(flyer_venice_24);
 static void beat_event_handler(const event_t* event, void* context);
 static void tempo_changed_handler(const event_t* event, void* context);
 static void transport_state_handler(const event_t* event, void* context);
+static void scene_changed_handler(const event_t* event, void* context);
 static void interp_timer_cb(lv_timer_t *timer);
 static void update_gradient(float phase, bool is_beat_one);
 static void update_tempo_labels(void);
+static void update_scene_info_label(void);
 static lv_color_t get_transport_color(void);
 
 //=============================================================================
@@ -293,6 +300,63 @@ static void update_tempo_labels(void) {
   }
 }
 
+static void update_scene_info_label(void) {
+  if (!g_scene_info_label) return;
+  
+  scene_mode_t mode = scene_get_mode();
+  if (mode == SCENE_MODE_SINGLE) {
+    // Hide in Simple mode
+    lv_obj_add_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  
+  lv_obj_remove_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
+  
+  // Get current scene info
+  uint8_t scene_index = scene_get_current_index();
+  const scene_t* scene = scene_get_current();
+  const char* name = (scene && scene->name[0]) ? scene->name : "Untitled";
+  
+  // Find position in manifest for ordinal
+  uint16_t position = 0;
+  uint16_t count = scene_get_count();
+  for (uint16_t i = 0; i < count; i++) {
+    if (scene_get_index_by_position(i) == scene_index) {
+      position = i;
+      break;
+    }
+  }
+  
+  if (mode == SCENE_MODE_PRESET_SYNC) {
+    // Preset Sync: show scene number and name, pending if any
+    if (scene_has_pending_change()) {
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "%u. %.12s > %u", (unsigned)(position + 1), name,
+        (unsigned)(scene_get_pending_index() + 1));
+    } else {
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "%u. %.16s", (unsigned)(position + 1), name);
+    }
+  } else {
+    // Advanced: show scene and preset info
+    uint8_t preset = scene ? scene->program_number : 0;
+    if (scene_has_pending_change()) {
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "%u. %.10s P%u > S%u", (unsigned)(position + 1), name,
+        (unsigned)(preset + 1), (unsigned)(scene_get_pending_index() + 1));
+    } else if (device_config_has_pending_program()) {
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "%u. %.10s P%u > P%u", (unsigned)(position + 1), name,
+        (unsigned)(preset + 1), (unsigned)(device_config_get_pending_program() + 1));
+    } else {
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "%u. %.12s P%u", (unsigned)(position + 1), name, (unsigned)(preset + 1));
+    }
+  }
+  
+  lv_label_set_text(g_scene_info_label, g_scene_info_text);
+}
+
 //=============================================================================
 // EVENT HANDLERS (lightweight - just update state, no LVGL calls)
 //=============================================================================
@@ -339,6 +403,16 @@ static void transport_state_handler(const event_t* event, void* context) {
   
   g_transport_state = (transport_state_t)event->data.transport.state;
   g_transport_dirty = true;
+}
+
+static void scene_changed_handler(const event_t* event, void* context) {
+  (void)context;
+  if (!event || !g_module_active) return;
+  
+  // Update scene info label asynchronously via timer callback
+  // (event handler context is not safe for LVGL calls)
+  // The interp_timer will call update_scene_info_label periodically
+  // For now, just mark that an update is needed (we'll add a dirty flag)
 }
 
 //=============================================================================
@@ -468,6 +542,13 @@ static void interp_timer_cb(lv_timer_t *timer) {
     if (body_frame >= BODY_FRAME_COUNT) body_frame = BODY_FRAME_COUNT - 1;
     lv_vector_art_set_frame(g_body_art, body_frame);
   }
+  
+  // Update scene info label periodically (~every 500ms = 30 frames at 60fps)
+  static uint8_t scene_info_counter = 0;
+  if (++scene_info_counter >= 30) {
+    scene_info_counter = 0;
+    update_scene_info_label();
+  }
 }
 
 //=============================================================================
@@ -576,6 +657,14 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   lv_obj_set_style_text_font(g_beat_label, &flyer_venice_24, 0);
   lv_obj_set_pos(g_beat_label, 155, 30);
   
+  // Scene info label - bottom center (for non-Simple modes)
+  g_scene_info_label = lv_label_create(g_screen);
+  lv_obj_set_style_text_font(g_scene_info_label, &flyer_venice_20, 0);
+  lv_obj_set_style_text_color(g_scene_info_label, lv_color_white(), 0);
+  lv_obj_set_style_text_align(g_scene_info_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(g_scene_info_label, LV_ALIGN_BOTTOM_MID, 0, -25);
+  update_scene_info_label();
+  
   // Initialize state from tempo/transport
   g_current_bpm = tempo_get_bpm();
   g_beat_duration_ms = 60000 / g_current_bpm;
@@ -602,6 +691,7 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   event_bus_subscribe(EVENT_BEAT, beat_event_handler, NULL);
   event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_CHANGED, scene_changed_handler, NULL);
 
   // Mark module as active
   g_module_active = true;
@@ -623,6 +713,7 @@ static void scene_ui_teardown(void) {
   event_bus_unsubscribe(EVENT_BEAT, beat_event_handler);
   event_bus_unsubscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler);
   event_bus_unsubscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler);
+  event_bus_unsubscribe(EVENT_SCENE_CHANGED, scene_changed_handler);
   
   // Clean up interpolation timer
   if (g_interp_timer) {
@@ -639,6 +730,7 @@ static void scene_ui_teardown(void) {
     g_bpm_label = NULL;
     g_time_sig_label = NULL;
     g_beat_label = NULL;
+    g_scene_info_label = NULL;
   }
   
   // Reset cached state

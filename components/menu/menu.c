@@ -2,6 +2,8 @@
 #include "menu_pages.h"
 #include "ui.h"
 #include "display_driver.h"
+#include "event_bus.h"
+#include "scene.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -63,6 +65,43 @@ static void focus_event_cb(lv_event_t* e);
 static void update_scroll_visuals(lv_obj_t* cont);
 static void save_focused_index(void);
 
+// Handle button events for scene navigation on index page
+static void menu_button_event_handler(const event_t* event, void* context) {
+  (void)context;
+  if (!event) return;
+  
+  // Only handle when at top level (index page)
+  if (!menu_is_top_level()) return;
+  
+  // Only in multi-scene modes
+  scene_mode_t mode = scene_get_mode();
+  if (mode == SCENE_MODE_SINGLE) return;
+  
+  esp_err_t ret = ESP_FAIL;
+  
+  switch (event->type) {
+    case EVENT_BUTTON_L_PRESS:
+      // Left button = next scene
+      ret = scene_next();
+      ESP_LOGI(TAG, "Index: Left button -> scene_next: %s", esp_err_to_name(ret));
+      break;
+      
+    case EVENT_BUTTON_R_PRESS:
+      // Right button = previous scene
+      ret = scene_previous();
+      ESP_LOGI(TAG, "Index: Right button -> scene_previous: %s", esp_err_to_name(ret));
+      break;
+      
+    default:
+      return;
+  }
+  
+  // Rebuild index page to show new scene
+  if (ret == ESP_OK) {
+    menu_replace_current("Menu", menu_page_index_create);
+  }
+}
+
 void menu_init(void) {
   if (menu_state.initialized) {
     ESP_LOGD(TAG, "Menu already initialized, reusing existing state");
@@ -75,6 +114,10 @@ void menu_init(void) {
   // Create group for encoder navigation
   menu_state.group = lv_group_create();
   lv_group_set_wrap(menu_state.group, false);
+  
+  // Subscribe to button events for scene navigation on index page
+  event_bus_subscribe(EVENT_BUTTON_L_PRESS, menu_button_event_handler, NULL);
+  event_bus_subscribe(EVENT_BUTTON_R_PRESS, menu_button_event_handler, NULL);
   
   ESP_LOGI(TAG, "Menu system initialized");
 }
@@ -227,8 +270,8 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Title bar height (slightly taller to account for circular display clipping at top)
-  const int title_bar_h = 27;
+  // Title bar height (taller to account for circular display clipping at top)
+  const int title_bar_h = 32;
   
   // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
@@ -247,7 +290,7 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Create scrollable container with flex layout
@@ -377,8 +420,8 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Title bar height (slightly taller to account for circular display clipping at top)
-  const int title_bar_h = 27;
+  // Title bar height (taller to account for circular display clipping at top)
+  const int title_bar_h = 32;
   
   // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
@@ -397,7 +440,7 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Create scrollable container with flex layout
@@ -620,7 +663,8 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   lv_screen_load(screen);
   update_top_level_flag();
 
-  ESP_LOGI(TAG, "Navigated to menu: %s (depth: %d)", menu_name, menu_state.stack_depth);
+  ESP_LOGI(TAG, "Navigated to menu: %s (depth: %d)", 
+    menu_name ? menu_name : "(unnamed)", menu_state.stack_depth);
 }
 
 // Deferred navigation timer callback (runs in LVGL task context)
@@ -887,6 +931,12 @@ void menu_navigate_back(void) {
       menu_navigate_back_then_to(2, "Scene", menu_page_current_scene_create);
       return;
     }
+    // Special case: leaving Scenes manager should rebuild the index page
+    // to reflect any reordering (scene ordinal might have changed)
+    if (current_name && strcmp(current_name, "Scenes") == 0 && menu_state.stack_depth == 2) {
+      menu_navigate_back_then_to(2, "Menu", menu_page_index_create);
+      return;
+    }
   }
 
   menu_state.pending_nav.is_back = true;
@@ -958,7 +1008,7 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
     return;
   }
   
-  ESP_LOGI(TAG, "Replacing current page with: %s", menu_name);
+  ESP_LOGI(TAG, "Replacing current page with: %s", menu_name ? menu_name : "(unnamed)");
   
   // Remove current page from group
   if (menu_state.group) {
@@ -1047,7 +1097,7 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   // Reset debounce timer to prevent double-clicks after replacement
   s_last_callback_time = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
   
-  ESP_LOGI(TAG, "Replaced current page with: %s", menu_name);
+  ESP_LOGI(TAG, "Replaced current page with: %s", menu_name ? menu_name : "(unnamed)");
 }
 
 bool menu_handle_enter(void) {
@@ -1176,8 +1226,8 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Title bar height (slightly taller to account for circular display clipping at top)
-  const int title_bar_h = 27;
+  // Title bar height (taller to account for circular display clipping at top)
+  const int title_bar_h = 32;
   
   // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
@@ -1196,7 +1246,7 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Margins for content
@@ -1300,8 +1350,8 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
   lv_obj_set_style_border_width(screen, 0, 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
 
-  // Title bar
-  const int title_bar_h = 22;
+  // Title bar (taller to account for circular display clipping at top)
+  const int title_bar_h = 27;
   lv_obj_t* title_bar = lv_obj_create(screen);
   lv_obj_set_size(title_bar, disp_w, title_bar_h);
   lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
@@ -1317,7 +1367,7 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
   lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 3);  // Offset down for circular display
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
 
   // Create roller centered below title
   lv_obj_t* roller = lv_roller_create(screen);
