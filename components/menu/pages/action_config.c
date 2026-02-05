@@ -4024,11 +4024,9 @@ lv_obj_t* action_config_detail_page_create(void) {
     };
   }
   
-  // Show Repeat option for non-HOLD actions only
-  // HOLD actions don't support repeat (use Cycle actions instead for rhythmic alternation)
-  if (action->type != ACTION_NONE && 
-      !action_requires_hold(action->type) && 
-      item_count < MAX_DETAIL_ITEMS) {
+  // Show Repeat option for actions that support it
+  // Excludes HOLD actions, preset/scene actions, and ACTION_NONE
+  if (action_supports_repeat(action->type) && item_count < MAX_DETAIL_ITEMS) {
     const char* repeat_display = get_repeat_display(action);
     snprintf(s_repeat_label[buf], sizeof(s_repeat_label[buf]), "Repeat\n%s", repeat_display);
     s_detail_items[item_count++] = (menu_item_t){

@@ -324,6 +324,10 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
 // Returns false for HOLD actions that must execute immediately
 bool action_supports_timing(action_type_t type);
 
+// Check if action type supports repeat options
+// Returns false for preset/scene actions and HOLD actions
+bool action_supports_repeat(action_type_t type);
+
 // String conversion for timing (for JSON/display)
 // Returns static buffer - copy if needed
 const char* action_timing_to_string(action_timing_t timing, uint8_t beat);

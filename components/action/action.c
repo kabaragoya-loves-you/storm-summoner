@@ -521,7 +521,7 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
   }
   
   // Handle non-HOLD repeating actions - toggle behavior
-  if (is_press && action->repeat_enabled && !action_requires_hold(action->type)) {
+  if (is_press && action->repeat_enabled && action_supports_repeat(action->type)) {
     if (is_action_repeating(mutable_action)) {
       // Currently repeating - stop it
       stop_repeating_internal(mutable_action);
@@ -549,7 +549,7 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
     }
     
     // Determine if this is a repeating action
-    bool repeating = action->repeat_enabled;
+    bool repeating = action->repeat_enabled && action_supports_repeat(action->type);
     
     if (action_enqueue_pending(mutable_action, trigger_value, target_beat, repeating)) {
       return ESP_OK;  // Successfully queued
@@ -1428,6 +1428,24 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
 // HOLD actions must execute immediately to preserve press/release pairing
 bool action_supports_timing(action_type_t type) {
   return !action_requires_hold(type) && type != ACTION_NONE;
+}
+
+// Returns true for actions that support repeat options
+// Preset/scene actions support timing but NOT repeat
+bool action_supports_repeat(action_type_t type) {
+  if (type == ACTION_NONE || action_requires_hold(type)) return false;
+  switch (type) {
+    case ACTION_PRESET:
+    case ACTION_PRESET_INC:
+    case ACTION_PRESET_DEC:
+    case ACTION_PRESET_CYCLE:
+    case ACTION_SCENE:
+    case ACTION_SCENE_INC:
+    case ACTION_SCENE_DEC:
+      return false;
+    default:
+      return true;
+  }
 }
 
 // Static buffer for timing string
