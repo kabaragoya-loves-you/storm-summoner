@@ -46,8 +46,10 @@ static int cmd_mode(int argc, char **argv) {
     mode = SCREENSAVER_MODE_STARFIELD;
   } else if (strcmp(mode_str, "elite") == 0) {
     mode = SCREENSAVER_MODE_ELITE;
+  } else if (strcmp(mode_str, "plasma") == 0) {
+    mode = SCREENSAVER_MODE_PLASMA;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: starfield or elite");
+    ESP_LOGE(TAG, "Unknown mode. Use: starfield, elite, or plasma");
     return 1;
   }
   
@@ -99,7 +101,7 @@ esp_err_t screensaver_console_init(void) {
   esp_console_cmd_register(&disable_cmd);
   
   // mode command
-  mode_args.mode_type = arg_str1(NULL, NULL, "<starfield|elite>", "Screensaver mode");
+  mode_args.mode_type = arg_str1(NULL, NULL, "<starfield|elite|plasma>", "Screensaver mode");
   mode_args.end = arg_end(2);
   
   const esp_console_cmd_t mode_cmd = {

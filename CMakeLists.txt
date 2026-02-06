@@ -94,6 +94,7 @@ target_link_options(${elf} PRIVATE
     "LINKER:--whole-archive"
     "$<TARGET_FILE:__idf_stars>"
     "$<TARGET_FILE:__idf_elite>"
+    "$<TARGET_FILE:__idf_plasma>"
     "$<TARGET_FILE:__idf_scene>"
     "$<TARGET_FILE:__idf_lfo>"
     "$<TARGET_FILE:__idf_device_config>"

@@ -29,6 +29,12 @@ static void set_mode_elite(void* user_data) {
   ESP_LOGI(TAG, "Screensaver mode set to: Elite");
 }
 
+static void set_mode_plasma(void* user_data) {
+  (void)user_data;
+  screensaver_set_mode(SCREENSAVER_MODE_PLASMA);
+  ESP_LOGI(TAG, "Screensaver mode set to: Plasma");
+}
+
 static void set_delay(void* user_data) {
   (void)user_data;
   // TODO: Implement delay slider UI
@@ -43,6 +49,7 @@ lv_obj_t* menu_page_screensaver_create(void) {
     { "Disable", action_disable, NULL, false },
     { "Mode: Starfield", set_mode_starfield, NULL, false },
     { "Mode: Elite", set_mode_elite, NULL, false },
+    { "Mode: Plasma", set_mode_plasma, NULL, false },
     { "Set Delay", set_delay, NULL, false }
   };
   

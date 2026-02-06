@@ -6,7 +6,8 @@
 
 typedef enum {
     SCREENSAVER_MODE_STARFIELD,
-    SCREENSAVER_MODE_ELITE
+    SCREENSAVER_MODE_ELITE,
+    SCREENSAVER_MODE_PLASMA
 } screensaver_mode_t;
 
 void screensaver_init(void);

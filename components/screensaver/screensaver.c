@@ -9,6 +9,7 @@
 #include "ui.h"
 #include "stars.h"
 #include "elite.h"
+#include "plasma.h"
 #include "nvs.h"
 #include "event_bus.h"
 
@@ -66,7 +67,7 @@ void screensaver_init(void) {
   uint16_t mode_setting_u16;
   ret = app_settings_load_u16(NVS_KEY_SS_MODE, &mode_setting_u16);
   if (ret == ESP_OK) {
-    if (mode_setting_u16 == SCREENSAVER_MODE_STARFIELD || mode_setting_u16 == SCREENSAVER_MODE_ELITE) {
+    if (mode_setting_u16 == SCREENSAVER_MODE_STARFIELD || mode_setting_u16 == SCREENSAVER_MODE_ELITE || mode_setting_u16 == SCREENSAVER_MODE_PLASMA) {
       g_selected_screensaver_mode = (screensaver_mode_t)mode_setting_u16;
     } else {
       ESP_LOGW(TAG, "Invalid NVS value for '%s': %u. Using default: %d", NVS_KEY_SS_MODE, mode_setting_u16, g_selected_screensaver_mode);
@@ -135,6 +136,8 @@ void screensaver_disable(void) {
       starfield_stop();
     } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
       elite_stop();
+    } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_PLASMA) {
+      plasma_stop();
     }
     g_screensaver_active = false;
     
@@ -159,6 +162,8 @@ static void stop_screensaver_deferred(lv_timer_t *timer) {
     starfield_stop();
   } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
     elite_stop();
+  } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_PLASMA) {
+    plasma_stop();
   }
   
   g_screensaver_active = false;
@@ -238,6 +243,8 @@ static void start_screensaver_deferred(lv_timer_t *timer) {
     starfield_start();
   } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
     elite_start();
+  } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_PLASMA) {
+    plasma_start();
   }
   
   g_screensaver_active = true;
@@ -309,14 +316,18 @@ void screensaver_set_mode(screensaver_mode_t mode) {
     return;
   }
 
-  if (mode != SCREENSAVER_MODE_STARFIELD && mode != SCREENSAVER_MODE_ELITE) {
+  if (mode != SCREENSAVER_MODE_STARFIELD && mode != SCREENSAVER_MODE_ELITE &&
+    mode != SCREENSAVER_MODE_PLASMA) {
     ESP_LOGE(TAG, "Invalid screensaver mode: %d", mode);
     return;
   }
 
+  const char *mode_name =
+    mode == SCREENSAVER_MODE_STARFIELD ? "Starfield" :
+    mode == SCREENSAVER_MODE_ELITE ? "Elite" : "Plasma";
+
   if (g_selected_screensaver_mode == mode) {
-    ESP_LOGI(TAG, "Mode is already %s. No change needed.", 
-      mode == SCREENSAVER_MODE_STARFIELD ? "Starfield" : "Elite");
+    ESP_LOGI(TAG, "Mode is already %s. No change needed.", mode_name);
     return;
   }
 
@@ -327,25 +338,27 @@ void screensaver_set_mode(screensaver_mode_t mode) {
       starfield_stop();
     } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_ELITE) {
       elite_stop();
+    } else if (g_selected_screensaver_mode == SCREENSAVER_MODE_PLASMA) {
+      plasma_stop();
     }
 
     // Update mode
     g_selected_screensaver_mode = mode;
 
     // Start new mode (takes over shared buffer)
-    // NOTE: No buffer allocation needed - both screensavers use the shared buffer
     if (mode == SCREENSAVER_MODE_STARFIELD) {
       starfield_start();
     } else if (mode == SCREENSAVER_MODE_ELITE) {
       elite_start();
+    } else if (mode == SCREENSAVER_MODE_PLASMA) {
+      plasma_start();
     }
   } else {
     // Just update the mode
     g_selected_screensaver_mode = mode;
   }
 
-  ESP_LOGI(TAG, "Screensaver mode changed to %s", 
-    mode == SCREENSAVER_MODE_STARFIELD ? "Starfield" : "Elite");
+  ESP_LOGI(TAG, "Screensaver mode changed to %s", mode_name);
 
   // Save to NVS
   esp_err_t ret = app_settings_save_u16(NVS_KEY_SS_MODE, (uint16_t)mode);
