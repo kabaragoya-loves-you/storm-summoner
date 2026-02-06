@@ -6,20 +6,19 @@
 static const char* TAG = "event_bus_console";
 
 static const char* registered_commands[] = {
-  "stats", "profile_start", "profile_stop", "profile_report", "profile_reset"
+  "stats", "handlers", "profile_start", "profile_stop", "profile_report", "profile_reset"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
 // Command: stats
 static int cmd_stats(int argc, char **argv) {
-  ESP_LOGI(TAG, "====== EVENT BUS STATS ======");
-  #if EVENT_BUS_ENABLE_STATISTICS
-  ESP_LOGI(TAG, "Event bus statistics available (function not yet implemented)");
-  #else
-  ESP_LOGI(TAG, "Statistics not enabled");
-  #endif
-  ESP_LOGI(TAG, "=============================");
-  
+  event_bus_print_diagnostics();
+  return 0;
+}
+
+// Command: handlers
+static int cmd_handlers(int argc, char **argv) {
+  event_bus_print_handlers();
   return 0;
 }
 
@@ -77,7 +76,16 @@ esp_err_t event_bus_console_init(void) {
     .func = &cmd_stats,
   };
   esp_console_cmd_register(&stats_cmd);
-  
+
+  // handlers command
+  const esp_console_cmd_t handlers_cmd = {
+    .command = "handlers",
+    .help = "List all registered event handlers",
+    .hint = NULL,
+    .func = &cmd_handlers,
+  };
+  esp_console_cmd_register(&handlers_cmd);
+
   // profile_start command
   const esp_console_cmd_t profile_start_cmd = {
     .command = "profile_start",

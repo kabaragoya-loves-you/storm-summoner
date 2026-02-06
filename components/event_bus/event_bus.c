@@ -33,6 +33,19 @@ static struct {
   uint32_t profiling_peak_per_second[EVENT_TYPE_MAX];
   uint32_t profiling_last_tick;
   #endif
+
+  // Overflow diagnostics (always enabled)
+  bool overflow_active;
+  uint32_t overflow_start_time;
+  uint32_t overflow_total_dropped;
+  uint32_t overflow_drops_by_type[EVENT_TYPE_MAX];
+  uint32_t overflow_episodes;
+  uint32_t overflow_lifetime_drops;
+
+  // Dispatcher state tracking (always enabled)
+  volatile event_type_t dispatcher_current_event;
+  volatile bool dispatcher_busy;
+  uint32_t dispatch_time_max_ms[EVENT_TYPE_MAX];
 } event_bus_state = {0};
 
 // Event type names for debugging
@@ -102,6 +115,10 @@ static void event_dispatcher_task(void* pvParameters) {
   
   while (1) {
     if (xQueueReceive(event_bus_state.queue, &event, portMAX_DELAY) == pdTRUE) {
+      event_bus_state.dispatcher_busy = true;
+      event_bus_state.dispatcher_current_event = event.type;
+      uint32_t dispatch_start = xTaskGetTickCount();
+
       #if EVENT_BUS_ENABLE_TRACE_LOG
       if (event.type != EVENT_TIMER_TICK) // Don't spam with timer ticks
         ESP_LOGD(TAG, "Dispatching %s event (pri=%d)", event_type_to_string(event.type), event.priority);
@@ -159,6 +176,12 @@ static void event_dispatcher_task(void* pvParameters) {
       if (processing_time > event_bus_state.stats.processing_time_max_ms)
         event_bus_state.stats.processing_time_max_ms = processing_time;
       #endif
+
+      // Track per-type dispatch time and clear busy flag
+      uint32_t dispatch_time = (xTaskGetTickCount() - dispatch_start) * portTICK_PERIOD_MS;
+      if (dispatch_time > event_bus_state.dispatch_time_max_ms[event.type])
+        event_bus_state.dispatch_time_max_ms[event.type] = dispatch_time;
+      event_bus_state.dispatcher_busy = false;
     }
   }
 }
@@ -275,6 +298,69 @@ esp_err_t event_bus_unsubscribe(event_type_t type, event_handler_t handler) {
   return ESP_ERR_NOT_FOUND;
 }
 
+// Dump comprehensive diagnostics on first overflow of each episode
+static void event_bus_overflow_dump(const event_t* dropped_event) {
+  UBaseType_t queue_depth = uxQueueMessagesWaiting(event_bus_state.queue);
+  UBaseType_t stack_hwm = uxTaskGetStackHighWaterMark(event_bus_state.dispatcher_task);
+
+  ESP_LOGE(TAG, "========== QUEUE OVERFLOW (episode #%lu) ==========",
+    (unsigned long)event_bus_state.overflow_episodes);
+  ESP_LOGE(TAG, "Queue: %u/%d | First dropped: %s (pri=%d)",
+    (unsigned)queue_depth, EVENT_BUS_QUEUE_SIZE,
+    event_type_to_string(dropped_event->type), dropped_event->priority);
+  ESP_LOGE(TAG, "Dispatcher: %s%s | Stack HWM: %u",
+    event_bus_state.dispatcher_busy ? "BUSY dispatching " : "idle",
+    event_bus_state.dispatcher_busy ?
+      event_type_to_string(event_bus_state.dispatcher_current_event) : "",
+    (unsigned)stack_hwm);
+
+  #if EVENT_BUS_ENABLE_STATISTICS
+  ESP_LOGE(TAG, "Totals: posted=%lu processed=%lu dropped=%lu hwm=%lu max_proc=%lums",
+    (unsigned long)event_bus_state.stats.events_posted,
+    (unsigned long)event_bus_state.stats.events_processed,
+    (unsigned long)event_bus_state.stats.events_dropped,
+    (unsigned long)event_bus_state.stats.queue_high_watermark,
+    (unsigned long)event_bus_state.stats.processing_time_max_ms);
+  #endif
+
+  // Per-type dispatch time maxes (non-zero only)
+  ESP_LOGE(TAG, "--- Per-type max dispatch times ---");
+  bool has_times = false;
+  for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+    if (event_bus_state.dispatch_time_max_ms[i] > 0) {
+      ESP_LOGE(TAG, "  %-20s %lu ms",
+        event_type_to_string((event_type_t)i),
+        (unsigned long)event_bus_state.dispatch_time_max_ms[i]);
+      has_times = true;
+    }
+  }
+  if (!has_times) ESP_LOGE(TAG, "  (all zero - tick resolution too coarse)");
+
+  // All registered handlers
+  ESP_LOGE(TAG, "--- Registered handlers ---");
+  for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
+    if (event_bus_state.handlers[i].active) {
+      ESP_LOGE(TAG, "  [%02d] %-20s min_pri=%d",
+        i, event_type_to_string(event_bus_state.handlers[i].type),
+        event_bus_state.handlers[i].min_priority);
+    }
+  }
+
+  #if EVENT_BUS_ENABLE_STATISTICS
+  // Per-type processed event counts
+  ESP_LOGE(TAG, "--- Events processed by type ---");
+  for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+    if (event_bus_state.stats.events_by_type[i] > 0) {
+      ESP_LOGE(TAG, "  %-20s %lu",
+        event_type_to_string((event_type_t)i),
+        (unsigned long)event_bus_state.stats.events_by_type[i]);
+    }
+  }
+  #endif
+
+  ESP_LOGE(TAG, "=================================================");
+}
+
 esp_err_t event_bus_post(const event_t* event) {
   if (!event_bus_state.initialized) return ESP_ERR_INVALID_STATE;
   if (!event || event->type >= EVENT_TYPE_MAX) return ESP_ERR_INVALID_ARG;
@@ -295,16 +381,50 @@ esp_err_t event_bus_post(const event_t* event) {
     #if EVENT_BUS_ENABLE_STATISTICS
     event_bus_state.stats.events_dropped++;
     #endif
-    ESP_LOGE(TAG, "EVENT QUEUE FULL! Dropped %s event", event_type_to_string(event->type));
+
+    // Track overflow silently - only dump diagnostics on first drop of each episode
+    if (!event_bus_state.overflow_active) {
+      event_bus_state.overflow_active = true;
+      event_bus_state.overflow_start_time = event_bus_get_current_timestamp();
+      event_bus_state.overflow_episodes++;
+      event_bus_state.overflow_total_dropped = 0;
+      memset(event_bus_state.overflow_drops_by_type, 0,
+        sizeof(event_bus_state.overflow_drops_by_type));
+      event_bus_overflow_dump(event);
+    }
+
+    event_bus_state.overflow_total_dropped++;
+    event_bus_state.overflow_lifetime_drops++;
+    if (event->type < EVENT_TYPE_MAX)
+      event_bus_state.overflow_drops_by_type[event->type]++;
+
     return ESP_ERR_NO_MEM;
   }
-  
+
+  // Detect recovery from overflow
+  if (event_bus_state.overflow_active) {
+    uint32_t elapsed = event_bus_get_current_timestamp() -
+      event_bus_state.overflow_start_time;
+    ESP_LOGW(TAG, "Queue overflow recovered: episode #%lu, %lu drops in %lu ms",
+      (unsigned long)event_bus_state.overflow_episodes,
+      (unsigned long)event_bus_state.overflow_total_dropped,
+      (unsigned long)elapsed);
+    for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+      if (event_bus_state.overflow_drops_by_type[i] > 0) {
+        ESP_LOGW(TAG, "  %s: %lu dropped",
+          event_type_to_string((event_type_t)i),
+          (unsigned long)event_bus_state.overflow_drops_by_type[i]);
+      }
+    }
+    event_bus_state.overflow_active = false;
+  }
+
   #if EVENT_BUS_ENABLE_STATISTICS
   UBaseType_t items = uxQueueMessagesWaiting(event_bus_state.queue);
   if (items > event_bus_state.stats.queue_high_watermark)
     event_bus_state.stats.queue_high_watermark = items;
   #endif
-  
+
   return ESP_OK;
 }
 
@@ -449,3 +569,96 @@ void event_bus_profiling_report(void) {
   ESP_LOGI(TAG, "============================================");
 }
 #endif
+
+void event_bus_print_diagnostics(void) {
+  if (!event_bus_state.initialized) {
+    ESP_LOGI(TAG, "Event bus not initialized");
+    return;
+  }
+
+  uint32_t queue_depth = (uint32_t)uxQueueMessagesWaiting(event_bus_state.queue);
+  UBaseType_t stack_hwm = uxTaskGetStackHighWaterMark(event_bus_state.dispatcher_task);
+
+  ESP_LOGI(TAG, "========== EVENT BUS DIAGNOSTICS ==========");
+  ESP_LOGI(TAG, "Queue: %lu/%d used", (unsigned long)queue_depth, EVENT_BUS_QUEUE_SIZE);
+  ESP_LOGI(TAG, "Dispatcher: %s%s",
+    event_bus_state.dispatcher_busy ? "BUSY dispatching " : "idle",
+    event_bus_state.dispatcher_busy ?
+      event_type_to_string(event_bus_state.dispatcher_current_event) : "");
+  ESP_LOGI(TAG, "Dispatcher stack HWM: %u", (unsigned)stack_hwm);
+
+  ESP_LOGI(TAG, "Overflow: %s | episodes: %lu | lifetime drops: %lu",
+    event_bus_state.overflow_active ? "ACTIVE" : "idle",
+    (unsigned long)event_bus_state.overflow_episodes,
+    (unsigned long)event_bus_state.overflow_lifetime_drops);
+
+  if (event_bus_state.overflow_active) {
+    uint32_t elapsed = event_bus_get_current_timestamp() -
+      event_bus_state.overflow_start_time;
+    ESP_LOGI(TAG, "Current episode: %lu drops in %lu ms",
+      (unsigned long)event_bus_state.overflow_total_dropped,
+      (unsigned long)elapsed);
+    for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+      if (event_bus_state.overflow_drops_by_type[i] > 0) {
+        ESP_LOGI(TAG, "  %-20s %lu dropped",
+          event_type_to_string((event_type_t)i),
+          (unsigned long)event_bus_state.overflow_drops_by_type[i]);
+      }
+    }
+  }
+
+  #if EVENT_BUS_ENABLE_STATISTICS
+  ESP_LOGI(TAG, "Stats: posted=%lu processed=%lu dropped=%lu",
+    (unsigned long)event_bus_state.stats.events_posted,
+    (unsigned long)event_bus_state.stats.events_processed,
+    (unsigned long)event_bus_state.stats.events_dropped);
+  ESP_LOGI(TAG, "Queue HWM: %lu | Max processing: %lu ms",
+    (unsigned long)event_bus_state.stats.queue_high_watermark,
+    (unsigned long)event_bus_state.stats.processing_time_max_ms);
+  #endif
+
+  bool has_times = false;
+  for (int i = 0; i < EVENT_TYPE_MAX; i++) {
+    if (event_bus_state.dispatch_time_max_ms[i] > 0) {
+      if (!has_times) {
+        ESP_LOGI(TAG, "--- Max dispatch times ---");
+        has_times = true;
+      }
+      ESP_LOGI(TAG, "  %-20s %lu ms",
+        event_type_to_string((event_type_t)i),
+        (unsigned long)event_bus_state.dispatch_time_max_ms[i]);
+    }
+  }
+
+  int handler_count = 0;
+  for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
+    if (event_bus_state.handlers[i].active) handler_count++;
+  }
+  ESP_LOGI(TAG, "Handlers: %d/%d slots used", handler_count, EVENT_BUS_MAX_HANDLERS);
+  ESP_LOGI(TAG, "============================================");
+}
+
+void event_bus_print_handlers(void) {
+  if (!event_bus_state.initialized) {
+    ESP_LOGI(TAG, "Event bus not initialized");
+    return;
+  }
+
+  ESP_LOGI(TAG, "========== REGISTERED HANDLERS ==========");
+  int count = 0;
+  for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
+    if (event_bus_state.handlers[i].active) {
+      ESP_LOGI(TAG, "  [%02d] %-20s min_pri=%d", i,
+        event_type_to_string(event_bus_state.handlers[i].type),
+        event_bus_state.handlers[i].min_priority);
+      count++;
+    }
+  }
+  ESP_LOGI(TAG, "Total: %d/%d slots used", count, EVENT_BUS_MAX_HANDLERS);
+  ESP_LOGI(TAG, "=========================================");
+}
+
+uint32_t event_bus_get_queue_depth(void) {
+  if (!event_bus_state.initialized || !event_bus_state.queue) return 0;
+  return (uint32_t)uxQueueMessagesWaiting(event_bus_state.queue);
+}

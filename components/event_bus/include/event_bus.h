@@ -263,6 +263,11 @@ esp_err_t event_bus_post_from_isr(const event_t* event, BaseType_t* higher_prior
 const char* event_type_to_string(event_type_t type);
 uint32_t event_bus_get_current_timestamp(void);
 
+// Diagnostics (always available)
+void event_bus_print_diagnostics(void);
+void event_bus_print_handlers(void);
+uint32_t event_bus_get_queue_depth(void);
+
 // Debug/Statistics API (only available when enabled)
 #if EVENT_BUS_ENABLE_STATISTICS
 typedef struct {
