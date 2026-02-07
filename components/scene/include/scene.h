@@ -345,6 +345,11 @@ esp_err_t scene_suspend_input(void);
 esp_err_t scene_resume_input(void);
 bool scene_is_input_suspended(void);
 
+// Replay the MIDI phase (PC send, on-load actions, LFO start) that was
+// deferred because a scene change occurred in programming mode.
+// Called automatically when returning to performance mode.
+void scene_apply_deferred_init(void);
+
 // Clean up any active touchwheel notes (call when disabling touchwheel, changing modes, etc.)
 void scene_touchwheel_cleanup_notes(void);
 

@@ -65,10 +65,28 @@ static void focus_event_cb(lv_event_t* e);
 static void update_scroll_visuals(lv_obj_t* cont);
 static void save_focused_index(void);
 
-// Deferred index page rebuild (runs in LVGL task context, off event_dispatch stack)
-static void deferred_index_rebuild_cb(lv_timer_t* timer) {
+// Pending scene change direction (set by event handler, consumed by LVGL timer)
+static int s_pending_scene_direction = 0;  // +1 = next, -1 = previous
+
+// Deferred scene change + index rebuild (runs in LVGL task context, off event_dispatch stack)
+static void deferred_scene_change_cb(lv_timer_t* timer) {
   lv_timer_delete(timer);
-  menu_replace_current("Menu", menu_page_index_create);
+  
+  int direction = s_pending_scene_direction;
+  s_pending_scene_direction = 0;
+  
+  esp_err_t ret = ESP_FAIL;
+  if (direction > 0) {
+    ret = scene_next();
+    ESP_LOGI(TAG, "Index: Left button -> scene_next: %s", esp_err_to_name(ret));
+  } else if (direction < 0) {
+    ret = scene_previous();
+    ESP_LOGI(TAG, "Index: Right button -> scene_previous: %s", esp_err_to_name(ret));
+  }
+  
+  if (ret == ESP_OK) {
+    menu_replace_current("Menu", menu_page_index_create);
+  }
 }
 
 // Handle button events for scene navigation on index page
@@ -83,27 +101,26 @@ static void menu_button_event_handler(const event_t* event, void* context) {
   scene_mode_t mode = scene_get_mode();
   if (mode == SCENE_MODE_SINGLE) return;
   
-  esp_err_t ret = ESP_FAIL;
+  // Don't queue if a scene change is already pending
+  if (s_pending_scene_direction != 0) return;
   
   switch (event->type) {
     case EVENT_BUTTON_L_PRESS:
-      ret = scene_next();
-      ESP_LOGI(TAG, "Index: Left button -> scene_next: %s", esp_err_to_name(ret));
+      s_pending_scene_direction = 1;
       break;
-      
     case EVENT_BUTTON_R_PRESS:
-      ret = scene_previous();
-      ESP_LOGI(TAG, "Index: Right button -> scene_previous: %s", esp_err_to_name(ret));
+      s_pending_scene_direction = -1;
       break;
-      
     default:
       return;
   }
   
-  // Defer index rebuild to LVGL task context to avoid stack overflow
-  if (ret == ESP_OK) {
-    lv_timer_t* t = lv_timer_create(deferred_index_rebuild_cb, 10, NULL);
-    if (t) lv_timer_set_repeat_count(t, 1);
+  // Defer scene change + rebuild to LVGL task context to avoid stack overflow
+  lv_timer_t* t = lv_timer_create(deferred_scene_change_cb, 10, NULL);
+  if (t) {
+    lv_timer_set_repeat_count(t, 1);
+  } else {
+    s_pending_scene_direction = 0;
   }
 }
 

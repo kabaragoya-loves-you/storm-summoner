@@ -339,18 +339,24 @@ static void update_scene_info_label(void) {
     }
   } else {
     // Advanced: show scene and preset info
-    uint8_t preset = scene ? scene->program_number : 0;
+    // Convert PC to 1-based display preset: (pc - index_base + 1)
+    uint16_t index_base = device_config_get_min_preset();
+    uint8_t pc = scene ? scene->program_number : (uint8_t)index_base;
+    int display_preset = pc - index_base + 1;
+    if (display_preset < 1) display_preset = 1;
     if (scene_has_pending_change()) {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.10s P%u > S%u", (unsigned)(position + 1), name,
-        (unsigned)(preset + 1), (unsigned)(scene_get_pending_index() + 1));
+        "%u. %.10s P%d > S%u", (unsigned)(position + 1), name,
+        display_preset, (unsigned)(scene_get_pending_index() + 1));
     } else if (device_config_has_pending_program()) {
+      int pending_preset = device_config_get_pending_program() - index_base + 1;
+      if (pending_preset < 1) pending_preset = 1;
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.10s P%u > P%u", (unsigned)(position + 1), name,
-        (unsigned)(preset + 1), (unsigned)(device_config_get_pending_program() + 1));
+        "%u. %.10s P%d > P%d", (unsigned)(position + 1), name,
+        display_preset, pending_preset);
     } else {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.12s P%u", (unsigned)(position + 1), name, (unsigned)(preset + 1));
+        "%u. %.12s P%d", (unsigned)(position + 1), name, display_preset);
     }
   }
   

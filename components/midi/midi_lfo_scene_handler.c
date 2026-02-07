@@ -57,6 +57,7 @@ static uint8_t get_lfo2_velocity(continuous_mapping_t* mapping) {
 // Handle LFO1 events through scene mapping
 static void handle_lfo1_event(const event_t* event, void* context) {
   if (event->type != EVENT_LFO1_VALUE) return;
+  if (scene_is_input_suspended()) return;
 
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -103,6 +104,7 @@ static void handle_lfo1_event(const event_t* event, void* context) {
 // Handle LFO2 events through scene mapping
 static void handle_lfo2_event(const event_t* event, void* context) {
   if (event->type != EVENT_LFO2_VALUE) return;
+  if (scene_is_input_suspended()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;

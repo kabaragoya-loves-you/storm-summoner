@@ -36,6 +36,7 @@ static uint8_t get_als_velocity(continuous_mapping_t* mapping) {
 // Handle ALS sensor events through scene mapping
 static void handle_als_event(const event_t* event, void* context) {
   if (event->type != EVENT_SENSOR_ALS) return;
+  if (scene_is_input_suspended()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;

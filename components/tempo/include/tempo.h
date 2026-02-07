@@ -116,6 +116,10 @@ tempo_clock_standard_t tempo_get_clock_standard(void);
 void tempo_set_bpm_deadzone(uint8_t deadzone);
 uint8_t tempo_get_bpm_deadzone(void);
 
+// Mute/unmute MIDI clock output (used to suppress clock in programming mode)
+void tempo_set_clock_muted(bool muted);
+bool tempo_get_clock_muted(void);
+
 // Clock output control
 void tempo_set_clock_output(clock_output_t output);
 clock_output_t tempo_get_clock_output(void);

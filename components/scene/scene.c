@@ -52,6 +52,11 @@ static scene_manager_t g_scene_manager = {
   .initialized = false
 };
 
+// Deferred init flag: when true, the MIDI phase of scene initialization
+// (PC send, on-load actions, LFO start) was skipped because we were in
+// programming mode. It will be replayed on return to performance mode.
+static bool s_needs_deferred_init = false;
+
 // Helper: Save current scene immediately if in programming mode
 // Programming mode changes are always persisted; performance mode changes are temporary
 static void scene_persist_if_programming(void) {
@@ -1341,14 +1346,6 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     program = new_scene->program_number;
   }
   
-  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || new_scene->send_pc_on_load) {
-    device_config_set_program(program);
-    ESP_LOGD(TAG, "Sent PC %d on channel %d", program, device_config_get_channel());
-  } else {
-    // Scene doesn't send PC on load - skip
-    ESP_LOGD(TAG, "Scene send_pc_on_load=false, no PC sent");
-  }
-  
   ESP_LOGI(TAG, "Switched to scene %d: %s", scene_index + 1, new_scene->name);
   
   // Configure expression jack mode for this scene
@@ -1372,18 +1369,31 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Reset cut states on scene change (cut is a temporary runtime state)
   midi_out_reset_cut();
   
-  // Execute on_load actions
-  if (new_scene->num_on_load_actions > 0) {
-    ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->num_on_load_actions);
-    for (int i = 0; i < new_scene->num_on_load_actions; i++) {
-      action_execute(&new_scene->on_load[i], 127, true);
-    }
-  }
-  
-  // Apply LFO configurations from scene to LFO engine, then apply start modes
+  // Apply LFO configurations (configures but does not start - no MIDI sent)
   lfo_apply_config(0, &new_scene->lfo1_config);
   lfo_apply_config(1, &new_scene->lfo2_config);
-  lfo_apply_start_modes();
+  
+  // MIDI phase: PC send, on-load actions, LFO start
+  // In programming mode, defer these until returning to performance mode
+  if (!ui_is_in_programming_mode()) {
+    if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || new_scene->send_pc_on_load) {
+      device_config_set_program(program);
+      ESP_LOGD(TAG, "Sent PC %d on channel %d", program, device_config_get_channel());
+    }
+    
+    if (new_scene->num_on_load_actions > 0) {
+      ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->num_on_load_actions);
+      for (int i = 0; i < new_scene->num_on_load_actions; i++) {
+        action_execute(&new_scene->on_load[i], 127, true);
+      }
+    }
+    
+    lfo_apply_start_modes();
+    s_needs_deferred_init = false;
+  } else {
+    ESP_LOGI(TAG, "Programming mode: deferring MIDI phase for scene %d", scene_index + 1);
+    s_needs_deferred_init = true;
+  }
   
   // Setup touchwheel instance for non-buttons modes
   scene_cleanup_touchwheel();
@@ -1404,6 +1414,49 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   event_bus_post(&event);
   
   return ESP_OK;
+}
+
+void scene_apply_deferred_init(void) {
+  if (!s_needs_deferred_init) return;
+  s_needs_deferred_init = false;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  uint8_t scene_index = g_scene_manager.current_scene_index;
+  ESP_LOGI(TAG, "Applying deferred MIDI init for scene %d: %s", scene_index + 1, scene->name);
+  
+  // Compute program number (same logic as scene_set_current)
+  uint8_t program;
+  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
+    int position = 0;
+    for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+      if (g_scene_manager.manifest[i].index == scene_index) {
+        position = i;
+        break;
+      }
+    }
+    program = (uint8_t)(position + device_config_get_min_preset());
+  } else {
+    program = scene->program_number;
+  }
+  
+  // Send PC
+  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || scene->send_pc_on_load) {
+    device_config_set_program(program);
+    ESP_LOGD(TAG, "Deferred PC %d on channel %d", program, device_config_get_channel());
+  }
+  
+  // Execute on-load actions
+  if (scene->num_on_load_actions > 0) {
+    ESP_LOGD(TAG, "Executing %d deferred on_load action(s)", scene->num_on_load_actions);
+    for (int i = 0; i < scene->num_on_load_actions; i++) {
+      action_execute(&scene->on_load[i], 127, true);
+    }
+  }
+  
+  // Start LFOs
+  lfo_apply_start_modes();
 }
 
 uint8_t scene_get_current_index(void) {
@@ -4383,6 +4436,9 @@ esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {
 // Input suspension for programming mode
 // ============================================================================
 
+// Track LFO running state before entering programming mode
+static bool s_lfo_was_running[2] = {false, false};
+
 esp_err_t scene_suspend_input(void) {
   if (s_input_suspended) return ESP_OK;  // Already suspended
 
@@ -4397,6 +4453,15 @@ esp_err_t scene_suspend_input(void) {
     ESP_LOGD(TAG, "Scene touchwheel unregistered");
   }
 
+  // Mute MIDI clock output in programming mode
+  tempo_set_clock_muted(true);
+
+  // Save LFO running state, then stop them to prevent MIDI CC output
+  s_lfo_was_running[0] = lfo_is_enabled(0);
+  s_lfo_was_running[1] = lfo_is_enabled(1);
+  lfo_enable(0, false);
+  lfo_enable(1, false);
+
   s_input_suspended = true;
   return ESP_OK;
 }
@@ -4410,6 +4475,16 @@ esp_err_t scene_resume_input(void) {
   if (s_scene_touchwheel) {
     touch_register_touchwheel_instance(s_scene_touchwheel);
     ESP_LOGD(TAG, "Scene touchwheel re-registered");
+  }
+  
+  // Unmute MIDI clock output
+  tempo_set_clock_muted(false);
+  
+  // Restore LFO running state (only if no scene change happened;
+  // if a scene change happened, scene_apply_deferred_init will handle LFOs)
+  if (!s_needs_deferred_init) {
+    if (s_lfo_was_running[0]) lfo_enable(0, true);
+    if (s_lfo_was_running[1]) lfo_enable(1, true);
   }
   
   s_input_suspended = false;

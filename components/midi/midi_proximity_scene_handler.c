@@ -40,6 +40,7 @@ static uint8_t get_proximity_velocity(continuous_mapping_t* mapping) {
 // Handle proximity sensor events through scene mapping
 static void handle_proximity_event(const event_t* event, void* context) {
   if (event->type != EVENT_SENSOR_PROXIMITY) return;
+  if (scene_is_input_suspended()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;

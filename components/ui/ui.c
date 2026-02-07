@@ -339,6 +339,7 @@ void ui_set_app_mode(app_mode_t mode) {
     // When going to Screensaver, we'll return to Programming mode later with scene still suspended
     if (mode == APP_MODE_PERFORMANCE) {
       scene_resume_input();
+      scene_apply_deferred_init();
     }
     
     // Suspend Performance mode rendering (this creates a deferred timer, safe)

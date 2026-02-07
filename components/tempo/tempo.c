@@ -108,6 +108,7 @@ static bool s_sync_clock_active = false;
 static uint16_t s_midi_last_known_good_bpm = DEFAULT_BPM;
 static uint32_t s_midi_last_tick_time_ms = 0;
 static bool s_midi_clock_active = false;
+static bool s_clock_muted = false;  // When true, suppress MIDI clock output
 
 // MIDI clock tick tracking (for tempo_midi_clock_tick)
 static uint32_t s_midi_tick_last_quarter_time = 0;
@@ -415,7 +416,7 @@ static void tempo_task(void *pvParameters) {
       if (tick_interval_ms < 10) tick_interval_ms = 10;
       
       // Send MIDI clock directly (low latency requirement)
-      send_clock();
+      if (!s_clock_muted) send_clock();
       
       // Track ticks and beats (use full 24ppqn for beat tracking)
       s_tick_counter++;
@@ -486,7 +487,7 @@ static void tempo_task(void *pvParameters) {
       uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
       if (tick_interval_ms < 10) tick_interval_ms = 10;
       
-      send_clock();
+      if (!s_clock_muted) send_clock();
       
       s_tick_counter++;
       
@@ -1223,6 +1224,15 @@ uint8_t tempo_get_bpm_deadzone(void) {
   uint8_t deadzone = s_bpm_deadzone;
   xSemaphoreGive(s_state_mutex);
   return deadzone;
+}
+
+void tempo_set_clock_muted(bool muted) {
+  s_clock_muted = muted;
+  ESP_LOGI(TAG, "Clock output %s", muted ? "muted" : "unmuted");
+}
+
+bool tempo_get_clock_muted(void) {
+  return s_clock_muted;
 }
 
 void tempo_set_clock_output(clock_output_t output) {
