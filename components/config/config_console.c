@@ -11,7 +11,7 @@ static const char* TAG = "config_console";
 
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
-  "info", "scene_mode", "change_mode", "program_wrap", "persist_scene"
+  "info", "scene_mode", "change_mode", "preset_wrap", "persist_scene"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -21,19 +21,19 @@ static int cmd_config_info(int argc, char **argv) {
   scene_change_mode_t change_mode = scene_get_change_mode();
   uint8_t channel = device_config_get_channel();
   uint8_t program = device_config_get_program();
-  bool program_wrap = config_get_program_wrap();
+  bool preset_wrap = config_get_preset_wrap();
   
   const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Single" :
                                 (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
-  const char* program_wrap_str = program_wrap ? "On (wrap around)" : "Off (clamp at 0/127)";
+  const char* preset_wrap_str = preset_wrap ? "On (wrap around)" : "Off (clamp at boundaries)";
   bool persist_scene = config_get_persist_scene();
   const char* persist_scene_str = persist_scene ? "On (restore last scene)" : "Off (boot to scene 1)";
   
   ESP_LOGI(TAG, "====== DEVICE CONFIG ======");
   ESP_LOGI(TAG, "MIDI channel: %d", channel);
   ESP_LOGI(TAG, "Current program: %d", program);
-  ESP_LOGI(TAG, "Program wrap: %s", program_wrap_str);
+  ESP_LOGI(TAG, "Preset wrap: %s", preset_wrap_str);
   ESP_LOGI(TAG, "Persist scene: %s", persist_scene_str);
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Scene mode: %s", scene_mode_str);
@@ -100,26 +100,26 @@ static int cmd_change_mode(int argc, char **argv) {
   return 0;
 }
 
-// Command: program_wrap - Set program wrap mode
+// Command: preset_wrap - Set preset wrap mode
 static struct {
   struct arg_str *wrap_type;
   struct arg_end *end;
-} program_wrap_args;
+} preset_wrap_args;
 
-static int cmd_program_wrap(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &program_wrap_args);
+static int cmd_preset_wrap(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &preset_wrap_args);
   if (nerrors != 0) {
-    arg_print_errors(stderr, program_wrap_args.end, argv[0]);
+    arg_print_errors(stderr, preset_wrap_args.end, argv[0]);
     return 1;
   }
   
-  const char *mode = program_wrap_args.wrap_type->sval[0];
+  const char *mode = preset_wrap_args.wrap_type->sval[0];
   if (strcmp(mode, "on") == 0) {
-    config_set_program_wrap(true);
-    ESP_LOGI(TAG, "Program wrap: On (127->0, 0->127)");
+    config_set_preset_wrap(true);
+    ESP_LOGI(TAG, "Preset wrap: On (wrap around at boundaries)");
   } else if (strcmp(mode, "off") == 0) {
-    config_set_program_wrap(false);
-    ESP_LOGI(TAG, "Program wrap: Off (clamp at 0/127)");
+    config_set_preset_wrap(false);
+    ESP_LOGI(TAG, "Preset wrap: Off (clamp at boundaries)");
   } else {
     ESP_LOGE(TAG, "Unknown wrap mode. Use: on or off");
     return 1;
@@ -192,18 +192,18 @@ esp_err_t config_console_init(void) {
   };
   esp_console_cmd_register(&change_mode_cmd);
   
-  // program_wrap command
-  program_wrap_args.wrap_type = arg_str1(NULL, NULL, "<on|off>", "Wrap mode");
-  program_wrap_args.end = arg_end(2);
+  // preset_wrap command
+  preset_wrap_args.wrap_type = arg_str1(NULL, NULL, "<on|off>", "Wrap mode");
+  preset_wrap_args.end = arg_end(2);
   
-  const esp_console_cmd_t program_wrap_cmd = {
-    .command = "program_wrap",
-    .help = "Set program number wrap mode (on=wrap around, off=clamp at 0/127)",
+  const esp_console_cmd_t preset_wrap_cmd = {
+    .command = "preset_wrap",
+    .help = "Set preset wrap mode (on=wrap around at boundaries, off=clamp)",
     .hint = NULL,
-    .func = &cmd_program_wrap,
-    .argtable = &program_wrap_args
+    .func = &cmd_preset_wrap,
+    .argtable = &preset_wrap_args
   };
-  esp_console_cmd_register(&program_wrap_cmd);
+  esp_console_cmd_register(&preset_wrap_cmd);
   
   // persist_scene command
   persist_scene_args.persist_type = arg_str1(NULL, NULL, "<on|off>", "Persist mode");

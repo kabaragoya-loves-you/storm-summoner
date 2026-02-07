@@ -242,7 +242,7 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   
   ESP_LOGD(TAG, "PC touchwheel: bank_mode=%d, min=%u, max=%u, wrap=%d, count=%u",
     bank_mode, (unsigned)min_preset, (unsigned)max_preset,
-    device_config_get_preset_wrap(), (unsigned)device_config_get_preset_count());
+    config_get_preset_wrap(), (unsigned)device_config_get_preset_count());
   
   if (bank_mode != BANK_SELECT_NONE) {
     // Bank mode: use preset-based calculation, respecting device preset count and indexBase
@@ -252,7 +252,7 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
     int new_preset = (int)base_preset + value;
     
     // Clamp or wrap at boundaries based on wrap setting
-    bool wrap = device_config_get_preset_wrap();
+    bool wrap = config_get_preset_wrap();
     int range = (int)max_preset - (int)min_preset + 1;
     if (wrap) {
       // Wrap around within valid range
@@ -287,7 +287,7 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
                  : device_config_get_program();
   int new_program = (int)base + value;
   
-  bool should_clamp = !device_config_get_preset_wrap() || !config_get_program_wrap();
+  bool should_clamp = !config_get_preset_wrap();
   int range = (int)max_prog - (int)min_prog + 1;
   
   if (should_clamp) {

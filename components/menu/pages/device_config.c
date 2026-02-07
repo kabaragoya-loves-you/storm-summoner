@@ -10,13 +10,12 @@
 
 #define TAG "MENU_DEVICE_CONFIG"
 
-// Static storage for main menu (17 items max: name, refresh, midi ch, send clock, preset wrap, divider, 10 info labels)
-#define MAX_DEVICE_CONFIG_ITEMS 17
+// Static storage for main menu (16 items max: name, refresh, midi ch, send clock, divider, 10 info labels)
+#define MAX_DEVICE_CONFIG_ITEMS 16
 static menu_item_t s_device_config_items[MAX_DEVICE_CONFIG_ITEMS];
 static char s_current_pedal_label[80];
 static char s_midi_ch_label[24];
 static char s_send_clock_label[24];
-static char s_preset_wrap_label[32];
 static char s_info_labels[10][48];  // TRS, CC count, Clock, Notes, Transmits, Slots, Bank, First preset, etc.
 
 // Dynamic storage - allocated in PSRAM only when needed
@@ -142,35 +141,6 @@ static lv_obj_t* send_clock_roller_create(void) {
 static void nav_to_send_clock(void* user_data) {
   (void)user_data;
   menu_navigate_to("Send Clock", send_clock_roller_create);
-}
-
-// ============================================================================
-// Preset Wrap Toggle
-// ============================================================================
-
-static void preset_wrap_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  bool wrap = (selected_index == 0);  // On=0, Off=1
-  
-  ESP_LOGD(TAG, "Preset wrap set to: %s", wrap ? "On" : "Off");
-  device_config_set_preset_wrap(wrap);
-  
-  // Navigate back to rebuilt Pedal Setup
-  menu_navigate_back_then_to(2, "Pedal Setup", menu_page_device_config_create);
-}
-
-static lv_obj_t* preset_wrap_roller_create(void) {
-  bool current_wrap = device_config_get_preset_wrap();
-  
-  return menu_create_roller_page("Preset Wrap",
-    "On\nOff",
-    current_wrap ? 0 : 1,  // On=0, Off=1
-    preset_wrap_confirm_cb, NULL);
-}
-
-static void nav_to_preset_wrap(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Preset Wrap", preset_wrap_roller_create);
 }
 
 // ============================================================================
@@ -377,13 +347,6 @@ lv_obj_t* menu_page_device_config_create(void) {
     send_clock ? "Yes" : "No");
   s_device_config_items[item_idx++] = 
     (menu_item_t){ s_send_clock_label, nav_to_send_clock, NULL, false };
-  
-  // Item 3: Preset Wrap toggle (clickable -> roller)
-  bool preset_wrap = device_config_get_preset_wrap();
-  snprintf(s_preset_wrap_label, sizeof(s_preset_wrap_label), "Preset Wrap: %s",
-    preset_wrap ? "On" : "Off");
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_preset_wrap_label, nav_to_preset_wrap, NULL, false };
   
   // Divider
   s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false };

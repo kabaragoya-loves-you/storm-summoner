@@ -9,7 +9,7 @@ static const char* TAG = "config";
 #define NVS_KEY_LAST_SCENE "last_scene"
 
 // Cached settings
-static bool s_program_wrap = true;   // Default: wrap around
+static bool s_preset_wrap = false;   // Default: clamp at boundaries
 static bool s_persist_scene = false; // Default: always boot to scene 1
 static uint8_t s_last_scene = 0;     // Default: scene index 0
 static bool s_initialized = false;
@@ -21,10 +21,10 @@ esp_err_t config_init(void) {
   
   ESP_LOGI(TAG, "Initializing config");
   
-  // Load program_wrap from NVS
+  // Load preset_wrap from NVS
   bool wrap_val;
   if (app_settings_load_bool(NVS_KEY_PROGRAM_WRAP, &wrap_val) == ESP_OK) {
-    s_program_wrap = wrap_val;
+    s_preset_wrap = wrap_val;
   }
   
   // Load persist_scene from NVS
@@ -40,23 +40,23 @@ esp_err_t config_init(void) {
   }
   
   s_initialized = true;
-  ESP_LOGI(TAG, "Config initialized: program_wrap=%s, persist_scene=%s, last_scene=%d",
-    s_program_wrap ? "on" : "off",
+  ESP_LOGI(TAG, "Config initialized: preset_wrap=%s, persist_scene=%s, last_scene=%d",
+    s_preset_wrap ? "on" : "off",
     s_persist_scene ? "on" : "off",
     s_last_scene);
   
   return ESP_OK;
 }
 
-bool config_get_program_wrap(void) {
-  return s_program_wrap;
+bool config_get_preset_wrap(void) {
+  return s_preset_wrap;
 }
 
-esp_err_t config_set_program_wrap(bool wrap) {
+esp_err_t config_set_preset_wrap(bool wrap) {
   esp_err_t ret = app_settings_save_bool(NVS_KEY_PROGRAM_WRAP, wrap);
   if (ret == ESP_OK) {
-    s_program_wrap = wrap;
-    ESP_LOGI(TAG, "Program wrap set to %s", wrap ? "on" : "off");
+    s_preset_wrap = wrap;
+    ESP_LOGI(TAG, "Preset wrap set to %s", wrap ? "on" : "off");
   }
   return ret;
 }

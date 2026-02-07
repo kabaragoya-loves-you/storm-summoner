@@ -1,7 +1,6 @@
 #include "menu.h"
 #include "menu_pages.h"
 #include "scene.h"
-#include "device_config.h"
 #include "config.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -14,7 +13,7 @@
 // Label buffers
 static char s_scene_mode_label[40];
 static char s_change_mode_label[40];
-static char s_program_wrap_label[40];
+static char s_preset_wrap_label[40];
 static char s_persist_scene_label[40];
 static menu_item_t s_config_items[5];
 
@@ -83,30 +82,30 @@ static void nav_to_change_mode(void* user_data) {
 }
 
 // ============================================================================
-// Program Wrap Roller
+// Preset Wrap Roller
 // ============================================================================
 
-static const char* PROGRAM_WRAP_OPTIONS = "On\nOff";
+static const char* PRESET_WRAP_OPTIONS = "On\nOff";
 
-static void program_wrap_confirm_cb(uint32_t selected_index, void* user_data) {
+static void preset_wrap_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   bool wrap = (selected_index == 0);
-  config_set_program_wrap(wrap);
-  ESP_LOGI(TAG, "Program wrap set to %s", wrap ? "On" : "Off");
+  config_set_preset_wrap(wrap);
+  ESP_LOGI(TAG, "Preset wrap set to %s", wrap ? "On" : "Off");
   
   menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
 }
 
-static lv_obj_t* program_wrap_roller_create(void) {
-  bool wrap = config_get_program_wrap();
+static lv_obj_t* preset_wrap_roller_create(void) {
+  bool wrap = config_get_preset_wrap();
   uint32_t current_idx = wrap ? 0 : 1;
-  return menu_create_roller_page("Program Wrap", PROGRAM_WRAP_OPTIONS, current_idx,
-    program_wrap_confirm_cb, NULL);
+  return menu_create_roller_page("Preset Wrap", PRESET_WRAP_OPTIONS, current_idx,
+    preset_wrap_confirm_cb, NULL);
 }
 
-static void nav_to_program_wrap(void* user_data) {
+static void nav_to_preset_wrap(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Program Wrap", program_wrap_roller_create);
+  menu_navigate_to("Preset Wrap", preset_wrap_roller_create);
 }
 
 // ============================================================================
@@ -158,11 +157,11 @@ lv_obj_t* menu_page_config_create(void) {
   snprintf(s_change_mode_label, sizeof(s_change_mode_label), "Confirm Change\n%s", change_mode_str);
   s_config_items[idx++] = (menu_item_t){ s_change_mode_label, nav_to_change_mode, NULL, true };
   
-  // Program Wrap with current value
-  bool program_wrap = config_get_program_wrap();
-  snprintf(s_program_wrap_label, sizeof(s_program_wrap_label), "Program Wrap\n%s",
-    program_wrap ? "On" : "Off");
-  s_config_items[idx++] = (menu_item_t){ s_program_wrap_label, nav_to_program_wrap, NULL, true };
+  // Preset Wrap with current value
+  bool preset_wrap = config_get_preset_wrap();
+  snprintf(s_preset_wrap_label, sizeof(s_preset_wrap_label), "Preset Wrap\n%s",
+    preset_wrap ? "On" : "Off");
+  s_config_items[idx++] = (menu_item_t){ s_preset_wrap_label, nav_to_preset_wrap, NULL, true };
   
   // Persist Scene with current value
   bool persist_scene = config_get_persist_scene();

@@ -7,11 +7,11 @@
 // Initialize config module (loads settings from NVS)
 esp_err_t config_init(void);
 
-// Program wrap setting (for program change mode)
-// When true: program numbers wrap around (127->0, 0->127)
-// When false: program numbers clamp at boundaries
-bool config_get_program_wrap(void);
-esp_err_t config_set_program_wrap(bool wrap);
+// Preset wrap setting
+// When true: preset/program numbers wrap around at boundaries
+// When false: preset/program numbers clamp at boundaries
+bool config_get_preset_wrap(void);
+esp_err_t config_set_preset_wrap(bool wrap);
 
 // Persist scene setting
 // When true: the current scene index is saved to NVS and restored on boot

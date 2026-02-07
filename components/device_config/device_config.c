@@ -1,4 +1,5 @@
 #include "device_config.h"
+#include "config.h"
 #include "assets_manager.h"
 #include "app_settings.h"
 #include "midi_messages.h"
@@ -38,7 +39,6 @@ static bool s_bank_lsb_received = false;
 #define NVS_KEY_CURRENT_PROGRAM "dev_program"
 #define NVS_KEY_PC_MODE         "dev_pc_mode"
 #define NVS_KEY_BANK_MODE       "dev_bank_mode"
-#define NVS_KEY_PRESET_WRAP     "dev_pwrap"
 #define NVS_KEY_SEND_CLOCK      "dev_clock"
 
 // Global device configuration
@@ -55,7 +55,6 @@ static device_config_t g_device_config = {
   .pending_bank = 0,
   .preset_base = 0,
   .preset_count = 128,
-  .preset_wrap = false,  // Default: clamp at boundaries (no wrap)
   .send_clock = true,    // Default: send MIDI clock
   .initialized = false
 };
@@ -242,12 +241,6 @@ esp_err_t device_config_init(void) {
     g_device_config.preset_base = preset_base_val;
   } else {
     g_device_config.preset_base = 0;  // Default: 0-based
-  }
-  
-  // Load preset wrap setting
-  uint8_t preset_wrap_val;
-  if (app_settings_load_u8(NVS_KEY_PRESET_WRAP, &preset_wrap_val) == ESP_OK) {
-    g_device_config.preset_wrap = (preset_wrap_val != 0);
   }
   
   // Load send clock setting (track if we have an NVS override)
@@ -507,7 +500,7 @@ esp_err_t device_config_set_program(uint8_t program) {
 }
 
 esp_err_t device_config_program_next(void) {
-  bool wrap = g_device_config.preset_wrap;
+  bool wrap = config_get_preset_wrap();
   uint16_t min_preset = device_config_get_min_preset();
   uint16_t max_preset = device_config_get_max_preset();
   
@@ -557,7 +550,7 @@ esp_err_t device_config_program_next(void) {
 }
 
 esp_err_t device_config_program_prev(void) {
-  bool wrap = g_device_config.preset_wrap;
+  bool wrap = config_get_preset_wrap();
   uint16_t min_preset = device_config_get_min_preset();
   uint16_t max_preset = device_config_get_max_preset();
   
@@ -804,16 +797,6 @@ esp_err_t device_config_set_preset_count(uint16_t count) {
   g_device_config.preset_count = count;
   ESP_LOGI(TAG, "Preset count set to %u", (unsigned)count);
   return ESP_OK;
-}
-
-bool device_config_get_preset_wrap(void) {
-  return g_device_config.preset_wrap;
-}
-
-esp_err_t device_config_set_preset_wrap(bool wrap) {
-  g_device_config.preset_wrap = wrap;
-  ESP_LOGI(TAG, "Preset wrap: %s", wrap ? "enabled" : "disabled");
-  return app_settings_save_u8(NVS_KEY_PRESET_WRAP, wrap ? 1 : 0);
 }
 
 uint16_t device_config_get_min_preset(void) {
