@@ -674,19 +674,22 @@ lv_obj_t* menu_page_current_scene_create(void) {
     s_scene_items[idx++] = (menu_item_t){ "Scene Name", nav_to_name, NULL, true };
   }
   
-  // Current preset - convert PC to user-friendly 1-based preset number
-  // PC 0 with indexBase=0 → Preset 1, PC 16 with indexBase=1 → Preset 16
-  // If PC < indexBase (invalid), clamp to minimum valid value (display as 1)
-  uint8_t current_pc = scene ? scene->program_number : index_base;
-  if (current_pc < index_base) current_pc = index_base;
-  int display_preset = current_pc - index_base + 1;
-  snprintf(s_preset_label, sizeof(s_preset_label), "Preset: %d", display_preset);
-  s_scene_items[idx++] = (menu_item_t){ s_preset_label, nav_to_preset, NULL, false };
-  
-  // PC on load
-  snprintf(s_send_pc_label, sizeof(s_send_pc_label), "PC on load: %s",
-    (scene && scene->send_pc_on_load) ? "Yes" : "No");
-  s_scene_items[idx++] = (menu_item_t){ s_send_pc_label, nav_to_send_pc, NULL, false };
+  // Preset and PC on load hidden in Preset Sync mode (preset is locked to scene ordinal)
+  if (mode != SCENE_MODE_PRESET_SYNC) {
+    // Current preset - convert PC to user-friendly 1-based preset number
+    // PC 0 with indexBase=0 → Preset 1, PC 16 with indexBase=1 → Preset 16
+    // If PC < indexBase (invalid), clamp to minimum valid value (display as 1)
+    uint8_t current_pc = scene ? scene->program_number : index_base;
+    if (current_pc < index_base) current_pc = index_base;
+    int display_preset = current_pc - index_base + 1;
+    snprintf(s_preset_label, sizeof(s_preset_label), "Preset: %d", display_preset);
+    s_scene_items[idx++] = (menu_item_t){ s_preset_label, nav_to_preset, NULL, false };
+    
+    // PC on load
+    snprintf(s_send_pc_label, sizeof(s_send_pc_label), "PC on load: %s",
+      (scene && scene->send_pc_on_load) ? "Yes" : "No");
+    s_scene_items[idx++] = (menu_item_t){ s_send_pc_label, nav_to_send_pc, NULL, false };
+  }
   
   // BPM
   snprintf(s_bpm_label, sizeof(s_bpm_label), "%d BPM", 

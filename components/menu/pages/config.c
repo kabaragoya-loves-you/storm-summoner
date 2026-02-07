@@ -15,7 +15,8 @@
 static char s_scene_mode_label[40];
 static char s_change_mode_label[40];
 static char s_program_wrap_label[40];
-static menu_item_t s_config_items[4];
+static char s_persist_scene_label[40];
+static menu_item_t s_config_items[5];
 
 // ============================================================================
 // Scene Mode Roller
@@ -109,6 +110,33 @@ static void nav_to_program_wrap(void* user_data) {
 }
 
 // ============================================================================
+// Persist Scene Roller
+// ============================================================================
+
+static const char* PERSIST_SCENE_OPTIONS = "On\nOff";
+
+static void persist_scene_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  bool persist = (selected_index == 0);
+  config_set_persist_scene(persist);
+  ESP_LOGI(TAG, "Persist scene set to %s", persist ? "On" : "Off");
+  
+  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+}
+
+static lv_obj_t* persist_scene_roller_create(void) {
+  bool persist = config_get_persist_scene();
+  uint32_t current_idx = persist ? 0 : 1;
+  return menu_create_roller_page("Persist Scene", PERSIST_SCENE_OPTIONS, current_idx,
+    persist_scene_confirm_cb, NULL);
+}
+
+static void nav_to_persist_scene(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Persist Scene", persist_scene_roller_create);
+}
+
+// ============================================================================
 // Config Menu Page
 // ============================================================================
 
@@ -135,6 +163,12 @@ lv_obj_t* menu_page_config_create(void) {
   snprintf(s_program_wrap_label, sizeof(s_program_wrap_label), "Program Wrap\n%s",
     program_wrap ? "On" : "Off");
   s_config_items[idx++] = (menu_item_t){ s_program_wrap_label, nav_to_program_wrap, NULL, true };
+  
+  // Persist Scene with current value
+  bool persist_scene = config_get_persist_scene();
+  snprintf(s_persist_scene_label, sizeof(s_persist_scene_label), "Persist Scene\n%s",
+    persist_scene ? "On" : "Off");
+  s_config_items[idx++] = (menu_item_t){ s_persist_scene_label, nav_to_persist_scene, NULL, true };
   
   return menu_create_page_2line("Scene", s_config_items, idx);
 }

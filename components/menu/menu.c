@@ -65,6 +65,12 @@ static void focus_event_cb(lv_event_t* e);
 static void update_scroll_visuals(lv_obj_t* cont);
 static void save_focused_index(void);
 
+// Deferred index page rebuild (runs in LVGL task context, off event_dispatch stack)
+static void deferred_index_rebuild_cb(lv_timer_t* timer) {
+  lv_timer_delete(timer);
+  menu_replace_current("Menu", menu_page_index_create);
+}
+
 // Handle button events for scene navigation on index page
 static void menu_button_event_handler(const event_t* event, void* context) {
   (void)context;
@@ -81,13 +87,11 @@ static void menu_button_event_handler(const event_t* event, void* context) {
   
   switch (event->type) {
     case EVENT_BUTTON_L_PRESS:
-      // Left button = next scene
       ret = scene_next();
       ESP_LOGI(TAG, "Index: Left button -> scene_next: %s", esp_err_to_name(ret));
       break;
       
     case EVENT_BUTTON_R_PRESS:
-      // Right button = previous scene
       ret = scene_previous();
       ESP_LOGI(TAG, "Index: Right button -> scene_previous: %s", esp_err_to_name(ret));
       break;
@@ -96,9 +100,10 @@ static void menu_button_event_handler(const event_t* event, void* context) {
       return;
   }
   
-  // Rebuild index page to show new scene
+  // Defer index rebuild to LVGL task context to avoid stack overflow
   if (ret == ESP_OK) {
-    menu_replace_current("Menu", menu_page_index_create);
+    lv_timer_t* t = lv_timer_create(deferred_index_rebuild_cb, 10, NULL);
+    if (t) lv_timer_set_repeat_count(t, 1);
   }
 }
 

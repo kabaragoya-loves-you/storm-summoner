@@ -1162,20 +1162,18 @@ esp_err_t scene_init(void) {
   ESP_LOGI(TAG, "Scene manager initialized: mode=%s, total_scenes=%d", mode_str, g_scene_manager.num_scenes);
   
   // Initialize device current_program from scene's program_number
-  // For PRESET_SYNC mode, use min_preset (respects device's indexBase)
+  // For PRESET_SYNC mode, initial scene is at position 0, so PC = 0 + min_preset
   scene_t* initial_scene = &g_scene_manager.cache[0].scene;
   uint8_t initial_program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC)
                             ? (uint8_t)device_config_get_min_preset()
                             : initial_scene->program_number;
-  device_config_set_program(initial_program);
   
-  // Log PC send status
-  if (initial_scene->send_pc_on_load) {
+  // In PRESET_SYNC mode, always send PC; otherwise respect per-scene flag
+  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || initial_scene->send_pc_on_load) {
+    device_config_set_program(initial_program);
     ESP_LOGI(TAG, "Sent initial PC %d on channel %d", initial_program, device_config_get_channel());
   } else {
     ESP_LOGI(TAG, "Scene loaded but send_pc_on_load=false, PC not sent");
-    // Note: device_config_set_program already sent it, so we'd need to track this better
-    // For now, PC is always sent on boot
   }
   
   // Configure tempo settings for initial scene
@@ -1214,6 +1212,27 @@ esp_err_t scene_init(void) {
     .data = {.value_uint8 = 0}
   };
   event_bus_post(&event);
+  
+  // Restore persisted scene if enabled and not already on scene 0
+  if (config_get_persist_scene()) {
+    uint8_t last_scene = config_get_last_scene();
+    if (last_scene != 0) {
+      // Verify the scene index exists in the manifest
+      bool valid = false;
+      for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+        if (g_scene_manager.manifest[i].index == last_scene) {
+          valid = true;
+          break;
+        }
+      }
+      if (valid) {
+        ESP_LOGI(TAG, "Restoring persisted scene %d", last_scene);
+        scene_set_current(last_scene);
+      } else {
+        ESP_LOGW(TAG, "Persisted scene %d no longer exists, staying on scene 0", last_scene);
+      }
+    }
+  }
   
   return ESP_OK;
 }
@@ -1307,12 +1326,22 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   }
   
   // Update device current_program and send PC based on mode
-  // For PRESET_SYNC mode, offset scene_index by device's indexBase
-  uint8_t program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC)
-                    ? (uint8_t)(scene_index + device_config_get_min_preset())
-                    : new_scene->program_number;
+  // For PRESET_SYNC mode, use manifest position (ordinal) + indexBase
+  uint8_t program;
+  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
+    int position = 0;
+    for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+      if (g_scene_manager.manifest[i].index == scene_index) {
+        position = i;
+        break;
+      }
+    }
+    program = (uint8_t)(position + device_config_get_min_preset());
+  } else {
+    program = new_scene->program_number;
+  }
   
-  if (new_scene->send_pc_on_load) {
+  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || new_scene->send_pc_on_load) {
     device_config_set_program(program);
     ESP_LOGD(TAG, "Sent PC %d on channel %d", program, device_config_get_channel());
   } else {
@@ -1359,6 +1388,11 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Setup touchwheel instance for non-buttons modes
   scene_cleanup_touchwheel();
   scene_setup_touchwheel_for_mode(new_scene);
+  
+  // Persist current scene index if enabled
+  if (config_get_persist_scene()) {
+    config_set_last_scene(scene_index);
+  }
   
   // Post event for scene change
   event_t event = {

@@ -11,7 +11,7 @@ static const char* TAG = "config_console";
 
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
-  "info", "scene_mode", "change_mode", "program_wrap"
+  "info", "scene_mode", "change_mode", "program_wrap", "persist_scene"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -27,11 +27,14 @@ static int cmd_config_info(int argc, char **argv) {
                                 (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   const char* program_wrap_str = program_wrap ? "On (wrap around)" : "Off (clamp at 0/127)";
+  bool persist_scene = config_get_persist_scene();
+  const char* persist_scene_str = persist_scene ? "On (restore last scene)" : "Off (boot to scene 1)";
   
   ESP_LOGI(TAG, "====== DEVICE CONFIG ======");
   ESP_LOGI(TAG, "MIDI channel: %d", channel);
   ESP_LOGI(TAG, "Current program: %d", program);
   ESP_LOGI(TAG, "Program wrap: %s", program_wrap_str);
+  ESP_LOGI(TAG, "Persist scene: %s", persist_scene_str);
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Scene mode: %s", scene_mode_str);
   ESP_LOGI(TAG, "Change mode: %s", change_mode_str);
@@ -124,6 +127,33 @@ static int cmd_program_wrap(int argc, char **argv) {
   return 0;
 }
 
+// Command: persist_scene - Set scene persistence mode
+static struct {
+  struct arg_str *persist_type;
+  struct arg_end *end;
+} persist_scene_args;
+
+static int cmd_persist_scene(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &persist_scene_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, persist_scene_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char *mode = persist_scene_args.persist_type->sval[0];
+  if (strcmp(mode, "on") == 0) {
+    config_set_persist_scene(true);
+    ESP_LOGI(TAG, "Persist scene: On (restore last scene on boot)");
+  } else if (strcmp(mode, "off") == 0) {
+    config_set_persist_scene(false);
+    ESP_LOGI(TAG, "Persist scene: Off (always boot to scene 1)");
+  } else {
+    ESP_LOGE(TAG, "Unknown persist mode. Use: on or off");
+    return 1;
+  }
+  return 0;
+}
+
 esp_err_t config_console_init(void) {
   ESP_LOGI(TAG, "Registering config commands");
   
@@ -174,6 +204,19 @@ esp_err_t config_console_init(void) {
     .argtable = &program_wrap_args
   };
   esp_console_cmd_register(&program_wrap_cmd);
+  
+  // persist_scene command
+  persist_scene_args.persist_type = arg_str1(NULL, NULL, "<on|off>", "Persist mode");
+  persist_scene_args.end = arg_end(2);
+  
+  const esp_console_cmd_t persist_scene_cmd = {
+    .command = "persist_scene",
+    .help = "Set scene persistence (on=restore last scene on boot, off=boot to scene 1)",
+    .hint = NULL,
+    .func = &cmd_persist_scene,
+    .argtable = &persist_scene_args
+  };
+  esp_console_cmd_register(&persist_scene_cmd);
   
   return ESP_OK;
 }
