@@ -335,6 +335,10 @@ esp_err_t scene_create_new(const char* name);
 esp_err_t scene_create_new_at_position(const char* name, uint16_t position);
 esp_err_t scene_delete(uint8_t scene_index);
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name);
+
+// Check if a scene name already exists (case-insensitive)
+// Pass exclude_index >= 0 to skip a specific scene (e.g., when renaming)
+bool scene_name_exists(const char* name, int8_t exclude_index);
 esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index);
 uint16_t scene_get_count(void);           // Active scenes only
 uint16_t scene_get_total_count(void);      // All scenes (active + inactive)

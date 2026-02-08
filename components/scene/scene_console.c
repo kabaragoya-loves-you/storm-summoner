@@ -575,17 +575,34 @@ static int cmd_name(int argc, char **argv) {
       return 1;
     }
     char new_name[SCENE_NAME_MAX_LEN + 1];
-    scene_name_generate(new_name, sizeof(new_name));
-    scene_set_name(scene_index, new_name);
-    ESP_LOGI(TAG, "Generated name: %s", new_name);
+    esp_err_t ret = ESP_ERR_INVALID_ARG;
+    // Retry up to 10 times if name collision
+    for (int attempt = 0; attempt < 10 && ret == ESP_ERR_INVALID_ARG; attempt++) {
+      scene_name_generate(new_name, sizeof(new_name));
+      ret = scene_set_name(scene_index, new_name);
+    }
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "Generated name: %s", new_name);
+    } else {
+      ESP_LOGE(TAG, "Failed to set generated name: %s", esp_err_to_name(ret));
+      return 1;
+    }
     return 0;
   }
 
   // Handle setting name directly
   if (name_args.scene_name->count > 0) {
     const char* name = name_args.scene_name->sval[0];
-    scene_set_name(scene_index, name);
-    ESP_LOGI(TAG, "Scene renamed to: %s", name);
+    esp_err_t ret = scene_set_name(scene_index, name);
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "Scene renamed to: %s", name);
+    } else if (ret == ESP_ERR_INVALID_ARG) {
+      ESP_LOGE(TAG, "Name '%s' is already in use", name);
+      return 1;
+    } else {
+      ESP_LOGE(TAG, "Failed to rename scene: %s", esp_err_to_name(ret));
+      return 1;
+    }
     return 0;
   }
 

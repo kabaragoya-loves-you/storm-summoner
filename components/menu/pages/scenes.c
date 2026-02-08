@@ -145,11 +145,20 @@ static void action_duplicate_scene(void* user_data) {
   const char* source_name = scene_get_name_by_position(s_selected_position);
 
   // Build "Copy of <name>", truncated to fit 16 chars
+  // If collision, try "Copy of X 2", "Copy of X 3", etc.
   char dup_name[17];
   snprintf(dup_name, sizeof(dup_name), "Copy of %.8s",
     source_name ? source_name : "Scene");
 
   esp_err_t ret = scene_duplicate(scene_index, dup_name);
+  
+  // Retry with numeric suffix if name collision
+  for (int suffix = 2; suffix <= 99 && ret == ESP_ERR_INVALID_ARG; suffix++) {
+    snprintf(dup_name, sizeof(dup_name), "Copy of %.5s %d",
+      source_name ? source_name : "Scene", suffix);
+    ret = scene_duplicate(scene_index, dup_name);
+  }
+
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Duplicated scene %u as \"%s\"",
       (unsigned)(s_selected_position + 1), dup_name);
@@ -253,12 +262,14 @@ static lv_obj_t* scene_action_menu_create(void) {
 static void action_add_scene(void* user_data) {
   (void)user_data;
   
-  // Generate a default name
+  // Generate a unique name (retry if collision)
   char name[17];
-  scene_name_generate(name, sizeof(name));
+  esp_err_t ret = ESP_ERR_INVALID_ARG;
+  for (int attempt = 0; attempt < 10 && ret == ESP_ERR_INVALID_ARG; attempt++) {
+    scene_name_generate(name, sizeof(name));
+    ret = scene_create_new(name);
+  }
   
-  // Add at the end of the list
-  esp_err_t ret = scene_create_new(name);
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Created new scene: %s", name);
     // Focus on new scene (at the end of active scenes)

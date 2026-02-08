@@ -29,6 +29,7 @@ static const char* TAG = "scene";
 
 // Forward declarations
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size);
+static void scene_name_to_slug(const char* name, char* slug, size_t slug_size);
 static esp_err_t json_to_scene(cJSON* root, scene_t* scene);
 static void scene_init_defaults(scene_t* scene, uint8_t index);
 static void scene_cleanup_touchwheel(void);
@@ -1098,7 +1099,7 @@ esp_err_t scene_init(void) {
     g_scene_manager.num_scenes = 1;
     g_scene_manager.manifest[0].index = 0;
     strncpy(g_scene_manager.manifest[0].name, "Scene 1", sizeof(g_scene_manager.manifest[0].name));
-    strncpy(g_scene_manager.manifest[0].filename, "scene_001.json", sizeof(g_scene_manager.manifest[0].filename));
+    strncpy(g_scene_manager.manifest[0].filename, "scene_1.json", sizeof(g_scene_manager.manifest[0].filename));
     g_scene_manager.manifest[0].active = true;
   }
   
@@ -1536,16 +1537,64 @@ esp_err_t scene_previous(void) {
 }
 
 esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
-  if (scene_index > MAX_SCENE_INDEX || !name) return ESP_ERR_INVALID_ARG;
+  if (scene_index > MAX_SCENE_INDEX || !name || name[0] == '\0') {
+    return ESP_ERR_INVALID_ARG;
+  }
 
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
 
+  // Check for name uniqueness (excluding this scene's current name)
+  if (scene_name_exists(name, scene_index)) {
+    ESP_LOGW(TAG, "Scene name '%s' already exists", name);
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  // Find manifest entry for this scene
+  int pos = -1;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == scene_index) {
+      pos = i;
+      break;
+    }
+  }
+  if (pos == -1) return ESP_ERR_NOT_FOUND;
+
+  // Get old and new filenames
+  char old_filepath[128], new_filepath[128];
+  snprintf(old_filepath, sizeof(old_filepath), "%s/%s", SCENES_BASE_PATH,
+    g_scene_manager.manifest[pos].filename);
+  
+  char new_slug[64];
+  scene_name_to_slug(name, new_slug, sizeof(new_slug));
+  snprintf(new_filepath, sizeof(new_filepath), "%s/%s", SCENES_BASE_PATH, new_slug);
+
+  // Rename file on disk if filename changed
+  if (strcmp(g_scene_manager.manifest[pos].filename, new_slug) != 0) {
+    if (rename(old_filepath, new_filepath) != 0) {
+      ESP_LOGW(TAG, "Failed to rename scene file from %s to %s",
+        old_filepath, new_filepath);
+      // Continue anyway - the file will be saved with new name
+    }
+  }
+
+  // Update scene name in cache
   strncpy(scene->name, name, sizeof(scene->name) - 1);
   scene->name[sizeof(scene->name) - 1] = '\0';
+
+  // Update manifest entry
+  strncpy(g_scene_manager.manifest[pos].name, name,
+    sizeof(g_scene_manager.manifest[pos].name) - 1);
+  g_scene_manager.manifest[pos].name[sizeof(g_scene_manager.manifest[pos].name) - 1] = '\0';
+  strncpy(g_scene_manager.manifest[pos].filename, new_slug,
+    sizeof(g_scene_manager.manifest[pos].filename) - 1);
+  g_scene_manager.manifest[pos].filename[sizeof(g_scene_manager.manifest[pos].filename) - 1] = '\0';
+
+  // Save manifest and scene
+  scene_save_manifest();
   scene_persist_if_programming();
 
-  ESP_LOGI(TAG, "Scene %d renamed to: %s", scene_index + 1, name);
+  ESP_LOGI(TAG, "Scene %d renamed to: %s (file: %s)", scene_index + 1, name, new_slug);
   return ESP_OK;
 }
 
@@ -2646,8 +2695,72 @@ uint8_t scene_get_proximity_lfo_rate(void) {
   return s_proximity_lfo_rate;
 }
 
-// Helper to get scene filename
+// Convert scene name to filesystem-safe slug filename
+// Example: "STORM BOLT" -> "storm_bolt.json"
+static void scene_name_to_slug(const char* name, char* slug, size_t slug_size) {
+  if (!name || !slug || slug_size < 6) {  // Minimum: "x.json"
+    if (slug && slug_size > 0) slug[0] = '\0';
+    return;
+  }
+  
+  size_t out = 0;
+  size_t max_name_len = slug_size - 6;  // Reserve space for ".json\0"
+  
+  for (size_t i = 0; name[i] && out < max_name_len; i++) {
+    char c = name[i];
+    if (c >= 'A' && c <= 'Z') {
+      slug[out++] = c + ('a' - 'A');  // Lowercase
+    } else if (c >= 'a' && c <= 'z') {
+      slug[out++] = c;
+    } else if (c >= '0' && c <= '9') {
+      slug[out++] = c;
+    } else if (c == ' ' || c == '-') {
+      // Replace spaces and hyphens with underscore (avoid consecutive underscores)
+      if (out > 0 && slug[out - 1] != '_') slug[out++] = '_';
+    }
+    // Skip all other characters
+  }
+  
+  // Remove trailing underscore if present
+  if (out > 0 && slug[out - 1] == '_') out--;
+  
+  // Ensure we have at least one character
+  if (out == 0) {
+    slug[out++] = 's';  // Fallback to "s.json"
+  }
+  
+  // Append .json extension
+  snprintf(slug + out, slug_size - out, ".json");
+}
+
+// Check if a scene name already exists in the manifest (case-insensitive)
+// Optionally exclude a specific scene index from the check (for rename validation)
+bool scene_name_exists(const char* name, int8_t exclude_index) {
+  if (!name || !g_scene_manager.manifest) return false;
+  
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    // Skip the excluded scene (used when renaming to allow same name)
+    if (exclude_index >= 0 && g_scene_manager.manifest[i].index == (uint8_t)exclude_index) {
+      continue;
+    }
+    if (strcasecmp(g_scene_manager.manifest[i].name, name) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Helper to get scene filename from manifest
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size) {
+  // Look up filename in manifest
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == scene_index) {
+      snprintf(buffer, buffer_size, "%s/%s", SCENES_BASE_PATH,
+        g_scene_manager.manifest[i].filename);
+      return;
+    }
+  }
+  // Fallback for scenes not yet in manifest (should not happen in normal operation)
   snprintf(buffer, buffer_size, "%s/scene_%03d.json", SCENES_BASE_PATH, scene_index + 1);
 }
 
@@ -4410,6 +4523,14 @@ esp_err_t scene_create_new(const char* name) {
 }
 
 esp_err_t scene_create_new_at_position(const char* name, uint16_t position) {
+  if (!name || name[0] == '\0') return ESP_ERR_INVALID_ARG;
+  
+  // Check for name uniqueness
+  if (scene_name_exists(name, -1)) {
+    ESP_LOGW(TAG, "Cannot create scene: name '%s' already exists", name);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
   // Find next available index
   uint8_t new_index = 0;
   for (uint8_t i = 0; i <= MAX_SCENE_INDEX; i++) {
@@ -4434,12 +4555,18 @@ esp_err_t scene_create_new_at_position(const char* name, uint16_t position) {
     g_scene_manager.manifest[i] = g_scene_manager.manifest[i - 1];
   }
   
+  // Generate slug filename from scene name
+  char slug[64];
+  scene_name_to_slug(name, slug, sizeof(slug));
+  
   // Insert new entry at position
   g_scene_manager.manifest[position].index = new_index;
   strncpy(g_scene_manager.manifest[position].name, name,
     sizeof(g_scene_manager.manifest[position].name) - 1);
   g_scene_manager.manifest[position].name[sizeof(g_scene_manager.manifest[position].name) - 1] = '\0';
-  snprintf(g_scene_manager.manifest[position].filename, 63, "scene_%03d.json", new_index + 1);
+  strncpy(g_scene_manager.manifest[position].filename, slug,
+    sizeof(g_scene_manager.manifest[position].filename) - 1);
+  g_scene_manager.manifest[position].filename[sizeof(g_scene_manager.manifest[position].filename) - 1] = '\0';
   g_scene_manager.manifest[position].active = true;
   g_scene_manager.num_scenes++;
   
@@ -4455,6 +4582,7 @@ esp_err_t scene_create_new_at_position(const char* name, uint16_t position) {
   scene_save_to_flash(new_index);
   scene_save_manifest();
   
+  ESP_LOGI(TAG, "Created scene '%s' (file: %s)", name, slug);
   return ESP_OK;
 }
 
@@ -4481,6 +4609,14 @@ esp_err_t scene_delete(uint8_t scene_index) {
 }
 
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
+  if (!new_name || new_name[0] == '\0') return ESP_ERR_INVALID_ARG;
+  
+  // Check for name uniqueness
+  if (scene_name_exists(new_name, -1)) {
+    ESP_LOGW(TAG, "Cannot duplicate scene: name '%s' already exists", new_name);
+    return ESP_ERR_INVALID_ARG;
+  }
+  
   // Find source in manifest
   int source_pos = -1;
   for (int i = 0; i < g_scene_manager.num_scenes; i++) {
@@ -4504,6 +4640,10 @@ esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
   if (!new_manifest) return ESP_ERR_NO_MEM;
   g_scene_manager.manifest = new_manifest;
 
+  // Generate slug filename from scene name
+  char slug[64];
+  scene_name_to_slug(new_name, slug, sizeof(slug));
+
   // Insert right after source
   uint16_t insert_pos = source_pos + 1;
   for (int i = g_scene_manager.num_scenes; i > (int)insert_pos; i--) {
@@ -4515,8 +4655,10 @@ esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
     sizeof(g_scene_manager.manifest[insert_pos].name) - 1);
   g_scene_manager.manifest[insert_pos].name[
     sizeof(g_scene_manager.manifest[insert_pos].name) - 1] = '\0';
-  snprintf(g_scene_manager.manifest[insert_pos].filename, 63,
-    "scene_%03d.json", new_index + 1);
+  strncpy(g_scene_manager.manifest[insert_pos].filename, slug,
+    sizeof(g_scene_manager.manifest[insert_pos].filename) - 1);
+  g_scene_manager.manifest[insert_pos].filename[
+    sizeof(g_scene_manager.manifest[insert_pos].filename) - 1] = '\0';
   g_scene_manager.manifest[insert_pos].active = true;
   g_scene_manager.num_scenes++;
 

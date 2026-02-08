@@ -128,9 +128,17 @@ static void regenerate_name_action(void* user_data) {
   (void)user_data;
   uint8_t scene_index = scene_get_current_index();
   char new_name[SCENE_NAME_MAX_LEN + 1];
-  scene_name_generate(new_name, sizeof(new_name));
-  scene_set_name(scene_index, new_name);
-  ESP_LOGI(TAG, "Regenerated scene name: %s", new_name);
+  esp_err_t ret = ESP_ERR_INVALID_ARG;
+  // Retry up to 10 times if name collision
+  for (int attempt = 0; attempt < 10 && ret == ESP_ERR_INVALID_ARG; attempt++) {
+    scene_name_generate(new_name, sizeof(new_name));
+    ret = scene_set_name(scene_index, new_name);
+  }
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Regenerated scene name: %s", new_name);
+  } else {
+    ESP_LOGW(TAG, "Failed to regenerate name: %s", esp_err_to_name(ret));
+  }
   // Refresh current submenu to show new name, keeping focus on Regenerate (index 1)
   menu_set_restore_focus(1);
   menu_replace_current("Scene Name", name_submenu_create);

@@ -282,8 +282,14 @@ static void confirm_and_exit(void) {
   
   if (g_is_scene_name_mode) {
     // Scene name mode: save to scene
-    scene_set_name(g_scene_index, final_text);
-    ESP_LOGI(TAG, "Saved scene name: %s", final_text);
+    esp_err_t ret = scene_set_name(g_scene_index, final_text);
+    if (ret == ESP_OK) {
+      ESP_LOGI(TAG, "Saved scene name: %s", final_text);
+    } else if (ret == ESP_ERR_INVALID_ARG) {
+      ESP_LOGW(TAG, "Name '%s' already in use", final_text);
+    } else {
+      ESP_LOGW(TAG, "Failed to save scene name: %s", esp_err_to_name(ret));
+    }
   } else if (g_config.on_confirm) {
     // Generic mode: call confirm callback
     g_config.on_confirm(final_text, g_config.user_data);

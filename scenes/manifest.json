@@ -3,13 +3,13 @@
     {
       "index": 0,
       "name": "Default Scene",
-      "filename": "scene_001.json",
+      "filename": "default_scene.json",
       "active": true
     },
     {
       "index": 1,
       "name": "Tap & Randomize",
-      "filename": "scene_002.json",
+      "filename": "tap_randomize.json",
       "active": true
     }
   ]
