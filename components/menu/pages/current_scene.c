@@ -207,7 +207,7 @@ static void preset_confirm_cb(uint32_t selected_index, void* user_data) {
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to set program number: %s", esp_err_to_name(ret));
   }
-  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* preset_roller_create(void) {
@@ -252,7 +252,7 @@ static void send_pc_confirm_cb(uint32_t selected_index, void* user_data) {
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to set send PC on load: %s", esp_err_to_name(ret));
   }
-  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* send_pc_roller_create(void) {
@@ -276,7 +276,7 @@ static void bpm_confirm_cb(uint32_t selected_index, void* user_data) {
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to set BPM: %s", esp_err_to_name(ret));
   }
-  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* bpm_roller_create(void) {
@@ -346,7 +346,7 @@ static void time_sig_roller_click_cb(lv_event_t* e) {
     s_ts_denom_roller = NULL;
     s_ts_on_denominator = false;
     menu_set_custom_back_handler(NULL);  // Clear custom handler
-    menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+    menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
   }
 }
 
@@ -520,7 +520,7 @@ static void divider_confirm_cb(uint32_t selected_index, void* user_data) {
       ESP_LOGW(TAG, "Failed to set beat divider: %s", esp_err_to_name(ret));
     }
   }
-  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* divider_roller_create(void) {
@@ -557,7 +557,7 @@ static void clock_confirm_cb(uint32_t selected_index, void* user_data) {
       ESP_LOGW(TAG, "Failed to set clock source: %s", esp_err_to_name(ret));
     }
   }
-  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* clock_roller_create(void) {
@@ -590,7 +590,7 @@ static void transport_confirm_cb(uint32_t selected_index, void* user_data) {
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to set use_transport: %s", esp_err_to_name(ret));
   }
-  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* transport_roller_create(void) {
@@ -614,7 +614,7 @@ static void send_clock_confirm_cb(uint32_t selected_index, void* user_data) {
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to set send_clock: %s", esp_err_to_name(ret));
   }
-  menu_navigate_back_then_to(1, s_page_title, menu_page_current_scene_create);
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* send_clock_roller_create(void) {
