@@ -231,6 +231,12 @@ static void touchwheel_program_change_callback(int value, void* user_data) {
   // Don't send MIDI in programming mode
   if (ui_is_in_programming_mode()) return;
   
+  // In Preset Sync mode, preset is locked to scene ordinal - ignore touchwheel PC
+  if (scene_get_mode() == SCENE_MODE_PRESET_SYNC) {
+    ESP_LOGW(TAG, "Touchwheel program change ignored: not allowed in Preset Sync mode");
+    return;
+  }
+  
   (void)user_data;
   
   // value is delta from endless encoder (+1, -1, etc.)

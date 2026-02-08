@@ -571,17 +571,32 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
   
   uint8_t channel = device_config_get_channel() - 1;  // MIDI uses 0-based channels
   
+  // Get current scene mode for action validation
+  scene_mode_t current_mode = scene_get_mode();
+  
   switch (action->type) {
-    // Preset control
+    // Preset control - disabled in Preset Sync mode (preset locked to scene ordinal)
     case ACTION_PRESET_INC:
+      if (current_mode == SCENE_MODE_PRESET_SYNC) {
+        ESP_LOGW(TAG, "Preset +1 action ignored: not allowed in Preset Sync mode");
+        break;
+      }
       if (is_press) device_config_program_next();
       break;
       
     case ACTION_PRESET_DEC:
+      if (current_mode == SCENE_MODE_PRESET_SYNC) {
+        ESP_LOGW(TAG, "Preset -1 action ignored: not allowed in Preset Sync mode");
+        break;
+      }
       if (is_press) device_config_program_prev();
       break;
       
     case ACTION_PRESET:
+      if (current_mode == SCENE_MODE_PRESET_SYNC) {
+        ESP_LOGW(TAG, "Set Preset action ignored: not allowed in Preset Sync mode");
+        break;
+      }
       if (is_press) {
         // Smart PC: uses bank mode setting to decide behavior
         uint16_t program = action->params.preset.program;
@@ -596,6 +611,10 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       break;
       
     case ACTION_PRESET_HOLD:
+      if (current_mode == SCENE_MODE_PRESET_SYNC) {
+        ESP_LOGW(TAG, "Preset Hold action ignored: not allowed in Preset Sync mode");
+        break;
+      }
       // Set press_preset on press, release_preset on release
       {
         uint16_t program = is_press ? 
@@ -612,6 +631,10 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       break;
       
     case ACTION_PRESET_CYCLE:
+      if (current_mode == SCENE_MODE_PRESET_SYNC) {
+        ESP_LOGW(TAG, "Preset Cycle action ignored: not allowed in Preset Sync mode");
+        break;
+      }
       if (is_press) {
         action_t* mutable_action = (action_t*)action;
         uint8_t num_presets = mutable_action->params.preset_cycle.num_presets;
@@ -634,16 +657,28 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       }
       break;
       
-    // Scene control
+    // Scene control - disabled in Simple mode (only one scene exists)
     case ACTION_SCENE_INC:
+      if (current_mode == SCENE_MODE_SINGLE) {
+        ESP_LOGW(TAG, "Scene +1 action ignored: not allowed in Simple mode");
+        break;
+      }
       if (is_press) scene_next();
       break;
       
     case ACTION_SCENE_DEC:
+      if (current_mode == SCENE_MODE_SINGLE) {
+        ESP_LOGW(TAG, "Scene -1 action ignored: not allowed in Simple mode");
+        break;
+      }
       if (is_press) scene_previous();
       break;
       
     case ACTION_SCENE:
+      if (current_mode == SCENE_MODE_SINGLE) {
+        ESP_LOGW(TAG, "Set Scene action ignored: not allowed in Simple mode");
+        break;
+      }
       // Scene numbers are 1-based for users, 0-based internally
       if (is_press && action->params.target.number >= 1) {
         scene_set_current(action->params.target.number - 1);
