@@ -4407,7 +4407,99 @@ esp_err_t scene_delete(uint8_t scene_index) {
 }
 
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
-  return scene_create_new(new_name);  // Simplified for now
+  // Find source in manifest
+  int source_pos = -1;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == source_index) { source_pos = i; break; }
+  }
+  if (source_pos == -1) return ESP_ERR_NOT_FOUND;
+
+  // Find next available index
+  uint8_t new_index = 0;
+  for (uint8_t i = 0; i <= MAX_SCENE_INDEX; i++) {
+    bool exists = false;
+    for (int j = 0; j < g_scene_manager.num_scenes; j++) {
+      if (g_scene_manager.manifest[j].index == i) { exists = true; break; }
+    }
+    if (!exists) { new_index = i; break; }
+  }
+
+  // Expand manifest
+  scene_manifest_entry_t* new_manifest = realloc_prefer_psram(g_scene_manager.manifest,
+    (g_scene_manager.num_scenes + 1) * sizeof(scene_manifest_entry_t));
+  if (!new_manifest) return ESP_ERR_NO_MEM;
+  g_scene_manager.manifest = new_manifest;
+
+  // Insert right after source
+  uint16_t insert_pos = source_pos + 1;
+  for (int i = g_scene_manager.num_scenes; i > (int)insert_pos; i--) {
+    g_scene_manager.manifest[i] = g_scene_manager.manifest[i - 1];
+  }
+
+  g_scene_manager.manifest[insert_pos].index = new_index;
+  strncpy(g_scene_manager.manifest[insert_pos].name, new_name,
+    sizeof(g_scene_manager.manifest[insert_pos].name) - 1);
+  g_scene_manager.manifest[insert_pos].name[
+    sizeof(g_scene_manager.manifest[insert_pos].name) - 1] = '\0';
+  snprintf(g_scene_manager.manifest[insert_pos].filename, 63,
+    "scene_%03d.json", new_index + 1);
+  g_scene_manager.num_scenes++;
+
+  // Use a temp cache slot for the new scene
+  int temp_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
+
+  // Try to copy source from cache first
+  bool copied = false;
+  for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
+    if (g_scene_manager.cache[i].valid &&
+      g_scene_manager.cache[i].index == source_index) {
+      g_scene_manager.cache[temp_idx].scene = g_scene_manager.cache[i].scene;
+      copied = true;
+      break;
+    }
+  }
+
+  // If not cached, load source from flash into temp slot
+  if (!copied) {
+    char filepath[128];
+    get_scene_filename(source_index, filepath, sizeof(filepath));
+    FILE* f = fopen(filepath, "r");
+    if (!f) {
+      // Rollback manifest change
+      for (int i = (int)insert_pos; i < g_scene_manager.num_scenes - 1; i++) {
+        g_scene_manager.manifest[i] = g_scene_manager.manifest[i + 1];
+      }
+      g_scene_manager.num_scenes--;
+      return ESP_ERR_NOT_FOUND;
+    }
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* json_str = malloc(fsize + 1);
+    if (!json_str) { fclose(f); return ESP_ERR_NO_MEM; }
+    fread(json_str, 1, fsize, f);
+    fclose(f);
+    json_str[fsize] = '\0';
+    cJSON* root = cJSON_Parse(json_str);
+    free(json_str);
+    if (!root) return ESP_ERR_INVALID_ARG;
+    scene_init_defaults(&g_scene_manager.cache[temp_idx].scene, new_index);
+    json_to_scene(root, &g_scene_manager.cache[temp_idx].scene);
+    cJSON_Delete(root);
+  }
+
+  // Update the copy with new identity
+  strncpy(g_scene_manager.cache[temp_idx].scene.name, new_name,
+    sizeof(g_scene_manager.cache[temp_idx].scene.name) - 1);
+  g_scene_manager.cache[temp_idx].scene.name[
+    sizeof(g_scene_manager.cache[temp_idx].scene.name) - 1] = '\0';
+  g_scene_manager.cache[temp_idx].index = new_index;
+  g_scene_manager.cache[temp_idx].valid = true;
+
+  scene_save_to_flash(new_index);
+  scene_save_manifest();
+
+  return ESP_OK;
 }
 
 esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {

@@ -74,12 +74,15 @@ static const char* event_type_names[] = {
   [EVENT_SENSOR_ALS] = "SENSOR_ALS",
   [EVENT_SENSOR_PROXIMITY] = "SENSOR_PROXIMITY",
   [EVENT_MIDI_IN] = "MIDI_IN",
+  [EVENT_USB_MIDI_CONNECTED] = "USB_MIDI_CONN",
+  [EVENT_USB_MIDI_DISCONNECTED] = "USB_MIDI_DISC",
   [EVENT_EXPRESSION_VALUE] = "EXPRESSION_VALUE",
   [EVENT_EXPRESSION_CONNECTED] = "EXPRESSION_CONN",
   [EVENT_EXPRESSION_DISCONNECTED] = "EXPRESSION_DISC",
   [EVENT_EXPRESSION_SUSTAIN] = "SUSTAIN",
   [EVENT_EXPRESSION_SOSTENUTO] = "SOSTENUTO",
   [EVENT_EXPRESSION_GATE] = "GATE",
+  [EVENT_EXPRESSION_SWITCH] = "EXPRESSION_SW",
   [EVENT_CV_VALUE] = "CV_VALUE",
   [EVENT_CV_DISCONNECTED] = "CV_DISC",
   [EVENT_CLOCK_SYNC_PULSE] = "CLOCK_SYNC",
@@ -103,7 +106,9 @@ static const char* event_type_names[] = {
 };
 
 const char* event_type_to_string(event_type_t type) {
-  return (type < EVENT_TYPE_MAX) ? event_type_names[type] : "UNKNOWN";
+  if (type >= EVENT_TYPE_MAX) return "UNKNOWN";
+  const char* name = event_type_names[type];
+  return name ? name : "UNNAMED";
 }
 
 uint32_t event_bus_get_current_timestamp(void) {

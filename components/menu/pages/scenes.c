@@ -120,18 +120,47 @@ static void action_edit_scene(void* user_data) {
   }
   
   // Navigate to scene editor (back 2 from action menu, push scene page)
+  // Focus first item, not the scenes list position
+  menu_set_restore_focus(0);
   menu_navigate_back_then_to(2, "Scene", menu_page_current_scene_create);
+}
+
+static void action_duplicate_scene(void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_index_by_position(s_selected_position);
+  const char* source_name = scene_get_name_by_position(s_selected_position);
+
+  // Build "Copy of <name>", truncated to fit 16 chars
+  char dup_name[17];
+  snprintf(dup_name, sizeof(dup_name), "Copy of %.8s",
+    source_name ? source_name : "Scene");
+
+  esp_err_t ret = scene_duplicate(scene_index, dup_name);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Duplicated scene %u as \"%s\"",
+      (unsigned)(s_selected_position + 1), dup_name);
+    // Focus on the new copy (inserted right after source)
+    s_selected_position++;
+  } else {
+    ESP_LOGW(TAG, "Failed to duplicate scene: %s", esp_err_to_name(ret));
+  }
+
+  menu_set_restore_focus((int)s_selected_position);
+  menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
 }
 
 static lv_obj_t* scene_action_menu_create(void) {
   const char* scene_name = scene_get_name_by_position(s_selected_position);
   uint16_t count = scene_get_count();
   
-  static menu_item_t action_items[4];
+  static menu_item_t action_items[5];
   int idx = 0;
   
   // Edit scene
   action_items[idx++] = (menu_item_t){ "Edit", action_edit_scene, NULL, true };
+  
+  // Duplicate scene
+  action_items[idx++] = (menu_item_t){ "Duplicate", action_duplicate_scene, NULL, true };
   
   // Reorder (only if more than one scene)
   if (count > 1) {
