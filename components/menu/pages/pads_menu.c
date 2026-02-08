@@ -1969,7 +1969,7 @@ static lv_obj_t* scene_set_roller_create(void) {
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return NULL;
   
-  uint16_t count = scene_get_count();
+  uint16_t count = scene_get_total_count();
   if (count == 0) {
     return menu_create_page("No Scenes", NULL, 0);
   }
@@ -3373,7 +3373,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     
     // Find scene name from manifest
     const char* target_name = NULL;
-    uint16_t count = scene_get_count();
+    uint16_t count = scene_get_total_count();
     for (uint16_t i = 0; i < count; i++) {
       if (scene_get_index_by_position(i) == target) {
         target_name = scene_get_name_by_position(i);

@@ -7,7 +7,7 @@
 #include <string.h>
 
 #define TAG "MENU_SCENES"
-#define MAX_SCENE_ITEMS 130  // 128 scenes + Add + divider
+#define MAX_SCENE_ITEMS 132  // 128 scenes + 2 dividers + Add + slack
 
 // Forward declarations
 static lv_obj_t* scene_action_menu_create(void);
@@ -19,6 +19,20 @@ static char s_scene_labels[128][32];  // "1. SceneName" format
 
 // Reorder roller state
 static char s_reorder_options[2048];  // Roller options string
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+// Count inactive scenes in manifest
+static uint16_t count_inactive_scenes(void) {
+  uint16_t total = scene_get_total_count();
+  uint16_t inactive = 0;
+  for (uint16_t i = 0; i < total; i++) {
+    if (!scene_is_active_by_position(i)) inactive++;
+  }
+  return inactive;
+}
 
 // ============================================================================
 // Reorder Roller
@@ -52,14 +66,14 @@ static void reorder_confirm_cb(uint32_t selected_index, void* user_data) {
 }
 
 static lv_obj_t* reorder_roller_create(void) {
-  uint16_t count = scene_get_count();
+  uint16_t total = scene_get_total_count();
   
   // Build options string with ordinal + scene name for each position
   s_reorder_options[0] = '\0';
   char* pos = s_reorder_options;
   size_t remaining = sizeof(s_reorder_options);
   
-  for (uint16_t i = 0; i < count && remaining > 40; i++) {
+  for (uint16_t i = 0; i < total && remaining > 40; i++) {
     const char* name = scene_get_name_by_position(i);
     if (!name) name = "Untitled";
     
@@ -86,8 +100,8 @@ static void nav_to_reorder(void* user_data) {
 
 static void action_delete_scene(void* user_data) {
   (void)user_data;
-  uint16_t count = scene_get_count();
-  if (count <= 1) {
+  uint16_t total = scene_get_total_count();
+  if (total <= 1) {
     ESP_LOGW(TAG, "Cannot delete last scene");
     menu_navigate_back();
     return;
@@ -149,33 +163,85 @@ static void action_duplicate_scene(void* user_data) {
   menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
 }
 
+static void action_activate_scene(void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_index_by_position(s_selected_position);
+  esp_err_t ret = scene_set_active(scene_index, true);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Activated scene at position %u", (unsigned)s_selected_position);
+  } else {
+    ESP_LOGW(TAG, "Failed to activate scene: %s", esp_err_to_name(ret));
+  }
+  menu_set_restore_focus((int)s_selected_position);
+  menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
+}
+
+static void action_deactivate_scene(void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_index_by_position(s_selected_position);
+  esp_err_t ret = scene_set_active(scene_index, false);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Deactivated scene at position %u", (unsigned)s_selected_position);
+  } else {
+    ESP_LOGW(TAG, "Failed to deactivate scene: %s", esp_err_to_name(ret));
+  }
+  menu_set_restore_focus((int)s_selected_position);
+  menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
+}
+
 static lv_obj_t* scene_action_menu_create(void) {
   const char* scene_name = scene_get_name_by_position(s_selected_position);
-  uint16_t count = scene_get_count();
+  bool is_active = scene_is_active_by_position(s_selected_position);
+  uint16_t active_count = scene_get_count();
+  uint16_t total = scene_get_total_count();
+  uint8_t scene_index = scene_get_index_by_position(s_selected_position);
+  bool is_current = (scene_index == scene_get_current_index());
   
-  static menu_item_t action_items[5];
+  static menu_item_t action_items[6];
   int idx = 0;
   
-  // Edit scene
-  action_items[idx++] = (menu_item_t){ "Edit", action_edit_scene, NULL, true };
-  
-  // Duplicate scene
-  action_items[idx++] = (menu_item_t){ "Duplicate", action_duplicate_scene, NULL, true };
-  
-  // Reorder (only if more than one scene)
-  if (count > 1) {
-    action_items[idx++] = (menu_item_t){ "Reorder", nav_to_reorder, NULL, true };
+  if (is_active) {
+    // Active scene: Edit, Duplicate, Reorder, Deactivate, Delete
+    action_items[idx++] = (menu_item_t){ "Edit", action_edit_scene, NULL, true };
+    action_items[idx++] = (menu_item_t){ "Duplicate", action_duplicate_scene, NULL, true };
+    
+    if (active_count > 1) {
+      action_items[idx++] = (menu_item_t){ "Reorder", nav_to_reorder, NULL, true };
+    }
+    
+    // Deactivate (not if current scene or last active)
+    if (!is_current && active_count > 1) {
+      action_items[idx++] = (menu_item_t){ "Deactivate", action_deactivate_scene, NULL, false };
+    }
+    
+    // Delete (not if only one scene total)
+    if (total > 1 && !is_current) {
+      action_items[idx++] = (menu_item_t){ "Delete", action_delete_scene, NULL, false };
+    }
+  } else {
+    // Inactive scene: Activate, Delete
+    action_items[idx++] = (menu_item_t){ "Activate", action_activate_scene, NULL, false };
+    action_items[idx++] = (menu_item_t){ "Duplicate", action_duplicate_scene, NULL, true };
+    
+    if (total > 1) {
+      action_items[idx++] = (menu_item_t){ "Delete", action_delete_scene, NULL, false };
+    }
   }
   
-  // Delete (not if only one scene)
-  if (count > 1) {
-    action_items[idx++] = (menu_item_t){ "Delete", action_delete_scene, NULL, false };
-  }
-  
-  // Build title with scene name
+  // Build title - show ordinal for active scenes, just name for inactive
   static char title[48];
-  snprintf(title, sizeof(title), "%u. %.24s", 
-    (unsigned)(s_selected_position + 1), scene_name ? scene_name : "Untitled");
+  if (is_active) {
+    // Compute active ordinal for this scene
+    uint16_t ordinal = 0;
+    for (uint16_t i = 0; i <= s_selected_position; i++) {
+      if (scene_is_active_by_position(i)) ordinal++;
+    }
+    snprintf(title, sizeof(title), "%u. %.24s",
+      (unsigned)ordinal, scene_name ? scene_name : "Untitled");
+  } else {
+    snprintf(title, sizeof(title), "%.30s",
+      scene_name ? scene_name : "Untitled");
+  }
   
   return menu_create_page(title, action_items, idx);
 }
@@ -195,8 +261,8 @@ static void action_add_scene(void* user_data) {
   esp_err_t ret = scene_create_new(name);
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Created new scene: %s", name);
-    // Focus on new scene (at the end)
-    s_selected_position = scene_get_count() - 1;
+    // Focus on new scene (at the end of active scenes)
+    s_selected_position = scene_get_total_count() - 1;
   } else {
     ESP_LOGW(TAG, "Failed to create scene: %s", esp_err_to_name(ret));
   }
@@ -211,7 +277,7 @@ static void action_add_scene(void* user_data) {
 // ============================================================================
 
 static void nav_to_scene_action(void* user_data) {
-  // user_data is the position cast to pointer
+  // user_data is the manifest position cast to pointer
   s_selected_position = (uint16_t)(uintptr_t)user_data;
   menu_navigate_to("Scene", scene_action_menu_create);
 }
@@ -223,24 +289,52 @@ static void nav_to_scene_action(void* user_data) {
 lv_obj_t* menu_page_scenes_create(void) {
   ESP_LOGI(TAG, "Creating scenes page");
   
-  uint16_t count = scene_get_count();
+  uint16_t total = scene_get_total_count();
   int idx = 0;
+  int label_idx = 0;
+  uint16_t ordinal = 1;
+  uint16_t inactive_count = count_inactive_scenes();
   
-  // Build scene list with ordinal prefixes
-  for (uint16_t i = 0; i < count && idx < 128; i++) {
+  // First pass: active scenes with ordinal prefixes
+  for (uint16_t i = 0; i < total && label_idx < 128; i++) {
+    if (!scene_is_active_by_position(i)) continue;
+    
     const char* name = scene_get_name_by_position(i);
-    snprintf(s_scene_labels[i], sizeof(s_scene_labels[i]), "%u. %.24s",
-      (unsigned)(i + 1), name ? name : "Untitled");
+    snprintf(s_scene_labels[label_idx], sizeof(s_scene_labels[label_idx]),
+      "%u. %.24s", (unsigned)ordinal, name ? name : "Untitled");
+    ordinal++;
     
     s_scene_items[idx++] = (menu_item_t){
-      s_scene_labels[i],
+      s_scene_labels[label_idx],
       nav_to_scene_action,
-      (void*)(uintptr_t)i,  // Pass position as user_data
+      (void*)(uintptr_t)i,  // Pass manifest position as user_data
       true
     };
+    label_idx++;
   }
   
-  // Divider
+  // Inactive scenes section (if any)
+  if (inactive_count > 0) {
+    s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
+    
+    for (uint16_t i = 0; i < total && label_idx < 128; i++) {
+      if (scene_is_active_by_position(i)) continue;
+      
+      const char* name = scene_get_name_by_position(i);
+      snprintf(s_scene_labels[label_idx], sizeof(s_scene_labels[label_idx]),
+        "%.28s", name ? name : "Untitled");
+      
+      s_scene_items[idx++] = (menu_item_t){
+        s_scene_labels[label_idx],
+        nav_to_scene_action,
+        (void*)(uintptr_t)i,  // Pass manifest position as user_data
+        true
+      };
+      label_idx++;
+    }
+  }
+  
+  // Divider before Add Scene
   s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
   
   // Add Scene option

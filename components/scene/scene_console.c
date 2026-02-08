@@ -173,7 +173,7 @@ static const char* registered_commands[] = {
   "lfo2_cc", "lfo2_curve", "lfo2_polarity", "lfo2_enable", "lfo2_output", "lfo2_base_note", "lfo2_note_range", "lfo2_velocity", "lfo2_velocity_mode",
   "lfo2_repeat", "lfo2_trigger",
   "touchwheel_mode", "touchwheel_style", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note",
-  "on_load", "expression_velocity_mode"
+  "on_load", "expression_velocity_mode", "active"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -191,7 +191,8 @@ static void cmd_scene_info(void) {
   const device_def_t* device = (const device_def_t*)scene_get_device(index);
   
   ESP_LOGI(TAG, "====== SCENE INFO ======");
-  ESP_LOGI(TAG, "Current scene: %d - %s", index + 1, scene->name);
+  ESP_LOGI(TAG, "Current scene: %d - %s (%s)", index + 1, scene->name,
+    scene_is_active(index) ? "active" : "inactive");
   
   // Display device info
   const char* effective_slug = scene_get_effective_device_slug(index);
@@ -4474,6 +4475,47 @@ static int cmd_touchwheel_note(int argc, char **argv) {
   return 0;
 }
 
+// Command: active - Show/set scene active status
+static struct {
+  struct arg_str *on_off;
+  struct arg_end *end;
+} active_args;
+
+static int cmd_active(int argc, char **argv) {
+  uint8_t scene_index = scene_get_current_index();
+  
+  // No args: show current status
+  if (argc == 1) {
+    bool active = scene_is_active(scene_index);
+    ESP_LOGI(TAG, "Scene %d active: %s", scene_index + 1, active ? "yes" : "no");
+    return 0;
+  }
+  
+  int nerrors = arg_parse(argc, argv, (void **) &active_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, active_args.end, argv[0]);
+    return 1;
+  }
+  
+  const char* val = active_args.on_off->sval[0];
+  bool new_active;
+  if (strcmp(val, "on") == 0 || strcmp(val, "1") == 0 || strcmp(val, "true") == 0) {
+    new_active = true;
+  } else if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0 || strcmp(val, "false") == 0) {
+    new_active = false;
+  } else {
+    ESP_LOGE(TAG, "Invalid value: %s (use on/off)", val);
+    return 1;
+  }
+  
+  esp_err_t ret = scene_set_active(scene_index, new_active);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
+    return 1;
+  }
+  return 0;
+}
+
 esp_err_t scene_console_init(void) {
   ESP_LOGI(TAG, "Registering scene commands");
   
@@ -5622,6 +5664,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &touchwheel_note_args
   };
   esp_console_cmd_register(&touchwheel_note_cmd);
+  
+  // active command
+  active_args.on_off = arg_str0(NULL, NULL, "<on|off>", "Activate/deactivate scene");
+  active_args.end = arg_end(2);
+  
+  const esp_console_cmd_t active_cmd = {
+    .command = "active",
+    .help = "Show or set scene active status (on/off)",
+    .hint = NULL,
+    .func = &cmd_active,
+    .argtable = &active_args
+  };
+  esp_console_cmd_register(&active_cmd);
   
   return ESP_OK;
 }

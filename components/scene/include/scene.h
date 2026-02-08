@@ -144,6 +144,7 @@ typedef struct {
   uint8_t index;
   char name[17];              // Scene name (max 16 chars + null)
   char filename[64];
+  bool active;                // Whether scene participates in navigation
 } scene_manifest_entry_t;
 
 // Scene manager state
@@ -335,9 +336,13 @@ esp_err_t scene_create_new_at_position(const char* name, uint16_t position);
 esp_err_t scene_delete(uint8_t scene_index);
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name);
 esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index);
-uint16_t scene_get_count(void);
+uint16_t scene_get_count(void);           // Active scenes only
+uint16_t scene_get_total_count(void);      // All scenes (active + inactive)
+bool scene_is_active(uint8_t scene_index);
+esp_err_t scene_set_active(uint8_t scene_index, bool active);
 const char* scene_get_name_by_position(uint16_t position);
 uint8_t scene_get_index_by_position(uint16_t position);
+bool scene_is_active_by_position(uint16_t position);
 
 // Suspend/resume scene input processing (for programming mode)
 // When suspended, the scene's touchwheel is unregistered and actions are disabled

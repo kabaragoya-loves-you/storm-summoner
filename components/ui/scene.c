@@ -317,25 +317,23 @@ static void update_scene_info_label(void) {
   const scene_t* scene = scene_get_current();
   const char* name = (scene && scene->name[0]) ? scene->name : "Untitled";
   
-  // Find position in manifest for ordinal
-  uint16_t position = 0;
-  uint16_t count = scene_get_count();
-  for (uint16_t i = 0; i < count; i++) {
-    if (scene_get_index_by_position(i) == scene_index) {
-      position = i;
-      break;
-    }
+  // Find active ordinal (1-based position among active scenes)
+  uint16_t ordinal = 0;
+  uint16_t total = scene_get_total_count();
+  for (uint16_t i = 0; i < total; i++) {
+    if (scene_is_active_by_position(i)) ordinal++;
+    if (scene_get_index_by_position(i) == scene_index) break;
   }
   
   if (mode == SCENE_MODE_PRESET_SYNC) {
     // Preset Sync: show scene number and name, pending if any
     if (scene_has_pending_change()) {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.12s > %u", (unsigned)(position + 1), name,
+        "%u. %.12s > %u", (unsigned)ordinal, name,
         (unsigned)(scene_get_pending_index() + 1));
     } else {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.16s", (unsigned)(position + 1), name);
+        "%u. %.16s", (unsigned)ordinal, name);
     }
   } else {
     // Advanced: show scene and preset info
@@ -346,17 +344,17 @@ static void update_scene_info_label(void) {
     if (display_preset < 1) display_preset = 1;
     if (scene_has_pending_change()) {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.10s P%d > S%u", (unsigned)(position + 1), name,
+        "%u. %.10s P%d > S%u", (unsigned)ordinal, name,
         display_preset, (unsigned)(scene_get_pending_index() + 1));
     } else if (device_config_has_pending_program()) {
       int pending_preset = device_config_get_pending_program() - index_base + 1;
       if (pending_preset < 1) pending_preset = 1;
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.10s P%d > P%d", (unsigned)(position + 1), name,
+        "%u. %.10s P%d > P%d", (unsigned)ordinal, name,
         display_preset, pending_preset);
     } else {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "%u. %.12s P%d", (unsigned)(position + 1), name, display_preset);
+        "%u. %.12s P%d", (unsigned)ordinal, name, display_preset);
     }
   }
   

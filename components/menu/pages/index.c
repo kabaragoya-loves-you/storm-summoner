@@ -52,20 +52,18 @@ lv_obj_t* menu_page_index_create(void) {
     scene_t* scene = scene_get_current();
     uint8_t scene_index = scene_get_current_index();
     
-    // Find position in manifest for ordinal
-    uint16_t position = 0;
-    uint16_t count = scene_get_count();
-    for (uint16_t i = 0; i < count; i++) {
-      if (scene_get_index_by_position(i) == scene_index) {
-        position = i;
-        break;
-      }
+    // Find active ordinal (1-based position among active scenes)
+    uint16_t ordinal = 0;
+    uint16_t total = scene_get_total_count();
+    for (uint16_t i = 0; i < total; i++) {
+      if (scene_is_active_by_position(i)) ordinal++;
+      if (scene_get_index_by_position(i) == scene_index) break;
     }
     
     // Build scene title with ordinal
     const char* name = (scene && scene->name[0]) ? scene->name : "Untitled";
     snprintf(s_scene_title, sizeof(s_scene_title), "%u. %.24s",
-      (unsigned)(position + 1), name);
+      (unsigned)ordinal, name);
     
     index_items[idx++] = (menu_item_t){ s_scene_title, nav_to_current_scene, NULL, true };
     index_items[idx++] = (menu_item_t){ "Scenes", nav_to_scenes_manager, NULL, true };

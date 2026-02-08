@@ -640,17 +640,15 @@ lv_obj_t* menu_page_current_scene_create(void) {
     snprintf(s_page_title, sizeof(s_page_title), "%s",
       (scene && scene->name[0]) ? scene->name : "Scene");
   } else {
-    // Find position in manifest for 1-based ordinal
-    uint16_t position = 0;
-    uint16_t count = scene_get_count();
-    for (uint16_t i = 0; i < count; i++) {
-      if (scene_get_index_by_position(i) == scene_index) {
-        position = i;
-        break;
-      }
+    // Find active ordinal (1-based position among active scenes)
+    uint16_t ordinal = 0;
+    uint16_t total = scene_get_total_count();
+    for (uint16_t i = 0; i < total; i++) {
+      if (scene_is_active_by_position(i)) ordinal++;
+      if (scene_get_index_by_position(i) == scene_index) break;
     }
     snprintf(s_page_title, sizeof(s_page_title), "%u. %s",
-      (unsigned)(position + 1),
+      (unsigned)ordinal,
       (scene && scene->name[0]) ? scene->name : "Untitled");
   }
   

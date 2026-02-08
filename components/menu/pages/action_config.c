@@ -2266,7 +2266,7 @@ static void scene_set_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* scene_set_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   
-  uint16_t count = scene_get_count();
+  uint16_t count = scene_get_total_count();
   if (count == 0) {
     return menu_create_page("No Scenes", NULL, 0);
   }
@@ -3830,7 +3830,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     uint8_t target = action->params.target.number;
     
     const char* target_name = NULL;
-    uint16_t count = scene_get_count();
+    uint16_t count = scene_get_total_count();
     for (uint16_t i = 0; i < count; i++) {
       if (scene_get_index_by_position(i) == target) {
         target_name = scene_get_name_by_position(i);
