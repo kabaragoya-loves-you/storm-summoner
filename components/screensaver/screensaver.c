@@ -423,3 +423,15 @@ void screensaver_set_delay(uint16_t delay_seconds) {
     }
   }
 }
+
+bool screensaver_is_enabled(void) {
+  return g_screensaver_enabled_in_settings && g_screensaver_delay_seconds > 0;
+}
+
+uint16_t screensaver_get_delay(void) {
+  return g_screensaver_delay_seconds;
+}
+
+screensaver_mode_t screensaver_get_mode(void) {
+  return g_selected_screensaver_mode;
+}

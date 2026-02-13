@@ -18,4 +18,9 @@ void screensaver_notify_activity_from_isr(BaseType_t* higher_priority_woken);
 void screensaver_set_mode(screensaver_mode_t mode);
 void screensaver_set_delay(uint16_t delay_seconds);
 
+// Getter functions for menu display
+bool screensaver_is_enabled(void);
+uint16_t screensaver_get_delay(void);
+screensaver_mode_t screensaver_get_mode(void);
+
 #endif // SCREENSAVER_H 

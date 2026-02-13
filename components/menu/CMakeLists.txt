@@ -10,7 +10,6 @@ idf_component_register(
     "pages/config.c"
     "pages/touch.c"
     "pages/midi.c"
-    "pages/haptic.c"
     "pages/screensaver.c"
     "pages/dac.c"
     "pages/adc_manager.c"
