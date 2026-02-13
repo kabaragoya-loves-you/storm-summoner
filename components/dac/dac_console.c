@@ -8,7 +8,7 @@
 static const char* TAG = "dac_console";
 
 static const char* registered_commands[] = {
-  "help", "info", "set", "voltage", "readback", "calibrate"
+  "info", "set", "voltage", "readback", "calibrate"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 

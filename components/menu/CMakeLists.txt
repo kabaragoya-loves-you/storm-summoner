@@ -11,8 +11,6 @@ idf_component_register(
     "pages/touch.c"
     "pages/midi.c"
     "pages/screensaver.c"
-    "pages/dac.c"
-    "pages/adc_manager.c"
     "pages/expression.c"
     "pages/settings_expression.c"
     "pages/cv.c"
@@ -57,10 +55,7 @@ idf_component_register(
     config
     touch
     midi
-    haptic
     screensaver
-    dac
-    adc_manager
     expression
     cv
     sensor

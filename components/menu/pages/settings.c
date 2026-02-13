@@ -27,16 +27,6 @@ static void nav_to_screensaver(void* user_data) {
   menu_navigate_to("Screensaver", menu_page_screensaver_create);
 }
 
-static void nav_to_dac(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("DAC", menu_page_dac_create);
-}
-
-static void nav_to_adc_manager(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("ADC", menu_page_adc_manager_create);
-}
-
 static void nav_to_expression(void* user_data) {
   (void)user_data;
   menu_navigate_to("Expression", menu_page_settings_expression_create);
@@ -172,8 +162,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Touch", nav_to_touch, NULL, true },
     { "MIDI", nav_to_midi, NULL, true },
     { "Screensaver", nav_to_screensaver, NULL, true },
-    { "DAC", nav_to_dac, NULL, true },
-    { "ADC", nav_to_adc_manager, NULL, true },
     { "Expression", nav_to_expression, NULL, true },
     { "Control Voltage", nav_to_cv, NULL, true },
     { "Proximity", nav_to_proximity, NULL, true },
