@@ -3,6 +3,7 @@
 #include "touch.h"
 #include "ui.h"
 #include "esp_log.h"
+#include <stdio.h>
 
 #define TAG "MENU_TOUCH"
 
@@ -13,6 +14,13 @@ static lv_obj_t* menu_hold_roller_create(void);
 
 // External declaration for working module message setter
 extern void working_set_message(const char *msg);
+
+// Label buffers
+static char s_calibrate_label[32];
+static char s_stuck_timeout_label[32];
+static char s_idle_calib_label[32];
+static char s_menu_hold_label[32];
+static menu_item_t s_touch_items[4];
 
 // ============================================================================
 // Calibrate Action
@@ -71,7 +79,7 @@ static void stuck_timeout_confirm_cb(uint32_t selected_index, void* user_data) {
   touch_set_stuck_timeout_ms(timeout_ms);
   ESP_LOGI(TAG, "Stuck timeout set to %lu ms", (unsigned long)timeout_ms);
   
-  menu_navigate_back();
+  menu_navigate_back_then_to(2, "Touch", menu_page_touch_create);
 }
 
 static uint32_t stuck_timeout_to_index(uint32_t timeout_ms) {
@@ -80,6 +88,13 @@ static uint32_t stuck_timeout_to_index(uint32_t timeout_ms) {
   if (seconds < 5) return 0;  // Below minimum, treat as disabled
   if (seconds > 20) return 16;  // Above maximum, clamp to 20s
   return seconds - 4;  // 5s = index 1, 6s = index 2, etc.
+}
+
+static const char* stuck_timeout_to_string(uint32_t timeout_ms) {
+  if (timeout_ms == 0) return "Disabled";
+  static char buf[16];
+  snprintf(buf, sizeof(buf), "%lu sec", (unsigned long)(timeout_ms / 1000));
+  return buf;
 }
 
 static lv_obj_t* stuck_timeout_roller_create(void) {
@@ -118,7 +133,7 @@ static void idle_calib_confirm_cb(uint32_t selected_index, void* user_data) {
   touch_set_idle_calibration_interval_ms(interval_ms);
   ESP_LOGI(TAG, "Idle calibration interval set to %lu ms", (unsigned long)interval_ms);
   
-  menu_navigate_back();
+  menu_navigate_back_then_to(2, "Touch", menu_page_touch_create);
 }
 
 static uint32_t idle_calib_to_index(uint32_t interval_ms) {
@@ -128,6 +143,13 @@ static uint32_t idle_calib_to_index(uint32_t interval_ms) {
   if (minutes > 60) return 11;  // Above maximum, clamp to 60m
   // 10min = index 1, 15min = index 2, etc.
   return 1 + (minutes - 10) / 5;
+}
+
+static const char* idle_calib_to_string(uint32_t interval_ms) {
+  if (interval_ms == 0) return "Disabled";
+  static char buf[16];
+  snprintf(buf, sizeof(buf), "%lu min", (unsigned long)(interval_ms / 60000));
+  return buf;
 }
 
 static lv_obj_t* idle_calib_roller_create(void) {
@@ -161,13 +183,21 @@ static void menu_hold_confirm_cb(uint32_t selected_index, void* user_data) {
   ui_set_button13_long_press_ms(hold_ms);
   ESP_LOGI(TAG, "Menu hold time set to %lu ms", (unsigned long)hold_ms);
   
-  menu_navigate_back();
+  menu_navigate_back_then_to(2, "Touch", menu_page_touch_create);
 }
 
 static uint32_t menu_hold_to_index(uint32_t hold_ms) {
   if (hold_ms < 800) return 0;  // Below minimum, clamp to 800ms
   if (hold_ms > 2500) return 17;  // Above maximum, clamp to 2500ms
   return (hold_ms - 800) / 100;
+}
+
+static const char* menu_hold_to_string(uint32_t hold_ms) {
+  static char buf[16];
+  snprintf(buf, sizeof(buf), "%lu.%lu sec",
+    (unsigned long)(hold_ms / 1000),
+    (unsigned long)((hold_ms % 1000) / 100));
+  return buf;
 }
 
 static lv_obj_t* menu_hold_roller_create(void) {
@@ -190,13 +220,29 @@ static void nav_to_menu_hold(void* user_data) {
 lv_obj_t* menu_page_touch_create(void) {
   ESP_LOGI(TAG, "Creating touch settings page");
   
-  static menu_item_t touch_items[] = {
-    { "Calibrate", action_calibrate, NULL, false },
-    { "Stuck Timeout", nav_to_stuck_timeout, NULL, true },
-    { "Idle Calibration", nav_to_idle_calib, NULL, true },
-    { "Menu Hold Time", nav_to_menu_hold, NULL, true }
-  };
+  int idx = 0;
   
-  return menu_create_action_page("Touch", touch_items, 
-    sizeof(touch_items) / sizeof(touch_items[0]));
+  // Calibrate (no value on second line)
+  snprintf(s_calibrate_label, sizeof(s_calibrate_label), "Calibrate\n");
+  s_touch_items[idx++] = (menu_item_t){ s_calibrate_label, action_calibrate, NULL, false };
+  
+  // Stuck Timeout with current value
+  uint32_t stuck_ms = touch_get_stuck_timeout_ms();
+  snprintf(s_stuck_timeout_label, sizeof(s_stuck_timeout_label), "Stuck Timeout\n%s",
+    stuck_timeout_to_string(stuck_ms));
+  s_touch_items[idx++] = (menu_item_t){ s_stuck_timeout_label, nav_to_stuck_timeout, NULL, true };
+  
+  // Idle Calibration with current value
+  uint32_t idle_ms = touch_get_idle_calibration_interval_ms();
+  snprintf(s_idle_calib_label, sizeof(s_idle_calib_label), "Idle Calibration\n%s",
+    idle_calib_to_string(idle_ms));
+  s_touch_items[idx++] = (menu_item_t){ s_idle_calib_label, nav_to_idle_calib, NULL, true };
+  
+  // Menu Hold Time with current value
+  uint32_t hold_ms = ui_get_button13_long_press_ms();
+  snprintf(s_menu_hold_label, sizeof(s_menu_hold_label), "Menu Hold Time\n%s",
+    menu_hold_to_string(hold_ms));
+  s_touch_items[idx++] = (menu_item_t){ s_menu_hold_label, nav_to_menu_hold, NULL, true };
+  
+  return menu_create_page_2line("Touch", s_touch_items, idx);
 }

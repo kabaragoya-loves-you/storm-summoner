@@ -3,157 +3,199 @@
 #include "midi_out.h"
 #include "midi_passthrough.h"
 #include "midi_loopback.h"
-#include "midi_in_debug.h"
-#include "device_config.h"
 #include "esp_log.h"
 #include <stdio.h>
-#include <string.h>
 
 #define TAG "MENU_MIDI"
 
-static void show_info(void* user_data) {
+// Label buffers
+static char s_interface_label[32];
+static char s_passthrough_label[32];
+static char s_loopback_label[32];
+static menu_item_t s_midi_items[3];
+
+// ============================================================================
+// Interface Roller (None, TRS, USB, Both)
+// ============================================================================
+
+static const char* INTERFACE_OPTIONS = "None\nTRS\nUSB\nBoth";
+
+static void interface_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
-  midi_out_config_t cfg = midi_out_get_config();
-  bool usb_to_uart_pass = midi_passthrough_usb_to_uart_is_enabled();
-  bool uart_to_usb_pass = midi_passthrough_uart_to_usb_is_enabled();
-  bool uart_loop = midi_loopback_uart_is_enabled();
-  bool usb_loop = midi_loopback_usb_is_enabled();
-  bool active_sensing = midi_active_sensing_is_enabled();
-  uint8_t channel = device_config_get_channel();
-  
-  const char* iface_str;
-  switch (cfg.active_interfaces) {
-    case MIDI_OUT_INTERFACE_NONE: iface_str = "None"; break;
-    case MIDI_OUT_INTERFACE_UART: iface_str = "UART only"; break;
-    case MIDI_OUT_INTERFACE_USB: iface_str = "USB only"; break;
-    case MIDI_OUT_INTERFACE_BOTH: iface_str = "Both"; break;
-    default: iface_str = "Unknown"; break;
+
+  midi_out_interface_t iface;
+  switch (selected_index) {
+    case 0:  iface = MIDI_OUT_INTERFACE_NONE; break;
+    case 1:  iface = MIDI_OUT_INTERFACE_UART; break;
+    case 2:  iface = MIDI_OUT_INTERFACE_USB;  break;
+    default: iface = MIDI_OUT_INTERFACE_BOTH; break;
   }
-  
-  char info_text[512];
-  snprintf(info_text, sizeof(info_text),
-    "MIDI CONFIG\n"
-    "MIDI channel: %d\n"
-    "Active interfaces: %s\n"
-    "UART tempo: %s\n"
-    "UART transport: %s\n"
-    "USB tempo: %s\n"
-    "USB transport: %s\n"
-    "Active sensing: %s\n"
-    "\n"
-    "Passthrough USB->UART: %s\n"
-    "Passthrough UART->USB: %s\n"
-    "Loopback UART: %s\n"
-    "Loopback USB: %s\n"
-    "MIDI IN debug: %s",
-    channel, iface_str,
-    cfg.uart_send_tempo ? "enabled" : "disabled",
-    cfg.uart_send_transport ? "enabled" : "disabled",
-    cfg.usb_send_tempo ? "enabled" : "disabled",
-    cfg.usb_send_transport ? "enabled" : "disabled",
-    active_sensing ? "enabled" : "disabled",
-    usb_to_uart_pass ? "enabled" : "disabled",
-    uart_to_usb_pass ? "enabled" : "disabled",
-    uart_loop ? "enabled" : "disabled",
-    usb_loop ? "enabled" : "disabled",
-    midi_in_debug_is_enabled() ? "enabled" : "disabled");
-  
-  menu_navigate_to_info("MIDI Info", info_text);
+
+  midi_out_set_interfaces(iface);
+  ESP_LOGI(TAG, "MIDI interface set to index %lu", (unsigned long)selected_index);
+
+  menu_navigate_back_then_to(2, "MIDI", menu_page_midi_create);
 }
 
-static void set_interfaces_none(void* user_data) {
-  (void)user_data;
-  midi_out_set_interfaces(MIDI_OUT_INTERFACE_NONE);
-  ESP_LOGI(TAG, "MIDI interfaces set to: None");
-}
-
-static void set_interfaces_uart(void* user_data) {
-  (void)user_data;
-  midi_out_set_interfaces(MIDI_OUT_INTERFACE_UART);
-  ESP_LOGI(TAG, "MIDI interfaces set to: UART");
-}
-
-static void set_interfaces_usb(void* user_data) {
-  (void)user_data;
-  midi_out_set_interfaces(MIDI_OUT_INTERFACE_USB);
-  ESP_LOGI(TAG, "MIDI interfaces set to: USB");
-}
-
-static void set_interfaces_both(void* user_data) {
-  (void)user_data;
-  midi_out_set_interfaces(MIDI_OUT_INTERFACE_BOTH);
-  ESP_LOGI(TAG, "MIDI interfaces set to: Both");
-}
-
-static void toggle_active_sensing(void* user_data) {
-  (void)user_data;
-  bool enabled = midi_active_sensing_is_enabled();
-  if (enabled) {
-    midi_active_sensing_stop();
-    ESP_LOGI(TAG, "Active sensing disabled");
-  } else {
-    midi_active_sensing_start();
-    ESP_LOGI(TAG, "Active sensing enabled");
+static uint32_t interface_to_index(midi_out_interface_t iface) {
+  switch (iface) {
+    case MIDI_OUT_INTERFACE_NONE: return 0;
+    case MIDI_OUT_INTERFACE_UART: return 1;
+    case MIDI_OUT_INTERFACE_USB:  return 2;
+    case MIDI_OUT_INTERFACE_BOTH: return 3;
+    default: return 0;
   }
 }
 
-static void toggle_passthrough_usb_uart(void* user_data) {
-  (void)user_data;
-  bool enabled = midi_passthrough_usb_to_uart_is_enabled();
-  midi_passthrough_usb_to_uart_enable(!enabled);
-  ESP_LOGI(TAG, "USB->UART passthrough: %s", !enabled ? "enabled" : "disabled");
-}
-
-static void toggle_passthrough_uart_usb(void* user_data) {
-  (void)user_data;
-  bool enabled = midi_passthrough_uart_to_usb_is_enabled();
-  midi_passthrough_uart_to_usb_enable(!enabled);
-  ESP_LOGI(TAG, "UART->USB passthrough: %s", !enabled ? "enabled" : "disabled");
-}
-
-static void toggle_loopback_uart(void* user_data) {
-  (void)user_data;
-  bool enabled = midi_loopback_uart_is_enabled();
-  midi_loopback_uart_enable(!enabled);
-  ESP_LOGI(TAG, "Loopback UART: %s", !enabled ? "enabled" : "disabled");
-}
-
-static void toggle_loopback_usb(void* user_data) {
-  (void)user_data;
-  bool enabled = midi_loopback_usb_is_enabled();
-  midi_loopback_usb_enable(!enabled);
-  ESP_LOGI(TAG, "Loopback USB: %s", !enabled ? "enabled" : "disabled");
-}
-
-static void toggle_debug(void* user_data) {
-  (void)user_data;
-  bool enabled = midi_in_debug_is_enabled();
-  if (enabled) {
-    midi_in_debug_disable();
-    ESP_LOGI(TAG, "MIDI IN debug disabled");
-  } else {
-    midi_in_debug_enable();
-    ESP_LOGI(TAG, "MIDI IN debug enabled");
+static const char* interface_to_string(midi_out_interface_t iface) {
+  switch (iface) {
+    case MIDI_OUT_INTERFACE_NONE: return "None";
+    case MIDI_OUT_INTERFACE_UART: return "TRS";
+    case MIDI_OUT_INTERFACE_USB:  return "USB";
+    case MIDI_OUT_INTERFACE_BOTH: return "Both";
+    default: return "None";
   }
 }
+
+static lv_obj_t* interface_roller_create(void) {
+  midi_out_interface_t current = midi_out_get_interfaces();
+  uint32_t initial_index = interface_to_index(current);
+
+  return menu_create_roller_page("Interface", INTERFACE_OPTIONS,
+    initial_index, interface_confirm_cb, NULL);
+}
+
+static void nav_to_interface(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Interface", interface_roller_create);
+}
+
+// ============================================================================
+// Passthrough Roller (Off, USB to TRS, TRS to USB, Both)
+// ============================================================================
+
+static const char* PASSTHROUGH_OPTIONS = "Off\nUSB to TRS\nTRS to USB\nBoth";
+
+static void passthrough_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  bool usb_to_trs = (selected_index == 1 || selected_index == 3);
+  bool trs_to_usb = (selected_index == 2 || selected_index == 3);
+
+  midi_passthrough_usb_to_uart_enable(usb_to_trs);
+  midi_passthrough_uart_to_usb_enable(trs_to_usb);
+  ESP_LOGI(TAG, "Passthrough set to index %lu", (unsigned long)selected_index);
+
+  menu_navigate_back_then_to(2, "MIDI", menu_page_midi_create);
+}
+
+static const char* passthrough_to_string(void) {
+  bool usb_to_trs = midi_passthrough_usb_to_uart_is_enabled();
+  bool trs_to_usb = midi_passthrough_uart_to_usb_is_enabled();
+
+  if (usb_to_trs && trs_to_usb) return "Both";
+  if (usb_to_trs) return "USB to TRS";
+  if (trs_to_usb) return "TRS to USB";
+  return "Off";
+}
+
+static uint32_t passthrough_to_index(void) {
+  bool usb_to_trs = midi_passthrough_usb_to_uart_is_enabled();
+  bool trs_to_usb = midi_passthrough_uart_to_usb_is_enabled();
+
+  if (usb_to_trs && trs_to_usb) return 3;
+  if (usb_to_trs) return 1;
+  if (trs_to_usb) return 2;
+  return 0;
+}
+
+static lv_obj_t* passthrough_roller_create(void) {
+  uint32_t initial_index = passthrough_to_index();
+
+  return menu_create_roller_page("Passthrough", PASSTHROUGH_OPTIONS,
+    initial_index, passthrough_confirm_cb, NULL);
+}
+
+static void nav_to_passthrough(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Passthrough", passthrough_roller_create);
+}
+
+// ============================================================================
+// Loopback Roller (Off, TRS, USB, Both)
+// ============================================================================
+
+static const char* LOOPBACK_OPTIONS = "Off\nTRS\nUSB\nBoth";
+
+static void loopback_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  bool trs = (selected_index == 1 || selected_index == 3);
+  bool usb = (selected_index == 2 || selected_index == 3);
+
+  midi_loopback_uart_enable(trs);
+  midi_loopback_usb_enable(usb);
+  ESP_LOGI(TAG, "Loopback set to index %lu", (unsigned long)selected_index);
+
+  menu_navigate_back_then_to(2, "MIDI", menu_page_midi_create);
+}
+
+static const char* loopback_to_string(void) {
+  bool trs = midi_loopback_uart_is_enabled();
+  bool usb = midi_loopback_usb_is_enabled();
+
+  if (trs && usb) return "Both";
+  if (trs) return "TRS";
+  if (usb) return "USB";
+  return "Off";
+}
+
+static uint32_t loopback_to_index(void) {
+  bool trs = midi_loopback_uart_is_enabled();
+  bool usb = midi_loopback_usb_is_enabled();
+
+  if (trs && usb) return 3;
+  if (trs) return 1;
+  if (usb) return 2;
+  return 0;
+}
+
+static lv_obj_t* loopback_roller_create(void) {
+  uint32_t initial_index = loopback_to_index();
+
+  return menu_create_roller_page("Loopback", LOOPBACK_OPTIONS,
+    initial_index, loopback_confirm_cb, NULL);
+}
+
+static void nav_to_loopback(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Loopback", loopback_roller_create);
+}
+
+// ============================================================================
+// MIDI Settings Menu Page
+// ============================================================================
 
 lv_obj_t* menu_page_midi_create(void) {
-  ESP_LOGD(TAG, "Creating MIDI page");
-  
-  static menu_item_t midi_items[] = {
-    { "Info", show_info, NULL, false },
-    { "Interfaces: None", set_interfaces_none, NULL, false },
-    { "Interfaces: UART", set_interfaces_uart, NULL, false },
-    { "Interfaces: USB", set_interfaces_usb, NULL, false },
-    { "Interfaces: Both", set_interfaces_both, NULL, false },
-    { "Active Sensing", toggle_active_sensing, NULL, false },
-    { "Passthrough USB->UART", toggle_passthrough_usb_uart, NULL, false },
-    { "Passthrough UART->USB", toggle_passthrough_uart_usb, NULL, false },
-    { "Loopback UART", toggle_loopback_uart, NULL, false },
-    { "Loopback USB", toggle_loopback_usb, NULL, false },
-    { "Debug", toggle_debug, NULL, false }
-  };
-  
-  return menu_create_page("MIDI", midi_items, 
-    sizeof(midi_items) / sizeof(midi_items[0]));
+  ESP_LOGD(TAG, "Creating MIDI settings page");
+
+  int idx = 0;
+
+  // Interface with current value
+  midi_out_interface_t iface = midi_out_get_interfaces();
+  snprintf(s_interface_label, sizeof(s_interface_label), "Interface\n%s",
+    interface_to_string(iface));
+  s_midi_items[idx++] = (menu_item_t){ s_interface_label, nav_to_interface, NULL, true };
+
+  // Passthrough with current value
+  snprintf(s_passthrough_label, sizeof(s_passthrough_label), "Passthrough\n%s",
+    passthrough_to_string());
+  s_midi_items[idx++] = (menu_item_t){ s_passthrough_label, nav_to_passthrough, NULL, true };
+
+  // Loopback with current value
+  snprintf(s_loopback_label, sizeof(s_loopback_label), "Loopback\n%s",
+    loopback_to_string());
+  s_midi_items[idx++] = (menu_item_t){ s_loopback_label, nav_to_loopback, NULL, true };
+
+  return menu_create_page_2line("MIDI", s_midi_items, idx);
 }

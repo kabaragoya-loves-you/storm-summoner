@@ -13,7 +13,7 @@
 static const char* TAG = "midi_console";
 
 static const char* registered_commands[] = {
-  "info", "channel", "interfaces", "uart_mode", "active_sensing", "passthrough", "loopback", "debug"
+  "info", "channel", "interfaces", "uart_mode", "passthrough", "loopback", "debug"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -24,7 +24,6 @@ static int cmd_info(int argc, char **argv) {
   bool uart_to_usb_pass = midi_passthrough_uart_to_usb_is_enabled();
   bool uart_loop = midi_loopback_uart_is_enabled();
   bool usb_loop = midi_loopback_usb_is_enabled();
-  bool active_sensing = midi_active_sensing_is_enabled();
   uint8_t channel = device_config_get_channel();
   
   const char* iface_str;
@@ -43,7 +42,6 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "UART transport: %s", cfg.uart_send_transport ? "enabled" : "disabled");
   ESP_LOGI(TAG, "USB tempo: %s", cfg.usb_send_tempo ? "enabled" : "disabled");
   ESP_LOGI(TAG, "USB transport: %s", cfg.usb_send_transport ? "enabled" : "disabled");
-  ESP_LOGI(TAG, "Active sensing: %s", active_sensing ? "enabled" : "disabled");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Passthrough USB→UART: %s", usb_to_uart_pass ? "enabled" : "disabled");
   ESP_LOGI(TAG, "Passthrough UART→USB: %s", uart_to_usb_pass ? "enabled" : "disabled");
@@ -150,35 +148,6 @@ static int cmd_uart_mode(int argc, char **argv) {
   
   midi_out_uart_set_mode(mode);
   ESP_LOGI(TAG, "UART transmit mode set to: %s", mode_str);
-  
-  return 0;
-}
-
-// Command: active_sensing
-static struct {
-  struct arg_str *enable;
-  struct arg_end *end;
-} active_sensing_args;
-
-static int cmd_active_sensing(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &active_sensing_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, active_sensing_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char* enable_str = active_sensing_args.enable->sval[0];
-  
-  if (strcmp(enable_str, "on") == 0 || strcmp(enable_str, "1") == 0) {
-    midi_active_sensing_start();
-    ESP_LOGI(TAG, "Active sensing enabled");
-  } else if (strcmp(enable_str, "off") == 0 || strcmp(enable_str, "0") == 0) {
-    midi_active_sensing_stop();
-    ESP_LOGI(TAG, "Active sensing disabled");
-  } else {
-    ESP_LOGE(TAG, "Use: on or off");
-    return 1;
-  }
   
   return 0;
 }
@@ -344,19 +313,6 @@ esp_err_t midi_console_init(void) {
     .argtable = &uart_mode_args
   };
   esp_console_cmd_register(&uart_mode_cmd);
-  
-  // active_sensing command
-  active_sensing_args.enable = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
-  active_sensing_args.end = arg_end(2);
-  
-  const esp_console_cmd_t active_sensing_cmd = {
-    .command = "active_sensing",
-    .help = "Enable/disable active sensing",
-    .hint = NULL,
-    .func = &cmd_active_sensing,
-    .argtable = &active_sensing_args
-  };
-  esp_console_cmd_register(&active_sensing_cmd);
   
   // passthrough command
   passthrough_args.direction = arg_str1(NULL, NULL, "<usb_to_uart|uart_to_usb>", "Direction");

@@ -56,9 +56,4 @@ void midi_out_reset_cut(void);              // Reset both cut states to false
 // Get current configuration
 midi_out_config_t midi_out_get_config(void);
 
-// Active sensing control functions
-void midi_active_sensing_start(void);
-void midi_active_sensing_stop(void);
-bool midi_active_sensing_is_enabled(void);
-
 #endif /* _MIDI_OUT_H */

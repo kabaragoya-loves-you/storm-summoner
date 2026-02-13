@@ -21,7 +21,7 @@ void send_start();
 void send_stop();
 void send_continue();
 void send_double_control_change(uint8_t channel, uint8_t msb_cc, uint8_t lsb_cc, uint16_t value);
-void send_active_sensing();
+void send_active_sensing(void);
 void send_song_position(uint16_t position);
 void send_mmc(uint8_t command);
 

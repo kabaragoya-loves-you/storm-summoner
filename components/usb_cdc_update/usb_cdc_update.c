@@ -1859,7 +1859,7 @@ static void midi_relay_event_handler(const event_t* event, void* context) {
   // Skip clock unless enabled
   if (type == MIDI_EVENT_REALTIME_CLOCK && !s_midi_relay_show_clock) return;
   
-  // Skip active sensing
+  // Skip active sensing (too noisy for relay)
   if (type == MIDI_EVENT_ACTIVE_SENSING) return;
   
   // Format: M:<type>,<channel>,<data1>,<data2>,<length>[,<hex_sysex>]

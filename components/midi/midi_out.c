@@ -7,7 +7,6 @@
 #include "esp_err.h"
 #include "nvs.h"
 #include "app_settings.h"
-#include "midi_messages.h"
 #include "task_priorities.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,10 +16,7 @@
 #define TAG "MIDI_OUT"
 #define MIDI_QUEUE_LENGTH   50
 #define MIDI_QUEUE_ITEM_SIZE sizeof(midi_out_job_t *)
-#define ACTIVE_SENSING_INTERVAL pdMS_TO_TICKS(250)
-
 // NVS Keys
-#define NVS_KEY_ACTIVE_SENSING "midi_act_sense"
 #define NVS_KEY_MIDI_MODE "midi_mode"
 #define NVS_KEY_OUT_INTERFACE "midi_out_iface"
 #define NVS_KEY_UART_TEMPO "midi_uart_tempo"
@@ -30,7 +26,6 @@
 
 static QueueHandle_t   midi_out_queue  = NULL;
 static SemaphoreHandle_t midi_out_mutex = NULL;
-static TaskHandle_t active_sensing_task_handle = NULL;
 static midi_out_config_t s_config = {0};
 
 // Cut state (temporary runtime mute, not persisted)
@@ -38,7 +33,6 @@ static bool s_cut_local = false;       // Cut locally-generated MIDI messages
 static bool s_cut_passthrough = false; // Cut passthrough MIDI messages
 
 static void midi_out_task(void *pvParameters);
-static void active_sensing_task(void *pvParameters);
 static void load_config_from_nvs(void);
 static void save_config_to_nvs(void);
 
@@ -82,11 +76,6 @@ void midi_out_init(void) {
     midi_out_queue = NULL;
     return;
   }
-
-  bool active_sensing_enabled = false;
-  esp_err_t err = app_settings_load_bool(NVS_KEY_ACTIVE_SENSING, &active_sensing_enabled);
-  if (err != ESP_OK) app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, false);
-  if (active_sensing_enabled) midi_active_sensing_start();
 
   BaseType_t ret = xTaskCreate(midi_out_task, "midi_out", 2048, NULL, TASK_PRIORITY_MIDI_OUT, NULL);
   if (ret != pdPASS) {
@@ -352,39 +341,6 @@ static void midi_out_task(void *pvParameters) {
       free(job);
     }
   }
-}
-
-static void active_sensing_task(void *pvParameters) {
-  for (;;) {
-    send_active_sensing();
-    vTaskDelay(ACTIVE_SENSING_INTERVAL);
-  }
-}
-
-void midi_active_sensing_start(void) {
-  if (active_sensing_task_handle != NULL) return;
-
-  BaseType_t ret = xTaskCreate(active_sensing_task, "heartbeat", 2048, NULL, TASK_PRIORITY_MIDI_OUT, &active_sensing_task_handle);
-  if (ret != pdPASS) {
-    ESP_LOGE(TAG, "Failed to create active sensing task");
-    return;
-  }
-
-  app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, true);
-  ESP_LOGI(TAG, "Active sensing started");
-}
-
-void midi_active_sensing_stop(void) {
-  if (active_sensing_task_handle == NULL) return;
-
-  vTaskDelete(active_sensing_task_handle);
-  active_sensing_task_handle = NULL;
-  app_settings_save_bool(NVS_KEY_ACTIVE_SENSING, false);
-  ESP_LOGI(TAG, "Active sensing stopped");
-}
-
-bool midi_active_sensing_is_enabled(void) {
-  return active_sensing_task_handle != NULL;
 }
 
 // Cut control functions (temporary runtime mute)
