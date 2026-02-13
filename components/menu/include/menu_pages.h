@@ -21,7 +21,6 @@ lv_obj_t* menu_page_about_create(void);
 lv_obj_t* menu_page_config_create(void);
 lv_obj_t* menu_page_touch_create(void);
 lv_obj_t* menu_page_midi_create(void);
-lv_obj_t* menu_page_haptic_create(void);
 lv_obj_t* menu_page_screensaver_create(void);
 lv_obj_t* menu_page_dac_create(void);
 lv_obj_t* menu_page_adc_manager_create(void);

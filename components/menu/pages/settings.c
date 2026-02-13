@@ -22,11 +22,6 @@ static void nav_to_midi(void* user_data) {
   menu_navigate_to("MIDI", menu_page_midi_create);
 }
 
-static void nav_to_haptic(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Haptic", menu_page_haptic_create);
-}
-
 static void nav_to_screensaver(void* user_data) {
   (void)user_data;
   menu_navigate_to("Screensaver", menu_page_screensaver_create);
@@ -176,7 +171,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Config", nav_to_config, NULL, true },
     { "Touch", nav_to_touch, NULL, true },
     { "MIDI", nav_to_midi, NULL, true },
-    { "Haptic", nav_to_haptic, NULL, true },
     { "Screensaver", nav_to_screensaver, NULL, true },
     { "DAC", nav_to_dac, NULL, true },
     { "ADC", nav_to_adc_manager, NULL, true },
