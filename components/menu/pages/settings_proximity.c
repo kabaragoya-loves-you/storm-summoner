@@ -568,11 +568,9 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
   int buf = get_next_buffer_set();
   int item_count = 0;
   
-  // Deadzone
-  uint8_t deadzone = proximity_get_deadzone();
-  snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
-    "Deadzone\n%u", (unsigned)deadzone);
-  s_prox_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
+  // Calibrate (at top, no second line)
+  snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]), "Calibrate\n");
+  s_prox_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
   
   // Hysteresis Enable (for CC mode)
   bool hyst_enabled = proximity_get_hysteresis_enabled();
@@ -610,10 +608,11 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
     s_prox_items[item_count++] = (menu_item_t){s_timeout_label[buf], nav_to_timeout, NULL, true};
   }
   
-  // Calibrate
-  snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]),
-    "Calibrate\nSensor Range");
-  s_prox_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  // Deadzone (at bottom)
+  uint8_t deadzone = proximity_get_deadzone();
+  snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
+    "Deadzone\n%u", (unsigned)deadzone);
+  s_prox_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
   
   return menu_create_page_2line("Proximity", s_prox_items, item_count);
 }
