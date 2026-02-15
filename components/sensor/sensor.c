@@ -969,6 +969,7 @@ static void sensor_task(void *arg) {
       
       if (i2c_common_read_reg16(vcnl4040_dev, reg_addr, &als_raw_value) == ESP_OK) {
         als_consecutive_errors = 0;
+        als_value = als_raw_value;
         
         // Initialize filter on first reading
         if (als_first_reading) {

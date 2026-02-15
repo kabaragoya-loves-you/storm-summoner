@@ -420,28 +420,27 @@ lv_obj_t* menu_page_settings_als_create(void) {
   int buf = get_next_buffer_set();
   int item_count = 0;
   
-  // Deadzone
-  uint8_t deadzone = als_get_deadzone();
-  snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
-    "Deadzone\n%u", (unsigned)deadzone);
-  s_als_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
+  // Calibrate (at top, no second line)
+  snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]), "Calibrate\n");
+  s_als_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
   
-  // Raw Mode
+  // Filter Mode
   bool raw_mode = als_get_raw_mode();
   snprintf(s_raw_mode_label[buf], sizeof(s_raw_mode_label[buf]),
     "Filter Mode\n%s", raw_mode ? "Raw" : "Filtered");
   s_als_items[item_count++] = (menu_item_t){s_raw_mode_label[buf], nav_to_raw_mode, NULL, true};
   
-  // White Channel
+  // Source
   bool white_ch = als_get_use_white_channel();
   snprintf(s_white_channel_label[buf], sizeof(s_white_channel_label[buf]),
     "Source\n%s", white_ch ? "White Channel" : "ALS Channel");
   s_als_items[item_count++] = (menu_item_t){s_white_channel_label[buf], nav_to_white_channel, NULL, true};
   
-  // Calibrate
-  snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]),
-    "Calibrate\nSensor Range");
-  s_als_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  // Deadzone (at bottom)
+  uint8_t deadzone = als_get_deadzone();
+  snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
+    "Deadzone\n%u", (unsigned)deadzone);
+  s_als_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
   
   return menu_create_page_2line("Ambient Light", s_als_items, item_count);
 }
