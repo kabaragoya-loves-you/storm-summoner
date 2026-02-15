@@ -26,10 +26,6 @@ idf_component_register(
     "pages/led.c"
     "pages/buttons.c"
     "pages/bump.c"
-    "pages/switch.c"
-    "pages/i2c_common.c"
-    "pages/event_bus.c"
-    "pages/app_settings.c"
     "pages/ui.c"
     "pages/display.c"
     "pages/usb_mode.c"
@@ -60,10 +56,6 @@ idf_component_register(
     clock_sync
     buttons
     bump
-    switch
-    i2c_common
-    event_bus
-    app_settings
     display
     revision
     version

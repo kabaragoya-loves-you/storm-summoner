@@ -67,26 +67,6 @@ static void nav_to_bump(void* user_data) {
   menu_navigate_to("Bump", menu_page_bump_create);
 }
 
-static void nav_to_switch(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Switch", menu_page_switch_create);
-}
-
-static void nav_to_i2c_common(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("I2C", menu_page_i2c_common_create);
-}
-
-static void nav_to_event_bus(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Event Bus", menu_page_event_bus_create);
-}
-
-static void nav_to_app_settings(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("App Settings", menu_page_app_settings_create);
-}
-
 static void nav_to_ui(void* user_data) {
   (void)user_data;
   menu_navigate_to("UI", menu_page_ui_create);
@@ -155,10 +135,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "LED", nav_to_led, NULL, true },
     { "Buttons", nav_to_buttons, NULL, true },
     { "Bump", nav_to_bump, NULL, true },
-    { "Switch", nav_to_switch, NULL, true },
-    { "I2C", nav_to_i2c_common, NULL, true },
-    { "Event Bus", nav_to_event_bus, NULL, true },
-    { "App Settings", nav_to_app_settings, NULL, true },
     { "UI", nav_to_ui, NULL, true },
     { "Display", nav_to_display, NULL, true },
     { "USB Mode", nav_to_usb_mode, NULL, true },
