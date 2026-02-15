@@ -75,7 +75,7 @@ static char g_planet_name[32] = DEFAULT_PLANET;
 static void *g_planet_buffer = NULL;
 
 // Rotation control
-static float g_rotation_speed = 0.5f;
+static float g_rotation_speed = 1.3f;
 static float g_frame_accumulator = 0.0f;
 
 // Forward declarations for settings callbacks

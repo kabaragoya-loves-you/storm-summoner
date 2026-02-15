@@ -62,11 +62,6 @@ static void nav_to_bump(void* user_data) {
   menu_navigate_to("Bump", menu_page_bump_create);
 }
 
-static void nav_to_ui(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("UI", menu_page_ui_create);
-}
-
 static void nav_to_display(void* user_data) {
   (void)user_data;
   menu_navigate_to("Display", menu_page_display_create);
@@ -109,7 +104,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "LED", nav_to_led, NULL, true },
     { "Buttons", nav_to_buttons, NULL, true },
     { "Bump", nav_to_bump, NULL, true },
-    { "UI", nav_to_ui, NULL, true },
     { "Display", nav_to_display, NULL, true },
     { "Factory Reset", nav_to_factory_reset, NULL, true }
   };

@@ -25,7 +25,6 @@ idf_component_register(
     "pages/led.c"
     "pages/buttons.c"
     "pages/bump.c"
-    "pages/ui.c"
     "pages/display.c"
     "pages/touchwheel_menu.c"
     "pages/pads_menu.c"

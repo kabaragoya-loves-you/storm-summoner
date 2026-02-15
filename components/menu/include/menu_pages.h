@@ -44,7 +44,6 @@ lv_obj_t* menu_page_tempo_create(void);
 lv_obj_t* menu_page_led_create(void);
 lv_obj_t* menu_page_buttons_create(void);
 lv_obj_t* menu_page_bump_create(void);
-lv_obj_t* menu_page_ui_create(void);
 lv_obj_t* menu_page_display_create(void);
 
 #endif // MENU_PAGES_H
