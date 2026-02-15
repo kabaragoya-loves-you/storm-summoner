@@ -22,11 +22,6 @@ static void nav_to_midi(void* user_data) {
   menu_navigate_to("MIDI", menu_page_midi_create);
 }
 
-static void nav_to_screensaver(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Screensaver", menu_page_screensaver_create);
-}
-
 static void nav_to_expression(void* user_data) {
   (void)user_data;
   menu_navigate_to("Expression", menu_page_settings_expression_create);
@@ -77,26 +72,6 @@ static void nav_to_display(void* user_data) {
   menu_navigate_to("Display", menu_page_display_create);
 }
 
-static void nav_to_usb_mode(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("USB Mode", menu_page_usb_mode_create);
-}
-
-static void nav_to_revision(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Revision", menu_page_revision_create);
-}
-
-static void nav_to_assets_manager(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Assets", menu_page_assets_manager_create);
-}
-
-static void nav_to_firmware_update(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Firmware", menu_page_firmware_update_create);
-}
-
 // Factory Reset confirmation
 static void factory_reset_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -126,7 +101,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Config", nav_to_config, NULL, true },
     { "Touch", nav_to_touch, NULL, true },
     { "MIDI", nav_to_midi, NULL, true },
-    { "Screensaver", nav_to_screensaver, NULL, true },
     { "Expression", nav_to_expression, NULL, true },
     { "Control Voltage", nav_to_cv, NULL, true },
     { "Proximity", nav_to_proximity, NULL, true },
@@ -137,10 +111,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Bump", nav_to_bump, NULL, true },
     { "UI", nav_to_ui, NULL, true },
     { "Display", nav_to_display, NULL, true },
-    { "USB Mode", nav_to_usb_mode, NULL, true },
-    { "Revision", nav_to_revision, NULL, true },
-    { "Assets", nav_to_assets_manager, NULL, true },
-    { "Firmware", nav_to_firmware_update, NULL, true },
     { "Factory Reset", nav_to_factory_reset, NULL, true }
   };
   

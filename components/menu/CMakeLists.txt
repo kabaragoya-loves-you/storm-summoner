@@ -10,7 +10,6 @@ idf_component_register(
     "pages/config.c"
     "pages/touch.c"
     "pages/midi.c"
-    "pages/screensaver.c"
     "pages/expression.c"
     "pages/settings_expression.c"
     "pages/cv.c"
@@ -28,10 +27,6 @@ idf_component_register(
     "pages/bump.c"
     "pages/ui.c"
     "pages/display.c"
-    "pages/usb_mode.c"
-    "pages/revision.c"
-    "pages/assets_manager.c"
-    "pages/firmware_update.c"
     "pages/touchwheel_menu.c"
     "pages/pads_menu.c"
     "pages/action_config.c"
@@ -57,11 +52,8 @@ idf_component_register(
     buttons
     bump
     display
-    revision
     version
     littlefs
-    assets_manager
-    firmware_update
     device_config
     lfo
   PRIV_REQUIRES main

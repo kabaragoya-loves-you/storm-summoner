@@ -21,7 +21,6 @@ lv_obj_t* menu_page_about_create(void);
 lv_obj_t* menu_page_config_create(void);
 lv_obj_t* menu_page_touch_create(void);
 lv_obj_t* menu_page_midi_create(void);
-lv_obj_t* menu_page_screensaver_create(void);
 lv_obj_t* menu_page_expression_create(void);
 void menu_page_expression_cleanup(void);      // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_settings_expression_create(void);  // Global expression settings
@@ -47,9 +46,5 @@ lv_obj_t* menu_page_buttons_create(void);
 lv_obj_t* menu_page_bump_create(void);
 lv_obj_t* menu_page_ui_create(void);
 lv_obj_t* menu_page_display_create(void);
-lv_obj_t* menu_page_usb_mode_create(void);
-lv_obj_t* menu_page_revision_create(void);
-lv_obj_t* menu_page_assets_manager_create(void);
-lv_obj_t* menu_page_firmware_update_create(void);
 
 #endif // MENU_PAGES_H
