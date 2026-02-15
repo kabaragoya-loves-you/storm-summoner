@@ -127,5 +127,6 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_config>"
     "$<TARGET_FILE:__idf_version>"
     "$<TARGET_FILE:__idf_miniz>"
+    "$<TARGET_FILE:__idf_settings_registry>"
     "LINKER:--no-whole-archive"
 )

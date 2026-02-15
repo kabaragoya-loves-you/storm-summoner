@@ -357,3 +357,148 @@ wa-button.active {
     margin-bottom: 0.25rem;
   }
 }
+
+/* Config Tab (Schema-driven settings) */
+.config-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.config-categories wa-details {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.config-categories wa-details:last-child {
+  border-bottom: none;
+}
+
+.config-categories wa-details::part(base) {
+  background: var(--bg-card);
+  border: none;
+}
+
+.config-categories wa-details::part(header) {
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  background: var(--bg-deep);
+  color: var(--text);
+}
+
+.config-categories wa-details::part(content) {
+  padding: 0;
+  background: var(--bg-card);
+}
+
+.config-category {
+  display: flex;
+  flex-direction: column;
+}
+
+.config-setting {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.config-setting:last-child {
+  border-bottom: none;
+}
+
+.config-setting:hover {
+  background: var(--bg-hover);
+}
+
+.config-setting-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.config-setting-label {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.config-setting-desc {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.config-setting-control {
+  min-width: 150px;
+  text-align: right;
+}
+
+.config-setting-control wa-select {
+  min-width: 150px;
+}
+
+.config-setting-control wa-input {
+  max-width: 120px;
+}
+
+.config-calibration-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.config-calibration-note wa-icon {
+  font-size: 1rem;
+}
+
+@media (max-width: 768px) {
+  .config-setting {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+  .config-setting-control {
+    text-align: left;
+  }
+}
+
+/* Factory Reset / Danger Zone */
+.danger-zone {
+  border-color: var(--error);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.danger-zone h3 {
+  color: var(--error);
+}
+
+.factory-reset-dialog-content {
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.factory-reset-dialog-content .warning-icon {
+  font-size: 3rem;
+  color: var(--warning);
+  margin-bottom: 1rem;
+}
+
+.factory-reset-dialog-content p {
+  margin: 0.5rem 0;
+}
+
+.factory-reset-dialog-content .hint {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}

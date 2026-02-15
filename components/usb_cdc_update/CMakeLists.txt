@@ -16,6 +16,7 @@ idf_component_register(
     device_config
     app_settings
     mbedtls
+    settings_registry
   PRIV_REQUIRES
     main
 )

@@ -49,7 +49,8 @@
         <wa-tab slot="nav" panel="midi">MIDI</wa-tab>
         <wa-tab slot="nav" panel="display">Display</wa-tab>
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
-        <wa-tab slot="nav" panel="settings">Settings</wa-tab>
+        <wa-tab slot="nav" panel="config">Settings</wa-tab>
+        <wa-tab slot="nav" panel="settings">NVS</wa-tab>
 
         <!-- Assets Tab -->
         <wa-tab-panel name="assets">
@@ -309,6 +310,34 @@
               </wa-button>
             </div>
 
+            <div class="card updater-section danger-zone">
+              <h3>Factory Reset</h3>
+              <p>Erase all settings and restore defaults. This cannot be undone.</p>
+              <wa-button variant="danger" data-updater-target="factoryResetBtn" disabled
+                         data-action="click->updater#showFactoryResetDialog">
+                Factory Reset
+              </wa-button>
+            </div>
+
+            <!-- Factory Reset Confirmation Dialog -->
+            <wa-dialog data-updater-target="factoryResetDialog" label="Factory Reset">
+              <div class="factory-reset-dialog-content">
+                <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
+                <p>Are you sure you want to erase all settings?</p>
+                <p class="hint">This will restore the device to factory defaults and restart.</p>
+              </div>
+              <div slot="footer">
+                <wa-button variant="neutral" appearance="outlined"
+                           data-action="click->updater#hideFactoryResetDialog">
+                  Cancel
+                </wa-button>
+                <wa-button variant="danger"
+                           data-action="click->updater#confirmFactoryReset">
+                  Erase All Settings
+                </wa-button>
+              </div>
+            </wa-dialog>
+
             <div class="log-panel">
               <div class="log-header">
                 <span>Update Log</span>
@@ -320,7 +349,28 @@
           </div>
         </wa-tab-panel>
 
-        <!-- Settings Tab -->
+        <!-- Config Tab -->
+        <wa-tab-panel name="config">
+          <div class="tab-content" data-controller="config">
+            <div class="toolbar">
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->config#refresh" data-config-target="refreshBtn" disabled>
+                <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
+                Refresh
+              </wa-button>
+              <div class="toolbar-spacer"></div>
+            </div>
+
+            <div class="config-container" data-config-target="container">
+              <div class="empty-state">
+                <wa-icon name="sliders"></wa-icon>
+                <p>Connect to view device settings</p>
+              </div>
+            </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- NVS (Raw Settings) Tab -->
         <wa-tab-panel name="settings">
           <div class="tab-content" data-controller="settings">
             <div class="toolbar">
@@ -347,7 +397,7 @@
             <div class="settings-list" data-settings-target="settingsList">
               <div class="empty-state">
                 <wa-icon name="sliders"></wa-icon>
-                <p>Connect to view settings</p>
+                <p>Connect to view NVS settings</p>
               </div>
             </div>
 
@@ -373,6 +423,7 @@
   <script src="/js/midi.js"></script>
   <script src="/js/display.js"></script>
   <script src="/js/updater.js"></script>
+  <script src="/js/config.js"></script>
   <script src="/js/settings.js"></script>
 
   <script>

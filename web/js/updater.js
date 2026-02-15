@@ -11,6 +11,8 @@ application.register(
       'assetsBtn',
       'assetsProgress',
       'resetBtn',
+      'factoryResetBtn',
+      'factoryResetDialog',
       'logContent'
     ]
 
@@ -59,6 +61,7 @@ application.register(
       this.assetsBtnTarget.disabled =
         !enabled || !this.assetsInputTarget.files[0]
       this.resetBtnTarget.disabled = !enabled
+      this.factoryResetBtnTarget.disabled = !enabled
       this.fwInputTarget.disabled = !hasPort
       this.assetsInputTarget.disabled = !hasPort
     }
@@ -252,6 +255,86 @@ application.register(
         return
       }
       this.send('RESET')
+    }
+
+    showFactoryResetDialog () {
+      this.factoryResetDialogTarget.show()
+    }
+
+    hideFactoryResetDialog () {
+      this.factoryResetDialogTarget.hide()
+    }
+
+    async confirmFactoryReset () {
+      this.hideFactoryResetDialog()
+
+      if (!this.connection.isConnected) {
+        this.log('Not connected', 'error')
+        return
+      }
+
+      this.log('Initiating factory reset...')
+
+      try {
+        // Use requestMode to coordinate mode transition with connection manager
+        const modeGranted = await this.connection.requestMode('CONFIG')
+        if (!modeGranted) {
+          this.log('Failed to request config mode', 'error')
+          return
+        }
+
+        // Send CONFIG command to device and wait for response
+        await this.sleep(100)
+        await this.connection.sendRaw('CONFIG\n')
+        const enterResponse = await this.readLine(3000)
+
+        if (enterResponse !== 'CONFIG_STARTED') {
+          this.log(`Failed to enter config mode: ${enterResponse}`, 'error')
+          return
+        }
+
+        // Send FACTORY_RESET command
+        await this.connection.sendRaw('FACTORY_RESET\n')
+        const response = await this.readLine(5000)
+
+        if (response === 'OK') {
+          this.log('Factory reset complete. Device is restarting...', 'success')
+        } else {
+          this.log(`Factory reset failed: ${response}`, 'error')
+        }
+      } catch (err) {
+        this.log(`Factory reset error: ${err.message}`, 'error')
+      }
+    }
+
+    async readLine (timeout = 2000) {
+      const reader = this.connection.port.readable.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      try {
+        const startTime = Date.now()
+        while (Date.now() - startTime < timeout) {
+          const result = await Promise.race([
+            reader.read(),
+            this.sleep(50).then(() => ({ timeout: true }))
+          ])
+          if (result.timeout) continue
+          if (result.done) break
+          if (result.value) {
+            const text = decoder.decode(result.value, { stream: true })
+            for (const char of text) {
+              if (char === '\n') {
+                return buffer.replace('\r', '').trim()
+              }
+              buffer += char
+            }
+          }
+        }
+      } finally {
+        try { reader.releaseLock() } catch (e) {}
+      }
+      return buffer.trim()
     }
   }
 )

@@ -7,6 +7,7 @@
 #include "midi_in.h"
 #include "device_config.h"
 #include "app_settings.h"
+#include "settings_registry.h"
 #include "mbedtls/base64.h"
 #include "tusb.h"
 #include "esp_log.h"
@@ -53,6 +54,7 @@ typedef enum {
   CDC_STATE_DISPLAY,  // LVGL display streaming mode
   CDC_STATE_MIDI_RELAY, // MIDI IN relay mode
   CDC_STATE_SETTINGS, // NVS settings mode
+  CDC_STATE_CONFIG,   // Semantic settings mode (via settings_registry)
   CDC_STATE_ERROR
 } cdc_update_state_t;
 
@@ -203,6 +205,7 @@ static void process_command(const char *cmd);
 static void process_console_command(const char *cmd);
 static void process_assets_command(const char *cmd);
 static void process_settings_command(const char *cmd);
+static void process_config_command(const char *cmd);
 static void send_response(const char *msg);
 static void send_binary(const uint8_t *data, size_t len);
 static void handle_binary_data(const uint8_t *data, size_t len);
@@ -324,6 +327,11 @@ void usb_cdc_task(void) {
     if (s_state == CDC_STATE_SETTINGS) {
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting settings mode");
+    }
+    // If we were in config mode and disconnected, cleanup
+    if (s_state == CDC_STATE_CONFIG) {
+      s_state = CDC_STATE_IDLE;
+      ESP_LOGI(TAG, "CDC disconnected, exiting config mode");
     }
     return;
   }
@@ -466,6 +474,19 @@ void usb_cdc_task(void) {
             if (s_cmd_pos > 0) {
               s_cmd_buffer[s_cmd_pos] = '\0';
               process_settings_command(s_cmd_buffer);
+              s_cmd_pos = 0;
+            }
+          } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
+            s_cmd_buffer[s_cmd_pos++] = buf[i];
+          }
+        }
+      } else if (s_state == CDC_STATE_CONFIG) {
+        // In config mode, parse commands (text mode, no echo)
+        for (uint32_t i = 0; i < count; i++) {
+          if (buf[i] == '\n' || buf[i] == '\r') {
+            if (s_cmd_pos > 0) {
+              s_cmd_buffer[s_cmd_pos] = '\0';
+              process_config_command(s_cmd_buffer);
               s_cmd_pos = 0;
             }
           } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
@@ -840,6 +861,11 @@ static void process_command(const char *cmd) {
     ESP_LOGI(TAG, "Entering settings mode");
     s_state = CDC_STATE_SETTINGS;
     send_response("SETTINGS_STARTED");
+
+  } else if (strcmp(cmd, "CONFIG") == 0) {
+    ESP_LOGI(TAG, "Entering config mode");
+    s_state = CDC_STATE_CONFIG;
+    send_response("CONFIG_STARTED");
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);
@@ -2259,4 +2285,113 @@ static void process_settings_command(const char *cmd) {
   }
   
   send_response("ERROR: Unknown settings command");
+}
+
+// ============================================================================
+// Config Mode - Semantic settings access via settings_registry
+// ============================================================================
+
+// Buffer for VALUES JSON response (allocated in PSRAM)
+#define CONFIG_VALUES_BUF_SIZE 8192
+
+// Process config mode commands
+static void process_config_command(const char *cmd) {
+  ESP_LOGD(TAG, "Config cmd: %s", cmd);
+  
+  if (strlen(cmd) == 0) return;
+  
+  // EXIT - leave config mode
+  if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
+    ESP_LOGI(TAG, "Exiting config mode");
+    s_state = CDC_STATE_IDLE;
+    send_response("CONFIG_STOPPED");
+    return;
+  }
+  
+  // VALUES - get all setting values as JSON
+  if (strcmp(cmd, "VALUES") == 0) {
+    char *buf = heap_caps_malloc(CONFIG_VALUES_BUF_SIZE, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+      send_response("ERROR: Out of memory");
+      return;
+    }
+    
+    size_t written = 0;
+    esp_err_t err = settings_registry_get_all_values(buf, CONFIG_VALUES_BUF_SIZE, &written);
+    if (err == ESP_OK) {
+      send_response(buf);
+    } else {
+      send_response("ERROR: Failed to get values");
+    }
+    
+    heap_caps_free(buf);
+    return;
+  }
+  
+  // GET <id> - get a single setting value
+  if (strncmp(cmd, "GET ", 4) == 0) {
+    const char *id = cmd + 4;
+    uint32_t value = 0;
+    
+    esp_err_t err = settings_registry_get_value(id, &value);
+    if (err == ESP_OK) {
+      char resp[32];
+      snprintf(resp, sizeof(resp), "%lu", (unsigned long)value);
+      send_response(resp);
+    } else if (err == ESP_ERR_NOT_FOUND) {
+      send_response("ERROR: Unknown setting");
+    } else {
+      send_response("ERROR: Read failed");
+    }
+    return;
+  }
+  
+  // SET <id> <value> - set a single setting
+  if (strncmp(cmd, "SET ", 4) == 0) {
+    char id[64];
+    uint32_t value = 0;
+    
+    if (sscanf(cmd + 4, "%63s %lu", id, (unsigned long *)&value) != 2) {
+      send_response("ERROR: Usage: SET <id> <value>");
+      return;
+    }
+    
+    esp_err_t err = settings_registry_set_value(id, value);
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else if (err == ESP_ERR_NOT_FOUND) {
+      send_response("ERROR: Unknown setting");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // FACTORY_RESET - erase all NVS and restart
+  if (strcmp(cmd, "FACTORY_RESET") == 0) {
+    ESP_LOGW(TAG, "Factory reset requested via CONFIG mode");
+    esp_err_t err = app_settings_erase_all();
+    if (err == ESP_OK) {
+      send_response("OK");
+      vTaskDelay(pdMS_TO_TICKS(100));  // Give time to send response
+      esp_restart();
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // COUNT - get number of registered settings
+  if (strcmp(cmd, "COUNT") == 0) {
+    char resp[32];
+    snprintf(resp, sizeof(resp), "%u", (unsigned)settings_registry_count());
+    send_response(resp);
+    return;
+  }
+  
+  send_response("ERROR: Unknown config command");
 }

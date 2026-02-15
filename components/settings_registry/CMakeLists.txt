@@ -1,0 +1,23 @@
+idf_component_register(
+  SRCS
+    "settings_registry.c"
+  INCLUDE_DIRS
+    "include"
+  REQUIRES
+    app_settings
+    buttons
+    bump
+    clock_sync
+    config
+    cv
+    display
+    expression
+    midi
+    scene
+    screensaver
+    sensor
+    tempo
+    touch
+    ui
+  PRIV_REQUIRES main
+)

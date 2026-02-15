@@ -4,120 +4,19 @@
 # App Settings CLI Tool for Storm Summoner
 # Manage NVS key-value pairs via USB CDC SETTINGS mode
 
-require 'serialport'
 require 'json'
 require 'optparse'
-require_relative 'ss_config'
+require_relative 'ss_serial'
 
-class AppSettingsCLI
+class AppSettingsCLI < SSSerial
   SETTINGS_TIMEOUT = 3.0
-  READ_TIMEOUT = 2.0
-
-  def initialize(port_name, debug: false)
-    @port_name = port_name
-    @port = nil
-    @in_settings = false
-    @debug = debug
-  end
-
-  def connect
-    puts "Connecting to #{@port_name}..."
-    @port = SerialPort.new(@port_name, 115200, 8, 1, SerialPort::NONE)
-    @port.dtr = 1
-    @port.rts = 1
-    @port.read_timeout = 100
-    sleep 0.5
-    flush_input
-    puts "Connected."
-  end
-
-  def disconnect
-    begin
-      leave_settings if @in_settings
-    rescue Errno::EIO, IOError, Errno::EBADF, Interrupt
-      # Port already in bad state or interrupted - ignore
-    end
-    begin
-      @port&.close
-    rescue Errno::EIO, IOError, Errno::EBADF, Interrupt
-      # Already closed or interrupted - ignore
-    end
-    puts "Disconnected."
-  end
-
-  def flush_input
-    @port.getc while @port.ready?
-  rescue StandardError
-    nil
-  end
-
-  def send_line(data)
-    puts "TX: #{data}" if @debug
-    @port.write("#{data}\n")
-    @port.flush
-  rescue Errno::EIO, IOError, Errno::EBADF, Interrupt
-    # Port error or interrupt - will be handled by caller
-  end
-
-  def read_line(timeout: READ_TIMEOUT)
-    buffer = ""
-    start = Time.now
-    while Time.now - start < timeout
-      begin
-        byte = @port.getbyte
-        if byte
-          if byte == 10 # newline
-            line = buffer.gsub("\r", "").strip
-            puts "RX: #{line}" if @debug
-            return line
-          else
-            buffer += byte.chr
-          end
-        else
-          sleep 0.01
-        end
-      rescue Errno::EIO, IOError, Errno::EBADF, Interrupt
-        break
-      end
-    end
-    nil
-  end
-
-  def read_until_end(timeout: READ_TIMEOUT)
-    lines = []
-    while true
-      line = read_line(timeout: timeout)
-      break if line.nil?
-      break if line == "END"
-      lines << line
-    end
-    lines
-  end
 
   def enter_settings
-    return if @in_settings
-
-    flush_input
-    send_line("")
-    sleep 0.1
-    flush_input
-    send_line("SETTINGS")
-
-    line = read_line(timeout: SETTINGS_TIMEOUT)
-    if line == "SETTINGS_STARTED"
-      @in_settings = true
-      puts "Entered settings mode."
-    else
-      raise "Failed to enter settings mode (got: #{line.inspect})"
-    end
+    enter_mode("SETTINGS", expected_response: "SETTINGS_STARTED")
   end
 
-  def leave_settings
-    return unless @in_settings
-
-    send_line("EXIT")
-    read_line(timeout: 1.0)
-    @in_settings = false
+  def in_settings?
+    @current_mode == "SETTINGS"
   end
 
   # ============================================================================
@@ -125,7 +24,7 @@ class AppSettingsCLI
   # ============================================================================
 
   def cmd_list
-    enter_settings unless @in_settings
+    enter_settings unless in_settings?
     send_line("LIST")
 
     lines = read_until_end
@@ -140,7 +39,7 @@ class AppSettingsCLI
   end
 
   def cmd_get(key)
-    enter_settings unless @in_settings
+    enter_settings unless in_settings?
     send_line("GET #{key}")
 
     line = read_line
@@ -156,7 +55,7 @@ class AppSettingsCLI
   end
 
   def cmd_set(key, value, type: nil)
-    enter_settings unless @in_settings
+    enter_settings unless in_settings?
 
     # Auto-detect type if not specified
     if type.nil?
@@ -186,7 +85,7 @@ class AppSettingsCLI
   end
 
   def cmd_erase(key)
-    enter_settings unless @in_settings
+    enter_settings unless in_settings?
     send_line("ERASE #{key}")
 
     line = read_line
@@ -204,7 +103,7 @@ class AppSettingsCLI
       exit 1
     end
 
-    enter_settings unless @in_settings
+    enter_settings unless in_settings?
     send_line("ERASE_ALL")
 
     line = read_line
@@ -217,7 +116,7 @@ class AppSettingsCLI
   end
 
   def cmd_dump(output_file: nil)
-    enter_settings unless @in_settings
+    enter_settings unless in_settings?
     send_line("DUMP")
 
     # Read JSON response (single line)
@@ -263,7 +162,7 @@ class AppSettingsCLI
       exit 1
     end
 
-    enter_settings unless @in_settings
+    enter_settings unless in_settings?
 
     # Send individual SET commands for each key
     count = 0

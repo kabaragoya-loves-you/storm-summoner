@@ -1,0 +1,746 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Storm Summoner Settings",
+  "description": "User-facing device configuration settings",
+  "version": "1.0.0",
+  "categories": [
+    {
+      "id": "config",
+      "label": "Config",
+      "description": "Scene and preset behavior settings",
+      "settings": [
+        {
+          "id": "config.scene_mode",
+          "label": "Scene Mode",
+          "description": "Controls how scenes operate",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Simple"},
+            {"value": 1, "label": "Preset Sync"},
+            {"value": 2, "label": "Advanced"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "config.confirm_change",
+          "label": "Confirm Change",
+          "description": "Scene change confirmation behavior",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Immediate"},
+            {"value": 1, "label": "Pending"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "config.preset_wrap",
+          "label": "Preset Wrap",
+          "description": "Wrap around when reaching preset limits",
+          "type": "toggle",
+          "default": false
+        },
+        {
+          "id": "config.persist_scene",
+          "label": "Persist Scene",
+          "description": "Remember selected scene across power cycles",
+          "type": "toggle",
+          "default": false
+        }
+      ]
+    },
+    {
+      "id": "touch",
+      "label": "Touch",
+      "description": "Touch pad settings",
+      "settings": [
+        {
+          "id": "touch.calibrate",
+          "label": "Calibrate",
+          "description": "Calibrate touch sensitivity",
+          "type": "calibration"
+        },
+        {
+          "id": "touch.stuck_timeout",
+          "label": "Stuck Timeout",
+          "description": "Timeout for stuck touch detection",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Disabled"},
+            {"value": 5000, "label": "5s"},
+            {"value": 6000, "label": "6s"},
+            {"value": 7000, "label": "7s"},
+            {"value": 8000, "label": "8s"},
+            {"value": 9000, "label": "9s"},
+            {"value": 10000, "label": "10s"},
+            {"value": 11000, "label": "11s"},
+            {"value": 12000, "label": "12s"},
+            {"value": 13000, "label": "13s"},
+            {"value": 14000, "label": "14s"},
+            {"value": 15000, "label": "15s"},
+            {"value": 16000, "label": "16s"},
+            {"value": 17000, "label": "17s"},
+            {"value": 18000, "label": "18s"},
+            {"value": 19000, "label": "19s"},
+            {"value": 20000, "label": "20s"}
+          ],
+          "default": 10000
+        },
+        {
+          "id": "touch.idle_calibration",
+          "label": "Idle Calibration",
+          "description": "Automatic recalibration interval when idle",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Disabled"},
+            {"value": 600000, "label": "10 min"},
+            {"value": 900000, "label": "15 min"},
+            {"value": 1200000, "label": "20 min"},
+            {"value": 1500000, "label": "25 min"},
+            {"value": 1800000, "label": "30 min"},
+            {"value": 2100000, "label": "35 min"},
+            {"value": 2400000, "label": "40 min"},
+            {"value": 2700000, "label": "45 min"},
+            {"value": 3000000, "label": "50 min"},
+            {"value": 3300000, "label": "55 min"},
+            {"value": 3600000, "label": "60 min"}
+          ],
+          "default": 900000
+        },
+        {
+          "id": "touch.menu_hold_time",
+          "label": "Menu Hold Time",
+          "description": "How long to hold pad 12 to enter programming mode",
+          "type": "number",
+          "min": 800,
+          "max": 2500,
+          "step": 100,
+          "unit": "ms",
+          "default": 2000
+        }
+      ]
+    },
+    {
+      "id": "midi",
+      "label": "MIDI",
+      "description": "MIDI interface settings",
+      "settings": [
+        {
+          "id": "midi.interface",
+          "label": "Interface",
+          "description": "MIDI output interface selection",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "None"},
+            {"value": 1, "label": "TRS"},
+            {"value": 2, "label": "USB"},
+            {"value": 3, "label": "Both"}
+          ],
+          "default": 3
+        },
+        {
+          "id": "midi.passthrough",
+          "label": "Passthrough",
+          "description": "MIDI passthrough routing",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Off"},
+            {"value": 1, "label": "USB to TRS"},
+            {"value": 2, "label": "TRS to USB"},
+            {"value": 3, "label": "Both"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "midi.loopback",
+          "label": "Loopback",
+          "description": "MIDI loopback for testing",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Off"},
+            {"value": 1, "label": "TRS"},
+            {"value": 2, "label": "USB"},
+            {"value": 3, "label": "Both"}
+          ],
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "expression",
+      "label": "Expression",
+      "description": "Expression pedal settings",
+      "settings": [
+        {
+          "id": "expression.calibrate",
+          "label": "Calibrate",
+          "description": "Calibrate expression pedal range",
+          "type": "calibration"
+        },
+        {
+          "id": "expression.trs_polarity",
+          "label": "TRS Polarity",
+          "description": "TRS jack polarity configuration",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Tip"},
+            {"value": 1, "label": "Ring"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "expression.switch_type",
+          "label": "Switch Type",
+          "description": "Pedal switch type for sustain/sostenuto",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Normally Open"},
+            {"value": 1, "label": "Normally Closed"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "expression.slow_delay",
+          "label": "Slow Delay",
+          "description": "Delay for slow movement detection",
+          "type": "select",
+          "options": [
+            {"value": 10, "label": "10ms"},
+            {"value": 20, "label": "20ms"},
+            {"value": 30, "label": "30ms"},
+            {"value": 40, "label": "40ms"},
+            {"value": 50, "label": "50ms"},
+            {"value": 60, "label": "60ms"},
+            {"value": 70, "label": "70ms"},
+            {"value": 80, "label": "80ms"},
+            {"value": 90, "label": "90ms"},
+            {"value": 100, "label": "100ms"},
+            {"value": 150, "label": "150ms"},
+            {"value": 200, "label": "200ms"}
+          ],
+          "default": 50
+        },
+        {
+          "id": "expression.menu_nav_mode",
+          "label": "Menu Navigation",
+          "description": "Expression pedal menu navigation mode",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Off"},
+            {"value": 1, "label": "Heel Min"},
+            {"value": 2, "label": "Toe Min"}
+          ],
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "cv",
+      "label": "Control Voltage",
+      "description": "CV input settings",
+      "settings": [
+        {
+          "id": "cv.range",
+          "label": "Voltage Range",
+          "description": "CV input voltage range",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "0-10V"},
+            {"value": 1, "label": "+/-10V"},
+            {"value": 2, "label": "0-5V"},
+            {"value": 3, "label": "+/-5V"},
+            {"value": 4, "label": "0-3.3V"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "cv.calibrate",
+          "label": "Calibrate",
+          "description": "Calibrate CV input range",
+          "type": "calibration"
+        },
+        {
+          "id": "cv.pitch_standard",
+          "label": "Pitch Standard",
+          "description": "CV pitch tracking standard",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "1V/Oct (C0@0V)"},
+            {"value": 1, "label": "1V/Oct (C2@0V)"},
+            {"value": 2, "label": "Hz/V (Buchla)"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "cv.deadzone",
+          "label": "Deadzone",
+          "description": "CV deadzone to reduce jitter",
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 1,
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "proximity",
+      "label": "Proximity",
+      "description": "Proximity sensor settings",
+      "settings": [
+        {
+          "id": "proximity.calibrate",
+          "label": "Calibrate",
+          "description": "Calibrate proximity sensor range",
+          "type": "calibration"
+        },
+        {
+          "id": "proximity.hysteresis",
+          "label": "Hysteresis",
+          "description": "Enable hysteresis for CC mode",
+          "type": "toggle",
+          "default": false
+        },
+        {
+          "id": "proximity.rest_position",
+          "label": "Rest Position",
+          "description": "Rest position value (0-127)",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "0"},
+            {"value": 8, "label": "8"},
+            {"value": 16, "label": "16"},
+            {"value": 24, "label": "24"},
+            {"value": 32, "label": "32"},
+            {"value": 40, "label": "40"},
+            {"value": 48, "label": "48"},
+            {"value": 56, "label": "56"},
+            {"value": 64, "label": "64"},
+            {"value": 72, "label": "72"},
+            {"value": 80, "label": "80"},
+            {"value": 88, "label": "88"},
+            {"value": 96, "label": "96"},
+            {"value": 104, "label": "104"},
+            {"value": 112, "label": "112"},
+            {"value": 127, "label": "127"}
+          ],
+          "default": 0,
+          "visible_when": {"id": "proximity.hysteresis", "value": true}
+        },
+        {
+          "id": "proximity.return_speed",
+          "label": "Return Speed",
+          "description": "Return speed for hysteresis",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Instant"},
+            {"value": 1, "label": "Fast"},
+            {"value": 2, "label": "Medium"},
+            {"value": 3, "label": "Slow"}
+          ],
+          "default": 1,
+          "visible_when": {"id": "proximity.hysteresis", "value": true}
+        },
+        {
+          "id": "proximity.note_silence",
+          "label": "Note Silence",
+          "description": "Silence notes when proximity is low",
+          "type": "toggle",
+          "default": false
+        },
+        {
+          "id": "proximity.timeout",
+          "label": "Timeout",
+          "description": "Timeout for hysteresis/note silence",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Fast (500ms)"},
+            {"value": 1, "label": "Medium (1s)"},
+            {"value": 2, "label": "Slow (5s)"}
+          ],
+          "default": 1,
+          "visible_when_any": [
+            {"id": "proximity.hysteresis", "value": true},
+            {"id": "proximity.note_silence", "value": true}
+          ]
+        },
+        {
+          "id": "proximity.deadzone",
+          "label": "Deadzone",
+          "description": "Proximity deadzone to reduce jitter",
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 1,
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "als",
+      "label": "Ambient Light",
+      "description": "Ambient light sensor settings",
+      "settings": [
+        {
+          "id": "als.calibrate",
+          "label": "Calibrate",
+          "description": "Calibrate ambient light sensor range",
+          "type": "calibration"
+        },
+        {
+          "id": "als.filter_mode",
+          "label": "Filter Mode",
+          "description": "Raw vs filtered sensor mode",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Filtered"},
+            {"value": 1, "label": "Raw"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "als.source",
+          "label": "Source",
+          "description": "ALS channel selection",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "ALS Channel"},
+            {"value": 1, "label": "White Channel"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "als.deadzone",
+          "label": "Deadzone",
+          "description": "ALS deadzone to reduce jitter",
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 1,
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "tempo",
+      "label": "Tempo",
+      "description": "Tempo and clock settings",
+      "settings": [
+        {
+          "id": "tempo.tap_mode",
+          "label": "Tap Mode",
+          "description": "Tap tempo mode",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Toggle"},
+            {"value": 1, "label": "Time"},
+            {"value": 2, "label": "Hold"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "tempo.tap_timeout",
+          "label": "Tap Timeout",
+          "description": "Timeout for tap tempo (Time mode only)",
+          "type": "select",
+          "options": [
+            {"value": 5, "label": "5s"},
+            {"value": 10, "label": "10s"},
+            {"value": 15, "label": "15s"},
+            {"value": 20, "label": "20s"},
+            {"value": 30, "label": "30s"},
+            {"value": 60, "label": "60s"}
+          ],
+          "default": 10,
+          "visible_when": {"id": "tempo.tap_mode", "value": 1}
+        },
+        {
+          "id": "tempo.sync_pulse_mode",
+          "label": "Sync Pulse Mode",
+          "description": "External clock input interpretation",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "24 PPQN"},
+            {"value": 1, "label": "48 PPQN"},
+            {"value": 2, "label": "96 PPQN"},
+            {"value": 3, "label": "1 PPQ"},
+            {"value": 4, "label": "2 PPQ"},
+            {"value": 5, "label": "4 PPQ"},
+            {"value": 6, "label": "Half-Beat"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "tempo.clock_output",
+          "label": "Clock Output",
+          "description": "Clock output destination",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "None"},
+            {"value": 1, "label": "TRS"},
+            {"value": 2, "label": "USB"},
+            {"value": 3, "label": "Both"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "tempo.clock_standard",
+          "label": "Clock Standard",
+          "description": "Clock output standard",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "24 PPQN"},
+            {"value": 1, "label": "16th Note"},
+            {"value": 2, "label": "Beat"}
+          ],
+          "default": 0,
+          "visible_when": {"id": "tempo.clock_output", "operator": "!=", "value": 0}
+        },
+        {
+          "id": "tempo.always_send",
+          "label": "Always Send",
+          "description": "Send clock even when transport stopped",
+          "type": "toggle",
+          "default": false,
+          "visible_when": {"id": "tempo.clock_output", "operator": "!=", "value": 0}
+        },
+        {
+          "id": "tempo.disable_on_passthrough",
+          "label": "Disable on Passthrough",
+          "description": "Disable clock when passthrough active",
+          "type": "toggle",
+          "default": false,
+          "visible_when": {"id": "tempo.clock_output", "operator": "!=", "value": 0}
+        },
+        {
+          "id": "tempo.bpm_deadzone",
+          "label": "BPM Deadzone",
+          "description": "Ignore small BPM fluctuations",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Off"},
+            {"value": 1, "label": "1"},
+            {"value": 2, "label": "2"},
+            {"value": 3, "label": "3"},
+            {"value": 4, "label": "4"},
+            {"value": 5, "label": "5"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "tempo.led_sync",
+          "label": "LED Sync",
+          "description": "Flash LED on beats",
+          "type": "toggle",
+          "default": false
+        },
+        {
+          "id": "tempo.flash_duration",
+          "label": "Flash Duration",
+          "description": "LED flash duration percentage",
+          "type": "number",
+          "min": 1,
+          "max": 10,
+          "step": 1,
+          "unit": "%",
+          "default": 5,
+          "visible_when": {"id": "tempo.led_sync", "value": true}
+        }
+      ]
+    },
+    {
+      "id": "led",
+      "label": "LED",
+      "description": "LED visual settings",
+      "settings": [
+        {
+          "id": "led.enable",
+          "label": "LED Enable",
+          "description": "Enable/disable LED",
+          "type": "toggle",
+          "default": true
+        },
+        {
+          "id": "led.mode",
+          "label": "Mode",
+          "description": "LED mode selection",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Daylight"},
+            {"value": 1, "label": "Nighttime"}
+          ],
+          "default": 0,
+          "visible_when": {"id": "led.enable", "value": true}
+        },
+        {
+          "id": "led.sundial",
+          "label": "Sundial",
+          "description": "Auto-switch between daylight/nighttime modes",
+          "type": "toggle",
+          "default": false,
+          "visible_when": {"id": "led.enable", "value": true}
+        }
+      ]
+    },
+    {
+      "id": "buttons",
+      "label": "Buttons",
+      "description": "Physical button settings",
+      "settings": [
+        {
+          "id": "buttons.debounce_delay",
+          "label": "Debounce Delay",
+          "description": "Button debounce delay",
+          "type": "number",
+          "min": 0,
+          "max": 100,
+          "step": 1,
+          "unit": "ms",
+          "default": 10
+        },
+        {
+          "id": "buttons.debounce_mode",
+          "label": "Debounce Mode",
+          "description": "Symmetric or asymmetric debounce",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Symmetric"},
+            {"value": 1, "label": "Asymmetric"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "buttons.release_debounce",
+          "label": "Release Debounce",
+          "description": "Release debounce delay (asymmetric mode)",
+          "type": "number",
+          "min": 0,
+          "max": 100,
+          "step": 1,
+          "unit": "ms",
+          "default": 10,
+          "visible_when": {"id": "buttons.debounce_mode", "value": 1}
+        },
+        {
+          "id": "buttons.chord_window",
+          "label": "Chord Window",
+          "description": "Chord detection window",
+          "type": "number",
+          "min": 0,
+          "max": 500,
+          "step": 10,
+          "unit": "ms",
+          "default": 50
+        },
+        {
+          "id": "buttons.long_press",
+          "label": "Long Press",
+          "description": "Long press threshold",
+          "type": "number",
+          "min": 100,
+          "max": 5000,
+          "step": 100,
+          "unit": "ms",
+          "default": 500
+        },
+        {
+          "id": "buttons.glitch_filter",
+          "label": "Glitch Filter",
+          "description": "Glitch filter mode",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "None"},
+            {"value": 1, "label": "Simple"},
+            {"value": 2, "label": "Flex"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "buttons.glitch_window",
+          "label": "Glitch Window",
+          "description": "Glitch filter window (Flex mode)",
+          "type": "number",
+          "min": 100,
+          "max": 4000,
+          "step": 100,
+          "unit": "ns",
+          "default": 1000,
+          "visible_when": {"id": "buttons.glitch_filter", "value": 2}
+        }
+      ]
+    },
+    {
+      "id": "bump",
+      "label": "Bump",
+      "description": "Bump sensor settings",
+      "settings": [
+        {
+          "id": "bump.sensitivity",
+          "label": "Sensitivity",
+          "description": "Bump sensitivity level (1=very sensitive, 10=insensitive)",
+          "type": "number",
+          "min": 1,
+          "max": 10,
+          "step": 1,
+          "default": 5
+        },
+        {
+          "id": "bump.debounce",
+          "label": "Debounce",
+          "description": "Bump debounce delay",
+          "type": "number",
+          "min": 0,
+          "max": 500,
+          "step": 10,
+          "unit": "ms",
+          "default": 100
+        }
+      ]
+    },
+    {
+      "id": "display",
+      "label": "Display",
+      "description": "Display and screensaver settings",
+      "settings": [
+        {
+          "id": "display.brightness",
+          "label": "Brightness",
+          "description": "Display brightness",
+          "type": "number",
+          "min": 0,
+          "max": 100,
+          "step": 10,
+          "unit": "%",
+          "default": 100
+        },
+        {
+          "id": "display.screensaver_delay",
+          "label": "Screensaver",
+          "description": "Screensaver activation delay",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Disabled"},
+            {"value": 300000, "label": "5 min"},
+            {"value": 600000, "label": "10 min"},
+            {"value": 1200000, "label": "20 min"},
+            {"value": 1800000, "label": "30 min"},
+            {"value": 3600000, "label": "60 min"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "display.screensaver_mode",
+          "label": "Screensaver Mode",
+          "description": "Screensaver visual mode",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Starfield"},
+            {"value": 1, "label": "Elite"},
+            {"value": 2, "label": "Plasma"}
+          ],
+          "default": 0,
+          "visible_when": {"id": "display.screensaver_delay", "operator": "!=", "value": 0}
+        }
+      ]
+    }
+  ]
+}
