@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-// Clock sync modes
+// Clock sync modes (pulse interpretation for external clock input)
 typedef enum {
   CLOCK_SYNC_24PPQN = 0,  // 24 pulses per quarter note (MIDI standard)
   CLOCK_SYNC_48PPQN,      // 48 pulses per quarter note
@@ -16,14 +16,6 @@ typedef enum {
   CLOCK_SYNC_HALF_BEAT    // 1 pulse per half beat (SQ-1 style: doubles BPM)
 } clock_sync_mode_t;
 
-// Voltage range modes (maps to PCA9536 channels)
-typedef enum {
-  SYNC_VOLTAGE_RANGE_3V3 = 0,     // 0-3.3V (channel 0)
-  SYNC_VOLTAGE_RANGE_5V = 1,      // 0-5V (channel 1) - Default for most sequencers
-  SYNC_VOLTAGE_RANGE_10V = 2,     // 0-10V (channel 2)
-  SYNC_VOLTAGE_RANGE_BIPOLAR = 3  // -5V to +5V (channel 3)
-} sync_voltage_range_t;
-
 /**
  * Initialize the clock sync component
  * @return ESP_OK on success
@@ -32,11 +24,13 @@ esp_err_t clock_sync_init(void);
 
 /**
  * Enable clock sync detection
+ * Called by tempo component when clock source is set to SYNC
  */
 void clock_sync_enable(void);
 
 /**
  * Disable clock sync detection
+ * Called by tempo component when clock source changes from SYNC
  */
 void clock_sync_disable(void);
 
@@ -63,18 +57,5 @@ uint8_t clock_sync_get_bpm(void);
  * @return true if receiving clock pulses
  */
 bool clock_sync_is_active(void);
-
-
-/**
- * Set the voltage range for clock sync input
- * @param range The voltage range to use
- */
-void clock_sync_set_voltage_range(sync_voltage_range_t range);
-
-/**
- * Get the current voltage range setting
- * @return Current voltage range
- */
-sync_voltage_range_t clock_sync_get_voltage_range(void);
 
 #endif /* _CLOCK_SYNC_H */

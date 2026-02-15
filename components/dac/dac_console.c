@@ -12,20 +12,6 @@ static const char* registered_commands[] = {
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
-// Command: help
-static int cmd_help(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  ESP_LOGI(TAG, "DAC commands:");
-  ESP_LOGI(TAG, "  help       - Show this help");
-  ESP_LOGI(TAG, "  info       - Show DAC status (value, voltage, range, VREF)");
-  ESP_LOGI(TAG, "  set <val>  - Set DAC code (0-4095), volatile");
-  ESP_LOGI(TAG, "  voltage <v> - Set DAC by voltage (0.0 to VREF), volatile");
-  ESP_LOGI(TAG, "  readback   - Read DAC register and EEPROM values");
-  ESP_LOGI(TAG, "  calibrate  - Run VREF calibration now");
-  return 0;
-}
-
 // Command: info
 static int cmd_info(int argc, char **argv) {
   uint16_t value = 0;
@@ -134,15 +120,6 @@ static int cmd_calibrate(int argc, char **argv) {
 
 esp_err_t dac_console_init(void) {
   ESP_LOGI(TAG, "Registering dac commands");
-  
-  // help command
-  const esp_console_cmd_t help_cmd = {
-    .command = "help",
-    .help = "Show available DAC commands",
-    .hint = NULL,
-    .func = &cmd_help,
-  };
-  esp_console_cmd_register(&help_cmd);
   
   // info command
   const esp_console_cmd_t info_cmd = {

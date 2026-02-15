@@ -41,29 +41,40 @@ static int cmd_info(int argc, char **argv) {
   bool tap_sampling = tempo_is_tap_sampling();
   const char* tap_mode_names[] = {"toggle", "time", "hold"};
   
-  ESP_LOGI(TAG, "====== TEMPO ======");
-  ESP_LOGI(TAG, "BPM: %u (set by current scene)", (unsigned)bpm);
-  ESP_LOGI(TAG, "Clock source: %s (set by current scene)", source_str);
-  ESP_LOGI(TAG, "Clock standard: %s", std_str);
-  ESP_LOGI(TAG, "Clock output: %s", output_names[clk_out]);
-  ESP_LOGI(TAG, "Always send clock: %s", always_send ? "yes" : "no");
-  ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
-  ESP_LOGI(TAG, "BPM deadzone: %u (0=off, 1-5=ignore ±N BPM)", (unsigned)deadzone);
+  ESP_LOGI(TAG, "============= TEMPO =============");
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Tap tempo mode: %s", tap_mode_names[tap_mode]);
+  ESP_LOGI(TAG, "--- Runtime State (per-scene) ---");
+  ESP_LOGI(TAG, "BPM: %u", (unsigned)bpm);
+  ESP_LOGI(TAG, "Clock source: %s", source_str);
+  ESP_LOGI(TAG, "(Use 'scene' context for BPM, clock source, beat divider, time signature)");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "--- Tap Tempo (global) ---");
+  ESP_LOGI(TAG, "Mode: %s", tap_mode_names[tap_mode]);
   if (tap_mode == TAP_MODE_TIME) {
-    ESP_LOGI(TAG, "  Timeout: %u seconds", (unsigned)tap_timeout);
+    ESP_LOGI(TAG, "Timeout: %u seconds", (unsigned)tap_timeout);
   }
-  ESP_LOGI(TAG, "  Session: %s", tap_sampling ? "ACTIVE" : "inactive");
+  ESP_LOGI(TAG, "Session: %s", tap_sampling ? "ACTIVE" : "inactive");
   ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "--- Clock Output (global) ---");
+  ESP_LOGI(TAG, "Output: %s", output_names[clk_out]);
+  ESP_LOGI(TAG, "Standard: %s", std_str);
+  ESP_LOGI(TAG, "Always send: %s", always_send ? "yes" : "no");
+  ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "--- Stability (global) ---");
+  if (deadzone == 0) {
+    ESP_LOGI(TAG, "BPM deadzone: off");
+  } else {
+    ESP_LOGI(TAG, "BPM deadzone: %u (ignores +/-%u BPM)", (unsigned)deadzone, (unsigned)deadzone);
+  }
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "--- LED Sync (global) ---");
   ESP_LOGI(TAG, "LED sync: %s", led_sync ? "enabled" : "disabled");
   if (led_sync) {
     uint8_t ratio = tempo_get_led_flash_ratio();
-    ESP_LOGI(TAG, "  Flash ratio: %d%% of beat", ratio);
+    ESP_LOGI(TAG, "Flash ratio: %d%% of beat", ratio);
   }
-  ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Note: BPM, clock source, beat divider, and time signature set by scene");
-  ESP_LOGI(TAG, "===================");
+  ESP_LOGI(TAG, "=================================");
   
   return 0;
 }
@@ -505,7 +516,7 @@ esp_err_t tempo_console_init(void) {
   // info command
   const esp_console_cmd_t info_cmd = {
     .command = "info",
-    .help = "Show tempo settings",
+    .help = "Show global tempo settings and runtime state",
     .hint = NULL,
     .func = &cmd_info,
   };
@@ -517,7 +528,7 @@ esp_err_t tempo_console_init(void) {
   
   const esp_console_cmd_t bpm_cmd = {
     .command = "bpm",
-    .help = "Set BPM",
+    .help = "Set BPM (temporary - use 'scene bpm' to persist)",
     .hint = NULL,
     .func = &cmd_bpm,
     .argtable = &bpm_args

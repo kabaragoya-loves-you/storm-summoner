@@ -52,16 +52,6 @@ static void nav_to_tempo(void* user_data) {
   menu_navigate_to("Tempo", menu_page_tempo_create);
 }
 
-static void nav_to_clock_sync(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Clock Sync", menu_page_clock_sync_create);
-}
-
-static void nav_to_transport(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Transport", menu_page_transport_create);
-}
-
 static void nav_to_input_manager(void* user_data) {
   (void)user_data;
   menu_navigate_to("Input Mgr", menu_page_input_manager_create);
@@ -167,8 +157,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Proximity", nav_to_proximity, NULL, true },
     { "Ambient Light", nav_to_ambient_light, NULL, true },
     { "Tempo", nav_to_tempo, NULL, true },
-    { "Clock Sync", nav_to_clock_sync, NULL, true },
-    { "Transport", nav_to_transport, NULL, true },
     { "Input Mgr", nav_to_input_manager, NULL, true },
     { "LED", nav_to_led, NULL, true },
     { "Buttons", nav_to_buttons, NULL, true },

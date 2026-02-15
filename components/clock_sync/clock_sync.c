@@ -1,5 +1,4 @@
 #include "clock_sync.h"
-#include "switch.h"
 #include "event_bus.h"
 #include "app_settings.h"
 #include "tempo.h"
@@ -16,7 +15,6 @@
 
 // NVS keys
 #define NVS_KEY_SYNC_MODE "sync_mode"
-#define NVS_KEY_SYNC_VOLTAGE_RANGE "sync_vrange"
 
 // Constants
 #define SYNC_TIMEOUT_MS 2000       // Consider sync lost after 2 seconds
@@ -27,7 +25,6 @@
 
 // State
 static clock_sync_mode_t s_mode = CLOCK_SYNC_24PPQN;
-static sync_voltage_range_t s_voltage_range = SYNC_VOLTAGE_RANGE_5V;
 static bool s_sync_active = false;
 static uint8_t s_current_bpm = 0;
 static bool s_enabled = false;
@@ -59,18 +56,15 @@ esp_err_t clock_sync_init(void) {
   uint8_t mode = CLOCK_SYNC_24PPQN;
   app_settings_load_u8(NVS_KEY_SYNC_MODE, &mode);
   s_mode = (clock_sync_mode_t)mode;
-  
-  uint8_t vrange = SYNC_VOLTAGE_RANGE_5V;
-  app_settings_load_u8(NVS_KEY_SYNC_VOLTAGE_RANGE, &vrange);
-  s_voltage_range = (sync_voltage_range_t)vrange;
 
   // Note: GPIO configuration for clock sync will be done in clock_sync_enable()
   // when we switch from ADC mode to GPIO mode. PIN_CV_CLOCK is shared with CV input.
+  // Voltage range is controlled by the CV component (same hardware).
   
   // Create a queue to handle gpio events from isr
   s_gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
   
-  ESP_LOGI(TAG, "Clock sync initialized - Mode: %d, Voltage range: %d", s_mode, s_voltage_range);
+  ESP_LOGI(TAG, "Clock sync initialized - Mode: %d", s_mode);
   
   return ESP_OK;
 }
@@ -276,19 +270,4 @@ uint8_t clock_sync_get_bpm(void) {
 
 bool clock_sync_is_active(void) {
   return s_sync_active;
-}
-
-void clock_sync_set_voltage_range(sync_voltage_range_t range) {
-  s_voltage_range = range;
-  app_settings_save_u8(NVS_KEY_SYNC_VOLTAGE_RANGE, (uint8_t)range);
-  
-  // Update the switch (channel 2 = unipolar 5V, typical for clock sync)
-  // Note: Clock sync typically uses unipolar 5V range (switch channel 2)
-  switch_set_channel(2);  // SWITCH_CHANNEL_5V
-  
-  ESP_LOGI(TAG, "Clock sync voltage range set to %d", range);
-}
-
-sync_voltage_range_t clock_sync_get_voltage_range(void) {
-  return s_voltage_range;
 }

@@ -18,7 +18,6 @@ static const int num_registered_commands = sizeof(registered_commands) / sizeof(
 // Command: info
 static int cmd_info(int argc, char **argv) {
   clock_sync_mode_t mode = clock_sync_get_mode();
-  sync_voltage_range_t range = clock_sync_get_voltage_range();
   uint8_t bpm = clock_sync_get_bpm();
   bool active = clock_sync_is_active();
   
@@ -34,20 +33,11 @@ static int cmd_info(int argc, char **argv) {
     default: mode_str = "Unknown"; break;
   }
   
-  const char* range_str;
-  switch (range) {
-    case SYNC_VOLTAGE_RANGE_3V3: range_str = "0-3.3V"; break;
-    case SYNC_VOLTAGE_RANGE_5V: range_str = "0-5V"; break;
-    case SYNC_VOLTAGE_RANGE_10V: range_str = "0-10V"; break;
-    case SYNC_VOLTAGE_RANGE_BIPOLAR: range_str = "±5V"; break;
-    default: range_str = "Unknown"; break;
-  }
-  
   ESP_LOGI(TAG, "====== CLOCK SYNC ======");
-  ESP_LOGI(TAG, "Mode: %s", mode_str);
-  ESP_LOGI(TAG, "Voltage range: %s", range_str);
+  ESP_LOGI(TAG, "Pulse Mode: %s", mode_str);
   ESP_LOGI(TAG, "Detected BPM: %u", (unsigned)bpm);
   ESP_LOGI(TAG, "Active: %s", active ? "yes" : "no");
+  ESP_LOGI(TAG, "(Voltage range controlled by CV settings)");
   ESP_LOGI(TAG, "========================");
   
   return 0;
@@ -165,7 +155,7 @@ esp_err_t clock_sync_console_init(void) {
   // enable command
   const esp_console_cmd_t enable_cmd = {
     .command = "enable",
-    .help = "Enable clock sync",
+    .help = "Enable clock sync (for testing - normally controlled by scene)",
     .hint = NULL,
     .func = &cmd_enable,
   };
@@ -174,7 +164,7 @@ esp_err_t clock_sync_console_init(void) {
   // disable command
   const esp_console_cmd_t disable_cmd = {
     .command = "disable",
-    .help = "Disable clock sync",
+    .help = "Disable clock sync (for testing - normally controlled by scene)",
     .hint = NULL,
     .func = &cmd_disable,
   };

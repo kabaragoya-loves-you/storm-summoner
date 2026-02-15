@@ -1461,12 +1461,15 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
 
 // Returns true for actions that support timing options (non-HOLD actions)
 // HOLD actions must execute immediately to preserve press/release pairing
+// TAP_TEMPO is always immediate (toggles tap mode instantly)
 bool action_supports_timing(action_type_t type) {
-  return !action_requires_hold(type) && type != ACTION_NONE;
+  if (type == ACTION_NONE || type == ACTION_TAP_TEMPO) return false;
+  return !action_requires_hold(type);
 }
 
 // Returns true for actions that support repeat options
 // Preset/scene actions support timing but NOT repeat
+// TAP_TEMPO never repeats (it's a mode toggle)
 bool action_supports_repeat(action_type_t type) {
   if (type == ACTION_NONE || action_requires_hold(type)) return false;
   switch (type) {
@@ -1477,6 +1480,7 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_SCENE:
     case ACTION_SCENE_INC:
     case ACTION_SCENE_DEC:
+    case ACTION_TAP_TEMPO:
       return false;
     default:
       return true;
