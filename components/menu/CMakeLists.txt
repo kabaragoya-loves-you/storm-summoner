@@ -23,7 +23,6 @@ idf_component_register(
     "pages/buttons_menu.c"
     "pages/on_load_menu.c"
     "pages/tempo.c"
-    "pages/input_manager.c"
     "pages/led.c"
     "pages/buttons.c"
     "pages/bump.c"
@@ -59,8 +58,6 @@ idf_component_register(
     sensor
     tempo
     clock_sync
-    transport
-    input_manager
     buttons
     bump
     switch

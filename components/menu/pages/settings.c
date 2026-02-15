@@ -52,11 +52,6 @@ static void nav_to_tempo(void* user_data) {
   menu_navigate_to("Tempo", menu_page_tempo_create);
 }
 
-static void nav_to_input_manager(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Input Mgr", menu_page_input_manager_create);
-}
-
 static void nav_to_led(void* user_data) {
   (void)user_data;
   menu_navigate_to("LED", menu_page_led_create);
@@ -157,7 +152,6 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Proximity", nav_to_proximity, NULL, true },
     { "Ambient Light", nav_to_ambient_light, NULL, true },
     { "Tempo", nav_to_tempo, NULL, true },
-    { "Input Mgr", nav_to_input_manager, NULL, true },
     { "LED", nav_to_led, NULL, true },
     { "Buttons", nav_to_buttons, NULL, true },
     { "Bump", nav_to_bump, NULL, true },
