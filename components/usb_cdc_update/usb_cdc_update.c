@@ -8,6 +8,8 @@
 #include "device_config.h"
 #include "app_settings.h"
 #include "settings_registry.h"
+#include "scene.h"
+#include "esp_timer.h"
 #include "mbedtls/base64.h"
 #include "tusb.h"
 #include "esp_log.h"
@@ -55,6 +57,7 @@ typedef enum {
   CDC_STATE_MIDI_RELAY, // MIDI IN relay mode
   CDC_STATE_SETTINGS, // NVS settings mode
   CDC_STATE_CONFIG,   // Semantic settings mode (via settings_registry)
+  CDC_STATE_SCENES,   // Scene management mode
   CDC_STATE_ERROR
 } cdc_update_state_t;
 
@@ -206,6 +209,7 @@ static void process_console_command(const char *cmd);
 static void process_assets_command(const char *cmd);
 static void process_settings_command(const char *cmd);
 static void process_config_command(const char *cmd);
+static void process_scenes_command(const char *cmd);
 static void send_response(const char *msg);
 static void send_binary(const uint8_t *data, size_t len);
 static void handle_binary_data(const uint8_t *data, size_t len);
@@ -332,6 +336,11 @@ void usb_cdc_task(void) {
     if (s_state == CDC_STATE_CONFIG) {
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting config mode");
+    }
+    // If we were in scenes mode and disconnected, cleanup
+    if (s_state == CDC_STATE_SCENES) {
+      s_state = CDC_STATE_IDLE;
+      ESP_LOGI(TAG, "CDC disconnected, exiting scenes mode");
     }
     return;
   }
@@ -493,6 +502,19 @@ void usb_cdc_task(void) {
             s_cmd_buffer[s_cmd_pos++] = buf[i];
           }
         }
+      } else if (s_state == CDC_STATE_SCENES) {
+        // In scenes mode, parse commands (text mode, no echo)
+        for (uint32_t i = 0; i < count; i++) {
+          if (buf[i] == '\n' || buf[i] == '\r') {
+            if (s_cmd_pos > 0) {
+              s_cmd_buffer[s_cmd_pos] = '\0';
+              process_scenes_command(s_cmd_buffer);
+              s_cmd_pos = 0;
+            }
+          } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
+            s_cmd_buffer[s_cmd_pos++] = buf[i];
+          }
+        }
       }
     }
   }
@@ -518,10 +540,10 @@ uint8_t usb_cdc_update_get_progress(void) {
 // }
 
 static void send_response(const char *msg) {
-  if (!tud_cdc_n_connected(0)) return;
-  
-  // Debug: uncomment to log what we're about to send
-  // log_response_to_file(msg);
+  if (!tud_cdc_n_connected(0)) {
+    ESP_LOGW(TAG, "send_response: CDC not connected, dropping '%s'", msg);
+    return;
+  }
   
   // Send message in chunks to handle long responses
   // Use smaller chunks with delays to ensure host can keep up
@@ -866,6 +888,11 @@ static void process_command(const char *cmd) {
     ESP_LOGI(TAG, "Entering config mode");
     s_state = CDC_STATE_CONFIG;
     send_response("CONFIG_STARTED");
+
+  } else if (strcmp(cmd, "SCENES") == 0) {
+    ESP_LOGI(TAG, "Entering scenes mode");
+    s_state = CDC_STATE_SCENES;
+    send_response("SCENES_STARTED");
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);
@@ -2394,4 +2421,279 @@ static void process_config_command(const char *cmd) {
   }
   
   send_response("ERROR: Unknown config command");
+}
+
+// ============================================================================
+// Scenes Mode - Scene management via web UI
+// ============================================================================
+
+#define SCENES_JSON_BUF_SIZE 8192
+
+// Process scenes mode commands
+static void process_scenes_command(const char *cmd) {
+  ESP_LOGD(TAG, "Scenes cmd: %s", cmd);
+  
+  if (strlen(cmd) == 0) return;
+  
+  // EXIT - leave scenes mode
+  if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
+    ESP_LOGI(TAG, "Exiting scenes mode");
+    s_state = CDC_STATE_IDLE;
+    send_response("SCENES_STOPPED");
+    return;
+  }
+  
+  // LIST - get all scenes as JSON array
+  if (strcmp(cmd, "LIST") == 0) {
+    uint16_t total = scene_get_total_count();
+    uint8_t current_idx = scene_get_current_index();
+    
+    char *buf = heap_caps_malloc(SCENES_JSON_BUF_SIZE, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+      send_response("ERROR: Out of memory");
+      return;
+    }
+    
+    size_t pos = 0;
+    pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos, "[");
+    
+    for (uint16_t i = 0; i < total; i++) {
+      const char *name = scene_get_name_by_position(i);
+      uint8_t idx = scene_get_index_by_position(i);
+      bool active = scene_is_active_by_position(i);
+      bool is_current = (idx == current_idx);
+      
+      if (i > 0) pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos, ",");
+      pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos,
+        "{\"position\":%u,\"index\":%u,\"name\":\"%s\",\"active\":%s,\"current\":%s}",
+        (unsigned)i, (unsigned)idx, name ? name : "",
+        active ? "true" : "false",
+        is_current ? "true" : "false");
+      
+      if (pos >= SCENES_JSON_BUF_SIZE - 100) break;  // Safety margin
+    }
+    
+    pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos, "]");
+    
+    // Yield to let USB task service connection before sending large response
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    send_response(buf);
+    heap_caps_free(buf);
+    return;
+  }
+  
+  // CURRENT - get current scene position
+  if (strcmp(cmd, "CURRENT") == 0) {
+    uint8_t current_idx = scene_get_current_index();
+    uint16_t total = scene_get_total_count();
+    
+    // Find position of current scene
+    for (uint16_t i = 0; i < total; i++) {
+      if (scene_get_index_by_position(i) == current_idx) {
+        char resp[16];
+        snprintf(resp, sizeof(resp), "%u", (unsigned)i);
+        send_response(resp);
+        return;
+      }
+    }
+    send_response("ERROR: Current scene not found");
+    return;
+  }
+  
+  // REORDER <from> <to> - move scene from position to position
+  if (strncmp(cmd, "REORDER ", 8) == 0) {
+    unsigned from_pos, to_pos;
+    if (sscanf(cmd + 8, "%u %u", &from_pos, &to_pos) != 2) {
+      send_response("ERROR: Usage: REORDER <from> <to>");
+      return;
+    }
+    
+    uint8_t from_idx = scene_get_index_by_position((uint16_t)from_pos);
+    uint8_t to_idx = scene_get_index_by_position((uint16_t)to_pos);
+    
+    esp_err_t err = scene_reorder(from_idx, to_idx);
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // RENAME <position> <name> - rename scene at position
+  if (strncmp(cmd, "RENAME ", 7) == 0) {
+    unsigned pos;
+    
+    // Parse position and name (name may contain spaces)
+    const char *args = cmd + 7;
+    char *endptr;
+    pos = strtoul(args, &endptr, 10);
+    
+    if (endptr == args || *endptr != ' ') {
+      send_response("ERROR: Usage: RENAME <position> <name>");
+      return;
+    }
+    
+    // Skip space and get name
+    const char *new_name = endptr + 1;
+    if (strlen(new_name) == 0 || strlen(new_name) > 16) {
+      send_response("ERROR: Name must be 1-16 characters");
+      return;
+    }
+    
+    uint8_t idx = scene_get_index_by_position((uint16_t)pos);
+    ESP_LOGI(TAG, "RENAME: calling scene_set_name for index %d", idx);
+    int64_t start = esp_timer_get_time();
+    esp_err_t err = scene_set_name(idx, new_name);
+    int64_t elapsed = (esp_timer_get_time() - start) / 1000;
+    ESP_LOGI(TAG, "RENAME: scene_set_name completed in %lld ms, result=%s", elapsed, esp_err_to_name(err));
+    
+    // Yield to let USB task service any pending data after file I/O
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else if (err == ESP_ERR_INVALID_ARG) {
+      send_response("ERROR: Name already exists");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // DELETE <position> - delete scene at position
+  if (strncmp(cmd, "DELETE ", 7) == 0) {
+    unsigned pos;
+    if (sscanf(cmd + 7, "%u", &pos) != 1) {
+      send_response("ERROR: Usage: DELETE <position>");
+      return;
+    }
+    
+    uint8_t idx = scene_get_index_by_position((uint16_t)pos);
+    esp_err_t err = scene_delete(idx);
+    
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // DUPLICATE <position> <name> - duplicate scene at position with given name
+  if (strncmp(cmd, "DUPLICATE ", 10) == 0) {
+    unsigned pos;
+    
+    // Parse position and name (name may contain spaces)
+    const char *args = cmd + 10;
+    char *endptr;
+    pos = strtoul(args, &endptr, 10);
+    
+    if (endptr == args || *endptr != ' ') {
+      send_response("ERROR: Usage: DUPLICATE <position> <name>");
+      return;
+    }
+    
+    // Skip space and get name
+    const char *new_name = endptr + 1;
+    if (strlen(new_name) == 0 || strlen(new_name) > 16) {
+      send_response("ERROR: Name must be 1-16 characters");
+      return;
+    }
+    
+    // Check for duplicate name
+    if (scene_name_exists(new_name, -1)) {
+      send_response("ERROR: Name already exists");
+      return;
+    }
+    
+    uint8_t idx = scene_get_index_by_position((uint16_t)pos);
+    esp_err_t err = scene_duplicate(idx, new_name);
+    
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // ACTIVATE <position> - set scene active
+  if (strncmp(cmd, "ACTIVATE ", 9) == 0) {
+    unsigned pos;
+    if (sscanf(cmd + 9, "%u", &pos) != 1) {
+      send_response("ERROR: Usage: ACTIVATE <position>");
+      return;
+    }
+    
+    uint8_t idx = scene_get_index_by_position((uint16_t)pos);
+    esp_err_t err = scene_set_active(idx, true);
+    
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // DEACTIVATE <position> - set scene inactive
+  if (strncmp(cmd, "DEACTIVATE ", 11) == 0) {
+    unsigned pos;
+    if (sscanf(cmd + 11, "%u", &pos) != 1) {
+      send_response("ERROR: Usage: DEACTIVATE <position>");
+      return;
+    }
+    
+    uint8_t idx = scene_get_index_by_position((uint16_t)pos);
+    esp_err_t err = scene_set_active(idx, false);
+    
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  // CREATE <name> - create new empty scene
+  if (strncmp(cmd, "CREATE ", 7) == 0) {
+    const char *name = cmd + 7;
+    
+    if (strlen(name) == 0 || strlen(name) > 16) {
+      send_response("ERROR: Name must be 1-16 characters");
+      return;
+    }
+    
+    if (scene_name_exists(name, -1)) {
+      send_response("ERROR: Name already exists");
+      return;
+    }
+    
+    esp_err_t err = scene_create_new(name);
+    
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return;
+  }
+  
+  send_response("ERROR: Unknown scenes command");
 }

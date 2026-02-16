@@ -17,6 +17,7 @@ idf_component_register(
     app_settings
     mbedtls
     settings_registry
+    scene
   PRIV_REQUIRES
     main
 )

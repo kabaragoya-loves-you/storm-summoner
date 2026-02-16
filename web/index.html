@@ -47,6 +47,7 @@
         <wa-tab slot="nav" panel="assets">Assets</wa-tab>
         <wa-tab slot="nav" panel="console">Console</wa-tab>
         <wa-tab slot="nav" panel="midi">MIDI</wa-tab>
+        <wa-tab slot="nav" panel="scenes">Scenes</wa-tab>
         <wa-tab slot="nav" panel="display">Display</wa-tab>
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
         <wa-tab slot="nav" panel="config">Settings</wa-tab>
@@ -205,6 +206,80 @@
                 <p>Waiting for MIDI messages</p>
               </div>
             </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- Scenes Tab -->
+        <wa-tab-panel name="scenes">
+          <div class="tab-content" data-controller="scenes">
+            <div class="toolbar">
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->scenes#refresh" data-scenes-target="refreshBtn" disabled>
+                <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
+                Refresh
+              </wa-button>
+              <div class="toolbar-spacer"></div>
+              <wa-button size="small" variant="brand" appearance="outlined"
+                         data-action="click->scenes#addScene" data-scenes-target="addBtn" disabled>
+                <wa-icon name="plus" slot="prefix"></wa-icon>
+                Add Scene
+              </wa-button>
+            </div>
+
+            <div class="scenes-container" data-scenes-target="container">
+              <div class="empty-state">
+                <wa-icon name="layer-group"></wa-icon>
+                <p>Connect to view scenes</p>
+              </div>
+            </div>
+
+            <div class="log-panel mt-3">
+              <div class="log-header">
+                <span>Activity Log</span>
+                <wa-button size="small" variant="neutral" appearance="text"
+                           data-action="click->scenes#clearLog">Clear</wa-button>
+              </div>
+              <div class="log-content" data-scenes-target="logContent"></div>
+            </div>
+
+            <!-- Delete Confirmation Dialog -->
+            <wa-dialog data-scenes-target="deleteDialog" label="Delete Scene">
+              <div class="scenes-delete-dialog-content">
+                <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
+                <p>Delete "<span data-scenes-target="deleteSceneName"></span>"?</p>
+                <p class="hint">This action cannot be undone.</p>
+              </div>
+              <div slot="footer">
+                <wa-button variant="neutral" appearance="outlined"
+                           data-action="click->scenes#hideDeleteDialog">
+                  Cancel
+                </wa-button>
+                <wa-button variant="danger"
+                           data-action="click->scenes#confirmDelete">
+                  Delete
+                </wa-button>
+              </div>
+            </wa-dialog>
+
+            <!-- Add/Rename Dialog -->
+            <wa-dialog data-scenes-target="nameDialog" label="Scene Name">
+              <div class="scenes-name-dialog-content">
+                <wa-input type="text" placeholder="Scene name" maxlength="16"
+                          data-scenes-target="nameInput"
+                          data-action="keydown.enter->scenes#confirmName input->scenes#validateName"></wa-input>
+                <div class="name-error" data-scenes-target="nameError"></div>
+              </div>
+              <div slot="footer">
+                <wa-button variant="neutral" appearance="outlined"
+                           data-action="click->scenes#hideNameDialog">
+                  Cancel
+                </wa-button>
+                <wa-button variant="brand" data-scenes-target="nameDialogConfirm"
+                           data-action="click->scenes#confirmName">
+                  Save
+                </wa-button>
+              </div>
+            </wa-dialog>
           </div>
         </wa-tab-panel>
 
@@ -421,6 +496,7 @@
   <script src="/js/assets.js"></script>
   <script src="/js/console.js"></script>
   <script src="/js/midi.js"></script>
+  <script src="/js/scenes.js"></script>
   <script src="/js/display.js"></script>
   <script src="/js/updater.js"></script>
   <script src="/js/config.js"></script>

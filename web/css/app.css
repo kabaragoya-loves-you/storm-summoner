@@ -502,3 +502,236 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   justify-content: flex-end;
   gap: 0.75rem;
 }
+
+/* ============================================================================
+   Scenes Tab
+   ============================================================================ */
+
+.scenes-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.scenes-section {
+  padding: 0;
+}
+
+.scenes-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.scenes-section-header wa-icon {
+  color: var(--text-dim);
+}
+
+.scenes-section.inactive .scenes-section-header {
+  color: var(--text-dim);
+}
+
+.scene-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.scene-row {
+  display: grid;
+  grid-template-columns: auto 40px 1fr auto;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+  transition: background 0.15s ease;
+}
+
+.scene-row:last-child {
+  border-bottom: none;
+}
+
+.scene-row:hover {
+  background: var(--bg-hover);
+}
+
+.scene-row.dragging {
+  opacity: 0.5;
+  background: var(--bg-deep);
+}
+
+.scene-row.drag-over {
+  border-top: 2px solid var(--brand);
+  padding-top: calc(0.75rem - 2px);
+}
+
+.scene-drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scene-drag-handle:active {
+  cursor: grabbing;
+}
+
+.scenes-section.inactive .scene-drag-handle {
+  visibility: hidden;
+}
+
+.scene-position {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--bg-deep);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.scene-row.current .scene-position {
+  background: var(--brand);
+  color: white;
+}
+
+.scenes-section.inactive .scene-position {
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.scene-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+}
+
+.scene-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenes-section.inactive .scene-name {
+  color: var(--text-dim);
+}
+
+.scene-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--brand);
+  border-radius: 4px;
+  background: var(--bg-deep);
+  color: var(--text);
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.scene-name-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+
+.scene-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.scene-actions wa-button {
+  font-size: 0.9rem;
+}
+
+.scene-actions wa-button::part(base) {
+  color: var(--text-dim);
+  padding: 0.25rem;
+  min-width: auto;
+}
+
+.scene-actions wa-button::part(base):hover {
+  color: var(--text);
+}
+
+.scene-actions wa-button.danger::part(base):hover {
+  color: var(--error);
+}
+
+/* Scenes Delete Dialog */
+.scenes-delete-dialog-content {
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.scenes-delete-dialog-content .warning-icon {
+  font-size: 3rem;
+  color: var(--warning);
+  margin-bottom: 1rem;
+}
+
+.scenes-delete-dialog-content p {
+  margin: 0.5rem 0;
+}
+
+.scenes-delete-dialog-content .hint {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* Scenes Name Dialog */
+.scenes-name-dialog-content {
+  padding: 0.5rem 0;
+}
+
+.scenes-name-dialog-content wa-input {
+  width: 100%;
+}
+
+.scenes-name-dialog-content .name-error {
+  color: var(--wa-color-danger-600);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  min-height: 1.2em;
+}
+
+.scenes-name-dialog-content wa-input.shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(6px); }
+}
+
+wa-dialog[data-scenes-target="deleteDialog"]::part(footer),
+wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+/* Empty scenes section */
+.scenes-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-style: italic;
+}

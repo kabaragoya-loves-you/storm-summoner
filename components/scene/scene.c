@@ -1547,9 +1547,6 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
     return ESP_ERR_INVALID_ARG;
   }
 
-  scene_t* scene = get_scene_for_modification(scene_index);
-  if (!scene) return ESP_ERR_INVALID_STATE;
-
   // Check for name uniqueness (excluding this scene's current name)
   if (scene_name_exists(name, scene_index)) {
     ESP_LOGW(TAG, "Scene name '%s' already exists", name);
@@ -1584,9 +1581,14 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
     }
   }
 
-  // Update scene name in cache
-  strncpy(scene->name, name, sizeof(scene->name) - 1);
-  scene->name[sizeof(scene->name) - 1] = '\0';
+  // Update scene name in cache if this is the current scene
+  if (scene_index == g_scene_manager.current_scene_index) {
+    scene_t* scene = scene_get_current();
+    if (scene) {
+      strncpy(scene->name, name, sizeof(scene->name) - 1);
+      scene->name[sizeof(scene->name) - 1] = '\0';
+    }
+  }
 
   // Update manifest entry
   strncpy(g_scene_manager.manifest[pos].name, name,
@@ -1596,9 +1598,11 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
     sizeof(g_scene_manager.manifest[pos].filename) - 1);
   g_scene_manager.manifest[pos].filename[sizeof(g_scene_manager.manifest[pos].filename) - 1] = '\0';
 
-  // Save manifest and scene
+  // Save manifest and persist current scene if applicable
   scene_save_manifest();
-  scene_persist_if_programming();
+  if (scene_index == g_scene_manager.current_scene_index) {
+    scene_persist_if_programming();
+  }
 
   ESP_LOGI(TAG, "Scene %d renamed to: %s (file: %s)", scene_index + 1, name, new_slug);
   return ESP_OK;
