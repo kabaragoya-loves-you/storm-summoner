@@ -34,6 +34,24 @@ static ui_draw_module_t* available_modules[] = {
 };
 static const int num_modules = sizeof(available_modules) / sizeof(available_modules[0]);
 
+// Scene-selectable UI modules (subset for per-scene screen selection)
+// Add new user-facing screens here as they become available.
+const char* const ui_scene_selectable_modules[] = {
+  "scene",
+  "buttons",
+};
+const int ui_scene_selectable_module_count =
+  sizeof(ui_scene_selectable_modules) / sizeof(ui_scene_selectable_modules[0]);
+
+ui_draw_module_t* ui_get_module_by_name(const char* name) {
+  if (!name || name[0] == '\0') return NULL;
+  for (int i = 0; i < num_modules; i++) {
+    if (strcmp(available_modules[i]->name, name) == 0)
+      return available_modules[i];
+  }
+  return NULL;
+}
+
 // Command: info
 static int cmd_info(int argc, char **argv) {
   const char* mode_str;

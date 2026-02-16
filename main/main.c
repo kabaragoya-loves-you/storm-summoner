@@ -182,7 +182,10 @@ void app_main(void) {
   // Wait for splash animation to complete before switching to main UI
   vTaskDelay(pdMS_TO_TICKS(1500));
 
-  ui_set_draw_module(&scene_ui_module);
+  // Load UI module specified by the current scene (defaults to "scene")
+  const char* module_name = scene_get_ui_module(scene_get_current_index());
+  ui_draw_module_t* startup_module = ui_get_module_by_name(module_name);
+  ui_set_draw_module(startup_module ? startup_module : &scene_ui_module);
   tempo_start();
 
   // Start LFO task (component was initialized earlier with other MIDI handlers)

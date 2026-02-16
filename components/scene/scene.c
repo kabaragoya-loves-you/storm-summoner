@@ -1408,6 +1408,14 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     s_needs_deferred_init = true;
   }
   
+  // Switch UI module for this scene (only in performance mode)
+  if (!ui_is_in_programming_mode()) {
+    const char* mod_name = (new_scene->ui_module[0] != '\0')
+      ? new_scene->ui_module : "scene";
+    ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
+    if (mod) ui_set_draw_module(mod);
+  }
+  
   // Setup touchwheel instance for non-buttons modes
   scene_cleanup_touchwheel();
   scene_setup_touchwheel_for_mode(new_scene);
@@ -1468,6 +1476,12 @@ void scene_apply_deferred_init(void) {
   
   // Start LFOs
   lfo_apply_start_modes();
+  
+  // Switch UI module for this scene
+  const char* mod_name = (scene->ui_module[0] != '\0')
+    ? scene->ui_module : "scene";
+  ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
+  if (mod) ui_set_draw_module(mod);
 }
 
 uint8_t scene_get_current_index(void) {
@@ -1563,49 +1577,159 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
   }
   if (pos == -1) return ESP_ERR_NOT_FOUND;
 
-  // Get old and new filenames
+  // Compute old and new file paths
   char old_filepath[128], new_filepath[128];
   snprintf(old_filepath, sizeof(old_filepath), "%s/%s", SCENES_BASE_PATH,
     g_scene_manager.manifest[pos].filename);
-  
+
   char new_slug[64];
   scene_name_to_slug(name, new_slug, sizeof(new_slug));
-  snprintf(new_filepath, sizeof(new_filepath), "%s/%s", SCENES_BASE_PATH, new_slug);
+  snprintf(new_filepath, sizeof(new_filepath), "%s/%s",
+    SCENES_BASE_PATH, new_slug);
 
-  // Rename file on disk if filename changed
-  if (strcmp(g_scene_manager.manifest[pos].filename, new_slug) != 0) {
-    if (rename(old_filepath, new_filepath) != 0) {
-      ESP_LOGW(TAG, "Failed to rename scene file from %s to %s",
-        old_filepath, new_filepath);
-      // Continue anyway - the file will be saved with new name
-    }
-  }
+  bool file_changed =
+    strcmp(g_scene_manager.manifest[pos].filename, new_slug) != 0;
+  bool is_current =
+    (scene_index == g_scene_manager.current_scene_index);
 
-  // Update scene name in cache if this is the current scene
-  if (scene_index == g_scene_manager.current_scene_index) {
+  if (is_current) {
+    // Current scene: update in-memory cache, then save fresh JSON
     scene_t* scene = scene_get_current();
-    if (scene) {
-      strncpy(scene->name, name, sizeof(scene->name) - 1);
-      scene->name[sizeof(scene->name) - 1] = '\0';
+    if (!scene) return ESP_ERR_INVALID_STATE;
+
+    strncpy(scene->name, name, sizeof(scene->name) - 1);
+    scene->name[sizeof(scene->name) - 1] = '\0';
+
+    // Update manifest BEFORE save so get_scene_filename resolves to new path
+    strncpy(g_scene_manager.manifest[pos].name, name,
+      sizeof(g_scene_manager.manifest[pos].name) - 1);
+    g_scene_manager.manifest[pos].name[
+      sizeof(g_scene_manager.manifest[pos].name) - 1] = '\0';
+    strncpy(g_scene_manager.manifest[pos].filename, new_slug,
+      sizeof(g_scene_manager.manifest[pos].filename) - 1);
+    g_scene_manager.manifest[pos].filename[
+      sizeof(g_scene_manager.manifest[pos].filename) - 1] = '\0';
+
+    // Write fresh scene JSON to (potentially new) path
+    esp_err_t ret = scene_save_to_flash(scene_index);
+    if (ret != ESP_OK)
+      ESP_LOGW(TAG, "Failed to save renamed scene: %s",
+        esp_err_to_name(ret));
+
+    // Remove old file if the filename changed
+    if (file_changed) remove(old_filepath);
+  } else {
+    // Non-current scene: read JSON, patch name, write to new path
+    FILE* f = fopen(old_filepath, "r");
+    if (!f) {
+      ESP_LOGW(TAG, "Cannot open scene file: %s", old_filepath);
+      return ESP_ERR_NOT_FOUND;
     }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char* json_str = malloc(fsize + 1);
+    if (!json_str) { fclose(f); return ESP_ERR_NO_MEM; }
+
+    fread(json_str, 1, fsize, f);
+    fclose(f);
+    json_str[fsize] = '\0';
+
+    cJSON* root = cJSON_Parse(json_str);
+    free(json_str);
+    if (!root) {
+      ESP_LOGW(TAG, "Failed to parse scene JSON: %s", old_filepath);
+      return ESP_ERR_INVALID_STATE;
+    }
+
+    // Patch the name field
+    cJSON_DeleteItemFromObject(root, "name");
+    cJSON_AddStringToObject(root, "name", name);
+
+    char* updated = cJSON_Print(root);
+    cJSON_Delete(root);
+    if (!updated) return ESP_ERR_NO_MEM;
+
+    FILE* out = fopen(new_filepath, "w");
+    if (!out) {
+      free(updated);
+      return ESP_ERR_NOT_FOUND;
+    }
+    fwrite(updated, 1, strlen(updated), out);
+    fclose(out);
+    free(updated);
+
+    // Remove old file if the filename changed
+    if (file_changed) remove(old_filepath);
+
+    // Update cache if this scene happens to be cached (prev/next)
+    for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
+      if (g_scene_manager.cache[i].valid &&
+          g_scene_manager.cache[i].index == scene_index) {
+        strncpy(g_scene_manager.cache[i].scene.name, name,
+          sizeof(g_scene_manager.cache[i].scene.name) - 1);
+        g_scene_manager.cache[i].scene.name[
+          sizeof(g_scene_manager.cache[i].scene.name) - 1] = '\0';
+        break;
+      }
+    }
+
+    // Update manifest
+    strncpy(g_scene_manager.manifest[pos].name, name,
+      sizeof(g_scene_manager.manifest[pos].name) - 1);
+    g_scene_manager.manifest[pos].name[
+      sizeof(g_scene_manager.manifest[pos].name) - 1] = '\0';
+    strncpy(g_scene_manager.manifest[pos].filename, new_slug,
+      sizeof(g_scene_manager.manifest[pos].filename) - 1);
+    g_scene_manager.manifest[pos].filename[
+      sizeof(g_scene_manager.manifest[pos].filename) - 1] = '\0';
   }
 
-  // Update manifest entry
-  strncpy(g_scene_manager.manifest[pos].name, name,
-    sizeof(g_scene_manager.manifest[pos].name) - 1);
-  g_scene_manager.manifest[pos].name[sizeof(g_scene_manager.manifest[pos].name) - 1] = '\0';
-  strncpy(g_scene_manager.manifest[pos].filename, new_slug,
-    sizeof(g_scene_manager.manifest[pos].filename) - 1);
-  g_scene_manager.manifest[pos].filename[sizeof(g_scene_manager.manifest[pos].filename) - 1] = '\0';
-
-  // Save manifest and persist current scene if applicable
   scene_save_manifest();
-  if (scene_index == g_scene_manager.current_scene_index) {
-    scene_persist_if_programming();
+
+  ESP_LOGI(TAG, "Scene %d renamed to: %s (file: %s)",
+    scene_index + 1, name, new_slug);
+  return ESP_OK;
+}
+
+esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  if (module_name && module_name[0] != '\0') {
+    strncpy(scene->ui_module, module_name,
+      sizeof(scene->ui_module) - 1);
+    scene->ui_module[sizeof(scene->ui_module) - 1] = '\0';
+  } else {
+    scene->ui_module[0] = '\0';
   }
 
-  ESP_LOGI(TAG, "Scene %d renamed to: %s (file: %s)", scene_index + 1, name, new_slug);
+  scene_persist_if_programming();
+  ESP_LOGI(TAG, "Scene %d ui_module set to: %s",
+    scene_index + 1,
+    scene->ui_module[0] ? scene->ui_module : "scene (default)");
+
+  // Switch immediately if this is the current scene and we're in performance mode
+  if (scene_index == g_scene_manager.current_scene_index &&
+      !ui_is_in_programming_mode()) {
+    const char* mod_name = (scene->ui_module[0] != '\0')
+      ? scene->ui_module : "scene";
+    ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
+    if (mod) ui_set_draw_module(mod);
+  }
+
   return ESP_OK;
+}
+
+const char* scene_get_ui_module(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return "scene";
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene || scene->ui_module[0] == '\0') return "scene";
+  return scene->ui_module;
 }
 
 esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id) {
@@ -2816,7 +2940,10 @@ static const char* action_type_json_names[] = {
   [ACTION_CLOCK_HOLD] = "clock_hold",
   [ACTION_CLOCK_BURST] = "clock_burst",
   [ACTION_CUT_TOGGLE] = "cut_toggle",
-  [ACTION_CUT_HOLD] = "cut_hold"
+  [ACTION_CUT_HOLD] = "cut_hold",
+  [ACTION_SET_UI] = "set_ui",
+  [ACTION_UI_HOLD] = "ui_hold",
+  [ACTION_UI_CYCLE] = "ui_cycle"
 };
 
 // Helper to convert action type string to enum
@@ -3009,6 +3136,19 @@ static cJSON* action_to_json(const action_t* action) {
     if (action->params.confirm.target == CONFIRM_TARGET_SCENE) {
       cJSON_AddStringToObject(obj, "confirm_target", "scene");
     }
+  } else if (action->type == ACTION_SET_UI) {
+    cJSON_AddNumberToObject(obj, "module", action->params.ui.module);
+  } else if (action->type == ACTION_UI_HOLD) {
+    cJSON_AddNumberToObject(obj, "module", action->params.ui.module);
+    cJSON_AddNumberToObject(obj, "module2", action->params.ui.module2);
+  } else if (action->type == ACTION_UI_CYCLE) {
+    cJSON_AddNumberToObject(obj, "num_modules", action->params.ui.num_modules);
+    cJSON* modules = cJSON_CreateArray();
+    for (int i = 0; i < action->params.ui.num_modules && i < 8; i++) {
+      cJSON_AddItemToArray(modules,
+        cJSON_CreateNumber(action->params.ui.modules[i]));
+    }
+    cJSON_AddItemToObject(obj, "modules", modules);
   }
   
   // Serialize timing (only if not immediate default)
@@ -3318,6 +3458,36 @@ static action_t json_to_action(cJSON* obj) {
     } else {
       // Default to preset
       action.params.confirm.target = CONFIRM_TARGET_PRESET;
+    }
+  }
+  
+  // Parse UI module actions
+  if (action.type == ACTION_SET_UI) {
+    cJSON* module = cJSON_GetObjectItem(obj, "module");
+    if (module) action.params.ui.module = (uint8_t)module->valueint;
+  } else if (action.type == ACTION_UI_HOLD) {
+    cJSON* module = cJSON_GetObjectItem(obj, "module");
+    cJSON* module2 = cJSON_GetObjectItem(obj, "module2");
+    if (module) action.params.ui.module = (uint8_t)module->valueint;
+    if (module2) action.params.ui.module2 = (uint8_t)module2->valueint;
+  } else if (action.type == ACTION_UI_CYCLE) {
+    cJSON* num_modules = cJSON_GetObjectItem(obj, "num_modules");
+    cJSON* modules = cJSON_GetObjectItem(obj, "modules");
+    if (num_modules) {
+      int nm = num_modules->valueint;
+      if (nm < 2) nm = 2;
+      if (nm > 8) nm = 8;
+      action.params.ui.num_modules = (uint8_t)nm;
+    }
+    if (modules && cJSON_IsArray(modules)) {
+      int count = cJSON_GetArraySize(modules);
+      if (count > 8) count = 8;
+      for (int i = 0; i < count; i++) {
+        cJSON* item = cJSON_GetArrayItem(modules, i);
+        if (item) action.params.ui.modules[i] = (uint8_t)item->valueint;
+      }
+      if (action.params.ui.num_modules > count)
+        action.params.ui.num_modules = (uint8_t)count;
     }
   }
   
@@ -3673,6 +3843,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "name", scene->name);
 
+  // Only write ui_module if it's set (non-empty and not the default "scene")
+  if (scene->ui_module[0] != '\0' && strcmp(scene->ui_module, "scene") != 0) {
+    cJSON_AddStringToObject(root, "ui_module", scene->ui_module);
+  }
+
   // Only write device_id if it's set (non-empty)
   if (scene->device_id[0] != '\0') {
     cJSON_AddStringToObject(root, "device_id", scene->device_id);
@@ -3823,6 +3998,16 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   if (name && cJSON_IsString(name)) {
     strncpy(scene->name, name->valuestring, sizeof(scene->name) - 1);
     scene->name[sizeof(scene->name) - 1] = '\0';
+  }
+
+  // Parse ui_module (optional - empty/missing means "scene")
+  cJSON* ui_module = cJSON_GetObjectItem(root, "ui_module");
+  if (ui_module && cJSON_IsString(ui_module)) {
+    strncpy(scene->ui_module, ui_module->valuestring,
+      sizeof(scene->ui_module) - 1);
+    scene->ui_module[sizeof(scene->ui_module) - 1] = '\0';
+  } else {
+    scene->ui_module[0] = '\0';  // Default: use "scene"
   }
 
   // Parse device_id (optional - empty means use global device_config)

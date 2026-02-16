@@ -70,6 +70,11 @@ typedef enum {
   ACTION_CUT_TOGGLE,          // Toggle MIDI cut on/off
   ACTION_CUT_HOLD,            // Hold: cut while pressed
   
+  // UI module control
+  ACTION_SET_UI,              // Switch to a specific UI module
+  ACTION_UI_HOLD,             // Switch on press, restore on release
+  ACTION_UI_CYCLE,            // Cycle through UI modules on each press
+  
   ACTION_MAX
 } action_type_t;
 
@@ -261,6 +266,15 @@ typedef struct {
     struct {
       uint8_t target;         // confirm_target_t: 0=preset, 1=scene
     } confirm;
+    
+    // For UI module actions (set_ui, ui_hold, ui_cycle)
+    struct {
+      uint8_t module;           // Primary module index (into ui_scene_selectable_modules)
+      uint8_t module2;          // For hold: release module index
+      uint8_t num_modules;      // For cycle: number of modules (2-8)
+      uint8_t modules[8];       // For cycle: module indices
+      uint8_t current_index;    // Current position in cycle
+    } ui;
   } params;
 } action_t;
 
@@ -298,6 +312,8 @@ action_t action_create_clock_hold(bool press_enables);
 action_t action_create_clock_burst(uint8_t speed_percent);
 action_t action_create_cut_toggle(uint8_t cut_mode);
 action_t action_create_cut_hold(uint8_t cut_mode);
+action_t action_create_set_ui(uint8_t module_index);
+action_t action_create_ui_hold(uint8_t press_module, uint8_t release_module);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);

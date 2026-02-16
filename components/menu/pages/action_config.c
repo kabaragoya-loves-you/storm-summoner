@@ -92,6 +92,11 @@ static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
 static char s_cut_mode_label[LABEL_BUFFER_SETS][32];
 static char s_confirm_target_label[LABEL_BUFFER_SETS][32];
+static char s_ui_module_label[LABEL_BUFFER_SETS][32];
+static char s_ui_module2_label[LABEL_BUFFER_SETS][32];
+static char s_ui_cycle_steps_label[LABEL_BUFFER_SETS][24];
+static char s_ui_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
+static uint8_t s_editing_ui_step = 0;
 static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
@@ -157,6 +162,9 @@ static const action_type_t s_all_action_types[] = {
   ACTION_CLOCK_BURST,
   ACTION_CUT_TOGGLE,
   ACTION_CUT_HOLD,
+  ACTION_SET_UI,
+  ACTION_UI_HOLD,
+  ACTION_UI_CYCLE,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -223,6 +231,9 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_CLOCK_BURST: return "Clock Burst";
     case ACTION_CUT_TOGGLE: return "Cut Toggle";
     case ACTION_CUT_HOLD: return "Cut Hold";
+    case ACTION_SET_UI: return "Set UI";
+    case ACTION_UI_HOLD: return "UI Hold";
+    case ACTION_UI_CYCLE: return "UI Cycle";
     default: return "Unknown";
   }
 }
@@ -654,6 +665,21 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     // Set defaults for cut actions (both = cut local and passthrough)
     if (new_type == ACTION_CUT_TOGGLE || new_type == ACTION_CUT_HOLD) {
       action->params.cut.cut_mode = 2;  // Both
+    }
+    
+    // Set defaults for UI actions
+    if (new_type == ACTION_SET_UI) {
+      action->params.ui.module = 0;  // Scene
+    }
+    if (new_type == ACTION_UI_HOLD) {
+      action->params.ui.module = 1;   // Press: buttons
+      action->params.ui.module2 = 0;  // Release: scene
+    }
+    if (new_type == ACTION_UI_CYCLE) {
+      action->params.ui.num_modules = 2;
+      action->params.ui.modules[0] = 0;  // Scene
+      action->params.ui.modules[1] = 1;  // Buttons
+      action->params.ui.current_index = 0;
     }
     
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
@@ -2975,6 +3001,199 @@ static void nav_to_confirm_target(void* user_data) {
 }
 
 // ============================================================================
+// UI Module Roller (for ACTION_SET_UI, ACTION_UI_HOLD, ACTION_UI_CYCLE)
+// ============================================================================
+
+// Helper to get capitalized module name
+static const char* get_ui_module_display_name(uint8_t idx) {
+  if (idx >= ui_scene_selectable_module_count) return "Unknown";
+  static char cap_name[MAX_UI_MODULE_NAME];
+  const char* name = ui_scene_selectable_modules[idx];
+  strncpy(cap_name, name, sizeof(cap_name) - 1);
+  cap_name[sizeof(cap_name) - 1] = '\0';
+  if (cap_name[0] >= 'a' && cap_name[0] <= 'z')
+    cap_name[0] -= 32;
+  return cap_name;
+}
+
+// Build roller options string from selectable modules (capitalized)
+static void build_ui_module_options(char* buf, size_t buf_size) {
+  buf[0] = '\0';
+  for (int i = 0; i < ui_scene_selectable_module_count; i++) {
+    if (i > 0) strncat(buf, "\n", buf_size - strlen(buf) - 1);
+    const char* name = ui_scene_selectable_modules[i];
+    size_t pos = strlen(buf);
+    if (pos < buf_size - 2) {
+      // Capitalize first letter
+      buf[pos] = (name[0] >= 'a' && name[0] <= 'z') ? name[0] - 32 : name[0];
+      buf[pos + 1] = '\0';
+      strncat(buf, name + 1, buf_size - strlen(buf) - 1);
+    }
+  }
+}
+
+// For ACTION_SET_UI - single module selection
+static void ui_module_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress || !s_ctx || !s_ctx->target_action) return;
+  s_callback_in_progress = true;
+  
+  action_t* action = s_ctx->target_action;
+  action->params.ui.module = (uint8_t)selected_index;
+  
+  persist_scene_changes();
+  ESP_LOGI(TAG, "UI module set to: %s", get_ui_module_display_name((uint8_t)selected_index));
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* ui_module_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = action->params.ui.module;
+  if (current_idx >= (uint32_t)ui_scene_selectable_module_count)
+    current_idx = 0;
+  
+  static char options[256];
+  build_ui_module_options(options, sizeof(options));
+  
+  return menu_create_roller_page("Module", options, current_idx,
+    ui_module_confirm_cb, NULL);
+}
+
+static void nav_to_ui_module(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Module", ui_module_roller_create);
+}
+
+// For ACTION_UI_HOLD - module2 (release module) selection
+static void ui_module2_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress || !s_ctx || !s_ctx->target_action) return;
+  s_callback_in_progress = true;
+  
+  action_t* action = s_ctx->target_action;
+  action->params.ui.module2 = (uint8_t)selected_index;
+  
+  persist_scene_changes();
+  ESP_LOGI(TAG, "UI release module set to: %s",
+    get_ui_module_display_name((uint8_t)selected_index));
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* ui_module2_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = action->params.ui.module2;
+  if (current_idx >= (uint32_t)ui_scene_selectable_module_count)
+    current_idx = 0;
+  
+  static char options[256];
+  build_ui_module_options(options, sizeof(options));
+  
+  return menu_create_roller_page("On Release", options, current_idx,
+    ui_module2_confirm_cb, NULL);
+}
+
+static void nav_to_ui_module2(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("On Release", ui_module2_roller_create);
+}
+
+// ============================================================================
+// UI Cycle Rollers (for ACTION_UI_CYCLE)
+// ============================================================================
+
+static void ui_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress || !s_ctx || !s_ctx->target_action) return;
+  s_callback_in_progress = true;
+  
+  action_t* action = s_ctx->target_action;
+  uint8_t new_steps = (uint8_t)(selected_idx + 2);  // Range 2-8
+  action->params.ui.num_modules = new_steps;
+  
+  persist_scene_changes();
+  ESP_LOGI(TAG, "UI Cycle steps set to %u", (unsigned)new_steps);
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* ui_cycle_steps_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  
+  // Options: 2, 3, 4, 5, 6, 7, 8
+  static const char* options = "2\n3\n4\n5\n6\n7\n8";
+  
+  uint8_t current_steps = action->params.ui.num_modules;
+  if (current_steps < 2) current_steps = 2;
+  if (current_steps > 8) current_steps = 8;
+  uint32_t current_idx = current_steps - 2;
+  
+  return menu_create_roller_page("Steps", options, current_idx,
+    ui_cycle_steps_confirm_cb, NULL);
+}
+
+static void nav_to_ui_cycle_steps(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Steps", ui_cycle_steps_roller_create);
+}
+
+static void ui_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress || !s_ctx || !s_ctx->target_action) return;
+  s_callback_in_progress = true;
+  
+  action_t* action = s_ctx->target_action;
+  uint8_t step = s_editing_ui_step;
+  
+  if (step < 8 && selected_idx < (uint32_t)ui_scene_selectable_module_count) {
+    action->params.ui.modules[step] = (uint8_t)selected_idx;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "UI Cycle step %u set to %s",
+      (unsigned)(step + 1), get_ui_module_display_name((uint8_t)selected_idx));
+  }
+  
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* ui_cycle_step_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  
+  action_t* action = s_ctx->target_action;
+  
+  static char options[256];
+  build_ui_module_options(options, sizeof(options));
+  
+  uint8_t step = s_editing_ui_step;
+  uint8_t current = action->params.ui.modules[step];
+  if (current >= (uint8_t)ui_scene_selectable_module_count) current = 0;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
+  
+  return menu_create_roller_page(title, options, current,
+    ui_cycle_step_confirm_cb, NULL);
+}
+
+static void nav_to_ui_cycle_step(void* user_data) {
+  s_editing_ui_step = (uint8_t)(uintptr_t)user_data;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_ui_step + 1));
+  nav_to_subpage(title, ui_cycle_step_roller_create);
+}
+
+// ============================================================================
 // Navigation Helpers
 // ============================================================================
 
@@ -4013,6 +4232,60 @@ lv_obj_t* action_config_detail_page_create(void) {
     s_detail_items[item_count++] = (menu_item_t){
       s_confirm_target_label[buf], nav_to_confirm_target, NULL, true
     };
+  }
+  
+  // Show UI module selector for SET_UI action
+  if (action->type == ACTION_SET_UI && item_count < MAX_DETAIL_ITEMS) {
+    const char* mod_name = get_ui_module_display_name(action->params.ui.module);
+    snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
+      "Module\n%s", mod_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_ui_module_label[buf], nav_to_ui_module, NULL, true
+    };
+  }
+  
+  // Show UI module selectors for UI_HOLD action (press and release modules)
+  if (action->type == ACTION_UI_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
+    const char* press_name = get_ui_module_display_name(action->params.ui.module);
+    snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
+      "On Press\n%s", press_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_ui_module_label[buf], nav_to_ui_module, NULL, true
+    };
+    
+    const char* release_name = get_ui_module_display_name(action->params.ui.module2);
+    snprintf(s_ui_module2_label[buf], sizeof(s_ui_module2_label[buf]),
+      "On Release\n%s", release_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_ui_module2_label[buf], nav_to_ui_module2, NULL, true
+    };
+  }
+  
+  // Show UI Cycle submenu items
+  if (action->type == ACTION_UI_CYCLE) {
+    uint8_t num_steps = action->params.ui.num_modules;
+    if (num_steps < 2) num_steps = 2;
+    if (num_steps > 8) num_steps = 8;
+    
+    // Steps selector
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_ui_cycle_steps_label[buf], sizeof(s_ui_cycle_steps_label[buf]),
+        "Steps\n%u", (unsigned)num_steps);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true
+      };
+    }
+    
+    // Individual step items
+    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+      uint8_t mod_idx = action->params.ui.modules[i];
+      if (mod_idx >= (uint8_t)ui_scene_selectable_module_count) mod_idx = 0;
+      snprintf(s_ui_cycle_step_labels[buf][i], sizeof(s_ui_cycle_step_labels[buf][i]),
+        "Step %d\n%s", i + 1, get_ui_module_display_name(mod_idx));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true
+      };
+    }
   }
   
   // Show Timing selector for non-HOLD actions (actions that support timing)

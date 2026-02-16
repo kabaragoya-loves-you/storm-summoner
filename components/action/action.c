@@ -10,6 +10,7 @@
 #include "assets_manager.h"
 #include "lfo.h"
 #include "event_bus.h"
+#include "ui.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -431,7 +432,10 @@ static const char* action_type_names[] = {
   [ACTION_CLOCK_HOLD] = "Clock Hold",
   [ACTION_CLOCK_BURST] = "Clock Burst",
   [ACTION_CUT_TOGGLE] = "Cut Toggle",
-  [ACTION_CUT_HOLD] = "Cut Hold"
+  [ACTION_CUT_HOLD] = "Cut Hold",
+  [ACTION_SET_UI] = "Set UI",
+  [ACTION_UI_HOLD] = "UI Hold",
+  [ACTION_UI_CYCLE] = "UI Cycle"
 };
 
 esp_err_t action_init(void) {
@@ -1230,6 +1234,61 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
           cut_mode, cut_active ? "active" : "released");
       }
       break;
+
+    case ACTION_SET_UI:
+      if (is_press) {
+        uint8_t idx = action->params.ui.module;
+        if (idx < ui_scene_selectable_module_count) {
+          ui_draw_module_t* mod = ui_get_module_by_name(
+            ui_scene_selectable_modules[idx]);
+          if (mod) {
+            ui_set_draw_module(mod);
+            ESP_LOGI(TAG, "Set UI: %s",
+              ui_scene_selectable_modules[idx]);
+          }
+        }
+      }
+      break;
+
+    case ACTION_UI_HOLD:
+      {
+        uint8_t idx = is_press
+          ? action->params.ui.module
+          : action->params.ui.module2;
+        if (idx < ui_scene_selectable_module_count) {
+          ui_draw_module_t* mod = ui_get_module_by_name(
+            ui_scene_selectable_modules[idx]);
+          if (mod) {
+            ui_set_draw_module(mod);
+            ESP_LOGI(TAG, "UI Hold: %s (%s)",
+              ui_scene_selectable_modules[idx],
+              is_press ? "press" : "release");
+          }
+        }
+      }
+      break;
+
+    case ACTION_UI_CYCLE:
+      if (is_press) {
+        action_t* mutable = (action_t*)action;
+        uint8_t idx = mutable->params.ui.modules[
+          mutable->params.ui.current_index];
+        if (idx < ui_scene_selectable_module_count) {
+          ui_draw_module_t* mod = ui_get_module_by_name(
+            ui_scene_selectable_modules[idx]);
+          if (mod) {
+            ui_set_draw_module(mod);
+            ESP_LOGI(TAG, "UI Cycle: %s (step %d/%d)",
+              ui_scene_selectable_modules[idx],
+              mutable->params.ui.current_index + 1,
+              mutable->params.ui.num_modules);
+          }
+        }
+        mutable->params.ui.current_index =
+          (mutable->params.ui.current_index + 1) %
+          mutable->params.ui.num_modules;
+      }
+      break;
       
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
@@ -1390,6 +1449,21 @@ action_t action_create_cut_hold(uint8_t cut_mode) {
   return action;
 }
 
+action_t action_create_set_ui(uint8_t module_index) {
+  action_t action = {0};
+  action.type = ACTION_SET_UI;
+  action.params.ui.module = module_index;
+  return action;
+}
+
+action_t action_create_ui_hold(uint8_t press_module, uint8_t release_module) {
+  action_t action = {0};
+  action.type = ACTION_UI_HOLD;
+  action.params.ui.module = press_module;
+  action.params.ui.module2 = release_module;
+  return action;
+}
+
 // Actions that require press/release (hold) behavior
 // These should NOT be assigned to bump or on_load
 static const action_type_t hold_actions[] = {
@@ -1405,6 +1479,7 @@ static const action_type_t hold_actions[] = {
   ACTION_CLOCK_HOLD,
   ACTION_CLOCK_BURST,
   ACTION_CUT_HOLD,
+  ACTION_UI_HOLD,
 };
 
 bool action_requires_hold(action_type_t type) {
@@ -1456,6 +1531,11 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
     }
   }
   
+  // UI actions cannot be assigned to on_load
+  if (type == ACTION_SET_UI || type == ACTION_UI_CYCLE) {
+    if (trigger == ACTION_TRIGGER_ON_LOAD) return false;
+  }
+  
   return true;
 }
 
@@ -1481,6 +1561,7 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_SCENE_INC:
     case ACTION_SCENE_DEC:
     case ACTION_TAP_TEMPO:
+    case ACTION_SET_UI:
       return false;
     default:
       return true;

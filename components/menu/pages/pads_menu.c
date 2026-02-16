@@ -111,6 +111,16 @@ static uint8_t s_editing_randomize_slot = 0;
 // LFO action
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 
+// UI module actions
+static char s_ui_module_label[LABEL_BUFFER_SETS][32];
+static char s_ui_module2_label[LABEL_BUFFER_SETS][32];
+
+// UI Cycle
+#define MAX_UI_CYCLE_STEPS 8
+static char s_ui_cycle_steps_label[LABEL_BUFFER_SETS][24];
+static char s_ui_cycle_step_labels[LABEL_BUFFER_SETS][MAX_UI_CYCLE_STEPS][32];
+static uint8_t s_editing_ui_step = 0;
+
 // Filtered CC options for randomize roller (excludes already-selected CCs)
 typedef struct {
   char* options_str;      // Filtered options string for roller
@@ -222,6 +232,9 @@ static const action_type_t s_all_action_types[] = {
   ACTION_CLOCK_BURST,
   ACTION_CUT_TOGGLE,
   ACTION_CUT_HOLD,
+  ACTION_SET_UI,
+  ACTION_UI_HOLD,
+  ACTION_UI_CYCLE,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -332,6 +345,9 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_CLOCK_BURST: return "Clock Burst";
     case ACTION_CUT_TOGGLE: return "Cut Toggle";
     case ACTION_CUT_HOLD: return "Cut Hold";
+    case ACTION_SET_UI: return "Set UI";
+    case ACTION_UI_HOLD: return "UI Hold";
+    case ACTION_UI_CYCLE: return "UI Cycle";
     default: return "Unknown";
   }
 }
@@ -712,6 +728,21 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     // Set defaults for cut actions (both = cut local and passthrough)
     if (new_type == ACTION_CUT_TOGGLE || new_type == ACTION_CUT_HOLD) {
       mapping->action.params.cut.cut_mode = 2;  // Both
+    }
+    
+    // Set defaults for UI actions
+    if (new_type == ACTION_SET_UI) {
+      mapping->action.params.ui.module = 0;  // Scene
+    }
+    if (new_type == ACTION_UI_HOLD) {
+      mapping->action.params.ui.module = 1;   // Press: buttons
+      mapping->action.params.ui.module2 = 0;  // Release: scene
+    }
+    if (new_type == ACTION_UI_CYCLE) {
+      mapping->action.params.ui.num_modules = 2;
+      mapping->action.params.ui.modules[0] = 0;  // Scene
+      mapping->action.params.ui.modules[1] = 1;  // Buttons
+      mapping->action.params.ui.current_index = 0;
     }
     
     persist_scene_changes();
@@ -3237,6 +3268,243 @@ static void nav_to_lfo_slot(void* user_data) {
 }
 
 // ============================================================================
+// UI Module Roller (for ACTION_SET_UI, ACTION_UI_HOLD)
+// ============================================================================
+
+// Helper to get capitalized module name
+static const char* get_ui_module_display_name(uint8_t idx) {
+  if (idx >= ui_scene_selectable_module_count) return "Unknown";
+  static char cap_name[MAX_UI_MODULE_NAME];
+  const char* name = ui_scene_selectable_modules[idx];
+  strncpy(cap_name, name, sizeof(cap_name) - 1);
+  cap_name[sizeof(cap_name) - 1] = '\0';
+  if (cap_name[0] >= 'a' && cap_name[0] <= 'z')
+    cap_name[0] -= 32;
+  return cap_name;
+}
+
+// Build roller options string from selectable modules (capitalized)
+static void build_ui_module_options(char* buf, size_t buf_size) {
+  buf[0] = '\0';
+  for (int i = 0; i < ui_scene_selectable_module_count; i++) {
+    if (i > 0) strncat(buf, "\n", buf_size - strlen(buf) - 1);
+    const char* name = ui_scene_selectable_modules[i];
+    size_t pos = strlen(buf);
+    if (pos < buf_size - 2) {
+      buf[pos] = (name[0] >= 'a' && name[0] <= 'z') ? name[0] - 32 : name[0];
+      buf[pos + 1] = '\0';
+      strncat(buf, name + 1, buf_size - strlen(buf) - 1);
+    }
+  }
+}
+
+// For ACTION_SET_UI and ACTION_UI_HOLD press module
+static void ui_module_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  mapping->action.params.ui.module = (uint8_t)selected_index;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %u UI module set to: %s",
+    (unsigned)s_editing_pad_index,
+    get_ui_module_display_name((uint8_t)selected_index));
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* ui_module_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint32_t current_idx = mapping->action.params.ui.module;
+  if (current_idx >= (uint32_t)ui_scene_selectable_module_count)
+    current_idx = 0;
+  
+  static char options[256];
+  build_ui_module_options(options, sizeof(options));
+  
+  const char* roller_title = (mapping->action.type == ACTION_UI_HOLD)
+    ? "On Press" : "Module";
+  
+  return menu_create_roller_page(roller_title, options, current_idx,
+    ui_module_confirm_cb, NULL);
+}
+
+static void nav_to_ui_module(void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  const char* title = (mapping->action.type == ACTION_UI_HOLD)
+    ? "On Press" : "Module";
+  menu_navigate_to(title, ui_module_roller_create);
+}
+
+// For ACTION_UI_HOLD release module
+static void ui_module2_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  mapping->action.params.ui.module2 = (uint8_t)selected_index;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %u UI release module set to: %s",
+    (unsigned)s_editing_pad_index,
+    get_ui_module_display_name((uint8_t)selected_index));
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* ui_module2_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint32_t current_idx = mapping->action.params.ui.module2;
+  if (current_idx >= (uint32_t)ui_scene_selectable_module_count)
+    current_idx = 0;
+  
+  static char options[256];
+  build_ui_module_options(options, sizeof(options));
+  
+  return menu_create_roller_page("On Release", options, current_idx,
+    ui_module2_confirm_cb, NULL);
+}
+
+static void nav_to_ui_module2(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("On Release", ui_module2_roller_create);
+}
+
+// ============================================================================
+// UI Cycle (for ACTION_UI_CYCLE)
+// ============================================================================
+
+static void ui_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t new_steps = (uint8_t)(selected_idx + 2);  // Range 2-8
+  mapping->action.params.ui.num_modules = new_steps;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %u UI Cycle steps set to %u",
+    (unsigned)s_editing_pad_index, (unsigned)new_steps);
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* ui_cycle_steps_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Options: 2, 3, 4, 5, 6, 7, 8
+  static const char* options = "2\n3\n4\n5\n6\n7\n8";
+  
+  uint8_t current_steps = mapping->action.params.ui.num_modules;
+  if (current_steps < 2) current_steps = 2;
+  if (current_steps > 8) current_steps = 8;
+  uint32_t current_idx = current_steps - 2;
+  
+  return menu_create_roller_page("Steps", options, current_idx,
+    ui_cycle_steps_confirm_cb, NULL);
+}
+
+static void nav_to_ui_cycle_steps(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Steps", ui_cycle_steps_roller_create);
+}
+
+static void ui_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t step = s_editing_ui_step;
+  if (step < MAX_UI_CYCLE_STEPS &&
+      selected_idx < (uint32_t)ui_scene_selectable_module_count) {
+    mapping->action.params.ui.modules[step] = (uint8_t)selected_idx;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Pad %u UI Cycle step %u set to %s",
+      (unsigned)s_editing_pad_index, (unsigned)(step + 1),
+      get_ui_module_display_name((uint8_t)selected_idx));
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* ui_cycle_step_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static char options[256];
+  build_ui_module_options(options, sizeof(options));
+  
+  uint8_t step = s_editing_ui_step;
+  uint8_t current = mapping->action.params.ui.modules[step];
+  if (current >= (uint8_t)ui_scene_selectable_module_count) current = 0;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
+  
+  return menu_create_roller_page(title, options, current,
+    ui_cycle_step_confirm_cb, NULL);
+}
+
+static void nav_to_ui_cycle_step(void* user_data) {
+  s_editing_ui_step = (uint8_t)(uintptr_t)user_data;
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_ui_step + 1));
+  menu_navigate_to(title, ui_cycle_step_roller_create);
+}
+
+// ============================================================================
 // CC Slot Navigation (routes to correct handler based on action type)
 // ============================================================================
 
@@ -3613,6 +3881,60 @@ static lv_obj_t* pad_detail_page_create(void) {
     s_detail_items[item_count++] = (menu_item_t){
       s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
     };
+  }
+  
+  // Show UI module selector for SET_UI action
+  if (mapping->action.type == ACTION_SET_UI && item_count < MAX_DETAIL_ITEMS) {
+    const char* mod_name = get_ui_module_display_name(mapping->action.params.ui.module);
+    snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
+      "Module\n%s", mod_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_ui_module_label[buf], nav_to_ui_module, NULL, true
+    };
+  }
+  
+  // Show UI module selectors for UI_HOLD action (press and release modules)
+  if (mapping->action.type == ACTION_UI_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
+    const char* press_name = get_ui_module_display_name(mapping->action.params.ui.module);
+    snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
+      "On Press\n%s", press_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_ui_module_label[buf], nav_to_ui_module, NULL, true
+    };
+    
+    const char* release_name = get_ui_module_display_name(mapping->action.params.ui.module2);
+    snprintf(s_ui_module2_label[buf], sizeof(s_ui_module2_label[buf]),
+      "On Release\n%s", release_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_ui_module2_label[buf], nav_to_ui_module2, NULL, true
+    };
+  }
+  
+  // Show UI Cycle submenu items
+  if (mapping->action.type == ACTION_UI_CYCLE) {
+    uint8_t num_steps = mapping->action.params.ui.num_modules;
+    if (num_steps < 2) num_steps = 2;
+    if (num_steps > 8) num_steps = 8;
+    
+    // Steps selector
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_ui_cycle_steps_label[buf], sizeof(s_ui_cycle_steps_label[buf]),
+        "Steps\n%u", (unsigned)num_steps);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true
+      };
+    }
+    
+    // Individual step items
+    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+      uint8_t mod_idx = mapping->action.params.ui.modules[i];
+      if (mod_idx >= (uint8_t)ui_scene_selectable_module_count) mod_idx = 0;
+      snprintf(s_ui_cycle_step_labels[buf][i], sizeof(s_ui_cycle_step_labels[buf][i]),
+        "Step %d\n%s", i + 1, get_ui_module_display_name(mod_idx));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true
+      };
+    }
   }
   
   const char* title = get_pad_display_name(s_editing_pad_index);

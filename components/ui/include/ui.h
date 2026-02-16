@@ -57,6 +57,13 @@ void ui_init(void);
 void ui_set_draw_module(ui_draw_module_t* module);
 ui_draw_module_t* ui_get_current_module(void);
 
+// Scene-selectable UI modules (subset available for per-scene screen selection)
+extern const char* const ui_scene_selectable_modules[];
+extern const int ui_scene_selectable_module_count;
+
+// Look up a draw module by name (searches all registered modules)
+ui_draw_module_t* ui_get_module_by_name(const char* name);
+
 app_mode_t ui_get_app_mode(void);
 void ui_set_app_mode(app_mode_t mode);
 

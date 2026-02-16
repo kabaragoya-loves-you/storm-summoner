@@ -11,6 +11,12 @@
       "maxLength": 16,
       "description": "Scene display name"
     },
+    "ui_module": {
+      "type": "string",
+      "maxLength": 15,
+      "default": "scene",
+      "description": "UI module to display when this scene loads (e.g. scene, buttons)"
+    },
     "device_id": {
       "type": "string",
       "maxLength": 64,
@@ -529,7 +535,10 @@
             "clock_hold",
             "clock_burst",
             "cut_toggle",
-            "cut_hold"
+            "cut_hold",
+            "set_ui",
+            "ui_hold",
+            "ui_cycle"
           ],
           "description": "Action type name"
         },
@@ -1009,6 +1018,73 @@
                 "enum": ["preset", "scene"],
                 "default": "preset",
                 "description": "What to confirm in Advanced mode: preset change or scene change"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "set_ui"}
+            }
+          },
+          "then": {
+            "required": ["module"],
+            "properties": {
+              "module": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Index into scene-selectable UI modules list"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "ui_hold"}
+            }
+          },
+          "then": {
+            "required": ["module", "module2"],
+            "properties": {
+              "module": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "UI module index on press"
+              },
+              "module2": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "UI module index on release"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "ui_cycle"}
+            }
+          },
+          "then": {
+            "required": ["num_modules", "modules"],
+            "properties": {
+              "num_modules": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8,
+                "description": "Number of UI modules in cycle"
+              },
+              "modules": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "UI module indices to cycle through"
               }
             }
           }

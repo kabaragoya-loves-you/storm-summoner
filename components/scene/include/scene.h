@@ -63,10 +63,14 @@ typedef struct {
   action_t action;            // Action to execute
 } touchpad_mapping_t;
 
+// Maximum length of a UI module name (must fit scene_t.ui_module field)
+#define MAX_UI_MODULE_NAME 16
+
 // Scene structure
 typedef struct {
   char name[17];              // Scene name (max 16 chars + null)
   char device_id[64];         // Device slug (empty = use global device_config)
+  char ui_module[MAX_UI_MODULE_NAME]; // UI module to load with scene (empty = "scene")
   
   // Program change settings (modes 2 & 3)
   uint8_t program_number;     // PC value (0-127)
@@ -196,6 +200,10 @@ touchwheel_mode_t scene_get_persisted_touchwheel_mode(uint8_t scene_index);  // 
 output_type_t scene_get_persisted_touchwheel_output_type(uint8_t scene_index);  // Read from JSON
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
 esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc);
+
+// UI module (per-scene screen)
+esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name);
+const char* scene_get_ui_module(uint8_t scene_index);
 
 // Device association (per-scene device targeting)
 esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id);
