@@ -1,5 +1,6 @@
 #include "continuous_mapping.h"
 #include "midi_messages.h"
+#include "action.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -109,6 +110,7 @@ void continuous_mapping_send_cc(const continuous_mapping_t* mapping, uint8_t cha
     for (int i = 0; i < MAX_MULTI_CC; i++) {
       if (mapping->cc_numbers[i] > 0) {
         send_control_change(channel, mapping->cc_numbers[i], value);
+        action_set_cc_value(mapping->cc_numbers[i], value);
         sent++;
       }
     }
@@ -116,6 +118,7 @@ void continuous_mapping_send_cc(const continuous_mapping_t* mapping, uint8_t cha
   } else if (mapping->cc_number > 0) {
     // Single CC mode (backward compatible) - only send if cc_number is configured
     send_control_change(channel, mapping->cc_number, value);
+    action_set_cc_value(mapping->cc_number, value);
   }
   // If num_cc_numbers == 0 and cc_number == 0, don't send anything
 }

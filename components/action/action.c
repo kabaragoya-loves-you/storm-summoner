@@ -1300,8 +1300,12 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
             ? action->params.tw_param.param
             : action->params.tw_param.param2;
           scene->touchwheel.cc_numbers[0] = cc;
-          ESP_LOGI(TAG, "Param Hold: CC %u (%s)",
-            (unsigned)cc, is_press ? "press" : "release");
+          // Restore touchwheel value to this CC's cached value
+          uint8_t cached_value = action_get_cc_value(cc);
+          scene_set_touchwheel_value(cached_value);
+          ESP_LOGI(TAG, "Param Hold: CC %u = %u (%s)",
+            (unsigned)cc, (unsigned)cached_value,
+            is_press ? "press" : "release");
         }
       }
       break;
@@ -1316,8 +1320,11 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
           uint8_t cc = mutable->params.tw_param.params[
             mutable->params.tw_param.current_index % num];
           scene->touchwheel.cc_numbers[0] = cc;
-          ESP_LOGI(TAG, "Param Cycle: CC %u (step %d/%d)",
-            (unsigned)cc,
+          // Restore touchwheel value to this CC's cached value
+          uint8_t cached_value = action_get_cc_value(cc);
+          scene_set_touchwheel_value(cached_value);
+          ESP_LOGI(TAG, "Param Cycle: CC %u = %u (step %d/%d)",
+            (unsigned)cc, (unsigned)cached_value,
             mutable->params.tw_param.current_index + 1, num);
           mutable->params.tw_param.current_index =
             (mutable->params.tw_param.current_index + 1) % num;
@@ -2398,4 +2405,40 @@ morph_division_t morph_division_from_string(const char* str) {
   if (strcmp(str, "beat_3") == 0) return MORPH_DIV_BEAT_3;
   if (strcmp(str, "beat_4") == 0) return MORPH_DIV_BEAT_4;
   return MORPH_DIV_1_BAR;
+}
+
+// ============================================================================
+// CC Value Cache API
+// ============================================================================
+
+uint8_t action_get_cc_value(uint8_t cc_num) {
+  if (cc_num >= 128) return 0;
+  return s_last_cc_values[cc_num];
+}
+
+void action_set_cc_value(uint8_t cc_num, uint8_t value) {
+  if (cc_num >= 128) return;
+  s_last_cc_values[cc_num] = value;
+}
+
+void action_reset_cc_values(const void* device) {
+  // Cast to device_def_t - passed as void* to avoid header dependency
+  const device_def_t* dev = (const device_def_t*)device;
+  
+  if (!dev || dev->control_count == 0) {
+    // No device: reset all to 0
+    memset(s_last_cc_values, 0, sizeof(s_last_cc_values));
+    return;
+  }
+  
+  // Reset all to 0, then set device-specific min values
+  memset(s_last_cc_values, 0, sizeof(s_last_cc_values));
+  
+  for (uint16_t i = 0; i < dev->control_count; i++) {
+    const midi_control_t* ctrl = &dev->controls[i];
+    if (ctrl->type == MIDI_CONTROL_TYPE_CC && ctrl->id < 128) {
+      // Use the device's min value for this CC
+      s_last_cc_values[ctrl->id] = (uint8_t)ctrl->min;
+    }
+  }
 }

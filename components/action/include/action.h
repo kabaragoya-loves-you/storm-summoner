@@ -409,4 +409,20 @@ bool action_supports_morph(action_type_t type);
 // Clear all active morphs (call on scene change)
 void action_clear_morphs(void);
 
+// ============================================================================
+// CC Value Cache API
+// ============================================================================
+// Tracks current CC values (0-127) for all 128 CC numbers.
+// Used by morphs, param hold/cycle, and continuous mappings.
+
+// Get the cached value for a CC number (returns 0 if not set)
+uint8_t action_get_cc_value(uint8_t cc_num);
+
+// Set the cached value for a CC number
+void action_set_cc_value(uint8_t cc_num, uint8_t value);
+
+// Reset all CC values to device defaults (call on scene change)
+// If device is NULL, resets all to 0
+void action_reset_cc_values(const void* device);
+
 #endif // ACTION_H

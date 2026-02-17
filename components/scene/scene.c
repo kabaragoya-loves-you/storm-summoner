@@ -1447,6 +1447,10 @@ void scene_apply_deferred_init(void) {
   uint8_t scene_index = g_scene_manager.current_scene_index;
   ESP_LOGI(TAG, "Applying deferred MIDI init for scene %d: %s", scene_index + 1, scene->name);
   
+  // Reset CC value cache to device defaults for this scene
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  action_reset_cc_values(device);
+  
   // Compute program number (same logic as scene_set_current)
   uint8_t program;
   if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
@@ -1950,6 +1954,13 @@ esp_err_t scene_set_touchwheel_mode_runtime(uint8_t scene_index, touchwheel_mode
   
   ESP_LOGD(TAG, "Touchwheel mode set to %d (runtime, no persist)", mode);
   return ESP_OK;
+}
+
+// Set the touchwheel's internal value (used when switching CC parameters)
+void scene_set_touchwheel_value(uint8_t value) {
+  s_touchwheel_endless_value = value;
+  s_touchwheel_last_sent_cc = -1;  // Force next send even if same value
+  ESP_LOGD(TAG, "Touchwheel value set to %u", (unsigned)value);
 }
 
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t cc_number, uint8_t value) {
