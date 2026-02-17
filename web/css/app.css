@@ -735,3 +735,355 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
   color: var(--text-dim);
   font-style: italic;
 }
+
+/* ==========================================================================
+   INFO TAB STYLES
+   ========================================================================== */
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.info-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.info-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border);
+}
+
+.info-card-header wa-icon {
+  font-size: 1.25rem;
+  color: var(--accent);
+}
+
+.info-card-header h3 {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: 1.1rem;
+  font-weight: normal;
+}
+
+.info-card-body {
+  padding: 1.25rem;
+}
+
+.info-card-body .empty-state {
+  padding: 2rem;
+}
+
+.info-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.info-value {
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: right;
+}
+
+.info-value.mono {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.info-card-actions {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ==========================================================================
+   PEDALS TAB STYLES
+   ========================================================================== */
+
+.pedals-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 1.5rem;
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 900px) {
+  .pedals-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+}
+
+/* Pedal Tree (left panel) */
+.pedals-tree {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-y: auto;
+  max-height: 600px;
+}
+
+.pedals-tree .empty-state {
+  padding: 2rem;
+}
+
+.pedal-tree {
+  padding: 0.5rem;
+}
+
+.pedal-tree wa-details {
+  margin-bottom: 0.25rem;
+}
+
+.pedal-tree wa-details::part(header) {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+}
+
+.pedal-tree wa-details::part(content) {
+  padding: 0.25rem 0 0.5rem 0;
+}
+
+.pedal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pedal-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem 0.5rem 1.25rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.pedal-item:hover {
+  background: var(--bg-hover);
+}
+
+.pedal-item.selected {
+  background: var(--bg-selected);
+  border: 1px solid var(--accent);
+}
+
+.pedal-item.current {
+  color: var(--success);
+}
+
+.pedal-item .pedal-name {
+  font-size: 0.875rem;
+}
+
+.pedal-item .current-icon {
+  color: var(--success);
+  font-size: 0.75rem;
+}
+
+/* Pedal Detail (right panel) */
+.pedals-detail {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-y: auto;
+  max-height: 600px;
+}
+
+.pedals-detail .empty-state,
+.pedals-detail .loading-state {
+  padding: 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: var(--text-dim);
+}
+
+.pedals-detail .loading-state wa-spinner {
+  font-size: 2rem;
+}
+
+.pedal-detail {
+  padding: 1.5rem;
+}
+
+.pedal-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.pedal-detail-title h2 {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: 1.5rem;
+  font-weight: normal;
+}
+
+.pedal-detail-subtitle {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.current-badge {
+  background: var(--success);
+  color: var(--bg-deep);
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.pedal-detail-section {
+  margin-bottom: 1.5rem;
+}
+
+.pedal-detail-section h3 {
+  margin: 0 0 0.75rem 0;
+  font-family: var(--font-title);
+  font-size: 1rem;
+  font-weight: normal;
+  color: var(--accent);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.detail-item {
+  background: rgba(0, 0, 0, 0.15);
+  padding: 0.75rem;
+  border-radius: 6px;
+}
+
+.detail-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.detail-value {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+/* CC Table */
+.cc-table-container {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.cc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.cc-table thead {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.cc-table th {
+  padding: 0.75rem;
+  text-align: left;
+  font-weight: normal;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.cc-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.cc-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cc-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.cc-table .cc-number {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cc-table .cc-values {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pedal-detail-actions {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+/* Toolbar search input */
+.toolbar wa-input {
+  min-width: 200px;
+}
+
+.toolbar wa-input::part(base) {
+  background: var(--bg-deep);
+  border-color: var(--border);
+}
+
+.toolbar wa-input::part(input) {
+  font-size: 0.875rem;
+}

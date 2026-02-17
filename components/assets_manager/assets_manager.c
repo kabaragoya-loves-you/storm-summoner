@@ -326,6 +326,14 @@ static manifest_device_t *find_device_in_manifest(const char *slug) {
 }
 
 /**
+ * Public wrapper to get manifest device by slug
+ */
+const manifest_device_t *assets_get_manifest_device(const char *slug) {
+  if (!slug) return NULL;
+  return find_device_in_manifest(slug);
+}
+
+/**
  * Load device by slug
  */
 device_def_t *assets_load_device(const char *slug) {

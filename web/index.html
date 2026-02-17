@@ -44,6 +44,8 @@
     <!-- Tab Container -->
     <div class="tab-container">
       <wa-tab-group>
+        <wa-tab slot="nav" panel="info" active>Info</wa-tab>
+        <wa-tab slot="nav" panel="pedals">Pedals</wa-tab>
         <wa-tab slot="nav" panel="assets">Assets</wa-tab>
         <wa-tab slot="nav" panel="console">Console</wa-tab>
         <wa-tab slot="nav" panel="midi">MIDI</wa-tab>
@@ -52,6 +54,78 @@
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
         <wa-tab slot="nav" panel="config">Settings</wa-tab>
         <wa-tab slot="nav" panel="settings">NVS</wa-tab>
+
+        <!-- Info Tab -->
+        <wa-tab-panel name="info">
+          <div class="tab-content" data-controller="info">
+            <div class="info-grid">
+              <!-- Device Info Card -->
+              <div class="info-card">
+                <div class="info-card-header">
+                  <wa-icon name="microchip"></wa-icon>
+                  <h3>Device</h3>
+                </div>
+                <div class="info-card-body" data-info-target="deviceCard">
+                  <div class="empty-state">
+                    <wa-icon name="link-slash"></wa-icon>
+                    <p>Connect to view device info</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Current Pedal Card -->
+              <div class="info-card">
+                <div class="info-card-header">
+                  <wa-icon name="guitar"></wa-icon>
+                  <h3>Current Pedal</h3>
+                </div>
+                <div class="info-card-body" data-info-target="pedalCard">
+                  <div class="empty-state">
+                    <wa-icon name="link-slash"></wa-icon>
+                    <p>Connect to view pedal info</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- Pedals Tab -->
+        <wa-tab-panel name="pedals">
+          <div class="tab-content" data-controller="pedals">
+            <div class="toolbar">
+              <wa-input type="search" placeholder="Search pedals..." size="small"
+                        data-pedals-target="searchInput"
+                        data-action="input->pedals#filterTree">
+                <wa-icon name="magnifying-glass" slot="prefix"></wa-icon>
+              </wa-input>
+              <div class="toolbar-spacer"></div>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->pedals#refresh" data-pedals-target="refreshBtn" disabled>
+                <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
+                Refresh
+              </wa-button>
+            </div>
+
+            <div class="pedals-layout">
+              <!-- Manufacturer/Pedal Tree -->
+              <div class="pedals-tree" data-pedals-target="treeContainer">
+                <div class="empty-state">
+                  <wa-icon name="guitar"></wa-icon>
+                  <p>Connect to browse pedals</p>
+                </div>
+              </div>
+
+              <!-- Pedal Detail View -->
+              <div class="pedals-detail" data-pedals-target="detailContainer">
+                <div class="empty-state">
+                  <wa-icon name="circle-info"></wa-icon>
+                  <p>Select a pedal to view details</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </wa-tab-panel>
 
         <!-- Assets Tab -->
         <wa-tab-panel name="assets">
@@ -202,7 +276,7 @@
                 <span style="text-align: right">Value</span>
               </div>
               <div class="midi-empty-state" data-midi-target="emptyState">
-                <wa-icon name="wave-pulse"></wa-icon>
+                <wa-icon name="sliders"></wa-icon>
                 <p>Waiting for MIDI messages</p>
               </div>
             </div>
@@ -493,6 +567,8 @@
 
   <!-- App Scripts -->
   <script src="/js/app.js"></script>
+  <script src="/js/info.js"></script>
+  <script src="/js/pedals.js"></script>
   <script src="/js/assets.js"></script>
   <script src="/js/console.js"></script>
   <script src="/js/midi.js"></script>

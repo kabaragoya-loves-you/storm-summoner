@@ -408,7 +408,11 @@ application.register(
     navigateToTab (tabName, params = {}) {
       const tabGroup = document.querySelector('wa-tab-group')
       if (tabGroup) {
-        tabGroup.show(tabName)
+        // WebAwesome tabs don't have a show() method - click the tab directly
+        const tab = tabGroup.querySelector(`wa-tab[panel="${tabName}"]`)
+        if (tab) {
+          tab.click()
+        }
         // Emit event for the tab to handle params
         document.dispatchEvent(
           new CustomEvent('app:tab-params', {

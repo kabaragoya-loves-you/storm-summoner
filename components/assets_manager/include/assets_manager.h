@@ -191,5 +191,12 @@ uint32_t assets_get_device_count_for_vendor(const char* vendor);
 esp_err_t assets_get_device_for_vendor(const char* vendor, uint32_t idx,
   const char** slug, const char** name);
 
+/**
+ * Get manifest device entry by slug
+ * Returns a pointer to the manifest_device_t or NULL if not found
+ * This is a lightweight lookup that doesn't load the full device JSON
+ */
+const manifest_device_t *assets_get_manifest_device(const char *slug);
+
 #endif // ASSETS_MANAGER_H
 

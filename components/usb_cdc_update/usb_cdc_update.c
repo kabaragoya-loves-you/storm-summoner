@@ -1,6 +1,7 @@
 #include "usb_cdc_update.h"
 #include "firmware_update.h"
 #include "assets_file_ops.h"
+#include "assets_manager.h"
 #include "lvgl_stream.h"
 #include "display_driver.h"
 #include "event_bus.h"
@@ -9,6 +10,7 @@
 #include "app_settings.h"
 #include "settings_registry.h"
 #include "scene.h"
+#include "version.h"
 #include "esp_timer.h"
 #include "mbedtls/base64.h"
 #include "tusb.h"
@@ -58,6 +60,7 @@ typedef enum {
   CDC_STATE_SETTINGS, // NVS settings mode
   CDC_STATE_CONFIG,   // Semantic settings mode (via settings_registry)
   CDC_STATE_SCENES,   // Scene management mode
+  CDC_STATE_PEDALS,   // Pedal database browsing mode
   CDC_STATE_ERROR
 } cdc_update_state_t;
 
@@ -210,6 +213,7 @@ static void process_assets_command(const char *cmd);
 static void process_settings_command(const char *cmd);
 static void process_config_command(const char *cmd);
 static void process_scenes_command(const char *cmd);
+static void process_pedals_command(const char *cmd);
 static void send_response(const char *msg);
 static void send_binary(const uint8_t *data, size_t len);
 static void handle_binary_data(const uint8_t *data, size_t len);
@@ -341,6 +345,11 @@ void usb_cdc_task(void) {
     if (s_state == CDC_STATE_SCENES) {
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting scenes mode");
+    }
+    // If we were in pedals mode and disconnected, cleanup
+    if (s_state == CDC_STATE_PEDALS) {
+      s_state = CDC_STATE_IDLE;
+      ESP_LOGI(TAG, "CDC disconnected, exiting pedals mode");
     }
     return;
   }
@@ -509,6 +518,19 @@ void usb_cdc_task(void) {
             if (s_cmd_pos > 0) {
               s_cmd_buffer[s_cmd_pos] = '\0';
               process_scenes_command(s_cmd_buffer);
+              s_cmd_pos = 0;
+            }
+          } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
+            s_cmd_buffer[s_cmd_pos++] = buf[i];
+          }
+        }
+      } else if (s_state == CDC_STATE_PEDALS) {
+        // In pedals mode, parse commands (text mode, no echo)
+        for (uint32_t i = 0; i < count; i++) {
+          if (buf[i] == '\n' || buf[i] == '\r') {
+            if (s_cmd_pos > 0) {
+              s_cmd_buffer[s_cmd_pos] = '\0';
+              process_pedals_command(s_cmd_buffer);
               s_cmd_pos = 0;
             }
           } else if (s_cmd_pos < CDC_CMD_BUF_SIZE - 1) {
@@ -893,6 +915,71 @@ static void process_command(const char *cmd) {
     ESP_LOGI(TAG, "Entering scenes mode");
     s_state = CDC_STATE_SCENES;
     send_response("SCENES_STARTED");
+
+  } else if (strcmp(cmd, "PEDALS") == 0) {
+    ESP_LOGI(TAG, "Entering pedals mode");
+    s_state = CDC_STATE_PEDALS;
+    send_response("PEDALS_STARTED");
+
+  } else if (strcmp(cmd, "INFO") == 0) {
+    // Build JSON response with version and device info
+    const device_config_t *cfg = device_config_get();
+    const char *slug = cfg ? cfg->pedal_slug : "user.default@0";
+
+    // Get device info from manifest for additional details
+    const manifest_device_t *mdev = assets_get_manifest_device(slug);
+
+    // TRS type string
+    const char *trs_str = "unknown";
+    if (cfg) {
+      switch (cfg->trs_type) {
+        case MIDI_TRS_TYPE_A: trs_str = "TYPE_A"; break;
+        case MIDI_TRS_TYPE_B: trs_str = "TYPE_B"; break;
+        case MIDI_TRS_TYPE_TS: trs_str = "TYPE_TS"; break;
+        case MIDI_TRS_TYPE_BOTH: trs_str = "BOTH"; break;
+        default: trs_str = "unknown"; break;
+      }
+    }
+
+    // Bank mode string
+    const char *bank_str = "none";
+    if (cfg) {
+      switch (cfg->bank_select_mode) {
+        case BANK_SELECT_CC0: bank_str = "CC0"; break;
+        case BANK_SELECT_CC0_CC32: bank_str = "CC0_CC32"; break;
+        default: bank_str = "none"; break;
+      }
+    }
+
+    // Build JSON - use a static buffer since response can be large
+    static char info_buf[512];
+    int len = snprintf(info_buf, sizeof(info_buf),
+      "{\"version\":\"%u.%u\",\"build\":%u,\"git\":\"%s\",\"serial\":\"%s\","
+      "\"pedal\":{\"slug\":\"%s\",\"name\":\"%s\",\"vendor\":\"%s\","
+      "\"midi_channel\":%u,\"send_clock\":%s,\"trs_type\":\"%s\","
+      "\"receives_pc\":%s,\"transmits_pc\":%s,\"receives_clock\":%s,\"receives_notes\":%s,"
+      "\"preset_count\":%u,\"bank_mode\":\"%s\",\"preset_base\":%u}}",
+      (unsigned)version_get_major(), (unsigned)version_get_minor(),
+      (unsigned)version_get_build(), version_get_git_hash(), version_get_serial(),
+      slug,
+      mdev ? mdev->name : "Unknown",
+      mdev ? mdev->vendor : "Unknown",
+      cfg ? (unsigned)cfg->midi_channel : 1,
+      (cfg && cfg->send_clock) ? "true" : "false",
+      trs_str,
+      mdev ? (mdev->receives_pc ? "true" : "false") : "false",
+      mdev ? (mdev->transmits_pc ? "true" : "false") : "false",
+      mdev ? (mdev->receives_clock ? "true" : "false") : "false",
+      mdev ? (mdev->receives_notes ? "true" : "false") : "false",
+      cfg ? (unsigned)cfg->preset_count : 128,
+      bank_str,
+      cfg ? (unsigned)cfg->preset_base : 0);
+
+    if (len > 0 && len < (int)sizeof(info_buf)) {
+      send_response(info_buf);
+    } else {
+      send_response("ERROR: Buffer overflow");
+    }
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);
@@ -2696,4 +2783,154 @@ static void process_scenes_command(const char *cmd) {
   }
   
   send_response("ERROR: Unknown scenes command");
+}
+
+// ============================================================================
+// PEDALS MODE - Pedal database browsing
+// ============================================================================
+
+// Process pedals mode commands
+static void process_pedals_command(const char *cmd) {
+  ESP_LOGI(TAG, "Pedals cmd: '%s'", cmd);
+  
+  if (strlen(cmd) == 0) return;
+  
+  // EXIT - leave pedals mode
+  if (strcmp(cmd, "EXIT") == 0) {
+    ESP_LOGI(TAG, "Exiting pedals mode");
+    s_state = CDC_STATE_IDLE;
+    send_response("PEDALS_STOPPED");
+    return;
+  }
+  
+  // MANIFEST - send the full manifest.json file
+  if (strcmp(cmd, "MANIFEST") == 0) {
+    const char *manifest_path = ASSETS_BASE_PATH "/devices/manifest.json";
+    
+    struct stat st;
+    if (stat(manifest_path, &st) != 0) {
+      send_response("ERROR: Manifest not found");
+      return;
+    }
+    
+    FILE *f = fopen(manifest_path, "r");
+    if (!f) {
+      send_response("ERROR: Failed to open manifest");
+      return;
+    }
+    
+    // Send size header
+    char resp[32];
+    snprintf(resp, sizeof(resp), "SIZE %u", (unsigned)st.st_size);
+    send_response(resp);
+    
+    // Send file content in chunks
+    uint8_t chunk[512];
+    size_t sent = 0;
+    while (sent < (size_t)st.st_size) {
+      size_t to_read = sizeof(chunk);
+      if (sent + to_read > (size_t)st.st_size) {
+        to_read = (size_t)st.st_size - sent;
+      }
+      size_t read = fread(chunk, 1, to_read, f);
+      if (read == 0) break;
+      send_binary(chunk, read);
+      sent += read;
+    }
+    fclose(f);
+    return;
+  }
+  
+  // LOAD <slug> - load a specific device JSON file
+  if (strncmp(cmd, "LOAD ", 5) == 0) {
+    const char *slug = cmd + 5;
+    
+    // Look up the device in manifest to get the file path
+    const manifest_device_t *mdev = assets_get_manifest_device(slug);
+    if (!mdev) {
+      send_response("ERROR: Device not found in manifest");
+      return;
+    }
+    
+    // Check if file path is populated
+    if (mdev->file[0] == '\0') {
+      ESP_LOGE(TAG, "Device %s has empty file path", slug);
+      send_response("ERROR: Device has no file path");
+      return;
+    }
+    
+    // Build full path - path is relative to /assets/devices/ (manifest directory)
+    char full_path[MAX_PATH_LEN];
+    snprintf(full_path, sizeof(full_path), "%s/devices/%s", ASSETS_BASE_PATH, mdev->file);
+    ESP_LOGI(TAG, "Loading device file: %s", full_path);
+    
+    struct stat st;
+    if (stat(full_path, &st) != 0) {
+      ESP_LOGE(TAG, "Device file not found: %s (errno=%d)", full_path, errno);
+      send_response("ERROR: Device file not found");
+      return;
+    }
+    
+    FILE *f = fopen(full_path, "r");
+    if (!f) {
+      send_response("ERROR: Failed to open device file");
+      return;
+    }
+    
+    // Send size header
+    char resp[32];
+    snprintf(resp, sizeof(resp), "SIZE %u", (unsigned)st.st_size);
+    send_response(resp);
+    
+    // Send file content in chunks
+    uint8_t chunk[512];
+    size_t sent = 0;
+    while (sent < (size_t)st.st_size) {
+      size_t to_read = sizeof(chunk);
+      if (sent + to_read > (size_t)st.st_size) {
+        to_read = (size_t)st.st_size - sent;
+      }
+      size_t read = fread(chunk, 1, to_read, f);
+      if (read == 0) break;
+      send_binary(chunk, read);
+      sent += read;
+    }
+    fclose(f);
+    return;
+  }
+  
+  // SELECT <slug> - select a device as the current pedal
+  if (strncmp(cmd, "SELECT ", 7) == 0) {
+    const char *slug = cmd + 7;
+    
+    // Verify the device exists
+    const manifest_device_t *mdev = assets_get_manifest_device(slug);
+    if (!mdev) {
+      send_response("ERROR: Device not found");
+      return;
+    }
+    
+    // Set the pedal
+    esp_err_t err = device_config_set_pedal(slug);
+    if (err != ESP_OK) {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+      return;
+    }
+    
+    // Save configuration
+    err = device_config_save();
+    if (err != ESP_OK) {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: Save failed - %s", esp_err_to_name(err));
+      send_response(resp);
+      return;
+    }
+    
+    send_response("OK");
+    return;
+  }
+  
+  send_response("ERROR: Unknown pedals command");
 }
