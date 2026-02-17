@@ -121,6 +121,14 @@ static char s_ui_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_ui_cycle_step_labels[LABEL_BUFFER_SETS][MAX_UI_CYCLE_STEPS][32];
 static uint8_t s_editing_ui_step = 0;
 
+// Param slot actions
+static char s_param_label[LABEL_BUFFER_SETS][32];
+static char s_param2_label[LABEL_BUFFER_SETS][32];
+#define MAX_PARAM_CYCLE_STEPS 8
+static char s_param_cycle_steps_label[LABEL_BUFFER_SETS][24];
+static char s_param_cycle_step_labels[LABEL_BUFFER_SETS][MAX_PARAM_CYCLE_STEPS][32];
+static uint8_t s_editing_param_step = 0;
+
 // Filtered CC options for randomize roller (excludes already-selected CCs)
 typedef struct {
   char* options_str;      // Filtered options string for roller
@@ -129,6 +137,7 @@ typedef struct {
 } filtered_cc_options_t;
 
 static filtered_cc_options_t s_randomize_cc_options = {0};
+static filtered_cc_options_t s_param_cc_options = {0};
 
 // Note name lookup table
 static const char* NOTE_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -235,6 +244,8 @@ static const action_type_t s_all_action_types[] = {
   ACTION_SET_UI,
   ACTION_UI_HOLD,
   ACTION_UI_CYCLE,
+  ACTION_PARAM_HOLD,
+  ACTION_PARAM_CYCLE,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -348,6 +359,8 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_SET_UI: return "Set UI";
     case ACTION_UI_HOLD: return "UI Hold";
     case ACTION_UI_CYCLE: return "UI Cycle";
+    case ACTION_PARAM_HOLD: return "Param Hold";
+    case ACTION_PARAM_CYCLE: return "Param Cycle";
     default: return "Unknown";
   }
 }
@@ -743,6 +756,32 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.ui.modules[0] = 0;  // Scene
       mapping->action.params.ui.modules[1] = 1;  // Buttons
       mapping->action.params.ui.current_index = 0;
+    }
+    if (new_type == ACTION_PARAM_HOLD || new_type == ACTION_PARAM_CYCLE) {
+      // Use device's first two CC controls as defaults
+      uint8_t scene_index = scene_get_current_index();
+      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+      uint8_t cc1 = 1, cc2 = 11;  // Fallback if no device
+      if (device && device->control_count > 0) {
+        int found = 0;
+        for (uint16_t i = 0; i < device->control_count && found < 2; i++) {
+          if (device->controls[i].type == MIDI_CONTROL_TYPE_CC) {
+            if (found == 0) cc1 = (uint8_t)device->controls[i].id;
+            else cc2 = (uint8_t)device->controls[i].id;
+            found++;
+          }
+        }
+        if (found == 1) cc2 = cc1;  // If only one CC, use it for both
+      }
+      if (new_type == ACTION_PARAM_HOLD) {
+        mapping->action.params.tw_param.param = cc1;
+        mapping->action.params.tw_param.param2 = cc2;
+      } else {
+        mapping->action.params.tw_param.num_params = 2;
+        mapping->action.params.tw_param.params[0] = cc1;
+        mapping->action.params.tw_param.params[1] = cc2;
+        mapping->action.params.tw_param.current_index = 0;
+      }
     }
     
     persist_scene_changes();
@@ -3089,6 +3128,116 @@ static bool build_randomize_cc_options(const action_t* action, uint8_t editing_s
   return true;
 }
 
+// ============================================================================
+// Filtered CC options for Param Cycle (excludes already-selected CCs)
+// ============================================================================
+
+static void free_param_cc_options(void) {
+  if (s_param_cc_options.options_str) {
+    heap_caps_free(s_param_cc_options.options_str);
+    s_param_cc_options.options_str = NULL;
+  }
+  if (s_param_cc_options.cc_numbers) {
+    heap_caps_free(s_param_cc_options.cc_numbers);
+    s_param_cc_options.cc_numbers = NULL;
+  }
+  s_param_cc_options.count = 0;
+}
+
+// Check if a CC is already used in another param slot (for cycle or hold)
+static bool is_cc_used_in_param(const action_t* action, uint8_t cc_num, uint8_t exclude_slot) {
+  if (action->type == ACTION_PARAM_CYCLE) {
+    uint8_t num = action->params.tw_param.num_params;
+    for (uint8_t i = 0; i < num && i < MAX_PARAM_CYCLE_STEPS; i++) {
+      if (i != exclude_slot && action->params.tw_param.params[i] == cc_num)
+        return true;
+    }
+  } else if (action->type == ACTION_PARAM_HOLD) {
+    // For hold, slot 0 = param (press), slot 1 = param2 (release)
+    if (exclude_slot != 0 && action->params.tw_param.param == cc_num) return true;
+    if (exclude_slot != 1 && action->params.tw_param.param2 == cc_num) return true;
+  }
+  return false;
+}
+
+// Build filtered CC options for param actions (excludes already-selected CCs)
+static bool build_param_cc_options(const action_t* action, uint8_t editing_slot) {
+  free_param_cc_options();
+  
+  if (!s_cc_options.options_str || s_cc_options.count == 0) {
+    if (!load_cc_options()) return false;
+  }
+  
+  s_param_cc_options.cc_numbers = heap_caps_calloc(
+    s_cc_options.count, sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+  s_param_cc_options.options_str = heap_caps_calloc(
+    s_cc_options.count * 28, 1, MALLOC_CAP_SPIRAM);
+  
+  if (!s_param_cc_options.cc_numbers || !s_param_cc_options.options_str) {
+    ESP_LOGE(TAG, "Failed to allocate filtered param CC options");
+    free_param_cc_options();
+    return false;
+  }
+  
+  s_param_cc_options.count = 0;
+  size_t pos = 0;
+  
+  // Add CCs that aren't already used in other slots
+  for (uint16_t i = 1; i < s_cc_options.count; i++) {
+    uint8_t cc_num = s_cc_options.cc_numbers[i];
+    
+    if (is_cc_used_in_param(action, cc_num, editing_slot))
+      continue;
+    
+    // Find the CC name from the original options string
+    const char* src = s_cc_options.options_str;
+    uint16_t line = 0;
+    const char* line_start = src;
+    
+    while (*src && line < i) {
+      if (*src == '\n') {
+        line++;
+        line_start = src + 1;
+      }
+      src++;
+    }
+    
+    const char* line_end = line_start;
+    while (*line_end && *line_end != '\n') line_end++;
+    size_t name_len = line_end - line_start;
+    
+    // Append to filtered options
+    if (s_param_cc_options.count > 0)
+      s_param_cc_options.options_str[pos++] = '\n';
+    memcpy(s_param_cc_options.options_str + pos, line_start, name_len);
+    pos += name_len;
+    s_param_cc_options.options_str[pos] = '\0';
+    
+    s_param_cc_options.cc_numbers[s_param_cc_options.count] = cc_num;
+    s_param_cc_options.count++;
+  }
+  
+  ESP_LOGD(TAG, "Built filtered param options: %u of %u CCs available",
+    (unsigned)s_param_cc_options.count, (unsigned)(s_cc_options.count - 1));
+  
+  return true;
+}
+
+// Get next unused CC from device for auto-fill
+static uint8_t get_next_unused_param_cc(const action_t* action, uint8_t exclude_slot) {
+  if (!s_cc_options.options_str || s_cc_options.count == 0) {
+    if (!load_cc_options()) return 1;  // Fallback to CC 1
+  }
+  
+  for (uint16_t i = 1; i < s_cc_options.count; i++) {
+    uint8_t cc_num = s_cc_options.cc_numbers[i];
+    if (!is_cc_used_in_param(action, cc_num, 0xFF))  // 0xFF = don't exclude any
+      return cc_num;
+  }
+  
+  return 1;  // Fallback
+}
+
 static void randomize_cc_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   
@@ -3502,6 +3651,262 @@ static void nav_to_ui_cycle_step(void* user_data) {
   static char title[24];
   snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_ui_step + 1));
   menu_navigate_to(title, ui_cycle_step_roller_create);
+}
+
+// ============================================================================
+// Param Hold/Cycle Rollers (for ACTION_PARAM_HOLD, ACTION_PARAM_CYCLE)
+// ============================================================================
+
+// For ACTION_PARAM_HOLD - press CC (slot 0)
+static void param_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  if (selected_index < s_param_cc_options.count) {
+    uint8_t cc = s_param_cc_options.cc_numbers[selected_index];
+    mapping->action.params.tw_param.param = cc;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Pad %u Param Hold press CC set to %u",
+      (unsigned)s_editing_pad_index, (unsigned)cc);
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* param_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Build filtered options excluding slot 1 (release CC)
+  if (!build_param_cc_options(&mapping->action, 0)) {
+    return menu_create_page("Error", NULL, 0);
+  }
+  
+  // Find current selection in filtered list
+  uint8_t cc = mapping->action.params.tw_param.param;
+  uint32_t current_idx = 0;
+  for (uint16_t i = 0; i < s_param_cc_options.count; i++) {
+    if (s_param_cc_options.cc_numbers[i] == cc) {
+      current_idx = i;
+      break;
+    }
+  }
+  
+  return menu_create_roller_page("On Press", s_param_cc_options.options_str, current_idx,
+    param_confirm_cb, NULL);
+}
+
+static void nav_to_param(void* user_data) {
+  (void)user_data;
+  if (!s_cc_options.options_str) load_cc_options();
+  menu_navigate_to("On Press", param_roller_create);
+}
+
+// For ACTION_PARAM_HOLD - release CC (slot 1)
+static void param2_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  if (selected_index < s_param_cc_options.count) {
+    uint8_t cc = s_param_cc_options.cc_numbers[selected_index];
+    mapping->action.params.tw_param.param2 = cc;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Pad %u Param Hold release CC set to %u",
+      (unsigned)s_editing_pad_index, (unsigned)cc);
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* param2_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  // Build filtered options excluding slot 0 (press CC)
+  if (!build_param_cc_options(&mapping->action, 1)) {
+    return menu_create_page("Error", NULL, 0);
+  }
+  
+  // Find current selection in filtered list
+  uint8_t cc = mapping->action.params.tw_param.param2;
+  uint32_t current_idx = 0;
+  for (uint16_t i = 0; i < s_param_cc_options.count; i++) {
+    if (s_param_cc_options.cc_numbers[i] == cc) {
+      current_idx = i;
+      break;
+    }
+  }
+  
+  return menu_create_roller_page("On Release", s_param_cc_options.options_str, current_idx,
+    param2_confirm_cb, NULL);
+}
+
+static void nav_to_param2(void* user_data) {
+  (void)user_data;
+  if (!s_cc_options.options_str) load_cc_options();
+  menu_navigate_to("On Release", param2_roller_create);
+}
+
+// For ACTION_PARAM_CYCLE - steps selector
+static void param_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t old_steps = mapping->action.params.tw_param.num_params;
+  uint8_t new_steps = (uint8_t)(selected_idx + 2);  // Range 2-8
+  
+  // Auto-fill any new slots with next available unused CCs
+  if (new_steps > old_steps) {
+    for (uint8_t i = old_steps; i < new_steps && i < MAX_PARAM_CYCLE_STEPS; i++) {
+      uint8_t next_cc = get_next_unused_param_cc(&mapping->action, 0xFF);
+      mapping->action.params.tw_param.params[i] = next_cc;
+      // Temporarily bump count so next iteration sees this as used
+      mapping->action.params.tw_param.num_params = i + 1;
+      ESP_LOGI(TAG, "Auto-filled step %u with CC %u", (unsigned)(i + 1), (unsigned)next_cc);
+    }
+  }
+  
+  mapping->action.params.tw_param.num_params = new_steps;
+  persist_scene_changes();
+  
+  ESP_LOGI(TAG, "Pad %u Param Cycle steps set to %u",
+    (unsigned)s_editing_pad_index, (unsigned)new_steps);
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* param_cycle_steps_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  static const char* options = "2\n3\n4\n5\n6\n7\n8";
+  
+  uint8_t current_steps = mapping->action.params.tw_param.num_params;
+  if (current_steps < 2) current_steps = 2;
+  if (current_steps > 8) current_steps = 8;
+  uint32_t current_idx = current_steps - 2;
+  
+  return menu_create_roller_page("Steps", options, current_idx,
+    param_cycle_steps_confirm_cb, NULL);
+}
+
+static void nav_to_param_cycle_steps(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Steps", param_cycle_steps_roller_create);
+}
+
+// For ACTION_PARAM_CYCLE - individual step CC
+static void param_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return;
+  
+  uint8_t step = s_editing_param_step;
+  if (step < MAX_PARAM_CYCLE_STEPS && selected_idx < s_param_cc_options.count) {
+    uint8_t cc = s_param_cc_options.cc_numbers[selected_idx];
+    mapping->action.params.tw_param.params[step] = cc;
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Pad %u Param Cycle step %u set to CC %u",
+      (unsigned)s_editing_pad_index, (unsigned)(step + 1), (unsigned)cc);
+  }
+  
+  const char* title = get_pad_display_name(s_editing_pad_index);
+  menu_navigate_back_then_to(2, title, pad_detail_page_create);
+}
+
+static lv_obj_t* param_cycle_step_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
+    scene_get_current_index(), s_editing_pad_index);
+  if (!mapping) return NULL;
+  
+  uint8_t step = s_editing_param_step;
+  
+  // Build filtered options (excludes CCs already used in other slots)
+  if (!build_param_cc_options(&mapping->action, step)) {
+    return menu_create_page("Error", NULL, 0);
+  }
+  
+  // Find current selection in filtered list
+  uint8_t cc = mapping->action.params.tw_param.params[step];
+  uint32_t current_idx = 0;
+  for (uint16_t i = 0; i < s_param_cc_options.count; i++) {
+    if (s_param_cc_options.cc_numbers[i] == cc) {
+      current_idx = i;
+      break;
+    }
+  }
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
+  
+  return menu_create_roller_page(title, s_param_cc_options.options_str, current_idx,
+    param_cycle_step_confirm_cb, NULL);
+}
+
+static void nav_to_param_cycle_step(void* user_data) {
+  s_editing_param_step = (uint8_t)(uintptr_t)user_data;
+  if (!s_cc_options.options_str) load_cc_options();
+  
+  static char title[24];
+  snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_param_step + 1));
+  menu_navigate_to(title, param_cycle_step_roller_create);
+}
+
+// Helper to get CC name from number
+static const char* get_cc_display_name(uint8_t cc_num) {
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  if (!device) return "Unknown";
+  
+  for (uint16_t i = 0; i < device->control_count; i++) {
+    if (device->controls[i].type == MIDI_CONTROL_TYPE_CC &&
+        device->controls[i].id == cc_num) {
+      return device->controls[i].name ? device->controls[i].name : "CC";
+    }
+  }
+  
+  static char fallback[16];
+  snprintf(fallback, sizeof(fallback), "CC %u", (unsigned)cc_num);
+  return fallback;
 }
 
 // ============================================================================
@@ -3933,6 +4338,49 @@ static lv_obj_t* pad_detail_page_create(void) {
         "Step %d\n%s", i + 1, get_ui_module_display_name(mod_idx));
       s_detail_items[item_count++] = (menu_item_t){
         s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true
+      };
+    }
+  }
+  
+  // Show Param Hold CC selectors (press and release)
+  if (mapping->action.type == ACTION_PARAM_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
+    const char* press_name = get_cc_display_name(mapping->action.params.tw_param.param);
+    snprintf(s_param_label[buf], sizeof(s_param_label[buf]),
+      "On Press\n%s", press_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_param_label[buf], nav_to_param, NULL, true
+    };
+    
+    const char* release_name = get_cc_display_name(mapping->action.params.tw_param.param2);
+    snprintf(s_param2_label[buf], sizeof(s_param2_label[buf]),
+      "On Release\n%s", release_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_param2_label[buf], nav_to_param2, NULL, true
+    };
+  }
+  
+  // Show Param Cycle submenu items
+  if (mapping->action.type == ACTION_PARAM_CYCLE) {
+    uint8_t num_steps = mapping->action.params.tw_param.num_params;
+    if (num_steps < 2) num_steps = 2;
+    if (num_steps > 8) num_steps = 8;
+    
+    // Steps selector
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_param_cycle_steps_label[buf], sizeof(s_param_cycle_steps_label[buf]),
+        "Steps\n%u", (unsigned)num_steps);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_param_cycle_steps_label[buf], nav_to_param_cycle_steps, NULL, true
+      };
+    }
+    
+    // Individual step items
+    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+      uint8_t cc = mapping->action.params.tw_param.params[i];
+      snprintf(s_param_cycle_step_labels[buf][i], sizeof(s_param_cycle_step_labels[buf][i]),
+        "Step %d\n%s", i + 1, get_cc_display_name(cc));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_param_cycle_step_labels[buf][i], nav_to_param_cycle_step, (void*)(uintptr_t)i, true
       };
     }
   }

@@ -2943,7 +2943,9 @@ static const char* action_type_json_names[] = {
   [ACTION_CUT_HOLD] = "cut_hold",
   [ACTION_SET_UI] = "set_ui",
   [ACTION_UI_HOLD] = "ui_hold",
-  [ACTION_UI_CYCLE] = "ui_cycle"
+  [ACTION_UI_CYCLE] = "ui_cycle",
+  [ACTION_PARAM_HOLD] = "param_hold",
+  [ACTION_PARAM_CYCLE] = "param_cycle"
 };
 
 // Helper to convert action type string to enum
@@ -3149,6 +3151,17 @@ static cJSON* action_to_json(const action_t* action) {
         cJSON_CreateNumber(action->params.ui.modules[i]));
     }
     cJSON_AddItemToObject(obj, "modules", modules);
+  } else if (action->type == ACTION_PARAM_HOLD) {
+    cJSON_AddNumberToObject(obj, "param", action->params.tw_param.param);
+    cJSON_AddNumberToObject(obj, "param2", action->params.tw_param.param2);
+  } else if (action->type == ACTION_PARAM_CYCLE) {
+    cJSON_AddNumberToObject(obj, "num_params", action->params.tw_param.num_params);
+    cJSON* params = cJSON_CreateArray();
+    for (int i = 0; i < action->params.tw_param.num_params && i < 8; i++) {
+      cJSON_AddItemToArray(params,
+        cJSON_CreateNumber(action->params.tw_param.params[i]));
+    }
+    cJSON_AddItemToObject(obj, "params", params);
   }
   
   // Serialize timing (only if not immediate default)
@@ -3473,6 +3486,8 @@ static action_t json_to_action(cJSON* obj) {
   } else if (action.type == ACTION_UI_CYCLE) {
     cJSON* num_modules = cJSON_GetObjectItem(obj, "num_modules");
     cJSON* modules = cJSON_GetObjectItem(obj, "modules");
+    // Default to 2 if not specified (prevents div-by-zero)
+    action.params.ui.num_modules = 2;
     if (num_modules) {
       int nm = num_modules->valueint;
       if (nm < 2) nm = 2;
@@ -3488,6 +3503,35 @@ static action_t json_to_action(cJSON* obj) {
       }
       if (action.params.ui.num_modules > count)
         action.params.ui.num_modules = (uint8_t)count;
+    }
+  }
+  
+  // Parse param slot actions (touchwheel CC slot 1)
+  if (action.type == ACTION_PARAM_HOLD) {
+    cJSON* param = cJSON_GetObjectItem(obj, "param");
+    cJSON* param2 = cJSON_GetObjectItem(obj, "param2");
+    if (param) action.params.tw_param.param = (uint8_t)param->valueint;
+    if (param2) action.params.tw_param.param2 = (uint8_t)param2->valueint;
+  } else if (action.type == ACTION_PARAM_CYCLE) {
+    cJSON* num_params = cJSON_GetObjectItem(obj, "num_params");
+    cJSON* params_arr = cJSON_GetObjectItem(obj, "params");
+    // Default to 2 if not specified (prevents div-by-zero)
+    action.params.tw_param.num_params = 2;
+    if (num_params) {
+      int np = num_params->valueint;
+      if (np < 2) np = 2;
+      if (np > 8) np = 8;
+      action.params.tw_param.num_params = (uint8_t)np;
+    }
+    if (params_arr && cJSON_IsArray(params_arr)) {
+      int count = cJSON_GetArraySize(params_arr);
+      if (count > 8) count = 8;
+      for (int i = 0; i < count; i++) {
+        cJSON* item = cJSON_GetArrayItem(params_arr, i);
+        if (item) action.params.tw_param.params[i] = (uint8_t)item->valueint;
+      }
+      if (action.params.tw_param.num_params > count)
+        action.params.tw_param.num_params = (uint8_t)count;
     }
   }
   

@@ -1228,7 +1228,7 @@ uint8_t tempo_get_bpm_deadzone(void) {
 
 void tempo_set_clock_muted(bool muted) {
   s_clock_muted = muted;
-  ESP_LOGI(TAG, "Clock output %s", muted ? "muted" : "unmuted");
+  ESP_LOGD(TAG, "Clock output %s", muted ? "muted" : "unmuted");
 }
 
 bool tempo_get_clock_muted(void) {

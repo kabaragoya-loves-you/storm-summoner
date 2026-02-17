@@ -435,7 +435,9 @@ static const char* action_type_names[] = {
   [ACTION_CUT_HOLD] = "Cut Hold",
   [ACTION_SET_UI] = "Set UI",
   [ACTION_UI_HOLD] = "UI Hold",
-  [ACTION_UI_CYCLE] = "UI Cycle"
+  [ACTION_UI_CYCLE] = "UI Cycle",
+  [ACTION_PARAM_HOLD] = "Param Hold",
+  [ACTION_PARAM_CYCLE] = "Param Cycle"
 };
 
 esp_err_t action_init(void) {
@@ -1271,8 +1273,10 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
     case ACTION_UI_CYCLE:
       if (is_press) {
         action_t* mutable = (action_t*)action;
+        uint8_t num = mutable->params.ui.num_modules;
+        if (num < 2) num = 2;  // Guard against div-by-zero
         uint8_t idx = mutable->params.ui.modules[
-          mutable->params.ui.current_index];
+          mutable->params.ui.current_index % num];
         if (idx < ui_scene_selectable_module_count) {
           ui_draw_module_t* mod = ui_get_module_by_name(
             ui_scene_selectable_modules[idx]);
@@ -1280,16 +1284,47 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
             ui_set_draw_module(mod);
             ESP_LOGI(TAG, "UI Cycle: %s (step %d/%d)",
               ui_scene_selectable_modules[idx],
-              mutable->params.ui.current_index + 1,
-              mutable->params.ui.num_modules);
+              mutable->params.ui.current_index + 1, num);
           }
         }
         mutable->params.ui.current_index =
-          (mutable->params.ui.current_index + 1) %
-          mutable->params.ui.num_modules;
+          (mutable->params.ui.current_index + 1) % num;
       }
       break;
-      
+
+    case ACTION_PARAM_HOLD:
+      {
+        scene_t* scene = scene_get_current();
+        if (scene) {
+          uint8_t cc = is_press
+            ? action->params.tw_param.param
+            : action->params.tw_param.param2;
+          scene->touchwheel.cc_numbers[0] = cc;
+          ESP_LOGI(TAG, "Param Hold: CC %u (%s)",
+            (unsigned)cc, is_press ? "press" : "release");
+        }
+      }
+      break;
+
+    case ACTION_PARAM_CYCLE:
+      if (is_press) {
+        scene_t* scene = scene_get_current();
+        if (scene) {
+          action_t* mutable = (action_t*)action;
+          uint8_t num = mutable->params.tw_param.num_params;
+          if (num < 2) num = 2;  // Guard against div-by-zero
+          uint8_t cc = mutable->params.tw_param.params[
+            mutable->params.tw_param.current_index % num];
+          scene->touchwheel.cc_numbers[0] = cc;
+          ESP_LOGI(TAG, "Param Cycle: CC %u (step %d/%d)",
+            (unsigned)cc,
+            mutable->params.tw_param.current_index + 1, num);
+          mutable->params.tw_param.current_index =
+            (mutable->params.tw_param.current_index + 1) % num;
+        }
+      }
+      break;
+
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
       return ESP_ERR_NOT_SUPPORTED;
@@ -1480,6 +1515,7 @@ static const action_type_t hold_actions[] = {
   ACTION_CLOCK_BURST,
   ACTION_CUT_HOLD,
   ACTION_UI_HOLD,
+  ACTION_PARAM_HOLD,
 };
 
 bool action_requires_hold(action_type_t type) {
@@ -1534,6 +1570,35 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
   // UI actions cannot be assigned to on_load
   if (type == ACTION_SET_UI || type == ACTION_UI_CYCLE) {
     if (trigger == ACTION_TRIGGER_ON_LOAD) return false;
+  }
+  
+  // Param Hold restrictions:
+  // - Valid: Pads 8-11, Buttons, Expression switch
+  // - Invalid: Pads 0-7, Bump, on_load
+  if (type == ACTION_PARAM_HOLD) {
+    switch (trigger) {
+      case ACTION_TRIGGER_TOUCHPAD_8_11:
+      case ACTION_TRIGGER_BUTTON:
+      case ACTION_TRIGGER_EXPR_SWITCH:
+        return true;
+      default:
+        return false;
+    }
+  }
+  
+  // Param Cycle restrictions:
+  // - Valid: Pads 8-11, Buttons, Bump, Expression switch
+  // - Invalid: Pads 0-7, on_load
+  if (type == ACTION_PARAM_CYCLE) {
+    switch (trigger) {
+      case ACTION_TRIGGER_TOUCHPAD_8_11:
+      case ACTION_TRIGGER_BUTTON:
+      case ACTION_TRIGGER_BUMP:
+      case ACTION_TRIGGER_EXPR_SWITCH:
+        return true;
+      default:
+        return false;
+    }
   }
   
   return true;

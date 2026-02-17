@@ -720,7 +720,7 @@ void lfo_enable(uint8_t slot, bool enabled) {
     }
     s_lfo[slot].last_sent_value = 255;  // Force first send
   }
-  ESP_LOGI(TAG, "LFO%d %s", slot + 1, enabled ? "enabled" : "disabled");
+  ESP_LOGD(TAG, "LFO%d %s", slot + 1, enabled ? "enabled" : "disabled");
 }
 
 bool lfo_is_enabled(uint8_t slot) {

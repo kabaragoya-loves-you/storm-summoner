@@ -143,6 +143,7 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   app_mode_t mode = ui_get_app_mode();
   if (mode != APP_MODE_PERFORMANCE) {
     ESP_LOGW(TAG, "Pad 12 long press ignored - mode is %d (expected Performance)", mode);
+    touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
     return;
   }
   
@@ -153,6 +154,7 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   if (uptime_ms < BOOT_GRACE_PERIOD_MS) {
     ESP_LOGW(TAG, "Pad 12 long press ignored - within boot grace period (%"PRIu32"ms < %dms)",
       uptime_ms, BOOT_GRACE_PERIOD_MS);
+    touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
     return;
   }
   
@@ -160,6 +162,7 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   // This catches spurious press events that didn't have a corresponding release.
   if (!touch_is_pad_pressed(BUTTON_13_LOGICAL_PAD)) {
     ESP_LOGW(TAG, "Pad 12 long press ignored - software state shows released");
+    touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
     return;
   }
   
@@ -181,14 +184,18 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
       if (!hardware_touched) {
         ESP_LOGW(TAG, "Pad 12 long press ignored - hardware shows idle (delta=%"PRId32", thresh=%"PRIu32")",
           delta, calib_data.threshold);
+        touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
         return;
       }
     }
   }
   
-  // All checks passed - this is a legitimate long press
+  // All checks passed - this is a legitimate long press.
+  // Keep hold_active set: the user's finger is still on the pad and needs
+  // protection from spurious releases until they actually lift it. The
+  // release event handlers clear hold_active when the finger is lifted.
   s_long_press_timer_fired = true;
-  ESP_LOGI(TAG, "Pad 12 long press detected - entering Programming Mode");
+  ESP_LOGD(TAG, "Pad 12 long press detected - entering Programming Mode");
   
   // Post mode change event - handle in event bus task context (safe for LVGL)
   event_t event = {
@@ -231,8 +238,9 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       app_mode_t mode = ui_get_app_mode();
       if (mode == APP_MODE_PERFORMANCE || mode == APP_MODE_SCREENSAVER) {
         s_long_press_timer_fired = false;
+        touch_set_hold_active(BUTTON_13_LOGICAL_PAD, true);
         xTimerStart(s_button13_long_press_timer, 0);
-        ESP_LOGI(TAG, "Pad 12 pressed - long press timer started (mode=%d)", mode);
+        ESP_LOGD(TAG, "Pad 12 pressed - long press timer started (mode=%d)", mode);
       } else {
         ESP_LOGD(TAG, "Pad 12 pressed in Programming mode - long press timer not started");
       }
@@ -295,6 +303,7 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       
       // Handle Button 13 (back/cancel) - require minimum press duration
       if (pad_id == BUTTON_13_LOGICAL_PAD) {
+        touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
         xTimerStop(s_button13_long_press_timer, 0);
         
         if (s_long_press_timer_fired) {
@@ -318,6 +327,7 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     
     // Handle Button 13 release (for Performance mode)
     if (pad_id == BUTTON_13_LOGICAL_PAD) {
+      touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
       xTimerStop(s_button13_long_press_timer, 0);
     }
   }

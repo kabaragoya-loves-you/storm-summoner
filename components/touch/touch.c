@@ -203,6 +203,43 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     }
   }
   
+  // Suppress spurious RELEASE events for pads with active holds.
+  // During sustained presses, benchmark drift can cause the delta to momentarily
+  // drop below threshold, triggering a hardware inactive callback. Sample the
+  // sensor multiple times over a short window to catch the signal when it
+  // swings back above threshold (standard capacitive touch debounce).
+  if (!is_pressed && s_hold_active[pad_index]) {
+    touch_pad_calibration_t calib_data;
+    esp_err_t calib_ret = touch_get_calibration_data(
+      TOUCH_PADS[pad_index], &calib_data);
+
+    if (calib_ret == ESP_OK && calib_data.valid) {
+      int32_t hold_release_thresh = (int32_t)(calib_data.threshold / 4);
+      int32_t max_delta = 0;
+
+      for (int attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(8));
+        uint32_t smooth[1], benchmark[1];
+        esp_err_t e1 = touch_channel_read_data(s_chan_handles[pad_index],
+          TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+        esp_err_t e2 = touch_channel_read_data(s_chan_handles[pad_index],
+          TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+        if (e1 == ESP_OK && e2 == ESP_OK) {
+          int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
+          if (delta > max_delta) max_delta = delta;
+          if (delta > hold_release_thresh) break;
+        }
+      }
+
+      if (max_delta > hold_release_thresh) {
+        ESP_LOGD(TAG, "Hold-active pad %d spurious RELEASE suppressed"
+          " (max_delta=%"PRId32", thresh=%"PRIu32")",
+          pad_index, max_delta, calib_data.threshold);
+        return;
+      }
+    }
+  }
+
   // Route pad 0-7 events to active touchwheel instances
   // Route in both performance mode AND programming mode
   if (pad_index < 8 && s_num_touchwheel_instances > 0) {
@@ -352,6 +389,15 @@ static void touch_health_check_task(void *pvParameters) {
       // just correct the software state. This fixes missed press/release events.
       // NO RECOVERY NEEDED - the pad is fine, just the state got out of sync.
       if (s_button_pressed_states[i] != hardware_is_touching) {
+        // Skip PRESSED→RELEASED correction for held pads - benchmark drift during
+        // sustained presses makes the delta unreliable. The stuck touch timeout
+        // (step 5) still catches genuinely stuck pads.
+        if (s_hold_active[i] && s_button_pressed_states[i] && !hardware_is_touching) {
+          ESP_LOGD(TAG, "Health check: Pad %d mismatch skipped (hold active, delta=%"PRId32")",
+            i, delta);
+          continue;
+        }
+        
         ESP_LOGD(TAG, "Health check: Pad %d state sync (SW=%s -> HW=%s)",
           i, s_button_pressed_states[i] ? "PRESSED" : "RELEASED", 
           hardware_is_touching ? "TOUCHING" : "IDLE");

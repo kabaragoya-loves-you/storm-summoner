@@ -538,7 +538,9 @@
             "cut_hold",
             "set_ui",
             "ui_hold",
-            "ui_cycle"
+            "ui_cycle",
+            "param_hold",
+            "param_cycle"
           ],
           "description": "Action type name"
         },
@@ -1085,6 +1087,59 @@
                   "minimum": 0
                 },
                 "description": "UI module indices to cycle through"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "param_hold"}
+            }
+          },
+          "then": {
+            "required": ["param", "param2"],
+            "properties": {
+              "param": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number for touchwheel slot 1 on press"
+              },
+              "param2": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number for touchwheel slot 1 on release"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "param_cycle"}
+            }
+          },
+          "then": {
+            "required": ["num_params", "params"],
+            "properties": {
+              "num_params": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8,
+                "description": "Number of CC values in cycle"
+              },
+              "params": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 127
+                },
+                "description": "CC numbers for touchwheel slot 1 to cycle through"
               }
             }
           }

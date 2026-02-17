@@ -75,6 +75,10 @@ typedef enum {
   ACTION_UI_HOLD,             // Switch on press, restore on release
   ACTION_UI_CYCLE,            // Cycle through UI modules on each press
   
+  // Touchwheel CC slot 1 control
+  ACTION_PARAM_HOLD,          // Hold: swap CC slot 1 on press, restore on release
+  ACTION_PARAM_CYCLE,         // Cycle through CC values for slot 1
+  
   ACTION_MAX
 } action_type_t;
 
@@ -275,6 +279,15 @@ typedef struct {
       uint8_t modules[8];       // For cycle: module indices
       uint8_t current_index;    // Current position in cycle
     } ui;
+    
+    // For param slot actions (param_hold, param_cycle)
+    struct {
+      uint8_t param;            // CC number for press/set
+      uint8_t param2;           // For hold: CC number on release
+      uint8_t num_params;       // For cycle: number of params (2-8)
+      uint8_t params[8];        // For cycle: CC numbers
+      uint8_t current_index;    // Current position in cycle
+    } tw_param;
   } params;
 } action_t;
 
