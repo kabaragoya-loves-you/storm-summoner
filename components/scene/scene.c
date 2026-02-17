@@ -1727,7 +1727,9 @@ esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name) {
 
 const char* scene_get_ui_module(uint8_t scene_index) {
   if (scene_index > MAX_SCENE_INDEX) return "beat";
-  scene_t* scene = get_scene_for_modification(scene_index);
+  // Only current scene is kept in memory; return default for non-current
+  if (scene_index != g_scene_manager.current_scene_index) return "beat";
+  scene_t* scene = scene_get_current();
   if (!scene || scene->ui_module[0] == '\0') return "beat";
   return scene->ui_module;
 }

@@ -39,6 +39,8 @@ static const int num_modules = sizeof(available_modules) / sizeof(available_modu
 const char* const ui_scene_selectable_modules[] = {
   "beat",
   "space",
+  "summoner",
+  "pixels",
 };
 const int ui_scene_selectable_module_count =
   sizeof(ui_scene_selectable_modules) / sizeof(ui_scene_selectable_modules[0]);
