@@ -11,7 +11,7 @@
 #include "esp_timer.h"
 #include <math.h>
 
-#define TAG "SCENE_UI"
+#define TAG "BEAT"
 
 //=============================================================================
 // CONFIGURATION
@@ -131,12 +131,12 @@ static uint8_t g_body_ratio = DEFAULT_BODY_RATIO;
 static bool g_animation_enabled = true;
 static bool g_pulse_enabled = true;
 
-static ui_module_setting_t scene_settings[] = {
+static ui_module_setting_t beat_settings[] = {
   { "animation", UI_SETTING_BOOL, &g_animation_enabled, "Enable/disable animation", NULL, NULL },
   { "pulse", UI_SETTING_BOOL, &g_pulse_enabled, "Red pulse on beat 1", NULL, NULL },
   { "body_ratio", UI_SETTING_U8, &g_body_ratio, "Body loops per tail cycle", NULL, NULL },
 };
-static const size_t scene_settings_count = sizeof(scene_settings) / sizeof(scene_settings[0]);
+static const size_t beat_settings_count = sizeof(beat_settings) / sizeof(beat_settings[0]);
 
 // Beat tracking (volatile - updated from event handler context)
 static volatile uint8_t g_current_beat = 1;      // 1-based beat position
@@ -559,7 +559,7 @@ static void interp_timer_cb(lv_timer_t *timer) {
 // MODULE CALLBACKS
 //=============================================================================
 
-static void scene_draw_deferred_cb(lv_timer_t *timer) {
+static void beat_draw_deferred_cb(lv_timer_t *timer) {
   if (g_screen != NULL) {
     lv_screen_load(g_screen);
     lv_timer_delete(timer);
@@ -700,16 +700,16 @@ static void scene_draw_deferred_cb(lv_timer_t *timer) {
   // Mark module as active
   g_module_active = true;
   
-  ESP_LOGI(TAG, "Scene UI screen created - BPM: %d, Time Sig: %d/%d, Body ratio: %d",
+  ESP_LOGI(TAG, "Beat module created - BPM: %d, Time Sig: %d/%d, Body ratio: %d",
            g_current_bpm, sig.numerator, sig.denominator, g_body_ratio);
   
   lv_screen_load(g_screen);
   lv_timer_delete(timer);
 }
 
-UI_CREATE_DEFERRED_DRAW_FUNC(scene_ui, scene_draw_deferred_cb)
+UI_CREATE_DEFERRED_DRAW_FUNC(beat, beat_draw_deferred_cb)
 
-static void scene_ui_teardown(void) {
+static void beat_teardown(void) {
   // Mark module as inactive first
   g_module_active = false;
 
@@ -743,20 +743,21 @@ static void scene_ui_teardown(void) {
   g_last_label_state = TRANSPORT_STOPPED;
 }
 
-static void scene_ui_init(void) {
+static void beat_init(void) {
   static bool s_settings_registered = false;
   if (s_settings_registered) return;
   s_settings_registered = true;
   
   // Register module settings (once at startup, so they're always available)
-  ui_module_register_settings("scene", scene_settings, scene_settings_count);
-  ESP_LOGD(TAG, "Scene UI module settings registered");
+  ui_module_register_settings("beat", beat_settings, beat_settings_count);
+  ESP_LOGD(TAG, "Beat module settings registered");
 }
 
-ui_draw_module_t scene_ui_module = {
-  .draw_func = scene_ui_draw,
-  .teardown_func = scene_ui_teardown,
-  .init_func = scene_ui_init,
-  .name = "scene"
+ui_draw_module_t beat_module = {
+  .draw_func = beat_draw,
+  .teardown_func = beat_teardown,
+  .init_func = beat_init,
+  .name = "beat",
+  .title = "Beat Grid"
 };
 

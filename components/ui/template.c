@@ -74,5 +74,6 @@ ui_draw_module_t template_module = {
   .draw_func = template_draw,
   .teardown_func = template_teardown,
   .init_func = template_init,
-  .name = "template"
+  .name = "template",
+  .title = "Template"
 };

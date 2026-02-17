@@ -102,5 +102,6 @@ ui_draw_module_t sphere_module = {
   .draw_func = sphere_draw,
   .teardown_func = sphere_teardown,
   .init_func = sphere_init,
-  .name = "sphere"
+  .name = "sphere",
+  .title = "Sphere"
 };

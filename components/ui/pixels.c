@@ -340,5 +340,6 @@ ui_draw_module_t pixels_module = {
   .draw_func = pixels_draw,
   .teardown_func = pixels_teardown,
   .init_func = pixels_init,
-  .name = "pixels"
+  .name = "pixels",
+  .title = "Pixels"
 };

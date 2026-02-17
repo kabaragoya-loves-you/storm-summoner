@@ -74,5 +74,6 @@ ui_draw_module_t pizza_module = {
   .draw_func = pizza_draw,
   .teardown_func = pizza_teardown,
   .init_func = pizza_init,
-  .name = "pizza"
+  .name = "pizza",
+  .title = "Pizza"
 };

@@ -1,6 +1,6 @@
 {
   "name": "Tap & Randomize",
-  "ui_module": "scene",
+  "ui_module": "beat",
   "program_number": 1,
   "send_pc_on_load": true,
   "touchwheel_mode": "pads",

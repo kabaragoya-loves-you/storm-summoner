@@ -452,5 +452,6 @@ ui_draw_module_t splash_module = {
   .draw_func = splash_draw,
   .teardown_func = splash_teardown,
   .init_func = splash_init,
-  .name = "splash"
+  .name = "splash",
+  .title = "Splash"
 };

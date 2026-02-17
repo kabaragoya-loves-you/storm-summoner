@@ -1,6 +1,6 @@
 {
 	"name":	"Default Scene",
-	"ui_module":	"scene",
+	"ui_module":	"beat",
 	"program_number":	0,
 	"send_pc_on_load":	true,
 	"touchwheel_mode":	"program_change",

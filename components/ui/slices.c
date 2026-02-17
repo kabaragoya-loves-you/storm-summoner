@@ -77,5 +77,6 @@ ui_draw_module_t slices_module = {
   .draw_func = slices_draw,
   .teardown_func = slices_teardown,
   .init_func = slices_init,
-  .name = "slices"
+  .name = "slices",
+  .title = "Slices"
 };

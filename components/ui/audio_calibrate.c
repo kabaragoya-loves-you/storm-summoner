@@ -295,5 +295,6 @@ ui_draw_module_t audio_calibrate_module = {
   .draw_func = audio_calibrate_draw,
   .teardown_func = audio_calibrate_teardown,
   .init_func = audio_calibrate_init,
-  .name = "audio_calibrate"
+  .name = "audio_calibrate",
+  .title = "Audio Calibrate"
 };

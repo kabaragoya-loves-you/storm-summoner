@@ -120,7 +120,8 @@ ui_draw_module_t boundary_circle_module = {
   .draw_func = boundary_circle_draw,
   .teardown_func = boundary_circle_teardown,
   .init_func = boundary_circle_init,
-  .name = "boundary_circle"
+  .name = "boundary_circle",
+  .title = "Boundary Circle"
 };
 
 // Calibration API

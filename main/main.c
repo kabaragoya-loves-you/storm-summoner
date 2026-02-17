@@ -146,9 +146,9 @@ void app_main(void) {
   console_repl_init();
 
   // Now that all tasks are created and memory is settled, load the UI module
-  // The scene module triggers decompression of animated vector art which
+  // The beat module triggers decompression of animated vector art which
   // uses significant memory - doing this last prevents resource contention
-  // ui_set_draw_module(&scene_ui_module);
+  // ui_set_draw_module(&beat_module);
 
   #if ENABLE_PERFORMANCE_MONITORING
   performance_init();
@@ -182,10 +182,10 @@ void app_main(void) {
   // Wait for splash animation to complete before switching to main UI
   vTaskDelay(pdMS_TO_TICKS(1500));
 
-  // Load UI module specified by the current scene (defaults to "scene")
+  // Load UI module specified by the current scene (defaults to "beat")
   const char* module_name = scene_get_ui_module(scene_get_current_index());
   ui_draw_module_t* startup_module = ui_get_module_by_name(module_name);
-  ui_set_draw_module(startup_module ? startup_module : &scene_ui_module);
+  ui_set_draw_module(startup_module ? startup_module : &beat_module);
   tempo_start();
 
   // Start LFO task (component was initialized earlier with other MIDI handlers)

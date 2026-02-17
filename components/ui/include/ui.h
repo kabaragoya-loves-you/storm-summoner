@@ -20,6 +20,7 @@ typedef struct {
   ui_teardown_func_t teardown_func;
   ui_init_func_t init_func;
   const char* name;
+  const char* title;  // User-facing display name (e.g. "Beat Grid")
 } ui_draw_module_t;
 
 #define UI_CREATE_DEFERRED_DRAW_FUNC(module_name, deferred_cb_func) \
@@ -44,12 +45,12 @@ int32_t boundary_circle_get_top(void);
 extern ui_draw_module_t pizza_module;
 extern ui_draw_module_t slices_module;
 extern ui_draw_module_t sphere_module;
-extern ui_draw_module_t buttons_module;
+extern ui_draw_module_t space_module;
 extern ui_draw_module_t template_module;
 extern ui_draw_module_t splash_module;
 extern ui_draw_module_t summoner_module;
 extern ui_draw_module_t pixels_module;
-extern ui_draw_module_t scene_ui_module;
+extern ui_draw_module_t beat_module;
 extern ui_draw_module_t working_module;
 
 void ui_init(void);
@@ -63,6 +64,9 @@ extern const int ui_scene_selectable_module_count;
 
 // Look up a draw module by name (searches all registered modules)
 ui_draw_module_t* ui_get_module_by_name(const char* name);
+
+// Get the user-facing title for a module (falls back to name if title is NULL)
+const char* ui_get_module_title(const char* name);
 
 app_mode_t ui_get_app_mode(void);
 void ui_set_app_mode(app_mode_t mode);

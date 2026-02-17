@@ -273,7 +273,7 @@ static void screen_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   uint8_t scene_index = scene_get_current_index();
   const char* module_name = (selected_index < (uint32_t)ui_scene_selectable_module_count)
-    ? ui_scene_selectable_modules[selected_index] : "scene";
+    ? ui_scene_selectable_modules[selected_index] : "beat";
   esp_err_t ret = scene_set_ui_module(scene_index, module_name);
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to set UI module: %s", esp_err_to_name(ret));
@@ -285,20 +285,14 @@ static lv_obj_t* screen_roller_create(void) {
   const char* current_module = scene_get_ui_module(scene_get_current_index());
   uint32_t current_idx = 0;
 
-  // Build options string from selectable modules (capitalize first letter)
+  // Build options string from selectable modules (using titles)
   static char options[256];
   options[0] = '\0';
   for (int i = 0; i < ui_scene_selectable_module_count; i++) {
     if (i > 0) strncat(options, "\n", sizeof(options) - strlen(options) - 1);
     const char* name = ui_scene_selectable_modules[i];
-    size_t pos = strlen(options);
-    if (pos < sizeof(options) - 2) {
-      // Capitalize first letter
-      options[pos] = (name[0] >= 'a' && name[0] <= 'z')
-        ? name[0] - 32 : name[0];
-      options[pos + 1] = '\0';
-      strncat(options, name + 1, sizeof(options) - strlen(options) - 1);
-    }
+    const char* title = ui_get_module_title(name);
+    strncat(options, title, sizeof(options) - strlen(options) - 1);
     if (strcmp(name, current_module) == 0)
       current_idx = (uint32_t)i;
   }
@@ -728,13 +722,8 @@ lv_obj_t* menu_page_current_scene_create(void) {
   // Screen (UI module)
   {
     const char* mod_name = scene_get_ui_module(scene_index);
-    // Capitalize first letter of module name
-    char cap_name[MAX_UI_MODULE_NAME];
-    strncpy(cap_name, mod_name, sizeof(cap_name) - 1);
-    cap_name[sizeof(cap_name) - 1] = '\0';
-    if (cap_name[0] >= 'a' && cap_name[0] <= 'z')
-      cap_name[0] -= 32;
-    snprintf(s_screen_label, sizeof(s_screen_label), "Screen: %s", cap_name);
+    const char* title = ui_get_module_title(mod_name);
+    snprintf(s_screen_label, sizeof(s_screen_label), "Screen: %s", title);
     s_scene_items[idx++] = (menu_item_t){ s_screen_label, nav_to_screen, NULL, false };
   }
   

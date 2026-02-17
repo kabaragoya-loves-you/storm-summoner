@@ -67,5 +67,6 @@ ui_draw_module_t working_module = {
   .draw_func = working_draw,
   .teardown_func = working_teardown,
   .init_func = working_init,
-  .name = "working"
+  .name = "working",
+  .title = "Working"
 };

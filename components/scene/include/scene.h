@@ -70,7 +70,7 @@ typedef struct {
 typedef struct {
   char name[17];              // Scene name (max 16 chars + null)
   char device_id[64];         // Device slug (empty = use global device_config)
-  char ui_module[MAX_UI_MODULE_NAME]; // UI module to load with scene (empty = "scene")
+  char ui_module[MAX_UI_MODULE_NAME]; // UI module to load with scene (empty = "beat")
   
   // Program change settings (modes 2 & 3)
   uint8_t program_number;     // PC value (0-127)

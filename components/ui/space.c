@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TAG "BUTTONS"
+#define TAG "SPACE"
 
 // Base dimensions for scaling (240x240 IPS display)
 #define BASE_SIZE 240
@@ -101,12 +101,12 @@ static void on_planet_change(void) {
 }
 
 // Module settings
-static ui_module_setting_t buttons_settings[] = {
+static ui_module_setting_t space_settings[] = {
   { "rotation", UI_SETTING_FLOAT, &g_rotation_speed, "Planet rotation speed", NULL, NULL },
   { "planet", UI_SETTING_ENUM, g_planet_name, "Planet texture", on_planet_change, planet_options },
 };
-static const size_t buttons_settings_count = 
-  sizeof(buttons_settings) / sizeof(buttons_settings[0]);
+static const size_t space_settings_count = 
+  sizeof(space_settings) / sizeof(space_settings[0]);
 
 // Display info
 static uint16_t g_disp_width = 0;
@@ -206,7 +206,7 @@ static void planet_anim_cb(lv_timer_t *timer) {
 // Module lifecycle
 //=============================================================================
 
-static void buttons_draw_deferred_cb(lv_timer_t *timer) {
+static void space_draw_deferred_cb(lv_timer_t *timer) {
   if (!canvas) {
     lv_timer_delete(timer);
     return;
@@ -297,7 +297,7 @@ static void buttons_draw_deferred_cb(lv_timer_t *timer) {
     // Start planet animation timer
     g_planet_timer = lv_timer_create(planet_anim_cb, PLANET_ANIM_MS, NULL);
     
-    ESP_LOGI(TAG, "Buttons: %dx%d, planet=%dpx", 
+    ESP_LOGI(TAG, "Space: %dx%d, planet=%dpx", 
              g_disp_width, g_disp_height, g_planet_header.diameter);
   }
   
@@ -305,9 +305,9 @@ static void buttons_draw_deferred_cb(lv_timer_t *timer) {
   lv_timer_delete(timer);
 }
 
-UI_CREATE_DEFERRED_DRAW_FUNC(buttons, buttons_draw_deferred_cb)
+UI_CREATE_DEFERRED_DRAW_FUNC(space, space_draw_deferred_cb)
 
-static void buttons_teardown(void) {
+static void space_teardown(void) {
   if (g_planet_timer) {
     lv_timer_delete(g_planet_timer);
     g_planet_timer = NULL;
@@ -325,19 +325,20 @@ static void buttons_teardown(void) {
     g_planet_buffer = NULL;
   }
   free_planet();
-  ESP_LOGD(TAG, "Buttons teardown complete");
+  ESP_LOGD(TAG, "Space teardown complete");
 }
 
-static void buttons_init(void) {
-  ui_module_register_settings("buttons", buttons_settings, buttons_settings_count);
-  ESP_LOGI(TAG, "Buttons module initialized");
+static void space_init(void) {
+  ui_module_register_settings("space", space_settings, space_settings_count);
+  ESP_LOGI(TAG, "Space module initialized");
 }
 
-ui_draw_module_t buttons_module = {
-  .draw_func = buttons_draw,
-  .teardown_func = buttons_teardown,
-  .init_func = buttons_init,
-  .name = "buttons"
+ui_draw_module_t space_module = {
+  .draw_func = space_draw,
+  .teardown_func = space_teardown,
+  .init_func = space_init,
+  .name = "space",
+  .title = "Space"
 };
 
 //=============================================================================

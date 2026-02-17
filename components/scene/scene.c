@@ -1411,7 +1411,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Switch UI module for this scene (only in performance mode)
   if (!ui_is_in_programming_mode()) {
     const char* mod_name = (new_scene->ui_module[0] != '\0')
-      ? new_scene->ui_module : "scene";
+      ? new_scene->ui_module : "beat";
     ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
     if (mod) ui_set_draw_module(mod);
   }
@@ -1479,7 +1479,7 @@ void scene_apply_deferred_init(void) {
   
   // Switch UI module for this scene
   const char* mod_name = (scene->ui_module[0] != '\0')
-    ? scene->ui_module : "scene";
+    ? scene->ui_module : "beat";
   ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
   if (mod) ui_set_draw_module(mod);
 }
@@ -1711,13 +1711,13 @@ esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name) {
   scene_persist_if_programming();
   ESP_LOGI(TAG, "Scene %d ui_module set to: %s",
     scene_index + 1,
-    scene->ui_module[0] ? scene->ui_module : "scene (default)");
+    scene->ui_module[0] ? scene->ui_module : "beat (default)");
 
   // Switch immediately if this is the current scene and we're in performance mode
   if (scene_index == g_scene_manager.current_scene_index &&
       !ui_is_in_programming_mode()) {
     const char* mod_name = (scene->ui_module[0] != '\0')
-      ? scene->ui_module : "scene";
+      ? scene->ui_module : "beat";
     ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
     if (mod) ui_set_draw_module(mod);
   }
@@ -1726,9 +1726,9 @@ esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name) {
 }
 
 const char* scene_get_ui_module(uint8_t scene_index) {
-  if (scene_index > MAX_SCENE_INDEX) return "scene";
+  if (scene_index > MAX_SCENE_INDEX) return "beat";
   scene_t* scene = get_scene_for_modification(scene_index);
-  if (!scene || scene->ui_module[0] == '\0') return "scene";
+  if (!scene || scene->ui_module[0] == '\0') return "beat";
   return scene->ui_module;
 }
 
@@ -3887,8 +3887,8 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "name", scene->name);
 
-  // Only write ui_module if it's set (non-empty and not the default "scene")
-  if (scene->ui_module[0] != '\0' && strcmp(scene->ui_module, "scene") != 0) {
+  // Only write ui_module if it's set (non-empty and not the default "beat")
+  if (scene->ui_module[0] != '\0' && strcmp(scene->ui_module, "beat") != 0) {
     cJSON_AddStringToObject(root, "ui_module", scene->ui_module);
   }
 
@@ -4044,14 +4044,14 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     scene->name[sizeof(scene->name) - 1] = '\0';
   }
 
-  // Parse ui_module (optional - empty/missing means "scene")
+  // Parse ui_module (optional - empty/missing means "beat")
   cJSON* ui_module = cJSON_GetObjectItem(root, "ui_module");
   if (ui_module && cJSON_IsString(ui_module)) {
     strncpy(scene->ui_module, ui_module->valuestring,
       sizeof(scene->ui_module) - 1);
     scene->ui_module[sizeof(scene->ui_module) - 1] = '\0';
   } else {
-    scene->ui_module[0] = '\0';  // Default: use "scene"
+    scene->ui_module[0] = '\0';  // Default: use "beat"
   }
 
   // Parse device_id (optional - empty means use global device_config)

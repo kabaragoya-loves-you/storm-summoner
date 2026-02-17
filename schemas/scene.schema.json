@@ -14,8 +14,8 @@
     "ui_module": {
       "type": "string",
       "maxLength": 15,
-      "default": "scene",
-      "description": "UI module to display when this scene loads (e.g. scene, buttons)"
+      "default": "beat",
+      "description": "UI module to display when this scene loads (e.g. beat, space)"
     },
     "device_id": {
       "type": "string",

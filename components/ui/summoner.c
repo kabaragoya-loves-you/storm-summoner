@@ -166,6 +166,7 @@ ui_draw_module_t summoner_module = {
   .draw_func = summoner_draw,
   .teardown_func = summoner_teardown,
   .init_func = summoner_init,
-  .name = "summoner"
+  .name = "summoner",
+  .title = "Summoner"
 };
 

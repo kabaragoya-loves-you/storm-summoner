@@ -430,7 +430,8 @@ ui_draw_module_t text_edit_module = {
   .draw_func = text_edit_draw,
   .teardown_func = text_edit_teardown,
   .init_func = text_edit_init,
-  .name = "text_edit"
+  .name = "text_edit",
+  .title = "Text Edit"
 };
 
 // Alias for backward compatibility
@@ -438,5 +439,6 @@ ui_draw_module_t name_edit_module = {
   .draw_func = text_edit_draw,
   .teardown_func = text_edit_teardown,
   .init_func = text_edit_init,
-  .name = "name_edit"
+  .name = "name_edit",
+  .title = "Name Edit"
 };

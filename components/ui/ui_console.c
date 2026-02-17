@@ -21,14 +21,14 @@ static const int num_registered_commands = sizeof(registered_commands) / sizeof(
 // Registry of available modules for runtime switching
 static ui_draw_module_t* available_modules[] = {
   &boundary_circle_module,
-  &buttons_module,
+  &space_module,
   &pixels_module,
   &pizza_module,
   &slices_module,
   &sphere_module,
   &splash_module,
   &summoner_module,
-  &scene_ui_module,
+  &beat_module,
   &template_module,
   &working_module,
 };
@@ -37,19 +37,30 @@ static const int num_modules = sizeof(available_modules) / sizeof(available_modu
 // Scene-selectable UI modules (subset for per-scene screen selection)
 // Add new user-facing screens here as they become available.
 const char* const ui_scene_selectable_modules[] = {
-  "scene",
-  "buttons",
+  "beat",
+  "space",
 };
 const int ui_scene_selectable_module_count =
   sizeof(ui_scene_selectable_modules) / sizeof(ui_scene_selectable_modules[0]);
 
 ui_draw_module_t* ui_get_module_by_name(const char* name) {
   if (!name || name[0] == '\0') return NULL;
+  
+  // Backward compatibility: map old module names to new ones
+  if (strcmp(name, "scene") == 0) name = "beat";
+  else if (strcmp(name, "buttons") == 0) name = "space";
+  
   for (int i = 0; i < num_modules; i++) {
     if (strcmp(available_modules[i]->name, name) == 0)
       return available_modules[i];
   }
   return NULL;
+}
+
+const char* ui_get_module_title(const char* name) {
+  ui_draw_module_t* mod = ui_get_module_by_name(name);
+  if (!mod) return name;  // Fallback to input name if not found
+  return (mod->title && mod->title[0]) ? mod->title : mod->name;
 }
 
 // Command: info

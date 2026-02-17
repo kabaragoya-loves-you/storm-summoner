@@ -3420,30 +3420,19 @@ static void nav_to_lfo_slot(void* user_data) {
 // UI Module Roller (for ACTION_SET_UI, ACTION_UI_HOLD)
 // ============================================================================
 
-// Helper to get capitalized module name
+// Helper to get module display title from index
 static const char* get_ui_module_display_name(uint8_t idx) {
   if (idx >= ui_scene_selectable_module_count) return "Unknown";
-  static char cap_name[MAX_UI_MODULE_NAME];
-  const char* name = ui_scene_selectable_modules[idx];
-  strncpy(cap_name, name, sizeof(cap_name) - 1);
-  cap_name[sizeof(cap_name) - 1] = '\0';
-  if (cap_name[0] >= 'a' && cap_name[0] <= 'z')
-    cap_name[0] -= 32;
-  return cap_name;
+  return ui_get_module_title(ui_scene_selectable_modules[idx]);
 }
 
-// Build roller options string from selectable modules (capitalized)
+// Build roller options string from selectable modules (using titles)
 static void build_ui_module_options(char* buf, size_t buf_size) {
   buf[0] = '\0';
   for (int i = 0; i < ui_scene_selectable_module_count; i++) {
     if (i > 0) strncat(buf, "\n", buf_size - strlen(buf) - 1);
-    const char* name = ui_scene_selectable_modules[i];
-    size_t pos = strlen(buf);
-    if (pos < buf_size - 2) {
-      buf[pos] = (name[0] >= 'a' && name[0] <= 'z') ? name[0] - 32 : name[0];
-      buf[pos + 1] = '\0';
-      strncat(buf, name + 1, buf_size - strlen(buf) - 1);
-    }
+    const char* title = ui_get_module_title(ui_scene_selectable_modules[i]);
+    strncat(buf, title, buf_size - strlen(buf) - 1);
   }
 }
 

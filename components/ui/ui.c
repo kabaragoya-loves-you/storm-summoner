@@ -242,10 +242,15 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
   menu_page_proximity_scene_cleanup();
   menu_page_als_scene_cleanup();
   
-  // Restore Performance mode
-  if (saved_draw_module) {
-    current_draw_module = saved_draw_module;
-    saved_draw_module = NULL;
+  // Restore Performance mode - use scene's ui_module (may have changed)
+  saved_draw_module = NULL;  // Clear saved reference
+  const char* scene_module = scene_get_ui_module(scene_get_current_index());
+  ui_draw_module_t* mod = ui_get_module_by_name(scene_module);
+  if (mod) {
+    current_draw_module = mod;
+  } else {
+    // Fallback to beat module if scene's module is invalid
+    current_draw_module = &beat_module;
   }
   
   // Show canvas
