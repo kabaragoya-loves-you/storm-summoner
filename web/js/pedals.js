@@ -618,7 +618,7 @@ application.register(
       await this.connection.sendRaw(`LOAD ${slug}\n`)
       const sizeResponse = await this.readLine(5000)
 
-      if (!sizeResponse.startsWith('SIZE ')) {
+      if (!sizeResponse || !sizeResponse.startsWith('SIZE ')) {
         throw new Error('Failed to reload device')
       }
 
