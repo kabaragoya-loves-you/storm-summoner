@@ -54,6 +54,9 @@ static esp_err_t set_preset_wrap(uint32_t v) { return config_set_preset_wrap(v !
 static uint32_t get_persist_scene(void) { return config_get_persist_scene() ? 1 : 0; }
 static esp_err_t set_persist_scene(uint32_t v) { return config_set_persist_scene(v != 0); }
 
+static uint32_t get_device_mode(void) { return (uint32_t)config_get_device_mode(); }
+static esp_err_t set_device_mode(uint32_t v) { return config_set_device_mode((device_mode_t)v); }
+
 // Touch wrappers
 static uint32_t get_stuck_timeout(void) { return touch_get_stuck_timeout_ms(); }
 static esp_err_t set_stuck_timeout(uint32_t v) {
@@ -355,6 +358,7 @@ static esp_err_t set_screensaver_mode(uint32_t v) {
 static const setting_entry_t s_settings[] = {
   // Config category
   {"config.scene_mode", get_scene_mode, set_scene_mode},
+  {"config.device_mode", get_device_mode, set_device_mode},
   {"config.confirm_change", get_confirm_change, set_confirm_change},
   {"config.preset_wrap", get_preset_wrap, set_preset_wrap},
   {"config.persist_scene", get_persist_scene, set_persist_scene},

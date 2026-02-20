@@ -403,7 +403,7 @@ static int get_next_poly_voice(uint8_t note) {
 
 // Clean up any active touchwheel notes (call before mode changes, suspend, disable, etc.)
 static void touchwheel_cleanup_active_notes(void) {
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
   
   // Clean up poly voices
   for (int i = 0; i < MAX_POLY_VOICES; i++) {
@@ -437,7 +437,7 @@ static void latch_release_timer_cb(void* arg) {
   
   poly_voice_t* voice = &s_poly_voices[voice_idx];
   if (voice->active) {
-    uint8_t channel = device_config_get_channel() - 1;
+    uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
     send_note_off(channel, voice->note, 0);
     ESP_LOGD(TAG, "Latch release: Note OFF %d (voice %d)", voice->note, voice_idx);
     voice->active = false;
@@ -536,7 +536,7 @@ static void touchwheel_pitch_bend_callback(int value, void* user_data) {
   if (new_pitch_bend < -8192) new_pitch_bend = -8192;
   if (new_pitch_bend > 8191) new_pitch_bend = 8191;
   
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
   
   // Calculate delta from previous position
   int delta = new_pitch_bend - s_touchwheel_prev_pitch_bend;
@@ -570,7 +570,7 @@ static void pitch_bend_return_timer_cb(void* arg) {
   if (!s_pb_anim_sequence || s_pb_anim_index >= s_pb_anim_length) {
     s_touchwheel_pitch_bend = 0;
     s_touchwheel_prev_pitch_bend = 0;
-    uint8_t channel = device_config_get_channel() - 1;
+    uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
     send_pitch_bend(channel, 0);
     esp_timer_stop(s_pitch_bend_timer);
     return;
@@ -583,7 +583,7 @@ static void pitch_bend_return_timer_cb(void* arg) {
   s_touchwheel_pitch_bend = s_pb_anim_negative ? -value : value;
   
   // Send the pitch bend
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
   send_pitch_bend(channel, (int16_t)s_touchwheel_pitch_bend);
   
   // Advance to next frame
@@ -617,7 +617,7 @@ static void touchwheel_pitch_bend_release_callback(void* user_data) {
     if (esp_timer_create(&timer_args, &s_pitch_bend_timer) != ESP_OK) {
       // Fallback: immediate return
       s_touchwheel_pitch_bend = 0;
-      uint8_t channel = device_config_get_channel() - 1;
+      uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
       send_pitch_bend(channel, 0);
       return;
     }
@@ -670,7 +670,7 @@ static void touchwheel_aftertouch_callback(int value, void* user_data) {
     s_touchwheel_aftertouch = midi_value;
   }
   
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
   send_channel_aftertouch(channel, midi_value);
   ESP_LOGD(TAG, "Touchwheel aftertouch: %d", midi_value);
 }
@@ -696,7 +696,7 @@ static void touchwheel_double_cc_callback(int value, void* user_data) {
   if (s_touchwheel_14bit_value < 0) s_touchwheel_14bit_value = 0;
   if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
 
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
   uint8_t msb_cc = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
   uint8_t lsb_cc = msb_cc + 32;  // Standard 14-bit CC: LSB = MSB + 32
   send_double_control_change(channel, msb_cc, lsb_cc, (uint16_t)s_touchwheel_14bit_value);
@@ -829,7 +829,7 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   uint8_t output = continuous_mapping_process(midi_value, &scene->touchwheel);
   
   // Send MIDI based on output type
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
 
   if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
     // Don't send if no CCs are configured (neither multi-CC slots nor single CC)
@@ -1783,6 +1783,38 @@ esp_err_t scene_clear_device_id(uint8_t scene_index) {
   return scene_set_device_id(scene_index, NULL);
 }
 
+esp_err_t scene_set_midi_channel(uint8_t scene_index, uint8_t channel) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (channel > 16) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->midi_channel = channel;
+  scene_persist_if_programming();
+
+  if (channel == 0) {
+    ESP_LOGI(TAG, "Scene %d MIDI channel cleared (using global)", scene_index + 1);
+  } else {
+    ESP_LOGI(TAG, "Scene %d MIDI channel set to: %u", scene_index + 1, (unsigned)channel);
+  }
+
+  return ESP_OK;
+}
+
+uint8_t scene_get_midi_channel(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return 0;
+
+  if (scene_index != g_scene_manager.current_scene_index) {
+    return 0;  // Can only get for current scene
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 0;
+
+  return scene->midi_channel;
+}
+
 const char* scene_get_effective_device_slug(uint8_t scene_index) {
   if (scene_index > MAX_SCENE_INDEX) return NULL;
 
@@ -1793,13 +1825,44 @@ const char* scene_get_effective_device_slug(uint8_t scene_index) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
 
-  // If scene has a device_id, use it; otherwise use global
+  // In single device mode, always use global device
+  if (config_get_device_mode() == DEVICE_MODE_SINGLE) {
+    return device_config_get_pedal_slug();
+  }
+
+  // In per-scene mode, use scene's device_id if set
   if (scene->device_id[0] != '\0') {
     return scene->device_id;
   }
 
   // Fall back to global device_config
   return device_config_get_pedal_slug();
+}
+
+uint8_t scene_get_effective_channel(uint8_t scene_index) {
+  // In single device mode, always use global channel
+  if (config_get_device_mode() == DEVICE_MODE_SINGLE) {
+    return device_config_get_channel();
+  }
+
+  if (scene_index > MAX_SCENE_INDEX) {
+    return device_config_get_channel();
+  }
+
+  if (scene_index != g_scene_manager.current_scene_index) {
+    return device_config_get_channel();
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return device_config_get_channel();
+
+  // In per-scene mode, use scene's midi_channel if set (1-16)
+  if (scene->midi_channel > 0 && scene->midi_channel <= 16) {
+    return scene->midi_channel;
+  }
+
+  // Fall back to global channel
+  return device_config_get_channel();
 }
 
 const struct device_def_t* scene_get_device(uint8_t scene_index) {
@@ -3910,6 +3973,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
     cJSON_AddStringToObject(root, "device_id", scene->device_id);
   }
 
+  // Only write midi_channel if it's non-zero (has override)
+  if (scene->midi_channel > 0) {
+    cJSON_AddNumberToObject(root, "midi_channel", scene->midi_channel);
+  }
+
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
@@ -4074,6 +4142,15 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     scene->device_id[sizeof(scene->device_id) - 1] = '\0';
   } else {
     scene->device_id[0] = '\0';  // Use global
+  }
+
+  // Parse midi_channel (optional - 0 means use global, 1-16 = override)
+  cJSON* midi_channel = cJSON_GetObjectItem(root, "midi_channel");
+  if (midi_channel && cJSON_IsNumber(midi_channel)) {
+    int ch = midi_channel->valueint;
+    scene->midi_channel = (ch >= 0 && ch <= 16) ? (uint8_t)ch : 0;
+  } else {
+    scene->midi_channel = 0;  // Use global
   }
 
   cJSON* program = cJSON_GetObjectItem(root, "program_number");

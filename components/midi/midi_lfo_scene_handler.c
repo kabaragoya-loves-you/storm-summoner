@@ -68,7 +68,7 @@ static void handle_lfo1_event(const event_t* event, void* context) {
   
   // Get raw value from event (0-127)
   uint8_t raw_value = event->data.sensor.value;
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   // Process through curve and polarity
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
@@ -114,7 +114,7 @@ static void handle_lfo2_event(const event_t* event, void* context) {
   
   // Get raw value from event (0-127)
   uint8_t raw_value = event->data.sensor.value;
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   // Process through curve and polarity
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
@@ -151,7 +151,7 @@ void midi_lfo_scene_handler_release_notes(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return;
   
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   // Release LFO1 notes
   continuous_mapping_t* lfo1 = &scene->lfo1;
@@ -187,7 +187,7 @@ void midi_lfo_scene_handler_restore_value(uint8_t slot) {
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
   
   // Send CC value
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   continuous_mapping_send_cc(mapping, channel, processed_value);
   
   ESP_LOGI(TAG, "LFO%d restored to phase-0 value: raw=%d processed=%d", 

@@ -70,6 +70,7 @@ typedef struct {
 typedef struct {
   char name[17];              // Scene name (max 16 chars + null)
   char device_id[64];         // Device slug (empty = use global device_config)
+  uint8_t midi_channel;       // Per-scene MIDI channel (0 = use global, 1-16 = override)
   char ui_module[MAX_UI_MODULE_NAME]; // UI module to load with scene (empty = "beat")
   
   // Program change settings (modes 2 & 3)
@@ -215,6 +216,10 @@ esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id);
 const char* scene_get_device_id(uint8_t scene_index);
 esp_err_t scene_clear_device_id(uint8_t scene_index);
 
+// Per-scene MIDI channel (0 = use global, 1-16 = override)
+esp_err_t scene_set_midi_channel(uint8_t scene_index, uint8_t channel);
+uint8_t scene_get_midi_channel(uint8_t scene_index);
+
 // Forward declaration for device_def_t (from assets_types.h)
 struct device_def_t;
 
@@ -225,6 +230,10 @@ const struct device_def_t* scene_get_device(uint8_t scene_index);
 
 // Get the effective device slug for a scene (resolves to global if scene doesn't specify)
 const char* scene_get_effective_device_slug(uint8_t scene_index);
+
+// Get the effective MIDI channel for a scene (resolves to global if scene doesn't specify)
+// Returns the channel to use (1-16) based on device_mode and scene settings
+uint8_t scene_get_effective_channel(uint8_t scene_index);
 
 // Touchpad configuration
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, 

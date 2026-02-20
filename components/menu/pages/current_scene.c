@@ -7,15 +7,19 @@
 #include "ui.h"
 #include "tempo.h"
 #include "assets_types.h"
+#include "assets_manager.h"
+#include "device_config.h"
+#include "config.h"
 #include "display_driver.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include <stdio.h>
 #include <string.h>
 
 #define TAG "MENU_CURRENT_SCENE"
 
 // Static storage for menu items and labels
-#define MAX_SCENE_ITEMS 26
+#define MAX_SCENE_ITEMS 30
 static menu_item_t s_scene_items[MAX_SCENE_ITEMS];
 static char s_page_title[24];
 static char s_preset_label[32];
@@ -27,6 +31,23 @@ static char s_divider_label[24];
 static char s_clock_label[24];
 static char s_transport_label[24];
 static char s_send_clock_label[24];
+static char s_pedal_label[80];
+static char s_midi_channel_label[32];
+
+// Dynamic menu for vendor/pedal selection (allocated in PSRAM)
+typedef struct {
+  menu_item_t* items;
+  char (*labels)[64];
+  uint32_t* indices;
+  uint32_t count;
+  uint32_t capacity;
+} scene_dynamic_menu_t;
+
+static scene_dynamic_menu_t s_scene_vendor_menu = {0};
+static scene_dynamic_menu_t s_scene_pedal_menu = {0};
+static char s_scene_selected_vendor[64];
+static char s_scene_pedal_title[80];
+static char s_pending_pedal_slug[64];  // Slug selected, pending confirmation
 
 // Navigation callbacks for assignment submenus
 static void nav_to_touchwheel(void* user_data) {
@@ -669,6 +690,381 @@ static void nav_to_send_clock(void* user_data) {
 }
 
 // ============================================================================
+// Per-Scene Device Selection (Vendor -> Pedal two-step flow)
+// ============================================================================
+
+// Forward declarations
+static lv_obj_t* scene_vendor_select_create(void);
+static lv_obj_t* scene_pedal_select_create(void);
+
+// Dynamic menu helpers
+static void scene_dynamic_menu_free(scene_dynamic_menu_t* menu) {
+  if (menu->items) {
+    heap_caps_free(menu->items);
+    menu->items = NULL;
+  }
+  if (menu->labels) {
+    heap_caps_free(menu->labels);
+    menu->labels = NULL;
+  }
+  if (menu->indices) {
+    heap_caps_free(menu->indices);
+    menu->indices = NULL;
+  }
+  menu->count = 0;
+  menu->capacity = 0;
+}
+
+static bool scene_dynamic_menu_alloc(scene_dynamic_menu_t* menu, uint32_t count) {
+  scene_dynamic_menu_free(menu);
+  if (count == 0) return true;
+  
+  menu->items = heap_caps_calloc(count, sizeof(menu_item_t), MALLOC_CAP_SPIRAM);
+  menu->labels = heap_caps_calloc(count, 64, MALLOC_CAP_SPIRAM);
+  menu->indices = heap_caps_calloc(count, sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+  
+  if (!menu->items || !menu->labels || !menu->indices) {
+    ESP_LOGE(TAG, "Failed to allocate scene dynamic menu for %lu items", (unsigned long)count);
+    scene_dynamic_menu_free(menu);
+    return false;
+  }
+  
+  menu->capacity = count;
+  menu->count = count;
+  return true;
+}
+
+// Track confirmation flow type (different nav depths for global vs vendor->pedal)
+static bool s_from_global_default = false;
+
+// Apply the pending pedal change
+static void apply_scene_pedal_change(void) {
+  uint8_t scene_index = scene_get_current_index();
+  
+  if (s_pending_pedal_slug[0] == '\0') {
+    scene_clear_device_id(scene_index);
+  } else {
+    scene_set_device_id(scene_index, s_pending_pedal_slug);
+  }
+}
+
+// Confirmation page callbacks
+static void scene_pedal_change_confirmed(void* user_data) {
+  (void)user_data;
+  apply_scene_pedal_change();
+  // Global Default: back 3 levels (Confirm -> Vendor -> Scene)
+  // Vendor->Pedal: back 4 levels (Confirm -> Pedal -> Vendor -> Scene)
+  uint8_t depth = s_from_global_default ? 3 : 4;
+  menu_navigate_back_then_to(depth, s_page_title, menu_page_current_scene_create);
+}
+
+static void pedal_warning_proceed_cb(lv_event_t* e) {
+  (void)e;
+  scene_pedal_change_confirmed(NULL);
+}
+
+static lv_obj_t* scene_pedal_confirm_warning_create(void) {
+  uint16_t disp_w = display_get_width();
+  uint16_t disp_h = display_get_height();
+  
+  // Create screen
+  lv_obj_t* screen = lv_obj_create(NULL);
+  lv_obj_set_size(screen, disp_w, disp_h);
+  lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(screen, 0, 0);
+  lv_obj_set_style_pad_all(screen, 0, 0);
+
+  // Title bar
+  const int title_bar_h = 32;
+  lv_obj_t* title_bar = lv_obj_create(screen);
+  lv_obj_set_size(title_bar, disp_w, title_bar_h);
+  lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);
+  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(139, 90, 43), 0);
+  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(title_bar, 0, 0);
+  lv_obj_set_style_pad_all(title_bar, 0, 0);
+  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
+  
+  lv_obj_t* title_label = lv_label_create(title_bar);
+  lv_label_set_text(title_label, "Pedal Warning");
+  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
+  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);
+
+  // Content container
+  lv_obj_t* cont = lv_obj_create(screen);
+  lv_obj_set_size(cont, disp_w, disp_h - title_bar_h);
+  lv_obj_align(cont, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(cont, 0, 0);
+  lv_obj_set_style_pad_all(cont, 0, 0);
+  lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  // Warning text - wrapping label
+  lv_obj_t* text_label = lv_label_create(cont);
+  lv_label_set_text(text_label,
+    "Every pedal has different\n"
+    "CC mappings, so changing\n"
+    "pedals requires manually\n"
+    "reassigning parameters.");
+  lv_obj_set_style_text_color(text_label, lv_color_make(200, 200, 200), 0);
+  lv_obj_set_style_text_font(text_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_align(text_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_pad_top(text_label, 27, 0);
+  lv_obj_set_style_pad_bottom(text_label, 16, 0);
+
+  // Proceed button
+  lv_obj_t* btn_label = lv_label_create(cont);
+  lv_label_set_text(btn_label, "Proceed?");
+  lv_obj_set_style_text_color(btn_label, lv_color_white(), 0);
+  lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(btn_label, lv_color_make(100, 200, 100), LV_STATE_FOCUSED);
+  lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, LV_STATE_FOCUSED);
+  lv_obj_add_flag(btn_label, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(btn_label, pedal_warning_proceed_cb, LV_EVENT_CLICKED, NULL);
+  
+  lv_group_t* group = menu_get_group();
+  if (group) {
+    lv_group_add_obj(group, btn_label);
+    lv_group_focus_obj(btn_label);
+  }
+
+  return screen;
+}
+
+// Pedal selection callback
+static void scene_select_pedal_callback(void* user_data) {
+  uint32_t idx = *(uint32_t*)user_data;
+  
+  const char* slug = NULL;
+  const char* name = NULL;
+  
+  if (assets_get_device_for_vendor(s_scene_selected_vendor, idx, &slug, &name) == ESP_OK && slug) {
+    ESP_LOGI(TAG, "Scene pedal selected: %s", slug);
+    
+    // Check if this is actually a change
+    const char* current_device_id = scene_get_device_id(scene_get_current_index());
+    bool is_change = true;
+    if (current_device_id && current_device_id[0] != '\0') {
+      is_change = (strcmp(current_device_id, slug) != 0);
+    }
+    
+    if (!is_change) {
+      // Same pedal, just go back
+      menu_navigate_back_then_to(3, s_page_title, menu_page_current_scene_create);
+      return;
+    }
+    
+    // Store pending slug and show confirmation
+    strncpy(s_pending_pedal_slug, slug, sizeof(s_pending_pedal_slug) - 1);
+    s_pending_pedal_slug[sizeof(s_pending_pedal_slug) - 1] = '\0';
+    s_from_global_default = false;
+    menu_navigate_to("Pedal Warning", scene_pedal_confirm_warning_create);
+  }
+}
+
+// "Global Default" option callback
+static void scene_select_global_default_callback(void* user_data) {
+  (void)user_data;
+  
+  // Check if currently using global default
+  const char* current_device_id = scene_get_device_id(scene_get_current_index());
+  bool is_change = (current_device_id && current_device_id[0] != '\0');
+  
+  if (!is_change) {
+    // Already global default, just go back
+    menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
+    return;
+  }
+  
+  // Store empty slug for global default and show confirmation
+  s_pending_pedal_slug[0] = '\0';
+  s_from_global_default = true;
+  menu_navigate_to("Pedal Warning", scene_pedal_confirm_warning_create);
+}
+
+static lv_obj_t* scene_pedal_select_create(void) {
+  ESP_LOGD(TAG, "Creating scene pedal select for vendor: %s", s_scene_selected_vendor);
+  
+  uint32_t pedal_count = assets_get_device_count_for_vendor(s_scene_selected_vendor);
+  
+  if (!scene_dynamic_menu_alloc(&s_scene_pedal_menu, pedal_count)) {
+    ESP_LOGE(TAG, "Failed to allocate scene pedal menu");
+    static menu_item_t error_items[] = {{ "Memory Error", NULL, NULL, false }};
+    return menu_create_page("Error", error_items, 1);
+  }
+  
+  for (uint32_t i = 0; i < pedal_count; i++) {
+    const char* slug = NULL;
+    const char* name = NULL;
+    
+    if (assets_get_device_for_vendor(s_scene_selected_vendor, i, &slug, &name) == ESP_OK) {
+      strncpy(s_scene_pedal_menu.labels[i], name ? name : "Unknown", 63);
+      s_scene_pedal_menu.labels[i][63] = '\0';
+    } else {
+      snprintf(s_scene_pedal_menu.labels[i], 64, "Pedal %u", (unsigned)(i + 1));
+    }
+    
+    s_scene_pedal_menu.indices[i] = i;
+    s_scene_pedal_menu.items[i].label = s_scene_pedal_menu.labels[i];
+    s_scene_pedal_menu.items[i].callback = scene_select_pedal_callback;
+    s_scene_pedal_menu.items[i].user_data = &s_scene_pedal_menu.indices[i];
+    s_scene_pedal_menu.items[i].has_submenu = false;
+  }
+  
+  snprintf(s_scene_pedal_title, sizeof(s_scene_pedal_title), "%s", s_scene_selected_vendor);
+  
+  return menu_create_page(s_scene_pedal_title, s_scene_pedal_menu.items, pedal_count);
+}
+
+// Vendor selection callback
+static void scene_select_vendor_callback(void* user_data) {
+  uint32_t idx = *(uint32_t*)user_data;
+  
+  const char* vendor = assets_get_vendor_by_index(idx);
+  if (vendor) {
+    strncpy(s_scene_selected_vendor, vendor, sizeof(s_scene_selected_vendor) - 1);
+    s_scene_selected_vendor[sizeof(s_scene_selected_vendor) - 1] = '\0';
+    ESP_LOGI(TAG, "Scene vendor selected: %s", s_scene_selected_vendor);
+    menu_navigate_to("Select Pedal", scene_pedal_select_create);
+  }
+}
+
+static lv_obj_t* scene_vendor_select_create(void) {
+  ESP_LOGD(TAG, "Creating scene vendor select page");
+  
+  uint32_t vendor_count = assets_get_vendor_count();
+  
+  // Find User vendor index and count non-User vendors
+  int32_t user_vendor_idx = -1;
+  uint32_t non_user_count = 0;
+  for (uint32_t i = 0; i < vendor_count; i++) {
+    const char* v = assets_get_vendor_by_index(i);
+    if (v && strcmp(v, "User") == 0) {
+      user_vendor_idx = (int32_t)i;
+    } else {
+      non_user_count++;
+    }
+  }
+  
+  // Structure: Global Default (readonly) + pedal name (clickable) + divider +
+  //            User Devices + divider + non-User vendors
+  // = 2 + 1 + 1 + 1 + non_user_count = 5 + non_user_count
+  uint32_t total_items = 5 + non_user_count;
+  
+  if (!scene_dynamic_menu_alloc(&s_scene_vendor_menu, total_items)) {
+    ESP_LOGE(TAG, "Failed to allocate scene vendor menu");
+    static menu_item_t error_items[] = {{ "Memory Error", NULL, NULL, false }};
+    return menu_create_page("Error", error_items, 1);
+  }
+  
+  uint32_t idx = 0;
+  
+  // Item 0: "Global Default" (readonly label)
+  strncpy(s_scene_vendor_menu.labels[idx], "Global Default", 63);
+  s_scene_vendor_menu.items[idx].label = s_scene_vendor_menu.labels[idx];
+  s_scene_vendor_menu.items[idx].callback = NULL;
+  s_scene_vendor_menu.items[idx].user_data = NULL;
+  s_scene_vendor_menu.items[idx].has_submenu = false;
+  idx++;
+  
+  // Item 1: Global default pedal name (clickable to select global default)
+  const char* global_slug = device_config_get_pedal_slug();
+  const manifest_device_t* global_dev = assets_get_manifest_device(global_slug);
+  const char* global_name = global_dev ? global_dev->name : "Default";
+  strncpy(s_scene_vendor_menu.labels[idx], global_name, 63);
+  s_scene_vendor_menu.labels[idx][63] = '\0';
+  s_scene_vendor_menu.items[idx].label = s_scene_vendor_menu.labels[idx];
+  s_scene_vendor_menu.items[idx].callback = scene_select_global_default_callback;
+  s_scene_vendor_menu.items[idx].user_data = NULL;
+  s_scene_vendor_menu.items[idx].has_submenu = false;
+  idx++;
+  
+  // Item 2: Divider
+  strncpy(s_scene_vendor_menu.labels[idx], "---", 63);
+  s_scene_vendor_menu.items[idx].label = s_scene_vendor_menu.labels[idx];
+  s_scene_vendor_menu.items[idx].callback = NULL;
+  s_scene_vendor_menu.items[idx].user_data = NULL;
+  s_scene_vendor_menu.items[idx].has_submenu = false;
+  idx++;
+  
+  // Item 3: User Devices
+  strncpy(s_scene_vendor_menu.labels[idx], "User Devices", 63);
+  s_scene_vendor_menu.items[idx].label = s_scene_vendor_menu.labels[idx];
+  if (user_vendor_idx >= 0) {
+    s_scene_vendor_menu.indices[idx] = (uint32_t)user_vendor_idx;
+    s_scene_vendor_menu.items[idx].callback = scene_select_vendor_callback;
+    s_scene_vendor_menu.items[idx].user_data = &s_scene_vendor_menu.indices[idx];
+  } else {
+    s_scene_vendor_menu.items[idx].callback = NULL;
+    s_scene_vendor_menu.items[idx].user_data = NULL;
+  }
+  s_scene_vendor_menu.items[idx].has_submenu = true;
+  idx++;
+  
+  // Item 4: Divider
+  strncpy(s_scene_vendor_menu.labels[idx], "---", 63);
+  s_scene_vendor_menu.items[idx].label = s_scene_vendor_menu.labels[idx];
+  s_scene_vendor_menu.items[idx].callback = NULL;
+  s_scene_vendor_menu.items[idx].user_data = NULL;
+  s_scene_vendor_menu.items[idx].has_submenu = false;
+  idx++;
+  
+  // Remaining items: vendors except User
+  for (uint32_t i = 0; i < vendor_count; i++) {
+    const char* vendor = assets_get_vendor_by_index(i);
+    if (!vendor || strcmp(vendor, "User") == 0) continue;
+    
+    strncpy(s_scene_vendor_menu.labels[idx], vendor, 63);
+    s_scene_vendor_menu.labels[idx][63] = '\0';
+    s_scene_vendor_menu.indices[idx] = i;
+    s_scene_vendor_menu.items[idx].label = s_scene_vendor_menu.labels[idx];
+    s_scene_vendor_menu.items[idx].callback = scene_select_vendor_callback;
+    s_scene_vendor_menu.items[idx].user_data = &s_scene_vendor_menu.indices[idx];
+    s_scene_vendor_menu.items[idx].has_submenu = true;
+    idx++;
+  }
+  
+  return menu_create_page("Select Pedal", s_scene_vendor_menu.items, idx);
+}
+
+static void nav_to_select_pedal(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Select Pedal", scene_vendor_select_create);
+}
+
+// MIDI Channel roller: Global Default (0), then 1-16
+static void midi_channel_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_current_index();
+  // Index 0 = Global Default (value 0), Index 1-16 = Channels 1-16
+  uint8_t channel = (selected_index == 0) ? 0 : (uint8_t)selected_index;
+  scene_set_midi_channel(scene_index, channel);
+  
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
+}
+
+static lv_obj_t* midi_channel_roller_create(void) {
+  uint8_t current = scene_get_midi_channel(scene_get_current_index());
+  // current 0 = index 0, current 1-16 = index 1-16
+  uint32_t current_idx = current;
+  
+  return menu_create_roller_page("MIDI Channel",
+    "Global Default\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16",
+    current_idx, midi_channel_confirm_cb, NULL);
+}
+
+static void nav_to_midi_channel(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("MIDI Channel", midi_channel_roller_create);
+}
+
+// ============================================================================
 // Main Current Scene Page
 // ============================================================================
 
@@ -710,6 +1106,29 @@ lv_obj_t* menu_page_current_scene_create(void) {
   s_scene_items[idx++] = (menu_item_t){ "LFO", nav_to_lfo, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Bump", nav_to_bump, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "On-Load", nav_to_on_load, NULL, true };
+  
+  // Per-scene device controls (only in per-scene device mode)
+  if (config_get_device_mode() == DEVICE_MODE_PER_SCENE) {
+    s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
+    
+    // Get effective device name for display
+    const char* effective_slug = scene_get_effective_device_slug(scene_index);
+    const manifest_device_t* mdev = assets_get_manifest_device(effective_slug);
+    const char* device_name = mdev ? mdev->name : "Default";
+    snprintf(s_pedal_label, sizeof(s_pedal_label), "Pedal: %s", device_name);
+    s_scene_items[idx++] = (menu_item_t){ s_pedal_label, NULL, NULL, false };
+    
+    s_scene_items[idx++] = (menu_item_t){ "Select Pedal", nav_to_select_pedal, NULL, true };
+    
+    // MIDI Channel
+    uint8_t midi_ch = scene_get_midi_channel(scene_index);
+    if (midi_ch == 0) {
+      snprintf(s_midi_channel_label, sizeof(s_midi_channel_label), "MIDI Channel: Global");
+    } else {
+      snprintf(s_midi_channel_label, sizeof(s_midi_channel_label), "MIDI Channel: %u", (unsigned)midi_ch);
+    }
+    s_scene_items[idx++] = (menu_item_t){ s_midi_channel_label, nav_to_midi_channel, NULL, false };
+  }
   
   // Divider
   s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };

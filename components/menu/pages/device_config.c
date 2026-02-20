@@ -227,34 +227,68 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
   
   uint32_t vendor_count = assets_get_vendor_count();
   
+  // Find User vendor index and count non-User vendors
+  int32_t user_vendor_idx = -1;
+  uint32_t non_user_count = 0;
+  for (uint32_t i = 0; i < vendor_count; i++) {
+    const char* v = assets_get_vendor_by_index(i);
+    if (v && strcmp(v, "User") == 0) {
+      user_vendor_idx = (int32_t)i;
+    } else {
+      non_user_count++;
+    }
+  }
+  
+  // Structure: User Devices + divider + non-User vendors = 2 + non_user_count
+  uint32_t total_items = 2 + non_user_count;
+  
   // Allocate dynamic menu in PSRAM
-  if (!dynamic_menu_alloc(&s_vendor_menu, vendor_count)) {
+  if (!dynamic_menu_alloc(&s_vendor_menu, total_items)) {
     ESP_LOGE(TAG, "Failed to allocate vendor menu");
-    // Return a fallback error page
     static menu_item_t error_items[] = {{ "Memory Error", NULL, NULL, false }};
     return menu_create_page("Error", error_items, 1);
   }
   
-  // Build menu items for each vendor
+  uint32_t idx = 0;
+  
+  // Item 0: User Devices
+  strncpy(s_vendor_menu.labels[idx], "User Devices", 63);
+  s_vendor_menu.items[idx].label = s_vendor_menu.labels[idx];
+  if (user_vendor_idx >= 0) {
+    s_vendor_menu.indices[idx] = (uint32_t)user_vendor_idx;
+    s_vendor_menu.items[idx].callback = select_vendor_callback;
+    s_vendor_menu.items[idx].user_data = &s_vendor_menu.indices[idx];
+  } else {
+    s_vendor_menu.items[idx].callback = NULL;
+    s_vendor_menu.items[idx].user_data = NULL;
+  }
+  s_vendor_menu.items[idx].has_submenu = true;
+  idx++;
+  
+  // Item 1: Divider
+  strncpy(s_vendor_menu.labels[idx], "---", 63);
+  s_vendor_menu.items[idx].label = s_vendor_menu.labels[idx];
+  s_vendor_menu.items[idx].callback = NULL;
+  s_vendor_menu.items[idx].user_data = NULL;
+  s_vendor_menu.items[idx].has_submenu = false;
+  idx++;
+  
+  // Remaining items: vendors except User
   for (uint32_t i = 0; i < vendor_count; i++) {
     const char* vendor = assets_get_vendor_by_index(i);
-    if (vendor) {
-      strncpy(s_vendor_menu.labels[i], vendor, 63);
-      s_vendor_menu.labels[i][63] = '\0';
-    } else {
-      snprintf(s_vendor_menu.labels[i], 64, "Vendor %u", (unsigned)(i + 1));
-    }
+    if (!vendor || strcmp(vendor, "User") == 0) continue;
     
-    // Store index for callback
-    s_vendor_menu.indices[i] = i;
-    
-    s_vendor_menu.items[i].label = s_vendor_menu.labels[i];
-    s_vendor_menu.items[i].callback = select_vendor_callback;
-    s_vendor_menu.items[i].user_data = &s_vendor_menu.indices[i];
-    s_vendor_menu.items[i].has_submenu = true;
+    strncpy(s_vendor_menu.labels[idx], vendor, 63);
+    s_vendor_menu.labels[idx][63] = '\0';
+    s_vendor_menu.indices[idx] = i;
+    s_vendor_menu.items[idx].label = s_vendor_menu.labels[idx];
+    s_vendor_menu.items[idx].callback = select_vendor_callback;
+    s_vendor_menu.items[idx].user_data = &s_vendor_menu.indices[idx];
+    s_vendor_menu.items[idx].has_submenu = true;
+    idx++;
   }
   
-  return menu_create_page("Select Vendor", s_vendor_menu.items, vendor_count);
+  return menu_create_page("Select Vendor", s_vendor_menu.items, idx);
 }
 
 // ============================================================================

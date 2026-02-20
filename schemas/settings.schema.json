@@ -22,6 +22,18 @@
           "default": 0
         },
         {
+          "id": "config.device_mode",
+          "label": "Device Mode",
+          "description": "Single device for all scenes or per-scene device selection",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Single"},
+            {"value": 1, "label": "Per-Scene"}
+          ],
+          "default": 0,
+          "visible_when": {"id": "config.scene_mode", "value": 2}
+        },
+        {
           "id": "config.confirm_change",
           "label": "Confirm Change",
           "description": "Scene change confirmation behavior",

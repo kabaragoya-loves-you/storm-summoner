@@ -12,10 +12,11 @@
 
 // Label buffers
 static char s_scene_mode_label[40];
+static char s_device_mode_label[40];
 static char s_change_mode_label[40];
 static char s_preset_wrap_label[40];
 static char s_persist_scene_label[40];
-static menu_item_t s_config_items[5];
+static menu_item_t s_config_items[6];
 
 // ============================================================================
 // Scene Mode Roller
@@ -50,6 +51,36 @@ static lv_obj_t* scene_mode_roller_create(void) {
 static void nav_to_scene_mode(void* user_data) {
   (void)user_data;
   menu_navigate_to("Scene Mode", scene_mode_roller_create);
+}
+
+// ============================================================================
+// Device Mode Roller (only visible in Advanced mode)
+// ============================================================================
+
+static const char* DEVICE_MODE_OPTIONS = "Single\nPer-Scene";
+
+static void device_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  device_mode_t mode = (selected_index == 0) ?
+    DEVICE_MODE_SINGLE : DEVICE_MODE_PER_SCENE;
+  config_set_device_mode(mode);
+  ESP_LOGI(TAG, "Device mode set to %s",
+    (mode == DEVICE_MODE_SINGLE) ? "Single" : "Per-Scene");
+  
+  // Go back to Index to refresh "Pedal Setup" / "Default Pedal" label
+  menu_navigate_back_then_to(3, "Menu", menu_page_index_create);
+}
+
+static lv_obj_t* device_mode_roller_create(void) {
+  device_mode_t mode = config_get_device_mode();
+  uint32_t current_idx = (mode == DEVICE_MODE_SINGLE) ? 0 : 1;
+  return menu_create_roller_page("Device Mode", DEVICE_MODE_OPTIONS, current_idx,
+    device_mode_confirm_cb, NULL);
+}
+
+static void nav_to_device_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Device Mode", device_mode_roller_create);
 }
 
 // ============================================================================
@@ -150,6 +181,14 @@ lv_obj_t* menu_page_config_create(void) {
     (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   snprintf(s_scene_mode_label, sizeof(s_scene_mode_label), "Scene Mode\n%s", scene_mode_str);
   s_config_items[idx++] = (menu_item_t){ s_scene_mode_label, nav_to_scene_mode, NULL, true };
+  
+  // Device Mode (only visible in Advanced mode)
+  if (scene_mode == SCENE_MODE_ADVANCED) {
+    device_mode_t device_mode = config_get_device_mode();
+    const char* device_mode_str = (device_mode == DEVICE_MODE_SINGLE) ? "Single" : "Per-Scene";
+    snprintf(s_device_mode_label, sizeof(s_device_mode_label), "Device Mode\n%s", device_mode_str);
+    s_config_items[idx++] = (menu_item_t){ s_device_mode_label, nav_to_device_mode, NULL, true };
+  }
   
   // Confirm Change with current value
   scene_change_mode_t change_mode = scene_get_change_mode();

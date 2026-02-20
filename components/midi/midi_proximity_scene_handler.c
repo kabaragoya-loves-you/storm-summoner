@@ -50,7 +50,7 @@ static void handle_proximity_event(const event_t* event, void* context) {
   
   // Get raw value from event (0-127)
   uint8_t raw_value = event->data.sensor.value;
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   // Handle note mode out-of-range silence
   if (mapping->output_type == OUTPUT_TYPE_NOTE) {
@@ -119,7 +119,7 @@ void midi_proximity_scene_handler_release_notes(void) {
   
   continuous_mapping_t* mapping = &scene->proximity;
   if (mapping->note_active) {
-    uint8_t channel = device_config_get_channel() - 1;
+    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
     send_note_off(channel, mapping->last_note, 0);
     ESP_LOGI(TAG, "Proximity Note Off (programming mode): %d", mapping->last_note);
     mapping->note_active = false;

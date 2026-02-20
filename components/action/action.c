@@ -575,7 +575,7 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
   ESP_LOGD(TAG, "Executing action: %s (trigger=%d, press=%d)", 
            action_type_to_string(action->type), trigger_value, is_press);
   
-  uint8_t channel = device_config_get_channel() - 1;  // MIDI uses 0-based channels
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;  // MIDI uses 0-based channels
   
   // Get current scene mode for action validation
   scene_mode_t current_mode = scene_get_mode();
@@ -1991,7 +1991,7 @@ static void morph_update_timer(void) {
 
 // Send the final target values for a morph
 static void morph_send_final_values(active_morph_t* m) {
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   for (int i = 0; i < m->num_ccs && i < 4; i++) {
     uint8_t target = m->target_values[i];
@@ -2029,7 +2029,7 @@ static void morph_advance_step(active_morph_t* m) {
   }
   
   // Calculate intermediate values with discrete-aware interpolation
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   for (int i = 0; i < m->num_ccs && i < 4; i++) {
     uint8_t new_value;
@@ -2276,7 +2276,7 @@ static bool morph_start(const action_t* action, uint8_t num_ccs,
   m->next_step_time = now + step_interval;
   
   // Send first value immediately (start value) - track for deduplication
-  uint8_t channel = device_config_get_channel() - 1;
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   for (int i = 0; i < num_ccs && i < 4; i++) {
     send_control_change(channel, cc_numbers[i], m->start_values[i]);
     m->last_sent_values[i] = m->start_values[i];

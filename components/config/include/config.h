@@ -2,7 +2,14 @@
 #define CONFIG_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
+
+// Device mode: single device for all scenes vs per-scene device selection
+typedef enum {
+  DEVICE_MODE_SINGLE = 0,    // One device for all scenes (default)
+  DEVICE_MODE_PER_SCENE = 1  // Allow per-scene device overrides
+} device_mode_t;
 
 // Initialize config module (loads settings from NVS)
 esp_err_t config_init(void);
@@ -22,6 +29,12 @@ esp_err_t config_set_persist_scene(bool persist);
 // Last scene index (used when persist_scene is enabled)
 uint8_t config_get_last_scene(void);
 esp_err_t config_set_last_scene(uint8_t scene_index);
+
+// Device mode setting
+// DEVICE_MODE_SINGLE: all scenes use the global device/channel
+// DEVICE_MODE_PER_SCENE: scenes can override the global device/channel
+device_mode_t config_get_device_mode(void);
+esp_err_t config_set_device_mode(device_mode_t mode);
 
 #endif // CONFIG_H
 

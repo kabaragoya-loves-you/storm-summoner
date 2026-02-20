@@ -216,7 +216,7 @@ void input_manager_cable_changed(bool connected) {
     if (s_current_mode == INPUT_MODE_NOTE && s_note_mode_hw_enabled) {
       // Release any active note before disabling
       if (s_note_active) {
-        uint8_t channel = device_config_get_channel() - 1;
+        uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
         send_note_off(channel, s_active_note, 0);
         ESP_LOGI(TAG, "NOTE OFF (CV cable disconnected): ch=%d, note=%d", channel + 1, s_active_note);
         s_note_active = false;
@@ -329,7 +329,7 @@ void input_manager_expression_cable_changed(bool connected) {
     if (s_note_mode_hw_enabled) {
       // Release any active note before disabling
       if (s_note_active) {
-        uint8_t channel = device_config_get_channel() - 1;
+        uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
         send_note_off(channel, s_active_note, 0);
         ESP_LOGI(TAG, "NOTE OFF (Expression cable disconnected): ch=%d, note=%d", channel + 1, s_active_note);
         s_note_active = false;
@@ -414,8 +414,8 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
         break;
     }
     
-    // Send MIDI Note On on the scene's global channel
-    uint8_t channel = device_config_get_channel() - 1;  // device_config uses 1-based, MIDI uses 0-based
+    // Send MIDI Note On on the effective channel
+    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;  // scene uses 1-based, MIDI uses 0-based
     send_note_on(channel, s_active_note, velocity);
     ESP_LOGD(TAG, "NOTE ON: ch=%d, note=%d, velocity=%d", channel + 1, s_active_note, velocity);
     s_note_active = true;
@@ -423,7 +423,7 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
     
   } else if (!gate_high && s_note_active) {
     // Gate went low - send note off using the SAME note that was sent on
-    uint8_t channel = device_config_get_channel() - 1;
+    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
     send_note_off(channel, s_active_note, 0);
     ESP_LOGD(TAG, "NOTE OFF: ch=%d, note=%d", channel + 1, s_active_note);
     s_note_active = false;
@@ -439,7 +439,7 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
 
 void input_manager_release_active_notes(void) {
   if (s_note_active) {
-    uint8_t channel = device_config_get_channel() - 1;
+    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
     send_note_off(channel, s_active_note, 0);
     ESP_LOGI(TAG, "NOTE OFF (programming mode): ch=%d, note=%d", channel + 1, s_active_note);
     s_note_active = false;

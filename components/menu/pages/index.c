@@ -1,6 +1,7 @@
 #include "menu.h"
 #include "menu_pages.h"
 #include "scene.h"
+#include "config.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -22,7 +23,9 @@ static void nav_to_scenes_manager(void* user_data) {
 
 static void nav_to_device_config(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Pedal Setup", menu_page_device_config_create);
+  const char* title = (config_get_device_mode() == DEVICE_MODE_PER_SCENE)
+    ? "Default Pedal" : "Pedal Setup";
+  menu_navigate_to(title, menu_page_device_config_create);
 }
 
 static void nav_to_settings(void* user_data) {
@@ -69,7 +72,9 @@ lv_obj_t* menu_page_index_create(void) {
     index_items[idx++] = (menu_item_t){ "Scenes", nav_to_scenes_manager, NULL, true };
   }
   
-  index_items[idx++] = (menu_item_t){ "Pedal Setup", nav_to_device_config, NULL, true };
+  const char* pedal_label = (config_get_device_mode() == DEVICE_MODE_PER_SCENE)
+    ? "Default Pedal" : "Pedal Setup";
+  index_items[idx++] = (menu_item_t){ pedal_label, nav_to_device_config, NULL, true };
   index_items[idx++] = (menu_item_t){ "Settings", nav_to_settings, NULL, true };
   index_items[idx++] = (menu_item_t){ "About", nav_to_about, NULL, true };
   
