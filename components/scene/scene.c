@@ -408,7 +408,7 @@ static int get_next_poly_voice(uint8_t note) {
 
 // Clean up any active touchwheel notes (call before mode changes, suspend, disable, etc.)
 static void touchwheel_cleanup_active_notes(void) {
-  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+  uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
   
   // Clean up poly voices
   for (int i = 0; i < MAX_POLY_VOICES; i++) {
@@ -442,7 +442,7 @@ static void latch_release_timer_cb(void* arg) {
   
   poly_voice_t* voice = &s_poly_voices[voice_idx];
   if (voice->active) {
-    uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+    uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
     send_note_off(channel, voice->note, 0);
     ESP_LOGD(TAG, "Latch release: Note OFF %d (voice %d)", voice->note, voice_idx);
     voice->active = false;
@@ -541,7 +541,7 @@ static void touchwheel_pitch_bend_callback(int value, void* user_data) {
   if (new_pitch_bend < -8192) new_pitch_bend = -8192;
   if (new_pitch_bend > 8191) new_pitch_bend = 8191;
   
-  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+  uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
   
   // Calculate delta from previous position
   int delta = new_pitch_bend - s_touchwheel_prev_pitch_bend;
@@ -575,7 +575,7 @@ static void pitch_bend_return_timer_cb(void* arg) {
   if (!s_pb_anim_sequence || s_pb_anim_index >= s_pb_anim_length) {
     s_touchwheel_pitch_bend = 0;
     s_touchwheel_prev_pitch_bend = 0;
-    uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+    uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
     send_pitch_bend(channel, 0);
     esp_timer_stop(s_pitch_bend_timer);
     return;
@@ -588,7 +588,7 @@ static void pitch_bend_return_timer_cb(void* arg) {
   s_touchwheel_pitch_bend = s_pb_anim_negative ? -value : value;
   
   // Send the pitch bend
-  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+  uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
   send_pitch_bend(channel, (int16_t)s_touchwheel_pitch_bend);
   
   // Advance to next frame
@@ -622,7 +622,7 @@ static void touchwheel_pitch_bend_release_callback(void* user_data) {
     if (esp_timer_create(&timer_args, &s_pitch_bend_timer) != ESP_OK) {
       // Fallback: immediate return
       s_touchwheel_pitch_bend = 0;
-      uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+      uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
       send_pitch_bend(channel, 0);
       return;
     }
@@ -675,7 +675,7 @@ static void touchwheel_aftertouch_callback(int value, void* user_data) {
     s_touchwheel_aftertouch = midi_value;
   }
   
-  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+  uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
   send_channel_aftertouch(channel, midi_value);
   ESP_LOGD(TAG, "Touchwheel aftertouch: %d", midi_value);
 }
@@ -862,9 +862,9 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   uint8_t output = continuous_mapping_process(midi_value, &scene->touchwheel);
   
   // Send MIDI based on output type
-  uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
-
   if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
+    uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
+    
     // Don't send if no CCs are configured (neither multi-CC slots nor single CC)
     if (scene->touchwheel.num_cc_numbers == 0 && scene->touchwheel.cc_number == 0) {
       return;
@@ -885,6 +885,7 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
     }
   } else {
     // Note mode: convert value to note number and play
+    uint8_t channel = scene_get_note_channel(g_scene_manager.current_scene_index) - 1;
     uint8_t note = continuous_mapping_value_to_note(output, &scene->touchwheel);
     uint8_t vel = scene->touchwheel.velocity;
     if (vel == 0) vel = 100;
@@ -1918,6 +1919,56 @@ uint8_t scene_get_effective_channel(uint8_t scene_index) {
 
   // Fall back to global channel
   return device_config_get_channel();
+}
+
+uint8_t scene_get_note_channel(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) {
+    return scene_get_effective_channel(scene_index);
+  }
+
+  if (scene_index != g_scene_manager.current_scene_index) {
+    return scene_get_effective_channel(scene_index);
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return scene_get_effective_channel(scene_index);
+
+  // If note_channel is explicitly set (1-16), use it
+  if (scene->note_channel > 0 && scene->note_channel <= 16) {
+    return scene->note_channel;
+  }
+
+  // Fall back to scene's effective channel
+  return scene_get_effective_channel(scene_index);
+}
+
+esp_err_t scene_set_note_channel(uint8_t scene_index, uint8_t channel) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (channel > 16) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->note_channel = channel;
+  scene_persist_if_programming();
+
+  if (channel == 0) {
+    ESP_LOGI(TAG, "Scene %d note channel cleared (using scene channel)", scene_index + 1);
+  } else {
+    ESP_LOGI(TAG, "Scene %d note channel set to: %u", scene_index + 1, (unsigned)channel);
+  }
+
+  return ESP_OK;
+}
+
+uint8_t scene_get_note_channel_setting(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return 0;
+  if (scene_index != g_scene_manager.current_scene_index) return 0;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 0;
+
+  return scene->note_channel;
 }
 
 const struct device_def_t* scene_get_device(uint8_t scene_index) {
@@ -4145,6 +4196,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
     cJSON_AddNumberToObject(root, "midi_channel", scene->midi_channel);
   }
 
+  // Only write note_channel if it's non-zero (has override)
+  if (scene->note_channel > 0) {
+    cJSON_AddNumberToObject(root, "note_channel", scene->note_channel);
+  }
+
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
@@ -4322,6 +4378,15 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     scene->midi_channel = (ch >= 0 && ch <= 16) ? (uint8_t)ch : 0;
   } else {
     scene->midi_channel = 0;  // Use global
+  }
+
+  // Parse note_channel (optional - 0 means use scene channel, 1-16 = override)
+  cJSON* note_channel = cJSON_GetObjectItem(root, "note_channel");
+  if (note_channel && cJSON_IsNumber(note_channel)) {
+    int ch = note_channel->valueint;
+    scene->note_channel = (ch >= 0 && ch <= 16) ? (uint8_t)ch : 0;
+  } else {
+    scene->note_channel = 0;  // Use scene channel
   }
 
   cJSON* program = cJSON_GetObjectItem(root, "program_number");

@@ -137,13 +137,9 @@ static void rtg_timer_update_rate(void) {
   esp_timer_start_periodic(s_rtg_timer, interval_us);
 }
 
-// Get effective MIDI channel (from scene or fallback to 1)
+// Get effective MIDI channel for note output (uses scene's note_channel)
 static uint8_t get_midi_channel(void) {
-  scene_t* scene = scene_get_current();
-  if (scene && scene->midi_channel > 0) {
-    return scene->midi_channel - 1;  // MIDI channels are 0-indexed internally
-  }
-  return 0;  // Default to channel 1
+  return scene_get_note_channel(scene_get_current_index()) - 1;  // MIDI channels are 0-indexed internally
 }
 
 // Generate next random note

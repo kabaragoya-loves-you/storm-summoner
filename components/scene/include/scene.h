@@ -73,6 +73,7 @@ typedef struct {
   char name[17];              // Scene name (max 16 chars + null)
   char device_id[64];         // Device slug (empty = use global device_config)
   uint8_t midi_channel;       // Per-scene MIDI channel (0 = use global, 1-16 = override)
+  uint8_t note_channel;       // Note output channel override (0 = use scene channel, 1-16 = specific)
   char ui_module[MAX_UI_MODULE_NAME]; // UI module to load with scene (empty = "beat")
   
   // Program change settings (modes 2 & 3)
@@ -225,6 +226,10 @@ esp_err_t scene_clear_device_id(uint8_t scene_index);
 esp_err_t scene_set_midi_channel(uint8_t scene_index, uint8_t channel);
 uint8_t scene_get_midi_channel(uint8_t scene_index);
 
+// Per-scene note output channel (0 = use scene channel, 1-16 = override)
+esp_err_t scene_set_note_channel(uint8_t scene_index, uint8_t channel);
+uint8_t scene_get_note_channel_setting(uint8_t scene_index);
+
 // Forward declaration for device_def_t (from assets_types.h)
 struct device_def_t;
 
@@ -239,6 +244,11 @@ const char* scene_get_effective_device_slug(uint8_t scene_index);
 // Get the effective MIDI channel for a scene (resolves to global if scene doesn't specify)
 // Returns the channel to use (1-16) based on device_mode and scene settings
 uint8_t scene_get_effective_channel(uint8_t scene_index);
+
+// Get the effective note output channel for a scene
+// If note_channel is set (1-16), returns that; otherwise returns scene's effective channel
+// Used by continuous stream sources in notes mode (touchwheel, expression, CV, proximity, ALS, LFO, RTG)
+uint8_t scene_get_note_channel(uint8_t scene_index);
 
 // Touchpad configuration
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, 

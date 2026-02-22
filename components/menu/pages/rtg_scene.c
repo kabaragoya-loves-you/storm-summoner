@@ -276,12 +276,19 @@ static lv_obj_t* rate_roller_create(void) {
     }
   }
 
-  // Find current index
+  // Find closest matching index
   uint32_t current = 6;  // Default to 2.0 Hz
   uint16_t current_rate = scene->rtg_config.rate_hz_x100;
   for (size_t i = 0; i < NUM_RATE_VALUES; i++) {
     if (s_rate_values[i] >= current_rate) {
-      current = i;
+      // Check if previous value is closer
+      if (i > 0) {
+        uint16_t diff_prev = current_rate - s_rate_values[i - 1];
+        uint16_t diff_curr = s_rate_values[i] - current_rate;
+        current = (diff_prev <= diff_curr) ? (i - 1) : i;
+      } else {
+        current = i;
+      }
       break;
     }
   }
@@ -372,12 +379,19 @@ static lv_obj_t* sync_mult_roller_create(void) {
     pos += snprintf(options + pos, sizeof(options) - pos, "%s", s_sync_mult_labels[i]);
   }
 
-  // Find current index (default to 1x = index 7)
+  // Find closest matching index (default to 1x = index 7)
   uint32_t current = 7;
   uint16_t current_mult = scene->rtg_config.sync_mult_x1000;
   for (size_t i = 0; i < NUM_SYNC_MULT_VALUES; i++) {
     if (s_sync_mult_values[i] >= current_mult) {
-      current = i;
+      // Check if previous value is closer
+      if (i > 0) {
+        uint16_t diff_prev = current_mult - s_sync_mult_values[i - 1];
+        uint16_t diff_curr = s_sync_mult_values[i] - current_mult;
+        current = (diff_prev <= diff_curr) ? (i - 1) : i;
+      } else {
+        current = i;
+      }
       break;
     }
   }

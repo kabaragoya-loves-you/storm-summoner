@@ -68,7 +68,6 @@ static void handle_lfo1_event(const event_t* event, void* context) {
   
   // Get raw value from event (0-127)
   uint8_t raw_value = event->data.sensor.value;
-  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   // Process through curve and polarity
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
@@ -80,6 +79,7 @@ static void handle_lfo1_event(const event_t* event, void* context) {
   if (!value_changed) return;
 
   if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
     uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
     
     if (mapping->note_active && note != mapping->last_note) {
@@ -96,6 +96,7 @@ static void handle_lfo1_event(const event_t* event, void* context) {
     mapping->note_active = true;
     mapping->last_note = note;
   } else {
+    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
     continuous_mapping_send_cc(mapping, channel, output_value);
     ESP_LOGD(TAG, "LFO1: %d -> CC=%d", raw_value, output_value);
   }
@@ -114,7 +115,6 @@ static void handle_lfo2_event(const event_t* event, void* context) {
   
   // Get raw value from event (0-127)
   uint8_t raw_value = event->data.sensor.value;
-  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
   
   // Process through curve and polarity
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
@@ -126,6 +126,7 @@ static void handle_lfo2_event(const event_t* event, void* context) {
   if (!value_changed) return;
   
   if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
     uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
     
     if (mapping->note_active && note != mapping->last_note) {
@@ -142,6 +143,7 @@ static void handle_lfo2_event(const event_t* event, void* context) {
     mapping->note_active = true;
     mapping->last_note = note;
   } else {
+    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
     continuous_mapping_send_cc(mapping, channel, output_value);
     ESP_LOGD(TAG, "LFO2: %d -> CC=%d", raw_value, output_value);
   }
@@ -151,7 +153,7 @@ void midi_lfo_scene_handler_release_notes(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return;
   
-  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
+  uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
   
   // Release LFO1 notes
   continuous_mapping_t* lfo1 = &scene->lfo1;

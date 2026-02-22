@@ -29,6 +29,13 @@
       "default": 0,
       "description": "Per-scene MIDI channel override (0 = use global, 1-16 = specific channel)"
     },
+    "note_channel": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16,
+      "default": 0,
+      "description": "MIDI channel for note output from continuous sources (0 = use scene channel, 1-16 = specific channel)"
+    },
     "program_number": {
       "type": "integer",
       "minimum": 0,

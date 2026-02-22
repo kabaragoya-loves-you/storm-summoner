@@ -1981,6 +1981,53 @@ static int cmd_pc(int argc, char **argv) {
   return 0;
 }
 
+// Command: note_channel (set note output MIDI channel for current scene)
+static struct {
+  struct arg_int *channel_num;
+  struct arg_end *end;
+} note_channel_args;
+
+static int cmd_note_channel(int argc, char **argv) {
+  // If no arguments, show current note channel
+  if (argc == 1) {
+    uint8_t setting = scene_get_note_channel_setting(scene_get_current_index());
+    uint8_t effective = scene_get_note_channel(scene_get_current_index());
+    if (setting == 0) {
+      ESP_LOGI(TAG, "Scene %d note channel: default (effective: %d)",
+        scene_get_current_index() + 1, effective);
+    } else {
+      ESP_LOGI(TAG, "Scene %d note channel: %d", scene_get_current_index() + 1, setting);
+    }
+    return 0;
+  }
+
+  int nerrors = arg_parse(argc, argv, (void **) &note_channel_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, note_channel_args.end, argv[0]);
+    return 1;
+  }
+  
+  int ch = note_channel_args.channel_num->ival[0];
+  if (ch < 0 || ch > 16) {
+    ESP_LOGE(TAG, "Note channel must be 0-16 (0 = use scene channel)");
+    return 1;
+  }
+  
+  esp_err_t ret = scene_set_note_channel(scene_get_current_index(), (uint8_t)ch);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set note channel");
+    return 1;
+  }
+  
+  if (ch == 0) {
+    ESP_LOGI(TAG, "Scene %d note channel: default (scene channel)",
+      scene_get_current_index() + 1);
+  } else {
+    ESP_LOGI(TAG, "Scene %d note channel: %d", scene_get_current_index() + 1, ch);
+  }
+  return 0;
+}
+
 // Command: expr_cc - Set expression CC number(s)
 static struct {
   struct arg_int *cc_nums;
@@ -4717,6 +4764,19 @@ esp_err_t scene_console_init(void) {
     .argtable = &pc_args
   };
   esp_console_cmd_register(&pc_cmd);
+  
+  // note_channel command
+  note_channel_args.channel_num = arg_int0(NULL, NULL, "<0-16>", "Note MIDI channel (0=scene channel)");
+  note_channel_args.end = arg_end(2);
+  
+  const esp_console_cmd_t note_channel_cmd = {
+    .command = "note_channel",
+    .help = "Show/set note output MIDI channel (0=scene channel, 1-16=override)",
+    .hint = NULL,
+    .func = &cmd_note_channel,
+    .argtable = &note_channel_args
+  };
+  esp_console_cmd_register(&note_channel_cmd);
   
   // expr_cc command
   expr_cc_args.cc_nums = arg_intn(NULL, NULL, "<cc>", 1, MAX_MULTI_CC, "CC number(s)");

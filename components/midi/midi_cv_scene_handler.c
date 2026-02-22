@@ -32,9 +32,8 @@ static void handle_cv_event(const event_t* event, void* context) {
   
   if (!value_changed) return;
   
-  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
-  
   if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
     uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
     
     if (mapping->note_active && note != mapping->last_note) {
@@ -50,6 +49,7 @@ static void handle_cv_event(const event_t* event, void* context) {
     mapping->note_active = true;
     mapping->last_note = note;
   } else {
+    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
     continuous_mapping_send_cc(mapping, channel, output_value);
     ESP_LOGD(TAG, "CV: %d -> CC=%d", raw_value, output_value);
   }
@@ -76,7 +76,7 @@ void midi_cv_scene_handler_release_notes(void) {
   
   continuous_mapping_t* mapping = &scene->cv;
   if (mapping->note_active) {
-    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
+    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
     send_note_off(channel, mapping->last_note, 0);
     ESP_LOGI(TAG, "CV Note Off (programming mode): %d", mapping->last_note);
     mapping->note_active = false;

@@ -33,6 +33,7 @@ static char s_transport_label[24];
 static char s_send_clock_label[24];
 static char s_pedal_label[80];
 static char s_midi_channel_label[32];
+static char s_note_channel_label[32];
 
 // Dynamic menu for vendor/pedal selection (allocated in PSRAM)
 typedef struct {
@@ -694,6 +695,33 @@ static void nav_to_send_clock(void* user_data) {
   menu_navigate_to("Send Clock", send_clock_roller_create);
 }
 
+// Note channel roller (for routing notes to alternate MIDI channel)
+static void note_channel_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_current_index();
+  // Index 0 = "Default (Scene)", 1-16 = channels 1-16
+  uint8_t note_channel = (uint8_t)selected_index;
+  esp_err_t ret = scene_set_note_channel(scene_index, note_channel);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to set note_channel: %s", esp_err_to_name(ret));
+  }
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
+}
+
+static lv_obj_t* note_channel_roller_create(void) {
+  uint8_t current = scene_get_note_channel_setting(scene_get_current_index());
+  
+  return menu_create_roller_page("Note Channel",
+    "Default\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16",
+    current,
+    note_channel_confirm_cb, NULL);
+}
+
+static void nav_to_note_channel(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Note Channel", note_channel_roller_create);
+}
+
 // ============================================================================
 // Per-Scene Device Selection (Vendor -> Pedal two-step flow)
 // ============================================================================
@@ -1215,6 +1243,15 @@ lv_obj_t* menu_page_current_scene_create(void) {
   snprintf(s_send_clock_label, sizeof(s_send_clock_label), "Send Clock: %s",
     (scene && scene->send_clock) ? "Yes" : "No");
   s_scene_items[idx++] = (menu_item_t){ s_send_clock_label, nav_to_send_clock, NULL, false };
+
+  // Note channel (for routing notes to alternate MIDI channel)
+  uint8_t note_ch = scene ? scene->note_channel : 0;
+  if (note_ch == 0) {
+    snprintf(s_note_channel_label, sizeof(s_note_channel_label), "Note Ch: Default");
+  } else {
+    snprintf(s_note_channel_label, sizeof(s_note_channel_label), "Note Ch: %d", note_ch);
+  }
+  s_scene_items[idx++] = (menu_item_t){ s_note_channel_label, nav_to_note_channel, NULL, false };
 
   ESP_LOGD(TAG, "Current scene page: %d items", idx);
   return menu_create_page(s_page_title, s_scene_items, idx);
