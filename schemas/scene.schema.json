@@ -283,6 +283,10 @@
       "enum": ["fixed", "gate_voltage", "touchwheel"],
       "default": "fixed",
       "description": "Velocity mode for LFO2 note output"
+    },
+    "rtg_config": {
+      "$ref": "#/definitions/rtg_config",
+      "description": "Random Tone Generator configuration"
     }
   },
   "definitions": {
@@ -476,6 +480,75 @@
         }
       }
     },
+    "rtg_config": {
+      "type": "object",
+      "description": "Random Tone Generator configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the RTG is active"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["continuous", "step"],
+          "default": "continuous",
+          "description": "Mode: continuous (time-based) or step (triggered)"
+        },
+        "start_mode": {
+          "type": "string",
+          "enum": ["running", "paused", "transport"],
+          "default": "running",
+          "description": "Start mode: running (start immediately), paused (wait for toggle), transport (follow play/stop)"
+        },
+        "rate_mode": {
+          "type": "string",
+          "enum": ["free", "sync"],
+          "default": "free",
+          "description": "Rate source: free (Hz-based) or sync (BPM-synced, one step per beat)"
+        },
+        "rate_hz": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 25.0,
+          "default": 2.0,
+          "description": "Rate in Hz (when rate_mode=free)"
+        },
+        "sync_mult": {
+          "type": "number",
+          "minimum": 0.125,
+          "maximum": 8.0,
+          "default": 1.0,
+          "description": "BPM sync multiplier (when rate_mode=sync). 1.0 = one step per beat."
+        },
+        "glide": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, uses pitch bend for smooth gliding between notes"
+        },
+        "velocity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 127,
+          "default": 100,
+          "description": "Note velocity"
+        },
+        "note_min": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 36,
+          "description": "Minimum note (C2 = 36)"
+        },
+        "note_max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 96,
+          "description": "Maximum note (C7 = 96)"
+        }
+      }
+    },
     "touchpad_mapping": {
       "type": "object",
       "required": ["enabled", "actions"],
@@ -547,7 +620,10 @@
             "ui_hold",
             "ui_cycle",
             "param_hold",
-            "param_cycle"
+            "param_cycle",
+            "rtg_toggle",
+            "rtg_hold",
+            "step"
           ],
           "description": "Action type name"
         },
@@ -1147,6 +1223,23 @@
                   "maximum": 127
                 },
                 "description": "CC numbers for touchwheel slot 1 to cycle through"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "step"}
+            }
+          },
+          "then": {
+            "properties": {
+              "step_target": {
+                "type": "string",
+                "enum": ["sh", "rtg"],
+                "default": "rtg",
+                "description": "Step target: sh (Sample & Hold) or rtg (Random Tone Generator)"
               }
             }
           }

@@ -26,6 +26,7 @@
 #include "task_monitor.h"
 #include "transport.h"
 #include "tempo.h"
+#include "rtg.h"
 #include "input_manager.h"
 #include "cv.h"
 #include "dac.h"
@@ -113,6 +114,9 @@ void app_main(void) {
   // Initialize LFO component BEFORE scene loads (so configs exist when scene applies start modes)
   lfo_init();
   midi_lfo_scene_handler_init();
+
+  // Initialize RTG component
+  rtg_init();
 
   // Scene handlers (midi_scene_handler_init loads the scene, which applies LFO start modes)
   midi_scene_handler_init();

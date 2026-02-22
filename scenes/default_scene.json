@@ -299,5 +299,17 @@
 		"idle_timeout_ms":	1000
 	},
 	"lfo1_velocity_mode":	"fixed",
-	"lfo2_velocity_mode":	"fixed"
+	"lfo2_velocity_mode":	"fixed",
+	"rtg_config":	{
+		"enabled":	false,
+		"mode":	"continuous",
+		"start_mode":	"running",
+		"rate_mode":	"free",
+		"rate_hz":	2.0,
+		"sync_mult":	1.0,
+		"glide":	false,
+		"velocity":	100,
+		"note_min":	36,
+		"note_max":	96
+	}
 }

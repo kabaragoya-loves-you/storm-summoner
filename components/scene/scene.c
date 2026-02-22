@@ -16,6 +16,7 @@
 #include "ui.h"
 #include "memory_utils.h"
 #include "lfo.h"
+#include "rtg.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -208,6 +209,9 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->lfo2.enabled = false;                         // Disabled by default
   scene->lfo1_velocity_mode = VELOCITY_MODE_FIXED;
   scene->lfo2_velocity_mode = VELOCITY_MODE_FIXED;
+
+  // RTG configuration
+  scene->rtg_config = rtg_config_create_default();
 }
 
 // Cleanup existing touchwheel instance
@@ -332,6 +336,7 @@ static int s_touchwheel_aftertouch = 0;            // 0-127
 static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
 static volatile uint8_t s_touchwheel_velocity = 100; // For TOUCHWHEEL_MODE_VELOCITY
 static volatile uint8_t s_touchwheel_lfo_rate = 64;   // For TOUCHWHEEL_MODE_LFO_RATE (64 = center/default)
+static volatile uint8_t s_touchwheel_rtg_rate = 64;   // For TOUCHWHEEL_MODE_RTG_RATE (64 = center/default)
 
 // External LFO rate sources (updated from sensor events)
 static volatile uint8_t s_expression_lfo_rate = 64;
@@ -755,6 +760,34 @@ static void touchwheel_lfo_rate_callback(int value, void* user_data) {
   ESP_LOGD(TAG, "Touchwheel LFO rate: %d", new_rate);
 }
 
+// Callback for RTG rate mode touchwheel (internal only - modulates RTG speed)
+static void touchwheel_rtg_rate_callback(int value, void* user_data) {
+  (void)user_data;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  uint8_t new_rate;
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    // Endless mode: value is delta, accumulate
+    int current = (int)s_touchwheel_rtg_rate;
+    current += value * 2;  // Scale delta
+    if (current < 0) current = 0;
+    if (current > 127) current = 127;
+    new_rate = (uint8_t)current;
+  } else {
+    // Odometer mode: value is 0-100%, scale to 0-127
+    new_rate = (value * 127) / 100;
+    if (new_rate > 127) new_rate = 127;
+  }
+
+  s_touchwheel_rtg_rate = new_rate;
+  ESP_LOGD(TAG, "Touchwheel RTG rate: %d", new_rate);
+
+  // Notify RTG to update its timer rate
+  rtg_touchwheel_rate_changed();
+}
+
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
   // Don't send MIDI in programming mode
@@ -1009,6 +1042,19 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       output = touchwheel_output_callback_create(touchwheel_lfo_rate_callback, NULL);
       break;
 
+    case TOUCHWHEEL_MODE_RTG_RATE:
+      // RTG rate mode: internal only - modulates RTG speed
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "rtg_rate (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "rtg_rate (odometer)";
+      }
+      // RTG rate callback just updates the internal RTG rate value
+      output = touchwheel_output_callback_create(touchwheel_rtg_rate_callback, NULL);
+      break;
+
     case TOUCHWHEEL_MODE_PADS:
     default:
       // No touchwheel instance needed for pads mode
@@ -1213,6 +1259,10 @@ esp_err_t scene_init(void) {
   lfo_apply_config(0, &initial_scene->lfo1_config);
   lfo_apply_config(1, &initial_scene->lfo2_config);
   lfo_apply_start_modes();
+
+  // Apply RTG configuration and start mode
+  rtg_apply_config(&initial_scene->rtg_config);
+  rtg_apply_start_mode();
   
   // Setup touchwheel instance for non-buttons modes
   scene_setup_touchwheel_for_mode(initial_scene);
@@ -1385,6 +1435,9 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Apply LFO configurations (configures but does not start - no MIDI sent)
   lfo_apply_config(0, &new_scene->lfo1_config);
   lfo_apply_config(1, &new_scene->lfo2_config);
+
+  // Apply RTG configuration
+  rtg_apply_config(&new_scene->rtg_config);
   
   // MIDI phase: PC send, on-load actions, LFO start
   // In programming mode, defer these until returning to performance mode
@@ -1402,6 +1455,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     }
     
     lfo_apply_start_modes();
+    rtg_apply_start_mode();
     s_needs_deferred_init = false;
   } else {
     ESP_LOGI(TAG, "Programming mode: deferring MIDI phase for scene %d", scene_index + 1);
@@ -1478,8 +1532,9 @@ void scene_apply_deferred_init(void) {
     }
   }
   
-  // Start LFOs
+  // Start LFOs and RTG
   lfo_apply_start_modes();
+  rtg_apply_start_mode();
   
   // Switch UI module for this scene
   const char* mod_name = (scene->ui_module[0] != '\0')
@@ -1988,6 +2043,7 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
     case TOUCHWHEEL_MODE_CONTINUOUS: mode_str = "continuous"; break;
     case TOUCHWHEEL_MODE_VELOCITY: mode_str = "velocity"; break;
     case TOUCHWHEEL_MODE_LFO_RATE: mode_str = "lfo_rate"; break;
+    case TOUCHWHEEL_MODE_RTG_RATE: mode_str = "rtg_rate"; break;
     default: mode_str = "unknown"; break;
   }
   ESP_LOGI(TAG, "Scene %d touchwheel mode set to %s", scene_index + 1, mode_str);
@@ -2889,6 +2945,14 @@ uint8_t scene_get_touchwheel_lfo_rate(void) {
   return s_touchwheel_lfo_rate;
 }
 
+uint8_t scene_get_touchwheel_rtg_rate(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_RTG_RATE) {
+    return 64;  // Default center value when not in RTG rate mode
+  }
+  return s_touchwheel_rtg_rate;
+}
+
 uint8_t scene_get_expression_lfo_rate(void) {
   return s_expression_lfo_rate;
 }
@@ -3021,7 +3085,10 @@ static const char* action_type_json_names[] = {
   [ACTION_UI_HOLD] = "ui_hold",
   [ACTION_UI_CYCLE] = "ui_cycle",
   [ACTION_PARAM_HOLD] = "param_hold",
-  [ACTION_PARAM_CYCLE] = "param_cycle"
+  [ACTION_PARAM_CYCLE] = "param_cycle",
+  [ACTION_RTG_TOGGLE] = "rtg_toggle",
+  [ACTION_RTG_HOLD] = "rtg_hold",
+  [ACTION_STEP] = "step"
 };
 
 // Helper to convert action type string to enum
@@ -3238,6 +3305,9 @@ static cJSON* action_to_json(const action_t* action) {
         cJSON_CreateNumber(action->params.tw_param.params[i]));
     }
     cJSON_AddItemToObject(obj, "params", params);
+  } else if (action->type == ACTION_STEP) {
+    const char* target_str = (action->params.step.target == STEP_TARGET_RTG) ? "rtg" : "sh";
+    cJSON_AddStringToObject(obj, "step_target", target_str);
   }
   
   // Serialize timing (only if not immediate default)
@@ -3610,6 +3680,21 @@ static action_t json_to_action(cJSON* obj) {
         action.params.tw_param.num_params = (uint8_t)count;
     }
   }
+
+  // Parse step action
+  if (action.type == ACTION_STEP) {
+    cJSON* step_target = cJSON_GetObjectItem(obj, "step_target");
+    if (step_target && cJSON_IsString(step_target)) {
+      if (strcmp(step_target->valuestring, "rtg") == 0) {
+        action.params.step.target = STEP_TARGET_RTG;
+      } else {
+        action.params.step.target = STEP_TARGET_SH;
+      }
+    } else {
+      // Default to RTG
+      action.params.step.target = STEP_TARGET_RTG;
+    }
+  }
   
   // Parse timing (default: immediate)
   cJSON* timing = cJSON_GetObjectItem(obj, "timing");
@@ -3958,6 +4043,88 @@ static void json_to_lfo_config(cJSON* obj, lfo_config_t* config) {
   }
 }
 
+// Serialize RTG config to JSON
+static cJSON* rtg_config_to_json(const rtg_config_t* config) {
+  cJSON* obj = cJSON_CreateObject();
+
+  cJSON_AddBoolToObject(obj, "enabled", config->enabled);
+  cJSON_AddStringToObject(obj, "mode", rtg_mode_to_string(config->mode));
+  cJSON_AddStringToObject(obj, "start_mode", rtg_start_mode_to_string(config->start_mode));
+  cJSON_AddStringToObject(obj, "rate_mode", rtg_rate_mode_to_string(config->rate_mode));
+  cJSON_AddNumberToObject(obj, "rate_hz", config->rate_hz_x100 / 100.0);
+  cJSON_AddNumberToObject(obj, "sync_mult", config->sync_mult_x1000 / 1000.0);
+  cJSON_AddBoolToObject(obj, "glide", config->glide);
+  cJSON_AddNumberToObject(obj, "velocity", config->velocity);
+  cJSON_AddNumberToObject(obj, "note_min", config->note_min);
+  cJSON_AddNumberToObject(obj, "note_max", config->note_max);
+
+  return obj;
+}
+
+// Deserialize RTG config from JSON
+static void json_to_rtg_config(cJSON* obj, rtg_config_t* config) {
+  if (!obj || !config) return;
+
+  cJSON* enabled = cJSON_GetObjectItem(obj, "enabled");
+  if (enabled) config->enabled = cJSON_IsTrue(enabled);
+
+  cJSON* mode = cJSON_GetObjectItem(obj, "mode");
+  if (mode && cJSON_IsString(mode)) {
+    config->mode = rtg_mode_from_string(mode->valuestring);
+  }
+
+  cJSON* start_mode = cJSON_GetObjectItem(obj, "start_mode");
+  if (start_mode && cJSON_IsString(start_mode)) {
+    config->start_mode = rtg_start_mode_from_string(start_mode->valuestring);
+  }
+
+  cJSON* rate_mode = cJSON_GetObjectItem(obj, "rate_mode");
+  if (rate_mode && cJSON_IsString(rate_mode)) {
+    config->rate_mode = rtg_rate_mode_from_string(rate_mode->valuestring);
+  }
+
+  cJSON* rate_hz = cJSON_GetObjectItem(obj, "rate_hz");
+  if (rate_hz && cJSON_IsNumber(rate_hz)) {
+    float hz = (float)rate_hz->valuedouble;
+    if (hz < 0.5f) hz = 0.5f;
+    if (hz > 25.0f) hz = 25.0f;
+    config->rate_hz_x100 = (uint16_t)(hz * 100.0f);
+  }
+
+  cJSON* sync_mult = cJSON_GetObjectItem(obj, "sync_mult");
+  if (sync_mult && cJSON_IsNumber(sync_mult)) {
+    float mult = (float)sync_mult->valuedouble;
+    if (mult < 0.125f) mult = 0.125f;
+    if (mult > 8.0f) mult = 8.0f;
+    config->sync_mult_x1000 = (uint16_t)(mult * 1000.0f);
+  }
+
+  cJSON* glide = cJSON_GetObjectItem(obj, "glide");
+  if (glide) config->glide = cJSON_IsTrue(glide);
+
+  cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
+  if (velocity) {
+    uint8_t vel = (uint8_t)velocity->valueint;
+    if (vel < 1) vel = 1;
+    if (vel > 127) vel = 127;
+    config->velocity = vel;
+  }
+
+  cJSON* note_min = cJSON_GetObjectItem(obj, "note_min");
+  if (note_min) {
+    uint8_t n = (uint8_t)note_min->valueint;
+    if (n > 127) n = 127;
+    config->note_min = n;
+  }
+
+  cJSON* note_max = cJSON_GetObjectItem(obj, "note_max");
+  if (note_max) {
+    uint8_t n = (uint8_t)note_max->valueint;
+    if (n > 127) n = 127;
+    config->note_max = n;
+  }
+}
+
 // Scene JSON serialization
 static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* root = cJSON_CreateObject();
@@ -3992,6 +4159,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
     case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
     case TOUCHWHEEL_MODE_VELOCITY: tw_mode_str = "velocity"; break;
     case TOUCHWHEEL_MODE_LFO_RATE: tw_mode_str = "lfo_rate"; break;
+    case TOUCHWHEEL_MODE_RTG_RATE: tw_mode_str = "rtg_rate"; break;
     default: tw_mode_str = "continuous"; break;
   }
   cJSON_AddStringToObject(root, "touchwheel_mode", tw_mode_str);
@@ -4112,6 +4280,9 @@ static cJSON* scene_to_json(const scene_t* scene) {
   const char* lfo2_vel_str = (scene->lfo2_velocity_mode == VELOCITY_MODE_FIXED) ? "fixed" :
                              (scene->lfo2_velocity_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "gate_voltage" : "touchwheel";
   cJSON_AddStringToObject(root, "lfo2_velocity_mode", lfo2_vel_str);
+
+  // Serialize RTG configuration
+  cJSON_AddItemToObject(root, "rtg_config", rtg_config_to_json(&scene->rtg_config));
   
   return root;
 }
@@ -4176,6 +4347,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(mode_str, "double_cc") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_DOUBLE_CC;
     else if (strcmp(mode_str, "velocity") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_VELOCITY;
     else if (strcmp(mode_str, "lfo_rate") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_LFO_RATE;
+    else if (strcmp(mode_str, "rtg_rate") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_RTG_RATE;
     // Legacy: nrpn/rpn modes removed, map to continuous for backwards compatibility
     else if (strcmp(mode_str, "nrpn") == 0 || strcmp(mode_str, "rpn") == 0) {
       scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
@@ -4532,6 +4704,14 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(s, "touchwheel") == 0) scene->lfo2_velocity_mode = VELOCITY_MODE_TOUCHWHEEL;
   }
 
+  // Deserialize RTG configuration
+  cJSON* rtg_cfg = cJSON_GetObjectItem(root, "rtg_config");
+  if (rtg_cfg) {
+    json_to_rtg_config(rtg_cfg, &scene->rtg_config);
+  } else {
+    scene->rtg_config = rtg_config_create_default();
+  }
+
   return ESP_OK;
 }
 
@@ -4620,6 +4800,8 @@ touchwheel_mode_t scene_get_persisted_touchwheel_mode(uint8_t scene_index) {
       mode = TOUCHWHEEL_MODE_VELOCITY;
     } else if (strcmp(mode_str, "lfo_rate") == 0) {
       mode = TOUCHWHEEL_MODE_LFO_RATE;
+    } else if (strcmp(mode_str, "rtg_rate") == 0) {
+      mode = TOUCHWHEEL_MODE_RTG_RATE;
     }
   }
 

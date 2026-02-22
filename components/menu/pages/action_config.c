@@ -89,6 +89,7 @@ static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
+static char s_step_target_label[LABEL_BUFFER_SETS][24];
 static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
 static char s_cut_mode_label[LABEL_BUFFER_SETS][32];
@@ -173,6 +174,9 @@ static const action_type_t s_all_action_types[] = {
   ACTION_UI_CYCLE,
   ACTION_PARAM_HOLD,
   ACTION_PARAM_CYCLE,
+  ACTION_RTG_TOGGLE,
+  ACTION_RTG_HOLD,
+  ACTION_STEP,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -244,6 +248,9 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_UI_CYCLE: return "UI Cycle";
     case ACTION_PARAM_HOLD: return "Param Hold";
     case ACTION_PARAM_CYCLE: return "Param Cycle";
+    case ACTION_RTG_TOGGLE: return "RTG Toggle";
+    case ACTION_RTG_HOLD: return "RTG Hold";
+    case ACTION_STEP: return "Step";
     default: return "Unknown";
   }
 }
@@ -716,6 +723,11 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
         action->params.tw_param.params[1] = cc2;
         action->params.tw_param.current_index = 0;
       }
+    }
+
+    // Set defaults for Step action (default to RTG)
+    if (new_type == ACTION_STEP) {
+      action->params.step.target = STEP_TARGET_RTG;
     }
     
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
@@ -2960,6 +2972,48 @@ static void nav_to_lfo_slot(void* user_data) {
 }
 
 // ============================================================================
+// Step Target Roller (for step actions)
+// ============================================================================
+
+static const char* STEP_TARGET_OPTIONS = "S&&H\nRTG";
+
+static void step_target_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action->params.step.target = (selected_index == 0) ? STEP_TARGET_SH : STEP_TARGET_RTG;
+
+  ESP_LOGI(TAG, "Step target set to %s", (selected_index == 0) ? "S+H" : "RTG");
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* step_target_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = (action->params.step.target == STEP_TARGET_RTG) ? 1 : 0;
+
+  return menu_create_roller_page("Target", STEP_TARGET_OPTIONS, current_idx,
+    step_target_confirm_cb, NULL);
+}
+
+static void nav_to_step_target(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Target", step_target_roller_create);
+}
+
+// ============================================================================
 // Clock Mode Roller (for clock toggle/hold actions)
 // ============================================================================
 
@@ -4679,6 +4733,16 @@ lv_obj_t* action_config_detail_page_create(void) {
         s_param_cycle_step_labels[buf][i], nav_to_param_cycle_step, (void*)(uintptr_t)i, true
       };
     }
+  }
+
+  // Show Step target selector
+  if (action->type == ACTION_STEP && item_count < MAX_DETAIL_ITEMS) {
+    const char* target_name = (action->params.step.target == STEP_TARGET_RTG) ? "RTG" : "S+H";
+    snprintf(s_step_target_label[buf], sizeof(s_step_target_label[buf]),
+      "Target\n%s", target_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_step_target_label[buf], nav_to_step_target, NULL, true
+    };
   }
   
   // Show Timing selector for non-HOLD actions (actions that support timing)

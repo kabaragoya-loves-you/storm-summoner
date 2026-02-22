@@ -136,6 +136,11 @@ static void nav_to_on_load(void* user_data) {
   menu_navigate_to("On-Load", menu_page_on_load_scene_create);
 }
 
+static void nav_to_rtg(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("RTG", menu_page_rtg_scene_create);
+}
+
 // ============================================================================
 // Name Submenu (Regenerate / Edit)
 // ============================================================================
@@ -1106,6 +1111,7 @@ lv_obj_t* menu_page_current_scene_create(void) {
   s_scene_items[idx++] = (menu_item_t){ "LFO", nav_to_lfo, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Bump", nav_to_bump, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "On-Load", nav_to_on_load, NULL, true };
+  s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true };
   
   // Per-scene device controls (only in per-scene device mode)
   if (config_get_device_mode() == DEVICE_MODE_PER_SCENE) {

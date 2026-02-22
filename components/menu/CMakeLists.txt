@@ -31,6 +31,7 @@ idf_component_register(
     "pages/action_config.c"
     "pages/lfo1_scene.c"
     "pages/lfo2_scene.c"
+    "pages/rtg_scene.c"
   INCLUDE_DIRS
     "include"
   REQUIRES
@@ -55,5 +56,6 @@ idf_component_register(
     littlefs
     device_config
     lfo
+    rtg
   PRIV_REQUIRES main
 )

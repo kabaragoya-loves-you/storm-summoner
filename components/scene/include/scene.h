@@ -11,6 +11,7 @@
 #include "input_mode.h"
 #include "tempo.h"
 #include "lfo.h"
+#include "rtg.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -47,7 +48,8 @@ typedef enum {
   TOUCHWHEEL_MODE_AFTERTOUCH,     // Channel aftertouch (0-127), default odometer
   TOUCHWHEEL_MODE_DOUBLE_CC,      // Double CC (0-16383), default odometer
   TOUCHWHEEL_MODE_VELOCITY,       // Velocity source for note-generating modules (internal only)
-  TOUCHWHEEL_MODE_LFO_RATE        // LFO rate modulation source (internal only)
+  TOUCHWHEEL_MODE_LFO_RATE,       // LFO rate modulation source (internal only)
+  TOUCHWHEEL_MODE_RTG_RATE        // RTG rate modulation source (internal only)
 } touchwheel_mode_t;
 
 // Touchwheel continuous style (for modes that use continuous input)
@@ -135,6 +137,9 @@ typedef struct {
   continuous_mapping_t lfo2;             // LFO2 output mapping (CC/note, curve, polarity)
   velocity_mode_t lfo1_velocity_mode;    // For LFO1 note output
   velocity_mode_t lfo2_velocity_mode;    // For LFO2 note output
+
+  // RTG configuration (per-scene)
+  rtg_config_t rtg_config;               // Random tone generator settings
 } scene_t;
 
 // Scene cache entry
@@ -319,6 +324,9 @@ uint8_t scene_get_touchwheel_velocity(void);
 
 // Touchwheel LFO rate (when in TOUCHWHEEL_MODE_LFO_RATE)
 uint8_t scene_get_touchwheel_lfo_rate(void);
+
+// Touchwheel RTG rate (when in TOUCHWHEEL_MODE_RTG_RATE)
+uint8_t scene_get_touchwheel_rtg_rate(void);
 
 // External LFO rate sources (updated from sensor events)
 uint8_t scene_get_expression_lfo_rate(void);

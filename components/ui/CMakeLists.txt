@@ -21,4 +21,5 @@ idf_component_register(
         "version"
         "memory_utils"
         "cv"
+        "rtg"
 )

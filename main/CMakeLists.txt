@@ -5,7 +5,7 @@ idf_component_register(
     REQUIRES 
       adc_manager action app_settings assets_manager bump buttons clock_sync config console_repl curve cv dac
       display elite event_bus expression firmware_update haptic i2c_common
-      input_manager lvgl midi monitor revision scene screensaver sensor
+      input_manager lvgl midi monitor revision rtg scene screensaver sensor
       stars switch task_monitor tempo tinyusb_init touch transport ui usb_cdc_update version
       espressif__tinyusb
 )

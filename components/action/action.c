@@ -9,6 +9,7 @@
 #include "tempo.h"
 #include "assets_manager.h"
 #include "lfo.h"
+#include "rtg.h"
 #include "event_bus.h"
 #include "ui.h"
 #include "esp_log.h"
@@ -437,7 +438,10 @@ static const char* action_type_names[] = {
   [ACTION_UI_HOLD] = "UI Hold",
   [ACTION_UI_CYCLE] = "UI Cycle",
   [ACTION_PARAM_HOLD] = "Param Hold",
-  [ACTION_PARAM_CYCLE] = "Param Cycle"
+  [ACTION_PARAM_CYCLE] = "Param Cycle",
+  [ACTION_RTG_TOGGLE] = "RTG Toggle",
+  [ACTION_RTG_HOLD] = "RTG Hold",
+  [ACTION_STEP] = "Step"
 };
 
 esp_err_t action_init(void) {
@@ -1332,6 +1336,34 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       }
       break;
 
+    case ACTION_RTG_TOGGLE:
+      if (is_press) {
+        rtg_toggle();
+        ESP_LOGI(TAG, "RTG Toggle: now %s", rtg_is_running() ? "running" : "stopped");
+      }
+      break;
+
+    case ACTION_RTG_HOLD:
+      if (is_press) {
+        rtg_start();
+        ESP_LOGD(TAG, "RTG Hold: press -> running");
+      } else {
+        rtg_stop();
+        ESP_LOGD(TAG, "RTG Hold: release -> stopped");
+      }
+      break;
+
+    case ACTION_STEP:
+      if (is_press) {
+        if (action->params.step.target == STEP_TARGET_RTG) {
+          rtg_step();
+          ESP_LOGD(TAG, "Step action: RTG");
+        } else {
+          ESP_LOGD(TAG, "Step action: S+H (not implemented)");
+        }
+      }
+      break;
+
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
       return ESP_ERR_NOT_SUPPORTED;
@@ -1523,6 +1555,7 @@ static const action_type_t hold_actions[] = {
   ACTION_CUT_HOLD,
   ACTION_UI_HOLD,
   ACTION_PARAM_HOLD,
+  ACTION_RTG_HOLD,
 };
 
 bool action_requires_hold(action_type_t type) {
@@ -1576,6 +1609,11 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
   
   // UI actions cannot be assigned to on_load
   if (type == ACTION_SET_UI || type == ACTION_UI_CYCLE) {
+    if (trigger == ACTION_TRIGGER_ON_LOAD) return false;
+  }
+  
+  // LFO start/stop cannot be assigned to on_load (LFOs auto-start based on config)
+  if (type == ACTION_LFO_START || type == ACTION_LFO_STOP) {
     if (trigger == ACTION_TRIGGER_ON_LOAD) return false;
   }
   
@@ -1634,6 +1672,8 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_SCENE_DEC:
     case ACTION_TAP_TEMPO:
     case ACTION_SET_UI:
+    case ACTION_STEP:  // Step is a one-shot trigger, no repeat
+    case ACTION_RTG_TOGGLE:  // Toggle shouldn't repeat
       return false;
     default:
       return true;

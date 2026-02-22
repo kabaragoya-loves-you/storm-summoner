@@ -78,9 +78,22 @@ typedef enum {
   // Touchwheel CC slot 1 control
   ACTION_PARAM_HOLD,          // Hold: swap CC slot 1 on press, restore on release
   ACTION_PARAM_CYCLE,         // Cycle through CC values for slot 1
+
+  // RTG control
+  ACTION_RTG_TOGGLE,          // Toggle RTG enabled state
+  ACTION_RTG_HOLD,            // Press: enable RTG, Release: disable RTG
+
+  // RTG/S+H step control
+  ACTION_STEP,                // Trigger RTG or S+H step
   
   ACTION_MAX
 } action_type_t;
+
+// Step action target
+typedef enum {
+  STEP_TARGET_SH = 0,         // Sample & Hold (future)
+  STEP_TARGET_RTG             // Random Tone Generator
+} step_target_t;
 
 // Action trigger timing (when action takes effect)
 typedef enum {
@@ -288,6 +301,11 @@ typedef struct {
       uint8_t params[8];        // For cycle: CC numbers
       uint8_t current_index;    // Current position in cycle
     } tw_param;
+
+    // For step action (RTG/S+H trigger)
+    struct {
+      uint8_t target;           // step_target_t: 0=S+H, 1=RTG
+    } step;
   } params;
 } action_t;
 
