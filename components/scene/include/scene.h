@@ -12,6 +12,7 @@
 #include "tempo.h"
 #include "lfo.h"
 #include "rtg.h"
+#include "sample_hold.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -141,6 +142,10 @@ typedef struct {
 
   // RTG configuration (per-scene)
   rtg_config_t rtg_config;               // Random tone generator settings
+
+  // Sample+Hold configuration (per-scene)
+  sample_hold_config_t sample_hold_config;
+  continuous_mapping_t sample_hold;      // S+H output mapping (CC, curve, polarity)
 } scene_t;
 
 // Scene cache entry

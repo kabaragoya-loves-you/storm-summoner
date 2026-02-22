@@ -37,6 +37,7 @@ void menu_page_lfo1_scene_cleanup(void);
 lv_obj_t* menu_page_lfo2_scene_create(void);       // Scene -> LFO2
 void menu_page_lfo2_scene_cleanup(void);
 lv_obj_t* menu_page_rtg_scene_create(void);        // Scene -> RTG
+lv_obj_t* menu_page_sample_hold_scene_create(void);   // Scene -> S+H
 lv_obj_t* menu_page_settings_proximity_create(void);  // Settings -> Proximity
 lv_obj_t* menu_page_settings_als_create(void);        // Settings -> Ambient Light
 lv_obj_t* menu_page_buttons_scene_create(void);       // Scene -> Buttons

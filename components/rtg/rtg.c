@@ -1,4 +1,5 @@
 #include "rtg.h"
+#include "lfsr.h"
 #include "midi_messages.h"
 #include "scene.h"
 #include "event_bus.h"
@@ -30,14 +31,6 @@ static rtg_state_t s_state;
 static bool s_initialized = false;
 static bool s_running = false;  // Runtime running state (independent of config.enabled)
 static esp_timer_handle_t s_rtg_timer = NULL;
-
-// 8-bit maximal LFSR (polynomial x^8 + x^6 + x^5 + x^4 + 1)
-static uint8_t lfsr8_step(uint8_t x) {
-  uint8_t lsb = x & 1;
-  x >>= 1;
-  if (lsb) x ^= 0xB8;  // 0b10111000 taps
-  return x ? x : 0xA5; // Avoid zero lockup
-}
 
 // Convert rate_hz_x100 to interval in microseconds (for esp_timer)
 static uint64_t rate_to_interval_us(uint16_t rate_hz_x100) {

@@ -32,6 +32,7 @@ idf_component_register(
     "pages/lfo1_scene.c"
     "pages/lfo2_scene.c"
     "pages/rtg_scene.c"
+    "pages/sample_hold_scene.c"
   INCLUDE_DIRS
     "include"
   REQUIRES
@@ -57,5 +58,6 @@ idf_component_register(
     device_config
     lfo
     rtg
+    sample_hold
   PRIV_REQUIRES main
 )

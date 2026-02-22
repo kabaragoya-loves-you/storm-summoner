@@ -294,6 +294,14 @@
     "rtg_config": {
       "$ref": "#/definitions/rtg_config",
       "description": "Random Tone Generator configuration"
+    },
+    "sample_hold_config": {
+      "$ref": "#/definitions/sample_hold_config",
+      "description": "Sample and Hold configuration"
+    },
+    "sample_hold": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Sample and Hold output mapping (CC, curve, polarity)"
     }
   },
   "definitions": {
@@ -556,6 +564,54 @@
         }
       }
     },
+    "sample_hold_config": {
+      "type": "object",
+      "description": "Sample and Hold configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the Sample+Hold is active"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["continuous", "step"],
+          "default": "continuous",
+          "description": "Mode: continuous (time-based) or step (triggered)"
+        },
+        "start_mode": {
+          "type": "string",
+          "enum": ["running", "paused", "transport"],
+          "default": "running",
+          "description": "Start mode: running (start immediately), paused (wait for toggle), transport (follow play/stop)"
+        },
+        "rate_mode": {
+          "type": "string",
+          "enum": ["free", "sync"],
+          "default": "free",
+          "description": "Rate source: free (Hz-based) or sync (BPM-synced)"
+        },
+        "rate_hz": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 25.0,
+          "default": 2.0,
+          "description": "Rate in Hz (when rate_mode=free)"
+        },
+        "sync_mult": {
+          "type": "number",
+          "minimum": 0.125,
+          "maximum": 8.0,
+          "default": 1.0,
+          "description": "BPM sync multiplier (when rate_mode=sync). 1.0 = one step per beat."
+        },
+        "glide": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable smooth transitions between values (auto-scaling steps based on delta)"
+        }
+      }
+    },
     "touchpad_mapping": {
       "type": "object",
       "required": ["enabled", "actions"],
@@ -630,6 +686,8 @@
             "param_cycle",
             "rtg_toggle",
             "rtg_hold",
+            "sample_hold_toggle",
+            "sample_hold_hold",
             "step"
           ],
           "description": "Action type name"

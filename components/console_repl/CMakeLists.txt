@@ -33,5 +33,6 @@ idf_component_register(
     driver
     version
     lfo
+    sample_hold
 )
 

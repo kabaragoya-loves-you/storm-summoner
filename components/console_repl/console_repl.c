@@ -30,6 +30,7 @@
 #include "firmware_update_console.h"
 #include "event_bus_console.h"
 #include "lfo_console.h"
+#include "sample_hold_console.h"
 #include "esp_console.h"
 #include "esp_vfs_dev.h"
 #include "driver/uart.h"
@@ -309,6 +310,7 @@ esp_err_t console_repl_init(void) {
   console_register_context("event_bus", event_bus_console_init, event_bus_console_cleanup);
   console_register_context("version", version_console_init, version_console_cleanup);
   console_register_context("lfo", lfo_console_init, lfo_console_cleanup);
+  sample_hold_console_init();
   
   // Start the REPL
   ret = esp_console_start_repl(g_repl);

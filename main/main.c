@@ -27,6 +27,8 @@
 #include "transport.h"
 #include "tempo.h"
 #include "rtg.h"
+#include "sample_hold.h"
+#include "midi_sample_hold_scene_handler.h"
 #include "input_manager.h"
 #include "cv.h"
 #include "dac.h"
@@ -117,6 +119,10 @@ void app_main(void) {
 
   // Initialize RTG component
   rtg_init();
+
+  // Initialize Sample+Hold component
+  sample_hold_init();
+  midi_sample_hold_scene_handler_init();
 
   // Scene handlers (midi_scene_handler_init loads the scene, which applies LFO start modes)
   midi_scene_handler_init();

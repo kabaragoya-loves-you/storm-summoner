@@ -102,7 +102,9 @@ static const char* event_type_names[] = {
   [EVENT_TEMPO_CHANGED] = "TEMPO_CHANGED",
   // LFO events
   [EVENT_LFO1_VALUE] = "LFO1_VALUE",
-  [EVENT_LFO2_VALUE] = "LFO2_VALUE"
+  [EVENT_LFO2_VALUE] = "LFO2_VALUE",
+  // Sample+Hold events
+  [EVENT_SAMPLE_HOLD_VALUE] = "SAMPLE_HOLD_VALUE"
 };
 
 const char* event_type_to_string(event_type_t type) {

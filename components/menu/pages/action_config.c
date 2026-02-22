@@ -176,6 +176,8 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PARAM_CYCLE,
   ACTION_RTG_TOGGLE,
   ACTION_RTG_HOLD,
+  ACTION_SAMPLE_HOLD_TOGGLE,
+  ACTION_SAMPLE_HOLD_HOLD,
   ACTION_STEP,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
@@ -250,6 +252,8 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_PARAM_CYCLE: return "Param Cycle";
     case ACTION_RTG_TOGGLE: return "RTG Toggle";
     case ACTION_RTG_HOLD: return "RTG Hold";
+    case ACTION_SAMPLE_HOLD_TOGGLE: return "S+H Toggle";
+    case ACTION_SAMPLE_HOLD_HOLD: return "S+H Hold";
     case ACTION_STEP: return "Step";
     default: return "Unknown";
   }
@@ -2975,7 +2979,7 @@ static void nav_to_lfo_slot(void* user_data) {
 // Step Target Roller (for step actions)
 // ============================================================================
 
-static const char* STEP_TARGET_OPTIONS = "S&&H\nRTG";
+static const char* STEP_TARGET_OPTIONS = "S+H\nRTG";
 
 static void step_target_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;

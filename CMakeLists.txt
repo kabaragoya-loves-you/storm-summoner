@@ -110,6 +110,7 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_sensor>"
     "$<TARGET_FILE:__idf_expression>"
     "$<TARGET_FILE:__idf_cv>"
+    "$<TARGET_FILE:__idf_sample_hold>"
     "$<TARGET_FILE:__idf_rtg>"
     "$<TARGET_FILE:__idf_dac>"
     "$<TARGET_FILE:__idf_midi>"

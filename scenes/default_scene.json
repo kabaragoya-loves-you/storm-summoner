@@ -311,5 +311,33 @@
 		"velocity":	100,
 		"note_min":	36,
 		"note_max":	96
+	},
+	"sample_hold_config":	{
+		"enabled":	false,
+		"mode":	"continuous",
+		"start_mode":	"running",
+		"rate_mode":	"free",
+		"rate_hz":	2.0,
+		"sync_mult":	1.0,
+		"glide":	false
+	},
+	"sample_hold":	{
+		"enabled":	false,
+		"output_type":	"cc",
+		"cc_number":	1,
+		"cc_numbers":	[1, 0, 0, 0],
+		"base_note":	60,
+		"note_range":	24,
+		"velocity":	100,
+		"note_latch":	false,
+		"note_release_ms":	500,
+		"polyphony":	"mono",
+		"curve_type":	0,
+		"polarity":	0,
+		"min_value":	0,
+		"max_value":	127,
+		"use_idle_value":	false,
+		"idle_value":	64,
+		"idle_timeout_ms":	1000
 	}
 }

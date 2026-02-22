@@ -10,6 +10,7 @@
 #include "assets_manager.h"
 #include "lfo.h"
 #include "rtg.h"
+#include "sample_hold.h"
 #include "event_bus.h"
 #include "ui.h"
 #include "esp_log.h"
@@ -441,6 +442,8 @@ static const char* action_type_names[] = {
   [ACTION_PARAM_CYCLE] = "Param Cycle",
   [ACTION_RTG_TOGGLE] = "RTG Toggle",
   [ACTION_RTG_HOLD] = "RTG Hold",
+  [ACTION_SAMPLE_HOLD_TOGGLE] = "S+H Toggle",
+  [ACTION_SAMPLE_HOLD_HOLD] = "S+H Hold",
   [ACTION_STEP] = "Step"
 };
 
@@ -1353,13 +1356,31 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       }
       break;
 
+    case ACTION_SAMPLE_HOLD_TOGGLE:
+      if (is_press) {
+        sample_hold_toggle();
+        ESP_LOGI(TAG, "S+H Toggle: now %s", sample_hold_is_running() ? "running" : "stopped");
+      }
+      break;
+
+    case ACTION_SAMPLE_HOLD_HOLD:
+      if (is_press) {
+        sample_hold_start();
+        ESP_LOGD(TAG, "S+H Hold: press -> running");
+      } else {
+        sample_hold_stop();
+        ESP_LOGD(TAG, "S+H Hold: release -> stopped");
+      }
+      break;
+
     case ACTION_STEP:
       if (is_press) {
         if (action->params.step.target == STEP_TARGET_RTG) {
           rtg_step();
           ESP_LOGD(TAG, "Step action: RTG");
-        } else {
-          ESP_LOGD(TAG, "Step action: S+H (not implemented)");
+        } else if (action->params.step.target == STEP_TARGET_SH) {
+          sample_hold_step();
+          ESP_LOGD(TAG, "Step action: S+H");
         }
       }
       break;
@@ -1556,6 +1577,7 @@ static const action_type_t hold_actions[] = {
   ACTION_UI_HOLD,
   ACTION_PARAM_HOLD,
   ACTION_RTG_HOLD,
+  ACTION_SAMPLE_HOLD_HOLD,
 };
 
 bool action_requires_hold(action_type_t type) {
@@ -1674,6 +1696,7 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_SET_UI:
     case ACTION_STEP:  // Step is a one-shot trigger, no repeat
     case ACTION_RTG_TOGGLE:  // Toggle shouldn't repeat
+    case ACTION_SAMPLE_HOLD_TOGGLE:  // Toggle shouldn't repeat
       return false;
     default:
       return true;
