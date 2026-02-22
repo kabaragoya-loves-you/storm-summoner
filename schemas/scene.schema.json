@@ -61,9 +61,15 @@
     },
     "touchwheel_mode": {
       "type": "string",
-      "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc", "velocity"],
+      "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc", "velocity", "lfo_rate", "lfo_depth", "rtg_rate"],
       "default": "pads",
       "description": "Touchwheel behavior mode"
+    },
+    "touchwheel_lfo_target": {
+      "type": "string",
+      "enum": ["lfo1", "lfo2", "both"],
+      "default": "both",
+      "description": "Which LFO(s) the touchwheel affects in LFO rate/depth modes"
     },
     "touchwheel_style": {
       "type": "string",
@@ -314,9 +320,15 @@
         },
         "output_type": {
           "type": "string",
-          "enum": ["cc", "note"],
+          "enum": ["cc", "note", "lfo_rate", "lfo_depth", "lfo2_rate", "lfo2_depth", "lfo1_rate", "lfo1_depth"],
           "default": "cc",
-          "description": "Output type (cc or note)"
+          "description": "Output type: cc, note, lfo_rate/lfo_depth (with lfo_target), or lfo1_rate/lfo1_depth/lfo2_rate/lfo2_depth (LFO cross-modulation)"
+        },
+        "lfo_target": {
+          "type": "string",
+          "enum": ["lfo1", "lfo2", "both"],
+          "default": "both",
+          "description": "Which LFO(s) to target when output_type is lfo_rate or lfo_depth"
         },
         "cc_number": {
           "type": "integer",

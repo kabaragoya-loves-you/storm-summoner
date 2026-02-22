@@ -48,6 +48,11 @@ typedef struct {
   uint8_t queued_cycles;    // Number of additional cycles queued (for retrigger)
   bool pending_start;       // LFO Start was triggered, waiting for timing
   bool just_started;        // Skip first one-shot detection after restart (race protection)
+  // Dynamic modulation from external sources
+  uint8_t dynamic_depth;    // 0-127, modulates floor/ceiling range (127=full range)
+  bool has_dynamic_depth;   // Whether dynamic depth is active
+  uint8_t dynamic_rate;     // 0-127, maps to 0.1-10.0 Hz exponentially
+  bool has_dynamic_rate;    // Whether dynamic rate is active
 } lfo_state_t;
 
 static lfo_state_t s_lfo[LFO_NUM_SLOTS];
@@ -158,6 +163,11 @@ esp_err_t lfo_init(void) {
     s_lfo[i].queued_cycles = 0;
     s_lfo[i].pending_start = false;
     s_lfo[i].just_started = false;
+    // Dynamic modulation (default: inactive, full range)
+    s_lfo[i].dynamic_depth = 127;
+    s_lfo[i].has_dynamic_depth = false;
+    s_lfo[i].dynamic_rate = 64;
+    s_lfo[i].has_dynamic_rate = false;
   }
 
   // Subscribe to beat events for tempo sync
@@ -437,6 +447,20 @@ static uint8_t calculate_waveform(lfo_state_t* lfo) {
     return (floor + ceiling) / 2;
   }
 
+  // Apply dynamic depth modulation if active
+  // dynamic_depth 0-127 scales the range: 0=flat at center, 127=full range
+  if (lfo->has_dynamic_depth) {
+    uint8_t configured_range = ceiling - floor;
+    uint8_t center = floor + (configured_range / 2);
+    // Scale range by dynamic_depth (0-127 -> 0-100%)
+    uint8_t effective_range = (uint8_t)(((uint32_t)configured_range *
+      lfo->dynamic_depth) / 127);
+    uint8_t half_range = effective_range / 2;
+    // Recalculate floor/ceiling centered on original midpoint
+    floor = (center > half_range) ? (center - half_range) : 0;
+    ceiling = (center + half_range <= 127) ? (center + half_range) : 127;
+  }
+
   if (floor == 0 && ceiling == 127) {
     // Full range, just scale to 0-127
     return value >> 1;
@@ -473,7 +497,13 @@ static void lfo_task(void* arg) {
         lfo->prev_phase = lfo->phase;
 
         // Update phase based on rate mode
-        if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
+        // Dynamic rate (from external modulation) takes priority if active
+        if (lfo->has_dynamic_rate) {
+          // Dynamic rate: external source controls rate (0.1-10.0 Hz exponential)
+          float rate_hz = 0.1f * powf(100.0f, lfo->dynamic_rate / 127.0f);
+          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
+          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
+        } else if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
           // Free-running mode: use configured Hz rate
           float rate_hz = lfo->config.rate_hz_x100 / 100.0f;
           uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
@@ -1292,4 +1322,80 @@ bool lfo_is_cycle_completed(uint8_t slot) {
 bool lfo_is_pending_start(uint8_t slot) {
   if (slot >= LFO_NUM_SLOTS) return false;
   return s_lfo[slot].pending_start;
+}
+
+// ============================================================================
+// Dynamic Modulation Functions (for external source control)
+// ============================================================================
+
+void lfo_set_dynamic_depth(uint8_t slot, uint8_t depth_value) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  s_lfo[slot].dynamic_depth = depth_value;
+  s_lfo[slot].has_dynamic_depth = true;
+}
+
+uint8_t lfo_get_dynamic_depth(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return 127;
+  return s_lfo[slot].dynamic_depth;
+}
+
+void lfo_set_dynamic_rate(uint8_t slot, uint8_t rate_value) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  s_lfo[slot].dynamic_rate = rate_value;
+  s_lfo[slot].has_dynamic_rate = true;
+}
+
+uint8_t lfo_get_dynamic_rate(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return 64;
+  return s_lfo[slot].dynamic_rate;
+}
+
+uint8_t lfo_get_effective_floor(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return 0;
+  lfo_state_t* lfo = &s_lfo[slot];
+  
+  if (!lfo->has_dynamic_depth) return lfo->config.floor;
+  
+  uint8_t configured_range = lfo->config.ceiling - lfo->config.floor;
+  uint8_t center = lfo->config.floor + (configured_range / 2);
+  uint8_t effective_range = (uint8_t)(((uint32_t)configured_range *
+    lfo->dynamic_depth) / 127);
+  uint8_t half_range = effective_range / 2;
+  return (center > half_range) ? (center - half_range) : 0;
+}
+
+uint8_t lfo_get_effective_ceiling(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return 127;
+  lfo_state_t* lfo = &s_lfo[slot];
+  
+  if (!lfo->has_dynamic_depth) return lfo->config.ceiling;
+  
+  uint8_t configured_range = lfo->config.ceiling - lfo->config.floor;
+  uint8_t center = lfo->config.floor + (configured_range / 2);
+  uint8_t effective_range = (uint8_t)(((uint32_t)configured_range *
+    lfo->dynamic_depth) / 127);
+  uint8_t half_range = effective_range / 2;
+  return (center + half_range <= 127) ? (center + half_range) : 127;
+}
+
+bool lfo_has_dynamic_depth(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return false;
+  return s_lfo[slot].has_dynamic_depth;
+}
+
+bool lfo_has_dynamic_rate(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return false;
+  return s_lfo[slot].has_dynamic_rate;
+}
+
+void lfo_clear_dynamic_depth(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  s_lfo[slot].has_dynamic_depth = false;
+  s_lfo[slot].dynamic_depth = 127;  // Reset to full range
+}
+
+void lfo_clear_dynamic_rate(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  s_lfo[slot].has_dynamic_rate = false;
+  s_lfo[slot].dynamic_rate = 64;  // Reset to mid-range (~1 Hz)
 }

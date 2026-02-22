@@ -15,8 +15,21 @@ typedef enum {
 // Output type for continuous inputs
 typedef enum {
   OUTPUT_TYPE_CC = 0,       // Send MIDI CC messages
-  OUTPUT_TYPE_NOTE          // Send MIDI Note On/Off messages
+  OUTPUT_TYPE_NOTE,         // Send MIDI Note On/Off messages
+  OUTPUT_TYPE_LFO_RATE,     // Modulate LFO rate (uses lfo_target)
+  OUTPUT_TYPE_LFO_DEPTH,    // Modulate LFO depth (uses lfo_target)
+  OUTPUT_TYPE_LFO2_RATE,    // LFO1 -> LFO2 rate (cross-modulation)
+  OUTPUT_TYPE_LFO2_DEPTH,   // LFO1 -> LFO2 depth (cross-modulation)
+  OUTPUT_TYPE_LFO1_RATE,    // LFO2 -> LFO1 rate (cross-modulation)
+  OUTPUT_TYPE_LFO1_DEPTH    // LFO2 -> LFO1 depth (cross-modulation)
 } output_type_t;
+
+// LFO target for LFO_RATE/LFO_DEPTH output types
+typedef enum {
+  LFO_TARGET_LFO1 = 0,      // Target LFO1 only
+  LFO_TARGET_LFO2,          // Target LFO2 only
+  LFO_TARGET_BOTH           // Target both LFOs
+} lfo_target_t;
 
 // Polyphony mode for note output
 typedef enum {
@@ -60,6 +73,9 @@ typedef struct {
   bool use_idle_value;       // Return to idle when no activity
   uint8_t idle_value;        // Value when idle (64 for CC bipolar, 60 for NOTE)
   uint16_t idle_timeout_ms;  // Time before reverting to idle
+  
+  // LFO modulation target (for OUTPUT_TYPE_LFO_RATE/LFO_DEPTH)
+  lfo_target_t lfo_target;   // Which LFO(s) to target
   
   // State tracking
   uint32_t last_activity_ms; // Last time value changed (for idle timeout)

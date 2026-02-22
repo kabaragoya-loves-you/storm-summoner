@@ -50,6 +50,7 @@ typedef enum {
   TOUCHWHEEL_MODE_DOUBLE_CC,      // Double CC (0-16383), default odometer
   TOUCHWHEEL_MODE_VELOCITY,       // Velocity source for note-generating modules (internal only)
   TOUCHWHEEL_MODE_LFO_RATE,       // LFO rate modulation source (internal only)
+  TOUCHWHEEL_MODE_LFO_DEPTH,      // LFO depth modulation source (internal only)
   TOUCHWHEEL_MODE_RTG_RATE        // RTG rate modulation source (internal only)
 } touchwheel_mode_t;
 
@@ -89,6 +90,7 @@ typedef struct {
   touchwheel_mode_t touchwheel_mode;
   touchwheel_style_t touchwheel_style;  // For CONTINUOUS mode: odometer vs endless encoder
   continuous_mapping_t touchwheel;      // For TOUCHWHEEL_MODE_CONTINUOUS (like proximity/cv/etc)
+  lfo_target_t touchwheel_lfo_target;   // Which LFO(s) to affect in LFO_RATE/LFO_DEPTH modes
   
   // Discrete input assignments (single action per input)
   touchpad_mapping_t touchpads[NUM_TOUCHPADS];
@@ -339,6 +341,9 @@ uint8_t scene_get_touchwheel_velocity(void);
 
 // Touchwheel LFO rate (when in TOUCHWHEEL_MODE_LFO_RATE)
 uint8_t scene_get_touchwheel_lfo_rate(void);
+
+// Touchwheel LFO depth (when in TOUCHWHEEL_MODE_LFO_DEPTH)
+uint8_t scene_get_touchwheel_lfo_depth(void);
 
 // Touchwheel RTG rate (when in TOUCHWHEEL_MODE_RTG_RATE)
 uint8_t scene_get_touchwheel_rtg_rate(void);

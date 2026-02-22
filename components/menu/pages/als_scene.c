@@ -37,6 +37,7 @@ static char s_base_note_label[LABEL_BUFFER_SETS][32];
 static char s_range_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_mode_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_label[LABEL_BUFFER_SETS][32];
+static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
 
 // CC options from device
 typedef struct {
@@ -211,11 +212,18 @@ static void output_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  scene->als.output_type = (selected_index == 0) ? OUTPUT_TYPE_CC : OUTPUT_TYPE_NOTE;
+  // Map roller index to output type
+  // 0=CC, 1=Note, 2=LFO Rate, 3=LFO Depth
+  switch (selected_index) {
+    case 0: scene->als.output_type = OUTPUT_TYPE_CC; break;
+    case 1: scene->als.output_type = OUTPUT_TYPE_NOTE; break;
+    case 2: scene->als.output_type = OUTPUT_TYPE_LFO_RATE; break;
+    case 3: scene->als.output_type = OUTPUT_TYPE_LFO_DEPTH; break;
+    default: scene->als.output_type = OUTPUT_TYPE_CC; break;
+  }
   persist_scene_changes();
   
-  ESP_LOGI(TAG, "Ambient Light output set to: %s", 
-    scene->als.output_type == OUTPUT_TYPE_CC ? "CC" : "Notes");
+  ESP_LOGI(TAG, "Ambient Light output set to type %d", (int)selected_index);
   
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, "Ambient Light", menu_page_als_scene_create);
@@ -225,13 +233,68 @@ static lv_obj_t* output_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
   
-  uint32_t current = (scene->als.output_type == OUTPUT_TYPE_CC) ? 0 : 1;
-  return menu_create_roller_page("Output", "Control Change\nNotes", current, output_confirm_cb, NULL);
+  uint32_t current = 0;
+  switch (scene->als.output_type) {
+    case OUTPUT_TYPE_CC: current = 0; break;
+    case OUTPUT_TYPE_NOTE: current = 1; break;
+    case OUTPUT_TYPE_LFO_RATE: current = 2; break;
+    case OUTPUT_TYPE_LFO_DEPTH: current = 3; break;
+    default: current = 0; break;
+  }
+  return menu_create_roller_page("Output", "Control Change\nNotes\nLFO Rate\nLFO Depth",
+    current, output_confirm_cb, NULL);
 }
 
 static void nav_to_output(void* user_data) {
   (void)user_data;
   menu_navigate_to("Output", output_roller_create);
+}
+
+// ============================================================================
+// LFO Target Roller
+// ============================================================================
+
+static const char* lfo_target_to_string(lfo_target_t target) {
+  switch (target) {
+    case LFO_TARGET_LFO1: return "LFO1";
+    case LFO_TARGET_LFO2: return "LFO2";
+    case LFO_TARGET_BOTH: return "Both";
+    default: return "Both";
+  }
+}
+
+static void lfo_target_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  scene->als.lfo_target = (lfo_target_t)selected_index;
+  persist_scene_changes();
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Ambient Light", menu_page_als_scene_create);
+}
+
+static lv_obj_t* lfo_target_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  uint32_t current = (uint32_t)scene->als.lfo_target;
+  return menu_create_roller_page("LFO Target", "LFO1\nLFO2\nBoth", current,
+    lfo_target_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_target(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("LFO Target", lfo_target_roller_create);
 }
 
 // ============================================================================
@@ -625,8 +688,14 @@ lv_obj_t* menu_page_als_scene_create(void) {
   }
   
   // Output type selector
-  const char* output_name = (scene->als.output_type == OUTPUT_TYPE_CC) ? 
-    "Control Change" : "Notes";
+  const char* output_name;
+  switch (scene->als.output_type) {
+    case OUTPUT_TYPE_CC: output_name = "Control Change"; break;
+    case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
+    case OUTPUT_TYPE_LFO_RATE: output_name = "LFO Rate"; break;
+    case OUTPUT_TYPE_LFO_DEPTH: output_name = "LFO Depth"; break;
+    default: output_name = "Control Change"; break;
+  }
   snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
   s_als_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
   
@@ -662,7 +731,7 @@ lv_obj_t* menu_page_als_scene_create(void) {
       "Curve\n%s", curve_type_to_string(scene->als.curve.type));
     s_als_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
     
-  } else {
+  } else if (scene->als.output_type == OUTPUT_TYPE_NOTE) {
     // Notes output mode: Base Note, Range, Velocity Mode, (Fixed) Velocity
     char note_name[8];
     get_note_name(scene->als.base_note, note_name, sizeof(note_name));
@@ -702,6 +771,12 @@ lv_obj_t* menu_page_als_scene_create(void) {
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(scene->als.curve.type));
     s_als_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+  } else if (scene->als.output_type == OUTPUT_TYPE_LFO_RATE ||
+             scene->als.output_type == OUTPUT_TYPE_LFO_DEPTH) {
+    // LFO modulation mode: Target selector
+    snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
+      "LFO Target\n%s", lfo_target_to_string(scene->als.lfo_target));
+    s_als_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true};
   }
   
   return menu_create_page_2line("Ambient Light", s_als_items, item_count);

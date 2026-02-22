@@ -135,6 +135,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;  // Default: position-based (~15 values)
   scene->touchwheel = continuous_mapping_create(16);    // CC16 = General Purpose 1
   scene->touchwheel.enabled = false;                    // Disabled by default (BUTTONS mode)
+  scene->touchwheel_lfo_target = LFO_TARGET_BOTH;       // Default: affect both LFOs
   
   // Initialize touchpad mappings with default CC actions
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
@@ -341,6 +342,7 @@ static int s_touchwheel_aftertouch = 0;            // 0-127
 static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
 static volatile uint8_t s_touchwheel_velocity = 100; // For TOUCHWHEEL_MODE_VELOCITY
 static volatile uint8_t s_touchwheel_lfo_rate = 64;   // For TOUCHWHEEL_MODE_LFO_RATE (64 = center/default)
+static volatile uint8_t s_touchwheel_lfo_depth = 127; // For TOUCHWHEEL_MODE_LFO_DEPTH (127 = full depth)
 static volatile uint8_t s_touchwheel_rtg_rate = 64;   // For TOUCHWHEEL_MODE_RTG_RATE (64 = center/default)
 
 // External LFO rate sources (updated from sensor events)
@@ -762,7 +764,52 @@ static void touchwheel_lfo_rate_callback(int value, void* user_data) {
   }
 
   s_touchwheel_lfo_rate = new_rate;
-  ESP_LOGD(TAG, "Touchwheel LFO rate: %d", new_rate);
+
+  // Apply rate to target LFO(s) using dynamic modulation
+  lfo_target_t target = scene->touchwheel_lfo_target;
+  if (target == LFO_TARGET_LFO1 || target == LFO_TARGET_BOTH) {
+    lfo_set_dynamic_rate(0, new_rate);
+  }
+  if (target == LFO_TARGET_LFO2 || target == LFO_TARGET_BOTH) {
+    lfo_set_dynamic_rate(1, new_rate);
+  }
+
+  ESP_LOGD(TAG, "Touchwheel LFO rate: %d (target: %d)", new_rate, target);
+}
+
+// Callback for LFO depth mode touchwheel (internal only - modulates LFO depth)
+static void touchwheel_lfo_depth_callback(int value, void* user_data) {
+  (void)user_data;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  uint8_t new_depth;
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    // Endless mode: value is delta, accumulate
+    int current = (int)s_touchwheel_lfo_depth;
+    current += value * 2;  // Scale delta
+    if (current < 0) current = 0;
+    if (current > 127) current = 127;
+    new_depth = (uint8_t)current;
+  } else {
+    // Odometer mode: value is 0-100%, scale to 0-127
+    new_depth = (value * 127) / 100;
+    if (new_depth > 127) new_depth = 127;
+  }
+
+  s_touchwheel_lfo_depth = new_depth;
+
+  // Apply depth to target LFO(s) using dynamic modulation
+  lfo_target_t target = scene->touchwheel_lfo_target;
+  if (target == LFO_TARGET_LFO1 || target == LFO_TARGET_BOTH) {
+    lfo_set_dynamic_depth(0, new_depth);
+  }
+  if (target == LFO_TARGET_LFO2 || target == LFO_TARGET_BOTH) {
+    lfo_set_dynamic_depth(1, new_depth);
+  }
+
+  ESP_LOGD(TAG, "Touchwheel LFO depth: %d (target: %d)", new_depth, target);
 }
 
 // Callback for RTG rate mode touchwheel (internal only - modulates RTG speed)
@@ -1046,6 +1093,19 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       }
       // LFO rate callback just updates the internal LFO rate value
       output = touchwheel_output_callback_create(touchwheel_lfo_rate_callback, NULL);
+      break;
+
+    case TOUCHWHEEL_MODE_LFO_DEPTH:
+      // LFO depth mode: internal only - modulates LFO depth/amplitude
+      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+        mode_proc = touchwheel_mode_create_endless();
+        mode_desc = "lfo_depth (endless)";
+      } else {
+        mode_proc = touchwheel_mode_create_odometer();
+        mode_desc = "lfo_depth (odometer)";
+      }
+      // LFO depth callback updates the internal LFO depth value
+      output = touchwheel_output_callback_create(touchwheel_lfo_depth_callback, NULL);
       break;
 
     case TOUCHWHEEL_MODE_RTG_RATE:
@@ -2108,6 +2168,7 @@ esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode)
     case TOUCHWHEEL_MODE_CONTINUOUS: mode_str = "continuous"; break;
     case TOUCHWHEEL_MODE_VELOCITY: mode_str = "velocity"; break;
     case TOUCHWHEEL_MODE_LFO_RATE: mode_str = "lfo_rate"; break;
+    case TOUCHWHEEL_MODE_LFO_DEPTH: mode_str = "lfo_depth"; break;
     case TOUCHWHEEL_MODE_RTG_RATE: mode_str = "rtg_rate"; break;
     default: mode_str = "unknown"; break;
   }
@@ -3010,6 +3071,14 @@ uint8_t scene_get_touchwheel_lfo_rate(void) {
   return s_touchwheel_lfo_rate;
 }
 
+uint8_t scene_get_touchwheel_lfo_depth(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_LFO_DEPTH) {
+    return 127;  // Default full depth when not in LFO depth mode
+  }
+  return s_touchwheel_lfo_depth;
+}
+
 uint8_t scene_get_touchwheel_rtg_rate(void) {
   scene_t* scene = scene_get_current();
   if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_RTG_RATE) {
@@ -3889,7 +3958,32 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
   cJSON* obj = cJSON_CreateObject();
   
   cJSON_AddBoolToObject(obj, "enabled", mapping->enabled);
-  cJSON_AddStringToObject(obj, "output_type", mapping->output_type == OUTPUT_TYPE_NOTE ? "note" : "cc");
+  
+  // Serialize output type
+  const char* output_type_str;
+  switch (mapping->output_type) {
+    case OUTPUT_TYPE_CC: output_type_str = "cc"; break;
+    case OUTPUT_TYPE_NOTE: output_type_str = "note"; break;
+    case OUTPUT_TYPE_LFO_RATE: output_type_str = "lfo_rate"; break;
+    case OUTPUT_TYPE_LFO_DEPTH: output_type_str = "lfo_depth"; break;
+    case OUTPUT_TYPE_LFO2_RATE: output_type_str = "lfo2_rate"; break;
+    case OUTPUT_TYPE_LFO2_DEPTH: output_type_str = "lfo2_depth"; break;
+    case OUTPUT_TYPE_LFO1_RATE: output_type_str = "lfo1_rate"; break;
+    case OUTPUT_TYPE_LFO1_DEPTH: output_type_str = "lfo1_depth"; break;
+    default: output_type_str = "cc"; break;
+  }
+  cJSON_AddStringToObject(obj, "output_type", output_type_str);
+  
+  // Serialize LFO target (for LFO_RATE/LFO_DEPTH output types)
+  const char* lfo_target_str;
+  switch (mapping->lfo_target) {
+    case LFO_TARGET_LFO1: lfo_target_str = "lfo1"; break;
+    case LFO_TARGET_LFO2: lfo_target_str = "lfo2"; break;
+    case LFO_TARGET_BOTH: lfo_target_str = "both"; break;
+    default: lfo_target_str = "both"; break;
+  }
+  cJSON_AddStringToObject(obj, "lfo_target", lfo_target_str);
+  
   cJSON_AddNumberToObject(obj, "cc_number", mapping->cc_number);
   
   // Multi-CC array - always save all 4 slots to preserve positions
@@ -3929,7 +4023,24 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
   
   cJSON* output_type = cJSON_GetObjectItem(obj, "output_type");
   if (output_type && cJSON_IsString(output_type)) {
-    mapping->output_type = (strcmp(output_type->valuestring, "note") == 0) ? OUTPUT_TYPE_NOTE : OUTPUT_TYPE_CC;
+    const char* type_str = output_type->valuestring;
+    if (strcmp(type_str, "note") == 0) mapping->output_type = OUTPUT_TYPE_NOTE;
+    else if (strcmp(type_str, "lfo_rate") == 0) mapping->output_type = OUTPUT_TYPE_LFO_RATE;
+    else if (strcmp(type_str, "lfo_depth") == 0) mapping->output_type = OUTPUT_TYPE_LFO_DEPTH;
+    else if (strcmp(type_str, "lfo2_rate") == 0) mapping->output_type = OUTPUT_TYPE_LFO2_RATE;
+    else if (strcmp(type_str, "lfo2_depth") == 0) mapping->output_type = OUTPUT_TYPE_LFO2_DEPTH;
+    else if (strcmp(type_str, "lfo1_rate") == 0) mapping->output_type = OUTPUT_TYPE_LFO1_RATE;
+    else if (strcmp(type_str, "lfo1_depth") == 0) mapping->output_type = OUTPUT_TYPE_LFO1_DEPTH;
+    else mapping->output_type = OUTPUT_TYPE_CC;
+  }
+  
+  // Parse LFO target (for LFO_RATE/LFO_DEPTH output types)
+  cJSON* lfo_target = cJSON_GetObjectItem(obj, "lfo_target");
+  if (lfo_target && cJSON_IsString(lfo_target)) {
+    const char* target_str = lfo_target->valuestring;
+    if (strcmp(target_str, "lfo1") == 0) mapping->lfo_target = LFO_TARGET_LFO1;
+    else if (strcmp(target_str, "lfo2") == 0) mapping->lfo_target = LFO_TARGET_LFO2;
+    else mapping->lfo_target = LFO_TARGET_BOTH;
   }
   
   cJSON* cc_num = cJSON_GetObjectItem(obj, "cc_number");
@@ -4288,6 +4399,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
     case TOUCHWHEEL_MODE_DOUBLE_CC: tw_mode_str = "double_cc"; break;
     case TOUCHWHEEL_MODE_VELOCITY: tw_mode_str = "velocity"; break;
     case TOUCHWHEEL_MODE_LFO_RATE: tw_mode_str = "lfo_rate"; break;
+    case TOUCHWHEEL_MODE_LFO_DEPTH: tw_mode_str = "lfo_depth"; break;
     case TOUCHWHEEL_MODE_RTG_RATE: tw_mode_str = "rtg_rate"; break;
     default: tw_mode_str = "continuous"; break;
   }
@@ -4296,6 +4408,16 @@ static cJSON* scene_to_json(const scene_t* scene) {
                              (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
   cJSON_AddStringToObject(root, "touchwheel_style", tw_style_str);
   cJSON_AddItemToObject(root, "touchwheel", continuous_mapping_to_json(&scene->touchwheel));
+  
+  // Serialize touchwheel LFO target (for LFO rate/depth modes)
+  const char* tw_lfo_target_str;
+  switch (scene->touchwheel_lfo_target) {
+    case LFO_TARGET_LFO1: tw_lfo_target_str = "lfo1"; break;
+    case LFO_TARGET_LFO2: tw_lfo_target_str = "lfo2"; break;
+    case LFO_TARGET_BOTH: tw_lfo_target_str = "both"; break;
+    default: tw_lfo_target_str = "both"; break;
+  }
+  cJSON_AddStringToObject(root, "touchwheel_lfo_target", tw_lfo_target_str);
   
   cJSON* touchpads = cJSON_CreateArray();
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
@@ -4489,6 +4611,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(mode_str, "double_cc") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_DOUBLE_CC;
     else if (strcmp(mode_str, "velocity") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_VELOCITY;
     else if (strcmp(mode_str, "lfo_rate") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_LFO_RATE;
+    else if (strcmp(mode_str, "lfo_depth") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_LFO_DEPTH;
     else if (strcmp(mode_str, "rtg_rate") == 0) scene->touchwheel_mode = TOUCHWHEEL_MODE_RTG_RATE;
     // Legacy: nrpn/rpn modes removed, map to continuous for backwards compatibility
     else if (strcmp(mode_str, "nrpn") == 0 || strcmp(mode_str, "rpn") == 0) {
@@ -4509,6 +4632,15 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   // Deserialize touchwheel continuous mapping
   cJSON* touchwheel = cJSON_GetObjectItem(root, "touchwheel");
   if (touchwheel) json_to_continuous_mapping(touchwheel, &scene->touchwheel);
+  
+  // Deserialize touchwheel LFO target
+  cJSON* tw_lfo_target = cJSON_GetObjectItem(root, "touchwheel_lfo_target");
+  if (tw_lfo_target && cJSON_IsString(tw_lfo_target)) {
+    const char* target_str = tw_lfo_target->valuestring;
+    if (strcmp(target_str, "lfo1") == 0) scene->touchwheel_lfo_target = LFO_TARGET_LFO1;
+    else if (strcmp(target_str, "lfo2") == 0) scene->touchwheel_lfo_target = LFO_TARGET_LFO2;
+    else scene->touchwheel_lfo_target = LFO_TARGET_BOTH;
+  }
   
   cJSON* touchpads = cJSON_GetObjectItem(root, "touchpads");
   if (touchpads && cJSON_IsArray(touchpads)) {

@@ -6,6 +6,7 @@
 #include "midi_messages.h"
 #include "event_bus.h"
 #include "expression.h"
+#include "lfo.h"
 #include "esp_log.h"
 
 static const char* TAG = "als_scene";
@@ -56,27 +57,60 @@ static void handle_als_event(const event_t* event, void* context) {
   
   if (!value_changed) return;
   
-  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
-    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
-    uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
-    
-    if (mapping->note_active && note != mapping->last_note) {
-      send_note_off(channel, mapping->last_note, 0);
-      ESP_LOGD(TAG, "ALS Note Off: %d", mapping->last_note);
+  switch (mapping->output_type) {
+    case OUTPUT_TYPE_NOTE: {
+      uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
+      uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
+      
+      if (mapping->note_active && note != mapping->last_note) {
+        send_note_off(channel, mapping->last_note, 0);
+        ESP_LOGD(TAG, "ALS Note Off: %d", mapping->last_note);
+      }
+      
+      if (!mapping->note_active || note != mapping->last_note) {
+        uint8_t velocity = get_als_velocity(mapping);
+        send_note_on(channel, note, velocity);
+        ESP_LOGD(TAG, "ALS: %d -> Note %d vel=%d", raw_value, note, velocity);
+      }
+      
+      mapping->note_active = true;
+      mapping->last_note = note;
+      break;
     }
     
-    if (!mapping->note_active || note != mapping->last_note) {
-      uint8_t velocity = get_als_velocity(mapping);
-      send_note_on(channel, note, velocity);
-      ESP_LOGD(TAG, "ALS: %d -> Note %d vel=%d", raw_value, note, velocity);
+    case OUTPUT_TYPE_LFO_RATE: {
+      // ALS -> LFO rate modulation
+      lfo_target_t target = mapping->lfo_target;
+      if (target == LFO_TARGET_LFO1 || target == LFO_TARGET_BOTH) {
+        lfo_set_dynamic_rate(0, output_value);
+      }
+      if (target == LFO_TARGET_LFO2 || target == LFO_TARGET_BOTH) {
+        lfo_set_dynamic_rate(1, output_value);
+      }
+      ESP_LOGD(TAG, "ALS -> LFO rate: %d (target: %d)", output_value, target);
+      break;
     }
     
-    mapping->note_active = true;
-    mapping->last_note = note;
-  } else {
-    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
-    continuous_mapping_send_cc(mapping, channel, output_value);
-    ESP_LOGD(TAG, "ALS: %d -> CC=%d", raw_value, output_value);
+    case OUTPUT_TYPE_LFO_DEPTH: {
+      // ALS -> LFO depth modulation
+      lfo_target_t target = mapping->lfo_target;
+      if (target == LFO_TARGET_LFO1 || target == LFO_TARGET_BOTH) {
+        lfo_set_dynamic_depth(0, output_value);
+      }
+      if (target == LFO_TARGET_LFO2 || target == LFO_TARGET_BOTH) {
+        lfo_set_dynamic_depth(1, output_value);
+      }
+      ESP_LOGD(TAG, "ALS -> LFO depth: %d (target: %d)", output_value, target);
+      break;
+    }
+    
+    case OUTPUT_TYPE_CC:
+    default: {
+      uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
+      continuous_mapping_send_cc(mapping, channel, output_value);
+      ESP_LOGD(TAG, "ALS: %d -> CC=%d", raw_value, output_value);
+      break;
+    }
   }
 }
 

@@ -52,6 +52,9 @@ static char s_audio_release_label[LABEL_BUFFER_SETS][32];
 static char s_audio_threshold_label[LABEL_BUFFER_SETS][32];
 static char s_audio_polarity_label[LABEL_BUFFER_SETS][32];
 
+// LFO modulation labels
+static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
+
 // CC options from device
 typedef struct {
   char* options_str;
@@ -258,11 +261,18 @@ static void output_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  scene->cv.output_type = (selected_index == 0) ? OUTPUT_TYPE_CC : OUTPUT_TYPE_NOTE;
+  // Map roller index to output type
+  // 0=CC, 1=Note, 2=LFO Rate, 3=LFO Depth
+  switch (selected_index) {
+    case 0: scene->cv.output_type = OUTPUT_TYPE_CC; break;
+    case 1: scene->cv.output_type = OUTPUT_TYPE_NOTE; break;
+    case 2: scene->cv.output_type = OUTPUT_TYPE_LFO_RATE; break;
+    case 3: scene->cv.output_type = OUTPUT_TYPE_LFO_DEPTH; break;
+    default: scene->cv.output_type = OUTPUT_TYPE_CC; break;
+  }
   persist_scene_changes();
   
-  ESP_LOGI(TAG, "CV output set to: %s", 
-    scene->cv.output_type == OUTPUT_TYPE_CC ? "CC" : "Notes");
+  ESP_LOGI(TAG, "CV output set to type %d", selected_index);
   
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
@@ -272,13 +282,69 @@ static lv_obj_t* output_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
   
-  uint32_t current = (scene->cv.output_type == OUTPUT_TYPE_CC) ? 0 : 1;
-  return menu_create_roller_page("Output", "Control Change\nNotes", current, output_confirm_cb, NULL);
+  // Map output type to roller index
+  uint32_t current = 0;
+  switch (scene->cv.output_type) {
+    case OUTPUT_TYPE_CC: current = 0; break;
+    case OUTPUT_TYPE_NOTE: current = 1; break;
+    case OUTPUT_TYPE_LFO_RATE: current = 2; break;
+    case OUTPUT_TYPE_LFO_DEPTH: current = 3; break;
+    default: current = 0; break;
+  }
+  return menu_create_roller_page("Output", "Control Change\nNotes\nLFO Rate\nLFO Depth",
+    current, output_confirm_cb, NULL);
 }
 
 static void nav_to_output(void* user_data) {
   (void)user_data;
   menu_navigate_to("Output", output_roller_create);
+}
+
+// ============================================================================
+// LFO Target Roller (for LFO Rate/Depth output modes)
+// ============================================================================
+
+static const char* lfo_target_to_string(lfo_target_t target) {
+  switch (target) {
+    case LFO_TARGET_LFO1: return "LFO1";
+    case LFO_TARGET_LFO2: return "LFO2";
+    case LFO_TARGET_BOTH: return "Both";
+    default: return "Both";
+  }
+}
+
+static void lfo_target_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  
+  scene->cv.lfo_target = (lfo_target_t)selected_index;
+  persist_scene_changes();
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
+}
+
+static lv_obj_t* lfo_target_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  
+  uint32_t current = (uint32_t)scene->cv.lfo_target;
+  return menu_create_roller_page("LFO Target", "LFO1\nLFO2\nBoth", current,
+    lfo_target_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_target(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("LFO Target", lfo_target_roller_create);
 }
 
 // ============================================================================
@@ -1011,9 +1077,15 @@ lv_obj_t* menu_page_cv_scene_create(void) {
   // Mode-specific items
   switch (mode) {
     case INPUT_MODE_CV: {
-      // Control Voltage mode: Output selector (CC or Notes)
-      const char* output_name = (scene->cv.output_type == OUTPUT_TYPE_CC) ? 
-        "Control Change" : "Notes";
+      // Control Voltage mode: Output selector (CC, Notes, LFO Rate, LFO Depth)
+      const char* output_name;
+      switch (scene->cv.output_type) {
+        case OUTPUT_TYPE_CC: output_name = "Control Change"; break;
+        case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
+        case OUTPUT_TYPE_LFO_RATE: output_name = "LFO Rate"; break;
+        case OUTPUT_TYPE_LFO_DEPTH: output_name = "LFO Depth"; break;
+        default: output_name = "Control Change"; break;
+      }
       snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
       s_cv_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
       
@@ -1051,7 +1123,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
           "Curve\n%s", curve_type_to_string(scene->cv.curve.type));
         s_cv_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
         
-      } else {
+      } else if (scene->cv.output_type == OUTPUT_TYPE_NOTE) {
         // Notes output mode: Base Note, Range, Velocity
         char note_name[8];
         get_note_name(scene->cv.base_note, note_name, sizeof(note_name));
@@ -1080,6 +1152,12 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->cv.curve.type));
         s_cv_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+      } else if (scene->cv.output_type == OUTPUT_TYPE_LFO_RATE ||
+                 scene->cv.output_type == OUTPUT_TYPE_LFO_DEPTH) {
+        // LFO modulation mode: Target selector
+        snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
+          "LFO Target\n%s", lfo_target_to_string(scene->cv.lfo_target));
+        s_cv_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true};
       }
       
       break;

@@ -716,7 +716,15 @@ static void output_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  scene->lfo2.output_type = (selected_index == 0) ? OUTPUT_TYPE_CC : OUTPUT_TYPE_NOTE;
+  // Map roller index to output type
+  // 0=CC, 1=Note, 2=LFO1 Rate, 3=LFO1 Depth
+  switch (selected_index) {
+    case 0: scene->lfo2.output_type = OUTPUT_TYPE_CC; break;
+    case 1: scene->lfo2.output_type = OUTPUT_TYPE_NOTE; break;
+    case 2: scene->lfo2.output_type = OUTPUT_TYPE_LFO1_RATE; break;
+    case 3: scene->lfo2.output_type = OUTPUT_TYPE_LFO1_DEPTH; break;
+    default: scene->lfo2.output_type = OUTPUT_TYPE_CC; break;
+  }
   persist_scene_changes();
   
   s_callback_in_progress = false;
@@ -727,8 +735,17 @@ static lv_obj_t* output_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
   
-  uint32_t current = (scene->lfo2.output_type == OUTPUT_TYPE_CC) ? 0 : 1;
-  return menu_create_roller_page("Output", "Control Change\nNotes", current, output_confirm_cb, NULL);
+  // Map output type to roller index
+  uint32_t current = 0;
+  switch (scene->lfo2.output_type) {
+    case OUTPUT_TYPE_CC: current = 0; break;
+    case OUTPUT_TYPE_NOTE: current = 1; break;
+    case OUTPUT_TYPE_LFO1_RATE: current = 2; break;
+    case OUTPUT_TYPE_LFO1_DEPTH: current = 3; break;
+    default: current = 0; break;
+  }
+  return menu_create_roller_page("Output", "Control Change\nNotes\nLFO1 Rate\nLFO1 Depth",
+    current, output_confirm_cb, NULL);
 }
 
 static void nav_to_output(void* user_data) {
@@ -1139,8 +1156,14 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
   // For TOUCHWHEEL mode, no rate setting needed (controlled by touchwheel)
   
   // Output type selector
-  const char* output_name = (scene->lfo2.output_type == OUTPUT_TYPE_CC) ? 
-    "Control Change" : "Notes";
+  const char* output_name;
+  switch (scene->lfo2.output_type) {
+    case OUTPUT_TYPE_CC: output_name = "Control Change"; break;
+    case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
+    case OUTPUT_TYPE_LFO1_RATE: output_name = "LFO1 Rate"; break;
+    case OUTPUT_TYPE_LFO1_DEPTH: output_name = "LFO1 Depth"; break;
+    default: output_name = "Control Change"; break;
+  }
   snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
   s_lfo_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
   

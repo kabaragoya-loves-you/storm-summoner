@@ -76,6 +76,7 @@ continuous_mapping_t continuous_mapping_create(uint8_t cc_number) {
     .use_idle_value = false,
     .idle_value = 64,
     .idle_timeout_ms = 1000,
+    .lfo_target = LFO_TARGET_BOTH,  // Default to both LFOs
     .last_activity_ms = 0,
     .last_value = 0,
     .last_note = 0,

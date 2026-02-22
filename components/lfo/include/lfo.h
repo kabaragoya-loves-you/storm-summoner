@@ -217,4 +217,29 @@ bool lfo_is_cycle_completed(uint8_t slot);
 // Check if LFO has a pending start
 bool lfo_is_pending_start(uint8_t slot);
 
+// Dynamic modulation (from external sources like other LFO, expression, etc.)
+// These override/modulate the static floor/ceiling and rate settings
+
+// Set dynamic depth modulation (0-127 = 0-100% of configured range)
+// depth_value=0: flat line at center, depth_value=127: full configured range
+void lfo_set_dynamic_depth(uint8_t slot, uint8_t depth_value);
+uint8_t lfo_get_dynamic_depth(uint8_t slot);
+
+// Set dynamic rate modulation (0-127 = 0.1-10.0 Hz exponential)
+// Used when external source controls rate
+void lfo_set_dynamic_rate(uint8_t slot, uint8_t rate_value);
+uint8_t lfo_get_dynamic_rate(uint8_t slot);
+
+// Get effective floor/ceiling after applying dynamic depth
+uint8_t lfo_get_effective_floor(uint8_t slot);
+uint8_t lfo_get_effective_ceiling(uint8_t slot);
+
+// Check if dynamic modulation is active
+bool lfo_has_dynamic_depth(uint8_t slot);
+bool lfo_has_dynamic_rate(uint8_t slot);
+
+// Clear dynamic modulation (returns to static config values)
+void lfo_clear_dynamic_depth(uint8_t slot);
+void lfo_clear_dynamic_rate(uint8_t slot);
+
 #endif // LFO_H

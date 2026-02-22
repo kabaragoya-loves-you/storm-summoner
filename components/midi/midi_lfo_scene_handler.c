@@ -78,27 +78,47 @@ static void handle_lfo1_event(const event_t* event, void* context) {
 
   if (!value_changed) return;
 
-  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
-    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
-    uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
-    
-    if (mapping->note_active && note != mapping->last_note) {
-      send_note_off(channel, mapping->last_note, 0);
-      ESP_LOGD(TAG, "LFO1 Note Off: %d", mapping->last_note);
+  switch (mapping->output_type) {
+    case OUTPUT_TYPE_NOTE: {
+      uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
+      uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
+      
+      if (mapping->note_active && note != mapping->last_note) {
+        send_note_off(channel, mapping->last_note, 0);
+        ESP_LOGD(TAG, "LFO1 Note Off: %d", mapping->last_note);
+      }
+      
+      if (!mapping->note_active || note != mapping->last_note) {
+        uint8_t velocity = get_lfo1_velocity(mapping);
+        send_note_on(channel, note, velocity);
+        ESP_LOGD(TAG, "LFO1: raw=%d processed=%d -> Note %d vel=%d",
+          raw_value, output_value, note, velocity);
+      }
+      
+      mapping->note_active = true;
+      mapping->last_note = note;
+      break;
     }
     
-    if (!mapping->note_active || note != mapping->last_note) {
-      uint8_t velocity = get_lfo1_velocity(mapping);
-      send_note_on(channel, note, velocity);
-      ESP_LOGD(TAG, "LFO1: raw=%d processed=%d -> Note %d vel=%d", raw_value, output_value, note, velocity);
+    case OUTPUT_TYPE_LFO2_RATE:
+      // LFO1 -> LFO2 rate cross-modulation
+      lfo_set_dynamic_rate(1, output_value);
+      ESP_LOGD(TAG, "LFO1 -> LFO2 rate: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_LFO2_DEPTH:
+      // LFO1 -> LFO2 depth cross-modulation
+      lfo_set_dynamic_depth(1, output_value);
+      ESP_LOGD(TAG, "LFO1 -> LFO2 depth: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_CC:
+    default: {
+      uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
+      continuous_mapping_send_cc(mapping, channel, output_value);
+      ESP_LOGD(TAG, "LFO1: %d -> CC=%d", raw_value, output_value);
+      break;
     }
-    
-    mapping->note_active = true;
-    mapping->last_note = note;
-  } else {
-    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
-    continuous_mapping_send_cc(mapping, channel, output_value);
-    ESP_LOGD(TAG, "LFO1: %d -> CC=%d", raw_value, output_value);
   }
 }
 
@@ -125,27 +145,47 @@ static void handle_lfo2_event(const event_t* event, void* context) {
   
   if (!value_changed) return;
   
-  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
-    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
-    uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
-    
-    if (mapping->note_active && note != mapping->last_note) {
-      send_note_off(channel, mapping->last_note, 0);
-      ESP_LOGD(TAG, "LFO2 Note Off: %d", mapping->last_note);
+  switch (mapping->output_type) {
+    case OUTPUT_TYPE_NOTE: {
+      uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
+      uint8_t note = continuous_mapping_value_to_note(output_value, mapping);
+      
+      if (mapping->note_active && note != mapping->last_note) {
+        send_note_off(channel, mapping->last_note, 0);
+        ESP_LOGD(TAG, "LFO2 Note Off: %d", mapping->last_note);
+      }
+      
+      if (!mapping->note_active || note != mapping->last_note) {
+        uint8_t velocity = get_lfo2_velocity(mapping);
+        send_note_on(channel, note, velocity);
+        ESP_LOGD(TAG, "LFO2: raw=%d processed=%d -> Note %d vel=%d",
+          raw_value, output_value, note, velocity);
+      }
+      
+      mapping->note_active = true;
+      mapping->last_note = note;
+      break;
     }
     
-    if (!mapping->note_active || note != mapping->last_note) {
-      uint8_t velocity = get_lfo2_velocity(mapping);
-      send_note_on(channel, note, velocity);
-      ESP_LOGD(TAG, "LFO2: raw=%d processed=%d -> Note %d vel=%d", raw_value, output_value, note, velocity);
+    case OUTPUT_TYPE_LFO1_RATE:
+      // LFO2 -> LFO1 rate cross-modulation
+      lfo_set_dynamic_rate(0, output_value);
+      ESP_LOGD(TAG, "LFO2 -> LFO1 rate: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_LFO1_DEPTH:
+      // LFO2 -> LFO1 depth cross-modulation
+      lfo_set_dynamic_depth(0, output_value);
+      ESP_LOGD(TAG, "LFO2 -> LFO1 depth: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_CC:
+    default: {
+      uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
+      continuous_mapping_send_cc(mapping, channel, output_value);
+      ESP_LOGD(TAG, "LFO2: %d -> CC=%d", raw_value, output_value);
+      break;
     }
-    
-    mapping->note_active = true;
-    mapping->last_note = note;
-  } else {
-    uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
-    continuous_mapping_send_cc(mapping, channel, output_value);
-    ESP_LOGD(TAG, "LFO2: %d -> CC=%d", raw_value, output_value);
   }
 }
 
@@ -179,7 +219,7 @@ void midi_lfo_scene_handler_restore_value(uint8_t slot) {
   // Get the mapping for the specified slot
   continuous_mapping_t* mapping = (slot == 0) ? &scene->lfo1 : &scene->lfo2;
   
-  // Only restore CC output (notes are released separately)
+  // Only restore CC output (notes are released separately, cross-mod doesn't restore)
   if (mapping->output_type != OUTPUT_TYPE_CC) return;
   
   // Get the waveform value at phase 0 (the starting value)

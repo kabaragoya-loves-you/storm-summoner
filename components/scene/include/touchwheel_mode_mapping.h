@@ -15,10 +15,10 @@ typedef struct {
 } touchwheel_mode_mapping_t;
 
 // Number of user-facing touchwheel modes
-#define NUM_TOUCHWHEEL_USER_MODES 11
+#define NUM_TOUCHWHEEL_USER_MODES 12
 
 // User-facing mode mappings - order determines roller display order
-// Index 0-10 maps to these modes
+// Index 0-11 maps to these modes
 static const touchwheel_mode_mapping_t g_touchwheel_mode_mappings[] = {
   { "Pads",           TOUCHWHEEL_MODE_PADS,           OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, false },
   { "Control Change", TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_CC,   true,  TOUCHWHEEL_STYLE_ENDLESS,  true  },
@@ -30,6 +30,7 @@ static const touchwheel_mode_mapping_t g_touchwheel_mode_mappings[] = {
   { "Double CC",      TOUCHWHEEL_MODE_DOUBLE_CC,      OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ENDLESS,  true  },
   { "Velocity",       TOUCHWHEEL_MODE_VELOCITY,       OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, false },
   { "LFO Rate",       TOUCHWHEEL_MODE_LFO_RATE,       OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, true  },
+  { "LFO Depth",      TOUCHWHEEL_MODE_LFO_DEPTH,      OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, true  },
   { "RTG Rate",       TOUCHWHEEL_MODE_RTG_RATE,       OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, true  },
 };
 
