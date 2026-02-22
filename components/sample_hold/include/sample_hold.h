@@ -99,4 +99,11 @@ void sample_hold_apply_start_mode(void);
 // Toggle S+H enabled state (for S+H Toggle action)
 void sample_hold_toggle(void);
 
+// Dynamic rate modulation (for LFO -> S+H rate)
+// lfo_value 0-127 maps to discrete rate options based on current rate_mode
+void sample_hold_set_dynamic_rate(uint8_t lfo_value);
+uint8_t sample_hold_get_dynamic_rate(void);
+bool sample_hold_has_dynamic_rate(void);
+void sample_hold_clear_dynamic_rate(void);
+
 #endif // SAMPLE_HOLD_H

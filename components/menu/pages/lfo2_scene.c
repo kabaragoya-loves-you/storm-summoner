@@ -3,6 +3,8 @@
 #include "lfo.h"
 #include "scene.h"
 #include "continuous_mapping.h"
+#include "rtg.h"
+#include "sample_hold.h"
 #include "assets_manager.h"
 #include "assets_types.h"
 #include "ui.h"
@@ -716,15 +718,27 @@ static void output_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
+  output_type_t prev_type = scene->lfo2.output_type;
+  
   // Map roller index to output type
-  // 0=CC, 1=Note, 2=LFO1 Rate, 3=LFO1 Depth
+  // 0=CC, 1=Note, 2=LFO1 Rate, 3=LFO1 Depth, 4=RTG Rate, 5=S+H Rate, 6=Pitch Bend
   switch (selected_index) {
     case 0: scene->lfo2.output_type = OUTPUT_TYPE_CC; break;
     case 1: scene->lfo2.output_type = OUTPUT_TYPE_NOTE; break;
     case 2: scene->lfo2.output_type = OUTPUT_TYPE_LFO1_RATE; break;
     case 3: scene->lfo2.output_type = OUTPUT_TYPE_LFO1_DEPTH; break;
+    case 4: scene->lfo2.output_type = OUTPUT_TYPE_RTG_RATE; break;
+    case 5: scene->lfo2.output_type = OUTPUT_TYPE_SH_RATE; break;
+    case 6: scene->lfo2.output_type = OUTPUT_TYPE_PITCH_BEND; break;
     default: scene->lfo2.output_type = OUTPUT_TYPE_CC; break;
   }
+  
+  // Clear dynamic rate modulation when switching away from RTG/S+H rate
+  if (prev_type == OUTPUT_TYPE_RTG_RATE && scene->lfo2.output_type != OUTPUT_TYPE_RTG_RATE)
+    rtg_clear_dynamic_rate();
+  if (prev_type == OUTPUT_TYPE_SH_RATE && scene->lfo2.output_type != OUTPUT_TYPE_SH_RATE)
+    sample_hold_clear_dynamic_rate();
+  
   persist_scene_changes();
   
   s_callback_in_progress = false;
@@ -742,9 +756,13 @@ static lv_obj_t* output_roller_create(void) {
     case OUTPUT_TYPE_NOTE: current = 1; break;
     case OUTPUT_TYPE_LFO1_RATE: current = 2; break;
     case OUTPUT_TYPE_LFO1_DEPTH: current = 3; break;
+    case OUTPUT_TYPE_RTG_RATE: current = 4; break;
+    case OUTPUT_TYPE_SH_RATE: current = 5; break;
+    case OUTPUT_TYPE_PITCH_BEND: current = 6; break;
     default: current = 0; break;
   }
-  return menu_create_roller_page("Output", "Control Change\nNotes\nLFO1 Rate\nLFO1 Depth",
+  return menu_create_roller_page("Output",
+    "Control Change\nNotes\nLFO1 Rate\nLFO1 Depth\nRTG Rate\nS+H Rate\nPitch Bend",
     current, output_confirm_cb, NULL);
 }
 
@@ -1162,6 +1180,9 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
     case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
     case OUTPUT_TYPE_LFO1_RATE: output_name = "LFO1 Rate"; break;
     case OUTPUT_TYPE_LFO1_DEPTH: output_name = "LFO1 Depth"; break;
+    case OUTPUT_TYPE_RTG_RATE: output_name = "RTG Rate"; break;
+    case OUTPUT_TYPE_SH_RATE: output_name = "S+H Rate"; break;
+    case OUTPUT_TYPE_PITCH_BEND: output_name = "Pitch Bend"; break;
     default: output_name = "Control Change"; break;
   }
   snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);

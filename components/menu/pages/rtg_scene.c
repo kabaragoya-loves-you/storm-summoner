@@ -461,59 +461,62 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
     "RTG: %s", scene->rtg_config.enabled ? "Enabled" : "Disabled");
   s_rtg_items[idx++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, false };
 
-  // Mode
-  const char* mode_str = (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) ? "Continuous" : "Step";
-  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
-  s_rtg_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false };
+  // Only show other options when RTG is enabled
+  if (scene->rtg_config.enabled) {
+    // Mode
+    const char* mode_str = (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) ? "Continuous" : "Step";
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
+    s_rtg_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false };
 
-  // Start Mode and Rate settings only apply to Continuous mode
-  if (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) {
-    // Start Mode (Running / Paused / Follow Transport)
-    const char* start_mode_str;
-    switch (scene->rtg_config.start_mode) {
-      case RTG_START_RUNNING: start_mode_str = "Running"; break;
-      case RTG_START_PAUSED: start_mode_str = "Paused"; break;
-      case RTG_START_TRANSPORT: start_mode_str = "Follow Transport"; break;
-      default: start_mode_str = "Running"; break;
-    }
-    snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start: %s", start_mode_str);
-    s_rtg_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false };
-
-    // Rate Mode (Free Hz / Sync BPM)
-    const char* rate_mode_str = (scene->rtg_config.rate_mode == RTG_RATE_MODE_SYNC) ? "Sync (BPM)" : "Free (Hz)";
-    snprintf(s_rate_mode_label[buf], sizeof(s_rate_mode_label[buf]), "Rate: %s", rate_mode_str);
-    s_rtg_items[idx++] = (menu_item_t){ s_rate_mode_label[buf], nav_to_rate_mode, NULL, false };
-
-    // Hz Rate (only show if in Free mode) or Sync Multiplier (only show if in Sync mode)
-    if (scene->rtg_config.rate_mode == RTG_RATE_MODE_FREE) {
-      float rate_hz = scene->rtg_config.rate_hz_x100 / 100.0f;
-      if (rate_hz < 1.0f) {
-        snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.2f", rate_hz);
-      } else if (rate_hz < 10.0f) {
-        snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.1f", rate_hz);
-      } else {
-        snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.0f", rate_hz);
+    // Start Mode and Rate settings only apply to Continuous mode
+    if (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) {
+      // Start Mode (Running / Paused / Follow Transport)
+      const char* start_mode_str;
+      switch (scene->rtg_config.start_mode) {
+        case RTG_START_RUNNING: start_mode_str = "Running"; break;
+        case RTG_START_PAUSED: start_mode_str = "Paused"; break;
+        case RTG_START_TRANSPORT: start_mode_str = "Follow Transport"; break;
+        default: start_mode_str = "Running"; break;
       }
-      s_rtg_items[idx++] = (menu_item_t){ s_rate_label[buf], nav_to_rate, NULL, false };
-    } else {
-      // Find the label for the current multiplier
-      uint16_t mult = scene->rtg_config.sync_mult_x1000;
-      const char* mult_label = "1x";
-      for (size_t i = 0; i < NUM_SYNC_MULT_VALUES; i++) {
-        if (s_sync_mult_values[i] == mult) {
-          mult_label = s_sync_mult_labels[i];
-          break;
+      snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start: %s", start_mode_str);
+      s_rtg_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false };
+
+      // Rate Mode (Free Hz / Sync BPM)
+      const char* rate_mode_str = (scene->rtg_config.rate_mode == RTG_RATE_MODE_SYNC) ? "Sync (BPM)" : "Free (Hz)";
+      snprintf(s_rate_mode_label[buf], sizeof(s_rate_mode_label[buf]), "Rate: %s", rate_mode_str);
+      s_rtg_items[idx++] = (menu_item_t){ s_rate_mode_label[buf], nav_to_rate_mode, NULL, false };
+
+      // Hz Rate (only show if in Free mode) or Sync Multiplier (only show if in Sync mode)
+      if (scene->rtg_config.rate_mode == RTG_RATE_MODE_FREE) {
+        float rate_hz = scene->rtg_config.rate_hz_x100 / 100.0f;
+        if (rate_hz < 1.0f) {
+          snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.2f", rate_hz);
+        } else if (rate_hz < 10.0f) {
+          snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.1f", rate_hz);
+        } else {
+          snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.0f", rate_hz);
         }
+        s_rtg_items[idx++] = (menu_item_t){ s_rate_label[buf], nav_to_rate, NULL, false };
+      } else {
+        // Find the label for the current multiplier
+        uint16_t mult = scene->rtg_config.sync_mult_x1000;
+        const char* mult_label = "1x";
+        for (size_t i = 0; i < NUM_SYNC_MULT_VALUES; i++) {
+          if (s_sync_mult_values[i] == mult) {
+            mult_label = s_sync_mult_labels[i];
+            break;
+          }
+        }
+        snprintf(s_sync_mult_label[buf], sizeof(s_sync_mult_label[buf]), "Mult: %s", mult_label);
+        s_rtg_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false };
       }
-      snprintf(s_sync_mult_label[buf], sizeof(s_sync_mult_label[buf]), "Mult: %s", mult_label);
-      s_rtg_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false };
     }
-  }
 
-  // Glide
-  snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
-    "Glide: %s", scene->rtg_config.glide ? "On" : "Off");
-  s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
+    // Glide
+    snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
+      "Glide: %s", scene->rtg_config.glide ? "On" : "Off");
+    s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
+  }
 
   return menu_create_page("RTG", s_rtg_items, idx);
 }

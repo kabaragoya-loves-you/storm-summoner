@@ -38,14 +38,25 @@ static uint64_t rate_to_interval_us(uint16_t rate_hz_x100) {
   return (100000000ULL / rate_hz_x100);
 }
 
-// Sync multiplier values (same as menu roller) - for touchwheel mapping
+// Sync multiplier values (same as menu roller) - for touchwheel/LFO mapping
 static const uint16_t s_sync_mult_table[] = {
   125, 167, 250, 333, 500, 667, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000
 };
 #define NUM_SYNC_MULT_TABLE (sizeof(s_sync_mult_table) / sizeof(s_sync_mult_table[0]))
 
+// Free Hz values (same as menu roller) - Hz * 100
+static const uint16_t s_rate_hz_table[] = {
+  50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400,
+  500, 600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500
+};
+#define NUM_RATE_HZ_TABLE (sizeof(s_rate_hz_table) / sizeof(s_rate_hz_table[0]))
+
+// Dynamic rate modulation (from LFO)
+static uint8_t s_dynamic_rate_value = 0;
+static bool s_has_dynamic_rate = false;
+
 // Get effective rate in Hz*100 (handles sync mode with multiplier)
-// Also handles touchwheel modulation when touchwheel is in RTG_RATE mode
+// Priority: dynamic rate (LFO) > touchwheel > config
 static uint16_t get_effective_rate_x100(void) {
   // Check if touchwheel is controlling RTG rate
   uint8_t tw_rate = scene_get_touchwheel_rtg_rate();
@@ -56,7 +67,12 @@ static uint16_t get_effective_rate_x100(void) {
     uint32_t base_hz_x100 = (s_current_bpm * 100) / 60;
     uint32_t mult;
 
-    if (tw_active) {
+    if (s_has_dynamic_rate) {
+      // LFO is modulating: map 0-127 to multiplier table index
+      uint8_t idx = (s_dynamic_rate_value * (NUM_SYNC_MULT_TABLE - 1)) / 127;
+      if (idx >= NUM_SYNC_MULT_TABLE) idx = NUM_SYNC_MULT_TABLE - 1;
+      mult = s_sync_mult_table[idx];
+    } else if (tw_active) {
       // Touchwheel is modulating: map 0-127 to multiplier table index
       uint8_t idx = (tw_rate * (NUM_SYNC_MULT_TABLE - 1)) / 127;
       if (idx >= NUM_SYNC_MULT_TABLE) idx = NUM_SYNC_MULT_TABLE - 1;
@@ -73,6 +89,13 @@ static uint16_t get_effective_rate_x100(void) {
   }
 
   // Free mode
+  if (s_has_dynamic_rate) {
+    // LFO is modulating: map 0-127 to Hz table index
+    uint8_t idx = (s_dynamic_rate_value * (NUM_RATE_HZ_TABLE - 1)) / 127;
+    if (idx >= NUM_RATE_HZ_TABLE) idx = NUM_RATE_HZ_TABLE - 1;
+    return s_rate_hz_table[idx];
+  }
+
   if (tw_active) {
     // Touchwheel is modulating: map 0-127 to 0.5-25 Hz exponentially
     // Exponential mapping: 0.5 Hz at 0, ~3.5Hz at 64, 25Hz at 127
@@ -729,4 +752,25 @@ void rtg_toggle(void) {
       ESP_LOGI(TAG, "RTG toggled: enabled for steps");
     }
   }
+}
+
+// Dynamic rate modulation (for LFO -> RTG rate)
+void rtg_set_dynamic_rate(uint8_t lfo_value) {
+  s_dynamic_rate_value = lfo_value;
+  s_has_dynamic_rate = true;
+  rtg_timer_update_rate();
+}
+
+uint8_t rtg_get_dynamic_rate(void) {
+  return s_dynamic_rate_value;
+}
+
+bool rtg_has_dynamic_rate(void) {
+  return s_has_dynamic_rate;
+}
+
+void rtg_clear_dynamic_rate(void) {
+  s_has_dynamic_rate = false;
+  s_dynamic_rate_value = 0;
+  rtg_timer_update_rate();
 }

@@ -21,7 +21,10 @@ typedef enum {
   OUTPUT_TYPE_LFO2_RATE,    // LFO1 -> LFO2 rate (cross-modulation)
   OUTPUT_TYPE_LFO2_DEPTH,   // LFO1 -> LFO2 depth (cross-modulation)
   OUTPUT_TYPE_LFO1_RATE,    // LFO2 -> LFO1 rate (cross-modulation)
-  OUTPUT_TYPE_LFO1_DEPTH    // LFO2 -> LFO1 depth (cross-modulation)
+  OUTPUT_TYPE_LFO1_DEPTH,   // LFO2 -> LFO1 depth (cross-modulation)
+  OUTPUT_TYPE_RTG_RATE,     // Modulate RTG rate
+  OUTPUT_TYPE_SH_RATE,      // Modulate Sample+Hold rate
+  OUTPUT_TYPE_PITCH_BEND    // Send pitch bend (uses note_channel)
 } output_type_t;
 
 // LFO target for LFO_RATE/LFO_DEPTH output types

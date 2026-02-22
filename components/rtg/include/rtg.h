@@ -89,6 +89,13 @@ float rtg_get_sync_mult(void);
 // Notify RTG that touchwheel rate modulation changed (triggers timer update)
 void rtg_touchwheel_rate_changed(void);
 
+// Dynamic rate modulation (for LFO -> RTG rate)
+// lfo_value 0-127 maps to discrete rate options based on current rate_mode
+void rtg_set_dynamic_rate(uint8_t lfo_value);
+uint8_t rtg_get_dynamic_rate(void);
+bool rtg_has_dynamic_rate(void);
+void rtg_clear_dynamic_rate(void);
+
 void rtg_set_glide(bool glide);
 bool rtg_get_glide(void);
 

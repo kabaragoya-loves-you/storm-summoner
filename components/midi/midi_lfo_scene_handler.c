@@ -6,6 +6,8 @@
 #include "midi_messages.h"
 #include "event_bus.h"
 #include "lfo.h"
+#include "rtg.h"
+#include "sample_hold.h"
 #include "expression.h"
 #include "esp_log.h"
 
@@ -112,6 +114,24 @@ static void handle_lfo1_event(const event_t* event, void* context) {
       ESP_LOGD(TAG, "LFO1 -> LFO2 depth: %d", output_value);
       break;
       
+    case OUTPUT_TYPE_RTG_RATE:
+      rtg_set_dynamic_rate(output_value);
+      ESP_LOGD(TAG, "LFO1 -> RTG rate: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_SH_RATE:
+      sample_hold_set_dynamic_rate(output_value);
+      ESP_LOGD(TAG, "LFO1 -> S+H rate: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_PITCH_BEND: {
+      uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
+      int16_t pb_value = ((int16_t)output_value - 64) * 128;
+      send_pitch_bend(channel, pb_value);
+      ESP_LOGD(TAG, "LFO1 -> Pitch Bend: %d", pb_value);
+      break;
+    }
+      
     case OUTPUT_TYPE_CC:
     default: {
       uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
@@ -178,6 +198,24 @@ static void handle_lfo2_event(const event_t* event, void* context) {
       lfo_set_dynamic_depth(0, output_value);
       ESP_LOGD(TAG, "LFO2 -> LFO1 depth: %d", output_value);
       break;
+      
+    case OUTPUT_TYPE_RTG_RATE:
+      rtg_set_dynamic_rate(output_value);
+      ESP_LOGD(TAG, "LFO2 -> RTG rate: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_SH_RATE:
+      sample_hold_set_dynamic_rate(output_value);
+      ESP_LOGD(TAG, "LFO2 -> S+H rate: %d", output_value);
+      break;
+      
+    case OUTPUT_TYPE_PITCH_BEND: {
+      uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
+      int16_t pb_value = ((int16_t)output_value - 64) * 128;
+      send_pitch_bend(channel, pb_value);
+      ESP_LOGD(TAG, "LFO2 -> Pitch Bend: %d", pb_value);
+      break;
+    }
       
     case OUTPUT_TYPE_CC:
     default: {

@@ -3970,6 +3970,9 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
     case OUTPUT_TYPE_LFO2_DEPTH: output_type_str = "lfo2_depth"; break;
     case OUTPUT_TYPE_LFO1_RATE: output_type_str = "lfo1_rate"; break;
     case OUTPUT_TYPE_LFO1_DEPTH: output_type_str = "lfo1_depth"; break;
+    case OUTPUT_TYPE_RTG_RATE: output_type_str = "rtg_rate"; break;
+    case OUTPUT_TYPE_SH_RATE: output_type_str = "sh_rate"; break;
+    case OUTPUT_TYPE_PITCH_BEND: output_type_str = "pitch_bend"; break;
     default: output_type_str = "cc"; break;
   }
   cJSON_AddStringToObject(obj, "output_type", output_type_str);
@@ -4031,6 +4034,9 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
     else if (strcmp(type_str, "lfo2_depth") == 0) mapping->output_type = OUTPUT_TYPE_LFO2_DEPTH;
     else if (strcmp(type_str, "lfo1_rate") == 0) mapping->output_type = OUTPUT_TYPE_LFO1_RATE;
     else if (strcmp(type_str, "lfo1_depth") == 0) mapping->output_type = OUTPUT_TYPE_LFO1_DEPTH;
+    else if (strcmp(type_str, "rtg_rate") == 0) mapping->output_type = OUTPUT_TYPE_RTG_RATE;
+    else if (strcmp(type_str, "sh_rate") == 0) mapping->output_type = OUTPUT_TYPE_SH_RATE;
+    else if (strcmp(type_str, "pitch_bend") == 0) mapping->output_type = OUTPUT_TYPE_PITCH_BEND;
     else mapping->output_type = OUTPUT_TYPE_CC;
   }
   

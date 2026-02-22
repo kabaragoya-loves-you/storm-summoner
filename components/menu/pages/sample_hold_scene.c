@@ -508,30 +508,32 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
     "S+H: %s", scene->sample_hold_config.enabled ? "Enabled" : "Disabled");
   s_sh_items[idx++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, false };
 
-  // Mode
-  const char* mode_str = (scene->sample_hold_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) ?
-    "Continuous" : "Step";
-  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
-  s_sh_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false };
+  // Only show other options when S+H is enabled
+  if (scene->sample_hold_config.enabled) {
+    // Mode
+    const char* mode_str = (scene->sample_hold_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) ?
+      "Continuous" : "Step";
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
+    s_sh_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false };
 
-  // Start Mode (applies to both modes)
-  const char* start_mode_str;
-  switch (scene->sample_hold_config.start_mode) {
-    case SAMPLE_HOLD_START_RUNNING: start_mode_str = "Running"; break;
-    case SAMPLE_HOLD_START_PAUSED: start_mode_str = "Paused"; break;
-    case SAMPLE_HOLD_START_TRANSPORT: start_mode_str = "Follow Transport"; break;
-    default: start_mode_str = "Running"; break;
-  }
-  snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start: %s", start_mode_str);
-  s_sh_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false };
+    // Start Mode (applies to both modes)
+    const char* start_mode_str;
+    switch (scene->sample_hold_config.start_mode) {
+      case SAMPLE_HOLD_START_RUNNING: start_mode_str = "Running"; break;
+      case SAMPLE_HOLD_START_PAUSED: start_mode_str = "Paused"; break;
+      case SAMPLE_HOLD_START_TRANSPORT: start_mode_str = "Follow Transport"; break;
+      default: start_mode_str = "Running"; break;
+    }
+    snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start: %s", start_mode_str);
+    s_sh_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false };
 
-  // Glide
-  snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]), "Glide: %s",
-    scene->sample_hold_config.glide ? "On" : "Off");
-  s_sh_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
+    // Glide
+    snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]), "Glide: %s",
+      scene->sample_hold_config.glide ? "On" : "Off");
+    s_sh_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
 
-  // Rate settings only apply to Continuous mode
-  if (scene->sample_hold_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) {
+    // Rate settings only apply to Continuous mode
+    if (scene->sample_hold_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) {
     const char* rate_mode_str = (scene->sample_hold_config.rate_mode == SAMPLE_HOLD_RATE_MODE_SYNC) ?
       "Sync (BPM)" : "Free (Hz)";
     snprintf(s_rate_mode_label[buf], sizeof(s_rate_mode_label[buf]), "Rate: %s", rate_mode_str);
@@ -561,20 +563,21 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
     }
   }
 
-  // CC Slots (4 assignable)
-  uint8_t scene_index = scene_get_current_index();
-  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  for (int i = 0; i < 4; i++) {
-    uint8_t cc = scene->sample_hold.cc_numbers[i];
-    const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
-    if (cc > 0 && cc_name && strcmp(cc_name, "Undefined") != 0) {
-      snprintf(s_cc_labels[buf][i], sizeof(s_cc_labels[buf][i]), "CC %d: %s", i + 1, cc_name);
-    } else if (cc > 0) {
-      snprintf(s_cc_labels[buf][i], sizeof(s_cc_labels[buf][i]), "CC %d: CC%d", i + 1, cc);
-    } else {
-      snprintf(s_cc_labels[buf][i], sizeof(s_cc_labels[buf][i]), "CC %d: None", i + 1);
+    // CC Slots (4 assignable)
+    uint8_t scene_index = scene_get_current_index();
+    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+    for (int i = 0; i < 4; i++) {
+      uint8_t cc = scene->sample_hold.cc_numbers[i];
+      const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
+      if (cc > 0 && cc_name && strcmp(cc_name, "Undefined") != 0) {
+        snprintf(s_cc_labels[buf][i], sizeof(s_cc_labels[buf][i]), "CC %d: %s", i + 1, cc_name);
+      } else if (cc > 0) {
+        snprintf(s_cc_labels[buf][i], sizeof(s_cc_labels[buf][i]), "CC %d: CC%d", i + 1, cc);
+      } else {
+        snprintf(s_cc_labels[buf][i], sizeof(s_cc_labels[buf][i]), "CC %d: None", i + 1);
+      }
+      s_sh_items[idx++] = (menu_item_t){ s_cc_labels[buf][i], nav_to_cc_slot, (void*)(intptr_t)i, false };
     }
-    s_sh_items[idx++] = (menu_item_t){ s_cc_labels[buf][i], nav_to_cc_slot, (void*)(intptr_t)i, false };
   }
 
   return menu_create_page("S+H", s_sh_items, idx);

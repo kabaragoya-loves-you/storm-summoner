@@ -320,9 +320,9 @@
         },
         "output_type": {
           "type": "string",
-          "enum": ["cc", "note", "lfo_rate", "lfo_depth", "lfo2_rate", "lfo2_depth", "lfo1_rate", "lfo1_depth"],
+          "enum": ["cc", "note", "lfo_rate", "lfo_depth", "lfo2_rate", "lfo2_depth", "lfo1_rate", "lfo1_depth", "rtg_rate", "sh_rate", "pitch_bend"],
           "default": "cc",
-          "description": "Output type: cc, note, lfo_rate/lfo_depth (with lfo_target), or lfo1_rate/lfo1_depth/lfo2_rate/lfo2_depth (LFO cross-modulation)"
+          "description": "Output type: cc, note, lfo_rate/lfo_depth (with lfo_target), lfo1_rate/lfo1_depth/lfo2_rate/lfo2_depth (LFO cross-modulation), rtg_rate, sh_rate, or pitch_bend"
         },
         "lfo_target": {
           "type": "string",
