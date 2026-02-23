@@ -3466,6 +3466,10 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddNumberToObject(obj, "pattern_length", action->pattern_length);
       cJSON_AddNumberToObject(obj, "pattern_mask", action->pattern_mask);
     }
+    // Only serialize transport_trigger if enabled
+    if (action->transport_trigger) {
+      cJSON_AddBoolToObject(obj, "transport_trigger", true);
+    }
   }
   
   // Serialize morph settings (only if enabled, for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
@@ -3871,6 +3875,13 @@ static action_t json_to_action(cJSON* obj) {
   cJSON* pattern_mask = cJSON_GetObjectItem(obj, "pattern_mask");
   if (pattern_mask && cJSON_IsNumber(pattern_mask)) {
     action.pattern_mask = (uint8_t)(pattern_mask->valueint & 0xFF);
+  }
+  
+  // Parse transport_trigger (default: disabled)
+  action.transport_trigger = false;
+  cJSON* transport_trigger = cJSON_GetObjectItem(obj, "transport_trigger");
+  if (transport_trigger && cJSON_IsBool(transport_trigger)) {
+    action.transport_trigger = cJSON_IsTrue(transport_trigger);
   }
   
   // Parse morph settings (default: disabled, only for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)

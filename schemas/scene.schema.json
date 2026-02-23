@@ -785,6 +785,11 @@
           "default": 255,
           "description": "Bitmask of active steps (bit 0=step 1, only used when pattern_length>=2)"
         },
+        "transport_trigger": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-trigger action when transport starts (only used when repeat=true)"
+        },
         "morph": {
           "type": "boolean",
           "default": false,

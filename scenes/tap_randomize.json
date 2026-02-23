@@ -36,11 +36,14 @@
         {
           "type": "randomize",
           "cc": [74, 71],
+          "repeat": true,
+          "repeat_division": "1_bar",
+          "transport_trigger": true,
           "morph": true,
           "morph_steps": "fine",
           "morph_timing": "sync",
           "morph_division": "bar",
-          "comment": "Randomize filter/resonance with morph to next bar"
+          "comment": "Randomize every bar, auto-starts with transport"
         }
       ]
     },

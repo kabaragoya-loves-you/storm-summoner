@@ -108,6 +108,7 @@ static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
 static char s_pattern_label[LABEL_BUFFER_SETS][24];
+static char s_transport_trigger_label[LABEL_BUFFER_SETS][24];
 static char s_morph_label[LABEL_BUFFER_SETS][24];
 static char s_morph_steps_label[LABEL_BUFFER_SETS][24];
 static char s_morph_manual_label[LABEL_BUFFER_SETS][24];
@@ -3963,6 +3964,41 @@ static void nav_to_pattern_editor(void* user_data) {
 }
 
 // ============================================================================
+// Transport Trigger Roller (only shown when repeat is enabled)
+// ============================================================================
+
+static const char* get_transport_trigger_display(action_t* action) {
+  if (!action) return "Off";
+  return action->transport_trigger ? "On" : "Off";
+}
+
+static void transport_trigger_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  
+  s_ctx->target_action->transport_trigger = (selected_index == 1);
+  ESP_LOGD(TAG, "Set transport trigger: %s", selected_index ? "On" : "Off");
+  
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* transport_trigger_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Transport", "Error", 0, NULL, NULL);
+  }
+  
+  uint32_t current_idx = s_ctx->target_action->transport_trigger ? 1 : 0;
+  
+  return menu_create_roller_page("Transport Trigger", "Off\nOn", current_idx,
+    transport_trigger_confirm_cb, NULL);
+}
+
+static void nav_to_transport_trigger(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Transport Trigger", transport_trigger_roller_create);
+}
+
+// ============================================================================
 // Morph Toggle Roller (On/Off)
 // ============================================================================
 
@@ -4794,6 +4830,16 @@ lv_obj_t* action_config_detail_page_create(void) {
       if (action->pattern_length >= 2 && item_count < MAX_DETAIL_ITEMS) {
         s_detail_items[item_count++] = (menu_item_t){
           "Edit Pattern", nav_to_pattern_editor, NULL, true
+        };
+      }
+      
+      // Show Transport Trigger option when repeat is enabled
+      if (item_count < MAX_DETAIL_ITEMS) {
+        const char* tt_display = get_transport_trigger_display(action);
+        snprintf(s_transport_trigger_label[buf], sizeof(s_transport_trigger_label[buf]),
+          "Transport Trigger\n%s", tt_display);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_transport_trigger_label[buf], nav_to_transport_trigger, NULL, true
         };
       }
     }

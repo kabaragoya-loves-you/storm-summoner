@@ -189,6 +189,7 @@ typedef struct {
   uint8_t probability;                 // Chance of firing 10-100% (default 100, only for repeating)
   uint8_t pattern_length;              // Step pattern length 2-8 (0 = disabled, only for repeating)
   uint8_t pattern_mask;                // Bitmask of active steps (bit 0 = step 1)
+  bool transport_trigger;              // Auto-trigger when transport starts (for repeating actions)
   
   // Morph configuration (for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
   bool morph_enabled;                  // Enable smooth value transition
@@ -378,6 +379,10 @@ bool action_supports_timing(action_type_t type);
 // Check if action type supports repeat options
 // Returns false for preset/scene actions and HOLD actions
 bool action_supports_repeat(action_type_t type);
+
+// Check if action supports transport trigger (auto-start when transport plays)
+// Only valid for actions that support timing and repeat
+bool action_supports_transport_trigger(action_type_t type);
 
 // String conversion for timing (for JSON/display)
 // Returns static buffer - copy if needed

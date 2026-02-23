@@ -177,6 +177,10 @@ static bool morph_start(const action_t* action, uint8_t num_ccs,
 static void morph_update_timer(void);
 static int find_discrete_index(const uint8_t* values, uint8_t count, uint8_t target);
 
+// Forward declaration for pending action queue
+static bool action_enqueue_pending(action_t* action, uint8_t trigger_value,
+  uint8_t target_beat, bool repeating);
+
 // Check if an action is currently repeating
 static bool is_action_repeating(action_t* action) {
   if (!action) return false;
@@ -240,6 +244,9 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
 // Beat event handler - fires pending actions when beat matches
 static void handle_beat_event(const event_t* event, void* context) {
   if (event->type != EVENT_BEAT) return;
+  
+  // Don't fire repeating actions in programming mode
+  if (ui_is_in_programming_mode()) return;
   
   uint8_t current_beat = event->data.beat.beat_in_bar;
   uint8_t beats_per_bar = event->data.beat.bar_length;
@@ -359,6 +366,104 @@ static void handle_beat_event(const event_t* event, void* context) {
   }
 }
 
+// Helper to start a transport-triggered action (bypasses toggle behavior)
+static void transport_start_action(action_t* action) {
+  if (!action || action->type == ACTION_NONE) return;
+  if (!action->transport_trigger) return;
+  if (!action_supports_transport_trigger(action->type)) return;
+  
+  // Only start if not already repeating (avoid toggle-off behavior)
+  if (is_action_repeating(action)) {
+    ESP_LOGD(TAG, "Action %s already repeating, skipping", action_type_to_string(action->type));
+    return;
+  }
+  
+  ESP_LOGI(TAG, "Transport starting: %s", action_type_to_string(action->type));
+  
+  // Mark as repeating
+  start_repeating(action);
+  
+  // Queue the action for beat-synchronized firing
+  uint8_t target_beat = 0;  // Any beat
+  if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
+    target_beat = action->timing_beat;
+  }
+  action_enqueue_pending(action, 127, target_beat, true);
+}
+
+// Helper to stop a transport-triggered action
+static void transport_stop_action(action_t* action) {
+  if (!action || action->type == ACTION_NONE) return;
+  if (!action->transport_trigger) return;
+  
+  // Only stop if currently repeating
+  if (!is_action_repeating(action)) return;
+  
+  ESP_LOGI(TAG, "Transport stopping: %s", action_type_to_string(action->type));
+  
+  // Stop repeating and clear from pending queue
+  stop_repeating_internal(action);
+  
+  // Clear from pending queue
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
+      s_pending_actions[i].valid = false;
+    }
+  }
+}
+
+// Transport event handler - manages transport-triggered actions based on transport state
+static void handle_transport_event(const event_t* event, void* context) {
+  (void)context;
+  if (event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
+  
+  transport_state_t state = transport_get_state();
+  bool starting = (state == TRANSPORT_PLAYING || state == TRANSPORT_RECORDING);
+  bool stopping = (state == TRANSPORT_STOPPED || state == TRANSPORT_PAUSED);
+  
+  // In programming mode, only handle stops (to clean up)
+  if (ui_is_in_programming_mode() && starting) return;
+  
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  
+  ESP_LOGD(TAG, "Transport state: %s", 
+    starting ? "playing/recording" : "stopped/paused");
+  
+  // Helper macros for start/stop
+  #define START_ACTION(action_ptr) transport_start_action(action_ptr)
+  #define STOP_ACTION(action_ptr) transport_stop_action(action_ptr)
+  
+  if (starting) {
+    // Start transport-triggered actions
+    for (int i = 0; i < NUM_TOUCHPADS; i++) {
+      if (scene->touchpads[i].enabled) {
+        START_ACTION(&scene->touchpads[i].action);
+      }
+    }
+    START_ACTION(&scene->button_left);
+    START_ACTION(&scene->button_right);
+    START_ACTION(&scene->button_both);
+    START_ACTION(&scene->bump);
+    START_ACTION(&scene->expr_switch);
+  } else if (stopping) {
+    // Stop transport-triggered actions
+    for (int i = 0; i < NUM_TOUCHPADS; i++) {
+      if (scene->touchpads[i].enabled) {
+        STOP_ACTION(&scene->touchpads[i].action);
+      }
+    }
+    STOP_ACTION(&scene->button_left);
+    STOP_ACTION(&scene->button_right);
+    STOP_ACTION(&scene->button_both);
+    STOP_ACTION(&scene->bump);
+    STOP_ACTION(&scene->expr_switch);
+  }
+  
+  #undef START_ACTION
+  #undef STOP_ACTION
+}
+
 // Enqueue an action for delayed execution
 static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint8_t target_beat, bool repeating) {
   // Find empty slot
@@ -462,6 +567,12 @@ esp_err_t action_init(void) {
   esp_err_t ret = event_bus_subscribe(EVENT_BEAT, handle_beat_event, NULL);
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to subscribe to beat events: %s", esp_err_to_name(ret));
+  }
+  
+  // Subscribe to transport events for transport-triggered actions
+  ret = event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, handle_transport_event, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to subscribe to transport events: %s", esp_err_to_name(ret));
   }
   
   // Create clock burst timer
@@ -1701,6 +1812,12 @@ bool action_supports_repeat(action_type_t type) {
     default:
       return true;
   }
+}
+
+// Returns true for actions that support transport trigger
+// Must support both timing and repeat
+bool action_supports_transport_trigger(action_type_t type) {
+  return action_supports_timing(type) && action_supports_repeat(type);
 }
 
 // Static buffer for timing string
