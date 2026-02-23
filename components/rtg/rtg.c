@@ -7,6 +7,7 @@
 #include "transport.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include <string.h>
 #include <math.h>
 
@@ -23,6 +24,7 @@ typedef struct {
   uint8_t held_note;      // Held note for glide mode
   bool have_last;         // Do we need to send NoteOff?
   bool gate_open;         // Is a note currently sounding?
+  uint8_t pattern_step;   // Current position in pattern (0 to length-1)
 } rtg_state_t;
 
 // Current configuration
@@ -230,6 +232,29 @@ static void rtg_send_glide(uint8_t target_note) {
 static void rtg_do_step(void) {
   if (scene_is_input_suspended()) return;
 
+  // Pattern check (only if pattern_length >= 2)
+  bool pattern_passed = true;
+  if (s_config.pattern_length >= 2) {
+    uint8_t current_step = s_state.pattern_step;
+    pattern_passed = (s_config.pattern_mask >> current_step) & 1;
+    s_state.pattern_step = (current_step + 1) % s_config.pattern_length;
+    if (!pattern_passed) {
+      ESP_LOGD(TAG, "RTG pattern step %d skipped", current_step);
+      return;
+    }
+  }
+
+  // Probability check (only if < 100%)
+  if (pattern_passed && s_config.probability < 100) {
+    uint8_t prob = s_config.probability;
+    if (prob == 0) prob = 100;
+    uint8_t roll = (uint8_t)(esp_random() % 100);
+    if (roll >= prob) {
+      ESP_LOGD(TAG, "RTG probability check failed (%d%%, rolled %d)", prob, roll);
+      return;
+    }
+  }
+
   uint8_t new_note = rtg_next_note();
 
   if (s_config.glide) {
@@ -264,6 +289,7 @@ esp_err_t rtg_init(void) {
   s_state.held_note = 60;
   s_state.have_last = false;
   s_state.gate_open = false;
+  s_state.pattern_step = 0;
 
   // Get initial BPM
   s_current_bpm = tempo_get_bpm();
@@ -296,7 +322,9 @@ esp_err_t rtg_init(void) {
 // Start RTG processing
 void rtg_start(void) {
   if (s_running) return;  // Already running
-  
+
+  s_state.pattern_step = 0;  // Reset pattern on start
+
   if (s_config.mode == RTG_MODE_CONTINUOUS) {
     rtg_timer_start();
   } else {
@@ -375,6 +403,9 @@ void rtg_apply_config(const rtg_config_t* config) {
     s_config.note_min = s_config.note_max;
     s_config.note_max = tmp;
   }
+  if (s_config.probability < 10) s_config.probability = 10;
+  if (s_config.probability > 100) s_config.probability = 100;
+  if (s_config.pattern_length > 8) s_config.pattern_length = 8;
 
   bool is_continuous = (s_config.mode == RTG_MODE_CONTINUOUS);
   bool rate_changed = (old_rate != s_config.rate_hz_x100) ||
@@ -439,7 +470,10 @@ rtg_config_t rtg_config_create_default(void) {
     .glide = false,
     .velocity = 100,
     .note_min = 36,   // C2
-    .note_max = 96    // C7
+    .note_max = 96,   // C7
+    .probability = 100,
+    .pattern_length = 0,   // Disabled
+    .pattern_mask = 0xFF   // All steps enabled by default
   };
 }
 
@@ -604,6 +638,44 @@ void rtg_set_note_max(uint8_t note_max) {
 
 uint8_t rtg_get_note_max(void) {
   return s_config.note_max;
+}
+
+// Probability
+void rtg_set_probability(uint8_t probability) {
+  if (probability < 10) probability = 10;
+  if (probability > 100) probability = 100;
+  s_config.probability = probability;
+}
+
+uint8_t rtg_get_probability(void) {
+  return s_config.probability;
+}
+
+// Pattern
+void rtg_set_pattern_length(uint8_t length) {
+  if (length > 8) length = 8;
+  uint8_t old_length = s_config.pattern_length;
+  s_config.pattern_length = length;
+  // Reset step counter when length changes
+  s_state.pattern_step = 0;
+  // Preserve existing mask, enable any newly added steps
+  if (length >= 2 && length > old_length) {
+    for (int i = (old_length < 2 ? 0 : old_length); i < length; i++) {
+      s_config.pattern_mask |= (1 << i);
+    }
+  }
+}
+
+uint8_t rtg_get_pattern_length(void) {
+  return s_config.pattern_length;
+}
+
+void rtg_set_pattern_mask(uint8_t mask) {
+  s_config.pattern_mask = mask;
+}
+
+uint8_t rtg_get_pattern_mask(void) {
+  return s_config.pattern_mask;
 }
 
 // String conversion

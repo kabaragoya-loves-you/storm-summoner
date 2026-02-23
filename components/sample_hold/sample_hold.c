@@ -5,6 +5,7 @@
 #include "transport.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include <string.h>
 
 #define TAG "S+H"
@@ -22,6 +23,7 @@ typedef struct {
   uint8_t glide_steps;    // Total interpolation steps
   uint8_t glide_step;     // Current step (0 to glide_steps)
   bool glide_active;      // Glide in progress
+  uint8_t pattern_step;   // Current position in pattern (0 to length-1)
 } sample_hold_state_t;
 
 // Current configuration
@@ -181,6 +183,29 @@ static void sample_hold_timer_update_rate(void) {
 
 // Generate next random value and start transition (with optional glide)
 static void sample_hold_do_step(void) {
+  // Pattern check (only if pattern_length >= 2)
+  bool pattern_passed = true;
+  if (s_config.pattern_length >= 2) {
+    uint8_t current_step = s_state.pattern_step;
+    pattern_passed = (s_config.pattern_mask >> current_step) & 1;
+    s_state.pattern_step = (current_step + 1) % s_config.pattern_length;
+    if (!pattern_passed) {
+      ESP_LOGD(TAG, "S+H pattern step %d skipped", current_step);
+      return;
+    }
+  }
+
+  // Probability check (only if < 100%)
+  if (pattern_passed && s_config.probability < 100) {
+    uint8_t prob = s_config.probability;
+    if (prob == 0) prob = 100;
+    uint8_t roll = (uint8_t)(esp_random() % 100);
+    if (roll >= prob) {
+      ESP_LOGD(TAG, "S+H probability check failed (%d%%, rolled %d)", prob, roll);
+      return;
+    }
+  }
+
   // Step the LFSR
   s_state.lfsr = lfsr8_step(s_state.lfsr);
 
@@ -289,6 +314,7 @@ esp_err_t sample_hold_init(void) {
   s_state.glide_active = false;
   s_state.glide_step = 0;
   s_state.glide_steps = 0;
+  s_state.pattern_step = 0;
 
   s_initialized = true;
   ESP_LOGI(TAG, "S+H initialized");
@@ -298,6 +324,8 @@ esp_err_t sample_hold_init(void) {
 // Start S+H processing
 void sample_hold_start(void) {
   if (s_running) return;
+
+  s_state.pattern_step = 0;  // Reset pattern on start
 
   if (s_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) {
     sample_hold_timer_start();
@@ -336,6 +364,9 @@ void sample_hold_apply_config(const sample_hold_config_t* config) {
   if (s_config.rate_hz_x100 > 2500) s_config.rate_hz_x100 = 2500;
   if (s_config.sync_mult_x1000 < 125) s_config.sync_mult_x1000 = 125;
   if (s_config.sync_mult_x1000 > 8000) s_config.sync_mult_x1000 = 8000;
+  if (s_config.probability < 10) s_config.probability = 10;
+  if (s_config.probability > 100) s_config.probability = 100;
+  if (s_config.pattern_length > 8) s_config.pattern_length = 8;
 
   bool is_continuous = (s_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS);
   bool rate_changed = (old_rate != s_config.rate_hz_x100) ||
@@ -405,7 +436,10 @@ sample_hold_config_t sample_hold_config_create_default(void) {
     .start_mode = SAMPLE_HOLD_START_RUNNING,
     .rate_hz_x100 = 200,       // 2.0 Hz
     .sync_mult_x1000 = 1000,   // 1.0x (1 step per beat)
-    .glide = false
+    .glide = false,
+    .probability = 100,
+    .pattern_length = 0,   // Disabled
+    .pattern_mask = 0xFF   // All steps enabled by default
   };
 }
 
@@ -528,6 +562,44 @@ void sample_hold_set_glide(bool glide) {
 
 bool sample_hold_get_glide(void) {
   return s_config.glide;
+}
+
+// Probability
+void sample_hold_set_probability(uint8_t probability) {
+  if (probability < 10) probability = 10;
+  if (probability > 100) probability = 100;
+  s_config.probability = probability;
+}
+
+uint8_t sample_hold_get_probability(void) {
+  return s_config.probability;
+}
+
+// Pattern
+void sample_hold_set_pattern_length(uint8_t length) {
+  if (length > 8) length = 8;
+  uint8_t old_length = s_config.pattern_length;
+  s_config.pattern_length = length;
+  // Reset step counter when length changes
+  s_state.pattern_step = 0;
+  // Preserve existing mask, enable any newly added steps
+  if (length >= 2 && length > old_length) {
+    for (int i = (old_length < 2 ? 0 : old_length); i < length; i++) {
+      s_config.pattern_mask |= (1 << i);
+    }
+  }
+}
+
+uint8_t sample_hold_get_pattern_length(void) {
+  return s_config.pattern_length;
+}
+
+void sample_hold_set_pattern_mask(uint8_t mask) {
+  s_config.pattern_mask = mask;
+}
+
+uint8_t sample_hold_get_pattern_mask(void) {
+  return s_config.pattern_mask;
 }
 
 // String conversion

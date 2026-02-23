@@ -573,6 +573,27 @@
           "maximum": 127,
           "default": 96,
           "description": "Maximum note (C7 = 96)"
+        },
+        "probability": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100,
+          "default": 100,
+          "description": "Probability of firing each step (10-100%)"
+        },
+        "pattern_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "default": 0,
+          "description": "Step pattern length (0=disabled, 2-8 enabled)"
+        },
+        "pattern_mask": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 255,
+          "description": "Bitmask of active steps (bit 0 = step 1)"
         }
       }
     },
@@ -621,6 +642,27 @@
           "type": "boolean",
           "default": false,
           "description": "Enable smooth transitions between values (auto-scaling steps based on delta)"
+        },
+        "probability": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100,
+          "default": 100,
+          "description": "Probability of firing each step (10-100%)"
+        },
+        "pattern_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "default": 0,
+          "description": "Step pattern length (0=disabled, 2-8 enabled)"
+        },
+        "pattern_mask": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 255,
+          "description": "Bitmask of active steps (bit 0 = step 1)"
         }
       }
     },

@@ -20,7 +20,7 @@ lv_obj_t* menu_page_sample_hold_scene_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_SH_ITEMS 12
+#define MAX_SH_ITEMS 14
 static menu_item_t s_sh_items[MAX_SH_ITEMS];
 
 static char s_enabled_label[LABEL_BUFFER_SETS][32];
@@ -31,6 +31,8 @@ static char s_rate_label[LABEL_BUFFER_SETS][32];
 static char s_sync_mult_label[LABEL_BUFFER_SETS][32];
 static char s_glide_label[LABEL_BUFFER_SETS][32];
 static char s_cc_labels[LABEL_BUFFER_SETS][4][48];
+static char s_probability_label[LABEL_BUFFER_SETS][32];
+static char s_pattern_label[LABEL_BUFFER_SETS][32];
 
 static bool s_callback_in_progress = false;
 
@@ -376,6 +378,249 @@ static void nav_to_sync_mult(void* user_data) {
 }
 
 // ============================================================================
+// Probability Roller
+// ============================================================================
+
+static void probability_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  // Index 0 = 10%, 1 = 20%, ..., 9 = 100%
+  scene->sample_hold_config.probability = (uint8_t)((selected_index + 1) * 10);
+
+  sample_hold_apply_config(&scene->sample_hold_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "S+H", menu_page_sample_hold_scene_create);
+}
+
+static lv_obj_t* probability_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint8_t prob = scene->sample_hold_config.probability;
+  if (prob == 0) prob = 100;
+  uint32_t current = (prob / 10) - 1;
+  if (current > 9) current = 9;
+
+  return menu_create_roller_page("Probability",
+    "10%\n20%\n30%\n40%\n50%\n60%\n70%\n80%\n90%\n100%",
+    current, probability_confirm_cb, NULL);
+}
+
+static void nav_to_probability(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Probability", probability_roller_create);
+}
+
+// ============================================================================
+// Pattern Length Roller
+// ============================================================================
+
+static void pattern_length_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  // Index 0 = Off, 1 = 2, 2 = 3, ..., 7 = 8
+  uint8_t new_length = (selected_index == 0) ? 0 : (uint8_t)(selected_index + 1);
+  uint8_t old_length = scene->sample_hold_config.pattern_length;
+  scene->sample_hold_config.pattern_length = new_length;
+
+  // Preserve existing mask, enable any newly added steps
+  if (new_length >= 2 && new_length > old_length) {
+    for (int i = (old_length < 2 ? 0 : old_length); i < new_length; i++) {
+      scene->sample_hold_config.pattern_mask |= (1 << i);
+    }
+  }
+
+  sample_hold_apply_config(&scene->sample_hold_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "S+H", menu_page_sample_hold_scene_create);
+}
+
+static lv_obj_t* pattern_length_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint8_t length = scene->sample_hold_config.pattern_length;
+  uint32_t current = (length < 2) ? 0 : (length - 1);
+
+  return menu_create_roller_page("Pattern",
+    "Off\n2\n3\n4\n5\n6\n7\n8",
+    current, pattern_length_confirm_cb, NULL);
+}
+
+// ============================================================================
+// Pattern Editor (toggle individual steps)
+// ============================================================================
+
+#define MAX_PATTERN_EDITOR_ITEMS 9  // 1 length + 8 steps
+static menu_item_t s_pattern_editor_items[MAX_PATTERN_EDITOR_ITEMS];
+static char s_pattern_length_item_label[32];
+static char s_pattern_step_labels[8][16];
+
+static lv_obj_t* pattern_editor_create(void);  // Forward declaration
+
+// Custom back handler for pattern editor - saves and recreates S+H page
+static bool pattern_editor_back_handler(void) {
+  menu_set_custom_back_handler(NULL);
+  persist_scene_changes();  // Save any step toggles made in editor
+  menu_navigate_back_then_to(2, "S+H", menu_page_sample_hold_scene_create);
+  return true;
+}
+
+static void pattern_step_toggle_cb(void* user_data) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  uint8_t step = (uint8_t)(uintptr_t)user_data;
+
+  // Toggle the bit for this step
+  scene->sample_hold_config.pattern_mask ^= (1 << step);
+
+  // Lightweight update - full apply_config would overflow this task's stack
+  sample_hold_set_pattern_mask(scene->sample_hold_config.pattern_mask);
+
+  // Refresh the pattern editor page, preserving focus on the toggled step
+  menu_set_restore_focus((int)step + 1);  // +1 because Length is at index 0
+  menu_replace_current_deferred("Pattern", pattern_editor_create);
+}
+
+// Callback when pattern length is changed from within the editor
+static void pattern_length_editor_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  // Index 0 = Off, 1 = 2, 2 = 3, ..., 7 = 8
+  uint8_t new_length = (selected_index == 0) ? 0 : (uint8_t)(selected_index + 1);
+  uint8_t old_length = scene->sample_hold_config.pattern_length;
+  scene->sample_hold_config.pattern_length = new_length;
+
+  // Preserve existing mask, enable any newly added steps
+  if (new_length >= 2 && new_length > old_length) {
+    for (int i = (old_length < 2 ? 0 : old_length); i < new_length; i++) {
+      scene->sample_hold_config.pattern_mask |= (1 << i);
+    }
+  }
+
+  sample_hold_apply_config(&scene->sample_hold_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+
+  // If pattern is now Off, go back to S+H page; otherwise refresh editor
+  if (new_length < 2) {
+    menu_set_custom_back_handler(NULL);
+    menu_navigate_back_then_to(2, "S+H", menu_page_sample_hold_scene_create);
+  } else {
+    menu_navigate_back_then_to(2, "Pattern", pattern_editor_create);
+  }
+}
+
+static lv_obj_t* pattern_length_editor_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint8_t length = scene->sample_hold_config.pattern_length;
+  uint32_t current = (length < 2) ? 0 : (length - 1);
+
+  return menu_create_roller_page("Length",
+    "Off\n2\n3\n4\n5\n6\n7\n8",
+    current, pattern_length_editor_confirm_cb, NULL);
+}
+
+static void nav_to_pattern_length_editor(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Length", pattern_length_editor_roller_create);
+}
+
+static lv_obj_t* pattern_editor_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return menu_create_page("Error", NULL, 0);
+
+  // Set custom back handler to recreate S+H page with fresh pattern display
+  menu_set_custom_back_handler(pattern_editor_back_handler);
+
+  uint8_t length = scene->sample_hold_config.pattern_length;
+  if (length < 2) length = 2;
+  if (length > 8) length = 8;
+
+  int idx = 0;
+
+  // Length item at top
+  snprintf(s_pattern_length_item_label, sizeof(s_pattern_length_item_label), "Length: %d", length);
+  s_pattern_editor_items[idx++] = (menu_item_t){
+    s_pattern_length_item_label, nav_to_pattern_length_editor, NULL, false
+  };
+
+  // Step toggle items
+  for (int i = 0; i < length; i++) {
+    bool enabled = (scene->sample_hold_config.pattern_mask >> i) & 1;
+    snprintf(s_pattern_step_labels[i], sizeof(s_pattern_step_labels[i]),
+      "Step %d: %s", i + 1, enabled ? "On" : "Off");
+    s_pattern_editor_items[idx++] = (menu_item_t){
+      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false
+    };
+  }
+
+  return menu_create_page("Pattern", s_pattern_editor_items, idx);
+}
+
+static void nav_to_pattern(void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  // If pattern is off, show length roller; otherwise show pattern editor
+  if (scene->sample_hold_config.pattern_length < 2) {
+    menu_navigate_to("Pattern", pattern_length_roller_create);
+  } else {
+    menu_navigate_to("Pattern", pattern_editor_create);
+  }
+}
+
+// Get pattern display string (e.g., "X.X.X.X.")
+static const char* get_pattern_display(uint8_t length, uint8_t mask) {
+  static char buf[12];
+  if (length < 2) return "Off";
+  for (int i = 0; i < length && i < 8; i++) {
+    buf[i] = (mask & (1 << i)) ? 'X' : '.';
+  }
+  buf[length] = '\0';
+  return buf;
+}
+
+// ============================================================================
 // Glide Roller
 // ============================================================================
 
@@ -561,7 +806,19 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
       snprintf(s_sync_mult_label[buf], sizeof(s_sync_mult_label[buf]), "Mult: %s", mult_label);
       s_sh_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false };
     }
-  }
+
+      // Probability (only in continuous mode)
+      uint8_t prob = scene->sample_hold_config.probability;
+      if (prob == 0) prob = 100;
+      snprintf(s_probability_label[buf], sizeof(s_probability_label[buf]), "Prob: %d%%", prob);
+      s_sh_items[idx++] = (menu_item_t){ s_probability_label[buf], nav_to_probability, NULL, false };
+
+      // Pattern (only in continuous mode)
+      const char* pattern_display = get_pattern_display(
+        scene->sample_hold_config.pattern_length, scene->sample_hold_config.pattern_mask);
+      snprintf(s_pattern_label[buf], sizeof(s_pattern_label[buf]), "Pattern: %s", pattern_display);
+      s_sh_items[idx++] = (menu_item_t){ s_pattern_label[buf], nav_to_pattern, NULL, false };
+    }
 
     // CC Slots (4 assignable)
     uint8_t scene_index = scene_get_current_index();

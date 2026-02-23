@@ -4242,6 +4242,16 @@ static cJSON* rtg_config_to_json(const rtg_config_t* config) {
   cJSON_AddNumberToObject(obj, "note_min", config->note_min);
   cJSON_AddNumberToObject(obj, "note_max", config->note_max);
 
+  // Only serialize probability if not default (100%)
+  if (config->probability > 0 && config->probability < 100) {
+    cJSON_AddNumberToObject(obj, "probability", config->probability);
+  }
+  // Only serialize pattern if enabled (length >= 2)
+  if (config->pattern_length >= 2) {
+    cJSON_AddNumberToObject(obj, "pattern_length", config->pattern_length);
+    cJSON_AddNumberToObject(obj, "pattern_mask", config->pattern_mask);
+  }
+
   return obj;
 }
 
@@ -4307,6 +4317,27 @@ static void json_to_rtg_config(cJSON* obj, rtg_config_t* config) {
     if (n > 127) n = 127;
     config->note_max = n;
   }
+
+  // Probability (default 100%)
+  config->probability = 100;
+  cJSON* prob = cJSON_GetObjectItem(obj, "probability");
+  if (prob && cJSON_IsNumber(prob)) {
+    int val = prob->valueint;
+    if (val >= 10 && val <= 100) config->probability = (uint8_t)val;
+  }
+
+  // Pattern (default disabled)
+  config->pattern_length = 0;
+  config->pattern_mask = 0xFF;
+  cJSON* plen = cJSON_GetObjectItem(obj, "pattern_length");
+  if (plen && cJSON_IsNumber(plen)) {
+    int len = plen->valueint;
+    if (len >= 2 && len <= 8) config->pattern_length = (uint8_t)len;
+  }
+  cJSON* pmask = cJSON_GetObjectItem(obj, "pattern_mask");
+  if (pmask && cJSON_IsNumber(pmask)) {
+    config->pattern_mask = (uint8_t)(pmask->valueint & 0xFF);
+  }
 }
 
 // Serialize Sample+Hold config to JSON
@@ -4320,6 +4351,16 @@ static cJSON* sample_hold_config_to_json(const sample_hold_config_t* config) {
   cJSON_AddNumberToObject(obj, "rate_hz", config->rate_hz_x100 / 100.0);
   cJSON_AddNumberToObject(obj, "sync_mult", config->sync_mult_x1000 / 1000.0);
   cJSON_AddBoolToObject(obj, "glide", config->glide);
+
+  // Only serialize probability if not default (100%)
+  if (config->probability > 0 && config->probability < 100) {
+    cJSON_AddNumberToObject(obj, "probability", config->probability);
+  }
+  // Only serialize pattern if enabled (length >= 2)
+  if (config->pattern_length >= 2) {
+    cJSON_AddNumberToObject(obj, "pattern_length", config->pattern_length);
+    cJSON_AddNumberToObject(obj, "pattern_mask", config->pattern_mask);
+  }
 
   return obj;
 }
@@ -4364,6 +4405,27 @@ static void json_to_sample_hold_config(cJSON* obj, sample_hold_config_t* config)
 
   cJSON* glide = cJSON_GetObjectItem(obj, "glide");
   if (glide) config->glide = cJSON_IsTrue(glide);
+
+  // Probability (default 100%)
+  config->probability = 100;
+  cJSON* prob = cJSON_GetObjectItem(obj, "probability");
+  if (prob && cJSON_IsNumber(prob)) {
+    int val = prob->valueint;
+    if (val >= 10 && val <= 100) config->probability = (uint8_t)val;
+  }
+
+  // Pattern (default disabled)
+  config->pattern_length = 0;
+  config->pattern_mask = 0xFF;
+  cJSON* plen = cJSON_GetObjectItem(obj, "pattern_length");
+  if (plen && cJSON_IsNumber(plen)) {
+    int len = plen->valueint;
+    if (len >= 2 && len <= 8) config->pattern_length = (uint8_t)len;
+  }
+  cJSON* pmask = cJSON_GetObjectItem(obj, "pattern_mask");
+  if (pmask && cJSON_IsNumber(pmask)) {
+    config->pattern_mask = (uint8_t)(pmask->valueint & 0xFF);
+  }
 }
 
 // Scene JSON serialization

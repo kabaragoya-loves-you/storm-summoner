@@ -228,7 +228,8 @@ esp_err_t event_bus_init(void) {
   event_bus_state.initialized = true;
   
   // Create dispatcher task with high priority for responsiveness
-  BaseType_t ret = xTaskCreate(event_dispatcher_task, "event_dispatch", 3072, NULL, 20, &event_bus_state.dispatcher_task);
+  // Stack increased to 4096 to handle LVGL menu rendering in callbacks
+  BaseType_t ret = xTaskCreate(event_dispatcher_task, "event_dispatch", 4096, NULL, 20, &event_bus_state.dispatcher_task);
   if (ret != pdPASS) {
     ESP_LOGE(TAG, "Failed to create dispatcher task");
     vQueueDelete(event_bus_state.queue);

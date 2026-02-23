@@ -3851,6 +3851,7 @@ static void pattern_length_confirm_cb(uint32_t selected_index, void* user_data) 
   if (!s_ctx || !s_ctx->target_action) return;
   
   action_t* action = s_ctx->target_action;
+  uint8_t old_length = action->pattern_length;
   
   if (selected_index == 0) {
     // Off selected
@@ -3859,10 +3860,14 @@ static void pattern_length_confirm_cb(uint32_t selected_index, void* user_data) 
   } else {
     // Length 2-8 selected (index 1-7 maps to length 2-8)
     uint8_t new_length = (uint8_t)(selected_index + 1);
-    if (action->pattern_length != new_length) {
+    if (new_length != old_length) {
       action->pattern_length = new_length;
-      // Reset mask to all steps enabled for new length
-      action->pattern_mask = (1 << new_length) - 1;
+      // Preserve existing mask, enable any newly added steps
+      if (new_length > old_length) {
+        for (int i = (old_length < 2 ? 0 : old_length); i < new_length; i++) {
+          action->pattern_mask |= (1 << i);
+        }
+      }
     }
     ESP_LOGD(TAG, "Set pattern length: %d", new_length);
   }
@@ -3921,16 +3926,14 @@ static void pattern_step_toggle_cb(void* user_data) {
   // Toggle the bit for this step
   action->pattern_mask ^= (1 << step);
   
-  ESP_LOGD(TAG, "Toggled step %d, mask now: 0x%02X", step + 1, action->pattern_mask);
-  
   // Refresh the pattern editor page, preserving focus on the toggled step
   menu_set_restore_focus((int)step);
-  menu_replace_current("Pattern", pattern_editor_create);
+  menu_replace_current_deferred("Pattern", pattern_editor_create);
 }
 
 static lv_obj_t* pattern_editor_create(void) {
   if (!s_ctx || !s_ctx->target_action) {
-    return menu_create_page_2line("Error", NULL, 0);
+    return menu_create_page("Error", NULL, 0);
   }
   
   // Set custom back handler to recreate detail page with fresh pattern display
@@ -3941,17 +3944,17 @@ static lv_obj_t* pattern_editor_create(void) {
   if (length < 2) length = 2;
   if (length > 8) length = 8;
   
-  // Build menu items for each step
+  // Build menu items for each step (single-line format to reduce stack usage)
   for (int i = 0; i < length; i++) {
     bool enabled = (action->pattern_mask >> i) & 1;
     snprintf(s_pattern_step_labels[i], sizeof(s_pattern_step_labels[i]),
-      "Step %d\n%s", i + 1, enabled ? "On" : "Off");
+      "Step %d: %s", i + 1, enabled ? "On" : "Off");
     s_pattern_step_items[i] = (menu_item_t){
-      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, true
+      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false
     };
   }
   
-  return menu_create_page_2line("Pattern", s_pattern_step_items, length);
+  return menu_create_page("Pattern", s_pattern_step_items, length);
 }
 
 static void nav_to_pattern_editor(void* user_data) {

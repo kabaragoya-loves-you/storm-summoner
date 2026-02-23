@@ -36,6 +36,9 @@ typedef struct {
   uint8_t velocity;             // Note velocity (1-127)
   uint8_t note_min;             // Range floor (default 36/C2)
   uint8_t note_max;             // Range ceiling (default 96/C7)
+  uint8_t probability;          // Chance of firing 10-100% (default 100)
+  uint8_t pattern_length;       // Step pattern length 2-8 (0 = disabled)
+  uint8_t pattern_mask;         // Bitmask of active steps (bit 0 = step 1)
 } rtg_config_t;
 
 // Initialize the RTG component
@@ -107,6 +110,15 @@ uint8_t rtg_get_note_min(void);
 
 void rtg_set_note_max(uint8_t note_max);
 uint8_t rtg_get_note_max(void);
+
+void rtg_set_probability(uint8_t probability);
+uint8_t rtg_get_probability(void);
+
+void rtg_set_pattern_length(uint8_t length);
+uint8_t rtg_get_pattern_length(void);
+
+void rtg_set_pattern_mask(uint8_t mask);
+uint8_t rtg_get_pattern_mask(void);
 
 // String conversion utilities
 const char* rtg_mode_to_string(rtg_mode_t mode);

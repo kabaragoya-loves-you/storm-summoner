@@ -46,6 +46,9 @@ void menu_set_restore_focus(int index);
 // Removes current page from stack and pushes a new one
 void menu_replace_current(const char* menu_name, menu_page_builder_t builder);
 
+// Deferred version - safe to call during LVGL rendering/event callbacks
+void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t builder);
+
 // Handle enter key (activate selected item)
 // Returns true if an action was performed (item was clickable)
 bool menu_handle_enter(void);

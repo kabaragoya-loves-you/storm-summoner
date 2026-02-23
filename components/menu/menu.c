@@ -30,6 +30,7 @@ typedef struct {
   menu_page_builder_t builder;
   bool is_back;
   int back_levels;  // For multi-level back navigation
+  bool is_replace;  // For deferred replace_current
 } deferred_nav_t;
 
 // Menu state
@@ -739,6 +740,13 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
   lv_timer_delete(timer);
 
   if (menu_state.has_pending_nav) {
+    if (menu_state.pending_nav.is_replace) {
+      // Deferred replace - call synchronous replace now (outside render cycle)
+      menu_replace_current(menu_state.pending_nav.menu_name,
+                          menu_state.pending_nav.builder);
+      menu_state.has_pending_nav = false;
+      return;
+    }
     if (menu_state.pending_nav.is_back) {
       // Handle multi-level back navigation
       int levels = menu_state.pending_nav.back_levels;
@@ -827,6 +835,8 @@ void menu_navigate_to(const char* menu_name, menu_page_builder_t builder) {
   menu_state.pending_nav.menu_name = menu_name;
   menu_state.pending_nav.builder = builder;
   menu_state.pending_nav.is_back = false;
+  menu_state.pending_nav.back_levels = 0;
+  menu_state.pending_nav.is_replace = false;
   menu_state.has_pending_nav = true;
   
   // Create a one-shot timer to execute navigation in LVGL task context
@@ -965,6 +975,7 @@ void menu_navigate_back(void) {
   menu_state.pending_nav.back_levels = 1;
   menu_state.pending_nav.menu_name = NULL;
   menu_state.pending_nav.builder = NULL;
+  menu_state.pending_nav.is_replace = false;
   menu_state.has_pending_nav = true;
 
   // Create a one-shot timer to execute navigation in LVGL task context
@@ -1004,6 +1015,7 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
   menu_state.pending_nav.back_levels = levels;
   menu_state.pending_nav.menu_name = menu_name;
   menu_state.pending_nav.builder = builder;
+  menu_state.pending_nav.is_replace = false;
   menu_state.has_pending_nav = true;
 
   // Create a one-shot timer to execute navigation in LVGL task context
@@ -1120,6 +1132,24 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   s_last_callback_time = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
   
   ESP_LOGI(TAG, "Replaced current page with: %s", menu_name ? menu_name : "(unnamed)");
+}
+
+void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t builder) {
+  // Deferred replacement - safe to call during LVGL event callbacks/rendering
+  if (menu_state.stack_depth < 1 || !builder) {
+    ESP_LOGW(TAG, "Cannot replace current (deferred): invalid state");
+    return;
+  }
+
+  menu_state.pending_nav.menu_name = menu_name;
+  menu_state.pending_nav.builder = builder;
+  menu_state.pending_nav.is_back = false;
+  menu_state.pending_nav.back_levels = 0;
+  menu_state.pending_nav.is_replace = true;
+  menu_state.has_pending_nav = true;
+
+  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 10, NULL);
+  lv_timer_set_repeat_count(nav_timer, 1);
 }
 
 bool menu_handle_enter(void) {

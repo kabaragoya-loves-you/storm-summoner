@@ -33,6 +33,9 @@ typedef struct {
   uint16_t rate_hz_x100;        // 50-2500 (0.5-25.0 Hz), used when rate_mode == FREE
   uint16_t sync_mult_x1000;     // 125-8000 (0.125x-8.0x), used when rate_mode == SYNC
   bool glide;                   // Enable smooth transitions between values
+  uint8_t probability;          // Chance of firing 10-100% (default 100)
+  uint8_t pattern_length;       // Step pattern length 2-8 (0 = disabled)
+  uint8_t pattern_mask;         // Bitmask of active steps (bit 0 = step 1)
 } sample_hold_config_t;
 
 // Initialize the S+H component
@@ -82,6 +85,15 @@ float sample_hold_get_sync_mult(void);
 
 void sample_hold_set_glide(bool glide);
 bool sample_hold_get_glide(void);
+
+void sample_hold_set_probability(uint8_t probability);
+uint8_t sample_hold_get_probability(void);
+
+void sample_hold_set_pattern_length(uint8_t length);
+uint8_t sample_hold_get_pattern_length(void);
+
+void sample_hold_set_pattern_mask(uint8_t mask);
+uint8_t sample_hold_get_pattern_mask(void);
 
 // String conversion utilities
 const char* sample_hold_mode_to_string(sample_hold_mode_t mode);
