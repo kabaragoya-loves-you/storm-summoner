@@ -21,6 +21,7 @@ idf_component_register(
     "pages/settings_als.c"
     "pages/buttons_menu.c"
     "pages/on_load_menu.c"
+    "pages/on_play_menu.c"
     "pages/tempo.c"
     "pages/led.c"
     "pages/buttons.c"

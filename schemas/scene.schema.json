@@ -59,6 +59,10 @@
       "$ref": "#/definitions/action_chain",
       "description": "Actions to execute when scene loads (for pedal initialization)"
     },
+    "on_play": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Actions to execute when transport starts playing (fresh start only, not resume)"
+    },
     "touchwheel_mode": {
       "type": "string",
       "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc", "velocity", "lfo_rate", "lfo_depth", "rtg_rate"],

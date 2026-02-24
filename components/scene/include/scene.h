@@ -86,6 +86,10 @@ typedef struct {
   uint8_t num_on_load_actions;
   action_t on_load[MAX_ON_LOAD_ACTIONS];
   
+  // Transport play actions (up to 4 actions executed when transport starts playing)
+  uint8_t num_on_play_actions;
+  action_t on_play[MAX_ON_PLAY_ACTIONS];
+  
   // Touchwheel configuration
   touchwheel_mode_t touchwheel_mode;
   touchwheel_style_t touchwheel_style;  // For CONTINUOUS mode: odometer vs endless encoder
@@ -279,6 +283,12 @@ esp_err_t scene_add_on_load_action(uint8_t scene_index, const action_t* action);
 esp_err_t scene_clear_on_load_actions(uint8_t scene_index);
 uint8_t scene_get_num_on_load_actions(uint8_t scene_index);
 action_t* scene_get_on_load_action(uint8_t scene_index, uint8_t action_index);
+
+// On-play actions (up to 4 actions per scene, fire when transport starts playing)
+esp_err_t scene_add_on_play_action(uint8_t scene_index, const action_t* action);
+esp_err_t scene_clear_on_play_actions(uint8_t scene_index);
+uint8_t scene_get_num_on_play_actions(uint8_t scene_index);
+action_t* scene_get_on_play_action(uint8_t scene_index, uint8_t action_index);
 
 // Pending change mode
 uint8_t scene_get_pending_index(void);

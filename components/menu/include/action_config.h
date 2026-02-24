@@ -23,6 +23,7 @@ struct action_config_context {
   void* user_data;                   // Optional user data
   bool exclude_hold_actions;         // Filter out hold-requiring actions (for bump)
   bool on_load_filter;               // Only show actions valid for on-load (CC, transport, etc.)
+  bool on_play_filter;               // Only show actions valid for on-play (like on-load but no transport)
   action_trigger_type_t trigger_type; // Trigger type for action validation
 };
 

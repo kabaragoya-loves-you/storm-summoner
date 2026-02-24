@@ -540,6 +540,16 @@ static void handle_transport_event(const event_t* event, void* context) {
     START_ACTION(&scene->button_both);
     START_ACTION(&scene->bump);
     START_ACTION(&scene->expr_switch);
+    
+    // Execute on_play actions on fresh play start (not resume, not recording)
+    if (state == TRANSPORT_PLAYING && !is_resume && scene->use_transport) {
+      if (scene->num_on_play_actions > 0) {
+        ESP_LOGI(TAG, "Executing %d on_play action(s)", scene->num_on_play_actions);
+        for (int i = 0; i < scene->num_on_play_actions; i++) {
+          action_execute(&scene->on_play[i], 127, true);
+        }
+      }
+    }
   } else if (stopping) {
     // Stop transport-triggered actions
     for (int i = 0; i < NUM_TOUCHPADS; i++) {
@@ -1801,16 +1811,25 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
   // ACTION_NONE is always valid (clear assignment)
   if (type == ACTION_NONE) return true;
   
-  // Hold actions are invalid for bump and on_load (no release event)
+  // Hold actions are invalid for bump, on_load, and on_play (no release event)
   if (action_requires_hold(type)) {
-    if (trigger == ACTION_TRIGGER_BUMP || trigger == ACTION_TRIGGER_ON_LOAD) {
+    if (trigger == ACTION_TRIGGER_BUMP || trigger == ACTION_TRIGGER_ON_LOAD ||
+        trigger == ACTION_TRIGGER_ON_PLAY) {
+      return false;
+    }
+  }
+  
+  // Transport actions cannot be assigned to on_play (would cause recursion/conflicts)
+  if (trigger == ACTION_TRIGGER_ON_PLAY) {
+    if (type == ACTION_PLAY || type == ACTION_STOP ||
+        type == ACTION_PAUSE || type == ACTION_RECORD) {
       return false;
     }
   }
   
   // Touchwheel Hold restrictions:
   // - Valid: Pads 8-11, Buttons, Expression switch
-  // - Invalid: Pads 0-7, Bump, on_load
+  // - Invalid: Pads 0-7, Bump, on_load, on_play
   if (type == ACTION_TOUCHWHEEL_HOLD) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
@@ -1824,7 +1843,7 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
   
   // Touchwheel Cycle restrictions:
   // - Valid: Pads 8-11, Buttons, Bump, Expression switch
-  // - Invalid: Pads 0-7, on_load
+  // - Invalid: Pads 0-7, on_load, on_play
   if (type == ACTION_TOUCHWHEEL_CYCLE) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
@@ -1837,19 +1856,20 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
     }
   }
   
-  // UI actions cannot be assigned to on_load
+  // UI actions cannot be assigned to on_load or on_play
   if (type == ACTION_SET_UI || type == ACTION_UI_CYCLE) {
-    if (trigger == ACTION_TRIGGER_ON_LOAD) return false;
+    if (trigger == ACTION_TRIGGER_ON_LOAD || trigger == ACTION_TRIGGER_ON_PLAY) return false;
   }
   
   // LFO start/stop cannot be assigned to on_load (LFOs auto-start based on config)
+  // but ARE allowed for on_play
   if (type == ACTION_LFO_START || type == ACTION_LFO_STOP) {
     if (trigger == ACTION_TRIGGER_ON_LOAD) return false;
   }
   
   // Param Hold restrictions:
   // - Valid: Pads 8-11, Buttons, Expression switch
-  // - Invalid: Pads 0-7, Bump, on_load
+  // - Invalid: Pads 0-7, Bump, on_load, on_play
   if (type == ACTION_PARAM_HOLD) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
@@ -1863,7 +1883,7 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
   
   // Param Cycle restrictions:
   // - Valid: Pads 8-11, Buttons, Bump, Expression switch
-  // - Invalid: Pads 0-7, on_load
+  // - Invalid: Pads 0-7, on_load, on_play
   if (type == ACTION_PARAM_CYCLE) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:

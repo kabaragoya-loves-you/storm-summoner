@@ -317,6 +317,9 @@ typedef struct {
 // Maximum on_load actions per scene
 #define MAX_ON_LOAD_ACTIONS 4
 
+// Maximum on_play actions per scene
+#define MAX_ON_PLAY_ACTIONS 4
+
 // Initialize the action system
 esp_err_t action_init(void);
 
@@ -355,7 +358,7 @@ action_t action_create_ui_hold(uint8_t press_module, uint8_t release_module);
 const char* action_type_to_string(action_type_t type);
 
 // Check if action type requires hold (press/release) behavior
-// These actions should NOT be assigned to bump or on_load
+// These actions should NOT be assigned to bump, on_load, or on_play
 bool action_requires_hold(action_type_t type);
 
 // Action trigger types for validation
@@ -365,7 +368,8 @@ typedef enum {
   ACTION_TRIGGER_BUTTON,         // Left, Right, Both buttons
   ACTION_TRIGGER_BUMP,           // Bump detector (no release event)
   ACTION_TRIGGER_EXPR_SWITCH,    // Expression in switch mode
-  ACTION_TRIGGER_ON_LOAD         // Scene load actions
+  ACTION_TRIGGER_ON_LOAD,        // Scene load actions
+  ACTION_TRIGGER_ON_PLAY         // Transport play actions (fresh start only)
 } action_trigger_type_t;
 
 // Check if an action type is valid for a specific trigger

@@ -279,9 +279,29 @@ static bool is_on_load_allowed(action_type_t type) {
   }
 }
 
+// Actions allowed for on-play (like on-load but NO transport actions)
+static bool is_on_play_allowed(action_type_t type) {
+  switch (type) {
+    case ACTION_NONE:
+    case ACTION_CONTROL_CHANGE:
+    case ACTION_RANDOMIZE:
+    case ACTION_RESET:
+    case ACTION_LFO_START:
+    case ACTION_LFO_STOP:
+      return true;
+    default:
+      return false;
+  }
+}
+
 static bool is_action_visible(action_type_t type) {
   // On-load filter: only allow specific actions
   if (s_ctx && s_ctx->on_load_filter && !is_on_load_allowed(type)) {
+    return false;
+  }
+  
+  // On-play filter: only allow specific actions (no transport actions)
+  if (s_ctx && s_ctx->on_play_filter && !is_on_play_allowed(type)) {
     return false;
   }
   

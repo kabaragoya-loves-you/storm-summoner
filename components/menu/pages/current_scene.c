@@ -137,6 +137,11 @@ static void nav_to_on_load(void* user_data) {
   menu_navigate_to("On-Load", menu_page_on_load_scene_create);
 }
 
+static void nav_to_on_play(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("On-Play", menu_page_on_play_scene_create);
+}
+
 static void nav_to_rtg(void* user_data) {
   (void)user_data;
   menu_navigate_to("RTG", menu_page_rtg_scene_create);
@@ -1144,6 +1149,9 @@ lv_obj_t* menu_page_current_scene_create(void) {
   s_scene_items[idx++] = (menu_item_t){ "LFO", nav_to_lfo, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Bump", nav_to_bump, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "On-Load", nav_to_on_load, NULL, true };
+  if (scene && scene->use_transport) {
+    s_scene_items[idx++] = (menu_item_t){ "On-Play", nav_to_on_play, NULL, true };
+  }
   s_scene_items[idx++] = (menu_item_t){ "S+H", nav_to_sample_hold, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true };
   

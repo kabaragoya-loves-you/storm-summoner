@@ -2516,6 +2516,57 @@ action_t* scene_get_on_load_action(uint8_t scene_index, uint8_t action_index) {
   return &scene->on_load[action_index];
 }
 
+esp_err_t scene_add_on_play_action(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+  
+  // Validate action against on_play trigger
+  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_ON_PLAY)) {
+    ESP_LOGW(TAG, "Cannot add '%s' to on_play (invalid for this trigger)",
+      action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  if (scene->num_on_play_actions >= MAX_ON_PLAY_ACTIONS) {
+    ESP_LOGW(TAG, "on_play already has %d actions (max)", MAX_ON_PLAY_ACTIONS);
+    return ESP_ERR_NO_MEM;
+  }
+  
+  scene->on_play[scene->num_on_play_actions++] = *action;
+  scene_persist_if_programming();
+  
+  ESP_LOGI(TAG, "Added on_play action: %s (now %d total)",
+    action_type_to_string(action->type), scene->num_on_play_actions);
+  return ESP_OK;
+}
+
+esp_err_t scene_clear_on_play_actions(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  
+  scene->num_on_play_actions = 0;
+  memset(scene->on_play, 0, sizeof(scene->on_play));
+  scene_persist_if_programming();
+  
+  ESP_LOGI(TAG, "Cleared on_play actions");
+  return ESP_OK;
+}
+
+uint8_t scene_get_num_on_play_actions(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->num_on_play_actions : 0;
+}
+
+action_t* scene_get_on_play_action(uint8_t scene_index, uint8_t action_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene || action_index >= scene->num_on_play_actions) return NULL;
+  return &scene->on_play[action_index];
+}
+
 esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
@@ -3957,6 +4008,40 @@ static void json_to_on_load(cJSON* array, scene_t* scene) {
   }
 }
 
+// Serialize on_play actions array to JSON
+static cJSON* on_play_to_json(const scene_t* scene) {
+  cJSON* array = cJSON_CreateArray();
+  for (int i = 0; i < scene->num_on_play_actions && i < MAX_ON_PLAY_ACTIONS; i++) {
+    cJSON* action_json = action_to_json(&scene->on_play[i]);
+    if (action_json) {
+      cJSON_AddItemToArray(array, action_json);
+    }
+  }
+  return array;
+}
+
+// Parse on_play actions array from JSON
+static void json_to_on_play(cJSON* array, scene_t* scene) {
+  scene->num_on_play_actions = 0;
+  if (!cJSON_IsArray(array)) return;
+  
+  int count = cJSON_GetArraySize(array);
+  
+  for (int i = 0; i < count && scene->num_on_play_actions < MAX_ON_PLAY_ACTIONS; i++) {
+    action_t action = json_to_action(cJSON_GetArrayItem(array, i));
+    if (action.type == ACTION_NONE) continue;
+    
+    // Validate action is allowed for on_play trigger
+    if (!action_is_valid_for_trigger(action.type, ACTION_TRIGGER_ON_PLAY)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' in on_play",
+        action_type_to_string(action.type));
+      continue;
+    }
+    
+    scene->on_play[scene->num_on_play_actions++] = action;
+  }
+}
+
 // For backward compatibility: parse array format to single action (takes first action)
 static action_t json_array_to_single_action(cJSON* array) {
   if (!cJSON_IsArray(array)) return (action_t){0};
@@ -4513,6 +4598,9 @@ static cJSON* scene_to_json(const scene_t* scene) {
   // on_load is an array (up to 4 actions)
   cJSON_AddItemToObject(root, "on_load", on_load_to_json(scene));
   
+  // on_play is an array (up to 4 actions, fires when transport starts playing)
+  cJSON_AddItemToObject(root, "on_play", on_play_to_json(scene));
+  
   // Discrete inputs are single actions
   cJSON* btn_l = action_to_json(&scene->button_left);
   if (btn_l) cJSON_AddItemToObject(root, "button_left", btn_l);
@@ -4757,6 +4845,10 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   // on_load is an array of up to 4 actions
   cJSON* on_load = cJSON_GetObjectItem(root, "on_load");
   if (on_load) json_to_on_load(on_load, scene);
+  
+  // on_play is an array of up to 4 actions
+  cJSON* on_play = cJSON_GetObjectItem(root, "on_play");
+  if (on_play) json_to_on_play(on_play, scene);
   
   // Discrete inputs: try object first (new format), fall back to array (old format)
   cJSON* btn_l = cJSON_GetObjectItem(root, "button_left");

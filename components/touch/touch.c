@@ -103,6 +103,11 @@ static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 // Hold action suppression - when a hold action is active, suppress health check interventions
 static bool s_hold_active[MAX_TOUCH_PADS] = {false};
 
+// #region agent log - Track known-good benchmark values for drift detection
+// Updated after successful recoveries and calibrations
+static uint32_t s_known_good_benchmark[MAX_TOUCH_PADS] = {0};
+// #endregion
+
 // Proactive idle calibration tracking
 static uint32_t s_idle_calibration_interval_ms = IDLE_CALIBRATION_INTERVAL_DEFAULT_MS;
 static uint32_t s_last_calibration_time = 0;  // When calibration last completed
@@ -290,17 +295,19 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     s_pad_press_timestamps[pad_index] = 0;
   }
   
-  // #region agent log - Pad 12 press tracking for race condition analysis
-  if (pad_index == 12 && is_pressed) {
+  // #region agent log - Pad 12 press/release tracking
+  if (pad_index == 12) {
     uint32_t smooth[1], benchmark[1];
     esp_err_t e1 = touch_channel_read_data(s_chan_handles[pad_index],
       TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
     esp_err_t e2 = touch_channel_read_data(s_chan_handles[pad_index],
       TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
-    ESP_LOGW(TAG, "[DIAG] Pad 12 PRESS: hold=%s bench=%"PRIu32" smooth=%"PRIu32,
+    ESP_LOGW(TAG, "[DIAG] Pad 12 %s: hold=%s bench=%"PRIu32" smooth=%"PRIu32" known_good=%"PRIu32,
+      is_pressed ? "PRESS" : "RELEASE",
       s_hold_active[12] ? "Y" : "N",
       (e2 == ESP_OK) ? benchmark[0] : 0,
-      (e1 == ESP_OK) ? smooth[0] : 0);
+      (e1 == ESP_OK) ? smooth[0] : 0,
+      s_known_good_benchmark[12]);
   }
   // #endregion
   
@@ -371,6 +378,29 @@ static void touch_health_check_task(void *pvParameters) {
       esp_err_t calib_ret = touch_get_calibration_data(TOUCH_PADS[i], &calib_data);
       
       if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
+      
+      // #region agent log - Track known-good benchmark and detect relative drift
+      // Update known-good if current benchmark is healthy and higher than stored
+      // (healthy = in range AND close to calibration baseline)
+      if (benchmark[0] >= 10000 && benchmark[0] <= 100000) {
+        if (s_known_good_benchmark[i] == 0 || benchmark[0] > s_known_good_benchmark[i] * 0.9) {
+          if (s_known_good_benchmark[i] == 0) {
+            ESP_LOGD(TAG, "[DIAG] Pad %d known_good initialized: %"PRIu32, i, benchmark[0]);
+          }
+          s_known_good_benchmark[i] = benchmark[0];
+        }
+      }
+      
+      // Detect relative drift: benchmark dropped >50% from known-good
+      // This catches cases like 20000->2289 that pass the >1000 check
+      if (i == 12 && s_known_good_benchmark[i] > 0 && !s_hold_active[i]) {
+        uint32_t known = s_known_good_benchmark[i];
+        if (benchmark[0] < known / 2) {
+          ESP_LOGW(TAG, "[DIAG] Pad 12 DRIFT: bench=%"PRIu32" vs known_good=%"PRIu32" (%.0f%% drop)",
+            benchmark[0], known, (1.0 - (float)benchmark[0] / known) * 100);
+        }
+      }
+      // #endregion
       
       // 2. Check for Critical Benchmark Corruption (rare, hardware-level issue)
       // Skip if a hold action is active on this pad - long holds can cause benchmark drift
