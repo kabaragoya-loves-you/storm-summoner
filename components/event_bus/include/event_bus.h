@@ -193,6 +193,7 @@ typedef struct {
     struct {
       uint8_t state;         // transport_state_t
       uint8_t source;        // Source of the event (MIDI, UI, etc)
+      uint8_t is_resume;     // 1 = resume from pause, 0 = fresh start
     } transport;
     
     // Beat event data  

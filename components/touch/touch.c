@@ -290,6 +290,20 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     s_pad_press_timestamps[pad_index] = 0;
   }
   
+  // #region agent log - Pad 12 press tracking for race condition analysis
+  if (pad_index == 12 && is_pressed) {
+    uint32_t smooth[1], benchmark[1];
+    esp_err_t e1 = touch_channel_read_data(s_chan_handles[pad_index],
+      TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+    esp_err_t e2 = touch_channel_read_data(s_chan_handles[pad_index],
+      TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
+    ESP_LOGW(TAG, "[DIAG] Pad 12 PRESS: hold=%s bench=%"PRIu32" smooth=%"PRIu32,
+      s_hold_active[12] ? "Y" : "N",
+      (e2 == ESP_OK) ? benchmark[0] : 0,
+      (e1 == ESP_OK) ? smooth[0] : 0);
+  }
+  // #endregion
+  
   if (s_logging_enabled) {
     ESP_LOGI(TAG, "Touch %s: GPIO%d (chan_id=%d) -> pad_index=%d", 
       is_pressed ? "PRESS" : "RELEASE", chan_id + 1, chan_id, pad_index);
@@ -361,11 +375,43 @@ static void touch_health_check_task(void *pvParameters) {
       // 2. Check for Critical Benchmark Corruption (rare, hardware-level issue)
       // Skip if a hold action is active on this pad - long holds can cause benchmark drift
       if (benchmark[0] < 1000 || benchmark[0] > 100000) {
+        // #region agent log - Comprehensive benchmark corruption diagnostic
+        // Build bitmasks for compact logging
+        uint16_t pressed_mask = 0, hold_mask = 0;
+        for (int p = 0; p < MAX_TOUCH_PADS; p++) {
+          if (s_button_pressed_states[p]) pressed_mask |= (1 << p);
+          if (s_hold_active[p]) hold_mask |= (1 << p);
+        }
+        uint32_t since_touch = now - s_last_any_touch_time;
+        uint32_t since_recovery = (s_pad_recovery_timestamps[i] > 0)
+          ? (now - s_pad_recovery_timestamps[i]) : 0xFFFFFFFF;
+        uint32_t press_age = (s_pad_press_timestamps[i] > 0)
+          ? (now - s_pad_press_timestamps[i]) : 0xFFFFFFFF;
+        
+        ESP_LOGW(TAG, "[DIAG] Pad %d benchmark=%"PRIu32" smooth=%"PRIu32" thresh=%"PRIu32
+          " | SW=%s hold=%s",
+          i, benchmark[0], smooth[0], calib_data.threshold,
+          s_button_pressed_states[i] ? "PRESS" : "REL",
+          s_hold_active[i] ? "Y" : "N");
+        ESP_LOGW(TAG, "[DIAG] All pads: pressed=0x%04X hold=0x%04X pending_recov=0x%04X",
+          pressed_mask, hold_mask, s_pending_recovery_mask);
+        ESP_LOGW(TAG, "[DIAG] Timing: since_touch=%"PRIu32"ms since_recov=%"PRIu32"ms"
+          " press_age=%"PRIu32"ms",
+          since_touch, since_recovery == 0xFFFFFFFF ? 0 : since_recovery,
+          press_age == 0xFFFFFFFF ? 0 : press_age);
+        // #endregion
+        
         if (s_hold_active[i]) {
           ESP_LOGD(TAG, "Pad %d benchmark out of range (%"PRIu32") - hold active, skipping recovery",
             i, benchmark[0]);
         } else {
+          // #region agent log - Pre-recovery state
           ESP_LOGE(TAG, "CRITICAL: Pad %d benchmark corrupted (%"PRIu32"), resetting...", i, benchmark[0]);
+          ESP_LOGW(TAG, "[DIAG] Recovery: immediate (not hold_active). Next drift check in ~%"PRIu32"s."
+            " Idle calib in ~%"PRIu32"s if no touch.",
+            DRIFT_CHECK_INTERVAL_SECONDS,
+            (s_idle_calibration_interval_ms - since_touch) / 1000);
+          // #endregion
           touch_recover_pad_state(i);
           s_pad_press_timestamps[i] = 0;
           s_pad_recovery_timestamps[i] = now;
@@ -1256,7 +1302,13 @@ void touch_set_stuck_timeout_ms(uint32_t timeout_ms) {
 void touch_set_hold_active(int pad_index, bool active) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
   s_hold_active[pad_index] = active;
-  ESP_LOGD(TAG, "Pad %d hold active: %s", pad_index, active ? "yes" : "no");
+  // #region agent log - Hold active tracking
+  uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  uint32_t since_touch = now - s_last_any_touch_time;
+  ESP_LOGW(TAG, "[DIAG] Pad %d hold_active=%s (since_touch=%"PRIu32"ms SW=%s)",
+    pad_index, active ? "SET" : "CLR", since_touch,
+    s_button_pressed_states[pad_index] ? "PRESS" : "REL");
+  // #endregion
 }
 
 bool touch_is_hold_active(int pad_index) {

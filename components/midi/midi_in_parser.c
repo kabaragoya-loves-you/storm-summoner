@@ -93,6 +93,11 @@ static void process_byte(uint8_t byte) {
     // Post transport events for Start/Stop/Continue
     // Tag with TRANSPORT_SOURCE_MIDI so we don't echo if passthrough is enabled
     if (byte == 0xFA) { // Start
+      ESP_LOGI(TAG, "MIDI START (0xFA) received");
+      // CRITICAL: Reset tempo counters synchronously BEFORE posting event
+      // This prevents clock ticks from racing ahead while event is queued
+      tempo_midi_transport_start();
+      
       event_t transport_event = {
         .type = EVENT_TRANSPORT_START,
         .priority = EVENT_PRIORITY_HIGH,
@@ -104,6 +109,7 @@ static void process_byte(uint8_t byte) {
       event_bus_post(&transport_event);
     }
     else if (byte == 0xFC) { // Stop
+      ESP_LOGI(TAG, "MIDI STOP (0xFC) received");
       event_t transport_event = {
         .type = EVENT_TRANSPORT_STOP,
         .priority = EVENT_PRIORITY_HIGH,
@@ -115,6 +121,14 @@ static void process_byte(uint8_t byte) {
       event_bus_post(&transport_event);
     }
     else if (byte == 0xFB) { // Continue
+      bool just_stopped = transport_just_stopped();
+      ESP_LOGI(TAG, "MIDI CONTINUE (0xFB) received, just_stopped=%d", just_stopped);
+      // Only reset tempo on Continue if we just stopped (Stop+Continue = "Play while playing")
+      // If this is a standalone Continue (Resume), keep current position
+      if (just_stopped) {
+        tempo_midi_transport_start();
+      }
+      
       event_t transport_event = {
         .type = EVENT_TRANSPORT_CONTINUE,
         .priority = EVENT_PRIORITY_HIGH,

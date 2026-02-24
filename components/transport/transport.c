@@ -4,6 +4,7 @@
 #include "midi_passthrough.h"
 #include "tempo.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -18,6 +19,15 @@ static SemaphoreHandle_t s_state_mutex = NULL;
 static uint32_t s_current_bar = 1;     // Current bar number (1-based)
 static uint8_t s_current_beat = 1;     // Current beat in bar (1-based)
 static SemaphoreHandle_t s_position_mutex = NULL;
+
+// Track last stop time to distinguish "Play while playing" from "Resume"
+static uint32_t s_last_stop_time_ms = 0;
+#define STOP_CONTINUE_WINDOW_MS 100  // If Continue arrives within 100ms of Stop, treat as "Play"
+
+// Track pending "second stop" reset - deferred until we confirm no Continue is coming
+static bool s_second_stop_pending = false;
+static uint32_t s_second_stop_time_ms = 0;
+#define SECOND_STOP_DEFER_MS 50  // Wait this long before confirming second stop reset
 
 // Forward declarations
 static void transport_event_handler(const event_t* event, void* context);
@@ -82,24 +92,15 @@ esp_err_t transport_init(void) {
   return ESP_OK;
 }
 
-static void set_state(transport_state_t new_state, transport_source_t source) {
+static void set_state_ex(transport_state_t new_state, transport_source_t source, bool is_resume) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
   
   if (s_state != new_state) {
     transport_state_t old_state = s_state;
     s_state = new_state;
     
-    ESP_LOGI(TAG, "State changed: %d -> %d (source: %d)", old_state, new_state, source);
-    
-    // Reset position when stopping - "stop" means return to beginning
-    // Play/Record from stopped or paused continues from current position
-    if (new_state == TRANSPORT_STOPPED) {
-      xSemaphoreTake(s_position_mutex, portMAX_DELAY);
-      s_current_bar = 1;
-      s_current_beat = 1;
-      xSemaphoreGive(s_position_mutex);
-      ESP_LOGD(TAG, "Position reset to bar 1, beat 1");
-    }
+    ESP_LOGI(TAG, "State changed: %d -> %d (source: %d, resume: %d)",
+      old_state, new_state, source, is_resume);
     
     // Post state change event
     event_t state_event = {
@@ -108,7 +109,8 @@ static void set_state(transport_state_t new_state, transport_source_t source) {
       .timestamp = event_bus_get_current_timestamp(),
       .data.transport = {
         .state = new_state,
-        .source = source
+        .source = source,
+        .is_resume = is_resume ? 1 : 0
       }
     };
     
@@ -120,6 +122,11 @@ static void set_state(transport_state_t new_state, transport_source_t source) {
   }
 }
 
+// Convenience wrapper for non-resume state changes
+static void set_state(transport_state_t new_state, transport_source_t source) {
+  set_state_ex(new_state, source, false);
+}
+
 static void transport_event_handler(const event_t* event, void* context) {
   if (!event) return;
   
@@ -127,9 +134,40 @@ static void transport_event_handler(const event_t* event, void* context) {
   transport_source_t source = event->data.transport.source;
   
   switch (event->type) {
-    case EVENT_TRANSPORT_START:
+    case EVENT_TRANSPORT_START: {
       ESP_LOGD(TAG, "Received START event (source=%d)", source);
+      // Clear any pending second-stop reset (START always resets anyway)
+      s_second_stop_pending = false;
+      // START means play from beginning - always reset position
+      xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+      s_current_bar = 1;
+      s_current_beat = 1;
+      xSemaphoreGive(s_position_mutex);
+      ESP_LOGD(TAG, "Position reset to bar 1, beat 1 (START)");
+      
+      // Check if we're already playing - if so, we need to force-notify
+      // (set_state won't post event if state doesn't change)
+      bool was_playing = transport_is_playing();
       set_state(TRANSPORT_PLAYING, source);
+      
+      // If already playing, force-post a state changed event so listeners restart
+      if (was_playing) {
+        ESP_LOGI(TAG, "Restarting from beginning (was already playing) - posting restart event");
+        event_t restart_event = {
+          .type = EVENT_TRANSPORT_STATE_CHANGED,
+          .priority = EVENT_PRIORITY_HIGH,
+          .timestamp = event_bus_get_current_timestamp(),
+          .data.transport = {
+            .state = TRANSPORT_PLAYING,
+            .source = source
+          }
+        };
+        esp_err_t err = event_bus_post(&restart_event);
+        if (err != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to post restart event: %s", esp_err_to_name(err));
+        }
+      }
+      
       // If source was MIDI and passthrough is enabled, don't echo (already forwarded)
       // If source was INTERNAL, MIDI was already sent by transport_play()
       // If source was MIDI and passthrough is OFF, we should echo
@@ -145,9 +183,23 @@ static void transport_event_handler(const event_t* event, void* context) {
         }
       }
       break;
+    }
       
     case EVENT_TRANSPORT_STOP:
       ESP_LOGD(TAG, "Received STOP event (source=%d)", source);
+      // If already stopped, this might be "second stop" (return to beginning)
+      // BUT it could also be part of a Resume sequence (Stop+Continue from DAW)
+      // Don't reset immediately - mark as pending and let Continue cancel it
+      if (s_state == TRANSPORT_STOPPED) {
+        s_second_stop_pending = true;
+        s_second_stop_time_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        ESP_LOGD(TAG, "Second STOP pending (waiting to see if Continue follows)");
+      } else {
+        // Only record stop time when actually transitioning from playing to stopped
+        // This is used to detect Stop+Continue ("Play while playing") vs Resume
+        s_last_stop_time_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        s_second_stop_pending = false;
+      }
       set_state(TRANSPORT_STOPPED, source);
       if (source == TRANSPORT_SOURCE_MIDI) {
         extern bool midi_passthrough_usb_to_uart_is_enabled(void);
@@ -175,10 +227,37 @@ static void transport_event_handler(const event_t* event, void* context) {
       }
       break;
       
-    case EVENT_TRANSPORT_CONTINUE:
+    case EVENT_TRANSPORT_CONTINUE: {
       ESP_LOGD(TAG, "Received CONTINUE event (source=%d)", source);
-      if (s_state == TRANSPORT_PAUSED) {
-        set_state(TRANSPORT_PLAYING, source);
+      
+      // If there's a pending "second stop" reset, cancel it - this is a Resume, not "go to beginning"
+      if (s_second_stop_pending) {
+        ESP_LOGI(TAG, "Cancelled pending second-stop reset (this is a Resume)");
+        s_second_stop_pending = false;
+      }
+      
+      // Check if this Continue came shortly after a Stop (= "Play while playing")
+      // vs a standalone Continue (= "Resume" which should keep current position)
+      uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+      uint32_t since_stop = now_ms - s_last_stop_time_ms;
+      bool is_resume = (since_stop >= STOP_CONTINUE_WINDOW_MS);
+      
+      if (!is_resume) {
+        // Stop+Continue sequence = "Play while playing" → reset to beginning
+        xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+        s_current_bar = 1;
+        s_current_beat = 1;
+        xSemaphoreGive(s_position_mutex);
+        ESP_LOGI(TAG, "CONTINUE after STOP (%lums): reset to bar 1, beat 1",
+          (unsigned long)since_stop);
+      } else {
+        // Standalone Continue = "Resume" → keep current position
+        ESP_LOGI(TAG, "CONTINUE (Resume): keeping position bar %lu, beat %d",
+          (unsigned long)s_current_bar, s_current_beat);
+      }
+      
+      if (s_state == TRANSPORT_PAUSED || s_state == TRANSPORT_STOPPED) {
+        set_state_ex(TRANSPORT_PLAYING, source, is_resume);
         if (source == TRANSPORT_SOURCE_MIDI) {
           extern bool midi_passthrough_usb_to_uart_is_enabled(void);
           extern bool midi_passthrough_uart_to_usb_is_enabled(void);
@@ -189,6 +268,7 @@ static void transport_event_handler(const event_t* event, void* context) {
         }
       }
       break;
+    }
       
     case EVENT_TRANSPORT_RECORD:
       ESP_LOGD(TAG, "Received RECORD event (source=%d)", source);
@@ -379,4 +459,10 @@ void transport_reset_position(void) {
   s_current_beat = 1;
   xSemaphoreGive(s_position_mutex);
   ESP_LOGI(TAG, "Position reset to bar 1, beat 1");
+}
+
+bool transport_just_stopped(void) {
+  uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+  uint32_t since_stop = now_ms - s_last_stop_time_ms;
+  return since_stop < STOP_CONTINUE_WINDOW_MS;
 }

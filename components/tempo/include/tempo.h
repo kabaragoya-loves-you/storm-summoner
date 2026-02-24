@@ -88,6 +88,7 @@ void tempo_tap_event(void);
 
 // For MIDI clock mode.
 void tempo_midi_clock_tick(void);
+void tempo_midi_transport_start(void);  // Called immediately on MIDI Start to reset counters
 
 // Set and get the note divider.
 void tempo_set_note_divider(tempo_note_divider_t divider);

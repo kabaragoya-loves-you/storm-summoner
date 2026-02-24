@@ -543,33 +543,46 @@ static void transport_state_handler(const event_t* event, void* context) {
   if (!event || event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
   
   transport_state_t state = event->data.transport.state;
+  bool is_resume = event->data.transport.is_resume;
+  
+  ESP_LOGI(TAG, "Transport state change: %d (resume: %d)", state, is_resume);
   
   switch (state) {
     case TRANSPORT_PLAYING:
-    case TRANSPORT_RECORDING:
-      // Reset counters for clean start
-      // Start at beat 1, tick 0 - MIDI Start means we're ON beat 1 immediately
-      s_beat_counter = 1;
-      s_tick_counter = 0;
-      // Reset MIDI tick tracking for clean tempo detection
-      s_midi_tick_last_quarter_time = 0;
-      s_midi_tick_ema_initialized = false;
-      s_midi_tick_last_update_time = 0;
-      // Reset tempo lock state - will lock after TEMPO_LOCK_BEATS
-      s_tempo_lock_beat_count = 0;
-      s_tempo_locked = false;
-      s_tempo_locked_bpm = 0;
-      s_tempo_change_confirm = 0;
-      s_tempo_change_candidate = 0;
+    case TRANSPORT_RECORDING: {
+      if (is_resume) {
+        // Resume: keep beat/tick counters and tempo lock state intact
+        ESP_LOGI(TAG, "Resuming at beat %d", s_beat_counter);
+      } else {
+        // Fresh start: sync beat counter with transport's current position
+        uint8_t transport_beat = transport_get_current_beat();
+        ESP_LOGI(TAG, "Resetting beat counter from %d to %d (from transport)",
+          s_beat_counter, transport_beat);
+        s_beat_counter = transport_beat;
+        if (s_beat_counter == 0) s_beat_counter = 1;  // Safety check
+        s_tick_counter = 0;
+        // Reset MIDI tick tracking for clean tempo detection
+        s_midi_tick_last_quarter_time = 0;
+        s_midi_tick_ema_initialized = false;
+        s_midi_tick_last_update_time = 0;
+        // Reset tempo lock state - will lock after TEMPO_LOCK_BEATS
+        s_tempo_lock_beat_count = 0;
+        s_tempo_locked = false;
+        s_tempo_locked_bpm = 0;
+        s_tempo_change_confirm = 0;
+        s_tempo_change_candidate = 0;
+        // Immediately publish current beat on fresh start
+        ESP_LOGI(TAG, "Publishing beat event (fresh start)");
+        publish_beat_event();
+      }
       tempo_start();
-      // Immediately publish beat 1 - transport start = beat 1 begins now
-      publish_beat_event();
       break;
+    }
       
     case TRANSPORT_STOPPED:
       // Don't stop tempo task - it respects clock_always_send setting
-      // Just reset counters
-      s_beat_counter = 0;
+      // Don't reset beat counter - MIDI Stop preserves position (Continue will resume here)
+      // Only tick counter resets for clean tick timing on next start
       s_tick_counter = 0;
       // Unlock tempo for next playback
       s_tempo_locked = false;
@@ -1082,6 +1095,40 @@ void tempo_midi_clock_tick(void) {
     }
     publish_beat_event();
   }
+}
+
+void tempo_midi_transport_start(void) {
+  // Called directly from MIDI parser when Start (0xFA) is received
+  // This must run synchronously BEFORE any clock ticks are processed
+  // to ensure beat counter is reset before incrementing
+  
+  if (!s_state_mutex) return;
+  if (s_clock_source != CLOCK_SOURCE_MIDI) return;
+  
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  
+  ESP_LOGI(TAG, "MIDI transport start: resetting counters (was beat=%d tick=%lu)",
+    s_beat_counter, (unsigned long)s_tick_counter);
+  
+  s_beat_counter = 1;
+  s_tick_counter = 0;
+  
+  // Reset MIDI tick tracking for clean tempo detection
+  s_midi_tick_last_quarter_time = 0;
+  s_midi_tick_ema_initialized = false;
+  s_midi_tick_last_update_time = 0;
+  
+  // Reset tempo lock state
+  s_tempo_lock_beat_count = 0;
+  s_tempo_locked = false;
+  s_tempo_locked_bpm = 0;
+  s_tempo_change_confirm = 0;
+  s_tempo_change_candidate = 0;
+  
+  xSemaphoreGive(s_state_mutex);
+  
+  // Publish beat 1 immediately (outside mutex to avoid potential deadlock with event bus)
+  publish_beat_event();
 }
 
 void tempo_set_note_divider(tempo_note_divider_t divider) {

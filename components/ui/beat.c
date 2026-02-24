@@ -454,14 +454,15 @@ static void interp_timer_cb(lv_timer_t *timer) {
         break;
         
       case TRANSPORT_STOPPED:
-        // Reset to frame 0
+        // Reset animation to frame 0, but keep current beat position
+        // (MIDI Stop preserves playhead position, only Start resets)
         if (g_body_art && lv_vector_art_is_animated(g_body_art)) {
           lv_vector_art_set_frame(g_body_art, 0);
         }
         if (g_tail_art && lv_vector_art_is_animated(g_tail_art)) {
           lv_vector_art_set_frame(g_tail_art, 0);
         }
-        g_current_beat = 1;
+        // Don't reset g_current_beat - it preserves the stopped position
         update_gradient(0.0f, false);
         update_tempo_labels();
         return; // Don't do further updates when stopped

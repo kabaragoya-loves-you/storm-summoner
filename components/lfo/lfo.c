@@ -1205,9 +1205,10 @@ static void handle_transport_event(const event_t* event, void* context) {
   if (event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
   
   bool playing = transport_is_playing();
+  bool is_resume = event->data.transport.is_resume;
   
-  // Reset beat tracking on transport start for clean sync
-  if (playing) {
+  // Reset beat tracking on fresh start (not resume) for clean sync
+  if (playing && !is_resume) {
     s_beat_count = 0;
     s_beat_in_bar = 1;  // Will be updated by first beat event
     s_last_beat_time = 0;
@@ -1219,7 +1220,7 @@ static void handle_transport_event(const event_t* event, void* context) {
       if (!playing && s_lfo[i].config.enabled && s_lfo[i].config.restore_on_stop) {
         if (!ui_is_in_programming_mode()) {
           uint8_t restore_value = lfo_get_value_at_phase(i, 0);
-          event_t event = {
+          event_t lfo_event = {
             .type = (i == 0) ? EVENT_LFO1_VALUE : EVENT_LFO2_VALUE,
             .priority = EVENT_PRIORITY_NORMAL,
             .timestamp = event_bus_get_current_timestamp(),
@@ -1229,11 +1230,12 @@ static void handle_transport_event(const event_t* event, void* context) {
               .value = restore_value
             }
           };
-          event_bus_post(&event);
+          event_bus_post(&lfo_event);
         }
       }
       lfo_enable(i, playing);
-      ESP_LOGD(TAG, "LFO%d %s (transport)", i + 1, playing ? "started" : "stopped");
+      ESP_LOGD(TAG, "LFO%d %s (transport, resume=%d)", i + 1,
+        playing ? "started" : "stopped", is_resume);
     }
   }
 }

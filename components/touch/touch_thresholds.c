@@ -760,6 +760,20 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
   }
 
+  // #region agent log - Pre-recovery diagnostic
+  touch_channel_handle_t pre_handle = touch_get_channel_handle(pad_index);
+  if (pre_handle) {
+    uint32_t pre_smooth[1], pre_bench[1];
+    esp_err_t p1 = touch_channel_read_data(pre_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, pre_smooth);
+    esp_err_t p2 = touch_channel_read_data(pre_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, pre_bench);
+    if (p1 == ESP_OK && p2 == ESP_OK) {
+      int32_t delta = (int32_t)pre_smooth[0] - (int32_t)pre_bench[0];
+      ESP_LOGW(TAG, "[DIAG] Pad %d pre-recovery: smooth=%"PRIu32" bench=%"PRIu32" delta=%"PRId32,
+        pad_index, pre_smooth[0], pre_bench[0], delta);
+    }
+  }
+  // #endregion
+
   ESP_LOGD(TAG, "Recovering pad %d (Fast Recalibration)...", pad_index);
 
   touch_channel_handle_t chan_handle = touch_get_channel_handle(pad_index);
@@ -812,15 +826,29 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   // Keep variance as is or zero it
   s_pad_calibration[pad_index].valid = true;
   
-  ESP_LOGD(TAG, "Pad %d recovered: baseline=%"PRIu32", threshold=%"PRIu32" (%.1f%%)", 
-           pad_index, new_baseline, new_threshold, threshold_ratio * 100.0f);
+  // #region agent log - Post-recovery diagnostic
+  ESP_LOGW(TAG, "[DIAG] Pad %d recovered: new_baseline=%"PRIu32" new_threshold=%"PRIu32" (%.1f%%)", 
+    pad_index, new_baseline, new_threshold, threshold_ratio * 100.0f);
+  // #endregion
   
   // 4. Apply Thresholds (stops/starts sensor)
   ret = apply_thresholds();
   
+  // #region agent log - Post-apply verification
   if (ret == ESP_OK) {
     save_calibration_to_nvs();
+    // Read sensor values after apply to verify stability
+    vTaskDelay(pdMS_TO_TICKS(50));
+    uint32_t verify_smooth[1], verify_bench[1];
+    esp_err_t v1 = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, verify_smooth);
+    esp_err_t v2 = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, verify_bench);
+    if (v1 == ESP_OK && v2 == ESP_OK) {
+      ESP_LOGW(TAG, "[DIAG] Pad %d post-apply: smooth=%"PRIu32" bench=%"PRIu32" (stable=%s)",
+        pad_index, verify_smooth[0], verify_bench[0],
+        (verify_bench[0] >= 1000 && verify_bench[0] <= 100000) ? "Y" : "N");
+    }
   }
+  // #endregion
 
   if (s_calibration_mutex) {
     xSemaphoreGive(s_calibration_mutex);

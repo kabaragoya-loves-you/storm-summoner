@@ -61,4 +61,10 @@ uint32_t transport_get_current_bar(void);    // Get current bar number (1-based)
 uint8_t transport_get_current_beat(void);    // Get current beat in bar (1-based)
 void transport_reset_position(void);         // Reset to bar 1, beat 1
 
+/**
+ * Check if transport just stopped (for distinguishing Play vs Resume)
+ * @return true if Stop was received within the detection window
+ */
+bool transport_just_stopped(void);
+
 #endif /* _TRANSPORT_H */

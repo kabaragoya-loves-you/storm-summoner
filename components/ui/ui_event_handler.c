@@ -140,6 +140,10 @@ static void load_config_from_settings(void) {
 }
 
 static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
+  // #region agent log - Long press timer diagnostic
+  ESP_LOGW("TOUCH", "[DIAG] Long press timer fired for pad 12");
+  // #endregion
+  
   app_mode_t mode = ui_get_app_mode();
   if (mode != APP_MODE_PERFORMANCE) {
     ESP_LOGW(TAG, "Pad 12 long press ignored - mode is %d (expected Performance)", mode);
@@ -187,6 +191,10 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
         touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
         return;
       }
+      // #region agent log - Long press success with sensor values
+      ESP_LOGW("TOUCH", "[DIAG] Long press SUCCESS - bench=%"PRIu32" smooth=%"PRIu32" delta=%"PRId32,
+        benchmark[0], smooth[0], delta);
+      // #endregion
     }
   }
   
@@ -238,6 +246,9 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       app_mode_t mode = ui_get_app_mode();
       if (mode == APP_MODE_PERFORMANCE || mode == APP_MODE_SCREENSAVER) {
         s_long_press_timer_fired = false;
+        // #region agent log - Track timing before hold_active is set
+        ESP_LOGW("TOUCH", "[DIAG] UI: Pad 12 PRESS received, about to set hold_active (mode=%d)", mode);
+        // #endregion
         touch_set_hold_active(BUTTON_13_LOGICAL_PAD, true);
         xTimerStart(s_button13_long_press_timer, 0);
         ESP_LOGD(TAG, "Pad 12 pressed - long press timer started (mode=%d)", mode);

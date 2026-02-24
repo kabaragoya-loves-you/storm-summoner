@@ -148,9 +148,12 @@ static void sample_hold_timer_callback(void* arg) {
   sample_hold_do_step();
 }
 
-// Start the continuous mode timer
+// Start the continuous mode timer (safe to call if already running - will restart)
 static void sample_hold_timer_start(void) {
   if (!s_timer) return;
+
+  // Stop first to ensure clean restart (esp_timer_start_periodic fails if already running)
+  esp_timer_stop(s_timer);
 
   uint16_t rate_x100 = get_effective_rate_x100();
   uint64_t interval_us = rate_to_interval_us(rate_x100);
@@ -655,18 +658,22 @@ static void sample_hold_transport_handler(const event_t* event, void* user_data)
   if (!s_config.enabled) return;
 
   bool playing = transport_is_playing();
+  bool is_resume = event->data.transport.is_resume;
 
   if (s_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) {
     if (playing) {
+      // Always restart timer - esp_timer_stop() on pause means there's nothing to resume
       sample_hold_timer_start();
-      ESP_LOGD(TAG, "S+H started by transport (continuous)");
+      ESP_LOGD(TAG, "S+H %s by transport (continuous)",
+        is_resume ? "resumed" : "started");
     } else {
       sample_hold_timer_stop();
       ESP_LOGD(TAG, "S+H stopped by transport (continuous)");
     }
   } else {
     s_running = playing;
-    ESP_LOGD(TAG, "S+H %s by transport (step)", playing ? "enabled" : "disabled");
+    ESP_LOGD(TAG, "S+H %s by transport (step, resume=%d)",
+      playing ? "enabled" : "disabled", is_resume);
   }
 }
 

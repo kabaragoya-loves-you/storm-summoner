@@ -103,6 +103,7 @@ typedef struct {
   action_t* original;         // Pointer to original action for state sync
   uint8_t trigger_value;
   bool valid;
+  bool paused;                // True if action is paused (transport stopped) - don't process but keep state
   
   // Phase 1: Trigger timing
   uint8_t target_beat;        // 0 = any beat, 1-16 = specific beat
@@ -254,6 +255,7 @@ static void handle_beat_event(const event_t* event, void* context) {
   
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     if (!s_pending_actions[i].valid) continue;
+    if (s_pending_actions[i].paused) continue;  // Skip paused actions (transport stopped)
     
     pending_action_t* pending = &s_pending_actions[i];
     bool should_fire = false;
@@ -303,7 +305,7 @@ static void handle_beat_event(const event_t* event, void* context) {
       }
       
       if (pattern_passed && probability_passed) {
-        ESP_LOGD(TAG, "Firing pending action %s on beat %d",
+        ESP_LOGI(TAG, "Beat firing pending action %s (beat %d)",
           action_type_to_string(pending->action.type), current_beat);
         
         // Execute immediately (press only - releases are never queued)
@@ -366,24 +368,77 @@ static void handle_beat_event(const event_t* event, void* context) {
   }
 }
 
+// Reset cycle index for cycle-type actions
+static void reset_action_cycle_index(action_t* action) {
+  if (!action) return;
+  switch (action->type) {
+    case ACTION_CONTROL_CYCLE:
+      action->params.control.current_index = 0;
+      break;
+    case ACTION_PRESET_CYCLE:
+      action->params.preset_cycle.current_index = 0;
+      break;
+    case ACTION_TEMPO_CYCLE:
+      action->params.tempo.current_index = 0;
+      break;
+    case ACTION_TOUCHWHEEL_CYCLE:
+      action->params.tw_mode.current_index = 0;
+      break;
+    case ACTION_LFO_SHAPE:
+      action->params.lfo.current_index = 0;
+      break;
+    case ACTION_UI_CYCLE:
+      action->params.ui.current_index = 0;
+      break;
+    case ACTION_PARAM_CYCLE:
+      action->params.tw_param.current_index = 0;
+      break;
+    default:
+      break;
+  }
+}
+
 // Helper to start a transport-triggered action (bypasses toggle behavior)
+// Safe to call if already running - will restart with fresh timing
 static void transport_start_action(action_t* action) {
   if (!action || action->type == ACTION_NONE) return;
   if (!action->transport_trigger) return;
   if (!action_supports_transport_trigger(action->type)) return;
   
-  // Only start if not already repeating (avoid toggle-off behavior)
-  if (is_action_repeating(action)) {
-    ESP_LOGD(TAG, "Action %s already repeating, skipping", action_type_to_string(action->type));
-    return;
+  // If already repeating or paused, restart it - stop first then start fresh
+  bool was_repeating = is_action_repeating(action);
+  bool has_paused_pending = false;
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
+      has_paused_pending = s_pending_actions[i].paused;
+      break;
+    }
   }
   
-  ESP_LOGI(TAG, "Transport starting: %s", action_type_to_string(action->type));
+  if (was_repeating || has_paused_pending) {
+    ESP_LOGI(TAG, "Transport restarting: %s", action_type_to_string(action->type));
+    stop_repeating_internal(action);
+    // Clear from pending queue (fresh start clears everything)
+    for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+      if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
+        s_pending_actions[i].valid = false;
+        s_pending_actions[i].paused = false;
+      }
+    }
+  } else {
+    ESP_LOGI(TAG, "Transport starting: %s", action_type_to_string(action->type));
+  }
+  
+  // Reset cycle index for cycle actions (start from step 1)
+  reset_action_cycle_index(action);
+  ESP_LOGI(TAG, "Reset cycle index to 0 for %s", action_type_to_string(action->type));
   
   // Mark as repeating
   start_repeating(action);
   
   // Queue the action for beat-synchronized firing
+  // The beat event published on transport start will fire this on beat 1
+  // DON'T execute immediately - that causes double-firing since beat event also fires
   uint8_t target_beat = 0;  // Any beat
   if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
     target_beat = action->timing_beat;
@@ -401,14 +456,48 @@ static void transport_stop_action(action_t* action) {
   
   ESP_LOGI(TAG, "Transport stopping: %s", action_type_to_string(action->type));
   
-  // Stop repeating and clear from pending queue
-  stop_repeating_internal(action);
+  // DON'T call stop_repeating_internal here - we want to keep it "repeating" but paused
+  // stop_repeating_internal clears the pending action, which we need to preserve for resume
   
-  // Clear from pending queue
+  // Pause pending actions (don't clear - we might resume)
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
-      s_pending_actions[i].valid = false;
+      s_pending_actions[i].paused = true;
     }
+  }
+}
+
+// Helper to resume a transport-triggered action (preserves timers and cycle position)
+static void transport_resume_action(action_t* action) {
+  if (!action || action->type == ACTION_NONE) return;
+  if (!action->transport_trigger) return;
+  if (!action_supports_transport_trigger(action->type)) return;
+  
+  ESP_LOGI(TAG, "Transport resuming: %s", action_type_to_string(action->type));
+  
+  // Mark as repeating
+  start_repeating(action);
+  
+  // Look for existing paused pending action and un-pause it
+  // This preserves beats_remaining from before the pause
+  bool found_paused = false;
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].paused &&
+        s_pending_actions[i].original == action) {
+      s_pending_actions[i].paused = false;
+      found_paused = true;
+      break;
+    }
+  }
+  
+  // Fallback: if no paused action found, create new one (shouldn't normally happen)
+  if (!found_paused) {
+    ESP_LOGW(TAG, "No paused pending action found, creating new one");
+    uint8_t target_beat = 0;  // Any beat
+    if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
+      target_beat = action->timing_beat;
+    }
+    action_enqueue_pending(action, 127, target_beat, true);
   }
 }
 
@@ -420,6 +509,7 @@ static void handle_transport_event(const event_t* event, void* context) {
   transport_state_t state = transport_get_state();
   bool starting = (state == TRANSPORT_PLAYING || state == TRANSPORT_RECORDING);
   bool stopping = (state == TRANSPORT_STOPPED || state == TRANSPORT_PAUSED);
+  bool is_resume = event->data.transport.is_resume;
   
   // In programming mode, only handle stops (to clean up)
   if (ui_is_in_programming_mode() && starting) return;
@@ -427,11 +517,15 @@ static void handle_transport_event(const event_t* event, void* context) {
   scene_t* scene = scene_get_current();
   if (!scene) return;
   
-  ESP_LOGD(TAG, "Transport state: %s", 
-    starting ? "playing/recording" : "stopped/paused");
+  ESP_LOGI(TAG, "Transport state: %s (resume: %d)", 
+    starting ? "playing/recording" : "stopped/paused", is_resume);
   
-  // Helper macros for start/stop
-  #define START_ACTION(action_ptr) transport_start_action(action_ptr)
+  // Helper macros for start/stop/resume
+  #define START_ACTION(action_ptr) \
+    do { \
+      if (is_resume) transport_resume_action(action_ptr); \
+      else transport_start_action(action_ptr); \
+    } while(0)
   #define STOP_ACTION(action_ptr) transport_stop_action(action_ptr)
   
   if (starting) {
@@ -474,6 +568,7 @@ static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint
       s_pending_actions[i].trigger_value = trigger_value;
       s_pending_actions[i].target_beat = target_beat;
       s_pending_actions[i].valid = true;
+      s_pending_actions[i].paused = false;
       s_pending_actions[i].repeating = repeating;
       s_pending_actions[i].beats_remaining = 1;  // Fire on first matching beat
       s_pending_actions[i].hold_released = false;
@@ -493,6 +588,7 @@ static bool action_enqueue_pending(action_t* action, uint8_t trigger_value, uint
 void action_clear_pending(void) {
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     s_pending_actions[i].valid = false;
+    s_pending_actions[i].paused = false;
   }
   clear_all_repeating();
   ESP_LOGD(TAG, "Cleared pending action queue and repeating actions");
@@ -960,6 +1056,7 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
           break;
         }
         uint8_t idx = mutable_action->params.control.current_index;
+        ESP_LOGI(TAG, "Control Cycle executing: idx=%d, num_steps=%d", idx, num_steps);
         uint8_t num_ccs = mutable_action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
         
