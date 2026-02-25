@@ -246,8 +246,8 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
 static void handle_beat_event(const event_t* event, void* context) {
   if (event->type != EVENT_BEAT) return;
   
-  // Don't fire repeating actions in programming mode
-  if (ui_is_in_programming_mode()) return;
+  // Check programming mode - we still process timing but gate MIDI output
+  bool in_programming_mode = ui_is_in_programming_mode();
   
   uint8_t current_beat = event->data.beat.beat_in_bar;
   uint8_t beats_per_bar = event->data.beat.bar_length;
@@ -305,13 +305,17 @@ static void handle_beat_event(const event_t* event, void* context) {
       }
       
       if (pattern_passed && probability_passed) {
-        ESP_LOGI(TAG, "Beat firing pending action %s (beat %d)",
-          action_type_to_string(pending->action.type), current_beat);
-        
-        // Execute immediately (press only - releases are never queued)
-        action_execute_immediate(&pending->action, pending->trigger_value, true);
+        // In programming mode, skip MIDI output but still update internal state
+        if (!in_programming_mode) {
+          ESP_LOGI(TAG, "Beat firing pending action %s (beat %d)",
+            action_type_to_string(pending->action.type), current_beat);
+          
+          // Execute immediately (press only - releases are never queued)
+          action_execute_immediate(&pending->action, pending->trigger_value, true);
+        }
         
         // Sync cycle state back to original action (for CYCLE actions)
+        // Do this even in programming mode to keep state in sync
         if (pending->original) {
           switch (pending->action.type) {
             case ACTION_CONTROL_CYCLE:
@@ -511,8 +515,8 @@ static void handle_transport_event(const event_t* event, void* context) {
   bool stopping = (state == TRANSPORT_STOPPED || state == TRANSPORT_PAUSED);
   bool is_resume = event->data.transport.is_resume;
   
-  // In programming mode, only handle stops (to clean up)
-  if (ui_is_in_programming_mode() && starting) return;
+  // Note: We handle transport events even in programming mode to keep timers in sync.
+  // MIDI output is gated in handle_beat_event, not here.
   
   scene_t* scene = scene_get_current();
   if (!scene) return;

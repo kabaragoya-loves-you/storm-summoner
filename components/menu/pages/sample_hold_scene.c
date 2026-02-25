@@ -427,6 +427,8 @@ static void nav_to_probability(void* user_data) {
 // Pattern Length Roller
 // ============================================================================
 
+static lv_obj_t* pattern_editor_create(void);  // Forward declaration
+
 static void pattern_length_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
 
@@ -456,7 +458,15 @@ static void pattern_length_confirm_cb(uint32_t selected_index, void* user_data) 
   persist_scene_changes();
 
   s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "S+H", menu_page_sample_hold_scene_create);
+
+  if (new_length < 2) {
+    // Pattern disabled - go back to S+H
+    menu_navigate_back_then_to(2, "S+H", menu_page_sample_hold_scene_create);
+  } else {
+    // Pattern enabled - go directly to pattern editor
+    // Stack: S+H -> Pattern_roller, replace with S+H -> Pattern_editor
+    menu_navigate_back_then_to(1, "Pattern", pattern_editor_create);
+  }
 }
 
 static lv_obj_t* pattern_length_roller_create(void) {
@@ -479,8 +489,6 @@ static lv_obj_t* pattern_length_roller_create(void) {
 static menu_item_t s_pattern_editor_items[MAX_PATTERN_EDITOR_ITEMS];
 static char s_pattern_length_item_label[32];
 static char s_pattern_step_labels[8][16];
-
-static lv_obj_t* pattern_editor_create(void);  // Forward declaration
 
 // Custom back handler for pattern editor - saves and recreates S+H page
 static bool pattern_editor_back_handler(void) {
