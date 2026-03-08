@@ -103,10 +103,9 @@ static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 // Hold action suppression - when a hold action is active, suppress health check interventions
 static bool s_hold_active[MAX_TOUCH_PADS] = {false};
 
-// #region agent log - Track known-good benchmark values for drift detection
+// Track known-good benchmark values for drift detection
 // Updated after successful recoveries and calibrations
 static uint32_t s_known_good_benchmark[MAX_TOUCH_PADS] = {0};
-// #endregion
 
 // Proactive idle calibration tracking
 static uint32_t s_idle_calibration_interval_ms = IDLE_CALIBRATION_INTERVAL_DEFAULT_MS;
@@ -175,6 +174,32 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // Update last touch time for ANY pad
   uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
   s_last_any_touch_time = now;
+  
+  // Phantom press detection: reject presses when benchmark has drifted significantly
+  // This prevents ghost touches caused by environmental drift during idle periods
+  if (is_pressed && s_known_good_benchmark[pad_index] > 0) {
+    uint32_t bench_now[1];
+    if (touch_channel_read_data(s_chan_handles[pad_index],
+        TOUCH_CHAN_DATA_TYPE_BENCHMARK, bench_now) == ESP_OK) {
+      uint32_t known = s_known_good_benchmark[pad_index];
+      // Reject if benchmark dropped >25% from known-good
+      if (bench_now[0] < (known * 3) / 4) {
+        ESP_LOGI(TAG, "Pad %d phantom press rejected (bench=%"PRIu32" vs known=%"PRIu32"), recovering",
+          pad_index, bench_now[0], known);
+        touch_recover_pad_state(pad_index);
+        s_pad_recovery_timestamps[pad_index] = now;
+        // Update known_good with the fresh baseline
+        uint32_t fresh_bench[1];
+        if (touch_channel_read_data(s_chan_handles[pad_index],
+            TOUCH_CHAN_DATA_TYPE_BENCHMARK, fresh_bench) == ESP_OK) {
+          if (fresh_bench[0] >= 10000 && fresh_bench[0] <= 100000) {
+            s_known_good_benchmark[pad_index] = fresh_bench[0];
+          }
+        }
+        return;
+      }
+    }
+  }
   
   // Track per-pad press timestamps for stuck detection
   if (is_pressed) {
@@ -295,22 +320,6 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     s_pad_press_timestamps[pad_index] = 0;
   }
   
-  // #region agent log - Pad 12 press/release tracking
-  if (pad_index == 12) {
-    uint32_t smooth[1], benchmark[1];
-    esp_err_t e1 = touch_channel_read_data(s_chan_handles[pad_index],
-      TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
-    esp_err_t e2 = touch_channel_read_data(s_chan_handles[pad_index],
-      TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
-    ESP_LOGW(TAG, "[DIAG] Pad 12 %s: hold=%s bench=%"PRIu32" smooth=%"PRIu32" known_good=%"PRIu32,
-      is_pressed ? "PRESS" : "RELEASE",
-      s_hold_active[12] ? "Y" : "N",
-      (e2 == ESP_OK) ? benchmark[0] : 0,
-      (e1 == ESP_OK) ? smooth[0] : 0,
-      s_known_good_benchmark[12]);
-  }
-  // #endregion
-  
   if (s_logging_enabled) {
     ESP_LOGI(TAG, "Touch %s: GPIO%d (chan_id=%d) -> pad_index=%d", 
       is_pressed ? "PRESS" : "RELEASE", chan_id + 1, chan_id, pad_index);
@@ -379,69 +388,55 @@ static void touch_health_check_task(void *pvParameters) {
       
       if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
       
-      // #region agent log - Track known-good benchmark and detect relative drift
-      // Update known-good if current benchmark is healthy and higher than stored
-      // (healthy = in range AND close to calibration baseline)
+      // Track known-good benchmark values for drift detection
       if (benchmark[0] >= 10000 && benchmark[0] <= 100000) {
         if (s_known_good_benchmark[i] == 0 || benchmark[0] > s_known_good_benchmark[i] * 0.9) {
-          if (s_known_good_benchmark[i] == 0) {
-            ESP_LOGD(TAG, "[DIAG] Pad %d known_good initialized: %"PRIu32, i, benchmark[0]);
-          }
           s_known_good_benchmark[i] = benchmark[0];
         }
       }
       
-      // Detect relative drift: benchmark dropped >50% from known-good
-      // This catches cases like 20000->2289 that pass the >1000 check
-      if (i == 12 && s_known_good_benchmark[i] > 0 && !s_hold_active[i]) {
+      // Detect relative drift: benchmark dropped >25% from known-good
+      // This catches drift that causes phantom touches (e.g., 20500->12836)
+      if (s_known_good_benchmark[i] > 0 && !s_hold_active[i]) {
         uint32_t known = s_known_good_benchmark[i];
-        if (benchmark[0] < known / 2) {
-          ESP_LOGW(TAG, "[DIAG] Pad 12 DRIFT: bench=%"PRIu32" vs known_good=%"PRIu32" (%.0f%% drop)",
-            benchmark[0], known, (1.0 - (float)benchmark[0] / known) * 100);
+        if (benchmark[0] < (known * 3) / 4) {
+          // If pad is currently "pressed", this is likely a phantom touch - force release
+          if (s_button_pressed_states[i]) {
+            ESP_LOGI(TAG, "Pad %d phantom touch detected (drift), forcing release + recovery", i);
+            s_button_pressed_states[i] = false;
+            s_pad_press_timestamps[i] = 0;
+            event_t release_event = {
+              .type = EVENT_TOUCH_RELEASE,
+              .priority = EVENT_PRIORITY_HIGH,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.touch = { .pad_id = i }
+            };
+            event_bus_post(&release_event);
+          } else {
+            ESP_LOGD(TAG, "Pad %d benchmark drift detected, recovering", i);
+          }
+          
+          touch_recover_pad_state(i);
+          s_pad_recovery_timestamps[i] = now;
+          // Update known_good with the fresh baseline
+          uint32_t fresh_bench[1];
+          if (touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_BENCHMARK, fresh_bench) == ESP_OK) {
+            if (fresh_bench[0] >= 10000 && fresh_bench[0] <= 100000) {
+              s_known_good_benchmark[i] = fresh_bench[0];
+            }
+          }
+          continue;
         }
       }
-      // #endregion
       
       // 2. Check for Critical Benchmark Corruption (rare, hardware-level issue)
       // Skip if a hold action is active on this pad - long holds can cause benchmark drift
       if (benchmark[0] < 1000 || benchmark[0] > 100000) {
-        // #region agent log - Comprehensive benchmark corruption diagnostic
-        // Build bitmasks for compact logging
-        uint16_t pressed_mask = 0, hold_mask = 0;
-        for (int p = 0; p < MAX_TOUCH_PADS; p++) {
-          if (s_button_pressed_states[p]) pressed_mask |= (1 << p);
-          if (s_hold_active[p]) hold_mask |= (1 << p);
-        }
-        uint32_t since_touch = now - s_last_any_touch_time;
-        uint32_t since_recovery = (s_pad_recovery_timestamps[i] > 0)
-          ? (now - s_pad_recovery_timestamps[i]) : 0xFFFFFFFF;
-        uint32_t press_age = (s_pad_press_timestamps[i] > 0)
-          ? (now - s_pad_press_timestamps[i]) : 0xFFFFFFFF;
-        
-        ESP_LOGW(TAG, "[DIAG] Pad %d benchmark=%"PRIu32" smooth=%"PRIu32" thresh=%"PRIu32
-          " | SW=%s hold=%s",
-          i, benchmark[0], smooth[0], calib_data.threshold,
-          s_button_pressed_states[i] ? "PRESS" : "REL",
-          s_hold_active[i] ? "Y" : "N");
-        ESP_LOGW(TAG, "[DIAG] All pads: pressed=0x%04X hold=0x%04X pending_recov=0x%04X",
-          pressed_mask, hold_mask, s_pending_recovery_mask);
-        ESP_LOGW(TAG, "[DIAG] Timing: since_touch=%"PRIu32"ms since_recov=%"PRIu32"ms"
-          " press_age=%"PRIu32"ms",
-          since_touch, since_recovery == 0xFFFFFFFF ? 0 : since_recovery,
-          press_age == 0xFFFFFFFF ? 0 : press_age);
-        // #endregion
-        
         if (s_hold_active[i]) {
           ESP_LOGD(TAG, "Pad %d benchmark out of range (%"PRIu32") - hold active, skipping recovery",
             i, benchmark[0]);
         } else {
-          // #region agent log - Pre-recovery state
           ESP_LOGE(TAG, "CRITICAL: Pad %d benchmark corrupted (%"PRIu32"), resetting...", i, benchmark[0]);
-          ESP_LOGW(TAG, "[DIAG] Recovery: immediate (not hold_active). Next drift check in ~%"PRIu32"s."
-            " Idle calib in ~%"PRIu32"s if no touch.",
-            DRIFT_CHECK_INTERVAL_SECONDS,
-            (s_idle_calibration_interval_ms - since_touch) / 1000);
-          // #endregion
           touch_recover_pad_state(i);
           s_pad_press_timestamps[i] = 0;
           s_pad_recovery_timestamps[i] = now;
@@ -1332,13 +1327,7 @@ void touch_set_stuck_timeout_ms(uint32_t timeout_ms) {
 void touch_set_hold_active(int pad_index, bool active) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
   s_hold_active[pad_index] = active;
-  // #region agent log - Hold active tracking
-  uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-  uint32_t since_touch = now - s_last_any_touch_time;
-  ESP_LOGW(TAG, "[DIAG] Pad %d hold_active=%s (since_touch=%"PRIu32"ms SW=%s)",
-    pad_index, active ? "SET" : "CLR", since_touch,
-    s_button_pressed_states[pad_index] ? "PRESS" : "REL");
-  // #endregion
+  ESP_LOGD(TAG, "Pad %d hold active: %s", pad_index, active ? "yes" : "no");
 }
 
 bool touch_is_hold_active(int pad_index) {
