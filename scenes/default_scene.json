@@ -116,9 +116,8 @@
 				"value":	127
 			}
 		}],
-	"on_load":	[{
-			"type":	"reset"
-		}],
+	"on_load":	[],
+  "on_play": [],
 	"button_left":	{
 		"type":	"preset_dec"
 	},
@@ -234,7 +233,7 @@
 	},
 	"use_transport":	false,
 	"lfo1_config":	{
-		"enabled":	true,
+		"enabled":	false,
 		"waveform":	"sine",
 		"rate_mode":	"free",
 		"start_mode":	"running",

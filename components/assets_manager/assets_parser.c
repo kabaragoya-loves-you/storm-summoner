@@ -260,7 +260,9 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
           string_ptr += len;
         }
         
-        // Get value range
+        // Get value range (default to 0-127 for CC)
+        ctrl->min = 0;
+        ctrl->max = 127;
         cJSON *range = cJSON_GetObjectItem(cc_item, "valueRange");
         if (range) {
           cJSON *min = cJSON_GetObjectItem(range, "min");

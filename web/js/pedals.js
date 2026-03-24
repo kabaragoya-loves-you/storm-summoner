@@ -382,9 +382,6 @@ application.register(
       // NRPN commands
       const nrpnCommands = device.nrpnCommands || []
 
-      // Note input support
-      const noteInput = device.x_midiNoteIn
-
       let html = `
         <div class="pedal-detail">
           <div class="pedal-detail-header">
@@ -435,33 +432,6 @@ application.register(
             </div>
           </div>
       `
-
-      // Note input section
-      if (noteInput) {
-        html += `
-          <div class="pedal-detail-section">
-            <h3>Note Input</h3>
-            <div class="detail-grid">
-              <div class="detail-item">
-                <span class="detail-label">Note On/Off</span>
-                <span class="detail-value">${noteInput.supportsNoteOnOff ? 'Yes' : 'No'}</span>
-              </div>
-              <div class="detail-item">
-                <span class="detail-label">Velocity</span>
-                <span class="detail-value">${noteInput.supportsVelocity ? 'Yes' : 'No'}</span>
-              </div>
-              <div class="detail-item">
-                <span class="detail-label">Pitch Bend</span>
-                <span class="detail-value">${noteInput.supportsPitchBend ? 'Yes' : 'No'}</span>
-              </div>
-              <div class="detail-item">
-                <span class="detail-label">Mod Wheel</span>
-                <span class="detail-value">${noteInput.supportsModWheel ? 'Yes' : 'No'}</span>
-              </div>
-            </div>
-          </div>
-        `
-      }
 
       // CC Commands table
       if (ccCommands.length > 0) {
