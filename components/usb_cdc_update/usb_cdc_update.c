@@ -70,6 +70,7 @@ static uint8_t *s_update_buffer = NULL;
 static size_t s_update_size = 0;
 static size_t s_received_bytes = 0;
 static bool s_is_firmware = false;
+static char s_pending_assets_checksum[9] = {0};  // 8 hex chars + null
 
 static char s_cmd_buffer[CDC_CMD_BUF_SIZE];
 static size_t s_cmd_pos = 0;
@@ -698,21 +699,32 @@ static void process_command(const char *cmd) {
     send_response("READY");
 
   } else if (strncmp(cmd, "ASSETS ", 7) == 0) {
-    // Parse size
-    size_t size = atoi(cmd + 7);
-    
-    if (size == 0 || size > 16 * 1024 * 1024) {  // Max 16MB
+    // Parse size and optional checksum: "ASSETS <size> [checksum]"
+    size_t size = 0;
+    char checksum[9] = {0};
+    int parsed = sscanf(cmd + 7, "%zu %8s", &size, checksum);
+
+    if (parsed < 1 || size == 0 || size > 16 * 1024 * 1024) {  // Max 16MB
       send_response("ERROR: Invalid assets size");
       return;
     }
 
-    ESP_LOGI(TAG, "Starting assets update (%u bytes)", (unsigned)size);
+    // Store pending checksum if provided
+    if (parsed >= 2 && strlen(checksum) == 8) {
+      strncpy(s_pending_assets_checksum, checksum, sizeof(s_pending_assets_checksum) - 1);
+      s_pending_assets_checksum[sizeof(s_pending_assets_checksum) - 1] = '\0';
+      ESP_LOGI(TAG, "Starting assets update (%u bytes, checksum %s)",
+        (unsigned)size, s_pending_assets_checksum);
+    } else {
+      s_pending_assets_checksum[0] = '\0';  // No checksum provided
+      ESP_LOGI(TAG, "Starting assets update (%u bytes)", (unsigned)size);
+    }
 
     // Allocate buffer in PSRAM
     if (s_update_buffer) {
       heap_caps_free(s_update_buffer);
     }
-    
+
     s_update_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
     if (!s_update_buffer) {
       ESP_LOGE(TAG, "Failed to allocate %u bytes for assets", (unsigned)size);
@@ -760,6 +772,11 @@ static void process_command(const char *cmd) {
       }
       if (err == ESP_OK) {
         err = assets_update_finalize();
+      }
+      // Save the assets checksum to NVS after successful update
+      if (err == ESP_OK && s_pending_assets_checksum[0] != '\0') {
+        version_set_assets_checksum(s_pending_assets_checksum);
+        s_pending_assets_checksum[0] = '\0';
       }
     }
 
@@ -955,12 +972,14 @@ static void process_command(const char *cmd) {
     static char info_buf[512];
     int len = snprintf(info_buf, sizeof(info_buf),
       "{\"version\":\"%u.%u\",\"build\":%u,\"git\":\"%s\",\"serial\":\"%s\","
+      "\"assets_checksum\":\"%s\","
       "\"pedal\":{\"slug\":\"%s\",\"name\":\"%s\",\"vendor\":\"%s\","
       "\"midi_channel\":%u,\"send_clock\":%s,\"trs_type\":\"%s\","
       "\"receives_pc\":%s,\"transmits_pc\":%s,\"receives_clock\":%s,\"receives_notes\":%s,"
       "\"preset_count\":%u,\"bank_mode\":\"%s\",\"preset_base\":%u}}",
       (unsigned)version_get_major(), (unsigned)version_get_minor(),
       (unsigned)version_get_build(), version_get_git_hash(), version_get_serial(),
+      version_get_assets_checksum(),
       slug,
       mdev ? mdev->name : "Unknown",
       mdev ? mdev->vendor : "Unknown",
@@ -980,6 +999,11 @@ static void process_command(const char *cmd) {
     } else {
       send_response("ERROR: Buffer overflow");
     }
+
+  } else if (strcmp(cmd, "EXIT") == 0) {
+    // EXIT in idle state is a no-op (already idle)
+    // Don't send any response - this prevents spurious errors after successful updates
+    ESP_LOGD(TAG, "EXIT received in idle state, ignoring");
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);

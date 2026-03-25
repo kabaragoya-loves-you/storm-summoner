@@ -83,6 +83,17 @@ add_custom_target(increment_build_number ALL
 # Make the ELF depend on the build number target
 add_dependencies(${elf} increment_build_number)
 
+# Release promotion: runs after build to copy binaries to web/binaries if needed
+add_custom_command(TARGET ${elf} POST_BUILD
+  COMMAND ${CMAKE_COMMAND}
+    -DFW_VERSION_MAJOR=${FW_VERSION_MAJOR}
+    -DFW_VERSION_MINOR=${FW_VERSION_MINOR}
+    -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+    -DBINARY_DIR=${CMAKE_BINARY_DIR}
+    -P ${CMAKE_SOURCE_DIR}/cmake/promote_release.cmake
+  COMMENT "Checking for release promotion"
+)
+
 # Force enable TinyUSB classes globally to ensure the library compiles with them
 # even if disabled in Kconfig to avoid wrapper interference
 idf_build_set_property(COMPILE_DEFINITIONS "-DCFG_TUD_MIDI=1" APPEND)

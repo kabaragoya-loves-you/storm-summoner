@@ -1,0 +1,9 @@
+{
+  "generated": "2026-03-25T21:07:00Z",
+  "firmware": [
+    { "version": "0.1", "filename": "storm-summoner-0.1.bin", "date": "2026-03-25" }
+  ],
+  "assets": [
+    { "checksum": "a061c5ce", "filename": "assets-a061c5ce.bin", "date": "2026-03-25" }
+  ]
+}

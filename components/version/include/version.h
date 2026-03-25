@@ -8,11 +8,12 @@
  * Version information structure
  */
 typedef struct {
-  uint8_t major;           // Major version number
-  uint8_t minor;           // Minor version number
-  uint32_t build;          // Build number
-  const char* git_hash;    // Git commit hash (short)
-  const char* serial;      // Unique device serial (derived from MAC)
+  uint8_t major;              // Major version number
+  uint8_t minor;              // Minor version number
+  uint32_t build;             // Build number
+  const char* git_hash;       // Git commit hash (short)
+  const char* serial;         // Unique device serial (derived from MAC)
+  const char* assets_checksum; // Assets manifest checksum (8 chars)
 } version_info_t;
 
 /**
@@ -45,6 +46,20 @@ uint32_t version_get_build(void);
  * @return Git commit hash (e.g., "abc1234" or "abc1234-dirty")
  */
 const char* version_get_git_hash(void);
+
+/**
+ * Get assets checksum string
+ * @return Assets manifest checksum (8 chars, e.g., "2e9a1904")
+ */
+const char* version_get_assets_checksum(void);
+
+/**
+ * Set assets checksum (called after successful assets update)
+ * Saves to NVS for persistence across reboots
+ * @param checksum 8-character hex checksum string
+ * @return ESP_OK on success
+ */
+esp_err_t version_set_assets_checksum(const char* checksum);
 
 /**
  * Get unique device serial number

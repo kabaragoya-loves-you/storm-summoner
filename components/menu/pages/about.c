@@ -9,7 +9,7 @@
 #define TAG "MENU_ABOUT"
 
 // Static storage for menu items and labels
-#define MAX_ABOUT_ITEMS 8
+#define MAX_ABOUT_ITEMS 9
 static menu_item_t s_about_items[MAX_ABOUT_ITEMS];
 static char s_labels[MAX_ABOUT_ITEMS][48];
 
@@ -36,6 +36,11 @@ lv_obj_t* menu_page_about_create(void) {
   
   // Build number
   snprintf(s_labels[idx], sizeof(s_labels[0]), "Build\n%lu", (unsigned long)version_get_build());
+  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  idx++;
+  
+  // Assets checksum
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Assets\n%s", version_get_assets_checksum());
   s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
   idx++;
   

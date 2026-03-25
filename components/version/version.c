@@ -1,5 +1,6 @@
 #include "version.h"
 #include "version_build.h"  // Auto-generated at build time
+#include "app_settings.h"
 #include "esp_mac.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -24,9 +25,17 @@ static const char* TAG = "VERSION";
 #define FW_GIT_HASH "unknown"
 #endif
 
+// Assets checksum is stored in NVS only - not compiled into firmware
+// This keeps firmware and assets truly decoupled
+#define ASSETS_CHECKSUM_UNKNOWN "unknown"
+
+// NVS key for assets checksum
+#define NVS_KEY_ASSETS_CHECKSUM "assets_csum"
+
 // Static buffers for generated strings
 static char s_serial[13] = {0};           // 12 hex chars + null
 static char s_version_string[64] = {0};   // "X.Y.Z (hash)"
+static char s_assets_checksum[9] = {0};   // 8 hex chars + null
 static bool s_initialized = false;
 
 static version_info_t s_version_info = {
@@ -34,7 +43,8 @@ static version_info_t s_version_info = {
   .minor = FW_VERSION_MINOR,
   .build = FW_BUILD_NUMBER,
   .git_hash = FW_GIT_HASH,
-  .serial = s_serial
+  .serial = s_serial,
+  .assets_checksum = s_assets_checksum
 };
 
 esp_err_t version_init(void) {
@@ -55,6 +65,14 @@ esp_err_t version_init(void) {
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 
+  // Load assets checksum from NVS (only set after WebUSB assets update)
+  ret = app_settings_load_str(NVS_KEY_ASSETS_CHECKSUM, s_assets_checksum,
+    sizeof(s_assets_checksum));
+  if (ret != ESP_OK) {
+    strncpy(s_assets_checksum, ASSETS_CHECKSUM_UNKNOWN, sizeof(s_assets_checksum) - 1);
+    s_assets_checksum[sizeof(s_assets_checksum) - 1] = '\0';
+  }
+
   // Build full version string
   snprintf(s_version_string, sizeof(s_version_string), "%u.%u.%lu (%s)",
            (unsigned)s_version_info.major,
@@ -66,6 +84,7 @@ esp_err_t version_init(void) {
 
   ESP_LOGI(TAG, "Firmware: %s", s_version_string);
   ESP_LOGI(TAG, "Serial: %s", s_serial);
+  ESP_LOGI(TAG, "Assets: %s", s_version_info.assets_checksum);
 
   return ESP_OK;
 }
@@ -84,6 +103,29 @@ uint32_t version_get_build(void) {
 
 const char* version_get_git_hash(void) {
   return s_version_info.git_hash;
+}
+
+const char* version_get_assets_checksum(void) {
+  return s_version_info.assets_checksum;
+}
+
+esp_err_t version_set_assets_checksum(const char* checksum) {
+  if (!checksum || strlen(checksum) != 8) {
+    ESP_LOGE(TAG, "Invalid assets checksum: must be 8 characters");
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  strncpy(s_assets_checksum, checksum, sizeof(s_assets_checksum) - 1);
+  s_assets_checksum[sizeof(s_assets_checksum) - 1] = '\0';
+
+  esp_err_t ret = app_settings_save_str(NVS_KEY_ASSETS_CHECKSUM, s_assets_checksum);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to save assets checksum to NVS: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  ESP_LOGI(TAG, "Assets checksum updated: %s", s_assets_checksum);
+  return ESP_OK;
 }
 
 const char* version_get_serial(void) {
@@ -113,6 +155,7 @@ void version_print(void) {
            (unsigned)s_version_info.minor,
            (unsigned long)s_version_info.build);
   ESP_LOGI(TAG, "Git Hash: %s", s_version_info.git_hash);
+  ESP_LOGI(TAG, "Assets: %s", s_version_info.assets_checksum);
   ESP_LOGI(TAG, "Serial: %s", s_serial);
   ESP_LOGI(TAG, "Full: %s", s_version_string);
   ESP_LOGI(TAG, "==============================");

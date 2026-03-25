@@ -167,9 +167,56 @@ wa-tab-panel::part(base) { height: 100%; padding: 1.5rem; }
 .updater-section { margin-bottom: 1.5rem; }
 .updater-section h3 { font-family: var(--font-title); font-size: 1.1rem; font-weight: normal; margin: 0 0 0.5rem 0; }
 .updater-section p { margin: 0 0 1rem 0; color: var(--text-dim); font-size: 0.9rem; }
+.updater-section p.hint { margin: 0.5rem 0 0 0; font-size: 0.8rem; }
 .updater-section code { background: var(--bg-input); padding: 0.2rem 0.4rem; border-radius: 4px; font-family: var(--font-mono); font-size: 0.85rem; }
 .progress-bar { height: 20px; background: var(--bg-deep); border-radius: 10px; overflow: hidden; margin-top: 10px; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, var(--success) 0%, var(--accent) 100%); width: 0%; transition: width 0.2s; }
+
+.version-info { 
+  display: flex; 
+  align-items: center; 
+  gap: 0.5rem; 
+  margin-bottom: 1rem; 
+  font-size: 0.9rem; 
+  color: var(--text-dim); 
+}
+.version-info strong { 
+  color: var(--text); 
+  font-family: var(--font-mono); 
+}
+
+.update-row { 
+  display: flex; 
+  gap: 0.75rem; 
+  align-items: center; 
+  margin-bottom: 0.75rem; 
+}
+.update-row wa-select { 
+  flex: 1; 
+  min-width: 200px; 
+}
+.update-row input[type="file"] { 
+  flex: 1; 
+  font-family: var(--font-mono); 
+  font-size: 0.85rem; 
+}
+
+.divider-text { 
+  display: flex; 
+  align-items: center; 
+  gap: 1rem; 
+  margin: 1rem 0; 
+  color: var(--text-dim); 
+  font-size: 0.8rem; 
+  text-transform: uppercase; 
+}
+.divider-text::before,
+.divider-text::after { 
+  content: ''; 
+  flex: 1; 
+  height: 1px; 
+  background: var(--border); 
+}
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.2s; }
 .modal-backdrop.open { opacity: 1; visibility: visible; }
@@ -822,6 +869,16 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
+}
+
+.update-banner {
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.update-banner strong {
+  margin-right: 0.5rem;
 }
 
 /* ==========================================================================

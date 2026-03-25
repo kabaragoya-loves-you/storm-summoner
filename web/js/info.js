@@ -8,6 +8,10 @@ application.register(
     connect() {
       this.infoData = null
       this.isActivating = false
+      this.releases = null
+
+      // Fetch releases manifest for update checking
+      this.fetchReleases()
 
       // Listen for connection changes
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
@@ -19,39 +23,63 @@ application.register(
         }
       })
 
+      // Listen for update completion to refresh info
+      document.addEventListener('updater:complete', () => {
+        if (this.connection.isConnected) {
+          this.activate()
+        }
+      })
+
       // Event delegation for dynamically created buttons
       this.element.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action*="goToPedals"]')
         if (btn) this.goToPedals()
+
+        const updateBtn = e.target.closest('[data-action*="goToUpdater"]')
+        if (updateBtn) this.goToUpdater()
       })
     }
 
+    async fetchReleases () {
+      try {
+        const response = await fetch('/releases.json')
+        if (response.ok) {
+          this.releases = await response.json()
+        }
+      } catch (err) {
+        console.warn('Failed to load releases manifest:', err)
+      }
+    }
+
     onConnectionChanged({ connected }) {
-      if (!connected) {
+      if (connected) {
+        // Query INFO when connecting (if we're on the info tab)
+        const tabGroup = document.querySelector('wa-tab-group')
+        const activePanel = tabGroup?.querySelector('wa-tab-panel[active]')
+        if (activePanel?.getAttribute('name') === 'info') {
+          this.activate()
+        }
+      } else {
         this.infoData = null
         this.isActivating = false
         this.renderEmpty()
       }
-      // Don't auto-activate here - let app:tab-activated handle it
     }
 
     async activate() {
       if (!this.connection.isConnected) return
-      if (this.isActivating) return // Prevent double activation
+      if (this.isActivating) return
 
       this.isActivating = true
 
       try {
-        // Exit any current mode to return to idle
         if (this.connection.currentMode) {
           await this.connection.exitMode()
           await this.sleep(300)
         }
 
-        // Small delay before sending command
         await this.sleep(100)
 
-        // Send INFO command (works from idle state)
         const response = await this.connection.sendCommand('INFO', 5000)
 
         if (!response || response.startsWith('ERROR:')) {
@@ -60,9 +88,18 @@ application.register(
           return
         }
 
-        // Parse JSON response
         this.infoData = JSON.parse(response)
         this.renderInfo()
+
+        // Dispatch device info for other controllers
+        document.dispatchEvent(new CustomEvent('device:info', {
+          detail: {
+            version: this.infoData.version,
+            build: this.infoData.build,
+            git: this.infoData.git,
+            assets_checksum: this.infoData.assets_checksum
+          }
+        }))
       } catch (err) {
         console.error('Info activation error:', err)
         this.renderEmpty()
@@ -86,14 +123,72 @@ application.register(
       `
     }
 
+    getLatestVersion() {
+      if (!this.releases?.firmware?.length) return null
+      return this.releases.firmware[0].version
+    }
+
+    hasNewerFirmware() {
+      if (!this.infoData?.version || !this.releases?.firmware?.length) return false
+
+      const current = this.parseVersion(this.infoData.version)
+      const latest = this.parseVersion(this.releases.firmware[0].version)
+
+      return latest.major > current.major ||
+        (latest.major === current.major && latest.minor > current.minor)
+    }
+
+    getLatestAssetsChecksum() {
+      if (!this.releases?.assets?.length) return null
+      return this.releases.assets[0].checksum
+    }
+
+    hasNewerAssets() {
+      if (!this.infoData?.assets_checksum || !this.releases?.assets?.length) return false
+      return this.infoData.assets_checksum !== this.releases.assets[0].checksum
+    }
+
+    parseVersion(str) {
+      const parts = str.split('.').map(Number)
+      return {
+        major: parts[0] || 0,
+        minor: parts[1] || 0
+      }
+    }
+
     renderInfo() {
       if (!this.infoData) {
         this.renderEmpty()
         return
       }
 
+      // Check for update availability
+      const fwBanner = this.hasNewerFirmware()
+        ? `<wa-callout variant="warning" class="update-banner">
+            <wa-icon name="arrow-up-from-bracket" slot="icon"></wa-icon>
+            <strong>Firmware update:</strong> v${this.getLatestVersion()}
+            <wa-button size="small" variant="brand" appearance="outlined"
+                       data-action="click->info#goToUpdater" style="margin-left: auto;">
+              Update
+            </wa-button>
+          </wa-callout>`
+        : ''
+
+      const assetsBanner = this.hasNewerAssets()
+        ? `<wa-callout variant="warning" class="update-banner">
+            <wa-icon name="folder-arrow-up" slot="icon"></wa-icon>
+            <strong>Assets update:</strong> ${this.getLatestAssetsChecksum()}
+            <wa-button size="small" variant="brand" appearance="outlined"
+                       data-action="click->info#goToUpdater" style="margin-left: auto;">
+              Update
+            </wa-button>
+          </wa-callout>`
+        : ''
+
       // Render device card
       this.deviceCardTarget.innerHTML = `
+        ${fwBanner}
+        ${assetsBanner}
         <div class="info-rows">
           <div class="info-row">
             <span class="info-label">Version</span>
@@ -106,6 +201,10 @@ application.register(
           <div class="info-row">
             <span class="info-label">Git</span>
             <span class="info-value mono">${this.infoData.git}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Assets</span>
+            <span class="info-value mono">${this.infoData.assets_checksum || '--'}</span>
           </div>
           <div class="info-row">
             <span class="info-label">Serial</span>
@@ -190,10 +289,17 @@ application.register(
     }
 
     goToPedals() {
-      // Navigate to pedals tab
       document.dispatchEvent(
         new CustomEvent('app:navigate-tab', {
           detail: { tab: 'pedals', params: { slug: this.infoData?.pedal?.slug } }
+        })
+      )
+    }
+
+    goToUpdater() {
+      document.dispatchEvent(
+        new CustomEvent('app:navigate-tab', {
+          detail: { tab: 'updater' }
         })
       )
     }

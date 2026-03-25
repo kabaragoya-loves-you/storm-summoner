@@ -424,36 +424,75 @@
           <div class="tab-content" data-controller="updater">
             <div class="card updater-section">
               <h3>Firmware Update</h3>
-              <p>Select <code>storm-summoner.bin</code></p>
-              <input type="file" accept=".bin" data-updater-target="fwInput"
-                     data-action="change->updater#fwFileSelected">
-              <wa-button variant="brand" data-updater-target="fwBtn" disabled
-                         data-action="click->updater#startFirmwareUpdate">
-                Update Firmware
-              </wa-button>
-              <div class="progress-bar">
+              <div class="version-info">
+                <span>Current version: </span>
+                <strong data-updater-target="currentFwVersion">--</strong>
+              </div>
+              <div class="update-row">
+                <wa-select data-updater-target="fwSelect" placeholder="Select version..."
+                           data-action="change->updater#fwVersionSelected">
+                </wa-select>
+                <wa-button variant="brand" data-updater-target="fwApplyBtn" disabled
+                           data-action="click->updater#applyFirmware">
+                  Apply
+                </wa-button>
+              </div>
+              <div class="divider-text">or upload manually</div>
+              <div class="update-row">
+                <input type="file" accept=".bin" data-updater-target="fwInput"
+                       data-action="change->updater#fwFileSelected">
+                <wa-button variant="neutral" appearance="outlined" data-updater-target="fwBtn" disabled
+                           data-action="click->updater#startFirmwareUpdate">
+                  Upload
+                </wa-button>
+              </div>
+              <div class="progress-bar" data-updater-target="fwProgressBar">
                 <div class="progress-fill" data-updater-target="fwProgress"></div>
               </div>
+              <wa-callout variant="success" data-updater-target="fwSuccess" class="hidden">
+                <wa-icon name="circle-check" slot="icon"></wa-icon>
+                <strong>Firmware update complete!</strong> Click "Reset Device" below to apply.
+              </wa-callout>
             </div>
 
             <div class="card updater-section">
               <h3>Assets Update</h3>
-              <p>Select <code>assets.bin</code> (This may take several minutes)</p>
-              <input type="file" accept=".bin" data-updater-target="assetsInput"
-                     data-action="change->updater#assetsFileSelected">
-              <wa-button variant="brand" data-updater-target="assetsBtn" disabled
-                         data-action="click->updater#startAssetsUpdate">
-                Update Assets
-              </wa-button>
-              <div class="progress-bar">
+              <div class="version-info">
+                <span>Current assets: </span>
+                <strong data-updater-target="currentAssetsVersion">--</strong>
+              </div>
+              <div class="update-row">
+                <wa-select data-updater-target="assetsSelect" placeholder="Select version..."
+                           data-action="change->updater#assetsVersionSelected">
+                </wa-select>
+                <wa-button variant="brand" data-updater-target="assetsApplyBtn" disabled
+                           data-action="click->updater#applyAssets">
+                  Apply
+                </wa-button>
+              </div>
+              <div class="divider-text">or upload manually</div>
+              <div class="update-row">
+                <input type="file" accept=".bin" data-updater-target="assetsInput"
+                       data-action="change->updater#assetsFileSelected">
+                <wa-button variant="neutral" appearance="outlined" data-updater-target="assetsBtn" disabled
+                           data-action="click->updater#startAssetsUpdate">
+                  Upload
+                </wa-button>
+              </div>
+              <p class="hint">Assets updates may take several minutes</p>
+              <div class="progress-bar" data-updater-target="assetsProgressBar">
                 <div class="progress-fill" data-updater-target="assetsProgress"></div>
               </div>
+              <wa-callout variant="success" data-updater-target="assetsSuccess" class="hidden">
+                <wa-icon name="circle-check" slot="icon"></wa-icon>
+                <strong>Assets update complete!</strong> New device profiles are now available.
+              </wa-callout>
             </div>
 
             <div class="card updater-section">
               <h3>Reset Device</h3>
               <p>Restart the device to apply changes.</p>
-              <wa-button variant="neutral" appearance="outlined" data-updater-target="resetBtn" disabled
+              <wa-button variant="brand" data-updater-target="resetBtn" disabled
                          data-action="click->updater#triggerReset">
                 Reset Device
               </wa-button>
