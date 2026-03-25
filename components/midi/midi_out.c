@@ -184,6 +184,10 @@ void midi_clear_queue(void) {
 }
 
 void midi_set_uart_transmit_mode(midi_transmit_mode_t mode) {
+  if (midi_out_uart_is_override_active()) {
+    ESP_LOGD(TAG, "UART mode change blocked by REPL override");
+    return;
+  }
   if (xSemaphoreTake(midi_out_mutex, portMAX_DELAY) == pdPASS) {
     midi_out_uart_set_mode(mode);
     app_settings_save_u16(NVS_KEY_MIDI_MODE, (uint16_t)mode);

@@ -131,8 +131,14 @@ static int cmd_uart_mode(int argc, char **argv) {
   }
   
   const char* mode_str = uart_mode_args.mode->sval[0];
-  midi_transmit_mode_t mode;
   
+  if (strcmp(mode_str, "auto") == 0) {
+    midi_out_uart_clear_override();
+    ESP_LOGI(TAG, "UART transmit mode: auto (UI/scene control restored)");
+    return 0;
+  }
+  
+  midi_transmit_mode_t mode;
   if (strcmp(mode_str, "both") == 0) {
     mode = MIDI_TRANSMIT_BOTH;
   } else if (strcmp(mode_str, "type_a") == 0 || strcmp(mode_str, "a") == 0) {
@@ -142,12 +148,12 @@ static int cmd_uart_mode(int argc, char **argv) {
   } else if (strcmp(mode_str, "ts") == 0) {
     mode = MIDI_TRANSMIT_TS;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: both, type_a, type_b, or ts");
+    ESP_LOGE(TAG, "Unknown mode. Use: both, type_a, type_b, ts, or auto");
     return 1;
   }
   
-  midi_out_uart_set_mode(mode);
-  ESP_LOGI(TAG, "UART transmit mode set to: %s", mode_str);
+  midi_out_uart_set_mode_override(mode);
+  ESP_LOGI(TAG, "UART transmit mode override: %s (UI/scene changes blocked)", mode_str);
   
   return 0;
 }
@@ -302,7 +308,7 @@ esp_err_t midi_console_init(void) {
   esp_console_cmd_register(&interfaces_cmd);
   
   // uart_mode command
-  uart_mode_args.mode = arg_str1(NULL, NULL, "<both|type_a|type_b|ts>", "UART transmit mode");
+  uart_mode_args.mode = arg_str1(NULL, NULL, "<both|type_a|type_b|ts|auto>", "UART transmit mode (auto restores UI control)");
   uart_mode_args.end = arg_end(2);
   
   const esp_console_cmd_t uart_mode_cmd = {

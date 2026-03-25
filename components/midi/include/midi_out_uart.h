@@ -50,6 +50,23 @@ esp_err_t midi_out_uart_send(const uint8_t *data, size_t len);
 void midi_out_uart_set_mode(midi_transmit_mode_t mode);
 
 /**
+ * Set UART transmit mode with REPL override (blocks UI/scene changes)
+ * @param mode Transmit mode
+ */
+void midi_out_uart_set_mode_override(midi_transmit_mode_t mode);
+
+/**
+ * Check if REPL override is active
+ * @return true if REPL override is blocking UI/scene mode changes
+ */
+bool midi_out_uart_is_override_active(void);
+
+/**
+ * Clear REPL override, allowing UI/scene to control mode again
+ */
+void midi_out_uart_clear_override(void);
+
+/**
  * Get current UART transmit mode
  * @return Current transmit mode
  */
