@@ -59,10 +59,12 @@
 #include "action.h"
 #include "curve.h"
 #include "version.h"
+#include "ldo.h"
 
 #define TAG "MAIN"
 
 void app_main(void) {
+  ldo_init();
   version_init();
   adc_manager_init();
   revision_init(-1);

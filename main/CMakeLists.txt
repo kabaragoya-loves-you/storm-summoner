@@ -1,6 +1,6 @@
 # Register main component with all project components explicitly listed
 idf_component_register(
-    SRCS "main.c" "usb_descriptors.c"
+    SRCS "main.c" "ldo.c" "usb_descriptors.c"
     INCLUDE_DIRS "."
     REQUIRES 
       adc_manager action app_settings assets_manager bump buttons clock_sync config console_repl curve cv dac
