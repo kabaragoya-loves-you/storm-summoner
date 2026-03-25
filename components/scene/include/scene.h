@@ -13,6 +13,7 @@
 #include "lfo.h"
 #include "rtg.h"
 #include "sample_hold.h"
+#include "assets_types.h"
 
 // Scene cache size - we keep current + prev + next in RAM
 #define SCENE_CACHE_SIZE 3
@@ -76,6 +77,7 @@ typedef struct {
   char device_id[64];         // Device slug (empty = use global device_config)
   uint8_t midi_channel;       // Per-scene MIDI channel (0 = use global, 1-16 = override)
   uint8_t note_channel;       // Note output channel override (0 = use scene channel, 1-16 = specific)
+  uint8_t trs_type;           // Per-scene TRS polarity (0 = use global, 1=A, 2=B, 3=TS, 4=Both)
   char ui_module[MAX_UI_MODULE_NAME]; // UI module to load with scene (empty = "beat")
   
   // Program change settings (modes 2 & 3)
@@ -241,6 +243,10 @@ uint8_t scene_get_midi_channel(uint8_t scene_index);
 esp_err_t scene_set_note_channel(uint8_t scene_index, uint8_t channel);
 uint8_t scene_get_note_channel_setting(uint8_t scene_index);
 
+// Per-scene TRS polarity (0 = use global, 1=A, 2=B, 3=TS, 4=Both)
+esp_err_t scene_set_trs_type(uint8_t scene_index, uint8_t trs_type);
+uint8_t scene_get_trs_type(uint8_t scene_index);
+
 // Forward declaration for device_def_t (from assets_types.h)
 struct device_def_t;
 
@@ -255,6 +261,10 @@ const char* scene_get_effective_device_slug(uint8_t scene_index);
 // Get the effective MIDI channel for a scene (resolves to global if scene doesn't specify)
 // Returns the channel to use (1-16) based on device_mode and scene settings
 uint8_t scene_get_effective_channel(uint8_t scene_index);
+
+// Get the effective TRS type for a scene (resolves to global if scene doesn't specify)
+// Returns the TRS type to use based on device_mode and scene settings
+midi_trs_type_t scene_get_effective_trs_type(uint8_t scene_index);
 
 // Get the effective note output channel for a scene
 // If note_channel is set (1-16), returns that; otherwise returns scene's effective channel

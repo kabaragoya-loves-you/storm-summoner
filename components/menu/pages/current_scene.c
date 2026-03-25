@@ -9,6 +9,7 @@
 #include "assets_types.h"
 #include "assets_manager.h"
 #include "device_config.h"
+#include "midi_out.h"
 #include "config.h"
 #include "display_driver.h"
 #include "esp_log.h"
@@ -34,6 +35,7 @@ static char s_send_clock_label[24];
 static char s_pedal_label[80];
 static char s_midi_channel_label[32];
 static char s_note_channel_label[32];
+static char s_trs_type_label[32];
 
 // Dynamic menu for vendor/pedal selection (allocated in PSRAM)
 typedef struct {
@@ -1107,6 +1109,36 @@ static void nav_to_midi_channel(void* user_data) {
   menu_navigate_to("MIDI Channel", midi_channel_roller_create);
 }
 
+// TRS Type roller: Global Default (0), then Type A, Type B, TS, Both
+static void trs_type_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  uint8_t scene_index = scene_get_current_index();
+  // Index 0 = Global Default (value 0), Index 1-4 = A/B/TS/Both
+  scene_set_trs_type(scene_index, (uint8_t)selected_index);
+
+  // Apply TRS type immediately
+  midi_trs_type_t trs = scene_get_effective_trs_type(scene_index);
+  midi_transmit_mode_t mode = (midi_transmit_mode_t)assets_trs_type_to_transmit_mode(trs);
+  midi_set_uart_transmit_mode(mode);
+
+  menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
+}
+
+static lv_obj_t* trs_type_roller_create(void) {
+  uint8_t current = scene_get_trs_type(scene_get_current_index());
+  // current 0 = index 0, current 1-4 = index 1-4
+  uint32_t current_idx = current;
+
+  return menu_create_roller_page("TRS Polarity",
+    "Global Default\nType A\nType B\nTS\nBoth",
+    current_idx, trs_type_confirm_cb, NULL);
+}
+
+static void nav_to_trs_type(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("TRS Polarity", trs_type_roller_create);
+}
+
 // ============================================================================
 // Main Current Scene Page
 // ============================================================================
@@ -1176,6 +1208,13 @@ lv_obj_t* menu_page_current_scene_create(void) {
       snprintf(s_midi_channel_label, sizeof(s_midi_channel_label), "MIDI Channel: %u", (unsigned)midi_ch);
     }
     s_scene_items[idx++] = (menu_item_t){ s_midi_channel_label, nav_to_midi_channel, NULL, false };
+
+    // TRS Polarity
+    uint8_t trs = scene_get_trs_type(scene_index);
+    const char* trs_names[] = {"Global", "Type A", "Type B", "TS", "Both"};
+    snprintf(s_trs_type_label, sizeof(s_trs_type_label), "TRS: %s", 
+      trs <= 4 ? trs_names[trs] : "Global");
+    s_scene_items[idx++] = (menu_item_t){ s_trs_type_label, nav_to_trs_type, NULL, false };
   }
   
   // Divider

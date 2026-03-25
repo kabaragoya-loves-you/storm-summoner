@@ -10,13 +10,14 @@
 
 #define TAG "MENU_DEVICE_CONFIG"
 
-// Static storage for main menu (16 items max: name, refresh, midi ch, send clock, divider, 10 info labels)
+// Static storage for main menu (16 items max: name, midi ch, trs, send clock, divider, info labels, refresh)
 #define MAX_DEVICE_CONFIG_ITEMS 16
 static menu_item_t s_device_config_items[MAX_DEVICE_CONFIG_ITEMS];
 static char s_current_pedal_label[80];
 static char s_midi_ch_label[24];
+static char s_trs_type_label[24];
 static char s_send_clock_label[24];
-static char s_info_labels[10][48];  // TRS, CC count, Clock, Notes, Transmits, Slots, Bank, First preset, etc.
+static char s_info_labels[10][48];  // CC count, Clock, Notes, Transmits, Slots, Bank, First preset, etc.
 
 // Dynamic storage - allocated in PSRAM only when needed
 typedef struct {
@@ -112,6 +113,44 @@ static lv_obj_t* midi_channel_roller_create(void) {
 static void nav_to_midi_channel_select(void* user_data) {
   (void)user_data;
   menu_navigate_to("MIDI Channel", midi_channel_roller_create);
+}
+
+// ============================================================================
+// TRS Type Selection (Roller)
+// ============================================================================
+
+static void trs_type_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  midi_trs_type_t types[] = {
+    MIDI_TRS_TYPE_A, MIDI_TRS_TYPE_B, MIDI_TRS_TYPE_TS, MIDI_TRS_TYPE_BOTH
+  };
+  
+  ESP_LOGI(TAG, "TRS type changed to: %u", (unsigned)selected_index);
+  device_config_set_trs_type(types[selected_index]);
+  device_config_save();
+  
+  menu_navigate_back_then_to(2, "Pedal Setup", menu_page_device_config_create);
+}
+
+static lv_obj_t* trs_type_roller_create(void) {
+  midi_trs_type_t current = device_config_get_trs_type();
+  uint32_t current_idx = 0;
+  switch (current) {
+    case MIDI_TRS_TYPE_A: current_idx = 0; break;
+    case MIDI_TRS_TYPE_B: current_idx = 1; break;
+    case MIDI_TRS_TYPE_TS: current_idx = 2; break;
+    case MIDI_TRS_TYPE_BOTH: current_idx = 3; break;
+    default: current_idx = 3; break;
+  }
+  
+  return menu_create_roller_page("TRS Polarity",
+    "Type A\nType B\nTS\nBoth",
+    current_idx, trs_type_confirm_cb, NULL);
+}
+
+static void nav_to_trs_type_select(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("TRS Polarity", trs_type_roller_create);
 }
 
 // ============================================================================
@@ -375,7 +414,20 @@ lv_obj_t* menu_page_device_config_create(void) {
   s_device_config_items[item_idx++] = 
     (menu_item_t){ s_midi_ch_label, nav_to_midi_channel_select, NULL, false };
   
-  // Item 2: Send Clock toggle (clickable -> roller)
+  // Item 2: TRS Polarity (clickable -> roller)
+  const char* trs_str = "Both";
+  switch (cfg->trs_type) {
+    case MIDI_TRS_TYPE_A: trs_str = "Type A"; break;
+    case MIDI_TRS_TYPE_B: trs_str = "Type B"; break;
+    case MIDI_TRS_TYPE_TS: trs_str = "TS"; break;
+    case MIDI_TRS_TYPE_BOTH: trs_str = "Both"; break;
+    default: break;
+  }
+  snprintf(s_trs_type_label, sizeof(s_trs_type_label), "TRS: %s", trs_str);
+  s_device_config_items[item_idx++] = 
+    (menu_item_t){ s_trs_type_label, nav_to_trs_type_select, NULL, false };
+  
+  // Item 3: Send Clock toggle (clickable -> roller)
   bool send_clock = device_config_get_send_clock();
   snprintf(s_send_clock_label, sizeof(s_send_clock_label), "Send Clock: %s",
     send_clock ? "Yes" : "No");
@@ -387,21 +439,6 @@ lv_obj_t* menu_page_device_config_create(void) {
   
   // Build info labels (read-only, NULL callback)
   int info_idx = 0;
-  
-  // TRS Type
-  const char* trs_str = "Not specified";
-  if (device) {
-    switch (device->trs_type) {
-      case MIDI_TRS_TYPE_A: trs_str = "Type A"; break;
-      case MIDI_TRS_TYPE_B: trs_str = "Type B"; break;
-      case MIDI_TRS_TYPE_TS: trs_str = "TS"; break;
-      case MIDI_TRS_TYPE_BOTH: trs_str = "Both"; break;
-      default: break;
-    }
-  }
-  snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "TRS: %s", trs_str);
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
   
   // CC commands count
   unsigned cc_count = device ? (unsigned)device->control_count : 0;

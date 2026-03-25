@@ -1501,6 +1501,11 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   
   // Reset cut states on scene change (cut is a temporary runtime state)
   midi_out_reset_cut();
+
+  // Apply effective TRS type for this scene
+  midi_trs_type_t trs = scene_get_effective_trs_type(scene_index);
+  midi_transmit_mode_t trs_mode = (midi_transmit_mode_t)assets_trs_type_to_transmit_mode(trs);
+  midi_set_uart_transmit_mode(trs_mode);
   
   // Apply LFO configurations (configures but does not start - no MIDI sent)
   lfo_apply_config(0, &new_scene->lfo1_config);
@@ -2043,6 +2048,66 @@ uint8_t scene_get_note_channel_setting(uint8_t scene_index) {
   if (!scene) return 0;
 
   return scene->note_channel;
+}
+
+esp_err_t scene_set_trs_type(uint8_t scene_index, uint8_t trs_type) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (trs_type > 4) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->trs_type = trs_type;
+  scene_persist_if_programming();
+
+  if (trs_type == 0) {
+    ESP_LOGI(TAG, "Scene %d TRS type cleared (using global)", scene_index + 1);
+  } else {
+    const char* names[] = {"", "Type A", "Type B", "TS", "Both"};
+    ESP_LOGI(TAG, "Scene %d TRS type set to: %s", scene_index + 1, names[trs_type]);
+  }
+
+  return ESP_OK;
+}
+
+uint8_t scene_get_trs_type(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return 0;
+  if (scene_index != g_scene_manager.current_scene_index) return 0;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return 0;
+
+  return scene->trs_type;
+}
+
+midi_trs_type_t scene_get_effective_trs_type(uint8_t scene_index) {
+  // In single device mode, always use global TRS type
+  if (config_get_device_mode() == DEVICE_MODE_SINGLE) {
+    return device_config_get_trs_type();
+  }
+
+  if (scene_index > MAX_SCENE_INDEX) {
+    return device_config_get_trs_type();
+  }
+
+  if (scene_index != g_scene_manager.current_scene_index) {
+    return device_config_get_trs_type();
+  }
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return device_config_get_trs_type();
+
+  // In per-scene mode, use scene's trs_type if set (1-4)
+  // Map: 1=A, 2=B, 3=TS, 4=Both to enum values 0-3
+  if (scene->trs_type >= 1 && scene->trs_type <= 4) {
+    midi_trs_type_t types[] = {
+      MIDI_TRS_TYPE_A, MIDI_TRS_TYPE_B, MIDI_TRS_TYPE_TS, MIDI_TRS_TYPE_BOTH
+    };
+    return types[scene->trs_type - 1];
+  }
+
+  // Fall back to global TRS type
+  return device_config_get_trs_type();
 }
 
 const struct device_def_t* scene_get_device(uint8_t scene_index) {
@@ -4549,6 +4614,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
     cJSON_AddNumberToObject(root, "note_channel", scene->note_channel);
   }
 
+  // Only write trs_type if it's non-zero (has override)
+  if (scene->trs_type > 0) {
+    cJSON_AddNumberToObject(root, "trs_type", scene->trs_type);
+  }
+
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
   
@@ -4753,6 +4823,15 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     scene->note_channel = (ch >= 0 && ch <= 16) ? (uint8_t)ch : 0;
   } else {
     scene->note_channel = 0;  // Use scene channel
+  }
+
+  // Parse trs_type (optional - 0 means use global, 1-4 = A/B/TS/Both)
+  cJSON* trs_type = cJSON_GetObjectItem(root, "trs_type");
+  if (trs_type && cJSON_IsNumber(trs_type)) {
+    int trs = trs_type->valueint;
+    scene->trs_type = (trs >= 0 && trs <= 4) ? (uint8_t)trs : 0;
+  } else {
+    scene->trs_type = 0;  // Use global
   }
 
   cJSON* program = cJSON_GetObjectItem(root, "program_number");
