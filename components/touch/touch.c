@@ -1335,6 +1335,19 @@ bool touch_is_hold_active(int pad_index) {
   return s_hold_active[pad_index];
 }
 
+bool touch_is_any_hold_active(void) {
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    if (s_hold_active[i]) return true;
+  }
+  return false;
+}
+
+void touch_clear_pressed_state(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
+  s_button_pressed_states[pad_index] = false;
+  s_pad_press_timestamps[pad_index] = 0;
+}
+
 uint32_t touch_get_idle_calibration_interval_ms(void) {
   return s_idle_calibration_interval_ms;
 }

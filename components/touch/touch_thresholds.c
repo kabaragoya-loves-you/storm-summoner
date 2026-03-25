@@ -756,11 +756,24 @@ esp_err_t touch_calibrate_pad(int pad_index) {
 esp_err_t touch_recover_pad_state(int pad_index) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return ESP_ERR_INVALID_ARG;
   
+  // Skip recovery if ANY hold action is in progress on ANY pad.
+  // Recovery calls apply_thresholds() which stops/restarts the entire touch sensor,
+  // disrupting ongoing hold actions on other pads.
+  // Exception: pad 12 (programming mode button) should always recover immediately
+  // since it's critical for device access and isn't a normal action pad.
+  if (pad_index != 12 && touch_is_any_hold_active()) {
+    ESP_LOGD(TAG, "Skipping pad %d recovery - hold action in progress", pad_index);
+    return ESP_OK;
+  }
+  
   if (s_calibration_mutex) {
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
   }
 
-  ESP_LOGD(TAG, "Recovering pad %d (Fast Recalibration)...", pad_index);
+  ESP_LOGI(TAG, "Recovering pad %d...", pad_index);
+
+  // 1. Clear software pressed state immediately (like manual reset does)
+  touch_clear_pressed_state(pad_index);
 
   touch_channel_handle_t chan_handle = touch_get_channel_handle(pad_index);
   if (chan_handle == NULL) {
@@ -768,7 +781,7 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     return ESP_ERR_INVALID_STATE;
   }
 
-  // 1. Reset Benchmark to current value (fixes corruption and drift)
+  // 2. Reset Benchmark to current smooth reading (fixes corruption and drift)
   touch_chan_benchmark_config_t benchmark_cfg = {
     .do_reset = true,
   };
@@ -779,10 +792,10 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     return ret;
   }
   
-  // Wait briefly for reset to take effect
-  vTaskDelay(pdMS_TO_TICKS(20));
+  // Wait longer for benchmark to stabilize (like manual reset does)
+  vTaskDelay(pdMS_TO_TICKS(100));
 
-  // 2. Read new Benchmark (should be close to Smooth)
+  // 3. Read new Benchmark (should now match current smooth reading)
   uint32_t benchmark[1];
   ret = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
   if (ret != ESP_OK) {
@@ -791,35 +804,25 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     return ret;
   }
 
-  // 3. Update Calibration Data
+  // 4. Update baseline ONLY - keep the original calibrated threshold from NVS
+  //    This is the key insight: don't recalculate thresholds from potentially
+  //    corrupted readings. The original NVS thresholds were calculated from
+  //    good data and should remain valid.
   uint32_t new_baseline = benchmark[0];
+  uint32_t original_threshold = s_pad_calibration[pad_index].threshold;
   
-  // Calculate new threshold using adaptive logic
-  float threshold_ratio = 0.07f; // Default 7%
-  if (new_baseline < 25000) threshold_ratio = 0.084f; // 20% higher (less sensitive) for low baseline
-  
-  uint32_t new_threshold = (uint32_t)(new_baseline * threshold_ratio);
-  
-  // Ensure minimum threshold gap (all pads including pad 12)
-  uint32_t min_gap = (uint32_t)(new_baseline * 0.03f);
-  if (new_threshold < min_gap) new_threshold = min_gap;
-
-  if (new_threshold < MIN_THRESHOLD_VALUE) new_threshold = MIN_THRESHOLD_VALUE;
-  if (new_threshold > MAX_THRESHOLD_VALUE) new_threshold = MAX_THRESHOLD_VALUE;
-  
-  s_pad_calibration[pad_index].baseline = new_baseline;
-  s_pad_calibration[pad_index].threshold = new_threshold;
-  s_pad_calibration[pad_index].valid = true;
-  
-  ESP_LOGD(TAG, "Pad %d recovered: baseline=%"PRIu32", threshold=%"PRIu32" (%.1f%%)", 
-    pad_index, new_baseline, new_threshold, threshold_ratio * 100.0f);
-  
-  // 4. Apply Thresholds (stops/starts sensor)
-  ret = apply_thresholds();
-  
-  if (ret == ESP_OK) {
-    save_calibration_to_nvs();
+  // Only update baseline if it looks healthy
+  if (new_baseline >= 10000 && new_baseline <= 100000) {
+    s_pad_calibration[pad_index].baseline = new_baseline;
+    ESP_LOGI(TAG, "Pad %d recovered: new_baseline=%"PRIu32", keeping threshold=%"PRIu32,
+      pad_index, new_baseline, original_threshold);
+  } else {
+    ESP_LOGW(TAG, "Pad %d benchmark still unhealthy (%"PRIu32"), skipping update",
+      pad_index, new_baseline);
   }
+  
+  // 5. Apply existing thresholds (reloads from s_pad_calibration which has original NVS values)
+  ret = apply_thresholds();
 
   if (s_calibration_mutex) {
     xSemaphoreGive(s_calibration_mutex);

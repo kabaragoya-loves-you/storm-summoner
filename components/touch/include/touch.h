@@ -73,6 +73,10 @@ void touch_reset_stuck_pads(void);
 // to allow intentional long presses without triggering recovery
 void touch_set_hold_active(int pad_index, bool active);
 bool touch_is_hold_active(int pad_index);
+bool touch_is_any_hold_active(void);
+
+// Clear pressed state for a specific pad (used during recovery)
+void touch_clear_pressed_state(int pad_index);
 
 // Manual calibration function (exposed for external calls)
 esp_err_t touch_calibrate(bool force);
