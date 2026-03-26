@@ -1,6 +1,6 @@
 # promote_release.cmake
 # Called at build time to promote firmware and assets to web/binaries
-# and regenerate the releases manifest
+# and regenerate the releases manifest (only if new binaries are added)
 
 # Required variables passed from CMakeLists.txt:
 # - FW_VERSION_MAJOR
@@ -11,6 +11,9 @@
 set(WEB_BINARIES_DIR "${SOURCE_DIR}/web/binaries")
 set(RELEASES_JSON "${SOURCE_DIR}/web/releases.json")
 set(MANIFEST_JSON "${SOURCE_DIR}/midi-devices/manifest.json")
+
+# Track if anything was promoted
+set(PROMOTED_SOMETHING FALSE)
 
 # Ensure binaries directory exists
 file(MAKE_DIRECTORY "${WEB_BINARIES_DIR}")
@@ -24,6 +27,7 @@ if(EXISTS "${FW_SOURCE}" AND NOT EXISTS "${FW_DEST}")
   message(STATUS "Promoting firmware: ${FW_FILENAME}")
   file(COPY "${FW_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
   file(RENAME "${WEB_BINARIES_DIR}/storm-summoner.bin" "${FW_DEST}")
+  set(PROMOTED_SOMETHING TRUE)
 else()
   if(NOT EXISTS "${FW_SOURCE}")
     message(STATUS "Firmware source not found: ${FW_SOURCE}")
@@ -47,6 +51,7 @@ if(EXISTS "${MANIFEST_JSON}" AND EXISTS "${ASSETS_SOURCE}")
     message(STATUS "Promoting assets: ${ASSETS_FILENAME}")
     file(COPY "${ASSETS_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
     file(RENAME "${WEB_BINARIES_DIR}/assets.bin" "${ASSETS_DEST}")
+    set(PROMOTED_SOMETHING TRUE)
   else()
     message(STATUS "Assets already exists: ${ASSETS_FILENAME}")
   endif()
@@ -57,6 +62,16 @@ else()
   if(NOT EXISTS "${ASSETS_SOURCE}")
     message(STATUS "Assets source not found: ${ASSETS_SOURCE}")
   endif()
+endif()
+
+# --- Generate releases.json (only if something was promoted or manifest doesn't exist) ---
+if(NOT PROMOTED_SOMETHING AND EXISTS "${RELEASES_JSON}")
+  message(STATUS "No new releases, skipping manifest update")
+  return()
+endif()
+
+if(NOT EXISTS "${RELEASES_JSON}")
+  message(STATUS "Creating releases.json (first time)")
 endif()
 
 # --- Generate releases.json ---
