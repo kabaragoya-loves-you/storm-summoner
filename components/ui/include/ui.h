@@ -52,6 +52,7 @@ extern ui_draw_module_t summoner_module;
 extern ui_draw_module_t pixels_module;
 extern ui_draw_module_t beat_module;
 extern ui_draw_module_t working_module;
+extern ui_draw_module_t updating_module;
 
 void ui_init(void);
 

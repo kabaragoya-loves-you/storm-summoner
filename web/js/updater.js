@@ -12,6 +12,7 @@ application.register(
       'fwProgress',
       'fwProgressBar',
       'fwSuccess',
+      'fwStatus',
       'currentAssetsVersion',
       'assetsSelect',
       'assetsApplyBtn',
@@ -20,11 +21,16 @@ application.register(
       'assetsProgress',
       'assetsProgressBar',
       'assetsSuccess',
+      'assetsStatus',
       'resetBtn',
       'factoryResetBtn',
       'factoryResetDialog',
       'logContent'
     ]
+
+    // Commit phase timing estimates (in ms) - based on measured times
+    static FIRMWARE_COMMIT_TIME = 25000  // ~25 seconds for firmware flash
+    static ASSETS_COMMIT_TIME = 100000   // ~100 seconds for assets flash
 
     connect () {
       this.reader = null
@@ -36,6 +42,8 @@ application.register(
       this.deviceVersion = null
       this.deviceAssetsChecksum = null
       this.pendingAssetsChecksum = null  // Checksum being uploaded
+      this.commitStartTime = null
+      this.commitAnimationFrame = null
 
       // Fetch releases manifest
       this.fetchReleases()
@@ -143,11 +151,46 @@ application.register(
     onConnectionChanged ({ connected }) {
       this.setControlsEnabled(connected)
       if (!connected) {
+        const wasUpdating = this.updateInProgress
+        const updateType = this.currentType
+
+        // Stop any ongoing operations
         this.stopReading()
+
+        // Stop commit animation
+        this.commitStartTime = null
+        if (this.commitAnimationFrame) {
+          cancelAnimationFrame(this.commitAnimationFrame)
+          this.commitAnimationFrame = null
+        }
+
+        // Reset state
         this.updateInProgress = false
         this.currentType = ''
+        this.pendingAssetsChecksum = null
         this.deviceVersion = null
         this.deviceAssetsChecksum = null
+
+        // Hide progress and status elements
+        this.fwProgressBarTarget.classList.add('hidden')
+        this.fwStatusTarget.classList.add('hidden')
+        this.fwSuccessTarget.classList.add('hidden')
+        this.assetsProgressBarTarget.classList.add('hidden')
+        this.assetsStatusTarget.classList.add('hidden')
+        this.assetsSuccessTarget.classList.add('hidden')
+
+        // Reset progress bars
+        this.fwProgressTarget.style.width = '0%'
+        this.assetsProgressTarget.style.width = '0%'
+
+        // Unlock tabs
+        this.connection.setTabsLocked(false)
+
+        // Log disconnect
+        if (wasUpdating) {
+          this.log(`${updateType} update interrupted - device disconnected`, 'error')
+        }
+
         this.updateCurrentVersionDisplay()
       }
     }
@@ -329,14 +372,25 @@ application.register(
             this.log('Device Ready. Starting upload...')
             this.uploadChunks()
           } else if (line === 'TRANSFER_COMPLETE') {
-            this.log('Transfer complete. Committing...')
+            this.log('Transfer complete. Writing to flash...')
             this.send('COMMIT')
+            this.startCommitPhaseAnimation()
           } else if (line === 'SUCCESS') {
             this.log('Update Successful!', 'success')
             this.onUpdateComplete()
           } else if (line === 'RESETTING') {
             this.log('Device is resetting...')
           } else if (line.startsWith('ERROR')) {
+            // Stop commit animation
+            this.commitStartTime = null
+            if (this.commitAnimationFrame) {
+              cancelAnimationFrame(this.commitAnimationFrame)
+              this.commitAnimationFrame = null
+            }
+            // Hide status
+            this.fwStatusTarget.classList.add('hidden')
+            this.assetsStatusTarget.classList.add('hidden')
+
             this.updateInProgress = false
             this.currentType = ''
             this.pendingAssetsChecksum = null
@@ -351,12 +405,21 @@ application.register(
     onUpdateComplete () {
       const updateType = this.currentType
 
-      // Show success message and hide progress bar
+      // Stop commit animation
+      this.commitStartTime = null
+      if (this.commitAnimationFrame) {
+        cancelAnimationFrame(this.commitAnimationFrame)
+        this.commitAnimationFrame = null
+      }
+
+      // Show success message, hide progress bar and status
       if (updateType === 'FIRMWARE') {
         this.fwProgressBarTarget.classList.add('hidden')
+        this.fwStatusTarget.classList.add('hidden')
         this.fwSuccessTarget.classList.remove('hidden')
       } else if (updateType === 'ASSETS') {
         this.assetsProgressBarTarget.classList.add('hidden')
+        this.assetsStatusTarget.classList.add('hidden')
         this.assetsSuccessTarget.classList.remove('hidden')
         // Update local display immediately for assets (device doesn't reset)
         if (this.pendingAssetsChecksum) {
@@ -434,13 +497,25 @@ application.register(
       this.connection.setTabsLocked(true, 'updater')
       this.setControlsEnabled(false)
 
-      // Reset progress bars and hide success messages
+      // Reset progress bars, status, and hide success messages
       this.fwProgressTarget.style.width = '0%'
       this.assetsProgressTarget.style.width = '0%'
       this.fwProgressBarTarget.classList.remove('hidden')
       this.assetsProgressBarTarget.classList.remove('hidden')
       this.fwSuccessTarget.classList.add('hidden')
       this.assetsSuccessTarget.classList.add('hidden')
+
+      // Show upload status
+      const statusTarget = type === 'FIRMWARE' ? this.fwStatusTarget : this.assetsStatusTarget
+      statusTarget.textContent = 'Uploading to device...'
+      statusTarget.classList.remove('hidden', 'committing')
+
+      // Reset commit animation state
+      this.commitStartTime = null
+      if (this.commitAnimationFrame) {
+        cancelAnimationFrame(this.commitAnimationFrame)
+        this.commitAnimationFrame = null
+      }
 
       this.log(`Starting ${type} update (${this.formatSize(this.uploadData.length)})`)
 
@@ -472,6 +547,54 @@ application.register(
         writer.releaseLock()
       }
       this.log('Upload finished, waiting for device...')
+    }
+
+    startCommitPhaseAnimation () {
+      const activeProgress =
+        this.currentType === 'FIRMWARE'
+          ? this.fwProgressTarget
+          : this.assetsProgressTarget
+      const statusTarget =
+        this.currentType === 'FIRMWARE'
+          ? this.fwStatusTarget
+          : this.assetsStatusTarget
+
+      // Show commit phase status
+      statusTarget.textContent = 'Writing to flash...'
+      statusTarget.classList.add('committing')
+
+      // Get expected commit duration
+      const commitDuration =
+        this.currentType === 'FIRMWARE'
+          ? this.constructor.FIRMWARE_COMMIT_TIME
+          : this.constructor.ASSETS_COMMIT_TIME
+
+      this.commitStartTime = Date.now()
+
+      // Animate progress bar from 0 to 95% during expected commit time
+      const animateCommit = () => {
+        if (!this.commitStartTime) return
+
+        const elapsed = Date.now() - this.commitStartTime
+        const progress = Math.min(95, (elapsed / commitDuration) * 95)
+        activeProgress.style.width = `${progress}%`
+
+        // Update status text with remaining time (countdown)
+        const remainingSecs = Math.max(0, Math.ceil((commitDuration - elapsed) / 1000))
+        if (remainingSecs > 0) {
+          statusTarget.textContent = `Writing to flash... ~${remainingSecs}s remaining`
+        } else {
+          statusTarget.textContent = 'Finalizing...'
+        }
+
+        if (elapsed < commitDuration || progress < 95) {
+          this.commitAnimationFrame = requestAnimationFrame(animateCommit)
+        }
+      }
+
+      // Reset progress bar to 0 for commit phase
+      activeProgress.style.width = '0%'
+      this.commitAnimationFrame = requestAnimationFrame(animateCommit)
     }
 
     async triggerReset () {

@@ -73,8 +73,26 @@ typedef enum {
   EVENT_LFO1_VALUE,
   EVENT_LFO2_VALUE,
   EVENT_SAMPLE_HOLD_VALUE,
+  
+  // Firmware/assets update events
+  EVENT_UPDATE_STARTED,
+  EVENT_UPDATE_PROGRESS,
+  EVENT_UPDATE_COMPLETE,
+  
   EVENT_TYPE_MAX
 } event_type_t;
+
+// Update types for EVENT_UPDATE_* events
+typedef enum {
+  UPDATE_TYPE_FIRMWARE = 0,
+  UPDATE_TYPE_ASSETS = 1
+} update_type_t;
+
+// Update phases for EVENT_UPDATE_PROGRESS
+typedef enum {
+  UPDATE_PHASE_TRANSFER = 0,
+  UPDATE_PHASE_FLASH = 1
+} update_phase_t;
 
 typedef enum {
   EVENT_PRIORITY_LOW,
@@ -232,6 +250,15 @@ typedef struct {
     struct {
       int value;              // Processed touchwheel value
     } touchwheel_value;
+    
+    // Update event data (for EVENT_UPDATE_STARTED, EVENT_UPDATE_PROGRESS, EVENT_UPDATE_COMPLETE)
+    struct {
+      uint8_t update_type;    // update_type_t: 0=firmware, 1=assets
+      uint8_t phase;          // update_phase_t: 0=transfer, 1=flash
+      uint8_t percent;        // Progress 0-100
+      uint8_t success;        // For complete: 1=success, 0=failure
+      uint32_t total_size;    // Total bytes being transferred
+    } update;
   } data;
 } event_t;
 

@@ -449,6 +449,7 @@
               <div class="progress-bar" data-updater-target="fwProgressBar">
                 <div class="progress-fill" data-updater-target="fwProgress"></div>
               </div>
+              <p class="update-status hidden" data-updater-target="fwStatus">Uploading...</p>
               <wa-callout variant="success" data-updater-target="fwSuccess" class="hidden">
                 <wa-icon name="circle-check" slot="icon"></wa-icon>
                 <strong>Firmware update complete!</strong> Click "Reset Device" below to apply.
@@ -479,13 +480,14 @@
                   Upload
                 </wa-button>
               </div>
-              <p class="hint">Assets updates may take several minutes</p>
+              <p class="hint">Assets updates may take 8-10 minutes total</p>
               <div class="progress-bar" data-updater-target="assetsProgressBar">
                 <div class="progress-fill" data-updater-target="assetsProgress"></div>
               </div>
+              <p class="update-status hidden" data-updater-target="assetsStatus">Uploading...</p>
               <wa-callout variant="success" data-updater-target="assetsSuccess" class="hidden">
                 <wa-icon name="circle-check" slot="icon"></wa-icon>
-                <strong>Assets update complete!</strong> New device profiles are now available.
+                <strong>Assets update complete!</strong> New device profiles available after reset.
               </wa-callout>
             </div>
 

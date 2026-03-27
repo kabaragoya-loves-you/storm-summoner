@@ -22,4 +22,5 @@ idf_component_register(
         "memory_utils"
         "cv"
         "rtg"
+        "usb_cdc_update"
 )

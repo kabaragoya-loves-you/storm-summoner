@@ -171,6 +171,8 @@ wa-tab-panel::part(base) { height: 100%; padding: 1.5rem; }
 .updater-section code { background: var(--bg-input); padding: 0.2rem 0.4rem; border-radius: 4px; font-family: var(--font-mono); font-size: 0.85rem; }
 .progress-bar { height: 20px; background: var(--bg-deep); border-radius: 10px; overflow: hidden; margin-top: 10px; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, var(--success) 0%, var(--accent) 100%); width: 0%; transition: width 0.2s; }
+.update-status { margin: 0.5rem 0 0 0; font-size: 0.85rem; color: var(--text-dim); text-align: center; }
+.update-status.committing { color: var(--warning); font-weight: 500; }
 
 .version-info { 
   display: flex; 

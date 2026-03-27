@@ -31,6 +31,7 @@ static ui_draw_module_t* available_modules[] = {
   &beat_module,
   &template_module,
   &working_module,
+  &updating_module,
 };
 static const int num_modules = sizeof(available_modules) / sizeof(available_modules[0]);
 

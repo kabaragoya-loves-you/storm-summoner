@@ -89,6 +89,7 @@ application.register(
         }
 
         this.infoData = JSON.parse(response)
+        console.log('Device INFO:', this.infoData)
         this.renderInfo()
 
         // Dispatch device info for other controllers
@@ -145,6 +146,8 @@ application.register(
 
     hasNewerAssets() {
       if (!this.infoData?.assets_checksum || !this.releases?.assets?.length) return false
+      // "unknown" means no assets checksum stored yet - show update banner
+      if (this.infoData.assets_checksum === 'unknown') return true
       return this.infoData.assets_checksum !== this.releases.assets[0].checksum
     }
 
@@ -204,7 +207,7 @@ application.register(
           </div>
           <div class="info-row">
             <span class="info-label">Assets</span>
-            <span class="info-value mono">${this.infoData.assets_checksum || '--'}</span>
+            <span class="info-value mono">${this.formatAssetsChecksum(this.infoData.assets_checksum)}</span>
           </div>
           <div class="info-row">
             <span class="info-label">Serial</span>
@@ -286,6 +289,11 @@ application.register(
         case 'CC0_CC32': return 'CC0 + CC32 + PC'
         default: return bankMode || 'None'
       }
+    }
+
+    formatAssetsChecksum(checksum) {
+      if (!checksum) return '--'
+      return checksum
     }
 
     goToPedals() {

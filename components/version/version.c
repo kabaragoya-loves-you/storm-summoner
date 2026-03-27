@@ -68,7 +68,11 @@ esp_err_t version_init(void) {
   // Load assets checksum from NVS (only set after WebUSB assets update)
   ret = app_settings_load_str(NVS_KEY_ASSETS_CHECKSUM, s_assets_checksum,
     sizeof(s_assets_checksum));
-  if (ret != ESP_OK) {
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Loaded assets checksum from NVS: %s", s_assets_checksum);
+  } else {
+    ESP_LOGW(TAG, "No assets checksum in NVS (ret=%s), using default",
+      esp_err_to_name(ret));
     strncpy(s_assets_checksum, ASSETS_CHECKSUM_UNKNOWN, sizeof(s_assets_checksum) - 1);
     s_assets_checksum[sizeof(s_assets_checksum) - 1] = '\0';
   }

@@ -71,6 +71,7 @@ static size_t s_update_size = 0;
 static size_t s_received_bytes = 0;
 static bool s_is_firmware = false;
 static char s_pending_assets_checksum[9] = {0};  // 8 hex chars + null
+static uint8_t s_last_progress_sent = 0;  // Track last progress % sent
 
 static char s_cmd_buffer[CDC_CMD_BUF_SIZE];
 static size_t s_cmd_pos = 0;
@@ -351,6 +352,32 @@ void usb_cdc_task(void) {
     if (s_state == CDC_STATE_PEDALS) {
       s_state = CDC_STATE_IDLE;
       ESP_LOGI(TAG, "CDC disconnected, exiting pedals mode");
+    }
+    // If we were receiving firmware/assets and disconnected, cleanup
+    if (s_state == CDC_STATE_RECEIVING_FIRMWARE ||
+        s_state == CDC_STATE_RECEIVING_ASSETS ||
+        s_state == CDC_STATE_WAITING_COMMIT) {
+      ESP_LOGW(TAG, "CDC disconnected during update, cleaning up");
+      if (s_update_buffer) {
+        heap_caps_free(s_update_buffer);
+        s_update_buffer = NULL;
+      }
+      s_update_size = 0;
+      s_received_bytes = 0;
+      s_pending_assets_checksum[0] = '\0';
+      s_state = CDC_STATE_IDLE;
+
+      // Publish update cancelled event for UI
+      event_t cancel_event = {
+        .type = EVENT_UPDATE_COMPLETE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.update = {
+          .update_type = s_is_firmware ? UPDATE_TYPE_FIRMWARE : UPDATE_TYPE_ASSETS,
+          .success = 0
+        }
+      };
+      event_bus_post(&cancel_event);
     }
     return;
   }
@@ -694,9 +721,22 @@ static void process_command(const char *cmd) {
 
     s_update_size = size;
     s_received_bytes = 0;
+    s_last_progress_sent = 0;
     s_is_firmware = true;
     s_state = CDC_STATE_RECEIVING_FIRMWARE;
     send_response("READY");
+
+    // Publish update started event for UI
+    event_t update_event = {
+      .type = EVENT_UPDATE_STARTED,
+      .priority = EVENT_PRIORITY_HIGH,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.update = {
+        .update_type = UPDATE_TYPE_FIRMWARE,
+        .total_size = size
+      }
+    };
+    event_bus_post(&update_event);
 
   } else if (strncmp(cmd, "ASSETS ", 7) == 0) {
     // Parse size and optional checksum: "ASSETS <size> [checksum]"
@@ -735,9 +775,22 @@ static void process_command(const char *cmd) {
 
     s_update_size = size;
     s_received_bytes = 0;
+    s_last_progress_sent = 0;
     s_is_firmware = false;
     s_state = CDC_STATE_RECEIVING_ASSETS;
     send_response("READY");
+
+    // Publish update started event for UI
+    event_t update_event = {
+      .type = EVENT_UPDATE_STARTED,
+      .priority = EVENT_PRIORITY_HIGH,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.update = {
+        .update_type = UPDATE_TYPE_ASSETS,
+        .total_size = size
+      }
+    };
+    event_bus_post(&update_event);
 
   } else if (strcmp(cmd, "COMMIT") == 0) {
     if (s_state != CDC_STATE_WAITING_COMMIT) {
@@ -775,8 +828,14 @@ static void process_command(const char *cmd) {
       }
       // Save the assets checksum to NVS after successful update
       if (err == ESP_OK && s_pending_assets_checksum[0] != '\0') {
-        version_set_assets_checksum(s_pending_assets_checksum);
+        ESP_LOGI(TAG, "Saving assets checksum to NVS: %s", s_pending_assets_checksum);
+        esp_err_t csum_err = version_set_assets_checksum(s_pending_assets_checksum);
+        if (csum_err != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to save assets checksum: %s", esp_err_to_name(csum_err));
+        }
         s_pending_assets_checksum[0] = '\0';
+      } else if (err == ESP_OK) {
+        ESP_LOGW(TAG, "Assets update succeeded but no checksum was provided");
       }
     }
 
@@ -784,10 +843,34 @@ static void process_command(const char *cmd) {
       ESP_LOGI(TAG, "Update successful");
       send_response("SUCCESS");
       s_state = CDC_STATE_IDLE;
+
+      // Publish update complete event (success)
+      event_t complete_event = {
+        .type = EVENT_UPDATE_COMPLETE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.update = {
+          .update_type = s_is_firmware ? UPDATE_TYPE_FIRMWARE : UPDATE_TYPE_ASSETS,
+          .success = 1
+        }
+      };
+      event_bus_post(&complete_event);
     } else {
       ESP_LOGE(TAG, "Update failed: %s", esp_err_to_name(err));
       send_response("ERROR: Update failed");
       s_state = CDC_STATE_ERROR;
+
+      // Publish update complete event (failure)
+      event_t complete_event = {
+        .type = EVENT_UPDATE_COMPLETE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.update = {
+          .update_type = s_is_firmware ? UPDATE_TYPE_FIRMWARE : UPDATE_TYPE_ASSETS,
+          .success = 0
+        }
+      };
+      event_bus_post(&complete_event);
     }
 
     // Free buffer
@@ -969,6 +1052,9 @@ static void process_command(const char *cmd) {
     }
 
     // Build JSON - use a static buffer since response can be large
+    const char *assets_csum = version_get_assets_checksum();
+    ESP_LOGI(TAG, "INFO: assets_checksum = %s", assets_csum ? assets_csum : "(null)");
+
     static char info_buf[512];
     int len = snprintf(info_buf, sizeof(info_buf),
       "{\"version\":\"%u.%u\",\"build\":%u,\"git\":\"%s\",\"serial\":\"%s\","
@@ -979,7 +1065,7 @@ static void process_command(const char *cmd) {
       "\"preset_count\":%u,\"bank_mode\":\"%s\",\"preset_base\":%u}}",
       (unsigned)version_get_major(), (unsigned)version_get_minor(),
       (unsigned)version_get_build(), version_get_git_hash(), version_get_serial(),
-      version_get_assets_checksum(),
+      assets_csum,
       slug,
       mdev ? mdev->name : "Unknown",
       mdev ? mdev->vendor : "Unknown",
@@ -1030,19 +1116,31 @@ static void handle_binary_data(const uint8_t *data, size_t len) {
   s_received_bytes += to_copy;
 
   // Send progress updates every 10%
-  static uint8_t last_progress = 0;
   uint8_t progress = usb_cdc_update_get_progress();
-  if (progress >= last_progress + 10) {
+  if (progress >= s_last_progress_sent + 10) {
     char resp[32];
     snprintf(resp, sizeof(resp), "PROGRESS %u", progress);
     send_response(resp);
-    last_progress = progress;
+    s_last_progress_sent = progress;
   }
 
   if (s_received_bytes >= s_update_size) {
     ESP_LOGI(TAG, "Transfer complete (%u bytes)", (unsigned)s_received_bytes);
     send_response("TRANSFER_COMPLETE");
     s_state = CDC_STATE_WAITING_COMMIT;
+
+    // Publish progress event indicating flash phase is starting
+    event_t progress_event = {
+      .type = EVENT_UPDATE_PROGRESS,
+      .priority = EVENT_PRIORITY_NORMAL,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.update = {
+        .update_type = s_is_firmware ? UPDATE_TYPE_FIRMWARE : UPDATE_TYPE_ASSETS,
+        .phase = UPDATE_PHASE_FLASH,
+        .percent = 100
+      }
+    };
+    event_bus_post(&progress_event);
   }
 }
 

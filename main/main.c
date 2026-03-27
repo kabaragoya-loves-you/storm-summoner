@@ -11,6 +11,7 @@
 #include "midi_passthrough.h"
 #include "elite.h"
 #include "ui.h"
+#include "ui_console.h"
 #include "shared_canvas_buffer.h"
 #include "app_settings.h"
 #include "event_bus.h"
@@ -65,15 +66,15 @@
 
 void app_main(void) {
   ldo_init();
-  version_init();
   adc_manager_init();
   revision_init(-1);
   gpio_install_isr_service(0);
 
   bool boot_calibrate = buttons_check_boot_right();
-  
+
   i2c_common_scan();
   app_settings_init();
+  version_init();  // Must be after app_settings_init for NVS access
   assets_manager_init();
   scene_name_gen_init();  // Load wordlist for random name generation
   event_bus_init();
@@ -81,6 +82,7 @@ void app_main(void) {
   display_init();
   shared_canvas_buffer_init();  // Must be called before ui_init()
   ui_init();
+  ui_console_init();  // Initialize UI modules and subscribe to events
   
   transport_init();
   tempo_init();
