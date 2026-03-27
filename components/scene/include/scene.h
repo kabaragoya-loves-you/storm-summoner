@@ -97,6 +97,7 @@ typedef struct {
   touchwheel_style_t touchwheel_style;  // For CONTINUOUS mode: odometer vs endless encoder
   continuous_mapping_t touchwheel;      // For TOUCHWHEEL_MODE_CONTINUOUS (like proximity/cv/etc)
   lfo_target_t touchwheel_lfo_target;   // Which LFO(s) to affect in LFO_RATE/LFO_DEPTH modes
+  uint8_t touchwheel_initial_value;     // Initial CC value for endless encoder (0-127, default 0)
   
   // Discrete input assignments (single action per input)
   touchpad_mapping_t touchpads[NUM_TOUCHPADS];

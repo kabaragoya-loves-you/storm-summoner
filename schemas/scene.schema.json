@@ -82,6 +82,13 @@
       "default": "both",
       "description": "Which LFO(s) the touchwheel affects in LFO rate/depth modes"
     },
+    "touchwheel_initial_value": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 127,
+      "default": 0,
+      "description": "Initial CC value for touchwheel endless encoder mode"
+    },
     "touchwheel_style": {
       "type": "string",
       "enum": ["odometer", "endless", "bipolar"],

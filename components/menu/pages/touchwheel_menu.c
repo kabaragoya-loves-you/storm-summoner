@@ -46,6 +46,7 @@ static char s_latch_label[32];
 static char s_release_label[32];
 static char s_polyphony_label[32];
 static char s_param_label[48];
+static char s_initial_value_label[32];
 
 // Dynamic storage for CC options from device
 typedef struct {
@@ -612,6 +613,53 @@ static void nav_to_velocity(void* user_data) {
   menu_navigate_to("Velocity", velocity_roller_create);
 }
 
+// Initial Value (0-127 for CC endless mode)
+static void initial_value_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->touchwheel_initial_value = (uint8_t)selected_index;
+  scene_set_touchwheel_value(selected_index);
+  persist_scene_changes();
+
+  ESP_LOGI(TAG, "Touchwheel initial value set to: %u", (unsigned)selected_index);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+}
+
+static lv_obj_t* initial_value_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  static char options[640];
+  char* p = options;
+  for (int i = 0; i <= 127; i++) {
+    int written = snprintf(p, options + sizeof(options) - p, "%d\n", i);
+    p += written;
+  }
+  if (p > options) *(p - 1) = '\0';
+
+  uint32_t current = scene->touchwheel_initial_value;
+  if (current > 127) current = 0;
+
+  return menu_create_roller_page("Initial Value", options, current, initial_value_confirm_cb, NULL);
+}
+
+static void nav_to_initial_value(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Initial Value", initial_value_roller_create);
+}
+
 // Latch (On/Off)
 static void latch_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -933,6 +981,17 @@ lv_obj_t* menu_page_touchwheel_create(void) {
     snprintf(s_style_label, sizeof(s_style_label), "Style\n%s", 
              style_to_string(scene->touchwheel_style));
     s_tw_items[item_count++] = (menu_item_t){s_style_label, nav_to_style, NULL, true};
+  }
+  
+  // Initial Value (only for CC mode with endless encoder style)
+  if (mapping->mode == TOUCHWHEEL_MODE_CONTINUOUS &&
+      mapping->output_type == OUTPUT_TYPE_CC &&
+      scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+    snprintf(s_initial_value_label, sizeof(s_initial_value_label), 
+      "Initial Value\n%u", (unsigned)scene->touchwheel_initial_value);
+    s_tw_items[item_count++] = (menu_item_t){
+      s_initial_value_label, nav_to_initial_value, NULL, true
+    };
   }
   
   return menu_create_page_2line("Touchwheel", s_tw_items, item_count);

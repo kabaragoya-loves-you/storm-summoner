@@ -136,7 +136,8 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->touchwheel = continuous_mapping_create(16);    // CC16 = General Purpose 1
   scene->touchwheel.enabled = false;                    // Disabled by default (BUTTONS mode)
   scene->touchwheel_lfo_target = LFO_TARGET_BOTH;       // Default: affect both LFOs
-  
+  scene->touchwheel_initial_value = 0;                   // Default: start at 0
+
   // Initialize touchpad mappings with default CC actions
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     scene->touchpads[i].enabled = true;
@@ -1004,6 +1005,10 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
         mode_proc = touchwheel_mode_create_endless();
         mode_desc = "continuous (endless)";
+        // Apply initial value for CC endless mode
+        if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
+          s_touchwheel_endless_value = scene->touchwheel_initial_value;
+        }
       } else {
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "continuous (odometer)";
@@ -4652,7 +4657,8 @@ static cJSON* scene_to_json(const scene_t* scene) {
     default: tw_lfo_target_str = "both"; break;
   }
   cJSON_AddStringToObject(root, "touchwheel_lfo_target", tw_lfo_target_str);
-  
+  cJSON_AddNumberToObject(root, "touchwheel_initial_value", scene->touchwheel_initial_value);
+
   cJSON* touchpads = cJSON_CreateArray();
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     cJSON* pad = cJSON_CreateObject();
@@ -4886,6 +4892,13 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     if (strcmp(target_str, "lfo1") == 0) scene->touchwheel_lfo_target = LFO_TARGET_LFO1;
     else if (strcmp(target_str, "lfo2") == 0) scene->touchwheel_lfo_target = LFO_TARGET_LFO2;
     else scene->touchwheel_lfo_target = LFO_TARGET_BOTH;
+  }
+
+  // Deserialize touchwheel initial value (for CC endless mode)
+  cJSON* tw_initial = cJSON_GetObjectItem(root, "touchwheel_initial_value");
+  if (tw_initial && cJSON_IsNumber(tw_initial)) {
+    int val = tw_initial->valueint;
+    scene->touchwheel_initial_value = (val >= 0 && val <= 127) ? (uint8_t)val : 0;
   }
   
   cJSON* touchpads = cJSON_GetObjectItem(root, "touchpads");
