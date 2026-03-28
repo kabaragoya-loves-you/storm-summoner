@@ -112,6 +112,9 @@ static char s_probability_label[LABEL_BUFFER_SETS][24];
 static char s_pattern_label[LABEL_BUFFER_SETS][24];
 static char s_transport_trigger_label[LABEL_BUFFER_SETS][24];
 static char s_morph_label[LABEL_BUFFER_SETS][24];
+static char s_punch_in_start_label[LABEL_BUFFER_SETS][48];
+static char s_punch_in_finish_label[LABEL_BUFFER_SETS][48];
+static char s_punch_in_duration_label[LABEL_BUFFER_SETS][32];
 static char s_morph_steps_label[LABEL_BUFFER_SETS][24];
 static char s_morph_manual_label[LABEL_BUFFER_SETS][24];
 static char s_morph_timing_label[LABEL_BUFFER_SETS][24];
@@ -182,6 +185,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_SAMPLE_HOLD_TOGGLE,
   ACTION_SAMPLE_HOLD_HOLD,
   ACTION_STEP,
+  ACTION_PUNCH_IN,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -258,6 +262,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_SAMPLE_HOLD_TOGGLE: return "S+H Toggle";
     case ACTION_SAMPLE_HOLD_HOLD: return "S+H Hold";
     case ACTION_STEP: return "Step";
+    case ACTION_PUNCH_IN: return "Punch-In";
     default: return "Unknown";
   }
 }
@@ -781,7 +786,28 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     if (new_type == ACTION_STEP) {
       action->params.step.target = STEP_TARGET_RTG;
     }
-    
+
+    // Set defaults for Punch-In action
+    if (new_type == ACTION_PUNCH_IN) {
+      // Use device's first CC control as default start/finish
+      uint8_t scene_index = scene_get_current_index();
+      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+      uint8_t default_cc = 64;  // Fallback to CC64 (sustain)
+      if (device && device->control_count > 0) {
+        for (uint16_t i = 0; i < device->control_count; i++) {
+          if (device->controls[i].type == MIDI_CONTROL_TYPE_CC) {
+            default_cc = (uint8_t)device->controls[i].id;
+            break;
+          }
+        }
+      }
+      action->params.punch_in.start_cc = default_cc;
+      action->params.punch_in.start_value = 127;
+      action->params.punch_in.finish_cc = default_cc;
+      action->params.punch_in.finish_value = 0;
+      action->params.punch_in.duration = PUNCH_IN_1_BAR;
+    }
+
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
   }
   
@@ -3171,6 +3197,281 @@ static void nav_to_step_target(void* user_data) {
 }
 
 // ============================================================================
+// Punch-In Configuration
+// ============================================================================
+
+// State for punch-in editing
+static bool s_editing_punch_in_start = true;  // true = start, false = finish
+
+// Forward declarations
+static lv_obj_t* punch_in_cc_roller_create(void);
+static lv_obj_t* punch_in_value_roller_create(void);
+
+// --- Punch-In CC Selection ---
+
+static void punch_in_cc_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  if (selected_index >= s_cc_options.count) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  // Store pending CC and navigate to value roller
+  s_pending_cc_number = s_cc_options.cc_numbers[selected_index];
+  s_callback_in_progress = false;
+  nav_to_subpage("Value", punch_in_value_roller_create);
+}
+
+static lv_obj_t* punch_in_cc_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action || !s_cc_options.options_str) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint8_t current_cc = s_editing_punch_in_start ?
+    action->params.punch_in.start_cc : action->params.punch_in.finish_cc;
+
+  // Find current CC in options
+  uint32_t current_idx = 0;
+  for (uint16_t i = 0; i < s_cc_options.count; i++) {
+    if (s_cc_options.cc_numbers[i] == current_cc) {
+      current_idx = i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("CC", s_cc_options.options_str, current_idx,
+    punch_in_cc_confirm_cb, NULL);
+}
+
+// --- Punch-In Value Selection ---
+
+static void punch_in_value_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  uint8_t cc_value;
+
+  // Determine the actual value based on control type
+  if (s_pending_control && s_pending_control->discrete_count > 0) {
+    if (selected_index < s_pending_control->discrete_count) {
+      cc_value = (uint8_t)s_pending_control->discrete_values[selected_index].value;
+    } else {
+      cc_value = 0;
+    }
+  } else if (s_pending_control) {
+    cc_value = (uint8_t)(s_pending_control->min + selected_index);
+  } else {
+    cc_value = (uint8_t)selected_index;
+  }
+
+  // Store CC and value
+  if (s_editing_punch_in_start) {
+    action->params.punch_in.start_cc = s_pending_cc_number;
+    action->params.punch_in.start_value = cc_value;
+    ESP_LOGI(TAG, "Punch-In start set to CC%d=%d", s_pending_cc_number, cc_value);
+  } else {
+    action->params.punch_in.finish_cc = s_pending_cc_number;
+    action->params.punch_in.finish_value = cc_value;
+    ESP_LOGI(TAG, "Punch-In finish set to CC%d=%d", s_pending_cc_number, cc_value);
+  }
+
+  s_pending_control = NULL;
+  s_callback_in_progress = false;
+  return_to_detail_page(3);  // Pop value roller, CC roller, old detail
+}
+
+static lv_obj_t* punch_in_value_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+
+  // Get control definition for this CC
+  s_pending_control = device ? assets_get_control_by_cc(device, s_pending_cc_number) : NULL;
+
+  // Get current value
+  uint8_t current_val = s_editing_punch_in_start ?
+    action->params.punch_in.start_value : action->params.punch_in.finish_value;
+
+  static char options[1024];
+  options[0] = '\0';
+  size_t pos = 0;
+  uint32_t current_idx = 0;
+
+  if (s_pending_control && s_pending_control->discrete_count > 0) {
+    // Discrete values from device
+    for (int i = 0; i < s_pending_control->discrete_count && pos < sizeof(options) - 32; i++) {
+      if (i > 0) options[pos++] = '\n';
+      const char* name = s_pending_control->discrete_values[i].name;
+      if (name && name[0]) {
+        pos += snprintf(options + pos, sizeof(options) - pos, "%s", name);
+      } else {
+        pos += snprintf(options + pos, sizeof(options) - pos, "%d",
+          (int)s_pending_control->discrete_values[i].value);
+      }
+      if (s_pending_control->discrete_values[i].value == current_val) {
+        current_idx = i;
+      }
+    }
+  } else if (s_pending_control) {
+    // Range from min to max
+    uint16_t min_val = s_pending_control->min;
+    uint16_t max_val = s_pending_control->max;
+    if (max_val > 127) max_val = 127;
+    for (uint16_t i = min_val; i <= max_val && pos < sizeof(options) - 8; i++) {
+      if (i > min_val) options[pos++] = '\n';
+      pos += snprintf(options + pos, sizeof(options) - pos, "%d", (int)i);
+    }
+    if (current_val >= min_val && current_val <= max_val) {
+      current_idx = current_val - min_val;
+    }
+  } else {
+    // Full 0-127 range
+    for (int i = 0; i <= 127 && pos < sizeof(options) - 8; i++) {
+      if (i > 0) options[pos++] = '\n';
+      pos += snprintf(options + pos, sizeof(options) - pos, "%d", i);
+    }
+    current_idx = current_val;
+  }
+
+  return menu_create_roller_page("Value", options, current_idx,
+    punch_in_value_confirm_cb, NULL);
+}
+
+// --- Punch-In Duration Roller ---
+
+static void punch_in_duration_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  // Build the list of available durations based on time signature
+  time_signature_t ts = tempo_get_time_signature();
+  uint8_t numerator = ts.numerator;
+  if (numerator == 0) numerator = 4;
+
+  // Calculate which duration was selected
+  punch_in_duration_t durations[12];
+  int count = 0;
+
+  // Add beat options (1 to numerator-1, max 7)
+  for (int i = 1; i < numerator && i <= 7; i++) {
+    durations[count++] = (punch_in_duration_t)(PUNCH_IN_1_BEAT + i - 1);
+  }
+
+  // Add bar options
+  durations[count++] = PUNCH_IN_1_BAR;
+  durations[count++] = PUNCH_IN_2_BARS;
+  durations[count++] = PUNCH_IN_4_BARS;
+  durations[count++] = PUNCH_IN_8_BARS;
+  durations[count++] = PUNCH_IN_16_BARS;
+
+  if (selected_index < (uint32_t)count) {
+    s_ctx->target_action->params.punch_in.duration = durations[selected_index];
+    ESP_LOGI(TAG, "Punch-In duration set to %s",
+      punch_in_duration_to_string(durations[selected_index]));
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* punch_in_duration_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+
+  // Build options based on current time signature
+  time_signature_t ts = tempo_get_time_signature();
+  uint8_t numerator = ts.numerator;
+  if (numerator == 0) numerator = 4;
+
+  static char options[256];
+  options[0] = '\0';
+  size_t pos = 0;
+  uint32_t current_idx = 0;
+  int option_num = 0;
+
+  // Add beat options (1 to numerator-1, max 7)
+  for (int i = 1; i < numerator && i <= 7; i++) {
+    if (option_num > 0) options[pos++] = '\n';
+    if (i == 1) {
+      pos += snprintf(options + pos, sizeof(options) - pos, "1 Beat");
+    } else {
+      pos += snprintf(options + pos, sizeof(options) - pos, "%d Beats", i);
+    }
+    if (action->params.punch_in.duration == (punch_in_duration_t)(PUNCH_IN_1_BEAT + i - 1)) {
+      current_idx = option_num;
+    }
+    option_num++;
+  }
+
+  // Add bar options
+  const char* bar_labels[] = {"1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars"};
+  punch_in_duration_t bar_durations[] = {
+    PUNCH_IN_1_BAR, PUNCH_IN_2_BARS, PUNCH_IN_4_BARS, PUNCH_IN_8_BARS, PUNCH_IN_16_BARS
+  };
+
+  for (int i = 0; i < 5; i++) {
+    if (option_num > 0) options[pos++] = '\n';
+    pos += snprintf(options + pos, sizeof(options) - pos, "%s", bar_labels[i]);
+    if (action->params.punch_in.duration == bar_durations[i]) {
+      current_idx = option_num;
+    }
+    option_num++;
+  }
+
+  return menu_create_roller_page("Duration", options, current_idx,
+    punch_in_duration_confirm_cb, NULL);
+}
+
+// --- Punch-In Navigation ---
+
+static void nav_to_punch_in_start(void* user_data) {
+  (void)user_data;
+  s_editing_punch_in_start = true;
+  nav_to_subpage("Start CC", punch_in_cc_roller_create);
+}
+
+static void nav_to_punch_in_finish(void* user_data) {
+  (void)user_data;
+  s_editing_punch_in_start = false;
+  nav_to_subpage("Finish CC", punch_in_cc_roller_create);
+}
+
+static void nav_to_punch_in_duration(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Duration", punch_in_duration_roller_create);
+}
+
+// ============================================================================
 // Clock Mode Roller (for clock toggle/hold actions)
 // ============================================================================
 
@@ -3540,16 +3841,39 @@ static const char* get_cc_display_name(uint8_t cc_num) {
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   if (!device) return "Unknown";
-  
+
   for (uint16_t i = 0; i < device->control_count; i++) {
     if (device->controls[i].type == MIDI_CONTROL_TYPE_CC &&
         device->controls[i].id == cc_num) {
       return device->controls[i].name ? device->controls[i].name : "CC";
     }
   }
-  
+
   static char fallback[16];
   snprintf(fallback, sizeof(fallback), "CC %u", (unsigned)cc_num);
+  return fallback;
+}
+
+// Helper to get CC value display name (looks up discrete value names)
+static const char* get_cc_value_display_name(uint8_t cc_num, uint8_t value) {
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+
+  if (device) {
+    const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+    if (ctrl && ctrl->discrete_count > 0 && ctrl->discrete_values) {
+      for (int i = 0; i < ctrl->discrete_count; i++) {
+        if (ctrl->discrete_values[i].value == value) {
+          const char* name = ctrl->discrete_values[i].name;
+          if (name && name[0]) return name;
+          break;
+        }
+      }
+    }
+  }
+
+  static char fallback[8];
+  snprintf(fallback, sizeof(fallback), "%u", (unsigned)value);
   return fallback;
 }
 
@@ -4959,7 +5283,44 @@ lv_obj_t* action_config_detail_page_create(void) {
       s_step_target_label[buf], nav_to_step_target, NULL, true
     };
   }
-  
+
+  // Show Punch-In configuration
+  if (action->type == ACTION_PUNCH_IN) {
+    // Start CC/Value
+    if (item_count < MAX_DETAIL_ITEMS) {
+      uint8_t start_cc = action->params.punch_in.start_cc;
+      uint8_t start_val = action->params.punch_in.start_value;
+      snprintf(s_punch_in_start_label[buf], sizeof(s_punch_in_start_label[buf]),
+        "Start\n%s: %s", get_cc_display_name(start_cc),
+        get_cc_value_display_name(start_cc, start_val));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_punch_in_start_label[buf], nav_to_punch_in_start, NULL, true
+      };
+    }
+
+    // Finish CC/Value
+    if (item_count < MAX_DETAIL_ITEMS) {
+      uint8_t finish_cc = action->params.punch_in.finish_cc;
+      uint8_t finish_val = action->params.punch_in.finish_value;
+      snprintf(s_punch_in_finish_label[buf], sizeof(s_punch_in_finish_label[buf]),
+        "Finish\n%s: %s", get_cc_display_name(finish_cc),
+        get_cc_value_display_name(finish_cc, finish_val));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_punch_in_finish_label[buf], nav_to_punch_in_finish, NULL, true
+      };
+    }
+
+    // Duration
+    if (item_count < MAX_DETAIL_ITEMS) {
+      const char* dur_str = punch_in_duration_to_display_string(action->params.punch_in.duration);
+      snprintf(s_punch_in_duration_label[buf], sizeof(s_punch_in_duration_label[buf]),
+        "Duration\n%s", dur_str);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_punch_in_duration_label[buf], nav_to_punch_in_duration, NULL, true
+      };
+    }
+  }
+
   // Show Timing selector for non-HOLD actions (actions that support timing)
   if (action_supports_timing(action->type) && item_count < MAX_DETAIL_ITEMS) {
     const char* timing_display = get_timing_display(action);

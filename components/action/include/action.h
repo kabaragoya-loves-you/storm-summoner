@@ -89,6 +89,9 @@ typedef enum {
 
   // RTG/S+H step control
   ACTION_STEP,                // Trigger RTG or S+H step
+
+  // Looper punch-in
+  ACTION_PUNCH_IN,            // Send start CC at bar, finish CC after duration
   
   ACTION_MAX
 } action_type_t;
@@ -98,6 +101,22 @@ typedef enum {
   STEP_TARGET_SH = 0,         // Sample & Hold (future)
   STEP_TARGET_RTG             // Random Tone Generator
 } step_target_t;
+
+// Punch-in duration (for looper recording)
+typedef enum {
+  PUNCH_IN_1_BEAT = 0,
+  PUNCH_IN_2_BEATS,
+  PUNCH_IN_3_BEATS,
+  PUNCH_IN_4_BEATS,
+  PUNCH_IN_5_BEATS,
+  PUNCH_IN_6_BEATS,
+  PUNCH_IN_7_BEATS,           // Covers up to 8/4 time
+  PUNCH_IN_1_BAR,
+  PUNCH_IN_2_BARS,
+  PUNCH_IN_4_BARS,
+  PUNCH_IN_8_BARS,
+  PUNCH_IN_16_BARS
+} punch_in_duration_t;
 
 // Action trigger timing (when action takes effect)
 typedef enum {
@@ -314,6 +333,15 @@ typedef struct {
     struct {
       uint8_t target;           // step_target_t: 0=S+H, 1=RTG
     } step;
+
+    // For punch-in action (looper recording)
+    struct {
+      uint8_t start_cc;         // CC number to send at start
+      uint8_t start_value;      // CC value to send at start
+      uint8_t finish_cc;        // CC number to send at end
+      uint8_t finish_value;     // CC value to send at end
+      punch_in_duration_t duration;  // How long to record
+    } punch_in;
   } params;
 } action_t;
 
@@ -410,6 +438,14 @@ action_repeat_division_t action_repeat_division_from_string(const char* str);
 // Get repeat interval in beats (for scheduling)
 // Returns quarter notes equivalent (e.g., 1 bar in 4/4 = 4 beats)
 uint8_t action_repeat_division_to_beats(action_repeat_division_t div, uint8_t beats_per_bar);
+
+// Punch-in duration string conversion
+const char* punch_in_duration_to_string(punch_in_duration_t duration);
+const char* punch_in_duration_to_display_string(punch_in_duration_t duration);
+punch_in_duration_t punch_in_duration_from_string(const char* str);
+
+// Get punch-in duration in beats (for scheduling finish CC)
+uint8_t punch_in_duration_to_beats(punch_in_duration_t duration, uint8_t beats_per_bar);
 
 // Clear all pending actions (call on scene change)
 void action_clear_pending(void);

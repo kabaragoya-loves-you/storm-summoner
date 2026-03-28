@@ -3345,7 +3345,8 @@ static const char* action_type_json_names[] = {
   [ACTION_RTG_HOLD] = "rtg_hold",
   [ACTION_SAMPLE_HOLD_TOGGLE] = "sample_hold_toggle",
   [ACTION_SAMPLE_HOLD_HOLD] = "sample_hold_hold",
-  [ACTION_STEP] = "step"
+  [ACTION_STEP] = "step",
+  [ACTION_PUNCH_IN] = "punch_in"
 };
 
 // Helper to convert action type string to enum
@@ -3571,6 +3572,13 @@ static cJSON* action_to_json(const action_t* action) {
   } else if (action->type == ACTION_STEP) {
     const char* target_str = (action->params.step.target == STEP_TARGET_RTG) ? "rtg" : "sh";
     cJSON_AddStringToObject(obj, "step_target", target_str);
+  } else if (action->type == ACTION_PUNCH_IN) {
+    cJSON_AddNumberToObject(obj, "start_cc", action->params.punch_in.start_cc);
+    cJSON_AddNumberToObject(obj, "start_value", action->params.punch_in.start_value);
+    cJSON_AddNumberToObject(obj, "finish_cc", action->params.punch_in.finish_cc);
+    cJSON_AddNumberToObject(obj, "finish_value", action->params.punch_in.finish_value);
+    cJSON_AddStringToObject(obj, "duration",
+      punch_in_duration_to_string(action->params.punch_in.duration));
   }
   
   // Serialize timing (only if not immediate default)
@@ -3981,6 +3989,25 @@ static action_t json_to_action(cJSON* obj) {
     } else {
       // Default to RTG
       action.params.step.target = STEP_TARGET_RTG;
+    }
+  }
+
+  // Parse punch-in action
+  if (action.type == ACTION_PUNCH_IN) {
+    cJSON* start_cc = cJSON_GetObjectItem(obj, "start_cc");
+    cJSON* start_value = cJSON_GetObjectItem(obj, "start_value");
+    cJSON* finish_cc = cJSON_GetObjectItem(obj, "finish_cc");
+    cJSON* finish_value = cJSON_GetObjectItem(obj, "finish_value");
+    cJSON* duration = cJSON_GetObjectItem(obj, "duration");
+
+    if (start_cc) action.params.punch_in.start_cc = (uint8_t)start_cc->valueint;
+    if (start_value) action.params.punch_in.start_value = (uint8_t)start_value->valueint;
+    if (finish_cc) action.params.punch_in.finish_cc = (uint8_t)finish_cc->valueint;
+    if (finish_value) action.params.punch_in.finish_value = (uint8_t)finish_value->valueint;
+    if (duration && cJSON_IsString(duration)) {
+      action.params.punch_in.duration = punch_in_duration_from_string(duration->valuestring);
+    } else {
+      action.params.punch_in.duration = PUNCH_IN_1_BAR;  // Default
     }
   }
   

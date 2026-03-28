@@ -89,6 +89,7 @@ void tempo_tap_event(void);
 // For MIDI clock mode.
 void tempo_midi_clock_tick(void);
 void tempo_midi_transport_start(void);  // Called immediately on MIDI Start to reset counters
+bool tempo_is_midi_clock_active(void);  // True if MIDI clock ticks are being received
 
 // Set and get the note divider.
 void tempo_set_note_divider(tempo_note_divider_t divider);
@@ -97,6 +98,9 @@ tempo_note_divider_t tempo_get_note_divider(void);
 // Time signature management
 void tempo_set_time_signature(uint8_t numerator, uint8_t denominator);
 time_signature_t tempo_get_time_signature(void);
+
+// Get current beat within bar (1 to numerator)
+uint8_t tempo_get_current_beat(void);
 
 // Meter classification and felt beats
 // Compound meters (6/8, 9/8, 12/8) have fewer "felt" beats than written beats

@@ -163,6 +163,29 @@ static active_morph_t s_active_morphs[MAX_ACTIVE_MORPHS];
 static esp_timer_handle_t s_morph_timer = NULL;
 static uint8_t s_last_cc_values[128];  // Track last sent CC values for morph start
 
+// ============================================================================
+// Punch-In System (for looper recording)
+// ============================================================================
+
+#define MAX_ACTIVE_PUNCH_INS 2
+
+typedef enum {
+  PUNCH_IN_PHASE_WAITING,   // Waiting for start of next bar
+  PUNCH_IN_PHASE_RECORDING  // Recording, counting down beats until finish
+} punch_in_phase_t;
+
+typedef struct {
+  bool active;
+  punch_in_phase_t phase;
+  uint8_t start_cc;
+  uint8_t start_value;
+  uint8_t finish_cc;
+  uint8_t finish_value;
+  uint16_t beats_remaining;   // Beats until finish CC (when in RECORDING phase)
+} active_punch_in_t;
+
+static active_punch_in_t s_active_punch_ins[MAX_ACTIVE_PUNCH_INS];
+
 // Forward declarations for morph functions
 static void morph_timer_callback(void* arg);
 static void morph_beat_event_handler(const event_t* event, void* context);
@@ -367,6 +390,46 @@ static void handle_beat_event(const event_t* event, void* context) {
         if (pending->original) {
           stop_repeating_internal(pending->original);
         }
+      }
+    }
+  }
+
+  // Process active punch-ins
+  uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
+  for (int i = 0; i < MAX_ACTIVE_PUNCH_INS; i++) {
+    if (!s_active_punch_ins[i].active) continue;
+
+    active_punch_in_t* pi = &s_active_punch_ins[i];
+
+    if (pi->phase == PUNCH_IN_PHASE_WAITING) {
+      // Waiting for beat 1 (start of bar)
+      if (current_beat == 1) {
+        // Send start CC
+        if (!in_programming_mode) {
+          send_control_change(channel, pi->start_cc, pi->start_value);
+          s_last_cc_values[pi->start_cc] = pi->start_value;
+          ESP_LOGI(TAG, "Punch-In started: CC%d=%d", pi->start_cc, pi->start_value);
+        }
+        // Transition to recording phase
+        pi->phase = PUNCH_IN_PHASE_RECORDING;
+        // beats_remaining counts FULL beats after the start CC
+        // Don't decrement here - beat 1 is the START, we count from beat 2
+      }
+    } else if (pi->phase == PUNCH_IN_PHASE_RECORDING) {
+      // Count down beats (each beat event in RECORDING phase = 1 beat elapsed)
+      if (pi->beats_remaining > 0) {
+        pi->beats_remaining--;
+      }
+
+      if (pi->beats_remaining == 0) {
+        // Duration complete - send finish CC
+        if (!in_programming_mode) {
+          send_control_change(channel, pi->finish_cc, pi->finish_value);
+          s_last_cc_values[pi->finish_cc] = pi->finish_value;
+          ESP_LOGI(TAG, "Punch-In finished: CC%d=%d", pi->finish_cc, pi->finish_value);
+        }
+        // Clear this punch-in slot
+        pi->active = false;
       }
     }
   }
@@ -604,8 +667,11 @@ void action_clear_pending(void) {
     s_pending_actions[i].valid = false;
     s_pending_actions[i].paused = false;
   }
+  for (int i = 0; i < MAX_ACTIVE_PUNCH_INS; i++) {
+    s_active_punch_ins[i].active = false;
+  }
   clear_all_repeating();
-  ESP_LOGD(TAG, "Cleared pending action queue and repeating actions");
+  ESP_LOGD(TAG, "Cleared pending action queue, punch-ins, and repeating actions");
 }
 
 // Action type names for debugging
@@ -659,7 +725,8 @@ static const char* action_type_names[] = {
   [ACTION_RTG_HOLD] = "RTG Hold",
   [ACTION_SAMPLE_HOLD_TOGGLE] = "S+H Toggle",
   [ACTION_SAMPLE_HOLD_HOLD] = "S+H Hold",
-  [ACTION_STEP] = "Step"
+  [ACTION_STEP] = "Step",
+  [ACTION_PUNCH_IN] = "Punch-In"
 };
 
 esp_err_t action_init(void) {
@@ -1630,6 +1697,47 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       }
       break;
 
+    case ACTION_PUNCH_IN:
+      if (is_press) {
+        // Find an empty punch-in slot
+        int slot = -1;
+        for (int i = 0; i < MAX_ACTIVE_PUNCH_INS; i++) {
+          if (!s_active_punch_ins[i].active) {
+            slot = i;
+            break;
+          }
+        }
+
+        if (slot < 0) {
+          ESP_LOGW(TAG, "Punch-In: no available slots");
+          break;
+        }
+
+        // Get current time signature for beat count
+        time_signature_t ts = tempo_get_time_signature();
+        uint8_t beats_per_bar = ts.numerator;
+        if (beats_per_bar == 0) beats_per_bar = 4;
+
+        // Calculate duration in beats
+        uint8_t duration_beats = punch_in_duration_to_beats(
+          action->params.punch_in.duration, beats_per_bar);
+
+        // Set up the punch-in
+        s_active_punch_ins[slot].active = true;
+        s_active_punch_ins[slot].phase = PUNCH_IN_PHASE_WAITING;
+        s_active_punch_ins[slot].start_cc = action->params.punch_in.start_cc;
+        s_active_punch_ins[slot].start_value = action->params.punch_in.start_value;
+        s_active_punch_ins[slot].finish_cc = action->params.punch_in.finish_cc;
+        s_active_punch_ins[slot].finish_value = action->params.punch_in.finish_value;
+        s_active_punch_ins[slot].beats_remaining = duration_beats;
+
+        ESP_LOGI(TAG, "Punch-In queued: CC%d=%d -> CC%d=%d, duration %d beats",
+          action->params.punch_in.start_cc, action->params.punch_in.start_value,
+          action->params.punch_in.finish_cc, action->params.punch_in.finish_value,
+          duration_beats);
+      }
+      break;
+
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
       return ESP_ERR_NOT_SUPPORTED;
@@ -1929,8 +2037,9 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
 // Returns true for actions that support timing options (non-HOLD actions)
 // HOLD actions must execute immediately to preserve press/release pairing
 // TAP_TEMPO is always immediate (toggles tap mode instantly)
+// PUNCH_IN has built-in timing (always starts at next bar)
 bool action_supports_timing(action_type_t type) {
-  if (type == ACTION_NONE || type == ACTION_TAP_TEMPO) return false;
+  if (type == ACTION_NONE || type == ACTION_TAP_TEMPO || type == ACTION_PUNCH_IN) return false;
   return !action_requires_hold(type);
 }
 
@@ -1952,6 +2061,7 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_STEP:  // Step is a one-shot trigger, no repeat
     case ACTION_RTG_TOGGLE:  // Toggle shouldn't repeat
     case ACTION_SAMPLE_HOLD_TOGGLE:  // Toggle shouldn't repeat
+    case ACTION_PUNCH_IN:  // Single-shot, handles its own timing
       return false;
     default:
       return true;
@@ -2110,6 +2220,83 @@ uint8_t action_repeat_division_to_beats(action_repeat_division_t div, uint8_t be
     case ACTION_REPEAT_SIXTEENTH: return 0;
     case ACTION_REPEAT_32ND:      return 0;
     default: return 1;
+  }
+}
+
+// ============================================================================
+// Punch-In Duration Helpers
+// ============================================================================
+
+const char* punch_in_duration_to_string(punch_in_duration_t duration) {
+  switch (duration) {
+    case PUNCH_IN_1_BEAT:  return "1_beat";
+    case PUNCH_IN_2_BEATS: return "2_beats";
+    case PUNCH_IN_3_BEATS: return "3_beats";
+    case PUNCH_IN_4_BEATS: return "4_beats";
+    case PUNCH_IN_5_BEATS: return "5_beats";
+    case PUNCH_IN_6_BEATS: return "6_beats";
+    case PUNCH_IN_7_BEATS: return "7_beats";
+    case PUNCH_IN_1_BAR:   return "1_bar";
+    case PUNCH_IN_2_BARS:  return "2_bars";
+    case PUNCH_IN_4_BARS:  return "4_bars";
+    case PUNCH_IN_8_BARS:  return "8_bars";
+    case PUNCH_IN_16_BARS: return "16_bars";
+    default: return "1_bar";
+  }
+}
+
+const char* punch_in_duration_to_display_string(punch_in_duration_t duration) {
+  switch (duration) {
+    case PUNCH_IN_1_BEAT:  return "1 Beat";
+    case PUNCH_IN_2_BEATS: return "2 Beats";
+    case PUNCH_IN_3_BEATS: return "3 Beats";
+    case PUNCH_IN_4_BEATS: return "4 Beats";
+    case PUNCH_IN_5_BEATS: return "5 Beats";
+    case PUNCH_IN_6_BEATS: return "6 Beats";
+    case PUNCH_IN_7_BEATS: return "7 Beats";
+    case PUNCH_IN_1_BAR:   return "1 Bar";
+    case PUNCH_IN_2_BARS:  return "2 Bars";
+    case PUNCH_IN_4_BARS:  return "4 Bars";
+    case PUNCH_IN_8_BARS:  return "8 Bars";
+    case PUNCH_IN_16_BARS: return "16 Bars";
+    default: return "1 Bar";
+  }
+}
+
+punch_in_duration_t punch_in_duration_from_string(const char* str) {
+  if (!str) return PUNCH_IN_1_BAR;
+  if (strcmp(str, "1_beat") == 0) return PUNCH_IN_1_BEAT;
+  if (strcmp(str, "2_beats") == 0) return PUNCH_IN_2_BEATS;
+  if (strcmp(str, "3_beats") == 0) return PUNCH_IN_3_BEATS;
+  if (strcmp(str, "4_beats") == 0) return PUNCH_IN_4_BEATS;
+  if (strcmp(str, "5_beats") == 0) return PUNCH_IN_5_BEATS;
+  if (strcmp(str, "6_beats") == 0) return PUNCH_IN_6_BEATS;
+  if (strcmp(str, "7_beats") == 0) return PUNCH_IN_7_BEATS;
+  if (strcmp(str, "1_bar") == 0) return PUNCH_IN_1_BAR;
+  if (strcmp(str, "2_bars") == 0) return PUNCH_IN_2_BARS;
+  if (strcmp(str, "4_bars") == 0) return PUNCH_IN_4_BARS;
+  if (strcmp(str, "8_bars") == 0) return PUNCH_IN_8_BARS;
+  if (strcmp(str, "16_bars") == 0) return PUNCH_IN_16_BARS;
+  return PUNCH_IN_1_BAR;
+}
+
+uint8_t punch_in_duration_to_beats(punch_in_duration_t duration, uint8_t beats_per_bar) {
+  if (beats_per_bar == 0) beats_per_bar = 4;
+
+  switch (duration) {
+    case PUNCH_IN_1_BEAT:  return 1;
+    case PUNCH_IN_2_BEATS: return 2;
+    case PUNCH_IN_3_BEATS: return 3;
+    case PUNCH_IN_4_BEATS: return 4;
+    case PUNCH_IN_5_BEATS: return 5;
+    case PUNCH_IN_6_BEATS: return 6;
+    case PUNCH_IN_7_BEATS: return 7;
+    case PUNCH_IN_1_BAR:   return beats_per_bar;
+    case PUNCH_IN_2_BARS:  return beats_per_bar * 2;
+    case PUNCH_IN_4_BARS:  return beats_per_bar * 4;
+    case PUNCH_IN_8_BARS:  return beats_per_bar * 8;
+    case PUNCH_IN_16_BARS: return beats_per_bar * 16;
+    default: return beats_per_bar;
   }
 }
 

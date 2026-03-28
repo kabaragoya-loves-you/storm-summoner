@@ -1,5 +1,6 @@
 #include "tempo.h"
 #include "transport.h"
+#include "scene.h"
 #include "event_bus.h"
 #include "midi_messages.h"
 #include "midi_out.h"
@@ -507,9 +508,10 @@ static void tempo_task(void *pvParameters) {
       vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
     }
     else { // CLOCK_SOURCE_MIDI
-      // In MIDI clock mode, beat/tick tracking is handled ENTIRELY by tempo_midi_clock_tick()
+      // In MIDI clock mode, beat/tick tracking is normally handled by tempo_midi_clock_tick()
       // which is called directly from the MIDI parser for each 0xF8 clock message.
-      // This task only monitors for dropout and handles optional clock re-transmission.
+      // However, when MIDI clock is not active, we fall back to internal beat generation
+      // to ensure the system remains functional.
       
       uint32_t now = esp_timer_get_time() / 1000;
       
@@ -531,10 +533,30 @@ static void tempo_task(void *pvParameters) {
         }
       }
       
-      // In MIDI mode, we do NOT generate our own clock or beat events here.
-      // All timing comes from tempo_midi_clock_tick() called by MIDI parser.
-      // Just sleep and check for dropout periodically.
-      vTaskDelay(pdMS_TO_TICKS(50));
+      if (s_midi_clock_active) {
+        // MIDI clock is active - timing comes from tempo_midi_clock_tick()
+        // Just sleep and check for dropout periodically
+        vTaskDelay(pdMS_TO_TICKS(50));
+      } else if (transport_is_playing() ||
+                 !scene_get_use_transport(scene_get_current_index())) {
+        // Generate beats internally when:
+        // 1. Transport is playing but MIDI clock not active (fallback), OR
+        // 2. Scene doesn't use transport controls (free-running clock)
+        uint16_t fallback_bpm = (s_midi_last_known_good_bpm > 0) ?
+          s_midi_last_known_good_bpm : s_bpm;
+        if (fallback_bpm == 0) fallback_bpm = 120;
+        
+        uint32_t beat_interval_ms = 60000 / fallback_bpm;
+        
+        s_beat_counter++;
+        if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+        publish_beat_event();
+        
+        vTaskDelay(pdMS_TO_TICKS(beat_interval_ms));
+      } else {
+        // Transport stopped/paused and no MIDI clock - just sleep
+        vTaskDelay(pdMS_TO_TICKS(50));
+      }
     }
   }
 }
@@ -769,6 +791,14 @@ tempo_clock_source_t tempo_get_source(void) {
   tempo_clock_source_t source = s_clock_source;
   xSemaphoreGive(s_state_mutex);
   return source;
+}
+
+bool tempo_is_midi_clock_active(void) {
+  if (!s_state_mutex) return false;
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool active = s_midi_clock_active;
+  xSemaphoreGive(s_state_mutex);
+  return active;
 }
 
 void tempo_sync_pulse(void) {
@@ -1174,6 +1204,14 @@ time_signature_t tempo_get_time_signature(void) {
   time_signature_t sig = s_time_signature;
   xSemaphoreGive(s_state_mutex);
   return sig;
+}
+
+uint8_t tempo_get_current_beat(void) {
+  if (!s_state_mutex) return 1;
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  uint8_t beat = s_beat_counter;
+  xSemaphoreGive(s_state_mutex);
+  return (beat == 0) ? 1 : beat;  // Return 1 if uninitialized
 }
 
 bool tempo_is_compound_meter(void) {

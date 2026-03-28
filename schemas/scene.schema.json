@@ -760,7 +760,8 @@
             "rtg_hold",
             "sample_hold_toggle",
             "sample_hold_hold",
-            "step"
+            "step",
+            "punch_in"
           ],
           "description": "Action type name"
         },
@@ -1394,6 +1395,49 @@
                 "enum": ["sh", "rtg"],
                 "default": "rtg",
                 "description": "Step target: sh (Sample & Hold) or rtg (Random Tone Generator)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "punch_in"}
+            }
+          },
+          "then": {
+            "required": ["start_cc", "start_value", "finish_cc", "finish_value"],
+            "properties": {
+              "start_cc": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number to send at recording start"
+              },
+              "start_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC value to send at recording start"
+              },
+              "finish_cc": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number to send when recording finishes"
+              },
+              "finish_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC value to send when recording finishes"
+              },
+              "duration": {
+                "type": "string",
+                "enum": ["1_beat", "2_beats", "3_beats", "4_beats", "5_beats", "6_beats", "7_beats",
+                         "1_bar", "2_bars", "4_bars", "8_bars", "16_bars"],
+                "default": "1_bar",
+                "description": "Duration of punch-in recording (beats or bars)"
               }
             }
           }
