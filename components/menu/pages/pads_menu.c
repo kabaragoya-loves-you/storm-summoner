@@ -252,6 +252,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_SAMPLE_HOLD_HOLD,
   ACTION_STEP,
   ACTION_PUNCH_IN,
+  ACTION_FLAG_CEREMONY,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -373,6 +374,7 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_SAMPLE_HOLD_HOLD: return "S+H Hold";
     case ACTION_STEP: return "Step";
     case ACTION_PUNCH_IN: return "Punch-In";
+    case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
     default: return "Unknown";
   }
 }
