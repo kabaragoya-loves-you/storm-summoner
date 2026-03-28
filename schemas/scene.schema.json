@@ -935,6 +935,18 @@
                 "maximum": 7,
                 "default": 0,
                 "description": "Current position in cycle"
+              },
+              "release_mode": {
+                "type": "string",
+                "enum": ["always", "if_held", "if_quick"],
+                "default": "always",
+                "description": "When to send release CC: always, if_held (>= threshold), if_quick (< threshold)"
+              },
+              "release_threshold_ms": {
+                "type": "integer",
+                "enum": [500, 750, 1000, 1500, 2000],
+                "default": 1000,
+                "description": "Hold duration threshold in ms (used when release_mode is not always)"
               }
             }
           }

@@ -50,6 +50,8 @@ static void progress_timer_cb(lv_timer_t *timer);
 static void update_progress_display(uint8_t percent);
 static void show_completion_ui(bool success);
 static void handle_button_press(int pad_id);
+static void subscribe_active_events(void);
+static void unsubscribe_active_events(void);
 
 // Progress timer callback - polls actual progress during transfer, animates during flash
 static void progress_timer_cb(lv_timer_t *timer) {
@@ -123,6 +125,7 @@ static void handle_button_press(int pad_id) {
   } else if (pad_id == 12) {
     // Cancel button - dismiss and return to previous module
     ESP_LOGI(TAG, "User dismissed update UI");
+    unsubscribe_active_events();
     g_state = UPDATING_STATE_IDLE;
     if (g_previous_module) {
       ui_set_draw_module(g_previous_module);
@@ -138,6 +141,9 @@ static void updating_event_handler(const event_t *event, void *context) {
     case EVENT_UPDATE_STARTED:
       ESP_LOGI(TAG, "Update started: type=%d, size=%lu",
         event->data.update.update_type, (unsigned long)event->data.update.total_size);
+
+      // Subscribe to remaining events now that update is active
+      subscribe_active_events();
 
       g_update_type = (update_type_t)event->data.update.update_type;
       g_state = UPDATING_STATE_RECEIVING;
@@ -259,22 +265,35 @@ static void updating_teardown(void) {
   ESP_LOGD(TAG, "Updating module teardown");
 }
 
-static bool s_subscribed = false;
+static bool s_init_subscribed = false;
+static bool s_active_subscribed = false;
 
-static void updating_init(void) {
-  // Only subscribe once - init may be called multiple times
-  if (s_subscribed) return;
-  s_subscribed = true;
-
-  // Subscribe to update events
-  event_bus_subscribe(EVENT_UPDATE_STARTED, updating_event_handler, NULL);
+// Subscribe to events only needed during active update
+static void subscribe_active_events(void) {
+  if (s_active_subscribed) return;
+  s_active_subscribed = true;
   event_bus_subscribe(EVENT_UPDATE_PROGRESS, updating_event_handler, NULL);
   event_bus_subscribe(EVENT_UPDATE_COMPLETE, updating_event_handler, NULL);
-
-  // Subscribe to touch events for button handling
   event_bus_subscribe(EVENT_TOUCH_RELEASE, touch_event_handler, NULL);
+}
 
-  ESP_LOGI(TAG, "Updating module initialized");
+// Unsubscribe from active update events
+static void unsubscribe_active_events(void) {
+  if (!s_active_subscribed) return;
+  s_active_subscribed = false;
+  event_bus_unsubscribe(EVENT_UPDATE_PROGRESS, updating_event_handler);
+  event_bus_unsubscribe(EVENT_UPDATE_COMPLETE, updating_event_handler);
+  event_bus_unsubscribe(EVENT_TOUCH_RELEASE, touch_event_handler);
+}
+
+static void updating_init(void) {
+  if (s_init_subscribed) return;
+  s_init_subscribed = true;
+
+  // Only subscribe to the trigger event at boot - other events subscribed on demand
+  event_bus_subscribe(EVENT_UPDATE_STARTED, updating_event_handler, NULL);
+
+  ESP_LOGI(TAG, "Updating module initialized (1 subscription)");
 }
 
 ui_draw_module_t updating_module = {

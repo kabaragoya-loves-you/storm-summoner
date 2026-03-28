@@ -3440,6 +3440,12 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddItemToObject(obj, "value", val_arr);
       if (val2_arr) cJSON_AddItemToObject(obj, "value2", val2_arr);
     }
+    // Add release mode fields for control_hold
+    if (action->type == ACTION_CONTROL_HOLD && action->params.control.release_mode != 0) {
+      const char* mode_str = (action->params.control.release_mode == 1) ? "if_held" : "if_quick";
+      cJSON_AddStringToObject(obj, "release_mode", mode_str);
+      cJSON_AddNumberToObject(obj, "release_threshold_ms", action->params.control.release_threshold_ms);
+    }
   } else if (action->type == ACTION_CONTROL_CYCLE) {
     uint8_t num_ccs = action->params.control.num_ccs;
     if (num_ccs == 0) num_ccs = 1;
@@ -3711,6 +3717,27 @@ static action_t json_to_action(cJSON* obj) {
           if (item) action.params.control.cycle_values[0][i] = item->valueint;
         }
       }
+    }
+  }
+  
+  // Parse release mode for control_hold
+  if (action.type == ACTION_CONTROL_HOLD) {
+    cJSON* release_mode = cJSON_GetObjectItem(obj, "release_mode");
+    if (release_mode && cJSON_IsString(release_mode)) {
+      const char* mode_str = release_mode->valuestring;
+      if (strcmp(mode_str, "if_held") == 0) {
+        action.params.control.release_mode = 1;
+      } else if (strcmp(mode_str, "if_quick") == 0) {
+        action.params.control.release_mode = 2;
+      } else {
+        action.params.control.release_mode = 0;  // "always" or unknown
+      }
+    }
+    cJSON* release_threshold = cJSON_GetObjectItem(obj, "release_threshold_ms");
+    if (release_threshold && cJSON_IsNumber(release_threshold)) {
+      action.params.control.release_threshold_ms = (uint16_t)release_threshold->valueint;
+    } else {
+      action.params.control.release_threshold_ms = 1000;  // Default 1 second
     }
   }
   

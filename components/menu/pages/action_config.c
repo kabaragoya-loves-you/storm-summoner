@@ -69,6 +69,8 @@ static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_cc_hold_cc_label[LABEL_BUFFER_SETS][40];
 static char s_cc_hold_press_label[LABEL_BUFFER_SETS][40];
 static char s_cc_hold_release_label[LABEL_BUFFER_SETS][40];
+static char s_cc_hold_followup_label[LABEL_BUFFER_SETS][32];
+static char s_cc_hold_duration_label[LABEL_BUFFER_SETS][32];
 static char s_cc_cycle_cc_label[LABEL_BUFFER_SETS][40];
 static char s_cc_cycle_step_labels[LABEL_BUFFER_SETS][8][40];
 static char s_preset_label[LABEL_BUFFER_SETS][32];
@@ -494,6 +496,31 @@ static const char* get_value_display(uint8_t cc_num, uint8_t value) {
     snprintf(buf, sizeof(buf), "%u", (unsigned)value);
   }
   return buf;
+}
+
+// Get display string for CC Hold follow-up mode
+static const char* get_followup_display(const action_t* action) {
+  if (!action) return "Always";
+  switch (action->params.control.release_mode) {
+    case 1: return "If Held";
+    case 2: return "If Quick";
+    default: return "Always";
+  }
+}
+
+// Get display string for CC Hold duration threshold
+static const char* get_duration_display(const action_t* action) {
+  if (!action) return "1 sec";
+  uint16_t ms = action->params.control.release_threshold_ms;
+  if (ms == 0) ms = 1000;  // Default
+  switch (ms) {
+    case 500: return "500ms";
+    case 750: return "750ms";
+    case 1000: return "1 sec";
+    case 1500: return "1.5 sec";
+    case 2000: return "2 sec";
+    default: return "1 sec";
+  }
 }
 
 // Get display name for a CC Cycle slot: just the CC name
@@ -1345,6 +1372,111 @@ static void nav_to_cc_hold_release(void* user_data) {
   nav_to_subpage("Release", cc_hold_release_roller_create);
 }
 
+// --- CC Hold: Follow-Up Mode Roller ---
+
+static lv_obj_t* cc_hold_followup_roller_create(void);
+
+static void cc_hold_followup_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+
+  // Map roller index to release mode (0=always, 1=if_held, 2=if_quick)
+  action->params.control.release_mode = (uint8_t)selected_index;
+
+  // Set default threshold if switching to conditional mode
+  if (selected_index != 0 && action->params.control.release_threshold_ms == 0) {
+    action->params.control.release_threshold_ms = 1000;  // Default to 1 second
+  }
+
+  ESP_LOGI(TAG, "CC Hold follow-up mode set to %u", (unsigned)selected_index);
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* cc_hold_followup_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = action->params.control.release_mode;
+  if (current_idx > 2) current_idx = 0;
+
+  return menu_create_roller_page("Follow-Up", "Always\nIf Held\nIf Quick",
+    current_idx, cc_hold_followup_confirm_cb, NULL);
+}
+
+static void nav_to_cc_hold_followup(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Follow-Up", cc_hold_followup_roller_create);
+}
+
+// --- CC Hold: Duration Threshold Roller ---
+
+static lv_obj_t* cc_hold_duration_roller_create(void);
+
+static void cc_hold_duration_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+
+  // Map roller index to threshold value
+  static const uint16_t thresholds[] = {500, 750, 1000, 1500, 2000};
+  if (selected_index < 5) {
+    action->params.control.release_threshold_ms = thresholds[selected_index];
+  }
+
+  ESP_LOGI(TAG, "CC Hold duration threshold set to %u ms",
+    (unsigned)action->params.control.release_threshold_ms);
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* cc_hold_duration_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint16_t threshold = action->params.control.release_threshold_ms;
+  if (threshold == 0) threshold = 1000;
+
+  // Map threshold to roller index
+  uint32_t current_idx = 2;  // Default to 1 sec
+  switch (threshold) {
+    case 500: current_idx = 0; break;
+    case 750: current_idx = 1; break;
+    case 1000: current_idx = 2; break;
+    case 1500: current_idx = 3; break;
+    case 2000: current_idx = 4; break;
+  }
+
+  return menu_create_roller_page("Duration", "500ms\n750ms\n1 sec\n1.5 sec\n2 sec",
+    current_idx, cc_hold_duration_confirm_cb, NULL);
+}
+
+static void nav_to_cc_hold_duration(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Duration", cc_hold_duration_roller_create);
+}
+
 // Custom back handler for slot submenus - recreates detail page with fresh labels
 static bool slot_submenu_back_handler(void) {
   menu_set_custom_back_handler(NULL);  // Clear handler before navigating
@@ -1382,10 +1514,10 @@ static lv_obj_t* cc_hold_slot_page_create(void) {
     } else {
       snprintf(s_cc_hold_cc_label[buf], sizeof(s_cc_hold_cc_label[buf]), "CC: %u", (unsigned)cc_num);
     }
-    
+
     const char* press_disp = get_value_display(cc_num, press_val);
     snprintf(s_cc_hold_press_label[buf], sizeof(s_cc_hold_press_label[buf]), "Press: %s", press_disp);
-    
+
     const char* release_disp = get_value_display(cc_num, release_val);
     snprintf(s_cc_hold_release_label[buf], sizeof(s_cc_hold_release_label[buf]), "Release: %s", release_disp);
   } else {
@@ -1393,14 +1525,14 @@ static lv_obj_t* cc_hold_slot_page_create(void) {
     snprintf(s_cc_hold_press_label[buf], sizeof(s_cc_hold_press_label[buf]), "Press: <none>");
     snprintf(s_cc_hold_release_label[buf], sizeof(s_cc_hold_release_label[buf]), "Release: <none>");
   }
-  
+
   s_cc_hold_items[0] = (menu_item_t){s_cc_hold_cc_label[buf], nav_to_cc_hold_cc, NULL, true};
   s_cc_hold_items[1] = (menu_item_t){s_cc_hold_press_label[buf], nav_to_cc_hold_press, NULL, is_active};
   s_cc_hold_items[2] = (menu_item_t){s_cc_hold_release_label[buf], nav_to_cc_hold_release, NULL, is_active};
-  
+
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
-  
+
   return menu_create_page(title, s_cc_hold_items, 3);
 }
 
@@ -4380,7 +4512,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       } else {
         slot_display = get_cc_slot_display(action, (uint8_t)i);
       }
-      
+
       if (strcmp(slot_display, "Inactive") == 0) {
         snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
           "Slot %d\nInactive", i + 1);
@@ -4391,6 +4523,26 @@ lv_obj_t* action_config_detail_page_create(void) {
       s_detail_items[item_count++] = (menu_item_t){
         s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
       };
+    }
+
+    // For Control Hold: add Follow-Up and Duration items
+    if (action->type == ACTION_CONTROL_HOLD && item_count < MAX_DETAIL_ITEMS) {
+      const char* followup_disp = get_followup_display(action);
+      snprintf(s_cc_hold_followup_label[buf], sizeof(s_cc_hold_followup_label[buf]),
+        "Follow-Up\n%s", followup_disp);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_cc_hold_followup_label[buf], nav_to_cc_hold_followup, NULL, true
+      };
+
+      // Show Duration only when follow-up mode is not "Always"
+      if (action->params.control.release_mode != 0 && item_count < MAX_DETAIL_ITEMS) {
+        const char* duration_disp = get_duration_display(action);
+        snprintf(s_cc_hold_duration_label[buf], sizeof(s_cc_hold_duration_label[buf]),
+          "Duration\n%s", duration_disp);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_cc_hold_duration_label[buf], nav_to_cc_hold_duration, NULL, true
+        };
+      }
     }
   }
   

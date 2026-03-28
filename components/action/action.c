@@ -1032,8 +1032,31 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
     case ACTION_CONTROL_HOLD:
       // Send value on press, value2 on release (momentary hold behavior)
       {
+        action_t* mutable_action = (action_t*)action;
         uint8_t num_ccs = action->params.control.num_ccs;
         if (num_ccs == 0) num_ccs = 1;  // Backward compat
+        
+        if (is_press) {
+          // Record press timestamp for release mode duration check
+          mutable_action->params.control.press_time_us = esp_timer_get_time();
+        } else {
+          // Check release mode to determine if we should send release CC
+          uint8_t mode = action->params.control.release_mode;
+          if (mode != 0) {  // Not "always"
+            int64_t elapsed_ms = (esp_timer_get_time() -
+              mutable_action->params.control.press_time_us) / 1000;
+            uint16_t threshold = action->params.control.release_threshold_ms;
+            if (threshold == 0) threshold = 1000;  // Default to 1 second
+            
+            bool should_send = (mode == 1) ? (elapsed_ms >= threshold)
+                                           : (elapsed_ms < threshold);
+            if (!should_send) {
+              ESP_LOGD(TAG, "CC Hold release skipped: mode=%d, elapsed=%lld, thresh=%u",
+                mode, (long long)elapsed_ms, (unsigned)threshold);
+              break;
+            }
+          }
+        }
         
         // Determine target values based on press/release
         uint8_t target_values[4];

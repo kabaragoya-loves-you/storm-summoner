@@ -209,6 +209,9 @@ typedef struct {
       uint8_t num_cycle_steps;    // For cycle: 2-8 steps (shared across all CCs)
       uint8_t cycle_values[4][8]; // For cycle: [cc_idx][step]
       uint8_t current_index;      // Current position in cycle (shared)
+      uint8_t release_mode;       // For hold: 0=always, 1=if_held, 2=if_quick
+      uint16_t release_threshold_ms; // For hold: duration threshold (500, 750, 1000, 1500, 2000)
+      int64_t press_time_us;      // For hold: timestamp when pressed (for duration check)
     } control;
     
     // For note actions (hold-style: press=on, release=off)
