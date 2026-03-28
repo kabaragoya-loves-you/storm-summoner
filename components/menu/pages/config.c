@@ -16,7 +16,8 @@ static char s_device_mode_label[40];
 static char s_change_mode_label[40];
 static char s_preset_wrap_label[40];
 static char s_persist_scene_label[40];
-static menu_item_t s_config_items[6];
+static char s_flag_enabled_label[48];
+static menu_item_t s_config_items[7];
 
 // ============================================================================
 // Scene Mode Roller
@@ -167,6 +168,33 @@ static void nav_to_persist_scene(void* user_data) {
 }
 
 // ============================================================================
+// Flag System Roller (Erect Flagpole)
+// ============================================================================
+
+static const char* FLAG_ENABLED_OPTIONS = "I just can't\nFuck it, why not";
+
+static void flag_enabled_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  bool enabled = (selected_index == 1);
+  config_set_flag_enabled(enabled);
+  ESP_LOGI(TAG, "Flag system set to %s", enabled ? "enabled" : "disabled");
+  
+  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+}
+
+static lv_obj_t* flag_enabled_roller_create(void) {
+  bool enabled = config_get_flag_enabled();
+  uint32_t current_idx = enabled ? 1 : 0;
+  return menu_create_roller_page("Erect Flagpole", FLAG_ENABLED_OPTIONS, current_idx,
+    flag_enabled_confirm_cb, NULL);
+}
+
+static void nav_to_flag_enabled(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Erect Flagpole", flag_enabled_roller_create);
+}
+
+// ============================================================================
 // Config Menu Page
 // ============================================================================
 
@@ -207,6 +235,12 @@ lv_obj_t* menu_page_config_create(void) {
   snprintf(s_persist_scene_label, sizeof(s_persist_scene_label), "Persist Scene\n%s",
     persist_scene ? "On" : "Off");
   s_config_items[idx++] = (menu_item_t){ s_persist_scene_label, nav_to_persist_scene, NULL, true };
+  
+  // Erect Flagpole (flag system enable) with current value
+  bool flag_enabled = config_get_flag_enabled();
+  snprintf(s_flag_enabled_label, sizeof(s_flag_enabled_label), "Erect Flagpole\n%s",
+    flag_enabled ? "Fuck it, why not" : "I just can't");
+  s_config_items[idx++] = (menu_item_t){ s_flag_enabled_label, nav_to_flag_enabled, NULL, true };
   
   return menu_create_page_2line("Scene", s_config_items, idx);
 }

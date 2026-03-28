@@ -761,7 +761,8 @@
             "sample_hold_toggle",
             "sample_hold_hold",
             "step",
-            "punch_in"
+            "punch_in",
+            "flag_ceremony"
           ],
           "description": "Action type name"
         },
@@ -808,6 +809,11 @@
           "type": "boolean",
           "default": false,
           "description": "Auto-trigger action when transport starts (only used when repeat=true)"
+        },
+        "raise_flag": {
+          "type": "boolean",
+          "default": false,
+          "description": "Set scene flag to 1 after action completes (when flag system enabled)"
         },
         "morph": {
           "type": "boolean",
@@ -1438,6 +1444,42 @@
                          "1_bar", "2_bars", "4_bars", "8_bars", "16_bars"],
                 "default": "1_bar",
                 "description": "Duration of punch-in recording (beats or bars)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "flag_ceremony"}
+            }
+          },
+          "then": {
+            "required": ["flag_up_cc", "flag_up_value", "flag_down_cc", "flag_down_value"],
+            "properties": {
+              "flag_up_cc": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number to send when flag is up (semaphore = 1)"
+              },
+              "flag_up_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC value to send when flag is up"
+              },
+              "flag_down_cc": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number to send when flag is down (semaphore = 0)"
+              },
+              "flag_down_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC value to send when flag is down"
               }
             }
           }

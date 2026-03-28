@@ -4,6 +4,7 @@
 #include "midi_out.h"
 #include "device_config.h"
 #include "scene.h"
+#include "config.h"
 #include "touchwheel_mode_mapping.h"
 #include "transport.h"
 #include "tempo.h"
@@ -185,6 +186,12 @@ typedef struct {
 } active_punch_in_t;
 
 static active_punch_in_t s_active_punch_ins[MAX_ACTIVE_PUNCH_INS];
+
+// ============================================================================
+// Flag System (scene-local semaphore)
+// ============================================================================
+
+static uint8_t s_scene_flag = 0;  // 0 = down, 1 = up; resets on scene change
 
 // Forward declarations for morph functions
 static void morph_timer_callback(void* arg);
@@ -671,7 +678,8 @@ void action_clear_pending(void) {
     s_active_punch_ins[i].active = false;
   }
   clear_all_repeating();
-  ESP_LOGD(TAG, "Cleared pending action queue, punch-ins, and repeating actions");
+  action_clear_flag();
+  ESP_LOGD(TAG, "Cleared pending action queue, punch-ins, repeating actions, and flag");
 }
 
 // Action type names for debugging
@@ -726,7 +734,8 @@ static const char* action_type_names[] = {
   [ACTION_SAMPLE_HOLD_TOGGLE] = "S+H Toggle",
   [ACTION_SAMPLE_HOLD_HOLD] = "S+H Hold",
   [ACTION_STEP] = "Step",
-  [ACTION_PUNCH_IN] = "Punch-In"
+  [ACTION_PUNCH_IN] = "Punch-In",
+  [ACTION_FLAG_CEREMONY] = "Flag Ceremony"
 };
 
 esp_err_t action_init(void) {
@@ -1738,11 +1747,47 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       }
       break;
 
+    case ACTION_FLAG_CEREMONY:
+      if (is_press) {
+        uint8_t cc, value;
+        bool took_down_path = false;
+        if (s_scene_flag == 1) {
+          cc = action->params.flag_ceremony.flag_up_cc;
+          value = action->params.flag_ceremony.flag_up_value;
+          s_scene_flag = 0;
+          ESP_LOGI(TAG, "Flag Ceremony: flag was UP, sending CC%d=%d, flag now DOWN",
+            cc, value);
+        } else {
+          cc = action->params.flag_ceremony.flag_down_cc;
+          value = action->params.flag_ceremony.flag_down_value;
+          took_down_path = true;
+          ESP_LOGI(TAG, "Flag Ceremony: flag was DOWN, sending CC%d=%d",
+            cc, value);
+        }
+        send_control_change(channel, cc, value);
+        s_last_cc_values[cc] = value;
+
+        // For FLAG_CEREMONY, only apply raise_flag if we took the "down" path
+        // (raising immediately after lowering would make it impossible to lower)
+        if (took_down_path && config_get_flag_enabled() && action->raise_flag) {
+          s_scene_flag = 1;
+          ESP_LOGD(TAG, "Raise the Flag: flag set to 1 after Flag Ceremony (down path)");
+        }
+      }
+      return ESP_OK;  // Skip generic raise_flag handling
+
     default:
       ESP_LOGW(TAG, "Unhandled action type: %d", action->type);
       return ESP_ERR_NOT_SUPPORTED;
   }
-  
+
+  // Handle raise_flag if enabled and action completed successfully
+  if (is_press && config_get_flag_enabled() && action->raise_flag) {
+    s_scene_flag = 1;
+    ESP_LOGD(TAG, "Raise the Flag: flag set to 1 after action %s",
+      action_type_to_string(action->type));
+  }
+
   return ESP_OK;
 }
 
@@ -2822,6 +2867,47 @@ bool action_supports_morph(action_type_t type) {
     default:
       return false;
   }
+}
+
+// ============================================================================
+// Flag System Functions
+// ============================================================================
+
+// Check if action type supports the "Raise the Flag" option
+bool action_supports_raise_flag(action_type_t type) {
+  switch (type) {
+    case ACTION_PLAY:
+    case ACTION_STOP:
+    case ACTION_PAUSE:
+    case ACTION_RECORD:
+    case ACTION_CONTROL_CHANGE:
+    case ACTION_CONTROL_HOLD:
+    case ACTION_CONTROL_CYCLE:
+    case ACTION_NOTE:
+    case ACTION_RANDOMIZE:
+    case ACTION_PUNCH_IN:
+    case ACTION_FLAG_CEREMONY:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Clear the scene flag (called on scene change)
+void action_clear_flag(void) {
+  s_scene_flag = 0;
+  ESP_LOGD(TAG, "Scene flag cleared");
+}
+
+// Get current flag state
+uint8_t action_get_flag(void) {
+  return s_scene_flag;
+}
+
+// Set flag state
+void action_set_flag(uint8_t value) {
+  s_scene_flag = value ? 1 : 0;
+  ESP_LOGD(TAG, "Scene flag set to %d", s_scene_flag);
 }
 
 // ============================================================================

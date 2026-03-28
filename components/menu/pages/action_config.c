@@ -3,6 +3,7 @@
 #include "menu_pages.h"
 #include "scene.h"
 #include "action.h"
+#include "config.h"
 #include "lfo.h"
 #include "touchwheel_mode_mapping.h"
 #include "tempo.h"
@@ -115,6 +116,9 @@ static char s_morph_label[LABEL_BUFFER_SETS][24];
 static char s_punch_in_start_label[LABEL_BUFFER_SETS][48];
 static char s_punch_in_finish_label[LABEL_BUFFER_SETS][48];
 static char s_punch_in_duration_label[LABEL_BUFFER_SETS][32];
+static char s_flag_ceremony_up_label[LABEL_BUFFER_SETS][48];
+static char s_flag_ceremony_down_label[LABEL_BUFFER_SETS][48];
+static char s_raise_flag_label[LABEL_BUFFER_SETS][40];
 static char s_morph_steps_label[LABEL_BUFFER_SETS][24];
 static char s_morph_manual_label[LABEL_BUFFER_SETS][24];
 static char s_morph_timing_label[LABEL_BUFFER_SETS][24];
@@ -186,6 +190,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_SAMPLE_HOLD_HOLD,
   ACTION_STEP,
   ACTION_PUNCH_IN,
+  ACTION_FLAG_CEREMONY,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -263,6 +268,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_SAMPLE_HOLD_HOLD: return "S+H Hold";
     case ACTION_STEP: return "Step";
     case ACTION_PUNCH_IN: return "Punch-In";
+    case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
     default: return "Unknown";
   }
 }
@@ -349,7 +355,10 @@ static bool is_action_visible(action_type_t type) {
       type == ACTION_TEMPO_HOLD || type == ACTION_TEMPO_CYCLE) {
     if (clock_source != CLOCK_SOURCE_INTERNAL) return false;
   }
-  
+
+  // Flag Ceremony only when flag system is enabled
+  if (type == ACTION_FLAG_CEREMONY && !config_get_flag_enabled()) return false;
+
   return true;
 }
 
@@ -3472,6 +3481,224 @@ static void nav_to_punch_in_duration(void* user_data) {
 }
 
 // ============================================================================
+// Flag Ceremony Configuration
+// ============================================================================
+
+// State for flag ceremony editing
+static bool s_editing_flag_up = true;  // true = flag up, false = flag down
+
+// Forward declarations
+static lv_obj_t* flag_ceremony_cc_roller_create(void);
+static lv_obj_t* flag_ceremony_value_roller_create(void);
+
+// --- Flag Ceremony CC Selection ---
+
+static void flag_ceremony_cc_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  if (selected_index >= s_cc_options.count) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  // Store pending CC and navigate to value roller
+  s_pending_cc_number = s_cc_options.cc_numbers[selected_index];
+  s_callback_in_progress = false;
+  nav_to_subpage("Value", flag_ceremony_value_roller_create);
+}
+
+static lv_obj_t* flag_ceremony_cc_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action || !s_cc_options.options_str) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint8_t current_cc = s_editing_flag_up ?
+    action->params.flag_ceremony.flag_up_cc : action->params.flag_ceremony.flag_down_cc;
+
+  // Find current CC in options
+  uint32_t current_idx = 0;
+  for (uint16_t i = 0; i < s_cc_options.count; i++) {
+    if (s_cc_options.cc_numbers[i] == current_cc) {
+      current_idx = i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("CC", s_cc_options.options_str, current_idx,
+    flag_ceremony_cc_confirm_cb, NULL);
+}
+
+// --- Flag Ceremony Value Selection ---
+
+static void flag_ceremony_value_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  uint8_t cc_value;
+
+  // Determine the actual value based on control type
+  if (s_pending_control && s_pending_control->discrete_count > 0) {
+    if (selected_index < s_pending_control->discrete_count) {
+      cc_value = (uint8_t)s_pending_control->discrete_values[selected_index].value;
+    } else {
+      cc_value = 0;
+    }
+  } else if (s_pending_control) {
+    cc_value = (uint8_t)(s_pending_control->min + selected_index);
+  } else {
+    cc_value = (uint8_t)selected_index;
+  }
+
+  // Store CC and value
+  if (s_editing_flag_up) {
+    action->params.flag_ceremony.flag_up_cc = s_pending_cc_number;
+    action->params.flag_ceremony.flag_up_value = cc_value;
+    ESP_LOGI(TAG, "Flag Ceremony up set to CC%d=%d", s_pending_cc_number, cc_value);
+  } else {
+    action->params.flag_ceremony.flag_down_cc = s_pending_cc_number;
+    action->params.flag_ceremony.flag_down_value = cc_value;
+    ESP_LOGI(TAG, "Flag Ceremony down set to CC%d=%d", s_pending_cc_number, cc_value);
+  }
+
+  s_pending_control = NULL;
+  s_callback_in_progress = false;
+  return_to_detail_page(3);  // Pop value roller, CC roller, old detail
+}
+
+static lv_obj_t* flag_ceremony_value_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+
+  // Get control definition for this CC
+  s_pending_control = device ? assets_get_control_by_cc(device, s_pending_cc_number) : NULL;
+
+  // Get current value
+  uint8_t current_val = s_editing_flag_up ?
+    action->params.flag_ceremony.flag_up_value : action->params.flag_ceremony.flag_down_value;
+
+  static char options[1024];
+  options[0] = '\0';
+  size_t pos = 0;
+  uint32_t current_idx = 0;
+
+  if (s_pending_control && s_pending_control->discrete_count > 0) {
+    // Discrete values from device
+    for (int i = 0; i < s_pending_control->discrete_count && pos < sizeof(options) - 32; i++) {
+      if (i > 0) options[pos++] = '\n';
+      const char* name = s_pending_control->discrete_values[i].name;
+      if (name && name[0]) {
+        pos += snprintf(options + pos, sizeof(options) - pos, "%s", name);
+      } else {
+        pos += snprintf(options + pos, sizeof(options) - pos, "%d",
+          (int)s_pending_control->discrete_values[i].value);
+      }
+      if (s_pending_control->discrete_values[i].value == current_val) {
+        current_idx = i;
+      }
+    }
+  } else if (s_pending_control) {
+    // Range from min to max
+    uint16_t min_val = s_pending_control->min;
+    uint16_t max_val = s_pending_control->max;
+    if (max_val > 127) max_val = 127;
+    for (uint16_t i = min_val; i <= max_val && pos < sizeof(options) - 8; i++) {
+      if (i > min_val) options[pos++] = '\n';
+      pos += snprintf(options + pos, sizeof(options) - pos, "%d", (int)i);
+    }
+    if (current_val >= min_val && current_val <= max_val) {
+      current_idx = current_val - min_val;
+    }
+  } else {
+    // Full 0-127 range
+    for (int i = 0; i <= 127 && pos < sizeof(options) - 8; i++) {
+      if (i > 0) options[pos++] = '\n';
+      pos += snprintf(options + pos, sizeof(options) - pos, "%d", i);
+    }
+    current_idx = current_val;
+  }
+
+  return menu_create_roller_page("Value", options, current_idx,
+    flag_ceremony_value_confirm_cb, NULL);
+}
+
+// --- Flag Ceremony Navigation ---
+
+static void nav_to_flag_ceremony_up(void* user_data) {
+  (void)user_data;
+  s_editing_flag_up = true;
+  nav_to_subpage("Flag Up CC", flag_ceremony_cc_roller_create);
+}
+
+static void nav_to_flag_ceremony_down(void* user_data) {
+  (void)user_data;
+  s_editing_flag_up = false;
+  nav_to_subpage("Flag Down CC", flag_ceremony_cc_roller_create);
+}
+
+// ============================================================================
+// Raise the Flag Roller
+// ============================================================================
+
+static const char* RAISE_FLAG_OPTIONS = "Not today\nSure, why not";
+
+static void raise_flag_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action->raise_flag = (selected_index == 1);
+
+  ESP_LOGI(TAG, "Raise the Flag set to %s", action->raise_flag ? "On" : "Off");
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* raise_flag_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = action->raise_flag ? 1 : 0;
+
+  return menu_create_roller_page("Raise the Flag", RAISE_FLAG_OPTIONS, current_idx,
+    raise_flag_confirm_cb, NULL);
+}
+
+static void nav_to_raise_flag(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Raise the Flag", raise_flag_roller_create);
+}
+
+// ============================================================================
 // Clock Mode Roller (for clock toggle/hold actions)
 // ============================================================================
 
@@ -5321,6 +5548,33 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
+  // Show Flag Ceremony configuration
+  if (action->type == ACTION_FLAG_CEREMONY) {
+    // Flag Up CC/Value
+    if (item_count < MAX_DETAIL_ITEMS) {
+      uint8_t up_cc = action->params.flag_ceremony.flag_up_cc;
+      uint8_t up_val = action->params.flag_ceremony.flag_up_value;
+      snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
+        "Flag Up\n%s: %s", get_cc_display_name(up_cc),
+        get_cc_value_display_name(up_cc, up_val));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_flag_ceremony_up_label[buf], nav_to_flag_ceremony_up, NULL, true
+      };
+    }
+
+    // Flag Down CC/Value
+    if (item_count < MAX_DETAIL_ITEMS) {
+      uint8_t down_cc = action->params.flag_ceremony.flag_down_cc;
+      uint8_t down_val = action->params.flag_ceremony.flag_down_value;
+      snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
+        "Flag Down\n%s: %s", get_cc_display_name(down_cc),
+        get_cc_value_display_name(down_cc, down_val));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_flag_ceremony_down_label[buf], nav_to_flag_ceremony_down, NULL, true
+      };
+    }
+  }
+
   // Show Timing selector for non-HOLD actions (actions that support timing)
   if (action_supports_timing(action->type) && item_count < MAX_DETAIL_ITEMS) {
     const char* timing_display = get_timing_display(action);
@@ -5439,6 +5693,16 @@ lv_obj_t* action_config_detail_page_create(void) {
         };
       }
     }
+  }
+
+  // Show Raise the Flag option for actions that support it (when flag system enabled)
+  if (config_get_flag_enabled() && action_supports_raise_flag(action->type) &&
+      item_count < MAX_DETAIL_ITEMS) {
+    snprintf(s_raise_flag_label[buf], sizeof(s_raise_flag_label[buf]),
+      "Raise the Flag\n%s", action->raise_flag ? "Sure, why not" : "Not today");
+    s_detail_items[item_count++] = (menu_item_t){
+      s_raise_flag_label[buf], nav_to_raise_flag, NULL, true
+    };
   }
   
   const char* title = s_ctx->detail_title ? s_ctx->detail_title : "Action";

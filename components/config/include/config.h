@@ -36,5 +36,11 @@ esp_err_t config_set_last_scene(uint8_t scene_index);
 device_mode_t config_get_device_mode(void);
 esp_err_t config_set_device_mode(device_mode_t mode);
 
+// Flag system setting
+// When true: the "Flag Ceremony" action and "Raise the Flag" option are available
+// When false: flag-related features are hidden (default)
+bool config_get_flag_enabled(void);
+esp_err_t config_set_flag_enabled(bool enabled);
+
 #endif // CONFIG_H
 

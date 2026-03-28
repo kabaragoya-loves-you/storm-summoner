@@ -3346,7 +3346,8 @@ static const char* action_type_json_names[] = {
   [ACTION_SAMPLE_HOLD_TOGGLE] = "sample_hold_toggle",
   [ACTION_SAMPLE_HOLD_HOLD] = "sample_hold_hold",
   [ACTION_STEP] = "step",
-  [ACTION_PUNCH_IN] = "punch_in"
+  [ACTION_PUNCH_IN] = "punch_in",
+  [ACTION_FLAG_CEREMONY] = "flag_ceremony"
 };
 
 // Helper to convert action type string to enum
@@ -3579,8 +3580,13 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddNumberToObject(obj, "finish_value", action->params.punch_in.finish_value);
     cJSON_AddStringToObject(obj, "duration",
       punch_in_duration_to_string(action->params.punch_in.duration));
+  } else if (action->type == ACTION_FLAG_CEREMONY) {
+    cJSON_AddNumberToObject(obj, "flag_up_cc", action->params.flag_ceremony.flag_up_cc);
+    cJSON_AddNumberToObject(obj, "flag_up_value", action->params.flag_ceremony.flag_up_value);
+    cJSON_AddNumberToObject(obj, "flag_down_cc", action->params.flag_ceremony.flag_down_cc);
+    cJSON_AddNumberToObject(obj, "flag_down_value", action->params.flag_ceremony.flag_down_value);
   }
-  
+
   // Serialize timing (only if not immediate default)
   if (action->timing != ACTION_TIMING_IMMEDIATE) {
     const char* timing_str = action_timing_to_string(action->timing, action->timing_beat);
@@ -3606,7 +3612,12 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddBoolToObject(obj, "transport_trigger", true);
     }
   }
-  
+
+  // Serialize raise_flag (only if enabled)
+  if (action->raise_flag) {
+    cJSON_AddBoolToObject(obj, "raise_flag", true);
+  }
+
   // Serialize morph settings (only if enabled, for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
   if (action->morph_enabled && action_supports_morph(action->type)) {
     cJSON_AddBoolToObject(obj, "morph", true);
@@ -4010,7 +4021,20 @@ static action_t json_to_action(cJSON* obj) {
       action.params.punch_in.duration = PUNCH_IN_1_BAR;  // Default
     }
   }
-  
+
+  // Parse flag ceremony action
+  if (action.type == ACTION_FLAG_CEREMONY) {
+    cJSON* flag_up_cc = cJSON_GetObjectItem(obj, "flag_up_cc");
+    cJSON* flag_up_value = cJSON_GetObjectItem(obj, "flag_up_value");
+    cJSON* flag_down_cc = cJSON_GetObjectItem(obj, "flag_down_cc");
+    cJSON* flag_down_value = cJSON_GetObjectItem(obj, "flag_down_value");
+
+    if (flag_up_cc) action.params.flag_ceremony.flag_up_cc = (uint8_t)flag_up_cc->valueint;
+    if (flag_up_value) action.params.flag_ceremony.flag_up_value = (uint8_t)flag_up_value->valueint;
+    if (flag_down_cc) action.params.flag_ceremony.flag_down_cc = (uint8_t)flag_down_cc->valueint;
+    if (flag_down_value) action.params.flag_ceremony.flag_down_value = (uint8_t)flag_down_value->valueint;
+  }
+
   // Parse timing (default: immediate)
   cJSON* timing = cJSON_GetObjectItem(obj, "timing");
   if (timing && cJSON_IsString(timing)) {
@@ -4058,7 +4082,14 @@ static action_t json_to_action(cJSON* obj) {
   if (transport_trigger && cJSON_IsBool(transport_trigger)) {
     action.transport_trigger = cJSON_IsTrue(transport_trigger);
   }
-  
+
+  // Parse raise_flag (default: disabled)
+  action.raise_flag = false;
+  cJSON* raise_flag = cJSON_GetObjectItem(obj, "raise_flag");
+  if (raise_flag && cJSON_IsBool(raise_flag)) {
+    action.raise_flag = cJSON_IsTrue(raise_flag);
+  }
+
   // Parse morph settings (default: disabled, only for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
   action.morph_enabled = false;
   action.morph_steps_mode = MORPH_STEPS_AUTO;

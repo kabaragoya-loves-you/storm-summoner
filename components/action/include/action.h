@@ -92,6 +92,9 @@ typedef enum {
 
   // Looper punch-in
   ACTION_PUNCH_IN,            // Send start CC at bar, finish CC after duration
+
+  // Flag ceremony (scene-local semaphore)
+  ACTION_FLAG_CEREMONY,       // Check flag state, send CC, flip flag
   
   ACTION_MAX
 } action_type_t;
@@ -209,6 +212,7 @@ typedef struct {
   uint8_t pattern_length;              // Step pattern length 2-8 (0 = disabled, only for repeating)
   uint8_t pattern_mask;                // Bitmask of active steps (bit 0 = step 1)
   bool transport_trigger;              // Auto-trigger when transport starts (for repeating actions)
+  bool raise_flag;                     // Set scene flag to 1 after action completes (when flag system enabled)
   
   // Morph configuration (for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
   bool morph_enabled;                  // Enable smooth value transition
@@ -342,6 +346,14 @@ typedef struct {
       uint8_t finish_value;     // CC value to send at end
       punch_in_duration_t duration;  // How long to record
     } punch_in;
+
+    // For flag ceremony action (scene-local semaphore)
+    struct {
+      uint8_t flag_up_cc;       // CC number to send when flag is up (1)
+      uint8_t flag_up_value;    // CC value to send when flag is up
+      uint8_t flag_down_cc;     // CC number to send when flag is down (0)
+      uint8_t flag_down_value;  // CC value to send when flag is down
+    } flag_ceremony;
   } params;
 } action_t;
 
@@ -478,6 +490,22 @@ bool action_supports_morph(action_type_t type);
 
 // Clear all active morphs (call on scene change)
 void action_clear_morphs(void);
+
+// ============================================================================
+// Flag System API (scene-local semaphore)
+// ============================================================================
+
+// Check if action type supports the "Raise the Flag" option
+bool action_supports_raise_flag(action_type_t type);
+
+// Clear the scene flag (call on scene change)
+void action_clear_flag(void);
+
+// Get current flag state (0 or 1)
+uint8_t action_get_flag(void);
+
+// Set flag state
+void action_set_flag(uint8_t value);
 
 // ============================================================================
 // CC Value Cache API
