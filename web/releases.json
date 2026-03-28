@@ -1,6 +1,7 @@
 {
-  "generated": "2026-03-25T21:07:00Z",
+  "generated": "2026-03-28T08:42:04Z",
   "firmware": [
+    { "version": "0.2", "filename": "storm-summoner-0.2.bin", "date": "2026-03-28" },
     { "version": "0.1", "filename": "storm-summoner-0.1.bin", "date": "2026-03-25" }
   ],
   "assets": [
