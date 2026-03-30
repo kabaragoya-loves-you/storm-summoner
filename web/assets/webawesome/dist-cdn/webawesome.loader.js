@@ -1,36 +1,44 @@
-/*! Copyright 2025 Fonticons, Inc. - https://webawesome.com/license */
-import "./chunks/chunk.OUHSDUJQ.js";
+/*! Copyright 2026 Fonticons, Inc. - https://webawesome.com/license */
+import "./chunks/chunk.OWXHWWWF.js";
+import "./chunks/chunk.VWU24OZA.js";
+import "./chunks/chunk.N2TXQSKF.js";
+import "./chunks/chunk.KBS6YHTA.js";
 import {
-  allDefined,
   discover,
   preventTurboFouce,
-  serialize,
   startLoader,
   stopLoader
-} from "./chunks/chunk.RRCUZAZD.js";
+} from "./chunks/chunk.2PWIIYRH.js";
+import {
+  allDefined
+} from "./chunks/chunk.X55YNZ3B.js";
+import {
+  serialize
+} from "./chunks/chunk.LRYJ2M5H.js";
 import {
   getAnimationNames,
   getEasingNames
-} from "./chunks/chunk.TSKE2QNQ.js";
-import "./chunks/chunk.DR3YY3XN.js";
-import "./chunks/chunk.YR76HA7F.js";
+} from "./chunks/chunk.OJH6FSGP.js";
+import "./chunks/chunk.ZNBKTX2R.js";
+import "./chunks/chunk.PQKYBDVH.js";
 import {
   registerTranslation
-} from "./chunks/chunk.BYHIFG43.js";
+} from "./chunks/chunk.HPOJN4W7.js";
 import {
   getDefaultIconFamily,
   registerIconLibrary,
   setDefaultIconFamily,
   unregisterIconLibrary
-} from "./chunks/chunk.LTSJC6DR.js";
+} from "./chunks/chunk.FSRXYGSW.js";
+import "./chunks/chunk.JVTAGR5B.js";
 import {
   getBasePath,
   getKitCode,
   setBasePath,
   setKitCode
-} from "./chunks/chunk.I3WWI2TE.js";
-import "./chunks/chunk.64T5YF4D.js";
-import "./chunks/chunk.6E4D3PD7.js";
+} from "./chunks/chunk.K6QMUIHP.js";
+import "./chunks/chunk.KPN3YZ6U.js";
+import "./chunks/chunk.AIIMJL75.js";
 export {
   allDefined,
   discover,

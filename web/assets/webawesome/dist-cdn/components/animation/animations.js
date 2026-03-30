@@ -1,10 +1,10 @@
-/*! Copyright 2025 Fonticons, Inc. - https://webawesome.com/license */
+/*! Copyright 2026 Fonticons, Inc. - https://webawesome.com/license */
 import {
   dist_exports,
   getAnimationNames,
   getEasingNames
-} from "../../chunks/chunk.TSKE2QNQ.js";
-import "../../chunks/chunk.6E4D3PD7.js";
+} from "../../chunks/chunk.OJH6FSGP.js";
+import "../../chunks/chunk.AIIMJL75.js";
 export {
   dist_exports as animations,
   getAnimationNames,

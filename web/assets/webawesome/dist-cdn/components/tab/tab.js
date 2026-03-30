@@ -1,13 +1,15 @@
-/*! Copyright 2025 Fonticons, Inc. - https://webawesome.com/license */
+/*! Copyright 2026 Fonticons, Inc. - https://webawesome.com/license */
 import {
   WaTab
-} from "../../chunks/chunk.OGU6AJF3.js";
-import "../../chunks/chunk.6MY2PWCO.js";
-import "../../chunks/chunk.UPM3QQ2M.js";
-import "../../chunks/chunk.N3AZYXKV.js";
-import "../../chunks/chunk.7F6EHFYD.js";
-import "../../chunks/chunk.23WMFJHA.js";
-import "../../chunks/chunk.6E4D3PD7.js";
+} from "../../chunks/chunk.C6U3C7XT.js";
+import "../../chunks/chunk.LH72HXK6.js";
+import "../../chunks/chunk.KWDPKKFO.js";
+import "../../chunks/chunk.H23DVATU.js";
+import "../../chunks/chunk.PZAN6FPN.js";
+import "../../chunks/chunk.6KESNGYW.js";
+import "../../chunks/chunk.7OBLIRXR.js";
+import "../../chunks/chunk.BKE5EYM3.js";
+import "../../chunks/chunk.AIIMJL75.js";
 export {
   WaTab as default
 };

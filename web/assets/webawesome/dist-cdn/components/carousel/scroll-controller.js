@@ -1,11 +1,11 @@
-/*! Copyright 2025 Fonticons, Inc. - https://webawesome.com/license */
+/*! Copyright 2026 Fonticons, Inc. - https://webawesome.com/license */
 import {
   waitForEvent
-} from "../../chunks/chunk.MDCY6RAP.js";
+} from "../../chunks/chunk.F25QOBDY.js";
 import {
   prefersReducedMotion
-} from "../../chunks/chunk.EFWMJOG7.js";
-import "../../chunks/chunk.6E4D3PD7.js";
+} from "../../chunks/chunk.L6CIKOFQ.js";
+import "../../chunks/chunk.AIIMJL75.js";
 
 // src/components/carousel/scroll-controller.ts
 var ScrollController = class {
