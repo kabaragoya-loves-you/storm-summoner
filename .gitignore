@@ -8,8 +8,8 @@ dependencies.lock
 # IDE files
 .clang-format
 .editorconfig
-.vscode/settings.json
+.vscode/
+.devcontainer/
 
 # MIDI device cache (auto-generated)
 midi-devices/cache/*.bin
-captures/

@@ -367,7 +367,6 @@ static bool check_sync_clock_dropout(uint32_t now_ms) {
 static void tempo_task(void *pvParameters) {
   ESP_LOGD(TAG, "Tempo task running");
   
-  TickType_t last_wake_time = xTaskGetTickCount();
   uint16_t last_bpm = s_bpm;
   bool was_running = false;  // Track state transitions
   
@@ -381,10 +380,8 @@ static void tempo_task(void *pvParameters) {
       continue;
     }
     
-    // Reset timing reference when transitioning from idle to running
-    // This prevents vTaskDelayUntil from "catching up" with a stale timestamp
+    // Track state transitions
     if (!was_running) {
-      last_wake_time = xTaskGetTickCount();
       was_running = true;
     }
     
@@ -412,9 +409,18 @@ static void tempo_task(void *pvParameters) {
           break;
       }
       
-      // Calculate tick interval (minimum 10ms to ensure at least 1 FreeRTOS tick)
-      uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
-      if (tick_interval_ms < 10) tick_interval_ms = 10;
+      // Calculate tick interval in MICROSECONDS for precision
+      // FreeRTOS ticks (10ms at 100Hz) are too coarse for MIDI timing
+      uint32_t tick_interval_us = 60000000 / (ppqn * current_bpm);
+      
+      // Track target time with microsecond precision to prevent drift
+      static int64_t next_tick_time_us = 0;
+      int64_t now_us = esp_timer_get_time();
+      
+      // Initialize or reset if we've drifted too far (e.g., after pause)
+      if (next_tick_time_us == 0 || (now_us - next_tick_time_us) > 1000000) {
+        next_tick_time_us = now_us;
+      }
       
       // Send MIDI clock directly (low latency requirement)
       if (!s_clock_muted) send_clock();
@@ -441,10 +447,36 @@ static void tempo_task(void *pvParameters) {
       if (current_bpm != last_bpm) {
         last_bpm = current_bpm;
         publish_tempo_changed_event();
+        // Reset timing on BPM change for immediate response
+        next_tick_time_us = now_us + tick_interval_us;
+      } else {
+        // Schedule next tick
+        next_tick_time_us += tick_interval_us;
       }
       
-      // Delay until next tick
-      vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
+      // Calculate delay needed to hit target time
+      now_us = esp_timer_get_time();
+      int64_t delay_us = next_tick_time_us - now_us;
+      
+      // If we're behind schedule, catch up without sleeping
+      if (delay_us <= 0) {
+        taskYIELD();  // Let other tasks run briefly
+        continue;
+      }
+      
+      // Convert to ticks, rounding UP to avoid waking too early
+      // Then fine-tune with a spin-wait if needed for precision
+      uint32_t delay_ms = (uint32_t)((delay_us + 999) / 1000);
+      uint32_t delay_ticks = (delay_ms * configTICK_RATE_HZ + 999) / 1000;
+      if (delay_ticks > 1) {
+        // Sleep for slightly less to allow spin-wait fine-tuning
+        vTaskDelay(delay_ticks - 1);
+      }
+      
+      // Spin-wait for precise timing (only for short remaining time)
+      while (esp_timer_get_time() < next_tick_time_us) {
+        // Busy wait for final microseconds
+      }
     }
     else if (source == CLOCK_SOURCE_SYNC) {
       // In SYNC mode, we track incoming pulses with dropout protection
@@ -485,8 +517,16 @@ static void tempo_task(void *pvParameters) {
           break;
       }
       
-      uint32_t tick_interval_ms = 60000 / (ppqn * current_bpm);
-      if (tick_interval_ms < 10) tick_interval_ms = 10;
+      // Calculate tick interval in MICROSECONDS for precision
+      uint32_t tick_interval_us = 60000000 / (ppqn * current_bpm);
+      
+      // Track target time with microsecond precision
+      static int64_t sync_next_tick_time_us = 0;
+      int64_t now_us = esp_timer_get_time();
+      
+      if (sync_next_tick_time_us == 0 || (now_us - sync_next_tick_time_us) > 1000000) {
+        sync_next_tick_time_us = now_us;
+      }
       
       if (!s_clock_muted) send_clock();
       
@@ -505,7 +545,27 @@ static void tempo_task(void *pvParameters) {
         publish_beat_event();
       }
       
-      vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tick_interval_ms));
+      // Schedule next tick
+      sync_next_tick_time_us += tick_interval_us;
+      
+      // Calculate delay needed
+      now_us = esp_timer_get_time();
+      int64_t delay_us = sync_next_tick_time_us - now_us;
+      
+      if (delay_us <= 0) {
+        taskYIELD();
+        continue;
+      }
+      
+      uint32_t delay_ms = (uint32_t)((delay_us + 999) / 1000);
+      uint32_t delay_ticks = (delay_ms * configTICK_RATE_HZ + 999) / 1000;
+      if (delay_ticks > 1) {
+        vTaskDelay(delay_ticks - 1);
+      }
+      
+      while (esp_timer_get_time() < sync_next_tick_time_us) {
+        // Busy wait for final microseconds
+      }
     }
     else { // CLOCK_SOURCE_MIDI
       // In MIDI clock mode, beat/tick tracking is normally handled by tempo_midi_clock_tick()
