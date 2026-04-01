@@ -18,7 +18,7 @@ static lv_obj_t* calibration_page_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_PROX_ITEMS 8
+#define MAX_PROX_ITEMS 10
 static menu_item_t s_prox_items[MAX_PROX_ITEMS];
 
 static char s_deadzone_label[LABEL_BUFFER_SETS][32];
@@ -28,6 +28,8 @@ static char s_return_speed_label[LABEL_BUFFER_SETS][40];
 static char s_timeout_label[LABEL_BUFFER_SETS][40];
 static char s_note_silence_label[LABEL_BUFFER_SETS][40];
 static char s_calibrate_label[LABEL_BUFFER_SETS][32];
+static char s_sunlight_label[LABEL_BUFFER_SETS][48];
+static char s_gamma_label[LABEL_BUFFER_SETS][40];
 
 static bool s_callback_in_progress = false;
 
@@ -559,6 +561,75 @@ static void nav_to_note_silence(void* user_data) {
 }
 
 // ============================================================================
+// Sunlight Cancellation Roller (ambient IR rejection)
+// ============================================================================
+
+static void sunlight_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  proximity_set_sunlight_cancel(selected_index == 1);
+  ESP_LOGI(TAG, "Sunlight cancellation %s", selected_index == 1 ? "enabled" : "disabled");
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Proximity", menu_page_settings_proximity_create);
+}
+
+static lv_obj_t* sunlight_roller_create(void) {
+  static const char* options = "Off\nOn";
+  
+  uint32_t current = proximity_get_sunlight_cancel() ? 1 : 0;
+  
+  return menu_create_roller_page("IR Rejection", options, current, sunlight_confirm_cb, NULL);
+}
+
+static void nav_to_sunlight(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("IR Rejection", sunlight_roller_create);
+}
+
+// ============================================================================
+// Gamma Roller (inverse-square compensation)
+// ============================================================================
+
+static void gamma_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  
+  // Map index 0-20 to gamma 0-100 (steps of 5)
+  uint8_t gamma = (uint8_t)(selected_index * 5);
+  proximity_set_gamma(gamma);
+  ESP_LOGI(TAG, "Gamma set to: %u (%.2f)", gamma, 0.15f + gamma * 0.0085f);
+  
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Proximity", menu_page_settings_proximity_create);
+}
+
+static lv_obj_t* gamma_roller_create(void) {
+  // 21 options: 0, 5, 10, ..., 100 (maps to gamma 0.15-1.00)
+  static const char* options = 
+    "0 (0.15)\n5 (0.19)\n10 (0.24)\n15 (0.28)\n20 (0.32)\n"
+    "25 (0.36)\n30 (0.41)\n35 (0.45)\n40 (0.49)\n45 (0.53)\n"
+    "50 (0.58)\n55 (0.62)\n60 (0.66)\n65 (0.70)\n70 (0.75)\n"
+    "75 (0.79)\n80 (0.83)\n85 (0.87)\n90 (0.92)\n95 (0.96)\n100 (1.00)";
+  
+  uint8_t current = proximity_get_gamma();
+  uint32_t idx = current / 5;
+  if (idx > 20) idx = 20;
+  
+  return menu_create_roller_page("Gamma", options, idx, gamma_confirm_cb, NULL);
+}
+
+static void nav_to_gamma(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Gamma", gamma_roller_create);
+}
+
+// ============================================================================
 // Main Settings Proximity Page
 // ============================================================================
 
@@ -571,6 +642,18 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
   // Calibrate (at top, no second line)
   snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]), "Calibrate\n");
   s_prox_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  
+  // Sunlight/IR Rejection (ambient IR cancellation)
+  bool sunlight_enabled = proximity_get_sunlight_cancel();
+  snprintf(s_sunlight_label[buf], sizeof(s_sunlight_label[buf]),
+    "IR Rejection\n%s", sunlight_enabled ? "On" : "Off");
+  s_prox_items[item_count++] = (menu_item_t){s_sunlight_label[buf], nav_to_sunlight, NULL, true};
+  
+  // Gamma (inverse-square compensation)
+  uint8_t gamma = proximity_get_gamma();
+  snprintf(s_gamma_label[buf], sizeof(s_gamma_label[buf]),
+    "Gamma\n%u (%.2f)", gamma, 0.15f + gamma * 0.0085f);
+  s_prox_items[item_count++] = (menu_item_t){s_gamma_label[buf], nav_to_gamma, NULL, true};
   
   // Hysteresis Enable (for CC mode)
   bool hyst_enabled = proximity_get_hysteresis_enabled();

@@ -115,6 +115,16 @@ uint8_t proximity_get_theremin_velocity(void);
 void proximity_set_note_silence_on_low(bool enabled);
 bool proximity_get_note_silence_on_low(void);
 
+// Sunlight/IR cancellation (PS_SC_EN) - rejects ambient IR interference
+void proximity_set_sunlight_cancel(bool enabled);
+bool proximity_get_sunlight_cancel(void);
+
+// Gamma correction for inverse-square compensation (0-100, maps to 0.15-1.00)
+// Lower gamma values expand low readings (useful for proximity sensors)
+// Default 25 = gamma 0.36
+void proximity_set_gamma(uint8_t gamma);
+uint8_t proximity_get_gamma(void);
+
 // Helper to get timeout in milliseconds
 uint32_t proximity_get_timeout_ms(void);
 

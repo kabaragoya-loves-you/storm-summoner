@@ -12,12 +12,13 @@
 #include "ui.h"
 #include <inttypes.h>
 #include <stdlib.h>
+#include <math.h>
 #include "task_priorities.h"
 
 #define TAG "SENSOR"
 // Default calibration values
-#define DEFAULT_PROXIMITY_MIN 1     // Minimum value when nothing is near
-#define DEFAULT_PROXIMITY_MAX 500    // Maximum value when finger is close (adjust based on testing)
+#define DEFAULT_PROXIMITY_MIN 0       // Minimum value when nothing is near
+#define DEFAULT_PROXIMITY_MAX 2200    // Maximum value when finger is close (12-bit mode max ~4095)
 #define DEFAULT_PROXIMITY_DEADZONE 1 // Minimum change required to send MIDI
 #define PROXIMITY_IIR_ALPHA 0.2f     // Filter coefficient for smoothing
 
@@ -50,6 +51,9 @@
 #define DEFAULT_REST_POSITION 65
 #define NVS_KEY_PROXIMITY_MODE "prox_mode"
 #define NVS_KEY_NOTE_SILENCE "prox_note_sil"
+#define NVS_KEY_SUNLIGHT_CANCEL "prox_sc_en"
+#define NVS_KEY_PS_GAMMA "prox_gamma"
+#define DEFAULT_PS_GAMMA 25  // Stored as 0-100, applied as 0.15-1.00 (25 = 0.36)
 // Theremin settings now come from scene->proximity mapping (base_note, note_range, velocity)
 
 static TaskHandle_t sensor_task_handle = NULL;
@@ -97,6 +101,8 @@ static volatile uint32_t return_start_time = 0;   // When return started
 // Mode settings (note generation now handled by midi_proximity_scene_handler)
 static proximity_mode_t proximity_mode = PROXIMITY_MODE_CC;
 static volatile bool note_silence_on_low = true;  // Send note_off when sensor is out of range
+static bool sunlight_cancel_enabled = false;  // PS_SC_EN for ambient IR rejection
+static uint8_t proximity_gamma = DEFAULT_PS_GAMMA;  // Gamma for inverse-square compensation (50 = 0.60)
 
 void sensor_init(bool enable_logging) {
   esp_err_t err;
@@ -224,6 +230,23 @@ void sensor_init(bool enable_logging) {
     note_silence_on_low = (stored_val != 0);
   }
 
+  // Load sunlight cancellation setting
+  uint8_t sc_enabled = 0;
+  if (app_settings_load_u8(NVS_KEY_SUNLIGHT_CANCEL, &sc_enabled) == ESP_OK) {
+    sunlight_cancel_enabled = (sc_enabled != 0);
+  } else {
+    app_settings_save_u8(NVS_KEY_SUNLIGHT_CANCEL, 0);  // Default: disabled
+  }
+
+  // Load proximity gamma setting (inverse-square compensation)
+  uint8_t stored_gamma = DEFAULT_PS_GAMMA;
+  if (app_settings_load_u8(NVS_KEY_PS_GAMMA, &stored_gamma) == ESP_OK) {
+    proximity_gamma = stored_gamma;
+  } else {
+    app_settings_save_u8(NVS_KEY_PS_GAMMA, DEFAULT_PS_GAMMA);
+  }
+  ESP_LOGI(TAG, "Proximity gamma: %u (%.2f)", proximity_gamma, 0.15f + proximity_gamma * 0.0085f);
+
   i2c_device_config_t dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
     .device_address   = SENSOR_ADDR,
@@ -274,18 +297,22 @@ void sensor_init(bool enable_logging) {
   // [14] - PS_MS: 0 = normal mode
   // [13] - LED_I_LOW: 0 = not in low power mode
   // [12] - Reserved
-  // [11] - PS_SC_EN: 0 = sunlight cancellation disable
+  // [11] - PS_SC_EN: sunlight cancellation (0=off, 1=on)
   // [10:8] - PS_TRIG: 000 = no trigger
   // [7:6] - PS_AF: 00 = auto mode
   // [5] - PS_SMART_PERS: 0 = disable
   // [4:3] - Reserved
   // [2:0] - LED_I: 000=50mA, 001=75mA, 010=100mA, 011=120mA, 100=140mA, 101=160mA, 110=180mA, 111=200mA
-  // Enable white channel, LED current to 200mA (will be limited to 120mA by hardware on some boards)
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, 0x8007); // WHITE_EN=1, LED_I=200mA
+  // Enable white channel, LED current to 200mA, optionally enable sunlight cancellation
+  uint16_t ps_conf3 = 0x8007;  // WHITE_EN=1, LED_I=200mA
+  if (sunlight_cancel_enabled) ps_conf3 |= 0x0800;  // Set PS_SC_EN bit 11
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, ps_conf3);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed configuring PS_CONF3");
     return;
   }
+  ESP_LOGI(TAG, "PS_CONF3: 0x%04X (sunlight cancel %s)", ps_conf3,
+    sunlight_cancel_enabled ? "enabled" : "disabled");
 
   // First put ALS into shutdown mode to reset any automatic features
   err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
@@ -730,6 +757,42 @@ bool proximity_get_note_silence_on_low(void) {
   return note_silence_on_low;
 }
 
+void proximity_set_sunlight_cancel(bool enabled) {
+  sunlight_cancel_enabled = enabled;
+  app_settings_save_u8(NVS_KEY_SUNLIGHT_CANCEL, enabled ? 1 : 0);
+  
+  // Update PS_CONF3 register immediately if sensor is initialized
+  if (vcnl4040_dev) {
+    uint16_t ps_conf3 = 0x8007;  // WHITE_EN=1, LED_I=200mA
+    if (enabled) ps_conf3 |= 0x0800;  // Set PS_SC_EN bit 11
+    esp_err_t err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, ps_conf3);
+    if (err == ESP_OK) {
+      ESP_LOGI(TAG, "Sunlight cancellation %s (PS_CONF3=0x%04X)",
+        enabled ? "enabled" : "disabled", ps_conf3);
+    } else {
+      ESP_LOGE(TAG, "Failed to update PS_CONF3: %s", esp_err_to_name(err));
+    }
+  } else {
+    ESP_LOGI(TAG, "Sunlight cancellation set to: %s (will apply on next init)",
+      enabled ? "enabled" : "disabled");
+  }
+}
+
+bool proximity_get_sunlight_cancel(void) {
+  return sunlight_cancel_enabled;
+}
+
+void proximity_set_gamma(uint8_t gamma) {
+  if (gamma > 100) gamma = 100;
+  proximity_gamma = gamma;
+  app_settings_save_u8(NVS_KEY_PS_GAMMA, gamma);
+  ESP_LOGI(TAG, "Proximity gamma set to: %u (%.2f)", gamma, 0.15f + gamma * 0.0085f);
+}
+
+uint8_t proximity_get_gamma(void) {
+  return proximity_gamma;
+}
+
 uint32_t proximity_get_timeout_ms(void) {
   switch (timeout_setting) {
     case PROXIMITY_TIMEOUT_FAST: return 500;
@@ -833,13 +896,26 @@ static void sensor_task(void *arg) {
         // Apply IIR filter to smooth the values
         filtered_proximity = PROXIMITY_IIR_ALPHA * ps_raw_value + (1.0f - PROXIMITY_IIR_ALPHA) * filtered_proximity;
         
-        // Scale to MIDI range (0-127) with proper clamping using calibration values
-        float scaled = ((float)filtered_proximity - (float)proximity_min) * 127.0f / ((float)proximity_max - (float)proximity_min);
-        if (scaled < 0.0f) scaled = 0.0f;
-        if (scaled > 127.0f) scaled = 127.0f;
+        // Noise floor: raw values below this are treated as zero
+        // Typical noise floor is 0-3 based on observation
+        const float noise_floor = 4.0f;
         
-        // Convert to MIDI value (polarity now handled by scene mapping)
-        uint8_t midi_value = (uint8_t)(scaled + 0.5f);
+        // Normalize to 0-1 range using calibration values, with noise floor cutoff
+        float effective_value = filtered_proximity - noise_floor;
+        if (effective_value < 0.0f) effective_value = 0.0f;
+        
+        float range = (float)proximity_max - (float)proximity_min - noise_floor;
+        float normalized = effective_value / range;
+        if (normalized > 1.0f) normalized = 1.0f;
+        
+        // Apply gamma correction for inverse-square compensation
+        // Gamma < 1 expands low values (useful for proximity sensors)
+        // proximity_gamma 0-100 maps to actual gamma 0.15-1.00
+        float gamma = 0.15f + proximity_gamma * 0.0085f;
+        float compensated = (normalized > 0.0f) ? powf(normalized, gamma) : 0.0f;
+        
+        // Scale to MIDI range (0-127)
+        uint8_t midi_value = (uint8_t)(compensated * 127.0f + 0.5f);
         
         // Hysteresis logic - determine output value
         // Note: Theremin/note mode is now handled by midi_proximity_scene_handler
