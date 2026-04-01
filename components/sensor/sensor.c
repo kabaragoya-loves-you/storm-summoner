@@ -260,8 +260,9 @@ void sensor_init(bool enable_logging) {
   
   // Enable proximity sensor with 8T integration time for better sensitivity
   // PS_CONF1/2 register (0x03): low byte = PS_CONF1, high byte = PS_CONF2
-  // PS_IT=1000b (8T), PS_SD=0 (enable)
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x4000); // 8T integration, enabled
+  // PS_IT is bits 3:1 of low byte: 100b = 8T → 0x08
+  // PS_SD=0 (enable) is bit 0
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x0008); // 8T integration, enabled
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF1");
     return;
@@ -1130,13 +1131,13 @@ void sensor_dump_registers(void) {
   
   if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF1, &val) == ESP_OK) {
     ESP_LOGI(TAG, "PS_CONF1/2 (0x03): 0x%04X", val);
-    uint8_t ps_it = (val >> 11) & 0xF;
-    uint8_t ps_duty = (val >> 6) & 0x3;
-    uint8_t ps_hd = (val >> 2) & 1;
     uint8_t ps_sd = (val >> 0) & 1;
-    ESP_LOGI(TAG, "  PS_SD=%u (0=ON), PS_IT=%ub (%s), PS_DUTY=%ub (1/%u), PS_HD=%u (%ubit)",
-      ps_sd, ps_it, 
-      (ps_it == 1) ? "1T" : (ps_it == 2) ? "2T" : (ps_it == 4) ? "4T" : (ps_it == 8) ? "8T" : "?",
+    uint8_t ps_it = (val >> 1) & 0x7;  // Bits 3:1 of low byte
+    uint8_t ps_duty = (val >> 6) & 0x3;  // Bits 7:6 of low byte
+    uint8_t ps_hd = (val >> 11) & 1;  // Bit 11 (high byte bit 3)
+    const char* it_names[] = {"1T", "1.5T", "2T", "4T", "8T", "?", "?", "?"};
+    ESP_LOGI(TAG, "  PS_SD=%u (0=ON), PS_IT=%u (%s), PS_DUTY=%u (1/%u), PS_HD=%u (%ubit)",
+      ps_sd, ps_it, it_names[ps_it],
       ps_duty, (ps_duty == 0) ? 40 : (ps_duty == 1) ? 80 : (ps_duty == 2) ? 160 : 320,
       ps_hd, ps_hd ? 16 : 12);
   }
@@ -1187,16 +1188,17 @@ void proximity_diagnostic_test(uint32_t duration_ms) {
   }
   
   // Test configurations to try
+  // PS_IT is bits 3:1 of low byte: 001=1.5T, 010=2T, 011=4T, 100=8T
   struct {
     const char* name;
     uint16_t ps_conf1;
     uint16_t ps_conf3;
   } configs[] = {
-    {"Current (8T, 200mA, WHITE)", 0x4000, 0x8007},
-    {"8T, 200mA, NO WHITE", 0x4000, 0x0007},
-    {"8T, 100mA, NO WHITE", 0x4000, 0x0002},
-    {"4T, 200mA, NO WHITE", 0x2000, 0x0007},
-    {"1T, 200mA, NO WHITE", 0x0800, 0x0007},
+    {"Current (8T, 200mA, WHITE)", 0x0008, 0x8007},
+    {"8T, 200mA, NO WHITE", 0x0008, 0x0007},
+    {"8T, 100mA, NO WHITE", 0x0008, 0x0002},
+    {"4T, 200mA, NO WHITE", 0x0006, 0x0007},
+    {"1T, 200mA, NO WHITE", 0x0000, 0x0007},
   };
   
   uint32_t test_duration = duration_ms / (sizeof(configs) / sizeof(configs[0]));
@@ -1232,7 +1234,7 @@ void proximity_diagnostic_test(uint32_t duration_ms) {
   
   // Restore original configuration
   ESP_LOGI(TAG, "Restoring original configuration...");
-  i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x4000);
+  i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x0008);  // 8T integration
   vTaskDelay(pdMS_TO_TICKS(50));
   i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, 0x8007);  // WHITE enabled, 200mA
   vTaskDelay(pdMS_TO_TICKS(200));
