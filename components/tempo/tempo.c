@@ -117,6 +117,9 @@ static float s_midi_tick_ema_interval_ms = 0.0f;
 static bool s_midi_tick_ema_initialized = false;
 static uint32_t s_midi_tick_last_update_time = 0;
 
+// Flag to reset timing when clock is unmuted (prevents catch-up burst)
+static bool s_clock_timing_reset_needed = false;
+
 // Tempo lock state (stabilizes BPM during playback)
 #define TEMPO_LOCK_BEATS 4              // Beats before locking tempo
 #define TEMPO_LOCK_CHANGE_THRESHOLD 2   // BPM difference required to unlock
@@ -418,12 +421,23 @@ static void tempo_task(void *pvParameters) {
       int64_t now_us = esp_timer_get_time();
       
       // Initialize or reset if we've drifted too far (e.g., after pause)
-      if (next_tick_time_us == 0 || (now_us - next_tick_time_us) > 1000000) {
-        next_tick_time_us = now_us;
+      // Also reset if unmute triggered a timing reset (prevents catch-up burst)
+      bool did_reset = false;
+      if (next_tick_time_us == 0 || (now_us - next_tick_time_us) > 1000000 ||
+          s_clock_timing_reset_needed) {
+        did_reset = true;
+        // Don't set next_tick_time_us here - we'll set it after the clock send
+        // to use the actual send time, avoiding timing errors from stale timestamps
+        s_clock_timing_reset_needed = false;
       }
       
       // Send MIDI clock directly (low latency requirement)
-      if (!s_clock_muted) send_clock();
+      // Capture actual send time to use for timing after reset
+      int64_t actual_send_time_us = 0;
+      if (!s_clock_muted) {
+        actual_send_time_us = esp_timer_get_time();
+        send_clock();
+      }
       
       // Track ticks and beats (use full 24ppqn for beat tracking)
       s_tick_counter++;
@@ -449,6 +463,10 @@ static void tempo_task(void *pvParameters) {
         publish_tempo_changed_event();
         // Reset timing on BPM change for immediate response
         next_tick_time_us = now_us + tick_interval_us;
+      } else if (did_reset && actual_send_time_us > 0) {
+        // After timing reset, base next tick on actual send time (Hypothesis F fix)
+        // This prevents the ~500μs error from using stale now_us
+        next_tick_time_us = actual_send_time_us + tick_interval_us;
       } else {
         // Schedule next tick
         next_tick_time_us += tick_interval_us;
@@ -524,11 +542,23 @@ static void tempo_task(void *pvParameters) {
       static int64_t sync_next_tick_time_us = 0;
       int64_t now_us = esp_timer_get_time();
       
-      if (sync_next_tick_time_us == 0 || (now_us - sync_next_tick_time_us) > 1000000) {
-        sync_next_tick_time_us = now_us;
+      // Reset timing on drift, init, or after unmute
+      bool sync_did_reset = false;
+      if (sync_next_tick_time_us == 0 || (now_us - sync_next_tick_time_us) > 1000000 ||
+          s_clock_timing_reset_needed) {
+        sync_did_reset = true;
+        // Don't set sync_next_tick_time_us here - set after clock send
+        if (s_clock_timing_reset_needed) {
+          s_clock_timing_reset_needed = false;
+          ESP_LOGD(TAG, "Sync clock timing reset after unmute");
+        }
       }
       
-      if (!s_clock_muted) send_clock();
+      int64_t sync_actual_send_time_us = 0;
+      if (!s_clock_muted) {
+        sync_actual_send_time_us = esp_timer_get_time();
+        send_clock();
+      }
       
       s_tick_counter++;
       
@@ -545,8 +575,12 @@ static void tempo_task(void *pvParameters) {
         publish_beat_event();
       }
       
-      // Schedule next tick
-      sync_next_tick_time_us += tick_interval_us;
+      // Schedule next tick - use actual send time after reset
+      if (sync_did_reset && sync_actual_send_time_us > 0) {
+        sync_next_tick_time_us = sync_actual_send_time_us + tick_interval_us;
+      } else {
+        sync_next_tick_time_us += tick_interval_us;
+      }
       
       // Calculate delay needed
       now_us = esp_timer_get_time();
@@ -1372,8 +1406,16 @@ uint8_t tempo_get_bpm_deadzone(void) {
 }
 
 void tempo_set_clock_muted(bool muted) {
+  bool was_muted = s_clock_muted;
   s_clock_muted = muted;
-  ESP_LOGD(TAG, "Clock output %s", muted ? "muted" : "unmuted");
+  
+  // When unmuting, signal the tempo task to reset its timing to avoid catch-up burst
+  if (was_muted && !muted) {
+    s_clock_timing_reset_needed = true;
+    ESP_LOGD(TAG, "Clock unmuted - timing reset scheduled");
+  } else {
+    ESP_LOGD(TAG, "Clock output %s", muted ? "muted" : "unmuted");
+  }
 }
 
 bool tempo_get_clock_muted(void) {
