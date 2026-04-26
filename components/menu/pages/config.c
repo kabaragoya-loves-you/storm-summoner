@@ -37,8 +37,9 @@ static void scene_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   ESP_LOGI(TAG, "Scene mode set to %s",
     (mode == SCENE_MODE_SINGLE) ? "Simple" :
     (mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced");
-  
-  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+
+  menu_rebuild_stack_entry(0, "Menu", menu_page_index_create, "Settings");
+  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
 }
 
 static lv_obj_t* scene_mode_roller_create(void) {
@@ -98,7 +99,7 @@ static void change_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   ESP_LOGI(TAG, "Change mode set to %s",
     (mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending");
   
-  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
 }
 
 static lv_obj_t* change_mode_roller_create(void) {
@@ -125,7 +126,7 @@ static void preset_wrap_confirm_cb(uint32_t selected_index, void* user_data) {
   config_set_preset_wrap(wrap);
   ESP_LOGI(TAG, "Preset wrap set to %s", wrap ? "On" : "Off");
   
-  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
 }
 
 static lv_obj_t* preset_wrap_roller_create(void) {
@@ -152,7 +153,7 @@ static void persist_scene_confirm_cb(uint32_t selected_index, void* user_data) {
   config_set_persist_scene(persist);
   ESP_LOGI(TAG, "Persist scene set to %s", persist ? "On" : "Off");
   
-  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
 }
 
 static lv_obj_t* persist_scene_roller_create(void) {
@@ -179,7 +180,7 @@ static void flag_enabled_confirm_cb(uint32_t selected_index, void* user_data) {
   config_set_flag_enabled(enabled);
   ESP_LOGI(TAG, "Flag system set to %s", enabled ? "enabled" : "disabled");
   
-  menu_navigate_back_then_to(2, "Scene", menu_page_config_create);
+  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
 }
 
 static lv_obj_t* flag_enabled_roller_create(void) {
@@ -242,5 +243,5 @@ lv_obj_t* menu_page_config_create(void) {
     flag_enabled ? "Fuck it, why not" : "I just can't");
   s_config_items[idx++] = (menu_item_t){ s_flag_enabled_label, nav_to_flag_enabled, NULL, true };
   
-  return menu_create_page_2line("Scene", s_config_items, idx);
+  return menu_create_page_2line("Global Config", s_config_items, idx);
 }

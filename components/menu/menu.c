@@ -1134,6 +1134,60 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   ESP_LOGI(TAG, "Replaced current page with: %s", menu_name ? menu_name : "(unnamed)");
 }
 
+void menu_rebuild_stack_entry(int depth, const char* menu_name,
+  menu_page_builder_t builder, const char* focus_label) {
+  if (!builder) {
+    ESP_LOGW(TAG, "menu_rebuild_stack_entry: NULL builder");
+    return;
+  }
+  if (depth < 0 || depth >= menu_state.stack_depth) {
+    ESP_LOGW(TAG, "menu_rebuild_stack_entry: depth %d out of range (stack=%d)",
+      depth, menu_state.stack_depth);
+    return;
+  }
+  if (depth == menu_state.stack_depth - 1) {
+    ESP_LOGW(TAG, "menu_rebuild_stack_entry: cannot rebuild visible page, use menu_replace_current");
+    return;
+  }
+
+  lv_obj_t* new_screen = builder();
+  if (!new_screen) {
+    ESP_LOGE(TAG, "menu_rebuild_stack_entry: builder returned NULL");
+    return;
+  }
+
+  lv_obj_t* new_container = find_container_in_screen(new_screen);
+
+  int32_t focused_index = 0;
+  if (focus_label && new_container) {
+    uint32_t child_cnt = lv_obj_get_child_count(new_container);
+    int clickable_idx = 0;
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(new_container, i);
+      if (!child || !lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) continue;
+      menu_item_t* item = (menu_item_t*)lv_obj_get_user_data(child);
+      if (item && item->label && strcmp(item->label, focus_label) == 0) {
+        focused_index = clickable_idx;
+        break;
+      }
+      clickable_idx++;
+    }
+  }
+
+  lv_obj_t* old_screen = menu_state.stack[depth].screen;
+
+  menu_state.stack[depth].screen = new_screen;
+  menu_state.stack[depth].container = new_container;
+  menu_state.stack[depth].name = menu_name;
+  menu_state.stack[depth].builder = builder;
+  menu_state.stack[depth].focused_index = focused_index;
+
+  if (old_screen) lv_obj_delete_async(old_screen);
+
+  ESP_LOGI(TAG, "Rebuilt stack entry at depth %d: %s (focus_idx=%ld)",
+    depth, menu_name ? menu_name : "(unnamed)", (long)focused_index);
+}
+
 void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t builder) {
   // Deferred replacement - safe to call during LVGL event callbacks/rendering
   if (menu_state.stack_depth < 1 || !builder) {

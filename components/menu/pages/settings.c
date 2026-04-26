@@ -9,7 +9,7 @@
 // Navigation callbacks for Settings submenus
 static void nav_to_config(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Config", menu_page_config_create);
+  menu_navigate_to("Global Config", menu_page_config_create);
 }
 
 static void nav_to_touch(void* user_data) {
