@@ -29,6 +29,7 @@ static ui_draw_module_t* available_modules[] = {
   &splash_module,
   &summoner_module,
   &beat_module,
+  &khyron_module,
   &template_module,
   &working_module,
   &updating_module,
@@ -39,6 +40,7 @@ static const int num_modules = sizeof(available_modules) / sizeof(available_modu
 // Add new user-facing screens here as they become available.
 const char* const ui_scene_selectable_modules[] = {
   "beat",
+  "khyron",
   "space",
   "summoner",
   "pixels",

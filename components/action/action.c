@@ -1788,6 +1788,42 @@ static esp_err_t action_execute_immediate(const action_t* action, uint8_t trigge
       action_type_to_string(action->type));
   }
 
+  // Post action executed event for UI modules (khyron, etc.)
+  if (is_press) {
+    event_t evt = {
+      .type = EVENT_ACTION_EXECUTED,
+      .priority = EVENT_PRIORITY_NORMAL,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.action_executed = {
+        .source_type = 255,  // Unknown source (set by caller if needed)
+        .source_index = 0,
+        .action_type = action->type,
+        .cc_number = 0,
+        .cc_value = 0,
+        .note = 0,
+        .velocity = 0
+      }
+    };
+
+    // Fill in action-specific details
+    if (action->type == ACTION_CONTROL_CHANGE ||
+        action->type == ACTION_CONTROL_HOLD ||
+        action->type == ACTION_CONTROL_CYCLE) {
+      if (action->params.control.num_ccs > 0) {
+        evt.data.action_executed.cc_number = action->params.control.cc_numbers[0];
+        evt.data.action_executed.cc_value = action->params.control.values[0];
+        if (action->type == ACTION_CONTROL_HOLD) {
+          evt.data.action_executed.cc_value2 = action->params.control.values2[0];
+        }
+      }
+    } else if (action->type == ACTION_NOTE) {
+      evt.data.action_executed.note = action->params.note.note;
+      evt.data.action_executed.velocity = action->params.note.velocity;
+    }
+
+    event_bus_post(&evt);
+  }
+
   return ESP_OK;
 }
 

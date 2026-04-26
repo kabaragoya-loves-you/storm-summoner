@@ -53,4 +53,12 @@ lv_obj_t* menu_page_buttons_create(void);
 lv_obj_t* menu_page_bump_create(void);
 lv_obj_t* menu_page_display_create(void);
 
+// Inspect Scene - visual assignment viewer
+lv_obj_t* menu_page_inspect_scene_create(void);
+void menu_page_inspect_scene_cleanup(void);
+
+// Inspect scene API for event interception
+bool inspect_scene_is_active(void);
+bool inspect_scene_handle_pad(uint8_t pad_id, bool pressed);
+
 #endif // MENU_PAGES_H

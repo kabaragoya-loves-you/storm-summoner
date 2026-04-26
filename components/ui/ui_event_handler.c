@@ -4,6 +4,7 @@
 #include "freertos/timers.h"
 #include "ui.h"
 #include "menu.h"
+#include "menu_pages.h"
 #include "text_edit.h"
 #include "app_settings.h"
 #include "touch.h"
@@ -250,6 +251,13 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     if (text_edit_is_active()) {
       if (text_edit_handle_pad(pad_id, true)) {
         return;  // Text editor consumed this event
+      }
+    }
+    
+    // Handle inspect scene mode (intercepts pads 0-11 when active)
+    if (inspect_scene_is_active()) {
+      if (inspect_scene_handle_pad(pad_id, true)) {
+        return;  // Inspect scene consumed this event
       }
     }
     

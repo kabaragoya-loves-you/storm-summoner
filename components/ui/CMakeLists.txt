@@ -18,6 +18,7 @@ idf_component_register(
         "tempo"
         "transport"
         "scene"
+        "action"
         "version"
         "memory_utils"
         "cv"

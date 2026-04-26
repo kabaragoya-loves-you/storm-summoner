@@ -37,6 +37,7 @@ idf_component_register(
     "pages/lfo2_scene.c"
     "pages/rtg_scene.c"
     "pages/sample_hold_scene.c"
+    "pages/inspect_scene.c"
   INCLUDE_DIRS
     "include"
   REQUIRES

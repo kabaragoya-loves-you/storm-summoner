@@ -1702,6 +1702,10 @@ void scene_apply_deferred_init(void) {
   rtg_apply_start_mode();
   sample_hold_apply_start_mode();
 
+  // Restore LED state based on current scene's proximity setting
+  // (proximity may have been enabled/disabled in programming mode)
+  led_restore_baseline();
+
   // Switch UI module for this scene
   const char* mod_name = (scene->ui_module[0] != '\0')
     ? scene->ui_module : "beat";

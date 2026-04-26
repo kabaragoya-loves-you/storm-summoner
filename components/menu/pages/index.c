@@ -38,13 +38,18 @@ static void nav_to_about(void* user_data) {
   menu_navigate_to("About", menu_page_about_create);
 }
 
+static void nav_to_inspect_scene(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Inspect Scene", menu_page_inspect_scene_create);
+}
+
 lv_obj_t* menu_page_index_create(void) {
   ESP_LOGD(TAG, "Creating index page");
   
   scene_mode_t mode = scene_get_mode();
   
   // Build menu items dynamically based on mode
-  static menu_item_t index_items[5];
+  static menu_item_t index_items[6];
   int idx = 0;
   
   if (mode == SCENE_MODE_SINGLE) {
@@ -71,6 +76,8 @@ lv_obj_t* menu_page_index_create(void) {
     index_items[idx++] = (menu_item_t){ s_scene_title, nav_to_current_scene, NULL, true };
     index_items[idx++] = (menu_item_t){ "Scenes", nav_to_scenes_manager, NULL, true };
   }
+  
+  index_items[idx++] = (menu_item_t){ "Inspect Scene", nav_to_inspect_scene, NULL, true };
   
   const char* pedal_label = (config_get_device_mode() == DEVICE_MODE_PER_SCENE)
     ? "Default Pedal" : "Pedal Setup";

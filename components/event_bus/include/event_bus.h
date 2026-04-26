@@ -75,6 +75,7 @@ typedef enum {
   EVENT_LFO1_VALUE,
   EVENT_LFO2_VALUE,
   EVENT_SAMPLE_HOLD_VALUE,
+  EVENT_ACTION_EXECUTED,    // Posted when an action completes execution
   
   // Firmware/assets update events
   EVENT_UPDATE_STARTED,
@@ -261,6 +262,18 @@ typedef struct {
       uint8_t success;        // For complete: 1=success, 0=failure
       uint32_t total_size;    // Total bytes being transferred
     } update;
+    
+    // Action executed event data (for EVENT_ACTION_EXECUTED)
+    struct {
+      uint8_t source_type;    // 0=pad, 1=button, 2=bump, 3=on_load, 4=on_play, 5=expr_switch
+      uint8_t source_index;   // pad index (0-11), button (0=L, 1=R, 2=both), etc.
+      uint8_t action_type;    // action_type_t value
+      uint8_t cc_number;      // For CC actions
+      uint8_t cc_value;       // For CC actions (press value for CONTROL_HOLD)
+      uint8_t cc_value2;      // For CONTROL_HOLD (release value)
+      uint8_t note;           // For note actions
+      uint8_t velocity;       // For note actions
+    } action_executed;
   } data;
 } event_t;
 
