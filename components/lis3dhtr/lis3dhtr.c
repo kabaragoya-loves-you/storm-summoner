@@ -106,13 +106,25 @@ void lis3dhtr_init(void) {
   i2c_common_write_reg(s_dev_handle, LIS3DHTR_REG_TIME_WINDOW,  0xFF);
 
   s_click_sem = xSemaphoreCreateBinary();
+  if (!s_click_sem) {
+    ESP_LOGE(TAG, "Failed to create click semaphore; aborting LIS3DHTR init");
+    s_initialized = false;
+    return;
+  }
 
   tilt_init();
 
   uint8_t tmp;
   i2c_common_read_reg(s_dev_handle, LIS3DHTR_REG_CLICK_SRC, &tmp);
 
-  xTaskCreate(lis3dhtr_task, "lis3dhtr", 3584, NULL, TASK_PRIORITY_BUMP, NULL);
+  BaseType_t task_ok = xTaskCreate(lis3dhtr_task, "lis3dhtr", 3584, NULL, TASK_PRIORITY_BUMP, NULL);
+  if (task_ok != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create lis3dhtr task; aborting LIS3DHTR init");
+    vSemaphoreDelete(s_click_sem);
+    s_click_sem = NULL;
+    s_initialized = false;
+    return;
+  }
 
   gpio_config_t io_conf = {
     .pin_bit_mask = (1ULL << PIN_BUMP_INT),

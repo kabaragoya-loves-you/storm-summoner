@@ -226,6 +226,41 @@
       "default": 10,
       "description": "Percent of scene BPM to swing around center for tilt Y (OUTPUT_TYPE_TEMPO_NUDGE)"
     },
+    "expression_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for expression (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "cv_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for CV (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "proximity_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for proximity (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "touchwheel_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for touchwheel (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "als_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for ambient light (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
     "audio_config": {
       "type": "object",
       "description": "Audio envelope follower configuration (when cv_input_mode=audio)",

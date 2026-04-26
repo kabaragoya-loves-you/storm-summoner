@@ -365,6 +365,45 @@ static void nav_to_style(void* user_data) {
 }
 
 // ============================================================================
+// Tempo Nudge % Roller
+// ============================================================================
+
+static char s_nudge_label[32];
+
+static void nudge_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  uint8_t pct = (uint8_t)(selected_index * 5);
+  if (pct > 100) pct = 100;
+  scene_set_touchwheel_tempo_nudge_pct(scene_get_current_index(), pct);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+}
+
+static lv_obj_t* nudge_roller_create(void) {
+  static char options[256];
+  options[0] = '\0';
+  for (int v = 0; v <= 100; v += 5) {
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%%s", v, v < 100 ? "\n" : "");
+    strncat(options, buf, sizeof(options) - strlen(options) - 1);
+  }
+
+  uint8_t cur = scene_get_touchwheel_tempo_nudge_pct(scene_get_current_index());
+  if (cur > 100) cur = 100;
+  uint32_t idx = cur / 5;
+  return menu_create_roller_page("Nudge %", options, idx, nudge_confirm_cb, NULL);
+}
+
+static void nav_to_nudge(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Nudge %", nudge_roller_create);
+}
+
+// ============================================================================
 // CC Slot Rollers (for Control Change mode)
 // ============================================================================
 
@@ -899,7 +938,11 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       break;
       
     case TOUCHWHEEL_MODE_CONTINUOUS:
-      if (mapping->output_type == OUTPUT_TYPE_CC) {
+      if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+        uint8_t pct = scene_get_touchwheel_tempo_nudge_pct(scene_get_current_index());
+        snprintf(s_nudge_label, sizeof(s_nudge_label), "Nudge %%\n%u%%", (unsigned)pct);
+        s_tw_items[item_count++] = (menu_item_t){s_nudge_label, nav_to_nudge, NULL, true};
+      } else if (mapping->output_type == OUTPUT_TYPE_CC) {
         // Control Change mode: 4 CC slots + Style (2-line format)
         for (int i = 0; i < MAX_MULTI_CC; i++) {
           const char* cc_name = get_cc_slot_display(scene, (uint8_t)i);

@@ -209,6 +209,11 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->tilt_y_velocity_mode = VELOCITY_MODE_FIXED;
   scene->tilt_x_tempo_nudge_pct = 10;
   scene->tilt_y_tempo_nudge_pct = 10;
+  scene->expression_tempo_nudge_pct = 10;
+  scene->cv_tempo_nudge_pct = 10;
+  scene->proximity_tempo_nudge_pct = 10;
+  scene->touchwheel_tempo_nudge_pct = 10;
+  scene->als_tempo_nudge_pct = 10;
   
   // Tempo configuration
   scene->bpm = 120;                                    // Default to 120 BPM
@@ -860,6 +865,34 @@ static void touchwheel_rtg_rate_callback(int value, void* user_data) {
   rtg_touchwheel_rate_changed();
 }
 
+// Bipolar tempo nudge around scene->bpm; shaped to match the tilt handler.
+static uint32_t s_tw_last_tempo_apply_ms = 0;
+static uint8_t  s_tw_last_applied_midi = 64;
+
+static void touchwheel_apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
+  uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+  if (now_ms - s_tw_last_tempo_apply_ms < 50) return;
+  s_tw_last_tempo_apply_ms = now_ms;
+  if (s_tw_last_applied_midi == midi_value) return;
+  s_tw_last_applied_midi = midi_value;
+
+  uint8_t pct = scene->touchwheel_tempo_nudge_pct;
+  if (pct > 100) pct = 100;
+
+  int32_t bpm = scene->bpm;
+  float scale = ((float)midi_value - 64.0f) / 63.0f;
+  if (scale > 1.0f) scale = 1.0f;
+  if (scale < -1.0f) scale = -1.0f;
+  float factor = 1.0f + scale * ((float)pct / 100.0f);
+  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
+  if (new_bpm < 20) new_bpm = 20;
+  if (new_bpm > 300) new_bpm = 300;
+
+  tempo_set_bpm((uint16_t)new_bpm);
+  ESP_LOGD(TAG, "Touchwheel tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
+    (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+}
+
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
   // Don't send MIDI in programming mode
@@ -932,7 +965,13 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   
   // Process through continuous mapping (applies curve, polarity, scaling)
   uint8_t output = continuous_mapping_process(midi_value, &scene->touchwheel);
-  
+
+  // Tempo nudge short-circuits the CC/Note path and modulates scene BPM.
+  if (scene->touchwheel.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    touchwheel_apply_tempo_nudge(output, scene);
+    return;
+  }
+
   // Send MIDI based on output type
   if (scene->touchwheel.output_type == OUTPUT_TYPE_CC) {
     uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
@@ -3276,6 +3315,81 @@ uint8_t scene_get_tilt_y_tempo_nudge_pct(uint8_t scene_index) {
   return scene ? scene->tilt_y_tempo_nudge_pct : 10;
 }
 
+esp_err_t scene_set_expression_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->expression_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_expression_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->expression_tempo_nudge_pct : 10;
+}
+
+esp_err_t scene_set_cv_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->cv_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_cv_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->cv_tempo_nudge_pct : 10;
+}
+
+esp_err_t scene_set_proximity_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->proximity_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_proximity_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->proximity_tempo_nudge_pct : 10;
+}
+
+esp_err_t scene_set_touchwheel_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->touchwheel_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_touchwheel_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->touchwheel_tempo_nudge_pct : 10;
+}
+
+esp_err_t scene_set_als_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->als_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_als_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->als_tempo_nudge_pct : 10;
+}
+
 uint8_t scene_get_touchwheel_velocity(void) {
   scene_t* scene = scene_get_current();
   if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) {
@@ -4943,6 +5057,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddStringToObject(root, "tilt_y_velocity_mode", VEL_MODE_STR(scene->tilt_y_velocity_mode));
   cJSON_AddNumberToObject(root, "tilt_x_tempo_nudge_pct", scene->tilt_x_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "tilt_y_tempo_nudge_pct", scene->tilt_y_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "expression_tempo_nudge_pct", scene->expression_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "cv_tempo_nudge_pct", scene->cv_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "proximity_tempo_nudge_pct", scene->proximity_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "touchwheel_tempo_nudge_pct", scene->touchwheel_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "als_tempo_nudge_pct", scene->als_tempo_nudge_pct);
 
   #undef VEL_MODE_STR
   
@@ -5224,6 +5343,21 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
 
   cJSON* tnpy = cJSON_GetObjectItem(root, "tilt_y_tempo_nudge_pct");
   if (tnpy && cJSON_IsNumber(tnpy)) scene->tilt_y_tempo_nudge_pct = (uint8_t)tnpy->valueint;
+
+  cJSON* tnpe = cJSON_GetObjectItem(root, "expression_tempo_nudge_pct");
+  if (tnpe && cJSON_IsNumber(tnpe)) scene->expression_tempo_nudge_pct = (uint8_t)tnpe->valueint;
+
+  cJSON* tnpcv = cJSON_GetObjectItem(root, "cv_tempo_nudge_pct");
+  if (tnpcv && cJSON_IsNumber(tnpcv)) scene->cv_tempo_nudge_pct = (uint8_t)tnpcv->valueint;
+
+  cJSON* tnpp = cJSON_GetObjectItem(root, "proximity_tempo_nudge_pct");
+  if (tnpp && cJSON_IsNumber(tnpp)) scene->proximity_tempo_nudge_pct = (uint8_t)tnpp->valueint;
+
+  cJSON* tnptw = cJSON_GetObjectItem(root, "touchwheel_tempo_nudge_pct");
+  if (tnptw && cJSON_IsNumber(tnptw)) scene->touchwheel_tempo_nudge_pct = (uint8_t)tnptw->valueint;
+
+  cJSON* tnpa = cJSON_GetObjectItem(root, "als_tempo_nudge_pct");
+  if (tnpa && cJSON_IsNumber(tnpa)) scene->als_tempo_nudge_pct = (uint8_t)tnpa->valueint;
   
   // Deserialize expression jack mode
   cJSON* expr_mode = cJSON_GetObjectItem(root, "expression_mode");

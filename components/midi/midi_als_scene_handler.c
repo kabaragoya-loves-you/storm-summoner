@@ -7,11 +7,40 @@
 #include "event_bus.h"
 #include "expression.h"
 #include "lfo.h"
+#include "tempo.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char* TAG = "als_scene";
 
 static smart_filter_t s_als_filter;
+
+static uint32_t s_last_tempo_apply_ms = 0;
+static uint8_t  s_last_applied_midi = 64;
+
+static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
+  uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+  if (now_ms - s_last_tempo_apply_ms < 50) return;
+  s_last_tempo_apply_ms = now_ms;
+  if (s_last_applied_midi == midi_value) return;
+  s_last_applied_midi = midi_value;
+
+  uint8_t pct = scene_get_als_tempo_nudge_pct(scene_get_current_index());
+  if (pct > 100) pct = 100;
+
+  int32_t bpm = scene->bpm;
+  float scale = ((float)midi_value - 64.0f) / 63.0f;
+  if (scale > 1.0f) scale = 1.0f;
+  if (scale < -1.0f) scale = -1.0f;
+  float factor = 1.0f + scale * ((float)pct / 100.0f);
+  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
+  if (new_bpm < 20) new_bpm = 20;
+  if (new_bpm > 300) new_bpm = 300;
+
+  tempo_set_bpm((uint16_t)new_bpm);
+  ESP_LOGD(TAG, "ALS tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
+    (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+}
 
 // Get velocity based on velocity mode setting
 static uint8_t get_als_velocity(continuous_mapping_t* mapping) {
@@ -104,6 +133,10 @@ static void handle_als_event(const event_t* event, void* context) {
       break;
     }
     
+    case OUTPUT_TYPE_TEMPO_NUDGE:
+      apply_tempo_nudge(output_value, scene);
+      break;
+
     case OUTPUT_TYPE_CC:
     default: {
       uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;

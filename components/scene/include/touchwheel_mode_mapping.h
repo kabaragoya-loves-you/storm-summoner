@@ -15,23 +15,24 @@ typedef struct {
 } touchwheel_mode_mapping_t;
 
 // Number of user-facing touchwheel modes
-#define NUM_TOUCHWHEEL_USER_MODES 12
+#define NUM_TOUCHWHEEL_USER_MODES 13
 
 // User-facing mode mappings - order determines roller display order
-// Index 0-11 maps to these modes
+// Index 0-12 maps to these modes
 static const touchwheel_mode_mapping_t g_touchwheel_mode_mappings[] = {
-  { "Pads",           TOUCHWHEEL_MODE_PADS,           OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, false },
-  { "Control Change", TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_CC,   true,  TOUCHWHEEL_STYLE_ENDLESS,  true  },
-  { "Program Change", TOUCHWHEEL_MODE_PROGRAM_CHANGE, OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ENDLESS,  false },
-  { "Tempo",          TOUCHWHEEL_MODE_SET_TEMPO,      OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ENDLESS,  true  },
-  { "Pitch Bend",     TOUCHWHEEL_MODE_PITCH_BEND,     OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_BIPOLAR,  false },
-  { "After Touch",    TOUCHWHEEL_MODE_AFTERTOUCH,     OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, true  },
-  { "Notes",          TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_NOTE, true,  TOUCHWHEEL_STYLE_ODOMETER, true  },
-  { "Double CC",      TOUCHWHEEL_MODE_DOUBLE_CC,      OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ENDLESS,  true  },
-  { "Velocity",       TOUCHWHEEL_MODE_VELOCITY,       OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, false },
-  { "LFO Rate",       TOUCHWHEEL_MODE_LFO_RATE,       OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, true  },
-  { "LFO Depth",      TOUCHWHEEL_MODE_LFO_DEPTH,      OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, true  },
-  { "RTG Rate",       TOUCHWHEEL_MODE_RTG_RATE,       OUTPUT_TYPE_CC,   false, TOUCHWHEEL_STYLE_ODOMETER, true  },
+  { "Pads",           TOUCHWHEEL_MODE_PADS,           OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, false },
+  { "Control Change", TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_CC,          true,  TOUCHWHEEL_STYLE_ENDLESS,  true  },
+  { "Program Change", TOUCHWHEEL_MODE_PROGRAM_CHANGE, OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ENDLESS,  false },
+  { "Tempo",          TOUCHWHEEL_MODE_SET_TEMPO,      OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ENDLESS,  true  },
+  { "Pitch Bend",     TOUCHWHEEL_MODE_PITCH_BEND,     OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_BIPOLAR,  false },
+  { "After Touch",    TOUCHWHEEL_MODE_AFTERTOUCH,     OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, true  },
+  { "Notes",          TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_NOTE,        true,  TOUCHWHEEL_STYLE_ODOMETER, true  },
+  { "Double CC",      TOUCHWHEEL_MODE_DOUBLE_CC,      OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ENDLESS,  true  },
+  { "Velocity",       TOUCHWHEEL_MODE_VELOCITY,       OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, false },
+  { "LFO Rate",       TOUCHWHEEL_MODE_LFO_RATE,       OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, true  },
+  { "LFO Depth",      TOUCHWHEEL_MODE_LFO_DEPTH,      OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, true  },
+  { "RTG Rate",       TOUCHWHEEL_MODE_RTG_RATE,       OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, true  },
+  { "Tempo Nudge",    TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_TEMPO_NUDGE, true,  TOUCHWHEEL_STYLE_BIPOLAR,  true  },
 };
 
 // Get mode mapping by user-facing index (0-7)

@@ -38,6 +38,7 @@ static char s_range_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_mode_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_label[LABEL_BUFFER_SETS][32];
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
+static char s_nudge_label[LABEL_BUFFER_SETS][32];
 
 // CC options from device
 typedef struct {
@@ -213,12 +214,13 @@ static void output_confirm_cb(uint32_t selected_index, void* user_data) {
   }
   
   // Map roller index to output type
-  // 0=CC, 1=Note, 2=LFO Rate, 3=LFO Depth
+  // 0=CC, 1=Note, 2=LFO Rate, 3=LFO Depth, 4=Tempo Nudge
   switch (selected_index) {
     case 0: scene->als.output_type = OUTPUT_TYPE_CC; break;
     case 1: scene->als.output_type = OUTPUT_TYPE_NOTE; break;
     case 2: scene->als.output_type = OUTPUT_TYPE_LFO_RATE; break;
     case 3: scene->als.output_type = OUTPUT_TYPE_LFO_DEPTH; break;
+    case 4: scene->als.output_type = OUTPUT_TYPE_TEMPO_NUDGE; break;
     default: scene->als.output_type = OUTPUT_TYPE_CC; break;
   }
   persist_scene_changes();
@@ -239,9 +241,11 @@ static lv_obj_t* output_roller_create(void) {
     case OUTPUT_TYPE_NOTE: current = 1; break;
     case OUTPUT_TYPE_LFO_RATE: current = 2; break;
     case OUTPUT_TYPE_LFO_DEPTH: current = 3; break;
+    case OUTPUT_TYPE_TEMPO_NUDGE: current = 4; break;
     default: current = 0; break;
   }
-  return menu_create_roller_page("Output", "Control Change\nNotes\nLFO Rate\nLFO Depth",
+  return menu_create_roller_page("Output",
+    "Control Change\nNotes\nLFO Rate\nLFO Depth\nTempo Nudge",
     current, output_confirm_cb, NULL);
 }
 
@@ -660,6 +664,43 @@ static void nav_to_velocity(void* user_data) {
 }
 
 // ============================================================================
+// Tempo Nudge % Roller (0..100, step 5)
+// ============================================================================
+
+static void nudge_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  uint8_t pct = (uint8_t)(selected_index * 5);
+  if (pct > 100) pct = 100;
+  scene_set_als_tempo_nudge_pct(scene_get_current_index(), pct);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Ambient Light", menu_page_als_scene_create);
+}
+
+static lv_obj_t* nudge_roller_create(void) {
+  static char options[256];
+  options[0] = '\0';
+  for (int v = 0; v <= 100; v += 5) {
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%%s", v, v < 100 ? "\n" : "");
+    strncat(options, buf, sizeof(options) - strlen(options) - 1);
+  }
+
+  uint8_t cur = scene_get_als_tempo_nudge_pct(scene_get_current_index());
+  if (cur > 100) cur = 100;
+  uint32_t idx = cur / 5;
+  return menu_create_roller_page("Nudge %", options, idx, nudge_confirm_cb, NULL);
+}
+
+static void nav_to_nudge(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Nudge %", nudge_roller_create);
+}
+
+// ============================================================================
 // Main Ambient Light Scene Page
 // ============================================================================
 
@@ -694,6 +735,7 @@ lv_obj_t* menu_page_als_scene_create(void) {
     case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
     case OUTPUT_TYPE_LFO_RATE: output_name = "LFO Rate"; break;
     case OUTPUT_TYPE_LFO_DEPTH: output_name = "LFO Depth"; break;
+    case OUTPUT_TYPE_TEMPO_NUDGE: output_name = "Tempo Nudge"; break;
     default: output_name = "Control Change"; break;
   }
   snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
@@ -777,6 +819,11 @@ lv_obj_t* menu_page_als_scene_create(void) {
     snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
       "LFO Target\n%s", lfo_target_to_string(scene->als.lfo_target));
     s_als_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true};
+  } else if (scene->als.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    uint8_t pct = scene_get_als_tempo_nudge_pct(scene_get_current_index());
+    snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
+      "Nudge %%\n%u%%", (unsigned)pct);
+    s_als_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true};
   }
   
   return menu_create_page_2line("Ambient Light", s_als_items, item_count);

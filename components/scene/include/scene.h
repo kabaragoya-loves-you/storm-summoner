@@ -140,6 +140,11 @@ typedef struct {
   // around the scene BPM; midi==64 returns exactly to scene->bpm.
   uint8_t tilt_x_tempo_nudge_pct;
   uint8_t tilt_y_tempo_nudge_pct;
+  uint8_t expression_tempo_nudge_pct;
+  uint8_t cv_tempo_nudge_pct;
+  uint8_t proximity_tempo_nudge_pct;
+  uint8_t touchwheel_tempo_nudge_pct;
+  uint8_t als_tempo_nudge_pct;
   
   // Tempo configuration (per-scene)
   uint16_t bpm;                          // Tempo in beats per minute (20-300)
@@ -376,6 +381,18 @@ esp_err_t scene_set_tilt_x_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_tilt_x_tempo_nudge_pct(uint8_t scene_index);
 esp_err_t scene_set_tilt_y_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_tilt_y_tempo_nudge_pct(uint8_t scene_index);
+
+// Tempo nudge percentages for other continuous sources (OUTPUT_TYPE_TEMPO_NUDGE)
+esp_err_t scene_set_expression_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_expression_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_cv_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_cv_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_proximity_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_proximity_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_touchwheel_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_touchwheel_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_als_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_als_tempo_nudge_pct(uint8_t scene_index);
 
 // Touchwheel velocity (when in TOUCHWHEEL_MODE_VELOCITY)
 uint8_t scene_get_touchwheel_velocity(void);
