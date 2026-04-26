@@ -95,9 +95,29 @@ typedef enum {
 
   // Flag ceremony (scene-local semaphore)
   ACTION_FLAG_CEREMONY,       // Check flag state, send CC, flip flag
+
+  // Boomerang (ADSR-style envelope: dive to target, hold, return)
+  ACTION_BOOMERANG,           // 3-phase envelope on any continuous output
   
   ACTION_MAX
 } action_type_t;
+
+// ============================================================================
+// Boomerang (ADSR envelope action) types
+// ============================================================================
+
+// Per-phase duration mode (attack, sustain, release)
+typedef enum {
+  BOOMERANG_DUR_INSTANT = 0,   // Zero-time transition (jump)
+  BOOMERANG_DUR_TIME_MS,       // Fixed millisecond duration
+  BOOMERANG_DUR_DIVISION       // Tempo-synced musical division
+} boomerang_duration_mode_t;
+
+// Target value mode
+typedef enum {
+  BOOMERANG_TARGET_EXPLICIT = 0, // Use configured target_value
+  BOOMERANG_TARGET_RANDOM        // Pick random value in valid range at trigger time
+} boomerang_target_mode_t;
 
 // Step action target
 typedef enum {
@@ -354,6 +374,34 @@ typedef struct {
       uint8_t flag_down_cc;     // CC number to send when flag is down (0)
       uint8_t flag_down_value;  // CC value to send when flag is down
     } flag_ceremony;
+
+    // For boomerang action (ADSR envelope on any continuous output)
+    struct {
+      uint8_t output_type;          // output_type_t (CC, TEMPO, LFO_RATE, etc.)
+      uint8_t lfo_target;           // lfo_target_t (for LFO_RATE/LFO_DEPTH outputs)
+      uint8_t cc_number;            // CC number (when output_type == CC)
+      uint8_t target_mode;          // boomerang_target_mode_t: EXPLICIT or RANDOM
+      uint16_t target_value;        // Target value (range depends on output_type)
+
+      // Attack phase (travel out to target)
+      uint8_t attack_mode;          // boomerang_duration_mode_t
+      uint16_t attack_time_ms;      // Duration when attack_mode == TIME_MS
+      uint8_t attack_division;      // morph_division_t when attack_mode == DIVISION
+      uint8_t attack_curve;         // curve_type_t
+      uint8_t attack_curve_slope;   // curve_slope_t
+
+      // Sustain phase (hold at target)
+      uint8_t sustain_mode;         // boomerang_duration_mode_t
+      uint16_t sustain_time_ms;
+      uint8_t sustain_division;
+
+      // Release phase (return to captured start)
+      uint8_t release_mode;         // boomerang_duration_mode_t
+      uint16_t release_time_ms;
+      uint8_t release_division;
+      uint8_t release_curve;        // curve_type_t
+      uint8_t release_curve_slope;  // curve_slope_t
+    } boomerang;
   } params;
 } action_t;
 
@@ -490,6 +538,18 @@ bool action_supports_morph(action_type_t type);
 
 // Clear all active morphs (call on scene change)
 void action_clear_morphs(void);
+
+// ============================================================================
+// Boomerang Engine API
+// ============================================================================
+
+// Clear all active boomerang envelopes (call on scene change)
+void action_clear_boomerangs(void);
+
+// Last pitch-bend value sent (center = 8192). Updated whenever the boomerang
+// engine or other pitch-bend output path sends a pitch-bend message.
+int16_t action_get_last_pitch_bend(void);
+void action_set_last_pitch_bend(int16_t value);
 
 // ============================================================================
 // Flag System API (scene-local semaphore)

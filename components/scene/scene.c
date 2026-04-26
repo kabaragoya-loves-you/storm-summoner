@@ -3573,7 +3573,8 @@ static const char* action_type_json_names[] = {
   [ACTION_SAMPLE_HOLD_HOLD] = "sample_hold_hold",
   [ACTION_STEP] = "step",
   [ACTION_PUNCH_IN] = "punch_in",
-  [ACTION_FLAG_CEREMONY] = "flag_ceremony"
+  [ACTION_FLAG_CEREMONY] = "flag_ceremony",
+  [ACTION_BOOMERANG] = "boomerang"
 };
 
 // Helper to convert action type string to enum
@@ -3811,6 +3812,80 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddNumberToObject(obj, "flag_up_value", action->params.flag_ceremony.flag_up_value);
     cJSON_AddNumberToObject(obj, "flag_down_cc", action->params.flag_ceremony.flag_down_cc);
     cJSON_AddNumberToObject(obj, "flag_down_value", action->params.flag_ceremony.flag_down_value);
+  } else if (action->type == ACTION_BOOMERANG) {
+    const char* ot;
+    switch (action->params.boomerang.output_type) {
+      case OUTPUT_TYPE_CC:          ot = "cc"; break;
+      case OUTPUT_TYPE_LFO_RATE:    ot = "lfo_rate"; break;
+      case OUTPUT_TYPE_LFO_DEPTH:   ot = "lfo_depth"; break;
+      case OUTPUT_TYPE_LFO2_RATE:   ot = "lfo2_rate"; break;
+      case OUTPUT_TYPE_LFO2_DEPTH:  ot = "lfo2_depth"; break;
+      case OUTPUT_TYPE_LFO1_RATE:   ot = "lfo1_rate"; break;
+      case OUTPUT_TYPE_LFO1_DEPTH:  ot = "lfo1_depth"; break;
+      case OUTPUT_TYPE_RTG_RATE:    ot = "rtg_rate"; break;
+      case OUTPUT_TYPE_SH_RATE:     ot = "sh_rate"; break;
+      case OUTPUT_TYPE_PITCH_BEND:  ot = "pitch_bend"; break;
+      case OUTPUT_TYPE_TEMPO_NUDGE: ot = "tempo_nudge"; break;
+      default: ot = "cc"; break;
+    }
+    cJSON_AddStringToObject(obj, "output_type", ot);
+
+    const char* lt;
+    switch (action->params.boomerang.lfo_target) {
+      case LFO_TARGET_LFO1: lt = "lfo1"; break;
+      case LFO_TARGET_LFO2: lt = "lfo2"; break;
+      case LFO_TARGET_BOTH: lt = "both"; break;
+      default: lt = "both"; break;
+    }
+    cJSON_AddStringToObject(obj, "lfo_target", lt);
+
+    cJSON_AddNumberToObject(obj, "cc_number", action->params.boomerang.cc_number);
+    cJSON_AddStringToObject(obj, "target_mode",
+      action->params.boomerang.target_mode == BOOMERANG_TARGET_RANDOM ? "random" : "explicit");
+    cJSON_AddNumberToObject(obj, "target_value", action->params.boomerang.target_value);
+
+    // Attack
+    const char* amode;
+    switch (action->params.boomerang.attack_mode) {
+      case BOOMERANG_DUR_INSTANT:  amode = "instant"; break;
+      case BOOMERANG_DUR_TIME_MS:  amode = "time_ms"; break;
+      case BOOMERANG_DUR_DIVISION: amode = "division"; break;
+      default: amode = "instant"; break;
+    }
+    cJSON_AddStringToObject(obj, "attack_mode", amode);
+    cJSON_AddNumberToObject(obj, "attack_time_ms", action->params.boomerang.attack_time_ms);
+    cJSON_AddStringToObject(obj, "attack_division",
+      morph_division_to_string((morph_division_t)action->params.boomerang.attack_division));
+    cJSON_AddNumberToObject(obj, "attack_curve", action->params.boomerang.attack_curve);
+    cJSON_AddNumberToObject(obj, "attack_curve_slope", action->params.boomerang.attack_curve_slope);
+
+    // Sustain
+    const char* smode;
+    switch (action->params.boomerang.sustain_mode) {
+      case BOOMERANG_DUR_INSTANT:  smode = "instant"; break;
+      case BOOMERANG_DUR_TIME_MS:  smode = "time_ms"; break;
+      case BOOMERANG_DUR_DIVISION: smode = "division"; break;
+      default: smode = "instant"; break;
+    }
+    cJSON_AddStringToObject(obj, "sustain_mode", smode);
+    cJSON_AddNumberToObject(obj, "sustain_time_ms", action->params.boomerang.sustain_time_ms);
+    cJSON_AddStringToObject(obj, "sustain_division",
+      morph_division_to_string((morph_division_t)action->params.boomerang.sustain_division));
+
+    // Release
+    const char* rmode;
+    switch (action->params.boomerang.release_mode) {
+      case BOOMERANG_DUR_INSTANT:  rmode = "instant"; break;
+      case BOOMERANG_DUR_TIME_MS:  rmode = "time_ms"; break;
+      case BOOMERANG_DUR_DIVISION: rmode = "division"; break;
+      default: rmode = "instant"; break;
+    }
+    cJSON_AddStringToObject(obj, "release_mode", rmode);
+    cJSON_AddNumberToObject(obj, "release_time_ms", action->params.boomerang.release_time_ms);
+    cJSON_AddStringToObject(obj, "release_division",
+      morph_division_to_string((morph_division_t)action->params.boomerang.release_division));
+    cJSON_AddNumberToObject(obj, "release_curve", action->params.boomerang.release_curve);
+    cJSON_AddNumberToObject(obj, "release_curve_slope", action->params.boomerang.release_curve_slope);
   }
 
   // Serialize timing (only if not immediate default)
@@ -4259,6 +4334,97 @@ static action_t json_to_action(cJSON* obj) {
     if (flag_up_value) action.params.flag_ceremony.flag_up_value = (uint8_t)flag_up_value->valueint;
     if (flag_down_cc) action.params.flag_ceremony.flag_down_cc = (uint8_t)flag_down_cc->valueint;
     if (flag_down_value) action.params.flag_ceremony.flag_down_value = (uint8_t)flag_down_value->valueint;
+  }
+
+  // Parse boomerang action
+  if (action.type == ACTION_BOOMERANG) {
+    cJSON* ot = cJSON_GetObjectItem(obj, "output_type");
+    if (ot && cJSON_IsString(ot)) {
+      const char* s = ot->valuestring;
+      if      (strcmp(s, "lfo_rate") == 0)    action.params.boomerang.output_type = OUTPUT_TYPE_LFO_RATE;
+      else if (strcmp(s, "lfo_depth") == 0)   action.params.boomerang.output_type = OUTPUT_TYPE_LFO_DEPTH;
+      else if (strcmp(s, "lfo2_rate") == 0)   action.params.boomerang.output_type = OUTPUT_TYPE_LFO2_RATE;
+      else if (strcmp(s, "lfo2_depth") == 0)  action.params.boomerang.output_type = OUTPUT_TYPE_LFO2_DEPTH;
+      else if (strcmp(s, "lfo1_rate") == 0)   action.params.boomerang.output_type = OUTPUT_TYPE_LFO1_RATE;
+      else if (strcmp(s, "lfo1_depth") == 0)  action.params.boomerang.output_type = OUTPUT_TYPE_LFO1_DEPTH;
+      else if (strcmp(s, "rtg_rate") == 0)    action.params.boomerang.output_type = OUTPUT_TYPE_RTG_RATE;
+      else if (strcmp(s, "sh_rate") == 0)     action.params.boomerang.output_type = OUTPUT_TYPE_SH_RATE;
+      else if (strcmp(s, "pitch_bend") == 0)  action.params.boomerang.output_type = OUTPUT_TYPE_PITCH_BEND;
+      else if (strcmp(s, "tempo_nudge") == 0) action.params.boomerang.output_type = OUTPUT_TYPE_TEMPO_NUDGE;
+      else                                    action.params.boomerang.output_type = OUTPUT_TYPE_CC;
+    }
+
+    cJSON* lt = cJSON_GetObjectItem(obj, "lfo_target");
+    if (lt && cJSON_IsString(lt)) {
+      const char* s = lt->valuestring;
+      if      (strcmp(s, "lfo1") == 0) action.params.boomerang.lfo_target = LFO_TARGET_LFO1;
+      else if (strcmp(s, "lfo2") == 0) action.params.boomerang.lfo_target = LFO_TARGET_LFO2;
+      else                              action.params.boomerang.lfo_target = LFO_TARGET_BOTH;
+    }
+
+    cJSON* cc_number = cJSON_GetObjectItem(obj, "cc_number");
+    if (cc_number) action.params.boomerang.cc_number = (uint8_t)cc_number->valueint;
+
+    cJSON* target_mode = cJSON_GetObjectItem(obj, "target_mode");
+    if (target_mode && cJSON_IsString(target_mode)) {
+      action.params.boomerang.target_mode = strcmp(target_mode->valuestring, "random") == 0
+        ? BOOMERANG_TARGET_RANDOM : BOOMERANG_TARGET_EXPLICIT;
+    }
+    cJSON* target_value = cJSON_GetObjectItem(obj, "target_value");
+    if (target_value) action.params.boomerang.target_value = (uint16_t)target_value->valueint;
+
+    // Attack
+    cJSON* amode = cJSON_GetObjectItem(obj, "attack_mode");
+    if (amode && cJSON_IsString(amode)) {
+      const char* s = amode->valuestring;
+      if      (strcmp(s, "time_ms") == 0)  action.params.boomerang.attack_mode = BOOMERANG_DUR_TIME_MS;
+      else if (strcmp(s, "division") == 0) action.params.boomerang.attack_mode = BOOMERANG_DUR_DIVISION;
+      else                                  action.params.boomerang.attack_mode = BOOMERANG_DUR_INSTANT;
+    }
+    cJSON* atime = cJSON_GetObjectItem(obj, "attack_time_ms");
+    if (atime) action.params.boomerang.attack_time_ms = (uint16_t)atime->valueint;
+    cJSON* adiv = cJSON_GetObjectItem(obj, "attack_division");
+    if (adiv && cJSON_IsString(adiv)) {
+      action.params.boomerang.attack_division = (uint8_t)morph_division_from_string(adiv->valuestring);
+    }
+    cJSON* acurve = cJSON_GetObjectItem(obj, "attack_curve");
+    if (acurve) action.params.boomerang.attack_curve = (uint8_t)acurve->valueint;
+    cJSON* aslope = cJSON_GetObjectItem(obj, "attack_curve_slope");
+    if (aslope) action.params.boomerang.attack_curve_slope = (uint8_t)aslope->valueint;
+
+    // Sustain
+    cJSON* smode = cJSON_GetObjectItem(obj, "sustain_mode");
+    if (smode && cJSON_IsString(smode)) {
+      const char* s = smode->valuestring;
+      if      (strcmp(s, "time_ms") == 0)  action.params.boomerang.sustain_mode = BOOMERANG_DUR_TIME_MS;
+      else if (strcmp(s, "division") == 0) action.params.boomerang.sustain_mode = BOOMERANG_DUR_DIVISION;
+      else                                  action.params.boomerang.sustain_mode = BOOMERANG_DUR_INSTANT;
+    }
+    cJSON* stime = cJSON_GetObjectItem(obj, "sustain_time_ms");
+    if (stime) action.params.boomerang.sustain_time_ms = (uint16_t)stime->valueint;
+    cJSON* sdiv = cJSON_GetObjectItem(obj, "sustain_division");
+    if (sdiv && cJSON_IsString(sdiv)) {
+      action.params.boomerang.sustain_division = (uint8_t)morph_division_from_string(sdiv->valuestring);
+    }
+
+    // Release
+    cJSON* rmode = cJSON_GetObjectItem(obj, "release_mode");
+    if (rmode && cJSON_IsString(rmode)) {
+      const char* s = rmode->valuestring;
+      if      (strcmp(s, "time_ms") == 0)  action.params.boomerang.release_mode = BOOMERANG_DUR_TIME_MS;
+      else if (strcmp(s, "division") == 0) action.params.boomerang.release_mode = BOOMERANG_DUR_DIVISION;
+      else                                  action.params.boomerang.release_mode = BOOMERANG_DUR_INSTANT;
+    }
+    cJSON* rtime = cJSON_GetObjectItem(obj, "release_time_ms");
+    if (rtime) action.params.boomerang.release_time_ms = (uint16_t)rtime->valueint;
+    cJSON* rdiv = cJSON_GetObjectItem(obj, "release_division");
+    if (rdiv && cJSON_IsString(rdiv)) {
+      action.params.boomerang.release_division = (uint8_t)morph_division_from_string(rdiv->valuestring);
+    }
+    cJSON* rcurve = cJSON_GetObjectItem(obj, "release_curve");
+    if (rcurve) action.params.boomerang.release_curve = (uint8_t)rcurve->valueint;
+    cJSON* rslope = cJSON_GetObjectItem(obj, "release_curve_slope");
+    if (rslope) action.params.boomerang.release_curve_slope = (uint8_t)rslope->valueint;
   }
 
   // Parse timing (default: immediate)

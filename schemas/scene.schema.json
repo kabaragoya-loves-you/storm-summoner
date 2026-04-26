@@ -838,7 +838,8 @@
             "sample_hold_hold",
             "step",
             "punch_in",
-            "flag_ceremony"
+            "flag_ceremony",
+            "boomerang"
           ],
           "description": "Action type name"
         },
@@ -1556,6 +1557,131 @@
                 "minimum": 0,
                 "maximum": 127,
                 "description": "CC value to send when flag is down"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "boomerang"}
+            }
+          },
+          "then": {
+            "required": ["output_type"],
+            "properties": {
+              "output_type": {
+                "type": "string",
+                "enum": ["cc", "lfo_rate", "lfo_depth", "lfo1_rate", "lfo1_depth",
+                         "lfo2_rate", "lfo2_depth", "rtg_rate", "sh_rate",
+                         "pitch_bend", "tempo_nudge"],
+                "description": "Target output type for the boomerang envelope"
+              },
+              "lfo_target": {
+                "type": "string",
+                "enum": ["lfo1", "lfo2", "both"],
+                "default": "both",
+                "description": "Which LFO to target (when output_type is lfo_rate or lfo_depth)"
+              },
+              "cc_number": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number (when output_type is cc)"
+              },
+              "target_mode": {
+                "type": "string",
+                "enum": ["explicit", "random"],
+                "default": "explicit",
+                "description": "Use an explicit target value or a random value within range"
+              },
+              "target_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383,
+                "description": "Target value (range depends on output_type: 0-127 for CC/LFO/RTG/SH/tempo_nudge, 0-16383 for pitch_bend)"
+              },
+              "attack_mode": {
+                "type": "string",
+                "enum": ["instant", "time_ms", "division"],
+                "default": "instant",
+                "description": "Attack phase duration mode"
+              },
+              "attack_time_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 60000,
+                "description": "Attack duration in milliseconds (when attack_mode is time_ms)"
+              },
+              "attack_division": {
+                "type": "string",
+                "enum": ["beat", "bar", "2_bars", "4_bars", "beat_2", "beat_3", "beat_4",
+                         "2_beats", "3_beats", "3_bars"],
+                "description": "Attack division (when attack_mode is division)"
+              },
+              "attack_curve": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8,
+                "default": 0,
+                "description": "Attack curve type (0=linear, 1=exponential, 2=logarithmic, 3=S, 4=inverse-S, 5=quadratic, 6=sqrt, 7=sine, 8=custom)"
+              },
+              "attack_curve_slope": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "default": 1,
+                "description": "Attack curve slope (0=gentle, 1=medium, 2=steep)"
+              },
+              "sustain_mode": {
+                "type": "string",
+                "enum": ["instant", "time_ms", "division"],
+                "default": "instant",
+                "description": "Sustain phase duration mode"
+              },
+              "sustain_time_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 60000,
+                "description": "Sustain duration in milliseconds (when sustain_mode is time_ms)"
+              },
+              "sustain_division": {
+                "type": "string",
+                "enum": ["beat", "bar", "2_bars", "4_bars", "beat_2", "beat_3", "beat_4",
+                         "2_beats", "3_beats", "3_bars"],
+                "description": "Sustain division (when sustain_mode is division)"
+              },
+              "release_mode": {
+                "type": "string",
+                "enum": ["instant", "time_ms", "division"],
+                "default": "instant",
+                "description": "Release phase duration mode"
+              },
+              "release_time_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 60000,
+                "description": "Release duration in milliseconds (when release_mode is time_ms)"
+              },
+              "release_division": {
+                "type": "string",
+                "enum": ["beat", "bar", "2_bars", "4_bars", "beat_2", "beat_3", "beat_4",
+                         "2_beats", "3_beats", "3_bars"],
+                "description": "Release division (when release_mode is division)"
+              },
+              "release_curve": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8,
+                "default": 0,
+                "description": "Release curve type"
+              },
+              "release_curve_slope": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "default": 1,
+                "description": "Release curve slope (0=gentle, 1=medium, 2=steep)"
               }
             }
           }

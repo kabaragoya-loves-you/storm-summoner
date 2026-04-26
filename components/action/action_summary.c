@@ -59,6 +59,7 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_STEP: return "Step";
     case ACTION_PUNCH_IN: return "Punch-In";
     case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
+    case ACTION_BOOMERANG: return "Boomerang";
     default: return "Unknown";
   }
 }
@@ -162,6 +163,7 @@ static const char* output_type_name(output_type_t type) {
     case OUTPUT_TYPE_RTG_RATE: return "RTG Rate";
     case OUTPUT_TYPE_SH_RATE: return "S+H Rate";
     case OUTPUT_TYPE_PITCH_BEND: return "Pitch Bend";
+    case OUTPUT_TYPE_TEMPO_NUDGE: return "Tempo Nudge";
     default: return "Unknown";
   }
 }
@@ -320,6 +322,31 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     snprintf(summary->param_name, sizeof(summary->param_name), "%u CCs",
       (unsigned)action->params.randomize.num_ccs);
     summary->has_param = true;
+
+  } else if (action->type == ACTION_BOOMERANG) {
+    const char *out_name = output_type_name((output_type_t)action->params.boomerang.output_type);
+    if (action->params.boomerang.output_type == OUTPUT_TYPE_CC) {
+      uint8_t cc_num = action->params.boomerang.cc_number;
+      const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
+      const char *cc_name = device ? assets_get_cc_name(device, cc_num) : NULL;
+      if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+        snprintf(summary->param_name, sizeof(summary->param_name), "%s", cc_name);
+      } else {
+        snprintf(summary->param_name, sizeof(summary->param_name), "CC %u",
+          (unsigned)cc_num);
+      }
+    } else {
+      snprintf(summary->param_name, sizeof(summary->param_name), "%s", out_name);
+    }
+    summary->has_param = true;
+
+    if (action->params.boomerang.target_mode == BOOMERANG_TARGET_RANDOM) {
+      snprintf(summary->param_value, sizeof(summary->param_value), "-> Random");
+    } else {
+      snprintf(summary->param_value, sizeof(summary->param_value), "-> %u",
+        (unsigned)action->params.boomerang.target_value);
+    }
+    summary->has_value = true;
 
   } else {
     summary->param_name[0] = '\0';

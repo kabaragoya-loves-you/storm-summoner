@@ -5,6 +5,7 @@
 #include "action.h"
 #include "config.h"
 #include "lfo.h"
+#include "curve.h"
 #include "touchwheel_mode_mapping.h"
 #include "tempo.h"
 #include "device_config.h"
@@ -118,6 +119,16 @@ static char s_punch_in_finish_label[LABEL_BUFFER_SETS][48];
 static char s_punch_in_duration_label[LABEL_BUFFER_SETS][32];
 static char s_flag_ceremony_up_label[LABEL_BUFFER_SETS][48];
 static char s_flag_ceremony_down_label[LABEL_BUFFER_SETS][48];
+static char s_boomerang_output_label[LABEL_BUFFER_SETS][40];
+static char s_boomerang_cc_label[LABEL_BUFFER_SETS][40];
+static char s_boomerang_lfo_target_label[LABEL_BUFFER_SETS][32];
+static char s_boomerang_target_mode_label[LABEL_BUFFER_SETS][32];
+static char s_boomerang_target_value_label[LABEL_BUFFER_SETS][40];
+static char s_boomerang_attack_label[LABEL_BUFFER_SETS][32];
+static char s_boomerang_sustain_label[LABEL_BUFFER_SETS][32];
+static char s_boomerang_release_label[LABEL_BUFFER_SETS][32];
+static char s_boomerang_attack_curve_label[LABEL_BUFFER_SETS][48];
+static char s_boomerang_release_curve_label[LABEL_BUFFER_SETS][48];
 static char s_raise_flag_label[LABEL_BUFFER_SETS][40];
 static char s_morph_steps_label[LABEL_BUFFER_SETS][24];
 static char s_morph_manual_label[LABEL_BUFFER_SETS][24];
@@ -191,6 +202,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_STEP,
   ACTION_PUNCH_IN,
   ACTION_FLAG_CEREMONY,
+  ACTION_BOOMERANG,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -269,6 +281,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_STEP: return "Step";
     case ACTION_PUNCH_IN: return "Punch-In";
     case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
+    case ACTION_BOOMERANG: return "Boomerang";
     default: return "Unknown";
   }
 }
@@ -286,6 +299,7 @@ static bool is_on_load_allowed(action_type_t type) {
     case ACTION_RESET:
     case ACTION_LFO_START:
     case ACTION_LFO_STOP:
+    case ACTION_BOOMERANG:
       return true;
     default:
       return false;
@@ -301,6 +315,7 @@ static bool is_on_play_allowed(action_type_t type) {
     case ACTION_RESET:
     case ACTION_LFO_START:
     case ACTION_LFO_STOP:
+    case ACTION_BOOMERANG:
       return true;
     default:
       return false;
@@ -3657,6 +3672,623 @@ static void nav_to_flag_ceremony_down(void* user_data) {
 }
 
 // ============================================================================
+// Boomerang (ADSR envelope) Navigation / Rollers
+// ============================================================================
+
+// Output type options (shown in order); index maps to output_type_t values below
+static const char* BOOMERANG_OUTPUT_OPTIONS =
+  "Control Change\nTempo Nudge\nLFO Rate\nLFO Depth\nRTG Rate\nS+H Rate\nPitch Bend";
+static const output_type_t BOOMERANG_OUTPUT_VALUES[] = {
+  OUTPUT_TYPE_CC,
+  OUTPUT_TYPE_TEMPO_NUDGE,
+  OUTPUT_TYPE_LFO_RATE,
+  OUTPUT_TYPE_LFO_DEPTH,
+  OUTPUT_TYPE_RTG_RATE,
+  OUTPUT_TYPE_SH_RATE,
+  OUTPUT_TYPE_PITCH_BEND,
+};
+static const int BOOMERANG_OUTPUT_COUNT =
+  sizeof(BOOMERANG_OUTPUT_VALUES) / sizeof(BOOMERANG_OUTPUT_VALUES[0]);
+
+static const char* boomerang_output_label(uint8_t output_type) {
+  switch (output_type) {
+    case OUTPUT_TYPE_CC: return "Control Change";
+    case OUTPUT_TYPE_TEMPO_NUDGE: return "Tempo Nudge";
+    case OUTPUT_TYPE_LFO_RATE: return "LFO Rate";
+    case OUTPUT_TYPE_LFO_DEPTH: return "LFO Depth";
+    case OUTPUT_TYPE_LFO1_RATE: return "LFO1 Rate";
+    case OUTPUT_TYPE_LFO1_DEPTH: return "LFO1 Depth";
+    case OUTPUT_TYPE_LFO2_RATE: return "LFO2 Rate";
+    case OUTPUT_TYPE_LFO2_DEPTH: return "LFO2 Depth";
+    case OUTPUT_TYPE_RTG_RATE: return "RTG Rate";
+    case OUTPUT_TYPE_SH_RATE: return "S+H Rate";
+    case OUTPUT_TYPE_PITCH_BEND: return "Pitch Bend";
+    default: return "Control Change";
+  }
+}
+
+static void boomerang_output_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  if (selected_index >= (uint32_t)BOOMERANG_OUTPUT_COUNT) selected_index = 0;
+  s_ctx->target_action->params.boomerang.output_type =
+    (uint8_t)BOOMERANG_OUTPUT_VALUES[selected_index];
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* boomerang_output_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  uint8_t cur = s_ctx->target_action->params.boomerang.output_type;
+  uint32_t idx = 0;
+  for (int i = 0; i < BOOMERANG_OUTPUT_COUNT; i++) {
+    if ((uint8_t)BOOMERANG_OUTPUT_VALUES[i] == cur) { idx = (uint32_t)i; break; }
+  }
+  return menu_create_roller_page("Output", BOOMERANG_OUTPUT_OPTIONS, idx,
+    boomerang_output_confirm_cb, NULL);
+}
+
+static void nav_to_boomerang_output(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Output", boomerang_output_roller_create);
+}
+
+// CC number roller for boomerang - uses device-aware parameter list
+static void boomerang_cc_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  // Index 0 is "Inactive" in the shared list; treat as no-change for boomerang
+  if (selected_index > 0 && selected_index < s_cc_options.count) {
+    s_ctx->target_action->params.boomerang.cc_number =
+      s_cc_options.cc_numbers[selected_index];
+  }
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* boomerang_cc_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  if (!s_cc_options.options_str || s_cc_options.count == 0) {
+    if (!load_cc_options()) {
+      ESP_LOGW(TAG, "No device CC options");
+      return menu_create_page_2line("Error", NULL, 0);
+    }
+  }
+
+  uint8_t cc_num = s_ctx->target_action->params.boomerang.cc_number;
+  uint32_t current_idx = cc_number_to_option_index(cc_num);
+
+  return menu_create_roller_page("CC", s_cc_options.options_str, current_idx,
+    boomerang_cc_confirm_cb, NULL);
+}
+
+static void nav_to_boomerang_cc(void* user_data) {
+  (void)user_data;
+  if (!s_cc_options.options_str) load_cc_options();
+  nav_to_subpage("CC", boomerang_cc_roller_create);
+}
+
+// LFO target roller
+static const char* BOOMERANG_LFO_TARGET_OPTIONS = "LFO 1\nLFO 2\nBoth";
+
+static void boomerang_lfo_target_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  if (selected_index > 2) selected_index = 2;
+  s_ctx->target_action->params.boomerang.lfo_target = (uint8_t)selected_index;
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* boomerang_lfo_target_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  uint32_t idx = s_ctx->target_action->params.boomerang.lfo_target;
+  if (idx > 2) idx = 2;
+  return menu_create_roller_page("LFO Target", BOOMERANG_LFO_TARGET_OPTIONS, idx,
+    boomerang_lfo_target_confirm_cb, NULL);
+}
+
+static void nav_to_boomerang_lfo_target(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("LFO Target", boomerang_lfo_target_roller_create);
+}
+
+// Target mode roller (Explicit / Random)
+static const char* BOOMERANG_TARGET_MODE_OPTIONS = "Explicit\nRandom";
+
+static void boomerang_target_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  s_ctx->target_action->params.boomerang.target_mode =
+    (selected_index == 1) ? BOOMERANG_TARGET_RANDOM : BOOMERANG_TARGET_EXPLICIT;
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* boomerang_target_mode_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  uint32_t idx = (s_ctx->target_action->params.boomerang.target_mode == BOOMERANG_TARGET_RANDOM) ? 1 : 0;
+  return menu_create_roller_page("Target", BOOMERANG_TARGET_MODE_OPTIONS, idx,
+    boomerang_target_mode_confirm_cb, NULL);
+}
+
+static void nav_to_boomerang_target_mode(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Target", boomerang_target_mode_roller_create);
+}
+
+// Target value roller - device-aware for CC output, otherwise simple ranges
+static void boomerang_target_value_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  uint8_t ot = s_ctx->target_action->params.boomerang.output_type;
+
+  if (ot == OUTPUT_TYPE_CC && s_pending_control) {
+    uint16_t val;
+    if (s_pending_control->discrete_count > 0) {
+      if (selected_index < (uint32_t)s_pending_control->discrete_count) {
+        val = (uint16_t)s_pending_control->discrete_values[selected_index].value;
+      } else {
+        val = 0;
+      }
+    } else {
+      val = (uint16_t)(s_pending_control->min + selected_index);
+      if (val > 127) val = 127;
+    }
+    s_ctx->target_action->params.boomerang.target_value = val;
+  } else if (ot == OUTPUT_TYPE_PITCH_BEND) {
+    s_ctx->target_action->params.boomerang.target_value =
+      (uint16_t)((selected_index & 0x7F) * 128);
+  } else {
+    s_ctx->target_action->params.boomerang.target_value = (uint16_t)(selected_index & 0x7F);
+  }
+
+  s_pending_control = NULL;
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* boomerang_target_value_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[1024];
+  options[0] = '\0';
+  size_t pos = 0;
+  uint8_t ot = s_ctx->target_action->params.boomerang.output_type;
+  uint32_t idx = 0;
+
+  if (ot == OUTPUT_TYPE_CC) {
+    uint8_t scene_index = scene_get_current_index();
+    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+    uint8_t cc_num = s_ctx->target_action->params.boomerang.cc_number;
+    s_pending_control = assets_get_control_by_cc(device, cc_num);
+    uint16_t current_val = s_ctx->target_action->params.boomerang.target_value;
+
+    if (s_pending_control && s_pending_control->discrete_count > 0) {
+      for (int i = 0; i < s_pending_control->discrete_count; i++) {
+        if (i > 0 && pos < sizeof(options) - 2) options[pos++] = '\n';
+        const char* name = s_pending_control->discrete_values[i].name;
+        if (name) {
+          pos += snprintf(options + pos, sizeof(options) - pos, "%.27s", name);
+        } else {
+          pos += snprintf(options + pos, sizeof(options) - pos, "%u",
+            (unsigned)s_pending_control->discrete_values[i].value);
+        }
+        if (s_pending_control->discrete_values[i].value == current_val) {
+          idx = (uint32_t)i;
+        }
+      }
+    } else if (s_pending_control) {
+      uint16_t min_val = s_pending_control->min;
+      uint16_t max_val = s_pending_control->max;
+      if (max_val > 127) max_val = 127;
+      for (uint16_t i = min_val; i <= max_val && pos < sizeof(options) - 8; i++) {
+        if (i > min_val) options[pos++] = '\n';
+        pos += snprintf(options + pos, sizeof(options) - pos, "%u", (unsigned)i);
+        if (i == current_val) idx = (uint32_t)(i - min_val);
+      }
+    } else {
+      for (int i = 0; i <= 127 && pos < sizeof(options) - 8; i++) {
+        if (i > 0) options[pos++] = '\n';
+        pos += snprintf(options + pos, sizeof(options) - pos, "%d", i);
+      }
+      idx = (current_val <= 127) ? current_val : 127;
+    }
+  } else if (ot == OUTPUT_TYPE_PITCH_BEND) {
+    for (int i = 0; i <= 127 && pos < sizeof(options) - 8; i++) {
+      if (i > 0) options[pos++] = '\n';
+      pos += snprintf(options + pos, sizeof(options) - pos, "%d", i * 128);
+    }
+    idx = s_ctx->target_action->params.boomerang.target_value / 128;
+    if (idx > 127) idx = 127;
+  } else {
+    for (int i = 0; i <= 127 && pos < sizeof(options) - 8; i++) {
+      if (i > 0) options[pos++] = '\n';
+      pos += snprintf(options + pos, sizeof(options) - pos, "%d", i);
+    }
+    idx = s_ctx->target_action->params.boomerang.target_value;
+    if (idx > 127) idx = 127;
+  }
+  options[pos] = '\0';
+  return menu_create_roller_page("Value", options, idx,
+    boomerang_target_value_confirm_cb, NULL);
+}
+
+static void nav_to_boomerang_target_value(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Value", boomerang_target_value_roller_create);
+}
+
+// Phase duration roller - one combined list of ms presets and musical divisions.
+// Index 0..MS_COUNT-1 are ms presets (0 == Instant); MS_COUNT..MS_COUNT+DIV_COUNT-1
+// are musical divisions that set mode=DIVISION.
+static const uint16_t BOOMERANG_DURATION_MS_PRESETS[] = {
+  0, 25, 50, 100, 150, 200, 300, 500, 750, 1000,
+  1500, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000, 45000, 60000,
+};
+#define BOOMERANG_DURATION_MS_COUNT \
+  (int)(sizeof(BOOMERANG_DURATION_MS_PRESETS) / sizeof(BOOMERANG_DURATION_MS_PRESETS[0]))
+
+static const morph_division_t BOOMERANG_DURATION_DIVISIONS[] = {
+  MORPH_DIV_1_BEAT, MORPH_DIV_2_BEATS, MORPH_DIV_3_BEATS,
+  MORPH_DIV_1_BAR, MORPH_DIV_2_BARS, MORPH_DIV_3_BARS, MORPH_DIV_4_BARS,
+};
+static const char* BOOMERANG_DURATION_DIVISION_NAMES[] = {
+  "1 Beat", "2 Beats", "3 Beats", "1 Bar", "2 Bars", "3 Bars", "4 Bars",
+};
+#define BOOMERANG_DURATION_DIV_COUNT \
+  (int)(sizeof(BOOMERANG_DURATION_DIVISIONS) / sizeof(BOOMERANG_DURATION_DIVISIONS[0]))
+
+static uint8_t s_editing_boomerang_phase = 0;  // 0=attack, 1=sustain, 2=release
+
+// Write duration choice to the currently-editing phase
+static void boomerang_write_phase_duration(uint8_t mode, uint16_t ms, uint8_t division) {
+  switch (s_editing_boomerang_phase) {
+    case 0:
+      s_ctx->target_action->params.boomerang.attack_mode = mode;
+      s_ctx->target_action->params.boomerang.attack_time_ms = ms;
+      s_ctx->target_action->params.boomerang.attack_division = division;
+      break;
+    case 1:
+      s_ctx->target_action->params.boomerang.sustain_mode = mode;
+      s_ctx->target_action->params.boomerang.sustain_time_ms = ms;
+      s_ctx->target_action->params.boomerang.sustain_division = division;
+      break;
+    case 2:
+    default:
+      s_ctx->target_action->params.boomerang.release_mode = mode;
+      s_ctx->target_action->params.boomerang.release_time_ms = ms;
+      s_ctx->target_action->params.boomerang.release_division = division;
+      break;
+  }
+}
+
+static void boomerang_duration_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  int total = BOOMERANG_DURATION_MS_COUNT + BOOMERANG_DURATION_DIV_COUNT;
+  if (selected_index >= (uint32_t)total) selected_index = total - 1;
+
+  if (selected_index < (uint32_t)BOOMERANG_DURATION_MS_COUNT) {
+    uint16_t ms = BOOMERANG_DURATION_MS_PRESETS[selected_index];
+    uint8_t mode = (ms == 0) ? BOOMERANG_DUR_INSTANT : BOOMERANG_DUR_TIME_MS;
+    boomerang_write_phase_duration(mode, ms, MORPH_DIV_1_BAR);
+  } else {
+    uint32_t div_idx = selected_index - BOOMERANG_DURATION_MS_COUNT;
+    uint8_t div = (uint8_t)BOOMERANG_DURATION_DIVISIONS[div_idx];
+    boomerang_write_phase_duration(BOOMERANG_DUR_DIVISION, 0, div);
+  }
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* boomerang_duration_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[768];
+  size_t pos = 0;
+  for (int i = 0; i < BOOMERANG_DURATION_MS_COUNT && pos < sizeof(options) - 32; i++) {
+    if (i > 0) options[pos++] = '\n';
+    uint16_t ms = BOOMERANG_DURATION_MS_PRESETS[i];
+    if (ms == 0) {
+      pos += snprintf(options + pos, sizeof(options) - pos, "Instant");
+    } else if (ms < 1000) {
+      pos += snprintf(options + pos, sizeof(options) - pos, "%u ms", (unsigned)ms);
+    } else {
+      pos += snprintf(options + pos, sizeof(options) - pos, "%.1f s", (double)ms / 1000.0);
+    }
+  }
+  for (int i = 0; i < BOOMERANG_DURATION_DIV_COUNT && pos < sizeof(options) - 16; i++) {
+    options[pos++] = '\n';
+    pos += snprintf(options + pos, sizeof(options) - pos, "%s",
+      BOOMERANG_DURATION_DIVISION_NAMES[i]);
+  }
+  options[pos] = '\0';
+
+  // Read current value to determine index
+  uint16_t cur_ms = 0;
+  uint8_t cur_mode = BOOMERANG_DUR_INSTANT;
+  uint8_t cur_div = MORPH_DIV_1_BAR;
+  switch (s_editing_boomerang_phase) {
+    case 0:
+      cur_mode = s_ctx->target_action->params.boomerang.attack_mode;
+      cur_ms = s_ctx->target_action->params.boomerang.attack_time_ms;
+      cur_div = s_ctx->target_action->params.boomerang.attack_division;
+      break;
+    case 1:
+      cur_mode = s_ctx->target_action->params.boomerang.sustain_mode;
+      cur_ms = s_ctx->target_action->params.boomerang.sustain_time_ms;
+      cur_div = s_ctx->target_action->params.boomerang.sustain_division;
+      break;
+    case 2:
+    default:
+      cur_mode = s_ctx->target_action->params.boomerang.release_mode;
+      cur_ms = s_ctx->target_action->params.boomerang.release_time_ms;
+      cur_div = s_ctx->target_action->params.boomerang.release_division;
+      break;
+  }
+  uint32_t idx = 0;
+  if (cur_mode == BOOMERANG_DUR_DIVISION) {
+    for (int i = 0; i < BOOMERANG_DURATION_DIV_COUNT; i++) {
+      if ((uint8_t)BOOMERANG_DURATION_DIVISIONS[i] == cur_div) {
+        idx = (uint32_t)(BOOMERANG_DURATION_MS_COUNT + i);
+        break;
+      }
+    }
+  } else if (cur_mode == BOOMERANG_DUR_INSTANT) {
+    idx = 0;
+  } else {
+    for (int i = 0; i < BOOMERANG_DURATION_MS_COUNT; i++) {
+      if (BOOMERANG_DURATION_MS_PRESETS[i] == cur_ms) { idx = (uint32_t)i; break; }
+    }
+  }
+
+  const char* title = (s_editing_boomerang_phase == 0) ? "Attack"
+    : (s_editing_boomerang_phase == 1) ? "Sustain" : "Release";
+  return menu_create_roller_page(title, options, idx,
+    boomerang_duration_confirm_cb, NULL);
+}
+
+static void nav_to_boomerang_attack(void* user_data) {
+  (void)user_data;
+  s_editing_boomerang_phase = 0;
+  nav_to_subpage("Attack", boomerang_duration_roller_create);
+}
+
+static void nav_to_boomerang_sustain(void* user_data) {
+  (void)user_data;
+  s_editing_boomerang_phase = 1;
+  nav_to_subpage("Sustain", boomerang_duration_roller_create);
+}
+
+static void nav_to_boomerang_release(void* user_data) {
+  (void)user_data;
+  s_editing_boomerang_phase = 2;
+  nav_to_subpage("Release", boomerang_duration_roller_create);
+}
+
+static const char* boomerang_division_label(uint8_t division) {
+  for (int i = 0; i < BOOMERANG_DURATION_DIV_COUNT; i++) {
+    if ((uint8_t)BOOMERANG_DURATION_DIVISIONS[i] == division) {
+      return BOOMERANG_DURATION_DIVISION_NAMES[i];
+    }
+  }
+  return "1 Bar";
+}
+
+static const char* boomerang_phase_label(uint8_t mode, uint16_t ms, uint8_t division) {
+  static char buf[16];
+  if (mode == BOOMERANG_DUR_DIVISION) {
+    snprintf(buf, sizeof(buf), "%s", boomerang_division_label(division));
+  } else if (mode == BOOMERANG_DUR_INSTANT || ms == 0) {
+    snprintf(buf, sizeof(buf), "Instant");
+  } else if (ms < 1000) {
+    snprintf(buf, sizeof(buf), "%u ms", (unsigned)ms);
+  } else {
+    snprintf(buf, sizeof(buf), "%.1fs", (double)ms / 1000.0);
+  }
+  return buf;
+}
+
+// ============================================================================
+// Boomerang Attack/Release Curve Rollers
+// ============================================================================
+
+// Subset of curve types we expose for envelope shaping (skip CUSTOM).
+static const curve_type_t BOOMERANG_CURVE_TYPES[] = {
+  CURVE_LINEAR, CURVE_EXPONENTIAL, CURVE_LOGARITHMIC, CURVE_S_CURVE,
+  CURVE_INVERSE_S, CURVE_QUADRATIC, CURVE_SQUARE_ROOT, CURVE_SINE,
+};
+#define BOOMERANG_CURVE_TYPE_COUNT \
+  (int)(sizeof(BOOMERANG_CURVE_TYPES) / sizeof(BOOMERANG_CURVE_TYPES[0]))
+
+static const char* BOOMERANG_CURVE_TYPE_OPTIONS =
+  "Linear\nExponential\nLogarithmic\nS-Curve\nInverse S\nQuadratic\nSquare Root\nSine";
+
+static const char* BOOMERANG_CURVE_SLOPE_OPTIONS = "Gentle\nMedium\nSteep";
+
+static const char* boomerang_slope_label(uint8_t slope) {
+  switch (slope) {
+    case CURVE_SLOPE_GENTLE: return "Gentle";
+    case CURVE_SLOPE_STEEP:  return "Steep";
+    case CURVE_SLOPE_MEDIUM:
+    default: return "Medium";
+  }
+}
+
+// 0 = attack, 1 = release
+static uint8_t s_editing_boomerang_curve_phase = 0;
+
+// Forward declarations for the curve submenu + nav handlers (defined below)
+static lv_obj_t* boomerang_curve_submenu_create(void);
+static void nav_to_boomerang_curve_type(void* user_data);
+static void nav_to_boomerang_curve_slope(void* user_data);
+
+static uint8_t* boomerang_editing_curve_ptr(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  return (s_editing_boomerang_curve_phase == 1)
+    ? &s_ctx->target_action->params.boomerang.release_curve
+    : &s_ctx->target_action->params.boomerang.attack_curve;
+}
+
+static uint8_t* boomerang_editing_slope_ptr(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  return (s_editing_boomerang_curve_phase == 1)
+    ? &s_ctx->target_action->params.boomerang.release_curve_slope
+    : &s_ctx->target_action->params.boomerang.attack_curve_slope;
+}
+
+// --- Curve type roller ---
+
+static void boomerang_curve_type_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  uint8_t* cur = boomerang_editing_curve_ptr();
+  if (!cur) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  if (selected_index >= (uint32_t)BOOMERANG_CURVE_TYPE_COUNT) selected_index = 0;
+  *cur = (uint8_t)BOOMERANG_CURVE_TYPES[selected_index];
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Curve" : "Attack Curve";
+  menu_navigate_back_then_to(2, title, boomerang_curve_submenu_create);
+}
+
+static lv_obj_t* boomerang_curve_type_roller_create(void) {
+  uint8_t* cur = boomerang_editing_curve_ptr();
+  uint32_t idx = 0;
+  if (cur) {
+    for (int i = 0; i < BOOMERANG_CURVE_TYPE_COUNT; i++) {
+      if ((uint8_t)BOOMERANG_CURVE_TYPES[i] == *cur) { idx = (uint32_t)i; break; }
+    }
+  }
+  const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Curve" : "Attack Curve";
+  return menu_create_roller_page(title, BOOMERANG_CURVE_TYPE_OPTIONS, idx,
+    boomerang_curve_type_confirm_cb, NULL);
+}
+
+// --- Curve slope roller ---
+
+static void boomerang_curve_slope_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  uint8_t* slope = boomerang_editing_slope_ptr();
+  if (!slope) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  if (selected_index > 2) selected_index = 1;
+  *slope = (uint8_t)selected_index;
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Curve" : "Attack Curve";
+  menu_navigate_back_then_to(2, title, boomerang_curve_submenu_create);
+}
+
+static lv_obj_t* boomerang_curve_slope_roller_create(void) {
+  uint8_t* slope = boomerang_editing_slope_ptr();
+  uint32_t idx = 1;  // Medium default
+  if (slope) {
+    if (*slope <= 2) idx = *slope;
+  }
+  const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Slope" : "Attack Slope";
+  return menu_create_roller_page(title, BOOMERANG_CURVE_SLOPE_OPTIONS, idx,
+    boomerang_curve_slope_confirm_cb, NULL);
+}
+
+// --- Curve submenu (combines type + slope) ---
+
+static menu_item_t s_boomerang_curve_items[2];
+static char s_boomerang_curve_type_item_label[LABEL_BUFFER_SETS][40];
+static char s_boomerang_curve_slope_item_label[LABEL_BUFFER_SETS][40];
+
+static void nav_to_boomerang_curve_type(void* user_data) {
+  (void)user_data;
+  const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Curve" : "Attack Curve";
+  nav_to_subpage(title, boomerang_curve_type_roller_create);
+}
+
+static void nav_to_boomerang_curve_slope(void* user_data) {
+  (void)user_data;
+  const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Slope" : "Attack Slope";
+  nav_to_subpage(title, boomerang_curve_slope_roller_create);
+}
+
+static lv_obj_t* boomerang_curve_submenu_create(void) {
+  uint8_t* cur = boomerang_editing_curve_ptr();
+  uint8_t* slope = boomerang_editing_slope_ptr();
+  int buf = get_next_buffer_set();
+
+  snprintf(s_boomerang_curve_type_item_label[buf], sizeof(s_boomerang_curve_type_item_label[buf]),
+    "Type\n%s", cur ? curve_type_to_string((curve_type_t)(*cur)) : "Linear");
+  snprintf(s_boomerang_curve_slope_item_label[buf], sizeof(s_boomerang_curve_slope_item_label[buf]),
+    "Slope\n%s", slope ? boomerang_slope_label(*slope) : "Medium");
+
+  s_boomerang_curve_items[0] = (menu_item_t){
+    s_boomerang_curve_type_item_label[buf], nav_to_boomerang_curve_type, NULL, true
+  };
+  s_boomerang_curve_items[1] = (menu_item_t){
+    s_boomerang_curve_slope_item_label[buf], nav_to_boomerang_curve_slope, NULL, true
+  };
+
+  const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Curve" : "Attack Curve";
+  return menu_create_page_2line(title, s_boomerang_curve_items, 2);
+}
+
+static void nav_to_boomerang_attack_curve(void* user_data) {
+  (void)user_data;
+  s_editing_boomerang_curve_phase = 0;
+  nav_to_subpage("Attack Curve", boomerang_curve_submenu_create);
+}
+
+static void nav_to_boomerang_release_curve(void* user_data) {
+  (void)user_data;
+  s_editing_boomerang_curve_phase = 1;
+  nav_to_subpage("Release Curve", boomerang_curve_submenu_create);
+}
+
+// ============================================================================
 // Raise the Flag Roller
 // ============================================================================
 
@@ -5544,6 +6176,138 @@ lv_obj_t* action_config_detail_page_create(void) {
         "Duration\n%s", dur_str);
       s_detail_items[item_count++] = (menu_item_t){
         s_punch_in_duration_label[buf], nav_to_punch_in_duration, NULL, true
+      };
+    }
+  }
+
+  // Show Boomerang configuration
+  if (action->type == ACTION_BOOMERANG) {
+    uint8_t ot = action->params.boomerang.output_type;
+
+    // Output type
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_boomerang_output_label[buf], sizeof(s_boomerang_output_label[buf]),
+        "Output\n%s", boomerang_output_label(ot));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_output_label[buf], nav_to_boomerang_output, NULL, true
+      };
+    }
+
+    // CC number (when output is CC) - show device parameter name when available
+    if (ot == OUTPUT_TYPE_CC && item_count < MAX_DETAIL_ITEMS) {
+      uint8_t cc_num = action->params.boomerang.cc_number;
+      uint8_t scene_index = scene_get_current_index();
+      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+      const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+      if (ctrl && ctrl->name) {
+        snprintf(s_boomerang_cc_label[buf], sizeof(s_boomerang_cc_label[buf]),
+          "CC\n%.30s", ctrl->name);
+      } else {
+        snprintf(s_boomerang_cc_label[buf], sizeof(s_boomerang_cc_label[buf]),
+          "CC\n%u", (unsigned)cc_num);
+      }
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_cc_label[buf], nav_to_boomerang_cc, NULL, true
+      };
+    }
+
+    // LFO target (for LFO rate/depth)
+    if ((ot == OUTPUT_TYPE_LFO_RATE || ot == OUTPUT_TYPE_LFO_DEPTH) &&
+        item_count < MAX_DETAIL_ITEMS) {
+      const char* tname = "Both";
+      switch (action->params.boomerang.lfo_target) {
+        case LFO_TARGET_LFO1: tname = "LFO 1"; break;
+        case LFO_TARGET_LFO2: tname = "LFO 2"; break;
+        case LFO_TARGET_BOTH: tname = "Both"; break;
+      }
+      snprintf(s_boomerang_lfo_target_label[buf], sizeof(s_boomerang_lfo_target_label[buf]),
+        "LFO Target\n%s", tname);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_lfo_target_label[buf], nav_to_boomerang_lfo_target, NULL, true
+      };
+    }
+
+    // Target mode
+    if (item_count < MAX_DETAIL_ITEMS) {
+      const char* mname = (action->params.boomerang.target_mode == BOOMERANG_TARGET_RANDOM)
+        ? "Random" : "Explicit";
+      snprintf(s_boomerang_target_mode_label[buf], sizeof(s_boomerang_target_mode_label[buf]),
+        "Target\n%s", mname);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_target_mode_label[buf], nav_to_boomerang_target_mode, NULL, true
+      };
+    }
+
+    // Target value (only when explicit)
+    if (action->params.boomerang.target_mode == BOOMERANG_TARGET_EXPLICIT &&
+        item_count < MAX_DETAIL_ITEMS) {
+      const char* value_name = NULL;
+      if (ot == OUTPUT_TYPE_CC) {
+        uint8_t scene_index = scene_get_current_index();
+        const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+        value_name = assets_get_discrete_name(device, action->params.boomerang.cc_number,
+          (uint8_t)action->params.boomerang.target_value);
+      }
+      if (value_name) {
+        snprintf(s_boomerang_target_value_label[buf], sizeof(s_boomerang_target_value_label[buf]),
+          "Value\n%.30s", value_name);
+      } else {
+        snprintf(s_boomerang_target_value_label[buf], sizeof(s_boomerang_target_value_label[buf]),
+          "Value\n%u", (unsigned)action->params.boomerang.target_value);
+      }
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_target_value_label[buf], nav_to_boomerang_target_value, NULL, true
+      };
+    }
+
+    // Attack
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_boomerang_attack_label[buf], sizeof(s_boomerang_attack_label[buf]),
+        "Attack\n%s", boomerang_phase_label(action->params.boomerang.attack_mode,
+        action->params.boomerang.attack_time_ms,
+        action->params.boomerang.attack_division));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_attack_label[buf], nav_to_boomerang_attack, NULL, true
+      };
+    }
+    // Attack Curve
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_boomerang_attack_curve_label[buf], sizeof(s_boomerang_attack_curve_label[buf]),
+        "Attack Curve\n%s %s",
+        curve_type_to_string((curve_type_t)action->params.boomerang.attack_curve),
+        boomerang_slope_label(action->params.boomerang.attack_curve_slope));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_attack_curve_label[buf], nav_to_boomerang_attack_curve, NULL, true
+      };
+    }
+    // Sustain
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_boomerang_sustain_label[buf], sizeof(s_boomerang_sustain_label[buf]),
+        "Sustain\n%s", boomerang_phase_label(action->params.boomerang.sustain_mode,
+        action->params.boomerang.sustain_time_ms,
+        action->params.boomerang.sustain_division));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_sustain_label[buf], nav_to_boomerang_sustain, NULL, true
+      };
+    }
+    // Release
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_boomerang_release_label[buf], sizeof(s_boomerang_release_label[buf]),
+        "Release\n%s", boomerang_phase_label(action->params.boomerang.release_mode,
+        action->params.boomerang.release_time_ms,
+        action->params.boomerang.release_division));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_release_label[buf], nav_to_boomerang_release, NULL, true
+      };
+    }
+    // Release Curve
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_boomerang_release_curve_label[buf], sizeof(s_boomerang_release_curve_label[buf]),
+        "Release Curve\n%s %s",
+        curve_type_to_string((curve_type_t)action->params.boomerang.release_curve),
+        boomerang_slope_label(action->params.boomerang.release_curve_slope));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_release_curve_label[buf], nav_to_boomerang_release_curve, NULL, true
       };
     }
   }
