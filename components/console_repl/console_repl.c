@@ -11,6 +11,7 @@
 #include "touch_console.h"
 #include "switch_console.h"
 #include "bump_console.h"
+#include "tilt_console.h"
 #include "sensor_console.h"
 #include "expression_console.h"
 #include "cv_console.h"
@@ -291,6 +292,7 @@ esp_err_t console_repl_init(void) {
   console_register_context("touch", touch_console_init, touch_console_cleanup);
   console_register_context("switch", switch_console_init, switch_console_cleanup);
   console_register_context("bump", bump_console_init, bump_console_cleanup);
+  console_register_context("tilt", tilt_console_init, tilt_console_cleanup);
   console_register_context("sensor", sensor_console_init, sensor_console_cleanup);
   console_register_context("expression", expression_console_init, expression_console_cleanup);
   console_register_context("cv", cv_console_init, cv_console_cleanup);

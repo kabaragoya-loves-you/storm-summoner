@@ -433,6 +433,85 @@
       ]
     },
     {
+      "id": "tilt",
+      "label": "Tilt",
+      "description": "Accelerometer tilt input (X/Y)",
+      "settings": [
+        {
+          "id": "tilt.calibrate",
+          "label": "Calibrate",
+          "description": "Run the 5-step tilt calibration wizard",
+          "type": "calibration"
+        },
+        {
+          "id": "tilt.forgive_middle",
+          "label": "Forgive Middle",
+          "description": "Snap to center when near the middle to absorb small hand tremor",
+          "type": "toggle",
+          "default": true
+        },
+        {
+          "id": "tilt.middle_width",
+          "label": "Middle Width",
+          "description": "Half-width (in MIDI units) of the forgiving middle band",
+          "type": "number",
+          "min": 1,
+          "max": 30,
+          "step": 1,
+          "default": 8,
+          "visible_when": { "id": "tilt.forgive_middle", "value": true }
+        },
+        {
+          "id": "tilt.deadzone",
+          "label": "Deadzone",
+          "description": "Minimum change required before a new tilt value is emitted",
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 1,
+          "default": 1
+        },
+        {
+          "id": "tilt.rate_limit",
+          "label": "Rate Limit",
+          "description": "Tilt sampling rate (Hz)",
+          "type": "number",
+          "min": 10,
+          "max": 100,
+          "step": 5,
+          "unit": "Hz",
+          "default": 40
+        },
+        {
+          "id": "tilt.x_invert",
+          "label": "Invert X",
+          "description": "Flip the X axis so right becomes lower instead of higher",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "id": "tilt.y_invert",
+          "label": "Invert Y",
+          "description": "Flip the Y axis so back becomes lower instead of higher",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "id": "tilt.note_off_mode",
+          "label": "Note Off",
+          "description": "Auto note-off while the axis sits in the forgive middle zone (Notes mode only). Off, fixed times, or tempo-relative subdivisions.",
+          "type": "enum",
+          "options": [
+            "off",
+            "100ms", "250ms", "500ms", "1s", "2s", "5s",
+            "1/16", "1/8", "1/4", "1/2", "bar", "2bars"
+          ],
+          "default": "off",
+          "visible_when": "tilt.forgive_middle == true"
+        }
+      ]
+    },
+    {
       "id": "tempo",
       "label": "Tempo",
       "description": "Tempo and clock settings",

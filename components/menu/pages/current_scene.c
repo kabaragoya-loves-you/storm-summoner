@@ -154,6 +154,11 @@ static void nav_to_sample_hold(void* user_data) {
   menu_navigate_to("S+H", menu_page_sample_hold_scene_create);
 }
 
+static void nav_to_tilt(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Tilt", menu_page_tilt_scene_create);
+}
+
 // ============================================================================
 // Name Submenu (Regenerate / Edit)
 // ============================================================================
@@ -1185,6 +1190,7 @@ lv_obj_t* menu_page_current_scene_create(void) {
     s_scene_items[idx++] = (menu_item_t){ "On-Play", nav_to_on_play, NULL, true };
   }
   s_scene_items[idx++] = (menu_item_t){ "S+H", nav_to_sample_hold, NULL, true };
+  s_scene_items[idx++] = (menu_item_t){ "Tilt", nav_to_tilt, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true };
   
   // Per-scene device controls (only in per-scene device mode)

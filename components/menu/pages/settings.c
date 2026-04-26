@@ -42,6 +42,11 @@ static void nav_to_ambient_light(void* user_data) {
   menu_navigate_to("Ambient Light", menu_page_settings_als_create);
 }
 
+static void nav_to_tilt(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Tilt", menu_page_settings_tilt_create);
+}
+
 static void nav_to_tempo(void* user_data) {
   (void)user_data;
   menu_navigate_to("Tempo", menu_page_tempo_create);
@@ -100,6 +105,7 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Control Voltage", nav_to_cv, NULL, true },
     { "Proximity", nav_to_proximity, NULL, true },
     { "Ambient Light", nav_to_ambient_light, NULL, true },
+    { "Tilt", nav_to_tilt, NULL, true },
     { "Tempo", nav_to_tempo, NULL, true },
     { "LED", nav_to_led, NULL, true },
     { "Buttons", nav_to_buttons, NULL, true },

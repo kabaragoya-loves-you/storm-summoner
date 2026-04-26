@@ -137,6 +137,14 @@
       "$ref": "#/definitions/continuous_mapping",
       "description": "Ambient light sensor mapping"
     },
+    "tilt_x": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Tilt X axis (roll, left/right) mapping"
+    },
+    "tilt_y": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Tilt Y axis (pitch, forward/back) mapping"
+    },
     "expression_mode": {
       "type": "string",
       "enum": ["expression", "sustain", "sostenuto", "gate", "switch"],
@@ -191,6 +199,32 @@
       "enum": ["fixed", "gate_voltage", "touchwheel"],
       "default": "fixed",
       "description": "Velocity mode for ambient light sensor note output"
+    },
+    "tilt_x_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "default": "fixed",
+      "description": "Velocity mode for tilt X note output"
+    },
+    "tilt_y_velocity_mode": {
+      "type": "string",
+      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "default": "fixed",
+      "description": "Velocity mode for tilt Y note output"
+    },
+    "tilt_x_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for tilt X (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "tilt_y_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for tilt Y (OUTPUT_TYPE_TEMPO_NUDGE)"
     },
     "audio_config": {
       "type": "object",
@@ -338,9 +372,9 @@
         },
         "output_type": {
           "type": "string",
-          "enum": ["cc", "note", "lfo_rate", "lfo_depth", "lfo2_rate", "lfo2_depth", "lfo1_rate", "lfo1_depth", "rtg_rate", "sh_rate", "pitch_bend"],
+          "enum": ["cc", "note", "lfo_rate", "lfo_depth", "lfo2_rate", "lfo2_depth", "lfo1_rate", "lfo1_depth", "rtg_rate", "sh_rate", "pitch_bend", "tempo_nudge"],
           "default": "cc",
-          "description": "Output type: cc, note, lfo_rate/lfo_depth (with lfo_target), lfo1_rate/lfo1_depth/lfo2_rate/lfo2_depth (LFO cross-modulation), rtg_rate, sh_rate, or pitch_bend"
+          "description": "Output type: cc, note, lfo_rate/lfo_depth (with lfo_target), lfo1_rate/lfo1_depth/lfo2_rate/lfo2_depth (LFO cross-modulation), rtg_rate, sh_rate, pitch_bend, or tempo_nudge"
         },
         "lfo_target": {
           "type": "string",
@@ -422,6 +456,13 @@
           "minimum": 0,
           "maximum": 127,
           "default": 0
+        },
+        "middle_value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 64,
+          "description": "Output at raw=64 (sensor rest). 3-point linear mapping: raw 0 -> min_value, 64 -> middle_value, 127 -> max_value."
         },
         "max_value": {
           "type": "integer",

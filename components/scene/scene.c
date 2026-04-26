@@ -17,6 +17,7 @@
 #include "memory_utils.h"
 #include "lfo.h"
 #include "rtg.h"
+#include "tilt.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -163,7 +164,19 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->proximity.idle_timeout_ms = 1000;
   scene->proximity.polarity = POLARITY_BIPOLAR;
   scene->als = continuous_mapping_create(18);          // CC18 = General Purpose 3
-  
+  scene->tilt_x = continuous_mapping_create(20);       // CC20 (defaults: disabled)
+  scene->tilt_x.enabled = false;
+  scene->tilt_x.use_idle_value = true;
+  scene->tilt_x.idle_value = 64;
+  scene->tilt_x.idle_timeout_ms = 1000;
+  scene->tilt_x.polarity = POLARITY_BIPOLAR;
+  scene->tilt_y = continuous_mapping_create(21);       // CC21 (defaults: disabled)
+  scene->tilt_y.enabled = false;
+  scene->tilt_y.use_idle_value = true;
+  scene->tilt_y.idle_value = 64;
+  scene->tilt_y.idle_timeout_ms = 1000;
+  scene->tilt_y.polarity = POLARITY_BIPOLAR;
+
   // Expression jack configuration
   scene->expression_mode = EXPRESSION_MODE_PEDAL;      // Default to expression pedal mode
   
@@ -192,6 +205,10 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->expression_velocity_mode = VELOCITY_MODE_FIXED;
   scene->proximity_velocity_mode = VELOCITY_MODE_FIXED;
   scene->als_velocity_mode = VELOCITY_MODE_FIXED;
+  scene->tilt_x_velocity_mode = VELOCITY_MODE_FIXED;
+  scene->tilt_y_velocity_mode = VELOCITY_MODE_FIXED;
+  scene->tilt_x_tempo_nudge_pct = 10;
+  scene->tilt_y_tempo_nudge_pct = 10;
   
   // Tempo configuration
   scene->bpm = 120;                                    // Default to 120 BPM
@@ -351,6 +368,8 @@ static volatile uint8_t s_expression_lfo_rate = 64;
 static volatile uint8_t s_cv_lfo_rate = 64;
 static volatile uint8_t s_als_lfo_rate = 64;
 static volatile uint8_t s_proximity_lfo_rate = 64;
+static volatile uint8_t s_tilt_x_lfo_rate = 64;
+static volatile uint8_t s_tilt_y_lfo_rate = 64;
 
 // Pitch bend return-to-center animation
 // Precalculated eased return sequences for each distance bucket
@@ -1166,6 +1185,12 @@ static void lfo_rate_source_event_handler(const event_t* event, void* context) {
     case EVENT_SENSOR_PROXIMITY:
       s_proximity_lfo_rate = event->data.sensor.value;
       break;
+    case EVENT_SENSOR_TILT_X:
+      s_tilt_x_lfo_rate = event->data.sensor.value;
+      break;
+    case EVENT_SENSOR_TILT_Y:
+      s_tilt_y_lfo_rate = event->data.sensor.value;
+      break;
     default:
       break;
   }
@@ -1284,6 +1309,8 @@ esp_err_t scene_init(void) {
   event_bus_subscribe(EVENT_CV_VALUE, lfo_rate_source_event_handler, NULL);
   event_bus_subscribe(EVENT_SENSOR_ALS, lfo_rate_source_event_handler, NULL);
   event_bus_subscribe(EVENT_SENSOR_PROXIMITY, lfo_rate_source_event_handler, NULL);
+  event_bus_subscribe(EVENT_SENSOR_TILT_X, lfo_rate_source_event_handler, NULL);
+  event_bus_subscribe(EVENT_SENSOR_TILT_Y, lfo_rate_source_event_handler, NULL);
 
   g_scene_manager.initialized = true;
 
@@ -1338,7 +1365,14 @@ esp_err_t scene_init(void) {
   // Apply Sample+Hold configuration and start mode
   sample_hold_apply_config(&initial_scene->sample_hold_config);
   sample_hold_apply_start_mode();
-  
+
+  // Sync tilt per-axis enable so the unified LIS3DHTR sampling task starts
+  // polling if this scene has tilt enabled. Without this, the persisted
+  // scene->tilt_x.enabled flag is loaded into RAM but never reaches the
+  // hardware sampling layer until the user manually toggles the axis.
+  tilt_axis_set_enabled(TILT_AXIS_X, initial_scene->tilt_x.enabled);
+  tilt_axis_set_enabled(TILT_AXIS_Y, initial_scene->tilt_y.enabled);
+
   // Setup touchwheel instance for non-buttons modes
   scene_setup_touchwheel_for_mode(initial_scene);
   
@@ -1545,7 +1579,15 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     ESP_LOGI(TAG, "Programming mode: deferring MIDI phase for scene %d", scene_index + 1);
     s_needs_deferred_init = true;
   }
-  
+
+  // Sync tilt per-axis enable unconditionally. This must run on every scene
+  // apply (including at boot and on scene switches, regardless of programming
+  // vs performance mode) so the unified LIS3DHTR sampling task picks up the
+  // scene's tilt configuration. No MIDI is emitted while input is suspended
+  // in programming mode (midi_tilt_scene_handler bails on scene_is_input_suspended).
+  tilt_axis_set_enabled(TILT_AXIS_X, new_scene->tilt_x.enabled);
+  tilt_axis_set_enabled(TILT_AXIS_Y, new_scene->tilt_y.enabled);
+
   // Switch UI module for this scene (only in performance mode)
   if (!ui_is_in_programming_mode()) {
     const char* mod_name = (new_scene->ui_module[0] != '\0')
@@ -1620,7 +1662,7 @@ void scene_apply_deferred_init(void) {
   lfo_apply_start_modes();
   rtg_apply_start_mode();
   sample_hold_apply_start_mode();
-  
+
   // Switch UI module for this scene
   const char* mod_name = (scene->ui_module[0] != '\0')
     ? scene->ui_module : "beat";
@@ -3176,6 +3218,64 @@ velocity_mode_t scene_get_als_velocity_mode(uint8_t scene_index) {
   return scene ? scene->als_velocity_mode : VELOCITY_MODE_FIXED;
 }
 
+esp_err_t scene_set_tilt_x_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->tilt_x_velocity_mode = mode;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+velocity_mode_t scene_get_tilt_x_velocity_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->tilt_x_velocity_mode : VELOCITY_MODE_FIXED;
+}
+
+esp_err_t scene_set_tilt_y_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->tilt_y_velocity_mode = mode;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+velocity_mode_t scene_get_tilt_y_velocity_mode(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->tilt_y_velocity_mode : VELOCITY_MODE_FIXED;
+}
+
+esp_err_t scene_set_tilt_x_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->tilt_x_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_tilt_x_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->tilt_x_tempo_nudge_pct : 10;
+}
+
+esp_err_t scene_set_tilt_y_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->tilt_y_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_tilt_y_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->tilt_y_tempo_nudge_pct : 10;
+}
+
 uint8_t scene_get_touchwheel_velocity(void) {
   scene_t* scene = scene_get_current();
   if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) {
@@ -3222,6 +3322,14 @@ uint8_t scene_get_als_lfo_rate(void) {
 
 uint8_t scene_get_proximity_lfo_rate(void) {
   return s_proximity_lfo_rate;
+}
+
+uint8_t scene_get_tilt_x_lfo_rate(void) {
+  return s_tilt_x_lfo_rate;
+}
+
+uint8_t scene_get_tilt_y_lfo_rate(void) {
+  return s_tilt_y_lfo_rate;
 }
 
 // Convert scene name to filesystem-safe slug filename
@@ -4224,6 +4332,7 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
     case OUTPUT_TYPE_RTG_RATE: output_type_str = "rtg_rate"; break;
     case OUTPUT_TYPE_SH_RATE: output_type_str = "sh_rate"; break;
     case OUTPUT_TYPE_PITCH_BEND: output_type_str = "pitch_bend"; break;
+    case OUTPUT_TYPE_TEMPO_NUDGE: output_type_str = "tempo_nudge"; break;
     default: output_type_str = "cc"; break;
   }
   cJSON_AddStringToObject(obj, "output_type", output_type_str);
@@ -4260,6 +4369,7 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
   cJSON_AddNumberToObject(obj, "curve_type", mapping->curve.type);
   cJSON_AddNumberToObject(obj, "polarity", mapping->polarity);
   cJSON_AddNumberToObject(obj, "min_value", mapping->min_value);
+  cJSON_AddNumberToObject(obj, "middle_value", mapping->middle_value);
   cJSON_AddNumberToObject(obj, "max_value", mapping->max_value);
   cJSON_AddBoolToObject(obj, "use_idle_value", mapping->use_idle_value);
   cJSON_AddNumberToObject(obj, "idle_value", mapping->idle_value);
@@ -4288,6 +4398,7 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
     else if (strcmp(type_str, "rtg_rate") == 0) mapping->output_type = OUTPUT_TYPE_RTG_RATE;
     else if (strcmp(type_str, "sh_rate") == 0) mapping->output_type = OUTPUT_TYPE_SH_RATE;
     else if (strcmp(type_str, "pitch_bend") == 0) mapping->output_type = OUTPUT_TYPE_PITCH_BEND;
+    else if (strcmp(type_str, "tempo_nudge") == 0) mapping->output_type = OUTPUT_TYPE_TEMPO_NUDGE;
     else mapping->output_type = OUTPUT_TYPE_CC;
   }
   
@@ -4362,7 +4473,10 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
   
   cJSON* min_val = cJSON_GetObjectItem(obj, "min_value");
   if (min_val) mapping->min_value = min_val->valueint;
-  
+
+  cJSON* middle_val = cJSON_GetObjectItem(obj, "middle_value");
+  if (middle_val) mapping->middle_value = middle_val->valueint;
+
   cJSON* max_val = cJSON_GetObjectItem(obj, "max_value");
   if (max_val) mapping->max_value = max_val->valueint;
   
@@ -4777,6 +4891,8 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "cv", continuous_mapping_to_json(&scene->cv));
   cJSON_AddItemToObject(root, "proximity", continuous_mapping_to_json(&scene->proximity));
   cJSON_AddItemToObject(root, "als", continuous_mapping_to_json(&scene->als));
+  cJSON_AddItemToObject(root, "tilt_x", continuous_mapping_to_json(&scene->tilt_x));
+  cJSON_AddItemToObject(root, "tilt_y", continuous_mapping_to_json(&scene->tilt_y));
   
   // Serialize expression jack mode and pedal actions
   const char* mode_str = (scene->expression_mode == EXPRESSION_MODE_NONE) ? "none" :
@@ -4823,7 +4939,11 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddStringToObject(root, "expression_velocity_mode", VEL_MODE_STR(scene->expression_velocity_mode));
   cJSON_AddStringToObject(root, "proximity_velocity_mode", VEL_MODE_STR(scene->proximity_velocity_mode));
   cJSON_AddStringToObject(root, "als_velocity_mode", VEL_MODE_STR(scene->als_velocity_mode));
-  
+  cJSON_AddStringToObject(root, "tilt_x_velocity_mode", VEL_MODE_STR(scene->tilt_x_velocity_mode));
+  cJSON_AddStringToObject(root, "tilt_y_velocity_mode", VEL_MODE_STR(scene->tilt_y_velocity_mode));
+  cJSON_AddNumberToObject(root, "tilt_x_tempo_nudge_pct", scene->tilt_x_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "tilt_y_tempo_nudge_pct", scene->tilt_y_tempo_nudge_pct);
+
   #undef VEL_MODE_STR
   
   // Serialize tempo settings
@@ -5092,6 +5212,18 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   
   cJSON* als = cJSON_GetObjectItem(root, "als");
   if (als) json_to_continuous_mapping(als, &scene->als);
+
+  cJSON* tilt_x = cJSON_GetObjectItem(root, "tilt_x");
+  if (tilt_x) json_to_continuous_mapping(tilt_x, &scene->tilt_x);
+
+  cJSON* tilt_y = cJSON_GetObjectItem(root, "tilt_y");
+  if (tilt_y) json_to_continuous_mapping(tilt_y, &scene->tilt_y);
+
+  cJSON* tnpx = cJSON_GetObjectItem(root, "tilt_x_tempo_nudge_pct");
+  if (tnpx && cJSON_IsNumber(tnpx)) scene->tilt_x_tempo_nudge_pct = (uint8_t)tnpx->valueint;
+
+  cJSON* tnpy = cJSON_GetObjectItem(root, "tilt_y_tempo_nudge_pct");
+  if (tnpy && cJSON_IsNumber(tnpy)) scene->tilt_y_tempo_nudge_pct = (uint8_t)tnpy->valueint;
   
   // Deserialize expression jack mode
   cJSON* expr_mode = cJSON_GetObjectItem(root, "expression_mode");
@@ -5243,6 +5375,8 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   PARSE_VEL_MODE(cJSON_GetObjectItem(root, "expression_velocity_mode"), scene->expression_velocity_mode);
   PARSE_VEL_MODE(cJSON_GetObjectItem(root, "proximity_velocity_mode"), scene->proximity_velocity_mode);
   PARSE_VEL_MODE(cJSON_GetObjectItem(root, "als_velocity_mode"), scene->als_velocity_mode);
+  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "tilt_x_velocity_mode"), scene->tilt_x_velocity_mode);
+  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "tilt_y_velocity_mode"), scene->tilt_y_velocity_mode);
   
   #undef PARSE_VEL_MODE
   

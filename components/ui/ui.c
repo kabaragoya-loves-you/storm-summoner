@@ -243,6 +243,7 @@ static void deferred_programming_mode_exit_cb(lv_timer_t *timer) {
   menu_page_cv_scene_cleanup();
   menu_page_proximity_scene_cleanup();
   menu_page_als_scene_cleanup();
+  menu_page_tilt_axis_scene_cleanup();
   
   // Restore Performance mode - use scene's ui_module (may have changed)
   saved_draw_module = NULL;  // Clear saved reference

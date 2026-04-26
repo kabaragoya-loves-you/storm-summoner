@@ -29,22 +29,29 @@ uint8_t continuous_mapping_process(uint8_t raw_input, continuous_mapping_t* mapp
   if (!mapping || !mapping->enabled) {
     return 0;
   }
-  
-  // 1. Apply curve
+
   uint8_t curved = curve_apply(&mapping->curve, raw_input);
-  
-  // 2. Apply polarity
   uint8_t polarized = apply_polarity(curved, mapping->polarity);
-  
-  // 3. Scale to output range
-  uint8_t range = mapping->max_value - mapping->min_value;
-  uint8_t scaled = mapping->min_value + ((polarized * range) / 127);
-  
-  // Update state
-  mapping->last_value = scaled;
+
+  // 3-point piecewise-linear scaling using min/middle/max. Signed math so
+  // middle can legitimately be below min or above max (e.g. inverted
+  // configurations), and we clamp at the end.
+  int16_t min = (int16_t)mapping->min_value;
+  int16_t mid = (int16_t)mapping->middle_value;
+  int16_t max = (int16_t)mapping->max_value;
+  int16_t scaled;
+  if (polarized <= 64) {
+    scaled = min + ((mid - min) * (int16_t)polarized) / 64;
+  } else {
+    scaled = mid + ((max - mid) * ((int16_t)polarized - 64)) / 63;
+  }
+  if (scaled < 0) scaled = 0;
+  if (scaled > 127) scaled = 127;
+
+  mapping->last_value = (uint8_t)scaled;
   mapping->last_activity_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
-  
-  return scaled;
+
+  return (uint8_t)scaled;
 }
 
 bool continuous_mapping_check_idle(continuous_mapping_t* mapping) {
@@ -72,6 +79,7 @@ continuous_mapping_t continuous_mapping_create(uint8_t cc_number) {
     .curve = curve_create(CURVE_LINEAR),
     .polarity = POLARITY_UNIPOLAR,
     .min_value = 0,
+    .middle_value = 64,
     .max_value = 127,
     .use_idle_value = false,
     .idle_value = 64,

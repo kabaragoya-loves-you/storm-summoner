@@ -111,6 +111,8 @@ typedef struct {
   continuous_mapping_t cv;
   continuous_mapping_t proximity;
   continuous_mapping_t als;          // Ambient light sensor
+  continuous_mapping_t tilt_x;       // Accelerometer X axis (roll, left/right)
+  continuous_mapping_t tilt_y;       // Accelerometer Y axis (pitch, forward/back)
   
   // Expression jack configuration (shared jack, multiple modes)
   expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE, SWITCH
@@ -132,6 +134,12 @@ typedef struct {
   velocity_mode_t expression_velocity_mode;  // For expression note output
   velocity_mode_t proximity_velocity_mode;   // For proximity note output
   velocity_mode_t als_velocity_mode;         // For ambient light note output
+  velocity_mode_t tilt_x_velocity_mode;      // For tilt X note output
+  velocity_mode_t tilt_y_velocity_mode;      // For tilt Y note output
+  // OUTPUT_TYPE_TEMPO_NUDGE: percentage (0-100) of scene->bpm to swing
+  // around the scene BPM; midi==64 returns exactly to scene->bpm.
+  uint8_t tilt_x_tempo_nudge_pct;
+  uint8_t tilt_y_tempo_nudge_pct;
   
   // Tempo configuration (per-scene)
   uint16_t bpm;                          // Tempo in beats per minute (20-300)
@@ -357,6 +365,18 @@ velocity_mode_t scene_get_proximity_velocity_mode(uint8_t scene_index);
 esp_err_t scene_set_als_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
 velocity_mode_t scene_get_als_velocity_mode(uint8_t scene_index);
 
+// Tilt X/Y note output velocity modes
+esp_err_t scene_set_tilt_x_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
+velocity_mode_t scene_get_tilt_x_velocity_mode(uint8_t scene_index);
+esp_err_t scene_set_tilt_y_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
+velocity_mode_t scene_get_tilt_y_velocity_mode(uint8_t scene_index);
+
+// Tilt tempo nudge percentages (OUTPUT_TYPE_TEMPO_NUDGE)
+esp_err_t scene_set_tilt_x_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_tilt_x_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_tilt_y_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_tilt_y_tempo_nudge_pct(uint8_t scene_index);
+
 // Touchwheel velocity (when in TOUCHWHEEL_MODE_VELOCITY)
 uint8_t scene_get_touchwheel_velocity(void);
 
@@ -374,6 +394,8 @@ uint8_t scene_get_expression_lfo_rate(void);
 uint8_t scene_get_cv_lfo_rate(void);
 uint8_t scene_get_als_lfo_rate(void);
 uint8_t scene_get_proximity_lfo_rate(void);
+uint8_t scene_get_tilt_x_lfo_rate(void);
+uint8_t scene_get_tilt_y_lfo_rate(void);
 
 // Tempo configuration (per-scene)
 esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm);

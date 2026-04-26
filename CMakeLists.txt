@@ -118,7 +118,7 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_buttons>"
     "$<TARGET_FILE:__idf_touch>"
     "$<TARGET_FILE:__idf_switch>"
-    "$<TARGET_FILE:__idf_bump>"
+    "$<TARGET_FILE:__idf_lis3dhtr>"
     "$<TARGET_FILE:__idf_sensor>"
     "$<TARGET_FILE:__idf_expression>"
     "$<TARGET_FILE:__idf_cv>"

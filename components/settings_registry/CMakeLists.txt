@@ -6,7 +6,7 @@ idf_component_register(
   REQUIRES
     app_settings
     buttons
-    bump
+    lis3dhtr
     clock_sync
     config
     cv

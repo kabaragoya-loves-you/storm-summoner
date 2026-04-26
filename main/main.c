@@ -44,6 +44,7 @@
 #include "midi_touchwheel_scene_handler.h"
 #include "midi_proximity_scene_handler.h"
 #include "midi_als_scene_handler.h"
+#include "midi_tilt_scene_handler.h"
 #include "midi_lfo_scene_handler.h"
 #include "lfo.h"
 #include "scene_test.h"
@@ -135,6 +136,7 @@ void app_main(void) {
   midi_touchwheel_scene_handler_init();
   midi_proximity_scene_handler_init();
   midi_als_scene_handler_init();
+  midi_tilt_scene_handler_init();
 
   switch_init();
   cv_init(false);

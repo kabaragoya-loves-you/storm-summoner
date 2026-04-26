@@ -24,7 +24,8 @@ typedef enum {
   OUTPUT_TYPE_LFO1_DEPTH,   // LFO2 -> LFO1 depth (cross-modulation)
   OUTPUT_TYPE_RTG_RATE,     // Modulate RTG rate
   OUTPUT_TYPE_SH_RATE,      // Modulate Sample+Hold rate
-  OUTPUT_TYPE_PITCH_BEND    // Send pitch bend (uses note_channel)
+  OUTPUT_TYPE_PITCH_BEND,   // Send pitch bend (uses note_channel)
+  OUTPUT_TYPE_TEMPO_NUDGE   // Nudge scene BPM around scene->bpm (bipolar, centered)
 } output_type_t;
 
 // LFO target for LFO_RATE/LFO_DEPTH output types
@@ -68,8 +69,13 @@ typedef struct {
   curve_t curve;             // Curve to apply before polarity
   polarity_t polarity;       // Polarity mode
   
-  // Output scaling
+  // Output scaling: raw 0 -> min_value, raw 64 (rest) -> middle_value,
+  // raw 127 -> max_value. Piecewise-linear interpolation between anchors
+  // lets callers shift the "rest" output independently of the extents.
+  // With middle_value == 64 and min=0/max=127, behavior is identical to the
+  // classic linear 0..127 mapping.
   uint8_t min_value;         // Minimum output value (default 0)
+  uint8_t middle_value;      // Output at raw=64 / sensor rest (default 64)
   uint8_t max_value;         // Maximum output value (default 127)
   
   // Special behaviors (for proximity sensor)

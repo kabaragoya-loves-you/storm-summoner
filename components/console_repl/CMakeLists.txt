@@ -13,7 +13,7 @@ idf_component_register(
     buttons
     touch
     switch
-    bump
+    lis3dhtr
     sensor
     expression
     cv

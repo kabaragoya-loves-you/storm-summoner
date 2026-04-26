@@ -19,6 +19,9 @@ idf_component_register(
     "pages/als_scene.c"
     "pages/settings_proximity.c"
     "pages/settings_als.c"
+    "pages/settings_tilt.c"
+    "pages/tilt_scene.c"
+    "pages/tilt_axis_scene.c"
     "pages/buttons_menu.c"
     "pages/on_load_menu.c"
     "pages/on_play_menu.c"
@@ -52,7 +55,7 @@ idf_component_register(
     tempo
     clock_sync
     buttons
-    bump
+    lis3dhtr
     display
     version
     littlefs
