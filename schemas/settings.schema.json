@@ -512,6 +512,54 @@
       ]
     },
     {
+      "id": "note_track",
+      "label": "Note Track",
+      "description": "Global parameters for the Note Track feature. Routing is configured per-scene via the scene's note_track mapping.",
+      "settings": [
+        {
+          "id": "note_track.low_note",
+          "label": "Low Note",
+          "description": "Note number that maps to value 0 (default C2 = 36)",
+          "type": "number",
+          "min": 0,
+          "max": 127,
+          "step": 1,
+          "default": 36
+        },
+        {
+          "id": "note_track.high_note",
+          "label": "High Note",
+          "description": "Note number that maps to value 127 (default C6 = 84)",
+          "type": "number",
+          "min": 0,
+          "max": 127,
+          "step": 1,
+          "default": 84
+        },
+        {
+          "id": "note_track.channel",
+          "label": "Channel",
+          "description": "MIDI channel filter (0 = Omni, 1-16 = specific channel)",
+          "type": "number",
+          "min": 0,
+          "max": 16,
+          "step": 1,
+          "default": 0
+        },
+        {
+          "id": "note_track.filter_mode",
+          "label": "Filter Mode",
+          "description": "Whether to also pass matched notes through MIDI OUT (Intercept) or drop them (Kill)",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Intercept"},
+            {"value": 1, "label": "Kill"}
+          ],
+          "default": 0
+        }
+      ]
+    },
+    {
       "id": "tempo",
       "label": "Tempo",
       "description": "Tempo and clock settings",

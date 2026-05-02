@@ -207,6 +207,17 @@ static void handle_switch_event(const event_t* event, void* context) {
   action_execute(&scene->expr_switch, pressed ? 127 : 0, pressed);
 }
 
+// On scene change, drop all of the across-event state we cache so the new
+// scene's first event isn't compared against (or snapped to) values captured
+// under the previous scene's curve/polarity/extremes.
+static void handle_scene_changed(const event_t* event, void* context) {
+  (void)event;
+  (void)context;
+  smart_filter_reset(&s_expression_filter);
+  s_last_tempo_apply_ms = 0;
+  s_last_applied_midi = 64;
+}
+
 esp_err_t midi_expression_scene_handler_init(void) {
   ESP_LOGD(TAG, "Initializing MIDI expression scene handler");
   
@@ -237,7 +248,13 @@ esp_err_t midi_expression_scene_handler_init(void) {
     ESP_LOGE(TAG, "Failed to subscribe to switch events");
     return ret;
   }
-  
+
+  ret = event_bus_subscribe(EVENT_SCENE_CHANGED, handle_scene_changed, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to scene changed events");
+    return ret;
+  }
+
   ESP_LOGI(TAG, "Expression scene handler initialized");
   return ESP_OK;
 }

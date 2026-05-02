@@ -235,6 +235,28 @@ void midi_tilt_scene_handler_release_notes(void) {
   }
 }
 
+// On scene change, drop the across-event filter and zone-tracking state for
+// both axes so the new scene's first event isn't compared against (or snapped
+// to) values captured under the previous scene's curve/polarity/extremes.
+// Also cancel any pending forgive-zone note-off timers; they were scheduled
+// against the previous scene's mapping->last_note and shouldn't fire blindly
+// against whatever the new scene happens to have active.
+static void handle_scene_changed(const event_t* event, void* context) {
+  (void)event;
+  (void)context;
+  for (int i = 0; i < 2; i++) {
+    cancel_note_off_timer(i);
+    smart_filter_reset(&s_state[i].filter);
+    s_state[i].last_tempo_apply_ms = 0;
+    s_state[i].last_applied_midi = 64;
+    // Match init: assume in-zone so the next event doesn't look like a fresh
+    // exit from the forgive zone.
+    s_state[i].prev_in_zone = true;
+    s_state[i].pending_note = 0;
+    s_state[i].pending_channel = 0;
+  }
+}
+
 esp_err_t midi_tilt_scene_handler_init(void) {
   for (int i = 0; i < 2; i++) {
     smart_filter_init(&s_state[i].filter, 2);
@@ -249,6 +271,8 @@ esp_err_t midi_tilt_scene_handler_init(void) {
   esp_err_t ret = event_bus_subscribe(EVENT_SENSOR_TILT_X, handle_tilt_event, NULL);
   if (ret != ESP_OK) return ret;
   ret = event_bus_subscribe(EVENT_SENSOR_TILT_Y, handle_tilt_event, NULL);
+  if (ret != ESP_OK) return ret;
+  ret = event_bus_subscribe(EVENT_SCENE_CHANGED, handle_scene_changed, NULL);
   if (ret != ESP_OK) return ret;
   ESP_LOGI(TAG, "Tilt scene handler initialized");
   return ESP_OK;

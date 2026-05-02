@@ -119,6 +119,12 @@ typedef enum {
   BOOMERANG_TARGET_RANDOM        // Pick random value in valid range at trigger time
 } boomerang_target_mode_t;
 
+// Starting value mode: where the envelope begins (and returns to on release)
+typedef enum {
+  BOOMERANG_START_CURRENT = 0,   // Capture the live parameter value at trigger time
+  BOOMERANG_START_EXPLICIT       // Use configured start_value
+} boomerang_start_mode_t;
+
 // Step action target
 typedef enum {
   STEP_TARGET_SH = 0,         // Sample & Hold (future)
@@ -382,6 +388,9 @@ typedef struct {
       uint8_t cc_number;            // CC number (when output_type == CC)
       uint8_t target_mode;          // boomerang_target_mode_t: EXPLICIT or RANDOM
       uint16_t target_value;        // Target value (range depends on output_type)
+
+      uint8_t start_mode;           // boomerang_start_mode_t: CURRENT or EXPLICIT
+      uint16_t start_value;         // Override start value when start_mode == EXPLICIT
 
       // Attack phase (travel out to target)
       uint8_t attack_mode;          // boomerang_duration_mode_t

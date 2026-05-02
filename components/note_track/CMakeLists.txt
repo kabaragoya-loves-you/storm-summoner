@@ -1,0 +1,9 @@
+idf_component_register(
+  SRCS
+    "note_track_config.c"
+  INCLUDE_DIRS
+    "include"
+  REQUIRES
+    log
+    app_settings
+)

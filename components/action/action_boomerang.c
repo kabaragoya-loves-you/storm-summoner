@@ -361,7 +361,15 @@ bool action_boomerang_start_internal(const action_t* action) {
   b->lfo_target = action->params.boomerang.lfo_target;
   b->cc_number = action->params.boomerang.cc_number;
 
-  b->start_value = boomerang_capture_start_value(action);
+  if (action->params.boomerang.start_mode == BOOMERANG_START_EXPLICIT) {
+    if (action->params.boomerang.output_type == OUTPUT_TYPE_PITCH_BEND) {
+      b->start_value = (int32_t)action->params.boomerang.start_value - 8192;
+    } else {
+      b->start_value = (int32_t)action->params.boomerang.start_value;
+    }
+  } else {
+    b->start_value = boomerang_capture_start_value(action);
+  }
   b->target_value = boomerang_resolve_target(action);
   b->last_sent_value = b->start_value;
 

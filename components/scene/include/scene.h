@@ -113,6 +113,7 @@ typedef struct {
   continuous_mapping_t als;          // Ambient light sensor
   continuous_mapping_t tilt_x;       // Accelerometer X axis (roll, left/right)
   continuous_mapping_t tilt_y;       // Accelerometer Y axis (pitch, forward/back)
+  continuous_mapping_t note_track;   // Incoming MIDI Note On as a continuous source
   
   // Expression jack configuration (shared jack, multiple modes)
   expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE, SWITCH

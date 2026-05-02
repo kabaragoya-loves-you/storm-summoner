@@ -38,6 +38,9 @@ lv_obj_t* menu_page_lfo2_scene_create(void);       // Scene -> LFO2
 void menu_page_lfo2_scene_cleanup(void);
 lv_obj_t* menu_page_rtg_scene_create(void);        // Scene -> RTG
 lv_obj_t* menu_page_sample_hold_scene_create(void);   // Scene -> S+H
+lv_obj_t* menu_page_note_track_scene_create(void); // Scene -> Note Track
+void menu_page_note_track_scene_cleanup(void);
+lv_obj_t* menu_page_settings_note_track_create(void); // Settings -> Note Track
 lv_obj_t* menu_page_tilt_scene_create(void);          // Scene -> Tilt (submenu)
 lv_obj_t* menu_page_tilt_axis_scene_create(void);     // Scene -> Tilt -> X/Y (parameterized)
 void menu_page_tilt_axis_scene_cleanup(void);         // Free PSRAM allocations for CC options

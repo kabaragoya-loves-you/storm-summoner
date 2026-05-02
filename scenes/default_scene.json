@@ -203,6 +203,25 @@
 		"idle_value":	64,
 		"idle_timeout_ms":	1000
 	},
+	"note_track":	{
+		"enabled":	false,
+		"output_type":	"cc",
+		"cc_number":	1,
+		"cc_numbers":	[1, 0, 0, 0],
+		"base_note":	60,
+		"note_range":	24,
+		"velocity":	100,
+		"note_latch":	false,
+		"note_release_ms":	500,
+		"polyphony":	"mono",
+		"curve_type":	0,
+		"polarity":	0,
+		"min_value":	0,
+		"max_value":	127,
+		"use_idle_value":	false,
+		"idle_value":	64,
+		"idle_timeout_ms":	1000
+	},
 	"expression_mode":	"expression",
 	"sustain":	{
 		"type":	"sustain"

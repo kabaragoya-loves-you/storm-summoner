@@ -10,6 +10,8 @@
 // #include "midi_sysex_update.h" // Removed
 #include "midi_identity.h"
 #include "midi_passthrough.h"
+#include "note_track_config.h"
+#include "scene.h"
 #include "transport.h"
 #include "esp_log.h"
 #include "event_bus.h"
@@ -340,14 +342,22 @@ static void process_byte(uint8_t byte) {
 void midi_in_process_stream(const uint8_t *data, size_t len, uint8_t source) {
   // Set the current source for this parsing session
   current_source = source;
-  
-  // Forward to appropriate passthrough destination
-  if (source == MIDI_SOURCE_UART) {
+
+  // When the active scene's Note Track is enabled and the global filter mode
+  // is KILL, we cannot raw-forward the byte chunk. Use the per-message
+  // filtered path instead so we can drop note bytes selectively while
+  // preserving every other message.
+  scene_t* cur_scene = scene_get_current();
+  bool kill_active = cur_scene && cur_scene->note_track.enabled
+    && note_track_get_filter_mode() == NOTE_TRACK_FILTER_KILL;
+  if (kill_active) {
+    midi_passthrough_forward_filtered(source, data, len);
+  } else if (source == MIDI_SOURCE_UART) {
     midi_passthrough_forward_from_uart(data, len);
   } else if (source == MIDI_SOURCE_USB) {
     midi_passthrough_forward_from_usb(data, len);
   }
-  
+
   // Process the MIDI data
   for (size_t i = 0; i < len; i++) process_byte(data[i]);
 }

@@ -176,6 +176,8 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->tilt_y.idle_value = 64;
   scene->tilt_y.idle_timeout_ms = 1000;
   scene->tilt_y.polarity = POLARITY_BIPOLAR;
+  scene->note_track = continuous_mapping_create(1);    // CC1 = Mod Wheel
+  scene->note_track.enabled = false;                   // Disabled by default
 
   // Expression jack configuration
   scene->expression_mode = EXPRESSION_MODE_PEDAL;      // Default to expression pedal mode
@@ -3843,6 +3845,9 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddStringToObject(obj, "target_mode",
       action->params.boomerang.target_mode == BOOMERANG_TARGET_RANDOM ? "random" : "explicit");
     cJSON_AddNumberToObject(obj, "target_value", action->params.boomerang.target_value);
+    cJSON_AddStringToObject(obj, "start_mode",
+      action->params.boomerang.start_mode == BOOMERANG_START_EXPLICIT ? "explicit" : "current");
+    cJSON_AddNumberToObject(obj, "start_value", action->params.boomerang.start_value);
 
     // Attack
     const char* amode;
@@ -4372,6 +4377,14 @@ static action_t json_to_action(cJSON* obj) {
     }
     cJSON* target_value = cJSON_GetObjectItem(obj, "target_value");
     if (target_value) action.params.boomerang.target_value = (uint16_t)target_value->valueint;
+
+    cJSON* start_mode = cJSON_GetObjectItem(obj, "start_mode");
+    if (start_mode && cJSON_IsString(start_mode)) {
+      action.params.boomerang.start_mode = strcmp(start_mode->valuestring, "explicit") == 0
+        ? BOOMERANG_START_EXPLICIT : BOOMERANG_START_CURRENT;
+    }
+    cJSON* start_value = cJSON_GetObjectItem(obj, "start_value");
+    if (start_value) action.params.boomerang.start_value = (uint16_t)start_value->valueint;
 
     // Attack
     cJSON* amode = cJSON_GetObjectItem(obj, "attack_mode");
@@ -5177,6 +5190,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "als", continuous_mapping_to_json(&scene->als));
   cJSON_AddItemToObject(root, "tilt_x", continuous_mapping_to_json(&scene->tilt_x));
   cJSON_AddItemToObject(root, "tilt_y", continuous_mapping_to_json(&scene->tilt_y));
+  cJSON_AddItemToObject(root, "note_track", continuous_mapping_to_json(&scene->note_track));
   
   // Serialize expression jack mode and pedal actions
   const char* mode_str = (scene->expression_mode == EXPRESSION_MODE_NONE) ? "none" :
@@ -5507,6 +5521,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
 
   cJSON* tilt_y = cJSON_GetObjectItem(root, "tilt_y");
   if (tilt_y) json_to_continuous_mapping(tilt_y, &scene->tilt_y);
+
+  cJSON* note_track = cJSON_GetObjectItem(root, "note_track");
+  if (note_track) json_to_continuous_mapping(note_track, &scene->note_track);
 
   cJSON* tnpx = cJSON_GetObjectItem(root, "tilt_x_tempo_nudge_pct");
   if (tnpx && cJSON_IsNumber(tnpx)) scene->tilt_x_tempo_nudge_pct = (uint8_t)tnpx->valueint;

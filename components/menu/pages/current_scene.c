@@ -159,6 +159,11 @@ static void nav_to_tilt(void* user_data) {
   menu_navigate_to("Tilt", menu_page_tilt_scene_create);
 }
 
+static void nav_to_note_track(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Note Track", menu_page_note_track_scene_create);
+}
+
 // ============================================================================
 // Name Submenu (Regenerate / Edit)
 // ============================================================================
@@ -1192,6 +1197,7 @@ lv_obj_t* menu_page_current_scene_create(void) {
   s_scene_items[idx++] = (menu_item_t){ "S+H", nav_to_sample_hold, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "Tilt", nav_to_tilt, NULL, true };
   s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true };
+  s_scene_items[idx++] = (menu_item_t){ "Note Track", nav_to_note_track, NULL, true };
   
   // Per-scene device controls (only in per-scene device mode)
   if (config_get_device_mode() == DEVICE_MODE_PER_SCENE) {

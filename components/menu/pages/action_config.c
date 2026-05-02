@@ -124,6 +124,7 @@ static char s_boomerang_cc_label[LABEL_BUFFER_SETS][40];
 static char s_boomerang_lfo_target_label[LABEL_BUFFER_SETS][32];
 static char s_boomerang_target_mode_label[LABEL_BUFFER_SETS][32];
 static char s_boomerang_target_value_label[LABEL_BUFFER_SETS][40];
+static char s_boomerang_start_label[LABEL_BUFFER_SETS][40];
 static char s_boomerang_attack_label[LABEL_BUFFER_SETS][32];
 static char s_boomerang_sustain_label[LABEL_BUFFER_SETS][32];
 static char s_boomerang_release_label[LABEL_BUFFER_SETS][32];
@@ -3949,6 +3950,110 @@ static void nav_to_boomerang_target_value(void* user_data) {
   nav_to_subpage("Value", boomerang_target_value_roller_create);
 }
 
+// Start value roller - "Current" as index 0, then device-aware values for CC.
+// Selecting "Current" sets start_mode=CURRENT; any other selection sets start_mode=EXPLICIT.
+static void boomerang_start_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  if (selected_index == 0) {
+    s_ctx->target_action->params.boomerang.start_mode = BOOMERANG_START_CURRENT;
+    s_pending_control = NULL;
+    s_callback_in_progress = false;
+    return_to_detail_page(2);
+    return;
+  }
+
+  uint32_t value_idx = selected_index - 1;
+  uint8_t ot = s_ctx->target_action->params.boomerang.output_type;
+  uint16_t val = 0;
+
+  if (ot == OUTPUT_TYPE_CC && s_pending_control) {
+    if (s_pending_control->discrete_count > 0) {
+      if (value_idx < (uint32_t)s_pending_control->discrete_count) {
+        val = (uint16_t)s_pending_control->discrete_values[value_idx].value;
+      }
+    } else {
+      val = (uint16_t)(s_pending_control->min + value_idx);
+      if (val > 127) val = 127;
+    }
+  } else {
+    val = (uint16_t)(value_idx & 0x7F);
+  }
+
+  s_ctx->target_action->params.boomerang.start_mode = BOOMERANG_START_EXPLICIT;
+  s_ctx->target_action->params.boomerang.start_value = val;
+  s_pending_control = NULL;
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* boomerang_start_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[1024];
+  options[0] = '\0';
+  size_t pos = 0;
+  uint8_t ot = s_ctx->target_action->params.boomerang.output_type;
+  uint32_t idx = 0;
+  bool is_explicit =
+    s_ctx->target_action->params.boomerang.start_mode == BOOMERANG_START_EXPLICIT;
+
+  pos += snprintf(options + pos, sizeof(options) - pos, "Current");
+
+  if (ot == OUTPUT_TYPE_CC) {
+    uint8_t scene_index = scene_get_current_index();
+    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+    uint8_t cc_num = s_ctx->target_action->params.boomerang.cc_number;
+    s_pending_control = assets_get_control_by_cc(device, cc_num);
+    uint16_t current_val = s_ctx->target_action->params.boomerang.start_value;
+
+    if (s_pending_control && s_pending_control->discrete_count > 0) {
+      for (int i = 0; i < s_pending_control->discrete_count; i++) {
+        if (pos < sizeof(options) - 2) options[pos++] = '\n';
+        const char* name = s_pending_control->discrete_values[i].name;
+        if (name) {
+          pos += snprintf(options + pos, sizeof(options) - pos, "%.27s", name);
+        } else {
+          pos += snprintf(options + pos, sizeof(options) - pos, "%u",
+            (unsigned)s_pending_control->discrete_values[i].value);
+        }
+        if (is_explicit && s_pending_control->discrete_values[i].value == current_val) {
+          idx = (uint32_t)(i + 1);
+        }
+      }
+    } else if (s_pending_control) {
+      uint16_t min_val = s_pending_control->min;
+      uint16_t max_val = s_pending_control->max;
+      if (max_val > 127) max_val = 127;
+      for (uint16_t i = min_val; i <= max_val && pos < sizeof(options) - 8; i++) {
+        options[pos++] = '\n';
+        pos += snprintf(options + pos, sizeof(options) - pos, "%u", (unsigned)i);
+        if (is_explicit && i == current_val) idx = (uint32_t)(1 + (i - min_val));
+      }
+    } else {
+      for (int i = 0; i <= 127 && pos < sizeof(options) - 8; i++) {
+        options[pos++] = '\n';
+        pos += snprintf(options + pos, sizeof(options) - pos, "%d", i);
+      }
+      if (is_explicit && current_val <= 127) idx = (uint32_t)(current_val + 1);
+    }
+  }
+  options[pos] = '\0';
+
+  return menu_create_roller_page("Start", options, idx,
+    boomerang_start_confirm_cb, NULL);
+}
+
+static void nav_to_boomerang_start(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Start", boomerang_start_roller_create);
+}
+
 // Phase duration roller - one combined list of ms presets and musical divisions.
 // Index 0..MS_COUNT-1 are ms presets (0 == Instant); MS_COUNT..MS_COUNT+DIV_COUNT-1
 // are musical divisions that set mode=DIVISION.
@@ -6257,6 +6362,31 @@ lv_obj_t* action_config_detail_page_create(void) {
       }
       s_detail_items[item_count++] = (menu_item_t){
         s_boomerang_target_value_label[buf], nav_to_boomerang_target_value, NULL, true
+      };
+    }
+
+    // Start value (CC mode only) - default Current, override with explicit value
+    if (ot == OUTPUT_TYPE_CC && item_count < MAX_DETAIL_ITEMS) {
+      const char* start_disp = "Current";
+      char value_buf[32];
+      if (action->params.boomerang.start_mode == BOOMERANG_START_EXPLICIT) {
+        uint8_t scene_index = scene_get_current_index();
+        const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+        const char* name = assets_get_discrete_name(device,
+          action->params.boomerang.cc_number,
+          (uint8_t)action->params.boomerang.start_value);
+        if (name) {
+          start_disp = name;
+        } else {
+          snprintf(value_buf, sizeof(value_buf), "%u",
+            (unsigned)action->params.boomerang.start_value);
+          start_disp = value_buf;
+        }
+      }
+      snprintf(s_boomerang_start_label[buf], sizeof(s_boomerang_start_label[buf]),
+        "Start\n%.30s", start_disp);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_boomerang_start_label[buf], nav_to_boomerang_start, NULL, true
       };
     }
 

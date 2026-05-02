@@ -55,6 +55,24 @@ void midi_passthrough_forward_from_usb(const uint8_t *data, size_t len);
 void midi_passthrough_forward_from_uart(const uint8_t *data, size_t len);
 
 /**
+ * @brief Forward MIDI data with per-message filtering for Note Track "kill" mode.
+ *
+ * Walks the byte stream, tracks running status, and selectively drops Note On
+ * and Note Off messages whose channel and note match the active Note Track
+ * filter. All other channel-voice messages, system-common, SysEx, and realtime
+ * bytes are forwarded to the opposite interface (USB->UART or UART->USB).
+ *
+ * Use this in place of midi_passthrough_forward_from_uart/usb when the
+ * active scene's Note Track mapping is enabled and the global filter mode
+ * is set to KILL.
+ *
+ * @param source MIDI_SOURCE_UART or MIDI_SOURCE_USB
+ * @param data   Incoming byte chunk
+ * @param len    Length of data
+ */
+void midi_passthrough_forward_filtered(uint8_t source, const uint8_t* data, size_t len);
+
+/**
  * @brief Get passthrough statistics
  */
 void midi_passthrough_get_stats(

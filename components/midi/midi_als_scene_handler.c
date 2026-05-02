@@ -160,6 +160,17 @@ void midi_als_scene_handler_release_notes(void) {
   }
 }
 
+// On scene change, drop all of the across-event state we cache so the new
+// scene's first event isn't compared against (or snapped to) values captured
+// under the previous scene's curve/polarity/extremes.
+static void handle_scene_changed(const event_t* event, void* context) {
+  (void)event;
+  (void)context;
+  smart_filter_reset(&s_als_filter);
+  s_last_tempo_apply_ms = 0;
+  s_last_applied_midi = 64;
+}
+
 esp_err_t midi_als_scene_handler_init(void) {
   ESP_LOGD(TAG, "Initializing ALS scene handler");
   
@@ -172,7 +183,13 @@ esp_err_t midi_als_scene_handler_init(void) {
     ESP_LOGE(TAG, "Failed to subscribe to ALS events");
     return ret;
   }
-  
+
+  ret = event_bus_subscribe(EVENT_SCENE_CHANGED, handle_scene_changed, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to scene changed events");
+    return ret;
+  }
+
   ESP_LOGI(TAG, "ALS scene handler initialized (smart filtering enabled)");
   return ESP_OK;
 }

@@ -145,6 +145,10 @@
       "$ref": "#/definitions/continuous_mapping",
       "description": "Tilt Y axis (pitch, forward/back) mapping"
     },
+    "note_track": {
+      "$ref": "#/definitions/continuous_mapping",
+      "description": "Note Track: incoming MIDI Note On numbers (within the global Note Track range) drive this continuous mapping"
+    },
     "expression_mode": {
       "type": "string",
       "enum": ["expression", "sustain", "sostenuto", "gate", "switch"],
@@ -1600,6 +1604,18 @@
                 "minimum": 0,
                 "maximum": 16383,
                 "description": "Target value (range depends on output_type: 0-127 for CC/LFO/RTG/SH/tempo_nudge, 0-16383 for pitch_bend)"
+              },
+              "start_mode": {
+                "type": "string",
+                "enum": ["current", "explicit"],
+                "default": "current",
+                "description": "Capture the live parameter value at trigger time, or use an explicit start_value"
+              },
+              "start_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383,
+                "description": "Override start value (used when start_mode is explicit; same range as target_value)"
               },
               "attack_mode": {
                 "type": "string",

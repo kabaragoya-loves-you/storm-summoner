@@ -46,6 +46,8 @@
 #include "midi_als_scene_handler.h"
 #include "midi_tilt_scene_handler.h"
 #include "midi_lfo_scene_handler.h"
+#include "midi_note_track_scene_handler.h"
+#include "note_track_config.h"
 #include "lfo.h"
 #include "scene_test.h"
 #include "scene.h"
@@ -102,6 +104,7 @@ void app_main(void) {
   midi_out_init();
   midi_in_init();
   midi_in_debug_init();
+  note_track_config_init();
   midi_passthrough_init();
   
   buttons_init(false);
@@ -137,6 +140,7 @@ void app_main(void) {
   midi_proximity_scene_handler_init();
   midi_als_scene_handler_init();
   midi_tilt_scene_handler_init();
+  midi_note_track_scene_handler_init();
 
   switch_init();
   cv_init(false);

@@ -37,6 +37,8 @@ idf_component_register(
     "pages/lfo2_scene.c"
     "pages/rtg_scene.c"
     "pages/sample_hold_scene.c"
+    "pages/note_track_scene.c"
+    "pages/settings_note_track.c"
     "pages/inspect_scene.c"
   INCLUDE_DIRS
     "include"
@@ -64,5 +66,6 @@ idf_component_register(
     lfo
     rtg
     sample_hold
+    note_track
   PRIV_REQUIRES main
 )

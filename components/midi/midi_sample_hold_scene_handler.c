@@ -43,6 +43,15 @@ static void handle_sample_hold_event(const event_t* event, void* context) {
   ESP_LOGD(TAG, "S+H: %d -> CC=%d", raw_value, output_value);
 }
 
+// On scene change, drop the across-event filter state so the new scene's
+// first S+H sample isn't compared against (or snapped to) values captured
+// under the previous scene's curve/polarity/extremes.
+static void handle_scene_changed(const event_t* event, void* context) {
+  (void)event;
+  (void)context;
+  smart_filter_reset(&s_sh_filter);
+}
+
 esp_err_t midi_sample_hold_scene_handler_init(void) {
   // Initialize smart filter with deadzone=2
   smart_filter_init(&s_sh_filter, 2);
@@ -53,7 +62,13 @@ esp_err_t midi_sample_hold_scene_handler_init(void) {
     ESP_LOGE(TAG, "Failed to subscribe to S+H events");
     return ret;
   }
-  
+
+  ret = event_bus_subscribe(EVENT_SCENE_CHANGED, handle_scene_changed, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to scene changed events");
+    return ret;
+  }
+
   ESP_LOGI(TAG, "Sample+Hold scene handler initialized");
   return ESP_OK;
 }
