@@ -19,16 +19,22 @@ lv_obj_t* menu_page_rtg_scene_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_RTG_ITEMS 11
+#define MAX_RTG_ITEMS 16
 static menu_item_t s_rtg_items[MAX_RTG_ITEMS];
 
 static char s_enabled_label[LABEL_BUFFER_SETS][32];
+static char s_generator_label[LABEL_BUFFER_SETS][32];
 static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_start_mode_label[LABEL_BUFFER_SETS][32];
 static char s_rate_mode_label[LABEL_BUFFER_SETS][32];
 static char s_rate_label[LABEL_BUFFER_SETS][32];
 static char s_sync_mult_label[LABEL_BUFFER_SETS][32];
 static char s_glide_label[LABEL_BUFFER_SETS][32];
+static char s_direction_label[LABEL_BUFFER_SETS][32];
+static char s_layout_label[LABEL_BUFFER_SETS][32];
+static char s_fade_label[LABEL_BUFFER_SETS][32];
+static char s_style_label[LABEL_BUFFER_SETS][32];
+static char s_wide_semis_label[LABEL_BUFFER_SETS][32];
 static char s_probability_label[LABEL_BUFFER_SETS][32];
 static char s_pattern_label[LABEL_BUFFER_SETS][32];
 
@@ -697,6 +703,319 @@ static void nav_to_glide(void* user_data) {
 }
 
 // ============================================================================
+// Generator Roller (Random / Shepard)
+// ============================================================================
+
+static void generator_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->rtg_config.generator =
+    (selected_index == 1) ? RTG_GEN_SHEPARD : RTG_GEN_RANDOM;
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* generator_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = (scene->rtg_config.generator == RTG_GEN_SHEPARD) ? 1 : 0;
+  return menu_create_roller_page("Generator", "Random\nShepard",
+    current, generator_confirm_cb, NULL);
+}
+
+static void nav_to_generator(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Generator", generator_roller_create);
+}
+
+// ============================================================================
+// Shepard Direction Roller (Rising / Falling)
+// ============================================================================
+
+static void direction_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->rtg_config.shepard_direction =
+    (selected_index == 1) ? SHEPARD_DIR_FALLING : SHEPARD_DIR_RISING;
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* direction_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current =
+    (scene->rtg_config.shepard_direction == SHEPARD_DIR_FALLING) ? 1 : 0;
+  return menu_create_roller_page("Direction", "Rising\nFalling",
+    current, direction_confirm_cb, NULL);
+}
+
+static void nav_to_direction(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Direction", direction_roller_create);
+}
+
+// ============================================================================
+// Shepard Voice Layout Roller (Single Channel / Multi-Channel)
+// ============================================================================
+
+static void layout_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->rtg_config.shepard_layout =
+    (selected_index == 1) ? SHEPARD_LAYOUT_MULTI : SHEPARD_LAYOUT_SINGLE;
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* layout_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current =
+    (scene->rtg_config.shepard_layout == SHEPARD_LAYOUT_MULTI) ? 1 : 0;
+  return menu_create_roller_page("Layout",
+    "Single Channel\nMulti-Channel", current, layout_confirm_cb, NULL);
+}
+
+static void nav_to_layout(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Layout", layout_roller_create);
+}
+
+// ============================================================================
+// Shepard Voice Fade Roller (None / CC11 / Poly Aftertouch)
+// ============================================================================
+
+static void fade_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  switch (selected_index) {
+    case 1: scene->rtg_config.shepard_fade = SHEPARD_FADE_CC11; break;
+    case 2: scene->rtg_config.shepard_fade = SHEPARD_FADE_POLY_AT; break;
+    default: scene->rtg_config.shepard_fade = SHEPARD_FADE_NONE; break;
+  }
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* fade_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = 0;
+  switch (scene->rtg_config.shepard_fade) {
+    case SHEPARD_FADE_NONE:    current = 0; break;
+    case SHEPARD_FADE_CC11:    current = 1; break;
+    case SHEPARD_FADE_POLY_AT: current = 2; break;
+  }
+
+  return menu_create_roller_page("Fade",
+    "None\nCC11 Expression\nPoly Aftertouch",
+    current, fade_confirm_cb, NULL);
+}
+
+static void nav_to_fade(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Fade", fade_roller_create);
+}
+
+// ============================================================================
+// Shepard Smoothness Style Roller (Stream / Wide / Crossfade)
+// ============================================================================
+
+static void style_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  switch (selected_index) {
+    case 1: scene->rtg_config.shepard_style = SHEPARD_STYLE_WIDE; break;
+    case 2: scene->rtg_config.shepard_style = SHEPARD_STYLE_CROSSFADE; break;
+    default: scene->rtg_config.shepard_style = SHEPARD_STYLE_STREAM; break;
+  }
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* style_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = 0;
+  switch (scene->rtg_config.shepard_style) {
+    case SHEPARD_STYLE_STREAM:    current = 0; break;
+    case SHEPARD_STYLE_WIDE:      current = 1; break;
+    case SHEPARD_STYLE_CROSSFADE: current = 2; break;
+  }
+
+  return menu_create_roller_page("Style",
+    "Stream\nWide\nCrossfade", current, style_confirm_cb, NULL);
+}
+
+static void nav_to_style(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Style", style_roller_create);
+}
+
+// ============================================================================
+// Shepard Wide Retrigger Spacing Roller (2 / 3 / 4 semitones)
+// ============================================================================
+
+static void wide_semis_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  uint8_t semis = (uint8_t)(selected_index + 2);  // 0 -> 2, 1 -> 3, 2 -> 4
+  if (semis < 2) semis = 2;
+  if (semis > 4) semis = 4;
+  scene->rtg_config.shepard_wide_semis = semis;
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* wide_semis_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint8_t semis = scene->rtg_config.shepard_wide_semis;
+  if (semis < 2) semis = 2;
+  if (semis > 4) semis = 4;
+  uint32_t current = (uint32_t)(semis - 2);
+
+  return menu_create_roller_page("Retrigger",
+    "2 semis\n3 semis\n4 semis", current, wide_semis_confirm_cb, NULL);
+}
+
+static void nav_to_wide_semis(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Retrigger", wide_semis_roller_create);
+}
+
+// ============================================================================
+// Smooth Roller (Shepard mode label for the existing glide field)
+// ============================================================================
+
+static void smooth_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->rtg_config.glide = (selected_index == 1);
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* smooth_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = scene->rtg_config.glide ? 1 : 0;
+  return menu_create_roller_page("Smooth", "Off\nOn",
+    current, smooth_confirm_cb, NULL);
+}
+
+static void nav_to_smooth(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Smooth", smooth_roller_create);
+}
+
+// ============================================================================
 // Main RTG Page
 // ============================================================================
 
@@ -716,6 +1035,13 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
 
   // Only show other options when RTG is enabled
   if (scene->rtg_config.enabled) {
+    bool is_shepard = (scene->rtg_config.generator == RTG_GEN_SHEPARD);
+
+    // Generator (Random / Shepard) - shapes the rest of the menu
+    snprintf(s_generator_label[buf], sizeof(s_generator_label[buf]),
+      "Gen: %s", is_shepard ? "Shepard" : "Random");
+    s_rtg_items[idx++] = (menu_item_t){ s_generator_label[buf], nav_to_generator, NULL, false };
+
     // Mode
     const char* mode_str = (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) ? "Continuous" : "Step";
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
@@ -764,23 +1090,71 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
         s_rtg_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false };
       }
 
-      // Probability (only in continuous mode)
+      // Probability (only in continuous mode) - applies to both generators
       uint8_t prob = scene->rtg_config.probability;
       if (prob == 0) prob = 100;
       snprintf(s_probability_label[buf], sizeof(s_probability_label[buf]), "Prob: %d%%", prob);
       s_rtg_items[idx++] = (menu_item_t){ s_probability_label[buf], nav_to_probability, NULL, false };
 
-      // Pattern (only in continuous mode)
+      // Pattern (only in continuous mode) - applies to both generators
       const char* pattern_display = get_pattern_display(
         scene->rtg_config.pattern_length, scene->rtg_config.pattern_mask);
       snprintf(s_pattern_label[buf], sizeof(s_pattern_label[buf]), "Pattern: %s", pattern_display);
       s_rtg_items[idx++] = (menu_item_t){ s_pattern_label[buf], nav_to_pattern, NULL, false };
     }
 
-    // Glide
-    snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
-      "Glide: %s", scene->rtg_config.glide ? "On" : "Off");
-    s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
+    if (is_shepard) {
+      // Direction (Rising / Falling)
+      const char* dir_str =
+        (scene->rtg_config.shepard_direction == SHEPARD_DIR_FALLING) ? "Falling" : "Rising";
+      snprintf(s_direction_label[buf], sizeof(s_direction_label[buf]), "Dir: %s", dir_str);
+      s_rtg_items[idx++] = (menu_item_t){ s_direction_label[buf], nav_to_direction, NULL, false };
+
+      // Smooth (uses the existing glide field with a Shepard-friendly label)
+      snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
+        "Smooth: %s", scene->rtg_config.glide ? "On" : "Off");
+      s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_smooth, NULL, false };
+
+      // Style, Layout, Fade, and (when Wide) Retrigger only matter when smooth is on
+      if (scene->rtg_config.glide) {
+        const char* style_str = "Stream";
+        switch (scene->rtg_config.shepard_style) {
+          case SHEPARD_STYLE_STREAM:    style_str = "Stream"; break;
+          case SHEPARD_STYLE_WIDE:      style_str = "Wide"; break;
+          case SHEPARD_STYLE_CROSSFADE: style_str = "Crossfade"; break;
+        }
+        snprintf(s_style_label[buf], sizeof(s_style_label[buf]), "Style: %s", style_str);
+        s_rtg_items[idx++] = (menu_item_t){ s_style_label[buf], nav_to_style, NULL, false };
+
+        if (scene->rtg_config.shepard_style == SHEPARD_STYLE_WIDE) {
+          uint8_t semis = scene->rtg_config.shepard_wide_semis;
+          if (semis < 2) semis = 2;
+          if (semis > 4) semis = 4;
+          snprintf(s_wide_semis_label[buf], sizeof(s_wide_semis_label[buf]),
+            "Retrigger: %d semis", semis);
+          s_rtg_items[idx++] = (menu_item_t){ s_wide_semis_label[buf], nav_to_wide_semis, NULL, false };
+        }
+
+        const char* layout_str =
+          (scene->rtg_config.shepard_layout == SHEPARD_LAYOUT_MULTI) ? "Multi-Ch" : "Single";
+        snprintf(s_layout_label[buf], sizeof(s_layout_label[buf]), "Layout: %s", layout_str);
+        s_rtg_items[idx++] = (menu_item_t){ s_layout_label[buf], nav_to_layout, NULL, false };
+
+        const char* fade_str = "None";
+        switch (scene->rtg_config.shepard_fade) {
+          case SHEPARD_FADE_NONE:    fade_str = "None"; break;
+          case SHEPARD_FADE_CC11:    fade_str = "CC11"; break;
+          case SHEPARD_FADE_POLY_AT: fade_str = "Poly AT"; break;
+        }
+        snprintf(s_fade_label[buf], sizeof(s_fade_label[buf]), "Fade: %s", fade_str);
+        s_rtg_items[idx++] = (menu_item_t){ s_fade_label[buf], nav_to_fade, NULL, false };
+      }
+    } else {
+      // Random generator: classic Glide toggle
+      snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
+        "Glide: %s", scene->rtg_config.glide ? "On" : "Off");
+      s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
+    }
   }
 
   return menu_create_page("RTG", s_rtg_items, idx);

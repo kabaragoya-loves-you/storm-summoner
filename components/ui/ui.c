@@ -12,6 +12,8 @@
 #include "midi_expression_scene_handler.h"
 #include "midi_als_scene_handler.h"
 #include "midi_proximity_scene_handler.h"
+#include "midi_lfo_scene_handler.h"
+#include "midi_tilt_scene_handler.h"
 #include "rtg.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -141,6 +143,8 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
   midi_expression_scene_handler_release_notes();  // Expression Notes output
   midi_als_scene_handler_release_notes();         // ALS Notes output
   midi_proximity_scene_handler_release_notes();   // Proximity Notes output
+  midi_lfo_scene_handler_release_notes();         // LFO1/LFO2 Notes output
+  midi_tilt_scene_handler_release_notes();        // Tilt X/Y Notes output
   rtg_release_notes();                            // RTG notes
   
   // Create LVGL encoder touchwheel if not already created (must be in LVGL context)

@@ -4914,6 +4914,33 @@ static cJSON* rtg_config_to_json(const rtg_config_t* config) {
     cJSON_AddNumberToObject(obj, "pattern_mask", config->pattern_mask);
   }
 
+  // Only serialize Shepard fields when not at defaults so legacy scenes stay terse
+  if (config->generator != RTG_GEN_RANDOM) {
+    cJSON_AddStringToObject(obj, "generator",
+      rtg_generator_to_string(config->generator));
+  }
+  if (config->shepard_direction != SHEPARD_DIR_RISING) {
+    cJSON_AddStringToObject(obj, "shepard_direction",
+      shepard_direction_to_string(config->shepard_direction));
+  }
+  if (config->shepard_layout != SHEPARD_LAYOUT_SINGLE) {
+    cJSON_AddStringToObject(obj, "shepard_layout",
+      shepard_layout_to_string(config->shepard_layout));
+  }
+  if (config->shepard_fade != SHEPARD_FADE_NONE) {
+    cJSON_AddStringToObject(obj, "shepard_fade",
+      shepard_fade_to_string(config->shepard_fade));
+  }
+  if (config->shepard_style != SHEPARD_STYLE_STREAM) {
+    cJSON_AddStringToObject(obj, "shepard_style",
+      shepard_style_to_string(config->shepard_style));
+  }
+  if (config->shepard_style == SHEPARD_STYLE_WIDE &&
+      config->shepard_wide_semis != 4) {
+    cJSON_AddNumberToObject(obj, "shepard_wide_semis",
+      config->shepard_wide_semis);
+  }
+
   return obj;
 }
 
@@ -4999,6 +5026,42 @@ static void json_to_rtg_config(cJSON* obj, rtg_config_t* config) {
   cJSON* pmask = cJSON_GetObjectItem(obj, "pattern_mask");
   if (pmask && cJSON_IsNumber(pmask)) {
     config->pattern_mask = (uint8_t)(pmask->valueint & 0xFF);
+  }
+
+  // Shepard fields - default to legacy random behavior when missing
+  config->generator = RTG_GEN_RANDOM;
+  config->shepard_direction = SHEPARD_DIR_RISING;
+  config->shepard_layout = SHEPARD_LAYOUT_SINGLE;
+  config->shepard_fade = SHEPARD_FADE_NONE;
+  config->shepard_style = SHEPARD_STYLE_STREAM;
+  config->shepard_wide_semis = 4;
+
+  cJSON* gen = cJSON_GetObjectItem(obj, "generator");
+  if (gen && cJSON_IsString(gen)) {
+    config->generator = rtg_generator_from_string(gen->valuestring);
+  }
+  cJSON* dir = cJSON_GetObjectItem(obj, "shepard_direction");
+  if (dir && cJSON_IsString(dir)) {
+    config->shepard_direction = shepard_direction_from_string(dir->valuestring);
+  }
+  cJSON* layout = cJSON_GetObjectItem(obj, "shepard_layout");
+  if (layout && cJSON_IsString(layout)) {
+    config->shepard_layout = shepard_layout_from_string(layout->valuestring);
+  }
+  cJSON* fade = cJSON_GetObjectItem(obj, "shepard_fade");
+  if (fade && cJSON_IsString(fade)) {
+    config->shepard_fade = shepard_fade_from_string(fade->valuestring);
+  }
+  cJSON* style = cJSON_GetObjectItem(obj, "shepard_style");
+  if (style && cJSON_IsString(style)) {
+    config->shepard_style = shepard_style_from_string(style->valuestring);
+  }
+  cJSON* wide = cJSON_GetObjectItem(obj, "shepard_wide_semis");
+  if (wide && cJSON_IsNumber(wide)) {
+    int semis = wide->valueint;
+    if (semis < 2) semis = 2;
+    if (semis > 4) semis = 4;
+    config->shepard_wide_semis = (uint8_t)semis;
   }
 }
 

@@ -692,6 +692,42 @@
           "maximum": 255,
           "default": 255,
           "description": "Bitmask of active steps (bit 0 = step 1)"
+        },
+        "generator": {
+          "type": "string",
+          "enum": ["random", "shepard"],
+          "default": "random",
+          "description": "Generator type: random (LFSR-driven note in note_min..note_max) or shepard (octave-spaced voices ascending/descending one semitone per tick with bell-curve velocity)"
+        },
+        "shepard_direction": {
+          "type": "string",
+          "enum": ["rising", "falling"],
+          "default": "rising",
+          "description": "Direction of Shepard motion (only used when generator=shepard)"
+        },
+        "shepard_layout": {
+          "type": "string",
+          "enum": ["single", "multi"],
+          "default": "single",
+          "description": "Voice layout for Shepard mode: single (all voices share note_channel) or multi (voice N goes to (note_channel + N) % 16). Only meaningful when smooth/glide is on."
+        },
+        "shepard_fade": {
+          "type": "string",
+          "enum": ["none", "cc11", "poly_at"],
+          "default": "none",
+          "description": "Per-voice fade source for smooth Shepard mode: none (bell curve only at retrigger), cc11 (CC11 expression per channel), or poly_at (polyphonic aftertouch per voice)"
+        },
+        "shepard_style": {
+          "type": "string",
+          "enum": ["stream", "wide", "crossfade"],
+          "default": "stream",
+          "description": "Smoothness style for smooth Shepard mode: stream (retrigger every semitone, continuous bend), wide (retrigger every shepard_wide_semis semitones using wider bend), crossfade (retrigger every semitone with brief overlap via fade source)"
+        },
+        "shepard_wide_semis": {
+          "type": "integer",
+          "enum": [2, 3, 4],
+          "default": 4,
+          "description": "Retrigger spacing in semitones for the wide Shepard style (only used when shepard_style=wide)"
         }
       }
     },
