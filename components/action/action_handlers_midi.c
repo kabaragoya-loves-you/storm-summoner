@@ -1,5 +1,7 @@
 #include "action_internal.h"
+#include "action_handlers_midi.h"
 #include "midi_messages.h"
+#include "midi_local_output.h"
 #include "device_config.h"
 #include "scene.h"
 #include "assets_manager.h"
@@ -8,6 +10,71 @@
 #include "esp_timer.h"
 
 static const char* TAG = "action_handlers_midi";
+
+// ----------------------------------------------------------------------------
+// ACTION_NOTE held-note tracker
+// ----------------------------------------------------------------------------
+// ACTION_NOTE sends NoteOn on press and NoteOff on release. If the device
+// transitions into programming mode (or changes scene) while a pad is held,
+// the press already sent NoteOn but the release will be suppressed by the
+// silence predicate -- the synth would be left holding the note forever.
+//
+// Track every NoteOn we send so the orchestrator can flush them on silence
+// and on scene change. Idempotent: re-pressing the same (channel, note)
+// doesn't allocate a second slot.
+
+#define ACTION_NOTE_TRACK_MAX 16
+
+typedef struct {
+  bool active;
+  uint8_t channel;
+  uint8_t note;
+} action_note_voice_t;
+
+static action_note_voice_t s_action_note_voices[ACTION_NOTE_TRACK_MAX];
+
+static void track_note_on(uint8_t channel, uint8_t note) {
+  for (int i = 0; i < ACTION_NOTE_TRACK_MAX; i++) {
+    if (s_action_note_voices[i].active &&
+        s_action_note_voices[i].channel == channel &&
+        s_action_note_voices[i].note == note) {
+      return;  // Already tracked; keep one slot per (channel, note).
+    }
+  }
+  for (int i = 0; i < ACTION_NOTE_TRACK_MAX; i++) {
+    if (!s_action_note_voices[i].active) {
+      s_action_note_voices[i].active = true;
+      s_action_note_voices[i].channel = channel;
+      s_action_note_voices[i].note = note;
+      return;
+    }
+  }
+  ESP_LOGW(TAG, "ACTION_NOTE voice tracker full (%d slots); leak risk on (ch=%u note=%u)",
+    ACTION_NOTE_TRACK_MAX, (unsigned)channel, (unsigned)note);
+}
+
+// Returns true if the (channel, note) was tracked and is now cleared.
+static bool track_note_off(uint8_t channel, uint8_t note) {
+  for (int i = 0; i < ACTION_NOTE_TRACK_MAX; i++) {
+    if (s_action_note_voices[i].active &&
+        s_action_note_voices[i].channel == channel &&
+        s_action_note_voices[i].note == note) {
+      s_action_note_voices[i].active = false;
+      return true;
+    }
+  }
+  return false;
+}
+
+void action_handlers_midi_release_notes(void) {
+  for (int i = 0; i < ACTION_NOTE_TRACK_MAX; i++) {
+    if (s_action_note_voices[i].active) {
+      send_note_off(s_action_note_voices[i].channel,
+        s_action_note_voices[i].note, 0);
+      s_action_note_voices[i].active = false;
+    }
+  }
+}
 
 action_handle_result_t action_handlers_midi_dispatch(
     const action_t* action, uint8_t trigger_value, bool is_press, uint8_t channel) {
@@ -117,11 +184,26 @@ action_handle_result_t action_handlers_midi_dispatch(
 
     case ACTION_NOTE:
       if (is_press) {
+        // Suppress fresh NoteOns while local output is silenced. The matching
+        // release will not find a tracked slot and will quietly do nothing.
+        if (!midi_local_output_is_enabled()) {
+          ESP_LOGD(TAG, "ACTION_NOTE press suppressed: local output silenced");
+          return ACTION_HANDLED;
+        }
         send_note_on(channel, action->params.note.note, action->params.note.velocity);
+        track_note_on(channel, action->params.note.note);
         ESP_LOGD(TAG, "Note On: %d vel=%d", action->params.note.note, action->params.note.velocity);
       } else {
-        send_note_off(channel, action->params.note.note, 0);
-        ESP_LOGD(TAG, "Note Off: %d", action->params.note.note);
+        // Only emit NoteOff if we actually tracked the matching press; this
+        // covers the case where the press was suppressed (silenced) or where
+        // release_notes() already flushed the voice during a mode/scene change.
+        if (track_note_off(channel, action->params.note.note)) {
+          send_note_off(channel, action->params.note.note, 0);
+          ESP_LOGD(TAG, "Note Off: %d", action->params.note.note);
+        } else {
+          ESP_LOGD(TAG, "ACTION_NOTE release with no tracked NoteOn: %d (suppressed or already released)",
+            action->params.note.note);
+        }
       }
       return ACTION_HANDLED;
 

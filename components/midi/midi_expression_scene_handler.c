@@ -1,5 +1,6 @@
 #include "midi_expression_scene_handler.h"
 #include "scene.h"
+#include "midi_local_output.h"
 #include "action.h"
 #include "continuous_mapping.h"
 #include "smart_filter.h"
@@ -66,7 +67,7 @@ static uint8_t get_expression_velocity(continuous_mapping_t* mapping) {
 // Handle continuous expression pedal events
 static void handle_expression_value(const event_t* event, void* context) {
   if (event->type != EVENT_EXPRESSION_VALUE) return;
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -161,7 +162,7 @@ void midi_expression_scene_handler_release_notes(void) {
 
 static void handle_sustain_event(const event_t* event, void* context) {
   if (event->type != EVENT_EXPRESSION_SUSTAIN) return;
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -177,7 +178,7 @@ static void handle_sustain_event(const event_t* event, void* context) {
 
 static void handle_sostenuto_event(const event_t* event, void* context) {
   if (event->type != EVENT_EXPRESSION_SOSTENUTO) return;
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -193,7 +194,7 @@ static void handle_sostenuto_event(const event_t* event, void* context) {
 
 static void handle_switch_event(const event_t* event, void* context) {
   if (event->type != EVENT_EXPRESSION_SWITCH) return;
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;

@@ -1,5 +1,6 @@
 #include "midi_cv_scene_handler.h"
 #include "scene.h"
+#include "midi_local_output.h"
 #include "continuous_mapping.h"
 #include "smart_filter.h"
 #include "device_config.h"
@@ -43,8 +44,8 @@ static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
 static void handle_cv_event(const event_t* event, void* context) {
   if (event->type != EVENT_CV_VALUE) return;
   
-  // Don't send MIDI when scene input is suspended (programming mode)
-  if (scene_is_input_suspended()) return;
+  // Don't send MIDI when on-device output is silenced (programming mode)
+  if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene || !scene->cv.enabled) return;

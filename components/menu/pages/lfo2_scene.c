@@ -8,6 +8,7 @@
 #include "assets_manager.h"
 #include "assets_types.h"
 #include "ui.h"
+#include "midi_lfo_scene_handler.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <stdio.h>
@@ -224,9 +225,19 @@ static void enabled_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  scene->lfo2_config.enabled = (selected_index == 1);
+  bool was_enabled = scene->lfo2_config.enabled;
+  bool will_be_enabled = (selected_index == 1);
+
+  // If turning the LFO off, release any held NOTE-output mapping voice
+  // before lfo_apply_config stops the loop. The channel computation inside
+  // release_notes_for_slot needs the same scene context the NoteOn used.
+  if (was_enabled && !will_be_enabled) {
+    midi_lfo_scene_handler_release_notes_for_slot(1);
+  }
+
+  scene->lfo2_config.enabled = will_be_enabled;
   scene->lfo2.enabled = scene->lfo2_config.enabled;
-  
+
   // Apply to LFO engine
   lfo_apply_config(1, &scene->lfo2_config);
   

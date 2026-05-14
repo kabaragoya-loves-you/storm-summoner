@@ -5,6 +5,7 @@
 #include "esp_heap_caps.h"
 #include "midi_messages.h"
 #include "midi_out.h"
+#include "midi_local_output.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "config.h"
@@ -897,8 +898,8 @@ static void touchwheel_apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
 
 // Callback for continuous mode touchwheel (CC/Note output)
 static void touchwheel_continuous_callback(int value, void* user_data) {
-  // Don't send MIDI in programming mode
-  if (ui_is_in_programming_mode()) return;
+  // Don't send MIDI when on-device output is silenced (programming mode)
+  if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = (scene_t*)user_data;
   if (!scene || !scene->touchwheel.enabled) return;
@@ -1494,9 +1495,12 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     return ESP_OK;  // Already on this scene
   }
   
-  // Clean up any active notes before switching scenes
-  touchwheel_cleanup_active_notes();
-  
+  // Release any notes still sounding from the outgoing scene's producers
+  // (touchwheel, RTG voices, LFO note mappings, sensor note mappings,
+  // ACTION_NOTE pads, CV/Gate). The new scene's apply_config block below
+  // will repopulate fresh state as needed.
+  midi_local_output_release_all();
+
   // Clear any pending timed actions from the previous scene
   action_clear_pending();
   
@@ -1624,8 +1628,8 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // Sync tilt per-axis enable unconditionally. This must run on every scene
   // apply (including at boot and on scene switches, regardless of programming
   // vs performance mode) so the unified LIS3DHTR sampling task picks up the
-  // scene's tilt configuration. No MIDI is emitted while input is suspended
-  // in programming mode (midi_tilt_scene_handler bails on scene_is_input_suspended).
+  // scene's tilt configuration. No MIDI is emitted while local output is
+  // silenced (midi_tilt_scene_handler bails on !midi_local_output_is_enabled).
   tilt_axis_set_enabled(TILT_AXIS_X, new_scene->tilt_x.enabled);
   tilt_axis_set_enabled(TILT_AXIS_Y, new_scene->tilt_y.enabled);
 
@@ -6419,19 +6423,18 @@ esp_err_t scene_suspend_input(void) {
 
   ESP_LOGD(TAG, "Suspending scene input (entering programming mode)");
 
-  // Clean up any active notes before suspending
-  touchwheel_cleanup_active_notes();
-
   // Unregister scene touchwheel so it doesn't receive input
   if (s_scene_touchwheel) {
     touch_unregister_touchwheel_instance(s_scene_touchwheel);
     ESP_LOGD(TAG, "Scene touchwheel unregistered");
   }
 
-  // Mute MIDI clock output in programming mode
-  tempo_set_clock_muted(true);
-
-  // Save LFO running state, then stop them to prevent MIDI CC output
+  // Save LFO running state, then stop the loops so they don't emit fresh
+  // values into the silence path. The held NOTE-output mapping notes are
+  // released by midi_local_output_release_all() called next from ui.c.
+  // LFO state lives here (not in midi_local_output) because restoration
+  // has to coordinate with scene_apply_deferred_init when a scene change
+  // happens during programming mode.
   s_lfo_was_running[0] = lfo_is_enabled(0);
   s_lfo_was_running[1] = lfo_is_enabled(1);
   lfo_enable(0, false);
@@ -6443,29 +6446,23 @@ esp_err_t scene_suspend_input(void) {
 
 esp_err_t scene_resume_input(void) {
   if (!s_input_suspended) return ESP_OK;  // Not suspended
-  
+
   ESP_LOGD(TAG, "Resuming scene input (leaving programming mode)");
-  
+
   // Re-register scene touchwheel if it exists
   if (s_scene_touchwheel) {
     touch_register_touchwheel_instance(s_scene_touchwheel);
     ESP_LOGD(TAG, "Scene touchwheel re-registered");
   }
-  
-  // Unmute MIDI clock output
-  tempo_set_clock_muted(false);
-  
+
   // Restore LFO running state (only if no scene change happened;
   // if a scene change happened, scene_apply_deferred_init will handle LFOs)
   if (!s_needs_deferred_init) {
     if (s_lfo_was_running[0]) lfo_enable(0, true);
     if (s_lfo_was_running[1]) lfo_enable(1, true);
   }
-  
+
   s_input_suspended = false;
   return ESP_OK;
 }
 
-bool scene_is_input_suspended(void) {
-  return s_input_suspended;
-}

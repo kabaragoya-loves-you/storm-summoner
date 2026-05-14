@@ -2,6 +2,7 @@
 #include "lfsr.h"
 #include "midi_messages.h"
 #include "scene.h"
+#include "midi_local_output.h"
 #include "event_bus.h"
 #include "tempo.h"
 #include "transport.h"
@@ -387,7 +388,7 @@ static void shepard_update_bend_timer(void) {
 static void shepard_bend_timer_callback(void* arg) {
   (void)arg;
   if (!shepard_should_stream()) return;
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
   if (!s_state.shepard_tick_valid) return;
 
   uint64_t interval = s_state.shepard_tick_interval_us;
@@ -666,7 +667,7 @@ static void rtg_do_shepard_step(void) {
 
 // Internal step function (called by timer or rtg_step when s_running is true)
 static void rtg_do_step(void) {
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
 
   // Pattern check (only if pattern_length >= 2)
   bool pattern_passed = true;

@@ -1,5 +1,6 @@
 #include "midi_lfo_scene_handler.h"
 #include "scene.h"
+#include "midi_local_output.h"
 #include "continuous_mapping.h"
 #include "smart_filter.h"
 #include "device_config.h"
@@ -59,7 +60,7 @@ static uint8_t get_lfo2_velocity(continuous_mapping_t* mapping) {
 // Handle LFO1 events through scene mapping
 static void handle_lfo1_event(const event_t* event, void* context) {
   if (event->type != EVENT_LFO1_VALUE) return;
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
 
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -145,7 +146,7 @@ static void handle_lfo1_event(const event_t* event, void* context) {
 // Handle LFO2 events through scene mapping
 static void handle_lfo2_event(const event_t* event, void* context) {
   if (event->type != EVENT_LFO2_VALUE) return;
-  if (scene_is_input_suspended()) return;
+  if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -227,27 +228,23 @@ static void handle_lfo2_event(const event_t* event, void* context) {
   }
 }
 
-void midi_lfo_scene_handler_release_notes(void) {
+void midi_lfo_scene_handler_release_notes_for_slot(uint8_t slot) {
+  if (slot > 1) return;
   scene_t* scene = scene_get_current();
   if (!scene) return;
-  
+
+  continuous_mapping_t* mapping = (slot == 0) ? &scene->lfo1 : &scene->lfo2;
+  if (!mapping->note_active) return;
+
   uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
-  
-  // Release LFO1 notes
-  continuous_mapping_t* lfo1 = &scene->lfo1;
-  if (lfo1->note_active) {
-    send_note_off(channel, lfo1->last_note, 0);
-    ESP_LOGI(TAG, "LFO1 Note Off (cleanup): %d", lfo1->last_note);
-    lfo1->note_active = false;
-  }
-  
-  // Release LFO2 notes
-  continuous_mapping_t* lfo2 = &scene->lfo2;
-  if (lfo2->note_active) {
-    send_note_off(channel, lfo2->last_note, 0);
-    ESP_LOGI(TAG, "LFO2 Note Off (cleanup): %d", lfo2->last_note);
-    lfo2->note_active = false;
-  }
+  send_note_off(channel, mapping->last_note, 0);
+  ESP_LOGI(TAG, "LFO%d Note Off (cleanup): %d", slot + 1, mapping->last_note);
+  mapping->note_active = false;
+}
+
+void midi_lfo_scene_handler_release_notes(void) {
+  midi_lfo_scene_handler_release_notes_for_slot(0);
+  midi_lfo_scene_handler_release_notes_for_slot(1);
 }
 
 void midi_lfo_scene_handler_restore_value(uint8_t slot) {

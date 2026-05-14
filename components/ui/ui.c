@@ -7,14 +7,7 @@
 #include "menu.h"
 #include "menu_pages.h"
 #include "scene.h"
-#include "input_manager.h"
-#include "midi_cv_scene_handler.h"
-#include "midi_expression_scene_handler.h"
-#include "midi_als_scene_handler.h"
-#include "midi_proximity_scene_handler.h"
-#include "midi_lfo_scene_handler.h"
-#include "midi_tilt_scene_handler.h"
-#include "rtg.h"
+#include "midi_local_output.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -137,15 +130,10 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
     return;
   }
   
-  // Release any active notes to prevent stuck notes in programming mode
-  input_manager_release_active_notes();           // CV/Gate mode notes
-  midi_cv_scene_handler_release_notes();          // CV mode Notes output
-  midi_expression_scene_handler_release_notes();  // Expression Notes output
-  midi_als_scene_handler_release_notes();         // ALS Notes output
-  midi_proximity_scene_handler_release_notes();   // Proximity Notes output
-  midi_lfo_scene_handler_release_notes();         // LFO1/LFO2 Notes output
-  midi_tilt_scene_handler_release_notes();        // Tilt X/Y Notes output
-  rtg_release_notes();                            // RTG notes
+  // Note release for on-device producers happens synchronously in
+  // ui_set_app_mode via midi_local_output_silence(); this deferred callback
+  // only handles LVGL widget construction.
+
   
   // Create LVGL encoder touchwheel if not already created (must be in LVGL context)
   if (!s_ui_touchwheel) {
@@ -326,9 +314,15 @@ void ui_set_app_mode(app_mode_t mode) {
   // When returning from screensaver, ui_reclaim_canvas_buffer will restore menu/touchwheel
   if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING
       && previous_mode != APP_MODE_SCREENSAVER) {
-    // Suspend scene input processing (disables scene touchwheel and actions)
+    // Suspend scene input first: this snapshots the LFO running state and
+    // stops the LFO loops so they don't emit fresh values during release.
     scene_suspend_input();
-    
+
+    // Then synchronously release every on-device producer's held notes,
+    // mute the clock, and flip the silence predicate. release_all() catches
+    // any LFO mapping note that was held when the loop stopped.
+    midi_local_output_silence();
+
     // Save current Performance mode draw module
     saved_draw_module = current_draw_module;
 
@@ -352,6 +346,7 @@ void ui_set_app_mode(app_mode_t mode) {
     if (mode == APP_MODE_PERFORMANCE) {
       scene_resume_input();
       scene_apply_deferred_init();
+      midi_local_output_enable();
     }
     
     // Suspend Performance mode rendering (this creates a deferred timer, safe)

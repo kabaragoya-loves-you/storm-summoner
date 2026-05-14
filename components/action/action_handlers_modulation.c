@@ -41,6 +41,10 @@ action_handle_result_t action_handlers_modulation_dispatch(
             if (lfo_get_restore_on_stop(0)) {
               midi_lfo_scene_handler_restore_value(0);
             }
+            // Release any held NOTE-output mapping voice before stopping
+            // the LFO loop, so the channel computation still has the same
+            // scene context the NoteOn used.
+            midi_lfo_scene_handler_release_notes_for_slot(0);
             lfo_enable(0, false);
             if (scene) scene->lfo1.enabled = false;
           } else if (lfo_is_pending_start(0)) {
@@ -52,6 +56,7 @@ action_handle_result_t action_handlers_modulation_dispatch(
             if (lfo_get_restore_on_stop(1)) {
               midi_lfo_scene_handler_restore_value(1);
             }
+            midi_lfo_scene_handler_release_notes_for_slot(1);
             lfo_enable(1, false);
             if (scene) scene->lfo2.enabled = false;
           } else if (lfo_is_pending_start(1)) {
@@ -68,16 +73,23 @@ action_handle_result_t action_handlers_modulation_dispatch(
         scene_t* scene = scene_get_current();
         if (slot == 1 || slot == 3) {
           bool new_state = !lfo_is_enabled(0);
-          if (!new_state && lfo_get_restore_on_stop(0)) {
-            midi_lfo_scene_handler_restore_value(0);
+          if (!new_state) {
+            if (lfo_get_restore_on_stop(0)) {
+              midi_lfo_scene_handler_restore_value(0);
+            }
+            // Release any held NOTE-output mapping voice on enable -> disable.
+            midi_lfo_scene_handler_release_notes_for_slot(0);
           }
           lfo_enable(0, new_state);
           if (scene) scene->lfo1.enabled = new_state;
         }
         if (slot == 2 || slot == 3) {
           bool new_state = !lfo_is_enabled(1);
-          if (!new_state && lfo_get_restore_on_stop(1)) {
-            midi_lfo_scene_handler_restore_value(1);
+          if (!new_state) {
+            if (lfo_get_restore_on_stop(1)) {
+              midi_lfo_scene_handler_restore_value(1);
+            }
+            midi_lfo_scene_handler_release_notes_for_slot(1);
           }
           lfo_enable(1, new_state);
           if (scene) scene->lfo2.enabled = new_state;

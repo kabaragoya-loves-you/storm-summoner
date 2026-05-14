@@ -7,8 +7,8 @@
 #include "app_settings.h"
 #include "scene.h"
 #include "midi_messages.h"
+#include "midi_local_output.h"
 #include "device_config.h"
-#include "ui.h"
 #include "driver/gpio.h"
 #include "io.h"
 #include "esp_log.h"
@@ -375,8 +375,8 @@ static void note_mode_cv_handler(const event_t* event, void* context) {
 static void note_mode_gate_handler(const event_t* event, void* context) {
   if (event->type != EVENT_EXPRESSION_GATE) return;
   
-  // Don't send MIDI in programming mode
-  if (ui_is_in_programming_mode()) return;
+  // Don't send MIDI when on-device output is silenced (programming mode)
+  if (!midi_local_output_is_enabled()) return;
   
   bool gate_high = event->data.gate.high;
   

@@ -1,7 +1,7 @@
 #include "action_internal.h"
 #include "scene.h"
 #include "transport.h"
-#include "ui.h"
+#include "midi_local_output.h"
 #include "event_bus.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -180,7 +180,9 @@ static void handle_beat_event(const event_t* event, void* context) {
   (void)context;
   if (event->type != EVENT_BEAT) return;
 
-  bool in_programming_mode = ui_is_in_programming_mode();
+  // Use the unified silence predicate so screensaver remains transparent
+  // and any future "muted" state behaves the same as programming mode.
+  bool in_programming_mode = !midi_local_output_is_enabled();
 
   uint8_t current_beat = event->data.beat.beat_in_bar;
   uint8_t beats_per_bar = event->data.beat.bar_length;

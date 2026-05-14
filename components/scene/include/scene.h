@@ -460,10 +460,12 @@ uint8_t scene_get_index_by_position(uint16_t position);
 bool scene_is_active_by_position(uint16_t position);
 
 // Suspend/resume scene input processing (for programming mode)
-// When suspended, the scene's touchwheel is unregistered and actions are disabled
+// When suspended, the scene's touchwheel is unregistered and the LFO loops
+// are paused (with their running state snapshotted for later restoration).
+// MIDI output silencing is handled separately by midi_local_output_silence()
+// -- query midi_local_output_is_enabled() to test "may producers emit".
 esp_err_t scene_suspend_input(void);
 esp_err_t scene_resume_input(void);
-bool scene_is_input_suspended(void);
 
 // Replay the MIDI phase (PC send, on-load actions, LFO start) that was
 // deferred because a scene change occurred in programming mode.
