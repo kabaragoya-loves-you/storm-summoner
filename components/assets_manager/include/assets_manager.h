@@ -3,6 +3,18 @@
 
 #include "assets_types.h"
 #include "esp_err.h"
+#include <stdbool.h>
+
+// Mount points for the two LittleFS partitions.
+//   ASSETS_BASE_PATH  -> read-only, replaced wholesale by ASSETS OTA
+//   USERDATA_BASE_PATH -> read-write, persistent across firmware/assets updates
+//
+// Other components should reference these macros instead of hard-coding paths
+// so a future move (e.g. /assets -> /shared) only touches this header.
+#define ASSETS_BASE_PATH    "/assets"
+#define USERDATA_BASE_PATH  "/userdata"
+#define ASSETS_PARTITION    "assets"
+#define USERDATA_PARTITION  "userdata"
 
 // Helper function to convert MIDI TRS type to transmit mode
 // (maps to midi_transmit_mode_t values from midi_out_uart.h)
@@ -20,11 +32,25 @@ static inline int assets_trs_type_to_transmit_mode(midi_trs_type_t trs_type) {
 
 /**
  * Initialize the assets manager
- * - Mounts the LittleFS partition
+ * - Mounts the RO `assets` LittleFS partition
+ * - Mounts (formatting on first mount) the RW `userdata` LittleFS partition
  * - Loads and parses manifest.json
- * Returns ESP_OK on success
+ *
+ * Returns ESP_OK on success. If the `userdata` partition is missing (e.g. a
+ * v(N+2) firmware booting on a unit that hasn't yet had its partition table
+ * updated), init logs an ESP_LOGE but still returns ESP_OK so the rest of the
+ * system can boot in degraded mode. Callers can check
+ * assets_userdata_available() to decide whether to attempt writes.
  */
 esp_err_t assets_manager_init(void);
+
+/**
+ * @return true if the `userdata` partition is mounted and writable.
+ *         false if the partition is missing (degraded boot) - in which case
+ *         all writes under USERDATA_BASE_PATH will fail at the fopen/mkdir
+ *         layer and callers should expect that.
+ */
+bool assets_userdata_available(void);
 
 /**
  * Get the number of devices in the manifest

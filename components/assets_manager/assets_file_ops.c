@@ -30,8 +30,10 @@ static void *psram_malloc(size_t size) {
 static void psram_free(void *ptr) {
   heap_caps_free(ptr);
 }
-#define ASSETS_BASE_PATH "/assets"
 #define MAX_PATH_LEN 320  // Must accommodate base path + d_name (255) + separators
+
+// ASSETS_BASE_PATH and USERDATA_BASE_PATH are provided by assets_manager.h
+// (Phase 1+). Don't redefine.
 
 // ============================================================================
 // Path helpers
@@ -39,26 +41,35 @@ static void psram_free(void *ptr) {
 
 bool assets_is_valid_path(const char *path) {
   if (!path) return false;
-  return strncmp(path, ASSETS_BASE_PATH, strlen(ASSETS_BASE_PATH)) == 0;
+  // Either RO `assets` or RW `userdata` mount counts as a valid asset path.
+  return strncmp(path, ASSETS_BASE_PATH, strlen(ASSETS_BASE_PATH)) == 0
+      || strncmp(path, USERDATA_BASE_PATH, strlen(USERDATA_BASE_PATH)) == 0;
 }
 
+// Path-aware folder classification (Phase 3).
+// Scenes only live under /userdata; the device-manifest split distinguishes
+// shared (RO) from user (RW); images are RO only. Returns NULL for any path
+// that doesn't fall into a managed bucket.
 const char *assets_get_folder_type(const char *path) {
   if (!path) return NULL;
-  
-  // Check for each managed folder
-  if (strstr(path, "/assets/scenes/") == path || 
-      strcmp(path, "/assets/scenes") == 0) {
+
+  if (strstr(path, USERDATA_BASE_PATH "/scenes/") == path ||
+      strcmp(path, USERDATA_BASE_PATH "/scenes") == 0) {
     return "scenes";
   }
-  if (strstr(path, "/assets/devices/") == path || 
-      strcmp(path, "/assets/devices") == 0) {
-    return "devices";
+  if (strstr(path, USERDATA_BASE_PATH "/devices/") == path ||
+      strcmp(path, USERDATA_BASE_PATH "/devices") == 0) {
+    return "user_devices";
   }
-  if (strstr(path, "/assets/images/") == path || 
-      strcmp(path, "/assets/images") == 0) {
+  if (strstr(path, ASSETS_BASE_PATH "/devices/") == path ||
+      strcmp(path, ASSETS_BASE_PATH "/devices") == 0) {
+    return "shared_devices";
+  }
+  if (strstr(path, ASSETS_BASE_PATH "/images/") == path ||
+      strcmp(path, ASSETS_BASE_PATH "/images") == 0) {
     return "images";
   }
-  
+
   return NULL;
 }
 
@@ -67,8 +78,11 @@ const char *assets_get_folder_type(const char *path) {
 // ============================================================================
 
 esp_err_t assets_regenerate_scenes_manifest(void) {
-  const char *scenes_dir = ASSETS_BASE_PATH "/scenes";
-  const char *manifest_path = ASSETS_BASE_PATH "/scenes/manifest.json";
+  // Scenes moved to the RW userdata partition in Phase 2; the manifest is
+  // regenerated whenever a scene file is created/deleted via CDC or the dev
+  // console. Scan /userdata/scenes/ rather than the (now read-only) /assets.
+  const char *scenes_dir = USERDATA_BASE_PATH "/scenes";
+  const char *manifest_path = USERDATA_BASE_PATH "/scenes/manifest.json";
   
   ESP_LOGI(TAG, "Regenerating scenes manifest");
   
@@ -437,65 +451,83 @@ static void scan_devices_dir(const char *base_dir, const char *vendor_name, cJSO
   closedir(dir);
 }
 
-esp_err_t assets_regenerate_devices_manifest(void) {
-  // The midi-devices repo structure: /devices/devices/<vendor>/<device>.json
-  const char *devices_dir = ASSETS_BASE_PATH "/devices/devices";
-  const char *manifest_path = ASSETS_BASE_PATH "/devices/manifest.json";
+// Internal helper: scan `devices_dir` and write `manifest_path`.
+// Used by both the shared (RO) and user (RW) regenerators.
+static esp_err_t regenerate_devices_manifest_at(const char *devices_dir,
+                                                const char *manifest_path) {
+  ESP_LOGI(TAG, "Regenerating devices manifest at %s", manifest_path);
 
-  ESP_LOGI(TAG, "Regenerating devices manifest");
-  
-  // Check if nested devices folder exists
   struct stat st;
   if (stat(devices_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
-    // Fall back to checking directly in /devices/
-    devices_dir = ASSETS_BASE_PATH "/devices";
-    if (stat(devices_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
-      ESP_LOGW(TAG, "Cannot find devices directory");
-      return ESP_ERR_NOT_FOUND;
-    }
+    ESP_LOGW(TAG, "Cannot find devices directory: %s", devices_dir);
+    return ESP_ERR_NOT_FOUND;
   }
-  
-  // Get current time for generatedAt
+
   time_t now = time(NULL);
   struct tm *tm_info = gmtime(&now);
   char timestamp[32];
   strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
-  
-  // Create JSON structure
+
   cJSON *root = cJSON_CreateObject();
   cJSON_AddNumberToObject(root, "schema", 1);
   cJSON_AddStringToObject(root, "generatedAt", timestamp);
   cJSON *devices = cJSON_CreateArray();
   int count = 0;
-  
-  // Recursively scan for device files (start with empty vendor name)
+
   scan_devices_dir(devices_dir, "", devices, &count);
-  
+
   cJSON_AddNumberToObject(root, "count", count);
   cJSON_AddItemToObject(root, "devices", devices);
-  
-  // Write manifest
+
   char *json_str = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
-  
+
   if (!json_str) {
     ESP_LOGE(TAG, "Failed to serialize devices manifest");
     return ESP_ERR_NO_MEM;
   }
-  
+
   FILE *f = fopen(manifest_path, "w");
   if (!f) {
     psram_free(json_str);
-    ESP_LOGE(TAG, "Failed to open manifest for writing");
+    ESP_LOGE(TAG, "Failed to open manifest for writing: %s", manifest_path);
     return ESP_FAIL;
   }
-  
+
   fputs(json_str, f);
   fclose(f);
   psram_free(json_str);
-  
-  ESP_LOGI(TAG, "Devices manifest updated (%d devices)", count);
+
+  ESP_LOGI(TAG, "Devices manifest updated: %s (%d devices)", manifest_path, count);
   return ESP_OK;
+}
+
+// Regenerate the SHARED (RO) device manifest by scanning /assets/devices/.
+// Only useful in dev workflows that push files manually into /assets at
+// runtime - the released build ships a pre-generated manifest.json baked
+// into the assets image. The dev console's `regenerate_shared_devices`
+// (Phase 7) is the front door; runtime CDC mutations under /assets are
+// rejected at the Phase 4 gate and never reach this path.
+esp_err_t assets_regenerate_devices_manifest(void) {
+  // Some dev layouts produce /assets/devices/devices/<vendor>/...; tolerate
+  // both the doubled and non-doubled cases.
+  const char *manifest_path = ASSETS_BASE_PATH "/devices/manifest.json";
+  const char *devices_dir = ASSETS_BASE_PATH "/devices/devices";
+  struct stat st;
+  if (stat(devices_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    devices_dir = ASSETS_BASE_PATH "/devices";
+  }
+  return regenerate_devices_manifest_at(devices_dir, manifest_path);
+}
+
+// Regenerate the USER (RW) device manifest by scanning /userdata/devices/.
+// Triggered automatically by file-create / file-delete hooks under that path
+// (CDC PUT, EXTRACT, RM, etc.) and also by ensure_default_device_exists()
+// after seeding the baked-in default.json.
+esp_err_t assets_regenerate_user_devices_manifest(void) {
+  return regenerate_devices_manifest_at(
+    USERDATA_BASE_PATH "/devices",
+    USERDATA_BASE_PATH "/devices/manifest.json");
 }
 
 esp_err_t assets_regenerate_images_manifest(void) {
@@ -812,42 +844,39 @@ esp_err_t assets_extract_zip(const uint8_t *zip_data, size_t zip_size, const cha
 // File operation hooks
 // ============================================================================
 
+// Shared dispatch for create/delete hooks. The hooks only ever fire for
+// writeable paths (CDC mutation gate in Phase 4 rejects /assets writes), so
+// we expect "scenes" / "user_devices" but defensively handle the others too.
+static void dispatch_manifest_regen(const char *folder_type, const char *path,
+                                    const char *event) {
+  if (strstr(path, "manifest.json")) return;  // Don't recurse on our own writes.
+
+  ESP_LOGD(TAG, "File %s in %s folder: %s", event, folder_type, path);
+
+  if (strcmp(folder_type, "scenes") == 0) {
+    assets_regenerate_scenes_manifest();
+  } else if (strcmp(folder_type, "user_devices") == 0) {
+    assets_regenerate_user_devices_manifest();
+    assets_manager_reload_manifest();  // Re-merge RO + new RW into memory.
+  } else if (strcmp(folder_type, "shared_devices") == 0) {
+    // Should never reach here at runtime - /assets is RO. Log and ignore so
+    // a Phase 4 gate bug surfaces in the logs rather than silently mutating
+    // shipped content.
+    ESP_LOGW(TAG, "%s in shared_devices ignored (RO partition): %s", event, path);
+  } else if (strcmp(folder_type, "images") == 0) {
+    ESP_LOGW(TAG, "%s in images ignored (RO partition): %s", event, path);
+  }
+}
+
 void assets_file_created(const char *path) {
   const char *folder_type = assets_get_folder_type(path);
   if (!folder_type) return;
-  
-  ESP_LOGD(TAG, "File created in %s folder: %s", folder_type, path);
-  
-  if (strcmp(folder_type, "scenes") == 0) {
-    // Don't regenerate if it's the manifest itself
-    if (strstr(path, "manifest.json")) return;
-    assets_regenerate_scenes_manifest();
-  } else if (strcmp(folder_type, "devices") == 0) {
-    if (strstr(path, "manifest.json")) return;
-    assets_regenerate_devices_manifest();
-    assets_manager_reload_manifest();  // Reload into memory
-  } else if (strcmp(folder_type, "images") == 0) {
-    if (strstr(path, "manifest.json")) return;
-    assets_regenerate_images_manifest();
-  }
+  dispatch_manifest_regen(folder_type, path, "created");
 }
 
 void assets_file_deleted(const char *path) {
   const char *folder_type = assets_get_folder_type(path);
   if (!folder_type) return;
-  
-  ESP_LOGD(TAG, "File deleted from %s folder: %s", folder_type, path);
-  
-  if (strcmp(folder_type, "scenes") == 0) {
-    if (strstr(path, "manifest.json")) return;
-    assets_regenerate_scenes_manifest();
-  } else if (strcmp(folder_type, "devices") == 0) {
-    if (strstr(path, "manifest.json")) return;
-    assets_regenerate_devices_manifest();
-    assets_manager_reload_manifest();  // Reload into memory
-  } else if (strcmp(folder_type, "images") == 0) {
-    if (strstr(path, "manifest.json")) return;
-    assets_regenerate_images_manifest();
-  }
+  dispatch_manifest_regen(folder_type, path, "deleted");
 }
 

@@ -10,10 +10,9 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
 
 #define TAG "assets_manager"
-#define ASSETS_BASE_PATH "/assets"
-#define ASSETS_PARTITION "assets"
 
 // Forward declarations from other modules
 extern device_def_t *assets_parse_device_file(const char *filepath, const char *slug);
@@ -23,52 +22,69 @@ extern esp_err_t generate_device_cache(const device_def_t *device, const char *c
 // Global manifest
 static manifest_t g_manifest = {0};
 static bool g_initialized = false;
+static bool g_userdata_available = false;
+
+// Forward decl: vendor cache lives at the bottom of the file but
+// assets_manager_reload_manifest() needs to invalidate it.
+static bool s_vendors_cached;
+
+bool assets_userdata_available(void) {
+  return g_userdata_available;
+}
 
 /**
- * Parse manifest.json
+ * Parse a manifest JSON string into the supplied output struct.
+ *
+ * @param json_str       NUL-terminated JSON
+ * @param out            Output manifest. Caller owns out->devices after success.
+ * @param from_userdata  true tags every parsed entry as RW-origin so
+ *                       assets_load_device() resolves its JSON path under
+ *                       USERDATA_BASE_PATH; false tags as RO origin.
  */
-static esp_err_t parse_manifest(const char *json_str) {
+static esp_err_t parse_manifest_into(const char *json_str, manifest_t *out, bool from_userdata) {
+  if (!out) return ESP_ERR_INVALID_ARG;
+  out->schema = 0;
+  out->device_count = 0;
+  out->devices = NULL;
+
   cJSON *root = cJSON_Parse(json_str);
   if (!root) {
     ESP_LOGE(TAG, "Failed to parse manifest.json");
     return ESP_FAIL;
   }
-  
-  // Get schema version
+
   cJSON *schema = cJSON_GetObjectItem(root, "schema");
   if (schema && cJSON_IsNumber(schema)) {
-    g_manifest.schema = schema->valueint;
+    out->schema = schema->valueint;
   }
-  
-  // Parse devices array
+
   cJSON *devices = cJSON_GetObjectItem(root, "devices");
   if (!devices || !cJSON_IsArray(devices)) {
     ESP_LOGE(TAG, "No devices array in manifest");
     cJSON_Delete(root);
     return ESP_FAIL;
   }
-  
-  g_manifest.device_count = cJSON_GetArraySize(devices);
-  
-  if (g_manifest.device_count == 0) {
+
+  out->device_count = cJSON_GetArraySize(devices);
+
+  if (out->device_count == 0) {
     ESP_LOGW(TAG, "Manifest contains no devices");
     cJSON_Delete(root);
     return ESP_OK;
   }
-  
-  // Allocate devices array in PSRAM (persistent for app lifetime)
-  g_manifest.devices = calloc_prefer_psram(g_manifest.device_count, sizeof(manifest_device_t));
-  if (!g_manifest.devices) {
+
+  out->devices = calloc_prefer_psram(out->device_count, sizeof(manifest_device_t));
+  if (!out->devices) {
     ESP_LOGE(TAG, "Failed to allocate devices array");
     cJSON_Delete(root);
     return ESP_ERR_NO_MEM;
   }
-  
-  // Parse each device entry
+
   int idx = 0;
   cJSON *dev_item;
   cJSON_ArrayForEach(dev_item, devices) {
-    manifest_device_t *dev = &g_manifest.devices[idx];
+    manifest_device_t *dev = &out->devices[idx];
+    dev->from_userdata = from_userdata;
     
     cJSON *item;
     
@@ -171,64 +187,141 @@ static esp_err_t parse_manifest(const char *json_str) {
     
     idx++;
   }
-  
+
   cJSON_Delete(root);
-  
-  ESP_LOGI(TAG, "Manifest loaded: schema=%lu, devices=%lu", 
-    (unsigned long)g_manifest.schema, (unsigned long)g_manifest.device_count);
-  
+
+  ESP_LOGI(TAG, "Manifest parsed: schema=%lu, devices=%lu, origin=%s",
+    (unsigned long)out->schema, (unsigned long)out->device_count,
+    from_userdata ? "userdata" : "assets");
+
   return ESP_OK;
 }
 
 /**
- * Load manifest.json from filesystem
+ * Load and parse a manifest file from disk into the supplied output. Returns
+ * ESP_FAIL (without populating out) if the file cannot be read; that's the
+ * normal first-boot state for the userdata manifest and is not an error from
+ * the caller's perspective.
  */
-static esp_err_t load_manifest(void) {
-  char path[128];
-  snprintf(path, sizeof(path), "%s/devices/manifest.json", ASSETS_BASE_PATH);
-  
+static esp_err_t load_manifest_file(const char *path, manifest_t *out, bool from_userdata) {
   ESP_LOGI(TAG, "Loading manifest: %s", path);
-  
-  // Open file
+
   FILE *f = fopen(path, "rb");
   if (!f) {
-    ESP_LOGE(TAG, "Failed to open manifest.json");
+    ESP_LOGW(TAG, "manifest not present: %s", path);
     return ESP_FAIL;
   }
-  
-  // Get file size
+
   struct stat st;
   if (stat(path, &st) != 0) {
-    ESP_LOGE(TAG, "Failed to stat manifest.json");
     fclose(f);
     return ESP_FAIL;
   }
-  
-  // Allocate buffer
+
   char *json_buf = malloc(st.st_size + 1);
   if (!json_buf) {
-    ESP_LOGE(TAG, "Failed to allocate buffer for manifest");
     fclose(f);
     return ESP_ERR_NO_MEM;
   }
-  
-  // Read file
+
   size_t read_bytes = fread(json_buf, 1, st.st_size, f);
   fclose(f);
-  
+
   if (read_bytes != (size_t)st.st_size) {
-    ESP_LOGE(TAG, "Failed to read manifest.json");
     free(json_buf);
     return ESP_FAIL;
   }
-  
+
   json_buf[st.st_size] = '\0';
-  
-  // Parse manifest
-  esp_err_t ret = parse_manifest(json_buf);
+  esp_err_t ret = parse_manifest_into(json_buf, out, from_userdata);
   free(json_buf);
-  
   return ret;
+}
+
+/**
+ * Load shared (RO) and user (RW) device manifests and merge them into
+ * g_manifest with overlay semantics: any RW entry whose slug matches an RO
+ * entry replaces that RO entry; remaining RW entries are appended.
+ *
+ * The result is a single deduplicated array, so build_vendor_cache and other
+ * callers don't see ghost RO entries that the user has overridden. The
+ * `from_userdata` flag on each entry tells assets_load_device() which mount
+ * to read the JSON from.
+ *
+ * Either manifest may be absent. RO absent on a fresh dev board (no /assets
+ * content) is logged as a warning. RW absent during a degraded boot or before
+ * the user creates any overrides is the normal case.
+ */
+static esp_err_t load_manifest(void) {
+  manifest_t ro = {0};
+  manifest_t rw = {0};
+
+  esp_err_t ro_err = load_manifest_file(
+    ASSETS_BASE_PATH "/devices/manifest.json", &ro, false);
+  if (ro_err != ESP_OK) {
+    ESP_LOGW(TAG, "shared device manifest unavailable - shared device list will be empty");
+  }
+
+  if (g_userdata_available) {
+    esp_err_t rw_err = load_manifest_file(
+      USERDATA_BASE_PATH "/devices/manifest.json", &rw, true);
+    if (rw_err != ESP_OK) {
+      ESP_LOGI(TAG, "user device manifest not present (first boot or no overrides)");
+    }
+  }
+
+  // Drop any prior global manifest (reload paths).
+  if (g_manifest.devices) {
+    free(g_manifest.devices);
+    g_manifest.devices = NULL;
+    g_manifest.device_count = 0;
+  }
+
+  size_t cap = ro.device_count + rw.device_count;
+  if (cap == 0) {
+    if (ro.devices) free(ro.devices);
+    if (rw.devices) free(rw.devices);
+    return (ro_err != ESP_OK) ? ro_err : ESP_OK;
+  }
+
+  g_manifest.devices = calloc_prefer_psram(cap, sizeof(manifest_device_t));
+  if (!g_manifest.devices) {
+    if (ro.devices) free(ro.devices);
+    if (rw.devices) free(rw.devices);
+    return ESP_ERR_NO_MEM;
+  }
+  g_manifest.schema = (rw.schema > 0) ? rw.schema : ro.schema;
+
+  size_t out_idx = 0;
+  // RO entries first, skipping any whose slug is overridden in RW.
+  for (uint32_t i = 0; i < ro.device_count; i++) {
+    bool overridden = false;
+    for (uint32_t j = 0; j < rw.device_count; j++) {
+      if (strcmp(ro.devices[i].slug, rw.devices[j].slug) == 0) {
+        overridden = true;
+        break;
+      }
+    }
+    if (overridden) {
+      ESP_LOGD(TAG, "RW overrides RO entry %s", ro.devices[i].slug);
+      continue;
+    }
+    g_manifest.devices[out_idx++] = ro.devices[i];
+  }
+  // Then all RW entries (already tagged from_userdata=true by parse).
+  for (uint32_t j = 0; j < rw.device_count; j++) {
+    g_manifest.devices[out_idx++] = rw.devices[j];
+  }
+  g_manifest.device_count = out_idx;
+
+  if (ro.devices) free(ro.devices);
+  if (rw.devices) free(rw.devices);
+
+  ESP_LOGI(TAG, "Merged manifest: %lu devices (%lu shared kept, %lu user)",
+    (unsigned long)g_manifest.device_count,
+    (unsigned long)(out_idx - rw.device_count),
+    (unsigned long)rw.device_count);
+  return ESP_OK;
 }
 
 /**
@@ -257,36 +350,81 @@ esp_err_t assets_manager_init(void) {
     .free_fn = cjson_psram_free
   };
   cJSON_InitHooks(&psram_hooks);
-  
-  // Configure LittleFS
-  esp_vfs_littlefs_conf_t conf = {
+
+  // Mount the RO `assets` partition. Failure here is fatal because the UI
+  // images and shared device DB live there.
+  esp_vfs_littlefs_conf_t assets_conf = {
     .base_path = ASSETS_BASE_PATH,
     .partition_label = ASSETS_PARTITION,
     .format_if_mount_failed = false,
     .dont_mount = false
   };
-  
-  // Mount filesystem
-  esp_err_t ret = esp_vfs_littlefs_register(&conf);
+  esp_err_t ret = esp_vfs_littlefs_register(&assets_conf);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to mount LittleFS (%s)", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Failed to mount assets LittleFS (%s)", esp_err_to_name(ret));
     return ret;
   }
-  
-  // Get filesystem info
-  size_t total = 0, used = 0;
-  ret = esp_littlefs_info(conf.partition_label, &total, &used);
-  if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "LittleFS mounted: used=%u of %u bytes", (unsigned)used, (unsigned)total);
+  size_t a_total = 0, a_used = 0;
+  if (esp_littlefs_info(ASSETS_PARTITION, &a_total, &a_used) == ESP_OK) {
+    ESP_LOGI(TAG, "assets mounted: used=%u of %u bytes",
+      (unsigned)a_used, (unsigned)a_total);
   }
-  
-  // Load manifest
+
+  // Mount the RW `userdata` partition. format_if_mount_failed=true so the
+  // first-boot empty partition is auto-formatted. If the partition is missing
+  // entirely (v(N+2) firmware on a unit still running the old PT), we log an
+  // ESP_LOGE but continue init - all userdata writes will fail gracefully at
+  // the fopen/mkdir layer and the user can re-run the system update.
+  esp_vfs_littlefs_conf_t userdata_conf = {
+    .base_path = USERDATA_BASE_PATH,
+    .partition_label = USERDATA_PARTITION,
+    .format_if_mount_failed = true,
+    .dont_mount = false
+  };
+  esp_err_t udret = esp_vfs_littlefs_register(&userdata_conf);
+  if (udret == ESP_OK) {
+    g_userdata_available = true;
+    size_t u_total = 0, u_used = 0;
+    if (esp_littlefs_info(USERDATA_PARTITION, &u_total, &u_used) == ESP_OK) {
+      ESP_LOGI(TAG, "userdata mounted: used=%u of %u bytes",
+        (unsigned)u_used, (unsigned)u_total);
+    }
+    // Seed the directory tree so downstream writers (scene.c, device_config.c,
+    // assets_cache.c) can fopen() without each having to create their own
+    // parent dirs. mkdir() returning EEXIST is the steady-state case and is
+    // not an error.
+    static const char *seed_dirs[] = {
+      USERDATA_BASE_PATH "/scenes",
+      USERDATA_BASE_PATH "/devices",
+      USERDATA_BASE_PATH "/devices/user",
+      USERDATA_BASE_PATH "/cache",
+    };
+    for (size_t i = 0; i < sizeof(seed_dirs) / sizeof(seed_dirs[0]); i++) {
+      struct stat st;
+      if (stat(seed_dirs[i], &st) != 0) {
+        if (mkdir(seed_dirs[i], 0755) != 0) {
+          ESP_LOGW(TAG, "mkdir(%s) failed (errno=%d)", seed_dirs[i], errno);
+        } else {
+          ESP_LOGI(TAG, "Created %s", seed_dirs[i]);
+        }
+      }
+    }
+  } else {
+    g_userdata_available = false;
+    ESP_LOGE(TAG, "userdata partition unavailable (%s) - "
+      "device booting in degraded mode. Re-run system update from web app.",
+      esp_err_to_name(udret));
+  }
+
+  // Load manifest from the RO partition. The Phase 3 split (RO + RW manifests
+  // merged into g_manifest) lands later; for now we keep the existing single-
+  // manifest behavior so v(N+2) Phase 1 remains a structural-only change.
   ret = load_manifest();
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to load manifest");
     return ret;
   }
-  
+
   g_initialized = true;
   return ESP_OK;
 }
@@ -351,9 +489,12 @@ device_def_t *assets_load_device(const char *slug) {
   
   ESP_LOGD(TAG, "Loading device: %s", slug);
   
-  // Try to load from cache first
+  // The parsed-device cache lives on the RW userdata partition: it can be
+  // regenerated from JSON, so wiping it (or having it absent on a degraded
+  // boot) is harmless. Moving it off /assets means an ASSETS OTA does not
+  // invalidate caches for unchanged shared devices.
   char cache_path[128];
-  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", ASSETS_BASE_PATH, slug);
+  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", USERDATA_BASE_PATH, slug);
 
   device_def_t *device = load_device_cache(cache_path, slug);
   if (device) {
@@ -380,22 +521,29 @@ device_def_t *assets_load_device(const char *slug) {
     return device;
   }
   
-  // Cache miss - parse JSON
+  // Cache miss - parse JSON. Origin partition determines the mount root.
   ESP_LOGI(TAG, "Cache miss, parsing JSON");
-  
+
+  const char *json_root = manifest_dev->from_userdata
+    ? USERDATA_BASE_PATH : ASSETS_BASE_PATH;
   char json_path[256];
-  snprintf(json_path, sizeof(json_path), "%s/devices/%s", ASSETS_BASE_PATH, manifest_dev->file);
-  
+  snprintf(json_path, sizeof(json_path), "%s/devices/%s", json_root, manifest_dev->file);
+
   device = assets_parse_device_file(json_path, slug);
   if (!device) {
     ESP_LOGE(TAG, "Failed to parse device JSON");
     return NULL;
   }
   
-  // Generate cache for next time
-  ESP_LOGI(TAG, "Generating cache for future use");
-  generate_device_cache(device, cache_path);
-  
+  // Generate cache for next time. Skipped (with a warning) when userdata is
+  // unavailable - parsing-from-JSON every load is the acceptable fallback.
+  if (g_userdata_available) {
+    ESP_LOGI(TAG, "Generating cache for future use");
+    generate_device_cache(device, cache_path);
+  } else {
+    ESP_LOGW(TAG, "userdata unavailable - skipping cache write for %s", slug);
+  }
+
   return device;
 }
 
@@ -424,29 +572,39 @@ void assets_free_device(device_def_t *device) {
   heap_caps_free(device);
 }
 
-// Forward declaration from assets_file_ops.c
+// Forward declarations from assets_file_ops.c
 extern esp_err_t assets_regenerate_devices_manifest(void);
+extern esp_err_t assets_regenerate_user_devices_manifest(void);
 
 /**
- * Rebuild manifest by scanning devices directory
- * This is a convenience wrapper around assets_regenerate_devices_manifest()
+ * Rebuild user (RW) device manifest by scanning /userdata/devices/, then
+ * reload the merged manifest into memory. The shared (RO) manifest is shipped
+ * as a build artifact and is never regenerated at runtime - use the dev
+ * console's `regenerate_shared_devices` for that (Phase 7).
+ *
+ * This is what device_config.c invokes after `ensure_default_device_exists`
+ * writes a new file under /userdata/devices/user/.
  */
 esp_err_t assets_rebuild_manifest(void) {
   if (!g_initialized) {
     ESP_LOGE(TAG, "Assets manager not initialized");
     return ESP_ERR_INVALID_STATE;
   }
-  
-  ESP_LOGI(TAG, "Rebuilding device manifest...");
-  
-  // Use the existing implementation from assets_file_ops
-  esp_err_t ret = assets_regenerate_devices_manifest();
+
+  if (!g_userdata_available) {
+    ESP_LOGW(TAG, "userdata unavailable - skipping user manifest rebuild");
+    return ESP_OK;
+  }
+
+  ESP_LOGI(TAG, "Rebuilding user device manifest...");
+
+  esp_err_t ret = assets_regenerate_user_devices_manifest();
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to regenerate devices manifest");
+    ESP_LOGE(TAG, "Failed to regenerate user devices manifest");
     return ret;
   }
-  
-  // Reload the manifest into memory
+
+  // Reload merged manifest (RO + new RW) into memory.
   return assets_manager_reload_manifest();
 }
 
@@ -458,19 +616,17 @@ esp_err_t assets_manager_reload_manifest(void) {
 
   ESP_LOGI(TAG, "Reloading device manifest");
 
-  // Free existing manifest
-  if (g_manifest.devices) {
-    free(g_manifest.devices);
-    g_manifest.devices = NULL;
-    g_manifest.device_count = 0;
-  }
-
-  // Reload from filesystem
+  // load_manifest() handles freeing the old global manifest internally and
+  // reloads both partitions with the overlay merge.
   esp_err_t ret = load_manifest();
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to reload manifest");
     return ret;
   }
+
+  // Vendor cache is derived from g_manifest; invalidate so it rebuilds on
+  // next access.
+  s_vendors_cached = false;
 
   ESP_LOGI(TAG, "Manifest reloaded successfully (%u devices)", (unsigned)g_manifest.device_count);
   return ESP_OK;
@@ -497,7 +653,7 @@ esp_err_t assets_manager_reload_device(const char *slug) {
 
   // Delete cache file to force reload from JSON
   char cache_path[128];
-  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", ASSETS_BASE_PATH, slug);
+  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", USERDATA_BASE_PATH, slug);
   
   struct stat st;
   if (stat(cache_path, &st) == 0) {
@@ -725,10 +881,11 @@ bool assets_cc_has_discrete_values(const device_def_t *device, uint8_t cc_num) {
 // Maximum vendors we expect (can adjust if needed)
 #define MAX_VENDORS 64
 
-// Cached vendor list (built on first access)
+// Cached vendor list (built on first access).
+// `s_vendors_cached` is forward-declared near the top so reload paths can
+// invalidate it; redefining here would conflict, so just initialize.
 static char* s_vendor_list[MAX_VENDORS];
 static uint32_t s_vendor_count = 0;
-static bool s_vendors_cached = false;
 
 // Comparison function for qsort (case-insensitive alphabetical)
 static int vendor_compare(const void* a, const void* b) {

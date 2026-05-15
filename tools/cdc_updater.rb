@@ -1,6 +1,15 @@
 #!/usr/bin/env ruby
 
 # CDC Firmware Updater for Storm Summoner
+#
+# Drives the FIRMWARE and ASSETS over-the-air commands over USB CDC. Note
+# that ASSETS only replaces the read-only `/assets` partition (shared MIDI
+# device DB + UI images); the writable `/userdata` partition holding scenes,
+# user-created/cloned pedals and the device cache is never touched here.
+#
+# Partition-table updates and the coordinated v(N+1) -> v(N+2) split-deploy
+# flow live in the web app's System Update panel — this CLI does not drive
+# PARTITION_TABLE / COMMIT_PARTITION_TABLE / RAW_ASSETS_WRITE.
 require 'serialport'
 require_relative 'ss_config'
 begin

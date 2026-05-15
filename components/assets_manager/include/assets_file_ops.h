@@ -26,21 +26,36 @@ void assets_file_deleted(const char *path);
 
 /**
  * @brief Regenerate the scenes manifest
- * 
- * Scans /assets/scenes/ for scene_*.json files and rebuilds manifest.json
- * 
+ *
+ * Scans /userdata/scenes/ (Phase 2: scenes moved off the RO partition) for
+ * scene_*.json files and rebuilds /userdata/scenes/manifest.json.
+ *
  * @return ESP_OK on success
  */
 esp_err_t assets_regenerate_scenes_manifest(void);
 
 /**
- * @brief Regenerate the devices manifest
- * 
- * Scans /assets/devices/ for device JSON files and rebuilds manifest.json
- * 
+ * @brief Regenerate the SHARED (RO) devices manifest
+ *
+ * Scans /assets/devices/ for device JSON files and rebuilds the shared
+ * manifest. Only invoked from the dev console / build pipeline; the released
+ * build ships a pre-generated manifest. Runtime CDC writes under /assets are
+ * rejected by the Phase 4 gate.
+ *
  * @return ESP_OK on success
  */
 esp_err_t assets_regenerate_devices_manifest(void);
+
+/**
+ * @brief Regenerate the USER (RW) devices manifest
+ *
+ * Scans /userdata/devices/ for device JSON files and rebuilds
+ * /userdata/devices/manifest.json. Triggered automatically by
+ * assets_file_created/deleted whenever a file lands under /userdata/devices/.
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t assets_regenerate_user_devices_manifest(void);
 
 /**
  * @brief Regenerate the images manifest

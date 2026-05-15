@@ -50,6 +50,7 @@
         <wa-tab slot="nav" panel="scenes">Scenes</wa-tab>
         <wa-tab slot="nav" panel="display">Display</wa-tab>
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
+        <wa-tab slot="nav" panel="system-update">System Update</wa-tab>
         <wa-tab slot="nav" panel="config">Settings</wa-tab>
         <wa-tab slot="nav" panel="settings">NVS</wa-tab>
 
@@ -130,7 +131,7 @@
           <div class="tab-content" data-controller="assets">
             <div class="toolbar">
               <div class="breadcrumb" data-assets-target="breadcrumb">
-                <button data-action="click->assets#navigateTo" data-path="/">/assets</button>
+                <button data-action="click->assets#navigateTo" data-path="/">/</button>
               </div>
               <wa-button size="small" variant="neutral" appearance="outlined"
                          data-action="click->assets#refresh" data-assets-target="refreshBtn" disabled>
@@ -149,6 +150,11 @@
               </wa-button>
               <input type="file" accept=".zip" hidden data-assets-target="zipInput"
                      data-action="change->assets#extractZip">
+            </div>
+
+            <div class="readonly-banner" data-assets-target="readonlyBanner" style="display: none;">
+              <wa-icon name="lock"></wa-icon>
+              <span>This area is <strong>read-only</strong>. Shared content is replaced by the Assets OTA flow.</span>
             </div>
 
             <div class="file-list" data-assets-target="fileList">
@@ -171,18 +177,30 @@
                 <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0-12L8 8m4-4l4 4"/>
               </svg>
               <p>Drop files here to upload</p>
-              <p class="hint">or click to select files</p>
+              <p class="hint">or click to select files (writes go to /userdata)</p>
               <input type="file" multiple hidden data-assets-target="fileInput"
                      data-action="change->assets#uploadFiles">
             </div>
 
             <div class="stats-bar" data-assets-target="statsBar" style="display: none;">
-              <div class="usage">
-                <span>Storage:</span>
-                <div class="usage-bar">
-                  <div class="usage-bar-fill" data-assets-target="usageBar" style="width: 0%"></div>
+              <div class="usage-group">
+                <div class="usage">
+                  <span class="label">Shared (RO):</span>
+                  <div class="usage-bar">
+                    <div class="usage-bar-fill" data-assets-target="assetsUsageBar" style="width: 0%"></div>
+                  </div>
+                  <span data-assets-target="assetsUsageText">-- / --</span>
                 </div>
-                <span data-assets-target="usageText">-- / --</span>
+                <div class="usage" data-assets-target="userdataStats">
+                  <span class="label">User (RW):</span>
+                  <div class="usage-bar">
+                    <div class="usage-bar-fill" data-assets-target="userdataUsageBar" style="width: 0%"></div>
+                  </div>
+                  <span data-assets-target="userdataUsageText">-- / --</span>
+                </div>
+                <span class="badge warn" data-assets-target="userdataMissing" style="display: none;">
+                  userdata missing — re-run System Update
+                </span>
               </div>
               <span data-assets-target="fileCount">-- files</span>
             </div>
@@ -428,7 +446,7 @@
               </div>
               <div class="update-row">
                 <wa-select data-updater-target="fwSelect" placeholder="Select version..."
-                           data-action="change->updater#fwVersionSelected">
+                           data-action="change->updater#fwVersionSelected wa-input->updater#fwVersionSelected">
                 </wa-select>
                 <wa-button variant="brand" data-updater-target="fwApplyBtn" disabled
                            data-action="click->updater#applyFirmware">
@@ -462,7 +480,7 @@
               </div>
               <div class="update-row">
                 <wa-select data-updater-target="assetsSelect" placeholder="Select version..."
-                           data-action="change->updater#assetsVersionSelected">
+                           data-action="change->updater#assetsVersionSelected wa-input->updater#assetsVersionSelected">
                 </wa-select>
                 <wa-button variant="brand" data-updater-target="assetsApplyBtn" disabled
                            data-action="click->updater#applyAssets">
@@ -533,6 +551,91 @@
                            data-action="click->updater#clearLog">Clear</wa-button>
               </div>
               <div class="log-content" data-updater-target="logContent"></div>
+            </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- System Update Tab (Phase 8: coordinated v(N+1) -> v(N+2) push) -->
+        <wa-tab-panel name="system-update">
+          <div class="tab-content" data-controller="system-update">
+            <div class="card updater-section">
+              <h3>Combined System Update</h3>
+              <p class="hint">
+                Pushes a coordinated firmware + partition table + shared assets
+                update. Required for the partition split (v(N+1) &rarr; v(N+2)).
+                User scenes and customizations on /userdata are preserved.
+              </p>
+              <div class="update-row">
+                <wa-select data-system-update-target="bundleSelect" placeholder="Select bundle..."
+                           data-action="change->system-update#onBundleSelected wa-input->system-update#onBundleSelected">
+                </wa-select>
+              </div>
+              <div class="bundle-info" data-system-update-target="bundleInfo"></div>
+
+              <div class="update-row">
+                <wa-button variant="brand" data-system-update-target="startBtn" disabled
+                           data-action="click->system-update#startUpdate">
+                  Start
+                </wa-button>
+                <wa-button variant="neutral" appearance="outlined"
+                           data-system-update-target="resumeBtn" disabled
+                           data-action="click->system-update#resumeUpdate">
+                  Resume
+                </wa-button>
+                <wa-button variant="danger" appearance="outlined"
+                           data-system-update-target="cancelBtn" disabled
+                           data-action="click->system-update#cancelUpdate">
+                  Cancel
+                </wa-button>
+              </div>
+
+              <div class="system-update-state">
+                State: <strong data-system-update-target="state">IDLE</strong>
+              </div>
+
+              <ul class="step-list" data-system-update-target="stepList"></ul>
+
+              <div class="progress-bar" data-system-update-target="progressBar">
+                <div class="progress-fill" data-system-update-target="progressFill"></div>
+              </div>
+              <p class="update-status" data-system-update-target="progressLabel">idle</p>
+            </div>
+
+            <wa-dialog data-system-update-target="commitDialog" label="Confirm Partition Table Commit">
+              <div class="commit-dialog-content">
+                <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
+                <p><strong>This is the only step that can brick the device.</strong></p>
+                <p>
+                  The next ~50 ms write to flash 0x8000 cannot be safely
+                  interrupted. Keep the device powered and the USB cable
+                  connected until you see "v(N+2) layout confirmed".
+                </p>
+                <p>Type <code>COMMIT</code> below to proceed:</p>
+                <wa-input data-system-update-target="commitConfirmInput"
+                          data-action="input->system-update#onCommitConfirmInput wa-input->system-update#onCommitConfirmInput"
+                          placeholder="COMMIT"></wa-input>
+              </div>
+              <div slot="footer">
+                <wa-button variant="neutral" appearance="outlined"
+                           data-system-update-target="commitCancelBtn"
+                           data-action="click->system-update#cancelCommit">
+                  Cancel
+                </wa-button>
+                <wa-button variant="danger" disabled
+                           data-system-update-target="commitConfirmBtn"
+                           data-action="click->system-update#confirmCommit">
+                  Commit Partition Table
+                </wa-button>
+              </div>
+            </wa-dialog>
+
+            <div class="log-panel">
+              <div class="log-header">
+                <span>System Update Log</span>
+                <wa-button size="small" variant="neutral" appearance="text"
+                           data-action="click->system-update#clearLog">Clear</wa-button>
+              </div>
+              <div class="log-content" data-system-update-target="logContent"></div>
             </div>
           </div>
         </wa-tab-panel>
@@ -614,6 +717,7 @@
   <script src="/js/scenes.js"></script>
   <script src="/js/display.js"></script>
   <script src="/js/updater.js"></script>
+  <script src="/js/system_update.js"></script>
   <script src="/js/config.js"></script>
   <script src="/js/settings.js"></script>
 

@@ -51,6 +51,8 @@ typedef enum {
   CDC_STATE_RECEIVING_ASSETS,
   CDC_STATE_WAITING_COMMIT,
   CDC_STATE_COMMITTING,
+  CDC_STATE_RECEIVING_PT,      // Phase 0: receiving partition table image
+  CDC_STATE_RECEIVING_RAW,     // Phase 0: receiving a raw assets-partition chunk
   CDC_STATE_CONSOLE,  // Interactive console mode
   CDC_STATE_ASSETS,   // Assets management mode
   CDC_STATE_ASSETS_RECEIVING,  // Receiving file data in assets mode
@@ -105,9 +107,25 @@ static volatile bool s_extract_in_progress = false;
 static bool s_midi_relay_active = false;
 static bool s_midi_relay_show_clock = false;
 
+// Phase 0: partition-table OTA upload state. The actual staging buffer lives
+// inside firmware_update.c; we only track the byte-level receive progress here.
+static size_t s_pt_expected = 0;
+static size_t s_pt_received = 0;
+
+// Phase 0: raw assets-partition chunk receive state. Each RAW_ASSETS_WRITE
+// command stages one chunk in PSRAM, then flushes to flash on completion.
+static uint32_t s_raw_offset = 0;
+static size_t s_raw_expected = 0;
+static size_t s_raw_received = 0;
+static uint8_t *s_raw_buffer = NULL;
+
 // Forward declarations for MIDI relay
 static void midi_relay_event_handler(const event_t* event, void* context);
 static void midi_relay_stop(void);
+
+// Forward declarations for Phase 0 binary handlers
+static void handle_pt_binary_data(const uint8_t *data, size_t len);
+static void handle_raw_binary_data(const uint8_t *data, size_t len);
 
 // ============================================================================
 // VFS wrapper for CDC stdout redirect
@@ -366,6 +384,27 @@ void usb_cdc_task(void) {
       s_received_bytes = 0;
       s_pending_assets_checksum[0] = '\0';
       s_state = CDC_STATE_IDLE;
+    }
+    // Phase 0: clean up partition-table upload on disconnect.
+    if (s_state == CDC_STATE_RECEIVING_PT) {
+      ESP_LOGW(TAG, "CDC disconnected during PT upload, aborting");
+      partition_table_update_abort();
+      s_pt_expected = 0;
+      s_pt_received = 0;
+      s_state = CDC_STATE_IDLE;
+    }
+    // Phase 0: clean up raw assets chunk on disconnect.
+    if (s_state == CDC_STATE_RECEIVING_RAW) {
+      ESP_LOGW(TAG, "CDC disconnected during raw assets chunk, discarding");
+      if (s_raw_buffer) {
+        heap_caps_free(s_raw_buffer);
+        s_raw_buffer = NULL;
+      }
+      s_raw_expected = 0;
+      s_raw_received = 0;
+      s_raw_offset = 0;
+      raw_assets_write_finalize(NULL);
+      s_state = CDC_STATE_IDLE;
 
       // Publish update cancelled event for UI
       event_t cancel_event = {
@@ -446,6 +485,10 @@ void usb_cdc_task(void) {
       } else if (s_state == CDC_STATE_RECEIVING_FIRMWARE || s_state == CDC_STATE_RECEIVING_ASSETS) {
         // In receiving state, handle binary data
         handle_binary_data(buf, count);
+      } else if (s_state == CDC_STATE_RECEIVING_PT) {
+        handle_pt_binary_data(buf, count);
+      } else if (s_state == CDC_STATE_RECEIVING_RAW) {
+        handle_raw_binary_data(buf, count);
       } else if (s_state == CDC_STATE_ASSETS) {
         // In assets mode, parse commands (text mode, no echo)
         for (uint32_t i = 0; i < count; i++) {
@@ -881,6 +924,102 @@ static void process_command(const char *cmd) {
     s_update_size = 0;
     s_received_bytes = 0;
 
+  } else if (strncmp(cmd, "PARTITION_TABLE ", 16) == 0) {
+    // Phase 0: stage a candidate partition table in PSRAM.
+    // Layout: PARTITION_TABLE <size> ; size must be 1..0x1000 bytes.
+    size_t size = (size_t)strtoul(cmd + 16, NULL, 0);
+    if (size == 0 || size > 0x1000) {
+      send_response("ERROR: Invalid partition table size (1..4096 bytes)");
+      return;
+    }
+    esp_err_t err = partition_table_update_start(size);
+    if (err != ESP_OK) {
+      char resp[80];
+      snprintf(resp, sizeof(resp), "ERROR: PT start failed: %s", esp_err_to_name(err));
+      send_response(resp);
+      s_state = CDC_STATE_ERROR;
+      return;
+    }
+    s_pt_expected = size;
+    s_pt_received = 0;
+    s_state = CDC_STATE_RECEIVING_PT;
+    ESP_LOGI(TAG, "PARTITION_TABLE: receiving %u bytes", (unsigned)size);
+    send_response("READY");
+
+  } else if (strcmp(cmd, "COMMIT_PARTITION_TABLE") == 0) {
+    // Phase 0: commit a previously verified PT to flash. CRITICAL operation;
+    // the host should have warned the user not to power-cycle.
+    partition_table_update_state_t st = partition_table_update_get_state();
+    if (st != PT_UPDATE_VERIFIED) {
+      char resp[80];
+      snprintf(resp, sizeof(resp),
+        "PT_COMMIT_FAILED: not verified (state=%d)", (int)st);
+      send_response(resp);
+      return;
+    }
+    ESP_LOGW(TAG, "Committing partition table - DO NOT POWER OFF");
+    esp_err_t err = partition_table_update_commit();
+    if (err == ESP_OK) {
+      send_response("PT_COMMITTED");
+    } else {
+      char resp[96];
+      snprintf(resp, sizeof(resp),
+        "PT_COMMIT_FAILED: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+
+  } else if (strcmp(cmd, "ABORT_PARTITION_TABLE") == 0) {
+    // Phase 0: drop any staged PT without committing.
+    partition_table_update_abort();
+    s_pt_expected = 0;
+    s_pt_received = 0;
+    if (s_state == CDC_STATE_RECEIVING_PT) s_state = CDC_STATE_IDLE;
+    send_response("PT_ABORTED");
+
+  } else if (strncmp(cmd, "RAW_ASSETS_WRITE ", 17) == 0) {
+    // Phase 0: write a chunk to the existing assets partition at <offset>.
+    // Layout: RAW_ASSETS_WRITE <offset> <size>
+    uint32_t offset = 0;
+    size_t size = 0;
+    int parsed = sscanf(cmd + 17, "%lu %zu", (unsigned long *)&offset, &size);
+    if (parsed != 2 || size == 0 || size > 1 * 1024 * 1024) {
+      send_response("ERROR: Invalid RAW_ASSETS_WRITE args (need <offset> <size>, size <= 1MB)");
+      return;
+    }
+    if (s_raw_buffer) {
+      heap_caps_free(s_raw_buffer);
+      s_raw_buffer = NULL;
+    }
+    s_raw_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    if (!s_raw_buffer) {
+      send_response("ERROR: Memory allocation failed");
+      s_state = CDC_STATE_ERROR;
+      return;
+    }
+    s_raw_offset = offset;
+    s_raw_expected = size;
+    s_raw_received = 0;
+    s_state = CDC_STATE_RECEIVING_RAW;
+    ESP_LOGI(TAG, "RAW_ASSETS_WRITE: offset=0x%lx size=%u",
+      (unsigned long)offset, (unsigned)size);
+    send_response("READY");
+
+  } else if (strcmp(cmd, "RAW_ASSETS_FINALIZE") == 0 ||
+             strncmp(cmd, "RAW_ASSETS_FINALIZE ", 20) == 0) {
+    // Optional 8-hex assets checksum may follow the command name, e.g.
+    // `RAW_ASSETS_FINALIZE f56767b1`. When present we persist it via
+    // version_set_assets_checksum() inside raw_assets_write_finalize() so
+    // the scene-manager factory-preset merge can detect the new blob on
+    // next boot. The no-arg form is kept for older tooling.
+    const char *csum = NULL;
+    if (cmd[19] == ' ') {
+      const char *p = cmd + 20;
+      while (*p == ' ') p++;
+      if (*p != '\0') csum = p;
+    }
+    raw_assets_write_finalize(csum);
+    send_response("RAW_FINALIZED");
+
   } else if (strcmp(cmd, "RESET") == 0) {
     ESP_LOGI(TAG, "Reset command received. Rebooting...");
     send_response("RESETTING");
@@ -1144,6 +1283,81 @@ static void handle_binary_data(const uint8_t *data, size_t len) {
   }
 }
 
+// Phase 0: handle bytes arriving for a PARTITION_TABLE upload. On full receipt
+// we automatically run partition_table_update_verify() and report the result;
+// the host then issues COMMIT_PARTITION_TABLE (or ABORT_PARTITION_TABLE).
+static void handle_pt_binary_data(const uint8_t *data, size_t len) {
+  size_t remaining = (s_pt_expected > s_pt_received) ? (s_pt_expected - s_pt_received) : 0;
+  size_t to_copy = (len < remaining) ? len : remaining;
+  esp_err_t err = partition_table_update_write(data, to_copy);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "PT receive: write failed: %s", esp_err_to_name(err));
+    partition_table_update_abort();
+    s_pt_expected = 0;
+    s_pt_received = 0;
+    char resp[80];
+    snprintf(resp, sizeof(resp), "PT_INVALID: write failed: %s", esp_err_to_name(err));
+    send_response(resp);
+    s_state = CDC_STATE_ERROR;
+    return;
+  }
+  s_pt_received += to_copy;
+
+  if (s_pt_received >= s_pt_expected) {
+    char err_msg[96] = {0};
+    err = partition_table_update_verify(err_msg, sizeof(err_msg));
+    s_state = CDC_STATE_IDLE;  // Back to text mode either way.
+    if (err == ESP_OK) {
+      send_response("PT_VERIFIED");
+    } else {
+      char resp[160];
+      snprintf(resp, sizeof(resp), "PT_INVALID: %s",
+        err_msg[0] ? err_msg : esp_err_to_name(err));
+      send_response(resp);
+      // Leave the staged buffer in place so the host can retry verify or abort.
+    }
+    s_pt_expected = 0;
+    s_pt_received = 0;
+  }
+}
+
+// Phase 0: handle bytes arriving for a RAW_ASSETS_WRITE chunk. On full receipt
+// we flush the chunk to flash via raw_assets_write_chunk().
+static void handle_raw_binary_data(const uint8_t *data, size_t len) {
+  if (!s_raw_buffer) {
+    ESP_LOGE(TAG, "RAW receive: no buffer");
+    s_state = CDC_STATE_ERROR;
+    send_response("RAW_ERROR: no buffer");
+    return;
+  }
+  size_t remaining = (s_raw_expected > s_raw_received) ? (s_raw_expected - s_raw_received) : 0;
+  size_t to_copy = (len < remaining) ? len : remaining;
+  memcpy(s_raw_buffer + s_raw_received, data, to_copy);
+  s_raw_received += to_copy;
+
+  if (s_raw_received >= s_raw_expected) {
+    esp_err_t err = raw_assets_write_chunk(s_raw_offset, s_raw_buffer, s_raw_expected);
+    heap_caps_free(s_raw_buffer);
+    s_raw_buffer = NULL;
+    uint32_t completed_offset = s_raw_offset;
+    size_t completed_size = s_raw_expected;
+    s_raw_offset = 0;
+    s_raw_expected = 0;
+    s_raw_received = 0;
+    s_state = CDC_STATE_IDLE;
+    if (err == ESP_OK) {
+      char resp[80];
+      snprintf(resp, sizeof(resp), "RAW_OK %lu %u",
+        (unsigned long)completed_offset, (unsigned)completed_size);
+      send_response(resp);
+    } else {
+      char resp[96];
+      snprintf(resp, sizeof(resp), "RAW_ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+  }
+}
+
 // Process console commands via esp_console
 static void process_console_command(const char *cmd) {
   if (strlen(cmd) == 0) {
@@ -1184,20 +1398,56 @@ static void process_console_command(const char *cmd) {
 // Assets Management Mode
 // ============================================================================
 
-// Build full path from relative path
+// Compute the absolute filesystem path for a CDC argument.
+// Phase 4 protocol:
+//   - Absolute paths under /assets or /userdata are taken verbatim.
+//   - Other absolute paths are rejected by setting dest to "" (empty); callers
+//     that don't pre-validate via is_writable_path will see fopen/stat fail.
+//   - Relative paths default to USERDATA_BASE_PATH (the writable mount). This
+//     keeps older Ruby tooling that passes bare names working without changes.
 static void build_full_path(char *dest, size_t dest_size, const char *path) {
-  if (path[0] == '/') {
-    // Absolute path - ensure it starts with /assets
-    if (strncmp(path, ASSETS_BASE_PATH, strlen(ASSETS_BASE_PATH)) == 0) {
-      strncpy(dest, path, dest_size - 1);
-    } else {
-      snprintf(dest, dest_size, "%s%s", ASSETS_BASE_PATH, path);
-    }
-  } else {
-    // Relative path
-    snprintf(dest, dest_size, "%s/%s", ASSETS_BASE_PATH, path);
+  if (!path || dest_size == 0) {
+    if (dest && dest_size) dest[0] = '\0';
+    return;
   }
+  if (path[0] == '/') {
+    if (strncmp(path, ASSETS_BASE_PATH "/", strlen(ASSETS_BASE_PATH) + 1) == 0
+        || strcmp(path, ASSETS_BASE_PATH) == 0
+        || strncmp(path, USERDATA_BASE_PATH "/", strlen(USERDATA_BASE_PATH) + 1) == 0
+        || strcmp(path, USERDATA_BASE_PATH) == 0) {
+      strncpy(dest, path, dest_size - 1);
+      dest[dest_size - 1] = '\0';
+      return;
+    }
+    // Absolute path outside both managed mounts: pass through unchanged so
+    // callers see consistent error behavior (stat/fopen will fail with ENOENT
+    // or EACCES). Mutation gates also reject these.
+    strncpy(dest, path, dest_size - 1);
+    dest[dest_size - 1] = '\0';
+    return;
+  }
+  snprintf(dest, dest_size, "%s/%s", USERDATA_BASE_PATH, path);
   dest[dest_size - 1] = '\0';
+}
+
+// True iff path lies on the writable userdata partition. Used as the gate on
+// every CDC mutation (PUT/MKDIR/RM/RMRF/MV/CP/EXTRACT) so the host cannot
+// scribble over the read-only shared content.
+static bool is_writable_path(const char *full_path) {
+  if (!full_path) return false;
+  size_t plen = strlen(USERDATA_BASE_PATH);
+  if (strncmp(full_path, USERDATA_BASE_PATH, plen) != 0) return false;
+  // Must be exactly /userdata or start with /userdata/.
+  return full_path[plen] == '\0' || full_path[plen] == '/';
+}
+
+// Send a uniform "read-only" rejection. Centralized so the wording matches
+// the web app's expectations (web/js/assets.js looks for the prefix).
+static void reject_readonly(const char *full_path) {
+  char resp[256];
+  snprintf(resp, sizeof(resp),
+    "ERROR: read-only path: %s (use /userdata/... for writes)", full_path);
+  send_response(resp);
 }
 
 // Process assets mode commands
@@ -1336,11 +1586,24 @@ static void process_assets_command(const char *cmd) {
   send_response("ERROR: Unknown assets command");
 }
 
-// LS - list directory
+// LS - list directory.
+// Phase 4: a literal `/` enumerates the two top-level mount points (so the
+// web file browser can render a two-root view) instead of trying to opendir
+// a non-existent root vfs. Any other path is dispatched normally.
 static void assets_cmd_ls(const char *path) {
+  if (path && (strcmp(path, "/") == 0 || strcmp(path, "") == 0)) {
+    char response[256];
+    snprintf(response, sizeof(response),
+      "[{\"name\":\"assets\",\"type\":\"dir\",\"size\":0,\"readonly\":true},"
+      "{\"name\":\"userdata\",\"type\":\"dir\",\"size\":0,\"readonly\":false,\"available\":%s}]",
+      assets_userdata_available() ? "true" : "false");
+    send_response(response);
+    return;
+  }
+
   char full_path[MAX_PATH_LEN];
   build_full_path(full_path, sizeof(full_path), path);
-  
+
   DIR *dir = opendir(full_path);
   if (!dir) {
     char resp[128];
@@ -1414,20 +1677,36 @@ static void assets_cmd_stat(const char *path) {
   send_response(response);
 }
 
-// DF - filesystem stats
+// DF - filesystem stats for both partitions. The web app reads this to draw
+// two usage bars (one per partition). The legacy single-object response is
+// gone; clients expect the new shape:
+//   {"assets":{"total":N,"used":N,"free":N},
+//    "userdata":{"total":N,"used":N,"free":N,"available":bool}}
+// userdata.available is false when the partition is missing entirely (the
+// degraded-boot path); web/js/assets.js shows a banner in that case.
 static void assets_cmd_df(void) {
-  size_t total = 0, used = 0;
-  esp_err_t err = esp_littlefs_info("assets", &total, &used);
-  
-  if (err != ESP_OK) {
+  size_t a_total = 0, a_used = 0;
+  size_t u_total = 0, u_used = 0;
+
+  esp_err_t a_err = esp_littlefs_info(ASSETS_PARTITION, &a_total, &a_used);
+  bool userdata_ok = assets_userdata_available();
+  esp_err_t u_err = userdata_ok
+    ? esp_littlefs_info(USERDATA_PARTITION, &u_total, &u_used)
+    : ESP_ERR_NOT_FOUND;
+
+  if (a_err != ESP_OK) {
     send_response("ERROR: Cannot get filesystem info");
     return;
   }
-  
-  char response[128];
+
+  char response[256];
   snprintf(response, sizeof(response),
-    "{\"total\":%u,\"used\":%u,\"free\":%u}",
-    (unsigned)total, (unsigned)used, (unsigned)(total - used));
+    "{\"assets\":{\"total\":%u,\"used\":%u,\"free\":%u},"
+    "\"userdata\":{\"total\":%u,\"used\":%u,\"free\":%u,\"available\":%s}}",
+    (unsigned)a_total, (unsigned)a_used, (unsigned)(a_total - a_used),
+    (unsigned)u_total, (unsigned)u_used,
+    (unsigned)(u_total > u_used ? u_total - u_used : 0),
+    (userdata_ok && u_err == ESP_OK) ? "true" : "false");
   send_response(response);
 }
 
@@ -1475,7 +1754,9 @@ static void assets_cmd_cat(const char *path) {
 static void assets_cmd_mkdir(const char *path) {
   char full_path[MAX_PATH_LEN];
   build_full_path(full_path, sizeof(full_path), path);
-  
+
+  if (!is_writable_path(full_path)) { reject_readonly(full_path); return; }
+
   if (mkdir(full_path, 0755) == 0) {
     send_response("OK");
   } else {
@@ -1489,20 +1770,22 @@ static void assets_cmd_mkdir(const char *path) {
 static void assets_cmd_rm(const char *path) {
   char full_path[MAX_PATH_LEN];
   build_full_path(full_path, sizeof(full_path), path);
-  
+
+  if (!is_writable_path(full_path)) { reject_readonly(full_path); return; }
+
   struct stat st;
   if (stat(full_path, &st) != 0) {
     send_response("ERROR: File not found");
     return;
   }
-  
+
   int result;
   if (S_ISDIR(st.st_mode)) {
     result = rmdir(full_path);
   } else {
     result = unlink(full_path);
   }
-  
+
   if (result == 0) {
     // Trigger manifest update if needed
     assets_file_deleted(full_path);
@@ -1518,15 +1801,17 @@ static void assets_cmd_rm(const char *path) {
 static void assets_cmd_rmrf(const char *path) {
   char full_path[MAX_PATH_LEN];
   build_full_path(full_path, sizeof(full_path), path);
-  
+
+  if (!is_writable_path(full_path)) { reject_readonly(full_path); return; }
+
   struct stat st;
   if (stat(full_path, &st) != 0) {
     send_response("ERROR: Path not found");
     return;
   }
-  
+
   esp_err_t result = assets_recursive_delete(full_path);
-  
+
   if (result == ESP_OK) {
     // Trigger manifest update for the folder
     assets_file_deleted(full_path);
@@ -1538,14 +1823,18 @@ static void assets_cmd_rmrf(const char *path) {
   }
 }
 
-// MV - move/rename
+// MV - move/rename. Both src and dst must be writable; preventing /assets ->
+// /userdata copies via MV keeps the protocol simple. Use CP if you really
+// want to seed user content from the shared partition.
 static void assets_cmd_mv(const char *src, const char *dst) {
   char full_src[MAX_PATH_LEN], full_dst[MAX_PATH_LEN];
   build_full_path(full_src, sizeof(full_src), src);
   build_full_path(full_dst, sizeof(full_dst), dst);
-  
+
+  if (!is_writable_path(full_src)) { reject_readonly(full_src); return; }
+  if (!is_writable_path(full_dst)) { reject_readonly(full_dst); return; }
+
   if (rename(full_src, full_dst) == 0) {
-    // Trigger manifest updates
     assets_file_deleted(full_src);
     assets_file_created(full_dst);
     send_response("OK");
@@ -1556,18 +1845,21 @@ static void assets_cmd_mv(const char *src, const char *dst) {
   }
 }
 
-// CP - copy file
+// CP - copy file. Source may be RO (legitimate seed-from-shared use case);
+// only the destination must be writable.
 static void assets_cmd_cp(const char *src, const char *dst) {
   char full_src[MAX_PATH_LEN], full_dst[MAX_PATH_LEN];
   build_full_path(full_src, sizeof(full_src), src);
   build_full_path(full_dst, sizeof(full_dst), dst);
-  
+
+  if (!is_writable_path(full_dst)) { reject_readonly(full_dst); return; }
+
   FILE *fsrc = fopen(full_src, "rb");
   if (!fsrc) {
     send_response("ERROR: Cannot open source file");
     return;
   }
-  
+
   FILE *fdst = fopen(full_dst, "wb");
   if (!fdst) {
     fclose(fsrc);
@@ -1601,9 +1893,11 @@ static void assets_cmd_put(const char *path, size_t size) {
     send_response("ERROR: Invalid file size");
     return;
   }
-  
+
   build_full_path(s_assets_path, sizeof(s_assets_path), path);
-  
+
+  if (!is_writable_path(s_assets_path)) { reject_readonly(s_assets_path); return; }
+
   // Open file for writing
   s_assets_file = fopen(s_assets_path, "wb");
   if (!s_assets_file) {
@@ -1767,18 +2061,32 @@ static void handle_assets_binary_data(const uint8_t *data, size_t len) {
   }
 }
 
-// MANIFEST - get manifest for a folder type
+// MANIFEST - get manifest for a folder type.
+// Phase 4: types are now partition-aware to match the split layout:
+//   shared_devices -> /assets/devices/manifest.json   (RO)
+//   user_devices   -> /userdata/devices/manifest.json (RW)
+//   scenes         -> /userdata/scenes/manifest.json  (RW)
+//   images         -> /assets/images/manifest.json    (RO)
+// Legacy `devices` is still accepted and resolves to shared_devices, but new
+// callers should pick a side explicitly.
 static void assets_cmd_manifest(const char *type) {
   char manifest_path[MAX_PATH_LEN];
-  
+
   if (strcmp(type, "scenes") == 0) {
-    snprintf(manifest_path, sizeof(manifest_path), "%s/scenes/manifest.json", ASSETS_BASE_PATH);
-  } else if (strcmp(type, "devices") == 0) {
-    snprintf(manifest_path, sizeof(manifest_path), "%s/devices/manifest.json", ASSETS_BASE_PATH);
+    snprintf(manifest_path, sizeof(manifest_path),
+      "%s/scenes/manifest.json", USERDATA_BASE_PATH);
+  } else if (strcmp(type, "shared_devices") == 0 || strcmp(type, "devices") == 0) {
+    snprintf(manifest_path, sizeof(manifest_path),
+      "%s/devices/manifest.json", ASSETS_BASE_PATH);
+  } else if (strcmp(type, "user_devices") == 0) {
+    snprintf(manifest_path, sizeof(manifest_path),
+      "%s/devices/manifest.json", USERDATA_BASE_PATH);
   } else if (strcmp(type, "images") == 0) {
-    snprintf(manifest_path, sizeof(manifest_path), "%s/images/manifest.json", ASSETS_BASE_PATH);
+    snprintf(manifest_path, sizeof(manifest_path),
+      "%s/images/manifest.json", ASSETS_BASE_PATH);
   } else {
-    send_response("ERROR: Unknown manifest type (use: scenes, devices, images)");
+    send_response("ERROR: Unknown manifest type "
+      "(use: scenes, shared_devices, user_devices, images)");
     return;
   }
   
@@ -2060,7 +2368,12 @@ static void assets_cmd_zip(const char *path) {
 static void assets_cmd_extract(const char *path, size_t size) {
   // Build destination path
   build_full_path(s_extract_dest, sizeof(s_extract_dest), path);
-  
+
+  if (!is_writable_path(s_extract_dest)) {
+    reject_readonly(s_extract_dest);
+    return;
+  }
+
   // Verify destination exists and is a directory
   struct stat st;
   if (stat(s_extract_dest, &st) != 0) {

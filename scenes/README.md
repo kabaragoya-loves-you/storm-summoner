@@ -1,83 +1,83 @@
 # Storm Summoner Scene Files
 
-This directory contains scene configuration files that are packaged into the device's LittleFS partition.
+This directory holds the developer-side scene tooling and the **factory
+preset library** that ships in the firmware's read-only assets image.
 
-## Quick Start
-
-### Validate Scenes
-```bash
-cd scenes
-ruby tools/validate_scene.rb scene_001.json
-ruby tools/validate_scene.rb *.json  # Validate all
-```
-
-### Build Manifest
-```bash
-ruby tools/build_scene_manifest.rb .
-```
-
-This generates `manifest.json` with an ordered list of all scenes.
-
-### Flash to Device
-```bash
-cd ..
-idf.py assets-flash
-```
-
-## File Structure
+## Layout
 
 ```
 scenes/
-  ├── manifest.json          # Auto-generated scene index
-  ├── scene_001.json         # Default scene
-  ├── scene_002.json         # Example advanced scene
-  ├── tools/
-  │   ├── validate_scene.rb  # Validation script
-  │   └── build_scene_manifest.rb  # Manifest generator
-  └── README.md              # This file
+  factory/                 # Factory presets baked into the assets blob
+    default_scene.json     # (sample preset)
+    tap_randomize.json     # (sample preset)
+    <your_preset>.json
+  tools/
+    validate_scene.rb
+    build_scene_manifest.rb
+  README.md
 ```
 
-## Creating New Scenes
+## Factory presets (`scenes/factory/`)
 
-1. Copy an existing scene file
-2. Rename with next number (`scene_003.json`)
-3. Edit the JSON (see SCENE_FORMAT.md in project root)
-4. Validate: `ruby tools/validate_scene.rb scene_003.json`
-5. Rebuild manifest: `ruby tools/build_scene_manifest.rb .`
-6. Flash: `idf.py assets-flash`
+Every `*.json` file in this folder is built into the read-only `assets`
+LittleFS image at `/assets/scenes/factory/<filename>.json`. On a device's
+first boot (i.e. no `/userdata/scenes/manifest.json` present yet), the
+firmware copies each one into `/userdata/scenes/` and adds a manifest
+entry with `active: false`. The user can then enable/duplicate/edit them
+from the on-device Scenes menu or the web app's file browser.
 
-## Scene Numbering
+The truly-default scene (Scene 1) is still synthesized in-memory by
+`scene_init_defaults()` — factory presets are *examples*, not the default.
 
-- Files must be named `scene_XXX.json` (001-128)
-- The number in the filename determines the scene index (001 = index 0)
-- Gaps in numbering are allowed but discouraged
-- The manifest defines the display order
+### Merging new presets into shipped units
 
-## Action Types Quick Reference
+Factory presets are reconciled again whenever the assets blob changes.
+On each boot the firmware compares the active assets checksum (NVS
+`assets_csum`, set when an assets OTA — classic or system-update RAW —
+commits) against the last-merged checksum (NVS `fac_seed_csum`). When
+they differ, it runs the same seeding pass and appends any new factory
+filenames as inactive entries. Existing entries are left strictly alone:
 
-| Type | Action | Example |
-|------|--------|---------|
-| 0 | Program Next | `{"type": 0}` |
-| 1 | Program Prev | `{"type": 1}` |
-| 4 | Send CC | `{"type": 4, "cc": 74, "value": 127}` |
-| 5 | CC Toggle | `{"type": 5, "cc": 1, "value": 0, "value2": 127}` |
-| 6 | CC Cycle | `{"type": 6, "cc": 1, "num_values": 3, "values": [0, 64, 127], "current_index": 0}` |
-| 7 | Note On | `{"type": 7, "note": 60, "velocity": 100}` |
-| 10 | Randomize CC | `{"type": 10, "cc": 74}` |
-| 11 | Randomize Multi | `{"type": 11, "num_ccs": 3, "cc_numbers": [74,72,76], "min_values": [0,0,0], "max_values": [127,127,127]}` |
-| 12 | Tap Tempo | `{"type": 12}` |
+- A preset already present in `/userdata/scenes/` (whether the user
+  activated, edited, or just left it inactive) is **never overwritten**.
+- A preset the user has **deleted** is tombstoned in
+  `/userdata/scenes/.factory_tombstones.json` and will not be resurrected
+  by any future merge, no matter how many times the same filename is
+  shipped. To get a tombstoned preset back, restore it manually via the
+  web app's file browser.
+- A newly-added preset filename is merged in as `active: false` so it
+  cannot disrupt navigation; the user decides whether to enable it.
 
-See `../../SCENE_FORMAT.md` for complete documentation.
+Identity is by **filename**: `scenes/factory/tap_randomize.json` ↔
+`/userdata/scenes/tap_randomize.json`. User-created and duplicated
+scenes use slug filenames (`scene_<NNN>.json` or `<slug>.json`), so they
+can never collide with future factory drops.
 
-## Tips
+### Adding a factory preset
 
-- Use the REPL console (`cd assign`) to prototype scenes on the device
-- Export working configurations by reading from RAM
-- Version control your scenes - they're your performance setlists!
-- Keep action chains short (1-2 actions is typical)
-- Comments in JSON are ignored by the parser (but helpful for you!)
+1. Drop a JSON file in `scenes/factory/`. The top-level `name` field is
+   what the on-device manifest will display.
+2. Validate (optional): `ruby tools/validate_scene.rb factory/my_preset.json`
+3. Rebuild the firmware. The new factory preset will be in the next
+   `assets` blob: a fresh device sees it on first boot, and existing
+   devices pick it up on the first boot after they accept the new
+   assets blob.
 
-## Requirements
+## User scenes (`/userdata/scenes/` on-device)
 
-- Ruby 2.7+ (standard library only, no gems required)
+Once on the device, scenes are user data — they live on the writable
+`userdata` LittleFS partition and survive firmware/asset updates. Use the
+web app's file browser or `tools/assets_manager.rb` to upload/download
+arbitrary scene files outside the factory mechanism.
 
+## Tools
+
+- `tools/validate_scene.rb <file>` — schema/value sanity check
+- `tools/build_scene_manifest.rb <dir>` — generate a manifest.json
+  alongside loose scene files (mostly for offline batch testing; the
+  on-device manifest is regenerated automatically by the firmware)
+
+## Format
+
+See `../docs/SCENE_FORMAT.md` (or `SCENE_FORMAT.md` at project root) for
+the full schema.

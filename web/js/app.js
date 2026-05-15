@@ -9,6 +9,14 @@ window.ConnectionManager = (function () {
       this.port = null
       this.mode = null // ASSETS, CONSOLE, DISPLAY, UPDATE, RPC
       this.listeners = new Map()
+      // Persistent receive buffer. Without this, readLine/sendCommand would
+      // each open a fresh reader, read a chunk that may contain MULTIPLE
+      // lines, return the first line, and silently drop everything after the
+      // first '\n'. That was corrupting any caller that tried to consume a
+      // burst of lines back-to-back (firmware OTA PROGRESS, COMMIT/SUCCESS
+      // splits, etc.).
+      this._rxBuffer = ''
+      this._rxDecoder = new TextDecoder()
     }
 
     // Event handling
@@ -69,6 +77,7 @@ window.ConnectionManager = (function () {
         console.log('USB device disconnected')
         this.port = null
         this.mode = null
+        this._rxBuffer = ''
         this.setTabsLocked(false)
         navigator.serial.removeEventListener(
           'disconnect',
@@ -94,6 +103,7 @@ window.ConnectionManager = (function () {
       } finally {
         this.port = null
         this.mode = null
+        this._rxBuffer = ''
         this.setTabsLocked(false)
         this.emit('connection:changed', { connected: false })
       }
@@ -155,55 +165,46 @@ window.ConnectionManager = (function () {
 
     async sendCommand (cmd, timeout = 30000) {
       if (!this.port) throw new Error('Not connected')
-
-      const reader = this.port.readable.getReader()
-      const decoder = new TextDecoder()
-
-      try {
-        await this.sendRaw(cmd + '\n')
-
-        let buffer = ''
-        const startTime = Date.now()
-
-        while (Date.now() - startTime < timeout) {
-          const { value, done } = await reader.read()
-          if (done) break
-
-          if (value?.length > 0) {
-            buffer += decoder.decode(value, { stream: true })
-            const idx = buffer.indexOf('\n')
-            if (idx !== -1) {
-              return buffer.substring(0, idx).replace(/\r/g, '').trim()
-            }
-          }
-        }
-        return buffer.replace(/\r/g, '').trim()
-      } finally {
-        reader.releaseLock()
-      }
+      await this.sendRaw(cmd + '\n')
+      return this.readLine(timeout)
     }
 
+    // Pull the next CR/LF-terminated line from the device. Anything that
+    // arrived after the line terminator stays in this._rxBuffer for the
+    // next call -- this is how we avoid losing back-to-back lines that
+    // happen to share a single USB chunk.
     async readLine (timeout = 10000) {
       if (!this.port?.readable) return null
 
+      // Drain anything already buffered first.
+      let idx = this._rxBuffer.indexOf('\n')
+      if (idx !== -1) {
+        const line = this._rxBuffer.substring(0, idx).replace(/\r/g, '').trim()
+        this._rxBuffer = this._rxBuffer.substring(idx + 1)
+        return line
+      }
+
       const reader = this.port.readable.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
       const startTime = Date.now()
 
       try {
         while (Date.now() - startTime < timeout) {
           const { value, done } = await reader.read()
           if (done) break
-          if (value) {
-            buffer += decoder.decode(value, { stream: true })
-            const idx = buffer.indexOf('\n')
+          if (value?.length > 0) {
+            this._rxBuffer += this._rxDecoder.decode(value, { stream: true })
+            idx = this._rxBuffer.indexOf('\n')
             if (idx !== -1) {
-              return buffer.substring(0, idx).replace(/\r/g, '').trim()
+              const line = this._rxBuffer.substring(0, idx).replace(/\r/g, '').trim()
+              this._rxBuffer = this._rxBuffer.substring(idx + 1)
+              return line
             }
           }
         }
-        return buffer.replace(/\r/g, '').trim()
+        // Timeout. Don't return a partial line -- that would be
+        // indistinguishable from a real line and confuse callers. Leave the
+        // partial bytes in the buffer for the next call to complete.
+        return ''
       } finally {
         reader.releaseLock()
       }
@@ -243,6 +244,11 @@ window.ConnectionManager = (function () {
     }
 
     async drainInput () {
+      // Clear any line-fragments buffered by readLine, then swallow any
+      // bytes that the device still has in flight. Both have to happen --
+      // otherwise a stale partial line would be returned by the next
+      // readLine call as if it were fresh data.
+      this._rxBuffer = ''
       if (!this.port?.readable) return
       const reader = this.port.readable.getReader()
       try {

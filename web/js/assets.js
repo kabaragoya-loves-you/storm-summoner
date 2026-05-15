@@ -13,21 +13,36 @@ application.register(
       'uploadZone',
       'fileInput',
       'statsBar',
-      'usageBar',
-      'usageText',
+      'assetsUsageBar',
+      'assetsUsageText',
+      'userdataUsageBar',
+      'userdataUsageText',
+      'userdataStats',
+      'userdataMissing',
       'fileCount',
       'logContent',
       'newFolderModal',
       'newFolderInput',
       'renameModal',
-      'renameInput'
+      'renameInput',
+      'readonlyBanner'
     ]
 
+    // Roots known to the device. Mutating commands are only allowed under
+    // USERDATA_ROOT; ASSETS_ROOT is replaced wholesale by the Assets OTA flow.
+    // Keep these in sync with components/assets_manager/include/assets_manager.h
+    // (ASSETS_BASE_PATH / USERDATA_BASE_PATH).
+    static USERDATA_ROOT = '/userdata'
+    static ASSETS_ROOT = '/assets'
+
     connect () {
-      this.currentPath = '/'
+      // Default to the writable root so users land in a usable view rather
+      // than staring at the two-root index they have to click into.
+      this.currentPath = this.constructor.USERDATA_ROOT
       this.files = []
       this.inAssetsMode = false
       this.renameTarget = null
+      this.userdataAvailable = true
 
       // Listen for connection changes
       this.connection.on(
@@ -54,12 +69,44 @@ application.register(
 
     onConnectionChanged ({ connected }) {
       this.refreshBtnTarget.disabled = !connected
-      this.newFolderBtnTarget.disabled = !connected
-      this.uploadZipBtnTarget.disabled = !connected
       this.statsBarTarget.style.display = connected ? 'flex' : 'none'
-
+      // Mutation buttons are also gated by isCurrentPathWritable() once we
+      // know which root we're in; on disconnect we just hard-disable.
       if (!connected) {
+        this.newFolderBtnTarget.disabled = true
+        this.uploadZipBtnTarget.disabled = true
         this.inAssetsMode = false
+      } else {
+        this.applyWritableState()
+      }
+    }
+
+    isWritablePath (path) {
+      if (!path) return false
+      const root = this.constructor.USERDATA_ROOT
+      return path === root || path.startsWith(root + '/')
+    }
+
+    isCurrentPathWritable () {
+      // The two-root index ('/') is itself read-only — you can only descend.
+      if (this.currentPath === '/' || this.currentPath === '') return false
+      return this.isWritablePath(this.currentPath)
+    }
+
+    // Mirrors button-disable + read-only banner state to the current path.
+    // Called whenever currentPath or connection state changes.
+    applyWritableState () {
+      const writable = this.isCurrentPathWritable() && this.connection.isConnected
+      this.newFolderBtnTarget.disabled = !writable
+      this.uploadZipBtnTarget.disabled = !writable
+      if (this.hasUploadZoneTarget) {
+        this.uploadZoneTarget.classList.toggle('disabled', !writable)
+      }
+      if (this.hasReadonlyBannerTarget) {
+        const showBanner = this.connection.isConnected
+          && this.currentPath !== '/'
+          && !writable
+        this.readonlyBannerTarget.style.display = showBanner ? 'flex' : 'none'
       }
     }
 
@@ -98,7 +145,9 @@ application.register(
           if (line.includes('ASSETS_STARTED')) {
             this.inAssetsMode = true
             this.log('Assets mode ready', 'success')
-            await this.navigateTo({ currentTarget: { dataset: { path: '/' } } })
+            await this.navigateTo({
+              currentTarget: { dataset: { path: this.constructor.USERDATA_ROOT } }
+            })
             await this.loadStats()
             return
           }
@@ -143,6 +192,11 @@ application.register(
       return this.connection.sendCommand(cmd, timeout)
     }
 
+    // Phase 4 device response shape:
+    //   {"assets":{"total":N,"used":N,"free":N},
+    //    "userdata":{"total":N,"used":N,"free":N,"available":bool}}
+    // userdata.available is false during the v(N+2) degraded boot path; we
+    // hide the userdata bar and surface a small "missing" warning instead.
     async loadStats () {
       try {
         await this.sleep(100)
@@ -151,12 +205,27 @@ application.register(
         if (!response || response.startsWith('ERROR')) return
 
         const stats = JSON.parse(response)
-        const percent = ((stats.used / stats.total) * 100).toFixed(1)
+        if (!stats || !stats.assets) return
 
-        this.usageBarTarget.style.width = `${percent}%`
-        this.usageTextTarget.textContent = `${this.formatSize(
-          stats.used
-        )} / ${this.formatSize(stats.total)}`
+        const a = stats.assets
+        const aPct = a.total > 0 ? ((a.used / a.total) * 100).toFixed(1) : '0.0'
+        this.assetsUsageBarTarget.style.width = `${aPct}%`
+        this.assetsUsageTextTarget.textContent =
+          `${this.formatSize(a.used)} / ${this.formatSize(a.total)}`
+
+        const u = stats.userdata || { available: false, total: 0, used: 0 }
+        this.userdataAvailable = !!u.available
+        if (this.hasUserdataStatsTarget && this.hasUserdataMissingTarget) {
+          this.userdataStatsTarget.style.display = u.available ? 'flex' : 'none'
+          this.userdataMissingTarget.style.display = u.available ? 'none' : 'inline'
+        }
+        if (u.available) {
+          const uPct = u.total > 0 ? ((u.used / u.total) * 100).toFixed(1) : '0.0'
+          this.userdataUsageBarTarget.style.width = `${uPct}%`
+          this.userdataUsageTextTarget.textContent =
+            `${this.formatSize(u.used)} / ${this.formatSize(u.total)}`
+        }
+        this.applyWritableState()
       } catch (err) {
         // DF parse error - ignore silently
       }
@@ -167,21 +236,29 @@ application.register(
       const path = event.currentTarget?.dataset?.path || '/'
       this.currentPath = path
       this.updateBreadcrumb()
+      this.applyWritableState()
       await this.loadDirectory()
     }
 
+    // Breadcrumb root is a literal "/" link that takes the user to the
+    // two-root index; from there they descend into either /assets or
+    // /userdata. Each prefix segment of currentPath becomes a clickable crumb.
     updateBreadcrumb () {
+      let html = `<button data-action="click->assets#navigateTo" data-path="/">/</button>`
       const parts = this.currentPath.split('/').filter(p => p)
-      let html = `<button data-action="click->assets#navigateTo" data-path="/">/assets</button>`
-
       let accumulated = ''
       for (const part of parts) {
         accumulated += '/' + part
-        html += `<span>/</span><button data-action="click->assets#navigateTo" data-path="${accumulated}">${part}</button>`
+        html += `<span>/</span>`
+          + `<button data-action="click->assets#navigateTo"`
+          + ` data-path="${accumulated}">${part}</button>`
       }
       this.breadcrumbTarget.innerHTML = html
     }
 
+    // LS dispatches to the device, which has special-case behavior for "/"
+    // (returns the two synthetic mount entries `assets` and `userdata`). The
+    // entries gain a `readonly` flag and the userdata entry gets `available`.
     async loadDirectory () {
       try {
         const response = await this.sendCommand(`LS ${this.currentPath}`)
@@ -196,7 +273,8 @@ application.register(
 
         const fileCount = this.files.filter(f => f.type === 'file').length
         const dirCount = this.files.filter(f => f.type === 'dir').length
-        this.fileCountTarget.textContent = `${fileCount} files, ${dirCount} folders`
+        this.fileCountTarget.textContent =
+          `${fileCount} files, ${dirCount} folders`
       } catch (err) {
         this.log(`Failed to list directory: ${err.message}`, 'error')
       }
@@ -232,6 +310,8 @@ application.register(
           return a.name.localeCompare(b.name)
         })
 
+      const atRoot = this.currentPath === '/' || this.currentPath === ''
+
       const items = sorted
         .map(file => {
           const isDir = file.type === 'dir'
@@ -239,35 +319,56 @@ application.register(
           const iconClass = isDir ? 'folder' : 'file'
           const size = isDir ? '--' : this.formatSize(file.size)
           const fullPath =
-            this.currentPath === '/'
-              ? `/${file.name}`
+            atRoot ? `/${file.name}`
               : `${this.currentPath}/${file.name}`
+          // Per-row writability: at the synthetic root we trust the device's
+          // `readonly` hint (assets=true, userdata=false). Anywhere else,
+          // writability is a function of the path itself.
+          const rowWritable = atRoot
+            ? !file.readonly && file.available !== false
+            : this.isWritablePath(fullPath)
+          const unavailable = atRoot && file.name === 'userdata'
+            && file.available === false
+          const nameSuffix = unavailable
+            ? ` <span class="badge warn">missing — re-run System Update</span>`
+            : (atRoot && file.readonly)
+              ? ` <span class="badge">read-only</span>`
+              : ''
+
+          const renameBtn = rowWritable && !atRoot
+            ? `<button data-action="click->assets#showRename"`
+              + ` data-path="${fullPath}"`
+              + ` data-name="${file.name}">Rename</button>`
+            : ''
+          const deleteBtn = rowWritable && !atRoot
+            ? `<button class="delete"`
+              + ` data-action="click->assets#deleteFile"`
+              + ` data-path="${fullPath}">Delete</button>`
+            : ''
+          const archiveBtn = isDir && !unavailable
+            ? `<button data-action="click->assets#archiveFolder"`
+              + ` data-path="${fullPath}"`
+              + ` data-name="${file.name}">Archive</button>`
+            : ''
+          const downloadBtn = !isDir
+            ? `<button data-action="click->assets#downloadFile"`
+              + ` data-path="${fullPath}">Download</button>`
+            : ''
+          const clickAction = isDir && !unavailable
+            ? `data-action="click->assets#openFolder"` : ''
 
           return `
-        <div class="file-item" data-path="${fullPath}" data-type="${
-            file.type
-          }" data-name="${file.name}"
-             ${isDir ? `data-action="click->assets#openFolder"` : ''}>
+        <div class="file-item" data-path="${fullPath}" data-type="${file.type}" data-name="${file.name}" ${clickAction}>
           <div class="file-name">
             <wa-icon name="${icon}" class="file-icon ${iconClass}"></wa-icon>
-            <span>${file.name}</span>
+            <span>${file.name}</span>${nameSuffix}
           </div>
           <div class="file-size">${size}</div>
           <div class="file-actions">
-            ${
-              isDir
-                ? `<button data-action="click->assets#archiveFolder" data-path="${fullPath}" data-name="${file.name}">Archive</button>`
-                : ''
-            }
-            ${
-              !isDir
-                ? `<button data-action="click->assets#downloadFile" data-path="${fullPath}">Download</button>`
-                : ''
-            }
-            <button data-action="click->assets#showRename" data-path="${fullPath}" data-name="${
-            file.name
-          }">Rename</button>
-            <button class="delete" data-action="click->assets#deleteFile" data-path="${fullPath}">Delete</button>
+            ${archiveBtn}
+            ${downloadBtn}
+            ${renameBtn}
+            ${deleteBtn}
           </div>
         </div>
       `
@@ -437,6 +538,11 @@ application.register(
       if (!file) return
       event.target.value = ''
 
+      if (!this.isCurrentPathWritable()) {
+        this.log(`Cannot extract under ${this.currentPath} (read-only)`, 'error')
+        return
+      }
+
       const destPath = this.currentPath
       this.log(
         `Uploading ${file.name} (${this.formatSize(
@@ -488,11 +594,19 @@ application.register(
     drop (event) {
       event.preventDefault()
       this.uploadZoneTarget.classList.remove('dragover')
+      if (!this.isCurrentPathWritable()) {
+        this.log(`Cannot upload under ${this.currentPath} (read-only)`, 'error')
+        return
+      }
       const files = event.dataTransfer.files
       if (files.length) this.doUpload(files)
     }
 
     selectFiles () {
+      if (!this.isCurrentPathWritable()) {
+        this.log(`Cannot upload under ${this.currentPath} (read-only)`, 'error')
+        return
+      }
       this.fileInputTarget.click()
     }
 
@@ -503,6 +617,10 @@ application.register(
     }
 
     async doUpload (files) {
+      if (!this.isCurrentPathWritable()) {
+        this.log(`Cannot upload under ${this.currentPath} (read-only)`, 'error')
+        return
+      }
       this.connection.setTabsLocked(true, 'assets')
       try {
         for (const file of files) {
@@ -549,6 +667,10 @@ application.register(
 
     // Modals
     showNewFolder () {
+      if (!this.isCurrentPathWritable()) {
+        this.log(`Cannot create folders under ${this.currentPath}`, 'error')
+        return
+      }
       this.newFolderInputTarget.value = ''
       this.newFolderModalTarget.classList.add('open')
       this.newFolderInputTarget.focus()

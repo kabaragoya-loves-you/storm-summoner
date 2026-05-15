@@ -23,8 +23,10 @@ static uint32_t calculate_crc32(const uint8_t *data, size_t len) {
 esp_err_t generate_device_cache(const device_def_t *device, const char *cache_path) {
   ESP_LOGI(TAG, "Generating cache: %s", cache_path);
   
-  // Ensure cache directory exists
-  // Extract directory from cache_path (e.g., "/assets/cache" from "/assets/cache/foo.bin")
+  // Ensure cache directory exists.
+  // Extract directory from cache_path (e.g. "/userdata/cache" from
+  // "/userdata/cache/foo.bin"). The cache directory is also created up-front
+  // by assets_manager_init's userdata seeding step; this is just a safety net.
   char dir_path[128];
   strncpy(dir_path, cache_path, sizeof(dir_path) - 1);
   dir_path[sizeof(dir_path) - 1] = '\0';

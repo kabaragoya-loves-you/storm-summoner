@@ -19,16 +19,43 @@
 #include "lfo.h"
 #include "rtg.h"
 #include "tilt.h"
+#include "version.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 static const char* TAG = "scene";
 
-// Scene storage paths
-#define SCENES_BASE_PATH "/assets/scenes"
-#define MANIFEST_PATH "/assets/scenes/manifest.json"
+// Scene storage paths.
+// Scenes are user data and live on the RW `userdata` LittleFS partition so
+// they survive ASSETS-OTA replacement of the shared content. If userdata
+// is unavailable (degraded boot), fopen-on-write will silently fail and
+// scene_load_manifest's existing fallback synthesizes a single in-memory
+// "Scene 1" so the device remains usable.
+#define SCENES_BASE_PATH USERDATA_BASE_PATH "/scenes"
+#define MANIFEST_PATH    USERDATA_BASE_PATH "/scenes/manifest.json"
+
+// Factory presets baked into the read-only assets image. On first boot the
+// firmware copies each into /userdata/scenes/ as an inactive manifest entry.
+// On subsequent boots, if the active assets checksum (NVS "assets_csum")
+// differs from the last-seeded checksum (NVS NVS_KEY_FACTORY_SEED_CSUM),
+// the same seeding pass runs again and any new factory filenames not in
+// the user's manifest (and not in the tombstone list) are appended.
+// See scenes/factory/ in the source tree and main/CMakeLists.txt for the
+// build-side mirror into /assets/scenes/factory/.
+#define FACTORY_SCENES_DIR "/assets/scenes/factory"
+// Sanity cap so a malformed/oversized factory file can't OOM the boot path.
+#define FACTORY_SCENE_MAX_BYTES 32768
+
+// Persistent record of factory presets the user has deleted. We never
+// resurrect a tombstoned filename even if a future assets blob still ships
+// the same preset. Lives on /userdata so a userdata wipe correctly forgets
+// the tombstones (and re-seeds everything).
+#define FACTORY_TOMBSTONES_PATH USERDATA_BASE_PATH "/scenes/.factory_tombstones.json"
 
 // Forward declarations
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size);
@@ -41,6 +68,10 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene);
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
 #define NVS_KEY_CHANGE_MODE      "change_mode"
+// 8-hex assets checksum we last reconciled factory presets against. Kept
+// separate from `assets_csum` (which version.c manages) so the merge
+// semantics can change later without touching the user-facing version.
+#define NVS_KEY_FACTORY_SEED_CSUM "fac_seed_csum"
 
 // Global scene manager instance
 static scene_manager_t g_scene_manager = {
@@ -1238,6 +1269,279 @@ static void lfo_rate_source_event_handler(const event_t* event, void* context) {
   }
 }
 
+// Walk g_scene_manager.manifest and return the smallest scene index in
+// [0, MAX_SCENE_INDEX] that is not currently used. Returns -1 if every
+// index is taken (manifest full).
+static int next_free_scene_index(void) {
+  for (int candidate = 0; candidate <= MAX_SCENE_INDEX; candidate++) {
+    bool taken = false;
+    for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+      if (g_scene_manager.manifest[i].index == candidate) {
+        taken = true;
+        break;
+      }
+    }
+    if (!taken) return candidate;
+  }
+  return -1;
+}
+
+// Load the factory-preset tombstone file (JSON array of filenames) into a
+// freshly-allocated cJSON tree. Returns NULL if the file doesn't exist or
+// can't be parsed. On parse error the tombstone file is left alone — the
+// caller fails closed (treats every filename as tombstoned) to avoid
+// resurrecting presets the user deleted.
+static cJSON *factory_tombstones_load(void) {
+  FILE *f = fopen(FACTORY_TOMBSTONES_PATH, "r");
+  if (!f) return NULL;
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (fsize <= 0 || fsize > 16384) { fclose(f); return NULL; }
+  char *buf = malloc((size_t)fsize + 1);
+  if (!buf) { fclose(f); return NULL; }
+  size_t nread = fread(buf, 1, (size_t)fsize, f);
+  fclose(f);
+  if (nread != (size_t)fsize) { free(buf); return NULL; }
+  buf[fsize] = '\0';
+  cJSON *root = cJSON_Parse(buf);
+  free(buf);
+  if (!root) return NULL;
+  if (!cJSON_IsArray(root)) { cJSON_Delete(root); return NULL; }
+  return root;
+}
+
+// True if `fname` appears in the tombstone list. Fails closed on parse error
+// (i.e. returns true when the file exists but can't be parsed) so we never
+// re-seed a preset the user has explicitly deleted.
+static bool factory_tombstones_contains(const char *fname) {
+  struct stat st;
+  if (stat(FACTORY_TOMBSTONES_PATH, &st) != 0) return false;
+  cJSON *arr = factory_tombstones_load();
+  if (!arr) {
+    ESP_LOGW(TAG, "Tombstone file unreadable - failing closed");
+    return true;
+  }
+  bool found = false;
+  cJSON *item = NULL;
+  cJSON_ArrayForEach(item, arr) {
+    if (cJSON_IsString(item) && item->valuestring &&
+        strcmp(item->valuestring, fname) == 0) {
+      found = true;
+      break;
+    }
+  }
+  cJSON_Delete(arr);
+  return found;
+}
+
+// Append a filename to the tombstone list (idempotent). Creates the file
+// if it doesn't exist yet. Non-fatal: returns the error but never aborts
+// the caller's flow.
+static esp_err_t factory_tombstones_add(const char *fname) {
+  cJSON *arr = factory_tombstones_load();
+  bool created = false;
+  if (!arr) {
+    arr = cJSON_CreateArray();
+    if (!arr) return ESP_ERR_NO_MEM;
+    created = true;
+  }
+  cJSON *item = NULL;
+  cJSON_ArrayForEach(item, arr) {
+    if (cJSON_IsString(item) && item->valuestring &&
+        strcmp(item->valuestring, fname) == 0) {
+      cJSON_Delete(arr);
+      return ESP_OK;
+    }
+  }
+  cJSON_AddItemToArray(arr, cJSON_CreateString(fname));
+  char *json_str = cJSON_PrintUnformatted(arr);
+  cJSON_Delete(arr);
+  if (!json_str) return ESP_ERR_NO_MEM;
+  FILE *f = fopen(FACTORY_TOMBSTONES_PATH, "w");
+  if (!f) { free(json_str); return ESP_ERR_NOT_FOUND; }
+  size_t len = strlen(json_str);
+  size_t nwrote = fwrite(json_str, 1, len, f);
+  fclose(f);
+  free(json_str);
+  if (nwrote != len) return ESP_FAIL;
+  ESP_LOGI(TAG, "Tombstoned factory preset '%s'%s",
+    fname, created ? " (created list)" : "");
+  return ESP_OK;
+}
+
+// True if `fname` corresponds to a file under /assets/scenes/factory/.
+// Used by scene_delete() to decide whether to tombstone. The buffer is sized
+// well past NAME_MAX (255) + prefix so format-truncation analysis is happy.
+static bool factory_source_exists(const char *fname) {
+  if (!fname || fname[0] == '\0') return false;
+  char src_path[320];
+  snprintf(src_path, sizeof(src_path), "%s/%s", FACTORY_SCENES_DIR, fname);
+  struct stat st;
+  return stat(src_path, &st) == 0;
+}
+
+// Seed factory presets from /assets/scenes/factory/ into /userdata/scenes/
+// as inactive manifest entries. Called both on first boot (when no manifest
+// existed on /userdata yet) and on subsequent boots when the active assets
+// checksum has changed since the last seed. Intentionally non-fatal: if the
+// factory dir is missing, malformed, or any individual file fails, we log
+// and move on so a busted preset can't block the device from booting.
+//
+// Skip rules: an entry is not seeded if (a) a file with the same basename
+// already exists under /userdata/scenes/ (so the user's edits, activation,
+// or prior seed are preserved), (b) the filename is in the tombstone list
+// (so user-deleted presets stay deleted), or (c) the display name collides
+// with an existing scene name.
+//
+// Returns the number of presets actually added to the manifest.
+static int seed_factory_presets(void) {
+  DIR *dir = opendir(FACTORY_SCENES_DIR);
+  if (!dir) {
+    ESP_LOGI(TAG, "No factory presets at %s (skipping seed)", FACTORY_SCENES_DIR);
+    return 0;
+  }
+
+  int seeded = 0;
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    const char *fname = entry->d_name;
+    size_t flen = strlen(fname);
+    if (flen < 6) continue;
+    if (strcmp(fname + flen - 5, ".json") != 0) continue;
+    if (fname[0] == '.') continue;
+    // Must fit in scene_manifest_entry_t.filename[64] including the NUL.
+    if (flen >= sizeof(((scene_manifest_entry_t*)0)->filename)) {
+      ESP_LOGW(TAG, "Factory '%s' filename too long (%u), skipping",
+        fname, (unsigned)flen);
+      continue;
+    }
+
+    // 320 is comfortably more than NAME_MAX (255) plus the longest prefix
+    // we use, so gcc's format-truncation analysis is satisfied even when
+    // it can't see the flen guard above.
+    char src_path[320];
+    char dst_path[320];
+    snprintf(src_path, sizeof(src_path), "%s/%s", FACTORY_SCENES_DIR, fname);
+    snprintf(dst_path, sizeof(dst_path), "%s/%s", SCENES_BASE_PATH, fname);
+
+    // User explicitly deleted this preset on a previous boot; never resurrect.
+    if (factory_tombstones_contains(fname)) {
+      ESP_LOGI(TAG, "Factory '%s' is tombstoned, skipping", fname);
+      continue;
+    }
+
+    // Don't clobber existing user content. On merge boots this is the
+    // normal "already seeded earlier" path; the file might also be one
+    // the user has edited or activated, both of which we want to leave alone.
+    struct stat st;
+    if (stat(dst_path, &st) == 0) {
+      ESP_LOGD(TAG, "Factory '%s' already present in /userdata, skipping", fname);
+      continue;
+    }
+
+    FILE *src = fopen(src_path, "r");
+    if (!src) {
+      ESP_LOGW(TAG, "Factory '%s' open failed", fname);
+      continue;
+    }
+    fseek(src, 0, SEEK_END);
+    long fsize = ftell(src);
+    fseek(src, 0, SEEK_SET);
+    if (fsize <= 0 || fsize > FACTORY_SCENE_MAX_BYTES) {
+      ESP_LOGW(TAG, "Factory '%s' size %ld out of range, skipping", fname, fsize);
+      fclose(src);
+      continue;
+    }
+    char *buf = malloc((size_t)fsize + 1);
+    if (!buf) {
+      ESP_LOGW(TAG, "Factory '%s' alloc failed", fname);
+      fclose(src);
+      continue;
+    }
+    size_t nread = fread(buf, 1, (size_t)fsize, src);
+    fclose(src);
+    if (nread != (size_t)fsize) {
+      ESP_LOGW(TAG, "Factory '%s' short read %u/%ld", fname, (unsigned)nread, fsize);
+      free(buf);
+      continue;
+    }
+    buf[fsize] = '\0';
+
+    // Pull the display name out of the JSON for the manifest entry.
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+      ESP_LOGW(TAG, "Factory '%s' invalid JSON, skipping", fname);
+      free(buf);
+      continue;
+    }
+    cJSON *name_node = cJSON_GetObjectItem(root, "name");
+    if (!name_node || !cJSON_IsString(name_node) || !name_node->valuestring) {
+      ESP_LOGW(TAG, "Factory '%s' missing top-level 'name', skipping", fname);
+      cJSON_Delete(root);
+      free(buf);
+      continue;
+    }
+    char name_copy[sizeof(((scene_manifest_entry_t*)0)->name)];
+    strncpy(name_copy, name_node->valuestring, sizeof(name_copy) - 1);
+    name_copy[sizeof(name_copy) - 1] = '\0';
+    cJSON_Delete(root);
+
+    if (scene_name_exists(name_copy, -1)) {
+      ESP_LOGW(TAG, "Factory '%s' name '%s' collides with existing scene, skipping",
+        fname, name_copy);
+      free(buf);
+      continue;
+    }
+
+    int new_index = next_free_scene_index();
+    if (new_index < 0) {
+      ESP_LOGW(TAG, "Manifest full, cannot seed remaining factory presets");
+      free(buf);
+      break;
+    }
+
+    // Copy the JSON byte-for-byte so we keep the original formatting and
+    // any author-only fields the runtime doesn't currently parse.
+    FILE *dst = fopen(dst_path, "w");
+    if (!dst) {
+      ESP_LOGW(TAG, "Factory '%s' dst open failed", fname);
+      free(buf);
+      continue;
+    }
+    size_t nwrote = fwrite(buf, 1, (size_t)fsize, dst);
+    fclose(dst);
+    free(buf);
+    if (nwrote != (size_t)fsize) {
+      ESP_LOGW(TAG, "Factory '%s' short write %u/%ld", fname, (unsigned)nwrote, fsize);
+      remove(dst_path);
+      continue;
+    }
+
+    scene_manifest_entry_t *grown = realloc_prefer_psram(g_scene_manager.manifest,
+      (g_scene_manager.num_scenes + 1) * sizeof(scene_manifest_entry_t));
+    if (!grown) {
+      ESP_LOGW(TAG, "Manifest realloc failed seeding '%s'", fname);
+      remove(dst_path);
+      break;
+    }
+    g_scene_manager.manifest = grown;
+    scene_manifest_entry_t *slot = &g_scene_manager.manifest[g_scene_manager.num_scenes];
+    slot->index = (uint8_t)new_index;
+    strncpy(slot->name, name_copy, sizeof(slot->name) - 1);
+    slot->name[sizeof(slot->name) - 1] = '\0';
+    strncpy(slot->filename, fname, sizeof(slot->filename) - 1);
+    slot->filename[sizeof(slot->filename) - 1] = '\0';
+    slot->active = false;
+    g_scene_manager.num_scenes++;
+    seeded++;
+    ESP_LOGI(TAG, "Seeded factory preset '%s' (index %d, inactive)",
+      name_copy, new_index);
+  }
+  closedir(dir);
+  return seeded;
+}
+
 esp_err_t scene_init(void) {
   if (g_scene_manager.initialized) {
     ESP_LOGW(TAG, "Scene manager already initialized");
@@ -1276,11 +1580,13 @@ esp_err_t scene_init(void) {
     g_scene_manager.cache[i].index = 0;
   }
   
-  // Load or create scene manifest
+  // Load or create scene manifest. Track whether we had to synthesize a
+  // default so we can persist it to /userdata after scene_0 defaults are
+  // populated below (first-boot seeding).
+  bool manifest_was_synthesized = false;
   esp_err_t ret = scene_load_manifest();
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to load manifest, creating default");
-    // Create default manifest with one scene (use PSRAM for persistent data)
     g_scene_manager.manifest = malloc_prefer_psram(sizeof(scene_manifest_entry_t));
     if (!g_scene_manager.manifest) {
       ESP_LOGE(TAG, "Failed to allocate manifest");
@@ -1291,6 +1597,7 @@ esp_err_t scene_init(void) {
     strncpy(g_scene_manager.manifest[0].name, "Scene 1", sizeof(g_scene_manager.manifest[0].name));
     strncpy(g_scene_manager.manifest[0].filename, "scene_1.json", sizeof(g_scene_manager.manifest[0].filename));
     g_scene_manager.manifest[0].active = true;
+    manifest_was_synthesized = true;
   }
   
   // Load first scene into cache slot 0
@@ -1298,9 +1605,10 @@ esp_err_t scene_init(void) {
   g_scene_manager.current_scene_index = 0;
   
   // Load scene 0 directly into cache[0] (NOT using scene_load_from_flash which uses wrong slot)
+  bool scene0_was_synthesized = false;
   char filepath[128];
   get_scene_filename(0, filepath, sizeof(filepath));
-  
+
   FILE* f = fopen(filepath, "r");
   if (f) {
     fseek(f, 0, SEEK_END);
@@ -1341,10 +1649,77 @@ esp_err_t scene_init(void) {
   } else {
     ESP_LOGW(TAG, "Scene 0 file not found, using defaults");
     scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+    scene0_was_synthesized = true;
   }
-  
+
   g_scene_manager.cache[0].index = 0;
   g_scene_manager.cache[0].valid = true;
+
+  // First-boot seeding: persist the synthesized manifest and/or default
+  // scene 0 to /userdata so the device has real files to read on next boot
+  // (and so the user can see them in the web app's file browser). We only
+  // write what was actually synthesized; if the file existed but failed to
+  // parse, we leave it alone rather than clobbering possibly-recoverable
+  // user data with defaults.
+  if (assets_userdata_available()) {
+    if (scene0_was_synthesized) {
+      esp_err_t save_ret = scene_save_to_flash(0);
+      if (save_ret == ESP_OK) ESP_LOGI(TAG, "Seeded default scene 0 to /userdata");
+      else ESP_LOGW(TAG, "Failed to seed scene 0: %s", esp_err_to_name(save_ret));
+    }
+    const char *cur_csum = version_get_assets_checksum();
+    bool csum_known = cur_csum && cur_csum[0] != '\0' &&
+                      strcmp(cur_csum, "unknown") != 0;
+
+    if (manifest_was_synthesized) {
+      // First-boot seed: every factory preset is fair game (no tombstones
+      // can exist yet because the userdata partition is fresh). Each is
+      // added to g_scene_manager.manifest as an inactive entry so they
+      // don't disrupt navigation but are visible in the Scenes menu / web
+      // file browser for the user to activate later.
+      int n_factory = seed_factory_presets();
+      if (n_factory > 0) {
+        ESP_LOGI(TAG, "Seeded %d factory preset(s) to /userdata", n_factory);
+      }
+      // Save manifest AFTER factory seeding so the on-disk file reflects
+      // the synthesized "Scene 1" + every factory entry in one shot.
+      esp_err_t save_ret = scene_save_manifest();
+      if (save_ret == ESP_OK) ESP_LOGI(TAG, "Seeded default manifest to /userdata");
+      else ESP_LOGW(TAG, "Failed to seed manifest: %s", esp_err_to_name(save_ret));
+      if (csum_known) {
+        app_settings_save_str(NVS_KEY_FACTORY_SEED_CSUM, cur_csum);
+      }
+    } else if (csum_known) {
+      // Merge path: manifest already existed, but the assets blob may have
+      // shipped new factory presets since we last reconciled. Compare the
+      // current assets checksum against the last-seeded checksum from NVS;
+      // if they differ, run the same seeding pass. Skip silently when the
+      // checksum is unknown (device never had an assets OTA persist one
+      // yet) so we don't stamp a meaningless value.
+      char seed_csum[16] = {0};
+      esp_err_t load_ret = app_settings_load_str(NVS_KEY_FACTORY_SEED_CSUM,
+        seed_csum, sizeof(seed_csum));
+      bool need_merge = (load_ret != ESP_OK) ||
+                        strncmp(seed_csum, cur_csum, 8) != 0;
+      if (need_merge) {
+        ESP_LOGI(TAG, "Assets checksum changed (%s -> %s), merging factory presets",
+          (load_ret == ESP_OK) ? seed_csum : "(none)", cur_csum);
+        int n_new = seed_factory_presets();
+        if (n_new > 0) {
+          ESP_LOGI(TAG, "Merged %d new factory preset(s) from updated assets", n_new);
+          esp_err_t save_ret = scene_save_manifest();
+          if (save_ret != ESP_OK)
+            ESP_LOGW(TAG, "Failed to save manifest after merge: %s",
+              esp_err_to_name(save_ret));
+        } else {
+          ESP_LOGI(TAG, "No new factory presets to merge");
+        }
+        app_settings_save_str(NVS_KEY_FACTORY_SEED_CSUM, cur_csum);
+      }
+    }
+  } else if (manifest_was_synthesized || scene0_was_synthesized) {
+    ESP_LOGW(TAG, "userdata unavailable - default scene held in memory only");
+  }
 
   // Subscribe to sensor events for LFO rate sources
   event_bus_subscribe(EVENT_EXPRESSION_VALUE, lfo_rate_source_event_handler, NULL);
@@ -6264,7 +6639,18 @@ esp_err_t scene_delete(uint8_t scene_index) {
     if (g_scene_manager.manifest[i].index == scene_index) { pos = i; break; }
   }
   if (pos == -1) return ESP_ERR_NOT_FOUND;
-  
+
+  // If the scene being deleted originated as a factory preset (same basename
+  // is shipped under /assets/scenes/factory/), record a tombstone so the
+  // merge pass on future assets updates doesn't resurrect it.
+  const char *del_fname = g_scene_manager.manifest[pos].filename;
+  if (del_fname[0] != '\0' && factory_source_exists(del_fname)) {
+    esp_err_t tret = factory_tombstones_add(del_fname);
+    if (tret != ESP_OK)
+      ESP_LOGW(TAG, "Failed to tombstone factory preset '%s': %s",
+        del_fname, esp_err_to_name(tret));
+  }
+
   char filepath[128];
   get_scene_filename(scene_index, filepath, sizeof(filepath));
   remove(filepath);

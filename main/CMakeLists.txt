@@ -10,43 +10,35 @@ idf_component_register(
       espressif__tinyusb
 )
 
-# Collect all JSON files from midi-devices and scenes directories
+# The `assets` partition is now strictly read-only. It holds the shared
+# MIDI device DB, UI images, and the factory-preset scene library.
+# User-authored scenes and cloned/edited pedals live in the separate
+# `userdata` partition and are NEVER baked into the assets image.
 file(GLOB_RECURSE MIDI_DEVICE_FILES "${CMAKE_SOURCE_DIR}/midi-devices/*.json")
-file(GLOB_RECURSE SCENE_FILES "${CMAKE_SOURCE_DIR}/scenes/*.json")
 file(GLOB_RECURSE IMAGE_FILES "${CMAKE_SOURCE_DIR}/images/*.bin" "${CMAKE_SOURCE_DIR}/images/*.bin.z" "${CMAKE_SOURCE_DIR}/images/*.svg")
+file(GLOB FACTORY_SCENE_FILES "${CMAKE_SOURCE_DIR}/scenes/factory/*.json")
 
-# Create a temporary combined assets directory at build time
 set(ASSETS_BUILD_DIR "${CMAKE_BINARY_DIR}/assets_combined")
 file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}")
 file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/devices")
-file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/scenes")
 file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/images")
+file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/scenes")
+file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/scenes/factory")
 
-# Copy midi-devices to assets/devices
+# Copy midi-devices to assets/devices, but explicitly drop the `user/` subtree.
+# User-defined pedals (the seed `default.json` and any clones) live on the RW
+# `userdata` partition; baking them into the RO image would defeat the split.
 add_custom_command(
   OUTPUT "${ASSETS_BUILD_DIR}/devices/.copied"
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_SOURCE_DIR}/midi-devices"
     "${ASSETS_BUILD_DIR}/devices"
   COMMAND ${CMAKE_COMMAND} -E remove_directory "${ASSETS_BUILD_DIR}/devices/tools"
+  COMMAND ${CMAKE_COMMAND} -E remove_directory "${ASSETS_BUILD_DIR}/devices/user"
   COMMAND ${CMAKE_COMMAND} -E remove -f "${ASSETS_BUILD_DIR}/devices/README.md"
   COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/devices/.copied"
   DEPENDS ${MIDI_DEVICE_FILES}
-  COMMENT "Copying MIDI device files to build assets"
-)
-
-# Copy scenes to assets/scenes
-add_custom_command(
-  OUTPUT "${ASSETS_BUILD_DIR}/scenes/.copied"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/scenes"
-    "${ASSETS_BUILD_DIR}/scenes"
-  COMMAND ${CMAKE_COMMAND} -E remove_directory "${ASSETS_BUILD_DIR}/scenes/tools"
-  COMMAND ${CMAKE_COMMAND} -E remove -f "${ASSETS_BUILD_DIR}/scenes/README.md"
-  COMMAND ${CMAKE_COMMAND} -E remove -f "${ASSETS_BUILD_DIR}/scenes/.gitignore"
-  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/scenes/.copied"
-  DEPENDS ${SCENE_FILES}
-  COMMENT "Copying scene files to build assets"
+  COMMENT "Copying shared MIDI device files to build assets (excluding user/)"
 )
 
 # Copy images to assets/images
@@ -60,11 +52,27 @@ add_custom_command(
   COMMENT "Copying image files to build assets"
 )
 
-# Create LittleFS partition image from combined assets directory
+# Copy factory-preset scenes to assets/scenes/factory. These are seeded into
+# /userdata/scenes/ as inactive entries on first boot (see scene.c). Empty
+# folder is fine; the firmware no-ops if there's nothing to seed.
+add_custom_command(
+  OUTPUT "${ASSETS_BUILD_DIR}/scenes/factory/.copied"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/scenes/factory"
+    "${ASSETS_BUILD_DIR}/scenes/factory"
+  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/scenes/factory/.copied"
+  DEPENDS ${FACTORY_SCENE_FILES}
+  COMMENT "Copying factory preset scenes to build assets"
+)
+
+# Create LittleFS partition image from combined assets directory.
+# Contains only the read-only shared content (devices, images, factory
+# scene presets); the device formats `userdata` from empty on first boot
+# and seeds `default.json` from baked-in code.
 # To flash: idf.py assets-flash
 littlefs_create_partition_image(assets ${ASSETS_BUILD_DIR}
-  DEPENDS 
+  DEPENDS
     "${ASSETS_BUILD_DIR}/devices/.copied"
-    "${ASSETS_BUILD_DIR}/scenes/.copied"
     "${ASSETS_BUILD_DIR}/images/.copied"
+    "${ASSETS_BUILD_DIR}/scenes/factory/.copied"
 )

@@ -1,26 +1,33 @@
 #!/usr/bin/env ruby
 
 # Assets Manager CLI for Storm Summoner
-# Manage files on the LittleFS assets volume over USB CDC
+# Manage files on the LittleFS assets volumes over USB CDC.
+#
+# Partition layout (post-split):
+#   /assets    -- read-only shared content (replaced by Assets OTA only)
+#   /userdata  -- read-write user content (scenes, custom pedals, cache)
+#
+# Mutating commands (mkdir/rm/rmrf/mv/cp/upload/extract) only work under
+# /userdata. The device enforces this; this CLI also pre-warns for clarity.
 #
 # Usage:
 #   ruby assets_manager.rb <port> <command> [args...]
 #
 # Commands:
-#   ls [path]                    - List directory contents
+#   ls [path]                    - List directory contents (default /userdata)
 #   stat <path>                  - Get file/directory info
-#   df                           - Show filesystem usage
+#   df                           - Show filesystem usage (both partitions)
 #   cat <path>                   - Display file contents (text files <4KB)
-#   mkdir <path>                 - Create directory
-#   rm <path>                    - Remove file or empty directory
-#   rmrf <path>                  - Recursively delete directory and contents
-#   mv <src> <dst>               - Move/rename file or directory
-#   cp <src> <dst>               - Copy file
-#   upload <local> <remote>      - Upload file to device
+#   mkdir <path>                 - Create directory (RW only)
+#   rm <path>                    - Remove file or empty directory (RW only)
+#   rmrf <path>                  - Recursively delete directory and contents (RW only)
+#   mv <src> <dst>               - Move/rename file or directory (RW only)
+#   cp <src> <dst>               - Copy file (RW destination only; src may be RO)
+#   upload <local> <remote>      - Upload file to device (RW only)
 #   download <remote> <local>    - Download file from device
-#   manifest [scenes|devices|images] - Show manifest
+#   manifest [type]              - Show manifest (scenes|shared_devices|user_devices|images)
 #   zip <remote_path> [local.zip] - Download folder as ZIP archive
-#   extract <local.zip> <remote_path> - Upload and extract ZIP to folder
+#   extract <local.zip> <remote_path> - Upload and extract ZIP to folder (RW only)
 #   interactive                  - Enter interactive mode
 
 require 'serialport'
@@ -30,6 +37,8 @@ require 'fileutils'
 class AssetsManager
   TIMEOUT_SHORT = 2
   TIMEOUT_LONG = 30
+  USERDATA_ROOT = '/userdata'.freeze
+  ASSETS_ROOT = '/assets'.freeze
 
   def initialize(port_name)
     @port_name = port_name
@@ -139,6 +148,20 @@ class AssetsManager
     read_line(TIMEOUT_SHORT)
   end
 
+  # Returns true iff `path` lies on the writable /userdata partition. The
+  # device rejects RO mutations on its own; we pre-warn here so users get a
+  # friendlier message and don't waste a round-trip.
+  def writable_path?(path)
+    return false if path.nil? || path.empty?
+    path == USERDATA_ROOT || path.start_with?("#{USERDATA_ROOT}/")
+  end
+
+  def warn_readonly(path)
+    puts "WARNING: #{path} is on the read-only /assets partition."
+    puts "         Shared content is replaced wholesale by the Assets OTA flow."
+    puts "         Writes go to /userdata/... — see the System Update tab in the web app."
+  end
+
   # ============================================================================
   # Commands
   # ============================================================================
@@ -200,35 +223,45 @@ class AssetsManager
 
   def cmd_df
     response = assets_command("DF")
-    
+
     if response&.start_with?("ERROR")
       puts response
       return
     end
-    
+
     begin
       info = JSON.parse(response)
-      total = info["total"]
-      used = info["used"]
-      free = info["free"]
-      percent = (used.to_f / total * 100).round(1)
-      
-      puts ""
-      puts "Filesystem: /assets"
-      puts "  Total:  #{format_size(total)}"
-      puts "  Used:   #{format_size(used)} (#{percent}%)"
-      puts "  Free:   #{format_size(free)}"
-      puts ""
-      
-      # Progress bar
-      bar_width = 40
-      filled = (bar_width * used.to_f / total).round
-      bar = "[" + "#" * filled + "-" * (bar_width - filled) + "]"
-      puts "  #{bar}"
-      puts ""
+      print_df_partition("/assets (RO)", info["assets"]) if info["assets"]
+      if info["userdata"] && info["userdata"]["available"]
+        print_df_partition("/userdata (RW)", info["userdata"])
+      elsif info["userdata"]
+        puts ""
+        puts "/userdata: NOT AVAILABLE (degraded boot — re-run System Update from the web app)"
+        puts ""
+      end
     rescue JSON::ParserError => e
       puts "Parse error: #{e.message}"
+      puts "Raw response: #{response}"
     end
+  end
+
+  def print_df_partition(label, info)
+    total = info["total"].to_i
+    used = info["used"].to_i
+    free = info["free"].to_i
+    percent = total > 0 ? (used.to_f / total * 100).round(1) : 0.0
+
+    puts ""
+    puts "Filesystem: #{label}"
+    puts "  Total:  #{format_size(total)}"
+    puts "  Used:   #{format_size(used)} (#{percent}%)"
+    puts "  Free:   #{format_size(free)}"
+
+    bar_width = 40
+    filled = total > 0 ? (bar_width * used.to_f / total).round : 0
+    bar = "[" + "#" * filled + "-" * (bar_width - filled) + "]"
+    puts "  #{bar}"
+    puts ""
   end
 
   def cmd_cat(path)
@@ -237,26 +270,34 @@ class AssetsManager
   end
 
   def cmd_mkdir(path)
+    warn_readonly(path) unless writable_path?(path)
     response = assets_command("MKDIR #{path}")
     puts response
   end
 
   def cmd_rm(path)
+    warn_readonly(path) unless writable_path?(path)
     response = assets_command("RM #{path}")
     puts response
   end
 
   def cmd_rmrf(path)
+    warn_readonly(path) unless writable_path?(path)
     response = assets_command("RMRF #{path}")
     puts response
   end
 
   def cmd_mv(src, dst)
+    warn_readonly(src) unless writable_path?(src)
+    warn_readonly(dst) unless writable_path?(dst)
     response = assets_command("MV #{src} #{dst}")
     puts response
   end
 
   def cmd_cp(src, dst)
+    # Source may be RO (legitimate "seed from shared" use case); only the
+    # destination has to be writable, matching the device-side gate.
+    warn_readonly(dst) unless writable_path?(dst)
     response = assets_command("CP #{src} #{dst}")
     puts response
   end
@@ -282,10 +323,12 @@ class AssetsManager
       puts "ERROR: Local file not found: #{local_path}"
       return
     end
-    
+
+    warn_readonly(remote_path) unless writable_path?(remote_path)
+
     file_size = File.size(local_path)
     puts "Uploading #{local_path} (#{format_size(file_size)}) to #{remote_path}..."
-    
+
     enter_assets_mode unless @in_assets_mode
     
     send_line("PUT #{remote_path} #{file_size}")
@@ -423,10 +466,12 @@ class AssetsManager
       puts "ERROR: Local file not found: #{local_path}"
       return
     end
-    
+
+    warn_readonly(remote_path) unless writable_path?(remote_path)
+
     file_size = File.size(local_path)
     puts "Extracting #{local_path} (#{format_size(file_size)}) to #{remote_path}..."
-    
+
     enter_assets_mode unless @in_assets_mode
     
     send_line("EXTRACT #{remote_path} #{file_size}")
@@ -483,7 +528,7 @@ class AssetsManager
       when "exit", "quit", nil
         break
       when "ls"
-        cmd_ls(args[0] || "/")
+        cmd_ls(args[0] || USERDATA_ROOT)
       when "stat"
         cmd_stat(args[0]) if args[0]
       when "df"
@@ -563,14 +608,19 @@ def print_usage
       interactive                  - Enter interactive mode
     
     Examples:
-      ruby assets_manager.rb COM3 ls /scenes
-      ruby assets_manager.rb COM3 upload scene_003.json /scenes/scene_003.json
-      ruby assets_manager.rb COM3 download /scenes/scene_001.json scene_001.json
-      ruby assets_manager.rb COM3 zip /scenes scenes_backup.zip
+      ruby assets_manager.rb COM3 ls /userdata/scenes
+      ruby assets_manager.rb COM3 upload scene_003.json /userdata/scenes/scene_003.json
+      ruby assets_manager.rb COM3 download /userdata/scenes/scene_001.json scene_001.json
+      ruby assets_manager.rb COM3 zip /userdata/scenes scenes_backup.zip
       ruby assets_manager.rb COM3 df
       ruby assets_manager.rb COM3 interactive
-      
-      ruby assets_manager.rb /dev/ttyACM0 ls /  # Linux example
+
+      ruby assets_manager.rb /dev/ttyACM0 ls /userdata  # Linux example
+
+    Notes:
+      `ls /` returns the two roots (assets, userdata). `ls` with no path
+      defaults to /userdata. The /assets partition is read-only; mutating
+      commands targeting /assets are rejected by the device.
   USAGE
 end
 
@@ -590,7 +640,7 @@ begin
   
   case command
   when "ls"
-    manager.cmd_ls(args[0] || "/")
+    manager.cmd_ls(args[0] || AssetsManager::USERDATA_ROOT)
   when "stat"
     if args[0]
       manager.cmd_stat(args[0])

@@ -32,6 +32,17 @@ application.register(
     static FIRMWARE_COMMIT_TIME = 25000  // ~25 seconds for firmware flash
     static ASSETS_COMMIT_TIME = 100000   // ~100 seconds for assets flash
 
+    // Phase 0 (v(N+1)) CDC commands. Surfaced here so the system-update
+    // orchestrator (Phase 8) can build on top without re-deriving the protocol.
+    // Device-side parsers live in components/usb_cdc_update/usb_cdc_update.c.
+    static SYSTEM_UPDATE_COMMANDS = {
+      PARTITION_TABLE: 'PARTITION_TABLE',           // PARTITION_TABLE <size>  -> READY ; binary upload follows ; device replies PT_VERIFIED or PT_INVALID: <reason>
+      COMMIT_PARTITION_TABLE: 'COMMIT_PARTITION_TABLE', // commit a verified PT to flash 0x8000 ; replies PT_COMMITTED or PT_COMMIT_FAILED: <reason>
+      ABORT_PARTITION_TABLE: 'ABORT_PARTITION_TABLE',   // discard staged PT ; replies PT_ABORTED
+      RAW_ASSETS_WRITE: 'RAW_ASSETS_WRITE',         // RAW_ASSETS_WRITE <offset> <size> -> READY ; binary upload follows ; device replies RAW_OK <offset> <size> or RAW_ERROR: <reason>
+      RAW_ASSETS_FINALIZE: 'RAW_ASSETS_FINALIZE'    // end raw-write session, release per-sector erase bitmap ; replies RAW_FINALIZED
+    }
+
     connect () {
       this.reader = null
       this.updateInProgress = false
@@ -110,6 +121,16 @@ application.register(
       }).join('')
 
       this.fwSelectTarget.innerHTML = options
+      // wa-select doesn't auto-select the first option when populated via
+      // innerHTML and doesn't always emit a `change` for the visible default
+      // value, which was leaving the Apply button stuck disabled. Set the
+      // value explicitly on the next tick (after wa-option slot wiring) and
+      // re-evaluate gating ourselves.
+      const first = this.releases.firmware[0]?.filename
+      if (first) requestAnimationFrame(() => {
+        try { this.fwSelectTarget.value = first } catch (e) {}
+        this.fwVersionSelected()
+      })
     }
 
     populateAssetsDropdown () {
@@ -124,6 +145,21 @@ application.register(
       }).join('')
 
       this.assetsSelectTarget.innerHTML = options
+      const first = this.releases.assets[0]?.filename
+      if (first) requestAnimationFrame(() => {
+        try { this.assetsSelectTarget.value = first } catch (e) {}
+        this.assetsVersionSelected()
+      })
+    }
+
+    // Read the wa-select value robustly. wa-select sometimes leaves `.value`
+    // empty even after the user picks an option (the selectedOptions list is
+    // populated but the property hasn't reflected it yet). Fall back to the
+    // first selected option's value.
+    selectValue (target) {
+      if (target.value) return target.value
+      if (target.selectedOptions?.length) return target.selectedOptions[0].value
+      return ''
     }
 
     formatDate (dateStr) {
@@ -200,8 +236,8 @@ application.register(
       const hasReleases = this.releases !== null
 
       // Dropdown-based updates
-      this.fwApplyBtnTarget.disabled = !enabled || !this.fwSelectTarget.value
-      this.assetsApplyBtnTarget.disabled = !enabled || !this.assetsSelectTarget.value
+      this.fwApplyBtnTarget.disabled = !enabled || !this.selectValue(this.fwSelectTarget)
+      this.assetsApplyBtnTarget.disabled = !enabled || !this.selectValue(this.assetsSelectTarget)
 
       // File-based updates
       this.fwBtnTarget.disabled = !enabled || !this.fwInputTarget.files[0]
@@ -220,13 +256,13 @@ application.register(
 
     fwVersionSelected () {
       if (!this.updateInProgress) {
-        this.fwApplyBtnTarget.disabled = !this.fwSelectTarget.value || !this.connection.isConnected
+        this.fwApplyBtnTarget.disabled = !this.selectValue(this.fwSelectTarget) || !this.connection.isConnected
       }
     }
 
     assetsVersionSelected () {
       if (!this.updateInProgress) {
-        this.assetsApplyBtnTarget.disabled = !this.assetsSelectTarget.value || !this.connection.isConnected
+        this.assetsApplyBtnTarget.disabled = !this.selectValue(this.assetsSelectTarget) || !this.connection.isConnected
       }
     }
 
@@ -243,7 +279,7 @@ application.register(
     }
 
     async applyFirmware () {
-      const filename = this.fwSelectTarget.value
+      const filename = this.selectValue(this.fwSelectTarget)
       if (!filename) {
         this.log('No firmware version selected', 'error')
         return
@@ -266,7 +302,7 @@ application.register(
     }
 
     async applyAssets () {
-      const filename = this.assetsSelectTarget.value
+      const filename = this.selectValue(this.assetsSelectTarget)
       if (!filename) {
         this.log('No assets version selected', 'error')
         return
@@ -606,11 +642,11 @@ application.register(
     }
 
     showFactoryResetDialog () {
-      this.factoryResetDialogTarget.show()
+      this.factoryResetDialogTarget.open = true
     }
 
     hideFactoryResetDialog () {
-      this.factoryResetDialogTarget.hide()
+      this.factoryResetDialogTarget.open = false
     }
 
     async confirmFactoryReset () {

@@ -16,9 +16,15 @@ static const char* TAG = "assets_mgr_console";
 // Set message on working module
 extern void working_set_message(const char *msg);
 
+// Phase 7: `regenerate_devices` was renamed to make the partition split
+// explicit. `regenerate_shared_devices` rebuilds the manifest of the
+// read-only /assets/devices tree (only useful in dev when files are
+// pushed/pulled manually); `regenerate_user_devices` rebuilds the writable
+// /userdata/devices manifest and reloads the merged in-memory manifest.
 static const char* registered_commands[] = {
   "info",
-  "regenerate_devices",
+  "regenerate_shared_devices",
+  "regenerate_user_devices",
   "regenerate_scenes",
   "regenerate_images",
   "wipe_cache"
@@ -34,32 +40,52 @@ static int cmd_info(int argc, char **argv) {
   return 0;
 }
 
-// Command: regenerate_devices
-static int cmd_regenerate_devices(int argc, char **argv) {
-  ESP_LOGI(TAG, "Regenerating devices manifest...");
-  
-  // Switch to lightweight working module to free display resources
+// Command: regenerate_shared_devices
+// Scans /assets/devices/ and rewrites /assets/devices/manifest.json. This is
+// only useful on dev units where files have been pushed into /assets/ via
+// JTAG; the production /assets partition is read-only at runtime so writes
+// will fail there. Does NOT reload the in-memory manifest by itself.
+static int cmd_regenerate_shared_devices(int argc, char **argv) {
+  ESP_LOGI(TAG, "Regenerating shared (RO) devices manifest...");
+  ESP_LOGW(TAG, "Note: /assets is read-only at runtime; this only works on dev units.");
+
+  esp_err_t ret = assets_regenerate_devices_manifest();
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Shared devices manifest regenerated");
+  } else {
+    ESP_LOGE(TAG, "Failed to regenerate shared devices manifest: %s",
+             esp_err_to_name(ret));
+  }
+  return (ret == ESP_OK) ? 0 : 1;
+}
+
+// Command: regenerate_user_devices
+// Scans /userdata/devices/, rewrites /userdata/devices/manifest.json, and
+// reloads the merged (RO+RW) manifest into memory. This is the command you
+// reach for after pushing pedal JSONs into /userdata/devices/ via the web
+// app's file browser without going through the file-create hooks.
+static int cmd_regenerate_user_devices(int argc, char **argv) {
+  ESP_LOGI(TAG, "Regenerating user (RW) devices manifest...");
+
   ui_draw_module_t* prev_module = ui_get_current_module();
   working_set_message("Scanning\ndevices...");
   ui_set_draw_module(&working_module);
-  
-  // Give LVGL time to switch and render the simple screen
+
   vTaskDelay(pdMS_TO_TICKS(100));
-  
-  // Use assets_rebuild_manifest() which regenerates AND reloads into memory
+
   esp_err_t ret = assets_rebuild_manifest();
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Devices manifest regenerated and reloaded (%u devices)", 
+    ESP_LOGI(TAG, "User devices manifest regenerated and merged (%u devices total)",
              (unsigned)assets_get_device_count());
   } else {
-    ESP_LOGE(TAG, "Failed to regenerate devices manifest: %s", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Failed to regenerate user devices manifest: %s",
+             esp_err_to_name(ret));
   }
-  
-  // Switch back to previous module
+
   if (prev_module) {
     ui_set_draw_module(prev_module);
   }
-  
+
   return (ret == ESP_OK) ? 0 : 1;
 }
 
@@ -89,7 +115,8 @@ static int cmd_regenerate_images(int argc, char **argv) {
 
 // Command: wipe_cache
 static int cmd_wipe_cache(int argc, char **argv) {
-  const char* cache_dir = "/assets/cache";
+  // Cache lives on the RW userdata partition since Phase 2.
+  const char* cache_dir = USERDATA_BASE_PATH "/cache";
   
   DIR* dir = opendir(cache_dir);
   if (!dir) {
@@ -130,19 +157,28 @@ esp_err_t assets_manager_console_init(void) {
   };
   esp_console_cmd_register(&info_cmd);
   
-  // regenerate_devices command
-  const esp_console_cmd_t regen_devices_cmd = {
-    .command = "regenerate_devices",
-    .help = "Regenerate /assets/devices/manifest.json",
+  // regenerate_shared_devices command (RO /assets partition; dev-only)
+  const esp_console_cmd_t regen_shared_cmd = {
+    .command = "regenerate_shared_devices",
+    .help = "Regenerate /assets/devices/manifest.json (RO; dev units only)",
     .hint = NULL,
-    .func = &cmd_regenerate_devices,
+    .func = &cmd_regenerate_shared_devices,
   };
-  esp_console_cmd_register(&regen_devices_cmd);
-  
+  esp_console_cmd_register(&regen_shared_cmd);
+
+  // regenerate_user_devices command (RW /userdata partition)
+  const esp_console_cmd_t regen_user_cmd = {
+    .command = "regenerate_user_devices",
+    .help = "Regenerate /userdata/devices/manifest.json and reload merged manifest",
+    .hint = NULL,
+    .func = &cmd_regenerate_user_devices,
+  };
+  esp_console_cmd_register(&regen_user_cmd);
+
   // regenerate_scenes command
   const esp_console_cmd_t regen_scenes_cmd = {
     .command = "regenerate_scenes",
-    .help = "Regenerate /assets/scenes/manifest.json",
+    .help = "Regenerate /userdata/scenes/manifest.json",
     .hint = NULL,
     .func = &cmd_regenerate_scenes,
   };
@@ -160,7 +196,7 @@ esp_err_t assets_manager_console_init(void) {
   // wipe_cache command
   const esp_console_cmd_t wipe_cache_cmd = {
     .command = "wipe_cache",
-    .help = "Delete all device cache files in /assets/cache/",
+    .help = "Delete all device cache files in /userdata/cache/",
     .hint = NULL,
     .func = &cmd_wipe_cache,
   };

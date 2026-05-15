@@ -138,6 +138,11 @@ typedef struct {
   uint16_t pc_index_base;  // 0 or 1
   uint16_t pc_count;       // Number of presets (default 128)
   uint8_t pc_bank_mode;    // pc_bank_select_mode_t
+  // Origin partition: false = shared/RO (/assets/devices/...),
+  //                   true  = user/RW (/userdata/devices/...)
+  // Set during manifest parsing; consumed by assets_load_device() when
+  // composing the on-disk JSON path.
+  bool from_userdata;
 } manifest_device_t;
 
 // Manifest structure

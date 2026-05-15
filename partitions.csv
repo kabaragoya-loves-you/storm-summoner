@@ -4,4 +4,8 @@ otadata,     data, ota,     ,          0x2000
 phy_init,    data, phy,     ,          0x1000
 ota_0,       app,  ota_0,   ,          0x2F0000
 ota_1,       app,  ota_1,   ,          0x2F0000
-assets,      data, littlefs, ,          0xA00000
+# RO shared content (UI images, shared MIDI device DB). Replaced wholesale by ASSETS OTA.
+assets,      data, littlefs, ,          0x800000
+# RW user content (scenes, user-defined / cloned pedals, parsed-device cache).
+# Never touched by an assets OTA. Format-on-first-mount; survives firmware updates.
+userdata,    data, littlefs, ,          0x200000
