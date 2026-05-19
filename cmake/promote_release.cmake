@@ -32,20 +32,35 @@ set(PROMOTED_SOMETHING FALSE)
 file(MAKE_DIRECTORY "${WEB_BINARIES_DIR}")
 
 # --- Firmware promotion ---
+# Re-promote whenever the freshly-built bin is newer than what's already in
+# web/binaries/ under the same versioned name. Without the IS_NEWER_THAN
+# check, bumping `FW_VERSION_MINOR` back to a value that was already promoted
+# (or rebuilding after fixes without bumping the version) silently keeps the
+# stale binary on the website, which is how the wrong firmware ends up
+# served to testers.
 set(FW_FILENAME "storm-summoner-${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.bin")
 set(FW_SOURCE "${BINARY_DIR}/storm-summoner.bin")
 set(FW_DEST "${WEB_BINARIES_DIR}/${FW_FILENAME}")
 
-if(EXISTS "${FW_SOURCE}" AND NOT EXISTS "${FW_DEST}")
-  message(STATUS "Promoting firmware: ${FW_FILENAME}")
+if(EXISTS "${FW_SOURCE}"
+    AND (NOT EXISTS "${FW_DEST}" OR "${FW_SOURCE}" IS_NEWER_THAN "${FW_DEST}"))
+  if(EXISTS "${FW_DEST}")
+    message(STATUS "Re-promoting firmware (source is newer): ${FW_FILENAME}")
+  else()
+    message(STATUS "Promoting firmware: ${FW_FILENAME}")
+  endif()
   file(COPY "${FW_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
   file(RENAME "${WEB_BINARIES_DIR}/storm-summoner.bin" "${FW_DEST}")
+  # Stamp the destination's mtime to *now*. file(COPY) preserves the source
+  # mtime, so without this the date in releases.json would reflect when the
+  # linker last wrote build/storm-summoner.bin rather than when we released it.
+  file(TOUCH "${FW_DEST}")
   set(PROMOTED_SOMETHING TRUE)
 else()
   if(NOT EXISTS "${FW_SOURCE}")
     message(STATUS "Firmware source not found: ${FW_SOURCE}")
   else()
-    message(STATUS "Firmware already exists: ${FW_FILENAME}")
+    message(STATUS "Firmware already up to date: ${FW_FILENAME}")
   endif()
 endif()
 
@@ -65,13 +80,24 @@ if(EXISTS "${MANIFEST_JSON}" AND EXISTS "${ASSETS_SOURCE}")
   set(SHARED_ASSETS_HASH "${MANIFEST_HASH_SHORT}")
   set(SHARED_ASSETS_DEST "${WEB_BINARIES_DIR}/${SHARED_ASSETS_FILENAME}")
 
-  if(NOT EXISTS "${SHARED_ASSETS_DEST}")
-    message(STATUS "Promoting shared assets: ${SHARED_ASSETS_FILENAME}")
+  # Note: the hash in the filename is over midi-devices/manifest.json only,
+  # so the same filename can correspond to different on-disk bytes if only
+  # the images/ subtree changed. IS_NEWER_THAN catches that case too and
+  # forces a re-promote, keeping web/binaries/ in lockstep with the latest
+  # built assets image.
+  if(NOT EXISTS "${SHARED_ASSETS_DEST}"
+      OR "${ASSETS_SOURCE}" IS_NEWER_THAN "${SHARED_ASSETS_DEST}")
+    if(EXISTS "${SHARED_ASSETS_DEST}")
+      message(STATUS "Re-promoting shared assets (source is newer): ${SHARED_ASSETS_FILENAME}")
+    else()
+      message(STATUS "Promoting shared assets: ${SHARED_ASSETS_FILENAME}")
+    endif()
     file(COPY "${ASSETS_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
     file(RENAME "${WEB_BINARIES_DIR}/assets.bin" "${SHARED_ASSETS_DEST}")
+    file(TOUCH "${SHARED_ASSETS_DEST}")
     set(PROMOTED_SOMETHING TRUE)
   else()
-    message(STATUS "Shared assets already exists: ${SHARED_ASSETS_FILENAME}")
+    message(STATUS "Shared assets already up to date: ${SHARED_ASSETS_FILENAME}")
   endif()
 else()
   if(NOT EXISTS "${MANIFEST_JSON}")
@@ -97,13 +123,19 @@ if(EXISTS "${PARTITIONS_CSV}" AND EXISTS "${PT_SOURCE}")
   set(PT_HASH "${PT_HASH_SHORT}")
   set(PT_DEST "${WEB_BINARIES_DIR}/${PT_FILENAME}")
 
-  if(NOT EXISTS "${PT_DEST}")
-    message(STATUS "Promoting partition table: ${PT_FILENAME}")
+  if(NOT EXISTS "${PT_DEST}"
+      OR "${PT_SOURCE}" IS_NEWER_THAN "${PT_DEST}")
+    if(EXISTS "${PT_DEST}")
+      message(STATUS "Re-promoting partition table (source is newer): ${PT_FILENAME}")
+    else()
+      message(STATUS "Promoting partition table: ${PT_FILENAME}")
+    endif()
     file(COPY "${PT_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
     file(RENAME "${WEB_BINARIES_DIR}/partition-table.bin" "${PT_DEST}")
+    file(TOUCH "${PT_DEST}")
     set(PROMOTED_SOMETHING TRUE)
   else()
-    message(STATUS "Partition table already exists: ${PT_FILENAME}")
+    message(STATUS "Partition table already up to date: ${PT_FILENAME}")
   endif()
 else()
   if(NOT EXISTS "${PARTITIONS_CSV}")
@@ -128,8 +160,8 @@ endif()
 # Scan existing binaries and build manifest
 
 # Get current timestamp
-string(TIMESTAMP CURRENT_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
-string(TIMESTAMP CURRENT_DATE "%Y-%m-%d" UTC)
+string(TIMESTAMP CURRENT_TIMESTAMP "%Y-%m-%dT%H:%M:%S")
+string(TIMESTAMP CURRENT_DATE "%Y-%m-%d")
 
 # Collect firmware binaries
 file(GLOB FW_BINARIES "${WEB_BINARIES_DIR}/storm-summoner-*.bin")
@@ -143,7 +175,7 @@ foreach(FW_BIN ${FW_BINARIES})
   
   if(NOT "${FW_VER}" STREQUAL "")
     # Get file modification time for date
-    file(TIMESTAMP "${FW_BIN}" FW_DATE "%Y-%m-%d" UTC)
+    file(TIMESTAMP "${FW_BIN}" FW_DATE "%Y-%m-%d")
     
     # Build JSON entry
     set(FW_ENTRY "    { \"version\": \"${FW_VER}\", \"filename\": \"${FW_NAME}\", \"date\": \"${FW_DATE}\" }")
@@ -175,7 +207,7 @@ foreach(FW_ITEM ${FW_VERSIONS})
   list(GET FW_PARTS 1 FW_VER)
   list(GET FW_PARTS 2 FW_NAME)
   list(GET FW_PARTS 3 FW_PATH)
-  file(TIMESTAMP "${FW_PATH}" FW_DATE "%Y-%m-%d" UTC)
+  file(TIMESTAMP "${FW_PATH}" FW_DATE "%Y-%m-%d")
   
   if(FW_JSON_ARRAY)
     set(FW_JSON_ARRAY "${FW_JSON_ARRAY},\n    { \"version\": \"${FW_VER}\", \"filename\": \"${FW_NAME}\", \"date\": \"${FW_DATE}\" }")
@@ -196,8 +228,8 @@ foreach(ASSET_BIN ${ASSETS_BINARIES})
   set(ASSET_CHECKSUM "${CMAKE_MATCH_1}")
 
   if(ASSET_CHECKSUM)
-    file(TIMESTAMP "${ASSET_BIN}" ASSET_DATE "%Y-%m-%d" UTC)
-    file(TIMESTAMP "${ASSET_BIN}" ASSET_SORT "%Y%m%d%H%M%S" UTC)
+    file(TIMESTAMP "${ASSET_BIN}" ASSET_DATE "%Y-%m-%d")
+    file(TIMESTAMP "${ASSET_BIN}" ASSET_SORT "%Y%m%d%H%M%S")
     list(APPEND ASSETS_ITEMS "${ASSET_SORT}|${ASSET_CHECKSUM}|${ASSET_NAME}|${ASSET_DATE}")
   endif()
 endforeach()
@@ -229,8 +261,8 @@ foreach(SA_BIN ${SHARED_ASSETS_BINARIES})
   set(SA_CHECKSUM "${CMAKE_MATCH_1}")
 
   if(SA_CHECKSUM)
-    file(TIMESTAMP "${SA_BIN}" SA_DATE "%Y-%m-%d" UTC)
-    file(TIMESTAMP "${SA_BIN}" SA_SORT "%Y%m%d%H%M%S" UTC)
+    file(TIMESTAMP "${SA_BIN}" SA_DATE "%Y-%m-%d")
+    file(TIMESTAMP "${SA_BIN}" SA_SORT "%Y%m%d%H%M%S")
     list(APPEND SHARED_ASSETS_ITEMS "${SA_SORT}|${SA_CHECKSUM}|${SA_NAME}|${SA_DATE}")
   endif()
 endforeach()
@@ -262,8 +294,8 @@ foreach(PT_BIN ${PT_BINARIES})
   set(PT_CHECKSUM "${CMAKE_MATCH_1}")
 
   if(PT_CHECKSUM)
-    file(TIMESTAMP "${PT_BIN}" PT_DATE "%Y-%m-%d" UTC)
-    file(TIMESTAMP "${PT_BIN}" PT_SORT "%Y%m%d%H%M%S" UTC)
+    file(TIMESTAMP "${PT_BIN}" PT_DATE "%Y-%m-%d")
+    file(TIMESTAMP "${PT_BIN}" PT_SORT "%Y%m%d%H%M%S")
     list(APPEND PT_ITEMS "${PT_SORT}|${PT_CHECKSUM}|${PT_NAME}|${PT_DATE}")
   endif()
 endforeach()
