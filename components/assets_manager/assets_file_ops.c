@@ -46,7 +46,7 @@ bool assets_is_valid_path(const char *path) {
       || strncmp(path, USERDATA_BASE_PATH, strlen(USERDATA_BASE_PATH)) == 0;
 }
 
-// Path-aware folder classification (Phase 3).
+// Path-aware folder classification.
 // Scenes only live under /userdata; the device-manifest split distinguishes
 // shared (RO) from user (RW); images are RO only. Returns NULL for any path
 // that doesn't fall into a managed bucket.
@@ -506,8 +506,8 @@ static esp_err_t regenerate_devices_manifest_at(const char *devices_dir,
 // Only useful in dev workflows that push files manually into /assets at
 // runtime - the released build ships a pre-generated manifest.json baked
 // into the assets image. The dev console's `regenerate_shared_devices`
-// (Phase 7) is the front door; runtime CDC mutations under /assets are
-// rejected at the Phase 4 gate and never reach this path.
+// is the front door; runtime CDC mutations under /assets are rejected by
+// the read-only gate and never reach this path.
 esp_err_t assets_regenerate_devices_manifest(void) {
   // Some dev layouts produce /assets/devices/devices/<vendor>/...; tolerate
   // both the doubled and non-doubled cases.

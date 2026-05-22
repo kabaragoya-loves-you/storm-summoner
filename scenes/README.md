@@ -33,8 +33,8 @@ The truly-default scene (Scene 1) is still synthesized in-memory by
 
 Factory presets are reconciled again whenever the assets blob changes.
 On each boot the firmware compares the active assets checksum (NVS
-`assets_csum`, set when an assets OTA — classic or system-update RAW —
-commits) against the last-merged checksum (NVS `fac_seed_csum`). When
+`assets_csum`, set when the classic ASSETS OTA commits) against the
+last-merged checksum (NVS `fac_seed_csum`). When
 they differ, it runs the same seeding pass and appends any new factory
 filenames as inactive entries. Existing entries are left strictly alone:
 

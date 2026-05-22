@@ -150,8 +150,8 @@ static const char* DEFAULT_DEVICE_JSON =
 // Ensure the default device JSON exists in LittleFS.
 // No-op if the userdata partition is unavailable (degraded boot): in that
 // case assets_load_device("user.default@0") will return NULL and the UI
-// already tolerates a NULL device. The user can recover by re-running the
-// system update from the web app.
+// already tolerates a NULL device. Recover with `idf.py erase-flash` and
+// reflash.
 static esp_err_t ensure_default_device_exists(void) {
   if (!assets_userdata_available()) {
     ESP_LOGW(TAG, "userdata unavailable - skipping default device creation");
@@ -190,9 +190,7 @@ static esp_err_t ensure_default_device_exists(void) {
 
   ESP_LOGI(TAG, "Default device created successfully");
 
-  // Rebuild manifest to include the new device. Phase 3 will switch this to
-  // the user-devices manifest specifically; for Phase 2 the existing call
-  // continues to regenerate the (still-single) manifest.
+  // Rebuild the user-devices manifest to include the new device.
   esp_err_t ret = assets_rebuild_manifest();
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to rebuild manifest after creating default device");

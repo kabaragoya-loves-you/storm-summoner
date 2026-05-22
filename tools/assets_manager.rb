@@ -159,7 +159,7 @@ class AssetsManager
   def warn_readonly(path)
     puts "WARNING: #{path} is on the read-only /assets partition."
     puts "         Shared content is replaced wholesale by the Assets OTA flow."
-    puts "         Writes go to /userdata/... — see the System Update tab in the web app."
+    puts "         Writes go to /userdata/... — use the Updater tab's Assets OTA in the web app."
   end
 
   # ============================================================================
@@ -236,7 +236,7 @@ class AssetsManager
         print_df_partition("/userdata (RW)", info["userdata"])
       elsif info["userdata"]
         puts ""
-        puts "/userdata: NOT AVAILABLE (degraded boot — re-run System Update from the web app)"
+        puts "/userdata: NOT AVAILABLE (degraded boot — recover with `idf.py erase-flash` and reflash)"
         puts ""
       end
     rescue JSON::ParserError => e

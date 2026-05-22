@@ -192,10 +192,10 @@ application.register(
       return this.connection.sendCommand(cmd, timeout)
     }
 
-    // Phase 4 device response shape:
+    // Device response shape:
     //   {"assets":{"total":N,"used":N,"free":N},
     //    "userdata":{"total":N,"used":N,"free":N,"available":bool}}
-    // userdata.available is false during the v(N+2) degraded boot path; we
+    // userdata.available is false when the userdata partition mount fails;
     // hide the userdata bar and surface a small "missing" warning instead.
     async loadStats () {
       try {
@@ -330,7 +330,7 @@ application.register(
           const unavailable = atRoot && file.name === 'userdata'
             && file.available === false
           const nameSuffix = unavailable
-            ? ` <span class="badge warn">missing — re-run System Update</span>`
+            ? ` <span class="badge warn">missing — userdata unavailable</span>`
             : (atRoot && file.readonly)
               ? ` <span class="badge">read-only</span>`
               : ''

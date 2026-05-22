@@ -32,17 +32,6 @@ application.register(
     static FIRMWARE_COMMIT_TIME = 25000  // ~25 seconds for firmware flash
     static ASSETS_COMMIT_TIME = 100000   // ~100 seconds for assets flash
 
-    // Phase 0 (v(N+1)) CDC commands. Surfaced here so the system-update
-    // orchestrator (Phase 8) can build on top without re-deriving the protocol.
-    // Device-side parsers live in components/usb_cdc_update/usb_cdc_update.c.
-    static SYSTEM_UPDATE_COMMANDS = {
-      PARTITION_TABLE: 'PARTITION_TABLE',           // PARTITION_TABLE <size>  -> READY ; binary upload follows ; device replies PT_VERIFIED or PT_INVALID: <reason>
-      COMMIT_PARTITION_TABLE: 'COMMIT_PARTITION_TABLE', // commit a verified PT to flash 0x8000 ; replies PT_COMMITTED or PT_COMMIT_FAILED: <reason>
-      ABORT_PARTITION_TABLE: 'ABORT_PARTITION_TABLE',   // discard staged PT ; replies PT_ABORTED
-      RAW_ASSETS_WRITE: 'RAW_ASSETS_WRITE',         // RAW_ASSETS_WRITE <offset> <size> -> READY ; binary upload follows ; device replies RAW_OK <offset> <size> or RAW_ERROR: <reason>
-      RAW_ASSETS_FINALIZE: 'RAW_ASSETS_FINALIZE'    // end raw-write session, release per-sector erase bitmap ; replies RAW_FINALIZED
-    }
-
     connect () {
       this.reader = null
       this.updateInProgress = false

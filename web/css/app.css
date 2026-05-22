@@ -240,19 +240,6 @@ wa-tab-panel::part(base) { height: 100%; padding: 1.5rem; }
 wa-button { --wa-button-font-family: var(--font-mono); }
 wa-button[variant="brand"] { --wa-color-brand-600: var(--color-primary); }
 
-.bundle-info { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.75rem 0; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-dim); display: flex; flex-direction: column; gap: 0.25rem; }
-.bundle-info:empty { display: none; }
-.system-update-state { margin-top: 0.75rem; font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-dim); }
-.system-update-state strong { color: var(--accent); }
-.step-list { list-style: none; padding: 0; margin: 0.75rem 0; font-family: var(--font-mono); font-size: 0.85rem; }
-.step-list .step { padding: 0.35rem 0.75rem; border-left: 3px solid var(--border); color: var(--text-dim); }
-.step-list .step.done { color: var(--success); border-left-color: var(--success); }
-.step-list .step.active { color: var(--accent); border-left-color: var(--accent); font-weight: 500; }
-.step-list .step.failed { color: var(--error); border-left-color: var(--error); }
-.commit-dialog-content { display: flex; flex-direction: column; gap: 0.75rem; }
-.commit-dialog-content .warning-icon { color: var(--warning); font-size: 2rem; align-self: center; }
-.commit-dialog-content code { background: var(--bg-input); padding: 0.1rem 0.4rem; border-radius: 4px; font-family: var(--font-mono); }
-
 /* MIDI Monitor Styles */
 .midi-status-info { 
   display: flex; 

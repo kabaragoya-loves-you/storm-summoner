@@ -19,15 +19,6 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_MD5=y
 
 #
-# SPI Flash dangerous write allowed
-# Required so the runtime partition-table OTA path (firmware_update::partition_table_*)
-# can erase and rewrite the partition-table sector at flash offset 0x8000.
-# Without this, esp_flash_erase_range() / esp_flash_write() against that region abort
-# at runtime. Use only with the validated PSRAM-buffered commit pattern in firmware_update.c.
-#
-CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y
-
-#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y

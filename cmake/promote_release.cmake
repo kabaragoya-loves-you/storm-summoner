@@ -1,18 +1,6 @@
 # promote_release.cmake
 # Called at build time to promote firmware and assets to web/binaries
 # and regenerate the releases manifest (only if new binaries are added).
-#
-# Phase 7 (partition split):
-#   - Adds partition-table promotion as `partition_table_v2-<hash>.bin`.
-#     v(N+2) firmware needs a different on-flash partition table than v(N)
-#     and v(N+1); the web app's System Update flow uploads this via the
-#     PARTITION_TABLE CDC command (see components/firmware_update).
-#   - Promotes the LittleFS image as `shared_assets-<hash>.bin` to make its
-#     read-only role explicit. Older `assets-<hash>.bin` files are still
-#     listed for backward compat with v(N) units doing a plain ASSETS OTA.
-#   - Adds a `system_update` array to releases.json that bundles a specific
-#     {firmware, partition_table, shared_assets} triple by hash so the web
-#     app can validate compatibility before driving the multi-step push.
 
 # Required variables passed from CMakeLists.txt:
 # - FW_VERSION_MAJOR
@@ -23,12 +11,9 @@
 set(WEB_BINARIES_DIR "${SOURCE_DIR}/web/binaries")
 set(RELEASES_JSON "${SOURCE_DIR}/web/releases.json")
 set(MANIFEST_JSON "${SOURCE_DIR}/midi-devices/manifest.json")
-set(PARTITIONS_CSV "${SOURCE_DIR}/partitions.csv")
 
-# Track if anything was promoted
 set(PROMOTED_SOMETHING FALSE)
 
-# Ensure binaries directory exists
 file(MAKE_DIRECTORY "${WEB_BINARIES_DIR}")
 
 # --- Firmware promotion ---
@@ -64,40 +49,34 @@ else()
   endif()
 endif()
 
-# --- Shared assets promotion ---
-# After the partition split this image holds only shared content (RO):
-# midi-devices/ + images/. Scenes and user-created devices are excluded
-# (see main/CMakeLists.txt).
+# --- Assets promotion ---
+# The LittleFS image baked into the read-only `assets` partition. Hash is over
+# midi-devices/manifest.json (the manifest of canonical content); the same
+# filename can correspond to different on-disk bytes if only the images/
+# subtree changed, so IS_NEWER_THAN forces a re-promote in that case too.
 set(ASSETS_SOURCE "${BINARY_DIR}/assets.bin")
-set(SHARED_ASSETS_FILENAME "")
-set(SHARED_ASSETS_HASH "")
+set(ASSETS_FILENAME "")
 
 if(EXISTS "${MANIFEST_JSON}" AND EXISTS "${ASSETS_SOURCE}")
   file(SHA256 "${MANIFEST_JSON}" MANIFEST_HASH)
   string(SUBSTRING "${MANIFEST_HASH}" 0 8 MANIFEST_HASH_SHORT)
 
-  set(SHARED_ASSETS_FILENAME "shared_assets-${MANIFEST_HASH_SHORT}.bin")
-  set(SHARED_ASSETS_HASH "${MANIFEST_HASH_SHORT}")
-  set(SHARED_ASSETS_DEST "${WEB_BINARIES_DIR}/${SHARED_ASSETS_FILENAME}")
+  set(ASSETS_FILENAME "assets-${MANIFEST_HASH_SHORT}.bin")
+  set(ASSETS_DEST "${WEB_BINARIES_DIR}/${ASSETS_FILENAME}")
 
-  # Note: the hash in the filename is over midi-devices/manifest.json only,
-  # so the same filename can correspond to different on-disk bytes if only
-  # the images/ subtree changed. IS_NEWER_THAN catches that case too and
-  # forces a re-promote, keeping web/binaries/ in lockstep with the latest
-  # built assets image.
-  if(NOT EXISTS "${SHARED_ASSETS_DEST}"
-      OR "${ASSETS_SOURCE}" IS_NEWER_THAN "${SHARED_ASSETS_DEST}")
-    if(EXISTS "${SHARED_ASSETS_DEST}")
-      message(STATUS "Re-promoting shared assets (source is newer): ${SHARED_ASSETS_FILENAME}")
+  if(NOT EXISTS "${ASSETS_DEST}"
+      OR "${ASSETS_SOURCE}" IS_NEWER_THAN "${ASSETS_DEST}")
+    if(EXISTS "${ASSETS_DEST}")
+      message(STATUS "Re-promoting assets (source is newer): ${ASSETS_FILENAME}")
     else()
-      message(STATUS "Promoting shared assets: ${SHARED_ASSETS_FILENAME}")
+      message(STATUS "Promoting assets: ${ASSETS_FILENAME}")
     endif()
     file(COPY "${ASSETS_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
-    file(RENAME "${WEB_BINARIES_DIR}/assets.bin" "${SHARED_ASSETS_DEST}")
-    file(TOUCH "${SHARED_ASSETS_DEST}")
+    file(RENAME "${WEB_BINARIES_DIR}/assets.bin" "${ASSETS_DEST}")
+    file(TOUCH "${ASSETS_DEST}")
     set(PROMOTED_SOMETHING TRUE)
   else()
-    message(STATUS "Shared assets already up to date: ${SHARED_ASSETS_FILENAME}")
+    message(STATUS "Assets already up to date: ${ASSETS_FILENAME}")
   endif()
 else()
   if(NOT EXISTS "${MANIFEST_JSON}")
@@ -105,44 +84,6 @@ else()
   endif()
   if(NOT EXISTS "${ASSETS_SOURCE}")
     message(STATUS "Assets source not found: ${ASSETS_SOURCE}")
-  endif()
-endif()
-
-# --- Partition table promotion ---
-# Hash the source partitions.csv (small text input -> stable, human-traceable
-# identifier; the generated .bin can vary slightly across IDF versions).
-set(PT_SOURCE "${BINARY_DIR}/partition_table/partition-table.bin")
-set(PT_FILENAME "")
-set(PT_HASH "")
-
-if(EXISTS "${PARTITIONS_CSV}" AND EXISTS "${PT_SOURCE}")
-  file(SHA256 "${PARTITIONS_CSV}" PT_FULL_HASH)
-  string(SUBSTRING "${PT_FULL_HASH}" 0 8 PT_HASH_SHORT)
-
-  set(PT_FILENAME "partition_table_v2-${PT_HASH_SHORT}.bin")
-  set(PT_HASH "${PT_HASH_SHORT}")
-  set(PT_DEST "${WEB_BINARIES_DIR}/${PT_FILENAME}")
-
-  if(NOT EXISTS "${PT_DEST}"
-      OR "${PT_SOURCE}" IS_NEWER_THAN "${PT_DEST}")
-    if(EXISTS "${PT_DEST}")
-      message(STATUS "Re-promoting partition table (source is newer): ${PT_FILENAME}")
-    else()
-      message(STATUS "Promoting partition table: ${PT_FILENAME}")
-    endif()
-    file(COPY "${PT_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
-    file(RENAME "${WEB_BINARIES_DIR}/partition-table.bin" "${PT_DEST}")
-    file(TOUCH "${PT_DEST}")
-    set(PROMOTED_SOMETHING TRUE)
-  else()
-    message(STATUS "Partition table already up to date: ${PT_FILENAME}")
-  endif()
-else()
-  if(NOT EXISTS "${PARTITIONS_CSV}")
-    message(STATUS "partitions.csv not found: ${PARTITIONS_CSV}")
-  endif()
-  if(NOT EXISTS "${PT_SOURCE}")
-    message(STATUS "Partition-table binary not found: ${PT_SOURCE}")
   endif()
 endif()
 
@@ -159,7 +100,6 @@ endif()
 # --- Generate releases.json ---
 # Scan existing binaries and build manifest
 
-# Get current timestamp
 string(TIMESTAMP CURRENT_TIMESTAMP "%Y-%m-%dT%H:%M:%S")
 string(TIMESTAMP CURRENT_DATE "%Y-%m-%d")
 
@@ -169,15 +109,12 @@ set(FW_ENTRIES "")
 
 foreach(FW_BIN ${FW_BINARIES})
   get_filename_component(FW_NAME "${FW_BIN}" NAME)
-  # Extract version from filename: storm-summoner-X.Y.bin -> X.Y
   string(REGEX MATCH "storm-summoner-([0-9]+\\.[0-9]+)\\.bin" _ "${FW_NAME}")
   set(FW_VER "${CMAKE_MATCH_1}")
-  
+
   if(NOT "${FW_VER}" STREQUAL "")
-    # Get file modification time for date
     file(TIMESTAMP "${FW_BIN}" FW_DATE "%Y-%m-%d")
-    
-    # Build JSON entry
+
     set(FW_ENTRY "    { \"version\": \"${FW_VER}\", \"filename\": \"${FW_NAME}\", \"date\": \"${FW_DATE}\" }")
     list(APPEND FW_ENTRIES "${FW_ENTRY}")
   endif()
@@ -192,7 +129,6 @@ foreach(FW_BIN ${FW_BINARIES})
   set(FW_MAJOR "${CMAKE_MATCH_1}")
   set(FW_MINOR "${CMAKE_MATCH_2}")
   if(DEFINED FW_MAJOR AND NOT "${FW_MAJOR}" STREQUAL "" AND NOT "${FW_MINOR}" STREQUAL "")
-    # Create sortable key: pad with zeros for proper sorting
     math(EXPR SORT_KEY "${FW_MAJOR} * 1000 + ${FW_MINOR}")
     list(APPEND FW_VERSIONS "${SORT_KEY}|${FW_MAJOR}.${FW_MINOR}|${FW_NAME}|${FW_BIN}")
   endif()
@@ -208,7 +144,7 @@ foreach(FW_ITEM ${FW_VERSIONS})
   list(GET FW_PARTS 2 FW_NAME)
   list(GET FW_PARTS 3 FW_PATH)
   file(TIMESTAMP "${FW_PATH}" FW_DATE "%Y-%m-%d")
-  
+
   if(FW_JSON_ARRAY)
     set(FW_JSON_ARRAY "${FW_JSON_ARRAY},\n    { \"version\": \"${FW_VER}\", \"filename\": \"${FW_NAME}\", \"date\": \"${FW_DATE}\" }")
   else()
@@ -216,9 +152,8 @@ foreach(FW_ITEM ${FW_VERSIONS})
   endif()
 endforeach()
 
-# Collect assets binaries (both legacy `assets-*.bin` and new
-# `shared_assets-*.bin`; old units doing a plain ASSETS OTA can still pull
-# from `assets`, while v(N+2) System Update only consumes `shared_assets`).
+# Collect assets binaries. These are the LittleFS images consumed by the
+# Updater tab's ASSETS-mode OTA path.
 file(GLOB ASSETS_BINARIES "${WEB_BINARIES_DIR}/assets-*.bin")
 set(ASSETS_ITEMS "")
 
@@ -251,85 +186,6 @@ foreach(ASSET_ITEM ${ASSETS_ITEMS})
   endif()
 endforeach()
 
-# Collect shared_assets binaries (post-split RO partition images).
-file(GLOB SHARED_ASSETS_BINARIES "${WEB_BINARIES_DIR}/shared_assets-*.bin")
-set(SHARED_ASSETS_ITEMS "")
-
-foreach(SA_BIN ${SHARED_ASSETS_BINARIES})
-  get_filename_component(SA_NAME "${SA_BIN}" NAME)
-  string(REGEX MATCH "shared_assets-([a-f0-9]+)\\.bin" _ "${SA_NAME}")
-  set(SA_CHECKSUM "${CMAKE_MATCH_1}")
-
-  if(SA_CHECKSUM)
-    file(TIMESTAMP "${SA_BIN}" SA_DATE "%Y-%m-%d")
-    file(TIMESTAMP "${SA_BIN}" SA_SORT "%Y%m%d%H%M%S")
-    list(APPEND SHARED_ASSETS_ITEMS "${SA_SORT}|${SA_CHECKSUM}|${SA_NAME}|${SA_DATE}")
-  endif()
-endforeach()
-
-list(SORT SHARED_ASSETS_ITEMS)
-list(REVERSE SHARED_ASSETS_ITEMS)
-
-set(SHARED_ASSETS_JSON_ARRAY "")
-foreach(SA_ITEM ${SHARED_ASSETS_ITEMS})
-  string(REPLACE "|" ";" SA_PARTS "${SA_ITEM}")
-  list(GET SA_PARTS 1 SA_CHECKSUM)
-  list(GET SA_PARTS 2 SA_NAME)
-  list(GET SA_PARTS 3 SA_DATE)
-
-  if(SHARED_ASSETS_JSON_ARRAY)
-    set(SHARED_ASSETS_JSON_ARRAY "${SHARED_ASSETS_JSON_ARRAY},\n    { \"checksum\": \"${SA_CHECKSUM}\", \"filename\": \"${SA_NAME}\", \"date\": \"${SA_DATE}\" }")
-  else()
-    set(SHARED_ASSETS_JSON_ARRAY "    { \"checksum\": \"${SA_CHECKSUM}\", \"filename\": \"${SA_NAME}\", \"date\": \"${SA_DATE}\" }")
-  endif()
-endforeach()
-
-# Collect partition table binaries (System Update bundles consume these).
-file(GLOB PT_BINARIES "${WEB_BINARIES_DIR}/partition_table_v2-*.bin")
-set(PT_ITEMS "")
-
-foreach(PT_BIN ${PT_BINARIES})
-  get_filename_component(PT_NAME "${PT_BIN}" NAME)
-  string(REGEX MATCH "partition_table_v2-([a-f0-9]+)\\.bin" _ "${PT_NAME}")
-  set(PT_CHECKSUM "${CMAKE_MATCH_1}")
-
-  if(PT_CHECKSUM)
-    file(TIMESTAMP "${PT_BIN}" PT_DATE "%Y-%m-%d")
-    file(TIMESTAMP "${PT_BIN}" PT_SORT "%Y%m%d%H%M%S")
-    list(APPEND PT_ITEMS "${PT_SORT}|${PT_CHECKSUM}|${PT_NAME}|${PT_DATE}")
-  endif()
-endforeach()
-
-list(SORT PT_ITEMS)
-list(REVERSE PT_ITEMS)
-
-set(PT_JSON_ARRAY "")
-foreach(PT_ITEM ${PT_ITEMS})
-  string(REPLACE "|" ";" PT_PARTS "${PT_ITEM}")
-  list(GET PT_PARTS 1 PT_CHECKSUM)
-  list(GET PT_PARTS 2 PT_NAME)
-  list(GET PT_PARTS 3 PT_DATE)
-
-  if(PT_JSON_ARRAY)
-    set(PT_JSON_ARRAY "${PT_JSON_ARRAY},\n    { \"checksum\": \"${PT_CHECKSUM}\", \"filename\": \"${PT_NAME}\", \"date\": \"${PT_DATE}\" }")
-  else()
-    set(PT_JSON_ARRAY "    { \"checksum\": \"${PT_CHECKSUM}\", \"filename\": \"${PT_NAME}\", \"date\": \"${PT_DATE}\" }")
-  endif()
-endforeach()
-
-# Synthesize the System Update bundle entry for the *current* build.
-# A `system_update` entry pins one specific {firmware, partition_table,
-# shared_assets} triple by hash so the web app's System Update orchestrator
-# can refuse a mismatched combination before driving the multi-step push.
-# Only emitted when all three pieces are present from this build.
-set(SYSTEM_UPDATE_JSON_ARRAY "")
-if(NOT "${PT_HASH}" STREQUAL ""
-   AND NOT "${SHARED_ASSETS_HASH}" STREQUAL ""
-   AND EXISTS "${FW_DEST}")
-  set(SYSTEM_UPDATE_JSON_ARRAY "    {\n      \"firmware_version\": \"${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}\",\n      \"firmware\": \"${FW_FILENAME}\",\n      \"partition_table\": \"partition_table_v2-${PT_HASH}.bin\",\n      \"shared_assets\": \"shared_assets-${SHARED_ASSETS_HASH}.bin\",\n      \"date\": \"${CURRENT_DATE}\"\n    }")
-endif()
-
-# Write releases.json
 set(RELEASES_CONTENT "{
   \"generated\": \"${CURRENT_TIMESTAMP}\",
   \"firmware\": [
@@ -337,15 +193,6 @@ ${FW_JSON_ARRAY}
   ],
   \"assets\": [
 ${ASSETS_JSON_ARRAY}
-  ],
-  \"shared_assets\": [
-${SHARED_ASSETS_JSON_ARRAY}
-  ],
-  \"partition_tables\": [
-${PT_JSON_ARRAY}
-  ],
-  \"system_update\": [
-${SYSTEM_UPDATE_JSON_ARRAY}
   ]
 }
 ")

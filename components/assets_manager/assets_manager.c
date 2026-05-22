@@ -371,10 +371,9 @@ esp_err_t assets_manager_init(void) {
   }
 
   // Mount the RW `userdata` partition. format_if_mount_failed=true so the
-  // first-boot empty partition is auto-formatted. If the partition is missing
-  // entirely (v(N+2) firmware on a unit still running the old PT), we log an
-  // ESP_LOGE but continue init - all userdata writes will fail gracefully at
-  // the fopen/mkdir layer and the user can re-run the system update.
+  // first-boot empty partition is auto-formatted. If the mount fails outright
+  // we log an ESP_LOGE but continue init - all userdata writes will fail
+  // gracefully at the fopen/mkdir layer.
   esp_vfs_littlefs_conf_t userdata_conf = {
     .base_path = USERDATA_BASE_PATH,
     .partition_label = USERDATA_PARTITION,
@@ -412,13 +411,11 @@ esp_err_t assets_manager_init(void) {
   } else {
     g_userdata_available = false;
     ESP_LOGE(TAG, "userdata partition unavailable (%s) - "
-      "device booting in degraded mode. Re-run system update from web app.",
+      "device booting in degraded mode. Recover with `idf.py erase-flash` and reflash.",
       esp_err_to_name(udret));
   }
 
-  // Load manifest from the RO partition. The Phase 3 split (RO + RW manifests
-  // merged into g_manifest) lands later; for now we keep the existing single-
-  // manifest behavior so v(N+2) Phase 1 remains a structural-only change.
+  // Load manifest from the RO partition.
   ret = load_manifest();
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to load manifest");
@@ -580,7 +577,7 @@ extern esp_err_t assets_regenerate_user_devices_manifest(void);
  * Rebuild user (RW) device manifest by scanning /userdata/devices/, then
  * reload the merged manifest into memory. The shared (RO) manifest is shipped
  * as a build artifact and is never regenerated at runtime - use the dev
- * console's `regenerate_shared_devices` for that (Phase 7).
+ * console's `regenerate_shared_devices` for that.
  *
  * This is what device_config.c invokes after `ensure_default_device_exists`
  * writes a new file under /userdata/devices/user/.

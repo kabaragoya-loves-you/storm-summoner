@@ -36,11 +36,10 @@ static inline int assets_trs_type_to_transmit_mode(midi_trs_type_t trs_type) {
  * - Mounts (formatting on first mount) the RW `userdata` LittleFS partition
  * - Loads and parses manifest.json
  *
- * Returns ESP_OK on success. If the `userdata` partition is missing (e.g. a
- * v(N+2) firmware booting on a unit that hasn't yet had its partition table
- * updated), init logs an ESP_LOGE but still returns ESP_OK so the rest of the
- * system can boot in degraded mode. Callers can check
- * assets_userdata_available() to decide whether to attempt writes.
+ * Returns ESP_OK on success. If the `userdata` partition mount fails, init
+ * logs an ESP_LOGE but still returns ESP_OK so the rest of the system can
+ * boot in degraded mode. Callers can check assets_userdata_available() to
+ * decide whether to attempt writes.
  */
 esp_err_t assets_manager_init(void);
 

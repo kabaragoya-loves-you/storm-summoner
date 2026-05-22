@@ -16,11 +16,11 @@ static const char* TAG = "assets_mgr_console";
 // Set message on working module
 extern void working_set_message(const char *msg);
 
-// Phase 7: `regenerate_devices` was renamed to make the partition split
-// explicit. `regenerate_shared_devices` rebuilds the manifest of the
-// read-only /assets/devices tree (only useful in dev when files are
-// pushed/pulled manually); `regenerate_user_devices` rebuilds the writable
-// /userdata/devices manifest and reloads the merged in-memory manifest.
+// The partition split exposes two regen commands: `regenerate_shared_devices`
+// rebuilds the manifest of the read-only /assets/devices tree (only useful in
+// dev when files are pushed/pulled manually); `regenerate_user_devices`
+// rebuilds the writable /userdata/devices manifest and reloads the merged
+// in-memory manifest.
 static const char* registered_commands[] = {
   "info",
   "regenerate_shared_devices",
