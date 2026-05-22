@@ -218,7 +218,6 @@ static const action_type_t s_all_action_types[] = {
   ACTION_STOP,
   ACTION_PAUSE,
   ACTION_RECORD,
-  ACTION_TAP,
   ACTION_TAP_TEMPO,
   ACTION_SET_TEMPO,
   ACTION_TEMPO_INC,
@@ -300,7 +299,7 @@ static bool is_action_visible(action_type_t type) {
   }
   
   // Tempo actions only available with internal clock
-  if (type == ACTION_TAP || type == ACTION_TAP_TEMPO || type == ACTION_SET_TEMPO ||
+  if (type == ACTION_TAP_TEMPO || type == ACTION_SET_TEMPO ||
       type == ACTION_TEMPO_INC || type == ACTION_TEMPO_DEC ||
       type == ACTION_TEMPO_HOLD || type == ACTION_TEMPO_CYCLE) {
     if (clock_source != CLOCK_SOURCE_INTERNAL) {
@@ -339,7 +338,6 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_STOP: return "Stop";
     case ACTION_PAUSE: return "Pause";
     case ACTION_RECORD: return "Record";
-    case ACTION_TAP: return "Tap";
     case ACTION_TAP_TEMPO: return "Tap Tempo";
     case ACTION_SET_TEMPO: return "Set Tempo";
     case ACTION_TEMPO_INC: return "Tempo +1";

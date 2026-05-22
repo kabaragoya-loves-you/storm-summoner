@@ -7,13 +7,11 @@
 
 #define TAG "MENU_TEMPO"
 
-// Maximum menu items (tap mode, timeout, sync pulse mode, clock output, standard,
+// Maximum menu items (sync pulse mode, clock output, standard,
 // always send, disable on passthrough, deadzone, led sync, flash duration)
-#define MAX_TEMPO_ITEMS 10
+#define MAX_TEMPO_ITEMS 8
 
 // Label buffers
-static char s_tap_mode_label[32];
-static char s_tap_timeout_label[32];
 static char s_sync_pulse_mode_label[32];
 static char s_clock_output_label[32];
 static char s_clock_standard_label[40];
@@ -23,102 +21,6 @@ static char s_deadzone_label[32];
 static char s_led_sync_label[32];
 static char s_flash_duration_label[32];
 static menu_item_t s_tempo_items[MAX_TEMPO_ITEMS];
-
-// ============================================================================
-// Tap Mode Roller (Toggle / Time / Hold)
-// ============================================================================
-
-static const char* TAP_MODE_OPTIONS = "Toggle\nTime\nHold";
-
-static const char* tap_mode_to_string(tap_tempo_mode_t mode) {
-  switch (mode) {
-    case TAP_MODE_TOGGLE: return "Toggle";
-    case TAP_MODE_TIME:   return "Time";
-    case TAP_MODE_HOLD:   return "Hold";
-    default: return "Toggle";
-  }
-}
-
-static uint32_t tap_mode_to_index(tap_tempo_mode_t mode) {
-  switch (mode) {
-    case TAP_MODE_TOGGLE: return 0;
-    case TAP_MODE_TIME:   return 1;
-    case TAP_MODE_HOLD:   return 2;
-    default: return 0;
-  }
-}
-
-static void tap_mode_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  tap_tempo_mode_t mode;
-  switch (selected_index) {
-    case 1:  mode = TAP_MODE_TIME; break;
-    case 2:  mode = TAP_MODE_HOLD; break;
-    default: mode = TAP_MODE_TOGGLE; break;
-  }
-  
-  tempo_set_tap_mode(mode);
-  ESP_LOGI(TAG, "Tap mode set to %s", tap_mode_to_string(mode));
-  
-  menu_navigate_back_then_to(2, "Tempo", menu_page_tempo_create);
-}
-
-static lv_obj_t* tap_mode_roller_create(void) {
-  tap_tempo_mode_t current = tempo_get_tap_mode();
-  uint32_t initial_index = tap_mode_to_index(current);
-  
-  return menu_create_roller_page("Tap Mode", TAP_MODE_OPTIONS,
-    initial_index, tap_mode_confirm_cb, NULL);
-}
-
-static void nav_to_tap_mode(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Tap Mode", tap_mode_roller_create);
-}
-
-// ============================================================================
-// Tap Timeout Roller (5s / 10s / 15s / 20s / 30s / 60s)
-// ============================================================================
-
-static const char* TAP_TIMEOUT_OPTIONS = "5s\n10s\n15s\n20s\n30s\n60s";
-static const uint8_t TAP_TIMEOUT_VALUES[] = { 5, 10, 15, 20, 30, 60 };
-static const int TAP_TIMEOUT_COUNT = sizeof(TAP_TIMEOUT_VALUES) / sizeof(TAP_TIMEOUT_VALUES[0]);
-
-static uint32_t tap_timeout_to_index(uint8_t seconds) {
-  for (int i = 0; i < TAP_TIMEOUT_COUNT; i++) {
-    if (TAP_TIMEOUT_VALUES[i] == seconds) return i;
-  }
-  // Default to 10s if not found
-  return 1;
-}
-
-static void tap_timeout_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  uint8_t timeout = 10;
-  if (selected_index < TAP_TIMEOUT_COUNT) {
-    timeout = TAP_TIMEOUT_VALUES[selected_index];
-  }
-  
-  tempo_set_tap_timeout(timeout);
-  ESP_LOGI(TAG, "Tap timeout set to %u seconds", timeout);
-  
-  menu_navigate_back_then_to(2, "Tempo", menu_page_tempo_create);
-}
-
-static lv_obj_t* tap_timeout_roller_create(void) {
-  uint8_t current = tempo_get_tap_timeout();
-  uint32_t initial_index = tap_timeout_to_index(current);
-  
-  return menu_create_roller_page("Tap Timeout", TAP_TIMEOUT_OPTIONS,
-    initial_index, tap_timeout_confirm_cb, NULL);
-}
-
-static void nav_to_tap_timeout(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Tap Timeout", tap_timeout_roller_create);
-}
 
 // ============================================================================
 // Sync Pulse Mode Roller (for external clock input interpretation)
@@ -461,20 +363,7 @@ lv_obj_t* menu_page_tempo_create(void) {
   ESP_LOGI(TAG, "Creating tempo settings page");
   
   int idx = 0;
-  
-  // Tap Mode
-  tap_tempo_mode_t tap_mode = tempo_get_tap_mode();
-  snprintf(s_tap_mode_label, sizeof(s_tap_mode_label), "Tap Mode\n%s",
-    tap_mode_to_string(tap_mode));
-  s_tempo_items[idx++] = (menu_item_t){ s_tap_mode_label, nav_to_tap_mode, NULL, true };
-  
-  // Tap Timeout (only show when mode is TIME)
-  if (tap_mode == TAP_MODE_TIME) {
-    uint8_t timeout = tempo_get_tap_timeout();
-    snprintf(s_tap_timeout_label, sizeof(s_tap_timeout_label), "Tap Timeout\n%us", timeout);
-    s_tempo_items[idx++] = (menu_item_t){ s_tap_timeout_label, nav_to_tap_timeout, NULL, true };
-  }
-  
+
   // Sync Pulse Mode (external clock input interpretation)
   clock_sync_mode_t sync_mode = clock_sync_get_mode();
   snprintf(s_sync_pulse_mode_label, sizeof(s_sync_pulse_mode_label), "Sync Pulse Mode\n%s",

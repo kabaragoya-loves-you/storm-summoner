@@ -20,7 +20,6 @@ static const char* action_type_names[] = {
   [ACTION_STOP] = "Stop",
   [ACTION_PAUSE] = "Pause",
   [ACTION_RECORD] = "Record",
-  [ACTION_TAP] = "Tap",
   [ACTION_TAP_TEMPO] = "Tap Tempo",
   [ACTION_SET_TEMPO] = "Set Tempo",
   [ACTION_TEMPO_INC] = "Tempo +1",

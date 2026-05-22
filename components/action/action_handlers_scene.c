@@ -134,23 +134,8 @@ action_handle_result_t action_handlers_scene_dispatch(
       if (is_press) transport_record();
       return ACTION_HANDLED;
 
-    case ACTION_TAP:
-      if (is_press) tempo_tap();
-      return ACTION_HANDLED;
-
     case ACTION_TAP_TEMPO:
-      if (is_press) {
-        tap_tempo_mode_t mode = tempo_get_tap_mode();
-        if (mode == TAP_MODE_HOLD) {
-          tempo_tap_session_start();
-        } else {
-          tempo_tap_session_toggle();
-        }
-      } else {
-        if (tempo_get_tap_mode() == TAP_MODE_HOLD) {
-          tempo_tap_session_stop();
-        }
-      }
+      if (is_press) tempo_tap();
       return ACTION_HANDLED;
 
     case ACTION_SET_TEMPO:

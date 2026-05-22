@@ -23,7 +23,6 @@ static const char* get_action_display_name(action_type_t type) {
     case ACTION_STOP: return "Stop";
     case ACTION_PAUSE: return "Pause";
     case ACTION_RECORD: return "Record";
-    case ACTION_TAP: return "Tap";
     case ACTION_TAP_TEMPO: return "Tap Tempo";
     case ACTION_SET_TEMPO: return "Set Tempo";
     case ACTION_TEMPO_INC: return "Tempo +1";

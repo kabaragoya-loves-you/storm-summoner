@@ -3916,7 +3916,6 @@ static const char* action_type_json_names[] = {
   [ACTION_STOP] = "stop",
   [ACTION_PAUSE] = "pause",
   [ACTION_RECORD] = "record",
-  [ACTION_TAP] = "tap",
   [ACTION_TAP_TEMPO] = "tap_tempo",
   [ACTION_SET_TEMPO] = "set_tempo",
   [ACTION_TEMPO_INC] = "tempo_inc",
@@ -3974,6 +3973,7 @@ static action_type_t action_type_from_string(const char* name) {
   if (strcmp(name, "transport_stop") == 0) return ACTION_STOP;
   if (strcmp(name, "transport_pause") == 0) return ACTION_PAUSE;
   if (strcmp(name, "transport_record") == 0) return ACTION_RECORD;
+  if (strcmp(name, "tap") == 0) return ACTION_TAP_TEMPO;
   if (strcmp(name, "all_notes_off") == 0) return ACTION_RESET;
   if (strcmp(name, "all_sound_off") == 0) return ACTION_RESET;
   if (strcmp(name, "send_reset") == 0) return ACTION_RESET;

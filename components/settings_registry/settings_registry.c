@@ -210,18 +210,6 @@ static esp_err_t set_als_deadzone(uint32_t v) {
 }
 
 // Tempo wrappers
-static uint32_t get_tap_mode(void) { return (uint32_t)tempo_get_tap_mode(); }
-static esp_err_t set_tap_mode(uint32_t v) {
-  tempo_set_tap_mode((tap_tempo_mode_t)v);
-  return ESP_OK;
-}
-
-static uint32_t get_tap_timeout(void) { return tempo_get_tap_timeout(); }
-static esp_err_t set_tap_timeout(uint32_t v) {
-  tempo_set_tap_timeout((uint8_t)v);
-  return ESP_OK;
-}
-
 static uint32_t get_sync_pulse_mode(void) { return (uint32_t)clock_sync_get_mode(); }
 static esp_err_t set_sync_pulse_mode(uint32_t v) {
   clock_sync_set_mode((clock_sync_mode_t)v);
@@ -398,8 +386,6 @@ static const setting_entry_t s_settings[] = {
   {"als.deadzone", get_als_deadzone, set_als_deadzone},
   
   // Tempo category
-  {"tempo.tap_mode", get_tap_mode, set_tap_mode},
-  {"tempo.tap_timeout", get_tap_timeout, set_tap_timeout},
   {"tempo.sync_pulse_mode", get_sync_pulse_mode, set_sync_pulse_mode},
   {"tempo.clock_output", get_clock_output, set_clock_output},
   {"tempo.clock_standard", get_clock_standard, set_clock_standard},

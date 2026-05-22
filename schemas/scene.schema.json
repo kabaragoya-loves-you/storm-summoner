@@ -840,7 +840,6 @@
             "stop",
             "pause",
             "record",
-            "tap",
             "tap_tempo",
             "set_tempo",
             "tempo_inc",

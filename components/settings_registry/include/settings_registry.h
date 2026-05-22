@@ -8,14 +8,14 @@
 /**
  * Settings Registry Component
  * 
- * Maps user-facing setting IDs (e.g., "tempo.tap_mode") to component getter/setter calls.
+ * Maps user-facing setting IDs (e.g., "tempo.clock_standard") to component getter/setter calls.
  * Provides a semantic layer between USB CONFIG mode and the various component APIs.
  */
 
 /**
  * Get a setting value by ID
  * 
- * @param id The setting ID (e.g., "tempo.tap_mode")
+ * @param id The setting ID (e.g., "tempo.clock_standard")
  * @param value Pointer to store the value (always uint32_t, cast as needed)
  * @return ESP_OK on success, ESP_ERR_NOT_FOUND if ID unknown
  */
@@ -24,7 +24,7 @@ esp_err_t settings_registry_get_value(const char* id, uint32_t* value);
 /**
  * Set a setting value by ID
  * 
- * @param id The setting ID (e.g., "tempo.tap_mode")
+ * @param id The setting ID (e.g., "tempo.clock_standard")
  * @param value The value to set (always uint32_t, cast as needed)
  * @return ESP_OK on success, ESP_ERR_NOT_FOUND if ID unknown, or error from setter
  */

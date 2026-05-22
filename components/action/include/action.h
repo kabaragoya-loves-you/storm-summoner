@@ -26,8 +26,7 @@ typedef enum {
   ACTION_RECORD,              // Toggle: recording -> stop, else -> record
   
   // Tempo
-  ACTION_TAP,                 // Send a single tap input (for tap tempo)
-  ACTION_TAP_TEMPO,           // Toggle/start/stop tap tempo session
+  ACTION_TAP_TEMPO,           // Register a tap; BPM is computed from a moving window of recent inter-tap intervals
   ACTION_SET_TEMPO,           // Set BPM directly (uses tempo.bpm param)
   ACTION_TEMPO_INC,           // Increment BPM by 1
   ACTION_TEMPO_DEC,           // Decrement BPM by 1
@@ -435,7 +434,6 @@ action_t action_create_preset_inc(void);
 action_t action_create_preset_dec(void);
 action_t action_create_scene_inc(void);
 action_t action_create_scene_dec(void);
-action_t action_create_tap(void);
 action_t action_create_tap_tempo(void);
 action_t action_create_set_tempo(uint16_t bpm);
 action_t action_create_transport(action_type_t transport_type);

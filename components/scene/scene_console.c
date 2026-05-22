@@ -1018,9 +1018,6 @@ static int cmd_pad(int argc, char **argv) {
     }
     ESP_LOGI(TAG, "CC Cycle with %d CC(s), %d steps", mcc.num_ccs, mcc.num_cycle_steps);
   }
-  else if (strcmp(action_str, "tap") == 0) {
-    action = action_create_tap();
-  }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
   }
@@ -1196,9 +1193,6 @@ static int cmd_button(int argc, char **argv) {
         action.params.control.cycle_values[i][j] = mcc.cycle_values[i][j];
       }
     }
-  }
-  else if (strcmp(action_str, "tap") == 0) {
-    action = action_create_tap();
   }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
@@ -1419,9 +1413,6 @@ static int cmd_bump(int argc, char **argv) {
         action.params.control.cycle_values[i][j] = mcc.cycle_values[i][j];
       }
     }
-  }
-  else if (strcmp(action_str, "tap") == 0) {
-    action = action_create_tap();
   }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
@@ -1644,9 +1635,6 @@ static int cmd_expr_switch(int argc, char **argv) {
         action.params.control.cycle_values[i][j] = mcc.cycle_values[i][j];
       }
     }
-  }
-  else if (strcmp(action_str, "tap") == 0) {
-    action = action_create_tap();
   }
   else if (strcmp(action_str, "tap_tempo") == 0) {
     action = action_create_tap_tempo();
@@ -1931,8 +1919,7 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "  confirm_pending                  - Confirm pending change");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Tempo:");
-  ESP_LOGI(TAG, "  tap                              - Single tap (for tap tempo)");
-  ESP_LOGI(TAG, "  tap_tempo                        - Toggle tap tempo session");
+  ESP_LOGI(TAG, "  tap_tempo                        - Tap to set BPM (moving average)");
   ESP_LOGI(TAG, "  set_tempo <bpm>                  - Set tempo (20-300)");
   ESP_LOGI(TAG, "  tempo_inc / tempo_dec            - +/- 1 BPM");
   ESP_LOGI(TAG, "");

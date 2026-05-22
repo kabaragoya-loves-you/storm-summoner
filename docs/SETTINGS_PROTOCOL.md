@@ -100,7 +100,7 @@ Setting IDs follow a hierarchical naming convention:
 
 Examples:
 - `config.scene_mode`
-- `tempo.tap_mode`
+- `tempo.clock_standard`
 - `buttons.debounce`
 - `sensor.prox_hysteresis`
 
@@ -184,8 +184,8 @@ The schema supports conditional visibility rules:
 
 ```json
 {
-  "id": "tempo.tap_timeout",
-  "visible_when": {"id": "tempo.tap_mode", "value": 1}
+  "id": "tempo.flash_duration",
+  "visible_when": {"id": "tempo.led_sync", "value": true}
 }
 ```
 

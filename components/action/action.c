@@ -245,12 +245,6 @@ action_t action_create_scene_dec(void) {
   return action;
 }
 
-action_t action_create_tap(void) {
-  action_t action = {0};
-  action.type = ACTION_TAP;
-  return action;
-}
-
 action_t action_create_tap_tempo(void) {
   action_t action = {0};
   action.type = ACTION_TAP_TEMPO;

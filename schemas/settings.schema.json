@@ -565,34 +565,6 @@
       "description": "Tempo and clock settings",
       "settings": [
         {
-          "id": "tempo.tap_mode",
-          "label": "Tap Mode",
-          "description": "Tap tempo mode",
-          "type": "select",
-          "options": [
-            {"value": 0, "label": "Toggle"},
-            {"value": 1, "label": "Time"},
-            {"value": 2, "label": "Hold"}
-          ],
-          "default": 0
-        },
-        {
-          "id": "tempo.tap_timeout",
-          "label": "Tap Timeout",
-          "description": "Timeout for tap tempo (Time mode only)",
-          "type": "select",
-          "options": [
-            {"value": 5, "label": "5s"},
-            {"value": 10, "label": "10s"},
-            {"value": 15, "label": "15s"},
-            {"value": 20, "label": "20s"},
-            {"value": 30, "label": "30s"},
-            {"value": 60, "label": "60s"}
-          ],
-          "default": 10,
-          "visible_when": {"id": "tempo.tap_mode", "value": 1}
-        },
-        {
           "id": "tempo.sync_pulse_mode",
           "label": "Sync Pulse Mode",
           "description": "External clock input interpretation",

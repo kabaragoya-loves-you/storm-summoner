@@ -37,13 +37,6 @@ typedef enum {
   DIVIDER_SIXTEENTH = 6
 } tempo_note_divider_t;
 
-// Tap tempo session modes
-typedef enum {
-  TAP_MODE_TOGGLE,  // Start on first tap_tempo, stop on second (default)
-  TAP_MODE_TIME,    // Sample for N seconds after tap_tempo triggered
-  TAP_MODE_HOLD     // Sample while tap_tempo trigger is held
-} tap_tempo_mode_t;
-
 // Time signature structure
 typedef struct {
   uint8_t numerator;    // Beats per bar (e.g., 4 for 4/4)
@@ -70,21 +63,10 @@ void tempo_sync_pulse(void);
 // Enable or disable logging/LED blink on every note divider tick.
 void tempo_enable_quarter_note_log(bool enable);
 
-// Tap tempo support
-void tempo_tap(void);                      // Register a single tap input
-void tempo_tap_session_start(void);        // Start tap tempo sampling session
-void tempo_tap_session_stop(void);         // Stop tap tempo sampling session  
-void tempo_tap_session_toggle(void);       // Toggle sampling session (for toggle mode)
-bool tempo_is_tap_sampling(void);          // Check if currently sampling taps
-
-// Tap tempo session configuration
-void tempo_set_tap_mode(tap_tempo_mode_t mode);
-tap_tempo_mode_t tempo_get_tap_mode(void);
-void tempo_set_tap_timeout(uint8_t seconds);  // For TAP_MODE_TIME (default 10s)
-uint8_t tempo_get_tap_timeout(void);
-
-// Legacy compatibility (deprecated, use tempo_tap instead)
-void tempo_tap_event(void);
+// Tap tempo: register a tap. BPM is computed as the moving average of the most
+// recent up to N inter-tap intervals. If more than X ms have elapsed since the
+// previous tap, the next tap restarts the averaging window.
+void tempo_tap(void);
 
 // For MIDI clock mode.
 void tempo_midi_clock_tick(void);

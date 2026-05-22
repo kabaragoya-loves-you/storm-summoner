@@ -25,8 +25,6 @@
 #define NVS_KEY_CLOCK_OUTPUT "tempo_clk_out"
 #define NVS_KEY_CLOCK_ALWAYS "tempo_clk_alws"
 #define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
-#define NVS_KEY_TAP_MODE "tempo_tap_mode"
-#define NVS_KEY_TAP_TIMEOUT "tempo_tap_to"
 #define NVS_KEY_CLOCK_STD "tempo_clk_std"
 
 // LED NVS keys
@@ -76,19 +74,13 @@ static uint32_t s_tick_counter = 0;
 static uint8_t s_beat_counter = 0;  // Counts beats within bar
 
 // Tap tempo
+// N = moving window size (most recent up to N taps are averaged).
+// X = inter-tap timeout in ms; one beat at MIN_BPM (20) is 3000ms, plus headroom.
 #define TAP_BUFFER_SIZE 4
-#define TAP_TIMEOUT_MS 2000
-#define DEFAULT_TAP_TIMEOUT_SEC 10
+#define TAP_INTER_TAP_TIMEOUT_MS 3500
 static uint32_t s_tap_timestamps[TAP_BUFFER_SIZE] = {0};
 static int s_tap_count = 0;
 static int s_tap_index = 0;
-
-// Tap tempo session state
-static tap_tempo_mode_t s_tap_mode = TAP_MODE_TOGGLE;
-static uint8_t s_tap_timeout_sec = DEFAULT_TAP_TIMEOUT_SEC;
-static bool s_tap_sampling = false;
-static uint32_t s_tap_session_start_ms = 0;
-static TimerHandle_t s_tap_timeout_timer = NULL;
 
 // External sync tracking
 static SemaphoreHandle_t s_sync_semaphore = NULL;
@@ -211,21 +203,6 @@ void tempo_init(void) {
     s_disable_clock_on_passthrough = (no_pt != 0);
   } else {
     app_settings_save_u8(NVS_KEY_CLOCK_NO_PT, s_disable_clock_on_passthrough ? 1 : 0);
-  }
-  
-  // Load tap tempo session settings
-  uint8_t tap_mode = TAP_MODE_TOGGLE;
-  if (app_settings_load_u8(NVS_KEY_TAP_MODE, &tap_mode) == ESP_OK) {
-    s_tap_mode = (tap_tempo_mode_t)tap_mode;
-  } else {
-    app_settings_save_u8(NVS_KEY_TAP_MODE, (uint8_t)s_tap_mode);
-  }
-  
-  uint8_t tap_timeout = DEFAULT_TAP_TIMEOUT_SEC;
-  if (app_settings_load_u8(NVS_KEY_TAP_TIMEOUT, &tap_timeout) == ESP_OK) {
-    s_tap_timeout_sec = tap_timeout;
-  } else {
-    app_settings_save_u8(NVS_KEY_TAP_TIMEOUT, s_tap_timeout_sec);
   }
   
   // Note: update_midi_out_clock_settings() will be called when tempo_start() is called
@@ -936,131 +913,21 @@ static void calculate_tap_bpm(void) {
   }
 }
 
-// Timer callback for TAP_MODE_TIME
-static void tap_timeout_callback(TimerHandle_t timer) {
-  if (s_tap_sampling) {
-    ESP_LOGI(TAG, "Tap tempo session timed out");
-    tempo_tap_session_stop();
-  }
-}
-
 void tempo_tap(void) {
-  // Only accept taps when sampling is active
-  if (!s_tap_sampling) {
-    ESP_LOGD(TAG, "Tap ignored - not in sampling mode");
-    return;
-  }
-  
   uint32_t now = esp_timer_get_time() / 1000;
-  
-  // Check for inter-tap timeout (reset if too long between taps)
-  if (s_tap_count > 0 && (now - s_tap_timestamps[(s_tap_index - 1 + TAP_BUFFER_SIZE) % TAP_BUFFER_SIZE]) > TAP_TIMEOUT_MS) {
-    ESP_LOGD(TAG, "Inter-tap timeout, resetting buffer");
-    reset_tap_buffer();
+
+  if (s_tap_count > 0) {
+    uint32_t last = s_tap_timestamps[(s_tap_index - 1 + TAP_BUFFER_SIZE) % TAP_BUFFER_SIZE];
+    if ((now - last) > TAP_INTER_TAP_TIMEOUT_MS) reset_tap_buffer();
   }
-  
-  // Store timestamp
+
   s_tap_timestamps[s_tap_index] = now;
   s_tap_index = (s_tap_index + 1) % TAP_BUFFER_SIZE;
   if (s_tap_count < TAP_BUFFER_SIZE) s_tap_count++;
-  
+
   ESP_LOGI(TAG, "Tap %d received", s_tap_count);
-  
-  // Calculate and update BPM in real-time if we have enough taps
+
   calculate_tap_bpm();
-}
-
-void tempo_tap_session_start(void) {
-  if (s_tap_sampling) {
-    ESP_LOGD(TAG, "Tap session already active");
-    return;
-  }
-  
-  s_tap_sampling = true;
-  s_tap_session_start_ms = esp_timer_get_time() / 1000;
-  reset_tap_buffer();
-  
-  ESP_LOGI(TAG, "Tap tempo session started (mode: %s)", 
-           s_tap_mode == TAP_MODE_TOGGLE ? "toggle" :
-           s_tap_mode == TAP_MODE_TIME ? "time" : "hold");
-  
-  // Start timeout timer for TAP_MODE_TIME
-  if (s_tap_mode == TAP_MODE_TIME) {
-    if (!s_tap_timeout_timer) {
-      s_tap_timeout_timer = xTimerCreate("tap_timeout", 
-                                          pdMS_TO_TICKS(s_tap_timeout_sec * 1000),
-                                          pdFALSE, NULL, tap_timeout_callback);
-    }
-    if (s_tap_timeout_timer) {
-      xTimerChangePeriod(s_tap_timeout_timer, pdMS_TO_TICKS(s_tap_timeout_sec * 1000), 0);
-      xTimerStart(s_tap_timeout_timer, 0);
-    }
-  }
-}
-
-void tempo_tap_session_stop(void) {
-  if (!s_tap_sampling) {
-    ESP_LOGD(TAG, "Tap session not active");
-    return;
-  }
-  
-  // Stop timeout timer if running
-  if (s_tap_timeout_timer) {
-    xTimerStop(s_tap_timeout_timer, 0);
-  }
-  
-  s_tap_sampling = false;
-  
-  // Final BPM calculation
-  if (s_tap_count >= 2) {
-    calculate_tap_bpm();
-    ESP_LOGI(TAG, "Tap tempo session ended - BPM set to %d", tempo_get_bpm());
-  } else {
-    ESP_LOGI(TAG, "Tap tempo session ended - not enough taps");
-  }
-}
-
-void tempo_tap_session_toggle(void) {
-  if (s_tap_sampling) {
-    tempo_tap_session_stop();
-  } else {
-    tempo_tap_session_start();
-  }
-}
-
-bool tempo_is_tap_sampling(void) {
-  return s_tap_sampling;
-}
-
-void tempo_set_tap_mode(tap_tempo_mode_t mode) {
-  s_tap_mode = mode;
-  app_settings_save_u8(NVS_KEY_TAP_MODE, (uint8_t)mode);
-  ESP_LOGI(TAG, "Tap tempo mode set to %s", 
-           mode == TAP_MODE_TOGGLE ? "toggle" :
-           mode == TAP_MODE_TIME ? "time" : "hold");
-}
-
-tap_tempo_mode_t tempo_get_tap_mode(void) {
-  return s_tap_mode;
-}
-
-void tempo_set_tap_timeout(uint8_t seconds) {
-  s_tap_timeout_sec = seconds > 0 ? seconds : DEFAULT_TAP_TIMEOUT_SEC;
-  app_settings_save_u8(NVS_KEY_TAP_TIMEOUT, s_tap_timeout_sec);
-  ESP_LOGI(TAG, "Tap tempo timeout set to %d seconds", s_tap_timeout_sec);
-}
-
-uint8_t tempo_get_tap_timeout(void) {
-  return s_tap_timeout_sec;
-}
-
-// Legacy compatibility
-void tempo_tap_event(void) {
-  // Old behavior: if not in session mode, auto-start a session and register the tap
-  if (!s_tap_sampling) {
-    tempo_tap_session_start();
-  }
-  tempo_tap();
 }
 
 void tempo_midi_clock_tick(void) {
