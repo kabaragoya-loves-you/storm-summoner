@@ -428,8 +428,10 @@ esp_err_t action_init(void);
 esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_press);
 
 // Helper functions to create common actions
+// Only the helpers actually used by scene defaults and the console are kept;
+// other action types are built directly via struct initialization (JSON loader,
+// menu UI) which keeps the surface area small.
 action_t action_create_control(uint8_t cc_number, uint8_t value);
-action_t action_create_control_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value);
 action_t action_create_preset_inc(void);
 action_t action_create_preset_dec(void);
 action_t action_create_scene_inc(void);
@@ -440,17 +442,6 @@ action_t action_create_transport(action_type_t transport_type);
 action_t action_create_reset(void);
 action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);
-action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode);
-action_t action_create_lfo_start(uint8_t slot);
-action_t action_create_lfo_stop(uint8_t slot);
-action_t action_create_lfo_toggle(uint8_t slot);
-action_t action_create_clock_toggle(bool start_enabled);
-action_t action_create_clock_hold(bool press_enables);
-action_t action_create_clock_burst(uint8_t speed_percent);
-action_t action_create_cut_toggle(uint8_t cut_mode);
-action_t action_create_cut_hold(uint8_t cut_mode);
-action_t action_create_set_ui(uint8_t module_index);
-action_t action_create_ui_hold(uint8_t press_module, uint8_t release_module);
 
 // Get action type name (for debugging/console)
 const char* action_type_to_string(action_type_t type);
@@ -497,6 +488,12 @@ void action_timing_from_string(const char* str, action_timing_t* timing, uint8_t
 // Validate timing against time signature, remap invalid beats to 1
 // Returns true if remapping occurred
 bool action_validate_timing(action_t* action, uint8_t beats_per_bar);
+
+// Validate every action timing in a scene against its time signature.
+// Call after scene load and when time signature changes.
+// Forward-declared to avoid pulling scene.h here (scene.h includes action.h).
+struct scene_t;
+void action_validate_scene_timings(struct scene_t* scene);
 
 // Repeat division string conversion
 const char* action_repeat_division_to_string(action_repeat_division_t div);

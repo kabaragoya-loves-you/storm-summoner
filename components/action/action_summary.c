@@ -4,64 +4,10 @@
 #include <string.h>
 #include <stdio.h>
 
-// Display name for action types (user-friendly names)
-static const char* get_action_display_name(action_type_t type) {
-  switch (type) {
-    case ACTION_NONE: return "Undefined";
-    case ACTION_CONTROL_CHANGE: return "Control Change";
-    case ACTION_CONTROL_HOLD: return "Control Hold";
-    case ACTION_CONTROL_CYCLE: return "Control Cycle";
-    case ACTION_PRESET_INC: return "Preset +1";
-    case ACTION_PRESET_DEC: return "Preset -1";
-    case ACTION_PRESET: return "Set Preset";
-    case ACTION_PRESET_HOLD: return "Preset Hold";
-    case ACTION_PRESET_CYCLE: return "Preset Cycle";
-    case ACTION_SCENE_INC: return "Scene +1";
-    case ACTION_SCENE_DEC: return "Scene -1";
-    case ACTION_SCENE: return "Set Scene";
-    case ACTION_PLAY: return "Play";
-    case ACTION_STOP: return "Stop";
-    case ACTION_PAUSE: return "Pause";
-    case ACTION_RECORD: return "Record";
-    case ACTION_TAP_TEMPO: return "Tap Tempo";
-    case ACTION_SET_TEMPO: return "Set Tempo";
-    case ACTION_TEMPO_INC: return "Tempo +1";
-    case ACTION_TEMPO_DEC: return "Tempo -1";
-    case ACTION_TEMPO_HOLD: return "Tempo Hold";
-    case ACTION_TEMPO_CYCLE: return "Tempo Cycle";
-    case ACTION_NOTE: return "Note";
-    case ACTION_RANDOMIZE: return "Randomize";
-    case ACTION_CONFIRM_PENDING: return "Confirm Pending";
-    case ACTION_RESET: return "Reset";
-    case ACTION_SUSTAIN: return "Sustain";
-    case ACTION_SOSTENUTO: return "Sostenuto";
-    case ACTION_TOUCHWHEEL_HOLD: return "Touchwheel Hold";
-    case ACTION_TOUCHWHEEL_CYCLE: return "Touchwheel Cycle";
-    case ACTION_LFO_START: return "LFO Start";
-    case ACTION_LFO_STOP: return "LFO Stop";
-    case ACTION_LFO_TOGGLE: return "LFO Toggle";
-    case ACTION_LFO_SHAPE: return "LFO Shape";
-    case ACTION_CLOCK_TOGGLE: return "Clock Toggle";
-    case ACTION_CLOCK_HOLD: return "Clock Hold";
-    case ACTION_CLOCK_BURST: return "Clock Burst";
-    case ACTION_CUT_TOGGLE: return "Cut Toggle";
-    case ACTION_CUT_HOLD: return "Cut Hold";
-    case ACTION_SET_UI: return "Set UI";
-    case ACTION_UI_HOLD: return "UI Hold";
-    case ACTION_UI_CYCLE: return "UI Cycle";
-    case ACTION_PARAM_HOLD: return "Param Hold";
-    case ACTION_PARAM_CYCLE: return "Param Cycle";
-    case ACTION_RTG_TOGGLE: return "RTG Toggle";
-    case ACTION_RTG_HOLD: return "RTG Hold";
-    case ACTION_SAMPLE_HOLD_TOGGLE: return "S+H Toggle";
-    case ACTION_SAMPLE_HOLD_HOLD: return "S+H Hold";
-    case ACTION_STEP: return "Step";
-    case ACTION_PUNCH_IN: return "Punch-In";
-    case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
-    case ACTION_BOOMERANG: return "Boomerang";
-    default: return "Unknown";
-  }
-}
+// Display names for action types live in action_strings.c
+// (action_type_to_string); the ACTION_NONE case is handled by the early
+// return in action_format_summary, so no separate "Undefined" label is needed
+// here.
 
 void action_summary_init(action_summary_t *summary) {
   if (!summary) return;
@@ -181,7 +127,7 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     return;
   }
 
-  const char *type_name = get_action_display_name(action->type);
+  const char *type_name = action_type_to_string(action->type);
   snprintf(summary->type_name, sizeof(summary->type_name), "%s", type_name);
 
   // For Control Change actions, show the first CC slot detail

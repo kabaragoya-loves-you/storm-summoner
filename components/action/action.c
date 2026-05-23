@@ -211,16 +211,6 @@ action_t action_create_control(uint8_t cc_number, uint8_t value) {
   return action;
 }
 
-action_t action_create_control_hold(uint8_t cc_number, uint8_t press_value, uint8_t release_value) {
-  action_t action = {0};
-  action.type = ACTION_CONTROL_HOLD;
-  action.params.control.num_ccs = 1;
-  action.params.control.cc_numbers[0] = cc_number;
-  action.params.control.values[0] = press_value;
-  action.params.control.values2[0] = release_value;
-  return action;
-}
-
 action_t action_create_preset_inc(void) {
   action_t action = {0};
   action.type = ACTION_PRESET_INC;
@@ -282,81 +272,3 @@ action_t action_create_sostenuto(void) {
   return action;
 }
 
-action_t action_create_touchwheel_hold(uint8_t press_mode, uint8_t release_mode) {
-  action_t action = {0};
-  action.type = ACTION_TOUCHWHEEL_HOLD;
-  action.params.tw_mode.mode = press_mode;
-  action.params.tw_mode.mode2 = release_mode;
-  return action;
-}
-
-action_t action_create_lfo_start(uint8_t slot) {
-  action_t action = {0};
-  action.type = ACTION_LFO_START;
-  action.params.lfo.slot = slot;
-  return action;
-}
-
-action_t action_create_lfo_stop(uint8_t slot) {
-  action_t action = {0};
-  action.type = ACTION_LFO_STOP;
-  action.params.lfo.slot = slot;
-  return action;
-}
-
-action_t action_create_lfo_toggle(uint8_t slot) {
-  action_t action = {0};
-  action.type = ACTION_LFO_TOGGLE;
-  action.params.lfo.slot = slot;
-  return action;
-}
-
-action_t action_create_clock_toggle(bool start_enabled) {
-  action_t action = {0};
-  action.type = ACTION_CLOCK_TOGGLE;
-  action.params.clock.start_enabled = start_enabled;
-  return action;
-}
-
-action_t action_create_clock_hold(bool press_enables) {
-  action_t action = {0};
-  action.type = ACTION_CLOCK_HOLD;
-  action.params.clock.start_enabled = press_enables;
-  return action;
-}
-
-action_t action_create_clock_burst(uint8_t speed_percent) {
-  action_t action = {0};
-  action.type = ACTION_CLOCK_BURST;
-  action.params.clock_burst.speed_percent = speed_percent;
-  return action;
-}
-
-action_t action_create_cut_toggle(uint8_t cut_mode) {
-  action_t action = {0};
-  action.type = ACTION_CUT_TOGGLE;
-  action.params.cut.cut_mode = cut_mode;
-  return action;
-}
-
-action_t action_create_cut_hold(uint8_t cut_mode) {
-  action_t action = {0};
-  action.type = ACTION_CUT_HOLD;
-  action.params.cut.cut_mode = cut_mode;
-  return action;
-}
-
-action_t action_create_set_ui(uint8_t module_index) {
-  action_t action = {0};
-  action.type = ACTION_SET_UI;
-  action.params.ui.module = module_index;
-  return action;
-}
-
-action_t action_create_ui_hold(uint8_t press_module, uint8_t release_module) {
-  action_t action = {0};
-  action.type = ACTION_UI_HOLD;
-  action.params.ui.module = press_module;
-  action.params.ui.module2 = release_module;
-  return action;
-}

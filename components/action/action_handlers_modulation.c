@@ -11,6 +11,48 @@
 
 static const char* TAG = "action_handlers_modulation";
 
+// ============================================================================
+// Per-slot LFO helpers
+// ----------------------------------------------------------------------------
+// LFO_START / LFO_STOP / LFO_TOGGLE all branch on slot 1/2/3 with mirrored
+// behavior per slot. These helpers run the operation on one engine index
+// (0 = LFO1, 1 = LFO2) and reflect the new enabled state in the scene's
+// matching continuous_mapping (NULL skips the scene write).
+// ============================================================================
+
+static void lfo_start_one(uint8_t lfo_index, continuous_mapping_t* scene_mapping) {
+  lfo_trigger_start(lfo_index);
+  if (scene_mapping) scene_mapping->enabled = true;
+}
+
+static void lfo_stop_one(uint8_t lfo_index, continuous_mapping_t* scene_mapping) {
+  if (lfo_is_enabled(lfo_index)) {
+    if (lfo_get_restore_on_stop(lfo_index)) {
+      midi_lfo_scene_handler_restore_value(lfo_index);
+    }
+    // Release any held NOTE-output mapping voice before stopping the LFO
+    // loop, so the channel computation still has the same scene context the
+    // NoteOn used.
+    midi_lfo_scene_handler_release_notes_for_slot(lfo_index);
+    lfo_enable(lfo_index, false);
+    if (scene_mapping) scene_mapping->enabled = false;
+  } else if (lfo_is_pending_start(lfo_index)) {
+    lfo_enable(lfo_index, false);
+  }
+}
+
+static void lfo_toggle_one(uint8_t lfo_index, continuous_mapping_t* scene_mapping) {
+  bool new_state = !lfo_is_enabled(lfo_index);
+  if (!new_state) {
+    if (lfo_get_restore_on_stop(lfo_index)) {
+      midi_lfo_scene_handler_restore_value(lfo_index);
+    }
+    midi_lfo_scene_handler_release_notes_for_slot(lfo_index);
+  }
+  lfo_enable(lfo_index, new_state);
+  if (scene_mapping) scene_mapping->enabled = new_state;
+}
+
 action_handle_result_t action_handlers_modulation_dispatch(
     const action_t* action, uint8_t trigger_value, bool is_press, uint8_t channel) {
   (void)trigger_value;
@@ -20,14 +62,8 @@ action_handle_result_t action_handlers_modulation_dispatch(
       if (is_press) {
         uint8_t slot = action->params.lfo.slot;
         scene_t* scene = scene_get_current();
-        if (slot == 1 || slot == 3) {
-          lfo_trigger_start(0);
-          if (scene) scene->lfo1.enabled = true;
-        }
-        if (slot == 2 || slot == 3) {
-          lfo_trigger_start(1);
-          if (scene) scene->lfo2.enabled = true;
-        }
+        if (slot == 1 || slot == 3) lfo_start_one(0, scene ? &scene->lfo1 : NULL);
+        if (slot == 2 || slot == 3) lfo_start_one(1, scene ? &scene->lfo2 : NULL);
         ESP_LOGI(TAG, "LFO Start: slot %d", slot);
       }
       return ACTION_HANDLED;
@@ -36,33 +72,8 @@ action_handle_result_t action_handlers_modulation_dispatch(
       if (is_press) {
         uint8_t slot = action->params.lfo.slot;
         scene_t* scene = scene_get_current();
-        if (slot == 1 || slot == 3) {
-          if (lfo_is_enabled(0)) {
-            if (lfo_get_restore_on_stop(0)) {
-              midi_lfo_scene_handler_restore_value(0);
-            }
-            // Release any held NOTE-output mapping voice before stopping
-            // the LFO loop, so the channel computation still has the same
-            // scene context the NoteOn used.
-            midi_lfo_scene_handler_release_notes_for_slot(0);
-            lfo_enable(0, false);
-            if (scene) scene->lfo1.enabled = false;
-          } else if (lfo_is_pending_start(0)) {
-            lfo_enable(0, false);
-          }
-        }
-        if (slot == 2 || slot == 3) {
-          if (lfo_is_enabled(1)) {
-            if (lfo_get_restore_on_stop(1)) {
-              midi_lfo_scene_handler_restore_value(1);
-            }
-            midi_lfo_scene_handler_release_notes_for_slot(1);
-            lfo_enable(1, false);
-            if (scene) scene->lfo2.enabled = false;
-          } else if (lfo_is_pending_start(1)) {
-            lfo_enable(1, false);
-          }
-        }
+        if (slot == 1 || slot == 3) lfo_stop_one(0, scene ? &scene->lfo1 : NULL);
+        if (slot == 2 || slot == 3) lfo_stop_one(1, scene ? &scene->lfo2 : NULL);
         ESP_LOGI(TAG, "LFO Stop: slot %d", slot);
       }
       return ACTION_HANDLED;
@@ -71,29 +82,8 @@ action_handle_result_t action_handlers_modulation_dispatch(
       if (is_press) {
         uint8_t slot = action->params.lfo.slot;
         scene_t* scene = scene_get_current();
-        if (slot == 1 || slot == 3) {
-          bool new_state = !lfo_is_enabled(0);
-          if (!new_state) {
-            if (lfo_get_restore_on_stop(0)) {
-              midi_lfo_scene_handler_restore_value(0);
-            }
-            // Release any held NOTE-output mapping voice on enable -> disable.
-            midi_lfo_scene_handler_release_notes_for_slot(0);
-          }
-          lfo_enable(0, new_state);
-          if (scene) scene->lfo1.enabled = new_state;
-        }
-        if (slot == 2 || slot == 3) {
-          bool new_state = !lfo_is_enabled(1);
-          if (!new_state) {
-            if (lfo_get_restore_on_stop(1)) {
-              midi_lfo_scene_handler_restore_value(1);
-            }
-            midi_lfo_scene_handler_release_notes_for_slot(1);
-          }
-          lfo_enable(1, new_state);
-          if (scene) scene->lfo2.enabled = new_state;
-        }
+        if (slot == 1 || slot == 3) lfo_toggle_one(0, scene ? &scene->lfo1 : NULL);
+        if (slot == 2 || slot == 3) lfo_toggle_one(1, scene ? &scene->lfo2 : NULL);
         ESP_LOGI(TAG, "LFO Toggle: slot %d", slot);
       }
       return ACTION_HANDLED;

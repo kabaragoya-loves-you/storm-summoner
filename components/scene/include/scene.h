@@ -72,7 +72,7 @@ typedef struct {
 #define MAX_UI_MODULE_NAME 16
 
 // Scene structure
-typedef struct {
+typedef struct scene_t {
   char name[17];              // Scene name (max 16 chars + null)
   char device_id[64];         // Device slug (empty = use global device_config)
   uint8_t midi_channel;       // Per-scene MIDI channel (0 = use global, 1-16 = override)
@@ -208,11 +208,6 @@ typedef struct {
 
 // Initialize the scene manager
 esp_err_t scene_init(void);
-
-// Validate all action timings in a scene against its time signature
-// Call after scene load and when time signature changes
-// (Defined in action.c but declared here to avoid circular includes)
-void action_validate_scene_timings(scene_t* scene);
 
 // Scene navigation
 esp_err_t scene_set_current(uint8_t scene_index);

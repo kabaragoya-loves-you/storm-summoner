@@ -9,6 +9,43 @@
 
 static const char* TAG = "action_handlers_scene";
 
+// Apply a preset/program number, picking the right device_config call based
+// on the active bank-select mode. Used by every "set preset" action variant.
+static void apply_preset_program(uint16_t program) {
+  if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
+    device_config_set_preset(program);
+  } else {
+    device_config_set_program(program & 0x7F);
+  }
+}
+
+// Switch the current scene's touchwheel runtime to the given user-mode index.
+// Mirrors the scene mutation used by both TOUCHWHEEL_HOLD and TOUCHWHEEL_CYCLE
+// so the two action types stay in sync when fields are added to the mapping.
+// Returns the resolved mapping (or NULL if user_mode_idx is invalid) so callers
+// can log a display name without re-resolving.
+static const touchwheel_mode_mapping_t* apply_touchwheel_mode_runtime(uint8_t user_mode_idx) {
+  const touchwheel_mode_mapping_t* mapping = touchwheel_get_mode_mapping(user_mode_idx);
+  if (!mapping) return NULL;
+
+  uint8_t scene_index = scene_get_current_index();
+  scene_t* scene = scene_get_current();
+  if (scene) {
+    scene->touchwheel_style = mapping->default_style;
+    scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
+    if (mapping->use_output_type) {
+      scene->touchwheel.output_type = mapping->output_type;
+      if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+        if (scene->touchwheel.base_note == 0) scene->touchwheel.base_note = 60;
+        if (scene->touchwheel.note_range == 0) scene->touchwheel.note_range = 24;
+        if (scene->touchwheel.velocity == 0) scene->touchwheel.velocity = 100;
+      }
+    }
+  }
+  scene_set_touchwheel_mode_runtime(scene_index, mapping->mode);
+  return mapping;
+}
+
 action_handle_result_t action_handlers_scene_dispatch(
     const action_t* action, uint8_t trigger_value, bool is_press, uint8_t channel) {
   (void)trigger_value;
@@ -38,14 +75,7 @@ action_handle_result_t action_handlers_scene_dispatch(
         ESP_LOGW(TAG, "Set Preset action ignored: not allowed in Preset Sync mode");
         return ACTION_HANDLED;
       }
-      if (is_press) {
-        uint16_t program = action->params.preset.program;
-        if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
-          device_config_set_preset(program);
-        } else {
-          device_config_set_program(program & 0x7F);
-        }
-      }
+      if (is_press) apply_preset_program(action->params.preset.program);
       return ACTION_HANDLED;
 
     case ACTION_PRESET_HOLD: {
@@ -56,11 +86,7 @@ action_handle_result_t action_handlers_scene_dispatch(
       uint16_t program = is_press ?
         action->params.preset_cycle.press_preset :
         action->params.preset_cycle.release_preset;
-      if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
-        device_config_set_preset(program);
-      } else {
-        device_config_set_program(program & 0x7F);
-      }
+      apply_preset_program(program);
       ESP_LOGD(TAG, "Preset hold: %s -> %u", is_press ? "press" : "release",
         (unsigned)program);
       return ACTION_HANDLED;
@@ -81,11 +107,7 @@ action_handle_result_t action_handlers_scene_dispatch(
         uint8_t idx = mutable_action->params.preset_cycle.current_index;
         uint16_t program = mutable_action->params.preset_cycle.cycle_presets[idx];
 
-        if (device_config_get_bank_mode() != BANK_SELECT_NONE) {
-          device_config_set_preset(program);
-        } else {
-          device_config_set_program(program & 0x7F);
-        }
+        apply_preset_program(program);
         ESP_LOGD(TAG, "Preset cycle step %u: preset %u", (unsigned)idx, (unsigned)program);
 
         mutable_action->params.preset_cycle.current_index = (idx + 1) % num_presets;
@@ -209,25 +231,9 @@ action_handle_result_t action_handlers_scene_dispatch(
     case ACTION_TOUCHWHEEL_HOLD: {
       uint8_t user_mode_idx = is_press ?
         action->params.tw_mode.mode : action->params.tw_mode.mode2;
-      const touchwheel_mode_mapping_t* mapping = touchwheel_get_mode_mapping(user_mode_idx);
-      if (mapping) {
-        uint8_t scene_index = scene_get_current_index();
-        scene_t* scene = scene_get_current();
-        if (scene) {
-          scene->touchwheel_style = mapping->default_style;
-          scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
-          if (mapping->use_output_type) {
-            scene->touchwheel.output_type = mapping->output_type;
-            if (mapping->output_type == OUTPUT_TYPE_NOTE) {
-              if (scene->touchwheel.base_note == 0) scene->touchwheel.base_note = 60;
-              if (scene->touchwheel.note_range == 0) scene->touchwheel.note_range = 24;
-              if (scene->touchwheel.velocity == 0) scene->touchwheel.velocity = 100;
-            }
-          }
-        }
-        scene_set_touchwheel_mode_runtime(scene_index, mapping->mode);
+      const touchwheel_mode_mapping_t* mapping = apply_touchwheel_mode_runtime(user_mode_idx);
+      if (mapping)
         ESP_LOGD(TAG, "Touchwheel mode hold: %s", mapping->display_name);
-      }
       return ACTION_HANDLED;
     }
 
@@ -236,26 +242,9 @@ action_handle_result_t action_handlers_scene_dispatch(
         action_t* mutable_action = (action_t*)action;
         uint8_t idx = mutable_action->params.tw_mode.current_index;
         uint8_t user_mode_idx = mutable_action->params.tw_mode.modes[idx];
-        const touchwheel_mode_mapping_t* mapping = touchwheel_get_mode_mapping(user_mode_idx);
-
-        if (mapping) {
-          uint8_t scene_index = scene_get_current_index();
-          scene_t* scene = scene_get_current();
-          if (scene) {
-            scene->touchwheel_style = mapping->default_style;
-            scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
-            if (mapping->use_output_type) {
-              scene->touchwheel.output_type = mapping->output_type;
-              if (mapping->output_type == OUTPUT_TYPE_NOTE) {
-                if (scene->touchwheel.base_note == 0) scene->touchwheel.base_note = 60;
-                if (scene->touchwheel.note_range == 0) scene->touchwheel.note_range = 24;
-                if (scene->touchwheel.velocity == 0) scene->touchwheel.velocity = 100;
-              }
-            }
-          }
-          scene_set_touchwheel_mode_runtime(scene_index, mapping->mode);
+        const touchwheel_mode_mapping_t* mapping = apply_touchwheel_mode_runtime(user_mode_idx);
+        if (mapping)
           ESP_LOGD(TAG, "Cycled touchwheel mode to %s", mapping->display_name);
-        }
 
         mutable_action->params.tw_mode.current_index =
           (idx + 1) % mutable_action->params.tw_mode.num_modes;

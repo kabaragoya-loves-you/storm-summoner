@@ -43,6 +43,10 @@ void action_punch_in_beat_tick(uint8_t channel, uint8_t beat, bool in_programmin
 // Also owns the shared periodic timer used by boomerang ticks.
 // ----------------------------------------------------------------------------
 esp_err_t action_morph_init(void);
+// Start a CC morph. Returns false (caller falls back to immediate send) when
+// morph is disabled on the action, the CC count is out of range (1-4), or
+// no morph slot is available. Callers therefore do NOT need to guard with
+// action->morph_enabled themselves.
 bool action_morph_start(const action_t* action, uint8_t num_ccs,
   const uint8_t* cc_numbers, const uint8_t* target_values);
 void action_morph_clear(void);

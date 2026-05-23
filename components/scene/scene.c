@@ -117,12 +117,6 @@ static esp_timer_handle_t s_pitch_bend_timer = NULL;
 static device_def_t* s_cached_device = NULL;
 static char s_cached_device_slug[64] = "";
 
-// Default CC assignments for initial testing
-static const uint8_t DEFAULT_CC_NUMBERS[NUM_TOUCHPADS] = {
-  1, 2, 3, 4, 5, 6, 7, 8,     // Touchwheel pads (0-7)
-  9, 10, 11, 12               // Additional pads (8-11)
-};
-
 // Helper: Get scene by index (returns current scene if it matches, otherwise error)
 // For now, we only allow modifications to the current scene
 static scene_t* get_scene_for_modification(uint8_t scene_index) {
@@ -135,21 +129,22 @@ static scene_t* get_scene_for_modification(uint8_t scene_index) {
   return scene_get_current();
 }
 
-// Set default button assignments based on scene mode
+// Set default button assignments based on scene mode.
+// Both-buttons-at-once defaults to unassigned regardless of mode -- users who
+// want Confirm Pending or another action can opt in.
 static void set_default_button_assignments(scene_t* scene) {
   scene_mode_t mode = g_scene_manager.mode;
-  
-  if (mode == SCENE_MODE_SINGLE) {
-    // Mode 1: Buttons control program changes
-    scene->button_left = action_create_preset_dec();
-    scene->button_right = action_create_preset_inc();
-    scene->button_both.type = ACTION_CONFIRM_PENDING;
-  } else {
-    // Modes 2 & 3: Buttons control scene navigation
+
+  if (mode == SCENE_MODE_ADVANCED) {
+    // Advanced: buttons navigate scenes (presets are arbitrary per scene)
     scene->button_left = action_create_scene_dec();
     scene->button_right = action_create_scene_inc();
-    scene->button_both.type = ACTION_CONFIRM_PENDING;
+  } else {
+    // Simple and Preset Sync: buttons change presets
+    scene->button_left = action_create_preset_dec();
+    scene->button_right = action_create_preset_inc();
   }
+  scene->button_both = (action_t){0};
 }
 
 // Initialize a single scene with defaults
@@ -166,36 +161,44 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Default touchwheel mode
   scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;
   scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;  // Default: position-based (~15 values)
-  scene->touchwheel = continuous_mapping_create(16);    // CC16 = General Purpose 1
-  scene->touchwheel.enabled = false;                    // Disabled by default (BUTTONS mode)
+  scene->touchwheel = continuous_mapping_create(0);     // No CC hint -- user picks on enable
+  scene->touchwheel.enabled = false;                    // Disabled by default (PADS mode)
   scene->touchwheel_lfo_target = LFO_TARGET_BOTH;       // Default: affect both LFOs
   scene->touchwheel_initial_value = 0;                   // Default: start at 0
 
-  // Initialize touchpad mappings with default CC actions
+  // Touchpads default to enabled but unassigned. A fresh scene does not
+  // transmit anything when a pad is pressed -- users opt in by assigning an
+  // action to each pad they want active.
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     scene->touchpads[i].enabled = true;
-    scene->touchpads[i].action = action_create_control(DEFAULT_CC_NUMBERS[i], 127);
+    scene->touchpads[i].action = (action_t){0};
   }
-  
+
   // Set default button assignments
   set_default_button_assignments(scene);
-  
-  // Initialize on_load actions (default: reset for clean slate)
-  scene->num_on_load_actions = 1;
-  scene->on_load[0] = action_create_reset();
-  
-  // Initialize discrete trigger inputs
-  scene->bump = action_create_tap_tempo();  // Default: tap tempo on bump
-  
-  // Initialize continuous input mappings with defaults
-  scene->expression = continuous_mapping_create(4);    // CC4 = Foot Controller (expression pedal)
-  scene->cv = continuous_mapping_create(16);           // CC16 = General Purpose 1
-  scene->proximity = continuous_mapping_create(17);    // CC17 = General Purpose 2
+
+  // On-load actions default to empty -- a blank scene fires nothing on load.
+  scene->num_on_load_actions = 0;
+
+  // Discrete trigger inputs default to unassigned
+  scene->bump = (action_t){0};
+
+  // Continuous input mappings: all disabled by default so a blank scene
+  // transmits nothing. Expression keeps its CC4 (Foot Controller) hint
+  // because that's the standard MIDI assignment for a sustain/expression
+  // jack; the others are zeroed so the user picks a CC on enable.
+  scene->expression = continuous_mapping_create(4);    // CC4 = Foot Controller
+  scene->expression.enabled = false;
+  scene->cv = continuous_mapping_create(0);
+  scene->cv.enabled = false;
+  scene->proximity = continuous_mapping_create(0);
+  scene->proximity.enabled = false;
   scene->proximity.use_idle_value = true;              // Proximity returns to center
   scene->proximity.idle_value = 64;                    // Center for CC (60 for NOTE mode)
   scene->proximity.idle_timeout_ms = 1000;
   scene->proximity.polarity = POLARITY_BIPOLAR;
-  scene->als = continuous_mapping_create(18);          // CC18 = General Purpose 3
+  scene->als = continuous_mapping_create(0);
+  scene->als.enabled = false;
   scene->tilt_x = continuous_mapping_create(20);       // CC20 (defaults: disabled)
   scene->tilt_x.enabled = false;
   scene->tilt_x.use_idle_value = true;
