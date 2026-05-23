@@ -10,30 +10,24 @@
 
 set(WEB_BINARIES_DIR "${SOURCE_DIR}/web/binaries")
 set(RELEASES_JSON "${SOURCE_DIR}/web/releases.json")
-set(MANIFEST_JSON "${SOURCE_DIR}/midi-devices/manifest.json")
 
 set(PROMOTED_SOMETHING FALSE)
 
 file(MAKE_DIRECTORY "${WEB_BINARIES_DIR}")
 
 # --- Firmware promotion ---
-# Re-promote whenever the freshly-built bin is newer than what's already in
-# web/binaries/ under the same versioned name. Without the IS_NEWER_THAN
-# check, bumping `FW_VERSION_MINOR` back to a value that was already promoted
-# (or rebuilding after fixes without bumping the version) silently keeps the
-# stale binary on the website, which is how the wrong firmware ends up
-# served to testers.
+# Promote only when no binary with the current versioned name is already in
+# web/binaries/. Once a versioned bin is published it is IMMUTABLE: customers
+# who already pulled storm-summoner-X.Y.bin must keep getting the same bytes
+# they got the first time, otherwise two devices that both self-report as
+# "X.Y" can have different firmware. To publish a new build, bump
+# FW_VERSION_MINOR (or major) so the destination filename changes.
 set(FW_FILENAME "storm-summoner-${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.bin")
 set(FW_SOURCE "${BINARY_DIR}/storm-summoner.bin")
 set(FW_DEST "${WEB_BINARIES_DIR}/${FW_FILENAME}")
 
-if(EXISTS "${FW_SOURCE}"
-    AND (NOT EXISTS "${FW_DEST}" OR "${FW_SOURCE}" IS_NEWER_THAN "${FW_DEST}"))
-  if(EXISTS "${FW_DEST}")
-    message(STATUS "Re-promoting firmware (source is newer): ${FW_FILENAME}")
-  else()
-    message(STATUS "Promoting firmware: ${FW_FILENAME}")
-  endif()
+if(EXISTS "${FW_SOURCE}" AND NOT EXISTS "${FW_DEST}")
+  message(STATUS "Promoting firmware: ${FW_FILENAME}")
   file(COPY "${FW_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
   file(RENAME "${WEB_BINARIES_DIR}/storm-summoner.bin" "${FW_DEST}")
   # Stamp the destination's mtime to *now*. file(COPY) preserves the source
@@ -45,46 +39,45 @@ else()
   if(NOT EXISTS "${FW_SOURCE}")
     message(STATUS "Firmware source not found: ${FW_SOURCE}")
   else()
-    message(STATUS "Firmware already up to date: ${FW_FILENAME}")
+    message(STATUS "Firmware ${FW_FILENAME} already published, leaving untouched (bump FW_VERSION_MINOR to publish a new binary)")
   endif()
 endif()
 
 # --- Assets promotion ---
-# The LittleFS image baked into the read-only `assets` partition. Hash is over
-# midi-devices/manifest.json (the manifest of canonical content); the same
-# filename can correspond to different on-disk bytes if only the images/
-# subtree changed, so IS_NEWER_THAN forces a re-promote in that case too.
+# Hash is computed over the entire built `assets.bin` (the LittleFS image
+# that gets baked into the read-only `assets` partition), so the short hash
+# in the filename is a true identifier of the on-disk bytes. Same content -->
+# same filename --> no-op; any change to anything baked in (devices, images,
+# factory scenes, or the image format itself) yields a new hash and a new
+# file alongside the old one.
+#
+# The 8-hex short hash is what the device persists to NVS `assets_csum`
+# after an ASSETS OTA commit, and what the web app reads from
+# releases.json's `assets[].checksum` to drive the OTA, so it must stay
+# byte-derived and stable.
 set(ASSETS_SOURCE "${BINARY_DIR}/assets.bin")
 set(ASSETS_FILENAME "")
 
-if(EXISTS "${MANIFEST_JSON}" AND EXISTS "${ASSETS_SOURCE}")
-  file(SHA256 "${MANIFEST_JSON}" MANIFEST_HASH)
-  string(SUBSTRING "${MANIFEST_HASH}" 0 8 MANIFEST_HASH_SHORT)
+if(EXISTS "${ASSETS_SOURCE}")
+  file(SHA256 "${ASSETS_SOURCE}" ASSETS_FULL_HASH)
+  string(SUBSTRING "${ASSETS_FULL_HASH}" 0 8 ASSETS_HASH_SHORT)
 
-  set(ASSETS_FILENAME "assets-${MANIFEST_HASH_SHORT}.bin")
+  set(ASSETS_FILENAME "assets-${ASSETS_HASH_SHORT}.bin")
   set(ASSETS_DEST "${WEB_BINARIES_DIR}/${ASSETS_FILENAME}")
 
-  if(NOT EXISTS "${ASSETS_DEST}"
-      OR "${ASSETS_SOURCE}" IS_NEWER_THAN "${ASSETS_DEST}")
-    if(EXISTS "${ASSETS_DEST}")
-      message(STATUS "Re-promoting assets (source is newer): ${ASSETS_FILENAME}")
-    else()
-      message(STATUS "Promoting assets: ${ASSETS_FILENAME}")
-    endif()
+  if(NOT EXISTS "${ASSETS_DEST}")
+    message(STATUS "Promoting assets: ${ASSETS_FILENAME}")
     file(COPY "${ASSETS_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
     file(RENAME "${WEB_BINARIES_DIR}/assets.bin" "${ASSETS_DEST}")
+    # Stamp the destination's mtime to *now* so the date in releases.json
+    # reflects when we released it, not when mklittlefs wrote the image.
     file(TOUCH "${ASSETS_DEST}")
     set(PROMOTED_SOMETHING TRUE)
   else()
-    message(STATUS "Assets already up to date: ${ASSETS_FILENAME}")
+    message(STATUS "Assets ${ASSETS_FILENAME} already published, leaving untouched (bytes match)")
   endif()
 else()
-  if(NOT EXISTS "${MANIFEST_JSON}")
-    message(STATUS "Manifest not found: ${MANIFEST_JSON}")
-  endif()
-  if(NOT EXISTS "${ASSETS_SOURCE}")
-    message(STATUS "Assets source not found: ${ASSETS_SOURCE}")
-  endif()
+  message(STATUS "Assets source not found: ${ASSETS_SOURCE}")
 endif()
 
 # --- Generate releases.json (only if something was promoted or manifest doesn't exist) ---

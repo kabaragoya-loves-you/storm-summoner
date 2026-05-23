@@ -87,6 +87,24 @@ static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pa
 #define STUCK_TOUCH_TIMEOUT_DEFAULT_MS 10000  // Default: 10 seconds (allows musical holds)
 #define NVS_STUCK_TIMEOUT_KEY "stuck_timeout"
 
+// === Quarantine constants (landings 1+2) ===
+// SUPPRESSION_IDLE_STREAK_REQUIRED: number of consecutive health-check cycles
+// the hardware must read IDLE before we lift suppression on a quarantined pad.
+// At 250ms per cycle, 5 cycles = 1.25s of confirmed idle.
+#define SUPPRESSION_IDLE_STREAK_REQUIRED 5
+// SYSTEM_EVENT_PAD_THRESHOLD: if this many pads enter stuck state in the same
+// health-check cycle, treat it as a system-wide event (static, EMI, transient).
+#define SYSTEM_EVENT_PAD_THRESHOLD       3
+// SYSTEM_EVENT_RECOVERY_DEFER_MS: after a system event, refuse to process any
+// recovery for this long. Let the hardware settle naturally instead of
+// cascading sensor restarts.
+#define SYSTEM_EVENT_RECOVERY_DEFER_MS   5000
+// STUCK_REPEAT_WINDOW_MS / STUCK_REPEAT_QUARANTINE_AT: if a single pad gets
+// stuck this many times within the sliding window, quarantine it instead of
+// queueing yet another recovery attempt that we expect to fail.
+#define STUCK_REPEAT_WINDOW_MS           60000
+#define STUCK_REPEAT_QUARANTINE_AT       2
+
 // Proactive idle calibration: recalibrate if device has been idle for too long
 // This prevents drift from accumulating during long idle periods
 #define IDLE_CALIBRATION_INTERVAL_DEFAULT_MS (15 * 60 * 1000)  // Default: 15 minutes
@@ -106,6 +124,24 @@ static bool s_hold_active[MAX_TOUCH_PADS] = {false};
 // Track known-good benchmark values for drift detection
 // Updated after successful recoveries and calibrations
 static uint32_t s_known_good_benchmark[MAX_TOUCH_PADS] = {0};
+
+// === Quarantine state (landings 1+2) ===
+// Per-pad suppression: when true, drop press/release events at the source so a
+// stuck pad cannot disrupt the touchwheel or menu navigation. A suppressed pad
+// continues to be monitored (smooth/benchmark are read every cycle) so that we
+// can lift suppression once hardware confirms it's IDLE again.
+static bool     s_pad_suppressed[MAX_TOUCH_PADS] = {false};
+static uint32_t s_pad_suppressed_since_ms[MAX_TOUCH_PADS] = {0};
+static uint8_t  s_pad_idle_streak[MAX_TOUCH_PADS] = {0};
+// Repeat-stuck tracking inside a sliding window. If the same pad gets stuck
+// repeatedly, the recovery strategy isn't working and we should quarantine
+// instead of continuing to thrash the sensor.
+static uint8_t  s_pad_stuck_count[MAX_TOUCH_PADS] = {0};
+static uint32_t s_pad_stuck_window_start[MAX_TOUCH_PADS] = {0};
+// After a multi-pad simultaneous stuck event, defer all recovery work until
+// this timestamp so we don't cascade per-pad sensor restarts during what is
+// almost certainly a static-discharge / EMI transient.
+static uint32_t s_system_event_until_ms = 0;
 
 // Proactive idle calibration tracking
 static uint32_t s_idle_calibration_interval_ms = IDLE_CALIBRATION_INTERVAL_DEFAULT_MS;
@@ -162,6 +198,50 @@ static int get_pad_index(int chan_id) {
   return -1;
 }
 
+// === Quarantine helpers (landings 1+2) ===
+// Put a pad into a "stop fighting it" state: drop its events until the
+// hardware confirms it's idle. Also posts a synthetic RELEASE so that any
+// subscriber that thought the pad was pressed gets a clean cleanup.
+static void quarantine_pad(int pad_index, uint32_t now, const char* reason) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
+  if (s_pad_suppressed[pad_index]) return;
+
+  s_pad_suppressed[pad_index] = true;
+  s_pad_suppressed_since_ms[pad_index] = now;
+  s_pad_idle_streak[pad_index] = 0;
+
+  if (s_button_pressed_states[pad_index]) {
+    s_button_pressed_states[pad_index] = false;
+    s_pad_press_timestamps[pad_index] = 0;
+    event_t release_event = {
+      .type = EVENT_TOUCH_RELEASE,
+      .priority = EVENT_PRIORITY_HIGH,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.touch = { .pad_id = pad_index }
+    };
+    event_bus_post(&release_event);
+  }
+
+  s_pending_recovery_mask &= ~(1 << pad_index);
+
+  ESP_LOGW(TAG, "Pad %d QUARANTINED (%s); events suppressed until hw IDLE for %d cycles",
+    pad_index, reason, SUPPRESSION_IDLE_STREAK_REQUIRED);
+}
+
+static void unquarantine_pad(int pad_index, uint32_t now) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
+  if (!s_pad_suppressed[pad_index]) return;
+
+  uint32_t duration = now - s_pad_suppressed_since_ms[pad_index];
+  s_pad_suppressed[pad_index] = false;
+  s_pad_idle_streak[pad_index] = 0;
+  s_pad_stuck_count[pad_index] = 0;
+  s_pad_stuck_window_start[pad_index] = 0;
+
+  ESP_LOGI(TAG, "Pad %d UNQUARANTINED after %"PRIu32"ms (hw IDLE confirmed)",
+    pad_index, duration);
+}
+
 static void handle_touch_event(int chan_id, bool is_pressed) {
   if (chan_id < 2 || chan_id > 14) return;
   
@@ -170,7 +250,19 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     ESP_LOGW(TAG, "Unknown channel %d", chan_id);
     return;
   }
-  
+
+  // === [QUARANTINE] Drop events from suppressed pads ===
+  // Suppressed pads are known to be in a stuck/phantom state where recovery
+  // isn't working. Drop the event before it reaches the event bus, the
+  // touchwheel, or s_last_any_touch_time. The last one matters: a phantom
+  // press on a quarantined pad must NOT reset the system-idle timer, or the
+  // back-off logic upstream can never determine the user is actually idle.
+  if (s_pad_suppressed[pad_index]) {
+    ESP_LOGD(TAG, "Suppressed pad %d: dropping %s",
+      pad_index, is_pressed ? "PRESS" : "RELEASE");
+    return;
+  }
+
   // Update last touch time for ANY pad
   uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
   s_last_any_touch_time = now;
@@ -204,6 +296,29 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // Track per-pad press timestamps for stuck detection
   if (is_pressed) {
     s_pad_press_timestamps[pad_index] = now;
+    // #region debug-press-after-recovery
+    // [DEBUG H1/H2] If a PRESS arrives shortly after a recovery, snapshot the
+    // hardware state. This tells us whether the recovery actually cleared the
+    // benchmark or if on_active is re-firing on a still-elevated signal.
+    if (s_pad_recovery_timestamps[pad_index] > 0) {
+      uint32_t since_recovery = now - s_pad_recovery_timestamps[pad_index];
+      if (since_recovery <= 3000) {
+        uint32_t s[1] = {0}, b[1] = {0};
+        touch_channel_read_data(s_chan_handles[pad_index], TOUCH_CHAN_DATA_TYPE_SMOOTH, s);
+        touch_channel_read_data(s_chan_handles[pad_index], TOUCH_CHAN_DATA_TYPE_BENCHMARK, b);
+        touch_pad_calibration_t cd;
+        esp_err_t cr = touch_get_calibration_data(TOUCH_PADS[pad_index], &cd);
+        ESP_LOGW(TAG, "[DBG-PRESS] Pad %d PRESS %"PRIu32"ms after recovery:"
+          " smooth=%"PRIu32" bench=%"PRIu32" delta=%"PRId32" thresh=%"PRIu32
+          " known_good=%"PRIu32" calib_ok=%d",
+          pad_index, since_recovery, s[0], b[0],
+          (int32_t)s[0] - (int32_t)b[0],
+          (cr == ESP_OK) ? cd.threshold : 0,
+          s_known_good_benchmark[pad_index],
+          (cr == ESP_OK) ? 1 : 0);
+      }
+    }
+    // #endregion
   }
   
   // Special handling for inverted polarity channel
@@ -376,7 +491,11 @@ static void touch_health_check_task(void *pvParameters) {
   
   while (s_health_check_running) {
     uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    
+    // [QUARANTINE] Bitmask of pads that entered stuck state during this single
+    // health-check cycle. Used after the per-pad loop to detect a multi-pad
+    // simultaneous event (likely static / EMI) and quarantine the whole batch.
+    uint32_t newly_stuck_mask_this_cycle = 0;
+
     for (int i = 0; i < MAX_TOUCH_PADS; i++) {
       // 1. Read Data
       uint32_t smooth[1], benchmark[1];
@@ -387,7 +506,32 @@ static void touch_health_check_task(void *pvParameters) {
       esp_err_t calib_ret = touch_get_calibration_data(TOUCH_PADS[i], &calib_data);
       
       if (err1 != ESP_OK || err2 != ESP_OK || calib_ret != ESP_OK || !calib_data.valid) continue;
-      
+
+      // === [QUARANTINE] Suppressed pads: only monitor for natural recovery ===
+      // Skip all corrective behavior (drift detection, state sync, stuck
+      // detection, recovery queueing). Count consecutive IDLE cycles; once
+      // we've confirmed enough of them, lift suppression so the pad rejoins
+      // normal operation.
+      if (s_pad_suppressed[i]) {
+        bool hw_idle;
+        if (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL) {
+          int32_t inv_delta = (int32_t)benchmark[0] - (int32_t)smooth[0];
+          hw_idle = (inv_delta <= (int32_t)calib_data.threshold);
+        } else {
+          int32_t d = (int32_t)smooth[0] - (int32_t)benchmark[0];
+          hw_idle = (d <= (int32_t)calib_data.threshold);
+        }
+        if (hw_idle) {
+          s_pad_idle_streak[i]++;
+          if (s_pad_idle_streak[i] >= SUPPRESSION_IDLE_STREAK_REQUIRED) {
+            unquarantine_pad(i, now);
+          }
+        } else {
+          s_pad_idle_streak[i] = 0;
+        }
+        continue;
+      }
+
       // Track known-good benchmark values for drift detection
       if (benchmark[0] >= 10000 && benchmark[0] <= 100000) {
         if (s_known_good_benchmark[i] == 0 || benchmark[0] > s_known_good_benchmark[i] * 0.9) {
@@ -512,6 +656,21 @@ static void touch_health_check_task(void *pvParameters) {
           if (press_duration <= 3600000 && press_duration > s_stuck_touch_timeout_ms) {
             ESP_LOGW(TAG, "Health check: Pad %d phantom touch (held %"PRIu32"ms), forcing release", 
               i, press_duration);
+            // #region debug-stuck-details
+            // [DEBUG H1/H2] Capture the raw hardware state at the moment we
+            // declare the pad stuck. Combined with the recovery STAGE0/1/2
+            // logs, this shows whether the previous recovery actually moved
+            // the benchmark or if the hardware is reporting a persistent
+            // delta > threshold even after a fresh reset.
+            ESP_LOGW(TAG, "[DBG-STUCK] Pad %d details: smooth=%"PRIu32
+              " bench=%"PRIu32" delta=%"PRId32" thresh=%"PRIu32
+              " calib_base=%"PRIu32" known_good=%"PRIu32
+              " since_last_recov=%"PRIu32"ms",
+              i, smooth[0], benchmark[0], delta, calib_data.threshold,
+              calib_data.baseline, s_known_good_benchmark[i],
+              (s_pad_recovery_timestamps[i] > 0)
+                ? (fresh_now - s_pad_recovery_timestamps[i]) : 0);
+            // #endregion
             
             // Force release - this clears the phantom touch
             s_button_pressed_states[i] = false;
@@ -525,22 +684,68 @@ static void touch_health_check_task(void *pvParameters) {
             };
             event_bus_post(&event);
             s_touch_stats.state_corrections++;
-            
-            // Queue for recovery ONLY for phantom touches (threshold issue)
-            // Check cooldown to avoid recovery cascade
-            uint32_t since_last_recovery = fresh_now - s_pad_recovery_timestamps[i];
-            if (s_pad_recovery_timestamps[i] == 0 || since_last_recovery > RECOVERY_COOLDOWN_MS) {
-              ESP_LOGI(TAG, "Health check: Pad %d may need recalibration", i);
-              s_pending_recovery_mask |= (1 << i);
+
+            // [QUARANTINE] Mark this pad as having become stuck in this cycle
+            // (consumed below for multi-pad system-event detection).
+            newly_stuck_mask_this_cycle |= (1u << i);
+
+            // [QUARANTINE] Repeat-stuck tracking inside a sliding window. If
+            // the same pad keeps getting stuck, recovery is not working and we
+            // should stop trying.
+            uint32_t window_age = (s_pad_stuck_window_start[i] > 0)
+              ? (fresh_now - s_pad_stuck_window_start[i]) : UINT32_MAX;
+            if (window_age > STUCK_REPEAT_WINDOW_MS) {
+              s_pad_stuck_window_start[i] = fresh_now;
+              s_pad_stuck_count[i] = 1;
+            } else {
+              s_pad_stuck_count[i]++;
+            }
+
+            if (s_pad_stuck_count[i] >= STUCK_REPEAT_QUARANTINE_AT) {
+              // Stop fighting it. Suppress events and let the hardware settle.
+              quarantine_pad(i, fresh_now, "repeat stuck");
+            } else {
+              // Queue for recovery ONLY for phantom touches (threshold issue)
+              // Check cooldown to avoid recovery cascade
+              uint32_t since_last_recovery = fresh_now - s_pad_recovery_timestamps[i];
+              if (s_pad_recovery_timestamps[i] == 0 || since_last_recovery > RECOVERY_COOLDOWN_MS) {
+                ESP_LOGI(TAG, "Health check: Pad %d may need recalibration", i);
+                s_pending_recovery_mask |= (1 << i);
+              }
             }
           }
         }
       }
       
     }
-    
+
+    // === [QUARANTINE] Multi-pad system-event detection ===
+    // If a bunch of pads enter stuck state inside a single 250ms health-check
+    // cycle, that is almost certainly a system-wide transient (static, EMI,
+    // power glitch) and NOT real human touch. Quarantine all of them and
+    // refuse to perform any recovery for SYSTEM_EVENT_RECOVERY_DEFER_MS so we
+    // don't cascade per-pad sensor restarts during the worst possible moment.
+    {
+      int newly_stuck_count = __builtin_popcount(newly_stuck_mask_this_cycle);
+      if (newly_stuck_count >= SYSTEM_EVENT_PAD_THRESHOLD) {
+        ESP_LOGW(TAG, "SYSTEM EVENT: %d pads stuck in one cycle (mask=0x%04lx);"
+          " quarantining all, deferring recovery for %dms",
+          newly_stuck_count,
+          (unsigned long)newly_stuck_mask_this_cycle,
+          SYSTEM_EVENT_RECOVERY_DEFER_MS);
+        for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+          if (newly_stuck_mask_this_cycle & (1u << i)) {
+            quarantine_pad(i, now, "system event");
+          }
+        }
+        s_system_event_until_ms = now + SYSTEM_EVENT_RECOVERY_DEFER_MS;
+      }
+    }
+
     // 6. Process Pending Recoveries (one at a time, only when system is truly idle)
-    if (s_pending_recovery_mask > 0) {
+    // [QUARANTINE] Also gated: refuse any recovery while a system event is
+    // still within its defer window.
+    if (s_pending_recovery_mask > 0 && now >= s_system_event_until_ms) {
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
       uint32_t idle_time = current_time - s_last_any_touch_time;
       
@@ -632,6 +837,11 @@ void touch_sync_states_after_reconfig(void) {
   
   // Now check each pad's actual hardware state
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    // [QUARANTINE] Don't sync state for suppressed pads; they're intentionally
+    // muted and any "PRESS" inferred from hardware state would just re-create
+    // the problem we're suppressing.
+    if (s_pad_suppressed[i]) continue;
+
     uint32_t smooth[1], benchmark[1];
     touch_pad_calibration_t calib_data;
     
@@ -1210,6 +1420,30 @@ void touch_enable_debug_logging(void) {
   }
   if (!any_pressed) {
     ESP_LOGI(TAG, "  (no pads pressed)");
+  }
+
+  // Quarantine status (landings 1+2)
+  ESP_LOGI(TAG, "Quarantine state:");
+  bool any_suppressed = false;
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    if (s_pad_suppressed[i]) {
+      uint32_t age = now - s_pad_suppressed_since_ms[i];
+      ESP_LOGI(TAG, "  Pad %d: SUPPRESSED for %"PRIu32"ms (idle streak %u/%u)",
+        i, age, s_pad_idle_streak[i], SUPPRESSION_IDLE_STREAK_REQUIRED);
+      any_suppressed = true;
+    } else if (s_pad_stuck_count[i] > 0) {
+      uint32_t window_age = now - s_pad_stuck_window_start[i];
+      ESP_LOGI(TAG, "  Pad %d: stuck %u/%u in last %"PRIu32"ms (window %ums)",
+        i, s_pad_stuck_count[i], STUCK_REPEAT_QUARANTINE_AT,
+        window_age, STUCK_REPEAT_WINDOW_MS);
+    }
+  }
+  if (!any_suppressed) {
+    ESP_LOGI(TAG, "  (no pads suppressed)");
+  }
+  if (s_system_event_until_ms > now) {
+    ESP_LOGI(TAG, "  SYSTEM EVENT recovery defer: %"PRIu32"ms remaining",
+      s_system_event_until_ms - now);
   }
   
   // Show current readings with threshold info
