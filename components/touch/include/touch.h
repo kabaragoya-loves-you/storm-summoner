@@ -68,6 +68,11 @@ void touch_sync_states_after_reconfig(void);
 // Reset stuck touch pads by resetting benchmarks
 void touch_reset_stuck_pads(void);
 
+// Force recovery for a specific pad. Clears any quarantine state on that pad
+// and then runs touch_recover_pad_state. Primarily a diagnostic hook for the
+// `recover <pad>` console command.
+void touch_force_recover_pad(int pad_index);
+
 // Hold action suppression - when a hold action is active on a pad,
 // suppress health check interventions (benchmark corruption, stuck touch)
 // to allow intentional long presses without triggering recovery

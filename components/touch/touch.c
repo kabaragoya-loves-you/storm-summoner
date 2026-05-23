@@ -104,6 +104,18 @@ static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pa
 // queueing yet another recovery attempt that we expect to fail.
 #define STUCK_REPEAT_WINDOW_MS           60000
 #define STUCK_REPEAT_QUARANTINE_AT       2
+// PRESS_TIME_SYSTEM_EVENT_WINDOW_MS: when a press arrives, look back over this
+// window for other recently-pressed pads. If the count crosses
+// SYSTEM_EVENT_PAD_THRESHOLD, treat as a system event immediately rather than
+// waiting STUCK_TOUCH_TIMEOUT for stuck-detection to catch it.
+#define PRESS_TIME_SYSTEM_EVENT_WINDOW_MS 300
+// QUARANTINE_SAFETY_HATCH_MS / QUARANTINE_SAFETY_HATCH_IDLE_MS: bound the
+// worst-case quarantine duration. After a pad has been suppressed this long,
+// AND the system has been touch-idle for at least this long, fire ONE recovery
+// attempt to either resolve the pad or generate STAGE0/1/2 instrumentation.
+// One attempt per quarantine episode; reset by unquarantine.
+#define QUARANTINE_SAFETY_HATCH_MS       30000
+#define QUARANTINE_SAFETY_HATCH_IDLE_MS  5000
 
 // Proactive idle calibration: recalibrate if device has been idle for too long
 // This prevents drift from accumulating during long idle periods
@@ -138,6 +150,9 @@ static uint8_t  s_pad_idle_streak[MAX_TOUCH_PADS] = {0};
 // instead of continuing to thrash the sensor.
 static uint8_t  s_pad_stuck_count[MAX_TOUCH_PADS] = {0};
 static uint32_t s_pad_stuck_window_start[MAX_TOUCH_PADS] = {0};
+// Safety-hatch tracking: at most one bounded recovery attempt per quarantine
+// episode, so we never wait minutes for natural recovery without trying.
+static bool     s_pad_safety_hatch_attempted[MAX_TOUCH_PADS] = {false};
 // After a multi-pad simultaneous stuck event, defer all recovery work until
 // this timestamp so we don't cascade per-pad sensor restarts during what is
 // almost certainly a static-discharge / EMI transient.
@@ -237,9 +252,31 @@ static void unquarantine_pad(int pad_index, uint32_t now) {
   s_pad_idle_streak[pad_index] = 0;
   s_pad_stuck_count[pad_index] = 0;
   s_pad_stuck_window_start[pad_index] = 0;
+  s_pad_safety_hatch_attempted[pad_index] = false;
 
   ESP_LOGI(TAG, "Pad %d UNQUARANTINED after %"PRIu32"ms (hw IDLE confirmed)",
     pad_index, duration);
+}
+
+// Public-from-this-translation-unit helper for the `recover` console command.
+// Clears quarantine state (if any) for the pad and then invokes the standard
+// touch_recover_pad_state. Lets us deliberately trigger STAGE0/1/2 traces on a
+// quarantined pad for diagnostic purposes.
+void touch_force_recover_pad(int pad_index) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
+
+  if (s_pad_suppressed[pad_index]) {
+    ESP_LOGW(TAG, "force_recover: clearing quarantine on pad %d before recovery",
+      pad_index);
+    s_pad_suppressed[pad_index] = false;
+    s_pad_idle_streak[pad_index] = 0;
+    s_pad_stuck_count[pad_index] = 0;
+    s_pad_stuck_window_start[pad_index] = 0;
+    s_pad_safety_hatch_attempted[pad_index] = false;
+  }
+
+  ESP_LOGI(TAG, "force_recover: triggering recovery for pad %d", pad_index);
+  touch_recover_pad_state(pad_index);
 }
 
 static void handle_touch_event(int chan_id, bool is_pressed) {
@@ -319,6 +356,37 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
       }
     }
     // #endregion
+
+    // === [QUARANTINE] Press-time multi-pad detector ===
+    // The health-check stuck-detection path catches system events only after
+    // STUCK_TOUCH_TIMEOUT_MS (10s) — long enough for phantom presses to
+    // hijack the menu. Here we check at press time: if N+ pads have all
+    // received a press within PRESS_TIME_SYSTEM_EVENT_WINDOW_MS, this is
+    // almost certainly a static-discharge / EMI event and not real human
+    // input. Quarantine the entire batch immediately and drop this press
+    // before it reaches the touchwheel, the event bus, or menu handlers.
+    int recent_press_count = 0;
+    uint32_t recent_press_mask = 0;
+    for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+      if (s_pad_press_timestamps[i] > 0 &&
+          (now - s_pad_press_timestamps[i]) <= PRESS_TIME_SYSTEM_EVENT_WINDOW_MS) {
+        recent_press_count++;
+        recent_press_mask |= (1u << i);
+      }
+    }
+    if (recent_press_count >= SYSTEM_EVENT_PAD_THRESHOLD) {
+      ESP_LOGW(TAG, "PRESS-TIME SYSTEM EVENT: %d pads pressed within %dms"
+        " (mask=0x%04lx); quarantining and dropping this press",
+        recent_press_count, PRESS_TIME_SYSTEM_EVENT_WINDOW_MS,
+        (unsigned long)recent_press_mask);
+      for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+        if (recent_press_mask & (1u << i)) {
+          quarantine_pad(i, now, "press-time system event");
+        }
+      }
+      s_system_event_until_ms = now + SYSTEM_EVENT_RECOVERY_DEFER_MS;
+      return;
+    }
   }
   
   // Special handling for inverted polarity channel
@@ -739,6 +807,37 @@ static void touch_health_check_task(void *pvParameters) {
           }
         }
         s_system_event_until_ms = now + SYSTEM_EVENT_RECOVERY_DEFER_MS;
+      }
+    }
+
+    // === [QUARANTINE] Safety-hatch escalation ===
+    // Bound the worst-case quarantine duration. If a pad has been suppressed
+    // longer than QUARANTINE_SAFETY_HATCH_MS, AND the system has been touch-
+    // idle for at least QUARANTINE_SAFETY_HATCH_IDLE_MS, AND we're not inside
+    // a system-event defer window, fire exactly one recovery attempt for that
+    // pad. The pad stays suppressed during recovery; if it works the normal
+    // IDLE-streak unquarantine kicks in within ~1.25s, if it doesn't we leave
+    // it alone and wait for natural recovery. One attempt per quarantine
+    // episode, reset by unquarantine_pad. Only one hatch fires per health
+    // check cycle to avoid back-to-back sensor restarts.
+    if (now >= s_system_event_until_ms) {
+      uint32_t touch_idle = now - s_last_any_touch_time;
+      if (touch_idle >= QUARANTINE_SAFETY_HATCH_IDLE_MS && touch_idle <= 3600000) {
+        for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+          if (s_pad_suppressed[i] && !s_pad_safety_hatch_attempted[i]) {
+            uint32_t quar_age = now - s_pad_suppressed_since_ms[i];
+            if (quar_age >= QUARANTINE_SAFETY_HATCH_MS && quar_age <= 3600000) {
+              ESP_LOGW(TAG, "SAFETY HATCH: pad %d quarantined %"PRIu32"ms,"
+                " system touch-idle %"PRIu32"ms; firing one recovery attempt",
+                i, quar_age, touch_idle);
+              s_pad_safety_hatch_attempted[i] = true;
+              touch_recover_pad_state(i);
+              s_pad_recovery_timestamps[i] = now;
+              s_last_any_touch_time = now;
+              break;
+            }
+          }
+        }
       }
     }
 

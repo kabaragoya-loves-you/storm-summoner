@@ -12,7 +12,7 @@
 static const char* TAG = "touch_console";
 
 static const char* registered_commands[] = {
-  "calibrate", "reset", "debug", "query", "endless", "odometer", "bipolar", "stucktimeout", "idlecalib"
+  "calibrate", "reset", "debug", "query", "recover", "endless", "odometer", "bipolar", "stucktimeout", "idlecalib"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -68,6 +68,25 @@ static int cmd_query(int argc, char **argv) {
   }
   
   touch_query_pad(pad_index);
+  return 0;
+}
+
+// Command: recover
+static int cmd_recover(int argc, char **argv) {
+  if (argc < 2) {
+    ESP_LOGI(TAG, "Usage: recover <pad_index>");
+    ESP_LOGI(TAG, "  Clears quarantine (if any) and triggers a recovery on the pad.");
+    ESP_LOGI(TAG, "  Use this to deliberately capture STAGE0/1/2 traces on a stuck pad.");
+    return 1;
+  }
+
+  int pad_index = atoi(argv[1]);
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) {
+    ESP_LOGE(TAG, "Invalid pad index %d. Must be 0-%d", pad_index, MAX_TOUCH_PADS - 1);
+    return 1;
+  }
+
+  touch_force_recover_pad(pad_index);
   return 0;
 }
 
@@ -416,6 +435,15 @@ esp_err_t touch_console_init(void) {
     .func = &cmd_query,
   };
   esp_console_cmd_register(&query_cmd);
+
+  // recover command
+  const esp_console_cmd_t recover_cmd = {
+    .command = "recover",
+    .help = "Clear quarantine on a pad and trigger recovery (captures STAGE0/1/2)",
+    .hint = "<pad_index>",
+    .func = &cmd_recover,
+  };
+  esp_console_cmd_register(&recover_cmd);
   
   // endless command
   const esp_console_cmd_t endless_cmd = {
