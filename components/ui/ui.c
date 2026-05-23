@@ -58,46 +58,170 @@ static int64_t s_transition_start_us = 0;
 // Forward decl so ui_set_draw_module can call the staged-flush body.
 static void ui_set_draw_module_internal(ui_draw_module_t* module);
 
-// Deferred callback to switch modules in LVGL context
-static void deferred_module_switch_cb(lv_timer_t *timer) {
-  lv_timer_delete(timer);
-  
-  ui_draw_module_t* module = pending_module;
-  pending_module = NULL;
-  
-  if (!module) {
-    ESP_LOGW(TAG, "No pending module to switch to");
+// Pending-teardown state for the "smooth swap" path. Every module in this
+// codebase creates its own screen (lv_obj_create(NULL)) and ends its
+// deferred draw callback with lv_screen_load(g_screen). That swap is
+// atomic. So instead of switching to a blank default screen and tearing
+// down the old module up-front (which left ~110 ms of black canvas
+// between switch and the new module finishing its widget build -- very
+// visible at boot when going splash -> beat), we keep the old screen
+// active until lv_screen_active() actually changes to a different screen,
+// then tear down the old module. The user sees a continuous image with a
+// single atomic crossfade-like swap.
+//
+// A safety timeout falls back to the legacy "switch to default + teardown"
+// behavior if the new module never loads its screen within the budget,
+// so a misbehaving module degrades to today's behavior, not worse.
+#define TEARDOWN_POLL_PERIOD_MS  10
+#define TEARDOWN_POLL_MAX_ATTEMPTS 25  // 250 ms total; beat needs ~110 ms
+static ui_draw_module_t* s_pending_teardown_module = NULL;
+static lv_obj_t* s_pending_teardown_screen = NULL;
+static int s_teardown_poll_count = 0;
+
+static void clear_canvas_black(void) {
+  if (!canvas) return;
+  lv_layer_t layer;
+  lv_canvas_init_layer(canvas, &layer);
+  if (layer.draw_buf) {
+    lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
+    lv_canvas_finish_layer(canvas, &layer);
+  }
+}
+
+static void finalize_pending_teardown(bool fallback_to_default_screen) {
+  if (fallback_to_default_screen) {
+    // Defensive fallback: the new module never swapped its screen in.
+    // Switch to the default (canvas-host) screen so destroying the old
+    // module's widgets does not delete the still-active screen.
+    if (canvas) {
+      lv_obj_t* default_screen = lv_obj_get_parent(canvas);
+      if (default_screen && lv_obj_is_valid(default_screen)) {
+        lv_screen_load(default_screen);
+      }
+    }
+  }
+  if (s_pending_teardown_module && s_pending_teardown_module->teardown_func) {
+    s_pending_teardown_module->teardown_func();
+  }
+  s_pending_teardown_module = NULL;
+  s_pending_teardown_screen = NULL;
+  s_teardown_poll_count = 0;
+}
+
+static void deferred_teardown_old_module_cb(lv_timer_t *timer) {
+  if (!s_pending_teardown_module) {
+    // Nothing to do (e.g. a second switch already flushed us synchronously).
+    lv_timer_delete(timer);
     return;
   }
 
-  // Switch to default screen BEFORE teardown to avoid deleting active screen
+  lv_obj_t* now_active = lv_screen_active();
+  if (now_active == s_pending_teardown_screen) {
+    // New module has not loaded its screen yet -- keep waiting.
+    if (++s_teardown_poll_count >= TEARDOWN_POLL_MAX_ATTEMPTS) {
+      ESP_LOGW(TAG, "Teardown poll timeout after %d ms; falling back to default screen",
+        TEARDOWN_POLL_PERIOD_MS * TEARDOWN_POLL_MAX_ATTEMPTS);
+      lv_timer_delete(timer);
+      finalize_pending_teardown(true);
+    }
+    return;
+  }
+
+  // Active screen changed -- the new module is now on screen and we can
+  // safely destroy the old module's widgets without flickering or deleting
+  // the live screen.
+  lv_timer_delete(timer);
+  finalize_pending_teardown(false);
+  clear_canvas_black();
+}
+
+// Legacy synchronous switch path: switch to default screen, tear down the
+// outgoing module, clear canvas, then build the new one. Used for
+// same-module reswitches (where the new build would otherwise clobber the
+// outgoing module's static g_screen pointer before our deferred teardown
+// could read it) and as a fallback when the smooth-swap path can't run.
+static void legacy_switch_to(ui_draw_module_t* module) {
   if (canvas) {
     lv_obj_t *default_screen = lv_obj_get_parent(canvas);
     if (default_screen && lv_obj_is_valid(default_screen)) {
       lv_screen_load(default_screen);
     }
   }
-
-  // Now safe to teardown - module's screen is no longer active
   if (current_draw_module && current_draw_module->teardown_func) {
     current_draw_module->teardown_func();
   }
+  clear_canvas_black();
 
-  // Clear canvas for new module
-  if (canvas) {
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-    if (layer.draw_buf) {
-      lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
-      lv_canvas_finish_layer(canvas, &layer);
-    }
+  current_draw_module = module;
+  if (module->init_func) module->init_func();
+  if (module->draw_func) module->draw_func();
+}
+
+// Deferred callback to switch modules in LVGL context
+static void deferred_module_switch_cb(lv_timer_t *timer) {
+  lv_timer_delete(timer);
+
+  ui_draw_module_t* module = pending_module;
+  pending_module = NULL;
+
+  if (!module) {
+    ESP_LOGW(TAG, "No pending module to switch to");
+    return;
   }
+
+  // If a previous teardown is still pending (rapid back-to-back switches),
+  // flush it synchronously now. Its screen is no longer active anyway --
+  // the previous switch already replaced it via lv_screen_load -- so
+  // destruction is safe and we keep state simple.
+  if (s_pending_teardown_module) {
+    finalize_pending_teardown(false);
+  }
+
+  // Same-module reswitch: the module's static g_screen would be clobbered
+  // by the new build before our deferred teardown could read it, which
+  // would cause the teardown to delete the freshly-built screen. Fall
+  // back to the legacy synchronous path (which is what scene-to-scene
+  // changes within the same UI module rely on today). This briefly shows
+  // the black default screen, but during scene transitions that's hidden
+  // by ui_graphics_suspend(), and outside scene transitions same-module
+  // reswitches are rare.
+  if (module == current_draw_module) {
+    ESP_LOGI(TAG, "Switched to module: %s (same-module reswitch)", module->name);
+    legacy_switch_to(module);
+    return;
+  }
+
+  // Different module: smooth-swap path. Capture the outgoing module + the
+  // currently-active screen so we can poll for the new module to swap it
+  // out, then tear down. We do NOT switch to the default screen first;
+  // the outgoing screen stays visible until the new module's deferred
+  // draw calls lv_screen_load(g_screen).
+  s_pending_teardown_module = current_draw_module;
+  s_pending_teardown_screen = lv_screen_active();
+  s_teardown_poll_count = 0;
 
   current_draw_module = module;
   ESP_LOGI(TAG, "Switched to module: %s", module->name);
 
   if (module->init_func) module->init_func();
   if (module->draw_func) module->draw_func();
+
+  // If there is no outgoing module to tear down (first ever switch), or
+  // it has no teardown_func, skip the polling timer entirely.
+  if (!s_pending_teardown_module || !s_pending_teardown_module->teardown_func) {
+    s_pending_teardown_module = NULL;
+    s_pending_teardown_screen = NULL;
+    return;
+  }
+
+  // Repeating timer; callback deletes itself once the screen swap is
+  // detected or the safety timeout fires.
+  lv_timer_t* teardown_timer = lv_timer_create(deferred_teardown_old_module_cb,
+                                                TEARDOWN_POLL_PERIOD_MS, NULL);
+  if (!teardown_timer) {
+    ESP_LOGE(TAG, "Failed to create teardown poll timer; falling back to immediate teardown");
+    finalize_pending_teardown(true);
+  }
 }
 
 static void ui_set_draw_module_internal(ui_draw_module_t* module) {
