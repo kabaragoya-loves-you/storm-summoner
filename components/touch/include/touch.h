@@ -83,6 +83,13 @@ bool touch_is_any_hold_active(void);
 // Clear pressed state for a specific pad (used during recovery)
 void touch_clear_pressed_state(int pad_index);
 
+// Post a synthetic RELEASE event for every pad that touch.c currently believes
+// is pressed, and clear that internal "pressed" state. Used at the end of a
+// scene transition to make sure no pad is stranded as held after PRESS/RELEASE
+// were dropped during the transition window. Safe to call when no pads are
+// pressed (it is a no-op in that case).
+void touch_force_release_all_pads(void);
+
 // Manual calibration function (exposed for external calls)
 esp_err_t touch_calibrate(bool force);
 

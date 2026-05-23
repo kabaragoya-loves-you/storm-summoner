@@ -4,6 +4,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <string.h>
 
 #define TAG "EVENT_BUS"
@@ -46,6 +47,12 @@ static struct {
   volatile event_type_t dispatcher_current_event;
   volatile bool dispatcher_busy;
   uint32_t dispatch_time_max_ms[EVENT_TYPE_MAX];
+
+  // Per-handler max execution time (microseconds). Indexed in lockstep with
+  // the handlers[] slot array; reset on (re)subscribe. Reported in the
+  // overflow dump and periodic stats so a slow handler can be identified by
+  // its registered name rather than a function pointer.
+  uint32_t handler_max_us[EVENT_BUS_MAX_HANDLERS];
 } event_bus_state = {0};
 
 // Event type names for debugging
@@ -170,13 +177,21 @@ static void event_dispatcher_task(void* pvParameters) {
       }
       #endif
       
-      // Dispatch to handlers
+      // Dispatch to handlers (with per-handler timing so a slow consumer is
+      // identifiable by name in the stats dump rather than appearing as a
+      // generic high per-type dispatch time).
       xSemaphoreTake(event_bus_state.handler_mutex, portMAX_DELAY);
       for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
         event_subscription_t* sub = &event_bus_state.handlers[i];
         if (sub->active && sub->type == event.type && event.priority >= sub->min_priority) {
           xSemaphoreGive(event_bus_state.handler_mutex);
+          int64_t h_start_us = esp_timer_get_time();
           sub->handler(&event, sub->context);
+          int64_t h_elapsed_us = esp_timer_get_time() - h_start_us;
+          if (h_elapsed_us > 0 &&
+              (uint32_t)h_elapsed_us > event_bus_state.handler_max_us[i]) {
+            event_bus_state.handler_max_us[i] = (uint32_t)h_elapsed_us;
+          }
           xSemaphoreTake(event_bus_state.handler_mutex, portMAX_DELAY);
         }
       }
@@ -263,13 +278,13 @@ esp_err_t event_bus_subscribe(event_type_t type, event_handler_t handler, void* 
   return event_bus_subscribe_with_priority(type, handler, context, EVENT_PRIORITY_LOW);
 }
 
-esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t handler, void* context, event_priority_t min_priority) {
+static esp_err_t subscribe_internal(event_type_t type, event_handler_t handler,
+    void* context, event_priority_t min_priority, const char* name) {
   if (!event_bus_state.initialized) return ESP_ERR_INVALID_STATE;
   if (!handler || type >= EVENT_TYPE_MAX) return ESP_ERR_INVALID_ARG;
-  
+
   xSemaphoreTake(event_bus_state.handler_mutex, portMAX_DELAY);
-  
-  // Find empty slot
+
   for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
     if (!event_bus_state.handlers[i].active) {
       event_bus_state.handlers[i] = (event_subscription_t){
@@ -277,17 +292,30 @@ esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t h
         .handler = handler,
         .context = context,
         .min_priority = min_priority,
-        .active = true
+        .active = true,
+        .name = name
       };
+      event_bus_state.handler_max_us[i] = 0;
       xSemaphoreGive(event_bus_state.handler_mutex);
-      ESP_LOGD(TAG, "Subscribed handler to %s events (min priority: %d)", event_type_to_string(type), min_priority);
+      ESP_LOGD(TAG, "Subscribed %s to %s events (min priority: %d)",
+        name ? name : "<unnamed>", event_type_to_string(type), min_priority);
       return ESP_OK;
     }
   }
-  
+
   xSemaphoreGive(event_bus_state.handler_mutex);
   ESP_LOGE(TAG, "No free handler slots available");
   return ESP_ERR_NO_MEM;
+}
+
+esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t handler,
+    void* context, event_priority_t min_priority) {
+  return subscribe_internal(type, handler, context, min_priority, NULL);
+}
+
+esp_err_t event_bus_subscribe_named(event_type_t type, event_handler_t handler,
+    void* context, const char* name) {
+  return subscribe_internal(type, handler, context, EVENT_PRIORITY_LOW, name);
 }
 
 esp_err_t event_bus_unsubscribe(event_type_t type, event_handler_t handler) {
@@ -296,10 +324,11 @@ esp_err_t event_bus_unsubscribe(event_type_t type, event_handler_t handler) {
   xSemaphoreTake(event_bus_state.handler_mutex, portMAX_DELAY);
   
   for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
-    if (event_bus_state.handlers[i].active && 
+    if (event_bus_state.handlers[i].active &&
         event_bus_state.handlers[i].type == type &&
         event_bus_state.handlers[i].handler == handler) {
       event_bus_state.handlers[i].active = false;
+      event_bus_state.handler_max_us[i] = 0;
       xSemaphoreGive(event_bus_state.handler_mutex);
       ESP_LOGI(TAG, "Unsubscribed handler from %s events", event_type_to_string(type));
       return ESP_OK;
@@ -348,13 +377,16 @@ static void event_bus_overflow_dump(const event_t* dropped_event) {
   }
   if (!has_times) ESP_LOGE(TAG, "  (all zero - tick resolution too coarse)");
 
-  // All registered handlers
-  ESP_LOGE(TAG, "--- Registered handlers ---");
+  // All registered handlers (with name + max execution time so the slow one is
+  // immediately identifiable)
+  ESP_LOGE(TAG, "--- Registered handlers (type, name, max_us) ---");
   for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
     if (event_bus_state.handlers[i].active) {
-      ESP_LOGE(TAG, "  [%02d] %-20s min_pri=%d",
+      const char* hname = event_bus_state.handlers[i].name;
+      ESP_LOGE(TAG, "  [%02d] %-20s %-32s max=%lu us",
         i, event_type_to_string(event_bus_state.handlers[i].type),
-        event_bus_state.handlers[i].min_priority);
+        hname ? hname : "<unnamed>",
+        (unsigned long)event_bus_state.handler_max_us[i]);
     }
   }
 
@@ -465,6 +497,10 @@ void event_bus_get_stats(event_bus_stats_t* stats) {
 
 void event_bus_reset_stats(void) {
   memset(&event_bus_state.stats, 0, sizeof(event_bus_state.stats));
+  memset(event_bus_state.dispatch_time_max_ms, 0,
+    sizeof(event_bus_state.dispatch_time_max_ms));
+  memset(event_bus_state.handler_max_us, 0,
+    sizeof(event_bus_state.handler_max_us));
 }
 #endif
 
@@ -647,6 +683,24 @@ void event_bus_print_diagnostics(void) {
     if (event_bus_state.handlers[i].active) handler_count++;
   }
   ESP_LOGI(TAG, "Handlers: %d/%d slots used", handler_count, EVENT_BUS_MAX_HANDLERS);
+
+  // Surface slow handlers without spamming the log every dump: only print
+  // entries that have run for >= 1 ms at some point.
+  bool has_slow = false;
+  for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
+    if (event_bus_state.handlers[i].active &&
+        event_bus_state.handler_max_us[i] >= 1000) {
+      if (!has_slow) {
+        ESP_LOGI(TAG, "--- Handlers >= 1ms ---");
+        has_slow = true;
+      }
+      const char* hname = event_bus_state.handlers[i].name;
+      ESP_LOGI(TAG, "  [%02d] %-15s %-30s max=%lu us", i,
+        event_type_to_string(event_bus_state.handlers[i].type),
+        hname ? hname : "<unnamed>",
+        (unsigned long)event_bus_state.handler_max_us[i]);
+    }
+  }
   ESP_LOGI(TAG, "============================================");
 }
 
@@ -660,9 +714,12 @@ void event_bus_print_handlers(void) {
   int count = 0;
   for (int i = 0; i < EVENT_BUS_MAX_HANDLERS; i++) {
     if (event_bus_state.handlers[i].active) {
-      ESP_LOGI(TAG, "  [%02d] %-20s min_pri=%d", i,
+      const char* hname = event_bus_state.handlers[i].name;
+      ESP_LOGI(TAG, "  [%02d] %-20s %-30s min_pri=%d max=%lu us", i,
         event_type_to_string(event_bus_state.handlers[i].type),
-        event_bus_state.handlers[i].min_priority);
+        hname ? hname : "<unnamed>",
+        event_bus_state.handlers[i].min_priority,
+        (unsigned long)event_bus_state.handler_max_us[i]);
       count++;
     }
   }

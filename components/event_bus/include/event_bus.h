@@ -287,6 +287,9 @@ typedef struct {
   void* context;
   event_priority_t min_priority;  // Only receive events >= this priority
   bool active;
+  const char* name;               // Optional human-readable name for diagnostics
+                                  // (matched in dispatcher-time stats dumps).
+                                  // NULL falls back to a slot/pointer label.
 } event_subscription_t;
 
 // Core API
@@ -295,8 +298,12 @@ esp_err_t event_bus_deinit(void);
 
 // Subscription management
 esp_err_t event_bus_subscribe(event_type_t type, event_handler_t handler, void* context);
-esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t handler, 
+esp_err_t event_bus_subscribe_with_priority(event_type_t type, event_handler_t handler,
                                           void* context, event_priority_t min_priority);
+// Same as event_bus_subscribe but records a friendly name for stats dumps.
+// `name` must be a stable string (string literal or static storage).
+esp_err_t event_bus_subscribe_named(event_type_t type, event_handler_t handler,
+                                          void* context, const char* name);
 esp_err_t event_bus_unsubscribe(event_type_t type, event_handler_t handler);
 
 // Event posting

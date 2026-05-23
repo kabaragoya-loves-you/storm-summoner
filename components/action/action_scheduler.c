@@ -104,9 +104,10 @@ bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
       s_pending_actions[i].hold_released = false;
       s_pending_actions[i].pattern_step = 0;
 
-      ESP_LOGD(TAG, "Queued action %s for beat %d (slot %d, repeating=%d)",
+      ESP_LOGI(TAG, "Queued %s timing=%s target_beat=%d (slot %d, repeating=%d)",
         action_type_name(action->type),
-        target_beat == 0 ? -1 : target_beat, i, repeating);
+        target_beat == 0 ? "NEXT_BEAT" : "SPECIFIC_BEAT",
+        target_beat == 0 ? -1 : (int)target_beat, i, repeating);
       return true;
     }
   }
@@ -233,8 +234,9 @@ static void handle_beat_event(const event_t* event, void* context) {
 
       if (pattern_passed && probability_passed) {
         if (!in_programming_mode) {
-          ESP_LOGI(TAG, "Beat firing pending action %s (beat %d)",
-            action_type_name(pending->action.type), current_beat);
+          ESP_LOGI(TAG, "Firing %s on beat %d (target_beat=%d)",
+            action_type_name(pending->action.type), current_beat,
+            pending->target_beat == 0 ? -1 : (int)pending->target_beat);
 
           action_execute_immediate(&pending->action, pending->trigger_value, true);
         }
@@ -449,7 +451,8 @@ static void handle_transport_event(const event_t* event, void* context) {
 esp_err_t action_scheduler_init(void) {
   action_scheduler_clear_pending();
 
-  esp_err_t ret = event_bus_subscribe(EVENT_BEAT, handle_beat_event, NULL);
+  esp_err_t ret = event_bus_subscribe_named(EVENT_BEAT, handle_beat_event, NULL,
+    "action_scheduler.beat");
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to subscribe to beat events: %s", esp_err_to_name(ret));
   }

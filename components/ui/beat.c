@@ -491,38 +491,33 @@ static void interp_timer_cb(lv_timer_t *timer) {
     return;
   }
   
-  // Calculate phase within current beat
+  // Calculate phase within current beat / bar. Both transport-on and
+  // transport-off paths now derive bar_phase from g_current_beat (set by the
+  // BEAT event handler) plus an interpolated phase since the last beat event.
+  //
+  // The previous transport-off path computed bar_phase from continuous wall
+  // time referenced to boot, then OVERWROTE g_current_beat with its own
+  // derived value. That made the visible beat label drift relative to the
+  // tempo task's s_beat_counter (which the action scheduler uses), so e.g. a
+  // "Beat 1" scheduled action would correctly fire on tempo's beat 1 but the
+  // label would show some other number at that moment. Always trusting the
+  // event-driven counter fixes the desync. If beat events stop arriving, the
+  // animation naturally freezes at the last known beat instead of running on
+  // a phantom clock.
   uint32_t now = esp_timer_get_time() / 1000;
-  float bar_phase;
-  
-  if (!use_transport) {
-    // When not using transport, calculate phase from continuous time
-    // This makes animation self-driving, not dependent on beat events
-    uint32_t bar_duration_ms = g_beat_duration_ms * g_bar_length;
-    bar_phase = fmodf((float)now / (float)bar_duration_ms, 1.0f);
-    
-    // Derive current beat from bar_phase for label display
-    uint8_t derived_beat = 1 + (uint8_t)(bar_phase * g_bar_length);
-    if (derived_beat > g_bar_length) derived_beat = g_bar_length;
-    if (derived_beat != g_current_beat) {
-      g_current_beat = derived_beat;
-      g_beat_dirty = true;
-    }
-  } else {
-    // When using transport, use beat events for timing
-    uint32_t elapsed = now - g_last_beat_time_ms;
-    float beat_phase = (float)elapsed / (float)g_beat_duration_ms;
-    if (beat_phase > 1.0f) beat_phase = 1.0f;
-    
-    // Calculate bar phase (0-1 over entire bar) for gradient pulse and tail animation
-    bar_phase = ((float)(g_current_beat - 1) + beat_phase) / (float)g_bar_length;
-  }
-  
-  // Update gradient with pulse (one full cycle per bar)
-  // Note: is_beat_one detection uses bar_phase for non-transport mode
-  bool is_beat_one = use_transport
-    ? (g_current_beat == 1 && bar_phase < (1.0f / g_bar_length / 2.0f))
-    : (bar_phase < (0.5f / g_bar_length));
+  uint32_t elapsed = (g_last_beat_time_ms == 0)
+    ? 0 : (now - g_last_beat_time_ms);
+  float beat_phase = (g_beat_duration_ms > 0)
+    ? (float)elapsed / (float)g_beat_duration_ms : 0.0f;
+  if (beat_phase > 1.0f) beat_phase = 1.0f;
+
+  float bar_phase = ((float)(g_current_beat - 1) + beat_phase)
+    / (float)g_bar_length;
+
+  // Pulse highlight on beat 1 only while we're still in the first half of
+  // that beat (matches the prior transport-on behaviour).
+  bool is_beat_one = (g_current_beat == 1)
+    && (bar_phase < (1.0f / g_bar_length / 2.0f));
   update_gradient(bar_phase, is_beat_one);
   
   // Update label if dirty
@@ -693,7 +688,8 @@ static void beat_draw_deferred_cb(lv_timer_t *timer) {
   g_interp_timer = lv_timer_create(interp_timer_cb, INTERP_TIMER_PERIOD_MS, NULL);
 
   // Subscribe to events now that we're active
-  event_bus_subscribe(EVENT_BEAT, beat_event_handler, NULL);
+  event_bus_subscribe_named(EVENT_BEAT, beat_event_handler, NULL,
+    "ui.beat_module");
   event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_CHANGED, scene_changed_handler, NULL);

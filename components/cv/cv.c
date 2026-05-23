@@ -79,6 +79,14 @@
 
 // State
 static TaskHandle_t s_task_handle = NULL;
+// Cooperative-shutdown flag. cv_disable() sets this to request the task to
+// exit cleanly between iterations; cv_task clears its own handle on exit so
+// cv_disable() can poll for completion. This replaces a direct vTaskDelete()
+// that could leave the ADC manager mutex orphaned if the task was inside
+// adc_manager_read at the moment of deletion -- which then deadlocked the
+// next adc_manager_register_channel call (e.g. on a Set Scene fired from
+// the beat handler, the whole dispatcher froze).
+static volatile bool s_task_should_exit = false;
 static cv_mode_t s_mode = CV_MODE_LINEAR;
 static cv_range_t s_range = CV_RANGE_5V;  // Default to unipolar 5V
 static cv_pitch_standard_t s_pitch_standard = CV_PITCH_1V_OCTAVE_C2;  // Default to C2 at 0V
@@ -336,19 +344,46 @@ void cv_enable(void) {
 }
 
 void cv_disable(void) {
+  if (s_task_handle == NULL) return;
+
+  // Ask cv_task to exit cooperatively. It checks the flag at the top of its
+  // loop and clears s_task_handle before vTaskDelete(NULL).
+  s_task_should_exit = true;
+
+  // Wait up to ~500ms for the task to acknowledge. We MUST sleep at least one
+  // tick per iteration -- this caller is the event-bus dispatcher at priority
+  // 20, cv_task is at priority 5, and at the project's 100 Hz tick rate
+  // pdMS_TO_TICKS(<10) == 0. vTaskDelay(0) does NOT yield to lower-priority
+  // tasks, so a sub-tick step would spin instead of letting cv_task run.
+  // Use vTaskDelay(1) (=1 tick = 10ms) explicitly to guarantee a real sleep.
+  const TickType_t wait_step_ticks = 1;          // 10ms at CONFIG_FREERTOS_HZ=100
+  const int wait_step_ms = 10;
+  const int wait_total_ms = 500;
+  int waited = 0;
+  while (s_task_handle != NULL && waited < wait_total_ms) {
+    vTaskDelay(wait_step_ticks);
+    waited += wait_step_ms;
+  }
+
   if (s_task_handle != NULL) {
+    // Fallback: the task is genuinely wedged (e.g. blocked in a driver call
+    // that won't return). Force-delete and warn -- this leaves the ADC mutex
+    // orphaned, but that's no worse than the previous unconditional behavior.
+    ESP_LOGW(TAG, "CV task did not exit gracefully within %d ms, forcing delete", wait_total_ms);
     vTaskDelete(s_task_handle);
     s_task_handle = NULL;
-    
-    // Deinitialize ADC
-    cv_adc_deinit();
-    
-    // Set switch to default channel (channel 0 has 100k pull-up for default current path)
-    // Never turn off all channels - hardware requires one channel active at all times
-    switch_set_channel(0);
-    
-    ESP_LOGD(TAG, "CV sampling disabled - switch set to default channel 0");
+  } else {
+    ESP_LOGD(TAG, "CV task exited cleanly after %d ms", waited);
   }
+  s_task_should_exit = false;
+
+  cv_adc_deinit();
+
+  // Set switch to default channel (channel 0 has 100k pull-up for default current path)
+  // Never turn off all channels - hardware requires one channel active at all times
+  switch_set_channel(0);
+
+  ESP_LOGD(TAG, "CV sampling disabled - switch set to default channel 0");
 }
 
 // Cable detection intervals (ms)
@@ -380,7 +415,16 @@ static void cv_task(void *pvParameters) {
   ESP_LOGI(TAG, "Median filter primed with initial reading: %d", initial_reading);
   
   while (1) {
-    
+    // Cooperative-shutdown check. cv_disable() sets this flag and then waits
+    // for s_task_handle to become NULL; clearing it here (before vTaskDelete)
+    // is what makes the wait safe.
+    if (s_task_should_exit) {
+      s_task_handle = NULL;
+      ESP_LOGD(TAG, "CV task exiting cleanly");
+      vTaskDelete(NULL);
+      return; // unreachable, but keeps the compiler happy
+    }
+
     // Read with 2x oversampling for noise reduction while tracking fast transients
     int16_t raw_oversampled = oversample_read();
     

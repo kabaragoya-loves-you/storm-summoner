@@ -9,5 +9,6 @@ idf_component_register(
     freertos
     log
     esp_common
+    esp_timer
     console
 )

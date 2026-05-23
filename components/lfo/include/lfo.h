@@ -204,6 +204,10 @@ lfo_resolution_mode_t lfo_resolution_mode_from_string(const char* str);
 // Apply start mode settings (called on scene load)
 void lfo_apply_start_modes(void);
 
+// Apply start mode settings for a single slot (called when a slot is newly
+// enabled mid-scene, e.g. after exiting programming mode).
+void lfo_apply_start_mode_one(uint8_t slot);
+
 // Trigger LFO start (respects trigger_timing setting)
 // Returns true if started immediately, false if pending
 bool lfo_trigger_start(uint8_t slot);

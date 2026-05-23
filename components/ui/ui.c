@@ -10,6 +10,7 @@
 #include "midi_local_output.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include <string.h>
 
 void ui_event_handler_init(void);
@@ -43,6 +44,19 @@ void lvgl_timer_cb(lv_timer_t *timer) {
 
 // Pending module for deferred switch
 static ui_draw_module_t* pending_module = NULL;
+
+// Scene-transition window state. While s_scene_transitioning is true:
+//   * ui_set_draw_module() STAGES the requested module into s_staged_module
+//     instead of immediately queueing the LVGL teardown/build timer.
+//   * touch.c handle_touch_event() drops inbound TOUCH_PRESS/RELEASE so the
+//     user does not inadvertently interact with a frozen screen.
+// ui_scene_transition_end() flushes the staged module and resets state.
+static volatile bool s_scene_transitioning = false;
+static ui_draw_module_t* s_staged_module = NULL;
+static int64_t s_transition_start_us = 0;
+
+// Forward decl so ui_set_draw_module can call the staged-flush body.
+static void ui_set_draw_module_internal(ui_draw_module_t* module);
 
 // Deferred callback to switch modules in LVGL context
 static void deferred_module_switch_cb(lv_timer_t *timer) {
@@ -86,15 +100,10 @@ static void deferred_module_switch_cb(lv_timer_t *timer) {
   if (module->draw_func) module->draw_func();
 }
 
-void ui_set_draw_module(ui_draw_module_t* module) {
-  if (!module) {
-    ESP_LOGW(TAG, "Attempted to set NULL module");
-    return;
-  }
-
+static void ui_set_draw_module_internal(ui_draw_module_t* module) {
   // Store pending module and defer switch to LVGL context
   pending_module = module;
-  
+
   lv_timer_t *switch_timer = lv_timer_create(deferred_module_switch_cb, 10, NULL);
   if (switch_timer) {
     lv_timer_set_repeat_count(switch_timer, 1);
@@ -102,6 +111,23 @@ void ui_set_draw_module(ui_draw_module_t* module) {
     ESP_LOGE(TAG, "Failed to create module switch timer");
     pending_module = NULL;
   }
+}
+
+void ui_set_draw_module(ui_draw_module_t* module) {
+  if (!module) {
+    ESP_LOGW(TAG, "Attempted to set NULL module");
+    return;
+  }
+
+  if (s_scene_transitioning) {
+    // Defer the actual teardown/build until ui_scene_transition_end().
+    // The most recent staged module wins -- callers that change their mind
+    // mid-transition (e.g. programming-mode toggles) just overwrite.
+    s_staged_module = module;
+    return;
+  }
+
+  ui_set_draw_module_internal(module);
 }
 
 ui_draw_module_t* ui_get_current_module(void) {
@@ -386,6 +412,57 @@ void ui_graphics_resume(void) {
   // Defer canvas showing to avoid blocking in timer callback context
   lv_timer_t *show_timer = lv_timer_create(deferred_canvas_show_cb, 1, NULL);
   if (show_timer != NULL) lv_timer_set_repeat_count(show_timer, 1);
+}
+
+bool ui_scene_is_transitioning(void) {
+  return s_scene_transitioning;
+}
+
+void ui_scene_transition_begin(void) {
+  if (s_scene_transitioning) {
+    ESP_LOGW(TAG, "Scene transition begin called while already transitioning");
+    return;
+  }
+  s_scene_transitioning = true;
+  s_staged_module = NULL;
+  s_transition_start_us = esp_timer_get_time();
+  ui_graphics_suspend();
+  ESP_LOGI(TAG, "Scene transition begin");
+}
+
+void ui_scene_transition_end(void) {
+  if (!s_scene_transitioning) {
+    ESP_LOGW(TAG, "Scene transition end called without a matching begin");
+    return;
+  }
+
+  // Capture the staged module before clearing the flag so any racy
+  // ui_set_draw_module() call that lands during this end-of-transition
+  // sequence falls through to the normal (unstaged) path.
+  ui_draw_module_t* staged = s_staged_module;
+  s_staged_module = NULL;
+  const char* staged_name = staged ? staged->name : "<none>";
+
+  // Flip the flag before reopening anything (touch_force_release_all_pads
+  // posts directly to the event bus, but any new hardware touch event that
+  // arrives at handle_touch_event from this point on should be allowed
+  // through -- the window is over).
+  s_scene_transitioning = false;
+
+  // Force-release any pad that was physically held across the transition
+  // (PRESS/RELEASE were dropped while the window was open).
+  touch_force_release_all_pads();
+
+  // Queue the deferred LVGL module switch (teardown old + build new).
+  // This happens AFTER scene_set_current's body has finished so we are not
+  // racing the heavy scene configuration work for CPU / memory bus.
+  if (staged) ui_set_draw_module_internal(staged);
+
+  ui_graphics_resume();
+
+  uint32_t elapsed_ms = (uint32_t)((esp_timer_get_time() - s_transition_start_us) / 1000);
+  ESP_LOGI(TAG, "Scene transition end (elapsed=%u ms, staged_module=%s)",
+    (unsigned)elapsed_ms, staged_name);
 }
 
 // Deferred callback to release UI's use of the shared buffer (no memory free)

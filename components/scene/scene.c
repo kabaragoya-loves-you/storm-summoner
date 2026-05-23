@@ -1872,7 +1872,14 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   if (g_scene_manager.current_scene_index == scene_index) {
     return ESP_OK;  // Already on this scene
   }
-  
+
+  // Open the scene-transition window. Pauses the canvas refresh timer,
+  // stages any ui_set_draw_module() call inside the body (so the LVGL
+  // teardown/build does not race with the heavy scene configuration), and
+  // tells touch.c to drop inbound PRESS/RELEASE for the duration. Closed
+  // by the matching ui_scene_transition_end() just before the final return.
+  ui_scene_transition_begin();
+
   // Release any notes still sounding from the outgoing scene's producers
   // (touchwheel, RTG voices, LFO note mappings, sensor note mappings,
   // ACTION_NOTE pads, CV/Gate). The new scene's apply_config block below
@@ -2036,7 +2043,12 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     .data = {.value_uint8 = scene_index}
   };
   event_bus_post(&event);
-  
+
+  // Close the transition window. Flushes the staged UI module switch,
+  // force-releases any pads physically held across the window, resumes
+  // canvas refresh, and clears the flag so touch.c stops dropping events.
+  ui_scene_transition_end();
+
   return ESP_OK;
 }
 
@@ -6844,11 +6856,36 @@ esp_err_t scene_resume_input(void) {
     ESP_LOGD(TAG, "Scene touchwheel re-registered");
   }
 
-  // Restore LFO running state (only if no scene change happened;
-  // if a scene change happened, scene_apply_deferred_init will handle LFOs)
+  // Restore LFO state (skip if a scene change is pending; scene_apply_deferred_init
+  // will run lfo_apply_start_modes() against the new scene's config).
+  //
+  // Two cases per slot:
+  //   1. Slot was already enabled before programming mode and the user did NOT
+  //      change its configured-enabled state -> restore previous runtime state.
+  //   2. Slot was disabled before programming mode and the user enabled it
+  //      while in programming mode -> respect start_mode (PAUSED / RUNNING /
+  //      TRANSPORT) instead of leaving the LFO running just because
+  //      lfo_apply_config() flipped config.enabled to true.
+  // Case 3 (was enabled, user disabled) just naturally stays off: lfo_apply_config()
+  // wrote config.enabled=false, suspend's lfo_enable(i, false) was a no-op,
+  // and we don't re-enable here.
   if (!s_needs_deferred_init) {
-    if (s_lfo_was_running[0]) lfo_enable(0, true);
-    if (s_lfo_was_running[1]) lfo_enable(1, true);
+    scene_t* scene = scene_get_current();
+    bool now_configured_enabled[2] = {
+      scene ? scene->lfo1_config.enabled : false,
+      scene ? scene->lfo2_config.enabled : false
+    };
+
+    for (int i = 0; i < 2; i++) {
+      bool was_enabled = s_lfo_was_running[i];
+      bool is_enabled = now_configured_enabled[i];
+
+      if (!was_enabled && is_enabled) {
+        lfo_apply_start_mode_one((uint8_t)i);
+      } else if (was_enabled && is_enabled) {
+        lfo_enable(i, true);
+      }
+    }
   }
 
   s_input_suspended = false;

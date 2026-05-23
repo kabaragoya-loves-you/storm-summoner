@@ -91,6 +91,14 @@ void ui_set_programming_top_level(bool is_top_level);
 void ui_graphics_suspend(void);
 void ui_graphics_resume(void);
 
+// Scene-change transition window. Pauses canvas refresh, stages UI module
+// switches (so the LVGL teardown/rebuild does not race with the heavy scene
+// configuration work), and -- via touch.c -- drops touch events for the
+// duration. Bracket the heavy body of scene_set_current with these.
+void ui_scene_transition_begin(void);
+void ui_scene_transition_end(void);
+bool ui_scene_is_transitioning(void);
+
 // Canvas buffer management for memory optimization
 // Returns true if release was initiated successfully, false if aborted
 // post_release_cb: Optional callback to run after release completes (in LVGL context)

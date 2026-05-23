@@ -516,7 +516,8 @@ esp_err_t action_morph_init(void) {
     return ret;
   }
 
-  ret = event_bus_subscribe(EVENT_BEAT, morph_beat_event_handler, NULL);
+  ret = event_bus_subscribe_named(EVENT_BEAT, morph_beat_event_handler, NULL,
+    "action_morph.beat_sync");
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to subscribe to beat events for morph: %s", esp_err_to_name(ret));
   }

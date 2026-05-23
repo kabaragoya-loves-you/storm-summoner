@@ -52,6 +52,11 @@
 
 // Static variables
 static TaskHandle_t s_task_handle = NULL;
+// Cooperative-shutdown flag. expression_disable() sets this and waits for
+// expression_task to clear its own handle. This avoids vTaskDelete()ing a
+// task that may be inside adc_manager_read holding the shared ADC mutex,
+// which would deadlock any subsequent adc_manager_register_channel.
+static volatile bool s_task_should_exit = false;
 static float s_expression_value = 0.0f;
 static uint8_t s_midi_value = 0;
 static int16_t s_min_value = DEFAULT_MIN_VALUE;
@@ -96,6 +101,14 @@ static void expression_task(void *pvParameters) {
   vTaskDelay(pdMS_TO_TICKS(100));
   
   while (1) {
+    // Cooperative-shutdown check. See note on s_task_should_exit.
+    if (s_task_should_exit) {
+      s_task_handle = NULL;
+      ESP_LOGD(TAG, "Expression task exiting cleanly");
+      vTaskDelete(NULL);
+      return;
+    }
+
     // Check cable detection setting
     bool cable_detect_enabled = input_get_cable_detection_enabled();
     
@@ -545,15 +558,36 @@ void expression_enable(void) {
 }
 
 void expression_disable(void) {
-  if (s_task_handle) {
+  if (s_task_handle == NULL) return;
+
+  s_task_should_exit = true;
+
+  // Wait up to ~500ms for the task to acknowledge. MUST sleep at least one
+  // tick per iteration (vTaskDelay(1) = 10ms at CONFIG_FREERTOS_HZ=100); at
+  // sub-tick steps vTaskDelay(0) does not yield from this caller (event-bus
+  // dispatcher, priority 20) down to expression_task (priority 5), so the
+  // loop would spin and the task would never get a chance to see the flag.
+  const TickType_t wait_step_ticks = 1;
+  const int wait_step_ms = 10;
+  const int wait_total_ms = 500;
+  int waited = 0;
+  while (s_task_handle != NULL && waited < wait_total_ms) {
+    vTaskDelay(wait_step_ticks);
+    waited += wait_step_ms;
+  }
+
+  if (s_task_handle != NULL) {
+    ESP_LOGW(TAG, "Expression task did not exit gracefully within %d ms, forcing delete", wait_total_ms);
     vTaskDelete(s_task_handle);
     s_task_handle = NULL;
-    
-    // Deinitialize ADC
-    expression_adc_deinit();
-    
-    ESP_LOGI(TAG, "Expression task deleted and ADC deinitialized");
+  } else {
+    ESP_LOGD(TAG, "Expression task exited cleanly after %d ms", waited);
   }
+  s_task_should_exit = false;
+
+  expression_adc_deinit();
+
+  ESP_LOGI(TAG, "Expression task stopped and ADC deinitialized");
 }
 
 float expression_get_value(void) {

@@ -415,24 +415,31 @@ static void tempo_task(void *pvParameters) {
         actual_send_time_us = esp_timer_get_time();
         send_clock();
       }
-      
-      // Track ticks and beats (use full 24ppqn for beat tracking)
-      s_tick_counter++;
-      
-      // Check if we've completed a beat (based on divider)
-      // Note: s_note_divider is based on 24ppqn, so we need to scale it
+
+      // Compute beat divisor (s_note_divider is based on 24ppqn, scale if needed).
       uint32_t beat_divisor = s_note_divider;
       if (standard == CLOCK_STANDARD_16TH_NOTE) {
         beat_divisor /= 4;  // Adjust for 6ppqn
       } else if (standard == CLOCK_STANDARD_BEAT) {
         beat_divisor = 1;   // One tick = one beat
       }
-      
+
+      // Publish beat event at the START of each musical beat (i.e. coincident
+      // with sending the FIRST pulse of that beat: ticks 0, 24, 48, ...). The
+      // check runs BEFORE incrementing s_tick_counter so it triggers on the
+      // current tick value (0 on the very first iteration after init or a
+      // time-signature reset, then 24 ticks later, etc.). This replaces the
+      // previous post-increment check that fired on tick 24, 48, ... which is
+      // the LAST tick of the prior beat -- causing every beat event to lead
+      // its musical position by one tick (~125 ms at 20 BPM) and pre-fix to
+      // miss beat 1 entirely until tick 24.
       if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
         s_beat_counter++;
         if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
         publish_beat_event();
       }
+
+      s_tick_counter++;
       
       // Check if BPM changed
       if (current_bpm != last_bpm) {
@@ -476,7 +483,7 @@ static void tempo_task(void *pvParameters) {
     else if (source == CLOCK_SOURCE_SYNC) {
       // In SYNC mode, we track incoming pulses with dropout protection
       // Tempo holds at last known good BPM if external clock stops
-      
+
       uint32_t now = esp_timer_get_time() / 1000;
       
       // Check for dropout first
@@ -536,21 +543,23 @@ static void tempo_task(void *pvParameters) {
         sync_actual_send_time_us = esp_timer_get_time();
         send_clock();
       }
-      
-      s_tick_counter++;
-      
+
       uint32_t beat_divisor = s_note_divider;
       if (standard == CLOCK_STANDARD_16TH_NOTE) {
         beat_divisor /= 4;
       } else if (standard == CLOCK_STANDARD_BEAT) {
         beat_divisor = 1;
       }
-      
+
+      // See INTERNAL branch above for the rationale: publish BEFORE the tick
+      // increment so beat N aligns with the first pulse of musical beat N.
       if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
         s_beat_counter++;
         if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
         publish_beat_event();
       }
+
+      s_tick_counter++;
       
       // Schedule next tick - use actual send time after reset
       if (sync_did_reset && sync_actual_send_time_us > 0) {
@@ -647,26 +656,36 @@ static void transport_state_handler(const event_t* event, void* context) {
         // Resume: keep beat/tick counters and tempo lock state intact
         ESP_LOGI(TAG, "Resuming at beat %d", s_beat_counter);
       } else {
-        // Fresh start: sync beat counter with transport's current position
+        // Fresh start: sync beat counter with transport's current position.
+        // The clock-source code (tempo_task INTERNAL/SYNC branches or
+        // tempo_midi_clock_tick) now publishes the beat event at the START
+        // of each musical beat by checking (s_tick_counter % divisor == 0)
+        // BEFORE incrementing. So we set s_tick_counter=0 and pre-decrement
+        // s_beat_counter so the first tick's check publishes the correct
+        // transport_beat (incrementing 0->1, 2->3, etc.).
         uint8_t transport_beat = transport_get_current_beat();
+        if (transport_beat == 0) transport_beat = 1;
+        uint8_t numerator = s_time_signature.numerator;
+        if (numerator == 0) numerator = 4;
         ESP_LOGI(TAG, "Resetting beat counter from %d to %d (from transport)",
           s_beat_counter, transport_beat);
-        s_beat_counter = transport_beat;
-        if (s_beat_counter == 0) s_beat_counter = 1;  // Safety check
+        s_beat_counter = (transport_beat > 1) ? (transport_beat - 1)
+                                              : (uint8_t)(numerator);
+        // Wrap-style pre-decrement: if transport_beat==1 we want the first
+        // tick's check (0%div==0) to do (numerator)+1 -> wraps to 1. That way
+        // s_beat_counter never sits at literal 0, which other code paths
+        // historically treat as "uninitialised".
         s_tick_counter = 0;
-        // Reset MIDI tick tracking for clean tempo detection
         s_midi_tick_last_quarter_time = 0;
         s_midi_tick_ema_initialized = false;
         s_midi_tick_last_update_time = 0;
-        // Reset tempo lock state - will lock after TEMPO_LOCK_BEATS
         s_tempo_lock_beat_count = 0;
         s_tempo_locked = false;
         s_tempo_locked_bpm = 0;
         s_tempo_change_confirm = 0;
         s_tempo_change_candidate = 0;
-        // Immediately publish current beat on fresh start
-        ESP_LOGI(TAG, "Publishing beat event (fresh start)");
-        publish_beat_event();
+        // No immediate publish_beat_event() here -- the first tick from the
+        // active clock source will publish naturally and at the right moment.
       }
       tempo_start();
       break;
@@ -933,13 +952,25 @@ void tempo_tap(void) {
 void tempo_midi_clock_tick(void) {
   // Safety: Don't process if tempo not initialized yet
   if (!s_state_mutex) return;
-  
+
   // Only process if source is MIDI
   if (s_clock_source != CLOCK_SOURCE_MIDI) return;
-  
+
+  // Publish beat event at the START of each musical beat. The modulo check
+  // uses the CURRENT s_tick_counter value (before increment) so it triggers
+  // on ticks 0, 24, 48, ..., which is the moment we receive the first MIDI
+  // clock pulse of that musical beat. See INTERNAL clock branch in tempo_task
+  // for the full rationale.
+  if (s_note_divider > 0 && (s_tick_counter % s_note_divider == 0)) {
+    s_beat_counter++;
+    if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+    if (s_tempo_lock_beat_count < 255) s_tempo_lock_beat_count++;
+    publish_beat_event();
+  }
+
   // Use global tick counter (reset by transport_state_handler on start/stop)
   s_tick_counter++;
-  
+
   uint32_t now = esp_timer_get_time() / 1000;
   
   // Track last tick time for dropout detection
@@ -1073,53 +1104,47 @@ void tempo_midi_clock_tick(void) {
     s_midi_tick_last_quarter_time = now;
   }
   
-  // Check for beat (for beat events and LED sync)
-  // Use global s_tick_counter which is now the authoritative tick source
-  if (s_tick_counter % s_note_divider == 0) {
-    s_beat_counter++;
-    if (s_beat_counter > s_time_signature.numerator) {
-      s_beat_counter = 1;
-    }
-    // Track beats for tempo lock (saturate at 255 to avoid overflow)
-    if (s_tempo_lock_beat_count < 255) {
-      s_tempo_lock_beat_count++;
-    }
-    publish_beat_event();
-  }
+  // Beat publish was moved to the top of this function so it fires on the
+  // first MIDI tick of each musical beat instead of the last tick of the
+  // previous beat.
 }
 
 void tempo_midi_transport_start(void) {
   // Called directly from MIDI parser when Start (0xFA) is received
   // This must run synchronously BEFORE any clock ticks are processed
   // to ensure beat counter is reset before incrementing
-  
+
   if (!s_state_mutex) return;
   if (s_clock_source != CLOCK_SOURCE_MIDI) return;
-  
+
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-  
+
   ESP_LOGI(TAG, "MIDI transport start: resetting counters (was beat=%d tick=%lu)",
     s_beat_counter, (unsigned long)s_tick_counter);
-  
-  s_beat_counter = 1;
+
+  // Pre-decrement: tempo_midi_clock_tick now publishes the beat at the START
+  // of each musical beat (modulo check BEFORE incrementing s_tick_counter).
+  // The first MIDI clock tick after Start hits the (0 % divisor == 0) branch
+  // and increments s_beat_counter, so seed it to numerator (which the wrap
+  // logic will turn back into beat 1 on that first tick). No immediate
+  // publish_beat_event() here -- the first tick will do it, aligned with
+  // the actual first MIDI clock pulse of beat 1.
+  uint8_t numerator = s_time_signature.numerator;
+  if (numerator == 0) numerator = 4;
+  s_beat_counter = numerator;
   s_tick_counter = 0;
-  
-  // Reset MIDI tick tracking for clean tempo detection
+
   s_midi_tick_last_quarter_time = 0;
   s_midi_tick_ema_initialized = false;
   s_midi_tick_last_update_time = 0;
-  
-  // Reset tempo lock state
+
   s_tempo_lock_beat_count = 0;
   s_tempo_locked = false;
   s_tempo_locked_bpm = 0;
   s_tempo_change_confirm = 0;
   s_tempo_change_candidate = 0;
-  
+
   xSemaphoreGive(s_state_mutex);
-  
-  // Publish beat 1 immediately (outside mutex to avoid potential deadlock with event bus)
-  publish_beat_event();
 }
 
 void tempo_set_note_divider(tempo_note_divider_t divider) {
@@ -1143,12 +1168,16 @@ tempo_note_divider_t tempo_get_note_divider(void) {
 
 void tempo_set_time_signature(uint8_t numerator, uint8_t denominator) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-  bool changed = (s_time_signature.numerator != numerator || 
+  bool changed = (s_time_signature.numerator != numerator ||
                   s_time_signature.denominator != denominator);
   s_time_signature.numerator = numerator;
   s_time_signature.denominator = denominator;
-  // Reset beat counter when time signature changes
+  // Reset beat AND tick counters so the next clock tick publishes beat 1 at
+  // a clean boundary. Without resetting s_tick_counter the bar would start
+  // mid-beat (the modulo check would have to wait up to a full beat for the
+  // tick counter to wrap around to a multiple of divisor).
   s_beat_counter = 0;
+  s_tick_counter = 0;
   xSemaphoreGive(s_state_mutex);
   
   // Note: No NVS save - time signature is now a per-scene setting

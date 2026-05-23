@@ -171,7 +171,8 @@ esp_err_t lfo_init(void) {
   }
 
   // Subscribe to beat events for tempo sync
-  esp_err_t ret = event_bus_subscribe(EVENT_BEAT, handle_beat_event, NULL);
+  esp_err_t ret = event_bus_subscribe_named(EVENT_BEAT, handle_beat_event, NULL,
+    "lfo.beat");
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to subscribe to beat events: %s", esp_err_to_name(ret));
   }
@@ -1240,37 +1241,39 @@ static void handle_transport_event(const event_t* event, void* context) {
   }
 }
 
+void lfo_apply_start_mode_one(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return;
+
+  if (!s_lfo[slot].config.enabled) {
+    ESP_LOGD(TAG, "LFO%d: config disabled, skipping start mode", slot + 1);
+    return;
+  }
+
+  switch (s_lfo[slot].config.start_mode) {
+    case LFO_START_RUNNING:
+      lfo_enable(slot, true);
+      ESP_LOGI(TAG, "LFO%d: start_mode=running -> enabled", slot + 1);
+      break;
+    case LFO_START_PAUSED:
+      lfo_enable(slot, false);
+      ESP_LOGI(TAG, "LFO%d: start_mode=paused -> disabled", slot + 1);
+      break;
+    case LFO_START_TRANSPORT: {
+      bool transport_playing = transport_is_playing();
+      lfo_enable(slot, transport_playing);
+      ESP_LOGI(TAG, "LFO%d: start_mode=transport -> %s", slot + 1,
+        transport_playing ? "enabled" : "disabled");
+      break;
+    }
+  }
+}
+
 void lfo_apply_start_modes(void) {
-  bool transport_playing = transport_is_playing();
-  
-  ESP_LOGI(TAG, "Applying LFO start modes (transport: %s)", transport_playing ? "playing" : "stopped");
-  
+  ESP_LOGI(TAG, "Applying LFO start modes (transport: %s)",
+    transport_is_playing() ? "playing" : "stopped");
+
   for (int i = 0; i < LFO_NUM_SLOTS; i++) {
-    // Only apply start mode logic if the LFO is configured as enabled in the scene
-    // The scene's lfo_config.enabled field determines if this LFO should be active at all
-    if (!s_lfo[i].config.enabled) {
-      ESP_LOGD(TAG, "LFO%d: config disabled, skipping start mode", i + 1);
-      continue;
-    }
-    
-    switch (s_lfo[i].config.start_mode) {
-      case LFO_START_RUNNING:
-        // Start running immediately when scene loads
-        lfo_enable(i, true);
-        ESP_LOGI(TAG, "LFO%d: start_mode=running -> enabled", i + 1);
-        break;
-      case LFO_START_PAUSED:
-        // Start paused - requires action to start
-        lfo_enable(i, false);
-        ESP_LOGI(TAG, "LFO%d: start_mode=paused -> disabled", i + 1);
-        break;
-      case LFO_START_TRANSPORT:
-        // Follow transport state
-        lfo_enable(i, transport_playing);
-        ESP_LOGI(TAG, "LFO%d: start_mode=transport -> %s", i + 1, 
-          transport_playing ? "enabled" : "disabled");
-        break;
-    }
+    lfo_apply_start_mode_one((uint8_t)i);
   }
 }
 

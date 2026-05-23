@@ -82,7 +82,8 @@ esp_err_t transport_init(void) {
   }
   
   // Subscribe to tempo beat events for position tracking
-  ret = event_bus_subscribe(EVENT_BEAT, tempo_beat_handler, NULL);
+  ret = event_bus_subscribe_named(EVENT_BEAT, tempo_beat_handler, NULL,
+    "transport.beat_pos");
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to subscribe to BEAT event");
     return ret;

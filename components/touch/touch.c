@@ -258,6 +258,32 @@ static void unquarantine_pad(int pad_index, uint32_t now) {
     pad_index, duration);
 }
 
+// Post a synthetic RELEASE for every pad currently believed pressed, and clear
+// the internal pressed-state bookkeeping. Called by ui_scene_transition_end()
+// to re-sync state after a window in which inbound PRESS/RELEASE were dropped.
+// Mirrors the synthetic-RELEASE pattern in quarantine_pad().
+void touch_force_release_all_pads(void) {
+  int released_count = 0;
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    if (!s_button_pressed_states[i]) continue;
+
+    s_button_pressed_states[i] = false;
+    s_pad_press_timestamps[i] = 0;
+
+    event_t release_event = {
+      .type = EVENT_TOUCH_RELEASE,
+      .priority = EVENT_PRIORITY_HIGH,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.touch = { .pad_id = i }
+    };
+    event_bus_post(&release_event);
+    released_count++;
+  }
+  if (released_count > 0) {
+    ESP_LOGI(TAG, "touch_force_release_all_pads: released %d pad(s)", released_count);
+  }
+}
+
 // Public-from-this-translation-unit helper for the `recover` console command.
 // Clears quarantine state (if any) for the pad and then invokes the standard
 // touch_recover_pad_state. Lets us deliberately trigger STAGE0/1/2 traces on a
@@ -297,6 +323,17 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   if (s_pad_suppressed[pad_index]) {
     ESP_LOGD(TAG, "Suppressed pad %d: dropping %s",
       pad_index, is_pressed ? "PRESS" : "RELEASE");
+    return;
+  }
+
+  // === [SCENE TRANSITION] Drop input while the screen is frozen ===
+  // The user cannot see what they are pressing during a scene change, and the
+  // outgoing UI module is being torn down by the LVGL task. Drop both PRESS
+  // and RELEASE; ui_scene_transition_end() calls touch_force_release_all_pads()
+  // to re-sync state for any pad that was physically held across the window.
+  if (ui_scene_is_transitioning()) {
+    ESP_LOGD(TAG, "Scene transition active: dropping %s for pad %d",
+      is_pressed ? "PRESS" : "RELEASE", pad_index);
     return;
   }
 

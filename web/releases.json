@@ -1,5 +1,5 @@
 {
-  "generated": "2026-05-22T22:32:05",
+  "generated": "2026-05-22T23:13:30",
   "firmware": [
     { "version": "0.4", "filename": "storm-summoner-0.4.bin", "date": "2026-05-22" },
     { "version": "0.3", "filename": "storm-summoner-0.3.bin", "date": "2026-05-15" },
@@ -7,6 +7,7 @@
     { "version": "0.1", "filename": "storm-summoner-0.1.bin", "date": "2026-03-25" }
   ],
   "assets": [
+    { "checksum": "bef46a65", "filename": "assets-bef46a65.bin", "date": "2026-05-22" },
     { "checksum": "f56767b1", "filename": "assets-f56767b1.bin", "date": "2026-05-22" }
   ]
 }

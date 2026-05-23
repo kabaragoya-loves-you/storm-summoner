@@ -93,6 +93,10 @@ static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_shape_list_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_shape_item_labels[LABEL_BUFFER_SETS][8][32];
+static char s_lfo_shape_add_label[LABEL_BUFFER_SETS][24];
+static uint8_t s_editing_shape_index = 0;
 static char s_step_target_label[LABEL_BUFFER_SETS][24];
 static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
@@ -142,6 +146,7 @@ static char s_morph_division_label[LABEL_BUFFER_SETS][24];
 static menu_item_t s_detail_items[MAX_DETAIL_ITEMS];
 static menu_item_t s_cc_hold_items[3];
 static menu_item_t s_cc_cycle_items[9];
+static menu_item_t s_lfo_shape_items[9];
 
 // Note names
 static const char* NOTE_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -3178,6 +3183,176 @@ static void nav_to_lfo_slot(void* user_data) {
 }
 
 // ============================================================================
+// LFO Shape List Editor (for ACTION_LFO_SHAPE)
+//
+// The shape cycle stores 2..8 waveforms in params.lfo.shapes[]. The list page
+// shows each entry; tapping it opens a picker that can set the waveform or
+// remove the entry (Remove is only offered when num_shapes > 2). An
+// "+ Add Shape" item appends a new Sine entry up to 8.
+// ============================================================================
+
+#define LFO_SHAPE_MIN 2
+#define LFO_SHAPE_MAX 8
+
+static lv_obj_t* lfo_shape_list_page_create(void);
+
+static const char* lfo_shape_display_name(uint8_t shape) {
+  switch ((lfo_waveform_t)shape) {
+    case LFO_WAVEFORM_SINE: return "Sine";
+    case LFO_WAVEFORM_TRIANGLE: return "Triangle";
+    case LFO_WAVEFORM_SQUARE: return "Square";
+    case LFO_WAVEFORM_SAW_UP: return "Saw Up";
+    case LFO_WAVEFORM_SAW_DOWN: return "Saw Down";
+    case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
+    default: return "?";
+  }
+}
+
+static bool lfo_shape_list_back_handler(void) {
+  menu_set_custom_back_handler(NULL);
+  return_to_detail_page(1);
+  return true;
+}
+
+static void lfo_shape_picker_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  uint8_t idx = s_editing_shape_index;
+  uint8_t num_shapes = action->params.lfo.num_shapes;
+
+  static const lfo_waveform_t waveforms[6] = {
+    LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
+    LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD
+  };
+
+  if (selected_index < 6) {
+    if (idx < num_shapes && idx < LFO_SHAPE_MAX) {
+      action->params.lfo.shapes[idx] = (uint8_t)waveforms[selected_index];
+      ESP_LOGI(TAG, "LFO Shape entry %u set to %s",
+        (unsigned)(idx + 1), lfo_shape_display_name((uint8_t)waveforms[selected_index]));
+    }
+  } else if (selected_index == 6 && num_shapes > LFO_SHAPE_MIN) {
+    for (int i = idx; i + 1 < num_shapes && i + 1 < LFO_SHAPE_MAX; i++) {
+      action->params.lfo.shapes[i] = action->params.lfo.shapes[i + 1];
+    }
+    action->params.lfo.shapes[num_shapes - 1] = LFO_WAVEFORM_SINE;
+    action->params.lfo.num_shapes = num_shapes - 1;
+    if (action->params.lfo.current_index >= action->params.lfo.num_shapes) {
+      action->params.lfo.current_index = 0;
+    }
+    ESP_LOGI(TAG, "LFO Shape entry %u removed (now %u shapes)",
+      (unsigned)(idx + 1), (unsigned)action->params.lfo.num_shapes);
+  }
+
+  s_callback_in_progress = false;
+  menu_set_restore_focus(idx);
+  menu_navigate_back_then_to(1, "Shapes", lfo_shape_list_page_create);
+}
+
+static lv_obj_t* lfo_shape_picker_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint8_t idx = s_editing_shape_index;
+  uint8_t num_shapes = action->params.lfo.num_shapes;
+
+  uint32_t current = 0;
+  if (idx < num_shapes && idx < LFO_SHAPE_MAX) {
+    switch ((lfo_waveform_t)action->params.lfo.shapes[idx]) {
+      case LFO_WAVEFORM_TRIANGLE: current = 1; break;
+      case LFO_WAVEFORM_SQUARE: current = 2; break;
+      case LFO_WAVEFORM_SAW_UP: current = 3; break;
+      case LFO_WAVEFORM_SAW_DOWN: current = 4; break;
+      case LFO_WAVEFORM_SAMPLE_HOLD: current = 5; break;
+      case LFO_WAVEFORM_SINE:
+      default: current = 0; break;
+    }
+  }
+
+  const char* options = (num_shapes > LFO_SHAPE_MIN)
+    ? "Sine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H\nRemove"
+    : "Sine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H";
+
+  static char title[24];
+  snprintf(title, sizeof(title), "Shape %u", (unsigned)(idx + 1));
+  return menu_create_roller_page(title, options, current,
+    lfo_shape_picker_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_shape_entry(void* user_data) {
+  s_editing_shape_index = (uint8_t)(uintptr_t)user_data;
+  static char title[24];
+  snprintf(title, sizeof(title), "Shape %u", (unsigned)(s_editing_shape_index + 1));
+  nav_to_subpage(title, lfo_shape_picker_create);
+}
+
+static void lfo_shape_add(void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+
+  action_t* action = s_ctx->target_action;
+  uint8_t num_shapes = action->params.lfo.num_shapes;
+  if (num_shapes >= LFO_SHAPE_MAX) return;
+
+  action->params.lfo.shapes[num_shapes] = LFO_WAVEFORM_SINE;
+  action->params.lfo.num_shapes = num_shapes + 1;
+  ESP_LOGI(TAG, "LFO Shape entry added (now %u shapes)",
+    (unsigned)action->params.lfo.num_shapes);
+
+  menu_set_custom_back_handler(NULL);
+  menu_set_restore_focus(num_shapes);
+  menu_navigate_to("Shapes", lfo_shape_list_page_create);
+}
+
+static lv_obj_t* lfo_shape_list_page_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return menu_create_page("Error", NULL, 0);
+
+  menu_set_custom_back_handler(lfo_shape_list_back_handler);
+
+  action_t* action = s_ctx->target_action;
+  int buf = get_next_buffer_set();
+  uint8_t num_shapes = action->params.lfo.num_shapes;
+  if (num_shapes < LFO_SHAPE_MIN) {
+    num_shapes = LFO_SHAPE_MIN;
+    action->params.lfo.num_shapes = LFO_SHAPE_MIN;
+  }
+  if (num_shapes > LFO_SHAPE_MAX) num_shapes = LFO_SHAPE_MAX;
+
+  int item_count = 0;
+  for (int i = 0; i < num_shapes; i++) {
+    snprintf(s_lfo_shape_item_labels[buf][i], sizeof(s_lfo_shape_item_labels[buf][i]),
+      "Shape %d\n%s", i + 1, lfo_shape_display_name(action->params.lfo.shapes[i]));
+    s_lfo_shape_items[item_count++] = (menu_item_t){
+      s_lfo_shape_item_labels[buf][i], nav_to_lfo_shape_entry, (void*)(uintptr_t)i, true
+    };
+  }
+
+  if (num_shapes < LFO_SHAPE_MAX) {
+    snprintf(s_lfo_shape_add_label[buf], sizeof(s_lfo_shape_add_label[buf]), "+ Add Shape");
+    s_lfo_shape_items[item_count++] = (menu_item_t){
+      s_lfo_shape_add_label[buf], lfo_shape_add, NULL, true
+    };
+  }
+
+  return menu_create_page("Shapes", s_lfo_shape_items, item_count);
+}
+
+static void nav_to_lfo_shape_list(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Shapes", lfo_shape_list_page_create);
+}
+
+// ============================================================================
 // Step Target Roller (for step actions)
 // ============================================================================
 
@@ -6085,6 +6260,18 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
+    };
+  }
+
+  // Show Shapes editor for LFO Shape action
+  if (action->type == ACTION_LFO_SHAPE && item_count < MAX_DETAIL_ITEMS) {
+    uint8_t num_shapes = action->params.lfo.num_shapes;
+    if (num_shapes < LFO_SHAPE_MIN) num_shapes = LFO_SHAPE_MIN;
+    if (num_shapes > LFO_SHAPE_MAX) num_shapes = LFO_SHAPE_MAX;
+    snprintf(s_lfo_shape_list_label[buf], sizeof(s_lfo_shape_list_label[buf]),
+      "Shapes\n%u", (unsigned)num_shapes);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_lfo_shape_list_label[buf], nav_to_lfo_shape_list, NULL, true
     };
   }
   
