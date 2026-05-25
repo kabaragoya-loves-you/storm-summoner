@@ -55,10 +55,16 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "program_prev",     ACTION_PRESET_DEC,       VARIANT_NONE      },
   { "pc",               ACTION_PRESET,           VARIANT_NONE      },
 
-  // Pre-consolidation scene names
-  { "scene_next",       ACTION_SCENE_INC,        VARIANT_NONE      },
-  { "scene_prev",       ACTION_SCENE_DEC,        VARIANT_NONE      },
-  { "scene_set",        ACTION_SCENE,            VARIANT_NONE      },
+  // Pre-consolidation scene names. scene_inc/scene_dec were the on-disk
+  // canonical names before the family was collapsed into ACTION_SCENE; map
+  // them to the matching variants. Bare "scene" without an explicit variant
+  // string falls through to action_type_from_string and then defaults to
+  // VARIANT_SET via json_to_action's consolidated-family fallback.
+  { "scene_next",       ACTION_SCENE,            VARIANT_INCREMENT },
+  { "scene_prev",       ACTION_SCENE,            VARIANT_DECREMENT },
+  { "scene_set",        ACTION_SCENE,            VARIANT_SET       },
+  { "scene_inc",        ACTION_SCENE,            VARIANT_INCREMENT },
+  { "scene_dec",        ACTION_SCENE,            VARIANT_DECREMENT },
 
   // Pre-consolidation CC names (Control family pilot)
   { "control_change",   ACTION_CONTROL,          VARIANT_SET       },

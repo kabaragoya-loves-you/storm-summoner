@@ -242,13 +242,15 @@ action_t action_create_preset_dec(void) {
 
 action_t action_create_scene_inc(void) {
   action_t action = {0};
-  action.type = ACTION_SCENE_INC;
+  action.type = ACTION_SCENE;
+  action.variant = VARIANT_INCREMENT;
   return action;
 }
 
 action_t action_create_scene_dec(void) {
   action_t action = {0};
-  action.type = ACTION_SCENE_DEC;
+  action.type = ACTION_SCENE;
+  action.variant = VARIANT_DECREMENT;
   return action;
 }
 

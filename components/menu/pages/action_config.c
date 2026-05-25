@@ -89,6 +89,7 @@ static char s_tw_hold_release_label[LABEL_BUFFER_SETS][32];
 static char s_tw_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_tw_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
 static char s_scene_label[LABEL_BUFFER_SETS][40];
+static char s_scene_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_amount_label[LABEL_BUFFER_SETS][24];
@@ -166,8 +167,6 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PRESET,
   ACTION_PRESET_HOLD,
   ACTION_PRESET_CYCLE,
-  ACTION_SCENE_INC,
-  ACTION_SCENE_DEC,
   ACTION_SCENE,
   ACTION_CONFIRM_PENDING,
   ACTION_PLAY,
@@ -237,9 +236,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_PRESET: return "Set Preset";
     case ACTION_PRESET_HOLD: return "Preset Hold";
     case ACTION_PRESET_CYCLE: return "Preset Cycle";
-    case ACTION_SCENE_INC: return "Scene +1";
-    case ACTION_SCENE_DEC: return "Scene -1";
-    case ACTION_SCENE: return "Set Scene";
+    case ACTION_SCENE: return "Scene";
     case ACTION_PLAY: return "Play";
     case ACTION_STOP: return "Stop";
     case ACTION_PAUSE: return "Pause";
@@ -302,8 +299,9 @@ static bool is_action_visible(action_type_t type) {
   // Preset Hold only available in immediate change mode
   if (type == ACTION_PRESET_HOLD && change_mode != CHANGE_MODE_IMMEDIATE) return false;
   
-  // Scene actions only in preset_sync or advanced mode
-  if (type == ACTION_SCENE_INC || type == ACTION_SCENE_DEC || type == ACTION_SCENE) {
+  // Scene actions only in preset_sync or advanced mode (all variants share
+  // this gate; the variant picker applies once the user opens it).
+  if (type == ACTION_SCENE) {
     if (scene_mode != SCENE_MODE_PRESET_SYNC && scene_mode != SCENE_MODE_ADVANCED) return false;
   }
   
@@ -644,6 +642,9 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     }
     
     if (new_type == ACTION_SCENE) {
+      // Default to Set Scene targeting the first scene; scene_variant_confirm_cb
+      // handles INC/DEC, which don't need a target.
+      action->variant = VARIANT_SET;
       action->params.target.number = scene_get_index_by_position(0);
     }
     
@@ -2473,6 +2474,96 @@ static lv_obj_t* control_variant_roller_create(void) {
 static void nav_to_control_variant(void* user_data) {
   (void)user_data;
   nav_to_subpage("Variant", control_variant_roller_create);
+}
+
+// ============================================================================
+// Scene Variant Roller (for ACTION_SCENE -- secondary operation picker)
+// ============================================================================
+
+// Order: SET first (most-explicit, mirrors Tempo's lead-with-SET convention
+// after TAP), then INCREMENT/DECREMENT.
+static const action_variant_t s_scene_variants[] = {
+  VARIANT_SET,
+  VARIANT_INCREMENT,
+  VARIANT_DECREMENT,
+};
+#define NUM_SCENE_VARIANTS (sizeof(s_scene_variants) / sizeof(s_scene_variants[0]))
+
+// Trigger-filtered subset of s_scene_variants. All three Scene variants are
+// fire-and-forget so the filter is effectively a no-op today, but we keep
+// the structure parallel to the Tempo/Control rollers for future-proofing
+// (any future variant-specific trigger restriction lands here without
+// reworking call sites).
+static action_variant_t s_filtered_scene_variants[NUM_SCENE_VARIANTS];
+static size_t s_num_filtered_scene_variants = 0;
+
+static void build_filtered_scene_variants(void) {
+  s_num_filtered_scene_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_SCENE_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_SCENE, s_scene_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_scene_variants[s_num_filtered_scene_variants++] = s_scene_variants[i];
+    }
+  }
+}
+
+static void scene_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_scene_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_scene_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    // No per-variant param seeding required -- SET reuses target.number
+    // (which the scene picker fills in), INC/DEC carry no params.
+    ESP_LOGI(TAG, "Scene variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* scene_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_scene_variants();
+  if (s_num_filtered_scene_variants == 0) return NULL;
+
+  static char options[128];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_scene_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_scene_variants[i]));
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_scene_variants; i++) {
+    if (s_filtered_scene_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, scene_variant_confirm_cb, NULL);
+}
+
+static void nav_to_scene_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", scene_variant_roller_create);
 }
 
 // ============================================================================
@@ -6427,27 +6518,37 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show Scene selector for Scene Set
+  // ACTION_SCENE (consolidated family): always show Variant picker, then
+  // the scene-number picker only for VARIANT_SET. INCREMENT/DECREMENT carry
+  // no parameters -- the variant label is the whole story.
   if (action->type == ACTION_SCENE) {
-    uint8_t target = action->params.target.number;
-    
-    const char* target_name = NULL;
-    uint16_t count = scene_get_total_count();
-    for (uint16_t i = 0; i < count; i++) {
-      if (scene_get_index_by_position(i) == target) {
-        target_name = scene_get_name_by_position(i);
-        break;
-      }
-    }
-    
-    if (target_name) {
-      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%.28s", target_name);
-    } else {
-      snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%u", (unsigned)target);
-    }
+    snprintf(s_scene_variant_label[buf], sizeof(s_scene_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_scene_label[buf], nav_to_scene_set, NULL, true
+      s_scene_variant_label[buf], nav_to_scene_variant, NULL, true
     };
+
+    if (action->variant == VARIANT_SET) {
+      uint8_t target = action->params.target.number;
+
+      const char* target_name = NULL;
+      uint16_t count = scene_get_total_count();
+      for (uint16_t i = 0; i < count; i++) {
+        if (scene_get_index_by_position(i) == target) {
+          target_name = scene_get_name_by_position(i);
+          break;
+        }
+      }
+
+      if (target_name) {
+        snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%.28s", target_name);
+      } else {
+        snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%u", (unsigned)target + 1);
+      }
+      s_detail_items[item_count++] = (menu_item_t){
+        s_scene_label[buf], nav_to_scene_set, NULL, true
+      };
+    }
   }
   
   // Show Note selector

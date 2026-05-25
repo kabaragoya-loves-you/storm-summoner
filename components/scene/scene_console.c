@@ -146,10 +146,16 @@ static void format_action_details_with_device(const action_t* action, const devi
       snprintf(buf, buf_size, "PC %d", action->params.preset.program);
       break;
     case ACTION_SCENE:
-      // target.number is stored 0-based; surface as 1-based to match the
-      // menu summary and the documented `<1-128>` console usage.
-      snprintf(buf, buf_size, "Scene %u",
-        (unsigned)action->params.target.number + 1);
+      // Only VARIANT_SET targets a numbered scene; surface 1-based to match
+      // the menu summary and the documented `<1-128>` console usage.
+      // INCREMENT/DECREMENT carry no number -- show the variant-aware
+      // display name ("Scene +1" / "Scene -1") instead of the bare family.
+      if (action->variant == VARIANT_SET) {
+        snprintf(buf, buf_size, "Scene %u",
+          (unsigned)action->params.target.number + 1);
+      } else {
+        action_get_display_name(action, buf, buf_size);
+      }
       break;
     case ACTION_TEMPO:
       if (action->variant == VARIANT_SET) {
@@ -1108,6 +1114,7 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
+    action.variant = VARIANT_SET;
     if (!parse_scene_number_1based(pad_args.params->sval[0],
         "Usage: pad <num> scene_set <1-128>",
         &action.params.target.number)) return 1;
@@ -1284,6 +1291,7 @@ static int cmd_button(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
+    action.variant = VARIANT_SET;
     if (!parse_scene_number_1based(button_args.params->sval[0],
         "Usage: button <name> scene_set <1-128>",
         &action.params.target.number)) return 1;
@@ -1511,6 +1519,7 @@ static int cmd_bump(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
+    action.variant = VARIANT_SET;
     if (!parse_scene_number_1based(bump_args.params->sval[0],
         "Usage: bump scene_set <1-128>",
         &action.params.target.number)) return 1;
@@ -1724,6 +1733,7 @@ static int cmd_expr_switch(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
+    action.variant = VARIANT_SET;
     if (!parse_scene_number_1based(expr_switch_args.params->sval[0],
         "Usage: expr_switch scene_set <1-128>",
         &action.params.target.number)) return 1;
@@ -1919,6 +1929,7 @@ static int cmd_on_load(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
+    action.variant = VARIANT_SET;
     if (!parse_scene_number_1based(on_load_args.params->sval[0],
         "Usage: on_load scene_set <1-128>",
         &action.params.target.number)) return 1;

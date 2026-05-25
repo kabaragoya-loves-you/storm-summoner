@@ -248,6 +248,7 @@ static action_variant_t default_variant_for_type(action_type_t type) {
   switch (type) {
     case ACTION_TEMPO:
     case ACTION_CONTROL:
+    case ACTION_SCENE:
       return VARIANT_SET;
     default:
       return VARIANT_NONE;
@@ -298,8 +299,6 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_PRESET_DEC:
     case ACTION_PRESET_CYCLE:
     case ACTION_SCENE:
-    case ACTION_SCENE_INC:
-    case ACTION_SCENE_DEC:
     case ACTION_TEMPO:
     case ACTION_SET_UI:
     case ACTION_STEP:

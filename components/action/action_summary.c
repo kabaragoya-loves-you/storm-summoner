@@ -228,7 +228,7 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       (unsigned)action->params.preset_cycle.num_presets);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_SCENE) {
+  } else if (action->type == ACTION_SCENE && action->variant == VARIANT_SET) {
     snprintf(summary->param_name, sizeof(summary->param_name), "Scene");
     summary->has_param = true;
     snprintf(summary->param_value, sizeof(summary->param_value), "%u",

@@ -3925,8 +3925,6 @@ static const char* action_type_json_names[] = {
   [ACTION_PRESET] = "preset",
   [ACTION_PRESET_HOLD] = "preset_hold",
   [ACTION_PRESET_CYCLE] = "preset_cycle",
-  [ACTION_SCENE_INC] = "scene_inc",
-  [ACTION_SCENE_DEC] = "scene_dec",
   [ACTION_SCENE] = "scene",
   [ACTION_PLAY] = "play",
   [ACTION_STOP] = "stop",
@@ -4118,7 +4116,11 @@ static cJSON* action_to_json(const action_t* action) {
     // alias and would truncate any bank-aware value > 255 on save.
     cJSON_AddNumberToObject(obj, "number", action->params.preset.program);
   } else if (action->type == ACTION_SCENE) {
-    cJSON_AddNumberToObject(obj, "number", action->params.target.number);
+    // Only VARIANT_SET targets a specific scene number. INCREMENT and
+    // DECREMENT are parameter-less (variant string alone is enough).
+    if (action->variant == VARIANT_SET) {
+      cJSON_AddNumberToObject(obj, "number", action->params.target.number);
+    }
   } else if (action->type == ACTION_PRESET_HOLD) {
     cJSON_AddNumberToObject(obj, "press_preset", action->params.preset_cycle.press_preset);
     cJSON_AddNumberToObject(obj, "release_preset", action->params.preset_cycle.release_preset);
@@ -4431,6 +4433,7 @@ static action_t json_to_action(cJSON* obj) {
   if (action.variant == VARIANT_NONE) {
     if (action.type == ACTION_CONTROL) action.variant = VARIANT_SET;
     if (action.type == ACTION_TEMPO)   action.variant = VARIANT_TAP;
+    if (action.type == ACTION_SCENE)   action.variant = VARIANT_SET;
   }
 
   

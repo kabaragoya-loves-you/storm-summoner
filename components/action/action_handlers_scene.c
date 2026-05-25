@@ -120,38 +120,38 @@ action_handle_result_t action_handlers_scene_dispatch(
       }
       return ACTION_HANDLED;
 
-    case ACTION_SCENE_INC:
+    case ACTION_SCENE: {
+      // Scene Mode gate is identical across all variants -- factor it out.
       if (current_mode == SCENE_MODE_SINGLE) {
-        ESP_LOGW(TAG, "Scene +1 action ignored: not allowed in Simple mode");
+        ESP_LOGW(TAG, "Scene action ignored: not allowed in Simple mode");
         return ACTION_HANDLED;
       }
-      if (is_press) scene_next();
-      return ACTION_HANDLED;
+      if (!is_press) return ACTION_HANDLED;
 
-    case ACTION_SCENE_DEC:
-      if (current_mode == SCENE_MODE_SINGLE) {
-        ESP_LOGW(TAG, "Scene -1 action ignored: not allowed in Simple mode");
-        return ACTION_HANDLED;
-      }
-      if (is_press) scene_previous();
-      return ACTION_HANDLED;
-
-    case ACTION_SCENE:
-      if (current_mode == SCENE_MODE_SINGLE) {
-        ESP_LOGW(TAG, "Set Scene action ignored: not allowed in Simple mode");
-        return ACTION_HANDLED;
-      }
-      if (is_press) {
-        // target.number is a 0-based scene index everywhere else (menu seed,
-        // picker write/read, JSON persistence). Summary display adds +1 for
-        // human-readable text. Use it raw here.
-        esp_err_t err = scene_set_current(action->params.target.number);
-        if (err != ESP_OK) {
-          ESP_LOGW(TAG, "Set Scene to %u failed: %s",
-            (unsigned)action->params.target.number + 1, esp_err_to_name(err));
+      switch (action->variant) {
+        case VARIANT_INCREMENT:
+          scene_next();
+          break;
+        case VARIANT_DECREMENT:
+          scene_previous();
+          break;
+        case VARIANT_SET: {
+          // target.number is a 0-based scene index everywhere else (menu seed,
+          // picker write/read, JSON persistence). Summary display adds +1 for
+          // human-readable text. Use it raw here.
+          esp_err_t err = scene_set_current(action->params.target.number);
+          if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Set Scene to %u failed: %s",
+              (unsigned)action->params.target.number + 1, esp_err_to_name(err));
+          }
+          break;
         }
+        default:
+          ESP_LOGW(TAG, "Unknown Scene variant %d", (int)action->variant);
+          break;
       }
       return ACTION_HANDLED;
+    }
 
     case ACTION_PLAY:
       if (is_press) transport_play();

@@ -833,8 +833,6 @@
             "preset",
             "preset_hold",
             "preset_cycle",
-            "scene_inc",
-            "scene_dec",
             "scene",
             "play",
             "stop",
@@ -882,12 +880,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle) and control_* (control_change, control_hold, control_cycle) names are accepted for backward compatibility and are migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), and scene_* (scene_inc, scene_dec, scene_next, scene_prev) names are accepted for backward compatibility and are migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
           "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle) and type='control' (set/hold/cycle). Omit for singleton types."
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), and type='scene' (set/increment/decrement). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -1150,8 +1148,10 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "scene"}
-            }
+              "type": {"const": "scene"},
+              "variant": {"const": "set"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["number"],
@@ -1163,6 +1163,18 @@
                 "description": "Scene number (1-128)"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "scene"},
+              "variant": {"enum": ["increment", "decrement"]}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "description": "Scene increment/decrement variants carry no parameters."
           }
         },
         {

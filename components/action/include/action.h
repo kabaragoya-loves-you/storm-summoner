@@ -15,9 +15,11 @@ typedef enum {
   ACTION_PRESET,              // Smart PC: 0-127 or 0-16383 based on bank_select_mode
   ACTION_PRESET_HOLD,         // Press: set one preset, Release: set another
   ACTION_PRESET_CYCLE,        // Cycle through presets on each press
-  ACTION_SCENE_INC,
-  ACTION_SCENE_DEC,
-  ACTION_SCENE,               // Jump to specific scene (1-128, user-facing)
+  // Scene (consolidated -- use variant field to pick operation:
+  //   VARIANT_SET       = jump to a specific scene number (was ACTION_SCENE)
+  //   VARIANT_INCREMENT = next scene (was ACTION_SCENE_INC)
+  //   VARIANT_DECREMENT = previous scene (was ACTION_SCENE_DEC))
+  ACTION_SCENE,
   
   // Transport (Play and Record are toggles)
   ACTION_PLAY,                // Toggle: playing -> stop, else -> play
