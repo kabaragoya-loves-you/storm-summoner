@@ -781,20 +781,6 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     return ESP_ERR_INVALID_STATE;
   }
 
-  // #region debug-recovery-stages
-  // [DEBUG H1/H2] STAGE 0: state immediately before benchmark reset
-  {
-    uint32_t s0[1] = {0}, b0[1] = {0};
-    touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, s0);
-    touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, b0);
-    ESP_LOGW(TAG, "[DBG-REC] Pad %d STAGE0 pre-reset: smooth=%"PRIu32
-      " bench=%"PRIu32" delta=%"PRId32" thresh=%"PRIu32,
-      pad_index, s0[0], b0[0],
-      (int32_t)s0[0] - (int32_t)b0[0],
-      s_pad_calibration[pad_index].threshold);
-  }
-  // #endregion
-
   // 2. Reset Benchmark to current smooth reading (fixes corruption and drift)
   touch_chan_benchmark_config_t benchmark_cfg = {
     .do_reset = true,
@@ -818,18 +804,6 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     return ret;
   }
 
-  // #region debug-recovery-stages
-  // [DEBUG H1/H2] STAGE 1: state after benchmark reset + 100ms wait, before apply_thresholds
-  {
-    uint32_t s1[1] = {0};
-    touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, s1);
-    ESP_LOGW(TAG, "[DBG-REC] Pad %d STAGE1 post-reset: smooth=%"PRIu32
-      " bench=%"PRIu32" delta=%"PRId32,
-      pad_index, s1[0], benchmark[0],
-      (int32_t)s1[0] - (int32_t)benchmark[0]);
-  }
-  // #endregion
-
   // 4. Update baseline ONLY - keep the original calibrated threshold from NVS
   //    This is the key insight: don't recalculate thresholds from potentially
   //    corrupted readings. The original NVS thresholds were calculated from
@@ -849,20 +823,6 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   
   // 5. Apply existing thresholds (reloads from s_pad_calibration which has original NVS values)
   ret = apply_thresholds();
-
-  // #region debug-recovery-stages
-  // [DEBUG H1/H2] STAGE 2: state after apply_thresholds (disable/reconfig/enable cycle)
-  {
-    uint32_t s2[1] = {0}, b2[1] = {0};
-    touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, s2);
-    touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, b2);
-    ESP_LOGW(TAG, "[DBG-REC] Pad %d STAGE2 post-apply: smooth=%"PRIu32
-      " bench=%"PRIu32" delta=%"PRId32" thresh=%"PRIu32" apply_ret=%d",
-      pad_index, s2[0], b2[0],
-      (int32_t)s2[0] - (int32_t)b2[0],
-      s_pad_calibration[pad_index].threshold, ret);
-  }
-  // #endregion
 
   if (s_calibration_mutex) {
     xSemaphoreGive(s_calibration_mutex);

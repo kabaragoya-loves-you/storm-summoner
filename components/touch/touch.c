@@ -109,10 +109,20 @@ static uint32_t s_pad_recovery_timestamps[MAX_TOUCH_PADS] = {0}; // When each pa
 // SYSTEM_EVENT_PAD_THRESHOLD, treat as a system event immediately rather than
 // waiting STUCK_TOUCH_TIMEOUT for stuck-detection to catch it.
 #define PRESS_TIME_SYSTEM_EVENT_WINDOW_MS 300
+// PRESS_TIME_HELD_OVERRIDE: even when the press pattern looks like touchwheel
+// rotation (wheel_only mask + active touchwheel), if this many pads are
+// simultaneously HELD (state-based, not just recently-pressed), it cannot be
+// rotation. Empirically (terminal 5, run 2026-05-25) a fastest-possible roll
+// transiently registers up to 4 adjacent pads held, so this must be >4 to
+// avoid false positives. A static event leaves 5-7+ pads stuck simultaneously,
+// which still trips the override on the 5th press.
+#define PRESS_TIME_HELD_OVERRIDE          5
+// WHEEL_PAD_MASK: bitmask of pads that belong to the touchwheel (logical 0-7).
+#define WHEEL_PAD_MASK                   0x00FFu
 // QUARANTINE_SAFETY_HATCH_MS / QUARANTINE_SAFETY_HATCH_IDLE_MS: bound the
 // worst-case quarantine duration. After a pad has been suppressed this long,
 // AND the system has been touch-idle for at least this long, fire ONE recovery
-// attempt to either resolve the pad or generate STAGE0/1/2 instrumentation.
+// attempt to either resolve the pad or leave it for natural recovery.
 // One attempt per quarantine episode; reset by unquarantine.
 #define QUARANTINE_SAFETY_HATCH_MS       30000
 #define QUARANTINE_SAFETY_HATCH_IDLE_MS  5000
@@ -284,9 +294,24 @@ void touch_force_release_all_pads(void) {
   }
 }
 
+// Returns true if any registered touchwheel instance is currently in an active
+// interaction. This lets the press-time multi-pad detector distinguish fast
+// wheel rotation (legitimate) from a static-discharge burst (phantom). Note:
+// the touchwheel's interaction_active flag is set on the FIRST press it sees,
+// so it is not by itself proof of real rotation — but combined with the
+// wheel-only mask and a state-based held-count override, it's a strong signal.
+static bool any_touchwheel_interaction_active(void) {
+  for (int i = 0; i < s_num_touchwheel_instances; i++) {
+    if (s_touchwheel_instances[i] && s_touchwheel_instances[i]->enabled) {
+      if (s_touchwheel_instances[i]->core.interaction_active) return true;
+    }
+  }
+  return false;
+}
+
 // Public-from-this-translation-unit helper for the `recover` console command.
 // Clears quarantine state (if any) for the pad and then invokes the standard
-// touch_recover_pad_state. Lets us deliberately trigger STAGE0/1/2 traces on a
+// touch_recover_pad_state. Lets us deliberately attempt recovery on a
 // quarantined pad for diagnostic purposes.
 void touch_force_recover_pad(int pad_index) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
@@ -370,38 +395,23 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // Track per-pad press timestamps for stuck detection
   if (is_pressed) {
     s_pad_press_timestamps[pad_index] = now;
-    // #region debug-press-after-recovery
-    // [DEBUG H1/H2] If a PRESS arrives shortly after a recovery, snapshot the
-    // hardware state. This tells us whether the recovery actually cleared the
-    // benchmark or if on_active is re-firing on a still-elevated signal.
-    if (s_pad_recovery_timestamps[pad_index] > 0) {
-      uint32_t since_recovery = now - s_pad_recovery_timestamps[pad_index];
-      if (since_recovery <= 3000) {
-        uint32_t s[1] = {0}, b[1] = {0};
-        touch_channel_read_data(s_chan_handles[pad_index], TOUCH_CHAN_DATA_TYPE_SMOOTH, s);
-        touch_channel_read_data(s_chan_handles[pad_index], TOUCH_CHAN_DATA_TYPE_BENCHMARK, b);
-        touch_pad_calibration_t cd;
-        esp_err_t cr = touch_get_calibration_data(TOUCH_PADS[pad_index], &cd);
-        ESP_LOGW(TAG, "[DBG-PRESS] Pad %d PRESS %"PRIu32"ms after recovery:"
-          " smooth=%"PRIu32" bench=%"PRIu32" delta=%"PRId32" thresh=%"PRIu32
-          " known_good=%"PRIu32" calib_ok=%d",
-          pad_index, since_recovery, s[0], b[0],
-          (int32_t)s[0] - (int32_t)b[0],
-          (cr == ESP_OK) ? cd.threshold : 0,
-          s_known_good_benchmark[pad_index],
-          (cr == ESP_OK) ? 1 : 0);
-      }
-    }
-    // #endregion
 
     // === [QUARANTINE] Press-time multi-pad detector ===
     // The health-check stuck-detection path catches system events only after
     // STUCK_TOUCH_TIMEOUT_MS (10s) — long enough for phantom presses to
     // hijack the menu. Here we check at press time: if N+ pads have all
     // received a press within PRESS_TIME_SYSTEM_EVENT_WINDOW_MS, this is
-    // almost certainly a static-discharge / EMI event and not real human
-    // input. Quarantine the entire batch immediately and drop this press
-    // before it reaches the touchwheel, the event bus, or menu handlers.
+    // likely a static-discharge / EMI event and not real human input.
+    //
+    // EXCEPTION: fast touchwheel rotation legitimately presses pads 0-7 in
+    // rapid sequence. If the recent-press mask is entirely on wheel pads AND
+    // a touchwheel instance is actively interacting, treat as rotation and
+    // let the press through. To avoid a static event slipping through this
+    // exemption by activating the touchwheel on its first phantom press, we
+    // additionally count CURRENTLY HELD pads (state-based, not just recently-
+    // pressed). A human finger holds at most 2 adjacent pads during transition;
+    // PRESS_TIME_HELD_OVERRIDE+ pads simultaneously held overrides the
+    // rotation exemption and triggers quarantine regardless.
     int recent_press_count = 0;
     uint32_t recent_press_mask = 0;
     for (int i = 0; i < MAX_TOUCH_PADS; i++) {
@@ -412,17 +422,39 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
       }
     }
     if (recent_press_count >= SYSTEM_EVENT_PAD_THRESHOLD) {
-      ESP_LOGW(TAG, "PRESS-TIME SYSTEM EVENT: %d pads pressed within %dms"
-        " (mask=0x%04lx); quarantining and dropping this press",
-        recent_press_count, PRESS_TIME_SYSTEM_EVENT_WINDOW_MS,
-        (unsigned long)recent_press_mask);
+      bool wheel_only = ((recent_press_mask & ~WHEEL_PAD_MASK) == 0);
+      bool wheel_active = any_touchwheel_interaction_active();
+
+      // Count pads currently held (state-based). The CURRENT press hasn't set
+      // s_button_pressed_states[pad_index] yet, so add 1 for it.
+      int held_count = 1;
       for (int i = 0; i < MAX_TOUCH_PADS; i++) {
-        if (recent_press_mask & (1u << i)) {
-          quarantine_pad(i, now, "press-time system event");
-        }
+        if (i == pad_index) continue;
+        if (s_button_pressed_states[i]) held_count++;
       }
-      s_system_event_until_ms = now + SYSTEM_EVENT_RECOVERY_DEFER_MS;
-      return;
+
+      bool rotation_exemption = wheel_only && wheel_active
+                                 && held_count < PRESS_TIME_HELD_OVERRIDE;
+
+      if (rotation_exemption) {
+        ESP_LOGD(TAG, "Multi-pad press allowed (touchwheel rotation):"
+          " mask=0x%04lx count=%d held=%d",
+          (unsigned long)recent_press_mask, recent_press_count, held_count);
+      } else {
+        ESP_LOGW(TAG, "PRESS-TIME SYSTEM EVENT: %d pads pressed within %dms"
+          " (mask=0x%04lx wheel_only=%d wheel_active=%d held=%d);"
+          " quarantining and dropping this press",
+          recent_press_count, PRESS_TIME_SYSTEM_EVENT_WINDOW_MS,
+          (unsigned long)recent_press_mask,
+          wheel_only, wheel_active, held_count);
+        for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+          if (recent_press_mask & (1u << i)) {
+            quarantine_pad(i, now, "press-time system event");
+          }
+        }
+        s_system_event_until_ms = now + SYSTEM_EVENT_RECOVERY_DEFER_MS;
+        return;
+      }
     }
   }
   
@@ -761,22 +793,7 @@ static void touch_health_check_task(void *pvParameters) {
           if (press_duration <= 3600000 && press_duration > s_stuck_touch_timeout_ms) {
             ESP_LOGW(TAG, "Health check: Pad %d phantom touch (held %"PRIu32"ms), forcing release", 
               i, press_duration);
-            // #region debug-stuck-details
-            // [DEBUG H1/H2] Capture the raw hardware state at the moment we
-            // declare the pad stuck. Combined with the recovery STAGE0/1/2
-            // logs, this shows whether the previous recovery actually moved
-            // the benchmark or if the hardware is reporting a persistent
-            // delta > threshold even after a fresh reset.
-            ESP_LOGW(TAG, "[DBG-STUCK] Pad %d details: smooth=%"PRIu32
-              " bench=%"PRIu32" delta=%"PRId32" thresh=%"PRIu32
-              " calib_base=%"PRIu32" known_good=%"PRIu32
-              " since_last_recov=%"PRIu32"ms",
-              i, smooth[0], benchmark[0], delta, calib_data.threshold,
-              calib_data.baseline, s_known_good_benchmark[i],
-              (s_pad_recovery_timestamps[i] > 0)
-                ? (fresh_now - s_pad_recovery_timestamps[i]) : 0);
-            // #endregion
-            
+
             // Force release - this clears the phantom touch
             s_button_pressed_states[i] = false;
             s_pad_press_timestamps[i] = 0;

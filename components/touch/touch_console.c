@@ -76,7 +76,7 @@ static int cmd_recover(int argc, char **argv) {
   if (argc < 2) {
     ESP_LOGI(TAG, "Usage: recover <pad_index>");
     ESP_LOGI(TAG, "  Clears quarantine (if any) and triggers a recovery on the pad.");
-    ESP_LOGI(TAG, "  Use this to deliberately capture STAGE0/1/2 traces on a stuck pad.");
+    ESP_LOGI(TAG, "  Use this to deliberately attempt recovery on a stuck or quarantined pad.");
     return 1;
   }
 
@@ -439,7 +439,7 @@ esp_err_t touch_console_init(void) {
   // recover command
   const esp_console_cmd_t recover_cmd = {
     .command = "recover",
-    .help = "Clear quarantine on a pad and trigger recovery (captures STAGE0/1/2)",
+    .help = "Clear quarantine on a pad and trigger recovery",
     .hint = "<pad_index>",
     .func = &cmd_recover,
   };
