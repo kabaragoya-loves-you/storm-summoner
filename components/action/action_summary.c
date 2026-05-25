@@ -127,8 +127,9 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     return;
   }
 
-  const char *type_name = action_type_to_string(action->type);
-  snprintf(summary->type_name, sizeof(summary->type_name), "%s", type_name);
+  // Composite (variant-aware) display name -- "Tempo > Hold" rather than
+  // bare "Tempo" so the summary card tells the user which operation runs.
+  action_get_display_name(action, summary->type_name, sizeof(summary->type_name));
 
   // For Control Change actions, show the first CC slot detail
   if (action->type == ACTION_CONTROL_CHANGE && action->params.control.num_ccs > 0) {
@@ -230,14 +231,14 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       (unsigned)action->params.target.number + 1);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_SET_TEMPO) {
+  } else if (action->type == ACTION_TEMPO && action->variant == VARIANT_SET) {
     snprintf(summary->param_name, sizeof(summary->param_name), "BPM");
     summary->has_param = true;
     snprintf(summary->param_value, sizeof(summary->param_value), "%u",
       (unsigned)action->params.tempo.bpm);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_TEMPO_HOLD) {
+  } else if (action->type == ACTION_TEMPO && action->variant == VARIANT_HOLD) {
     snprintf(summary->param_name, sizeof(summary->param_name), "BPM");
     summary->has_param = true;
     snprintf(summary->param_value, sizeof(summary->param_value), "%u / %u",
@@ -245,11 +246,22 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       (unsigned)action->params.tempo.release_bpm);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_TEMPO_CYCLE) {
+  } else if (action->type == ACTION_TEMPO && action->variant == VARIANT_CYCLE) {
     snprintf(summary->param_name, sizeof(summary->param_name), "BPM");
     summary->has_param = true;
     snprintf(summary->param_value, sizeof(summary->param_value), "%u values",
       (unsigned)action->params.tempo.num_tempos);
+    summary->has_value = true;
+
+  } else if (action->type == ACTION_TEMPO &&
+             (action->variant == VARIANT_INCREMENT ||
+              action->variant == VARIANT_DECREMENT)) {
+    uint8_t amount = action->params.tempo.inc_amount;
+    if (amount == 0) amount = 1;
+    snprintf(summary->param_name, sizeof(summary->param_name), "Step");
+    summary->has_param = true;
+    snprintf(summary->param_value, sizeof(summary->param_value), "%c%u BPM",
+      action->variant == VARIANT_INCREMENT ? '+' : '-', (unsigned)amount);
     summary->has_value = true;
 
   } else if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||

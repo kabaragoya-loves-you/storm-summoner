@@ -905,8 +905,8 @@ lv_obj_t* menu_page_expression_create(void) {
       break;
     
     case EXPRESSION_MODE_SWITCH: {
-      // Show action configuration
-      const char* action_name = action_config_get_display_name(scene->expr_switch.type);
+      char action_name[32];
+      action_get_display_name(&scene->expr_switch, action_name, sizeof(action_name));
       snprintf(s_action_label[buf], sizeof(s_action_label[buf]),
         "Action\n%s", action_name);
       s_expr_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_switch_action, NULL, true};

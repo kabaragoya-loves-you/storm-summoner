@@ -113,19 +113,18 @@ lv_obj_t* menu_page_buttons_scene_create(void) {
   int buf = get_next_buffer_set();
   int item_count = 0;
   
-  // Left button
-  const char* left_action_name = action_config_get_display_name(scene->button_left.type);
-  snprintf(s_left_label[buf], sizeof(s_left_label[buf]), "Left\n%s", left_action_name);
+  char name_buf[32];
+
+  action_get_display_name(&scene->button_left, name_buf, sizeof(name_buf));
+  snprintf(s_left_label[buf], sizeof(s_left_label[buf]), "Left\n%s", name_buf);
   s_button_items[item_count++] = (menu_item_t){s_left_label[buf], nav_to_left, NULL, true};
-  
-  // Right button
-  const char* right_action_name = action_config_get_display_name(scene->button_right.type);
-  snprintf(s_right_label[buf], sizeof(s_right_label[buf]), "Right\n%s", right_action_name);
+
+  action_get_display_name(&scene->button_right, name_buf, sizeof(name_buf));
+  snprintf(s_right_label[buf], sizeof(s_right_label[buf]), "Right\n%s", name_buf);
   s_button_items[item_count++] = (menu_item_t){s_right_label[buf], nav_to_right, NULL, true};
-  
-  // Both buttons
-  const char* both_action_name = action_config_get_display_name(scene->button_both.type);
-  snprintf(s_both_label[buf], sizeof(s_both_label[buf]), "Both\n%s", both_action_name);
+
+  action_get_display_name(&scene->button_both, name_buf, sizeof(name_buf));
+  snprintf(s_both_label[buf], sizeof(s_both_label[buf]), "Both\n%s", name_buf);
   s_button_items[item_count++] = (menu_item_t){s_both_label[buf], nav_to_both, NULL, true};
   
   return menu_create_page_2line("Buttons", s_button_items, item_count);

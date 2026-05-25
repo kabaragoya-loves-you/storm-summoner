@@ -117,9 +117,13 @@ lv_obj_t* menu_page_on_play_scene_create(void) {
   
   for (int i = 0; i < MAX_ON_PLAY_ACTIONS; i++) {
     action_t* action = scene_get_on_play_action(scene_index, i);
-    const char* action_name = (action && action->type != ACTION_NONE) ?
-      action_config_get_display_name(action->type) : "<none>";
-    
+    char action_name[32];
+    if (action && action->type != ACTION_NONE) {
+      action_get_display_name(action, action_name, sizeof(action_name));
+    } else {
+      snprintf(action_name, sizeof(action_name), "<none>");
+    }
+
     snprintf(s_slot_labels[buf][i], sizeof(s_slot_labels[buf][i]),
       "Play Action %d\n%s", i + 1, action_name);
     s_on_play_items[i] = (menu_item_t){

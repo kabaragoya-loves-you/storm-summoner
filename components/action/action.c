@@ -97,13 +97,15 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
 
   // HOLD action release for repeating actions: mark as released so the
   // scheduler stops after the pending fire.
-  if (!is_press && action_requires_hold(action->type) && action->repeat_enabled) {
+  if (!is_press && action_requires_hold_for(action) && action->repeat_enabled) {
     action_scheduler_mark_hold_released(mutable_action);
     return action_execute_immediate(action, trigger_value, is_press);
   }
 
   // Non-HOLD repeating actions use toggle-on-press behavior.
-  if (is_press && action->repeat_enabled && action_supports_repeat(action->type)) {
+  bool repeats = is_press && action->repeat_enabled &&
+                 action_supports_repeat_for(action);
+  if (repeats) {
     if (action_scheduler_is_repeating(mutable_action)) {
       action_scheduler_stop_repeating(mutable_action);
       ESP_LOGD(TAG, "Stopped repeating action (toggle off)");
@@ -112,20 +114,35 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
     action_scheduler_start_repeating(mutable_action);
   }
 
-  bool should_queue = is_press &&
-                      action_supports_timing(action->type) &&
+  bool supports_timing = action_supports_timing_for(action);
+  bool should_queue = is_press && supports_timing &&
                       action->timing != ACTION_TIMING_IMMEDIATE;
 
   if (should_queue) {
     uint8_t target_beat = (action->timing == ACTION_TIMING_NEXT_BEAT)
       ? 0 : action->timing_beat;
 
-    bool repeating = action->repeat_enabled && action_supports_repeat(action->type);
-
-    if (action_scheduler_enqueue(mutable_action, trigger_value, target_beat, repeating)) {
+    if (action_scheduler_enqueue(mutable_action, trigger_value, target_beat,
+                                 repeats, 1)) {
       return ESP_OK;
     }
     // Fall through to immediate execution if queue is full
+  }
+
+  // Immediate+Repeat: fire now and arm the scheduler for periodic re-fires.
+  // First scheduled fire is one full interval after the press, so the
+  // pacing is consistent regardless of where in the bar the press landed.
+  // Without this, start_repeating() above just adds the action to a tracker
+  // list and nothing in the queue ever re-fires it.
+  if (repeats && action->timing == ACTION_TIMING_IMMEDIATE && supports_timing) {
+    scene_t* scene = scene_get_current();
+    uint8_t beats_per_bar = (scene && scene->time_signature.numerator)
+      ? scene->time_signature.numerator : 4;
+    uint8_t interval = action_repeat_division_to_beats(
+      action->repeat_division, beats_per_bar);
+    if (interval == 0) interval = 1;  // sub-beat divisions: every beat
+    action_scheduler_enqueue(mutable_action, trigger_value,
+                             /*target_beat=*/0, /*repeating=*/true, interval);
   }
 
   return action_execute_immediate(action, trigger_value, is_press);
@@ -237,13 +254,15 @@ action_t action_create_scene_dec(void) {
 
 action_t action_create_tap_tempo(void) {
   action_t action = {0};
-  action.type = ACTION_TAP_TEMPO;
+  action.type = ACTION_TEMPO;
+  action.variant = VARIANT_TAP;
   return action;
 }
 
 action_t action_create_set_tempo(uint16_t bpm) {
   action_t action = {0};
-  action.type = ACTION_SET_TEMPO;
+  action.type = ACTION_TEMPO;
+  action.variant = VARIANT_SET;
   action.params.tempo.bpm = bpm;
   return action;
 }

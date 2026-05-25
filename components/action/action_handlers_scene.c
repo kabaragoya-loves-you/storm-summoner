@@ -163,60 +163,75 @@ action_handle_result_t action_handlers_scene_dispatch(
       if (is_press) transport_record();
       return ACTION_HANDLED;
 
-    case ACTION_TAP_TEMPO:
-      if (is_press) tempo_tap();
-      return ACTION_HANDLED;
+    case ACTION_TEMPO:
+      switch (action->variant) {
+        case VARIANT_TAP:
+          if (is_press) tempo_tap();
+          return ACTION_HANDLED;
 
-    case ACTION_SET_TEMPO:
-      if (is_press && action->params.tempo.bpm > 0) {
-        tempo_set_bpm(action->params.tempo.bpm);
-      }
-      return ACTION_HANDLED;
+        case VARIANT_SET:
+          if (is_press && action->params.tempo.bpm > 0) {
+            tempo_set_bpm(action->params.tempo.bpm);
+          }
+          return ACTION_HANDLED;
 
-    case ACTION_TEMPO_INC:
-      if (is_press) {
-        uint16_t bpm = tempo_get_bpm();
-        if (bpm < 300) tempo_set_bpm(bpm + 1);
-      }
-      return ACTION_HANDLED;
+        case VARIANT_INCREMENT:
+          if (is_press) {
+            uint16_t bpm = tempo_get_bpm();
+            uint8_t amount = action->params.tempo.inc_amount;
+            if (amount == 0) amount = 1;
+            uint16_t target = (bpm + amount > 300) ? 300 : (uint16_t)(bpm + amount);
+            if (target < 20) target = 20;
+            if (target != bpm) tempo_set_bpm(target);
+          }
+          return ACTION_HANDLED;
 
-    case ACTION_TEMPO_DEC:
-      if (is_press) {
-        uint16_t bpm = tempo_get_bpm();
-        if (bpm > 20) tempo_set_bpm(bpm - 1);
-      }
-      return ACTION_HANDLED;
+        case VARIANT_DECREMENT:
+          if (is_press) {
+            uint16_t bpm = tempo_get_bpm();
+            uint8_t amount = action->params.tempo.inc_amount;
+            if (amount == 0) amount = 1;
+            uint16_t target = (bpm <= 20 + amount) ? 20 : (uint16_t)(bpm - amount);
+            if (target > 300) target = 300;
+            if (target != bpm) tempo_set_bpm(target);
+          }
+          return ACTION_HANDLED;
 
-    case ACTION_TEMPO_HOLD: {
-      uint16_t bpm = is_press ?
-        action->params.tempo.press_bpm : action->params.tempo.release_bpm;
-      if (bpm >= 20 && bpm <= 300) {
-        tempo_set_bpm(bpm);
-        ESP_LOGD(TAG, "Tempo hold: %s -> %u BPM", is_press ? "press" : "release",
-          (unsigned)bpm);
-      }
-      return ACTION_HANDLED;
-    }
-
-    case ACTION_TEMPO_CYCLE:
-      if (is_press) {
-        action_t* mutable_action = (action_t*)action;
-        uint8_t num_tempos = mutable_action->params.tempo.num_tempos;
-        if (num_tempos == 0) {
-          ESP_LOGW(TAG, "Tempo cycle has no tempos defined, skipping");
+        case VARIANT_HOLD: {
+          uint16_t bpm = is_press ?
+            action->params.tempo.press_bpm : action->params.tempo.release_bpm;
+          if (bpm >= 20 && bpm <= 300) {
+            tempo_set_bpm(bpm);
+            ESP_LOGD(TAG, "Tempo hold: %s -> %u BPM", is_press ? "press" : "release",
+              (unsigned)bpm);
+          }
           return ACTION_HANDLED;
         }
-        uint8_t idx = mutable_action->params.tempo.current_index;
-        uint16_t bpm = mutable_action->params.tempo.cycle_tempos[idx];
 
-        if (bpm >= 20 && bpm <= 300) {
-          tempo_set_bpm(bpm);
-          ESP_LOGD(TAG, "Tempo cycle step %u: %u BPM", (unsigned)idx, (unsigned)bpm);
-        }
+        case VARIANT_CYCLE:
+          if (is_press) {
+            action_t* mutable_action = (action_t*)action;
+            uint8_t num_tempos = mutable_action->params.tempo.num_tempos;
+            if (num_tempos == 0) {
+              ESP_LOGW(TAG, "Tempo cycle has no tempos defined, skipping");
+              return ACTION_HANDLED;
+            }
+            uint8_t idx = mutable_action->params.tempo.current_index;
+            uint16_t bpm = mutable_action->params.tempo.cycle_tempos[idx];
 
-        mutable_action->params.tempo.current_index = (idx + 1) % num_tempos;
+            if (bpm >= 20 && bpm <= 300) {
+              tempo_set_bpm(bpm);
+              ESP_LOGD(TAG, "Tempo cycle step %u: %u BPM", (unsigned)idx, (unsigned)bpm);
+            }
+
+            mutable_action->params.tempo.current_index = (idx + 1) % num_tempos;
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unhandled tempo variant: %d", action->variant);
+          return ACTION_NOT_HANDLED;
       }
-      return ACTION_HANDLED;
 
     case ACTION_CONFIRM_PENDING:
       if (is_press) {

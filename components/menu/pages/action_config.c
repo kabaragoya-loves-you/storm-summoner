@@ -90,6 +90,8 @@ static char s_tw_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_tw_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
 static char s_scene_label[LABEL_BUFFER_SETS][40];
 static char s_tempo_label[LABEL_BUFFER_SETS][24];
+static char s_tempo_variant_label[LABEL_BUFFER_SETS][24];
+static char s_tempo_amount_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
@@ -173,12 +175,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_STOP,
   ACTION_PAUSE,
   ACTION_RECORD,
-  ACTION_TAP_TEMPO,
-  ACTION_SET_TEMPO,
-  ACTION_TEMPO_INC,
-  ACTION_TEMPO_DEC,
-  ACTION_TEMPO_HOLD,
-  ACTION_TEMPO_CYCLE,
+  ACTION_TEMPO,
   ACTION_NOTE,
   ACTION_RANDOMIZE,
   ACTION_RESET,
@@ -250,12 +247,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_STOP: return "Stop";
     case ACTION_PAUSE: return "Pause";
     case ACTION_RECORD: return "Record";
-    case ACTION_TAP_TEMPO: return "Tap Tempo";
-    case ACTION_SET_TEMPO: return "Set Tempo";
-    case ACTION_TEMPO_INC: return "Tempo +1";
-    case ACTION_TEMPO_DEC: return "Tempo -1";
-    case ACTION_TEMPO_HOLD: return "Tempo Hold";
-    case ACTION_TEMPO_CYCLE: return "Tempo Cycle";
+    case ACTION_TEMPO: return "Tempo";
     case ACTION_NOTE: return "Note";
     case ACTION_RANDOMIZE: return "Randomize";
     case ACTION_CONFIRM_PENDING: return "Confirm Pending";
@@ -369,9 +361,7 @@ static bool is_action_visible(action_type_t type) {
   if (type == ACTION_CONFIRM_PENDING && change_mode != CHANGE_MODE_PENDING) return false;
   
   // Tempo actions only with internal clock
-  if (type == ACTION_TAP_TEMPO || type == ACTION_SET_TEMPO ||
-      type == ACTION_TEMPO_INC || type == ACTION_TEMPO_DEC ||
-      type == ACTION_TEMPO_HOLD || type == ACTION_TEMPO_CYCLE) {
+  if (type == ACTION_TEMPO) {
     if (clock_source != CLOCK_SOURCE_INTERNAL) return false;
   }
 
@@ -690,15 +680,18 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.target.number = scene_get_index_by_position(0);
     }
     
-    if (new_type == ACTION_SET_TEMPO) {
+    if (new_type == ACTION_TEMPO) {
+      // Default to Set with 120 BPM; variant-specific fields are filled
+      // in by tempo_variant_confirm_cb when the user changes variant.
+      action->variant = VARIANT_SET;
       action->params.tempo.bpm = 120;
     }
-    
+
     if (new_type == ACTION_NOTE) {
       action->params.note.note = 60;
       action->params.note.velocity = 100;
     }
-    
+
     if (new_type == ACTION_PRESET_HOLD) {
       uint8_t scene_index = scene_get_current_index();
       const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -706,7 +699,7 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.preset_cycle.press_preset = index_base;
       action->params.preset_cycle.release_preset = index_base;
     }
-    
+
     if (new_type == ACTION_PRESET_CYCLE) {
       uint8_t scene_index = scene_get_current_index();
       const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -714,17 +707,6 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.preset_cycle.num_presets = 2;
       action->params.preset_cycle.cycle_presets[0] = index_base;
       action->params.preset_cycle.cycle_presets[1] = index_base;
-    }
-    
-    if (new_type == ACTION_TEMPO_HOLD) {
-      action->params.tempo.press_bpm = 120;
-      action->params.tempo.release_bpm = 120;
-    }
-    
-    if (new_type == ACTION_TEMPO_CYCLE) {
-      action->params.tempo.num_tempos = 2;
-      action->params.tempo.cycle_tempos[0] = 120;
-      action->params.tempo.cycle_tempos[1] = 120;
     }
     
     if (new_type == ACTION_TOUCHWHEEL_HOLD) {
@@ -2259,7 +2241,121 @@ static void nav_to_preset_cycle_step(void* user_data) {
 }
 
 // ============================================================================
-// Set Tempo Roller (for ACTION_SET_TEMPO)
+// Tempo Variant Roller (for ACTION_TEMPO -- secondary operation picker)
+// ============================================================================
+
+// Variants offered for ACTION_TEMPO, in the order they appear in the roller.
+// Keep order stable so saved current_idx maps consistently across firmware
+// versions (though tempo_variant_confirm_cb stores the variant enum, not
+// the roller index, so reordering would only affect UX not data).
+static const action_variant_t s_tempo_variants[] = {
+  VARIANT_TAP,
+  VARIANT_SET,
+  VARIANT_INCREMENT,
+  VARIANT_DECREMENT,
+  VARIANT_HOLD,
+  VARIANT_CYCLE,
+};
+#define NUM_TEMPO_VARIANTS (sizeof(s_tempo_variants) / sizeof(s_tempo_variants[0]))
+
+static void tempo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action || selected_index >= NUM_TEMPO_VARIANTS) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_tempo_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+
+    // Fill in sensible defaults for the new variant. Existing fields are
+    // preserved where possible (the union is shared across all tempo
+    // variants), so switching SET -> HOLD does not wipe a configured
+    // press_bpm if the user had set one before.
+    switch (new_variant) {
+      case VARIANT_SET:
+        if (action->params.tempo.bpm < 20 || action->params.tempo.bpm > 300) {
+          action->params.tempo.bpm = 120;
+        }
+        break;
+      case VARIANT_HOLD:
+        if (action->params.tempo.press_bpm < 20 || action->params.tempo.press_bpm > 300) {
+          action->params.tempo.press_bpm = 120;
+        }
+        if (action->params.tempo.release_bpm < 20 || action->params.tempo.release_bpm > 300) {
+          action->params.tempo.release_bpm = 120;
+        }
+        break;
+      case VARIANT_CYCLE:
+        if (action->params.tempo.num_tempos < 2 || action->params.tempo.num_tempos > 8) {
+          action->params.tempo.num_tempos = 2;
+        }
+        for (int i = 0; i < action->params.tempo.num_tempos; i++) {
+          uint16_t v = action->params.tempo.cycle_tempos[i];
+          if (v < 20 || v > 300) action->params.tempo.cycle_tempos[i] = 120;
+        }
+        action->params.tempo.current_index = 0;
+        break;
+      case VARIANT_INCREMENT:
+      case VARIANT_DECREMENT:
+        // Default the step size to 1 BPM if unset. Allowed values are
+        // validated by the Amount roller (1,2,3,4,5,10,15,20).
+        if (action->params.tempo.inc_amount == 0 ||
+            action->params.tempo.inc_amount > 20) {
+          action->params.tempo.inc_amount = 1;
+        }
+        break;
+      default:
+        // TAP needs no extra fields
+        break;
+    }
+
+    ESP_LOGI(TAG, "Tempo variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* tempo_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  static char options[256];
+  options[0] = '\0';
+  for (size_t i = 0; i < NUM_TEMPO_VARIANTS; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_tempo_variants[i]));
+  }
+
+  // Find current variant's index in the roller
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < NUM_TEMPO_VARIANTS; i++) {
+    if (s_tempo_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, tempo_variant_confirm_cb, NULL);
+}
+
+static void nav_to_tempo_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", tempo_variant_roller_create);
+}
+
+// ============================================================================
+// Set Tempo Roller (for ACTION_TEMPO + VARIANT_SET)
 // ============================================================================
 
 static void tempo_set_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -2315,7 +2411,7 @@ static void nav_to_tempo_set(void* user_data) {
 }
 
 // ============================================================================
-// Tempo Hold Rollers (for ACTION_TEMPO_HOLD)
+// Tempo Hold Rollers (for ACTION_TEMPO + VARIANT_HOLD)
 // ============================================================================
 
 static void tempo_hold_press_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -2419,7 +2515,7 @@ static void nav_to_tempo_hold_release(void* user_data) {
 }
 
 // ============================================================================
-// Tempo Cycle Rollers (for ACTION_TEMPO_CYCLE)
+// Tempo Cycle Rollers (for ACTION_TEMPO + VARIANT_CYCLE)
 // ============================================================================
 
 static void tempo_cycle_steps_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -2519,6 +2615,72 @@ static void nav_to_tempo_cycle_step(void* user_data) {
   static char title[24];
   snprintf(title, sizeof(title), "Step %u", (unsigned)(s_editing_tempo_step + 1));
   nav_to_subpage(title, tempo_cycle_step_roller_create);
+}
+
+// ============================================================================
+// Tempo Amount Roller (for ACTION_TEMPO + VARIANT_INCREMENT/DECREMENT)
+// ============================================================================
+
+// Allowed step sizes for tempo Increment/Decrement, in BPM. Small steps
+// for fine adjustment, larger ones (10/15/20) for quick jumps.
+static const uint8_t s_tempo_amounts[] = { 1, 2, 3, 4, 5, 10, 15, 20 };
+#define NUM_TEMPO_AMOUNTS (sizeof(s_tempo_amounts) / sizeof(s_tempo_amounts[0]))
+
+static void tempo_amount_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action || selected_index >= NUM_TEMPO_AMOUNTS) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  uint8_t amount = s_tempo_amounts[selected_index];
+  s_ctx->target_action->params.tempo.inc_amount = amount;
+
+  ESP_LOGI(TAG, "Tempo %s amount set to %u BPM",
+    s_ctx->target_action->variant == VARIANT_INCREMENT ? "Increment" : "Decrement",
+    (unsigned)amount);
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* tempo_amount_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  static char options[64];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+  for (size_t i = 0; i < NUM_TEMPO_AMOUNTS; i++) {
+    int written = snprintf(pos, remaining, "%s%u",
+      i > 0 ? "\n" : "", (unsigned)s_tempo_amounts[i]);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+
+  uint8_t current = s_ctx->target_action->params.tempo.inc_amount;
+  if (current == 0) current = 1;
+  uint32_t current_idx = 0;
+  for (size_t i = 0; i < NUM_TEMPO_AMOUNTS; i++) {
+    if (s_tempo_amounts[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Amount", options, current_idx, tempo_amount_confirm_cb, NULL);
+}
+
+static void nav_to_tempo_amount(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Amount", tempo_amount_roller_create);
 }
 
 // ============================================================================
@@ -6070,57 +6232,79 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show Set Tempo selector
-  if (action->type == ACTION_SET_TEMPO) {
-    uint16_t bpm = action->params.tempo.bpm;
-    if (bpm < 20 || bpm > 300) bpm = 120;
-    
-    snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%u BPM", (unsigned)bpm);
+  // ACTION_TEMPO (consolidated family): always show Variant picker, then
+  // variant-specific sub-rows.
+  if (action->type == ACTION_TEMPO) {
+    snprintf(s_tempo_variant_label[buf], sizeof(s_tempo_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_label[buf], nav_to_tempo_set, NULL, true
+      s_tempo_variant_label[buf], nav_to_tempo_variant, NULL, true
     };
-  }
-  
-  // Show Tempo Hold items
-  if (action->type == ACTION_TEMPO_HOLD) {
-    uint16_t press = action->params.tempo.press_bpm;
-    uint16_t release = action->params.tempo.release_bpm;
-    if (press < 20 || press > 300) press = 120;
-    if (release < 20 || release > 300) release = 120;
-    
-    snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
-      "Press\n%u BPM", (unsigned)press);
-    snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
-      "Release\n%u BPM", (unsigned)release);
-    
-    s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
-    };
-    s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
-    };
-  }
-  
-  // Show Tempo Cycle items
-  if (action->type == ACTION_TEMPO_CYCLE) {
-    uint8_t num_steps = action->params.tempo.num_tempos;
-    if (num_steps < 2) num_steps = 2;
-    if (num_steps > 8) num_steps = 8;
-    
-    snprintf(s_tempo_cycle_steps_label[buf], sizeof(s_tempo_cycle_steps_label[buf]),
-      "Steps\n%u", (unsigned)num_steps);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true
-    };
-    
-    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
-      uint16_t bpm = action->params.tempo.cycle_tempos[i];
-      if (bpm < 20 || bpm > 300) bpm = 120;
-      snprintf(s_tempo_cycle_step_labels[buf][i], sizeof(s_tempo_cycle_step_labels[buf][i]),
-        "Step %d\n%u BPM", i + 1, (unsigned)bpm);
-      s_detail_items[item_count++] = (menu_item_t){
-        s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true
-      };
+
+    switch (action->variant) {
+      case VARIANT_SET: {
+        uint16_t bpm = action->params.tempo.bpm;
+        if (bpm < 20 || bpm > 300) bpm = 120;
+        snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]),
+          "Tempo\n%u BPM", (unsigned)bpm);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_tempo_label[buf], nav_to_tempo_set, NULL, true
+        };
+        break;
+      }
+      case VARIANT_HOLD: {
+        uint16_t press = action->params.tempo.press_bpm;
+        uint16_t release = action->params.tempo.release_bpm;
+        if (press < 20 || press > 300) press = 120;
+        if (release < 20 || release > 300) release = 120;
+        snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
+          "Press\n%u BPM", (unsigned)press);
+        snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
+          "Release\n%u BPM", (unsigned)release);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
+        };
+        s_detail_items[item_count++] = (menu_item_t){
+          s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
+        };
+        break;
+      }
+      case VARIANT_CYCLE: {
+        uint8_t num_steps = action->params.tempo.num_tempos;
+        if (num_steps < 2) num_steps = 2;
+        if (num_steps > 8) num_steps = 8;
+        snprintf(s_tempo_cycle_steps_label[buf], sizeof(s_tempo_cycle_steps_label[buf]),
+          "Steps\n%u", (unsigned)num_steps);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true
+        };
+        for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+          uint16_t bpm = action->params.tempo.cycle_tempos[i];
+          if (bpm < 20 || bpm > 300) bpm = 120;
+          snprintf(s_tempo_cycle_step_labels[buf][i], sizeof(s_tempo_cycle_step_labels[buf][i]),
+            "Step %d\n%u BPM", i + 1, (unsigned)bpm);
+          s_detail_items[item_count++] = (menu_item_t){
+            s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true
+          };
+        }
+        break;
+      }
+      case VARIANT_INCREMENT:
+      case VARIANT_DECREMENT: {
+        uint8_t amount = action->params.tempo.inc_amount;
+        if (amount == 0) amount = 1;
+        snprintf(s_tempo_amount_label[buf], sizeof(s_tempo_amount_label[buf]),
+          "Amount\n%u BPM", (unsigned)amount);
+        if (item_count < MAX_DETAIL_ITEMS) {
+          s_detail_items[item_count++] = (menu_item_t){
+            s_tempo_amount_label[buf], nav_to_tempo_amount, NULL, true
+          };
+        }
+        break;
+      }
+      default:
+        // TAP has no extra rows
+        break;
     }
   }
   
@@ -6654,8 +6838,9 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
-  // Show Timing selector for non-HOLD actions (actions that support timing)
-  if (action_supports_timing(action->type) && item_count < MAX_DETAIL_ITEMS) {
+  // Show Timing selector for non-HOLD actions (actions that support timing).
+  // Variant-aware: ACTION_TEMPO + VARIANT_TAP/VARIANT_HOLD are excluded.
+  if (action_supports_timing_for(action) && item_count < MAX_DETAIL_ITEMS) {
     const char* timing_display = get_timing_display(action);
     snprintf(s_timing_label[buf], sizeof(s_timing_label[buf]), "Timing\n%s", timing_display);
     s_detail_items[item_count++] = (menu_item_t){
@@ -6663,9 +6848,9 @@ lv_obj_t* action_config_detail_page_create(void) {
     };
   }
   
-  // Show Repeat option for actions that support it
-  // Excludes HOLD actions, preset/scene actions, and ACTION_NONE
-  if (action_supports_repeat(action->type) && item_count < MAX_DETAIL_ITEMS) {
+  // Show Repeat option for actions that support it. Variant-aware:
+  // ACTION_TEMPO repeats only for INCREMENT/DECREMENT/CYCLE.
+  if (action_supports_repeat_for(action) && item_count < MAX_DETAIL_ITEMS) {
     const char* repeat_display = get_repeat_display(action);
     snprintf(s_repeat_label[buf], sizeof(s_repeat_label[buf]), "Repeat\n%s", repeat_display);
     s_detail_items[item_count++] = (menu_item_t){

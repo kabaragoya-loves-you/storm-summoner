@@ -12,6 +12,7 @@
 #include "app_settings.h"
 #include "event_bus.h"
 #include "action.h"
+#include "action_migration.h"
 #include "tempo.h"
 #include "input_manager.h"
 #include "ui.h"
@@ -2887,7 +2888,7 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
            pressed ? "pressed" : "released", action_type_to_string(mapping->action.type));
   
   // Notify touch component when hold actions start/end to suppress health check interventions
-  if (action_requires_hold(mapping->action.type)) {
+  if (action_requires_hold_for(&mapping->action)) {
     touch_set_hold_active(pad_index, pressed);
   }
   
@@ -3931,12 +3932,7 @@ static const char* action_type_json_names[] = {
   [ACTION_STOP] = "stop",
   [ACTION_PAUSE] = "pause",
   [ACTION_RECORD] = "record",
-  [ACTION_TAP_TEMPO] = "tap_tempo",
-  [ACTION_SET_TEMPO] = "set_tempo",
-  [ACTION_TEMPO_INC] = "tempo_inc",
-  [ACTION_TEMPO_DEC] = "tempo_dec",
-  [ACTION_TEMPO_HOLD] = "tempo_hold",
-  [ACTION_TEMPO_CYCLE] = "tempo_cycle",
+  [ACTION_TEMPO] = "tempo",
   [ACTION_CONTROL_CHANGE] = "control_change",
   [ACTION_CONTROL_HOLD] = "control_hold",
   [ACTION_CONTROL_CYCLE] = "control_cycle",
@@ -3972,50 +3968,55 @@ static const char* action_type_json_names[] = {
   [ACTION_BOOMERANG] = "boomerang"
 };
 
-// Helper to convert action type string to enum
+// Variant string table for consolidated action families. Indexed by
+// action_variant_t. Append-only -- order matters for backwards-compatible
+// reads via positional indexing if anyone ever does that.
+static const char* action_variant_json_names[] = {
+  [VARIANT_NONE]      = NULL,        // Don't serialize when variant is default
+  [VARIANT_INCREMENT] = "increment",
+  [VARIANT_DECREMENT] = "decrement",
+  [VARIANT_SET]       = "set",
+  [VARIANT_HOLD]      = "hold",
+  [VARIANT_CYCLE]     = "cycle",
+  [VARIANT_TOGGLE]    = "toggle",
+  [VARIANT_START]     = "start",
+  [VARIANT_STOP]      = "stop",
+  [VARIANT_TAP]       = "tap",
+  [VARIANT_BURST]     = "burst",
+};
+
+static action_variant_t action_variant_from_string(const char* name) {
+  if (!name) return VARIANT_NONE;
+  for (int i = 0; i < VARIANT_MAX; i++) {
+    if (action_variant_json_names[i] && strcmp(name, action_variant_json_names[i]) == 0) {
+      return (action_variant_t)i;
+    }
+  }
+  return VARIANT_NONE;
+}
+
+// Helper to convert action type string to enum.
+// Legacy aliases (including pre-consolidation type names that mapped to
+// removed enum values) live in components/action_migration. Callers that
+// need variant info from a legacy name should go through json_to_action,
+// which consults the migration component.
 static action_type_t action_type_from_string(const char* name) {
   if (!name) return ACTION_NONE;
-  
-  // Check current names
+
   for (int i = 0; i < ACTION_MAX; i++) {
     if (action_type_json_names[i] && strcmp(name, action_type_json_names[i]) == 0) {
       return (action_type_t)i;
     }
   }
-  
-  // Backward compatibility for old action names
-  if (strcmp(name, "transport_play") == 0) return ACTION_PLAY;
-  if (strcmp(name, "transport_stop") == 0) return ACTION_STOP;
-  if (strcmp(name, "transport_pause") == 0) return ACTION_PAUSE;
-  if (strcmp(name, "transport_record") == 0) return ACTION_RECORD;
-  if (strcmp(name, "tap") == 0) return ACTION_TAP_TEMPO;
-  if (strcmp(name, "all_notes_off") == 0) return ACTION_RESET;
-  if (strcmp(name, "all_sound_off") == 0) return ACTION_RESET;
-  if (strcmp(name, "send_reset") == 0) return ACTION_RESET;
-  // Old preset/program names
-  if (strcmp(name, "program_next") == 0) return ACTION_PRESET_INC;
-  if (strcmp(name, "program_prev") == 0) return ACTION_PRESET_DEC;
-  if (strcmp(name, "pc") == 0) return ACTION_PRESET;
-  // Old scene names
-  if (strcmp(name, "scene_next") == 0) return ACTION_SCENE_INC;
-  if (strcmp(name, "scene_prev") == 0) return ACTION_SCENE_DEC;
-  if (strcmp(name, "scene_set") == 0) return ACTION_SCENE;
-  // Old CC/control names (backward compatibility)
-  if (strcmp(name, "control") == 0) return ACTION_CONTROL_CHANGE;
-  if (strcmp(name, "send_cc") == 0) return ACTION_CONTROL_CHANGE;
-  if (strcmp(name, "send_cc_hold") == 0) return ACTION_CONTROL_HOLD;
-  if (strcmp(name, "send_cc_cycle") == 0) return ACTION_CONTROL_CYCLE;
-  // Old note names (both map to the new hold-style ACTION_NOTE)
-  if (strcmp(name, "send_note_on") == 0) return ACTION_NOTE;
-  if (strcmp(name, "send_note_off") == 0) return ACTION_NOTE;
-  // Old randomize name
-  if (strcmp(name, "randomize_cc") == 0) return ACTION_RANDOMIZE;
-  // Old touchwheel names (tw_mode removed, map to NONE for backward compat)
-  if (strcmp(name, "tw_mode") == 0) return ACTION_NONE;
-  if (strcmp(name, "touchwheel") == 0) return ACTION_NONE;  // Old JSON name
-  if (strcmp(name, "tw_mode_hold") == 0) return ACTION_TOUCHWHEEL_HOLD;
-  if (strcmp(name, "tw_mode_cycle") == 0) return ACTION_TOUCHWHEEL_CYCLE;
-  
+
+  // Try the migration component (handles every legacy alias previously
+  // listed inline here, plus consolidated families that need a variant).
+  action_type_t mig_type = ACTION_NONE;
+  action_variant_t mig_variant = VARIANT_NONE;
+  if (action_migration_translate_type(name, &mig_type, &mig_variant)) {
+    return mig_type;
+  }
+
   return ACTION_NONE;
 }
 
@@ -4037,7 +4038,16 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_Delete(obj);
     return NULL;
   }
-  
+
+  // Consolidated families (currently only ACTION_TEMPO) always emit a
+  // variant string so the read path can dispatch without legacy aliases.
+  // Singleton types omit it; the default VARIANT_NONE is implicit.
+  if (action->variant != VARIANT_NONE
+        && action->variant < VARIANT_MAX
+        && action_variant_json_names[action->variant]) {
+    cJSON_AddStringToObject(obj, "variant", action_variant_json_names[action->variant]);
+  }
+
   if (action->type == ACTION_CONTROL_CHANGE || action->type == ACTION_CONTROL_HOLD) {
     uint8_t num_ccs = action->params.control.num_ccs;
     if (num_ccs == 0) num_ccs = 1;  // Backward compat
@@ -4122,19 +4132,39 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddItemToArray(presets, cJSON_CreateNumber(action->params.preset_cycle.cycle_presets[i]));
     }
     cJSON_AddItemToObject(obj, "presets", presets);
-  } else if (action->type == ACTION_SET_TEMPO) {
-    cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
-  } else if (action->type == ACTION_TEMPO_HOLD) {
-    cJSON_AddNumberToObject(obj, "press_bpm", action->params.tempo.press_bpm);
-    cJSON_AddNumberToObject(obj, "release_bpm", action->params.tempo.release_bpm);
-  } else if (action->type == ACTION_TEMPO_CYCLE) {
-    uint8_t num_tempos = action->params.tempo.num_tempos;
-    cJSON_AddNumberToObject(obj, "num_tempos", num_tempos);
-    cJSON* tempos = cJSON_CreateArray();
-    for (int i = 0; i < num_tempos && i < 8; i++) {
-      cJSON_AddItemToArray(tempos, cJSON_CreateNumber(action->params.tempo.cycle_tempos[i]));
+  } else if (action->type == ACTION_TEMPO) {
+    // Variant determines which fields are emitted. The "variant" key itself
+    // is added unconditionally below for ACTION_TEMPO so the read path can
+    // tell SET from HOLD from CYCLE without legacy aliases.
+    switch (action->variant) {
+      case VARIANT_SET:
+        cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
+        break;
+      case VARIANT_HOLD:
+        cJSON_AddNumberToObject(obj, "press_bpm", action->params.tempo.press_bpm);
+        cJSON_AddNumberToObject(obj, "release_bpm", action->params.tempo.release_bpm);
+        break;
+      case VARIANT_CYCLE: {
+        uint8_t num_tempos = action->params.tempo.num_tempos;
+        cJSON_AddNumberToObject(obj, "num_tempos", num_tempos);
+        cJSON* tempos = cJSON_CreateArray();
+        for (int i = 0; i < num_tempos && i < 8; i++) {
+          cJSON_AddItemToArray(tempos, cJSON_CreateNumber(action->params.tempo.cycle_tempos[i]));
+        }
+        cJSON_AddItemToObject(obj, "tempos", tempos);
+        break;
+      }
+      case VARIANT_INCREMENT:
+      case VARIANT_DECREMENT: {
+        uint8_t amount = action->params.tempo.inc_amount;
+        if (amount == 0) amount = 1;
+        cJSON_AddNumberToObject(obj, "inc_amount", amount);
+        break;
+      }
+      default:
+        // TAP has no extra fields
+        break;
     }
-    cJSON_AddItemToObject(obj, "tempos", tempos);
   } else if (action->type == ACTION_TOUCHWHEEL_HOLD) {
     cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
     cJSON_AddNumberToObject(obj, "mode2", action->params.tw_mode.mode2);
@@ -4350,12 +4380,22 @@ static cJSON* action_to_json(const action_t* action) {
 static action_t json_to_action(cJSON* obj) {
   action_t action = {0};
   cJSON* type = cJSON_GetObjectItem(obj, "type");
-  
+
   if (type) {
     if (cJSON_IsString(type)) {
-      // New format: string name
+      // New format: string name. The migration component is consulted
+      // inside action_type_from_string when a name is not found in the
+      // current table; we additionally probe it here so the variant is
+      // populated for legacy single-string types (e.g. "tempo_hold" ->
+      // ACTION_TEMPO + VARIANT_HOLD).
       action.type = action_type_from_string(type->valuestring);
-      ESP_LOGD(TAG, "Loaded action: %s -> %d", type->valuestring, action.type);
+      action_variant_t mig_variant = VARIANT_NONE;
+      action_type_t mig_type = ACTION_NONE;
+      if (action_migration_translate_type(type->valuestring, &mig_type, &mig_variant)) {
+        if (mig_variant != VARIANT_NONE) action.variant = mig_variant;
+      }
+      ESP_LOGD(TAG, "Loaded action: %s -> %d (variant %d)",
+        type->valuestring, action.type, action.variant);
     } else if (cJSON_IsNumber(type)) {
       // Legacy format: integer (for backward compatibility)
       action.type = (action_type_t)type->valueint;
@@ -4366,6 +4406,15 @@ static action_t json_to_action(cJSON* obj) {
   } else {
     ESP_LOGE(TAG, "Action missing 'type' field!");
   }
+
+  // Parse explicit variant string if present. Wins over any variant the
+  // migration step may have set (new-format files always carry it).
+  cJSON* variant_node = cJSON_GetObjectItem(obj, "variant");
+  if (variant_node && cJSON_IsString(variant_node)) {
+    action_variant_t v = action_variant_from_string(variant_node->valuestring);
+    if (v != VARIANT_NONE) action.variant = v;
+  }
+
   
   // Parse CC actions (supports both single and multi-CC formats)
   cJSON* cc = cJSON_GetObjectItem(obj, "cc");
@@ -4504,29 +4553,41 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
-  // Parse tempo actions
-  cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
-  if (bpm) action.params.tempo.bpm = bpm->valueint;
-  
-  // Parse tempo hold/cycle actions
-  if (action.type == ACTION_TEMPO_HOLD) {
-    cJSON* press_bpm = cJSON_GetObjectItem(obj, "press_bpm");
-    cJSON* release_bpm = cJSON_GetObjectItem(obj, "release_bpm");
-    if (press_bpm) action.params.tempo.press_bpm = press_bpm->valueint;
-    if (release_bpm) action.params.tempo.release_bpm = release_bpm->valueint;
-  }
-  if (action.type == ACTION_TEMPO_CYCLE) {
-    cJSON* num_tempos = cJSON_GetObjectItem(obj, "num_tempos");
-    cJSON* tempos = cJSON_GetObjectItem(obj, "tempos");
-    if (num_tempos) {
-      action.params.tempo.num_tempos = num_tempos->valueint;
+  // Parse tempo actions (consolidated: ACTION_TEMPO + variant)
+  if (action.type == ACTION_TEMPO) {
+    cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
+    if (bpm) action.params.tempo.bpm = bpm->valueint;
+
+    if (action.variant == VARIANT_HOLD) {
+      cJSON* press_bpm = cJSON_GetObjectItem(obj, "press_bpm");
+      cJSON* release_bpm = cJSON_GetObjectItem(obj, "release_bpm");
+      if (press_bpm) action.params.tempo.press_bpm = press_bpm->valueint;
+      if (release_bpm) action.params.tempo.release_bpm = release_bpm->valueint;
     }
-    if (tempos && cJSON_IsArray(tempos)) {
-      int count = cJSON_GetArraySize(tempos);
-      if (count > 8) count = 8;
-      for (int i = 0; i < count; i++) {
-        cJSON* item = cJSON_GetArrayItem(tempos, i);
-        if (item) action.params.tempo.cycle_tempos[i] = item->valueint;
+    if (action.variant == VARIANT_CYCLE) {
+      cJSON* num_tempos = cJSON_GetObjectItem(obj, "num_tempos");
+      cJSON* tempos = cJSON_GetObjectItem(obj, "tempos");
+      if (num_tempos) {
+        action.params.tempo.num_tempos = num_tempos->valueint;
+      }
+      if (tempos && cJSON_IsArray(tempos)) {
+        int count = cJSON_GetArraySize(tempos);
+        if (count > 8) count = 8;
+        for (int i = 0; i < count; i++) {
+          cJSON* item = cJSON_GetArrayItem(tempos, i);
+          if (item) action.params.tempo.cycle_tempos[i] = item->valueint;
+        }
+      }
+    }
+    if (action.variant == VARIANT_INCREMENT || action.variant == VARIANT_DECREMENT) {
+      cJSON* amt = cJSON_GetObjectItem(obj, "inc_amount");
+      // Legacy tempo_inc/tempo_dec scenes won't carry inc_amount; the
+      // executor treats 0 as 1, so absence is harmless.
+      if (amt) {
+        int v = amt->valueint;
+        if (v < 1) v = 1;
+        if (v > 20) v = 20;
+        action.params.tempo.inc_amount = (uint8_t)v;
       }
     }
   }
@@ -4924,7 +4985,11 @@ static action_t json_to_action(cJSON* obj) {
   if (morph_div && cJSON_IsString(morph_div)) {
     action.morph_division = morph_division_from_string(morph_div->valuestring);
   }
-  
+
+  // Post-parse migration hook for future field-shape changes.
+  // Currently a stub for the Tempo pilot.
+  (void)action_migration_fixup_action(obj, &action);
+
   return action;
 }
 
@@ -6268,25 +6333,30 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
 esp_err_t scene_load_from_flash(uint8_t scene_index) {
   char filepath[128];
   get_scene_filename(scene_index, filepath, sizeof(filepath));
-  
+
   FILE* f = fopen(filepath, "r");
   if (!f) return ESP_ERR_NOT_FOUND;
-  
+
   fseek(f, 0, SEEK_END);
   long fsize = ftell(f);
   fseek(f, 0, SEEK_SET);
-  
+
   char* json_str = malloc(fsize + 1);
   if (!json_str) { fclose(f); return ESP_ERR_NO_MEM; }
-  
+
   fread(json_str, 1, fsize, f);
   fclose(f);
   json_str[fsize] = '\0';
-  
+
   cJSON* root = cJSON_Parse(json_str);
   free(json_str);
   if (!root) return ESP_ERR_INVALID_ARG;
-  
+
+  // Snapshot migration hit count so we can tell whether THIS load touched
+  // any legacy aliases (action_to_json/json_to_action delegate to the
+  // action_migration component for legacy translations).
+  uint32_t mig_before = action_migration_hit_count();
+
   // Load into cache
   int cache_idx = (g_scene_manager.current_cache_idx + 1) % SCENE_CACHE_SIZE;
   // Initialize with defaults first to ensure all fields have valid values,
@@ -6294,12 +6364,25 @@ esp_err_t scene_load_from_flash(uint8_t scene_index) {
   scene_init_defaults(&g_scene_manager.cache[cache_idx].scene, scene_index);
   esp_err_t ret = json_to_scene(root, &g_scene_manager.cache[cache_idx].scene);
   cJSON_Delete(root);
-  
+
   if (ret == ESP_OK) {
     g_scene_manager.cache[cache_idx].index = scene_index;
     g_scene_manager.cache[cache_idx].valid = true;
+
+    // Report migration coverage so we can tell when the migration
+    // component can safely be deleted (see plans/action_consolidation
+    // pilot's "Migration component lifecycle"). The scene is NOT
+    // batch-saved here -- any subsequent user edit triggers
+    // scene_save_to_flash, which writes the new format unconditionally
+    // (action_to_json always uses the consolidated 'tempo'+variant form).
+    uint32_t mig_after = action_migration_hit_count();
+    if (mig_after > mig_before) {
+      ESP_LOGI(TAG, "Scene %d: migrated %lu legacy action alias(es) on load; "
+        "next save will persist new format",
+        scene_index, (unsigned long)(mig_after - mig_before));
+    }
   }
-  
+
   return ret;
 }
 

@@ -90,7 +90,8 @@ static void clear_all_repeating(void) {
 }
 
 bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
-    uint8_t target_beat, bool repeating) {
+    uint8_t target_beat, bool repeating, uint8_t initial_beats_remaining) {
+  if (initial_beats_remaining == 0) initial_beats_remaining = 1;
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     if (!s_pending_actions[i].valid) {
       s_pending_actions[i].action = *action;
@@ -100,14 +101,15 @@ bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
       s_pending_actions[i].valid = true;
       s_pending_actions[i].paused = false;
       s_pending_actions[i].repeating = repeating;
-      s_pending_actions[i].beats_remaining = 1;
+      s_pending_actions[i].beats_remaining = initial_beats_remaining;
       s_pending_actions[i].hold_released = false;
       s_pending_actions[i].pattern_step = 0;
 
-      ESP_LOGI(TAG, "Queued %s timing=%s target_beat=%d (slot %d, repeating=%d)",
+      ESP_LOGI(TAG, "Queued %s timing=%s target_beat=%d (slot %d, repeating=%d, wait=%u beats)",
         action_type_name(action->type),
         target_beat == 0 ? "NEXT_BEAT" : "SPECIFIC_BEAT",
-        target_beat == 0 ? -1 : (int)target_beat, i, repeating);
+        target_beat == 0 ? -1 : (int)target_beat, i, repeating,
+        (unsigned)initial_beats_remaining);
       return true;
     }
   }
@@ -153,8 +155,10 @@ static void reset_action_cycle_index(action_t* action) {
     case ACTION_PRESET_CYCLE:
       action->params.preset_cycle.current_index = 0;
       break;
-    case ACTION_TEMPO_CYCLE:
-      action->params.tempo.current_index = 0;
+    case ACTION_TEMPO:
+      if (action->variant == VARIANT_CYCLE) {
+        action->params.tempo.current_index = 0;
+      }
       break;
     case ACTION_TOUCHWHEEL_CYCLE:
       action->params.tw_mode.current_index = 0;
@@ -252,9 +256,11 @@ static void handle_beat_event(const event_t* event, void* context) {
               pending->original->params.preset_cycle.current_index =
                 pending->action.params.preset_cycle.current_index;
               break;
-            case ACTION_TEMPO_CYCLE:
-              pending->original->params.tempo.current_index =
-                pending->action.params.tempo.current_index;
+            case ACTION_TEMPO:
+              if (pending->action.variant == VARIANT_CYCLE) {
+                pending->original->params.tempo.current_index =
+                  pending->action.params.tempo.current_index;
+              }
               break;
             case ACTION_TOUCHWHEEL_CYCLE:
               pending->original->params.tw_mode.current_index =
@@ -339,7 +345,7 @@ static void transport_start_action(action_t* action) {
   if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
     target_beat = action->timing_beat;
   }
-  action_scheduler_enqueue(action, 127, target_beat, true);
+  action_scheduler_enqueue(action, 127, target_beat, true, 1);
 }
 
 static void transport_stop_action(action_t* action) {
@@ -384,7 +390,7 @@ static void transport_resume_action(action_t* action) {
     if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
       target_beat = action->timing_beat;
     }
-    action_scheduler_enqueue(action, 127, target_beat, true);
+    action_scheduler_enqueue(action, 127, target_beat, true, 1);
   }
 }
 

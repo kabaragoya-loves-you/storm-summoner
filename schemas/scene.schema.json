@@ -840,6 +840,7 @@
             "stop",
             "pause",
             "record",
+            "tempo",
             "tap_tempo",
             "set_tempo",
             "tempo_inc",
@@ -880,7 +881,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name"
+          "description": "Action type name. The consolidated 'tempo' type uses 'variant' to pick Set/Hold/Cycle/Tap/Increment/Decrement; the legacy tempo_* names (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle) are accepted for backward compatibility and are migrated to 'tempo'+variant on load. They will be removed in a future schema revision."
+        },
+        "variant": {
+          "type": "string",
+          "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst"],
+          "description": "Secondary operation discriminator for consolidated action families. Currently used by type='tempo'. Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -1214,8 +1220,30 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "tempo_hold"}
+              "type": {"const": "tempo"},
+              "variant": {"const": "set"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["bpm"],
+            "properties": {
+              "bpm": {
+                "type": "integer",
+                "minimum": 20,
+                "maximum": 300,
+                "description": "Tempo to set when triggered (BPM)"
+              }
             }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "tempo"},
+              "variant": {"const": "hold"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["press_bpm", "release_bpm"],
@@ -1238,8 +1266,10 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "tempo_cycle"}
-            }
+              "type": {"const": "tempo"},
+              "variant": {"const": "cycle"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["num_tempos", "tempos"],
@@ -1260,6 +1290,24 @@
                   "maximum": 300
                 },
                 "description": "Tempo values (BPM) to cycle through"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "tempo"},
+              "variant": {"enum": ["increment", "decrement"]}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "properties": {
+              "inc_amount": {
+                "type": "integer",
+                "enum": [1, 2, 3, 4, 5, 10, 15, 20],
+                "description": "Step size in BPM applied each time the action fires. The runtime clamps the resulting tempo to [20, 300]. Defaults to 1 if omitted (covers legacy tempo_inc/tempo_dec scenes)."
               }
             }
           }

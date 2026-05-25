@@ -25,13 +25,10 @@ typedef enum {
   ACTION_PAUSE,               // Pause only (does not unpause)
   ACTION_RECORD,              // Toggle: recording -> stop, else -> record
   
-  // Tempo
-  ACTION_TAP_TEMPO,           // Register a tap; BPM is computed from a moving window of recent inter-tap intervals
-  ACTION_SET_TEMPO,           // Set BPM directly (uses tempo.bpm param)
-  ACTION_TEMPO_INC,           // Increment BPM by 1
-  ACTION_TEMPO_DEC,           // Decrement BPM by 1
-  ACTION_TEMPO_HOLD,          // Set tempo on press, different tempo on release
-  ACTION_TEMPO_CYCLE,         // Cycle through tempo values on each press
+  // Tempo (consolidated -- use variant field to pick operation:
+  //   VARIANT_TAP, VARIANT_SET, VARIANT_INCREMENT, VARIANT_DECREMENT,
+  //   VARIANT_HOLD, VARIANT_CYCLE)
+  ACTION_TEMPO,
   
   // Direct MIDI output
   ACTION_CONTROL_CHANGE,      // Send CC with value (on press only)
@@ -100,6 +97,26 @@ typedef enum {
   
   ACTION_MAX
 } action_type_t;
+
+// Action variant -- secondary discriminator for consolidated action families
+// (e.g. ACTION_TEMPO uses variant to distinguish Tap / Set / Inc / Dec / Hold
+// / Cycle). Singleton actions (NOTE, BOOMERANG, etc.) use VARIANT_NONE.
+// One shared enum across families: each family uses the subset that makes
+// sense for it. Keep additions append-only so JSON ordinals stay stable.
+typedef enum {
+  VARIANT_NONE = 0,
+  VARIANT_INCREMENT,
+  VARIANT_DECREMENT,
+  VARIANT_SET,
+  VARIANT_HOLD,
+  VARIANT_CYCLE,
+  VARIANT_TOGGLE,
+  VARIANT_START,
+  VARIANT_STOP,
+  VARIANT_TAP,
+  VARIANT_BURST,
+  VARIANT_MAX
+} action_variant_t;
 
 // ============================================================================
 // Boomerang (ADSR envelope action) types
@@ -229,6 +246,7 @@ typedef enum {
 // Action parameters (flexible union for different action types)
 typedef struct {
   action_type_t type;
+  action_variant_t variant;            // Secondary operation discriminator (see action_variant_t)
   action_timing_t timing;              // When to execute (default: IMMEDIATE)
   uint8_t timing_beat;                 // Target beat 1-16 (only used when timing == SPECIFIC_BEAT)
   bool repeat_enabled;                 // Whether action repeats at repeat_division
@@ -287,14 +305,17 @@ typedef struct {
       uint8_t current_index;      // Current position in cycle
     } preset_cycle;
     
-    // For tempo actions (set, hold, cycle)
+    // For tempo actions (set, hold, cycle, increment, decrement)
     struct {
-      uint16_t bpm;               // For set_tempo (20-300)
-      uint16_t press_bpm;         // For hold: tempo on press
-      uint16_t release_bpm;       // For hold: tempo on release
-      uint8_t num_tempos;         // For cycle: number of tempos (2-8)
-      uint16_t cycle_tempos[8];   // For cycle: tempo values
-      uint8_t current_index;      // Current position in cycle
+      uint16_t bpm;               // For VARIANT_SET (20-300)
+      uint16_t press_bpm;         // For VARIANT_HOLD: tempo on press
+      uint16_t release_bpm;       // For VARIANT_HOLD: tempo on release
+      uint8_t num_tempos;         // For VARIANT_CYCLE: number of tempos (2-8)
+      uint16_t cycle_tempos[8];   // For VARIANT_CYCLE: tempo values
+      uint8_t current_index;      // For VARIANT_CYCLE: current position
+      uint8_t inc_amount;         // For VARIANT_INCREMENT/DECREMENT: step
+                                  // (1,2,3,4,5,10,15,20). Treated as 1 if
+                                  // 0 so legacy scenes Just Work.
     } tempo;
     
     // For randomize (one or more CCs, always 0-127 range)
@@ -443,12 +464,40 @@ action_t action_create_reset(void);
 action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);
 
-// Get action type name (for debugging/console)
+// Get action type name (for debugging/console and the type-picker roller).
+// Returns the BASE family name only for consolidated types
+// (e.g. ACTION_TEMPO -> "Tempo"). For everywhere the user sees an
+// already-configured action use action_get_display_name() instead.
 const char* action_type_to_string(action_type_t type);
 
-// Check if action type requires hold (press/release) behavior
-// These actions should NOT be assigned to bump, on_load, or on_play
+// Get human-facing name for an action variant ("Hold", "Cycle", "Increment").
+// Used by the variant-picker roller. Returns empty string for VARIANT_NONE
+// or out-of-range values.
+const char* action_variant_to_string(action_variant_t variant);
+
+// True if the given action type is a consolidated family that exposes
+// variants in the UI (e.g. ACTION_TEMPO). Singletons return false.
+#include <stddef.h>
+bool action_type_has_variants(action_type_t type);
+
+// Write the user-facing display name for an action into buf. For
+// consolidated families, returns a compact per-variant label tuned for the
+// device's narrow ~12-14 char display (e.g. "Tempo Hold", "Tempo +1",
+// "Set Tempo", "Tap Tempo"). For singletons or unknown variants, falls
+// back to the type name. Always null-terminates.
+void action_get_display_name(const action_t* action, char* buf, size_t len);
+
+// Check if action type requires hold (press/release) behavior.
+// Returns true only when EVERY variant of the type is hold-like.
+// For consolidated families (e.g. ACTION_TEMPO) prefer the variant-aware
+// action_requires_hold_for() at runtime; the by-type form returns the
+// conservative answer used by menu filters.
 bool action_requires_hold(action_type_t type);
+
+// Variant-aware hold check. Use this anywhere the full action_t is
+// available (runtime dispatch, scheduler, etc.) so consolidated families
+// (e.g. ACTION_TEMPO with VARIANT_HOLD) are correctly treated as hold.
+bool action_requires_hold_for(const action_t* action);
 
 // Action trigger types for validation
 typedef enum {
@@ -466,12 +515,27 @@ typedef enum {
 bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigger);
 
 // Check if action type supports timing options (non-HOLD actions)
-// Returns false for HOLD actions that must execute immediately
+// Returns false for HOLD actions that must execute immediately.
+// Conservative answer at type level: consolidated families return true if
+// ANY variant supports timing. Use action_supports_timing_for() at runtime
+// for the variant-precise answer.
 bool action_supports_timing(action_type_t type);
 
 // Check if action type supports repeat options
-// Returns false for preset/scene actions and HOLD actions
+// Returns false for preset/scene actions and HOLD actions.
+// Conservative answer at type level: consolidated families return false if
+// NO variant supports repeat. Use action_supports_repeat_for() at runtime
+// for the variant-precise answer.
 bool action_supports_repeat(action_type_t type);
+
+// Variant-aware timing/repeat predicates. Prefer these when the caller has
+// the full action_t. For ACTION_TEMPO:
+//   - timing: false for VARIANT_TAP (no meaning to defer) and VARIANT_HOLD
+//   - repeat: true for VARIANT_INCREMENT, VARIANT_DECREMENT, VARIANT_CYCLE
+//             false for VARIANT_TAP, VARIANT_SET, VARIANT_HOLD
+// For all other types these return the same answer as the by-type forms.
+bool action_supports_timing_for(const action_t* action);
+bool action_supports_repeat_for(const action_t* action);
 
 // Check if action supports transport trigger (auto-start when transport plays)
 // Only valid for actions that support timing and repeat

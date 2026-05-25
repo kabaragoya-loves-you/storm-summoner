@@ -218,12 +218,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_STOP,
   ACTION_PAUSE,
   ACTION_RECORD,
-  ACTION_TAP_TEMPO,
-  ACTION_SET_TEMPO,
-  ACTION_TEMPO_INC,
-  ACTION_TEMPO_DEC,
-  ACTION_TEMPO_HOLD,
-  ACTION_TEMPO_CYCLE,
+  ACTION_TEMPO,
   ACTION_NOTE,
   ACTION_RANDOMIZE,
   ACTION_RESET,
@@ -299,9 +294,7 @@ static bool is_action_visible(action_type_t type) {
   }
   
   // Tempo actions only available with internal clock
-  if (type == ACTION_TAP_TEMPO || type == ACTION_SET_TEMPO ||
-      type == ACTION_TEMPO_INC || type == ACTION_TEMPO_DEC ||
-      type == ACTION_TEMPO_HOLD || type == ACTION_TEMPO_CYCLE) {
+  if (type == ACTION_TEMPO) {
     if (clock_source != CLOCK_SOURCE_INTERNAL) {
       return false;
     }
@@ -619,17 +612,19 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.target.number = scene_get_index_by_position(0);
     }
     
-    // Set default tempo for Set Tempo (120 BPM)
-    if (new_type == ACTION_SET_TEMPO) {
+    // Tempo defaults: default to SET variant at 120 BPM. Variant switches
+    // are handled in the new action_config flow, not in this legacy path.
+    if (new_type == ACTION_TEMPO) {
+      mapping->action.variant = VARIANT_SET;
       mapping->action.params.tempo.bpm = 120;
     }
-    
+
     // Set default note for Note action (C4 = MIDI 60, middle C)
     if (new_type == ACTION_NOTE) {
       mapping->action.params.note.note = 60;
       mapping->action.params.note.velocity = 100;
     }
-    
+
     // Set defaults for Preset Hold (preset 1 for both press and release)
     if (new_type == ACTION_PRESET_HOLD) {
       uint8_t scene_index = scene_get_current_index();
@@ -638,7 +633,7 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.preset_cycle.press_preset = index_base;
       mapping->action.params.preset_cycle.release_preset = index_base;
     }
-    
+
     // Set defaults for Preset Cycle (2 steps, preset 1 for both)
     if (new_type == ACTION_PRESET_CYCLE) {
       uint8_t scene_index = scene_get_current_index();
@@ -647,19 +642,6 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       mapping->action.params.preset_cycle.num_presets = 2;
       mapping->action.params.preset_cycle.cycle_presets[0] = index_base;
       mapping->action.params.preset_cycle.cycle_presets[1] = index_base;
-    }
-    
-    // Set defaults for Tempo Hold (120 BPM for both press and release)
-    if (new_type == ACTION_TEMPO_HOLD) {
-      mapping->action.params.tempo.press_bpm = 120;
-      mapping->action.params.tempo.release_bpm = 120;
-    }
-    
-    // Set defaults for Tempo Cycle (2 steps, 120 BPM for both)
-    if (new_type == ACTION_TEMPO_CYCLE) {
-      mapping->action.params.tempo.num_tempos = 2;
-      mapping->action.params.tempo.cycle_tempos[0] = 120;
-      mapping->action.params.tempo.cycle_tempos[1] = 120;
     }
     
     // Set defaults for TW Hold (Pads for both press and release)
@@ -2491,7 +2473,7 @@ static void nav_to_preset_cycle_step(void* user_data) {
 }
 
 // ============================================================================
-// Tempo Hold (for ACTION_TEMPO_HOLD)
+// Tempo Hold (for ACTION_TEMPO + VARIANT_HOLD)
 // ============================================================================
 
 static lv_obj_t* tempo_hold_page_create(void);  // Forward declaration
@@ -2640,7 +2622,7 @@ static lv_obj_t* tempo_hold_page_create(void) {
 }
 
 // ============================================================================
-// Tempo Cycle (for ACTION_TEMPO_CYCLE)
+// Tempo Cycle (for ACTION_TEMPO + VARIANT_CYCLE)
 // ============================================================================
 
 static void tempo_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -4068,18 +4050,21 @@ static lv_obj_t* pad_detail_page_create(void) {
     }
   }
   
-  // Show Tempo Hold submenu items
-  if (mapping->action.type == ACTION_TEMPO_HOLD) {
+  // ACTION_TEMPO (consolidated): variant-conditional rows. The variant
+  // picker itself lives in the action_config flow now; this legacy
+  // detail-page path only renders the value rows for whichever variant is
+  // already set, leaving variant changes to the new UI.
+  if (mapping->action.type == ACTION_TEMPO && mapping->action.variant == VARIANT_HOLD) {
     uint16_t press = mapping->action.params.tempo.press_bpm;
     uint16_t release = mapping->action.params.tempo.release_bpm;
     if (press < 20 || press > 300) press = 120;
     if (release < 20 || release > 300) release = 120;
-    
+
     snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
       "Press\n%u BPM", (unsigned)press);
     snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
       "Release\n%u BPM", (unsigned)release);
-    
+
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
     };
@@ -4087,21 +4072,18 @@ static lv_obj_t* pad_detail_page_create(void) {
       s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
     };
   }
-  
-  // Show Tempo Cycle submenu items
-  if (mapping->action.type == ACTION_TEMPO_CYCLE) {
+
+  if (mapping->action.type == ACTION_TEMPO && mapping->action.variant == VARIANT_CYCLE) {
     uint8_t num_steps = mapping->action.params.tempo.num_tempos;
     if (num_steps < 2) num_steps = 2;
     if (num_steps > 8) num_steps = 8;
-    
-    // Steps selector
+
     snprintf(s_tempo_cycle_steps_label[buf], sizeof(s_tempo_cycle_steps_label[buf]),
       "Steps\n%u", (unsigned)num_steps);
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true
     };
-    
-    // Individual step items
+
     for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
       uint16_t bpm = mapping->action.params.tempo.cycle_tempos[i];
       if (bpm < 20 || bpm > 300) bpm = 120;
@@ -4158,10 +4140,10 @@ static lv_obj_t* pad_detail_page_create(void) {
     }
   }
   
-  // Show Tempo selector for Set Tempo
-  if (mapping->action.type == ACTION_SET_TEMPO) {
+  // Show Tempo selector for ACTION_TEMPO + VARIANT_SET (consolidated)
+  if (mapping->action.type == ACTION_TEMPO && mapping->action.variant == VARIANT_SET) {
     uint16_t bpm = mapping->action.params.tempo.bpm;
-    if (bpm < 20 || bpm > 300) bpm = 120;  // Fallback to default
+    if (bpm < 20 || bpm > 300) bpm = 120;
     snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%u BPM", (unsigned)bpm);
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_label[buf], nav_to_set_tempo, NULL, true

@@ -4,12 +4,15 @@
 
 static const char* TAG = "action_validation";
 
-// Actions that require press/release (hold) behavior
-// These should NOT be assigned to bump or on_load
+// Actions whose every (type, variant) combination requires press/release
+// (hold) behavior. These should NOT be assigned to bump, on_load, or on_play.
+// Consolidated families like ACTION_TEMPO are absent from this list because
+// only SOME variants are hold-like (e.g. VARIANT_HOLD); callers with access
+// to the full action_t should use action_requires_hold_for() for a precise
+// answer.
 static const action_type_t hold_actions[] = {
   ACTION_CONTROL_HOLD,
   ACTION_PRESET_HOLD,
-  ACTION_TEMPO_HOLD,
   ACTION_NOTE,
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_SUSTAIN,
@@ -29,6 +32,13 @@ bool action_requires_hold(action_type_t type) {
   for (size_t i = 0; i < sizeof(hold_actions) / sizeof(hold_actions[0]); i++) {
     if (hold_actions[i] == type) return true;
   }
+  return false;
+}
+
+bool action_requires_hold_for(const action_t* action) {
+  if (!action) return false;
+  if (action_requires_hold(action->type)) return true;
+  if (action->type == ACTION_TEMPO && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -126,15 +136,21 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
 
 // Returns true for actions that support timing options (non-HOLD actions)
 // HOLD actions must execute immediately to preserve press/release pairing
-// TAP_TEMPO is always immediate (toggles tap mode instantly)
 // PUNCH_IN has built-in timing (always starts at next bar)
+// ACTION_TEMPO supports timing at the type level (the menu lets the user
+// pick a beat to fire on). Variant-specific exclusions (VARIANT_TAP,
+// VARIANT_HOLD) are made by action_supports_timing_for() at the menu UI
+// layer; this conservative by-type answer keeps existing call sites safe.
 bool action_supports_timing(action_type_t type) {
-  if (type == ACTION_NONE || type == ACTION_TAP_TEMPO || type == ACTION_PUNCH_IN) return false;
+  if (type == ACTION_NONE || type == ACTION_PUNCH_IN) return false;
   return !action_requires_hold(type);
 }
 
-// Preset/scene actions support timing but NOT repeat
-// TAP_TEMPO never repeats (it's a mode toggle)
+// Preset/scene actions support timing but NOT repeat.
+// ACTION_TEMPO is excluded at type level here, but variant-aware callers
+// going through action_supports_repeat_for() get true for INCREMENT,
+// DECREMENT, and CYCLE -- the variants whose repeat use case is musical
+// (ramping tempo, stepping through presets in time).
 bool action_supports_repeat(action_type_t type) {
   if (type == ACTION_NONE || action_requires_hold(type)) return false;
   switch (type) {
@@ -145,7 +161,7 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_SCENE:
     case ACTION_SCENE_INC:
     case ACTION_SCENE_DEC:
-    case ACTION_TAP_TEMPO:
+    case ACTION_TEMPO:
     case ACTION_SET_UI:
     case ACTION_STEP:
     case ACTION_RTG_TOGGLE:
@@ -155,6 +171,36 @@ bool action_supports_repeat(action_type_t type) {
     default:
       return true;
   }
+}
+
+bool action_supports_timing_for(const action_t* action) {
+  if (!action) return false;
+  // Variant-precise carve-outs for consolidated families.
+  if (action->type == ACTION_TEMPO) {
+    // TAP is a mode interaction -- deferring it to a beat is nonsense.
+    // HOLD needs a release pair, so it cannot be scheduled/repeated.
+    if (action->variant == VARIANT_TAP || action->variant == VARIANT_HOLD) {
+      return false;
+    }
+    return true;
+  }
+  return action_supports_timing(action->type);
+}
+
+bool action_supports_repeat_for(const action_t* action) {
+  if (!action) return false;
+  if (action->type == ACTION_TEMPO) {
+    switch (action->variant) {
+      case VARIANT_INCREMENT:
+      case VARIANT_DECREMENT:
+      case VARIANT_CYCLE:
+        return true;
+      default:
+        // TAP / SET / HOLD do not repeat.
+        return false;
+    }
+  }
+  return action_supports_repeat(action->type);
 }
 
 bool action_supports_transport_trigger(action_type_t type) {

@@ -79,8 +79,14 @@ void action_scheduler_stop_repeating(action_t* action);
 bool action_scheduler_is_repeating(action_t* action);
 bool action_scheduler_start_repeating(action_t* action);
 // Returns true if successfully queued, false if queue full.
+// initial_beats_remaining controls when the first scheduled fire happens:
+//   1 = fire on the first beat event whose current_beat matches target_beat
+//       (or any beat if target_beat==0) -- the historical default.
+//   N = wait N-1 beat events, then arm; useful for Immediate+Repeat where
+//       the caller has already fired once and wants the next scheduled fire
+//       to occur a full interval later instead of on the very next beat.
 bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
-  uint8_t target_beat, bool repeating);
+  uint8_t target_beat, bool repeating, uint8_t initial_beats_remaining);
 // Mark a HOLD action as released; its next scheduled fire will clear the slot.
 void action_scheduler_mark_hold_released(action_t* action);
 

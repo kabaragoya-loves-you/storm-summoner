@@ -20,12 +20,7 @@ static const char* action_type_names[] = {
   [ACTION_STOP] = "Stop",
   [ACTION_PAUSE] = "Pause",
   [ACTION_RECORD] = "Record",
-  [ACTION_TAP_TEMPO] = "Tap Tempo",
-  [ACTION_SET_TEMPO] = "Set Tempo",
-  [ACTION_TEMPO_INC] = "Tempo +1",
-  [ACTION_TEMPO_DEC] = "Tempo -1",
-  [ACTION_TEMPO_HOLD] = "Tempo Hold",
-  [ACTION_TEMPO_CYCLE] = "Tempo Cycle",
+  [ACTION_TEMPO] = "Tempo",
   [ACTION_CONTROL_CHANGE] = "Control Change",
   [ACTION_CONTROL_HOLD] = "Control Hold",
   [ACTION_CONTROL_CYCLE] = "Control Cycle",
@@ -69,6 +64,75 @@ const char* action_type_to_string(action_type_t type) {
 
 const char* action_type_name(action_type_t type) {
   return action_type_to_string(type);
+}
+
+// ============================================================================
+// Action variant names (for consolidated families)
+// ============================================================================
+
+static const char* action_variant_display_names[] = {
+  [VARIANT_NONE]      = "",
+  [VARIANT_INCREMENT] = "Increment",
+  [VARIANT_DECREMENT] = "Decrement",
+  [VARIANT_SET]       = "Set",
+  [VARIANT_HOLD]      = "Hold",
+  [VARIANT_CYCLE]     = "Cycle",
+  [VARIANT_TOGGLE]    = "Toggle",
+  [VARIANT_START]     = "Start",
+  [VARIANT_STOP]      = "Stop",
+  [VARIANT_TAP]       = "Tap",
+  [VARIANT_BURST]     = "Burst",
+};
+
+const char* action_variant_to_string(action_variant_t variant) {
+  if (variant >= VARIANT_MAX) return "";
+  const char* name = action_variant_display_names[variant];
+  return name ? name : "";
+}
+
+bool action_type_has_variants(action_type_t type) {
+  // Add new consolidated families here as they are introduced. Singletons
+  // (NOTE, BOOMERANG, etc.) and types with a single behavior return false
+  // so action_get_display_name does not render a trailing "> " separator.
+  switch (type) {
+    case ACTION_TEMPO:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Compact per-(type, variant) display names for consolidated families.
+// These are intentionally kept short (<= 14 chars) so they fit the 240x240px
+// circular display's ~12-14 char working width in list labels like
+// "Load Action 1\n<name>" and "Left\n<name>".
+//
+// The standalone action_type_to_string() label ("Tempo") is reserved for the
+// type-picker roller, where the user is choosing the family. The composite
+// form below is for everywhere the user sees an already-configured action.
+static const char* tempo_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_TAP:       return "Tap Tempo";
+    case VARIANT_SET:       return "Set Tempo";
+    case VARIANT_INCREMENT: return "Tempo +1";
+    case VARIANT_DECREMENT: return "Tempo -1";
+    case VARIANT_HOLD:      return "Tempo Hold";
+    case VARIANT_CYCLE:     return "Tempo Cycle";
+    default:                return "Tempo";
+  }
+}
+
+void action_get_display_name(const action_t* action, char* buf, size_t len) {
+  if (!buf || len == 0) return;
+  if (!action) {
+    buf[0] = '\0';
+    return;
+  }
+  if (action->type == ACTION_TEMPO) {
+    snprintf(buf, len, "%s", tempo_variant_display(action->variant));
+    return;
+  }
+  snprintf(buf, len, "%s", action_type_to_string(action->type));
 }
 
 // ============================================================================

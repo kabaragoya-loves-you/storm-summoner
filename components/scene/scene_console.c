@@ -130,8 +130,12 @@ static void format_action_details_with_device(const action_t* action, const devi
     case ACTION_SCENE:
       snprintf(buf, buf_size, "Scene %d", action->params.target.number);
       break;
-    case ACTION_SET_TEMPO:
-      snprintf(buf, buf_size, "Tempo %d BPM", action->params.tempo.bpm);
+    case ACTION_TEMPO:
+      if (action->variant == VARIANT_SET) {
+        snprintf(buf, buf_size, "Tempo %d BPM", action->params.tempo.bpm);
+      } else {
+        snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
+      }
       break;
     case ACTION_TOUCHWHEEL_HOLD:
       snprintf(buf, buf_size, "Touchwheel Hold %d/%d", action->params.tw_mode.mode, action->params.tw_mode.mode2);
@@ -1029,10 +1033,12 @@ static int cmd_pad(int argc, char **argv) {
     action = action_create_set_tempo(atoi(pad_args.params->sval[0]));
   }
   else if (strcmp(action_str, "tempo_inc") == 0) {
-    action.type = ACTION_TEMPO_INC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_INCREMENT;
   }
   else if (strcmp(action_str, "tempo_dec") == 0) {
-    action.type = ACTION_TEMPO_DEC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_DECREMENT;
   }
   else if (strcmp(action_str, "play") == 0 || strcmp(action_str, "transport_play") == 0) {
     action = action_create_transport(ACTION_PLAY);
@@ -1205,10 +1211,12 @@ static int cmd_button(int argc, char **argv) {
     action = action_create_set_tempo(atoi(button_args.params->sval[0]));
   }
   else if (strcmp(action_str, "tempo_inc") == 0) {
-    action.type = ACTION_TEMPO_INC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_INCREMENT;
   }
   else if (strcmp(action_str, "tempo_dec") == 0) {
-    action.type = ACTION_TEMPO_DEC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_DECREMENT;
   }
   else if (strcmp(action_str, "program_next") == 0) {
     action = action_create_preset_inc();
@@ -1425,10 +1433,12 @@ static int cmd_bump(int argc, char **argv) {
     action = action_create_set_tempo(atoi(bump_args.params->sval[0]));
   }
   else if (strcmp(action_str, "tempo_inc") == 0) {
-    action.type = ACTION_TEMPO_INC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_INCREMENT;
   }
   else if (strcmp(action_str, "tempo_dec") == 0) {
-    action.type = ACTION_TEMPO_DEC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_DECREMENT;
   }
   else if (strcmp(action_str, "program_next") == 0) {
     action = action_create_preset_inc();
@@ -1647,10 +1657,12 @@ static int cmd_expr_switch(int argc, char **argv) {
     action = action_create_set_tempo(atoi(expr_switch_args.params->sval[0]));
   }
   else if (strcmp(action_str, "tempo_inc") == 0) {
-    action.type = ACTION_TEMPO_INC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_INCREMENT;
   }
   else if (strcmp(action_str, "tempo_dec") == 0) {
-    action.type = ACTION_TEMPO_DEC;
+    action.type = ACTION_TEMPO;
+    action.variant = VARIANT_DECREMENT;
   }
   else if (strcmp(action_str, "program_next") == 0) {
     action = action_create_preset_inc();
