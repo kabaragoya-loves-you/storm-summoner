@@ -258,14 +258,12 @@ action_handle_result_t action_handlers_midi_dispatch(
       }
       return ACTION_HANDLED;
 
-    case ACTION_SUSTAIN:
-      send_control_change(channel, 64, is_press ? 127 : 0);
-      ESP_LOGD(TAG, "Sustain: %s", is_press ? "on" : "off");
-      return ACTION_HANDLED;
-
-    case ACTION_SOSTENUTO:
-      send_control_change(channel, 66, is_press ? 127 : 0);
-      ESP_LOGD(TAG, "Sostenuto: %s", is_press ? "on" : "off");
+    case ACTION_PIANO_PEDAL:
+      send_control_change(channel, action->params.piano_pedal.cc_number,
+                          is_press ? 127 : 0);
+      ESP_LOGD(TAG, "Piano Pedal CC%u: %s",
+        (unsigned)action->params.piano_pedal.cc_number,
+        is_press ? "on" : "off");
       return ACTION_HANDLED;
 
     default:

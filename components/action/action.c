@@ -284,15 +284,22 @@ action_t action_create_reset(void) {
   return action;
 }
 
-action_t action_create_sustain(void) {
+action_t action_create_piano_pedal(uint8_t cc_number) {
   action_t action = {0};
-  action.type = ACTION_SUSTAIN;
-  return action;
-}
-
-action_t action_create_sostenuto(void) {
-  action_t action = {0};
-  action.type = ACTION_SOSTENUTO;
+  action.type = ACTION_PIANO_PEDAL;
+  // Whitelist the five standard piano pedal CCs; anything else collapses
+  // to Damper (CC 64). Keeps the menu picker and the runtime in sync --
+  // the picker only offers these five, and a bad value from console or
+  // legacy JSON falls back to the most common pedal rather than firing a
+  // surprise CC.
+  switch (cc_number) {
+    case 64: case 66: case 67: case 68: case 69:
+      action.params.piano_pedal.cc_number = cc_number;
+      break;
+    default:
+      action.params.piano_pedal.cc_number = 64;
+      break;
+  }
   return action;
 }
 

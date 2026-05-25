@@ -846,8 +846,7 @@
             "randomize",
             "confirm_pending",
             "reset",
-            "sustain",
-            "sostenuto",
+            "piano_pedal",
             "touchwheel_hold",
             "touchwheel_cycle",
             "lfo_start",
@@ -873,7 +872,7 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), and transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), and the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
@@ -1297,6 +1296,24 @@
           },
           "then": {
             "description": "Transport operations (play/stop/pause/record) carry no parameters."
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "piano_pedal"}
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["cc"],
+            "properties": {
+              "cc": {
+                "type": "integer",
+                "enum": [64, 66, 67, 68, 69],
+                "description": "Pedal CC number: 64=Damper, 66=Sostenuto, 67=Soft, 68=Legato, 69=Hold 2"
+              }
+            }
           }
         },
         {

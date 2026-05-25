@@ -13,8 +13,7 @@ static const char* TAG = "action_validation";
 static const action_type_t hold_actions[] = {
   ACTION_NOTE,
   ACTION_TOUCHWHEEL_HOLD,
-  ACTION_SUSTAIN,
-  ACTION_SOSTENUTO,
+  ACTION_PIANO_PEDAL,
   ACTION_LFO_TOGGLE,  // Toggle needs discrete press
   ACTION_LFO_SHAPE,   // Shape cycle needs discrete press
   ACTION_CLOCK_HOLD,

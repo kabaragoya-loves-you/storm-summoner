@@ -206,6 +206,21 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       (unsigned)action->params.note.velocity);
     summary->has_value = true;
 
+  } else if (action->type == ACTION_PIANO_PEDAL) {
+    snprintf(summary->param_name, sizeof(summary->param_name), "Pedal");
+    summary->has_param = true;
+    const char *name;
+    switch (action->params.piano_pedal.cc_number) {
+      case 64: name = "Damper";    break;
+      case 66: name = "Sostenuto"; break;
+      case 67: name = "Soft";      break;
+      case 68: name = "Legato";    break;
+      case 69: name = "Hold 2";    break;
+      default: name = "Damper";    break;
+    }
+    snprintf(summary->param_value, sizeof(summary->param_value), "%s", name);
+    summary->has_value = true;
+
   } else if (action->type == ACTION_PRESET && action->variant == VARIANT_SET) {
     snprintf(summary->param_name, sizeof(summary->param_name), "Program");
     summary->has_param = true;

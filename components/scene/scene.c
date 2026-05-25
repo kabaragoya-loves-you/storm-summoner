@@ -218,11 +218,11 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Expression jack configuration
   scene->expression_mode = EXPRESSION_MODE_PEDAL;      // Default to expression pedal mode
   
-  // Default sustain action: ACTION_SUSTAIN (CC64 toggle)
-  scene->sustain = action_create_sustain();
-  
-  // Default sostenuto action: ACTION_SOSTENUTO (CC66 toggle)
-  scene->sostenuto = action_create_sostenuto();
+  // Default sustain mount: Piano Pedal targeting CC 64 (Damper)
+  scene->sustain = action_create_piano_pedal(64);
+
+  // Default sostenuto mount: Piano Pedal targeting CC 66 (Sostenuto)
+  scene->sostenuto = action_create_piano_pedal(66);
   
   // CV input configuration
   scene->cv_input_mode = INPUT_MODE_CV;                // Default to CV mode
@@ -3929,8 +3929,7 @@ static const char* action_type_json_names[] = {
   [ACTION_RANDOMIZE] = "randomize",
   [ACTION_CONFIRM_PENDING] = "confirm_pending",
   [ACTION_RESET] = "reset",
-  [ACTION_SUSTAIN] = "sustain",
-  [ACTION_SOSTENUTO] = "sostenuto",
+  [ACTION_PIANO_PEDAL] = "piano_pedal",
   [ACTION_TOUCHWHEEL_HOLD] = "touchwheel_hold",
   [ACTION_TOUCHWHEEL_CYCLE] = "touchwheel_cycle",
   [ACTION_LFO_START] = "lfo_start",
@@ -4107,6 +4106,10 @@ static cJSON* action_to_json(const action_t* action) {
   } else if (action->type == ACTION_NOTE) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
+  } else if (action->type == ACTION_PIANO_PEDAL) {
+    // Single field: which switch-style MIDI CC to fire on press/release.
+    // Whitelist enforced in action_create_piano_pedal() and json_to_action.
+    cJSON_AddNumberToObject(obj, "cc", action->params.piano_pedal.cc_number);
   } else if (action->type == ACTION_PRESET) {
     // Variant decides which fields go on the wire. The variant string itself
     // is emitted unconditionally below; consumers route on that. JSON keys
@@ -4455,13 +4458,36 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_TRANSPORT) action.variant = VARIANT_PLAY;
   }
 
-  
+  // Piano Pedal: dedicated parser so the generic CC parser below doesn't
+  // write into the wrong union member. Handles both the new-style
+  // {"type":"piano_pedal","cc":<n>} and the legacy {"type":"sustain"} /
+  // {"type":"sostenuto"} migration cases.
+  if (action.type == ACTION_PIANO_PEDAL) {
+    uint8_t cc_seed = 64;  // default to Damper
+    cJSON* pp_cc = cJSON_GetObjectItem(obj, "cc");
+    if (pp_cc && cJSON_IsNumber(pp_cc)) {
+      cc_seed = (uint8_t)pp_cc->valueint;
+    } else if (type && cJSON_IsString(type)) {
+      // No "cc" field: probably migrated from a legacy "sustain" /
+      // "sostenuto" type string. Pick the matching standard CC so
+      // behavior is preserved bit-for-bit.
+      if (strcmp(type->valuestring, "sostenuto") == 0) cc_seed = 66;
+      else cc_seed = 64;
+    }
+    action = action_create_piano_pedal(cc_seed);
+    // action_create_piano_pedal() clamps cc_seed to the whitelist and
+    // resets every other field of the struct, so we're done -- skip the
+    // generic CC parser below.
+    goto piano_pedal_done;
+  }
+
+
   // Parse CC actions (supports both single and multi-CC formats)
   cJSON* cc = cJSON_GetObjectItem(obj, "cc");
   cJSON* value = cJSON_GetObjectItem(obj, "value");
   cJSON* value2 = cJSON_GetObjectItem(obj, "value2");
   cJSON* values = cJSON_GetObjectItem(obj, "values");
-  
+
   if (cc) {
     if (cJSON_IsArray(cc)) {
       // Multi-CC format: cc is array
@@ -5040,6 +5066,7 @@ static action_t json_to_action(cJSON* obj) {
     action.morph_division = morph_division_from_string(morph_div->valuestring);
   }
 
+piano_pedal_done:
   // Post-parse migration hook for future field-shape changes.
   // Currently a stub for the Tempo pilot.
   (void)action_migration_fixup_action(obj, &action);

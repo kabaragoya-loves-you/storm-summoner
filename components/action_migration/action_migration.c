@@ -57,6 +57,13 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "all_sound_off",    ACTION_RESET,            VARIANT_NONE      },
   { "send_reset",       ACTION_RESET,            VARIANT_NONE      },
 
+  // Pre-consolidation piano pedal names. The two old singletons collapse
+  // to ACTION_PIANO_PEDAL; the cc_number seed (64 / 66) is filled in by
+  // json_to_action's piano-pedal fixup since the migration table is
+  // type+variant only.
+  { "sustain",          ACTION_PIANO_PEDAL,      VARIANT_NONE      },
+  { "sostenuto",        ACTION_PIANO_PEDAL,      VARIANT_NONE      },
+
   // Pre-consolidation preset/program names. preset_inc / preset_dec /
   // preset_hold / preset_cycle were the on-disk canonical names before the
   // family was collapsed into ACTION_PRESET; map them to the matching

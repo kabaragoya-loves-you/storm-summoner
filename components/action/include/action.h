@@ -49,9 +49,13 @@ typedef enum {
   ACTION_CONFIRM_PENDING,     // Confirm pending scene/program change
   ACTION_RESET,               // Send CC123 + CC120 + System Reset (0xFF)
   
-  // Musical concepts (assignable to any input)
-  ACTION_SUSTAIN,             // Send CC64 (127 on press, 0 on release)
-  ACTION_SOSTENUTO,           // Send CC66 (127 on press, 0 on release)
+  // Piano pedals (single hold action; cc_number param picks which switch-style
+  // MIDI CC fires on press/release. Supported CCs:
+  //   64 = Damper (Sustain),  66 = Sostenuto,  67 = Soft (Una Corda),
+  //   68 = Legato Footswitch, 69 = Hold 2.
+  // CC 65 (Portamento on/off) is intentionally excluded -- it's a synth
+  // engine flag rather than a physical-pedal concept.
+  ACTION_PIANO_PEDAL,
   
   // Touchwheel mode control
   ACTION_TOUCHWHEEL_HOLD,     // Set mode on press, restore on release
@@ -304,6 +308,13 @@ typedef struct {
       uint8_t note;
       uint8_t velocity;
     } note;
+
+    // For ACTION_PIANO_PEDAL: toggles a switch-style MIDI CC (127 on press,
+    // 0 on release). cc_number is one of the standard piano pedal CCs:
+    //   64=Damper, 66=Sostenuto, 67=Soft, 68=Legato, 69=Hold 2.
+    struct {
+      uint8_t cc_number;
+    } piano_pedal;
     
     // For scene set (0-127 range)
     struct {
@@ -480,8 +491,7 @@ action_t action_create_tap_tempo(void);
 action_t action_create_set_tempo(uint16_t bpm);
 action_t action_create_transport(action_variant_t variant);
 action_t action_create_reset(void);
-action_t action_create_sustain(void);
-action_t action_create_sostenuto(void);
+action_t action_create_piano_pedal(uint8_t cc_number);
 
 // Get action type name (for debugging/console and the type-picker roller).
 // Returns the BASE family name only for consolidated types

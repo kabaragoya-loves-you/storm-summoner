@@ -47,6 +47,24 @@ static bool parse_scene_number_1based(const char* str, const char* usage,
   return true;
 }
 
+// Parse a piano pedal argument: either one of the five bare verbs
+// (damper, sostenuto, soft, legato, hold2) or a numeric CC restricted to
+// the five-CC whitelist. Returns 0 on failure (caller should treat that
+// as an error and bail). On success returns the CC number.
+static uint8_t parse_piano_pedal_arg(const char* arg) {
+  if (!arg) return 0;
+  if (strcmp(arg, "damper")    == 0) return 64;
+  if (strcmp(arg, "sostenuto") == 0) return 66;
+  if (strcmp(arg, "soft")      == 0) return 67;
+  if (strcmp(arg, "legato")    == 0) return 68;
+  if (strcmp(arg, "hold2")     == 0) return 69;
+  int n = atoi(arg);
+  switch (n) {
+    case 64: case 66: case 67: case 68: case 69: return (uint8_t)n;
+    default: return 0;
+  }
+}
+
 // Helper to format CC value with optional discrete name
 static void format_cc_value_with_discrete(const device_def_t* device, uint8_t cc_num,
   uint16_t value, char* buf, size_t buf_size) {
@@ -134,6 +152,20 @@ static void format_action_details_with_device(const action_t* action, const devi
     case ACTION_NOTE:
       snprintf(buf, buf_size, "Note %d vel=%d", action->params.note.note, action->params.note.velocity);
       break;
+    case ACTION_PIANO_PEDAL: {
+      const char* pedal_name;
+      switch (action->params.piano_pedal.cc_number) {
+        case 64: pedal_name = "Damper";    break;
+        case 66: pedal_name = "Sostenuto"; break;
+        case 67: pedal_name = "Soft";      break;
+        case 68: pedal_name = "Legato";    break;
+        case 69: pedal_name = "Hold 2";    break;
+        default: pedal_name = "Damper";    break;
+      }
+      snprintf(buf, buf_size, "Piano Pedal: %s (CC%u)", pedal_name,
+        (unsigned)action->params.piano_pedal.cc_number);
+      break;
+    }
     case ACTION_RANDOMIZE: {
       int pos = snprintf(buf, buf_size, "Randomize CC");
       for (int i = 0; i < action->params.randomize.num_ccs && pos < (int)buf_size - 4; i++) {
@@ -1133,11 +1165,24 @@ static int cmd_pad(int argc, char **argv) {
            strcmp(action_str, "all_sound_off") == 0) {
     action = action_create_reset();
   }
+  else if (strcmp(action_str, "piano_pedal") == 0) {
+    if (pad_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> piano_pedal <damper|sostenuto|soft|legato|hold2|64|66|67|68|69>");
+      return 1;
+    }
+    uint8_t cc = parse_piano_pedal_arg(pad_args.params->sval[0]);
+    if (cc == 0) {
+      ESP_LOGE(TAG, "Unknown pedal '%s' (use damper/sostenuto/soft/legato/hold2 or 64/66/67/68/69)",
+        pad_args.params->sval[0]);
+      return 1;
+    }
+    action = action_create_piano_pedal(cc);
+  }
   else if (strcmp(action_str, "sustain") == 0) {
-    action = action_create_sustain();
+    action = action_create_piano_pedal(64);
   }
   else if (strcmp(action_str, "sostenuto") == 0) {
-    action = action_create_sostenuto();
+    action = action_create_piano_pedal(66);
   }
   // Scene set
   else if (strcmp(action_str, "scene_set") == 0) {
@@ -1305,11 +1350,24 @@ static int cmd_button(int argc, char **argv) {
            strcmp(action_str, "all_sound_off") == 0) {
     action = action_create_reset();
   }
+  else if (strcmp(action_str, "piano_pedal") == 0) {
+    if (button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> piano_pedal <damper|sostenuto|soft|legato|hold2|64|66|67|68|69>");
+      return 1;
+    }
+    uint8_t cc = parse_piano_pedal_arg(button_args.params->sval[0]);
+    if (cc == 0) {
+      ESP_LOGE(TAG, "Unknown pedal '%s' (use damper/sostenuto/soft/legato/hold2 or 64/66/67/68/69)",
+        button_args.params->sval[0]);
+      return 1;
+    }
+    action = action_create_piano_pedal(cc);
+  }
   else if (strcmp(action_str, "sustain") == 0) {
-    action = action_create_sustain();
+    action = action_create_piano_pedal(64);
   }
   else if (strcmp(action_str, "sostenuto") == 0) {
-    action = action_create_sostenuto();
+    action = action_create_piano_pedal(66);
   }
   else if (strcmp(action_str, "pause") == 0 || strcmp(action_str, "transport_pause") == 0) {
     action = action_create_transport(VARIANT_PAUSE);
@@ -1534,11 +1592,24 @@ static int cmd_bump(int argc, char **argv) {
            strcmp(action_str, "all_sound_off") == 0) {
     action = action_create_reset();
   }
+  else if (strcmp(action_str, "piano_pedal") == 0) {
+    if (bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump piano_pedal <damper|sostenuto|soft|legato|hold2|64|66|67|68|69>");
+      return 1;
+    }
+    uint8_t cc = parse_piano_pedal_arg(bump_args.params->sval[0]);
+    if (cc == 0) {
+      ESP_LOGE(TAG, "Unknown pedal '%s' (use damper/sostenuto/soft/legato/hold2 or 64/66/67/68/69)",
+        bump_args.params->sval[0]);
+      return 1;
+    }
+    action = action_create_piano_pedal(cc);
+  }
   else if (strcmp(action_str, "sustain") == 0) {
-    action = action_create_sustain();
+    action = action_create_piano_pedal(64);
   }
   else if (strcmp(action_str, "sostenuto") == 0) {
-    action = action_create_sostenuto();
+    action = action_create_piano_pedal(66);
   }
   else if (strcmp(action_str, "pause") == 0 || strcmp(action_str, "transport_pause") == 0) {
     action = action_create_transport(VARIANT_PAUSE);
@@ -1772,11 +1843,24 @@ static int cmd_expr_switch(int argc, char **argv) {
         "Usage: expr_switch scene_set <1-128>",
         &action.params.target.number)) return 1;
   }
+  else if (strcmp(action_str, "piano_pedal") == 0) {
+    if (expr_switch_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch piano_pedal <damper|sostenuto|soft|legato|hold2|64|66|67|68|69>");
+      return 1;
+    }
+    uint8_t cc = parse_piano_pedal_arg(expr_switch_args.params->sval[0]);
+    if (cc == 0) {
+      ESP_LOGE(TAG, "Unknown pedal '%s' (use damper/sostenuto/soft/legato/hold2 or 64/66/67/68/69)",
+        expr_switch_args.params->sval[0]);
+      return 1;
+    }
+    action = action_create_piano_pedal(cc);
+  }
   else if (strcmp(action_str, "sustain") == 0) {
-    action.type = ACTION_SUSTAIN;
+    action = action_create_piano_pedal(64);
   }
   else if (strcmp(action_str, "sostenuto") == 0) {
-    action.type = ACTION_SOSTENUTO;
+    action = action_create_piano_pedal(66);
   }
   else if (strcmp(action_str, "note_on") == 0) {
     if (expr_switch_args.params->count < 2) {
@@ -1986,7 +2070,7 @@ static int cmd_on_load(int argc, char **argv) {
     ESP_LOGI(TAG, "  cc <cc> <val> ...   - Add CC action (multi-CC with /)");
     ESP_LOGI(TAG, "  cc_cycle <cc> <v1> <v2> ... - Add CC cycle");
     ESP_LOGI(TAG, "  pc <program>        - Add program change");
-    ESP_LOGI(TAG, "(Hold actions like cc_hold/sustain not allowed)");
+    ESP_LOGI(TAG, "(Hold actions like cc_hold/piano_pedal not allowed)");
     return 1;
   }
   
@@ -2035,8 +2119,8 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Utility:");
   ESP_LOGI(TAG, "  reset                            - CC123 + CC120 + System Reset");
-  ESP_LOGI(TAG, "  sustain                          - CC64 (hold: 127 press, 0 release)");
-  ESP_LOGI(TAG, "  sostenuto                        - CC66 (hold: 127 press, 0 release)");
+  ESP_LOGI(TAG, "  piano_pedal <pedal>              - Hold pedal (damper/sostenuto/soft/legato/hold2)");
+  ESP_LOGI(TAG, "    Legacy: sustain (CC64), sostenuto (CC66) -- still accepted");
   ESP_LOGI(TAG, "  none                             - Clear assignment");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchwheel Mode:");

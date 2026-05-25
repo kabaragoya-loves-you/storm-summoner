@@ -97,6 +97,7 @@ static char s_tempo_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_amount_label[LABEL_BUFFER_SETS][24];
 static char s_control_variant_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
+static char s_piano_pedal_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_shape_list_label[LABEL_BUFFER_SETS][24];
@@ -172,8 +173,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_NOTE,
   ACTION_RANDOMIZE,
   ACTION_RESET,
-  ACTION_SUSTAIN,
-  ACTION_SOSTENUTO,
+  ACTION_PIANO_PEDAL,
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_TOUCHWHEEL_CYCLE,
   ACTION_LFO_START,
@@ -234,8 +234,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_RANDOMIZE: return "Randomize";
     case ACTION_CONFIRM_PENDING: return "Confirm Pending";
     case ACTION_RESET: return "Reset";
-    case ACTION_SUSTAIN: return "Sustain";
-    case ACTION_SOSTENUTO: return "Sostenuto";
+    case ACTION_PIANO_PEDAL: return "Piano Pedal";
     case ACTION_TOUCHWHEEL_HOLD: return "Touchwheel Hold";
     case ACTION_TOUCHWHEEL_CYCLE: return "Touchwheel Cycle";
     case ACTION_LFO_START: return "LFO Start";
@@ -662,6 +661,11 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     if (new_type == ACTION_NOTE) {
       action->params.note.note = 60;
       action->params.note.velocity = 100;
+    }
+
+    if (new_type == ACTION_PIANO_PEDAL) {
+      // Default to Damper (CC 64); the Pedal roller covers the other four.
+      action->params.piano_pedal.cc_number = 64;
     }
 
     if (new_type == ACTION_TOUCHWHEEL_HOLD) {
@@ -3245,6 +3249,87 @@ static lv_obj_t* note_roller_create(void) {
 static void nav_to_note(void* user_data) {
   (void)user_data;
   nav_to_subpage("Note", note_roller_create);
+}
+
+// ============================================================================
+// Piano Pedal Roller (for ACTION_PIANO_PEDAL)
+// ============================================================================
+
+// Roller order matches the five MIDI-standard piano pedal CCs. The display
+// name shows the pedal verb; the CC number is implicit.
+static const struct { uint8_t cc; const char* name; } s_piano_pedal_cc_options[] = {
+  { 64, "Damper"    },
+  { 66, "Sostenuto" },
+  { 67, "Soft"      },
+  { 68, "Legato"    },
+  { 69, "Hold 2"    },
+};
+#define NUM_PIANO_PEDAL_OPTIONS \
+  (sizeof(s_piano_pedal_cc_options) / sizeof(s_piano_pedal_cc_options[0]))
+
+static const char* piano_pedal_name_for_cc(uint8_t cc) {
+  for (size_t i = 0; i < NUM_PIANO_PEDAL_OPTIONS; i++) {
+    if (s_piano_pedal_cc_options[i].cc == cc) return s_piano_pedal_cc_options[i].name;
+  }
+  return "Damper";
+}
+
+static void pedal_select_confirm_cb(uint32_t selected_idx, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  if (selected_idx >= NUM_PIANO_PEDAL_OPTIONS) selected_idx = 0;
+  uint8_t cc = s_piano_pedal_cc_options[selected_idx].cc;
+  s_ctx->target_action->params.piano_pedal.cc_number = cc;
+
+  ESP_LOGI(TAG, "Piano Pedal set to %s (CC %u)",
+    s_piano_pedal_cc_options[selected_idx].name, (unsigned)cc);
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* pedal_select_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  static char options[96];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+
+  for (size_t i = 0; i < NUM_PIANO_PEDAL_OPTIONS && remaining > 1; i++) {
+    int written = snprintf(pos, remaining, "%s%s",
+      i > 0 ? "\n" : "", s_piano_pedal_cc_options[i].name);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+
+  uint8_t current_cc = s_ctx->target_action->params.piano_pedal.cc_number;
+  uint32_t current_idx = 0;
+  for (size_t i = 0; i < NUM_PIANO_PEDAL_OPTIONS; i++) {
+    if (s_piano_pedal_cc_options[i].cc == current_cc) {
+      current_idx = i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Pedal", options, current_idx,
+    pedal_select_confirm_cb, NULL);
+}
+
+static void nav_to_pedal_select(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Pedal", pedal_select_roller_create);
 }
 
 // ============================================================================
@@ -6821,6 +6906,16 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note\n%s", note_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_note_label[buf], nav_to_note, NULL, true
+    };
+  }
+
+  // Show Piano Pedal selector. Singleton with one parameter (cc_number),
+  // so no Variant row -- just the Pedal picker.
+  if (action->type == ACTION_PIANO_PEDAL) {
+    snprintf(s_piano_pedal_label[buf], sizeof(s_piano_pedal_label[buf]),
+      "Pedal\n%s", piano_pedal_name_for_cc(action->params.piano_pedal.cc_number));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_piano_pedal_label[buf], nav_to_pedal_select, NULL, true
     };
   }
   
