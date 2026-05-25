@@ -4113,7 +4113,11 @@ static cJSON* action_to_json(const action_t* action) {
   } else if (action->type == ACTION_NOTE) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
-  } else if (action->type == ACTION_PRESET || action->type == ACTION_SCENE) {
+  } else if (action->type == ACTION_PRESET) {
+    // Use preset.program (uint16_t) -- params.target.number is the low byte
+    // alias and would truncate any bank-aware value > 255 on save.
+    cJSON_AddNumberToObject(obj, "number", action->params.preset.program);
+  } else if (action->type == ACTION_SCENE) {
     cJSON_AddNumberToObject(obj, "number", action->params.target.number);
   } else if (action->type == ACTION_PRESET_HOLD) {
     cJSON_AddNumberToObject(obj, "press_preset", action->params.preset_cycle.press_preset);
@@ -4539,9 +4543,17 @@ static action_t json_to_action(cJSON* obj) {
   if (note) action.params.note.note = note->valueint;
   if (velocity) action.params.note.velocity = velocity->valueint;
   
-  // Parse target/scene/program actions
+  // Parse target/scene/program actions. ACTION_PRESET routes to
+  // preset.program (uint16_t) so bank-aware values > 255 survive the load;
+  // everything else (ACTION_SCENE today) stays on the uint8_t alias.
   cJSON* number = cJSON_GetObjectItem(obj, "number");
-  if (number) action.params.target.number = number->valueint;
+  if (number) {
+    if (action.type == ACTION_PRESET) {
+      action.params.preset.program = (uint16_t)number->valueint;
+    } else {
+      action.params.target.number = (uint8_t)number->valueint;
+    }
+  }
   
   // Parse preset hold/cycle actions
   if (action.type == ACTION_PRESET_HOLD) {
