@@ -83,6 +83,12 @@ action_handle_result_t action_handlers_scene_dispatch(
         ESP_LOGW(TAG, "Preset Hold action ignored: not allowed in Preset Sync mode");
         return ACTION_HANDLED;
       }
+      if (is_press) {
+        action_followup_record_press((action_t*)action);
+      } else if (action_followup_should_skip_release(action)) {
+        ESP_LOGD(TAG, "Preset hold release skipped by follow-up");
+        return ACTION_HANDLED;
+      }
       uint16_t program = is_press ?
         action->params.preset_cycle.press_preset :
         action->params.preset_cycle.release_preset;
@@ -198,13 +204,25 @@ action_handle_result_t action_handlers_scene_dispatch(
           return ACTION_HANDLED;
 
         case VARIANT_HOLD: {
+          if (is_press) {
+            action_followup_record_press((action_t*)action);
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "Tempo hold release skipped by follow-up");
+            return ACTION_HANDLED;
+          }
           uint16_t bpm = is_press ?
             action->params.tempo.press_bpm : action->params.tempo.release_bpm;
-          if (bpm >= 20 && bpm <= 300) {
+          if (bpm < 20 || bpm > 300) return ACTION_HANDLED;
+
+          if (action->morph_enabled) {
+            uint32_t duration = action_morph_compute_duration_ms(action);
+            action_tempo_morph_start(bpm, duration);
+          } else {
             tempo_set_bpm(bpm);
-            ESP_LOGD(TAG, "Tempo hold: %s -> %u BPM", is_press ? "press" : "release",
-              (unsigned)bpm);
           }
+          ESP_LOGD(TAG, "Tempo hold: %s -> %u BPM (%s)",
+            is_press ? "press" : "release", (unsigned)bpm,
+            action->morph_enabled ? "morph" : "jump");
           return ACTION_HANDLED;
         }
 
@@ -251,6 +269,12 @@ action_handle_result_t action_handlers_scene_dispatch(
       return ACTION_HANDLED;
 
     case ACTION_TOUCHWHEEL_HOLD: {
+      if (is_press) {
+        action_followup_record_press((action_t*)action);
+      } else if (action_followup_should_skip_release(action)) {
+        ESP_LOGD(TAG, "Touchwheel hold release skipped by follow-up");
+        return ACTION_HANDLED;
+      }
       uint8_t user_mode_idx = is_press ?
         action->params.tw_mode.mode : action->params.tw_mode.mode2;
       const touchwheel_mode_mapping_t* mapping = apply_touchwheel_mode_runtime(user_mode_idx);
@@ -288,6 +312,12 @@ action_handle_result_t action_handlers_scene_dispatch(
       return ACTION_HANDLED;
 
     case ACTION_UI_HOLD: {
+      if (is_press) {
+        action_followup_record_press((action_t*)action);
+      } else if (action_followup_should_skip_release(action)) {
+        ESP_LOGD(TAG, "UI hold release skipped by follow-up");
+        return ACTION_HANDLED;
+      }
       uint8_t idx = is_press
         ? action->params.ui.module
         : action->params.ui.module2;
@@ -327,6 +357,12 @@ action_handle_result_t action_handlers_scene_dispatch(
       return ACTION_HANDLED;
 
     case ACTION_PARAM_HOLD: {
+      if (is_press) {
+        action_followup_record_press((action_t*)action);
+      } else if (action_followup_should_skip_release(action)) {
+        ESP_LOGD(TAG, "Param hold release skipped by follow-up");
+        return ACTION_HANDLED;
+      }
       scene_t* scene = scene_get_current();
       if (scene) {
         uint8_t cc = is_press

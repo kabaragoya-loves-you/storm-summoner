@@ -21,9 +21,7 @@ static const char* action_type_names[] = {
   [ACTION_PAUSE] = "Pause",
   [ACTION_RECORD] = "Record",
   [ACTION_TEMPO] = "Tempo",
-  [ACTION_CONTROL_CHANGE] = "Control Change",
-  [ACTION_CONTROL_HOLD] = "Control Hold",
-  [ACTION_CONTROL_CYCLE] = "Control Cycle",
+  [ACTION_CONTROL] = "Control",
   [ACTION_NOTE] = "Note",
   [ACTION_RANDOMIZE] = "Randomize",
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
@@ -96,6 +94,7 @@ bool action_type_has_variants(action_type_t type) {
   // so action_get_display_name does not render a trailing "> " separator.
   switch (type) {
     case ACTION_TEMPO:
+    case ACTION_CONTROL:
       return true;
     default:
       return false;
@@ -122,6 +121,16 @@ static const char* tempo_variant_display(action_variant_t v) {
   }
 }
 
+// "Control Change" is the well-known MIDI term, kept intact for SET.
+static const char* control_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_SET:   return "Control Change";
+    case VARIANT_HOLD:  return "Control Hold";
+    case VARIANT_CYCLE: return "Control Cycle";
+    default:            return "Control";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -130,6 +139,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_TEMPO) {
     snprintf(buf, len, "%s", tempo_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_CONTROL) {
+    snprintf(buf, len, "%s", control_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

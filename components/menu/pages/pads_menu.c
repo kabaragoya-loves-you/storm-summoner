@@ -196,122 +196,13 @@ static const char* get_pad_display_name(uint8_t index) {
 }
 
 // ============================================================================
-// Action Type Names for Roller
+// NOTE: The local action-type picker has been removed from this file.
+// The live picker for pads lives in components/menu/pages/action_config.c;
+// pads enter that flow via nav_to_pad_detail() -> action_config_start().
+// A dead pad_detail_page_create chain remains below (out of scope for
+// this pass); nav_to_action_type is kept as an empty stub to preserve
+// compile.
 // ============================================================================
-
-// All action types in display order (filtered at runtime)
-static const action_type_t s_all_action_types[] = {
-  ACTION_NONE,
-  ACTION_CONTROL_CHANGE,
-  ACTION_CONTROL_HOLD,
-  ACTION_CONTROL_CYCLE,
-  ACTION_PRESET_INC,
-  ACTION_PRESET_DEC,
-  ACTION_PRESET,
-  ACTION_PRESET_HOLD,
-  ACTION_PRESET_CYCLE,
-  ACTION_SCENE_INC,
-  ACTION_SCENE_DEC,
-  ACTION_SCENE,
-  ACTION_CONFIRM_PENDING,
-  ACTION_PLAY,
-  ACTION_STOP,
-  ACTION_PAUSE,
-  ACTION_RECORD,
-  ACTION_TEMPO,
-  ACTION_NOTE,
-  ACTION_RANDOMIZE,
-  ACTION_RESET,
-  ACTION_SUSTAIN,
-  ACTION_SOSTENUTO,
-  ACTION_TOUCHWHEEL_HOLD,
-  ACTION_TOUCHWHEEL_CYCLE,
-  ACTION_LFO_START,
-  ACTION_LFO_STOP,
-  ACTION_LFO_TOGGLE,
-  ACTION_LFO_SHAPE,
-  ACTION_CLOCK_TOGGLE,
-  ACTION_CLOCK_HOLD,
-  ACTION_CLOCK_BURST,
-  ACTION_CUT_TOGGLE,
-  ACTION_CUT_HOLD,
-  ACTION_SET_UI,
-  ACTION_UI_HOLD,
-  ACTION_UI_CYCLE,
-  ACTION_PARAM_HOLD,
-  ACTION_PARAM_CYCLE,
-  ACTION_RTG_TOGGLE,
-  ACTION_RTG_HOLD,
-  ACTION_SAMPLE_HOLD_TOGGLE,
-  ACTION_SAMPLE_HOLD_HOLD,
-  ACTION_STEP,
-  ACTION_PUNCH_IN,
-  ACTION_FLAG_CEREMONY,
-};
-#define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
-
-// Filtered action types (built at runtime based on mode)
-static action_type_t s_filtered_action_types[NUM_ALL_ACTION_TYPES];
-static size_t s_num_filtered_action_types = 0;
-
-// Check if action should be shown based on current mode and editing context
-static bool is_action_visible(action_type_t type) {
-  // Validate against trigger type based on current pad being edited
-  action_trigger_type_t trigger = (s_editing_pad_index <= 7) ?
-    ACTION_TRIGGER_TOUCHPAD_0_7 : ACTION_TRIGGER_TOUCHPAD_8_11;
-  
-  if (!action_is_valid_for_trigger(type, trigger)) {
-    return false;
-  }
-  
-  scene_mode_t scene_mode = scene_get_mode();
-  scene_change_mode_t change_mode = scene_get_change_mode();
-  tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
-  
-  // Preset actions (all 5) only in single or advanced mode
-  if (type == ACTION_PRESET_INC || type == ACTION_PRESET_DEC || 
-      type == ACTION_PRESET || type == ACTION_PRESET_HOLD || type == ACTION_PRESET_CYCLE) {
-    if (scene_mode != SCENE_MODE_SINGLE && scene_mode != SCENE_MODE_ADVANCED) {
-      return false;
-    }
-  }
-  
-  // Preset Hold only available in immediate change mode
-  if (type == ACTION_PRESET_HOLD && change_mode != CHANGE_MODE_IMMEDIATE) {
-    return false;
-  }
-  
-  // Scene actions only in preset_sync or advanced mode
-  if (type == ACTION_SCENE_INC || type == ACTION_SCENE_DEC || type == ACTION_SCENE) {
-    if (scene_mode != SCENE_MODE_PRESET_SYNC && scene_mode != SCENE_MODE_ADVANCED) {
-      return false;
-    }
-  }
-  
-  // Confirm pending only visible in pending change mode
-  if (type == ACTION_CONFIRM_PENDING && change_mode != CHANGE_MODE_PENDING) {
-    return false;
-  }
-  
-  // Tempo actions only available with internal clock
-  if (type == ACTION_TEMPO) {
-    if (clock_source != CLOCK_SOURCE_INTERNAL) {
-      return false;
-    }
-  }
-  
-  return true;
-}
-
-// Build filtered action type list
-static void build_filtered_action_types(void) {
-  s_num_filtered_action_types = 0;
-  for (size_t i = 0; i < NUM_ALL_ACTION_TYPES; i++) {
-    if (is_action_visible(s_all_action_types[i])) {
-      s_filtered_action_types[s_num_filtered_action_types++] = s_all_action_types[i];
-    }
-  }
-}
 
 // Thin wrapper around action_type_to_string that uses "<None>" for the
 // "unassigned" slot in the picker UI (the canonical name is just "None").
@@ -319,13 +210,6 @@ static void build_filtered_action_types(void) {
 static const char* get_action_display_name(action_type_t type) {
   if (type == ACTION_NONE) return "<None>";
   return action_type_to_string(type);
-}
-
-static uint32_t action_type_to_roller_index(action_type_t type) {
-  for (size_t i = 0; i < s_num_filtered_action_types; i++) {
-    if (s_filtered_action_types[i] == type) return (uint32_t)i;
-  }
-  return 0;
 }
 
 // ============================================================================
@@ -561,216 +445,17 @@ static void nav_to_pad_detail(void* user_data) {
 }
 
 // ============================================================================
-// Action Type Roller
+// Action Type Roller -- DEAD STUB
+//
+// The live picker lives in components/menu/pages/action_config.c. This
+// stub exists only because the dead pad_detail_page_create chain below
+// still references nav_to_action_type. The chain itself is unreachable
+// (the only entry point, nav_to_pad_detail, jumps straight to
+// action_config_start), so the body is intentionally empty.
 // ============================================================================
-
-static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  scene_t* scene = scene_get_current();
-  if (!scene || selected_index >= s_num_filtered_action_types) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-  
-  action_type_t new_type = s_filtered_action_types[selected_index];
-  
-  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
-    scene_get_current_index(), s_editing_pad_index);
-  if (!mapping) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-  
-  // If changing action type, reset the action
-  if (mapping->action.type != new_type) {
-    memset(&mapping->action, 0, sizeof(action_t));
-    mapping->action.type = new_type;
-    mapping->enabled = (new_type != ACTION_NONE);
-    
-    // CC slots are already 0 (inactive) from memset
-    // Set default cycle steps for CC Cycle
-    if (new_type == ACTION_CONTROL_CYCLE) {
-      mapping->action.params.control.num_cycle_steps = 2;
-    }
-    
-    // Set default preset for Program Set (preset 1 = index_base)
-    if (new_type == ACTION_PRESET) {
-      uint8_t scene_index = scene_get_current_index();
-      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-      mapping->action.params.preset.program = index_base;  // Preset 1
-    }
-    
-    // Set default scene for Scene Set (first scene in manifest)
-    if (new_type == ACTION_SCENE) {
-      mapping->action.params.target.number = scene_get_index_by_position(0);
-    }
-    
-    // Tempo defaults: default to SET variant at 120 BPM. Variant switches
-    // are handled in the new action_config flow, not in this legacy path.
-    if (new_type == ACTION_TEMPO) {
-      mapping->action.variant = VARIANT_SET;
-      mapping->action.params.tempo.bpm = 120;
-    }
-
-    // Set default note for Note action (C4 = MIDI 60, middle C)
-    if (new_type == ACTION_NOTE) {
-      mapping->action.params.note.note = 60;
-      mapping->action.params.note.velocity = 100;
-    }
-
-    // Set defaults for Preset Hold (preset 1 for both press and release)
-    if (new_type == ACTION_PRESET_HOLD) {
-      uint8_t scene_index = scene_get_current_index();
-      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-      mapping->action.params.preset_cycle.press_preset = index_base;
-      mapping->action.params.preset_cycle.release_preset = index_base;
-    }
-
-    // Set defaults for Preset Cycle (2 steps, preset 1 for both)
-    if (new_type == ACTION_PRESET_CYCLE) {
-      uint8_t scene_index = scene_get_current_index();
-      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-      mapping->action.params.preset_cycle.num_presets = 2;
-      mapping->action.params.preset_cycle.cycle_presets[0] = index_base;
-      mapping->action.params.preset_cycle.cycle_presets[1] = index_base;
-    }
-    
-    // Set defaults for TW Hold (Pads for both press and release)
-    if (new_type == ACTION_TOUCHWHEEL_HOLD) {
-      mapping->action.params.tw_mode.mode = 0;   // Pads on press
-      mapping->action.params.tw_mode.mode2 = 0;  // Pads on release
-    }
-    
-    // Set defaults for TW Cycle (2 steps, Pads for both)
-    if (new_type == ACTION_TOUCHWHEEL_CYCLE) {
-      mapping->action.params.tw_mode.num_modes = 2;
-      mapping->action.params.tw_mode.modes[0] = 0;  // Pads
-      mapping->action.params.tw_mode.modes[1] = 0;  // Pads
-    }
-    
-    // Set defaults for LFO actions (slot 1 = LFO1)
-    if (new_type == ACTION_LFO_START || new_type == ACTION_LFO_STOP ||
-        new_type == ACTION_LFO_TOGGLE) {
-      mapping->action.params.lfo.slot = 1;  // LFO1
-    }
-    
-    // Set defaults for LFO Shape (cycle between sine and triangle)
-    if (new_type == ACTION_LFO_SHAPE) {
-      mapping->action.params.lfo.slot = 1;  // LFO1
-      mapping->action.params.lfo.num_shapes = 2;
-      mapping->action.params.lfo.shapes[0] = LFO_WAVEFORM_SINE;
-      mapping->action.params.lfo.shapes[1] = LFO_WAVEFORM_TRIANGLE;
-      mapping->action.params.lfo.current_index = 0;
-    }
-    
-    // Set defaults for clock toggle/hold (start_enabled = false means press disables clock)
-    // Default to disable since clock is running by default
-    if (new_type == ACTION_CLOCK_TOGGLE || new_type == ACTION_CLOCK_HOLD) {
-      mapping->action.params.clock.start_enabled = false;
-    }
-    
-    // Set defaults for clock burst (100% = double the clock rate)
-    if (new_type == ACTION_CLOCK_BURST) {
-      mapping->action.params.clock_burst.speed_percent = 100;
-    }
-    
-    // Set defaults for cut actions (both = cut local and passthrough)
-    if (new_type == ACTION_CUT_TOGGLE || new_type == ACTION_CUT_HOLD) {
-      mapping->action.params.cut.cut_mode = 2;  // Both
-    }
-    
-    // Set defaults for UI actions
-    if (new_type == ACTION_SET_UI) {
-      mapping->action.params.ui.module = 0;  // Scene
-    }
-    if (new_type == ACTION_UI_HOLD) {
-      mapping->action.params.ui.module = 1;   // Press: buttons
-      mapping->action.params.ui.module2 = 0;  // Release: scene
-    }
-    if (new_type == ACTION_UI_CYCLE) {
-      mapping->action.params.ui.num_modules = 2;
-      mapping->action.params.ui.modules[0] = 0;  // Scene
-      mapping->action.params.ui.modules[1] = 1;  // Buttons
-      mapping->action.params.ui.current_index = 0;
-    }
-    if (new_type == ACTION_PARAM_HOLD || new_type == ACTION_PARAM_CYCLE) {
-      // Use device's first two CC controls as defaults
-      uint8_t scene_index = scene_get_current_index();
-      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-      uint8_t cc1 = 1, cc2 = 11;  // Fallback if no device
-      if (device && device->control_count > 0) {
-        int found = 0;
-        for (uint16_t i = 0; i < device->control_count && found < 2; i++) {
-          if (device->controls[i].type == MIDI_CONTROL_TYPE_CC) {
-            if (found == 0) cc1 = (uint8_t)device->controls[i].id;
-            else cc2 = (uint8_t)device->controls[i].id;
-            found++;
-          }
-        }
-        if (found == 1) cc2 = cc1;  // If only one CC, use it for both
-      }
-      if (new_type == ACTION_PARAM_HOLD) {
-        mapping->action.params.tw_param.param = cc1;
-        mapping->action.params.tw_param.param2 = cc2;
-      } else {
-        mapping->action.params.tw_param.num_params = 2;
-        mapping->action.params.tw_param.params[0] = cc1;
-        mapping->action.params.tw_param.params[1] = cc2;
-        mapping->action.params.tw_param.current_index = 0;
-      }
-    }
-    
-    persist_scene_changes();
-    ESP_LOGI(TAG, "Pad %s action changed to: %s", 
-      get_pad_display_name(s_editing_pad_index), get_action_display_name(new_type));
-  } else {
-    ESP_LOGD(TAG, "Pad %s action unchanged: %s", 
-      get_pad_display_name(s_editing_pad_index), get_action_display_name(new_type));
-  }
-  
-  s_callback_in_progress = false;
-  
-  // Go back 2: pop roller AND old pad detail, push fresh pad detail
-  const char* title = get_pad_display_name(s_editing_pad_index);
-  menu_navigate_back_then_to(2, title, pad_detail_page_create);
-}
-
-static lv_obj_t* action_type_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-  
-  touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
-    scene_get_current_index(), s_editing_pad_index);
-  if (!mapping) return NULL;
-  
-  // Build filtered action type list based on current mode
-  build_filtered_action_types();
-  
-  // Build options string from filtered list
-  static char options[512];
-  options[0] = '\0';
-  for (size_t i = 0; i < s_num_filtered_action_types; i++) {
-    if (i > 0) strcat(options, "\n");
-    strcat(options, get_action_display_name(s_filtered_action_types[i]));
-  }
-  
-  uint32_t current_idx = action_type_to_roller_index(mapping->action.type);
-  
-  return menu_create_roller_page("Action", options, current_idx, action_type_confirm_cb, NULL);
-}
 
 static void nav_to_action_type(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Action", action_type_roller_create);
 }
 
 // ============================================================================
@@ -3873,17 +3558,14 @@ static void nav_to_cc_slot(void* user_data) {
   
   static char title[24];
   
-  // Route based on action type
-  if (mapping->action.type == ACTION_CONTROL_HOLD) {
-    // CC Hold: open submenu with CC/Press/Release
+  // Route based on Control variant
+  if (mapping->action.type == ACTION_CONTROL && mapping->action.variant == VARIANT_HOLD) {
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
     menu_navigate_to(title, cc_hold_slot_page_create);
-  } else if (mapping->action.type == ACTION_CONTROL_CYCLE) {
-    // CC Cycle: open submenu with CC/Step values
+  } else if (mapping->action.type == ACTION_CONTROL && mapping->action.variant == VARIANT_CYCLE) {
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
     menu_navigate_to(title, cc_cycle_slot_page_create);
   } else {
-    // Regular CC: open CC number roller directly
     snprintf(title, sizeof(title), "CC Slot %u", (unsigned)(s_editing_cc_slot + 1));
     menu_navigate_to(title, cc_number_roller_create);
   }
@@ -3917,13 +3599,11 @@ static lv_obj_t* pad_detail_page_create(void) {
   snprintf(s_action_label[buf], sizeof(s_action_label[buf]), "Action\n%s", action_name);
   s_detail_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_action_type, NULL, true};
   
-  // Show CC slots for CC actions
-  if (mapping->action.type == ACTION_CONTROL_CHANGE ||
-      mapping->action.type == ACTION_CONTROL_HOLD ||
-      mapping->action.type == ACTION_CONTROL_CYCLE) {
-    
+  // Show CC slots for the consolidated Control family
+  if (mapping->action.type == ACTION_CONTROL) {
+
     // For CC Cycle, show Steps selector before the CC slots
-    if (mapping->action.type == ACTION_CONTROL_CYCLE) {
+    if (mapping->action.variant == VARIANT_CYCLE) {
       uint8_t steps = mapping->action.params.control.num_cycle_steps;
       if (steps < 2) steps = 2;
       snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps\n%u", (unsigned)steps);
@@ -3931,13 +3611,13 @@ static lv_obj_t* pad_detail_page_create(void) {
         s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true
       };
     }
-    
+
     for (int i = 0; i < 4; i++) {
-      // Use appropriate display function based on action type
+      // Use appropriate display function based on variant
       const char* slot_display;
-      if (mapping->action.type == ACTION_CONTROL_HOLD) {
+      if (mapping->action.variant == VARIANT_HOLD) {
         slot_display = get_cc_hold_slot_display(&mapping->action, (uint8_t)i);
-      } else if (mapping->action.type == ACTION_CONTROL_CYCLE) {
+      } else if (mapping->action.variant == VARIANT_CYCLE) {
         slot_display = get_cc_cycle_slot_display(&mapping->action, (uint8_t)i);
       } else {
         slot_display = get_cc_slot_display(&mapping->action, (uint8_t)i);

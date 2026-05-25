@@ -2904,7 +2904,7 @@ esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, c
   action_trigger_type_t trigger = (pad_index <= 7) ?
     ACTION_TRIGGER_TOUCHPAD_0_7 : ACTION_TRIGGER_TOUCHPAD_8_11;
   
-  if (!action_is_valid_for_trigger(action->type, trigger)) {
+  if (!action_is_valid_for_trigger_for(action, trigger)) {
     ESP_LOGW(TAG, "Cannot assign '%s' to pad %d (invalid for this trigger)",
       action_type_to_string(action->type), pad_index);
     return ESP_ERR_NOT_SUPPORTED;
@@ -2925,7 +2925,7 @@ esp_err_t scene_assign_button_left(uint8_t scene_index, const action_t* action) 
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   // Validate action against button trigger
-  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUTTON)) {
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_BUTTON)) {
     ESP_LOGW(TAG, "Cannot assign '%s' to left button (invalid for this trigger)",
       action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
@@ -2944,7 +2944,7 @@ esp_err_t scene_assign_button_right(uint8_t scene_index, const action_t* action)
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   // Validate action against button trigger
-  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUTTON)) {
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_BUTTON)) {
     ESP_LOGW(TAG, "Cannot assign '%s' to right button (invalid for this trigger)",
       action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
@@ -2963,7 +2963,7 @@ esp_err_t scene_assign_button_both(uint8_t scene_index, const action_t* action) 
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   // Validate action against button trigger
-  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUTTON)) {
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_BUTTON)) {
     ESP_LOGW(TAG, "Cannot assign '%s' to both buttons (invalid for this trigger)",
       action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
@@ -2997,7 +2997,7 @@ esp_err_t scene_assign_bump(uint8_t scene_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   // Validate action against bump trigger
-  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_BUMP)) {
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_BUMP)) {
     ESP_LOGW(TAG, "Cannot assign '%s' to bump (invalid for this trigger)",
       action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
@@ -3021,7 +3021,7 @@ esp_err_t scene_add_on_load_action(uint8_t scene_index, const action_t* action) 
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   // Validate action against on_load trigger
-  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_ON_LOAD)) {
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_ON_LOAD)) {
     ESP_LOGW(TAG, "Cannot add '%s' to on_load (invalid for this trigger)",
       action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
@@ -3072,7 +3072,7 @@ esp_err_t scene_add_on_play_action(uint8_t scene_index, const action_t* action) 
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   // Validate action against on_play trigger
-  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_ON_PLAY)) {
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_ON_PLAY)) {
     ESP_LOGW(TAG, "Cannot add '%s' to on_play (invalid for this trigger)",
       action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
@@ -3196,7 +3196,7 @@ esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_t* action) 
   if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
   
   // Validate action against expression switch trigger
-  if (!action_is_valid_for_trigger(action->type, ACTION_TRIGGER_EXPR_SWITCH)) {
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_EXPR_SWITCH)) {
     ESP_LOGW(TAG, "Cannot assign '%s' to expr_switch (invalid for this trigger)",
       action_type_to_string(action->type));
     return ESP_ERR_NOT_SUPPORTED;
@@ -3933,9 +3933,7 @@ static const char* action_type_json_names[] = {
   [ACTION_PAUSE] = "pause",
   [ACTION_RECORD] = "record",
   [ACTION_TEMPO] = "tempo",
-  [ACTION_CONTROL_CHANGE] = "control_change",
-  [ACTION_CONTROL_HOLD] = "control_hold",
-  [ACTION_CONTROL_CYCLE] = "control_cycle",
+  [ACTION_CONTROL] = "control",
   [ACTION_NOTE] = "note",
   [ACTION_RANDOMIZE] = "randomize",
   [ACTION_CONFIRM_PENDING] = "confirm_pending",
@@ -4039,7 +4037,7 @@ static cJSON* action_to_json(const action_t* action) {
     return NULL;
   }
 
-  // Consolidated families (currently only ACTION_TEMPO) always emit a
+  // Consolidated families (ACTION_TEMPO, ACTION_CONTROL) always emit a
   // variant string so the read path can dispatch without legacy aliases.
   // Singleton types omit it; the default VARIANT_NONE is implicit.
   if (action->variant != VARIANT_NONE
@@ -4048,22 +4046,24 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddStringToObject(obj, "variant", action_variant_json_names[action->variant]);
   }
 
-  if (action->type == ACTION_CONTROL_CHANGE || action->type == ACTION_CONTROL_HOLD) {
+  if (action->type == ACTION_CONTROL &&
+      (action->variant == VARIANT_SET || action->variant == VARIANT_HOLD)) {
     uint8_t num_ccs = action->params.control.num_ccs;
     if (num_ccs == 0) num_ccs = 1;  // Backward compat
-    
+    bool is_hold = (action->variant == VARIANT_HOLD);
+
     if (num_ccs == 1) {
       // Single CC: use simple format for backward compatibility
       cJSON_AddNumberToObject(obj, "cc", action->params.control.cc_numbers[0]);
       cJSON_AddNumberToObject(obj, "value", action->params.control.values[0]);
-      if (action->type == ACTION_CONTROL_HOLD) {
+      if (is_hold) {
         cJSON_AddNumberToObject(obj, "value2", action->params.control.values2[0]);
       }
     } else {
       // Multi-CC: use array format
       cJSON* cc_arr = cJSON_CreateArray();
       cJSON* val_arr = cJSON_CreateArray();
-      cJSON* val2_arr = (action->type == ACTION_CONTROL_HOLD) ? cJSON_CreateArray() : NULL;
+      cJSON* val2_arr = is_hold ? cJSON_CreateArray() : NULL;
       for (int i = 0; i < num_ccs && i < 4; i++) {
         cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(action->params.control.cc_numbers[i]));
         cJSON_AddItemToArray(val_arr, cJSON_CreateNumber(action->params.control.values[i]));
@@ -4075,17 +4075,11 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddItemToObject(obj, "value", val_arr);
       if (val2_arr) cJSON_AddItemToObject(obj, "value2", val2_arr);
     }
-    // Add release mode fields for control_hold
-    if (action->type == ACTION_CONTROL_HOLD && action->params.control.release_mode != 0) {
-      const char* mode_str = (action->params.control.release_mode == 1) ? "if_held" : "if_quick";
-      cJSON_AddStringToObject(obj, "release_mode", mode_str);
-      cJSON_AddNumberToObject(obj, "release_threshold_ms", action->params.control.release_threshold_ms);
-    }
-  } else if (action->type == ACTION_CONTROL_CYCLE) {
+  } else if (action->type == ACTION_CONTROL && action->variant == VARIANT_CYCLE) {
     uint8_t num_ccs = action->params.control.num_ccs;
     if (num_ccs == 0) num_ccs = 1;
     uint8_t num_steps = action->params.control.num_cycle_steps;
-    
+
     if (num_ccs == 1) {
       // Single CC cycle: simple format
       cJSON_AddNumberToObject(obj, "cc", action->params.control.cc_numbers[0]);
@@ -4348,7 +4342,7 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddBoolToObject(obj, "raise_flag", true);
   }
 
-  // Serialize morph settings (only if enabled, for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
+  // Serialize morph settings (only if enabled; ACTION_CONTROL + HOLD/CYCLE variants, RANDOMIZE)
   if (action->morph_enabled && action_supports_morph(action->type)) {
     cJSON_AddBoolToObject(obj, "morph", true);
     // Only serialize non-default values
@@ -4372,6 +4366,16 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddStringToObject(obj, "morph_division", 
         morph_division_to_string(action->morph_division));
     }
+  }
+
+  // Serialize Follow-Up settings (only for eligible hold variants with a
+  // non-default mode). JSON keys match the pre-promotion control_hold shape
+  // so existing scene files keep working without a key rename.
+  if (action_supports_followup_for(action) && action->followup_mode != 0) {
+    const char* mode_str = (action->followup_mode == 1) ? "if_held" : "if_quick";
+    cJSON_AddStringToObject(obj, "release_mode", mode_str);
+    uint16_t thr = action->followup_threshold_ms ? action->followup_threshold_ms : 1000;
+    cJSON_AddNumberToObject(obj, "release_threshold_ms", thr);
   }
 
   return obj;
@@ -4413,6 +4417,16 @@ static action_t json_to_action(cJSON* obj) {
   if (variant_node && cJSON_IsString(variant_node)) {
     action_variant_t v = action_variant_from_string(variant_node->valuestring);
     if (v != VARIANT_NONE) action.variant = v;
+  }
+
+  // Sensible default for consolidated families when an old file uses the
+  // bare canonical type name without a variant (e.g. "type": "control"
+  // from before the Control family rename to control_change). This keeps
+  // legacy data behaving as it always did rather than landing in the
+  // default-case warning path at dispatch.
+  if (action.variant == VARIANT_NONE) {
+    if (action.type == ACTION_CONTROL) action.variant = VARIANT_SET;
+    if (action.type == ACTION_TEMPO)   action.variant = VARIANT_TAP;
   }
 
   
@@ -4488,24 +4502,23 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
-  // Parse release mode for control_hold
-  if (action.type == ACTION_CONTROL_HOLD) {
-    cJSON* release_mode = cJSON_GetObjectItem(obj, "release_mode");
-    if (release_mode && cJSON_IsString(release_mode)) {
-      const char* mode_str = release_mode->valuestring;
-      if (strcmp(mode_str, "if_held") == 0) {
-        action.params.control.release_mode = 1;
-      } else if (strcmp(mode_str, "if_quick") == 0) {
-        action.params.control.release_mode = 2;
-      } else {
-        action.params.control.release_mode = 0;  // "always" or unknown
-      }
+  // Parse Follow-Up settings. Top-level on action_t after promotion; keyed by
+  // legacy names so old control_hold scenes load identically. Read for any
+  // action -- non-eligible actions just carry the value harmlessly, but
+  // gating on action_supports_followup_for() keeps the field clean.
+  if (action_supports_followup_for(&action)) {
+    cJSON* fu_mode = cJSON_GetObjectItem(obj, "release_mode");
+    if (fu_mode && cJSON_IsString(fu_mode)) {
+      const char* mode_str = fu_mode->valuestring;
+      if (strcmp(mode_str, "if_held") == 0) action.followup_mode = 1;
+      else if (strcmp(mode_str, "if_quick") == 0) action.followup_mode = 2;
+      else action.followup_mode = 0;
     }
-    cJSON* release_threshold = cJSON_GetObjectItem(obj, "release_threshold_ms");
-    if (release_threshold && cJSON_IsNumber(release_threshold)) {
-      action.params.control.release_threshold_ms = (uint16_t)release_threshold->valueint;
-    } else {
-      action.params.control.release_threshold_ms = 1000;  // Default 1 second
+    cJSON* fu_thr = cJSON_GetObjectItem(obj, "release_threshold_ms");
+    if (fu_thr && cJSON_IsNumber(fu_thr)) {
+      action.followup_threshold_ms = (uint16_t)fu_thr->valueint;
+    } else if (action.followup_mode != 0) {
+      action.followup_threshold_ms = 1000;
     }
   }
   
@@ -4950,7 +4963,7 @@ static action_t json_to_action(cJSON* obj) {
     action.raise_flag = cJSON_IsTrue(raise_flag);
   }
 
-  // Parse morph settings (default: disabled, only for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
+  // Parse morph settings (default: disabled; ACTION_CONTROL + HOLD/CYCLE variants, RANDOMIZE)
   action.morph_enabled = false;
   action.morph_steps_mode = MORPH_STEPS_AUTO;
   action.morph_manual_steps = 32;
@@ -5017,7 +5030,7 @@ static void json_to_on_load(cJSON* array, scene_t* scene) {
     if (action.type == ACTION_NONE) continue;
     
     // Validate action is allowed for on_load trigger
-    if (!action_is_valid_for_trigger(action.type, ACTION_TRIGGER_ON_LOAD)) {
+    if (!action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_ON_LOAD)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' in on_load",
         action_type_to_string(action.type));
       continue;
@@ -5051,7 +5064,7 @@ static void json_to_on_play(cJSON* array, scene_t* scene) {
     if (action.type == ACTION_NONE) continue;
     
     // Validate action is allowed for on_play trigger
-    if (!action_is_valid_for_trigger(action.type, ACTION_TRIGGER_ON_PLAY)) {
+    if (!action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_ON_PLAY)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' in on_play",
         action_type_to_string(action.type));
       continue;
@@ -5955,7 +5968,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
       
       // Validate action is allowed for this pad's trigger type
       if (parsed_action.type != ACTION_NONE &&
-          !action_is_valid_for_trigger(parsed_action.type, trigger)) {
+          !action_is_valid_for_trigger_for(&parsed_action, trigger)) {
         ESP_LOGW(TAG, "Ignoring invalid action '%s' on pad %d",
           action_type_to_string(parsed_action.type), i);
         parsed_action.type = ACTION_NONE;
@@ -5978,7 +5991,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     action_t action = cJSON_IsArray(btn_l) ?
       json_array_to_single_action(btn_l) : json_to_action(btn_l);
     if (action.type != ACTION_NONE &&
-        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+        !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_BUTTON)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for button_left",
         action_type_to_string(action.type));
       action.type = ACTION_NONE;
@@ -5991,7 +6004,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     action_t action = cJSON_IsArray(btn_r) ?
       json_array_to_single_action(btn_r) : json_to_action(btn_r);
     if (action.type != ACTION_NONE &&
-        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+        !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_BUTTON)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for button_right",
         action_type_to_string(action.type));
       action.type = ACTION_NONE;
@@ -6004,7 +6017,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     action_t action = cJSON_IsArray(btn_both) ?
       json_array_to_single_action(btn_both) : json_to_action(btn_both);
     if (action.type != ACTION_NONE &&
-        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+        !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_BUTTON)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for button_both",
         action_type_to_string(action.type));
       action.type = ACTION_NONE;
@@ -6017,7 +6030,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     action_t bump_action = cJSON_IsArray(bump) ?
       json_array_to_single_action(bump) : json_to_action(bump);
     if (bump_action.type != ACTION_NONE &&
-        !action_is_valid_for_trigger(bump_action.type, ACTION_TRIGGER_BUMP)) {
+        !action_is_valid_for_trigger_for(&bump_action, ACTION_TRIGGER_BUMP)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for bump",
         action_type_to_string(bump_action.type));
       bump_action.type = ACTION_NONE;
@@ -6091,7 +6104,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     action_t action = cJSON_IsArray(sustain) ?
       json_array_to_single_action(sustain) : json_to_action(sustain);
     if (action.type != ACTION_NONE &&
-        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+        !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_BUTTON)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for sustain",
         action_type_to_string(action.type));
       action.type = ACTION_NONE;
@@ -6104,7 +6117,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     action_t action = cJSON_IsArray(sostenuto) ?
       json_array_to_single_action(sostenuto) : json_to_action(sostenuto);
     if (action.type != ACTION_NONE &&
-        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUTTON)) {
+        !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_BUTTON)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for sostenuto",
         action_type_to_string(action.type));
       action.type = ACTION_NONE;
@@ -6117,7 +6130,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     action_t action = cJSON_IsArray(expr_switch_json) ?
       json_array_to_single_action(expr_switch_json) : json_to_action(expr_switch_json);
     if (action.type != ACTION_NONE &&
-        !action_is_valid_for_trigger(action.type, ACTION_TRIGGER_EXPR_SWITCH)) {
+        !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_EXPR_SWITCH)) {
       ESP_LOGW(TAG, "Ignoring invalid action '%s' for expr_switch",
         action_type_to_string(action.type));
       action.type = ACTION_NONE;

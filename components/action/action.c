@@ -188,6 +188,7 @@ esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value
         .source_type = 255,
         .source_index = 0,
         .action_type = action->type,
+        .action_variant = action->variant,
         .cc_number = 0,
         .cc_value = 0,
         .note = 0,
@@ -195,13 +196,11 @@ esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value
       }
     };
 
-    if (action->type == ACTION_CONTROL_CHANGE ||
-        action->type == ACTION_CONTROL_HOLD ||
-        action->type == ACTION_CONTROL_CYCLE) {
+    if (action->type == ACTION_CONTROL) {
       if (action->params.control.num_ccs > 0) {
         evt.data.action_executed.cc_number = action->params.control.cc_numbers[0];
         evt.data.action_executed.cc_value = action->params.control.values[0];
-        if (action->type == ACTION_CONTROL_HOLD) {
+        if (action->variant == VARIANT_HOLD) {
           evt.data.action_executed.cc_value2 = action->params.control.values2[0];
         }
       }
@@ -221,7 +220,8 @@ esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value
 // ============================================================================
 action_t action_create_control(uint8_t cc_number, uint8_t value) {
   action_t action = {0};
-  action.type = ACTION_CONTROL_CHANGE;
+  action.type = ACTION_CONTROL;
+  action.variant = VARIANT_SET;
   action.params.control.num_ccs = 1;
   action.params.control.cc_numbers[0] = cc_number;
   action.params.control.values[0] = value;

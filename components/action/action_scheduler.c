@@ -149,8 +149,10 @@ void action_clear_pending(void) {
 static void reset_action_cycle_index(action_t* action) {
   if (!action) return;
   switch (action->type) {
-    case ACTION_CONTROL_CYCLE:
-      action->params.control.current_index = 0;
+    case ACTION_CONTROL:
+      if (action->variant == VARIANT_CYCLE) {
+        action->params.control.current_index = 0;
+      }
       break;
     case ACTION_PRESET_CYCLE:
       action->params.preset_cycle.current_index = 0;
@@ -248,9 +250,11 @@ static void handle_beat_event(const event_t* event, void* context) {
         // Sync cycle state back to original action (for CYCLE actions)
         if (pending->original) {
           switch (pending->action.type) {
-            case ACTION_CONTROL_CYCLE:
-              pending->original->params.control.current_index =
-                pending->action.params.control.current_index;
+            case ACTION_CONTROL:
+              if (pending->action.variant == VARIANT_CYCLE) {
+                pending->original->params.control.current_index =
+                  pending->action.params.control.current_index;
+              }
               break;
             case ACTION_PRESET_CYCLE:
               pending->original->params.preset_cycle.current_index =

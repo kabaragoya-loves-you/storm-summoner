@@ -47,6 +47,23 @@ typedef struct {
 static active_morph_t s_active_morphs[MAX_ACTIVE_MORPHS];
 static esp_timer_handle_t s_morph_timer = NULL;
 
+// ----------------------------------------------------------------------------
+// Tempo morph: minimalist linear BPM ramp. One global slot -- there's only
+// one transport tempo, so a second start retargets the in-flight ramp.
+// Reuses the shared 10ms timer; integer-BPM throttled so we only call
+// tempo_set_bpm() when the value actually changes.
+// ----------------------------------------------------------------------------
+typedef struct {
+  bool active;
+  uint16_t start_bpm;
+  uint16_t target_bpm;
+  uint32_t start_ms;
+  uint32_t end_ms;
+  uint16_t last_sent_bpm;
+} tempo_morph_t;
+
+static tempo_morph_t s_tempo_morph;
+
 // Forward declarations
 static void morph_timer_callback(void* arg);
 static void morph_beat_event_handler(const event_t* event, void* context);
@@ -213,6 +230,7 @@ void action_morph_update_timer(void) {
     }
   }
   if (!any_active) any_active = action_boomerang_any_active();
+  if (!any_active) any_active = s_tempo_morph.active;
 
   if (any_active) {
     if (!esp_timer_is_active(s_morph_timer)) {
@@ -303,6 +321,32 @@ static void morph_advance_step(active_morph_t* m) {
   }
 }
 
+static void tempo_morph_tick(uint32_t now) {
+  if (!s_tempo_morph.active) return;
+
+  if (now >= s_tempo_morph.end_ms) {
+    if (s_tempo_morph.target_bpm != s_tempo_morph.last_sent_bpm) {
+      tempo_set_bpm(s_tempo_morph.target_bpm);
+    }
+    s_tempo_morph.active = false;
+    return;
+  }
+
+  uint32_t total = s_tempo_morph.end_ms - s_tempo_morph.start_ms;
+  if (total == 0) total = 1;
+  uint32_t elapsed = now - s_tempo_morph.start_ms;
+  int32_t delta = (int32_t)s_tempo_morph.target_bpm - (int32_t)s_tempo_morph.start_bpm;
+  int32_t value = (int32_t)s_tempo_morph.start_bpm
+                + (delta * (int32_t)elapsed) / (int32_t)total;
+  if (value < 20) value = 20;
+  if (value > 300) value = 300;
+  uint16_t bpm = (uint16_t)value;
+  if (bpm != s_tempo_morph.last_sent_bpm) {
+    tempo_set_bpm(bpm);
+    s_tempo_morph.last_sent_bpm = bpm;
+  }
+}
+
 static void morph_timer_callback(void* arg) {
   (void)arg;
   uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
@@ -323,8 +367,9 @@ static void morph_timer_callback(void* arg) {
   }
 
   action_boomerang_tick_all(now);
+  tempo_morph_tick(now);
 
-  if (!any_morph_active && !action_boomerang_any_active()) {
+  if (!any_morph_active && !action_boomerang_any_active() && !s_tempo_morph.active) {
     action_morph_update_timer();
   }
 }
@@ -486,10 +531,61 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
   return true;
 }
 
+// Compute the duration in ms for an action's morph configuration. Used by
+// both CC and tempo morph paths so the three timing modes behave the same.
+uint32_t action_morph_compute_duration_ms(const action_t* action) {
+  uint16_t bpm = tempo_get_bpm();
+  if (bpm == 0) bpm = 120;
+  switch (action->morph_timing_mode) {
+    case MORPH_TIMING_FEEL:
+      return get_feel_duration_ms(action->morph_feel, bpm);
+    case MORPH_TIMING_DURATION:
+      return action_morph_get_duration_ms(action->morph_division, bpm);
+    case MORPH_TIMING_SYNC: {
+      time_signature_t sig = tempo_get_time_signature();
+      uint8_t beats_per_bar = sig.numerator ? sig.numerator : 4;
+      uint8_t current_beat = transport_get_current_beat();
+      if (current_beat == 0) current_beat = 1;
+      return get_sync_duration_ms(action->morph_division, bpm,
+        current_beat, beats_per_bar);
+    }
+    default:
+      return 500;
+  }
+}
+
+bool action_tempo_morph_start(uint16_t target_bpm, uint32_t duration_ms) {
+  uint16_t current = tempo_get_bpm();
+  if (current == 0) current = 120;
+  if (target_bpm < 20) target_bpm = 20;
+  if (target_bpm > 300) target_bpm = 300;
+
+  if (duration_ms < 10 || current == target_bpm) {
+    if (current != target_bpm) tempo_set_bpm(target_bpm);
+    s_tempo_morph.active = false;
+    action_morph_update_timer();
+    return true;
+  }
+
+  uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+  s_tempo_morph.active = true;
+  s_tempo_morph.start_bpm = current;
+  s_tempo_morph.target_bpm = target_bpm;
+  s_tempo_morph.start_ms = now;
+  s_tempo_morph.end_ms = now + duration_ms;
+  s_tempo_morph.last_sent_bpm = current;
+  action_morph_update_timer();
+
+  ESP_LOGD(TAG, "Tempo morph: %u -> %u BPM over %lu ms",
+    (unsigned)current, (unsigned)target_bpm, (unsigned long)duration_ms);
+  return true;
+}
+
 void action_morph_clear(void) {
   for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
     s_active_morphs[i].active = false;
   }
+  s_tempo_morph.active = false;
   action_morph_update_timer();
   ESP_LOGD(TAG, "Cleared all active morphs");
 }

@@ -48,11 +48,11 @@ void scene_test_info(void) {
       if (map->action.type != ACTION_NONE) {
         const char* action_name = action_type_to_string(map->action.type);
         
-        if (map->action.type == ACTION_CONTROL_CHANGE) {
+        if (map->action.type == ACTION_CONTROL && map->action.variant == VARIANT_SET) {
           uint8_t num_ccs = map->action.params.control.num_ccs;
           if (num_ccs == 0) num_ccs = 1;
-          ESP_LOGI(TAG, "  Pad %2d: %s (CC%d=%d)", 
-                   i, action_name, map->action.params.control.cc_numbers[0], 
+          ESP_LOGI(TAG, "  Pad %2d: %s (CC%d=%d)",
+                   i, action_name, map->action.params.control.cc_numbers[0],
                    map->action.params.control.values[0]);
         } else {
           ESP_LOGI(TAG, "  Pad %2d: %s", i, action_name);

@@ -11,7 +11,6 @@ static const char* TAG = "action_validation";
 // to the full action_t should use action_requires_hold_for() for a precise
 // answer.
 static const action_type_t hold_actions[] = {
-  ACTION_CONTROL_HOLD,
   ACTION_PRESET_HOLD,
   ACTION_NOTE,
   ACTION_TOUCHWHEEL_HOLD,
@@ -39,32 +38,121 @@ bool action_requires_hold_for(const action_t* action) {
   if (!action) return false;
   if (action_requires_hold(action->type)) return true;
   if (action->type == ACTION_TEMPO && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_CONTROL && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
-// Enforces restrictions for touchwheel mode actions and hold actions
-bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigger) {
-  if (type == ACTION_NONE) return true;
-
-  // Hold actions are invalid for bump, on_load, and on_play (no release event)
-  if (action_requires_hold(type)) {
-    if (trigger == ACTION_TRIGGER_BUMP || trigger == ACTION_TRIGGER_ON_LOAD ||
-        trigger == ACTION_TRIGGER_ON_PLAY) {
+// Hold actions where it's safe (and musically useful) to gate the release
+// phase on hold duration. Excludes:
+//   - NOTE / SUSTAIN / SOSTENUTO -- the release IS the NoteOff / CC=0
+//     pair; suppressing it strands a note or pedal.
+//   - LFO_TOGGLE / LFO_SHAPE / CLOCK_BURST -- not symmetric press/release
+//     pairs (toggle / cycle / one-shot on press).
+bool action_supports_followup_for(const action_t* action) {
+  if (!action) return false;
+  switch (action->type) {
+    case ACTION_PRESET_HOLD:
+    case ACTION_TOUCHWHEEL_HOLD:
+    case ACTION_CLOCK_HOLD:
+    case ACTION_CUT_HOLD:
+    case ACTION_UI_HOLD:
+    case ACTION_PARAM_HOLD:
+    case ACTION_RTG_HOLD:
+    case ACTION_SAMPLE_HOLD_HOLD:
+      return true;
+    case ACTION_TEMPO:
+    case ACTION_CONTROL:
+      return action->variant == VARIANT_HOLD;
+    default:
       return false;
-    }
   }
+}
 
-  // Transport actions cannot be assigned to on_play (would cause recursion/conflicts)
-  if (trigger == ACTION_TRIGGER_ON_PLAY) {
-    if (type == ACTION_PLAY || type == ACTION_STOP ||
-        type == ACTION_PAUSE || type == ACTION_RECORD) {
+// ============================================================================
+// Trigger capability table + variant-aware validator
+// ============================================================================
+//
+// One source of truth for "what each trigger can do" -- replaces the patchwork
+// of is_on_load_allowed / is_on_play_allowed / exclude_hold_actions / per-type
+// inline checks. The validator combines the trigger's capabilities with the
+// action's (type, variant) to give a single yes/no answer; menu, runtime,
+// JSON load, and console parsers all call the same function.
+
+trigger_capabilities_t action_trigger_capabilities(action_trigger_type_t trigger) {
+  trigger_capabilities_t caps = {
+    .delivers_release   = false,
+    .inhibits_transport = false,
+    .fires_at_load_time = false,
+    .fires_at_play_time = false,
+  };
+  switch (trigger) {
+    case ACTION_TRIGGER_TOUCHPAD_0_7:
+    case ACTION_TRIGGER_TOUCHPAD_8_11:
+    case ACTION_TRIGGER_BUTTON:
+    case ACTION_TRIGGER_EXPR_SWITCH:
+      caps.delivers_release = true;
+      break;
+    case ACTION_TRIGGER_BUMP:
+      // one-shot, no release pair
+      break;
+    case ACTION_TRIGGER_ON_LOAD:
+      caps.fires_at_load_time = true;
+      break;
+    case ACTION_TRIGGER_ON_PLAY:
+      caps.fires_at_play_time = true;
+      caps.inhibits_transport = true;
+      break;
+  }
+  return caps;
+}
+
+bool action_is_transport(action_type_t type) {
+  return type == ACTION_PLAY || type == ACTION_STOP ||
+         type == ACTION_PAUSE || type == ACTION_RECORD;
+}
+
+// Fire-and-forget category: actions that send a thing once and return,
+// without needing a release pair, mode interaction, or live scene state.
+// Encodes what the old is_on_load_allowed / is_on_play_allowed menu
+// whitelists conveyed -- but variant-aware. Used by Rule 3 of the
+// validator to gate ON_LOAD / ON_PLAY triggers.
+bool action_is_fire_and_forget_for(const action_t* action) {
+  if (!action) return false;
+  switch (action->type) {
+    // Consolidated families: only SET is one-shot. HOLD needs a release pair,
+    // CYCLE/INC/DEC need per-press semantics, TAP needs mode interaction.
+    case ACTION_CONTROL:
+    case ACTION_TEMPO:
+      return action->variant == VARIANT_SET;
+
+    // Pure one-shots
+    case ACTION_PLAY:
+    case ACTION_STOP:
+    case ACTION_PAUSE:
+    case ACTION_RECORD:
+    case ACTION_RANDOMIZE:
+    case ACTION_RESET:
+    case ACTION_BOOMERANG:
+    // LFO_START/STOP -- fire-and-forget at the category level. Rule 4 of
+    // the validator additionally rejects them on ON_LOAD (LFOs auto-start
+    // from scene config), but ON_PLAY is fine.
+    case ACTION_LFO_START:
+    case ACTION_LFO_STOP:
+      return true;
+
+    default:
       return false;
-    }
   }
+}
 
-  // Touchwheel Hold restrictions:
-  // - Valid: Pads 8-11, Buttons, Expression switch
-  // - Invalid: Pads 0-7, Bump, on_load, on_play
+// Action-specific input restrictions -- the rules that aren't reducible to
+// "trigger has capability X". These are genuine per-action hardware
+// affordance requirements (touchwheel mode actions only on touchwheel/button
+// inputs; param hold/cycle same constraint).
+static bool action_input_restriction_allows(action_type_t type,
+                                            action_trigger_type_t trigger) {
+  // Touchwheel Hold: needs an input that lets the user keep contact.
+  //   Valid: Pads 8-11, Buttons, Expression switch.
   if (type == ACTION_TOUCHWHEEL_HOLD) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
@@ -75,10 +163,7 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
         return false;
     }
   }
-
-  // Touchwheel Cycle restrictions:
-  // - Valid: Pads 8-11, Buttons, Bump, Expression switch
-  // - Invalid: Pads 0-7, on_load, on_play
+  // Touchwheel Cycle: same as Hold but bump is also OK (no release needed).
   if (type == ACTION_TOUCHWHEEL_CYCLE) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
@@ -90,21 +175,8 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
         return false;
     }
   }
-
-  // UI actions cannot be assigned to on_load or on_play
-  if (type == ACTION_SET_UI || type == ACTION_UI_CYCLE) {
-    if (trigger == ACTION_TRIGGER_ON_LOAD || trigger == ACTION_TRIGGER_ON_PLAY) return false;
-  }
-
-  // LFO start/stop cannot be assigned to on_load (LFOs auto-start based on config)
-  // but ARE allowed for on_play
-  if (type == ACTION_LFO_START || type == ACTION_LFO_STOP) {
-    if (trigger == ACTION_TRIGGER_ON_LOAD) return false;
-  }
-
-  // Param Hold restrictions:
-  // - Valid: Pads 8-11, Buttons, Expression switch
-  // - Invalid: Pads 0-7, Bump, on_load, on_play
+  // Param Hold / Cycle mirror the touchwheel rules (they manipulate the
+  // touchwheel's CC slot 1, so they need similar input affordances).
   if (type == ACTION_PARAM_HOLD) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
@@ -115,10 +187,6 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
         return false;
     }
   }
-
-  // Param Cycle restrictions:
-  // - Valid: Pads 8-11, Buttons, Bump, Expression switch
-  // - Invalid: Pads 0-7, on_load, on_play
   if (type == ACTION_PARAM_CYCLE) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
@@ -130,8 +198,79 @@ bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigg
         return false;
     }
   }
-
+  // UI module changes only make sense from a live input (the user needs to
+  // see the UI swap in response to their input). Already handled by the
+  // fire-and-forget gate for ON_LOAD/ON_PLAY -- this is the live-input gate.
+  // (No additional rule needed; SET_UI/UI_CYCLE aren't fire-and-forget.)
   return true;
+}
+
+// Canonical variant-aware validator. All call sites that have a real
+// action_t should use this. The by-type wrapper below builds a synthetic
+// action_t for legacy callers.
+bool action_is_valid_for_trigger_for(const action_t* action,
+                                     action_trigger_type_t trigger) {
+  if (!action || action->type == ACTION_NONE) return true;
+
+  trigger_capabilities_t caps = action_trigger_capabilities(trigger);
+
+  // Rule 1: HOLD variants need a release event from the trigger.
+  if (action_requires_hold_for(action) && !caps.delivers_release) return false;
+
+  // Rule 2: transport recursion guard.
+  if (caps.inhibits_transport && action_is_transport(action->type)) return false;
+
+  // Rule 3: load/play-time triggers only accept fire-and-forget actions.
+  if ((caps.fires_at_load_time || caps.fires_at_play_time)
+      && !action_is_fire_and_forget_for(action)) {
+    return false;
+  }
+
+  // Rule 4: LFO_START/STOP rejected on ON_LOAD (LFOs auto-start from scene
+  //   config; firing them here would race the init path). ON_PLAY is fine
+  //   because the scene is already live by then.
+  if (caps.fires_at_load_time &&
+      (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP)) {
+    return false;
+  }
+
+  // Rule 5: per-action input affordance requirements (touchwheel/param holds).
+  return action_input_restriction_allows(action->type, trigger);
+}
+
+// Default variant for a consolidated family. Chosen so that "is this type
+// valid for the trigger?" with no variant information returns true whenever
+// ANY variant would work. For TEMPO and CONTROL, VARIANT_SET is the most
+// permissive: it passes both the hold gate (not hold) and the fire-and-forget
+// gate (SET is the one-shot variant of each family). The variant picker then
+// filters precisely once the user opens it.
+static action_variant_t default_variant_for_type(action_type_t type) {
+  switch (type) {
+    case ACTION_TEMPO:
+    case ACTION_CONTROL:
+      return VARIANT_SET;
+    default:
+      return VARIANT_NONE;
+  }
+}
+
+// Thin wrapper for legacy by-type callers. Builds a synthetic action with
+// the family's "least restrictive" default variant so the answer matches
+// what the type picker should show.
+bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigger) {
+  action_t probe = {0};
+  probe.type = type;
+  probe.variant = default_variant_for_type(type);
+  return action_is_valid_for_trigger_for(&probe, trigger);
+}
+
+bool action_variant_is_valid_for_trigger(action_type_t type,
+                                         action_variant_t variant,
+                                         action_trigger_type_t trigger) {
+  action_t probe = {0};
+  probe.type = type;
+  probe.variant = variant;
+  return action_is_valid_for_trigger_for(&probe, trigger);
 }
 
 // Returns true for actions that support timing options (non-HOLD actions)
@@ -184,6 +323,12 @@ bool action_supports_timing_for(const action_t* action) {
     }
     return true;
   }
+  if (action->type == ACTION_CONTROL) {
+    // HOLD needs a release pair, so it cannot be scheduled/repeated.
+    // SET and CYCLE schedule fine.
+    if (action->variant == VARIANT_HOLD) return false;
+    return true;
+  }
   return action_supports_timing(action->type);
 }
 
@@ -200,6 +345,11 @@ bool action_supports_repeat_for(const action_t* action) {
         return false;
     }
   }
+  if (action->type == ACTION_CONTROL) {
+    // SET and CYCLE repeat (every press resends / advances).
+    // HOLD does not repeat -- the release event has nowhere to go.
+    return action->variant == VARIANT_SET || action->variant == VARIANT_CYCLE;
+  }
   return action_supports_repeat(action->type);
 }
 
@@ -207,15 +357,33 @@ bool action_supports_transport_trigger(action_type_t type) {
   return action_supports_timing(type) && action_supports_repeat(type);
 }
 
+// Type-level morph support: conservative answer for consolidated families
+// (true if ANY variant supports morph). Use action_supports_morph_for() when
+// you have the full action_t to get the variant-precise answer.
 bool action_supports_morph(action_type_t type) {
   switch (type) {
-    case ACTION_CONTROL_HOLD:
-    case ACTION_CONTROL_CYCLE:
+    case ACTION_CONTROL:
     case ACTION_RANDOMIZE:
+    case ACTION_TEMPO:
       return true;
     default:
       return false;
   }
+}
+
+bool action_supports_morph_for(const action_t* action) {
+  if (!action) return false;
+  if (action->type == ACTION_CONTROL) {
+    // SET sends immediately; HOLD and CYCLE feed the morph engine.
+    return action->variant == VARIANT_HOLD || action->variant == VARIANT_CYCLE;
+  }
+  if (action->type == ACTION_TEMPO) {
+    // Only HOLD glides between two BPMs; the other variants are one-shots
+    // (TAP, SET) or already-quantized step changes (INCREMENT, DECREMENT,
+    // CYCLE) where a ramp would feel mushy.
+    return action->variant == VARIANT_HOLD;
+  }
+  return action_supports_morph(action->type);
 }
 
 bool action_supports_raise_flag(action_type_t type) {
@@ -224,9 +392,7 @@ bool action_supports_raise_flag(action_type_t type) {
     case ACTION_STOP:
     case ACTION_PAUSE:
     case ACTION_RECORD:
-    case ACTION_CONTROL_CHANGE:
-    case ACTION_CONTROL_HOLD:
-    case ACTION_CONTROL_CYCLE:
+    case ACTION_CONTROL:
     case ACTION_NOTE:
     case ACTION_RANDOMIZE:
     case ACTION_PUNCH_IN:

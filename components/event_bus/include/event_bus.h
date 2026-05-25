@@ -268,9 +268,10 @@ typedef struct {
       uint8_t source_type;    // 0=pad, 1=button, 2=bump, 3=on_load, 4=on_play, 5=expr_switch
       uint8_t source_index;   // pad index (0-11), button (0=L, 1=R, 2=both), etc.
       uint8_t action_type;    // action_type_t value
+      uint8_t action_variant; // action_variant_t value (for consolidated families)
       uint8_t cc_number;      // For CC actions
-      uint8_t cc_value;       // For CC actions (press value for CONTROL_HOLD)
-      uint8_t cc_value2;      // For CONTROL_HOLD (release value)
+      uint8_t cc_value;       // For CC actions (press value for Control HOLD variant)
+      uint8_t cc_value2;      // For Control HOLD variant (release value)
       uint8_t note;           // For note actions
       uint8_t velocity;       // For note actions
     } action_executed;

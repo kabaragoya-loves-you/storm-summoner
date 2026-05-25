@@ -117,14 +117,13 @@ static void action_executed_handler(const event_t *event, void *context) {
   // (We only have limited info from the event)
   action_t action = {0};
   action.type = (action_type_t)event->data.action_executed.action_type;
+  action.variant = (action_variant_t)event->data.action_executed.action_variant;
 
-  if (action.type == ACTION_CONTROL_CHANGE ||
-      action.type == ACTION_CONTROL_HOLD ||
-      action.type == ACTION_CONTROL_CYCLE) {
+  if (action.type == ACTION_CONTROL) {
     action.params.control.num_ccs = 1;
     action.params.control.cc_numbers[0] = event->data.action_executed.cc_number;
     action.params.control.values[0] = event->data.action_executed.cc_value;
-    if (action.type == ACTION_CONTROL_HOLD) {
+    if (action.variant == VARIANT_HOLD) {
       action.params.control.values2[0] = event->data.action_executed.cc_value2;
     }
   } else if (action.type == ACTION_NOTE) {

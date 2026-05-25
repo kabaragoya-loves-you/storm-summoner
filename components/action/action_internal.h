@@ -3,6 +3,7 @@
 
 #include "action.h"
 #include "event_bus.h"
+#include "esp_timer.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -58,6 +59,17 @@ void action_morph_update_timer(void);
 // Exposed so the boomerang engine can reuse it for DIVISION-mode phases.
 uint32_t action_morph_get_duration_ms(morph_division_t div, uint16_t bpm);
 
+// Resolve an action's full morph configuration (timing mode + feel/division)
+// into a single duration in ms. Used by both CC and tempo morph paths so
+// FEEL/DURATION/SYNC behave identically across action families.
+uint32_t action_morph_compute_duration_ms(const action_t* action);
+
+// Start a linear-ramp tempo morph from the current BPM to target_bpm over
+// duration_ms. A duration_ms < 10 or target == current jumps immediately.
+// Calling again while a ramp is in flight retargets it (there's only one
+// transport tempo, so one slot is enough). Returns true on success.
+bool action_tempo_morph_start(uint16_t target_bpm, uint32_t duration_ms);
+
 // ----------------------------------------------------------------------------
 // Boomerang subsystem (action_boomerang.c)
 // Hooks into the shared timer via action_morph_update_timer().
@@ -97,6 +109,33 @@ void action_scheduler_mark_hold_released(action_t* action);
 // ----------------------------------------------------------------------------
 esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value,
   bool is_press);
+
+// ----------------------------------------------------------------------------
+// Follow-Up helpers (header-only). Used by hold-variant handlers to gate
+// their release-phase work on hold duration. See action_supports_followup_for()
+// in action.h for which actions are expected to call these.
+// ----------------------------------------------------------------------------
+
+// Stamp the press timestamp. Call this on every press of a follow-up-eligible
+// hold action so the matching release can compute elapsed time.
+static inline void action_followup_record_press(action_t* action) {
+  if (action) action->hold_press_time_us = esp_timer_get_time();
+}
+
+// Decide whether to skip the release-phase work given the configured
+// follow-up mode and elapsed hold duration.
+//   mode == 0  -> always fire release (returns false)
+//   mode == 1  -> If Held: skip when elapsed < threshold
+//   mode == 2  -> If Quick: skip when elapsed >= threshold
+// Treats threshold == 0 as the default 1000 ms.
+static inline bool action_followup_should_skip_release(const action_t* action) {
+  if (!action || action->followup_mode == 0) return false;
+  int64_t elapsed_ms = (esp_timer_get_time() - action->hold_press_time_us) / 1000;
+  uint16_t threshold = action->followup_threshold_ms;
+  if (threshold == 0) threshold = 1000;
+  if (action->followup_mode == 1) return elapsed_ms < (int64_t)threshold;
+  return elapsed_ms >= (int64_t)threshold;
+}
 
 // ----------------------------------------------------------------------------
 // Handler dispatchers (action_handlers_*.c)

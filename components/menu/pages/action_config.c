@@ -92,6 +92,7 @@ static char s_scene_label[LABEL_BUFFER_SETS][40];
 static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_amount_label[LABEL_BUFFER_SETS][24];
+static char s_control_variant_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
@@ -159,9 +160,7 @@ static const char* NOTE_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G
 
 static const action_type_t s_all_action_types[] = {
   ACTION_NONE,
-  ACTION_CONTROL_CHANGE,
-  ACTION_CONTROL_HOLD,
-  ACTION_CONTROL_CYCLE,
+  ACTION_CONTROL,
   ACTION_PRESET_INC,
   ACTION_PRESET_DEC,
   ACTION_PRESET,
@@ -232,9 +231,7 @@ static void persist_scene_changes(void) {
 const char* action_config_get_display_name(action_type_t type) {
   switch (type) {
     case ACTION_NONE: return "<None>";
-    case ACTION_CONTROL_CHANGE: return "Control Change";
-    case ACTION_CONTROL_HOLD: return "Control Hold";
-    case ACTION_CONTROL_CYCLE: return "Control Cycle";
+    case ACTION_CONTROL: return "Control Change";
     case ACTION_PRESET_INC: return "Preset +1";
     case ACTION_PRESET_DEC: return "Preset -1";
     case ACTION_PRESET: return "Set Preset";
@@ -282,63 +279,16 @@ const char* action_config_get_display_name(action_type_t type) {
   }
 }
 
-// Actions allowed for on-load (no hold/cycle, no scene-level settings)
-static bool is_on_load_allowed(action_type_t type) {
-  switch (type) {
-    case ACTION_NONE:
-    case ACTION_CONTROL_CHANGE:
-    case ACTION_PLAY:
-    case ACTION_STOP:
-    case ACTION_PAUSE:
-    case ACTION_RECORD:
-    case ACTION_RANDOMIZE:
-    case ACTION_RESET:
-    case ACTION_LFO_START:
-    case ACTION_LFO_STOP:
-    case ACTION_BOOMERANG:
-      return true;
-    default:
-      return false;
-  }
-}
-
-// Actions allowed for on-play (like on-load but NO transport actions)
-static bool is_on_play_allowed(action_type_t type) {
-  switch (type) {
-    case ACTION_NONE:
-    case ACTION_CONTROL_CHANGE:
-    case ACTION_RANDOMIZE:
-    case ACTION_RESET:
-    case ACTION_LFO_START:
-    case ACTION_LFO_STOP:
-    case ACTION_BOOMERANG:
-      return true;
-    default:
-      return false;
-  }
-}
-
 static bool is_action_visible(action_type_t type) {
-  // On-load filter: only allow specific actions
-  if (s_ctx && s_ctx->on_load_filter && !is_on_load_allowed(type)) {
-    return false;
-  }
-  
-  // On-play filter: only allow specific actions (no transport actions)
-  if (s_ctx && s_ctx->on_play_filter && !is_on_play_allowed(type)) {
-    return false;
-  }
-  
-  // Filter out hold-requiring actions when context requests it (for bump)
-  if (s_ctx && s_ctx->exclude_hold_actions && action_requires_hold(type)) {
-    return false;
-  }
-  
-  // Validate against trigger type if context provides one
+  // Trigger-capability gate: variant-aware. The wrapper synthesizes the
+  // family's default variant (SET for TEMPO/CONTROL) so a family is
+  // offered if ANY variant would be valid for the current trigger.
+  // The Variant roller (see build_filtered_*_variants) trims precisely
+  // once the user opens it.
   if (s_ctx && !action_is_valid_for_trigger(type, s_ctx->trigger_type)) {
     return false;
   }
-  
+
   scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
   tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
@@ -460,22 +410,27 @@ static uint32_t cc_number_to_option_index(uint8_t cc_num) {
 // CC Slot Display Helpers
 // ============================================================================
 
-// Get display name for a CC slot: "ControlName: ValueName" or "ControlName: 64"
+// Get display name for a CC slot: "ControlName: ValueName" or "ControlName: 64".
+// If the assigned CC isn't defined on the current device (e.g. the scene was
+// authored against a different pedal), render the slot as "Inactive" rather
+// than expose a meaningless raw "CC 64: 0" -- the user re-picks from the CC
+// roller, which only offers device-supported CCs.
 static const char* get_cc_slot_display(action_t* action, uint8_t slot) {
   if (!action || slot >= 4) return "Inactive";
   if (slot >= action->params.control.num_ccs) return "Inactive";
-  
+
   uint8_t cc_num = action->params.control.cc_numbers[slot];
   uint8_t cc_val = action->params.control.values[slot];
-  
+
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
-  
+  if (!ctrl) return "Inactive";
+
   static char buf[40];
-  const char* ctrl_name = (ctrl && ctrl->name) ? ctrl->name : NULL;
+  const char* ctrl_name = ctrl->name;
   const char* value_name = assets_get_discrete_name(device, cc_num, cc_val);
-  
+
   if (ctrl_name) {
     if (value_name) {
       snprintf(buf, sizeof(buf), "%.16s: %.18s", ctrl_name, value_name);
@@ -483,23 +438,27 @@ static const char* get_cc_slot_display(action_t* action, uint8_t slot) {
       snprintf(buf, sizeof(buf), "%.24s: %u", ctrl_name, (unsigned)cc_val);
     }
   } else {
+    // Device defines the CC but has no name string for it -- still better
+    // than showing a control the device doesn't support.
     snprintf(buf, sizeof(buf), "CC%u: %u", (unsigned)cc_num, (unsigned)cc_val);
   }
   return buf;
 }
 
-// Get display name for a CC Hold slot: just the CC name
+// Get display name for a CC Hold slot: just the CC name. Treats an
+// unsupported CC as "Inactive" -- same reasoning as get_cc_slot_display().
 static const char* get_cc_hold_slot_display(action_t* action, uint8_t slot) {
   if (!action || slot >= 4) return "Inactive";
   if (slot >= action->params.control.num_ccs) return "Inactive";
-  
+
   uint8_t cc_num = action->params.control.cc_numbers[slot];
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
-  
+  if (!ctrl) return "Inactive";
+
   static char buf[32];
-  if (ctrl && ctrl->name) {
+  if (ctrl->name) {
     snprintf(buf, sizeof(buf), "%.28s", ctrl->name);
   } else {
     snprintf(buf, sizeof(buf), "CC %u", (unsigned)cc_num);
@@ -521,21 +480,22 @@ static const char* get_value_display(uint8_t cc_num, uint8_t value) {
   return buf;
 }
 
-// Get display string for CC Hold follow-up mode
+// Get display string for the Follow-Up mode row. Reads top-level fields on
+// action_t; works for any hold variant that supports follow-up.
 static const char* get_followup_display(const action_t* action) {
   if (!action) return "Always";
-  switch (action->params.control.release_mode) {
+  switch (action->followup_mode) {
     case 1: return "If Held";
     case 2: return "If Quick";
     default: return "Always";
   }
 }
 
-// Get display string for CC Hold duration threshold
+// Get display string for the Follow-Up duration threshold row.
 static const char* get_duration_display(const action_t* action) {
   if (!action) return "1 sec";
-  uint16_t ms = action->params.control.release_threshold_ms;
-  if (ms == 0) ms = 1000;  // Default
+  uint16_t ms = action->followup_threshold_ms;
+  if (ms == 0) ms = 1000;
   switch (ms) {
     case 500: return "500ms";
     case 750: return "750ms";
@@ -546,18 +506,20 @@ static const char* get_duration_display(const action_t* action) {
   }
 }
 
-// Get display name for a CC Cycle slot: just the CC name
+// Get display name for a CC Cycle slot: just the CC name. Treats an
+// unsupported CC as "Inactive" -- same reasoning as get_cc_slot_display().
 static const char* get_cc_cycle_slot_display(action_t* action, uint8_t slot) {
   if (!action || slot >= 4) return "Inactive";
   if (slot >= action->params.control.num_ccs) return "Inactive";
-  
+
   uint8_t cc_num = action->params.control.cc_numbers[slot];
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
-  
+  if (!ctrl) return "Inactive";
+
   static char buf[32];
-  if (ctrl && ctrl->name) {
+  if (ctrl->name) {
     snprintf(buf, sizeof(buf), "%.28s", ctrl->name);
   } else {
     snprintf(buf, sizeof(buf), "CC %u", (unsigned)cc_num);
@@ -665,10 +627,15 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     action->type = new_type;
     
     // Set defaults based on type
-    if (new_type == ACTION_CONTROL_CYCLE) {
-      action->params.control.num_cycle_steps = 2;
+    if (new_type == ACTION_CONTROL) {
+      // Default to Control Change with CC1 = 64; control_variant_confirm_cb
+      // adjusts variant-specific fields when the user changes variant.
+      action->variant = VARIANT_SET;
+      action->params.control.num_ccs = 1;
+      action->params.control.cc_numbers[0] = 1;
+      action->params.control.values[0] = 64;
     }
-    
+
     if (new_type == ACTION_PRESET) {
       uint8_t scene_index = scene_get_current_index();
       const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -851,7 +818,7 @@ static lv_obj_t* cc_hold_slot_page_create(void);
 static lv_obj_t* cc_cycle_slot_page_create(void);
 
 // ============================================================================
-// CC Value Roller (for ACTION_CONTROL_CHANGE)
+// CC Value Roller (for ACTION_CONTROL + VARIANT_SET)
 // ============================================================================
 
 static void cc_value_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -969,7 +936,7 @@ static lv_obj_t* cc_value_roller_create(void) {
 }
 
 // ============================================================================
-// CC Number Roller (for ACTION_CONTROL_CHANGE)
+// CC Number Roller (for ACTION_CONTROL + VARIANT_SET)
 // ============================================================================
 
 static void cc_number_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -1069,10 +1036,10 @@ static void nav_to_cc_slot(void* user_data) {
   
   static char title[24];
   
-  if (action->type == ACTION_CONTROL_HOLD) {
+  if (action->type == ACTION_CONTROL && action->variant == VARIANT_HOLD) {
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
     nav_to_subpage(title, cc_hold_slot_page_create);
-  } else if (action->type == ACTION_CONTROL_CYCLE) {
+  } else if (action->type == ACTION_CONTROL && action->variant == VARIANT_CYCLE) {
     snprintf(title, sizeof(title), "Slot %u", (unsigned)(s_editing_cc_slot + 1));
     nav_to_subpage(title, cc_cycle_slot_page_create);
   } else {
@@ -1426,15 +1393,13 @@ static void cc_hold_followup_confirm_cb(uint32_t selected_index, void* user_data
 
   action_t* action = s_ctx->target_action;
 
-  // Map roller index to release mode (0=always, 1=if_held, 2=if_quick)
-  action->params.control.release_mode = (uint8_t)selected_index;
+  action->followup_mode = (uint8_t)selected_index;
 
-  // Set default threshold if switching to conditional mode
-  if (selected_index != 0 && action->params.control.release_threshold_ms == 0) {
-    action->params.control.release_threshold_ms = 1000;  // Default to 1 second
+  if (selected_index != 0 && action->followup_threshold_ms == 0) {
+    action->followup_threshold_ms = 1000;
   }
 
-  ESP_LOGI(TAG, "CC Hold follow-up mode set to %u", (unsigned)selected_index);
+  ESP_LOGI(TAG, "Follow-Up mode set to %u", (unsigned)selected_index);
 
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -1444,7 +1409,7 @@ static lv_obj_t* cc_hold_followup_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
 
   action_t* action = s_ctx->target_action;
-  uint32_t current_idx = action->params.control.release_mode;
+  uint32_t current_idx = action->followup_mode;
   if (current_idx > 2) current_idx = 0;
 
   return menu_create_roller_page("Follow-Up", "Always\nIf Held\nIf Quick",
@@ -1474,14 +1439,13 @@ static void cc_hold_duration_confirm_cb(uint32_t selected_index, void* user_data
 
   action_t* action = s_ctx->target_action;
 
-  // Map roller index to threshold value
   static const uint16_t thresholds[] = {500, 750, 1000, 1500, 2000};
   if (selected_index < 5) {
-    action->params.control.release_threshold_ms = thresholds[selected_index];
+    action->followup_threshold_ms = thresholds[selected_index];
   }
 
-  ESP_LOGI(TAG, "CC Hold duration threshold set to %u ms",
-    (unsigned)action->params.control.release_threshold_ms);
+  ESP_LOGI(TAG, "Follow-Up duration threshold set to %u ms",
+    (unsigned)action->followup_threshold_ms);
 
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -1491,7 +1455,7 @@ static lv_obj_t* cc_hold_duration_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
 
   action_t* action = s_ctx->target_action;
-  uint16_t threshold = action->params.control.release_threshold_ms;
+  uint16_t threshold = action->followup_threshold_ms;
   if (threshold == 0) threshold = 1000;
 
   // Map threshold to roller index
@@ -2258,20 +2222,38 @@ static const action_variant_t s_tempo_variants[] = {
 };
 #define NUM_TEMPO_VARIANTS (sizeof(s_tempo_variants) / sizeof(s_tempo_variants[0]))
 
+// Trigger-filtered subset of s_tempo_variants. Rebuilt every time the
+// roller is opened so it reflects the current trigger (e.g. bump hides
+// VARIANT_HOLD; on_load/on_play hide everything but VARIANT_SET).
+static action_variant_t s_filtered_tempo_variants[NUM_TEMPO_VARIANTS];
+static size_t s_num_filtered_tempo_variants = 0;
+
+static void build_filtered_tempo_variants(void) {
+  s_num_filtered_tempo_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_TEMPO_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_TEMPO, s_tempo_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_tempo_variants[s_num_filtered_tempo_variants++] = s_tempo_variants[i];
+    }
+  }
+}
+
 static void tempo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
 
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
 
-  if (!s_ctx || !s_ctx->target_action || selected_index >= NUM_TEMPO_VARIANTS) {
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_tempo_variants) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
 
   action_t* action = s_ctx->target_action;
-  action_variant_t new_variant = s_tempo_variants[selected_index];
+  action_variant_t new_variant = s_filtered_tempo_variants[selected_index];
 
   if (action->variant != new_variant) {
     action->variant = new_variant;
@@ -2329,18 +2311,27 @@ static void tempo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* tempo_variant_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
 
-  static char options[256];
-  options[0] = '\0';
-  for (size_t i = 0; i < NUM_TEMPO_VARIANTS; i++) {
-    if (i > 0) strcat(options, "\n");
-    strcat(options, action_variant_to_string(s_tempo_variants[i]));
+  build_filtered_tempo_variants();
+  if (s_num_filtered_tempo_variants == 0) {
+    // No valid variants for this trigger -- shouldn't happen if the type
+    // picker did its job, but bail out gracefully rather than show empty.
+    return NULL;
   }
 
-  // Find current variant's index in the roller
+  static char options[256];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_tempo_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_tempo_variants[i]));
+  }
+
+  // Find current variant's index in the FILTERED roller. If the saved
+  // variant isn't in the filtered set (e.g. legacy HOLD on a bump that
+  // we now reject), fall back to index 0 -- the user can pick anew.
   uint32_t current_idx = 0;
   action_variant_t current = s_ctx->target_action->variant;
-  for (size_t i = 0; i < NUM_TEMPO_VARIANTS; i++) {
-    if (s_tempo_variants[i] == current) {
+  for (size_t i = 0; i < s_num_filtered_tempo_variants; i++) {
+    if (s_filtered_tempo_variants[i] == current) {
       current_idx = (uint32_t)i;
       break;
     }
@@ -2352,6 +2343,136 @@ static lv_obj_t* tempo_variant_roller_create(void) {
 static void nav_to_tempo_variant(void* user_data) {
   (void)user_data;
   nav_to_subpage("Variant", tempo_variant_roller_create);
+}
+
+// ============================================================================
+// Control Variant Roller (for ACTION_CONTROL -- secondary operation picker)
+// ============================================================================
+
+// Variants offered for ACTION_CONTROL. SET appears first as it is the most
+// common operation ("Control Change" in MIDI parlance). HOLD/CYCLE follow.
+static const action_variant_t s_control_variants[] = {
+  VARIANT_SET,
+  VARIANT_HOLD,
+  VARIANT_CYCLE,
+};
+#define NUM_CONTROL_VARIANTS (sizeof(s_control_variants) / sizeof(s_control_variants[0]))
+
+// Trigger-filtered subset of s_control_variants. See tempo equivalent above.
+static action_variant_t s_filtered_control_variants[NUM_CONTROL_VARIANTS];
+static size_t s_num_filtered_control_variants = 0;
+
+static void build_filtered_control_variants(void) {
+  s_num_filtered_control_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_CONTROL_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_CONTROL, s_control_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_control_variants[s_num_filtered_control_variants++] = s_control_variants[i];
+    }
+  }
+}
+
+static void control_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_control_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_control_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action_variant_t old_variant = action->variant;
+    action->variant = new_variant;
+
+    // Preserve user data where it makes sense across variant changes --
+    // num_ccs / cc_numbers / values are shared across all three variants.
+    // Seed only the fields the new variant needs that the old variant
+    // wouldn't have populated.
+    uint8_t num_ccs = action->params.control.num_ccs;
+    if (num_ccs == 0) {
+      action->params.control.num_ccs = 1;
+      action->params.control.cc_numbers[0] = 1;
+      num_ccs = 1;
+    }
+
+    if (new_variant == VARIANT_HOLD) {
+      // Seed values2 to match values if it looks unset, so a fresh
+      // SET -> HOLD switch doesn't release to a meaningless 0.
+      bool values2_unset = true;
+      for (int i = 0; i < num_ccs && i < 4; i++) {
+        if (action->params.control.values2[i] != 0) { values2_unset = false; break; }
+      }
+      if (values2_unset) {
+        for (int i = 0; i < num_ccs && i < 4; i++) {
+          action->params.control.values2[i] = action->params.control.values[i];
+        }
+      }
+    } else if (new_variant == VARIANT_CYCLE) {
+      // Default to 2 steps if not configured; seed step 0 from current
+      // values so the first cycle press doesn't jump to 0.
+      if (action->params.control.num_cycle_steps < 2) {
+        action->params.control.num_cycle_steps = 2;
+      }
+      if (action->params.control.num_cycle_steps > 8) {
+        action->params.control.num_cycle_steps = 8;
+      }
+      // Only seed step 0 when switching FROM a non-cycle variant -- avoids
+      // clobbering an existing cycle configuration during round-trips.
+      if (old_variant != VARIANT_CYCLE) {
+        for (int i = 0; i < num_ccs && i < 4; i++) {
+          if (action->params.control.cycle_values[i][0] == 0) {
+            action->params.control.cycle_values[i][0] = action->params.control.values[i];
+          }
+        }
+      }
+      action->params.control.current_index = 0;
+    }
+
+    ESP_LOGI(TAG, "Control variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* control_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_control_variants();
+  if (s_num_filtered_control_variants == 0) return NULL;
+
+  static char options[128];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_control_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_control_variants[i]));
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_control_variants; i++) {
+    if (s_filtered_control_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, control_variant_confirm_cb, NULL);
+}
+
+static void nav_to_control_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", control_variant_roller_create);
 }
 
 // ============================================================================
@@ -5135,19 +5256,29 @@ static void nav_to_ui_cycle_step(void* user_data) {
 // Param Hold/Cycle Rollers (for ACTION_PARAM_HOLD, ACTION_PARAM_CYCLE)
 // ============================================================================
 
-// Helper to get CC name from number
+// True if the current scene's device defines `cc_num` as a CC control.
+// Used by display helpers to gate "Inactive" rendering for CC selections
+// that don't survive a device switch (scene authored against a different
+// pedal, etc.). Re-picking from the CC roller offers only device-supported
+// CCs, so the user resolves the stale state in place.
+static bool cc_is_supported(uint8_t cc_num) {
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  return assets_get_control_by_cc(device, cc_num) != NULL;
+}
+
+// Helper to get CC name from number. Returns "Inactive" when the CC isn't
+// defined on the current device (was: bare "CC <num>" fallback). Callers
+// that render "{name}: {value}" should check cc_is_supported() first so
+// they can drop the ": <value>" suffix when the CC is gone.
 static const char* get_cc_display_name(uint8_t cc_num) {
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  if (!device) return "Unknown";
+  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  if (!ctrl) return "Inactive";
+  if (ctrl->name) return ctrl->name;
 
-  for (uint16_t i = 0; i < device->control_count; i++) {
-    if (device->controls[i].type == MIDI_CONTROL_TYPE_CC &&
-        device->controls[i].id == cc_num) {
-      return device->controls[i].name ? device->controls[i].name : "CC";
-    }
-  }
-
+  // Device defines this CC but supplied no name -- fall back to numeric.
   static char fallback[16];
   snprintf(fallback, sizeof(fallback), "CC %u", (unsigned)cc_num);
   return fallback;
@@ -6105,18 +6236,26 @@ lv_obj_t* action_config_detail_page_create(void) {
   int buf = get_next_buffer_set();
   int item_count = 0;
   
-  // Action type selector (always first) - 2-line format
-  const char* action_name = action_config_get_display_name(action->type);
-  snprintf(s_action_label[buf], sizeof(s_action_label[buf]), "Action\n%s", action_name);
+  // Action type selector (always first) - 2-line format. Uses the
+  // variant-aware display name so consolidated families show their
+  // configured variant (e.g. "Control Hold") rather than the bare
+  // family name.
+  char action_name_buf[32];
+  action_get_display_name(action, action_name_buf, sizeof(action_name_buf));
+  snprintf(s_action_label[buf], sizeof(s_action_label[buf]), "Action\n%s", action_name_buf);
   s_detail_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_action_type, NULL, true};
-  
-  // CC actions: show CC slots
-  if (action->type == ACTION_CONTROL_CHANGE ||
-      action->type == ACTION_CONTROL_HOLD ||
-      action->type == ACTION_CONTROL_CYCLE) {
-    
+
+  // ACTION_CONTROL (consolidated family): always show Variant picker, then
+  // variant-specific sub-rows.
+  if (action->type == ACTION_CONTROL) {
+    snprintf(s_control_variant_label[buf], sizeof(s_control_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_control_variant_label[buf], nav_to_control_variant, NULL, true
+    };
+
     // For CC Cycle, show Steps selector first
-    if (action->type == ACTION_CONTROL_CYCLE) {
+    if (action->variant == VARIANT_CYCLE) {
       uint8_t steps = action->params.control.num_cycle_steps;
       if (steps < 2) steps = 2;
       snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps\n%u", (unsigned)steps);
@@ -6124,13 +6263,13 @@ lv_obj_t* action_config_detail_page_create(void) {
         s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true
       };
     }
-    
+
     // CC slots
     for (int i = 0; i < 4; i++) {
       const char* slot_display;
-      if (action->type == ACTION_CONTROL_HOLD) {
+      if (action->variant == VARIANT_HOLD) {
         slot_display = get_cc_hold_slot_display(action, (uint8_t)i);
-      } else if (action->type == ACTION_CONTROL_CYCLE) {
+      } else if (action->variant == VARIANT_CYCLE) {
         slot_display = get_cc_cycle_slot_display(action, (uint8_t)i);
       } else {
         slot_display = get_cc_slot_display(action, (uint8_t)i);
@@ -6146,26 +6285,6 @@ lv_obj_t* action_config_detail_page_create(void) {
       s_detail_items[item_count++] = (menu_item_t){
         s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
       };
-    }
-
-    // For Control Hold: add Follow-Up and Duration items
-    if (action->type == ACTION_CONTROL_HOLD && item_count < MAX_DETAIL_ITEMS) {
-      const char* followup_disp = get_followup_display(action);
-      snprintf(s_cc_hold_followup_label[buf], sizeof(s_cc_hold_followup_label[buf]),
-        "Follow-Up\n%s", followup_disp);
-      s_detail_items[item_count++] = (menu_item_t){
-        s_cc_hold_followup_label[buf], nav_to_cc_hold_followup, NULL, true
-      };
-
-      // Show Duration only when follow-up mode is not "Always"
-      if (action->params.control.release_mode != 0 && item_count < MAX_DETAIL_ITEMS) {
-        const char* duration_disp = get_duration_display(action);
-        snprintf(s_cc_hold_duration_label[buf], sizeof(s_cc_hold_duration_label[buf]),
-          "Duration\n%s", duration_disp);
-        s_detail_items[item_count++] = (menu_item_t){
-          s_cc_hold_duration_label[buf], nav_to_cc_hold_duration, NULL, true
-        };
-      }
     }
   }
   
@@ -6413,12 +6532,16 @@ lv_obj_t* action_config_detail_page_create(void) {
       if (i < num_ccs) {
         uint8_t cc_num = action->params.randomize.cc_numbers[i];
         const char* cc_name = assets_get_cc_name(device, cc_num);
+        // "Undefined" sentinel from assets_get_cc_name means the device
+        // doesn't define this CC. Mirror the active-slot rules elsewhere
+        // (Control / PARAM) by rendering as Inactive rather than showing
+        // a raw "CC N" the user can't act on without re-picking.
         if (cc_name && strcmp(cc_name, "Undefined") != 0) {
           snprintf(s_randomize_slot_labels[buf][i],
             sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\n%s", i + 1, cc_name);
         } else {
           snprintf(s_randomize_slot_labels[buf][i],
-            sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\nCC %u", i + 1, (unsigned)cc_num);
+            sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\nInactive", i + 1);
         }
       } else {
         snprintf(s_randomize_slot_labels[buf][i],
@@ -6619,25 +6742,36 @@ lv_obj_t* action_config_detail_page_create(void) {
 
   // Show Punch-In configuration
   if (action->type == ACTION_PUNCH_IN) {
-    // Start CC/Value
+    // Start CC/Value -- drop ": <value>" suffix when CC is unsupported
+    // by the current device so the row reads "Start\nInactive" cleanly.
     if (item_count < MAX_DETAIL_ITEMS) {
       uint8_t start_cc = action->params.punch_in.start_cc;
       uint8_t start_val = action->params.punch_in.start_value;
-      snprintf(s_punch_in_start_label[buf], sizeof(s_punch_in_start_label[buf]),
-        "Start\n%s: %s", get_cc_display_name(start_cc),
-        get_cc_value_display_name(start_cc, start_val));
+      if (cc_is_supported(start_cc)) {
+        snprintf(s_punch_in_start_label[buf], sizeof(s_punch_in_start_label[buf]),
+          "Start\n%s: %s", get_cc_display_name(start_cc),
+          get_cc_value_display_name(start_cc, start_val));
+      } else {
+        snprintf(s_punch_in_start_label[buf], sizeof(s_punch_in_start_label[buf]),
+          "Start\nInactive");
+      }
       s_detail_items[item_count++] = (menu_item_t){
         s_punch_in_start_label[buf], nav_to_punch_in_start, NULL, true
       };
     }
 
-    // Finish CC/Value
+    // Finish CC/Value -- same treatment as Start.
     if (item_count < MAX_DETAIL_ITEMS) {
       uint8_t finish_cc = action->params.punch_in.finish_cc;
       uint8_t finish_val = action->params.punch_in.finish_value;
-      snprintf(s_punch_in_finish_label[buf], sizeof(s_punch_in_finish_label[buf]),
-        "Finish\n%s: %s", get_cc_display_name(finish_cc),
-        get_cc_value_display_name(finish_cc, finish_val));
+      if (cc_is_supported(finish_cc)) {
+        snprintf(s_punch_in_finish_label[buf], sizeof(s_punch_in_finish_label[buf]),
+          "Finish\n%s: %s", get_cc_display_name(finish_cc),
+          get_cc_value_display_name(finish_cc, finish_val));
+      } else {
+        snprintf(s_punch_in_finish_label[buf], sizeof(s_punch_in_finish_label[buf]),
+          "Finish\nInactive");
+      }
       s_detail_items[item_count++] = (menu_item_t){
         s_punch_in_finish_label[buf], nav_to_punch_in_finish, NULL, true
       };
@@ -6667,7 +6801,9 @@ lv_obj_t* action_config_detail_page_create(void) {
       };
     }
 
-    // CC number (when output is CC) - show device parameter name when available
+    // CC number (when output is CC) - show device parameter name when available;
+    // fall back to "Inactive" when the device doesn't define this CC (e.g.
+    // scene authored against a different pedal).
     if (ot == OUTPUT_TYPE_CC && item_count < MAX_DETAIL_ITEMS) {
       uint8_t cc_num = action->params.boomerang.cc_number;
       uint8_t scene_index = scene_get_current_index();
@@ -6676,9 +6812,12 @@ lv_obj_t* action_config_detail_page_create(void) {
       if (ctrl && ctrl->name) {
         snprintf(s_boomerang_cc_label[buf], sizeof(s_boomerang_cc_label[buf]),
           "CC\n%.30s", ctrl->name);
+      } else if (ctrl) {
+        snprintf(s_boomerang_cc_label[buf], sizeof(s_boomerang_cc_label[buf]),
+          "CC\nCC %u", (unsigned)cc_num);
       } else {
         snprintf(s_boomerang_cc_label[buf], sizeof(s_boomerang_cc_label[buf]),
-          "CC\n%u", (unsigned)cc_num);
+          "CC\nInactive");
       }
       s_detail_items[item_count++] = (menu_item_t){
         s_boomerang_cc_label[buf], nav_to_boomerang_cc, NULL, true
@@ -6813,27 +6952,58 @@ lv_obj_t* action_config_detail_page_create(void) {
 
   // Show Flag Ceremony configuration
   if (action->type == ACTION_FLAG_CEREMONY) {
-    // Flag Up CC/Value
+    // Flag Up CC/Value -- drop ": <value>" suffix when CC is unsupported.
     if (item_count < MAX_DETAIL_ITEMS) {
       uint8_t up_cc = action->params.flag_ceremony.flag_up_cc;
       uint8_t up_val = action->params.flag_ceremony.flag_up_value;
-      snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
-        "Flag Up\n%s: %s", get_cc_display_name(up_cc),
-        get_cc_value_display_name(up_cc, up_val));
+      if (cc_is_supported(up_cc)) {
+        snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
+          "Flag Up\n%s: %s", get_cc_display_name(up_cc),
+          get_cc_value_display_name(up_cc, up_val));
+      } else {
+        snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
+          "Flag Up\nInactive");
+      }
       s_detail_items[item_count++] = (menu_item_t){
         s_flag_ceremony_up_label[buf], nav_to_flag_ceremony_up, NULL, true
       };
     }
 
-    // Flag Down CC/Value
+    // Flag Down CC/Value -- same treatment as Up.
     if (item_count < MAX_DETAIL_ITEMS) {
       uint8_t down_cc = action->params.flag_ceremony.flag_down_cc;
       uint8_t down_val = action->params.flag_ceremony.flag_down_value;
-      snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
-        "Flag Down\n%s: %s", get_cc_display_name(down_cc),
-        get_cc_value_display_name(down_cc, down_val));
+      if (cc_is_supported(down_cc)) {
+        snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
+          "Flag Down\n%s: %s", get_cc_display_name(down_cc),
+          get_cc_value_display_name(down_cc, down_val));
+      } else {
+        snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
+          "Flag Down\nInactive");
+      }
       s_detail_items[item_count++] = (menu_item_t){
         s_flag_ceremony_down_label[buf], nav_to_flag_ceremony_down, NULL, true
+      };
+    }
+  }
+
+  // Follow-Up: optional gate that lets a hold action skip its release-phase
+  // work based on how long the trigger was held. Same row shape for every
+  // eligible variant; reads top-level action_t.followup_mode/threshold.
+  if (action_supports_followup_for(action) && item_count < MAX_DETAIL_ITEMS) {
+    const char* followup_disp = get_followup_display(action);
+    snprintf(s_cc_hold_followup_label[buf], sizeof(s_cc_hold_followup_label[buf]),
+      "Follow-Up\n%s", followup_disp);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_cc_hold_followup_label[buf], nav_to_cc_hold_followup, NULL, true
+    };
+
+    if (action->followup_mode != 0 && item_count < MAX_DETAIL_ITEMS) {
+      const char* duration_disp = get_duration_display(action);
+      snprintf(s_cc_hold_duration_label[buf], sizeof(s_cc_hold_duration_label[buf]),
+        "Duration\n%s", duration_disp);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_cc_hold_duration_label[buf], nav_to_cc_hold_duration, NULL, true
       };
     }
   }
@@ -6896,8 +7066,8 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show Morph option for actions that support it (CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
-  if (action_supports_morph(action->type) && item_count < MAX_DETAIL_ITEMS) {
+  // Show Morph option for actions that support it (ACTION_CONTROL HOLD/CYCLE, RANDOMIZE)
+  if (action_supports_morph_for(action) && item_count < MAX_DETAIL_ITEMS) {
     const char* morph_display = get_morph_display(action);
     snprintf(s_morph_label[buf], sizeof(s_morph_label[buf]), "Morph\n%s", morph_display);
     s_detail_items[item_count++] = (menu_item_t){

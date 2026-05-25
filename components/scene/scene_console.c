@@ -30,6 +30,23 @@ static void format_cc_list(const continuous_mapping_t* mapping, char* buf, size_
   }
 }
 
+// Parse a 1-based scene number from console input and convert to the
+// internal 0-based target.number. The console interface is documented as
+// "<1-128>" throughout, so the +/- 1 conversion belongs here at the parser
+// boundary rather than at execution time.
+// Returns true on success; on failure logs an error and returns false so
+// the caller can `return 1;`.
+static bool parse_scene_number_1based(const char* str, const char* usage,
+                                      uint8_t* out) {
+  int n = str ? atoi(str) : 0;
+  if (n < 1 || n > 128) {
+    ESP_LOGE(TAG, "Scene number must be 1-128 (got %d). %s", n, usage);
+    return false;
+  }
+  *out = (uint8_t)(n - 1);
+  return true;
+}
+
 // Helper to format CC value with optional discrete name
 static void format_cc_value_with_discrete(const device_def_t* device, uint8_t cc_num,
   uint16_t value, char* buf, size_t buf_size) {
@@ -47,69 +64,70 @@ static void format_cc_value_with_discrete(const device_def_t* device, uint8_t cc
 static void format_action_details_with_device(const action_t* action, const device_def_t* device,
   char* buf, size_t buf_size) {
   switch (action->type) {
-    case ACTION_CONTROL_CHANGE: {
+    case ACTION_CONTROL: {
       uint8_t num_ccs = action->params.control.num_ccs;
       if (num_ccs == 0) num_ccs = 1;  // Backward compat
-      if (num_ccs == 1) {
-        uint8_t cc = action->params.control.cc_numbers[0];
-        const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
-        char val_buf[32];
-        format_cc_value_with_discrete(device, cc, action->params.control.values[0], val_buf, sizeof(val_buf));
-        if (cc_name && strcmp(cc_name, "Undefined") != 0) {
-          snprintf(buf, buf_size, "CC%d %s - %s", cc, cc_name, val_buf);
-        } else {
-          snprintf(buf, buf_size, "CC%d=%s", cc, val_buf);
-        }
-      } else {
-        int pos = snprintf(buf, buf_size, "MultiCC:");
-        for (int i = 0; i < num_ccs && i < 4 && pos < (int)buf_size - 10; i++) {
-          pos += snprintf(buf + pos, buf_size - pos, " %d=%d",
-            action->params.control.cc_numbers[i], action->params.control.values[i]);
-        }
-      }
-      break;
-    }
-    case ACTION_CONTROL_HOLD: {
-      uint8_t num_ccs = action->params.control.num_ccs;
-      if (num_ccs == 0) num_ccs = 1;
-      if (num_ccs == 1) {
-        uint8_t cc = action->params.control.cc_numbers[0];
-        const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
-        if (cc_name && strcmp(cc_name, "Undefined") != 0) {
-          snprintf(buf, buf_size, "CC%d %s hold:%d/%d", cc, cc_name,
-            action->params.control.values[0], action->params.control.values2[0]);
-        } else {
-          snprintf(buf, buf_size, "CC%d hold:%d/%d", cc,
-            action->params.control.values[0], action->params.control.values2[0]);
-        }
-      } else {
-        int pos = snprintf(buf, buf_size, "MultiCC hold:");
-        for (int i = 0; i < num_ccs && i < 4 && pos < (int)buf_size - 15; i++) {
-          pos += snprintf(buf + pos, buf_size - pos, " %d:%d/%d",
-            action->params.control.cc_numbers[i], action->params.control.values[i], action->params.control.values2[i]);
-        }
-      }
-      break;
-    }
-    case ACTION_CONTROL_CYCLE: {
-      uint8_t num_ccs = action->params.control.num_ccs;
-      if (num_ccs == 0) num_ccs = 1;
       uint8_t cc = action->params.control.cc_numbers[0];
       const char* cc_name = device ? assets_get_cc_name(device, cc) : NULL;
-      int pos;
-      if (num_ccs == 1) {
-        if (cc_name && strcmp(cc_name, "Undefined") != 0) {
-          pos = snprintf(buf, buf_size, "CC%d %s cycle:", cc, cc_name);
-        } else {
-          pos = snprintf(buf, buf_size, "CC%d cycle:", cc);
+
+      switch (action->variant) {
+        case VARIANT_SET: {
+          if (num_ccs == 1) {
+            char val_buf[32];
+            format_cc_value_with_discrete(device, cc, action->params.control.values[0], val_buf, sizeof(val_buf));
+            if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+              snprintf(buf, buf_size, "CC%d %s - %s", cc, cc_name, val_buf);
+            } else {
+              snprintf(buf, buf_size, "CC%d=%s", cc, val_buf);
+            }
+          } else {
+            int pos = snprintf(buf, buf_size, "MultiCC:");
+            for (int i = 0; i < num_ccs && i < 4 && pos < (int)buf_size - 10; i++) {
+              pos += snprintf(buf + pos, buf_size - pos, " %d=%d",
+                action->params.control.cc_numbers[i], action->params.control.values[i]);
+            }
+          }
+          break;
         }
-        for (int i = 0; i < action->params.control.num_cycle_steps && pos < (int)buf_size - 4; i++) {
-          pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
-            action->params.control.cycle_values[0][i]);
+        case VARIANT_HOLD: {
+          if (num_ccs == 1) {
+            if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+              snprintf(buf, buf_size, "CC%d %s hold:%d/%d", cc, cc_name,
+                action->params.control.values[0], action->params.control.values2[0]);
+            } else {
+              snprintf(buf, buf_size, "CC%d hold:%d/%d", cc,
+                action->params.control.values[0], action->params.control.values2[0]);
+            }
+          } else {
+            int pos = snprintf(buf, buf_size, "MultiCC hold:");
+            for (int i = 0; i < num_ccs && i < 4 && pos < (int)buf_size - 15; i++) {
+              pos += snprintf(buf + pos, buf_size - pos, " %d:%d/%d",
+                action->params.control.cc_numbers[i], action->params.control.values[i], action->params.control.values2[i]);
+            }
+          }
+          break;
         }
-      } else {
-        pos = snprintf(buf, buf_size, "MultiCC cycle (%d CCs, %d steps)",
-          num_ccs, action->params.control.num_cycle_steps);
+        case VARIANT_CYCLE: {
+          int pos;
+          if (num_ccs == 1) {
+            if (cc_name && strcmp(cc_name, "Undefined") != 0) {
+              pos = snprintf(buf, buf_size, "CC%d %s cycle:", cc, cc_name);
+            } else {
+              pos = snprintf(buf, buf_size, "CC%d cycle:", cc);
+            }
+            for (int i = 0; i < action->params.control.num_cycle_steps && pos < (int)buf_size - 4; i++) {
+              pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
+                action->params.control.cycle_values[0][i]);
+            }
+          } else {
+            pos = snprintf(buf, buf_size, "MultiCC cycle (%d CCs, %d steps)",
+              num_ccs, action->params.control.num_cycle_steps);
+          }
+          break;
+        }
+        default:
+          snprintf(buf, buf_size, "Control(unknown variant %d)", (int)action->variant);
+          break;
       }
       break;
     }
@@ -128,7 +146,10 @@ static void format_action_details_with_device(const action_t* action, const devi
       snprintf(buf, buf_size, "PC %d", action->params.preset.program);
       break;
     case ACTION_SCENE:
-      snprintf(buf, buf_size, "Scene %d", action->params.target.number);
+      // target.number is stored 0-based; surface as 1-based to match the
+      // menu summary and the documented `<1-128>` console usage.
+      snprintf(buf, buf_size, "Scene %u",
+        (unsigned)action->params.target.number + 1);
       break;
     case ACTION_TEMPO:
       if (action->variant == VARIANT_SET) {
@@ -887,7 +908,8 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_CONTROL_CHANGE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_SET;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       int cc_num = mcc.cc_numbers[i];
@@ -925,7 +947,8 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_CONTROL_HOLD;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_HOLD;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       int cc_num = mcc.cc_numbers[i];
@@ -1000,7 +1023,8 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     
-    action.type = ACTION_CONTROL_CYCLE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_CYCLE;
     action.params.control.num_ccs = mcc.num_ccs;
     action.params.control.num_cycle_steps = mcc.num_cycle_steps;
     action.params.control.current_index = 0;
@@ -1084,7 +1108,9 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
-    action.params.target.number = atoi(pad_args.params->sval[0]);
+    if (!parse_scene_number_1based(pad_args.params->sval[0],
+        "Usage: pad <num> scene_set <1-128>",
+        &action.params.target.number)) return 1;
   }
   // Touchwheel mode actions
   else if (strcmp(action_str, "tw_mode_hold") == 0) {
@@ -1154,7 +1180,8 @@ static int cmd_button(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CHANGE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_SET;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1171,7 +1198,8 @@ static int cmd_button(int argc, char **argv) {
         MULTI_CC_MODE_CC_HOLD, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_HOLD;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_HOLD;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1189,7 +1217,8 @@ static int cmd_button(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CYCLE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_CYCLE;
     action.params.control.num_ccs = mcc.num_ccs;
     action.params.control.num_cycle_steps = mcc.num_cycle_steps;
     action.params.control.current_index = 0;
@@ -1255,7 +1284,9 @@ static int cmd_button(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
-    action.params.target.number = atoi(button_args.params->sval[0]);
+    if (!parse_scene_number_1based(button_args.params->sval[0],
+        "Usage: button <name> scene_set <1-128>",
+        &action.params.target.number)) return 1;
   }
   else if (strcmp(action_str, "note_on") == 0) {
     if (button_args.params->count < 2) {
@@ -1375,7 +1406,8 @@ static int cmd_bump(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CHANGE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_SET;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1393,7 +1425,8 @@ static int cmd_bump(int argc, char **argv) {
         MULTI_CC_MODE_CC_HOLD, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_HOLD;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_HOLD;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1411,7 +1444,8 @@ static int cmd_bump(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CYCLE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_CYCLE;
     action.params.control.num_ccs = mcc.num_ccs;
     action.params.control.num_cycle_steps = mcc.num_cycle_steps;
     action.params.control.current_index = 0;
@@ -1477,7 +1511,9 @@ static int cmd_bump(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
-    action.params.target.number = atoi(bump_args.params->sval[0]);
+    if (!parse_scene_number_1based(bump_args.params->sval[0],
+        "Usage: bump scene_set <1-128>",
+        &action.params.target.number)) return 1;
   }
   else if (strcmp(action_str, "note_on") == 0) {
     if (bump_args.params->count < 2) {
@@ -1555,7 +1591,7 @@ static int cmd_bump(int argc, char **argv) {
   }
   
   // Validate action against bump trigger
-  if (!action_is_valid_for_trigger(action.type, ACTION_TRIGGER_BUMP)) {
+  if (!action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_BUMP)) {
     ESP_LOGE(TAG, "'%s' is not valid for bump", action_str);
     return 1;
   }
@@ -1600,7 +1636,8 @@ static int cmd_expr_switch(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CHANGE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_SET;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1617,7 +1654,8 @@ static int cmd_expr_switch(int argc, char **argv) {
         MULTI_CC_MODE_CC_HOLD, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_HOLD;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_HOLD;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1635,7 +1673,8 @@ static int cmd_expr_switch(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CYCLE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_CYCLE;
     action.params.control.num_ccs = mcc.num_ccs;
     action.params.control.num_cycle_steps = mcc.num_cycle_steps;
     action.params.control.current_index = 0;
@@ -1685,7 +1724,9 @@ static int cmd_expr_switch(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
-    action.params.target.number = atoi(expr_switch_args.params->sval[0]);
+    if (!parse_scene_number_1based(expr_switch_args.params->sval[0],
+        "Usage: expr_switch scene_set <1-128>",
+        &action.params.target.number)) return 1;
   }
   else if (strcmp(action_str, "sustain") == 0) {
     action.type = ACTION_SUSTAIN;
@@ -1826,7 +1867,8 @@ static int cmd_on_load(int argc, char **argv) {
         MULTI_CC_MODE_CC, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CHANGE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_SET;
     action.params.control.num_ccs = mcc.num_ccs;
     for (int i = 0; i < mcc.num_ccs; i++) {
       action.params.control.cc_numbers[i] = mcc.cc_numbers[i];
@@ -1844,7 +1886,8 @@ static int cmd_on_load(int argc, char **argv) {
         MULTI_CC_MODE_CC_CYCLE, &mcc) != 0) {
       return 1;
     }
-    action.type = ACTION_CONTROL_CYCLE;
+    action.type = ACTION_CONTROL;
+    action.variant = VARIANT_CYCLE;
     action.params.control.num_ccs = mcc.num_ccs;
     action.params.control.num_cycle_steps = mcc.num_cycle_steps;
     action.params.control.current_index = 0;
@@ -1876,7 +1919,9 @@ static int cmd_on_load(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_SCENE;
-    action.params.target.number = atoi(on_load_args.params->sval[0]);
+    if (!parse_scene_number_1based(on_load_args.params->sval[0],
+        "Usage: on_load scene_set <1-128>",
+        &action.params.target.number)) return 1;
   }
   else if (strcmp(subcmd, "pc") == 0) {
     if (on_load_args.params->count < 1) {

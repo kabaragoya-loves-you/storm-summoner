@@ -60,11 +60,14 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "scene_prev",       ACTION_SCENE_DEC,        VARIANT_NONE      },
   { "scene_set",        ACTION_SCENE,            VARIANT_NONE      },
 
-  // Pre-consolidation CC names
-  { "control",          ACTION_CONTROL_CHANGE,   VARIANT_NONE      },
-  { "send_cc",          ACTION_CONTROL_CHANGE,   VARIANT_NONE      },
-  { "send_cc_hold",     ACTION_CONTROL_HOLD,     VARIANT_NONE      },
-  { "send_cc_cycle",    ACTION_CONTROL_CYCLE,    VARIANT_NONE      },
+  // Pre-consolidation CC names (Control family pilot)
+  { "control_change",   ACTION_CONTROL,          VARIANT_SET       },
+  { "control_hold",     ACTION_CONTROL,          VARIANT_HOLD      },
+  { "control_cycle",    ACTION_CONTROL,          VARIANT_CYCLE     },
+  // Older pre-rename aliases that all mapped to "Control Change"
+  { "send_cc",          ACTION_CONTROL,          VARIANT_SET       },
+  { "send_cc_hold",     ACTION_CONTROL,          VARIANT_HOLD      },
+  { "send_cc_cycle",    ACTION_CONTROL,          VARIANT_CYCLE     },
 
   // Pre-consolidation note names (both old separate types -> single hold note)
   { "send_note_on",     ACTION_NOTE,             VARIANT_NONE      },

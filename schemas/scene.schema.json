@@ -847,6 +847,7 @@
             "tempo_dec",
             "tempo_hold",
             "tempo_cycle",
+            "control",
             "control_change",
             "control_hold",
             "control_cycle",
@@ -881,12 +882,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. The consolidated 'tempo' type uses 'variant' to pick Set/Hold/Cycle/Tap/Increment/Decrement; the legacy tempo_* names (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle) are accepted for backward compatibility and are migrated to 'tempo'+variant on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle) and control_* (control_change, control_hold, control_cycle) names are accepted for backward compatibility and are migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
           "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst"],
-          "description": "Secondary operation discriminator for consolidated action families. Currently used by type='tempo'. Omit for singleton types."
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle) and type='control' (set/hold/cycle). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -940,7 +941,7 @@
         "morph": {
           "type": "boolean",
           "default": false,
-          "description": "Enable smooth value transition (for control_hold, control_cycle, randomize)"
+          "description": "Enable smooth value transition (for control + hold/cycle variants, randomize)"
         },
         "morph_steps": {
           "type": "string",
@@ -972,6 +973,18 @@
           "enum": ["beat", "bar", "2_bars", "4_bars", "beat_2", "beat_3", "beat_4"],
           "default": "bar",
           "description": "Musical division (when morph_timing=duration or sync)"
+        },
+        "release_mode": {
+          "type": "string",
+          "enum": ["always", "if_held", "if_quick"],
+          "default": "always",
+          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset_hold, touchwheel_hold, clock_hold, cut_hold, ui_hold, param_hold, rtg_hold, sample_hold_hold."
+        },
+        "release_threshold_ms": {
+          "type": "integer",
+          "enum": [500, 750, 1000, 1500, 2000],
+          "default": 1000,
+          "description": "Follow-Up: hold duration threshold in ms (used when release_mode is not always)"
         }
       },
       "allOf": [
@@ -979,7 +992,8 @@
           "if": {
             "properties": {
               "type": {"enum": ["control_change", "control_hold", "control_cycle"]}
-            }
+            },
+            "required": ["type"]
           },
           "then": {
             "required": ["cc"],
@@ -1000,62 +1014,102 @@
                     "description": "Array of MIDI CC numbers (multi-CC)"
                   }
                 ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "control"},
+              "variant": {"const": "set"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["cc"],
+            "properties": {
+              "cc": {
+                "oneOf": [
+                  {"type": "integer", "minimum": 0, "maximum": 127, "description": "Single MIDI CC number"},
+                  {"type": "array", "minItems": 1, "maxItems": 4,
+                   "items": {"type": "integer", "minimum": 0, "maximum": 127},
+                   "description": "Array of MIDI CC numbers (multi-CC)"}
+                ]
               },
               "value": {
                 "oneOf": [
-                  {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 127,
-                    "description": "Single CC value"
-                  },
-                  {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 4,
-                    "items": {"type": "integer", "minimum": 0, "maximum": 127},
-                    "description": "Array of CC values (multi-CC)"
-                  }
+                  {"type": "integer", "minimum": 0, "maximum": 127, "description": "Single CC value"},
+                  {"type": "array", "minItems": 1, "maxItems": 4,
+                   "items": {"type": "integer", "minimum": 0, "maximum": 127},
+                   "description": "Array of CC values (multi-CC)"}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "control"},
+              "variant": {"const": "hold"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["cc", "value", "value2"],
+            "properties": {
+              "cc": {
+                "oneOf": [
+                  {"type": "integer", "minimum": 0, "maximum": 127},
+                  {"type": "array", "minItems": 1, "maxItems": 4,
+                   "items": {"type": "integer", "minimum": 0, "maximum": 127}}
+                ]
+              },
+              "value": {
+                "oneOf": [
+                  {"type": "integer", "minimum": 0, "maximum": 127, "description": "Press value"},
+                  {"type": "array", "minItems": 1, "maxItems": 4,
+                   "items": {"type": "integer", "minimum": 0, "maximum": 127}}
                 ]
               },
               "value2": {
                 "oneOf": [
-                  {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 127,
-                    "description": "Single release value for hold"
-                  },
-                  {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 4,
-                    "items": {"type": "integer", "minimum": 0, "maximum": 127},
-                    "description": "Array of release values (multi-CC hold)"
-                  }
+                  {"type": "integer", "minimum": 0, "maximum": 127, "description": "Release value"},
+                  {"type": "array", "minItems": 1, "maxItems": 4,
+                   "items": {"type": "integer", "minimum": 0, "maximum": 127}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "control"},
+              "variant": {"const": "cycle"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["cc", "values"],
+            "properties": {
+              "cc": {
+                "oneOf": [
+                  {"type": "integer", "minimum": 0, "maximum": 127},
+                  {"type": "array", "minItems": 1, "maxItems": 4,
+                   "items": {"type": "integer", "minimum": 0, "maximum": 127}}
                 ]
               },
               "values": {
                 "oneOf": [
-                  {
-                    "type": "array",
-                    "minItems": 2,
-                    "maxItems": 8,
-                    "items": {"type": "integer", "minimum": 0, "maximum": 127},
-                    "description": "Cycle values for single CC"
-                  },
-                  {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 4,
-                    "items": {
-                      "type": "array",
-                      "minItems": 2,
-                      "maxItems": 8,
-                      "items": {"type": "integer", "minimum": 0, "maximum": 127}
-                    },
-                    "description": "Array of cycle values (multi-CC cycle)"
-                  }
+                  {"type": "array", "minItems": 2, "maxItems": 8,
+                   "items": {"type": "integer", "minimum": 0, "maximum": 127},
+                   "description": "Cycle values for single CC"},
+                  {"type": "array", "minItems": 1, "maxItems": 4,
+                   "items": {"type": "array", "minItems": 2, "maxItems": 8,
+                             "items": {"type": "integer", "minimum": 0, "maximum": 127}},
+                   "description": "Array of cycle values (multi-CC cycle)"}
                 ]
               },
               "current_index": {
@@ -1064,18 +1118,6 @@
                 "maximum": 7,
                 "default": 0,
                 "description": "Current position in cycle"
-              },
-              "release_mode": {
-                "type": "string",
-                "enum": ["always", "if_held", "if_quick"],
-                "default": "always",
-                "description": "When to send release CC: always, if_held (>= threshold), if_quick (< threshold)"
-              },
-              "release_threshold_ms": {
-                "type": "integer",
-                "enum": [500, 750, 1000, 1500, 2000],
-                "default": 1000,
-                "description": "Hold duration threshold in ms (used when release_mode is not always)"
               }
             }
           }

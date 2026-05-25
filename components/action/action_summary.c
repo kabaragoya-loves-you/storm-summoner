@@ -131,8 +131,10 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
   // bare "Tempo" so the summary card tells the user which operation runs.
   action_get_display_name(action, summary->type_name, sizeof(summary->type_name));
 
-  // For Control Change actions, show the first CC slot detail
-  if (action->type == ACTION_CONTROL_CHANGE && action->params.control.num_ccs > 0) {
+  // Control family: show the first CC slot detail. Variant determines
+  // the value-side formatting (single value vs press/release vs cycle).
+  if (action->type == ACTION_CONTROL && action->variant == VARIANT_SET &&
+      action->params.control.num_ccs > 0) {
     uint8_t cc_num = action->params.control.cc_numbers[0];
     uint8_t cc_val = action->params.control.values[0];
 
@@ -157,7 +159,8 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     }
     summary->has_value = true;
 
-  } else if (action->type == ACTION_CONTROL_HOLD && action->params.control.num_ccs > 0) {
+  } else if (action->type == ACTION_CONTROL && action->variant == VARIANT_HOLD &&
+             action->params.control.num_ccs > 0) {
     uint8_t cc_num = action->params.control.cc_numbers[0];
     uint8_t val1 = action->params.control.values[0];
     uint8_t val2 = action->params.control.values2[0];
@@ -176,7 +179,8 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       (unsigned)val1, (unsigned)val2);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_CONTROL_CYCLE && action->params.control.num_ccs > 0) {
+  } else if (action->type == ACTION_CONTROL && action->variant == VARIANT_CYCLE &&
+             action->params.control.num_ccs > 0) {
     uint8_t cc_num = action->params.control.cc_numbers[0];
     uint8_t num_steps = action->params.control.num_cycle_steps;
 

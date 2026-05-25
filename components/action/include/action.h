@@ -31,9 +31,11 @@ typedef enum {
   ACTION_TEMPO,
   
   // Direct MIDI output
-  ACTION_CONTROL_CHANGE,      // Send CC with value (on press only)
-  ACTION_CONTROL_HOLD,        // Send value1 on press, value2 on release
-  ACTION_CONTROL_CYCLE,       // Cycle through multiple CC values
+  // Control (consolidated -- use variant field to pick operation:
+  //   VARIANT_SET    = send CC with value(s) on press (legacy "Control Change")
+  //   VARIANT_HOLD   = send press values, then release values (with release_mode)
+  //   VARIANT_CYCLE  = cycle through multiple CC values per press)
+  ACTION_CONTROL,
   ACTION_NOTE,                // Send Note On on press, Note Off on release
   
   // Randomization
@@ -257,27 +259,35 @@ typedef struct {
   bool transport_trigger;              // Auto-trigger when transport starts (for repeating actions)
   bool raise_flag;                     // Set scene flag to 1 after action completes (when flag system enabled)
   
-  // Morph configuration (for CONTROL_HOLD, CONTROL_CYCLE, RANDOMIZE)
+  // Morph configuration (for ACTION_CONTROL+VARIANT_HOLD/CYCLE, RANDOMIZE)
   bool morph_enabled;                  // Enable smooth value transition
   morph_steps_mode_t morph_steps_mode; // Step resolution
   uint8_t morph_manual_steps;          // 8-128, used when steps_mode=MANUAL
   morph_timing_mode_t morph_timing_mode; // How duration is determined
   morph_feel_t morph_feel;             // Curated feel preset (when timing_mode=FEEL)
   morph_division_t morph_division;     // Musical division (when timing_mode=DURATION or SYNC)
-  
+
+  // Follow-Up configuration. Hold variants honor this to optionally skip
+  // their release-phase work based on how long the trigger was held. Only
+  // actions for which action_supports_followup_for() returns true look at
+  // these fields; everything else ignores them and behaves as before.
+  //   followup_mode == 0 (Always)  -> always fire release (default; no-op)
+  //   followup_mode == 1 (If Held) -> fire release only if elapsed >= threshold
+  //   followup_mode == 2 (If Quick)-> fire release only if elapsed <  threshold
+  uint8_t followup_mode;
+  uint16_t followup_threshold_ms;      // 500/750/1000/1500/2000; 0 -> default 1000
+  int64_t hold_press_time_us;          // Transient: stamped on press for elapsed calc
+
   union {
-    // For Control actions (CONTROL, CONTROL_HOLD, CONTROL_CYCLE) - supports 1-4 CC numbers
+    // For ACTION_CONTROL (variants SET / HOLD / CYCLE) - supports 1-4 CC numbers
     struct {
       uint8_t num_ccs;            // 1-4 CC numbers (1 = single CC mode)
       uint8_t cc_numbers[4];      // The CC numbers
       uint8_t values[4];          // Primary values for CONTROL (one per CC)
-      uint8_t values2[4];         // Release values for CONTROL_HOLD (one per CC)
+      uint8_t values2[4];         // Release values for VARIANT_HOLD (one per CC)
       uint8_t num_cycle_steps;    // For cycle: 2-8 steps (shared across all CCs)
       uint8_t cycle_values[4][8]; // For cycle: [cc_idx][step]
       uint8_t current_index;      // Current position in cycle (shared)
-      uint8_t release_mode;       // For hold: 0=always, 1=if_held, 2=if_quick
-      uint16_t release_threshold_ms; // For hold: duration threshold (500, 750, 1000, 1500, 2000)
-      int64_t press_time_us;      // For hold: timestamp when pressed (for duration check)
     } control;
     
     // For note actions (hold-style: press=on, release=off)
@@ -499,6 +509,12 @@ bool action_requires_hold(action_type_t type);
 // (e.g. ACTION_TEMPO with VARIANT_HOLD) are correctly treated as hold.
 bool action_requires_hold_for(const action_t* action);
 
+// True for hold actions where it makes sense to optionally skip the
+// release-phase work based on hold duration ("Follow-Up"). Excludes
+// NOTE / SUSTAIN / SOSTENUTO (stuck-note/pedal risk) and non-paired
+// types like LFO_TOGGLE / LFO_SHAPE / CLOCK_BURST.
+bool action_supports_followup_for(const action_t* action);
+
 // Action trigger types for validation
 typedef enum {
   ACTION_TRIGGER_TOUCHPAD_0_7,   // Touchwheel pads (0-7)
@@ -510,9 +526,49 @@ typedef enum {
   ACTION_TRIGGER_ON_PLAY         // Transport play actions (fresh start only)
 } action_trigger_type_t;
 
-// Check if an action type is valid for a specific trigger
-// Returns true if the action can be assigned to the trigger, false otherwise
+// Flattened trigger capabilities. Conservative answer per field:
+// "true means the trigger supports / participates in this thing".
+// One source of truth for what each trigger does; the validator below
+// uses it to decide which actions/variants are valid where.
+typedef struct {
+  bool delivers_release;    // false for BUMP, ON_LOAD, ON_PLAY (no release pair)
+  bool inhibits_transport;  // true for ON_PLAY (firing transport here would recurse)
+  bool fires_at_load_time;  // true for ON_LOAD (scene not fully live yet)
+  bool fires_at_play_time;  // true for ON_PLAY (transport-start moment)
+} trigger_capabilities_t;
+
+trigger_capabilities_t action_trigger_capabilities(action_trigger_type_t trigger);
+
+// Check if an action type is valid for a specific trigger.
+// Thin wrapper around action_is_valid_for_trigger_for() that synthesizes a
+// default-variant action_t. Prefer the _for() form when you have a real
+// action_t (variant-precise; closes the TEMPO/CONTROL+HOLD gap).
 bool action_is_valid_for_trigger(action_type_t type, action_trigger_type_t trigger);
+
+// Canonical entry point. Variant-aware. All call sites that have a full
+// action_t should use this -- it correctly rejects consolidated-family
+// HOLD variants on bump/on_load/on_play, where action_requires_hold_for()
+// alone would not (HOLD types are removed from the by-type hold_actions[]
+// table for consolidated families).
+bool action_is_valid_for_trigger_for(const action_t* action,
+                                     action_trigger_type_t trigger);
+
+// Variant picker filter -- "would picking THIS variant on the current
+// trigger be valid?". Uses action_is_valid_for_trigger_for() on a
+// synthetic action_t. Drives the Variant rollers in action_config.c.
+bool action_variant_is_valid_for_trigger(action_type_t type,
+                                         action_variant_t variant,
+                                         action_trigger_type_t trigger);
+
+// Fire-and-forget category: action that sends a thing once and returns
+// without needing a release pair, mode interaction, or live scene state.
+// Replaces the old is_on_load_allowed / is_on_play_allowed whitelists.
+// Variant-aware: ACTION_CONTROL+SET is fire-and-forget, +HOLD/CYCLE are not.
+bool action_is_fire_and_forget_for(const action_t* action);
+
+// Transport actions (PLAY/STOP/PAUSE/RECORD). Helper used by the validator
+// to enforce the on_play recursion guard.
+bool action_is_transport(action_type_t type);
 
 // Check if action type supports timing options (non-HOLD actions)
 // Returns false for HOLD actions that must execute immediately.
@@ -601,8 +657,13 @@ morph_feel_t morph_feel_from_string(const char* str);
 const char* morph_division_to_string(morph_division_t div);
 morph_division_t morph_division_from_string(const char* str);
 
-// Check if action type supports morphing
+// Check if action type supports morphing.
+// Conservative answer at type level: consolidated families return true if
+// ANY variant supports morph. Use action_supports_morph_for() when you have
+// the full action_t for the variant-precise answer (e.g. ACTION_CONTROL
+// supports morph for HOLD/CYCLE but not SET).
 bool action_supports_morph(action_type_t type);
+bool action_supports_morph_for(const action_t* action);
 
 // Clear all active morphs (call on scene change)
 void action_clear_morphs(void);
