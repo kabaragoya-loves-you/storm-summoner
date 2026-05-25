@@ -3922,10 +3922,7 @@ static const char* action_type_json_names[] = {
   [ACTION_NONE] = NULL,  // Don't serialize empty actions
   [ACTION_PRESET] = "preset",
   [ACTION_SCENE] = "scene",
-  [ACTION_PLAY] = "play",
-  [ACTION_STOP] = "stop",
-  [ACTION_PAUSE] = "pause",
-  [ACTION_RECORD] = "record",
+  [ACTION_TRANSPORT] = "transport",
   [ACTION_TEMPO] = "tempo",
   [ACTION_CONTROL] = "control",
   [ACTION_NOTE] = "note",
@@ -3975,6 +3972,9 @@ static const char* action_variant_json_names[] = {
   [VARIANT_STOP]      = "stop",
   [VARIANT_TAP]       = "tap",
   [VARIANT_BURST]     = "burst",
+  [VARIANT_PLAY]      = "play",
+  [VARIANT_PAUSE]     = "pause",
+  [VARIANT_RECORD]    = "record",
 };
 
 static action_variant_t action_variant_from_string(const char* name) {
@@ -4448,10 +4448,11 @@ static action_t json_to_action(cJSON* obj) {
   // legacy data behaving as it always did rather than landing in the
   // default-case warning path at dispatch.
   if (action.variant == VARIANT_NONE) {
-    if (action.type == ACTION_CONTROL) action.variant = VARIANT_SET;
-    if (action.type == ACTION_TEMPO)   action.variant = VARIANT_TAP;
-    if (action.type == ACTION_SCENE)   action.variant = VARIANT_SET;
-    if (action.type == ACTION_PRESET)  action.variant = VARIANT_SET;
+    if (action.type == ACTION_CONTROL)   action.variant = VARIANT_SET;
+    if (action.type == ACTION_TEMPO)     action.variant = VARIANT_TAP;
+    if (action.type == ACTION_SCENE)     action.variant = VARIANT_SET;
+    if (action.type == ACTION_PRESET)    action.variant = VARIANT_SET;
+    if (action.type == ACTION_TRANSPORT) action.variant = VARIANT_PLAY;
   }
 
   

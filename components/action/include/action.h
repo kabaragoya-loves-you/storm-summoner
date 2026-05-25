@@ -22,11 +22,12 @@ typedef enum {
   //   VARIANT_DECREMENT = previous scene (was ACTION_SCENE_DEC))
   ACTION_SCENE,
   
-  // Transport (Play and Record are toggles)
-  ACTION_PLAY,                // Toggle: playing -> stop, else -> play
-  ACTION_STOP,
-  ACTION_PAUSE,               // Pause only (does not unpause)
-  ACTION_RECORD,              // Toggle: recording -> stop, else -> record
+  // Transport (consolidated -- use variant field to pick operation:
+  //   VARIANT_PLAY   = toggle play/stop (was ACTION_PLAY)
+  //   VARIANT_STOP   = stop transport (was ACTION_STOP)
+  //   VARIANT_PAUSE  = pause only, does not unpause (was ACTION_PAUSE)
+  //   VARIANT_RECORD = toggle record/stop (was ACTION_RECORD))
+  ACTION_TRANSPORT,
   
   // Tempo (consolidated -- use variant field to pick operation:
   //   VARIANT_TAP, VARIANT_SET, VARIANT_INCREMENT, VARIANT_DECREMENT,
@@ -120,6 +121,11 @@ typedef enum {
   VARIANT_STOP,
   VARIANT_TAP,
   VARIANT_BURST,
+  // Transport family operations (append-only after BURST -- keeps JSON
+  // ordinals stable for everything before this point).
+  VARIANT_PLAY,
+  VARIANT_PAUSE,
+  VARIANT_RECORD,
   VARIANT_MAX
 } action_variant_t;
 
@@ -472,7 +478,7 @@ action_t action_create_scene_inc(void);
 action_t action_create_scene_dec(void);
 action_t action_create_tap_tempo(void);
 action_t action_create_set_tempo(uint16_t bpm);
-action_t action_create_transport(action_type_t transport_type);
+action_t action_create_transport(action_variant_t variant);
 action_t action_create_reset(void);
 action_t action_create_sustain(void);
 action_t action_create_sostenuto(void);

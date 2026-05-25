@@ -107,8 +107,7 @@ trigger_capabilities_t action_trigger_capabilities(action_trigger_type_t trigger
 }
 
 bool action_is_transport(action_type_t type) {
-  return type == ACTION_PLAY || type == ACTION_STOP ||
-         type == ACTION_PAUSE || type == ACTION_RECORD;
+  return type == ACTION_TRANSPORT;
 }
 
 // Fire-and-forget category: actions that send a thing once and return,
@@ -128,11 +127,9 @@ bool action_is_fire_and_forget_for(const action_t* action) {
     case ACTION_SCENE:
       return action->variant == VARIANT_SET;
 
-    // Pure one-shots
-    case ACTION_PLAY:
-    case ACTION_STOP:
-    case ACTION_PAUSE:
-    case ACTION_RECORD:
+    // Pure one-shots (transport family already collapsed -- all four
+    // variants are fire-and-forget; no variant-level carve-out needed).
+    case ACTION_TRANSPORT:
     case ACTION_RANDOMIZE:
     case ACTION_RESET:
     case ACTION_BOOMERANG:
@@ -254,6 +251,8 @@ static action_variant_t default_variant_for_type(action_type_t type) {
     case ACTION_SCENE:
     case ACTION_PRESET:
       return VARIANT_SET;
+    case ACTION_TRANSPORT:
+      return VARIANT_PLAY;
     default:
       return VARIANT_NONE;
   }
@@ -403,10 +402,7 @@ bool action_supports_morph_for(const action_t* action) {
 
 bool action_supports_raise_flag(action_type_t type) {
   switch (type) {
-    case ACTION_PLAY:
-    case ACTION_STOP:
-    case ACTION_PAUSE:
-    case ACTION_RECORD:
+    case ACTION_TRANSPORT:
     case ACTION_CONTROL:
     case ACTION_PRESET:
     case ACTION_TEMPO:

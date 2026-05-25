@@ -830,10 +830,7 @@
           "enum": [
             "preset",
             "scene",
-            "play",
-            "stop",
-            "pause",
-            "record",
+            "transport",
             "tempo",
             "tap_tempo",
             "set_tempo",
@@ -876,12 +873,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), and preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc) names are accepted for backward compatibility and are migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), and transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
-          "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), and type='preset' (set/hold/cycle/increment/decrement). Omit for singleton types."
+          "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record"],
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), and type='transport' (play/stop/pause/record). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -1288,6 +1285,18 @@
           },
           "then": {
             "description": "Preset increment/decrement variants carry no parameters."
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "transport"},
+              "variant": {"enum": ["play", "stop", "pause", "record"]}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "description": "Transport operations (play/stop/pause/record) carry no parameters."
           }
         },
         {

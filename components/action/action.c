@@ -271,9 +271,10 @@ action_t action_create_set_tempo(uint16_t bpm) {
   return action;
 }
 
-action_t action_create_transport(action_type_t transport_type) {
+action_t action_create_transport(action_variant_t variant) {
   action_t action = {0};
-  action.type = transport_type;
+  action.type = ACTION_TRANSPORT;
+  action.variant = variant;
   return action;
 }
 

@@ -39,11 +39,18 @@ static const legacy_alias_t s_legacy_aliases[] = {
   // The bare alias "tap" was the original pre-rename name for tap_tempo.
   { "tap",              ACTION_TEMPO,            VARIANT_TAP       },
 
-  // Pre-consolidation transport names
-  { "transport_play",   ACTION_PLAY,             VARIANT_NONE      },
-  { "transport_stop",   ACTION_STOP,             VARIANT_NONE      },
-  { "transport_pause",  ACTION_PAUSE,            VARIANT_NONE      },
-  { "transport_record", ACTION_RECORD,           VARIANT_NONE      },
+  // Pre-consolidation transport names. transport_* were the on-disk
+  // canonical names before the family was collapsed into ACTION_TRANSPORT;
+  // the bare verbs play/stop/pause/record migrate any earlier files that
+  // wrote the four singleton type strings directly.
+  { "transport_play",   ACTION_TRANSPORT,        VARIANT_PLAY      },
+  { "transport_stop",   ACTION_TRANSPORT,        VARIANT_STOP      },
+  { "transport_pause",  ACTION_TRANSPORT,        VARIANT_PAUSE     },
+  { "transport_record", ACTION_TRANSPORT,        VARIANT_RECORD    },
+  { "play",             ACTION_TRANSPORT,        VARIANT_PLAY      },
+  { "stop",             ACTION_TRANSPORT,        VARIANT_STOP      },
+  { "pause",            ACTION_TRANSPORT,        VARIANT_PAUSE     },
+  { "record",           ACTION_TRANSPORT,        VARIANT_RECORD    },
 
   // Pre-consolidation reset names
   { "all_notes_off",    ACTION_RESET,            VARIANT_NONE      },

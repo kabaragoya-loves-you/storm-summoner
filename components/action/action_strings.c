@@ -10,10 +10,7 @@ static const char* action_type_names[] = {
   [ACTION_NONE] = "None",
   [ACTION_PRESET] = "Preset",
   [ACTION_SCENE] = "Scene",
-  [ACTION_PLAY] = "Play",
-  [ACTION_STOP] = "Stop",
-  [ACTION_PAUSE] = "Pause",
-  [ACTION_RECORD] = "Record",
+  [ACTION_TRANSPORT] = "Transport",
   [ACTION_TEMPO] = "Tempo",
   [ACTION_CONTROL] = "Control",
   [ACTION_NOTE] = "Note",
@@ -74,6 +71,9 @@ static const char* action_variant_display_names[] = {
   [VARIANT_STOP]      = "Stop",
   [VARIANT_TAP]       = "Tap",
   [VARIANT_BURST]     = "Burst",
+  [VARIANT_PLAY]      = "Play",
+  [VARIANT_PAUSE]     = "Pause",
+  [VARIANT_RECORD]    = "Record",
 };
 
 const char* action_variant_to_string(action_variant_t variant) {
@@ -91,6 +91,7 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_CONTROL:
     case ACTION_SCENE:
     case ACTION_PRESET:
+    case ACTION_TRANSPORT:
       return true;
     default:
       return false;
@@ -151,6 +152,19 @@ static const char* preset_variant_display(action_variant_t v) {
   }
 }
 
+// Transport family: operation-as-variant -- bare verbs unambiguously name the
+// operation and a "Transport" prefix would only waste pixels on the ~12-14
+// char display.
+static const char* transport_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_PLAY:   return "Play";
+    case VARIANT_STOP:   return "Stop";
+    case VARIANT_PAUSE:  return "Pause";
+    case VARIANT_RECORD: return "Record";
+    default:             return "Transport";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -171,6 +185,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_PRESET) {
     snprintf(buf, len, "%s", preset_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_TRANSPORT) {
+    snprintf(buf, len, "%s", transport_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

@@ -91,6 +91,7 @@ static char s_tw_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
 static char s_scene_label[LABEL_BUFFER_SETS][40];
 static char s_scene_variant_label[LABEL_BUFFER_SETS][24];
 static char s_preset_variant_label[LABEL_BUFFER_SETS][24];
+static char s_transport_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_amount_label[LABEL_BUFFER_SETS][24];
@@ -166,10 +167,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PRESET,
   ACTION_SCENE,
   ACTION_CONFIRM_PENDING,
-  ACTION_PLAY,
-  ACTION_STOP,
-  ACTION_PAUSE,
-  ACTION_RECORD,
+  ACTION_TRANSPORT,
   ACTION_TEMPO,
   ACTION_NOTE,
   ACTION_RANDOMIZE,
@@ -230,10 +228,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_CONTROL: return "Control Change";
     case ACTION_PRESET: return "Preset";
     case ACTION_SCENE: return "Scene";
-    case ACTION_PLAY: return "Play";
-    case ACTION_STOP: return "Stop";
-    case ACTION_PAUSE: return "Pause";
-    case ACTION_RECORD: return "Record";
+    case ACTION_TRANSPORT: return "Transport";
     case ACTION_TEMPO: return "Tempo";
     case ACTION_NOTE: return "Note";
     case ACTION_RANDOMIZE: return "Randomize";
@@ -656,6 +651,12 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       // in by tempo_variant_confirm_cb when the user changes variant.
       action->variant = VARIANT_SET;
       action->params.tempo.bpm = 120;
+    }
+
+    if (new_type == ACTION_TRANSPORT) {
+      // Default to Play; transport_variant_confirm_cb handles the rest.
+      // No params to seed -- all four operations are payload-free verbs.
+      action->variant = VARIANT_PLAY;
     }
 
     if (new_type == ACTION_NOTE) {
@@ -2700,6 +2701,94 @@ static lv_obj_t* preset_variant_roller_create(void) {
 static void nav_to_preset_variant(void* user_data) {
   (void)user_data;
   nav_to_subpage("Variant", preset_variant_roller_create);
+}
+
+// ============================================================================
+// Transport Variant Roller (for ACTION_TRANSPORT -- operation picker)
+// ============================================================================
+
+// Order mirrors the historical type enum order and a physical tape-deck's
+// button layout: Play, Stop, Pause, Record. All four variants are
+// fire-and-forget so the filter is effectively a no-op today, but the
+// parallel structure keeps future trigger restrictions cheap to add.
+static const action_variant_t s_transport_variants[] = {
+  VARIANT_PLAY,
+  VARIANT_STOP,
+  VARIANT_PAUSE,
+  VARIANT_RECORD,
+};
+#define NUM_TRANSPORT_VARIANTS (sizeof(s_transport_variants) / sizeof(s_transport_variants[0]))
+
+static action_variant_t s_filtered_transport_variants[NUM_TRANSPORT_VARIANTS];
+static size_t s_num_filtered_transport_variants = 0;
+
+static void build_filtered_transport_variants(void) {
+  s_num_filtered_transport_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_TRANSPORT_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_TRANSPORT, s_transport_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_transport_variants[s_num_filtered_transport_variants++] = s_transport_variants[i];
+    }
+  }
+}
+
+static void transport_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_transport_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_transport_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    // No params to seed -- all four transport variants are press-only verbs
+    // with no payload (dispatch reads variant directly).
+    ESP_LOGI(TAG, "Transport variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* transport_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_transport_variants();
+  if (s_num_filtered_transport_variants == 0) return NULL;
+
+  static char options[128];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_transport_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_transport_variants[i]));
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_transport_variants; i++) {
+    if (s_filtered_transport_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, transport_variant_confirm_cb, NULL);
+}
+
+static void nav_to_transport_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", transport_variant_roller_create);
 }
 
 // ============================================================================
@@ -6463,13 +6552,17 @@ lv_obj_t* action_config_detail_page_create(void) {
   int buf = get_next_buffer_set();
   int item_count = 0;
   
-  // Action type selector (always first) - 2-line format. Uses the
-  // variant-aware display name so consolidated families show their
-  // configured variant (e.g. "Control Hold") rather than the bare
-  // family name.
-  char action_name_buf[32];
-  action_get_display_name(action, action_name_buf, sizeof(action_name_buf));
-  snprintf(s_action_label[buf], sizeof(s_action_label[buf]), "Action\n%s", action_name_buf);
+  // Action type selector (always first) - 2-line format. Uses the bare
+  // family / picker label so the Action row matches the string the type
+  // picker shows when tapped (Tempo, Control Change, Preset, Scene,
+  // Transport, Note, ...) and never duplicates the Variant row below it
+  // for consolidated families. The variant-aware label still appears
+  // everywhere a user is reading a configured action (Pads/Buttons list
+  // views, Khyron action-executed display) -- those call sites use
+  // action_get_display_name() directly and continue to show e.g. "Play"
+  // or "Control Hold".
+  snprintf(s_action_label[buf], sizeof(s_action_label[buf]),
+    "Action\n%s", action_config_get_display_name(action->type));
   s_detail_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_action_type, NULL, true};
 
   // ACTION_CONTROL (consolidated family): always show Variant picker, then
@@ -6673,6 +6766,17 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
+  // ACTION_TRANSPORT (consolidated family): Variant picker is the whole
+  // detail page -- none of the four operations carry per-variant params.
+  // Timing/Repeat/Raise-Flag rows are added by the shared section below.
+  if (action->type == ACTION_TRANSPORT) {
+    snprintf(s_transport_variant_label[buf], sizeof(s_transport_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_transport_variant_label[buf], nav_to_transport_variant, NULL, true
+    };
+  }
+
   // ACTION_SCENE (consolidated family): always show Variant picker, then
   // the scene-number picker only for VARIANT_SET. INCREMENT/DECREMENT carry
   // no parameters -- the variant label is the whole story.

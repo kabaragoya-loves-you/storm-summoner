@@ -189,6 +189,12 @@ static void format_action_details_with_device(const action_t* action, const devi
         snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
       }
       break;
+    case ACTION_TRANSPORT:
+      // No per-variant params -- the variant-aware display name ("Play" /
+      // "Stop" / "Pause" / "Record") matches what the console showed when
+      // each was a separate top-level action type.
+      action_get_display_name(action, buf, buf_size);
+      break;
     case ACTION_TOUCHWHEEL_HOLD:
       snprintf(buf, buf_size, "Touchwheel Hold %d/%d", action->params.tw_mode.mode, action->params.tw_mode.mode2);
       break;
@@ -1097,16 +1103,16 @@ static int cmd_pad(int argc, char **argv) {
     action.variant = VARIANT_DECREMENT;
   }
   else if (strcmp(action_str, "play") == 0 || strcmp(action_str, "transport_play") == 0) {
-    action = action_create_transport(ACTION_PLAY);
+    action = action_create_transport(VARIANT_PLAY);
   }
   else if (strcmp(action_str, "stop") == 0 || strcmp(action_str, "transport_stop") == 0) {
-    action = action_create_transport(ACTION_STOP);
+    action = action_create_transport(VARIANT_STOP);
   }
   else if (strcmp(action_str, "pause") == 0 || strcmp(action_str, "transport_pause") == 0) {
-    action = action_create_transport(ACTION_PAUSE);
+    action = action_create_transport(VARIANT_PAUSE);
   }
   else if (strcmp(action_str, "record") == 0 || strcmp(action_str, "transport_record") == 0) {
-    action = action_create_transport(ACTION_RECORD);
+    action = action_create_transport(VARIANT_RECORD);
   }
   else if (strcmp(action_str, "program_next") == 0) {
     action = action_create_preset_inc();
@@ -1306,10 +1312,10 @@ static int cmd_button(int argc, char **argv) {
     action = action_create_sostenuto();
   }
   else if (strcmp(action_str, "pause") == 0 || strcmp(action_str, "transport_pause") == 0) {
-    action = action_create_transport(ACTION_PAUSE);
+    action = action_create_transport(VARIANT_PAUSE);
   }
   else if (strcmp(action_str, "record") == 0 || strcmp(action_str, "transport_record") == 0) {
-    action = action_create_transport(ACTION_RECORD);
+    action = action_create_transport(VARIANT_RECORD);
   }
   else if (strcmp(action_str, "scene_set") == 0) {
     if (button_args.params->count < 1) {
@@ -1535,10 +1541,10 @@ static int cmd_bump(int argc, char **argv) {
     action = action_create_sostenuto();
   }
   else if (strcmp(action_str, "pause") == 0 || strcmp(action_str, "transport_pause") == 0) {
-    action = action_create_transport(ACTION_PAUSE);
+    action = action_create_transport(VARIANT_PAUSE);
   }
   else if (strcmp(action_str, "record") == 0 || strcmp(action_str, "transport_record") == 0) {
-    action = action_create_transport(ACTION_RECORD);
+    action = action_create_transport(VARIANT_RECORD);
   }
   else if (strcmp(action_str, "scene_set") == 0) {
     if (bump_args.params->count < 1) {

@@ -162,20 +162,20 @@ action_handle_result_t action_handlers_scene_dispatch(
       return ACTION_HANDLED;
     }
 
-    case ACTION_PLAY:
-      if (is_press) transport_play();
-      return ACTION_HANDLED;
-
-    case ACTION_STOP:
-      if (is_press) transport_stop();
-      return ACTION_HANDLED;
-
-    case ACTION_PAUSE:
-      if (is_press) transport_pause();
-      return ACTION_HANDLED;
-
-    case ACTION_RECORD:
-      if (is_press) transport_record();
+    case ACTION_TRANSPORT:
+      // Press-only -- no transport operation has meaningful release semantics
+      // today. Play/Record use transport-level toggle internally so we just
+      // forward each variant to its dedicated entry point.
+      if (!is_press) return ACTION_HANDLED;
+      switch (action->variant) {
+        case VARIANT_PLAY:   transport_play();   break;
+        case VARIANT_STOP:   transport_stop();   break;
+        case VARIANT_PAUSE:  transport_pause();  break;
+        case VARIANT_RECORD: transport_record(); break;
+        default:
+          ESP_LOGW(TAG, "Unknown Transport variant %d", (int)action->variant);
+          break;
+      }
       return ACTION_HANDLED;
 
     case ACTION_TEMPO:
