@@ -90,6 +90,7 @@ static char s_tw_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_tw_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
 static char s_scene_label[LABEL_BUFFER_SETS][40];
 static char s_scene_variant_label[LABEL_BUFFER_SETS][24];
+static char s_preset_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_amount_label[LABEL_BUFFER_SETS][24];
@@ -162,11 +163,7 @@ static const char* NOTE_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G
 static const action_type_t s_all_action_types[] = {
   ACTION_NONE,
   ACTION_CONTROL,
-  ACTION_PRESET_INC,
-  ACTION_PRESET_DEC,
   ACTION_PRESET,
-  ACTION_PRESET_HOLD,
-  ACTION_PRESET_CYCLE,
   ACTION_SCENE,
   ACTION_CONFIRM_PENDING,
   ACTION_PLAY,
@@ -231,11 +228,7 @@ const char* action_config_get_display_name(action_type_t type) {
   switch (type) {
     case ACTION_NONE: return "<None>";
     case ACTION_CONTROL: return "Control Change";
-    case ACTION_PRESET_INC: return "Preset +1";
-    case ACTION_PRESET_DEC: return "Preset -1";
-    case ACTION_PRESET: return "Set Preset";
-    case ACTION_PRESET_HOLD: return "Preset Hold";
-    case ACTION_PRESET_CYCLE: return "Preset Cycle";
+    case ACTION_PRESET: return "Preset";
     case ACTION_SCENE: return "Scene";
     case ACTION_PLAY: return "Play";
     case ACTION_STOP: return "Stop";
@@ -289,16 +282,15 @@ static bool is_action_visible(action_type_t type) {
   scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
   tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
-  
-  // Preset actions only in single or advanced mode
-  if (type == ACTION_PRESET_INC || type == ACTION_PRESET_DEC || 
-      type == ACTION_PRESET || type == ACTION_PRESET_HOLD || type == ACTION_PRESET_CYCLE) {
+
+  // Preset actions only in single or advanced mode. All variants share this
+  // gate; per-variant gating (e.g. HOLD requires CHANGE_MODE_IMMEDIATE) is
+  // applied by build_filtered_preset_variants() when the user opens the
+  // variant roller.
+  if (type == ACTION_PRESET) {
     if (scene_mode != SCENE_MODE_SINGLE && scene_mode != SCENE_MODE_ADVANCED) return false;
   }
-  
-  // Preset Hold only available in immediate change mode
-  if (type == ACTION_PRESET_HOLD && change_mode != CHANGE_MODE_IMMEDIATE) return false;
-  
+
   // Scene actions only in preset_sync or advanced mode (all variants share
   // this gate; the variant picker applies once the user opens it).
   if (type == ACTION_SCENE) {
@@ -635,12 +627,23 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     }
 
     if (new_type == ACTION_PRESET) {
+      // Default to Set Preset targeting the first program; variant-specific
+      // fields are filled in by preset_variant_confirm_cb when the user
+      // changes variant. The HOLD release_preset / CYCLE step seeds happen
+      // there rather than here so we don't waste cycles seeding fields the
+      // user may never reach.
       uint8_t scene_index = scene_get_current_index();
       const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
       uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+      action->variant = VARIANT_SET;
       action->params.preset.program = index_base;
+      action->params.preset.press_preset = index_base;
+      action->params.preset.release_preset = index_base;
+      action->params.preset.num_presets = 2;
+      action->params.preset.cycle_presets[0] = index_base;
+      action->params.preset.cycle_presets[1] = index_base;
     }
-    
+
     if (new_type == ACTION_SCENE) {
       // Default to Set Scene targeting the first scene; scene_variant_confirm_cb
       // handles INC/DEC, which don't need a target.
@@ -660,23 +663,6 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.note.velocity = 100;
     }
 
-    if (new_type == ACTION_PRESET_HOLD) {
-      uint8_t scene_index = scene_get_current_index();
-      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-      action->params.preset_cycle.press_preset = index_base;
-      action->params.preset_cycle.release_preset = index_base;
-    }
-
-    if (new_type == ACTION_PRESET_CYCLE) {
-      uint8_t scene_index = scene_get_current_index();
-      const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-      uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-      action->params.preset_cycle.num_presets = 2;
-      action->params.preset_cycle.cycle_presets[0] = index_base;
-      action->params.preset_cycle.cycle_presets[1] = index_base;
-    }
-    
     if (new_type == ACTION_TOUCHWHEEL_HOLD) {
       action->params.tw_mode.mode = 0;
       action->params.tw_mode.mode2 = 0;
@@ -1942,7 +1928,7 @@ static void nav_to_preset_set(void* user_data) {
 }
 
 // ============================================================================
-// Preset Hold Rollers (for ACTION_PRESET_HOLD)
+// Preset Hold Rollers (for ACTION_PRESET + VARIANT_HOLD)
 // ============================================================================
 
 static void preset_hold_press_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -1963,7 +1949,7 @@ static void preset_hold_press_confirm_cb(uint32_t selected_index, void* user_dat
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
-  action->params.preset_cycle.press_preset = index_base + (uint16_t)selected_index;
+  action->params.preset.press_preset = index_base + (uint16_t)selected_index;
   
   ESP_LOGI(TAG, "Preset Hold press set to %u",
     (unsigned)(selected_index + 1));
@@ -2000,7 +1986,7 @@ static lv_obj_t* preset_hold_press_roller_create(void) {
     }
   }
   
-  uint16_t current = action->params.preset_cycle.press_preset;
+  uint16_t current = action->params.preset.press_preset;
   uint32_t current_idx = 0;
   if (current >= index_base) {
     current_idx = current - index_base;
@@ -2028,55 +2014,78 @@ static void preset_hold_release_confirm_cb(uint32_t selected_index, void* user_d
   }
   
   action_t* action = s_ctx->target_action;
-  
-  uint8_t scene_index = scene_get_current_index();
-  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-  
-  action->params.preset_cycle.release_preset = index_base + (uint16_t)selected_index;
-  
-  ESP_LOGI(TAG, "Preset Hold release set to %u",
-    (unsigned)(selected_index + 1));
-  
+
+  // Index 0 is the synthetic "Original" entry; real preset numbers start at
+  // index 1 and map to index_base + (selected_index - 1).
+  if (selected_index == 0) {
+    action->params.preset.release_to_original = 1;
+    ESP_LOGI(TAG, "Preset Hold release set to Original (capture-on-press)");
+  } else {
+    uint8_t scene_index = scene_get_current_index();
+    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+    uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+
+    action->params.preset.release_to_original = 0;
+    action->params.preset.release_preset = index_base + (uint16_t)(selected_index - 1);
+
+    ESP_LOGI(TAG, "Preset Hold release set to %u",
+      (unsigned)selected_index);
+  }
+
   s_callback_in_progress = false;
   return_to_detail_page(2);
 }
 
 static lv_obj_t* preset_hold_release_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
-  
+
   action_t* action = s_ctx->target_action;
-  
+
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  
+
   uint16_t count = 128;
   uint16_t index_base = 0;
   if (device && device->pc_info) {
     count = device->pc_info->count;
     index_base = device->pc_info->index_base;
   }
-  
+
+  // "Original" leads the roller: when picked, release captures the live
+  // device preset at press time and restores it on release. Preset numbers
+  // 1..count follow.
   static char options[1024];
   options[0] = '\0';
   char* pos = options;
   size_t remaining = sizeof(options);
-  
+
+  int written = snprintf(pos, remaining, "Original");
+  if (written > 0 && (size_t)written < remaining) {
+    pos += written;
+    remaining -= written;
+  }
+
   for (uint16_t i = 1; i <= count && remaining > 8; i++) {
-    int written = snprintf(pos, remaining, "%s%u", i > 1 ? "\n" : "", (unsigned)i);
+    written = snprintf(pos, remaining, "\n%u", (unsigned)i);
     if (written > 0 && (size_t)written < remaining) {
       pos += written;
       remaining -= written;
     }
   }
-  
-  uint16_t current = action->params.preset_cycle.release_preset;
+
   uint32_t current_idx = 0;
-  if (current >= index_base) {
-    current_idx = current - index_base;
-    if (current_idx >= count) current_idx = 0;
+  if (action->params.preset.release_to_original) {
+    current_idx = 0;
+  } else {
+    uint16_t current = action->params.preset.release_preset;
+    if (current >= index_base) {
+      uint32_t preset_idx = current - index_base;
+      if (preset_idx < count) {
+        current_idx = preset_idx + 1;  // +1 to skip the "Original" entry
+      }
+    }
   }
-  
+
   return menu_create_roller_page("Release", options, current_idx, preset_hold_release_confirm_cb, NULL);
 }
 
@@ -2086,7 +2095,7 @@ static void nav_to_preset_hold_release(void* user_data) {
 }
 
 // ============================================================================
-// Preset Cycle Rollers (for ACTION_PRESET_CYCLE)
+// Preset Cycle Rollers (for ACTION_PRESET + VARIANT_CYCLE)
 // ============================================================================
 
 static void preset_cycle_steps_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -2102,7 +2111,7 @@ static void preset_cycle_steps_confirm_cb(uint32_t selected_index, void* user_da
   }
   
   uint8_t new_steps = (uint8_t)(selected_index + 2);
-  s_ctx->target_action->params.preset_cycle.num_presets = new_steps;
+  s_ctx->target_action->params.preset.num_presets = new_steps;
   
   ESP_LOGI(TAG, "Preset Cycle steps set to %u", (unsigned)new_steps);
   
@@ -2116,7 +2125,7 @@ static lv_obj_t* preset_cycle_steps_roller_create(void) {
   static char options[32];
   snprintf(options, sizeof(options), "2\n3\n4\n5\n6\n7\n8");
   
-  uint8_t current_steps = s_ctx->target_action->params.preset_cycle.num_presets;
+  uint8_t current_steps = s_ctx->target_action->params.preset.num_presets;
   if (current_steps < 2) current_steps = 2;
   if (current_steps > 8) current_steps = 8;
   uint32_t current_idx = current_steps - 2;
@@ -2148,7 +2157,7 @@ static void preset_cycle_step_confirm_cb(uint32_t selected_index, void* user_dat
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
-  action->params.preset_cycle.cycle_presets[step] = index_base + (uint16_t)selected_index;
+  action->params.preset.cycle_presets[step] = index_base + (uint16_t)selected_index;
   
   ESP_LOGI(TAG, "Preset Cycle step %u set to %u",
     (unsigned)(step + 1), (unsigned)(selected_index + 1));
@@ -2186,7 +2195,7 @@ static lv_obj_t* preset_cycle_step_roller_create(void) {
     }
   }
   
-  uint16_t current = action->params.preset_cycle.cycle_presets[step];
+  uint16_t current = action->params.preset.cycle_presets[step];
   uint32_t current_idx = 0;
   if (current >= index_base) {
     current_idx = current - index_base;
@@ -2564,6 +2573,133 @@ static lv_obj_t* scene_variant_roller_create(void) {
 static void nav_to_scene_variant(void* user_data) {
   (void)user_data;
   nav_to_subpage("Variant", scene_variant_roller_create);
+}
+
+// ============================================================================
+// Preset Variant Roller (for ACTION_PRESET -- secondary operation picker)
+// ============================================================================
+
+// Order: SET first (the everyday "Set Preset"), then HOLD/CYCLE which were
+// the historical secondary types, then INC/DEC. Matches Tempo's
+// most-explicit-first-then-defaults shape.
+static const action_variant_t s_preset_variants[] = {
+  VARIANT_SET,
+  VARIANT_HOLD,
+  VARIANT_CYCLE,
+  VARIANT_INCREMENT,
+  VARIANT_DECREMENT,
+};
+#define NUM_PRESET_VARIANTS (sizeof(s_preset_variants) / sizeof(s_preset_variants[0]))
+
+static action_variant_t s_filtered_preset_variants[NUM_PRESET_VARIANTS];
+static size_t s_num_filtered_preset_variants = 0;
+
+static void build_filtered_preset_variants(void) {
+  s_num_filtered_preset_variants = 0;
+  if (!s_ctx) return;
+  // HOLD requires Change Mode = Immediate (otherwise the release-phase preset
+  // change would race the in-flight bar/beat-pending preset change). This
+  // gate used to live at the type level (ACTION_PRESET_HOLD); now it filters
+  // the variant roller instead so the family stays available for the other
+  // four variants regardless of change mode.
+  scene_change_mode_t change_mode = scene_get_change_mode();
+  for (size_t i = 0; i < NUM_PRESET_VARIANTS; i++) {
+    action_variant_t v = s_preset_variants[i];
+    if (v == VARIANT_HOLD && change_mode != CHANGE_MODE_IMMEDIATE) continue;
+    if (!action_variant_is_valid_for_trigger(ACTION_PRESET, v, s_ctx->trigger_type)) continue;
+    s_filtered_preset_variants[s_num_filtered_preset_variants++] = v;
+  }
+}
+
+static void preset_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_preset_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_preset_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+
+    // Reuse existing values where the new variant has a sensible interpretation
+    // (e.g. SET's program and HOLD's press_preset both name "the program you
+    // want when this fires"). Seed missing CYCLE fields if the user is
+    // arriving fresh.
+    uint8_t scene_index = scene_get_current_index();
+    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+    uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
+
+    switch (new_variant) {
+      case VARIANT_HOLD:
+        if (action->params.preset.press_preset == 0 && action->params.preset.program != 0) {
+          action->params.preset.press_preset = action->params.preset.program;
+        }
+        if (action->params.preset.release_preset == 0 && !action->params.preset.release_to_original) {
+          action->params.preset.release_preset = index_base;
+        }
+        break;
+      case VARIANT_CYCLE:
+        if (action->params.preset.num_presets < 2 || action->params.preset.num_presets > 8) {
+          action->params.preset.num_presets = 2;
+        }
+        for (int i = 0; i < action->params.preset.num_presets; i++) {
+          // Clear-on-switch sentinel: only seed slots that look uninitialized.
+          if (action->params.preset.cycle_presets[i] == 0) {
+            action->params.preset.cycle_presets[i] = index_base;
+          }
+        }
+        action->params.preset.current_index = 0;
+        break;
+      default:
+        // SET / INC / DEC: nothing extra to seed.
+        break;
+    }
+
+    ESP_LOGI(TAG, "Preset variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* preset_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_preset_variants();
+  if (s_num_filtered_preset_variants == 0) return NULL;
+
+  static char options[128];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_preset_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_preset_variants[i]));
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_preset_variants; i++) {
+    if (s_filtered_preset_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, preset_variant_confirm_cb, NULL);
+}
+
+static void nav_to_preset_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", preset_variant_roller_create);
 }
 
 // ============================================================================
@@ -6379,69 +6515,88 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show Preset selector for Program Set
+  // Preset family: one variant switch with the Variant row at top, then
+  // variant-specific detail rows. Mirrors Tempo/Scene's layout.
   if (action->type == ACTION_PRESET) {
-    uint16_t program = action->params.preset.program;
-    
     uint8_t scene_index = scene_get_current_index();
     const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
     uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-    
-    uint16_t display_num = program - index_base + 1;
-    snprintf(s_preset_label[buf], sizeof(s_preset_label[buf]), "Preset\n%u", (unsigned)display_num);
+
+    snprintf(s_preset_variant_label[buf], sizeof(s_preset_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_preset_label[buf], nav_to_preset_set, NULL, true
+      s_preset_variant_label[buf], nav_to_preset_variant, NULL, true
     };
-  }
-  
-  // Show Preset Hold items
-  if (action->type == ACTION_PRESET_HOLD) {
-    uint8_t scene_index = scene_get_current_index();
-    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-    uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-    
-    uint16_t press = action->params.preset_cycle.press_preset;
-    uint16_t release = action->params.preset_cycle.release_preset;
-    
-    snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
-      "Press\n%u", (unsigned)(press - index_base + 1));
-    snprintf(s_preset_hold_release_label[buf], sizeof(s_preset_hold_release_label[buf]),
-      "Release\n%u", (unsigned)(release - index_base + 1));
-    
-    s_detail_items[item_count++] = (menu_item_t){
-      s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
-    };
-    s_detail_items[item_count++] = (menu_item_t){
-      s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true
-    };
-  }
-  
-  // Show Preset Cycle items
-  if (action->type == ACTION_PRESET_CYCLE) {
-    uint8_t scene_index = scene_get_current_index();
-    const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-    uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
-    
-    uint8_t num_steps = action->params.preset_cycle.num_presets;
-    if (num_steps < 2) num_steps = 2;
-    if (num_steps > 8) num_steps = 8;
-    
-    snprintf(s_preset_cycle_steps_label[buf], sizeof(s_preset_cycle_steps_label[buf]),
-      "Steps\n%u", (unsigned)num_steps);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true
-    };
-    
-    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
-      uint16_t preset = action->params.preset_cycle.cycle_presets[i];
-      snprintf(s_preset_cycle_step_labels[buf][i], sizeof(s_preset_cycle_step_labels[buf][i]),
-        "Step %d\n%u", i + 1, (unsigned)(preset - index_base + 1));
-      s_detail_items[item_count++] = (menu_item_t){
-        s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true
-      };
+
+    switch (action->variant) {
+      case VARIANT_SET: {
+        uint16_t program = action->params.preset.program;
+        uint16_t display_num = program - index_base + 1;
+        snprintf(s_preset_label[buf], sizeof(s_preset_label[buf]),
+          "Preset\n%u", (unsigned)display_num);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_preset_label[buf], nav_to_preset_set, NULL, true
+        };
+        break;
+      }
+
+      case VARIANT_HOLD: {
+        uint16_t press = action->params.preset.press_preset;
+
+        snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
+          "Press\n%u", (unsigned)(press - index_base + 1));
+        s_detail_items[item_count++] = (menu_item_t){
+          s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
+        };
+
+        // Release row: "Original" when the snap-back-to-live flag is set,
+        // otherwise the configured release preset number.
+        if (action->params.preset.release_to_original) {
+          snprintf(s_preset_hold_release_label[buf], sizeof(s_preset_hold_release_label[buf]),
+            "Release\nOriginal");
+        } else {
+          uint16_t release = action->params.preset.release_preset;
+          snprintf(s_preset_hold_release_label[buf], sizeof(s_preset_hold_release_label[buf]),
+            "Release\n%u", (unsigned)(release - index_base + 1));
+        }
+        s_detail_items[item_count++] = (menu_item_t){
+          s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true
+        };
+        break;
+      }
+
+      case VARIANT_CYCLE: {
+        uint8_t num_steps = action->params.preset.num_presets;
+        if (num_steps < 2) num_steps = 2;
+        if (num_steps > 8) num_steps = 8;
+
+        snprintf(s_preset_cycle_steps_label[buf], sizeof(s_preset_cycle_steps_label[buf]),
+          "Steps\n%u", (unsigned)num_steps);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true
+        };
+
+        for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+          uint16_t preset = action->params.preset.cycle_presets[i];
+          snprintf(s_preset_cycle_step_labels[buf][i], sizeof(s_preset_cycle_step_labels[buf][i]),
+            "Step %d\n%u", i + 1, (unsigned)(preset - index_base + 1));
+          s_detail_items[item_count++] = (menu_item_t){
+            s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true
+          };
+        }
+        break;
+      }
+
+      case VARIANT_INCREMENT:
+      case VARIANT_DECREMENT:
+      default:
+        // INC/DEC step by 1 with no per-action parameters; nothing to show
+        // beyond the Variant row (and the standard Timing/Repeat/Follow-up
+        // rows added by the shared section below).
+        break;
     }
   }
-  
+
   // ACTION_TEMPO (consolidated family): always show Variant picker, then
   // variant-specific sub-rows.
   if (action->type == ACTION_TEMPO) {
@@ -7231,7 +7386,7 @@ lv_obj_t* action_config_detail_page_create(void) {
   }
 
   // Show Raise the Flag option for actions that support it (when flag system enabled)
-  if (config_get_flag_enabled() && action_supports_raise_flag(action->type) &&
+  if (config_get_flag_enabled() && action_supports_raise_flag_for(action) &&
       item_count < MAX_DETAIL_ITEMS) {
     snprintf(s_raise_flag_label[buf], sizeof(s_raise_flag_label[buf]),
       "Raise the Flag\n%s", action->raise_flag ? "Sure, why not" : "Not today");

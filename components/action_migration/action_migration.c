@@ -50,10 +50,19 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "all_sound_off",    ACTION_RESET,            VARIANT_NONE      },
   { "send_reset",       ACTION_RESET,            VARIANT_NONE      },
 
-  // Pre-consolidation preset/program names
-  { "program_next",     ACTION_PRESET_INC,       VARIANT_NONE      },
-  { "program_prev",     ACTION_PRESET_DEC,       VARIANT_NONE      },
-  { "pc",               ACTION_PRESET,           VARIANT_NONE      },
+  // Pre-consolidation preset/program names. preset_inc / preset_dec /
+  // preset_hold / preset_cycle were the on-disk canonical names before the
+  // family was collapsed into ACTION_PRESET; map them to the matching
+  // variants. Bare "preset" without an explicit variant falls through to
+  // action_type_from_string and then defaults to VARIANT_SET via the
+  // consolidated-family fallback in json_to_action.
+  { "program_next",     ACTION_PRESET,           VARIANT_INCREMENT },
+  { "program_prev",     ACTION_PRESET,           VARIANT_DECREMENT },
+  { "pc",               ACTION_PRESET,           VARIANT_SET       },
+  { "preset_inc",       ACTION_PRESET,           VARIANT_INCREMENT },
+  { "preset_dec",       ACTION_PRESET,           VARIANT_DECREMENT },
+  { "preset_hold",      ACTION_PRESET,           VARIANT_HOLD      },
+  { "preset_cycle",     ACTION_PRESET,           VARIANT_CYCLE     },
 
   // Pre-consolidation scene names. scene_inc/scene_dec were the on-disk
   // canonical names before the family was collapsed into ACTION_SCENE; map

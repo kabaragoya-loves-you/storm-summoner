@@ -230,13 +230,15 @@ action_t action_create_control(uint8_t cc_number, uint8_t value) {
 
 action_t action_create_preset_inc(void) {
   action_t action = {0};
-  action.type = ACTION_PRESET_INC;
+  action.type = ACTION_PRESET;
+  action.variant = VARIANT_INCREMENT;
   return action;
 }
 
 action_t action_create_preset_dec(void) {
   action_t action = {0};
-  action.type = ACTION_PRESET_DEC;
+  action.type = ACTION_PRESET;
+  action.variant = VARIANT_DECREMENT;
   return action;
 }
 

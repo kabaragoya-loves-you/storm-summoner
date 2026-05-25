@@ -828,11 +828,7 @@
         "type": {
           "type": "string",
           "enum": [
-            "preset_inc",
-            "preset_dec",
             "preset",
-            "preset_hold",
-            "preset_cycle",
             "scene",
             "play",
             "stop",
@@ -880,12 +876,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), and scene_* (scene_inc, scene_dec, scene_next, scene_prev) names are accepted for backward compatibility and are migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), and preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc) names are accepted for backward compatibility and are migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
           "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), and type='scene' (set/increment/decrement). Omit for singleton types."
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), and type='preset' (set/hold/cycle/increment/decrement). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -1180,8 +1176,10 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "preset"}
-            }
+              "type": {"const": "preset"},
+              "variant": {"const": "set"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["number"],
@@ -1221,8 +1219,10 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "preset_hold"}
-            }
+              "type": {"const": "preset"},
+              "variant": {"const": "hold"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["press_preset", "release_preset"],
@@ -1237,7 +1237,12 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 16383,
-                "description": "Preset to set on release"
+                "description": "Preset to set on release (ignored when release_to_original is true)"
+              },
+              "release_to_original": {
+                "type": "boolean",
+                "default": false,
+                "description": "When true, the release phase restores whatever preset was active on the device at press time, instead of using release_preset. The captured value is transient and not persisted."
               }
             }
           }
@@ -1245,8 +1250,10 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "preset_cycle"}
-            }
+              "type": {"const": "preset"},
+              "variant": {"const": "cycle"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["num_presets", "presets"],
@@ -1269,6 +1276,18 @@
                 "description": "Preset values to cycle through"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "preset"},
+              "variant": {"enum": ["increment", "decrement"]}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "description": "Preset increment/decrement variants carry no parameters."
           }
         },
         {

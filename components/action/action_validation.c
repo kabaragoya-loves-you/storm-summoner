@@ -11,7 +11,6 @@ static const char* TAG = "action_validation";
 // to the full action_t should use action_requires_hold_for() for a precise
 // answer.
 static const action_type_t hold_actions[] = {
-  ACTION_PRESET_HOLD,
   ACTION_NOTE,
   ACTION_TOUCHWHEEL_HOLD,
   ACTION_SUSTAIN,
@@ -39,6 +38,7 @@ bool action_requires_hold_for(const action_t* action) {
   if (action_requires_hold(action->type)) return true;
   if (action->type == ACTION_TEMPO && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_CONTROL && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_PRESET && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -51,7 +51,6 @@ bool action_requires_hold_for(const action_t* action) {
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
-    case ACTION_PRESET_HOLD:
     case ACTION_TOUCHWHEEL_HOLD:
     case ACTION_CLOCK_HOLD:
     case ACTION_CUT_HOLD:
@@ -62,6 +61,7 @@ bool action_supports_followup_for(const action_t* action) {
       return true;
     case ACTION_TEMPO:
     case ACTION_CONTROL:
+    case ACTION_PRESET:
       return action->variant == VARIANT_HOLD;
     default:
       return false;
@@ -120,9 +120,12 @@ bool action_is_fire_and_forget_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
     // Consolidated families: only SET is one-shot. HOLD needs a release pair,
-    // CYCLE/INC/DEC need per-press semantics, TAP needs mode interaction.
+    // CYCLE/INC/DEC need per-press semantics (and on ON_LOAD/ON_PLAY would
+    // silently advance state on every load), TAP needs mode interaction.
     case ACTION_CONTROL:
     case ACTION_TEMPO:
+    case ACTION_PRESET:
+    case ACTION_SCENE:
       return action->variant == VARIANT_SET;
 
     // Pure one-shots
@@ -249,6 +252,7 @@ static action_variant_t default_variant_for_type(action_type_t type) {
     case ACTION_TEMPO:
     case ACTION_CONTROL:
     case ACTION_SCENE:
+    case ACTION_PRESET:
       return VARIANT_SET;
     default:
       return VARIANT_NONE;
@@ -295,9 +299,6 @@ bool action_supports_repeat(action_type_t type) {
   if (type == ACTION_NONE || action_requires_hold(type)) return false;
   switch (type) {
     case ACTION_PRESET:
-    case ACTION_PRESET_INC:
-    case ACTION_PRESET_DEC:
-    case ACTION_PRESET_CYCLE:
     case ACTION_SCENE:
     case ACTION_TEMPO:
     case ACTION_SET_UI:
@@ -328,6 +329,14 @@ bool action_supports_timing_for(const action_t* action) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
+  if (action->type == ACTION_PRESET) {
+    // Same logic as CONTROL: HOLD needs a release pair, the rest schedule.
+    // action_supports_timing(ACTION_PRESET) returns true at the type level
+    // because PRESET is no longer in hold_actions[] (HOLD is now a variant);
+    // intercept here so the menu doesn't show a Timing row for Preset Hold.
+    if (action->variant == VARIANT_HOLD) return false;
+    return true;
+  }
   return action_supports_timing(action->type);
 }
 
@@ -348,6 +357,13 @@ bool action_supports_repeat_for(const action_t* action) {
     // SET and CYCLE repeat (every press resends / advances).
     // HOLD does not repeat -- the release event has nowhere to go.
     return action->variant == VARIANT_SET || action->variant == VARIANT_CYCLE;
+  }
+  if (action->type == ACTION_PRESET) {
+    // HOLD has no place to send repeated release events; suppress it.
+    // Everything else in the family (SET, CYCLE, INC, DEC) repeats fine
+    // (CYCLE advances the cursor, INC/DEC step the device preset, SET
+    // just resends the same PC).
+    return action->variant != VARIANT_HOLD;
   }
   return action_supports_repeat(action->type);
 }
@@ -392,6 +408,8 @@ bool action_supports_raise_flag(action_type_t type) {
     case ACTION_PAUSE:
     case ACTION_RECORD:
     case ACTION_CONTROL:
+    case ACTION_PRESET:
+    case ACTION_TEMPO:
     case ACTION_NOTE:
     case ACTION_RANDOMIZE:
     case ACTION_PUNCH_IN:
@@ -401,6 +419,19 @@ bool action_supports_raise_flag(action_type_t type) {
     default:
       return false;
   }
+}
+
+bool action_supports_raise_flag_for(const action_t* action) {
+  if (!action) return false;
+  if (!action_supports_raise_flag(action->type)) return false;
+  // Any hold-shaped action -- HOLD variants of consolidated families
+  // (TEMPO/CONTROL/PRESET), explicit *_HOLD singletons, and press/release
+  // pairings like ACTION_NOTE that aren't named "Hold" but behave like one
+  // -- defeats the flag-as-semaphore use case: the release event would
+  // immediately unflag whatever the press flagged. action_requires_hold_for
+  // already encodes this superset, so use it as the single source of truth.
+  if (action_requires_hold_for(action)) return false;
+  return true;
 }
 
 bool action_validate_timing(action_t* action, uint8_t beats_per_bar) {

@@ -143,7 +143,32 @@ static void format_action_details_with_device(const action_t* action, const devi
       break;
     }
     case ACTION_PRESET:
-      snprintf(buf, buf_size, "PC %d", action->params.preset.program);
+      // Variant decides the shape; SET uses the historical "PC <n>" form so
+      // existing tooling/scripts parsing console output keep working.
+      switch (action->variant) {
+        case VARIANT_SET:
+          snprintf(buf, buf_size, "PC %u", (unsigned)action->params.preset.program);
+          break;
+        case VARIANT_HOLD:
+          if (action->params.preset.release_to_original) {
+            snprintf(buf, buf_size, "PCH %u/Orig",
+              (unsigned)action->params.preset.press_preset);
+          } else {
+            snprintf(buf, buf_size, "PCH %u/%u",
+              (unsigned)action->params.preset.press_preset,
+              (unsigned)action->params.preset.release_preset);
+          }
+          break;
+        case VARIANT_CYCLE:
+          snprintf(buf, buf_size, "PCY %u",
+            (unsigned)action->params.preset.num_presets);
+          break;
+        case VARIANT_INCREMENT:
+        case VARIANT_DECREMENT:
+        default:
+          action_get_display_name(action, buf, buf_size);
+          break;
+      }
       break;
     case ACTION_SCENE:
       // Only VARIANT_SET targets a numbered scene; surface 1-based to match
@@ -999,6 +1024,7 @@ static int cmd_pad(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_PRESET;
+    action.variant = VARIANT_SET;
     action.params.preset.program = atoi(pad_args.params->sval[0]);
   }
   else if (strcmp(action_str, "randomize") == 0) {
@@ -1320,6 +1346,7 @@ static int cmd_button(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_PRESET;
+    action.variant = VARIANT_SET;
     action.params.preset.program = atoi(button_args.params->sval[0]);
   }
   else if (strcmp(action_str, "randomize") == 0) {
@@ -1548,6 +1575,7 @@ static int cmd_bump(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_PRESET;
+    action.variant = VARIANT_SET;
     action.params.preset.program = atoi(bump_args.params->sval[0]);
   }
   else if (strcmp(action_str, "randomize") == 0) {
@@ -1768,6 +1796,7 @@ static int cmd_expr_switch(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_PRESET;
+    action.variant = VARIANT_SET;
     action.params.preset.program = atoi(expr_switch_args.params->sval[0]);
   }
   // Touchwheel mode actions
@@ -1940,6 +1969,7 @@ static int cmd_on_load(int argc, char **argv) {
       return 1;
     }
     action.type = ACTION_PRESET;
+    action.variant = VARIANT_SET;
     action.params.preset.program = atoi(on_load_args.params->sval[0]);
   }
   else {

@@ -8,11 +8,7 @@
 // ============================================================================
 static const char* action_type_names[] = {
   [ACTION_NONE] = "None",
-  [ACTION_PRESET_INC] = "Preset +1",
-  [ACTION_PRESET_DEC] = "Preset -1",
-  [ACTION_PRESET] = "Set Preset",
-  [ACTION_PRESET_HOLD] = "Preset Hold",
-  [ACTION_PRESET_CYCLE] = "Preset Cycle",
+  [ACTION_PRESET] = "Preset",
   [ACTION_SCENE] = "Scene",
   [ACTION_PLAY] = "Play",
   [ACTION_STOP] = "Stop",
@@ -94,6 +90,7 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_TEMPO:
     case ACTION_CONTROL:
     case ACTION_SCENE:
+    case ACTION_PRESET:
       return true;
     default:
       return false;
@@ -141,6 +138,19 @@ static const char* scene_variant_display(action_variant_t v) {
   }
 }
 
+// Preset family: same shape as Scene -- "Set Preset" is the historical
+// label, HOLD/CYCLE keep their pre-consolidation names, INC/DEC compress.
+static const char* preset_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_SET:       return "Set Preset";
+    case VARIANT_HOLD:      return "Preset Hold";
+    case VARIANT_CYCLE:     return "Preset Cycle";
+    case VARIANT_INCREMENT: return "Preset +1";
+    case VARIANT_DECREMENT: return "Preset -1";
+    default:                return "Preset";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -157,6 +167,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_SCENE) {
     snprintf(buf, len, "%s", scene_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_PRESET) {
+    snprintf(buf, len, "%s", preset_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

@@ -9,12 +9,13 @@
 typedef enum {
   ACTION_NONE = 0,
   
-  // Preset/Scene control
-  ACTION_PRESET_INC,
-  ACTION_PRESET_DEC,
-  ACTION_PRESET,              // Smart PC: 0-127 or 0-16383 based on bank_select_mode
-  ACTION_PRESET_HOLD,         // Press: set one preset, Release: set another
-  ACTION_PRESET_CYCLE,        // Cycle through presets on each press
+  // Preset (consolidated -- use variant field to pick operation:
+  //   VARIANT_SET       = jump to a specific preset/program number
+  //   VARIANT_HOLD      = set press preset, restore release preset (or "Original") on release
+  //   VARIANT_CYCLE     = step through configured presets on each press
+  //   VARIANT_INCREMENT = next preset (was ACTION_PRESET_INC / program_next)
+  //   VARIANT_DECREMENT = previous preset (was ACTION_PRESET_DEC / program_prev)
+  ACTION_PRESET,
   // Scene (consolidated -- use variant field to pick operation:
   //   VARIANT_SET       = jump to a specific scene number (was ACTION_SCENE)
   //   VARIANT_INCREMENT = next scene (was ACTION_SCENE_INC)
@@ -303,19 +304,19 @@ typedef struct {
       uint8_t number;
     } target;
     
-    // For preset set (0-127 or 0-16383 based on bank mode)
+    // For ACTION_PRESET (consolidated -- variants SET / HOLD / CYCLE /
+    // INCREMENT / DECREMENT). Bank-aware values use the full uint16_t range
+    // (0-16383 with bank mode, 0-127 without).
     struct {
-      uint16_t program;
+      uint16_t program;            // VARIANT_SET: target preset
+      uint16_t press_preset;       // VARIANT_HOLD: preset to set on press
+      uint16_t release_preset;     // VARIANT_HOLD: preset to set on release (used when release_to_original == 0)
+      uint8_t  release_to_original;// VARIANT_HOLD: 0 = use release_preset (default), 1 = restore captured preset
+      uint16_t captured_preset;    // VARIANT_HOLD transient: device preset snapshot taken at press time; not persisted
+      uint8_t  num_presets;        // VARIANT_CYCLE: 2-8 steps
+      uint16_t cycle_presets[8];   // VARIANT_CYCLE: preset values
+      uint8_t  current_index;      // VARIANT_CYCLE: rotating cursor (mutable at runtime)
     } preset;
-    
-    // For preset hold/cycle
-    struct {
-      uint16_t press_preset;      // Preset to set on press (hold)
-      uint16_t release_preset;    // Preset to set on release (hold)
-      uint8_t num_presets;        // Number of presets in cycle (2-8)
-      uint16_t cycle_presets[8];  // Preset values for cycle
-      uint8_t current_index;      // Current position in cycle
-    } preset_cycle;
     
     // For tempo actions (set, hold, cycle, increment, decrement)
     struct {
@@ -686,8 +687,19 @@ void action_set_last_pitch_bend(int16_t value);
 // Flag System API (scene-local semaphore)
 // ============================================================================
 
-// Check if action type supports the "Raise the Flag" option
+// Check if action type supports the "Raise the Flag" option (by-type).
+// Conservative answer for consolidated families: returns true if ANY variant
+// supports it. Callers with a full action_t should prefer the variant-aware
+// action_supports_raise_flag_for() below, which excludes HOLD variants per
+// the rationale that holds change state only for the duration of the press.
 bool action_supports_raise_flag(action_type_t type);
+
+// Variant-aware companion. Returns false for any hold-shaped action --
+// HOLD variants of consolidated families (TEMPO, CONTROL, PRESET), explicit
+// *_HOLD singletons, and press/release pairings like ACTION_NOTE -- because
+// the release event would immediately unflag whatever the press flagged,
+// defeating the flag-as-semaphore use case.
+bool action_supports_raise_flag_for(const action_t* action);
 
 // Clear the scene flag (call on scene change)
 void action_clear_flag(void);

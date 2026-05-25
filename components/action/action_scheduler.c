@@ -154,8 +154,10 @@ static void reset_action_cycle_index(action_t* action) {
         action->params.control.current_index = 0;
       }
       break;
-    case ACTION_PRESET_CYCLE:
-      action->params.preset_cycle.current_index = 0;
+    case ACTION_PRESET:
+      if (action->variant == VARIANT_CYCLE) {
+        action->params.preset.current_index = 0;
+      }
       break;
     case ACTION_TEMPO:
       if (action->variant == VARIANT_CYCLE) {
@@ -256,9 +258,11 @@ static void handle_beat_event(const event_t* event, void* context) {
                   pending->action.params.control.current_index;
               }
               break;
-            case ACTION_PRESET_CYCLE:
-              pending->original->params.preset_cycle.current_index =
-                pending->action.params.preset_cycle.current_index;
+            case ACTION_PRESET:
+              if (pending->action.variant == VARIANT_CYCLE) {
+                pending->original->params.preset.current_index =
+                  pending->action.params.preset.current_index;
+              }
               break;
             case ACTION_TEMPO:
               if (pending->action.variant == VARIANT_CYCLE) {

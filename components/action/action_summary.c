@@ -206,26 +206,31 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       (unsigned)action->params.note.velocity);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_PRESET) {
+  } else if (action->type == ACTION_PRESET && action->variant == VARIANT_SET) {
     snprintf(summary->param_name, sizeof(summary->param_name), "Program");
     summary->has_param = true;
     snprintf(summary->param_value, sizeof(summary->param_value), "%u",
       (unsigned)action->params.preset.program + 1);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_PRESET_HOLD) {
+  } else if (action->type == ACTION_PRESET && action->variant == VARIANT_HOLD) {
     snprintf(summary->param_name, sizeof(summary->param_name), "Programs");
     summary->has_param = true;
-    snprintf(summary->param_value, sizeof(summary->param_value), "%u / %u",
-      (unsigned)action->params.preset_cycle.press_preset + 1,
-      (unsigned)action->params.preset_cycle.release_preset + 1);
+    if (action->params.preset.release_to_original) {
+      snprintf(summary->param_value, sizeof(summary->param_value), "%u / Orig",
+        (unsigned)action->params.preset.press_preset + 1);
+    } else {
+      snprintf(summary->param_value, sizeof(summary->param_value), "%u / %u",
+        (unsigned)action->params.preset.press_preset + 1,
+        (unsigned)action->params.preset.release_preset + 1);
+    }
     summary->has_value = true;
 
-  } else if (action->type == ACTION_PRESET_CYCLE) {
+  } else if (action->type == ACTION_PRESET && action->variant == VARIANT_CYCLE) {
     snprintf(summary->param_name, sizeof(summary->param_name), "Programs");
     summary->has_param = true;
     snprintf(summary->param_value, sizeof(summary->param_value), "%u values",
-      (unsigned)action->params.preset_cycle.num_presets);
+      (unsigned)action->params.preset.num_presets);
     summary->has_value = true;
 
   } else if (action->type == ACTION_SCENE && action->variant == VARIANT_SET) {

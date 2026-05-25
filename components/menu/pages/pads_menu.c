@@ -303,7 +303,13 @@ static void persist_scene_changes(void) {
 static void format_pad_label(uint8_t index, action_t* action, char* buf, size_t buf_size) {
   const char* name = get_pad_display_name(index);
   if (action && action->type != ACTION_NONE) {
-    const char* action_name = get_action_display_name(action->type);
+    // Use the variant-aware display so consolidated families (Preset,
+    // Scene, Tempo, Control) render as e.g. "Preset +1" instead of the
+    // bare family name "Preset". Other surfaces (buttons_menu,
+    // on_load/on_play, expression) already do this; pads_menu was the
+    // outlier.
+    char action_name[40];
+    action_get_display_name(action, action_name, sizeof(action_name));
     snprintf(buf, buf_size, "%s\n%s", name, action_name);
   } else {
     snprintf(buf, buf_size, "%s\n<None>", name);
@@ -1863,7 +1869,7 @@ static void nav_to_note(void* user_data) {
 }
 
 // ============================================================================
-// Preset Hold (for ACTION_PRESET_HOLD)
+// Preset Hold (for ACTION_PRESET + VARIANT_HOLD)
 // ============================================================================
 
 static lv_obj_t* preset_hold_page_create(void);  // Forward declaration
@@ -1909,7 +1915,7 @@ static void preset_hold_press_confirm_cb(uint32_t selected_idx, void* user_data)
     scene_get_current_index());
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
-  mapping->action.params.preset_cycle.press_preset = index_base + selected_idx;
+  mapping->action.params.preset.press_preset = index_base + selected_idx;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Preset Hold press set to %u", (unsigned)(index_base + selected_idx));
@@ -1935,7 +1941,7 @@ static lv_obj_t* preset_hold_press_roller_create(void) {
     scene_get_current_index());
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
-  uint16_t current = mapping->action.params.preset_cycle.press_preset;
+  uint16_t current = mapping->action.params.preset.press_preset;
   uint32_t current_idx = (current >= index_base) ? (current - index_base) : 0;
   if (current_idx >= count) current_idx = 0;
   
@@ -1963,7 +1969,7 @@ static void preset_hold_release_confirm_cb(uint32_t selected_idx, void* user_dat
     scene_get_current_index());
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
-  mapping->action.params.preset_cycle.release_preset = index_base + selected_idx;
+  mapping->action.params.preset.release_preset = index_base + selected_idx;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Preset Hold release set to %u", (unsigned)(index_base + selected_idx));
@@ -1989,7 +1995,7 @@ static lv_obj_t* preset_hold_release_roller_create(void) {
     scene_get_current_index());
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
-  uint16_t current = mapping->action.params.preset_cycle.release_preset;
+  uint16_t current = mapping->action.params.preset.release_preset;
   uint32_t current_idx = (current >= index_base) ? (current - index_base) : 0;
   if (current_idx >= count) current_idx = 0;
   
@@ -2023,8 +2029,8 @@ static lv_obj_t* preset_hold_page_create(void) {
     scene_get_current_index());
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
-  uint16_t press = mapping->action.params.preset_cycle.press_preset;
-  uint16_t release = mapping->action.params.preset_cycle.release_preset;
+  uint16_t press = mapping->action.params.preset.press_preset;
+  uint16_t release = mapping->action.params.preset.release_preset;
   
   snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
     "Press: %u", (unsigned)(press - index_base + 1));
@@ -2044,7 +2050,7 @@ static lv_obj_t* preset_hold_page_create(void) {
 }
 
 // ============================================================================
-// Preset Cycle (for ACTION_PRESET_CYCLE)
+// Preset Cycle (for ACTION_PRESET + VARIANT_CYCLE)
 // ============================================================================
 
 static void preset_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -2058,7 +2064,7 @@ static void preset_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data
   if (!mapping) return;
   
   uint8_t new_steps = selected_idx + 2;  // Range 2-8
-  mapping->action.params.preset_cycle.num_presets = new_steps;
+  mapping->action.params.preset.num_presets = new_steps;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Preset Cycle steps set to %u", (unsigned)new_steps);
@@ -2078,7 +2084,7 @@ static lv_obj_t* preset_cycle_steps_roller_create(void) {
   // Options: 2, 3, 4, 5, 6, 7, 8
   static const char* options = "2\n3\n4\n5\n6\n7\n8";
   
-  uint8_t current_steps = mapping->action.params.preset_cycle.num_presets;
+  uint8_t current_steps = mapping->action.params.preset.num_presets;
   if (current_steps < 2) current_steps = 2;
   if (current_steps > 8) current_steps = 8;
   uint32_t current_idx = current_steps - 2;
@@ -2109,7 +2115,7 @@ static void preset_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data)
   
   uint8_t step = s_editing_preset_step;
   if (step < MAX_PRESET_CYCLE_STEPS) {
-    mapping->action.params.preset_cycle.cycle_presets[step] = index_base + selected_idx;
+    mapping->action.params.preset.cycle_presets[step] = index_base + selected_idx;
     persist_scene_changes();
     
     ESP_LOGI(TAG, "Preset Cycle step %u set to preset %u", 
@@ -2138,7 +2144,7 @@ static lv_obj_t* preset_cycle_step_roller_create(void) {
   uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
   
   uint8_t step = s_editing_preset_step;
-  uint16_t current = mapping->action.params.preset_cycle.cycle_presets[step];
+  uint16_t current = mapping->action.params.preset.cycle_presets[step];
   uint32_t current_idx = (current >= index_base) ? (current - index_base) : 0;
   if (current_idx >= count) current_idx = 0;
   
@@ -3679,14 +3685,17 @@ static lv_obj_t* pad_detail_page_create(void) {
   }
   
   // Show Preset Hold submenu link
-  if (mapping->action.type == ACTION_PRESET_HOLD) {
+  // NOTE: this page is dead code (superseded by action_config.c). Keep the
+  // type checks compiling against the consolidated ACTION_PRESET family but
+  // do not bother extending the UI -- the action_config page is canonical.
+  if (mapping->action.type == ACTION_PRESET && mapping->action.variant == VARIANT_HOLD) {
     // Get device for index_base
     const device_def_t* device = (const device_def_t*)scene_get_device(
       scene_get_current_index());
     uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
     
-    uint16_t press = mapping->action.params.preset_cycle.press_preset;
-    uint16_t release = mapping->action.params.preset_cycle.release_preset;
+    uint16_t press = mapping->action.params.preset.press_preset;
+    uint16_t release = mapping->action.params.preset.release_preset;
     
     snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
       "Press\n%u", (unsigned)(press - index_base + 1));
@@ -3701,14 +3710,14 @@ static lv_obj_t* pad_detail_page_create(void) {
     };
   }
   
-  // Show Preset Cycle submenu items
-  if (mapping->action.type == ACTION_PRESET_CYCLE) {
+  // Show Preset Cycle submenu items (dead-code page; see note above).
+  if (mapping->action.type == ACTION_PRESET && mapping->action.variant == VARIANT_CYCLE) {
     // Get device for index_base
     const device_def_t* device = (const device_def_t*)scene_get_device(
       scene_get_current_index());
     uint16_t index_base = (device && device->pc_info) ? device->pc_info->index_base : 0;
     
-    uint8_t num_steps = mapping->action.params.preset_cycle.num_presets;
+    uint8_t num_steps = mapping->action.params.preset.num_presets;
     if (num_steps < 2) num_steps = 2;
     if (num_steps > 8) num_steps = 8;
     
@@ -3721,7 +3730,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     
     // Individual step items
     for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
-      uint16_t preset = mapping->action.params.preset_cycle.cycle_presets[i];
+      uint16_t preset = mapping->action.params.preset.cycle_presets[i];
       snprintf(s_preset_cycle_step_labels[buf][i], sizeof(s_preset_cycle_step_labels[buf][i]),
         "Step %d\n%u", i + 1, (unsigned)(preset - index_base + 1));
       s_detail_items[item_count++] = (menu_item_t){

@@ -3920,11 +3920,7 @@ static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_
 // Note: ACTION_NONE is NULL - we skip serializing empty actions
 static const char* action_type_json_names[] = {
   [ACTION_NONE] = NULL,  // Don't serialize empty actions
-  [ACTION_PRESET_INC] = "preset_inc",
-  [ACTION_PRESET_DEC] = "preset_dec",
   [ACTION_PRESET] = "preset",
-  [ACTION_PRESET_HOLD] = "preset_hold",
-  [ACTION_PRESET_CYCLE] = "preset_cycle",
   [ACTION_SCENE] = "scene",
   [ACTION_PLAY] = "play",
   [ACTION_STOP] = "stop",
@@ -4112,26 +4108,47 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
   } else if (action->type == ACTION_PRESET) {
-    // Use preset.program (uint16_t) -- params.target.number is the low byte
-    // alias and would truncate any bank-aware value > 255 on save.
-    cJSON_AddNumberToObject(obj, "number", action->params.preset.program);
+    // Variant decides which fields go on the wire. The variant string itself
+    // is emitted unconditionally below; consumers route on that. JSON keys
+    // are unchanged from the pre-consolidation shape so legacy files
+    // (and external editors) round-trip without surprises.
+    switch (action->variant) {
+      case VARIANT_SET:
+        // preset.program is uint16_t -- preserves bank-aware values > 255.
+        cJSON_AddNumberToObject(obj, "number", action->params.preset.program);
+        break;
+      case VARIANT_HOLD:
+        cJSON_AddNumberToObject(obj, "press_preset",   action->params.preset.press_preset);
+        cJSON_AddNumberToObject(obj, "release_preset", action->params.preset.release_preset);
+        // Only emit release_to_original when set; absence == false on read,
+        // keeping diffs minimal for the common case.
+        if (action->params.preset.release_to_original) {
+          cJSON_AddBoolToObject(obj, "release_to_original", true);
+        }
+        break;
+      case VARIANT_CYCLE: {
+        uint8_t num_presets = action->params.preset.num_presets;
+        cJSON_AddNumberToObject(obj, "num_presets", num_presets);
+        cJSON* presets = cJSON_CreateArray();
+        for (int i = 0; i < num_presets && i < 8; i++) {
+          cJSON_AddItemToArray(presets, cJSON_CreateNumber(action->params.preset.cycle_presets[i]));
+        }
+        cJSON_AddItemToObject(obj, "presets", presets);
+        break;
+      }
+      case VARIANT_INCREMENT:
+      case VARIANT_DECREMENT:
+        // No payload; the variant string alone is enough.
+        break;
+      default:
+        break;
+    }
   } else if (action->type == ACTION_SCENE) {
     // Only VARIANT_SET targets a specific scene number. INCREMENT and
     // DECREMENT are parameter-less (variant string alone is enough).
     if (action->variant == VARIANT_SET) {
       cJSON_AddNumberToObject(obj, "number", action->params.target.number);
     }
-  } else if (action->type == ACTION_PRESET_HOLD) {
-    cJSON_AddNumberToObject(obj, "press_preset", action->params.preset_cycle.press_preset);
-    cJSON_AddNumberToObject(obj, "release_preset", action->params.preset_cycle.release_preset);
-  } else if (action->type == ACTION_PRESET_CYCLE) {
-    uint8_t num_presets = action->params.preset_cycle.num_presets;
-    cJSON_AddNumberToObject(obj, "num_presets", num_presets);
-    cJSON* presets = cJSON_CreateArray();
-    for (int i = 0; i < num_presets && i < 8; i++) {
-      cJSON_AddItemToArray(presets, cJSON_CreateNumber(action->params.preset_cycle.cycle_presets[i]));
-    }
-    cJSON_AddItemToObject(obj, "presets", presets);
   } else if (action->type == ACTION_TEMPO) {
     // Variant determines which fields are emitted. The "variant" key itself
     // is added unconditionally below for ACTION_TEMPO so the read path can
@@ -4434,6 +4451,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_CONTROL) action.variant = VARIANT_SET;
     if (action.type == ACTION_TEMPO)   action.variant = VARIANT_TAP;
     if (action.type == ACTION_SCENE)   action.variant = VARIANT_SET;
+    if (action.type == ACTION_PRESET)  action.variant = VARIANT_SET;
   }
 
   
@@ -4546,8 +4564,8 @@ static action_t json_to_action(cJSON* obj) {
   if (note) action.params.note.note = note->valueint;
   if (velocity) action.params.note.velocity = velocity->valueint;
   
-  // Parse target/scene/program actions. ACTION_PRESET routes to
-  // preset.program (uint16_t) so bank-aware values > 255 survive the load;
+  // Parse target/scene/program actions. ACTION_PRESET + VARIANT_SET routes
+  // to preset.program (uint16_t) so bank-aware values > 255 survive the load;
   // everything else (ACTION_SCENE today) stays on the uint8_t alias.
   cJSON* number = cJSON_GetObjectItem(obj, "number");
   if (number) {
@@ -4557,26 +4575,33 @@ static action_t json_to_action(cJSON* obj) {
       action.params.target.number = (uint8_t)number->valueint;
     }
   }
-  
-  // Parse preset hold/cycle actions
-  if (action.type == ACTION_PRESET_HOLD) {
+
+  // Parse preset hold/cycle fields. The variant decides which keys we look
+  // for; legacy files (type:"preset_hold", type:"preset_cycle") already
+  // resolved to ACTION_PRESET + VARIANT_HOLD/CYCLE via the migration table
+  // before we get here, so a single branch covers both old and new shapes.
+  if (action.type == ACTION_PRESET && action.variant == VARIANT_HOLD) {
     cJSON* press = cJSON_GetObjectItem(obj, "press_preset");
     cJSON* release = cJSON_GetObjectItem(obj, "release_preset");
-    if (press) action.params.preset_cycle.press_preset = press->valueint;
-    if (release) action.params.preset_cycle.release_preset = release->valueint;
+    cJSON* original = cJSON_GetObjectItem(obj, "release_to_original");
+    if (press) action.params.preset.press_preset = (uint16_t)press->valueint;
+    if (release) action.params.preset.release_preset = (uint16_t)release->valueint;
+    if (original && cJSON_IsBool(original)) {
+      action.params.preset.release_to_original = cJSON_IsTrue(original) ? 1 : 0;
+    }
   }
-  if (action.type == ACTION_PRESET_CYCLE) {
+  if (action.type == ACTION_PRESET && action.variant == VARIANT_CYCLE) {
     cJSON* num_presets = cJSON_GetObjectItem(obj, "num_presets");
     cJSON* presets = cJSON_GetObjectItem(obj, "presets");
     if (num_presets) {
-      action.params.preset_cycle.num_presets = num_presets->valueint;
+      action.params.preset.num_presets = num_presets->valueint;
     }
     if (presets && cJSON_IsArray(presets)) {
       int count = cJSON_GetArraySize(presets);
       if (count > 8) count = 8;
       for (int i = 0; i < count; i++) {
         cJSON* item = cJSON_GetArrayItem(presets, i);
-        if (item) action.params.preset_cycle.cycle_presets[i] = item->valueint;
+        if (item) action.params.preset.cycle_presets[i] = (uint16_t)item->valueint;
       }
     }
   }

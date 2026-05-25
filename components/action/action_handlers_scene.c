@@ -54,71 +54,80 @@ action_handle_result_t action_handlers_scene_dispatch(
   scene_mode_t current_mode = scene_get_mode();
 
   switch (action->type) {
-    case ACTION_PRESET_INC:
+    case ACTION_PRESET: {
+      // Preset Sync mode gate is identical across every variant -- factor it.
       if (current_mode == SCENE_MODE_PRESET_SYNC) {
-        ESP_LOGW(TAG, "Preset +1 action ignored: not allowed in Preset Sync mode");
+        ESP_LOGW(TAG, "Preset action ignored: not allowed in Preset Sync mode");
         return ACTION_HANDLED;
       }
-      if (is_press) device_config_program_next();
-      return ACTION_HANDLED;
 
-    case ACTION_PRESET_DEC:
-      if (current_mode == SCENE_MODE_PRESET_SYNC) {
-        ESP_LOGW(TAG, "Preset -1 action ignored: not allowed in Preset Sync mode");
-        return ACTION_HANDLED;
-      }
-      if (is_press) device_config_program_prev();
-      return ACTION_HANDLED;
+      switch (action->variant) {
+        case VARIANT_INCREMENT:
+          if (is_press) device_config_program_next();
+          break;
 
-    case ACTION_PRESET:
-      if (current_mode == SCENE_MODE_PRESET_SYNC) {
-        ESP_LOGW(TAG, "Set Preset action ignored: not allowed in Preset Sync mode");
-        return ACTION_HANDLED;
-      }
-      if (is_press) apply_preset_program(action->params.preset.program);
-      return ACTION_HANDLED;
+        case VARIANT_DECREMENT:
+          if (is_press) device_config_program_prev();
+          break;
 
-    case ACTION_PRESET_HOLD: {
-      if (current_mode == SCENE_MODE_PRESET_SYNC) {
-        ESP_LOGW(TAG, "Preset Hold action ignored: not allowed in Preset Sync mode");
-        return ACTION_HANDLED;
+        case VARIANT_SET:
+          if (is_press) apply_preset_program(action->params.preset.program);
+          break;
+
+        case VARIANT_HOLD: {
+          action_t* mutable_action = (action_t*)action;
+          if (is_press) {
+            action_followup_record_press(mutable_action);
+            // Snapshot the live preset NOW so the release knows what to
+            // restore. We capture even when release_to_original is false so
+            // toggling the flag later (e.g. via console) does not strand a
+            // hold action with a stale captured value -- cheap defensive
+            // store.
+            mutable_action->params.preset.captured_preset = device_config_get_preset();
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "Preset hold release skipped by follow-up");
+            break;
+          }
+          uint16_t program;
+          if (is_press) {
+            program = action->params.preset.press_preset;
+          } else if (action->params.preset.release_to_original) {
+            program = action->params.preset.captured_preset;
+          } else {
+            program = action->params.preset.release_preset;
+          }
+          apply_preset_program(program);
+          ESP_LOGD(TAG, "Preset hold: %s -> %u%s",
+            is_press ? "press" : "release",
+            (unsigned)program,
+            (!is_press && action->params.preset.release_to_original) ? " (original)" : "");
+          break;
+        }
+
+        case VARIANT_CYCLE: {
+          if (!is_press) break;
+          action_t* mutable_action = (action_t*)action;
+          uint8_t num_presets = mutable_action->params.preset.num_presets;
+          if (num_presets == 0) {
+            ESP_LOGW(TAG, "Preset cycle has no presets defined, skipping");
+            break;
+          }
+          uint8_t idx = mutable_action->params.preset.current_index;
+          uint16_t program = mutable_action->params.preset.cycle_presets[idx];
+
+          apply_preset_program(program);
+          ESP_LOGD(TAG, "Preset cycle step %u: preset %u", (unsigned)idx, (unsigned)program);
+
+          mutable_action->params.preset.current_index = (idx + 1) % num_presets;
+          break;
+        }
+
+        default:
+          ESP_LOGW(TAG, "Unknown Preset variant %d", (int)action->variant);
+          break;
       }
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "Preset hold release skipped by follow-up");
-        return ACTION_HANDLED;
-      }
-      uint16_t program = is_press ?
-        action->params.preset_cycle.press_preset :
-        action->params.preset_cycle.release_preset;
-      apply_preset_program(program);
-      ESP_LOGD(TAG, "Preset hold: %s -> %u", is_press ? "press" : "release",
-        (unsigned)program);
       return ACTION_HANDLED;
     }
-
-    case ACTION_PRESET_CYCLE:
-      if (current_mode == SCENE_MODE_PRESET_SYNC) {
-        ESP_LOGW(TAG, "Preset Cycle action ignored: not allowed in Preset Sync mode");
-        return ACTION_HANDLED;
-      }
-      if (is_press) {
-        action_t* mutable_action = (action_t*)action;
-        uint8_t num_presets = mutable_action->params.preset_cycle.num_presets;
-        if (num_presets == 0) {
-          ESP_LOGW(TAG, "Preset cycle has no presets defined, skipping");
-          return ACTION_HANDLED;
-        }
-        uint8_t idx = mutable_action->params.preset_cycle.current_index;
-        uint16_t program = mutable_action->params.preset_cycle.cycle_presets[idx];
-
-        apply_preset_program(program);
-        ESP_LOGD(TAG, "Preset cycle step %u: preset %u", (unsigned)idx, (unsigned)program);
-
-        mutable_action->params.preset_cycle.current_index = (idx + 1) % num_presets;
-      }
-      return ACTION_HANDLED;
 
     case ACTION_SCENE: {
       // Scene Mode gate is identical across all variants -- factor it out.
