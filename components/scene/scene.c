@@ -3930,8 +3930,7 @@ static const char* action_type_json_names[] = {
   [ACTION_CONFIRM_PENDING] = "confirm_pending",
   [ACTION_RESET] = "reset",
   [ACTION_PIANO_PEDAL] = "piano_pedal",
-  [ACTION_TOUCHWHEEL_HOLD] = "touchwheel_hold",
-  [ACTION_TOUCHWHEEL_CYCLE] = "touchwheel_cycle",
+  [ACTION_TOUCHWHEEL] = "touchwheel",
   [ACTION_LFO_START] = "lfo_start",
   [ACTION_LFO_STOP] = "lfo_stop",
   [ACTION_LFO_TOGGLE] = "lfo_toggle",
@@ -4185,16 +4184,33 @@ static cJSON* action_to_json(const action_t* action) {
         // TAP has no extra fields
         break;
     }
-  } else if (action->type == ACTION_TOUCHWHEEL_HOLD) {
-    cJSON_AddNumberToObject(obj, "mode", action->params.tw_mode.mode);
-    cJSON_AddNumberToObject(obj, "mode2", action->params.tw_mode.mode2);
-  } else if (action->type == ACTION_TOUCHWHEEL_CYCLE) {
-    cJSON_AddNumberToObject(obj, "num_modes", action->params.tw_mode.num_modes);
-    cJSON* modes = cJSON_CreateArray();
-    for (int i = 0; i < action->params.tw_mode.num_modes; i++) {
-      cJSON_AddItemToArray(modes, cJSON_CreateNumber(action->params.tw_mode.modes[i]));
+  } else if (action->type == ACTION_TOUCHWHEEL) {
+    // Variant decides which fields go on the wire. The variant string is
+    // emitted unconditionally above; consumers route on that. JSON keys
+    // are unchanged from the pre-consolidation shape so legacy files
+    // round-trip without surprises. captured_mode is transient and is
+    // intentionally not persisted (matches Preset Hold's captured_preset).
+    switch (action->variant) {
+      case VARIANT_HOLD:
+        cJSON_AddNumberToObject(obj, "mode",  action->params.tw_mode.mode);
+        cJSON_AddNumberToObject(obj, "mode2", action->params.tw_mode.mode2);
+        // Only emit release_to_original when set; absence == false on read.
+        if (action->params.tw_mode.release_to_original) {
+          cJSON_AddBoolToObject(obj, "release_to_original", true);
+        }
+        break;
+      case VARIANT_CYCLE: {
+        cJSON_AddNumberToObject(obj, "num_modes", action->params.tw_mode.num_modes);
+        cJSON* modes = cJSON_CreateArray();
+        for (int i = 0; i < action->params.tw_mode.num_modes && i < 8; i++) {
+          cJSON_AddItemToArray(modes, cJSON_CreateNumber(action->params.tw_mode.modes[i]));
+        }
+        cJSON_AddItemToObject(obj, "modes", modes);
+        break;
+      }
+      default:
+        break;
     }
-    cJSON_AddItemToObject(obj, "modes", modes);
   } else if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||
              action->type == ACTION_LFO_TOGGLE) {
     cJSON_AddNumberToObject(obj, "slot", action->params.lfo.slot);
@@ -4451,11 +4467,12 @@ static action_t json_to_action(cJSON* obj) {
   // legacy data behaving as it always did rather than landing in the
   // default-case warning path at dispatch.
   if (action.variant == VARIANT_NONE) {
-    if (action.type == ACTION_CONTROL)   action.variant = VARIANT_SET;
-    if (action.type == ACTION_TEMPO)     action.variant = VARIANT_TAP;
-    if (action.type == ACTION_SCENE)     action.variant = VARIANT_SET;
-    if (action.type == ACTION_PRESET)    action.variant = VARIANT_SET;
-    if (action.type == ACTION_TRANSPORT) action.variant = VARIANT_PLAY;
+    if (action.type == ACTION_CONTROL)    action.variant = VARIANT_SET;
+    if (action.type == ACTION_TEMPO)      action.variant = VARIANT_TAP;
+    if (action.type == ACTION_SCENE)      action.variant = VARIANT_SET;
+    if (action.type == ACTION_PRESET)     action.variant = VARIANT_SET;
+    if (action.type == ACTION_TRANSPORT)  action.variant = VARIANT_PLAY;
+    if (action.type == ACTION_TOUCHWHEEL) action.variant = VARIANT_HOLD;
   }
 
   // Piano Pedal: dedicated parser so the generic CC parser below doesn't
@@ -4672,20 +4689,30 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
-  // Parse touchwheel mode actions
-  cJSON* mode = cJSON_GetObjectItem(obj, "mode");
-  cJSON* mode2 = cJSON_GetObjectItem(obj, "mode2");
-  cJSON* num_modes = cJSON_GetObjectItem(obj, "num_modes");
-  cJSON* modes = cJSON_GetObjectItem(obj, "modes");
-  if (mode) action.params.tw_mode.mode = mode->valueint;
-  if (mode2) action.params.tw_mode.mode2 = mode2->valueint;
-  if (num_modes) action.params.tw_mode.num_modes = num_modes->valueint;
-  if (modes && cJSON_IsArray(modes)) {
-    int count = cJSON_GetArraySize(modes);
-    if (count > 8) count = 8;
-    for (int i = 0; i < count; i++) {
-      cJSON* item = cJSON_GetArrayItem(modes, i);
-      if (item) action.params.tw_mode.modes[i] = item->valueint;
+  // Parse touchwheel mode actions. Gated on ACTION_TOUCHWHEEL so other
+  // types that happen to use the same JSON key names don't write into the
+  // wrong union member. captured_mode is transient and is zeroed by the
+  // {0} initializer at the top of the function; on next press the handler
+  // resnapshots it from the live scene.
+  if (action.type == ACTION_TOUCHWHEEL) {
+    cJSON* mode      = cJSON_GetObjectItem(obj, "mode");
+    cJSON* mode2     = cJSON_GetObjectItem(obj, "mode2");
+    cJSON* rto       = cJSON_GetObjectItem(obj, "release_to_original");
+    cJSON* num_modes = cJSON_GetObjectItem(obj, "num_modes");
+    cJSON* modes     = cJSON_GetObjectItem(obj, "modes");
+    if (mode)  action.params.tw_mode.mode  = mode->valueint;
+    if (mode2) action.params.tw_mode.mode2 = mode2->valueint;
+    if (rto && cJSON_IsBool(rto)) {
+      action.params.tw_mode.release_to_original = cJSON_IsTrue(rto) ? 1 : 0;
+    }
+    if (num_modes) action.params.tw_mode.num_modes = num_modes->valueint;
+    if (modes && cJSON_IsArray(modes)) {
+      int count = cJSON_GetArraySize(modes);
+      if (count > 8) count = 8;
+      for (int i = 0; i < count; i++) {
+        cJSON* item = cJSON_GetArrayItem(modes, i);
+        if (item) action.params.tw_mode.modes[i] = item->valueint;
+      }
     }
   }
   

@@ -18,8 +18,7 @@ static const char* action_type_names[] = {
   [ACTION_CONFIRM_PENDING] = "Confirm Pending",
   [ACTION_RESET] = "Reset",
   [ACTION_PIANO_PEDAL] = "Piano Pedal",
-  [ACTION_TOUCHWHEEL_HOLD] = "Touchwheel Hold",
-  [ACTION_TOUCHWHEEL_CYCLE] = "Touchwheel Cycle",
+  [ACTION_TOUCHWHEEL] = "Touchwheel",
   [ACTION_LFO_START] = "LFO Start",
   [ACTION_LFO_STOP] = "LFO Stop",
   [ACTION_LFO_TOGGLE] = "LFO Toggle",
@@ -91,6 +90,7 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_SCENE:
     case ACTION_PRESET:
     case ACTION_TRANSPORT:
+    case ACTION_TOUCHWHEEL:
       return true;
     default:
       return false;
@@ -164,6 +164,17 @@ static const char* transport_variant_display(action_variant_t v) {
   }
 }
 
+// Touchwheel family: pre-consolidation labels were "Touchwheel Hold" /
+// "Touchwheel Cycle"; keep that wording so user-facing pads/buttons lists
+// and Khyron readouts read the same as before the rename.
+static const char* touchwheel_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_HOLD:  return "Touchwheel Hold";
+    case VARIANT_CYCLE: return "Touchwheel Cycle";
+    default:            return "Touchwheel";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -188,6 +199,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_TRANSPORT) {
     snprintf(buf, len, "%s", transport_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_TOUCHWHEEL) {
+    snprintf(buf, len, "%s", touchwheel_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

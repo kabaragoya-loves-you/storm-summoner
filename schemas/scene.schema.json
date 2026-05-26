@@ -847,8 +847,7 @@
             "confirm_pending",
             "reset",
             "piano_pedal",
-            "touchwheel_hold",
-            "touchwheel_cycle",
+            "touchwheel",
             "lfo_start",
             "lfo_stop",
             "lfo_toggle",
@@ -872,12 +871,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), and the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record; 'touchwheel' supports Hold/Cycle. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), and the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
           "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), and type='transport' (play/stop/pause/record). Omit for singleton types."
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/pause/record), and type='touchwheel' (hold/cycle). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -968,7 +967,7 @@
           "type": "string",
           "enum": ["always", "if_held", "if_quick"],
           "default": "always",
-          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset_hold, touchwheel_hold, clock_hold, cut_hold, ui_hold, param_hold, rtg_hold, sample_hold_hold."
+          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset, touchwheel, clock_hold, cut_hold, ui_hold, param_hold, rtg_hold, sample_hold_hold."
         },
         "release_threshold_ms": {
           "type": "integer",
@@ -1414,8 +1413,10 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "touchwheel_hold"}
-            }
+              "type":    {"const": "touchwheel"},
+              "variant": {"const": "hold"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["mode", "mode2"],
@@ -1423,14 +1424,19 @@
               "mode": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 7,
-                "description": "User-facing touchwheel mode index on press"
+                "maximum": 12,
+                "description": "User-facing touchwheel mode index on press (13 user modes; see firmware touchwheel_mode_mapping for the list)"
               },
               "mode2": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 7,
-                "description": "User-facing touchwheel mode index on release"
+                "maximum": 12,
+                "description": "User-facing touchwheel mode index on release (used when release_to_original is false)"
+              },
+              "release_to_original": {
+                "type": "boolean",
+                "default": false,
+                "description": "If true, release restores the touchwheel mode captured at press time instead of using mode2"
               }
             }
           }
@@ -1438,8 +1444,10 @@
         {
           "if": {
             "properties": {
-              "type": {"const": "touchwheel_cycle"}
-            }
+              "type":    {"const": "touchwheel"},
+              "variant": {"const": "cycle"}
+            },
+            "required": ["type", "variant"]
           },
           "then": {
             "required": ["num_modes", "modes"],
@@ -1457,9 +1465,9 @@
                 "items": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 7
+                  "maximum": 12
                 },
-                "description": "User-facing touchwheel mode indices to cycle through"
+                "description": "User-facing touchwheel mode indices to cycle through (13 user modes; see firmware touchwheel_mode_mapping for the list)"
               }
             }
           }

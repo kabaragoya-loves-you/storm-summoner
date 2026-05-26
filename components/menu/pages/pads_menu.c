@@ -2436,7 +2436,7 @@ static void build_tw_mode_options(char* buf, size_t buf_size) {
 }
 
 // ============================================================================
-// TW Hold (for ACTION_TOUCHWHEEL_HOLD)
+// TW Hold (for ACTION_TOUCHWHEEL + VARIANT_HOLD)
 // ============================================================================
 
 static lv_obj_t* tw_hold_page_create(void);  // Forward declaration
@@ -2562,7 +2562,7 @@ static lv_obj_t* tw_hold_page_create(void) {
 }
 
 // ============================================================================
-// TW Cycle (for ACTION_TOUCHWHEEL_CYCLE)
+// TW Cycle (for ACTION_TOUCHWHEEL + VARIANT_CYCLE)
 // ============================================================================
 
 static void tw_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -3785,7 +3785,8 @@ static lv_obj_t* pad_detail_page_create(void) {
   }
   
   // Show TW Hold submenu items
-  if (mapping->action.type == ACTION_TOUCHWHEEL_HOLD) {
+  if (mapping->action.type == ACTION_TOUCHWHEEL &&
+      mapping->action.variant == VARIANT_HOLD) {
     uint8_t press_idx = mapping->action.params.tw_mode.mode;
     uint8_t release_idx = mapping->action.params.tw_mode.mode2;
     if (press_idx >= NUM_TOUCHWHEEL_USER_MODES) press_idx = 0;
@@ -3805,7 +3806,8 @@ static lv_obj_t* pad_detail_page_create(void) {
   }
   
   // Show TW Cycle submenu items
-  if (mapping->action.type == ACTION_TOUCHWHEEL_CYCLE) {
+  if (mapping->action.type == ACTION_TOUCHWHEEL &&
+      mapping->action.variant == VARIANT_CYCLE) {
     uint8_t num_steps = mapping->action.params.tw_mode.num_modes;
     if (num_steps < 2) num_steps = 2;
     if (num_steps > 8) num_steps = 8;

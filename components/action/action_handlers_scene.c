@@ -277,34 +277,58 @@ action_handle_result_t action_handlers_scene_dispatch(
       }
       return ACTION_HANDLED;
 
-    case ACTION_TOUCHWHEEL_HOLD: {
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "Touchwheel hold release skipped by follow-up");
-        return ACTION_HANDLED;
-      }
-      uint8_t user_mode_idx = is_press ?
-        action->params.tw_mode.mode : action->params.tw_mode.mode2;
-      const touchwheel_mode_mapping_t* mapping = apply_touchwheel_mode_runtime(user_mode_idx);
-      if (mapping)
-        ESP_LOGD(TAG, "Touchwheel mode hold: %s", mapping->display_name);
-      return ACTION_HANDLED;
-    }
+    case ACTION_TOUCHWHEEL:
+      switch (action->variant) {
+        case VARIANT_HOLD: {
+          action_t* mutable_action = (action_t*)action;
+          if (is_press) {
+            action_followup_record_press(mutable_action);
+            // Snapshot the live touchwheel mode NOW so the release knows
+            // what to restore. We capture even when release_to_original is
+            // false so toggling the flag later (e.g. via console) doesn't
+            // strand a hold action with a stale captured value -- mirrors
+            // the Preset Hold press-time capture pattern.
+            mutable_action->params.tw_mode.captured_mode =
+              touchwheel_get_current_mode_index(scene_get_current());
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "Touchwheel hold release skipped by follow-up");
+            return ACTION_HANDLED;
+          }
+          uint8_t user_mode_idx;
+          if (is_press) {
+            user_mode_idx = action->params.tw_mode.mode;
+          } else if (action->params.tw_mode.release_to_original) {
+            user_mode_idx = action->params.tw_mode.captured_mode;
+          } else {
+            user_mode_idx = action->params.tw_mode.mode2;
+          }
+          const touchwheel_mode_mapping_t* mapping = apply_touchwheel_mode_runtime(user_mode_idx);
+          if (mapping)
+            ESP_LOGD(TAG, "Touchwheel hold: %s -> %s%s",
+              is_press ? "press" : "release",
+              mapping->display_name,
+              (!is_press && action->params.tw_mode.release_to_original) ? " (original)" : "");
+          return ACTION_HANDLED;
+        }
 
-    case ACTION_TOUCHWHEEL_CYCLE:
-      if (is_press) {
-        action_t* mutable_action = (action_t*)action;
-        uint8_t idx = mutable_action->params.tw_mode.current_index;
-        uint8_t user_mode_idx = mutable_action->params.tw_mode.modes[idx];
-        const touchwheel_mode_mapping_t* mapping = apply_touchwheel_mode_runtime(user_mode_idx);
-        if (mapping)
-          ESP_LOGD(TAG, "Cycled touchwheel mode to %s", mapping->display_name);
+        case VARIANT_CYCLE:
+          if (is_press) {
+            action_t* mutable_action = (action_t*)action;
+            uint8_t idx = mutable_action->params.tw_mode.current_index;
+            uint8_t user_mode_idx = mutable_action->params.tw_mode.modes[idx];
+            const touchwheel_mode_mapping_t* mapping = apply_touchwheel_mode_runtime(user_mode_idx);
+            if (mapping)
+              ESP_LOGD(TAG, "Cycled touchwheel mode to %s", mapping->display_name);
 
-        mutable_action->params.tw_mode.current_index =
-          (idx + 1) % mutable_action->params.tw_mode.num_modes;
+            mutable_action->params.tw_mode.current_index =
+              (idx + 1) % mutable_action->params.tw_mode.num_modes;
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unknown Touchwheel variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      return ACTION_HANDLED;
 
     case ACTION_SET_UI:
       if (is_press) {

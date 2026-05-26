@@ -3,6 +3,7 @@
 #include "scene_name_gen.h"
 #include "device_config.h"
 #include "assets_manager.h"
+#include "touchwheel_mode_mapping.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -63,6 +64,55 @@ static uint8_t parse_piano_pedal_arg(const char* arg) {
     case 64: case 66: case 67: case 68: case 69: return (uint8_t)n;
     default: return 0;
   }
+}
+
+// Shared touchwheel parser. Accepts:
+//   variant = "hold" : params = <press_mode> <release_mode | original>
+//   variant = "cycle": params = <mode1> <mode2> ... (up to 8 modes)
+// Returns true on success and fills `action` (type + variant + tw_mode union).
+// Logs the appropriate usage line and returns false on failure. `prefix`
+// describes the trigger context for the usage line, e.g. "pad <num>" or
+// "button <name>", so the user knows which command they were typing.
+static bool parse_touchwheel_action(const char* variant,
+                                    action_t* action,
+                                    const char* const* params,
+                                    int count,
+                                    const char* prefix) {
+  if (!variant || !action || !prefix) return false;
+  action->type = ACTION_TOUCHWHEEL;
+  if (strcmp(variant, "hold") == 0) {
+    if (count < 2) {
+      ESP_LOGE(TAG, "Usage: %s touchwheel hold <press_mode> <release_mode|original>", prefix);
+      return false;
+    }
+    action->variant = VARIANT_HOLD;
+    action->params.tw_mode.mode = (uint8_t)atoi(params[0]);
+    action->params.tw_mode.release_to_original = 0;
+    action->params.tw_mode.captured_mode = 0;
+    if (params[1] && strcmp(params[1], "original") == 0) {
+      action->params.tw_mode.release_to_original = 1;
+      action->params.tw_mode.mode2 = 0;
+    } else {
+      action->params.tw_mode.mode2 = (uint8_t)atoi(params[1]);
+    }
+    return true;
+  }
+  if (strcmp(variant, "cycle") == 0) {
+    if (count < 2) {
+      ESP_LOGE(TAG, "Usage: %s touchwheel cycle <m1> <m2>...<m8>", prefix);
+      return false;
+    }
+    action->variant = VARIANT_CYCLE;
+    action->params.tw_mode.num_modes = 0;
+    for (int i = 0; i < count && action->params.tw_mode.num_modes < 8; i++) {
+      action->params.tw_mode.modes[action->params.tw_mode.num_modes++] =
+        (uint8_t)atoi(params[i]);
+    }
+    action->params.tw_mode.current_index = 0;
+    return true;
+  }
+  ESP_LOGE(TAG, "Usage: %s touchwheel <hold|cycle> ...", prefix);
+  return false;
 }
 
 // Helper to format CC value with optional discrete name
@@ -227,17 +277,31 @@ static void format_action_details_with_device(const action_t* action, const devi
       // each was a separate top-level action type.
       action_get_display_name(action, buf, buf_size);
       break;
-    case ACTION_TOUCHWHEEL_HOLD:
-      snprintf(buf, buf_size, "Touchwheel Hold %d/%d", action->params.tw_mode.mode, action->params.tw_mode.mode2);
-      break;
-    case ACTION_TOUCHWHEEL_CYCLE: {
-      int pos = snprintf(buf, buf_size, "TW Mode cycle:");
-      for (int i = 0; i < action->params.tw_mode.num_modes && pos < (int)buf_size - 4; i++) {
-        pos += snprintf(buf + pos, buf_size - pos, "%s%d", i > 0 ? "," : "",
-          action->params.tw_mode.modes[i]);
+    case ACTION_TOUCHWHEEL:
+      switch (action->variant) {
+        case VARIANT_HOLD: {
+          const char* press_name = touchwheel_get_mode_name(action->params.tw_mode.mode);
+          if (action->params.tw_mode.release_to_original) {
+            snprintf(buf, buf_size, "Touchwheel Hold %s/Orig", press_name);
+          } else {
+            const char* release_name = touchwheel_get_mode_name(action->params.tw_mode.mode2);
+            snprintf(buf, buf_size, "Touchwheel Hold %s/%s", press_name, release_name);
+          }
+          break;
+        }
+        case VARIANT_CYCLE: {
+          int pos = snprintf(buf, buf_size, "TW cycle:");
+          for (int i = 0; i < action->params.tw_mode.num_modes && pos < (int)buf_size - 4; i++) {
+            pos += snprintf(buf + pos, buf_size - pos, "%s%s", i > 0 ? "," : " ",
+              touchwheel_get_mode_name(action->params.tw_mode.modes[i]));
+          }
+          break;
+        }
+        default:
+          snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
+          break;
       }
       break;
-    }
     default:
       // For actions without parameters, just use the action name
       snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
@@ -1196,26 +1260,23 @@ static int cmd_pad(int argc, char **argv) {
         "Usage: pad <num> scene_set <1-128>",
         &action.params.target.number)) return 1;
   }
-  // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode_hold") == 0) {
-    if (pad_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: pad <num> tw_mode_hold <press_mode> <release_mode>");
+  // Touchwheel mode actions (consolidated). Canonical verb is "touchwheel
+  // <hold|cycle> ..."; tw_mode_hold / tw_mode_cycle remain as legacy aliases.
+  else if (strcmp(action_str, "touchwheel") == 0) {
+    if (pad_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: pad <num> touchwheel <hold|cycle> ...");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_HOLD;
-    action.params.tw_mode.mode = atoi(pad_args.params->sval[0]);
-    action.params.tw_mode.mode2 = atoi(pad_args.params->sval[1]);
+    if (!parse_touchwheel_action(pad_args.params->sval[0], &action,
+        &pad_args.params->sval[1], pad_args.params->count - 1, "pad <num>")) return 1;
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (!parse_touchwheel_action("hold", &action,
+        pad_args.params->sval, pad_args.params->count, "pad <num>")) return 1;
   }
   else if (strcmp(action_str, "tw_mode_cycle") == 0) {
-    if (pad_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: pad <num> tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_CYCLE;
-    action.params.tw_mode.num_modes = 0;
-    for (int i = 0; i < pad_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
-      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] = atoi(pad_args.params->sval[i]);
-    }
+    if (!parse_touchwheel_action("cycle", &action,
+        pad_args.params->sval, pad_args.params->count, "pad <num>")) return 1;
   }
   else {
     ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
@@ -1425,27 +1486,23 @@ static int cmd_button(int argc, char **argv) {
         atoi(button_args.params->sval[i]);
     }
   }
-  // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode_hold") == 0) {
-    if (button_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: button <name> tw_mode_hold <press_mode> <release_mode>");
+  // Touchwheel mode actions (consolidated). Canonical verb is "touchwheel
+  // <hold|cycle> ..."; tw_mode_hold / tw_mode_cycle remain as legacy aliases.
+  else if (strcmp(action_str, "touchwheel") == 0) {
+    if (button_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: button <name> touchwheel <hold|cycle> ...");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_HOLD;
-    action.params.tw_mode.mode = atoi(button_args.params->sval[0]);
-    action.params.tw_mode.mode2 = atoi(button_args.params->sval[1]);
+    if (!parse_touchwheel_action(button_args.params->sval[0], &action,
+        &button_args.params->sval[1], button_args.params->count - 1, "button <name>")) return 1;
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (!parse_touchwheel_action("hold", &action,
+        button_args.params->sval, button_args.params->count, "button <name>")) return 1;
   }
   else if (strcmp(action_str, "tw_mode_cycle") == 0) {
-    if (button_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: button <name> tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_CYCLE;
-    action.params.tw_mode.num_modes = 0;
-    for (int i = 0; i < button_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
-      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] =
-        atoi(button_args.params->sval[i]);
-    }
+    if (!parse_touchwheel_action("cycle", &action,
+        button_args.params->sval, button_args.params->count, "button <name>")) return 1;
   }
   else {
     ESP_LOGE(TAG, "Unknown action: %s. Type 'actions' for help", action_str);
@@ -1667,28 +1724,25 @@ static int cmd_bump(int argc, char **argv) {
         atoi(bump_args.params->sval[i]);
     }
   }
-  // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode_hold") == 0) {
-    // Note: will be rejected by action_requires_hold check
-    if (bump_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: bump tw_mode_hold <press_mode> <release_mode>");
+  // Touchwheel mode actions (consolidated). Canonical verb is "touchwheel
+  // <hold|cycle> ..."; tw_mode_hold / tw_mode_cycle remain as legacy aliases.
+  // Hold variants will be rejected by the unified validator (bump has no
+  // release event); cycle stays valid on bump.
+  else if (strcmp(action_str, "touchwheel") == 0) {
+    if (bump_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: bump touchwheel <hold|cycle> ...");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_HOLD;
-    action.params.tw_mode.mode = atoi(bump_args.params->sval[0]);
-    action.params.tw_mode.mode2 = atoi(bump_args.params->sval[1]);
+    if (!parse_touchwheel_action(bump_args.params->sval[0], &action,
+        &bump_args.params->sval[1], bump_args.params->count - 1, "bump")) return 1;
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (!parse_touchwheel_action("hold", &action,
+        bump_args.params->sval, bump_args.params->count, "bump")) return 1;
   }
   else if (strcmp(action_str, "tw_mode_cycle") == 0) {
-    if (bump_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: bump tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_CYCLE;
-    action.params.tw_mode.num_modes = 0;
-    for (int i = 0; i < bump_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
-      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] =
-        atoi(bump_args.params->sval[i]);
-    }
+    if (!parse_touchwheel_action("cycle", &action,
+        bump_args.params->sval, bump_args.params->count, "bump")) return 1;
   }
   else if (strcmp(action_str, "none") == 0) {
     // Clear bump assignment
@@ -1890,26 +1944,23 @@ static int cmd_expr_switch(int argc, char **argv) {
     action.params.preset.program = atoi(expr_switch_args.params->sval[0]);
   }
   // Touchwheel mode actions
-  else if (strcmp(action_str, "tw_mode_hold") == 0) {
-    if (expr_switch_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: expr_switch tw_mode_hold <press_mode> <release_mode>");
+  // Touchwheel mode actions (consolidated). Canonical verb is "touchwheel
+  // <hold|cycle> ..."; tw_mode_hold / tw_mode_cycle remain as legacy aliases.
+  else if (strcmp(action_str, "touchwheel") == 0) {
+    if (expr_switch_args.params->count < 1) {
+      ESP_LOGE(TAG, "Usage: expr_switch touchwheel <hold|cycle> ...");
       return 1;
     }
-    action.type = ACTION_TOUCHWHEEL_HOLD;
-    action.params.tw_mode.mode = atoi(expr_switch_args.params->sval[0]);
-    action.params.tw_mode.mode2 = atoi(expr_switch_args.params->sval[1]);
+    if (!parse_touchwheel_action(expr_switch_args.params->sval[0], &action,
+        &expr_switch_args.params->sval[1], expr_switch_args.params->count - 1, "expr_switch")) return 1;
+  }
+  else if (strcmp(action_str, "tw_mode_hold") == 0) {
+    if (!parse_touchwheel_action("hold", &action,
+        expr_switch_args.params->sval, expr_switch_args.params->count, "expr_switch")) return 1;
   }
   else if (strcmp(action_str, "tw_mode_cycle") == 0) {
-    if (expr_switch_args.params->count < 2) {
-      ESP_LOGE(TAG, "Usage: expr_switch tw_mode_cycle <mode1> <mode2> ... (up to 8 modes)");
-      return 1;
-    }
-    action.type = ACTION_TOUCHWHEEL_CYCLE;
-    action.params.tw_mode.num_modes = 0;
-    for (int i = 0; i < expr_switch_args.params->count && action.params.tw_mode.num_modes < 8; i++) {
-      action.params.tw_mode.modes[action.params.tw_mode.num_modes++] =
-        atoi(expr_switch_args.params->sval[i]);
-    }
+    if (!parse_touchwheel_action("cycle", &action,
+        expr_switch_args.params->sval, expr_switch_args.params->count, "expr_switch")) return 1;
   }
   else if (strcmp(action_str, "none") == 0) {
     // Clear expr_switch assignment
@@ -2124,8 +2175,9 @@ static int cmd_actions(int argc, char **argv) {
   ESP_LOGI(TAG, "  none                             - Clear assignment");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Touchwheel Mode:");
-  ESP_LOGI(TAG, "  tw_mode_hold <press> <release>   - Mode on press, restore on release");
-  ESP_LOGI(TAG, "  tw_mode_cycle <m1> <m2>...<m8>   - Cycle through 2-8 modes");
+  ESP_LOGI(TAG, "  touchwheel hold <press> <release|original>  - Mode on press, restore on release");
+  ESP_LOGI(TAG, "  touchwheel cycle <m1> <m2>...<m8>           - Cycle through 2-8 modes");
+  ESP_LOGI(TAG, "  (legacy aliases: tw_mode_hold, tw_mode_cycle)");
   ESP_LOGI(TAG, "    Modes: 0=pads 1=pc 2=cc 3=tempo 4=pitch_bend");
   ESP_LOGI(TAG, "           5=aftertouch 6=double_cc");
   

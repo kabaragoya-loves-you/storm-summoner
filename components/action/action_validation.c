@@ -12,7 +12,6 @@ static const char* TAG = "action_validation";
 // answer.
 static const action_type_t hold_actions[] = {
   ACTION_NOTE,
-  ACTION_TOUCHWHEEL_HOLD,
   ACTION_PIANO_PEDAL,
   ACTION_LFO_TOGGLE,  // Toggle needs discrete press
   ACTION_LFO_SHAPE,   // Shape cycle needs discrete press
@@ -38,6 +37,7 @@ bool action_requires_hold_for(const action_t* action) {
   if (action->type == ACTION_TEMPO && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_CONTROL && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_PRESET && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_TOUCHWHEEL && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -50,7 +50,6 @@ bool action_requires_hold_for(const action_t* action) {
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
-    case ACTION_TOUCHWHEEL_HOLD:
     case ACTION_CLOCK_HOLD:
     case ACTION_CUT_HOLD:
     case ACTION_UI_HOLD:
@@ -61,6 +60,7 @@ bool action_supports_followup_for(const action_t* action) {
     case ACTION_TEMPO:
     case ACTION_CONTROL:
     case ACTION_PRESET:
+    case ACTION_TOUCHWHEEL:
       return action->variant == VARIANT_HOLD;
     default:
       return false;
@@ -150,20 +150,12 @@ bool action_is_fire_and_forget_for(const action_t* action) {
 // inputs; param hold/cycle same constraint).
 static bool action_input_restriction_allows(action_type_t type,
                                             action_trigger_type_t trigger) {
-  // Touchwheel Hold: needs an input that lets the user keep contact.
-  //   Valid: Pads 8-11, Buttons, Expression switch.
-  if (type == ACTION_TOUCHWHEEL_HOLD) {
-    switch (trigger) {
-      case ACTION_TRIGGER_TOUCHPAD_8_11:
-      case ACTION_TRIGGER_BUTTON:
-      case ACTION_TRIGGER_EXPR_SWITCH:
-        return true;
-      default:
-        return false;
-    }
-  }
-  // Touchwheel Cycle: same as Hold but bump is also OK (no release needed).
-  if (type == ACTION_TOUCHWHEEL_CYCLE) {
+  // Touchwheel (HOLD / CYCLE): hardware-input gate. Allow the touchwheel-
+  // adjacent triggers; the HOLD variant's "needs a release pair" requirement
+  // is enforced separately by Rule 1 (action_requires_hold_for + caps
+  // .delivers_release), so HOLD on BUMP is already blocked upstream without
+  // a variant check here.
+  if (type == ACTION_TOUCHWHEEL) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
       case ACTION_TRIGGER_BUTTON:
@@ -335,6 +327,12 @@ bool action_supports_timing_for(const action_t* action) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
+  if (action->type == ACTION_TOUCHWHEEL) {
+    // HOLD needs a release pair (can't be scheduled or repeated).
+    // CYCLE is a press-only one-shot that schedules and repeats just fine.
+    if (action->variant == VARIANT_HOLD) return false;
+    return true;
+  }
   return action_supports_timing(action->type);
 }
 
@@ -362,6 +360,11 @@ bool action_supports_repeat_for(const action_t* action) {
     // (CYCLE advances the cursor, INC/DEC step the device preset, SET
     // just resends the same PC).
     return action->variant != VARIANT_HOLD;
+  }
+  if (action->type == ACTION_TOUCHWHEEL) {
+    // HOLD has nowhere to send repeated release events; suppress.
+    // CYCLE advances the mode cursor on every press -- repeats fine.
+    return action->variant == VARIANT_CYCLE;
   }
   return action_supports_repeat(action->type);
 }

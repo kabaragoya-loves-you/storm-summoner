@@ -88,6 +88,7 @@ static char s_tw_hold_press_label[LABEL_BUFFER_SETS][32];
 static char s_tw_hold_release_label[LABEL_BUFFER_SETS][32];
 static char s_tw_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_tw_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
+static char s_touchwheel_variant_label[LABEL_BUFFER_SETS][24];
 static char s_scene_label[LABEL_BUFFER_SETS][40];
 static char s_scene_variant_label[LABEL_BUFFER_SETS][24];
 static char s_preset_variant_label[LABEL_BUFFER_SETS][24];
@@ -174,8 +175,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_RANDOMIZE,
   ACTION_RESET,
   ACTION_PIANO_PEDAL,
-  ACTION_TOUCHWHEEL_HOLD,
-  ACTION_TOUCHWHEEL_CYCLE,
+  ACTION_TOUCHWHEEL,
   ACTION_LFO_START,
   ACTION_LFO_STOP,
   ACTION_LFO_TOGGLE,
@@ -235,8 +235,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_CONFIRM_PENDING: return "Confirm Pending";
     case ACTION_RESET: return "Reset";
     case ACTION_PIANO_PEDAL: return "Piano Pedal";
-    case ACTION_TOUCHWHEEL_HOLD: return "Touchwheel Hold";
-    case ACTION_TOUCHWHEEL_CYCLE: return "Touchwheel Cycle";
+    case ACTION_TOUCHWHEEL: return "Touchwheel";
     case ACTION_LFO_START: return "LFO Start";
     case ACTION_LFO_STOP: return "LFO Stop";
     case ACTION_LFO_TOGGLE: return "LFO Toggle";
@@ -668,12 +667,14 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.piano_pedal.cc_number = 64;
     }
 
-    if (new_type == ACTION_TOUCHWHEEL_HOLD) {
+    if (new_type == ACTION_TOUCHWHEEL) {
+      // Default variant is HOLD; touchwheel_variant_confirm_cb handles
+      // user-driven switches between HOLD and CYCLE. Seed both variants'
+      // fields so flipping variant in the menu sees sensible defaults.
+      action->variant = VARIANT_HOLD;
       action->params.tw_mode.mode = 0;
       action->params.tw_mode.mode2 = 0;
-    }
-    
-    if (new_type == ACTION_TOUCHWHEEL_CYCLE) {
+      action->params.tw_mode.release_to_original = 0;
       action->params.tw_mode.num_modes = 2;
       action->params.tw_mode.modes[0] = 0;
       action->params.tw_mode.modes[1] = 0;
@@ -3333,6 +3334,110 @@ static void nav_to_pedal_select(void* user_data) {
 }
 
 // ============================================================================
+// Touchwheel Variant Roller (for ACTION_TOUCHWHEEL -- HOLD / CYCLE picker)
+// ============================================================================
+//
+// Mirrors the Preset/Tempo/Control variant pickers: a fixed candidate list
+// is filtered against the trigger and then rendered into a roller. Switching
+// variant via this picker seeds the new variant's union fields without
+// stomping whatever the user already configured for the other variant.
+
+static const action_variant_t s_touchwheel_variants[] = {
+  VARIANT_HOLD,
+  VARIANT_CYCLE,
+};
+#define NUM_TOUCHWHEEL_VARIANTS (sizeof(s_touchwheel_variants) / sizeof(s_touchwheel_variants[0]))
+
+static action_variant_t s_filtered_touchwheel_variants[NUM_TOUCHWHEEL_VARIANTS];
+static size_t s_num_filtered_touchwheel_variants = 0;
+
+static void build_filtered_touchwheel_variants(void) {
+  s_num_filtered_touchwheel_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_TOUCHWHEEL_VARIANTS; i++) {
+    action_variant_t v = s_touchwheel_variants[i];
+    if (!action_variant_is_valid_for_trigger(ACTION_TOUCHWHEEL, v, s_ctx->trigger_type)) continue;
+    s_filtered_touchwheel_variants[s_num_filtered_touchwheel_variants++] = v;
+  }
+}
+
+static void touchwheel_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_touchwheel_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_touchwheel_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+
+    // Seed missing fields if switching to a variant the user has not
+    // configured yet. The union members for HOLD and CYCLE don't overlap
+    // semantically, so we leave the other variant's stored values intact
+    // in case the user flips back -- they'll find what they had before.
+    switch (new_variant) {
+      case VARIANT_HOLD:
+        // mode / mode2 / release_to_original already valid (zero-init or
+        // previously set); nothing extra needed.
+        break;
+      case VARIANT_CYCLE:
+        if (action->params.tw_mode.num_modes < 2 || action->params.tw_mode.num_modes > 8) {
+          action->params.tw_mode.num_modes = 2;
+        }
+        action->params.tw_mode.current_index = 0;
+        break;
+      default:
+        break;
+    }
+
+    ESP_LOGI(TAG, "Touchwheel variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* touchwheel_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_touchwheel_variants();
+  if (s_num_filtered_touchwheel_variants == 0) return NULL;
+
+  static char options[64];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_touchwheel_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_touchwheel_variants[i]));
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_touchwheel_variants; i++) {
+    if (s_filtered_touchwheel_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, touchwheel_variant_confirm_cb, NULL);
+}
+
+static void nav_to_touchwheel_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", touchwheel_variant_roller_create);
+}
+
+// ============================================================================
 // Touchwheel Mode Helpers (shared by Hold and Cycle)
 // ============================================================================
 
@@ -3352,7 +3457,7 @@ static void build_tw_mode_options(char* buf, size_t buf_size) {
 }
 
 // ============================================================================
-// Touchwheel Hold Rollers (for ACTION_TOUCHWHEEL_HOLD)
+// Touchwheel Hold Rollers (for ACTION_TOUCHWHEEL + VARIANT_HOLD)
 // ============================================================================
 
 static void tw_hold_press_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -3404,26 +3509,59 @@ static void tw_hold_release_confirm_cb(uint32_t selected_idx, void* user_data) {
     menu_navigate_back();
     return;
   }
-  
-  if (selected_idx < NUM_TOUCHWHEEL_USER_MODES) {
-    s_ctx->target_action->params.tw_mode.mode2 = (uint8_t)selected_idx;
-    ESP_LOGI(TAG, "TW Hold release set to %s", touchwheel_get_mode_name(selected_idx));
+
+  // Index 0 is the synthetic "Original" entry; real user-mode indices
+  // start at 1 and map to (selected_idx - 1). Mirrors the Preset Hold
+  // release roller's Original-injection scheme.
+  action_t* action = s_ctx->target_action;
+  if (selected_idx == 0) {
+    action->params.tw_mode.release_to_original = 1;
+    ESP_LOGI(TAG, "TW Hold release set to Original (capture-on-press)");
+  } else {
+    uint32_t mode_idx = selected_idx - 1;
+    if (mode_idx < NUM_TOUCHWHEEL_USER_MODES) {
+      action->params.tw_mode.release_to_original = 0;
+      action->params.tw_mode.mode2 = (uint8_t)mode_idx;
+      ESP_LOGI(TAG, "TW Hold release set to %s",
+        touchwheel_get_mode_name((uint8_t)mode_idx));
+    }
   }
-  
+
   s_callback_in_progress = false;
   return_to_detail_page(2);
 }
 
 static lv_obj_t* tw_hold_release_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
-  
-  static char options[512];
-  build_tw_mode_options(options, sizeof(options));
-  
-  uint8_t current = s_ctx->target_action->params.tw_mode.mode2;
-  if (current >= NUM_TOUCHWHEEL_USER_MODES) current = 0;
-  
-  return menu_create_roller_page("Release", options, current, tw_hold_release_confirm_cb, NULL);
+
+  // "Original" leads the roller: when picked, release restores whatever
+  // mode the touchwheel was in at press time. The 13 user modes follow.
+  static char options[640];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+
+  int written = snprintf(pos, remaining, "Original");
+  if (written > 0 && (size_t)written < remaining) {
+    pos += written;
+    remaining -= written;
+  }
+  for (uint8_t i = 0; i < NUM_TOUCHWHEEL_USER_MODES && remaining > 20; i++) {
+    written = snprintf(pos, remaining, "\n%s", touchwheel_get_mode_name(i));
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= written;
+    }
+  }
+
+  uint32_t current_idx = 0;
+  if (!s_ctx->target_action->params.tw_mode.release_to_original) {
+    uint8_t current = s_ctx->target_action->params.tw_mode.mode2;
+    if (current >= NUM_TOUCHWHEEL_USER_MODES) current = 0;
+    current_idx = (uint32_t)current + 1;  // +1 to skip the "Original" entry
+  }
+
+  return menu_create_roller_page("Release", options, current_idx, tw_hold_release_confirm_cb, NULL);
 }
 
 static void nav_to_tw_hold_release(void* user_data) {
@@ -3432,7 +3570,7 @@ static void nav_to_tw_hold_release(void* user_data) {
 }
 
 // ============================================================================
-// Touchwheel Cycle Rollers (for ACTION_TOUCHWHEEL_CYCLE)
+// Touchwheel Cycle Rollers (for ACTION_TOUCHWHEEL + VARIANT_CYCLE)
 // ============================================================================
 
 static void tw_cycle_steps_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -6919,46 +7057,59 @@ lv_obj_t* action_config_detail_page_create(void) {
     };
   }
   
-  // Show Touchwheel Hold items
-  if (action->type == ACTION_TOUCHWHEEL_HOLD) {
-    uint8_t press_idx = action->params.tw_mode.mode;
-    uint8_t release_idx = action->params.tw_mode.mode2;
-    if (press_idx >= NUM_TOUCHWHEEL_USER_MODES) press_idx = 0;
-    if (release_idx >= NUM_TOUCHWHEEL_USER_MODES) release_idx = 0;
-    
-    snprintf(s_tw_hold_press_label[buf], sizeof(s_tw_hold_press_label[buf]),
-      "Press\n%s", touchwheel_get_mode_name(press_idx));
-    snprintf(s_tw_hold_release_label[buf], sizeof(s_tw_hold_release_label[buf]),
-      "Release\n%s", touchwheel_get_mode_name(release_idx));
-    
+  // Show Touchwheel (consolidated) items. Variant row first (HOLD / CYCLE),
+  // then variant-specific rows. HOLD's release roller offers "Original" as
+  // the first option which captures the live mode at press time and restores
+  // it on release.
+  if (action->type == ACTION_TOUCHWHEEL) {
+    snprintf(s_touchwheel_variant_label[buf], sizeof(s_touchwheel_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
+      s_touchwheel_variant_label[buf], nav_to_touchwheel_variant, NULL, true
     };
-    s_detail_items[item_count++] = (menu_item_t){
-      s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true
-    };
-  }
-  
-  // Show Touchwheel Cycle items
-  if (action->type == ACTION_TOUCHWHEEL_CYCLE) {
-    uint8_t num_steps = action->params.tw_mode.num_modes;
-    if (num_steps < 2) num_steps = 2;
-    if (num_steps > 8) num_steps = 8;
-    
-    snprintf(s_tw_cycle_steps_label[buf], sizeof(s_tw_cycle_steps_label[buf]),
-      "Steps\n%u", (unsigned)num_steps);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true
-    };
-    
-    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
-      uint8_t mode_idx = action->params.tw_mode.modes[i];
-      if (mode_idx >= NUM_TOUCHWHEEL_USER_MODES) mode_idx = 0;
-      snprintf(s_tw_cycle_step_labels[buf][i], sizeof(s_tw_cycle_step_labels[buf][i]),
-        "Step %d\n%s", i + 1, touchwheel_get_mode_name(mode_idx));
+
+    if (action->variant == VARIANT_HOLD) {
+      uint8_t press_idx = action->params.tw_mode.mode;
+      if (press_idx >= NUM_TOUCHWHEEL_USER_MODES) press_idx = 0;
+
+      snprintf(s_tw_hold_press_label[buf], sizeof(s_tw_hold_press_label[buf]),
+        "Press\n%s", touchwheel_get_mode_name(press_idx));
       s_detail_items[item_count++] = (menu_item_t){
-        s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true
+        s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
       };
+
+      if (action->params.tw_mode.release_to_original) {
+        snprintf(s_tw_hold_release_label[buf], sizeof(s_tw_hold_release_label[buf]),
+          "Release\nOriginal");
+      } else {
+        uint8_t release_idx = action->params.tw_mode.mode2;
+        if (release_idx >= NUM_TOUCHWHEEL_USER_MODES) release_idx = 0;
+        snprintf(s_tw_hold_release_label[buf], sizeof(s_tw_hold_release_label[buf]),
+          "Release\n%s", touchwheel_get_mode_name(release_idx));
+      }
+      s_detail_items[item_count++] = (menu_item_t){
+        s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true
+      };
+    } else if (action->variant == VARIANT_CYCLE) {
+      uint8_t num_steps = action->params.tw_mode.num_modes;
+      if (num_steps < 2) num_steps = 2;
+      if (num_steps > 8) num_steps = 8;
+
+      snprintf(s_tw_cycle_steps_label[buf], sizeof(s_tw_cycle_steps_label[buf]),
+        "Steps\n%u", (unsigned)num_steps);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true
+      };
+
+      for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+        uint8_t mode_idx = action->params.tw_mode.modes[i];
+        if (mode_idx >= NUM_TOUCHWHEEL_USER_MODES) mode_idx = 0;
+        snprintf(s_tw_cycle_step_labels[buf][i], sizeof(s_tw_cycle_step_labels[buf][i]),
+          "Step %d\n%s", i + 1, touchwheel_get_mode_name(mode_idx));
+        s_detail_items[item_count++] = (menu_item_t){
+          s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true
+        };
+      }
     }
   }
   

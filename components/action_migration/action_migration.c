@@ -105,14 +105,19 @@ static const legacy_alias_t s_legacy_aliases[] = {
   // Pre-consolidation randomize name
   { "randomize_cc",     ACTION_RANDOMIZE,        VARIANT_NONE      },
 
-  // Pre-consolidation touchwheel mode names. The bare "tw_mode" /
-  // "touchwheel" types were removed entirely; they map to NONE so an
-  // outdated scene's pad just becomes unassigned rather than firing
-  // something unexpected.
+  // Pre-consolidation touchwheel mode names. Bare "tw_mode" stays mapped
+  // to NONE (the old generic name never carried enough info to dispatch).
+  // Bare "touchwheel" no longer needs a NONE entry -- it now matches the
+  // new canonical ACTION_TOUCHWHEEL through action_type_json_names, with
+  // json_to_action's default-variant fallback picking VARIANT_HOLD.
+  // tw_mode_hold / tw_mode_cycle and the former canonical touchwheel_hold
+  // / touchwheel_cycle JSON names move into the legacy table carrying
+  // explicit variants.
   { "tw_mode",          ACTION_NONE,             VARIANT_NONE      },
-  { "touchwheel",       ACTION_NONE,             VARIANT_NONE      },
-  { "tw_mode_hold",     ACTION_TOUCHWHEEL_HOLD,  VARIANT_NONE      },
-  { "tw_mode_cycle",    ACTION_TOUCHWHEEL_CYCLE, VARIANT_NONE      },
+  { "tw_mode_hold",     ACTION_TOUCHWHEEL,       VARIANT_HOLD      },
+  { "tw_mode_cycle",    ACTION_TOUCHWHEEL,       VARIANT_CYCLE     },
+  { "touchwheel_hold",  ACTION_TOUCHWHEEL,       VARIANT_HOLD      },
+  { "touchwheel_cycle", ACTION_TOUCHWHEEL,       VARIANT_CYCLE     },
 };
 
 static const size_t s_legacy_alias_count =

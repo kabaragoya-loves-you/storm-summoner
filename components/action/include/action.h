@@ -57,9 +57,11 @@ typedef enum {
   // engine flag rather than a physical-pedal concept.
   ACTION_PIANO_PEDAL,
   
-  // Touchwheel mode control
-  ACTION_TOUCHWHEEL_HOLD,     // Set mode on press, restore on release
-  ACTION_TOUCHWHEEL_CYCLE,    // Cycle through touchwheel modes
+  // Touchwheel mode control (consolidated -- variants HOLD / CYCLE)
+  //   HOLD  = set mode on press, restore on release (or capture/restore the
+  //           live mode when release_to_original is set)
+  //   CYCLE = step through a list of 2-8 modes, one per press
+  ACTION_TOUCHWHEEL,
   
   // LFO control
   ACTION_LFO_START,           // Start LFO (slot: 1, 2, or 3=both)
@@ -354,13 +356,18 @@ typedef struct {
       uint8_t cc_numbers[8];
     } randomize;
     
-    // For touchwheel mode actions
+    // For ACTION_TOUCHWHEEL (consolidated -- variants HOLD / CYCLE).
+    // Storage is user-facing mode indices (0 .. NUM_TOUCHWHEEL_USER_MODES-1),
+    // NOT touchwheel_mode_t engine enums. The handler resolves the user
+    // index through apply_touchwheel_mode_runtime() at dispatch time.
     struct {
-      uint8_t mode;           // Primary mode (touchwheel_mode_t)
-      uint8_t mode2;          // For hold: release mode
-      uint8_t num_modes;      // For cycle: number of modes (2-8)
-      uint8_t modes[8];       // For cycle: mode values
-      uint8_t current_index;  // Current position in cycle
+      uint8_t mode;                // VARIANT_HOLD: press mode (user index)
+      uint8_t mode2;               // VARIANT_HOLD: release mode (user index; used when release_to_original == 0)
+      uint8_t release_to_original; // VARIANT_HOLD: 0 = restore mode2 (default), 1 = restore captured_mode
+      uint8_t captured_mode;       // VARIANT_HOLD transient: live mode snapshot taken at press time; not persisted
+      uint8_t num_modes;           // VARIANT_CYCLE: number of modes (2-8)
+      uint8_t modes[8];            // VARIANT_CYCLE: user-mode indices per step
+      uint8_t current_index;       // VARIANT_CYCLE: rotating cursor (mutable at runtime)
     } tw_mode;
     
     // For LFO actions (start, stop, toggle, shape)

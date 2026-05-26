@@ -164,8 +164,10 @@ static void reset_action_cycle_index(action_t* action) {
         action->params.tempo.current_index = 0;
       }
       break;
-    case ACTION_TOUCHWHEEL_CYCLE:
-      action->params.tw_mode.current_index = 0;
+    case ACTION_TOUCHWHEEL:
+      if (action->variant == VARIANT_CYCLE) {
+        action->params.tw_mode.current_index = 0;
+      }
       break;
     case ACTION_LFO_SHAPE:
       action->params.lfo.current_index = 0;
@@ -270,9 +272,11 @@ static void handle_beat_event(const event_t* event, void* context) {
                   pending->action.params.tempo.current_index;
               }
               break;
-            case ACTION_TOUCHWHEEL_CYCLE:
-              pending->original->params.tw_mode.current_index =
-                pending->action.params.tw_mode.current_index;
+            case ACTION_TOUCHWHEEL:
+              if (pending->action.variant == VARIANT_CYCLE) {
+                pending->original->params.tw_mode.current_index =
+                  pending->action.params.tw_mode.current_index;
+              }
               break;
             case ACTION_LFO_SHAPE:
               pending->original->params.lfo.current_index =

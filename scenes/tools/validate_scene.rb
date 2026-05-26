@@ -22,6 +22,7 @@ VALID_ACTION_TYPES = %w[
   all_notes_off all_sound_off
   sustain sostenuto
   tw_mode_hold tw_mode_cycle
+  touchwheel touchwheel_hold touchwheel_cycle
 ].freeze
 
 # Valid touchwheel modes
@@ -84,19 +85,63 @@ def validate_action(action, context, errors)
     if action['value'] && !(action['value'].is_a?(Integer) && action['value'].between?(0, 16383))
       errors << "#{context}: 'value' must be 0-16383"
     end
-  when 'tw_mode_hold'
-    unless action['mode'].is_a?(Integer) && action['mode'].between?(0, 8)
-      errors << "#{context}: requires 'mode' (0-8)"
+  when 'tw_mode_hold', 'touchwheel_hold'
+    # Legacy single-type entries. New 'touchwheel' type below dispatches on
+    # variant. Mode index cap matches firmware NUM_TOUCHWHEEL_USER_MODES = 13.
+    unless action['mode'].is_a?(Integer) && action['mode'].between?(0, 12)
+      errors << "#{context}: requires 'mode' (0-12)"
     end
-    unless action['mode2'].is_a?(Integer) && action['mode2'].between?(0, 8)
-      errors << "#{context}: requires 'mode2' (0-8)"
+    unless action['mode2'].is_a?(Integer) && action['mode2'].between?(0, 12)
+      errors << "#{context}: requires 'mode2' (0-12)"
     end
-  when 'tw_mode_cycle'
+  when 'tw_mode_cycle', 'touchwheel_cycle'
     unless action['num_modes'].is_a?(Integer) && action['num_modes'].between?(2, 8)
       errors << "#{context}: requires 'num_modes' (2-8)"
     end
     unless action['modes'].is_a?(Array) && action['modes'].length >= 2
       errors << "#{context}: requires 'modes' array with 2+ values"
+    end
+    if action['modes'].is_a?(Array)
+      action['modes'].each_with_index do |m, i|
+        unless m.is_a?(Integer) && m.between?(0, 12)
+          errors << "#{context}: modes[#{i}] must be 0-12 (got #{m.inspect})"
+        end
+      end
+    end
+  when 'touchwheel'
+    # Consolidated type. Variant decides which fields are required.
+    variant = action['variant']
+    case variant
+    when 'hold', nil
+      # nil variant defaults to hold per firmware fallback
+      unless action['mode'].is_a?(Integer) && action['mode'].between?(0, 12)
+        errors << "#{context}: touchwheel hold requires 'mode' (0-12)"
+      end
+      if action['release_to_original']
+        unless [true, false].include?(action['release_to_original'])
+          errors << "#{context}: 'release_to_original' must be boolean"
+        end
+      else
+        unless action['mode2'].is_a?(Integer) && action['mode2'].between?(0, 12)
+          errors << "#{context}: touchwheel hold requires 'mode2' (0-12) unless release_to_original is true"
+        end
+      end
+    when 'cycle'
+      unless action['num_modes'].is_a?(Integer) && action['num_modes'].between?(2, 8)
+        errors << "#{context}: touchwheel cycle requires 'num_modes' (2-8)"
+      end
+      unless action['modes'].is_a?(Array) && action['modes'].length >= 2
+        errors << "#{context}: touchwheel cycle requires 'modes' array with 2+ values"
+      end
+      if action['modes'].is_a?(Array)
+        action['modes'].each_with_index do |m, i|
+          unless m.is_a?(Integer) && m.between?(0, 12)
+            errors << "#{context}: modes[#{i}] must be 0-12 (got #{m.inspect})"
+          end
+        end
+      end
+    else
+      errors << "#{context}: touchwheel variant must be 'hold' or 'cycle' (got #{variant.inspect})"
     end
   end
 end

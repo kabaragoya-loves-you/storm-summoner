@@ -288,6 +288,26 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       action->variant == VARIANT_INCREMENT ? '+' : '-', (unsigned)amount);
     summary->has_value = true;
 
+  } else if (action->type == ACTION_TOUCHWHEEL && action->variant == VARIANT_HOLD) {
+    snprintf(summary->param_name, sizeof(summary->param_name), "Modes");
+    summary->has_param = true;
+    const char* press_name = touchwheel_get_mode_name(action->params.tw_mode.mode);
+    if (action->params.tw_mode.release_to_original) {
+      snprintf(summary->param_value, sizeof(summary->param_value), "%s / Orig", press_name);
+    } else {
+      const char* release_name = touchwheel_get_mode_name(action->params.tw_mode.mode2);
+      snprintf(summary->param_value, sizeof(summary->param_value), "%s / %s",
+        press_name, release_name);
+    }
+    summary->has_value = true;
+
+  } else if (action->type == ACTION_TOUCHWHEEL && action->variant == VARIANT_CYCLE) {
+    snprintf(summary->param_name, sizeof(summary->param_name), "Modes");
+    summary->has_param = true;
+    snprintf(summary->param_value, sizeof(summary->param_value), "%u modes",
+      (unsigned)action->params.tw_mode.num_modes);
+    summary->has_value = true;
+
   } else if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||
              action->type == ACTION_LFO_TOGGLE) {
     uint8_t slot = action->params.lfo.slot;
