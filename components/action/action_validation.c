@@ -13,8 +13,10 @@ static const char* TAG = "action_validation";
 static const action_type_t hold_actions[] = {
   ACTION_NOTE,
   ACTION_PIANO_PEDAL,
-  ACTION_LFO_TOGGLE,  // Toggle needs discrete press
-  ACTION_LFO_SHAPE,   // Shape cycle needs discrete press
+  // ACTION_LFO is intentionally NOT in this list. None of its variants are
+  // press/release pairs (START/STOP/TOGGLE/MODIFY are all press-only). The
+  // per-variant timing/repeat restrictions for TOGGLE live in the
+  // action_supports_timing_for / action_supports_repeat_for carve-outs.
   ACTION_CLOCK_HOLD,
   ACTION_CLOCK_BURST,
   ACTION_CUT_HOLD,
@@ -45,8 +47,8 @@ bool action_requires_hold_for(const action_t* action) {
 // phase on hold duration. Excludes:
 //   - NOTE / SUSTAIN / SOSTENUTO -- the release IS the NoteOff / CC=0
 //     pair; suppressing it strands a note or pedal.
-//   - LFO_TOGGLE / LFO_SHAPE / CLOCK_BURST -- not symmetric press/release
-//     pairs (toggle / cycle / one-shot on press).
+//   - LFO variants / CLOCK_BURST -- not symmetric press/release pairs
+//     (start/stop/toggle/modify and one-shot burst all fire on press only).
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
@@ -132,11 +134,11 @@ bool action_is_fire_and_forget_for(const action_t* action) {
     case ACTION_RANDOMIZE:
     case ACTION_RESET:
     case ACTION_BOOMERANG:
-    // LFO_START/STOP -- fire-and-forget at the category level. Rule 4 of
-    // the validator additionally rejects them on ON_LOAD (LFOs auto-start
-    // from scene config), but ON_PLAY is fine.
-    case ACTION_LFO_START:
-    case ACTION_LFO_STOP:
+    // ACTION_LFO -- all variants (START/STOP/TOGGLE/MODIFY) are press-only
+    // one-shots, so fire-and-forget at the category level. Rule 4 of the
+    // validator additionally rejects START/STOP/TOGGLE on ON_LOAD (LFOs
+    // auto-start from scene config), but MODIFY and ON_PLAY are fine.
+    case ACTION_LFO:
       return true;
 
     default:
@@ -217,12 +219,17 @@ bool action_is_valid_for_trigger_for(const action_t* action,
     return false;
   }
 
-  // Rule 4: LFO_START/STOP rejected on ON_LOAD (LFOs auto-start from scene
-  //   config; firing them here would race the init path). ON_PLAY is fine
-  //   because the scene is already live by then.
-  if (caps.fires_at_load_time &&
-      (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP)) {
-    return false;
+  // Rule 4: ACTION_LFO START/STOP/TOGGLE rejected on ON_LOAD (LFOs auto-start
+  //   from scene config; firing them here would race the init path). MODIFY
+  //   is allowed because parameter overrides on a not-yet-running engine are
+  //   harmless. ON_PLAY is fine for all variants because the scene is already
+  //   live by then.
+  if (caps.fires_at_load_time && action->type == ACTION_LFO) {
+    if (action->variant == VARIANT_START ||
+        action->variant == VARIANT_STOP ||
+        action->variant == VARIANT_TOGGLE) {
+      return false;
+    }
   }
 
   // Rule 5: per-action input affordance requirements (touchwheel/param holds).
@@ -244,6 +251,11 @@ static action_variant_t default_variant_for_type(action_type_t type) {
       return VARIANT_SET;
     case ACTION_TRANSPORT:
       return VARIANT_PLAY;
+    case ACTION_LFO:
+      // MODIFY clears all four rules (not hold, not transport, fire-and-
+      // forget, and exempt from the LFO ON_LOAD carve-out in Rule 4). Other
+      // variants would falsely fail the type-level probe on ON_LOAD.
+      return VARIANT_MODIFY;
     default:
       return VARIANT_NONE;
   }
@@ -333,6 +345,13 @@ bool action_supports_timing_for(const action_t* action) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
+  if (action->type == ACTION_LFO) {
+    // TOGGLE is interactive (the user expects it to flip on the press they
+    // just made). START/STOP/MODIFY are all press-only one-shots that
+    // schedule cleanly on a beat.
+    if (action->variant == VARIANT_TOGGLE) return false;
+    return true;
+  }
   return action_supports_timing(action->type);
 }
 
@@ -365,6 +384,11 @@ bool action_supports_repeat_for(const action_t* action) {
     // HOLD has nowhere to send repeated release events; suppress.
     // CYCLE advances the mode cursor on every press -- repeats fine.
     return action->variant == VARIANT_CYCLE;
+  }
+  if (action->type == ACTION_LFO) {
+    // Same TOGGLE carve-out as timing: starting/stopping/modifying on every
+    // beat is musical; flipping on/off on every beat is just noise.
+    return action->variant != VARIANT_TOGGLE;
   }
   return action_supports_repeat(action->type);
 }

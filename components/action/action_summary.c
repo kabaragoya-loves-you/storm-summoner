@@ -308,8 +308,7 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       (unsigned)action->params.tw_mode.num_modes);
     summary->has_value = true;
 
-  } else if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||
-             action->type == ACTION_LFO_TOGGLE) {
+  } else if (action->type == ACTION_LFO) {
     uint8_t slot = action->params.lfo.slot;
     if (slot == 3) {
       snprintf(summary->param_name, sizeof(summary->param_name), "Both LFOs");
@@ -318,6 +317,52 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
         (unsigned)slot);
     }
     summary->has_param = true;
+
+    // MODIFY -- list each non-sentinel override as a compact tag (Wave / Rate
+    // / Pol / Floor / Ceil / Res / Steps). Tags that wouldn't fit are
+    // silently dropped rather than truncating mid-tag.
+    if (action->variant == VARIANT_MODIFY) {
+      // Static lookup keeps the per-call code small and easy to scan.
+      static const struct { uint8_t field; const char *tag; } overrides[] = {
+        { 0, "Wave"     },
+        { 1, "RateMode" },
+        { 2, "Rate"     },
+        { 3, "Div"      },
+        { 4, "Pol"      },
+        { 5, "Floor"    },
+        { 6, "Ceil"     },
+        { 7, "Res"      },
+        { 8, "Steps"    },
+      };
+      bool active[9] = {
+        action->params.lfo.waveform        != ACTION_LFO_ORIG_U8,
+        action->params.lfo.rate_mode       != ACTION_LFO_ORIG_U8,
+        action->params.lfo.rate_hz_x100    != ACTION_LFO_ORIG_U16,
+        action->params.lfo.division        != ACTION_LFO_ORIG_U8,
+        action->params.lfo.polarity        != ACTION_LFO_ORIG_U8,
+        action->params.lfo.floor           != ACTION_LFO_ORIG_U8,
+        action->params.lfo.ceiling         != ACTION_LFO_ORIG_U8,
+        action->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8,
+        action->params.lfo.manual_steps    != ACTION_LFO_ORIG_STEPS,
+      };
+      char *out = summary->param_value;
+      size_t out_cap = sizeof(summary->param_value);
+      size_t pos = 0;
+      out[0] = '\0';
+      for (size_t i = 0; i < sizeof(overrides) / sizeof(overrides[0]); i++) {
+        if (!active[overrides[i].field]) continue;
+        size_t n = strlen(overrides[i].tag);
+        size_t need = (pos == 0) ? n : n + 1;
+        if (pos + need >= out_cap) break;
+        if (pos > 0) out[pos++] = '/';
+        memcpy(out + pos, overrides[i].tag, n);
+        pos += n;
+        out[pos] = '\0';
+      }
+      if (pos == 0)
+        snprintf(out, out_cap, "no overrides");
+      summary->has_value = true;
+    }
 
   } else if (action->type == ACTION_RANDOMIZE) {
     snprintf(summary->param_name, sizeof(summary->param_name), "%u CCs",

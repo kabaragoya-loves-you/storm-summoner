@@ -3896,9 +3896,14 @@ static lv_obj_t* pad_detail_page_create(void) {
     }
   }
   
-  // Show LFO slot selector for LFO actions
-  if (mapping->action.type == ACTION_LFO_START || mapping->action.type == ACTION_LFO_STOP ||
-      mapping->action.type == ACTION_LFO_TOGGLE || mapping->action.type == ACTION_LFO_SHAPE) {
+  // Show LFO slot selector for the consolidated LFO action. This pads_menu
+  // detail view appears to be dead code in the current navigation -- the
+  // action detail page in action_config.c is the live editor -- but we keep
+  // the row visible/parsed so any caller that does still land here gets a
+  // sensible label rather than a default-case fallthrough. MODIFY override
+  // editing is not exposed here; users wanting that go through the action
+  // config menu.
+  if (mapping->action.type == ACTION_LFO) {
     uint8_t slot = mapping->action.params.lfo.slot;
     const char* slot_name;
     switch (slot) {

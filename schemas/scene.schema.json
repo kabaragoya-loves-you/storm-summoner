@@ -602,6 +602,33 @@
           "maximum": 127,
           "default": 64,
           "description": "Square wave duty cycle (0-127 = 0-100%)"
+        },
+        "floor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 0,
+          "description": "Output floor: minimum value the LFO is allowed to emit (0-127). Combined with ceiling to scale the output range."
+        },
+        "ceiling": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127,
+          "default": 127,
+          "description": "Output ceiling: maximum value the LFO is allowed to emit (0-127). Combined with floor to scale the output range."
+        },
+        "resolution_mode": {
+          "type": "string",
+          "enum": ["auto", "coarse", "medium", "fine", "manual"],
+          "default": "auto",
+          "description": "Per-cycle step count selection: auto (smart fixed-rate), coarse (16), medium (32), fine (64), or manual (uses manual_steps)."
+        },
+        "manual_steps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256,
+          "default": 32,
+          "description": "Number of steps per cycle when resolution_mode=manual."
         }
       }
     },
@@ -848,6 +875,7 @@
             "reset",
             "piano_pedal",
             "touchwheel",
+            "lfo",
             "lfo_start",
             "lfo_stop",
             "lfo_toggle",
@@ -871,12 +899,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record; 'touchwheel' supports Hold/Cycle. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), and the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record; 'touchwheel' supports Hold/Cycle; 'lfo' supports Start/Stop/Toggle/Modify (Modify carries optional per-parameter overrides; absent fields keep the scene's LFO config in place). 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66), and the legacy lfo_start / lfo_stop / lfo_toggle / lfo_shape types (now migrated to lfo with variant=start/stop/toggle/modify; lfo_shape's per-press waveform cycle is collapsed to a single waveform override) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
-          "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/pause/record), and type='touchwheel' (hold/cycle). Omit for singleton types."
+          "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record", "modify"],
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/pause/record), type='touchwheel' (hold/cycle), and type='lfo' (start/stop/toggle/modify). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -1468,6 +1496,98 @@
                   "maximum": 12
                 },
                 "description": "User-facing touchwheel mode indices to cycle through (13 user modes; see firmware touchwheel_mode_mapping for the list)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type":    {"const": "lfo"},
+              "variant": {"enum": ["start", "stop", "toggle"]}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["slot"],
+            "properties": {
+              "slot": {
+                "type": "integer",
+                "enum": [1, 2, 3],
+                "description": "Target LFO: 1=LFO1, 2=LFO2, 3=both"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type":    {"const": "lfo"},
+              "variant": {"const": "modify"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["slot"],
+            "properties": {
+              "slot": {
+                "type": "integer",
+                "enum": [1, 2, 3],
+                "description": "Target LFO: 1=LFO1, 2=LFO2, 3=both"
+              },
+              "waveform": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5,
+                "description": "Override LFO waveform (0=Sine, 1=Triangle, 2=Square, 3=Saw Up, 4=Saw Down, 5=Sample&Hold). Omit to keep the scene's configured waveform."
+              },
+              "rate_mode": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 6,
+                "description": "Override rate mode (0=Free, 1=Tempo, 2=Touchwheel, 3=Expression, 4=CV, 5=ALS, 6=Proximity). Omit to keep the scene's configured rate mode."
+              },
+              "rate_hz_x100": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 2000,
+                "description": "Override free-running rate in Hz * 100 (5=0.05Hz, 2000=20.0Hz). Used when rate_mode=free or override-paired with rate_mode=free. Omit to keep the scene's configured rate."
+              },
+              "division": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "description": "Override tempo-synced note division (0=16 bars .. 10=1/32). Used when rate_mode=tempo. Omit to keep the scene's configured division."
+              },
+              "polarity": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Override output polarity (0=Unipolar, 1=Bipolar, 2=Inverted). Omit to keep the scene's per-LFO continuous-mapping polarity."
+              },
+              "floor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "Override output floor (0-127). Omit to keep the scene's configured floor."
+              },
+              "ceiling": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "Override output ceiling (0-127). Omit to keep the scene's configured ceiling."
+              },
+              "resolution_mode": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4,
+                "description": "Override per-cycle resolution mode (0=Auto, 1=Coarse, 2=Medium, 3=Fine, 4=Manual). Omit to keep the scene's configured resolution mode."
+              },
+              "manual_steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256,
+                "description": "Override per-cycle step count when resolution_mode=manual. Has no effect unless paired with a Manual resolution_mode (either via this action or via the scene config). Omit to keep the scene's configured manual_steps."
               }
             }
           }

@@ -23,6 +23,7 @@ VALID_ACTION_TYPES = %w[
   sustain sostenuto
   tw_mode_hold tw_mode_cycle
   touchwheel touchwheel_hold touchwheel_cycle
+  lfo lfo_start lfo_stop lfo_toggle lfo_shape
 ].freeze
 
 # Valid touchwheel modes
@@ -142,6 +143,68 @@ def validate_action(action, context, errors)
       end
     else
       errors << "#{context}: touchwheel variant must be 'hold' or 'cycle' (got #{variant.inspect})"
+    end
+  when 'lfo'
+    # Consolidated LFO family. Variant decides which fields apply.
+    #   start/stop/toggle: slot only.
+    #   modify: slot plus any of 8 optional override fields, each with the
+    #     range matched in the JSON schema (sentinels live in firmware as
+    #     "field absent from JSON = Original").
+    variant = action['variant']
+    unless action['slot'].is_a?(Integer) && [1, 2, 3].include?(action['slot'])
+      errors << "#{context}: lfo requires 'slot' (1=LFO1, 2=LFO2, 3=both)"
+    end
+    case variant
+    when 'start', 'stop', 'toggle', nil
+      # nil variant defaults to start per firmware fallback. No further fields.
+    when 'modify'
+      if action.key?('waveform') && !(action['waveform'].is_a?(Integer) && action['waveform'].between?(0, 5))
+        errors << "#{context}: lfo modify 'waveform' must be 0-5"
+      end
+      if action.key?('rate_mode') && !(action['rate_mode'].is_a?(Integer) && action['rate_mode'].between?(0, 6))
+        errors << "#{context}: lfo modify 'rate_mode' must be 0-6"
+      end
+      if action.key?('rate_hz_x100') && !(action['rate_hz_x100'].is_a?(Integer) && action['rate_hz_x100'].between?(5, 2000))
+        errors << "#{context}: lfo modify 'rate_hz_x100' must be 5-2000"
+      end
+      if action.key?('division') && !(action['division'].is_a?(Integer) && action['division'].between?(0, 10))
+        errors << "#{context}: lfo modify 'division' must be 0-10"
+      end
+      if action.key?('polarity') && !(action['polarity'].is_a?(Integer) && action['polarity'].between?(0, 2))
+        errors << "#{context}: lfo modify 'polarity' must be 0-2"
+      end
+      if action.key?('floor') && !(action['floor'].is_a?(Integer) && action['floor'].between?(0, 127))
+        errors << "#{context}: lfo modify 'floor' must be 0-127"
+      end
+      if action.key?('ceiling') && !(action['ceiling'].is_a?(Integer) && action['ceiling'].between?(0, 127))
+        errors << "#{context}: lfo modify 'ceiling' must be 0-127"
+      end
+      if action.key?('resolution_mode') && !(action['resolution_mode'].is_a?(Integer) && action['resolution_mode'].between?(0, 4))
+        errors << "#{context}: lfo modify 'resolution_mode' must be 0-4"
+      end
+      if action.key?('manual_steps') && !(action['manual_steps'].is_a?(Integer) && action['manual_steps'].between?(1, 256))
+        errors << "#{context}: lfo modify 'manual_steps' must be 1-256"
+      end
+    else
+      errors << "#{context}: lfo variant must be 'start', 'stop', 'toggle', or 'modify' (got #{variant.inspect})"
+    end
+  when 'lfo_start', 'lfo_stop', 'lfo_toggle', 'lfo_shape'
+    # Legacy single-type entries (pre-consolidation). Minimal validation --
+    # firmware's migration table rewrites them to 'lfo' + the matching
+    # variant on load; 'lfo_shape' additionally collapses its old shapes[]
+    # cycle to a single waveform override (the first entry).
+    unless action['slot'].is_a?(Integer) && [1, 2, 3].include?(action['slot'])
+      errors << "#{context}: #{type} requires 'slot' (1=LFO1, 2=LFO2, 3=both)"
+    end
+    if type == 'lfo_shape'
+      # shapes[] is optional in legacy files; if present, sanity-check it.
+      if action['shapes'].is_a?(Array)
+        action['shapes'].each_with_index do |s, i|
+          unless s.is_a?(Integer) && s.between?(0, 5)
+            errors << "#{context}: legacy lfo_shape shapes[#{i}] must be 0-5"
+          end
+        end
+      end
     end
   end
 end

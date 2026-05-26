@@ -63,11 +63,13 @@ typedef enum {
   //   CYCLE = step through a list of 2-8 modes, one per press
   ACTION_TOUCHWHEEL,
   
-  // LFO control
-  ACTION_LFO_START,           // Start LFO (slot: 1, 2, or 3=both)
-  ACTION_LFO_STOP,            // Stop LFO
-  ACTION_LFO_TOGGLE,          // Toggle LFO state
-  ACTION_LFO_SHAPE,           // Cycle through waveform shapes
+  // LFO control (consolidated -- variants START / STOP / TOGGLE / MODIFY)
+  //   START  / STOP / TOGGLE = drive the LFO engine for slot 1, 2, or 3 (both)
+  //   MODIFY = apply per-parameter overrides to a running LFO (waveform,
+  //            rate mode, rate, polarity, floor, ceiling, resolution, steps).
+  //            Each override has an "Original" sentinel meaning "do not
+  //            touch this field". Replaces the old SHAPE-cycle behavior.
+  ACTION_LFO,
   
   // Clock control (per-scene clock sending)
   ACTION_CLOCK_TOGGLE,        // Toggle clock sending on/off
@@ -132,6 +134,9 @@ typedef enum {
   VARIANT_PLAY,
   VARIANT_PAUSE,
   VARIANT_RECORD,
+  // LFO family parameter-override variant (replaces the old SHAPE-cycle
+  // action). Append-only -- do not move above this point.
+  VARIANT_MODIFY,
   VARIANT_MAX
 } action_variant_t;
 
@@ -370,12 +375,24 @@ typedef struct {
       uint8_t current_index;       // VARIANT_CYCLE: rotating cursor (mutable at runtime)
     } tw_mode;
     
-    // For LFO actions (start, stop, toggle, shape)
+    // For ACTION_LFO (consolidated -- variants START / STOP / TOGGLE / MODIFY).
+    // START/STOP/TOGGLE only read `slot`. MODIFY adds per-parameter override
+    // slots; each field's "Original" sentinel (documented per-field) means
+    // "leave the scene config's value in place". This replaces the old
+    // SHAPE cycling fields (num_shapes/shapes[]/current_index were removed
+    // when cycling was dropped from the LFO family).
     struct {
-      uint8_t slot;           // 1, 2, or 3 (both)
-      uint8_t num_shapes;     // For shape cycle: 2-8 shapes
-      uint8_t shapes[8];      // lfo_waveform_t values
-      uint8_t current_index;  // Current position in cycle
+      uint8_t slot;              // All variants: 1, 2, or 3 (both)
+      // MODIFY overrides:
+      uint8_t waveform;          // lfo_waveform_t,        0xFF = Original
+      uint8_t rate_mode;         // lfo_rate_mode_t,       0xFF = Original
+      uint16_t rate_hz_x100;     // Free-rate Hz * 100,  0xFFFF = Original
+      uint8_t division;          // lfo_note_division_t,   0xFF = Original
+      uint8_t polarity;          // polarity_t,            0xFF = Original
+      uint8_t floor;             // 0-127,                 0xFF = Original
+      uint8_t ceiling;           // 0-127,                 0xFF = Original
+      uint8_t resolution_mode;   // lfo_resolution_mode_t, 0xFF = Original
+      uint8_t manual_steps;      // 1-N (Manual mode only),   0 = Original
     } lfo;
     
     // For clock actions (toggle, hold)
@@ -476,6 +493,17 @@ typedef struct {
 
 // Maximum on_play actions per scene
 #define MAX_ON_PLAY_ACTIONS 4
+
+// "Original" sentinel values for ACTION_LFO + VARIANT_MODIFY override
+// fields. Each field carries one of these in its default state, meaning
+// "do not touch this field at dispatch time; the scene's configured value
+// stays in effect". Picked to fall outside each field's valid range:
+//   - 8-bit enums / 0-127 ranges:    0xFF
+//   - rate_hz_x100 (uint16_t):     0xFFFF
+//   - manual_steps (valid 1-N):    0
+#define ACTION_LFO_ORIG_U8      ((uint8_t)0xFF)
+#define ACTION_LFO_ORIG_U16     ((uint16_t)0xFFFF)
+#define ACTION_LFO_ORIG_STEPS   ((uint8_t)0)
 
 // Initialize the action system
 esp_err_t action_init(void);

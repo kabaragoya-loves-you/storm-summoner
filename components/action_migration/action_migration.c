@@ -118,6 +118,21 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "tw_mode_cycle",    ACTION_TOUCHWHEEL,       VARIANT_CYCLE     },
   { "touchwheel_hold",  ACTION_TOUCHWHEEL,       VARIANT_HOLD      },
   { "touchwheel_cycle", ACTION_TOUCHWHEEL,       VARIANT_CYCLE     },
+
+  // Pre-consolidation LFO names. lfo_start/stop/toggle migrate cleanly to
+  // ACTION_LFO + the matching variant. lfo_shape (the old SHAPE-cycle
+  // action) collapses to VARIANT_MODIFY -- json_to_action seeds the
+  // waveform override from the legacy shapes[0] field. Cycling capability
+  // (rotating through 2-8 waveforms on each press) is GONE in the new
+  // design; legacy SHAPE-cycle actions become single-waveform overrides
+  // and the user must rebuild any sequencing they had by chaining several
+  // MODIFY actions across pads. Bare "lfo" without an explicit variant
+  // falls through to action_type_from_string and then to json_to_action's
+  // consolidated-family default-variant fallback (VARIANT_START).
+  { "lfo_start",        ACTION_LFO,              VARIANT_START     },
+  { "lfo_stop",         ACTION_LFO,              VARIANT_STOP      },
+  { "lfo_toggle",       ACTION_LFO,              VARIANT_TOGGLE    },
+  { "lfo_shape",        ACTION_LFO,              VARIANT_MODIFY    },
 };
 
 static const size_t s_legacy_alias_count =

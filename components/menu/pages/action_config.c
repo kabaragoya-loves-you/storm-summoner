@@ -101,10 +101,20 @@ static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_piano_pedal_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
-static char s_lfo_shape_list_label[LABEL_BUFFER_SETS][24];
-static char s_lfo_shape_item_labels[LABEL_BUFFER_SETS][8][32];
-static char s_lfo_shape_add_label[LABEL_BUFFER_SETS][24];
-static uint8_t s_editing_shape_index = 0;
+static char s_lfo_variant_label[LABEL_BUFFER_SETS][24];
+// MODIFY override row labels. Each holds "<row>\n<value-or-Original>"; the
+// row itself is conditionally rendered only when action->variant ==
+// VARIANT_MODIFY. Steps is shown only when resolution_mode == MANUAL (the
+// scene-config menu uses the same gate).
+static char s_lfo_modify_waveform_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_rate_mode_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_rate_hz_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_division_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_polarity_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_floor_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_ceiling_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_resolution_label[LABEL_BUFFER_SETS][24];
+static char s_lfo_modify_steps_label[LABEL_BUFFER_SETS][24];
 static char s_step_target_label[LABEL_BUFFER_SETS][24];
 static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
@@ -154,7 +164,6 @@ static char s_morph_division_label[LABEL_BUFFER_SETS][24];
 static menu_item_t s_detail_items[MAX_DETAIL_ITEMS];
 static menu_item_t s_cc_hold_items[3];
 static menu_item_t s_cc_cycle_items[9];
-static menu_item_t s_lfo_shape_items[9];
 
 // Note names
 static const char* NOTE_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -176,10 +185,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_RESET,
   ACTION_PIANO_PEDAL,
   ACTION_TOUCHWHEEL,
-  ACTION_LFO_START,
-  ACTION_LFO_STOP,
-  ACTION_LFO_TOGGLE,
-  ACTION_LFO_SHAPE,
+  ACTION_LFO,
   ACTION_CLOCK_TOGGLE,
   ACTION_CLOCK_HOLD,
   ACTION_CLOCK_BURST,
@@ -236,10 +242,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_RESET: return "Reset";
     case ACTION_PIANO_PEDAL: return "Piano Pedal";
     case ACTION_TOUCHWHEEL: return "Touchwheel";
-    case ACTION_LFO_START: return "LFO Start";
-    case ACTION_LFO_STOP: return "LFO Stop";
-    case ACTION_LFO_TOGGLE: return "LFO Toggle";
-    case ACTION_LFO_SHAPE: return "LFO Shape";
+    case ACTION_LFO: return "LFO";
     case ACTION_CLOCK_TOGGLE: return "Clock Toggle";
     case ACTION_CLOCK_HOLD: return "Clock Hold";
     case ACTION_CLOCK_BURST: return "Clock Burst";
@@ -680,19 +683,25 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.tw_mode.modes[1] = 0;
     }
     
-    // Set defaults for LFO actions (slot 1 = LFO1)
-    if (new_type == ACTION_LFO_START || new_type == ACTION_LFO_STOP ||
-        new_type == ACTION_LFO_TOGGLE) {
-      action->params.lfo.slot = 1;  // LFO1
-    }
-    
-    // Set defaults for LFO Shape (cycle between sine and triangle)
-    if (new_type == ACTION_LFO_SHAPE) {
-      action->params.lfo.slot = 1;  // LFO1
-      action->params.lfo.num_shapes = 2;
-      action->params.lfo.shapes[0] = LFO_WAVEFORM_SINE;
-      action->params.lfo.shapes[1] = LFO_WAVEFORM_TRIANGLE;
-      action->params.lfo.current_index = 0;
+    // Set defaults for ACTION_LFO (consolidated family).
+    //   - default variant = START so a fresh LFO action does the "obvious
+    //     useful thing" without the user having to open the Variant row.
+    //   - slot = 1 (LFO1).
+    //   - all MODIFY overrides start at their Original sentinel so the
+    //     MODIFY detail page shows "Original" in every roller out of the
+    //     box; the user opts in to each override they want to push.
+    if (new_type == ACTION_LFO) {
+      action->variant = VARIANT_START;
+      action->params.lfo.slot = 1;
+      action->params.lfo.waveform        = ACTION_LFO_ORIG_U8;
+      action->params.lfo.rate_mode       = ACTION_LFO_ORIG_U8;
+      action->params.lfo.rate_hz_x100    = ACTION_LFO_ORIG_U16;
+      action->params.lfo.division        = ACTION_LFO_ORIG_U8;
+      action->params.lfo.polarity        = ACTION_LFO_ORIG_U8;
+      action->params.lfo.floor           = ACTION_LFO_ORIG_U8;
+      action->params.lfo.ceiling         = ACTION_LFO_ORIG_U8;
+      action->params.lfo.resolution_mode = ACTION_LFO_ORIG_U8;
+      action->params.lfo.manual_steps    = ACTION_LFO_ORIG_STEPS;
     }
     
     // Set defaults for clock toggle/hold (start_enabled = false means press disables clock)
@@ -4005,173 +4014,637 @@ static void nav_to_lfo_slot(void* user_data) {
 }
 
 // ============================================================================
-// LFO Shape List Editor (for ACTION_LFO_SHAPE)
-//
-// The shape cycle stores 2..8 waveforms in params.lfo.shapes[]. The list page
-// shows each entry; tapping it opens a picker that can set the waveform or
-// remove the entry (Remove is only offered when num_shapes > 2). An
-// "+ Add Shape" item appends a new Sine entry up to 8.
+// LFO Variant Picker (Start / Stop / Toggle / Modify)
 // ============================================================================
+// Mirrors the Touchwheel variant picker: a fixed candidate list is filtered
+// against the trigger and rendered into a roller. Switching variant via this
+// picker only flips action->variant -- the MODIFY override fields stay at
+// their sentinels (the type-confirm seed put them there) unless the user
+// has explicitly pushed values into them.
 
-#define LFO_SHAPE_MIN 2
-#define LFO_SHAPE_MAX 8
+static const action_variant_t s_lfo_variants[] = {
+  VARIANT_START,
+  VARIANT_STOP,
+  VARIANT_TOGGLE,
+  VARIANT_MODIFY,
+};
+#define NUM_LFO_VARIANTS (sizeof(s_lfo_variants) / sizeof(s_lfo_variants[0]))
 
-static lv_obj_t* lfo_shape_list_page_create(void);
+static action_variant_t s_filtered_lfo_variants[NUM_LFO_VARIANTS];
+static size_t s_num_filtered_lfo_variants = 0;
 
-static const char* lfo_shape_display_name(uint8_t shape) {
-  switch ((lfo_waveform_t)shape) {
-    case LFO_WAVEFORM_SINE: return "Sine";
-    case LFO_WAVEFORM_TRIANGLE: return "Triangle";
-    case LFO_WAVEFORM_SQUARE: return "Square";
-    case LFO_WAVEFORM_SAW_UP: return "Saw Up";
-    case LFO_WAVEFORM_SAW_DOWN: return "Saw Down";
-    case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
-    default: return "?";
+static void build_filtered_lfo_variants(void) {
+  s_num_filtered_lfo_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_LFO_VARIANTS; i++) {
+    action_variant_t v = s_lfo_variants[i];
+    if (!action_variant_is_valid_for_trigger(ACTION_LFO, v, s_ctx->trigger_type)) continue;
+    s_filtered_lfo_variants[s_num_filtered_lfo_variants++] = v;
   }
 }
 
-static bool lfo_shape_list_back_handler(void) {
-  menu_set_custom_back_handler(NULL);
-  return_to_detail_page(1);
-  return true;
-}
-
-static void lfo_shape_picker_confirm_cb(uint32_t selected_index, void* user_data) {
+static void lfo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
 
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
 
-  if (!s_ctx || !s_ctx->target_action) {
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_lfo_variants) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
 
   action_t* action = s_ctx->target_action;
-  uint8_t idx = s_editing_shape_index;
-  uint8_t num_shapes = action->params.lfo.num_shapes;
+  action_variant_t new_variant = s_filtered_lfo_variants[selected_index];
 
-  static const lfo_waveform_t waveforms[6] = {
-    LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
-    LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD
-  };
-
-  if (selected_index < 6) {
-    if (idx < num_shapes && idx < LFO_SHAPE_MAX) {
-      action->params.lfo.shapes[idx] = (uint8_t)waveforms[selected_index];
-      ESP_LOGI(TAG, "LFO Shape entry %u set to %s",
-        (unsigned)(idx + 1), lfo_shape_display_name((uint8_t)waveforms[selected_index]));
-    }
-  } else if (selected_index == 6 && num_shapes > LFO_SHAPE_MIN) {
-    for (int i = idx; i + 1 < num_shapes && i + 1 < LFO_SHAPE_MAX; i++) {
-      action->params.lfo.shapes[i] = action->params.lfo.shapes[i + 1];
-    }
-    action->params.lfo.shapes[num_shapes - 1] = LFO_WAVEFORM_SINE;
-    action->params.lfo.num_shapes = num_shapes - 1;
-    if (action->params.lfo.current_index >= action->params.lfo.num_shapes) {
-      action->params.lfo.current_index = 0;
-    }
-    ESP_LOGI(TAG, "LFO Shape entry %u removed (now %u shapes)",
-      (unsigned)(idx + 1), (unsigned)action->params.lfo.num_shapes);
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    ESP_LOGI(TAG, "LFO variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
   }
 
   s_callback_in_progress = false;
-  menu_set_restore_focus(idx);
-  menu_navigate_back_then_to(1, "Shapes", lfo_shape_list_page_create);
+  return_to_detail_page(2);
 }
 
-static lv_obj_t* lfo_shape_picker_create(void) {
+static lv_obj_t* lfo_variant_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
 
-  action_t* action = s_ctx->target_action;
-  uint8_t idx = s_editing_shape_index;
-  uint8_t num_shapes = action->params.lfo.num_shapes;
+  build_filtered_lfo_variants();
+  if (s_num_filtered_lfo_variants == 0) return NULL;
 
-  uint32_t current = 0;
-  if (idx < num_shapes && idx < LFO_SHAPE_MAX) {
-    switch ((lfo_waveform_t)action->params.lfo.shapes[idx]) {
-      case LFO_WAVEFORM_TRIANGLE: current = 1; break;
-      case LFO_WAVEFORM_SQUARE: current = 2; break;
-      case LFO_WAVEFORM_SAW_UP: current = 3; break;
-      case LFO_WAVEFORM_SAW_DOWN: current = 4; break;
-      case LFO_WAVEFORM_SAMPLE_HOLD: current = 5; break;
-      case LFO_WAVEFORM_SINE:
-      default: current = 0; break;
+  static char options[64];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_lfo_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_lfo_variants[i]));
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_lfo_variants; i++) {
+    if (s_filtered_lfo_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
     }
   }
 
-  const char* options = (num_shapes > LFO_SHAPE_MIN)
-    ? "Sine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H\nRemove"
-    : "Sine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H";
-
-  static char title[24];
-  snprintf(title, sizeof(title), "Shape %u", (unsigned)(idx + 1));
-  return menu_create_roller_page(title, options, current,
-    lfo_shape_picker_confirm_cb, NULL);
+  return menu_create_roller_page("Variant", options, current_idx, lfo_variant_confirm_cb, NULL);
 }
 
-static void nav_to_lfo_shape_entry(void* user_data) {
-  s_editing_shape_index = (uint8_t)(uintptr_t)user_data;
-  static char title[24];
-  snprintf(title, sizeof(title), "Shape %u", (unsigned)(s_editing_shape_index + 1));
-  nav_to_subpage(title, lfo_shape_picker_create);
-}
-
-static void lfo_shape_add(void* user_data) {
+static void nav_to_lfo_variant(void* user_data) {
   (void)user_data;
-  if (!s_ctx || !s_ctx->target_action) return;
-
-  action_t* action = s_ctx->target_action;
-  uint8_t num_shapes = action->params.lfo.num_shapes;
-  if (num_shapes >= LFO_SHAPE_MAX) return;
-
-  action->params.lfo.shapes[num_shapes] = LFO_WAVEFORM_SINE;
-  action->params.lfo.num_shapes = num_shapes + 1;
-  ESP_LOGI(TAG, "LFO Shape entry added (now %u shapes)",
-    (unsigned)action->params.lfo.num_shapes);
-
-  menu_set_custom_back_handler(NULL);
-  menu_set_restore_focus(num_shapes);
-  menu_navigate_to("Shapes", lfo_shape_list_page_create);
+  nav_to_subpage("Variant", lfo_variant_roller_create);
 }
 
-static lv_obj_t* lfo_shape_list_page_create(void) {
-  if (!s_ctx || !s_ctx->target_action) return menu_create_page("Error", NULL, 0);
+// ============================================================================
+// LFO MODIFY override rollers
+// ============================================================================
+// One pair (confirm_cb + roller_create) per overridable field. All rollers
+// start with "Original" (selected_index 0) which writes the sentinel back to
+// the action; any other selection writes the corresponding value. Display
+// strings deliberately mirror the labels used by the LFO scene-config menu
+// so the override values read the same as the underlying scene settings.
+//
+// Picker tables (kept inside their owning functions for locality):
+//   - Waveform: 6 entries -- Custom is intentionally hidden (Custom curves
+//     are bound to a per-scene table and can't be safely pushed at runtime).
+//   - Rate mode: 7 entries (matches the scene picker's full list; we don't
+//     gate Expression on CV/Gate here because the action-level override
+//     can't easily reach the per-scene CV mode read).
+//   - Division: 11 entries (LFO_DIVISION_16_BARS..LFO_DIVISION_32ND).
+//   - Polarity: 3 entries (Unipolar, Bipolar, Inverted).
+//   - Floor / Ceiling: discrete sampled steps across 0-127.
+//   - Resolution: 5 entries (Auto, Coarse, Medium, Fine, Manual).
+//   - Manual steps: 4 entries (16, 32, 64, 128) -- matches the scene menu.
+//
+// On any non-Original selection rate_mode is NOT auto-flipped to FREE/TEMPO
+// to match the chosen rate field; the user is expected to pair the rate
+// override with a rate_mode override if they want a specific dispatch
+// shape. Same applies to manual_steps + resolution_mode = Manual.
 
-  menu_set_custom_back_handler(lfo_shape_list_back_handler);
+// --- Waveform -------------------------------------------------------------
 
-  action_t* action = s_ctx->target_action;
-  int buf = get_next_buffer_set();
-  uint8_t num_shapes = action->params.lfo.num_shapes;
-  if (num_shapes < LFO_SHAPE_MIN) {
-    num_shapes = LFO_SHAPE_MIN;
-    action->params.lfo.num_shapes = LFO_SHAPE_MIN;
+static const lfo_waveform_t s_lfo_modify_waveforms[] = {
+  LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
+  LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD,
+};
+#define NUM_LFO_MODIFY_WAVEFORMS (sizeof(s_lfo_modify_waveforms) / sizeof(s_lfo_modify_waveforms[0]))
+
+static const char* lfo_modify_waveform_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  switch ((lfo_waveform_t)v) {
+    case LFO_WAVEFORM_SINE:        return "Sine";
+    case LFO_WAVEFORM_TRIANGLE:    return "Triangle";
+    case LFO_WAVEFORM_SQUARE:      return "Square";
+    case LFO_WAVEFORM_SAW_UP:      return "Saw Up";
+    case LFO_WAVEFORM_SAW_DOWN:    return "Saw Down";
+    case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
+    default:                       return "Original";
   }
-  if (num_shapes > LFO_SHAPE_MAX) num_shapes = LFO_SHAPE_MAX;
-
-  int item_count = 0;
-  for (int i = 0; i < num_shapes; i++) {
-    snprintf(s_lfo_shape_item_labels[buf][i], sizeof(s_lfo_shape_item_labels[buf][i]),
-      "Shape %d\n%s", i + 1, lfo_shape_display_name(action->params.lfo.shapes[i]));
-    s_lfo_shape_items[item_count++] = (menu_item_t){
-      s_lfo_shape_item_labels[buf][i], nav_to_lfo_shape_entry, (void*)(uintptr_t)i, true
-    };
-  }
-
-  if (num_shapes < LFO_SHAPE_MAX) {
-    snprintf(s_lfo_shape_add_label[buf], sizeof(s_lfo_shape_add_label[buf]), "+ Add Shape");
-    s_lfo_shape_items[item_count++] = (menu_item_t){
-      s_lfo_shape_add_label[buf], lfo_shape_add, NULL, true
-    };
-  }
-
-  return menu_create_page("Shapes", s_lfo_shape_items, item_count);
 }
 
-static void nav_to_lfo_shape_list(void* user_data) {
+static void lfo_modify_waveform_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
-  nav_to_subpage("Shapes", lfo_shape_list_page_create);
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.waveform = ACTION_LFO_ORIG_U8;
+  } else if (selected_index <= NUM_LFO_MODIFY_WAVEFORMS) {
+    action->params.lfo.waveform = (uint8_t)s_lfo_modify_waveforms[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_waveform_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[96];
+  snprintf(options, sizeof(options),
+    "Original\nSine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H");
+  uint32_t current = 0;
+  uint8_t v = s_ctx->target_action->params.lfo.waveform;
+  if (v != ACTION_LFO_ORIG_U8) {
+    for (size_t i = 0; i < NUM_LFO_MODIFY_WAVEFORMS; i++) {
+      if (s_lfo_modify_waveforms[i] == (lfo_waveform_t)v) { current = (uint32_t)(i + 1); break; }
+    }
+  }
+  return menu_create_roller_page("Waveform", options, current,
+    lfo_modify_waveform_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_waveform(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Waveform", lfo_modify_waveform_roller_create);
+}
+
+// --- Rate mode ------------------------------------------------------------
+
+static const lfo_rate_mode_t s_lfo_modify_rate_modes[] = {
+  LFO_RATE_MODE_FREE, LFO_RATE_MODE_TEMPO, LFO_RATE_MODE_TOUCHWHEEL,
+  LFO_RATE_MODE_EXPRESSION, LFO_RATE_MODE_CV, LFO_RATE_MODE_ALS,
+  LFO_RATE_MODE_PROXIMITY,
+};
+#define NUM_LFO_MODIFY_RATE_MODES (sizeof(s_lfo_modify_rate_modes) / sizeof(s_lfo_modify_rate_modes[0]))
+
+static const char* lfo_modify_rate_mode_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  switch ((lfo_rate_mode_t)v) {
+    case LFO_RATE_MODE_FREE:       return "Free";
+    case LFO_RATE_MODE_TEMPO:      return "Tempo";
+    case LFO_RATE_MODE_TOUCHWHEEL: return "Touchwheel";
+    case LFO_RATE_MODE_EXPRESSION: return "Expression";
+    case LFO_RATE_MODE_CV:         return "CV";
+    case LFO_RATE_MODE_ALS:        return "ALS";
+    case LFO_RATE_MODE_PROXIMITY:  return "Proximity";
+    default:                       return "Original";
+  }
+}
+
+static void lfo_modify_rate_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.rate_mode = ACTION_LFO_ORIG_U8;
+  } else if (selected_index <= NUM_LFO_MODIFY_RATE_MODES) {
+    action->params.lfo.rate_mode = (uint8_t)s_lfo_modify_rate_modes[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_rate_mode_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[128];
+  snprintf(options, sizeof(options),
+    "Original\nFree\nTempo\nTouchwheel\nExpression\nCV\nALS\nProximity");
+  uint32_t current = 0;
+  uint8_t v = s_ctx->target_action->params.lfo.rate_mode;
+  if (v != ACTION_LFO_ORIG_U8) {
+    for (size_t i = 0; i < NUM_LFO_MODIFY_RATE_MODES; i++) {
+      if (s_lfo_modify_rate_modes[i] == (lfo_rate_mode_t)v) { current = (uint32_t)(i + 1); break; }
+    }
+  }
+  return menu_create_roller_page("Rate Mode", options, current,
+    lfo_modify_rate_mode_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_rate_mode(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Rate Mode", lfo_modify_rate_mode_roller_create);
+}
+
+// --- Rate (Free-mode Hz) --------------------------------------------------
+// Discrete picker -- sampled Hz values spanning the engine's 0.05-20.0 Hz
+// range. Stored as Hz * 100 to match the union field. The roller's "Original"
+// entry leaves rate_hz_x100 at its sentinel.
+
+static const uint16_t s_lfo_modify_rates_x100[] = {
+  5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000,
+};
+#define NUM_LFO_MODIFY_RATES (sizeof(s_lfo_modify_rates_x100) / sizeof(s_lfo_modify_rates_x100[0]))
+
+static const char* lfo_modify_rate_hz_display(uint16_t v, char* buf, size_t len) {
+  if (v == ACTION_LFO_ORIG_U16) return "Original";
+  snprintf(buf, len, "%u.%02u Hz", (unsigned)(v / 100), (unsigned)(v % 100));
+  return buf;
+}
+
+static void lfo_modify_rate_hz_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.rate_hz_x100 = ACTION_LFO_ORIG_U16;
+  } else if (selected_index <= NUM_LFO_MODIFY_RATES) {
+    action->params.lfo.rate_hz_x100 = s_lfo_modify_rates_x100[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_rate_hz_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[256];
+  size_t pos = (size_t)snprintf(options, sizeof(options), "Original");
+  for (size_t i = 0; i < NUM_LFO_MODIFY_RATES && pos < sizeof(options); i++) {
+    uint16_t hz = s_lfo_modify_rates_x100[i];
+    pos += (size_t)snprintf(options + pos, sizeof(options) - pos,
+      "\n%u.%02u Hz", (unsigned)(hz / 100), (unsigned)(hz % 100));
+  }
+  uint32_t current = 0;
+  uint16_t v = s_ctx->target_action->params.lfo.rate_hz_x100;
+  if (v != ACTION_LFO_ORIG_U16) {
+    for (size_t i = 0; i < NUM_LFO_MODIFY_RATES; i++) {
+      if (s_lfo_modify_rates_x100[i] == v) { current = (uint32_t)(i + 1); break; }
+    }
+  }
+  return menu_create_roller_page("Rate", options, current,
+    lfo_modify_rate_hz_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_rate_hz(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Rate", lfo_modify_rate_hz_roller_create);
+}
+
+// --- Division (Tempo-mode note value) ------------------------------------
+
+static const lfo_note_division_t s_lfo_modify_divisions[] = {
+  LFO_DIVISION_16_BARS, LFO_DIVISION_12_BARS, LFO_DIVISION_8_BARS,
+  LFO_DIVISION_4_BARS, LFO_DIVISION_2_BARS, LFO_DIVISION_1_BAR,
+  LFO_DIVISION_HALF, LFO_DIVISION_QUARTER, LFO_DIVISION_EIGHTH,
+  LFO_DIVISION_SIXTEENTH, LFO_DIVISION_32ND,
+};
+#define NUM_LFO_MODIFY_DIVISIONS (sizeof(s_lfo_modify_divisions) / sizeof(s_lfo_modify_divisions[0]))
+
+static const char* lfo_modify_division_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  switch ((lfo_note_division_t)v) {
+    case LFO_DIVISION_16_BARS:  return "16 Bars";
+    case LFO_DIVISION_12_BARS:  return "12 Bars";
+    case LFO_DIVISION_8_BARS:   return "8 Bars";
+    case LFO_DIVISION_4_BARS:   return "4 Bars";
+    case LFO_DIVISION_2_BARS:   return "2 Bars";
+    case LFO_DIVISION_1_BAR:    return "1 Bar";
+    case LFO_DIVISION_HALF:     return "1/2";
+    case LFO_DIVISION_QUARTER:  return "1/4";
+    case LFO_DIVISION_EIGHTH:   return "1/8";
+    case LFO_DIVISION_SIXTEENTH:return "1/16";
+    case LFO_DIVISION_32ND:     return "1/32";
+    default:                    return "Original";
+  }
+}
+
+static void lfo_modify_division_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.division = ACTION_LFO_ORIG_U8;
+  } else if (selected_index <= NUM_LFO_MODIFY_DIVISIONS) {
+    action->params.lfo.division = (uint8_t)s_lfo_modify_divisions[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_division_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[192];
+  snprintf(options, sizeof(options),
+    "Original\n16 Bars\n12 Bars\n8 Bars\n4 Bars\n2 Bars\n1 Bar\n1/2\n1/4\n1/8\n1/16\n1/32");
+  uint32_t current = 0;
+  uint8_t v = s_ctx->target_action->params.lfo.division;
+  if (v != ACTION_LFO_ORIG_U8) {
+    for (size_t i = 0; i < NUM_LFO_MODIFY_DIVISIONS; i++) {
+      if (s_lfo_modify_divisions[i] == (lfo_note_division_t)v) { current = (uint32_t)(i + 1); break; }
+    }
+  }
+  return menu_create_roller_page("Division", options, current,
+    lfo_modify_division_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_division(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Division", lfo_modify_division_roller_create);
+}
+
+// --- Polarity -------------------------------------------------------------
+
+static const polarity_t s_lfo_modify_polarities[] = {
+  POLARITY_UNIPOLAR, POLARITY_BIPOLAR, POLARITY_INVERTED,
+};
+#define NUM_LFO_MODIFY_POLARITIES (sizeof(s_lfo_modify_polarities) / sizeof(s_lfo_modify_polarities[0]))
+
+static const char* lfo_modify_polarity_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  switch ((polarity_t)v) {
+    case POLARITY_UNIPOLAR: return "Unipolar";
+    case POLARITY_BIPOLAR:  return "Bipolar";
+    case POLARITY_INVERTED: return "Inverted";
+    default:                return "Original";
+  }
+}
+
+static void lfo_modify_polarity_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.polarity = ACTION_LFO_ORIG_U8;
+  } else if (selected_index <= NUM_LFO_MODIFY_POLARITIES) {
+    action->params.lfo.polarity = (uint8_t)s_lfo_modify_polarities[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_polarity_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  uint32_t current = 0;
+  uint8_t v = s_ctx->target_action->params.lfo.polarity;
+  if (v != ACTION_LFO_ORIG_U8) {
+    for (size_t i = 0; i < NUM_LFO_MODIFY_POLARITIES; i++) {
+      if (s_lfo_modify_polarities[i] == (polarity_t)v) { current = (uint32_t)(i + 1); break; }
+    }
+  }
+  return menu_create_roller_page("Polarity",
+    "Original\nUnipolar\nBipolar\nInverted", current,
+    lfo_modify_polarity_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_polarity(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Polarity", lfo_modify_polarity_roller_create);
+}
+
+// --- Floor / Ceiling -----------------------------------------------------
+// Sampled 0-127 values so the picker fits the screen. Each slot's index 0
+// is Original; indices 1.. map to s_lfo_modify_floor_values[i-1]. We use the
+// same value table for both floor and ceiling because they share the same
+// range; the user just picks values that make sense for their use.
+
+static const uint8_t s_lfo_modify_floor_values[] = {
+  0, 10, 20, 30, 40, 50, 60, 64, 70, 80, 90, 100, 110, 120, 127,
+};
+#define NUM_LFO_MODIFY_FLOOR_VALUES (sizeof(s_lfo_modify_floor_values) / sizeof(s_lfo_modify_floor_values[0]))
+
+static const char* lfo_modify_floor_display(uint8_t v, char* buf, size_t len) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  snprintf(buf, len, "%u", (unsigned)v);
+  return buf;
+}
+
+static uint32_t lfo_modify_floor_lookup_index(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return 0;
+  for (size_t i = 0; i < NUM_LFO_MODIFY_FLOOR_VALUES; i++) {
+    if (s_lfo_modify_floor_values[i] == v) return (uint32_t)(i + 1);
+  }
+  return 0;
+}
+
+static void lfo_modify_floor_options(char* options, size_t cap) {
+  size_t pos = (size_t)snprintf(options, cap, "Original");
+  for (size_t i = 0; i < NUM_LFO_MODIFY_FLOOR_VALUES && pos < cap; i++) {
+    pos += (size_t)snprintf(options + pos, cap - pos, "\n%u",
+      (unsigned)s_lfo_modify_floor_values[i]);
+  }
+}
+
+static void lfo_modify_floor_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.floor = ACTION_LFO_ORIG_U8;
+  } else if (selected_index <= NUM_LFO_MODIFY_FLOOR_VALUES) {
+    action->params.lfo.floor = s_lfo_modify_floor_values[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_floor_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[128];
+  lfo_modify_floor_options(options, sizeof(options));
+  uint32_t current = lfo_modify_floor_lookup_index(s_ctx->target_action->params.lfo.floor);
+  return menu_create_roller_page("Floor", options, current,
+    lfo_modify_floor_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_floor(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Floor", lfo_modify_floor_roller_create);
+}
+
+static void lfo_modify_ceiling_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.ceiling = ACTION_LFO_ORIG_U8;
+  } else if (selected_index <= NUM_LFO_MODIFY_FLOOR_VALUES) {
+    action->params.lfo.ceiling = s_lfo_modify_floor_values[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_ceiling_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  static char options[128];
+  lfo_modify_floor_options(options, sizeof(options));
+  uint32_t current = lfo_modify_floor_lookup_index(s_ctx->target_action->params.lfo.ceiling);
+  return menu_create_roller_page("Ceiling", options, current,
+    lfo_modify_ceiling_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_ceiling(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Ceiling", lfo_modify_ceiling_roller_create);
+}
+
+// --- Resolution mode ------------------------------------------------------
+
+static const lfo_resolution_mode_t s_lfo_modify_resolutions[] = {
+  LFO_RESOLUTION_AUTO, LFO_RESOLUTION_COARSE, LFO_RESOLUTION_MEDIUM,
+  LFO_RESOLUTION_FINE, LFO_RESOLUTION_MANUAL,
+};
+#define NUM_LFO_MODIFY_RESOLUTIONS (sizeof(s_lfo_modify_resolutions) / sizeof(s_lfo_modify_resolutions[0]))
+
+static const char* lfo_modify_resolution_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  switch ((lfo_resolution_mode_t)v) {
+    case LFO_RESOLUTION_AUTO:   return "Auto";
+    case LFO_RESOLUTION_COARSE: return "Coarse";
+    case LFO_RESOLUTION_MEDIUM: return "Medium";
+    case LFO_RESOLUTION_FINE:   return "Fine";
+    case LFO_RESOLUTION_MANUAL: return "Manual";
+    default:                    return "Original";
+  }
+}
+
+static void lfo_modify_resolution_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.resolution_mode = ACTION_LFO_ORIG_U8;
+  } else if (selected_index <= NUM_LFO_MODIFY_RESOLUTIONS) {
+    action->params.lfo.resolution_mode = (uint8_t)s_lfo_modify_resolutions[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_resolution_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  uint32_t current = 0;
+  uint8_t v = s_ctx->target_action->params.lfo.resolution_mode;
+  if (v != ACTION_LFO_ORIG_U8) {
+    for (size_t i = 0; i < NUM_LFO_MODIFY_RESOLUTIONS; i++) {
+      if (s_lfo_modify_resolutions[i] == (lfo_resolution_mode_t)v) { current = (uint32_t)(i + 1); break; }
+    }
+  }
+  return menu_create_roller_page("Resolution",
+    "Original\nAuto\nCoarse\nMedium\nFine\nManual", current,
+    lfo_modify_resolution_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_resolution(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Resolution", lfo_modify_resolution_roller_create);
+}
+
+// --- Manual steps (conditional row, Resolution = Manual) -----------------
+
+static const uint8_t s_lfo_modify_step_values[] = { 16, 32, 64, 128 };
+#define NUM_LFO_MODIFY_STEP_VALUES (sizeof(s_lfo_modify_step_values) / sizeof(s_lfo_modify_step_values[0]))
+
+static const char* lfo_modify_steps_display(uint8_t v, char* buf, size_t len) {
+  if (v == ACTION_LFO_ORIG_STEPS) return "Original";
+  snprintf(buf, len, "%u", (unsigned)v);
+  return buf;
+}
+
+static void lfo_modify_steps_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  action_t* action = s_ctx->target_action;
+  if (selected_index == 0) {
+    action->params.lfo.manual_steps = ACTION_LFO_ORIG_STEPS;
+  } else if (selected_index <= NUM_LFO_MODIFY_STEP_VALUES) {
+    action->params.lfo.manual_steps = s_lfo_modify_step_values[selected_index - 1];
+  }
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* lfo_modify_steps_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  uint32_t current = 0;
+  uint8_t v = s_ctx->target_action->params.lfo.manual_steps;
+  if (v != ACTION_LFO_ORIG_STEPS) {
+    for (size_t i = 0; i < NUM_LFO_MODIFY_STEP_VALUES; i++) {
+      if (s_lfo_modify_step_values[i] == v) { current = (uint32_t)(i + 1); break; }
+    }
+  }
+  return menu_create_roller_page("Steps",
+    "Original\n16\n32\n64\n128", current,
+    lfo_modify_steps_confirm_cb, NULL);
+}
+
+static void nav_to_lfo_modify_steps(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Steps", lfo_modify_steps_roller_create);
 }
 
 // ============================================================================
@@ -7159,33 +7632,91 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show LFO slot selector for LFO actions
-  if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||
-      action->type == ACTION_LFO_TOGGLE || action->type == ACTION_LFO_SHAPE) {
+  // Show ACTION_LFO (consolidated family) rows: Variant + Target are
+  // always present; MODIFY adds 8 override rollers (each defaulting to
+  // "Original"). The Steps row is only rendered when the user has actually
+  // chosen Resolution = Manual -- in every other case it would have no
+  // effect at dispatch time so we hide it for clarity.
+  if (action->type == ACTION_LFO) {
+    snprintf(s_lfo_variant_label[buf], sizeof(s_lfo_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_lfo_variant_label[buf], nav_to_lfo_variant, NULL, true
+    };
+
     uint8_t slot = action->params.lfo.slot;
     const char* slot_name;
     switch (slot) {
       case 1: slot_name = "LFO 1"; break;
       case 2: slot_name = "LFO 2"; break;
       case 3: slot_name = "Both"; break;
-      default: slot_name = "LFO 1"; action->params.lfo.slot = 1; break;  // Fix invalid default
+      default: slot_name = "LFO 1"; action->params.lfo.slot = 1; break;
     }
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
     };
-  }
 
-  // Show Shapes editor for LFO Shape action
-  if (action->type == ACTION_LFO_SHAPE && item_count < MAX_DETAIL_ITEMS) {
-    uint8_t num_shapes = action->params.lfo.num_shapes;
-    if (num_shapes < LFO_SHAPE_MIN) num_shapes = LFO_SHAPE_MIN;
-    if (num_shapes > LFO_SHAPE_MAX) num_shapes = LFO_SHAPE_MAX;
-    snprintf(s_lfo_shape_list_label[buf], sizeof(s_lfo_shape_list_label[buf]),
-      "Shapes\n%u", (unsigned)num_shapes);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_lfo_shape_list_label[buf], nav_to_lfo_shape_list, NULL, true
-    };
+    if (action->variant == VARIANT_MODIFY) {
+      char tmp[16];
+
+      snprintf(s_lfo_modify_waveform_label[buf], sizeof(s_lfo_modify_waveform_label[buf]),
+        "Waveform\n%s", lfo_modify_waveform_display(action->params.lfo.waveform));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_waveform_label[buf], nav_to_lfo_modify_waveform, NULL, true
+      };
+
+      snprintf(s_lfo_modify_rate_mode_label[buf], sizeof(s_lfo_modify_rate_mode_label[buf]),
+        "Rate Mode\n%s", lfo_modify_rate_mode_display(action->params.lfo.rate_mode));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_rate_mode_label[buf], nav_to_lfo_modify_rate_mode, NULL, true
+      };
+
+      snprintf(s_lfo_modify_rate_hz_label[buf], sizeof(s_lfo_modify_rate_hz_label[buf]),
+        "Rate\n%s", lfo_modify_rate_hz_display(action->params.lfo.rate_hz_x100, tmp, sizeof(tmp)));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_rate_hz_label[buf], nav_to_lfo_modify_rate_hz, NULL, true
+      };
+
+      snprintf(s_lfo_modify_division_label[buf], sizeof(s_lfo_modify_division_label[buf]),
+        "Division\n%s", lfo_modify_division_display(action->params.lfo.division));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_division_label[buf], nav_to_lfo_modify_division, NULL, true
+      };
+
+      snprintf(s_lfo_modify_polarity_label[buf], sizeof(s_lfo_modify_polarity_label[buf]),
+        "Polarity\n%s", lfo_modify_polarity_display(action->params.lfo.polarity));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_polarity_label[buf], nav_to_lfo_modify_polarity, NULL, true
+      };
+
+      snprintf(s_lfo_modify_floor_label[buf], sizeof(s_lfo_modify_floor_label[buf]),
+        "Floor\n%s", lfo_modify_floor_display(action->params.lfo.floor, tmp, sizeof(tmp)));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_floor_label[buf], nav_to_lfo_modify_floor, NULL, true
+      };
+
+      snprintf(s_lfo_modify_ceiling_label[buf], sizeof(s_lfo_modify_ceiling_label[buf]),
+        "Ceiling\n%s", lfo_modify_floor_display(action->params.lfo.ceiling, tmp, sizeof(tmp)));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_ceiling_label[buf], nav_to_lfo_modify_ceiling, NULL, true
+      };
+
+      snprintf(s_lfo_modify_resolution_label[buf], sizeof(s_lfo_modify_resolution_label[buf]),
+        "Resolution\n%s", lfo_modify_resolution_display(action->params.lfo.resolution_mode));
+      s_detail_items[item_count++] = (menu_item_t){
+        s_lfo_modify_resolution_label[buf], nav_to_lfo_modify_resolution, NULL, true
+      };
+
+      if (action->params.lfo.resolution_mode == LFO_RESOLUTION_MANUAL &&
+          item_count < MAX_DETAIL_ITEMS) {
+        snprintf(s_lfo_modify_steps_label[buf], sizeof(s_lfo_modify_steps_label[buf]),
+          "Steps\n%s", lfo_modify_steps_display(action->params.lfo.manual_steps, tmp, sizeof(tmp)));
+        s_detail_items[item_count++] = (menu_item_t){
+          s_lfo_modify_steps_label[buf], nav_to_lfo_modify_steps, NULL, true
+        };
+      }
+    }
   }
   
   // Show clock mode selector for clock toggle/hold actions

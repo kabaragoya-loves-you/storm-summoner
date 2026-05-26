@@ -3931,10 +3931,7 @@ static const char* action_type_json_names[] = {
   [ACTION_RESET] = "reset",
   [ACTION_PIANO_PEDAL] = "piano_pedal",
   [ACTION_TOUCHWHEEL] = "touchwheel",
-  [ACTION_LFO_START] = "lfo_start",
-  [ACTION_LFO_STOP] = "lfo_stop",
-  [ACTION_LFO_TOGGLE] = "lfo_toggle",
-  [ACTION_LFO_SHAPE] = "lfo_shape",
+  [ACTION_LFO] = "lfo",
   [ACTION_CLOCK_TOGGLE] = "clock_toggle",
   [ACTION_CLOCK_HOLD] = "clock_hold",
   [ACTION_CLOCK_BURST] = "clock_burst",
@@ -4211,17 +4208,31 @@ static cJSON* action_to_json(const action_t* action) {
       default:
         break;
     }
-  } else if (action->type == ACTION_LFO_START || action->type == ACTION_LFO_STOP ||
-             action->type == ACTION_LFO_TOGGLE) {
+  } else if (action->type == ACTION_LFO) {
+    // Always emit slot. For VARIANT_MODIFY, additionally emit each override
+    // only when it carries a non-sentinel value -- absent fields mean
+    // "Original" (leave the scene config in place) on the load side too.
     cJSON_AddNumberToObject(obj, "slot", action->params.lfo.slot);
-  } else if (action->type == ACTION_LFO_SHAPE) {
-    cJSON_AddNumberToObject(obj, "slot", action->params.lfo.slot);
-    cJSON_AddNumberToObject(obj, "num_shapes", action->params.lfo.num_shapes);
-    cJSON* shapes = cJSON_CreateArray();
-    for (int i = 0; i < action->params.lfo.num_shapes && i < 8; i++) {
-      cJSON_AddItemToArray(shapes, cJSON_CreateNumber(action->params.lfo.shapes[i]));
+    if (action->variant == VARIANT_MODIFY) {
+      if (action->params.lfo.waveform != ACTION_LFO_ORIG_U8)
+        cJSON_AddNumberToObject(obj, "waveform", action->params.lfo.waveform);
+      if (action->params.lfo.rate_mode != ACTION_LFO_ORIG_U8)
+        cJSON_AddNumberToObject(obj, "rate_mode", action->params.lfo.rate_mode);
+      if (action->params.lfo.rate_hz_x100 != ACTION_LFO_ORIG_U16)
+        cJSON_AddNumberToObject(obj, "rate_hz_x100", action->params.lfo.rate_hz_x100);
+      if (action->params.lfo.division != ACTION_LFO_ORIG_U8)
+        cJSON_AddNumberToObject(obj, "division", action->params.lfo.division);
+      if (action->params.lfo.polarity != ACTION_LFO_ORIG_U8)
+        cJSON_AddNumberToObject(obj, "polarity", action->params.lfo.polarity);
+      if (action->params.lfo.floor != ACTION_LFO_ORIG_U8)
+        cJSON_AddNumberToObject(obj, "floor", action->params.lfo.floor);
+      if (action->params.lfo.ceiling != ACTION_LFO_ORIG_U8)
+        cJSON_AddNumberToObject(obj, "ceiling", action->params.lfo.ceiling);
+      if (action->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8)
+        cJSON_AddNumberToObject(obj, "resolution_mode", action->params.lfo.resolution_mode);
+      if (action->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS)
+        cJSON_AddNumberToObject(obj, "manual_steps", action->params.lfo.manual_steps);
     }
-    cJSON_AddItemToObject(obj, "shapes", shapes);
   } else if (action->type == ACTION_CLOCK_TOGGLE || action->type == ACTION_CLOCK_HOLD) {
     cJSON_AddBoolToObject(obj, "start_enabled", action->params.clock.start_enabled);
   } else if (action->type == ACTION_CLOCK_BURST) {
@@ -4473,6 +4484,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_PRESET)     action.variant = VARIANT_SET;
     if (action.type == ACTION_TRANSPORT)  action.variant = VARIANT_PLAY;
     if (action.type == ACTION_TOUCHWHEEL) action.variant = VARIANT_HOLD;
+    if (action.type == ACTION_LFO)        action.variant = VARIANT_START;
   }
 
   // Piano Pedal: dedicated parser so the generic CC parser below doesn't
@@ -4716,33 +4728,56 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
-  // Parse LFO actions
-  if (action.type == ACTION_LFO_START || action.type == ACTION_LFO_STOP ||
-      action.type == ACTION_LFO_TOGGLE || action.type == ACTION_LFO_SHAPE) {
+  // Parse ACTION_LFO actions
+  if (action.type == ACTION_LFO) {
+    // Seed every MODIFY override at its "Original" sentinel; the field is
+    // only filled in when the JSON object actually carries that key.
+    action.params.lfo.waveform        = ACTION_LFO_ORIG_U8;
+    action.params.lfo.rate_mode       = ACTION_LFO_ORIG_U8;
+    action.params.lfo.rate_hz_x100    = ACTION_LFO_ORIG_U16;
+    action.params.lfo.division        = ACTION_LFO_ORIG_U8;
+    action.params.lfo.polarity        = ACTION_LFO_ORIG_U8;
+    action.params.lfo.floor           = ACTION_LFO_ORIG_U8;
+    action.params.lfo.ceiling         = ACTION_LFO_ORIG_U8;
+    action.params.lfo.resolution_mode = ACTION_LFO_ORIG_U8;
+    action.params.lfo.manual_steps    = ACTION_LFO_ORIG_STEPS;
+
     cJSON* slot = cJSON_GetObjectItem(obj, "slot");
-    if (slot) action.params.lfo.slot = slot->valueint;
-    
-    if (action.type == ACTION_LFO_SHAPE) {
-      cJSON* num_shapes = cJSON_GetObjectItem(obj, "num_shapes");
+    if (slot) action.params.lfo.slot = (uint8_t)slot->valueint;
+
+    if (action.variant == VARIANT_MODIFY) {
+      // Modern MODIFY overrides -- absent keys stay at the Original sentinel.
+      cJSON* item;
+      if ((item = cJSON_GetObjectItem(obj, "waveform")))
+        action.params.lfo.waveform = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "rate_mode")))
+        action.params.lfo.rate_mode = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "rate_hz_x100")))
+        action.params.lfo.rate_hz_x100 = (uint16_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "division")))
+        action.params.lfo.division = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "polarity")))
+        action.params.lfo.polarity = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "floor")))
+        action.params.lfo.floor = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "ceiling")))
+        action.params.lfo.ceiling = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "resolution_mode")))
+        action.params.lfo.resolution_mode = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "manual_steps")))
+        action.params.lfo.manual_steps = (uint8_t)item->valueint;
+
+      // Legacy lfo_shape compatibility: the migration alias rewrote the
+      // type/variant to ACTION_LFO + VARIANT_MODIFY but the JSON still
+      // carries the old shapes[] cycle. Seed the waveform override from
+      // shapes[0] so the legacy file at least flips to its first listed
+      // waveform on every press. The other 1-7 entries (and the cycle
+      // semantics) are lost; this is the documented regression.
       cJSON* shapes = cJSON_GetObjectItem(obj, "shapes");
-      if (num_shapes) {
-        int ns = num_shapes->valueint;
-        // Clamp to valid range: 2-8 (need at least 2 shapes to cycle)
-        if (ns < 2) ns = 2;
-        if (ns > 8) ns = 8;
-        action.params.lfo.num_shapes = (uint8_t)ns;
-      }
-      if (shapes && cJSON_IsArray(shapes)) {
-        int count = cJSON_GetArraySize(shapes);
-        if (count > 8) count = 8;
-        for (int i = 0; i < count; i++) {
-          cJSON* item = cJSON_GetArrayItem(shapes, i);
-          if (item) action.params.lfo.shapes[i] = (uint8_t)item->valueint;
-        }
-        // Ensure num_shapes doesn't exceed actual array count
-        if (action.params.lfo.num_shapes > count) {
-          action.params.lfo.num_shapes = (uint8_t)count;
-        }
+      if (action.params.lfo.waveform == ACTION_LFO_ORIG_U8 &&
+          shapes && cJSON_IsArray(shapes) && cJSON_GetArraySize(shapes) > 0) {
+        cJSON* first = cJSON_GetArrayItem(shapes, 0);
+        if (first) action.params.lfo.waveform = (uint8_t)first->valueint;
       }
     }
   }

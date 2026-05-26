@@ -58,60 +58,87 @@ action_handle_result_t action_handlers_modulation_dispatch(
   (void)trigger_value;
 
   switch (action->type) {
-    case ACTION_LFO_START:
-      if (is_press) {
-        uint8_t slot = action->params.lfo.slot;
-        scene_t* scene = scene_get_current();
-        if (slot == 1 || slot == 3) lfo_start_one(0, scene ? &scene->lfo1 : NULL);
-        if (slot == 2 || slot == 3) lfo_start_one(1, scene ? &scene->lfo2 : NULL);
-        ESP_LOGI(TAG, "LFO Start: slot %d", slot);
-      }
-      return ACTION_HANDLED;
+    case ACTION_LFO: {
+      if (!is_press) return ACTION_HANDLED;
+      uint8_t slot = action->params.lfo.slot;
+      scene_t* scene = scene_get_current();
+      switch (action->variant) {
+        case VARIANT_START:
+          if (slot == 1 || slot == 3) lfo_start_one(0, scene ? &scene->lfo1 : NULL);
+          if (slot == 2 || slot == 3) lfo_start_one(1, scene ? &scene->lfo2 : NULL);
+          ESP_LOGI(TAG, "LFO Start: slot %d", slot);
+          return ACTION_HANDLED;
+        case VARIANT_STOP:
+          if (slot == 1 || slot == 3) lfo_stop_one(0, scene ? &scene->lfo1 : NULL);
+          if (slot == 2 || slot == 3) lfo_stop_one(1, scene ? &scene->lfo2 : NULL);
+          ESP_LOGI(TAG, "LFO Stop: slot %d", slot);
+          return ACTION_HANDLED;
+        case VARIANT_TOGGLE:
+          if (slot == 1 || slot == 3) lfo_toggle_one(0, scene ? &scene->lfo1 : NULL);
+          if (slot == 2 || slot == 3) lfo_toggle_one(1, scene ? &scene->lfo2 : NULL);
+          ESP_LOGI(TAG, "LFO Toggle: slot %d", slot);
+          return ACTION_HANDLED;
+        case VARIANT_MODIFY: {
+          // Apply each non-sentinel override in place. Mirrors the SHAPE
+          // action's "runtime mutation without phase reset" behavior, but
+          // generalized to every LFO parameter. Polarity is on the per-scene
+          // continuous_mapping (not the engine), so we mutate the scene
+          // struct directly for that field.
+          const action_t* a = action;
+          int applied = 0;
+          for (int side = 0; side < 2; side++) {
+            uint8_t lfo_index = (uint8_t)side;
+            uint8_t slot_bit = (side == 0) ? 1 : 2;
+            if (!(slot == slot_bit || slot == 3)) continue;
 
-    case ACTION_LFO_STOP:
-      if (is_press) {
-        uint8_t slot = action->params.lfo.slot;
-        scene_t* scene = scene_get_current();
-        if (slot == 1 || slot == 3) lfo_stop_one(0, scene ? &scene->lfo1 : NULL);
-        if (slot == 2 || slot == 3) lfo_stop_one(1, scene ? &scene->lfo2 : NULL);
-        ESP_LOGI(TAG, "LFO Stop: slot %d", slot);
-      }
-      return ACTION_HANDLED;
+            continuous_mapping_t* scene_mapping =
+              scene ? (lfo_index == 0 ? &scene->lfo1 : &scene->lfo2) : NULL;
 
-    case ACTION_LFO_TOGGLE:
-      if (is_press) {
-        uint8_t slot = action->params.lfo.slot;
-        scene_t* scene = scene_get_current();
-        if (slot == 1 || slot == 3) lfo_toggle_one(0, scene ? &scene->lfo1 : NULL);
-        if (slot == 2 || slot == 3) lfo_toggle_one(1, scene ? &scene->lfo2 : NULL);
-        ESP_LOGI(TAG, "LFO Toggle: slot %d", slot);
-      }
-      return ACTION_HANDLED;
-
-    case ACTION_LFO_SHAPE:
-      if (is_press) {
-        action_t* mutable_action = (action_t*)action;
-        uint8_t num_shapes = mutable_action->params.lfo.num_shapes;
-
-        if (num_shapes < 2 || num_shapes > 8) {
-          ESP_LOGW(TAG, "LFO Shape: num_shapes=%d invalid, skipping", num_shapes);
+            if (a->params.lfo.waveform != ACTION_LFO_ORIG_U8) {
+              lfo_set_waveform(lfo_index, (lfo_waveform_t)a->params.lfo.waveform);
+              applied++;
+            }
+            if (a->params.lfo.rate_mode != ACTION_LFO_ORIG_U8) {
+              lfo_set_rate_mode(lfo_index, (lfo_rate_mode_t)a->params.lfo.rate_mode);
+              applied++;
+            }
+            if (a->params.lfo.rate_hz_x100 != ACTION_LFO_ORIG_U16) {
+              lfo_set_rate_hz(lfo_index, (float)a->params.lfo.rate_hz_x100 / 100.0f);
+              applied++;
+            }
+            if (a->params.lfo.division != ACTION_LFO_ORIG_U8) {
+              lfo_set_division(lfo_index, (lfo_note_division_t)a->params.lfo.division);
+              applied++;
+            }
+            if (a->params.lfo.polarity != ACTION_LFO_ORIG_U8 && scene_mapping) {
+              scene_mapping->polarity = (polarity_t)a->params.lfo.polarity;
+              applied++;
+            }
+            if (a->params.lfo.floor != ACTION_LFO_ORIG_U8) {
+              lfo_set_floor(lfo_index, a->params.lfo.floor);
+              applied++;
+            }
+            if (a->params.lfo.ceiling != ACTION_LFO_ORIG_U8) {
+              lfo_set_ceiling(lfo_index, a->params.lfo.ceiling);
+              applied++;
+            }
+            if (a->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8) {
+              lfo_set_resolution_mode(lfo_index, (lfo_resolution_mode_t)a->params.lfo.resolution_mode);
+              applied++;
+            }
+            if (a->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS) {
+              lfo_set_manual_steps(lfo_index, a->params.lfo.manual_steps);
+              applied++;
+            }
+          }
+          ESP_LOGI(TAG, "LFO Modify: slot %d, %d override(s) applied", slot, applied);
           return ACTION_HANDLED;
         }
-
-        uint8_t idx = mutable_action->params.lfo.current_index;
-        if (idx >= num_shapes || idx >= 8) idx = 0;
-
-        uint8_t shape = mutable_action->params.lfo.shapes[idx];
-        uint8_t slot = mutable_action->params.lfo.slot;
-
-        if (slot == 1 || slot == 3) lfo_set_waveform(0, (lfo_waveform_t)shape);
-        if (slot == 2 || slot == 3) lfo_set_waveform(1, (lfo_waveform_t)shape);
-
-        ESP_LOGI(TAG, "LFO Shape: slot %d, shape %d", slot, shape);
-
-        mutable_action->params.lfo.current_index = (idx + 1) % num_shapes;
+        default:
+          ESP_LOGW(TAG, "Unknown LFO variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      return ACTION_HANDLED;
+    }
 
     case ACTION_CLOCK_TOGGLE:
       if (is_press) {

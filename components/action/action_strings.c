@@ -19,10 +19,7 @@ static const char* action_type_names[] = {
   [ACTION_RESET] = "Reset",
   [ACTION_PIANO_PEDAL] = "Piano Pedal",
   [ACTION_TOUCHWHEEL] = "Touchwheel",
-  [ACTION_LFO_START] = "LFO Start",
-  [ACTION_LFO_STOP] = "LFO Stop",
-  [ACTION_LFO_TOGGLE] = "LFO Toggle",
-  [ACTION_LFO_SHAPE] = "LFO Shape",
+  [ACTION_LFO] = "LFO",
   [ACTION_CLOCK_TOGGLE] = "Clock Toggle",
   [ACTION_CLOCK_HOLD] = "Clock Hold",
   [ACTION_CLOCK_BURST] = "Clock Burst",
@@ -72,6 +69,7 @@ static const char* action_variant_display_names[] = {
   [VARIANT_PLAY]      = "Play",
   [VARIANT_PAUSE]     = "Pause",
   [VARIANT_RECORD]    = "Record",
+  [VARIANT_MODIFY]    = "Modify",
 };
 
 const char* action_variant_to_string(action_variant_t variant) {
@@ -91,6 +89,7 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_PRESET:
     case ACTION_TRANSPORT:
     case ACTION_TOUCHWHEEL:
+    case ACTION_LFO:
       return true;
     default:
       return false;
@@ -175,6 +174,18 @@ static const char* touchwheel_variant_display(action_variant_t v) {
   }
 }
 
+// LFO family: SHAPE collapsed into MODIFY (general parameter override). All
+// three of START/STOP/TOGGLE keep their pre-consolidation wording.
+static const char* lfo_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_START:  return "LFO Start";
+    case VARIANT_STOP:   return "LFO Stop";
+    case VARIANT_TOGGLE: return "LFO Toggle";
+    case VARIANT_MODIFY: return "LFO Modify";
+    default:             return "LFO";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -203,6 +214,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_TOUCHWHEEL) {
     snprintf(buf, len, "%s", touchwheel_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_LFO) {
+    snprintf(buf, len, "%s", lfo_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

@@ -302,6 +302,52 @@ static void format_action_details_with_device(const action_t* action, const devi
           break;
       }
       break;
+    case ACTION_LFO: {
+      // Console-side variant-aware label. No console parser verbs for the
+      // LFO family yet (the inventory carried none for the old singletons
+      // either); these print-only formatters keep `scene show` and the
+      // pad-listing readouts intelligible while we wait to add LFO console
+      // commands as a follow-up task. The leading display-name ("LFO
+      // Start"/"LFO Modify"/etc.) already encodes the variant, so we
+      // only tag on the bits the user actually configured.
+      const char* slot_name =
+        action->params.lfo.slot == 1 ? "LFO1" :
+        action->params.lfo.slot == 2 ? "LFO2" :
+        action->params.lfo.slot == 3 ? "Both" : "LFO?";
+      if (action->variant == VARIANT_MODIFY) {
+        // List override tags compactly. Same naming as action_summary so
+        // the user sees consistent terminology everywhere.
+        int pos = snprintf(buf, buf_size, "LFO Modify %s:", slot_name);
+        int first = 1;
+        #define LFO_DBG_TAG(_tag) do { \
+          if (pos < (int)buf_size - 16) { \
+            pos += snprintf(buf + pos, buf_size - pos, "%s%s", \
+              first ? " " : ",", (_tag)); \
+            first = 0; \
+          } \
+        } while (0)
+        if (action->params.lfo.waveform        != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Wave");
+        if (action->params.lfo.rate_mode       != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("RateMode");
+        if (action->params.lfo.rate_hz_x100    != ACTION_LFO_ORIG_U16)   LFO_DBG_TAG("Rate");
+        if (action->params.lfo.division        != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Div");
+        if (action->params.lfo.polarity        != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Pol");
+        if (action->params.lfo.floor           != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Floor");
+        if (action->params.lfo.ceiling         != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Ceil");
+        if (action->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Res");
+        if (action->params.lfo.manual_steps    != ACTION_LFO_ORIG_STEPS) LFO_DBG_TAG("Steps");
+        if (first) snprintf(buf + pos, buf_size - pos, " no overrides");
+        #undef LFO_DBG_TAG
+      } else {
+        snprintf(buf, buf_size, "%s %s",
+          action_variant_to_string(action->variant) /* Start/Stop/Toggle */, slot_name);
+        // Fall back if variant string is empty (shouldn't happen for the
+        // consolidated family; defensive only).
+        if (buf[0] == ' ') {
+          snprintf(buf, buf_size, "LFO ? %s", slot_name);
+        }
+      }
+      break;
+    }
     default:
       // For actions without parameters, just use the action name
       snprintf(buf, buf_size, "%s", action_type_to_string(action->type));

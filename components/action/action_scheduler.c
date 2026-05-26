@@ -169,9 +169,9 @@ static void reset_action_cycle_index(action_t* action) {
         action->params.tw_mode.current_index = 0;
       }
       break;
-    case ACTION_LFO_SHAPE:
-      action->params.lfo.current_index = 0;
-      break;
+    // ACTION_LFO has no cycle variant in the consolidated family (the old
+    // SHAPE cycling was dropped in favor of MODIFY's general parameter
+    // overrides), so nothing here needs to reset between repeats.
     case ACTION_UI_CYCLE:
       action->params.ui.current_index = 0;
       break;
@@ -278,10 +278,9 @@ static void handle_beat_event(const event_t* event, void* context) {
                   pending->action.params.tw_mode.current_index;
               }
               break;
-            case ACTION_LFO_SHAPE:
-              pending->original->params.lfo.current_index =
-                pending->action.params.lfo.current_index;
-              break;
+            // ACTION_LFO has no cycle state to sync back -- the consolidated
+            // family dropped SHAPE cycling in favor of MODIFY's per-press
+            // override push.
             default:
               break;
           }
