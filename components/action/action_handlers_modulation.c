@@ -284,25 +284,32 @@ action_handle_result_t action_handlers_modulation_dispatch(
           return ACTION_HANDLED;
       }
 
-    case ACTION_RTG_TOGGLE:
-      if (is_press) {
-        rtg_toggle();
-        ESP_LOGI(TAG, "RTG Toggle: now %s", rtg_is_running() ? "running" : "stopped");
-      }
-      return ACTION_HANDLED;
+    case ACTION_RTG:
+      switch (action->variant) {
+        case VARIANT_TOGGLE:
+          if (is_press) {
+            rtg_toggle();
+            ESP_LOGI(TAG, "RTG Toggle: now %s", rtg_is_running() ? "running" : "stopped");
+          }
+          return ACTION_HANDLED;
 
-    case ACTION_RTG_HOLD:
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-        rtg_start();
-        ESP_LOGD(TAG, "RTG Hold: press -> running");
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "RTG hold release skipped by follow-up");
-      } else {
-        rtg_stop();
-        ESP_LOGD(TAG, "RTG Hold: release -> stopped");
+        case VARIANT_HOLD:
+          if (is_press) {
+            action_followup_record_press((action_t*)action);
+            rtg_start();
+            ESP_LOGD(TAG, "RTG Hold: press -> running");
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "RTG hold release skipped by follow-up");
+          } else {
+            rtg_stop();
+            ESP_LOGD(TAG, "RTG Hold: release -> stopped");
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unknown RTG variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      return ACTION_HANDLED;
 
     case ACTION_SAMPLE_HOLD_TOGGLE:
       if (is_press) {

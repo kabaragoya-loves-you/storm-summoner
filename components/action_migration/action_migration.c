@@ -151,6 +151,10 @@ static const legacy_alias_t s_legacy_aliases[] = {
   // Pre-consolidation param names.
   { "param_hold",       ACTION_PARAM,            VARIANT_HOLD      },
   { "param_cycle",      ACTION_PARAM,            VARIANT_CYCLE     },
+
+  // Pre-consolidation RTG names.
+  { "rtg_toggle",       ACTION_RTG,              VARIANT_TOGGLE    },
+  { "rtg_hold",         ACTION_RTG,              VARIANT_HOLD      },
 };
 
 static const size_t s_legacy_alias_count =

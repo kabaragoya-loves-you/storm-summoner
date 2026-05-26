@@ -131,6 +131,7 @@ static char s_ui_cycle_steps_label[LABEL_BUFFER_SETS][24];
 static char s_ui_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
 static uint8_t s_editing_ui_step = 0;
 static char s_param_variant_label[LABEL_BUFFER_SETS][24];
+static char s_rtg_variant_label[LABEL_BUFFER_SETS][24];
 static char s_param_label[LABEL_BUFFER_SETS][32];
 static char s_param2_label[LABEL_BUFFER_SETS][32];
 static char s_param_cycle_steps_label[LABEL_BUFFER_SETS][24];
@@ -195,8 +196,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_CUT,
   ACTION_UI,
   ACTION_PARAM,
-  ACTION_RTG_TOGGLE,
-  ACTION_RTG_HOLD,
+  ACTION_RTG,
   ACTION_SAMPLE_HOLD_TOGGLE,
   ACTION_SAMPLE_HOLD_HOLD,
   ACTION_STEP,
@@ -247,8 +247,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_CUT: return "Cut";
     case ACTION_UI: return "UI";
     case ACTION_PARAM: return "Param";
-    case ACTION_RTG_TOGGLE: return "RTG Toggle";
-    case ACTION_RTG_HOLD: return "RTG Hold";
+    case ACTION_RTG: return "RTG";
     case ACTION_SAMPLE_HOLD_TOGGLE: return "S+H Toggle";
     case ACTION_SAMPLE_HOLD_HOLD: return "S+H Hold";
     case ACTION_STEP: return "Step";
@@ -742,6 +741,10 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.tw_param.params[0] = cc1;
       action->params.tw_param.params[1] = cc2;
       action->params.tw_param.current_index = 0;
+    }
+
+    if (new_type == ACTION_RTG) {
+      action->variant = VARIANT_TOGGLE;
     }
 
     // Set defaults for Step action (default to RTG)
@@ -6593,6 +6596,88 @@ static void nav_to_ui_cycle_step(void* user_data) {
 }
 
 // ============================================================================
+// RTG Variant Roller (for ACTION_RTG -- Toggle / Hold picker)
+// ============================================================================
+
+static const action_variant_t s_rtg_variants[] = {
+  VARIANT_TOGGLE,
+  VARIANT_HOLD,
+};
+#define NUM_RTG_VARIANTS (sizeof(s_rtg_variants) / sizeof(s_rtg_variants[0]))
+
+static action_variant_t s_filtered_rtg_variants[NUM_RTG_VARIANTS];
+static size_t s_num_filtered_rtg_variants = 0;
+
+static void build_filtered_rtg_variants(void) {
+  s_num_filtered_rtg_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_RTG_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_RTG, s_rtg_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_rtg_variants[s_num_filtered_rtg_variants++] = s_rtg_variants[i];
+    }
+  }
+}
+
+static void rtg_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_rtg_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_rtg_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* rtg_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_rtg_variants();
+  if (s_num_filtered_rtg_variants == 0) return NULL;
+
+  static char options[64];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_rtg_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    char name[24];
+    action_t probe = { .type = ACTION_RTG, .variant = s_filtered_rtg_variants[i] };
+    action_get_display_name(&probe, name, sizeof(name));
+    strcat(options, name);
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_rtg_variants; i++) {
+    if (s_filtered_rtg_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, rtg_variant_confirm_cb, NULL);
+}
+
+static void nav_to_rtg_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", rtg_variant_roller_create);
+}
+
+// ============================================================================
 // Param Variant Roller (for ACTION_PARAM -- Hold / Cycle picker)
 // ============================================================================
 
@@ -8209,7 +8294,16 @@ lv_obj_t* action_config_detail_page_create(void) {
       };
     }
   }
-  
+
+  // ACTION_RTG (consolidated family): Variant row only.
+  if (action->type == ACTION_RTG) {
+    snprintf(s_rtg_variant_label[buf], sizeof(s_rtg_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_rtg_variant_label[buf], nav_to_rtg_variant, NULL, true
+    };
+  }
+
   // Show confirm target selector for confirm_pending action in Advanced mode only
   if (action->type == ACTION_CONFIRM_PENDING &&
       scene_get_mode() == SCENE_MODE_ADVANCED &&

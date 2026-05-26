@@ -3936,8 +3936,7 @@ static const char* action_type_json_names[] = {
   [ACTION_CUT] = "cut",
   [ACTION_UI] = "ui",
   [ACTION_PARAM] = "param",
-  [ACTION_RTG_TOGGLE] = "rtg_toggle",
-  [ACTION_RTG_HOLD] = "rtg_hold",
+  [ACTION_RTG] = "rtg",
   [ACTION_SAMPLE_HOLD_TOGGLE] = "sample_hold_toggle",
   [ACTION_SAMPLE_HOLD_HOLD] = "sample_hold_hold",
   [ACTION_STEP] = "step",
@@ -4517,6 +4516,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_CUT)        action.variant = VARIANT_TOGGLE;
     if (action.type == ACTION_UI)         action.variant = VARIANT_SET;
     if (action.type == ACTION_PARAM)      action.variant = VARIANT_HOLD;
+    if (action.type == ACTION_RTG)        action.variant = VARIANT_TOGGLE;
   }
 
   // Piano Pedal: dedicated parser so the generic CC parser below doesn't

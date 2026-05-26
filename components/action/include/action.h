@@ -87,8 +87,7 @@ typedef enum {
   ACTION_PARAM,               // Hold / Cycle via variant
 
   // RTG control
-  ACTION_RTG_TOGGLE,          // Toggle RTG enabled state
-  ACTION_RTG_HOLD,            // Press: enable RTG, Release: disable RTG
+  ACTION_RTG,                 // Toggle / Hold via variant
 
   // Sample+Hold control
   ACTION_SAMPLE_HOLD_TOGGLE,  // Toggle S+H enabled state
