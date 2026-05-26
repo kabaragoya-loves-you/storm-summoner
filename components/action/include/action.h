@@ -87,10 +87,10 @@ typedef enum {
   ACTION_PARAM,               // Hold / Cycle via variant
 
   // RTG control
-  ACTION_RTG,                 // Toggle / Hold / Step via variant
+  ACTION_RTG,                 // Toggle / Hold / Step / Modify via variant
 
   // Sample+Hold control
-  ACTION_SAMPLE_HOLD,         // Toggle / Hold / Step via variant
+  ACTION_SAMPLE_HOLD,         // Toggle / Hold / Step / Modify via variant
 
   // Looper punch-in
   ACTION_PUNCH_IN,            // Send start CC at bar, finish CC after duration
@@ -252,6 +252,15 @@ typedef enum {
   CONFIRM_TARGET_PRESET = 0,  // Default: confirm preset changes
   CONFIRM_TARGET_SCENE        // Confirm scene changes
 } confirm_target_t;
+
+// Shared MODIFY override layout for ACTION_RTG and ACTION_SAMPLE_HOLD.
+typedef struct {
+  uint8_t rate_mode;
+  uint16_t rate_hz_x100;
+  uint16_t sync_mult_x1000;
+  uint8_t glide;
+  uint8_t probability;
+} action_engine_modify_t;
 
 // Action parameters (flexible union for different action types)
 typedef struct {
@@ -419,6 +428,12 @@ typedef struct {
       uint8_t current_index;    // Current position in cycle
     } tw_param;
 
+    // For ACTION_RTG + VARIANT_MODIFY (runtime engine overrides; press-only).
+    action_engine_modify_t rtg_modify;
+
+    // For ACTION_SAMPLE_HOLD + VARIANT_MODIFY.
+    action_engine_modify_t sh_modify;
+
     // For punch-in action (looper recording)
     struct {
       uint8_t start_cc;         // CC number to send at start
@@ -493,6 +508,15 @@ typedef struct {
 #define ACTION_LFO_RAND_U8      ((uint8_t)0xFE)
 #define ACTION_LFO_RAND_U16     ((uint16_t)0xFFFE)
 #define ACTION_LFO_RAND_STEPS   ((uint8_t)254)
+
+static inline void action_engine_modify_seed(action_engine_modify_t* m) {
+  if (!m) return;
+  m->rate_mode = ACTION_LFO_ORIG_U8;
+  m->rate_hz_x100 = ACTION_LFO_ORIG_U16;
+  m->sync_mult_x1000 = ACTION_LFO_ORIG_U16;
+  m->glide = ACTION_LFO_ORIG_U8;
+  m->probability = ACTION_LFO_ORIG_U8;
+}
 
 // VARIANT_SET tempo sentinels (outside the 20-300 BPM picker range).
 #define ACTION_TEMPO_BPM_RANDOM   ((uint16_t)0)

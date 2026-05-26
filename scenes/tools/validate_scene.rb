@@ -42,6 +42,36 @@ VALID_TOUCHWHEEL_MODES = %w[
 # Valid touchwheel styles
 VALID_TOUCHWHEEL_STYLES = %w[odometer endless bipolar].freeze
 
+def validate_engine_modify_fields(action, context, errors)
+  rand_u8 = 254
+  rand_u16 = 65534
+  if action.key?('rate_mode') &&
+     !(action['rate_mode'].is_a?(Integer) &&
+       (action['rate_mode'] == rand_u8 || action['rate_mode'].between?(0, 1)))
+    errors << "#{context}: modify 'rate_mode' must be 0-1 or #{rand_u8} (random)"
+  end
+  if action.key?('rate_hz_x100') &&
+     !(action['rate_hz_x100'].is_a?(Integer) &&
+       (action['rate_hz_x100'] == rand_u16 || action['rate_hz_x100'].between?(50, 2500)))
+    errors << "#{context}: modify 'rate_hz_x100' must be 50-2500 or #{rand_u16} (random)"
+  end
+  if action.key?('sync_mult_x1000') &&
+     !(action['sync_mult_x1000'].is_a?(Integer) &&
+       (action['sync_mult_x1000'] == rand_u16 || action['sync_mult_x1000'].between?(125, 8000)))
+    errors << "#{context}: modify 'sync_mult_x1000' must be 125-8000 or #{rand_u16} (random)"
+  end
+  if action.key?('glide') &&
+     !(action['glide'].is_a?(Integer) &&
+       (action['glide'] == rand_u8 || action['glide'].between?(0, 1)))
+    errors << "#{context}: modify 'glide' must be 0-1 or #{rand_u8} (random)"
+  end
+  if action.key?('probability') &&
+     !(action['probability'].is_a?(Integer) &&
+       (action['probability'] == rand_u8 || action['probability'].between?(10, 100)))
+    errors << "#{context}: modify 'probability' must be 10-100 or #{rand_u8} (random)"
+  end
+end
+
 def validate_action(action, context, errors)
   type = action['type']
   
@@ -315,8 +345,10 @@ def validate_action(action, context, errors)
     case variant
     when 'toggle', 'hold', 'step', nil
       # Parameterless action; no extra fields.
+    when 'modify'
+      validate_engine_modify_fields(action, context, errors)
     else
-      errors << "#{context}: rtg variant must be 'toggle', 'hold', or 'step' (got #{variant.inspect})"
+      errors << "#{context}: rtg variant must be 'toggle', 'hold', 'step', or 'modify' (got #{variant.inspect})"
     end
   when 'rtg_toggle', 'rtg_hold'
     # Legacy single-type entries; no extra fields.
@@ -325,8 +357,10 @@ def validate_action(action, context, errors)
     case variant
     when 'toggle', 'hold', 'step', nil
       # Parameterless action; no extra fields.
+    when 'modify'
+      validate_engine_modify_fields(action, context, errors)
     else
-      errors << "#{context}: sample_hold variant must be 'toggle', 'hold', or 'step' (got #{variant.inspect})"
+      errors << "#{context}: sample_hold variant must be 'toggle', 'hold', 'step', or 'modify' (got #{variant.inspect})"
     end
   when 'sample_hold_toggle', 'sample_hold_hold'
     # Legacy single-type entries; no extra fields.

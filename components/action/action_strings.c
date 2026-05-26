@@ -228,6 +228,7 @@ static const char* rtg_variant_display(action_variant_t v) {
     case VARIANT_TOGGLE: return "RTG Toggle";
     case VARIANT_HOLD:   return "RTG Hold";
     case VARIANT_STEP:   return "RTG Step";
+    case VARIANT_MODIFY: return "RTG Modify";
     default:             return "RTG";
   }
 }
@@ -237,6 +238,7 @@ static const char* sample_hold_variant_display(action_variant_t v) {
     case VARIANT_TOGGLE: return "S+H Toggle";
     case VARIANT_HOLD:   return "S+H Hold";
     case VARIANT_STEP:   return "S+H Step";
+    case VARIANT_MODIFY: return "S+H Modify";
     default:             return "S+H";
   }
 }

@@ -163,10 +163,12 @@ bool action_is_fire_and_forget_for(const action_t* action) {
       return action->variant == VARIANT_TOGGLE;
 
     case ACTION_RTG:
-      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP;
+      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP ||
+        action->variant == VARIANT_MODIFY;
 
     case ACTION_SAMPLE_HOLD:
-      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP;
+      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP ||
+        action->variant == VARIANT_MODIFY;
 
     default:
       return false;

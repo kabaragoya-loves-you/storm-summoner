@@ -132,6 +132,11 @@ static uint8_t s_editing_ui_step = 0;
 static char s_param_variant_label[LABEL_BUFFER_SETS][24];
 static char s_rtg_variant_label[LABEL_BUFFER_SETS][24];
 static char s_sh_variant_label[LABEL_BUFFER_SETS][24];
+static char s_engine_modify_rate_mode_label[LABEL_BUFFER_SETS][28];
+static char s_engine_modify_rate_hz_label[LABEL_BUFFER_SETS][28];
+static char s_engine_modify_sync_mult_label[LABEL_BUFFER_SETS][28];
+static char s_engine_modify_glide_label[LABEL_BUFFER_SETS][24];
+static char s_engine_modify_prob_label[LABEL_BUFFER_SETS][24];
 static char s_param_label[LABEL_BUFFER_SETS][32];
 static char s_param2_label[LABEL_BUFFER_SETS][32];
 static char s_param_cycle_steps_label[LABEL_BUFFER_SETS][24];
@@ -741,10 +746,12 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
 
     if (new_type == ACTION_RTG) {
       action->variant = VARIANT_TOGGLE;
+      action_engine_modify_seed(&action->params.rtg_modify);
     }
 
     if (new_type == ACTION_SAMPLE_HOLD) {
       action->variant = VARIANT_TOGGLE;
+      action_engine_modify_seed(&action->params.sh_modify);
     }
 
     // Set defaults for Punch-In action
@@ -4726,6 +4733,322 @@ static void nav_to_lfo_modify_steps(void* user_data) {
 }
 
 // ============================================================================
+// Engine MODIFY overrides (shared by RTG + S+H)
+// ============================================================================
+
+typedef struct {
+  uint8_t* rate_mode;
+  uint16_t* rate_hz_x100;
+  uint16_t* sync_mult_x1000;
+  uint8_t* glide;
+  uint8_t* probability;
+} engine_modify_bind_t;
+
+static engine_modify_bind_t s_engine_modify;
+
+static bool engine_modify_bind_action(action_t* action) {
+  if (!action) return false;
+  if (action->type == ACTION_RTG) {
+    s_engine_modify = (engine_modify_bind_t){
+      &action->params.rtg_modify.rate_mode,
+      &action->params.rtg_modify.rate_hz_x100,
+      &action->params.rtg_modify.sync_mult_x1000,
+      &action->params.rtg_modify.glide,
+      &action->params.rtg_modify.probability,
+    };
+    return true;
+  }
+  if (action->type == ACTION_SAMPLE_HOLD) {
+    s_engine_modify = (engine_modify_bind_t){
+      &action->params.sh_modify.rate_mode,
+      &action->params.sh_modify.rate_hz_x100,
+      &action->params.sh_modify.sync_mult_x1000,
+      &action->params.sh_modify.glide,
+      &action->params.sh_modify.probability,
+    };
+    return true;
+  }
+  return false;
+}
+
+static const uint8_t s_engine_modify_rate_modes[] = { 0, 1 };
+
+static const char* engine_modify_rate_mode_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
+  return (v == 0) ? "Free" : "Sync";
+}
+
+static const uint16_t s_engine_modify_rates_x100[] = {
+  50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500,
+  600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500,
+};
+#define NUM_ENGINE_MODIFY_RATES (sizeof(s_engine_modify_rates_x100) / sizeof(s_engine_modify_rates_x100[0]))
+
+static const char* engine_modify_rate_hz_display(uint16_t v, char* buf, size_t len) {
+  if (v == ACTION_LFO_ORIG_U16) return "Original";
+  if (v == ACTION_LFO_RAND_U16) return "Random";
+  if (v < 100) {
+    snprintf(buf, len, "%.2f Hz", (double)v / 100.0);
+  } else if (v < 1000) {
+    snprintf(buf, len, "%.1f Hz", (double)v / 100.0);
+  } else {
+    snprintf(buf, len, "%.0f Hz", (double)v / 100.0);
+  }
+  return buf;
+}
+
+static const uint16_t s_engine_modify_sync_mults[] = {
+  125, 167, 250, 333, 500, 667, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000,
+};
+#define NUM_ENGINE_MODIFY_SYNC_MULTS (sizeof(s_engine_modify_sync_mults) / sizeof(s_engine_modify_sync_mults[0]))
+
+static const char* s_engine_modify_sync_labels[] = {
+  "1/8 (0.125x)", "1/6 (0.167x)", "1/4 (0.25x)", "1/3 (0.333x)",
+  "1/2 (0.5x)", "2/3 (0.667x)", "3/4 (0.75x)", "1x",
+  "3/2 (1.5x)", "2x", "3x", "4x", "6x", "8x",
+};
+
+static const char* engine_modify_sync_mult_display(uint16_t v) {
+  if (v == ACTION_LFO_ORIG_U16) return "Original";
+  if (v == ACTION_LFO_RAND_U16) return "Random";
+  for (size_t i = 0; i < NUM_ENGINE_MODIFY_SYNC_MULTS; i++) {
+    if (s_engine_modify_sync_mults[i] == v) return s_engine_modify_sync_labels[i];
+  }
+  return "Custom";
+}
+
+static const uint8_t s_engine_modify_prob_values[] = {
+  10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+};
+#define NUM_ENGINE_MODIFY_PROB (sizeof(s_engine_modify_prob_values) / sizeof(s_engine_modify_prob_values[0]))
+
+static const char* engine_modify_prob_display(uint8_t v, char* buf, size_t len) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
+  snprintf(buf, len, "%u%%", (unsigned)v);
+  return buf;
+}
+
+static const char* engine_modify_glide_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  return v ? "On" : "Off";
+}
+
+static void engine_modify_rate_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  lfo_modify_u8_roller_apply(s_engine_modify.rate_mode, selected_index,
+    s_engine_modify_rate_modes, 2);
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* engine_modify_rate_mode_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) return NULL;
+  return menu_create_roller_page("Rate Mode", "Original\nRandom\nFree\nSync",
+    lfo_modify_u8_roller_current(*s_engine_modify.rate_mode, s_engine_modify_rate_modes, 2),
+    engine_modify_rate_mode_confirm_cb, NULL);
+}
+
+static void nav_to_engine_modify_rate_mode(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Rate Mode", engine_modify_rate_mode_roller_create);
+}
+
+static void engine_modify_rate_hz_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  lfo_modify_u16_roller_apply(s_engine_modify.rate_hz_x100, selected_index,
+    s_engine_modify_rates_x100, NUM_ENGINE_MODIFY_RATES);
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* engine_modify_rate_hz_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) return NULL;
+  static char options[384];
+  size_t pos = (size_t)snprintf(options, sizeof(options), "Original\nRandom");
+  for (size_t i = 0; i < NUM_ENGINE_MODIFY_RATES && pos < sizeof(options); i++) {
+    uint16_t hz = s_engine_modify_rates_x100[i];
+    if (hz < 100) {
+      pos += (size_t)snprintf(options + pos, sizeof(options) - pos, "\n%.2f Hz", (double)hz / 100.0);
+    } else if (hz < 1000) {
+      pos += (size_t)snprintf(options + pos, sizeof(options) - pos, "\n%.1f Hz", (double)hz / 100.0);
+    } else {
+      pos += (size_t)snprintf(options + pos, sizeof(options) - pos, "\n%.0f Hz", (double)hz / 100.0);
+    }
+  }
+  return menu_create_roller_page("Rate",
+    options,
+    lfo_modify_u16_roller_current(*s_engine_modify.rate_hz_x100,
+      s_engine_modify_rates_x100, NUM_ENGINE_MODIFY_RATES),
+    engine_modify_rate_hz_confirm_cb, NULL);
+}
+
+static void nav_to_engine_modify_rate_hz(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Rate", engine_modify_rate_hz_roller_create);
+}
+
+static void engine_modify_sync_mult_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  lfo_modify_u16_roller_apply(s_engine_modify.sync_mult_x1000, selected_index,
+    s_engine_modify_sync_mults, NUM_ENGINE_MODIFY_SYNC_MULTS);
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* engine_modify_sync_mult_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) return NULL;
+  static char options[384];
+  size_t pos = (size_t)snprintf(options, sizeof(options), "Original\nRandom");
+  for (size_t i = 0; i < NUM_ENGINE_MODIFY_SYNC_MULTS && pos < sizeof(options); i++) {
+    pos += (size_t)snprintf(options + pos, sizeof(options) - pos, "\n%s",
+      s_engine_modify_sync_labels[i]);
+  }
+  return menu_create_roller_page("Sync Mult",
+    options,
+    lfo_modify_u16_roller_current(*s_engine_modify.sync_mult_x1000,
+      s_engine_modify_sync_mults, NUM_ENGINE_MODIFY_SYNC_MULTS),
+    engine_modify_sync_mult_confirm_cb, NULL);
+}
+
+static void nav_to_engine_modify_sync_mult(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Sync Mult", engine_modify_sync_mult_roller_create);
+}
+
+static void engine_modify_glide_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  *s_engine_modify.glide = (selected_index == 0) ? ACTION_LFO_ORIG_U8 :
+    (selected_index == 1) ? 0 : 1;
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* engine_modify_glide_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) return NULL;
+  uint32_t current = 1;
+  uint8_t v = *s_engine_modify.glide;
+  if (v == ACTION_LFO_ORIG_U8) current = 0;
+  else if (v == 0) current = 1;
+  else current = 2;
+  return menu_create_roller_page("Glide", "Original\nOff\nOn", current,
+    engine_modify_glide_confirm_cb, NULL);
+}
+
+static void nav_to_engine_modify_glide(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Glide", engine_modify_glide_roller_create);
+}
+
+static void engine_modify_prob_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+  lfo_modify_u8_roller_apply(s_engine_modify.probability, selected_index,
+    s_engine_modify_prob_values, NUM_ENGINE_MODIFY_PROB);
+  persist_scene_changes();
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* engine_modify_prob_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) return NULL;
+  static char options[128];
+  size_t pos = (size_t)snprintf(options, sizeof(options), "Original\nRandom");
+  for (size_t i = 0; i < NUM_ENGINE_MODIFY_PROB && pos < sizeof(options); i++) {
+    pos += (size_t)snprintf(options + pos, sizeof(options) - pos, "\n%u%%",
+      (unsigned)s_engine_modify_prob_values[i]);
+  }
+  return menu_create_roller_page("Probability",
+    options,
+    lfo_modify_u8_roller_current(*s_engine_modify.probability,
+      s_engine_modify_prob_values, NUM_ENGINE_MODIFY_PROB),
+    engine_modify_prob_confirm_cb, NULL);
+}
+
+static void nav_to_engine_modify_prob(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Probability", engine_modify_prob_roller_create);
+}
+
+static void engine_modify_append_detail_rows(const action_engine_modify_t* m, int buf,
+  int* item_count) {
+  char tmp[24];
+  if (*item_count >= MAX_DETAIL_ITEMS) return;
+  snprintf(s_engine_modify_rate_mode_label[buf], sizeof(s_engine_modify_rate_mode_label[buf]),
+    "Rate Mode\n%s", engine_modify_rate_mode_display(m->rate_mode));
+  s_detail_items[(*item_count)++] = (menu_item_t){
+    s_engine_modify_rate_mode_label[buf], nav_to_engine_modify_rate_mode, NULL, true
+  };
+
+  if (*item_count >= MAX_DETAIL_ITEMS) return;
+  snprintf(s_engine_modify_rate_hz_label[buf], sizeof(s_engine_modify_rate_hz_label[buf]),
+    "Rate\n%s", engine_modify_rate_hz_display(m->rate_hz_x100, tmp, sizeof(tmp)));
+  s_detail_items[(*item_count)++] = (menu_item_t){
+    s_engine_modify_rate_hz_label[buf], nav_to_engine_modify_rate_hz, NULL, true
+  };
+
+  if (*item_count >= MAX_DETAIL_ITEMS) return;
+  snprintf(s_engine_modify_sync_mult_label[buf], sizeof(s_engine_modify_sync_mult_label[buf]),
+    "Sync Mult\n%s", engine_modify_sync_mult_display(m->sync_mult_x1000));
+  s_detail_items[(*item_count)++] = (menu_item_t){
+    s_engine_modify_sync_mult_label[buf], nav_to_engine_modify_sync_mult, NULL, true
+  };
+
+  if (*item_count >= MAX_DETAIL_ITEMS) return;
+  snprintf(s_engine_modify_glide_label[buf], sizeof(s_engine_modify_glide_label[buf]),
+    "Glide\n%s", engine_modify_glide_display(m->glide));
+  s_detail_items[(*item_count)++] = (menu_item_t){
+    s_engine_modify_glide_label[buf], nav_to_engine_modify_glide, NULL, true
+  };
+
+  if (*item_count >= MAX_DETAIL_ITEMS) return;
+  snprintf(s_engine_modify_prob_label[buf], sizeof(s_engine_modify_prob_label[buf]),
+    "Prob\n%s", engine_modify_prob_display(m->probability, tmp, sizeof(tmp)));
+  s_detail_items[(*item_count)++] = (menu_item_t){
+    s_engine_modify_prob_label[buf], nav_to_engine_modify_prob, NULL, true
+  };
+}
+
+// ============================================================================
 // Punch-In Configuration
 // ============================================================================
 
@@ -6556,6 +6879,7 @@ static const action_variant_t s_rtg_variants[] = {
   VARIANT_TOGGLE,
   VARIANT_HOLD,
   VARIANT_STEP,
+  VARIANT_MODIFY,
 };
 #define NUM_RTG_VARIANTS (sizeof(s_rtg_variants) / sizeof(s_rtg_variants[0]))
 
@@ -6639,6 +6963,7 @@ static const action_variant_t s_sh_variants[] = {
   VARIANT_TOGGLE,
   VARIANT_HOLD,
   VARIANT_STEP,
+  VARIANT_MODIFY,
 };
 #define NUM_SH_VARIANTS (sizeof(s_sh_variants) / sizeof(s_sh_variants[0]))
 
@@ -8332,22 +8657,26 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
-  // ACTION_RTG (consolidated family): Variant row only.
+  // ACTION_RTG (consolidated family): Variant row; MODIFY adds override rows.
   if (action->type == ACTION_RTG) {
     snprintf(s_rtg_variant_label[buf], sizeof(s_rtg_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
       s_rtg_variant_label[buf], nav_to_rtg_variant, NULL, true
     };
+    if (action->variant == VARIANT_MODIFY)
+      engine_modify_append_detail_rows(&action->params.rtg_modify, buf, &item_count);
   }
 
-  // ACTION_SAMPLE_HOLD (consolidated family): Variant row only.
+  // ACTION_SAMPLE_HOLD (consolidated family): Variant row; MODIFY adds override rows.
   if (action->type == ACTION_SAMPLE_HOLD) {
     snprintf(s_sh_variant_label[buf], sizeof(s_sh_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
       s_sh_variant_label[buf], nav_to_sh_variant, NULL, true
     };
+    if (action->variant == VARIANT_MODIFY)
+      engine_modify_append_detail_rows(&action->params.sh_modify, buf, &item_count);
   }
 
   // Show confirm target selector for confirm_pending action in Advanced mode only

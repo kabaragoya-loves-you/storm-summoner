@@ -33,6 +33,57 @@ static uint8_t lfo_modify_resolve_steps(uint8_t v) {
   return steps[esp_random() % (sizeof(steps) / sizeof(steps[0]))];
 }
 
+static int apply_engine_modify(const action_engine_modify_t* m, bool rtg) {
+  static const uint8_t rate_modes[] = { 0, 1 };
+  static const uint16_t rates_x100[] = {
+    50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500,
+    600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500,
+  };
+  static const uint16_t sync_mults[] = {
+    125, 167, 250, 333, 500, 667, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000,
+  };
+  static const uint8_t prob_values[] = {
+    10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+  };
+  int applied = 0;
+
+  if (m->rate_mode != ACTION_LFO_ORIG_U8) {
+    uint8_t rm = lfo_modify_resolve_u8_table(m->rate_mode, rate_modes,
+      sizeof(rate_modes) / sizeof(rate_modes[0]));
+    if (rtg) rtg_set_rate_mode((rtg_rate_mode_t)rm);
+    else sample_hold_set_rate_mode((sample_hold_rate_mode_t)rm);
+    applied++;
+  }
+  if (m->rate_hz_x100 != ACTION_LFO_ORIG_U16) {
+    uint16_t hz_x100 = lfo_modify_resolve_u16_table(m->rate_hz_x100, rates_x100,
+      sizeof(rates_x100) / sizeof(rates_x100[0]));
+    if (rtg) rtg_set_rate_hz((float)hz_x100 / 100.0f);
+    else sample_hold_set_rate_hz((float)hz_x100 / 100.0f);
+    applied++;
+  }
+  if (m->sync_mult_x1000 != ACTION_LFO_ORIG_U16) {
+    uint16_t mult = lfo_modify_resolve_u16_table(m->sync_mult_x1000, sync_mults,
+      sizeof(sync_mults) / sizeof(sync_mults[0]));
+    if (rtg) rtg_set_sync_mult((float)mult / 1000.0f);
+    else sample_hold_set_sync_mult((float)mult / 1000.0f);
+    applied++;
+  }
+  if (m->glide != ACTION_LFO_ORIG_U8) {
+    bool glide = (m->glide != 0);
+    if (rtg) rtg_set_glide(glide);
+    else sample_hold_set_glide(glide);
+    applied++;
+  }
+  if (m->probability != ACTION_LFO_ORIG_U8) {
+    uint8_t prob = lfo_modify_resolve_u8_table(m->probability, prob_values,
+      sizeof(prob_values) / sizeof(prob_values[0]));
+    if (rtg) rtg_set_probability(prob);
+    else sample_hold_set_probability(prob);
+    applied++;
+  }
+  return applied;
+}
+
 // ============================================================================
 // Per-slot LFO helpers
 // ----------------------------------------------------------------------------
@@ -313,6 +364,13 @@ action_handle_result_t action_handlers_modulation_dispatch(
           }
           return ACTION_HANDLED;
 
+        case VARIANT_MODIFY:
+          if (is_press) {
+            int n = apply_engine_modify(&action->params.rtg_modify, true);
+            ESP_LOGI(TAG, "RTG Modify: %d override(s) applied", n);
+          }
+          return ACTION_HANDLED;
+
         default:
           ESP_LOGW(TAG, "Unknown RTG variant %d", (int)action->variant);
           return ACTION_HANDLED;
@@ -344,6 +402,13 @@ action_handle_result_t action_handlers_modulation_dispatch(
           if (is_press) {
             sample_hold_step();
             ESP_LOGD(TAG, "S+H Step");
+          }
+          return ACTION_HANDLED;
+
+        case VARIANT_MODIFY:
+          if (is_press) {
+            int n = apply_engine_modify(&action->params.sh_modify, false);
+            ESP_LOGI(TAG, "S+H Modify: %d override(s) applied", n);
           }
           return ACTION_HANDLED;
 

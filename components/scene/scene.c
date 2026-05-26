@@ -4234,6 +4234,30 @@ static cJSON* action_to_json(const action_t* action) {
       if (action->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS)
         cJSON_AddNumberToObject(obj, "manual_steps", action->params.lfo.manual_steps);
     }
+  } else if (action->type == ACTION_RTG && action->variant == VARIANT_MODIFY) {
+    const action_engine_modify_t* m = &action->params.rtg_modify;
+    if (m->rate_mode != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "rate_mode", m->rate_mode);
+    if (m->rate_hz_x100 != ACTION_LFO_ORIG_U16)
+      cJSON_AddNumberToObject(obj, "rate_hz_x100", m->rate_hz_x100);
+    if (m->sync_mult_x1000 != ACTION_LFO_ORIG_U16)
+      cJSON_AddNumberToObject(obj, "sync_mult_x1000", m->sync_mult_x1000);
+    if (m->glide != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "glide", m->glide);
+    if (m->probability != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "probability", m->probability);
+  } else if (action->type == ACTION_SAMPLE_HOLD && action->variant == VARIANT_MODIFY) {
+    const action_engine_modify_t* m = &action->params.sh_modify;
+    if (m->rate_mode != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "rate_mode", m->rate_mode);
+    if (m->rate_hz_x100 != ACTION_LFO_ORIG_U16)
+      cJSON_AddNumberToObject(obj, "rate_hz_x100", m->rate_hz_x100);
+    if (m->sync_mult_x1000 != ACTION_LFO_ORIG_U16)
+      cJSON_AddNumberToObject(obj, "sync_mult_x1000", m->sync_mult_x1000);
+    if (m->glide != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "glide", m->glide);
+    if (m->probability != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "probability", m->probability);
   } else if (action->type == ACTION_CLOCK) {
     switch (action->variant) {
       case VARIANT_TOGGLE:
@@ -4817,6 +4841,26 @@ static action_t json_to_action(cJSON* obj) {
         cJSON* first = cJSON_GetArrayItem(shapes, 0);
         if (first) action.params.lfo.waveform = (uint8_t)first->valueint;
       }
+    }
+  }
+
+  // Parse RTG / S+H MODIFY overrides
+  if (action.type == ACTION_RTG || action.type == ACTION_SAMPLE_HOLD) {
+    action_engine_modify_t* m = (action.type == ACTION_RTG)
+      ? &action.params.rtg_modify : &action.params.sh_modify;
+    action_engine_modify_seed(m);
+    if (action.variant == VARIANT_MODIFY) {
+      cJSON* item;
+      if ((item = cJSON_GetObjectItem(obj, "rate_mode")))
+        m->rate_mode = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "rate_hz_x100")))
+        m->rate_hz_x100 = (uint16_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "sync_mult_x1000")))
+        m->sync_mult_x1000 = (uint16_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "glide")))
+        m->glide = (uint8_t)item->valueint;
+      if ((item = cJSON_GetObjectItem(obj, "probability")))
+        m->probability = (uint8_t)item->valueint;
     }
   }
   
