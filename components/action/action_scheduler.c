@@ -172,8 +172,9 @@ static void reset_action_cycle_index(action_t* action) {
     // ACTION_LFO has no cycle variant in the consolidated family (the old
     // SHAPE cycling was dropped in favor of MODIFY's general parameter
     // overrides), so nothing here needs to reset between repeats.
-    case ACTION_UI_CYCLE:
-      action->params.ui.current_index = 0;
+    case ACTION_UI:
+      if (action->variant == VARIANT_CYCLE)
+        action->params.ui.current_index = 0;
       break;
     case ACTION_PARAM_CYCLE:
       action->params.tw_param.current_index = 0;

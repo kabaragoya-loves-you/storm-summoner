@@ -81,9 +81,7 @@ typedef enum {
   ACTION_CUT,                 // Toggle or Hold via variant
   
   // UI module control
-  ACTION_SET_UI,              // Switch to a specific UI module
-  ACTION_UI_HOLD,             // Switch on press, restore on release
-  ACTION_UI_CYCLE,            // Cycle through UI modules on each press
+  ACTION_UI,                  // Set / Hold / Cycle via variant
   
   // Touchwheel CC slot 1 control
   ACTION_PARAM_HOLD,          // Hold: swap CC slot 1 on press, restore on release
@@ -413,7 +411,7 @@ typedef struct {
       uint8_t target;         // confirm_target_t: 0=preset, 1=scene
     } confirm;
     
-    // For UI module actions (set_ui, ui_hold, ui_cycle)
+    // For ACTION_UI (Set/Hold/Cycle variants)
     struct {
       uint8_t module;           // Primary module index (into ui_scene_selectable_modules)
       uint8_t module2;          // For hold: release module index

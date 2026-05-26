@@ -22,9 +22,7 @@ static const char* action_type_names[] = {
   [ACTION_LFO] = "LFO",
   [ACTION_CLOCK] = "Clock",
   [ACTION_CUT] = "Cut",
-  [ACTION_SET_UI] = "Set UI",
-  [ACTION_UI_HOLD] = "UI Hold",
-  [ACTION_UI_CYCLE] = "UI Cycle",
+  [ACTION_UI] = "UI",
   [ACTION_PARAM_HOLD] = "Param Hold",
   [ACTION_PARAM_CYCLE] = "Param Cycle",
   [ACTION_RTG_TOGGLE] = "RTG Toggle",
@@ -90,6 +88,8 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_CLOCK:
       return true;
     case ACTION_CUT:
+      return true;
+    case ACTION_UI:
       return true;
     default:
       return false;
@@ -203,6 +203,15 @@ static const char* cut_variant_display(action_variant_t v) {
   }
 }
 
+static const char* ui_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_SET:   return "Set UI";
+    case VARIANT_HOLD:  return "UI Hold";
+    case VARIANT_CYCLE: return "UI Cycle";
+    default:            return "UI";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -243,6 +252,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_CUT) {
     snprintf(buf, len, "%s", cut_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_UI) {
+    snprintf(buf, len, "%s", ui_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

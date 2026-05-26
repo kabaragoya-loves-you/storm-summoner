@@ -353,64 +353,72 @@ action_handle_result_t action_handlers_scene_dispatch(
           return ACTION_HANDLED;
       }
 
-    case ACTION_SET_UI:
-      if (is_press) {
-        uint8_t idx = action->params.ui.module;
-        if (idx < ui_scene_selectable_module_count) {
-          ui_draw_module_t* mod = ui_get_module_by_name(
-            ui_scene_selectable_modules[idx]);
-          if (mod) {
-            ui_set_draw_module(mod);
-            ESP_LOGI(TAG, "Set UI: %s", ui_scene_selectable_modules[idx]);
+    case ACTION_UI:
+      switch (action->variant) {
+        case VARIANT_SET:
+          if (is_press) {
+            uint8_t idx = action->params.ui.module;
+            if (idx < ui_scene_selectable_module_count) {
+              ui_draw_module_t* mod = ui_get_module_by_name(
+                ui_scene_selectable_modules[idx]);
+              if (mod) {
+                ui_set_draw_module(mod);
+                ESP_LOGI(TAG, "Set UI: %s", ui_scene_selectable_modules[idx]);
+              }
+            }
           }
-        }
-      }
-      return ACTION_HANDLED;
+          return ACTION_HANDLED;
 
-    case ACTION_UI_HOLD: {
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "UI hold release skipped by follow-up");
-        return ACTION_HANDLED;
-      }
-      uint8_t idx = is_press
-        ? action->params.ui.module
-        : action->params.ui.module2;
-      if (idx < ui_scene_selectable_module_count) {
-        ui_draw_module_t* mod = ui_get_module_by_name(
-          ui_scene_selectable_modules[idx]);
-        if (mod) {
-          ui_set_draw_module(mod);
-          ESP_LOGI(TAG, "UI Hold: %s (%s)",
-            ui_scene_selectable_modules[idx],
-            is_press ? "press" : "release");
-        }
-      }
-      return ACTION_HANDLED;
-    }
-
-    case ACTION_UI_CYCLE:
-      if (is_press) {
-        action_t* mutable = (action_t*)action;
-        uint8_t num = mutable->params.ui.num_modules;
-        if (num < 2) num = 2;
-        uint8_t idx = mutable->params.ui.modules[
-          mutable->params.ui.current_index % num];
-        if (idx < ui_scene_selectable_module_count) {
-          ui_draw_module_t* mod = ui_get_module_by_name(
-            ui_scene_selectable_modules[idx]);
-          if (mod) {
-            ui_set_draw_module(mod);
-            ESP_LOGI(TAG, "UI Cycle: %s (step %d/%d)",
-              ui_scene_selectable_modules[idx],
-              mutable->params.ui.current_index + 1, num);
+        case VARIANT_HOLD:
+          if (is_press) {
+            action_followup_record_press((action_t*)action);
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "UI hold release skipped by follow-up");
+            return ACTION_HANDLED;
           }
-        }
-        mutable->params.ui.current_index =
-          (mutable->params.ui.current_index + 1) % num;
+          {
+            uint8_t idx = is_press
+              ? action->params.ui.module
+              : action->params.ui.module2;
+            if (idx < ui_scene_selectable_module_count) {
+              ui_draw_module_t* mod = ui_get_module_by_name(
+                ui_scene_selectable_modules[idx]);
+              if (mod) {
+                ui_set_draw_module(mod);
+                ESP_LOGI(TAG, "UI Hold: %s (%s)",
+                  ui_scene_selectable_modules[idx],
+                  is_press ? "press" : "release");
+              }
+            }
+          }
+          return ACTION_HANDLED;
+
+        case VARIANT_CYCLE:
+          if (is_press) {
+            action_t* mutable = (action_t*)action;
+            uint8_t num = mutable->params.ui.num_modules;
+            if (num < 2) num = 2;
+            uint8_t idx = mutable->params.ui.modules[
+              mutable->params.ui.current_index % num];
+            if (idx < ui_scene_selectable_module_count) {
+              ui_draw_module_t* mod = ui_get_module_by_name(
+                ui_scene_selectable_modules[idx]);
+              if (mod) {
+                ui_set_draw_module(mod);
+                ESP_LOGI(TAG, "UI Cycle: %s (step %d/%d)",
+                  ui_scene_selectable_modules[idx],
+                  mutable->params.ui.current_index + 1, num);
+              }
+            }
+            mutable->params.ui.current_index =
+              (mutable->params.ui.current_index + 1) % num;
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unknown UI variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      return ACTION_HANDLED;
 
     case ACTION_PARAM_HOLD: {
       if (is_press) {

@@ -20,7 +20,7 @@ static const action_type_t hold_actions[] = {
   // ACTION_CLOCK is variant-aware: only HOLD is hold-like; BURST needs
   // press/release but is handled via fire-and-forget (Toggle only on load).
   // ACTION_CUT is variant-aware: only HOLD is hold-like.
-  ACTION_UI_HOLD,
+  // ACTION_UI is variant-aware: only HOLD is hold-like.
   ACTION_PARAM_HOLD,
   ACTION_RTG_HOLD,
   ACTION_SAMPLE_HOLD_HOLD,
@@ -43,6 +43,7 @@ bool action_requires_hold_for(const action_t* action) {
   if (action->type == ACTION_CLOCK &&
       (action->variant == VARIANT_HOLD || action->variant == VARIANT_BURST)) return true;
   if (action->type == ACTION_CUT && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_UI && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -55,7 +56,6 @@ bool action_requires_hold_for(const action_t* action) {
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
-    case ACTION_UI_HOLD:
     case ACTION_PARAM_HOLD:
     case ACTION_RTG_HOLD:
     case ACTION_SAMPLE_HOLD_HOLD:
@@ -68,6 +68,8 @@ bool action_supports_followup_for(const action_t* action) {
     case ACTION_CLOCK:
       return action->variant == VARIANT_HOLD;
     case ACTION_CUT:
+      return action->variant == VARIANT_HOLD;
+    case ACTION_UI:
       return action->variant == VARIANT_HOLD;
     default:
       return false;
@@ -131,6 +133,9 @@ bool action_is_fire_and_forget_for(const action_t* action) {
     case ACTION_TEMPO:
     case ACTION_PRESET:
     case ACTION_SCENE:
+      return action->variant == VARIANT_SET;
+
+    case ACTION_UI:
       return action->variant == VARIANT_SET;
 
     // Pure one-shots (transport family already collapsed -- all four
@@ -205,7 +210,7 @@ static bool action_input_restriction_allows(action_type_t type,
   // UI module changes only make sense from a live input (the user needs to
   // see the UI swap in response to their input). Already handled by the
   // fire-and-forget gate for ON_LOAD/ON_PLAY -- this is the live-input gate.
-  // (No additional rule needed; SET_UI/UI_CYCLE aren't fire-and-forget.)
+  // (No additional rule needed; ACTION_UI HOLD/CYCLE aren't fire-and-forget.)
   return true;
 }
 
@@ -271,6 +276,8 @@ static action_variant_t default_variant_for_type(action_type_t type) {
       return VARIANT_TOGGLE;
     case ACTION_CUT:
       return VARIANT_TOGGLE;
+    case ACTION_UI:
+      return VARIANT_SET;
     default:
       return VARIANT_NONE;
   }
@@ -318,7 +325,6 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_PRESET:
     case ACTION_SCENE:
     case ACTION_TEMPO:
-    case ACTION_SET_UI:
     case ACTION_STEP:
     case ACTION_RTG_TOGGLE:
     case ACTION_SAMPLE_HOLD_TOGGLE:
@@ -373,6 +379,10 @@ bool action_supports_timing_for(const action_t* action) {
   }
   if (action->type == ACTION_CUT)
     return false;
+  if (action->type == ACTION_UI) {
+    if (action->variant == VARIANT_HOLD) return false;
+    return true;
+  }
   return action_supports_timing(action->type);
 }
 
@@ -415,6 +425,8 @@ bool action_supports_repeat_for(const action_t* action) {
     return false;
   if (action->type == ACTION_CUT)
     return false;
+  if (action->type == ACTION_UI)
+    return action->variant == VARIANT_CYCLE;
   return action_supports_repeat(action->type);
 }
 

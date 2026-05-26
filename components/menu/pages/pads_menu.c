@@ -3053,7 +3053,7 @@ static void nav_to_lfo_slot(void* user_data) {
 }
 
 // ============================================================================
-// UI Module Roller (for ACTION_SET_UI, ACTION_UI_HOLD)
+// UI Module Roller (for ACTION_UI)
 // ============================================================================
 
 // Helper to get module display title from index
@@ -3072,7 +3072,7 @@ static void build_ui_module_options(char* buf, size_t buf_size) {
   }
 }
 
-// For ACTION_SET_UI and ACTION_UI_HOLD press module
+// For ACTION_UI Set/Hold press module
 static void ui_module_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   scene_t* scene = scene_get_current();
@@ -3108,7 +3108,8 @@ static lv_obj_t* ui_module_roller_create(void) {
   static char options[256];
   build_ui_module_options(options, sizeof(options));
   
-  const char* roller_title = (mapping->action.type == ACTION_UI_HOLD)
+  const char* roller_title = (mapping->action.type == ACTION_UI &&
+      mapping->action.variant == VARIANT_HOLD)
     ? "On Press" : "Module";
   
   return menu_create_roller_page(roller_title, options, current_idx,
@@ -3124,12 +3125,13 @@ static void nav_to_ui_module(void* user_data) {
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return;
   
-  const char* title = (mapping->action.type == ACTION_UI_HOLD)
+  const char* title = (mapping->action.type == ACTION_UI &&
+      mapping->action.variant == VARIANT_HOLD)
     ? "On Press" : "Module";
   menu_navigate_to(title, ui_module_roller_create);
 }
 
-// For ACTION_UI_HOLD release module
+// For ACTION_UI Hold release module
 static void ui_module2_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   scene_t* scene = scene_get_current();
@@ -3175,7 +3177,7 @@ static void nav_to_ui_module2(void* user_data) {
 }
 
 // ============================================================================
-// UI Cycle (for ACTION_UI_CYCLE)
+// UI Cycle (for ACTION_UI + VARIANT_CYCLE)
 // ============================================================================
 
 static void ui_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -3924,8 +3926,8 @@ static lv_obj_t* pad_detail_page_create(void) {
     };
   }
   
-  // Show UI module selector for SET_UI action
-  if (mapping->action.type == ACTION_SET_UI && item_count < MAX_DETAIL_ITEMS) {
+  if (mapping->action.type == ACTION_UI && mapping->action.variant == VARIANT_SET &&
+      item_count < MAX_DETAIL_ITEMS) {
     const char* mod_name = get_ui_module_display_name(mapping->action.params.ui.module);
     snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
       "Module\n%s", mod_name);
@@ -3933,16 +3935,16 @@ static lv_obj_t* pad_detail_page_create(void) {
       s_ui_module_label[buf], nav_to_ui_module, NULL, true
     };
   }
-  
-  // Show UI module selectors for UI_HOLD action (press and release modules)
-  if (mapping->action.type == ACTION_UI_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
+
+  if (mapping->action.type == ACTION_UI && mapping->action.variant == VARIANT_HOLD &&
+      item_count < MAX_DETAIL_ITEMS - 1) {
     const char* press_name = get_ui_module_display_name(mapping->action.params.ui.module);
     snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
       "On Press\n%s", press_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_ui_module_label[buf], nav_to_ui_module, NULL, true
     };
-    
+
     const char* release_name = get_ui_module_display_name(mapping->action.params.ui.module2);
     snprintf(s_ui_module2_label[buf], sizeof(s_ui_module2_label[buf]),
       "On Release\n%s", release_name);
@@ -3950,9 +3952,8 @@ static lv_obj_t* pad_detail_page_create(void) {
       s_ui_module2_label[buf], nav_to_ui_module2, NULL, true
     };
   }
-  
-  // Show UI Cycle submenu items
-  if (mapping->action.type == ACTION_UI_CYCLE) {
+
+  if (mapping->action.type == ACTION_UI && mapping->action.variant == VARIANT_CYCLE) {
     uint8_t num_steps = mapping->action.params.ui.num_modules;
     if (num_steps < 2) num_steps = 2;
     if (num_steps > 8) num_steps = 8;

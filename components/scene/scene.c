@@ -3934,9 +3934,7 @@ static const char* action_type_json_names[] = {
   [ACTION_LFO] = "lfo",
   [ACTION_CLOCK] = "clock",
   [ACTION_CUT] = "cut",
-  [ACTION_SET_UI] = "set_ui",
-  [ACTION_UI_HOLD] = "ui_hold",
-  [ACTION_UI_CYCLE] = "ui_cycle",
+  [ACTION_UI] = "ui",
   [ACTION_PARAM_HOLD] = "param_hold",
   [ACTION_PARAM_CYCLE] = "param_cycle",
   [ACTION_RTG_TOGGLE] = "rtg_toggle",
@@ -4258,19 +4256,29 @@ static cJSON* action_to_json(const action_t* action) {
     if (action->params.confirm.target == CONFIRM_TARGET_SCENE) {
       cJSON_AddStringToObject(obj, "confirm_target", "scene");
     }
-  } else if (action->type == ACTION_SET_UI) {
-    cJSON_AddNumberToObject(obj, "module", action->params.ui.module);
-  } else if (action->type == ACTION_UI_HOLD) {
-    cJSON_AddNumberToObject(obj, "module", action->params.ui.module);
-    cJSON_AddNumberToObject(obj, "module2", action->params.ui.module2);
-  } else if (action->type == ACTION_UI_CYCLE) {
-    cJSON_AddNumberToObject(obj, "num_modules", action->params.ui.num_modules);
-    cJSON* modules = cJSON_CreateArray();
-    for (int i = 0; i < action->params.ui.num_modules && i < 8; i++) {
-      cJSON_AddItemToArray(modules,
-        cJSON_CreateNumber(action->params.ui.modules[i]));
+  } else if (action->type == ACTION_UI) {
+    switch (action->variant) {
+      case VARIANT_SET:
+        cJSON_AddNumberToObject(obj, "module", action->params.ui.module);
+        break;
+      case VARIANT_HOLD:
+        cJSON_AddNumberToObject(obj, "module", action->params.ui.module);
+        cJSON_AddNumberToObject(obj, "module2", action->params.ui.module2);
+        break;
+      case VARIANT_CYCLE:
+        cJSON_AddNumberToObject(obj, "num_modules", action->params.ui.num_modules);
+        {
+          cJSON* modules = cJSON_CreateArray();
+          for (int i = 0; i < action->params.ui.num_modules && i < 8; i++) {
+            cJSON_AddItemToArray(modules,
+              cJSON_CreateNumber(action->params.ui.modules[i]));
+          }
+          cJSON_AddItemToObject(obj, "modules", modules);
+        }
+        break;
+      default:
+        break;
     }
-    cJSON_AddItemToObject(obj, "modules", modules);
   } else if (action->type == ACTION_PARAM_HOLD) {
     cJSON_AddNumberToObject(obj, "param", action->params.tw_param.param);
     cJSON_AddNumberToObject(obj, "param2", action->params.tw_param.param2);
@@ -4499,6 +4507,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_LFO)        action.variant = VARIANT_START;
     if (action.type == ACTION_CLOCK)      action.variant = VARIANT_TOGGLE;
     if (action.type == ACTION_CUT)        action.variant = VARIANT_TOGGLE;
+    if (action.type == ACTION_UI)         action.variant = VARIANT_SET;
   }
 
   // Piano Pedal: dedicated parser so the generic CC parser below doesn't
@@ -4851,34 +4860,43 @@ static action_t json_to_action(cJSON* obj) {
   }
   
   // Parse UI module actions
-  if (action.type == ACTION_SET_UI) {
-    cJSON* module = cJSON_GetObjectItem(obj, "module");
-    if (module) action.params.ui.module = (uint8_t)module->valueint;
-  } else if (action.type == ACTION_UI_HOLD) {
-    cJSON* module = cJSON_GetObjectItem(obj, "module");
-    cJSON* module2 = cJSON_GetObjectItem(obj, "module2");
-    if (module) action.params.ui.module = (uint8_t)module->valueint;
-    if (module2) action.params.ui.module2 = (uint8_t)module2->valueint;
-  } else if (action.type == ACTION_UI_CYCLE) {
-    cJSON* num_modules = cJSON_GetObjectItem(obj, "num_modules");
-    cJSON* modules = cJSON_GetObjectItem(obj, "modules");
-    // Default to 2 if not specified (prevents div-by-zero)
-    action.params.ui.num_modules = 2;
-    if (num_modules) {
-      int nm = num_modules->valueint;
-      if (nm < 2) nm = 2;
-      if (nm > 8) nm = 8;
-      action.params.ui.num_modules = (uint8_t)nm;
-    }
-    if (modules && cJSON_IsArray(modules)) {
-      int count = cJSON_GetArraySize(modules);
-      if (count > 8) count = 8;
-      for (int i = 0; i < count; i++) {
-        cJSON* item = cJSON_GetArrayItem(modules, i);
-        if (item) action.params.ui.modules[i] = (uint8_t)item->valueint;
+  if (action.type == ACTION_UI) {
+    switch (action.variant) {
+      case VARIANT_SET: {
+        cJSON* module = cJSON_GetObjectItem(obj, "module");
+        if (module) action.params.ui.module = (uint8_t)module->valueint;
+        break;
       }
-      if (action.params.ui.num_modules > count)
-        action.params.ui.num_modules = (uint8_t)count;
+      case VARIANT_HOLD: {
+        cJSON* module = cJSON_GetObjectItem(obj, "module");
+        cJSON* module2 = cJSON_GetObjectItem(obj, "module2");
+        if (module) action.params.ui.module = (uint8_t)module->valueint;
+        if (module2) action.params.ui.module2 = (uint8_t)module2->valueint;
+        break;
+      }
+      case VARIANT_CYCLE:
+      default: {
+        cJSON* num_modules = cJSON_GetObjectItem(obj, "num_modules");
+        cJSON* modules = cJSON_GetObjectItem(obj, "modules");
+        action.params.ui.num_modules = 2;
+        if (num_modules) {
+          int nm = num_modules->valueint;
+          if (nm < 2) nm = 2;
+          if (nm > 8) nm = 8;
+          action.params.ui.num_modules = (uint8_t)nm;
+        }
+        if (modules && cJSON_IsArray(modules)) {
+          int count = cJSON_GetArraySize(modules);
+          if (count > 8) count = 8;
+          for (int i = 0; i < count; i++) {
+            cJSON* item = cJSON_GetArrayItem(modules, i);
+            if (item) action.params.ui.modules[i] = (uint8_t)item->valueint;
+          }
+          if (action.params.ui.num_modules > count)
+            action.params.ui.num_modules = (uint8_t)count;
+        }
+        break;
+      }
     }
   }
   

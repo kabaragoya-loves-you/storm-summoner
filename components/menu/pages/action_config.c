@@ -124,6 +124,7 @@ static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
 static char s_cut_variant_label[LABEL_BUFFER_SETS][24];
 static char s_cut_mode_label[LABEL_BUFFER_SETS][32];
 static char s_confirm_target_label[LABEL_BUFFER_SETS][32];
+static char s_ui_variant_label[LABEL_BUFFER_SETS][24];
 static char s_ui_module_label[LABEL_BUFFER_SETS][32];
 static char s_ui_module2_label[LABEL_BUFFER_SETS][32];
 static char s_ui_cycle_steps_label[LABEL_BUFFER_SETS][24];
@@ -191,9 +192,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_LFO,
   ACTION_CLOCK,
   ACTION_CUT,
-  ACTION_SET_UI,
-  ACTION_UI_HOLD,
-  ACTION_UI_CYCLE,
+  ACTION_UI,
   ACTION_PARAM_HOLD,
   ACTION_PARAM_CYCLE,
   ACTION_RTG_TOGGLE,
@@ -246,9 +245,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_LFO: return "LFO";
     case ACTION_CLOCK: return "Clock";
     case ACTION_CUT: return "Cut";
-    case ACTION_SET_UI: return "Set UI";
-    case ACTION_UI_HOLD: return "UI Hold";
-    case ACTION_UI_CYCLE: return "UI Cycle";
+    case ACTION_UI: return "UI";
     case ACTION_PARAM_HOLD: return "Param Hold";
     case ACTION_PARAM_CYCLE: return "Param Cycle";
     case ACTION_RTG_TOGGLE: return "RTG Toggle";
@@ -715,18 +712,13 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.cut.cut_mode = 2;  // Both
     }
     
-    // Set defaults for UI actions
-    if (new_type == ACTION_SET_UI) {
-      action->params.ui.module = 0;  // Scene
-    }
-    if (new_type == ACTION_UI_HOLD) {
-      action->params.ui.module = 1;   // Press: buttons
-      action->params.ui.module2 = 0;  // Release: scene
-    }
-    if (new_type == ACTION_UI_CYCLE) {
+    if (new_type == ACTION_UI) {
+      action->variant = VARIANT_SET;
+      action->params.ui.module = 0;       // Scene
+      action->params.ui.module2 = 0;      // Release: scene
       action->params.ui.num_modules = 2;
-      action->params.ui.modules[0] = 0;  // Scene
-      action->params.ui.modules[1] = 1;  // Buttons
+      action->params.ui.modules[0] = 0;   // Scene
+      action->params.ui.modules[1] = 1;   // Buttons
       action->params.ui.current_index = 0;
     }
     if (new_type == ACTION_PARAM_HOLD || new_type == ACTION_PARAM_CYCLE) {
@@ -6341,7 +6333,90 @@ static void nav_to_confirm_target(void* user_data) {
 }
 
 // ============================================================================
-// UI Module Roller (for ACTION_SET_UI, ACTION_UI_HOLD, ACTION_UI_CYCLE)
+// UI Variant Roller (for ACTION_UI -- Set / Hold / Cycle picker)
+// ============================================================================
+
+static const action_variant_t s_ui_variants[] = {
+  VARIANT_SET,
+  VARIANT_HOLD,
+  VARIANT_CYCLE,
+};
+#define NUM_UI_VARIANTS (sizeof(s_ui_variants) / sizeof(s_ui_variants[0]))
+
+static action_variant_t s_filtered_ui_variants[NUM_UI_VARIANTS];
+static size_t s_num_filtered_ui_variants = 0;
+
+static void build_filtered_ui_variants(void) {
+  s_num_filtered_ui_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_UI_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_UI, s_ui_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_ui_variants[s_num_filtered_ui_variants++] = s_ui_variants[i];
+    }
+  }
+}
+
+static void ui_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_ui_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_ui_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* ui_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_ui_variants();
+  if (s_num_filtered_ui_variants == 0) return NULL;
+
+  static char options[96];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_ui_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    char name[24];
+    action_t probe = { .type = ACTION_UI, .variant = s_filtered_ui_variants[i] };
+    action_get_display_name(&probe, name, sizeof(name));
+    strcat(options, name);
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_ui_variants; i++) {
+    if (s_filtered_ui_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, ui_variant_confirm_cb, NULL);
+}
+
+static void nav_to_ui_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", ui_variant_roller_create);
+}
+
+// ============================================================================
+// UI Module Roller (for ACTION_UI)
 // ============================================================================
 
 // Helper to get module display title from index
@@ -6360,7 +6435,7 @@ static void build_ui_module_options(char* buf, size_t buf_size) {
   }
 }
 
-// For ACTION_SET_UI - single module selection
+// For ACTION_UI Set/Hold press module selection
 static void ui_module_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   if (s_callback_in_progress || !s_ctx || !s_ctx->target_action) return;
@@ -6396,7 +6471,7 @@ static void nav_to_ui_module(void* user_data) {
   nav_to_subpage("Module", ui_module_roller_create);
 }
 
-// For ACTION_UI_HOLD - module2 (release module) selection
+// For ACTION_UI Hold release module selection
 static void ui_module2_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   if (s_callback_in_progress || !s_ctx || !s_ctx->target_action) return;
@@ -6434,7 +6509,7 @@ static void nav_to_ui_module2(void* user_data) {
 }
 
 // ============================================================================
-// UI Cycle Rollers (for ACTION_UI_CYCLE)
+// UI Cycle Rollers (for ACTION_UI + VARIANT_CYCLE)
 // ============================================================================
 
 static void ui_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
@@ -8065,57 +8140,57 @@ lv_obj_t* action_config_detail_page_create(void) {
     };
   }
   
-  // Show UI module selector for SET_UI action
-  if (action->type == ACTION_SET_UI && item_count < MAX_DETAIL_ITEMS) {
-    const char* mod_name = get_ui_module_display_name(action->params.ui.module);
-    snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
-      "Module\n%s", mod_name);
+  // ACTION_UI (consolidated family): Variant row + variant-specific rows.
+  if (action->type == ACTION_UI) {
+    snprintf(s_ui_variant_label[buf], sizeof(s_ui_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_ui_module_label[buf], nav_to_ui_module, NULL, true
+      s_ui_variant_label[buf], nav_to_ui_variant, NULL, true
     };
-  }
-  
-  // Show UI module selectors for UI_HOLD action (press and release modules)
-  if (action->type == ACTION_UI_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
-    const char* press_name = get_ui_module_display_name(action->params.ui.module);
-    snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
-      "On Press\n%s", press_name);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_ui_module_label[buf], nav_to_ui_module, NULL, true
-    };
-    
-    const char* release_name = get_ui_module_display_name(action->params.ui.module2);
-    snprintf(s_ui_module2_label[buf], sizeof(s_ui_module2_label[buf]),
-      "On Release\n%s", release_name);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_ui_module2_label[buf], nav_to_ui_module2, NULL, true
-    };
-  }
-  
-  // Show UI Cycle submenu items
-  if (action->type == ACTION_UI_CYCLE) {
-    uint8_t num_steps = action->params.ui.num_modules;
-    if (num_steps < 2) num_steps = 2;
-    if (num_steps > 8) num_steps = 8;
-    
-    // Steps selector
-    if (item_count < MAX_DETAIL_ITEMS) {
-      snprintf(s_ui_cycle_steps_label[buf], sizeof(s_ui_cycle_steps_label[buf]),
-        "Steps\n%u", (unsigned)num_steps);
+
+    if (action->variant == VARIANT_SET && item_count < MAX_DETAIL_ITEMS) {
+      const char* mod_name = get_ui_module_display_name(action->params.ui.module);
+      snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
+        "Module\n%s", mod_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true
+        s_ui_module_label[buf], nav_to_ui_module, NULL, true
       };
-    }
-    
-    // Individual step items
-    for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
-      uint8_t mod_idx = action->params.ui.modules[i];
-      if (mod_idx >= (uint8_t)ui_scene_selectable_module_count) mod_idx = 0;
-      snprintf(s_ui_cycle_step_labels[buf][i], sizeof(s_ui_cycle_step_labels[buf][i]),
-        "Step %d\n%s", i + 1, get_ui_module_display_name(mod_idx));
+    } else if (action->variant == VARIANT_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
+      const char* press_name = get_ui_module_display_name(action->params.ui.module);
+      snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
+        "On Press\n%s", press_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true
+        s_ui_module_label[buf], nav_to_ui_module, NULL, true
       };
+
+      const char* release_name = get_ui_module_display_name(action->params.ui.module2);
+      snprintf(s_ui_module2_label[buf], sizeof(s_ui_module2_label[buf]),
+        "On Release\n%s", release_name);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_ui_module2_label[buf], nav_to_ui_module2, NULL, true
+      };
+    } else if (action->variant == VARIANT_CYCLE) {
+      uint8_t num_steps = action->params.ui.num_modules;
+      if (num_steps < 2) num_steps = 2;
+      if (num_steps > 8) num_steps = 8;
+
+      if (item_count < MAX_DETAIL_ITEMS) {
+        snprintf(s_ui_cycle_steps_label[buf], sizeof(s_ui_cycle_steps_label[buf]),
+          "Steps\n%u", (unsigned)num_steps);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true
+        };
+      }
+
+      for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
+        uint8_t mod_idx = action->params.ui.modules[i];
+        if (mod_idx >= (uint8_t)ui_scene_selectable_module_count) mod_idx = 0;
+        snprintf(s_ui_cycle_step_labels[buf][i], sizeof(s_ui_cycle_step_labels[buf][i]),
+          "Step %d\n%s", i + 1, get_ui_module_display_name(mod_idx));
+        s_detail_items[item_count++] = (menu_item_t){
+          s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true
+        };
+      }
     }
   }
   

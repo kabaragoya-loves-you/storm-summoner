@@ -26,6 +26,7 @@ VALID_ACTION_TYPES = %w[
   lfo lfo_start lfo_stop lfo_toggle lfo_shape
   clock clock_toggle clock_hold clock_burst
   cut cut_toggle cut_hold
+  ui set_ui ui_hold ui_cycle
 ].freeze
 
 # Valid touchwheel modes
@@ -247,6 +248,63 @@ def validate_action(action, context, errors)
     if action.key?('cut_mode') &&
        !(action['cut_mode'].is_a?(String) && cut_modes.include?(action['cut_mode']))
       errors << "#{context}: #{type} 'cut_mode' must be one of #{cut_modes.join(', ')}"
+    end
+  when 'ui'
+    variant = action['variant']
+    case variant
+    when 'set', nil
+      if action.key?('module') &&
+         !(action['module'].is_a?(Integer) && action['module'] >= 0)
+        errors << "#{context}: ui set 'module' must be a non-negative integer"
+      end
+    when 'hold'
+      unless action['module'].is_a?(Integer) && action['module'] >= 0
+        errors << "#{context}: ui hold requires 'module' (non-negative integer)"
+      end
+      unless action['module2'].is_a?(Integer) && action['module2'] >= 0
+        errors << "#{context}: ui hold requires 'module2' (non-negative integer)"
+      end
+    when 'cycle'
+      unless action['num_modules'].is_a?(Integer) && action['num_modules'].between?(2, 8)
+        errors << "#{context}: ui cycle requires 'num_modules' (2-8)"
+      end
+      unless action['modules'].is_a?(Array) && action['modules'].length.between?(2, 8)
+        errors << "#{context}: ui cycle requires 'modules' array (2-8 items)"
+      end
+      if action['modules'].is_a?(Array)
+        action['modules'].each_with_index do |m, i|
+          unless m.is_a?(Integer) && m >= 0
+            errors << "#{context}: ui cycle modules[#{i}] must be a non-negative integer"
+          end
+        end
+      end
+    else
+      errors << "#{context}: ui variant must be 'set', 'hold', or 'cycle' (got #{variant.inspect})"
+    end
+  when 'set_ui'
+    unless action['module'].is_a?(Integer) && action['module'] >= 0
+      errors << "#{context}: set_ui requires 'module' (non-negative integer)"
+    end
+  when 'ui_hold'
+    unless action['module'].is_a?(Integer) && action['module'] >= 0
+      errors << "#{context}: ui_hold requires 'module' (non-negative integer)"
+    end
+    unless action['module2'].is_a?(Integer) && action['module2'] >= 0
+      errors << "#{context}: ui_hold requires 'module2' (non-negative integer)"
+    end
+  when 'ui_cycle'
+    unless action['num_modules'].is_a?(Integer) && action['num_modules'].between?(2, 8)
+      errors << "#{context}: ui_cycle requires 'num_modules' (2-8)"
+    end
+    unless action['modules'].is_a?(Array) && action['modules'].length.between?(2, 8)
+      errors << "#{context}: ui_cycle requires 'modules' array (2-8 items)"
+    end
+    if action['modules'].is_a?(Array)
+      action['modules'].each_with_index do |m, i|
+        unless m.is_a?(Integer) && m >= 0
+          errors << "#{context}: ui_cycle modules[#{i}] must be a non-negative integer"
+        end
+      end
     end
   when 'lfo_start', 'lfo_stop', 'lfo_toggle', 'lfo_shape'
     # Legacy single-type entries (pre-consolidation). Minimal validation --
