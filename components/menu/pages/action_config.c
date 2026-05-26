@@ -4125,6 +4125,56 @@ static void nav_to_lfo_variant(void* user_data) {
 // override with a rate_mode override if they want a specific dispatch
 // shape. Same applies to manual_steps + resolution_mode = Manual.
 
+// --- Shared MODIFY roller helpers (Original / Random / concrete values) ----
+
+static uint32_t lfo_modify_u8_roller_current(uint8_t v, const uint8_t* values, size_t n) {
+  if (v == ACTION_LFO_ORIG_U8) return 0;
+  if (v == ACTION_LFO_RAND_U8) return 1;
+  for (size_t i = 0; i < n; i++) {
+    if (values[i] == v) return (uint32_t)(i + 2);
+  }
+  return 0;
+}
+
+static void lfo_modify_u8_roller_apply(uint8_t* field, uint32_t idx,
+    const uint8_t* values, size_t n) {
+  if (idx == 0) *field = ACTION_LFO_ORIG_U8;
+  else if (idx == 1) *field = ACTION_LFO_RAND_U8;
+  else if (idx >= 2 && idx - 2 < n) *field = values[idx - 2];
+}
+
+static uint32_t lfo_modify_u16_roller_current(uint16_t v, const uint16_t* values, size_t n) {
+  if (v == ACTION_LFO_ORIG_U16) return 0;
+  if (v == ACTION_LFO_RAND_U16) return 1;
+  for (size_t i = 0; i < n; i++) {
+    if (values[i] == v) return (uint32_t)(i + 2);
+  }
+  return 0;
+}
+
+static void lfo_modify_u16_roller_apply(uint16_t* field, uint32_t idx,
+    const uint16_t* values, size_t n) {
+  if (idx == 0) *field = ACTION_LFO_ORIG_U16;
+  else if (idx == 1) *field = ACTION_LFO_RAND_U16;
+  else if (idx >= 2 && idx - 2 < n) *field = values[idx - 2];
+}
+
+static uint32_t lfo_modify_steps_roller_current(uint8_t v, const uint8_t* values, size_t n) {
+  if (v == ACTION_LFO_ORIG_STEPS) return 0;
+  if (v == ACTION_LFO_RAND_STEPS) return 1;
+  for (size_t i = 0; i < n; i++) {
+    if (values[i] == v) return (uint32_t)(i + 2);
+  }
+  return 0;
+}
+
+static void lfo_modify_steps_roller_apply(uint8_t* field, uint32_t idx,
+    const uint8_t* values, size_t n) {
+  if (idx == 0) *field = ACTION_LFO_ORIG_STEPS;
+  else if (idx == 1) *field = ACTION_LFO_RAND_STEPS;
+  else if (idx >= 2 && idx - 2 < n) *field = values[idx - 2];
+}
+
 // --- Waveform -------------------------------------------------------------
 
 static const lfo_waveform_t s_lfo_modify_waveforms[] = {
@@ -4135,6 +4185,7 @@ static const lfo_waveform_t s_lfo_modify_waveforms[] = {
 
 static const char* lfo_modify_waveform_display(uint8_t v) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
   switch ((lfo_waveform_t)v) {
     case LFO_WAVEFORM_SINE:        return "Sine";
     case LFO_WAVEFORM_TRIANGLE:    return "Triangle";
@@ -4156,11 +4207,8 @@ static void lfo_modify_waveform_confirm_cb(uint32_t selected_index, void* user_d
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.waveform = ACTION_LFO_ORIG_U8;
-  } else if (selected_index <= NUM_LFO_MODIFY_WAVEFORMS) {
-    action->params.lfo.waveform = (uint8_t)s_lfo_modify_waveforms[selected_index - 1];
-  }
+  lfo_modify_u8_roller_apply(&action->params.lfo.waveform, selected_index,
+    (const uint8_t*)s_lfo_modify_waveforms, NUM_LFO_MODIFY_WAVEFORMS);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4170,14 +4218,10 @@ static lv_obj_t* lfo_modify_waveform_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   static char options[96];
   snprintf(options, sizeof(options),
-    "Original\nSine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H");
-  uint32_t current = 0;
-  uint8_t v = s_ctx->target_action->params.lfo.waveform;
-  if (v != ACTION_LFO_ORIG_U8) {
-    for (size_t i = 0; i < NUM_LFO_MODIFY_WAVEFORMS; i++) {
-      if (s_lfo_modify_waveforms[i] == (lfo_waveform_t)v) { current = (uint32_t)(i + 1); break; }
-    }
-  }
+    "Original\nRandom\nSine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H");
+  uint32_t current = lfo_modify_u8_roller_current(
+    s_ctx->target_action->params.lfo.waveform,
+    (const uint8_t*)s_lfo_modify_waveforms, NUM_LFO_MODIFY_WAVEFORMS);
   return menu_create_roller_page("Waveform", options, current,
     lfo_modify_waveform_confirm_cb, NULL);
 }
@@ -4198,6 +4242,7 @@ static const lfo_rate_mode_t s_lfo_modify_rate_modes[] = {
 
 static const char* lfo_modify_rate_mode_display(uint8_t v) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
   switch ((lfo_rate_mode_t)v) {
     case LFO_RATE_MODE_FREE:       return "Free";
     case LFO_RATE_MODE_TEMPO:      return "Tempo";
@@ -4220,11 +4265,8 @@ static void lfo_modify_rate_mode_confirm_cb(uint32_t selected_index, void* user_
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.rate_mode = ACTION_LFO_ORIG_U8;
-  } else if (selected_index <= NUM_LFO_MODIFY_RATE_MODES) {
-    action->params.lfo.rate_mode = (uint8_t)s_lfo_modify_rate_modes[selected_index - 1];
-  }
+  lfo_modify_u8_roller_apply(&action->params.lfo.rate_mode, selected_index,
+    (const uint8_t*)s_lfo_modify_rate_modes, NUM_LFO_MODIFY_RATE_MODES);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4234,14 +4276,10 @@ static lv_obj_t* lfo_modify_rate_mode_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   static char options[128];
   snprintf(options, sizeof(options),
-    "Original\nFree\nTempo\nTouchwheel\nExpression\nCV\nALS\nProximity");
-  uint32_t current = 0;
-  uint8_t v = s_ctx->target_action->params.lfo.rate_mode;
-  if (v != ACTION_LFO_ORIG_U8) {
-    for (size_t i = 0; i < NUM_LFO_MODIFY_RATE_MODES; i++) {
-      if (s_lfo_modify_rate_modes[i] == (lfo_rate_mode_t)v) { current = (uint32_t)(i + 1); break; }
-    }
-  }
+    "Original\nRandom\nFree\nTempo\nTouchwheel\nExpression\nCV\nALS\nProximity");
+  uint32_t current = lfo_modify_u8_roller_current(
+    s_ctx->target_action->params.lfo.rate_mode,
+    (const uint8_t*)s_lfo_modify_rate_modes, NUM_LFO_MODIFY_RATE_MODES);
   return menu_create_roller_page("Rate Mode", options, current,
     lfo_modify_rate_mode_confirm_cb, NULL);
 }
@@ -4263,6 +4301,7 @@ static const uint16_t s_lfo_modify_rates_x100[] = {
 
 static const char* lfo_modify_rate_hz_display(uint16_t v, char* buf, size_t len) {
   if (v == ACTION_LFO_ORIG_U16) return "Original";
+  if (v == ACTION_LFO_RAND_U16) return "Random";
   snprintf(buf, len, "%u.%02u Hz", (unsigned)(v / 100), (unsigned)(v % 100));
   return buf;
 }
@@ -4277,11 +4316,8 @@ static void lfo_modify_rate_hz_confirm_cb(uint32_t selected_index, void* user_da
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.rate_hz_x100 = ACTION_LFO_ORIG_U16;
-  } else if (selected_index <= NUM_LFO_MODIFY_RATES) {
-    action->params.lfo.rate_hz_x100 = s_lfo_modify_rates_x100[selected_index - 1];
-  }
+  lfo_modify_u16_roller_apply(&action->params.lfo.rate_hz_x100, selected_index,
+    s_lfo_modify_rates_x100, NUM_LFO_MODIFY_RATES);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4290,19 +4326,15 @@ static void lfo_modify_rate_hz_confirm_cb(uint32_t selected_index, void* user_da
 static lv_obj_t* lfo_modify_rate_hz_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   static char options[256];
-  size_t pos = (size_t)snprintf(options, sizeof(options), "Original");
+  size_t pos = (size_t)snprintf(options, sizeof(options), "Original\nRandom");
   for (size_t i = 0; i < NUM_LFO_MODIFY_RATES && pos < sizeof(options); i++) {
     uint16_t hz = s_lfo_modify_rates_x100[i];
     pos += (size_t)snprintf(options + pos, sizeof(options) - pos,
       "\n%u.%02u Hz", (unsigned)(hz / 100), (unsigned)(hz % 100));
   }
-  uint32_t current = 0;
-  uint16_t v = s_ctx->target_action->params.lfo.rate_hz_x100;
-  if (v != ACTION_LFO_ORIG_U16) {
-    for (size_t i = 0; i < NUM_LFO_MODIFY_RATES; i++) {
-      if (s_lfo_modify_rates_x100[i] == v) { current = (uint32_t)(i + 1); break; }
-    }
-  }
+  uint32_t current = lfo_modify_u16_roller_current(
+    s_ctx->target_action->params.lfo.rate_hz_x100,
+    s_lfo_modify_rates_x100, NUM_LFO_MODIFY_RATES);
   return menu_create_roller_page("Rate", options, current,
     lfo_modify_rate_hz_confirm_cb, NULL);
 }
@@ -4324,6 +4356,7 @@ static const lfo_note_division_t s_lfo_modify_divisions[] = {
 
 static const char* lfo_modify_division_display(uint8_t v) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
   switch ((lfo_note_division_t)v) {
     case LFO_DIVISION_16_BARS:  return "16 Bars";
     case LFO_DIVISION_12_BARS:  return "12 Bars";
@@ -4350,11 +4383,8 @@ static void lfo_modify_division_confirm_cb(uint32_t selected_index, void* user_d
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.division = ACTION_LFO_ORIG_U8;
-  } else if (selected_index <= NUM_LFO_MODIFY_DIVISIONS) {
-    action->params.lfo.division = (uint8_t)s_lfo_modify_divisions[selected_index - 1];
-  }
+  lfo_modify_u8_roller_apply(&action->params.lfo.division, selected_index,
+    (const uint8_t*)s_lfo_modify_divisions, NUM_LFO_MODIFY_DIVISIONS);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4364,14 +4394,10 @@ static lv_obj_t* lfo_modify_division_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   static char options[192];
   snprintf(options, sizeof(options),
-    "Original\n16 Bars\n12 Bars\n8 Bars\n4 Bars\n2 Bars\n1 Bar\n1/2\n1/4\n1/8\n1/16\n1/32");
-  uint32_t current = 0;
-  uint8_t v = s_ctx->target_action->params.lfo.division;
-  if (v != ACTION_LFO_ORIG_U8) {
-    for (size_t i = 0; i < NUM_LFO_MODIFY_DIVISIONS; i++) {
-      if (s_lfo_modify_divisions[i] == (lfo_note_division_t)v) { current = (uint32_t)(i + 1); break; }
-    }
-  }
+    "Original\nRandom\n16 Bars\n12 Bars\n8 Bars\n4 Bars\n2 Bars\n1 Bar\n1/2\n1/4\n1/8\n1/16\n1/32");
+  uint32_t current = lfo_modify_u8_roller_current(
+    s_ctx->target_action->params.lfo.division,
+    (const uint8_t*)s_lfo_modify_divisions, NUM_LFO_MODIFY_DIVISIONS);
   return menu_create_roller_page("Division", options, current,
     lfo_modify_division_confirm_cb, NULL);
 }
@@ -4390,6 +4416,7 @@ static const polarity_t s_lfo_modify_polarities[] = {
 
 static const char* lfo_modify_polarity_display(uint8_t v) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
   switch ((polarity_t)v) {
     case POLARITY_UNIPOLAR: return "Unipolar";
     case POLARITY_BIPOLAR:  return "Bipolar";
@@ -4408,11 +4435,8 @@ static void lfo_modify_polarity_confirm_cb(uint32_t selected_index, void* user_d
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.polarity = ACTION_LFO_ORIG_U8;
-  } else if (selected_index <= NUM_LFO_MODIFY_POLARITIES) {
-    action->params.lfo.polarity = (uint8_t)s_lfo_modify_polarities[selected_index - 1];
-  }
+  lfo_modify_u8_roller_apply(&action->params.lfo.polarity, selected_index,
+    (const uint8_t*)s_lfo_modify_polarities, NUM_LFO_MODIFY_POLARITIES);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4420,15 +4444,11 @@ static void lfo_modify_polarity_confirm_cb(uint32_t selected_index, void* user_d
 
 static lv_obj_t* lfo_modify_polarity_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
-  uint32_t current = 0;
-  uint8_t v = s_ctx->target_action->params.lfo.polarity;
-  if (v != ACTION_LFO_ORIG_U8) {
-    for (size_t i = 0; i < NUM_LFO_MODIFY_POLARITIES; i++) {
-      if (s_lfo_modify_polarities[i] == (polarity_t)v) { current = (uint32_t)(i + 1); break; }
-    }
-  }
+  uint32_t current = lfo_modify_u8_roller_current(
+    s_ctx->target_action->params.lfo.polarity,
+    (const uint8_t*)s_lfo_modify_polarities, NUM_LFO_MODIFY_POLARITIES);
   return menu_create_roller_page("Polarity",
-    "Original\nUnipolar\nBipolar\nInverted", current,
+    "Original\nRandom\nUnipolar\nBipolar\nInverted", current,
     lfo_modify_polarity_confirm_cb, NULL);
 }
 
@@ -4438,10 +4458,9 @@ static void nav_to_lfo_modify_polarity(void* user_data) {
 }
 
 // --- Floor / Ceiling -----------------------------------------------------
-// Sampled 0-127 values so the picker fits the screen. Each slot's index 0
-// is Original; indices 1.. map to s_lfo_modify_floor_values[i-1]. We use the
-// same value table for both floor and ceiling because they share the same
-// range; the user just picks values that make sense for their use.
+// Sampled 0-127 values so the picker fits the screen. Index 0 = Original,
+// index 1 = Random (full 0-127 range at dispatch), indices 2.. map to
+// s_lfo_modify_floor_values[i-2]. Same value table for floor and ceiling.
 
 static const uint8_t s_lfo_modify_floor_values[] = {
   0, 10, 20, 30, 40, 50, 60, 64, 70, 80, 90, 100, 110, 120, 127,
@@ -4450,20 +4469,17 @@ static const uint8_t s_lfo_modify_floor_values[] = {
 
 static const char* lfo_modify_floor_display(uint8_t v, char* buf, size_t len) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
   snprintf(buf, len, "%u", (unsigned)v);
   return buf;
 }
 
 static uint32_t lfo_modify_floor_lookup_index(uint8_t v) {
-  if (v == ACTION_LFO_ORIG_U8) return 0;
-  for (size_t i = 0; i < NUM_LFO_MODIFY_FLOOR_VALUES; i++) {
-    if (s_lfo_modify_floor_values[i] == v) return (uint32_t)(i + 1);
-  }
-  return 0;
+  return lfo_modify_u8_roller_current(v, s_lfo_modify_floor_values, NUM_LFO_MODIFY_FLOOR_VALUES);
 }
 
 static void lfo_modify_floor_options(char* options, size_t cap) {
-  size_t pos = (size_t)snprintf(options, cap, "Original");
+  size_t pos = (size_t)snprintf(options, cap, "Original\nRandom");
   for (size_t i = 0; i < NUM_LFO_MODIFY_FLOOR_VALUES && pos < cap; i++) {
     pos += (size_t)snprintf(options + pos, cap - pos, "\n%u",
       (unsigned)s_lfo_modify_floor_values[i]);
@@ -4480,11 +4496,8 @@ static void lfo_modify_floor_confirm_cb(uint32_t selected_index, void* user_data
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.floor = ACTION_LFO_ORIG_U8;
-  } else if (selected_index <= NUM_LFO_MODIFY_FLOOR_VALUES) {
-    action->params.lfo.floor = s_lfo_modify_floor_values[selected_index - 1];
-  }
+  lfo_modify_u8_roller_apply(&action->params.lfo.floor, selected_index,
+    s_lfo_modify_floor_values, NUM_LFO_MODIFY_FLOOR_VALUES);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4514,11 +4527,8 @@ static void lfo_modify_ceiling_confirm_cb(uint32_t selected_index, void* user_da
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.ceiling = ACTION_LFO_ORIG_U8;
-  } else if (selected_index <= NUM_LFO_MODIFY_FLOOR_VALUES) {
-    action->params.lfo.ceiling = s_lfo_modify_floor_values[selected_index - 1];
-  }
+  lfo_modify_u8_roller_apply(&action->params.lfo.ceiling, selected_index,
+    s_lfo_modify_floor_values, NUM_LFO_MODIFY_FLOOR_VALUES);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4548,6 +4558,7 @@ static const lfo_resolution_mode_t s_lfo_modify_resolutions[] = {
 
 static const char* lfo_modify_resolution_display(uint8_t v) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
   switch ((lfo_resolution_mode_t)v) {
     case LFO_RESOLUTION_AUTO:   return "Auto";
     case LFO_RESOLUTION_COARSE: return "Coarse";
@@ -4568,11 +4579,8 @@ static void lfo_modify_resolution_confirm_cb(uint32_t selected_index, void* user
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.resolution_mode = ACTION_LFO_ORIG_U8;
-  } else if (selected_index <= NUM_LFO_MODIFY_RESOLUTIONS) {
-    action->params.lfo.resolution_mode = (uint8_t)s_lfo_modify_resolutions[selected_index - 1];
-  }
+  lfo_modify_u8_roller_apply(&action->params.lfo.resolution_mode, selected_index,
+    (const uint8_t*)s_lfo_modify_resolutions, NUM_LFO_MODIFY_RESOLUTIONS);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4580,15 +4588,11 @@ static void lfo_modify_resolution_confirm_cb(uint32_t selected_index, void* user
 
 static lv_obj_t* lfo_modify_resolution_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
-  uint32_t current = 0;
-  uint8_t v = s_ctx->target_action->params.lfo.resolution_mode;
-  if (v != ACTION_LFO_ORIG_U8) {
-    for (size_t i = 0; i < NUM_LFO_MODIFY_RESOLUTIONS; i++) {
-      if (s_lfo_modify_resolutions[i] == (lfo_resolution_mode_t)v) { current = (uint32_t)(i + 1); break; }
-    }
-  }
+  uint32_t current = lfo_modify_u8_roller_current(
+    s_ctx->target_action->params.lfo.resolution_mode,
+    (const uint8_t*)s_lfo_modify_resolutions, NUM_LFO_MODIFY_RESOLUTIONS);
   return menu_create_roller_page("Resolution",
-    "Original\nAuto\nCoarse\nMedium\nFine\nManual", current,
+    "Original\nRandom\nAuto\nCoarse\nMedium\nFine\nManual", current,
     lfo_modify_resolution_confirm_cb, NULL);
 }
 
@@ -4604,6 +4608,7 @@ static const uint8_t s_lfo_modify_step_values[] = { 16, 32, 64, 128 };
 
 static const char* lfo_modify_steps_display(uint8_t v, char* buf, size_t len) {
   if (v == ACTION_LFO_ORIG_STEPS) return "Original";
+  if (v == ACTION_LFO_RAND_STEPS) return "Random";
   snprintf(buf, len, "%u", (unsigned)v);
   return buf;
 }
@@ -4618,11 +4623,8 @@ static void lfo_modify_steps_confirm_cb(uint32_t selected_index, void* user_data
     return;
   }
   action_t* action = s_ctx->target_action;
-  if (selected_index == 0) {
-    action->params.lfo.manual_steps = ACTION_LFO_ORIG_STEPS;
-  } else if (selected_index <= NUM_LFO_MODIFY_STEP_VALUES) {
-    action->params.lfo.manual_steps = s_lfo_modify_step_values[selected_index - 1];
-  }
+  lfo_modify_steps_roller_apply(&action->params.lfo.manual_steps, selected_index,
+    s_lfo_modify_step_values, NUM_LFO_MODIFY_STEP_VALUES);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -4630,15 +4632,11 @@ static void lfo_modify_steps_confirm_cb(uint32_t selected_index, void* user_data
 
 static lv_obj_t* lfo_modify_steps_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
-  uint32_t current = 0;
-  uint8_t v = s_ctx->target_action->params.lfo.manual_steps;
-  if (v != ACTION_LFO_ORIG_STEPS) {
-    for (size_t i = 0; i < NUM_LFO_MODIFY_STEP_VALUES; i++) {
-      if (s_lfo_modify_step_values[i] == v) { current = (uint32_t)(i + 1); break; }
-    }
-  }
+  uint32_t current = lfo_modify_steps_roller_current(
+    s_ctx->target_action->params.lfo.manual_steps,
+    s_lfo_modify_step_values, NUM_LFO_MODIFY_STEP_VALUES);
   return menu_create_roller_page("Steps",
-    "Original\n16\n32\n64\n128", current,
+    "Original\nRandom\n16\n32\n64\n128", current,
     lfo_modify_steps_confirm_cb, NULL);
 }
 

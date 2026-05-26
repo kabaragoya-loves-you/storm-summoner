@@ -1536,58 +1536,67 @@
                 "description": "Target LFO: 1=LFO1, 2=LFO2, 3=both"
               },
               "waveform": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 5,
-                "description": "Override LFO waveform (0=Sine, 1=Triangle, 2=Square, 3=Saw Up, 4=Saw Down, 5=Sample&Hold). Omit to keep the scene's configured waveform."
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 5 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override LFO waveform (0=Sine, 1=Triangle, 2=Square, 3=Saw Up, 4=Saw Down, 5=Sample&Hold). 254 = randomize on each trigger. Omit to keep the scene's configured waveform."
               },
               "rate_mode": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 6,
-                "description": "Override rate mode (0=Free, 1=Tempo, 2=Touchwheel, 3=Expression, 4=CV, 5=ALS, 6=Proximity). Omit to keep the scene's configured rate mode."
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 6 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override rate mode (0=Free, 1=Tempo, 2=Touchwheel, 3=Expression, 4=CV, 5=ALS, 6=Proximity). 254 = randomize on each trigger. Omit to keep the scene's configured rate mode."
               },
               "rate_hz_x100": {
-                "type": "integer",
-                "minimum": 5,
-                "maximum": 2000,
-                "description": "Override free-running rate in Hz * 100 (5=0.05Hz, 2000=20.0Hz). Used when rate_mode=free or override-paired with rate_mode=free. Omit to keep the scene's configured rate."
+                "anyOf": [
+                  { "type": "integer", "minimum": 5, "maximum": 2000 },
+                  { "type": "integer", "const": 65534 }
+                ],
+                "description": "Override free-running rate in Hz * 100 (5=0.05Hz, 2000=20.0Hz). 65534 = randomize on each trigger (picker table). Used when rate_mode=free or override-paired with rate_mode=free. Omit to keep the scene's configured rate."
               },
               "division": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 10,
-                "description": "Override tempo-synced note division (0=16 bars .. 10=1/32). Used when rate_mode=tempo. Omit to keep the scene's configured division."
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 10 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override tempo-synced note division (0=16 bars .. 10=1/32). 254 = randomize on each trigger. Used when rate_mode=tempo. Omit to keep the scene's configured division."
               },
               "polarity": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 2,
-                "description": "Override output polarity (0=Unipolar, 1=Bipolar, 2=Inverted). Omit to keep the scene's per-LFO continuous-mapping polarity."
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 2 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override output polarity (0=Unipolar, 1=Bipolar, 2=Inverted). 254 = randomize on each trigger. Omit to keep the scene's per-LFO continuous-mapping polarity."
               },
               "floor": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
-                "description": "Override output floor (0-127). Omit to keep the scene's configured floor."
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 127 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override output floor (0-127). 254 = randomize on each trigger (full 0-127 range). Omit to keep the scene's configured floor."
               },
               "ceiling": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
-                "description": "Override output ceiling (0-127). Omit to keep the scene's configured ceiling."
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 127 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override output ceiling (0-127). 254 = randomize on each trigger (full 0-127 range). Omit to keep the scene's configured ceiling."
               },
               "resolution_mode": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 4,
-                "description": "Override per-cycle resolution mode (0=Auto, 1=Coarse, 2=Medium, 3=Fine, 4=Manual). Omit to keep the scene's configured resolution mode."
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 4 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override per-cycle resolution mode (0=Auto, 1=Coarse, 2=Medium, 3=Fine, 4=Manual). 254 = randomize on each trigger. Omit to keep the scene's configured resolution mode."
               },
               "manual_steps": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 256,
-                "description": "Override per-cycle step count when resolution_mode=manual. Has no effect unless paired with a Manual resolution_mode (either via this action or via the scene config). Omit to keep the scene's configured manual_steps."
+                "anyOf": [
+                  { "type": "integer", "minimum": 1, "maximum": 256 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "Override per-cycle step count when resolution_mode=manual. 254 = randomize on each trigger (16/32/64/128). Has no effect unless paired with a Manual resolution_mode (either via this action or via the scene config). Omit to keep the scene's configured manual_steps."
               }
             }
           }

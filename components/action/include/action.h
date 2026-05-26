@@ -384,15 +384,15 @@ typedef struct {
     struct {
       uint8_t slot;              // All variants: 1, 2, or 3 (both)
       // MODIFY overrides:
-      uint8_t waveform;          // lfo_waveform_t,        0xFF = Original
-      uint8_t rate_mode;         // lfo_rate_mode_t,       0xFF = Original
-      uint16_t rate_hz_x100;     // Free-rate Hz * 100,  0xFFFF = Original
-      uint8_t division;          // lfo_note_division_t,   0xFF = Original
-      uint8_t polarity;          // polarity_t,            0xFF = Original
-      uint8_t floor;             // 0-127,                 0xFF = Original
-      uint8_t ceiling;           // 0-127,                 0xFF = Original
-      uint8_t resolution_mode;   // lfo_resolution_mode_t, 0xFF = Original
-      uint8_t manual_steps;      // 1-N (Manual mode only),   0 = Original
+      uint8_t waveform;          // lfo_waveform_t,        0xFF = Original, 0xFE = Random
+      uint8_t rate_mode;         // lfo_rate_mode_t,       0xFF = Original, 0xFE = Random
+      uint16_t rate_hz_x100;     // Free-rate Hz * 100,  0xFFFF = Original, 0xFFFE = Random
+      uint8_t division;          // lfo_note_division_t,   0xFF = Original, 0xFE = Random
+      uint8_t polarity;          // polarity_t,            0xFF = Original, 0xFE = Random
+      uint8_t floor;             // 0-127,                 0xFF = Original, 0xFE = Random
+      uint8_t ceiling;           // 0-127,                 0xFF = Original, 0xFE = Random
+      uint8_t resolution_mode;   // lfo_resolution_mode_t, 0xFF = Original, 0xFE = Random
+      uint8_t manual_steps;      // 1-N (Manual mode only),   0 = Original, 254 = Random
     } lfo;
     
     // For clock actions (toggle, hold)
@@ -501,9 +501,17 @@ typedef struct {
 //   - 8-bit enums / 0-127 ranges:    0xFF
 //   - rate_hz_x100 (uint16_t):     0xFFFF
 //   - manual_steps (valid 1-N):    0
+// Random sentinels (second picker entry on MODIFY rollers) pick a fresh
+// value from the field's valid range on every trigger:
+//   - 8-bit enums / 0-127 ranges:    0xFE
+//   - rate_hz_x100 (uint16_t):     0xFFFE
+//   - manual_steps:                  254 (0 is Original; 255 is a valid step count)
 #define ACTION_LFO_ORIG_U8      ((uint8_t)0xFF)
 #define ACTION_LFO_ORIG_U16     ((uint16_t)0xFFFF)
 #define ACTION_LFO_ORIG_STEPS   ((uint8_t)0)
+#define ACTION_LFO_RAND_U8      ((uint8_t)0xFE)
+#define ACTION_LFO_RAND_U16     ((uint16_t)0xFFFE)
+#define ACTION_LFO_RAND_STEPS   ((uint8_t)254)
 
 // Initialize the action system
 esp_err_t action_init(void);

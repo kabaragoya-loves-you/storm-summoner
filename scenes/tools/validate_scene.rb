@@ -158,32 +158,35 @@ def validate_action(action, context, errors)
     when 'start', 'stop', 'toggle', nil
       # nil variant defaults to start per firmware fallback. No further fields.
     when 'modify'
-      if action.key?('waveform') && !(action['waveform'].is_a?(Integer) && action['waveform'].between?(0, 5))
-        errors << "#{context}: lfo modify 'waveform' must be 0-5"
+      lfo_rand_u8 = 254
+      lfo_rand_u16 = 65534
+      lfo_rand_steps = 254
+      if action.key?('waveform') && !(action['waveform'].is_a?(Integer) && (action['waveform'] == lfo_rand_u8 || action['waveform'].between?(0, 5)))
+        errors << "#{context}: lfo modify 'waveform' must be 0-5 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('rate_mode') && !(action['rate_mode'].is_a?(Integer) && action['rate_mode'].between?(0, 6))
-        errors << "#{context}: lfo modify 'rate_mode' must be 0-6"
+      if action.key?('rate_mode') && !(action['rate_mode'].is_a?(Integer) && (action['rate_mode'] == lfo_rand_u8 || action['rate_mode'].between?(0, 6)))
+        errors << "#{context}: lfo modify 'rate_mode' must be 0-6 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('rate_hz_x100') && !(action['rate_hz_x100'].is_a?(Integer) && action['rate_hz_x100'].between?(5, 2000))
-        errors << "#{context}: lfo modify 'rate_hz_x100' must be 5-2000"
+      if action.key?('rate_hz_x100') && !(action['rate_hz_x100'].is_a?(Integer) && (action['rate_hz_x100'] == lfo_rand_u16 || action['rate_hz_x100'].between?(5, 2000)))
+        errors << "#{context}: lfo modify 'rate_hz_x100' must be 5-2000 or #{lfo_rand_u16} (random)"
       end
-      if action.key?('division') && !(action['division'].is_a?(Integer) && action['division'].between?(0, 10))
-        errors << "#{context}: lfo modify 'division' must be 0-10"
+      if action.key?('division') && !(action['division'].is_a?(Integer) && (action['division'] == lfo_rand_u8 || action['division'].between?(0, 10)))
+        errors << "#{context}: lfo modify 'division' must be 0-10 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('polarity') && !(action['polarity'].is_a?(Integer) && action['polarity'].between?(0, 2))
-        errors << "#{context}: lfo modify 'polarity' must be 0-2"
+      if action.key?('polarity') && !(action['polarity'].is_a?(Integer) && (action['polarity'] == lfo_rand_u8 || action['polarity'].between?(0, 2)))
+        errors << "#{context}: lfo modify 'polarity' must be 0-2 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('floor') && !(action['floor'].is_a?(Integer) && action['floor'].between?(0, 127))
-        errors << "#{context}: lfo modify 'floor' must be 0-127"
+      if action.key?('floor') && !(action['floor'].is_a?(Integer) && (action['floor'] == lfo_rand_u8 || action['floor'].between?(0, 127)))
+        errors << "#{context}: lfo modify 'floor' must be 0-127 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('ceiling') && !(action['ceiling'].is_a?(Integer) && action['ceiling'].between?(0, 127))
-        errors << "#{context}: lfo modify 'ceiling' must be 0-127"
+      if action.key?('ceiling') && !(action['ceiling'].is_a?(Integer) && (action['ceiling'] == lfo_rand_u8 || action['ceiling'].between?(0, 127)))
+        errors << "#{context}: lfo modify 'ceiling' must be 0-127 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('resolution_mode') && !(action['resolution_mode'].is_a?(Integer) && action['resolution_mode'].between?(0, 4))
-        errors << "#{context}: lfo modify 'resolution_mode' must be 0-4"
+      if action.key?('resolution_mode') && !(action['resolution_mode'].is_a?(Integer) && (action['resolution_mode'] == lfo_rand_u8 || action['resolution_mode'].between?(0, 4)))
+        errors << "#{context}: lfo modify 'resolution_mode' must be 0-4 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('manual_steps') && !(action['manual_steps'].is_a?(Integer) && action['manual_steps'].between?(1, 256))
-        errors << "#{context}: lfo modify 'manual_steps' must be 1-256"
+      if action.key?('manual_steps') && !(action['manual_steps'].is_a?(Integer) && (action['manual_steps'] == lfo_rand_steps || action['manual_steps'].between?(1, 256)))
+        errors << "#{context}: lfo modify 'manual_steps' must be 1-256 or #{lfo_rand_steps} (random)"
       end
     else
       errors << "#{context}: lfo variant must be 'start', 'stop', 'toggle', or 'modify' (got #{variant.inspect})"
