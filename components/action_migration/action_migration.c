@@ -147,6 +147,10 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "set_ui",           ACTION_UI,               VARIANT_SET       },
   { "ui_hold",          ACTION_UI,               VARIANT_HOLD      },
   { "ui_cycle",         ACTION_UI,               VARIANT_CYCLE     },
+
+  // Pre-consolidation param names.
+  { "param_hold",       ACTION_PARAM,            VARIANT_HOLD      },
+  { "param_cycle",      ACTION_PARAM,            VARIANT_CYCLE     },
 };
 
 static const size_t s_legacy_alias_count =

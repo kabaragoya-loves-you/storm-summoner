@@ -21,7 +21,7 @@ static const action_type_t hold_actions[] = {
   // press/release but is handled via fire-and-forget (Toggle only on load).
   // ACTION_CUT is variant-aware: only HOLD is hold-like.
   // ACTION_UI is variant-aware: only HOLD is hold-like.
-  ACTION_PARAM_HOLD,
+  // ACTION_PARAM is variant-aware: only HOLD is hold-like.
   ACTION_RTG_HOLD,
   ACTION_SAMPLE_HOLD_HOLD,
 };
@@ -44,6 +44,7 @@ bool action_requires_hold_for(const action_t* action) {
       (action->variant == VARIANT_HOLD || action->variant == VARIANT_BURST)) return true;
   if (action->type == ACTION_CUT && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_UI && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_PARAM && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -56,7 +57,6 @@ bool action_requires_hold_for(const action_t* action) {
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
-    case ACTION_PARAM_HOLD:
     case ACTION_RTG_HOLD:
     case ACTION_SAMPLE_HOLD_HOLD:
       return true;
@@ -70,6 +70,8 @@ bool action_supports_followup_for(const action_t* action) {
     case ACTION_CUT:
       return action->variant == VARIANT_HOLD;
     case ACTION_UI:
+      return action->variant == VARIANT_HOLD;
+    case ACTION_PARAM:
       return action->variant == VARIANT_HOLD;
     default:
       return false;
@@ -166,8 +168,10 @@ bool action_is_fire_and_forget_for(const action_t* action) {
 // "trigger has capability X". These are genuine per-action hardware
 // affordance requirements (touchwheel mode actions only on touchwheel/button
 // inputs; param hold/cycle same constraint).
-static bool action_input_restriction_allows(action_type_t type,
+static bool action_input_restriction_allows(const action_t* action,
                                             action_trigger_type_t trigger) {
+  if (!action) return true;
+  action_type_t type = action->type;
   // Touchwheel (HOLD / CYCLE): hardware-input gate. Allow the touchwheel-
   // adjacent triggers; the HOLD variant's "needs a release pair" requirement
   // is enforced separately by Rule 1 (action_requires_hold_for + caps
@@ -184,25 +188,16 @@ static bool action_input_restriction_allows(action_type_t type,
         return false;
     }
   }
-  // Param Hold / Cycle mirror the touchwheel rules (they manipulate the
-  // touchwheel's CC slot 1, so they need similar input affordances).
-  if (type == ACTION_PARAM_HOLD) {
+  // ACTION_PARAM (Hold/Cycle): retargets touchwheel CC slot 1; same input
+  // affordances as touchwheel, except Hold excludes bump (no release pair).
+  if (type == ACTION_PARAM) {
     switch (trigger) {
       case ACTION_TRIGGER_TOUCHPAD_8_11:
       case ACTION_TRIGGER_BUTTON:
       case ACTION_TRIGGER_EXPR_SWITCH:
         return true;
-      default:
-        return false;
-    }
-  }
-  if (type == ACTION_PARAM_CYCLE) {
-    switch (trigger) {
-      case ACTION_TRIGGER_TOUCHPAD_8_11:
-      case ACTION_TRIGGER_BUTTON:
       case ACTION_TRIGGER_BUMP:
-      case ACTION_TRIGGER_EXPR_SWITCH:
-        return true;
+        return action->variant == VARIANT_CYCLE;
       default:
         return false;
     }
@@ -249,7 +244,7 @@ bool action_is_valid_for_trigger_for(const action_t* action,
   }
 
   // Rule 5: per-action input affordance requirements (touchwheel/param holds).
-  return action_input_restriction_allows(action->type, trigger);
+  return action_input_restriction_allows(action, trigger);
 }
 
 // Default variant for a consolidated family. Chosen so that "is this type
@@ -278,6 +273,8 @@ static action_variant_t default_variant_for_type(action_type_t type) {
       return VARIANT_TOGGLE;
     case ACTION_UI:
       return VARIANT_SET;
+    case ACTION_PARAM:
+      return VARIANT_HOLD;
     default:
       return VARIANT_NONE;
   }
@@ -383,6 +380,10 @@ bool action_supports_timing_for(const action_t* action) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
+  if (action->type == ACTION_PARAM) {
+    if (action->variant == VARIANT_HOLD) return false;
+    return true;
+  }
   return action_supports_timing(action->type);
 }
 
@@ -426,6 +427,8 @@ bool action_supports_repeat_for(const action_t* action) {
   if (action->type == ACTION_CUT)
     return false;
   if (action->type == ACTION_UI)
+    return action->variant == VARIANT_CYCLE;
+  if (action->type == ACTION_PARAM)
     return action->variant == VARIANT_CYCLE;
   return action_supports_repeat(action->type);
 }

@@ -2782,14 +2782,14 @@ static void free_param_cc_options(void) {
 
 // Check if a CC is already used in another param slot (for cycle or hold)
 static bool is_cc_used_in_param(const action_t* action, uint8_t cc_num, uint8_t exclude_slot) {
-  if (action->type == ACTION_PARAM_CYCLE) {
+  if (action->type != ACTION_PARAM) return false;
+  if (action->variant == VARIANT_CYCLE) {
     uint8_t num = action->params.tw_param.num_params;
     for (uint8_t i = 0; i < num && i < MAX_PARAM_CYCLE_STEPS; i++) {
       if (i != exclude_slot && action->params.tw_param.params[i] == cc_num)
         return true;
     }
-  } else if (action->type == ACTION_PARAM_HOLD) {
-    // For hold, slot 0 = param (press), slot 1 = param2 (release)
+  } else if (action->variant == VARIANT_HOLD) {
     if (exclude_slot != 0 && action->params.tw_param.param == cc_num) return true;
     if (exclude_slot != 1 && action->params.tw_param.param2 == cc_num) return true;
   }
@@ -3281,10 +3281,10 @@ static void nav_to_ui_cycle_step(void* user_data) {
 }
 
 // ============================================================================
-// Param Hold/Cycle Rollers (for ACTION_PARAM_HOLD, ACTION_PARAM_CYCLE)
+// Param Hold/Cycle Rollers (for ACTION_PARAM)
 // ============================================================================
 
-// For ACTION_PARAM_HOLD - press CC (slot 0)
+// For ACTION_PARAM Hold press CC (slot 0)
 static void param_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   scene_t* scene = scene_get_current();
@@ -3339,7 +3339,7 @@ static void nav_to_param(void* user_data) {
   menu_navigate_to("On Press", param_roller_create);
 }
 
-// For ACTION_PARAM_HOLD - release CC (slot 1)
+// For ACTION_PARAM Hold release CC (slot 1)
 static void param2_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   scene_t* scene = scene_get_current();
@@ -3394,7 +3394,7 @@ static void nav_to_param2(void* user_data) {
   menu_navigate_to("On Release", param2_roller_create);
 }
 
-// For ACTION_PARAM_CYCLE - steps selector
+// For ACTION_PARAM Cycle steps selector
 static void param_cycle_steps_confirm_cb(uint32_t selected_idx, void* user_data) {
   (void)user_data;
   
@@ -3453,7 +3453,7 @@ static void nav_to_param_cycle_steps(void* user_data) {
   menu_navigate_to("Steps", param_cycle_steps_roller_create);
 }
 
-// For ACTION_PARAM_CYCLE - individual step CC
+// For ACTION_PARAM Cycle individual step CC
 static void param_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
   (void)user_data;
   
@@ -3979,15 +3979,16 @@ static lv_obj_t* pad_detail_page_create(void) {
     }
   }
   
-  // Show Param Hold CC selectors (press and release)
-  if (mapping->action.type == ACTION_PARAM_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
+  // ACTION_PARAM (consolidated family): variant-specific CC rows.
+  if (mapping->action.type == ACTION_PARAM && mapping->action.variant == VARIANT_HOLD &&
+      item_count < MAX_DETAIL_ITEMS - 1) {
     const char* press_name = get_cc_display_name(mapping->action.params.tw_param.param);
     snprintf(s_param_label[buf], sizeof(s_param_label[buf]),
       "On Press\n%s", press_name);
     s_detail_items[item_count++] = (menu_item_t){
       s_param_label[buf], nav_to_param, NULL, true
     };
-    
+
     const char* release_name = get_cc_display_name(mapping->action.params.tw_param.param2);
     snprintf(s_param2_label[buf], sizeof(s_param2_label[buf]),
       "On Release\n%s", release_name);
@@ -3995,14 +3996,12 @@ static lv_obj_t* pad_detail_page_create(void) {
       s_param2_label[buf], nav_to_param2, NULL, true
     };
   }
-  
-  // Show Param Cycle submenu items
-  if (mapping->action.type == ACTION_PARAM_CYCLE) {
+
+  if (mapping->action.type == ACTION_PARAM && mapping->action.variant == VARIANT_CYCLE) {
     uint8_t num_steps = mapping->action.params.tw_param.num_params;
     if (num_steps < 2) num_steps = 2;
     if (num_steps > 8) num_steps = 8;
-    
-    // Steps selector
+
     if (item_count < MAX_DETAIL_ITEMS) {
       snprintf(s_param_cycle_steps_label[buf], sizeof(s_param_cycle_steps_label[buf]),
         "Steps\n%u", (unsigned)num_steps);
@@ -4010,8 +4009,7 @@ static lv_obj_t* pad_detail_page_create(void) {
         s_param_cycle_steps_label[buf], nav_to_param_cycle_steps, NULL, true
       };
     }
-    
-    // Individual step items
+
     for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
       uint8_t cc = mapping->action.params.tw_param.params[i];
       snprintf(s_param_cycle_step_labels[buf][i], sizeof(s_param_cycle_step_labels[buf][i]),

@@ -420,48 +420,56 @@ action_handle_result_t action_handlers_scene_dispatch(
           return ACTION_HANDLED;
       }
 
-    case ACTION_PARAM_HOLD: {
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "Param hold release skipped by follow-up");
-        return ACTION_HANDLED;
-      }
-      scene_t* scene = scene_get_current();
-      if (scene) {
-        uint8_t cc = is_press
-          ? action->params.tw_param.param
-          : action->params.tw_param.param2;
-        scene->touchwheel.cc_numbers[0] = cc;
-        uint8_t cached_value = action_get_cc_value(cc);
-        scene_set_touchwheel_value(cached_value);
-        ESP_LOGI(TAG, "Param Hold: CC %u = %u (%s)",
-          (unsigned)cc, (unsigned)cached_value,
-          is_press ? "press" : "release");
-      }
-      return ACTION_HANDLED;
-    }
+    case ACTION_PARAM:
+      switch (action->variant) {
+        case VARIANT_HOLD:
+          if (is_press) {
+            action_followup_record_press((action_t*)action);
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "Param hold release skipped by follow-up");
+            return ACTION_HANDLED;
+          }
+          {
+            scene_t* scene = scene_get_current();
+            if (scene) {
+              uint8_t cc = is_press
+                ? action->params.tw_param.param
+                : action->params.tw_param.param2;
+              scene->touchwheel.cc_numbers[0] = cc;
+              uint8_t cached_value = action_get_cc_value(cc);
+              scene_set_touchwheel_value(cached_value);
+              ESP_LOGI(TAG, "Param Hold: CC %u = %u (%s)",
+                (unsigned)cc, (unsigned)cached_value,
+                is_press ? "press" : "release");
+            }
+          }
+          return ACTION_HANDLED;
 
-    case ACTION_PARAM_CYCLE:
-      if (is_press) {
-        scene_t* scene = scene_get_current();
-        if (scene) {
-          action_t* mutable = (action_t*)action;
-          uint8_t num = mutable->params.tw_param.num_params;
-          if (num < 2) num = 2;
-          uint8_t cc = mutable->params.tw_param.params[
-            mutable->params.tw_param.current_index % num];
-          scene->touchwheel.cc_numbers[0] = cc;
-          uint8_t cached_value = action_get_cc_value(cc);
-          scene_set_touchwheel_value(cached_value);
-          ESP_LOGI(TAG, "Param Cycle: CC %u = %u (step %d/%d)",
-            (unsigned)cc, (unsigned)cached_value,
-            mutable->params.tw_param.current_index + 1, num);
-          mutable->params.tw_param.current_index =
-            (mutable->params.tw_param.current_index + 1) % num;
-        }
+        case VARIANT_CYCLE:
+          if (is_press) {
+            scene_t* scene = scene_get_current();
+            if (scene) {
+              action_t* mutable = (action_t*)action;
+              uint8_t num = mutable->params.tw_param.num_params;
+              if (num < 2) num = 2;
+              uint8_t cc = mutable->params.tw_param.params[
+                mutable->params.tw_param.current_index % num];
+              scene->touchwheel.cc_numbers[0] = cc;
+              uint8_t cached_value = action_get_cc_value(cc);
+              scene_set_touchwheel_value(cached_value);
+              ESP_LOGI(TAG, "Param Cycle: CC %u = %u (step %d/%d)",
+                (unsigned)cc, (unsigned)cached_value,
+                mutable->params.tw_param.current_index + 1, num);
+              mutable->params.tw_param.current_index =
+                (mutable->params.tw_param.current_index + 1) % num;
+            }
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unknown Param variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      return ACTION_HANDLED;
 
     default:
       return ACTION_NOT_HANDLED;

@@ -176,8 +176,9 @@ static void reset_action_cycle_index(action_t* action) {
       if (action->variant == VARIANT_CYCLE)
         action->params.ui.current_index = 0;
       break;
-    case ACTION_PARAM_CYCLE:
-      action->params.tw_param.current_index = 0;
+    case ACTION_PARAM:
+      if (action->variant == VARIANT_CYCLE)
+        action->params.tw_param.current_index = 0;
       break;
     default:
       break;

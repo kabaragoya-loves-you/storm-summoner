@@ -84,8 +84,7 @@ typedef enum {
   ACTION_UI,                  // Set / Hold / Cycle via variant
   
   // Touchwheel CC slot 1 control
-  ACTION_PARAM_HOLD,          // Hold: swap CC slot 1 on press, restore on release
-  ACTION_PARAM_CYCLE,         // Cycle through CC values for slot 1
+  ACTION_PARAM,               // Hold / Cycle via variant
 
   // RTG control
   ACTION_RTG_TOGGLE,          // Toggle RTG enabled state
@@ -420,7 +419,7 @@ typedef struct {
       uint8_t current_index;    // Current position in cycle
     } ui;
     
-    // For param slot actions (param_hold, param_cycle)
+    // For ACTION_PARAM (Hold/Cycle variants) — touchwheel CC slot 1
     struct {
       uint8_t param;            // CC number for press/set
       uint8_t param2;           // For hold: CC number on release

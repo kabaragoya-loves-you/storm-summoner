@@ -891,6 +891,7 @@
             "set_ui",
             "ui_hold",
             "ui_cycle",
+            "param",
             "param_hold",
             "param_cycle",
             "rtg_toggle",
@@ -902,12 +903,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record; 'touchwheel' supports Hold/Cycle; 'lfo' supports Start/Stop/Toggle/Modify (Modify carries optional per-parameter overrides; absent fields keep the scene's LFO config in place); 'clock' supports Toggle/Hold/Burst; 'cut' supports Toggle/Hold; 'ui' supports Set/Hold/Cycle. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66), the legacy lfo_start / lfo_stop / lfo_toggle / lfo_shape types (now migrated to lfo with variant=start/stop/toggle/modify; lfo_shape's per-press waveform cycle is collapsed to a single waveform override), the legacy clock_toggle / clock_hold / clock_burst types (now migrated to clock with variant=toggle/hold/burst), the legacy cut_toggle / cut_hold types (now migrated to cut with variant=toggle/hold), and the legacy set_ui / ui_hold / ui_cycle types (now migrated to ui with variant=set/hold/cycle) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record; 'touchwheel' supports Hold/Cycle; 'lfo' supports Start/Stop/Toggle/Modify (Modify carries optional per-parameter overrides; absent fields keep the scene's LFO config in place); 'clock' supports Toggle/Hold/Burst; 'cut' supports Toggle/Hold; 'ui' supports Set/Hold/Cycle; 'param' supports Hold/Cycle. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66), the legacy lfo_start / lfo_stop / lfo_toggle / lfo_shape types (now migrated to lfo with variant=start/stop/toggle/modify; lfo_shape's per-press waveform cycle is collapsed to a single waveform override), the legacy clock_toggle / clock_hold / clock_burst types (now migrated to clock with variant=toggle/hold/burst), the legacy cut_toggle / cut_hold types (now migrated to cut with variant=toggle/hold), the legacy set_ui / ui_hold / ui_cycle types (now migrated to ui with variant=set/hold/cycle), and the legacy param_hold / param_cycle types (now migrated to param with variant=hold/cycle) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
           "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record", "modify"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/pause/record), type='touchwheel' (hold/cycle), type='lfo' (start/stop/toggle/modify), type='clock' (toggle/hold/burst), type='cut' (toggle/hold), and type='ui' (set/hold/cycle). Omit for singleton types."
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/pause/record), type='touchwheel' (hold/cycle), type='lfo' (start/stop/toggle/modify), type='clock' (toggle/hold/burst), type='cut' (toggle/hold), type='ui' (set/hold/cycle), and type='param' (hold/cycle). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -998,7 +999,7 @@
           "type": "string",
           "enum": ["always", "if_held", "if_quick"],
           "default": "always",
-          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset, touchwheel, clock, cut, ui, param_hold, rtg_hold, sample_hold_hold."
+          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset, touchwheel, clock, cut, ui, param, rtg_hold, sample_hold_hold."
         },
         "release_threshold_ms": {
           "type": "integer",
@@ -1877,6 +1878,63 @@
                   "minimum": 0
                 },
                 "description": "UI module indices to cycle through"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type":    {"const": "param"},
+              "variant": {"const": "hold"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["param", "param2"],
+            "properties": {
+              "param": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number for touchwheel slot 1 on press"
+              },
+              "param2": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number for touchwheel slot 1 on release"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type":    {"const": "param"},
+              "variant": {"const": "cycle"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["num_params", "params"],
+            "properties": {
+              "num_params": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8,
+                "description": "Number of CC values in cycle"
+              },
+              "params": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 127
+                },
+                "description": "CC numbers for touchwheel slot 1 to cycle through"
               }
             }
           }

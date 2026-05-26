@@ -27,6 +27,7 @@ VALID_ACTION_TYPES = %w[
   clock clock_toggle clock_hold clock_burst
   cut cut_toggle cut_hold
   ui set_ui ui_hold ui_cycle
+  param param_hold param_cycle
 ].freeze
 
 # Valid touchwheel modes
@@ -303,6 +304,54 @@ def validate_action(action, context, errors)
       action['modules'].each_with_index do |m, i|
         unless m.is_a?(Integer) && m >= 0
           errors << "#{context}: ui_cycle modules[#{i}] must be a non-negative integer"
+        end
+      end
+    end
+  when 'param'
+    variant = action['variant']
+    case variant
+    when 'hold', nil
+      unless action['param'].is_a?(Integer) && action['param'].between?(0, 127)
+        errors << "#{context}: param hold requires 'param' (0-127)"
+      end
+      unless action['param2'].is_a?(Integer) && action['param2'].between?(0, 127)
+        errors << "#{context}: param hold requires 'param2' (0-127)"
+      end
+    when 'cycle'
+      unless action['num_params'].is_a?(Integer) && action['num_params'].between?(2, 8)
+        errors << "#{context}: param cycle requires 'num_params' (2-8)"
+      end
+      unless action['params'].is_a?(Array) && action['params'].length >= 2
+        errors << "#{context}: param cycle requires 'params' array with 2+ values"
+      end
+      if action['params'].is_a?(Array)
+        action['params'].each_with_index do |p, i|
+          unless p.is_a?(Integer) && p.between?(0, 127)
+            errors << "#{context}: params[#{i}] must be 0-127 (got #{p.inspect})"
+          end
+        end
+      end
+    else
+      errors << "#{context}: param variant must be 'hold' or 'cycle' (got #{variant.inspect})"
+    end
+  when 'param_hold'
+    unless action['param'].is_a?(Integer) && action['param'].between?(0, 127)
+      errors << "#{context}: param_hold requires 'param' (0-127)"
+    end
+    unless action['param2'].is_a?(Integer) && action['param2'].between?(0, 127)
+      errors << "#{context}: param_hold requires 'param2' (0-127)"
+    end
+  when 'param_cycle'
+    unless action['num_params'].is_a?(Integer) && action['num_params'].between?(2, 8)
+      errors << "#{context}: param_cycle requires 'num_params' (2-8)"
+    end
+    unless action['params'].is_a?(Array) && action['params'].length >= 2
+      errors << "#{context}: param_cycle requires 'params' array with 2+ values"
+    end
+    if action['params'].is_a?(Array)
+      action['params'].each_with_index do |p, i|
+        unless p.is_a?(Integer) && p.between?(0, 127)
+          errors << "#{context}: params[#{i}] must be 0-127 (got #{p.inspect})"
         end
       end
     end
