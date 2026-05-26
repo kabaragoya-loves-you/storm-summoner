@@ -199,9 +199,27 @@ static void format_action_details_with_device(const action_t* action, const devi
       }
       break;
     }
-    case ACTION_NOTE:
-      snprintf(buf, buf_size, "Note %d vel=%d", action->params.note.note, action->params.note.velocity);
+    case ACTION_NOTE: {
+      uint8_t voices = action->params.note.voices;
+      if (voices < 1) voices = 1;
+      if (voices > 4) voices = 4;
+      if (action->params.note.note == ACTION_NOTE_RANDOM) {
+        snprintf(buf, buf_size, "Note Random vel=%d", action->params.note.velocity);
+      } else {
+        snprintf(buf, buf_size, "Note %d vel=%d",
+          action->params.note.note, action->params.note.velocity);
+      }
+      if (voices > 1 || action->params.note.bass) {
+        int pos = (int)strlen(buf);
+        if (pos < (int)buf_size - 16) {
+          if (voices > 1)
+            pos += snprintf(buf + pos, buf_size - pos, " x%u", (unsigned)voices);
+          if (action->params.note.bass && pos < (int)buf_size - 8)
+            snprintf(buf + pos, buf_size - pos, " Bass");
+        }
+      }
       break;
+    }
     case ACTION_PIANO_PEDAL: {
       const char* pedal_name;
       switch (action->params.piano_pedal.cc_number) {

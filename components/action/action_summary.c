@@ -199,11 +199,26 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     summary->has_value = true;
 
   } else if (action->type == ACTION_NOTE) {
-    snprintf(summary->param_name, sizeof(summary->param_name), "Note %u",
-      (unsigned)action->params.note.note);
+    if (action->params.note.note == ACTION_NOTE_RANDOM) {
+      snprintf(summary->param_name, sizeof(summary->param_name), "Note Random");
+    } else {
+      snprintf(summary->param_name, sizeof(summary->param_name), "Note %u",
+        (unsigned)action->params.note.note);
+    }
     summary->has_param = true;
-    snprintf(summary->param_value, sizeof(summary->param_value), "Vel %u",
-      (unsigned)action->params.note.velocity);
+    uint8_t voices = action->params.note.voices;
+    if (voices < 1) voices = 1;
+    if (voices > 4) voices = 4;
+    if (action->params.note.bass && voices > 1) {
+      snprintf(summary->param_value, sizeof(summary->param_value),
+        "Vel %u x%u Bass", (unsigned)action->params.note.velocity, (unsigned)voices);
+    } else if (voices > 1) {
+      snprintf(summary->param_value, sizeof(summary->param_value),
+        "Vel %u x%u", (unsigned)action->params.note.velocity, (unsigned)voices);
+    } else {
+      snprintf(summary->param_value, sizeof(summary->param_value), "Vel %u",
+        (unsigned)action->params.note.velocity);
+    }
     summary->has_value = true;
 
   } else if (action->type == ACTION_PIANO_PEDAL) {

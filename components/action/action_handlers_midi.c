@@ -75,6 +75,37 @@ void action_handlers_midi_release_notes(void) {
   }
 }
 
+static uint8_t clamp_midi_note(int n) {
+  if (n < 0) return 0;
+  if (n > 127) return 127;
+  return (uint8_t)n;
+}
+
+static uint8_t resolve_note_root(uint8_t configured) {
+  if (configured == ACTION_NOTE_RANDOM)
+    return (uint8_t)(36 + (esp_random() % 61));
+  return configured;
+}
+
+static uint8_t build_note_chord(const action_t* action, uint8_t out[4]) {
+  uint8_t voices = action->params.note.voices;
+  if (voices < 1) voices = 1;
+  if (voices > 4) voices = 4;
+
+  out[0] = resolve_note_root(action->params.note.note);
+  uint8_t prev = out[0];
+  for (uint8_t i = 1; i < voices; i++) {
+    uint8_t step = (esp_random() & 1) ? 2 : 3;
+    prev = clamp_midi_note((int)prev + step);
+    out[i] = prev;
+  }
+  if (action->params.note.bass) {
+    for (uint8_t i = 1; i < voices; i++)
+      out[i] = clamp_midi_note((int)out[i] + 12);
+  }
+  return voices;
+}
+
 action_handle_result_t action_handlers_midi_dispatch(
     const action_t* action, uint8_t trigger_value, bool is_press, uint8_t channel) {
   (void)trigger_value;
@@ -171,30 +202,41 @@ action_handle_result_t action_handlers_midi_dispatch(
           return ACTION_NOT_HANDLED;
       }
 
-    case ACTION_NOTE:
+    case ACTION_NOTE: {
+      action_t* mutable_action = (action_t*)action;
       if (is_press) {
-        // Suppress fresh NoteOns while local output is silenced. The matching
-        // release will not find a tracked slot and will quietly do nothing.
         if (!midi_local_output_is_enabled()) {
           ESP_LOGD(TAG, "ACTION_NOTE press suppressed: local output silenced");
           return ACTION_HANDLED;
         }
-        send_note_on(channel, action->params.note.note, action->params.note.velocity);
-        track_note_on(channel, action->params.note.note);
-        ESP_LOGD(TAG, "Note On: %d vel=%d", action->params.note.note, action->params.note.velocity);
-      } else {
-        // Only emit NoteOff if we actually tracked the matching press; this
-        // covers the case where the press was suppressed (silenced) or where
-        // release_notes() already flushed the voice during a mode/scene change.
-        if (track_note_off(channel, action->params.note.note)) {
-          send_note_off(channel, action->params.note.note, 0);
-          ESP_LOGD(TAG, "Note Off: %d", action->params.note.note);
-        } else {
-          ESP_LOGD(TAG, "ACTION_NOTE release with no tracked NoteOn: %d (suppressed or already released)",
-            action->params.note.note);
+        uint8_t notes[4];
+        uint8_t count = build_note_chord(action, notes);
+        uint8_t vel = action->params.note.velocity;
+        for (uint8_t i = 0; i < count; i++) {
+          send_note_on(channel, notes[i], vel);
+          track_note_on(channel, notes[i]);
         }
+        mutable_action->params.note.active_count = count;
+        for (uint8_t i = 0; i < count; i++)
+          mutable_action->params.note.active_notes[i] = notes[i];
+        ESP_LOGD(TAG, "Note On: %u voice(s) root=%u vel=%u",
+          (unsigned)count, (unsigned)notes[0], (unsigned)vel);
+      } else {
+        uint8_t count = action->params.note.active_count;
+        for (uint8_t i = 0; i < count; i++) {
+          uint8_t n = action->params.note.active_notes[i];
+          if (track_note_off(channel, n)) {
+            send_note_off(channel, n, 0);
+            ESP_LOGD(TAG, "Note Off: %u", (unsigned)n);
+          }
+        }
+        if (count == 0) {
+          ESP_LOGD(TAG, "ACTION_NOTE release with no active voices (suppressed or already released)");
+        }
+        mutable_action->params.note.active_count = 0;
       }
       return ACTION_HANDLED;
+    }
 
     case ACTION_RANDOMIZE:
       if (is_press) {

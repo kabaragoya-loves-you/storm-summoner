@@ -4097,6 +4097,10 @@ static cJSON* action_to_json(const action_t* action) {
   } else if (action->type == ACTION_NOTE) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
+    if (action->params.note.voices != 1)
+      cJSON_AddNumberToObject(obj, "voices", action->params.note.voices);
+    if (action->params.note.bass)
+      cJSON_AddBoolToObject(obj, "bass", true);
   } else if (action->type == ACTION_PIANO_PEDAL) {
     // Single field: which switch-style MIDI CC to fire on press/release.
     // Whitelist enforced in action_create_piano_pedal() and json_to_action.
@@ -4670,10 +4674,25 @@ static action_t json_to_action(cJSON* obj) {
   }
   
   // Parse note actions
-  cJSON* note = cJSON_GetObjectItem(obj, "note");
-  cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
-  if (note) action.params.note.note = note->valueint;
-  if (velocity) action.params.note.velocity = velocity->valueint;
+  if (action.type == ACTION_NOTE) {
+    action.params.note.voices = 1;
+    action.params.note.bass = false;
+    action.params.note.active_count = 0;
+    cJSON* note = cJSON_GetObjectItem(obj, "note");
+    cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
+    if (note) action.params.note.note = (uint8_t)note->valueint;
+    if (velocity) action.params.note.velocity = (uint8_t)velocity->valueint;
+    cJSON* voices = cJSON_GetObjectItem(obj, "voices");
+    if (voices && cJSON_IsNumber(voices)) {
+      uint8_t v = (uint8_t)voices->valueint;
+      if (v < 1) v = 1;
+      if (v > 4) v = 4;
+      action.params.note.voices = v;
+    }
+    cJSON* bass = cJSON_GetObjectItem(obj, "bass");
+    if (bass && cJSON_IsBool(bass))
+      action.params.note.bass = cJSON_IsTrue(bass);
+  }
   
   // Parse target/scene/program actions. ACTION_PRESET + VARIANT_SET routes
   // to preset.program (uint16_t) so bank-aware values > 255 survive the load;

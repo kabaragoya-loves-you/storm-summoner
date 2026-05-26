@@ -1155,10 +1155,11 @@
             "required": ["note"],
             "properties": {
               "note": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
-                "description": "MIDI note number"
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 127 },
+                  { "type": "integer", "const": 254 }
+                ],
+                "description": "MIDI note number, or 254 for a random root (C2-C7) on each press."
               },
               "velocity": {
                 "type": "integer",
@@ -1166,6 +1167,18 @@
                 "maximum": 127,
                 "default": 100,
                 "description": "Note velocity"
+              },
+              "voices": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4,
+                "default": 1,
+                "description": "Number of chord voices (root plus stacked +2/+3 semitone steps)."
+              },
+              "bass": {
+                "type": "boolean",
+                "default": false,
+                "description": "When true, root stays at selected pitch and upper voices are transposed up one octave."
               }
             }
           }

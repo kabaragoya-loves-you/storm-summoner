@@ -100,6 +100,8 @@ static char s_tempo_variant_label[LABEL_BUFFER_SETS][24];
 static char s_tempo_amount_label[LABEL_BUFFER_SETS][24];
 static char s_control_variant_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
+static char s_note_voices_label[LABEL_BUFFER_SETS][20];
+static char s_note_bass_label[LABEL_BUFFER_SETS][16];
 static char s_piano_pedal_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
@@ -659,6 +661,9 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     if (new_type == ACTION_NOTE) {
       action->params.note.note = 60;
       action->params.note.velocity = 100;
+      action->params.note.voices = 1;
+      action->params.note.bass = false;
+      action->params.note.active_count = 0;
     }
 
     if (new_type == ACTION_PIANO_PEDAL) {
@@ -3291,61 +3296,144 @@ static void nav_to_scene_set(void* user_data) {
 // Note Roller (for ACTION_NOTE)
 // ============================================================================
 
+static const char* note_configured_display(uint8_t note) {
+  if (note == ACTION_NOTE_RANDOM) return "Random";
+  static char buf[8];
+  get_note_display_name(note, buf, sizeof(buf));
+  return buf;
+}
+
+static uint32_t note_roller_current_index(uint8_t note) {
+  if (note == ACTION_NOTE_RANDOM) return 0;
+  if (note < 36) note = 60;
+  if (note > 96) note = 96;
+  return (uint32_t)(note - 36 + 1);
+}
+
 static void note_confirm_cb(uint32_t selected_idx, void* user_data) {
   (void)user_data;
-  
+
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
-  
+
   if (!s_ctx || !s_ctx->target_action) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
-  
-  // Convert roller index to MIDI note (C2=36 is index 0)
-  uint8_t midi_note = 36 + selected_idx;
-  if (midi_note > 96) midi_note = 96;
-  
+
+  uint8_t midi_note;
+  if (selected_idx == 0) {
+    midi_note = ACTION_NOTE_RANDOM;
+  } else {
+    midi_note = (uint8_t)(36 + selected_idx - 1);
+    if (midi_note > 96) midi_note = 96;
+  }
+
   s_ctx->target_action->params.note.note = midi_note;
-  
-  char note_name[8];
-  get_note_display_name(midi_note, note_name, sizeof(note_name));
-  ESP_LOGI(TAG, "Note set to %s (MIDI %u)", note_name, (unsigned)midi_note);
-  
+  ESP_LOGI(TAG, "Note set to %s", note_configured_display(midi_note));
+
   s_callback_in_progress = false;
   return_to_detail_page(2);
 }
 
 static lv_obj_t* note_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
-  
+
   static char options[512];
   options[0] = '\0';
   char* pos = options;
   size_t remaining = sizeof(options);
-  
+
+  int written = snprintf(pos, remaining, "Random");
+  if (written > 0 && (size_t)written < remaining) {
+    pos += written;
+    remaining -= (size_t)written;
+  }
+
   for (uint8_t midi = 36; midi <= 96 && remaining > 8; midi++) {
     char note_name[8];
     get_note_display_name(midi, note_name, sizeof(note_name));
-    int written = snprintf(pos, remaining, "%s%s", midi > 36 ? "\n" : "", note_name);
+    written = snprintf(pos, remaining, "\n%s", note_name);
     if (written > 0 && (size_t)written < remaining) {
       pos += written;
-      remaining -= written;
+      remaining -= (size_t)written;
     }
   }
-  
-  uint8_t current_note = s_ctx->target_action->params.note.note;
-  if (current_note < 36) current_note = 60;
-  if (current_note > 96) current_note = 96;
-  uint32_t current_idx = current_note - 36;
-  
+
+  uint32_t current_idx = note_roller_current_index(s_ctx->target_action->params.note.note);
   return menu_create_roller_page("Note", options, current_idx, note_confirm_cb, NULL);
 }
 
 static void nav_to_note(void* user_data) {
   (void)user_data;
   nav_to_subpage("Note", note_roller_create);
+}
+
+static void note_voices_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action || selected_index > 3) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  s_ctx->target_action->params.note.voices = (uint8_t)(selected_index + 1);
+  ESP_LOGI(TAG, "Note voices set to %u", (unsigned)(selected_index + 1));
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* note_voices_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  uint8_t voices = s_ctx->target_action->params.note.voices;
+  if (voices < 1) voices = 1;
+  if (voices > 4) voices = 4;
+
+  return menu_create_roller_page("Voices", "1\n2\n3\n4",
+    (uint32_t)(voices - 1), note_voices_confirm_cb, NULL);
+}
+
+static void nav_to_note_voices(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Voices", note_voices_roller_create);
+}
+
+static void note_bass_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  s_ctx->target_action->params.note.bass = (selected_index == 1);
+  ESP_LOGI(TAG, "Note bass set to %s", selected_index == 1 ? "On" : "Off");
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* note_bass_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  uint32_t current_idx = s_ctx->target_action->params.note.bass ? 1 : 0;
+  return menu_create_roller_page("Bass", "Off\nOn", current_idx, note_bass_confirm_cb, NULL);
+}
+
+static void nav_to_note_bass(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Bass", note_bass_roller_create);
 }
 
 // ============================================================================
@@ -8393,15 +8481,26 @@ lv_obj_t* action_config_detail_page_create(void) {
   
   // Show Note selector
   if (action->type == ACTION_NOTE) {
-    uint8_t midi_note = action->params.note.note;
-    if (midi_note < 36) midi_note = 60;
-    if (midi_note > 96) midi_note = 96;
-    
-    char note_name[8];
-    get_note_display_name(midi_note, note_name, sizeof(note_name));
-    snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note\n%s", note_name);
+    uint8_t voices = action->params.note.voices;
+    if (voices < 1) voices = 1;
+    if (voices > 4) voices = 4;
+
+    snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note\n%s",
+      note_configured_display(action->params.note.note));
     s_detail_items[item_count++] = (menu_item_t){
       s_note_label[buf], nav_to_note, NULL, true
+    };
+
+    snprintf(s_note_voices_label[buf], sizeof(s_note_voices_label[buf]),
+      "Voices\n%u", (unsigned)voices);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_note_voices_label[buf], nav_to_note_voices, NULL, true
+    };
+
+    snprintf(s_note_bass_label[buf], sizeof(s_note_bass_label[buf]),
+      "Bass\n%s", action->params.note.bass ? "On" : "Off");
+    s_detail_items[item_count++] = (menu_item_t){
+      s_note_bass_label[buf], nav_to_note_bass, NULL, true
     };
   }
 

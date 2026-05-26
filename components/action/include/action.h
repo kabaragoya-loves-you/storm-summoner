@@ -309,8 +309,12 @@ typedef struct {
     
     // For note actions (hold-style: press=on, release=off)
     struct {
-      uint8_t note;
+      uint8_t note;           // fixed MIDI note, or ACTION_NOTE_RANDOM
       uint8_t velocity;
+      uint8_t voices;         // 1-4 chord voices (default 1)
+      bool bass;              // upper voices +12 semitones (root unchanged)
+      uint8_t active_count;   // runtime: notes sounding from last press
+      uint8_t active_notes[4];
     } note;
 
     // For ACTION_PIANO_PEDAL: toggles a switch-style MIDI CC (127 on press,
@@ -516,6 +520,16 @@ static inline void action_engine_modify_seed(action_engine_modify_t* m) {
   m->sync_mult_x1000 = ACTION_LFO_ORIG_U16;
   m->glide = ACTION_LFO_ORIG_U8;
   m->probability = ACTION_LFO_ORIG_U8;
+}
+
+// ACTION_NOTE: note field sentinel for per-press random root (C2-C7 range).
+#define ACTION_NOTE_RANDOM        ((uint8_t)254)
+
+static inline void action_note_params_seed(action_t* action) {
+  if (!action || action->type != ACTION_NOTE) return;
+  action->params.note.voices = 1;
+  action->params.note.bass = false;
+  action->params.note.active_count = 0;
 }
 
 // VARIANT_SET tempo sentinels (outside the 20-300 BPM picker range).
