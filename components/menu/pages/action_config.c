@@ -132,6 +132,7 @@ static char s_ui_cycle_step_labels[LABEL_BUFFER_SETS][8][32];
 static uint8_t s_editing_ui_step = 0;
 static char s_param_variant_label[LABEL_BUFFER_SETS][24];
 static char s_rtg_variant_label[LABEL_BUFFER_SETS][24];
+static char s_sh_variant_label[LABEL_BUFFER_SETS][24];
 static char s_param_label[LABEL_BUFFER_SETS][32];
 static char s_param2_label[LABEL_BUFFER_SETS][32];
 static char s_param_cycle_steps_label[LABEL_BUFFER_SETS][24];
@@ -197,8 +198,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_UI,
   ACTION_PARAM,
   ACTION_RTG,
-  ACTION_SAMPLE_HOLD_TOGGLE,
-  ACTION_SAMPLE_HOLD_HOLD,
+  ACTION_SAMPLE_HOLD,
   ACTION_STEP,
   ACTION_PUNCH_IN,
   ACTION_FLAG_CEREMONY,
@@ -248,8 +248,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_UI: return "UI";
     case ACTION_PARAM: return "Param";
     case ACTION_RTG: return "RTG";
-    case ACTION_SAMPLE_HOLD_TOGGLE: return "S+H Toggle";
-    case ACTION_SAMPLE_HOLD_HOLD: return "S+H Hold";
+    case ACTION_SAMPLE_HOLD: return "S+H";
     case ACTION_STEP: return "Step";
     case ACTION_PUNCH_IN: return "Punch-In";
     case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
@@ -744,6 +743,10 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     }
 
     if (new_type == ACTION_RTG) {
+      action->variant = VARIANT_TOGGLE;
+    }
+
+    if (new_type == ACTION_SAMPLE_HOLD) {
       action->variant = VARIANT_TOGGLE;
     }
 
@@ -6678,6 +6681,88 @@ static void nav_to_rtg_variant(void* user_data) {
 }
 
 // ============================================================================
+// S+H Variant Roller (for ACTION_SAMPLE_HOLD -- Toggle / Hold picker)
+// ============================================================================
+
+static const action_variant_t s_sh_variants[] = {
+  VARIANT_TOGGLE,
+  VARIANT_HOLD,
+};
+#define NUM_SH_VARIANTS (sizeof(s_sh_variants) / sizeof(s_sh_variants[0]))
+
+static action_variant_t s_filtered_sh_variants[NUM_SH_VARIANTS];
+static size_t s_num_filtered_sh_variants = 0;
+
+static void build_filtered_sh_variants(void) {
+  s_num_filtered_sh_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_SH_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_SAMPLE_HOLD, s_sh_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_sh_variants[s_num_filtered_sh_variants++] = s_sh_variants[i];
+    }
+  }
+}
+
+static void sh_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_sh_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_sh_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* sh_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_sh_variants();
+  if (s_num_filtered_sh_variants == 0) return NULL;
+
+  static char options[64];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_sh_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    char name[24];
+    action_t probe = { .type = ACTION_SAMPLE_HOLD, .variant = s_filtered_sh_variants[i] };
+    action_get_display_name(&probe, name, sizeof(name));
+    strcat(options, name);
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_sh_variants; i++) {
+    if (s_filtered_sh_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, sh_variant_confirm_cb, NULL);
+}
+
+static void nav_to_sh_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", sh_variant_roller_create);
+}
+
+// ============================================================================
 // Param Variant Roller (for ACTION_PARAM -- Hold / Cycle picker)
 // ============================================================================
 
@@ -8301,6 +8386,15 @@ lv_obj_t* action_config_detail_page_create(void) {
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
       s_rtg_variant_label[buf], nav_to_rtg_variant, NULL, true
+    };
+  }
+
+  // ACTION_SAMPLE_HOLD (consolidated family): Variant row only.
+  if (action->type == ACTION_SAMPLE_HOLD) {
+    snprintf(s_sh_variant_label[buf], sizeof(s_sh_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_sh_variant_label[buf], nav_to_sh_variant, NULL, true
     };
   }
 

@@ -25,8 +25,7 @@ static const char* action_type_names[] = {
   [ACTION_UI] = "UI",
   [ACTION_PARAM] = "Param",
   [ACTION_RTG] = "RTG",
-  [ACTION_SAMPLE_HOLD_TOGGLE] = "S+H Toggle",
-  [ACTION_SAMPLE_HOLD_HOLD] = "S+H Hold",
+  [ACTION_SAMPLE_HOLD] = "S+H",
   [ACTION_STEP] = "Step",
   [ACTION_PUNCH_IN] = "Punch-In",
   [ACTION_FLAG_CEREMONY] = "Flag Ceremony",
@@ -92,6 +91,8 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_PARAM:
       return true;
     case ACTION_RTG:
+      return true;
+    case ACTION_SAMPLE_HOLD:
       return true;
     default:
       return false;
@@ -230,6 +231,14 @@ static const char* rtg_variant_display(action_variant_t v) {
   }
 }
 
+static const char* sample_hold_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_TOGGLE: return "S+H Toggle";
+    case VARIANT_HOLD:   return "S+H Hold";
+    default:             return "S+H";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -282,6 +291,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_RTG) {
     snprintf(buf, len, "%s", rtg_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_SAMPLE_HOLD) {
+    snprintf(buf, len, "%s", sample_hold_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

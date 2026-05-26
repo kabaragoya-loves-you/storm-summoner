@@ -90,8 +90,7 @@ typedef enum {
   ACTION_RTG,                 // Toggle / Hold via variant
 
   // Sample+Hold control
-  ACTION_SAMPLE_HOLD_TOGGLE,  // Toggle S+H enabled state
-  ACTION_SAMPLE_HOLD_HOLD,    // Press: enable S+H, Release: disable S+H
+  ACTION_SAMPLE_HOLD,         // Toggle / Hold via variant
 
   // RTG/S+H step control
   ACTION_STEP,                // Trigger RTG or S+H step

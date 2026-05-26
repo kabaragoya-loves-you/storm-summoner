@@ -23,7 +23,7 @@ static const action_type_t hold_actions[] = {
   // ACTION_UI is variant-aware: only HOLD is hold-like.
   // ACTION_PARAM is variant-aware: only HOLD is hold-like.
   // ACTION_RTG is variant-aware: only HOLD is hold-like.
-  ACTION_SAMPLE_HOLD_HOLD,
+  // ACTION_SAMPLE_HOLD is variant-aware: only HOLD is hold-like.
 };
 
 bool action_requires_hold(action_type_t type) {
@@ -45,6 +45,8 @@ bool action_requires_hold_for(const action_t* action) {
   if (action->type == ACTION_CUT && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_UI && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_PARAM && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_RTG && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_SAMPLE_HOLD && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -57,8 +59,6 @@ bool action_requires_hold_for(const action_t* action) {
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
-    case ACTION_SAMPLE_HOLD_HOLD:
-      return true;
     case ACTION_TEMPO:
     case ACTION_CONTROL:
     case ACTION_PRESET:
@@ -73,6 +73,8 @@ bool action_supports_followup_for(const action_t* action) {
     case ACTION_PARAM:
       return action->variant == VARIANT_HOLD;
     case ACTION_RTG:
+      return action->variant == VARIANT_HOLD;
+    case ACTION_SAMPLE_HOLD:
       return action->variant == VARIANT_HOLD;
     default:
       return false;
@@ -161,6 +163,9 @@ bool action_is_fire_and_forget_for(const action_t* action) {
       return action->variant == VARIANT_TOGGLE;
 
     case ACTION_RTG:
+      return action->variant == VARIANT_TOGGLE;
+
+    case ACTION_SAMPLE_HOLD:
       return action->variant == VARIANT_TOGGLE;
 
     default:
@@ -281,6 +286,8 @@ static action_variant_t default_variant_for_type(action_type_t type) {
       return VARIANT_HOLD;
     case ACTION_RTG:
       return VARIANT_TOGGLE;
+    case ACTION_SAMPLE_HOLD:
+      return VARIANT_TOGGLE;
     default:
       return VARIANT_NONE;
   }
@@ -329,7 +336,6 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_SCENE:
     case ACTION_TEMPO:
     case ACTION_STEP:
-    case ACTION_SAMPLE_HOLD_TOGGLE:
     case ACTION_PUNCH_IN:
       return false;
     default:
@@ -393,6 +399,10 @@ bool action_supports_timing_for(const action_t* action) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
+  if (action->type == ACTION_SAMPLE_HOLD) {
+    if (action->variant == VARIANT_HOLD) return false;
+    return true;
+  }
   return action_supports_timing(action->type);
 }
 
@@ -440,6 +450,8 @@ bool action_supports_repeat_for(const action_t* action) {
   if (action->type == ACTION_PARAM)
     return action->variant == VARIANT_CYCLE;
   if (action->type == ACTION_RTG)
+    return false;
+  if (action->type == ACTION_SAMPLE_HOLD)
     return false;
   return action_supports_repeat(action->type);
 }

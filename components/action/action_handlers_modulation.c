@@ -311,25 +311,32 @@ action_handle_result_t action_handlers_modulation_dispatch(
           return ACTION_HANDLED;
       }
 
-    case ACTION_SAMPLE_HOLD_TOGGLE:
-      if (is_press) {
-        sample_hold_toggle();
-        ESP_LOGI(TAG, "S+H Toggle: now %s", sample_hold_is_running() ? "running" : "stopped");
-      }
-      return ACTION_HANDLED;
+    case ACTION_SAMPLE_HOLD:
+      switch (action->variant) {
+        case VARIANT_TOGGLE:
+          if (is_press) {
+            sample_hold_toggle();
+            ESP_LOGI(TAG, "S+H Toggle: now %s", sample_hold_is_running() ? "running" : "stopped");
+          }
+          return ACTION_HANDLED;
 
-    case ACTION_SAMPLE_HOLD_HOLD:
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-        sample_hold_start();
-        ESP_LOGD(TAG, "S+H Hold: press -> running");
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "S+H hold release skipped by follow-up");
-      } else {
-        sample_hold_stop();
-        ESP_LOGD(TAG, "S+H Hold: release -> stopped");
+        case VARIANT_HOLD:
+          if (is_press) {
+            action_followup_record_press((action_t*)action);
+            sample_hold_start();
+            ESP_LOGD(TAG, "S+H Hold: press -> running");
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "S+H hold release skipped by follow-up");
+          } else {
+            sample_hold_stop();
+            ESP_LOGD(TAG, "S+H Hold: release -> stopped");
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unknown S+H variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      return ACTION_HANDLED;
 
     case ACTION_STEP:
       if (is_press) {

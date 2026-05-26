@@ -155,6 +155,10 @@ static const legacy_alias_t s_legacy_aliases[] = {
   // Pre-consolidation RTG names.
   { "rtg_toggle",       ACTION_RTG,              VARIANT_TOGGLE    },
   { "rtg_hold",         ACTION_RTG,              VARIANT_HOLD      },
+
+  // Pre-consolidation S+H names.
+  { "sample_hold_toggle", ACTION_SAMPLE_HOLD,    VARIANT_TOGGLE    },
+  { "sample_hold_hold",   ACTION_SAMPLE_HOLD,    VARIANT_HOLD      },
 };
 
 static const size_t s_legacy_alias_count =
