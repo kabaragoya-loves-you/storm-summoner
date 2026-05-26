@@ -71,10 +71,11 @@ typedef enum {
   //            touch this field". Replaces the old SHAPE-cycle behavior.
   ACTION_LFO,
   
-  // Clock control (per-scene clock sending)
-  ACTION_CLOCK_TOGGLE,        // Toggle clock sending on/off
-  ACTION_CLOCK_HOLD,          // Press: one state, Release: opposite state
-  ACTION_CLOCK_BURST,         // Hold: send extra clock pulses at multiplier
+  // Clock control (consolidated -- variants TOGGLE / HOLD / BURST)
+  //   TOGGLE = flip scene send_clock on each press (was ACTION_CLOCK_TOGGLE)
+  //   HOLD   = press one state, release opposite (was ACTION_CLOCK_HOLD)
+  //   BURST  = extra clock pulses while held (was ACTION_CLOCK_BURST)
+  ACTION_CLOCK,
   
   // MIDI cut control (temporary runtime state)
   ACTION_CUT_TOGGLE,          // Toggle MIDI cut on/off
@@ -395,15 +396,11 @@ typedef struct {
       uint8_t manual_steps;      // 1-N (Manual mode only),   0 = Original, 254 = Random
     } lfo;
     
-    // For clock actions (toggle, hold)
+    // For ACTION_CLOCK (consolidated -- variants TOGGLE / HOLD / BURST).
     struct {
-      bool start_enabled;     // For toggle: what state is "first" (press enables if true)
+      bool start_enabled;      // TOGGLE + HOLD: press/enable polarity
+      uint16_t speed_percent;  // BURST: 25-300 in 25% steps (default 100)
     } clock;
-    
-    // For clock burst action
-    struct {
-      uint16_t speed_percent;  // Speed multiplier: 25, 50, 75, 100, 125, ... 300
-    } clock_burst;
     
     // For cut actions (toggle, hold)
     struct {

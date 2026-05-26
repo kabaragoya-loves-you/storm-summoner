@@ -133,6 +133,11 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "lfo_stop",         ACTION_LFO,              VARIANT_STOP      },
   { "lfo_toggle",       ACTION_LFO,              VARIANT_TOGGLE    },
   { "lfo_shape",        ACTION_LFO,              VARIANT_MODIFY    },
+
+  // Pre-consolidation clock names.
+  { "clock_toggle",     ACTION_CLOCK,            VARIANT_TOGGLE    },
+  { "clock_hold",       ACTION_CLOCK,            VARIANT_HOLD      },
+  { "clock_burst",      ACTION_CLOCK,            VARIANT_BURST     },
 };
 
 static const size_t s_legacy_alias_count =

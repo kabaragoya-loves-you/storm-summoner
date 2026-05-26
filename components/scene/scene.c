@@ -3932,9 +3932,7 @@ static const char* action_type_json_names[] = {
   [ACTION_PIANO_PEDAL] = "piano_pedal",
   [ACTION_TOUCHWHEEL] = "touchwheel",
   [ACTION_LFO] = "lfo",
-  [ACTION_CLOCK_TOGGLE] = "clock_toggle",
-  [ACTION_CLOCK_HOLD] = "clock_hold",
-  [ACTION_CLOCK_BURST] = "clock_burst",
+  [ACTION_CLOCK] = "clock",
   [ACTION_CUT_TOGGLE] = "cut_toggle",
   [ACTION_CUT_HOLD] = "cut_hold",
   [ACTION_SET_UI] = "set_ui",
@@ -3970,6 +3968,7 @@ static const char* action_variant_json_names[] = {
   [VARIANT_PLAY]      = "play",
   [VARIANT_PAUSE]     = "pause",
   [VARIANT_RECORD]    = "record",
+  [VARIANT_MODIFY]    = "modify",
 };
 
 static action_variant_t action_variant_from_string(const char* name) {
@@ -4233,10 +4232,18 @@ static cJSON* action_to_json(const action_t* action) {
       if (action->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS)
         cJSON_AddNumberToObject(obj, "manual_steps", action->params.lfo.manual_steps);
     }
-  } else if (action->type == ACTION_CLOCK_TOGGLE || action->type == ACTION_CLOCK_HOLD) {
-    cJSON_AddBoolToObject(obj, "start_enabled", action->params.clock.start_enabled);
-  } else if (action->type == ACTION_CLOCK_BURST) {
-    cJSON_AddNumberToObject(obj, "speed_percent", action->params.clock_burst.speed_percent);
+  } else if (action->type == ACTION_CLOCK) {
+    switch (action->variant) {
+      case VARIANT_TOGGLE:
+      case VARIANT_HOLD:
+        cJSON_AddBoolToObject(obj, "start_enabled", action->params.clock.start_enabled);
+        break;
+      case VARIANT_BURST:
+        cJSON_AddNumberToObject(obj, "speed_percent", action->params.clock.speed_percent);
+        break;
+      default:
+        break;
+    }
   } else if (action->type == ACTION_CUT_TOGGLE || action->type == ACTION_CUT_HOLD) {
     const char* mode_str = (action->params.cut.cut_mode == 0) ? "local" :
                            (action->params.cut.cut_mode == 1) ? "passthrough" : "both";
@@ -4485,6 +4492,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_TRANSPORT)  action.variant = VARIANT_PLAY;
     if (action.type == ACTION_TOUCHWHEEL) action.variant = VARIANT_HOLD;
     if (action.type == ACTION_LFO)        action.variant = VARIANT_START;
+    if (action.type == ACTION_CLOCK)      action.variant = VARIANT_TOGGLE;
   }
 
   // Piano Pedal: dedicated parser so the generic CC parser below doesn't
@@ -4782,18 +4790,17 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
-  // Parse clock toggle/hold actions
-  if (action.type == ACTION_CLOCK_TOGGLE || action.type == ACTION_CLOCK_HOLD) {
-    cJSON* start_enabled = cJSON_GetObjectItem(obj, "start_enabled");
-    // Default to false (press disables clock, since clock is running by default)
-    action.params.clock.start_enabled = start_enabled ? cJSON_IsTrue(start_enabled) : false;
-  }
-  
-  // Parse clock burst action
-  if (action.type == ACTION_CLOCK_BURST) {
-    cJSON* speed = cJSON_GetObjectItem(obj, "speed_percent");
-    // Default to 100% (double the clock rate)
-    action.params.clock_burst.speed_percent = speed ? speed->valueint : 100;
+  // Parse clock actions (consolidated family)
+  if (action.type == ACTION_CLOCK) {
+    if (action.variant == VARIANT_TOGGLE || action.variant == VARIANT_HOLD) {
+      cJSON* start_enabled = cJSON_GetObjectItem(obj, "start_enabled");
+      // Default to false (press disables clock, since clock is running by default)
+      action.params.clock.start_enabled = start_enabled ? cJSON_IsTrue(start_enabled) : false;
+    }
+    if (action.variant == VARIANT_BURST) {
+      cJSON* speed = cJSON_GetObjectItem(obj, "speed_percent");
+      action.params.clock.speed_percent = speed ? (uint16_t)speed->valueint : 100;
+    }
   }
   
   // Parse cut toggle/hold actions

@@ -20,9 +20,7 @@ static const char* action_type_names[] = {
   [ACTION_PIANO_PEDAL] = "Piano Pedal",
   [ACTION_TOUCHWHEEL] = "Touchwheel",
   [ACTION_LFO] = "LFO",
-  [ACTION_CLOCK_TOGGLE] = "Clock Toggle",
-  [ACTION_CLOCK_HOLD] = "Clock Hold",
-  [ACTION_CLOCK_BURST] = "Clock Burst",
+  [ACTION_CLOCK] = "Clock",
   [ACTION_CUT_TOGGLE] = "Cut Toggle",
   [ACTION_CUT_HOLD] = "Cut Hold",
   [ACTION_SET_UI] = "Set UI",
@@ -90,6 +88,7 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_TRANSPORT:
     case ACTION_TOUCHWHEEL:
     case ACTION_LFO:
+    case ACTION_CLOCK:
       return true;
     default:
       return false;
@@ -186,6 +185,15 @@ static const char* lfo_variant_display(action_variant_t v) {
   }
 }
 
+static const char* clock_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_TOGGLE: return "Clock Toggle";
+    case VARIANT_HOLD:   return "Clock Hold";
+    case VARIANT_BURST:  return "Clock Burst";
+    default:             return "Clock";
+  }
+}
+
 void action_get_display_name(const action_t* action, char* buf, size_t len) {
   if (!buf || len == 0) return;
   if (!action) {
@@ -218,6 +226,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_LFO) {
     snprintf(buf, len, "%s", lfo_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_CLOCK) {
+    snprintf(buf, len, "%s", clock_variant_display(action->variant));
     return;
   }
   snprintf(buf, len, "%s", action_type_to_string(action->type));

@@ -24,6 +24,7 @@ VALID_ACTION_TYPES = %w[
   tw_mode_hold tw_mode_cycle
   touchwheel touchwheel_hold touchwheel_cycle
   lfo lfo_start lfo_stop lfo_toggle lfo_shape
+  clock clock_toggle clock_hold clock_burst
 ].freeze
 
 # Valid touchwheel modes
@@ -190,6 +191,32 @@ def validate_action(action, context, errors)
       end
     else
       errors << "#{context}: lfo variant must be 'start', 'stop', 'toggle', or 'modify' (got #{variant.inspect})"
+    end
+  when 'clock'
+    variant = action['variant']
+    clock_speeds = [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300]
+    case variant
+    when 'toggle', 'hold', nil
+      if action.key?('start_enabled') && ![true, false].include?(action['start_enabled'])
+        errors << "#{context}: clock 'start_enabled' must be a boolean"
+      end
+    when 'burst'
+      if action.key?('speed_percent') &&
+         !(action['speed_percent'].is_a?(Integer) && clock_speeds.include?(action['speed_percent']))
+        errors << "#{context}: clock burst 'speed_percent' must be one of #{clock_speeds.join(', ')}"
+      end
+    else
+      errors << "#{context}: clock variant must be 'toggle', 'hold', or 'burst' (got #{variant.inspect})"
+    end
+  when 'clock_toggle', 'clock_hold'
+    if action.key?('start_enabled') && ![true, false].include?(action['start_enabled'])
+      errors << "#{context}: #{type} 'start_enabled' must be a boolean"
+    end
+  when 'clock_burst'
+    clock_speeds = [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300]
+    if action.key?('speed_percent') &&
+       !(action['speed_percent'].is_a?(Integer) && clock_speeds.include?(action['speed_percent']))
+      errors << "#{context}: clock_burst 'speed_percent' must be one of #{clock_speeds.join(', ')}"
     end
   when 'lfo_start', 'lfo_stop', 'lfo_toggle', 'lfo_shape'
     # Legacy single-type entries (pre-consolidation). Minimal validation --

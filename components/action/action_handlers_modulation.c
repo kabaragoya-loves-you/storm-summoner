@@ -202,41 +202,46 @@ action_handle_result_t action_handlers_modulation_dispatch(
       }
     }
 
-    case ACTION_CLOCK_TOGGLE:
-      if (is_press) {
-        scene_t* scene = scene_get_current();
-        if (scene) {
-          scene->send_clock = !scene->send_clock;
-          ESP_LOGI(TAG, "Clock Toggle: send_clock now %s",
-            scene->send_clock ? "enabled" : "disabled");
+    case ACTION_CLOCK: {
+      switch (action->variant) {
+        case VARIANT_TOGGLE:
+          if (is_press) {
+            scene_t* scene = scene_get_current();
+            if (scene) {
+              scene->send_clock = !scene->send_clock;
+              ESP_LOGI(TAG, "Clock Toggle: send_clock now %s",
+                scene->send_clock ? "enabled" : "disabled");
+            }
+          }
+          return ACTION_HANDLED;
+        case VARIANT_HOLD: {
+          if (is_press) {
+            action_followup_record_press((action_t*)action);
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "Clock hold release skipped by follow-up");
+            return ACTION_HANDLED;
+          }
+          scene_t* scene = scene_get_current();
+          if (scene) {
+            bool press_state = action->params.clock.start_enabled;
+            scene->send_clock = is_press ? press_state : !press_state;
+            ESP_LOGI(TAG, "Clock Hold: send_clock now %s",
+              scene->send_clock ? "enabled" : "disabled");
+          }
+          return ACTION_HANDLED;
         }
+        case VARIANT_BURST:
+          if (is_press) {
+            action_clock_burst_start((uint8_t)action->params.clock.speed_percent);
+          } else {
+            action_clock_burst_stop();
+          }
+          return ACTION_HANDLED;
+        default:
+          ESP_LOGW(TAG, "Unknown Clock variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      return ACTION_HANDLED;
-
-    case ACTION_CLOCK_HOLD: {
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "Clock hold release skipped by follow-up");
-        return ACTION_HANDLED;
-      }
-      scene_t* scene = scene_get_current();
-      if (scene) {
-        bool press_state = action->params.clock.start_enabled;
-        scene->send_clock = is_press ? press_state : !press_state;
-        ESP_LOGI(TAG, "Clock Hold: send_clock now %s",
-          scene->send_clock ? "enabled" : "disabled");
-      }
-      return ACTION_HANDLED;
     }
-
-    case ACTION_CLOCK_BURST:
-      if (is_press) {
-        action_clock_burst_start(action->params.clock_burst.speed_percent);
-      } else {
-        action_clock_burst_stop();
-      }
-      return ACTION_HANDLED;
 
     case ACTION_CUT_TOGGLE:
       if (is_press) {

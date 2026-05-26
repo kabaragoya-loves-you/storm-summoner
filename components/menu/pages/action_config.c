@@ -116,6 +116,7 @@ static char s_lfo_modify_ceiling_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_resolution_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_steps_label[LABEL_BUFFER_SETS][24];
 static char s_step_target_label[LABEL_BUFFER_SETS][24];
+static char s_clock_variant_label[LABEL_BUFFER_SETS][24];
 static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
 static char s_cut_mode_label[LABEL_BUFFER_SETS][32];
@@ -186,9 +187,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PIANO_PEDAL,
   ACTION_TOUCHWHEEL,
   ACTION_LFO,
-  ACTION_CLOCK_TOGGLE,
-  ACTION_CLOCK_HOLD,
-  ACTION_CLOCK_BURST,
+  ACTION_CLOCK,
   ACTION_CUT_TOGGLE,
   ACTION_CUT_HOLD,
   ACTION_SET_UI,
@@ -243,9 +242,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_PIANO_PEDAL: return "Piano Pedal";
     case ACTION_TOUCHWHEEL: return "Touchwheel";
     case ACTION_LFO: return "LFO";
-    case ACTION_CLOCK_TOGGLE: return "Clock Toggle";
-    case ACTION_CLOCK_HOLD: return "Clock Hold";
-    case ACTION_CLOCK_BURST: return "Clock Burst";
+    case ACTION_CLOCK: return "Clock";
     case ACTION_CUT_TOGGLE: return "Cut Toggle";
     case ACTION_CUT_HOLD: return "Cut Hold";
     case ACTION_SET_UI: return "Set UI";
@@ -704,15 +701,10 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.lfo.manual_steps    = ACTION_LFO_ORIG_STEPS;
     }
     
-    // Set defaults for clock toggle/hold (start_enabled = false means press disables clock)
-    // Default to disable since clock is running by default
-    if (new_type == ACTION_CLOCK_TOGGLE || new_type == ACTION_CLOCK_HOLD) {
+    if (new_type == ACTION_CLOCK) {
+      action->variant = VARIANT_TOGGLE;
       action->params.clock.start_enabled = false;
-    }
-    
-    // Set defaults for clock burst (100% = double the clock rate)
-    if (new_type == ACTION_CLOCK_BURST) {
-      action->params.clock_burst.speed_percent = 100;
+      action->params.clock.speed_percent = 100;
     }
     
     // Set defaults for cut actions (both = cut local and passthrough)
@@ -5902,7 +5894,90 @@ static void nav_to_raise_flag(void* user_data) {
 }
 
 // ============================================================================
-// Clock Mode Roller (for clock toggle/hold actions)
+// Clock Variant Roller (for ACTION_CLOCK -- operation picker)
+// ============================================================================
+
+static const action_variant_t s_clock_variants[] = {
+  VARIANT_TOGGLE,
+  VARIANT_HOLD,
+  VARIANT_BURST,
+};
+#define NUM_CLOCK_VARIANTS (sizeof(s_clock_variants) / sizeof(s_clock_variants[0]))
+
+static action_variant_t s_filtered_clock_variants[NUM_CLOCK_VARIANTS];
+static size_t s_num_filtered_clock_variants = 0;
+
+static void build_filtered_clock_variants(void) {
+  s_num_filtered_clock_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_CLOCK_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_CLOCK, s_clock_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_clock_variants[s_num_filtered_clock_variants++] = s_clock_variants[i];
+    }
+  }
+}
+
+static void clock_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_clock_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_clock_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* clock_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_clock_variants();
+  if (s_num_filtered_clock_variants == 0) return NULL;
+
+  static char options[96];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_clock_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    char name[24];
+    action_t probe = { .type = ACTION_CLOCK, .variant = s_filtered_clock_variants[i] };
+    action_get_display_name(&probe, name, sizeof(name));
+    strcat(options, name);
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_clock_variants; i++) {
+    if (s_filtered_clock_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, clock_variant_confirm_cb, NULL);
+}
+
+static void nav_to_clock_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", clock_variant_roller_create);
+}
+
+// ============================================================================
+// Clock Mode Roller (for ACTION_CLOCK toggle/hold variants)
 // ============================================================================
 
 static const char* CLOCK_MODE_OPTIONS_TOGGLE = "Enable First\nDisable First";
@@ -5936,7 +6011,7 @@ static lv_obj_t* clock_mode_roller_create(void) {
   action_t* action = s_ctx->target_action;
   uint32_t current_idx = action->params.clock.start_enabled ? 0 : 1;
   
-  bool is_hold = (action->type == ACTION_CLOCK_HOLD);
+  bool is_hold = (action->variant == VARIANT_HOLD);
   const char* title = is_hold ? "Press" : "First Action";
   const char* options = is_hold ? CLOCK_MODE_OPTIONS_HOLD : CLOCK_MODE_OPTIONS_TOGGLE;
   
@@ -5947,7 +6022,7 @@ static void nav_to_clock_mode(void* user_data) {
   (void)user_data;
   if (!s_ctx || !s_ctx->target_action) return;
   
-  bool is_hold = (s_ctx->target_action->type == ACTION_CLOCK_HOLD);
+  bool is_hold = (s_ctx->target_action->variant == VARIANT_HOLD);
   nav_to_subpage(is_hold ? "Press" : "First Action", clock_mode_roller_create);
 }
 
@@ -5971,9 +6046,9 @@ static void clock_burst_confirm_cb(uint32_t selected_index, void* user_data) {
   
   // Map index to percentage: 0=25%, 1=50%, ..., 11=300%
   action_t* action = s_ctx->target_action;
-  action->params.clock_burst.speed_percent = (uint16_t)((selected_index + 1) * 25);
+  action->params.clock.speed_percent = (uint16_t)((selected_index + 1) * 25);
   
-  ESP_LOGI(TAG, "Clock burst speed set to %u%%", (unsigned)action->params.clock_burst.speed_percent);
+  ESP_LOGI(TAG, "Clock burst speed set to %u%%", (unsigned)action->params.clock.speed_percent);
   
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -5983,7 +6058,7 @@ static lv_obj_t* clock_burst_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   
   action_t* action = s_ctx->target_action;
-  uint16_t speed = action->params.clock_burst.speed_percent;
+  uint16_t speed = action->params.clock.speed_percent;
   
   // Map percentage to index: 25->0, 50->1, ..., 300->11
   uint32_t current_idx = (speed >= 25 && speed <= 300) ? (speed / 25) - 1 : 3;  // Default to 100%
@@ -7717,27 +7792,35 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show clock mode selector for clock toggle/hold actions
-  if ((action->type == ACTION_CLOCK_TOGGLE || action->type == ACTION_CLOCK_HOLD) &&
-      item_count < MAX_DETAIL_ITEMS) {
-    bool is_hold = (action->type == ACTION_CLOCK_HOLD);
-    const char* label = is_hold ? "Press" : "First Action";
-    const char* mode_name = is_hold ?
-      (action->params.clock.start_enabled ? "Enable" : "Disable") :
-      (action->params.clock.start_enabled ? "Enable First" : "Disable First");
-    snprintf(s_clock_mode_label[buf], sizeof(s_clock_mode_label[buf]), "%s\n%s", label, mode_name);
+  // ACTION_CLOCK (consolidated family): Variant row always; Toggle/Hold get
+  // the mode roller, Burst gets the speed roller.
+  if (action->type == ACTION_CLOCK) {
+    snprintf(s_clock_variant_label[buf], sizeof(s_clock_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_clock_mode_label[buf], nav_to_clock_mode, NULL, true
+      s_clock_variant_label[buf], nav_to_clock_variant, NULL, true
     };
-  }
-  
-  // Show clock burst speed selector
-  if (action->type == ACTION_CLOCK_BURST && item_count < MAX_DETAIL_ITEMS) {
-    snprintf(s_clock_burst_label[buf], sizeof(s_clock_burst_label[buf]), "Speed\n%u%%",
-      (unsigned)action->params.clock_burst.speed_percent);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_clock_burst_label[buf], nav_to_clock_burst, NULL, true
-    };
+
+    if ((action->variant == VARIANT_TOGGLE || action->variant == VARIANT_HOLD) &&
+        item_count < MAX_DETAIL_ITEMS) {
+      bool is_hold = (action->variant == VARIANT_HOLD);
+      const char* label = is_hold ? "Press" : "First Action";
+      const char* mode_name = is_hold ?
+        (action->params.clock.start_enabled ? "Enable" : "Disable") :
+        (action->params.clock.start_enabled ? "Enable First" : "Disable First");
+      snprintf(s_clock_mode_label[buf], sizeof(s_clock_mode_label[buf]), "%s\n%s", label, mode_name);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_clock_mode_label[buf], nav_to_clock_mode, NULL, true
+      };
+    }
+
+    if (action->variant == VARIANT_BURST && item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_clock_burst_label[buf], sizeof(s_clock_burst_label[buf]), "Speed\n%u%%",
+        (unsigned)action->params.clock.speed_percent);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_clock_burst_label[buf], nav_to_clock_burst, NULL, true
+      };
+    }
   }
   
   // Show cut mode selector for cut toggle/hold actions
