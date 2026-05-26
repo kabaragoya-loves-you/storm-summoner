@@ -278,7 +278,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Sample+Hold configuration
   scene->sample_hold_config = sample_hold_config_create_default();
   scene->sample_hold = continuous_mapping_create(1);  // Default CC1
-  scene->sample_hold.enabled = false;                 // Disabled by default
+  scene->sample_hold.enabled = scene->sample_hold_config.enabled;
 }
 
 // Cleanup existing touchwheel instance
@@ -1785,6 +1785,7 @@ esp_err_t scene_init(void) {
 
   // Apply Sample+Hold configuration and start mode
   sample_hold_apply_config(&initial_scene->sample_hold_config);
+  initial_scene->sample_hold.enabled = initial_scene->sample_hold_config.enabled;
   sample_hold_apply_start_mode();
 
   // Sync tilt per-axis enable so the unified LIS3DHTR sampling task starts
@@ -1986,6 +1987,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
 
   // Apply Sample+Hold configuration
   sample_hold_apply_config(&new_scene->sample_hold_config);
+  new_scene->sample_hold.enabled = new_scene->sample_hold_config.enabled;
   
   // MIDI phase: PC send, on-load actions, LFO start
   // In programming mode, defer these until returning to performance mode
@@ -3938,7 +3940,6 @@ static const char* action_type_json_names[] = {
   [ACTION_PARAM] = "param",
   [ACTION_RTG] = "rtg",
   [ACTION_SAMPLE_HOLD] = "sample_hold",
-  [ACTION_STEP] = "step",
   [ACTION_PUNCH_IN] = "punch_in",
   [ACTION_FLAG_CEREMONY] = "flag_ceremony",
   [ACTION_BOOMERANG] = "boomerang"
@@ -3963,6 +3964,7 @@ static const char* action_variant_json_names[] = {
   [VARIANT_PAUSE]     = "pause",
   [VARIANT_RECORD]    = "record",
   [VARIANT_MODIFY]    = "modify",
+  [VARIANT_STEP]      = "step",
 };
 
 static action_variant_t action_variant_from_string(const char* name) {
@@ -4296,9 +4298,6 @@ static cJSON* action_to_json(const action_t* action) {
       default:
         break;
     }
-  } else if (action->type == ACTION_STEP) {
-    const char* target_str = (action->params.step.target == STEP_TARGET_RTG) ? "rtg" : "sh";
-    cJSON_AddStringToObject(obj, "step_target", target_str);
   } else if (action->type == ACTION_PUNCH_IN) {
     cJSON_AddNumberToObject(obj, "start_cc", action->params.punch_in.start_cc);
     cJSON_AddNumberToObject(obj, "start_value", action->params.punch_in.start_value);
@@ -4942,21 +4941,6 @@ static action_t json_to_action(cJSON* obj) {
         }
         break;
       }
-    }
-  }
-
-  // Parse step action
-  if (action.type == ACTION_STEP) {
-    cJSON* step_target = cJSON_GetObjectItem(obj, "step_target");
-    if (step_target && cJSON_IsString(step_target)) {
-      if (strcmp(step_target->valuestring, "rtg") == 0) {
-        action.params.step.target = STEP_TARGET_RTG;
-      } else {
-        action.params.step.target = STEP_TARGET_SH;
-      }
-    } else {
-      // Default to RTG
-      action.params.step.target = STEP_TARGET_RTG;
     }
   }
 
@@ -6522,6 +6506,8 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   } else {
     scene->sample_hold = continuous_mapping_create(1);  // Default CC1
   }
+  // Output mapping has no separate enable UI; keep it in sync with the engine.
+  scene->sample_hold.enabled = scene->sample_hold_config.enabled;
 
   return ESP_OK;
 }

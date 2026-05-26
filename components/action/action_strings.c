@@ -26,7 +26,6 @@ static const char* action_type_names[] = {
   [ACTION_PARAM] = "Param",
   [ACTION_RTG] = "RTG",
   [ACTION_SAMPLE_HOLD] = "S+H",
-  [ACTION_STEP] = "Step",
   [ACTION_PUNCH_IN] = "Punch-In",
   [ACTION_FLAG_CEREMONY] = "Flag Ceremony",
   [ACTION_BOOMERANG] = "Boomerang"
@@ -62,6 +61,7 @@ static const char* action_variant_display_names[] = {
   [VARIANT_PAUSE]     = "Pause",
   [VARIANT_RECORD]    = "Record",
   [VARIANT_MODIFY]    = "Modify",
+  [VARIANT_STEP]      = "Step",
 };
 
 const char* action_variant_to_string(action_variant_t variant) {
@@ -227,6 +227,7 @@ static const char* rtg_variant_display(action_variant_t v) {
   switch (v) {
     case VARIANT_TOGGLE: return "RTG Toggle";
     case VARIANT_HOLD:   return "RTG Hold";
+    case VARIANT_STEP:   return "RTG Step";
     default:             return "RTG";
   }
 }
@@ -235,6 +236,7 @@ static const char* sample_hold_variant_display(action_variant_t v) {
   switch (v) {
     case VARIANT_TOGGLE: return "S+H Toggle";
     case VARIANT_HOLD:   return "S+H Hold";
+    case VARIANT_STEP:   return "S+H Step";
     default:             return "S+H";
   }
 }

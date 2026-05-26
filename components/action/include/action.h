@@ -87,13 +87,10 @@ typedef enum {
   ACTION_PARAM,               // Hold / Cycle via variant
 
   // RTG control
-  ACTION_RTG,                 // Toggle / Hold via variant
+  ACTION_RTG,                 // Toggle / Hold / Step via variant
 
   // Sample+Hold control
-  ACTION_SAMPLE_HOLD,         // Toggle / Hold via variant
-
-  // RTG/S+H step control
-  ACTION_STEP,                // Trigger RTG or S+H step
+  ACTION_SAMPLE_HOLD,         // Toggle / Hold / Step via variant
 
   // Looper punch-in
   ACTION_PUNCH_IN,            // Send start CC at bar, finish CC after duration
@@ -132,6 +129,8 @@ typedef enum {
   // LFO family parameter-override variant (replaces the old SHAPE-cycle
   // action). Append-only -- do not move above this point.
   VARIANT_MODIFY,
+  // RTG / S+H manual step trigger (append-only).
+  VARIANT_STEP,
   VARIANT_MAX
 } action_variant_t;
 
@@ -157,12 +156,6 @@ typedef enum {
   BOOMERANG_START_CURRENT = 0,   // Capture the live parameter value at trigger time
   BOOMERANG_START_EXPLICIT       // Use configured start_value
 } boomerang_start_mode_t;
-
-// Step action target
-typedef enum {
-  STEP_TARGET_SH = 0,         // Sample & Hold (future)
-  STEP_TARGET_RTG             // Random Tone Generator
-} step_target_t;
 
 // Punch-in duration (for looper recording)
 typedef enum {
@@ -425,11 +418,6 @@ typedef struct {
       uint8_t params[8];        // For cycle: CC numbers
       uint8_t current_index;    // Current position in cycle
     } tw_param;
-
-    // For step action (RTG/S+H trigger)
-    struct {
-      uint8_t target;           // step_target_t: 0=S+H, 1=RTG
-    } step;
 
     // For punch-in action (looper recording)
     struct {

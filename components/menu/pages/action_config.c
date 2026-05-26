@@ -117,7 +117,6 @@ static char s_lfo_modify_floor_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_ceiling_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_resolution_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_steps_label[LABEL_BUFFER_SETS][24];
-static char s_step_target_label[LABEL_BUFFER_SETS][24];
 static char s_clock_variant_label[LABEL_BUFFER_SETS][24];
 static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
@@ -199,7 +198,6 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PARAM,
   ACTION_RTG,
   ACTION_SAMPLE_HOLD,
-  ACTION_STEP,
   ACTION_PUNCH_IN,
   ACTION_FLAG_CEREMONY,
   ACTION_BOOMERANG,
@@ -249,7 +247,6 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_PARAM: return "Param";
     case ACTION_RTG: return "RTG";
     case ACTION_SAMPLE_HOLD: return "S+H";
-    case ACTION_STEP: return "Step";
     case ACTION_PUNCH_IN: return "Punch-In";
     case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
     case ACTION_BOOMERANG: return "Boomerang";
@@ -748,11 +745,6 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
 
     if (new_type == ACTION_SAMPLE_HOLD) {
       action->variant = VARIANT_TOGGLE;
-    }
-
-    // Set defaults for Step action (default to RTG)
-    if (new_type == ACTION_STEP) {
-      action->params.step.target = STEP_TARGET_RTG;
     }
 
     // Set defaults for Punch-In action
@@ -4734,48 +4726,6 @@ static void nav_to_lfo_modify_steps(void* user_data) {
 }
 
 // ============================================================================
-// Step Target Roller (for step actions)
-// ============================================================================
-
-static const char* STEP_TARGET_OPTIONS = "S+H\nRTG";
-
-static void step_target_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-
-  if (!s_ctx || !s_ctx->target_action) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-
-  action_t* action = s_ctx->target_action;
-  action->params.step.target = (selected_index == 0) ? STEP_TARGET_SH : STEP_TARGET_RTG;
-
-  ESP_LOGI(TAG, "Step target set to %s", (selected_index == 0) ? "S+H" : "RTG");
-
-  s_callback_in_progress = false;
-  return_to_detail_page(2);
-}
-
-static lv_obj_t* step_target_roller_create(void) {
-  if (!s_ctx || !s_ctx->target_action) return NULL;
-
-  action_t* action = s_ctx->target_action;
-  uint32_t current_idx = (action->params.step.target == STEP_TARGET_RTG) ? 1 : 0;
-
-  return menu_create_roller_page("Target", STEP_TARGET_OPTIONS, current_idx,
-    step_target_confirm_cb, NULL);
-}
-
-static void nav_to_step_target(void* user_data) {
-  (void)user_data;
-  nav_to_subpage("Target", step_target_roller_create);
-}
-
-// ============================================================================
 // Punch-In Configuration
 // ============================================================================
 
@@ -6605,6 +6555,7 @@ static void nav_to_ui_cycle_step(void* user_data) {
 static const action_variant_t s_rtg_variants[] = {
   VARIANT_TOGGLE,
   VARIANT_HOLD,
+  VARIANT_STEP,
 };
 #define NUM_RTG_VARIANTS (sizeof(s_rtg_variants) / sizeof(s_rtg_variants[0]))
 
@@ -6687,6 +6638,7 @@ static void nav_to_rtg_variant(void* user_data) {
 static const action_variant_t s_sh_variants[] = {
   VARIANT_TOGGLE,
   VARIANT_HOLD,
+  VARIANT_STEP,
 };
 #define NUM_SH_VARIANTS (sizeof(s_sh_variants) / sizeof(s_sh_variants[0]))
 
@@ -8509,16 +8461,6 @@ lv_obj_t* action_config_detail_page_create(void) {
         };
       }
     }
-  }
-
-  // Show Step target selector
-  if (action->type == ACTION_STEP && item_count < MAX_DETAIL_ITEMS) {
-    const char* target_name = (action->params.step.target == STEP_TARGET_RTG) ? "RTG" : "S+H";
-    snprintf(s_step_target_label[buf], sizeof(s_step_target_label[buf]),
-      "Target\n%s", target_name);
-    s_detail_items[item_count++] = (menu_item_t){
-      s_step_target_label[buf], nav_to_step_target, NULL, true
-    };
   }
 
   // Show Punch-In configuration

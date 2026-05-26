@@ -54,7 +54,7 @@ void sample_hold_get_config(sample_hold_config_t* config);
 // Create default configuration
 sample_hold_config_t sample_hold_config_create_default(void);
 
-// Manual step trigger (for Step mode and ACTION_STEP)
+// Manual step trigger (for Step mode and ACTION_SAMPLE_HOLD + VARIANT_STEP)
 void sample_hold_step(void);
 
 // Enable/disable S+H (config setting)

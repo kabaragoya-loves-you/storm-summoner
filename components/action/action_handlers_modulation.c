@@ -306,6 +306,13 @@ action_handle_result_t action_handlers_modulation_dispatch(
           }
           return ACTION_HANDLED;
 
+        case VARIANT_STEP:
+          if (is_press) {
+            rtg_step();
+            ESP_LOGD(TAG, "RTG Step");
+          }
+          return ACTION_HANDLED;
+
         default:
           ESP_LOGW(TAG, "Unknown RTG variant %d", (int)action->variant);
           return ACTION_HANDLED;
@@ -333,22 +340,17 @@ action_handle_result_t action_handlers_modulation_dispatch(
           }
           return ACTION_HANDLED;
 
+        case VARIANT_STEP:
+          if (is_press) {
+            sample_hold_step();
+            ESP_LOGD(TAG, "S+H Step");
+          }
+          return ACTION_HANDLED;
+
         default:
           ESP_LOGW(TAG, "Unknown S+H variant %d", (int)action->variant);
           return ACTION_HANDLED;
       }
-
-    case ACTION_STEP:
-      if (is_press) {
-        if (action->params.step.target == STEP_TARGET_RTG) {
-          rtg_step();
-          ESP_LOGD(TAG, "Step action: RTG");
-        } else if (action->params.step.target == STEP_TARGET_SH) {
-          sample_hold_step();
-          ESP_LOGD(TAG, "Step action: S+H");
-        }
-      }
-      return ACTION_HANDLED;
 
     case ACTION_PUNCH_IN:
       if (is_press) {

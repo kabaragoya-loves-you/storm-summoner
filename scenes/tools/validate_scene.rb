@@ -30,6 +30,7 @@ VALID_ACTION_TYPES = %w[
   param param_hold param_cycle
   rtg rtg_toggle rtg_hold
   sample_hold sample_hold_toggle sample_hold_hold
+  step
 ].freeze
 
 # Valid touchwheel modes
@@ -312,23 +313,28 @@ def validate_action(action, context, errors)
   when 'rtg'
     variant = action['variant']
     case variant
-    when 'toggle', 'hold', nil
+    when 'toggle', 'hold', 'step', nil
       # Parameterless action; no extra fields.
     else
-      errors << "#{context}: rtg variant must be 'toggle' or 'hold' (got #{variant.inspect})"
+      errors << "#{context}: rtg variant must be 'toggle', 'hold', or 'step' (got #{variant.inspect})"
     end
   when 'rtg_toggle', 'rtg_hold'
     # Legacy single-type entries; no extra fields.
   when 'sample_hold'
     variant = action['variant']
     case variant
-    when 'toggle', 'hold', nil
+    when 'toggle', 'hold', 'step', nil
       # Parameterless action; no extra fields.
     else
-      errors << "#{context}: sample_hold variant must be 'toggle' or 'hold' (got #{variant.inspect})"
+      errors << "#{context}: sample_hold variant must be 'toggle', 'hold', or 'step' (got #{variant.inspect})"
     end
   when 'sample_hold_toggle', 'sample_hold_hold'
     # Legacy single-type entries; no extra fields.
+  when 'step'
+    target = action['step_target']
+    if target && !%w[rtg sh].include?(target)
+      errors << "#{context}: step step_target must be 'rtg' or 'sh' (got #{target.inspect})"
+    end
   when 'param'
     variant = action['variant']
     case variant

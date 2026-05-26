@@ -186,11 +186,27 @@ bool action_migration_translate_type(const char* legacy_name,
 }
 
 bool action_migration_fixup_action(const cJSON* action_json, action_t* action) {
-  // Stub for the Tempo pilot. Future families that change field layout
-  // add their fixups here -- the call site in scene.c is already wired.
-  (void)action_json;
-  (void)action;
-  return false;
+  if (!action_json || !action) return false;
+
+  cJSON* type_node = cJSON_GetObjectItem(action_json, "type");
+  if (!type_node || !cJSON_IsString(type_node)) return false;
+  if (strcmp(type_node->valuestring, "step") != 0) return false;
+
+  action->variant = VARIANT_STEP;
+  cJSON* step_target = cJSON_GetObjectItem(action_json, "step_target");
+  if (step_target && cJSON_IsString(step_target) &&
+      strcmp(step_target->valuestring, "sh") == 0) {
+    action->type = ACTION_SAMPLE_HOLD;
+  } else {
+    action->type = ACTION_RTG;
+  }
+
+  s_hit_count++;
+  snprintf(s_last_summary, sizeof(s_last_summary),
+    "legacy action type 'step' -> type=%d variant=%d",
+    (int)action->type, (int)action->variant);
+  ESP_LOGI(TAG, "%s", s_last_summary);
+  return true;
 }
 
 uint32_t action_migration_hit_count(void) {

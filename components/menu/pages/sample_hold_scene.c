@@ -71,6 +71,7 @@ static void enabled_confirm_cb(uint32_t selected_index, void* user_data) {
   }
 
   scene->sample_hold_config.enabled = (selected_index == 1);
+  scene->sample_hold.enabled = scene->sample_hold_config.enabled;
 
   sample_hold_apply_config(&scene->sample_hold_config);
 

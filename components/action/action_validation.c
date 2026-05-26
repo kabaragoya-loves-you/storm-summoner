@@ -163,10 +163,10 @@ bool action_is_fire_and_forget_for(const action_t* action) {
       return action->variant == VARIANT_TOGGLE;
 
     case ACTION_RTG:
-      return action->variant == VARIANT_TOGGLE;
+      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP;
 
     case ACTION_SAMPLE_HOLD:
-      return action->variant == VARIANT_TOGGLE;
+      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP;
 
     default:
       return false;
@@ -335,7 +335,6 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_PRESET:
     case ACTION_SCENE:
     case ACTION_TEMPO:
-    case ACTION_STEP:
     case ACTION_PUNCH_IN:
       return false;
     default:

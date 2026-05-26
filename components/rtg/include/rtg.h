@@ -101,7 +101,7 @@ void rtg_get_config(rtg_config_t* config);
 // Create default configuration
 rtg_config_t rtg_config_create_default(void);
 
-// Manual step trigger (for Step mode and ACTION_STEP)
+// Manual step trigger (for Step mode and ACTION_RTG + VARIANT_STEP)
 void rtg_step(void);
 
 // Tick function for continuous mode (called from main loop)
