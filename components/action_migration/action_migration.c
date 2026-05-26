@@ -138,6 +138,10 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "clock_toggle",     ACTION_CLOCK,            VARIANT_TOGGLE    },
   { "clock_hold",       ACTION_CLOCK,            VARIANT_HOLD      },
   { "clock_burst",      ACTION_CLOCK,            VARIANT_BURST     },
+
+  // Pre-consolidation cut names.
+  { "cut_toggle",       ACTION_CUT,              VARIANT_TOGGLE    },
+  { "cut_hold",         ACTION_CUT,              VARIANT_HOLD      },
 };
 
 static const size_t s_legacy_alias_count =

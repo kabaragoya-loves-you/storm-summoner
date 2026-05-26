@@ -3933,8 +3933,7 @@ static const char* action_type_json_names[] = {
   [ACTION_TOUCHWHEEL] = "touchwheel",
   [ACTION_LFO] = "lfo",
   [ACTION_CLOCK] = "clock",
-  [ACTION_CUT_TOGGLE] = "cut_toggle",
-  [ACTION_CUT_HOLD] = "cut_hold",
+  [ACTION_CUT] = "cut",
   [ACTION_SET_UI] = "set_ui",
   [ACTION_UI_HOLD] = "ui_hold",
   [ACTION_UI_CYCLE] = "ui_cycle",
@@ -4250,7 +4249,7 @@ static cJSON* action_to_json(const action_t* action) {
       default:
         break;
     }
-  } else if (action->type == ACTION_CUT_TOGGLE || action->type == ACTION_CUT_HOLD) {
+  } else if (action->type == ACTION_CUT) {
     const char* mode_str = (action->params.cut.cut_mode == 0) ? "local" :
                            (action->params.cut.cut_mode == 1) ? "passthrough" : "both";
     cJSON_AddStringToObject(obj, "cut_mode", mode_str);
@@ -4499,6 +4498,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_TOUCHWHEEL) action.variant = VARIANT_HOLD;
     if (action.type == ACTION_LFO)        action.variant = VARIANT_START;
     if (action.type == ACTION_CLOCK)      action.variant = VARIANT_TOGGLE;
+    if (action.type == ACTION_CUT)        action.variant = VARIANT_TOGGLE;
   }
 
   // Piano Pedal: dedicated parser so the generic CC parser below doesn't
@@ -4816,8 +4816,8 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
-  // Parse cut toggle/hold actions
-  if (action.type == ACTION_CUT_TOGGLE || action.type == ACTION_CUT_HOLD) {
+  // Parse cut actions
+  if (action.type == ACTION_CUT) {
     cJSON* cut_mode = cJSON_GetObjectItem(obj, "cut_mode");
     if (cut_mode && cJSON_IsString(cut_mode)) {
       const char* mode_str = cut_mode->valuestring;

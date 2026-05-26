@@ -121,6 +121,7 @@ static char s_step_target_label[LABEL_BUFFER_SETS][24];
 static char s_clock_variant_label[LABEL_BUFFER_SETS][24];
 static char s_clock_mode_label[LABEL_BUFFER_SETS][32];
 static char s_clock_burst_label[LABEL_BUFFER_SETS][24];
+static char s_cut_variant_label[LABEL_BUFFER_SETS][24];
 static char s_cut_mode_label[LABEL_BUFFER_SETS][32];
 static char s_confirm_target_label[LABEL_BUFFER_SETS][32];
 static char s_ui_module_label[LABEL_BUFFER_SETS][32];
@@ -185,13 +186,11 @@ static const action_type_t s_all_action_types[] = {
   ACTION_TEMPO,
   ACTION_NOTE,
   ACTION_RANDOMIZE,
-  ACTION_RESET,
   ACTION_PIANO_PEDAL,
   ACTION_TOUCHWHEEL,
   ACTION_LFO,
   ACTION_CLOCK,
-  ACTION_CUT_TOGGLE,
-  ACTION_CUT_HOLD,
+  ACTION_CUT,
   ACTION_SET_UI,
   ACTION_UI_HOLD,
   ACTION_UI_CYCLE,
@@ -205,6 +204,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PUNCH_IN,
   ACTION_FLAG_CEREMONY,
   ACTION_BOOMERANG,
+  ACTION_RESET,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
 
@@ -245,8 +245,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_TOUCHWHEEL: return "Touchwheel";
     case ACTION_LFO: return "LFO";
     case ACTION_CLOCK: return "Clock";
-    case ACTION_CUT_TOGGLE: return "Cut Toggle";
-    case ACTION_CUT_HOLD: return "Cut Hold";
+    case ACTION_CUT: return "Cut";
     case ACTION_SET_UI: return "Set UI";
     case ACTION_UI_HOLD: return "UI Hold";
     case ACTION_UI_CYCLE: return "UI Cycle";
@@ -711,8 +710,8 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.clock.speed_percent = 100;
     }
     
-    // Set defaults for cut actions (both = cut local and passthrough)
-    if (new_type == ACTION_CUT_TOGGLE || new_type == ACTION_CUT_HOLD) {
+    if (new_type == ACTION_CUT) {
+      action->variant = VARIANT_TOGGLE;
       action->params.cut.cut_mode = 2;  // Both
     }
     
@@ -6177,7 +6176,89 @@ static void nav_to_clock_burst(void* user_data) {
 }
 
 // ============================================================================
-// Cut Mode Roller (for cut toggle/hold actions)
+// Cut Variant Roller (for ACTION_CUT -- operation picker)
+// ============================================================================
+
+static const action_variant_t s_cut_variants[] = {
+  VARIANT_TOGGLE,
+  VARIANT_HOLD,
+};
+#define NUM_CUT_VARIANTS (sizeof(s_cut_variants) / sizeof(s_cut_variants[0]))
+
+static action_variant_t s_filtered_cut_variants[NUM_CUT_VARIANTS];
+static size_t s_num_filtered_cut_variants = 0;
+
+static void build_filtered_cut_variants(void) {
+  s_num_filtered_cut_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_CUT_VARIANTS; i++) {
+    if (action_variant_is_valid_for_trigger(ACTION_CUT, s_cut_variants[i],
+                                            s_ctx->trigger_type)) {
+      s_filtered_cut_variants[s_num_filtered_cut_variants++] = s_cut_variants[i];
+    }
+  }
+}
+
+static void cut_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_cut_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_cut_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* cut_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_cut_variants();
+  if (s_num_filtered_cut_variants == 0) return NULL;
+
+  static char options[64];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_cut_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    char name[24];
+    action_t probe = { .type = ACTION_CUT, .variant = s_filtered_cut_variants[i] };
+    action_get_display_name(&probe, name, sizeof(name));
+    strcat(options, name);
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_cut_variants; i++) {
+    if (s_filtered_cut_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, cut_variant_confirm_cb, NULL);
+}
+
+static void nav_to_cut_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", cut_variant_roller_create);
+}
+
+// ============================================================================
+// Cut Mode Roller (for ACTION_CUT)
 // ============================================================================
 
 static const char* CUT_MODE_OPTIONS = "Local Only\nPassthrough\nBoth";
@@ -7949,19 +8030,26 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show cut mode selector for cut toggle/hold actions
-  if ((action->type == ACTION_CUT_TOGGLE || action->type == ACTION_CUT_HOLD) &&
-      item_count < MAX_DETAIL_ITEMS) {
-    const char* mode_name;
-    switch (action->params.cut.cut_mode) {
-      case 0: mode_name = "Local Only"; break;
-      case 1: mode_name = "Passthrough"; break;
-      default: mode_name = "Both"; break;
-    }
-    snprintf(s_cut_mode_label[buf], sizeof(s_cut_mode_label[buf]), "Cut Target\n%s", mode_name);
+  // ACTION_CUT (consolidated family): Variant row + Cut Target row.
+  if (action->type == ACTION_CUT) {
+    snprintf(s_cut_variant_label[buf], sizeof(s_cut_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_cut_mode_label[buf], nav_to_cut_mode, NULL, true
+      s_cut_variant_label[buf], nav_to_cut_variant, NULL, true
     };
+
+    if (item_count < MAX_DETAIL_ITEMS) {
+      const char* mode_name;
+      switch (action->params.cut.cut_mode) {
+        case 0: mode_name = "Local Only"; break;
+        case 1: mode_name = "Passthrough"; break;
+        default: mode_name = "Both"; break;
+      }
+      snprintf(s_cut_mode_label[buf], sizeof(s_cut_mode_label[buf]), "Cut Target\n%s", mode_name);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_cut_mode_label[buf], nav_to_cut_mode, NULL, true
+      };
+    }
   }
   
   // Show confirm target selector for confirm_pending action in Advanced mode only

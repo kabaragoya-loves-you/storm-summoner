@@ -25,6 +25,7 @@ VALID_ACTION_TYPES = %w[
   touchwheel touchwheel_hold touchwheel_cycle
   lfo lfo_start lfo_stop lfo_toggle lfo_shape
   clock clock_toggle clock_hold clock_burst
+  cut cut_toggle cut_hold
 ].freeze
 
 # Valid touchwheel modes
@@ -228,6 +229,24 @@ def validate_action(action, context, errors)
     if action.key?('speed_percent') &&
        !(action['speed_percent'].is_a?(Integer) && clock_speeds.include?(action['speed_percent']))
       errors << "#{context}: clock_burst 'speed_percent' must be one of #{clock_speeds.join(', ')}"
+    end
+  when 'cut'
+    variant = action['variant']
+    cut_modes = %w[local passthrough both]
+    case variant
+    when 'toggle', 'hold', nil
+      if action.key?('cut_mode') &&
+         !(action['cut_mode'].is_a?(String) && cut_modes.include?(action['cut_mode']))
+        errors << "#{context}: cut 'cut_mode' must be one of #{cut_modes.join(', ')}"
+      end
+    else
+      errors << "#{context}: cut variant must be 'toggle' or 'hold' (got #{variant.inspect})"
+    end
+  when 'cut_toggle', 'cut_hold'
+    cut_modes = %w[local passthrough both]
+    if action.key?('cut_mode') &&
+       !(action['cut_mode'].is_a?(String) && cut_modes.include?(action['cut_mode']))
+      errors << "#{context}: #{type} 'cut_mode' must be one of #{cut_modes.join(', ')}"
     end
   when 'lfo_start', 'lfo_stop', 'lfo_toggle', 'lfo_shape'
     # Legacy single-type entries (pre-consolidation). Minimal validation --

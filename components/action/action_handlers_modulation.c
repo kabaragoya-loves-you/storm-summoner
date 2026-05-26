@@ -243,40 +243,46 @@ action_handle_result_t action_handlers_modulation_dispatch(
       }
     }
 
-    case ACTION_CUT_TOGGLE:
-      if (is_press) {
-        uint8_t cut_mode = action->params.cut.cut_mode;
-        if (cut_mode == 0 || cut_mode == 2) {
-          bool current = midi_out_get_cut_local();
-          midi_out_set_cut_local(!current);
-        }
-        if (cut_mode == 1 || cut_mode == 2) {
-          bool current = midi_out_get_cut_passthrough();
-          midi_out_set_cut_passthrough(!current);
-        }
-        ESP_LOGI(TAG, "Cut Toggle: mode %d", cut_mode);
-      }
-      return ACTION_HANDLED;
+    case ACTION_CUT:
+      switch (action->variant) {
+        case VARIANT_TOGGLE:
+          if (is_press) {
+            uint8_t cut_mode = action->params.cut.cut_mode;
+            if (cut_mode == 0 || cut_mode == 2) {
+              bool current = midi_out_get_cut_local();
+              midi_out_set_cut_local(!current);
+            }
+            if (cut_mode == 1 || cut_mode == 2) {
+              bool current = midi_out_get_cut_passthrough();
+              midi_out_set_cut_passthrough(!current);
+            }
+            ESP_LOGI(TAG, "Cut Toggle: mode %d", cut_mode);
+          }
+          return ACTION_HANDLED;
 
-    case ACTION_CUT_HOLD: {
-      if (is_press) {
-        action_followup_record_press((action_t*)action);
-      } else if (action_followup_should_skip_release(action)) {
-        ESP_LOGD(TAG, "Cut hold release skipped by follow-up");
-        return ACTION_HANDLED;
+        case VARIANT_HOLD:
+          if (is_press) {
+            action_followup_record_press((action_t*)action);
+          } else if (action_followup_should_skip_release(action)) {
+            ESP_LOGD(TAG, "Cut hold release skipped by follow-up");
+            return ACTION_HANDLED;
+          }
+          {
+            uint8_t cut_mode = action->params.cut.cut_mode;
+            bool cut_active = is_press;
+            if (cut_mode == 0 || cut_mode == 2)
+              midi_out_set_cut_local(cut_active);
+            if (cut_mode == 1 || cut_mode == 2)
+              midi_out_set_cut_passthrough(cut_active);
+            ESP_LOGI(TAG, "Cut Hold: mode %d, cut %s",
+              cut_mode, cut_active ? "active" : "released");
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unknown Cut variant %d", (int)action->variant);
+          return ACTION_HANDLED;
       }
-      uint8_t cut_mode = action->params.cut.cut_mode;
-      bool cut_active = is_press;
-      if (cut_mode == 0 || cut_mode == 2) {
-        midi_out_set_cut_local(cut_active);
-      }
-      if (cut_mode == 1 || cut_mode == 2) {
-        midi_out_set_cut_passthrough(cut_active);
-      }
-      ESP_LOGI(TAG, "Cut Hold: mode %d, cut %s",
-        cut_mode, cut_active ? "active" : "released");
-      return ACTION_HANDLED;
-    }
 
     case ACTION_RTG_TOGGLE:
       if (is_press) {

@@ -78,8 +78,7 @@ typedef enum {
   ACTION_CLOCK,
   
   // MIDI cut control (temporary runtime state)
-  ACTION_CUT_TOGGLE,          // Toggle MIDI cut on/off
-  ACTION_CUT_HOLD,            // Hold: cut while pressed
+  ACTION_CUT,                 // Toggle or Hold via variant
   
   // UI module control
   ACTION_SET_UI,              // Switch to a specific UI module
@@ -404,7 +403,7 @@ typedef struct {
       uint16_t speed_percent;  // BURST: 25-300 in 25% steps (default 100)
     } clock;
     
-    // For cut actions (toggle, hold)
+    // For ACTION_CUT (Toggle/Hold variants)
     struct {
       uint8_t cut_mode;       // 0=local only, 1=passthrough only, 2=both
     } cut;

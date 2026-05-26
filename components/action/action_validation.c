@@ -19,7 +19,7 @@ static const action_type_t hold_actions[] = {
   // action_supports_timing_for / action_supports_repeat_for carve-outs.
   // ACTION_CLOCK is variant-aware: only HOLD is hold-like; BURST needs
   // press/release but is handled via fire-and-forget (Toggle only on load).
-  ACTION_CUT_HOLD,
+  // ACTION_CUT is variant-aware: only HOLD is hold-like.
   ACTION_UI_HOLD,
   ACTION_PARAM_HOLD,
   ACTION_RTG_HOLD,
@@ -42,6 +42,7 @@ bool action_requires_hold_for(const action_t* action) {
   if (action->type == ACTION_TOUCHWHEEL && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_CLOCK &&
       (action->variant == VARIANT_HOLD || action->variant == VARIANT_BURST)) return true;
+  if (action->type == ACTION_CUT && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -54,7 +55,6 @@ bool action_requires_hold_for(const action_t* action) {
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
-    case ACTION_CUT_HOLD:
     case ACTION_UI_HOLD:
     case ACTION_PARAM_HOLD:
     case ACTION_RTG_HOLD:
@@ -66,6 +66,8 @@ bool action_supports_followup_for(const action_t* action) {
     case ACTION_TOUCHWHEEL:
       return action->variant == VARIANT_HOLD;
     case ACTION_CLOCK:
+      return action->variant == VARIANT_HOLD;
+    case ACTION_CUT:
       return action->variant == VARIANT_HOLD;
     default:
       return false;
@@ -145,6 +147,9 @@ bool action_is_fire_and_forget_for(const action_t* action) {
       return true;
 
     case ACTION_CLOCK:
+      return action->variant == VARIANT_TOGGLE;
+
+    case ACTION_CUT:
       return action->variant == VARIANT_TOGGLE;
 
     default:
@@ -264,6 +269,8 @@ static action_variant_t default_variant_for_type(action_type_t type) {
       return VARIANT_MODIFY;
     case ACTION_CLOCK:
       return VARIANT_TOGGLE;
+    case ACTION_CUT:
+      return VARIANT_TOGGLE;
     default:
       return VARIANT_NONE;
   }
@@ -364,6 +371,8 @@ bool action_supports_timing_for(const action_t* action) {
     // TOGGLE is interactive; HOLD/BURST need press/release pairing.
     return false;
   }
+  if (action->type == ACTION_CUT)
+    return false;
   return action_supports_timing(action->type);
 }
 
@@ -403,6 +412,8 @@ bool action_supports_repeat_for(const action_t* action) {
     return action->variant != VARIANT_TOGGLE;
   }
   if (action->type == ACTION_CLOCK)
+    return false;
+  if (action->type == ACTION_CUT)
     return false;
   return action_supports_repeat(action->type);
 }

@@ -884,6 +884,7 @@
             "clock_toggle",
             "clock_hold",
             "clock_burst",
+            "cut",
             "cut_toggle",
             "cut_hold",
             "set_ui",
@@ -900,12 +901,12 @@
             "flag_ceremony",
             "boomerang"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record; 'touchwheel' supports Hold/Cycle; 'lfo' supports Start/Stop/Toggle/Modify (Modify carries optional per-parameter overrides; absent fields keep the scene's LFO config in place); 'clock' supports Toggle/Hold/Burst. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66), the legacy lfo_start / lfo_stop / lfo_toggle / lfo_shape types (now migrated to lfo with variant=start/stop/toggle/modify; lfo_shape's per-press waveform cycle is collapsed to a single waveform override), and the legacy clock_toggle / clock_hold / clock_burst types (now migrated to clock with variant=toggle/hold/burst) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Pause/Record; 'touchwheel' supports Hold/Cycle; 'lfo' supports Start/Stop/Toggle/Modify (Modify carries optional per-parameter overrides; absent fields keep the scene's LFO config in place); 'clock' supports Toggle/Hold/Burst; 'cut' supports Toggle/Hold. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66), the legacy lfo_start / lfo_stop / lfo_toggle / lfo_shape types (now migrated to lfo with variant=start/stop/toggle/modify; lfo_shape's per-press waveform cycle is collapsed to a single waveform override), the legacy clock_toggle / clock_hold / clock_burst types (now migrated to clock with variant=toggle/hold/burst), and the legacy cut_toggle / cut_hold types (now migrated to cut with variant=toggle/hold) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
           "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record", "modify"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/pause/record), type='touchwheel' (hold/cycle), type='lfo' (start/stop/toggle/modify), and type='clock' (toggle/hold/burst). Omit for singleton types."
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/pause/record), type='touchwheel' (hold/cycle), type='lfo' (start/stop/toggle/modify), type='clock' (toggle/hold/burst), and type='cut' (toggle/hold). Omit for singleton types."
         },
         "timing": {
           "type": "string",
@@ -996,7 +997,7 @@
           "type": "string",
           "enum": ["always", "if_held", "if_quick"],
           "default": "always",
-          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset, touchwheel, clock, cut_hold, ui_hold, param_hold, rtg_hold, sample_hold_hold."
+          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset, touchwheel, clock, cut, ui_hold, param_hold, rtg_hold, sample_hold_hold."
         },
         "release_threshold_ms": {
           "type": "integer",
@@ -1684,6 +1685,23 @@
                 "enum": [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300],
                 "default": 100,
                 "description": "Speed multiplier for burst (25-300% in 25% increments)"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "cut"}
+            }
+          },
+          "then": {
+            "properties": {
+              "cut_mode": {
+                "type": "string",
+                "enum": ["local", "passthrough", "both"],
+                "default": "both",
+                "description": "What to cut: local (device-generated), passthrough (MIDI IN), or both"
               }
             }
           }
