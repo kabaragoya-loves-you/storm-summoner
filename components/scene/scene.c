@@ -4097,10 +4097,18 @@ static cJSON* action_to_json(const action_t* action) {
   } else if (action->type == ACTION_NOTE) {
     cJSON_AddNumberToObject(obj, "note", action->params.note.note);
     cJSON_AddNumberToObject(obj, "velocity", action->params.note.velocity);
+    if (action->params.note.note == ACTION_NOTE_RANDOM) {
+      if (action->params.note.random_floor != 36)
+        cJSON_AddNumberToObject(obj, "random_floor", action->params.note.random_floor);
+      if (action->params.note.random_ceiling != 96)
+        cJSON_AddNumberToObject(obj, "random_ceiling", action->params.note.random_ceiling);
+    }
     if (action->params.note.voices != 1)
       cJSON_AddNumberToObject(obj, "voices", action->params.note.voices);
     if (action->params.note.bass)
       cJSON_AddBoolToObject(obj, "bass", true);
+    if (!action->params.note.aftertouch)
+      cJSON_AddBoolToObject(obj, "aftertouch", false);
   } else if (action->type == ACTION_PIANO_PEDAL) {
     // Single field: which switch-style MIDI CC to fire on press/release.
     // Whitelist enforced in action_create_piano_pedal() and json_to_action.
@@ -4677,11 +4685,26 @@ static action_t json_to_action(cJSON* obj) {
   if (action.type == ACTION_NOTE) {
     action.params.note.voices = 1;
     action.params.note.bass = false;
+    action.params.note.random_floor = 36;
+    action.params.note.random_ceiling = 96;
+    action.params.note.aftertouch = true;
     action.params.note.active_count = 0;
     cJSON* note = cJSON_GetObjectItem(obj, "note");
     cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
     if (note) action.params.note.note = (uint8_t)note->valueint;
     if (velocity) action.params.note.velocity = (uint8_t)velocity->valueint;
+    cJSON* floor = cJSON_GetObjectItem(obj, "random_floor");
+    cJSON* ceiling = cJSON_GetObjectItem(obj, "random_ceiling");
+    if (floor && cJSON_IsNumber(floor))
+      action.params.note.random_floor = (uint8_t)floor->valueint;
+    if (ceiling && cJSON_IsNumber(ceiling))
+      action.params.note.random_ceiling = (uint8_t)ceiling->valueint;
+    if (action.params.note.random_floor < 36) action.params.note.random_floor = 36;
+    if (action.params.note.random_floor > 96) action.params.note.random_floor = 96;
+    if (action.params.note.random_ceiling < 36) action.params.note.random_ceiling = 96;
+    if (action.params.note.random_ceiling > 96) action.params.note.random_ceiling = 96;
+    if (action.params.note.random_floor > action.params.note.random_ceiling)
+      action.params.note.random_ceiling = action.params.note.random_floor;
     cJSON* voices = cJSON_GetObjectItem(obj, "voices");
     if (voices && cJSON_IsNumber(voices)) {
       uint8_t v = (uint8_t)voices->valueint;
@@ -4692,6 +4715,9 @@ static action_t json_to_action(cJSON* obj) {
     cJSON* bass = cJSON_GetObjectItem(obj, "bass");
     if (bass && cJSON_IsBool(bass))
       action.params.note.bass = cJSON_IsTrue(bass);
+    cJSON* aftertouch = cJSON_GetObjectItem(obj, "aftertouch");
+    if (aftertouch && cJSON_IsBool(aftertouch))
+      action.params.note.aftertouch = cJSON_IsTrue(aftertouch);
   }
   
   // Parse target/scene/program actions. ACTION_PRESET + VARIANT_SET routes

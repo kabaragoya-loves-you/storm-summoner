@@ -203,21 +203,37 @@ static void format_action_details_with_device(const action_t* action, const devi
       uint8_t voices = action->params.note.voices;
       if (voices < 1) voices = 1;
       if (voices > 4) voices = 4;
+
+      const char* vel_name = NULL;
+      if (action->params.note.velocity == ACTION_NOTE_VEL_RANDOM) vel_name = "Random";
+      else if (action->params.note.velocity == 127) vel_name = "Forte";
+      else if (action->params.note.velocity == 100) vel_name = "Strong";
+      else if (action->params.note.velocity == 80) vel_name = "Medium";
+      else if (action->params.note.velocity == 60) vel_name = "Soft";
+      else if (action->params.note.velocity == 40) vel_name = "Piano";
+
+      int pos;
       if (action->params.note.note == ACTION_NOTE_RANDOM) {
-        snprintf(buf, buf_size, "Note Random vel=%d", action->params.note.velocity);
-      } else {
-        snprintf(buf, buf_size, "Note %d vel=%d",
-          action->params.note.note, action->params.note.velocity);
-      }
-      if (voices > 1 || action->params.note.bass) {
-        int pos = (int)strlen(buf);
-        if (pos < (int)buf_size - 16) {
-          if (voices > 1)
-            pos += snprintf(buf + pos, buf_size - pos, " x%u", (unsigned)voices);
-          if (action->params.note.bass && pos < (int)buf_size - 8)
-            snprintf(buf + pos, buf_size - pos, " Bass");
+        uint8_t lo = action->params.note.random_floor;
+        uint8_t hi = action->params.note.random_ceiling;
+        if (lo < 36) lo = 36;
+        if (hi > 96) hi = 96;
+        if (lo == 36 && hi == 96) {
+          pos = snprintf(buf, buf_size, "Note Random");
+        } else {
+          pos = snprintf(buf, buf_size, "Note Random %u-%u", (unsigned)lo, (unsigned)hi);
         }
+      } else {
+        pos = snprintf(buf, buf_size, "Note %d", action->params.note.note);
       }
+      if (vel_name) pos += snprintf(buf + pos, buf_size - pos, " %s", vel_name);
+      else pos += snprintf(buf + pos, buf_size - pos, " vel=%d", action->params.note.velocity);
+      if (voices > 1 && pos < (int)buf_size - 8)
+        pos += snprintf(buf + pos, buf_size - pos, " x%u", (unsigned)voices);
+      if (action->params.note.bass && pos < (int)buf_size - 8)
+        pos += snprintf(buf + pos, buf_size - pos, " Bass");
+      if (action->params.note.aftertouch && pos < (int)buf_size - 8)
+        snprintf(buf + pos, buf_size - pos, " AT");
       break;
     }
     case ACTION_PIANO_PEDAL: {

@@ -200,7 +200,16 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
 
   } else if (action->type == ACTION_NOTE) {
     if (action->params.note.note == ACTION_NOTE_RANDOM) {
-      snprintf(summary->param_name, sizeof(summary->param_name), "Note Random");
+      uint8_t lo = action->params.note.random_floor;
+      uint8_t hi = action->params.note.random_ceiling;
+      if (lo < 36) lo = 36;
+      if (hi > 96) hi = 96;
+      if (lo == 36 && hi == 96) {
+        snprintf(summary->param_name, sizeof(summary->param_name), "Note Random");
+      } else {
+        snprintf(summary->param_name, sizeof(summary->param_name), "Note Random %u-%u",
+          (unsigned)lo, (unsigned)hi);
+      }
     } else {
       snprintf(summary->param_name, sizeof(summary->param_name), "Note %u",
         (unsigned)action->params.note.note);
@@ -209,16 +218,27 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     uint8_t voices = action->params.note.voices;
     if (voices < 1) voices = 1;
     if (voices > 4) voices = 4;
-    if (action->params.note.bass && voices > 1) {
-      snprintf(summary->param_value, sizeof(summary->param_value),
-        "Vel %u x%u Bass", (unsigned)action->params.note.velocity, (unsigned)voices);
-    } else if (voices > 1) {
-      snprintf(summary->param_value, sizeof(summary->param_value),
-        "Vel %u x%u", (unsigned)action->params.note.velocity, (unsigned)voices);
-    } else {
-      snprintf(summary->param_value, sizeof(summary->param_value), "Vel %u",
-        (unsigned)action->params.note.velocity);
-    }
+    const char* vel_name = NULL;
+    if (action->params.note.velocity == ACTION_NOTE_VEL_RANDOM) vel_name = "Random";
+    else if (action->params.note.velocity == 127) vel_name = "Forte";
+    else if (action->params.note.velocity == 100) vel_name = "Strong";
+    else if (action->params.note.velocity == 80) vel_name = "Medium";
+    else if (action->params.note.velocity == 60) vel_name = "Soft";
+    else if (action->params.note.velocity == 40) vel_name = "Piano";
+
+    char vel_part[16];
+    if (vel_name) snprintf(vel_part, sizeof(vel_part), "%s", vel_name);
+    else snprintf(vel_part, sizeof(vel_part), "Vel %u", (unsigned)action->params.note.velocity);
+
+    char* val = summary->param_value;
+    size_t val_cap = sizeof(summary->param_value);
+    int pos = snprintf(val, val_cap, "%s", vel_part);
+    if (voices > 1 && pos > 0 && (size_t)pos < val_cap)
+      pos += snprintf(val + pos, val_cap - (size_t)pos, " x%u", (unsigned)voices);
+    if (action->params.note.bass && pos > 0 && (size_t)pos < val_cap)
+      pos += snprintf(val + pos, val_cap - (size_t)pos, " Bass");
+    if (action->params.note.aftertouch && pos > 0 && (size_t)pos < val_cap)
+      snprintf(val + pos, val_cap - (size_t)pos, " AT");
     summary->has_value = true;
 
   } else if (action->type == ACTION_PIANO_PEDAL) {

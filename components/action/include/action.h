@@ -310,9 +310,12 @@ typedef struct {
     // For note actions (hold-style: press=on, release=off)
     struct {
       uint8_t note;           // fixed MIDI note, or ACTION_NOTE_RANDOM
-      uint8_t velocity;
+      uint8_t velocity;       // preset value or ACTION_NOTE_VEL_RANDOM
       uint8_t voices;         // 1-4 chord voices (default 1)
       bool bass;              // upper voices +12 semitones (root unchanged)
+      uint8_t random_floor;   // random root lower bound (default C2 / 36)
+      uint8_t random_ceiling; // random root upper bound (default C7 / 96)
+      bool aftertouch;        // tempo-synced poly AT swell while held
       uint8_t active_count;   // runtime: notes sounding from last press
       uint8_t active_notes[4];
     } note;
@@ -522,13 +525,17 @@ static inline void action_engine_modify_seed(action_engine_modify_t* m) {
   m->probability = ACTION_LFO_ORIG_U8;
 }
 
-// ACTION_NOTE: note field sentinel for per-press random root (C2-C7 range).
+// ACTION_NOTE sentinels (outside normal MIDI note / velocity picker ranges).
 #define ACTION_NOTE_RANDOM        ((uint8_t)254)
+#define ACTION_NOTE_VEL_RANDOM    ((uint8_t)254)
 
 static inline void action_note_params_seed(action_t* action) {
   if (!action || action->type != ACTION_NOTE) return;
   action->params.note.voices = 1;
   action->params.note.bass = false;
+  action->params.note.random_floor = 36;
+  action->params.note.random_ceiling = 96;
+  action->params.note.aftertouch = true;
   action->params.note.active_count = 0;
 }
 

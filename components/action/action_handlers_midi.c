@@ -1,5 +1,6 @@
 #include "action_internal.h"
 #include "action_handlers_midi.h"
+#include "action_note_hold.h"
 #include "midi_messages.h"
 #include "midi_local_output.h"
 #include "device_config.h"
@@ -66,6 +67,7 @@ static bool track_note_off(uint8_t channel, uint8_t note) {
 }
 
 void action_handlers_midi_release_notes(void) {
+  action_note_hold_clear_all();
   for (int i = 0; i < ACTION_NOTE_TRACK_MAX; i++) {
     if (s_action_note_voices[i].active) {
       send_note_off(s_action_note_voices[i].channel,
@@ -81,10 +83,26 @@ static uint8_t clamp_midi_note(int n) {
   return (uint8_t)n;
 }
 
-static uint8_t resolve_note_root(uint8_t configured) {
-  if (configured == ACTION_NOTE_RANDOM)
-    return (uint8_t)(36 + (esp_random() % 61));
-  return configured;
+static uint8_t clamp_random_note_bound(uint8_t v, uint8_t fallback) {
+  if (v < 36 || v > 96) return fallback;
+  return v;
+}
+
+static uint8_t resolve_note_root(const action_t* action) {
+  uint8_t configured = action->params.note.note;
+  if (configured != ACTION_NOTE_RANDOM) return configured;
+
+  uint8_t lo = clamp_random_note_bound(action->params.note.random_floor, 36);
+  uint8_t hi = clamp_random_note_bound(action->params.note.random_ceiling, 96);
+  if (lo > hi) hi = lo;
+  return (uint8_t)(lo + (uint8_t)(esp_random() % (unsigned)(hi - lo + 1)));
+}
+
+static const uint8_t s_note_vel_presets[] = { 127, 100, 80, 60, 40 };
+
+static uint8_t resolve_note_velocity(uint8_t configured) {
+  if (configured != ACTION_NOTE_VEL_RANDOM) return configured;
+  return s_note_vel_presets[esp_random() % (sizeof(s_note_vel_presets) / sizeof(s_note_vel_presets[0]))];
 }
 
 static uint8_t build_note_chord(const action_t* action, uint8_t out[4]) {
@@ -92,7 +110,7 @@ static uint8_t build_note_chord(const action_t* action, uint8_t out[4]) {
   if (voices < 1) voices = 1;
   if (voices > 4) voices = 4;
 
-  out[0] = resolve_note_root(action->params.note.note);
+  out[0] = resolve_note_root(action);
   uint8_t prev = out[0];
   for (uint8_t i = 1; i < voices; i++) {
     uint8_t step = (esp_random() & 1) ? 2 : 3;
@@ -211,7 +229,7 @@ action_handle_result_t action_handlers_midi_dispatch(
         }
         uint8_t notes[4];
         uint8_t count = build_note_chord(action, notes);
-        uint8_t vel = action->params.note.velocity;
+        uint8_t vel = resolve_note_velocity(action->params.note.velocity);
         for (uint8_t i = 0; i < count; i++) {
           send_note_on(channel, notes[i], vel);
           track_note_on(channel, notes[i]);
@@ -219,9 +237,12 @@ action_handle_result_t action_handlers_midi_dispatch(
         mutable_action->params.note.active_count = count;
         for (uint8_t i = 0; i < count; i++)
           mutable_action->params.note.active_notes[i] = notes[i];
+        if (action->params.note.aftertouch)
+          action_note_hold_start(action, channel, notes, count);
         ESP_LOGD(TAG, "Note On: %u voice(s) root=%u vel=%u",
           (unsigned)count, (unsigned)notes[0], (unsigned)vel);
       } else {
+        action_note_hold_stop(action, channel);
         uint8_t count = action->params.note.active_count;
         for (uint8_t i = 0; i < count; i++) {
           uint8_t n = action->params.note.active_notes[i];

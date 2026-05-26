@@ -11,7 +11,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Firmware Version Configuration
 # =============================================================================
 set(FW_VERSION_MAJOR 0)
-set(FW_VERSION_MINOR 4)
+set(FW_VERSION_MINOR 5)
 
 # Get short git hash (captured at configure time - rebuild after commits to update)
 find_package(Git QUIET)

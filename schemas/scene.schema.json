@@ -1162,11 +1162,26 @@
                 "description": "MIDI note number, or 254 for a random root (C2-C7) on each press."
               },
               "velocity": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 127,
+                "anyOf": [
+                  { "type": "integer", "minimum": 0, "maximum": 127 },
+                  { "type": "integer", "const": 254 }
+                ],
                 "default": 100,
-                "description": "Note velocity"
+                "description": "Note velocity preset value, or 254 for random loud-to-quiet on each press."
+              },
+              "random_floor": {
+                "type": "integer",
+                "minimum": 36,
+                "maximum": 96,
+                "default": 36,
+                "description": "Lower bound for random root note (C2-C7 range). Used when note=254."
+              },
+              "random_ceiling": {
+                "type": "integer",
+                "minimum": 36,
+                "maximum": 96,
+                "default": 96,
+                "description": "Upper bound for random root note. Used when note=254."
               },
               "voices": {
                 "type": "integer",
@@ -1179,6 +1194,11 @@
                 "type": "boolean",
                 "default": false,
                 "description": "When true, root stays at selected pitch and upper voices are transposed up one octave."
+              },
+              "aftertouch": {
+                "type": "boolean",
+                "default": true,
+                "description": "When true, sends tempo-synced poly aftertouch swell while the pad is held."
               }
             }
           }

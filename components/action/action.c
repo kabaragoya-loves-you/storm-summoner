@@ -1,5 +1,6 @@
 #include "action.h"
 #include "action_internal.h"
+#include "action_note_hold.h"
 #include "device_config.h"
 #include "scene.h"
 #include "config.h"
@@ -82,6 +83,7 @@ esp_err_t action_init(void) {
   action_morph_init();
   action_clock_burst_init();
   action_scheduler_init();
+  action_note_hold_init();
 
   s_initialized = true;
   return ESP_OK;

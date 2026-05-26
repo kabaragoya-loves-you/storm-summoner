@@ -108,8 +108,18 @@ def validate_action(action, context, errors)
            (action['note'] == note_rand || action['note'].between?(0, 127))
       errors << "#{context}: requires 'note' (0-127 or #{note_rand} for random)"
     end
-    if action['velocity'] && !(action['velocity'].is_a?(Integer) && action['velocity'].between?(0, 127))
-      errors << "#{context}: 'velocity' must be 0-127"
+    if action['velocity'] &&
+       !(action['velocity'].is_a?(Integer) &&
+         (action['velocity'] == note_rand || action['velocity'].between?(0, 127)))
+      errors << "#{context}: 'velocity' must be 0-127 or #{note_rand} (random)"
+    end
+    if action.key?('random_floor') &&
+       !(action['random_floor'].is_a?(Integer) && action['random_floor'].between?(36, 96))
+      errors << "#{context}: 'random_floor' must be 36-96"
+    end
+    if action.key?('random_ceiling') &&
+       !(action['random_ceiling'].is_a?(Integer) && action['random_ceiling'].between?(36, 96))
+      errors << "#{context}: 'random_ceiling' must be 36-96"
     end
     if action.key?('voices') &&
        !(action['voices'].is_a?(Integer) && action['voices'].between?(1, 4))
@@ -117,6 +127,9 @@ def validate_action(action, context, errors)
     end
     if action.key?('bass') && ![true, false].include?(action['bass'])
       errors << "#{context}: 'bass' must be a boolean"
+    end
+    if action.key?('aftertouch') && ![true, false].include?(action['aftertouch'])
+      errors << "#{context}: 'aftertouch' must be a boolean"
     end
   when 'pc', 'scene_set'
     unless action['number'].is_a?(Integer) && action['number'].between?(0, 127)

@@ -102,6 +102,10 @@ static char s_control_variant_label[LABEL_BUFFER_SETS][24];
 static char s_note_label[LABEL_BUFFER_SETS][24];
 static char s_note_voices_label[LABEL_BUFFER_SETS][20];
 static char s_note_bass_label[LABEL_BUFFER_SETS][16];
+static char s_note_random_floor_label[LABEL_BUFFER_SETS][24];
+static char s_note_random_ceiling_label[LABEL_BUFFER_SETS][24];
+static char s_note_velocity_label[LABEL_BUFFER_SETS][24];
+static char s_note_aftertouch_label[LABEL_BUFFER_SETS][20];
 static char s_piano_pedal_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
@@ -663,6 +667,9 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.note.velocity = 100;
       action->params.note.voices = 1;
       action->params.note.bass = false;
+      action->params.note.random_floor = 36;
+      action->params.note.random_ceiling = 96;
+      action->params.note.aftertouch = true;
       action->params.note.active_count = 0;
     }
 
@@ -3434,6 +3441,180 @@ static lv_obj_t* note_bass_roller_create(void) {
 static void nav_to_note_bass(void* user_data) {
   (void)user_data;
   nav_to_subpage("Bass", note_bass_roller_create);
+}
+
+static void note_random_bound_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  uint8_t midi = (uint8_t)(36 + selected_index);
+  if (midi > 96) midi = 96;
+  bool is_floor = (user_data != NULL);
+  action_t* action = s_ctx->target_action;
+
+  if (is_floor) {
+    action->params.note.random_floor = midi;
+    if (action->params.note.random_floor > action->params.note.random_ceiling)
+      action->params.note.random_ceiling = action->params.note.random_floor;
+  } else {
+    action->params.note.random_ceiling = midi;
+    if (action->params.note.random_ceiling < action->params.note.random_floor)
+      action->params.note.random_floor = action->params.note.random_ceiling;
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* note_random_bound_roller_create(void* user_data) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  static char options[512];
+  options[0] = '\0';
+  char* pos = options;
+  size_t remaining = sizeof(options);
+
+  for (uint8_t midi = 36; midi <= 96 && remaining > 8; midi++) {
+    char note_name[8];
+    get_note_display_name(midi, note_name, sizeof(note_name));
+    int written = snprintf(pos, remaining, "%s%s", midi > 36 ? "\n" : "", note_name);
+    if (written > 0 && (size_t)written < remaining) {
+      pos += written;
+      remaining -= (size_t)written;
+    }
+  }
+
+  bool is_floor = (user_data != NULL);
+  uint8_t current = is_floor ?
+    s_ctx->target_action->params.note.random_floor :
+    s_ctx->target_action->params.note.random_ceiling;
+  if (current < 36) current = is_floor ? 36 : 96;
+  if (current > 96) current = is_floor ? 36 : 96;
+
+  return menu_create_roller_page(is_floor ? "Floor" : "Ceiling", options,
+    (uint32_t)(current - 36), note_random_bound_confirm_cb, user_data);
+}
+
+static lv_obj_t* note_random_floor_roller_create(void) {
+  return note_random_bound_roller_create((void*)1);
+}
+
+static lv_obj_t* note_random_ceiling_roller_create(void) {
+  return note_random_bound_roller_create(NULL);
+}
+
+static void nav_to_note_random_floor(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Floor", note_random_floor_roller_create);
+}
+
+static void nav_to_note_random_ceiling(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Ceiling", note_random_ceiling_roller_create);
+}
+
+static const uint8_t s_note_velocity_values[] = {
+  ACTION_NOTE_VEL_RANDOM, 127, 100, 80, 60, 40,
+};
+static const char* s_note_velocity_names[] = {
+  "Random", "Forte", "Strong", "Medium", "Soft", "Piano",
+};
+#define NUM_NOTE_VELOCITY_OPTIONS \
+  (sizeof(s_note_velocity_values) / sizeof(s_note_velocity_values[0]))
+
+static const char* note_velocity_display(uint8_t vel) {
+  for (size_t i = 0; i < NUM_NOTE_VELOCITY_OPTIONS; i++) {
+    if (s_note_velocity_values[i] == vel) return s_note_velocity_names[i];
+  }
+  static char buf[12];
+  snprintf(buf, sizeof(buf), "%u", (unsigned)vel);
+  return buf;
+}
+
+static uint32_t note_velocity_roller_index(uint8_t vel) {
+  for (size_t i = 0; i < NUM_NOTE_VELOCITY_OPTIONS; i++) {
+    if (s_note_velocity_values[i] == vel) return (uint32_t)i;
+  }
+  return 2;
+}
+
+static void note_velocity_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action || selected_index >= NUM_NOTE_VELOCITY_OPTIONS) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  s_ctx->target_action->params.note.velocity = s_note_velocity_values[selected_index];
+  ESP_LOGI(TAG, "Note velocity set to %s", note_velocity_display(s_note_velocity_values[selected_index]));
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* note_velocity_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  static char options[64];
+  options[0] = '\0';
+  for (size_t i = 0; i < NUM_NOTE_VELOCITY_OPTIONS; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, s_note_velocity_names[i]);
+  }
+
+  return menu_create_roller_page("Velocity", options,
+    note_velocity_roller_index(s_ctx->target_action->params.note.velocity),
+    note_velocity_confirm_cb, NULL);
+}
+
+static void nav_to_note_velocity(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Velocity", note_velocity_roller_create);
+}
+
+static void note_aftertouch_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  s_ctx->target_action->params.note.aftertouch = (selected_index == 1);
+  ESP_LOGI(TAG, "Note aftertouch set to %s", selected_index == 1 ? "On" : "Off");
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* note_aftertouch_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  uint32_t current_idx = s_ctx->target_action->params.note.aftertouch ? 1 : 0;
+  return menu_create_roller_page("Aftertouch", "Off\nOn", current_idx,
+    note_aftertouch_confirm_cb, NULL);
+}
+
+static void nav_to_note_aftertouch(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Aftertouch", note_aftertouch_roller_create);
 }
 
 // ============================================================================
@@ -8491,6 +8672,29 @@ lv_obj_t* action_config_detail_page_create(void) {
       s_note_label[buf], nav_to_note, NULL, true
     };
 
+    if (action->params.note.note == ACTION_NOTE_RANDOM) {
+      char floor_name[8];
+      char ceil_name[8];
+      uint8_t floor = action->params.note.random_floor;
+      uint8_t ceiling = action->params.note.random_ceiling;
+      if (floor < 36) floor = 36;
+      if (floor > 96) floor = 96;
+      if (ceiling < 36) ceiling = 96;
+      if (ceiling > 96) ceiling = 96;
+      get_note_display_name(floor, floor_name, sizeof(floor_name));
+      get_note_display_name(ceiling, ceil_name, sizeof(ceil_name));
+      snprintf(s_note_random_floor_label[buf], sizeof(s_note_random_floor_label[buf]),
+        "Floor\n%s", floor_name);
+      snprintf(s_note_random_ceiling_label[buf], sizeof(s_note_random_ceiling_label[buf]),
+        "Ceiling\n%s", ceil_name);
+      s_detail_items[item_count++] = (menu_item_t){
+        s_note_random_floor_label[buf], nav_to_note_random_floor, NULL, true
+      };
+      s_detail_items[item_count++] = (menu_item_t){
+        s_note_random_ceiling_label[buf], nav_to_note_random_ceiling, NULL, true
+      };
+    }
+
     snprintf(s_note_voices_label[buf], sizeof(s_note_voices_label[buf]),
       "Voices\n%u", (unsigned)voices);
     s_detail_items[item_count++] = (menu_item_t){
@@ -8501,6 +8705,18 @@ lv_obj_t* action_config_detail_page_create(void) {
       "Bass\n%s", action->params.note.bass ? "On" : "Off");
     s_detail_items[item_count++] = (menu_item_t){
       s_note_bass_label[buf], nav_to_note_bass, NULL, true
+    };
+
+    snprintf(s_note_velocity_label[buf], sizeof(s_note_velocity_label[buf]),
+      "Velocity\n%s", note_velocity_display(action->params.note.velocity));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_note_velocity_label[buf], nav_to_note_velocity, NULL, true
+    };
+
+    snprintf(s_note_aftertouch_label[buf], sizeof(s_note_aftertouch_label[buf]),
+      "Aftertouch\n%s", action->params.note.aftertouch ? "On" : "Off");
+    s_detail_items[item_count++] = (menu_item_t){
+      s_note_aftertouch_label[buf], nav_to_note_aftertouch, NULL, true
     };
   }
 
