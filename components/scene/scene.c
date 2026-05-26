@@ -4154,6 +4154,12 @@ static cJSON* action_to_json(const action_t* action) {
     switch (action->variant) {
       case VARIANT_SET:
         cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
+        if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
+          cJSON_AddNumberToObject(obj, "random_floor",
+            action->params.tempo.random_floor);
+          cJSON_AddNumberToObject(obj, "random_ceiling",
+            action->params.tempo.random_ceiling);
+        }
         break;
       case VARIANT_HOLD:
         cJSON_AddNumberToObject(obj, "press_bpm", action->params.tempo.press_bpm);
@@ -4673,7 +4679,14 @@ static action_t json_to_action(cJSON* obj) {
   // Parse tempo actions (consolidated: ACTION_TEMPO + variant)
   if (action.type == ACTION_TEMPO) {
     cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
-    if (bpm) action.params.tempo.bpm = bpm->valueint;
+    if (bpm) action.params.tempo.bpm = (uint16_t)bpm->valueint;
+
+    if (action.variant == VARIANT_SET && action.params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
+      cJSON* floor = cJSON_GetObjectItem(obj, "random_floor");
+      cJSON* ceiling = cJSON_GetObjectItem(obj, "random_ceiling");
+      action.params.tempo.random_floor = floor ? (uint16_t)floor->valueint : 20;
+      action.params.tempo.random_ceiling = ceiling ? (uint16_t)ceiling->valueint : 300;
+    }
 
     if (action.variant == VARIANT_HOLD) {
       cJSON* press_bpm = cJSON_GetObjectItem(obj, "press_bpm");

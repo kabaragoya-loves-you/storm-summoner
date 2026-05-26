@@ -258,8 +258,16 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
   } else if (action->type == ACTION_TEMPO && action->variant == VARIANT_SET) {
     snprintf(summary->param_name, sizeof(summary->param_name), "BPM");
     summary->has_param = true;
-    if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
-      snprintf(summary->param_value, sizeof(summary->param_value), "Random");
+    if (action->params.tempo.bpm == ACTION_TEMPO_BPM_ORIGINAL) {
+      snprintf(summary->param_value, sizeof(summary->param_value), "Original");
+    } else if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
+      uint16_t lo = action->params.tempo.random_floor;
+      uint16_t hi = action->params.tempo.random_ceiling;
+      if (lo < 20 || lo > 300) lo = 20;
+      if (hi < 20 || hi > 300) hi = 300;
+      if (lo > hi) hi = lo;
+      snprintf(summary->param_value, sizeof(summary->param_value), "Random %u-%u",
+        (unsigned)lo, (unsigned)hi);
     } else {
       snprintf(summary->param_value, sizeof(summary->param_value), "%u",
         (unsigned)action->params.tempo.bpm);

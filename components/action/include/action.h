@@ -345,7 +345,9 @@ typedef struct {
     
     // For tempo actions (set, hold, cycle, increment, decrement)
     struct {
-      uint16_t bpm;               // VARIANT_SET: 20-300, or 0 = random
+      uint16_t bpm;               // VARIANT_SET: 20-300, 0=random, 0xFFFF=original
+      uint16_t random_floor;      // VARIANT_SET + random: lower bound (default 20)
+      uint16_t random_ceiling;    // VARIANT_SET + random: upper bound (default 300)
       uint16_t press_bpm;         // For VARIANT_HOLD: tempo on press
       uint16_t release_bpm;       // For VARIANT_HOLD: tempo on release
       uint8_t num_tempos;         // For VARIANT_CYCLE: number of tempos (2-8)
@@ -510,8 +512,9 @@ typedef struct {
 #define ACTION_LFO_RAND_U16     ((uint16_t)0xFFFE)
 #define ACTION_LFO_RAND_STEPS   ((uint8_t)254)
 
-// VARIANT_SET tempo: pick a random BPM in [20, 300] on each trigger.
-#define ACTION_TEMPO_BPM_RANDOM ((uint16_t)0)
+// VARIANT_SET tempo sentinels (outside the 20-300 BPM picker range).
+#define ACTION_TEMPO_BPM_RANDOM   ((uint16_t)0)
+#define ACTION_TEMPO_BPM_ORIGINAL ((uint16_t)0xFFFF)
 
 // Initialize the action system
 esp_err_t action_init(void);

@@ -71,8 +71,18 @@ def validate_action(action, context, errors)
     end
   when 'set_tempo'
     if action['bpm'] && !(action['bpm'].is_a?(Integer) &&
-        (action['bpm'] == 0 || action['bpm'].between?(20, 300)))
-      errors << "#{context}: 'bpm' must be 0 (random) or 20-300"
+        (action['bpm'] == 0 || action['bpm'] == 65535 || action['bpm'].between?(20, 300)))
+      errors << "#{context}: 'bpm' must be 0 (random), 65535 (original), or 20-300"
+    if action['bpm'] == 0
+      if action.key?('random_floor') &&
+         !(action['random_floor'].is_a?(Integer) && action['random_floor'].between?(20, 300))
+        errors << "#{context}: 'random_floor' must be 20-300"
+      end
+      if action.key?('random_ceiling') &&
+         !(action['random_ceiling'].is_a?(Integer) && action['random_ceiling'].between?(20, 300))
+        errors << "#{context}: 'random_ceiling' must be 20-300"
+      end
+    end
     end
   when 'send_nrpn', 'send_rpn'
     unless action['parameter'].is_a?(Integer) && action['parameter'].between?(0, 16383)

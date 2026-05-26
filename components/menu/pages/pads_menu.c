@@ -3834,8 +3834,14 @@ static lv_obj_t* pad_detail_page_create(void) {
   // Show Tempo selector for ACTION_TEMPO + VARIANT_SET (consolidated)
   if (mapping->action.type == ACTION_TEMPO && mapping->action.variant == VARIANT_SET) {
     uint16_t bpm = mapping->action.params.tempo.bpm;
-    if (bpm < 20 || bpm > 300) bpm = 120;
-    snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%u BPM", (unsigned)bpm);
+    if (bpm == ACTION_TEMPO_BPM_ORIGINAL)
+      snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\nOriginal");
+    else if (bpm == ACTION_TEMPO_BPM_RANDOM)
+      snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\nRandom");
+    else {
+      if (bpm < 20 || bpm > 300) bpm = 120;
+      snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%u BPM", (unsigned)bpm);
+    }
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_label[buf], nav_to_set_tempo, NULL, true
     };

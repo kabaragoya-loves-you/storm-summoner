@@ -10,9 +10,23 @@
 
 static const char* TAG = "action_handlers_scene";
 
-static uint16_t tempo_set_resolve_bpm(uint16_t configured) {
-  if (configured == ACTION_TEMPO_BPM_RANDOM)
-    return (uint16_t)(20 + (esp_random() % (unsigned)(300 - 20 + 1)));
+static uint16_t tempo_set_clamp_random_bound(uint16_t v, uint16_t fallback) {
+  if (v < 20 || v > 300) return fallback;
+  return v;
+}
+
+static uint16_t tempo_set_resolve_bpm(const action_t* action) {
+  uint16_t configured = action->params.tempo.bpm;
+  if (configured == ACTION_TEMPO_BPM_ORIGINAL) {
+    scene_t* scene = scene_get_current();
+    return scene ? scene->bpm : 120;
+  }
+  if (configured == ACTION_TEMPO_BPM_RANDOM) {
+    uint16_t lo = tempo_set_clamp_random_bound(action->params.tempo.random_floor, 20);
+    uint16_t hi = tempo_set_clamp_random_bound(action->params.tempo.random_ceiling, 300);
+    if (lo > hi) hi = lo;
+    return (uint16_t)(lo + (esp_random() % (unsigned)(hi - lo + 1)));
+  }
   return configured;
 }
 
@@ -193,7 +207,7 @@ action_handle_result_t action_handlers_scene_dispatch(
 
         case VARIANT_SET:
           if (is_press) {
-            uint16_t bpm = tempo_set_resolve_bpm(action->params.tempo.bpm);
+            uint16_t bpm = tempo_set_resolve_bpm(action);
             if (bpm >= 20 && bpm <= 300)
               tempo_set_bpm(bpm);
           }

@@ -266,7 +266,9 @@ static void format_action_details_with_device(const action_t* action, const devi
       break;
     case ACTION_TEMPO:
       if (action->variant == VARIANT_SET) {
-        if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM)
+        if (action->params.tempo.bpm == ACTION_TEMPO_BPM_ORIGINAL)
+          snprintf(buf, buf_size, "Tempo Original");
+        else if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM)
           snprintf(buf, buf_size, "Tempo Random");
         else
           snprintf(buf, buf_size, "Tempo %d BPM", action->params.tempo.bpm);
