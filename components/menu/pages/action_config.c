@@ -2281,7 +2281,8 @@ static void tempo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
     // press_bpm if the user had set one before.
     switch (new_variant) {
       case VARIANT_SET:
-        if (action->params.tempo.bpm < 20 || action->params.tempo.bpm > 300) {
+        if (action->params.tempo.bpm != ACTION_TEMPO_BPM_RANDOM &&
+            (action->params.tempo.bpm < 20 || action->params.tempo.bpm > 300)) {
           action->params.tempo.bpm = 120;
         }
         break;
@@ -2813,11 +2814,13 @@ static void tempo_set_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  // BPM range: 20-300
-  uint16_t bpm = 20 + (uint16_t)selected_index;
+  // BPM range: index 0 = Random, indices 1..281 = 20-300 BPM
+  uint16_t bpm = (selected_index == 0) ?
+    ACTION_TEMPO_BPM_RANDOM : (uint16_t)(19 + selected_index);
   s_ctx->target_action->params.tempo.bpm = bpm;
   
-  ESP_LOGI(TAG, "Tempo set to %u BPM", (unsigned)bpm);
+  ESP_LOGI(TAG, "Tempo set to %s",
+    bpm == ACTION_TEMPO_BPM_RANDOM ? "Random" : "fixed BPM");
   
   s_callback_in_progress = false;
   return_to_detail_page(2);
@@ -2826,24 +2829,28 @@ static void tempo_set_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* tempo_set_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   
-  // Build options: 20-300 BPM
+  // Build options: Random, then 20-300 BPM
   static char options[2048];
-  options[0] = '\0';
-  char* pos = options;
-  size_t remaining = sizeof(options);
+  size_t pos = (size_t)snprintf(options, sizeof(options), "Random");
+  size_t remaining = sizeof(options) - pos;
   
   for (uint16_t bpm = 20; bpm <= 300 && remaining > 8; bpm++) {
-    int written = snprintf(pos, remaining, "%s%u", bpm > 20 ? "\n" : "", (unsigned)bpm);
-    if (written > 0 && (size_t)written < remaining) {
-      pos += written;
-      remaining -= written;
+    int n = snprintf(options + pos, remaining, "\n%u", (unsigned)bpm);
+    if (n > 0 && (size_t)n < remaining) {
+      pos += (size_t)n;
+      remaining -= (size_t)n;
     }
   }
   
   uint16_t current_bpm = s_ctx->target_action->params.tempo.bpm;
-  if (current_bpm < 20) current_bpm = 120;
-  if (current_bpm > 300) current_bpm = 120;
-  uint32_t current_idx = current_bpm - 20;
+  uint32_t current_idx;
+  if (current_bpm == ACTION_TEMPO_BPM_RANDOM) {
+    current_idx = 0;
+  } else {
+    if (current_bpm < 20) current_bpm = 120;
+    if (current_bpm > 300) current_bpm = 120;
+    current_idx = (uint32_t)(current_bpm - 19);
+  }
   
   return menu_create_roller_page("Tempo", options, current_idx, tempo_set_confirm_cb, NULL);
 }
@@ -7470,10 +7477,14 @@ lv_obj_t* action_config_detail_page_create(void) {
 
     switch (action->variant) {
       case VARIANT_SET: {
-        uint16_t bpm = action->params.tempo.bpm;
-        if (bpm < 20 || bpm > 300) bpm = 120;
-        snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]),
-          "Tempo\n%u BPM", (unsigned)bpm);
+        if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
+          snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\nRandom");
+        } else {
+          uint16_t bpm = action->params.tempo.bpm;
+          if (bpm < 20 || bpm > 300) bpm = 120;
+          snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]),
+            "Tempo\n%u BPM", (unsigned)bpm);
+        }
         s_detail_items[item_count++] = (menu_item_t){
           s_tempo_label[buf], nav_to_tempo_set, NULL, true
         };

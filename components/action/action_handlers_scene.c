@@ -6,8 +6,15 @@
 #include "touchwheel_mode_mapping.h"
 #include "ui.h"
 #include "esp_log.h"
+#include "esp_random.h"
 
 static const char* TAG = "action_handlers_scene";
+
+static uint16_t tempo_set_resolve_bpm(uint16_t configured) {
+  if (configured == ACTION_TEMPO_BPM_RANDOM)
+    return (uint16_t)(20 + (esp_random() % (unsigned)(300 - 20 + 1)));
+  return configured;
+}
 
 // Apply a preset/program number, picking the right device_config call based
 // on the active bank-select mode. Used by every "set preset" action variant.
@@ -185,8 +192,10 @@ action_handle_result_t action_handlers_scene_dispatch(
           return ACTION_HANDLED;
 
         case VARIANT_SET:
-          if (is_press && action->params.tempo.bpm > 0) {
-            tempo_set_bpm(action->params.tempo.bpm);
+          if (is_press) {
+            uint16_t bpm = tempo_set_resolve_bpm(action->params.tempo.bpm);
+            if (bpm >= 20 && bpm <= 300)
+              tempo_set_bpm(bpm);
           }
           return ACTION_HANDLED;
 

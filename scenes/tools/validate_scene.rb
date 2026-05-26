@@ -70,8 +70,9 @@ def validate_action(action, context, errors)
       errors << "#{context}: requires 'number' (0-127)"
     end
   when 'set_tempo'
-    if action['bpm'] && !(action['bpm'].is_a?(Integer) && action['bpm'].between?(20, 300))
-      errors << "#{context}: 'bpm' must be 20-300"
+    if action['bpm'] && !(action['bpm'].is_a?(Integer) &&
+        (action['bpm'] == 0 || action['bpm'].between?(20, 300)))
+      errors << "#{context}: 'bpm' must be 0 (random) or 20-300"
     end
   when 'send_nrpn', 'send_rpn'
     unless action['parameter'].is_a?(Integer) && action['parameter'].between?(0, 16383)

@@ -1356,10 +1356,11 @@
             "required": ["bpm"],
             "properties": {
               "bpm": {
-                "type": "integer",
-                "minimum": 20,
-                "maximum": 300,
-                "description": "Tempo to set when triggered (BPM)"
+                "anyOf": [
+                  { "type": "integer", "const": 0 },
+                  { "type": "integer", "minimum": 20, "maximum": 300 }
+                ],
+                "description": "Tempo to set when triggered (BPM). 0 = randomize to a value in 20-300 on each trigger."
               }
             }
           }
