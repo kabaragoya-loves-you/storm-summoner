@@ -798,3 +798,15 @@ void ui_reclaim_canvas_buffer(void) {
 
   ESP_LOGD(TAG, "UI reclaimed shared canvas buffer");
 }
+
+void ui_attach_encoder_to_menu(void) {
+  if (!s_ui_touchwheel_output) return;
+
+  lv_indev_t *encoder_indev = touchwheel_output_get_lvgl_indev(s_ui_touchwheel_output);
+  if (!encoder_indev) return;
+
+  lv_group_t *menu_group = menu_get_group();
+  if (!menu_group) return;
+
+  lv_indev_set_group(encoder_indev, menu_group);
+}

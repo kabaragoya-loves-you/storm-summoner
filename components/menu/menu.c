@@ -86,7 +86,11 @@ static void deferred_scene_change_cb(lv_timer_t* timer) {
   }
   
   if (ret == ESP_OK) {
-    menu_replace_current("Menu", menu_page_index_create);
+    if (inspect_scene_is_active()) {
+      menu_replace_current("Inspect Scene", menu_page_inspect_scene_create);
+    } else {
+      menu_replace_current("Menu", menu_page_index_create);
+    }
   }
 }
 
@@ -95,8 +99,7 @@ static void menu_button_event_handler(const event_t* event, void* context) {
   (void)context;
   if (!event) return;
   
-  // Only handle when at top level (index page)
-  if (!menu_is_top_level()) return;
+  if (!menu_is_top_level() && !inspect_scene_is_active()) return;
   
   // Only in multi-scene modes
   scene_mode_t mode = scene_get_mode();
@@ -858,6 +861,8 @@ static void menu_navigate_back_internal(void) {
     return;
   }
 
+  if (inspect_scene_is_active()) menu_page_inspect_scene_cleanup();
+
   // Reset editing mode (info pages set this to true for scrolling)
   if (menu_state.group) {
     lv_group_set_editing(menu_state.group, false);
@@ -1127,6 +1132,8 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   
   // Delete old screen after loading new one (async to let events finish)
   if (old_screen) lv_obj_delete_async(old_screen);
+
+  if (inspect_scene_is_active()) inspect_scene_rebind_input();
   
   // Reset debounce timer to prevent double-clicks after replacement
   s_last_callback_time = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
@@ -1250,6 +1257,8 @@ void menu_handle_back(void) {
 }
 
 void menu_cleanup(void) {
+  if (inspect_scene_is_active()) menu_page_inspect_scene_cleanup();
+
   // Delete all screens in stack (async to let events finish)
   for (int i = 0; i < menu_state.stack_depth; i++) {
     if (menu_state.stack[i].screen) {

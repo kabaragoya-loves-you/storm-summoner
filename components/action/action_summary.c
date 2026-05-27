@@ -650,6 +650,38 @@ void sample_hold_format_summary(const scene_t *scene, action_summary_t *summary,
   }
 }
 
+void action_summary_format_line(const action_summary_t *summary,
+    char *buf, size_t len) {
+  if (!summary || !buf || len == 0) return;
+  buf[0] = '\0';
+
+  if (summary->input_name[0] == '\0' && summary->type_name[0] == '\0') return;
+
+  if (summary->has_param && summary->has_value) {
+    if (summary->input_name[0] != '\0') {
+      snprintf(buf, len, "%s: %s %s %s",
+        summary->input_name, summary->type_name,
+        summary->param_name, summary->param_value);
+    } else {
+      snprintf(buf, len, "%s %s %s",
+        summary->type_name, summary->param_name, summary->param_value);
+    }
+  } else if (summary->has_param) {
+    if (summary->input_name[0] != '\0') {
+      snprintf(buf, len, "%s: %s %s",
+        summary->input_name, summary->type_name, summary->param_name);
+    } else {
+      snprintf(buf, len, "%s %s", summary->type_name, summary->param_name);
+    }
+  } else if (summary->type_name[0] != '\0') {
+    if (summary->input_name[0] != '\0') {
+      snprintf(buf, len, "%s: %s", summary->input_name, summary->type_name);
+    } else {
+      snprintf(buf, len, "%s", summary->type_name);
+    }
+  }
+}
+
 void action_summary_format_display(const action_summary_t *summary,
     char *buf, size_t len, uint32_t input_color) {
   if (!summary || !buf || len == 0) return;

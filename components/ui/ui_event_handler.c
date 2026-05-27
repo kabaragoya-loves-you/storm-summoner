@@ -65,6 +65,14 @@ typedef enum {
 } nav_action_t;
 
 static volatile nav_action_t s_pending_nav_action = NAV_ACTION_NONE;
+static int s_inspect_scroll_pad = -1;
+
+static void inspect_scroll_async(void *user_data) {
+  (void)user_data;
+  if (s_inspect_scroll_pad < 0) return;
+  if (inspect_scene_jog_scroll((uint8_t)s_inspect_scroll_pad)) post_haptic_click();
+  s_inspect_scroll_pad = -1;
+}
 
 // Async callback for pad 9/11 up/down navigation
 static void pad_nav_async(void* user_data) {
@@ -254,14 +262,25 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       }
     }
     
-    // Handle inspect scene mode (intercepts pads 0-11 when active)
-    if (inspect_scene_is_active()) {
-      if (inspect_scene_handle_pad(pad_id, true)) {
-        return;  // Inspect scene consumed this event
+    // Pad 10: open Inspect Scene (programming mode only)
+    if (ui_get_app_mode() == APP_MODE_PROGRAMMING && pad_id == PAD_10_LOGICAL) {
+      if (!inspect_scene_is_active()) {
+        menu_navigate_to("Inspect Scene", menu_page_inspect_scene_create);
+        post_haptic_click();
+      }
+      return;
+    }
+    
+    // Inspect line scroll: logical 9 = Alpha, logical 11 = Gamma (PCB wiring).
+    if (ui_get_app_mode() == APP_MODE_PROGRAMMING && inspect_scene_is_active()) {
+      if (pad_id == PAD_9_LOGICAL || pad_id == PAD_11_LOGICAL) {
+        s_inspect_scroll_pad = (int)pad_id;
+        lv_async_call(inspect_scroll_async, NULL);
+        return;
       }
     }
     
-    // Handle pads 9/10/11 on PRESS for immediate response (async to LVGL task)
+    // Handle pads 9/11 on PRESS for immediate response (async to LVGL task)
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
       if (pad_id == PAD_9_LOGICAL) {
         s_pending_nav_action = NAV_ACTION_UP;
@@ -270,11 +289,6 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       }
       if (pad_id == PAD_11_LOGICAL) {
         s_pending_nav_action = NAV_ACTION_DOWN;
-        lv_async_call(pad_nav_async, NULL);
-        return;
-      }
-      if (pad_id == PAD_10_LOGICAL) {
-        s_pending_nav_action = NAV_ACTION_JUMP;
         lv_async_call(pad_nav_async, NULL);
         return;
       }
@@ -297,10 +311,16 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     
     // Handle Programming mode input
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
-      // Handle pad 8 (enter/confirm)
+      // Handle pad 8 (enter/confirm, or dismiss Inspect Scene)
       if (pad_id == BUTTON_8_LOGICAL_PAD) {
         // If text editor exit is pending, consume the release to prevent menu activation
         if (text_edit_exit_pending()) {
+          return;
+        }
+        if (inspect_scene_is_active()) {
+          menu_navigate_back();
+          post_haptic_click();
+          ESP_LOGD(TAG, "Pad 8: Inspect Scene back");
           return;
         }
         bool action_taken = menu_handle_enter();

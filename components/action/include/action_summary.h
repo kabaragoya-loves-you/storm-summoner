@@ -88,4 +88,8 @@ void sample_hold_format_summary(const scene_t *scene,
 void action_summary_format_display(const action_summary_t *summary,
   char *buf, size_t len, uint32_t input_color);
 
+// Plain single-line text (no LVGL recolor codes) for scene inspect
+void action_summary_format_line(const action_summary_t *summary,
+  char *buf, size_t len);
+
 #endif // ACTION_SUMMARY_H

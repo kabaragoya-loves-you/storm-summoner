@@ -105,6 +105,8 @@ bool ui_scene_is_transitioning(void);
 bool ui_release_canvas_buffer(void (*post_release_cb)(void));
 void ui_reclaim_canvas_buffer(void);
 
+// Re-attach programming-mode LVGL encoder indev to the menu focus group
+void ui_attach_encoder_to_menu(void);
 
 // Touch state and configuration API
 bool ui_touch_is_button_pressed(uint8_t pad_id);

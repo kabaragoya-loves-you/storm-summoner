@@ -56,12 +56,11 @@ lv_obj_t* menu_page_buttons_create(void);
 lv_obj_t* menu_page_bump_create(void);
 lv_obj_t* menu_page_display_create(void);
 
-// Inspect Scene - visual assignment viewer
+// Inspect Scene - scrollable scene summary (pad 10 in programming mode)
 lv_obj_t* menu_page_inspect_scene_create(void);
 void menu_page_inspect_scene_cleanup(void);
-
-// Inspect scene API for event interception
 bool inspect_scene_is_active(void);
-bool inspect_scene_handle_pad(uint8_t pad_id, bool pressed);
+void inspect_scene_rebind_input(void);
+bool inspect_scene_jog_scroll(uint8_t pad_id);
 
 #endif // MENU_PAGES_H
