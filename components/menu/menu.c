@@ -1062,6 +1062,7 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   }
   
   // Delete current screen
+  if (inspect_scene_is_active()) inspect_scene_invalidate_scroll();
   lv_obj_t* old_screen = menu_state.stack[menu_state.stack_depth - 1].screen;
   
   // Decrement stack depth (pop current page)

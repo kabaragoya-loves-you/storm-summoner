@@ -28,7 +28,8 @@ static const char* action_type_names[] = {
   [ACTION_SAMPLE_HOLD] = "S+H",
   [ACTION_PUNCH_IN] = "Punch-In",
   [ACTION_FLAG_CEREMONY] = "Flag Ceremony",
-  [ACTION_BOOMERANG] = "Boomerang"
+  [ACTION_BOOMERANG] = "Boomerang",
+  [ACTION_INSPECT_SCENE] = "Inspect Scene"
 };
 
 const char* action_type_to_string(action_type_t type) {

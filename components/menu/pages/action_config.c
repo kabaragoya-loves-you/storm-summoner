@@ -212,6 +212,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PUNCH_IN,
   ACTION_FLAG_CEREMONY,
   ACTION_BOOMERANG,
+  ACTION_INSPECT_SCENE,
   ACTION_RESET,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
@@ -261,6 +262,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_PUNCH_IN: return "Punch-In";
     case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
     case ACTION_BOOMERANG: return "Boomerang";
+    case ACTION_INSPECT_SCENE: return "Inspect Scene";
     default: return "Unknown";
   }
 }
@@ -533,8 +535,21 @@ action_config_context_t* action_config_get_context(void) {
   return s_ctx;
 }
 
+static void action_config_apply_trigger_defaults(action_t *action,
+    action_trigger_type_t trigger) {
+  if (!action) return;
+  if (trigger == ACTION_TRIGGER_ON_LOAD) {
+    action->timing = ACTION_TIMING_IMMEDIATE;
+    action->timing_beat = 0;
+    action->repeat_enabled = false;
+  }
+}
+
 void action_config_start(action_config_context_t* ctx) {
   s_ctx = ctx;
+  if (ctx && ctx->target_action) {
+    action_config_apply_trigger_defaults(ctx->target_action, ctx->trigger_type);
+  }
   load_cc_options();
   const char* title = ctx->detail_title ? ctx->detail_title : "Action";
   menu_navigate_to(title, action_config_detail_page_create);
@@ -788,6 +803,7 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     }
 
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
+    if (s_ctx) action_config_apply_trigger_defaults(action, s_ctx->trigger_type);
   }
   
   s_callback_in_progress = false;
@@ -9377,7 +9393,9 @@ lv_obj_t* action_config_detail_page_create(void) {
 
   // Show Timing selector for non-HOLD actions (actions that support timing).
   // Variant-aware: ACTION_TEMPO + VARIANT_TAP/VARIANT_HOLD are excluded.
-  if (action_supports_timing_for(action) && item_count < MAX_DETAIL_ITEMS) {
+  // On-load actions are always immediate (no beat scheduling in the menu).
+  if (s_ctx && s_ctx->trigger_type != ACTION_TRIGGER_ON_LOAD &&
+      action_supports_timing_for(action) && item_count < MAX_DETAIL_ITEMS) {
     const char* timing_display = get_timing_display(action);
     snprintf(s_timing_label[buf], sizeof(s_timing_label[buf]), "Timing\n%s", timing_display);
     s_detail_items[item_count++] = (menu_item_t){
@@ -9387,7 +9405,8 @@ lv_obj_t* action_config_detail_page_create(void) {
   
   // Show Repeat option for actions that support it. Variant-aware:
   // ACTION_TEMPO repeats only for INCREMENT/DECREMENT/CYCLE.
-  if (action_supports_repeat_for(action) && item_count < MAX_DETAIL_ITEMS) {
+  if (s_ctx && s_ctx->trigger_type != ACTION_TRIGGER_ON_LOAD &&
+      action_supports_repeat_for(action) && item_count < MAX_DETAIL_ITEMS) {
     const char* repeat_display = get_repeat_display(action);
     snprintf(s_repeat_label[buf], sizeof(s_repeat_label[buf]), "Repeat\n%s", repeat_display);
     s_detail_items[item_count++] = (menu_item_t){

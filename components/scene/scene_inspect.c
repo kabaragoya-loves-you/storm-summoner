@@ -2,11 +2,14 @@
 #include "action_summary.h"
 #include "assets_manager.h"
 #include "device_config.h"
+#include "expression.h"
+#include "cv.h"
+#include "input_mode.h"
 #include "rtg.h"
 #include "lfo.h"
 #include "sample_hold.h"
-#include "input_mode.h"
 #include "ui.h"
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -104,38 +107,229 @@ static const char *trs_type_name(uint8_t trs) {
 static void append_summary_line(scene_inspect_buf_t *b, const action_summary_t *summary) {
   char line[160];
   action_summary_format_line(summary, line, sizeof(line));
-  if (line[0] != '\0') scene_inspect_buf_append(b, "%s\n", line);
+  if (line[0] != '\0') scene_inspect_buf_append(b, "%s\n\n", line);
 }
 
-static void append_action_line(scene_inspect_buf_t *b, const char *label,
-  const action_t *action, uint8_t scene_index) {
+static void append_inspect_action(scene_inspect_buf_t *b, const char *label,
+  const action_t *action, uint8_t scene_index, bool trailing_blank, bool show_scheduling) {
   if (!action || action->type == ACTION_NONE || !label) return;
 
-  action_summary_t summary;
-  action_summary_init(&summary);
-  action_format_summary(action, &summary, scene_index);
+  char block[768];
+  if (!action_summary_format_inspect_pad(action, label, scene_index, block, sizeof(block),
+      show_scheduling)) return;
 
-  if (summary.has_param && summary.has_value) {
-    scene_inspect_buf_append(b, "%s: %s %s %s\n", label,
-      summary.type_name, summary.param_name, summary.param_value);
-  } else if (summary.has_param) {
-    scene_inspect_buf_append(b, "%s: %s %s\n", label,
-      summary.type_name, summary.param_name);
-  } else if (summary.type_name[0] != '\0') {
-    scene_inspect_buf_append(b, "%s: %s\n", label, summary.type_name);
+  scene_inspect_buf_append(b, "%s%s", block, trailing_blank ? "\n\n" : "\n");
+}
+
+static const char *jack_connection_status(bool connected) {
+  return connected ? "Connected" : "Disconnected";
+}
+
+static void append_jack_action_block(scene_inspect_buf_t *b, const char *jack_label,
+  bool connected, const action_t *action, uint8_t scene_index) {
+  scene_inspect_buf_append(b, "%s: %s\n", jack_label, jack_connection_status(connected));
+
+  if (action && action->type != ACTION_NONE) {
+    scene_inspect_buf_append(b, "%s\n", action_summary_inspect_family_name(action->type));
+    char body[512];
+    if (action_summary_format_inspect_action_body(action, scene_index, body, sizeof(body))) {
+      scene_inspect_buf_append(b, "%s\n", body);
+    }
+  }
+
+  scene_inspect_buf_append(b, "\n");
+}
+
+static void append_pedal_enabled_block(scene_inspect_buf_t *b, const char *label,
+  bool connected) {
+  scene_inspect_buf_append(b, "%s: %s\n\n", label, jack_connection_status(connected));
+}
+
+static void append_continuous_assignment(scene_inspect_buf_t *b, const char *prefix,
+  const continuous_mapping_t *mapping, uint8_t scene_index);
+
+static void append_cv_mapping_block(scene_inspect_buf_t *b, const char *label,
+  bool connected, const continuous_mapping_t *mapping, uint8_t scene_index,
+  uint8_t nudge_pct) {
+  if (!mapping || !mapping->enabled) {
+    scene_inspect_buf_append(b, "%s: %s\n\n", label, jack_connection_status(connected));
+    return;
+  }
+
+  if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    scene_inspect_buf_append(b, "%s: Tempo\n", label);
+    scene_inspect_buf_append(b, "Nudge %u%%\n\n", (unsigned)nudge_pct);
+    return;
+  }
+
+  scene_inspect_buf_append(b, "%s: %s\n", label, jack_connection_status(connected));
+  append_continuous_assignment(b, "Set", mapping, scene_index);
+  scene_inspect_buf_append(b, "\n");
+}
+
+static const char *cv_velocity_inspect_label(const scene_t *scene) {
+  static char fixed_vel[16];
+  switch (scene->cv_velocity_mode) {
+    case VELOCITY_MODE_GATE_VOLTAGE: return "Gate Voltage";
+    case VELOCITY_MODE_TOUCHWHEEL: return "Touchwheel";
+    default:
+      fixed_vel[0] = '\0';
+      {
+        uint8_t vel = scene->cv_velocity;
+        if (vel == 0) vel = 100;
+        snprintf(fixed_vel, sizeof(fixed_vel), "%u", (unsigned)vel);
+      }
+      return fixed_vel;
   }
 }
 
-static void append_continuous_line(scene_inspect_buf_t *b, const char *label,
+static const char *scene_inspect_output_type_name(output_type_t type) {
+  switch (type) {
+    case OUTPUT_TYPE_CC: return "Control Change";
+    case OUTPUT_TYPE_NOTE: return "Notes";
+    case OUTPUT_TYPE_LFO_RATE: return "LFO Rate";
+    case OUTPUT_TYPE_LFO_DEPTH: return "LFO Depth";
+    case OUTPUT_TYPE_LFO1_RATE: return "LFO 1 Rate";
+    case OUTPUT_TYPE_LFO1_DEPTH: return "LFO 1 Depth";
+    case OUTPUT_TYPE_LFO2_RATE: return "LFO 2 Rate";
+    case OUTPUT_TYPE_LFO2_DEPTH: return "LFO 2 Depth";
+    case OUTPUT_TYPE_RTG_RATE: return "RTG Rate";
+    case OUTPUT_TYPE_SH_RATE: return "S+H Rate";
+    case OUTPUT_TYPE_PITCH_BEND: return "Pitch Bend";
+    case OUTPUT_TYPE_TEMPO_NUDGE: return "Tempo Nudge";
+    default: return "Unknown";
+  }
+}
+
+static void scene_inspect_cc_label(char *buf, size_t cap, const device_def_t *device, uint8_t cc) {
+  const char *name = device ? assets_get_cc_name(device, cc) : NULL;
+  if (name && strcmp(name, "Undefined") != 0) {
+    snprintf(buf, cap, "%s", name);
+  } else {
+    snprintf(buf, cap, "CC %u", (unsigned)cc);
+  }
+}
+
+static bool scene_inspect_cc_assigned(const device_def_t *device, uint8_t cc) {
+  if (!device || cc > 127) return false;
+  return assets_get_control_by_cc(device, cc) != NULL;
+}
+
+static const char *SCENE_INSPECT_NOTE_NAMES[] = {
+  "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+};
+
+static void scene_inspect_note_name(uint8_t midi_note, char *buf, size_t cap) {
+  if (midi_note > 127) midi_note = 127;
+  int octave = (midi_note / 12) - 1;
+  int note_idx = midi_note % 12;
+  snprintf(buf, cap, "%s%d", SCENE_INSPECT_NOTE_NAMES[note_idx], octave);
+}
+
+static void append_continuous_assignment(scene_inspect_buf_t *b, const char *prefix,
   const continuous_mapping_t *mapping, uint8_t scene_index) {
+  const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
+
+  if (mapping->output_type == OUTPUT_TYPE_CC) {
+    char cc_name[32];
+    if (scene_inspect_cc_assigned(device, mapping->cc_number)) {
+      scene_inspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
+      scene_inspect_buf_append(b, "%s: %s %u-%u\n", prefix, cc_name,
+        (unsigned)mapping->min_value, (unsigned)mapping->max_value);
+    } else {
+      scene_inspect_buf_append(b, "%s: Unassigned!\n", prefix);
+    }
+    return;
+  }
+
+  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+    char lo[8];
+    char hi[8];
+    uint8_t top = mapping->base_note + mapping->note_range;
+    if (top > 127) top = 127;
+    scene_inspect_note_name(mapping->base_note, lo, sizeof(lo));
+    scene_inspect_note_name(top, hi, sizeof(hi));
+    scene_inspect_buf_append(b, "%s: %s-%s\n", prefix, lo, hi);
+    return;
+  }
+
+  const char *out = scene_inspect_output_type_name(mapping->output_type);
+  scene_inspect_buf_append(b, "%s: %s\n", prefix, out);
+}
+
+static const char *inspect_lfo_target_label(lfo_target_t target) {
+  switch (target) {
+    case LFO_TARGET_LFO1: return "LFO 1";
+    case LFO_TARGET_LFO2: return "LFO 2";
+    default: return "LFO 1 + LFO 2";
+  }
+}
+
+static bool mapping_uses_lfo_target(output_type_t type) {
+  return type == OUTPUT_TYPE_LFO_RATE || type == OUTPUT_TYPE_LFO_DEPTH;
+}
+
+static void append_continuous_mapping_block(scene_inspect_buf_t *b, const char *label,
+  const continuous_mapping_t *mapping, uint8_t scene_index, uint8_t nudge_pct) {
   if (!mapping || !mapping->enabled) return;
 
-  action_summary_t summary;
-  action_summary_init(&summary);
-  snprintf(summary.input_name, sizeof(summary.input_name), "%s", label);
-  continuous_format_summary(mapping, &summary, scene_index);
-  if (strcmp(summary.type_name, "Disabled") == 0) return;
-  append_summary_line(b, &summary);
+  if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    scene_inspect_buf_append(b, "%s: Tempo\n", label);
+    scene_inspect_buf_append(b, "Nudge %u%%\n\n", (unsigned)nudge_pct);
+    return;
+  }
+
+  if (mapping_uses_lfo_target(mapping->output_type)) {
+    const char *kind = (mapping->output_type == OUTPUT_TYPE_LFO_RATE) ? "LFO Rate" : "LFO Depth";
+    scene_inspect_buf_append(b, "%s: %s\n", label, kind);
+    scene_inspect_buf_append(b, "%s\n\n", inspect_lfo_target_label(mapping->lfo_target));
+    return;
+  }
+
+  if (mapping->output_type == OUTPUT_TYPE_LFO1_RATE ||
+      mapping->output_type == OUTPUT_TYPE_LFO1_DEPTH) {
+    const char *kind = (mapping->output_type == OUTPUT_TYPE_LFO1_RATE) ? "LFO 1 Rate" : "LFO 1 Depth";
+    scene_inspect_buf_append(b, "%s: %s\n", label, kind);
+    scene_inspect_buf_append(b, "LFO 2\n\n");
+    return;
+  }
+
+  if (mapping->output_type == OUTPUT_TYPE_LFO2_RATE ||
+      mapping->output_type == OUTPUT_TYPE_LFO2_DEPTH) {
+    const char *kind = (mapping->output_type == OUTPUT_TYPE_LFO2_RATE) ? "LFO 2 Rate" : "LFO 2 Depth";
+    scene_inspect_buf_append(b, "%s: %s\n", label, kind);
+    scene_inspect_buf_append(b, "LFO 1\n\n");
+    return;
+  }
+
+  if (mapping->output_type == OUTPUT_TYPE_CC) {
+    char cc_name[32];
+    const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
+    scene_inspect_buf_append(b, "%s: Control Change\n", label);
+    if (scene_inspect_cc_assigned(device, mapping->cc_number)) {
+      scene_inspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
+      scene_inspect_buf_append(b, "Set: %s %u-%u\n\n", cc_name,
+        (unsigned)mapping->min_value, (unsigned)mapping->max_value);
+    } else {
+      scene_inspect_buf_append(b, "Set: Unassigned!\n\n");
+    }
+    return;
+  }
+
+  if (mapping->output_type == OUTPUT_TYPE_NOTE) {
+    char lo[8];
+    char hi[8];
+    uint8_t top = mapping->base_note + mapping->note_range;
+    if (top > 127) top = 127;
+    scene_inspect_note_name(mapping->base_note, lo, sizeof(lo));
+    scene_inspect_note_name(top, hi, sizeof(hi));
+    scene_inspect_buf_append(b, "%s: Notes\n", label);
+    scene_inspect_buf_append(b, "Set: %s-%s\n\n", lo, hi);
+    return;
+  }
+
+  scene_inspect_buf_append(b, "%s: %s\n\n", label,
+    scene_inspect_output_type_name(mapping->output_type));
 }
 
 static void append_header(scene_inspect_buf_t *b, const scene_t *scene) {
@@ -207,23 +401,43 @@ static void append_overview(scene_inspect_buf_t *b, const scene_t *scene,
   }
 }
 
+static const char *inspect_pad_name(uint8_t pad_index) {
+  static const char *names[] = {
+    "Pad 1", "Pad 2", "Pad 3", "Pad 4", "Pad 5", "Pad 6", "Pad 7", "Pad 8",
+    "Omega", "Alpha", "Beta", "Gamma"
+  };
+  if (pad_index < NUM_TOUCHPADS) return names[pad_index];
+  return "?";
+}
+
 static void append_touchpads(scene_inspect_buf_t *b, const scene_t *scene,
   uint8_t scene_index) {
   if (!scene) return;
 
   int start_pad = (scene->touchwheel_mode == TOUCHWHEEL_MODE_PADS) ? 0 : TOUCHWHEEL_SIZE;
-  bool is_pads_mode = (scene->touchwheel_mode == TOUCHWHEEL_MODE_PADS);
+
+  bool any_pad = false;
+  for (int i = start_pad; i < NUM_TOUCHPADS; i++) {
+    const touchpad_mapping_t *map = &scene->touchpads[i];
+    if (map->enabled && map->action.type != ACTION_NONE) {
+      any_pad = true;
+      break;
+    }
+  }
+  if (!any_pad) return;
+
+  char pad_block[768];
 
   for (int i = start_pad; i < NUM_TOUCHPADS; i++) {
     const touchpad_mapping_t *map = &scene->touchpads[i];
     if (!map->enabled || map->action.type == ACTION_NONE) continue;
 
-    action_summary_t summary;
-    action_summary_init(&summary);
-    action_summary_set_input(&summary, (summary_input_t)(SUMMARY_INPUT_PAD_0 + i),
-      is_pads_mode);
-    action_format_summary(&map->action, &summary, scene_index);
-    append_summary_line(b, &summary);
+    if (!action_summary_format_inspect_pad(&map->action, inspect_pad_name((uint8_t)i),
+        scene_index, pad_block, sizeof(pad_block), true)) {
+      continue;
+    }
+
+    scene_inspect_buf_append(b, "%s\n\n", pad_block);
   }
 }
 
@@ -232,8 +446,20 @@ static void append_touchwheel(scene_inspect_buf_t *b, const scene_t *scene,
   if (!scene || scene->touchwheel_mode == TOUCHWHEEL_MODE_PADS) return;
 
   if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
-    if (!scene->touchwheel.enabled) return;
-    append_continuous_line(b, "Touchwheel", &scene->touchwheel, scene_index);
+    append_continuous_mapping_block(b, "Touchwheel", &scene->touchwheel, scene_index,
+      scene->touchwheel_tempo_nudge_pct);
+    return;
+  }
+
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_LFO_RATE) {
+    scene_inspect_buf_append(b, "Touchwheel: LFO Rate\n");
+    scene_inspect_buf_append(b, "%s\n\n", inspect_lfo_target_label(scene->touchwheel_lfo_target));
+    return;
+  }
+
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_LFO_DEPTH) {
+    scene_inspect_buf_append(b, "Touchwheel: LFO Depth\n");
+    scene_inspect_buf_append(b, "%s\n\n", inspect_lfo_target_label(scene->touchwheel_lfo_target));
     return;
   }
 
@@ -248,97 +474,234 @@ static void append_expression(scene_inspect_buf_t *b, const scene_t *scene,
   uint8_t scene_index) {
   if (!scene) return;
 
-  if (scene->expression_mode == EXPRESSION_MODE_PEDAL) {
-    if (scene->expression.enabled)
-      append_continuous_line(b, "Expression", &scene->expression, scene_index);
+  // CV/Gate mode owns the expression jack summary in append_cv().
+  if (scene->cv_input_mode == INPUT_MODE_NOTE) return;
+
+  bool connected = expression_is_connected();
+
+  if (scene->expression_mode == EXPRESSION_MODE_NONE ||
+      (scene->expression_mode == EXPRESSION_MODE_PEDAL && !scene->expression.enabled)) {
     return;
   }
 
-  const char *mode = NULL;
   switch (scene->expression_mode) {
-    case EXPRESSION_MODE_SUSTAIN: mode = "Sustain jack"; break;
-    case EXPRESSION_MODE_SOSTENUTO: mode = "Sostenuto jack"; break;
-    case EXPRESSION_MODE_SWITCH: mode = "Switch jack"; break;
-    case EXPRESSION_MODE_GATE: mode = "Gate jack"; break;
-    default: break;
-  }
-  if (!mode) return;
+    case EXPRESSION_MODE_PEDAL:
+      append_cv_mapping_block(b, "Expression", connected, &scene->expression, scene_index,
+        scene->expression_tempo_nudge_pct);
+      return;
 
-  bool has_action = false;
-  if (scene->expression_mode == EXPRESSION_MODE_SUSTAIN &&
-      scene->sustain.type != ACTION_NONE) {
-    append_action_line(b, mode, &scene->sustain, scene_index);
-    has_action = true;
-  } else if (scene->expression_mode == EXPRESSION_MODE_SOSTENUTO &&
-      scene->sostenuto.type != ACTION_NONE) {
-    append_action_line(b, mode, &scene->sostenuto, scene_index);
-    has_action = true;
-  } else if (scene->expression_mode == EXPRESSION_MODE_SWITCH &&
-      scene->expr_switch.type != ACTION_NONE) {
-    append_action_line(b, mode, &scene->expr_switch, scene_index);
-    has_action = true;
+    case EXPRESSION_MODE_SUSTAIN:
+      if (scene->sustain.type != ACTION_NONE) {
+        append_jack_action_block(b, "Sustain Pedal", connected, &scene->sustain, scene_index);
+      } else {
+        append_pedal_enabled_block(b, "Sustain Pedal", connected);
+      }
+      return;
+
+    case EXPRESSION_MODE_SOSTENUTO:
+      if (scene->sostenuto.type != ACTION_NONE) {
+        append_jack_action_block(b, "Sostenuto Pedal", connected, &scene->sostenuto, scene_index);
+      } else {
+        append_pedal_enabled_block(b, "Sostenuto Pedal", connected);
+      }
+      return;
+
+    case EXPRESSION_MODE_SWITCH:
+      append_jack_action_block(b, "Foot Switch", connected, &scene->expr_switch, scene_index);
+      return;
+
+    case EXPRESSION_MODE_GATE:
+      append_pedal_enabled_block(b, "Gate", connected);
+      return;
+
+    default:
+      return;
+  }
+}
+
+static void append_cv_audio_inspect(scene_inspect_buf_t *b, const scene_t *scene,
+  uint8_t scene_index, bool cv_connected) {
+  uint8_t sens = scene_get_audio_sensitivity(scene_index);
+  float gain = 0.25f * powf(256.0f, sens / 255.0f);
+  uint8_t thresh = scene_get_audio_threshold(scene_index);
+  cv_range_t audio_range = scene_get_audio_range(scene_index);
+  const char *range_str = (audio_range == CV_RANGE_BIPOLAR_10V) ? "+-10V" : "+-5V";
+  uint16_t attack = scene_get_audio_attack(scene_index);
+  uint16_t release = scene_get_audio_release(scene_index);
+
+  scene_inspect_buf_append(b, "Audio: %s\n", jack_connection_status(cv_connected));
+  scene_inspect_buf_append(b, "Sensitivity/Threshold/Range:\n");
+
+  if (gain >= 10.0f) {
+    scene_inspect_buf_append(b, "%.0fx, %u, %s\n", gain, (unsigned)thresh, range_str);
+  } else {
+    scene_inspect_buf_append(b, "%.1fx, %u, %s\n", gain, (unsigned)thresh, range_str);
   }
 
-  if (!has_action) scene_inspect_buf_append(b, "%s\n", mode);
+  scene_inspect_buf_append(b, "Attack/Release: %ums/%ums\n",
+    (unsigned)attack, (unsigned)release);
+
+  if (scene->cv.enabled) {
+    append_continuous_assignment(b, "Set", &scene->cv, scene_index);
+  }
+
+  scene_inspect_buf_append(b, "\n");
 }
 
 static void append_cv(scene_inspect_buf_t *b, const scene_t *scene,
   uint8_t scene_index) {
   if (!scene) return;
+
+  bool cv_connected = cv_is_cable_connected();
+  bool gate_connected = expression_is_connected();
+
   if (scene->cv_input_mode == INPUT_MODE_NONE && !scene->cv.enabled) return;
 
-  if (scene->cv.enabled) {
-    append_continuous_line(b, "Control Voltage", &scene->cv, scene_index);
+  if (scene->cv_input_mode == INPUT_MODE_NOTE) {
+    scene_inspect_buf_append(b, "CV: %s\n", jack_connection_status(cv_connected));
+    scene_inspect_buf_append(b, "Gate: %s\n", jack_connection_status(gate_connected));
+    scene_inspect_buf_append(b, "Velocity: %s\n\n", cv_velocity_inspect_label(scene));
     return;
   }
 
-  const char *cv_mode = "CV";
-  switch (scene->cv_input_mode) {
-    case INPUT_MODE_CV: cv_mode = "CV"; break;
-    case INPUT_MODE_CLOCK_SYNC: cv_mode = "Clock sync"; break;
-    case INPUT_MODE_AUDIO: cv_mode = "Audio"; break;
-    case INPUT_MODE_NOTE: cv_mode = "Note"; break;
-    default: return;
+  if (scene->cv_input_mode == INPUT_MODE_AUDIO) {
+    append_cv_audio_inspect(b, scene, scene_index, cv_connected);
+    return;
   }
-  scene_inspect_buf_append(b, "Control Voltage: %s\n", cv_mode);
+
+  if (scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) {
+    scene_inspect_buf_append(b, "CV: %s\n", jack_connection_status(cv_connected));
+    scene_inspect_buf_append(b, "Clock sync\n\n");
+    return;
+  }
+
+  if (scene->cv_input_mode == INPUT_MODE_CV) {
+    append_cv_mapping_block(b, "CV", cv_connected, &scene->cv, scene_index,
+      scene->cv_tempo_nudge_pct);
+    return;
+  }
+
+  scene_inspect_buf_append(b, "CV: %s\n\n", jack_connection_status(cv_connected));
 }
 
 static void append_buttons(scene_inspect_buf_t *b, const scene_t *scene,
   uint8_t scene_index) {
   if (!scene) return;
 
-  append_action_line(b, "Left Button", &scene->button_left, scene_index);
-  append_action_line(b, "Right Button", &scene->button_right, scene_index);
-  append_action_line(b, "Both Buttons", &scene->button_both, scene_index);
+  bool any = false;
+  if (scene->button_left.type != ACTION_NONE) {
+    append_inspect_action(b, "Left", &scene->button_left, scene_index, false, true);
+    any = true;
+  }
+  if (scene->button_right.type != ACTION_NONE) {
+    append_inspect_action(b, "Right", &scene->button_right, scene_index, false, true);
+    any = true;
+  }
+  if (scene->button_both.type != ACTION_NONE) {
+    append_inspect_action(b, "Both", &scene->button_both, scene_index, false, true);
+    any = true;
+  }
+  if (any) scene_inspect_buf_append(b, "\n");
+}
+
+static const char *inspect_lfo_waveform_label(lfo_waveform_t wf) {
+  switch (wf) {
+    case LFO_WAVEFORM_SINE: return "Sine";
+    case LFO_WAVEFORM_TRIANGLE: return "Triangle";
+    case LFO_WAVEFORM_SQUARE: return "Square";
+    case LFO_WAVEFORM_SAW_UP: return "Saw Up";
+    case LFO_WAVEFORM_SAW_DOWN: return "Saw Down";
+    case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
+    case LFO_WAVEFORM_CUSTOM: return "Custom";
+    default: return "?";
+  }
+}
+
+static const char *inspect_lfo_division_note_label(lfo_note_division_t div) {
+  switch (div) {
+    case LFO_DIVISION_HALF: return "1/2 Note Division";
+    case LFO_DIVISION_QUARTER: return "1/4 Note Division";
+    case LFO_DIVISION_EIGHTH: return "1/8 Note Division";
+    case LFO_DIVISION_SIXTEENTH: return "1/16 Note Division";
+    case LFO_DIVISION_32ND: return "1/32 Note Division";
+    case LFO_DIVISION_1_BAR: return "1 Bar Division";
+    case LFO_DIVISION_2_BARS: return "2 Bar Division";
+    case LFO_DIVISION_4_BARS: return "4 Bar Division";
+    case LFO_DIVISION_8_BARS: return "8 Bar Division";
+    case LFO_DIVISION_12_BARS: return "12 Bar Division";
+    case LFO_DIVISION_16_BARS: return "16 Bar Division";
+    default: return "?";
+  }
+}
+
+static const char *inspect_lfo_external_timing_label(lfo_rate_mode_t mode) {
+  switch (mode) {
+    case LFO_RATE_MODE_TOUCHWHEEL: return "Touchwheel";
+    case LFO_RATE_MODE_EXPRESSION: return "Expression";
+    case LFO_RATE_MODE_CV: return "CV";
+    case LFO_RATE_MODE_ALS: return "ALS";
+    case LFO_RATE_MODE_PROXIMITY: return "Proximity";
+    default: return "?";
+  }
 }
 
 static void append_lfo_slot(scene_inspect_buf_t *b, uint8_t slot,
   const scene_t *scene, uint8_t scene_index) {
   const lfo_config_t *config = (slot == 0) ? &scene->lfo1_config : &scene->lfo2_config;
   const continuous_mapping_t *mapping = (slot == 0) ? &scene->lfo1 : &scene->lfo2;
+  const char *label = (slot == 0) ? "LFO 1" : "LFO 2";
+
   if (!config->enabled && !mapping->enabled) return;
 
-  action_summary_t summary;
-  action_summary_init(&summary);
-  action_summary_set_input(&summary,
-    slot == 0 ? SUMMARY_INPUT_LFO1 : SUMMARY_INPUT_LFO2, true);
-  lfo_format_summary(slot, scene, &summary, scene_index);
-  if (strcmp(summary.type_name, "Disabled") == 0) return;
-  append_summary_line(b, &summary);
+  scene_inspect_buf_append(b, "%s: %s\n", label,
+    inspect_lfo_waveform_label(config->waveform));
+
+  if (config->rate_mode == LFO_RATE_MODE_FREE) {
+    float hz = (float)config->rate_hz_x100 / 100.0f;
+    scene_inspect_buf_append(b, "Free Timing: %.1fHz\n", hz);
+  } else if (config->rate_mode == LFO_RATE_MODE_TEMPO) {
+    scene_inspect_buf_append(b, "Tempo Sync: %s\n",
+      inspect_lfo_division_note_label(config->division));
+  } else {
+    scene_inspect_buf_append(b, "Timing: %s\n",
+      inspect_lfo_external_timing_label(config->rate_mode));
+  }
+
+  if (mapping->enabled) {
+    append_continuous_assignment(b, "Set", mapping, scene_index);
+  }
+
+  scene_inspect_buf_append(b, "\n");
+}
+
+static const char *inspect_rtg_generator_label(rtg_generator_t gen) {
+  switch (gen) {
+    case RTG_GEN_SHEPARD: return "Shepard Tone";
+    default: return "Random";
+  }
 }
 
 static void append_rtg(scene_inspect_buf_t *b, const scene_t *scene) {
   if (!scene || !scene->rtg_config.enabled) return;
 
   const rtg_config_t *rc = &scene->rtg_config;
+  scene_inspect_buf_append(b, "RTG: %s\n", inspect_rtg_generator_label(rc->generator));
+
   if (rc->rate_mode == RTG_RATE_MODE_FREE) {
     float hz = (float)rc->rate_hz_x100 / 100.0f;
-    scene_inspect_buf_append(b, "RTG: %s %.1f Hz\n",
-      rtg_generator_to_string(rc->generator), hz);
+    scene_inspect_buf_append(b, "Rate: %.1f Hz\n", hz);
   } else {
     float mult = (float)rc->sync_mult_x1000 / 1000.0f;
-    scene_inspect_buf_append(b, "RTG: %s %.2fx BPM\n",
-      rtg_generator_to_string(rc->generator), mult);
+    scene_inspect_buf_append(b, "Rate: %.1fx BPM\n", mult);
+  }
+
+  scene_inspect_buf_append(b, "Glide: %s\n\n", rc->glide ? "On" : "Off");
+}
+
+static const char *inspect_sh_mode_label(sample_hold_mode_t mode) {
+  switch (mode) {
+    case SAMPLE_HOLD_MODE_STEP: return "Step";
+    default: return "Continuous";
   }
 }
 
@@ -346,12 +709,38 @@ static void append_sample_hold(scene_inspect_buf_t *b, const scene_t *scene,
   uint8_t scene_index) {
   if (!scene || !scene->sample_hold_config.enabled) return;
 
-  action_summary_t summary;
-  action_summary_init(&summary);
-  action_summary_set_input(&summary, SUMMARY_INPUT_SAMPLE_HOLD, true);
-  sample_hold_format_summary(scene, &summary, scene_index);
-  if (strcmp(summary.type_name, "Disabled") == 0) return;
-  append_summary_line(b, &summary);
+  const sample_hold_config_t *config = &scene->sample_hold_config;
+  const continuous_mapping_t *mapping = &scene->sample_hold;
+
+  scene_inspect_buf_append(b, "S+H: %s\n", inspect_sh_mode_label(config->mode));
+
+  if (config->rate_mode == SAMPLE_HOLD_RATE_MODE_FREE) {
+    float hz = (float)config->rate_hz_x100 / 100.0f;
+    scene_inspect_buf_append(b, "Timing: %.1f Hz\n", hz);
+  } else {
+    float mult = (float)config->sync_mult_x1000 / 1000.0f;
+    scene_inspect_buf_append(b, "Timing: %.1fx BPM\n", mult);
+  }
+
+  if (mapping->enabled) {
+    append_continuous_assignment(b, "Set", mapping, scene_index);
+  }
+
+  scene_inspect_buf_append(b, "\n");
+}
+
+static void append_note_track(scene_inspect_buf_t *b, const scene_t *scene,
+  uint8_t scene_index) {
+  if (!scene || !scene->note_track.enabled) return;
+
+  scene_inspect_buf_append(b, "Note Track: %s\n",
+    scene_inspect_output_type_name(scene->note_track.output_type));
+
+  if (scene->note_track.output_type == OUTPUT_TYPE_CC) {
+    append_continuous_assignment(b, "Set", &scene->note_track, scene_index);
+  }
+
+  scene_inspect_buf_append(b, "\n");
 }
 
 static void append_on_load(scene_inspect_buf_t *b, const scene_t *scene,
@@ -363,7 +752,7 @@ static void append_on_load(scene_inspect_buf_t *b, const scene_t *scene,
     if (action->type == ACTION_NONE) continue;
     char label[16];
     snprintf(label, sizeof(label), "On-Load %d", i + 1);
-    append_action_line(b, label, action, scene_index);
+    append_inspect_action(b, label, action, scene_index, true, false);
   }
 }
 
@@ -376,7 +765,7 @@ static void append_on_play(scene_inspect_buf_t *b, const scene_t *scene,
     if (action->type == ACTION_NONE) continue;
     char label[16];
     snprintf(label, sizeof(label), "On-Play %d", i + 1);
-    append_action_line(b, label, action, scene_index);
+    append_inspect_action(b, label, action, scene_index, true, true);
   }
 }
 
@@ -409,19 +798,23 @@ bool scene_inspect_build(const scene_t *scene, uint8_t scene_index, char *buf,
   append_touchwheel(&b, scene, scene_index);
   append_expression(&b, scene, scene_index);
   append_cv(&b, scene, scene_index);
-  append_continuous_line(&b, "Proximity", &scene->proximity, scene_index);
-  append_continuous_line(&b, "Ambient Light", &scene->als, scene_index);
+  append_continuous_mapping_block(&b, "Proximity", &scene->proximity, scene_index,
+    scene->proximity_tempo_nudge_pct);
+  append_continuous_mapping_block(&b, "Ambient Light", &scene->als, scene_index,
+    scene->als_tempo_nudge_pct);
   append_buttons(&b, scene, scene_index);
   append_lfo_slot(&b, 0, scene, scene_index);
   append_lfo_slot(&b, 1, scene, scene_index);
-  append_action_line(&b, "Bump", &scene->bump, scene_index);
+  append_inspect_action(&b, "Bump", &scene->bump, scene_index, true, true);
   append_on_load(&b, scene, scene_index);
   append_on_play(&b, scene, scene_index);
   append_sample_hold(&b, scene, scene_index);
-  append_continuous_line(&b, "Tilt X", &scene->tilt_x, scene_index);
-  append_continuous_line(&b, "Tilt Y", &scene->tilt_y, scene_index);
+  append_continuous_mapping_block(&b, "Tilt X", &scene->tilt_x, scene_index,
+    scene->tilt_x_tempo_nudge_pct);
+  append_continuous_mapping_block(&b, "Tilt Y", &scene->tilt_y, scene_index,
+    scene->tilt_y_tempo_nudge_pct);
   append_rtg(&b, scene);
-  append_continuous_line(&b, "Note Track", &scene->note_track, scene_index);
+  append_note_track(&b, scene, scene_index);
   append_pending(&b);
 
   append_truncation_marker(&b);

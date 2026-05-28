@@ -100,6 +100,9 @@ typedef enum {
 
   // Boomerang (ADSR-style envelope: dive to target, hold, return)
   ACTION_BOOMERANG,           // 3-phase envelope on any continuous output
+
+  // Performance-mode scene summary overlay (hold to show, release to dismiss)
+  ACTION_INSPECT_SCENE,
   
   ACTION_MAX
 } action_type_t;

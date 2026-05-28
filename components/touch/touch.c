@@ -412,9 +412,14 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     // pressed). A human finger holds at most 2 adjacent pads during transition;
     // PRESS_TIME_HELD_OVERRIDE+ pads simultaneously held overrides the
     // rotation exemption and triggers quarantine regardless.
+    //
+    // Hold-action pads are excluded from both counts (same as stuck detection):
+    // a user can hold a note on one pad while pitch-bending on the touchwheel
+    // without tripping the multi-pad limit.
     int recent_press_count = 0;
     uint32_t recent_press_mask = 0;
     for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+      if (s_hold_active[i]) continue;
       if (s_pad_press_timestamps[i] > 0 &&
           (now - s_pad_press_timestamps[i]) <= PRESS_TIME_SYSTEM_EVENT_WINDOW_MS) {
         recent_press_count++;
@@ -426,10 +431,12 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
       bool wheel_active = any_touchwheel_interaction_active();
 
       // Count pads currently held (state-based). The CURRENT press hasn't set
-      // s_button_pressed_states[pad_index] yet, so add 1 for it.
-      int held_count = 1;
+      // s_button_pressed_states[pad_index] yet, so add 1 for it unless this pad
+      // is already marked hold-active (shouldn't happen, but be consistent).
+      int held_count = s_hold_active[pad_index] ? 0 : 1;
       for (int i = 0; i < MAX_TOUCH_PADS; i++) {
         if (i == pad_index) continue;
+        if (s_hold_active[i]) continue;
         if (s_button_pressed_states[i]) held_count++;
       }
 

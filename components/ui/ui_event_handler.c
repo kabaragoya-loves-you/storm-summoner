@@ -70,6 +70,10 @@ static int s_inspect_scroll_pad = -1;
 static void inspect_scroll_async(void *user_data) {
   (void)user_data;
   if (s_inspect_scroll_pad < 0) return;
+  if (!inspect_scene_is_active()) {
+    s_inspect_scroll_pad = -1;
+    return;
+  }
   if (inspect_scene_jog_scroll((uint8_t)s_inspect_scroll_pad)) post_haptic_click();
   s_inspect_scroll_pad = -1;
 }
@@ -262,9 +266,13 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       }
     }
     
-    // Pad 10: open Inspect Scene (programming mode only)
+    // Pad 10 (Beta): open or close Inspect Scene (programming mode only)
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING && pad_id == PAD_10_LOGICAL) {
-      if (!inspect_scene_is_active()) {
+      if (inspect_scene_is_active()) {
+        menu_navigate_back();
+        post_haptic_click();
+        ESP_LOGD(TAG, "Pad 10: Inspect Scene back");
+      } else {
         menu_navigate_to("Inspect Scene", menu_page_inspect_scene_create);
         post_haptic_click();
       }

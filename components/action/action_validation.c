@@ -13,6 +13,7 @@ static const char* TAG = "action_validation";
 static const action_type_t hold_actions[] = {
   ACTION_NOTE,
   ACTION_PIANO_PEDAL,
+  ACTION_INSPECT_SCENE,
   // ACTION_LFO is intentionally NOT in this list. None of its variants are
   // press/release pairs (START/STOP/TOGGLE/MODIFY are all press-only). The
   // per-variant timing/repeat restrictions for TOGGLE live in the
@@ -550,7 +551,13 @@ void action_validate_scene_timings(scene_t* scene) {
   if (action_validate_timing(&scene->bump, beats)) remapped++;
 
   for (int i = 0; i < scene->num_on_load_actions && i < MAX_ON_LOAD_ACTIONS; i++) {
-    if (action_validate_timing(&scene->on_load[i], beats)) remapped++;
+    action_t *a = &scene->on_load[i];
+    if (a->type != ACTION_NONE) {
+      a->timing = ACTION_TIMING_IMMEDIATE;
+      a->timing_beat = 0;
+      a->repeat_enabled = false;
+    }
+    if (action_validate_timing(a, beats)) remapped++;
   }
 
   if (action_validate_timing(&scene->sustain, beats)) remapped++;

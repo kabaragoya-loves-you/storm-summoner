@@ -32,6 +32,7 @@ VALID_ACTION_TYPES = %w[
   rtg rtg_toggle rtg_hold
   sample_hold sample_hold_toggle sample_hold_hold
   step
+  inspect_scene
 ].freeze
 
 # Valid touchwheel modes

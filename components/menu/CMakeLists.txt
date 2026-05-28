@@ -39,6 +39,7 @@ idf_component_register(
     "pages/sample_hold_scene.c"
     "pages/note_track_scene.c"
     "pages/settings_note_track.c"
+    "pages/settings_scene_inspect.c"
     "pages/inspect_scene.c"
   INCLUDE_DIRS
     "include"

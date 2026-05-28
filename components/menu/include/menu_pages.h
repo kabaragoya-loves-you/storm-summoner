@@ -41,6 +41,7 @@ lv_obj_t* menu_page_sample_hold_scene_create(void);   // Scene -> S+H
 lv_obj_t* menu_page_note_track_scene_create(void); // Scene -> Note Track
 void menu_page_note_track_scene_cleanup(void);
 lv_obj_t* menu_page_settings_note_track_create(void); // Settings -> Note Track
+lv_obj_t* menu_page_settings_scene_inspect_create(void); // Settings -> Scene Inspect
 lv_obj_t* menu_page_tilt_scene_create(void);          // Scene -> Tilt (submenu)
 lv_obj_t* menu_page_tilt_axis_scene_create(void);     // Scene -> Tilt -> X/Y (parameterized)
 void menu_page_tilt_axis_scene_cleanup(void);         // Free PSRAM allocations for CC options
@@ -56,10 +57,11 @@ lv_obj_t* menu_page_buttons_create(void);
 lv_obj_t* menu_page_bump_create(void);
 lv_obj_t* menu_page_display_create(void);
 
-// Inspect Scene - scrollable scene summary (pad 10 in programming mode)
+// Inspect Scene - scrollable scene summary (pad 10 open/close; pads 8 and 12 back)
 lv_obj_t* menu_page_inspect_scene_create(void);
 void menu_page_inspect_scene_cleanup(void);
 bool inspect_scene_is_active(void);
+void inspect_scene_invalidate_scroll(void);
 void inspect_scene_rebind_input(void);
 bool inspect_scene_jog_scroll(uint8_t pad_id);
 

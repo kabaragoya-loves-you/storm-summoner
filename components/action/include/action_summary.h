@@ -92,4 +92,19 @@ void action_summary_format_display(const action_summary_t *summary,
 void action_summary_format_line(const action_summary_t *summary,
   char *buf, size_t len);
 
+// Multi-line inspect block for one pad (family line + variant detail + options).
+// Returns false if action is unset. buf receives newline-separated lines, no trailing blank line.
+bool action_summary_format_inspect_pad(const action_t *action, const char *pad_name,
+  uint8_t scene_index, char *buf, size_t len, bool show_scheduling);
+
+// Variant/options lines only (no label/family header).
+bool action_summary_format_inspect_action_body(const action_t *action, uint8_t scene_index,
+  char *buf, size_t len);
+
+// Continuous mapping lines (output type, target/range, curve, polarity).
+bool action_summary_format_inspect_continuous(const continuous_mapping_t *mapping,
+  uint8_t scene_index, char *buf, size_t len);
+
+const char *action_summary_inspect_family_name(action_type_t type);
+
 #endif // ACTION_SUMMARY_H

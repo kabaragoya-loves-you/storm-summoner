@@ -77,6 +77,11 @@ static void nav_to_display(void* user_data) {
   menu_navigate_to("Display", menu_page_display_create);
 }
 
+static void nav_to_scene_inspect(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Scene Inspect", menu_page_settings_scene_inspect_create);
+}
+
 // Factory Reset confirmation
 static void factory_reset_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -117,6 +122,7 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Buttons", nav_to_buttons, NULL, true },
     { "Bump", nav_to_bump, NULL, true },
     { "Display", nav_to_display, NULL, true },
+    { "Scene Inspect", nav_to_scene_inspect, NULL, true },
     { "Factory Reset", nav_to_factory_reset, NULL, true }
   };
   

@@ -5,6 +5,7 @@
 #include "tempo.h"
 #include "touchwheel_mode_mapping.h"
 #include "ui.h"
+#include "inspect_overlay.h"
 #include "esp_log.h"
 #include "esp_random.h"
 
@@ -470,6 +471,14 @@ action_handle_result_t action_handlers_scene_dispatch(
           ESP_LOGW(TAG, "Unknown Param variant %d", (int)action->variant);
           return ACTION_HANDLED;
       }
+
+    case ACTION_INSPECT_SCENE:
+      if (is_press) {
+        inspect_overlay_show();
+      } else {
+        inspect_overlay_hide();
+      }
+      return ACTION_HANDLED;
 
     default:
       return ACTION_NOT_HANDLED;

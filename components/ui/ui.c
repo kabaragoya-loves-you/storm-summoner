@@ -1,6 +1,8 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "shared_canvas_buffer.h"
+#include "inspect_config.h"
+#include "inspect_overlay.h"
 #include "touchwheel.h"
 #include "touchwheel_outputs.h"
 #include "touch.h"
@@ -444,6 +446,7 @@ void ui_init(void) {
   g_ui_has_buffer = true;  // UI now owns the shared buffer
 
   ui_event_handler_init();
+  inspect_config_init();
 }
 
 app_mode_t ui_get_app_mode(void) {
@@ -464,6 +467,7 @@ void ui_set_app_mode(app_mode_t mode) {
   // When returning from screensaver, ui_reclaim_canvas_buffer will restore menu/touchwheel
   if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING
       && previous_mode != APP_MODE_SCREENSAVER) {
+    inspect_overlay_hide();
     // Suspend scene input first: this snapshots the LFO running state and
     // stops the LFO loops so they don't emit fresh values during release.
     scene_suspend_input();
@@ -550,6 +554,7 @@ void ui_scene_transition_begin(void) {
   s_scene_transitioning = true;
   s_staged_module = NULL;
   s_transition_start_us = esp_timer_get_time();
+  inspect_overlay_hide();
   ui_graphics_suspend();
   ESP_LOGI(TAG, "Scene transition begin");
 }

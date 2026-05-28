@@ -1952,11 +1952,14 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   
   ESP_LOGI(TAG, "Switched to scene %d: %s", scene_index + 1, new_scene->name);
   
-  // Configure expression jack mode for this scene
-  expression_set_mode(new_scene->expression_mode);
-  
-  // Configure CV input mode for this scene
+  // Configure CV input mode before expression — NOTE mode locks expression to GATE.
+  if (new_scene->cv_input_mode != INPUT_MODE_NOTE &&
+      new_scene->expression_mode == EXPRESSION_MODE_GATE) {
+    new_scene->expression_mode = EXPRESSION_MODE_NONE;
+    new_scene->expression.enabled = false;
+  }
   input_set_mode(new_scene->cv_input_mode);
+  expression_set_mode(new_scene->expression_mode);
   
   // Configure tempo settings for this scene
   tempo_set_bpm(new_scene->bpm);
@@ -3238,25 +3241,23 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   // INPUT_MODE_CLOCK_SYNC: CV is used for tempo, not continuous routing
   
   scene_persist_if_programming();
-  
+
+  bool is_current = (scene_index == g_scene_manager.current_scene_index);
+
   // State machine: NOTE mode requires GATE expression mode
   if (mode == INPUT_MODE_NOTE) {
     scene->expression_mode = EXPRESSION_MODE_GATE;
     ESP_LOGI(TAG, "Expression mode automatically set to GATE for NOTE input mode");
-    
-    // Update hardware if this is the current scene
-    if (scene_index == g_scene_manager.current_scene_index) {
-      expression_set_mode(EXPRESSION_MODE_GATE);
-    }
+    if (is_current) input_set_mode(INPUT_MODE_NOTE);
   } else if (old_mode == INPUT_MODE_NOTE) {
-    // Changing FROM NOTE mode - set expression to PEDAL mode
-    scene->expression_mode = EXPRESSION_MODE_PEDAL;
-    ESP_LOGI(TAG, "Expression mode set to PEDAL (leaving NOTE mode)");
-    
-    // Update hardware if this is the current scene
-    if (scene_index == g_scene_manager.current_scene_index) {
-      expression_set_mode(EXPRESSION_MODE_PEDAL);
+    scene->expression_mode = EXPRESSION_MODE_NONE;
+    ESP_LOGI(TAG, "Expression mode set to Disabled (leaving NOTE mode)");
+    if (is_current) {
+      input_set_mode(mode);
+      expression_set_mode(EXPRESSION_MODE_NONE);
     }
+  } else if (is_current && mode != old_mode) {
+    input_set_mode(mode);
   }
   
   const char* mode_str = (mode == INPUT_MODE_NONE) ? "none" :
@@ -3317,13 +3318,13 @@ esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t sourc
     input_mode_t old_input_mode = scene->cv_input_mode;
     scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
     
-    // If we were in NOTE mode, also reset expression mode to PEDAL
+    // If we were in NOTE mode, also reset expression mode to Disabled
     if (old_input_mode == INPUT_MODE_NOTE) {
-      scene->expression_mode = EXPRESSION_MODE_PEDAL;
-      ESP_LOGI(TAG, "Expression mode set to PEDAL (leaving NOTE mode for clock sync)");
+      scene->expression_mode = EXPRESSION_MODE_NONE;
+      ESP_LOGI(TAG, "Expression mode set to Disabled (leaving NOTE mode for clock sync)");
       
       if (scene_index == g_scene_manager.current_scene_index) {
-        expression_set_mode(EXPRESSION_MODE_PEDAL);
+        expression_set_mode(EXPRESSION_MODE_NONE);
       }
     }
     
@@ -3942,7 +3943,8 @@ static const char* action_type_json_names[] = {
   [ACTION_SAMPLE_HOLD] = "sample_hold",
   [ACTION_PUNCH_IN] = "punch_in",
   [ACTION_FLAG_CEREMONY] = "flag_ceremony",
-  [ACTION_BOOMERANG] = "boomerang"
+  [ACTION_BOOMERANG] = "boomerang",
+  [ACTION_INSPECT_SCENE] = "inspect_scene"
 };
 
 // Variant string table for consolidated action families. Indexed by
