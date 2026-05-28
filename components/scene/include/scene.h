@@ -448,6 +448,9 @@ bool scene_name_exists(const char* name, int8_t exclude_index);
 esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index);
 uint16_t scene_get_count(void);           // Active scenes only
 uint16_t scene_get_total_count(void);      // All scenes (active + inactive)
+// 1-based position among active scenes; returns false if scene_index not active
+bool scene_get_active_slot(uint8_t scene_index, uint16_t *ordinal_1based,
+  uint16_t *active_total);
 bool scene_is_active(uint8_t scene_index);
 esp_err_t scene_set_active(uint8_t scene_index, bool active);
 const char* scene_get_name_by_position(uint16_t position);

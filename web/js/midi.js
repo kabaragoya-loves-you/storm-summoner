@@ -354,6 +354,8 @@ application.register(
 
               if (line.startsWith('M:')) {
                 this.processCdcMessage(line)
+              } else if (line.startsWith('EVT:')) {
+                this.connection.dispatchCdcNotify(line)
               } else if (line === 'MIDI_STARTED') {
                 // Ready
               }

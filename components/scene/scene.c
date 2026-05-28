@@ -65,6 +65,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene);
 static void scene_init_defaults(scene_t* scene, uint8_t index);
 static void scene_cleanup_touchwheel(void);
 static void scene_setup_touchwheel_for_mode(const scene_t* scene);
+static void scene_post_updated_event(uint8_t scene_index);
 
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
@@ -6777,6 +6778,8 @@ esp_err_t scene_save_to_flash(uint8_t scene_index) {
   free(json_str);
   
   ESP_LOGI(TAG, "Saved scene %d to flash", scene_index);
+  if (scene_index == g_scene_manager.current_scene_index)
+    scene_post_updated_event(scene_index);
   return ESP_OK;
 }
 
@@ -6867,6 +6870,35 @@ uint16_t scene_get_count(void) {
     if (g_scene_manager.manifest[i].active) count++;
   }
   return count;
+}
+
+bool scene_get_active_slot(uint8_t scene_index, uint16_t *ordinal_1based,
+  uint16_t *active_total) {
+  uint16_t total = scene_get_count();
+  if (active_total) *active_total = total;
+
+  uint16_t ordinal = 0;
+  for (uint16_t i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (!g_scene_manager.manifest[i].active) continue;
+    ordinal++;
+    if (g_scene_manager.manifest[i].index == scene_index) {
+      if (ordinal_1based) *ordinal_1based = ordinal;
+      return true;
+    }
+  }
+
+  if (ordinal_1based) *ordinal_1based = 0;
+  return false;
+}
+
+static void scene_post_updated_event(uint8_t scene_index) {
+  event_t event = {
+    .type = EVENT_SCENE_UPDATED,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data = {.value_uint8 = scene_index}
+  };
+  event_bus_post(&event);
 }
 
 uint16_t scene_get_total_count(void) {

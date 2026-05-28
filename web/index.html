@@ -43,6 +43,7 @@
     <div class="tab-container">
       <wa-tab-group>
         <wa-tab slot="nav" panel="info" active>Info</wa-tab>
+        <wa-tab slot="nav" panel="scene">Scene</wa-tab>
         <wa-tab slot="nav" panel="pedals">Pedals</wa-tab>
         <wa-tab slot="nav" panel="assets">Assets</wa-tab>
         <wa-tab slot="nav" panel="console">Console</wa-tab>
@@ -84,6 +85,48 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Current Scene Card -->
+              <div class="info-card">
+                <div class="info-card-header">
+                  <wa-icon name="layer-group"></wa-icon>
+                  <h3>Scene</h3>
+                </div>
+                <div class="info-card-body" data-info-target="sceneCard">
+                  <div class="empty-state">
+                    <wa-icon name="link-slash"></wa-icon>
+                    <p>Connect to view scene info</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </wa-tab-panel>
+
+        <!-- Scene Tab (inspect) -->
+        <wa-tab-panel name="scene">
+          <div class="tab-content scene-inspect-panel" data-controller="scene">
+            <div class="toolbar">
+              <div class="toolbar-spacer"></div>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-scene-target="editBtn"
+                         data-action="click->scene#toggleEdit">
+                Edit
+              </wa-button>
+            </div>
+
+            <div class="scene-inspect-body" data-scene-target="inspectView">
+              <wa-callout variant="warning" class="scene-truncated-banner hidden"
+                          data-scene-target="truncatedBanner">
+                <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
+                Inspect text was truncated on device.
+              </wa-callout>
+              <pre class="scene-inspect-text empty" data-scene-target="inspectText">Connect to view scene inspect text</pre>
+            </div>
+
+            <div class="scene-edit-placeholder hidden" data-scene-target="editView">
+              <wa-icon name="pen-to-square"></wa-icon>
+              <p>Scene editing is not available yet.</p>
             </div>
           </div>
         </wa-tab-panel>
@@ -624,6 +667,7 @@
   <!-- App Scripts -->
   <script src="/js/app.js"></script>
   <script src="/js/info.js"></script>
+  <script src="/js/scene.js"></script>
   <script src="/js/pedals.js"></script>
   <script src="/js/assets.js"></script>
   <script src="/js/console.js"></script>

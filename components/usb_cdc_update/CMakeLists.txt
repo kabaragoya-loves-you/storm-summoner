@@ -18,6 +18,7 @@ idf_component_register(
     mbedtls
     settings_registry
     scene
+    json
   PRIV_REQUIRES
     main
 )

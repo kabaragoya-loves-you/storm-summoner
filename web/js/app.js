@@ -17,6 +17,12 @@ window.ConnectionManager = (function () {
       // splits, etc.).
       this._rxBuffer = ''
       this._rxDecoder = new TextDecoder()
+      this._rxPumpRunning = false
+      this._rxPumpReader = null
+      this._pumpSuspended = false
+      this._lineQueue = []
+      this._lineWaiters = []
+      this._commandChain = Promise.resolve()
     }
 
     // Event handling
@@ -63,6 +69,9 @@ window.ConnectionManager = (function () {
         // Listen for unexpected disconnection
         navigator.serial.addEventListener('disconnect', this.onPortDisconnect)
 
+        this._startRxPump()
+        await this.sleep(50)
+        await this.drainInput()
         this.emit('connection:changed', { connected: true })
         return true
       } catch (err) {
@@ -75,9 +84,12 @@ window.ConnectionManager = (function () {
     onPortDisconnect = event => {
       if (event.target === this.port) {
         console.log('USB device disconnected')
+        this._stopRxPump()
         this.port = null
         this.mode = null
         this._rxBuffer = ''
+        this._lineQueue = []
+        this._lineWaiters = []
         this.setTabsLocked(false)
         navigator.serial.removeEventListener(
           'disconnect',
@@ -91,6 +103,7 @@ window.ConnectionManager = (function () {
     async disconnect () {
       if (!this.port) return
 
+      this._stopRxPump()
       navigator.serial.removeEventListener('disconnect', this.onPortDisconnect)
 
       try {
@@ -104,6 +117,8 @@ window.ConnectionManager = (function () {
         this.port = null
         this.mode = null
         this._rxBuffer = ''
+        this._lineQueue = []
+        this._lineWaiters = []
         this.setTabsLocked(false)
         this.emit('connection:changed', { connected: false })
       }
@@ -163,54 +178,342 @@ window.ConnectionManager = (function () {
       }
     }
 
-    async sendCommand (cmd, timeout = 30000) {
-      if (!this.port) throw new Error('Not connected')
-      await this.sendRaw(cmd + '\n')
-      return this.readLine(timeout)
+    _takeLineFromBuffer () {
+      const idx = this._rxBuffer.indexOf('\n')
+      if (idx === -1) return null
+      const line = this._rxBuffer.substring(0, idx).replace(/\r/g, '').trim()
+      this._rxBuffer = this._rxBuffer.substring(idx + 1)
+      return line
+    }
+
+    dispatchCdcNotify (line) {
+      if (!line.startsWith('EVT:')) return false
+      const parts = line.split(':')
+      if (parts.length < 3) return true
+      const kind = parts[1]
+      const index = parseInt(parts[2], 10)
+      document.dispatchEvent(new CustomEvent('cdc:notify', {
+        detail: { kind, index: Number.isNaN(index) ? -1 : index }
+      }))
+      return true
+    }
+
+    _deliverLine (line) {
+      if (this._lineWaiters.length > 0) {
+        const waiter = this._lineWaiters.shift()
+        if (waiter.timer) clearTimeout(waiter.timer)
+        waiter.resolve(line)
+      } else {
+        this._lineQueue.push(line)
+      }
+    }
+
+    _processIncomingLines () {
+      while (true) {
+        const line = this._takeLineFromBuffer()
+        if (line === null) break
+        if (this.dispatchCdcNotify(line)) continue
+        this._deliverLine(line)
+      }
+    }
+
+    _tryDequeueLine () {
+      if (this._lineQueue.length > 0) return this._lineQueue.shift()
+      while (true) {
+        const line = this._takeLineFromBuffer()
+        if (line === null) return null
+        if (this.dispatchCdcNotify(line)) continue
+        return line
+      }
+    }
+
+    _releaseRxPumpReader () {
+      if (!this._rxPumpReader) return
+      try {
+        this._rxPumpReader.releaseLock()
+      } catch (e) {}
+      this._rxPumpReader = null
+    }
+
+    async _waitForPumpReaderRelease (ms = 500) {
+      const deadline = Date.now() + ms
+      while (this._rxPumpReader && Date.now() < deadline) {
+        await this.sleep(10)
+      }
+    }
+
+    async _suspendRxPump () {
+      this._pumpSuspended = true
+      const reader = this._rxPumpReader
+      if (reader) {
+        try {
+          await reader.cancel()
+        } catch (e) {}
+      }
+      await this._waitForPumpReaderRelease()
+      if (this._rxPumpReader) this._releaseRxPumpReader()
+    }
+
+    _resumeRxPump () {
+      this._pumpSuspended = false
+      if (this.port) this._processIncomingLines()
+      if (!this._rxPumpRunning && this.port) {
+        this._startRxPump()
+      }
+    }
+
+    _rejectLineWaiters () {
+      const waiters = this._lineWaiters
+      this._lineWaiters = []
+      for (const waiter of waiters) waiter.resolve('')
+    }
+
+    _startRxPump () {
+      if (this._rxPumpRunning) return
+      this._rxPumpRunning = true
+      this._rxPumpLoop()
+    }
+
+    _stopRxPump () {
+      this._rxPumpRunning = false
+      this._releaseRxPumpReader()
+      this._lineQueue = []
+      this._rejectLineWaiters()
+    }
+
+    async _rxPumpLoop () {
+      while (this._rxPumpRunning && this.port) {
+        if (this._pumpSuspended || this.mode !== null || !this.port.readable) {
+          await this.sleep(30)
+          continue
+        }
+
+        let reader = null
+        try {
+          reader = this.port.readable.getReader()
+          this._rxPumpReader = reader
+
+          while (
+            this._rxPumpRunning &&
+            !this._pumpSuspended &&
+            this.mode === null &&
+            this.port
+          ) {
+            const { value, done } = await reader.read()
+            if (this._pumpSuspended) break
+            if (done) break
+            if (value?.length > 0) {
+              this._rxBuffer += this._rxDecoder.decode(value, { stream: true })
+              this._processIncomingLines()
+            }
+          }
+        } catch (err) {
+          // Ignore pump read errors during reader handoff
+        } finally {
+          if (reader) {
+            try {
+              reader.releaseLock()
+            } catch (e) {}
+          }
+          this._rxPumpReader = null
+        }
+
+        await this.sleep(20)
+      }
+      this._releaseRxPumpReader()
+      this._rxPumpRunning = false
+    }
+
+    _repairJsonLine (line) {
+      const t = line.trim()
+      if (t.startsWith('{')) return t
+      if (t.startsWith('"')) return '{' + t
+      return t
+    }
+
+    _isNoiseLine (line) {
+      if (!line) return true
+      if (line.startsWith('EVT:')) return true
+      if (/^I \(/.test(line)) return true
+      return false
+    }
+
+    _expectedJsonMarker (cmd) {
+      if (cmd === 'INFO') return '"version"'
+      if (cmd === 'SCENE_INSPECT') return '"text"'
+      return null
+    }
+
+    _extractFirstJson (line) {
+      const start = line.indexOf('{')
+      if (start === -1) return line
+      let depth = 0
+      let inString = false
+      let escape = false
+      for (let i = start; i < line.length; i++) {
+        const c = line[i]
+        if (escape) {
+          escape = false
+          continue
+        }
+        if (c === '\\' && inString) {
+          escape = true
+          continue
+        }
+        if (c === '"') {
+          inString = !inString
+          continue
+        }
+        if (inString) continue
+        if (c === '{') depth++
+        else if (c === '}') {
+          depth--
+          if (depth === 0) return line.slice(start, i + 1)
+        }
+      }
+      return line.slice(start)
+    }
+
+    _mergeRxTail (rxBuf) {
+      if (!rxBuf) return
+      this._rxBuffer = rxBuf + this._rxBuffer
+      this._processIncomingLines()
+    }
+
+    async sendCommand (cmd, timeout = 30000, validator = null) {
+      const run = async () => {
+        if (!this.port) throw new Error('Not connected')
+        this._lineQueue = []
+        this._rejectLineWaiters()
+        await this._suspendRxPump()
+
+        const expectMarker = validator ? this._expectedJsonMarker(cmd) : null
+        let rxBuf = ''
+        const decoder = new TextDecoder()
+        let jsonAcc = ''
+        let lineCount = 0
+
+        try {
+          await this.sendRaw(cmd + '\n')
+          const reader = this.port.readable.getReader()
+          const deadline = Date.now() + timeout
+          try {
+            while (Date.now() < deadline) {
+              const waitMs = Math.min(100, deadline - Date.now())
+              if (waitMs <= 0) break
+              const result = await Promise.race([
+                reader.read(),
+                this.sleep(waitMs).then(() => ({ timeout: true }))
+              ])
+              if (result.timeout) continue
+              if (result.done) break
+              if (!result.value?.length) continue
+
+              rxBuf += decoder.decode(result.value, { stream: true })
+              while (true) {
+                const idx = rxBuf.indexOf('\n')
+                if (idx === -1) break
+                const rawLine = rxBuf.substring(0, idx).replace(/\r/g, '').trim()
+                rxBuf = rxBuf.substring(idx + 1)
+                if (!rawLine) continue
+                lineCount++
+
+                if (rawLine.startsWith('EVT:')) {
+                  this.dispatchCdcNotify(rawLine)
+                  continue
+                }
+                if (this._isNoiseLine(rawLine)) continue
+
+                if (rawLine.startsWith('ERROR:')) {
+                  this._mergeRxTail(rxBuf)
+                  return rawLine
+                }
+                if (!validator) {
+                  if (!rawLine.includes('{')) {
+                    this._mergeRxTail(rxBuf)
+                    return rawLine
+                  }
+                }
+                if (!rawLine.includes('{') && !rawLine.includes('"')) continue
+
+                jsonAcc += rawLine
+                const candidate = this._repairJsonLine(jsonAcc)
+                const json = this._extractFirstJson(candidate)
+                try {
+                  const data = JSON.parse(json)
+                  if (validator && !validator(data)) {
+                    if (expectMarker && !jsonAcc.includes(expectMarker)) continue
+                    continue
+                  }
+                  this._mergeRxTail(rxBuf)
+                  return json
+                } catch (e) {
+                  if (expectMarker && !jsonAcc.includes(expectMarker)) continue
+                }
+              }
+            }
+          } finally {
+            reader.releaseLock()
+          }
+
+          this._mergeRxTail(rxBuf)
+          return ''
+        } finally {
+          this._resumeRxPump()
+        }
+      }
+      const result = this._commandChain.then(run, run)
+      this._commandChain = result.then(() => {}, () => {})
+      return result
     }
 
     // Pull the next CR/LF-terminated line from the device. Anything that
     // arrived after the line terminator stays in this._rxBuffer for the
     // next call -- this is how we avoid losing back-to-back lines that
     // happen to share a single USB chunk.
+    _waitForLine (ms) {
+      return new Promise(resolve => {
+        const line = this._tryDequeueLine()
+        if (line !== null) {
+          resolve(line)
+          return
+        }
+        const entry = {
+          resolve: (l) => {
+            clearTimeout(entry.timer)
+            resolve(l)
+          }
+        }
+        entry.timer = setTimeout(() => {
+          const idx = this._lineWaiters.indexOf(entry)
+          if (idx >= 0) {
+            this._lineWaiters.splice(idx, 1)
+            resolve(null)
+          }
+        }, ms)
+        this._lineWaiters.push(entry)
+      })
+    }
+
     async readLine (timeout = 10000) {
       if (!this.port?.readable) return null
 
-      // Drain anything already buffered first.
-      let idx = this._rxBuffer.indexOf('\n')
-      if (idx !== -1) {
-        const line = this._rxBuffer.substring(0, idx).replace(/\r/g, '').trim()
-        this._rxBuffer = this._rxBuffer.substring(idx + 1)
-        return line
+      const deadline = Date.now() + timeout
+      while (Date.now() < deadline) {
+        const line = this._tryDequeueLine()
+        if (line !== null) return line
+
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        const waited = await this._waitForLine(Math.min(50, remaining))
+        if (waited !== null) return waited
       }
 
-      const reader = this.port.readable.getReader()
-      const startTime = Date.now()
-
-      try {
-        while (Date.now() - startTime < timeout) {
-          const { value, done } = await reader.read()
-          if (done) break
-          if (value?.length > 0) {
-            this._rxBuffer += this._rxDecoder.decode(value, { stream: true })
-            idx = this._rxBuffer.indexOf('\n')
-            if (idx !== -1) {
-              const line = this._rxBuffer.substring(0, idx).replace(/\r/g, '').trim()
-              this._rxBuffer = this._rxBuffer.substring(idx + 1)
-              return line
-            }
-          }
-        }
-        // Timeout. Don't return a partial line -- that would be
-        // indistinguishable from a real line and confuse callers. Leave the
-        // partial bytes in the buffer for the next call to complete.
-        return ''
-      } finally {
-        reader.releaseLock()
-      }
+      return ''
     }
 
     async readBinary (size, timeout = 30000) {
+      await this._suspendRxPump()
       const reader = this.port.readable.getReader()
       const data = new Uint8Array(size)
       let received = 0
@@ -227,6 +530,7 @@ window.ConnectionManager = (function () {
         }
       } finally {
         reader.releaseLock()
+        this._resumeRxPump()
       }
       return data.slice(0, received)
     }
@@ -249,7 +553,12 @@ window.ConnectionManager = (function () {
       // otherwise a stale partial line would be returned by the next
       // readLine call as if it were fresh data.
       this._rxBuffer = ''
+      this._rxDecoder = new TextDecoder()
+      this._lineQueue = []
+      this._rejectLineWaiters()
       if (!this.port?.readable) return
+
+      await this._suspendRxPump()
       const reader = this.port.readable.getReader()
       try {
         while (true) {
@@ -263,6 +572,7 @@ window.ConnectionManager = (function () {
         // Ignore drain errors
       } finally {
         reader.releaseLock()
+        this._resumeRxPump()
       }
     }
 

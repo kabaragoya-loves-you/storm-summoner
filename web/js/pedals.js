@@ -99,7 +99,8 @@ application.register(
         }
         await this.sleep(100)
 
-        const response = await this.connection.sendCommand('INFO', 5000)
+        const response = await this.connection.sendCommand('INFO', 5000, (data) =>
+          typeof data.version === 'string' && typeof data.build === 'number')
         if (response && !response.startsWith('ERROR:')) {
           const info = JSON.parse(response)
           if (info.pedal?.slug) {

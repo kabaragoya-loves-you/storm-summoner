@@ -3,12 +3,28 @@
 application.register(
   'info',
   class extends BaseController {
-    static targets = ['deviceCard', 'pedalCard']
+    static targets = ['deviceCard', 'pedalCard', 'sceneCard']
 
     connect() {
       this.infoData = null
       this.isActivating = false
       this.releases = null
+      this._onTabActivated = (e) => {
+        if (e.detail.tab === 'info' && this.connection.isConnected) this.activate()
+      }
+      this._notifyDebounce = null
+      this._onCdcNotify = (e) => {
+        const kind = e.detail?.kind
+        if (kind !== 'scene_changed' && kind !== 'scene_updated') return
+        if (!this.connection.isConnected) return
+        const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
+        if (activeTab?.getAttribute('panel') !== 'info') return
+        if (this._notifyDebounce) clearTimeout(this._notifyDebounce)
+        this._notifyDebounce = setTimeout(() => {
+          this._notifyDebounce = null
+          this.activate()
+        }, 200)
+      }
 
       // Fetch releases manifest for update checking
       this.fetchReleases()
@@ -16,12 +32,8 @@ application.register(
       // Listen for connection changes
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
 
-      // Listen for tab activation (this is the only trigger for activate)
-      document.addEventListener('app:tab-activated', (e) => {
-        if (e.detail.tab === 'info' && this.connection.isConnected) {
-          this.activate()
-        }
-      })
+      document.addEventListener('app:tab-activated', this._onTabActivated)
+      document.addEventListener('cdc:notify', this._onCdcNotify)
 
       // Listen for update completion to refresh info
       document.addEventListener('updater:complete', () => {
@@ -38,6 +50,12 @@ application.register(
         const updateBtn = e.target.closest('[data-action*="goToUpdater"]')
         if (updateBtn) this.goToUpdater()
       })
+    }
+
+    disconnect () {
+      document.removeEventListener('app:tab-activated', this._onTabActivated)
+      document.removeEventListener('cdc:notify', this._onCdcNotify)
+      if (this._notifyDebounce) clearTimeout(this._notifyDebounce)
     }
 
     async fetchReleases () {
@@ -80,7 +98,8 @@ application.register(
 
         await this.sleep(100)
 
-        const response = await this.connection.sendCommand('INFO', 5000)
+        const response = await this.connection.sendCommand('INFO', 5000, (data) =>
+          typeof data.version === 'string' && typeof data.build === 'number')
 
         if (!response || response.startsWith('ERROR:')) {
           console.error('INFO command failed:', response)
@@ -120,6 +139,12 @@ application.register(
         <div class="empty-state">
           <wa-icon name="link-slash"></wa-icon>
           <p>Connect to view pedal info</p>
+        </div>
+      `
+      this.sceneCardTarget.innerHTML = `
+        <div class="empty-state">
+          <wa-icon name="link-slash"></wa-icon>
+          <p>Connect to view scene info</p>
         </div>
       `
     }
@@ -218,56 +243,98 @@ application.register(
 
       // Render pedal card
       const pedal = this.infoData.pedal
-      const trsDisplay = this.formatTrsType(pedal.trs_type)
-      const bankDisplay = this.formatBankMode(pedal.bank_mode)
+      if (!pedal) {
+        this.pedalCardTarget.innerHTML = `
+          <div class="empty-state">
+            <p>Pedal info unavailable</p>
+          </div>
+        `
+      } else {
+        const trsDisplay = this.formatTrsType(pedal.trs_type)
+        const bankDisplay = this.formatBankMode(pedal.bank_mode)
 
-      const capabilities = []
-      if (pedal.receives_pc) capabilities.push('PC')
-      if (pedal.receives_clock) capabilities.push('Clock')
-      if (pedal.receives_notes) capabilities.push('Notes')
-      if (pedal.transmits_pc) capabilities.push('TX PC')
+        const capabilities = []
+        if (pedal.receives_pc) capabilities.push('PC')
+        if (pedal.receives_clock) capabilities.push('Clock')
+        if (pedal.receives_notes) capabilities.push('Notes')
+        if (pedal.transmits_pc) capabilities.push('TX PC')
 
-      this.pedalCardTarget.innerHTML = `
+        this.pedalCardTarget.innerHTML = `
+          <div class="info-rows">
+            <div class="info-row">
+              <span class="info-label">Name</span>
+              <span class="info-value">${pedal.name}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Manufacturer</span>
+              <span class="info-value">${pedal.vendor}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">MIDI Channel</span>
+              <span class="info-value">${pedal.midi_channel}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">TRS Type</span>
+              <span class="info-value">${trsDisplay}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Send Clock</span>
+              <span class="info-value">${pedal.send_clock ? 'Yes' : 'No'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Capabilities</span>
+              <span class="info-value">${capabilities.join(', ') || 'None'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Presets</span>
+              <span class="info-value">${pedal.preset_count} (${pedal.preset_base}-based)</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Bank Mode</span>
+              <span class="info-value">${bankDisplay}</span>
+            </div>
+          </div>
+          <div class="info-card-actions">
+            <wa-button size="small" variant="brand" appearance="outlined"
+                       data-action="click->info#goToPedals">
+              <wa-icon name="guitar" slot="prefix"></wa-icon>
+              Change Pedal
+            </wa-button>
+          </div>
+        `
+      }
+
+      this.renderSceneCard()
+    }
+
+    renderSceneCard () {
+      const scene = this.infoData?.scene
+      if (!scene) {
+        this.sceneCardTarget.innerHTML = `
+          <div class="empty-state">
+            <p>No scene loaded</p>
+          </div>
+        `
+        return
+      }
+
+      const name = scene.name || 'Untitled'
+      const ordinal = scene.active_ordinal || 0
+      const total = scene.active_count || 0
+      const positionLine = total > 0
+        ? `Scene ${ordinal} of ${total}`
+        : 'Scene —'
+
+      this.sceneCardTarget.innerHTML = `
         <div class="info-rows">
           <div class="info-row">
             <span class="info-label">Name</span>
-            <span class="info-value">${pedal.name}</span>
+            <span class="info-value">${name}</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Manufacturer</span>
-            <span class="info-value">${pedal.vendor}</span>
+            <span class="info-label">Position</span>
+            <span class="info-value">${positionLine}</span>
           </div>
-          <div class="info-row">
-            <span class="info-label">MIDI Channel</span>
-            <span class="info-value">${pedal.midi_channel}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">TRS Type</span>
-            <span class="info-value">${trsDisplay}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Send Clock</span>
-            <span class="info-value">${pedal.send_clock ? 'Yes' : 'No'}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Capabilities</span>
-            <span class="info-value">${capabilities.join(', ') || 'None'}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Presets</span>
-            <span class="info-value">${pedal.preset_count} (${pedal.preset_base}-based)</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Bank Mode</span>
-            <span class="info-value">${bankDisplay}</span>
-          </div>
-        </div>
-        <div class="info-card-actions">
-          <wa-button size="small" variant="brand" appearance="outlined"
-                     data-action="click->info#goToPedals">
-            <wa-icon name="guitar" slot="prefix"></wa-icon>
-            Change Pedal
-          </wa-button>
         </div>
       `
     }

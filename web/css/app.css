@@ -831,6 +831,77 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
   font-weight: normal;
 }
 
+/* ==========================================================================
+   SCENE INSPECT TAB
+   ========================================================================== */
+
+.scene-inspect-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.scene-inspect-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.scene-inspect-text {
+  flex: 1;
+  min-height: 12rem;
+  margin: 0;
+  padding: 1rem 1.25rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+}
+
+.scene-inspect-text.empty {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.scene-truncated-banner {
+  flex-shrink: 0;
+}
+
+.scene-edit-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-height: 12rem;
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-dim);
+  background: var(--bg-card);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+
+.scene-edit-placeholder wa-icon {
+  font-size: 2rem;
+  color: var(--text-dim);
+}
+
+.scene-edit-placeholder p {
+  margin: 0;
+  max-width: 20rem;
+}
+
 .info-card-body {
   padding: 1.25rem;
 }

@@ -99,6 +99,7 @@ static const char* event_type_names[] = {
   [EVENT_NOTE_ON] = "NOTE_ON",
   [EVENT_NOTE_OFF] = "NOTE_OFF",
   [EVENT_SCENE_CHANGED] = "SCENE_CHANGED",
+  [EVENT_SCENE_UPDATED] = "SCENE_UPDATED",
   // Transport events
   [EVENT_TRANSPORT_START] = "TRANSPORT_START",
   [EVENT_TRANSPORT_STOP] = "TRANSPORT_STOP",

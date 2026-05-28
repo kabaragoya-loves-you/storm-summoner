@@ -10,6 +10,8 @@
 #include "app_settings.h"
 #include "settings_registry.h"
 #include "scene.h"
+#include "scene_inspect.h"
+#include "cJSON.h"
 #include "version.h"
 #include "esp_timer.h"
 #include "mbedtls/base64.h"
@@ -43,6 +45,7 @@
 #define ASSETS_BASE_PATH "/assets"
 #define MAX_PATH_LEN 320  // Must accommodate paths + d_name (255)
 #define CAT_MAX_SIZE 4096
+#define SCENE_INSPECT_TEXT_SIZE 2048
 
 // Update protocol states
 typedef enum {
@@ -108,6 +111,12 @@ static bool s_midi_relay_show_clock = false;
 // Forward declarations for MIDI relay
 static void midi_relay_event_handler(const event_t* event, void* context);
 static void midi_relay_stop(void);
+
+// Scene CDC notifications (idle / text-safe modes)
+static void cdc_scene_changed_handler(const event_t *event, void *context);
+static void cdc_scene_updated_handler(const event_t *event, void *context);
+static void cdc_send_scene_inspect(void);
+static void cdc_send_info_json(void);
 
 // ============================================================================
 // VFS wrapper for CDC stdout redirect
@@ -286,6 +295,9 @@ esp_err_t usb_cdc_update_init(void) {
   // Stack size for printf/VFS operations in console mode
   // ZIP operations spawn their own task with larger stack
   xTaskCreate(cdc_update_task, "cdc_update", 8192, NULL, 5, NULL);
+
+  event_bus_subscribe(EVENT_SCENE_CHANGED, cdc_scene_changed_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_UPDATED, cdc_scene_updated_handler, NULL);
 
   s_initialized = true;
   ESP_LOGI(TAG, "CDC update handler initialized");
@@ -619,6 +631,53 @@ static void send_response(const char *msg) {
   tud_cdc_n_write_flush(0);
 }
 
+// Short notify lines (EVT:...) — avoid send_response chunk delays blocking scene events
+static void cdc_send_notify_line(const char *msg) {
+  if (!tud_cdc_n_connected(0)) return;
+  size_t len = strlen(msg);
+  if (len == 0) return;
+  tud_cdc_n_write(0, msg, len);
+  tud_cdc_n_write_char(0, '\n');
+  tud_cdc_n_write_flush(0);
+}
+
+// Large JSON payloads — write in bigger chunks, no per-chunk delay
+static void send_json_response(const char *msg) {
+  if (!tud_cdc_n_connected(0)) {
+    ESP_LOGW(TAG, "send_json_response: CDC not connected");
+    return;
+  }
+
+  size_t len = strlen(msg);
+  size_t sent = 0;
+  int retry_count = 0;
+  const int max_retries = 500;
+
+  while (sent < len) {
+    if (!tud_cdc_n_connected(0)) {
+      ESP_LOGW(TAG, "send_json_response: CDC disconnected at %u/%u", (unsigned)sent, (unsigned)len);
+      return;
+    }
+
+    uint32_t written = tud_cdc_n_write(0, msg + sent, len - sent);
+    tud_cdc_n_write_flush(0);
+    if (written == 0) {
+      retry_count++;
+      if (retry_count >= max_retries) {
+        ESP_LOGW(TAG, "send_json_response: max retries, sent %u/%u", (unsigned)sent, (unsigned)len);
+        return;
+      }
+      vTaskDelay(pdMS_TO_TICKS(2));
+      continue;
+    }
+    sent += written;
+    retry_count = 0;
+  }
+
+  tud_cdc_n_write_char(0, '\n');
+  tud_cdc_n_write_flush(0);
+}
+
 static void send_binary(const uint8_t *data, size_t len) {
   if (!tud_cdc_n_connected(0)) return;
   
@@ -650,6 +709,173 @@ static void send_binary(const uint8_t *data, size_t len) {
     } else {
       retry_count = 0;  // Reset retry counter on successful write
     }
+  }
+}
+
+static bool cdc_may_push_notify(void) {
+  if (!tud_cdc_n_connected(0)) return false;
+
+  switch (s_state) {
+    case CDC_STATE_IDLE:
+    case CDC_STATE_CONSOLE:
+    case CDC_STATE_SCENES:
+    case CDC_STATE_CONFIG:
+    case CDC_STATE_SETTINGS:
+    case CDC_STATE_PEDALS:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static void cdc_push_scene_evt(const char *kind, uint8_t scene_index) {
+  if (!cdc_may_push_notify()) return;
+
+  char buf[48];
+  snprintf(buf, sizeof(buf), "EVT:%s:%u", kind, (unsigned)scene_index);
+  ESP_LOGI(TAG, "CDC notify: %s", buf);
+  cdc_send_notify_line(buf);
+}
+
+static void cdc_scene_changed_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_SCENE_CHANGED) return;
+  cdc_push_scene_evt("scene_changed", event->data.value_uint8);
+}
+
+static void cdc_scene_updated_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_SCENE_UPDATED) return;
+  cdc_push_scene_evt("scene_updated", event->data.value_uint8);
+}
+
+static void cdc_send_scene_inspect(void) {
+  ESP_LOGI(TAG, "SCENE_INSPECT begin");
+  char *text_buf = heap_caps_malloc(SCENE_INSPECT_TEXT_SIZE, MALLOC_CAP_SPIRAM);
+  if (!text_buf) {
+    send_response("ERROR: Out of memory");
+    return;
+  }
+
+  scene_t *scene = scene_get_current();
+  uint8_t idx = scene_get_current_index();
+  if (!scene) {
+    heap_caps_free(text_buf);
+    send_response("ERROR: No scene");
+    return;
+  }
+
+  bool truncated = !scene_inspect_build(scene, idx, text_buf, SCENE_INSPECT_TEXT_SIZE);
+  ESP_LOGI(TAG, "SCENE_INSPECT built (truncated=%d)", truncated ? 1 : 0);
+
+  cJSON *root = cJSON_CreateObject();
+  if (!root) {
+    heap_caps_free(text_buf);
+    send_response("ERROR: Out of memory");
+    return;
+  }
+
+  cJSON_AddStringToObject(root, "text", text_buf);
+  cJSON_AddBoolToObject(root, "truncated", truncated);
+
+  char *json = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  heap_caps_free(text_buf);
+
+  if (json) {
+    ESP_LOGI(TAG, "SCENE_INSPECT sending %u bytes", (unsigned)strlen(json));
+    send_json_response(json);
+    cJSON_free(json);
+    ESP_LOGI(TAG, "SCENE_INSPECT done");
+  } else {
+    send_response("ERROR: Out of memory");
+  }
+}
+
+static const char *cdc_trs_type_str(midi_trs_type_t trs) {
+  switch (trs) {
+    case MIDI_TRS_TYPE_A: return "TYPE_A";
+    case MIDI_TRS_TYPE_B: return "TYPE_B";
+    case MIDI_TRS_TYPE_TS: return "TYPE_TS";
+    case MIDI_TRS_TYPE_BOTH: return "BOTH";
+    default: return "unknown";
+  }
+}
+
+static const char *cdc_bank_mode_str(bank_select_mode_t mode) {
+  switch (mode) {
+    case BANK_SELECT_CC0: return "CC0";
+    case BANK_SELECT_CC0_CC32: return "CC0_CC32";
+    default: return "none";
+  }
+}
+
+static void cdc_send_info_json(void) {
+  const device_config_t *cfg = device_config_get();
+  const char *slug = cfg ? cfg->pedal_slug : "user.default@0";
+  const manifest_device_t *mdev = assets_get_manifest_device(slug);
+  const char *assets_csum = version_get_assets_checksum();
+
+  cJSON *root = cJSON_CreateObject();
+  if (!root) {
+    send_response("ERROR: Out of memory");
+    return;
+  }
+
+  char ver[16];
+  snprintf(ver, sizeof(ver), "%u.%u",
+    (unsigned)version_get_major(), (unsigned)version_get_minor());
+
+  cJSON_AddStringToObject(root, "version", ver);
+  cJSON_AddNumberToObject(root, "build", version_get_build());
+  cJSON_AddStringToObject(root, "git", version_get_git_hash());
+  cJSON_AddStringToObject(root, "serial", version_get_serial());
+  cJSON_AddStringToObject(root, "assets_checksum", assets_csum ? assets_csum : "");
+
+  cJSON *pedal = cJSON_CreateObject();
+  if (pedal) {
+    cJSON_AddStringToObject(pedal, "slug", slug);
+    cJSON_AddStringToObject(pedal, "name", mdev ? mdev->name : "Unknown");
+    cJSON_AddStringToObject(pedal, "vendor", mdev ? mdev->vendor : "Unknown");
+    cJSON_AddNumberToObject(pedal, "midi_channel", cfg ? (unsigned)cfg->midi_channel : 1);
+    cJSON_AddBoolToObject(pedal, "send_clock", cfg && cfg->send_clock);
+    cJSON_AddStringToObject(pedal, "trs_type",
+      cfg ? cdc_trs_type_str(cfg->trs_type) : "unknown");
+    cJSON_AddBoolToObject(pedal, "receives_pc", mdev && mdev->receives_pc);
+    cJSON_AddBoolToObject(pedal, "transmits_pc", mdev && mdev->transmits_pc);
+    cJSON_AddBoolToObject(pedal, "receives_clock", mdev && mdev->receives_clock);
+    cJSON_AddBoolToObject(pedal, "receives_notes", mdev && mdev->receives_notes);
+    cJSON_AddNumberToObject(pedal, "preset_count", cfg ? (unsigned)cfg->preset_count : 128);
+    cJSON_AddStringToObject(pedal, "bank_mode",
+      cfg ? cdc_bank_mode_str(cfg->bank_select_mode) : "none");
+    cJSON_AddNumberToObject(pedal, "preset_base", cfg ? (unsigned)cfg->preset_base : 0);
+    cJSON_AddItemToObject(root, "pedal", pedal);
+  }
+
+  scene_t *scene = scene_get_current();
+  if (scene) {
+    uint8_t idx = scene_get_current_index();
+    uint16_t ordinal = 0;
+    uint16_t active_total = 0;
+    scene_get_active_slot(idx, &ordinal, &active_total);
+
+    cJSON *scene_obj = cJSON_CreateObject();
+    if (scene_obj) {
+      cJSON_AddStringToObject(scene_obj, "name", scene->name);
+      cJSON_AddNumberToObject(scene_obj, "active_ordinal", (unsigned)ordinal);
+      cJSON_AddNumberToObject(scene_obj, "active_count", (unsigned)active_total);
+      cJSON_AddItemToObject(root, "scene", scene_obj);
+    }
+  }
+
+  char *json = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+
+  if (json) {
+    send_json_response(json);
+    cJSON_free(json);
+  } else {
+    send_response("ERROR: Out of memory");
   }
 }
 
@@ -1010,69 +1236,10 @@ static void process_command(const char *cmd) {
     send_response("PEDALS_STARTED");
 
   } else if (strcmp(cmd, "INFO") == 0) {
-    // Build JSON response with version and device info
-    const device_config_t *cfg = device_config_get();
-    const char *slug = cfg ? cfg->pedal_slug : "user.default@0";
+    cdc_send_info_json();
 
-    // Get device info from manifest for additional details
-    const manifest_device_t *mdev = assets_get_manifest_device(slug);
-
-    // TRS type string
-    const char *trs_str = "unknown";
-    if (cfg) {
-      switch (cfg->trs_type) {
-        case MIDI_TRS_TYPE_A: trs_str = "TYPE_A"; break;
-        case MIDI_TRS_TYPE_B: trs_str = "TYPE_B"; break;
-        case MIDI_TRS_TYPE_TS: trs_str = "TYPE_TS"; break;
-        case MIDI_TRS_TYPE_BOTH: trs_str = "BOTH"; break;
-        default: trs_str = "unknown"; break;
-      }
-    }
-
-    // Bank mode string
-    const char *bank_str = "none";
-    if (cfg) {
-      switch (cfg->bank_select_mode) {
-        case BANK_SELECT_CC0: bank_str = "CC0"; break;
-        case BANK_SELECT_CC0_CC32: bank_str = "CC0_CC32"; break;
-        default: bank_str = "none"; break;
-      }
-    }
-
-    // Build JSON - use a static buffer since response can be large
-    const char *assets_csum = version_get_assets_checksum();
-    ESP_LOGI(TAG, "INFO: assets_checksum = %s", assets_csum ? assets_csum : "(null)");
-
-    static char info_buf[512];
-    int len = snprintf(info_buf, sizeof(info_buf),
-      "{\"version\":\"%u.%u\",\"build\":%u,\"git\":\"%s\",\"serial\":\"%s\","
-      "\"assets_checksum\":\"%s\","
-      "\"pedal\":{\"slug\":\"%s\",\"name\":\"%s\",\"vendor\":\"%s\","
-      "\"midi_channel\":%u,\"send_clock\":%s,\"trs_type\":\"%s\","
-      "\"receives_pc\":%s,\"transmits_pc\":%s,\"receives_clock\":%s,\"receives_notes\":%s,"
-      "\"preset_count\":%u,\"bank_mode\":\"%s\",\"preset_base\":%u}}",
-      (unsigned)version_get_major(), (unsigned)version_get_minor(),
-      (unsigned)version_get_build(), version_get_git_hash(), version_get_serial(),
-      assets_csum,
-      slug,
-      mdev ? mdev->name : "Unknown",
-      mdev ? mdev->vendor : "Unknown",
-      cfg ? (unsigned)cfg->midi_channel : 1,
-      (cfg && cfg->send_clock) ? "true" : "false",
-      trs_str,
-      mdev ? (mdev->receives_pc ? "true" : "false") : "false",
-      mdev ? (mdev->transmits_pc ? "true" : "false") : "false",
-      mdev ? (mdev->receives_clock ? "true" : "false") : "false",
-      mdev ? (mdev->receives_notes ? "true" : "false") : "false",
-      cfg ? (unsigned)cfg->preset_count : 128,
-      bank_str,
-      cfg ? (unsigned)cfg->preset_base : 0);
-
-    if (len > 0 && len < (int)sizeof(info_buf)) {
-      send_response(info_buf);
-    } else {
-      send_response("ERROR: Buffer overflow");
-    }
+  } else if (strcmp(cmd, "SCENE_INSPECT") == 0) {
+    cdc_send_scene_inspect();
 
   } else if (strcmp(cmd, "EXIT") == 0) {
     // EXIT in idle state is a no-op (already idle)
