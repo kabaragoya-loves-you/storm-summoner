@@ -170,7 +170,7 @@
     "cv_input_mode": {
       "type": "string",
       "enum": ["none", "cv", "clock_sync", "audio", "note"],
-      "default": "cv",
+      "default": "none",
       "description": "CV input interpretation mode"
     },
     "cv_velocity_mode": {

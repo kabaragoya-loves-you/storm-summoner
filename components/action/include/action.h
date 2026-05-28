@@ -567,6 +567,7 @@ action_t action_create_tap_tempo(void);
 action_t action_create_set_tempo(uint16_t bpm);
 action_t action_create_transport(action_variant_t variant);
 action_t action_create_reset(void);
+action_t action_create_inspect_scene(void);
 action_t action_create_piano_pedal(uint8_t cc_number);
 
 // Get action type name (for debugging/console and the type-picker roller).

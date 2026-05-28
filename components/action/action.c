@@ -286,6 +286,12 @@ action_t action_create_reset(void) {
   return action;
 }
 
+action_t action_create_inspect_scene(void) {
+  action_t action = {0};
+  action.type = ACTION_INSPECT_SCENE;
+  return action;
+}
+
 action_t action_create_piano_pedal(uint8_t cc_number) {
   action_t action = {0};
   action.type = ACTION_PIANO_PEDAL;

@@ -131,8 +131,6 @@ static scene_t* get_scene_for_modification(uint8_t scene_index) {
 }
 
 // Set default button assignments based on scene mode.
-// Both-buttons-at-once defaults to unassigned regardless of mode -- users who
-// want Confirm Pending or another action can opt in.
 static void set_default_button_assignments(scene_t* scene) {
   scene_mode_t mode = g_scene_manager.mode;
 
@@ -145,7 +143,7 @@ static void set_default_button_assignments(scene_t* scene) {
     scene->button_left = action_create_preset_dec();
     scene->button_right = action_create_preset_inc();
   }
-  scene->button_both = (action_t){0};
+  scene->button_both = action_create_inspect_scene();
 }
 
 // Initialize a single scene with defaults
@@ -155,8 +153,8 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Set default name
   snprintf(scene->name, sizeof(scene->name), "Scene %d", index + 1);
   
-  // Program change defaults
-  scene->program_number = index;  // Match scene index in preset sync mode
+  // Program change defaults (display Preset 1 for this device)
+  scene->program_number = (uint8_t)device_config_get_min_preset();
   scene->send_pc_on_load = true;
   
   // Default touchwheel mode
@@ -225,7 +223,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->sostenuto = action_create_piano_pedal(66);
   
   // CV input configuration
-  scene->cv_input_mode = INPUT_MODE_CV;                // Default to CV mode
+  scene->cv_input_mode = INPUT_MODE_NONE;
   
   // CV NOTE mode velocity configuration
   scene->cv_velocity_mode = VELOCITY_MODE_FIXED;       // Default to fixed velocity
@@ -3270,7 +3268,7 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
 
 input_mode_t scene_get_cv_input_mode(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? scene->cv_input_mode : INPUT_MODE_CV;
+  return scene ? scene->cv_input_mode : INPUT_MODE_NONE;
 }
 
 esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
