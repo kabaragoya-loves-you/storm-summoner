@@ -7195,7 +7195,9 @@ esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {
   
   g_scene_manager.manifest[to_pos] = temp;
   scene_save_manifest();
-  
+
+  scene_post_updated_event(g_scene_manager.current_scene_index);
+
   return ESP_OK;
 }
 

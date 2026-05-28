@@ -134,7 +134,12 @@ window.ConnectionManager = (function () {
         await this.exitMode()
       }
 
-      // Enter new mode
+      if (newMode) {
+        await this._suspendRxPump()
+        this._lineQueue = []
+        this._rejectLineWaiters()
+      }
+
       this.mode = newMode
       this.emit('mode:changed', { mode: newMode })
       return true
@@ -151,6 +156,7 @@ window.ConnectionManager = (function () {
         // Ignore exit errors
       }
       this.mode = null
+      this._resumeRxPump()
     }
 
     // Lock/unlock tabs during critical operations
@@ -497,6 +503,7 @@ window.ConnectionManager = (function () {
 
     async readLine (timeout = 10000) {
       if (!this.port?.readable) return null
+      if (this.mode !== null) return this._readLineExclusive(timeout)
 
       const deadline = Date.now() + timeout
       while (Date.now() < deadline) {
@@ -510,6 +517,55 @@ window.ConnectionManager = (function () {
       }
 
       return ''
+    }
+
+    async _readLineExclusive (timeout = 10000) {
+      await this._suspendRxPump()
+      const reader = this.port.readable.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      const takeResponseLine = () => {
+        while (true) {
+          const idx = buffer.indexOf('\n')
+          if (idx === -1) return null
+          const line = buffer.substring(0, idx).replace(/\r/g, '').trim()
+          buffer = buffer.substring(idx + 1)
+          if (!line) continue
+          if (this.dispatchCdcNotify(line)) continue
+          if (/^I \(/.test(line)) continue
+          return line
+        }
+      }
+
+      try {
+        const deadline = Date.now() + timeout
+        let pendingRead = null
+
+        while (Date.now() < deadline) {
+          const ready = takeResponseLine()
+          if (ready !== null) return ready
+
+          if (!pendingRead) pendingRead = reader.read()
+
+          const remainingTime = Math.max(deadline - Date.now(), 0)
+          const result = await Promise.race([
+            pendingRead,
+            this.sleep(Math.min(remainingTime, 100)).then(() => ({ timeout: true }))
+          ])
+
+          if (result.timeout) continue
+
+          pendingRead = null
+          if (result.done) break
+          if (result.value) {
+            buffer += decoder.decode(result.value, { stream: true })
+          }
+        }
+      } finally {
+        try { reader.releaseLock() } catch (e) {}
+      }
+      return buffer.trim()
     }
 
     async readBinary (size, timeout = 30000) {

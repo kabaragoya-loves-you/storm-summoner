@@ -63,7 +63,7 @@ application.register(
     async enterScenesMode() {
       await this.sleep(100)
       await this.connection.sendRaw('SCENES\n')
-      const response = await this.readLine(3000)
+      const response = await this.connection.readLine(3000)
 
       if (response === 'SCENES_STARTED') {
         this.inScenesMode = true
@@ -78,47 +78,8 @@ application.register(
       await this.sleep(200)
     }
 
-    async readLine(timeout = 2000) {
-      const reader = this.connection.port.readable.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      try {
-        const deadline = Date.now() + timeout
-        let pendingRead = null
-
-        while (Date.now() < deadline) {
-          // Reuse pending read or start a new one
-          if (!pendingRead) {
-            pendingRead = reader.read()
-          }
-
-          const remainingTime = Math.max(deadline - Date.now(), 0)
-          const result = await Promise.race([
-            pendingRead,
-            this.sleep(Math.min(remainingTime, 100)).then(() => ({ timeout: true }))
-          ])
-
-          if (result.timeout) continue
-
-          // Read completed - clear pending and process
-          pendingRead = null
-
-          if (result.done) break
-          if (result.value) {
-            const text = decoder.decode(result.value, { stream: true })
-            for (const char of text) {
-              if (char === '\n') {
-                return buffer.replace('\r', '').trim()
-              }
-              buffer += char
-            }
-          }
-        }
-      } finally {
-        try { reader.releaseLock() } catch (e) {}
-      }
-      return buffer.trim()
+    readLine(timeout = 2000) {
+      return this.connection.readLine(timeout)
     }
 
     async fetchScenes() {
