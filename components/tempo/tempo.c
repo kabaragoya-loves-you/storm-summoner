@@ -1147,6 +1147,24 @@ void tempo_midi_transport_start(void) {
   xSemaphoreGive(s_state_mutex);
 }
 
+void tempo_resync_downbeat(void) {
+  if (!s_state_mutex) return;
+
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+
+  uint8_t numerator = s_time_signature.numerator;
+  if (numerator == 0) numerator = 4;
+  s_beat_counter = numerator;
+  s_tick_counter = 0;
+  if (s_clock_source == CLOCK_SOURCE_INTERNAL)
+    s_clock_timing_reset_needed = true;
+
+  xSemaphoreGive(s_state_mutex);
+
+  transport_reset_position();
+  ESP_LOGI(TAG, "Downbeat resync: bar 1, beat 1 on next tick");
+}
+
 void tempo_set_note_divider(tempo_note_divider_t divider) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
   bool changed = (s_note_divider != divider);

@@ -206,6 +206,10 @@ action_handle_result_t action_handlers_scene_dispatch(
           if (is_press) tempo_tap();
           return ACTION_HANDLED;
 
+        case VARIANT_DOWNBEAT:
+          if (is_press) tempo_resync_downbeat();
+          return ACTION_HANDLED;
+
         case VARIANT_SET:
           if (is_press) {
             uint16_t bpm = tempo_set_resolve_bpm(action);

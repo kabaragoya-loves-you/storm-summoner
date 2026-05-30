@@ -73,6 +73,9 @@ void tempo_midi_clock_tick(void);
 void tempo_midi_transport_start(void);  // Called immediately on MIDI Start to reset counters
 bool tempo_is_midi_clock_active(void);  // True if MIDI clock ticks are being received
 
+// Re-align bar/beat to downbeat on demand (internal or external clock).
+void tempo_resync_downbeat(void);
+
 // Set and get the note divider.
 void tempo_set_note_divider(tempo_note_divider_t divider);
 tempo_note_divider_t tempo_get_note_divider(void);

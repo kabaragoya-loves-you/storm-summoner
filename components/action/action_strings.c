@@ -63,6 +63,7 @@ static const char* action_variant_display_names[] = {
   [VARIANT_RECORD]    = "Record",
   [VARIANT_MODIFY]    = "Modify",
   [VARIANT_STEP]      = "Step",
+  [VARIANT_DOWNBEAT]  = "Downbeat",
 };
 
 const char* action_variant_to_string(action_variant_t variant) {
@@ -116,6 +117,7 @@ static const char* tempo_variant_display(action_variant_t v) {
     case VARIANT_DECREMENT: return "Tempo -1";
     case VARIANT_HOLD:      return "Tempo Hold";
     case VARIANT_CYCLE:     return "Tempo Cycle";
+    case VARIANT_DOWNBEAT:  return "Downbeat";
     default:                return "Tempo";
   }
 }

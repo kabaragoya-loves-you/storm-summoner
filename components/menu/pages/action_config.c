@@ -298,9 +298,11 @@ static bool is_action_visible(action_type_t type) {
   // Confirm pending only in pending change mode
   if (type == ACTION_CONFIRM_PENDING && change_mode != CHANGE_MODE_PENDING) return false;
   
-  // Tempo actions only with internal clock
-  if (type == ACTION_TEMPO) {
-    if (clock_source != CLOCK_SOURCE_INTERNAL) return false;
+  // Tempo actions: BPM variants need internal clock; Downbeat works on any source
+  if (type == ACTION_TEMPO && clock_source != CLOCK_SOURCE_INTERNAL) {
+    if (!s_ctx) return false;
+    return action_variant_is_valid_for_trigger(ACTION_TEMPO, VARIANT_DOWNBEAT,
+      s_ctx->trigger_type);
   }
 
   // Flag Ceremony only when flag system is enabled
@@ -663,12 +665,17 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     }
     
     if (new_type == ACTION_TEMPO) {
-      // Default to Set with 120 BPM; variant-specific fields are filled
-      // in by tempo_variant_confirm_cb when the user changes variant.
-      action->variant = VARIANT_SET;
-      action->params.tempo.bpm = 120;
-      action->params.tempo.random_floor = 20;
-      action->params.tempo.random_ceiling = 300;
+      tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
+      if (clock_source != CLOCK_SOURCE_INTERNAL) {
+        action->variant = VARIANT_DOWNBEAT;
+      } else {
+        // Default to Set with 120 BPM; variant-specific fields are filled
+        // in by tempo_variant_confirm_cb when the user changes variant.
+        action->variant = VARIANT_SET;
+        action->params.tempo.bpm = 120;
+        action->params.tempo.random_floor = 20;
+        action->params.tempo.random_ceiling = 300;
+      }
     }
 
     if (new_type == ACTION_TRANSPORT) {
@@ -2260,6 +2267,7 @@ static const action_variant_t s_tempo_variants[] = {
   VARIANT_DECREMENT,
   VARIANT_HOLD,
   VARIANT_CYCLE,
+  VARIANT_DOWNBEAT,
 };
 #define NUM_TEMPO_VARIANTS (sizeof(s_tempo_variants) / sizeof(s_tempo_variants[0]))
 
@@ -2272,10 +2280,14 @@ static size_t s_num_filtered_tempo_variants = 0;
 static void build_filtered_tempo_variants(void) {
   s_num_filtered_tempo_variants = 0;
   if (!s_ctx) return;
+  tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
   for (size_t i = 0; i < NUM_TEMPO_VARIANTS; i++) {
-    if (action_variant_is_valid_for_trigger(ACTION_TEMPO, s_tempo_variants[i],
+    action_variant_t variant = s_tempo_variants[i];
+    if (clock_source != CLOCK_SOURCE_INTERNAL && variant != VARIANT_DOWNBEAT)
+      continue;
+    if (action_variant_is_valid_for_trigger(ACTION_TEMPO, variant,
                                             s_ctx->trigger_type)) {
-      s_filtered_tempo_variants[s_num_filtered_tempo_variants++] = s_tempo_variants[i];
+      s_filtered_tempo_variants[s_num_filtered_tempo_variants++] = variant;
     }
   }
 }
@@ -2345,7 +2357,7 @@ static void tempo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
         }
         break;
       default:
-        // TAP needs no extra fields
+        // TAP and DOWNBEAT need no extra fields
         break;
     }
 
@@ -8627,7 +8639,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         break;
       }
       default:
-        // TAP has no extra rows
+        // TAP and DOWNBEAT have no extra rows
         break;
     }
   }
@@ -9392,7 +9404,7 @@ lv_obj_t* action_config_detail_page_create(void) {
   }
 
   // Show Timing selector for non-HOLD actions (actions that support timing).
-  // Variant-aware: ACTION_TEMPO + VARIANT_TAP/VARIANT_HOLD are excluded.
+  // Variant-aware: ACTION_TEMPO + VARIANT_TAP/VARIANT_HOLD/VARIANT_DOWNBEAT excluded.
   // On-load actions are always immediate (no beat scheduling in the menu).
   if (s_ctx && s_ctx->trigger_type != ACTION_TRIGGER_ON_LOAD &&
       action_supports_timing_for(action) && item_count < MAX_DETAIL_ITEMS) {

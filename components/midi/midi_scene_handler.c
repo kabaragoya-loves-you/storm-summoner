@@ -39,6 +39,7 @@ static void handle_button_event(const event_t* event, void* context) {
   if (!scene) return;
   
   action_t* action = NULL;
+  bool is_press = true;
   
   switch (event->type) {
     case EVENT_BUTTON_L_PRESS:
@@ -55,6 +56,24 @@ static void handle_button_event(const event_t* event, void* context) {
       action = &scene->button_both;
       ESP_LOGI(TAG, "Both buttons pressed - %s", action_type_to_string(action->type));
       break;
+
+    case EVENT_BUTTON_L_RELEASE:
+      action = &scene->button_left;
+      is_press = false;
+      ESP_LOGD(TAG, "Left button released - %s", action_type_to_string(action->type));
+      break;
+
+    case EVENT_BUTTON_R_RELEASE:
+      action = &scene->button_right;
+      is_press = false;
+      ESP_LOGD(TAG, "Right button released - %s", action_type_to_string(action->type));
+      break;
+
+    case EVENT_BUTTON_BOTH_RELEASE:
+      action = &scene->button_both;
+      is_press = false;
+      ESP_LOGD(TAG, "Both buttons released - %s", action_type_to_string(action->type));
+      break;
       
     case EVENT_BUTTON_L_LONG_PRESS:
     case EVENT_BUTTON_R_LONG_PRESS:
@@ -67,9 +86,8 @@ static void handle_button_event(const event_t* event, void* context) {
       return;
   }
   
-  if (action && action->type != ACTION_NONE) {
-    action_execute(action, 127, true);
-  }
+  if (action && action->type != ACTION_NONE)
+    action_execute(action, 127, is_press);
 }
 
 // Handle bump events using scene-based action assignments
@@ -123,6 +141,9 @@ esp_err_t midi_scene_handler_init(void) {
   event_bus_subscribe(EVENT_BUTTON_L_LONG_PRESS, handle_button_event, NULL);
   event_bus_subscribe(EVENT_BUTTON_R_LONG_PRESS, handle_button_event, NULL);
   event_bus_subscribe(EVENT_BUTTON_BOTH_LONG_PRESS, handle_button_event, NULL);
+  event_bus_subscribe(EVENT_BUTTON_L_RELEASE, handle_button_event, NULL);
+  event_bus_subscribe(EVENT_BUTTON_R_RELEASE, handle_button_event, NULL);
+  event_bus_subscribe(EVENT_BUTTON_BOTH_RELEASE, handle_button_event, NULL);
   
   // Subscribe to bump events
   event_bus_subscribe(EVENT_BUMP_DETECTED, handle_bump_event, NULL);

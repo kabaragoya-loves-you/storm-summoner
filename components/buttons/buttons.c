@@ -52,6 +52,7 @@ typedef struct {
   TimerHandle_t long_press_timer;
   TimerHandle_t chord_timer;
   bool long_press_fired;
+  bool press_delivered;
 } button_internal_state_t;
 
 static button_internal_state_t g_button_left = {0};
@@ -380,6 +381,7 @@ static void button_process_press(uint8_t button_id) {
         .data.button.duration_ms = 0
       };
       event_bus_post_from_isr(&event, &higher_priority_woken);
+      button->press_delivered = true;
       
       // Start long press timer
       xTimerStartFromISR(button->long_press_timer, &higher_priority_woken);
@@ -404,23 +406,48 @@ static void button_process_release(uint8_t button_id) {
   button_internal_state_t* button = (button_id == BUTTON_ID_LEFT) ? &g_button_left : &g_button_right;
   button_internal_state_t* other_button = (button_id == BUTTON_ID_LEFT) ? &g_button_right : &g_button_left;
   
-  button->pressed = false;
+  uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  uint32_t duration = button->pressed ? (now - button->press_timestamp) : 0;
   
   // Stop timers
   BaseType_t higher_priority_woken = pdFALSE;
   xTimerStopFromISR(button->long_press_timer, &higher_priority_woken);
   xTimerStopFromISR(button->chord_timer, &higher_priority_woken);
   
-  // Clear both-pressed state if it was set
   if (g_both_pressed) {
+    event_t event = {
+      .type = EVENT_BUTTON_BOTH_RELEASE,
+      .priority = EVENT_PRIORITY_HIGH,
+      .timestamp = now,
+      .data.button.button_id = BUTTON_ID_BOTH,
+      .data.button.duration_ms = duration
+    };
+    event_bus_post_from_isr(&event, &higher_priority_woken);
     g_both_pressed = false;
     g_first_button_pressed = 0xFF;
-    // Don't log individual releases when both were pressed
+    g_button_left.press_delivered = false;
+    g_button_right.press_delivered = false;
+    if (g_logging_enabled)
+      ESP_EARLY_LOGI(TAG, "Both buttons released");
+  } else if (button->press_delivered) {
+    event_t event = {
+      .type = (button_id == BUTTON_ID_LEFT) ? EVENT_BUTTON_L_RELEASE : EVENT_BUTTON_R_RELEASE,
+      .priority = EVENT_PRIORITY_NORMAL,
+      .timestamp = now,
+      .data.button.button_id = button_id,
+      .data.button.duration_ms = duration
+    };
+    event_bus_post_from_isr(&event, &higher_priority_woken);
+    button->press_delivered = false;
+    if (g_logging_enabled && !other_button->pressed) {
+      ESP_EARLY_LOGD(TAG, "Button %s released", (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT");
+    }
   } else if (g_logging_enabled && !other_button->pressed) {
-    // Only log single button release if the other button isn't pressed
-    // (prevents logging when releasing second button after both were pressed)
-    ESP_EARLY_LOGD(TAG, "Button %s released", (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT");
+    ESP_EARLY_LOGD(TAG, "Button %s released (no press delivered)",
+      (button_id == BUTTON_ID_LEFT) ? "LEFT" : "RIGHT");
   }
+  
+  button->pressed = false;
   
   portYIELD_FROM_ISR(higher_priority_woken);
 }
@@ -490,6 +517,7 @@ static void button_chord_timer_callback(TimerHandle_t xTimer) {
       .data.button.duration_ms = 0
     };
     event_bus_post(&event);
+    button->press_delivered = true;
     
     // Start long press timer now
     xTimerStart(button->long_press_timer, 0);

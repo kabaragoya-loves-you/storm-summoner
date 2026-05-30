@@ -78,6 +78,9 @@ void menu_cleanup(void);
 // Check if menu is at top level
 bool menu_is_top_level(void);
 
+// True when the top of the menu stack has the given page name
+bool menu_current_page_is(const char *name);
+
 // Get menu group for encoder attachment
 lv_group_t* menu_get_group(void);
 
@@ -86,6 +89,9 @@ lv_obj_t* menu_get_current_screen(void);
 
 // Get current menu container (for expression pedal navigation)
 lv_obj_t* menu_get_current_container(void);
+
+// user_data from the focused clickable menu item, or NULL
+void* menu_get_focused_item_user_data(void);
 
 // Helper: Create a menu screen with title and items
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count);

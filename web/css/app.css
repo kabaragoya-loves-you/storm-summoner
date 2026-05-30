@@ -659,6 +659,14 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   color: var(--text-dim);
 }
 
+.scene-row.current {
+  background: color-mix(in srgb, var(--brand) 14%, var(--bg-card));
+}
+
+.scene-row.current:hover {
+  background: color-mix(in srgb, var(--brand) 20%, var(--bg-card));
+}
+
 .scene-row.current .scene-position {
   background: var(--brand);
   color: white;
@@ -677,6 +685,17 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   font-weight: 500;
   color: var(--text);
   min-width: 0;
+}
+
+.scene-current-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
 }
 
 .scene-name span {

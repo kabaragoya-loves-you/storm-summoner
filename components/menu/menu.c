@@ -1281,6 +1281,12 @@ bool menu_is_top_level(void) {
   return (menu_state.stack_depth == 1);
 }
 
+bool menu_current_page_is(const char *name) {
+  if (!name || menu_state.stack_depth < 1) return false;
+  const char *current = menu_state.stack[menu_state.stack_depth - 1].name;
+  return current && strcmp(current, name) == 0;
+}
+
 lv_group_t* menu_get_group(void) {
   return menu_state.group;
 }
@@ -1297,6 +1303,18 @@ lv_obj_t* menu_get_current_container(void) {
     return menu_state.stack[menu_state.stack_depth - 1].container;
   }
   return NULL;
+}
+
+void* menu_get_focused_item_user_data(void) {
+  if (menu_state.stack_depth < 1 || !menu_state.group) return NULL;
+
+  lv_obj_t* focused = lv_group_get_focused(menu_state.group);
+  if (!focused) return NULL;
+
+  menu_item_t* item = (menu_item_t*)lv_obj_get_user_data(focused);
+  if (!item || !item->callback) return NULL;
+
+  return item->user_data;
 }
 
 static void update_top_level_flag(void) {

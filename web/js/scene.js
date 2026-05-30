@@ -45,6 +45,9 @@ application.register(
       if (kind !== 'scene_changed' && kind !== 'scene_updated') return
       if (!this.connection.isConnected || this.editing) return
 
+      const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
+      if (activeTab?.getAttribute('panel') !== 'scene') return
+
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       this.notifyDebounce = setTimeout(() => {
         this.notifyDebounce = null

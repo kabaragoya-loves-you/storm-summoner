@@ -31,7 +31,7 @@ typedef enum {
   
   // Tempo (consolidated -- use variant field to pick operation:
   //   VARIANT_TAP, VARIANT_SET, VARIANT_INCREMENT, VARIANT_DECREMENT,
-  //   VARIANT_HOLD, VARIANT_CYCLE)
+  //   VARIANT_HOLD, VARIANT_CYCLE, VARIANT_DOWNBEAT)
   ACTION_TEMPO,
   
   // Direct MIDI output
@@ -134,6 +134,8 @@ typedef enum {
   VARIANT_MODIFY,
   // RTG / S+H manual step trigger (append-only).
   VARIANT_STEP,
+  // Tempo family: re-align bar/beat to downbeat on press (append-only).
+  VARIANT_DOWNBEAT,
   VARIANT_MAX
 } action_variant_t;
 
@@ -682,9 +684,10 @@ bool action_supports_repeat(action_type_t type);
 
 // Variant-aware timing/repeat predicates. Prefer these when the caller has
 // the full action_t. For ACTION_TEMPO:
-//   - timing: false for VARIANT_TAP (no meaning to defer) and VARIANT_HOLD
+//   - timing: false for VARIANT_TAP (no meaning to defer), VARIANT_HOLD,
+//             and VARIANT_DOWNBEAT (must fire on the tap)
 //   - repeat: true for VARIANT_INCREMENT, VARIANT_DECREMENT, VARIANT_CYCLE
-//             false for VARIANT_TAP, VARIANT_SET, VARIANT_HOLD
+//             false for VARIANT_TAP, VARIANT_SET, VARIANT_HOLD, VARIANT_DOWNBEAT
 // For all other types these return the same answer as the by-type forms.
 bool action_supports_timing_for(const action_t* action);
 bool action_supports_repeat_for(const action_t* action);

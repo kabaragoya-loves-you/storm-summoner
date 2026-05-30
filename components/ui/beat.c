@@ -152,6 +152,7 @@ static volatile transport_state_t g_transport_state = TRANSPORT_STOPPED;
 static volatile bool g_beat_dirty = false;
 static volatile bool g_tempo_dirty = false;
 static volatile bool g_transport_dirty = false;
+static volatile bool g_scene_info_dirty = false;
 
 // Module active flag (only process events when screen is active)
 static volatile bool g_module_active = false;
@@ -173,6 +174,8 @@ static void beat_event_handler(const event_t* event, void* context);
 static void tempo_changed_handler(const event_t* event, void* context);
 static void transport_state_handler(const event_t* event, void* context);
 static void scene_changed_handler(const event_t* event, void* context);
+static void scene_reordered_handler(const event_t* event, void* context);
+static void scene_list_changed_handler(const event_t* event, void* context);
 static void interp_timer_cb(lv_timer_t *timer);
 static void update_gradient(float phase, bool is_beat_one);
 static void update_tempo_labels(void);
@@ -412,11 +415,19 @@ static void transport_state_handler(const event_t* event, void* context) {
 static void scene_changed_handler(const event_t* event, void* context) {
   (void)context;
   if (!event || !g_module_active) return;
-  
-  // Update scene info label asynchronously via timer callback
-  // (event handler context is not safe for LVGL calls)
-  // The interp_timer will call update_scene_info_label periodically
-  // For now, just mark that an update is needed (we'll add a dirty flag)
+  g_scene_info_dirty = true;
+}
+
+static void scene_reordered_handler(const event_t* event, void* context) {
+  (void)context;
+  if (!event || !g_module_active) return;
+  g_scene_info_dirty = true;
+}
+
+static void scene_list_changed_handler(const event_t* event, void* context) {
+  (void)context;
+  if (!event || !g_module_active) return;
+  g_scene_info_dirty = true;
 }
 
 //=============================================================================
@@ -543,10 +554,11 @@ static void interp_timer_cb(lv_timer_t *timer) {
     lv_vector_art_set_frame(g_body_art, body_frame);
   }
   
-  // Update scene info label periodically (~every 500ms = 30 frames at 60fps)
+  // Update scene info label periodically (~every 500ms) or when manifest order changes
   static uint8_t scene_info_counter = 0;
-  if (++scene_info_counter >= 30) {
+  if (g_scene_info_dirty || ++scene_info_counter >= 30) {
     scene_info_counter = 0;
+    g_scene_info_dirty = false;
     update_scene_info_label();
   }
 }
@@ -693,6 +705,8 @@ static void beat_draw_deferred_cb(lv_timer_t *timer) {
   event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_CHANGED, scene_changed_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_REORDERED, scene_reordered_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_LIST_CHANGED, scene_list_changed_handler, NULL);
 
   // Mark module as active
   g_module_active = true;
@@ -715,6 +729,8 @@ static void beat_teardown(void) {
   event_bus_unsubscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler);
   event_bus_unsubscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler);
   event_bus_unsubscribe(EVENT_SCENE_CHANGED, scene_changed_handler);
+  event_bus_unsubscribe(EVENT_SCENE_REORDERED, scene_reordered_handler);
+  event_bus_unsubscribe(EVENT_SCENE_LIST_CHANGED, scene_list_changed_handler);
   
   // Clean up interpolation timer
   if (g_interp_timer) {

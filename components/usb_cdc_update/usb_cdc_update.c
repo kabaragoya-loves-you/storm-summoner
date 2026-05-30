@@ -115,6 +115,8 @@ static void midi_relay_stop(void);
 // Scene CDC notifications (idle / text-safe modes)
 static void cdc_scene_changed_handler(const event_t *event, void *context);
 static void cdc_scene_updated_handler(const event_t *event, void *context);
+static void cdc_scene_reordered_handler(const event_t *event, void *context);
+static void cdc_scene_list_changed_handler(const event_t *event, void *context);
 static void cdc_send_scene_inspect(void);
 static void cdc_send_info_json(void);
 
@@ -298,6 +300,8 @@ esp_err_t usb_cdc_update_init(void) {
 
   event_bus_subscribe(EVENT_SCENE_CHANGED, cdc_scene_changed_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_UPDATED, cdc_scene_updated_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_REORDERED, cdc_scene_reordered_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_LIST_CHANGED, cdc_scene_list_changed_handler, NULL);
 
   s_initialized = true;
   ESP_LOGI(TAG, "CDC update handler initialized");
@@ -747,6 +751,18 @@ static void cdc_scene_updated_handler(const event_t *event, void *context) {
   (void)context;
   if (!event || event->type != EVENT_SCENE_UPDATED) return;
   cdc_push_scene_evt("scene_updated", event->data.value_uint8);
+}
+
+static void cdc_scene_reordered_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_SCENE_REORDERED) return;
+  cdc_push_scene_evt("scene_reordered", event->data.value_uint8);
+}
+
+static void cdc_scene_list_changed_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_SCENE_LIST_CHANGED) return;
+  cdc_push_scene_evt("scene_list_changed", event->data.value_uint8);
 }
 
 static void cdc_send_scene_inspect(void) {
@@ -2961,6 +2977,31 @@ static void process_scenes_command(const char *cmd) {
       }
     }
     send_response("ERROR: Current scene not found");
+    return;
+  }
+
+  // GOTO <position> - switch to scene at manifest position
+  if (strncmp(cmd, "GOTO ", 5) == 0) {
+    unsigned pos;
+    if (sscanf(cmd + 5, "%u", &pos) != 1) {
+      send_response("ERROR: Usage: GOTO <position>");
+      return;
+    }
+
+    uint8_t idx = scene_get_index_by_position((uint16_t)pos);
+    if (!scene_is_active(idx)) {
+      send_response("ERROR: Scene inactive");
+      return;
+    }
+
+    esp_err_t err = scene_set_current(idx);
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
     return;
   }
   

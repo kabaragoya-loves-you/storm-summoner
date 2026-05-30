@@ -946,6 +946,10 @@ static bool ainspect_format_variant_line(const action_t *action, uint8_t scene_i
       snprintf(buf, cap, "Tap");
       return true;
     }
+    if (action->variant == VARIANT_DOWNBEAT) {
+      snprintf(buf, cap, "Downbeat");
+      return true;
+    }
   }
 
   if (action->type == ACTION_LFO) {

@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "scene.h"
 #include "scene_name_gen.h"
+#include "event_bus.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +20,54 @@ static char s_scene_labels[128][32];  // "1. SceneName" format
 
 // Reorder roller state
 static char s_reorder_options[2048];  // Roller options string
+static bool s_list_subscribed = false;
+
+static int manifest_position_to_clickable_focus(uint16_t manifest_pos) {
+  uint16_t total = scene_get_total_count();
+  int focus = 0;
+
+  for (uint16_t i = 0; i < total; i++) {
+    if (!scene_is_active_by_position(i)) continue;
+    if (i == manifest_pos) return focus;
+    focus++;
+  }
+
+  for (uint16_t i = 0; i < total; i++) {
+    if (scene_is_active_by_position(i)) continue;
+    if (i == manifest_pos) return focus;
+    focus++;
+  }
+
+  return focus > 0 ? focus - 1 : 0;
+}
+
+static void scene_list_refresh_handler(const event_t *event, void *context) {
+  (void)event;
+  (void)context;
+  if (!menu_current_page_is("Scenes")) return;
+
+  void *focused = menu_get_focused_item_user_data();
+  if (focused) {
+    uint16_t old_pos = (uint16_t)(uintptr_t)focused;
+    uint8_t scene_index = scene_get_index_by_position(old_pos);
+    uint16_t total = scene_get_total_count();
+    for (uint16_t i = 0; i < total; i++) {
+      if (scene_get_index_by_position(i) == scene_index) {
+        menu_set_restore_focus(manifest_position_to_clickable_focus(i));
+        break;
+      }
+    }
+  }
+
+  menu_replace_current_deferred("Scenes", menu_page_scenes_create);
+}
+
+static void ensure_list_subscribed(void) {
+  if (s_list_subscribed) return;
+  event_bus_subscribe(EVENT_SCENE_LIST_CHANGED, scene_list_refresh_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_REORDERED, scene_list_refresh_handler, NULL);
+  s_list_subscribed = true;
+}
 
 // ============================================================================
 // Helpers
@@ -59,9 +108,8 @@ static void reorder_confirm_cb(uint32_t selected_index, void* user_data) {
   } else {
     ESP_LOGW(TAG, "Failed to reorder scene: %s", esp_err_to_name(ret));
   }
-  
-  // Refresh list with focus on moved scene
-  menu_set_restore_focus((int)s_selected_position);
+
+  menu_set_restore_focus(manifest_position_to_clickable_focus(target_position));
   menu_navigate_back_then_to(3, "Scenes", menu_page_scenes_create);
 }
 
@@ -298,6 +346,7 @@ static void nav_to_scene_action(void* user_data) {
 // ============================================================================
 
 lv_obj_t* menu_page_scenes_create(void) {
+  ensure_list_subscribed();
   ESP_LOGI(TAG, "Creating scenes page");
   
   uint16_t total = scene_get_total_count();

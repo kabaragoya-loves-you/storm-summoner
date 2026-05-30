@@ -15,7 +15,8 @@ application.register(
       this._notifyDebounce = null
       this._onCdcNotify = (e) => {
         const kind = e.detail?.kind
-        if (kind !== 'scene_changed' && kind !== 'scene_updated') return
+        if (kind !== 'scene_changed' && kind !== 'scene_updated' &&
+            kind !== 'scene_list_changed' && kind !== 'scene_reordered') return
         if (!this.connection.isConnected) return
         const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
         if (activeTab?.getAttribute('panel') !== 'info') return

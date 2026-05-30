@@ -23,6 +23,9 @@ window.ConnectionManager = (function () {
       this._lineQueue = []
       this._lineWaiters = []
       this._commandChain = Promise.resolve()
+      this._modeNotifyRunning = false
+      this._modeNotifyReader = null
+      this._modeNotifySuspended = false
     }
 
     // Event handling
@@ -85,6 +88,7 @@ window.ConnectionManager = (function () {
       if (event.target === this.port) {
         console.log('USB device disconnected')
         this._stopRxPump()
+        this._stopModeNotifyLoop()
         this.port = null
         this.mode = null
         this._rxBuffer = ''
@@ -104,6 +108,7 @@ window.ConnectionManager = (function () {
       if (!this.port) return
 
       this._stopRxPump()
+      this._stopModeNotifyLoop()
       navigator.serial.removeEventListener('disconnect', this.onPortDisconnect)
 
       try {
@@ -141,6 +146,7 @@ window.ConnectionManager = (function () {
       }
 
       this.mode = newMode
+      if (newMode) this._startModeNotifyLoop()
       this.emit('mode:changed', { mode: newMode })
       return true
     }
@@ -148,6 +154,7 @@ window.ConnectionManager = (function () {
     // Exit current mode
     async exitMode () {
       if (!this.mode || !this.port) return
+      this._stopModeNotifyLoop()
       try {
         await this.sendRaw('EXIT\n')
         await this.sleep(100)
@@ -263,9 +270,99 @@ window.ConnectionManager = (function () {
     _resumeRxPump () {
       this._pumpSuspended = false
       if (this.port) this._processIncomingLines()
-      if (!this._rxPumpRunning && this.port) {
+      if (!this._rxPumpRunning && this.port && this.mode === null) {
         this._startRxPump()
       }
+    }
+
+    _releaseModeNotifyReader () {
+      if (!this._modeNotifyReader) return
+      try {
+        this._modeNotifyReader.releaseLock()
+      } catch (e) {}
+      this._modeNotifyReader = null
+    }
+
+    async _waitForModeNotifyReaderRelease (ms = 500) {
+      const deadline = Date.now() + ms
+      while (this._modeNotifyReader && Date.now() < deadline) {
+        await this.sleep(10)
+      }
+    }
+
+    async _suspendModeNotify () {
+      if (!this.mode) return
+      this._modeNotifySuspended = true
+      const reader = this._modeNotifyReader
+      if (reader) {
+        try {
+          await reader.cancel()
+        } catch (e) {}
+      }
+      await this._waitForModeNotifyReaderRelease()
+      if (this._modeNotifyReader) this._releaseModeNotifyReader()
+    }
+
+    _resumeModeNotify () {
+      this._modeNotifySuspended = false
+      if (this.port) this._processIncomingLines()
+      if (!this._modeNotifyRunning && this.mode && this.port) {
+        this._startModeNotifyLoop()
+      }
+    }
+
+    _startModeNotifyLoop () {
+      if (this._modeNotifyRunning || !this.mode) return
+      this._modeNotifyRunning = true
+      this._modeNotifyLoop()
+    }
+
+    _stopModeNotifyLoop () {
+      this._modeNotifyRunning = false
+      this._releaseModeNotifyReader()
+    }
+
+    async _modeNotifyLoop () {
+      while (this._modeNotifyRunning && this.port && this.mode !== null) {
+        if (this._modeNotifySuspended || !this.port.readable) {
+          await this.sleep(30)
+          continue
+        }
+
+        let reader = null
+        try {
+          reader = this.port.readable.getReader()
+          this._modeNotifyReader = reader
+
+          while (
+            this._modeNotifyRunning &&
+            !this._modeNotifySuspended &&
+            this.mode !== null &&
+            this.port
+          ) {
+            const { value, done } = await reader.read()
+            if (this._modeNotifySuspended) break
+            if (done) break
+            if (value?.length > 0) {
+              this._rxBuffer += this._rxDecoder.decode(value, { stream: true })
+              this._processIncomingLines()
+            }
+          }
+        } catch (err) {
+          // Ignore read errors during reader handoff
+        } finally {
+          if (reader) {
+            try {
+              reader.releaseLock()
+            } catch (e) {}
+          }
+          this._modeNotifyReader = null
+        }
+
+        await this.sleep(20)
+      }
+      this._releaseModeNotifyReader()
+      this._modeNotifyRunning = false
     }
 
     _rejectLineWaiters () {
@@ -521,6 +618,7 @@ window.ConnectionManager = (function () {
 
     async _readLineExclusive (timeout = 10000) {
       await this._suspendRxPump()
+      await this._suspendModeNotify()
       const reader = this.port.readable.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -564,12 +662,14 @@ window.ConnectionManager = (function () {
         }
       } finally {
         try { reader.releaseLock() } catch (e) {}
+        this._resumeModeNotify()
       }
       return buffer.trim()
     }
 
     async readBinary (size, timeout = 30000) {
       await this._suspendRxPump()
+      await this._suspendModeNotify()
       const reader = this.port.readable.getReader()
       const data = new Uint8Array(size)
       let received = 0
@@ -586,6 +686,7 @@ window.ConnectionManager = (function () {
         }
       } finally {
         reader.releaseLock()
+        this._resumeModeNotify()
         this._resumeRxPump()
       }
       return data.slice(0, received)

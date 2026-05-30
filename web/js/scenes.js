@@ -1,5 +1,11 @@
 /* Storm Summoner - Scenes Controller */
 
+const SCENES_LIST_SYNC_EVENTS = new Set([
+  'scene_list_changed',
+  'scene_reordered',
+  'scene_changed'
+])
+
 application.register(
   'scenes',
   class extends BaseController {
@@ -16,6 +22,7 @@ application.register(
       this.pendingRenamePosition = null  // null for add, position for rename
       this.pendingDuplicatePosition = null  // position when duplicating
       this.draggedElement = null
+      this.notifyDebounce = null
 
       // Listen for connection changes
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
@@ -27,12 +34,35 @@ application.register(
         }
       })
 
+      this._onCdcNotify = this.onCdcNotify.bind(this)
+      document.addEventListener('cdc:notify', this._onCdcNotify)
+
       // Listen for tab activation
       document.addEventListener('app:tab-activated', (e) => {
         if (e.detail.tab === 'scenes' && this.connection.isConnected && !this.inScenesMode) {
           this.activate()
         }
       })
+    }
+
+    disconnect () {
+      document.removeEventListener('cdc:notify', this._onCdcNotify)
+      if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
+    }
+
+    onCdcNotify (e) {
+      const kind = e.detail?.kind
+      if (!SCENES_LIST_SYNC_EVENTS.has(kind)) return
+      if (!this.connection.isConnected || !this.inScenesMode) return
+
+      const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
+      if (activeTab?.getAttribute('panel') !== 'scenes') return
+
+      if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
+      this.notifyDebounce = setTimeout(() => {
+        this.notifyDebounce = null
+        this.fetchScenes()
+      }, 100)
     }
 
     onConnectionChanged({ connected }) {
@@ -92,6 +122,13 @@ application.register(
           this.log('Failed to fetch scenes: ' + response, 'error')
           this.renderEmpty()
           return
+        }
+
+        if (response === 'SCENES_STOPPED' || !response.includes('[')) {
+          this.inScenesMode = false
+          await this.enterScenesMode()
+          await this.settleDelay()
+          return this.fetchScenes()
         }
 
         // Extract just the JSON array in case there's extra data
@@ -189,6 +226,9 @@ application.register(
     renderSceneRow(scene, displayNumber, isActive) {
       const currentClass = scene.current ? ' current' : ''
       const positionDisplay = displayNumber !== null ? displayNumber : '-'
+      const showGoto = isActive && !scene.current
+      const showDelete = !scene.current
+      const showDeactivate = isActive && !scene.current
 
       return `
         <li class="scene-row${currentClass}"
@@ -202,8 +242,17 @@ application.register(
           <div class="scene-position">${positionDisplay}</div>
           <div class="scene-name">
             <span>${this.escapeHtml(scene.name)}</span>
+            ${scene.current ? '<span class="scene-current-badge">Playing</span>' : ''}
           </div>
           <div class="scene-actions">
+            ${showGoto ? `
+              <wa-button size="small" appearance="text"
+                         data-action="click->scenes#switchToScene"
+                         data-position="${scene.position}"
+                         title="Switch to this scene">
+                <wa-icon name="play"></wa-icon>
+              </wa-button>
+            ` : ''}
             <wa-button size="small" appearance="text"
                        data-action="click->scenes#startRename"
                        data-position="${scene.position}"
@@ -216,14 +265,14 @@ application.register(
                        title="Duplicate">
               <wa-icon name="clone"></wa-icon>
             </wa-button>
-            ${isActive ? `
+            ${showDeactivate ? `
               <wa-button size="small" appearance="text"
                          data-action="click->scenes#deactivate"
                          data-position="${scene.position}"
                          title="Deactivate">
                 <wa-icon name="eye-slash"></wa-icon>
               </wa-button>
-            ` : `
+            ` : isActive ? '' : `
               <wa-button size="small" appearance="text"
                          data-action="click->scenes#activateScene"
                          data-position="${scene.position}"
@@ -231,12 +280,14 @@ application.register(
                 <wa-icon name="eye"></wa-icon>
               </wa-button>
             `}
-            <wa-button size="small" appearance="text" class="danger"
-                       data-action="click->scenes#showDeleteDialog"
-                       data-position="${scene.position}"
-                       title="Delete">
-              <wa-icon name="trash"></wa-icon>
-            </wa-button>
+            ${showDelete ? `
+              <wa-button size="small" appearance="text" class="danger"
+                         data-action="click->scenes#showDeleteDialog"
+                         data-position="${scene.position}"
+                         title="Delete">
+                <wa-icon name="trash"></wa-icon>
+              </wa-button>
+            ` : ''}
           </div>
         </li>
       `
@@ -556,6 +607,28 @@ application.register(
       }
     }
 
+    async switchToScene(e) {
+      const position = parseInt(e.currentTarget.dataset.position, 10)
+
+      this.log(`Switching to scene at position ${position}`)
+
+      try {
+        await this.settleDelay()
+        await this.connection.sendRaw(`GOTO ${position}\n`)
+        const response = await this.readLine(3000)
+
+        if (response === 'OK') {
+          this.log('Scene switched')
+        } else {
+          this.log('Switch failed: ' + (response || 'timeout'), 'error')
+        }
+        await this.fetchScenes()
+      } catch (err) {
+        this.log('Error: ' + err.message, 'error')
+        await this.fetchScenes()
+      }
+    }
+
     // Activate handler (named activateScene to avoid conflict with activate())
     async activateScene(e) {
       const position = parseInt(e.currentTarget.dataset.position, 10)
@@ -582,6 +655,11 @@ application.register(
     // Deactivate handler
     async deactivate(e) {
       const position = parseInt(e.currentTarget.dataset.position, 10)
+      const scene = this.scenes.find(s => s.position === position)
+      if (scene?.current) {
+        this.log('Cannot deactivate the playing scene', 'error')
+        return
+      }
 
       this.log(`Deactivating scene at position ${position}`)
 

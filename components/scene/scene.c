@@ -66,6 +66,8 @@ static void scene_init_defaults(scene_t* scene, uint8_t index);
 static void scene_cleanup_touchwheel(void);
 static void scene_setup_touchwheel_for_mode(const scene_t* scene);
 static void scene_post_updated_event(uint8_t scene_index);
+static void scene_post_list_changed_event(uint8_t scene_index);
+static uint8_t scene_get_first_active_index(void);
 
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
@@ -1545,6 +1547,17 @@ static int seed_factory_presets(void) {
   return seeded;
 }
 
+// First active scene in manifest list order (position 0 when active).
+// Used at boot so reordering the manifest does not leave us on a stale
+// hardcoded scene index 0 when that slot is no longer first in the list.
+static uint8_t scene_get_first_active_index(void) {
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].active)
+      return g_scene_manager.manifest[i].index;
+  }
+  return 0;
+}
+
 esp_err_t scene_init(void) {
   if (g_scene_manager.initialized) {
     ESP_LOGW(TAG, "Scene manager already initialized");
@@ -1603,14 +1616,16 @@ esp_err_t scene_init(void) {
     manifest_was_synthesized = true;
   }
   
-  // Load first scene into cache slot 0
+  // Load first scene in manifest order into cache slot 0
+  uint8_t boot_index = scene_get_first_active_index();
   g_scene_manager.current_cache_idx = 0;
-  g_scene_manager.current_scene_index = 0;
-  
-  // Load scene 0 directly into cache[0] (NOT using scene_load_from_flash which uses wrong slot)
-  bool scene0_was_synthesized = false;
+  g_scene_manager.current_scene_index = boot_index;
+
+  // Load boot scene directly into cache[0] (NOT using scene_load_from_flash
+  // which uses wrong slot)
+  bool boot_scene_was_synthesized = false;
   char filepath[128];
-  get_scene_filename(0, filepath, sizeof(filepath));
+  get_scene_filename(boot_index, filepath, sizeof(filepath));
 
   FILE* f = fopen(filepath, "r");
   if (f) {
@@ -1630,45 +1645,49 @@ esp_err_t scene_init(void) {
       if (root) {
         // Initialize with defaults first to ensure all fields have valid values,
         // even if JSON file is missing newer fields (e.g., velocity modes)
-        scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+        scene_init_defaults(&g_scene_manager.cache[0].scene, boot_index);
         ret = json_to_scene(root, &g_scene_manager.cache[0].scene);
         cJSON_Delete(root);
         
         if (ret == ESP_OK) {
-          ESP_LOGI(TAG, "Loaded scene 0 from flash");
+          ESP_LOGI(TAG, "Loaded scene %u from flash (manifest position 0)",
+            (unsigned)boot_index);
         } else {
-          ESP_LOGW(TAG, "Failed to parse scene 0, using defaults");
-          scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+          ESP_LOGW(TAG, "Failed to parse scene %u, using defaults", (unsigned)boot_index);
+          scene_init_defaults(&g_scene_manager.cache[0].scene, boot_index);
         }
       } else {
-        ESP_LOGW(TAG, "Failed to parse scene 0 JSON, using defaults");
-        scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+        ESP_LOGW(TAG, "Failed to parse scene %u JSON, using defaults", (unsigned)boot_index);
+        scene_init_defaults(&g_scene_manager.cache[0].scene, boot_index);
       }
     } else {
       fclose(f);
-      ESP_LOGW(TAG, "Failed to allocate memory for scene 0, using defaults");
-      scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
+      ESP_LOGW(TAG, "Failed to allocate memory for scene %u, using defaults",
+        (unsigned)boot_index);
+      scene_init_defaults(&g_scene_manager.cache[0].scene, boot_index);
     }
   } else {
-    ESP_LOGW(TAG, "Scene 0 file not found, using defaults");
-    scene_init_defaults(&g_scene_manager.cache[0].scene, 0);
-    scene0_was_synthesized = true;
+    ESP_LOGW(TAG, "Scene %u file not found, using defaults", (unsigned)boot_index);
+    scene_init_defaults(&g_scene_manager.cache[0].scene, boot_index);
+    boot_scene_was_synthesized = true;
   }
 
-  g_scene_manager.cache[0].index = 0;
+  g_scene_manager.cache[0].index = boot_index;
   g_scene_manager.cache[0].valid = true;
 
   // First-boot seeding: persist the synthesized manifest and/or default
-  // scene 0 to /userdata so the device has real files to read on next boot
+  // boot scene to /userdata so the device has real files to read on next boot
   // (and so the user can see them in the web app's file browser). We only
   // write what was actually synthesized; if the file existed but failed to
   // parse, we leave it alone rather than clobbering possibly-recoverable
   // user data with defaults.
   if (assets_userdata_available()) {
-    if (scene0_was_synthesized) {
-      esp_err_t save_ret = scene_save_to_flash(0);
-      if (save_ret == ESP_OK) ESP_LOGI(TAG, "Seeded default scene 0 to /userdata");
-      else ESP_LOGW(TAG, "Failed to seed scene 0: %s", esp_err_to_name(save_ret));
+    if (boot_scene_was_synthesized) {
+      esp_err_t save_ret = scene_save_to_flash(boot_index);
+      if (save_ret == ESP_OK)
+        ESP_LOGI(TAG, "Seeded default scene %u to /userdata", (unsigned)boot_index);
+      else ESP_LOGW(TAG, "Failed to seed scene %u: %s", (unsigned)boot_index,
+        esp_err_to_name(save_ret));
     }
     const char *cur_csum = version_get_assets_checksum();
     bool csum_known = cur_csum && cur_csum[0] != '\0' &&
@@ -1720,7 +1739,7 @@ esp_err_t scene_init(void) {
         app_settings_save_str(NVS_KEY_FACTORY_SEED_CSUM, cur_csum);
       }
     }
-  } else if (manifest_was_synthesized || scene0_was_synthesized) {
+  } else if (manifest_was_synthesized || boot_scene_was_synthesized) {
     ESP_LOGW(TAG, "userdata unavailable - default scene held in memory only");
   }
 
@@ -1802,28 +1821,27 @@ esp_err_t scene_init(void) {
     .type = EVENT_SCENE_CHANGED,
     .priority = EVENT_PRIORITY_NORMAL,
     .timestamp = event_bus_get_current_timestamp(),
-    .data = {.value_uint8 = 0}
+    .data = {.value_uint8 = boot_index}
   };
   event_bus_post(&event);
   
-  // Restore persisted scene if enabled and not already on scene 0
+  // Restore persisted scene if enabled
   if (config_get_persist_scene()) {
     uint8_t last_scene = config_get_last_scene();
-    if (last_scene != 0) {
-      // Verify the scene index exists in the manifest
-      bool valid = false;
-      for (int i = 0; i < g_scene_manager.num_scenes; i++) {
-        if (g_scene_manager.manifest[i].index == last_scene) {
-          valid = true;
-          break;
-        }
+    // Verify the scene index exists in the manifest
+    bool valid = false;
+    for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+      if (g_scene_manager.manifest[i].index == last_scene) {
+        valid = true;
+        break;
       }
-      if (valid) {
-        ESP_LOGI(TAG, "Restoring persisted scene %d", last_scene);
-        scene_set_current(last_scene);
-      } else {
-        ESP_LOGW(TAG, "Persisted scene %d no longer exists, staying on scene 0", last_scene);
-      }
+    }
+    if (valid) {
+      ESP_LOGI(TAG, "Restoring persisted scene %u", (unsigned)last_scene);
+      scene_set_current(last_scene);
+    } else {
+      ESP_LOGW(TAG, "Persisted scene %u no longer exists, staying on scene %u",
+        (unsigned)last_scene, (unsigned)boot_index);
     }
   }
   
@@ -2318,6 +2336,8 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
   }
 
   scene_save_manifest();
+
+  scene_post_list_changed_event(scene_index);
 
   ESP_LOGI(TAG, "Scene %d renamed to: %s (file: %s)",
     scene_index + 1, name, new_slug);
@@ -3966,6 +3986,7 @@ static const char* action_variant_json_names[] = {
   [VARIANT_RECORD]    = "record",
   [VARIANT_MODIFY]    = "modify",
   [VARIANT_STEP]      = "step",
+  [VARIANT_DOWNBEAT]  = "downbeat",
 };
 
 static action_variant_t action_variant_from_string(const char* name) {
@@ -6901,6 +6922,26 @@ static void scene_post_updated_event(uint8_t scene_index) {
   event_bus_post(&event);
 }
 
+static void scene_post_reordered_event(uint8_t scene_index) {
+  event_t event = {
+    .type = EVENT_SCENE_REORDERED,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data = {.value_uint8 = scene_index}
+  };
+  event_bus_post(&event);
+}
+
+static void scene_post_list_changed_event(uint8_t scene_index) {
+  event_t event = {
+    .type = EVENT_SCENE_LIST_CHANGED,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data = {.value_uint8 = scene_index}
+  };
+  event_bus_post(&event);
+}
+
 uint16_t scene_get_total_count(void) {
   return g_scene_manager.num_scenes;
 }
@@ -6941,7 +6982,9 @@ esp_err_t scene_set_active(uint8_t scene_index, bool active) {
   ESP_LOGI(TAG, "Scene %d (%s) %s",
     scene_index + 1, g_scene_manager.manifest[pos].name,
     active ? "activated" : "deactivated");
-  return scene_save_manifest();
+  esp_err_t err = scene_save_manifest();
+  if (err == ESP_OK) scene_post_list_changed_event(scene_index);
+  return err;
 }
 
 const char* scene_get_name_by_position(uint16_t position) {
@@ -7028,7 +7071,9 @@ esp_err_t scene_create_new_at_position(const char* name, uint16_t position) {
   
   scene_save_to_flash(new_index);
   scene_save_manifest();
-  
+
+  scene_post_list_changed_event(new_index);
+
   ESP_LOGI(TAG, "Created scene '%s' (file: %s)", name, slug);
   return ESP_OK;
 }
@@ -7041,6 +7086,11 @@ esp_err_t scene_delete(uint8_t scene_index) {
     if (g_scene_manager.manifest[i].index == scene_index) { pos = i; break; }
   }
   if (pos == -1) return ESP_ERR_NOT_FOUND;
+
+  if (scene_index == g_scene_manager.current_scene_index) {
+    ESP_LOGW(TAG, "Cannot delete the current scene");
+    return ESP_ERR_INVALID_STATE;
+  }
 
   // If the scene being deleted originated as a factory preset (same basename
   // is shipped under /assets/scenes/factory/), record a tombstone so the
@@ -7061,8 +7111,9 @@ esp_err_t scene_delete(uint8_t scene_index) {
     g_scene_manager.manifest[i] = g_scene_manager.manifest[i + 1];
   }
   g_scene_manager.num_scenes--;
-  
+
   scene_save_manifest();
+  scene_post_list_changed_event(g_scene_manager.current_scene_index);
   return ESP_OK;
 }
 
@@ -7174,6 +7225,8 @@ esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
   scene_save_to_flash(new_index);
   scene_save_manifest();
 
+  scene_post_list_changed_event(new_index);
+
   return ESP_OK;
 }
 
@@ -7196,7 +7249,8 @@ esp_err_t scene_reorder(uint8_t from_index, uint8_t to_index) {
   g_scene_manager.manifest[to_pos] = temp;
   scene_save_manifest();
 
-  scene_post_updated_event(g_scene_manager.current_scene_index);
+  scene_post_list_changed_event(g_scene_manager.current_scene_index);
+  scene_post_reordered_event(g_scene_manager.current_scene_index);
 
   return ESP_OK;
 }

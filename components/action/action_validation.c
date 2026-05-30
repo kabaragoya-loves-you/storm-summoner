@@ -351,7 +351,8 @@ bool action_supports_timing_for(const action_t* action) {
   if (action->type == ACTION_TEMPO) {
     // TAP is a mode interaction -- deferring it to a beat is nonsense.
     // HOLD needs a release pair, so it cannot be scheduled/repeated.
-    if (action->variant == VARIANT_TAP || action->variant == VARIANT_HOLD) {
+    if (action->variant == VARIANT_TAP || action->variant == VARIANT_HOLD ||
+        action->variant == VARIANT_DOWNBEAT) {
       return false;
     }
     return true;
