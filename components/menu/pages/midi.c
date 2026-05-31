@@ -185,17 +185,17 @@ lv_obj_t* menu_page_midi_create(void) {
   midi_out_interface_t iface = midi_out_get_interfaces();
   snprintf(s_interface_label, sizeof(s_interface_label), "Interface\n%s",
     interface_to_string(iface));
-  s_midi_items[idx++] = (menu_item_t){ s_interface_label, nav_to_interface, NULL, true };
+  s_midi_items[idx++] = (menu_item_t){ s_interface_label, nav_to_interface, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Passthrough with current value
   snprintf(s_passthrough_label, sizeof(s_passthrough_label), "Passthrough\n%s",
     passthrough_to_string());
-  s_midi_items[idx++] = (menu_item_t){ s_passthrough_label, nav_to_passthrough, NULL, true };
+  s_midi_items[idx++] = (menu_item_t){ s_passthrough_label, nav_to_passthrough, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Loopback with current value
   snprintf(s_loopback_label, sizeof(s_loopback_label), "Loopback\n%s",
     loopback_to_string());
-  s_midi_items[idx++] = (menu_item_t){ s_loopback_label, nav_to_loopback, NULL, true };
+  s_midi_items[idx++] = (menu_item_t){ s_loopback_label, nav_to_loopback, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   return menu_create_page_2line("MIDI", s_midi_items, idx);
 }

@@ -225,7 +225,9 @@ static lv_obj_t* menu_page_pedal_select_create(void) {
   if (!dynamic_menu_alloc(&s_pedal_menu, pedal_count)) {
     ESP_LOGE(TAG, "Failed to allocate pedal menu");
     // Return a fallback error page
-    static menu_item_t error_items[] = {{ "Memory Error", NULL, NULL, false }};
+    static menu_item_t error_items[] = {
+      { "Memory Error", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY }
+    };
     return menu_create_page("Error", error_items, 1);
   }
   
@@ -251,6 +253,7 @@ static lv_obj_t* menu_page_pedal_select_create(void) {
     s_pedal_menu.items[i].callback = select_pedal_callback;
     s_pedal_menu.items[i].user_data = &s_pedal_menu.indices[i];
     s_pedal_menu.items[i].has_submenu = false;
+    s_pedal_menu.items[i].kind = MENU_ITEM_KIND_ACTION;
   }
   
   // Build title with vendor name
@@ -310,7 +313,9 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
   // Allocate dynamic menu in PSRAM
   if (!dynamic_menu_alloc(&s_vendor_menu, total_items)) {
     ESP_LOGE(TAG, "Failed to allocate vendor menu");
-    static menu_item_t error_items[] = {{ "Memory Error", NULL, NULL, false }};
+    static menu_item_t error_items[] = {
+      { "Memory Error", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY }
+    };
     return menu_create_page("Error", error_items, 1);
   }
   
@@ -327,6 +332,8 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
     s_vendor_menu.items[idx].user_data = NULL;
   }
   s_vendor_menu.items[idx].has_submenu = user_device_count > 0;
+  s_vendor_menu.items[idx].kind = user_device_count > 0 ?
+    MENU_ITEM_KIND_SUBMENU : MENU_ITEM_KIND_DISPLAY;
   idx++;
   
   // Item 1: Divider
@@ -335,6 +342,7 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
   s_vendor_menu.items[idx].callback = NULL;
   s_vendor_menu.items[idx].user_data = NULL;
   s_vendor_menu.items[idx].has_submenu = false;
+  s_vendor_menu.items[idx].kind = MENU_ITEM_KIND_DISPLAY;
   idx++;
   
   // Remaining items: vendors except User
@@ -349,6 +357,7 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
     s_vendor_menu.items[idx].callback = select_vendor_callback;
     s_vendor_menu.items[idx].user_data = &s_vendor_menu.indices[idx];
     s_vendor_menu.items[idx].has_submenu = true;
+    s_vendor_menu.items[idx].kind = MENU_ITEM_KIND_SUBMENU;
     idx++;
   }
   
@@ -426,22 +435,22 @@ lv_obj_t* menu_page_device_config_create(void) {
   int item_idx = 0;
   
   // Item 0: Select pedal (opens vendor / user device list)
-  s_device_config_items[item_idx++] =
-    (menu_item_t){ "Select Pedal", nav_to_vendor_select, NULL, true };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    "Select Pedal", nav_to_vendor_select, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
 
-  // Item 1: Current pedal display name (read-only)
   const char *pedal_display = (device && device->name[0]) ? device->name : NULL;
   assets_format_pedal_menu_label(cfg->pedal_slug, pedal_display,
     s_current_pedal_label, sizeof(s_current_pedal_label));
-  s_device_config_items[item_idx++] =
-    (menu_item_t){ s_current_pedal_label, NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_current_pedal_label, NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
 
-  // Item 2: MIDI Channel (clickable -> roller)
   snprintf(s_midi_ch_label, sizeof(s_midi_ch_label), "MIDI Ch: %d", cfg->midi_channel);
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_midi_ch_label, nav_to_midi_channel_select, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_midi_ch_label, nav_to_midi_channel_select, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Item 2: TRS Polarity (clickable -> roller)
   const char* trs_str = "Both";
   switch (cfg->trs_type) {
     case MIDI_TRS_TYPE_A: trs_str = "Type A"; break;
@@ -451,18 +460,18 @@ lv_obj_t* menu_page_device_config_create(void) {
     default: break;
   }
   snprintf(s_trs_type_label, sizeof(s_trs_type_label), "TRS: %s", trs_str);
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_trs_type_label, nav_to_trs_type_select, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_trs_type_label, nav_to_trs_type_select, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Item 3: Send Clock toggle (clickable -> roller)
   bool send_clock = device_config_get_send_clock();
   snprintf(s_send_clock_label, sizeof(s_send_clock_label), "Send Clock: %s",
     send_clock ? "Yes" : "No");
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_send_clock_label, nav_to_send_clock, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_send_clock_label, nav_to_send_clock, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Divider
-  s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
   
   // Build info labels (read-only, NULL callback)
   int info_idx = 0;
@@ -470,37 +479,37 @@ lv_obj_t* menu_page_device_config_create(void) {
   // CC commands count
   unsigned cc_count = device ? (unsigned)device->control_count : 0;
   snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "CC commands: %u", cc_count);
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_info_labels[info_idx++], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   
-  // Clock support
   bool clock = device ? device->receives_clock : false;
   snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), 
     "Clock: %s", clock ? "supported" : "unsupported");
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_info_labels[info_idx++], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   
-  // Notes support
   bool notes = device ? device->receives_notes : false;
   snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), 
     "Notes: %s", notes ? "supported" : "unsupported");
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_info_labels[info_idx++], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   
-  // Transmits PC
   bool transmits = device ? device->transmits_pc : false;
   snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), 
     "Transmits: %s", transmits ? "yes" : "no");
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_info_labels[info_idx++], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   
-  // Preset slots
   unsigned slots = (device && device->pc_info) ? (unsigned)device->pc_info->count : 128;
   snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "Preset slots: %u", slots);
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_info_labels[info_idx++], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   
-  // Bank mode
   const char* bank_str = "None";
   if (device && device->pc_info) {
     switch (device->pc_info->bank_mode) {
@@ -510,21 +519,21 @@ lv_obj_t* menu_page_device_config_create(void) {
     }
   }
   snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "Bank mode: %s", bank_str);
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_info_labels[info_idx++], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   
-  // First preset
   int first_preset = (device && device->pc_info) ? (int)device->pc_info->index_base : 0;
   snprintf(s_info_labels[info_idx], sizeof(s_info_labels[0]), "First preset: %d", first_preset);
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_info_labels[info_idx++], NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    s_info_labels[info_idx++], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   
-  // Second divider after info labels
-  s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
   
-  // Refresh command at bottom (clickable)
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ "Refresh", refresh_pedal, NULL, false };
+  s_device_config_items[item_idx++] = (menu_item_t){
+    "Refresh", refresh_pedal, NULL, false, MENU_ITEM_KIND_ACTION
+  };
   
   if (device) assets_free_device(device);
   

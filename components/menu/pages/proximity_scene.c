@@ -722,7 +722,7 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
   // Enable/Disable
   snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "Proximity Sensor\n%s",
     scene->proximity.enabled ? "Enabled" : "Disabled");
-  s_prox_items[item_count++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Only show more options if enabled
   if (!scene->proximity.enabled) {
@@ -740,7 +740,9 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     default: output_name = "Control Change"; break;
   }
   snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-  s_prox_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){
+    s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
   if (scene->proximity.output_type == OUTPUT_TYPE_CC) {
     // CC slots
@@ -760,19 +762,20 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
           "CC Slot %d\nInactive", i + 1);
       }
       s_prox_items[item_count++] = (menu_item_t){
-        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_SUBMENU
       };
     }
     
     // Polarity
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
       "Polarity\n%s", polarity_to_string(scene->proximity.polarity));
-    s_prox_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     // Curve
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(scene->proximity.curve.type));
-    s_prox_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
     
   } else if (scene->proximity.output_type == OUTPUT_TYPE_NOTE) {
     // Notes (Theremin) output mode: Base Note, Range, Velocity Mode, (Fixed) Velocity
@@ -780,13 +783,13 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     get_note_name(scene->proximity.base_note, note_name, sizeof(note_name));
     snprintf(s_base_note_label[buf], sizeof(s_base_note_label[buf]),
       "Base Note\n%s", note_name);
-    s_prox_items[item_count++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     uint8_t octaves = scene->proximity.note_range / 12;
     if (octaves == 0) octaves = 1;
     snprintf(s_range_label[buf], sizeof(s_range_label[buf]),
       "Range\n%u Octave%s", (unsigned)octaves, octaves > 1 ? "s" : "");
-    s_prox_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     // Velocity mode
     velocity_mode_t vel_mode = scene_get_proximity_velocity_mode(scene_get_current_index());
@@ -794,7 +797,7 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
                                (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
     snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
       "Velocity Mode\n%s", vel_mode_str);
-    s_prox_items[item_count++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     // Fixed velocity (only shown when mode is FIXED)
     if (vel_mode == VELOCITY_MODE_FIXED) {
@@ -802,29 +805,29 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
       if (vel == 0) vel = 100;
       snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
         "Velocity\n%u", (unsigned)vel);
-      s_prox_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true};
+      s_prox_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true, MENU_ITEM_KIND_ROLLER};
     }
     
     // Polarity (also applies to notes)
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
       "Polarity\n%s", polarity_to_string(scene->proximity.polarity));
-    s_prox_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     // Curve (also applies to notes)
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(scene->proximity.curve.type));
-    s_prox_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
   } else if (scene->proximity.output_type == OUTPUT_TYPE_LFO_RATE ||
              scene->proximity.output_type == OUTPUT_TYPE_LFO_DEPTH) {
     // LFO modulation mode: Target selector
     snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
       "LFO Target\n%s", lfo_target_to_string(scene->proximity.lfo_target));
-    s_prox_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true, MENU_ITEM_KIND_ROLLER};
   } else if (scene->proximity.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
     uint8_t pct = scene_get_proximity_tempo_nudge_pct(scene_get_current_index());
     snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
       "Nudge %%\n%u%%", (unsigned)pct);
-    s_prox_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   return menu_create_page_2line("Proximity", s_prox_items, item_count);

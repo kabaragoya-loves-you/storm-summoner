@@ -209,39 +209,46 @@ lv_obj_t* menu_page_config_create(void) {
   const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Simple" :
     (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   snprintf(s_scene_mode_label, sizeof(s_scene_mode_label), "Scene Mode\n%s", scene_mode_str);
-  s_config_items[idx++] = (menu_item_t){ s_scene_mode_label, nav_to_scene_mode, NULL, true };
+  s_config_items[idx++] = (menu_item_t){
+    s_scene_mode_label, nav_to_scene_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Device Mode (only visible in Advanced mode)
   if (scene_mode == SCENE_MODE_ADVANCED) {
     device_mode_t device_mode = config_get_device_mode();
     const char* device_mode_str = (device_mode == DEVICE_MODE_SINGLE) ? "Single" : "Per-Scene";
     snprintf(s_device_mode_label, sizeof(s_device_mode_label), "Device Mode\n%s", device_mode_str);
-    s_config_items[idx++] = (menu_item_t){ s_device_mode_label, nav_to_device_mode, NULL, true };
+    s_config_items[idx++] = (menu_item_t){
+      s_device_mode_label, nav_to_device_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
   }
   
-  // Confirm Change with current value
   scene_change_mode_t change_mode = scene_get_change_mode();
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   snprintf(s_change_mode_label, sizeof(s_change_mode_label), "Confirm Change\n%s", change_mode_str);
-  s_config_items[idx++] = (menu_item_t){ s_change_mode_label, nav_to_change_mode, NULL, true };
+  s_config_items[idx++] = (menu_item_t){
+    s_change_mode_label, nav_to_change_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Preset Wrap with current value
   bool preset_wrap = config_get_preset_wrap();
   snprintf(s_preset_wrap_label, sizeof(s_preset_wrap_label), "Preset Wrap\n%s",
     preset_wrap ? "On" : "Off");
-  s_config_items[idx++] = (menu_item_t){ s_preset_wrap_label, nav_to_preset_wrap, NULL, true };
+  s_config_items[idx++] = (menu_item_t){
+    s_preset_wrap_label, nav_to_preset_wrap, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Persist Scene with current value
   bool persist_scene = config_get_persist_scene();
   snprintf(s_persist_scene_label, sizeof(s_persist_scene_label), "Persist Scene\n%s",
     persist_scene ? "On" : "Off");
-  s_config_items[idx++] = (menu_item_t){ s_persist_scene_label, nav_to_persist_scene, NULL, true };
+  s_config_items[idx++] = (menu_item_t){
+    s_persist_scene_label, nav_to_persist_scene, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Erect Flagpole (flag system enable) with current value
   bool flag_enabled = config_get_flag_enabled();
   snprintf(s_flag_enabled_label, sizeof(s_flag_enabled_label), "Erect Flagpole\n%s",
     flag_enabled ? "Fuck it, why not" : "I just can't");
-  s_config_items[idx++] = (menu_item_t){ s_flag_enabled_label, nav_to_flag_enabled, NULL, true };
+  s_config_items[idx++] = (menu_item_t){
+    s_flag_enabled_label, nav_to_flag_enabled, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
   return menu_create_page_2line("Global Config", s_config_items, idx);
 }

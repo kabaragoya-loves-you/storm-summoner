@@ -131,7 +131,7 @@ lv_obj_t* menu_page_led_create(void) {
   bool enabled = led_get_enabled();
   snprintf(s_enable_label, sizeof(s_enable_label), "LED Enable\n%s",
     enabled ? "On" : "Off");
-  s_led_items[idx++] = (menu_item_t){ s_enable_label, nav_to_enable, NULL, true };
+  s_led_items[idx++] = (menu_item_t){ s_enable_label, nav_to_enable, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Only show mode and sundial options when LED is enabled
   if (enabled) {
@@ -139,13 +139,13 @@ lv_obj_t* menu_page_led_create(void) {
     led_mode_t mode = led_get_mode();
     snprintf(s_mode_label, sizeof(s_mode_label), "Mode\n%s",
       led_mode_to_string(mode));
-    s_led_items[idx++] = (menu_item_t){ s_mode_label, nav_to_mode, NULL, true };
+    s_led_items[idx++] = (menu_item_t){ s_mode_label, nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     // Sundial Auto-Switch
     bool sundial = led_get_sundial_mode();
     snprintf(s_sundial_label, sizeof(s_sundial_label), "Sundial\n%s",
       sundial ? "On" : "Off");
-    s_led_items[idx++] = (menu_item_t){ s_sundial_label, nav_to_sundial, NULL, true };
+    s_led_items[idx++] = (menu_item_t){ s_sundial_label, nav_to_sundial, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   return menu_create_page_2line("LED", s_led_items, idx);

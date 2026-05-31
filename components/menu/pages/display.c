@@ -213,14 +213,14 @@ lv_obj_t* menu_page_display_create(void) {
   snprintf(s_brightness_label[buf], sizeof(s_brightness_label[buf]),
     "Brightness\n%u%%", (unsigned)brightness);
   s_display_items[item_count++] = (menu_item_t){
-    s_brightness_label[buf], nav_to_brightness, NULL, true};
+    s_brightness_label[buf], nav_to_brightness, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Screensaver Delay
   uint16_t delay = screensaver_get_delay();
   snprintf(s_delay_label[buf], sizeof(s_delay_label[buf]),
     "Screensaver\n%s", delay_to_string(delay));
   s_display_items[item_count++] = (menu_item_t){
-    s_delay_label[buf], nav_to_delay, NULL, true};
+    s_delay_label[buf], nav_to_delay, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Screensaver Mode (only shown when screensaver is enabled)
   if (delay > 0) {
@@ -228,7 +228,7 @@ lv_obj_t* menu_page_display_create(void) {
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]),
       "Saver Mode\n%s", mode_to_string(mode));
     s_display_items[item_count++] = (menu_item_t){
-      s_mode_label[buf], nav_to_mode, NULL, true};
+      s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   return menu_create_page_2line("Display", s_display_items, item_count);

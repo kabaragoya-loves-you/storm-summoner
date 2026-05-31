@@ -77,8 +77,8 @@ lv_obj_t *menu_page_settings_scene_inspect_create(void) {
   snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Scroll Mode: %s",
     inspect_config_scroll_mode_name(inspect_config_get_scroll_mode()));
 
-  s_items[0] = (menu_item_t){ s_speed_label[buf], nav_to_speed, NULL, true };
-  s_items[1] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, true };
+  s_items[0] = (menu_item_t){ s_speed_label[buf], nav_to_speed, NULL, true, MENU_ITEM_KIND_ROLLER };
+  s_items[1] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER };
 
   return menu_create_page_2line("Scene Inspect", s_items, 2);
 }

@@ -641,25 +641,27 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
   
   // Calibrate (at top, no second line)
   snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]), "Calibrate\n");
-  s_prox_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){
+    s_calibrate_label[buf], nav_to_calibrate, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
   
   // Sunlight/IR Rejection (ambient IR cancellation)
   bool sunlight_enabled = proximity_get_sunlight_cancel();
   snprintf(s_sunlight_label[buf], sizeof(s_sunlight_label[buf]),
     "IR Rejection\n%s", sunlight_enabled ? "On" : "Off");
-  s_prox_items[item_count++] = (menu_item_t){s_sunlight_label[buf], nav_to_sunlight, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){s_sunlight_label[buf], nav_to_sunlight, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Gamma (inverse-square compensation)
   uint8_t gamma = proximity_get_gamma();
   snprintf(s_gamma_label[buf], sizeof(s_gamma_label[buf]),
     "Gamma\n%u (%.2f)", gamma, 0.15f + gamma * 0.0085f);
-  s_prox_items[item_count++] = (menu_item_t){s_gamma_label[buf], nav_to_gamma, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){s_gamma_label[buf], nav_to_gamma, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Hysteresis Enable (for CC mode)
   bool hyst_enabled = proximity_get_hysteresis_enabled();
   snprintf(s_hysteresis_label[buf], sizeof(s_hysteresis_label[buf]),
     "Hysteresis\n%s", hyst_enabled ? "Enabled" : "Disabled");
-  s_prox_items[item_count++] = (menu_item_t){s_hysteresis_label[buf], nav_to_hysteresis, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){s_hysteresis_label[buf], nav_to_hysteresis, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Only show hysteresis-related settings if enabled
   if (hyst_enabled) {
@@ -667,20 +669,20 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
     uint8_t rest_pos = proximity_get_rest_position();
     snprintf(s_rest_pos_label[buf], sizeof(s_rest_pos_label[buf]),
       "Rest Position\n%u", (unsigned)rest_pos);
-    s_prox_items[item_count++] = (menu_item_t){s_rest_pos_label[buf], nav_to_rest_pos, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_rest_pos_label[buf], nav_to_rest_pos, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     // Return Speed
     proximity_return_speed_t speed = proximity_get_return_speed();
     snprintf(s_return_speed_label[buf], sizeof(s_return_speed_label[buf]),
       "Return Speed\n%s", return_speed_to_string(speed));
-    s_prox_items[item_count++] = (menu_item_t){s_return_speed_label[buf], nav_to_return_speed, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_return_speed_label[buf], nav_to_return_speed, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   // Note Silence on Low (for note mode)
   bool note_silence = proximity_get_note_silence_on_low();
   snprintf(s_note_silence_label[buf], sizeof(s_note_silence_label[buf]),
     "Note Silence\n%s", note_silence ? "Enabled" : "Disabled");
-  s_prox_items[item_count++] = (menu_item_t){s_note_silence_label[buf], nav_to_note_silence, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){s_note_silence_label[buf], nav_to_note_silence, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Timeout - applies to both CC hysteresis and Note silence
   // Show when either feature is enabled
@@ -688,14 +690,14 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
     proximity_timeout_t timeout = proximity_get_timeout();
     snprintf(s_timeout_label[buf], sizeof(s_timeout_label[buf]),
       "Timeout\n%s", timeout_to_string(timeout));
-    s_prox_items[item_count++] = (menu_item_t){s_timeout_label[buf], nav_to_timeout, NULL, true};
+    s_prox_items[item_count++] = (menu_item_t){s_timeout_label[buf], nav_to_timeout, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   // Deadzone (at bottom)
   uint8_t deadzone = proximity_get_deadzone();
   snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
     "Deadzone\n%u", (unsigned)deadzone);
-  s_prox_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
+  s_prox_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   return menu_create_page_2line("Proximity", s_prox_items, item_count);
 }

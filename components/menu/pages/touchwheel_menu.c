@@ -921,15 +921,16 @@ lv_obj_t* menu_page_touchwheel_create(void) {
     ESP_LOGW(TAG, "No current scene");
     return menu_create_page_2line("Touchwheel", NULL, 0);
   }
-  
+
   int mode_idx = get_current_mode_index();
   const touchwheel_mode_mapping_t* mapping = &g_touchwheel_mode_mappings[mode_idx];
   
   int item_count = 0;
   
-  // Mode is always first (2-line format)
   snprintf(s_mode_label, sizeof(s_mode_label), "Mode\n%s", mapping->display_name);
-  s_tw_items[item_count++] = (menu_item_t){s_mode_label, nav_to_mode, NULL, true};
+  s_tw_items[item_count++] = (menu_item_t){
+    s_mode_label, nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
   // Mode-specific items
   switch (mapping->mode) {
@@ -941,7 +942,7 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
         uint8_t pct = scene_get_touchwheel_tempo_nudge_pct(scene_get_current_index());
         snprintf(s_nudge_label, sizeof(s_nudge_label), "Nudge %%\n%u%%", (unsigned)pct);
-        s_tw_items[item_count++] = (menu_item_t){s_nudge_label, nav_to_nudge, NULL, true};
+        s_tw_items[item_count++] = (menu_item_t){s_nudge_label, nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
       } else if (mapping->output_type == OUTPUT_TYPE_CC) {
         // Control Change mode: 4 CC slots + Style (2-line format)
         for (int i = 0; i < MAX_MULTI_CC; i++) {
@@ -949,7 +950,7 @@ lv_obj_t* menu_page_touchwheel_create(void) {
           snprintf(s_cc_slot_labels[i], sizeof(s_cc_slot_labels[i]), 
                    "Control Change %d\n%s", i + 1, cc_name);
           s_tw_items[item_count++] = (menu_item_t){
-            s_cc_slot_labels[i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+            s_cc_slot_labels[i], nav_to_cc_slot, (void*)(uintptr_t)i, true, MENU_ITEM_KIND_ROLLER
           };
         }
       } else {
@@ -957,37 +958,37 @@ lv_obj_t* menu_page_touchwheel_create(void) {
         char note_name[8];
         get_note_name(scene->touchwheel.base_note, note_name, sizeof(note_name));
         snprintf(s_base_note_label, sizeof(s_base_note_label), "Base Note\n%s", note_name);
-        s_tw_items[item_count++] = (menu_item_t){s_base_note_label, nav_to_base_note, NULL, true};
+        s_tw_items[item_count++] = (menu_item_t){s_base_note_label, nav_to_base_note, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         uint8_t octaves = scene->touchwheel.note_range / 12;
         if (octaves == 0) octaves = 1;
         snprintf(s_range_label, sizeof(s_range_label), "Range\n%u Octave%s", 
                  (unsigned)octaves, octaves > 1 ? "s" : "");
-        s_tw_items[item_count++] = (menu_item_t){s_range_label, nav_to_range, NULL, true};
+        s_tw_items[item_count++] = (menu_item_t){s_range_label, nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         uint8_t vel = scene->touchwheel.velocity;
         if (vel == 0) vel = 100;
         snprintf(s_velocity_label, sizeof(s_velocity_label), "Velocity\n%u", (unsigned)vel);
-        s_tw_items[item_count++] = (menu_item_t){s_velocity_label, nav_to_velocity, NULL, true};
+        s_tw_items[item_count++] = (menu_item_t){s_velocity_label, nav_to_velocity, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Latch
         snprintf(s_latch_label, sizeof(s_latch_label), "Latch\n%s", 
                  scene->touchwheel.note_latch ? "On" : "Off");
-        s_tw_items[item_count++] = (menu_item_t){s_latch_label, nav_to_latch, NULL, true};
+        s_tw_items[item_count++] = (menu_item_t){s_latch_label, nav_to_latch, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Release (only shown when Latch is On)
         if (scene->touchwheel.note_latch) {
           uint16_t release = scene->touchwheel.note_release_ms;
           if (release < 100) release = 500;
           snprintf(s_release_label, sizeof(s_release_label), "Release\n%u ms", (unsigned)release);
-          s_tw_items[item_count++] = (menu_item_t){s_release_label, nav_to_release, NULL, true};
+          s_tw_items[item_count++] = (menu_item_t){s_release_label, nav_to_release, NULL, true, MENU_ITEM_KIND_ROLLER};
         }
         
         // Polyphony (only shown when style is Odometer)
         if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
           snprintf(s_polyphony_label, sizeof(s_polyphony_label), "Polyphony\n%s",
                    scene->touchwheel.polyphony == POLYPHONY_MONO ? "Mono" : "Poly");
-          s_tw_items[item_count++] = (menu_item_t){s_polyphony_label, nav_to_polyphony, NULL, true};
+          s_tw_items[item_count++] = (menu_item_t){s_polyphony_label, nav_to_polyphony, NULL, true, MENU_ITEM_KIND_ROLLER};
         }
       }
       break;
@@ -1000,7 +1001,7 @@ lv_obj_t* menu_page_touchwheel_create(void) {
           param_name = get_cc_slot_display(scene, 0);
         }
         snprintf(s_param_label, sizeof(s_param_label), "Parameter\n%s", param_name);
-        s_tw_items[item_count++] = (menu_item_t){s_param_label, nav_to_double_cc_param, NULL, true};
+        s_tw_items[item_count++] = (menu_item_t){s_param_label, nav_to_double_cc_param, NULL, true, MENU_ITEM_KIND_ROLLER};
       }
       break;
       
@@ -1023,7 +1024,7 @@ lv_obj_t* menu_page_touchwheel_create(void) {
   if (mapping->supports_style_selection) {
     snprintf(s_style_label, sizeof(s_style_label), "Style\n%s", 
              style_to_string(scene->touchwheel_style));
-    s_tw_items[item_count++] = (menu_item_t){s_style_label, nav_to_style, NULL, true};
+    s_tw_items[item_count++] = (menu_item_t){s_style_label, nav_to_style, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   // Initial Value (only for CC mode with endless encoder style)
@@ -1033,7 +1034,7 @@ lv_obj_t* menu_page_touchwheel_create(void) {
     snprintf(s_initial_value_label, sizeof(s_initial_value_label), 
       "Initial Value\n%u", (unsigned)scene->touchwheel_initial_value);
     s_tw_items[item_count++] = (menu_item_t){
-      s_initial_value_label, nav_to_initial_value, NULL, true
+      s_initial_value_label, nav_to_initial_value, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   

@@ -103,8 +103,8 @@ static void nav_to_lfo2(void* user_data) {
 static menu_item_t s_lfo_menu_items[2];
 
 static lv_obj_t* lfo_submenu_create(void) {
-  s_lfo_menu_items[0] = (menu_item_t){ "LFO1", nav_to_lfo1, NULL, true };
-  s_lfo_menu_items[1] = (menu_item_t){ "LFO2", nav_to_lfo2, NULL, true };
+  s_lfo_menu_items[0] = (menu_item_t){ "LFO1", nav_to_lfo1, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_lfo_menu_items[1] = (menu_item_t){ "LFO2", nav_to_lfo2, NULL, true, MENU_ITEM_KIND_SUBMENU };
   return menu_create_page_2line("LFO", s_lfo_menu_items, 2);
 }
 
@@ -208,9 +208,9 @@ lv_obj_t* menu_page_scene_name_create(void) {
   const char* name = (scene && scene->name[0]) ? scene->name : "<unnamed>";
   snprintf(s_current_name_display, sizeof(s_current_name_display), "%s", name);
   
-  s_name_menu_items[0] = (menu_item_t){ s_current_name_display, NULL, NULL, false };  // Read-only
-  s_name_menu_items[1] = (menu_item_t){ "Regenerate", regenerate_name_action, NULL, false };
-  s_name_menu_items[2] = (menu_item_t){ "Edit", edit_name_action, NULL, false };
+  s_name_menu_items[0] = (menu_item_t){ s_current_name_display, NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
+  s_name_menu_items[1] = (menu_item_t){ "Regenerate", regenerate_name_action, NULL, false, MENU_ITEM_KIND_ACTION };
+  s_name_menu_items[2] = (menu_item_t){ "Edit", edit_name_action, NULL, false, MENU_ITEM_KIND_ACTION };
   return menu_create_page("Scene Name", s_name_menu_items, 3);
 }
 
@@ -956,7 +956,9 @@ static lv_obj_t* scene_pedal_select_create(void) {
   
   if (!scene_dynamic_menu_alloc(&s_scene_pedal_menu, pedal_count)) {
     ESP_LOGE(TAG, "Failed to allocate scene pedal menu");
-    static menu_item_t error_items[] = {{ "Memory Error", NULL, NULL, false }};
+    static menu_item_t error_items[] = {
+      { "Memory Error", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY }
+    };
     return menu_create_page("Error", error_items, 1);
   }
   
@@ -979,6 +981,7 @@ static lv_obj_t* scene_pedal_select_create(void) {
     s_scene_pedal_menu.items[i].callback = scene_select_pedal_callback;
     s_scene_pedal_menu.items[i].user_data = &s_scene_pedal_menu.indices[i];
     s_scene_pedal_menu.items[i].has_submenu = false;
+    s_scene_pedal_menu.items[i].kind = MENU_ITEM_KIND_ACTION;
   }
   
   snprintf(s_scene_pedal_title, sizeof(s_scene_pedal_title), "%s", s_scene_selected_vendor);
@@ -1033,7 +1036,9 @@ static lv_obj_t* scene_vendor_select_create(void) {
   
   if (!scene_dynamic_menu_alloc(&s_scene_vendor_menu, total_items)) {
     ESP_LOGE(TAG, "Failed to allocate scene vendor menu");
-    static menu_item_t error_items[] = {{ "Memory Error", NULL, NULL, false }};
+    static menu_item_t error_items[] = {
+      { "Memory Error", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY }
+    };
     return menu_create_page("Error", error_items, 1);
   }
   
@@ -1045,6 +1050,7 @@ static lv_obj_t* scene_vendor_select_create(void) {
   s_scene_vendor_menu.items[idx].callback = NULL;
   s_scene_vendor_menu.items[idx].user_data = NULL;
   s_scene_vendor_menu.items[idx].has_submenu = false;
+  s_scene_vendor_menu.items[idx].kind = MENU_ITEM_KIND_DISPLAY;
   idx++;
   
   // Item 1: Global default pedal name (clickable to select global default)
@@ -1057,6 +1063,7 @@ static lv_obj_t* scene_vendor_select_create(void) {
   s_scene_vendor_menu.items[idx].callback = scene_select_global_default_callback;
   s_scene_vendor_menu.items[idx].user_data = NULL;
   s_scene_vendor_menu.items[idx].has_submenu = false;
+  s_scene_vendor_menu.items[idx].kind = MENU_ITEM_KIND_ACTION;
   idx++;
   
   // Item 2: Divider
@@ -1065,6 +1072,7 @@ static lv_obj_t* scene_vendor_select_create(void) {
   s_scene_vendor_menu.items[idx].callback = NULL;
   s_scene_vendor_menu.items[idx].user_data = NULL;
   s_scene_vendor_menu.items[idx].has_submenu = false;
+  s_scene_vendor_menu.items[idx].kind = MENU_ITEM_KIND_DISPLAY;
   idx++;
   
   // Item 3: User Devices
@@ -1078,6 +1086,8 @@ static lv_obj_t* scene_vendor_select_create(void) {
     s_scene_vendor_menu.items[idx].user_data = NULL;
   }
   s_scene_vendor_menu.items[idx].has_submenu = user_device_count > 0;
+  s_scene_vendor_menu.items[idx].kind = user_device_count > 0 ?
+    MENU_ITEM_KIND_SUBMENU : MENU_ITEM_KIND_DISPLAY;
   idx++;
   
   // Item 4: Divider
@@ -1086,6 +1096,7 @@ static lv_obj_t* scene_vendor_select_create(void) {
   s_scene_vendor_menu.items[idx].callback = NULL;
   s_scene_vendor_menu.items[idx].user_data = NULL;
   s_scene_vendor_menu.items[idx].has_submenu = false;
+  s_scene_vendor_menu.items[idx].kind = MENU_ITEM_KIND_DISPLAY;
   idx++;
   
   // Remaining items: vendors except User
@@ -1100,6 +1111,7 @@ static lv_obj_t* scene_vendor_select_create(void) {
     s_scene_vendor_menu.items[idx].callback = scene_select_vendor_callback;
     s_scene_vendor_menu.items[idx].user_data = &s_scene_vendor_menu.indices[idx];
     s_scene_vendor_menu.items[idx].has_submenu = true;
+    s_scene_vendor_menu.items[idx].kind = MENU_ITEM_KIND_SUBMENU;
     idx++;
   }
   
@@ -1199,100 +1211,107 @@ lv_obj_t* menu_page_current_scene_create(void) {
   }
   
   // Assignment submenus
-  s_scene_items[idx++] = (menu_item_t){ "Pads", nav_to_pads, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Touchwheel", nav_to_touchwheel, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Expression", nav_to_expression, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Control Voltage", nav_to_cv, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Proximity", nav_to_proximity, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Ambient Light", nav_to_ambient_light, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Buttons", nav_to_buttons, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "LFO", nav_to_lfo, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Bump", nav_to_bump, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "On-Load", nav_to_on_load, NULL, true };
+  s_scene_items[idx++] = (menu_item_t){ "Pads", nav_to_pads, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Touchwheel", nav_to_touchwheel, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Expression", nav_to_expression, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Control Voltage", nav_to_cv, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Proximity", nav_to_proximity, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Ambient Light", nav_to_ambient_light, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Buttons", nav_to_buttons, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "LFO", nav_to_lfo, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Bump", nav_to_bump, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "On-Load", nav_to_on_load, NULL, true, MENU_ITEM_KIND_SUBMENU };
   if (scene && scene->use_transport) {
-    s_scene_items[idx++] = (menu_item_t){ "On-Play", nav_to_on_play, NULL, true };
+    s_scene_items[idx++] = (menu_item_t){ "On-Play", nav_to_on_play, NULL, true, MENU_ITEM_KIND_SUBMENU };
   }
-  s_scene_items[idx++] = (menu_item_t){ "S+H", nav_to_sample_hold, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Tilt", nav_to_tilt, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true };
-  s_scene_items[idx++] = (menu_item_t){ "Note Track", nav_to_note_track, NULL, true };
+  s_scene_items[idx++] = (menu_item_t){ "S+H", nav_to_sample_hold, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Tilt", nav_to_tilt, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_scene_items[idx++] = (menu_item_t){ "Note Track", nav_to_note_track, NULL, true, MENU_ITEM_KIND_SUBMENU };
   
   // Per-scene device controls (only in per-scene device mode)
   if (config_get_device_mode() == DEVICE_MODE_PER_SCENE) {
-    s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
     
-    // Get effective device name for display
+    s_scene_items[idx++] = (menu_item_t){
+      "Select Pedal", nav_to_select_pedal, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
+
     const char* effective_slug = scene_get_effective_device_slug(scene_index);
     const manifest_device_t* mdev = assets_get_manifest_device(effective_slug);
     const char* device_name = mdev ? mdev->name : "Default";
     assets_format_pedal_menu_label(effective_slug, device_name,
       s_pedal_label, sizeof(s_pedal_label));
-    s_scene_items[idx++] = (menu_item_t){ s_pedal_label, NULL, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){
+      s_pedal_label, NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+    };
     
-    s_scene_items[idx++] = (menu_item_t){ "Select Pedal", nav_to_select_pedal, NULL, true };
-    
-    // MIDI Channel
     uint8_t midi_ch = scene_get_midi_channel(scene_index);
     if (midi_ch == 0) {
       snprintf(s_midi_channel_label, sizeof(s_midi_channel_label), "MIDI Channel: Global");
     } else {
       snprintf(s_midi_channel_label, sizeof(s_midi_channel_label), "MIDI Channel: %u", (unsigned)midi_ch);
     }
-    s_scene_items[idx++] = (menu_item_t){ s_midi_channel_label, nav_to_midi_channel, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){
+      s_midi_channel_label, nav_to_midi_channel, NULL, false, MENU_ITEM_KIND_ROLLER
+    };
 
-    // TRS Polarity
     uint8_t trs = scene_get_trs_type(scene_index);
     const char* trs_names[] = {"Global", "Type A", "Type B", "TS", "Both"};
-    snprintf(s_trs_type_label, sizeof(s_trs_type_label), "TRS: %s", 
+    snprintf(s_trs_type_label, sizeof(s_trs_type_label), "TRS: %s",
       trs <= 4 ? trs_names[trs] : "Global");
-    s_scene_items[idx++] = (menu_item_t){ s_trs_type_label, nav_to_trs_type, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){
+      s_trs_type_label, nav_to_trs_type, NULL, false, MENU_ITEM_KIND_ROLLER
+    };
   }
   
   // Divider
-  s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
   
-  // Scene Name menu item (hidden in Simple mode - only one scene, name less relevant)
   if (mode != SCENE_MODE_SINGLE) {
-    s_scene_items[idx++] = (menu_item_t){ "Scene Name", nav_to_name, NULL, true };
+    s_scene_items[idx++] = (menu_item_t){
+      "Scene Name", nav_to_name, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
   }
   
-  // Screen (UI module)
   {
     const char* mod_name = scene_get_ui_module(scene_index);
     const char* title = ui_get_module_title(mod_name);
     snprintf(s_screen_label, sizeof(s_screen_label), "Screen: %s", title);
-    s_scene_items[idx++] = (menu_item_t){ s_screen_label, nav_to_screen, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){
+      s_screen_label, nav_to_screen, NULL, false, MENU_ITEM_KIND_ROLLER
+    };
   }
   
-  // Preset and PC on load hidden in Preset Sync mode (preset is locked to scene ordinal)
   if (mode != SCENE_MODE_PRESET_SYNC) {
-    // Current preset - convert PC to user-friendly 1-based preset number
-    // PC 0 with indexBase=0 → Preset 1, PC 16 with indexBase=1 → Preset 16
-    // If PC < indexBase (invalid), clamp to minimum valid value (display as 1)
     uint8_t current_pc = scene ? scene->program_number : index_base;
     if (current_pc < index_base) current_pc = index_base;
     int display_preset = current_pc - index_base + 1;
     snprintf(s_preset_label, sizeof(s_preset_label), "Preset: %d", display_preset);
-    s_scene_items[idx++] = (menu_item_t){ s_preset_label, nav_to_preset, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){
+      s_preset_label, nav_to_preset, NULL, false, MENU_ITEM_KIND_ROLLER
+    };
     
-    // PC on load
     snprintf(s_send_pc_label, sizeof(s_send_pc_label), "PC on load: %s",
       (scene && scene->send_pc_on_load) ? "Yes" : "No");
-    s_scene_items[idx++] = (menu_item_t){ s_send_pc_label, nav_to_send_pc, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){
+      s_send_pc_label, nav_to_send_pc, NULL, false, MENU_ITEM_KIND_ROLLER
+    };
   }
   
-  // BPM
-  snprintf(s_bpm_label, sizeof(s_bpm_label), "%d BPM", 
+  snprintf(s_bpm_label, sizeof(s_bpm_label), "%d BPM",
     scene ? scene->bpm : 120);
-  s_scene_items[idx++] = (menu_item_t){ s_bpm_label, nav_to_bpm, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    s_bpm_label, nav_to_bpm, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Time signature
   snprintf(s_time_sig_label, sizeof(s_time_sig_label), "%d/%d",
     scene ? scene->time_signature.numerator : 4,
     scene ? scene->time_signature.denominator : 4);
-  s_scene_items[idx++] = (menu_item_t){ s_time_sig_label, nav_to_time_sig, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    s_time_sig_label, nav_to_time_sig, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Divider
   const char* divider_str = "Quarter";
   if (scene) {
     switch (scene->beat_divider) {
@@ -1303,9 +1322,10 @@ lv_obj_t* menu_page_current_scene_create(void) {
     }
   }
   snprintf(s_divider_label, sizeof(s_divider_label), "Divider: %s", divider_str);
-  s_scene_items[idx++] = (menu_item_t){ s_divider_label, nav_to_divider, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    s_divider_label, nav_to_divider, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
   
-  // Clock source
   const char* clock_str = "Internal";
   if (scene) {
     switch (scene->clock_source) {
@@ -1316,26 +1336,31 @@ lv_obj_t* menu_page_current_scene_create(void) {
     }
   }
   snprintf(s_clock_label, sizeof(s_clock_label), "Clock: %s", clock_str);
-  s_scene_items[idx++] = (menu_item_t){ s_clock_label, nav_to_clock, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    s_clock_label, nav_to_clock, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
 
-  // Use transport
   snprintf(s_transport_label, sizeof(s_transport_label), "Transport: %s",
     (scene && scene->use_transport) ? "Yes" : "No");
-  s_scene_items[idx++] = (menu_item_t){ s_transport_label, nav_to_transport, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    s_transport_label, nav_to_transport, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
 
-  // Send clock
   snprintf(s_send_clock_label, sizeof(s_send_clock_label), "Send Clock: %s",
     (scene && scene->send_clock) ? "Yes" : "No");
-  s_scene_items[idx++] = (menu_item_t){ s_send_clock_label, nav_to_send_clock, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    s_send_clock_label, nav_to_send_clock, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
 
-  // Note channel (for routing notes to alternate MIDI channel)
   uint8_t note_ch = scene ? scene->note_channel : 0;
   if (note_ch == 0) {
     snprintf(s_note_channel_label, sizeof(s_note_channel_label), "Note Ch: Default");
   } else {
     snprintf(s_note_channel_label, sizeof(s_note_channel_label), "Note Ch: %d", note_ch);
   }
-  s_scene_items[idx++] = (menu_item_t){ s_note_channel_label, nav_to_note_channel, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    s_note_channel_label, nav_to_note_channel, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
 
   ESP_LOGD(TAG, "Current scene page: %d items", idx);
   return menu_create_page(s_page_title, s_scene_items, idx);

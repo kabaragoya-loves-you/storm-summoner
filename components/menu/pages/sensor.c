@@ -48,9 +48,9 @@ lv_obj_t* menu_page_sensor_create(void) {
   ESP_LOGI(TAG, "Creating sensor page");
   
   static menu_item_t sensor_items[] = {
-    { "Info", show_info, NULL, false },
-    { "Calibrate PS", action_calibrate_ps, NULL, false },
-    { "Calibrate ALS", action_calibrate_als, NULL, false }
+    { "Info", show_info, NULL, false, MENU_ITEM_KIND_ACTION },
+    { "Calibrate PS", action_calibrate_ps, NULL, false, MENU_ITEM_KIND_ACTION },
+    { "Calibrate ALS", action_calibrate_als, NULL, false, MENU_ITEM_KIND_ACTION }
   };
   
   return menu_create_page("Sensor", sensor_items, 

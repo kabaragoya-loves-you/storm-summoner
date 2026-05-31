@@ -69,6 +69,7 @@ static void update_scroll_visuals(lv_obj_t* cont);
 static void save_focused_index(void);
 static lv_obj_t* find_menu_item_widget(lv_obj_t* cont, int item_index);
 static void apply_menu_focus(lv_obj_t* cont, lv_obj_t* focus_target);
+static void apply_initial_page_focus(lv_obj_t* cont);
 
 // Pending scene change direction (set by event handler, consumed by LVGL timer)
 static int s_pending_scene_direction = 0;  // +1 = next, -1 = previous
@@ -312,6 +313,67 @@ static void apply_menu_focus(lv_obj_t* cont, lv_obj_t* focus_target) {
   }
 }
 
+static void apply_initial_page_focus(lv_obj_t* cont) {
+  if (!cont || !menu_state.group) {
+    return;
+  }
+
+  lv_obj_t* focus_target = NULL;
+  if (menu_state.restore_focus_item_index >= 0) {
+    focus_target = find_menu_item_widget(cont, menu_state.restore_focus_item_index);
+    menu_state.restore_focus_item_index = -1;
+  } else if (menu_state.restore_focus_index >= 0) {
+    int clickable_count = 0;
+    uint32_t child_cnt = lv_obj_get_child_count(cont);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(cont, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        if (clickable_count == menu_state.restore_focus_index) {
+          focus_target = child;
+          break;
+        }
+        clickable_count++;
+      }
+    }
+    menu_state.restore_focus_index = -1;
+  } else {
+    uint32_t child_cnt = lv_obj_get_child_count(cont);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(cont, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        focus_target = child;
+        break;
+      }
+    }
+  }
+
+  if (focus_target) {
+    apply_menu_focus(cont, focus_target);
+  } else {
+    update_scroll_visuals(cont);
+  }
+}
+
+static menu_item_kind_t menu_item_effective_kind(const menu_item_t* item) {
+  if (!item) return MENU_ITEM_KIND_AUTO;
+  int kind = (int)item->kind;
+  if (kind < 0 || kind >= MENU_ITEM_KIND_COUNT) return MENU_ITEM_KIND_AUTO;
+  return (menu_item_kind_t)kind;
+}
+
+static lv_color_t menu_item_text_color(const menu_item_t* item, bool is_readonly) {
+  menu_item_kind_t kind = menu_item_effective_kind(item);
+  if (is_readonly || kind == MENU_ITEM_KIND_DISPLAY) {
+    return lv_color_make(160, 160, 160);
+  }
+  switch (kind) {
+    case MENU_ITEM_KIND_SUBMENU: return lv_color_make(90, 160, 255);
+    case MENU_ITEM_KIND_ROLLER: return lv_color_make(255, 150, 40);
+    case MENU_ITEM_KIND_ACTION: return lv_color_make(100, 200, 110);
+    default: return lv_color_white();
+  }
+}
+
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count) {
   uint16_t disp_w = display_get_width();
   uint16_t disp_h = display_get_height();
@@ -406,12 +468,8 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     // Clip long text to prevent wrapping/overflow
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
 
-    // Label styling - dimmer color for read-only items
-    if (is_readonly) {
-      lv_obj_set_style_text_color(label, lv_color_make(160, 160, 160), 0);
-    } else {
-      lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    }
+    // Label styling - color by kind (read-only stays grey)
+    lv_obj_set_style_text_color(label, menu_item_text_color(&items[i], is_readonly), 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_pad_ver(label, 4, 0);
@@ -421,7 +479,7 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     lv_obj_add_event_cb(label, focus_event_cb, LV_EVENT_FOCUSED, NULL);
     
     if (is_readonly) {
-      // Read-only items: in group for scrolling, but not clickable
+      lv_obj_set_user_data(label, (void*)&items[i]);
       if (menu_state.group) lv_group_add_obj(menu_state.group, label);
     } else {
       // Clickable items: in group and respond to enter
@@ -433,37 +491,8 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     }
   }
 
-  // Initial focus: menu item index, else clickable index, else first clickable
   if (item_count > 0 && menu_state.group) {
-    lv_obj_t* focus_target = NULL;
-    if (menu_state.restore_focus_item_index >= 0) {
-      focus_target = find_menu_item_widget(cont, menu_state.restore_focus_item_index);
-      menu_state.restore_focus_item_index = -1;
-    } else if (menu_state.restore_focus_index >= 0) {
-      int clickable_count = 0;
-      uint32_t child_cnt = lv_obj_get_child_count(cont);
-      for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(cont, i);
-        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
-          if (clickable_count == menu_state.restore_focus_index) {
-            focus_target = child;
-            break;
-          }
-          clickable_count++;
-        }
-      }
-      menu_state.restore_focus_index = -1;
-    } else {
-      uint32_t child_cnt = lv_obj_get_child_count(cont);
-      for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(cont, i);
-        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
-          focus_target = child;
-          break;
-        }
-      }
-    }
-    apply_menu_focus(cont, focus_target);
+    apply_initial_page_focus(cont);
   } else {
     update_scroll_visuals(cont);
   }
@@ -556,12 +585,8 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
     // Clip text (newlines handled naturally)
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
 
-    // Label styling
-    if (is_readonly) {
-      lv_obj_set_style_text_color(label, lv_color_make(160, 160, 160), 0);
-    } else {
-      lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    }
+    // Label styling - color by kind (read-only stays grey)
+    lv_obj_set_style_text_color(label, menu_item_text_color(&items[i], is_readonly), 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_pad_ver(label, 4, 0);
@@ -571,6 +596,7 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
     lv_obj_add_event_cb(label, focus_event_cb, LV_EVENT_FOCUSED, NULL);
     
     if (is_readonly) {
+      lv_obj_set_user_data(label, (void*)&items[i]);
       if (menu_state.group) lv_group_add_obj(menu_state.group, label);
     } else {
       lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
@@ -580,23 +606,11 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
     }
   }
 
-  // Scroll to center on first focusable item
   if (item_count > 0 && menu_state.group) {
-    uint32_t child_cnt = lv_obj_get_child_count(cont);
-    for (uint32_t i = 0; i < child_cnt; i++) {
-      lv_obj_t* child = lv_obj_get_child(cont, i);
-      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
-        menu_state.skip_focus_scroll = true;
-        lv_obj_scroll_to_view(child, LV_ANIM_OFF);
-        lv_group_focus_obj(child);
-        menu_state.skip_focus_scroll = false;
-        break;
-      }
-    }
+    apply_initial_page_focus(cont);
+  } else {
+    update_scroll_visuals(cont);
   }
-
-  // Initial visual update
-  update_scroll_visuals(cont);
 
   ESP_LOGD(TAG, "menu_create_page_2line: title='%s', screen=%p, children=%u",
            title, (void*)screen, (unsigned)lv_obj_get_child_count(cont));
@@ -1295,12 +1309,11 @@ bool menu_handle_enter(void) {
     }
   }
 
-  // Only trigger click if the object is clickable (not a read-only label)
   if (focused && lv_obj_has_flag(focused, LV_OBJ_FLAG_CLICKABLE)) {
     lv_obj_send_event(focused, LV_EVENT_CLICKED, NULL);
     return true;
   }
-  
+
   return false;
 }
 

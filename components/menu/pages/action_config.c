@@ -1551,9 +1551,15 @@ static lv_obj_t* cc_hold_slot_page_create(void) {
     snprintf(s_cc_hold_release_label[buf], sizeof(s_cc_hold_release_label[buf]), "Release: <none>");
   }
 
-  s_cc_hold_items[0] = (menu_item_t){s_cc_hold_cc_label[buf], nav_to_cc_hold_cc, NULL, true};
-  s_cc_hold_items[1] = (menu_item_t){s_cc_hold_press_label[buf], nav_to_cc_hold_press, NULL, is_active};
-  s_cc_hold_items[2] = (menu_item_t){s_cc_hold_release_label[buf], nav_to_cc_hold_release, NULL, is_active};
+  s_cc_hold_items[0] = (menu_item_t){s_cc_hold_cc_label[buf], nav_to_cc_hold_cc, NULL, true, MENU_ITEM_KIND_ROLLER};
+  s_cc_hold_items[1] = (menu_item_t){
+    s_cc_hold_press_label[buf], nav_to_cc_hold_press, NULL, is_active,
+    is_active ? MENU_ITEM_KIND_ROLLER : MENU_ITEM_KIND_AUTO
+  };
+  s_cc_hold_items[2] = (menu_item_t){
+    s_cc_hold_release_label[buf], nav_to_cc_hold_release, NULL, is_active,
+    is_active ? MENU_ITEM_KIND_ROLLER : MENU_ITEM_KIND_AUTO
+  };
 
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
@@ -1823,7 +1829,7 @@ static lv_obj_t* cc_cycle_slot_page_create(void) {
   } else {
     snprintf(s_cc_cycle_cc_label[buf], sizeof(s_cc_cycle_cc_label[buf]), "CC: <none>");
   }
-  s_cc_cycle_items[item_count++] = (menu_item_t){s_cc_cycle_cc_label[buf], nav_to_cc_cycle_cc, NULL, true};
+  s_cc_cycle_items[item_count++] = (menu_item_t){s_cc_cycle_cc_label[buf], nav_to_cc_cycle_cc, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Step value items (only if slot is active)
   if (is_active) {
@@ -1833,7 +1839,8 @@ static lv_obj_t* cc_cycle_slot_page_create(void) {
       snprintf(s_cc_cycle_step_labels[buf][i], sizeof(s_cc_cycle_step_labels[buf][i]), 
         "Step %d: %s", i + 1, val_disp);
       s_cc_cycle_items[item_count++] = (menu_item_t){
-        s_cc_cycle_step_labels[buf][i], nav_to_cc_cycle_step, (void*)(uintptr_t)i, true
+        s_cc_cycle_step_labels[buf][i], nav_to_cc_cycle_step, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -5313,36 +5320,36 @@ static void engine_modify_append_detail_rows(const action_engine_modify_t* m, in
   snprintf(s_engine_modify_rate_mode_label[buf], sizeof(s_engine_modify_rate_mode_label[buf]),
     "Rate Mode\n%s", engine_modify_rate_mode_display(m->rate_mode));
   s_detail_items[(*item_count)++] = (menu_item_t){
-    s_engine_modify_rate_mode_label[buf], nav_to_engine_modify_rate_mode, NULL, true
-  };
+    s_engine_modify_rate_mode_label[buf], nav_to_engine_modify_rate_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
   if (*item_count >= MAX_DETAIL_ITEMS) return;
   snprintf(s_engine_modify_rate_hz_label[buf], sizeof(s_engine_modify_rate_hz_label[buf]),
     "Rate\n%s", engine_modify_rate_hz_display(m->rate_hz_x100, tmp, sizeof(tmp)));
   s_detail_items[(*item_count)++] = (menu_item_t){
-    s_engine_modify_rate_hz_label[buf], nav_to_engine_modify_rate_hz, NULL, true
-  };
+    s_engine_modify_rate_hz_label[buf], nav_to_engine_modify_rate_hz, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
   if (*item_count >= MAX_DETAIL_ITEMS) return;
   snprintf(s_engine_modify_sync_mult_label[buf], sizeof(s_engine_modify_sync_mult_label[buf]),
     "Sync Mult\n%s", engine_modify_sync_mult_display(m->sync_mult_x1000));
   s_detail_items[(*item_count)++] = (menu_item_t){
-    s_engine_modify_sync_mult_label[buf], nav_to_engine_modify_sync_mult, NULL, true
-  };
+    s_engine_modify_sync_mult_label[buf], nav_to_engine_modify_sync_mult, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
   if (*item_count >= MAX_DETAIL_ITEMS) return;
   snprintf(s_engine_modify_glide_label[buf], sizeof(s_engine_modify_glide_label[buf]),
     "Glide\n%s", engine_modify_glide_display(m->glide));
   s_detail_items[(*item_count)++] = (menu_item_t){
-    s_engine_modify_glide_label[buf], nav_to_engine_modify_glide, NULL, true
-  };
+    s_engine_modify_glide_label[buf], nav_to_engine_modify_glide, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
   if (*item_count >= MAX_DETAIL_ITEMS) return;
   snprintf(s_engine_modify_prob_label[buf], sizeof(s_engine_modify_prob_label[buf]),
     "Prob\n%s", engine_modify_prob_display(m->probability, tmp, sizeof(tmp)));
   s_detail_items[(*item_count)++] = (menu_item_t){
-    s_engine_modify_prob_label[buf], nav_to_engine_modify_prob, NULL, true
-  };
+    s_engine_modify_prob_label[buf], nav_to_engine_modify_prob, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 }
 
 // ============================================================================
@@ -6495,11 +6502,11 @@ static lv_obj_t* boomerang_curve_submenu_create(void) {
     "Slope\n%s", slope ? boomerang_slope_label(*slope) : "Medium");
 
   s_boomerang_curve_items[0] = (menu_item_t){
-    s_boomerang_curve_type_item_label[buf], nav_to_boomerang_curve_type, NULL, true
-  };
+    s_boomerang_curve_type_item_label[buf], nav_to_boomerang_curve_type, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
   s_boomerang_curve_items[1] = (menu_item_t){
-    s_boomerang_curve_slope_item_label[buf], nav_to_boomerang_curve_slope, NULL, true
-  };
+    s_boomerang_curve_slope_item_label[buf], nav_to_boomerang_curve_slope, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
   const char* title = (s_editing_boomerang_curve_phase == 1) ? "Release Curve" : "Attack Curve";
   return menu_create_page_2line(title, s_boomerang_curve_items, 2);
@@ -8028,7 +8035,8 @@ static lv_obj_t* pattern_editor_create(void) {
     snprintf(s_pattern_step_labels[i], sizeof(s_pattern_step_labels[i]),
       "Step %d: %s", i + 1, enabled ? "On" : "Off");
     s_pattern_step_items[i] = (menu_item_t){
-      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false
+      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false,
+      MENU_ITEM_KIND_ACTION
     };
   }
   
@@ -8418,7 +8426,9 @@ lv_obj_t* action_config_detail_page_create(void) {
   // or "Control Hold".
   snprintf(s_action_label[buf], sizeof(s_action_label[buf]),
     "Action\n%s", action_config_get_display_name(action->type));
-  s_detail_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_action_type, NULL, true};
+  s_detail_items[item_count++] = (menu_item_t){
+    s_action_label[buf], nav_to_action_type, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
 
   // ACTION_CONTROL (consolidated family): always show Variant picker, then
   // variant-specific sub-rows.
@@ -8426,7 +8436,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_control_variant_label[buf], sizeof(s_control_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_control_variant_label[buf], nav_to_control_variant, NULL, true
+      s_control_variant_label[buf], nav_to_control_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     // For CC Cycle, show Steps selector first
@@ -8435,7 +8445,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       if (steps < 2) steps = 2;
       snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps\n%u", (unsigned)steps);
       s_detail_items[item_count++] = (menu_item_t){
-        s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true
+        s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -8458,7 +8468,8 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Slot %d\n%s", i + 1, slot_display);
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_SUBMENU
       };
     }
   }
@@ -8473,7 +8484,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_preset_variant_label[buf], sizeof(s_preset_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_preset_variant_label[buf], nav_to_preset_variant, NULL, true
+      s_preset_variant_label[buf], nav_to_preset_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     switch (action->variant) {
@@ -8483,8 +8494,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_preset_label[buf], sizeof(s_preset_label[buf]),
           "Preset\n%u", (unsigned)display_num);
         s_detail_items[item_count++] = (menu_item_t){
-          s_preset_label[buf], nav_to_preset_set, NULL, true
-        };
+          s_preset_label[buf], nav_to_preset_set, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         break;
       }
 
@@ -8494,8 +8505,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_preset_hold_press_label[buf], sizeof(s_preset_hold_press_label[buf]),
           "Press\n%u", (unsigned)(press - index_base + 1));
         s_detail_items[item_count++] = (menu_item_t){
-          s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
-        };
+          s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
         // Release row: "Original" when the snap-back-to-live flag is set,
         // otherwise the configured release preset number.
@@ -8508,8 +8519,8 @@ lv_obj_t* action_config_detail_page_create(void) {
             "Release\n%u", (unsigned)(release - index_base + 1));
         }
         s_detail_items[item_count++] = (menu_item_t){
-          s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true
-        };
+          s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         break;
       }
 
@@ -8521,15 +8532,16 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_preset_cycle_steps_label[buf], sizeof(s_preset_cycle_steps_label[buf]),
           "Steps\n%u", (unsigned)num_steps);
         s_detail_items[item_count++] = (menu_item_t){
-          s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true
-        };
+          s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
         for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
           uint16_t preset = action->params.preset.cycle_presets[i];
           snprintf(s_preset_cycle_step_labels[buf][i], sizeof(s_preset_cycle_step_labels[buf][i]),
             "Step %d\n%u", i + 1, (unsigned)(preset - index_base + 1));
           s_detail_items[item_count++] = (menu_item_t){
-            s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true
+            s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true,
+            MENU_ITEM_KIND_ROLLER
           };
         }
         break;
@@ -8551,7 +8563,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_tempo_variant_label[buf], sizeof(s_tempo_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_variant_label[buf], nav_to_tempo_variant, NULL, true
+      s_tempo_variant_label[buf], nav_to_tempo_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     switch (action->variant) {
@@ -8567,8 +8579,8 @@ lv_obj_t* action_config_detail_page_create(void) {
             "Tempo\n%u BPM", (unsigned)bpm);
         }
         s_detail_items[item_count++] = (menu_item_t){
-          s_tempo_label[buf], nav_to_tempo_set, NULL, true
-        };
+          s_tempo_label[buf], nav_to_tempo_set, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM &&
             item_count + 2 <= MAX_DETAIL_ITEMS) {
           uint16_t floor = action->params.tempo.random_floor;
@@ -8580,11 +8592,11 @@ lv_obj_t* action_config_detail_page_create(void) {
           snprintf(s_tempo_random_ceiling_label[buf], sizeof(s_tempo_random_ceiling_label[buf]),
             "Ceiling\n%u", (unsigned)ceiling);
           s_detail_items[item_count++] = (menu_item_t){
-            s_tempo_random_floor_label[buf], nav_to_tempo_random_floor, NULL, true
-          };
+            s_tempo_random_floor_label[buf], nav_to_tempo_random_floor, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
           s_detail_items[item_count++] = (menu_item_t){
-            s_tempo_random_ceiling_label[buf], nav_to_tempo_random_ceiling, NULL, true
-          };
+            s_tempo_random_ceiling_label[buf], nav_to_tempo_random_ceiling, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         }
         break;
       }
@@ -8598,11 +8610,11 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
           "Release\n%u BPM", (unsigned)release);
         s_detail_items[item_count++] = (menu_item_t){
-          s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
-        };
+          s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         s_detail_items[item_count++] = (menu_item_t){
-          s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
-        };
+          s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         break;
       }
       case VARIANT_CYCLE: {
@@ -8612,15 +8624,16 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_tempo_cycle_steps_label[buf], sizeof(s_tempo_cycle_steps_label[buf]),
           "Steps\n%u", (unsigned)num_steps);
         s_detail_items[item_count++] = (menu_item_t){
-          s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true
-        };
+          s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
           uint16_t bpm = action->params.tempo.cycle_tempos[i];
           if (bpm < 20 || bpm > 300) bpm = 120;
           snprintf(s_tempo_cycle_step_labels[buf][i], sizeof(s_tempo_cycle_step_labels[buf][i]),
             "Step %d\n%u BPM", i + 1, (unsigned)bpm);
           s_detail_items[item_count++] = (menu_item_t){
-            s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true
+            s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true,
+            MENU_ITEM_KIND_ROLLER
           };
         }
         break;
@@ -8633,8 +8646,8 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Amount\n%u BPM", (unsigned)amount);
         if (item_count < MAX_DETAIL_ITEMS) {
           s_detail_items[item_count++] = (menu_item_t){
-            s_tempo_amount_label[buf], nav_to_tempo_amount, NULL, true
-          };
+            s_tempo_amount_label[buf], nav_to_tempo_amount, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
         }
         break;
       }
@@ -8651,7 +8664,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_transport_variant_label[buf], sizeof(s_transport_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_transport_variant_label[buf], nav_to_transport_variant, NULL, true
+      s_transport_variant_label[buf], nav_to_transport_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
 
@@ -8662,7 +8675,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_scene_variant_label[buf], sizeof(s_scene_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_scene_variant_label[buf], nav_to_scene_variant, NULL, true
+      s_scene_variant_label[buf], nav_to_scene_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (action->variant == VARIANT_SET) {
@@ -8683,7 +8696,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%u", (unsigned)target + 1);
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_scene_label[buf], nav_to_scene_set, NULL, true
+        s_scene_label[buf], nav_to_scene_set, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -8697,7 +8710,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note\n%s",
       note_configured_display(action->params.note.note));
     s_detail_items[item_count++] = (menu_item_t){
-      s_note_label[buf], nav_to_note, NULL, true
+      s_note_label[buf], nav_to_note, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (action->params.note.note == ACTION_NOTE_RANDOM) {
@@ -8716,35 +8729,35 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_note_random_ceiling_label[buf], sizeof(s_note_random_ceiling_label[buf]),
         "Ceiling\n%s", ceil_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_note_random_floor_label[buf], nav_to_note_random_floor, NULL, true
+        s_note_random_floor_label[buf], nav_to_note_random_floor, NULL, true, MENU_ITEM_KIND_ROLLER
       };
       s_detail_items[item_count++] = (menu_item_t){
-        s_note_random_ceiling_label[buf], nav_to_note_random_ceiling, NULL, true
+        s_note_random_ceiling_label[buf], nav_to_note_random_ceiling, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
     snprintf(s_note_voices_label[buf], sizeof(s_note_voices_label[buf]),
       "Voices\n%u", (unsigned)voices);
     s_detail_items[item_count++] = (menu_item_t){
-      s_note_voices_label[buf], nav_to_note_voices, NULL, true
+      s_note_voices_label[buf], nav_to_note_voices, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     snprintf(s_note_bass_label[buf], sizeof(s_note_bass_label[buf]),
       "Bass\n%s", action->params.note.bass ? "On" : "Off");
     s_detail_items[item_count++] = (menu_item_t){
-      s_note_bass_label[buf], nav_to_note_bass, NULL, true
+      s_note_bass_label[buf], nav_to_note_bass, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     snprintf(s_note_velocity_label[buf], sizeof(s_note_velocity_label[buf]),
       "Velocity\n%s", note_velocity_display(action->params.note.velocity));
     s_detail_items[item_count++] = (menu_item_t){
-      s_note_velocity_label[buf], nav_to_note_velocity, NULL, true
+      s_note_velocity_label[buf], nav_to_note_velocity, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     snprintf(s_note_aftertouch_label[buf], sizeof(s_note_aftertouch_label[buf]),
       "Aftertouch\n%s", action->params.note.aftertouch ? "On" : "Off");
     s_detail_items[item_count++] = (menu_item_t){
-      s_note_aftertouch_label[buf], nav_to_note_aftertouch, NULL, true
+      s_note_aftertouch_label[buf], nav_to_note_aftertouch, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
 
@@ -8754,7 +8767,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_piano_pedal_label[buf], sizeof(s_piano_pedal_label[buf]),
       "Pedal\n%s", piano_pedal_name_for_cc(action->params.piano_pedal.cc_number));
     s_detail_items[item_count++] = (menu_item_t){
-      s_piano_pedal_label[buf], nav_to_pedal_select, NULL, true
+      s_piano_pedal_label[buf], nav_to_pedal_select, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -8766,7 +8779,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_touchwheel_variant_label[buf], sizeof(s_touchwheel_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_touchwheel_variant_label[buf], nav_to_touchwheel_variant, NULL, true
+      s_touchwheel_variant_label[buf], nav_to_touchwheel_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (action->variant == VARIANT_HOLD) {
@@ -8776,7 +8789,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_tw_hold_press_label[buf], sizeof(s_tw_hold_press_label[buf]),
         "Press\n%s", touchwheel_get_mode_name(press_idx));
       s_detail_items[item_count++] = (menu_item_t){
-        s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
+        s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       if (action->params.tw_mode.release_to_original) {
@@ -8789,7 +8802,7 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Release\n%s", touchwheel_get_mode_name(release_idx));
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true
+        s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     } else if (action->variant == VARIANT_CYCLE) {
       uint8_t num_steps = action->params.tw_mode.num_modes;
@@ -8799,7 +8812,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_tw_cycle_steps_label[buf], sizeof(s_tw_cycle_steps_label[buf]),
         "Steps\n%u", (unsigned)num_steps);
       s_detail_items[item_count++] = (menu_item_t){
-        s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true
+        s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
@@ -8808,7 +8821,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_tw_cycle_step_labels[buf][i], sizeof(s_tw_cycle_step_labels[buf][i]),
           "Step %d\n%s", i + 1, touchwheel_get_mode_name(mode_idx));
         s_detail_items[item_count++] = (menu_item_t){
-          s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true
+          s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true,
+          MENU_ITEM_KIND_ROLLER
         };
       }
     }
@@ -8855,7 +8869,8 @@ lv_obj_t* action_config_detail_page_create(void) {
           sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\nInactive", i + 1);
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_randomize_slot_labels[buf][i], nav_to_randomize_slot, (void*)(uintptr_t)i, true
+        s_randomize_slot_labels[buf][i], nav_to_randomize_slot, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -8869,7 +8884,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_lfo_variant_label[buf], sizeof(s_lfo_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_lfo_variant_label[buf], nav_to_lfo_variant, NULL, true
+      s_lfo_variant_label[buf], nav_to_lfo_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     uint8_t slot = action->params.lfo.slot;
@@ -8882,7 +8897,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
+      s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (action->variant == VARIANT_MODIFY) {
@@ -8891,49 +8906,49 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_lfo_modify_waveform_label[buf], sizeof(s_lfo_modify_waveform_label[buf]),
         "Waveform\n%s", lfo_modify_waveform_display(action->params.lfo.waveform));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_waveform_label[buf], nav_to_lfo_modify_waveform, NULL, true
+        s_lfo_modify_waveform_label[buf], nav_to_lfo_modify_waveform, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_rate_mode_label[buf], sizeof(s_lfo_modify_rate_mode_label[buf]),
         "Rate Mode\n%s", lfo_modify_rate_mode_display(action->params.lfo.rate_mode));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_rate_mode_label[buf], nav_to_lfo_modify_rate_mode, NULL, true
+        s_lfo_modify_rate_mode_label[buf], nav_to_lfo_modify_rate_mode, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_rate_hz_label[buf], sizeof(s_lfo_modify_rate_hz_label[buf]),
         "Rate\n%s", lfo_modify_rate_hz_display(action->params.lfo.rate_hz_x100, tmp, sizeof(tmp)));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_rate_hz_label[buf], nav_to_lfo_modify_rate_hz, NULL, true
+        s_lfo_modify_rate_hz_label[buf], nav_to_lfo_modify_rate_hz, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_division_label[buf], sizeof(s_lfo_modify_division_label[buf]),
         "Division\n%s", lfo_modify_division_display(action->params.lfo.division));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_division_label[buf], nav_to_lfo_modify_division, NULL, true
+        s_lfo_modify_division_label[buf], nav_to_lfo_modify_division, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_polarity_label[buf], sizeof(s_lfo_modify_polarity_label[buf]),
         "Polarity\n%s", lfo_modify_polarity_display(action->params.lfo.polarity));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_polarity_label[buf], nav_to_lfo_modify_polarity, NULL, true
+        s_lfo_modify_polarity_label[buf], nav_to_lfo_modify_polarity, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_floor_label[buf], sizeof(s_lfo_modify_floor_label[buf]),
         "Floor\n%s", lfo_modify_floor_display(action->params.lfo.floor, tmp, sizeof(tmp)));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_floor_label[buf], nav_to_lfo_modify_floor, NULL, true
+        s_lfo_modify_floor_label[buf], nav_to_lfo_modify_floor, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_ceiling_label[buf], sizeof(s_lfo_modify_ceiling_label[buf]),
         "Ceiling\n%s", lfo_modify_floor_display(action->params.lfo.ceiling, tmp, sizeof(tmp)));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_ceiling_label[buf], nav_to_lfo_modify_ceiling, NULL, true
+        s_lfo_modify_ceiling_label[buf], nav_to_lfo_modify_ceiling, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_resolution_label[buf], sizeof(s_lfo_modify_resolution_label[buf]),
         "Resolution\n%s", lfo_modify_resolution_display(action->params.lfo.resolution_mode));
       s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_resolution_label[buf], nav_to_lfo_modify_resolution, NULL, true
+        s_lfo_modify_resolution_label[buf], nav_to_lfo_modify_resolution, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       if (action->params.lfo.resolution_mode == LFO_RESOLUTION_MANUAL &&
@@ -8941,8 +8956,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_lfo_modify_steps_label[buf], sizeof(s_lfo_modify_steps_label[buf]),
           "Steps\n%s", lfo_modify_steps_display(action->params.lfo.manual_steps, tmp, sizeof(tmp)));
         s_detail_items[item_count++] = (menu_item_t){
-          s_lfo_modify_steps_label[buf], nav_to_lfo_modify_steps, NULL, true
-        };
+          s_lfo_modify_steps_label[buf], nav_to_lfo_modify_steps, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
     }
   }
@@ -8953,7 +8968,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_clock_variant_label[buf], sizeof(s_clock_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_clock_variant_label[buf], nav_to_clock_variant, NULL, true
+      s_clock_variant_label[buf], nav_to_clock_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if ((action->variant == VARIANT_TOGGLE || action->variant == VARIANT_HOLD) &&
@@ -8965,7 +8980,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         (action->params.clock.start_enabled ? "Enable First" : "Disable First");
       snprintf(s_clock_mode_label[buf], sizeof(s_clock_mode_label[buf]), "%s\n%s", label, mode_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_clock_mode_label[buf], nav_to_clock_mode, NULL, true
+        s_clock_mode_label[buf], nav_to_clock_mode, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -8973,7 +8988,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_clock_burst_label[buf], sizeof(s_clock_burst_label[buf]), "Speed\n%u%%",
         (unsigned)action->params.clock.speed_percent);
       s_detail_items[item_count++] = (menu_item_t){
-        s_clock_burst_label[buf], nav_to_clock_burst, NULL, true
+        s_clock_burst_label[buf], nav_to_clock_burst, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -8983,7 +8998,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_cut_variant_label[buf], sizeof(s_cut_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_cut_variant_label[buf], nav_to_cut_variant, NULL, true
+      s_cut_variant_label[buf], nav_to_cut_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (item_count < MAX_DETAIL_ITEMS) {
@@ -8995,7 +9010,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       }
       snprintf(s_cut_mode_label[buf], sizeof(s_cut_mode_label[buf]), "Cut Target\n%s", mode_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_cut_mode_label[buf], nav_to_cut_mode, NULL, true
+        s_cut_mode_label[buf], nav_to_cut_mode, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -9005,7 +9020,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_rtg_variant_label[buf], sizeof(s_rtg_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_rtg_variant_label[buf], nav_to_rtg_variant, NULL, true
+      s_rtg_variant_label[buf], nav_to_rtg_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     if (action->variant == VARIANT_MODIFY)
       engine_modify_append_detail_rows(&action->params.rtg_modify, buf, &item_count);
@@ -9016,7 +9031,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_sh_variant_label[buf], sizeof(s_sh_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_sh_variant_label[buf], nav_to_sh_variant, NULL, true
+      s_sh_variant_label[buf], nav_to_sh_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     if (action->variant == VARIANT_MODIFY)
       engine_modify_append_detail_rows(&action->params.sh_modify, buf, &item_count);
@@ -9031,7 +9046,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_confirm_target_label[buf], sizeof(s_confirm_target_label[buf]),
       "Confirms\n%s", target_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_confirm_target_label[buf], nav_to_confirm_target, NULL, true
+      s_confirm_target_label[buf], nav_to_confirm_target, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -9040,7 +9055,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_ui_variant_label[buf], sizeof(s_ui_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_ui_variant_label[buf], nav_to_ui_variant, NULL, true
+      s_ui_variant_label[buf], nav_to_ui_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (action->variant == VARIANT_SET && item_count < MAX_DETAIL_ITEMS) {
@@ -9048,21 +9063,21 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
         "Module\n%s", mod_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_ui_module_label[buf], nav_to_ui_module, NULL, true
+        s_ui_module_label[buf], nav_to_ui_module, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     } else if (action->variant == VARIANT_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
       const char* press_name = get_ui_module_display_name(action->params.ui.module);
       snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
         "On Press\n%s", press_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_ui_module_label[buf], nav_to_ui_module, NULL, true
+        s_ui_module_label[buf], nav_to_ui_module, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       const char* release_name = get_ui_module_display_name(action->params.ui.module2);
       snprintf(s_ui_module2_label[buf], sizeof(s_ui_module2_label[buf]),
         "On Release\n%s", release_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_ui_module2_label[buf], nav_to_ui_module2, NULL, true
+        s_ui_module2_label[buf], nav_to_ui_module2, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     } else if (action->variant == VARIANT_CYCLE) {
       uint8_t num_steps = action->params.ui.num_modules;
@@ -9073,8 +9088,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_ui_cycle_steps_label[buf], sizeof(s_ui_cycle_steps_label[buf]),
           "Steps\n%u", (unsigned)num_steps);
         s_detail_items[item_count++] = (menu_item_t){
-          s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true
-        };
+          s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
 
       for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
@@ -9083,7 +9098,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_ui_cycle_step_labels[buf][i], sizeof(s_ui_cycle_step_labels[buf][i]),
           "Step %d\n%s", i + 1, get_ui_module_display_name(mod_idx));
         s_detail_items[item_count++] = (menu_item_t){
-          s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true
+          s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true,
+          MENU_ITEM_KIND_ROLLER
         };
       }
     }
@@ -9094,7 +9110,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_param_variant_label[buf], sizeof(s_param_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_param_variant_label[buf], nav_to_param_variant, NULL, true
+      s_param_variant_label[buf], nav_to_param_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (action->variant == VARIANT_HOLD && item_count < MAX_DETAIL_ITEMS - 1) {
@@ -9102,14 +9118,14 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_param_label[buf], sizeof(s_param_label[buf]),
         "On Press\n%s", press_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_param_label[buf], nav_to_param, NULL, true
+        s_param_label[buf], nav_to_param, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       const char* release_name = get_cc_display_name(action->params.tw_param.param2);
       snprintf(s_param2_label[buf], sizeof(s_param2_label[buf]),
         "On Release\n%s", release_name);
       s_detail_items[item_count++] = (menu_item_t){
-        s_param2_label[buf], nav_to_param2, NULL, true
+        s_param2_label[buf], nav_to_param2, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     } else if (action->variant == VARIANT_CYCLE) {
       uint8_t num_steps = action->params.tw_param.num_params;
@@ -9120,8 +9136,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_param_cycle_steps_label[buf], sizeof(s_param_cycle_steps_label[buf]),
           "Steps\n%u", (unsigned)num_steps);
         s_detail_items[item_count++] = (menu_item_t){
-          s_param_cycle_steps_label[buf], nav_to_param_cycle_steps, NULL, true
-        };
+          s_param_cycle_steps_label[buf], nav_to_param_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
 
       for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
@@ -9129,7 +9145,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_param_cycle_step_labels[buf][i], sizeof(s_param_cycle_step_labels[buf][i]),
           "Step %d\n%s", i + 1, get_cc_display_name(cc));
         s_detail_items[item_count++] = (menu_item_t){
-          s_param_cycle_step_labels[buf][i], nav_to_param_cycle_step, (void*)(uintptr_t)i, true
+          s_param_cycle_step_labels[buf][i], nav_to_param_cycle_step, (void*)(uintptr_t)i, true,
+          MENU_ITEM_KIND_ROLLER
         };
       }
     }
@@ -9151,7 +9168,7 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Start\nInactive");
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_punch_in_start_label[buf], nav_to_punch_in_start, NULL, true
+        s_punch_in_start_label[buf], nav_to_punch_in_start, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9168,7 +9185,7 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Finish\nInactive");
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_punch_in_finish_label[buf], nav_to_punch_in_finish, NULL, true
+        s_punch_in_finish_label[buf], nav_to_punch_in_finish, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9178,7 +9195,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_punch_in_duration_label[buf], sizeof(s_punch_in_duration_label[buf]),
         "Duration\n%s", dur_str);
       s_detail_items[item_count++] = (menu_item_t){
-        s_punch_in_duration_label[buf], nav_to_punch_in_duration, NULL, true
+        s_punch_in_duration_label[buf], nav_to_punch_in_duration, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -9192,7 +9209,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_boomerang_output_label[buf], sizeof(s_boomerang_output_label[buf]),
         "Output\n%s", boomerang_output_label(ot));
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_output_label[buf], nav_to_boomerang_output, NULL, true
+        s_boomerang_output_label[buf], nav_to_boomerang_output, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9215,7 +9232,7 @@ lv_obj_t* action_config_detail_page_create(void) {
           "CC\nInactive");
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_cc_label[buf], nav_to_boomerang_cc, NULL, true
+        s_boomerang_cc_label[buf], nav_to_boomerang_cc, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9231,7 +9248,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_boomerang_lfo_target_label[buf], sizeof(s_boomerang_lfo_target_label[buf]),
         "LFO Target\n%s", tname);
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_lfo_target_label[buf], nav_to_boomerang_lfo_target, NULL, true
+        s_boomerang_lfo_target_label[buf], nav_to_boomerang_lfo_target, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9242,7 +9259,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_boomerang_target_mode_label[buf], sizeof(s_boomerang_target_mode_label[buf]),
         "Target\n%s", mname);
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_target_mode_label[buf], nav_to_boomerang_target_mode, NULL, true
+        s_boomerang_target_mode_label[buf], nav_to_boomerang_target_mode, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9264,7 +9281,7 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Value\n%u", (unsigned)action->params.boomerang.target_value);
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_target_value_label[buf], nav_to_boomerang_target_value, NULL, true
+        s_boomerang_target_value_label[buf], nav_to_boomerang_target_value, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9289,7 +9306,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_boomerang_start_label[buf], sizeof(s_boomerang_start_label[buf]),
         "Start\n%.30s", start_disp);
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_start_label[buf], nav_to_boomerang_start, NULL, true
+        s_boomerang_start_label[buf], nav_to_boomerang_start, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9300,7 +9317,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         action->params.boomerang.attack_time_ms,
         action->params.boomerang.attack_division));
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_attack_label[buf], nav_to_boomerang_attack, NULL, true
+        s_boomerang_attack_label[buf], nav_to_boomerang_attack, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
     // Attack Curve
@@ -9310,7 +9327,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         curve_type_to_string((curve_type_t)action->params.boomerang.attack_curve),
         boomerang_slope_label(action->params.boomerang.attack_curve_slope));
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_attack_curve_label[buf], nav_to_boomerang_attack_curve, NULL, true
+        s_boomerang_attack_curve_label[buf], nav_to_boomerang_attack_curve, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
     // Sustain
@@ -9320,7 +9337,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         action->params.boomerang.sustain_time_ms,
         action->params.boomerang.sustain_division));
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_sustain_label[buf], nav_to_boomerang_sustain, NULL, true
+        s_boomerang_sustain_label[buf], nav_to_boomerang_sustain, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
     // Release
@@ -9330,7 +9347,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         action->params.boomerang.release_time_ms,
         action->params.boomerang.release_division));
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_release_label[buf], nav_to_boomerang_release, NULL, true
+        s_boomerang_release_label[buf], nav_to_boomerang_release, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
     // Release Curve
@@ -9340,7 +9357,7 @@ lv_obj_t* action_config_detail_page_create(void) {
         curve_type_to_string((curve_type_t)action->params.boomerang.release_curve),
         boomerang_slope_label(action->params.boomerang.release_curve_slope));
       s_detail_items[item_count++] = (menu_item_t){
-        s_boomerang_release_curve_label[buf], nav_to_boomerang_release_curve, NULL, true
+        s_boomerang_release_curve_label[buf], nav_to_boomerang_release_curve, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -9360,7 +9377,7 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Flag Up\nInactive");
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_flag_ceremony_up_label[buf], nav_to_flag_ceremony_up, NULL, true
+        s_flag_ceremony_up_label[buf], nav_to_flag_ceremony_up, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -9377,7 +9394,7 @@ lv_obj_t* action_config_detail_page_create(void) {
           "Flag Down\nInactive");
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_flag_ceremony_down_label[buf], nav_to_flag_ceremony_down, NULL, true
+        s_flag_ceremony_down_label[buf], nav_to_flag_ceremony_down, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -9390,7 +9407,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_cc_hold_followup_label[buf], sizeof(s_cc_hold_followup_label[buf]),
       "Follow-Up\n%s", followup_disp);
     s_detail_items[item_count++] = (menu_item_t){
-      s_cc_hold_followup_label[buf], nav_to_cc_hold_followup, NULL, true
+      s_cc_hold_followup_label[buf], nav_to_cc_hold_followup, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     if (action->followup_mode != 0 && item_count < MAX_DETAIL_ITEMS) {
@@ -9398,7 +9415,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_cc_hold_duration_label[buf], sizeof(s_cc_hold_duration_label[buf]),
         "Duration\n%s", duration_disp);
       s_detail_items[item_count++] = (menu_item_t){
-        s_cc_hold_duration_label[buf], nav_to_cc_hold_duration, NULL, true
+        s_cc_hold_duration_label[buf], nav_to_cc_hold_duration, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -9411,7 +9428,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     const char* timing_display = get_timing_display(action);
     snprintf(s_timing_label[buf], sizeof(s_timing_label[buf]), "Timing\n%s", timing_display);
     s_detail_items[item_count++] = (menu_item_t){
-      s_timing_label[buf], nav_to_timing, NULL, true
+      s_timing_label[buf], nav_to_timing, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -9422,7 +9439,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     const char* repeat_display = get_repeat_display(action);
     snprintf(s_repeat_label[buf], sizeof(s_repeat_label[buf]), "Repeat\n%s", repeat_display);
     s_detail_items[item_count++] = (menu_item_t){
-      s_repeat_label[buf], nav_to_repeat, NULL, true
+      s_repeat_label[buf], nav_to_repeat, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     
     // Show Probability option only when repeat is enabled
@@ -9431,7 +9448,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       snprintf(s_probability_label[buf], sizeof(s_probability_label[buf]),
         "Probability\n%s", prob_display);
       s_detail_items[item_count++] = (menu_item_t){
-        s_probability_label[buf], nav_to_probability, NULL, true
+        s_probability_label[buf], nav_to_probability, NULL, true, MENU_ITEM_KIND_ROLLER
       };
       
       // Show Pattern options only when repeat is enabled
@@ -9441,15 +9458,15 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_pattern_label[buf], sizeof(s_pattern_label[buf]),
           "Pattern\n%s", pattern_display);
         s_detail_items[item_count++] = (menu_item_t){
-          s_pattern_label[buf], nav_to_pattern_length, NULL, true
-        };
+          s_pattern_label[buf], nav_to_pattern_length, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
       
       // Show Pattern Editor when pattern is enabled
       if (action->pattern_length >= 2 && item_count < MAX_DETAIL_ITEMS) {
         s_detail_items[item_count++] = (menu_item_t){
-          "Edit Pattern", nav_to_pattern_editor, NULL, true
-        };
+          "Edit Pattern", nav_to_pattern_editor, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
       
       // Show Transport Trigger option when repeat is enabled
@@ -9458,8 +9475,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_transport_trigger_label[buf], sizeof(s_transport_trigger_label[buf]),
           "Transport Trigger\n%s", tt_display);
         s_detail_items[item_count++] = (menu_item_t){
-          s_transport_trigger_label[buf], nav_to_transport_trigger, NULL, true
-        };
+          s_transport_trigger_label[buf], nav_to_transport_trigger, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
     }
   }
@@ -9469,7 +9486,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     const char* morph_display = get_morph_display(action);
     snprintf(s_morph_label[buf], sizeof(s_morph_label[buf]), "Morph\n%s", morph_display);
     s_detail_items[item_count++] = (menu_item_t){
-      s_morph_label[buf], nav_to_morph, NULL, true
+      s_morph_label[buf], nav_to_morph, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     
     // Show morph sub-options only when morph is enabled
@@ -9480,8 +9497,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_morph_steps_label[buf], sizeof(s_morph_steps_label[buf]),
           "Steps\n%s", steps_display);
         s_detail_items[item_count++] = (menu_item_t){
-          s_morph_steps_label[buf], nav_to_morph_steps, NULL, true
-        };
+          s_morph_steps_label[buf], nav_to_morph_steps, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
       
       // Manual steps value (only when steps mode is Manual)
@@ -9490,8 +9507,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_morph_manual_label[buf], sizeof(s_morph_manual_label[buf]),
           "Manual Steps\n%s", manual_display);
         s_detail_items[item_count++] = (menu_item_t){
-          s_morph_manual_label[buf], nav_to_morph_manual, NULL, true
-        };
+          s_morph_manual_label[buf], nav_to_morph_manual, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
       
       // Timing mode selector
@@ -9500,8 +9517,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_morph_timing_label[buf], sizeof(s_morph_timing_label[buf]),
           "Morph Timing\n%s", timing_display);
         s_detail_items[item_count++] = (menu_item_t){
-          s_morph_timing_label[buf], nav_to_morph_timing, NULL, true
-        };
+          s_morph_timing_label[buf], nav_to_morph_timing, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
       
       // Feel selector (only when timing mode is Feel)
@@ -9510,8 +9527,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_morph_feel_label[buf], sizeof(s_morph_feel_label[buf]),
           "Feel\n%s", feel_display);
         s_detail_items[item_count++] = (menu_item_t){
-          s_morph_feel_label[buf], nav_to_morph_feel, NULL, true
-        };
+          s_morph_feel_label[buf], nav_to_morph_feel, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
       
       // Division selector (only when timing mode is Duration or Sync)
@@ -9521,8 +9538,8 @@ lv_obj_t* action_config_detail_page_create(void) {
         snprintf(s_morph_division_label[buf], sizeof(s_morph_division_label[buf]),
           "Division\n%s", div_display);
         s_detail_items[item_count++] = (menu_item_t){
-          s_morph_division_label[buf], nav_to_morph_division, NULL, true
-        };
+          s_morph_division_label[buf], nav_to_morph_division, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
       }
     }
   }
@@ -9533,7 +9550,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     snprintf(s_raise_flag_label[buf], sizeof(s_raise_flag_label[buf]),
       "Raise the Flag\n%s", action->raise_flag ? "Sure, why not" : "Not today");
     s_detail_items[item_count++] = (menu_item_t){
-      s_raise_flag_label[buf], nav_to_raise_flag, NULL, true
+      s_raise_flag_label[buf], nav_to_raise_flag, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   

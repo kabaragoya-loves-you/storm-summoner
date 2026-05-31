@@ -259,29 +259,45 @@ static lv_obj_t* scene_action_menu_create(void) {
   
   if (is_active) {
     // Active scene: Edit, Duplicate, Reorder, Deactivate, Delete
-    action_items[idx++] = (menu_item_t){ "Edit", action_edit_scene, NULL, true };
-    action_items[idx++] = (menu_item_t){ "Duplicate", action_duplicate_scene, NULL, true };
-    
+    action_items[idx++] = (menu_item_t){
+      "Edit", action_edit_scene, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
+    action_items[idx++] = (menu_item_t){
+      "Duplicate", action_duplicate_scene, NULL, true, MENU_ITEM_KIND_ACTION
+    };
+
     if (active_count > 1) {
-      action_items[idx++] = (menu_item_t){ "Reorder", nav_to_reorder, NULL, true };
+      action_items[idx++] = (menu_item_t){
+        "Reorder", nav_to_reorder, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
     }
-    
+
     // Deactivate (not if current scene or last active)
     if (!is_current && active_count > 1) {
-      action_items[idx++] = (menu_item_t){ "Deactivate", action_deactivate_scene, NULL, false };
+      action_items[idx++] = (menu_item_t){
+        "Deactivate", action_deactivate_scene, NULL, false, MENU_ITEM_KIND_ACTION
+      };
     }
-    
+
     // Delete (not if only one scene total)
     if (total > 1 && !is_current) {
-      action_items[idx++] = (menu_item_t){ "Delete", action_delete_scene, NULL, false };
+      action_items[idx++] = (menu_item_t){
+        "Delete", action_delete_scene, NULL, false, MENU_ITEM_KIND_ACTION
+      };
     }
   } else {
     // Inactive scene: Activate, Delete
-    action_items[idx++] = (menu_item_t){ "Activate", action_activate_scene, NULL, false };
-    action_items[idx++] = (menu_item_t){ "Duplicate", action_duplicate_scene, NULL, true };
-    
+    action_items[idx++] = (menu_item_t){
+      "Activate", action_activate_scene, NULL, false, MENU_ITEM_KIND_ACTION
+    };
+    action_items[idx++] = (menu_item_t){
+      "Duplicate", action_duplicate_scene, NULL, true, MENU_ITEM_KIND_ACTION
+    };
+
     if (total > 1) {
-      action_items[idx++] = (menu_item_t){ "Delete", action_delete_scene, NULL, false };
+      action_items[idx++] = (menu_item_t){
+        "Delete", action_delete_scene, NULL, false, MENU_ITEM_KIND_ACTION
+      };
     }
   }
   
@@ -367,15 +383,16 @@ lv_obj_t* menu_page_scenes_create(void) {
     s_scene_items[idx++] = (menu_item_t){
       s_scene_labels[label_idx],
       nav_to_scene_action,
-      (void*)(uintptr_t)i,  // Pass manifest position as user_data
-      true
+      (void*)(uintptr_t)i,
+      true,
+      MENU_ITEM_KIND_SUBMENU
     };
     label_idx++;
   }
   
   // Inactive scenes section (if any)
   if (inactive_count > 0) {
-    s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
+    s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
     
     for (uint16_t i = 0; i < total && label_idx < 128; i++) {
       if (scene_is_active_by_position(i)) continue;
@@ -387,18 +404,21 @@ lv_obj_t* menu_page_scenes_create(void) {
       s_scene_items[idx++] = (menu_item_t){
         s_scene_labels[label_idx],
         nav_to_scene_action,
-        (void*)(uintptr_t)i,  // Pass manifest position as user_data
-        true
+        (void*)(uintptr_t)i,
+        true,
+        MENU_ITEM_KIND_SUBMENU
       };
       label_idx++;
     }
   }
   
   // Divider before Add Scene
-  s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
   
   // Add Scene option
-  s_scene_items[idx++] = (menu_item_t){ "Add Scene", action_add_scene, NULL, false };
+  s_scene_items[idx++] = (menu_item_t){
+    "Add Scene", action_add_scene, NULL, false, MENU_ITEM_KIND_ACTION
+  };
   
   return menu_create_page("Scenes", s_scene_items, idx);
 }

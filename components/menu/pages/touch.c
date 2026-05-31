@@ -224,25 +224,27 @@ lv_obj_t* menu_page_touch_create(void) {
   
   // Calibrate (no value on second line)
   snprintf(s_calibrate_label, sizeof(s_calibrate_label), "Calibrate\n");
-  s_touch_items[idx++] = (menu_item_t){ s_calibrate_label, action_calibrate, NULL, false };
+  s_touch_items[idx++] = (menu_item_t){
+    s_calibrate_label, action_calibrate, NULL, false, MENU_ITEM_KIND_ACTION
+  };
   
   // Stuck Timeout with current value
   uint32_t stuck_ms = touch_get_stuck_timeout_ms();
   snprintf(s_stuck_timeout_label, sizeof(s_stuck_timeout_label), "Stuck Timeout\n%s",
     stuck_timeout_to_string(stuck_ms));
-  s_touch_items[idx++] = (menu_item_t){ s_stuck_timeout_label, nav_to_stuck_timeout, NULL, true };
+  s_touch_items[idx++] = (menu_item_t){ s_stuck_timeout_label, nav_to_stuck_timeout, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Idle Calibration with current value
   uint32_t idle_ms = touch_get_idle_calibration_interval_ms();
   snprintf(s_idle_calib_label, sizeof(s_idle_calib_label), "Idle Calibration\n%s",
     idle_calib_to_string(idle_ms));
-  s_touch_items[idx++] = (menu_item_t){ s_idle_calib_label, nav_to_idle_calib, NULL, true };
+  s_touch_items[idx++] = (menu_item_t){ s_idle_calib_label, nav_to_idle_calib, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Menu Hold Time with current value
   uint32_t hold_ms = ui_get_button13_long_press_ms();
   snprintf(s_menu_hold_label, sizeof(s_menu_hold_label), "Menu Hold Time\n%s",
     menu_hold_to_string(hold_ms));
-  s_touch_items[idx++] = (menu_item_t){ s_menu_hold_label, nav_to_menu_hold, NULL, true };
+  s_touch_items[idx++] = (menu_item_t){ s_menu_hold_label, nav_to_menu_hold, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   return menu_create_page_2line("Touch", s_touch_items, idx);
 }

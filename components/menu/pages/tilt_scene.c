@@ -48,8 +48,8 @@ lv_obj_t* menu_page_tilt_scene_create(void) {
   snprintf(s_x_label[buf], sizeof(s_x_label[buf]), "X Axis\n%s", x_on ? "Enabled" : "Disabled");
   snprintf(s_y_label[buf], sizeof(s_y_label[buf]), "Y Axis\n%s", y_on ? "Enabled" : "Disabled");
 
-  s_items[idx++] = (menu_item_t){ s_x_label[buf], nav_to_x_axis, NULL, true };
-  s_items[idx++] = (menu_item_t){ s_y_label[buf], nav_to_y_axis, NULL, true };
+  s_items[idx++] = (menu_item_t){ s_x_label[buf], nav_to_x_axis, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  s_items[idx++] = (menu_item_t){ s_y_label[buf], nav_to_y_axis, NULL, true, MENU_ITEM_KIND_SUBMENU };
 
   return menu_create_page_2line("Tilt", s_items, idx);
 }

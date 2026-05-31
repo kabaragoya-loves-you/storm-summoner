@@ -152,20 +152,20 @@ lv_obj_t* menu_page_settings_note_track_create(void) {
   char note_buf[16];
   format_note(note_track_get_low_note(), note_buf, sizeof(note_buf));
   snprintf(s_low_label[buf], sizeof(s_low_label[buf]), "Low Note\n%s", note_buf);
-  s_items[n++] = (menu_item_t){ s_low_label[buf], nav_to_low_note, NULL, true };
+  s_items[n++] = (menu_item_t){ s_low_label[buf], nav_to_low_note, NULL, true, MENU_ITEM_KIND_ROLLER };
 
   format_note(note_track_get_high_note(), note_buf, sizeof(note_buf));
   snprintf(s_high_label[buf], sizeof(s_high_label[buf]), "High Note\n%s", note_buf);
-  s_items[n++] = (menu_item_t){ s_high_label[buf], nav_to_high_note, NULL, true };
+  s_items[n++] = (menu_item_t){ s_high_label[buf], nav_to_high_note, NULL, true, MENU_ITEM_KIND_ROLLER };
 
   uint8_t ch = note_track_get_channel();
   if (ch == 0) snprintf(s_channel_label[buf], sizeof(s_channel_label[buf]), "Channel\nOmni");
   else snprintf(s_channel_label[buf], sizeof(s_channel_label[buf]), "Channel\nCh %u", (unsigned)ch);
-  s_items[n++] = (menu_item_t){ s_channel_label[buf], nav_to_channel, NULL, true };
+  s_items[n++] = (menu_item_t){ s_channel_label[buf], nav_to_channel, NULL, true, MENU_ITEM_KIND_ROLLER };
 
   const char* mode_str = (note_track_get_filter_mode() == NOTE_TRACK_FILTER_KILL) ? "Kill" : "Intercept";
   snprintf(s_filter_mode_label[buf], sizeof(s_filter_mode_label[buf]), "Filter Mode\n%s", mode_str);
-  s_items[n++] = (menu_item_t){ s_filter_mode_label[buf], nav_to_filter_mode, NULL, true };
+  s_items[n++] = (menu_item_t){ s_filter_mode_label[buf], nav_to_filter_mode, NULL, true, MENU_ITEM_KIND_ROLLER };
 
   return menu_create_page_2line("Note Track", s_items, n);
 }

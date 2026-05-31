@@ -422,25 +422,27 @@ lv_obj_t* menu_page_settings_als_create(void) {
   
   // Calibrate (at top, no second line)
   snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]), "Calibrate\n");
-  s_als_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  s_als_items[item_count++] = (menu_item_t){
+    s_calibrate_label[buf], nav_to_calibrate, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
   
   // Filter Mode
   bool raw_mode = als_get_raw_mode();
   snprintf(s_raw_mode_label[buf], sizeof(s_raw_mode_label[buf]),
     "Filter Mode\n%s", raw_mode ? "Raw" : "Filtered");
-  s_als_items[item_count++] = (menu_item_t){s_raw_mode_label[buf], nav_to_raw_mode, NULL, true};
+  s_als_items[item_count++] = (menu_item_t){s_raw_mode_label[buf], nav_to_raw_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Source
   bool white_ch = als_get_use_white_channel();
   snprintf(s_white_channel_label[buf], sizeof(s_white_channel_label[buf]),
     "Source\n%s", white_ch ? "White Channel" : "ALS Channel");
-  s_als_items[item_count++] = (menu_item_t){s_white_channel_label[buf], nav_to_white_channel, NULL, true};
+  s_als_items[item_count++] = (menu_item_t){s_white_channel_label[buf], nav_to_white_channel, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Deadzone (at bottom)
   uint8_t deadzone = als_get_deadzone();
   snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
     "Deadzone\n%u", (unsigned)deadzone);
-  s_als_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
+  s_als_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   return menu_create_page_2line("Ambient Light", s_als_items, item_count);
 }

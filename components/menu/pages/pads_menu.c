@@ -1143,9 +1143,15 @@ static lv_obj_t* cc_hold_slot_page_create(void) {
     snprintf(s_cc_hold_release_label[buf], sizeof(s_cc_hold_release_label[buf]), "Release: <none>");
   }
   
-  s_cc_hold_items[0] = (menu_item_t){s_cc_hold_cc_label[buf], nav_to_cc_hold_cc, NULL, true};
-  s_cc_hold_items[1] = (menu_item_t){s_cc_hold_press_label[buf], nav_to_cc_hold_press, NULL, is_active};
-  s_cc_hold_items[2] = (menu_item_t){s_cc_hold_release_label[buf], nav_to_cc_hold_release, NULL, is_active};
+  s_cc_hold_items[0] = (menu_item_t){s_cc_hold_cc_label[buf], nav_to_cc_hold_cc, NULL, true, MENU_ITEM_KIND_ROLLER};
+  s_cc_hold_items[1] = (menu_item_t){
+    s_cc_hold_press_label[buf], nav_to_cc_hold_press, NULL, is_active,
+    is_active ? MENU_ITEM_KIND_ROLLER : MENU_ITEM_KIND_AUTO
+  };
+  s_cc_hold_items[2] = (menu_item_t){
+    s_cc_hold_release_label[buf], nav_to_cc_hold_release, NULL, is_active,
+    is_active ? MENU_ITEM_KIND_ROLLER : MENU_ITEM_KIND_AUTO
+  };
   
   static char title[24];
   snprintf(title, sizeof(title), "Slot %u", (unsigned)(slot + 1));
@@ -1442,7 +1448,7 @@ static lv_obj_t* cc_cycle_slot_page_create(void) {
   } else {
     snprintf(s_cc_cycle_cc_label[buf], sizeof(s_cc_cycle_cc_label[buf]), "CC: <none>");
   }
-  s_cc_cycle_items[item_count++] = (menu_item_t){s_cc_cycle_cc_label[buf], nav_to_cc_cycle_cc, NULL, true};
+  s_cc_cycle_items[item_count++] = (menu_item_t){s_cc_cycle_cc_label[buf], nav_to_cc_cycle_cc, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Step value items (only if slot is active)
   if (is_active) {
@@ -1452,7 +1458,8 @@ static lv_obj_t* cc_cycle_slot_page_create(void) {
       snprintf(s_cc_cycle_step_labels[buf][i], sizeof(s_cc_cycle_step_labels[buf][i]), 
         "Step %d: %s", i + 1, val_disp);
       s_cc_cycle_items[item_count++] = (menu_item_t){
-        s_cc_cycle_step_labels[buf][i], nav_to_cc_cycle_step, (void*)(uintptr_t)i, true
+        s_cc_cycle_step_labels[buf][i], nav_to_cc_cycle_step, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -2038,10 +2045,10 @@ static lv_obj_t* preset_hold_page_create(void) {
     "Release: %u", (unsigned)(release - index_base + 1));
   
   s_preset_hold_items[0] = (menu_item_t){
-    s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
+    s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
   };
   s_preset_hold_items[1] = (menu_item_t){
-    s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true
+    s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
   };
   
   menu_set_custom_back_handler(preset_hold_handle_back);
@@ -2301,10 +2308,10 @@ static lv_obj_t* tempo_hold_page_create(void) {
     "Release: %u BPM", (unsigned)release);
   
   s_tempo_hold_items[0] = (menu_item_t){
-    s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
+    s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
   };
   s_tempo_hold_items[1] = (menu_item_t){
-    s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
+    s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
   };
   
   menu_set_custom_back_handler(tempo_hold_handle_back);
@@ -2550,10 +2557,10 @@ static lv_obj_t* tw_hold_page_create(void) {
     "Release: %s", touchwheel_get_mode_name(release_idx));
   
   s_tw_hold_items[0] = (menu_item_t){
-    s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
+    s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
   };
   s_tw_hold_items[1] = (menu_item_t){
-    s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true
+    s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
   };
   
   menu_set_custom_back_handler(tw_hold_handle_back);
@@ -3601,11 +3608,12 @@ static lv_obj_t* pad_detail_page_create(void) {
   int buf = get_next_buffer_set();
   
   int item_count = 0;
-  
-  // Action selector (always first) - 2-line format
+
   const char* action_name = get_action_display_name(mapping->action.type);
   snprintf(s_action_label[buf], sizeof(s_action_label[buf]), "Action\n%s", action_name);
-  s_detail_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_action_type, NULL, true};
+  s_detail_items[item_count++] = (menu_item_t){
+    s_action_label[buf], nav_to_action_type, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
   // Show CC slots for the consolidated Control family
   if (mapping->action.type == ACTION_CONTROL) {
@@ -3616,7 +3624,7 @@ static lv_obj_t* pad_detail_page_create(void) {
       if (steps < 2) steps = 2;
       snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps\n%u", (unsigned)steps);
       s_detail_items[item_count++] = (menu_item_t){
-        s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true
+        s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -3640,7 +3648,8 @@ static lv_obj_t* pad_detail_page_create(void) {
           "Slot %d\n%s", i + 1, slot_display);
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_SUBMENU
       };
     }
   }
@@ -3658,7 +3667,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     uint16_t display_num = program - index_base + 1;
     snprintf(s_preset_label[buf], sizeof(s_preset_label[buf]), "Preset\n%u", (unsigned)display_num);
     s_detail_items[item_count++] = (menu_item_t){
-      s_preset_label[buf], nav_to_program_set, NULL, true
+      s_preset_label[buf], nav_to_program_set, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -3682,7 +3691,7 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_scene_label[buf], sizeof(s_scene_label[buf]), "Scene\n%u", (unsigned)target);
     }
     s_detail_items[item_count++] = (menu_item_t){
-      s_scene_label[buf], nav_to_scene_set, NULL, true
+      s_scene_label[buf], nav_to_scene_set, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -3705,10 +3714,10 @@ static lv_obj_t* pad_detail_page_create(void) {
       "Release\n%u", (unsigned)(release - index_base + 1));
     
     s_detail_items[item_count++] = (menu_item_t){
-      s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true
+      s_preset_hold_press_label[buf], nav_to_preset_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     s_detail_items[item_count++] = (menu_item_t){
-      s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true
+      s_preset_hold_release_label[buf], nav_to_preset_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -3727,7 +3736,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     snprintf(s_preset_cycle_steps_label[buf], sizeof(s_preset_cycle_steps_label[buf]),
       "Steps\n%u", (unsigned)num_steps);
     s_detail_items[item_count++] = (menu_item_t){
-      s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true
+      s_preset_cycle_steps_label[buf], nav_to_preset_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     
     // Individual step items
@@ -3736,7 +3745,8 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_preset_cycle_step_labels[buf][i], sizeof(s_preset_cycle_step_labels[buf][i]),
         "Step %d\n%u", i + 1, (unsigned)(preset - index_base + 1));
       s_detail_items[item_count++] = (menu_item_t){
-        s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true
+        s_preset_cycle_step_labels[buf][i], nav_to_preset_cycle_step, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -3757,10 +3767,10 @@ static lv_obj_t* pad_detail_page_create(void) {
       "Release\n%u BPM", (unsigned)release);
 
     s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true
+      s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true
+      s_tempo_hold_release_label[buf], nav_to_tempo_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
 
@@ -3772,7 +3782,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     snprintf(s_tempo_cycle_steps_label[buf], sizeof(s_tempo_cycle_steps_label[buf]),
       "Steps\n%u", (unsigned)num_steps);
     s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true
+      s_tempo_cycle_steps_label[buf], nav_to_tempo_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
@@ -3781,7 +3791,8 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_tempo_cycle_step_labels[buf][i], sizeof(s_tempo_cycle_step_labels[buf][i]),
         "Step %d\n%u BPM", i + 1, (unsigned)bpm);
       s_detail_items[item_count++] = (menu_item_t){
-        s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true
+        s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -3800,10 +3811,10 @@ static lv_obj_t* pad_detail_page_create(void) {
       "Release\n%s", touchwheel_get_mode_name(release_idx));
     
     s_detail_items[item_count++] = (menu_item_t){
-      s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true
+      s_tw_hold_press_label[buf], nav_to_tw_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     s_detail_items[item_count++] = (menu_item_t){
-      s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true
+      s_tw_hold_release_label[buf], nav_to_tw_hold_release, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -3818,7 +3829,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     snprintf(s_tw_cycle_steps_label[buf], sizeof(s_tw_cycle_steps_label[buf]),
       "Steps\n%u", (unsigned)num_steps);
     s_detail_items[item_count++] = (menu_item_t){
-      s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true
+      s_tw_cycle_steps_label[buf], nav_to_tw_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
     };
     
     // Individual step items
@@ -3828,7 +3839,8 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_tw_cycle_step_labels[buf][i], sizeof(s_tw_cycle_step_labels[buf][i]),
         "Step %d\n%s", i + 1, touchwheel_get_mode_name(mode_idx));
       s_detail_items[item_count++] = (menu_item_t){
-        s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true
+        s_tw_cycle_step_labels[buf][i], nav_to_tw_cycle_step, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -3845,7 +3857,7 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%u BPM", (unsigned)bpm);
     }
     s_detail_items[item_count++] = (menu_item_t){
-      s_tempo_label[buf], nav_to_set_tempo, NULL, true
+      s_tempo_label[buf], nav_to_set_tempo, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -3857,7 +3869,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     get_note_display_name(midi_note, note_name, sizeof(note_name));
     snprintf(s_note_label[buf], sizeof(s_note_label[buf]), "Note\n%s", note_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_note_label[buf], nav_to_note, NULL, true
+      s_note_label[buf], nav_to_note, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -3899,7 +3911,8 @@ static lv_obj_t* pad_detail_page_create(void) {
           sizeof(s_randomize_slot_labels[buf][i]), "Slot %d\nInactive", i + 1);
       }
       s_detail_items[item_count++] = (menu_item_t){
-        s_randomize_slot_labels[buf][i], nav_to_randomize_slot, (void*)(uintptr_t)i, true
+        s_randomize_slot_labels[buf][i], nav_to_randomize_slot, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -3922,7 +3935,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     }
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true
+      s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   
@@ -3932,7 +3945,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
       "Module\n%s", mod_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_ui_module_label[buf], nav_to_ui_module, NULL, true
+      s_ui_module_label[buf], nav_to_ui_module, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
 
@@ -3942,14 +3955,14 @@ static lv_obj_t* pad_detail_page_create(void) {
     snprintf(s_ui_module_label[buf], sizeof(s_ui_module_label[buf]),
       "On Press\n%s", press_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_ui_module_label[buf], nav_to_ui_module, NULL, true
+      s_ui_module_label[buf], nav_to_ui_module, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     const char* release_name = get_ui_module_display_name(mapping->action.params.ui.module2);
     snprintf(s_ui_module2_label[buf], sizeof(s_ui_module2_label[buf]),
       "On Release\n%s", release_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_ui_module2_label[buf], nav_to_ui_module2, NULL, true
+      s_ui_module2_label[buf], nav_to_ui_module2, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
 
@@ -3963,7 +3976,7 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_ui_cycle_steps_label[buf], sizeof(s_ui_cycle_steps_label[buf]),
         "Steps\n%u", (unsigned)num_steps);
       s_detail_items[item_count++] = (menu_item_t){
-        s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true
+        s_ui_cycle_steps_label[buf], nav_to_ui_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
     
@@ -3974,7 +3987,8 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_ui_cycle_step_labels[buf][i], sizeof(s_ui_cycle_step_labels[buf][i]),
         "Step %d\n%s", i + 1, get_ui_module_display_name(mod_idx));
       s_detail_items[item_count++] = (menu_item_t){
-        s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true
+        s_ui_cycle_step_labels[buf][i], nav_to_ui_cycle_step, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -3986,14 +4000,14 @@ static lv_obj_t* pad_detail_page_create(void) {
     snprintf(s_param_label[buf], sizeof(s_param_label[buf]),
       "On Press\n%s", press_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_param_label[buf], nav_to_param, NULL, true
+      s_param_label[buf], nav_to_param, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
     const char* release_name = get_cc_display_name(mapping->action.params.tw_param.param2);
     snprintf(s_param2_label[buf], sizeof(s_param2_label[buf]),
       "On Release\n%s", release_name);
     s_detail_items[item_count++] = (menu_item_t){
-      s_param2_label[buf], nav_to_param2, NULL, true
+      s_param2_label[buf], nav_to_param2, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
 
@@ -4006,7 +4020,7 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_param_cycle_steps_label[buf], sizeof(s_param_cycle_steps_label[buf]),
         "Steps\n%u", (unsigned)num_steps);
       s_detail_items[item_count++] = (menu_item_t){
-        s_param_cycle_steps_label[buf], nav_to_param_cycle_steps, NULL, true
+        s_param_cycle_steps_label[buf], nav_to_param_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
       };
     }
 
@@ -4015,7 +4029,8 @@ static lv_obj_t* pad_detail_page_create(void) {
       snprintf(s_param_cycle_step_labels[buf][i], sizeof(s_param_cycle_step_labels[buf][i]),
         "Step %d\n%s", i + 1, get_cc_display_name(cc));
       s_detail_items[item_count++] = (menu_item_t){
-        s_param_cycle_step_labels[buf][i], nav_to_param_cycle_step, (void*)(uintptr_t)i, true
+        s_param_cycle_step_labels[buf][i], nav_to_param_cycle_step, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }
@@ -4060,7 +4075,8 @@ lv_obj_t* menu_page_pads_create(void) {
       format_pad_label((uint8_t)i, action, s_pad_labels[buf][item_count], 
         sizeof(s_pad_labels[buf][item_count]));
       s_pad_items[item_count] = (menu_item_t){
-        s_pad_labels[buf][item_count], nav_to_pad_detail, (void*)(uintptr_t)i, true
+        s_pad_labels[buf][item_count], nav_to_pad_detail, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_SUBMENU
       };
       item_count++;
     }
@@ -4074,7 +4090,8 @@ lv_obj_t* menu_page_pads_create(void) {
       format_pad_label((uint8_t)i, action, s_pad_labels[buf][item_count], 
         sizeof(s_pad_labels[buf][item_count]));
       s_pad_items[item_count] = (menu_item_t){
-        s_pad_labels[buf][item_count], nav_to_pad_detail, (void*)(uintptr_t)i, true
+        s_pad_labels[buf][item_count], nav_to_pad_detail, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_SUBMENU
       };
       item_count++;
     }

@@ -1104,16 +1104,17 @@ lv_obj_t* menu_page_cv_scene_create(void) {
     // Show read-only mode indicating tempo controls this
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), 
       "Mode\nClock Sync (Tempo)");
-    s_cv_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false};
+    s_cv_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
     
     // Show info that CV is controlled by tempo
     return menu_create_page_2line("Control Voltage", s_cv_items, item_count);
   }
-  
-  // Mode selector (always first)
-  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s", 
+
+  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
     get_cv_mode_display_name(mode));
-  s_cv_items[item_count++] = (menu_item_t){s_mode_label[buf], nav_to_mode, NULL, true};
+  s_cv_items[item_count++] = (menu_item_t){
+    s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
   // Mode-specific items
   switch (mode) {
@@ -1129,7 +1130,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         default: output_name = "Control Change"; break;
       }
       snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-      s_cv_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       if (scene->cv.output_type == OUTPUT_TYPE_CC) {
         // CC slots
@@ -1151,19 +1152,20 @@ lv_obj_t* menu_page_cv_scene_create(void) {
               "CC Slot %d\nInactive", i + 1);
           }
           s_cv_items[item_count++] = (menu_item_t){
-            s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+            s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+            MENU_ITEM_KIND_SUBMENU
           };
         }
         
         // Polarity (envelope shaping)
         snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
           "Polarity\n%s", polarity_to_string(scene->cv.polarity));
-        s_cv_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Curve
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->cv.curve.type));
-        s_cv_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
         
       } else if (scene->cv.output_type == OUTPUT_TYPE_NOTE) {
         // Notes output mode: Base Note, Range, Velocity
@@ -1171,40 +1173,40 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         get_note_name(scene->cv.base_note, note_name, sizeof(note_name));
         snprintf(s_base_note_label[buf], sizeof(s_base_note_label[buf]),
           "Base Note\n%s", note_name);
-        s_cv_items[item_count++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         uint8_t octaves = scene->cv.note_range / 12;
         if (octaves == 0) octaves = 1;
         snprintf(s_range_label[buf], sizeof(s_range_label[buf]),
           "Range\n%u Octave%s", (unsigned)octaves, octaves > 1 ? "s" : "");
-        s_cv_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         uint8_t vel = scene->cv.velocity;
         if (vel == 0) vel = 100;
         snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
           "Velocity\n%u", (unsigned)vel);
-        s_cv_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Polarity (envelope shaping - also applies to notes)
         snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
           "Polarity\n%s", polarity_to_string(scene->cv.polarity));
-        s_cv_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Curve (also applies to notes)
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->cv.curve.type));
-        s_cv_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
       } else if (scene->cv.output_type == OUTPUT_TYPE_LFO_RATE ||
                  scene->cv.output_type == OUTPUT_TYPE_LFO_DEPTH) {
         // LFO modulation mode: Target selector
         snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
           "LFO Target\n%s", lfo_target_to_string(scene->cv.lfo_target));
-        s_cv_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true, MENU_ITEM_KIND_ROLLER};
       } else if (scene->cv.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
         uint8_t pct = scene_get_cv_tempo_nudge_pct(scene_index);
         snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
           "Nudge %%\n%u%%", (unsigned)pct);
-        s_cv_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
       }
       
       break;
@@ -1218,7 +1220,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
                                  (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
       snprintf(s_vel_mode_label[buf], sizeof(s_vel_mode_label[buf]),
         "Velocity Mode\n%s", vel_mode_str);
-      s_cv_items[item_count++] = (menu_item_t){s_vel_mode_label[buf], nav_to_note_vel_mode, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_vel_mode_label[buf], nav_to_note_vel_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // Show fixed velocity value if in fixed mode
       if (vel_mode == VELOCITY_MODE_FIXED) {
@@ -1226,13 +1228,13 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         if (fixed_vel == 0) fixed_vel = 100;
         snprintf(s_fixed_vel_label[buf], sizeof(s_fixed_vel_label[buf]),
           "Fixed Velocity\n%u", (unsigned)fixed_vel);
-        s_cv_items[item_count++] = (menu_item_t){s_fixed_vel_label[buf], nav_to_note_fixed_vel, NULL, true};
+        s_cv_items[item_count++] = (menu_item_t){s_fixed_vel_label[buf], nav_to_note_fixed_vel, NULL, true, MENU_ITEM_KIND_ROLLER};
       }
       
       // Show info that Expression is locked to Gate mode
       snprintf(s_gate_info_label[buf], sizeof(s_gate_info_label[buf]),
         "Expression\nLocked to Gate");
-      s_cv_items[item_count++] = (menu_item_t){s_gate_info_label[buf], NULL, NULL, false};
+      s_cv_items[item_count++] = (menu_item_t){s_gate_info_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
       
       break;
     }
@@ -1246,7 +1248,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
       
       // Calibrate action (first and most important)
       snprintf(s_audio_calibrate_label[buf], sizeof(s_audio_calibrate_label[buf]), "Calibrate\nPlay Loud!");
-      s_cv_items[item_count++] = (menu_item_t){s_audio_calibrate_label[buf], audio_calibrate_action, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_audio_calibrate_label[buf], audio_calibrate_action, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // Sensitivity - editable roller
       uint8_t sens = scene_get_audio_sensitivity(scene_index);
@@ -1258,7 +1260,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         snprintf(s_audio_sensitivity_label[buf], sizeof(s_audio_sensitivity_label[buf]), 
           "Sensitivity\n%.1fx", gain);
       }
-      s_cv_items[item_count++] = (menu_item_t){s_audio_sensitivity_label[buf], nav_to_audio_sensitivity, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_audio_sensitivity_label[buf], nav_to_audio_sensitivity, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // Threshold - editable roller
       uint8_t thresh = scene_get_audio_threshold(scene_index);
@@ -1267,29 +1269,29 @@ lv_obj_t* menu_page_cv_scene_create(void) {
       } else {
         snprintf(s_audio_threshold_label[buf], sizeof(s_audio_threshold_label[buf]), "Threshold\n%u", (unsigned)thresh);
       }
-      s_cv_items[item_count++] = (menu_item_t){s_audio_threshold_label[buf], nav_to_audio_threshold, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_audio_threshold_label[buf], nav_to_audio_threshold, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // Range (±5V or ±10V) - editable
       cv_range_t audio_range = scene_get_audio_range(scene_index);
       const char* range_str = (audio_range == CV_RANGE_BIPOLAR_10V) ? "+-10V" : "+-5V";
       snprintf(s_audio_range_label[buf], sizeof(s_audio_range_label[buf]), "Range\n%s", range_str);
-      s_cv_items[item_count++] = (menu_item_t){s_audio_range_label[buf], nav_to_audio_range, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_audio_range_label[buf], nav_to_audio_range, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // Attack - editable
       uint16_t attack = scene_get_audio_attack(scene_index);
       snprintf(s_audio_attack_label[buf], sizeof(s_audio_attack_label[buf]), "Attack\n%ums", attack);
-      s_cv_items[item_count++] = (menu_item_t){s_audio_attack_label[buf], nav_to_audio_attack, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_audio_attack_label[buf], nav_to_audio_attack, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // Release - editable
       uint16_t release = scene_get_audio_release(scene_index);
       snprintf(s_audio_release_label[buf], sizeof(s_audio_release_label[buf]), "Release\n%ums", release);
-      s_cv_items[item_count++] = (menu_item_t){s_audio_release_label[buf], nav_to_audio_release, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_audio_release_label[buf], nav_to_audio_release, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // Polarity (Attract/Repel) - editable
       audio_polarity_t polarity = scene_get_audio_polarity(scene_index);
       const char* pol_str = (polarity == AUDIO_POLARITY_REPEL) ? "Repel (Duck)" : "Attract";
       snprintf(s_audio_polarity_label[buf], sizeof(s_audio_polarity_label[buf]), "Polarity\n%s", pol_str);
-      s_cv_items[item_count++] = (menu_item_t){s_audio_polarity_label[buf], nav_to_audio_polarity, NULL, true};
+      s_cv_items[item_count++] = (menu_item_t){s_audio_polarity_label[buf], nav_to_audio_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       // CC slots (reuse existing CC slot functionality)
       const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -1309,7 +1311,8 @@ lv_obj_t* menu_page_cv_scene_create(void) {
             "CC Slot %d\nInactive", i + 1);
         }
         s_cv_items[item_count++] = (menu_item_t){
-          s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+          s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+          MENU_ITEM_KIND_SUBMENU
         };
       }
       break;

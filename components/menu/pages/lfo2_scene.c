@@ -1128,7 +1128,7 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
     show_full_menu = false;
   }
   snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "LFO2\n%s", enabled_status);
-  s_lfo_items[item_count++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Only show more options if enabled/running/pending
   if (!show_full_menu) {
@@ -1138,49 +1138,51 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
   // Start Mode
   snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start Mode\n%s",
     start_mode_to_display_string(scene->lfo2_config.start_mode));
-  s_lfo_items[item_count++] = (menu_item_t){s_start_mode_label[buf], nav_to_start_mode, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_start_mode_label[buf], nav_to_start_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Trigger Timing (only show if start_mode is paused - controlled by action)
   if (scene->lfo2_config.start_mode == LFO_START_PAUSED) {
     snprintf(s_trigger_timing_label[buf], sizeof(s_trigger_timing_label[buf]), "Trigger\n%s",
       trigger_timing_to_display_string(scene->lfo2_config.trigger_timing));
-    s_lfo_items[item_count++] = (menu_item_t){s_trigger_timing_label[buf], nav_to_trigger_timing, NULL, true};
+    s_lfo_items[item_count++] = (menu_item_t){s_trigger_timing_label[buf], nav_to_trigger_timing, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   // Repeat Mode
   snprintf(s_repeat_label[buf], sizeof(s_repeat_label[buf]), "Repeat\n%s",
     scene->lfo2_config.repeat ? "Loop" : "One-Shot");
-  s_lfo_items[item_count++] = (menu_item_t){s_repeat_label[buf], nav_to_repeat, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_repeat_label[buf], nav_to_repeat, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Phase Reset
   snprintf(s_phase_reset_label[buf], sizeof(s_phase_reset_label[buf]), "On Restart\n%s",
     scene->lfo2_config.reset_phase ? "From Start" : "Continue");
-  s_lfo_items[item_count++] = (menu_item_t){s_phase_reset_label[buf], nav_to_phase_reset, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_phase_reset_label[buf], nav_to_phase_reset, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Restore on Stop
   snprintf(s_restore_on_stop_label[buf], sizeof(s_restore_on_stop_label[buf]), "On Stop\n%s",
     scene->lfo2_config.restore_on_stop ? "Restore" : "Nothing");
-  s_lfo_items[item_count++] = (menu_item_t){s_restore_on_stop_label[buf], nav_to_restore_on_stop, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_restore_on_stop_label[buf], nav_to_restore_on_stop, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Waveform
   snprintf(s_waveform_label[buf], sizeof(s_waveform_label[buf]), "Waveform\n%s",
     waveform_to_display_string(scene->lfo2_config.waveform));
-  s_lfo_items[item_count++] = (menu_item_t){s_waveform_label[buf], nav_to_waveform, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){
+    s_waveform_label[buf], nav_to_waveform, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
 
   // Rate Mode
   snprintf(s_rate_mode_label[buf], sizeof(s_rate_mode_label[buf]), "Rate Mode\n%s",
     rate_mode_to_display_string(scene->lfo2_config.rate_mode));
-  s_lfo_items[item_count++] = (menu_item_t){s_rate_mode_label[buf], nav_to_rate_mode, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_rate_mode_label[buf], nav_to_rate_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Rate or Division based on mode (not shown for touchwheel mode)
   if (scene->lfo2_config.rate_mode == LFO_RATE_MODE_FREE) {
     float hz = scene->lfo2_config.rate_hz_x100 / 100.0f;
     snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Rate\n%.1f Hz", hz);
-    s_lfo_items[item_count++] = (menu_item_t){s_rate_label[buf], nav_to_rate, NULL, true};
+    s_lfo_items[item_count++] = (menu_item_t){s_rate_label[buf], nav_to_rate, NULL, true, MENU_ITEM_KIND_ROLLER};
   } else if (scene->lfo2_config.rate_mode == LFO_RATE_MODE_TEMPO) {
     snprintf(s_division_label[buf], sizeof(s_division_label[buf]), "Division\n%s",
       division_to_display_string(scene->lfo2_config.division));
-    s_lfo_items[item_count++] = (menu_item_t){s_division_label[buf], nav_to_division, NULL, true};
+    s_lfo_items[item_count++] = (menu_item_t){s_division_label[buf], nav_to_division, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   // For TOUCHWHEEL mode, no rate setting needed (controlled by touchwheel)
   
@@ -1197,7 +1199,7 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
     default: output_name = "Control Change"; break;
   }
   snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-  s_lfo_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   if (scene->lfo2.output_type == OUTPUT_TYPE_CC) {
     // CC slots
@@ -1217,7 +1219,8 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
           "CC Slot %d\nInactive", i + 1);
       }
       s_lfo_items[item_count++] = (menu_item_t){
-        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_SUBMENU
       };
     }
   }
@@ -1225,28 +1228,28 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
   // Polarity
   snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
     "Polarity\n%s", polarity_to_string(scene->lfo2.polarity));
-  s_lfo_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Floor
   snprintf(s_floor_label[buf], sizeof(s_floor_label[buf]),
     "Floor\n%d", scene->lfo2_config.floor);
-  s_lfo_items[item_count++] = (menu_item_t){s_floor_label[buf], nav_to_floor, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_floor_label[buf], nav_to_floor, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Ceiling
   snprintf(s_ceiling_label[buf], sizeof(s_ceiling_label[buf]),
     "Ceiling\n%d", scene->lfo2_config.ceiling);
-  s_lfo_items[item_count++] = (menu_item_t){s_ceiling_label[buf], nav_to_ceiling, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_ceiling_label[buf], nav_to_ceiling, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Resolution
   snprintf(s_resolution_label[buf], sizeof(s_resolution_label[buf]),
     "Resolution\n%s", resolution_to_display_string(scene->lfo2_config.resolution_mode));
-  s_lfo_items[item_count++] = (menu_item_t){s_resolution_label[buf], nav_to_resolution, NULL, true};
+  s_lfo_items[item_count++] = (menu_item_t){s_resolution_label[buf], nav_to_resolution, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   // Steps (only show when Manual mode is selected)
   if (scene->lfo2_config.resolution_mode == LFO_RESOLUTION_MANUAL) {
     snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]),
       "Steps\n%d", scene->lfo2_config.manual_steps);
-    s_lfo_items[item_count++] = (menu_item_t){s_steps_label[buf], nav_to_steps, NULL, true};
+    s_lfo_items[item_count++] = (menu_item_t){s_steps_label[buf], nav_to_steps, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
 
   return menu_create_page_2line("LFO2", s_lfo_items, item_count);

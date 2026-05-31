@@ -124,7 +124,8 @@ lv_obj_t* menu_page_on_play_scene_create(void) {
     snprintf(s_slot_labels[buf][i], sizeof(s_slot_labels[buf][i]),
       "Play Action %d\n%s", i + 1, action_name);
     s_on_play_items[i] = (menu_item_t){
-      s_slot_labels[buf][i], nav_to_slot, (void*)(uintptr_t)i, true
+      s_slot_labels[buf][i], nav_to_slot, (void*)(uintptr_t)i, true,
+      MENU_ITEM_KIND_ROLLER
     };
   }
   

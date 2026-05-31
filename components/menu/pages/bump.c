@@ -149,14 +149,14 @@ lv_obj_t* menu_page_bump_create(void) {
   snprintf(s_sensitivity_label[buf], sizeof(s_sensitivity_label[buf]),
     "Sensitivity\n%s", sensitivity_to_string(sensitivity));
   s_bump_items[item_count++] = (menu_item_t){
-    s_sensitivity_label[buf], nav_to_sensitivity, NULL, true};
+    s_sensitivity_label[buf], nav_to_sensitivity, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Debounce (ms)
   uint32_t debounce = bump_get_debounce();
   snprintf(s_debounce_label[buf], sizeof(s_debounce_label[buf]),
     "Debounce\n%lu ms", (unsigned long)debounce);
   s_bump_items[item_count++] = (menu_item_t){
-    s_debounce_label[buf], nav_to_debounce, NULL, true};
+    s_debounce_label[buf], nav_to_debounce, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   return menu_create_page_2line("Bump", s_bump_items, item_count);
 }

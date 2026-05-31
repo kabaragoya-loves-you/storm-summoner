@@ -589,7 +589,8 @@ static lv_obj_t* pattern_editor_create(void) {
   // Length item at top
   snprintf(s_pattern_length_item_label, sizeof(s_pattern_length_item_label), "Length: %d", length);
   s_pattern_editor_items[idx++] = (menu_item_t){
-    s_pattern_length_item_label, nav_to_pattern_length_editor, NULL, false
+    s_pattern_length_item_label, nav_to_pattern_length_editor, NULL, false,
+    MENU_ITEM_KIND_ROLLER
   };
 
   // Step toggle items
@@ -598,7 +599,8 @@ static lv_obj_t* pattern_editor_create(void) {
     snprintf(s_pattern_step_labels[i], sizeof(s_pattern_step_labels[i]),
       "Step %d: %s", i + 1, enabled ? "On" : "Off");
     s_pattern_editor_items[idx++] = (menu_item_t){
-      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false
+      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false,
+      MENU_ITEM_KIND_ACTION
     };
   }
 
@@ -760,15 +762,20 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
   // Enabled
   snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]),
     "S+H: %s", scene->sample_hold_config.enabled ? "Enabled" : "Disabled");
-  s_sh_items[idx++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, false };
+  s_sh_items[idx++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, false, MENU_ITEM_KIND_ROLLER };
 
   // Only show other options when S+H is enabled
-  if (scene->sample_hold_config.enabled) {
-    // Mode
+  if (!scene->sample_hold_config.enabled) {
+    return menu_create_page("S+H", s_sh_items, idx);
+  }
+
+  {
     const char* mode_str = (scene->sample_hold_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) ?
       "Continuous" : "Step";
-    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
-    s_sh_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false };
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s", mode_str);
+    s_sh_items[idx++] = (menu_item_t){
+      s_mode_label[buf], nav_to_mode, NULL, false, MENU_ITEM_KIND_ROLLER
+    };
 
     // Start Mode (applies to both modes)
     const char* start_mode_str;
@@ -779,19 +786,19 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
       default: start_mode_str = "Running"; break;
     }
     snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start: %s", start_mode_str);
-    s_sh_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false };
+    s_sh_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false, MENU_ITEM_KIND_ROLLER };
 
     // Glide
     snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]), "Glide: %s",
       scene->sample_hold_config.glide ? "On" : "Off");
-    s_sh_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
+    s_sh_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false, MENU_ITEM_KIND_ROLLER };
 
     // Rate settings only apply to Continuous mode
     if (scene->sample_hold_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) {
     const char* rate_mode_str = (scene->sample_hold_config.rate_mode == SAMPLE_HOLD_RATE_MODE_SYNC) ?
       "Sync (BPM)" : "Free (Hz)";
     snprintf(s_rate_mode_label[buf], sizeof(s_rate_mode_label[buf]), "Rate: %s", rate_mode_str);
-    s_sh_items[idx++] = (menu_item_t){ s_rate_mode_label[buf], nav_to_rate_mode, NULL, false };
+    s_sh_items[idx++] = (menu_item_t){ s_rate_mode_label[buf], nav_to_rate_mode, NULL, false, MENU_ITEM_KIND_ROLLER };
 
     if (scene->sample_hold_config.rate_mode == SAMPLE_HOLD_RATE_MODE_FREE) {
       float rate_hz = scene->sample_hold_config.rate_hz_x100 / 100.0f;
@@ -802,7 +809,7 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
       } else {
         snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.0f", rate_hz);
       }
-      s_sh_items[idx++] = (menu_item_t){ s_rate_label[buf], nav_to_rate, NULL, false };
+      s_sh_items[idx++] = (menu_item_t){ s_rate_label[buf], nav_to_rate, NULL, false, MENU_ITEM_KIND_ROLLER };
     } else {
       uint16_t mult = scene->sample_hold_config.sync_mult_x1000;
       const char* mult_label = "1x";
@@ -813,20 +820,20 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
         }
       }
       snprintf(s_sync_mult_label[buf], sizeof(s_sync_mult_label[buf]), "Mult: %s", mult_label);
-      s_sh_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false };
+      s_sh_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false, MENU_ITEM_KIND_ROLLER };
     }
 
       // Probability (only in continuous mode)
       uint8_t prob = scene->sample_hold_config.probability;
       if (prob == 0) prob = 100;
       snprintf(s_probability_label[buf], sizeof(s_probability_label[buf]), "Prob: %d%%", prob);
-      s_sh_items[idx++] = (menu_item_t){ s_probability_label[buf], nav_to_probability, NULL, false };
+      s_sh_items[idx++] = (menu_item_t){ s_probability_label[buf], nav_to_probability, NULL, false, MENU_ITEM_KIND_ROLLER };
 
       // Pattern (only in continuous mode)
       const char* pattern_display = get_pattern_display(
         scene->sample_hold_config.pattern_length, scene->sample_hold_config.pattern_mask);
       snprintf(s_pattern_label[buf], sizeof(s_pattern_label[buf]), "Pattern: %s", pattern_display);
-      s_sh_items[idx++] = (menu_item_t){ s_pattern_label[buf], nav_to_pattern, NULL, false };
+      s_sh_items[idx++] = (menu_item_t){ s_pattern_label[buf], nav_to_pattern, NULL, false, MENU_ITEM_KIND_ROLLER };
     }
 
     // CC Slots (4 assignable)
@@ -842,7 +849,10 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
       } else {
         snprintf(s_cc_labels[buf][i], sizeof(s_cc_labels[buf][i]), "CC %d: None", i + 1);
       }
-      s_sh_items[idx++] = (menu_item_t){ s_cc_labels[buf][i], nav_to_cc_slot, (void*)(intptr_t)i, false };
+      s_sh_items[idx++] = (menu_item_t){
+        s_cc_labels[buf][i], nav_to_cc_slot, (void*)(intptr_t)i, false,
+        MENU_ITEM_KIND_SUBMENU
+      };
     }
   }
 

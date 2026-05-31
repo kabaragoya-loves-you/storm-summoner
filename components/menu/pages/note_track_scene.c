@@ -343,7 +343,13 @@ lv_obj_t* menu_page_note_track_scene_create(void) {
 
   snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]),
     "Enabled\n%s", enabled ? "Yes" : "No");
-  s_nt_items[n++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, true };
+  s_nt_items[n++] = (menu_item_t){
+    s_enabled_label[buf], nav_to_enabled, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
+
+  if (!enabled) {
+    return menu_create_page_2line("Note Track", s_nt_items, n);
+  }
 
   if (enabled) {
     load_cc_options();
@@ -358,7 +364,9 @@ lv_obj_t* menu_page_note_track_scene_create(void) {
       default: output_name = "Control Change"; break;
     }
     snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-    s_nt_items[n++] = (menu_item_t){ s_output_label[buf], nav_to_output, NULL, true };
+    s_nt_items[n++] = (menu_item_t){
+      s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
 
     if (scene->note_track.output_type == OUTPUT_TYPE_CC) {
       uint8_t cc_num = scene->note_track.cc_numbers[0];
@@ -372,23 +380,23 @@ lv_obj_t* menu_page_note_track_scene_create(void) {
       } else {
         snprintf(s_cc_label[buf], sizeof(s_cc_label[buf]), "CC\nInactive");
       }
-      s_nt_items[n++] = (menu_item_t){ s_cc_label[buf], nav_to_cc, NULL, true };
+      s_nt_items[n++] = (menu_item_t){ s_cc_label[buf], nav_to_cc, NULL, true, MENU_ITEM_KIND_ROLLER };
     }
 
     if (scene->note_track.output_type == OUTPUT_TYPE_LFO_RATE ||
         scene->note_track.output_type == OUTPUT_TYPE_LFO_DEPTH) {
       snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
         "LFO Target\n%s", lfo_target_to_string(scene->note_track.lfo_target));
-      s_nt_items[n++] = (menu_item_t){ s_lfo_target_label[buf], nav_to_lfo_target, NULL, true };
+      s_nt_items[n++] = (menu_item_t){ s_lfo_target_label[buf], nav_to_lfo_target, NULL, true, MENU_ITEM_KIND_ROLLER };
     }
 
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
       "Polarity\n%s", polarity_to_string(scene->note_track.polarity));
-    s_nt_items[n++] = (menu_item_t){ s_polarity_label[buf], nav_to_polarity, NULL, true };
+    s_nt_items[n++] = (menu_item_t){ s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER };
 
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(scene->note_track.curve.type));
-    s_nt_items[n++] = (menu_item_t){ s_curve_label[buf], nav_to_curve, NULL, true };
+    s_nt_items[n++] = (menu_item_t){ s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER };
   }
 
   return menu_create_page_2line("Note Track", s_nt_items, n);

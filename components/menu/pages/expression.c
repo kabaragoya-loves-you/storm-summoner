@@ -764,7 +764,7 @@ lv_obj_t* menu_page_expression_create(void) {
   
   uint8_t scene_index = scene_get_current_index();
   expression_mode_t mode = scene_get_expression_mode(scene_index);
-  
+
   // Check if CV is in CV/Gate mode (locks expression to Gate)
   input_mode_t cv_mode = scene_get_cv_input_mode(scene_index);
   bool locked_by_cv_gate = (cv_mode == INPUT_MODE_NOTE);
@@ -777,15 +777,17 @@ lv_obj_t* menu_page_expression_create(void) {
   if (locked_by_cv_gate) {
     // Show read-only mode indicating CV/Gate controls this
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\nGate (Locked)");
-    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false};
+    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
   } else if (locked_by_lfo) {
     // Show read-only mode indicating LFO controls this
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\nLFO Rate (Locked)");
-    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false};
+    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
   } else {
-    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s", 
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
       get_mode_display_name(mode));
-    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], nav_to_mode, NULL, true};
+    s_expr_items[item_count++] = (menu_item_t){
+      s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
   }
   
   // Mode-specific items
@@ -802,7 +804,7 @@ lv_obj_t* menu_page_expression_create(void) {
         default: output_name = "Control Change"; break;
       }
       snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-      s_expr_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
+      s_expr_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER};
       
       if (scene->expression.output_type == OUTPUT_TYPE_CC) {
         // CC slots
@@ -825,19 +827,20 @@ lv_obj_t* menu_page_expression_create(void) {
               "CC Slot %d\nInactive", i + 1);
           }
           s_expr_items[item_count++] = (menu_item_t){
-            s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+            s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+            MENU_ITEM_KIND_SUBMENU
           };
         }
         
         // Polarity (envelope shaping)
         snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
           "Polarity\n%s", polarity_to_string(scene->expression.polarity));
-        s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Curve
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->expression.curve.type));
-        s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
         
       } else if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
         // Notes mode: Base Note, Range, Velocity Mode, (Fixed) Velocity
@@ -845,13 +848,13 @@ lv_obj_t* menu_page_expression_create(void) {
         get_note_name(scene->expression.base_note, note_name, sizeof(note_name));
         snprintf(s_base_note_label[buf], sizeof(s_base_note_label[buf]),
           "Base Note\n%s", note_name);
-        s_expr_items[item_count++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         uint8_t octaves = scene->expression.note_range / 12;
         if (octaves == 0) octaves = 1;
         snprintf(s_range_label[buf], sizeof(s_range_label[buf]),
           "Range\n%u Octave%s", (unsigned)octaves, octaves > 1 ? "s" : "");
-        s_expr_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Velocity mode
         velocity_mode_t vel_mode = scene_get_expression_velocity_mode(scene_get_current_index());
@@ -859,7 +862,7 @@ lv_obj_t* menu_page_expression_create(void) {
                                    (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
         snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
           "Velocity Mode\n%s", vel_mode_str);
-        s_expr_items[item_count++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Fixed velocity (only shown when mode is FIXED)
         if (vel_mode == VELOCITY_MODE_FIXED) {
@@ -867,29 +870,29 @@ lv_obj_t* menu_page_expression_create(void) {
           if (vel == 0) vel = 100;
           snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
             "Velocity\n%u", (unsigned)vel);
-          s_expr_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true};
+          s_expr_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true, MENU_ITEM_KIND_ROLLER};
         }
         
         // Polarity (envelope shaping - also applies to notes)
         snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
           "Polarity\n%s", polarity_to_string(scene->expression.polarity));
-        s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Curve (also applies to notes)
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->expression.curve.type));
-        s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
       } else if (scene->expression.output_type == OUTPUT_TYPE_LFO_RATE ||
                  scene->expression.output_type == OUTPUT_TYPE_LFO_DEPTH) {
         // LFO modulation mode: Target selector
         snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
           "LFO Target\n%s", lfo_target_to_string(scene->expression.lfo_target));
-        s_expr_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true, MENU_ITEM_KIND_ROLLER};
       } else if (scene->expression.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
         uint8_t pct = scene_get_expression_tempo_nudge_pct(scene_get_current_index());
         snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
           "Nudge %%\n%u%%", (unsigned)pct);
-        s_expr_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true};
+        s_expr_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
       }
       
       break;
@@ -909,7 +912,7 @@ lv_obj_t* menu_page_expression_create(void) {
       action_get_display_name(&scene->expr_switch, action_name, sizeof(action_name));
       snprintf(s_action_label[buf], sizeof(s_action_label[buf]),
         "Action\n%s", action_name);
-      s_expr_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_switch_action, NULL, true};
+      s_expr_items[item_count++] = (menu_item_t){s_action_label[buf], nav_to_switch_action, NULL, true, MENU_ITEM_KIND_SUBMENU};
       break;
     }
     

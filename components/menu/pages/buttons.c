@@ -419,14 +419,14 @@ lv_obj_t* menu_page_buttons_create(void) {
   snprintf(s_debounce_label[buf], sizeof(s_debounce_label[buf]),
     "Debounce Delay\n%u ms", (unsigned)debounce);
   s_button_items[item_count++] = (menu_item_t){
-    s_debounce_label[buf], nav_to_debounce, NULL, true};
+    s_debounce_label[buf], nav_to_debounce, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Debounce Mode
   uint8_t debounce_mode = buttons_get_debounce_mode();
   snprintf(s_debounce_mode_label[buf], sizeof(s_debounce_mode_label[buf]),
     "Debounce Mode\n%s", debounce_mode_to_string(debounce_mode));
   s_button_items[item_count++] = (menu_item_t){
-    s_debounce_mode_label[buf], nav_to_debounce_mode, NULL, true};
+    s_debounce_mode_label[buf], nav_to_debounce_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Debounce Release (only shown when mode == asymmetric)
   if (debounce_mode == BUTTON_DEBOUNCE_MODE_ASYMMETRIC) {
@@ -434,7 +434,7 @@ lv_obj_t* menu_page_buttons_create(void) {
     snprintf(s_debounce_release_label[buf], sizeof(s_debounce_release_label[buf]),
       "Release Debounce\n%u ms", (unsigned)release);
     s_button_items[item_count++] = (menu_item_t){
-      s_debounce_release_label[buf], nav_to_debounce_release, NULL, true};
+      s_debounce_release_label[buf], nav_to_debounce_release, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   // Chord Window
@@ -442,21 +442,21 @@ lv_obj_t* menu_page_buttons_create(void) {
   snprintf(s_chord_label[buf], sizeof(s_chord_label[buf]),
     "Chord Window\n%u ms", (unsigned)chord);
   s_button_items[item_count++] = (menu_item_t){
-    s_chord_label[buf], nav_to_chord, NULL, true};
+    s_chord_label[buf], nav_to_chord, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Long Press
   uint16_t longpress = buttons_get_long_press_threshold();
   snprintf(s_longpress_label[buf], sizeof(s_longpress_label[buf]),
     "Long Press\n%u ms", (unsigned)longpress);
   s_button_items[item_count++] = (menu_item_t){
-    s_longpress_label[buf], nav_to_longpress, NULL, true};
+    s_longpress_label[buf], nav_to_longpress, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Glitch Filter Mode
   uint8_t glitch_mode = buttons_get_glitch_filter_mode();
   snprintf(s_glitch_mode_label[buf], sizeof(s_glitch_mode_label[buf]),
     "Glitch Filter\n%s", glitch_mode_to_string(glitch_mode));
   s_button_items[item_count++] = (menu_item_t){
-    s_glitch_mode_label[buf], nav_to_glitch_mode, NULL, true};
+    s_glitch_mode_label[buf], nav_to_glitch_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Glitch Filter Window (only shown when mode == flex)
   if (glitch_mode == BUTTON_GLITCH_FILTER_MODE_FLEX) {
@@ -464,7 +464,7 @@ lv_obj_t* menu_page_buttons_create(void) {
     snprintf(s_glitch_window_label[buf], sizeof(s_glitch_window_label[buf]),
       "Glitch Window\n%lu ns", (unsigned long)glitch_window);
     s_button_items[item_count++] = (menu_item_t){
-      s_glitch_window_label[buf], nav_to_glitch_window, NULL, true};
+      s_glitch_window_label[buf], nav_to_glitch_window, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
   return menu_create_page_2line("Buttons", s_button_items, item_count);

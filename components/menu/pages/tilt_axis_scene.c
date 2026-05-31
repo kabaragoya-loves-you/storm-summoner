@@ -906,7 +906,7 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
 
   snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "%s\n%s",
     axis_title(), m->enabled ? "Enabled" : "Disabled");
-  s_items[idx++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true};
+  s_items[idx++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   if (!m->enabled) {
     lv_obj_t* disabled_screen = menu_create_page_2line(axis_title(), s_items, idx);
@@ -917,7 +917,9 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
 
   snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s",
     output_type_name(m->output_type));
-  s_items[idx++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true};
+  s_items[idx++] = (menu_item_t){
+    s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
 
   if (m->output_type == OUTPUT_TYPE_CC) {
     for (int i = 0; i < 4; i++) {
@@ -936,88 +938,89 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
           "CC Slot %d\nInactive", i + 1);
       }
       s_items[idx++] = (menu_item_t){
-        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true
+        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+        MENU_ITEM_KIND_SUBMENU
       };
     }
 
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
       "Polarity\n%s", polarity_to_string(m->polarity));
-    s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+    s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(m->curve.type));
-    s_items[idx++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+    s_items[idx++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_min_label[buf], sizeof(s_min_label[buf]),
       "Min\n%u", (unsigned)m->min_value);
-    s_items[idx++] = (menu_item_t){s_min_label[buf], nav_to_min, NULL, true};
+    s_items[idx++] = (menu_item_t){s_min_label[buf], nav_to_min, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_middle_label[buf], sizeof(s_middle_label[buf]),
       "Middle\n%u", (unsigned)m->middle_value);
-    s_items[idx++] = (menu_item_t){s_middle_label[buf], nav_to_middle, NULL, true};
+    s_items[idx++] = (menu_item_t){s_middle_label[buf], nav_to_middle, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_max_label[buf], sizeof(s_max_label[buf]),
       "Max\n%u", (unsigned)m->max_value);
-    s_items[idx++] = (menu_item_t){s_max_label[buf], nav_to_max, NULL, true};
+    s_items[idx++] = (menu_item_t){s_max_label[buf], nav_to_max, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   } else if (m->output_type == OUTPUT_TYPE_NOTE) {
     char note_name[8];
     get_note_name(m->base_note, note_name, sizeof(note_name));
     snprintf(s_base_note_label[buf], sizeof(s_base_note_label[buf]),
       "Base Note\n%s", note_name);
-    s_items[idx++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true};
+    s_items[idx++] = (menu_item_t){s_base_note_label[buf], nav_to_base_note, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     uint8_t octaves = m->note_range / 12;
     if (octaves == 0) octaves = 1;
     snprintf(s_range_label[buf], sizeof(s_range_label[buf]),
       "Range\n%u Octave%s", (unsigned)octaves, octaves > 1 ? "s" : "");
-    s_items[idx++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true};
+    s_items[idx++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     velocity_mode_t vel_mode = get_vel_mode(scene_get_current_index());
     const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
       (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
     snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
       "Velocity Mode\n%s", vel_mode_str);
-    s_items[idx++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true};
+    s_items[idx++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     if (vel_mode == VELOCITY_MODE_FIXED) {
       uint8_t vel = m->velocity;
       if (vel == 0) vel = 100;
       snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
         "Velocity\n%u", (unsigned)vel);
-      s_items[idx++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true};
+      s_items[idx++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true, MENU_ITEM_KIND_ROLLER};
     }
 
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
       "Polarity\n%s", polarity_to_string(m->polarity));
-    s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+    s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(m->curve.type));
-    s_items[idx++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+    s_items[idx++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   } else if (m->output_type == OUTPUT_TYPE_LFO_RATE ||
              m->output_type == OUTPUT_TYPE_LFO_DEPTH) {
     snprintf(s_lfo_target_label[buf], sizeof(s_lfo_target_label[buf]),
       "LFO Target\n%s", lfo_target_to_string(m->lfo_target));
-    s_items[idx++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true};
+    s_items[idx++] = (menu_item_t){s_lfo_target_label[buf], nav_to_lfo_target, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   } else if (m->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
     uint8_t pct = get_nudge_pct(scene_get_current_index());
     snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
       "Nudge %%\n%u%%", (unsigned)pct);
-    s_items[idx++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true};
+    s_items[idx++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   } else if (m->output_type == OUTPUT_TYPE_PITCH_BEND) {
     // Pitch bend has no extra options on this page; polarity/curve still
     // influence the bipolar mapping.
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
       "Polarity\n%s", polarity_to_string(m->polarity));
-    s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+    s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(m->curve.type));
-    s_items[idx++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true};
+    s_items[idx++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
 
   lv_obj_t* screen = menu_create_page_2line(axis_title(), s_items, idx);

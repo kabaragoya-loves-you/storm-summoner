@@ -368,52 +368,52 @@ lv_obj_t* menu_page_tempo_create(void) {
   clock_sync_mode_t sync_mode = clock_sync_get_mode();
   snprintf(s_sync_pulse_mode_label, sizeof(s_sync_pulse_mode_label), "Sync Pulse Mode\n%s",
     sync_pulse_mode_to_string(sync_mode));
-  s_tempo_items[idx++] = (menu_item_t){ s_sync_pulse_mode_label, nav_to_sync_pulse_mode, NULL, true };
+  s_tempo_items[idx++] = (menu_item_t){ s_sync_pulse_mode_label, nav_to_sync_pulse_mode, NULL, true, MENU_ITEM_KIND_ROLLER };
   
   // Clock Output
   clock_output_t clock_output = tempo_get_clock_output();
   snprintf(s_clock_output_label, sizeof(s_clock_output_label), "Clock Output\n%s",
     clock_output_to_string(clock_output));
-  s_tempo_items[idx++] = (menu_item_t){ s_clock_output_label, nav_to_clock_output, NULL, true };
+  s_tempo_items[idx++] = (menu_item_t){ s_clock_output_label, nav_to_clock_output, NULL, true, MENU_ITEM_KIND_ROLLER };
   
   // Clock Standard (only show when clock output is enabled)
   if (clock_output != CLOCK_OUTPUT_NONE) {
     tempo_clock_standard_t standard = tempo_get_clock_standard();
     snprintf(s_clock_standard_label, sizeof(s_clock_standard_label), "Clock Standard\n%s",
       clock_standard_to_string(standard));
-    s_tempo_items[idx++] = (menu_item_t){ s_clock_standard_label, nav_to_clock_standard, NULL, true };
+    s_tempo_items[idx++] = (menu_item_t){ s_clock_standard_label, nav_to_clock_standard, NULL, true, MENU_ITEM_KIND_ROLLER };
     
     // Always Send
     bool always_send = tempo_get_clock_always_send();
     snprintf(s_always_send_label, sizeof(s_always_send_label), "Always Send\n%s",
       always_send ? "On" : "Off");
-    s_tempo_items[idx++] = (menu_item_t){ s_always_send_label, nav_to_always_send, NULL, true };
+    s_tempo_items[idx++] = (menu_item_t){ s_always_send_label, nav_to_always_send, NULL, true, MENU_ITEM_KIND_ROLLER };
     
     // Disable on Passthrough
     bool disable_passthrough = tempo_get_disable_clock_on_passthrough();
     snprintf(s_disable_passthrough_label, sizeof(s_disable_passthrough_label),
       "Disable on Passthrough\n%s", disable_passthrough ? "On" : "Off");
-    s_tempo_items[idx++] = (menu_item_t){ s_disable_passthrough_label, nav_to_disable_passthrough, NULL, true };
+    s_tempo_items[idx++] = (menu_item_t){ s_disable_passthrough_label, nav_to_disable_passthrough, NULL, true, MENU_ITEM_KIND_ROLLER };
   }
   
   // BPM Deadzone
   uint8_t deadzone = tempo_get_bpm_deadzone();
   snprintf(s_deadzone_label, sizeof(s_deadzone_label), "BPM Deadzone\n%s",
     deadzone_to_string(deadzone));
-  s_tempo_items[idx++] = (menu_item_t){ s_deadzone_label, nav_to_deadzone, NULL, true };
+  s_tempo_items[idx++] = (menu_item_t){ s_deadzone_label, nav_to_deadzone, NULL, true, MENU_ITEM_KIND_ROLLER };
   
   // LED Sync
   bool led_sync = tempo_get_led_sync();
   snprintf(s_led_sync_label, sizeof(s_led_sync_label), "LED Sync\n%s",
     led_sync ? "On" : "Off");
-  s_tempo_items[idx++] = (menu_item_t){ s_led_sync_label, nav_to_led_sync, NULL, true };
+  s_tempo_items[idx++] = (menu_item_t){ s_led_sync_label, nav_to_led_sync, NULL, true, MENU_ITEM_KIND_ROLLER };
   
   // Flash Duration (only show when LED sync is enabled)
   if (led_sync) {
     uint8_t flash_ratio = tempo_get_led_flash_ratio();
     snprintf(s_flash_duration_label, sizeof(s_flash_duration_label), "Flash Duration\n%s",
       flash_duration_to_string(flash_ratio));
-    s_tempo_items[idx++] = (menu_item_t){ s_flash_duration_label, nav_to_flash_duration, NULL, true };
+    s_tempo_items[idx++] = (menu_item_t){ s_flash_duration_label, nav_to_flash_duration, NULL, true, MENU_ITEM_KIND_ROLLER };
   }
   
   return menu_create_page_2line("Tempo", s_tempo_items, idx);

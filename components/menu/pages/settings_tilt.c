@@ -470,38 +470,40 @@ lv_obj_t* menu_page_settings_tilt_create(void) {
 
   snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]),
     "Calibrate\n%s", tilt_is_calibrated() ? "OK" : "Needed");
-  s_items[idx++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  s_items[idx++] = (menu_item_t){
+    s_calibrate_label[buf], nav_to_calibrate, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
 
   bool forgive = tilt_get_forgive_middle();
   snprintf(s_forgive_label[buf], sizeof(s_forgive_label[buf]),
     "Forgive Mid\n%s", forgive ? "On" : "Off");
-  s_items[idx++] = (menu_item_t){s_forgive_label[buf], nav_to_forgive, NULL, true};
+  s_items[idx++] = (menu_item_t){s_forgive_label[buf], nav_to_forgive, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   if (forgive) {
     snprintf(s_mid_w_label[buf], sizeof(s_mid_w_label[buf]),
       "Middle Width\n%u", (unsigned)tilt_get_middle_width());
-    s_items[idx++] = (menu_item_t){s_mid_w_label[buf], nav_to_mid_w, NULL, true};
+    s_items[idx++] = (menu_item_t){s_mid_w_label[buf], nav_to_mid_w, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_note_off_label[buf], sizeof(s_note_off_label[buf]),
       "Note Off\n%s", tilt_note_off_mode_label(tilt_get_note_off_mode()));
-    s_items[idx++] = (menu_item_t){s_note_off_label[buf], nav_to_note_off, NULL, true};
+    s_items[idx++] = (menu_item_t){s_note_off_label[buf], nav_to_note_off, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
 
   snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
     "Deadzone\n%u", (unsigned)tilt_get_deadzone());
-  s_items[idx++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
+  s_items[idx++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]),
     "Rate\n%u Hz", (unsigned)tilt_get_rate_hz());
-  s_items[idx++] = (menu_item_t){s_rate_label[buf], nav_to_rate, NULL, true};
+  s_items[idx++] = (menu_item_t){s_rate_label[buf], nav_to_rate, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   snprintf(s_inv_x_label[buf], sizeof(s_inv_x_label[buf]),
     "Invert X\n%s", tilt_get_axis_inverted(TILT_AXIS_X) ? "Inverted" : "Normal");
-  s_items[idx++] = (menu_item_t){s_inv_x_label[buf], nav_to_invert_x, NULL, true};
+  s_items[idx++] = (menu_item_t){s_inv_x_label[buf], nav_to_invert_x, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   snprintf(s_inv_y_label[buf], sizeof(s_inv_y_label[buf]),
     "Invert Y\n%s", tilt_get_axis_inverted(TILT_AXIS_Y) ? "Inverted" : "Normal");
-  s_items[idx++] = (menu_item_t){s_inv_y_label[buf], nav_to_invert_y, NULL, true};
+  s_items[idx++] = (menu_item_t){s_inv_y_label[buf], nav_to_invert_y, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   return menu_create_page_2line("Tilt", s_items, idx);
 }

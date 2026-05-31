@@ -21,32 +21,44 @@ lv_obj_t* menu_page_about_create(void) {
   // Version (major.minor only)
   snprintf(s_labels[idx], sizeof(s_labels[0]), "Version\n%u.%u",
     version_get_major(), version_get_minor());
-  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
   
   // Git Commit
   snprintf(s_labels[idx], sizeof(s_labels[0]), "Git Commit\n%s", version_get_git_hash());
-  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
   
   // Serial
   snprintf(s_labels[idx], sizeof(s_labels[0]), "Serial\n%s", version_get_serial());
-  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
   
   // Build number
   snprintf(s_labels[idx], sizeof(s_labels[0]), "Build\n%lu", (unsigned long)version_get_build());
-  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
   
   // Assets checksum
   snprintf(s_labels[idx], sizeof(s_labels[0]), "Assets\n%s", version_get_assets_checksum());
-  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
   
   // Hardware revision
   snprintf(s_labels[idx], sizeof(s_labels[0]), "Hardware\n%s", revision_get_string());
-  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
   
   // LittleFS storage
@@ -58,11 +70,15 @@ lv_obj_t* menu_page_about_create(void) {
   } else {
     snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage\nunavailable");
   }
-  s_about_items[idx] = (menu_item_t){ s_labels[idx], NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
 
   // Identity
-  s_about_items[idx] = (menu_item_t){ "Lizard\nVoronox", NULL, NULL, false };
+  s_about_items[idx] = (menu_item_t){
+    "Lizard\nVoronox", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
   idx++;
   
   ESP_LOGI(TAG, "About page: %d items", idx);

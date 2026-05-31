@@ -495,24 +495,26 @@ lv_obj_t* menu_page_cv_create(void) {
   cv_range_t range = cv_get_range();
   snprintf(s_range_label[buf], sizeof(s_range_label[buf]),
     "Voltage Range\n%s", range_to_string(range));
-  s_cv_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true};
+  s_cv_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Calibrate (with current range in label, no second line)
   snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]),
     "Calibrate %s\n", range_to_short_string(range));
-  s_cv_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  s_cv_items[item_count++] = (menu_item_t){
+    s_calibrate_label[buf], nav_to_calibrate, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
   
   // Pitch Standard
   cv_pitch_standard_t pitch_std = cv_get_pitch_standard();
   snprintf(s_pitch_std_label[buf], sizeof(s_pitch_std_label[buf]),
     "Pitch Standard\n%s", pitch_std_to_string(pitch_std));
-  s_cv_items[item_count++] = (menu_item_t){s_pitch_std_label[buf], nav_to_pitch_std, NULL, true};
+  s_cv_items[item_count++] = (menu_item_t){s_pitch_std_label[buf], nav_to_pitch_std, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Deadzone
   uint8_t deadzone = cv_get_deadzone();
   snprintf(s_deadzone_label[buf], sizeof(s_deadzone_label[buf]),
     "Deadzone\n%u", (unsigned)deadzone);
-  s_cv_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true};
+  s_cv_items[item_count++] = (menu_item_t){s_deadzone_label[buf], nav_to_deadzone, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   return menu_create_page_2line("Control Voltage", s_cv_items, item_count);
 }

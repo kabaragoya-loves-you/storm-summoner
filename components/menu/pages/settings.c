@@ -108,22 +108,22 @@ lv_obj_t* menu_page_settings_create(void) {
   ESP_LOGI(TAG, "Creating settings page");
   
   static menu_item_t settings_items[] = {
-    { "Config", nav_to_config, NULL, true },
-    { "Touch", nav_to_touch, NULL, true },
-    { "MIDI", nav_to_midi, NULL, true },
-    { "Expression", nav_to_expression, NULL, true },
-    { "Control Voltage", nav_to_cv, NULL, true },
-    { "Proximity", nav_to_proximity, NULL, true },
-    { "Ambient Light", nav_to_ambient_light, NULL, true },
-    { "Tilt", nav_to_tilt, NULL, true },
-    { "Note Track", nav_to_note_track, NULL, true },
-    { "Tempo", nav_to_tempo, NULL, true },
-    { "LED", nav_to_led, NULL, true },
-    { "Buttons", nav_to_buttons, NULL, true },
-    { "Bump", nav_to_bump, NULL, true },
-    { "Display", nav_to_display, NULL, true },
-    { "Scene Inspect", nav_to_scene_inspect, NULL, true },
-    { "Factory Reset", nav_to_factory_reset, NULL, true }
+    { "Config", nav_to_config, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Touch", nav_to_touch, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "MIDI", nav_to_midi, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Expression", nav_to_expression, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Control Voltage", nav_to_cv, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Proximity", nav_to_proximity, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Ambient Light", nav_to_ambient_light, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Tilt", nav_to_tilt, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Note Track", nav_to_note_track, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Tempo", nav_to_tempo, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "LED", nav_to_led, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Buttons", nav_to_buttons, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Bump", nav_to_bump, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Display", nav_to_display, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Scene Inspect", nav_to_scene_inspect, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Factory Reset", nav_to_factory_reset, NULL, true, MENU_ITEM_KIND_SUBMENU }
   };
   
   return menu_create_page("Settings", settings_items, 

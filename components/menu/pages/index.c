@@ -49,7 +49,9 @@ lv_obj_t* menu_page_index_create(void) {
   
   if (mode == SCENE_MODE_SINGLE) {
     // Single mode: just "Scene" for current scene editor
-    index_items[idx++] = (menu_item_t){ "Scene", nav_to_current_scene, NULL, true };
+    index_items[idx++] = (menu_item_t){
+      "Scene", nav_to_current_scene, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
   } else {
     // Multi-scene modes: show current scene (with ordinal) AND scene manager
     scene_t* scene = scene_get_current();
@@ -68,15 +70,25 @@ lv_obj_t* menu_page_index_create(void) {
     snprintf(s_scene_title, sizeof(s_scene_title), "%u. %.24s",
       (unsigned)ordinal, name);
     
-    index_items[idx++] = (menu_item_t){ s_scene_title, nav_to_current_scene, NULL, true };
-    index_items[idx++] = (menu_item_t){ "Scenes", nav_to_scenes_manager, NULL, true };
+    index_items[idx++] = (menu_item_t){
+      s_scene_title, nav_to_current_scene, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
+    index_items[idx++] = (menu_item_t){
+      "Scenes", nav_to_scenes_manager, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
   }
   
   const char* pedal_label = (config_get_device_mode() == DEVICE_MODE_PER_SCENE)
     ? "Default Pedal" : "Pedal Setup";
-  index_items[idx++] = (menu_item_t){ pedal_label, nav_to_device_config, NULL, true };
-  index_items[idx++] = (menu_item_t){ "Settings", nav_to_settings, NULL, true };
-  index_items[idx++] = (menu_item_t){ "About", nav_to_about, NULL, true };
+  index_items[idx++] = (menu_item_t){
+    pedal_label, nav_to_device_config, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
+  index_items[idx++] = (menu_item_t){
+    "Settings", nav_to_settings, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
+  index_items[idx++] = (menu_item_t){
+    "About", nav_to_about, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
   
   return menu_create_page("Menu", index_items, idx);
 }

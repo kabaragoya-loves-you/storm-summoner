@@ -117,16 +117,22 @@ lv_obj_t* menu_page_buttons_scene_create(void) {
 
   action_get_display_name(&scene->button_left, name_buf, sizeof(name_buf));
   snprintf(s_left_label[buf], sizeof(s_left_label[buf]), "Left\n%s", name_buf);
-  s_button_items[item_count++] = (menu_item_t){s_left_label[buf], nav_to_left, NULL, true};
+  s_button_items[item_count++] = (menu_item_t){
+    s_left_label[buf], nav_to_left, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
 
   action_get_display_name(&scene->button_right, name_buf, sizeof(name_buf));
   snprintf(s_right_label[buf], sizeof(s_right_label[buf]), "Right\n%s", name_buf);
-  s_button_items[item_count++] = (menu_item_t){s_right_label[buf], nav_to_right, NULL, true};
+  s_button_items[item_count++] = (menu_item_t){
+    s_right_label[buf], nav_to_right, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
 
   action_get_display_name(&scene->button_both, name_buf, sizeof(name_buf));
   snprintf(s_both_label[buf], sizeof(s_both_label[buf]), "Both\n%s", name_buf);
-  s_button_items[item_count++] = (menu_item_t){s_both_label[buf], nav_to_both, NULL, true};
-  
+  s_button_items[item_count++] = (menu_item_t){
+    s_both_label[buf], nav_to_both, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
+
   return menu_create_page_2line("Buttons", s_button_items, item_count);
 }
 

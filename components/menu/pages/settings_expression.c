@@ -490,25 +490,27 @@ lv_obj_t* menu_page_settings_expression_create(void) {
   
   // Calibrate
   snprintf(s_calibrate_label[buf], sizeof(s_calibrate_label[buf]), "Calibrate");
-  s_expr_items[item_count++] = (menu_item_t){s_calibrate_label[buf], nav_to_calibrate, NULL, true};
+  s_expr_items[item_count++] = (menu_item_t){
+    s_calibrate_label[buf], nav_to_calibrate, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
   
   // TRS Polarity
   expression_polarity_t polarity = expression_get_polarity();
   snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
     "TRS Polarity\n%s", polarity == EXPRESSION_POLARITY_TIP_ADC ? "Tip" : "Ring");
-  s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true};
+  s_expr_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Switch Type (for sustain/sostenuto pedals)
   pedal_switch_type_t switch_type = expression_get_pedal_switch_type();
   snprintf(s_switch_type_label[buf], sizeof(s_switch_type_label[buf]),
   "Switch Type\n%s", switch_type == PEDAL_SWITCH_NO ? "Normally Open" : "Normally Closed");
-  s_expr_items[item_count++] = (menu_item_t){s_switch_type_label[buf], nav_to_switch_type, NULL, true};
+  s_expr_items[item_count++] = (menu_item_t){s_switch_type_label[buf], nav_to_switch_type, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Slow Delay
   uint8_t slow_delay = expression_get_slow_delay();
   snprintf(s_slow_delay_label[buf], sizeof(s_slow_delay_label[buf]),
     "Slow Delay\n%u ms", (unsigned)slow_delay);
-  s_expr_items[item_count++] = (menu_item_t){s_slow_delay_label[buf], nav_to_slow_delay, NULL, true};
+  s_expr_items[item_count++] = (menu_item_t){s_slow_delay_label[buf], nav_to_slow_delay, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   // Menu Navigation
   expression_menu_nav_mode_t menu_nav = expression_get_menu_nav_mode();
@@ -516,7 +518,7 @@ lv_obj_t* menu_page_settings_expression_create(void) {
     (menu_nav == EXPR_MENU_NAV_HEEL_MIN) ? "Heel Min" : "Toe Min";
   snprintf(s_menu_nav_label[buf], sizeof(s_menu_nav_label[buf]),
     "Menu Navigation\n%s", nav_str);
-  s_expr_items[item_count++] = (menu_item_t){s_menu_nav_label[buf], nav_to_menu_nav, NULL, true};
+  s_expr_items[item_count++] = (menu_item_t){s_menu_nav_label[buf], nav_to_menu_nav, NULL, true, MENU_ITEM_KIND_ROLLER};
   
   return menu_create_page_2line("Expression", s_expr_items, item_count);
 }

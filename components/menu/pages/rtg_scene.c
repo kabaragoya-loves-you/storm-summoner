@@ -623,7 +623,8 @@ static lv_obj_t* pattern_editor_create(void) {
   // Length item at top
   snprintf(s_pattern_length_item_label, sizeof(s_pattern_length_item_label), "Length: %d", length);
   s_pattern_editor_items[idx++] = (menu_item_t){
-    s_pattern_length_item_label, nav_to_pattern_length_editor, NULL, false
+    s_pattern_length_item_label, nav_to_pattern_length_editor, NULL, false,
+    MENU_ITEM_KIND_ROLLER
   };
 
   // Step toggle items
@@ -632,7 +633,8 @@ static lv_obj_t* pattern_editor_create(void) {
     snprintf(s_pattern_step_labels[i], sizeof(s_pattern_step_labels[i]),
       "Step %d: %s", i + 1, enabled ? "On" : "Off");
     s_pattern_editor_items[idx++] = (menu_item_t){
-      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false
+      s_pattern_step_labels[i], pattern_step_toggle_cb, (void*)(uintptr_t)i, false,
+      MENU_ITEM_KIND_ACTION
     };
   }
 
@@ -1031,21 +1033,26 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
   // Enabled
   snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]),
     "RTG: %s", scene->rtg_config.enabled ? "Enabled" : "Disabled");
-  s_rtg_items[idx++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, false };
+  s_rtg_items[idx++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, false, MENU_ITEM_KIND_ROLLER };
 
   // Only show other options when RTG is enabled
-  if (scene->rtg_config.enabled) {
+  if (!scene->rtg_config.enabled) {
+    return menu_create_page("RTG", s_rtg_items, idx);
+  }
+
+  {
     bool is_shepard = (scene->rtg_config.generator == RTG_GEN_SHEPARD);
 
-    // Generator (Random / Shepard) - shapes the rest of the menu
     snprintf(s_generator_label[buf], sizeof(s_generator_label[buf]),
-      "Gen: %s", is_shepard ? "Shepard" : "Random");
-    s_rtg_items[idx++] = (menu_item_t){ s_generator_label[buf], nav_to_generator, NULL, false };
+      "Generator\n%s", is_shepard ? "Shepard" : "Random");
+    s_rtg_items[idx++] = (menu_item_t){
+      s_generator_label[buf], nav_to_generator, NULL, false, MENU_ITEM_KIND_ROLLER
+    };
 
     // Mode
     const char* mode_str = (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) ? "Continuous" : "Step";
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
-    s_rtg_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false };
+    s_rtg_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false, MENU_ITEM_KIND_ROLLER };
 
     // Start Mode and Rate settings only apply to Continuous mode
     if (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) {
@@ -1058,12 +1065,12 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
         default: start_mode_str = "Running"; break;
       }
       snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]), "Start: %s", start_mode_str);
-      s_rtg_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false };
+      s_rtg_items[idx++] = (menu_item_t){ s_start_mode_label[buf], nav_to_start_mode, NULL, false, MENU_ITEM_KIND_ROLLER };
 
       // Rate Mode (Free Hz / Sync BPM)
       const char* rate_mode_str = (scene->rtg_config.rate_mode == RTG_RATE_MODE_SYNC) ? "Sync (BPM)" : "Free (Hz)";
       snprintf(s_rate_mode_label[buf], sizeof(s_rate_mode_label[buf]), "Rate: %s", rate_mode_str);
-      s_rtg_items[idx++] = (menu_item_t){ s_rate_mode_label[buf], nav_to_rate_mode, NULL, false };
+      s_rtg_items[idx++] = (menu_item_t){ s_rate_mode_label[buf], nav_to_rate_mode, NULL, false, MENU_ITEM_KIND_ROLLER };
 
       // Hz Rate (only show if in Free mode) or Sync Multiplier (only show if in Sync mode)
       if (scene->rtg_config.rate_mode == RTG_RATE_MODE_FREE) {
@@ -1075,7 +1082,7 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
         } else {
           snprintf(s_rate_label[buf], sizeof(s_rate_label[buf]), "Hz: %.0f", rate_hz);
         }
-        s_rtg_items[idx++] = (menu_item_t){ s_rate_label[buf], nav_to_rate, NULL, false };
+        s_rtg_items[idx++] = (menu_item_t){ s_rate_label[buf], nav_to_rate, NULL, false, MENU_ITEM_KIND_ROLLER };
       } else {
         // Find the label for the current multiplier
         uint16_t mult = scene->rtg_config.sync_mult_x1000;
@@ -1087,20 +1094,20 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
           }
         }
         snprintf(s_sync_mult_label[buf], sizeof(s_sync_mult_label[buf]), "Mult: %s", mult_label);
-        s_rtg_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false };
+        s_rtg_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false, MENU_ITEM_KIND_ROLLER };
       }
 
       // Probability (only in continuous mode) - applies to both generators
       uint8_t prob = scene->rtg_config.probability;
       if (prob == 0) prob = 100;
       snprintf(s_probability_label[buf], sizeof(s_probability_label[buf]), "Prob: %d%%", prob);
-      s_rtg_items[idx++] = (menu_item_t){ s_probability_label[buf], nav_to_probability, NULL, false };
+      s_rtg_items[idx++] = (menu_item_t){ s_probability_label[buf], nav_to_probability, NULL, false, MENU_ITEM_KIND_ROLLER };
 
       // Pattern (only in continuous mode) - applies to both generators
       const char* pattern_display = get_pattern_display(
         scene->rtg_config.pattern_length, scene->rtg_config.pattern_mask);
       snprintf(s_pattern_label[buf], sizeof(s_pattern_label[buf]), "Pattern: %s", pattern_display);
-      s_rtg_items[idx++] = (menu_item_t){ s_pattern_label[buf], nav_to_pattern, NULL, false };
+      s_rtg_items[idx++] = (menu_item_t){ s_pattern_label[buf], nav_to_pattern, NULL, false, MENU_ITEM_KIND_ROLLER };
     }
 
     if (is_shepard) {
@@ -1108,12 +1115,12 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
       const char* dir_str =
         (scene->rtg_config.shepard_direction == SHEPARD_DIR_FALLING) ? "Falling" : "Rising";
       snprintf(s_direction_label[buf], sizeof(s_direction_label[buf]), "Dir: %s", dir_str);
-      s_rtg_items[idx++] = (menu_item_t){ s_direction_label[buf], nav_to_direction, NULL, false };
+      s_rtg_items[idx++] = (menu_item_t){ s_direction_label[buf], nav_to_direction, NULL, false, MENU_ITEM_KIND_ROLLER };
 
       // Smooth (uses the existing glide field with a Shepard-friendly label)
       snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
         "Smooth: %s", scene->rtg_config.glide ? "On" : "Off");
-      s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_smooth, NULL, false };
+      s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_smooth, NULL, false, MENU_ITEM_KIND_ROLLER };
 
       // Style, Layout, Fade, and (when Wide) Retrigger only matter when smooth is on
       if (scene->rtg_config.glide) {
@@ -1124,7 +1131,7 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
           case SHEPARD_STYLE_CROSSFADE: style_str = "Crossfade"; break;
         }
         snprintf(s_style_label[buf], sizeof(s_style_label[buf]), "Style: %s", style_str);
-        s_rtg_items[idx++] = (menu_item_t){ s_style_label[buf], nav_to_style, NULL, false };
+        s_rtg_items[idx++] = (menu_item_t){ s_style_label[buf], nav_to_style, NULL, false, MENU_ITEM_KIND_ROLLER };
 
         if (scene->rtg_config.shepard_style == SHEPARD_STYLE_WIDE) {
           uint8_t semis = scene->rtg_config.shepard_wide_semis;
@@ -1132,13 +1139,13 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
           if (semis > 4) semis = 4;
           snprintf(s_wide_semis_label[buf], sizeof(s_wide_semis_label[buf]),
             "Retrigger: %d semis", semis);
-          s_rtg_items[idx++] = (menu_item_t){ s_wide_semis_label[buf], nav_to_wide_semis, NULL, false };
+          s_rtg_items[idx++] = (menu_item_t){ s_wide_semis_label[buf], nav_to_wide_semis, NULL, false, MENU_ITEM_KIND_ROLLER };
         }
 
         const char* layout_str =
           (scene->rtg_config.shepard_layout == SHEPARD_LAYOUT_MULTI) ? "Multi-Ch" : "Single";
         snprintf(s_layout_label[buf], sizeof(s_layout_label[buf]), "Layout: %s", layout_str);
-        s_rtg_items[idx++] = (menu_item_t){ s_layout_label[buf], nav_to_layout, NULL, false };
+        s_rtg_items[idx++] = (menu_item_t){ s_layout_label[buf], nav_to_layout, NULL, false, MENU_ITEM_KIND_ROLLER };
 
         const char* fade_str = "None";
         switch (scene->rtg_config.shepard_fade) {
@@ -1147,13 +1154,13 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
           case SHEPARD_FADE_POLY_AT: fade_str = "Poly AT"; break;
         }
         snprintf(s_fade_label[buf], sizeof(s_fade_label[buf]), "Fade: %s", fade_str);
-        s_rtg_items[idx++] = (menu_item_t){ s_fade_label[buf], nav_to_fade, NULL, false };
+        s_rtg_items[idx++] = (menu_item_t){ s_fade_label[buf], nav_to_fade, NULL, false, MENU_ITEM_KIND_ROLLER };
       }
     } else {
       // Random generator: classic Glide toggle
       snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
         "Glide: %s", scene->rtg_config.glide ? "On" : "Off");
-      s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false };
+      s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false, MENU_ITEM_KIND_ROLLER };
     }
   }
 
