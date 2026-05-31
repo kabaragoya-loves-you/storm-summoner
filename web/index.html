@@ -121,7 +121,20 @@
                 <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
                 Inspect text was truncated on device.
               </wa-callout>
-              <pre class="scene-inspect-text empty" data-scene-target="inspectText">Connect to view scene inspect text</pre>
+              <div class="scene-inspect-display" data-controller="copy">
+                <div class="scene-inspect-actions">
+                  <wa-button class="scene-inspect-action" size="small" variant="neutral"
+                             data-scene-target="copyBtn"
+                             data-action="click->copy#copy" disabled>Copy</wa-button>
+                  <wa-button class="scene-inspect-action" size="small" variant="neutral"
+                             data-scene-target="printBtn"
+                             data-action="click->scene#print" disabled>Print</wa-button>
+                </div>
+                <textarea class="scene-inspect-copy-source" data-copy-target="source"
+                          data-scene-target="copySource" readonly tabindex="-1"
+                          aria-hidden="true"></textarea>
+                <pre class="scene-inspect-text empty" data-scene-target="inspectText">Connect to view scene inspect text</pre>
+              </div>
             </div>
 
             <div class="scene-edit-placeholder hidden" data-scene-target="editView">
@@ -141,6 +154,11 @@
                 <wa-icon name="magnifying-glass" slot="prefix"></wa-icon>
               </wa-input>
               <div class="toolbar-spacer"></div>
+              <wa-button size="small" variant="brand" appearance="outlined"
+                         data-action="click->pedals#showNewPedalDialog" data-pedals-target="newPedalBtn" disabled>
+                <wa-icon name="plus" slot="prefix"></wa-icon>
+                New Pedal
+              </wa-button>
               <wa-button size="small" variant="neutral" appearance="outlined"
                          data-action="click->pedals#refresh" data-pedals-target="refreshBtn" disabled>
                 <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
@@ -165,6 +183,40 @@
                 </div>
               </div>
             </div>
+
+            <wa-dialog data-pedals-target="newPedalDialog" label="New Pedal">
+              <wa-input type="text" placeholder="Pedal name" maxlength="64"
+                        data-pedals-target="newPedalInput"
+                        data-action="keydown.enter->pedals#confirmNewPedal"></wa-input>
+              <div slot="footer">
+                <wa-button variant="neutral" appearance="outlined"
+                           data-action="click->pedals#hideNewPedalDialog">Cancel</wa-button>
+                <wa-button variant="brand" data-action="click->pedals#confirmNewPedal">Create</wa-button>
+              </div>
+            </wa-dialog>
+
+            <wa-dialog data-pedals-target="deleteDialog" label="Delete Pedal">
+              <div class="confirm-delete-dialog-content">
+                <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
+                <p>Delete "<span data-pedals-target="deletePedalName"></span>"?</p>
+                <p class="hint">This cannot be undone.</p>
+              </div>
+              <div slot="footer">
+                <wa-button variant="neutral" appearance="outlined"
+                           data-action="click->pedals#hideDeleteDialog">Cancel</wa-button>
+                <wa-button variant="danger" data-action="click->pedals#confirmDelete">Delete</wa-button>
+              </div>
+            </wa-dialog>
+
+            <wa-dialog data-pedals-target="messageDialog" label="Error">
+              <div class="confirm-delete-dialog-content pedals-message-dialog-content">
+                <wa-icon name="circle-exclamation" class="warning-icon"></wa-icon>
+                <p data-pedals-target="messageDialogBody"></p>
+              </div>
+              <div slot="footer">
+                <wa-button variant="brand" data-action="click->pedals#hideMessageDialog">OK</wa-button>
+              </div>
+            </wa-dialog>
           </div>
         </wa-tab-panel>
 
@@ -376,7 +428,7 @@
 
             <!-- Delete Confirmation Dialog -->
             <wa-dialog data-scenes-target="deleteDialog" label="Delete Scene">
-              <div class="scenes-delete-dialog-content">
+              <div class="confirm-delete-dialog-content">
                 <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
                 <p>Delete "<span data-scenes-target="deleteSceneName"></span>"?</p>
                 <p class="hint">This action cannot be undone.</p>
@@ -666,6 +718,9 @@
 
   <!-- App Scripts -->
   <script src="/js/app.js"></script>
+  <script src="/js/lib/json-schema-validator.js"></script>
+  <script src="/js/controllers/copy.js"></script>
+  <script src="/js/controllers/collapsible.js"></script>
   <script src="/js/info.js"></script>
   <script src="/js/scene.js"></script>
   <script src="/js/pedals.js"></script>

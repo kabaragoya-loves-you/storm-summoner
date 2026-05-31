@@ -12,6 +12,30 @@
 // Forward declarations
 extern device_def_t *parse_device_json(const char *json_str, size_t json_len, const char *slug);
 
+static bool cc_array_has_duplicate_numbers(cJSON *cc_array) {
+  if (!cc_array || !cJSON_IsArray(cc_array)) {
+    return false;
+  }
+
+  bool seen[128] = {false};
+  cJSON *item = NULL;
+  cJSON_ArrayForEach(item, cc_array) {
+    cJSON *cc_num = cJSON_GetObjectItem(item, "controlChangeNumber");
+    if (!cc_num || !cJSON_IsNumber(cc_num)) {
+      continue;
+    }
+    int id = cc_num->valueint;
+    if (id < 0 || id > 127) {
+      continue;
+    }
+    if (seen[id]) {
+      return true;
+    }
+    seen[id] = true;
+  }
+  return false;
+}
+
 /**
  * Parse a device JSON file from filesystem
  */
@@ -159,6 +183,13 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
   // Parse controlChangeCommands
   cJSON *cc_array = cJSON_GetObjectItem(root, "controlChangeCommands");
   if (cc_array && cJSON_IsArray(cc_array)) {
+    if (cc_array_has_duplicate_numbers(cc_array)) {
+      ESP_LOGE(TAG, "Duplicate controlChangeNumber in device '%s'", slug);
+      cJSON_Delete(root);
+      free(device);
+      return NULL;
+    }
+
     device->control_count = cJSON_GetArraySize(cc_array);
     
     if (device->control_count > 0) {
@@ -390,5 +421,53 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
   ESP_LOGI(TAG, "Parsed device '%s': %u controls", device->slug, (unsigned)device->control_count);
   
   return device;
+}
+
+esp_err_t assets_validate_device_json_file(const char *filepath) {
+  if (!filepath) {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  FILE *f = fopen(filepath, "rb");
+  if (!f) {
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  struct stat st;
+  if (stat(filepath, &st) != 0) {
+    fclose(f);
+    return ESP_FAIL;
+  }
+
+  size_t file_size = (size_t)st.st_size;
+  char *json_buf = malloc_prefer_psram(file_size + 1);
+  if (!json_buf) {
+    fclose(f);
+    return ESP_ERR_NO_MEM;
+  }
+
+  size_t read_bytes = fread(json_buf, 1, file_size, f);
+  fclose(f);
+  if (read_bytes != file_size) {
+    heap_caps_free(json_buf);
+    return ESP_FAIL;
+  }
+  json_buf[file_size] = '\0';
+
+  cJSON *root = cJSON_Parse(json_buf);
+  heap_caps_free(json_buf);
+  if (!root) {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  cJSON *cc_array = cJSON_GetObjectItem(root, "controlChangeCommands");
+  esp_err_t err = ESP_OK;
+  if (cc_array_has_duplicate_numbers(cc_array)) {
+    ESP_LOGE(TAG, "Duplicate controlChangeNumber in %s", filepath);
+    err = ESP_ERR_INVALID_STATE;
+  }
+
+  cJSON_Delete(root);
+  return err;
 }
 

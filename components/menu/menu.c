@@ -43,7 +43,8 @@ static struct {
   deferred_nav_t pending_nav;
   bool has_pending_nav;
   bool skip_focus_scroll;  // Skip scroll in focus_event_cb during restore
-  int restore_focus_index;  // Index to focus after next page creation (-1 = default)
+  int restore_focus_index;  // Clickable index after next page creation (-1 = default)
+  int restore_focus_item_index;  // menu_items[] index (-1 = default)
 } menu_state = {
   .initialized = false,
   .stack_depth = 0,
@@ -51,7 +52,8 @@ static struct {
   .encoder_indev = NULL,
   .has_pending_nav = false,
   .skip_focus_scroll = false,
-  .restore_focus_index = -1
+  .restore_focus_index = -1,
+  .restore_focus_item_index = -1
 };
 
 // Forward declarations
@@ -65,6 +67,8 @@ static void scroll_event_cb(lv_event_t* e);
 static void focus_event_cb(lv_event_t* e);
 static void update_scroll_visuals(lv_obj_t* cont);
 static void save_focused_index(void);
+static lv_obj_t* find_menu_item_widget(lv_obj_t* cont, int item_index);
+static void apply_menu_focus(lv_obj_t* cont, lv_obj_t* focus_target);
 
 // Pending scene change direction (set by event handler, consumed by LVGL timer)
 static int s_pending_scene_direction = 0;  // +1 = next, -1 = previous
@@ -284,6 +288,30 @@ static void focus_event_cb(lv_event_t* e) {
   }
 }
 
+static lv_obj_t* find_menu_item_widget(lv_obj_t* cont, int item_index) {
+  if (!cont || item_index < 0) {
+    return NULL;
+  }
+  uint32_t child_cnt = lv_obj_get_child_count(cont);
+  if ((uint32_t)item_index >= child_cnt) {
+    return NULL;
+  }
+  return lv_obj_get_child(cont, (uint32_t)item_index);
+}
+
+static void apply_menu_focus(lv_obj_t* cont, lv_obj_t* focus_target) {
+  if (!focus_target || !menu_state.group) {
+    return;
+  }
+  menu_state.skip_focus_scroll = true;
+  lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
+  lv_group_focus_obj(focus_target);
+  menu_state.skip_focus_scroll = false;
+  if (cont) {
+    update_scroll_visuals(cont);
+  }
+}
+
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count) {
   uint16_t disp_w = display_get_width();
   uint16_t disp_h = display_get_height();
@@ -405,24 +433,40 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     }
   }
 
-  // Scroll to center on first focusable item
+  // Initial focus: menu item index, else clickable index, else first clickable
   if (item_count > 0 && menu_state.group) {
-    // Find the first clickable child (first focusable item)
-    uint32_t child_cnt = lv_obj_get_child_count(cont);
-    for (uint32_t i = 0; i < child_cnt; i++) {
-      lv_obj_t* child = lv_obj_get_child(cont, i);
-      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
-        menu_state.skip_focus_scroll = true;
-        lv_obj_scroll_to_view(child, LV_ANIM_OFF);
-        lv_group_focus_obj(child);
-        menu_state.skip_focus_scroll = false;
-        break;
+    lv_obj_t* focus_target = NULL;
+    if (menu_state.restore_focus_item_index >= 0) {
+      focus_target = find_menu_item_widget(cont, menu_state.restore_focus_item_index);
+      menu_state.restore_focus_item_index = -1;
+    } else if (menu_state.restore_focus_index >= 0) {
+      int clickable_count = 0;
+      uint32_t child_cnt = lv_obj_get_child_count(cont);
+      for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(cont, i);
+        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+          if (clickable_count == menu_state.restore_focus_index) {
+            focus_target = child;
+            break;
+          }
+          clickable_count++;
+        }
+      }
+      menu_state.restore_focus_index = -1;
+    } else {
+      uint32_t child_cnt = lv_obj_get_child_count(cont);
+      for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(cont, i);
+        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+          focus_target = child;
+          break;
+        }
       }
     }
+    apply_menu_focus(cont, focus_target);
+  } else {
+    update_scroll_visuals(cont);
   }
-
-  // Initial visual update
-  update_scroll_visuals(cont);
 
   // Debug: log what we created
   uint32_t created_children = lv_obj_get_child_count(cont);
@@ -784,44 +828,41 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
     }
     
     // Apply restore focus if set
-    if (menu_state.restore_focus_index >= 0 && menu_state.stack_depth > 0) {
+    if (menu_state.stack_depth > 0 &&
+        (menu_state.restore_focus_item_index >= 0 || menu_state.restore_focus_index >= 0)) {
       menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
       if (entry->container && menu_state.group) {
-        uint32_t child_cnt = lv_obj_get_child_count(entry->container);
-        int focus_idx = menu_state.restore_focus_index;
-        
-        // Count clickable children and find the target
-        int clickable_count = 0;
         lv_obj_t* focus_target = NULL;
-        lv_obj_t* last_clickable = NULL;
-        
-        for (uint32_t i = 0; i < child_cnt; i++) {
-          lv_obj_t* child = lv_obj_get_child(entry->container, i);
-          if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
-            last_clickable = child;
-            if (clickable_count == focus_idx) {
-              focus_target = child;
+        if (menu_state.restore_focus_item_index >= 0) {
+          focus_target = find_menu_item_widget(entry->container,
+            menu_state.restore_focus_item_index);
+          menu_state.restore_focus_item_index = -1;
+        } else {
+          int focus_idx = menu_state.restore_focus_index;
+          int clickable_count = 0;
+          lv_obj_t* last_clickable = NULL;
+          uint32_t child_cnt = lv_obj_get_child_count(entry->container);
+          for (uint32_t i = 0; i < child_cnt; i++) {
+            lv_obj_t* child = lv_obj_get_child(entry->container, i);
+            if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+              last_clickable = child;
+              if (clickable_count == focus_idx) {
+                focus_target = child;
+              }
+              clickable_count++;
             }
-            clickable_count++;
           }
+          if (!focus_target && last_clickable) {
+            focus_target = last_clickable;
+            ESP_LOGD(TAG, "Focus index %d clamped to last item", focus_idx);
+          }
+          menu_state.restore_focus_index = -1;
         }
-        
-        // If focus_idx was beyond available items, use last clickable
-        if (!focus_target && last_clickable) {
-          focus_target = last_clickable;
-          ESP_LOGD(TAG, "Focus index %d clamped to last item", focus_idx);
-        }
-        
-        if (focus_target) {
-          menu_state.skip_focus_scroll = true;
-          lv_group_focus_obj(focus_target);
-          lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
-          menu_state.skip_focus_scroll = false;
-          update_scroll_visuals(entry->container);
-          ESP_LOGD(TAG, "Restored focus to clickable index: %d", focus_idx);
-        }
+        apply_menu_focus(entry->container, focus_target);
+      } else {
+        menu_state.restore_focus_item_index = -1;
+        menu_state.restore_focus_index = -1;
       }
-      menu_state.restore_focus_index = -1;  // Clear after use
     }
     
     menu_state.has_pending_nav = false;
@@ -1035,7 +1076,14 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
 
 void menu_set_restore_focus(int index) {
   menu_state.restore_focus_index = index;
+  menu_state.restore_focus_item_index = -1;
   ESP_LOGD(TAG, "Set restore focus index: %d", index);
+}
+
+void menu_set_restore_focus_item(int item_index) {
+  menu_state.restore_focus_item_index = item_index;
+  menu_state.restore_focus_index = -1;
+  ESP_LOGD(TAG, "Set restore focus item index: %d", item_index);
 }
 
 void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
@@ -1108,19 +1156,33 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
       if (child) lv_group_add_obj(menu_state.group, child);
     }
     
-    // Apply restore focus if set, otherwise focus first item
-    int focus_idx = menu_state.restore_focus_index;
-    if (focus_idx >= 0 && focus_idx < (int)new_child_cnt) {
-      focus_target = lv_obj_get_child(new_container, focus_idx);
-      if (focus_target) {
-        lv_group_focus_obj(focus_target);
-        ESP_LOGD(TAG, "Restored focus to index: %d", focus_idx);
+    if (menu_state.restore_focus_item_index >= 0) {
+      focus_target = find_menu_item_widget(new_container,
+        menu_state.restore_focus_item_index);
+      menu_state.restore_focus_item_index = -1;
+    } else if (menu_state.restore_focus_index >= 0) {
+      int clickable_count = 0;
+      for (uint32_t i = 0; i < new_child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(new_container, i);
+        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+          if (clickable_count == menu_state.restore_focus_index) {
+            focus_target = child;
+            break;
+          }
+          clickable_count++;
+        }
       }
+      menu_state.restore_focus_index = -1;
     } else if (new_child_cnt > 0) {
-      lv_obj_t* first = lv_obj_get_child(new_container, 0);
-      if (first) lv_group_focus_obj(first);
+      for (uint32_t i = 0; i < new_child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(new_container, i);
+        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+          focus_target = child;
+          break;
+        }
+      }
     }
-    menu_state.restore_focus_index = -1;  // Clear after use
+    apply_menu_focus(new_container, focus_target);
   }
   
   // Load new screen

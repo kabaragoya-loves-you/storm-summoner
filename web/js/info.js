@@ -5,18 +5,27 @@ application.register(
   class extends BaseController {
     static targets = ['deviceCard', 'pedalCard', 'sceneCard']
 
-    connect() {
+    connect () {
       this.infoData = null
       this.isActivating = false
+      this._loadGeneration = 0
       this.releases = null
-      this._onTabActivated = (e) => {
-        if (e.detail.tab === 'info' && this.connection.isConnected) this.activate()
+      this._onTabActivated = e => {
+        if (e.detail.tab === 'info' && this.connection.isConnected) {
+          this._loadGeneration++
+          this.activate()
+        }
       }
       this._notifyDebounce = null
-      this._onCdcNotify = (e) => {
+      this._onCdcNotify = e => {
         const kind = e.detail?.kind
-        if (kind !== 'scene_changed' && kind !== 'scene_updated' &&
-            kind !== 'scene_list_changed' && kind !== 'scene_reordered') return
+        if (
+          kind !== 'scene_changed' &&
+          kind !== 'scene_updated' &&
+          kind !== 'scene_list_changed' &&
+          kind !== 'scene_reordered'
+        )
+          return
         if (!this.connection.isConnected) return
         const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
         if (activeTab?.getAttribute('panel') !== 'info') return
@@ -31,7 +40,10 @@ application.register(
       this.fetchReleases()
 
       // Listen for connection changes
-      this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
+      this.connection.on(
+        'connection:changed',
+        this.onConnectionChanged.bind(this)
+      )
 
       document.addEventListener('app:tab-activated', this._onTabActivated)
       document.addEventListener('cdc:notify', this._onCdcNotify)
@@ -44,7 +56,7 @@ application.register(
       })
 
       // Event delegation for dynamically created buttons
-      this.element.addEventListener('click', (e) => {
+      this.element.addEventListener('click', e => {
         const btn = e.target.closest('[data-action*="goToPedals"]')
         if (btn) this.goToPedals()
 
@@ -70,7 +82,7 @@ application.register(
       }
     }
 
-    onConnectionChanged({ connected }) {
+    onConnectionChanged ({ connected }) {
       if (connected) {
         // Query INFO when connecting (if we're on the info tab)
         const tabGroup = document.querySelector('wa-tab-group')
@@ -85,22 +97,31 @@ application.register(
       }
     }
 
-    async activate() {
+    async activate () {
       if (!this.connection.isConnected) return
       if (this.isActivating) return
 
+      const gen = this._loadGeneration
       this.isActivating = true
 
       try {
-        if (this.connection.currentMode) {
-          await this.connection.exitMode()
-          await this.sleep(300)
-        }
+        const response = await this.connection.runSerialTask(async () => {
+          if (gen !== this._loadGeneration) return null
+          if (this.connection.currentMode) {
+            await this.connection._exitModeImpl()
+            await this.sleep(300)
+          }
+          if (gen !== this._loadGeneration) return null
+          await this.sleep(100)
+          return this.connection._sendCommandImpl(
+            'INFO',
+            5000,
+            data =>
+              typeof data.version === 'string' && typeof data.build === 'number'
+          )
+        })
 
-        await this.sleep(100)
-
-        const response = await this.connection.sendCommand('INFO', 5000, (data) =>
-          typeof data.version === 'string' && typeof data.build === 'number')
+        if (gen !== this._loadGeneration) return
 
         if (!response || response.startsWith('ERROR:')) {
           console.error('INFO command failed:', response)
@@ -112,16 +133,18 @@ application.register(
         console.log('Device INFO:', this.infoData)
         this.renderInfo()
 
-        // Dispatch device info for other controllers
-        document.dispatchEvent(new CustomEvent('device:info', {
-          detail: {
-            version: this.infoData.version,
-            build: this.infoData.build,
-            git: this.infoData.git,
-            assets_checksum: this.infoData.assets_checksum
-          }
-        }))
+        document.dispatchEvent(
+          new CustomEvent('device:info', {
+            detail: {
+              version: this.infoData.version,
+              build: this.infoData.build,
+              git: this.infoData.git,
+              assets_checksum: this.infoData.assets_checksum
+            }
+          })
+        )
       } catch (err) {
+        if (gen !== this._loadGeneration) return
         console.error('Info activation error:', err)
         this.renderEmpty()
       } finally {
@@ -129,7 +152,7 @@ application.register(
       }
     }
 
-    renderEmpty() {
+    renderEmpty () {
       this.deviceCardTarget.innerHTML = `
         <div class="empty-state">
           <wa-icon name="link-slash"></wa-icon>
@@ -150,34 +173,38 @@ application.register(
       `
     }
 
-    getLatestVersion() {
+    getLatestVersion () {
       if (!this.releases?.firmware?.length) return null
       return this.releases.firmware[0].version
     }
 
-    hasNewerFirmware() {
-      if (!this.infoData?.version || !this.releases?.firmware?.length) return false
+    hasNewerFirmware () {
+      if (!this.infoData?.version || !this.releases?.firmware?.length)
+        return false
 
       const current = this.parseVersion(this.infoData.version)
       const latest = this.parseVersion(this.releases.firmware[0].version)
 
-      return latest.major > current.major ||
+      return (
+        latest.major > current.major ||
         (latest.major === current.major && latest.minor > current.minor)
+      )
     }
 
-    getLatestAssetsChecksum() {
+    getLatestAssetsChecksum () {
       if (!this.releases?.assets?.length) return null
       return this.releases.assets[0].checksum
     }
 
-    hasNewerAssets() {
-      if (!this.infoData?.assets_checksum || !this.releases?.assets?.length) return false
+    hasNewerAssets () {
+      if (!this.infoData?.assets_checksum || !this.releases?.assets?.length)
+        return false
       // "unknown" means no assets checksum stored yet - show update banner
       if (this.infoData.assets_checksum === 'unknown') return true
       return this.infoData.assets_checksum !== this.releases.assets[0].checksum
     }
 
-    parseVersion(str) {
+    parseVersion (str) {
       const parts = str.split('.').map(Number)
       return {
         major: parts[0] || 0,
@@ -185,7 +212,7 @@ application.register(
       }
     }
 
-    renderInfo() {
+    renderInfo () {
       if (!this.infoData) {
         this.renderEmpty()
         return
@@ -205,7 +232,7 @@ application.register(
 
       const assetsBanner = this.hasNewerAssets()
         ? `<wa-callout variant="warning" class="update-banner">
-            <wa-icon name="folder-arrow-up" slot="icon"></wa-icon>
+            <wa-icon name="circle-arrow-up" slot="icon"></wa-icon>
             <strong>Assets update:</strong> ${this.getLatestAssetsChecksum()}
             <wa-button size="small" variant="brand" appearance="outlined"
                        data-action="click->info#goToUpdater" style="margin-left: auto;">
@@ -233,7 +260,9 @@ application.register(
           </div>
           <div class="info-row">
             <span class="info-label">Assets</span>
-            <span class="info-value mono">${this.formatAssetsChecksum(this.infoData.assets_checksum)}</span>
+            <span class="info-value mono">${this.formatAssetsChecksum(
+              this.infoData.assets_checksum
+            )}</span>
           </div>
           <div class="info-row">
             <span class="info-label">Serial</span>
@@ -284,11 +313,15 @@ application.register(
             </div>
             <div class="info-row">
               <span class="info-label">Capabilities</span>
-              <span class="info-value">${capabilities.join(', ') || 'None'}</span>
+              <span class="info-value">${
+                capabilities.join(', ') || 'None'
+              }</span>
             </div>
             <div class="info-row">
               <span class="info-label">Presets</span>
-              <span class="info-value">${pedal.preset_count} (${pedal.preset_base}-based)</span>
+              <span class="info-value">${pedal.preset_count} (${
+          pedal.preset_base
+        }-based)</span>
             </div>
             <div class="info-row">
               <span class="info-label">Bank Mode</span>
@@ -322,9 +355,8 @@ application.register(
       const name = scene.name || 'Untitled'
       const ordinal = scene.active_ordinal || 0
       const total = scene.active_count || 0
-      const positionLine = total > 0
-        ? `Scene ${ordinal} of ${total}`
-        : 'Scene —'
+      const positionLine =
+        total > 0 ? `Scene ${ordinal} of ${total}` : 'Scene —'
 
       this.sceneCardTarget.innerHTML = `
         <div class="info-rows">
@@ -340,39 +372,51 @@ application.register(
       `
     }
 
-    formatTrsType(trsType) {
+    formatTrsType (trsType) {
       switch (trsType) {
-        case 'TYPE_A': return 'Type A (Tip)'
-        case 'TYPE_B': return 'Type B (Ring)'
-        case 'TYPE_TS': return 'TS (Tip/Sleeve)'
-        case 'BOTH': return 'Both A & B'
-        default: return trsType || 'Unknown'
+        case 'TYPE_A':
+          return 'Type A (Tip)'
+        case 'TYPE_B':
+          return 'Type B (Ring)'
+        case 'TYPE_TS':
+          return 'TS (Tip/Sleeve)'
+        case 'BOTH':
+          return 'Both A & B'
+        default:
+          return trsType || 'Unknown'
       }
     }
 
-    formatBankMode(bankMode) {
+    formatBankMode (bankMode) {
       switch (bankMode) {
-        case 'none': return 'None (PC only)'
-        case 'CC0': return 'CC0 + PC'
-        case 'CC0_CC32': return 'CC0 + CC32 + PC'
-        default: return bankMode || 'None'
+        case 'none':
+          return 'None (PC only)'
+        case 'CC0':
+          return 'CC0 + PC'
+        case 'CC0_CC32':
+          return 'CC0 + CC32 + PC'
+        default:
+          return bankMode || 'None'
       }
     }
 
-    formatAssetsChecksum(checksum) {
+    formatAssetsChecksum (checksum) {
       if (!checksum) return '--'
       return checksum
     }
 
-    goToPedals() {
+    goToPedals () {
       document.dispatchEvent(
         new CustomEvent('app:navigate-tab', {
-          detail: { tab: 'pedals', params: { slug: this.infoData?.pedal?.slug } }
+          detail: {
+            tab: 'pedals',
+            params: { slug: this.infoData?.pedal?.slug }
+          }
         })
       )
     }
 
-    goToUpdater() {
+    goToUpdater () {
       document.dispatchEvent(
         new CustomEvent('app:navigate-tab', {
           detail: { tab: 'updater' }

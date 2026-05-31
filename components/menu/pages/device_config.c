@@ -6,11 +6,15 @@
 #include "esp_heap_caps.h"
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdint.h>
 
 #define TAG "MENU_DEVICE_CONFIG"
 
-// Static storage for main menu (16 items max: name, midi ch, trs, send clock, divider, info labels, refresh)
+// menu_items[] row focused when Pedal Setup opens (display name, read-only)
+#define PEDAL_SETUP_FOCUS_ITEM  1
+
+// Static storage for main menu (16 items max: select, name, midi ch, trs, send clock, divider, info labels, refresh)
 #define MAX_DEVICE_CONFIG_ITEMS 16
 static menu_item_t s_device_config_items[MAX_DEVICE_CONFIG_ITEMS];
 static char s_current_pedal_label[80];
@@ -32,6 +36,7 @@ static dynamic_menu_t s_vendor_menu = {0};
 static dynamic_menu_t s_pedal_menu = {0};
 static char s_selected_vendor[64];
 static char s_pedal_title[80];
+static bool s_pedal_list_user_only = false;
 
 // Forward declarations
 static lv_obj_t* menu_page_vendor_select_create(void);
@@ -191,8 +196,11 @@ static void select_pedal_callback(void* user_data) {
   
   const char* slug = NULL;
   const char* name = NULL;
+  esp_err_t found = s_pedal_list_user_only
+    ? assets_get_user_device_by_index(idx, &slug, &name)
+    : assets_get_device_for_vendor(s_selected_vendor, idx, &slug, &name);
   
-  if (assets_get_device_for_vendor(s_selected_vendor, idx, &slug, &name) == ESP_OK && slug) {
+  if (found == ESP_OK && slug) {
     ESP_LOGI(TAG, "Selected pedal: %s", slug);
     device_config_set_pedal(slug);
     device_config_save();
@@ -206,9 +214,12 @@ static void select_pedal_callback(void* user_data) {
 }
 
 static lv_obj_t* menu_page_pedal_select_create(void) {
-  ESP_LOGD(TAG, "Creating pedal select page for vendor: %s", s_selected_vendor);
+  ESP_LOGD(TAG, "Creating pedal select page for vendor: %s (user_only=%d)",
+    s_selected_vendor, (int)s_pedal_list_user_only);
   
-  uint32_t pedal_count = assets_get_device_count_for_vendor(s_selected_vendor);
+  uint32_t pedal_count = s_pedal_list_user_only
+    ? assets_get_user_device_count()
+    : assets_get_device_count_for_vendor(s_selected_vendor);
   
   // Allocate dynamic menu in PSRAM
   if (!dynamic_menu_alloc(&s_pedal_menu, pedal_count)) {
@@ -223,7 +234,10 @@ static lv_obj_t* menu_page_pedal_select_create(void) {
     const char* slug = NULL;
     const char* name = NULL;
     
-    if (assets_get_device_for_vendor(s_selected_vendor, i, &slug, &name) == ESP_OK) {
+    esp_err_t got = s_pedal_list_user_only
+      ? assets_get_user_device_by_index(i, &slug, &name)
+      : assets_get_device_for_vendor(s_selected_vendor, i, &slug, &name);
+    if (got == ESP_OK) {
       strncpy(s_pedal_menu.labels[i], name ? name : "Unknown", 63);
       s_pedal_menu.labels[i][63] = '\0';
     } else {
@@ -249,11 +263,22 @@ static lv_obj_t* menu_page_pedal_select_create(void) {
 // Vendor Selection - Single callback using user_data for index
 // ============================================================================
 
+static void select_user_devices_callback(void* user_data) {
+  (void)user_data;
+  s_pedal_list_user_only = true;
+  strncpy(s_selected_vendor, "User Devices", sizeof(s_selected_vendor) - 1);
+  s_selected_vendor[sizeof(s_selected_vendor) - 1] = '\0';
+  ESP_LOGI(TAG, "Opening user device list (%lu pedals)",
+    (unsigned long)assets_get_user_device_count());
+  menu_navigate_to("Select Pedal", menu_page_pedal_select_create);
+}
+
 static void select_vendor_callback(void* user_data) {
   uint32_t idx = *(uint32_t*)user_data;
   
   const char* vendor = assets_get_vendor_by_index(idx);
   if (vendor) {
+    s_pedal_list_user_only = false;
     strncpy(s_selected_vendor, vendor, sizeof(s_selected_vendor) - 1);
     s_selected_vendor[sizeof(s_selected_vendor) - 1] = '\0';
     ESP_LOGI(TAG, "Selected vendor: %s", s_selected_vendor);
@@ -261,19 +286,20 @@ static void select_vendor_callback(void* user_data) {
   }
 }
 
+static bool vendor_is_user_bucket(const char* vendor) {
+  return vendor && (strcasecmp(vendor, "User") == 0 || strcasecmp(vendor, "user") == 0);
+}
+
 static lv_obj_t* menu_page_vendor_select_create(void) {
   ESP_LOGI(TAG, "Creating vendor select page");
   
   uint32_t vendor_count = assets_get_vendor_count();
+  uint32_t user_device_count = assets_get_user_device_count();
   
-  // Find User vendor index and count non-User vendors
-  int32_t user_vendor_idx = -1;
   uint32_t non_user_count = 0;
   for (uint32_t i = 0; i < vendor_count; i++) {
     const char* v = assets_get_vendor_by_index(i);
-    if (v && strcmp(v, "User") == 0) {
-      user_vendor_idx = (int32_t)i;
-    } else {
+    if (!vendor_is_user_bucket(v)) {
       non_user_count++;
     }
   }
@@ -290,18 +316,17 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
   
   uint32_t idx = 0;
   
-  // Item 0: User Devices
+  // Item 0: User Devices (RW pedals; not tied to manifest vendor string)
   strncpy(s_vendor_menu.labels[idx], "User Devices", 63);
   s_vendor_menu.items[idx].label = s_vendor_menu.labels[idx];
-  if (user_vendor_idx >= 0) {
-    s_vendor_menu.indices[idx] = (uint32_t)user_vendor_idx;
-    s_vendor_menu.items[idx].callback = select_vendor_callback;
-    s_vendor_menu.items[idx].user_data = &s_vendor_menu.indices[idx];
+  if (user_device_count > 0) {
+    s_vendor_menu.items[idx].callback = select_user_devices_callback;
+    s_vendor_menu.items[idx].user_data = NULL;
   } else {
     s_vendor_menu.items[idx].callback = NULL;
     s_vendor_menu.items[idx].user_data = NULL;
   }
-  s_vendor_menu.items[idx].has_submenu = true;
+  s_vendor_menu.items[idx].has_submenu = user_device_count > 0;
   idx++;
   
   // Item 1: Divider
@@ -315,7 +340,7 @@ static lv_obj_t* menu_page_vendor_select_create(void) {
   // Remaining items: vendors except User
   for (uint32_t i = 0; i < vendor_count; i++) {
     const char* vendor = assets_get_vendor_by_index(i);
-    if (!vendor || strcmp(vendor, "User") == 0) continue;
+    if (!vendor || vendor_is_user_bucket(vendor)) continue;
     
     strncpy(s_vendor_menu.labels[idx], vendor, 63);
     s_vendor_menu.labels[idx][63] = '\0';
@@ -389,6 +414,7 @@ static void refresh_pedal(void* user_data) {
 
 lv_obj_t* menu_page_device_config_create(void) {
   ESP_LOGD(TAG, "Creating device config page");
+  menu_set_restore_focus_item(PEDAL_SETUP_FOCUS_ITEM);
   
   // Note: Don't call cleanup_submenus() here! Old screens (being deleted after this)
   // still have event handlers pointing to that memory. The submenus will be freed
@@ -399,17 +425,18 @@ lv_obj_t* menu_page_device_config_create(void) {
   
   int item_idx = 0;
   
-  // Item 0: Current pedal name (clickable -> vendor select)
-  if (device && device->name[0]) {
-    strncpy(s_current_pedal_label, device->name, sizeof(s_current_pedal_label) - 1);
-    s_current_pedal_label[sizeof(s_current_pedal_label) - 1] = '\0';
-  } else {
-    strncpy(s_current_pedal_label, "(no pedal)", sizeof(s_current_pedal_label) - 1);
-  }
-  s_device_config_items[item_idx++] = 
-    (menu_item_t){ s_current_pedal_label, nav_to_vendor_select, NULL, true };
-  
-  // Item 1: MIDI Channel (clickable -> roller)
+  // Item 0: Select pedal (opens vendor / user device list)
+  s_device_config_items[item_idx++] =
+    (menu_item_t){ "Select Pedal", nav_to_vendor_select, NULL, true };
+
+  // Item 1: Current pedal display name (read-only)
+  const char *pedal_display = (device && device->name[0]) ? device->name : NULL;
+  assets_format_pedal_menu_label(cfg->pedal_slug, pedal_display,
+    s_current_pedal_label, sizeof(s_current_pedal_label));
+  s_device_config_items[item_idx++] =
+    (menu_item_t){ s_current_pedal_label, NULL, NULL, false };
+
+  // Item 2: MIDI Channel (clickable -> roller)
   snprintf(s_midi_ch_label, sizeof(s_midi_ch_label), "MIDI Ch: %d", cfg->midi_channel);
   s_device_config_items[item_idx++] = 
     (menu_item_t){ s_midi_ch_label, nav_to_midi_channel_select, NULL, false };

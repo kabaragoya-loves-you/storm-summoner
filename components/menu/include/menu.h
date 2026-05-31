@@ -38,9 +38,13 @@ void menu_navigate_back(void);
 void menu_navigate_back_then_to(int levels, const char* menu_name,
   menu_page_builder_t builder);
 
-// Set the focus index to restore after the next page creation
-// Pass -1 to use default focus (first item)
+// Set the clickable-item index to restore after the next page creation
+// Pass -1 to use default focus (first clickable item)
 void menu_set_restore_focus(int index);
+
+// Focus a menu_items[] row after the next page creation (includes read-only rows).
+// Pass -1 to use default focus. Takes precedence over menu_set_restore_focus.
+void menu_set_restore_focus_item(int item_index);
 
 // Replace the current menu page with a new one (synchronous, for use in callbacks)
 // Removes current page from stack and pushes a new one

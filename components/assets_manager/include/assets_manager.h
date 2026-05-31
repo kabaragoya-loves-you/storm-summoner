@@ -156,6 +156,12 @@ uint16_t assets_clamp_cc_value(const device_def_t *device, uint8_t cc_num, uint1
 bool assets_cc_has_discrete_values(const device_def_t *device, uint8_t cc_num);
 
 /**
+ * Validate a device JSON file on disk (duplicate controlChangeNumber, etc.).
+ * @return ESP_OK if acceptable, ESP_ERR_INVALID_STATE if duplicate CC numbers
+ */
+esp_err_t assets_validate_device_json_file(const char *filepath);
+
+/**
  * Reload the device manifest from LittleFS
  * Re-scans and parses manifest.json
  * @return ESP_OK on success
@@ -217,11 +223,26 @@ esp_err_t assets_get_device_for_vendor(const char* vendor, uint32_t idx,
   const char** slug, const char** name);
 
 /**
+ * RW user pedals under /userdata/devices/user/ (slug prefix user.).
+ */
+uint32_t assets_get_user_device_count(void);
+
+esp_err_t assets_get_user_device_by_index(uint32_t idx,
+  const char** slug, const char** name);
+
+/**
  * Get manifest device entry by slug
  * Returns a pointer to the manifest_device_t or NULL if not found
  * This is a lightweight lookup that doesn't load the full device JSON
  */
 const manifest_device_t *assets_get_manifest_device(const char *slug);
+
+/**
+ * Menu label for a pedal: "User: {displayName}" for RW user pedals, else displayName.
+ * Uses "(no pedal)" when display_name is NULL or empty.
+ */
+void assets_format_pedal_menu_label(const char *slug, const char *display_name,
+  char *out, size_t out_len);
 
 #endif // ASSETS_MANAGER_H
 

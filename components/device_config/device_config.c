@@ -132,7 +132,7 @@ static const char* DEFAULT_DEVICE_JSON =
   "  \"device\": {\n"
   "    \"displayName\": \"Custom Device\",\n"
   "    \"manufacturer\": \"User\",\n"
-  "    \"model\": \"Custom\",\n"
+  "    \"model\": \"Default\",\n"
   "    \"version\": \"1.0\"\n"
   "  },\n"
   "  \"receives\": [\"PROGRAM_CHANGE\"],\n"

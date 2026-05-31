@@ -303,18 +303,33 @@ class AssetsManager
   end
 
   def cmd_manifest(type = "scenes")
-    response = assets_command("MANIFEST #{type}")
-    
+    enter_assets_mode unless @in_assets_mode
+    send_line("MANIFEST #{type}")
+    response = read_line(TIMEOUT_SHORT)
+
     if response&.start_with?("ERROR")
       puts response
       return
     end
-    
+
+    unless response&.start_with?("SIZE ")
+      puts "ERROR: Unexpected MANIFEST response: #{response}"
+      return
+    end
+
+    file_size = response.split(" ")[1].to_i
+    data = read_binary(file_size, TIMEOUT_LONG)
+
+    if data.length != file_size
+      puts "ERROR: Incomplete manifest download (#{data.length}/#{file_size} bytes)"
+      return
+    end
+
     begin
-      manifest = JSON.parse(response)
+      manifest = JSON.parse(data)
       puts JSON.pretty_generate(manifest)
-    rescue JSON::ParserError
-      puts response
+    rescue JSON::ParserError => e
+      puts "ERROR: Invalid manifest JSON: #{e.message}"
     end
   end
 

@@ -28,7 +28,7 @@ void assets_file_deleted(const char *path);
  * @brief Regenerate the scenes manifest
  *
  * Scans /userdata/scenes/ (Phase 2: scenes moved off the RO partition) for
- * scene_*.json files and rebuilds /userdata/scenes/manifest.json.
+ * numbered scene JSON files and rebuilds /userdata/scenes/manifest.json.
  *
  * @return ESP_OK on success
  */
@@ -58,9 +58,20 @@ esp_err_t assets_regenerate_devices_manifest(void);
 esp_err_t assets_regenerate_user_devices_manifest(void);
 
 /**
+ * @brief Reject PUT when a new user pedal file would claim an existing manifest slug.
+ *
+ * Updates to an existing path are allowed. New .json files under devices/user/
+ * are blocked if user.<basename>@0 is already registered (prevents accidental overwrite).
+ *
+ * @param full_path Resolved filesystem path (e.g. /userdata/devices/user/foo.json)
+ * @return ESP_OK if PUT may proceed, ESP_ERR_INVALID_STATE if slug is taken
+ */
+esp_err_t assets_validate_user_pedal_put(const char *full_path);
+
+/**
  * @brief Regenerate the images manifest
  * 
- * Scans /assets/images/ for *.bin and *.bin.z files and rebuilds manifest.json
+ * Scans /assets/images/ for .bin and .bin.z files and rebuilds manifest.json
  * 
  * @return ESP_OK on success
  */

@@ -34,6 +34,7 @@ application.register(
     // (ASSETS_BASE_PATH / USERDATA_BASE_PATH).
     static USERDATA_ROOT = '/userdata'
     static ASSETS_ROOT = '/assets'
+    static ASSETS_MODE_TABS = new Set(['pedals', 'assets'])
 
     connect () {
       // Default to the writable root so users land in a usable view rather
@@ -63,6 +64,11 @@ application.register(
           !this.inAssetsMode
         ) {
           this.activate()
+        } else if (
+          !this.constructor.ASSETS_MODE_TABS.has(e.detail.tab) &&
+          (this.inAssetsMode || this.connection.currentMode === 'ASSETS')
+        ) {
+          this.leaveAssetsMode()
         }
       })
     }
@@ -117,79 +123,51 @@ application.register(
       }
 
       try {
-        const modeGranted = await this.connection.requestMode('ASSETS')
-        if (!modeGranted) return
-
-        await this.enterAssetsMode()
+        await this.connection.runSerialTask(async () => {
+          await this.connection._requestModeImpl('ASSETS')
+          await this.enterAssetsModeBody()
+        })
       } catch (err) {
         this.log(`Failed to activate: ${err.message}`, 'error')
       }
     }
 
-    async enterAssetsMode () {
+    async leaveAssetsMode () {
+      if (!this.inAssetsMode && this.connection.currentMode !== 'ASSETS') return
+      try {
+        if (this.connection.currentMode) {
+          await this.connection.exitMode()
+          await this.sleep(200)
+        }
+      } catch (err) {
+        console.warn('Assets leave mode:', err)
+      }
+      this.inAssetsMode = false
+    }
+
+    async enterAssetsModeBody () {
       try {
         this.log('Entering assets mode...')
-
-        // Wait for device init
-        await this.sleep(500)
-        await this.connection.drainInput()
-
-        // Send ASSETS command
+        await this.sleep(50)
         await this.connection.sendRaw('ASSETS\n')
-
-        // Wait for ASSETS_STARTED
-        const startTime = Date.now()
-        while (Date.now() - startTime < 5000) {
-          const line = await this.readLineWithTimeout(500)
-          if (!line) continue
-          if (line.includes('ASSETS_STARTED')) {
-            this.inAssetsMode = true
-            this.log('Assets mode ready', 'success')
-            await this.navigateTo({
-              currentTarget: { dataset: { path: this.constructor.USERDATA_ROOT } }
-            })
-            await this.loadStats()
-            return
-          }
+        const line = await this.connection.readLine(5000)
+        if (!line?.includes('ASSETS_STARTED')) {
+          throw new Error(`Timeout waiting for ASSETS_STARTED (got: ${line || 'nothing'})`)
         }
-        throw new Error('Timeout waiting for ASSETS_STARTED')
+        this.inAssetsMode = true
+        this.log('Assets mode ready', 'success')
+        await this.navigateTo({
+          currentTarget: { dataset: { path: this.constructor.USERDATA_ROOT } }
+        })
+        await this.loadStatsBody()
       } catch (err) {
         this.log(`Assets mode failed: ${err.message}`, 'error')
       }
     }
 
-    async readLineWithTimeout (timeout = 2000) {
-      if (!this.connection.port?.readable) return null
-
-      const reader = this.connection.port.readable.getReader()
-      const decoder = new TextDecoder()
-      let line = ''
-      const startTime = Date.now()
-
-      try {
-        while (Date.now() - startTime < timeout) {
-          const result = await Promise.race([
-            reader.read(),
-            this.sleep(50).then(() => ({ timeout: true }))
-          ])
-
-          if (result.timeout) continue
-          if (result.done) break
-
-          line += decoder.decode(result.value, { stream: true })
-          const idx = line.indexOf('\n')
-          if (idx !== -1) {
-            return line.substring(0, idx).replace(/\r/g, '').trim()
-          }
-        }
-      } finally {
-        reader.releaseLock()
-      }
-      return line.replace(/\r/g, '').trim() || null
-    }
-
     async sendCommand (cmd, timeout = 30000) {
-      return this.connection.sendCommand(cmd, timeout)
+      return this.connection.runSerialTask(() =>
+        this.connection._sendCommandImpl(cmd, timeout))
     }
 
     // Device response shape:
@@ -197,10 +175,10 @@ application.register(
     //    "userdata":{"total":N,"used":N,"free":N,"available":bool}}
     // userdata.available is false when the userdata partition mount fails;
     // hide the userdata bar and surface a small "missing" warning instead.
-    async loadStats () {
+    async loadStatsBody () {
       try {
         await this.sleep(100)
-        const response = await this.sendCommand('DF')
+        const response = await this.connection._sendCommandImpl('DF')
 
         if (!response || response.startsWith('ERROR')) return
 
@@ -229,6 +207,10 @@ application.register(
       } catch (err) {
         // DF parse error - ignore silently
       }
+    }
+
+    async loadStats () {
+      return this.connection.runSerialTask(() => this.loadStatsBody())
     }
 
     // Navigation
@@ -400,20 +382,8 @@ application.register(
       this.log(`Downloading ${filename}...`)
 
       try {
-        const response = await this.sendCommand(`GET ${path}`)
-
-        if (response.startsWith('ERROR')) {
-          this.log(response, 'error')
-          return
-        }
-
-        if (!response.startsWith('SIZE ')) {
-          this.log(`Unexpected response: ${response}`, 'error')
-          return
-        }
-
-        const size = parseInt(response.split(' ')[1])
-        const data = await this.connection.readBinary(size)
+        const { data } = await this.connection.fetchSizedTransfer(`GET ${path}`)
+        const size = data.length
 
         const blob = new Blob([data])
         const url = URL.createObjectURL(blob)
@@ -489,22 +459,13 @@ application.register(
       this.log(`Creating archive of ${folderName}...`)
 
       try {
-        const response = await this.sendCommand(`ZIP ${path}`, 60000)
-
-        if (response.startsWith('ERROR')) {
-          this.log(response, 'error')
-          return
-        }
-
-        if (!response.startsWith('SIZE ')) {
-          this.log(`Unexpected response: ${response}`, 'error')
-          return
-        }
-
-        const size = parseInt(response.split(' ')[1])
+        this.log(`Downloading archive...`)
+        const { data } = await this.connection.fetchSizedTransfer(`ZIP ${path}`, {
+          lineTimeout: 60000,
+          binaryTimeout: 60000
+        })
+        const size = data.length
         this.log(`Archive size: ${this.formatSize(size)}, downloading...`)
-
-        const data = await this.connection.readBinary(size, 60000)
 
         if (data.length !== size) {
           this.log(`Incomplete download: ${data.length}/${size} bytes`, 'error')

@@ -1420,6 +1420,12 @@ static void process_assets_command(const char *cmd) {
     send_response("ASSETS_STOPPED");
     return;
   }
+
+  // ASSETS while already in assets mode (idempotent re-handshake)
+  if (strcmp(cmd, "ASSETS") == 0) {
+    send_response("ASSETS_STARTED");
+    return;
+  }
   
   // DF - filesystem stats
   if (strcmp(cmd, "DF") == 0) {
@@ -1855,6 +1861,11 @@ static void assets_cmd_put(const char *path, size_t size) {
 
   if (!is_writable_path(s_assets_path)) { reject_readonly(s_assets_path); return; }
 
+  if (assets_validate_user_pedal_put(s_assets_path) != ESP_OK) {
+    send_response("ERROR: A pedal with this slug already exists");
+    return;
+  }
+
   // Open file for writing
   s_assets_file = fopen(s_assets_path, "wb");
   if (!s_assets_file) {
@@ -1927,6 +1938,14 @@ static void handle_assets_send(void) {
     fclose(s_assets_file);
     s_assets_file = NULL;
     s_state = CDC_STATE_ASSETS;
+    // When the payload length is an exact multiple of the 64-byte full-speed
+    // bulk packet size, the USB host withholds the final full packet until it
+    // sees a short packet. Emit a one-byte terminator so the host flushes the
+    // payload immediately; the JS side discards this trailing byte.
+    if (s_assets_file_size > 0 && (s_assets_file_size % 64) == 0) {
+      uint8_t term = '\n';
+      send_binary(&term, 1);
+    }
     ESP_LOGI(TAG, "File send complete: %u bytes", (unsigned)s_assets_bytes_transferred);
   }
 }
@@ -2008,6 +2027,16 @@ static void handle_assets_binary_data(const uint8_t *data, size_t len) {
       
       ESP_LOGI(TAG, "File receive complete: %s (%u bytes)", 
         s_assets_path, (unsigned)s_assets_bytes_transferred);
+
+      if (strstr(s_assets_path, "/devices/user/") != NULL &&
+          strstr(s_assets_path, ".json") != NULL) {
+        if (assets_validate_device_json_file(s_assets_path) != ESP_OK) {
+          unlink(s_assets_path);
+          s_state = CDC_STATE_ASSETS;
+          send_response("ERROR: Duplicate controlChangeNumber");
+          return;
+        }
+      }
       
       // Trigger manifest update
       assets_file_created(s_assets_path);
@@ -2018,14 +2047,14 @@ static void handle_assets_binary_data(const uint8_t *data, size_t len) {
   }
 }
 
-// MANIFEST - get manifest for a folder type.
-// Phase 4: types are now partition-aware to match the split layout:
-//   shared_devices -> /assets/devices/manifest.json   (RO)
+// MANIFEST <type> - download a manifest JSON file (SIZE + binary, same as GET).
+// Phase 4: types are partition-aware:
+//   shared_devices -> /assets/devices/manifest.json   (RO, can be ~100KB)
 //   user_devices   -> /userdata/devices/manifest.json (RW)
 //   scenes         -> /userdata/scenes/manifest.json  (RW)
 //   images         -> /assets/images/manifest.json    (RO)
-// Legacy `devices` is still accepted and resolves to shared_devices, but new
-// callers should pick a side explicitly.
+// Legacy `devices` resolves to shared_devices.
+// Response: "SIZE <bytes>" then raw file bytes (CDC_STATE_ASSETS_SENDING).
 static void assets_cmd_manifest(const char *type) {
   char manifest_path[MAX_PATH_LEN];
 
@@ -2046,36 +2075,45 @@ static void assets_cmd_manifest(const char *type) {
       "(use: scenes, shared_devices, user_devices, images)");
     return;
   }
-  
-  // Read and send manifest file
-  FILE *f = fopen(manifest_path, "r");
-  if (!f) {
+
+  struct stat st;
+  if (stat(manifest_path, &st) != 0) {
     send_response("ERROR: Manifest not found");
     return;
   }
-  
-  struct stat st;
-  if (stat(manifest_path, &st) != 0 || st.st_size > 8192) {
-    fclose(f);
-    send_response("ERROR: Manifest too large or inaccessible");
+
+  if (S_ISDIR(st.st_mode)) {
+    send_response("ERROR: Manifest path is a directory");
     return;
   }
-  
-  char *buf = malloc(st.st_size + 1);
-  if (!buf) {
-    fclose(f);
-    send_response("ERROR: Out of memory");
+
+  if (st.st_size > 512 * 1024) {
+    send_response("ERROR: Manifest too large");
     return;
   }
-  
-  size_t read_bytes = fread(buf, 1, st.st_size, f);
-  fclose(f);
-  buf[read_bytes] = '\0';
-  
-  // Send manifest content using chunked send_response
-  send_response(buf);
-  
-  free(buf);
+
+  if (s_assets_file) {
+    fclose(s_assets_file);
+    s_assets_file = NULL;
+  }
+
+  s_assets_file = fopen(manifest_path, "rb");
+  if (!s_assets_file) {
+    send_response("ERROR: Cannot open manifest");
+    return;
+  }
+
+  strncpy(s_assets_path, manifest_path, sizeof(s_assets_path) - 1);
+  s_assets_path[sizeof(s_assets_path) - 1] = '\0';
+  s_assets_file_size = st.st_size;
+  s_assets_bytes_transferred = 0;
+
+  char resp[64];
+  snprintf(resp, sizeof(resp), "SIZE %u", (unsigned)st.st_size);
+  send_response(resp);
+
+  s_state = CDC_STATE_ASSETS_SENDING;
+  ESP_LOGI(TAG, "Sending manifest %s (%u bytes)", manifest_path, (unsigned)st.st_size);
 }
 
 // ============================================================================
@@ -2263,6 +2301,11 @@ static void zip_task(void *arg) {
   
   // Stream the archive data
   send_binary((const uint8_t *)archive_buf, archive_size);
+  // Short-packet terminator for exact-multiple-of-64 payloads (see handle_assets_send).
+  if (archive_size > 0 && (archive_size % 64) == 0) {
+    uint8_t term = '\n';
+    send_binary(&term, 1);
+  }
   
   // Cleanup miniz (also frees archive_buf since we used heap mode)
   mz_zip_writer_end(&zip);
@@ -3254,6 +3297,10 @@ static void process_pedals_command(const char *cmd) {
       send_binary(chunk, read);
       sent += read;
     }
+    if (st.st_size > 0 && ((size_t)st.st_size % 64) == 0) {
+      uint8_t term = '\n';
+      send_binary(&term, 1);
+    }
     fclose(f);
     return;
   }
@@ -3311,6 +3358,10 @@ static void process_pedals_command(const char *cmd) {
       if (read == 0) break;
       send_binary(chunk, read);
       sent += read;
+    }
+    if (st.st_size > 0 && ((size_t)st.st_size % 64) == 0) {
+      uint8_t term = '\n';
+      send_binary(&term, 1);
     }
     fclose(f);
     return;

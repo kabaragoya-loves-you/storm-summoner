@@ -42,6 +42,7 @@ Handles CDC-based firmware and assets updates via text protocol.
 - Text-based protocol over CDC serial
 - Supports firmware and assets updates
 - Progress reporting
+- **SIZE + binary downloads** (ASSETS `MANIFEST` / `GET` / `ZIP`): see [USB_CDC_BINARY_TRANSFER.md](USB_CDC_BINARY_TRANSFER.md) for the full-speed bulk terminator and host read rules
 
 #### assets_manager enhancements
 

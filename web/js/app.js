@@ -23,9 +23,24 @@ window.ConnectionManager = (function () {
       this._lineQueue = []
       this._lineWaiters = []
       this._commandChain = Promise.resolve()
+      this._serialDepth = 0
       this._modeNotifyRunning = false
       this._modeNotifyReader = null
       this._modeNotifySuspended = false
+      this._exclusiveSession = 0
+    }
+
+    beginExclusiveSession () {
+      this._exclusiveSession++
+    }
+
+    endExclusiveSession () {
+      this._exclusiveSession = Math.max(0, this._exclusiveSession - 1)
+      if (this._exclusiveSession === 0 && this.mode) this._resumeModeNotify()
+    }
+
+    _resumeModeNotifyIfAllowed () {
+      if (this.mode && this._exclusiveSession === 0) this._resumeModeNotify()
     }
 
     // Event handling
@@ -53,6 +68,27 @@ window.ConnectionManager = (function () {
 
     get currentMode () {
       return this.mode
+    }
+
+    get isSerialBusy () {
+      return this._serialDepth > 0
+    }
+
+    // Serialize every WebSerial transaction. One task at a time — never bypass
+    // the queue (reentrant bypass caused concurrent reader locks mid-await).
+    runSerialTask (fn) {
+      const run = async () => {
+        this._serialDepth++
+        try {
+          return await fn()
+        } finally {
+          this._serialDepth--
+        }
+      }
+
+      const result = this._commandChain.then(run, run)
+      this._commandChain = result.then(() => {}, () => {})
+      return result
     }
 
     // Connect to device
@@ -94,6 +130,8 @@ window.ConnectionManager = (function () {
         this._rxBuffer = ''
         this._lineQueue = []
         this._lineWaiters = []
+        this._commandChain = Promise.resolve()
+        this._serialDepth = 0
         this.setTabsLocked(false)
         navigator.serial.removeEventListener(
           'disconnect',
@@ -124,6 +162,8 @@ window.ConnectionManager = (function () {
         this._rxBuffer = ''
         this._lineQueue = []
         this._lineWaiters = []
+        this._commandChain = Promise.resolve()
+        this._serialDepth = 0
         this.setTabsLocked(false)
         this.emit('connection:changed', { connected: false })
       }
@@ -131,18 +171,22 @@ window.ConnectionManager = (function () {
 
     // Request a mode - returns true if mode was entered
     async requestMode (newMode) {
+      return this.runSerialTask(() => this._requestModeImpl(newMode))
+    }
+
+    async _requestModeImpl (newMode) {
       if (!this.port) throw new Error('Not connected')
       if (this.mode === newMode) return true
 
-      // Exit current mode if any
       if (this.mode) {
-        await this.exitMode()
+        await this._exitModeImpl()
       }
 
       if (newMode) {
         await this._suspendRxPump()
         this._lineQueue = []
         this._rejectLineWaiters()
+        this._rxBuffer = ''
       }
 
       this.mode = newMode
@@ -153,8 +197,15 @@ window.ConnectionManager = (function () {
 
     // Exit current mode
     async exitMode () {
+      return this.runSerialTask(() => this._exitModeImpl())
+    }
+
+    async _exitModeImpl () {
       if (!this.mode || !this.port) return
       this._stopModeNotifyLoop()
+      await this._suspendModeNotify()
+      this.mode = null
+      this.emit('mode:changed', { mode: null })
       try {
         await this.sendRaw('EXIT\n')
         await this.sleep(100)
@@ -162,7 +213,6 @@ window.ConnectionManager = (function () {
       } catch (err) {
         // Ignore exit errors
       }
-      this.mode = null
       this._resumeRxPump()
     }
 
@@ -313,12 +363,20 @@ window.ConnectionManager = (function () {
 
     _startModeNotifyLoop () {
       if (this._modeNotifyRunning || !this.mode) return
+      // ASSETS mode never emits unsolicited EVT lines (firmware cdc_may_push_notify()
+      // excludes it). A background reader here only competes with fetchSizedTransfer /
+      // readLine for port.readable and steals binary-transfer bytes mid-stream.
+      if (this.mode === 'ASSETS') return
       this._modeNotifyRunning = true
       this._modeNotifyLoop()
     }
 
     _stopModeNotifyLoop () {
       this._modeNotifyRunning = false
+      const reader = this._modeNotifyReader
+      if (reader) {
+        reader.cancel().catch(() => {})
+      }
       this._releaseModeNotifyReader()
     }
 
@@ -484,90 +542,99 @@ window.ConnectionManager = (function () {
     }
 
     async sendCommand (cmd, timeout = 30000, validator = null) {
-      const run = async () => {
-        if (!this.port) throw new Error('Not connected')
-        this._lineQueue = []
-        this._rejectLineWaiters()
-        await this._suspendRxPump()
+      return this.runSerialTask(() => this._sendCommandImpl(cmd, timeout, validator))
+    }
 
-        const expectMarker = validator ? this._expectedJsonMarker(cmd) : null
-        let rxBuf = ''
-        const decoder = new TextDecoder()
-        let jsonAcc = ''
-        let lineCount = 0
+    async _sendCommandImpl (cmd, timeout = 30000, validator = null) {
+      if (!this.port) throw new Error('Not connected')
+      this._lineQueue = []
+      this._rejectLineWaiters()
+      await this._suspendRxPump()
+      await this._waitForPumpReaderRelease()
+      const hadMode = this.mode !== null
+      if (hadMode) {
+        await this._suspendModeNotify()
+        await this._waitForModeNotifyReaderRelease()
+      }
 
+      const expectMarker = validator ? this._expectedJsonMarker(cmd) : null
+      let rxBuf = ''
+      const decoder = new TextDecoder()
+      let jsonAcc = ''
+      let lineCount = 0
+
+      try {
+        await this.sendRaw(cmd + '\n')
+        const reader = this.port.readable.getReader()
+        const deadline = Date.now() + timeout
+        let pendingRead = null
         try {
-          await this.sendRaw(cmd + '\n')
-          const reader = this.port.readable.getReader()
-          const deadline = Date.now() + timeout
-          try {
-            while (Date.now() < deadline) {
-              const waitMs = Math.min(100, deadline - Date.now())
-              if (waitMs <= 0) break
-              const result = await Promise.race([
-                reader.read(),
-                this.sleep(waitMs).then(() => ({ timeout: true }))
-              ])
-              if (result.timeout) continue
-              if (result.done) break
-              if (!result.value?.length) continue
+          while (Date.now() < deadline) {
+            if (!pendingRead) pendingRead = reader.read()
+            const waitMs = Math.min(100, deadline - Date.now())
+            if (waitMs <= 0) break
+            const result = await Promise.race([
+              pendingRead,
+              this.sleep(waitMs).then(() => ({ timeout: true }))
+            ])
+            if (result.timeout) continue
+            pendingRead = null
+            if (result.done) break
+            if (!result.value?.length) continue
 
-              rxBuf += decoder.decode(result.value, { stream: true })
-              while (true) {
-                const idx = rxBuf.indexOf('\n')
-                if (idx === -1) break
-                const rawLine = rxBuf.substring(0, idx).replace(/\r/g, '').trim()
-                rxBuf = rxBuf.substring(idx + 1)
-                if (!rawLine) continue
-                lineCount++
+            rxBuf += decoder.decode(result.value, { stream: true })
+            while (true) {
+              const idx = rxBuf.indexOf('\n')
+              if (idx === -1) break
+              const rawLine = rxBuf.substring(0, idx).replace(/\r/g, '').trim()
+              rxBuf = rxBuf.substring(idx + 1)
+              if (!rawLine) continue
+              lineCount++
 
-                if (rawLine.startsWith('EVT:')) {
-                  this.dispatchCdcNotify(rawLine)
-                  continue
-                }
-                if (this._isNoiseLine(rawLine)) continue
+              if (rawLine.startsWith('EVT:')) {
+                this.dispatchCdcNotify(rawLine)
+                continue
+              }
+              if (this._isNoiseLine(rawLine)) continue
 
-                if (rawLine.startsWith('ERROR:')) {
+              if (rawLine.startsWith('ERROR:')) {
+                this._mergeRxTail(rxBuf)
+                return rawLine
+              }
+              if (!validator) {
+                if (!rawLine.includes('{')) {
                   this._mergeRxTail(rxBuf)
                   return rawLine
                 }
-                if (!validator) {
-                  if (!rawLine.includes('{')) {
-                    this._mergeRxTail(rxBuf)
-                    return rawLine
-                  }
-                }
-                if (!rawLine.includes('{') && !rawLine.includes('"')) continue
+              }
+              if (!rawLine.includes('{') && !rawLine.includes('"')) continue
 
-                jsonAcc += rawLine
-                const candidate = this._repairJsonLine(jsonAcc)
-                const json = this._extractFirstJson(candidate)
-                try {
-                  const data = JSON.parse(json)
-                  if (validator && !validator(data)) {
-                    if (expectMarker && !jsonAcc.includes(expectMarker)) continue
-                    continue
-                  }
-                  this._mergeRxTail(rxBuf)
-                  return json
-                } catch (e) {
+              jsonAcc += rawLine
+              const candidate = this._repairJsonLine(jsonAcc)
+              const json = this._extractFirstJson(candidate)
+              try {
+                const data = JSON.parse(json)
+                if (validator && !validator(data)) {
                   if (expectMarker && !jsonAcc.includes(expectMarker)) continue
+                  continue
                 }
+                this._mergeRxTail(rxBuf)
+                return json
+              } catch (e) {
+                if (expectMarker && !jsonAcc.includes(expectMarker)) continue
               }
             }
-          } finally {
-            reader.releaseLock()
           }
-
-          this._mergeRxTail(rxBuf)
-          return ''
         } finally {
-          this._resumeRxPump()
+          reader.releaseLock()
         }
+
+        this._mergeRxTail(rxBuf)
+        return ''
+      } finally {
+        if (hadMode) this._resumeModeNotifyIfAllowed()
+        else this._resumeRxPump()
       }
-      const result = this._commandChain.then(run, run)
-      this._commandChain = result.then(() => {}, () => {})
-      return result
     }
 
     // Pull the next CR/LF-terminated line from the device. Anything that
@@ -662,32 +729,208 @@ window.ConnectionManager = (function () {
         }
       } finally {
         try { reader.releaseLock() } catch (e) {}
-        this._resumeModeNotify()
+        this._resumeModeNotifyIfAllowed()
       }
       return buffer.trim()
     }
 
-    async readBinary (size, timeout = 30000) {
+    _concatBytes (a, b) {
+      if (!a?.length) return b || new Uint8Array(0)
+      if (!b?.length) return a
+      const out = new Uint8Array(a.length + b.length)
+      out.set(a)
+      out.set(b, a.length)
+      return out
+    }
+
+    _takeLineFromBytes (buffer) {
+      for (let i = 0; i < buffer.length; i++) {
+        if (buffer[i] !== 0x0a) continue
+        let end = i
+        if (end > 0 && buffer[end - 1] === 0x0d) end--
+        const line = new TextDecoder().decode(buffer.slice(0, end)).trim()
+        const rest = buffer.slice(i + 1)
+        return { line, rest }
+      }
+      return { line: null, rest: buffer }
+    }
+
+    _takeFromBinary (arr, data, state) {
+      let pos = 0
+      let progress = false
+      while (pos < arr.length && state.consumed < state.total) {
+        const take = Math.min(arr.length - pos, state.total - state.consumed)
+        if (state.received < state.size) {
+          const dataTake = Math.min(take, state.size - state.received)
+          data.set(arr.subarray(pos, pos + dataTake), state.received)
+          state.received += dataTake
+        }
+        pos += take
+        state.consumed += take
+        progress = true
+      }
+      return { rest: arr.subarray(pos), progress }
+    }
+
+    // SIZE line + raw binary in one exclusive read (MANIFEST/GET). Avoids resuming
+    // the mode-notify reader between sendCommand and readBinary (stream lock race).
+    async fetchSizedTransfer (cmd, options = {}) {
+      return this.runSerialTask(() => this._fetchSizedTransferImpl(cmd, options))
+    }
+
+    _binaryStallTimeoutMs (size, explicit) {
+      if (explicit != null) return explicit
+      // USB FS bulk is typically ~1 MB/s; this is idle-stall budget, not total transfer time.
+      const scaled = 5000 + Math.ceil(size / 16384) * 750
+      return Math.min(20000, Math.max(8000, scaled))
+    }
+
+    async _fetchSizedTransferImpl (cmd, options = {}) {
+      const lineTimeout = options.lineTimeout ?? 10000
+      let binaryStallMs = options.binaryTimeout ?? null
+
+      if (!this.port) throw new Error('Not connected')
+      this._lineQueue = []
+      this._rejectLineWaiters()
       await this._suspendRxPump()
-      await this._suspendModeNotify()
+      await this._waitForPumpReaderRelease()
+      const hadMode = this.mode !== null
+      if (hadMode) {
+        await this._suspendModeNotify()
+        await this._waitForModeNotifyReaderRelease()
+      }
+
       const reader = this.port.readable.getReader()
-      const data = new Uint8Array(size)
-      let received = 0
-      const startTime = Date.now()
+      let buffer = new Uint8Array(0)
+      let responseLine = ''
 
       try {
-        while (received < size && Date.now() - startTime < timeout) {
+        await this.sendRaw(cmd + '\n')
+        const lineDeadline = Date.now() + lineTimeout
+        let pendingRead = null
+
+        while (!responseLine && Date.now() < lineDeadline) {
+          if (!pendingRead) pendingRead = reader.read()
+          const waitMs = Math.min(100, lineDeadline - Date.now())
+          if (waitMs <= 0) break
+          const result = await Promise.race([
+            pendingRead,
+            this.sleep(waitMs).then(() => ({ timeout: true }))
+          ])
+          if (result.timeout) continue
+          pendingRead = null
+          if (result.done) break
+          if (result.value?.length) {
+            buffer = this._concatBytes(buffer, result.value)
+            while (true) {
+              const { line, rest } = this._takeLineFromBytes(buffer)
+              buffer = rest
+              if (!line) break
+              if (line.startsWith('EVT:')) {
+                this.dispatchCdcNotify(line)
+                continue
+              }
+              if (this._isNoiseLine(line)) continue
+              responseLine = line
+              break
+            }
+          }
+        }
+
+        if (!responseLine) throw new Error('No response')
+        if (responseLine.startsWith('ERROR:')) throw new Error(responseLine)
+        if (!responseLine.startsWith('SIZE ')) {
+          throw new Error(`Unexpected response: ${responseLine}`)
+        }
+
+        const size = parseInt(responseLine.split(' ')[1], 10)
+        if (Number.isNaN(size) || size < 0) {
+          throw new Error(`Invalid SIZE: ${responseLine}`)
+        }
+
+        if (binaryStallMs == null) {
+          binaryStallMs = this._binaryStallTimeoutMs(size, null)
+        }
+
+        const termLen = (size > 0 && size % 64 === 0) ? 1 : 0
+        const total = size + termLen
+
+        const data = new Uint8Array(size)
+        const binState = { consumed: 0, received: 0, size, total }
+        let carry = buffer
+        let binDeadline = Date.now() + binaryStallMs
+
+        const drainCarry = () => {
+          if (!carry.length) return false
+          const { rest, progress } = this._takeFromBinary(carry, data, binState)
+          carry = rest
+          if (progress) binDeadline = Date.now() + binaryStallMs
+          return progress
+        }
+
+        drainCarry()
+        while (binState.consumed < total && Date.now() < binDeadline) {
+          if (binState.consumed >= total) break
           const { value, done } = await reader.read()
           if (done) break
-          if (value) {
-            data.set(value.slice(0, size - received), received)
-            received += Math.min(value.length, size - received)
+          if (value?.length) carry = this._concatBytes(carry, value)
+          drainCarry()
+        }
+        drainCarry()
+
+        const { received, consumed } = binState
+        if (received !== size) {
+          throw new Error(`Incomplete download: ${received}/${size} bytes`)
+        }
+
+        if (carry.length) {
+          this._rxBuffer = new TextDecoder().decode(carry) + this._rxBuffer
+          this._processIncomingLines()
+        }
+
+        return { line: responseLine, data }
+      } finally {
+        try { reader.releaseLock() } catch (e) {}
+        if (hadMode) this._resumeModeNotifyIfAllowed()
+        else this._resumeRxPump()
+      }
+    }
+
+    async readBinary (size, timeout = null) {
+      await this._suspendRxPump()
+      await this._waitForPumpReaderRelease()
+      await this._suspendModeNotify()
+      await this._waitForModeNotifyReaderRelease()
+      const reader = this.port.readable.getReader()
+      const data = new Uint8Array(size)
+      // Firmware appends a 1-byte short-packet terminator when the payload is an
+      // exact multiple of the 64-byte FS bulk packet size; consume and discard it.
+      const termLen = (size > 0 && size % 64 === 0) ? 1 : 0
+      const total = size + termLen
+      const stallMs = this._binaryStallTimeoutMs(size, timeout)
+      let received = 0
+      let consumed = 0
+      let deadline = Date.now() + stallMs
+
+      try {
+        while (consumed < total && Date.now() < deadline) {
+          const { value, done } = await reader.read()
+          if (done) break
+          if (value?.length) {
+            if (received < size) {
+              const dataTake = Math.min(value.length, size - received)
+              data.set(value.slice(0, dataTake), received)
+              received += dataTake
+            }
+            const take = Math.min(value.length, total - consumed)
+            consumed += take
+            if (take > 0) deadline = Date.now() + stallMs
           }
         }
       } finally {
         reader.releaseLock()
-        this._resumeModeNotify()
-        this._resumeRxPump()
+        if (this.mode !== null) this._resumeModeNotifyIfAllowed()
+        else this._resumeRxPump()
       }
       return data.slice(0, received)
     }
@@ -715,7 +958,9 @@ window.ConnectionManager = (function () {
       this._rejectLineWaiters()
       if (!this.port?.readable) return
 
+      const hadMode = this.mode !== null
       await this._suspendRxPump()
+      if (hadMode) await this._suspendModeNotify()
       const reader = this.port.readable.getReader()
       try {
         while (true) {
@@ -729,7 +974,8 @@ window.ConnectionManager = (function () {
         // Ignore drain errors
       } finally {
         reader.releaseLock()
-        this._resumeRxPump()
+        if (hadMode) this._resumeModeNotifyIfAllowed()
+        else this._resumeRxPump()
       }
     }
 

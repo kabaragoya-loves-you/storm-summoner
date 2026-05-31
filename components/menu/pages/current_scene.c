@@ -16,6 +16,7 @@
 #include "esp_heap_caps.h"
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #define TAG "MENU_CURRENT_SCENE"
 
@@ -51,6 +52,7 @@ static scene_dynamic_menu_t s_scene_pedal_menu = {0};
 static char s_scene_selected_vendor[64];
 static char s_scene_pedal_title[80];
 static char s_pending_pedal_slug[64];  // Slug selected, pending confirmation
+static bool s_scene_pedal_list_user_only = false;
 
 // Navigation callbacks for assignment submenus
 static void nav_to_touchwheel(void* user_data) {
@@ -897,7 +899,10 @@ static void scene_select_pedal_callback(void* user_data) {
   const char* slug = NULL;
   const char* name = NULL;
   
-  if (assets_get_device_for_vendor(s_scene_selected_vendor, idx, &slug, &name) == ESP_OK && slug) {
+  esp_err_t found = s_scene_pedal_list_user_only
+    ? assets_get_user_device_by_index(idx, &slug, &name)
+    : assets_get_device_for_vendor(s_scene_selected_vendor, idx, &slug, &name);
+  if (found == ESP_OK && slug) {
     ESP_LOGI(TAG, "Scene pedal selected: %s", slug);
     
     // Check if this is actually a change
@@ -942,9 +947,12 @@ static void scene_select_global_default_callback(void* user_data) {
 }
 
 static lv_obj_t* scene_pedal_select_create(void) {
-  ESP_LOGD(TAG, "Creating scene pedal select for vendor: %s", s_scene_selected_vendor);
+  ESP_LOGD(TAG, "Creating scene pedal select for vendor: %s (user_only=%d)",
+    s_scene_selected_vendor, (int)s_scene_pedal_list_user_only);
   
-  uint32_t pedal_count = assets_get_device_count_for_vendor(s_scene_selected_vendor);
+  uint32_t pedal_count = s_scene_pedal_list_user_only
+    ? assets_get_user_device_count()
+    : assets_get_device_count_for_vendor(s_scene_selected_vendor);
   
   if (!scene_dynamic_menu_alloc(&s_scene_pedal_menu, pedal_count)) {
     ESP_LOGE(TAG, "Failed to allocate scene pedal menu");
@@ -956,7 +964,10 @@ static lv_obj_t* scene_pedal_select_create(void) {
     const char* slug = NULL;
     const char* name = NULL;
     
-    if (assets_get_device_for_vendor(s_scene_selected_vendor, i, &slug, &name) == ESP_OK) {
+    esp_err_t got = s_scene_pedal_list_user_only
+      ? assets_get_user_device_by_index(i, &slug, &name)
+      : assets_get_device_for_vendor(s_scene_selected_vendor, i, &slug, &name);
+    if (got == ESP_OK) {
       strncpy(s_scene_pedal_menu.labels[i], name ? name : "Unknown", 63);
       s_scene_pedal_menu.labels[i][63] = '\0';
     } else {
@@ -975,12 +986,21 @@ static lv_obj_t* scene_pedal_select_create(void) {
   return menu_create_page(s_scene_pedal_title, s_scene_pedal_menu.items, pedal_count);
 }
 
+static void scene_select_user_devices_callback(void* user_data) {
+  (void)user_data;
+  s_scene_pedal_list_user_only = true;
+  strncpy(s_scene_selected_vendor, "User Devices", sizeof(s_scene_selected_vendor) - 1);
+  s_scene_selected_vendor[sizeof(s_scene_selected_vendor) - 1] = '\0';
+  menu_navigate_to("Select Pedal", scene_pedal_select_create);
+}
+
 // Vendor selection callback
 static void scene_select_vendor_callback(void* user_data) {
   uint32_t idx = *(uint32_t*)user_data;
   
   const char* vendor = assets_get_vendor_by_index(idx);
   if (vendor) {
+    s_scene_pedal_list_user_only = false;
     strncpy(s_scene_selected_vendor, vendor, sizeof(s_scene_selected_vendor) - 1);
     s_scene_selected_vendor[sizeof(s_scene_selected_vendor) - 1] = '\0';
     ESP_LOGI(TAG, "Scene vendor selected: %s", s_scene_selected_vendor);
@@ -988,19 +1008,20 @@ static void scene_select_vendor_callback(void* user_data) {
   }
 }
 
+static bool scene_vendor_is_user_bucket(const char* vendor) {
+  return vendor && (strcasecmp(vendor, "User") == 0 || strcasecmp(vendor, "user") == 0);
+}
+
 static lv_obj_t* scene_vendor_select_create(void) {
   ESP_LOGD(TAG, "Creating scene vendor select page");
   
   uint32_t vendor_count = assets_get_vendor_count();
+  uint32_t user_device_count = assets_get_user_device_count();
   
-  // Find User vendor index and count non-User vendors
-  int32_t user_vendor_idx = -1;
   uint32_t non_user_count = 0;
   for (uint32_t i = 0; i < vendor_count; i++) {
     const char* v = assets_get_vendor_by_index(i);
-    if (v && strcmp(v, "User") == 0) {
-      user_vendor_idx = (int32_t)i;
-    } else {
+    if (!scene_vendor_is_user_bucket(v)) {
       non_user_count++;
     }
   }
@@ -1049,15 +1070,14 @@ static lv_obj_t* scene_vendor_select_create(void) {
   // Item 3: User Devices
   strncpy(s_scene_vendor_menu.labels[idx], "User Devices", 63);
   s_scene_vendor_menu.items[idx].label = s_scene_vendor_menu.labels[idx];
-  if (user_vendor_idx >= 0) {
-    s_scene_vendor_menu.indices[idx] = (uint32_t)user_vendor_idx;
-    s_scene_vendor_menu.items[idx].callback = scene_select_vendor_callback;
-    s_scene_vendor_menu.items[idx].user_data = &s_scene_vendor_menu.indices[idx];
+  if (user_device_count > 0) {
+    s_scene_vendor_menu.items[idx].callback = scene_select_user_devices_callback;
+    s_scene_vendor_menu.items[idx].user_data = NULL;
   } else {
     s_scene_vendor_menu.items[idx].callback = NULL;
     s_scene_vendor_menu.items[idx].user_data = NULL;
   }
-  s_scene_vendor_menu.items[idx].has_submenu = true;
+  s_scene_vendor_menu.items[idx].has_submenu = user_device_count > 0;
   idx++;
   
   // Item 4: Divider
@@ -1071,7 +1091,7 @@ static lv_obj_t* scene_vendor_select_create(void) {
   // Remaining items: vendors except User
   for (uint32_t i = 0; i < vendor_count; i++) {
     const char* vendor = assets_get_vendor_by_index(i);
-    if (!vendor || strcmp(vendor, "User") == 0) continue;
+    if (!vendor || scene_vendor_is_user_bucket(vendor)) continue;
     
     strncpy(s_scene_vendor_menu.labels[idx], vendor, 63);
     s_scene_vendor_menu.labels[idx][63] = '\0';
@@ -1205,7 +1225,8 @@ lv_obj_t* menu_page_current_scene_create(void) {
     const char* effective_slug = scene_get_effective_device_slug(scene_index);
     const manifest_device_t* mdev = assets_get_manifest_device(effective_slug);
     const char* device_name = mdev ? mdev->name : "Default";
-    snprintf(s_pedal_label, sizeof(s_pedal_label), "Pedal: %s", device_name);
+    assets_format_pedal_menu_label(effective_slug, device_name,
+      s_pedal_label, sizeof(s_pedal_label));
     s_scene_items[idx++] = (menu_item_t){ s_pedal_label, NULL, NULL, false };
     
     s_scene_items[idx++] = (menu_item_t){ "Select Pedal", nav_to_select_pedal, NULL, true };

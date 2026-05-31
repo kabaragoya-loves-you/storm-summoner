@@ -524,7 +524,7 @@ device_def_t *assets_load_device(const char *slug) {
   const char *json_root = manifest_dev->from_userdata
     ? USERDATA_BASE_PATH : ASSETS_BASE_PATH;
   char json_path[256];
-  snprintf(json_path, sizeof(json_path), "%s/devices/%s", json_root, manifest_dev->file);
+  snprintf(json_path, sizeof(json_path), "%s/%s", json_root, manifest_dev->file);
 
   device = assets_parse_device_file(json_path, slug);
   if (!device) {
@@ -976,6 +976,63 @@ esp_err_t assets_get_device_for_vendor(const char* vendor, uint32_t idx,
     }
   }
   
+  return ESP_ERR_NOT_FOUND;
+}
+
+static bool manifest_entry_is_user_device(const manifest_device_t *dev) {
+  if (!dev || !dev->from_userdata || dev->slug[0] == '\0') {
+    return false;
+  }
+  return strncmp(dev->file, "devices/user/", 13) == 0;
+}
+
+void assets_format_pedal_menu_label(const char *slug, const char *display_name,
+  char *out, size_t out_len) {
+  if (!out || out_len == 0) {
+    return;
+  }
+  if (!display_name || display_name[0] == '\0') {
+    strncpy(out, "(no pedal)", out_len - 1);
+    out[out_len - 1] = '\0';
+    return;
+  }
+  const manifest_device_t *mdev = slug ? assets_get_manifest_device(slug) : NULL;
+  if (mdev && manifest_entry_is_user_device(mdev)) {
+    snprintf(out, out_len, "User: %s", display_name);
+  } else {
+    strncpy(out, display_name, out_len - 1);
+    out[out_len - 1] = '\0';
+  }
+}
+
+uint32_t assets_get_user_device_count(void) {
+  uint32_t count = 0;
+  for (uint32_t i = 0; i < g_manifest.device_count; i++) {
+    if (manifest_entry_is_user_device(&g_manifest.devices[i])) {
+      count++;
+    }
+  }
+  return count;
+}
+
+esp_err_t assets_get_user_device_by_index(uint32_t idx,
+  const char** slug, const char** name) {
+  uint32_t current = 0;
+  for (uint32_t i = 0; i < g_manifest.device_count; i++) {
+    if (!manifest_entry_is_user_device(&g_manifest.devices[i])) {
+      continue;
+    }
+    if (current == idx) {
+      if (slug) {
+        *slug = g_manifest.devices[i].slug;
+      }
+      if (name) {
+        *name = g_manifest.devices[i].name;
+      }
+      return ESP_OK;
+    }
+    current++;
+  }
   return ESP_ERR_NOT_FOUND;
 }
 

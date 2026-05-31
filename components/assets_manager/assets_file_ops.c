@@ -219,6 +219,40 @@ static bool compute_buffer_sha256(const uint8_t *data, size_t len, char *hex_out
   return true;
 }
 
+// Lowercase slug token: non-alphanumeric runs become a single underscore.
+static void slugify_ident(const char *in, char *out, size_t out_len) {
+  if (!in || !out || out_len < 2) {
+    if (out && out_len) out[0] = '\0';
+    return;
+  }
+
+  size_t o = 0;
+  bool prev_us = false;
+  for (const char *p = in; *p && o < out_len - 1; p++) {
+    unsigned char c = (unsigned char)*p;
+    if (c >= 'A' && c <= 'Z') {
+      c = (unsigned char)(c + ('a' - 'A'));
+    } else if (!(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9')) {
+      if (!prev_us && o > 0) {
+        out[o++] = '_';
+        prev_us = true;
+      }
+      continue;
+    }
+    prev_us = false;
+    out[o++] = (char)c;
+  }
+  while (o > 0 && out[o - 1] == '_') {
+    o--;
+  }
+  if (o == 0) {
+    strncpy(out, "pedal", out_len - 1);
+    out[out_len - 1] = '\0';
+    return;
+  }
+  out[o] = '\0';
+}
+
 // Helper: Add device JSON file to manifest array (MIDI-RTC Schema format)
 // Uses heap allocation to avoid stack overflow in console task
 static void add_device_to_manifest(const char *device_path, const char *vendor_dir, 
@@ -283,18 +317,32 @@ static void add_device_to_manifest(const char *device_path, const char *vendor_d
   char *dot = strrchr(product, '.');
   if (dot) *dot = '\0';
   
+  cJSON *device_obj = cJSON_GetObjectItem(device_json, "device");
+  cJSON *manufacturer = device_obj ? cJSON_GetObjectItem(device_obj, "manufacturer") : NULL;
+
   // Get implementationVersion from JSON
   cJSON *version_item = cJSON_GetObjectItem(device_json, "implementationVersion");
   const char *version = (version_item && cJSON_IsString(version_item)) ? version_item->valuestring : "0";
   
-  // Build slug: vendor.product@version (using filesystem names)
-  snprintf(slug, 256, "%s.%s@%s", vendor_dir, product, version);
+  // Slug: vendor_dir.product@version for shared pedals; manufacturer.model@version for user pedals.
+  if (strcmp(vendor_dir, "user") == 0) {
+    cJSON *model_item = device_obj ? cJSON_GetObjectItem(device_obj, "model") : NULL;
+    const char *mfg_in = (manufacturer && cJSON_IsString(manufacturer)) ? manufacturer->valuestring : "user";
+    const char *model_in = (model_item && cJSON_IsString(model_item)) ? model_item->valuestring : product;
+    char mfg_slug[64];
+    char model_slug[64];
+    slugify_ident(mfg_in, mfg_slug, sizeof(mfg_slug));
+    slugify_ident(model_in, model_slug, sizeof(model_slug));
+    snprintf(slug, 256, "%s.%s@%s", mfg_slug, model_slug, version);
+  } else {
+    snprintf(slug, 256, "%s.%s@%s", vendor_dir, product, version);
+  }
   
   // Get properly-cased display names from JSON
-  // Vendor: device.manufacturer or fallback to vendor_dir
-  cJSON *device_obj = cJSON_GetObjectItem(device_json, "device");
-  cJSON *manufacturer = device_obj ? cJSON_GetObjectItem(device_obj, "manufacturer") : NULL;
-  if (manufacturer && cJSON_IsString(manufacturer)) {
+  // User pedals always bucket under vendor "User" for on-device menus.
+  if (strcmp(vendor_dir, "user") == 0) {
+    strncpy(vendor_display, "User", 127);
+  } else if (manufacturer && cJSON_IsString(manufacturer)) {
     strncpy(vendor_display, manufacturer->valuestring, 127);
   } else {
     strncpy(vendor_display, vendor_dir, 127);
@@ -530,6 +578,24 @@ esp_err_t assets_regenerate_user_devices_manifest(void) {
     USERDATA_BASE_PATH "/devices/manifest.json");
 }
 
+esp_err_t assets_validate_user_pedal_put(const char *full_path) {
+  if (!full_path) return ESP_ERR_INVALID_ARG;
+
+  const char *user_dir = USERDATA_BASE_PATH "/devices/user/";
+  size_t prefix_len = strlen(user_dir);
+  if (strncmp(full_path, user_dir, prefix_len) != 0) {
+    return ESP_OK;
+  }
+
+  struct stat st;
+  if (stat(full_path, &st) == 0) {
+    return ESP_OK;
+  }
+
+  // New user pedal files: slug is assigned at manifest regen from JSON manufacturer/model.
+  return ESP_OK;
+}
+
 esp_err_t assets_regenerate_images_manifest(void) {
   const char *images_dir = ASSETS_BASE_PATH "/images";
   const char *manifest_path = ASSETS_BASE_PATH "/images/manifest.json";
@@ -559,7 +625,7 @@ esp_err_t assets_regenerate_images_manifest(void) {
     // Skip manifest and non-bin files
     if (strcmp(entry->d_name, "manifest.json") == 0) continue;
     
-    // Match *.bin or *.bin.z patterns
+    // Match .bin or .bin.z suffix
     bool is_compressed = false;
     char *ext = strstr(entry->d_name, ".bin.z");
     if (ext && strcmp(ext, ".bin.z") == 0) {
