@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "menu_pages.h"
+#include "menu_theme.h"
 #include "ui.h"
 #include "display_driver.h"
 #include "event_bus.h"
@@ -141,6 +142,8 @@ void menu_init(void) {
 
   memset(&menu_state, 0, sizeof(menu_state));
   menu_state.initialized = true;
+
+  menu_theme_init();
   
   // Create group for encoder navigation
   menu_state.group = lv_group_create();
@@ -362,16 +365,43 @@ static menu_item_kind_t menu_item_effective_kind(const menu_item_t* item) {
 }
 
 static lv_color_t menu_item_text_color(const menu_item_t* item, bool is_readonly) {
+  const menu_theme_palette_t* palette = menu_theme_get_palette();
   menu_item_kind_t kind = menu_item_effective_kind(item);
   if (is_readonly || kind == MENU_ITEM_KIND_DISPLAY) {
-    return lv_color_make(160, 160, 160);
+    return palette->item_display;
   }
   switch (kind) {
-    case MENU_ITEM_KIND_SUBMENU: return lv_color_make(90, 160, 255);
-    case MENU_ITEM_KIND_ROLLER: return lv_color_make(255, 150, 40);
-    case MENU_ITEM_KIND_ACTION: return lv_color_make(100, 200, 110);
-    default: return lv_color_white();
+    case MENU_ITEM_KIND_SUBMENU: return palette->item_submenu;
+    case MENU_ITEM_KIND_ROLLER: return palette->item_roller;
+    case MENU_ITEM_KIND_ACTION: return palette->item_action;
+    default: return palette->item_auto;
   }
+}
+
+static void menu_apply_title_bar_style(lv_obj_t* title_bar, lv_obj_t* title_label,
+    bool two_line_variant) {
+  const menu_theme_palette_t* palette = menu_theme_get_palette();
+  lv_obj_set_style_bg_color(title_bar, palette->title_bar_bg, 0);
+  lv_obj_set_style_bg_grad_color(title_bar,
+    two_line_variant ? palette->title_bar_grad_2line : palette->title_bar_grad, 0);
+  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(title_bar, 0, 0);
+  lv_obj_set_style_pad_all(title_bar, 0, 0);
+  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_text_color(title_label, palette->title_text, 0);
+  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+}
+
+static void menu_apply_roller_style(lv_obj_t* roller) {
+  const menu_theme_palette_t* palette = menu_theme_get_palette();
+  lv_obj_set_style_bg_color(roller, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(roller, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(roller, 0, 0);
+  lv_obj_set_style_text_color(roller, palette->roller_text, 0);
+  lv_obj_set_style_text_font(roller, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_bg_color(roller, palette->roller_selected_bg, LV_PART_SELECTED);
+  lv_obj_set_style_text_color(roller, palette->roller_selected_text, LV_PART_SELECTED);
 }
 
 lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item_count) {
@@ -389,24 +419,14 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   // Title bar height (taller to account for circular display clipping at top)
   const int title_bar_h = 32;
   
-  // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
   lv_obj_set_size(title_bar, disp_w, title_bar_h);
   lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);  // Dark woody brown
-  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(139, 90, 43), 0);  // Lighter brown
-  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
-  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(title_bar, 0, 0);
-  lv_obj_set_style_pad_all(title_bar, 0, 0);
-  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
-  
-  // Create title label inside title bar
+
   lv_obj_t* title_label = lv_label_create(title_bar);
   lv_label_set_text(title_label, title);
-  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
+  menu_apply_title_bar_style(title_bar, title_label, false);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Create scrollable container with flex layout
@@ -437,6 +457,8 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   // Add scroll event callback
   lv_obj_add_event_cb(cont, scroll_event_cb, LV_EVENT_SCROLL, NULL);
 
+  const menu_theme_palette_t* palette = menu_theme_get_palette();
+
   // Create labels for menu items
   for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
     const char* item_label = items[i].label;
@@ -444,10 +466,9 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     bool is_readonly = (items[i].callback == NULL && !is_divider);
     
     if (is_divider) {
-      // Create a horizontal line divider
       lv_obj_t* line = lv_obj_create(cont);
       lv_obj_set_size(line, lv_pct(80), 2);
-      lv_obj_set_style_bg_color(line, lv_color_make(80, 80, 80), 0);
+      lv_obj_set_style_bg_color(line, palette->divider, 0);
       lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
       lv_obj_set_style_border_width(line, 0, 0);
       lv_obj_set_style_radius(line, 1, 0);
@@ -522,24 +543,14 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
   // Title bar height (taller to account for circular display clipping at top)
   const int title_bar_h = 32;
   
-  // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
   lv_obj_set_size(title_bar, disp_w, title_bar_h);
   lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);
-  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(60, 40, 20), 0);
-  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
-  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(title_bar, 0, 0);
-  lv_obj_set_style_pad_all(title_bar, 0, 0);
-  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
-  
-  // Create title label inside title bar
+
   lv_obj_t* title_label = lv_label_create(title_bar);
   lv_label_set_text(title_label, title);
-  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
+  menu_apply_title_bar_style(title_bar, title_label, true);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Create scrollable container with flex layout
@@ -1438,24 +1449,14 @@ lv_obj_t* menu_create_info_page(const char* title, const char* info_text) {
   // Title bar height (taller to account for circular display clipping at top)
   const int title_bar_h = 32;
   
-  // Create title bar container with woody brown gradient
   lv_obj_t* title_bar = lv_obj_create(screen);
   lv_obj_set_size(title_bar, disp_w, title_bar_h);
   lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);  // Dark woody brown
-  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(139, 90, 43), 0);  // Lighter brown
-  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
-  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(title_bar, 0, 0);
-  lv_obj_set_style_pad_all(title_bar, 0, 0);
-  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
-  
-  // Create title label inside title bar
+
   lv_obj_t* title_label = lv_label_create(title_bar);
   lv_label_set_text(title_label, title);
-  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);  // Cornsilk/cream
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
+  menu_apply_title_bar_style(title_bar, title_label, false);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);
   lv_obj_remove_flag(title_label, LV_OBJ_FLAG_SCROLLABLE);
 
   // Margins for content
@@ -1564,19 +1565,11 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
   lv_obj_t* title_bar = lv_obj_create(screen);
   lv_obj_set_size(title_bar, disp_w, title_bar_h);
   lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(title_bar, lv_color_make(101, 67, 33), 0);
-  lv_obj_set_style_bg_grad_color(title_bar, lv_color_make(139, 90, 43), 0);
-  lv_obj_set_style_bg_grad_dir(title_bar, LV_GRAD_DIR_VER, 0);
-  lv_obj_set_style_bg_opa(title_bar, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(title_bar, 0, 0);
-  lv_obj_set_style_pad_all(title_bar, 0, 0);
-  lv_obj_remove_flag(title_bar, LV_OBJ_FLAG_SCROLLABLE);
-  
+
   lv_obj_t* title_label = lv_label_create(title_bar);
   lv_label_set_text(title_label, title);
-  lv_obj_set_style_text_color(title_label, lv_color_make(255, 248, 220), 0);
-  lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);  // Offset down for circular display
+  menu_apply_title_bar_style(title_bar, title_label, false);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);
 
   // Create roller centered below title
   lv_obj_t* roller = lv_roller_create(screen);
@@ -1584,17 +1577,8 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
   lv_roller_set_visible_row_count(roller, 3);
   lv_roller_set_selected(roller, initial_index, LV_ANIM_OFF);
   lv_obj_align(roller, LV_ALIGN_CENTER, 0, 10);
-  
-  // Roller styling
-  lv_obj_set_style_bg_color(roller, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(roller, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(roller, 0, 0);
-  lv_obj_set_style_text_color(roller, lv_color_make(160, 160, 160), 0);
-  lv_obj_set_style_text_font(roller, &lv_font_montserrat_14, 0);
-  
-  // Selected item styling
-  lv_obj_set_style_bg_color(roller, lv_color_make(60, 60, 60), LV_PART_SELECTED);
-  lv_obj_set_style_text_color(roller, lv_color_white(), LV_PART_SELECTED);
+
+  menu_apply_roller_style(roller);
   
   // Add click event for confirmation
   lv_obj_add_event_cb(roller, roller_click_cb, LV_EVENT_CLICKED, NULL);

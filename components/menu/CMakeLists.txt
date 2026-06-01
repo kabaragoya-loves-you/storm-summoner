@@ -30,6 +30,8 @@ idf_component_register(
     "pages/buttons.c"
     "pages/bump.c"
     "pages/display.c"
+    "pages/theme.c"
+    "menu_theme.c"
     "pages/touchwheel_menu.c"
     "pages/pads_menu.c"
     "pages/action_config.c"
@@ -68,5 +70,6 @@ idf_component_register(
     rtg
     sample_hold
     note_track
+    app_settings
   PRIV_REQUIRES main
 )

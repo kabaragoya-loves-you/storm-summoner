@@ -56,6 +56,7 @@ lv_obj_t* menu_page_led_create(void);
 lv_obj_t* menu_page_buttons_create(void);
 lv_obj_t* menu_page_bump_create(void);
 lv_obj_t* menu_page_display_create(void);
+lv_obj_t* menu_page_theme_create(void);
 
 // Inspect Scene - scrollable scene summary (pad 10 open/close; pads 8 and 12 back)
 lv_obj_t* menu_page_inspect_scene_create(void);
