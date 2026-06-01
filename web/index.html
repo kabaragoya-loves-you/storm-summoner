@@ -160,6 +160,11 @@
                 New Pedal
               </wa-button>
               <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->pedals#copyLlmPrompt" data-pedals-target="llmPromptBtn">
+                <wa-icon name="clipboard" slot="prefix"></wa-icon>
+                LLM Prompt
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
                          data-action="click->pedals#refresh" data-pedals-target="refreshBtn" disabled>
                 <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
                 Refresh

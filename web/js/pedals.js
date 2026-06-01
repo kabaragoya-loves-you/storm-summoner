@@ -1,6 +1,7 @@
 /* Storm Summoner - Pedals Controller (user pedal authoring) */
 
 const PEDALS_USER_DIR = '/userdata/devices/user'
+const DEVICE_AUTHORING_URL = '/DEVICE_AUTHORING.md'
 // Tabs that keep the device in CDC ASSETS mode (do not EXIT when switching between them).
 const ASSETS_MODE_TABS = new Set(['pedals', 'assets'])
 const PEDALS_MIDI_TOKENS = [
@@ -27,7 +28,7 @@ application.register(
   'pedals',
   class extends BaseController {
     static targets = [
-      'searchInput', 'refreshBtn', 'newPedalBtn', 'treeContainer', 'detailContainer',
+      'searchInput', 'refreshBtn', 'newPedalBtn', 'llmPromptBtn', 'treeContainer', 'detailContainer',
       'newPedalDialog', 'newPedalInput', 'deleteDialog', 'deletePedalName',
       'messageDialog', 'messageDialogBody', 'jsonTextarea',
     ]
@@ -52,6 +53,8 @@ application.register(
       this._activateQueue = Promise.resolve()
       this._schema = null
       this._schemaLoad = null
+      this._authoringText = null
+      this._authoringLoad = null
       this._deleteSlug = null
       this._deletePath = null
       this._pendingPedalsActivate = false
@@ -1592,6 +1595,46 @@ application.register(
         } catch (e) {}
       } finally {
         btn.disabled = false
+      }
+    }
+
+    async loadDeviceAuthoring () {
+      if (this._authoringText) return this._authoringText
+      if (!this._authoringLoad) {
+        this._authoringLoad = fetch(DEVICE_AUTHORING_URL)
+          .then(res => {
+            if (!res.ok) throw new Error(`Could not load prompt (${res.status})`)
+            return res.text()
+          })
+          .then(text => {
+            this._authoringText = text
+            return text
+          })
+      }
+      return this._authoringLoad
+    }
+
+    async copyLlmPrompt (event) {
+      const btn = event?.currentTarget
+      const prevLabel = btn?.textContent?.trim() || 'LLM Prompt'
+      if (btn) {
+        btn.disabled = true
+        btn.textContent = 'Loading…'
+      }
+      try {
+        const text = await this.loadDeviceAuthoring()
+        if (!text?.trim()) throw new Error('Prompt file is empty')
+        await navigator.clipboard.writeText(text)
+        if (btn) btn.textContent = 'Copied!'
+        setTimeout(() => {
+          if (btn) btn.textContent = prevLabel
+        }, 1500)
+      } catch (err) {
+        console.error('LLM prompt copy failed:', err)
+        if (btn) btn.textContent = prevLabel
+        this.showMessageDialog('Copy failed', err.message || 'Could not copy LLM prompt')
+      } finally {
+        if (btn) btn.disabled = false
       }
     }
 
