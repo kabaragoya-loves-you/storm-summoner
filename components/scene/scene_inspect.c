@@ -2,6 +2,7 @@
 #include "action_summary.h"
 #include "assets_manager.h"
 #include "device_config.h"
+#include "midi_control.h"
 #include "expression.h"
 #include "cv.h"
 #include "input_mode.h"
@@ -729,6 +730,21 @@ static void append_sample_hold(scene_inspect_buf_t *b, const scene_t *scene,
   scene_inspect_buf_append(b, "\n");
 }
 
+static void append_cc_triggers(scene_inspect_buf_t *b, const scene_t *scene,
+  uint8_t scene_index) {
+  if (!scene || !midi_control_is_enabled()) return;
+
+  for (int i = 0; i < NUM_CC_TRIGGERS; i++) {
+    const cc_trigger_slot_t *slot = &scene->cc_triggers[i];
+    if (slot->action.type == ACTION_NONE) continue;
+
+    char label[24];
+    snprintf(label, sizeof(label), "Trigger %d (CC %u)", i + 1,
+      (unsigned)slot->cc_number);
+    append_inspect_action(b, label, &slot->action, scene_index, true, true);
+  }
+}
+
 static void append_note_track(scene_inspect_buf_t *b, const scene_t *scene,
   uint8_t scene_index) {
   if (!scene || !scene->note_track.enabled) return;
@@ -814,6 +830,7 @@ bool scene_inspect_build(const scene_t *scene, uint8_t scene_index, char *buf,
   append_continuous_mapping_block(&b, "Tilt Y", &scene->tilt_y, scene_index,
     scene->tilt_y_tempo_nudge_pct);
   append_rtg(&b, scene);
+  append_cc_triggers(&b, scene, scene_index);
   append_note_track(&b, scene, scene_index);
   append_pending(&b);
 

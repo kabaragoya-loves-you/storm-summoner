@@ -22,6 +22,11 @@ static void nav_to_midi(void* user_data) {
   menu_navigate_to("MIDI", menu_page_midi_create);
 }
 
+static void nav_to_midi_control(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("MIDI Control", menu_page_settings_midi_control_create);
+}
+
 static void nav_to_expression(void* user_data) {
   (void)user_data;
   menu_navigate_to("Expression", menu_page_settings_expression_create);
@@ -116,6 +121,7 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Config", nav_to_config, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "Touch", nav_to_touch, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "MIDI", nav_to_midi, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "MIDI Control", nav_to_midi_control, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "Expression", nav_to_expression, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "Control Voltage", nav_to_cv, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "Proximity", nav_to_proximity, NULL, true, MENU_ITEM_KIND_SUBMENU },

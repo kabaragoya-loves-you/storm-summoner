@@ -67,6 +67,10 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder);
 // Deferred version - safe to call during LVGL rendering/event callbacks
 void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t builder);
 
+// Pop N levels, then replace the new top page (does not push an extra level)
+void menu_pop_then_replace_deferred(int levels, const char* menu_name,
+  menu_page_builder_t builder);
+
 // Rebuild a NON-visible stack entry in place. Creates a fresh screen via builder
 // and swaps it into stack[depth]; the old screen is deleted async. If focus_label
 // is non-NULL, focused_index is set to the clickable child whose menu_item_t.label

@@ -216,6 +216,12 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->note_track = continuous_mapping_create(1);    // CC1 = Mod Wheel
   scene->note_track.enabled = false;                   // Disabled by default
 
+  for (int i = 0; i < NUM_CC_TRIGGERS; i++) {
+    scene->cc_triggers[i].cc_number = 0;
+    scene->cc_triggers[i].action.type = ACTION_NONE;
+    scene->cc_triggers[i].pressing = false;
+  }
+
   // Expression jack configuration
   scene->expression_mode = EXPRESSION_MODE_PEDAL;      // Default to expression pedal mode
   
@@ -5360,6 +5366,57 @@ static action_t json_array_to_single_action(cJSON* array) {
   return json_to_action(cJSON_GetArrayItem(array, 0));
 }
 
+static cJSON* cc_triggers_to_json(const scene_t* scene) {
+  if (!scene) return NULL;
+  cJSON* arr = cJSON_CreateArray();
+  for (int i = 0; i < NUM_CC_TRIGGERS; i++) {
+    cJSON* slot = cJSON_CreateObject();
+    cJSON_AddNumberToObject(slot, "cc_number", scene->cc_triggers[i].cc_number);
+    cJSON* action_json = action_to_json(&scene->cc_triggers[i].action);
+    if (action_json) cJSON_AddItemToObject(slot, "action", action_json);
+    cJSON_AddItemToArray(arr, slot);
+  }
+  return arr;
+}
+
+static void json_to_cc_triggers(cJSON* arr, scene_t* scene) {
+  if (!scene) return;
+  for (int i = 0; i < NUM_CC_TRIGGERS; i++) {
+    scene->cc_triggers[i].cc_number = 0;
+    scene->cc_triggers[i].action.type = ACTION_NONE;
+    scene->cc_triggers[i].pressing = false;
+  }
+  if (!arr || !cJSON_IsArray(arr)) return;
+
+  int n = cJSON_GetArraySize(arr);
+  if (n > NUM_CC_TRIGGERS) n = NUM_CC_TRIGGERS;
+  for (int i = 0; i < n; i++) {
+    cJSON* slot = cJSON_GetArrayItem(arr, i);
+    if (!slot || !cJSON_IsObject(slot)) continue;
+
+    cJSON* cc = cJSON_GetObjectItem(slot, "cc_number");
+    if (cc && cJSON_IsNumber(cc)) {
+      int v = cc->valueint;
+      if (v < 0) v = 0;
+      if (v > 127) v = 127;
+      scene->cc_triggers[i].cc_number = (uint8_t)v;
+    }
+
+    cJSON* action_obj = cJSON_GetObjectItem(slot, "action");
+    if (action_obj) {
+      action_t action = json_to_action(action_obj);
+      if (action.type != ACTION_NONE &&
+          !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_CC)) {
+        ESP_LOGW(TAG, "Ignoring invalid action '%s' in cc_triggers[%d]",
+          action_type_to_string(action.type), i);
+        action.type = ACTION_NONE;
+      }
+      scene->cc_triggers[i].action = action;
+    }
+    scene->cc_triggers[i].pressing = false;
+  }
+}
+
 // Serialize continuous mapping to JSON
 static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
   cJSON* obj = cJSON_CreateObject();
@@ -6005,6 +6062,9 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddItemToObject(root, "tilt_x", continuous_mapping_to_json(&scene->tilt_x));
   cJSON_AddItemToObject(root, "tilt_y", continuous_mapping_to_json(&scene->tilt_y));
   cJSON_AddItemToObject(root, "note_track", continuous_mapping_to_json(&scene->note_track));
+
+  cJSON* cc_triggers = cc_triggers_to_json(scene);
+  if (cc_triggers) cJSON_AddItemToObject(root, "cc_triggers", cc_triggers);
   
   // Serialize expression jack mode and pedal actions
   const char* mode_str = (scene->expression_mode == EXPRESSION_MODE_NONE) ? "none" :
@@ -6338,6 +6398,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
 
   cJSON* note_track = cJSON_GetObjectItem(root, "note_track");
   if (note_track) json_to_continuous_mapping(note_track, &scene->note_track);
+
+  cJSON* cc_triggers = cJSON_GetObjectItem(root, "cc_triggers");
+  if (cc_triggers) json_to_cc_triggers(cc_triggers, scene);
 
   cJSON* tnpx = cJSON_GetObjectItem(root, "tilt_x_tempo_nudge_pct");
   if (tnpx && cJSON_IsNumber(tnpx)) scene->tilt_x_tempo_nudge_pct = (uint8_t)tnpx->valueint;

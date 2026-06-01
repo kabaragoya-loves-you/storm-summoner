@@ -104,6 +104,7 @@ trigger_capabilities_t action_trigger_capabilities(action_trigger_type_t trigger
     case ACTION_TRIGGER_TOUCHPAD_8_11:
     case ACTION_TRIGGER_BUTTON:
     case ACTION_TRIGGER_EXPR_SWITCH:
+    case ACTION_TRIGGER_CC:
       caps.delivers_release = true;
       break;
     case ACTION_TRIGGER_BUMP:
@@ -207,6 +208,7 @@ static bool action_input_restriction_allows(const action_t* action,
       case ACTION_TRIGGER_TOUCHPAD_8_11:
       case ACTION_TRIGGER_BUTTON:
       case ACTION_TRIGGER_EXPR_SWITCH:
+      case ACTION_TRIGGER_CC:
         return true;
       case ACTION_TRIGGER_BUMP:
         return action->variant == VARIANT_CYCLE;

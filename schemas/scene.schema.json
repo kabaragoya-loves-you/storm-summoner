@@ -149,6 +149,27 @@
       "$ref": "#/definitions/continuous_mapping",
       "description": "Note Track: incoming MIDI Note On numbers (within the global Note Track range) drive this continuous mapping"
     },
+    "cc_triggers": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "Incoming MIDI CC triggers (when global MIDI Control is enabled)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cc_number": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 127,
+            "default": 0
+          },
+          "action": {
+            "$ref": "#/definitions/action",
+            "description": "Optional action; omit or type=none when unassigned"
+          }
+        }
+      }
+    },
     "expression_mode": {
       "type": "string",
       "enum": ["expression", "sustain", "sostenuto", "gate", "switch"],

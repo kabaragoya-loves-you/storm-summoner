@@ -71,6 +71,14 @@ typedef struct {
 // Maximum length of a UI module name (must fit scene_t.ui_module field)
 #define MAX_UI_MODULE_NAME 16
 
+#define NUM_CC_TRIGGERS 4
+
+typedef struct {
+  uint8_t cc_number;
+  action_t action;
+  bool pressing;
+} cc_trigger_slot_t;
+
 // Scene structure
 typedef struct scene_t {
   char name[17];              // Scene name (max 16 chars + null)
@@ -114,7 +122,8 @@ typedef struct scene_t {
   continuous_mapping_t tilt_x;       // Accelerometer X axis (roll, left/right)
   continuous_mapping_t tilt_y;       // Accelerometer Y axis (pitch, forward/back)
   continuous_mapping_t note_track;   // Incoming MIDI Note On as a continuous source
-  
+  cc_trigger_slot_t cc_triggers[NUM_CC_TRIGGERS];
+
   // Expression jack configuration (shared jack, multiple modes)
   expression_mode_t expression_mode; // PEDAL, SUSTAIN, SOSTENUTO, GATE, SWITCH
   action_t sustain;            // Action for sustain pedal events

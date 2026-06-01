@@ -11,6 +11,7 @@
 #include "device_config.h"
 #include "midi_out.h"
 #include "config.h"
+#include "midi_control.h"
 #include "display_driver.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -157,6 +158,11 @@ static void nav_to_sample_hold(void* user_data) {
 static void nav_to_tilt(void* user_data) {
   (void)user_data;
   menu_navigate_to("Tilt", menu_page_tilt_scene_create);
+}
+
+static void nav_to_cc_triggers(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("CC Triggers", menu_page_cc_triggers_scene_create);
 }
 
 static void nav_to_note_track(void* user_data) {
@@ -1227,6 +1233,11 @@ lv_obj_t* menu_page_current_scene_create(void) {
   s_scene_items[idx++] = (menu_item_t){ "S+H", nav_to_sample_hold, NULL, true, MENU_ITEM_KIND_SUBMENU };
   s_scene_items[idx++] = (menu_item_t){ "Tilt", nav_to_tilt, NULL, true, MENU_ITEM_KIND_SUBMENU };
   s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true, MENU_ITEM_KIND_SUBMENU };
+  if (midi_control_is_enabled()) {
+    s_scene_items[idx++] = (menu_item_t){
+      "CC Triggers", nav_to_cc_triggers, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
+  }
   s_scene_items[idx++] = (menu_item_t){ "Note Track", nav_to_note_track, NULL, true, MENU_ITEM_KIND_SUBMENU };
   
   // Per-scene device controls (only in per-scene device mode)

@@ -621,7 +621,8 @@ typedef enum {
   ACTION_TRIGGER_BUMP,           // Bump detector (no release event)
   ACTION_TRIGGER_EXPR_SWITCH,    // Expression in switch mode
   ACTION_TRIGGER_ON_LOAD,        // Scene load actions
-  ACTION_TRIGGER_ON_PLAY         // Transport play actions (fresh start only)
+  ACTION_TRIGGER_ON_PLAY,        // Transport play actions (fresh start only)
+  ACTION_TRIGGER_CC              // Incoming MIDI CC trigger slots
 } action_trigger_type_t;
 
 // Flattened trigger capabilities. Conservative answer per field:

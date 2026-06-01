@@ -9,6 +9,7 @@
 #include "midi_in.h"
 #include "midi_in_debug.h"
 #include "midi_passthrough.h"
+#include "midi_control.h"
 #include "elite.h"
 #include "ui.h"
 #include "ui_console.h"
@@ -105,6 +106,7 @@ void app_main(void) {
   midi_in_init();
   midi_in_debug_init();
   note_track_config_init();
+  midi_control_init();
   midi_passthrough_init();
   
   buttons_init(false);

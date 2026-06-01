@@ -21,6 +21,7 @@ lv_obj_t* menu_page_about_create(void);
 lv_obj_t* menu_page_config_create(void);
 lv_obj_t* menu_page_touch_create(void);
 lv_obj_t* menu_page_midi_create(void);
+lv_obj_t* menu_page_settings_midi_control_create(void);
 lv_obj_t* menu_page_expression_create(void);
 void menu_page_expression_cleanup(void);      // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_settings_expression_create(void);  // Global expression settings
@@ -38,6 +39,10 @@ lv_obj_t* menu_page_lfo2_scene_create(void);       // Scene -> LFO2
 void menu_page_lfo2_scene_cleanup(void);
 lv_obj_t* menu_page_rtg_scene_create(void);        // Scene -> RTG
 lv_obj_t* menu_page_sample_hold_scene_create(void);   // Scene -> S+H
+lv_obj_t* menu_page_cc_triggers_scene_create(void);   // Scene -> CC Triggers
+lv_obj_t* menu_page_cc_trigger_slot_create(void);     // Scene -> CC Triggers -> slot
+uint8_t cc_triggers_focus_slot_get(void);
+void cc_triggers_focus_slot_set(uint8_t slot);
 lv_obj_t* menu_page_note_track_scene_create(void); // Scene -> Note Track
 void menu_page_note_track_scene_cleanup(void);
 lv_obj_t* menu_page_settings_note_track_create(void); // Settings -> Note Track

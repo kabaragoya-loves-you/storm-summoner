@@ -32,6 +32,7 @@ typedef struct {
   bool is_back;
   int back_levels;  // For multi-level back navigation
   bool is_replace;  // For deferred replace_current
+  bool pop_then_replace;  // Pop back_levels, then replace top (not push)
 } deferred_nav_t;
 
 // Menu state
@@ -812,7 +813,7 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
   lv_timer_delete(timer);
 
   if (menu_state.has_pending_nav) {
-    if (menu_state.pending_nav.is_replace) {
+    if (menu_state.pending_nav.is_replace && !menu_state.pending_nav.pop_then_replace) {
       // Deferred replace - call synchronous replace now (outside render cycle)
       menu_replace_current(menu_state.pending_nav.menu_name,
                           menu_state.pending_nav.builder);
@@ -837,14 +838,15 @@ static void deferred_nav_timer_cb(lv_timer_t* timer) {
         }
       }
 
-      // If there's a forward navigation, push the new page ON TOP of where we landed
-      // (back_then_to means: go back N levels, then navigate TO a new page)
+      // If there's a forward navigation, push or replace the new page
       if (has_forward) {
-        // Create new page FIRST (this becomes the active screen)
-        menu_navigate_to_internal(menu_state.pending_nav.menu_name,
-                                 menu_state.pending_nav.builder);
-        
-        // NOW it's safe to delete old screens (new screen is active)
+        if (menu_state.pending_nav.pop_then_replace) {
+          menu_replace_current(menu_state.pending_nav.menu_name,
+            menu_state.pending_nav.builder);
+        } else {
+          menu_navigate_to_internal(menu_state.pending_nav.menu_name,
+            menu_state.pending_nav.builder);
+        }
         menu_flush_pending_deletes();
       }
     } else {
@@ -976,9 +978,12 @@ static void menu_navigate_back_internal(void) {
       
       // Restore focus to saved clickable index
       int32_t focus_idx = entry->focused_index;
+      if (entry->name && strcmp(entry->name, "CC Triggers") == 0)
+        focus_idx = (int32_t)cc_triggers_focus_slot_get();
+
       lv_obj_t* focus_target = NULL;
       int clickable_count = 0;
-      
+
       for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t* child = lv_obj_get_child(prev_cont, i);
         if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
@@ -1047,6 +1052,7 @@ void menu_navigate_back(void) {
   menu_state.pending_nav.menu_name = NULL;
   menu_state.pending_nav.builder = NULL;
   menu_state.pending_nav.is_replace = false;
+  menu_state.pending_nav.pop_then_replace = false;
   menu_state.has_pending_nav = true;
 
   // Create a one-shot timer to execute navigation in LVGL task context
@@ -1087,6 +1093,7 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
   menu_state.pending_nav.menu_name = menu_name;
   menu_state.pending_nav.builder = builder;
   menu_state.pending_nav.is_replace = false;
+  menu_state.pending_nav.pop_then_replace = false;
   menu_state.has_pending_nav = true;
 
   // Create a one-shot timer to execute navigation in LVGL task context
@@ -1140,7 +1147,11 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   
   // Decrement stack depth (pop current page)
   menu_state.stack_depth--;
-  
+
+  // Builders may call apply_initial_page_focus() and clear restore indices
+  int saved_restore_focus = menu_state.restore_focus_index;
+  int saved_restore_item = menu_state.restore_focus_item_index;
+
   // Build new page
   lv_obj_t* new_screen = builder();
   if (!new_screen) {
@@ -1174,6 +1185,11 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   // Track focus target for after screen load
   lv_obj_t* focus_target = NULL;
   
+  if (saved_restore_focus >= 0 && menu_state.restore_focus_index < 0)
+    menu_state.restore_focus_index = saved_restore_focus;
+  if (saved_restore_item >= 0 && menu_state.restore_focus_item_index < 0)
+    menu_state.restore_focus_item_index = saved_restore_item;
+
   if (menu_state.group && new_container) {
     uint32_t new_child_cnt = lv_obj_get_child_count(new_container);
     for (uint32_t i = 0; i < new_child_cnt; i++) {
@@ -1295,9 +1311,38 @@ void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t bu
   menu_state.pending_nav.is_back = false;
   menu_state.pending_nav.back_levels = 0;
   menu_state.pending_nav.is_replace = true;
+  menu_state.pending_nav.pop_then_replace = false;
   menu_state.has_pending_nav = true;
 
   lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 10, NULL);
+  lv_timer_set_repeat_count(nav_timer, 1);
+}
+
+void menu_pop_then_replace_deferred(int levels, const char* menu_name,
+  menu_page_builder_t builder) {
+  if (menu_state.stack_depth < 1 || !builder || levels < 1) {
+    ESP_LOGW(TAG, "Cannot pop-then-replace (deferred): invalid state");
+    return;
+  }
+  if (menu_state.has_pending_nav) {
+    ESP_LOGW(TAG, "Navigation already pending, dropping pop_then_replace request");
+    return;
+  }
+
+  menu_state.pending_nav.menu_name = menu_name;
+  menu_state.pending_nav.builder = builder;
+  menu_state.pending_nav.is_back = true;
+  menu_state.pending_nav.back_levels = levels;
+  menu_state.pending_nav.is_replace = false;
+  menu_state.pending_nav.pop_then_replace = true;
+  menu_state.has_pending_nav = true;
+
+  lv_timer_t* nav_timer = lv_timer_create(deferred_nav_timer_cb, 10, NULL);
+  if (!nav_timer) {
+    ESP_LOGW(TAG, "Failed to create pop_then_replace navigation timer");
+    menu_state.has_pending_nav = false;
+    return;
+  }
   lv_timer_set_repeat_count(nav_timer, 1);
 }
 

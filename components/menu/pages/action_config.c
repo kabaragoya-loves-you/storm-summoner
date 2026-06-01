@@ -557,6 +557,15 @@ void action_config_start(action_config_context_t* ctx) {
   menu_navigate_to(title, action_config_detail_page_create);
 }
 
+void action_config_start_type_picker(action_config_context_t* ctx) {
+  s_ctx = ctx;
+  if (ctx && ctx->target_action) {
+    action_config_apply_trigger_defaults(ctx->target_action, ctx->trigger_type);
+  }
+  load_cc_options();
+  menu_navigate_to("Action", action_config_type_roller_create);
+}
+
 void action_config_cleanup(void) {
   free_cc_options();
   s_ctx = NULL;
@@ -597,7 +606,15 @@ static void return_to_source(void) {
   persist_scene_changes();
   
   if (s_ctx->return_page) {
-    menu_navigate_back_then_to(s_ctx->return_depth, s_ctx->source_title, s_ctx->return_page);
+    if (s_ctx->trigger_type == ACTION_TRIGGER_CC &&
+        s_ctx->return_page == menu_page_cc_trigger_slot_create) {
+      uint8_t slot = (uint8_t)(uintptr_t)s_ctx->user_data;
+      if (slot < NUM_CC_TRIGGERS) cc_triggers_focus_slot_set(slot);
+      const char* title = s_ctx->source_title ? s_ctx->source_title : "Trigger";
+      menu_pop_then_replace_deferred(s_ctx->return_depth, title, s_ctx->return_page);
+    } else {
+      menu_navigate_back_then_to(s_ctx->return_depth, s_ctx->source_title, s_ctx->return_page);
+    }
   } else {
     for (int i = 0; i < s_ctx->return_depth; i++) {
       menu_navigate_back();
@@ -812,10 +829,41 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
     if (s_ctx) action_config_apply_trigger_defaults(action, s_ctx->trigger_type);
   }
-  
+
+  uint8_t pop = (s_ctx && s_ctx->type_picker_pop_depth > 0) ?
+    s_ctx->type_picker_pop_depth : 2;
+
   s_callback_in_progress = false;
-  // Go back 2: pop roller AND old detail page, push fresh detail page
-  return_to_detail_page(2);
+
+  if (new_type == ACTION_NONE && s_ctx && s_ctx->return_page) {
+    persist_scene_changes();
+    if (s_ctx->on_complete && s_ctx->target_action)
+      s_ctx->on_complete(s_ctx, s_ctx->target_action);
+    if (s_ctx->trigger_type == ACTION_TRIGGER_CC &&
+        s_ctx->return_page == menu_page_cc_trigger_slot_create) {
+      uint8_t slot = (uint8_t)(uintptr_t)s_ctx->user_data;
+      if (slot < NUM_CC_TRIGGERS) cc_triggers_focus_slot_set(slot);
+      uint8_t levels = (s_ctx->type_picker_pop_depth > 0) ? 1 : 2;
+      const char* title = s_ctx->source_title ? s_ctx->source_title : "Trigger";
+      menu_pop_then_replace_deferred(levels, title, menu_page_cc_trigger_slot_create);
+    } else {
+      menu_navigate_back_then_to(pop, s_ctx->source_title, s_ctx->return_page);
+    }
+    return;
+  }
+
+  if (s_ctx && s_ctx->trigger_type == ACTION_TRIGGER_CC &&
+      s_ctx->return_page == menu_page_cc_trigger_slot_create) {
+    uint8_t slot = (uint8_t)(uintptr_t)s_ctx->user_data;
+    if (slot < NUM_CC_TRIGGERS) cc_triggers_focus_slot_set(slot);
+    const char* title = s_ctx->detail_title ? s_ctx->detail_title : "Action";
+    uint8_t levels = (s_ctx->type_picker_pop_depth > 0) ?
+      s_ctx->type_picker_pop_depth : pop;
+    menu_pop_then_replace_deferred(levels, title, action_config_detail_page_create);
+    return;
+  }
+
+  return_to_detail_page(pop);
 }
 
 lv_obj_t* action_config_type_roller_create(void) {

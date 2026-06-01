@@ -22,6 +22,7 @@ struct action_config_context {
   action_config_complete_cb_t on_complete; // Optional callback when done
   void* user_data;                   // Optional user data
   action_trigger_type_t trigger_type; // Trigger type -- drives ALL action/variant filtering via action_is_valid_for_trigger_for() / action_variant_is_valid_for_trigger()
+  uint8_t type_picker_pop_depth;     // Levels to pop before detail after type pick (0 = default 2)
 };
 
 // Initialize action configuration module
@@ -30,6 +31,9 @@ void action_config_init(void);
 // Start action configuration flow - navigates to detail page
 // ctx: configuration context (caller must keep this alive until flow completes)
 void action_config_start(action_config_context_t* ctx);
+
+// Start at the action type picker (for unassigned slots; skips the detail page)
+void action_config_start_type_picker(action_config_context_t* ctx);
 
 // Get the current action config context (for use in rollers)
 action_config_context_t* action_config_get_context(void);

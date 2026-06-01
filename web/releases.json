@@ -1,7 +1,7 @@
 {
-  "generated": "2026-05-31T23:51:51",
+  "generated": "2026-06-01T04:30:53",
   "firmware": [
-    { "version": "0.6", "filename": "storm-summoner-0.6.bin", "date": "2026-05-31" },
+    { "version": "0.6", "filename": "storm-summoner-0.6.bin", "date": "2026-06-01" },
     { "version": "0.5", "filename": "storm-summoner-0.5.bin", "date": "2026-05-26" },
     { "version": "0.4", "filename": "storm-summoner-0.4.bin", "date": "2026-05-22" },
     { "version": "0.3", "filename": "storm-summoner-0.3.bin", "date": "2026-05-15" },
