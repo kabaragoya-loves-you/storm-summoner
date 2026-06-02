@@ -139,6 +139,12 @@ typedef struct scene_t {
   
   // Audio envelope follower configuration (when cv_input_mode = AUDIO)
   audio_config_t audio_config;
+
+  // CV Trigger mode configuration (when cv_input_mode = TRIGGER)
+  action_t cv_trigger_action;
+  uint8_t cv_trigger_threshold;      // 0-100 percent of 0-3.3V range (default 50)
+  uint16_t cv_trigger_debounce_ms;   // 0 = Immediate
+  bool cv_trigger_pressing;          // Runtime gate state
   
   // Velocity mode for continuous input note outputs
   velocity_mode_t expression_velocity_mode;  // For expression note output
@@ -347,6 +353,13 @@ esp_err_t scene_set_cv_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
 velocity_mode_t scene_get_cv_velocity_mode(uint8_t scene_index);
 esp_err_t scene_set_cv_velocity(uint8_t scene_index, uint8_t velocity);
 uint8_t scene_get_cv_velocity(uint8_t scene_index);
+
+// CV Trigger mode configuration (when cv_input_mode = TRIGGER)
+action_t* scene_get_cv_trigger_action(uint8_t scene_index);
+esp_err_t scene_set_cv_trigger_threshold(uint8_t scene_index, uint8_t threshold);
+uint8_t scene_get_cv_trigger_threshold(uint8_t scene_index);
+esp_err_t scene_set_cv_trigger_debounce_ms(uint8_t scene_index, uint16_t debounce_ms);
+uint16_t scene_get_cv_trigger_debounce_ms(uint8_t scene_index);
 
 // Audio envelope follower configuration (when cv_input_mode = AUDIO)
 esp_err_t scene_set_audio_range(uint8_t scene_index, cv_range_t range);

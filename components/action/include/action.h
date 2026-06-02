@@ -536,6 +536,8 @@ static inline void action_engine_modify_seed(action_engine_modify_t* m) {
 
 static inline void action_note_params_seed(action_t* action) {
   if (!action || action->type != ACTION_NOTE) return;
+  action->params.note.note = ACTION_NOTE_RANDOM;
+  action->params.note.velocity = 100;
   action->params.note.voices = 1;
   action->params.note.bass = false;
   action->params.note.random_floor = 36;

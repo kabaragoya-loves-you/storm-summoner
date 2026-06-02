@@ -1,5 +1,7 @@
 #include "menu.h"
 #include "menu_pages.h"
+#include "action_config.h"
+#include "action.h"
 #include "cv.h"
 #include "scene.h"
 #include "curve.h"
@@ -28,7 +30,7 @@ lv_obj_t* menu_page_cv_scene_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_CV_ITEMS 16
+#define MAX_CV_ITEMS 20
 static menu_item_t s_cv_items[MAX_CV_ITEMS];
 
 static char s_mode_label[LABEL_BUFFER_SETS][48];
@@ -55,6 +57,12 @@ static char s_audio_polarity_label[LABEL_BUFFER_SETS][32];
 // LFO modulation labels
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
 static char s_nudge_label[LABEL_BUFFER_SETS][32];
+
+// Trigger mode labels
+static char s_trigger_action_label[LABEL_BUFFER_SETS][64];
+static char s_trigger_threshold_label[LABEL_BUFFER_SETS][32];
+static char s_trigger_debounce_label[LABEL_BUFFER_SETS][32];
+static action_config_context_t s_trigger_action_ctx;
 
 // CC options from device
 typedef struct {
@@ -100,6 +108,7 @@ static const char* get_cv_mode_display_name(input_mode_t mode) {
     case INPUT_MODE_CLOCK_SYNC: return "Clock Sync";
     case INPUT_MODE_AUDIO: return "Audio";
     case INPUT_MODE_NOTE: return "CV/Gate";
+    case INPUT_MODE_TRIGGER: return "Trigger";
     default: return "Unknown";
   }
 }
@@ -188,15 +197,16 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   s_callback_in_progress = true;
   
   // Map index to mode
-  // 0=None, 1=Control Voltage, 2=CV/Gate, 3=Audio
+  // 0=None, 1=Control Voltage, 2=CV/Gate, 3=Audio, 4=Trigger
   input_mode_t modes[] = {
     INPUT_MODE_NONE,
     INPUT_MODE_CV,
     INPUT_MODE_NOTE,
-    INPUT_MODE_AUDIO
+    INPUT_MODE_AUDIO,
+    INPUT_MODE_TRIGGER
   };
   
-  if (selected_index >= 4) {
+  if (selected_index >= 5) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
@@ -222,8 +232,7 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
 }
 
 static lv_obj_t* mode_roller_create(void) {
-  // Options: None, Control Voltage, CV/Gate, Audio
-  static const char* options = "<None>\nControl Voltage\nCV/Gate\nAudio";
+  static const char* options = "<None>\nControl Voltage\nCV/Gate\nAudio\nTrigger";
   
   uint8_t scene_index = scene_get_current_index();
   input_mode_t current = scene_get_cv_input_mode(scene_index);
@@ -234,6 +243,7 @@ static lv_obj_t* mode_roller_create(void) {
     case INPUT_MODE_CV: current_idx = 1; break;
     case INPUT_MODE_NOTE: current_idx = 2; break;
     case INPUT_MODE_AUDIO: current_idx = 3; break;
+    case INPUT_MODE_TRIGGER: current_idx = 4; break;
     default: current_idx = 0; break;
   }
   
@@ -243,6 +253,120 @@ static lv_obj_t* mode_roller_create(void) {
 static void nav_to_mode(void* user_data) {
   (void)user_data;
   menu_navigate_to("Mode", mode_roller_create);
+}
+
+// ============================================================================
+// Trigger Mode: Action, Threshold, Debounce
+// ============================================================================
+
+static void trigger_action_complete(action_config_context_t* ctx, action_t* action) {
+  (void)ctx;
+  (void)action;
+  persist_scene_changes();
+}
+
+static void fill_trigger_action_ctx(void) {
+  uint8_t scene_index = scene_get_current_index();
+  action_t* target = scene_get_cv_trigger_action(scene_index);
+  if (!target) return;
+
+  s_trigger_action_ctx.target_action = target;
+  s_trigger_action_ctx.return_page = menu_page_cv_scene_create;
+  s_trigger_action_ctx.return_depth = 1;
+  s_trigger_action_ctx.type_picker_pop_depth = 0;
+  s_trigger_action_ctx.on_complete = trigger_action_complete;
+  s_trigger_action_ctx.user_data = NULL;
+  s_trigger_action_ctx.trigger_type = ACTION_TRIGGER_CC;
+  s_trigger_action_ctx.detail_title = "CV Trigger";
+  s_trigger_action_ctx.source_title = "CV Trigger";
+}
+
+static void nav_to_trigger_action(void* user_data) {
+  (void)user_data;
+  action_t* target = scene_get_cv_trigger_action(scene_get_current_index());
+  if (!target) return;
+
+  fill_trigger_action_ctx();
+  if (target->type == ACTION_NONE) {
+    s_trigger_action_ctx.type_picker_pop_depth = 1;
+    action_config_start_type_picker(&s_trigger_action_ctx);
+  } else {
+    action_config_start(&s_trigger_action_ctx);
+  }
+}
+
+static void trigger_threshold_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  scene_set_cv_trigger_threshold(scene_get_current_index(), (uint8_t)selected_index);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
+}
+
+static lv_obj_t* trigger_threshold_roller_create(void) {
+  static char options[512];
+  options[0] = '\0';
+  for (int i = 0; i <= 100; i++) {
+    char line[16];
+    snprintf(line, sizeof(line), "%d%%", i);
+    if (i > 0) strcat(options, "\n");
+    strcat(options, line);
+  }
+
+  uint8_t current = scene_get_cv_trigger_threshold(scene_get_current_index());
+  return menu_create_roller_page("Threshold", options, current, trigger_threshold_confirm_cb, NULL);
+}
+
+static void nav_to_trigger_threshold(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Threshold", trigger_threshold_roller_create);
+}
+
+static const uint16_t TRIGGER_DEBOUNCE_VALUES[] = {
+  0, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000
+};
+static const char* TRIGGER_DEBOUNCE_OPTIONS =
+  "Immediate\n50ms\n100ms\n200ms\n300ms\n500ms\n750ms\n1s\n1.5s\n2s";
+
+static uint32_t trigger_debounce_index_for_ms(uint16_t ms) {
+  for (uint32_t i = 0; i < sizeof(TRIGGER_DEBOUNCE_VALUES) / sizeof(TRIGGER_DEBOUNCE_VALUES[0]); i++) {
+    if (TRIGGER_DEBOUNCE_VALUES[i] == ms) return i;
+  }
+  return 0;
+}
+
+static void trigger_debounce_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (selected_index >= sizeof(TRIGGER_DEBOUNCE_VALUES) / sizeof(TRIGGER_DEBOUNCE_VALUES[0])) return;
+  scene_set_cv_trigger_debounce_ms(scene_get_current_index(),
+    TRIGGER_DEBOUNCE_VALUES[selected_index]);
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
+}
+
+static lv_obj_t* trigger_debounce_roller_create(void) {
+  uint16_t current = scene_get_cv_trigger_debounce_ms(scene_get_current_index());
+  uint32_t idx = trigger_debounce_index_for_ms(current);
+  return menu_create_roller_page("Debounce", TRIGGER_DEBOUNCE_OPTIONS, idx,
+    trigger_debounce_confirm_cb, NULL);
+}
+
+static void nav_to_trigger_debounce(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Debounce", trigger_debounce_roller_create);
+}
+
+static void format_trigger_debounce_label(char* buf, size_t len, uint16_t ms) {
+  if (ms == 0) {
+    snprintf(buf, len, "Immediate");
+    return;
+  }
+  if (ms % 1000 == 0) {
+    snprintf(buf, len, "%us", (unsigned)(ms / 1000));
+    return;
+  }
+  if (ms == 1500) {
+    snprintf(buf, len, "1.5s");
+    return;
+  }
+  snprintf(buf, len, "%ums", (unsigned)ms);
 }
 
 // ============================================================================
@@ -1236,6 +1360,37 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         "Expression\nLocked to Gate");
       s_cv_items[item_count++] = (menu_item_t){s_gate_info_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
       
+      break;
+    }
+
+    case INPUT_MODE_TRIGGER: {
+      char action_name[48];
+      action_t* trigger_action = scene_get_cv_trigger_action(scene_index);
+      if (trigger_action && trigger_action->type != ACTION_NONE)
+        action_get_display_name(trigger_action, action_name, sizeof(action_name));
+      else
+        snprintf(action_name, sizeof(action_name), "None");
+
+      snprintf(s_trigger_action_label[buf], sizeof(s_trigger_action_label[buf]),
+        "Action\n%s", action_name);
+      s_cv_items[item_count++] = (menu_item_t){
+        s_trigger_action_label[buf], nav_to_trigger_action, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
+
+      snprintf(s_trigger_threshold_label[buf], sizeof(s_trigger_threshold_label[buf]),
+        "Threshold\n%u%%", (unsigned)scene_get_cv_trigger_threshold(scene_index));
+      s_cv_items[item_count++] = (menu_item_t){
+        s_trigger_threshold_label[buf], nav_to_trigger_threshold, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
+
+      char debounce_str[16];
+      format_trigger_debounce_label(debounce_str, sizeof(debounce_str),
+        scene_get_cv_trigger_debounce_ms(scene_index));
+      snprintf(s_trigger_debounce_label[buf], sizeof(s_trigger_debounce_label[buf]),
+        "Debounce\n%s", debounce_str);
+      s_cv_items[item_count++] = (menu_item_t){
+        s_trigger_debounce_label[buf], nav_to_trigger_debounce, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
       break;
     }
     

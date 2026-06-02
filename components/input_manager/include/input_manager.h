@@ -70,4 +70,9 @@ uint8_t input_get_fixed_velocity(void);
  */
 void input_manager_release_active_notes(void);
 
+/**
+ * Reset CV Trigger debounce and release any held action on scene change
+ */
+void input_manager_cv_trigger_scene_changed(void);
+
 #endif /* _INPUT_MANAGER_H */

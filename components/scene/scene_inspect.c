@@ -576,6 +576,19 @@ static void append_cv(scene_inspect_buf_t *b, const scene_t *scene,
     return;
   }
 
+  if (scene->cv_input_mode == INPUT_MODE_TRIGGER) {
+    scene_inspect_buf_append(b, "CV: %s\n", jack_connection_status(cv_connected));
+    scene_inspect_buf_append(b, "Trigger (>= %u%%)\n",
+      (unsigned)scene->cv_trigger_threshold);
+    if (scene->cv_trigger_debounce_ms == 0)
+      scene_inspect_buf_append(b, "Debounce: Immediate\n");
+    else
+      scene_inspect_buf_append(b, "Debounce: %ums\n",
+        (unsigned)scene->cv_trigger_debounce_ms);
+    append_inspect_action(b, "Action", &scene->cv_trigger_action, scene_index, true, true);
+    return;
+  }
+
   if (scene->cv_input_mode == INPUT_MODE_CV) {
     append_cv_mapping_block(b, "CV", cv_connected, &scene->cv, scene_index,
       scene->cv_tempo_nudge_pct);

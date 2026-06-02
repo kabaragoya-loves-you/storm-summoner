@@ -701,16 +701,8 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->variant = VARIANT_PLAY;
     }
 
-    if (new_type == ACTION_NOTE) {
-      action->params.note.note = 60;
-      action->params.note.velocity = 100;
-      action->params.note.voices = 1;
-      action->params.note.bass = false;
-      action->params.note.random_floor = 36;
-      action->params.note.random_ceiling = 96;
-      action->params.note.aftertouch = true;
-      action->params.note.active_count = 0;
-    }
+    if (new_type == ACTION_NOTE)
+      action_note_params_seed(action);
 
     if (new_type == ACTION_PIANO_PEDAL) {
       // Default to Damper (CC 64); the Pedal roller covers the other four.
@@ -3394,8 +3386,7 @@ static const char* note_configured_display(uint8_t note) {
 }
 
 static uint32_t note_roller_current_index(uint8_t note) {
-  if (note == ACTION_NOTE_RANDOM) return 0;
-  if (note < 36) note = 60;
+  if (note == ACTION_NOTE_RANDOM || note < 36) return 0;
   if (note > 96) note = 96;
   return (uint32_t)(note - 36 + 1);
 }

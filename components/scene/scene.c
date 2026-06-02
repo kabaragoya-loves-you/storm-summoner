@@ -245,6 +245,12 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->audio_config.release_ms = 200;               // Medium release
   scene->audio_config.threshold = 5;                  // Small noise gate
   scene->audio_config.polarity = AUDIO_POLARITY_ATTRACT;  // Louder = higher value
+
+  // CV Trigger mode defaults (when cv_input_mode = TRIGGER)
+  scene->cv_trigger_action.type = ACTION_NONE;
+  scene->cv_trigger_threshold = 50;
+  scene->cv_trigger_debounce_ms = 0;
+  scene->cv_trigger_pressing = false;
   
   // Velocity modes for other continuous inputs (all default to fixed)
   scene->expression_velocity_mode = VELOCITY_MODE_FIXED;
@@ -1981,6 +1987,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     new_scene->expression_mode = EXPRESSION_MODE_NONE;
     new_scene->expression.enabled = false;
   }
+  input_manager_cv_trigger_scene_changed();
   input_set_mode(new_scene->cv_input_mode);
   expression_set_mode(new_scene->expression_mode);
   
@@ -3261,6 +3268,9 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
     scene->cv.enabled = false;
   } else if (mode == INPUT_MODE_CV) {
     scene->cv.enabled = true;
+  } else if (mode == INPUT_MODE_TRIGGER) {
+    scene->cv.enabled = false;
+    scene->cv_trigger_pressing = false;
   }
   // INPUT_MODE_NOTE: enabled is managed by input_manager
   // INPUT_MODE_CLOCK_SYNC: CV is used for tempo, not continuous routing
@@ -3288,7 +3298,8 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   const char* mode_str = (mode == INPUT_MODE_NONE) ? "none" :
                          (mode == INPUT_MODE_CV) ? "cv" :
                          (mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
-                         (mode == INPUT_MODE_AUDIO) ? "audio" : "note";
+                         (mode == INPUT_MODE_AUDIO) ? "audio" :
+                         (mode == INPUT_MODE_TRIGGER) ? "trigger" : "note";
   ESP_LOGI(TAG, "Scene %d CV input mode set to %s", scene_index + 1, mode_str);
   return ESP_OK;
 }
@@ -3296,6 +3307,45 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
 input_mode_t scene_get_cv_input_mode(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
   return scene ? scene->cv_input_mode : INPUT_MODE_NONE;
+}
+
+action_t* scene_get_cv_trigger_action(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? &scene->cv_trigger_action : NULL;
+}
+
+esp_err_t scene_set_cv_trigger_threshold(uint8_t scene_index, uint8_t threshold) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (threshold > 100) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->cv_trigger_threshold = threshold;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_cv_trigger_threshold(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->cv_trigger_threshold : 50;
+}
+
+esp_err_t scene_set_cv_trigger_debounce_ms(uint8_t scene_index, uint16_t debounce_ms) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (debounce_ms > 2000) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->cv_trigger_debounce_ms = debounce_ms;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint16_t scene_get_cv_trigger_debounce_ms(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->cv_trigger_debounce_ms : 0;
 }
 
 esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
@@ -4711,12 +4761,7 @@ static action_t json_to_action(cJSON* obj) {
   
   // Parse note actions
   if (action.type == ACTION_NOTE) {
-    action.params.note.voices = 1;
-    action.params.note.bass = false;
-    action.params.note.random_floor = 36;
-    action.params.note.random_ceiling = 96;
-    action.params.note.aftertouch = true;
-    action.params.note.active_count = 0;
+    action_note_params_seed(&action);
     cJSON* note = cJSON_GetObjectItem(obj, "note");
     cJSON* velocity = cJSON_GetObjectItem(obj, "velocity");
     if (note) action.params.note.note = (uint8_t)note->valueint;
@@ -6084,7 +6129,8 @@ static cJSON* scene_to_json(const scene_t* scene) {
   const char* cv_mode_str = (scene->cv_input_mode == INPUT_MODE_NONE) ? "none" :
                             (scene->cv_input_mode == INPUT_MODE_CV) ? "cv" :
                             (scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
-                            (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" : "note";
+                            (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" :
+                            (scene->cv_input_mode == INPUT_MODE_TRIGGER) ? "trigger" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
   
   // Serialize velocity mode settings (helper inline)
@@ -6094,6 +6140,12 @@ static cJSON* scene_to_json(const scene_t* scene) {
   // CV velocity mode and value
   cJSON_AddStringToObject(root, "cv_velocity_mode", VEL_MODE_STR(scene->cv_velocity_mode));
   cJSON_AddNumberToObject(root, "cv_velocity", scene->cv_velocity);
+
+  // CV Trigger mode configuration
+  cJSON_AddNumberToObject(root, "cv_trigger_threshold", scene->cv_trigger_threshold);
+  cJSON_AddNumberToObject(root, "cv_trigger_debounce_ms", scene->cv_trigger_debounce_ms);
+  cJSON* cv_trigger_action_json = action_to_json(&scene->cv_trigger_action);
+  if (cv_trigger_action_json) cJSON_AddItemToObject(root, "cv_trigger_action", cv_trigger_action_json);
   
   // Audio envelope follower configuration
   cJSON* audio_config = cJSON_CreateObject();
@@ -6488,6 +6540,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     else if (strcmp(mode_str, "clock_sync") == 0) scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
     else if (strcmp(mode_str, "audio") == 0) scene->cv_input_mode = INPUT_MODE_AUDIO;
     else if (strcmp(mode_str, "note") == 0) scene->cv_input_mode = INPUT_MODE_NOTE;
+    else if (strcmp(mode_str, "trigger") == 0) scene->cv_input_mode = INPUT_MODE_TRIGGER;
     else scene->cv_input_mode = INPUT_MODE_CV;
   }
   
@@ -6497,6 +6550,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     scene->cv.enabled = false;
   } else if (scene->cv_input_mode == INPUT_MODE_CV) {
     scene->cv.enabled = true;
+  } else if (scene->cv_input_mode == INPUT_MODE_TRIGGER) {
+    scene->cv.enabled = false;
+    scene->cv_trigger_pressing = false;
   }
   // INPUT_MODE_NOTE: enabled is managed by input_manager at runtime
   // INPUT_MODE_CLOCK_SYNC: CV is used for tempo, not continuous routing
@@ -6521,6 +6577,33 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   if (cv_vel && cJSON_IsNumber(cv_vel)) {
     int vel = cv_vel->valueint;
     if (vel >= 1 && vel <= 127) scene->cv_velocity = (uint8_t)vel;
+  }
+
+  // Deserialize CV Trigger mode configuration
+  cJSON* cv_trigger_thresh = cJSON_GetObjectItem(root, "cv_trigger_threshold");
+  if (cv_trigger_thresh && cJSON_IsNumber(cv_trigger_thresh)) {
+    int val = cv_trigger_thresh->valueint;
+    if (val < 0) val = 0;
+    if (val > 100) val = 100;
+    scene->cv_trigger_threshold = (uint8_t)val;
+  }
+  cJSON* cv_trigger_debounce = cJSON_GetObjectItem(root, "cv_trigger_debounce_ms");
+  if (cv_trigger_debounce && cJSON_IsNumber(cv_trigger_debounce)) {
+    int val = cv_trigger_debounce->valueint;
+    if (val < 0) val = 0;
+    if (val > 2000) val = 2000;
+    scene->cv_trigger_debounce_ms = (uint16_t)val;
+  }
+  cJSON* cv_trigger_action_obj = cJSON_GetObjectItem(root, "cv_trigger_action");
+  if (cv_trigger_action_obj) {
+    action_t action = json_to_action(cv_trigger_action_obj);
+    if (action.type != ACTION_NONE &&
+        !action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_CC)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' for cv_trigger_action",
+        action_type_to_string(action.type));
+      action.type = ACTION_NONE;
+    }
+    scene->cv_trigger_action = action;
   }
   
   // Deserialize audio envelope follower configuration

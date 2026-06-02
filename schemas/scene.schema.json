@@ -190,7 +190,7 @@
     },
     "cv_input_mode": {
       "type": "string",
-      "enum": ["none", "cv", "clock_sync", "audio", "note"],
+      "enum": ["none", "cv", "clock_sync", "audio", "note", "trigger"],
       "default": "none",
       "description": "CV input interpretation mode"
     },
@@ -206,6 +206,24 @@
       "maximum": 127,
       "default": 100,
       "description": "Fixed velocity value for CV NOTE mode"
+    },
+    "cv_trigger_threshold": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "Threshold percent (0-100) for CV Trigger mode"
+    },
+    "cv_trigger_debounce_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2000,
+      "default": 0,
+      "description": "Debounce time in ms before CV Trigger fires (0 = Immediate)"
+    },
+    "cv_trigger_action": {
+      "$ref": "#/definitions/action",
+      "description": "Action for CV Trigger mode; omit or type=none when unassigned"
     },
     "expression_velocity_mode": {
       "type": "string",

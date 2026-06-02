@@ -9,9 +9,12 @@
 #include "midi_messages.h"
 #include "midi_local_output.h"
 #include "device_config.h"
+#include "ui.h"
 #include "driver/gpio.h"
 #include "io.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "action.h"
 
 #define TAG "INPUT_MGR"
 
@@ -33,9 +36,82 @@ static bool s_note_pending = false;          // True while waiting for CV to set
 static uint8_t s_current_cv_note = 60;  // Current CV pitch reading
 static uint8_t s_active_note = 60;      // The note that was sent in last Note On
 
+// TRIGGER mode state
+static esp_timer_handle_t s_trigger_debounce_timer = NULL;
+static bool s_trigger_armed = false;
+
 // Forward declarations
 static void note_mode_cv_handler(const event_t* event, void* context);
 static void note_mode_gate_handler(const event_t* event, void* context);
+static void trigger_mode_cv_handler(const event_t* event, void* context);
+static void trigger_debounce_timeout_cb(void* arg);
+
+static uint8_t trigger_threshold_counts(const scene_t* scene) {
+  return (uint8_t)((scene->cv_trigger_threshold * 127 + 50) / 100);
+}
+
+static void trigger_cancel_debounce(void) {
+  s_trigger_armed = false;
+  if (s_trigger_debounce_timer) esp_timer_stop(s_trigger_debounce_timer);
+}
+
+static bool cv_trigger_blocked(void) {
+  return ui_is_in_programming_mode();
+}
+
+static void trigger_fire_press(scene_t* scene) {
+  if (cv_trigger_blocked()) return;
+  uint8_t value = cv_get_midi_value();
+  action_execute(&scene->cv_trigger_action, value, true);
+  scene->cv_trigger_pressing = true;
+}
+
+static void trigger_fire_release(scene_t* scene) {
+  if (cv_trigger_blocked()) {
+    scene->cv_trigger_pressing = false;
+    return;
+  }
+  action_t* action = &scene->cv_trigger_action;
+  if (scene->cv_trigger_pressing && action_requires_hold_for(action))
+    action_execute(action, 0, false);
+  scene->cv_trigger_pressing = false;
+}
+
+static void trigger_mode_disable(void) {
+  trigger_cancel_debounce();
+  scene_t* scene = scene_get_current();
+  if (scene && scene->cv_trigger_pressing) trigger_fire_release(scene);
+  event_bus_unsubscribe(EVENT_CV_VALUE, trigger_mode_cv_handler);
+  cv_disable();
+}
+
+static esp_err_t trigger_mode_enable(void) {
+  if (!s_trigger_debounce_timer) {
+    const esp_timer_create_args_t args = {
+      .callback = trigger_debounce_timeout_cb,
+      .name = "cv_trigger_deb"
+    };
+    esp_err_t err = esp_timer_create(&args, &s_trigger_debounce_timer);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to create CV trigger debounce timer");
+      return err;
+    }
+  }
+
+  cv_set_mode(CV_MODE_LINEAR);
+  cv_enable();
+  event_bus_subscribe(EVENT_CV_VALUE, trigger_mode_cv_handler, NULL);
+  ESP_LOGI(TAG, "Enabled CV Trigger mode");
+  return ESP_OK;
+}
+
+void input_manager_cv_trigger_scene_changed(void) {
+  trigger_cancel_debounce();
+  if (s_current_mode != INPUT_MODE_TRIGGER) return;
+
+  scene_t* scene = scene_get_current();
+  if (scene && scene->cv_trigger_pressing) trigger_fire_release(scene);
+}
 
 esp_err_t input_manager_init(void) {
   if (s_initialized) return ESP_OK;
@@ -97,6 +173,9 @@ esp_err_t input_set_mode(input_mode_t mode) {
       event_bus_unsubscribe(EVENT_EXPRESSION_GATE, note_mode_gate_handler);
       s_note_mode_hw_enabled = false;
       s_note_active = false;
+      break;
+    case INPUT_MODE_TRIGGER:
+      trigger_mode_disable();
       break;
   }
   
@@ -182,6 +261,10 @@ esp_err_t input_set_mode(input_mode_t mode) {
       }
       break;
     }
+
+    case INPUT_MODE_TRIGGER:
+      trigger_mode_enable();
+      break;
   }
   
   return ESP_OK;
@@ -234,6 +317,13 @@ void input_manager_cable_changed(bool connected) {
       cv_disable_audio_mode();
       cv_disable();
       ESP_LOGI(TAG, "CV cable disconnected - disabled audio envelope follower");
+    }
+
+    if (s_current_mode == INPUT_MODE_TRIGGER) {
+      trigger_cancel_debounce();
+      scene_t* scene = scene_get_current();
+      if (scene && scene->cv_trigger_pressing) trigger_fire_release(scene);
+      ESP_LOGI(TAG, "CV cable disconnected - released CV trigger");
     }
   } else {
     // Cable connected - re-enable current mode
@@ -288,6 +378,11 @@ void input_manager_cable_changed(bool connected) {
         }
         break;
       }
+
+      case INPUT_MODE_TRIGGER:
+        cv_set_mode(CV_MODE_LINEAR);
+        cv_enable();
+        break;
     }
   }
 }
@@ -355,6 +450,55 @@ bool input_get_cable_detection_enabled(void) {
 }
 
 // NOTE mode event handlers
+static void trigger_debounce_timeout_cb(void* arg) {
+  (void)arg;
+  s_trigger_armed = false;
+  if (s_current_mode != INPUT_MODE_TRIGGER) return;
+  if (cv_trigger_blocked()) return;
+
+  scene_t* scene = scene_get_current();
+  if (!scene || scene->cv_trigger_action.type == ACTION_NONE) return;
+  if (scene->cv_trigger_pressing) return;
+
+  if (cv_get_midi_value() >= trigger_threshold_counts(scene))
+    trigger_fire_press(scene);
+}
+
+static void trigger_mode_cv_handler(const event_t* event, void* context) {
+  (void)context;
+  if (event->type != EVENT_CV_VALUE) return;
+  if (s_current_mode != INPUT_MODE_TRIGGER) return;
+
+  scene_t* scene = scene_get_current();
+  if (!scene || scene->cv_trigger_action.type == ACTION_NONE) return;
+
+  if (cv_trigger_blocked()) {
+    trigger_cancel_debounce();
+    return;
+  }
+
+  bool above = event->data.cv.midi_value >= trigger_threshold_counts(scene);
+
+  if (!above) {
+    trigger_cancel_debounce();
+    if (scene->cv_trigger_pressing) trigger_fire_release(scene);
+    return;
+  }
+
+  if (scene->cv_trigger_pressing) return;
+
+  if (scene->cv_trigger_debounce_ms == 0) {
+    trigger_fire_press(scene);
+    return;
+  }
+
+  if (!s_trigger_armed) {
+    s_trigger_armed = true;
+    esp_timer_start_once(s_trigger_debounce_timer,
+      (uint64_t)scene->cv_trigger_debounce_ms * 1000ULL);
+  }
+}
+
 static void note_mode_cv_handler(const event_t* event, void* context) {
   if (event->type != EVENT_CV_VALUE) return;
   
