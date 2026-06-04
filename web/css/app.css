@@ -969,6 +969,160 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
   flex-shrink: 0;
 }
 
+.scene-programming-banner {
+  flex-shrink: 0;
+  margin-bottom: 0.5rem;
+}
+
+.scene-editor-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-left: 0.5rem;
+}
+
+.scene-editor-status {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-right: 0.5rem;
+}
+
+.scene-edit-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.scene-editor-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.25rem 0;
+}
+
+.scene-editor-loading,
+.scene-editor-error {
+  padding: 3rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.scene-editor-loading wa-spinner {
+  font-size: 2rem;
+}
+
+.scene-editor-error {
+  color: var(--error);
+}
+
+.scene-editor-scroll.scene-editor-locked {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.scene-editor-section {
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+
+.scene-editor-section summary {
+  padding: 0.6rem 0.85rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.scene-editor-section-body {
+  padding: 0.5rem 0.85rem 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.scene-editor-divider {
+  margin: 1rem 0 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.scene-editor-flat {
+  margin-bottom: 1rem;
+}
+
+.scene-editor-flat-title {
+  margin: 0 0 0.65rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.scene-editor-flat-body {
+  padding: 0 0.15rem;
+}
+
+.scene-field-row {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin-bottom: 0.45rem;
+}
+
+.scene-field-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.scene-field-control .scene-select,
+.scene-field-control .scene-input {
+  width: 100%;
+  max-width: 20rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-deep);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.scene-validation-box {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(220, 80, 80, 0.12);
+  border: 1px solid var(--error);
+  font-size: 0.8rem;
+  color: var(--error);
+}
+
+.scene-json-textarea {
+  width: 100%;
+  min-height: 20rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+.scene-action-slot,
+.scene-pad-row {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.scene-action-slot h4,
+.scene-pad-row h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
 .scene-edit-placeholder {
   flex: 1;
   display: flex;

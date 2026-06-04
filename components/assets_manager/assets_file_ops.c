@@ -773,6 +773,87 @@ esp_err_t assets_recursive_delete(const char *path) {
 }
 
 // ============================================================================
+// ZIP archive policy (download + upload)
+// ============================================================================
+
+static bool assets_zip_leaf_is_manifest(const char *path) {
+  if (!path) return false;
+  const char *leaf = strrchr(path, '/');
+  leaf = leaf ? leaf + 1 : path;
+  return strcasecmp(leaf, "manifest.json") == 0;
+}
+
+bool assets_zip_skip_archive_path(const char *archive_relative_path) {
+  if (!archive_relative_path || !archive_relative_path[0]) return true;
+  if (assets_zip_leaf_is_manifest(archive_relative_path)) return true;
+  if (strcmp(archive_relative_path, "cache") == 0 ||
+      strncmp(archive_relative_path, "cache/", 6) == 0) {
+    return true;
+  }
+  return false;
+}
+
+static bool assets_zip_entry_unsafe(const char *zip_entry) {
+  if (!zip_entry || !zip_entry[0]) return true;
+  if (zip_entry[0] == '/' || zip_entry[0] == '\\') return true;
+  if (strchr(zip_entry, '\\')) return true;
+  if (strstr(zip_entry, "..")) return true;
+  return false;
+}
+
+static bool assets_path_under_prefix(const char *full, const char *prefix) {
+  if (!full || !prefix) return false;
+  size_t plen = strlen(prefix);
+  if (strncmp(full, prefix, plen) != 0) return false;
+  if (full[plen] == '\0') return true;
+  if (prefix[plen - 1] == '/') return true;
+  return full[plen] == '/';
+}
+
+static bool assets_zip_skip_cache_extract_entry(const char *zip_entry) {
+  const char *p = zip_entry;
+  while (*p == '/') p++;
+  if (!*p) return false;
+  return strcmp(p, "cache") == 0 || strncmp(p, "cache/", 6) == 0;
+}
+
+// At userdata root, ignore ZIP directory entries that are only "scenes", "devices",
+// or "cache" (no nested path). mkdir on an existing tree is harmless, but skipping
+// avoids pointless no-op dirs and blocks a zip that tries to "replace" a folder
+// with an empty shell. File entries under those paths (scenes/foo.json, etc.)
+// still extract and merge (last write wins).
+static bool assets_zip_skip_lone_protected_root_dir(const char *dest_path,
+    const char *zip_entry) {
+  if (strcmp(dest_path, USERDATA_BASE_PATH) != 0) return false;
+
+  const char *p = zip_entry;
+  while (*p == '/') p++;
+  if (!*p) return true;
+
+  const char *seg_end = p;
+  while (*seg_end && *seg_end != '/') seg_end++;
+  const char *rest = seg_end;
+  while (*rest == '/') rest++;
+  if (*rest != '\0') return false;
+
+  size_t seg_len = (size_t)(seg_end - p);
+  static const char *protected[] = { "cache", "devices", "scenes" };
+  for (size_t i = 0; i < sizeof(protected) / sizeof(protected[0]); i++) {
+    size_t blen = strlen(protected[i]);
+    if (seg_len == blen && strncmp(p, protected[i], seg_len) == 0) return true;
+  }
+  return false;
+}
+
+bool assets_is_blocked_extract_dest(const char *full_dest) {
+  if (!full_dest) return true;
+  static const char cache_root[] = USERDATA_BASE_PATH "/cache";
+  size_t clen = strlen(cache_root);
+  if (strncmp(full_dest, cache_root, clen) != 0) return false;
+  return full_dest[clen] == '\0' || full_dest[clen] == '/';
+}
+
+// ============================================================================
 // ZIP extraction (from PSRAM buffer to filesystem)
 // ============================================================================
 
@@ -817,24 +898,44 @@ esp_err_t assets_extract_zip(const uint8_t *zip_data, size_t zip_size, const cha
       ESP_LOGW(TAG, "Failed to stat ZIP entry %d", i);
       continue;
     }
-    
-    // Check path length before building full path
+
+    const char *entry_name = file_stat.m_filename;
+    if (assets_zip_entry_unsafe(entry_name)) {
+      ESP_LOGW(TAG, "Skipping unsafe ZIP path: %s", entry_name);
+      continue;
+    }
+    if (assets_zip_leaf_is_manifest(entry_name)) {
+      ESP_LOGI(TAG, "Skipping manifest.json in ZIP: %s", entry_name);
+      continue;
+    }
+    if (assets_zip_skip_cache_extract_entry(entry_name)) {
+      ESP_LOGI(TAG, "Skipping cache entry in ZIP: %s", entry_name);
+      continue;
+    }
+
     size_t dest_len = strlen(dest_path);
-    size_t name_len = strlen(file_stat.m_filename);
+    size_t name_len = strlen(entry_name);
     if (dest_len + 1 + name_len >= MAX_PATH_LEN) {
-      ESP_LOGW(TAG, "Path too long, skipping: %s", file_stat.m_filename);
+      ESP_LOGW(TAG, "Path too long, skipping: %s", entry_name);
+      continue;
+    }
+
+    int n = snprintf(full_path, MAX_PATH_LEN, "%s/%s", dest_path, entry_name);
+    if (n < 0 || (size_t)n >= MAX_PATH_LEN) {
+      ESP_LOGW(TAG, "Path too long, skipping: %s", entry_name);
+      continue;
+    }
+    if (!assets_path_under_prefix(full_path, dest_path)) {
+      ESP_LOGW(TAG, "ZIP path escapes destination, skipping: %s", entry_name);
       continue;
     }
     
-    // Build destination path (length already validated above)
-    // Copy in two steps to avoid format-truncation warning
-    strcpy(full_path, dest_path);
-    strcat(full_path, "/");
-    strcat(full_path, file_stat.m_filename);
-    
     // Check if it's a directory
     if (mz_zip_reader_is_file_a_directory(zip, i)) {
-      // Create directory
+      if (assets_zip_skip_lone_protected_root_dir(dest_path, entry_name)) {
+        ESP_LOGI(TAG, "Skipping lone protected root dir in ZIP: %s", entry_name);
+        continue;
+      }
       mkdir(full_path, 0755);
       ESP_LOGD(TAG, "Created directory: %s", full_path);
       continue;

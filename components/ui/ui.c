@@ -1,5 +1,6 @@
 #include "lvgl.h"
 #include "ui.h"
+#include "usb_cdc_update.h"
 #include "shared_canvas_buffer.h"
 #include "inspect_config.h"
 #include "inspect_overlay.h"
@@ -462,7 +463,8 @@ void ui_set_app_mode(app_mode_t mode) {
   const char* new_name = (mode < 3) ? mode_names[mode] : "Unknown";
   
   ESP_LOGI(TAG, "App mode changed: %s -> %s", prev_name, new_name);
-  
+  usb_cdc_notify_programming(mode == APP_MODE_PROGRAMMING);
+
   // Handle entering Programming mode (but NOT when returning from screensaver)
   // When returning from screensaver, ui_reclaim_canvas_buffer will restore menu/touchwheel
   if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING

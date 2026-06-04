@@ -9,6 +9,7 @@ application.register(
       'refreshBtn',
       'newFolderBtn',
       'uploadZipBtn',
+      'downloadZipBtn',
       'zipInput',
       'uploadZone',
       'fileInput',
@@ -28,18 +29,42 @@ application.register(
       'readonlyBanner'
     ]
 
-    // Roots known to the device. Mutating commands are only allowed under
-    // USERDATA_ROOT; ASSETS_ROOT is replaced wholesale by the Assets OTA flow.
-    // Keep these in sync with components/assets_manager/include/assets_manager.h
-    // (ASSETS_BASE_PATH / USERDATA_BASE_PATH).
+    // Roots known to the device. The Assets tab shows / as the userdata root;
+    // commands are translated to USERDATA_BASE_PATH behind the scenes.
+    // ASSETS_ROOT is replaced wholesale by the Assets OTA flow.
     static USERDATA_ROOT = '/userdata'
     static ASSETS_ROOT = '/assets'
+    static DISPLAY_ROOT = '/'
     static ASSETS_MODE_TABS = new Set(['pedals', 'assets'])
 
+    /** UI path (/) -> device path (/userdata). */
+    toDevicePath (displayPath) {
+      const p = displayPath ?? this.constructor.DISPLAY_ROOT
+      if (p === '/' || p === '') return this.constructor.USERDATA_ROOT
+      if (p === this.constructor.USERDATA_ROOT ||
+          p.startsWith(`${this.constructor.USERDATA_ROOT}/`)) {
+        return p
+      }
+      if (p.startsWith('/')) {
+        return `${this.constructor.USERDATA_ROOT}${p}`
+      }
+      return `${this.constructor.USERDATA_ROOT}/${p}`
+    }
+
+    /** Device or legacy UI path -> display path rooted at / */
+    toDisplayPath (path) {
+      const root = this.constructor.USERDATA_ROOT
+      if (!path || path === root || path === `${root}/`) {
+        return this.constructor.DISPLAY_ROOT
+      }
+      if (path.startsWith(`${root}/`)) {
+        return path.slice(root.length) || this.constructor.DISPLAY_ROOT
+      }
+      return path
+    }
+
     connect () {
-      // Default to the writable root so users land in a usable view rather
-      // than staring at the two-root index they have to click into.
-      this.currentPath = this.constructor.USERDATA_ROOT
+      this.currentPath = this.constructor.DISPLAY_ROOT
       this.files = []
       this.inAssetsMode = false
       this.renameTarget = null
@@ -81,6 +106,7 @@ application.register(
       if (!connected) {
         this.newFolderBtnTarget.disabled = true
         this.uploadZipBtnTarget.disabled = true
+        if (this.hasDownloadZipBtnTarget) this.downloadZipBtnTarget.disabled = true
         this.inAssetsMode = false
       } else {
         this.applyWritableState()
@@ -89,14 +115,31 @@ application.register(
 
     isWritablePath (path) {
       if (!path) return false
-      const root = this.constructor.USERDATA_ROOT
-      return path === root || path.startsWith(root + '/')
+      const display = this.toDisplayPath(path)
+      return display !== this.constructor.ASSETS_ROOT &&
+        !display.startsWith(`${this.constructor.ASSETS_ROOT}/`)
     }
 
     isCurrentPathWritable () {
-      // The two-root index ('/') is itself read-only — you can only descend.
-      if (this.currentPath === '/' || this.currentPath === '') return false
+      if (this.currentPath === '/' || this.currentPath === '') return true
       return this.isWritablePath(this.currentPath)
+    }
+
+    isHiddenEntry (file, atRoot) {
+      if (!file?.name || file.name.startsWith('.')) return true
+      if (file.name === 'manifest.json') return true
+      if (atRoot && file.type === 'dir' && file.name === 'cache') return true
+      return false
+    }
+
+    isProtectedFilename (name) {
+      return name === 'manifest.json'
+    }
+
+    isManifestProtectedPath (displayPath) {
+      const p = this.toDisplayPath(displayPath)
+      return p === '/scenes' || p.startsWith('/scenes/') ||
+        p === '/devices' || p.startsWith('/devices/')
     }
 
     // Mirrors button-disable + read-only banner state to the current path.
@@ -105,6 +148,9 @@ application.register(
       const writable = this.isCurrentPathWritable() && this.connection.isConnected
       this.newFolderBtnTarget.disabled = !writable
       this.uploadZipBtnTarget.disabled = !writable
+      if (this.hasDownloadZipBtnTarget) {
+        this.downloadZipBtnTarget.disabled = !this.connection.isConnected
+      }
       if (this.hasUploadZoneTarget) {
         this.uploadZoneTarget.classList.toggle('disabled', !writable)
       }
@@ -156,9 +202,10 @@ application.register(
         }
         this.inAssetsMode = true
         this.log('Assets mode ready', 'success')
-        await this.navigateTo({
-          currentTarget: { dataset: { path: this.constructor.USERDATA_ROOT } }
-        })
+        this.currentPath = this.constructor.DISPLAY_ROOT
+        this.updateBreadcrumb()
+        this.applyWritableState()
+        await this.loadDirectoryBody()
         await this.loadStatsBody()
       } catch (err) {
         this.log(`Assets mode failed: ${err.message}`, 'error')
@@ -166,11 +213,44 @@ application.register(
     }
 
     async sendCommand (cmd, timeout = 30000) {
-      return this.connection.runSerialTask(() =>
-        this.connection._sendCommandImpl(cmd, timeout))
+      return this.connection.sendCommand(cmd, timeout)
     }
 
-    // Device response shape:
+    async loadDirectoryBody () {
+      const devicePath = this.toDevicePath(this.currentPath)
+      const response = await this.connection._sendCommandImpl(`LS ${devicePath}`)
+
+      if (!response || response.startsWith('ERROR')) {
+        this.log(response || 'Empty LS response', 'error')
+        return
+      }
+
+      this.files = JSON.parse(response)
+      if (!Array.isArray(this.files)) {
+        this.files = [this.files]
+      }
+      this.renderFileList()
+
+      const fileCount = this.files.filter(f => !this.isHiddenEntry(
+        f, this.toDisplayPath(this.currentPath) === '/'
+      ) && f.type === 'file').length
+      const dirCount = this.files.filter(f => !this.isHiddenEntry(
+        f, this.toDisplayPath(this.currentPath) === '/'
+      ) && f.type === 'dir').length
+      this.fileCountTarget.textContent =
+        `${fileCount} files, ${dirCount} folders`
+    }
+
+    // LS dispatches to the device under /userdata; the UI shows / as root.
+    async loadDirectory () {
+      try {
+        await this.connection.runSerialTask(() => this.loadDirectoryBody())
+      } catch (err) {
+        this.log(`Failed to list directory: ${err.message}`, 'error')
+      }
+    }
+
+    // Device response shape for DF:
     //   {"assets":{"total":N,"used":N,"free":N},
     //    "userdata":{"total":N,"used":N,"free":N,"available":bool}}
     // userdata.available is false when the userdata partition mount fails;
@@ -222,44 +302,19 @@ application.register(
       await this.loadDirectory()
     }
 
-    // Breadcrumb root is a literal "/" link that takes the user to the
-    // two-root index; from there they descend into either /assets or
-    // /userdata. Each prefix segment of currentPath becomes a clickable crumb.
+    // Breadcrumb: / is the userdata root; segments are display paths.
     updateBreadcrumb () {
+      const display = this.toDisplayPath(this.currentPath)
       let html = `<button data-action="click->assets#navigateTo" data-path="/">/</button>`
-      const parts = this.currentPath.split('/').filter(p => p)
+      const parts = display.split('/').filter(p => p)
       let accumulated = ''
-      for (const part of parts) {
-        accumulated += '/' + part
-        html += `<span>/</span>`
-          + `<button data-action="click->assets#navigateTo"`
-          + ` data-path="${accumulated}">${part}</button>`
+      for (let i = 0; i < parts.length; i++) {
+        accumulated += '/' + parts[i]
+        if (i > 0) html += `<span>/</span>`
+        html += `<button data-action="click->assets#navigateTo"`
+          + ` data-path="${accumulated}">${parts[i]}</button>`
       }
       this.breadcrumbTarget.innerHTML = html
-    }
-
-    // LS dispatches to the device, which has special-case behavior for "/"
-    // (returns the two synthetic mount entries `assets` and `userdata`). The
-    // entries gain a `readonly` flag and the userdata entry gets `available`.
-    async loadDirectory () {
-      try {
-        const response = await this.sendCommand(`LS ${this.currentPath}`)
-
-        if (response.startsWith('ERROR')) {
-          this.log(response, 'error')
-          return
-        }
-
-        this.files = JSON.parse(response)
-        this.renderFileList()
-
-        const fileCount = this.files.filter(f => f.type === 'file').length
-        const dirCount = this.files.filter(f => f.type === 'dir').length
-        this.fileCountTarget.textContent =
-          `${fileCount} files, ${dirCount} folders`
-      } catch (err) {
-        this.log(`Failed to list directory: ${err.message}`, 'error')
-      }
     }
 
     renderFileList () {
@@ -285,37 +340,40 @@ application.register(
         return
       }
 
-      const sorted = [...this.files]
-        .filter(f => !f.name.startsWith('.'))
-        .sort((a, b) => {
+      const sorted = [...this.files].sort((a, b) => {
           if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
           return a.name.localeCompare(b.name)
         })
 
-      const atRoot = this.currentPath === '/' || this.currentPath === ''
+      const atRoot = this.toDisplayPath(this.currentPath) === '/'
+      const visible = sorted.filter(f => !this.isHiddenEntry(f, atRoot))
 
-      const items = sorted
+      if (visible.length === 0) {
+        this.fileListTarget.innerHTML =
+          header +
+          `
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+          </svg>
+          <p>Empty folder</p>
+        </div>
+      `
+        return
+      }
+
+      const items = visible
         .map(file => {
           const isDir = file.type === 'dir'
           const icon = isDir ? 'folder-fill' : 'file-earmark'
           const iconClass = isDir ? 'folder' : 'file'
           const size = isDir ? '--' : this.formatSize(file.size)
-          const fullPath =
-            atRoot ? `/${file.name}`
-              : `${this.currentPath}/${file.name}`
-          // Per-row writability: at the synthetic root we trust the device's
-          // `readonly` hint (assets=true, userdata=false). Anywhere else,
-          // writability is a function of the path itself.
-          const rowWritable = atRoot
-            ? !file.readonly && file.available !== false
-            : this.isWritablePath(fullPath)
-          const unavailable = atRoot && file.name === 'userdata'
-            && file.available === false
-          const nameSuffix = unavailable
-            ? ` <span class="badge warn">missing — userdata unavailable</span>`
-            : (atRoot && file.readonly)
-              ? ` <span class="badge">read-only</span>`
-              : ''
+          const fullPath = atRoot
+            ? `/${file.name}`
+            : `${this.toDisplayPath(this.currentPath)}/${file.name}`.replace(/\/+/g, '/')
+          const rowWritable = this.isWritablePath(fullPath)
+          const unavailable = false
+          const nameSuffix = ''
 
           const renameBtn = rowWritable && !atRoot
             ? `<button data-action="click->assets#showRename"`
@@ -382,7 +440,8 @@ application.register(
       this.log(`Downloading ${filename}...`)
 
       try {
-        const { data } = await this.connection.fetchSizedTransfer(`GET ${path}`)
+        const { data } = await this.connection.fetchSizedTransfer(
+          `GET ${this.toDevicePath(path)}`)
         const size = data.length
 
         const blob = new Blob([data])
@@ -407,7 +466,7 @@ application.register(
 
       if (type === 'dir') {
         try {
-          const lsResponse = await this.sendCommand(`LS ${path}`)
+          const lsResponse = await this.sendCommand(`LS ${this.toDevicePath(path)}`)
           const contents = JSON.parse(lsResponse)
 
           if (contents.length > 0) {
@@ -419,7 +478,7 @@ application.register(
               return
             }
 
-            const response = await this.sendCommand(`RMRF ${path}`)
+            const response = await this.sendCommand(`RMRF ${this.toDevicePath(path)}`)
             if (response === 'OK') {
               this.log(`Deleted ${name} and contents`, 'success')
               await this.loadDirectory()
@@ -437,7 +496,7 @@ application.register(
       if (!confirm(`Delete "${name}"?`)) return
 
       try {
-        const response = await this.sendCommand(`RM ${path}`)
+        const response = await this.sendCommand(`RM ${this.toDevicePath(path)}`)
 
         if (response === 'OK') {
           this.log(`Deleted ${name}`, 'success')
@@ -451,21 +510,16 @@ application.register(
       }
     }
 
-    async archiveFolder (event) {
-      event.stopPropagation()
-      const path = event.currentTarget.dataset.path
-      const folderName = event.currentTarget.dataset.name
-
-      this.log(`Creating archive of ${folderName}...`)
+    async downloadZipAtPath (displayPath, downloadName) {
+      this.log(`Creating archive of ${downloadName}...`)
 
       try {
-        this.log(`Downloading archive...`)
-        const { data } = await this.connection.fetchSizedTransfer(`ZIP ${path}`, {
-          lineTimeout: 60000,
-          binaryTimeout: 60000
-        })
+        const { data } = await this.connection.fetchSizedTransfer(
+          `ZIP ${this.toDevicePath(displayPath)}`, {
+            lineTimeout: 60000,
+            binaryTimeout: 60000
+          })
         const size = data.length
-        this.log(`Archive size: ${this.formatSize(size)}, downloading...`)
 
         if (data.length !== size) {
           this.log(`Incomplete download: ${data.length}/${size} bytes`, 'error')
@@ -476,17 +530,32 @@ application.register(
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `${folderName}.zip`
+        a.download = `${downloadName}.zip`
         a.click()
         URL.revokeObjectURL(url)
 
         this.log(
-          `Downloaded ${folderName}.zip (${this.formatSize(size)})`,
+          `Downloaded ${downloadName}.zip (${this.formatSize(size)})`,
           'success'
         )
       } catch (err) {
         this.log(`Archive failed: ${err.message}`, 'error')
       }
+    }
+
+    async downloadCurrentFolder () {
+      const display = this.toDisplayPath(this.currentPath)
+      const name = display === '/'
+        ? 'userdata'
+        : display.split('/').filter(Boolean).pop() || 'folder'
+      await this.downloadZipAtPath(this.currentPath, name)
+    }
+
+    async archiveFolder (event) {
+      event.stopPropagation()
+      const path = event.currentTarget.dataset.path
+      const folderName = event.currentTarget.dataset.name
+      await this.downloadZipAtPath(path, folderName)
     }
 
     // Upload
@@ -504,7 +573,7 @@ application.register(
         return
       }
 
-      const destPath = this.currentPath
+      const destPath = this.toDevicePath(this.currentPath)
       this.log(
         `Uploading ${file.name} (${this.formatSize(
           file.size
@@ -529,7 +598,7 @@ application.register(
         const result = await this.connection.readLine(60000)
 
         if (result === 'OK') {
-          this.log(`Extracted ${file.name} to ${destPath}`, 'success')
+          this.log(`Extracted ${file.name} to ${this.toDisplayPath(destPath)}`, 'success')
           await this.loadDirectory()
           await this.loadStats()
         } else {
@@ -595,10 +664,14 @@ application.register(
     }
 
     async uploadFile (file) {
-      const remotePath =
+      if (file.name === 'manifest.json' && this.isManifestProtectedPath(this.currentPath)) {
+        this.log('manifest.json is a protected system file', 'error')
+        return
+      }
+      const remotePath = this.toDevicePath(
         this.currentPath === '/'
           ? `/${file.name}`
-          : `${this.currentPath}/${file.name}`
+          : `${this.toDisplayPath(this.currentPath)}/${file.name}`.replace(/\/+/g, '/'))
       this.log(`Uploading ${file.name} (${this.formatSize(file.size)})...`)
 
       try {
@@ -644,9 +717,15 @@ application.register(
     async createFolder () {
       const name = this.newFolderInputTarget.value.trim()
       if (!name) return
+      if (this.isProtectedFilename(name)) {
+        this.log('That name is reserved', 'error')
+        return
+      }
 
-      const path =
-        this.currentPath === '/' ? `/${name}` : `${this.currentPath}/${name}`
+      const path = this.toDevicePath(
+        this.currentPath === '/'
+          ? `/${name}`
+          : `${this.toDisplayPath(this.currentPath)}/${name}`.replace(/\/+/g, '/'))
 
       try {
         const response = await this.sendCommand(`MKDIR ${path}`)
@@ -680,17 +759,20 @@ application.register(
     async doRename () {
       const newName = this.renameInputTarget.value.trim()
       if (!newName || !this.renameTarget) return
+      if (this.isProtectedFilename(newName)) {
+        this.log('manifest.json is a protected system file', 'error')
+        return
+      }
 
-      const dir = this.renameTarget.substring(
-        0,
-        this.renameTarget.lastIndexOf('/')
-      )
-      const newPath = dir + '/' + newName
+      const displayDir = this.toDisplayPath(this.renameTarget)
+      const dir = displayDir.substring(0, displayDir.lastIndexOf('/')) || '/'
+      const newDisplayPath = dir === '/'
+        ? `/${newName}`
+        : `${dir}/${newName}`.replace(/\/+/g, '/')
 
       try {
         const response = await this.sendCommand(
-          `MV ${this.renameTarget} ${newPath}`
-        )
+          `MV ${this.toDevicePath(this.renameTarget)} ${this.toDevicePath(newDisplayPath)}`)
 
         if (response === 'OK') {
           this.log(`Renamed to ${newName}`, 'success')

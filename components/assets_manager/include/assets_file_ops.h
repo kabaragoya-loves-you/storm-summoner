@@ -111,5 +111,14 @@ esp_err_t assets_recursive_delete(const char *path);
  */
 esp_err_t assets_extract_zip(const uint8_t *zip_data, size_t zip_size, const char *dest_path);
 
+/**
+ * True if this relative archive path should be omitted from ZIP downloads
+ * (cache/ tree and manifest.json anywhere).
+ */
+bool assets_zip_skip_archive_path(const char *archive_relative_path);
+
+/** Block EXTRACT into the device cache partition path. */
+bool assets_is_blocked_extract_dest(const char *full_dest);
+
 #endif // ASSETS_FILE_OPS_H
 

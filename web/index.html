@@ -103,17 +103,53 @@
           </div>
         </wa-tab-panel>
 
-        <!-- Scene Tab (inspect) -->
+        <!-- Scene Tab (inspect + editor) -->
         <wa-tab-panel name="scene">
           <div class="tab-content scene-inspect-panel" data-controller="scene">
             <div class="toolbar">
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-scene-target="prevBtn"
+                         data-action="click->scene#prevScene" disabled>
+                <wa-icon name="chevron-left" slot="prefix"></wa-icon>
+                Prev
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-scene-target="nextBtn"
+                         data-action="click->scene#nextScene" disabled>
+                Next
+                <wa-icon name="chevron-right" slot="suffix"></wa-icon>
+              </wa-button>
+              <span class="scene-editor-title" data-scene-target="editorTitle"></span>
               <div class="toolbar-spacer"></div>
+              <span class="scene-editor-status" data-scene-target="editorStatus"></span>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-scene-target="downloadBtn"
+                         data-action="click->scene#downloadSceneJson" class="hidden">
+                <wa-icon name="download" slot="prefix"></wa-icon>
+                Download
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-scene-target="revertBtn"
+                         data-action="click->scene#revertEdits" disabled>
+                Revert
+              </wa-button>
+              <wa-button size="small" variant="brand"
+                         data-scene-target="saveBtn"
+                         data-action="click->scene#saveScene" disabled>
+                Save
+              </wa-button>
               <wa-button size="small" variant="neutral" appearance="outlined"
                          data-scene-target="editBtn"
                          data-action="click->scene#toggleEdit">
                 Edit
               </wa-button>
             </div>
+
+            <wa-callout variant="warning" class="scene-programming-banner hidden"
+                        data-scene-target="programmingBanner">
+              <wa-icon name="lock" slot="icon"></wa-icon>
+              Device is in programming mode. Web editing is locked until you exit programming mode on the device.
+            </wa-callout>
 
             <div class="scene-inspect-body" data-scene-target="inspectView">
               <wa-callout variant="warning" class="scene-truncated-banner hidden"
@@ -137,9 +173,9 @@
               </div>
             </div>
 
-            <div class="scene-edit-placeholder hidden" data-scene-target="editView">
-              <wa-icon name="pen-to-square"></wa-icon>
-              <p>Scene editing is not available yet.</p>
+            <div class="scene-edit-view hidden" data-scene-target="editView">
+              <div class="scene-validation-box hidden" data-scene-target="validationBox"></div>
+              <div class="scene-editor-scroll" data-scene-target="editorContainer"></div>
             </div>
           </div>
         </wa-tab-panel>
@@ -241,6 +277,12 @@
                          data-action="click->assets#showNewFolder" data-assets-target="newFolderBtn" disabled>
                 <wa-icon name="folder-plus" slot="prefix"></wa-icon>
                 New Folder
+              </wa-button>
+              <wa-button size="small" variant="neutral" appearance="outlined"
+                         data-action="click->assets#downloadCurrentFolder"
+                         data-assets-target="downloadZipBtn" disabled>
+                <wa-icon name="download" slot="prefix"></wa-icon>
+                Download ZIP
               </wa-button>
               <wa-button size="small" variant="neutral" appearance="outlined"
                          data-action="click->assets#selectZipFile" data-assets-target="uploadZipBtn" disabled>
@@ -727,6 +769,7 @@
   <script src="/js/controllers/copy.js"></script>
   <script src="/js/controllers/collapsible.js"></script>
   <script src="/js/info.js"></script>
+  <script src="/js/scene_editor_ui.js"></script>
   <script src="/js/scene.js"></script>
   <script src="/js/pedals.js"></script>
   <script src="/js/assets.js"></script>

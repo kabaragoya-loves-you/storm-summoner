@@ -5,31 +5,32 @@ application.register(
   class extends BaseController {
     static targets = ['refreshBtn', 'container']
 
-    connect() {
+    connect () {
       this.schema = null
       this.values = {}
       this.inConfigMode = false
-      this.rxBuffer = ''
 
-      // Listen for connection changes
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
 
-      // Listen for mode changes
       this.connection.on('mode:changed', ({ mode }) => {
         if (mode !== 'CONFIG') {
           this.inConfigMode = false
         }
       })
 
-      // Listen for tab activation
       document.addEventListener('app:tab-activated', (e) => {
         if (e.detail.tab === 'config' && this.connection.isConnected && !this.inConfigMode) {
           this.activate()
+        } else if (
+          e.detail.tab !== 'config' &&
+          (this.inConfigMode || this.connection.currentMode === 'CONFIG')
+        ) {
+          this.leaveConfigMode()
         }
       })
     }
 
-    onConnectionChanged({ connected }) {
+    onConnectionChanged ({ connected }) {
       this.refreshBtnTarget.disabled = !connected
       if (!connected) {
         this.inConfigMode = false
@@ -37,26 +38,38 @@ application.register(
       }
     }
 
-    async activate() {
+    async leaveConfigMode () {
+      if (!this.inConfigMode && this.connection.currentMode !== 'CONFIG') return
+      try {
+        if (this.connection.currentMode) {
+          await this.connection.exitMode()
+          await this.sleep(200)
+        }
+      } catch (err) {
+        console.warn('Config leave mode:', err)
+      }
+      this.inConfigMode = false
+    }
+
+    async activate () {
       if (!this.connection.isConnected) return
 
       try {
-        // Load schema if not already loaded
         if (!this.schema) {
           await this.loadSchema()
         }
 
-        const modeGranted = await this.connection.requestMode('CONFIG')
-        if (!modeGranted) return
-
-        await this.enterConfigMode()
-        await this.fetchValues()
+        await this.connection.runSerialTask(async () => {
+          await this.connection._requestModeImpl('CONFIG')
+          await this.enterConfigModeBody()
+          await this.fetchValuesBody()
+        })
       } catch (err) {
         console.error('Config activation error:', err)
       }
     }
 
-    async loadSchema() {
+    async loadSchema () {
       try {
         const response = await fetch('/schemas/settings.schema.json')
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -74,10 +87,10 @@ application.register(
       }
     }
 
-    async enterConfigMode() {
+    async enterConfigModeBody () {
       await this.sleep(100)
       await this.connection.sendRaw('CONFIG\n')
-      const response = await this.readLine(3000)
+      const response = await this.connection.readLine(3000)
 
       if (response === 'CONFIG_STARTED') {
         this.inConfigMode = true
@@ -86,55 +99,20 @@ application.register(
       }
     }
 
-    async readLine(timeout = 2000) {
-      const reader = this.connection.port.readable.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
+    async fetchValuesBody () {
+      await this.connection.sendRaw('VALUES\n')
+      const response = await this.connection.readLine(5000)
 
-      try {
-        const startTime = Date.now()
-        while (Date.now() - startTime < timeout) {
-          const result = await Promise.race([
-            reader.read(),
-            this.sleep(50).then(() => ({ timeout: true }))
-          ])
-          if (result.timeout) continue
-          if (result.done) break
-          if (result.value) {
-            const text = decoder.decode(result.value, { stream: true })
-            for (const char of text) {
-              if (char === '\n') {
-                return buffer.replace('\r', '').trim()
-              }
-              buffer += char
-            }
-          }
-        }
-      } finally {
-        try { reader.releaseLock() } catch (e) {}
-      }
-      return buffer.trim()
-    }
-
-    async fetchValues() {
-      try {
-        await this.connection.sendRaw('VALUES\n')
-        const response = await this.readLine(5000)
-
-        if (!response || response.startsWith('ERROR:')) {
-          this.renderEmpty()
-          return
-        }
-
-        this.values = JSON.parse(response)
-        this.renderSettings()
-      } catch (err) {
-        console.error('Error fetching values:', err)
+      if (!response || response.startsWith('ERROR:')) {
         this.renderEmpty()
+        return
       }
+
+      this.values = JSON.parse(response)
+      this.renderSettings()
     }
 
-    renderEmpty() {
+    renderEmpty () {
       this.containerTarget.innerHTML = `
         <div class="empty-state">
           <wa-icon name="sliders"></wa-icon>
@@ -144,7 +122,7 @@ application.register(
       this.values = {}
     }
 
-    renderSettings() {
+    renderSettings () {
       if (!this.schema || !this.schema.categories) {
         this.renderEmpty()
         return
@@ -185,19 +163,16 @@ application.register(
       html += '</div>'
       this.containerTarget.innerHTML = html
 
-      // Add event listeners
       this.containerTarget.querySelectorAll('[data-config-control]').forEach((el) => {
         el.addEventListener('change', (e) => this.onValueChange(e))
       })
     }
 
-    checkVisibility(setting) {
-      // Check visible_when condition
+    checkVisibility (setting) {
       if (setting.visible_when) {
         return this.evaluateCondition(setting.visible_when)
       }
 
-      // Check visible_when_any (OR condition)
       if (setting.visible_when_any) {
         return setting.visible_when_any.some((cond) => this.evaluateCondition(cond))
       }
@@ -205,22 +180,20 @@ application.register(
       return true
     }
 
-    evaluateCondition(condition) {
+    evaluateCondition (condition) {
       const depValue = this.values[condition.id]
       let expected = condition.value
 
-      // Handle boolean conditions: schema may use true/false but device sends 0/1
       if (expected === true) expected = 1
       else if (expected === false) expected = 0
 
       if (condition.operator === '!=') {
         return depValue !== expected
       }
-      // Default: equality check
       return depValue === expected
     }
 
-    renderControl(setting, value) {
+    renderControl (setting, value) {
       const id = `config-${setting.id.replace(/\./g, '-')}`
 
       switch (setting.type) {
@@ -268,7 +241,7 @@ application.register(
       }
     }
 
-    async onValueChange(event) {
+    async onValueChange (event) {
       const el = event.target
       const settingId = el.dataset.settingId
       if (!settingId) return
@@ -285,28 +258,29 @@ application.register(
       }
 
       try {
-        await this.connection.sendRaw(`SET ${settingId} ${value}\n`)
-        const response = await this.readLine()
+        await this.connection.runSerialTask(async () => {
+          if (!this.inConfigMode) {
+            await this.connection._requestModeImpl('CONFIG')
+            await this.enterConfigModeBody()
+          }
+          await this.connection.sendRaw(`SET ${settingId} ${value}\n`)
+          const response = await this.connection.readLine(5000)
 
-        if (response === 'OK') {
-          // Update local cache
-          this.values[settingId] = value
-
-          // Update visibility of dependent settings
-          this.updateVisibility()
-        } else {
-          console.error(`Failed to set ${settingId}: ${response}`)
-        }
+          if (response === 'OK') {
+            this.values[settingId] = value
+            this.updateVisibility()
+          } else {
+            console.error(`Failed to set ${settingId}: ${response}`)
+          }
+        })
       } catch (err) {
         console.error(`Failed to set ${settingId}:`, err)
       }
     }
 
-    updateVisibility() {
-      // Re-check visibility for all settings
+    updateVisibility () {
       for (const category of this.schema.categories) {
         for (const setting of category.settings) {
-          // Use specific selector to target wrapper div, not control element
           const el = this.containerTarget.querySelector(
             `.config-setting[data-setting-id="${setting.id}"]`
           )
@@ -318,13 +292,17 @@ application.register(
       }
     }
 
-    async refresh() {
+    async refresh () {
       if (!this.connection.isConnected) return
 
       if (!this.inConfigMode) {
         await this.activate()
       } else {
-        await this.fetchValues()
+        try {
+          await this.connection.runSerialTask(() => this.fetchValuesBody())
+        } catch (err) {
+          console.error('Config refresh error:', err)
+        }
       }
     }
   }

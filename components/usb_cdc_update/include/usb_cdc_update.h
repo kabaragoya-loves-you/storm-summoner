@@ -31,5 +31,8 @@ bool usb_cdc_update_in_progress(void);
  */
 uint8_t usb_cdc_update_get_progress(void);
 
+/** Push EVT:programming:0|1 when app mode changes (web scene editor lock). */
+void usb_cdc_notify_programming(bool active);
+
 #endif /* _USB_CDC_UPDATE_H */
 

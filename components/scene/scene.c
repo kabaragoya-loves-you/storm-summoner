@@ -68,6 +68,9 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene);
 static void scene_post_updated_event(uint8_t scene_index);
 static void scene_post_list_changed_event(uint8_t scene_index);
 static uint8_t scene_get_first_active_index(void);
+static void scene_invalidate_cache_index(uint8_t scene_index);
+static esp_err_t scene_load_into_cache_slot(int cache_idx, uint8_t scene_index);
+static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene);
 
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
@@ -2227,6 +2230,10 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
     ESP_LOGW(TAG, "Scene name '%s' already exists", name);
     return ESP_ERR_INVALID_ARG;
   }
+  if (scene_name_is_reserved(name)) {
+    ESP_LOGW(TAG, "Scene name '%s' is reserved", name);
+    return ESP_ERR_INVALID_ARG;
+  }
 
   // Find manifest entry for this scene
   int pos = -1;
@@ -3961,6 +3968,13 @@ static void scene_name_to_slug(const char* name, char* slug, size_t slug_size) {
   
   // Append .json extension
   snprintf(slug + out, slug_size - out, ".json");
+}
+
+bool scene_name_is_reserved(const char* name) {
+  if (!name || name[0] == '\0') return false;
+  char slug[64];
+  scene_name_to_slug(name, slug, sizeof(slug));
+  return strcasecmp(slug, "manifest.json") == 0;
 }
 
 // Check if a scene name already exists in the manifest (case-insensitive)
@@ -6950,6 +6964,273 @@ esp_err_t scene_save_to_flash(uint8_t scene_index) {
   return ESP_OK;
 }
 
+bool scene_index_in_manifest(uint8_t scene_index) {
+  if (!g_scene_manager.initialized) return false;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == scene_index)
+      return true;
+  }
+  return false;
+}
+
+static void scene_invalidate_cache_index(uint8_t scene_index) {
+  for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
+    if (g_scene_manager.cache[i].valid &&
+        g_scene_manager.cache[i].index == scene_index) {
+      g_scene_manager.cache[i].valid = false;
+    }
+  }
+}
+
+static esp_err_t scene_load_into_cache_slot(int cache_idx, uint8_t scene_index) {
+  if (cache_idx < 0 || cache_idx >= SCENE_CACHE_SIZE)
+    return ESP_ERR_INVALID_ARG;
+
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+
+  FILE *f = fopen(filepath, "r");
+  if (!f) return ESP_ERR_NOT_FOUND;
+
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+
+  if (fsize <= 0 || fsize > 256 * 1024) {
+    fclose(f);
+    return ESP_ERR_INVALID_SIZE;
+  }
+
+  char *json_str = malloc((size_t)fsize + 1);
+  if (!json_str) {
+    fclose(f);
+    return ESP_ERR_NO_MEM;
+  }
+
+  size_t nread = fread(json_str, 1, (size_t)fsize, f);
+  fclose(f);
+  json_str[nread] = '\0';
+
+  cJSON *root = cJSON_Parse(json_str);
+  free(json_str);
+  if (!root) return ESP_ERR_INVALID_ARG;
+
+  scene_init_defaults(&g_scene_manager.cache[cache_idx].scene, scene_index);
+  esp_err_t ret = json_to_scene(root, &g_scene_manager.cache[cache_idx].scene);
+  cJSON_Delete(root);
+
+  if (ret == ESP_OK) {
+    g_scene_manager.cache[cache_idx].index = scene_index;
+    g_scene_manager.cache[cache_idx].valid = true;
+  }
+  return ret;
+}
+
+static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
+  if (!scene) return;
+
+  midi_local_output_release_all();
+  action_clear_pending();
+  action_clear_morphs();
+
+  if (s_cached_device) {
+    assets_free_device(s_cached_device);
+    s_cached_device = NULL;
+    s_cached_device_slug[0] = '\0';
+  }
+
+  if (scene->cv_input_mode != INPUT_MODE_NOTE &&
+      scene->expression_mode == EXPRESSION_MODE_GATE) {
+    scene->expression_mode = EXPRESSION_MODE_NONE;
+    scene->expression.enabled = false;
+  }
+  input_manager_cv_trigger_scene_changed();
+  input_set_mode(scene->cv_input_mode);
+  expression_set_mode(scene->expression_mode);
+
+  tempo_set_bpm(scene->bpm);
+  tempo_set_source(scene->clock_source);
+  tempo_set_note_divider(scene->beat_divider);
+  tempo_set_time_signature(scene->time_signature.numerator,
+    scene->time_signature.denominator);
+  action_validate_scene_timings(scene);
+  midi_out_reset_cut();
+
+  midi_trs_type_t trs = scene_get_effective_trs_type(scene_index);
+  midi_transmit_mode_t trs_mode =
+    (midi_transmit_mode_t)assets_trs_type_to_transmit_mode(trs);
+  midi_set_uart_transmit_mode(trs_mode);
+
+  lfo_apply_config(0, &scene->lfo1_config);
+  lfo_apply_config(1, &scene->lfo2_config);
+  rtg_apply_config(&scene->rtg_config);
+  sample_hold_apply_config(&scene->sample_hold_config);
+  scene->sample_hold.enabled = scene->sample_hold_config.enabled;
+
+  if (!ui_is_in_programming_mode()) {
+    uint8_t program;
+    if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
+      int ordinal = 0;
+      for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+        if (g_scene_manager.manifest[i].index == scene_index) break;
+        if (g_scene_manager.manifest[i].active) ordinal++;
+      }
+      program = (uint8_t)(ordinal + device_config_get_min_preset());
+    } else {
+      program = scene->program_number;
+    }
+
+    if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || scene->send_pc_on_load) {
+      device_config_set_program(program);
+    }
+    if (scene->num_on_load_actions > 0) {
+      for (int i = 0; i < scene->num_on_load_actions; i++)
+        action_execute(&scene->on_load[i], 127, true);
+    }
+    lfo_apply_start_modes();
+    rtg_apply_start_mode();
+    sample_hold_apply_start_mode();
+    s_needs_deferred_init = false;
+  } else {
+    s_needs_deferred_init = true;
+  }
+
+  tilt_axis_set_enabled(TILT_AXIS_X, scene->tilt_x.enabled);
+  tilt_axis_set_enabled(TILT_AXIS_Y, scene->tilt_y.enabled);
+
+  if (!ui_is_in_programming_mode()) {
+    const char *mod_name =
+      (scene->ui_module[0] != '\0') ? scene->ui_module : "beat";
+    ui_draw_module_t *mod = ui_get_module_by_name(mod_name);
+    if (mod) ui_set_draw_module(mod);
+  }
+
+  scene_cleanup_touchwheel();
+  scene_setup_touchwheel_for_mode(scene);
+
+  scene_post_updated_event(scene_index);
+}
+
+esp_err_t scene_reload_index(uint8_t scene_index) {
+  if (!g_scene_manager.initialized) return ESP_ERR_INVALID_STATE;
+  if (!scene_index_in_manifest(scene_index)) return ESP_ERR_NOT_FOUND;
+
+  scene_invalidate_cache_index(scene_index);
+
+  if (scene_index != g_scene_manager.current_scene_index)
+    return ESP_OK;
+
+  int cache_idx = g_scene_manager.current_cache_idx;
+  esp_err_t ret = scene_load_into_cache_slot(cache_idx, scene_index);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "scene_reload_index: load failed for %u", (unsigned)scene_index);
+    return ret;
+  }
+
+  scene_reapply_runtime(scene_index, &g_scene_manager.cache[cache_idx].scene);
+  ESP_LOGI(TAG, "Reloaded current scene %u from flash", (unsigned)scene_index);
+  return ESP_OK;
+}
+
+esp_err_t scene_get_json(uint8_t scene_index, char **json_out) {
+  if (!json_out) return ESP_ERR_INVALID_ARG;
+  *json_out = NULL;
+  if (!g_scene_manager.initialized) return ESP_ERR_INVALID_STATE;
+  if (!scene_index_in_manifest(scene_index)) return ESP_ERR_NOT_FOUND;
+
+  for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
+    if (g_scene_manager.cache[i].valid &&
+        g_scene_manager.cache[i].index == scene_index) {
+      cJSON *root = scene_to_json(&g_scene_manager.cache[i].scene);
+      if (!root) return ESP_ERR_NO_MEM;
+      *json_out = cJSON_PrintUnformatted(root);
+      cJSON_Delete(root);
+      return *json_out ? ESP_OK : ESP_ERR_NO_MEM;
+    }
+  }
+
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+  FILE *f = fopen(filepath, "r");
+  if (!f) return ESP_ERR_NOT_FOUND;
+
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (fsize <= 0 || fsize > 256 * 1024) {
+    fclose(f);
+    return ESP_ERR_INVALID_SIZE;
+  }
+
+  char *buf = heap_caps_malloc((size_t)fsize + 1, MALLOC_CAP_SPIRAM);
+  if (!buf) {
+    fclose(f);
+    return ESP_ERR_NO_MEM;
+  }
+
+  size_t nread = fread(buf, 1, (size_t)fsize, f);
+  fclose(f);
+  buf[nread] = '\0';
+  *json_out = buf;
+  return ESP_OK;
+}
+
+esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
+  if (!json || len == 0) return ESP_ERR_INVALID_ARG;
+  if (!g_scene_manager.initialized) return ESP_ERR_INVALID_STATE;
+  if (!scene_index_in_manifest(scene_index)) return ESP_ERR_NOT_FOUND;
+  if (len > 256 * 1024) return ESP_ERR_INVALID_SIZE;
+
+  char *parse_buf = malloc(len + 1);
+  if (!parse_buf) return ESP_ERR_NO_MEM;
+  memcpy(parse_buf, json, len);
+  parse_buf[len] = '\0';
+  cJSON *root = cJSON_Parse(parse_buf);
+  free(parse_buf);
+  if (!root) return ESP_ERR_INVALID_ARG;
+
+  scene_t *scratch =
+    heap_caps_malloc(sizeof(scene_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!scratch) {
+    cJSON_Delete(root);
+    return ESP_ERR_NO_MEM;
+  }
+
+  scene_init_defaults(scratch, scene_index);
+  esp_err_t ret = json_to_scene(root, scratch);
+  cJSON_Delete(root);
+  if (ret != ESP_OK) {
+    heap_caps_free(scratch);
+    return ret;
+  }
+
+  cJSON *out = scene_to_json(scratch);
+  heap_caps_free(scratch);
+  if (!out) return ESP_ERR_NO_MEM;
+
+  char *json_str = cJSON_PrintUnformatted(out);
+  cJSON_Delete(out);
+  if (!json_str) return ESP_ERR_NO_MEM;
+
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+  FILE *f = fopen(filepath, "w");
+  if (!f) {
+    free(json_str);
+    return ESP_ERR_NOT_FOUND;
+  }
+  fwrite(json_str, 1, strlen(json_str), f);
+  fclose(f);
+  free(json_str);
+
+  ESP_LOGI(TAG, "SCENE_PUT wrote scene %u (%s)", (unsigned)scene_index, filepath);
+  scene_invalidate_cache_index(scene_index);
+  ret = scene_reload_index(scene_index);
+  if (ret == ESP_OK && scene_index != g_scene_manager.current_scene_index)
+    scene_post_updated_event(scene_index);
+  return ret;
+}
+
 esp_err_t scene_load_manifest(void) {
   FILE* f = fopen(MANIFEST_PATH, "r");
   if (!f) return ESP_ERR_NOT_FOUND;
@@ -7166,6 +7447,10 @@ esp_err_t scene_create_new_at_position(const char* name, uint16_t position) {
     ESP_LOGW(TAG, "Cannot create scene: name '%s' already exists", name);
     return ESP_ERR_INVALID_ARG;
   }
+  if (scene_name_is_reserved(name)) {
+    ESP_LOGW(TAG, "Cannot create scene: name '%s' is reserved", name);
+    return ESP_ERR_INVALID_ARG;
+  }
   
   // Find next available index
   uint8_t new_index = 0;
@@ -7269,6 +7554,10 @@ esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
   // Check for name uniqueness
   if (scene_name_exists(new_name, -1)) {
     ESP_LOGW(TAG, "Cannot duplicate scene: name '%s' already exists", new_name);
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (scene_name_is_reserved(new_name)) {
+    ESP_LOGW(TAG, "Cannot duplicate scene: name '%s' is reserved", new_name);
     return ESP_ERR_INVALID_ARG;
   }
   

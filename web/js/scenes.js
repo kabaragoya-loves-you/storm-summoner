@@ -254,10 +254,10 @@ application.register(
               </wa-button>
             ` : ''}
             <wa-button size="small" appearance="text"
-                       data-action="click->scenes#startRename"
+                       data-action="click->scenes#openInEditor"
                        data-position="${scene.position}"
-                       title="Rename">
-              <wa-icon name="pen"></wa-icon>
+                       title="Edit scene">
+              <wa-icon name="pen-to-square"></wa-icon>
             </wa-button>
             <wa-button size="small" appearance="text"
                        data-action="click->scenes#duplicate"
@@ -408,6 +408,16 @@ application.register(
       }, 100)
     }
 
+    openInEditor (e) {
+      const position = parseInt(e.currentTarget.dataset.position, 10)
+      if (Number.isNaN(position)) return
+      document.dispatchEvent(
+        new CustomEvent('app:navigate-tab', {
+          detail: { tab: 'scene', params: { position, edit: true } }
+        })
+      )
+    }
+
     // Start inline rename
     startRename(e) {
       const position = parseInt(e.currentTarget.dataset.position, 10)
@@ -504,6 +514,13 @@ application.register(
       const excludePos = this.pendingRenamePosition
       if (this.nameExists(name, excludePos)) {
         this.nameErrorTarget.textContent = 'A scene with this name already exists'
+        this.shakeInput()
+        return
+      }
+
+      if (window.SceneEditorUi?.isReservedSceneName?.(name)) {
+        this.nameErrorTarget.textContent =
+          '"manifest" is reserved (would overwrite manifest.json)'
         this.shakeInput()
         return
       }

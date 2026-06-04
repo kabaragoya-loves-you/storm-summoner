@@ -363,10 +363,9 @@ window.ConnectionManager = (function () {
 
     _startModeNotifyLoop () {
       if (this._modeNotifyRunning || !this.mode) return
-      // ASSETS mode never emits unsolicited EVT lines (firmware cdc_may_push_notify()
-      // excludes it). A background reader here only competes with fetchSizedTransfer /
-      // readLine for port.readable and steals binary-transfer bytes mid-stream.
-      if (this.mode === 'ASSETS') return
+      // ASSETS/CONFIG use request/response lines (and ASSETS binary transfers).
+      // A background reader competes with readLine / fetchSizedTransfer.
+      if (this.mode === 'ASSETS' || this.mode === 'CONFIG') return
       this._modeNotifyRunning = true
       this._modeNotifyLoop()
     }
@@ -542,7 +541,8 @@ window.ConnectionManager = (function () {
     }
 
     async sendCommand (cmd, timeout = 30000, validator = null) {
-      return this.runSerialTask(() => this._sendCommandImpl(cmd, timeout, validator))
+      const impl = () => this._sendCommandImpl(cmd, timeout, validator)
+      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
     }
 
     async _sendCommandImpl (cmd, timeout = 30000, validator = null) {
@@ -601,8 +601,15 @@ window.ConnectionManager = (function () {
                 this._mergeRxTail(rxBuf)
                 return rawLine
               }
+              if (!validator && rawLine.startsWith('[')) {
+                try {
+                  JSON.parse(rawLine)
+                  this._mergeRxTail(rxBuf)
+                  return rawLine
+                } catch (_) { /* accumulate below */ }
+              }
               if (!validator) {
-                if (!rawLine.includes('{')) {
+                if (!rawLine.includes('{') && !rawLine.includes('[')) {
                   this._mergeRxTail(rxBuf)
                   return rawLine
                 }
@@ -775,7 +782,8 @@ window.ConnectionManager = (function () {
     // SIZE line + raw binary in one exclusive read (MANIFEST/GET). Avoids resuming
     // the mode-notify reader between sendCommand and readBinary (stream lock race).
     async fetchSizedTransfer (cmd, options = {}) {
-      return this.runSerialTask(() => this._fetchSizedTransferImpl(cmd, options))
+      const impl = () => this._fetchSizedTransferImpl(cmd, options)
+      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
     }
 
     _binaryStallTimeoutMs (size, explicit) {

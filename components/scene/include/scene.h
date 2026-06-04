@@ -238,6 +238,7 @@ esp_err_t scene_set_change_mode(scene_change_mode_t mode);
 scene_change_mode_t scene_get_change_mode(void);
 
 // Scene configuration
+bool scene_name_is_reserved(const char* name);
 esp_err_t scene_set_name(uint8_t scene_index, const char* name);
 esp_err_t scene_set_touchwheel_mode(uint8_t scene_index, touchwheel_mode_t mode);
 esp_err_t scene_set_touchwheel_mode_runtime(uint8_t scene_index, touchwheel_mode_t mode);  // No persistence
@@ -457,6 +458,12 @@ esp_err_t scene_load_config(void);
 // Scene storage (flash-based)
 esp_err_t scene_load_from_flash(uint8_t scene_index);
 esp_err_t scene_save_to_flash(uint8_t scene_index);
+
+// Web CDC: full scene JSON read/write and reload from disk
+bool scene_index_in_manifest(uint8_t scene_index);
+esp_err_t scene_get_json(uint8_t scene_index, char **json_out);
+esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len);
+esp_err_t scene_reload_index(uint8_t scene_index);
 esp_err_t scene_load_manifest(void);
 esp_err_t scene_save_manifest(void);
 esp_err_t scene_create_new(const char* name);

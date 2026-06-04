@@ -11,6 +11,7 @@
 #include "settings_registry.h"
 #include "scene.h"
 #include "scene_inspect.h"
+#include "ui.h"
 #include "cJSON.h"
 #include "version.h"
 #include "esp_timer.h"
@@ -46,6 +47,7 @@
 #define MAX_PATH_LEN 320  // Must accommodate paths + d_name (255)
 #define CAT_MAX_SIZE 4096
 #define SCENE_INSPECT_TEXT_SIZE 2048
+#define SCENE_JSON_MAX_BYTES (256 * 1024)
 
 // Update protocol states
 typedef enum {
@@ -64,6 +66,7 @@ typedef enum {
   CDC_STATE_CONFIG,   // Semantic settings mode (via settings_registry)
   CDC_STATE_SCENES,   // Scene management mode
   CDC_STATE_PEDALS,   // Pedal database browsing mode
+  CDC_STATE_SCENE_RECEIVING,  // SCENE_PUT binary payload (idle)
   CDC_STATE_ERROR
 } cdc_update_state_t;
 
@@ -119,6 +122,13 @@ static void cdc_scene_reordered_handler(const event_t *event, void *context);
 static void cdc_scene_list_changed_handler(const event_t *event, void *context);
 static void cdc_send_scene_inspect(void);
 static void cdc_send_info_json(void);
+static void cdc_send_scene_get(const char *arg);
+static void cdc_cmd_scene_put(const char *args);
+static void handle_scene_put_binary(const uint8_t *data, size_t len);
+static uint8_t *s_scene_put_buffer = NULL;
+static size_t s_scene_put_size = 0;
+static size_t s_scene_put_received = 0;
+static uint8_t s_scene_put_index = 0;
 
 // ============================================================================
 // VFS wrapper for CDC stdout redirect
@@ -370,6 +380,14 @@ void usb_cdc_task(void) {
       ESP_LOGI(TAG, "CDC disconnected, exiting pedals mode");
     }
     // If we were receiving firmware/assets and disconnected, cleanup
+    if (s_state == CDC_STATE_SCENE_RECEIVING) {
+      if (s_scene_put_buffer) {
+        heap_caps_free(s_scene_put_buffer);
+        s_scene_put_buffer = NULL;
+      }
+      s_state = CDC_STATE_IDLE;
+      ESP_LOGI(TAG, "CDC disconnected during SCENE_PUT, aborted");
+    }
     if (s_state == CDC_STATE_RECEIVING_FIRMWARE ||
         s_state == CDC_STATE_RECEIVING_ASSETS ||
         s_state == CDC_STATE_WAITING_COMMIT) {
@@ -450,6 +468,8 @@ void usb_cdc_task(void) {
       } else if (s_state == CDC_STATE_RECEIVING_FIRMWARE || s_state == CDC_STATE_RECEIVING_ASSETS) {
         // In receiving state, handle binary data
         handle_binary_data(buf, count);
+      } else if (s_state == CDC_STATE_SCENE_RECEIVING) {
+        handle_scene_put_binary(buf, count);
       } else if (s_state == CDC_STATE_ASSETS) {
         // In assets mode, parse commands (text mode, no echo)
         for (uint32_t i = 0; i < count; i++) {
@@ -741,6 +761,14 @@ static void cdc_push_scene_evt(const char *kind, uint8_t scene_index) {
   cdc_send_notify_line(buf);
 }
 
+void usb_cdc_notify_programming(bool active) {
+  if (!cdc_may_push_notify()) return;
+  char buf[24];
+  snprintf(buf, sizeof(buf), "EVT:programming:%u", active ? 1u : 0u);
+  ESP_LOGI(TAG, "CDC notify: %s", buf);
+  cdc_send_notify_line(buf);
+}
+
 static void cdc_scene_changed_handler(const event_t *event, void *context) {
   (void)context;
   if (!event || event->type != EVENT_SCENE_CHANGED) return;
@@ -847,6 +875,7 @@ static void cdc_send_info_json(void) {
   cJSON_AddStringToObject(root, "git", version_get_git_hash());
   cJSON_AddStringToObject(root, "serial", version_get_serial());
   cJSON_AddStringToObject(root, "assets_checksum", assets_csum ? assets_csum : "");
+  cJSON_AddBoolToObject(root, "programming", ui_is_in_programming_mode());
 
   cJSON *pedal = cJSON_CreateObject();
   if (pedal) {
@@ -892,6 +921,130 @@ static void cdc_send_info_json(void) {
     cJSON_free(json);
   } else {
     send_response("ERROR: Out of memory");
+  }
+}
+
+static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position) {
+  if (!arg || !arg[0]) return 0;
+  if (strcmp(arg, "current") == 0) {
+    if (is_position) *is_position = false;
+    return scene_get_current_index();
+  }
+  unsigned long pos = strtoul(arg, NULL, 10);
+  if (is_position) *is_position = true;
+  return scene_get_index_by_position((uint16_t)pos);
+}
+
+static void cdc_send_scene_get(const char *arg) {
+  const char *idx_arg = arg;
+  while (idx_arg && *idx_arg == ' ') idx_arg++;
+  if (!idx_arg || !idx_arg[0]) {
+    send_response("ERROR: Usage SCENE_GET <position|current>");
+    return;
+  }
+
+  bool is_position = false;
+  uint8_t scene_index = cdc_resolve_scene_index(idx_arg, &is_position);
+  if (is_position) {
+    unsigned long pos = strtoul(idx_arg, NULL, 10);
+    if (pos >= scene_get_total_count()) {
+      send_response("ERROR: Invalid scene position");
+      return;
+    }
+  }
+
+  if (!scene_index_in_manifest(scene_index)) {
+    send_response("ERROR: Scene not found");
+    return;
+  }
+
+  char *json = NULL;
+  esp_err_t err = scene_get_json(scene_index, &json);
+  if (err != ESP_OK || !json) {
+    send_response("ERROR: Failed to read scene");
+    return;
+  }
+
+  size_t len = strlen(json);
+  char resp[48];
+  snprintf(resp, sizeof(resp), "SIZE %u", (unsigned)len);
+  send_response(resp);
+  send_binary((const uint8_t *)json, len);
+  if (len > 0 && (len % 64) == 0) {
+    uint8_t term = '\n';
+    send_binary(&term, 1);
+  }
+  free(json);
+  ESP_LOGI(TAG, "SCENE_GET sent %u bytes for scene %u", (unsigned)len,
+    (unsigned)scene_index);
+}
+
+static void cdc_cmd_scene_put(const char *args) {
+  if (!args) {
+    send_response("ERROR: Usage SCENE_PUT <position> <size>");
+    return;
+  }
+
+  unsigned long position = 0;
+  unsigned long size = 0;
+  if (sscanf(args, "%lu %lu", &position, &size) != 2) {
+    send_response("ERROR: Usage SCENE_PUT <position> <size>");
+    return;
+  }
+
+  if (position >= scene_get_total_count()) {
+    send_response("ERROR: Invalid scene position");
+    return;
+  }
+
+  if (size == 0 || size > SCENE_JSON_MAX_BYTES) {
+    send_response("ERROR: Invalid scene size");
+    return;
+  }
+
+  if (s_scene_put_buffer) {
+    heap_caps_free(s_scene_put_buffer);
+    s_scene_put_buffer = NULL;
+  }
+
+  s_scene_put_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+  if (!s_scene_put_buffer) {
+    send_response("ERROR: Out of memory");
+    return;
+  }
+
+  s_scene_put_index = scene_get_index_by_position((uint16_t)position);
+  s_scene_put_size = (size_t)size;
+  s_scene_put_received = 0;
+  s_state = CDC_STATE_SCENE_RECEIVING;
+  ESP_LOGI(TAG, "SCENE_PUT position %lu index %u size %lu",
+    position, (unsigned)s_scene_put_index, size);
+  send_response("READY");
+}
+
+static void handle_scene_put_binary(const uint8_t *data, size_t len) {
+  if (!s_scene_put_buffer || s_state != CDC_STATE_SCENE_RECEIVING) return;
+
+  size_t remaining = s_scene_put_size - s_scene_put_received;
+  size_t to_copy = (len < remaining) ? len : remaining;
+  memcpy(s_scene_put_buffer + s_scene_put_received, data, to_copy);
+  s_scene_put_received += to_copy;
+
+  if (s_scene_put_received < s_scene_put_size) return;
+
+  esp_err_t err = scene_put_json(s_scene_put_index,
+    (const char *)s_scene_put_buffer, s_scene_put_size);
+  heap_caps_free(s_scene_put_buffer);
+  s_scene_put_buffer = NULL;
+  s_state = CDC_STATE_IDLE;
+
+  if (err == ESP_OK) {
+    send_response("OK");
+  } else {
+    char resp[64];
+    snprintf(resp, sizeof(resp), "ERROR: Scene put failed (%s)",
+      esp_err_to_name(err));
+    send_response(resp);
   }
 }
 
@@ -1257,6 +1410,12 @@ static void process_command(const char *cmd) {
   } else if (strcmp(cmd, "SCENE_INSPECT") == 0) {
     cdc_send_scene_inspect();
 
+  } else if (strncmp(cmd, "SCENE_GET ", 10) == 0) {
+    cdc_send_scene_get(cmd + 10);
+
+  } else if (strncmp(cmd, "SCENE_PUT ", 10) == 0) {
+    cdc_cmd_scene_put(cmd + 10);
+
   } else if (strcmp(cmd, "EXIT") == 0) {
     // EXIT in idle state is a no-op (already idle)
     // Don't send any response - this prevents spurious errors after successful updates
@@ -1396,6 +1555,33 @@ static bool is_writable_path(const char *full_path) {
   if (strncmp(full_path, USERDATA_BASE_PATH, plen) != 0) return false;
   // Must be exactly /userdata or start with /userdata/.
   return full_path[plen] == '\0' || full_path[plen] == '/';
+}
+
+// manifest.json under scenes/ or devices/ is the index file — never mutate via ASSETS.
+static bool assets_is_protected_system_file(const char *full_path) {
+  if (!full_path) return false;
+  const char *leaf = strrchr(full_path, '/');
+  leaf = leaf ? leaf + 1 : full_path;
+  if (strcasecmp(leaf, "manifest.json") != 0) return false;
+  static const char *prefixes[] = {
+    USERDATA_BASE_PATH "/scenes",
+    USERDATA_BASE_PATH "/devices",
+  };
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    size_t plen = strlen(prefixes[i]);
+    if (strncmp(full_path, prefixes[i], plen) == 0 &&
+        (full_path[plen] == '\0' || full_path[plen] == '/')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void reject_protected_system_file(const char *full_path) {
+  char resp[256];
+  snprintf(resp, sizeof(resp),
+    "ERROR: protected system file: %s", full_path);
+  send_response(resp);
 }
 
 // Send a uniform "read-only" rejection. Centralized so the wording matches
@@ -1735,6 +1921,10 @@ static void assets_cmd_rm(const char *path) {
   build_full_path(full_path, sizeof(full_path), path);
 
   if (!is_writable_path(full_path)) { reject_readonly(full_path); return; }
+  if (assets_is_protected_system_file(full_path)) {
+    reject_protected_system_file(full_path);
+    return;
+  }
 
   struct stat st;
   if (stat(full_path, &st) != 0) {
@@ -1796,6 +1986,12 @@ static void assets_cmd_mv(const char *src, const char *dst) {
 
   if (!is_writable_path(full_src)) { reject_readonly(full_src); return; }
   if (!is_writable_path(full_dst)) { reject_readonly(full_dst); return; }
+  if (assets_is_protected_system_file(full_src) ||
+      assets_is_protected_system_file(full_dst)) {
+    reject_protected_system_file(
+      assets_is_protected_system_file(full_dst) ? full_dst : full_src);
+    return;
+  }
 
   if (rename(full_src, full_dst) == 0) {
     assets_file_deleted(full_src);
@@ -1860,6 +2056,10 @@ static void assets_cmd_put(const char *path, size_t size) {
   build_full_path(s_assets_path, sizeof(s_assets_path), path);
 
   if (!is_writable_path(s_assets_path)) { reject_readonly(s_assets_path); return; }
+  if (assets_is_protected_system_file(s_assets_path)) {
+    reject_protected_system_file(s_assets_path);
+    return;
+  }
 
   if (assets_validate_user_pedal_put(s_assets_path) != ESP_OK) {
     send_response("ERROR: A pedal with this slug already exists");
@@ -2173,6 +2373,8 @@ static bool zip_add_directory(mz_zip_archive *zip, const char *base_path, const 
       } else {
         snprintf(archive_name, MAX_PATH_LEN, "%s", entry->d_name);
       }
+
+      if (assets_zip_skip_archive_path(archive_name)) continue;
       
       // Recurse into subdirectory
       if (!zip_add_directory(zip, full_path, archive_name)) {
@@ -2188,6 +2390,8 @@ static bool zip_add_directory(mz_zip_archive *zip, const char *base_path, const 
       } else {
         snprintf(archive_name, MAX_PATH_LEN, "%s", entry->d_name);
       }
+
+      if (assets_zip_skip_archive_path(archive_name)) continue;
       
       // Read file contents
       FILE *f = fopen(full_path, "rb");
@@ -2371,6 +2575,10 @@ static void assets_cmd_extract(const char *path, size_t size) {
 
   if (!is_writable_path(s_extract_dest)) {
     reject_readonly(s_extract_dest);
+    return;
+  }
+  if (assets_is_blocked_extract_dest(s_extract_dest)) {
+    send_response("ERROR: Cannot extract into cache folder");
     return;
   }
 
@@ -3091,6 +3299,11 @@ static void process_scenes_command(const char *cmd) {
       return;
     }
     
+    if (scene_name_is_reserved(new_name)) {
+      send_response("ERROR: Reserved name");
+      return;
+    }
+
     uint8_t idx = scene_get_index_by_position((uint16_t)pos);
     ESP_LOGI(TAG, "RENAME: calling scene_set_name for index %d", idx);
     int64_t start = esp_timer_get_time();
@@ -3160,6 +3373,10 @@ static void process_scenes_command(const char *cmd) {
       send_response("ERROR: Name already exists");
       return;
     }
+    if (scene_name_is_reserved(new_name)) {
+      send_response("ERROR: Reserved name");
+      return;
+    }
     
     uint8_t idx = scene_get_index_by_position((uint16_t)pos);
     esp_err_t err = scene_duplicate(idx, new_name);
@@ -3227,6 +3444,10 @@ static void process_scenes_command(const char *cmd) {
     
     if (scene_name_exists(name, -1)) {
       send_response("ERROR: Name already exists");
+      return;
+    }
+    if (scene_name_is_reserved(name)) {
+      send_response("ERROR: Reserved name");
       return;
     }
     
