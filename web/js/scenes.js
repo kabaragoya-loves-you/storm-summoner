@@ -17,6 +17,8 @@ application.register(
 
     connect() {
       this.scenes = []
+      this.selectedPosition = null
+      this.panelMode = null
       this.inScenesMode = false
       this.pendingDeletePosition = null
       this.pendingRenamePosition = null  // null for add, position for rename
@@ -39,8 +41,11 @@ application.register(
 
       // Listen for tab activation
       document.addEventListener('app:tab-activated', (e) => {
-        if (e.detail.tab === 'scenes' && this.connection.isConnected && !this.inScenesMode) {
+        if (e.detail.tab !== 'scenes' || !this.connection.isConnected) return
+        if (!this.inScenesMode) {
           this.activate()
+        } else {
+          this.selectPlayingSceneIfNeeded()
         }
       })
     }
@@ -70,6 +75,8 @@ application.register(
       this.addBtnTarget.disabled = !connected
       if (!connected) {
         this.inScenesMode = false
+        this.selectedPosition = null
+        this.panelMode = null
         this.renderEmpty()
       }
     }
@@ -145,6 +152,7 @@ application.register(
         this.scenes = JSON.parse(jsonStr)
         this.renderScenes()
         this.log(`Loaded ${this.scenes.length} scenes`)
+        this.selectPlayingSceneIfNeeded()
       } catch (err) {
         console.error('Error fetching scenes:', err)
         this.log('Error: ' + err.message, 'error')
@@ -160,6 +168,7 @@ application.register(
         </div>
       `
       this.scenes = []
+      this.publishSceneList()
     }
 
     renderScenes() {
@@ -221,21 +230,102 @@ application.register(
 
       // Attach drag-and-drop listeners to active scenes
       this.attachDragListeners()
+      this.highlightSelection()
+      this.publishSceneList()
+    }
+
+    publishSceneList () {
+      document.dispatchEvent(
+        new CustomEvent('scenes:list-updated', { detail: { scenes: this.scenes } })
+      )
+    }
+
+    highlightSelection () {
+      if (!this.hasContainerTarget) return
+      this.containerTarget.querySelectorAll('.scene-row').forEach(row => {
+        const pos = parseInt(row.dataset.position, 10)
+        row.classList.toggle('selected', pos === this.selectedPosition)
+      })
+    }
+
+    stopRowClick (e) {
+      e.stopPropagation()
+    }
+
+    openViewRow (e) {
+      if (e.target.closest('.scene-drag-handle')) return
+      const row = e.target.closest('.scene-row')
+      if (!row) return
+      const position = parseInt(row.dataset.position, 10)
+      if (Number.isNaN(position)) return
+      this.openScene(position, 'view')
+    }
+
+    openScene (position, mode) {
+      if (Number.isNaN(position)) return
+      this.selectedPosition = position
+      this.panelMode = mode === 'edit' ? 'edit' : 'view'
+      this.highlightSelection()
+      if (this.scenes.length) this.renderScenes()
+      document.dispatchEvent(
+        new CustomEvent('scenes:open-scene', { detail: { position, mode } })
+      )
+    }
+
+    /** Show inspect view for the playing scene when the detail panel is empty. */
+    selectPlayingSceneIfNeeded () {
+      if (this.selectedPosition !== null) return
+      const playing = this.scenes.find(s => s.current)
+      if (!playing) return
+      this.openScene(playing.position, 'view')
+    }
+
+    openView (e) {
+      e.stopPropagation()
+      const position = parseInt(e.currentTarget.dataset.position, 10)
+      this.openScene(position, 'view')
+    }
+
+    openEdit (e) {
+      e.stopPropagation()
+      const position = parseInt(e.currentTarget.dataset.position, 10)
+      this.openScene(position, 'edit')
+    }
+
+    printScene (e) {
+      e.stopPropagation()
+      const position = parseInt(e.currentTarget.dataset.position, 10)
+      this.openScene(position, 'print')
+    }
+
+    downloadScene (e) {
+      e.stopPropagation()
+      const position = parseInt(e.currentTarget.dataset.position, 10)
+      if (Number.isNaN(position)) return
+      document.dispatchEvent(
+        new CustomEvent('scenes:download-scene', { detail: { position } })
+      )
     }
 
     renderSceneRow(scene, displayNumber, isActive) {
       const currentClass = scene.current ? ' current' : ''
+      const selectedClass =
+        scene.position === this.selectedPosition ? ' selected' : ''
       const positionDisplay = displayNumber !== null ? displayNumber : '-'
-      const showGoto = isActive && !scene.current
+      const showActivate = isActive && !scene.current
       const showDelete = !scene.current
-      const showDeactivate = isActive && !scene.current
+      const showDisable = isActive && !scene.current
+      const isPanelScene = scene.position === this.selectedPosition
+      const hideView = isPanelScene && this.panelMode === 'view'
+      const hideEdit = isPanelScene && this.panelMode === 'edit'
 
       return `
-        <li class="scene-row${currentClass}"
+        <li class="scene-row${currentClass}${selectedClass}"
             data-position="${scene.position}"
             data-index="${scene.index}"
             draggable="${isActive}"
-            data-active="${isActive}">
+            data-active="${isActive}"
+            data-action="click->scenes#openViewRow">
           <div class="scene-drag-handle">
             <wa-icon name="grip-vertical"></wa-icon>
           </div>
@@ -244,20 +334,42 @@ application.register(
             <span>${this.escapeHtml(scene.name)}</span>
             ${scene.current ? '<span class="scene-current-badge">Playing</span>' : ''}
           </div>
-          <div class="scene-actions">
-            ${showGoto ? `
+          <div class="scene-actions" data-action="click->scenes#stopRowClick">
+            ${showActivate ? `
               <wa-button size="small" appearance="text"
                          data-action="click->scenes#switchToScene"
                          data-position="${scene.position}"
-                         title="Switch to this scene">
+                         title="Activate (switch playing scene)">
                 <wa-icon name="play"></wa-icon>
               </wa-button>
             ` : ''}
+            ${hideView ? '' : `
             <wa-button size="small" appearance="text"
-                       data-action="click->scenes#openInEditor"
+                       data-action="click->scenes#openView"
+                       data-position="${scene.position}"
+                       title="View scene">
+              <wa-icon name="eye"></wa-icon>
+            </wa-button>
+            `}
+            ${hideEdit ? '' : `
+            <wa-button size="small" appearance="text"
+                       data-action="click->scenes#openEdit"
                        data-position="${scene.position}"
                        title="Edit scene">
               <wa-icon name="pen-to-square"></wa-icon>
+            </wa-button>
+            `}
+            <wa-button size="small" appearance="text"
+                       data-action="click->scenes#downloadScene"
+                       data-position="${scene.position}"
+                       title="Download scene JSON">
+              <wa-icon name="download"></wa-icon>
+            </wa-button>
+            <wa-button size="small" appearance="text"
+                       data-action="click->scenes#printScene"
+                       data-position="${scene.position}"
+                       title="Print scene inspect">
+              <wa-icon name="print"></wa-icon>
             </wa-button>
             <wa-button size="small" appearance="text"
                        data-action="click->scenes#duplicate"
@@ -265,19 +377,19 @@ application.register(
                        title="Duplicate">
               <wa-icon name="clone"></wa-icon>
             </wa-button>
-            ${showDeactivate ? `
+            ${showDisable ? `
               <wa-button size="small" appearance="text"
                          data-action="click->scenes#deactivate"
                          data-position="${scene.position}"
-                         title="Deactivate">
-                <wa-icon name="eye-slash"></wa-icon>
+                         title="Disable (remove from active set)">
+                <wa-icon name="toggle-off"></wa-icon>
               </wa-button>
             ` : isActive ? '' : `
               <wa-button size="small" appearance="text"
                          data-action="click->scenes#activateScene"
                          data-position="${scene.position}"
-                         title="Activate">
-                <wa-icon name="eye"></wa-icon>
+                         title="Enable (add to active set)">
+                <wa-icon name="toggle-on"></wa-icon>
               </wa-button>
             `}
             ${showDelete ? `
@@ -406,16 +518,6 @@ application.register(
       setTimeout(() => {
         this.nameInputTarget.focus()
       }, 100)
-    }
-
-    openInEditor (e) {
-      const position = parseInt(e.currentTarget.dataset.position, 10)
-      if (Number.isNaN(position)) return
-      document.dispatchEvent(
-        new CustomEvent('app:navigate-tab', {
-          detail: { tab: 'scene', params: { position, edit: true } }
-        })
-      )
     }
 
     // Start inline rename
@@ -627,7 +729,7 @@ application.register(
     async switchToScene(e) {
       const position = parseInt(e.currentTarget.dataset.position, 10)
 
-      this.log(`Switching to scene at position ${position}`)
+      this.log(`Activating (playing) scene at position ${position}`)
 
       try {
         await this.settleDelay()
@@ -635,9 +737,9 @@ application.register(
         const response = await this.readLine(3000)
 
         if (response === 'OK') {
-          this.log('Scene switched')
+          this.log('Scene activated (now playing)')
         } else {
-          this.log('Switch failed: ' + (response || 'timeout'), 'error')
+          this.log('Activate failed: ' + (response || 'timeout'), 'error')
         }
         await this.fetchScenes()
       } catch (err) {
@@ -650,7 +752,7 @@ application.register(
     async activateScene(e) {
       const position = parseInt(e.currentTarget.dataset.position, 10)
 
-      this.log(`Activating scene at position ${position}`)
+      this.log(`Enabling scene at position ${position}`)
 
       try {
         await this.settleDelay()
@@ -658,9 +760,9 @@ application.register(
         const response = await this.readLine(3000)
 
         if (response === 'OK') {
-          this.log('Scene activated')
+          this.log('Scene enabled')
         } else {
-          this.log('Activate failed: ' + (response || 'timeout'), 'error')
+          this.log('Enable failed: ' + (response || 'timeout'), 'error')
         }
         await this.fetchScenes()
       } catch (err) {
@@ -678,7 +780,7 @@ application.register(
         return
       }
 
-      this.log(`Deactivating scene at position ${position}`)
+      this.log(`Disabling scene at position ${position}`)
 
       try {
         await this.settleDelay()
@@ -686,9 +788,9 @@ application.register(
         const response = await this.readLine(3000)
 
         if (response === 'OK') {
-          this.log('Scene deactivated')
+          this.log('Scene disabled')
         } else {
-          this.log('Deactivate failed: ' + (response || 'timeout'), 'error')
+          this.log('Disable failed: ' + (response || 'timeout'), 'error')
         }
         await this.fetchScenes()
       } catch (err) {

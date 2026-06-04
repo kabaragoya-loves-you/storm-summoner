@@ -564,6 +564,80 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
    Scenes Tab
    ============================================================================ */
 
+.scenes-tab-panel {
+  max-width: none;
+  width: 100%;
+}
+
+.scenes-workspace {
+  display: grid;
+  /* List needs room for scene names + action icons (not a fixed 300px strip) */
+  grid-template-columns: clamp(360px, 42%, 520px) minmax(0, 1fr);
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.scenes-list-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scenes-list-panel .scenes-container {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.scenes-detail-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.scenes-detail-toolbar {
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+}
+
+.scenes-detail-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0.75rem;
+}
+
+.scenes-detail-body .scene-inspect-body,
+.scenes-detail-body .scene-edit-view {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .scenes-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(12rem, 1fr);
+  }
+
+  .scenes-list-panel {
+    max-height: 40vh;
+    min-height: 0;
+  }
+
+  .scenes-list-panel .scenes-container {
+    max-height: 40vh;
+  }
+}
+
 .scenes-container {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -602,13 +676,33 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
 
 .scene-row {
   display: grid;
-  grid-template-columns: auto 40px 1fr auto;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  grid-template-columns: auto 32px minmax(0, 1fr);
+  grid-template-areas:
+    "handle pos name"
+    "actions actions actions";
+  gap: 0.35rem 0.5rem;
+  padding: 0.6rem 0.75rem;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   align-items: center;
   transition: background 0.15s ease;
+  cursor: pointer;
+}
+
+.scene-drag-handle {
+  grid-area: handle;
+}
+
+.scene-position {
+  grid-area: pos;
+}
+
+.scene-name {
+  grid-area: name;
+}
+
+.scene-actions {
+  grid-area: actions;
 }
 
 .scene-row:last-child {
@@ -629,7 +723,7 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   padding-top: calc(0.75rem - 2px);
 }
 
-.scene-drag-handle {
+.scene-row .scene-drag-handle {
   cursor: grab;
   color: var(--text-dim);
   padding: 0.25rem;
@@ -646,7 +740,7 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   visibility: hidden;
 }
 
-.scene-position {
+.scene-row .scene-position {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -672,13 +766,22 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   color: white;
 }
 
+.scene-row.selected {
+  background: color-mix(in srgb, var(--brand) 10%, var(--bg-card));
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.scene-row.selected:hover {
+  background: color-mix(in srgb, var(--brand) 16%, var(--bg-hover));
+}
+
 .scenes-section.inactive .scene-position {
   background: transparent;
   color: var(--text-dim);
   opacity: 0.5;
 }
 
-.scene-name {
+.scene-row .scene-name {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -725,9 +828,11 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
 }
 
-.scene-actions {
+.scene-row .scene-actions {
   display: flex;
-  gap: 0.25rem;
+  flex-wrap: wrap;
+  gap: 0.1rem;
+  justify-content: flex-start;
 }
 
 .scene-actions wa-button {

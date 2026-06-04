@@ -1,14 +1,13 @@
-/* Storm Summoner - Scene tab (inspect + editor) */
+/* Storm Summoner - Scene inspect + editor (Scenes tab right panel) */
 
 application.register(
   'scene',
   class extends BaseController {
     static targets = [
-      'inspectView', 'inspectText', 'editView', 'editBtn', 'truncatedBanner',
-      'copySource', 'copyBtn', 'printBtn',
-      'editorContainer', 'editorTitle', 'editorStatus', 'validationBox',
-      'programmingBanner', 'prevBtn', 'nextBtn', 'saveBtn', 'revertBtn',
-      'downloadBtn'
+      'inspectView', 'inspectText', 'editView', 'truncatedBanner',
+      'copySource', 'copyBtn', 'editorToolbar',
+      'editorContainer', 'editorTitle', 'validationBox',
+      'programmingBanner', 'saveBtn', 'revertBtn'
     ]
 
     connect () {
@@ -33,19 +32,25 @@ application.register(
       this._onConnectionChanged = this.onConnectionChanged.bind(this)
       this._onTabActivated = this.onTabActivated.bind(this)
       this._onCdcNotify = this.onCdcNotify.bind(this)
-      this._onTabParams = this.onTabParams.bind(this)
+      this._onOpenScene = this.onOpenScene.bind(this)
+      this._onSceneListUpdated = this.onSceneListUpdated.bind(this)
+      this._onDownloadScene = this.onDownloadScene.bind(this)
 
       this.connection.on('connection:changed', this._onConnectionChanged)
       document.addEventListener('app:tab-activated', this._onTabActivated)
       document.addEventListener('cdc:notify', this._onCdcNotify)
-      document.addEventListener('app:tab-params', this._onTabParams)
+      document.addEventListener('scenes:open-scene', this._onOpenScene)
+      document.addEventListener('scenes:list-updated', this._onSceneListUpdated)
+      document.addEventListener('scenes:download-scene', this._onDownloadScene)
     }
 
     disconnect () {
       this.connection.off('connection:changed', this._onConnectionChanged)
       document.removeEventListener('app:tab-activated', this._onTabActivated)
       document.removeEventListener('cdc:notify', this._onCdcNotify)
-      document.removeEventListener('app:tab-params', this._onTabParams)
+      document.removeEventListener('scenes:open-scene', this._onOpenScene)
+      document.removeEventListener('scenes:list-updated', this._onSceneListUpdated)
+      document.removeEventListener('scenes:download-scene', this._onDownloadScene)
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       if (this.printFrame) {
         this.printFrame.remove()
@@ -53,44 +58,83 @@ application.register(
       }
     }
 
-    onTabParams (e) {
-      if (e.detail.tab !== 'scene') return
-      const params = e.detail.params || {}
-      if (params.position === undefined || params.position === null) return
-      this.editPosition = Number(params.position)
-      if (params.edit && !this.editing) {
-        this.editing = true
-        this.inspectViewTarget.classList.add('hidden')
-        this.editViewTarget.classList.remove('hidden')
-        this.editBtnTarget.textContent = 'View'
-        if (this.hasDownloadBtnTarget) {
-          this.downloadBtnTarget.classList.remove('hidden')
-        }
+    onSceneListUpdated (e) {
+      this.sceneList = e.detail?.scenes || []
+      this.updatePanelTitle()
+    }
+
+    onOpenScene (e) {
+      const { position, mode } = e.detail || {}
+      if (position === undefined || position === null) return
+      if (this.dirty && position !== this.editPosition &&
+          !confirm('Discard unsaved changes?')) return
+
+      this.editPosition = position
+      if (mode === 'edit') {
+        this.showEditMode()
+      } else if (mode === 'print') {
+        void this.openForPrint()
+      } else {
+        void this.showViewMode()
       }
-      if (this.editing && this.connection.isConnected) this.loadSceneForEdit()
+    }
+
+    async showViewMode () {
+      this.editing = false
+      this.inspectViewTarget.classList.remove('hidden')
+      this.editViewTarget.classList.add('hidden')
+      if (this.hasEditorToolbarTarget) {
+        this.editorToolbarTarget.classList.add('hidden')
+      }
+      if (this.connection.isConnected && this.editPosition !== null) {
+        await this.fetchInspectForPosition(this.editPosition)
+      }
+    }
+
+    showEditMode () {
+      this.editing = true
+      this.inspectViewTarget.classList.add('hidden')
+      this.editViewTarget.classList.remove('hidden')
+      if (this.hasEditorToolbarTarget) {
+        this.editorToolbarTarget.classList.remove('hidden')
+      }
+      if (this.connection.isConnected) this.loadSceneForEdit()
+    }
+
+    async openForPrint () {
+      this.editing = false
+      this.inspectViewTarget.classList.remove('hidden')
+      this.editViewTarget.classList.add('hidden')
+      if (this.hasEditorToolbarTarget) {
+        this.editorToolbarTarget.classList.add('hidden')
+      }
+      await this.fetchInspectForPosition(this.editPosition)
+      this.print()
     }
 
     onConnectionChanged ({ connected }) {
       if (!connected) {
         this.renderDisconnected()
         this.editModel = null
+        this.editPosition = null
         this.deviceProgramming = false
+        if (this.hasEditorToolbarTarget) {
+          this.editorToolbarTarget.classList.add('hidden')
+        }
       } else {
         this.fetchDeviceProgramming()
       }
     }
 
     onTabActivated (e) {
-      if (e.detail.tab !== 'scene') return
+      if (e.detail.tab !== 'scenes') return
       if (!this.connection.isConnected) {
         this.renderDisconnected()
         return
       }
-      if (this.editing) {
-        this.loadSceneForEdit()
-      } else {
-        this._loadGeneration++
-        this.fetchInspect()
+      if (this.editPosition !== null) {
+        if (this.editing) this.loadSceneForEdit()
+        else this.fetchInspectForPosition(this.editPosition)
       }
     }
 
@@ -108,13 +152,14 @@ application.register(
       if (this.editing && this.dirty) return
 
       const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
-      if (activeTab?.getAttribute('panel') !== 'scene') return
+      if (activeTab?.getAttribute('panel') !== 'scenes') return
+      if (this.editPosition === null) return
 
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       this.notifyDebounce = setTimeout(() => {
         this.notifyDebounce = null
         if (this.editing) this.loadSceneForEdit()
-        else this.fetchInspect()
+        else this.fetchInspectForPosition(this.editPosition)
       }, 100)
     }
 
@@ -149,43 +194,69 @@ application.register(
       if (this.hasSaveBtnTarget) this.saveBtnTarget.disabled = locked || !this.dirty
     }
 
-    toggleEdit () {
-      this.editing = !this.editing
-      this.inspectViewTarget.classList.toggle('hidden', this.editing)
-      this.editViewTarget.classList.toggle('hidden', !this.editing)
-      this.editBtnTarget.textContent = this.editing ? 'View' : 'Edit'
-      if (this.hasDownloadBtnTarget) {
-        this.downloadBtnTarget.classList.toggle('hidden', !this.editing)
-        this.downloadBtnTarget.disabled = !this.editModel
-      }
-
-      if (this.editing) {
-        if (this.editPosition === null) this.editPosition = 'current'
-        this.loadSceneForEdit()
-      } else if (this.connection.isConnected) {
-        this.fetchInspect()
-      }
+    updatePanelTitle () {
+      if (!this.hasEditorTitleTarget || this.editPosition === null) return
+      const pos = Number(this.editPosition)
+      const row = this.sceneList.find(s => s.position === pos)
+      const modelName = this.editModel?.name
+      const label = row
+        ? `${row.name}${row.current ? ' (playing)' : ''}`
+        : (modelName || 'Scene')
+      this.editorTitleTarget.textContent = label
     }
 
-    downloadSceneJson () {
-      if (!this.editModel) return
-      const json = JSON.stringify(this.editModel, null, 2)
+    onDownloadScene (e) {
+      const position = e.detail?.position
+      if (position === undefined || position === null) return
+      void this.downloadSceneAtPosition(position)
+    }
+
+    saveJsonBlob (model, position) {
+      const json = JSON.stringify(model, null, 2)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
-      const safeName = String(this.editModel.name || 'scene')
+      const safeName = String(model.name || 'scene')
         .replace(/[^\w.-]+/g, '_')
         .replace(/^_+|_+$/g, '')
         .slice(0, 40) || 'scene'
-      const pos = this.editPosition === 'current' ? 'current' : String(this.editPosition)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${safeName}-${pos}.json`
+      a.download = `${safeName}-${position}.json`
       a.click()
       URL.revokeObjectURL(url)
     }
 
-    cloneModel (obj) {
-      return JSON.parse(JSON.stringify(obj))
+    async downloadSceneAtPosition (position) {
+      if (!this.connection.isConnected) return
+      const pos = Number(position)
+
+      if (this.editing && this.editPosition === pos && this.editModel) {
+        this.saveJsonBlob(this.editModel, pos)
+        return
+      }
+
+      try {
+        const result = await this.connection.runSerialTask(async () => {
+          if (this.connection.currentMode) {
+            await this.connection._exitModeImpl()
+            await this.sleep(300)
+          }
+          await this.ensureDeviceIdleInTask()
+          return this.connection._fetchSizedTransferImpl(`SCENE_GET ${pos}`, {
+            lineTimeout: 30000,
+            binaryTimeout: 120000
+          })
+        })
+        if (!result?.data?.length) {
+          alert('Failed to download scene')
+          return
+        }
+        const model = JSON.parse(new TextDecoder().decode(result.data))
+        this.saveJsonBlob(model, pos)
+      } catch (err) {
+        console.error('Scene download error:', err)
+        alert(err.message || 'Download failed')
+      }
     }
 
     normalizeBeforeSave (model) {
@@ -235,9 +306,6 @@ application.register(
         this.saveBtnTarget.disabled = this.deviceProgramming || !this.dirty
       }
       if (this.hasRevertBtnTarget) this.revertBtnTarget.disabled = !this.dirty
-      if (this.hasEditorStatusTarget) {
-        this.editorStatusTarget.textContent = this.dirty ? 'Unsaved changes' : 'Saved'
-      }
     }
 
     patchSelect (e) {
@@ -322,20 +390,12 @@ application.register(
         SceneEditorUi.renderEditor(this)
       this.renderValidation()
       this.updateProgrammingLock()
-      if (this.hasDownloadBtnTarget) this.downloadBtnTarget.disabled = false
-    }
-
-
-    resolveGetArg () {
-      if (this.editPosition === 'current') return 'current'
-      return String(this.editPosition)
     }
 
     async loadSceneForEdit () {
       if (!this.connection.isConnected) return
+      if (this.editPosition === null) return
       const gen = ++this._loadGeneration
-      if (this.hasEditorStatusTarget) this.editorStatusTarget.textContent = 'Loading…'
-      if (this.hasDownloadBtnTarget) this.downloadBtnTarget.disabled = true
       if (this.hasEditorContainerTarget) {
         this.editorContainerTarget.innerHTML =
           `<div class="scene-editor-loading" aria-busy="true">
@@ -345,7 +405,7 @@ application.register(
       }
 
       try {
-        const arg = this.resolveGetArg()
+        const arg = String(this.editPosition)
         const result = await this.connection.runSerialTask(async () => {
           if (gen !== this._loadGeneration) return null
           if (this.connection.currentMode) {
@@ -358,11 +418,6 @@ application.register(
             await this.fetchConfigContextInTask()
           } catch (err) {
             console.warn('Scene editor: CONFIG context skipped:', err.message)
-          }
-          try {
-            await this.fetchSceneListInTask()
-          } catch (err) {
-            console.warn('Scene editor: scene list skipped:', err.message)
           }
           await this.ensureDeviceIdleInTask()
 
@@ -381,30 +436,16 @@ application.register(
         const text = new TextDecoder().decode(result.data)
         const model = JSON.parse(text)
         this.editModel = model
-        this.baselineJson = JSON.stringify(model)
-        this.dirty = false
-
-        const pos = this.editPosition === 'current'
-          ? this.sceneList.find(s => s.current)?.position
-          : Number(this.editPosition)
-        const row = this.sceneList.find(s => s.position === pos)
-        if (this.hasEditorTitleTarget) {
-          const label = row
-            ? `${row.name}${row.current ? ' (playing)' : ''}`
-            : (model.name || 'Scene')
-          this.editorTitleTarget.textContent = label
-        }
 
         await this.loadSchema()
         this.validationErrors = []
         this.renderEditor()
+        this.baselineJson = JSON.stringify(this.editModel)
+        this.dirty = false
         this.markDirty()
-        this.updateNavButtons()
+        this.updatePanelTitle()
       } catch (err) {
         console.error('Scene load error:', err)
-        if (this.hasEditorStatusTarget) {
-          this.editorStatusTarget.textContent = 'Failed to load scene'
-        }
         if (this.hasEditorContainerTarget) {
           const msg = err?.message || 'Failed to load scene'
           this.editorContainerTarget.innerHTML =
@@ -413,7 +454,6 @@ application.register(
       }
     }
 
-    /** Device may be in CONFIG/SCENES/etc. without connection.mode set — always EXIT+drain. */
     async ensureDeviceIdleInTask () {
       await this.connection.sendRaw('EXIT\n')
       await this.sleep(200)
@@ -448,55 +488,6 @@ application.register(
       }
     }
 
-    async fetchSceneListInTask () {
-      try {
-        await this.connection.sendRaw('SCENES\n')
-        const started = await this.connection.readLine(5000)
-        if (started !== 'SCENES_STARTED') {
-          throw new Error(started || 'SCENES did not start')
-        }
-        await this.connection.sendRaw('LIST\n')
-        const line = await this.connection.readLine(8000)
-        if (!line || !line.includes('[')) {
-          throw new Error(line?.startsWith('ERROR:') ? line : 'LIST response missing JSON')
-        }
-        const jsonStart = line.indexOf('[')
-        const jsonEnd = line.lastIndexOf(']')
-        this.sceneList = JSON.parse(line.substring(jsonStart, jsonEnd + 1))
-      } finally {
-        await this.ensureDeviceIdleInTask()
-      }
-    }
-
-    updateNavButtons () {
-      if (!this.sceneList.length || this.editPosition === 'current') {
-        if (this.hasPrevBtnTarget) this.prevBtnTarget.disabled = true
-        if (this.hasNextBtnTarget) this.nextBtnTarget.disabled = true
-        return
-      }
-      const pos = Number(this.editPosition)
-      if (this.hasPrevBtnTarget) this.prevBtnTarget.disabled = pos <= 0
-      if (this.hasNextBtnTarget) {
-        this.nextBtnTarget.disabled = pos >= this.sceneList.length - 1
-      }
-    }
-
-    async prevScene () {
-      if (this.dirty && !confirm('Discard unsaved changes?')) return
-      const pos = Number(this.editPosition)
-      if (pos <= 0) return
-      this.editPosition = pos - 1
-      await this.loadSceneForEdit()
-    }
-
-    async nextScene () {
-      if (this.dirty && !confirm('Discard unsaved changes?')) return
-      const pos = Number(this.editPosition)
-      if (pos >= this.sceneList.length - 1) return
-      this.editPosition = pos + 1
-      await this.loadSceneForEdit()
-    }
-
     revertEdits () {
       if (!this.baselineJson) return
       this.editModel = JSON.parse(this.baselineJson)
@@ -513,10 +504,8 @@ application.register(
       this.renderValidation()
       if (this.validationErrors.length) return
 
-      const pos = this.editPosition === 'current'
-        ? this.sceneList.find(s => s.current)?.position
-        : Number(this.editPosition)
-      if (pos === undefined || pos === null) {
+      const pos = Number(this.editPosition)
+      if (Number.isNaN(pos)) {
         alert('Cannot resolve scene position for save')
         return
       }
@@ -526,8 +515,7 @@ application.register(
       const bytes = new TextEncoder().encode(json)
 
       try {
-        this.connection.setTabsLocked(true, 'scene')
-        if (this.hasEditorStatusTarget) this.editorStatusTarget.textContent = 'Saving…'
+        this.connection.setTabsLocked(true, 'scenes')
 
         await this.connection.runSerialTask(async () => {
           if (this.connection.currentMode) {
@@ -546,11 +534,9 @@ application.register(
         this.baselineJson = JSON.stringify(this.editModel)
         this.dirty = false
         this.markDirty()
-        if (this.hasEditorStatusTarget) this.editorStatusTarget.textContent = 'Saved'
       } catch (err) {
         console.error('Scene save error:', err)
         alert(err.message || 'Save failed')
-        if (this.hasEditorStatusTarget) this.editorStatusTarget.textContent = 'Save failed'
       } finally {
         this.connection.setTabsLocked(false)
       }
@@ -560,13 +546,12 @@ application.register(
       if (this.hasCopySourceTarget) this.copySourceTarget.value = text || ''
       const disabled = !enabled || !text
       if (this.hasCopyBtnTarget) this.copyBtnTarget.disabled = disabled
-      if (this.hasPrintBtnTarget) this.printBtnTarget.disabled = disabled
     }
 
     renderDisconnected () {
       this.inspectTextTarget.textContent = ''
       this.inspectTextTarget.classList.add('empty')
-      this.inspectTextTarget.textContent = 'Connect to view scene inspect text'
+      this.inspectTextTarget.textContent = 'Connect to view scenes'
       this.truncatedBannerTarget.classList.add('hidden')
       this.setCopyable('', false)
     }
@@ -617,21 +602,207 @@ application.register(
         this.printFrame = frame
       }
 
-      const doc = frame.contentWindow.document
+      const doc = frame.contentDocument || frame.contentWindow.document
       doc.open()
       doc.write(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Scene Inspect</title>
-<style>@page { size: letter portrait; margin: 0.5in; }
-body { margin: 0; font-family: Consolas, monospace; white-space: pre-wrap; }</style>
-</head><body><pre>${this.escapeHtml(text)}</pre></body></html>`)
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scene Inspect</title>
+<style>
+  @page { size: letter portrait; margin: 0.5in; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    color: #000;
+  }
+  body {
+    width: 7.5in;
+    box-sizing: border-box;
+  }
+  .print-text {
+    margin: 0;
+    font-family: Consolas, Monaco, "Courier New", monospace;
+    line-height: 1.25;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .print-content {
+    width: 100%;
+  }
+  .print-cols {
+    display: flex;
+    flex-direction: row;
+    gap: 0.25in;
+    width: 100%;
+  }
+  .print-col {
+    flex: 1;
+    min-width: 0;
+  }
+  @media print {
+    html, body {
+      width: 7.5in;
+      height: 10in;
+      max-height: 10in;
+      overflow: hidden;
+    }
+    .print-cols {
+      display: flex;
+    }
+  }
+</style>
+</head>
+<body><div id="print-root"></div></body>
+</html>`)
       doc.close()
-      frame.contentWindow.print()
+
+      const win = frame.contentWindow
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          this.fitPrintLayout(doc, text)
+          win.print()
+        })
+      })
     }
 
-    async fetchInspect () {
-      if (!this.connection.isConnected) return
+    // Letter portrait with 0.5in margins → 10in printable height at 96dpi.
+    static PRINTABLE_HEIGHT_PX = 960
+    static LAYOUT_REF_PT = 8
+    static COMFORT_SINGLE_PT = 9
+    static SPLIT_SINGLE_PT = 7.5
+    static SHORT_MAX_LINES = 8
+    static TWO_COLUMN_MIN_LINES = 18
+    static TWO_COLUMN_MIN_CHARS = 1400
+    static TWO_COLUMN_HEIGHT_RATIO = 0.58
 
-      const gen = this._loadGeneration
+    countLines (text) {
+      if (!text) return 0
+      return text.split('\n').length
+    }
+
+    measureRefHeight (text, doc) {
+      const probe = doc.createElement('div')
+      probe.className = 'print-text print-content'
+      probe.style.position = 'absolute'
+      probe.style.visibility = 'hidden'
+      probe.style.left = '0'
+      probe.style.top = '0'
+      probe.style.width = '100%'
+      probe.textContent = text
+      probe.style.fontSize = this.constructor.LAYOUT_REF_PT + 'pt'
+      doc.body.appendChild(probe)
+      const refHeight = probe.scrollHeight
+      probe.remove()
+      return refHeight
+    }
+
+    shouldUseTwoColumns (text, doc, singlePt) {
+      if (singlePt >= this.constructor.COMFORT_SINGLE_PT) return false
+
+      const lineCount = this.countLines(text)
+      if (lineCount <= this.constructor.SHORT_MAX_LINES) return false
+      if (singlePt < this.constructor.SPLIT_SINGLE_PT) return true
+      if (lineCount >= this.constructor.TWO_COLUMN_MIN_LINES) return true
+      if (text.length >= this.constructor.TWO_COLUMN_MIN_CHARS &&
+          singlePt < this.constructor.COMFORT_SINGLE_PT) return true
+
+      return this.measureRefHeight(text, doc) >=
+        this.constructor.PRINTABLE_HEIGHT_PX * this.constructor.TWO_COLUMN_HEIGHT_RATIO
+    }
+
+    buildPrintRoot (doc, text, twoCol) {
+      const root = doc.getElementById('print-root')
+      root.replaceChildren()
+
+      if (!twoCol) {
+        const el = doc.createElement('div')
+        el.className = 'print-text print-content'
+        el.textContent = text
+        root.appendChild(el)
+        return { measureTarget: el, twoCol: false }
+      }
+
+      const lines = text.split('\n')
+      const mid = Math.ceil(lines.length / 2)
+      const row = doc.createElement('div')
+      row.className = 'print-cols print-text'
+      const left = doc.createElement('div')
+      const right = doc.createElement('div')
+      left.className = 'print-col'
+      right.className = 'print-col'
+      left.textContent = lines.slice(0, mid).join('\n')
+      right.textContent = lines.slice(mid).join('\n')
+      row.append(left, right)
+      root.appendChild(row)
+      return { measureTarget: row, twoCol: true }
+    }
+
+    measurePrintHeight (target, twoCol) {
+      if (twoCol) {
+        let max = 0
+        target.querySelectorAll('.print-col').forEach(col => {
+          col.style.height = 'auto'
+          col.style.maxHeight = 'none'
+          void col.offsetHeight
+          max = Math.max(max, col.scrollHeight)
+        })
+        return max
+      }
+      target.style.height = 'auto'
+      target.style.maxHeight = 'none'
+      void target.offsetHeight
+      return target.scrollHeight
+    }
+
+    setPrintFontSize (target, pt) {
+      target.style.fontSize = pt + 'pt'
+    }
+
+    searchFontSize (target, printableHeight, minPt, maxPt, twoCol) {
+      const fits = (sizePt) => {
+        this.setPrintFontSize(target, sizePt)
+        return this.measurePrintHeight(target, twoCol) <= printableHeight
+      }
+
+      let lo = minPt
+      let hi = maxPt
+      let best = minPt
+      while (hi - lo > 0.1) {
+        const mid = (lo + hi) / 2
+        if (fits(mid)) {
+          best = mid
+          lo = mid
+        } else {
+          hi = mid
+        }
+      }
+
+      this.setPrintFontSize(target, best)
+      while (best > minPt && this.measurePrintHeight(target, twoCol) > printableHeight) {
+        best -= 0.25
+        this.setPrintFontSize(target, best)
+      }
+      return best
+    }
+
+    fitPrintLayout (doc, text) {
+      const printableHeight = this.constructor.PRINTABLE_HEIGHT_PX
+
+      let { measureTarget, twoCol } = this.buildPrintRoot(doc, text, false)
+      const singlePt = this.searchFontSize(measureTarget, printableHeight, 4, 72, false)
+      if (!this.shouldUseTwoColumns(text, doc, singlePt)) return
+
+      ({ measureTarget, twoCol } = this.buildPrintRoot(doc, text, true))
+      this.searchFontSize(measureTarget, printableHeight, 4, 72, twoCol)
+    }
+
+    async fetchInspectForPosition (position) {
+      if (!this.connection.isConnected) return
+      if (position === null || position === undefined) return
+
+      const gen = ++this._loadGeneration
       this.renderLoading()
 
       try {
@@ -641,13 +812,16 @@ body { margin: 0; font-family: Consolas, monospace; white-space: pre-wrap; }</st
             await this.connection._exitModeImpl()
             await this.sleep(300)
           }
+          await this.ensureDeviceIdleInTask()
           if (gen !== this._loadGeneration) return null
-          return this.connection._sendCommandImpl('SCENE_INSPECT', 60000, (data) =>
-            typeof data.text === 'string')
+          return this.connection._sendCommandImpl(
+            `SCENE_INSPECT ${position}`,
+            60000,
+            (data) => typeof data.text === 'string'
+          )
         })
 
         if (gen !== this._loadGeneration) return
-
         if (!response || response.startsWith('ERROR:')) {
           this.renderError(response || 'No response from device')
           return

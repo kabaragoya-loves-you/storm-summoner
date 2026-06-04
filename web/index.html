@@ -43,12 +43,11 @@
     <div class="tab-container">
       <wa-tab-group>
         <wa-tab slot="nav" panel="info" active>Info</wa-tab>
-        <wa-tab slot="nav" panel="scene">Scene</wa-tab>
+        <wa-tab slot="nav" panel="scenes">Scenes</wa-tab>
         <wa-tab slot="nav" panel="pedals">Pedals</wa-tab>
         <wa-tab slot="nav" panel="assets">Assets</wa-tab>
         <wa-tab slot="nav" panel="console">Console</wa-tab>
         <wa-tab slot="nav" panel="midi">MIDI</wa-tab>
-        <wa-tab slot="nav" panel="scenes">Scenes</wa-tab>
         <wa-tab slot="nav" panel="display">Display</wa-tab>
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
         <wa-tab slot="nav" panel="config">Settings</wa-tab>
@@ -99,83 +98,6 @@
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </wa-tab-panel>
-
-        <!-- Scene Tab (inspect + editor) -->
-        <wa-tab-panel name="scene">
-          <div class="tab-content scene-inspect-panel" data-controller="scene">
-            <div class="toolbar">
-              <wa-button size="small" variant="neutral" appearance="outlined"
-                         data-scene-target="prevBtn"
-                         data-action="click->scene#prevScene" disabled>
-                <wa-icon name="chevron-left" slot="prefix"></wa-icon>
-                Prev
-              </wa-button>
-              <wa-button size="small" variant="neutral" appearance="outlined"
-                         data-scene-target="nextBtn"
-                         data-action="click->scene#nextScene" disabled>
-                Next
-                <wa-icon name="chevron-right" slot="suffix"></wa-icon>
-              </wa-button>
-              <span class="scene-editor-title" data-scene-target="editorTitle"></span>
-              <div class="toolbar-spacer"></div>
-              <span class="scene-editor-status" data-scene-target="editorStatus"></span>
-              <wa-button size="small" variant="neutral" appearance="outlined"
-                         data-scene-target="downloadBtn"
-                         data-action="click->scene#downloadSceneJson" class="hidden">
-                <wa-icon name="download" slot="prefix"></wa-icon>
-                Download
-              </wa-button>
-              <wa-button size="small" variant="neutral" appearance="outlined"
-                         data-scene-target="revertBtn"
-                         data-action="click->scene#revertEdits" disabled>
-                Revert
-              </wa-button>
-              <wa-button size="small" variant="brand"
-                         data-scene-target="saveBtn"
-                         data-action="click->scene#saveScene" disabled>
-                Save
-              </wa-button>
-              <wa-button size="small" variant="neutral" appearance="outlined"
-                         data-scene-target="editBtn"
-                         data-action="click->scene#toggleEdit">
-                Edit
-              </wa-button>
-            </div>
-
-            <wa-callout variant="warning" class="scene-programming-banner hidden"
-                        data-scene-target="programmingBanner">
-              <wa-icon name="lock" slot="icon"></wa-icon>
-              Device is in programming mode. Web editing is locked until you exit programming mode on the device.
-            </wa-callout>
-
-            <div class="scene-inspect-body" data-scene-target="inspectView">
-              <wa-callout variant="warning" class="scene-truncated-banner hidden"
-                          data-scene-target="truncatedBanner">
-                <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
-                Inspect text was truncated on device.
-              </wa-callout>
-              <div class="scene-inspect-display" data-controller="copy">
-                <div class="scene-inspect-actions">
-                  <wa-button class="scene-inspect-action" size="small" variant="neutral"
-                             data-scene-target="copyBtn"
-                             data-action="click->copy#copy" disabled>Copy</wa-button>
-                  <wa-button class="scene-inspect-action" size="small" variant="neutral"
-                             data-scene-target="printBtn"
-                             data-action="click->scene#print" disabled>Print</wa-button>
-                </div>
-                <textarea class="scene-inspect-copy-source" data-copy-target="source"
-                          data-scene-target="copySource" readonly tabindex="-1"
-                          aria-hidden="true"></textarea>
-                <pre class="scene-inspect-text empty" data-scene-target="inspectText">Connect to view scene inspect text</pre>
-              </div>
-            </div>
-
-            <div class="scene-edit-view hidden" data-scene-target="editView">
-              <div class="scene-validation-box hidden" data-scene-target="validationBox"></div>
-              <div class="scene-editor-scroll" data-scene-target="editorContainer"></div>
             </div>
           </div>
         </wa-tab-panel>
@@ -440,9 +362,9 @@
           </div>
         </wa-tab-panel>
 
-        <!-- Scenes Tab -->
+        <!-- Scenes Tab (list + inspect/editor) -->
         <wa-tab-panel name="scenes">
-          <div class="tab-content" data-controller="scenes">
+          <div class="tab-content scenes-tab-panel" data-controller="scenes">
             <div class="toolbar">
               <wa-button size="small" variant="neutral" appearance="outlined"
                          data-action="click->scenes#refresh" data-scenes-target="refreshBtn" disabled>
@@ -457,10 +379,63 @@
               </wa-button>
             </div>
 
-            <div class="scenes-container" data-scenes-target="container">
-              <div class="empty-state">
-                <wa-icon name="layer-group"></wa-icon>
-                <p>Connect to view scenes</p>
+            <div class="scenes-workspace">
+              <div class="scenes-list-panel">
+                <div class="scenes-container" data-scenes-target="container">
+                  <div class="empty-state">
+                    <wa-icon name="layer-group"></wa-icon>
+                    <p>Connect to view scenes</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="scenes-detail-panel scene-inspect-panel" data-controller="scene">
+                <div class="scenes-detail-toolbar toolbar hidden" data-scene-target="editorToolbar">
+                  <span class="scene-editor-title" data-scene-target="editorTitle"></span>
+                  <div class="toolbar-spacer"></div>
+                  <wa-button size="small" variant="neutral" appearance="outlined"
+                             data-scene-target="revertBtn"
+                             data-action="click->scene#revertEdits" disabled>
+                    Revert
+                  </wa-button>
+                  <wa-button size="small" variant="brand"
+                             data-scene-target="saveBtn"
+                             data-action="click->scene#saveScene" disabled>
+                    Save
+                  </wa-button>
+                </div>
+
+                <wa-callout variant="warning" class="scene-programming-banner hidden"
+                            data-scene-target="programmingBanner">
+                  <wa-icon name="lock" slot="icon"></wa-icon>
+                  Device is in programming mode. Web editing is locked until you exit programming mode on the device.
+                </wa-callout>
+
+                <div class="scenes-detail-body">
+                  <div class="scene-inspect-body" data-scene-target="inspectView">
+                    <wa-callout variant="warning" class="scene-truncated-banner hidden"
+                                data-scene-target="truncatedBanner">
+                      <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
+                      Inspect text was truncated on device.
+                    </wa-callout>
+                    <div class="scene-inspect-display" data-controller="copy">
+                      <div class="scene-inspect-actions">
+                        <wa-button class="scene-inspect-action" size="small" variant="neutral"
+                                   data-scene-target="copyBtn"
+                                   data-action="click->copy#copy" disabled>Copy</wa-button>
+                      </div>
+                      <textarea class="scene-inspect-copy-source" data-copy-target="source"
+                                data-scene-target="copySource" readonly tabindex="-1"
+                                aria-hidden="true"></textarea>
+                      <pre class="scene-inspect-text empty" data-scene-target="inspectText">Select a scene to view</pre>
+                    </div>
+                  </div>
+
+                  <div class="scene-edit-view hidden" data-scene-target="editView">
+                    <div class="scene-validation-box hidden" data-scene-target="validationBox"></div>
+                    <div class="scene-editor-scroll" data-scene-target="editorContainer"></div>
+                  </div>
+                </div>
               </div>
             </div>
 

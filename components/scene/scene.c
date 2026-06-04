@@ -21,6 +21,7 @@
 #include "rtg.h"
 #include "tilt.h"
 #include "version.h"
+#include "scene_inspect.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -7129,6 +7130,83 @@ esp_err_t scene_reload_index(uint8_t scene_index) {
 
   scene_reapply_runtime(scene_index, &g_scene_manager.cache[cache_idx].scene);
   ESP_LOGI(TAG, "Reloaded current scene %u from flash", (unsigned)scene_index);
+  return ESP_OK;
+}
+
+static esp_err_t scene_parse_from_flash(uint8_t scene_index, scene_t *out) {
+  if (!out) return ESP_ERR_INVALID_ARG;
+
+  char filepath[128];
+  get_scene_filename(scene_index, filepath, sizeof(filepath));
+
+  FILE *f = fopen(filepath, "r");
+  if (!f) return ESP_ERR_NOT_FOUND;
+
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+
+  if (fsize <= 0 || fsize > 256 * 1024) {
+    fclose(f);
+    return ESP_ERR_INVALID_SIZE;
+  }
+
+  char *json_str = malloc((size_t)fsize + 1);
+  if (!json_str) {
+    fclose(f);
+    return ESP_ERR_NO_MEM;
+  }
+
+  size_t nread = fread(json_str, 1, (size_t)fsize, f);
+  fclose(f);
+  json_str[nread] = '\0';
+
+  cJSON *root = cJSON_Parse(json_str);
+  free(json_str);
+  if (!root) return ESP_ERR_INVALID_ARG;
+
+  scene_init_defaults(out, scene_index);
+  esp_err_t ret = json_to_scene(root, out);
+  cJSON_Delete(root);
+  return ret;
+}
+
+static const scene_t *scene_find_cached(uint8_t scene_index) {
+  for (int i = 0; i < SCENE_CACHE_SIZE; i++) {
+    if (g_scene_manager.cache[i].valid &&
+        g_scene_manager.cache[i].index == scene_index) {
+      return &g_scene_manager.cache[i].scene;
+    }
+  }
+  return NULL;
+}
+
+esp_err_t scene_inspect_at_index(uint8_t scene_index, char *buf, size_t cap,
+    bool *truncated_out) {
+  if (!buf || cap == 0) return ESP_ERR_INVALID_ARG;
+  if (!g_scene_manager.initialized) return ESP_ERR_INVALID_STATE;
+  if (!scene_index_in_manifest(scene_index)) return ESP_ERR_NOT_FOUND;
+
+  const scene_t *cached = scene_find_cached(scene_index);
+  scene_t *heap_scene = NULL;
+  const scene_t *scene = cached;
+  esp_err_t ret = ESP_OK;
+
+  if (!scene) {
+    heap_scene = heap_caps_malloc(sizeof(scene_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!heap_scene) return ESP_ERR_NO_MEM;
+    ret = scene_parse_from_flash(scene_index, heap_scene);
+    if (ret != ESP_OK) {
+      heap_caps_free(heap_scene);
+      return ret;
+    }
+    scene = heap_scene;
+  }
+
+  bool complete = scene_inspect_build(scene, scene_index, buf, cap);
+  if (truncated_out) *truncated_out = !complete;
+
+  if (heap_scene) heap_caps_free(heap_scene);
   return ESP_OK;
 }
 

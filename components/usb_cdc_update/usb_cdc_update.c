@@ -120,7 +120,8 @@ static void cdc_scene_changed_handler(const event_t *event, void *context);
 static void cdc_scene_updated_handler(const event_t *event, void *context);
 static void cdc_scene_reordered_handler(const event_t *event, void *context);
 static void cdc_scene_list_changed_handler(const event_t *event, void *context);
-static void cdc_send_scene_inspect(void);
+static void cdc_send_scene_inspect(const char *arg);
+static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position);
 static void cdc_send_info_json(void);
 static void cdc_send_scene_get(const char *arg);
 static void cdc_cmd_scene_put(const char *args);
@@ -793,23 +794,47 @@ static void cdc_scene_list_changed_handler(const event_t *event, void *context) 
   cdc_push_scene_evt("scene_list_changed", event->data.value_uint8);
 }
 
-static void cdc_send_scene_inspect(void) {
-  ESP_LOGI(TAG, "SCENE_INSPECT begin");
+static void cdc_send_scene_inspect(const char *arg) {
+  bool is_position = false;
+  uint8_t scene_index;
+
+  if (!arg || !arg[0]) {
+    scene_index = scene_get_current_index();
+  } else {
+    scene_index = cdc_resolve_scene_index(arg, &is_position);
+    if (is_position) {
+      unsigned long pos = strtoul(arg, NULL, 10);
+      if (pos >= scene_get_total_count()) {
+        send_response("ERROR: Invalid scene position");
+        return;
+      }
+    }
+    if (!scene_index_in_manifest(scene_index)) {
+      send_response("ERROR: Scene not found");
+      return;
+    }
+  }
+
+  ESP_LOGI(TAG, "SCENE_INSPECT begin (index=%u)", (unsigned)scene_index);
   char *text_buf = heap_caps_malloc(SCENE_INSPECT_TEXT_SIZE, MALLOC_CAP_SPIRAM);
   if (!text_buf) {
     send_response("ERROR: Out of memory");
     return;
   }
 
-  scene_t *scene = scene_get_current();
-  uint8_t idx = scene_get_current_index();
-  if (!scene) {
+  bool truncated = false;
+  esp_err_t err = scene_inspect_at_index(scene_index, text_buf,
+    SCENE_INSPECT_TEXT_SIZE, &truncated);
+  if (err != ESP_OK) {
     heap_caps_free(text_buf);
-    send_response("ERROR: No scene");
+    if (err == ESP_ERR_NOT_FOUND) {
+      send_response("ERROR: Scene not found");
+    } else {
+      send_response("ERROR: Failed to build inspect");
+    }
     return;
   }
 
-  bool truncated = !scene_inspect_build(scene, idx, text_buf, SCENE_INSPECT_TEXT_SIZE);
   ESP_LOGI(TAG, "SCENE_INSPECT built (truncated=%d)", truncated ? 1 : 0);
 
   cJSON *root = cJSON_CreateObject();
@@ -1407,8 +1432,10 @@ static void process_command(const char *cmd) {
   } else if (strcmp(cmd, "INFO") == 0) {
     cdc_send_info_json();
 
-  } else if (strcmp(cmd, "SCENE_INSPECT") == 0) {
-    cdc_send_scene_inspect();
+  } else if (strncmp(cmd, "SCENE_INSPECT", 13) == 0) {
+    const char *arg = cmd + 13;
+    while (arg && *arg == ' ') arg++;
+    cdc_send_scene_inspect(arg && *arg ? arg : NULL);
 
   } else if (strncmp(cmd, "SCENE_GET ", 10) == 0) {
     cdc_send_scene_get(cmd + 10);
