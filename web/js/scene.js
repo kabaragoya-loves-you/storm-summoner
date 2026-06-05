@@ -157,9 +157,12 @@ application.register(
       const kind = e.detail?.kind
       if (kind === 'programming') {
         const active = e.detail?.index === 1
+        const wasProgramming = this.deviceProgramming
         this.deviceProgramming = active
         this.updateProgrammingLock()
-        if (!active && this.editing && !this.dirty) this.loadSceneForEdit()
+        if (wasProgramming && !active && this.editing && !this.dirty) {
+          this.loadSceneForEdit()
+        }
         return
       }
       if (kind !== 'scene_changed' && kind !== 'scene_updated') return
