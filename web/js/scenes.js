@@ -10,7 +10,7 @@ application.register(
   'scenes',
   class extends BaseController {
     static targets = [
-      'refreshBtn', 'addBtn', 'container', 'logContent',
+      'refreshBtn', 'addBtn', 'activeHeader', 'container', 'logContent',
       'deleteDialog', 'deleteSceneName',
       'nameDialog', 'nameInput', 'nameDialogConfirm', 'nameError'
     ]
@@ -25,6 +25,7 @@ application.register(
       this.pendingDuplicatePosition = null  // position when duplicating
       this.draggedElement = null
       this.notifyDebounce = null
+      this._fetchScenesPromise = null
 
       // Listen for connection changes
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
@@ -59,6 +60,7 @@ application.register(
       const kind = e.detail?.kind
       if (!SCENES_LIST_SYNC_EVENTS.has(kind)) return
       if (!this.connection.isConnected || !this.inScenesMode) return
+      if (this.connection.isSerialBusy) return
 
       const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
       if (activeTab?.getAttribute('panel') !== 'scenes') return
@@ -66,6 +68,7 @@ application.register(
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       this.notifyDebounce = setTimeout(() => {
         this.notifyDebounce = null
+        if (this.connection.isSerialBusy) return
         this.fetchScenes()
       }, 100)
     }
@@ -85,28 +88,54 @@ application.register(
       if (!this.connection.isConnected) return
 
       try {
-        const modeGranted = await this.connection.requestMode('SCENES')
-        if (!modeGranted) return
-
-        await this.enterScenesMode()
-        await this.settleDelay()  // Extra delay after mode transition
-        await this.fetchScenes()
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         console.error('Scenes activation error:', err)
         this.log('Activation error: ' + err.message, 'error')
       }
     }
 
+    scenesSerial(fn) {
+      const impl = () => fn()
+      return this.connection.isSerialBusy ? impl() : this.connection.runSerialTask(impl)
+    }
+
+    async ensureScenesMode() {
+      if (this.inScenesMode) return
+
+      if (this.connection.currentMode !== 'SCENES') {
+        const modeGranted = await this.connection.requestMode('SCENES')
+        if (!modeGranted) throw new Error('Could not enter SCENES mode')
+      }
+      await this.enterScenesMode()
+    }
+
     async enterScenesMode() {
       await this.sleep(100)
-      await this.connection.sendRaw('SCENES\n')
-      const response = await this.connection.readLine(3000)
 
-      if (response === 'SCENES_STARTED') {
-        this.inScenesMode = true
-        this.log('Entered scenes mode')
-      } else {
-        throw new Error(`Unexpected response: ${response}`)
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await this.connection.sendRaw('SCENES\n')
+        const response = await this.connection.readLine(3000)
+
+        if (response === 'SCENES_STARTED') {
+          this.inScenesMode = true
+          this.log('Entered scenes mode')
+          return
+        }
+
+        // Device may still be in SCENES after the scene panel sent EXIT; sync to idle.
+        if (attempt === 0 && response?.includes('Unknown')) {
+          await this.connection.sendRaw('EXIT\n')
+          await this.sleep(150)
+          await this.connection.drainInput()
+          continue
+        }
+
+        throw new Error(`Unexpected response: ${response || '(no response)'}`)
       }
     }
 
@@ -119,23 +148,59 @@ application.register(
       return this.connection.readLine(timeout)
     }
 
+    normalizeSceneListEntry (scene) {
+      const name = String(scene?.name ?? '').trim()
+      return { ...scene, name: name || 'Untitled' }
+    }
+
+    updateActiveHeader () {
+      if (!this.hasActiveHeaderTarget) return
+      const n = (this.scenes || []).filter(s => s.active).length
+      this.activeHeaderTarget.textContent = `Active Scenes (${n})`
+    }
+
+    async fetchScenesListOnce () {
+      await this.connection.sendRaw('LIST\n')
+      return this.readLine(5000)
+    }
+
     async fetchScenes() {
+      if (this._fetchScenesPromise) return this._fetchScenesPromise
+
+      const run = () => this.fetchScenesBody()
+      const task = this.connection.isSerialBusy
+        ? run()
+        : this.connection.runSerialTask(run)
+
+      this._fetchScenesPromise = Promise.resolve(task).finally(() => {
+        this._fetchScenesPromise = null
+      })
+      return this._fetchScenesPromise
+    }
+
+    async fetchScenesBody() {
       try {
+        await this.ensureScenesMode()
         await this.settleDelay()
-        await this.connection.sendRaw('LIST\n')
-        const response = await this.readLine(5000)
+        let response = await this.fetchScenesListOnce()
 
         if (!response || response.startsWith('ERROR:')) {
-          this.log('Failed to fetch scenes: ' + response, 'error')
-          this.renderEmpty()
+          this.inScenesMode = false
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          response = await this.fetchScenesListOnce()
+        }
+
+        if (!response || response.startsWith('ERROR:')) {
+          this.log('Failed to fetch scenes: ' + (response || 'no response'), 'error')
           return
         }
 
         if (response === 'SCENES_STOPPED' || !response.includes('[')) {
           this.inScenesMode = false
-          await this.enterScenesMode()
+          await this.ensureScenesMode()
           await this.settleDelay()
-          return this.fetchScenes()
+          return this.fetchScenesBody()
         }
 
         // Extract just the JSON array in case there's extra data
@@ -144,19 +209,17 @@ application.register(
         if (jsonStart === -1 || jsonEnd === -1 || jsonEnd < jsonStart) {
           console.error('Invalid JSON response:', response)
           this.log('Invalid response format', 'error')
-          this.renderEmpty()
           return
         }
 
         const jsonStr = response.substring(jsonStart, jsonEnd + 1)
-        this.scenes = JSON.parse(jsonStr)
+        this.scenes = JSON.parse(jsonStr).map(s => this.normalizeSceneListEntry(s))
         this.renderScenes()
         this.log(`Loaded ${this.scenes.length} scenes`)
         this.selectPlayingSceneIfNeeded()
       } catch (err) {
         console.error('Error fetching scenes:', err)
         this.log('Error: ' + err.message, 'error')
-        this.renderEmpty()
       }
     }
 
@@ -168,10 +231,13 @@ application.register(
         </div>
       `
       this.scenes = []
+      this.updateActiveHeader()
       this.publishSceneList()
     }
 
     renderScenes() {
+      this.updateActiveHeader()
+
       if (!this.scenes || this.scenes.length === 0) {
         this.containerTarget.innerHTML = `
           <div class="empty-state">
@@ -188,13 +254,8 @@ application.register(
 
       let html = ''
 
-      // Active scenes section
       html += `
         <div class="scenes-section active">
-          <div class="scenes-section-header">
-            <wa-icon name="layer-group"></wa-icon>
-            Active Scenes (${activeScenes.length})
-          </div>
           <ul class="scene-list" data-section="active">
       `
 
@@ -477,16 +538,19 @@ application.register(
       this.log(`Reordering: ${fromPos} → ${toPos}`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`REORDER ${fromPos} ${toPos}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`REORDER ${fromPos} ${toPos}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Reorder successful')
-        } else {
-          this.log('Reorder failed: ' + (response || 'timeout'), 'error')
-        }
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Reorder successful')
+          } else {
+            this.log('Reorder failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
         await this.fetchScenes()
@@ -648,17 +712,19 @@ application.register(
       this.log(`Creating scene: ${name}`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`CREATE ${name}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`CREATE ${name}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Scene created')
-        } else {
-          this.log('Create failed: ' + (response || 'timeout'), 'error')
-        }
-        // Always refresh - operation may have succeeded even if response was lost
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Scene created')
+          } else {
+            this.log('Create failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
         await this.fetchScenes()
@@ -669,20 +735,21 @@ application.register(
       this.log(`Renaming scene at position ${position} to "${name}"`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`RENAME ${position} ${name}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`RENAME ${position} ${name}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Scene renamed')
-        } else {
-          this.log('Rename failed: ' + (response || 'timeout'), 'error')
-        }
-        // Always refresh - operation may have succeeded even if response was lost
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Scene renamed')
+          } else {
+            this.log('Rename failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
-        // Refresh anyway in case operation succeeded
         await this.fetchScenes()
       }
     }
@@ -710,16 +777,19 @@ application.register(
       this.log(`Duplicating scene at position ${position} as "${name}"`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`DUPLICATE ${position} ${name}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`DUPLICATE ${position} ${name}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Scene duplicated')
-        } else {
-          this.log('Duplicate failed: ' + (response || 'timeout'), 'error')
-        }
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Scene duplicated')
+          } else {
+            this.log('Duplicate failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
         await this.fetchScenes()
@@ -732,16 +802,19 @@ application.register(
       this.log(`Activating (playing) scene at position ${position}`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`GOTO ${position}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`GOTO ${position}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Scene activated (now playing)')
-        } else {
-          this.log('Activate failed: ' + (response || 'timeout'), 'error')
-        }
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Scene activated (now playing)')
+          } else {
+            this.log('Activate failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
         await this.fetchScenes()
@@ -755,16 +828,19 @@ application.register(
       this.log(`Enabling scene at position ${position}`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`ACTIVATE ${position}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`ACTIVATE ${position}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Scene enabled')
-        } else {
-          this.log('Enable failed: ' + (response || 'timeout'), 'error')
-        }
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Scene enabled')
+          } else {
+            this.log('Enable failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
         await this.fetchScenes()
@@ -783,16 +859,19 @@ application.register(
       this.log(`Disabling scene at position ${position}`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`DEACTIVATE ${position}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`DEACTIVATE ${position}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Scene disabled')
-        } else {
-          this.log('Disable failed: ' + (response || 'timeout'), 'error')
-        }
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Scene disabled')
+          } else {
+            this.log('Disable failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
         await this.fetchScenes()
@@ -824,16 +903,19 @@ application.register(
       this.log(`Deleting scene at position ${position}`)
 
       try {
-        await this.settleDelay()
-        await this.connection.sendRaw(`DELETE ${position}\n`)
-        const response = await this.readLine(3000)
+        await this.scenesSerial(async () => {
+          await this.ensureScenesMode()
+          await this.settleDelay()
+          await this.connection.sendRaw(`DELETE ${position}\n`)
+          const response = await this.readLine(3000)
 
-        if (response === 'OK') {
-          this.log('Scene deleted')
-        } else {
-          this.log('Delete failed: ' + (response || 'timeout'), 'error')
-        }
-        await this.fetchScenes()
+          if (response === 'OK') {
+            this.log('Scene deleted')
+          } else {
+            this.log('Delete failed: ' + (response || 'timeout'), 'error')
+          }
+          await this.fetchScenesBody()
+        })
       } catch (err) {
         this.log('Error: ' + err.message, 'error')
         await this.fetchScenes()

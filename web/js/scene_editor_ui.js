@@ -72,6 +72,14 @@ window.SceneEditorUi = (function () {
     { v: 'rtg_rate', l: 'RTG Rate' }
   ]
 
+  const SCREEN_MODULES = [
+    { v: 'beat', l: 'Beat Grid' },
+    { v: 'khyron', l: 'Khyron' },
+    { v: 'space', l: 'Space' },
+    { v: 'summoner', l: 'Summoner' },
+    { v: 'pixels', l: 'Pixels' }
+  ]
+
   const ACTION_TYPES = [
     'none', 'note', 'control', 'scene', 'preset', 'transport', 'tempo', 'touchwheel',
     'lfo', 'clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold', 'piano_pedal',
@@ -82,6 +90,18 @@ window.SceneEditorUi = (function () {
     'set', 'hold', 'cycle', 'toggle', 'increment', 'decrement', 'start', 'stop',
     'tap', 'play', 'pause', 'record', 'modify', 'step', 'downbeat', 'burst'
   ]
+
+  function normalizeUiModule (name) {
+    if (!name || name === 'scene') return 'beat'
+    if (name === 'buttons') return 'space'
+    return name
+  }
+
+  function screenModuleOptions (value) {
+    const current = normalizeUiModule(value || 'beat')
+    if (SCREEN_MODULES.some(o => o.v === current)) return SCREEN_MODULES
+    return [{ v: current, l: current }, ...SCREEN_MODULES]
+  }
 
   function esc (s) {
     return String(s ?? '')
@@ -286,11 +306,14 @@ window.SceneEditorUi = (function () {
     if (ctx.sceneMode !== 0) {
       html += fieldRow('Scene name', textField('name', m.name || '', 16))
     }
-    html += fieldRow('Screen', textField('ui_module', m.ui_module || 'beat', 15))
+    html += fieldRow('Screen',
+      selectField('ui_module', normalizeUiModule(m.ui_module), screenModuleOptions(m.ui_module)))
 
     if (ctx.sceneMode !== 1) {
-      html += fieldRow('Program', numberField('program_number', m.program_number ?? 0, 0, 127))
-      html += fieldRow('PC on load', checkboxField('send_pc_on_load', m.send_pc_on_load !== false))
+      html += fieldRow('Pedal Preset',
+        numberField('program_number', m.program_number ?? 0, 0, 127))
+      html += fieldRow('Load preset when loading scene',
+        checkboxField('send_pc_on_load', m.send_pc_on_load !== false))
     }
 
     html += fieldRow('BPM', numberField('bpm', m.bpm ?? 120, 20, 300))
@@ -310,9 +333,17 @@ window.SceneEditorUi = (function () {
         { v: 'midi', l: 'MIDI' },
         { v: 'sync', l: 'Sync' }
       ]))
-    html += fieldRow('Use transport', checkboxField('use_transport', !!m.use_transport))
     html += fieldRow('Send clock', checkboxField('send_clock', m.send_clock !== false))
-    html += fieldRow('Note channel', numberField('note_channel', m.note_channel ?? 0, 0, 16))
+    html += fieldRow('Use transport', checkboxField('use_transport', !!m.use_transport))
+
+    const inheritedNoteCh = typeof ctrl.getEffectiveMidiChannel === 'function'
+      ? ctrl.getEffectiveMidiChannel()
+      : (ctx.globalPedal?.midi_channel || 1)
+    html += fieldRow('Send notes on channel',
+      selectField('note_channel', m.note_channel ?? 0, [
+        { v: 0, l: `Inherited (${inheritedNoteCh})` },
+        ...Array.from({ length: 16 }, (_, i) => ({ v: i + 1, l: String(i + 1) }))
+      ]))
 
     return flatBlock('Scene settings', html)
   }

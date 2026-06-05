@@ -365,26 +365,32 @@
         <!-- Scenes Tab (list + inspect/editor) -->
         <wa-tab-panel name="scenes">
           <div class="tab-content scenes-tab-panel" data-controller="scenes">
-            <div class="toolbar">
-              <wa-button size="small" variant="neutral" appearance="outlined"
-                         data-action="click->scenes#refresh" data-scenes-target="refreshBtn" disabled>
-                <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
-                Refresh
-              </wa-button>
-              <div class="toolbar-spacer"></div>
-              <wa-button size="small" variant="brand" appearance="outlined"
-                         data-action="click->scenes#addScene" data-scenes-target="addBtn" disabled>
-                <wa-icon name="plus" slot="prefix"></wa-icon>
-                Add Scene
-              </wa-button>
-            </div>
-
             <div class="scenes-workspace">
               <div class="scenes-list-panel">
-                <div class="scenes-container" data-scenes-target="container">
-                  <div class="empty-state">
-                    <wa-icon name="layer-group"></wa-icon>
-                    <p>Connect to view scenes</p>
+                <div class="scenes-list-card">
+                  <div class="scenes-section-header scenes-list-toolbar">
+                    <span class="scenes-list-toolbar-label">
+                      <wa-icon name="layer-group"></wa-icon>
+                      <span data-scenes-target="activeHeader">Active Scenes (0)</span>
+                    </span>
+                    <span class="scenes-list-toolbar-actions">
+                      <wa-button size="small" variant="neutral" appearance="outlined"
+                                 data-action="click->scenes#refresh" data-scenes-target="refreshBtn" disabled>
+                        <wa-icon name="arrows-rotate" slot="prefix"></wa-icon>
+                        Refresh
+                      </wa-button>
+                      <wa-button size="small" variant="brand" appearance="outlined"
+                                 data-action="click->scenes#addScene" data-scenes-target="addBtn" disabled>
+                        <wa-icon name="plus" slot="prefix"></wa-icon>
+                        Add Scene
+                      </wa-button>
+                    </span>
+                  </div>
+                  <div class="scenes-container" data-scenes-target="container">
+                    <div class="empty-state">
+                      <wa-icon name="layer-group"></wa-icon>
+                      <p>Connect to view scenes</p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -393,6 +399,8 @@
                 <div class="scenes-detail-toolbar toolbar hidden" data-scene-target="editorToolbar">
                   <span class="scene-editor-title" data-scene-target="editorTitle"></span>
                   <div class="toolbar-spacer"></div>
+                  <span class="scene-editor-save-status hidden"
+                        data-scene-target="saveStatus" aria-live="polite"></span>
                   <wa-button size="small" variant="neutral" appearance="outlined"
                              data-scene-target="revertBtn"
                              data-action="click->scene#revertEdits" disabled>

@@ -48,6 +48,15 @@ window.JsonSchemaValidator = (function () {
       }
     }
 
+    if (typeof data === 'string') {
+      if (schema.minLength !== undefined && data.length < schema.minLength) {
+        pushError(errors, path, `must be at least ${schema.minLength} characters`)
+      }
+      if (schema.maxLength !== undefined && data.length > schema.maxLength) {
+        pushError(errors, path, `must be at most ${schema.maxLength} characters`)
+      }
+    }
+
     if (typeof data === 'number') {
       if (schema.minimum !== undefined && data < schema.minimum) {
         pushError(errors, path, `must be >= ${schema.minimum}`)

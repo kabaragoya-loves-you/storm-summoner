@@ -3204,39 +3204,40 @@ static void process_scenes_command(const char *cmd) {
   if (strcmp(cmd, "LIST") == 0) {
     uint16_t total = scene_get_total_count();
     uint8_t current_idx = scene_get_current_index();
-    
-    char *buf = heap_caps_malloc(SCENES_JSON_BUF_SIZE, MALLOC_CAP_SPIRAM);
-    if (!buf) {
+
+    cJSON *arr = cJSON_CreateArray();
+    if (!arr) {
       send_response("ERROR: Out of memory");
       return;
     }
-    
-    size_t pos = 0;
-    pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos, "[");
-    
+
     for (uint16_t i = 0; i < total; i++) {
       const char *name = scene_get_name_by_position(i);
+      if (!name || name[0] == '\0') name = "Untitled";
       uint8_t idx = scene_get_index_by_position(i);
       bool active = scene_is_active_by_position(i);
       bool is_current = (idx == current_idx);
-      
-      if (i > 0) pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos, ",");
-      pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos,
-        "{\"position\":%u,\"index\":%u,\"name\":\"%s\",\"active\":%s,\"current\":%s}",
-        (unsigned)i, (unsigned)idx, name ? name : "",
-        active ? "true" : "false",
-        is_current ? "true" : "false");
-      
-      if (pos >= SCENES_JSON_BUF_SIZE - 100) break;  // Safety margin
+
+      cJSON *item = cJSON_CreateObject();
+      if (!item) continue;
+      cJSON_AddNumberToObject(item, "position", (double)i);
+      cJSON_AddNumberToObject(item, "index", (double)idx);
+      cJSON_AddStringToObject(item, "name", name);
+      cJSON_AddBoolToObject(item, "active", active);
+      cJSON_AddBoolToObject(item, "current", is_current);
+      cJSON_AddItemToArray(arr, item);
     }
-    
-    pos += snprintf(buf + pos, SCENES_JSON_BUF_SIZE - pos, "]");
-    
-    // Yield to let USB task service connection before sending large response
+
+    char *json = cJSON_PrintUnformatted(arr);
+    cJSON_Delete(arr);
+    if (!json) {
+      send_response("ERROR: Out of memory");
+      return;
+    }
+
     vTaskDelay(pdMS_TO_TICKS(10));
-    
-    send_response(buf);
-    heap_caps_free(buf);
+    send_response(json);
+    cJSON_free(json);
     return;
   }
   

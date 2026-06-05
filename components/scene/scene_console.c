@@ -416,7 +416,7 @@ static const char* registered_commands[] = {
   "lfo2_cc", "lfo2_curve", "lfo2_polarity", "lfo2_enable", "lfo2_output", "lfo2_base_note", "lfo2_note_range", "lfo2_velocity", "lfo2_velocity_mode",
   "lfo2_repeat", "lfo2_trigger",
   "touchwheel_mode", "touchwheel_style", "touchwheel_enable", "touchwheel_output", "touchwheel_cc", "touchwheel_note",
-  "on_load", "expression_velocity_mode", "active"
+  "on_load", "expression_velocity_mode", "active", "reconcile_manifest"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -4892,6 +4892,19 @@ static int cmd_active(int argc, char **argv) {
   return 0;
 }
 
+static int cmd_reconcile_manifest(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  esp_err_t ret = scene_rebuild_manifest_from_disk(true);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Manifest reconcile failed: %s", esp_err_to_name(ret));
+    return 1;
+  }
+  ESP_LOGI(TAG, "Scenes manifest reconciled (%u entries)",
+    (unsigned)scene_get_total_count());
+  return 0;
+}
+
 esp_err_t scene_console_init(void) {
   ESP_LOGI(TAG, "Registering scene commands");
   
@@ -6066,6 +6079,14 @@ esp_err_t scene_console_init(void) {
     .argtable = &active_args
   };
   esp_console_cmd_register(&active_cmd);
+
+  const esp_console_cmd_t reconcile_manifest_cmd = {
+    .command = "reconcile_manifest",
+    .help = "Rebuild scenes/manifest.json from scene JSON files on disk",
+    .hint = NULL,
+    .func = &cmd_reconcile_manifest,
+  };
+  esp_console_cmd_register(&reconcile_manifest_cmd);
   
   return ESP_OK;
 }

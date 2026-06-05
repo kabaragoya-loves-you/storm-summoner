@@ -4,6 +4,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "lvgl.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -383,6 +384,34 @@ void st7789v3_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) 
     esp_err_t ret = spi_device_polling_transmit(spi, &t);
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "SPI transmit failed: %s", esp_err_to_name(ret));
+      // #region agent log
+      // Only emitted when the display driver itself fails a transmit, so no
+      // noise on the happy path. Captures the memory + transaction picture at
+      // the exact moment ESP_ERR_NO_MEM (or any other error) surfaces.
+      ESP_LOGE(TAG, "[diag] ctx: task=%s line=%d/%d w=%d line_size=%u stream=%d "
+        "area=(%d,%d)-(%d,%d) vp=%dx%d",
+        pcTaskGetName(NULL), (int)y, (int)h, (int)w, (unsigned)line_size,
+        (int)lvgl_stream_is_active(),
+        (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2,
+        (int)viewport_width, (int)viewport_height);
+      ESP_LOGE(TAG, "[diag] linebuf=%p align64=%u align4=%u dma_capable=%d",
+        (void *)st7789v3_line_buf,
+        (unsigned)((uintptr_t)st7789v3_line_buf % 64),
+        (unsigned)((uintptr_t)st7789v3_line_buf % 4),
+        (int)esp_ptr_dma_capable(st7789v3_line_buf));
+      ESP_LOGE(TAG, "[diag] DMA caps: free=%u largest=%u min_ever=%u",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DMA));
+      ESP_LOGE(TAG, "[diag] INTERNAL caps: free=%u largest=%u min_ever=%u",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+      ESP_LOGE(TAG, "[diag] DEFAULT caps: free=%u largest=%u min_ever=%u",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
+      // #endregion
       break;
     }
     

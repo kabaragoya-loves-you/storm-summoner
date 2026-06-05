@@ -16,6 +16,7 @@
 #include "tempo.h"
 #include "input_manager.h"
 #include "ui.h"
+#include "screensaver.h"
 #include "memory_utils.h"
 #include "lfo.h"
 #include "rtg.h"
@@ -62,6 +63,8 @@ static const char* TAG = "scene";
 // Forward declarations
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size);
 static void scene_name_to_slug(const char* name, char* slug, size_t slug_size);
+static void scene_trim_name(char *name);
+static int scene_count_json_files_on_disk(void);
 static esp_err_t json_to_scene(cJSON* root, scene_t* scene);
 static void scene_init_defaults(scene_t* scene, uint8_t index);
 static void scene_cleanup_touchwheel(void);
@@ -72,6 +75,20 @@ static uint8_t scene_get_first_active_index(void);
 static void scene_invalidate_cache_index(uint8_t scene_index);
 static esp_err_t scene_load_into_cache_slot(int cache_idx, uint8_t scene_index);
 static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene);
+
+static void scene_apply_ui_module_for_performance(const char *module_name) {
+  if (ui_is_in_programming_mode()) return;
+
+  if (ui_is_in_screensaver_mode()) {
+    ESP_LOGI(TAG, "Exiting screensaver before applying scene UI module");
+    screensaver_disable();
+  }
+
+  const char *mod_name =
+    (module_name && module_name[0] != '\0') ? module_name : "beat";
+  ui_draw_module_t *mod = ui_get_module_by_name(mod_name);
+  if (mod) ui_set_draw_module(mod);
+}
 
 // NVS keys
 #define NVS_KEY_SCENE_MODE       "scene_mode"
@@ -1618,6 +1635,12 @@ esp_err_t scene_init(void) {
   bool manifest_was_synthesized = false;
   esp_err_t ret = scene_load_manifest();
   if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to load manifest (%s), rebuilding from scene files",
+      esp_err_to_name(ret));
+    if (scene_rebuild_manifest_from_disk(false) == ESP_OK)
+      ret = scene_load_manifest();
+  }
+  if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Failed to load manifest, creating default");
     g_scene_manager.manifest = malloc_prefer_psram(sizeof(scene_manifest_entry_t));
     if (!g_scene_manager.manifest) {
@@ -1630,6 +1653,14 @@ esp_err_t scene_init(void) {
     strncpy(g_scene_manager.manifest[0].filename, "scene_1.json", sizeof(g_scene_manager.manifest[0].filename));
     g_scene_manager.manifest[0].active = true;
     manifest_was_synthesized = true;
+  } else {
+    int on_disk = scene_count_json_files_on_disk();
+    if (on_disk > g_scene_manager.num_scenes) {
+      ESP_LOGW(TAG, "Manifest lists %d scene(s) but %d JSON file(s) on disk, reconciling",
+        g_scene_manager.num_scenes, on_disk);
+      if (scene_rebuild_manifest_from_disk(false) == ESP_OK)
+        ret = scene_load_manifest();
+    }
   }
   
   // Load first scene in manifest order into cache slot 0
@@ -1913,6 +1944,10 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // teardown/build does not race with the heavy scene configuration), and
   // tells touch.c to drop inbound PRESS/RELEASE for the duration. Closed
   // by the matching ui_scene_transition_end() just before the final return.
+  if (ui_is_in_screensaver_mode()) {
+    ESP_LOGI(TAG, "Exiting screensaver for scene change");
+    screensaver_disable();
+  }
   ui_scene_transition_begin();
 
   // Release any notes still sounding from the outgoing scene's producers
@@ -2059,12 +2094,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   tilt_axis_set_enabled(TILT_AXIS_Y, new_scene->tilt_y.enabled);
 
   // Switch UI module for this scene (only in performance mode)
-  if (!ui_is_in_programming_mode()) {
-    const char* mod_name = (new_scene->ui_module[0] != '\0')
-      ? new_scene->ui_module : "beat";
-    ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
-    if (mod) ui_set_draw_module(mod);
-  }
+  scene_apply_ui_module_for_performance(new_scene->ui_module);
   
   // Setup touchwheel instance for non-buttons modes
   scene_cleanup_touchwheel();
@@ -2143,10 +2173,7 @@ void scene_apply_deferred_init(void) {
   led_restore_baseline();
 
   // Switch UI module for this scene
-  const char* mod_name = (scene->ui_module[0] != '\0')
-    ? scene->ui_module : "beat";
-  ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
-  if (mod) ui_set_draw_module(mod);
+  scene_apply_ui_module_for_performance(scene->ui_module);
 }
 
 uint8_t scene_get_current_index(void) {
@@ -2222,9 +2249,19 @@ esp_err_t scene_previous(void) {
 }
 
 esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
-  if (scene_index > MAX_SCENE_INDEX || !name || name[0] == '\0') {
+  if (scene_index > MAX_SCENE_INDEX || !name) {
     return ESP_ERR_INVALID_ARG;
   }
+
+  char trimmed[17];
+  strncpy(trimmed, name, sizeof(trimmed) - 1);
+  trimmed[sizeof(trimmed) - 1] = '\0';
+  scene_trim_name(trimmed);
+  if (trimmed[0] == '\0') {
+    ESP_LOGW(TAG, "Scene name is required");
+    return ESP_ERR_INVALID_ARG;
+  }
+  name = trimmed;
 
   // Check for name uniqueness (excluding this scene's current name)
   if (scene_name_exists(name, scene_index)) {
@@ -2385,12 +2422,8 @@ esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name) {
     scene->ui_module[0] ? scene->ui_module : "beat (default)");
 
   // Switch immediately if this is the current scene and we're in performance mode
-  if (scene_index == g_scene_manager.current_scene_index &&
-      !ui_is_in_programming_mode()) {
-    const char* mod_name = (scene->ui_module[0] != '\0')
-      ? scene->ui_module : "beat";
-    ui_draw_module_t* mod = ui_get_module_by_name(mod_name);
-    if (mod) ui_set_draw_module(mod);
+  if (scene_index == g_scene_manager.current_scene_index) {
+    scene_apply_ui_module_for_performance(scene->ui_module);
   }
 
   return ESP_OK;
@@ -3935,6 +3968,25 @@ uint8_t scene_get_tilt_y_lfo_rate(void) {
 
 // Convert scene name to filesystem-safe slug filename
 // Example: "STORM BOLT" -> "storm_bolt.json"
+static bool scene_name_char_is_space(char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+static void scene_trim_name(char *name) {
+  if (!name || name[0] == '\0') return;
+
+  char *start = name;
+  while (*start && scene_name_char_is_space(*start)) start++;
+  if (start != name) {
+    memmove(name, start, strlen(start) + 1);
+  }
+
+  size_t len = strlen(name);
+  while (len > 0 && scene_name_char_is_space(name[len - 1])) {
+    name[--len] = '\0';
+  }
+}
+
 static void scene_name_to_slug(const char* name, char* slug, size_t slug_size) {
   if (!name || !slug || slug_size < 6) {  // Minimum: "x.json"
     if (slug && slug_size > 0) slug[0] = '\0';
@@ -7099,12 +7151,7 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
   tilt_axis_set_enabled(TILT_AXIS_X, scene->tilt_x.enabled);
   tilt_axis_set_enabled(TILT_AXIS_Y, scene->tilt_y.enabled);
 
-  if (!ui_is_in_programming_mode()) {
-    const char *mod_name =
-      (scene->ui_module[0] != '\0') ? scene->ui_module : "beat";
-    ui_draw_module_t *mod = ui_get_module_by_name(mod_name);
-    if (mod) ui_set_draw_module(mod);
-  }
+  scene_apply_ui_module_for_performance(scene->ui_module);
 
   scene_cleanup_touchwheel();
   scene_setup_touchwheel_for_mode(scene);
@@ -7282,6 +7329,13 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
     return ret;
   }
 
+  scene_trim_name(scratch->name);
+  if (scratch->name[0] == '\0') {
+    ESP_LOGW(TAG, "SCENE_PUT rejected: scene name is required");
+    heap_caps_free(scratch);
+    return ESP_ERR_INVALID_ARG;
+  }
+
   cJSON *out = scene_to_json(scratch);
   heap_caps_free(scratch);
   if (!out) return ESP_ERR_NO_MEM;
@@ -7309,7 +7363,336 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
   return ret;
 }
 
+static bool scene_json_leaf_is_skipped(const char *fname) {
+  if (!fname || fname[0] == '\0') return true;
+  if (fname[0] == '.') return true;
+  size_t flen = strlen(fname);
+  if (flen < 6 || strcmp(fname + flen - 5, ".json") != 0) return true;
+  return strcasecmp(fname, "manifest.json") == 0;
+}
+
+static bool scene_filename_to_index(const char *fname, uint8_t *out_index) {
+  if (strncmp(fname, "scene_", 6) != 0) return false;
+  const char *num_start = fname + 6;
+  const char *dot = strstr(num_start, ".json");
+  if (!dot || dot[5] != '\0') return false;
+
+  char num_buf[8];
+  size_t num_len = (size_t)(dot - num_start);
+  if (num_len == 0 || num_len >= sizeof(num_buf)) return false;
+  memcpy(num_buf, num_start, num_len);
+  num_buf[num_len] = '\0';
+
+  int file_num = atoi(num_buf);
+  if (file_num < 1 || file_num > MAX_SCENE_INDEX + 1) return false;
+  *out_index = (uint8_t)(file_num - 1);
+  return true;
+}
+
+static int scene_count_json_files_on_disk(void) {
+  DIR *dir = opendir(SCENES_BASE_PATH);
+  if (!dir) return 0;
+
+  int count = 0;
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (!scene_json_leaf_is_skipped(entry->d_name)) count++;
+  }
+  closedir(dir);
+  return count;
+}
+
+static esp_err_t scene_read_json_name(const char *filepath, char *name, size_t name_size) {
+  if (!filepath || !name || name_size == 0) return ESP_ERR_INVALID_ARG;
+  name[0] = '\0';
+
+  FILE *f = fopen(filepath, "r");
+  if (!f) return ESP_ERR_NOT_FOUND;
+
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (fsize <= 0 || fsize > 256 * 1024) {
+    fclose(f);
+    return ESP_ERR_INVALID_SIZE;
+  }
+
+  char *json_buf = malloc((size_t)fsize + 1);
+  if (!json_buf) {
+    fclose(f);
+    return ESP_ERR_NO_MEM;
+  }
+
+  size_t nread = fread(json_buf, 1, (size_t)fsize, f);
+  fclose(f);
+  json_buf[nread] = '\0';
+
+  cJSON *root = cJSON_Parse(json_buf);
+  free(json_buf);
+  if (!root) return ESP_ERR_INVALID_ARG;
+
+  cJSON *name_item = cJSON_GetObjectItem(root, "name");
+  if (name_item && cJSON_IsString(name_item) && name_item->valuestring) {
+    strncpy(name, name_item->valuestring, name_size - 1);
+    name[name_size - 1] = '\0';
+    scene_trim_name(name);
+  }
+  cJSON_Delete(root);
+  return ESP_OK;
+}
+
+static esp_err_t scene_write_manifest_entries(const scene_manifest_entry_t *entries,
+  int count) {
+  if (!entries || count <= 0) return ESP_ERR_INVALID_ARG;
+
+  cJSON *root = cJSON_CreateObject();
+  cJSON *scenes = cJSON_CreateArray();
+  if (!root || !scenes) {
+    cJSON_Delete(root);
+    cJSON_Delete(scenes);
+    return ESP_ERR_NO_MEM;
+  }
+
+  for (int i = 0; i < count; i++) {
+    cJSON *entry = cJSON_CreateObject();
+    if (!entry) continue;
+    cJSON_AddNumberToObject(entry, "index", entries[i].index);
+    cJSON_AddStringToObject(entry, "name", entries[i].name);
+    cJSON_AddStringToObject(entry, "filename", entries[i].filename);
+    cJSON_AddBoolToObject(entry, "active", entries[i].active);
+    cJSON_AddItemToArray(scenes, entry);
+  }
+
+  cJSON_AddItemToObject(root, "scenes", scenes);
+  char *json_str = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (!json_str) return ESP_ERR_NO_MEM;
+
+  FILE *f = fopen(MANIFEST_PATH, "w");
+  if (!f) {
+    cJSON_free(json_str);
+    return ESP_ERR_NOT_FOUND;
+  }
+  fputs(json_str, f);
+  fclose(f);
+  cJSON_free(json_str);
+  return ESP_OK;
+}
+
+static bool manifest_build_has_filename(const scene_manifest_entry_t *entries, int count,
+  const char *fname) {
+  for (int i = 0; i < count; i++) {
+    if (strcmp(entries[i].filename, fname) == 0) return true;
+  }
+  return false;
+}
+
+static bool manifest_build_has_index(const scene_manifest_entry_t *entries, int count,
+  uint8_t index) {
+  for (int i = 0; i < count; i++) {
+    if (entries[i].index == index) return true;
+  }
+  return false;
+}
+
+static uint8_t manifest_find_free_index(const scene_manifest_entry_t *entries, int count) {
+  for (uint8_t i = 0; i <= MAX_SCENE_INDEX; i++) {
+    if (!manifest_build_has_index(entries, count, i)) return i;
+  }
+  return MAX_SCENE_INDEX + 1;
+}
+
+esp_err_t scene_rebuild_manifest_from_disk(bool reload_runtime) {
+  scene_manifest_entry_t *old_entries = NULL;
+  int old_count = 0;
+
+  FILE *mf = fopen(MANIFEST_PATH, "r");
+  if (mf) {
+    fseek(mf, 0, SEEK_END);
+    long mfsize = ftell(mf);
+    fseek(mf, 0, SEEK_SET);
+    if (mfsize > 0 && mfsize <= 64 * 1024) {
+      char *json_str = malloc((size_t)mfsize + 1);
+      if (json_str) {
+        size_t nread = fread(json_str, 1, (size_t)mfsize, mf);
+        fclose(mf);
+        mf = NULL;
+        json_str[nread] = '\0';
+
+        cJSON *root = cJSON_Parse(json_str);
+        free(json_str);
+        if (root) {
+          cJSON *scenes = cJSON_GetObjectItem(root, "scenes");
+          if (scenes && cJSON_IsArray(scenes)) {
+            old_count = cJSON_GetArraySize(scenes);
+            if (old_count > 0) {
+              old_entries = calloc((size_t)old_count, sizeof(scene_manifest_entry_t));
+              if (old_entries) {
+                for (int i = 0; i < old_count; i++) {
+                  cJSON *entry = cJSON_GetArrayItem(scenes, i);
+                  cJSON *idx = cJSON_GetObjectItem(entry, "index");
+                  cJSON *name = cJSON_GetObjectItem(entry, "name");
+                  cJSON *filename = cJSON_GetObjectItem(entry, "filename");
+                  cJSON *active = cJSON_GetObjectItem(entry, "active");
+
+                  if (idx && cJSON_IsNumber(idx))
+                    old_entries[i].index = (uint8_t)idx->valueint;
+                  if (name && cJSON_IsString(name)) {
+                    strncpy(old_entries[i].name, name->valuestring,
+                      sizeof(old_entries[i].name) - 1);
+                  }
+                  if (filename && cJSON_IsString(filename)) {
+                    strncpy(old_entries[i].filename, filename->valuestring,
+                      sizeof(old_entries[i].filename) - 1);
+                    old_entries[i].filename[sizeof(old_entries[i].filename) - 1] = '\0';
+                  }
+                  old_entries[i].active = active ? cJSON_IsTrue(active) : true;
+                }
+              } else {
+                old_count = 0;
+              }
+            }
+          }
+          cJSON_Delete(root);
+        }
+      } else {
+        fclose(mf);
+        mf = NULL;
+      }
+    }
+    if (mf) fclose(mf);
+  }
+
+  int capacity = 16;
+  int count = 0;
+  scene_manifest_entry_t *built =
+    malloc_prefer_psram((size_t)capacity * sizeof(scene_manifest_entry_t));
+  if (!built) {
+    free(old_entries);
+    return ESP_ERR_NO_MEM;
+  }
+
+  // Keep existing manifest entries whose files still exist (preserve order).
+  for (int i = 0; i < old_count; i++) {
+    if (old_entries[i].filename[0] == '\0') continue;
+
+    char filepath[320];
+    snprintf(filepath, sizeof(filepath), "%s/%s", SCENES_BASE_PATH,
+      old_entries[i].filename);
+    struct stat st;
+    if (stat(filepath, &st) != 0) continue;
+
+    scene_manifest_entry_t entry = old_entries[i];
+    if (entry.name[0] == '\0') {
+      char read_name[sizeof(entry.name)];
+      if (scene_read_json_name(filepath, read_name, sizeof(read_name)) == ESP_OK &&
+          read_name[0] != '\0') {
+        strncpy(entry.name, read_name, sizeof(entry.name) - 1);
+      } else {
+        snprintf(entry.name, sizeof(entry.name), "Scene %u",
+          (unsigned)entry.index + 1);
+      }
+    }
+
+    if (count >= capacity) {
+      capacity *= 2;
+      scene_manifest_entry_t *grown = realloc_prefer_psram(built,
+        (size_t)capacity * sizeof(scene_manifest_entry_t));
+      if (!grown) {
+        free(built);
+        free(old_entries);
+        return ESP_ERR_NO_MEM;
+      }
+      built = grown;
+    }
+    built[count++] = entry;
+  }
+
+  DIR *dir = opendir(SCENES_BASE_PATH);
+  if (!dir) {
+    free(built);
+    free(old_entries);
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  struct dirent *dent;
+  while ((dent = readdir(dir)) != NULL) {
+    const char *fname = dent->d_name;
+    if (scene_json_leaf_is_skipped(fname)) continue;
+    if (manifest_build_has_filename(built, count, fname)) continue;
+
+    char filepath[320];
+    snprintf(filepath, sizeof(filepath), "%s/%s", SCENES_BASE_PATH, fname);
+
+    scene_manifest_entry_t entry = {0};
+    strncpy(entry.filename, fname, sizeof(entry.filename) - 1);
+    entry.filename[sizeof(entry.filename) - 1] = '\0';
+    entry.active = true;
+
+    uint8_t derived_index = 0;
+    if (scene_filename_to_index(fname, &derived_index) &&
+        !manifest_build_has_index(built, count, derived_index)) {
+      entry.index = derived_index;
+    } else {
+      uint8_t free_index = manifest_find_free_index(built, count);
+      if (free_index > MAX_SCENE_INDEX) continue;
+      entry.index = free_index;
+    }
+
+    if (scene_read_json_name(filepath, entry.name, sizeof(entry.name)) != ESP_OK ||
+        entry.name[0] == '\0') {
+      snprintf(entry.name, sizeof(entry.name), "Scene %u", (unsigned)entry.index + 1);
+    }
+
+    if (count >= capacity) {
+      capacity *= 2;
+      scene_manifest_entry_t *grown = realloc_prefer_psram(built,
+        (size_t)capacity * sizeof(scene_manifest_entry_t));
+      if (!grown) continue;
+      built = grown;
+    }
+    built[count++] = entry;
+    ESP_LOGI(TAG, "Recovered orphan scene file '%s' as index %u",
+      fname, (unsigned)entry.index);
+  }
+  closedir(dir);
+  free(old_entries);
+
+  if (count == 0) {
+    free(built);
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  esp_err_t ret = scene_write_manifest_entries(built, count);
+  if (ret != ESP_OK) {
+    free(built);
+    return ret;
+  }
+
+  ESP_LOGI(TAG, "Rebuilt scenes manifest with %d entr%s", count, count == 1 ? "y" : "ies");
+
+  if (reload_runtime && g_scene_manager.initialized) {
+    if (g_scene_manager.manifest) {
+      free(g_scene_manager.manifest);
+      g_scene_manager.manifest = NULL;
+    }
+    g_scene_manager.manifest = built;
+    g_scene_manager.num_scenes = (uint16_t)count;
+    scene_post_list_changed_event(0);
+    return ESP_OK;
+  }
+
+  free(built);
+  return ESP_OK;
+}
+
 esp_err_t scene_load_manifest(void) {
+  if (g_scene_manager.manifest) {
+    free(g_scene_manager.manifest);
+    g_scene_manager.manifest = NULL;
+    g_scene_manager.num_scenes = 0;
+  }
+
   FILE* f = fopen(MANIFEST_PATH, "r");
   if (!f) return ESP_ERR_NOT_FOUND;
   

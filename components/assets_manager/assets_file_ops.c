@@ -1,5 +1,6 @@
 #include "assets_file_ops.h"
 #include "assets_manager.h"
+#include "scene.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "cJSON.h"
@@ -78,114 +79,8 @@ const char *assets_get_folder_type(const char *path) {
 // ============================================================================
 
 esp_err_t assets_regenerate_scenes_manifest(void) {
-  // Scenes moved to the RW userdata partition in Phase 2; the manifest is
-  // regenerated whenever a scene file is created/deleted via CDC or the dev
-  // console. Scan /userdata/scenes/ rather than the (now read-only) /assets.
-  const char *scenes_dir = USERDATA_BASE_PATH "/scenes";
-  const char *manifest_path = USERDATA_BASE_PATH "/scenes/manifest.json";
-  
   ESP_LOGI(TAG, "Regenerating scenes manifest");
-  
-  DIR *dir = opendir(scenes_dir);
-  if (!dir) {
-    ESP_LOGW(TAG, "Cannot open scenes directory");
-    return ESP_ERR_NOT_FOUND;
-  }
-  
-  // Create JSON structure
-  cJSON *root = cJSON_CreateObject();
-  cJSON *scenes = cJSON_CreateArray();
-  
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != NULL) {
-    // Match scene_XXX.json pattern
-    if (strncmp(entry->d_name, "scene_", 6) != 0) continue;
-    char *ext = strstr(entry->d_name, ".json");
-    if (!ext || strcmp(ext, ".json") != 0) continue;
-    
-    // Extract index from filename (scene_001.json -> 0)
-    int file_num = atoi(entry->d_name + 6);
-    if (file_num < 1) continue;
-    int index = file_num - 1;
-    
-    // Read scene file to get name
-    char scene_path[MAX_PATH_LEN];
-    snprintf(scene_path, sizeof(scene_path), "%s/%s", scenes_dir, entry->d_name);
-    
-    FILE *f = fopen(scene_path, "r");
-    if (!f) continue;
-    
-    // Get file size
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    if (fsize > 16384) {  // Sanity check
-      fclose(f);
-      continue;
-    }
-    
-    char *json_buf = psram_malloc(fsize + 1);
-    if (!json_buf) {
-      fclose(f);
-      continue;
-    }
-    
-    fread(json_buf, 1, fsize, f);
-    fclose(f);
-    json_buf[fsize] = '\0';
-    
-    // Parse to get name
-    cJSON *scene_json = cJSON_Parse(json_buf);
-    psram_free(json_buf);
-    
-    char name[64] = "";
-    if (scene_json) {
-      cJSON *name_item = cJSON_GetObjectItem(scene_json, "name");
-      if (name_item && cJSON_IsString(name_item)) {
-        strncpy(name, name_item->valuestring, sizeof(name) - 1);
-      }
-      cJSON_Delete(scene_json);
-    }
-    
-    if (name[0] == '\0') {
-      snprintf(name, sizeof(name), "Scene %d", index + 1);
-    }
-    
-    // Add to manifest
-    cJSON *entry_obj = cJSON_CreateObject();
-    cJSON_AddNumberToObject(entry_obj, "index", index);
-    cJSON_AddStringToObject(entry_obj, "name", name);
-    cJSON_AddStringToObject(entry_obj, "filename", entry->d_name);
-    cJSON_AddItemToArray(scenes, entry_obj);
-  }
-  
-  closedir(dir);
-  
-  cJSON_AddItemToObject(root, "scenes", scenes);
-  
-  // Write manifest
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  
-  if (!json_str) {
-    ESP_LOGE(TAG, "Failed to serialize scenes manifest");
-    return ESP_ERR_NO_MEM;
-  }
-  
-  FILE *f = fopen(manifest_path, "w");
-  if (!f) {
-    psram_free(json_str);
-    ESP_LOGE(TAG, "Failed to open manifest for writing");
-    return ESP_FAIL;
-  }
-  
-  fputs(json_str, f);
-  fclose(f);
-  psram_free(json_str);
-  
-  ESP_LOGI(TAG, "Scenes manifest updated");
-  return ESP_OK;
+  return scene_rebuild_manifest_from_disk(true);
 }
 
 // Helper: Compute SHA256 from a memory buffer (avoids re-opening file)

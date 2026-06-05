@@ -171,7 +171,8 @@ window.ConnectionManager = (function () {
 
     // Request a mode - returns true if mode was entered
     async requestMode (newMode) {
-      return this.runSerialTask(() => this._requestModeImpl(newMode))
+      const impl = () => this._requestModeImpl(newMode)
+      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
     }
 
     async _requestModeImpl (newMode) {
@@ -197,7 +198,8 @@ window.ConnectionManager = (function () {
 
     // Exit current mode
     async exitMode () {
-      return this.runSerialTask(() => this._exitModeImpl())
+      const impl = () => this._exitModeImpl()
+      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
     }
 
     async _exitModeImpl () {
@@ -674,6 +676,11 @@ window.ConnectionManager = (function () {
 
     async readLine (timeout = 10000) {
       if (!this.port?.readable) return null
+      const impl = () => this._readLineBody(timeout)
+      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
+    }
+
+    async _readLineBody (timeout = 10000) {
       if (this.mode !== null) return this._readLineExclusive(timeout)
 
       const deadline = Date.now() + timeout

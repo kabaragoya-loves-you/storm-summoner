@@ -466,6 +466,7 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len);
 esp_err_t scene_reload_index(uint8_t scene_index);
 esp_err_t scene_load_manifest(void);
 esp_err_t scene_save_manifest(void);
+esp_err_t scene_rebuild_manifest_from_disk(bool reload_runtime);
 esp_err_t scene_create_new(const char* name);
 esp_err_t scene_create_new_at_position(const char* name, uint16_t position);
 esp_err_t scene_delete(uint8_t scene_index);

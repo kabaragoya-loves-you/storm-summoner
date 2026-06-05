@@ -7,7 +7,7 @@ application.register(
       'inspectView', 'inspectText', 'editView', 'truncatedBanner',
       'copySource', 'copyBtn', 'editorToolbar',
       'editorContainer', 'editorTitle', 'validationBox',
-      'programmingBanner', 'saveBtn', 'revertBtn',
+      'programmingBanner', 'saveBtn', 'revertBtn', 'saveStatus',
       'pedalPickerDialog', 'pedalVendorSelect', 'pedalSelect',
       'pedalChangeWarningDialog'
     ]
@@ -35,6 +35,7 @@ application.register(
       this.validationErrors = []
       this._schema = null
       this._schemaLoad = null
+      this._saveStatusTimer = null
 
       this._onConnectionChanged = this.onConnectionChanged.bind(this)
       this._onTabActivated = this.onTabActivated.bind(this)
@@ -62,6 +63,10 @@ application.register(
       if (this.printFrame) {
         this.printFrame.remove()
         this.printFrame = null
+      }
+      if (this._saveStatusTimer) {
+        clearTimeout(this._saveStatusTimer)
+        this._saveStatusTimer = null
       }
     }
 
@@ -159,6 +164,7 @@ application.register(
       }
       if (kind !== 'scene_changed' && kind !== 'scene_updated') return
       if (!this.connection.isConnected) return
+      if (this.connection.isSerialBusy) return
       if (this.editing && this.dirty) return
 
       const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
@@ -168,6 +174,7 @@ application.register(
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       this.notifyDebounce = setTimeout(() => {
         this.notifyDebounce = null
+        if (this.connection.isSerialBusy) return
         if (this.editing) this.loadSceneForEdit()
         else this.fetchInspectForPosition(this.editPosition)
       }, 100)
@@ -270,6 +277,7 @@ application.register(
     }
 
     normalizeBeforeSave (model) {
+      if (typeof model.name === 'string') model.name = model.name.trim()
       if (model.touchpads) {
         model.touchpads.forEach(tp => {
           if (tp.actions?.length) {
@@ -481,6 +489,25 @@ application.register(
       cur[Number.isInteger(lastIdx) && String(lastIdx) === last ? lastIdx : last] = value
     }
 
+    getEffectiveMidiChannel () {
+      const global = this.deviceContext.globalPedal?.midi_channel || 1
+      if (this.deviceContext.deviceMode !== 1) return global
+      const sceneMidi = this.editModel?.midi_channel ?? 0
+      return sceneMidi > 0 ? sceneMidi : global
+    }
+
+    flashSaveStatus (message = 'Changes saved') {
+      if (!this.hasSaveStatusTarget) return
+      if (this._saveStatusTimer) clearTimeout(this._saveStatusTimer)
+      this.saveStatusTarget.textContent = message
+      this.saveStatusTarget.classList.remove('hidden')
+      this._saveStatusTimer = setTimeout(() => {
+        this.saveStatusTarget.classList.add('hidden')
+        this.saveStatusTarget.textContent = ''
+        this._saveStatusTimer = null
+      }, 2500)
+    }
+
     markDirty () {
       this.dirty = JSON.stringify(this.editModel) !== this.baselineJson
       if (this.hasSaveBtnTarget) {
@@ -494,7 +521,9 @@ application.register(
       const path = e.target.dataset.scenePath
       if (!path) return
       let val = e.target.value
-      if (path === 'midi_channel' || path === 'trs_type') val = Number(val)
+      if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') {
+        val = Number(val)
+      }
       this.setAtPath(path, val)
       this.markDirty()
       this.renderEditor()
@@ -544,6 +573,12 @@ application.register(
 
     validateScene (model) {
       const errors = []
+      if (this.deviceContext.sceneMode !== 0) {
+        const name = String(model?.name ?? '').trim()
+        if (!name) {
+          errors.push({ path: 'name', message: 'Scene name is required' })
+        }
+      }
       if (model?.name && window.SceneEditorUi?.isReservedSceneName?.(model.name)) {
         errors.push({
           path: 'name',
@@ -722,6 +757,7 @@ application.register(
         this.baselineJson = JSON.stringify(this.editModel)
         this.dirty = false
         this.markDirty()
+        this.flashSaveStatus()
       } catch (err) {
         console.error('Scene save error:', err)
         alert(err.message || 'Save failed')
