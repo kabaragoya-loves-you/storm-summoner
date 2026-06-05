@@ -249,12 +249,26 @@ window.SceneEditorUi = (function () {
   function renderPerSceneDevice (ctrl) {
     if (ctrl.deviceContext.deviceMode !== 1) return ''
     const m = ctrl.editModel
-    let html = fieldRow('Pedal (device ID)', textField('device_id', m.device_id || '', 32))
+    const global = ctrl.deviceContext.globalPedal || {}
+    const inheritedCh = global.midi_channel || 1
+    const inheritedTrs = PedalCatalog.formatTrsLabel(global.trs_type)
+
+    const pedalName = PedalCatalog.formatPedalDisplayName(
+      m.device_id || '', ctrl.pedalCatalog, global)
+    let html = fieldRow('Pedal',
+      `<div class="scene-pedal-display">
+        <span class="scene-pedal-name">${esc(pedalName)}</span>
+        <wa-button size="small" variant="neutral" appearance="outlined"
+                   data-action="click->scene#openPedalPicker">Change</wa-button>
+      </div>`)
     html += fieldRow('MIDI channel',
-      numberField('midi_channel', m.midi_channel ?? 0, 0, 16))
+      selectField('midi_channel', m.midi_channel ?? 0, [
+        { v: 0, l: `Inherited (${inheritedCh})` },
+        ...Array.from({ length: 16 }, (_, i) => ({ v: i + 1, l: String(i + 1) }))
+      ]))
     html += fieldRow('TRS type',
       selectField('trs_type', m.trs_type ?? 0, [
-        { v: 0, l: 'Global' },
+        { v: 0, l: `Inherited (${inheritedTrs})` },
         { v: 1, l: 'Type A' },
         { v: 2, l: 'Type B' },
         { v: 3, l: 'TS' },

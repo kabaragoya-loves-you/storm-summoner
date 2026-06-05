@@ -436,6 +436,50 @@
                     <div class="scene-editor-scroll" data-scene-target="editorContainer"></div>
                   </div>
                 </div>
+
+                <wa-dialog data-scene-target="pedalPickerDialog" label="Select Pedal">
+                  <div class="scene-pedal-picker-content">
+                    <label class="scene-pedal-picker-label">
+                      Vendor
+                      <select class="scene-select scene-pedal-vendor-select"
+                              data-scene-target="pedalVendorSelect"
+                              data-action="change->scene#onPedalVendorChange"></select>
+                    </label>
+                    <label class="scene-pedal-picker-label">
+                      Pedal
+                      <select class="scene-select scene-pedal-select"
+                              data-scene-target="pedalSelect"></select>
+                    </label>
+                  </div>
+                  <div slot="footer">
+                    <wa-button variant="neutral" appearance="outlined"
+                               data-action="click->scene#closePedalPicker">
+                      Cancel
+                    </wa-button>
+                    <wa-button variant="brand"
+                               data-action="click->scene#confirmPedalPicker">
+                      Select
+                    </wa-button>
+                  </div>
+                </wa-dialog>
+
+                <wa-dialog data-scene-target="pedalChangeWarningDialog" label="Pedal Warning">
+                  <div class="scene-pedal-warning-content">
+                    <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
+                    <p>Every pedal has different CC mappings, so changing pedals requires manually reassigning parameters.</p>
+                    <p class="hint">Proceed?</p>
+                  </div>
+                  <div slot="footer">
+                    <wa-button variant="neutral" appearance="outlined"
+                               data-action="click->scene#closePedalWarning">
+                      Cancel
+                    </wa-button>
+                    <wa-button variant="brand"
+                               data-action="click->scene#applyPedalChange">
+                      Proceed
+                    </wa-button>
+                  </div>
+                </wa-dialog>
               </div>
             </div>
 
@@ -744,6 +788,7 @@
   <script src="/js/controllers/copy.js"></script>
   <script src="/js/controllers/collapsible.js"></script>
   <script src="/js/info.js"></script>
+  <script src="/js/pedal_catalog.js"></script>
   <script src="/js/scene_editor_ui.js"></script>
   <script src="/js/scene.js"></script>
   <script src="/js/pedals.js"></script>

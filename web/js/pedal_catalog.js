@@ -1,0 +1,165 @@
+/* Shared pedal manifest catalog (Pedals tab + scene editor picker) */
+
+window.PedalCatalog = (function () {
+  function formatVendorName (vendor) {
+    return String(vendor || 'Unknown').split('_')
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ')
+  }
+
+  function getDeviceDisplayName (device) {
+    if (device.product) return device.product
+    if (device.name) return device.name
+    return device.slug || 'Unknown'
+  }
+
+  function isUserBucketVendor (vendor) {
+    return vendor && (vendor.toLowerCase() === 'user')
+  }
+
+  function formatTrsLabel (trsType) {
+    if (typeof trsType === 'number') {
+      switch (trsType) {
+        case 1: return 'Type A'
+        case 2: return 'Type B'
+        case 3: return 'TS'
+        case 4: return 'Both'
+        default: return 'Global'
+      }
+    }
+    switch (String(trsType || '').toUpperCase()) {
+      case 'TYPE_A': return 'Type A'
+      case 'TYPE_B': return 'Type B'
+      case 'TYPE_TS': return 'TS'
+      case 'BOTH': return 'Both'
+      default: return 'Unknown'
+    }
+  }
+
+  function formatPedalMenuLabel (slug, displayName, isUser) {
+    const name = displayName || 'Unknown'
+    if (isUser) return `User: ${name}`
+    return name
+  }
+
+  function formatPedalDisplayName (deviceId, catalog, globalPedal) {
+    if (!deviceId) {
+      const name = globalPedal?.name || 'Default'
+      return `${name} (Inherited)`
+    }
+    const info = catalog?.deviceBySlug?.get(deviceId)
+    if (info) {
+      return formatPedalMenuLabel(deviceId, getDeviceDisplayName(info.entry), info.isUser)
+    }
+    return deviceId
+  }
+
+  function buildCatalog (sharedManifest, userManifest) {
+    const deviceBySlug = new Map()
+    const userSlugs = new Set()
+    const userDevices = (userManifest?.devices || []).slice()
+      .sort((a, b) => getDeviceDisplayName(a).toLowerCase()
+        .localeCompare(getDeviceDisplayName(b).toLowerCase()))
+    for (const d of userDevices) {
+      userSlugs.add(d.slug)
+      deviceBySlug.set(d.slug, { entry: d, isUser: true })
+    }
+
+    const vendors = {}
+    for (const device of (sharedManifest?.devices || [])) {
+      if (userSlugs.has(device.slug)) continue
+      const vendor = device.vendor || 'Unknown'
+      if (isUserBucketVendor(vendor)) continue
+      if (!vendors[vendor]) vendors[vendor] = []
+      vendors[vendor].push(device)
+      deviceBySlug.set(device.slug, { entry: device, isUser: false })
+    }
+
+    const sortedVendors = Object.keys(vendors).sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase()))
+    const vendorTree = sortedVendors.map(vendor => ({
+      name: vendor,
+      displayName: formatVendorName(vendor),
+      devices: vendors[vendor].sort((a, b) =>
+        getDeviceDisplayName(a).toLowerCase()
+          .localeCompare(getDeviceDisplayName(b).toLowerCase()))
+    }))
+
+    return { deviceBySlug, userDevices, vendorTree, sharedManifest, userManifest }
+  }
+
+  async function fetchManifestByCommand (connection, type) {
+    const maxAttempts = 2
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const { data } = await connection._fetchSizedTransferImpl(`MANIFEST ${type}`)
+        const manifest = JSON.parse(new TextDecoder().decode(data))
+        return Array.isArray(manifest?.devices) ? manifest : { devices: [] }
+      } catch (err) {
+        const retryable = /Incomplete download|No response|Unexpected response/i.test(err.message)
+        if (retryable && attempt < maxAttempts) {
+          console.warn(`Manifest fetch retry (${type}):`, err)
+          await new Promise(r => setTimeout(r, 300))
+          continue
+        }
+        console.warn(`Manifest fetch failed (${type}):`, err)
+        return { devices: [] }
+      }
+    }
+    return { devices: [] }
+  }
+
+  async function ensureAssetsModeBody (connection) {
+    const modeGranted = await connection._requestModeImpl('ASSETS')
+    if (!modeGranted) throw new Error('Could not enter ASSETS mode')
+    await new Promise(r => setTimeout(r, 50))
+    await connection.sendRaw('ASSETS\n')
+    const response = await connection.readLine(5000)
+    if (response?.includes('ASSETS_STARTED')) return
+    throw new Error(`Timeout waiting for ASSETS_STARTED (got: ${response || 'nothing'})`)
+  }
+
+  async function fetchManifestsInAssets (connection) {
+    const shared = await fetchManifestByCommand(connection, 'shared_devices')
+    const user = await fetchManifestByCommand(connection, 'user_devices')
+    return buildCatalog(shared, user)
+  }
+
+  async function fetchCatalog (connection) {
+    return connection.runSerialTask(async () => {
+      if (connection.currentMode) {
+        await connection._exitModeImpl()
+        await new Promise(r => setTimeout(r, 200))
+      }
+      await ensureAssetsModeBody(connection)
+      const catalog = await fetchManifestsInAssets(connection)
+      await connection.sendRaw('EXIT\n')
+      await new Promise(r => setTimeout(r, 200))
+      await connection.drainInput?.()
+      return catalog
+    })
+  }
+
+  function findVendorForSlug (catalog, slug) {
+    if (!slug || !catalog) return null
+    const info = catalog.deviceBySlug.get(slug)
+    if (!info) return null
+    if (info.isUser) return '__user__'
+    return info.entry.vendor || null
+  }
+
+  return {
+    formatVendorName,
+    getDeviceDisplayName,
+    formatTrsLabel,
+    formatPedalMenuLabel,
+    formatPedalDisplayName,
+    buildCatalog,
+    fetchManifestByCommand,
+    ensureAssetsModeBody,
+    fetchManifestsInAssets,
+    fetchCatalog,
+    findVendorForSlug,
+    isUserBucketVendor
+  }
+})()

@@ -227,8 +227,8 @@ application.register(
     }
 
     async fetchManifestsBody () {
-      const shared = await this.fetchManifestByCommand('shared_devices')
-      const user = await this.fetchManifestByCommand('user_devices')
+      const shared = await PedalCatalog.fetchManifestByCommand(this.connection, 'shared_devices')
+      const user = await PedalCatalog.fetchManifestByCommand(this.connection, 'user_devices')
       this.sharedManifest = shared
       this.userManifest = user
       this.buildCatalog()
@@ -239,56 +239,11 @@ application.register(
       return this.connection.runSerialTask(() => this.fetchManifestsBody())
     }
 
-    async fetchManifestByCommand (type) {
-      const maxAttempts = 2
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          const { data } = await this.connection._fetchSizedTransferImpl(`MANIFEST ${type}`)
-          const manifest = JSON.parse(new TextDecoder().decode(data))
-          return Array.isArray(manifest?.devices) ? manifest : { devices: [] }
-        } catch (err) {
-          const retryable = /Incomplete download|No response|Unexpected response/i.test(err.message)
-          if (retryable && attempt < maxAttempts) {
-            console.warn(`Manifest fetch retry (${type}):`, err)
-            await this.sleep(300)
-            continue
-          }
-          console.warn(`Manifest fetch failed (${type}):`, err)
-          return { devices: [] }
-        }
-      }
-      return { devices: [] }
-    }
-
     buildCatalog () {
-      this.deviceBySlug = new Map()
-      const userSlugs = new Set()
-      this.userDevices = (this.userManifest?.devices || []).slice()
-        .sort((a, b) => (a.product || a.name || '').toLowerCase()
-          .localeCompare((b.product || b.name || '').toLowerCase()))
-      for (const d of this.userDevices) {
-        userSlugs.add(d.slug)
-        this.deviceBySlug.set(d.slug, { entry: d, isUser: true })
-      }
-
-      const vendors = {}
-      for (const device of (this.sharedManifest?.devices || [])) {
-        if (userSlugs.has(device.slug)) continue
-        const vendor = device.vendor || 'Unknown'
-        if (!vendors[vendor]) vendors[vendor] = []
-        vendors[vendor].push(device)
-        this.deviceBySlug.set(device.slug, { entry: device, isUser: false })
-      }
-
-      const sortedVendors = Object.keys(vendors).sort((a, b) =>
-        a.toLowerCase().localeCompare(b.toLowerCase()))
-      this.vendorTree = sortedVendors.map(vendor => ({
-        name: vendor,
-        displayName: this.formatVendorName(vendor),
-        devices: vendors[vendor].sort((a, b) =>
-          (a.product || a.name || '').toLowerCase()
-            .localeCompare((b.product || b.name || '').toLowerCase()))
-      }))
+      const catalog = PedalCatalog.buildCatalog(this.sharedManifest, this.userManifest)
+      this.deviceBySlug = catalog.deviceBySlug
+      this.userDevices = catalog.userDevices
+      this.vendorTree = catalog.vendorTree
     }
 
     deviceJsonPaths (entry, isUser) {
@@ -398,15 +353,11 @@ application.register(
     }
 
     formatVendorName (vendor) {
-      return vendor.split('_')
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' ')
+      return PedalCatalog.formatVendorName(vendor)
     }
 
     getDeviceDisplayName (device) {
-      if (device.product) return device.product
-      if (device.name) return device.name
-      return device.slug || 'Unknown'
+      return PedalCatalog.getDeviceDisplayName(device)
     }
 
     pedalHeaderName (device) {

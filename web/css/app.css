@@ -1168,6 +1168,79 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
   padding: 0 0.15rem;
 }
 
+.scene-pedal-display {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.scene-pedal-name {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.scene-pedal-picker-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  min-width: 18rem;
+}
+
+.scene-pedal-picker-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.scene-pedal-picker-label .scene-select {
+  width: 100%;
+  max-width: none;
+}
+
+.scene-pedal-select.hidden {
+  display: none;
+}
+
+.scene-pedal-warning-content {
+  text-align: center;
+  padding: 0.5rem 0;
+  color: var(--text);
+}
+
+.scene-pedal-warning-content .warning-icon {
+  font-size: 2.5rem;
+  color: var(--warning);
+  margin-bottom: 0.75rem;
+}
+
+.scene-pedal-warning-content p {
+  margin: 0.5rem 0;
+}
+
+.scene-pedal-warning-content .hint {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+wa-dialog[data-scene-target="pedalPickerDialog"]::part(dialog),
+wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(dialog) {
+  background-color: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+wa-dialog[data-scene-target="pedalPickerDialog"]::part(footer),
+wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
 .scene-field-row {
   display: grid;
   grid-template-columns: 10rem 1fr;

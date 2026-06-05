@@ -7,7 +7,9 @@ application.register(
       'inspectView', 'inspectText', 'editView', 'truncatedBanner',
       'copySource', 'copyBtn', 'editorToolbar',
       'editorContainer', 'editorTitle', 'validationBox',
-      'programmingBanner', 'saveBtn', 'revertBtn'
+      'programmingBanner', 'saveBtn', 'revertBtn',
+      'pedalPickerDialog', 'pedalVendorSelect', 'pedalSelect',
+      'pedalChangeWarningDialog'
     ]
 
     connect () {
@@ -23,8 +25,13 @@ application.register(
       this.deviceContext = {
         sceneMode: 2,
         deviceMode: 0,
-        midiControl: false
+        midiControl: false,
+        globalPedal: null
       }
+      this.pedalCatalog = null
+      this._pedalCatalogLoad = null
+      this._pendingPedalSlug = null
+      this._pendingPedalInherited = false
       this.validationErrors = []
       this._schema = null
       this._schemaLoad = null
@@ -118,6 +125,9 @@ application.register(
         this.editModel = null
         this.editPosition = null
         this.deviceProgramming = false
+        this.pedalCatalog = null
+        this._pedalCatalogLoad = null
+        this.deviceContext.globalPedal = null
         if (this.hasEditorToolbarTarget) {
           this.editorToolbarTarget.classList.add('hidden')
         }
@@ -260,13 +270,184 @@ application.register(
     }
 
     normalizeBeforeSave (model) {
-      if (!model.touchpads) return
-      model.touchpads.forEach(tp => {
-        if (tp.actions?.length) {
-          tp.action = tp.actions[0]
-          delete tp.actions
+      if (model.touchpads) {
+        model.touchpads.forEach(tp => {
+          if (tp.actions?.length) {
+            tp.action = tp.actions[0]
+            delete tp.actions
+          }
+        })
+      }
+      if (model.device_id === '' || model.device_id == null) delete model.device_id
+    }
+
+    async fetchGlobalPedalInTask () {
+      const response = await this.connection._sendCommandImpl('INFO', 15000, (data) =>
+        typeof data.version === 'string')
+      if (!response || response.startsWith('ERROR:')) return
+      const info = JSON.parse(response)
+      if (info.pedal) {
+        this.deviceContext.globalPedal = {
+          slug: info.pedal.slug || '',
+          name: info.pedal.name || 'Unknown',
+          vendor: info.pedal.vendor || '',
+          midi_channel: Number(info.pedal.midi_channel) || 1,
+          trs_type: info.pedal.trs_type || 'TYPE_A'
         }
-      })
+      }
+    }
+
+    async ensurePedalCatalog () {
+      if (this.pedalCatalog) return this.pedalCatalog
+      if (this._pedalCatalogLoad) return this._pedalCatalogLoad
+      this._pedalCatalogLoad = PedalCatalog.fetchCatalog(this.connection)
+        .then(catalog => {
+          this.pedalCatalog = catalog
+          this._pedalCatalogLoad = null
+          return catalog
+        })
+        .catch(err => {
+          this._pedalCatalogLoad = null
+          throw err
+        })
+      return this._pedalCatalogLoad
+    }
+
+    async openPedalPicker () {
+      if (this.deviceProgramming) return
+      try {
+        await this.ensurePedalCatalog()
+      } catch (err) {
+        console.error('Pedal catalog load failed:', err)
+        alert(err.message || 'Failed to load pedal list')
+        return
+      }
+      this.populatePedalPickerSelects()
+      if (this.hasPedalPickerDialogTarget) this.pedalPickerDialogTarget.open = true
+    }
+
+    closePedalPicker () {
+      if (this.hasPedalPickerDialogTarget) this.pedalPickerDialogTarget.open = false
+    }
+
+    closePedalWarning () {
+      if (this.hasPedalChangeWarningDialogTarget) {
+        this.pedalChangeWarningDialogTarget.open = false
+      }
+      this._pendingPedalSlug = null
+      this._pendingPedalInherited = false
+    }
+
+    populatePedalPickerSelects () {
+      if (!this.hasPedalVendorSelectTarget) return
+      const global = this.deviceContext.globalPedal
+      const globalName = global?.name || 'Default'
+      const catalog = this.pedalCatalog
+      const deviceId = this.editModel?.device_id || ''
+
+      let vendorHtml = `<option value="__inherited__">Inherited — ${this.escapeHtml(globalName)}</option>`
+      vendorHtml += '<option value="__user__">User Devices</option>'
+      for (const v of (catalog?.vendorTree || [])) {
+        vendorHtml += `<option value="${this.escapeHtml(v.name)}">${this.escapeHtml(v.displayName)}</option>`
+      }
+      this.pedalVendorSelectTarget.innerHTML = vendorHtml
+
+      let vendorKey = '__inherited__'
+      if (deviceId) {
+        vendorKey = PedalCatalog.findVendorForSlug(catalog, deviceId) || '__user__'
+      }
+      this.pedalVendorSelectTarget.value = vendorKey
+      this.rebuildPedalPickerPedalSelect(vendorKey, deviceId)
+    }
+
+    onPedalVendorChange () {
+      if (!this.hasPedalVendorSelectTarget) return
+      this.rebuildPedalPickerPedalSelect(this.pedalVendorSelectTarget.value, '')
+    }
+
+    rebuildPedalPickerPedalSelect (vendorKey, selectedSlug) {
+      if (!this.hasPedalSelectTarget) return
+      const inherited = vendorKey === '__inherited__'
+      this.pedalSelectTarget.classList.toggle('hidden', inherited)
+      this.pedalSelectTarget.disabled = inherited
+      if (inherited) {
+        this.pedalSelectTarget.innerHTML = ''
+        return
+      }
+
+      let devices = []
+      if (vendorKey === '__user__') {
+        devices = this.pedalCatalog?.userDevices || []
+      } else {
+        const vendor = this.pedalCatalog?.vendorTree?.find(v => v.name === vendorKey)
+        devices = vendor?.devices || []
+      }
+
+      let html = ''
+      for (const d of devices) {
+        const name = PedalCatalog.getDeviceDisplayName(d)
+        const sel = d.slug === selectedSlug ? ' selected' : ''
+        html += `<option value="${this.escapeHtml(d.slug)}"${sel}>${this.escapeHtml(name)}</option>`
+      }
+      this.pedalSelectTarget.innerHTML = html
+      if (devices.length && !devices.some(d => d.slug === selectedSlug)) {
+        this.pedalSelectTarget.selectedIndex = 0
+      }
+    }
+
+    confirmPedalPicker () {
+      if (!this.hasPedalVendorSelectTarget) return
+      const vendorKey = this.pedalVendorSelectTarget.value
+      const currentId = this.editModel?.device_id || ''
+
+      if (vendorKey === '__inherited__') {
+        if (currentId) {
+          this._pendingPedalSlug = ''
+          this._pendingPedalInherited = true
+          this.closePedalPicker()
+          if (this.hasPedalChangeWarningDialogTarget) {
+            this.pedalChangeWarningDialogTarget.open = true
+          } else {
+            this.applyPedalChange()
+          }
+        } else {
+          this.closePedalPicker()
+        }
+        return
+      }
+
+      const slug = this.hasPedalSelectTarget ? this.pedalSelectTarget.value : ''
+      if (!slug) {
+        alert('Select a pedal')
+        return
+      }
+      if (slug === currentId) {
+        this.closePedalPicker()
+        return
+      }
+
+      this._pendingPedalSlug = slug
+      this._pendingPedalInherited = false
+      this.closePedalPicker()
+      if (this.hasPedalChangeWarningDialogTarget) {
+        this.pedalChangeWarningDialogTarget.open = true
+      } else {
+        this.applyPedalChange()
+      }
+    }
+
+    applyPedalChange () {
+      if (!this.editModel) return
+      if (this._pendingPedalInherited || this._pendingPedalSlug === '') {
+        delete this.editModel.device_id
+      } else if (this._pendingPedalSlug) {
+        this.editModel.device_id = this._pendingPedalSlug
+      }
+      this._pendingPedalSlug = null
+      this._pendingPedalInherited = false
+      this.closePedalWarning()
+      this.markDirty()
+      this.renderEditor()
     }
 
     getAtPath (path) {
@@ -312,7 +493,9 @@ application.register(
       if (this.deviceProgramming) return
       const path = e.target.dataset.scenePath
       if (!path) return
-      this.setAtPath(path, e.target.value)
+      let val = e.target.value
+      if (path === 'midi_channel' || path === 'trs_type') val = Number(val)
+      this.setAtPath(path, val)
       this.markDirty()
       this.renderEditor()
     }
@@ -418,6 +601,11 @@ application.register(
             await this.fetchConfigContextInTask()
           } catch (err) {
             console.warn('Scene editor: CONFIG context skipped:', err.message)
+          }
+          try {
+            await this.fetchGlobalPedalInTask()
+          } catch (err) {
+            console.warn('Scene editor: INFO pedal context skipped:', err.message)
           }
           await this.ensureDeviceIdleInTask()
 
