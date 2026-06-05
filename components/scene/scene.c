@@ -76,18 +76,64 @@ static void scene_invalidate_cache_index(uint8_t scene_index);
 static esp_err_t scene_load_into_cache_slot(int cache_idx, uint8_t scene_index);
 static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene);
 
+static char s_deferred_ui_module[MAX_UI_MODULE_NAME + 1];
+static lv_timer_t *s_deferred_ui_module_timer = NULL;
+
+static void scene_apply_ui_module_now(void) {
+  const char *mod_name =
+    s_deferred_ui_module[0] != '\0' ? s_deferred_ui_module : "beat";
+  ui_draw_module_t *mod = ui_get_module_by_name(mod_name);
+  if (mod) ui_set_draw_module(mod);
+}
+
+static void scene_deferred_ui_module_step2_cb(lv_timer_t *timer) {
+  lv_timer_delete(timer);
+  scene_apply_ui_module_now();
+}
+
+static void scene_deferred_ui_module_step1_cb(lv_timer_t *timer) {
+  s_deferred_ui_module_timer = NULL;
+  lv_timer_delete(timer);
+
+  if (ui_is_in_screensaver_mode()) {
+    ESP_LOGI(TAG, "Exiting screensaver (deferred) before applying scene UI module");
+    screensaver_disable();
+    lv_timer_t *step2 = lv_timer_create(scene_deferred_ui_module_step2_cb, 10, NULL);
+    if (step2) lv_timer_set_repeat_count(step2, 1);
+    else scene_apply_ui_module_now();
+    return;
+  }
+
+  scene_apply_ui_module_now();
+}
+
 static void scene_apply_ui_module_for_performance(const char *module_name) {
   if (ui_is_in_programming_mode()) return;
 
-  if (ui_is_in_screensaver_mode()) {
-    ESP_LOGI(TAG, "Exiting screensaver before applying scene UI module");
-    screensaver_disable();
+  if (module_name && module_name[0] != '\0') {
+    strncpy(s_deferred_ui_module, module_name, MAX_UI_MODULE_NAME);
+    s_deferred_ui_module[MAX_UI_MODULE_NAME] = '\0';
+  } else {
+    s_deferred_ui_module[0] = '\0';
   }
 
-  const char *mod_name =
-    (module_name && module_name[0] != '\0') ? module_name : "beat";
-  ui_draw_module_t *mod = ui_get_module_by_name(mod_name);
-  if (mod) ui_set_draw_module(mod);
+  if (!ui_is_in_screensaver_mode()) {
+    scene_apply_ui_module_now();
+    return;
+  }
+
+  if (s_deferred_ui_module_timer) {
+    lv_timer_delete(s_deferred_ui_module_timer);
+    s_deferred_ui_module_timer = NULL;
+  }
+
+  s_deferred_ui_module_timer =
+    lv_timer_create(scene_deferred_ui_module_step1_cb, 0, NULL);
+  if (s_deferred_ui_module_timer) {
+    lv_timer_set_repeat_count(s_deferred_ui_module_timer, 1);
+  } else {
+    ESP_LOGE(TAG, "Failed to schedule deferred UI module apply");
+  }
 }
 
 // NVS keys
@@ -1944,10 +1990,6 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // teardown/build does not race with the heavy scene configuration), and
   // tells touch.c to drop inbound PRESS/RELEASE for the duration. Closed
   // by the matching ui_scene_transition_end() just before the final return.
-  if (ui_is_in_screensaver_mode()) {
-    ESP_LOGI(TAG, "Exiting screensaver for scene change");
-    screensaver_disable();
-  }
   ui_scene_transition_begin();
 
   // Release any notes still sounding from the outgoing scene's producers
