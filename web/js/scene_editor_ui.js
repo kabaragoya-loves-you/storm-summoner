@@ -80,16 +80,33 @@ window.SceneEditorUi = (function () {
     { v: 'pixels', l: 'Pixels' }
   ]
 
-  const ACTION_TYPES = [
-    'none', 'note', 'control', 'scene', 'preset', 'transport', 'tempo', 'touchwheel',
-    'lfo', 'clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold', 'piano_pedal',
-    'randomize', 'punch_in', 'flag_ceremony', 'boomerang', 'inspect_scene'
+  const REPEAT_DIVISIONS = [
+    { v: '16_bars', l: '16 Bars' }, { v: '12_bars', l: '12 Bars' },
+    { v: '8_bars', l: '8 Bars' }, { v: '4_bars', l: '4 Bars' },
+    { v: '2_bars', l: '2 Bars' }, { v: '1_bar', l: '1 Bar' },
+    { v: 'half', l: 'Half' }, { v: 'quarter', l: 'Quarter' },
+    { v: 'eighth', l: 'Eighth' }, { v: 'sixteenth', l: 'Sixteenth' },
+    { v: '32nd', l: '32nd' }
   ]
 
-  const ACTION_VARIANTS = [
-    'set', 'hold', 'cycle', 'toggle', 'increment', 'decrement', 'start', 'stop',
-    'tap', 'play', 'pause', 'record', 'modify', 'step', 'downbeat', 'burst'
+  const PROBABILITY = Array.from({ length: 10 }, (_, i) => {
+    const v = (i + 1) * 10
+    return { v, l: `${v}%` }
+  })
+
+  const PATTERN_LENGTHS = [
+    { v: 0, l: 'Off' },
+    ...Array.from({ length: 7 }, (_, i) => ({ v: i + 2, l: String(i + 2) }))
   ]
+
+  let _openSections = new Set()
+
+  function actionContext (ctrl) {
+    return {
+      sceneMode: ctrl.deviceContext?.sceneMode ?? 2,
+      clockSource: ctrl.editModel?.clock_source || 'internal'
+    }
+  }
 
   function normalizeUiModule (name) {
     if (!name || name === 'scene') return 'beat'
@@ -200,25 +217,226 @@ window.SceneEditorUi = (function () {
     return html
   }
 
-  function renderAction (ctrl, path, action) {
+  function slotValue (field, index) {
+    return Array.isArray(field) ? field[index] : (index === 0 ? field : undefined)
+  }
+
+  function paramField (ctrl, path, cc, optionOpts) {
+    const device = ctrl.deviceDefinition
+    if (DeviceControls.hasParameters(device)) {
+      return selectField(path, cc, DeviceControls.parameterOptions(device, optionOpts))
+    }
+    return numberField(path, cc, 0, 127)
+  }
+
+  function valueField (ctrl, path, cc, val) {
+    const device = ctrl.deviceDefinition
+    if (DeviceControls.hasParameters(device)) {
+      return selectField(path, val, DeviceControls.valueOptions(device, cc))
+    }
+    return numberField(path, val, 0, 127)
+  }
+
+  function slotAddButton (path, kind, label, max = 4) {
+    const min = kind === 'cycle-step' ? 2 : 1
+    return `<wa-button class="scene-slot-add" size="small" appearance="text" variant="brand"
+      data-controller="slots"
+      data-slots-path-value="${esc(path)}" data-slots-kind-value="${esc(kind)}"
+      data-slots-min-value="${min}" data-slots-max-value="${max}" data-slots-default-value="0"
+      data-action="click->slots#add" aria-label="${esc(label)}"><wa-icon name="plus"></wa-icon></wa-button>`
+  }
+
+  function addSlotButton (label) {
+    return `<wa-button class="scene-slot-add" size="small" appearance="text" variant="brand"
+      data-action="click->slots#add" aria-label="${esc(label)}"><wa-icon name="plus"></wa-icon></wa-button>`
+  }
+
+  function slotBlock (title, body, removeIndex, addHtml) {
+    const remove = removeIndex >= 0
+      ? `<wa-button class="scene-slot-remove" size="small" appearance="text" variant="neutral"
+          data-action="click->slots#remove" data-slot-index="${removeIndex}"
+          aria-label="Remove ${esc(title)}"><wa-icon name="xmark"></wa-icon></wa-button>`
+      : ''
+    return `<div class="scene-slot">
+      <div class="scene-slot-head"><span class="scene-slot-title">${esc(title)}</span>
+        <span class="scene-slot-actions">${remove}${addHtml || ''}</span></div>
+      ${body}</div>`
+  }
+
+  function slotGroup (opts) {
+    return `<div class="scene-slots" data-controller="slots"
+      data-slots-path-value="${esc(opts.path)}" data-slots-kind-value="${esc(opts.kind)}"
+      data-slots-min-value="${opts.min}" data-slots-max-value="${opts.max}"
+      data-slots-default-value="${opts.def}">${opts.rows}</div>`
+  }
+
+  function renderCycleSlots (ctrl, path, a) {
+    const device = ctrl.deviceDefinition
+    const slotCount = DeviceControls.cycleSlotCount(a)
+    const stepCount = DeviceControls.cycleStepCount(a)
+    const ccBySlot = []
+    for (let s = 0; s < slotCount; s++) {
+      ccBySlot.push(DeviceControls.resolveParameterCc(device, DeviceControls.ccForSlot(a, s)))
+    }
+    const usedCcs = new Set(ccBySlot.map(Number))
+    const hasParams = DeviceControls.hasParameters(device)
+    const maxSlots = hasParams ? Math.min(4, DeviceControls.parameterCount(device)) : 4
+    const multiSlot = slotCount > 1
+
+    let html = `<div class="scene-cycle" style="--cycle-steps: ${stepCount}">`
+
+    // Column headers: Parameter | Step 1 | Step 2 | …
+    html += '<div class="scene-cycle-row scene-cycle-row-head">'
+    html += '<div class="scene-cycle-param-col">Parameter</div>'
+    for (let i = 0; i < stepCount; i++) {
+      const add = (i === stepCount - 1 && stepCount < 8)
+        ? slotAddButton(path, 'cycle-step', 'Add step', 8) : ''
+      const remove = i > 1
+        ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
+            data-controller="slots" data-slots-path-value="${esc(path)}" data-slots-kind-value="cycle-step"
+            data-slots-min-value="2" data-slots-max-value="8" data-slots-default-value="0"
+            data-action="click->slots#remove" data-slot-index="${i}"
+            aria-label="Remove step ${i + 1}"><wa-icon name="xmark"></wa-icon></wa-button>`
+        : ''
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span>${remove}${add}</div>`
+    }
+    html += '</div>'
+
+    // One row per parameter slot
+    for (let s = 0; s < slotCount; s++) {
+      const ccPath = multiSlot ? `${path}.cc.${s}` : `${path}.cc`
+      const cc = ccBySlot[s]
+      const steps = DeviceControls.cycleStepsForSlot(a, s)
+      const removeSlot = s > 0
+        ? `<wa-button class="scene-slot-remove" size="small" appearance="text" variant="neutral"
+            data-controller="slots" data-slots-path-value="${esc(path)}" data-slots-kind-value="control"
+            data-slots-min-value="1" data-slots-max-value="4" data-slots-default-value="0"
+            data-action="click->slots#remove" data-slot-index="${s}"
+            aria-label="Remove ${esc(DeviceControls.parameterLabel(device, cc))}"><wa-icon name="xmark"></wa-icon></wa-button>`
+        : ''
+      const addParam = (s === slotCount - 1 && slotCount < maxSlots)
+        ? slotAddButton(path, 'control', 'Add parameter', maxSlots) : ''
+
+      html += '<div class="scene-cycle-row">'
+      html += `<div class="scene-cycle-param-col">
+        <div class="scene-cycle-param-head">
+          <span class="scene-cycle-param-name">${esc(DeviceControls.parameterLabel(device, cc))}</span>
+          <span class="scene-cycle-param-actions">${removeSlot}${addParam}</span>
+        </div>
+        ${paramField(ctrl, ccPath, cc, { exclude: usedCcs, keep: cc })}
+      </div>`
+      for (let i = 0; i < stepCount; i++) {
+        const valPath = multiSlot ? `${path}.values.${s}.${i}` : `${path}.values.${i}`
+        const val = DeviceControls.resolveParameterValue(device, cc, steps[i])
+        html += `<div class="scene-cycle-step-col">${valueField(ctrl, valPath, cc, val)}</div>`
+      }
+      html += '</div>'
+    }
+
+    html += '</div>'
+    return html
+  }
+
+  function renderControlFields (ctrl, path, a) {
+    const device = ctrl.deviceDefinition
+    const variant = a.variant || 'set'
+    if (variant === 'cycle') return renderCycleSlots(ctrl, path, a)
+
+    const count = DeviceControls.controlSlotCount(a)
+    const multi = count > 1
+    const ccBySlot = []
+    for (let i = 0; i < count; i++) {
+      ccBySlot.push(DeviceControls.resolveParameterCc(device, DeviceControls.ccForSlot(a, i)))
+    }
+    // A control action may not target the same parameter twice, so each slot's
+    // dropdown hides parameters already taken by the other slots.
+    const usedCcs = new Set(ccBySlot.map(Number))
+    const hasParams = DeviceControls.hasParameters(device)
+    const maxSlots = hasParams ? Math.min(4, DeviceControls.parameterCount(device)) : 4
+    let rows = ''
+    for (let i = 0; i < count; i++) {
+      const ccPath = multi ? `${path}.cc.${i}` : `${path}.cc`
+      const cc = ccBySlot[i]
+      let body = fieldRow('Parameter',
+        paramField(ctrl, ccPath, cc, { exclude: usedCcs, keep: cc }))
+      if (variant === 'set') {
+        const valPath = multi ? `${path}.value.${i}` : `${path}.value`
+        const val = DeviceControls.resolveParameterValue(device, cc, slotValue(a.value, i))
+        body += fieldRow('Value', valueField(ctrl, valPath, cc, val))
+      } else if (variant === 'hold') {
+        const pressPath = multi ? `${path}.value.${i}` : `${path}.value`
+        const relPath = multi ? `${path}.value2.${i}` : `${path}.value2`
+        const press = DeviceControls.resolveParameterValue(device, cc, slotValue(a.value, i))
+        const rel = DeviceControls.resolveParameterValue(device, cc, slotValue(a.value2, i))
+        body += fieldRow('Press value', valueField(ctrl, pressPath, cc, press))
+        body += fieldRow('Release value', valueField(ctrl, relPath, cc, rel))
+      }
+      const add = (count < maxSlots && i === count - 1) ? addSlotButton('Add parameter') : ''
+      rows += slotBlock(`Slot ${i + 1}`, body, i > 0 ? i : -1, add)
+    }
+    return slotGroup({ path, kind: 'control', min: 1, max: 4, def: 0, rows })
+  }
+
+  function renderRepeatBlock (ctrl, path, a) {
+    if (!ActionCatalog.supportsRepeat(a)) return ''
+    const on = !!a.repeat
+    const repeatCb = `<input type="checkbox" class="scene-checkbox" ${on ? 'checked' : ''}
+      data-scene-path="${esc(path)}.repeat" data-reveal-target="trigger"
+      data-action="change->scene#patchCheckboxQuiet change->reveal#toggle">`
+    let content = fieldRow('Division',
+      selectField(`${path}.repeat_division`, a.repeat_division || 'quarter', REPEAT_DIVISIONS))
+    content += fieldRow('Probability',
+      selectField(`${path}.probability`, a.probability ?? 100, PROBABILITY))
+    content += fieldRow('Pattern length',
+      selectField(`${path}.pattern_length`, a.pattern_length ?? 0, PATTERN_LENGTHS))
+    const plen = Number(a.pattern_length ?? 0)
+    if (plen >= 2) content += renderPatternMask(path, plen, a.pattern_mask ?? 255)
+    content += fieldRow('Transport trigger',
+      checkboxField(`${path}.transport_trigger`, !!a.transport_trigger))
+    return `<div class="scene-reveal" data-controller="reveal">
+      ${fieldRow('Repeat', repeatCb)}
+      <div class="scene-reveal-content" data-reveal-target="content" ${on ? '' : 'hidden'}>${content}</div>
+    </div>`
+  }
+
+  function renderPatternMask (path, len, mask) {
+    let steps = ''
+    for (let i = 0; i < len; i++) {
+      const active = (mask >> i) & 1
+      steps += `<button type="button" class="scene-step${active ? ' is-on' : ''}"
+        data-action="click->scene#togglePatternStep"
+        data-scene-path="${esc(path)}.pattern_mask" data-step-bit="${i}"
+        aria-pressed="${active ? 'true' : 'false'}">${i + 1}</button>`
+    }
+    return fieldRow('Pattern', `<div class="scene-steps">${steps}</div>`)
+  }
+
+  function renderAction (ctrl, path, action, opts = {}) {
     const a = action || { type: 'none' }
-    const typeOpts = ACTION_TYPES.map(t => ({ v: t, l: t }))
+    const trigger = opts.trigger || ActionCatalog.TRIGGERS.TOUCHPAD_0_7
+    const ctx = actionContext(ctrl)
+    const typeOpts = ActionCatalog.typesForTrigger(trigger, ctx)
+    if (a.type && a.type !== 'none' && !typeOpts.some(o => o.v === a.type)) {
+      typeOpts.unshift({ v: a.type, l: ActionCatalog.typeLabel(a.type) })
+    }
     let html = fieldRow('Type', selectField(`${path}.type`, a.type || 'none', typeOpts))
     if (a.type && a.type !== 'none') {
-      html += fieldRow('Variant', selectField(`${path}.variant`, a.variant || '', [
-        { v: '', l: '(none)' },
-        ...ACTION_VARIANTS.map(v => ({ v, l: v }))
-      ]))
+      const variantOpts = ActionCatalog.variantsForType(a.type, trigger, ctx)
+      if (variantOpts.length) {
+        const curVariant = a.variant || variantOpts[0].v
+        if (curVariant && !variantOpts.some(o => o.v === curVariant)) {
+          variantOpts.unshift({ v: curVariant, l: ActionCatalog.variantLabel(curVariant) })
+        }
+        html += fieldRow('Variant', selectField(`${path}.variant`, curVariant, variantOpts))
+      }
       if (a.type === 'note') {
-        html += fieldRow('Note', numberField(`${path}.note`, a.note ?? 60, 0, 127))
+        const noteVal = a.note ?? ActionCatalog.NOTE_RANDOM
+        html += fieldRow('Note',
+          selectField(`${path}.note`, noteVal, ActionCatalog.noteOptions(noteVal)))
         html += fieldRow('Velocity', numberField(`${path}.velocity`, a.velocity ?? 100, 1, 127))
       }
       if (a.type === 'control' || a.type === 'control_change') {
-        const cc = Array.isArray(a.cc) ? a.cc[0] : (a.cc ?? 0)
-        html += fieldRow('CC', numberField(`${path}.cc`, cc, 0, 127))
-        if (a.variant === 'set') {
-          html += fieldRow('Value', numberField(`${path}.value`, a.value ?? 0, 0, 127))
-        }
+        html += renderControlFields(ctrl, path, a)
       }
       if (a.type === 'scene' && a.variant === 'set') {
         html += fieldRow('Scene #', numberField(`${path}.number`, a.number ?? 1, 1, 128))
@@ -229,26 +447,38 @@ window.SceneEditorUi = (function () {
       if (a.type === 'lfo') {
         html += fieldRow('Slot', numberField(`${path}.slot`, a.slot ?? 1, 1, 3))
       }
-      html += fieldRow('Timing', textField(`${path}.timing`, a.timing || 'immediate', 32))
-      html += fieldRow('Repeat', checkboxField(`${path}.repeat`, !!a.repeat))
+      if (ActionCatalog.supportsTiming(a)) {
+        const beats = ctrl.editModel?.time_signature?.numerator ?? 4
+        const timingVal = a.timing || 'immediate'
+        const timingOpts = ActionCatalog.timingOptions(beats)
+        if (!timingOpts.some(o => o.v === timingVal)) {
+          timingOpts.unshift({ v: timingVal, l: timingVal })
+        }
+        html += fieldRow('Timing', selectField(`${path}.timing`, timingVal, timingOpts))
+      }
+      html += renderRepeatBlock(ctrl, path, a)
+      if (ctrl.deviceContext?.flagEnabled) {
+        html += fieldRow('Raise the Flag', checkboxField(`${path}.raise_flag`, !!a.raise_flag))
+      }
     }
     return html
   }
 
-  function renderActionChain (ctrl, path, chain, maxItems) {
+  function renderActionChain (ctrl, path, chain, maxItems, trigger) {
     const arr = Array.isArray(chain) ? chain : []
     let html = ''
     for (let i = 0; i < maxItems; i++) {
       const itemPath = `${path}.${i}`
       html += `<div class="scene-action-slot"><h4>Action ${i + 1}</h4>`
-      html += renderAction(ctrl, itemPath, arr[i] || { type: 'none' })
+      html += renderAction(ctrl, itemPath, arr[i] || { type: 'none' }, { trigger })
       html += '</div>'
     }
     return html
   }
 
   function section (title, body, open = false) {
-    return `<details class="scene-editor-section" ${open ? 'open' : ''}>
+    const isOpen = _openSections.has(title) || open
+    return `<details class="scene-editor-section" data-section="${esc(title)}" ${isOpen ? 'open' : ''}>
       <summary>${esc(title)}</summary>
       <div class="scene-editor-section-body">${body}</div>
     </details>`
@@ -436,7 +666,8 @@ window.SceneEditorUi = (function () {
           numberField('cv_velocity', m.cv_velocity ?? 100, 1, 127))
       }
     } else if (mode === 'trigger') {
-      html += renderAction(ctrl, 'cv_trigger_action', m.cv_trigger_action || { type: 'none' })
+      html += renderAction(ctrl, 'cv_trigger_action', m.cv_trigger_action || { type: 'none' },
+        { trigger: ActionCatalog.TRIGGERS.BUTTON })
       html += fieldRow('Threshold %',
         numberField('cv_trigger_threshold', m.cv_trigger_threshold ?? 50, 0, 100))
       html += fieldRow('Debounce ms',
@@ -554,9 +785,8 @@ window.SceneEditorUi = (function () {
 
   function renderPads (ctrl) {
     if (!ctrl.editModel.touchpads || ctrl.editModel.touchpads.length !== 12) {
-      ctrl.editModel.touchpads = Array.from({ length: 12 }, (_, i) => ({
-        enabled: i < 8,
-        actions: [{ type: 'none' }]
+      ctrl.editModel.touchpads = Array.from({ length: 12 }, () => ({
+        action: { type: 'none' }
       }))
     }
     let html = ''
@@ -564,11 +794,13 @@ window.SceneEditorUi = (function () {
     const start = mode === 'pads' ? 0 : 8
     for (let i = start; i < 12; i++) {
       const tp = ctrl.editModel.touchpads[i]
-      if (!tp.actions) tp.actions = [{ type: 'none' }]
-      const act = tp.action || tp.actions?.[0] || { type: 'none' }
-      html += `<div class="scene-pad-row"><h4>Pad ${i + 1}</h4>`
-      html += fieldRow('Enabled', checkboxField(`touchpads.${i}.enabled`, tp.enabled !== false))
-      html += renderAction(ctrl, `touchpads.${i}.action`, act)
+      if (!tp.action && tp.actions?.length) tp.action = tp.actions[0]
+      const act = tp.action || { type: 'none' }
+      const trigger = i < 8
+        ? ActionCatalog.TRIGGERS.TOUCHPAD_0_7
+        : ActionCatalog.TRIGGERS.TOUCHPAD_8_11
+      html += `<div class="scene-pad-row"><h4>${esc(ActionCatalog.padDisplayName(i))}</h4>`
+      html += renderAction(ctrl, `touchpads.${i}.action`, act, { trigger })
       html += '</div>'
     }
     return section('Pads', html)
@@ -580,14 +812,15 @@ window.SceneEditorUi = (function () {
       const labels = ['Left', 'Right', 'Both']
       const act = ctrl.editModel[key] || { type: 'none' }
       html += `<div class="scene-action-slot"><h4>Button ${labels[idx]}</h4>`
-      html += renderAction(ctrl, key, act)
+      html += renderAction(ctrl, key, act, { trigger: ActionCatalog.TRIGGERS.BUTTON })
       html += '</div>'
     })
     return section('Buttons', html)
   }
 
   function renderBump (ctrl) {
-    return section('Bump', renderAction(ctrl, 'bump', ctrl.editModel.bump || { type: 'none' }))
+    return section('Bump', renderAction(ctrl, 'bump', ctrl.editModel.bump || { type: 'none' },
+      { trigger: ActionCatalog.TRIGGERS.BUMP }))
   }
 
   function renderOnLoad (ctrl) {
@@ -598,7 +831,8 @@ window.SceneEditorUi = (function () {
   function renderOnPlay (ctrl) {
     if (!ctrl.editModel.use_transport) return ''
     if (!ctrl.editModel.on_play) ctrl.editModel.on_play = []
-    return section('On-Play', renderActionChain(ctrl, 'on_play', ctrl.editModel.on_play, 4))
+    return section('On-Play', renderActionChain(ctrl, 'on_play', ctrl.editModel.on_play, 4,
+      ActionCatalog.TRIGGERS.ON_PLAY))
   }
 
   function renderCcTriggers (ctrl) {
@@ -614,13 +848,15 @@ window.SceneEditorUi = (function () {
       const slot = ctrl.editModel.cc_triggers[i]
       html += `<div class="scene-action-slot"><h4>CC Trigger ${i + 1}</h4>`
       html += fieldRow('CC', numberField(`cc_triggers.${i}.cc_number`, slot.cc_number ?? 0, 0, 127))
-      html += renderAction(ctrl, `cc_triggers.${i}.action`, slot.action || { type: 'none' })
+      html += renderAction(ctrl, `cc_triggers.${i}.action`, slot.action || { type: 'none' },
+        { trigger: ActionCatalog.TRIGGERS.CC })
       html += '</div>'
     }
     return section('CC Triggers', html)
   }
 
-  function renderEditor (ctrl) {
+  function renderEditor (ctrl, openSections) {
+    _openSections = openSections || new Set()
     // Order matches device Scene menu (current_scene.c assignment list, then globals).
     let html = renderPads(ctrl)
     html += renderTouchwheel(ctrl)
@@ -644,6 +880,37 @@ window.SceneEditorUi = (function () {
     html += renderPerSceneDevice(ctrl)
     html += renderSceneGlobals(ctrl)
     return html
+  }
+
+  // Section titles that should start expanded because they carry an assignment
+  // or an enabled feature. Titles must match the section() headers above.
+  function sectionsWithContent (ctrl) {
+    const m = ctrl.editModel || {}
+    const open = new Set()
+    const hasAction = (a) => !!(a && a.type && a.type !== 'none')
+    const padAction = (tp) => hasAction(tp?.action) || hasAction(tp?.actions?.[0])
+
+    if ((m.touchpads || []).some(padAction)) open.add('Pads')
+    if (m.touchwheel_mode && m.touchwheel_mode !== 'pads') open.add('Touchwheel')
+    if (m.expression?.enabled) open.add('Expression')
+    if (m.cv_input_mode && m.cv_input_mode !== 'none') open.add('Control Voltage')
+    if (m.proximity?.enabled) open.add('Proximity')
+    if (m.als?.enabled) open.add('Ambient Light')
+    if (hasAction(m.button_left) || hasAction(m.button_right) || hasAction(m.button_both)) {
+      open.add('Buttons')
+    }
+    if (m.lfo1_config?.enabled) open.add('LFO1')
+    if (m.lfo2_config?.enabled) open.add('LFO2')
+    if (hasAction(m.bump)) open.add('Bump')
+    if ((m.on_load || []).some(hasAction)) open.add('On-Load')
+    if ((m.on_play || []).some(hasAction)) open.add('On-Play')
+    if (m.sample_hold_config?.enabled) open.add('S+H')
+    if (m.tilt_x?.enabled) open.add('Tilt X')
+    if (m.tilt_y?.enabled) open.add('Tilt Y')
+    if (m.rtg_config?.enabled) open.add('RTG')
+    if ((m.cc_triggers || []).some(t => hasAction(t?.action))) open.add('CC Triggers')
+    if (m.note_track?.enabled) open.add('Note Track')
+    return open
   }
 
   function sceneNameToSlug (name) {
@@ -670,6 +937,7 @@ window.SceneEditorUi = (function () {
     renderEditor,
     section,
     fieldRow,
+    sectionsWithContent,
     isReservedSceneName,
     sceneNameToSlug
   }

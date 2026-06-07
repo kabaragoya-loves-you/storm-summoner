@@ -395,7 +395,8 @@
                 </div>
               </div>
 
-              <div class="scenes-detail-panel scene-inspect-panel" data-controller="scene">
+              <div class="scenes-detail-panel scene-inspect-panel" data-controller="scene"
+                   data-action="slots:add->scene#slotAdd slots:remove->scene#slotRemove">
                 <div class="scenes-detail-toolbar toolbar hidden" data-scene-target="editorToolbar">
                   <span class="scene-editor-title" data-scene-target="editorTitle"></span>
                   <div class="toolbar-spacer"></div>
@@ -795,8 +796,12 @@
   <script src="/js/lib/json-schema-validator.js"></script>
   <script src="/js/controllers/copy.js"></script>
   <script src="/js/controllers/collapsible.js"></script>
+  <script src="/js/controllers/reveal.js"></script>
+  <script src="/js/controllers/slots.js"></script>
   <script src="/js/info.js"></script>
   <script src="/js/pedal_catalog.js"></script>
+  <script src="/js/action_catalog.js"></script>
+  <script src="/js/device_controls.js"></script>
   <script src="/js/scene_editor_ui.js"></script>
   <script src="/js/scene.js"></script>
   <script src="/js/pedals.js"></script>

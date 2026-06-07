@@ -1338,6 +1338,172 @@ wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer) {
   color: var(--text-dim);
 }
 
+.scene-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.scene-slot {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem 0.2rem;
+  background: var(--bg-deep);
+}
+
+.scene-slot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.1rem;
+  margin-bottom: 0.3rem;
+}
+
+.scene-slot-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.scene-slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.scene-slot-remove::part(base) {
+  color: var(--text-dim);
+}
+
+.scene-slot-remove::part(base),
+.scene-slot-add::part(base) {
+  min-height: 0;
+  height: auto;
+  padding: 0 0.15rem;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.scene-slot-actions wa-icon {
+  font-size: 0.78rem;
+}
+
+.scene-slots-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0.35rem 0 0.1rem;
+}
+
+.scene-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.scene-step {
+  min-width: 2rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-deep);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.scene-step.is-on {
+  background: var(--brand, #4f8cff);
+  border-color: var(--brand, #4f8cff);
+  color: #fff;
+}
+
+.scene-reveal-content[hidden] {
+  display: none;
+}
+
+.scene-cycle {
+  margin: 0.35rem 0 0.5rem;
+  overflow-x: auto;
+}
+
+.scene-cycle-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1.2fr) repeat(var(--cycle-steps, 2), minmax(4.5rem, 1fr));
+  gap: 0.35rem 0.5rem;
+  align-items: start;
+  margin-bottom: 0.45rem;
+}
+
+.scene-cycle-row-head {
+  align-items: end;
+  margin-bottom: 0.25rem;
+}
+
+.scene-cycle-param-col {
+  min-width: 0;
+}
+
+.scene-cycle-param-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.scene-cycle-param-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.scene-cycle-param-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.scene-cycle-step-col {
+  min-width: 0;
+}
+
+.scene-cycle-step-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  margin-bottom: 0.15rem;
+}
+
+.scene-cycle-step-col .scene-select,
+.scene-cycle-step-col .scene-input,
+.scene-cycle-param-col .scene-select,
+.scene-cycle-param-col .scene-input {
+  width: 100%;
+  max-width: none;
+}
+
+.scene-cycle-step-col .scene-cycle-step-label,
+.scene-cycle-row-head .scene-cycle-step-col {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.scene-cycle-step-remove {
+  margin-left: 0.1rem;
+}
+
 .scene-edit-placeholder {
   flex: 1;
   display: flex;

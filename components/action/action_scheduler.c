@@ -431,9 +431,7 @@ static void handle_transport_event(const event_t* event, void* context) {
 
   if (starting) {
     for (int i = 0; i < NUM_TOUCHPADS; i++) {
-      if (scene->touchpads[i].enabled) {
-        START_ACTION(&scene->touchpads[i].action);
-      }
+      START_ACTION(&scene->touchpads[i].action);
     }
     START_ACTION(&scene->button_left);
     START_ACTION(&scene->button_right);
@@ -452,9 +450,7 @@ static void handle_transport_event(const event_t* event, void* context) {
     }
   } else if (stopping) {
     for (int i = 0; i < NUM_TOUCHPADS; i++) {
-      if (scene->touchpads[i].enabled) {
-        STOP_ACTION(&scene->touchpads[i].action);
-      }
+      STOP_ACTION(&scene->touchpads[i].action);
     }
     STOP_ACTION(&scene->button_left);
     STOP_ACTION(&scene->button_right);

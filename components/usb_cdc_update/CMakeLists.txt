@@ -21,5 +21,6 @@ idf_component_register(
     json
   PRIV_REQUIRES
     main
+    screensaver
 )
 

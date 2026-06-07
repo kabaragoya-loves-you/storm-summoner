@@ -23,4 +23,8 @@ bool screensaver_is_enabled(void);
 uint16_t screensaver_get_delay(void);
 screensaver_mode_t screensaver_get_mode(void);
 
+// True while the screensaver is running over a Programming-mode session
+// (mode is temporarily SCREENSAVER but Programming will be restored on wake).
+bool screensaver_preserves_programming_session(void);
+
 #endif // SCREENSAVER_H 

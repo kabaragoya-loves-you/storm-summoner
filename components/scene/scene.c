@@ -235,11 +235,8 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->touchwheel_lfo_target = LFO_TARGET_BOTH;       // Default: affect both LFOs
   scene->touchwheel_initial_value = 0;                   // Default: start at 0
 
-  // Touchpads default to enabled but unassigned. A fresh scene does not
-  // transmit anything when a pad is pressed -- users opt in by assigning an
-  // action to each pad they want active.
+  // Touchpads default to unassigned (ACTION_NONE).
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
-    scene->touchpads[i].enabled = true;
     scene->touchpads[i].action = (action_t){0};
   }
 
@@ -2898,19 +2895,6 @@ esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t 
   return ESP_OK;
 }
 
-esp_err_t scene_enable_touchpad(uint8_t scene_index, uint8_t pad_index, bool enabled) {
-  if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS) return ESP_ERR_INVALID_ARG;
-  
-  scene_t* scene = get_scene_for_modification(scene_index);
-  if (!scene) return ESP_ERR_INVALID_STATE;
-  
-  scene->touchpads[pad_index].enabled = enabled;
-  scene_persist_if_programming();
-  
-  ESP_LOGI(TAG, "Scene %d pad %d %s", scene_index + 1, pad_index, enabled ? "enabled" : "disabled");
-  return ESP_OK;
-}
-
 touchpad_mapping_t* scene_get_touchpad_mapping(uint8_t scene_index, uint8_t pad_index) {
   if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS) return NULL;
   
@@ -2993,8 +2977,8 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
   if (!scene) return ESP_ERR_INVALID_STATE;
   
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
-  if (!mapping->enabled) return ESP_OK;  // Pad is disabled
-  
+  if (mapping->action.type == ACTION_NONE) return ESP_OK;
+
   // Handle touchwheel modes - pads 0-7 are routed to touchwheel instance
   // Touchwheel instance handles program change or continuous output
   if (scene->touchwheel_mode != TOUCHWHEEL_MODE_PADS && pad_index <= TOUCHWHEEL_END) {
@@ -6183,7 +6167,6 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* touchpads = cJSON_CreateArray();
   for (int i = 0; i < NUM_TOUCHPADS; i++) {
     cJSON* pad = cJSON_CreateObject();
-    cJSON_AddBoolToObject(pad, "enabled", scene->touchpads[i].enabled);
     cJSON* action_json = action_to_json(&scene->touchpads[i].action);
     if (action_json) {
       cJSON_AddItemToObject(pad, "action", action_json);
@@ -6449,9 +6432,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     int count = cJSON_GetArraySize(touchpads);
     for (int i = 0; i < count && i < NUM_TOUCHPADS; i++) {
       cJSON* pad = cJSON_GetArrayItem(touchpads, i);
-      cJSON* enabled = cJSON_GetObjectItem(pad, "enabled");
-      if (enabled) scene->touchpads[i].enabled = cJSON_IsTrue(enabled);
-      
+
       // Determine trigger type based on pad index
       action_trigger_type_t trigger = (i <= 7) ?
         ACTION_TRIGGER_TOUCHPAD_0_7 : ACTION_TRIGGER_TOUCHPAD_8_11;

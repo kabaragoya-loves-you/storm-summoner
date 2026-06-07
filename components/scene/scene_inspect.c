@@ -420,7 +420,7 @@ static void append_touchpads(scene_inspect_buf_t *b, const scene_t *scene,
   bool any_pad = false;
   for (int i = start_pad; i < NUM_TOUCHPADS; i++) {
     const touchpad_mapping_t *map = &scene->touchpads[i];
-    if (map->enabled && map->action.type != ACTION_NONE) {
+    if (map->action.type != ACTION_NONE) {
       any_pad = true;
       break;
     }
@@ -431,7 +431,7 @@ static void append_touchpads(scene_inspect_buf_t *b, const scene_t *scene,
 
   for (int i = start_pad; i < NUM_TOUCHPADS; i++) {
     const touchpad_mapping_t *map = &scene->touchpads[i];
-    if (!map->enabled || map->action.type == ACTION_NONE) continue;
+    if (map->action.type == ACTION_NONE) continue;
 
     if (!action_summary_format_inspect_pad(&map->action, inspect_pad_name((uint8_t)i),
         scene_index, pad_block, sizeof(pad_block), true)) {

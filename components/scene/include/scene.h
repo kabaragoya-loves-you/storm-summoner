@@ -64,8 +64,7 @@ typedef enum {
 
 // Touchpad mapping
 typedef struct {
-  bool enabled;               // Whether this touchpad is active
-  action_t action;            // Action to execute
+  action_t action;            // Action to execute (ACTION_NONE = unassigned)
 } touchpad_mapping_t;
 
 // Maximum length of a UI module name (must fit scene_t.ui_module field)
@@ -300,7 +299,6 @@ uint8_t scene_get_note_channel(uint8_t scene_index);
 // Touchpad configuration
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, 
                                 uint8_t cc_number, uint8_t value);
-esp_err_t scene_enable_touchpad(uint8_t scene_index, uint8_t pad_index, bool enabled);
 touchpad_mapping_t* scene_get_touchpad_mapping(uint8_t scene_index, uint8_t pad_index);
 
 // Action-based assignment API (single action per discrete input)

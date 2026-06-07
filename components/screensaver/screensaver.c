@@ -435,3 +435,7 @@ uint16_t screensaver_get_delay(void) {
 screensaver_mode_t screensaver_get_mode(void) {
   return g_selected_screensaver_mode;
 }
+
+bool screensaver_preserves_programming_session(void) {
+  return g_screensaver_active && g_mode_before_screensaver == APP_MODE_PROGRAMMING;
+}

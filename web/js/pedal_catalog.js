@@ -140,6 +140,48 @@ window.PedalCatalog = (function () {
     })
   }
 
+  const PEDALS_USER_DIR = '/userdata/devices/user'
+
+  function deviceJsonPaths (entry, isUser) {
+    const rel = entry.path || entry.file
+    if (!rel) return []
+    const root = isUser ? '/userdata' : '/assets'
+    const fname = rel.split('/').pop()
+    const paths = []
+    if (isUser) {
+      paths.push(`${PEDALS_USER_DIR}/${fname}`)
+      paths.push(`${root}/${rel}`)
+      if (!rel.startsWith('devices/user/')) {
+        paths.push(`${root}/devices/user/${fname}`)
+      }
+    } else {
+      paths.push(`${root}/devices/${rel}`)
+    }
+    return [...new Set(paths)]
+  }
+
+  async function fetchDeviceJson (connection, catalog, slug) {
+    const info = catalog?.deviceBySlug?.get(slug)
+    if (!info) return null
+    const paths = deviceJsonPaths(info.entry, info.isUser)
+    let lastErr = null
+    for (const path of paths) {
+      try {
+        const { data } = await connection._fetchSizedTransferImpl(`GET ${path}`)
+        return JSON.parse(new TextDecoder().decode(data))
+      } catch (err) {
+        lastErr = err
+        const retryable = /Incomplete download|No response|Unexpected response/i.test(err.message)
+        if (retryable) {
+          await new Promise(r => setTimeout(r, 300))
+          continue
+        }
+      }
+    }
+    if (lastErr) throw lastErr
+    return null
+  }
+
   function findVendorForSlug (catalog, slug) {
     if (!slug || !catalog) return null
     const info = catalog.deviceBySlug.get(slug)
@@ -159,6 +201,8 @@ window.PedalCatalog = (function () {
     ensureAssetsModeBody,
     fetchManifestsInAssets,
     fetchCatalog,
+    fetchDeviceJson,
+    deviceJsonPaths,
     findVendorForSlug,
     isUserBucketVendor
   }

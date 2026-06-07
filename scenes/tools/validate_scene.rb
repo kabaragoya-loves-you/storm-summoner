@@ -630,7 +630,10 @@ def validate_scene(scene_file)
       puts "     Time sig: #{ts['numerator']}/#{ts['denominator']}"
     end
     
-    active_pads = scene_data['touchpads']&.count { |p| p['enabled'] } || 0
+    active_pads = scene_data['touchpads']&.count { |p|
+      act = p['action'] || p['actions']&.first
+      act && act['type'] && act['type'] != 'none'
+    } || 0
     puts "     Active pads: #{active_pads}/12"
     
     return true

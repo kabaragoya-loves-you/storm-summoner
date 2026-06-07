@@ -12,6 +12,7 @@
 #include "scene.h"
 #include "scene_inspect.h"
 #include "ui.h"
+#include "screensaver.h"
 #include "cJSON.h"
 #include "version.h"
 #include "esp_timer.h"
@@ -900,7 +901,8 @@ static void cdc_send_info_json(void) {
   cJSON_AddStringToObject(root, "git", version_get_git_hash());
   cJSON_AddStringToObject(root, "serial", version_get_serial());
   cJSON_AddStringToObject(root, "assets_checksum", assets_csum ? assets_csum : "");
-  cJSON_AddBoolToObject(root, "programming", ui_is_in_programming_mode());
+  cJSON_AddBoolToObject(root, "programming",
+    ui_is_in_programming_mode() || screensaver_preserves_programming_session());
 
   cJSON *pedal = cJSON_CreateObject();
   if (pedal) {

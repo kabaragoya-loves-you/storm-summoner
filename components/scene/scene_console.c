@@ -716,16 +716,12 @@ static void cmd_scene_info(void) {
   
   for (int i = start_pad; i < NUM_TOUCHPADS; i++) {
     touchpad_mapping_t* map = &scene->touchpads[i];
-    if (map->enabled) {
-      if (map->action.type != ACTION_NONE) {
-        char pad_action_buf[96];  // Larger buffer for device names
-        format_action_details_with_device(&map->action, device, pad_action_buf, sizeof(pad_action_buf));
-        ESP_LOGI(TAG, "  Pad %2d: %s", i, pad_action_buf);
-      } else {
-        ESP_LOGI(TAG, "  Pad %2d: no action", i);
-      }
+    if (map->action.type != ACTION_NONE) {
+      char pad_action_buf[96];  // Larger buffer for device names
+      format_action_details_with_device(&map->action, device, pad_action_buf, sizeof(pad_action_buf));
+      ESP_LOGI(TAG, "  Pad %2d: %s", i, pad_action_buf);
     } else {
-      ESP_LOGI(TAG, "  Pad %2d: disabled", i);
+      ESP_LOGI(TAG, "  Pad %2d: no action", i);
     }
   }
   ESP_LOGI(TAG, "========================");

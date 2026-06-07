@@ -869,14 +869,14 @@
     },
     "touchpad_mapping": {
       "type": "object",
-      "required": ["enabled", "actions"],
       "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "Whether this touchpad is active"
+        "action": {
+          "$ref": "#/definitions/action",
+          "description": "Action for this touchpad; type=none when unassigned"
         },
         "actions": {
-          "$ref": "#/definitions/action_chain"
+          "$ref": "#/definitions/action_chain",
+          "description": "Legacy format; migrated to action on load"
         }
       }
     },

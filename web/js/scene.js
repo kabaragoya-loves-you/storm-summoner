@@ -26,34 +26,55 @@ application.register(
         sceneMode: 2,
         deviceMode: 0,
         midiControl: false,
+        flagEnabled: false,
         globalPedal: null
       }
       this.pedalCatalog = null
       this._pedalCatalogLoad = null
+      this.deviceDefinition = null
+      this._openEditorSections = new Set()
       this._pendingPedalSlug = null
       this._pendingPedalInherited = false
       this.validationErrors = []
       this._schema = null
       this._schemaLoad = null
       this._saveStatusTimer = null
+      this._programmingSyncGen = 0
+      this._programmingFetchPromise = null
+      this._programmingPollTimer = null
 
       this._onConnectionChanged = this.onConnectionChanged.bind(this)
       this._onTabActivated = this.onTabActivated.bind(this)
       this._onCdcNotify = this.onCdcNotify.bind(this)
+      this._onModeChanged = this.onModeChanged.bind(this)
       this._onOpenScene = this.onOpenScene.bind(this)
       this._onSceneListUpdated = this.onSceneListUpdated.bind(this)
       this._onDownloadScene = this.onDownloadScene.bind(this)
 
       this.connection.on('connection:changed', this._onConnectionChanged)
+      this.connection.on('mode:changed', this._onModeChanged)
       document.addEventListener('app:tab-activated', this._onTabActivated)
       document.addEventListener('cdc:notify', this._onCdcNotify)
       document.addEventListener('scenes:open-scene', this._onOpenScene)
       document.addEventListener('scenes:list-updated', this._onSceneListUpdated)
       document.addEventListener('scenes:download-scene', this._onDownloadScene)
+
+      this._onEditorSectionToggle = (e) => {
+        const el = e.target
+        if (el.tagName !== 'DETAILS' || !el.classList.contains('scene-editor-section')) return
+        const title = el.dataset.section
+        if (!title) return
+        if (el.open) this._openEditorSections.add(title)
+        else this._openEditorSections.delete(title)
+      }
+      if (this.hasEditorContainerTarget) {
+        this.editorContainerTarget.addEventListener('toggle', this._onEditorSectionToggle, true)
+      }
     }
 
     disconnect () {
       this.connection.off('connection:changed', this._onConnectionChanged)
+      this.connection.off('mode:changed', this._onModeChanged)
       document.removeEventListener('app:tab-activated', this._onTabActivated)
       document.removeEventListener('cdc:notify', this._onCdcNotify)
       document.removeEventListener('scenes:open-scene', this._onOpenScene)
@@ -67,6 +88,10 @@ application.register(
       if (this._saveStatusTimer) {
         clearTimeout(this._saveStatusTimer)
         this._saveStatusTimer = null
+      }
+      this.stopProgrammingPoll()
+      if (this.hasEditorContainerTarget && this._onEditorSectionToggle) {
+        this.editorContainerTarget.removeEventListener('toggle', this._onEditorSectionToggle, true)
       }
     }
 
@@ -130,6 +155,7 @@ application.register(
         this.editModel = null
         this.editPosition = null
         this.deviceProgramming = false
+        this.stopProgrammingPoll()
         this.pedalCatalog = null
         this._pedalCatalogLoad = null
         this.deviceContext.globalPedal = null
@@ -147,10 +173,17 @@ application.register(
         this.renderDisconnected()
         return
       }
+      void this.fetchDeviceProgramming()
       if (this.editPosition !== null) {
         if (this.editing) this.loadSceneForEdit()
         else this.fetchInspectForPosition(this.editPosition)
       }
+    }
+
+    onModeChanged ({ mode }) {
+      // ASSETS/CONFIG modes don't run a background CDC reader, so EVT:programming
+      // lines can be missed while those tabs hold the port. Re-sync on exit.
+      if (mode === null && this.connection.isConnected) void this.fetchDeviceProgramming()
     }
 
     onCdcNotify (e) {
@@ -158,6 +191,7 @@ application.register(
       if (kind === 'programming') {
         const active = e.detail?.index === 1
         const wasProgramming = this.deviceProgramming
+        this._programmingSyncGen++
         this.deviceProgramming = active
         this.updateProgrammingLock()
         if (wasProgramming && !active && this.editing && !this.dirty) {
@@ -184,6 +218,15 @@ application.register(
     }
 
     async fetchDeviceProgramming () {
+      if (!this.connection.isConnected) return
+      if (this._programmingFetchPromise) return this._programmingFetchPromise
+      this._programmingFetchPromise = this._fetchDeviceProgrammingImpl()
+        .finally(() => { this._programmingFetchPromise = null })
+      return this._programmingFetchPromise
+    }
+
+    async _fetchDeviceProgrammingImpl () {
+      const syncGen = this._programmingSyncGen
       try {
         const response = await this.connection.runSerialTask(async () => {
           if (this.connection.currentMode) {
@@ -193,6 +236,7 @@ application.register(
           return this.connection._sendCommandImpl('INFO', 15000, (d) =>
             typeof d.programming === 'boolean')
         })
+        if (syncGen !== this._programmingSyncGen) return
         if (!response || response.startsWith('ERROR:')) return
         const data = JSON.parse(response)
         this.deviceProgramming = !!data.programming
@@ -200,7 +244,31 @@ application.register(
       } catch (_) { /* ignore */ }
     }
 
+    syncProgrammingPoll () {
+      if (this.deviceProgramming && this.connection.isConnected) {
+        if (this._programmingPollTimer) return
+        this._programmingPollTimer = setInterval(() => {
+          if (!this.connection.isConnected || !this.deviceProgramming) {
+            this.stopProgrammingPoll()
+            return
+          }
+          // Don't yank ASSETS/CONFIG (or other modes) just to poll INFO.
+          if (this.connection.currentMode) return
+          void this.fetchDeviceProgramming()
+        }, 2000)
+      } else {
+        this.stopProgrammingPoll()
+      }
+    }
+
+    stopProgrammingPoll () {
+      if (!this._programmingPollTimer) return
+      clearInterval(this._programmingPollTimer)
+      this._programmingPollTimer = null
+    }
+
     updateProgrammingLock () {
+      this.syncProgrammingPoll()
       if (!this.hasProgrammingBannerTarget) return
       if (this.deviceProgramming && this.editing) {
         this.programmingBannerTarget.classList.remove('hidden')
@@ -283,13 +351,31 @@ application.register(
       if (typeof model.name === 'string') model.name = model.name.trim()
       if (model.touchpads) {
         model.touchpads.forEach(tp => {
-          if (tp.actions?.length) {
-            tp.action = tp.actions[0]
-            delete tp.actions
-          }
+          this.normalizeTouchpadMapping(tp)
         })
       }
+      DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, model)
       if (model.device_id === '' || model.device_id == null) delete model.device_id
+    }
+
+    normalizeTouchpadMapping (tp) {
+      if (!tp) return
+      const action = tp.action
+      const legacy = tp.actions?.[0]
+      const hasAction = action?.type && action.type !== 'none'
+      const hasLegacy = legacy?.type && legacy.type !== 'none'
+      if (hasAction) {
+        tp.action = action
+      } else if (hasLegacy) {
+        tp.action = legacy
+      } else if (action) {
+        tp.action = action
+      } else if (legacy) {
+        tp.action = legacy
+      } else {
+        tp.action = { type: 'none' }
+      }
+      delete tp.actions
     }
 
     async fetchGlobalPedalInTask () {
@@ -305,6 +391,43 @@ application.register(
           midi_channel: Number(info.pedal.midi_channel) || 1,
           trs_type: info.pedal.trs_type || 'TYPE_A'
         }
+      }
+    }
+
+    captureOpenEditorSections () {
+      const open = new Set(this._openEditorSections)
+      if (!this.hasEditorContainerTarget) return open
+      this.editorContainerTarget.querySelectorAll('details.scene-editor-section').forEach(el => {
+        const title = el.dataset.section ||
+          el.querySelector('summary')?.textContent?.trim()
+        if (!title) return
+        if (el.open) open.add(title)
+        else open.delete(title)
+      })
+      this._openEditorSections = open
+      return open
+    }
+
+    async loadDeviceDefinitionInTask () {
+      const slug = this.editModel?.device_id || this.deviceContext.globalPedal?.slug || ''
+      if (!slug) {
+        this.deviceDefinition = null
+        return
+      }
+      try {
+        await PedalCatalog.ensureAssetsModeBody(this.connection)
+        if (!this.pedalCatalog) {
+          this.pedalCatalog = await PedalCatalog.fetchManifestsInAssets(this.connection)
+        }
+        this.deviceDefinition = await PedalCatalog.fetchDeviceJson(
+          this.connection, this.pedalCatalog, slug)
+      } catch (err) {
+        console.warn('Scene editor: device definition skipped:', err.message)
+        this.deviceDefinition = null
+      } finally {
+        await this.connection.sendRaw('EXIT\n')
+        await this.sleep(200)
+        await this.connection.drainInput?.()
       }
     }
 
@@ -447,7 +570,7 @@ application.register(
       }
     }
 
-    applyPedalChange () {
+    async applyPedalChange () {
       if (!this.editModel) return
       if (this._pendingPedalInherited || this._pendingPedalSlug === '') {
         delete this.editModel.device_id
@@ -457,6 +580,12 @@ application.register(
       this._pendingPedalSlug = null
       this._pendingPedalInherited = false
       this.closePedalWarning()
+      try {
+        await this.connection.runSerialTask(() => this.loadDeviceDefinitionInTask())
+      } catch (err) {
+        console.warn('Scene editor: device reload skipped:', err.message)
+      }
+      DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, this.editModel)
       this.markDirty()
       this.renderEditor()
     }
@@ -519,17 +648,75 @@ application.register(
       if (this.hasRevertBtnTarget) this.revertBtnTarget.disabled = !this.dirty
     }
 
+    isNumericScenePath (path) {
+      if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') return true
+      if (/\.values(\.\d+)+$/.test(path)) return true
+      return /\.(note|cc|value|value2|probability|pattern_length)(\.\d+)?$/.test(path)
+    }
+
     patchSelect (e) {
       if (this.deviceProgramming) return
       const path = e.target.dataset.scenePath
       if (!path) return
       let val = e.target.value
-      if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') {
-        val = Number(val)
-      }
+      if (this.isNumericScenePath(path)) val = Number(val)
       this.setAtPath(path, val)
+      if (path.endsWith('.type')) {
+        // Reset the variant to a valid default for the new type so a stale
+        // variant (e.g. lfo's "start") can't leak into the next type's list.
+        const aPath = path.slice(0, -'.type'.length)
+        const def = ActionCatalog.defaultVariant(val)
+        const action = this.getAtPath(aPath)
+        if (def) this.setAtPath(`${aPath}.variant`, def)
+        else if (action) delete action.variant
+        if (val === 'control') DeviceControls.seedControlAction(this, aPath)
+      } else if (path.endsWith('.variant')) {
+        const aPath = path.slice(0, -'.variant'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'control') DeviceControls.seedControlAction(this, aPath)
+      } else {
+        this.syncControlValueForCc(path, val)
+      }
       this.markDirty()
       this.renderEditor()
+    }
+
+    // When a control "Parameter" (cc) dropdown changes, re-resolve the matching
+    // value slot so discrete-value devices never show a stale/invalid value.
+    syncControlValueForCc (path, val) {
+      const m = path.match(/^(.*)\.cc(?:\.(\d+))?$/)
+      if (!m) return
+      const actionPath = m[1]
+      const action = this.getAtPath(actionPath)
+      if (action?.type !== 'control') return
+      const variant = action.variant || 'set'
+      if (variant === 'cycle') {
+        const idx = m[2] != null ? Number(m[2]) : 0
+        const cc = Number(val)
+        const device = this.deviceDefinition
+        const steps = DeviceControls.cycleStepCount(action)
+        const multi = DeviceControls.cycleIsMultiValues(action.values)
+        for (let i = 0; i < steps; i++) {
+          const valPath = multi
+            ? `${actionPath}.values.${idx}.${i}`
+            : `${actionPath}.values.${i}`
+          const cur = multi ? action.values?.[idx]?.[i] : action.values?.[i]
+          this.setAtPath(valPath, DeviceControls.resolveParameterValue(device, cc, cur))
+        }
+        return
+      }
+      if (variant !== 'set' && variant !== 'hold') return
+      const idx = m[2] != null ? Number(m[2]) : null
+      const cc = Number(val)
+      const device = this.deviceDefinition
+      const valuePath = idx != null ? `${actionPath}.value.${idx}` : `${actionPath}.value`
+      const curVal = idx != null ? action.value?.[idx] : action.value
+      this.setAtPath(valuePath, DeviceControls.resolveParameterValue(device, cc, curVal))
+      if (variant === 'hold') {
+        const rPath = idx != null ? `${actionPath}.value2.${idx}` : `${actionPath}.value2`
+        const curRel = idx != null ? action.value2?.[idx] : action.value2
+        this.setAtPath(rPath, DeviceControls.resolveParameterValue(device, cc, curRel))
+      }
     }
 
     patchNumber (e) {
@@ -549,6 +736,159 @@ application.register(
       this.setAtPath(path, e.target.checked)
       this.markDirty()
       this.renderEditor()
+    }
+
+    // Patch a checkbox without a full re-render. Used for reveal triggers
+    // (e.g. Repeat) where a `reveal` controller toggles dependent fields, so
+    // the model updates but the editor DOM stays put.
+    patchCheckboxQuiet (e) {
+      if (this.deviceProgramming) return
+      const path = e.target.dataset.scenePath
+      if (!path) return
+      this.setAtPath(path, e.target.checked)
+      this.markDirty()
+    }
+
+    togglePatternStep (e) {
+      if (this.deviceProgramming) return
+      const path = e.currentTarget.dataset.scenePath
+      const bit = Number(e.currentTarget.dataset.stepBit)
+      if (!path || Number.isNaN(bit)) return
+      const mask = Number(this.getAtPath(path) ?? 255) ^ (1 << bit)
+      this.setAtPath(path, mask & 0xff)
+      this.markDirty()
+      this.renderEditor()
+    }
+
+    slotAdd (e) {
+      if (this.deviceProgramming) return
+      const { path, kind, max, default: def } = e.detail || {}
+      if (!path) return
+      if (kind === 'control') this.addControlCcSlot(path)
+      else if (kind === 'cycle-step') this.addCycleStep(path)
+      else this.addListItem(path, def ?? 0, max ?? 8)
+      this.markDirty()
+      this.renderEditor()
+    }
+
+    slotRemove (e) {
+      if (this.deviceProgramming) return
+      const { path, kind, index, min } = e.detail || {}
+      if (!path || index == null || index < 0) return
+      if (kind === 'control') this.removeControlCcSlot(path, index)
+      else if (kind === 'cycle-step') this.removeCycleStep(path, index)
+      else this.removeListItem(path, index, min ?? 0)
+      this.markDirty()
+      this.renderEditor()
+    }
+
+    asArray (field) {
+      if (Array.isArray(field)) return field.slice()
+      return field == null ? [] : [field]
+    }
+
+    addControlCcSlot (path) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'control') return
+      const device = this.deviceDefinition
+      const hasParams = DeviceControls.hasParameters(device)
+      const ccList = this.asArray(action.cc)
+      if (ccList.length >= 4) return
+      const used = new Set(ccList.map(Number))
+      ccList.push(hasParams ? DeviceControls.firstUnusedParameterCc(device, used) : 0)
+      action.cc = ccList
+
+      const fill = (cc) => hasParams ? DeviceControls.resolveParameterValue(device, cc, null) : 0
+      const grow = (field) => {
+        const list = this.asArray(action[field])
+        while (list.length < ccList.length) list.push(fill(ccList[list.length]))
+        action[field] = list
+      }
+      const variant = action.variant || 'set'
+      if (variant === 'cycle') {
+        const stepCount = DeviceControls.cycleStepCount(action)
+        const newCc = ccList[ccList.length - 1]
+        const def = (cc) => hasParams ? DeviceControls.resolveParameterValue(device, cc, null) : 0
+        if (!DeviceControls.cycleIsMultiValues(action.values)) {
+          action.values = [this.asArray(action.values)]
+        }
+        action.values.push(Array.from({ length: stepCount }, () => def(newCc)))
+        action.cc = ccList.length <= 1 ? ccList[0] : ccList
+        return
+      }
+      if (variant === 'set' || variant === 'hold') grow('value')
+      if (variant === 'hold') grow('value2')
+    }
+
+    removeControlCcSlot (path, index) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'control') return
+      const variant = action.variant || 'set'
+      const drop = (field) => {
+        if (!Array.isArray(action[field])) return
+        action[field].splice(index, 1)
+        if (action[field].length === 1) action[field] = action[field][0]
+      }
+      if (variant === 'cycle') {
+        const ccList = this.asArray(action.cc)
+        ccList.splice(index, 1)
+        action.cc = ccList.length === 1 ? ccList[0] : ccList
+        if (DeviceControls.cycleIsMultiValues(action.values)) {
+          action.values.splice(index, 1)
+          if (action.values.length === 1) action.values = action.values[0]
+        }
+        return
+      }
+      drop('cc')
+      if (variant === 'set' || variant === 'hold') drop('value')
+      if (variant === 'hold') drop('value2')
+    }
+
+    addCycleStep (path) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'control' || (action.variant || 'set') !== 'cycle') return
+      if (DeviceControls.cycleStepCount(action) >= 8) return
+      const device = this.deviceDefinition
+      const hasParams = DeviceControls.hasParameters(device)
+      const def = (cc) => hasParams ? DeviceControls.resolveParameterValue(device, cc, null) : 0
+      const ccList = this.asArray(action.cc)
+      if (DeviceControls.cycleIsMultiValues(action.values)) {
+        action.values.forEach((row, i) => {
+          row.push(def(ccList[i] ?? ccList[0]))
+        })
+      } else {
+        const cc = ccList[0]
+        const steps = this.asArray(action.values)
+        steps.push(def(cc))
+        action.values = steps
+      }
+    }
+
+    removeCycleStep (path, stepIndex) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'control' || (action.variant || 'set') !== 'cycle') return
+      if (DeviceControls.cycleStepCount(action) <= 2) return
+      if (DeviceControls.cycleIsMultiValues(action.values)) {
+        action.values.forEach(row => { if (Array.isArray(row)) row.splice(stepIndex, 1) })
+      } else if (Array.isArray(action.values)) {
+        action.values.splice(stepIndex, 1)
+      }
+    }
+
+    addListItem (path, def, max) {
+      const list = this.getAtPath(path)
+      if (!Array.isArray(list)) {
+        this.setAtPath(path, [def])
+        return
+      }
+      if (list.length >= max) return
+      list.push(def)
+    }
+
+    removeListItem (path, index, min) {
+      const list = this.getAtPath(path)
+      if (!Array.isArray(list) || list.length <= min) return
+      list.splice(index, 1)
     }
 
     patchText (e) {
@@ -607,8 +947,9 @@ application.register(
 
     renderEditor () {
       if (!this.hasEditorContainerTarget || !this.editModel) return
+      const openSections = this.captureOpenEditorSections()
       this.editorContainerTarget.innerHTML =
-        SceneEditorUi.renderEditor(this)
+        SceneEditorUi.renderEditor(this, openSections)
       this.renderValidation()
       this.updateProgrammingLock()
     }
@@ -645,6 +986,12 @@ application.register(
           } catch (err) {
             console.warn('Scene editor: INFO pedal context skipped:', err.message)
           }
+          if (gen !== this._loadGeneration) return null
+          try {
+            await this.loadDeviceDefinitionInTask()
+          } catch (err) {
+            console.warn('Scene editor: device definition skipped:', err.message)
+          }
           await this.ensureDeviceIdleInTask()
 
           if (gen !== this._loadGeneration) return null
@@ -661,13 +1008,22 @@ application.register(
 
         const text = new TextDecoder().decode(result.data)
         const model = JSON.parse(text)
+        if (model.touchpads) {
+          model.touchpads.forEach(tp => this.normalizeTouchpadMapping(tp))
+        }
+        const controlCorrected =
+          DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, model)
         this.editModel = model
+
+        // Start with assigned/enabled sections expanded; everything else stays
+        // collapsed. User toggles during editing are tracked from here on.
+        this._openEditorSections = SceneEditorUi.sectionsWithContent(this)
 
         await this.loadSchema()
         this.validationErrors = []
         this.renderEditor()
         this.baselineJson = JSON.stringify(this.editModel)
-        this.dirty = false
+        this.dirty = controlCorrected
         this.markDirty()
         this.updatePanelTitle()
       } catch (err) {
@@ -708,6 +1064,9 @@ application.register(
         }
         if (vals['config.device_mode'] != null) {
           this.deviceContext.deviceMode = Number(vals['config.device_mode'])
+        }
+        if (vals['config.flag_enabled'] != null) {
+          this.deviceContext.flagEnabled = Number(vals['config.flag_enabled']) !== 0
         }
       } finally {
         await this.ensureDeviceIdleInTask()
