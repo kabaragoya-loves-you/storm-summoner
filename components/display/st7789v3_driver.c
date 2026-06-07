@@ -4,7 +4,6 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "esp_memory_utils.h"
 #include "lvgl.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -19,6 +18,14 @@
 // Physical display dimensions
 #define ST7789V3_PHYSICAL_WIDTH  240
 #define ST7789V3_PHYSICAL_HEIGHT 240
+
+// SPI transmit chunk size in bytes. Must be a multiple of the ESP32-P4 64-byte
+// L1 cache line so the SPI master never falls into its cache-alignment realloc
+// path (heap_caps_aligned_alloc from the scarce MALLOC_CAP_DMA pool, which fails
+// with ESP_ERR_NO_MEM under DMA-heap pressure). Pixels are streamed through this
+// persistent buffer in 64-byte-aligned spans; kept small to avoid permanently
+// consuming the very limited DMA-capable heap on this board.
+#define ST7789V3_DMA_CHUNK 512
 
 // Viewport configuration (virtual display within physical)
 // ST7789V3 is centered in aperture, so no offset needed
@@ -158,11 +165,12 @@ void st7789v3_init(void) {
   gpio_set_level(PIN_RESET, 1);
   vTaskDelay(pdMS_TO_TICKS(150)); // Wait for internal regulator (datasheet: 120ms min)
 
-  // Allocate line buffer for RGB565 data (2 bytes per pixel)
-  size_t line_buf_size = ST7789V3_WIDTH * 2;
-  st7789v3_line_buf = heap_caps_malloc(line_buf_size, MALLOC_CAP_DMA);
+  // Persistent, 64-byte-aligned DMA scratch buffer. Transfers are sliced to this
+  // size and kept cache-line aligned so the SPI master transmits directly from
+  // it without allocating a temporary bounce buffer per transfer.
+  st7789v3_line_buf = heap_caps_aligned_alloc(64, ST7789V3_DMA_CHUNK, MALLOC_CAP_DMA);
   if (!st7789v3_line_buf) {
-    ESP_LOGE(TAG, "Failed to allocate line buffer");
+    ESP_LOGE(TAG, "Failed to allocate DMA buffer");
     return;
   }
 
@@ -360,62 +368,49 @@ void st7789v3_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) 
   int32_t w = lv_area_get_width(area);
   int32_t h = lv_area_get_height(area);
 
-  // The px_map is in RGB565 format (2 bytes per pixel)
-  // Send data line by line for better DMA handling
+  // px_map is a contiguous, row-major RGB565 block (2 bytes/pixel). Stream it
+  // through the persistent aligned DMA buffer. Every transfer is a multiple of
+  // the 64-byte cache line EXCEPT a final sub-cache-line remainder. The aligned
+  // transfers go straight out with no bounce allocation; the remainder is always
+  // < 64 bytes, so the SPI master's fallback allocation is rounded up to exactly
+  // 64 bytes -- small enough to satisfy even when the DMA pool is nearly drained.
   gpio_set_level(PIN_DC, 1);  // Data mode
 
-  size_t line_size = w * 2;  // RGB565 = 2 bytes per pixel
-  uint8_t *src = px_map;
+  uint16_t *src16 = (uint16_t *)px_map;
+  size_t total_bytes = (size_t)w * (size_t)h * 2;
+  size_t sent = 0;
 
-  for (int32_t y = 0; y < h; y++) {
-    // Copy line to DMA buffer with byte swap for big-endian display
-    // ST7789V3 expects big-endian RGB565, ESP32/LVGL outputs little-endian
-    uint16_t *src16 = (uint16_t *)src;
-    uint16_t *dst16 = (uint16_t *)st7789v3_line_buf;
-    for (int32_t x = 0; x < w; x++) {
-      dst16[x] = __builtin_bswap16(src16[x]);
+  while (sent < total_bytes) {
+    size_t remaining = total_bytes - sent;
+    size_t xfer_bytes;
+    if (remaining >= 64) {
+      // Largest 64-aligned span we can do this pass (capped at the chunk size).
+      xfer_bytes = remaining < ST7789V3_DMA_CHUNK ? (remaining & ~(size_t)63) : ST7789V3_DMA_CHUNK;
+    } else {
+      xfer_bytes = remaining;  // final < 64-byte remainder
     }
-    
+
+    // Byte-swap into the DMA buffer: ST7789V3 wants big-endian RGB565, while
+    // ESP32/LVGL produce little-endian.
+    size_t px_off = sent / 2;
+    size_t npx = xfer_bytes / 2;
+    uint16_t *dst16 = (uint16_t *)st7789v3_line_buf;
+    for (size_t i = 0; i < npx; i++) {
+      dst16[i] = __builtin_bswap16(src16[px_off + i]);
+    }
+
     spi_transaction_t t = {
-      .length = line_size * 8,
+      .length = xfer_bytes * 8,
       .tx_buffer = st7789v3_line_buf,
     };
-    
+
     esp_err_t ret = spi_device_polling_transmit(spi, &t);
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "SPI transmit failed: %s", esp_err_to_name(ret));
-      // #region agent log
-      // Only emitted when the display driver itself fails a transmit, so no
-      // noise on the happy path. Captures the memory + transaction picture at
-      // the exact moment ESP_ERR_NO_MEM (or any other error) surfaces.
-      ESP_LOGE(TAG, "[diag] ctx: task=%s line=%d/%d w=%d line_size=%u stream=%d "
-        "area=(%d,%d)-(%d,%d) vp=%dx%d",
-        pcTaskGetName(NULL), (int)y, (int)h, (int)w, (unsigned)line_size,
-        (int)lvgl_stream_is_active(),
-        (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2,
-        (int)viewport_width, (int)viewport_height);
-      ESP_LOGE(TAG, "[diag] linebuf=%p align64=%u align4=%u dma_capable=%d",
-        (void *)st7789v3_line_buf,
-        (unsigned)((uintptr_t)st7789v3_line_buf % 64),
-        (unsigned)((uintptr_t)st7789v3_line_buf % 4),
-        (int)esp_ptr_dma_capable(st7789v3_line_buf));
-      ESP_LOGE(TAG, "[diag] DMA caps: free=%u largest=%u min_ever=%u",
-        (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
-        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DMA));
-      ESP_LOGE(TAG, "[diag] INTERNAL caps: free=%u largest=%u min_ever=%u",
-        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
-      ESP_LOGE(TAG, "[diag] DEFAULT caps: free=%u largest=%u min_ever=%u",
-        (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
-        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT),
-        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
-      // #endregion
       break;
     }
-    
-    src += line_size;
+
+    sent += xfer_bytes;
   }
 
   lv_display_flush_ready(disp);
