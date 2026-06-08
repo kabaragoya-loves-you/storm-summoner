@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "task_priorities.h"
@@ -100,16 +101,28 @@ void display_init(void) {
   ESP_LOGI(TAG, "Temporarily disabling task watchdog for buffer allocation");
   esp_task_wdt_deinit();
 
-  // Double buffering with partial mode for memory efficiency
+  // Double buffering with partial mode. Prefer DMA-capable PSRAM on ESP32-P4 to
+  // keep the scarce internal DMA pool free for SPI bounce tails and other drivers.
   ESP_LOGI(TAG, "ST7789V3: Using double buffering with partial mode (%zu bytes each)", buffer_size);
-  uint8_t *buf1 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
-  uint8_t *buf2 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
+  const uint32_t lvgl_buf_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA;
+  uint8_t *buf1 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, lvgl_buf_caps);
+  uint8_t *buf2 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, lvgl_buf_caps);
+  if (!buf1 || !buf2) {
+    if (buf1) { heap_caps_free(buf1); buf1 = NULL; }
+    if (buf2) { heap_caps_free(buf2); buf2 = NULL; }
+    ESP_LOGW(TAG, "PSRAM DMA buffers unavailable, falling back to internal DMA");
+    buf1 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
+    buf2 = (uint8_t *)heap_caps_aligned_alloc(64, buffer_size, MALLOC_CAP_DMA);
+  }
   if (!buf1 || !buf2) {
     ESP_LOGE(TAG, "Failed to allocate LVGL buffers. Cannot continue.");
     if (buf1) heap_caps_free(buf1);
     if (buf2) heap_caps_free(buf2);
     return;
   }
+  ESP_LOGI(TAG, "LVGL draw buffers at %p, %p (%s)",
+    (void *)buf1, (void *)buf2,
+    esp_ptr_external_ram(buf1) ? "PSRAM+DMA" : "internal DMA");
   lv_display_set_buffers(display, buf1, buf2, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
   ESP_LOGI(TAG, "Task watchdog re-enabled");

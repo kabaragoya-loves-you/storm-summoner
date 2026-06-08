@@ -4,8 +4,16 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+#if CONFIG_HEAP_TRACING_STANDALONE
+#include "esp_heap_trace.h"
+#define TASK_MON_HEAP_TRACE_RECORDS 128
+static heap_trace_record_t s_heap_trace_records[TASK_MON_HEAP_TRACE_RECORDS];
+static bool s_heap_trace_active = false;
+#endif
 
 #define TAG "TASK_MON"
 
@@ -112,69 +120,141 @@ uint32_t task_monitor_get_stack_hwm(TaskHandle_t task) {
   return uxTaskGetStackHighWaterMark(task) * 4; // Convert words to bytes
 }
 
+void task_monitor_fill_heap_snapshot(task_monitor_heap_snapshot_t *out) {
+  if (!out) return;
+  memset(out, 0, sizeof(*out));
+
+  out->default_total = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
+  out->default_free = (uint32_t)esp_get_free_heap_size();
+  out->default_min_ever = (uint32_t)esp_get_minimum_free_heap_size();
+  out->default_largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+
+  out->internal_total = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  out->internal_free = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  out->internal_largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  out->internal_min_ever = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+  out->dma_total = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_DMA);
+  out->dma_free = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_DMA);
+  out->dma_largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+  out->dma_min_ever = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_DMA);
+
+  out->psram_total = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+  if (out->psram_total > 0) {
+    out->psram_free = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    out->psram_largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    out->psram_min_ever = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+  }
+}
+
+int task_monitor_format_heap_json(const task_monitor_heap_snapshot_t *snap,
+    char *buf, size_t buf_size) {
+  if (!snap || !buf || buf_size == 0) return 0;
+  return snprintf(buf, buf_size,
+    "{\"default\":{\"total\":%u,\"free\":%u,\"largest\":%u,\"min_ever\":%u},"
+    "\"internal\":{\"total\":%u,\"free\":%u,\"largest\":%u,\"min_ever\":%u},"
+    "\"dma\":{\"total\":%u,\"free\":%u,\"largest\":%u,\"min_ever\":%u},"
+    "\"psram\":{\"total\":%u,\"free\":%u,\"largest\":%u,\"min_ever\":%u}}",
+    (unsigned)snap->default_total, (unsigned)snap->default_free,
+    (unsigned)snap->default_largest, (unsigned)snap->default_min_ever,
+    (unsigned)snap->internal_total, (unsigned)snap->internal_free,
+    (unsigned)snap->internal_largest, (unsigned)snap->internal_min_ever,
+    (unsigned)snap->dma_total, (unsigned)snap->dma_free,
+    (unsigned)snap->dma_largest, (unsigned)snap->dma_min_ever,
+    (unsigned)snap->psram_total, (unsigned)snap->psram_free,
+    (unsigned)snap->psram_largest, (unsigned)snap->psram_min_ever);
+}
+
 void task_monitor_print_heap_info(void) {
+  task_monitor_heap_snapshot_t snap;
+  task_monitor_fill_heap_snapshot(&snap);
+
   ESP_LOGI(TAG, "============================================");
   ESP_LOGI(TAG, "           HEAP USAGE REPORT");
   ESP_LOGI(TAG, "============================================");
-  
-  // Total heap info
-  uint32_t total_heap = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
-  uint32_t free_heap = esp_get_free_heap_size();
-  uint32_t min_free_heap = esp_get_minimum_free_heap_size();
-  uint32_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
-  
-  ESP_LOGI(TAG, "Total heap: %u bytes", (unsigned)total_heap);
-  ESP_LOGI(TAG, "Free heap: %u bytes (%.1f%%)", (unsigned)free_heap, (free_heap * 100.0f) / total_heap);
-  ESP_LOGI(TAG, "Min free heap ever: %u bytes", (unsigned)min_free_heap);
-  ESP_LOGI(TAG, "Largest free block: %u bytes", (unsigned)largest_block);
-  
+  ESP_LOGI(TAG, "Total heap: %u bytes", (unsigned)snap.default_total);
+  ESP_LOGI(TAG, "Free heap: %u bytes (%.1f%%)", (unsigned)snap.default_free,
+    snap.default_total ? (snap.default_free * 100.0f) / snap.default_total : 0.0f);
+  ESP_LOGI(TAG, "Min free heap ever: %u bytes", (unsigned)snap.default_min_ever);
+  ESP_LOGI(TAG, "Largest free block: %u bytes", (unsigned)snap.default_largest);
+
   ESP_LOGI(TAG, "--------------------------------------------");
   ESP_LOGI(TAG, "INTERNAL RAM (critical for FreeRTOS stacks)");
   ESP_LOGI(TAG, "--------------------------------------------");
-  
-  // Internal RAM breakdown - this is critical for FreeRTOS
-  uint32_t internal_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  uint32_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  uint32_t internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  uint32_t internal_used = internal_total - internal_free;
-  
-  ESP_LOGI(TAG, "Internal total:   %6u bytes", (unsigned)internal_total);
-  ESP_LOGI(TAG, "Internal used:    %6u bytes (%.1f%%)", (unsigned)internal_used, (internal_used * 100.0f) / internal_total);
-  ESP_LOGI(TAG, "Internal free:    %6u bytes (%.1f%%)", (unsigned)internal_free, (internal_free * 100.0f) / internal_total);
-  ESP_LOGI(TAG, "Largest block:    %6u bytes", (unsigned)internal_largest);
-  
-  // Warning if low on internal RAM
-  if (internal_free < 4096) {
+  uint32_t internal_used = snap.internal_total - snap.internal_free;
+  ESP_LOGI(TAG, "Internal total:   %6u bytes", (unsigned)snap.internal_total);
+  ESP_LOGI(TAG, "Internal used:    %6u bytes (%.1f%%)", (unsigned)internal_used,
+    snap.internal_total ? (internal_used * 100.0f) / snap.internal_total : 0.0f);
+  ESP_LOGI(TAG, "Internal free:    %6u bytes (%.1f%%)", (unsigned)snap.internal_free,
+    snap.internal_total ? (snap.internal_free * 100.0f) / snap.internal_total : 0.0f);
+  ESP_LOGI(TAG, "Internal min:     %6u bytes", (unsigned)snap.internal_min_ever);
+  ESP_LOGI(TAG, "Largest block:    %6u bytes", (unsigned)snap.internal_largest);
+
+  if (snap.internal_free < 4096) {
     ESP_LOGW(TAG, "*** WARNING: Internal RAM critically low! ***");
-    ESP_LOGW(TAG, "    Cannot create new FreeRTOS tasks!");
-  } else if (internal_free < 8192) {
+  } else if (snap.internal_free < 8192) {
     ESP_LOGW(TAG, "*** CAUTION: Internal RAM low ***");
   }
-  
-  // DMA-capable memory
-  uint32_t dma_total = heap_caps_get_total_size(MALLOC_CAP_DMA);
-  uint32_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA);
-  uint32_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+
   ESP_LOGI(TAG, "--------------------------------------------");
-  ESP_LOGI(TAG, "DMA-capable: %u free / %u total (largest: %u)", 
-    (unsigned)dma_free, (unsigned)dma_total, (unsigned)dma_largest);
-  
-  // PSRAM info if available
+  ESP_LOGI(TAG, "DMA-capable: %u free / %u total (largest: %u, min_ever: %u)",
+    (unsigned)snap.dma_free, (unsigned)snap.dma_total,
+    (unsigned)snap.dma_largest, (unsigned)snap.dma_min_ever);
+
   ESP_LOGI(TAG, "--------------------------------------------");
   ESP_LOGI(TAG, "PSRAM (external)");
   ESP_LOGI(TAG, "--------------------------------------------");
-  uint32_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-  if (psram_total > 0) {
-    uint32_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    uint32_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-    uint32_t psram_used = psram_total - psram_free;
-    ESP_LOGI(TAG, "PSRAM total:      %10u bytes (%.1f MB)", (unsigned)psram_total, psram_total / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "PSRAM used:       %10u bytes (%.1f%%)", (unsigned)psram_used, (psram_used * 100.0f) / psram_total);
-    ESP_LOGI(TAG, "PSRAM free:       %10u bytes (%.1f%%)", (unsigned)psram_free, (psram_free * 100.0f) / psram_total);
-    ESP_LOGI(TAG, "Largest block:    %10u bytes", (unsigned)psram_largest);
+  if (snap.psram_total > 0) {
+    uint32_t psram_used = snap.psram_total - snap.psram_free;
+    ESP_LOGI(TAG, "PSRAM total:      %10u bytes (%.1f MB)",
+      (unsigned)snap.psram_total, snap.psram_total / (1024.0f * 1024.0f));
+    ESP_LOGI(TAG, "PSRAM used:       %10u bytes (%.1f%%)", (unsigned)psram_used,
+      snap.psram_total ? (psram_used * 100.0f) / snap.psram_total : 0.0f);
+    ESP_LOGI(TAG, "PSRAM free:       %10u bytes (%.1f%%)", (unsigned)snap.psram_free,
+      snap.psram_total ? (snap.psram_free * 100.0f) / snap.psram_total : 0.0f);
+    ESP_LOGI(TAG, "PSRAM min_ever:   %10u bytes", (unsigned)snap.psram_min_ever);
+    ESP_LOGI(TAG, "Largest block:    %10u bytes", (unsigned)snap.psram_largest);
   } else {
     ESP_LOGI(TAG, "PSRAM not available");
   }
-  
+
   ESP_LOGI(TAG, "============================================");
+}
+
+esp_err_t task_monitor_heap_trace_start(void) {
+#if CONFIG_HEAP_TRACING_STANDALONE
+  if (s_heap_trace_active) return ESP_OK;
+  static bool s_heap_trace_inited = false;
+  if (!s_heap_trace_inited) {
+    esp_err_t err = heap_trace_init_standalone(s_heap_trace_records, TASK_MON_HEAP_TRACE_RECORDS);
+    if (err != ESP_OK) return err;
+    s_heap_trace_inited = true;
+  }
+  esp_err_t err = heap_trace_start(HEAP_TRACE_ALL);
+  if (err == ESP_OK) s_heap_trace_active = true;
+  return err;
+#else
+  return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+esp_err_t task_monitor_heap_trace_stop(void) {
+#if CONFIG_HEAP_TRACING_STANDALONE
+  if (!s_heap_trace_active) return ESP_OK;
+  esp_err_t err = heap_trace_stop();
+  if (err == ESP_OK) s_heap_trace_active = false;
+  return err;
+#else
+  return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+void task_monitor_heap_trace_dump(void) {
+#if CONFIG_HEAP_TRACING_STANDALONE
+  heap_trace_dump_caps(MALLOC_CAP_INTERNAL);
+  heap_trace_dump_caps(MALLOC_CAP_DMA);
+  heap_trace_dump_caps(MALLOC_CAP_SPIRAM);
+#else
+  ESP_LOGW(TAG, "Heap tracing disabled (enable CONFIG_HEAP_TRACING_STANDALONE)");
+#endif
 }

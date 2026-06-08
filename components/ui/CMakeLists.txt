@@ -21,6 +21,7 @@ idf_component_register(
         "action"
         "version"
         "memory_utils"
+        "task_monitor"
         "cv"
         "rtg"
         "usb_cdc_update"

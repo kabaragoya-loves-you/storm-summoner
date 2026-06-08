@@ -21,6 +21,7 @@ idf_component_register(
     json
     transport
     tempo
+    task_monitor
   PRIV_REQUIRES
     main
     screensaver

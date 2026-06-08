@@ -25,7 +25,6 @@
 #include "performance.h"
 #include "driver/gpio.h"
 #include "io.h"
-#include "task_monitor.h"
 #include "transport.h"
 #include "tempo.h"
 #include "rtg.h"
@@ -176,10 +175,6 @@ void app_main(void) {
   performance_init();
   #endif
   
-  // task_monitor_init();
-  // vTaskDelay(pdMS_TO_TICKS(5000));  // Wait for system to stabilize
-  // task_monitor_print_heap_info();
-  // task_monitor_print_report();
 
   // touch_debug_init();  // Touch sensor debugging
   

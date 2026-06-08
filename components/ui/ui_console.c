@@ -1,6 +1,7 @@
 #include "ui_console.h"
 #include "ui.h"
 #include "ui_module_settings.h"
+#include "task_monitor.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
@@ -14,7 +15,7 @@
 static const char* TAG = "ui_console";
 
 static const char* registered_commands[] = {
-  "info", "module", "perf", "cpu", "settings", "set"
+  "info", "module", "perf", "cpu", "settings", "set", "mem"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -144,6 +145,40 @@ static int cmd_cpu(int argc, char **argv) {
   printf("Enable CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS in menuconfig\n");
 #endif
   
+  return 0;
+}
+
+// Command: mem [trace]
+static int cmd_mem(int argc, char **argv) {
+  if (argc >= 2 && strcmp(argv[1], "trace") == 0) {
+    if (argc >= 3 && strcmp(argv[2], "start") == 0) {
+      esp_err_t err = task_monitor_heap_trace_start();
+      printf("heap trace start: %s\n", esp_err_to_name(err));
+      return err == ESP_OK ? 0 : 1;
+    }
+    if (argc >= 3 && strcmp(argv[2], "stop") == 0) {
+      esp_err_t err = task_monitor_heap_trace_stop();
+      printf("heap trace stop: %s\n", esp_err_to_name(err));
+      return err == ESP_OK ? 0 : 1;
+    }
+    task_monitor_heap_trace_dump();
+    return 0;
+  }
+
+  task_monitor_heap_snapshot_t snap;
+  task_monitor_fill_heap_snapshot(&snap);
+  printf("DEFAULT:  free=%u largest=%u min_ever=%u / total=%u\n",
+    (unsigned)snap.default_free, (unsigned)snap.default_largest,
+    (unsigned)snap.default_min_ever, (unsigned)snap.default_total);
+  printf("INTERNAL: free=%u largest=%u min_ever=%u / total=%u\n",
+    (unsigned)snap.internal_free, (unsigned)snap.internal_largest,
+    (unsigned)snap.internal_min_ever, (unsigned)snap.internal_total);
+  printf("DMA:      free=%u largest=%u min_ever=%u / total=%u\n",
+    (unsigned)snap.dma_free, (unsigned)snap.dma_largest,
+    (unsigned)snap.dma_min_ever, (unsigned)snap.dma_total);
+  printf("PSRAM:    free=%u largest=%u min_ever=%u / total=%u\n",
+    (unsigned)snap.psram_free, (unsigned)snap.psram_largest,
+    (unsigned)snap.psram_min_ever, (unsigned)snap.psram_total);
   return 0;
 }
 
@@ -339,6 +374,15 @@ esp_err_t ui_console_init(void) {
   };
   esp_console_cmd_register(&perf_cmd);
   
+  // mem command
+  const esp_console_cmd_t mem_cmd = {
+    .command = "mem",
+    .help = "Show per-region heap (mem trace [start|stop] for allocation dump)",
+    .hint = "[trace [start|stop]]",
+    .func = &cmd_mem,
+  };
+  esp_console_cmd_register(&mem_cmd);
+
   // cpu command
   const esp_console_cmd_t cpu_cmd = {
     .command = "cpu",

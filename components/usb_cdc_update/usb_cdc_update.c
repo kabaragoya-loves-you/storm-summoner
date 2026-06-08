@@ -17,6 +17,7 @@
 #include "screensaver.h"
 #include "cJSON.h"
 #include "version.h"
+#include "task_monitor.h"
 #include "esp_timer.h"
 #include "mbedtls/base64.h"
 #include "tusb.h"
@@ -136,6 +137,7 @@ static void cdc_clock_beat_handler(const event_t *event, void *context);
 static void cdc_send_scene_inspect(const char *arg);
 static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position);
 static void cdc_send_info_json(void);
+static void cdc_send_mem_json(void);
 static void cdc_send_scene_get(const char *arg);
 static void cdc_cmd_scene_put(const char *args);
 static void handle_scene_put_binary(const uint8_t *data, size_t len);
@@ -1005,6 +1007,19 @@ static void cdc_clock_beat_handler(const event_t *event, void *context) {
 }
 #endif
 
+static void cdc_send_mem_json(void) {
+  task_monitor_heap_snapshot_t snap;
+  task_monitor_fill_heap_snapshot(&snap);
+
+  char json[512];
+  int n = task_monitor_format_heap_json(&snap, json, sizeof(json));
+  if (n <= 0 || (size_t)n >= sizeof(json)) {
+    send_response("ERROR: Failed to format memory report");
+    return;
+  }
+  send_json_response(json);
+}
+
 static void cdc_send_info_json(void) {
   const device_config_t *cfg = device_config_get();
   const char *slug = cfg ? cfg->pedal_slug : "user.default@0";
@@ -1562,6 +1577,25 @@ static void process_command(const char *cmd) {
 
   } else if (strcmp(cmd, "INFO") == 0) {
     cdc_send_info_json();
+
+  } else if (strcmp(cmd, "MEM") == 0) {
+    cdc_send_mem_json();
+
+  } else if (strncmp(cmd, "MEM ", 4) == 0) {
+    const char *sub = cmd + 4;
+    while (*sub == ' ') sub++;
+    if (strcmp(sub, "TRACE") == 0) {
+      task_monitor_heap_trace_dump();
+      send_response("MEM_TRACE_DONE");
+    } else if (strcmp(sub, "TRACE START") == 0) {
+      esp_err_t err = task_monitor_heap_trace_start();
+      send_response(err == ESP_OK ? "MEM_TRACE_STARTED" : "ERROR: trace start failed");
+    } else if (strcmp(sub, "TRACE STOP") == 0) {
+      esp_err_t err = task_monitor_heap_trace_stop();
+      send_response(err == ESP_OK ? "MEM_TRACE_STOPPED" : "ERROR: trace stop failed");
+    } else {
+      send_response("ERROR: Unknown MEM subcommand");
+    }
 
   } else if (strncmp(cmd, "NAV ", 4) == 0) {
     const char *op = cmd + 4;

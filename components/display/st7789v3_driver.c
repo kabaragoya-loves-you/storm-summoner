@@ -79,6 +79,7 @@ static uint16_t viewport_height = 240;
 static spi_device_handle_t spi = NULL;
 static uint8_t *st7789v3_line_buf = NULL;
 
+
 // Forward declaration
 static void st7789v3_set_addr_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
 
@@ -168,7 +169,11 @@ void st7789v3_init(void) {
   // Persistent, 64-byte-aligned DMA scratch buffer. Transfers are sliced to this
   // size and kept cache-line aligned so the SPI master transmits directly from
   // it without allocating a temporary bounce buffer per transfer.
-  st7789v3_line_buf = heap_caps_aligned_alloc(64, ST7789V3_DMA_CHUNK, MALLOC_CAP_DMA);
+  st7789v3_line_buf = heap_caps_aligned_alloc(64, ST7789V3_DMA_CHUNK,
+    MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+  if (!st7789v3_line_buf) {
+    st7789v3_line_buf = heap_caps_aligned_alloc(64, ST7789V3_DMA_CHUNK, MALLOC_CAP_DMA);
+  }
   if (!st7789v3_line_buf) {
     ESP_LOGE(TAG, "Failed to allocate DMA buffer");
     return;
