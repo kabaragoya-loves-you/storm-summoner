@@ -291,28 +291,36 @@ bool transport_is_playing(void) {
 }
 
 esp_err_t transport_play(void) {
-  transport_state_t current = transport_get_state();
-
-  if (current == TRANSPORT_PLAYING)
-    return transport_stop();
+  if (transport_is_playing()) {
+    send_song_position(0);
+    send_start();
+    send_mmc_play();
+    set_position(1, 1);
+    publish_position_changed();
+    post_restart_event(TRANSPORT_SOURCE_INTERNAL);
+    ESP_LOGI(TAG, "Play restart from top (was already playing)");
+    return ESP_OK;
+  }
 
   if (transport_at_top()) {
     send_song_position(0);
     send_start();
     send_mmc_play();
+    set_position(1, 1);
+    publish_position_changed();
+    set_state(TRANSPORT_PLAYING, TRANSPORT_SOURCE_INTERNAL);
     ESP_LOGI(TAG, "Play from top (F2+FA + MMC Play)");
-    return post_transport_event(EVENT_TRANSPORT_START, TRANSPORT_SOURCE_INTERNAL);
+    return ESP_OK;
   }
 
   send_continue();
+  set_state_ex(TRANSPORT_PLAYING, TRANSPORT_SOURCE_INTERNAL, true);
   ESP_LOGI(TAG, "Resume (FB)");
-  return post_transport_event(EVENT_TRANSPORT_CONTINUE, TRANSPORT_SOURCE_INTERNAL);
+  return ESP_OK;
 }
 
 esp_err_t transport_stop(void) {
-  transport_state_t current = transport_get_state();
-
-  if (current == TRANSPORT_STOPPED) {
+  if (!transport_is_playing()) {
     send_song_position(0);
     set_position(1, 1);
     tempo_sync_to_bar_beat(1, 1);
@@ -323,8 +331,9 @@ esp_err_t transport_stop(void) {
 
   send_stop();
   send_mmc_stop();
+  set_state(TRANSPORT_STOPPED, TRANSPORT_SOURCE_INTERNAL);
   ESP_LOGI(TAG, "Stop (FC + MMC Stop)");
-  return post_transport_event(EVENT_TRANSPORT_STOP, TRANSPORT_SOURCE_INTERNAL);
+  return ESP_OK;
 }
 
 esp_err_t transport_pause(void) {
@@ -338,8 +347,9 @@ esp_err_t transport_resume(void) {
   }
 
   send_continue();
+  set_state_ex(TRANSPORT_PLAYING, TRANSPORT_SOURCE_INTERNAL, true);
   ESP_LOGI(TAG, "Resume (FB)");
-  return post_transport_event(EVENT_TRANSPORT_CONTINUE, TRANSPORT_SOURCE_INTERNAL);
+  return ESP_OK;
 }
 
 esp_err_t transport_record(void) {
@@ -349,20 +359,22 @@ esp_err_t transport_record(void) {
     return ESP_OK;
   }
 
-  esp_err_t ret;
   if (transport_at_top()) {
     send_song_position(0);
     send_start();
-    ret = post_transport_event(EVENT_TRANSPORT_START, TRANSPORT_SOURCE_INTERNAL);
+    send_mmc_play();
+    set_position(1, 1);
+    publish_position_changed();
+    set_state(TRANSPORT_PLAYING, TRANSPORT_SOURCE_INTERNAL);
     ESP_LOGI(TAG, "Record from top (F2+FA + MMC Record Strobe)");
   } else {
     send_continue();
-    ret = post_transport_event(EVENT_TRANSPORT_CONTINUE, TRANSPORT_SOURCE_INTERNAL);
+    set_state_ex(TRANSPORT_PLAYING, TRANSPORT_SOURCE_INTERNAL, true);
     ESP_LOGI(TAG, "Record resume (FB + MMC Record Strobe)");
   }
 
   send_mmc_record_strobe();
-  return ret;
+  return ESP_OK;
 }
 
 static void tempo_beat_handler(const event_t* event, void* context) {

@@ -7,6 +7,8 @@ application.register(
 
     connect () {
       this.infoData = null
+      this.clockData = null
+      this._transportBusy = false
       this.isActivating = false
       this._loadGeneration = 0
       this.releases = null
@@ -19,6 +21,14 @@ application.register(
       this._notifyDebounce = null
       this._onCdcNotify = e => {
         const kind = e.detail?.kind
+        if (kind === 'clock') {
+          if (!this.connection.isConnected) return
+          if (e.detail.clock) {
+            this.clockData = e.detail.clock
+            this.renderSceneCard()
+          }
+          return
+        }
         if (
           kind !== 'scene_changed' &&
           kind !== 'scene_updated' &&
@@ -36,10 +46,8 @@ application.register(
         }, 200)
       }
 
-      // Fetch releases manifest for update checking
       this.fetchReleases()
 
-      // Listen for connection changes
       this.connection.on(
         'connection:changed',
         this.onConnectionChanged.bind(this)
@@ -48,20 +56,30 @@ application.register(
       document.addEventListener('app:tab-activated', this._onTabActivated)
       document.addEventListener('cdc:notify', this._onCdcNotify)
 
-      // Listen for update completion to refresh info
       document.addEventListener('updater:complete', () => {
         if (this.connection.isConnected) {
           this.activate()
         }
       })
 
-      // Event delegation for dynamically created buttons
       this.element.addEventListener('click', e => {
         const btn = e.target.closest('[data-action*="goToPedals"]')
         if (btn) this.goToPedals()
 
         const updateBtn = e.target.closest('[data-action*="goToUpdater"]')
         if (updateBtn) this.goToUpdater()
+
+        const transportBtn = e.target.closest('[data-transport-cmd]')
+        if (transportBtn) {
+          const cmd = transportBtn.getAttribute('data-transport-cmd')
+          if (cmd) this.sendTransport(cmd)
+        }
+
+        const navBtn = e.target.closest('[data-nav-cmd]')
+        if (navBtn) {
+          const cmd = navBtn.getAttribute('data-nav-cmd')
+          if (cmd) this.sendNav(cmd)
+        }
       })
     }
 
@@ -84,7 +102,6 @@ application.register(
 
     onConnectionChanged ({ connected }) {
       if (connected) {
-        // Query INFO when connecting (if we're on the info tab)
         const tabGroup = document.querySelector('wa-tab-group')
         const activePanel = tabGroup?.querySelector('wa-tab-panel[active]')
         if (activePanel?.getAttribute('name') === 'info') {
@@ -92,6 +109,7 @@ application.register(
         }
       } else {
         this.infoData = null
+        this.clockData = null
         this.isActivating = false
         this.renderEmpty()
       }
@@ -130,6 +148,7 @@ application.register(
         }
 
         this.infoData = JSON.parse(response)
+        if (this.infoData.clock) this.clockData = this.infoData.clock
         console.log('Device INFO:', this.infoData)
         this.renderInfo()
 
@@ -149,6 +168,36 @@ application.register(
         this.renderEmpty()
       } finally {
         this.isActivating = false
+      }
+    }
+
+    async sendNav (cmd) {
+      if (!this.connection.isConnected) return
+      const op = cmd.toUpperCase()
+      if (op !== 'PREV' && op !== 'NEXT') return
+      try {
+        const response = await this.connection.sendCommand(`NAV ${op}`, 3000)
+        if (response !== 'OK') {
+          console.error('Navigation command failed:', response)
+        }
+      } catch (err) {
+        console.error('Navigation command error:', err)
+      }
+    }
+
+    async sendTransport (cmd) {
+      if (!this.connection.isConnected || this._transportBusy) return
+      const op = cmd.toUpperCase()
+      this._transportBusy = true
+      try {
+        const response = await this.connection.sendCommand(`TRANSPORT ${op}`, 3000)
+        if (response !== 'OK') {
+          console.error('Transport command failed:', response)
+        }
+      } catch (err) {
+        console.error('Transport command error:', err)
+      } finally {
+        this._transportBusy = false
       }
     }
 
@@ -199,7 +248,6 @@ application.register(
     hasNewerAssets () {
       if (!this.infoData?.assets_checksum || !this.releases?.assets?.length)
         return false
-      // "unknown" means no assets checksum stored yet - show update banner
       if (this.infoData.assets_checksum === 'unknown') return true
       return this.infoData.assets_checksum !== this.releases.assets[0].checksum
     }
@@ -218,7 +266,6 @@ application.register(
         return
       }
 
-      // Check for update availability
       const fwBanner = this.hasNewerFirmware()
         ? `<wa-callout variant="warning" class="update-banner">
             <wa-icon name="arrow-up-from-bracket" slot="icon"></wa-icon>
@@ -241,7 +288,6 @@ application.register(
           </wa-callout>`
         : ''
 
-      // Render device card
       this.deviceCardTarget.innerHTML = `
         ${fwBanner}
         ${assetsBanner}
@@ -271,7 +317,6 @@ application.register(
         </div>
       `
 
-      // Render pedal card
       const pedal = this.infoData.pedal
       if (!pedal) {
         this.pedalCardTarget.innerHTML = `
@@ -341,9 +386,103 @@ application.register(
       this.renderSceneCard()
     }
 
+    renderSceneClockRows () {
+      const clock = this.clockData
+      if (!clock) return ''
+
+      const ts = clock.time_signature || {}
+      const num = ts.numerator || 4
+      const den = ts.denominator || 4
+      const useTransport = !!clock.use_transport
+
+      let rows = `
+        <div class="info-row">
+          <span class="info-label">BPM</span>
+          <span class="info-value">${clock.bpm ?? '--'}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Time Signature</span>
+          <span class="info-value">${num}/${den}</span>
+        </div>`
+
+      if (useTransport) {
+        const playing = clock.transport === 'playing'
+        const transportClass = playing ? 'clock-playing' : 'clock-stopped'
+        rows += `
+        <div class="info-row">
+          <span class="info-label">Transport</span>
+          <span class="info-value ${transportClass}">${
+          playing ? 'Playing' : 'Stopped'
+        }</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Position</span>
+          <span class="info-value">Bar ${clock.bar ?? 1}, Beat ${
+          clock.beat ?? 1
+        }</span>
+        </div>
+        <div class="info-transport-actions">
+          <wa-button size="small" variant="brand"
+                     appearance="${playing ? 'filled' : 'outlined'}"
+                     data-transport-cmd="play"
+                     title="${playing ? 'Restart from top' : 'Play'}">
+            <wa-icon name="play" slot="prefix"></wa-icon>
+            Play
+          </wa-button>
+          <wa-button size="small" variant="neutral"
+                     appearance="${playing ? 'outlined' : 'filled'}"
+                     data-transport-cmd="stop"
+                     title="Stop">
+            <wa-icon name="stop" slot="prefix"></wa-icon>
+            Stop
+          </wa-button>
+          <wa-button size="small" variant="danger" appearance="outlined"
+                     data-transport-cmd="record"
+                     title="${playing ? 'Punch-in (MMC strobe)' : 'Play + record strobe'}">
+            <wa-icon name="circle" slot="prefix"></wa-icon>
+            Record
+          </wa-button>
+        </div>`
+      } else {
+        rows += `
+        <div class="info-row">
+          <span class="info-label">Beat</span>
+          <span class="info-value">${clock.beat ?? 1}</span>
+        </div>`
+      }
+
+      return rows
+    }
+
+    renderSceneNavRow () {
+      const mode = this.infoData?.scene?.mode
+      if (!mode || mode === 'single') return ''
+
+      const isPreset = mode === 'preset_sync'
+      const prevLabel = isPreset ? 'Prev Preset' : 'Prev Scene'
+      const nextLabel = isPreset ? 'Next Preset' : 'Next Scene'
+
+      return `
+        <div class="info-nav-actions">
+          <wa-button size="small" variant="neutral" appearance="outlined"
+                     data-nav-cmd="prev">
+            <wa-icon name="chevron-left" slot="prefix"></wa-icon>
+            ${prevLabel}
+          </wa-button>
+          <wa-button size="small" variant="neutral" appearance="outlined"
+                     data-nav-cmd="next">
+            ${nextLabel}
+            <wa-icon name="chevron-right" slot="suffix"></wa-icon>
+          </wa-button>
+        </div>`
+    }
+
     renderSceneCard () {
       const scene = this.infoData?.scene
-      if (!scene) {
+      const clockRows = this.renderSceneClockRows()
+      const navRow = this.renderSceneNavRow()
+
+      if (!scene && !clockRows && !navRow) {
         this.sceneCardTarget.innerHTML = `
           <div class="empty-state">
             <p>No scene loaded</p>
@@ -352,22 +491,30 @@ application.register(
         return
       }
 
-      const name = scene.name || 'Untitled'
-      const ordinal = scene.active_ordinal || 0
-      const total = scene.active_count || 0
-      const positionLine =
-        total > 0 ? `Scene ${ordinal} of ${total}` : 'Scene —'
+      let sceneRows = ''
+      if (scene) {
+        const name = scene.name || 'Untitled'
+        const ordinal = scene.active_ordinal || 0
+        const total = scene.active_count || 0
+        const positionLine =
+          total > 0 ? `Scene ${ordinal} of ${total}` : 'Scene —'
 
-      this.sceneCardTarget.innerHTML = `
-        <div class="info-rows">
+        sceneRows = `
           <div class="info-row">
             <span class="info-label">Name</span>
             <span class="info-value">${name}</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Position</span>
+            <span class="info-label">Scene</span>
             <span class="info-value">${positionLine}</span>
-          </div>
+          </div>`
+      }
+
+      this.sceneCardTarget.innerHTML = `
+        ${navRow}
+        <div class="info-rows">
+          ${sceneRows}
+          ${clockRows}
         </div>
       `
     }

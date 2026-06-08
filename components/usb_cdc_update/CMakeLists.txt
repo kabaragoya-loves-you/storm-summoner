@@ -19,6 +19,8 @@ idf_component_register(
     settings_registry
     scene
     json
+    transport
+    tempo
   PRIV_REQUIRES
     main
     screensaver

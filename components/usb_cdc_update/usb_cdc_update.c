@@ -11,6 +11,8 @@
 #include "settings_registry.h"
 #include "scene.h"
 #include "scene_inspect.h"
+#include "transport.h"
+#include "tempo.h"
 #include "ui.h"
 #include "screensaver.h"
 #include "cJSON.h"
@@ -39,6 +41,9 @@
 #pragma GCC diagnostic pop
 
 #define TAG "USB_CDC_UPDATE"
+
+// Push EVT:clock on each beat while playing (~2/s at 120 BPM). Set 0 if USB load/lag is an issue.
+#define CDC_CLOCK_NOTIFY_ON_BEAT 1
 
 #define CDC_RX_BUF_SIZE 1024
 #define CDC_CMD_BUF_SIZE 512
@@ -121,6 +126,13 @@ static void cdc_scene_changed_handler(const event_t *event, void *context);
 static void cdc_scene_updated_handler(const event_t *event, void *context);
 static void cdc_scene_reordered_handler(const event_t *event, void *context);
 static void cdc_scene_list_changed_handler(const event_t *event, void *context);
+static void cdc_push_clock_evt(void);
+static void cdc_clock_transport_handler(const event_t *event, void *context);
+static void cdc_clock_tempo_handler(const event_t *event, void *context);
+static void cdc_clock_position_handler(const event_t *event, void *context);
+#if CDC_CLOCK_NOTIFY_ON_BEAT
+static void cdc_clock_beat_handler(const event_t *event, void *context);
+#endif
 static void cdc_send_scene_inspect(const char *arg);
 static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position);
 static void cdc_send_info_json(void);
@@ -314,6 +326,12 @@ esp_err_t usb_cdc_update_init(void) {
   event_bus_subscribe(EVENT_SCENE_UPDATED, cdc_scene_updated_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_REORDERED, cdc_scene_reordered_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_LIST_CHANGED, cdc_scene_list_changed_handler, NULL);
+  event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, cdc_clock_transport_handler, NULL);
+  event_bus_subscribe(EVENT_TEMPO_CHANGED, cdc_clock_tempo_handler, NULL);
+  event_bus_subscribe(EVENT_TRANSPORT_POSITION_CHANGED, cdc_clock_position_handler, NULL);
+#if CDC_CLOCK_NOTIFY_ON_BEAT
+  event_bus_subscribe_named(EVENT_BEAT, cdc_clock_beat_handler, NULL, "cdc.clock_beat");
+#endif
 
   s_initialized = true;
   ESP_LOGI(TAG, "CDC update handler initialized");
@@ -775,6 +793,7 @@ static void cdc_scene_changed_handler(const event_t *event, void *context) {
   (void)context;
   if (!event || event->type != EVENT_SCENE_CHANGED) return;
   cdc_push_scene_evt("scene_changed", event->data.value_uint8);
+  cdc_push_clock_evt();
 }
 
 static void cdc_scene_updated_handler(const event_t *event, void *context) {
@@ -872,6 +891,14 @@ static const char *cdc_trs_type_str(midi_trs_type_t trs) {
   }
 }
 
+static const char *cdc_scene_mode_str(scene_mode_t mode) {
+  switch (mode) {
+    case SCENE_MODE_PRESET_SYNC: return "preset_sync";
+    case SCENE_MODE_ADVANCED: return "advanced";
+    default: return "single";
+  }
+}
+
 static const char *cdc_bank_mode_str(bank_select_mode_t mode) {
   switch (mode) {
     case BANK_SELECT_CC0: return "CC0";
@@ -879,6 +906,104 @@ static const char *cdc_bank_mode_str(bank_select_mode_t mode) {
     default: return "none";
   }
 }
+
+typedef struct {
+  uint16_t bpm;
+  uint8_t playing;
+  uint32_t bar;
+  uint8_t beat;
+  uint8_t numerator;
+  uint8_t denominator;
+  uint8_t use_transport;
+} cdc_clock_snapshot_t;
+
+static cdc_clock_snapshot_t s_last_clock_notify;
+
+static void cdc_read_clock_snapshot(cdc_clock_snapshot_t *out) {
+  if (!out) return;
+
+  time_signature_t sig = tempo_get_time_signature();
+  uint8_t scene_idx = scene_get_current_index();
+
+  out->bpm = tempo_get_bpm();
+  out->playing = transport_is_playing() ? 1u : 0u;
+  out->bar = transport_get_current_bar();
+  out->beat = transport_get_current_beat();
+  if (out->beat == 0) out->beat = 1;
+  out->numerator = sig.numerator ? sig.numerator : 4;
+  out->denominator = sig.denominator ? sig.denominator : 4;
+  out->use_transport = scene_get_use_transport(scene_idx) ? 1u : 0u;
+}
+
+static void cdc_add_clock_json(cJSON *root) {
+  if (!root) return;
+
+  cdc_clock_snapshot_t snap;
+  cdc_read_clock_snapshot(&snap);
+
+  cJSON *clock = cJSON_CreateObject();
+  if (!clock) return;
+
+  cJSON_AddNumberToObject(clock, "bpm", (unsigned)snap.bpm);
+  cJSON_AddStringToObject(clock, "transport",
+    snap.playing ? "playing" : "stopped");
+  cJSON_AddNumberToObject(clock, "bar", (unsigned)snap.bar);
+  cJSON_AddNumberToObject(clock, "beat", (unsigned)snap.beat);
+  cJSON_AddBoolToObject(clock, "use_transport", snap.use_transport != 0);
+
+  cJSON *ts = cJSON_CreateObject();
+  if (ts) {
+    cJSON_AddNumberToObject(ts, "numerator", (unsigned)snap.numerator);
+    cJSON_AddNumberToObject(ts, "denominator", (unsigned)snap.denominator);
+    cJSON_AddItemToObject(clock, "time_signature", ts);
+  }
+
+  cJSON_AddItemToObject(root, "clock", clock);
+}
+
+static void cdc_push_clock_evt(void) {
+  if (!cdc_may_push_notify()) return;
+
+  cdc_clock_snapshot_t snap;
+  cdc_read_clock_snapshot(&snap);
+
+  if (memcmp(&snap, &s_last_clock_notify, sizeof(snap)) == 0)
+    return;
+  s_last_clock_notify = snap;
+
+  char buf[80];
+  snprintf(buf, sizeof(buf), "EVT:clock:%u:%u:%lu:%u:%u:%u:%u",
+    (unsigned)snap.bpm, (unsigned)snap.playing, (unsigned long)snap.bar,
+    (unsigned)snap.beat, (unsigned)snap.numerator, (unsigned)snap.denominator,
+    (unsigned)snap.use_transport);
+  cdc_send_notify_line(buf);
+}
+
+static void cdc_clock_transport_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
+  cdc_push_clock_evt();
+}
+
+static void cdc_clock_tempo_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_TEMPO_CHANGED) return;
+  cdc_push_clock_evt();
+}
+
+static void cdc_clock_position_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_TRANSPORT_POSITION_CHANGED) return;
+  cdc_push_clock_evt();
+}
+
+#if CDC_CLOCK_NOTIFY_ON_BEAT
+static void cdc_clock_beat_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_BEAT) return;
+  cdc_push_clock_evt();
+}
+#endif
 
 static void cdc_send_info_json(void) {
   const device_config_t *cfg = device_config_get();
@@ -934,11 +1059,15 @@ static void cdc_send_info_json(void) {
     cJSON *scene_obj = cJSON_CreateObject();
     if (scene_obj) {
       cJSON_AddStringToObject(scene_obj, "name", scene->name);
+      cJSON_AddStringToObject(scene_obj, "mode", cdc_scene_mode_str(scene_get_mode()));
       cJSON_AddNumberToObject(scene_obj, "active_ordinal", (unsigned)ordinal);
       cJSON_AddNumberToObject(scene_obj, "active_count", (unsigned)active_total);
       cJSON_AddItemToObject(root, "scene", scene_obj);
     }
   }
+
+  cdc_add_clock_json(root);
+  cdc_read_clock_snapshot(&s_last_clock_notify);
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
@@ -1433,6 +1562,38 @@ static void process_command(const char *cmd) {
 
   } else if (strcmp(cmd, "INFO") == 0) {
     cdc_send_info_json();
+
+  } else if (strncmp(cmd, "NAV ", 4) == 0) {
+    const char *op = cmd + 4;
+    while (op && *op == ' ') op++;
+    scene_mode_t mode = scene_get_mode();
+    if (mode == SCENE_MODE_SINGLE) {
+      send_response("ERROR: Navigation not available in Single mode");
+    } else if (strcmp(op, "PREV") == 0) {
+      esp_err_t err = scene_previous();
+      send_response(err == ESP_OK ? "OK" : "ERROR: Scene previous failed");
+    } else if (strcmp(op, "NEXT") == 0) {
+      esp_err_t err = scene_next();
+      send_response(err == ESP_OK ? "OK" : "ERROR: Scene next failed");
+    } else {
+      send_response("ERROR: Unknown navigation command");
+    }
+
+  } else if (strncmp(cmd, "TRANSPORT ", 10) == 0) {
+    const char *op = cmd + 10;
+    while (op && *op == ' ') op++;
+    if (strcmp(op, "PLAY") == 0) {
+      transport_play();
+      send_response("OK");
+    } else if (strcmp(op, "STOP") == 0) {
+      transport_stop();
+      send_response("OK");
+    } else if (strcmp(op, "RECORD") == 0) {
+      transport_record();
+      send_response("OK");
+    } else {
+      send_response("ERROR: Unknown transport command");
+    }
 
   } else if (strncmp(cmd, "SCENE_INSPECT", 13) == 0) {
     const char *arg = cmd + 13;

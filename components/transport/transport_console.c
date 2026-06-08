@@ -61,7 +61,7 @@ esp_err_t transport_console_init(void) {
 
   const esp_console_cmd_t play_cmd = {
     .command = "play",
-    .help = "Toggle play/stop",
+    .help = "Play, resume, or restart from top",
     .hint = NULL,
     .func = &cmd_play,
   };

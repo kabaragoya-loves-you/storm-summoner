@@ -1019,6 +1019,32 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
   color: var(--accent);
 }
 
+.info-value.clock-playing {
+  color: var(--text-primary, #fff);
+}
+
+.info-value.clock-stopped {
+  color: var(--text-muted, #888);
+}
+
+.info-nav-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0 0 0.75rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.info-transport-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.75rem 0 0.25rem;
+  border-top: 1px solid var(--border);
+  margin-top: 0.25rem;
+}
+
 .info-card-header h3 {
   margin: 0;
   font-family: var(--font-title);

@@ -256,10 +256,26 @@ window.ConnectionManager = (function () {
       const parts = line.split(':')
       if (parts.length < 3) return true
       const kind = parts[1]
-      const index = parseInt(parts[2], 10)
-      document.dispatchEvent(new CustomEvent('cdc:notify', {
-        detail: { kind, index: Number.isNaN(index) ? -1 : index }
-      }))
+      const detail = { kind, index: -1 }
+
+      if (kind === 'clock' && parts.length >= 9) {
+        detail.clock = {
+          bpm: parseInt(parts[2], 10) || 0,
+          transport: parts[3] === '1' ? 'playing' : 'stopped',
+          bar: parseInt(parts[4], 10) || 1,
+          beat: parseInt(parts[5], 10) || 1,
+          time_signature: {
+            numerator: parseInt(parts[6], 10) || 4,
+            denominator: parseInt(parts[7], 10) || 4
+          },
+          use_transport: parts[8] === '1'
+        }
+      } else {
+        const index = parseInt(parts[2], 10)
+        detail.index = Number.isNaN(index) ? -1 : index
+      }
+
+      document.dispatchEvent(new CustomEvent('cdc:notify', { detail }))
       return true
     }
 
