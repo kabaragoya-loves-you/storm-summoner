@@ -102,6 +102,13 @@ bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
 // Mark a HOLD action as released; its next scheduled fire will clear the slot.
 void action_scheduler_mark_hold_released(action_t* action);
 
+// On-Transport timing: pad press arms; transport start fires only when armed.
+bool action_scheduler_is_transport_armed(action_t* action);
+void action_scheduler_arm_transport(action_t* action);
+void action_scheduler_disarm_transport(action_t* action);
+// Arm on pad press; if transport is already playing, enqueue for the next beat.
+void action_scheduler_transport_pad_press(action_t* action);
+
 // ----------------------------------------------------------------------------
 // Core dispatch (action.c)
 // Called by scheduler when a pending action's beat arrives.

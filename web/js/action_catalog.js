@@ -124,7 +124,7 @@ window.ActionCatalog = (function () {
     return opts
   }
 
-  function timingOptions (numerator) {
+  function timingOptions (numerator, useTransport) {
     let beats = Number(numerator)
     if (!beats || beats < 1) beats = 4
     if (beats > 16) beats = 16
@@ -135,6 +135,8 @@ window.ActionCatalog = (function () {
     for (let i = 1; i <= beats; i++) {
       opts.push({ v: `beat_${i}`, l: `Beat ${i}` })
     }
+    if (useTransport)
+      opts.push({ v: 'transport', l: 'On Transport' })
     return opts
   }
 

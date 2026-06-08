@@ -391,8 +391,6 @@ window.SceneEditorUi = (function () {
       selectField(`${path}.pattern_length`, a.pattern_length ?? 0, PATTERN_LENGTHS))
     const plen = Number(a.pattern_length ?? 0)
     if (plen >= 2) content += renderPatternMask(path, plen, a.pattern_mask ?? 255)
-    content += fieldRow('Transport trigger',
-      checkboxField(`${path}.transport_trigger`, !!a.transport_trigger))
     return `<div class="scene-reveal" data-controller="reveal">
       ${fieldRow('Repeat', repeatCb)}
       <div class="scene-reveal-content" data-reveal-target="content" ${on ? '' : 'hidden'}>${content}</div>
@@ -449,8 +447,9 @@ window.SceneEditorUi = (function () {
       }
       if (ActionCatalog.supportsTiming(a)) {
         const beats = ctrl.editModel?.time_signature?.numerator ?? 4
+        const useTransport = !!ctrl.editModel?.use_transport
         const timingVal = a.timing || 'immediate'
-        const timingOpts = ActionCatalog.timingOptions(beats)
+        const timingOpts = ActionCatalog.timingOptions(beats, useTransport)
         if (!timingOpts.some(o => o.v === timingVal)) {
           timingOpts.unshift({ v: timingVal, l: timingVal })
         }

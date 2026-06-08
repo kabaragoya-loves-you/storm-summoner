@@ -462,7 +462,12 @@ bool action_supports_repeat_for(const action_t* action) {
 }
 
 bool action_supports_transport_trigger(action_type_t type) {
-  return action_supports_timing(type) && action_supports_repeat(type);
+  return action_supports_timing(type);
+}
+
+bool action_timing_allows_transport_for(const action_t* action) {
+  if (!action) return false;
+  return action_supports_timing_for(action);
 }
 
 // Type-level morph support: conservative answer for consolidated families
@@ -526,6 +531,7 @@ bool action_supports_raise_flag_for(const action_t* action) {
 
 bool action_validate_timing(action_t* action, uint8_t beats_per_bar) {
   if (!action) return false;
+  if (action->timing == ACTION_TIMING_TRANSPORT_START) return false;
   if (action->timing != ACTION_TIMING_SPECIFIC_BEAT) return false;
   if (action->timing_beat <= beats_per_bar) return false;
 

@@ -104,6 +104,12 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
     return action_execute_immediate(action, trigger_value, is_press);
   }
 
+  // On-Transport timing: pad press arms; transport start fires when armed.
+  if (is_press && action->timing == ACTION_TIMING_TRANSPORT_START) {
+    action_scheduler_transport_pad_press(mutable_action);
+    return ESP_OK;
+  }
+
   // Non-HOLD repeating actions use toggle-on-press behavior.
   bool repeats = is_press && action->repeat_enabled &&
                  action_supports_repeat_for(action);
@@ -118,7 +124,8 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
 
   bool supports_timing = action_supports_timing_for(action);
   bool should_queue = is_press && supports_timing &&
-                      action->timing != ACTION_TIMING_IMMEDIATE;
+                      action->timing != ACTION_TIMING_IMMEDIATE &&
+                      action->timing != ACTION_TIMING_TRANSPORT_START;
 
   if (should_queue) {
     uint8_t target_beat = (action->timing == ACTION_TIMING_NEXT_BEAT)

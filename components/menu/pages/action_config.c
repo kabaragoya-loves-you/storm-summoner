@@ -152,7 +152,6 @@ static char s_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
 static char s_pattern_label[LABEL_BUFFER_SETS][24];
-static char s_transport_trigger_label[LABEL_BUFFER_SETS][24];
 static char s_morph_label[LABEL_BUFFER_SETS][24];
 static char s_punch_in_start_label[LABEL_BUFFER_SETS][48];
 static char s_punch_in_finish_label[LABEL_BUFFER_SETS][48];
@@ -7766,25 +7765,31 @@ static lv_obj_t* timing_roller_create(void);
 static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   if (!s_ctx || !s_ctx->target_action) return;
-  
+
   action_t* action = s_ctx->target_action;
-  
+  bool use_transport = scene_get_use_transport(scene_get_current_index());
+  time_signature_t sig = tempo_get_time_signature();
+  uint8_t beats = sig.numerator;
+  if (beats == 0) beats = 4;
+  if (beats > 16) beats = 16;
+  uint32_t transport_idx = (uint32_t)(beats + 2);
+
   if (selected_index == 0) {
-    // Immediate
     action->timing = ACTION_TIMING_IMMEDIATE;
     action->timing_beat = 0;
   } else if (selected_index == 1) {
-    // Next Beat
     action->timing = ACTION_TIMING_NEXT_BEAT;
     action->timing_beat = 0;
+  } else if (use_transport && selected_index == transport_idx) {
+    action->timing = ACTION_TIMING_TRANSPORT_START;
+    action->timing_beat = 0;
   } else {
-    // Specific beat: index 2 = Beat 1, index 3 = Beat 2, etc.
     action->timing = ACTION_TIMING_SPECIFIC_BEAT;
-    action->timing_beat = (uint8_t)(selected_index - 1);  // index 2 -> beat 1
+    action->timing_beat = (uint8_t)(selected_index - 1);
   }
-  
+
   ESP_LOGD(TAG, "Set timing: %s", action_timing_to_string(action->timing, action->timing_beat));
-  
+
   return_to_detail_page(2);
 }
 
@@ -7793,30 +7798,31 @@ static lv_obj_t* timing_roller_create(void) {
     return menu_create_roller_page("Timing", "Error", 0, NULL, NULL);
   }
   
-  // Build options based on current time signature
   time_signature_t sig = tempo_get_time_signature();
   uint8_t beats = sig.numerator;
   if (beats == 0) beats = 4;
   if (beats > 16) beats = 16;
-  
-  // Buffer for roller options: "Immediate\nNext Beat\nBeat 1\nBeat 2\n..."
-  static char timing_options[256];
+  bool use_transport = scene_get_use_transport(scene_get_current_index());
+
+  static char timing_options[288];
   int pos = snprintf(timing_options, sizeof(timing_options), "Immediate\nNext Beat");
   for (int i = 1; i <= beats; i++) {
     pos += snprintf(timing_options + pos, sizeof(timing_options) - pos, "\nBeat %d", i);
   }
-  
-  // Determine current index
+  if (use_transport)
+    pos += snprintf(timing_options + pos, sizeof(timing_options) - pos, "\nOn Transport");
+
   action_t* action = s_ctx->target_action;
   uint32_t current_idx = 0;
   if (action->timing == ACTION_TIMING_IMMEDIATE) {
     current_idx = 0;
   } else if (action->timing == ACTION_TIMING_NEXT_BEAT) {
     current_idx = 1;
+  } else if (action->timing == ACTION_TIMING_TRANSPORT_START && use_transport) {
+    current_idx = (uint32_t)(beats + 2);
   } else if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
-    // Beat N -> index N+1 (Beat 1 = index 2)
     current_idx = action->timing_beat + 1;
-    if (current_idx > (uint32_t)(beats + 1)) current_idx = 2;  // Clamp to valid range
+    if (current_idx > (uint32_t)(beats + 1)) current_idx = 2;
   }
   
   return menu_create_roller_page("Timing", timing_options, current_idx, timing_confirm_cb, NULL);
@@ -7841,6 +7847,8 @@ static const char* get_timing_display(action_t* action) {
       snprintf(beat_buf, sizeof(beat_buf), "Beat %d", action->timing_beat);
       return beat_buf;
     }
+    case ACTION_TIMING_TRANSPORT_START:
+      return "On Transport";
     default:
       return "Immediate";
   }
@@ -8085,41 +8093,6 @@ static lv_obj_t* pattern_editor_create(void) {
 static void nav_to_pattern_editor(void* user_data) {
   (void)user_data;
   nav_to_subpage("Pattern", pattern_editor_create);
-}
-
-// ============================================================================
-// Transport Trigger Roller (only shown when repeat is enabled)
-// ============================================================================
-
-static const char* get_transport_trigger_display(action_t* action) {
-  if (!action) return "Off";
-  return action->transport_trigger ? "On" : "Off";
-}
-
-static void transport_trigger_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  if (!s_ctx || !s_ctx->target_action) return;
-  
-  s_ctx->target_action->transport_trigger = (selected_index == 1);
-  ESP_LOGD(TAG, "Set transport trigger: %s", selected_index ? "On" : "Off");
-  
-  return_to_detail_page(2);
-}
-
-static lv_obj_t* transport_trigger_roller_create(void) {
-  if (!s_ctx || !s_ctx->target_action) {
-    return menu_create_roller_page("Transport", "Error", 0, NULL, NULL);
-  }
-  
-  uint32_t current_idx = s_ctx->target_action->transport_trigger ? 1 : 0;
-  
-  return menu_create_roller_page("Transport Trigger", "Off\nOn", current_idx,
-    transport_trigger_confirm_cb, NULL);
-}
-
-static void nav_to_transport_trigger(void* user_data) {
-  (void)user_data;
-  nav_to_subpage("Transport Trigger", transport_trigger_roller_create);
 }
 
 // ============================================================================
@@ -9508,15 +9481,6 @@ lv_obj_t* action_config_detail_page_create(void) {
     };
       }
       
-      // Show Transport Trigger option when repeat is enabled
-      if (item_count < MAX_DETAIL_ITEMS) {
-        const char* tt_display = get_transport_trigger_display(action);
-        snprintf(s_transport_trigger_label[buf], sizeof(s_transport_trigger_label[buf]),
-          "Transport Trigger\n%s", tt_display);
-        s_detail_items[item_count++] = (menu_item_t){
-          s_transport_trigger_label[buf], nav_to_transport_trigger, NULL, true, MENU_ITEM_KIND_ROLLER
-    };
-      }
     }
   }
   

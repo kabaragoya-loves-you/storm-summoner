@@ -103,6 +103,9 @@ static void set_state_ex(transport_state_t new_state, transport_source_t source,
     ESP_LOGI(TAG, "State changed: %d -> %d (source: %d, resume: %d)",
       old_state, new_state, source, is_resume);
     
+    bool fresh_start = !is_resume && old_state == TRANSPORT_STOPPED &&
+      (new_state == TRANSPORT_PLAYING || new_state == TRANSPORT_RECORDING);
+
     // Post state change event
     event_t state_event = {
       .type = EVENT_TRANSPORT_STATE_CHANGED,
@@ -111,7 +114,8 @@ static void set_state_ex(transport_state_t new_state, transport_source_t source,
       .data.transport = {
         .state = new_state,
         .source = source,
-        .is_resume = is_resume ? 1 : 0
+        .is_resume = is_resume ? 1 : 0,
+        .is_fresh_start = fresh_start ? 1 : 0
       }
     };
     
@@ -160,7 +164,9 @@ static void transport_event_handler(const event_t* event, void* context) {
           .timestamp = event_bus_get_current_timestamp(),
           .data.transport = {
             .state = TRANSPORT_PLAYING,
-            .source = source
+            .source = source,
+            .is_resume = 0,
+            .is_fresh_start = 1
           }
         };
         esp_err_t err = event_bus_post(&restart_event);

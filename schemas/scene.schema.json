@@ -955,9 +955,9 @@
         },
         "timing": {
           "type": "string",
-          "pattern": "^(immediate|beat|beat_[1-9]|beat_1[0-6])$",
+          "pattern": "^(immediate|beat|beat_[1-9]|beat_1[0-6]|transport)$",
           "default": "immediate",
-          "description": "When action takes effect: immediate (default), beat (next beat), beat_N (specific beat 1-16)"
+          "description": "When action takes effect: immediate (default), beat (next beat), beat_N (specific beat 1-16), transport (on transport fresh-start downbeat, requires scene use_transport)"
         },
         "repeat": {
           "type": "boolean",
@@ -995,7 +995,8 @@
         "transport_trigger": {
           "type": "boolean",
           "default": false,
-          "description": "Auto-trigger action when transport starts (only used when repeat=true)"
+          "deprecated": true,
+          "description": "Deprecated: use timing=transport. Migrated to timing on load."
         },
         "raise_flag": {
           "type": "boolean",

@@ -322,6 +322,8 @@ const char* action_timing_to_string(action_timing_t timing, uint8_t beat) {
     case ACTION_TIMING_SPECIFIC_BEAT:
       snprintf(s_timing_str, sizeof(s_timing_str), "beat_%d", beat);
       return s_timing_str;
+    case ACTION_TIMING_TRANSPORT_START:
+      return "transport";
     default:
       return "immediate";
   }
@@ -337,6 +339,9 @@ void action_timing_from_string(const char* str, action_timing_t* timing, uint8_t
     *timing = ACTION_TIMING_IMMEDIATE;
   } else if (strcmp(str, "beat") == 0) {
     *timing = ACTION_TIMING_NEXT_BEAT;
+  } else if (strcmp(str, "transport") == 0) {
+    *timing = ACTION_TIMING_TRANSPORT_START;
+    *beat = 0;
   } else if (strncmp(str, "beat_", 5) == 0) {
     int beat_num = atoi(str + 5);
     if (beat_num >= 1 && beat_num <= 16) {

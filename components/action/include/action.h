@@ -182,7 +182,8 @@ typedef enum {
 typedef enum {
   ACTION_TIMING_IMMEDIATE = 0,   // Execute on trigger (default)
   ACTION_TIMING_NEXT_BEAT,       // Wait for any next beat
-  ACTION_TIMING_SPECIFIC_BEAT    // Wait for specific beat (uses timing_beat field)
+  ACTION_TIMING_SPECIFIC_BEAT,   // Wait for specific beat (uses timing_beat field)
+  ACTION_TIMING_TRANSPORT_START  // Fire on transport fresh-start downbeat (scene use_transport)
 } action_timing_t;
 
 // Repeat division (matches LFO divisions for consistency)
@@ -278,7 +279,7 @@ typedef struct {
   uint8_t probability;                 // Chance of firing 10-100% (default 100, only for repeating)
   uint8_t pattern_length;              // Step pattern length 2-8 (0 = disabled, only for repeating)
   uint8_t pattern_mask;                // Bitmask of active steps (bit 0 = step 1)
-  bool transport_trigger;              // Auto-trigger when transport starts (for repeating actions)
+  bool transport_trigger;              // Legacy JSON only; migrated to ACTION_TIMING_TRANSPORT_START on load
   bool raise_flag;                     // Set scene flag to 1 after action completes (when flag system enabled)
   
   // Morph configuration (for ACTION_CONTROL+VARIANT_HOLD/CYCLE, RANDOMIZE)
@@ -695,9 +696,12 @@ bool action_supports_repeat(action_type_t type);
 bool action_supports_timing_for(const action_t* action);
 bool action_supports_repeat_for(const action_t* action);
 
-// Check if action supports transport trigger (auto-start when transport plays)
-// Only valid for actions that support timing and repeat
+// Check if action type can use On-Transport timing (variant-aware callers use
+// action_timing_allows_transport_for() when they have a full action_t).
 bool action_supports_transport_trigger(action_type_t type);
+
+// Variant-aware: true when On-Transport timing is valid for this action.
+bool action_timing_allows_transport_for(const action_t* action);
 
 // String conversion for timing (for JSON/display)
 // Returns static buffer - copy if needed

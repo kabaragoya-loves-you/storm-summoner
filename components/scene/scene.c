@@ -4616,10 +4616,6 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddNumberToObject(obj, "pattern_length", action->pattern_length);
       cJSON_AddNumberToObject(obj, "pattern_mask", action->pattern_mask);
     }
-    // Only serialize transport_trigger if enabled
-    if (action->transport_trigger) {
-      cJSON_AddBoolToObject(obj, "transport_trigger", true);
-    }
   }
 
   // Serialize raise_flag (only if enabled)
@@ -5371,11 +5367,13 @@ static action_t json_to_action(cJSON* obj) {
     action.pattern_mask = (uint8_t)(pattern_mask->valueint & 0xFF);
   }
   
-  // Parse transport_trigger (default: disabled)
+  // Legacy transport_trigger -> ACTION_TIMING_TRANSPORT_START
   action.transport_trigger = false;
   cJSON* transport_trigger = cJSON_GetObjectItem(obj, "transport_trigger");
-  if (transport_trigger && cJSON_IsBool(transport_trigger)) {
-    action.transport_trigger = cJSON_IsTrue(transport_trigger);
+  if (transport_trigger && cJSON_IsBool(transport_trigger) &&
+      cJSON_IsTrue(transport_trigger)) {
+    action.timing = ACTION_TIMING_TRANSPORT_START;
+    action.timing_beat = 0;
   }
 
   // Parse raise_flag (default: disabled)

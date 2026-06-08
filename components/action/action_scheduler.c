@@ -12,7 +12,7 @@ static const char* TAG = "action_scheduler";
 // Pending Action Queue (for delayed trigger timing)
 // ============================================================================
 
-#define MAX_PENDING_ACTIONS 4
+#define MAX_PENDING_ACTIONS 12
 
 typedef struct {
   action_t action;
@@ -89,6 +89,57 @@ static void clear_all_repeating(void) {
   }
 }
 
+// ============================================================================
+// On-Transport pad arming (runtime only; cleared on scene change)
+// ============================================================================
+
+#define MAX_TRANSPORT_ARMED 12
+static action_t* s_transport_armed[MAX_TRANSPORT_ARMED];
+
+static void clear_transport_armed(void) {
+  for (int i = 0; i < MAX_TRANSPORT_ARMED; i++)
+    s_transport_armed[i] = NULL;
+}
+
+bool action_scheduler_is_transport_armed(action_t* action) {
+  if (!action) return false;
+  for (int i = 0; i < MAX_TRANSPORT_ARMED; i++) {
+    if (s_transport_armed[i] == action) return true;
+  }
+  return false;
+}
+
+void action_scheduler_arm_transport(action_t* action) {
+  if (!action || action_scheduler_is_transport_armed(action)) return;
+  for (int i = 0; i < MAX_TRANSPORT_ARMED; i++) {
+    if (s_transport_armed[i] == NULL) {
+      s_transport_armed[i] = action;
+      ESP_LOGI(TAG, "Armed On-Transport %s", action_type_name(action->type));
+      return;
+    }
+  }
+  ESP_LOGW(TAG, "No slot for On-Transport arm");
+}
+
+void action_scheduler_disarm_transport(action_t* action) {
+  if (!action) return;
+  for (int i = 0; i < MAX_TRANSPORT_ARMED; i++) {
+    if (s_transport_armed[i] == action) {
+      s_transport_armed[i] = NULL;
+      ESP_LOGI(TAG, "Disarmed On-Transport %s", action_type_name(action->type));
+      return;
+    }
+  }
+}
+
+static void clear_pending_for_action(action_t* action) {
+  if (!action) return;
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].original == action)
+      s_pending_actions[i].valid = false;
+  }
+}
+
 bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
     uint8_t target_beat, bool repeating, uint8_t initial_beats_remaining) {
   if (initial_beats_remaining == 0) initial_beats_remaining = 1;
@@ -136,8 +187,9 @@ void action_scheduler_clear_pending(void) {
   action_punch_in_clear_all();
   action_boomerang_clear();
   clear_all_repeating();
+  clear_transport_armed();
   action_clear_flag();
-  ESP_LOGD(TAG, "Cleared pending action queue, punch-ins, boomerangs, repeating actions, and flag");
+  ESP_LOGD(TAG, "Cleared pending action queue, punch-ins, boomerangs, repeating actions, transport arms, and flag");
 }
 
 // Public API wrapper (declared in action.h)
@@ -304,6 +356,9 @@ static void handle_beat_event(const event_t* event, void* context) {
       } else {
         pending->valid = false;
         if (pending->original) {
+          if (!pending->repeating &&
+              pending->original->timing == ACTION_TIMING_TRANSPORT_START)
+            action_scheduler_disarm_transport(pending->original);
           action_scheduler_stop_repeating(pending->original);
         }
       }
@@ -321,9 +376,11 @@ static void handle_beat_event(const event_t* event, void* context) {
 
 static void transport_start_action(action_t* action) {
   if (!action || action->type == ACTION_NONE) return;
-  if (!action->transport_trigger) return;
-  if (!action_supports_transport_trigger(action->type)) return;
+  if (action->timing != ACTION_TIMING_TRANSPORT_START) return;
+  if (!action_timing_allows_transport_for(action)) return;
+  if (!action_scheduler_is_transport_armed(action)) return;
 
+  bool repeats = action->repeat_enabled && action_supports_repeat_for(action);
   bool was_repeating = action_scheduler_is_repeating(action);
   bool has_paused_pending = false;
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
@@ -349,39 +406,45 @@ static void transport_start_action(action_t* action) {
   reset_action_cycle_index(action);
   ESP_LOGI(TAG, "Reset cycle index to 0 for %s", action_type_name(action->type));
 
-  action_scheduler_start_repeating(action);
+  if (repeats)
+    action_scheduler_start_repeating(action);
 
-  // Queue the action for beat-synchronized firing
-  // The beat event published on transport start will fire this on beat 1
-  // DON'T execute immediately - that causes double-firing since beat event also fires
-  uint8_t target_beat = 0;
-  if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
-    target_beat = action->timing_beat;
-  }
-  action_scheduler_enqueue(action, 127, target_beat, true, 1);
+  // Queue for downbeat firing on the first beat event after transport start.
+  action_scheduler_enqueue(action, 127, 0, repeats, 1);
 }
 
 static void transport_stop_action(action_t* action) {
   if (!action || action->type == ACTION_NONE) return;
-  if (!action->transport_trigger) return;
+  if (action->timing != ACTION_TIMING_TRANSPORT_START) return;
+
+  bool repeats = action->repeat_enabled && action_supports_repeat_for(action);
+  if (!repeats) {
+    for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+      if (s_pending_actions[i].valid && s_pending_actions[i].original == action)
+        s_pending_actions[i].valid = false;
+    }
+    return;
+  }
 
   if (!action_scheduler_is_repeating(action)) return;
 
   ESP_LOGI(TAG, "Transport stopping: %s", action_type_name(action->type));
 
-  // Don't stop_repeating here - we want to keep it "repeating" but paused
-  // so we can resume later preserving cycle state.
+  // Don't stop_repeating here - keep "repeating" but paused for resume.
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
-    if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].original == action)
       s_pending_actions[i].paused = true;
-    }
   }
 }
 
 static void transport_resume_action(action_t* action) {
   if (!action || action->type == ACTION_NONE) return;
-  if (!action->transport_trigger) return;
-  if (!action_supports_transport_trigger(action->type)) return;
+  if (action->timing != ACTION_TIMING_TRANSPORT_START) return;
+  if (!action_timing_allows_transport_for(action)) return;
+  if (!action_scheduler_is_transport_armed(action)) return;
+
+  bool repeats = action->repeat_enabled && action_supports_repeat_for(action);
+  if (!repeats) return;
 
   ESP_LOGI(TAG, "Transport resuming: %s", action_type_name(action->type));
 
@@ -399,12 +462,30 @@ static void transport_resume_action(action_t* action) {
 
   if (!found_paused) {
     ESP_LOGW(TAG, "No paused pending action found, creating new one");
-    uint8_t target_beat = 0;
-    if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
-      target_beat = action->timing_beat;
-    }
-    action_scheduler_enqueue(action, 127, target_beat, true, 1);
+    action_scheduler_enqueue(action, 127, 0, true, 1);
   }
+}
+
+void action_scheduler_transport_pad_press(action_t* action) {
+  if (!action || action->type == ACTION_NONE) return;
+  if (action->timing != ACTION_TIMING_TRANSPORT_START) return;
+
+  scene_t* scene = scene_get_current();
+  if (!scene || !scene->use_transport) return;
+
+  if (action_scheduler_is_repeating(action)) {
+    action_scheduler_stop_repeating(action);
+    action_scheduler_disarm_transport(action);
+    return;
+  }
+
+  if (action_scheduler_is_transport_armed(action)) {
+    action_scheduler_disarm_transport(action);
+    clear_pending_for_action(action);
+    return;
+  }
+
+  action_scheduler_arm_transport(action);
 }
 
 static void handle_transport_event(const event_t* event, void* context) {
@@ -415,12 +496,13 @@ static void handle_transport_event(const event_t* event, void* context) {
   bool starting = (state == TRANSPORT_PLAYING || state == TRANSPORT_RECORDING);
   bool stopping = (state == TRANSPORT_STOPPED || state == TRANSPORT_PAUSED);
   bool is_resume = event->data.transport.is_resume;
+  bool is_fresh_start = event->data.transport.is_fresh_start;
 
   scene_t* scene = scene_get_current();
   if (!scene) return;
 
-  ESP_LOGI(TAG, "Transport state: %s (resume: %d)",
-    starting ? "playing/recording" : "stopped/paused", is_resume);
+  ESP_LOGI(TAG, "Transport state: %s (resume: %d, fresh: %d)",
+    starting ? "playing/recording" : "stopped/paused", is_resume, is_fresh_start);
 
   #define START_ACTION(action_ptr) \
     do { \
@@ -430,28 +512,27 @@ static void handle_transport_event(const event_t* event, void* context) {
   #define STOP_ACTION(action_ptr) transport_stop_action(action_ptr)
 
   if (starting) {
-    for (int i = 0; i < NUM_TOUCHPADS; i++) {
-      START_ACTION(&scene->touchpads[i].action);
+    if (scene->use_transport) {
+      for (int i = 0; i < NUM_TOUCHPADS; i++)
+        START_ACTION(&scene->touchpads[i].action);
+      START_ACTION(&scene->button_left);
+      START_ACTION(&scene->button_right);
+      START_ACTION(&scene->button_both);
+      START_ACTION(&scene->bump);
+      START_ACTION(&scene->expr_switch);
     }
-    START_ACTION(&scene->button_left);
-    START_ACTION(&scene->button_right);
-    START_ACTION(&scene->button_both);
-    START_ACTION(&scene->bump);
-    START_ACTION(&scene->expr_switch);
 
-    // Execute on_play actions on fresh play start (not resume, not recording)
-    if (state == TRANSPORT_PLAYING && !is_resume && scene->use_transport) {
-      if (scene->num_on_play_actions > 0) {
-        ESP_LOGI(TAG, "Executing %d on_play action(s)", scene->num_on_play_actions);
-        for (int i = 0; i < scene->num_on_play_actions; i++) {
-          action_execute(&scene->on_play[i], 127, true);
-        }
+    // On-Play: downbeat-aligned, fresh start only (from STOPPED, incl. record).
+    if (is_fresh_start && scene->use_transport && scene->num_on_play_actions > 0) {
+      ESP_LOGI(TAG, "Queuing %d on_play action(s) for downbeat",
+        scene->num_on_play_actions);
+      for (int i = 0; i < scene->num_on_play_actions; i++) {
+        action_scheduler_enqueue(&scene->on_play[i], 127, 0, false, 1);
       }
     }
-  } else if (stopping) {
-    for (int i = 0; i < NUM_TOUCHPADS; i++) {
+  } else if (stopping && scene->use_transport) {
+    for (int i = 0; i < NUM_TOUCHPADS; i++)
       STOP_ACTION(&scene->touchpads[i].action);
-    }
     STOP_ACTION(&scene->button_left);
     STOP_ACTION(&scene->button_right);
     STOP_ACTION(&scene->button_both);

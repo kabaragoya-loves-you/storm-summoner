@@ -852,6 +852,9 @@ static bool ainspect_format_timing(char *buf, size_t cap, const action_t *action
     case ACTION_TIMING_SPECIFIC_BEAT:
       snprintf(buf, cap, "Beat %u", (unsigned)action->timing_beat);
       return true;
+    case ACTION_TIMING_TRANSPORT_START:
+      snprintf(buf, cap, "On Transport");
+      return true;
     default:
       return false;
   }
@@ -1175,10 +1178,6 @@ static void ainspect_append_action_options(ainspect_buf_t *b, const action_t *ac
   if (show_scheduling && action_supports_timing_for(action) &&
       ainspect_format_timing(timing, sizeof(timing), action)) {
     ainspect_append(b, "\nTiming: %s", timing);
-  }
-
-  if (action_supports_transport_trigger(action->type) && action->transport_trigger) {
-    ainspect_append(b, "\nTransport Trigger: On");
   }
 
   if (action_supports_raise_flag_for(action) && action->raise_flag) {
