@@ -341,6 +341,8 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_SCENE:
     case ACTION_TEMPO:
     case ACTION_PUNCH_IN:
+    case ACTION_CONFIRM_PENDING:
+    case ACTION_TRANSPORT:
       return false;
     default:
       return true;

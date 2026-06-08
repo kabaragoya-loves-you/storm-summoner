@@ -2,7 +2,17 @@
 
 window.ActionCatalog = (function () {
   const NOTE_RANDOM = 254
+  const NOTE_VEL_RANDOM = 254
   const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+  const NOTE_VELOCITY_PRESETS = [
+    { v: NOTE_VEL_RANDOM, l: 'Random' },
+    { v: 127, l: 'Forte' },
+    { v: 100, l: 'Strong' },
+    { v: 80, l: 'Medium' },
+    { v: 60, l: 'Soft' },
+    { v: 40, l: 'Piano' }
+  ]
 
   const ALL_TYPES = [
     'none', 'control', 'preset', 'scene', 'confirm_pending', 'transport', 'tempo',
@@ -120,6 +130,27 @@ window.ActionCatalog = (function () {
     const cur = Number(current)
     if (!Number.isNaN(cur) && cur !== NOTE_RANDOM && (cur < 36 || cur > 96)) {
       opts.push({ v: cur, l: `${midiNoteLabel(cur)} (${cur})` })
+    }
+    return opts
+  }
+
+  function noteRandomBoundOptions (current) {
+    const opts = []
+    for (let midi = 36; midi <= 96; midi++) {
+      opts.push({ v: midi, l: `${midiNoteLabel(midi)} (${midi})` })
+    }
+    const cur = Number(current)
+    if (!Number.isNaN(cur) && (cur < 36 || cur > 96)) {
+      opts.push({ v: cur, l: `${midiNoteLabel(cur)} (${cur})` })
+    }
+    return opts
+  }
+
+  function noteVelocityOptions (current) {
+    const opts = NOTE_VELOCITY_PRESETS.slice()
+    const cur = Number(current)
+    if (!Number.isNaN(cur) && !opts.some(o => o.v === cur)) {
+      opts.push({ v: cur, l: String(cur) })
     }
     return opts
   }
@@ -291,6 +322,7 @@ window.ActionCatalog = (function () {
     const sceneMode = ctx?.sceneMode ?? 2
     if (type === 'preset' && sceneMode !== 0 && sceneMode !== 2) return false
     if (type === 'scene' && sceneMode !== 1 && sceneMode !== 2) return false
+    if (type === 'confirm_pending' && (ctx?.confirmChange ?? 0) !== 1) return false
 
     const clockSource = ctx?.clockSource || 'internal'
     if (type === 'tempo' && clockSource !== 'internal') {
@@ -335,7 +367,7 @@ window.ActionCatalog = (function () {
     if (!action?.type || action.type === 'none' || requiresHold(action)) return false
     const t = action.type
     const v = action.variant || defaultVariant(t)
-    if (t === 'scene' || t === 'punch_in') return false
+    if (t === 'scene' || t === 'punch_in' || t === 'confirm_pending' || t === 'transport') return false
     if (t === 'tempo') {
       return v === 'increment' || v === 'decrement' || v === 'cycle'
     }
@@ -347,19 +379,125 @@ window.ActionCatalog = (function () {
     return true
   }
 
+  const FOLLOWUP_HOLD_TYPES = new Set([
+    'tempo', 'control', 'preset', 'touchwheel', 'clock', 'cut', 'ui', 'param',
+    'rtg', 'sample_hold'
+  ])
+
+  function supportsFollowUp (action) {
+    if (!action?.type || action.type === 'none') return false
+    return action.variant === 'hold' && FOLLOWUP_HOLD_TYPES.has(action.type)
+  }
+
+  function supportsMorph (action) {
+    if (!action?.type || action.type === 'none') return false
+    const t = action.type
+    const v = action.variant || defaultVariant(t)
+    if (t === 'control') return v === 'hold' || v === 'cycle'
+    if (t === 'tempo') return v === 'hold'
+    if (t === 'randomize') return true
+    return false
+  }
+
+  function tempoStepCount (action) {
+    const tempos = action?.tempos
+    const n = Array.isArray(tempos) ? tempos.length : 0
+    const declared = Number(action?.num_tempos ?? 0)
+    return Math.max(2, Math.min(8, Math.max(n, declared || 2)))
+  }
+
+  function normalizeTempoActionsInModel (model) {
+    let changed = false
+    forEachAction(model, action => {
+      if (action?.type !== 'tempo') return
+      const before = JSON.stringify(action)
+      const v = action.variant || defaultVariant('tempo')
+      const clampBpm = (n) => {
+        const x = Number(n)
+        if (Number.isNaN(x)) return 120
+        return Math.max(20, Math.min(300, Math.round(x)))
+      }
+      if (v === 'set') {
+        if (action.bpm != null) action.bpm = clampBpm(action.bpm)
+      } else if (v === 'hold') {
+        action.press_bpm = clampBpm(action.press_bpm)
+        action.release_bpm = clampBpm(action.release_bpm)
+      } else if (v === 'cycle') {
+        let steps = Array.isArray(action.tempos) ? action.tempos.slice() : []
+        const stepCount = tempoStepCount(action)
+        while (steps.length < stepCount) steps.push(120)
+        steps = steps.slice(0, stepCount).map(clampBpm)
+        action.tempos = steps
+        action.num_tempos = steps.length
+      }
+      if (JSON.stringify(action) !== before) changed = true
+    })
+    return changed
+  }
+
+  const REPEAT_KEYS = ['repeat', 'repeat_division', 'probability', 'pattern_length', 'pattern_mask']
+
+  function clearRepeatFields (action) {
+    if (!action) return false
+    let changed = false
+    for (const key of REPEAT_KEYS) {
+      if (key in action) {
+        delete action[key]
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  function forEachAction (model, cb) {
+    if (!model) return
+    const visit = (action, path) => {
+      if (action) cb(action, path)
+    }
+    model.touchpads?.forEach((tp, i) => visit(tp?.action, `touchpads.${i}.action`))
+    visit(model.button_left, 'button_left')
+    visit(model.button_right, 'button_right')
+    visit(model.button_both, 'button_both')
+    visit(model.bump, 'bump')
+    model.on_load?.forEach((a, i) => visit(a, `on_load.${i}`))
+    model.on_play?.forEach((a, i) => visit(a, `on_play.${i}`))
+    model.cc_triggers?.forEach((t, i) => visit(t?.action, `cc_triggers.${i}.action`))
+    visit(model.cv_trigger_action, 'cv_trigger_action')
+  }
+
+  function normalizeRepeatActionsInModel (model) {
+    let changed = false
+    forEachAction(model, action => {
+      if (action?.type && action.type !== 'none' && !supportsRepeat(action) &&
+          clearRepeatFields(action)) {
+        changed = true
+      }
+    })
+    return changed
+  }
+
   return {
     NOTE_RANDOM,
+    NOTE_VEL_RANDOM,
     TRIGGERS,
     padDisplayName,
     typeLabel,
     variantLabel,
     typeHasVariants,
     noteOptions,
+    noteRandomBoundOptions,
+    noteVelocityOptions,
     timingOptions,
     typesForTrigger,
     variantsForType,
     defaultVariant,
     supportsTiming,
-    supportsRepeat
+    supportsRepeat,
+    supportsFollowUp,
+    supportsMorph,
+    clearRepeatFields,
+    normalizeRepeatActionsInModel,
+    tempoStepCount,
+    normalizeTempoActionsInModel
   }
 })()

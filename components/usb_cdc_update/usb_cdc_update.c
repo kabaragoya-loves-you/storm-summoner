@@ -79,6 +79,7 @@ typedef enum {
 
 static cdc_update_state_t s_state = CDC_STATE_IDLE;
 static bool s_initialized = false;
+static bool s_logging_enabled = false;
 static uint8_t *s_update_buffer = NULL;
 static size_t s_update_size = 0;
 static size_t s_received_bytes = 0;
@@ -305,11 +306,13 @@ static void cdc_update_task(void *arg) {
   }
 }
 
-esp_err_t usb_cdc_update_init(void) {
+esp_err_t usb_cdc_update_init(bool enable_logging) {
   if (s_initialized) {
     ESP_LOGW(TAG, "CDC update already initialized");
     return ESP_OK;
   }
+
+  s_logging_enabled = enable_logging;
 
   ESP_LOGI(TAG, "Initializing CDC update handler");
 
@@ -1240,14 +1243,15 @@ static void console_send_prompt(void) {
 }
 
 static void process_command(const char *cmd) {
-  ESP_LOGI(TAG, "Received command: '%s' (len=%d)", cmd, strlen(cmd));
-  
-  // Debug hex dump of command
-  char hex[128] = {0};
-  for (int i = 0; i < strlen(cmd) && i < 16; i++) {
-    snprintf(hex + strlen(hex), sizeof(hex) - strlen(hex), "%02X ", (uint8_t)cmd[i]);
+  if (s_logging_enabled) {
+    ESP_LOGI(TAG, "Received command: '%s' (len=%d)", cmd, strlen(cmd));
+
+    char hex[128] = {0};
+    for (int i = 0; i < strlen(cmd) && i < 16; i++) {
+      snprintf(hex + strlen(hex), sizeof(hex) - strlen(hex), "%02X ", (uint8_t)cmd[i]);
+    }
+    ESP_LOGI(TAG, "Hex: %s", hex);
   }
-  ESP_LOGI(TAG, "Hex: %s", hex);
 
   if (strncmp(cmd, "FIRMWARE ", 9) == 0) {
     // Parse size

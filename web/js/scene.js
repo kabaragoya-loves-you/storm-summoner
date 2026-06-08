@@ -9,7 +9,7 @@ application.register(
       'editorContainer', 'editorTitle', 'validationBox',
       'programmingBanner', 'saveBtn', 'revertBtn', 'saveStatus',
       'pedalPickerDialog', 'pedalVendorSelect', 'pedalSelect',
-      'pedalChangeWarningDialog'
+      'pedalChangeWarningDialog', 'reloadConfirmDialog', 'reloadConfirmMessage'
     ]
 
     connect () {
@@ -25,6 +25,7 @@ application.register(
       this.deviceContext = {
         sceneMode: 2,
         deviceMode: 0,
+        confirmChange: 0,
         midiControl: false,
         flagEnabled: false,
         globalPedal: null
@@ -42,6 +43,7 @@ application.register(
       this._programmingSyncGen = 0
       this._programmingFetchPromise = null
       this._programmingPollTimer = null
+      this._programmingExitDebounce = null
 
       this._onConnectionChanged = this.onConnectionChanged.bind(this)
       this._onTabActivated = this.onTabActivated.bind(this)
@@ -89,6 +91,10 @@ application.register(
         clearTimeout(this._saveStatusTimer)
         this._saveStatusTimer = null
       }
+      if (this._programmingExitDebounce) {
+        clearTimeout(this._programmingExitDebounce)
+        this._programmingExitDebounce = null
+      }
       this.stopProgrammingPoll()
       if (this.hasEditorContainerTarget && this._onEditorSectionToggle) {
         this.editorContainerTarget.removeEventListener('toggle', this._onEditorSectionToggle, true)
@@ -98,14 +104,23 @@ application.register(
     onSceneListUpdated (e) {
       this.sceneList = e.detail?.scenes || []
       this.updatePanelTitle()
+      if (this.editing && this.editModel) this.renderEditor()
     }
 
     onOpenScene (e) {
       const { position, mode } = e.detail || {}
       if (position === undefined || position === null) return
-      if (this.dirty && position !== this.editPosition &&
-          !confirm('Discard unsaved changes?')) return
+      if (this.dirty && position !== this.editPosition) {
+        void this.confirmDiscardChanges('Discard unsaved changes?').then(ok => {
+          if (!ok) return
+          this.openSceneAt(position, mode)
+        })
+        return
+      }
+      this.openSceneAt(position, mode)
+    }
 
+    openSceneAt (position, mode) {
       this.editPosition = position
       if (mode === 'edit') {
         this.showEditMode()
@@ -123,6 +138,7 @@ application.register(
       if (this.hasEditorToolbarTarget) {
         this.editorToolbarTarget.classList.add('hidden')
       }
+      this.updateProgrammingLock()
       if (this.connection.isConnected && this.editPosition !== null) {
         await this.fetchInspectForPosition(this.editPosition)
       }
@@ -135,6 +151,7 @@ application.register(
       if (this.hasEditorToolbarTarget) {
         this.editorToolbarTarget.classList.remove('hidden')
       }
+      this.updateProgrammingLock()
       if (this.connection.isConnected) this.loadSceneForEdit()
     }
 
@@ -191,16 +208,13 @@ application.register(
       if (kind === 'programming') {
         const active = e.detail?.index === 1
         const wasProgramming = this.deviceProgramming
-        this._programmingSyncGen++
-        this.deviceProgramming = active
-        this.updateProgrammingLock()
-        if (wasProgramming && !active && this.editing && !this.dirty) {
-          this.loadSceneForEdit()
-        }
+        this.setDeviceProgramming(active)
+        if (wasProgramming && !active) this.onProgrammingModeEnded()
         return
       }
       if (kind !== 'scene_changed' && kind !== 'scene_updated') return
       if (!this.connection.isConnected) return
+      if (this.deviceProgramming) return
       if (this.connection.isSerialBusy) return
       if (this.editing && this.dirty) return
 
@@ -217,6 +231,41 @@ application.register(
       }, 100)
     }
 
+    onProgrammingModeEnded () {
+      if (this._programmingExitDebounce) clearTimeout(this._programmingExitDebounce)
+      this._programmingExitDebounce = setTimeout(() => {
+        this._programmingExitDebounce = null
+        void this.refreshEditorFromDeviceAfterProgramming()
+      }, 150)
+    }
+
+    async refreshEditorFromDeviceAfterProgramming () {
+      if (!this.connection.isConnected || this.editPosition === null) return
+      const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
+      if (activeTab?.getAttribute('panel') !== 'scenes') return
+      if (this.connection.isSerialBusy) {
+        this.onProgrammingModeEnded()
+        return
+      }
+      if (this.editing && this.dirty) {
+        const ok = await this.confirmDiscardChanges(
+          'The device was edited in programming mode. Discard unsaved web changes and reload from the device?'
+        )
+        if (!ok) return
+      }
+      if (this.editing) await this.loadSceneForEdit()
+      else await this.fetchInspectForPosition(this.editPosition)
+    }
+
+    setDeviceProgramming (active) {
+      const next = !!active
+      if (next === this.deviceProgramming) return false
+      this._programmingSyncGen++
+      this.deviceProgramming = next
+      this.updateProgrammingLock()
+      return true
+    }
+
     async fetchDeviceProgramming () {
       if (!this.connection.isConnected) return
       if (this._programmingFetchPromise) return this._programmingFetchPromise
@@ -227,6 +276,7 @@ application.register(
 
     async _fetchDeviceProgrammingImpl () {
       const syncGen = this._programmingSyncGen
+      const wasProgramming = this.deviceProgramming
       try {
         const response = await this.connection.runSerialTask(async () => {
           if (this.connection.currentMode) {
@@ -239,16 +289,18 @@ application.register(
         if (syncGen !== this._programmingSyncGen) return
         if (!response || response.startsWith('ERROR:')) return
         const data = JSON.parse(response)
-        this.deviceProgramming = !!data.programming
-        this.updateProgrammingLock()
+        const next = !!data.programming
+        this.setDeviceProgramming(next)
+        if (wasProgramming && !next) this.onProgrammingModeEnded()
       } catch (_) { /* ignore */ }
     }
 
     syncProgrammingPoll () {
-      if (this.deviceProgramming && this.connection.isConnected) {
+      const shouldPoll = this.connection.isConnected && this.editing
+      if (shouldPoll) {
         if (this._programmingPollTimer) return
         this._programmingPollTimer = setInterval(() => {
-          if (!this.connection.isConnected || !this.deviceProgramming) {
+          if (!this.connection.isConnected || !this.editing) {
             this.stopProgrammingPoll()
             return
           }
@@ -347,6 +399,71 @@ application.register(
       }
     }
 
+    seedConfirmPendingAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'confirm_pending') return
+      ActionCatalog.clearRepeatFields(action)
+      if (this.deviceContext.sceneMode === 2 && !action.confirm_target) {
+        this.setAtPath(`${actionPath}.confirm_target`, 'preset')
+      }
+    }
+
+    seedNoteAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'note') return
+      if (action.note == null) action.note = ActionCatalog.NOTE_RANDOM
+      if (action.velocity == null) action.velocity = 100
+      if (action.voices == null) action.voices = 1
+      if (action.bass == null) action.bass = false
+      if (action.random_floor == null) action.random_floor = 36
+      if (action.random_ceiling == null) action.random_ceiling = 96
+      if (action.aftertouch == null) action.aftertouch = true
+    }
+
+    seedRandomizeAction (actionPath) {
+      DeviceControls.seedRandomizeAction(this, actionPath)
+    }
+
+    seedTempoAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'tempo') return
+      const variant = action.variant || 'set'
+      const clampBpm = (n) => {
+        const x = Number(n)
+        if (Number.isNaN(x) || x < 20 || x > 300) return 120
+        return Math.round(x)
+      }
+
+      if (variant === 'set') {
+        delete action.press_bpm
+        delete action.release_bpm
+        delete action.num_tempos
+        delete action.tempos
+        if (action.bpm == null) action.bpm = 120
+      } else if (variant === 'hold') {
+        delete action.bpm
+        delete action.num_tempos
+        delete action.tempos
+        action.press_bpm = clampBpm(action.press_bpm)
+        action.release_bpm = clampBpm(action.release_bpm)
+      } else if (variant === 'cycle') {
+        delete action.bpm
+        delete action.press_bpm
+        delete action.release_bpm
+        const cur = Array.isArray(action.tempos) ? action.tempos : []
+        const stepCount = Math.max(2, Math.min(8, Math.max(cur.length, action.num_tempos || 2)))
+        const steps = []
+        for (let i = 0; i < stepCount; i++) steps.push(clampBpm(cur[i]))
+        action.tempos = steps
+        action.num_tempos = steps.length
+      } else {
+        delete action.press_bpm
+        delete action.release_bpm
+        delete action.num_tempos
+        delete action.tempos
+      }
+    }
+
     normalizeBeforeSave (model) {
       if (typeof model.name === 'string') model.name = model.name.trim()
       if (model.touchpads) {
@@ -355,6 +472,10 @@ application.register(
         })
       }
       DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, model)
+      DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
+      DeviceControls.normalizeRandomizeActionsInModel(this.deviceDefinition, model)
+      ActionCatalog.normalizeTempoActionsInModel(model)
+      ActionCatalog.normalizeRepeatActionsInModel(model)
       if (model.device_id === '' || model.device_id == null) delete model.device_id
     }
 
@@ -378,11 +499,38 @@ application.register(
       delete tp.actions
     }
 
+    async fetchSceneListInTask () {
+      try {
+        await this.connection.sendRaw('SCENES\n')
+        const started = await this.connection.readLine(5000)
+        if (started !== 'SCENES_STARTED') return false
+        await this.connection.sendRaw('LIST\n')
+        const response = await this.connection.readLine(5000)
+        await this.connection.sendRaw('EXIT\n')
+        await this.sleep(150)
+        if (!response || !response.includes('[')) return false
+        const jsonStart = response.indexOf('[')
+        const jsonEnd = response.lastIndexOf(']')
+        if (jsonStart === -1 || jsonEnd === -1) return false
+        this.sceneList = JSON.parse(response.substring(jsonStart, jsonEnd + 1)).map(s => ({
+          ...s,
+          name: String(s?.name ?? '').trim() || 'Untitled'
+        }))
+        return true
+      } catch (err) {
+        console.warn('Scene editor: scene list skipped:', err.message)
+        return false
+      }
+    }
+
     async fetchGlobalPedalInTask () {
       const response = await this.connection._sendCommandImpl('INFO', 15000, (data) =>
         typeof data.version === 'string')
       if (!response || response.startsWith('ERROR:')) return
       const info = JSON.parse(response)
+      if (typeof info.programming === 'boolean') {
+        this.setDeviceProgramming(info.programming)
+      }
       if (info.pedal) {
         this.deviceContext.globalPedal = {
           slug: info.pedal.slug || '',
@@ -470,6 +618,39 @@ application.register(
       }
       this._pendingPedalSlug = null
       this._pendingPedalInherited = false
+    }
+
+    confirmDiscardChanges (message) {
+      if (!this.hasReloadConfirmDialogTarget) {
+        return Promise.resolve(window.confirm(message))
+      }
+      if (this._discardConfirmResolver) this.resolveDiscardConfirm(false)
+      return new Promise(resolve => {
+        this._discardConfirmResolver = resolve
+        this.reloadConfirmMessageTarget.textContent = message
+        this.reloadConfirmDialogTarget.open = true
+      })
+    }
+
+    resolveDiscardConfirm (accepted) {
+      const resolve = this._discardConfirmResolver
+      this._discardConfirmResolver = null
+      if (this.hasReloadConfirmDialogTarget) {
+        this.reloadConfirmDialogTarget.open = false
+      }
+      resolve?.(accepted)
+    }
+
+    cancelReloadConfirm () {
+      this.resolveDiscardConfirm(false)
+    }
+
+    confirmReloadDiscard () {
+      this.resolveDiscardConfirm(true)
+    }
+
+    onReloadConfirmDismiss () {
+      if (this._discardConfirmResolver) this.resolveDiscardConfirm(false)
     }
 
     populatePedalPickerSelects () {
@@ -586,6 +767,7 @@ application.register(
         console.warn('Scene editor: device reload skipped:', err.message)
       }
       DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, this.editModel)
+      DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, this.editModel)
       this.markDirty()
       this.renderEditor()
     }
@@ -651,7 +833,8 @@ application.register(
     isNumericScenePath (path) {
       if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') return true
       if (/\.values(\.\d+)+$/.test(path)) return true
-      return /\.(note|cc|value|value2|probability|pattern_length)(\.\d+)?$/.test(path)
+      if (/\.presets(\.\d+)+$/.test(path)) return true
+      return /\.(note|velocity|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps)(\.\d+)?$/.test(path)
     }
 
     patchSelect (e) {
@@ -659,6 +842,54 @@ application.register(
       const path = e.target.dataset.scenePath
       if (!path) return
       let val = e.target.value
+
+      if (val === '__original__' && path.endsWith('.release_preset')) {
+        const aPath = path.slice(0, -'.release_preset'.length)
+        const action = this.getAtPath(aPath)
+        if (action) {
+          action.release_to_original = true
+          delete action.release_preset
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path.endsWith('.release_preset')) {
+        const aPath = path.slice(0, -'.release_preset'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'preset' && action?.variant === 'hold') {
+          action.release_to_original = false
+        }
+      }
+
+      if (path.endsWith('.release_mode')) {
+        const aPath = path.slice(0, -'.release_mode'.length)
+        const action = this.getAtPath(aPath)
+        if (val === 'always' && action) {
+          delete action.release_mode
+          delete action.release_threshold_ms
+          this.markDirty()
+          this.renderEditor()
+          return
+        }
+        if (action && val !== 'always' && !action.release_threshold_ms) {
+          this.setAtPath(`${aPath}.release_threshold_ms`, 1000)
+        }
+      }
+
+      const randomizeCcMatch = path.match(/^(.*)\.cc\.(\d+)$/)
+      if (randomizeCcMatch) {
+        const action = this.getAtPath(randomizeCcMatch[1])
+        if (action?.type === 'randomize') {
+          if (this.patchRandomizeCc(randomizeCcMatch[1], Number(randomizeCcMatch[2]), val)) {
+            this.markDirty()
+            this.renderEditor()
+          }
+          return
+        }
+      }
+
       if (this.isNumericScenePath(path)) val = Number(val)
       this.setAtPath(path, val)
       if (path.endsWith('.type')) {
@@ -669,11 +900,36 @@ application.register(
         const action = this.getAtPath(aPath)
         if (def) this.setAtPath(`${aPath}.variant`, def)
         else if (action) delete action.variant
-        if (val === 'control') DeviceControls.seedControlAction(this, aPath)
+        if (DeviceControls.isControlAction(val)) DeviceControls.seedControlAction(this, aPath)
+        if (DeviceControls.isPresetAction(val)) DeviceControls.seedPresetAction(this, aPath)
+        if (val === 'scene') SceneActions.seedSceneSetAction(this, aPath)
+        if (val === 'confirm_pending') this.seedConfirmPendingAction(aPath)
+        else if (val === 'note') this.seedNoteAction(aPath)
+        else if (val === 'randomize') this.seedRandomizeAction(aPath)
+        else if (val === 'tempo') this.seedTempoAction(aPath)
+        else {
+          const updated = this.getAtPath(aPath)
+          if (updated && !ActionCatalog.supportsRepeat(updated)) {
+            ActionCatalog.clearRepeatFields(updated)
+          }
+        }
       } else if (path.endsWith('.variant')) {
         const aPath = path.slice(0, -'.variant'.length)
         const action = this.getAtPath(aPath)
-        if (action?.type === 'control') DeviceControls.seedControlAction(this, aPath)
+        if (DeviceControls.isControlAction(action?.type)) {
+          DeviceControls.seedControlAction(this, aPath)
+          DeviceControls.normalizeControlAction(this.deviceDefinition, this.getAtPath(aPath))
+        }
+        if (DeviceControls.isPresetAction(action?.type)) {
+          DeviceControls.seedPresetAction(this, aPath)
+          DeviceControls.normalizePresetAction(this.deviceDefinition, this.getAtPath(aPath))
+        }
+        if (action?.type === 'scene' && val === 'set') {
+          SceneActions.seedSceneSetAction(this, aPath)
+        }
+        if (action?.type === 'tempo') {
+          this.seedTempoAction(aPath)
+        }
       } else {
         this.syncControlValueForCc(path, val)
       }
@@ -688,7 +944,7 @@ application.register(
       if (!m) return
       const actionPath = m[1]
       const action = this.getAtPath(actionPath)
-      if (action?.type !== 'control') return
+      if (!DeviceControls.isControlAction(action?.type)) return
       const variant = action.variant || 'set'
       if (variant === 'cycle') {
         const idx = m[2] != null ? Number(m[2]) : 0
@@ -724,7 +980,14 @@ application.register(
       const path = e.target.dataset.scenePath
       if (!path) return
       let v = e.target.value === '' ? 0 : Number(e.target.value)
-      if (path.includes('rate_hz') || path.includes('sync_mult')) v = parseFloat(e.target.value)
+      if (path.includes('rate_hz') || path.includes('sync_mult')) {
+        v = parseFloat(e.target.value)
+      } else {
+        const minAttr = e.target.getAttribute('min')
+        const maxAttr = e.target.getAttribute('max')
+        if (minAttr !== null && minAttr !== '') v = Math.max(Number(minAttr), v)
+        if (maxAttr !== null && maxAttr !== '') v = Math.min(Number(maxAttr), v)
+      }
       this.setAtPath(path, v)
       this.markDirty()
     }
@@ -766,6 +1029,8 @@ application.register(
       if (!path) return
       if (kind === 'control') this.addControlCcSlot(path)
       else if (kind === 'cycle-step') this.addCycleStep(path)
+      else if (kind === 'preset-step') this.addPresetCycleStep(path)
+      else if (kind === 'tempo-step') this.addTempoCycleStep(path)
       else this.addListItem(path, def ?? 0, max ?? 8)
       this.markDirty()
       this.renderEditor()
@@ -777,6 +1042,9 @@ application.register(
       if (!path || index == null || index < 0) return
       if (kind === 'control') this.removeControlCcSlot(path, index)
       else if (kind === 'cycle-step') this.removeCycleStep(path, index)
+      else if (kind === 'preset-step') this.removePresetCycleStep(path, index)
+      else if (kind === 'tempo-step') this.removeTempoCycleStep(path, index)
+      else if (kind === 'randomize') this.removeRandomizeSlot(path, index)
       else this.removeListItem(path, index, min ?? 0)
       this.markDirty()
       this.renderEditor()
@@ -789,7 +1057,7 @@ application.register(
 
     addControlCcSlot (path) {
       const action = this.getAtPath(path)
-      if (!action || action.type !== 'control') return
+      if (!action || !DeviceControls.isControlAction(action.type)) return
       const device = this.deviceDefinition
       const hasParams = DeviceControls.hasParameters(device)
       const ccList = this.asArray(action.cc)
@@ -822,7 +1090,7 @@ application.register(
 
     removeControlCcSlot (path, index) {
       const action = this.getAtPath(path)
-      if (!action || action.type !== 'control') return
+      if (!action || !DeviceControls.isControlAction(action.type)) return
       const variant = action.variant || 'set'
       const drop = (field) => {
         if (!Array.isArray(action[field])) return
@@ -846,7 +1114,8 @@ application.register(
 
     addCycleStep (path) {
       const action = this.getAtPath(path)
-      if (!action || action.type !== 'control' || (action.variant || 'set') !== 'cycle') return
+      if (!action || !DeviceControls.isControlAction(action.type) ||
+          (action.variant || 'set') !== 'cycle') return
       if (DeviceControls.cycleStepCount(action) >= 8) return
       const device = this.deviceDefinition
       const hasParams = DeviceControls.hasParameters(device)
@@ -866,13 +1135,86 @@ application.register(
 
     removeCycleStep (path, stepIndex) {
       const action = this.getAtPath(path)
-      if (!action || action.type !== 'control' || (action.variant || 'set') !== 'cycle') return
+      if (!action || !DeviceControls.isControlAction(action.type) ||
+          (action.variant || 'set') !== 'cycle') return
       if (DeviceControls.cycleStepCount(action) <= 2) return
       if (DeviceControls.cycleIsMultiValues(action.values)) {
         action.values.forEach(row => { if (Array.isArray(row)) row.splice(stepIndex, 1) })
       } else if (Array.isArray(action.values)) {
         action.values.splice(stepIndex, 1)
       }
+    }
+
+    addPresetCycleStep (path) {
+      const action = this.getAtPath(path)
+      if (!action || !DeviceControls.isPresetAction(action.type) ||
+          (action.variant || 'set') !== 'cycle') return
+      if (DeviceControls.presetStepCount(action) >= 8) return
+      const device = this.deviceDefinition
+      const def = DeviceControls.resolvePresetValue(device, null)
+      const steps = this.asArray(action.presets)
+      steps.push(def)
+      action.presets = steps
+      action.num_presets = steps.length
+    }
+
+    removePresetCycleStep (path, stepIndex) {
+      const action = this.getAtPath(path)
+      if (!action || !DeviceControls.isPresetAction(action.type) ||
+          (action.variant || 'set') !== 'cycle') return
+      if (DeviceControls.presetStepCount(action) <= 2) return
+      if (Array.isArray(action.presets)) {
+        action.presets.splice(stepIndex, 1)
+        action.num_presets = action.presets.length
+      }
+    }
+
+    addTempoCycleStep (path) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'tempo' || (action.variant || 'set') !== 'cycle') return
+      if (ActionCatalog.tempoStepCount(action) >= 8) return
+      const steps = this.asArray(action.tempos)
+      steps.push(120)
+      action.tempos = steps
+      action.num_tempos = steps.length
+    }
+
+    removeTempoCycleStep (path, stepIndex) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'tempo' || (action.variant || 'set') !== 'cycle') return
+      if (ActionCatalog.tempoStepCount(action) <= 2) return
+      if (Array.isArray(action.tempos)) {
+        action.tempos.splice(stepIndex, 1)
+        action.num_tempos = action.tempos.length
+      }
+    }
+
+    patchRandomizeCc (actionPath, slot, val) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'randomize') return false
+      const list = this.asArray(action.cc)
+
+      if (val === '__inactive__') {
+        if (slot < list.length) list.splice(slot, 1)
+      } else {
+        const cc = Number(val)
+        if (Number.isNaN(cc)) return false
+        if (slot < list.length) list[slot] = cc
+        else if (slot === list.length) list.push(cc)
+        else return false
+      }
+
+      action.cc = list
+      return true
+    }
+
+    removeRandomizeSlot (path, slotIndex) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'randomize') return
+      const list = this.asArray(action.cc)
+      if (slotIndex <= 0 || slotIndex >= list.length) return
+      list.splice(slotIndex, 1)
+      action.cc = list
     }
 
     addListItem (path, def, max) {
@@ -928,8 +1270,14 @@ application.register(
           message: '"manifest" is reserved (would overwrite manifest.json)'
         })
       }
-      if (!this._schema || !window.JsonSchemaValidator) return errors
-      return errors.concat(window.JsonSchemaValidator.validate(model, this._schema))
+      const schemaErrors = (this._schema && window.JsonSchemaValidator)
+        ? window.JsonSchemaValidator.validate(model, this._schema) : []
+      return errors
+        .concat(schemaErrors)
+        .concat(DeviceControls.validateControlActionsInModel(model))
+        .concat(DeviceControls.validatePresetActionsInModel(model, this.deviceDefinition))
+        .concat(SceneActions.validateSceneSetActionsInModel(
+          this.sceneList, model, SceneActions.currentEditIndex(this)))
     }
 
     renderValidation () {
@@ -976,6 +1324,14 @@ application.register(
           }
           await this.ensureDeviceIdleInTask()
 
+          if (!this.sceneList?.length) {
+            try {
+              await this.fetchSceneListInTask()
+            } catch (err) {
+              console.warn('Scene editor: scene list skipped:', err.message)
+            }
+          }
+
           try {
             await this.fetchConfigContextInTask()
           } catch (err) {
@@ -1013,6 +1369,8 @@ application.register(
         }
         const controlCorrected =
           DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, model)
+        const presetCorrected =
+          DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
         this.editModel = model
 
         // Start with assigned/enabled sections expanded; everything else stays
@@ -1023,7 +1381,7 @@ application.register(
         this.validationErrors = []
         this.renderEditor()
         this.baselineJson = JSON.stringify(this.editModel)
-        this.dirty = controlCorrected
+        this.dirty = controlCorrected || presetCorrected
         this.markDirty()
         this.updatePanelTitle()
       } catch (err) {
@@ -1041,6 +1399,7 @@ application.register(
       await this.sleep(200)
       let line = await this.connection.readLine(2000)
       while (line && line.startsWith('EVT:')) {
+        this.connection.dispatchCdcNotify(line)
         line = await this.connection.readLine(500)
       }
       await this.connection.drainInput()
@@ -1064,6 +1423,9 @@ application.register(
         }
         if (vals['config.device_mode'] != null) {
           this.deviceContext.deviceMode = Number(vals['config.device_mode'])
+        }
+        if (vals['config.confirm_change'] != null) {
+          this.deviceContext.confirmChange = Number(vals['config.confirm_change'])
         }
         if (vals['config.flag_enabled'] != null) {
           this.deviceContext.flagEnabled = Number(vals['config.flag_enabled']) !== 0

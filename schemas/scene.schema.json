@@ -1258,9 +1258,9 @@
             "properties": {
               "number": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 128,
-                "description": "Scene number (1-128)"
+                "minimum": 0,
+                "maximum": 127,
+                "description": "Stable manifest scene index (0–127). Survives reordering and renaming; not list position."
               }
             }
           }

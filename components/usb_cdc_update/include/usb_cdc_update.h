@@ -9,9 +9,10 @@
 /**
  * Initialize USB CDC update handler
  * Initializes CDC port and command protocol
+ * @param enable_logging Enable verbose logging of received CDC commands
  * @return ESP_OK on success
  */
-esp_err_t usb_cdc_update_init(void);
+esp_err_t usb_cdc_update_init(bool enable_logging);
 
 /**
  * CDC task - call periodically to handle incoming commands

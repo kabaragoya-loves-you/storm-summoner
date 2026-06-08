@@ -1290,14 +1290,16 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
 }
 
 wa-dialog[data-scene-target="pedalPickerDialog"]::part(dialog),
-wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(dialog) {
+wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(dialog),
+wa-dialog[data-scene-target="reloadConfirmDialog"]::part(dialog) {
   background-color: var(--bg-card);
   color: var(--text);
   border: 1px solid var(--border);
 }
 
 wa-dialog[data-scene-target="pedalPickerDialog"]::part(footer),
-wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer) {
+wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer),
+wa-dialog[data-scene-target="reloadConfirmDialog"]::part(footer) {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
@@ -1462,7 +1464,7 @@ wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer) {
   display: grid;
   grid-template-columns: minmax(8rem, 1.2fr) repeat(var(--cycle-steps, 2), minmax(4.5rem, 1fr));
   gap: 0.35rem 0.5rem;
-  align-items: start;
+  align-items: center;
   margin-bottom: 0.45rem;
 }
 
@@ -1475,26 +1477,33 @@ wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer) {
   min-width: 0;
 }
 
-.scene-cycle-param-head {
+.scene-cycle-param-line {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.35rem;
-  margin-bottom: 0.2rem;
+  gap: 0.25rem;
+  min-width: 0;
 }
 
-.scene-cycle-param-name {
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: var(--text-dim);
+.scene-cycle-param-line .scene-select {
+  flex: 1;
+  min-width: 0;
 }
 
-.scene-cycle-param-actions {
-  display: flex;
+.scene-cycle-param-slot,
+.scene-cycle-param-line .scene-slot-remove::part(base),
+.scene-cycle-param-line .scene-slot-add::part(base) {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+}
+
+.scene-cycle-param-line .scene-slot-remove::part(base),
+.scene-cycle-param-line .scene-slot-add::part(base) {
+  padding: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 0.1rem;
+  justify-content: center;
 }
 
 .scene-cycle-step-col {
@@ -1517,6 +1526,14 @@ wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer) {
 .scene-cycle-param-col .scene-input {
   width: 100%;
   max-width: none;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-deep);
+  color: var(--text);
+  font-size: 0.85rem;
+  box-sizing: border-box;
+  height: 2rem;
 }
 
 .scene-cycle-step-col .scene-cycle-step-label,
@@ -1524,6 +1541,10 @@ wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer) {
   display: flex;
   align-items: center;
   gap: 0.15rem;
+}
+
+.scene-cycle-row-head .scene-cycle-step-col .scene-slot-add {
+  margin-left: auto;
 }
 
 .scene-cycle-step-remove {

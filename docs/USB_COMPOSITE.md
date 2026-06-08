@@ -190,7 +190,7 @@ Copy `firmware.bin` to MSC volume to trigger update.
 ```c
 usb_manager_init();
 tinyusb_init_and_start();
-usb_cdc_update_init();
+usb_cdc_update_init(false);
 ```
 
 ### Call CDC Task Periodically

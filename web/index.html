@@ -489,6 +489,24 @@
                     </wa-button>
                   </div>
                 </wa-dialog>
+
+                <wa-dialog data-scene-target="reloadConfirmDialog" label="Scene Changed"
+                           data-action="wa-hide->scene#onReloadConfirmDismiss">
+                  <div class="scene-pedal-warning-content">
+                    <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
+                    <p data-scene-target="reloadConfirmMessage"></p>
+                  </div>
+                  <div slot="footer">
+                    <wa-button variant="neutral" appearance="outlined"
+                               data-action="click->scene#cancelReloadConfirm">
+                      Keep Editing
+                    </wa-button>
+                    <wa-button variant="brand"
+                               data-action="click->scene#confirmReloadDiscard">
+                      Discard Changes
+                    </wa-button>
+                  </div>
+                </wa-dialog>
               </div>
             </div>
 
@@ -802,6 +820,7 @@
   <script src="/js/pedal_catalog.js"></script>
   <script src="/js/action_catalog.js"></script>
   <script src="/js/device_controls.js"></script>
+  <script src="/js/scene_actions.js"></script>
   <script src="/js/scene_editor_ui.js"></script>
   <script src="/js/scene.js"></script>
   <script src="/js/pedals.js"></script>
