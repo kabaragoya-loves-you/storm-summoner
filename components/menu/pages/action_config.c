@@ -2803,14 +2803,11 @@ static void nav_to_preset_variant(void* user_data) {
 // Transport Variant Roller (for ACTION_TRANSPORT -- operation picker)
 // ============================================================================
 
-// Order mirrors the historical type enum order and a physical tape-deck's
-// button layout: Play, Stop, Pause, Record. All four variants are
-// fire-and-forget so the filter is effectively a no-op today, but the
-// parallel structure keeps future trigger restrictions cheap to add.
+// Play, Stop, Record. Pause is kept in the enum for JSON compatibility but
+// hidden here (it aliases Stop in firmware).
 static const action_variant_t s_transport_variants[] = {
   VARIANT_PLAY,
   VARIANT_STOP,
-  VARIANT_PAUSE,
   VARIANT_RECORD,
 };
 #define NUM_TRANSPORT_VARIANTS (sizeof(s_transport_variants) / sizeof(s_transport_variants[0]))

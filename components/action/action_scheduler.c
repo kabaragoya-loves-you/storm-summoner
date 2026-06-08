@@ -374,11 +374,12 @@ static void handle_beat_event(const event_t* event, void* context) {
 // Transport event handling (start/stop/resume transport-triggered actions)
 // ============================================================================
 
-static void transport_start_action(action_t* action) {
+static void transport_start_action(action_t* action, bool fresh_start) {
   if (!action || action->type == ACTION_NONE) return;
   if (action->timing != ACTION_TIMING_TRANSPORT_START) return;
   if (!action_timing_allows_transport_for(action)) return;
   if (!action_scheduler_is_transport_armed(action)) return;
+  if (!fresh_start) return;
 
   bool repeats = action->repeat_enabled && action_supports_repeat_for(action);
   bool was_repeating = action_scheduler_is_repeating(action);
@@ -460,10 +461,8 @@ static void transport_resume_action(action_t* action) {
     }
   }
 
-  if (!found_paused) {
-    ESP_LOGW(TAG, "No paused pending action found, creating new one");
-    action_scheduler_enqueue(action, 127, 0, true, 1);
-  }
+  if (!found_paused)
+    ESP_LOGD(TAG, "Resume ignored for %s (nothing was paused)", action_type_name(action->type));
 }
 
 void action_scheduler_transport_pad_press(action_t* action) {
@@ -493,8 +492,8 @@ static void handle_transport_event(const event_t* event, void* context) {
   if (event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
 
   transport_state_t state = transport_get_state();
-  bool starting = (state == TRANSPORT_PLAYING || state == TRANSPORT_RECORDING);
-  bool stopping = (state == TRANSPORT_STOPPED || state == TRANSPORT_PAUSED);
+  bool starting = (state == TRANSPORT_PLAYING);
+  bool stopping = (state == TRANSPORT_STOPPED);
   bool is_resume = event->data.transport.is_resume;
   bool is_fresh_start = event->data.transport.is_fresh_start;
 
@@ -502,12 +501,12 @@ static void handle_transport_event(const event_t* event, void* context) {
   if (!scene) return;
 
   ESP_LOGI(TAG, "Transport state: %s (resume: %d, fresh: %d)",
-    starting ? "playing/recording" : "stopped/paused", is_resume, is_fresh_start);
+    starting ? "playing" : "stopped", is_resume, is_fresh_start);
 
   #define START_ACTION(action_ptr) \
     do { \
       if (is_resume) transport_resume_action(action_ptr); \
-      else transport_start_action(action_ptr); \
+      else transport_start_action(action_ptr, is_fresh_start); \
     } while(0)
   #define STOP_ACTION(action_ptr) transport_stop_action(action_ptr)
 

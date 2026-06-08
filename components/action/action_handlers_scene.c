@@ -192,7 +192,7 @@ action_handle_result_t action_handlers_scene_dispatch(
       switch (action->variant) {
         case VARIANT_PLAY:   transport_play();   break;
         case VARIANT_STOP:   transport_stop();   break;
-        case VARIANT_PAUSE:  transport_pause();  break;
+        case VARIANT_PAUSE:  transport_stop();   break;
         case VARIANT_RECORD: transport_record(); break;
         default:
           ESP_LOGW(TAG, "Unknown Transport variant %d", (int)action->variant);

@@ -123,14 +123,7 @@ static void process_byte(uint8_t byte) {
       event_bus_post(&transport_event);
     }
     else if (byte == 0xFB) { // Continue
-      bool just_stopped = transport_just_stopped();
-      ESP_LOGI(TAG, "MIDI CONTINUE (0xFB) received, just_stopped=%d", just_stopped);
-      // Only reset tempo on Continue if we just stopped (Stop+Continue = "Play while playing")
-      // If this is a standalone Continue (Resume), keep current position
-      if (just_stopped) {
-        tempo_midi_transport_start();
-      }
-      
+      ESP_LOGI(TAG, "MIDI CONTINUE (0xFB) received (resume)");
       event_t transport_event = {
         .type = EVENT_TRANSPORT_CONTINUE,
         .priority = EVENT_PRIORITY_HIGH,
@@ -269,7 +262,13 @@ static void process_byte(uint8_t byte) {
       
       uint8_t data1 = (sys_common_data_expected >= 1) ? sys_common_data_buffer[0] : 0;
       uint8_t data2 = (sys_common_data_expected >= 2) ? sys_common_data_buffer[1] : 0;
-      
+
+      if (sys_common_status == 0xF2) {
+        uint16_t spp = (uint16_t)data1 | ((uint16_t)data2 << 7);
+        ESP_LOGI(TAG, "MIDI SPP (0xF2) received: %u sixteenths", (unsigned)spp);
+        transport_set_song_position(spp);
+      }
+
       post_midi_event(event_type, 0, data1, data2, sys_common_status, NULL, sys_common_data_expected + 1);
       
       sys_common_status = 0;

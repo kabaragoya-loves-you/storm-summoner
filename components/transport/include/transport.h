@@ -5,12 +5,10 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-// Transport states
+// Transport states (two-state model: pause is STOPPED with position held)
 typedef enum {
   TRANSPORT_STOPPED = 0,
-  TRANSPORT_PLAYING,
-  TRANSPORT_PAUSED,
-  TRANSPORT_RECORDING
+  TRANSPORT_PLAYING
 } transport_state_t;
 
 // Transport event sources
@@ -21,50 +19,27 @@ typedef enum {
   TRANSPORT_SOURCE_INTERNAL
 } transport_source_t;
 
-/**
- * Initialize the transport component
- * @return ESP_OK on success
- */
 esp_err_t transport_init(void);
 
-/**
- * Get current transport state
- * @return Current transport state
- */
 transport_state_t transport_get_state(void);
-
-/**
- * Check if transport is playing
- * @return true if playing or recording
- */
 bool transport_is_playing(void);
 
-/**
- * Check if transport is recording
- * @return true if recording
- */
-bool transport_is_recording(void);
-
-/**
- * Transport control functions
- * Note: play() and record() are toggles - they pause if already in that state
- */
-esp_err_t transport_play(void);    // Toggle: playing → pause, else → play
+// Fresh start from stopped (F2 00 00 + FA). If playing, stops first.
+esp_err_t transport_play(void);
+// Stop clock (FC); second stop while already stopped relocates to top (F2 00 00).
 esp_err_t transport_stop(void);
-esp_err_t transport_pause(void);   // Pause only (does not unpause)
-esp_err_t transport_record(void);  // Toggle: recording → pause, else → record
+// Alias for transport_stop() (MMC Pause is not a separate state).
+esp_err_t transport_pause(void);
+// Resume from stopped position (FB).
+esp_err_t transport_resume(void);
+// Play locally + MMC Record strobe (no recording state on device).
+esp_err_t transport_record(void);
 
-/**
- * Transport position tracking
- */
-uint32_t transport_get_current_bar(void);    // Get current bar number (1-based)
-uint8_t transport_get_current_beat(void);    // Get current beat in bar (1-based)
-void transport_reset_position(void);         // Reset to bar 1, beat 1
+uint32_t transport_get_current_bar(void);
+uint8_t transport_get_current_beat(void);
+void transport_reset_position(void);
 
-/**
- * Check if transport just stopped (for distinguishing Play vs Resume)
- * @return true if Stop was received within the detection window
- */
-bool transport_just_stopped(void);
+// Song Position Pointer (MIDI beats = 1/16 notes from top).
+void transport_set_song_position(uint16_t spp_sixteenths);
 
 #endif /* _TRANSPORT_H */

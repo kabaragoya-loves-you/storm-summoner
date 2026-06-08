@@ -76,6 +76,9 @@ bool tempo_is_midi_clock_active(void);  // True if MIDI clock ticks are being re
 // Re-align bar/beat to downbeat on demand (internal or external clock).
 void tempo_resync_downbeat(void);
 
+// Align beat counter to a bar/beat position (e.g. after Song Position Pointer).
+void tempo_sync_to_bar_beat(uint8_t bar, uint8_t beat);
+
 // Set and get the note divider.
 void tempo_set_note_divider(tempo_note_divider_t divider);
 tempo_note_divider_t tempo_get_note_divider(void);

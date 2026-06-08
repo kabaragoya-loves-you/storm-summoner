@@ -8,7 +8,7 @@ VALID_ACTION_TYPES = %w[
   none
   program_next program_prev pc
   scene_next scene_prev scene_set
-  transport_play transport_stop transport_pause transport_record
+  transport_play transport_stop transport_pause transport_record # pause aliases stop
   tap_tempo set_tempo tempo_inc tempo_dec
   send_cc send_cc_hold send_cc_cycle send_double_cc
   send_nrpn send_rpn

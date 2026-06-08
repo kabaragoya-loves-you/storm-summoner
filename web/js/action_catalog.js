@@ -42,7 +42,7 @@ window.ActionCatalog = (function () {
     control: ['set', 'hold', 'cycle'],
     scene: ['set', 'increment', 'decrement'],
     preset: ['set', 'hold', 'cycle', 'increment', 'decrement'],
-    transport: ['play', 'stop', 'pause', 'record'],
+    transport: ['play', 'stop', 'record'],
     touchwheel: ['hold', 'cycle'],
     lfo: ['start', 'stop', 'toggle', 'modify'],
     clock: ['toggle', 'hold', 'burst'],

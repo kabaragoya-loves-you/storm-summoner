@@ -650,10 +650,8 @@ static void transport_state_handler(const event_t* event, void* context) {
   ESP_LOGI(TAG, "Transport state change: %d (resume: %d)", state, is_resume);
   
   switch (state) {
-    case TRANSPORT_PLAYING:
-    case TRANSPORT_RECORDING: {
+    case TRANSPORT_PLAYING: {
       if (is_resume) {
-        // Resume: keep beat/tick counters and tempo lock state intact
         ESP_LOGI(TAG, "Resuming at beat %d", s_beat_counter);
       } else {
         // Fresh start: sync beat counter with transport's current position.
@@ -692,17 +690,8 @@ static void transport_state_handler(const event_t* event, void* context) {
     }
       
     case TRANSPORT_STOPPED:
-      // Don't stop tempo task - it respects clock_always_send setting
-      // Don't reset beat counter - MIDI Stop preserves position (Continue will resume here)
-      // Only tick counter resets for clean tick timing on next start
       s_tick_counter = 0;
-      // Unlock tempo for next playback
       s_tempo_locked = false;
-      break;
-      
-    case TRANSPORT_PAUSED:
-      // Don't stop tempo task
-      // Don't reset counters - maintain position
       break;
   }
 }
@@ -1163,6 +1152,34 @@ void tempo_resync_downbeat(void) {
 
   transport_reset_position();
   ESP_LOGI(TAG, "Downbeat resync: bar 1, beat 1 on next tick");
+}
+
+void tempo_sync_to_bar_beat(uint8_t bar, uint8_t beat) {
+  (void)bar;
+  if (!s_state_mutex) return;
+
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+
+  uint8_t numerator = s_time_signature.numerator;
+  if (numerator == 0) numerator = 4;
+  if (beat == 0) beat = 1;
+
+  ESP_LOGI(TAG, "Sync beat counter to beat %u (was %d)", (unsigned)beat, s_beat_counter);
+
+  s_beat_counter = (beat > 1) ? (beat - 1) : numerator;
+  s_tick_counter = 0;
+  s_midi_tick_last_quarter_time = 0;
+  s_midi_tick_ema_initialized = false;
+  s_midi_tick_last_update_time = 0;
+  s_tempo_lock_beat_count = 0;
+  s_tempo_locked = false;
+  s_tempo_locked_bpm = 0;
+  s_tempo_change_confirm = 0;
+  s_tempo_change_candidate = 0;
+  if (s_clock_source == CLOCK_SOURCE_INTERNAL)
+    s_clock_timing_reset_needed = true;
+
+  xSemaphoreGive(s_state_mutex);
 }
 
 void tempo_set_note_divider(tempo_note_divider_t divider) {

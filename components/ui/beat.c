@@ -255,13 +255,9 @@ static lv_color_t get_transport_color(void) {
   
   switch (g_transport_state) {
     case TRANSPORT_STOPPED:
-      return lv_color_make(0, 0, 0);        // Black
-    case TRANSPORT_PAUSED:
-      return lv_color_make(128, 128, 128);  // Grey
+      return lv_color_make(0, 0, 0);
     case TRANSPORT_PLAYING:
-      return lv_color_make(255, 255, 255);  // White
-    case TRANSPORT_RECORDING:
-      return lv_color_make(255, 0, 0);      // Red
+      return lv_color_make(255, 255, 255);
     default:
       return lv_color_make(255, 255, 255);
   }
@@ -378,9 +374,8 @@ static void beat_event_handler(const event_t* event, void* context) {
   if (use_transport) {
     // Only update state when transport is actively playing
     // This prevents state drift while stopped/paused
-    if (g_transport_state != TRANSPORT_PLAYING && g_transport_state != TRANSPORT_RECORDING) {
+    if (g_transport_state != TRANSPORT_PLAYING)
       return;
-    }
   }
   
   // Just update volatile state - LVGL updates happen in timer callback
@@ -407,9 +402,27 @@ static void tempo_changed_handler(const event_t* event, void* context) {
 
 static void transport_state_handler(const event_t* event, void* context) {
   if (!event || !g_module_active) return;
-  
+
   g_transport_state = (transport_state_t)event->data.transport.state;
   g_transport_dirty = true;
+
+  if (g_transport_state == TRANSPORT_STOPPED) {
+    g_current_beat = transport_get_current_beat();
+    if (g_current_beat == 0) g_current_beat = 1;
+    g_last_label_beat = 0;
+    g_beat_dirty = true;
+  }
+}
+
+static void transport_position_handler(const event_t* event, void* context) {
+  (void)context;
+  if (!event || !g_module_active) return;
+
+  g_current_beat = event->data.beat.beat_in_bar;
+  if (g_current_beat == 0) g_current_beat = 1;
+  g_bar_length = event->data.beat.bar_length;
+  g_last_label_beat = 0;
+  g_beat_dirty = true;
 }
 
 static void scene_changed_handler(const event_t* event, void* context) {
@@ -459,27 +472,15 @@ static void interp_timer_cb(lv_timer_t *timer) {
     
     switch (g_transport_state) {
       case TRANSPORT_PLAYING:
-      case TRANSPORT_RECORDING:
-        // Reset timing to start clean - prevents "catch up" animation
         g_last_beat_time_ms = esp_timer_get_time() / 1000;
         break;
-        
+
       case TRANSPORT_STOPPED:
-        // Reset animation to frame 0, but keep current beat position
-        // (MIDI Stop preserves playhead position, only Start resets)
-        if (g_body_art && lv_vector_art_is_animated(g_body_art)) {
+        if (g_body_art && lv_vector_art_is_animated(g_body_art))
           lv_vector_art_set_frame(g_body_art, 0);
-        }
-        if (g_tail_art && lv_vector_art_is_animated(g_tail_art)) {
+        if (g_tail_art && lv_vector_art_is_animated(g_tail_art))
           lv_vector_art_set_frame(g_tail_art, 0);
-        }
-        // Don't reset g_current_beat - it preserves the stopped position
         update_gradient(0.0f, false);
-        update_tempo_labels();
-        return; // Don't do further updates when stopped
-        
-      case TRANSPORT_PAUSED:
-        // Just update label, keep current visual state
         update_tempo_labels();
         return;
     }
@@ -489,8 +490,8 @@ static void interp_timer_cb(lv_timer_t *timer) {
   
   // Check if we should animate
   bool should_animate = use_transport
-    ? (g_transport_state == TRANSPORT_PLAYING || g_transport_state == TRANSPORT_RECORDING)
-    : true; // Always animate when use_transport is false
+    ? (g_transport_state == TRANSPORT_PLAYING)
+    : true;
   
   if (!should_animate) {
     // Still update label if dirty
@@ -704,6 +705,7 @@ static void beat_draw_deferred_cb(lv_timer_t *timer) {
     "ui.beat_module");
   event_bus_subscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler, NULL);
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
+  event_bus_subscribe(EVENT_TRANSPORT_POSITION_CHANGED, transport_position_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_CHANGED, scene_changed_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_REORDERED, scene_reordered_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_LIST_CHANGED, scene_list_changed_handler, NULL);
@@ -728,6 +730,7 @@ static void beat_teardown(void) {
   event_bus_unsubscribe(EVENT_BEAT, beat_event_handler);
   event_bus_unsubscribe(EVENT_TEMPO_CHANGED, tempo_changed_handler);
   event_bus_unsubscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler);
+  event_bus_unsubscribe(EVENT_TRANSPORT_POSITION_CHANGED, transport_position_handler);
   event_bus_unsubscribe(EVENT_SCENE_CHANGED, scene_changed_handler);
   event_bus_unsubscribe(EVENT_SCENE_REORDERED, scene_reordered_handler);
   event_bus_unsubscribe(EVENT_SCENE_LIST_CHANGED, scene_list_changed_handler);
