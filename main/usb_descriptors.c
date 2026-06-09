@@ -1,5 +1,6 @@
 #include "tusb.h"
 #include "esp_log.h"
+#include "usb_cdc_update.h"
 #include "version.h"
 #include <string.h>
 
@@ -148,7 +149,7 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
   (void) itf;
   (void) dtr;
   (void) rts;
-  // We don't need to do anything with line state for our use case
+  usb_cdc_notify_connections();
 }
 
 

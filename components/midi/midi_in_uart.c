@@ -24,10 +24,11 @@
 #define UART_READ_TIMEOUT  20  // in milliseconds
 
 static bool s_initialized = false;
+static bool s_cable_connected = false;
 
 static void midi_in_uart_task(void *pvParameters) {
   uint8_t rx_buf[RX_BUF_SIZE];
-  bool was_connected = false;
+  bool was_connected = s_cable_connected;
   uint8_t stable_count = 0;
   const uint8_t DEBOUNCE_COUNT = 3;  // Require 3 consecutive stable readings
   
@@ -47,13 +48,15 @@ static void midi_in_uart_task(void *pvParameters) {
       if (stable_count >= DEBOUNCE_COUNT) {
         was_connected = current_reading;
         stable_count = 0;
-        
+        s_cable_connected = was_connected;
+
         // Log connection state changes
         if (was_connected) {
           ESP_LOGI(TAG, "MIDI IN cable connected");
         } else {
           ESP_LOGI(TAG, "MIDI IN cable disconnected");
         }
+        event_bus_post_connections_changed();
       }
     } else {
       stable_count = 0;
@@ -93,18 +96,24 @@ esp_err_t midi_in_uart_init(void) {
   };
   gpio_config(&io_conf);
 
-  // Create UART reading task
-  xTaskCreate(midi_in_uart_task, "midi_in_uart", 4096, NULL, TASK_PRIORITY_MIDI_IN, NULL);
-  
-  // Check initial cable state
   int gpio_level = gpio_get_level(PIN_MIDI_SW);
-  bool cable_connected = (gpio_level == 1);  // HIGH = connected
-  ESP_LOGI(TAG, "UART MIDI IN initialized - Cable: %s (GPIO %d = %d)", 
-    cable_connected ? "CONNECTED" : "DISCONNECTED", 
+  bool cable_connected = (gpio_level == 1);
+  if (!input_get_cable_detection_enabled()) cable_connected = true;
+  s_cable_connected = cable_connected;
+
+  xTaskCreate(midi_in_uart_task, "midi_in_uart", 4096, NULL, TASK_PRIORITY_MIDI_IN, NULL);
+
+  ESP_LOGI(TAG, "UART MIDI IN initialized - Cable: %s (GPIO %d = %d)",
+    cable_connected ? "CONNECTED" : "DISCONNECTED",
     PIN_MIDI_SW, gpio_level);
 
   s_initialized = true;
   return ESP_OK;
+}
+
+bool midi_in_uart_is_cable_connected(void) {
+  if (!input_get_cable_detection_enabled()) return true;
+  return s_cable_connected;
 }
 
 void midi_in_uart_deinit(void) {

@@ -108,27 +108,58 @@ application.register(
     }
 
     onOpenScene (e) {
-      const { position, mode } = e.detail || {}
-      if (position === undefined || position === null) return
-      if (this.dirty && position !== this.editPosition) {
-        void this.confirmDiscardChanges('Discard unsaved changes?').then(ok => {
-          if (!ok) return
-          this.openSceneAt(position, mode)
-        })
+      const { position, mode, ready } = e.detail || {}
+      if (position === undefined || position === null) {
+        if (ready) ready()
         return
       }
-      this.openSceneAt(position, mode)
+      void (async () => {
+        try {
+          if (this.dirty && position !== this.editPosition) {
+            const ok = await this.confirmDiscardChanges('Discard unsaved changes?')
+            if (!ok) return
+          }
+          await this.openSceneAt(position, mode)
+        } finally {
+          if (ready) ready()
+        }
+      })()
     }
 
-    openSceneAt (position, mode) {
+    async openSceneAt (position, mode) {
       this.editPosition = position
       if (mode === 'edit') {
         this.showEditMode()
       } else if (mode === 'print') {
-        void this.openForPrint()
+        await this.openForPrint()
       } else {
-        void this.showViewMode()
+        await this.showViewMode()
       }
+    }
+
+    applyInspectResponse (response) {
+      if (!response || response.startsWith('ERROR:')) {
+        if (!response) {
+          console.error('SCENE_INSPECT: no serial data received (device may have sent a response)')
+        }
+        this.renderError(response || 'No response from device')
+        return false
+      }
+
+      let data
+      try {
+        data = JSON.parse(response)
+      } catch (err) {
+        console.error('Scene inspect JSON parse error:', err, response.slice(0, 120))
+        this.renderError('Invalid inspect response from device')
+        return false
+      }
+      if (typeof data.text !== 'string') {
+        this.renderError('Invalid inspect response from device')
+        return false
+      }
+      this.renderInspect(data.text || '', !!data.truncated)
+      return true
     }
 
     async showViewMode () {
@@ -190,17 +221,18 @@ application.register(
         this.renderDisconnected()
         return
       }
-      void this.fetchDeviceProgramming()
-      if (this.editPosition !== null) {
-        if (this.editing) this.loadSceneForEdit()
-        else this.fetchInspectForPosition(this.editPosition)
+      if (this.editPosition !== null && this.editing) {
+        this.loadSceneForEdit()
       }
     }
 
     onModeChanged ({ mode }) {
       // ASSETS/CONFIG modes don't run a background CDC reader, so EVT:programming
       // lines can be missed while those tabs hold the port. Re-sync on exit.
-      if (mode === null && this.connection.isConnected) void this.fetchDeviceProgramming()
+      if (mode === null && this.connection.isConnected &&
+          !this.connection.isSerialBusy) {
+        void this.fetchDeviceProgramming()
+      }
     }
 
     onCdcNotify (e) {
@@ -424,6 +456,130 @@ application.register(
       DeviceControls.seedRandomizeAction(this, actionPath)
     }
 
+    seedPianoPedalAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'piano_pedal') return
+      action.cc = ActionCatalog.resolvePianoPedalCc(action.cc)
+    }
+
+    seedTouchwheelAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'touchwheel') return
+      const variant = action.variant || 'hold'
+      const clampMode = (n) => {
+        const x = Number(n)
+        if (Number.isNaN(x) || x < 0 || x > 12) return 0
+        return Math.round(x)
+      }
+
+      ActionCatalog.clearRepeatFields(action)
+      delete action.timing
+      delete action.timing_beat
+      delete action.raise_flag
+
+      if (variant === 'hold') {
+        delete action.num_modes
+        delete action.modes
+        action.mode = clampMode(action.mode ?? 0)
+        if (action.release_to_original) {
+          delete action.mode2
+        } else {
+          delete action.release_to_original
+          action.mode2 = clampMode(action.mode2 ?? 0)
+        }
+      } else if (variant === 'cycle') {
+        delete action.mode
+        delete action.mode2
+        delete action.release_to_original
+        const cur = Array.isArray(action.modes) ? action.modes : []
+        const stepCount = Math.max(2, Math.min(8, Math.max(cur.length, action.num_modes || 2)))
+        const steps = []
+        for (let i = 0; i < stepCount; i++) steps.push(clampMode(cur[i]))
+        action.modes = steps
+        action.num_modes = steps.length
+      }
+    }
+
+    seedLfoAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'lfo') return
+      const v = action.variant || 'modify'
+      if (action.slot == null) action.slot = 1
+      if (v === 'modify') ActionCatalog.seedLfoModifyFields(action)
+      else ActionCatalog.clearLfoModifyFields(action)
+      if (v === 'start' || v === 'stop') ActionCatalog.clearRepeatFields(action)
+    }
+
+    seedConsolidatedAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action?.type) return
+      const device = this.deviceDefinition
+      const t = action.type
+      const v = action.variant || ActionCatalog.defaultVariant(t)
+      const firstCc = () => DeviceControls.firstParameterCc(device)
+
+      if (t === 'clock') {
+        if (v === 'burst') {
+          if (action.speed_percent == null) action.speed_percent = 100
+        } else if (action.start_enabled == null) {
+          action.start_enabled = false
+        }
+      } else if (t === 'cut') {
+        if (!action.cut_mode) action.cut_mode = 'both'
+      } else if (t === 'ui') {
+        if (v === 'set') {
+          if (action.module == null) action.module = 0
+        } else if (v === 'hold') {
+          if (action.module == null) action.module = 0
+          if (action.module2 == null) action.module2 = 0
+        } else if (v === 'cycle') {
+          const n = ActionCatalog.uiStepCount(action)
+          const steps = Array.isArray(action.modules) ? action.modules.slice() : []
+          while (steps.length < n) steps.push(0)
+          action.modules = steps.slice(0, n)
+          action.num_modules = n
+        }
+      } else if (t === 'param') {
+        const cc = firstCc()
+        if (v === 'hold') {
+          if (action.param == null) action.param = cc
+          if (action.param2 == null) action.param2 = cc
+        } else if (v === 'cycle') {
+          const n = ActionCatalog.paramStepCount(action)
+          const steps = Array.isArray(action.params) ? action.params.slice() : []
+          while (steps.length < n) steps.push(cc)
+          action.params = steps.slice(0, n)
+          action.num_params = n
+        }
+      } else if (t === 'rtg' || t === 'sample_hold') {
+        if (v === 'step' && !action.step_target) {
+          action.step_target = t === 'sample_hold' ? 'sh' : 'rtg'
+        }
+        if (v === 'modify') ActionCatalog.seedEngineModifyFields(action)
+        else ActionCatalog.clearEngineModifyFields(action)
+      } else if (t === 'punch_in') {
+        const cc = firstCc()
+        if (action.start_cc == null) action.start_cc = cc
+        if (action.start_value == null) action.start_value = 127
+        if (action.finish_cc == null) action.finish_cc = cc
+        if (action.finish_value == null) action.finish_value = 0
+        if (!action.duration) action.duration = '1_bar'
+      } else if (t === 'flag_ceremony') {
+        const cc = firstCc()
+        if (action.flag_up_cc == null) action.flag_up_cc = cc
+        if (action.flag_up_value == null) action.flag_up_value = 127
+        if (action.flag_down_cc == null) action.flag_down_cc = cc
+        if (action.flag_down_value == null) action.flag_down_value = 0
+      } else if (t === 'boomerang') {
+        if (!action.output_type) action.output_type = 'cc'
+        if (!action.target_mode) action.target_mode = 'explicit'
+        if (!action.start_mode) action.start_mode = 'current'
+        if (action.attack_mode == null) action.attack_mode = 'instant'
+        if (action.sustain_mode == null) action.sustain_mode = 'instant'
+        if (action.release_mode == null) action.release_mode = 'instant'
+      }
+    }
+
     seedTempoAction (actionPath) {
       const action = this.getAtPath(actionPath)
       if (!action || action.type !== 'tempo') return
@@ -475,6 +631,9 @@ application.register(
       DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
       DeviceControls.normalizeRandomizeActionsInModel(this.deviceDefinition, model)
       ActionCatalog.normalizeTempoActionsInModel(model)
+      ActionCatalog.normalizeTouchwheelActionsInModel(model)
+      ActionCatalog.normalizeLfoActionsInModel(model)
+      ActionCatalog.normalizeSimpleActionsInModel(model)
       ActionCatalog.normalizeRepeatActionsInModel(model)
       if (model.device_id === '' || model.device_id == null) delete model.device_id
     }
@@ -834,7 +993,7 @@ application.register(
       if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') return true
       if (/\.values(\.\d+)+$/.test(path)) return true
       if (/\.presets(\.\d+)+$/.test(path)) return true
-      return /\.(note|velocity|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps)(\.\d+)?$/.test(path)
+      return /\.(note|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
     }
 
     patchSelect (e) {
@@ -855,11 +1014,104 @@ application.register(
         return
       }
 
+      if (val === '__original__' && path.endsWith('.mode2')) {
+        const aPath = path.slice(0, -'.mode2'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'touchwheel' && (action.variant || 'hold') === 'hold') {
+          action.release_to_original = true
+          delete action.mode2
+          this.markDirty()
+          this.renderEditor()
+          return
+        }
+      }
+
       if (path.endsWith('.release_preset')) {
         const aPath = path.slice(0, -'.release_preset'.length)
         const action = this.getAtPath(aPath)
         if (action?.type === 'preset' && action?.variant === 'hold') {
           action.release_to_original = false
+        }
+      }
+
+      if (path.endsWith('.mode2')) {
+        const aPath = path.slice(0, -'.mode2'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'touchwheel' && (action.variant || 'hold') === 'hold') {
+          action.release_to_original = false
+        }
+      }
+
+      if (path.endsWith('.num_modes')) {
+        const aPath = path.slice(0, -'.num_modes'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'touchwheel' && action.variant === 'cycle') {
+          const count = Math.max(2, Math.min(8, Number(val)))
+          const modes = this.asArray(action.modes)
+          while (modes.length < count) modes.push(0)
+          action.modes = modes.slice(0, count)
+          action.num_modes = count
+          this.markDirty()
+          this.renderEditor()
+          return
+        }
+      }
+
+      if (path.endsWith('.num_modules')) {
+        const aPath = path.slice(0, -'.num_modules'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'ui' && action.variant === 'cycle') {
+          const count = Math.max(2, Math.min(8, Number(val)))
+          const mods = this.asArray(action.modules)
+          while (mods.length < count) mods.push(0)
+          action.modules = mods.slice(0, count)
+          action.num_modules = count
+          this.markDirty()
+          this.renderEditor()
+          return
+        }
+      }
+
+      if (path.endsWith('.num_params')) {
+        const aPath = path.slice(0, -'.num_params'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'param' && action.variant === 'cycle') {
+          const count = Math.max(2, Math.min(8, Number(val)))
+          const cc = DeviceControls.firstParameterCc(this.deviceDefinition)
+          const params = this.asArray(action.params)
+          while (params.length < count) params.push(cc)
+          action.params = params.slice(0, count)
+          action.num_params = count
+          this.markDirty()
+          this.renderEditor()
+          return
+        }
+      }
+
+      if (path.endsWith('.start_enabled')) {
+        this.setAtPath(path, val === 'enable' || val === 'true' || val === true)
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      const ccValueSync = path.match(/^(.*)\.(start_cc|finish_cc|flag_up_cc|flag_down_cc)$/)
+      if (ccValueSync) {
+        const actionPath = ccValueSync[1]
+        const ccKey = ccValueSync[2]
+        const valKey = ccKey.replace('_cc', '_value')
+        const action = this.getAtPath(actionPath)
+        if (action && (action.type === 'punch_in' || action.type === 'flag_ceremony')) {
+          const cc = Number(val)
+          const curVal = action[valKey]
+          this.setAtPath(path, cc)
+          this.setAtPath(
+            `${actionPath}.${valKey}`,
+            DeviceControls.resolveParameterValue(this.deviceDefinition, cc, curVal)
+          )
+          this.markDirty()
+          this.renderEditor()
+          return
         }
       }
 
@@ -906,8 +1158,14 @@ application.register(
         if (val === 'confirm_pending') this.seedConfirmPendingAction(aPath)
         else if (val === 'note') this.seedNoteAction(aPath)
         else if (val === 'randomize') this.seedRandomizeAction(aPath)
+        else if (val === 'piano_pedal') this.seedPianoPedalAction(aPath)
+        else if (val === 'touchwheel') this.seedTouchwheelAction(aPath)
+        else if (val === 'lfo') this.seedLfoAction(aPath)
         else if (val === 'tempo') this.seedTempoAction(aPath)
-        else {
+        else if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold', 'punch_in',
+          'flag_ceremony', 'boomerang'].includes(val)) {
+          this.seedConsolidatedAction(aPath)
+        } else {
           const updated = this.getAtPath(aPath)
           if (updated && !ActionCatalog.supportsRepeat(updated)) {
             ActionCatalog.clearRepeatFields(updated)
@@ -930,8 +1188,18 @@ application.register(
         if (action?.type === 'tempo') {
           this.seedTempoAction(aPath)
         }
+        if (action?.type === 'touchwheel') {
+          this.seedTouchwheelAction(aPath)
+        }
+        if (action?.type === 'lfo') {
+          this.seedLfoAction(aPath)
+        }
+        if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold'].includes(action?.type)) {
+          this.seedConsolidatedAction(aPath)
+        }
       } else {
         this.syncControlValueForCc(path, val)
+        this.syncCcValueForAction(path, val)
       }
       this.markDirty()
       this.renderEditor()
@@ -972,6 +1240,27 @@ application.register(
         const rPath = idx != null ? `${actionPath}.value2.${idx}` : `${actionPath}.value2`
         const curRel = idx != null ? action.value2?.[idx] : action.value2
         this.setAtPath(rPath, DeviceControls.resolveParameterValue(device, cc, curRel))
+      }
+    }
+
+    syncCcValueForAction (path, val) {
+      const boomMatch = path.match(/^(.*)\.cc_number$/)
+      if (!boomMatch) return
+      const action = this.getAtPath(boomMatch[1])
+      if (action?.type !== 'boomerang') return
+      const cc = Number(val)
+      const device = this.deviceDefinition
+      if (action.target_value != null) {
+        this.setAtPath(
+          `${boomMatch[1]}.target_value`,
+          DeviceControls.resolveParameterValue(device, cc, action.target_value)
+        )
+      }
+      if (action.start_mode === 'explicit' && action.start_value != null) {
+        this.setAtPath(
+          `${boomMatch[1]}.start_value`,
+          DeviceControls.resolveParameterValue(device, cc, action.start_value)
+        )
       }
     }
 
@@ -1395,14 +1684,25 @@ application.register(
     }
 
     async ensureDeviceIdleInTask () {
-      await this.connection.sendRaw('EXIT\n')
-      await this.sleep(200)
-      let line = await this.connection.readLine(2000)
-      while (line && line.startsWith('EVT:')) {
-        this.connection.dispatchCdcNotify(line)
-        line = await this.connection.readLine(500)
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await this.connection.sendRaw('EXIT\n')
+        await this.sleep(100)
+        const deadline = Date.now() + 2000
+        while (Date.now() < deadline) {
+          const line = await this.connection.readLine(400)
+          if (!line) break
+          if (line === 'SCENES_STOPPED' || line === 'CONFIG_STOPPED' ||
+              line === 'SETTINGS_STOPPED' || line === 'PEDALS_STOPPED') break
+          if (line.startsWith('EVT:')) {
+            this.connection.dispatchCdcNotify(line)
+            continue
+          }
+        }
+        await this.connection.drainInput()
+        if (this.connection.currentMode === null) break
+        await this.connection._exitModeImpl()
+        await this.sleep(150)
       }
-      await this.connection.drainInput()
     }
 
     async fetchConfigContextInTask () {
@@ -1754,33 +2054,35 @@ application.register(
       this.renderLoading()
 
       try {
-        const response = await this.connection.runSerialTask(async () => {
+        const fetchImpl = async () => {
           if (gen !== this._loadGeneration) return null
-          if (this.connection.currentMode) {
-            await this.connection._exitModeImpl()
-            await this.sleep(300)
+          const wasScenes = this.connection.currentMode === 'SCENES'
+          if (this.connection.currentMode === 'SCENES') {
+            this.connection._stopModeNotifyLoop()
+            await this.connection._suspendModeNotify()
+            this.connection.mode = null
+            this.connection.emit('mode:changed', { mode: null })
           }
-          await this.ensureDeviceIdleInTask()
           if (gen !== this._loadGeneration) return null
-          return this.connection._sendCommandImpl(
+          return this.connection._sendCommandViaPump(
             `SCENE_INSPECT ${position}`,
             60000,
-            (data) => typeof data.text === 'string'
+            (data) => typeof data.text === 'string',
+            { preludeExit: wasScenes }
           )
-        })
+        }
+        const response = this.connection.isSerialBusy
+          ? await fetchImpl()
+          : await this.connection.runSerialTask(fetchImpl)
 
         if (gen !== this._loadGeneration) return
-        if (!response || response.startsWith('ERROR:')) {
-          this.renderError(response || 'No response from device')
-          return
-        }
-
-        const data = JSON.parse(response)
-        this.renderInspect(data.text || '', !!data.truncated)
+        this.applyInspectResponse(response)
       } catch (err) {
         if (gen !== this._loadGeneration) return
         console.error('Scene inspect fetch error:', err)
         this.renderError('Failed to load scene inspect text')
+      } finally {
+        if (gen === this._loadGeneration) void this.fetchDeviceProgramming()
       }
     }
   }

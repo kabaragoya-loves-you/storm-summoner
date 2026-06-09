@@ -232,6 +232,21 @@ esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv) {
   return ESP_OK;
 }
 
+bool adc_manager_channel_is_registered(adc_channel_t channel) {
+  if (!s_initialized) return false;
+
+  bool found = false;
+  xSemaphoreTake(s_mutex, portMAX_DELAY);
+  for (int i = 0; i < s_channel_count; i++) {
+    if (s_channels[i].channel == channel && s_channels[i].registered) {
+      found = true;
+      break;
+    }
+  }
+  xSemaphoreGive(s_mutex);
+  return found;
+}
+
 bool adc_manager_is_initialized(void) {
   return s_initialized;
 }

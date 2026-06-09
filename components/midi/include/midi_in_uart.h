@@ -26,6 +26,12 @@ void midi_in_uart_deinit(void);
  */
 bool midi_in_uart_is_initialized(void);
 
+/**
+ * @brief Check if a cable is inserted in the MIDI IN jack
+ * @return true when cable detection reads connected (or detection is disabled)
+ */
+bool midi_in_uart_is_cable_connected(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -129,11 +129,25 @@ application.register(
       this.activating = true
       try {
         const modeGranted = await this.connection.requestMode('DISPLAY')
-        if (!modeGranted) return
+        if (!modeGranted) {
+          await this.connection.exitMode()
+          return
+        }
 
-        await this.startStreamWithRetry()
+        if (this.connection.port?.readable?.locked) {
+          const unlocked = await this.waitForStreamUnlock(2000)
+          if (!unlocked) {
+            this.log('Stream still locked, cannot start display', 'error')
+            await this.connection.exitMode()
+            return
+          }
+        }
+
+        const started = await this.startStreamWithRetry()
+        if (!started) await this.connection.exitMode()
       } catch (err) {
         this.log(`Failed to activate: ${err.message}`, 'error')
+        await this.connection.exitMode()
       } finally {
         this.activating = false
       }
@@ -147,7 +161,7 @@ application.register(
         }
 
         const success = await this.startStream()
-        if (success) return
+        if (success) return true
 
         // Clean up before retry
         this.stopStream()
@@ -169,6 +183,7 @@ application.register(
         'Failed to start display stream after multiple attempts',
         'error'
       )
+      return false
     }
 
     async waitForStreamUnlock (timeout = 2000) {

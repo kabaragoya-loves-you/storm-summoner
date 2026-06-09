@@ -98,6 +98,7 @@ static float s_offset = 0.0f;
 static float s_scale = 1.0f;
 static uint8_t s_deadzone = DEFAULT_DEADZONE;
 static bool s_logging_enabled = false;  // Control periodic value logging
+static bool s_initialized = false;
 static bool s_filter_initialized = false;
 static int16_t s_median_buffer[MEDIAN_WINDOW] = {0};
 static uint8_t s_median_index = 0;
@@ -145,7 +146,10 @@ static int16_t oversample_read(void);
 
 bool cv_is_cable_connected(void) {
   static bool last_state = true;  // Remember last state
-  
+
+  if (!s_initialized || !adc_manager_channel_is_registered(REF_ADC_CHANNEL))
+    return last_state;
+
   // Read switch voltage
   int sw_raw = 0;
   esp_err_t ret = adc_manager_read(CV_SW_ADC_CHANNEL, &sw_raw);
@@ -299,7 +303,8 @@ esp_err_t cv_init(bool enable_logging) {
   }
   
   ESP_LOGI(TAG, "CV initialized - Mode: %d, Range: %d, Offset: %.3f, Scale: %.3f", s_mode, s_range, s_offset, s_scale);
-  
+
+  s_initialized = true;
   return ESP_OK;
 }
 
@@ -470,6 +475,7 @@ static void cv_task(void *pvParameters) {
           .timestamp = event_bus_get_current_timestamp()
         };
         event_bus_post(&disc_event);
+        event_bus_post_connections_changed();
         ESP_LOGI(TAG, "CV cable disconnected - switch set to default channel 0");
       } else {
         // Cable connected - set appropriate switch channel
@@ -494,8 +500,16 @@ static void cv_task(void *pvParameters) {
         // Notify input manager
         extern void input_manager_cable_changed(bool connected);
         input_manager_cable_changed(true);
+
+        event_t conn_event = {
+          .type = EVENT_CV_CONNECTED,
+          .priority = EVENT_PRIORITY_NORMAL,
+          .timestamp = event_bus_get_current_timestamp()
+        };
+        event_bus_post(&conn_event);
+        event_bus_post_connections_changed();
         
-        ESP_LOGI(TAG, "CV cable connected - switch channel %d for %s (primed at %d)", 
+        ESP_LOGI(TAG, "CV cable connected - switch channel %d for %s (primed at %d)",
           channel, cv_range_to_string(s_range), reconnect_reading);
       }
     }

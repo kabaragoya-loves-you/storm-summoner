@@ -14,6 +14,44 @@ window.ActionCatalog = (function () {
     { v: 40, l: 'Piano' }
   ]
 
+  const PIANO_PEDAL_OPTIONS = [
+    { v: 64, l: 'Damper' },
+    { v: 66, l: 'Sostenuto' },
+    { v: 67, l: 'Soft' },
+    { v: 68, l: 'Legato' },
+    { v: 69, l: 'Hold 2' }
+  ]
+
+  const LFO_ORIG_U8 = 255
+  const LFO_RAND_U8 = 254
+  const LFO_ORIG_U16 = 65535
+  const LFO_RAND_U16 = 65534
+  const LFO_ORIG_STEPS = 0
+  const LFO_RAND_STEPS = 254
+  const LFO_RESOLUTION_MANUAL = 4
+
+  const LFO_TARGET_OPTIONS = [
+    { v: 1, l: 'LFO1' },
+    { v: 2, l: 'LFO2' },
+    { v: 3, l: 'Both' }
+  ]
+
+  const TOUCHWHEEL_MODES = [
+    { v: 0, l: 'Pads' },
+    { v: 1, l: 'Control Change' },
+    { v: 2, l: 'Program Change' },
+    { v: 3, l: 'Tempo' },
+    { v: 4, l: 'Pitch Bend' },
+    { v: 5, l: 'After Touch' },
+    { v: 6, l: 'Notes' },
+    { v: 7, l: 'Double CC' },
+    { v: 8, l: 'Velocity' },
+    { v: 9, l: 'LFO Rate' },
+    { v: 10, l: 'LFO Depth' },
+    { v: 11, l: 'RTG Rate' },
+    { v: 12, l: 'Tempo Nudge' }
+  ]
+
   const ALL_TYPES = [
     'none', 'control', 'preset', 'scene', 'confirm_pending', 'transport', 'tempo',
     'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'clock', 'cut', 'ui',
@@ -153,6 +191,513 @@ window.ActionCatalog = (function () {
       opts.push({ v: cur, l: String(cur) })
     }
     return opts
+  }
+
+  function pianoPedalOptions (current) {
+    const opts = PIANO_PEDAL_OPTIONS.slice()
+    const cur = Number(current)
+    if (!Number.isNaN(cur) && !opts.some(o => o.v === cur)) {
+      opts.push({ v: cur, l: `CC ${cur}` })
+    }
+    return opts
+  }
+
+  function resolvePianoPedalCc (current) {
+    const cur = Number(current)
+    if (!Number.isNaN(cur) && PIANO_PEDAL_OPTIONS.some(o => o.v === cur)) return cur
+    return 64
+  }
+
+  function withStaleOption (opts, current, label) {
+    const cur = Number(current)
+    if (Number.isNaN(cur) || opts.some(o => Number(o.v) === cur)) return opts
+    return opts.concat([{ v: cur, l: label ?? String(cur) }])
+  }
+
+  function lfoTargetOptions (current) {
+    const cur = Number(current)
+    if (!Number.isNaN(cur) && !LFO_TARGET_OPTIONS.some(o => o.v === cur)) {
+      return LFO_TARGET_OPTIONS.concat([{ v: cur, l: `Target ${cur}` }])
+    }
+    return LFO_TARGET_OPTIONS.slice()
+  }
+
+  function lfoModifyU8Options (presets, current) {
+    return withStaleOption(
+      [{ v: LFO_ORIG_U8, l: 'Original' }, { v: LFO_RAND_U8, l: 'Random' }, ...presets],
+      current
+    )
+  }
+
+  function lfoModifyU16Options (presets, current) {
+    return withStaleOption(
+      [{ v: LFO_ORIG_U16, l: 'Original' }, { v: LFO_RAND_U16, l: 'Random' }, ...presets],
+      current
+    )
+  }
+
+  function lfoModifyWaveformOptions (current) {
+    return lfoModifyU8Options([
+      { v: 0, l: 'Sine' },
+      { v: 1, l: 'Triangle' },
+      { v: 2, l: 'Square' },
+      { v: 3, l: 'Saw Up' },
+      { v: 4, l: 'Saw Down' },
+      { v: 5, l: 'Sample & Hold' }
+    ], current)
+  }
+
+  function lfoModifyRateModeOptions (current) {
+    return lfoModifyU8Options([
+      { v: 0, l: 'Free' },
+      { v: 1, l: 'Tempo' },
+      { v: 2, l: 'Touchwheel' },
+      { v: 3, l: 'Expression' },
+      { v: 4, l: 'CV' },
+      { v: 5, l: 'ALS' },
+      { v: 6, l: 'Proximity' }
+    ], current)
+  }
+
+  function lfoModifyRateHzOptions (current) {
+    const rates = [5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000]
+    const presets = rates.map(v => ({
+      v,
+      l: `${Math.floor(v / 100)}.${String(v % 100).padStart(2, '0')} Hz`
+    }))
+    return lfoModifyU16Options(presets, current)
+  }
+
+  function lfoModifyDivisionOptions (current) {
+    return lfoModifyU8Options([
+      { v: 0, l: '16 Bars' },
+      { v: 1, l: '12 Bars' },
+      { v: 2, l: '8 Bars' },
+      { v: 3, l: '4 Bars' },
+      { v: 4, l: '2 Bars' },
+      { v: 5, l: '1 Bar' },
+      { v: 6, l: '1/2' },
+      { v: 7, l: '1/4' },
+      { v: 8, l: '1/8' },
+      { v: 9, l: '1/16' },
+      { v: 10, l: '1/32' }
+    ], current)
+  }
+
+  function lfoModifyPolarityOptions (current) {
+    return lfoModifyU8Options([
+      { v: 0, l: 'Unipolar' },
+      { v: 1, l: 'Bipolar' },
+      { v: 2, l: 'Inverted' }
+    ], current)
+  }
+
+  function lfoModifyFloorCeilingOptions (current) {
+    const vals = [0, 10, 20, 30, 40, 50, 60, 64, 70, 80, 90, 100, 110, 120, 127]
+    return lfoModifyU8Options(vals.map(v => ({ v, l: String(v) })), current)
+  }
+
+  function lfoModifyResolutionOptions (current) {
+    return lfoModifyU8Options([
+      { v: 0, l: 'Auto' },
+      { v: 1, l: 'Coarse' },
+      { v: 2, l: 'Medium' },
+      { v: 3, l: 'Fine' },
+      { v: 4, l: 'Manual' }
+    ], current)
+  }
+
+  function lfoModifyManualStepsOptions (current) {
+    const opts = [
+      { v: LFO_ORIG_STEPS, l: 'Original' },
+      { v: LFO_RAND_STEPS, l: 'Random' },
+      { v: 16, l: '16' },
+      { v: 32, l: '32' },
+      { v: 64, l: '64' },
+      { v: 128, l: '128' }
+    ]
+    return withStaleOption(opts, current)
+  }
+
+  function clearLfoModifyFields (action) {
+    delete action.waveform
+    delete action.rate_mode
+    delete action.rate_hz_x100
+    delete action.division
+    delete action.polarity
+    delete action.floor
+    delete action.ceiling
+    delete action.resolution_mode
+    delete action.manual_steps
+  }
+
+  function seedLfoModifyFields (action) {
+    if (action.waveform == null) action.waveform = LFO_ORIG_U8
+    if (action.rate_mode == null) action.rate_mode = LFO_ORIG_U8
+    if (action.rate_hz_x100 == null) action.rate_hz_x100 = LFO_ORIG_U16
+    if (action.division == null) action.division = LFO_ORIG_U8
+    if (action.polarity == null) action.polarity = LFO_ORIG_U8
+    if (action.floor == null) action.floor = LFO_ORIG_U8
+    if (action.ceiling == null) action.ceiling = LFO_ORIG_U8
+    if (action.resolution_mode == null) action.resolution_mode = LFO_ORIG_U8
+    if (action.manual_steps == null) action.manual_steps = LFO_ORIG_STEPS
+  }
+
+  function normalizeLfoAction (action) {
+    if (!action || action.type !== 'lfo') return false
+    const before = JSON.stringify(action)
+    const v = action.variant || defaultVariant('lfo')
+    const slot = Number(action.slot)
+    action.slot = (slot === 2 || slot === 3) ? slot : 1
+
+    if (v === 'modify') {
+      seedLfoModifyFields(action)
+    } else {
+      clearLfoModifyFields(action)
+      if (v === 'start' || v === 'stop') clearRepeatFields(action)
+    }
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeLfoActionsInModel (model) {
+    let changed = false
+    forEachAction(model, action => {
+      if (normalizeLfoAction(action)) changed = true
+    })
+    return changed
+  }
+
+  const ENGINE_MODIFY_RATES_X100 = [
+    50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500,
+    600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500
+  ]
+
+  const ENGINE_MODIFY_SYNC_MULTS = [
+    { v: 125, l: '1/8 (0.125x)' },
+    { v: 167, l: '1/6 (0.167x)' },
+    { v: 250, l: '1/4 (0.25x)' },
+    { v: 333, l: '1/3 (0.333x)' },
+    { v: 500, l: '1/2 (0.5x)' },
+    { v: 667, l: '2/3 (0.667x)' },
+    { v: 750, l: '3/4 (0.75x)' },
+    { v: 1000, l: '1x' },
+    { v: 1500, l: '3/2 (1.5x)' },
+    { v: 2000, l: '2x' },
+    { v: 3000, l: '3x' },
+    { v: 4000, l: '4x' },
+    { v: 6000, l: '6x' },
+    { v: 8000, l: '8x' }
+  ]
+
+  const CLOCK_BURST_SPEEDS = [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300]
+
+  const UI_MODULE_OPTIONS = [
+    { v: 0, l: 'Beat Grid' },
+    { v: 1, l: 'Khyron' },
+    { v: 2, l: 'Space' },
+    { v: 3, l: 'Summoner' },
+    { v: 4, l: 'Pixels' }
+  ]
+
+  const CUT_MODE_OPTIONS = [
+    { v: 'local', l: 'Local Only' },
+    { v: 'passthrough', l: 'Passthrough' },
+    { v: 'both', l: 'Both' }
+  ]
+
+  const STEP_TARGET_OPTIONS = [
+    { v: 'rtg', l: 'RTG' },
+    { v: 'sh', l: 'S+H' }
+  ]
+
+  function engineModifyRateModeOptions (current) {
+    return lfoModifyU8Options([
+      { v: 0, l: 'Free' },
+      { v: 1, l: 'Sync' }
+    ], current)
+  }
+
+  function engineModifyRateHzOptions (current) {
+    const presets = ENGINE_MODIFY_RATES_X100.map(v => ({
+      v,
+      l: v < 1000
+        ? (v < 100 ? `${(v / 100).toFixed(2)} Hz` : `${(v / 100).toFixed(1)} Hz`)
+        : `${Math.round(v / 100)} Hz`
+    }))
+    return lfoModifyU16Options(presets, current)
+  }
+
+  function engineModifySyncMultOptions (current) {
+    return lfoModifyU16Options(ENGINE_MODIFY_SYNC_MULTS, current)
+  }
+
+  function engineModifyGlideOptions (current) {
+    return lfoModifyU8Options([
+      { v: 0, l: 'Off' },
+      { v: 1, l: 'On' }
+    ], current)
+  }
+
+  function engineModifyProbOptions (current) {
+    const presets = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+      .map(v => ({ v, l: `${v}%` }))
+    return lfoModifyU8Options(presets, current)
+  }
+
+  function clockBurstSpeedOptions (current) {
+    const opts = CLOCK_BURST_SPEEDS.map(v => ({ v, l: `${v}%` }))
+    return withStaleOption(opts, current)
+  }
+
+  function uiModuleOptions (current) {
+    return withStaleOption(UI_MODULE_OPTIONS.slice(), current)
+  }
+
+  function uiStepCount (action) {
+    const mods = action?.modules
+    const n = Array.isArray(mods) ? mods.length : 0
+    const declared = Number(action?.num_modules ?? 0)
+    return Math.max(2, Math.min(8, Math.max(n, declared || 2)))
+  }
+
+  function paramStepCount (action) {
+    const params = action?.params
+    const n = Array.isArray(params) ? params.length : 0
+    const declared = Number(action?.num_params ?? 0)
+    return Math.max(2, Math.min(8, Math.max(n, declared || 2)))
+  }
+
+  function punchInDurationOptions (numerator = 4) {
+    const beats = Math.max(1, Math.min(7, Number(numerator) || 4))
+    const opts = []
+    for (let i = 1; i < beats && i <= 7; i++) {
+      opts.push({ v: `${i}_beat${i === 1 ? '' : 's'}`, l: `${i} beat${i === 1 ? '' : 's'}` })
+    }
+    opts.push(
+      { v: '1_bar', l: '1 bar' },
+      { v: '2_bars', l: '2 bars' },
+      { v: '4_bars', l: '4 bars' },
+      { v: '8_bars', l: '8 bars' },
+      { v: '16_bars', l: '16 bars' }
+    )
+    return opts
+  }
+
+  function clearEngineModifyFields (action) {
+    delete action.rate_mode
+    delete action.rate_hz_x100
+    delete action.sync_mult_x1000
+    delete action.glide
+    delete action.probability
+  }
+
+  function seedEngineModifyFields (action) {
+    if (action.rate_mode == null) action.rate_mode = LFO_ORIG_U8
+    if (action.rate_hz_x100 == null) action.rate_hz_x100 = LFO_ORIG_U16
+    if (action.sync_mult_x1000 == null) action.sync_mult_x1000 = LFO_ORIG_U16
+    if (action.glide == null) action.glide = LFO_ORIG_U8
+    if (action.probability == null) action.probability = LFO_ORIG_U8
+  }
+
+  function normalizeClockAction (action) {
+    if (!action || action.type !== 'clock') return false
+    const before = JSON.stringify(action)
+    const v = action.variant || defaultVariant('clock')
+    clearRepeatFields(action)
+    delete action.timing
+    delete action.timing_beat
+    delete action.raise_flag
+    if (v === 'burst') {
+      delete action.start_enabled
+      let sp = Number(action.speed_percent)
+      if (!CLOCK_BURST_SPEEDS.includes(sp)) sp = 100
+      action.speed_percent = sp
+    } else {
+      delete action.speed_percent
+      if (action.start_enabled == null) action.start_enabled = false
+    }
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeCutAction (action) {
+    if (!action || action.type !== 'cut') return false
+    const before = JSON.stringify(action)
+    clearRepeatFields(action)
+    delete action.timing
+    delete action.timing_beat
+    delete action.raise_flag
+    const modes = CUT_MODE_OPTIONS.map(o => o.v)
+    if (!modes.includes(action.cut_mode)) action.cut_mode = 'both'
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeUiAction (action) {
+    if (!action || action.type !== 'ui') return false
+    const before = JSON.stringify(action)
+    const v = action.variant || defaultVariant('ui')
+    const clampMod = (n) => {
+      const x = Number(n)
+      if (Number.isNaN(x) || x < 0 || x > 4) return 0
+      return Math.round(x)
+    }
+    if (v === 'set') {
+      delete action.module2
+      delete action.num_modules
+      delete action.modules
+      action.module = clampMod(action.module)
+    } else if (v === 'hold') {
+      delete action.num_modules
+      delete action.modules
+      action.module = clampMod(action.module)
+      action.module2 = clampMod(action.module2)
+    } else if (v === 'cycle') {
+      delete action.module
+      delete action.module2
+      let steps = Array.isArray(action.modules) ? action.modules.slice() : []
+      const stepCount = uiStepCount(action)
+      while (steps.length < stepCount) steps.push(0)
+      steps = steps.slice(0, stepCount).map(clampMod)
+      action.modules = steps
+      action.num_modules = steps.length
+    }
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeParamAction (action) {
+    if (!action || action.type !== 'param') return false
+    const before = JSON.stringify(action)
+    const v = action.variant || defaultVariant('param')
+    const clampCc = (n) => {
+      const x = Number(n)
+      if (Number.isNaN(x) || x < 0 || x > 127) return 0
+      return Math.round(x)
+    }
+    if (v === 'hold') {
+      delete action.num_params
+      delete action.params
+      action.param = clampCc(action.param)
+      action.param2 = clampCc(action.param2)
+    } else if (v === 'cycle') {
+      delete action.param
+      delete action.param2
+      let steps = Array.isArray(action.params) ? action.params.slice() : []
+      const stepCount = paramStepCount(action)
+      while (steps.length < stepCount) steps.push(0)
+      steps = steps.slice(0, stepCount).map(clampCc)
+      action.params = steps
+      action.num_params = steps.length
+    }
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeEngineAction (action) {
+    if (!action || (action.type !== 'rtg' && action.type !== 'sample_hold')) return false
+    const before = JSON.stringify(action)
+    const v = action.variant || defaultVariant(action.type)
+    clearRepeatFields(action)
+    if (v === 'step') {
+      clearEngineModifyFields(action)
+      if (!action.step_target || (action.step_target !== 'sh' && action.step_target !== 'rtg')) {
+        action.step_target = action.type === 'sample_hold' ? 'sh' : 'rtg'
+      }
+    } else if (v === 'modify') {
+      delete action.step_target
+      seedEngineModifyFields(action)
+    } else {
+      delete action.step_target
+      clearEngineModifyFields(action)
+    }
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeSimpleActionsInModel (model) {
+    let changed = false
+    forEachAction(model, action => {
+      if (!action?.type) return
+      if (action.type === 'clock' && normalizeClockAction(action)) changed = true
+      if (action.type === 'cut' && normalizeCutAction(action)) changed = true
+      if (action.type === 'ui' && normalizeUiAction(action)) changed = true
+      if (action.type === 'param' && normalizeParamAction(action)) changed = true
+      if ((action.type === 'rtg' || action.type === 'sample_hold') &&
+          normalizeEngineAction(action)) changed = true
+      if (action.type === 'inspect_scene') {
+        const before = JSON.stringify(action)
+        clearRepeatFields(action)
+        delete action.timing
+        delete action.timing_beat
+        delete action.raise_flag
+        if (JSON.stringify(action) !== before) changed = true
+      }
+      if (action.type === 'punch_in' || action.type === 'flag_ceremony') {
+        const before = JSON.stringify(action)
+        clearRepeatFields(action)
+        if (JSON.stringify(action) !== before) changed = true
+      }
+    })
+    return changed
+  }
+
+  function touchwheelModeOptions (current) {
+    const opts = TOUCHWHEEL_MODES.slice()
+    const cur = Number(current)
+    if (!Number.isNaN(cur) && !opts.some(o => o.v === cur)) {
+      opts.push({ v: cur, l: `Mode ${cur}` })
+    }
+    return opts
+  }
+
+  function touchwheelStepCount (action) {
+    const modes = action?.modes
+    const n = Array.isArray(modes) ? modes.length : 0
+    const declared = Number(action?.num_modes ?? 0)
+    return Math.max(2, Math.min(8, Math.max(n, declared || 2)))
+  }
+
+  function normalizeTouchwheelAction (action) {
+    if (!action || action.type !== 'touchwheel') return false
+    const before = JSON.stringify(action)
+    clearRepeatFields(action)
+    delete action.timing
+    delete action.timing_beat
+    delete action.raise_flag
+
+    const clampMode = (n) => {
+      const x = Number(n)
+      if (Number.isNaN(x) || x < 0 || x > 12) return 0
+      return Math.round(x)
+    }
+
+    const v = action.variant || 'hold'
+    if (v === 'hold') {
+      delete action.num_modes
+      delete action.modes
+      action.mode = clampMode(action.mode)
+      if (action.release_to_original) {
+        delete action.mode2
+      } else {
+        action.mode2 = clampMode(action.mode2)
+        delete action.release_to_original
+      }
+    } else if (v === 'cycle') {
+      delete action.mode
+      delete action.mode2
+      delete action.release_to_original
+      let steps = Array.isArray(action.modes) ? action.modes.slice() : []
+      const stepCount = touchwheelStepCount(action)
+      while (steps.length < stepCount) steps.push(0)
+      steps = steps.slice(0, stepCount).map(clampMode)
+      action.modes = steps
+      action.num_modes = steps.length
+    }
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeTouchwheelActionsInModel (model) {
+    let changed = false
+    forEachAction(model, action => {
+      if (normalizeTouchwheelAction(action)) changed = true
+    })
+    return changed
   }
 
   function timingOptions (numerator, useTransport) {
@@ -354,11 +899,14 @@ window.ActionCatalog = (function () {
     if (t === 'tempo') {
       return v !== 'tap' && v !== 'hold' && v !== 'downbeat'
     }
-    if (t === 'control' || t === 'preset' || t === 'touchwheel' || t === 'ui' ||
+    if (t === 'control' || t === 'preset' || t === 'ui' ||
         t === 'param' || t === 'rtg' || t === 'sample_hold') {
       return v !== 'hold'
     }
-    if (t === 'lfo') return v !== 'toggle'
+    if (t === 'touchwheel') return false
+    if (t === 'lfo') {
+      return v === 'start' || v === 'stop' || v === 'modify' || v === 'toggle'
+    }
     if (t === 'clock' || t === 'cut') return false
     return !HOLD_TYPES.has(t)
   }
@@ -373,9 +921,10 @@ window.ActionCatalog = (function () {
     }
     if (t === 'control') return v === 'set' || v === 'cycle'
     if (t === 'preset') return v !== 'hold'
-    if (t === 'touchwheel') return v === 'cycle'
-    if (t === 'lfo') return v !== 'toggle'
-    if (t === 'clock' || t === 'cut') return false
+    if (t === 'touchwheel') return false
+    if (t === 'lfo') return v === 'toggle' || v === 'modify'
+    if (t === 'clock' || t === 'cut' || t === 'rtg' || t === 'sample_hold') return false
+    if (t === 'ui' || t === 'param') return v === 'cycle'
     return true
   }
 
@@ -387,6 +936,17 @@ window.ActionCatalog = (function () {
   function supportsFollowUp (action) {
     if (!action?.type || action.type === 'none') return false
     return action.variant === 'hold' && FOLLOWUP_HOLD_TYPES.has(action.type)
+  }
+
+  const RAISE_FLAG_TYPES = new Set([
+    'transport', 'control', 'preset', 'tempo', 'note', 'randomize', 'lfo',
+    'punch_in', 'flag_ceremony', 'boomerang'
+  ])
+
+  function supportsRaiseFlag (action) {
+    if (!action?.type || action.type === 'none') return false
+    if (requiresHold(action)) return false
+    return RAISE_FLAG_TYPES.has(action.type)
   }
 
   function supportsMorph (action) {
@@ -487,6 +1047,39 @@ window.ActionCatalog = (function () {
     noteOptions,
     noteRandomBoundOptions,
     noteVelocityOptions,
+    pianoPedalOptions,
+    resolvePianoPedalCc,
+    LFO_RESOLUTION_MANUAL,
+    lfoTargetOptions,
+    lfoModifyWaveformOptions,
+    lfoModifyRateModeOptions,
+    lfoModifyRateHzOptions,
+    lfoModifyDivisionOptions,
+    lfoModifyPolarityOptions,
+    lfoModifyFloorCeilingOptions,
+    lfoModifyResolutionOptions,
+    lfoModifyManualStepsOptions,
+    clearLfoModifyFields,
+    seedLfoModifyFields,
+    normalizeLfoActionsInModel,
+    engineModifyRateModeOptions,
+    engineModifyRateHzOptions,
+    engineModifySyncMultOptions,
+    engineModifyGlideOptions,
+    engineModifyProbOptions,
+    clockBurstSpeedOptions,
+    uiModuleOptions,
+    uiStepCount,
+    paramStepCount,
+    punchInDurationOptions,
+    CUT_MODE_OPTIONS,
+    STEP_TARGET_OPTIONS,
+    clearEngineModifyFields,
+    seedEngineModifyFields,
+    normalizeSimpleActionsInModel,
+    touchwheelModeOptions,
+    touchwheelStepCount,
+    normalizeTouchwheelActionsInModel,
     timingOptions,
     typesForTrigger,
     variantsForType,
@@ -494,6 +1087,7 @@ window.ActionCatalog = (function () {
     supportsTiming,
     supportsRepeat,
     supportsFollowUp,
+    supportsRaiseFlag,
     supportsMorph,
     clearRepeatFields,
     normalizeRepeatActionsInModel,

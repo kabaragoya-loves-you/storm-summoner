@@ -97,6 +97,8 @@ static const char* event_type_names[] = {
   [EVENT_EXPRESSION_SWITCH] = "EXPRESSION_SW",
   [EVENT_CV_VALUE] = "CV_VALUE",
   [EVENT_CV_DISCONNECTED] = "CV_DISC",
+  [EVENT_CV_CONNECTED] = "CV_CONN",
+  [EVENT_CONNECTIONS_CHANGED] = "CONNECTIONS",
   [EVENT_CLOCK_SYNC_PULSE] = "CLOCK_SYNC",
   [EVENT_SCREENSAVER_TIMEOUT] = "SCREENSAVER_TIMEOUT",
   [EVENT_NOTE_ON] = "NOTE_ON",
@@ -477,6 +479,15 @@ esp_err_t event_bus_post(const event_t* event) {
   #endif
 
   return ESP_OK;
+}
+
+esp_err_t event_bus_post_connections_changed(void) {
+  event_t evt = {
+    .type = EVENT_CONNECTIONS_CHANGED,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp()
+  };
+  return event_bus_post(&evt);
 }
 
 esp_err_t event_bus_post_from_isr(const event_t* event, BaseType_t* higher_priority_woken) {

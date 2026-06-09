@@ -70,6 +70,8 @@ typedef enum {
   EVENT_EXPRESSION_SWITCH,
   EVENT_CV_VALUE,
   EVENT_CV_DISCONNECTED,
+  EVENT_CV_CONNECTED,
+  EVENT_CONNECTIONS_CHANGED,  // Jack / USB link status changed (Info tab notify)
   EVENT_CLOCK_SYNC_PULSE,
   EVENT_SCENE_CHANGED,
   EVENT_SCENE_UPDATED,
@@ -317,6 +319,7 @@ esp_err_t event_bus_unsubscribe(event_type_t type, event_handler_t handler);
 
 // Event posting
 esp_err_t event_bus_post(const event_t* event);
+esp_err_t event_bus_post_connections_changed(void);
 esp_err_t event_bus_post_from_isr(const event_t* event, BaseType_t* higher_priority_woken);
 
 // Utility functions

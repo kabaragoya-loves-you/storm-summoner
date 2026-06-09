@@ -556,9 +556,14 @@ bool cdcd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_
     tud_cdc_tx_complete_cb(itf);
 
     if (0 == tud_cdc_n_write_flush(itf)) {
-      // If there is no data left, a ZLP should be sent if
-      // xferred_bytes is multiple of EP Packet size and not zero
-      if (!tu_fifo_count(&p_cdc->tx_ff) && xferred_bytes && (0 == (xferred_bytes & (BULK_PACKET_SIZE - 1)))) {
+      // If there is no data left, a ZLP should be sent if xferred_bytes is a
+      // multiple of the actual endpoint packet size and not zero. Use the
+      // negotiated speed's packet size (64 at Full Speed, 512 at High Speed):
+      // the compile-time BULK_PACKET_SIZE assumes High Speed, so when an
+      // HS-capable build enumerates at Full Speed it would miss the ZLP for
+      // 64-byte-multiple transfers and stall the host.
+      const uint16_t ep_mps = (tud_speed_get() == TUSB_SPEED_HIGH) ? 512 : 64;
+      if (!tu_fifo_count(&p_cdc->tx_ff) && xferred_bytes && (0 == (xferred_bytes & (ep_mps - 1)))) {
         if (usbd_edpt_claim(rhport, p_cdc->ep_in)) {
           TU_ASSERT(usbd_edpt_xfer(rhport, p_cdc->ep_in, NULL, 0));
         }

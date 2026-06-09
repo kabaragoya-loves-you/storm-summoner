@@ -15,6 +15,9 @@
 #include "tempo.h"
 #include "ui.h"
 #include "screensaver.h"
+#include "cv.h"
+#include "expression.h"
+#include "midi_in_uart.h"
 #include "cJSON.h"
 #include "version.h"
 #include "task_monitor.h"
@@ -80,6 +83,9 @@ typedef enum {
 static cdc_update_state_t s_state = CDC_STATE_IDLE;
 static bool s_initialized = false;
 static bool s_logging_enabled = false;
+
+#define CDC_LOGI(fmt, ...) do { if (s_logging_enabled) ESP_LOGI(TAG, fmt, ##__VA_ARGS__); } while (0)
+#define CDC_LOGD(fmt, ...) do { if (s_logging_enabled) ESP_LOGD(TAG, fmt, ##__VA_ARGS__); } while (0)
 static uint8_t *s_update_buffer = NULL;
 static size_t s_update_size = 0;
 static size_t s_received_bytes = 0;
@@ -139,6 +145,13 @@ static void cdc_send_scene_inspect(const char *arg);
 static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position);
 static void cdc_send_info_json(void);
 static void cdc_send_mem_json(void);
+static void cdc_connections_handler(const event_t *event, void *context);
+static void cdc_add_connections_json(cJSON *root);
+static bool cdc_connection_usb(void);
+static bool cdc_connection_cv(void);
+static bool cdc_connection_expression(void);
+static bool cdc_connection_midi_in(void);
+static void cdc_push_connections_evt(void);
 static void cdc_send_scene_get(const char *arg);
 static void cdc_cmd_scene_put(const char *args);
 static void handle_scene_put_binary(const uint8_t *data, size_t len);
@@ -214,7 +227,7 @@ static esp_err_t cdc_vfs_register(void) {
   esp_err_t err = esp_vfs_register(CDC_VFS_PATH, &vfs, NULL);
   if (err == ESP_OK) {
     s_vfs_registered = true;
-    ESP_LOGI(TAG, "CDC VFS registered at %s", CDC_VFS_PATH);
+    CDC_LOGI("CDC VFS registered at %s", CDC_VFS_PATH);
   }
   return err;
 }
@@ -261,6 +274,7 @@ static void handle_assets_binary_data(const uint8_t *data, size_t len);
 static void handle_assets_send(void);
 static void console_send(const char *str);
 static void console_send_prompt(void);
+static esp_err_t cdc_scene_apply_if_pending(esp_err_t err);
 
 // Assets mode command handlers
 static void assets_cmd_ls(const char *path);
@@ -299,7 +313,7 @@ static int cdc_log_vprintf(const char *fmt, va_list args) {
 
 // CDC Update Task
 static void cdc_update_task(void *arg) {
-  ESP_LOGI(TAG, "CDC update task started");
+  CDC_LOGI("CDC update task started");
   while (1) {
     usb_cdc_task();
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -314,7 +328,7 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
 
   s_logging_enabled = enable_logging;
 
-  ESP_LOGI(TAG, "Initializing CDC update handler");
+  CDC_LOGI("Initializing CDC update handler");
 
   // Register VFS for console stdout redirect
   cdc_vfs_register();
@@ -337,9 +351,11 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
 #if CDC_CLOCK_NOTIFY_ON_BEAT
   event_bus_subscribe_named(EVENT_BEAT, cdc_clock_beat_handler, NULL, "cdc.clock_beat");
 #endif
+  if (event_bus_subscribe(EVENT_CONNECTIONS_CHANGED, cdc_connections_handler, NULL) != ESP_OK)
+    ESP_LOGE(TAG, "Failed to subscribe for connection status updates");
 
   s_initialized = true;
-  ESP_LOGI(TAG, "CDC update handler initialized");
+  CDC_LOGI("CDC update handler initialized");
   return ESP_OK;
 }
 
@@ -353,7 +369,7 @@ void usb_cdc_task(void) {
       console_redirect_stdout(false);  // Restore stdout first
       s_log_redirect_active = false;
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting console mode");
+      CDC_LOGI("CDC disconnected, exiting console mode");
     }
     // If we were in assets mode and disconnected, cleanup
     if (s_state == CDC_STATE_ASSETS || s_state == CDC_STATE_ASSETS_RECEIVING || 
@@ -370,39 +386,39 @@ void usb_cdc_task(void) {
       s_extract_in_progress = false;
       // Note: extract_task will handle its own cleanup if still running
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting assets mode");
+      CDC_LOGI("CDC disconnected, exiting assets mode");
     }
     // If we were in display streaming mode and disconnected, cleanup
     if (s_state == CDC_STATE_DISPLAY) {
       lvgl_stream_stop();
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting display mode");
+      CDC_LOGI("CDC disconnected, exiting display mode");
     }
     // If we were in MIDI relay mode and disconnected, cleanup
     if (s_state == CDC_STATE_MIDI_RELAY) {
       midi_relay_stop();
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting MIDI relay mode");
+      CDC_LOGI("CDC disconnected, exiting MIDI relay mode");
     }
     // If we were in settings mode and disconnected, cleanup
     if (s_state == CDC_STATE_SETTINGS) {
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting settings mode");
+      CDC_LOGI("CDC disconnected, exiting settings mode");
     }
     // If we were in config mode and disconnected, cleanup
     if (s_state == CDC_STATE_CONFIG) {
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting config mode");
+      CDC_LOGI("CDC disconnected, exiting config mode");
     }
     // If we were in scenes mode and disconnected, cleanup
     if (s_state == CDC_STATE_SCENES) {
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting scenes mode");
+      CDC_LOGI("CDC disconnected, exiting scenes mode");
     }
     // If we were in pedals mode and disconnected, cleanup
     if (s_state == CDC_STATE_PEDALS) {
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected, exiting pedals mode");
+      CDC_LOGI("CDC disconnected, exiting pedals mode");
     }
     // If we were receiving firmware/assets and disconnected, cleanup
     if (s_state == CDC_STATE_SCENE_RECEIVING) {
@@ -411,7 +427,7 @@ void usb_cdc_task(void) {
         s_scene_put_buffer = NULL;
       }
       s_state = CDC_STATE_IDLE;
-      ESP_LOGI(TAG, "CDC disconnected during SCENE_PUT, aborted");
+      CDC_LOGI("CDC disconnected during SCENE_PUT, aborted");
     }
     if (s_state == CDC_STATE_RECEIVING_FIRMWARE ||
         s_state == CDC_STATE_RECEIVING_ASSETS ||
@@ -518,7 +534,7 @@ void usb_cdc_task(void) {
             if (s_cmd_pos > 0) {
               s_cmd_buffer[s_cmd_pos] = '\0';
               if (strcmp(s_cmd_buffer, "EXIT") == 0 || strcmp(s_cmd_buffer, "exit") == 0) {
-                ESP_LOGI(TAG, "Exiting display mode");
+                CDC_LOGI("Exiting display mode");
                 lvgl_stream_stop();
                 s_state = CDC_STATE_IDLE;
                 send_response("DISPLAY_STOPPED");
@@ -551,7 +567,7 @@ void usb_cdc_task(void) {
             if (s_cmd_pos > 0) {
               s_cmd_buffer[s_cmd_pos] = '\0';
               if (strcmp(s_cmd_buffer, "EXIT") == 0 || strcmp(s_cmd_buffer, "exit") == 0) {
-                ESP_LOGI(TAG, "Exiting MIDI relay mode");
+                CDC_LOGI("Exiting MIDI relay mode");
                 midi_relay_stop();
                 s_state = CDC_STATE_IDLE;
                 send_response("MIDI_STOPPED");
@@ -643,40 +659,48 @@ static void send_response(const char *msg) {
     ESP_LOGW(TAG, "send_response: CDC not connected, dropping '%s'", msg);
     return;
   }
-  
-  // Send message in chunks to handle long responses
-  // Use smaller chunks with delays to ensure host can keep up
-  const size_t chunk_size = 64;
+
+  // Write the payload AND its trailing newline contiguously into the CDC TX
+  // FIFO, flushing only on backpressure (FIFO full). The newline must ride out
+  // in the same final transfer as the last body bytes: sending it as a separate
+  // write_char()+flush produces an isolated 1-byte transfer that races the
+  // automatic ZLP transfers and gets dropped, so the host never sees the line
+  // terminator and the response line never completes.
   const int max_retries = 100;  // Max retries when buffer full
   size_t len = strlen(msg);
   size_t sent = 0;
   int retry_count = 0;
-  
+
   while (sent < len) {
-    // Check connection before each write attempt
     if (!tud_cdc_n_connected(0)) {
       ESP_LOGW(TAG, "CDC disconnected during send_response");
       return;
     }
-    
-    size_t to_send = (len - sent > chunk_size) ? chunk_size : (len - sent);
-    uint32_t written = tud_cdc_n_write(0, msg + sent, to_send);
-    tud_cdc_n_write_flush(0);
+
+    uint32_t written = tud_cdc_n_write(0, msg + sent, len - sent);
     sent += written;
-    
+
     if (written == 0) {
+      // FIFO full: flush to make room, then wait briefly for space.
+      tud_cdc_n_write_flush(0);
       retry_count++;
       if (retry_count >= max_retries) {
         ESP_LOGW(TAG, "send_response: max retries reached, sent %u/%u bytes", (unsigned)sent, (unsigned)len);
         return;
       }
-      vTaskDelay(pdMS_TO_TICKS(5));  // Wait for buffer space
+      vTaskDelay(pdMS_TO_TICKS(5));
     } else {
-      retry_count = 0;  // Reset retry counter on successful write
-      vTaskDelay(pdMS_TO_TICKS(1));  // Small delay between chunks
+      retry_count = 0;
     }
   }
-  tud_cdc_n_write_char(0, '\n');
+
+  // Append the newline to whatever is still buffered, then a single flush so it
+  // leaves as the tail of the final body transfer.
+  while (tud_cdc_n_write_char(0, '\n') == 0) {
+    tud_cdc_n_write_flush(0);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    if (!tud_cdc_n_connected(0)) return;
+  }
   tud_cdc_n_write_flush(0);
 }
 
@@ -782,7 +806,7 @@ static void cdc_push_scene_evt(const char *kind, uint8_t scene_index) {
 
   char buf[48];
   snprintf(buf, sizeof(buf), "EVT:%s:%u", kind, (unsigned)scene_index);
-  ESP_LOGI(TAG, "CDC notify: %s", buf);
+  CDC_LOGI("CDC notify: %s", buf);
   cdc_send_notify_line(buf);
 }
 
@@ -790,7 +814,7 @@ void usb_cdc_notify_programming(bool active) {
   if (!cdc_may_push_notify()) return;
   char buf[24];
   snprintf(buf, sizeof(buf), "EVT:programming:%u", active ? 1u : 0u);
-  ESP_LOGI(TAG, "CDC notify: %s", buf);
+  CDC_LOGI("CDC notify: %s", buf);
   cdc_send_notify_line(buf);
 }
 
@@ -840,7 +864,7 @@ static void cdc_send_scene_inspect(const char *arg) {
     }
   }
 
-  ESP_LOGI(TAG, "SCENE_INSPECT begin (index=%u)", (unsigned)scene_index);
+  CDC_LOGI("SCENE_INSPECT begin (index=%u)", (unsigned)scene_index);
   char *text_buf = heap_caps_malloc(SCENE_INSPECT_TEXT_SIZE, MALLOC_CAP_SPIRAM);
   if (!text_buf) {
     send_response("ERROR: Out of memory");
@@ -860,7 +884,7 @@ static void cdc_send_scene_inspect(const char *arg) {
     return;
   }
 
-  ESP_LOGI(TAG, "SCENE_INSPECT built (truncated=%d)", truncated ? 1 : 0);
+  CDC_LOGI("SCENE_INSPECT built (truncated=%d)", truncated ? 1 : 0);
 
   cJSON *root = cJSON_CreateObject();
   if (!root) {
@@ -877,10 +901,10 @@ static void cdc_send_scene_inspect(const char *arg) {
   heap_caps_free(text_buf);
 
   if (json) {
-    ESP_LOGI(TAG, "SCENE_INSPECT sending %u bytes", (unsigned)strlen(json));
-    send_json_response(json);
+    CDC_LOGI("SCENE_INSPECT sending %u bytes", (unsigned)strlen(json));
+    send_response(json);
     cJSON_free(json);
-    ESP_LOGI(TAG, "SCENE_INSPECT done");
+    CDC_LOGI("SCENE_INSPECT done");
   } else {
     send_response("ERROR: Out of memory");
   }
@@ -1010,6 +1034,94 @@ static void cdc_clock_beat_handler(const event_t *event, void *context) {
 }
 #endif
 
+extern bool input_get_cable_detection_enabled(void);
+
+static const char *cdc_cv_range_str(cv_range_t range) {
+  switch (range) {
+    case CV_RANGE_BIPOLAR_10V: return "+/-10V";
+    case CV_RANGE_10V:         return "0-10V";
+    case CV_RANGE_BIPOLAR_5V:  return "+/-5V";
+    case CV_RANGE_5V:          return "0-5V";
+    case CV_RANGE_3V3:         return "0-3.3V";
+    default:                   return "Unknown";
+  }
+}
+
+static bool cdc_connection_usb(void) {
+  return tud_mounted() && tud_cdc_n_connected(0);
+}
+
+static bool cdc_connection_cv(void) {
+  if (!input_get_cable_detection_enabled()) return true;
+  return cv_is_cable_connected();
+}
+
+static bool cdc_connection_expression(void) {
+  if (!input_get_cable_detection_enabled()) return true;
+  return expression_is_connected();
+}
+
+static bool cdc_connection_midi_in(void) {
+  return midi_in_uart_is_cable_connected();
+}
+
+static void cdc_add_connections_json(cJSON *root) {
+  if (!root) return;
+  cJSON *conn = cJSON_CreateObject();
+  if (!conn) return;
+  cJSON_AddBoolToObject(conn, "usb", cdc_connection_usb());
+  cJSON_AddBoolToObject(conn, "cv", cdc_connection_cv());
+  cJSON_AddBoolToObject(conn, "expression", cdc_connection_expression());
+  cJSON_AddBoolToObject(conn, "midi_in", cdc_connection_midi_in());
+  cJSON_AddItemToObject(root, "connections", conn);
+  cJSON_AddStringToObject(root, "cv_range", cdc_cv_range_str(cv_get_range()));
+}
+
+static uint8_t s_last_conn_usb = 0xFF;
+static uint8_t s_last_conn_cv = 0xFF;
+static uint8_t s_last_conn_exp = 0xFF;
+static uint8_t s_last_conn_midi_in = 0xFF;
+
+void usb_cdc_notify_connections(void) {
+  cdc_push_connections_evt();
+}
+
+static void cdc_push_connections_evt(void) {
+  if (!s_initialized) return;
+  uint8_t usb = cdc_connection_usb() ? 1u : 0u;
+  uint8_t cv = cdc_connection_cv() ? 1u : 0u;
+  uint8_t exp = cdc_connection_expression() ? 1u : 0u;
+  uint8_t midi_in = cdc_connection_midi_in() ? 1u : 0u;
+  if (usb == s_last_conn_usb && cv == s_last_conn_cv && exp == s_last_conn_exp &&
+      midi_in == s_last_conn_midi_in) {
+    return;
+  }
+  s_last_conn_usb = usb;
+  s_last_conn_cv = cv;
+  s_last_conn_exp = exp;
+  s_last_conn_midi_in = midi_in;
+  if (!cdc_may_push_notify()) return;
+  char buf[40];
+  snprintf(buf, sizeof(buf), "EVT:connections:%u:%u:%u:%u",
+    (unsigned)usb, (unsigned)cv, (unsigned)exp, (unsigned)midi_in);
+  CDC_LOGI("CDC notify: %s", buf);
+  cdc_send_notify_line(buf);
+}
+
+static void cdc_connections_handler(const event_t *event, void *context) {
+  (void)event;
+  (void)context;
+  cdc_push_connections_evt();
+}
+
+void tud_mount_cb(void) {
+  cdc_push_connections_evt();
+}
+
+void tud_umount_cb(void) {
+  cdc_push_connections_evt();
+}
+
 static void cdc_send_mem_json(void) {
   task_monitor_heap_snapshot_t snap;
   task_monitor_fill_heap_snapshot(&snap);
@@ -1084,8 +1196,13 @@ static void cdc_send_info_json(void) {
     }
   }
 
+  cdc_add_connections_json(root);
   cdc_add_clock_json(root);
   cdc_read_clock_snapshot(&s_last_clock_notify);
+  s_last_conn_usb = cdc_connection_usb() ? 1u : 0u;
+  s_last_conn_cv = cdc_connection_cv() ? 1u : 0u;
+  s_last_conn_exp = cdc_connection_expression() ? 1u : 0u;
+  s_last_conn_midi_in = cdc_connection_midi_in() ? 1u : 0u;
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
@@ -1149,7 +1266,7 @@ static void cdc_send_scene_get(const char *arg) {
     send_binary(&term, 1);
   }
   free(json);
-  ESP_LOGI(TAG, "SCENE_GET sent %u bytes for scene %u", (unsigned)len,
+  CDC_LOGI("SCENE_GET sent %u bytes for scene %u", (unsigned)len,
     (unsigned)scene_index);
 }
 
@@ -1191,7 +1308,7 @@ static void cdc_cmd_scene_put(const char *args) {
   s_scene_put_size = (size_t)size;
   s_scene_put_received = 0;
   s_state = CDC_STATE_SCENE_RECEIVING;
-  ESP_LOGI(TAG, "SCENE_PUT position %lu index %u size %lu",
+  CDC_LOGI("SCENE_PUT position %lu index %u size %lu",
     position, (unsigned)s_scene_put_index, size);
   send_response("READY");
 }
@@ -1243,15 +1360,13 @@ static void console_send_prompt(void) {
 }
 
 static void process_command(const char *cmd) {
-  if (s_logging_enabled) {
-    ESP_LOGI(TAG, "Received command: '%s' (len=%d)", cmd, strlen(cmd));
+  CDC_LOGI("Received command: '%s' (len=%d)", cmd, strlen(cmd));
 
-    char hex[128] = {0};
-    for (int i = 0; i < strlen(cmd) && i < 16; i++) {
-      snprintf(hex + strlen(hex), sizeof(hex) - strlen(hex), "%02X ", (uint8_t)cmd[i]);
-    }
-    ESP_LOGI(TAG, "Hex: %s", hex);
+  char hex[128] = {0};
+  for (int i = 0; i < strlen(cmd) && i < 16; i++) {
+    snprintf(hex + strlen(hex), sizeof(hex) - strlen(hex), "%02X ", (uint8_t)cmd[i]);
   }
+  CDC_LOGI("Hex: %s", hex);
 
   if (strncmp(cmd, "FIRMWARE ", 9) == 0) {
     // Parse size
@@ -1262,7 +1377,7 @@ static void process_command(const char *cmd) {
       return;
     }
 
-    ESP_LOGI(TAG, "Starting firmware update (%u bytes)", (unsigned)size);
+    CDC_LOGI("Starting firmware update (%u bytes)", (unsigned)size);
 
     // Allocate buffer in PSRAM
     if (s_update_buffer) {
@@ -1311,11 +1426,11 @@ static void process_command(const char *cmd) {
     if (parsed >= 2 && strlen(checksum) == 8) {
       strncpy(s_pending_assets_checksum, checksum, sizeof(s_pending_assets_checksum) - 1);
       s_pending_assets_checksum[sizeof(s_pending_assets_checksum) - 1] = '\0';
-      ESP_LOGI(TAG, "Starting assets update (%u bytes, checksum %s)",
+      CDC_LOGI("Starting assets update (%u bytes, checksum %s)",
         (unsigned)size, s_pending_assets_checksum);
     } else {
       s_pending_assets_checksum[0] = '\0';  // No checksum provided
-      ESP_LOGI(TAG, "Starting assets update (%u bytes)", (unsigned)size);
+      CDC_LOGI("Starting assets update (%u bytes)", (unsigned)size);
     }
 
     // Allocate buffer in PSRAM
@@ -1365,7 +1480,7 @@ static void process_command(const char *cmd) {
     }
 
     s_state = CDC_STATE_COMMITTING;
-    ESP_LOGI(TAG, "Committing %s update", s_is_firmware ? "firmware" : "assets");
+    CDC_LOGI("Committing %s update", s_is_firmware ? "firmware" : "assets");
 
     esp_err_t err;
     if (s_is_firmware) {
@@ -1386,7 +1501,7 @@ static void process_command(const char *cmd) {
       }
       // Save the assets checksum to NVS after successful update
       if (err == ESP_OK && s_pending_assets_checksum[0] != '\0') {
-        ESP_LOGI(TAG, "Saving assets checksum to NVS: %s", s_pending_assets_checksum);
+        CDC_LOGI("Saving assets checksum to NVS: %s", s_pending_assets_checksum);
         esp_err_t csum_err = version_set_assets_checksum(s_pending_assets_checksum);
         if (csum_err != ESP_OK) {
           ESP_LOGE(TAG, "Failed to save assets checksum: %s", esp_err_to_name(csum_err));
@@ -1398,7 +1513,7 @@ static void process_command(const char *cmd) {
     }
 
     if (err == ESP_OK) {
-      ESP_LOGI(TAG, "Update successful");
+      CDC_LOGI("Update successful");
       send_response("SUCCESS");
       s_state = CDC_STATE_IDLE;
 
@@ -1440,7 +1555,7 @@ static void process_command(const char *cmd) {
     s_received_bytes = 0;
 
   } else if (strcmp(cmd, "RESET") == 0) {
-    ESP_LOGI(TAG, "Reset command received. Rebooting...");
+    CDC_LOGI("Reset command received. Rebooting...");
     send_response("RESETTING");
     vTaskDelay(pdMS_TO_TICKS(100)); // Give time to send response
     esp_restart();
@@ -1452,7 +1567,7 @@ static void process_command(const char *cmd) {
     send_response(resp);
 
   } else if (strcmp(cmd, "CANCEL") == 0) {
-    ESP_LOGI(TAG, "Update cancelled");
+    CDC_LOGI("Update cancelled");
     if (s_update_buffer) {
       heap_caps_free(s_update_buffer);
       s_update_buffer = NULL;
@@ -1463,7 +1578,7 @@ static void process_command(const char *cmd) {
     send_response("CANCELLED");
 
   } else if (strcmp(cmd, "CONSOLE") == 0) {
-    ESP_LOGI(TAG, "Entering console mode");
+    CDC_LOGI("Entering console mode");
     s_state = CDC_STATE_CONSOLE;
     s_log_redirect_active = true;
     
@@ -1484,7 +1599,7 @@ static void process_command(const char *cmd) {
     printf("\r\n> ");
 
   } else if (strcmp(cmd, "ASSETS") == 0) {
-    ESP_LOGI(TAG, "Entering assets management mode");
+    CDC_LOGI("Entering assets management mode");
     s_state = CDC_STATE_ASSETS;
     s_assets_path[0] = '\0';
     s_assets_file = NULL;
@@ -1493,11 +1608,11 @@ static void process_command(const char *cmd) {
     send_response("ASSETS_STARTED");
 
   } else if (strcmp(cmd, "DISPLAY") == 0) {
-    ESP_LOGI(TAG, "Entering display streaming mode");
+    CDC_LOGI("Entering display streaming mode");
     
     // If already streaming (e.g. previous client disconnected uncleanly), stop first
     if (lvgl_stream_is_active()) {
-      ESP_LOGI(TAG, "Stopping previous stream session");
+      CDC_LOGI("Stopping previous stream session");
       lvgl_stream_stop();
       vTaskDelay(pdMS_TO_TICKS(50));  // Let TX task clean up
     }
@@ -1538,7 +1653,7 @@ static void process_command(const char *cmd) {
     send_response(resp);
 
   } else if (strcmp(cmd, "MIDI") == 0) {
-    ESP_LOGI(TAG, "Entering MIDI relay mode");
+    CDC_LOGI("Entering MIDI relay mode");
     s_state = CDC_STATE_MIDI_RELAY;
     s_midi_relay_active = true;
     s_midi_relay_show_clock = false;
@@ -1550,7 +1665,7 @@ static void process_command(const char *cmd) {
 
   } else if (strncmp(cmd, "MIDI ", 5) == 0) {
     // MIDI with options, e.g., "MIDI CLOCK"
-    ESP_LOGI(TAG, "Entering MIDI relay mode with options");
+    CDC_LOGI("Entering MIDI relay mode with options");
     s_state = CDC_STATE_MIDI_RELAY;
     s_midi_relay_active = true;
     s_midi_relay_show_clock = (strstr(cmd + 5, "CLOCK") != NULL);
@@ -1560,22 +1675,22 @@ static void process_command(const char *cmd) {
     send_response("MIDI_STARTED");
 
   } else if (strcmp(cmd, "SETTINGS") == 0) {
-    ESP_LOGI(TAG, "Entering settings mode");
+    CDC_LOGI("Entering settings mode");
     s_state = CDC_STATE_SETTINGS;
     send_response("SETTINGS_STARTED");
 
   } else if (strcmp(cmd, "CONFIG") == 0) {
-    ESP_LOGI(TAG, "Entering config mode");
+    CDC_LOGI("Entering config mode");
     s_state = CDC_STATE_CONFIG;
     send_response("CONFIG_STARTED");
 
   } else if (strcmp(cmd, "SCENES") == 0) {
-    ESP_LOGI(TAG, "Entering scenes mode");
+    CDC_LOGI("Entering scenes mode");
     s_state = CDC_STATE_SCENES;
     send_response("SCENES_STARTED");
 
   } else if (strcmp(cmd, "PEDALS") == 0) {
-    ESP_LOGI(TAG, "Entering pedals mode");
+    CDC_LOGI("Entering pedals mode");
     s_state = CDC_STATE_PEDALS;
     send_response("PEDALS_STARTED");
 
@@ -1608,14 +1723,22 @@ static void process_command(const char *cmd) {
     if (mode == SCENE_MODE_SINGLE) {
       send_response("ERROR: Navigation not available in Single mode");
     } else if (strcmp(op, "PREV") == 0) {
-      esp_err_t err = scene_previous();
+      esp_err_t err = cdc_scene_apply_if_pending(scene_previous());
       send_response(err == ESP_OK ? "OK" : "ERROR: Scene previous failed");
     } else if (strcmp(op, "NEXT") == 0) {
-      esp_err_t err = scene_next();
+      esp_err_t err = cdc_scene_apply_if_pending(scene_next());
       send_response(err == ESP_OK ? "OK" : "ERROR: Scene next failed");
     } else {
       send_response("ERROR: Unknown navigation command");
     }
+
+  } else if (strcmp(cmd, "SCENE CONFIRM") == 0) {
+    esp_err_t err = scene_confirm_change();
+    send_response(err == ESP_OK ? "OK" : "ERROR: Scene confirm failed");
+
+  } else if (strcmp(cmd, "SCENE CANCEL") == 0) {
+    esp_err_t err = scene_cancel_pending();
+    send_response(err == ESP_OK ? "OK" : "ERROR: Scene cancel failed");
 
   } else if (strncmp(cmd, "TRANSPORT ", 10) == 0) {
     const char *op = cmd + 10;
@@ -1647,7 +1770,7 @@ static void process_command(const char *cmd) {
   } else if (strcmp(cmd, "EXIT") == 0) {
     // EXIT in idle state is a no-op (already idle)
     // Don't send any response - this prevents spurious errors after successful updates
-    ESP_LOGD(TAG, "EXIT received in idle state, ignoring");
+    CDC_LOGD("EXIT received in idle state, ignoring");
 
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", cmd);
@@ -1658,7 +1781,7 @@ static void process_command(const char *cmd) {
 static void handle_binary_data(const uint8_t *data, size_t len) {
   // Debug first chunk
   if (s_received_bytes == 0) {
-    ESP_LOGI(TAG, "Received first chunk of data (%u bytes)", (unsigned)len);
+    CDC_LOGI("Received first chunk of data (%u bytes)", (unsigned)len);
   }
 
   if (!s_update_buffer) {
@@ -1683,7 +1806,7 @@ static void handle_binary_data(const uint8_t *data, size_t len) {
   }
 
   if (s_received_bytes >= s_update_size) {
-    ESP_LOGI(TAG, "Transfer complete (%u bytes)", (unsigned)s_received_bytes);
+    CDC_LOGI("Transfer complete (%u bytes)", (unsigned)s_received_bytes);
     send_response("TRANSFER_COMPLETE");
     s_state = CDC_STATE_WAITING_COMMIT;
 
@@ -1716,7 +1839,7 @@ static void process_console_command(const char *cmd) {
     // Restore stdout before changing state
     console_redirect_stdout(false);
     
-    ESP_LOGI(TAG, "Exiting console mode");
+    CDC_LOGI("Exiting console mode");
     s_log_redirect_active = false;
     s_state = CDC_STATE_IDLE;
     send_response("CONSOLE_STOPPED");
@@ -1823,13 +1946,13 @@ static void reject_readonly(const char *full_path) {
 
 // Process assets mode commands
 static void process_assets_command(const char *cmd) {
-  ESP_LOGD(TAG, "Assets cmd: %s", cmd);
+  CDC_LOGD("Assets cmd: %s", cmd);
   
   if (strlen(cmd) == 0) return;
   
   // EXIT - leave assets mode
   if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
-    ESP_LOGI(TAG, "Exiting assets mode");
+    CDC_LOGI("Exiting assets mode");
     s_state = CDC_STATE_IDLE;
     send_response("ASSETS_STOPPED");
     return;
@@ -2307,7 +2430,7 @@ static void assets_cmd_put(const char *path, size_t size) {
   s_assets_bytes_transferred = 0;
   s_state = CDC_STATE_ASSETS_RECEIVING;
   
-  ESP_LOGI(TAG, "Receiving file: %s (%u bytes)", s_assets_path, (unsigned)size);
+  CDC_LOGI("Receiving file: %s (%u bytes)", s_assets_path, (unsigned)size);
   send_response("READY");
 }
 
@@ -2343,7 +2466,7 @@ static void assets_cmd_get(const char *path) {
   send_response(resp);
   
   s_state = CDC_STATE_ASSETS_SENDING;
-  ESP_LOGI(TAG, "Sending file: %s (%u bytes)", full_path, (unsigned)st.st_size);
+  CDC_LOGI("Sending file: %s (%u bytes)", full_path, (unsigned)st.st_size);
 }
 
 // Handle file send in assets mode (called from main task loop)
@@ -2374,7 +2497,7 @@ static void handle_assets_send(void) {
       uint8_t term = '\n';
       send_binary(&term, 1);
     }
-    ESP_LOGI(TAG, "File send complete: %u bytes", (unsigned)s_assets_bytes_transferred);
+    CDC_LOGI("File send complete: %u bytes", (unsigned)s_assets_bytes_transferred);
   }
 }
 
@@ -2398,7 +2521,7 @@ static void handle_assets_binary_data(const uint8_t *data, size_t len) {
     
     // Check if done
     if (s_assets_bytes_transferred >= s_assets_file_size) {
-      ESP_LOGI(TAG, "ZIP receive complete: %u bytes", (unsigned)s_assets_bytes_transferred);
+      CDC_LOGI("ZIP receive complete: %u bytes", (unsigned)s_assets_bytes_transferred);
       
       // Store size for the extract task
       s_extract_size = s_assets_file_size;
@@ -2453,7 +2576,7 @@ static void handle_assets_binary_data(const uint8_t *data, size_t len) {
       fclose(s_assets_file);
       s_assets_file = NULL;
       
-      ESP_LOGI(TAG, "File receive complete: %s (%u bytes)", 
+      CDC_LOGI("File receive complete: %s (%u bytes)", 
         s_assets_path, (unsigned)s_assets_bytes_transferred);
 
       if (strstr(s_assets_path, "/devices/user/") != NULL &&
@@ -2541,7 +2664,7 @@ static void assets_cmd_manifest(const char *type) {
   send_response(resp);
 
   s_state = CDC_STATE_ASSETS_SENDING;
-  ESP_LOGI(TAG, "Sending manifest %s (%u bytes)", manifest_path, (unsigned)st.st_size);
+  CDC_LOGI("Sending manifest %s (%u bytes)", manifest_path, (unsigned)st.st_size);
 }
 
 // ============================================================================
@@ -2647,7 +2770,7 @@ static bool zip_add_directory(mz_zip_archive *zip, const char *base_path, const 
         continue;
       }
       
-      ESP_LOGD(TAG, "ZIP: Added %s (%u bytes)", archive_name, (unsigned)read_bytes);
+      CDC_LOGD("ZIP: Added %s (%u bytes)", archive_name, (unsigned)read_bytes);
       free(file_buf);
     }
   }
@@ -2662,7 +2785,7 @@ static bool zip_add_directory(mz_zip_archive *zip, const char *base_path, const 
 static void extract_task(void *arg) {
   (void)arg;  // Unused
   
-  ESP_LOGI(TAG, "Extract task started for %s", s_extract_dest);
+  CDC_LOGI("Extract task started for %s", s_extract_dest);
   
   // Extract the ZIP from PSRAM buffer
   esp_err_t result = assets_extract_zip(s_extract_buffer, s_extract_size, s_extract_dest);
@@ -2675,7 +2798,7 @@ static void extract_task(void *arg) {
     // Trigger manifest updates for the destination folder
     assets_file_created(s_extract_dest);
     send_response("OK");
-    ESP_LOGI(TAG, "Extract completed successfully");
+    CDC_LOGI("Extract completed successfully");
   } else {
     char resp[128];
     snprintf(resp, sizeof(resp), "ERROR: Extract failed: %s", esp_err_to_name(result));
@@ -2692,7 +2815,7 @@ static void extract_task(void *arg) {
 static void zip_task(void *arg) {
   const char *full_path = (const char *)arg;
   
-  ESP_LOGI(TAG, "ZIP task started for %s", full_path);
+  CDC_LOGI("ZIP task started for %s", full_path);
   
   // Initialize ZIP writer with PSRAM allocator
   mz_zip_archive zip;
@@ -2724,7 +2847,7 @@ static void zip_task(void *arg) {
     goto cleanup;
   }
   
-  ESP_LOGI(TAG, "ZIP archive created: %u bytes", (unsigned)archive_size);
+  CDC_LOGI("ZIP archive created: %u bytes", (unsigned)archive_size);
   
   // Send size response
   char resp[64];
@@ -2742,7 +2865,7 @@ static void zip_task(void *arg) {
   // Cleanup miniz (also frees archive_buf since we used heap mode)
   mz_zip_writer_end(&zip);
   
-  ESP_LOGI(TAG, "ZIP archive sent successfully");
+  CDC_LOGI("ZIP archive sent successfully");
 
 cleanup:
   s_zip_in_progress = false;
@@ -2772,7 +2895,7 @@ static void assets_cmd_zip(const char *path) {
     return;
   }
   
-  ESP_LOGI(TAG, "Spawning ZIP task for %s", s_zip_path);
+  CDC_LOGI("Spawning ZIP task for %s", s_zip_path);
   s_zip_in_progress = true;
   
   // Task stack MUST be in internal RAM because LittleFS accesses flash,
@@ -2839,7 +2962,7 @@ static void assets_cmd_extract(const char *path, size_t size) {
   s_extract_mode = true;
   s_state = CDC_STATE_ASSETS_RECEIVING;
   
-  ESP_LOGI(TAG, "Receiving ZIP for extraction: %u bytes -> %s", (unsigned)size, s_extract_dest);
+  CDC_LOGI("Receiving ZIP for extraction: %u bytes -> %s", (unsigned)size, s_extract_dest);
   send_response("READY");
 }
 
@@ -2851,7 +2974,7 @@ static void midi_relay_stop(void) {
   if (s_midi_relay_active) {
     event_bus_unsubscribe(EVENT_MIDI_IN, midi_relay_event_handler);
     s_midi_relay_active = false;
-    ESP_LOGI(TAG, "MIDI relay stopped");
+    CDC_LOGI("MIDI relay stopped");
   }
 }
 
@@ -3208,13 +3331,13 @@ static void settings_cmd_load(const char *json_str) {
 
 // Process settings mode commands
 static void process_settings_command(const char *cmd) {
-  ESP_LOGD(TAG, "Settings cmd: %s", cmd);
+  CDC_LOGD("Settings cmd: %s", cmd);
   
   if (strlen(cmd) == 0) return;
   
   // EXIT - leave settings mode
   if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
-    ESP_LOGI(TAG, "Exiting settings mode");
+    CDC_LOGI("Exiting settings mode");
     s_state = CDC_STATE_IDLE;
     send_response("SETTINGS_STOPPED");
     return;
@@ -3281,13 +3404,13 @@ static void process_settings_command(const char *cmd) {
 
 // Process config mode commands
 static void process_config_command(const char *cmd) {
-  ESP_LOGD(TAG, "Config cmd: %s", cmd);
+  CDC_LOGD("Config cmd: %s", cmd);
   
   if (strlen(cmd) == 0) return;
   
   // EXIT - leave config mode
   if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
-    ESP_LOGI(TAG, "Exiting config mode");
+    CDC_LOGI("Exiting config mode");
     s_state = CDC_STATE_IDLE;
     send_response("CONFIG_STOPPED");
     return;
@@ -3387,17 +3510,34 @@ static void process_config_command(const char *cmd) {
 
 #define SCENES_JSON_BUF_SIZE 8192
 
+// Web-initiated scene switches should apply immediately even when the device
+// is configured for pending (confirm-on-device) scene changes.
+static esp_err_t cdc_scene_apply_if_pending(esp_err_t err) {
+  if (err == ESP_OK && scene_has_pending_change()) {
+    return scene_confirm_change();
+  }
+  return err;
+}
+
 // Process scenes mode commands
 static void process_scenes_command(const char *cmd) {
-  ESP_LOGD(TAG, "Scenes cmd: %s", cmd);
+  CDC_LOGD("Scenes cmd: %s", cmd);
   
   if (strlen(cmd) == 0) return;
   
   // EXIT - leave scenes mode
   if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
-    ESP_LOGI(TAG, "Exiting scenes mode");
+    CDC_LOGI("Exiting scenes mode");
     s_state = CDC_STATE_IDLE;
     send_response("SCENES_STOPPED");
+    return;
+  }
+
+  // SCENE_INSPECT — allowed in scenes mode (inspect uses idle handler)
+  if (strncmp(cmd, "SCENE_INSPECT", 13) == 0) {
+    const char *arg = cmd + 13;
+    while (arg && *arg == ' ') arg++;
+    cdc_send_scene_inspect(arg && *arg ? arg : NULL);
     return;
   }
   
@@ -3474,7 +3614,7 @@ static void process_scenes_command(const char *cmd) {
       return;
     }
 
-    esp_err_t err = scene_set_current(idx);
+    esp_err_t err = cdc_scene_apply_if_pending(scene_set_current(idx));
     if (err == ESP_OK) {
       send_response("OK");
     } else {
@@ -3534,11 +3674,11 @@ static void process_scenes_command(const char *cmd) {
     }
 
     uint8_t idx = scene_get_index_by_position((uint16_t)pos);
-    ESP_LOGI(TAG, "RENAME: calling scene_set_name for index %d", idx);
+    CDC_LOGI("RENAME: calling scene_set_name for index %d", idx);
     int64_t start = esp_timer_get_time();
     esp_err_t err = scene_set_name(idx, new_name);
     int64_t elapsed = (esp_timer_get_time() - start) / 1000;
-    ESP_LOGI(TAG, "RENAME: scene_set_name completed in %lld ms, result=%s", elapsed, esp_err_to_name(err));
+    CDC_LOGI("RENAME: scene_set_name completed in %lld ms, result=%s", elapsed, esp_err_to_name(err));
     
     // Yield to let USB task service any pending data after file I/O
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -3701,13 +3841,13 @@ static void process_scenes_command(const char *cmd) {
 
 // Process pedals mode commands
 static void process_pedals_command(const char *cmd) {
-  ESP_LOGI(TAG, "Pedals cmd: '%s'", cmd);
+  CDC_LOGI("Pedals cmd: '%s'", cmd);
   
   if (strlen(cmd) == 0) return;
   
   // EXIT - leave pedals mode
   if (strcmp(cmd, "EXIT") == 0) {
-    ESP_LOGI(TAG, "Exiting pedals mode");
+    CDC_LOGI("Exiting pedals mode");
     s_state = CDC_STATE_IDLE;
     send_response("PEDALS_STOPPED");
     return;
@@ -3776,7 +3916,7 @@ static void process_pedals_command(const char *cmd) {
     // Build full path - path is relative to /assets/devices/ (manifest directory)
     char full_path[MAX_PATH_LEN];
     snprintf(full_path, sizeof(full_path), "%s/devices/%s", ASSETS_BASE_PATH, mdev->file);
-    ESP_LOGI(TAG, "Loading device file: %s", full_path);
+    CDC_LOGI("Loading device file: %s", full_path);
     
     struct stat st;
     if (stat(full_path, &st) != 0) {

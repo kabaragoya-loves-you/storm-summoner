@@ -1629,6 +1629,25 @@ wa-dialog[data-scene-target="reloadConfirmDialog"]::part(footer) {
   font-size: 0.85rem;
 }
 
+.info-subsection {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.jack-status {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.jack-connected {
+  color: var(--success, #4ade80);
+}
+
+.jack-disconnected {
+  color: var(--text-dim);
+}
+
 .info-card-actions {
   margin-top: 1.25rem;
   padding-top: 1rem;
@@ -1662,7 +1681,16 @@ wa-dialog[data-scene-target="reloadConfirmDialog"]::part(footer) {
 @media (max-width: 900px) {
   .pedals-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto minmax(12rem, 1fr);
+  }
+
+  .pedals-tree {
+    max-height: 40vh;
+    min-height: 0;
+  }
+
+  .pedals-detail {
+    min-height: 0;
   }
 }
 

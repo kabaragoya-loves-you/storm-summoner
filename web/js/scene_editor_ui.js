@@ -349,6 +349,548 @@ window.SceneEditorUi = (function () {
     return selectField(path, cur, opts)
   }
 
+  function touchwheelReleaseField (path, a) {
+    const opts = [{ v: '__original__', l: 'Original' },
+      ...ActionCatalog.touchwheelModeOptions(a.mode2)]
+    const cur = a.release_to_original ? '__original__' : (a.mode2 ?? 0)
+    return selectField(`${path}.mode2`, cur, opts)
+  }
+
+  function renderLfoFields (ctrl, path, a) {
+    const v = a.variant || 'modify'
+    let html = ''
+    if (v === 'start' || v === 'stop' || v === 'toggle' || v === 'modify') {
+      html += fieldRow(
+        'Target',
+        selectField(
+          `${path}.slot`,
+          a.slot ?? 1,
+          ActionCatalog.lfoTargetOptions(a.slot)
+        )
+      )
+    }
+    if (v === 'modify') {
+      html += fieldRow(
+        'Waveform',
+        selectField(
+          `${path}.waveform`,
+          a.waveform ?? 255,
+          ActionCatalog.lfoModifyWaveformOptions(a.waveform)
+        )
+      )
+      html += fieldRow(
+        'Rate mode',
+        selectField(
+          `${path}.rate_mode`,
+          a.rate_mode ?? 255,
+          ActionCatalog.lfoModifyRateModeOptions(a.rate_mode)
+        )
+      )
+      html += fieldRow(
+        'Rate',
+        selectField(
+          `${path}.rate_hz_x100`,
+          a.rate_hz_x100 ?? 65535,
+          ActionCatalog.lfoModifyRateHzOptions(a.rate_hz_x100)
+        )
+      )
+      html += fieldRow(
+        'Division',
+        selectField(
+          `${path}.division`,
+          a.division ?? 255,
+          ActionCatalog.lfoModifyDivisionOptions(a.division)
+        )
+      )
+      html += fieldRow(
+        'Polarity',
+        selectField(
+          `${path}.polarity`,
+          a.polarity ?? 255,
+          ActionCatalog.lfoModifyPolarityOptions(a.polarity)
+        )
+      )
+      html += fieldRow(
+        'Floor',
+        selectField(
+          `${path}.floor`,
+          a.floor ?? 255,
+          ActionCatalog.lfoModifyFloorCeilingOptions(a.floor)
+        )
+      )
+      html += fieldRow(
+        'Ceiling',
+        selectField(
+          `${path}.ceiling`,
+          a.ceiling ?? 255,
+          ActionCatalog.lfoModifyFloorCeilingOptions(a.ceiling)
+        )
+      )
+      html += fieldRow(
+        'Resolution',
+        selectField(
+          `${path}.resolution_mode`,
+          a.resolution_mode ?? 255,
+          ActionCatalog.lfoModifyResolutionOptions(a.resolution_mode)
+        )
+      )
+      if (Number(a.resolution_mode) === ActionCatalog.LFO_RESOLUTION_MANUAL) {
+        html += fieldRow(
+          'Steps',
+          selectField(
+            `${path}.manual_steps`,
+            a.manual_steps ?? 0,
+            ActionCatalog.lfoModifyManualStepsOptions(a.manual_steps)
+          )
+        )
+      }
+    }
+    return html
+  }
+
+  const CUT_MODES = ActionCatalog.CUT_MODE_OPTIONS
+
+  const BOOMERANG_PHASE_MODES = [
+    { v: 'instant', l: 'Instant' },
+    { v: 'time_ms', l: 'Time (ms)' },
+    { v: 'division', l: 'Division' }
+  ]
+
+  const BOOMERANG_CURVES = [
+    { v: 0, l: 'Linear' },
+    { v: 1, l: 'Exponential' },
+    { v: 2, l: 'Logarithmic' },
+    { v: 3, l: 'S-Curve' },
+    { v: 4, l: 'Inverse S' },
+    { v: 5, l: 'Quadratic' },
+    { v: 6, l: 'Square Root' },
+    { v: 7, l: 'Sine' },
+    { v: 8, l: 'Custom' }
+  ]
+
+  const BOOMERANG_SLOPE = [
+    { v: 0, l: 'Gentle' },
+    { v: 1, l: 'Medium' },
+    { v: 2, l: 'Steep' }
+  ]
+
+  const BOOMERANG_PHASE_DIVISIONS = [
+    { v: 'beat', l: '1 beat' },
+    { v: 'bar', l: '1 bar' },
+    { v: '2_bars', l: '2 bars' },
+    { v: '4_bars', l: '4 bars' },
+    { v: 'beat_2', l: 'Beat 2' },
+    { v: 'beat_3', l: 'Beat 3' },
+    { v: 'beat_4', l: 'Beat 4' },
+    { v: '2_beats', l: '2 beats' },
+    { v: '3_beats', l: '3 beats' },
+    { v: '3_bars', l: '3 bars' }
+  ]
+
+  function renderCcValuePair (ctrl, path, ccKey, valKey, cc, val) {
+    const ccPath = `${path}.${ccKey}`
+    const valPath = `${path}.${valKey}`
+    const ccNum = DeviceControls.resolveParameterCc(ctrl.deviceDefinition, cc)
+    let html = fieldRow(
+      'CC',
+      paramField(ctrl, ccPath, ccNum)
+    )
+    html += fieldRow(
+      'Value',
+      valueField(ctrl, valPath, ccNum, val)
+    )
+    return html
+  }
+
+  function renderClockFields (ctrl, path, a) {
+    const v = a.variant || 'toggle'
+    if (v === 'burst') {
+      return fieldRow(
+        'Speed',
+        selectField(
+          `${path}.speed_percent`,
+          a.speed_percent ?? 100,
+          ActionCatalog.clockBurstSpeedOptions(a.speed_percent)
+        )
+      )
+    }
+    const isHold = v === 'hold'
+    return fieldRow(
+      isHold ? 'Press' : 'First action',
+      selectField(
+        `${path}.start_enabled`,
+        a.start_enabled ? 'enable' : 'disable',
+        [
+          { v: 'enable', l: isHold ? 'Enable' : 'Enable first' },
+          { v: 'disable', l: isHold ? 'Disable' : 'Disable first' }
+        ]
+      )
+    )
+  }
+
+  function renderCutFields (ctrl, path, a) {
+    return fieldRow(
+      'Cut target',
+      selectField(
+        `${path}.cut_mode`,
+        a.cut_mode || 'both',
+        CUT_MODES
+      )
+    )
+  }
+
+  function renderUiFields (ctrl, path, a) {
+    const v = a.variant || 'set'
+    if (v === 'set') {
+      return fieldRow(
+        'Module',
+        selectField(
+          `${path}.module`,
+          a.module ?? 0,
+          ActionCatalog.uiModuleOptions(a.module)
+        )
+      )
+    }
+    if (v === 'hold') {
+      let html = fieldRow(
+        'Press',
+        selectField(
+          `${path}.module`,
+          a.module ?? 0,
+          ActionCatalog.uiModuleOptions(a.module)
+        )
+      )
+      html += fieldRow(
+        'Release',
+        selectField(
+          `${path}.module2`,
+          a.module2 ?? 0,
+          ActionCatalog.uiModuleOptions(a.module2)
+        )
+      )
+      return html
+    }
+    if (v === 'cycle') return renderUiCycle(ctrl, path, a)
+    return ''
+  }
+
+  function renderUiCycle (ctrl, path, a) {
+    const stepCount = ActionCatalog.uiStepCount(a)
+    const steps = Array.isArray(a.modules) ? a.modules.slice() : []
+    const stepOpts = []
+    for (let i = 2; i <= 8; i++) stepOpts.push({ v: i, l: String(i) })
+
+    let html = fieldRow(
+      'Steps',
+      selectField(`${path}.num_modules`, stepCount, stepOpts)
+    )
+    html += `<div class="scene-cycle scene-ui-cycle" style="--cycle-steps: ${stepCount}">`
+    html += '<div class="scene-cycle-row scene-cycle-row-head">'
+    html += '<div class="scene-cycle-param-col">Module</div>'
+    for (let i = 0; i < stepCount; i++) {
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span></div>`
+    }
+    html += '</div><div class="scene-cycle-row">'
+    html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
+    for (let i = 0; i < stepCount; i++) {
+      html += `<div class="scene-cycle-step-col">${selectField(
+        `${path}.modules.${i}`,
+        steps[i] ?? 0,
+        ActionCatalog.uiModuleOptions(steps[i])
+      )}</div>`
+    }
+    html += '</div></div>'
+    return html
+  }
+
+  function renderParamFields (ctrl, path, a) {
+    const v = a.variant || 'hold'
+    const device = ctrl.deviceDefinition
+    if (v === 'hold') {
+      const pressCc = DeviceControls.resolveParameterCc(device, a.param)
+      const relCc = DeviceControls.resolveParameterCc(device, a.param2)
+      let html = fieldRow(
+        'Press',
+        paramField(ctrl, `${path}.param`, pressCc, { exclude: new Set([relCc]), keep: pressCc })
+      )
+      html += fieldRow(
+        'Release',
+        paramField(ctrl, `${path}.param2`, relCc, { exclude: new Set([pressCc]), keep: relCc })
+      )
+      return html
+    }
+    if (v === 'cycle') return renderParamCycle(ctrl, path, a)
+    return ''
+  }
+
+  function renderParamCycle (ctrl, path, a) {
+    const device = ctrl.deviceDefinition
+    const stepCount = ActionCatalog.paramStepCount(a)
+    const steps = Array.isArray(a.params) ? a.params.slice() : []
+    const stepOpts = []
+    for (let i = 2; i <= 8; i++) stepOpts.push({ v: i, l: String(i) })
+
+    let html = fieldRow(
+      'Steps',
+      selectField(`${path}.num_params`, stepCount, stepOpts)
+    )
+    html += `<div class="scene-cycle scene-param-cycle" style="--cycle-steps: ${stepCount}">`
+    html += '<div class="scene-cycle-row scene-cycle-row-head">'
+    html += '<div class="scene-cycle-param-col">Parameter</div>'
+    for (let i = 0; i < stepCount; i++) {
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span></div>`
+    }
+    html += '</div><div class="scene-cycle-row">'
+    html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
+    for (let i = 0; i < stepCount; i++) {
+      const cc = DeviceControls.resolveParameterCc(device, steps[i])
+      const used = new Set(steps.filter((_, j) => j !== i).map(c => Number(c)))
+      html += `<div class="scene-cycle-step-col">${paramField(
+        ctrl,
+        `${path}.params.${i}`,
+        cc,
+        { exclude: used, keep: cc }
+      )}</div>`
+    }
+    html += '</div></div>'
+    return html
+  }
+
+  function renderEngineModifyFields (ctrl, path, a) {
+    let html = fieldRow(
+      'Rate mode',
+      selectField(
+        `${path}.rate_mode`,
+        a.rate_mode ?? 255,
+        ActionCatalog.engineModifyRateModeOptions(a.rate_mode)
+      )
+    )
+    html += fieldRow(
+      'Rate',
+      selectField(
+        `${path}.rate_hz_x100`,
+        a.rate_hz_x100 ?? 65535,
+        ActionCatalog.engineModifyRateHzOptions(a.rate_hz_x100)
+      )
+    )
+    html += fieldRow(
+      'Sync mult',
+      selectField(
+        `${path}.sync_mult_x1000`,
+        a.sync_mult_x1000 ?? 65535,
+        ActionCatalog.engineModifySyncMultOptions(a.sync_mult_x1000)
+      )
+    )
+    html += fieldRow(
+      'Glide',
+      selectField(
+        `${path}.glide`,
+        a.glide ?? 255,
+        ActionCatalog.engineModifyGlideOptions(a.glide)
+      )
+    )
+    html += fieldRow(
+      'Probability',
+      selectField(
+        `${path}.probability`,
+        a.probability ?? 255,
+        ActionCatalog.engineModifyProbOptions(a.probability)
+      )
+    )
+    return html
+  }
+
+  function renderEngineFields (ctrl, path, a) {
+    const v = a.variant || 'toggle'
+    if (v === 'step') {
+      return fieldRow(
+        'Target',
+        selectField(
+          `${path}.step_target`,
+          a.step_target || (a.type === 'sample_hold' ? 'sh' : 'rtg'),
+          ActionCatalog.STEP_TARGET_OPTIONS
+        )
+      )
+    }
+    if (v === 'modify') return renderEngineModifyFields(ctrl, path, a)
+    return ''
+  }
+
+  function renderPunchInFields (ctrl, path, a) {
+    let html = renderCcValuePair(
+      ctrl, path, 'start_cc', 'start_value', a.start_cc, a.start_value
+    )
+    html += renderCcValuePair(
+      ctrl, path, 'finish_cc', 'finish_value', a.finish_cc, a.finish_value
+    )
+    const beats = ctrl.editModel?.time_signature?.numerator ?? 4
+    const dur = a.duration || '1_bar'
+    const durOpts = ActionCatalog.punchInDurationOptions(beats)
+    if (!durOpts.some(o => o.v === dur)) durOpts.unshift({ v: dur, l: dur })
+    html += fieldRow(
+      'Duration',
+      selectField(`${path}.duration`, dur, durOpts)
+    )
+    return html
+  }
+
+  function renderFlagCeremonyFields (ctrl, path, a) {
+    let html = renderCcValuePair(
+      ctrl, path, 'flag_up_cc', 'flag_up_value', a.flag_up_cc, a.flag_up_value
+    )
+    html += renderCcValuePair(
+      ctrl, path, 'flag_down_cc', 'flag_down_value', a.flag_down_cc, a.flag_down_value
+    )
+    return html
+  }
+
+  function renderBoomerangPhase (ctrl, path, a, phase) {
+    const modeKey = `${phase}_mode`
+    const timeKey = `${phase}_time_ms`
+    const divKey = `${phase}_division`
+    const curveKey = `${phase}_curve`
+    const slopeKey = `${phase}_curve_slope`
+    const mode = a[modeKey] || 'instant'
+    let html = fieldRow(
+      `${phase.charAt(0).toUpperCase()}${phase.slice(1)} mode`,
+      selectField(`${path}.${modeKey}`, mode, BOOMERANG_PHASE_MODES)
+    )
+    if (mode === 'time_ms') {
+      html += fieldRow(
+        `${phase.charAt(0).toUpperCase()}${phase.slice(1)} time (ms)`,
+        numberField(`${path}.${timeKey}`, a[timeKey] ?? 0, 0, 60000)
+      )
+    } else if (mode === 'division') {
+      html += fieldRow(
+        `${phase.charAt(0).toUpperCase()}${phase.slice(1)} division`,
+        selectField(
+          `${path}.${divKey}`,
+          a[divKey] || 'beat',
+          BOOMERANG_PHASE_DIVISIONS
+        )
+      )
+    }
+    if (phase !== 'sustain') {
+      html += fieldRow(
+        `${phase.charAt(0).toUpperCase()}${phase.slice(1)} curve`,
+        selectField(`${path}.${curveKey}`, a[curveKey] ?? 0, BOOMERANG_CURVES)
+      )
+      html += fieldRow(
+        `${phase.charAt(0).toUpperCase()}${phase.slice(1)} slope`,
+        selectField(`${path}.${slopeKey}`, a[slopeKey] ?? 1, BOOMERANG_SLOPE)
+      )
+    }
+    return html
+  }
+
+  function renderBoomerangFields (ctrl, path, a) {
+    const ot = a.output_type || 'cc'
+    let html = fieldRow(
+      'Output',
+      selectField(`${path}.output_type`, ot, OUTPUT_TYPES)
+    )
+    if (ot === 'cc') {
+      html += fieldRow(
+        'CC',
+        paramField(
+          ctrl,
+          `${path}.cc_number`,
+          DeviceControls.resolveParameterCc(ctrl.deviceDefinition, a.cc_number)
+        )
+      )
+    }
+    if (ot === 'lfo_rate' || ot === 'lfo_depth') {
+      html += fieldRow(
+        'LFO target',
+        selectField(`${path}.lfo_target`, a.lfo_target || 'both', LFO_TARGET)
+      )
+    }
+    html += fieldRow(
+      'Target mode',
+      selectField(`${path}.target_mode`, a.target_mode || 'explicit', [
+        { v: 'explicit', l: 'Explicit' },
+        { v: 'random', l: 'Random' }
+      ])
+    )
+    if ((a.target_mode || 'explicit') === 'explicit') {
+      const cc = ot === 'cc'
+        ? DeviceControls.resolveParameterCc(ctrl.deviceDefinition, a.cc_number)
+        : null
+      const max = ot === 'pitch_bend' ? 16383 : 127
+      html += fieldRow(
+        'Target value',
+        cc && DeviceControls.hasDiscreteValues(ctrl.deviceDefinition, cc)
+          ? valueField(ctrl, `${path}.target_value`, cc, a.target_value ?? 0)
+          : numberField(`${path}.target_value`, a.target_value ?? 0, 0, max)
+      )
+    }
+    if (ot === 'cc') {
+      html += fieldRow(
+        'Start mode',
+        selectField(`${path}.start_mode`, a.start_mode || 'current', [
+          { v: 'current', l: 'Current' },
+          { v: 'explicit', l: 'Explicit' }
+        ])
+      )
+      if ((a.start_mode || 'current') === 'explicit') {
+        const cc = DeviceControls.resolveParameterCc(ctrl.deviceDefinition, a.cc_number)
+        html += fieldRow(
+          'Start value',
+          valueField(ctrl, `${path}.start_value`, cc, a.start_value ?? 0)
+        )
+      }
+    }
+    html += renderBoomerangPhase(ctrl, path, a, 'attack')
+    html += renderBoomerangPhase(ctrl, path, a, 'sustain')
+    html += renderBoomerangPhase(ctrl, path, a, 'release')
+    return html
+  }
+
+  function renderTouchwheelHold (ctrl, path, a) {
+    let html = fieldRow(
+      'Press',
+      selectField(
+        `${path}.mode`,
+        a.mode ?? 0,
+        ActionCatalog.touchwheelModeOptions(a.mode)
+      )
+    )
+    html += fieldRow('Release', touchwheelReleaseField(path, a))
+    return html
+  }
+
+  function renderTouchwheelCycle (ctrl, path, a) {
+    const stepCount = ActionCatalog.touchwheelStepCount(a)
+    const steps = Array.isArray(a.modes) ? a.modes.slice() : []
+    const stepOpts = []
+    for (let i = 2; i <= 8; i++) stepOpts.push({ v: i, l: String(i) })
+
+    let html = fieldRow(
+      'Steps',
+      selectField(`${path}.num_modes`, stepCount, stepOpts)
+    )
+
+    html += `<div class="scene-cycle scene-touchwheel-cycle" style="--cycle-steps: ${stepCount}">`
+    html += '<div class="scene-cycle-row scene-cycle-row-head">'
+    html += '<div class="scene-cycle-param-col">Mode</div>'
+    for (let i = 0; i < stepCount; i++) {
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span></div>`
+    }
+    html += '</div>'
+
+    html += '<div class="scene-cycle-row">'
+    html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
+    for (let i = 0; i < stepCount; i++) {
+      html += `<div class="scene-cycle-step-col">${selectField(
+        `${path}.modes.${i}`,
+        steps[i] ?? 0,
+        ActionCatalog.touchwheelModeOptions(steps[i])
+      )}</div>`
+    }
+    html += '</div></div>'
+    return html
+  }
+
   function renderTempoCycle (ctrl, path, a) {
     const stepCount = ActionCatalog.tempoStepCount(a)
     const steps = Array.isArray(a.tempos) ? a.tempos.slice() : []
@@ -884,6 +1426,22 @@ window.SceneEditorUi = (function () {
       if (a.type === 'randomize') {
         html += renderRandomizeFields(ctrl, path, a)
       }
+      if (a.type === 'piano_pedal') {
+        html += fieldRow(
+          'Pedal',
+          selectField(
+            `${path}.cc`,
+            ActionCatalog.resolvePianoPedalCc(a.cc),
+            ActionCatalog.pianoPedalOptions(a.cc)
+          )
+        )
+      }
+      if (a.type === 'touchwheel' && (a.variant || 'hold') === 'hold') {
+        html += renderTouchwheelHold(ctrl, path, a)
+      }
+      if (a.type === 'touchwheel' && a.variant === 'cycle') {
+        html += renderTouchwheelCycle(ctrl, path, a)
+      }
       if (a.type === 'control' || a.type === 'control_change') {
         html += renderControlFields(ctrl, path, a)
       }
@@ -916,7 +1474,31 @@ window.SceneEditorUi = (function () {
         html += renderTempoCycle(ctrl, path, a)
       }
       if (a.type === 'lfo') {
-        html += fieldRow('Slot', numberField(`${path}.slot`, a.slot ?? 1, 1, 3))
+        html += renderLfoFields(ctrl, path, a)
+      }
+      if (a.type === 'clock') {
+        html += renderClockFields(ctrl, path, a)
+      }
+      if (a.type === 'cut') {
+        html += renderCutFields(ctrl, path, a)
+      }
+      if (a.type === 'ui') {
+        html += renderUiFields(ctrl, path, a)
+      }
+      if (a.type === 'param') {
+        html += renderParamFields(ctrl, path, a)
+      }
+      if (a.type === 'rtg' || a.type === 'sample_hold') {
+        html += renderEngineFields(ctrl, path, a)
+      }
+      if (a.type === 'punch_in') {
+        html += renderPunchInFields(ctrl, path, a)
+      }
+      if (a.type === 'flag_ceremony') {
+        html += renderFlagCeremonyFields(ctrl, path, a)
+      }
+      if (a.type === 'boomerang') {
+        html += renderBoomerangFields(ctrl, path, a)
       }
       if (a.type === 'confirm_pending' && (ctrl.deviceContext?.sceneMode ?? 0) === 2) {
         html += fieldRow(
@@ -940,7 +1522,7 @@ window.SceneEditorUi = (function () {
       html += renderRepeatBlock(ctrl, path, a)
       html += renderFollowUpBlock(ctrl, path, a)
       html += renderMorphBlock(ctrl, path, a)
-      if (ctrl.deviceContext?.flagEnabled) {
+      if (ActionCatalog.supportsRaiseFlag(a) && ctrl.deviceContext?.flagEnabled) {
         html += fieldRow(
           'Raise the Flag',
           checkboxField(`${path}.raise_flag`, !!a.raise_flag)

@@ -15,9 +15,9 @@ static const action_type_t hold_actions[] = {
   ACTION_PIANO_PEDAL,
   ACTION_INSPECT_SCENE,
   // ACTION_LFO is intentionally NOT in this list. None of its variants are
-  // press/release pairs (START/STOP/TOGGLE/MODIFY are all press-only). The
-  // per-variant timing/repeat restrictions for TOGGLE live in the
-  // action_supports_timing_for / action_supports_repeat_for carve-outs.
+  // press/release pairs (START/STOP/TOGGLE/MODIFY are all press-only).
+  // Per-variant timing/repeat rules live in action_supports_timing_for /
+  // action_supports_repeat_for.
   // ACTION_CLOCK is variant-aware: only HOLD is hold-like; BURST needs
   // press/release but is handled via fire-and-forget (Toggle only on load).
   // ACTION_CUT is variant-aware: only HOLD is hold-like.
@@ -382,10 +382,8 @@ bool action_supports_timing_for(const action_t* action) {
     return true;
   }
   if (action->type == ACTION_LFO) {
-    // TOGGLE is interactive (the user expects it to flip on the press they
-    // just made). START/STOP/MODIFY are all press-only one-shots that
-    // schedule cleanly on a beat.
-    if (action->variant == VARIANT_TOGGLE) return false;
+    // All LFO variants are press-only one-shots that schedule on a beat,
+    // including TOGGLE (flip on the scheduled beat, not the press beat).
     return true;
   }
   if (action->type == ACTION_CLOCK) {
@@ -444,9 +442,9 @@ bool action_supports_repeat_for(const action_t* action) {
     return action->variant == VARIANT_CYCLE;
   }
   if (action->type == ACTION_LFO) {
-    // Same TOGGLE carve-out as timing: starting/stopping/modifying on every
-    // beat is musical; flipping on/off on every beat is just noise.
-    return action->variant != VARIANT_TOGGLE;
+    // TOGGLE and MODIFY repeat musically; START/STOP are one-shot edges.
+    return action->variant == VARIANT_TOGGLE ||
+           action->variant == VARIANT_MODIFY;
   }
   if (action->type == ACTION_CLOCK)
     return false;
@@ -509,6 +507,7 @@ bool action_supports_raise_flag(action_type_t type) {
     case ACTION_TEMPO:
     case ACTION_NOTE:
     case ACTION_RANDOMIZE:
+    case ACTION_LFO:
     case ACTION_PUNCH_IN:
     case ACTION_FLAG_CEREMONY:
     case ACTION_BOOMERANG:

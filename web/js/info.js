@@ -29,6 +29,15 @@ application.register(
           }
           return
         }
+        if (kind === 'connections') {
+          if (!this.connection.isConnected) return
+          if (e.detail.connections) {
+            if (!this.infoData) this.infoData = {}
+            this.infoData.connections = e.detail.connections
+            this.renderDeviceConnections()
+          }
+          return
+        }
         if (
           kind !== 'scene_changed' &&
           kind !== 'scene_updated' &&
@@ -125,10 +134,7 @@ application.register(
       try {
         const response = await this.connection.runSerialTask(async () => {
           if (gen !== this._loadGeneration) return null
-          if (this.connection.currentMode) {
-            await this.connection._exitModeImpl()
-            await this.sleep(300)
-          }
+          await this.connection.ensureDeviceIdle()
           if (gen !== this._loadGeneration) return null
           await this.sleep(100)
           return this.connection._sendCommandImpl(
@@ -176,10 +182,15 @@ application.register(
       const op = cmd.toUpperCase()
       if (op !== 'PREV' && op !== 'NEXT') return
       try {
-        const response = await this.connection.sendCommand(`NAV ${op}`, 3000)
+        const response = await this.connection.runSerialTask(async () => {
+          await this.connection.ensureDeviceIdle()
+          return this.connection._sendCommandImpl(`NAV ${op}`, 3000)
+        })
         if (response !== 'OK') {
           console.error('Navigation command failed:', response)
+          return
         }
+        await this.activate()
       } catch (err) {
         console.error('Navigation command error:', err)
       }
@@ -190,7 +201,10 @@ application.register(
       const op = cmd.toUpperCase()
       this._transportBusy = true
       try {
-        const response = await this.connection.sendCommand(`TRANSPORT ${op}`, 3000)
+        const response = await this.connection.runSerialTask(async () => {
+          await this.connection.ensureDeviceIdle()
+          return this.connection._sendCommandImpl(`TRANSPORT ${op}`, 3000)
+        })
         if (response !== 'OK') {
           console.error('Transport command failed:', response)
         }
@@ -260,6 +274,47 @@ application.register(
       }
     }
 
+    formatJackStatus (connected) {
+      const on = !!connected
+      return `<span class="jack-status ${on ? 'jack-connected' : 'jack-disconnected'}">${
+        on ? 'Connected' : 'Disconnected'
+      }</span>`
+    }
+
+    renderDeviceConnectionsHtml () {
+      const c = this.infoData?.connections || {}
+      let html = `
+        <div class="info-row">
+          <span class="info-label">USB</span>
+          <span class="info-value">${this.formatJackStatus(c.usb)}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">CV In</span>
+          <span class="info-value">${this.formatJackStatus(c.cv)}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Expression</span>
+          <span class="info-value">${this.formatJackStatus(c.expression)}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">MIDI In</span>
+          <span class="info-value">${this.formatJackStatus(c.midi_in)}</span>
+        </div>`
+      if (this.infoData?.cv_range) {
+        html += `
+        <div class="info-row">
+          <span class="info-label">CV range</span>
+          <span class="info-value">${this.infoData.cv_range}</span>
+        </div>`
+      }
+      return html
+    }
+
+    renderDeviceConnections () {
+      const block = this.deviceCardTarget.querySelector('[data-info-connections]')
+      if (block) block.innerHTML = this.renderDeviceConnectionsHtml()
+    }
+
     renderInfo () {
       if (!this.infoData) {
         this.renderEmpty()
@@ -313,6 +368,9 @@ application.register(
           <div class="info-row">
             <span class="info-label">Serial</span>
             <span class="info-value mono">${this.infoData.serial}</span>
+          </div>
+          <div class="info-subsection" data-info-connections>
+            ${this.renderDeviceConnectionsHtml()}
           </div>
         </div>
       `

@@ -74,6 +74,11 @@ esp_err_t adc_manager_read_calibrated(adc_channel_t channel, int *voltage_mv);
 bool adc_manager_is_initialized(void);
 
 /**
+ * Check whether a channel has been registered with the ADC manager.
+ */
+bool adc_manager_channel_is_registered(adc_channel_t channel);
+
+/**
  * Deinitialize the ADC manager
  * 
  * Releases all ADC resources. After calling this, adc_manager_init() can be called again.

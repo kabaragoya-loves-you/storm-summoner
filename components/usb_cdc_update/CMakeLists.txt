@@ -22,6 +22,10 @@ idf_component_register(
     transport
     tempo
     task_monitor
+    cv
+    expression
+    input_manager
+    midi
   PRIV_REQUIRES
     main
     screensaver

@@ -41,12 +41,20 @@ application.register(
       document.addEventListener('cdc:notify', this._onCdcNotify)
 
       // Listen for tab activation
-      document.addEventListener('app:tab-activated', (e) => {
-        if (e.detail.tab !== 'scenes' || !this.connection.isConnected) return
-        if (!this.inScenesMode) {
-          this.activate()
-        } else {
-          this.selectPlayingSceneIfNeeded()
+      document.addEventListener('app:tab-activated', async (e) => {
+        if (e.detail.tab === 'scenes') {
+          if (!this.connection.isConnected) return
+          if (!this.inScenesMode) {
+            await this.activate()
+          } else {
+            await this.openDetailPanelAfterListLoad()
+          }
+          return
+        }
+        if (this.connection.isConnected &&
+            (this.inScenesMode || this.connection._deviceScenesActive ||
+             this.connection.currentMode === 'SCENES')) {
+          await this.leaveScenesModeFully()
         }
       })
     }
@@ -93,6 +101,7 @@ application.register(
           await this.settleDelay()
           await this.fetchScenesBody()
         })
+        await this.openDetailPanelAfterListLoad()
       } catch (err) {
         console.error('Scenes activation error:', err)
         this.log('Activation error: ' + err.message, 'error')
@@ -216,7 +225,6 @@ application.register(
         this.scenes = JSON.parse(jsonStr).map(s => this.normalizeSceneListEntry(s))
         this.renderScenes()
         this.log(`Loaded ${this.scenes.length} scenes`)
-        this.selectPlayingSceneIfNeeded()
       } catch (err) {
         console.error('Error fetching scenes:', err)
         this.log('Error: ' + err.message, 'error')
@@ -324,21 +332,73 @@ application.register(
 
     openScene (position, mode) {
       if (Number.isNaN(position)) return
+      void this.openSceneDispatch(position, mode)
+    }
+
+    async openSceneDispatch (position, mode) {
       this.selectedPosition = position
       this.panelMode = mode === 'edit' ? 'edit' : 'view'
       this.highlightSelection()
       if (this.scenes.length) this.renderScenes()
-      document.dispatchEvent(
-        new CustomEvent('scenes:open-scene', { detail: { position, mode } })
-      )
+
+      let done = () => {}
+      const loaded = new Promise(resolve => { done = resolve })
+
+      await this.connection.runSerialTask(async () => {
+        await this.leaveScenesModeInTask()
+        document.dispatchEvent(
+          new CustomEvent('scenes:open-scene', {
+            detail: { position, mode, ready: done }
+          })
+        )
+        await loaded
+      })
     }
 
-    /** Show inspect view for the playing scene when the detail panel is empty. */
-    selectPlayingSceneIfNeeded () {
-      if (this.selectedPosition !== null) return
+    async openDetailPanelAfterListLoad () {
+      if (this.selectedPosition !== null) {
+        await this.openSceneDispatch(this.selectedPosition, this.panelMode || 'view')
+        return
+      }
       const playing = this.scenes.find(s => s.current)
       if (!playing) return
-      this.openScene(playing.position, 'view')
+      await this.openSceneDispatch(playing.position, 'view')
+    }
+
+    async selectPlayingSceneIfNeeded () {
+      if (this.selectedPosition !== null) return
+      await this.openDetailPanelAfterListLoad()
+    }
+
+    async leaveScenesModeForInspect () {
+      await this.connection.runSerialTask(() => this.leaveScenesModeInTask())
+    }
+
+    async leaveScenesModeFully () {
+      if (!this.inScenesMode && !this.connection._deviceScenesActive &&
+          this.connection.currentMode !== 'SCENES') return
+
+      this.inScenesMode = false
+      const impl = async () => {
+        await this.connection.ensureDeviceIdle()
+      }
+      if (this.connection.isSerialBusy) await impl()
+      else await this.connection.runSerialTask(impl)
+    }
+
+    async leaveScenesModeInTask () {
+      if (!this.inScenesMode && this.connection.currentMode !== 'SCENES') return
+
+      this.inScenesMode = false
+      if (this.connection.currentMode === 'SCENES') {
+        this.connection._stopModeNotifyLoop()
+        await this.connection._suspendModeNotify()
+        this.connection.mode = null
+        // The device is still in SCENES even though we present mode as null;
+        // record it so a later mode change / exit sends EXIT to the device.
+        this.connection._deviceScenesActive = true
+        this.connection.emit('mode:changed', { mode: null })
+      }
     }
 
     openView (e) {

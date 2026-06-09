@@ -147,6 +147,7 @@ static void expression_task(void *pvParameters) {
           .timestamp = event_bus_get_current_timestamp()
         };
         event_bus_post(&conn_event);
+        event_bus_post_connections_changed();
         // Notify input manager (for CV/Gate mode cable checking)
         extern void input_manager_expression_cable_changed(bool connected);
         input_manager_expression_cable_changed(true);
@@ -159,6 +160,7 @@ static void expression_task(void *pvParameters) {
           .timestamp = event_bus_get_current_timestamp()
         };
         event_bus_post(&disc_event);
+        event_bus_post_connections_changed();
         // Notify input manager
         extern void input_manager_expression_cable_changed(bool connected);
         input_manager_expression_cable_changed(false);
@@ -894,7 +896,8 @@ static esp_err_t expression_adc_init(void) {
   }
   
   ESP_LOGI(TAG, "Expression ADC channels registered: exp_ch=%d, ref_ch=%d (ratiometric)", EXP_ADC_CHANNEL, REF_ADC_CHANNEL);
-  
+
+  event_bus_post_connections_changed();
   return ESP_OK;
 }
 

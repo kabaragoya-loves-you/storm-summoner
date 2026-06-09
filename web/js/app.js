@@ -8,6 +8,11 @@ window.ConnectionManager = (function () {
     constructor () {
       this.port = null
       this.mode = null // ASSETS, CONSOLE, DISPLAY, UPDATE, RPC
+      // The Scenes flow keeps the device in SCENES mode while presenting
+      // this.mode as null (so SCENE_INSPECT can run through the rx pump). This
+      // flag remembers that the device side is still in SCENES so that a later
+      // mode change / exit knows to send EXIT even though this.mode is null.
+      this._deviceScenesActive = false
       this.listeners = new Map()
       // Persistent receive buffer. Without this, readLine/sendCommand would
       // each open a fresh reader, read a chunk that may contain MULTIPLE
@@ -127,6 +132,7 @@ window.ConnectionManager = (function () {
         this._stopModeNotifyLoop()
         this.port = null
         this.mode = null
+        this._deviceScenesActive = false
         this._rxBuffer = ''
         this._lineQueue = []
         this._lineWaiters = []
@@ -159,6 +165,7 @@ window.ConnectionManager = (function () {
       } finally {
         this.port = null
         this.mode = null
+        this._deviceScenesActive = false
         this._rxBuffer = ''
         this._lineQueue = []
         this._lineWaiters = []
@@ -179,7 +186,7 @@ window.ConnectionManager = (function () {
       if (!this.port) throw new Error('Not connected')
       if (this.mode === newMode) return true
 
-      if (this.mode) {
+      if (this.mode || this._deviceScenesActive) {
         await this._exitModeImpl()
       }
 
@@ -203,10 +210,11 @@ window.ConnectionManager = (function () {
     }
 
     async _exitModeImpl () {
-      if (!this.mode || !this.port) return
+      if ((!this.mode && !this._deviceScenesActive) || !this.port) return
       this._stopModeNotifyLoop()
       await this._suspendModeNotify()
       this.mode = null
+      this._deviceScenesActive = false
       this.emit('mode:changed', { mode: null })
       try {
         await this.sendRaw('EXIT\n')
@@ -216,6 +224,14 @@ window.ConnectionManager = (function () {
         // Ignore exit errors
       }
       this._resumeRxPump()
+    }
+
+    async ensureDeviceIdle () {
+      if (!this.port) return
+      if (this.mode || this._deviceScenesActive) {
+        await this._exitModeImpl()
+        await this.sleep(200)
+      }
     }
 
     // Lock/unlock tabs during critical operations
@@ -269,6 +285,20 @@ window.ConnectionManager = (function () {
             denominator: parseInt(parts[7], 10) || 4
           },
           use_transport: parts[8] === '1'
+        }
+      } else if (kind === 'connections' && parts.length >= 6) {
+        detail.connections = {
+          usb: parts[2] === '1',
+          cv: parts[3] === '1',
+          expression: parts[4] === '1',
+          midi_in: parts[5] === '1'
+        }
+      } else if (kind === 'connections' && parts.length >= 5) {
+        detail.connections = {
+          usb: parts[2] === '1',
+          cv: parts[3] === '1',
+          expression: parts[4] === '1',
+          midi_in: false
         }
       } else {
         const index = parseInt(parts[2], 10)
@@ -382,8 +412,9 @@ window.ConnectionManager = (function () {
     _startModeNotifyLoop () {
       if (this._modeNotifyRunning || !this.mode) return
       // ASSETS/CONFIG use request/response lines (and ASSETS binary transfers).
+      // DISPLAY owns the readable stream for binary frames.
       // A background reader competes with readLine / fetchSizedTransfer.
-      if (this.mode === 'ASSETS' || this.mode === 'CONFIG') return
+      if (this.mode === 'ASSETS' || this.mode === 'CONFIG' || this.mode === 'DISPLAY') return
       this._modeNotifyRunning = true
       this._modeNotifyLoop()
     }
@@ -517,8 +548,9 @@ window.ConnectionManager = (function () {
     }
 
     _expectedJsonMarker (cmd) {
-      if (cmd === 'INFO') return '"version"'
-      if (cmd === 'SCENE_INSPECT') return '"text"'
+      const base = cmd.split(/\s+/)[0]
+      if (base === 'INFO') return '"version"'
+      if (base === 'SCENE_INSPECT') return '"text"'
       return null
     }
 
@@ -558,12 +590,192 @@ window.ConnectionManager = (function () {
       this._processIncomingLines()
     }
 
+    _takeJsonLineFromBuffer (buffer) {
+      while (true) {
+        const idx = buffer.indexOf('\n')
+        if (idx === -1) return { line: null, buffer }
+        const line = buffer.substring(0, idx).replace(/\r/g, '').trim()
+        buffer = buffer.substring(idx + 1)
+        if (!line) continue
+        if (line.startsWith('EVT:')) {
+          this.dispatchCdcNotify(line)
+          continue
+        }
+        if (this._isNoiseLine(line)) continue
+        if (line === 'SCENES_STOPPED' || line === 'SCENES_STARTED' ||
+            line === 'CONFIG_STOPPED' || line === 'SETTINGS_STOPPED' ||
+            line === 'PEDALS_STOPPED') continue
+        return { line, buffer }
+      }
+    }
+
+    // Legacy helper — prefer _sendAndReadJsonLine.
+    async _readOneJsonLine (timeout = 30000) {
+      const reader = this.port.readable.getReader()
+      const decoder = new TextDecoder()
+      let buffer = this._rxBuffer
+      this._rxBuffer = ''
+      const deadline = Date.now() + timeout
+      let pendingRead = null
+
+      try {
+        while (Date.now() < deadline) {
+          let taken = this._takeJsonLineFromBuffer(buffer)
+          buffer = taken.buffer
+          if (taken.line) return taken.line
+
+          const trimmed = buffer.trim()
+          if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed
+
+          if (!pendingRead) pendingRead = reader.read()
+          const waitMs = Math.min(100, deadline - Date.now())
+          if (waitMs <= 0) break
+          const result = await Promise.race([
+            pendingRead,
+            this.sleep(waitMs).then(() => ({ timeout: true }))
+          ])
+          if (result.timeout) continue
+          pendingRead = null
+          if (result.done) break
+          if (result.value?.length) {
+            buffer += decoder.decode(result.value, { stream: true })
+          }
+        }
+      } finally {
+        this._rxBuffer = buffer + this._rxBuffer
+        try { reader.releaseLock() } catch (e) {}
+      }
+      const trimmed = buffer.trim()
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed
+      return ''
+    }
+
+    // sendRaw before locking readable — matches INFO path; holding a reader
+    // during sendRaw can orphan in-flight reads and drop the response.
+    async _sendAndReadJsonLine (cmd, timeout = 30000) {
+      if (!this.port) throw new Error('Not connected')
+      this._lineQueue = []
+      this._rejectLineWaiters()
+      await this._suspendRxPump()
+      await this._waitForPumpReaderRelease()
+      const hadMode = this.mode !== null
+      if (hadMode) {
+        await this._suspendModeNotify()
+        await this._waitForModeNotifyReaderRelease()
+      }
+
+      this._rxBuffer = ''
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let reader = null
+
+      try {
+        await this.sendRaw(cmd + '\n')
+        reader = this.port.readable.getReader()
+
+        const deadline = Date.now() + timeout
+        let pendingRead = null
+        while (Date.now() < deadline) {
+          let taken = this._takeJsonLineFromBuffer(buffer)
+          buffer = taken.buffer
+          if (taken.line) return taken.line
+
+          const trimmed = buffer.trim()
+          if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed
+
+          if (!pendingRead) pendingRead = reader.read()
+          const waitMs = Math.min(100, deadline - Date.now())
+          if (waitMs <= 0) break
+          const result = await Promise.race([
+            pendingRead,
+            this.sleep(waitMs).then(() => ({ timeout: true }))
+          ])
+          if (result.timeout) continue
+          pendingRead = null
+          if (result.done) break
+          if (result.value?.length) {
+            buffer += decoder.decode(result.value, { stream: true })
+          }
+        }
+
+        const trimmed = buffer.trim()
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed
+        console.error('Serial JSON command timeout', {
+          cmd,
+          bytes: buffer.length,
+          head: buffer.slice(0, 120)
+        })
+        return ''
+      } finally {
+        this._rxBuffer = buffer + this._rxBuffer
+        if (reader) {
+          try { reader.releaseLock() } catch (e) {}
+        }
+        if (hadMode) this._resumeModeNotifyIfAllowed()
+        else this._resumeRxPump()
+      }
+    }
+
+    // Send a command and read a single JSON response line through the persistent
+    // rx pump (mode === null). Unlike _sendCommandImpl, this never acquires a
+    // fresh dedicated reader right after a cancel(), which avoids a Chromium
+    // Web Serial stall where a pending read() does not wake on newly-arrived
+    // bytes. Caller must already be inside a serial task and have mode === null.
+    async _sendCommandViaPump (cmd, timeout = 30000, validator = null, options = null) {
+      if (!this.port) throw new Error('Not connected')
+      const preludeExit = options?.preludeExit === true
+
+      // Make the single pump reader the active consumer and wait until it has
+      // actually acquired the port reader (steady-state pull, not post-cancel).
+      this._resumeRxPump()
+      const armDeadline = Date.now() + 1000
+      while (!this._rxPumpReader && Date.now() < armDeadline) await this.sleep(20)
+
+      if (preludeExit) await this.sendRaw('EXIT\n')
+      await this.sendRaw(cmd + '\n')
+
+      const expectMarker = validator ? this._expectedJsonMarker(cmd) : null
+      const deadline = Date.now() + timeout
+      let acc = ''
+      while (Date.now() < deadline) {
+        const line = await this.readLine(Math.min(1000, Math.max(1, deadline - Date.now())))
+        if (!line) continue
+        if (line.startsWith('ERROR:')) return line
+        if (line === 'SCENES_STOPPED' || line === 'SCENES_STARTED' ||
+            line === 'CONFIG_STOPPED' || line === 'SETTINGS_STOPPED' ||
+            line === 'PEDALS_STOPPED') continue
+        if (!line.includes('{') && !line.includes('"')) continue
+
+        acc += line
+        try {
+          const data = JSON.parse(this._extractFirstJson(this._repairJsonLine(acc)))
+          if (!validator || validator(data)) return JSON.stringify(data)
+        } catch (_) {
+          if (expectMarker && !acc.includes(expectMarker)) { acc = ''; continue }
+          if (line.endsWith('}')) acc = ''
+        }
+      }
+      return ''
+    }
+
+    async _tryParseCommandJson (rawLine, validator) {
+      if (!rawLine.startsWith('{') && !rawLine.startsWith('[')) return null
+      try {
+        const data = JSON.parse(rawLine)
+        if (validator && !validator(data)) return null
+        return rawLine
+      } catch (_) {
+        return null
+      }
+    }
+
     async sendCommand (cmd, timeout = 30000, validator = null) {
       const impl = () => this._sendCommandImpl(cmd, timeout, validator)
       return this.isSerialBusy ? impl() : this.runSerialTask(impl)
     }
 
-    async _sendCommandImpl (cmd, timeout = 30000, validator = null) {
+    async _sendCommandImpl (cmd, timeout = 30000, validator = null, options = null) {
+      const preludeExit = options?.preludeExit === true
       if (!this.port) throw new Error('Not connected')
       this._lineQueue = []
       this._rejectLineWaiters()
@@ -576,14 +788,23 @@ window.ConnectionManager = (function () {
       }
 
       const expectMarker = validator ? this._expectedJsonMarker(cmd) : null
+      this._rxBuffer = ''
       let rxBuf = ''
       const decoder = new TextDecoder()
       let jsonAcc = ''
-      let lineCount = 0
 
       try {
+        if (preludeExit) {
+          await this.sendRaw('EXIT\n')
+          await this.sleep(150)
+        }
         await this.sendRaw(cmd + '\n')
-        const reader = this.port.readable.getReader()
+        let reader = null
+        try {
+          reader = this.port.readable.getReader()
+        } catch (getErr) {
+          throw getErr
+        }
         const deadline = Date.now() + timeout
         let pendingRead = null
         try {
@@ -607,13 +828,21 @@ window.ConnectionManager = (function () {
               const rawLine = rxBuf.substring(0, idx).replace(/\r/g, '').trim()
               rxBuf = rxBuf.substring(idx + 1)
               if (!rawLine) continue
-              lineCount++
 
               if (rawLine.startsWith('EVT:')) {
                 this.dispatchCdcNotify(rawLine)
                 continue
               }
               if (this._isNoiseLine(rawLine)) continue
+              if (rawLine === 'SCENES_STOPPED' || rawLine === 'SCENES_STARTED' ||
+                  rawLine === 'CONFIG_STOPPED' || rawLine === 'SETTINGS_STOPPED' ||
+                  rawLine === 'PEDALS_STOPPED') continue
+
+              const direct = this._tryParseCommandJson(rawLine, validator)
+              if (direct) {
+                this._mergeRxTail(rxBuf)
+                return direct
+              }
 
               if (rawLine.startsWith('ERROR:')) {
                 this._mergeRxTail(rxBuf)
@@ -640,21 +869,37 @@ window.ConnectionManager = (function () {
               try {
                 const data = JSON.parse(json)
                 if (validator && !validator(data)) {
-                  if (expectMarker && !jsonAcc.includes(expectMarker)) continue
+                  if (expectMarker && !jsonAcc.includes(expectMarker)) {
+                    jsonAcc = ''
+                    continue
+                  }
                   continue
                 }
                 this._mergeRxTail(rxBuf)
                 return json
               } catch (e) {
-                if (expectMarker && !jsonAcc.includes(expectMarker)) continue
+                if (expectMarker && !jsonAcc.includes(expectMarker)) {
+                  jsonAcc = ''
+                  continue
+                }
+                if (rawLine.endsWith('}')) jsonAcc = ''
               }
             }
           }
         } finally {
-          reader.releaseLock()
+          if (reader) {
+            try { reader.releaseLock() } catch (e) {}
+          }
         }
 
         this._mergeRxTail(rxBuf)
+        if (jsonAcc) {
+          const fallback = this._tryParseCommandJson(
+            this._extractFirstJson(this._repairJsonLine(jsonAcc)),
+            validator
+          )
+          if (fallback) return fallback
+        }
         return ''
       } finally {
         if (hadMode) this._resumeModeNotifyIfAllowed()
