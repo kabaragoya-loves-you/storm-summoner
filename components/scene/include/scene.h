@@ -247,6 +247,7 @@ output_type_t scene_get_persisted_touchwheel_output_type(uint8_t scene_index);  
 // Set the touchwheel's internal value (used when switching CC parameters)
 // This updates the endless encoder accumulator so the next CC send starts from this value
 void scene_set_touchwheel_value(uint8_t value);
+uint8_t scene_get_touchwheel_value(void);
 
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
 esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc);

@@ -563,10 +563,93 @@ window.ActionCatalog = (function () {
     return JSON.stringify(action) !== before
   }
 
-  function normalizeParamAction (action) {
+  const PARAM_STREAM_TARGETS = [
+    { v: 'touchwheel', l: 'Touchwheel' },
+    { v: 'expression', l: 'Expression' },
+    { v: 'cv', l: 'CV' },
+    { v: 'proximity', l: 'Proximity' },
+    { v: 'als', l: 'ALS' },
+    { v: 'tilt_x', l: 'Tilt X' },
+    { v: 'tilt_y', l: 'Tilt Y' },
+    { v: 'note_track', l: 'Note Track' },
+    { v: 'lfo1', l: 'LFO 1' },
+    { v: 'lfo2', l: 'LFO 2' }
+  ]
+
+  function paramStreamMappingIsCc (mapping) {
+    if (!mapping) return false
+    if (mapping.enabled === false) return false
+    return (mapping.output_type || 'cc') === 'cc'
+  }
+
+  function paramStreamTargetIsActive (model, target) {
+    if (!model || !target) return false
+    const m = model
+    switch (target) {
+      case 'touchwheel':
+        return (m.touchwheel_mode || 'pads') === 'continuous' &&
+          paramStreamMappingIsCc(m.touchwheel)
+      case 'expression':
+        return (m.expression_mode || 'expression') === 'expression' &&
+          paramStreamMappingIsCc(m.expression)
+      case 'cv':
+        return (m.cv_input_mode || 'none') === 'cv' &&
+          paramStreamMappingIsCc(m.cv)
+      case 'proximity':
+        return paramStreamMappingIsCc(m.proximity)
+      case 'als':
+        return paramStreamMappingIsCc(m.als)
+      case 'tilt_x':
+        return paramStreamMappingIsCc(m.tilt_x)
+      case 'tilt_y':
+        return paramStreamMappingIsCc(m.tilt_y)
+      case 'note_track':
+        return paramStreamMappingIsCc(m.note_track)
+      case 'lfo1':
+        return !!m.lfo1_config?.enabled && paramStreamMappingIsCc(m.lfo1)
+      case 'lfo2':
+        return !!m.lfo2_config?.enabled && paramStreamMappingIsCc(m.lfo2)
+      default:
+        return false
+    }
+  }
+
+  function paramStreamTargetOptions (model, currentTarget) {
+    const cur = currentTarget || 'touchwheel'
+    const opts = PARAM_STREAM_TARGETS
+      .filter(t => paramStreamTargetIsActive(model, t.v))
+      .map(t => ({ v: t.v, l: t.l }))
+    if (cur && !opts.some(o => o.v === cur)) {
+      const base = PARAM_STREAM_TARGETS.find(t => t.v === cur)
+      opts.unshift({
+        v: cur,
+        l: base ? `${base.l} (unavailable)` : `${cur} (unavailable)`
+      })
+    }
+    return opts
+  }
+
+  function resolveParamTarget (action, model) {
+    const cur = action.target || 'touchwheel'
+    if (!model) {
+      if (!action.target) action.target = 'touchwheel'
+      return
+    }
+    const active = PARAM_STREAM_TARGETS
+      .filter(t => paramStreamTargetIsActive(model, t.v))
+      .map(t => t.v)
+    if (active.includes(cur)) {
+      action.target = cur
+      return
+    }
+    action.target = active.length ? active[0] : 'touchwheel'
+  }
+
+  function normalizeParamAction (action, model) {
     if (!action || action.type !== 'param') return false
     const before = JSON.stringify(action)
     const v = action.variant || defaultVariant('param')
+    resolveParamTarget(action, model)
     const clampCc = (n) => {
       const x = Number(n)
       if (Number.isNaN(x) || x < 0 || x > 127) return 0
@@ -576,10 +659,21 @@ window.ActionCatalog = (function () {
       delete action.num_params
       delete action.params
       action.param = clampCc(action.param)
-      action.param2 = clampCc(action.param2)
+      if (action.release_to_original ||
+          (action.param2 === undefined && action.release_to_original !== false)) {
+        action.release_to_original = true
+        delete action.param2
+      } else {
+        action.param2 = clampCc(action.param2)
+        delete action.release_to_original
+      }
     } else if (v === 'cycle') {
       delete action.param
       delete action.param2
+      delete action.release_to_original
+      clearRepeatFields(action)
+      delete action.timing
+      delete action.timing_beat
       let steps = Array.isArray(action.params) ? action.params.slice() : []
       const stepCount = paramStepCount(action)
       while (steps.length < stepCount) steps.push(0)
@@ -594,14 +688,18 @@ window.ActionCatalog = (function () {
     if (!action || (action.type !== 'rtg' && action.type !== 'sample_hold')) return false
     const before = JSON.stringify(action)
     const v = action.variant || defaultVariant(action.type)
-    clearRepeatFields(action)
+    if (v !== 'modify') clearRepeatFields(action)
+    if (v === 'hold') {
+      delete action.release_mode
+      delete action.release_threshold_ms
+    }
     if (v === 'step') {
+      delete action.step_target
       clearEngineModifyFields(action)
-      if (!action.step_target || (action.step_target !== 'sh' && action.step_target !== 'rtg')) {
-        action.step_target = action.type === 'sample_hold' ? 'sh' : 'rtg'
-      }
     } else if (v === 'modify') {
       delete action.step_target
+      delete action.release_mode
+      delete action.release_threshold_ms
       seedEngineModifyFields(action)
     } else {
       delete action.step_target
@@ -617,7 +715,7 @@ window.ActionCatalog = (function () {
       if (action.type === 'clock' && normalizeClockAction(action)) changed = true
       if (action.type === 'cut' && normalizeCutAction(action)) changed = true
       if (action.type === 'ui' && normalizeUiAction(action)) changed = true
-      if (action.type === 'param' && normalizeParamAction(action)) changed = true
+      if (action.type === 'param' && normalizeParamAction(action, model)) changed = true
       if ((action.type === 'rtg' || action.type === 'sample_hold') &&
           normalizeEngineAction(action)) changed = true
       if (action.type === 'inspect_scene') {
@@ -900,9 +998,10 @@ window.ActionCatalog = (function () {
       return v !== 'tap' && v !== 'hold' && v !== 'downbeat'
     }
     if (t === 'control' || t === 'preset' || t === 'ui' ||
-        t === 'param' || t === 'rtg' || t === 'sample_hold') {
+        t === 'rtg' || t === 'sample_hold') {
       return v !== 'hold'
     }
+    if (t === 'param') return false
     if (t === 'touchwheel') return false
     if (t === 'lfo') {
       return v === 'start' || v === 'stop' || v === 'modify' || v === 'toggle'
@@ -915,7 +1014,10 @@ window.ActionCatalog = (function () {
     if (!action?.type || action.type === 'none' || requiresHold(action)) return false
     const t = action.type
     const v = action.variant || defaultVariant(t)
-    if (t === 'scene' || t === 'punch_in' || t === 'confirm_pending' || t === 'transport') return false
+    if (t === 'scene' || t === 'punch_in' || t === 'confirm_pending' || t === 'transport' ||
+        t === 'reset') {
+      return false
+    }
     if (t === 'tempo') {
       return v === 'increment' || v === 'decrement' || v === 'cycle'
     }
@@ -923,14 +1025,14 @@ window.ActionCatalog = (function () {
     if (t === 'preset') return v !== 'hold'
     if (t === 'touchwheel') return false
     if (t === 'lfo') return v === 'toggle' || v === 'modify'
-    if (t === 'clock' || t === 'cut' || t === 'rtg' || t === 'sample_hold') return false
-    if (t === 'ui' || t === 'param') return v === 'cycle'
+    if (t === 'rtg' || t === 'sample_hold') return v === 'modify'
+    if (t === 'clock' || t === 'cut' || t === 'param') return false
+    if (t === 'ui') return v === 'cycle'
     return true
   }
 
   const FOLLOWUP_HOLD_TYPES = new Set([
-    'tempo', 'control', 'preset', 'touchwheel', 'clock', 'cut', 'ui', 'param',
-    'rtg', 'sample_hold'
+    'tempo', 'control', 'preset', 'touchwheel', 'clock'
   ])
 
   function supportsFollowUp (action) {
@@ -1071,11 +1173,14 @@ window.ActionCatalog = (function () {
     uiModuleOptions,
     uiStepCount,
     paramStepCount,
+    paramStreamTargetOptions,
+    paramStreamTargetIsActive,
     punchInDurationOptions,
     CUT_MODE_OPTIONS,
     STEP_TARGET_OPTIONS,
     clearEngineModifyFields,
     seedEngineModifyFields,
+    normalizeEngineAction,
     normalizeSimpleActionsInModel,
     touchwheelModeOptions,
     touchwheelStepCount,

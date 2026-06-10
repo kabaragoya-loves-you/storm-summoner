@@ -432,10 +432,14 @@ typedef struct {
       uint8_t current_index;    // Current position in cycle
     } ui;
     
-    // For ACTION_PARAM (Hold/Cycle variants) — touchwheel CC slot 1
+    // For ACTION_PARAM (Hold/Cycle variants) — retarget a scene CC stream
     struct {
+      uint8_t target;           // param_target_t; default touchwheel
       uint8_t param;            // CC number for press/set
-      uint8_t param2;           // For hold: CC number on release
+      uint8_t param2;           // For hold: CC on release (when release_to_original == 0)
+      uint8_t release_to_original; // For hold: 1 = restore captured cc/value on release
+      uint8_t captured_cc;      // For hold transient: stream CC snapshot at press; not persisted
+      uint8_t captured_value;   // For hold transient: stream value snapshot at press; not persisted
       uint8_t num_params;       // For cycle: number of params (2-8)
       uint8_t params[8];        // For cycle: CC numbers
       uint8_t current_index;    // Current position in cycle

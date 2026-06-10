@@ -453,6 +453,20 @@ application.register(
       const den = ts.denominator || 4
       const useTransport = !!clock.use_transport
 
+      const flagRow = () => {
+        if (!clock.flag_enabled) return ''
+        const raised = !!clock.flag
+        const icon = raised ? 'house-flag' : 'house-chimney-window'
+        const label = raised ? 'Raised' : 'Lowered'
+        return `
+        <div class="info-row">
+          <span class="info-label">Flag</span>
+          <span class="info-value info-flag-value">
+            <wa-icon name="${icon}"></wa-icon> ${label}
+          </span>
+        </div>`
+      }
+
       let rows = `
         <div class="info-row">
           <span class="info-label">BPM</span>
@@ -479,6 +493,7 @@ application.register(
           clock.beat ?? 1
         }</span>
         </div>
+        ${flagRow()}
         <div class="info-transport-actions">
           <wa-button size="small" variant="brand"
                      appearance="${playing ? 'filled' : 'outlined'}"
@@ -506,7 +521,8 @@ application.register(
         <div class="info-row">
           <span class="info-label">Beat</span>
           <span class="info-value">${clock.beat ?? 1}</span>
-        </div>`
+        </div>
+        ${flagRow()}`
       }
 
       return rows

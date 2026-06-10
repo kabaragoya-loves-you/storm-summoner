@@ -17,6 +17,9 @@ application.register(
       this._loadGeneration = 0
       this.notifyDebounce = null
       this.editModel = null
+      this.inspectModel = null
+      this._inspectText = ''
+      this._inspectTruncated = false
       this.baselineJson = null
       this.dirty = false
       this.editPosition = null
@@ -158,8 +161,27 @@ application.register(
         this.renderError('Invalid inspect response from device')
         return false
       }
-      this.renderInspect(data.text || '', !!data.truncated)
+      if (data.midi_control_enabled != null) {
+        this.deviceContext.midiControl = !!data.midi_control_enabled
+      }
+      let text = data.text || ''
+      if (data.midi_control_enabled === false) {
+        text = this.filterMidiControlInspectText(text)
+      }
+      this.renderInspect(text, !!data.truncated)
       return true
+    }
+
+    filterMidiControlInspectText (text) {
+      if (this.deviceContext.midiControl) return text
+      const paragraphs = text.split(/\n\n+/)
+      const kept = paragraphs.filter(para => {
+        const trimmed = para.trim()
+        if (!trimmed) return false
+        const firstLine = trimmed.split('\n')[0]
+        return !/^Trigger \d+ \(CC \d+\)/.test(firstLine)
+      })
+      return kept.join('\n\n')
     }
 
     async showViewMode () {
@@ -541,10 +563,20 @@ application.register(
         }
       } else if (t === 'param') {
         const cc = firstCc()
+        if (action.target == null) action.target = 'touchwheel'
         if (v === 'hold') {
           if (action.param == null) action.param = cc
-          if (action.param2 == null) action.param2 = cc
+          if (action.release_to_original ||
+              (action.param2 === undefined && action.release_to_original !== false)) {
+            action.release_to_original = true
+            delete action.param2
+          } else if (action.param2 == null) {
+            action.param2 = cc
+          }
         } else if (v === 'cycle') {
+          ActionCatalog.clearRepeatFields(action)
+          delete action.timing
+          delete action.timing_beat
           const n = ActionCatalog.paramStepCount(action)
           const steps = Array.isArray(action.params) ? action.params.slice() : []
           while (steps.length < n) steps.push(cc)
@@ -552,11 +584,7 @@ application.register(
           action.num_params = n
         }
       } else if (t === 'rtg' || t === 'sample_hold') {
-        if (v === 'step' && !action.step_target) {
-          action.step_target = t === 'sample_hold' ? 'sh' : 'rtg'
-        }
-        if (v === 'modify') ActionCatalog.seedEngineModifyFields(action)
-        else ActionCatalog.clearEngineModifyFields(action)
+        ActionCatalog.normalizeEngineAction(action)
       } else if (t === 'punch_in') {
         const cc = firstCc()
         if (action.start_cc == null) action.start_cc = cc
@@ -1002,6 +1030,56 @@ application.register(
       if (!path) return
       let val = e.target.value
 
+      if (path.endsWith('.__boomerang_target')) {
+        const aPath = path.slice(0, -'.__boomerang_target'.length)
+        const action = this.getAtPath(aPath)
+        if (!action) return
+        if (val === 'random') {
+          action.target_mode = 'random'
+        } else {
+          const n = Number(val)
+          action.target_mode = 'explicit'
+          action.target_value = action.output_type === 'pitch_bend' ? n * 128 : n
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path.endsWith('.__boomerang_origin')) {
+        const aPath = path.slice(0, -'.__boomerang_origin'.length)
+        const action = this.getAtPath(aPath)
+        if (!action) return
+        if (val === 'current') {
+          action.start_mode = 'current'
+        } else {
+          action.start_mode = 'explicit'
+          action.start_value = Number(val)
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      const boomPhaseMode = path.match(/^(.*)\.(attack|sustain|release)_mode$/)
+      if (boomPhaseMode) {
+        const aPath = boomPhaseMode[1]
+        const phase = boomPhaseMode[2]
+        const action = this.getAtPath(aPath)
+        this.setAtPath(path, val)
+        if (action?.type === 'boomerang') {
+          const timePath = `${aPath}.${phase}_time_ms`
+          if (val === 'time_ms' && !action[`${phase}_time_ms`]) {
+            this.setAtPath(timePath, 1000)
+          } else if (val === 'instant') {
+            this.setAtPath(timePath, 0)
+          }
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
       if (val === '__original__' && path.endsWith('.release_preset')) {
         const aPath = path.slice(0, -'.release_preset'.length)
         const action = this.getAtPath(aPath)
@@ -1026,6 +1104,18 @@ application.register(
         }
       }
 
+      if (val === '__original__' && path.endsWith('.param2')) {
+        const aPath = path.slice(0, -'.param2'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'param' && (action.variant || 'hold') === 'hold') {
+          action.release_to_original = true
+          delete action.param2
+          this.markDirty()
+          this.renderEditor()
+          return
+        }
+      }
+
       if (path.endsWith('.release_preset')) {
         const aPath = path.slice(0, -'.release_preset'.length)
         const action = this.getAtPath(aPath)
@@ -1038,6 +1128,14 @@ application.register(
         const aPath = path.slice(0, -'.mode2'.length)
         const action = this.getAtPath(aPath)
         if (action?.type === 'touchwheel' && (action.variant || 'hold') === 'hold') {
+          action.release_to_original = false
+        }
+      }
+
+      if (path.endsWith('.param2')) {
+        const aPath = path.slice(0, -'.param2'.length)
+        const action = this.getAtPath(aPath)
+        if (action?.type === 'param' && (action.variant || 'hold') === 'hold') {
           action.release_to_original = false
         }
       }
@@ -1318,6 +1416,7 @@ application.register(
       if (!path) return
       if (kind === 'control') this.addControlCcSlot(path)
       else if (kind === 'cycle-step') this.addCycleStep(path)
+      else if (kind === 'param-cycle-step') this.addParamCycleStep(path)
       else if (kind === 'preset-step') this.addPresetCycleStep(path)
       else if (kind === 'tempo-step') this.addTempoCycleStep(path)
       else this.addListItem(path, def ?? 0, max ?? 8)
@@ -1331,6 +1430,7 @@ application.register(
       if (!path || index == null || index < 0) return
       if (kind === 'control') this.removeControlCcSlot(path, index)
       else if (kind === 'cycle-step') this.removeCycleStep(path, index)
+      else if (kind === 'param-cycle-step') this.removeParamCycleStep(path, index)
       else if (kind === 'preset-step') this.removePresetCycleStep(path, index)
       else if (kind === 'tempo-step') this.removeTempoCycleStep(path, index)
       else if (kind === 'randomize') this.removeRandomizeSlot(path, index)
@@ -1434,6 +1534,28 @@ application.register(
       }
     }
 
+    addParamCycleStep (path) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'param' || (action.variant || 'hold') !== 'cycle') return
+      if (ActionCatalog.paramStepCount(action) >= 8) return
+      const device = this.deviceDefinition
+      const steps = this.asArray(action.params)
+      const used = new Set(steps.map(Number))
+      steps.push(DeviceControls.firstUnusedParameterCc(device, used))
+      action.params = steps
+      action.num_params = steps.length
+    }
+
+    removeParamCycleStep (path, stepIndex) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'param' || (action.variant || 'hold') !== 'cycle') return
+      if (ActionCatalog.paramStepCount(action) <= 2) return
+      if (Array.isArray(action.params)) {
+        action.params.splice(stepIndex, 1)
+        action.num_params = action.params.length
+      }
+    }
+
     addPresetCycleStep (path) {
       const action = this.getAtPath(path)
       if (!action || !DeviceControls.isPresetAction(action.type) ||
@@ -1533,7 +1655,7 @@ application.register(
     async loadSchema () {
       if (this._schema) return this._schema
       if (this._schemaLoad) return this._schemaLoad
-      this._schemaLoad = fetch('/schemas/scene.schema.json')
+      this._schemaLoad = fetch('/schemas/scene.schema.json', { cache: 'no-store' })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`)
           return r.json()
@@ -1730,6 +1852,9 @@ application.register(
         if (vals['config.flag_enabled'] != null) {
           this.deviceContext.flagEnabled = Number(vals['config.flag_enabled']) !== 0
         }
+        if (vals['midi_control.enabled'] != null) {
+          this.deviceContext.midiControl = Number(vals['midi_control.enabled']) !== 0
+        }
       } finally {
         await this.ensureDeviceIdleInTask()
       }
@@ -1797,6 +1922,8 @@ application.register(
     }
 
     renderDisconnected () {
+      this._inspectText = ''
+      this.inspectModel = null
       this.inspectTextTarget.textContent = ''
       this.inspectTextTarget.classList.add('empty')
       this.inspectTextTarget.textContent = 'Connect to view scenes'
@@ -1812,10 +1939,26 @@ application.register(
     }
 
     renderInspect (text, truncated) {
-      const body = text || '(empty scene)'
+      this._inspectText = text || ''
+      this._inspectTruncated = !!truncated
+      this.applyInspectBody()
+    }
+
+    applyInspectBody () {
+      const body = this._inspectText || '(empty scene)'
       this.inspectTextTarget.classList.remove('empty')
-      this.inspectTextTarget.textContent = body
-      if (truncated) {
+      const boomOpts = this.deviceContext.midiControl === false
+        ? { midiControl: false }
+        : {}
+      const hasBoomerangs =
+        window.BoomerangEnvelope?.collectBoomerangs(this.inspectModel, boomOpts)?.length
+      if (hasBoomerangs) {
+        this.inspectTextTarget.innerHTML =
+          window.BoomerangEnvelope.renderInspectDocument(body, this.inspectModel, boomOpts)
+      } else {
+        this.inspectTextTarget.textContent = body
+      }
+      if (this._inspectTruncated) {
         this.truncatedBannerTarget.classList.remove('hidden')
       } else {
         this.truncatedBannerTarget.classList.add('hidden')
@@ -1824,6 +1967,7 @@ application.register(
     }
 
     renderError (message) {
+      this._inspectText = ''
       this.inspectTextTarget.classList.remove('empty')
       this.inspectTextTarget.textContent = message
       this.truncatedBannerTarget.classList.add('hidden')
@@ -1839,6 +1983,16 @@ application.register(
     print () {
       const text = this.copySourceTarget?.value || ''
       if (!text) return
+
+      const boomOpts = this.deviceContext.midiControl === false
+        ? { midiControl: false }
+        : {}
+      const hasBoomerangs =
+        window.BoomerangEnvelope?.collectBoomerangs(this.inspectModel, boomOpts)?.length
+      const htmlBody = hasBoomerangs
+        ? window.BoomerangEnvelope.renderInspectDocument(text, this.inspectModel, boomOpts)
+        : null
+      const boomStyles = window.BoomerangEnvelope?.printStyles || ''
 
       let frame = this.printFrame
       if (!frame) {
@@ -1889,6 +2043,12 @@ application.register(
     flex: 1;
     min-width: 0;
   }
+  .print-inspect-rich {
+    font-family: Consolas, Monaco, "Courier New", monospace;
+    font-size: 9pt;
+    line-height: 1.25;
+  }
+  ${boomStyles}
   @media print {
     html, body {
       width: 7.5in;
@@ -1909,6 +2069,12 @@ application.register(
       const win = frame.contentWindow
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
+          if (htmlBody) {
+            const root = doc.getElementById('print-root')
+            root.innerHTML = `<div class="print-inspect-rich print-content">${htmlBody}</div>`
+            win.print()
+            return
+          }
           this.fitPrintLayout(doc, text)
           win.print()
         })
@@ -2046,11 +2212,51 @@ application.register(
       this.searchFontSize(measureTarget, printableHeight, 4, 72, twoCol)
     }
 
+    async fetchSceneJsonAtPosition (position) {
+      const arg = String(position)
+      const result = await this.connection._fetchSizedTransferImpl(`SCENE_GET ${arg}`, {
+        lineTimeout: 30000,
+        binaryTimeout: 120000
+      })
+      if (!result?.data?.length) return null
+      const model = JSON.parse(new TextDecoder().decode(result.data))
+      if (model.touchpads) {
+        model.touchpads.forEach(tp => this.normalizeTouchpadMapping(tp))
+      }
+      return model
+    }
+
+    async fetchInspectBoomerangsForPosition (position, gen) {
+      try {
+        const fetchTask = async () => {
+          if (gen !== this._loadGeneration) return null
+          if (this.connection.currentMode) {
+            await this.connection._exitModeImpl()
+            await this.sleep(300)
+          }
+          await this.ensureDeviceIdleInTask()
+          if (gen !== this._loadGeneration) return null
+          return this.fetchSceneJsonAtPosition(position)
+        }
+        const sceneModel = this.connection.isSerialBusy
+          ? await fetchTask()
+          : await this.connection.runSerialTask(fetchTask)
+        if (gen !== this._loadGeneration) return
+        this.inspectModel = sceneModel
+        this.applyInspectBody()
+      } catch (err) {
+        if (gen !== this._loadGeneration) return
+        console.warn('Scene JSON fetch for inspect skipped:', err)
+        this.inspectModel = null
+      }
+    }
+
     async fetchInspectForPosition (position) {
       if (!this.connection.isConnected) return
       if (position === null || position === undefined) return
 
       const gen = ++this._loadGeneration
+      this.inspectModel = null
       this.renderLoading()
 
       try {
@@ -2076,7 +2282,8 @@ application.register(
           : await this.connection.runSerialTask(fetchImpl)
 
         if (gen !== this._loadGeneration) return
-        this.applyInspectResponse(response)
+        const inspectOk = this.applyInspectResponse(response)
+        if (inspectOk) await this.fetchInspectBoomerangsForPosition(position, gen)
       } catch (err) {
         if (gen !== this._loadGeneration) return
         console.error('Scene inspect fetch error:', err)

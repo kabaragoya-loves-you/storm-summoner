@@ -1,5 +1,6 @@
 #include "action_internal.h"
 #include "device_config.h"
+#include "param_stream.h"
 #include "scene.h"
 #include "transport.h"
 #include "tempo.h"
@@ -375,12 +376,6 @@ action_handle_result_t action_handlers_scene_dispatch(
           return ACTION_HANDLED;
 
         case VARIANT_HOLD:
-          if (is_press) {
-            action_followup_record_press((action_t*)action);
-          } else if (action_followup_should_skip_release(action)) {
-            ESP_LOGD(TAG, "UI hold release skipped by follow-up");
-            return ACTION_HANDLED;
-          }
           {
             uint8_t idx = is_press
               ? action->params.ui.module
@@ -427,43 +422,54 @@ action_handle_result_t action_handlers_scene_dispatch(
 
     case ACTION_PARAM:
       switch (action->variant) {
-        case VARIANT_HOLD:
+        case VARIANT_HOLD: {
+          scene_t* scene = scene_get_current();
+          if (!scene) return ACTION_HANDLED;
+          action_t* mutable_action = (action_t*)action;
+          param_target_t target = (param_target_t)action->params.tw_param.target;
+          if (target >= PARAM_TARGET_COUNT) target = PARAM_TARGET_TOUCHWHEEL;
+          if (!param_target_is_cc_active(scene, target)) return ACTION_HANDLED;
+
+          uint8_t cc;
+          uint8_t value;
           if (is_press) {
-            action_followup_record_press((action_t*)action);
-          } else if (action_followup_should_skip_release(action)) {
-            ESP_LOGD(TAG, "Param hold release skipped by follow-up");
-            return ACTION_HANDLED;
+            param_target_capture(scene, target,
+              &mutable_action->params.tw_param.captured_cc,
+              &mutable_action->params.tw_param.captured_value);
+            cc = action->params.tw_param.param;
+            value = action_get_cc_value(cc);
+          } else if (action->params.tw_param.release_to_original) {
+            cc = action->params.tw_param.captured_cc;
+            value = action->params.tw_param.captured_value;
+          } else {
+            cc = action->params.tw_param.param2;
+            value = action_get_cc_value(cc);
           }
-          {
-            scene_t* scene = scene_get_current();
-            if (scene) {
-              uint8_t cc = is_press
-                ? action->params.tw_param.param
-                : action->params.tw_param.param2;
-              scene->touchwheel.cc_numbers[0] = cc;
-              uint8_t cached_value = action_get_cc_value(cc);
-              scene_set_touchwheel_value(cached_value);
-              ESP_LOGI(TAG, "Param Hold: CC %u = %u (%s)",
-                (unsigned)cc, (unsigned)cached_value,
-                is_press ? "press" : "release");
-            }
-          }
+          param_target_apply(scene, target, cc, value);
+          ESP_LOGI(TAG, "Param Hold [%s]: CC %u = %u (%s%s)",
+            param_target_to_string(target), (unsigned)cc, (unsigned)value,
+            is_press ? "press" : "release",
+            (!is_press && action->params.tw_param.release_to_original) ? ", original" : "");
           return ACTION_HANDLED;
+        }
 
         case VARIANT_CYCLE:
           if (is_press) {
             scene_t* scene = scene_get_current();
             if (scene) {
               action_t* mutable = (action_t*)action;
+              param_target_t target = (param_target_t)mutable->params.tw_param.target;
+              if (target >= PARAM_TARGET_COUNT) target = PARAM_TARGET_TOUCHWHEEL;
+              if (!param_target_is_cc_active(scene, target)) return ACTION_HANDLED;
+
               uint8_t num = mutable->params.tw_param.num_params;
               if (num < 2) num = 2;
               uint8_t cc = mutable->params.tw_param.params[
                 mutable->params.tw_param.current_index % num];
-              scene->touchwheel.cc_numbers[0] = cc;
               uint8_t cached_value = action_get_cc_value(cc);
-              scene_set_touchwheel_value(cached_value);
-              ESP_LOGI(TAG, "Param Cycle: CC %u = %u (step %d/%d)",
-                (unsigned)cc, (unsigned)cached_value,
+              param_target_apply(scene, target, cc, cached_value);
+              ESP_LOGI(TAG, "Param Cycle [%s]: CC %u = %u (step %d/%d)",
+                param_target_to_string(target), (unsigned)cc, (unsigned)cached_value,
                 mutable->params.tw_param.current_index + 1, num);
               mutable->params.tw_param.current_index =
                 (mutable->params.tw_param.current_index + 1) % num;

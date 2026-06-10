@@ -286,6 +286,10 @@ window.ConnectionManager = (function () {
           },
           use_transport: parts[8] === '1'
         }
+        if (parts.length >= 11) {
+          detail.clock.flag_enabled = parts[9] === '1'
+          detail.clock.flag = parts[10] === '1'
+        }
       } else if (kind === 'connections' && parts.length >= 6) {
         detail.connections = {
           usb: parts[2] === '1',

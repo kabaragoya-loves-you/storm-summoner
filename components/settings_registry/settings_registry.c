@@ -21,6 +21,11 @@
 #include "tempo.h"
 #include "touch.h"
 #include "ui.h"
+#include "tilt.h"
+#include "note_track_config.h"
+#include "midi_control.h"
+#include "menu_theme.h"
+#include "inspect_config.h"
 
 static const char* TAG = "settings_registry";
 
@@ -191,6 +196,123 @@ static uint32_t get_prox_deadzone(void) { return proximity_get_deadzone(); }
 static esp_err_t set_prox_deadzone(uint32_t v) {
   proximity_set_deadzone((uint8_t)v);
   return ESP_OK;
+}
+
+static uint32_t get_prox_ir_rejection(void) { return proximity_get_sunlight_cancel() ? 1 : 0; }
+static esp_err_t set_prox_ir_rejection(uint32_t v) {
+  proximity_set_sunlight_cancel(v != 0);
+  return ESP_OK;
+}
+
+static uint32_t get_prox_gamma(void) { return proximity_get_gamma(); }
+static esp_err_t set_prox_gamma(uint32_t v) {
+  proximity_set_gamma((uint8_t)v);
+  return ESP_OK;
+}
+
+// Tilt wrappers
+static uint32_t get_tilt_forgive_middle(void) { return tilt_get_forgive_middle() ? 1 : 0; }
+static esp_err_t set_tilt_forgive_middle(uint32_t v) {
+  tilt_set_forgive_middle(v != 0);
+  return ESP_OK;
+}
+
+static uint32_t get_tilt_middle_width(void) { return tilt_get_middle_width(); }
+static esp_err_t set_tilt_middle_width(uint32_t v) {
+  tilt_set_middle_width((uint8_t)v);
+  return ESP_OK;
+}
+
+static uint32_t get_tilt_deadzone(void) { return tilt_get_deadzone(); }
+static esp_err_t set_tilt_deadzone(uint32_t v) {
+  tilt_set_deadzone((uint8_t)v);
+  return ESP_OK;
+}
+
+static uint32_t get_tilt_rate_hz(void) { return tilt_get_rate_hz(); }
+static esp_err_t set_tilt_rate_hz(uint32_t v) {
+  tilt_set_rate_hz((uint8_t)v);
+  return ESP_OK;
+}
+
+static uint32_t get_tilt_x_invert(void) { return tilt_get_axis_inverted(TILT_AXIS_X) ? 1 : 0; }
+static esp_err_t set_tilt_x_invert(uint32_t v) {
+  tilt_set_axis_inverted(TILT_AXIS_X, v != 0);
+  return ESP_OK;
+}
+
+static uint32_t get_tilt_y_invert(void) { return tilt_get_axis_inverted(TILT_AXIS_Y) ? 1 : 0; }
+static esp_err_t set_tilt_y_invert(uint32_t v) {
+  tilt_set_axis_inverted(TILT_AXIS_Y, v != 0);
+  return ESP_OK;
+}
+
+static uint32_t get_tilt_note_off_mode(void) { return (uint32_t)tilt_get_note_off_mode(); }
+static esp_err_t set_tilt_note_off_mode(uint32_t v) {
+  if (v >= TILT_NOTE_OFF_NUM_MODES) return ESP_ERR_INVALID_ARG;
+  tilt_set_note_off_mode((tilt_note_off_mode_t)v);
+  return ESP_OK;
+}
+
+// MIDI Control wrappers
+static uint32_t get_midi_control_enabled(void) { return midi_control_is_enabled() ? 1 : 0; }
+static esp_err_t set_midi_control_enabled(uint32_t v) {
+  return midi_control_set_enabled(v != 0);
+}
+
+static uint32_t get_midi_control_channel(void) { return midi_control_get_channel(); }
+static esp_err_t set_midi_control_channel(uint32_t v) {
+  if (v < 1 || v > 16) return ESP_ERR_INVALID_ARG;
+  return midi_control_set_channel((uint8_t)v);
+}
+
+static uint32_t get_midi_control_input(void) { return (uint32_t)midi_control_get_input(); }
+static esp_err_t set_midi_control_input(uint32_t v) {
+  if (v > MIDI_CONTROL_INPUT_BOTH) return ESP_ERR_INVALID_ARG;
+  return midi_control_set_input((midi_control_input_t)v);
+}
+
+// Note Track wrappers
+static uint32_t get_note_track_low_note(void) { return note_track_get_low_note(); }
+static esp_err_t set_note_track_low_note(uint32_t v) {
+  return note_track_set_low_note((uint8_t)v);
+}
+
+static uint32_t get_note_track_high_note(void) { return note_track_get_high_note(); }
+static esp_err_t set_note_track_high_note(uint32_t v) {
+  return note_track_set_high_note((uint8_t)v);
+}
+
+static uint32_t get_note_track_channel(void) { return note_track_get_channel(); }
+static esp_err_t set_note_track_channel(uint32_t v) {
+  if (v > 16) return ESP_ERR_INVALID_ARG;
+  return note_track_set_channel((uint8_t)v);
+}
+
+static uint32_t get_note_track_filter_mode(void) { return (uint32_t)note_track_get_filter_mode(); }
+static esp_err_t set_note_track_filter_mode(uint32_t v) {
+  if (v > NOTE_TRACK_FILTER_KILL) return ESP_ERR_INVALID_ARG;
+  return note_track_set_filter_mode((note_track_filter_mode_t)v);
+}
+
+// Theme wrappers
+static uint32_t get_theme(void) { return (uint32_t)menu_theme_get(); }
+static esp_err_t set_theme(uint32_t v) {
+  if (v >= MENU_THEME_COUNT) return ESP_ERR_INVALID_ARG;
+  return menu_theme_set((menu_theme_t)v);
+}
+
+// Scene Inspect wrappers
+static uint32_t get_scene_inspect_scroll_speed(void) { return (uint32_t)inspect_config_get_scroll_speed(); }
+static esp_err_t set_scene_inspect_scroll_speed(uint32_t v) {
+  if (v >= INSPECT_SCROLL_SPEED_MAX) return ESP_ERR_INVALID_ARG;
+  return inspect_config_set_scroll_speed((inspect_scroll_speed_t)v);
+}
+
+static uint32_t get_scene_inspect_scroll_mode(void) { return (uint32_t)inspect_config_get_scroll_mode(); }
+static esp_err_t set_scene_inspect_scroll_mode(uint32_t v) {
+  if (v >= INSPECT_SCROLL_MODE_MAX) return ESP_ERR_INVALID_ARG;
+  return inspect_config_set_scroll_mode((inspect_scroll_mode_t)v);
 }
 
 // ALS wrappers
@@ -383,6 +505,35 @@ static const setting_entry_t s_settings[] = {
   {"proximity.note_silence", get_prox_note_silence, set_prox_note_silence},
   {"proximity.timeout", get_prox_timeout, set_prox_timeout},
   {"proximity.deadzone", get_prox_deadzone, set_prox_deadzone},
+  {"proximity.ir_rejection", get_prox_ir_rejection, set_prox_ir_rejection},
+  {"proximity.gamma", get_prox_gamma, set_prox_gamma},
+
+  // Tilt category
+  {"tilt.forgive_middle", get_tilt_forgive_middle, set_tilt_forgive_middle},
+  {"tilt.middle_width", get_tilt_middle_width, set_tilt_middle_width},
+  {"tilt.deadzone", get_tilt_deadzone, set_tilt_deadzone},
+  {"tilt.rate_hz", get_tilt_rate_hz, set_tilt_rate_hz},
+  {"tilt.x_invert", get_tilt_x_invert, set_tilt_x_invert},
+  {"tilt.y_invert", get_tilt_y_invert, set_tilt_y_invert},
+  {"tilt.note_off_mode", get_tilt_note_off_mode, set_tilt_note_off_mode},
+
+  // MIDI Control category
+  {"midi_control.enabled", get_midi_control_enabled, set_midi_control_enabled},
+  {"midi_control.channel", get_midi_control_channel, set_midi_control_channel},
+  {"midi_control.input", get_midi_control_input, set_midi_control_input},
+
+  // Note Track category
+  {"note_track.low_note", get_note_track_low_note, set_note_track_low_note},
+  {"note_track.high_note", get_note_track_high_note, set_note_track_high_note},
+  {"note_track.channel", get_note_track_channel, set_note_track_channel},
+  {"note_track.filter_mode", get_note_track_filter_mode, set_note_track_filter_mode},
+
+  // Theme category
+  {"theme.theme", get_theme, set_theme},
+
+  // Scene Inspect category
+  {"scene_inspect.scroll_speed", get_scene_inspect_scroll_speed, set_scene_inspect_scroll_speed},
+  {"scene_inspect.scroll_mode", get_scene_inspect_scroll_mode, set_scene_inspect_scroll_mode},
   
   // ALS category
   {"als.filter_mode", get_als_filter_mode, set_als_filter_mode},

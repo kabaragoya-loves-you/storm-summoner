@@ -312,12 +312,6 @@ action_handle_result_t action_handlers_modulation_dispatch(
           return ACTION_HANDLED;
 
         case VARIANT_HOLD:
-          if (is_press) {
-            action_followup_record_press((action_t*)action);
-          } else if (action_followup_should_skip_release(action)) {
-            ESP_LOGD(TAG, "Cut hold release skipped by follow-up");
-            return ACTION_HANDLED;
-          }
           {
             uint8_t cut_mode = action->params.cut.cut_mode;
             bool cut_active = is_press;
@@ -346,11 +340,8 @@ action_handle_result_t action_handlers_modulation_dispatch(
 
         case VARIANT_HOLD:
           if (is_press) {
-            action_followup_record_press((action_t*)action);
             rtg_start();
             ESP_LOGD(TAG, "RTG Hold: press -> running");
-          } else if (action_followup_should_skip_release(action)) {
-            ESP_LOGD(TAG, "RTG hold release skipped by follow-up");
           } else {
             rtg_stop();
             ESP_LOGD(TAG, "RTG Hold: release -> stopped");
@@ -387,11 +378,8 @@ action_handle_result_t action_handlers_modulation_dispatch(
 
         case VARIANT_HOLD:
           if (is_press) {
-            action_followup_record_press((action_t*)action);
             sample_hold_start();
             ESP_LOGD(TAG, "S+H Hold: press -> running");
-          } else if (action_followup_should_skip_release(action)) {
-            ESP_LOGD(TAG, "S+H hold release skipped by follow-up");
           } else {
             sample_hold_stop();
             ESP_LOGD(TAG, "S+H Hold: release -> stopped");

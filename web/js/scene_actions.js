@@ -137,6 +137,7 @@ window.SceneActions = (function () {
     defaultSetIndex,
     resolveStoredIndex,
     setOptions,
+    forEachAction,
     seedSceneSetAction,
     validateSceneSetActionsInModel
   }

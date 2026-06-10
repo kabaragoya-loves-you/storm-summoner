@@ -18,6 +18,8 @@ idf_component_register(
     mbedtls
     settings_registry
     scene
+    action
+    config
     json
     transport
     tempo

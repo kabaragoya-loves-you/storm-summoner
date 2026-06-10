@@ -44,6 +44,50 @@ VALID_TOUCHWHEEL_MODES = %w[
 # Valid touchwheel styles
 VALID_TOUCHWHEEL_STYLES = %w[odometer endless bipolar].freeze
 
+VALID_PARAM_TARGETS = %w[
+  touchwheel expression cv proximity als tilt_x tilt_y note_track lfo1 lfo2
+].freeze
+
+def param_stream_mapping_cc_active?(mapping)
+  mapping.is_a?(Hash) &&
+    mapping['enabled'] != false &&
+    (mapping['output_type'] || 'cc') == 'cc'
+end
+
+def param_stream_target_cc_active?(scene_data, target)
+  return false unless scene_data.is_a?(Hash) && VALID_PARAM_TARGETS.include?(target)
+
+  case target
+  when 'touchwheel'
+    scene_data['touchwheel_mode'] == 'continuous' &&
+      param_stream_mapping_cc_active?(scene_data['touchwheel'])
+  when 'expression'
+    (scene_data['expression_mode'] || 'expression') == 'expression' &&
+      param_stream_mapping_cc_active?(scene_data['expression'])
+  when 'cv'
+    scene_data['cv_input_mode'] == 'cv' &&
+      param_stream_mapping_cc_active?(scene_data['cv'])
+  when 'proximity'
+    param_stream_mapping_cc_active?(scene_data['proximity'])
+  when 'als'
+    param_stream_mapping_cc_active?(scene_data['als'])
+  when 'tilt_x'
+    param_stream_mapping_cc_active?(scene_data['tilt_x'])
+  when 'tilt_y'
+    param_stream_mapping_cc_active?(scene_data['tilt_y'])
+  when 'note_track'
+    param_stream_mapping_cc_active?(scene_data['note_track'])
+  when 'lfo1'
+    scene_data.dig('lfo1_config', 'enabled') &&
+      param_stream_mapping_cc_active?(scene_data['lfo1'])
+  when 'lfo2'
+    scene_data.dig('lfo2_config', 'enabled') &&
+      param_stream_mapping_cc_active?(scene_data['lfo2'])
+  else
+    false
+  end
+end
+
 def validate_engine_modify_fields(action, context, errors)
   rand_u8 = 254
   rand_u16 = 65534
@@ -74,7 +118,7 @@ def validate_engine_modify_fields(action, context, errors)
   end
 end
 
-def validate_action(action, context, errors)
+def validate_action(action, context, errors, scene_data: nil)
   type = action['type']
   
   unless type.is_a?(String)
@@ -373,6 +417,8 @@ def validate_action(action, context, errors)
     end
   when 'rtg'
     variant = action['variant']
+    if action['step_target']
+      errors << "#{context}: warning: step_target is ignored on rtg actions (use type sample_hold for S+H Step)"
     case variant
     when 'toggle', 'hold', 'step', nil
       # Parameterless action; no extra fields.
@@ -385,6 +431,8 @@ def validate_action(action, context, errors)
     # Legacy single-type entries; no extra fields.
   when 'sample_hold'
     variant = action['variant']
+    if action['step_target']
+      errors << "#{context}: warning: step_target is ignored on sample_hold actions"
     case variant
     when 'toggle', 'hold', 'step', nil
       # Parameterless action; no extra fields.
@@ -401,14 +449,23 @@ def validate_action(action, context, errors)
       errors << "#{context}: step step_target must be 'rtg' or 'sh' (got #{target.inspect})"
     end
   when 'param'
+    if action['target']
+      unless VALID_PARAM_TARGETS.include?(action['target'])
+        errors << "#{context}: param target must be one of: #{VALID_PARAM_TARGETS.join(', ')}"
+      elsif scene_data && !param_stream_target_cc_active?(scene_data, action['target'])
+        errors << "#{context}: warning: param target '#{action['target']}' is not in Control Change mode in this scene"
+      end
+    end
     variant = action['variant']
     case variant
     when 'hold', nil
       unless action['param'].is_a?(Integer) && action['param'].between?(0, 127)
         errors << "#{context}: param hold requires 'param' (0-127)"
       end
-      unless action['param2'].is_a?(Integer) && action['param2'].between?(0, 127)
-        errors << "#{context}: param hold requires 'param2' (0-127)"
+      unless action['release_to_original']
+        unless action['param2'].is_a?(Integer) && action['param2'].between?(0, 127)
+          errors << "#{context}: param hold requires 'param2' (0-127) unless release_to_original is true"
+        end
       end
     when 'cycle'
       unless action['num_params'].is_a?(Integer) && action['num_params'].between?(2, 8)
@@ -428,13 +485,29 @@ def validate_action(action, context, errors)
       errors << "#{context}: param variant must be 'hold' or 'cycle' (got #{variant.inspect})"
     end
   when 'param_hold'
+    if action['target']
+      unless VALID_PARAM_TARGETS.include?(action['target'])
+        errors << "#{context}: param target must be one of: #{VALID_PARAM_TARGETS.join(', ')}"
+      elsif scene_data && !param_stream_target_cc_active?(scene_data, action['target'])
+        errors << "#{context}: warning: param target '#{action['target']}' is not in Control Change mode in this scene"
+      end
+    end
     unless action['param'].is_a?(Integer) && action['param'].between?(0, 127)
       errors << "#{context}: param_hold requires 'param' (0-127)"
     end
-    unless action['param2'].is_a?(Integer) && action['param2'].between?(0, 127)
-      errors << "#{context}: param_hold requires 'param2' (0-127)"
+    unless action['release_to_original']
+      unless action['param2'].is_a?(Integer) && action['param2'].between?(0, 127)
+        errors << "#{context}: param_hold requires 'param2' (0-127) unless release_to_original is true"
+      end
     end
   when 'param_cycle'
+    if action['target']
+      unless VALID_PARAM_TARGETS.include?(action['target'])
+        errors << "#{context}: param target must be one of: #{VALID_PARAM_TARGETS.join(', ')}"
+      elsif scene_data && !param_stream_target_cc_active?(scene_data, action['target'])
+        errors << "#{context}: warning: param target '#{action['target']}' is not in Control Change mode in this scene"
+      end
+    end
     unless action['num_params'].is_a?(Integer) && action['num_params'].between?(2, 8)
       errors << "#{context}: param_cycle requires 'num_params' (2-8)"
     end
@@ -590,7 +663,7 @@ def validate_scene(scene_file)
       end
       
       pad['actions']&.each_with_index do |action, aidx|
-        validate_action(action, "Touchpad #{idx} action #{aidx}", errors)
+        validate_action(action, "Touchpad #{idx} action #{aidx}", errors, scene_data: scene_data)
       end
     end
   end
@@ -603,7 +676,7 @@ def validate_scene(scene_file)
       end
       
       scene_data[btn].each_with_index do |action, idx|
-        validate_action(action, "#{btn} action #{idx}", errors)
+        validate_action(action, "#{btn} action #{idx}", errors, scene_data: scene_data)
       end
     end
   end

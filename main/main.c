@@ -99,7 +99,7 @@ void app_main(void) {
   action_init();
   curve_init();
   tinyusb_init_and_start();
-  usb_cdc_update_init(true);
+  usb_cdc_update_init(false);
   
   midi_out_init();
   midi_in_init();

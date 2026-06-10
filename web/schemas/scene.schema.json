@@ -1043,7 +1043,7 @@
           "type": "string",
           "enum": ["always", "if_held", "if_quick"],
           "default": "always",
-          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset, touchwheel, clock, cut, ui, param, rtg, sample_hold."
+          "description": "Follow-Up: when to perform the release-phase work of a hold action. always (default), if_held (>= threshold), if_quick (< threshold). Honored by hold variants of control, tempo, preset, touchwheel, and clock."
         },
         "release_threshold_ms": {
           "type": "integer",
@@ -2016,19 +2016,30 @@
             "required": ["type", "variant"]
           },
           "then": {
-            "required": ["param", "param2"],
+            "required": ["param"],
             "properties": {
+              "target": {
+                "type": "string",
+                "enum": ["touchwheel", "expression", "cv", "proximity", "als", "tilt_x", "tilt_y", "note_track", "lfo1", "lfo2"],
+                "default": "touchwheel",
+                "description": "Scene CC stream to retarget (must be in Control Change mode when the action runs)"
+              },
               "param": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 127,
-                "description": "CC number for touchwheel slot 1 on press"
+                "description": "CC number to apply on press"
               },
               "param2": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 127,
-                "description": "CC number for touchwheel slot 1 on release"
+                "description": "CC number to apply on release (ignored when release_to_original is true)"
+              },
+              "release_to_original": {
+                "type": "boolean",
+                "default": false,
+                "description": "When true, the release phase restores whatever CC and value the target stream had at press time, instead of using param2. The captured values are transient and not persisted."
               }
             }
           }
@@ -2044,6 +2055,12 @@
           "then": {
             "required": ["num_params", "params"],
             "properties": {
+              "target": {
+                "type": "string",
+                "enum": ["touchwheel", "expression", "cv", "proximity", "als", "tilt_x", "tilt_y", "note_track", "lfo1", "lfo2"],
+                "default": "touchwheel",
+                "description": "Scene CC stream to retarget (must be in Control Change mode when the action runs)"
+              },
               "num_params": {
                 "type": "integer",
                 "minimum": 2,
@@ -2059,7 +2076,7 @@
                   "minimum": 0,
                   "maximum": 127
                 },
-                "description": "CC numbers for touchwheel slot 1 to cycle through"
+                "description": "CC numbers to cycle through on the target stream"
               }
             }
           }
@@ -2071,19 +2088,30 @@
             }
           },
           "then": {
-            "required": ["param", "param2"],
+            "required": ["param"],
             "properties": {
+              "target": {
+                "type": "string",
+                "enum": ["touchwheel", "expression", "cv", "proximity", "als", "tilt_x", "tilt_y", "note_track", "lfo1", "lfo2"],
+                "default": "touchwheel",
+                "description": "Scene CC stream to retarget"
+              },
               "param": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 127,
-                "description": "CC number for touchwheel slot 1 on press"
+                "description": "CC number to apply on press"
               },
               "param2": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 127,
-                "description": "CC number for touchwheel slot 1 on release"
+                "description": "CC number to apply on release (ignored when release_to_original is true)"
+              },
+              "release_to_original": {
+                "type": "boolean",
+                "default": false,
+                "description": "When true, the release phase restores whatever CC and value the target stream had at press time, instead of using param2."
               }
             }
           }
@@ -2097,6 +2125,12 @@
           "then": {
             "required": ["num_params", "params"],
             "properties": {
+              "target": {
+                "type": "string",
+                "enum": ["touchwheel", "expression", "cv", "proximity", "als", "tilt_x", "tilt_y", "note_track", "lfo1", "lfo2"],
+                "default": "touchwheel",
+                "description": "Scene CC stream to retarget"
+              },
               "num_params": {
                 "type": "integer",
                 "minimum": 2,
@@ -2112,7 +2146,7 @@
                   "minimum": 0,
                   "maximum": 127
                 },
-                "description": "CC numbers for touchwheel slot 1 to cycle through"
+                "description": "CC numbers to cycle through on the target stream"
               }
             }
           }

@@ -13,6 +13,7 @@
 #include "event_bus.h"
 #include "action.h"
 #include "action_migration.h"
+#include "param_stream.h"
 #include "tempo.h"
 #include "input_manager.h"
 #include "ui.h"
@@ -2877,6 +2878,12 @@ void scene_set_touchwheel_value(uint8_t value) {
   ESP_LOGD(TAG, "Touchwheel value set to %u", (unsigned)value);
 }
 
+uint8_t scene_get_touchwheel_value(void) {
+  if (s_touchwheel_endless_value < 0) return 0;
+  if (s_touchwheel_endless_value > 255) return 255;
+  return (uint8_t)s_touchwheel_endless_value;
+}
+
 esp_err_t scene_set_touchpad_cc(uint8_t scene_index, uint8_t pad_index, uint8_t cc_number, uint8_t value) {
   if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS || cc_number > 127 || value > 127) return ESP_ERR_INVALID_ARG;
   
@@ -4486,10 +4493,19 @@ static cJSON* action_to_json(const action_t* action) {
         break;
     }
   } else if (action->type == ACTION_PARAM) {
+    if (action->params.tw_param.target != PARAM_TARGET_TOUCHWHEEL) {
+      cJSON_AddStringToObject(obj, "target",
+        param_target_to_string((param_target_t)action->params.tw_param.target));
+    }
     switch (action->variant) {
       case VARIANT_HOLD:
         cJSON_AddNumberToObject(obj, "param", action->params.tw_param.param);
-        cJSON_AddNumberToObject(obj, "param2", action->params.tw_param.param2);
+        if (!action->params.tw_param.release_to_original) {
+          cJSON_AddNumberToObject(obj, "param2", action->params.tw_param.param2);
+        }
+        if (action->params.tw_param.release_to_original) {
+          cJSON_AddBoolToObject(obj, "release_to_original", true);
+        }
         break;
       case VARIANT_CYCLE:
         cJSON_AddNumberToObject(obj, "num_params", action->params.tw_param.num_params);
@@ -5159,14 +5175,28 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
   
-  // Parse param actions (touchwheel CC slot 1)
+  // Parse param actions (scene CC stream retarget)
   if (action.type == ACTION_PARAM) {
+    cJSON* target = cJSON_GetObjectItem(obj, "target");
+    if (target && cJSON_IsString(target)) {
+      action.params.tw_param.target =
+        (uint8_t)param_target_from_string(target->valuestring);
+    } else {
+      action.params.tw_param.target = PARAM_TARGET_TOUCHWHEEL;
+    }
     switch (action.variant) {
       case VARIANT_HOLD: {
         cJSON* param = cJSON_GetObjectItem(obj, "param");
         cJSON* param2 = cJSON_GetObjectItem(obj, "param2");
+        cJSON* original = cJSON_GetObjectItem(obj, "release_to_original");
         if (param) action.params.tw_param.param = (uint8_t)param->valueint;
-        if (param2) action.params.tw_param.param2 = (uint8_t)param2->valueint;
+        if (original) {
+          action.params.tw_param.release_to_original = cJSON_IsTrue(original) ? 1 : 0;
+        }
+        if (param2) {
+          action.params.tw_param.param2 = (uint8_t)param2->valueint;
+          action.params.tw_param.release_to_original = 0;
+        }
         break;
       }
       case VARIANT_CYCLE:

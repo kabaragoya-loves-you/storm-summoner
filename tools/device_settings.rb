@@ -10,7 +10,7 @@ require 'optparse'
 require_relative 'ss_serial'
 
 class DeviceSettingsCLI < SSSerial
-  SCHEMA_PATH = File.expand_path('../../schemas/settings.schema.json', __FILE__)
+  SCHEMA_PATH = File.expand_path('../web/schemas/settings.schema.json', __FILE__)
   CONFIG_TIMEOUT = 3.0
 
   def initialize(port_name, debug: false)

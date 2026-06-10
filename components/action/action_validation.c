@@ -57,6 +57,8 @@ bool action_requires_hold_for(const action_t* action) {
 //     pair; suppressing it strands a note or pedal.
 //   - LFO variants / ACTION_CLOCK BURST -- not symmetric press/release pairs
 //     (start/stop/toggle/modify and one-shot burst all fire on press only).
+//   - ACTION_CUT / ACTION_UI / ACTION_PARAM / ACTION_RTG / ACTION_SAMPLE_HOLD
+//     HOLD -- release must always restore state; skipping release would strand it.
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
@@ -66,16 +68,6 @@ bool action_supports_followup_for(const action_t* action) {
     case ACTION_TOUCHWHEEL:
       return action->variant == VARIANT_HOLD;
     case ACTION_CLOCK:
-      return action->variant == VARIANT_HOLD;
-    case ACTION_CUT:
-      return action->variant == VARIANT_HOLD;
-    case ACTION_UI:
-      return action->variant == VARIANT_HOLD;
-    case ACTION_PARAM:
-      return action->variant == VARIANT_HOLD;
-    case ACTION_RTG:
-      return action->variant == VARIANT_HOLD;
-    case ACTION_SAMPLE_HOLD:
       return action->variant == VARIANT_HOLD;
     default:
       return false;
@@ -201,7 +193,7 @@ static bool action_input_restriction_allows(const action_t* action,
         return false;
     }
   }
-  // ACTION_PARAM (Hold/Cycle): retargets touchwheel CC slot 1; same input
+  // ACTION_PARAM (Hold/Cycle): retargets a scene CC stream; same input
   // affordances as touchwheel, except Hold excludes bump (no release pair).
   if (type == ACTION_PARAM) {
     switch (trigger) {
@@ -343,6 +335,7 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_PUNCH_IN:
     case ACTION_CONFIRM_PENDING:
     case ACTION_TRANSPORT:
+    case ACTION_RESET:
       return false;
     default:
       return true;
@@ -396,10 +389,8 @@ bool action_supports_timing_for(const action_t* action) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
-  if (action->type == ACTION_PARAM) {
-    if (action->variant == VARIANT_HOLD) return false;
-    return true;
-  }
+  if (action->type == ACTION_PARAM)
+    return false;
   if (action->type == ACTION_RTG) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
@@ -453,10 +444,12 @@ bool action_supports_repeat_for(const action_t* action) {
   if (action->type == ACTION_UI)
     return action->variant == VARIANT_CYCLE;
   if (action->type == ACTION_PARAM)
-    return action->variant == VARIANT_CYCLE;
-  if (action->type == ACTION_RTG)
     return false;
+  if (action->type == ACTION_RTG)
+    return action->variant == VARIANT_MODIFY;
   if (action->type == ACTION_SAMPLE_HOLD)
+    return action->variant == VARIANT_MODIFY;
+  if (action->type == ACTION_RESET)
     return false;
   return action_supports_repeat(action->type);
 }

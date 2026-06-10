@@ -1045,6 +1045,12 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
   margin-top: 0.25rem;
 }
 
+.info-rows .info-transport-actions {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0.5rem;
+}
+
 .info-card-header h3 {
   margin: 0;
   font-family: var(--font-title);
@@ -1304,6 +1310,120 @@ wa-dialog[data-scene-target="reloadConfirmDialog"]::part(footer) {
   justify-content: flex-end;
   gap: 0.75rem;
   border-top: 1px solid var(--border);
+}
+
+.scene-boomerang-block .scene-boomerang-env {
+  width: 280px;
+  max-width: 100%;
+  height: 100px;
+  margin: 0 0 0.65rem;
+}
+
+.scene-boomerang-env {
+  height: 100px;
+  margin: 0 0 0.65rem;
+}
+
+.scene-boomerang-env-svg {
+  display: block;
+  width: 280px;
+  max-width: 100%;
+  height: 100px;
+}
+
+.scene-boomerang-env-readonly {
+  margin-bottom: 0.75rem;
+}
+
+.scene-boomerang-env-caption {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-bottom: 0.25rem;
+}
+
+.scene-inspect-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 1rem 1.25rem;
+  align-items: start;
+  margin-bottom: 1rem;
+}
+
+.scene-inspect-block-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.scene-inspect-block-graph {
+  width: 280px;
+}
+
+.scene-inspect-block-graph .scene-boomerang-env {
+  width: 280px;
+  max-width: 100%;
+  height: 100px;
+  margin: 0;
+}
+
+.scene-inspect-block-graph .scene-boomerang-env-svg {
+  width: 280px;
+  max-width: 100%;
+  height: 100px;
+}
+
+@media (max-width: 640px) {
+  .scene-inspect-block {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scene-inspect-block-graph {
+    width: 100%;
+    max-width: 280px;
+  }
+}
+
+.scene-inspect-paragraph {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 1rem;
+}
+
+.scene-inspect-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.scene-boomerang-env-readonly {
+  margin-bottom: 0;
+}
+
+.scene-boomerang-env-stroke line,
+.scene-boomerang-env-stroke path {
+  stroke: var(--wa-color-brand-on-quiet, var(--text));
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.scene-boomerang-env-ref {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+.scene-boomerang-env-label {
+  fill: var(--text-dim);
+  font-size: 10px;
+  font-family: system-ui, sans-serif;
+}
+
+.scene-boomerang-env-level {
+  fill: var(--text-dim);
+  font-size: 9px;
+  font-family: system-ui, sans-serif;
+  font-style: italic;
 }
 
 .scene-field-row {
@@ -1629,10 +1749,20 @@ wa-dialog[data-scene-target="reloadConfirmDialog"]::part(footer) {
   font-size: 0.85rem;
 }
 
+.info-flag-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.info-flag-value wa-icon {
+  font-size: 1.1rem;
+}
+
 .info-subsection {
-  margin-top: 0.5rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .jack-status {

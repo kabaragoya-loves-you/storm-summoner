@@ -7,7 +7,7 @@ This document describes the USB CDC CONFIG mode protocol for managing user-facin
 The CONFIG mode is designed to:
 
 1. **Abstract complexity** - Map simple setting IDs to potentially complex component API calls
-2. **Schema-driven** - Work in conjunction with `schemas/settings.schema.json` for UI generation
+2. **Schema-driven** - Work in conjunction with `web/schemas/settings.schema.json` for UI generation
 3. **Type-safe** - All values are uint32_t internally, with type conversion handled by the registry
 4. **Consistent** - Provide the same interface regardless of how settings are stored internally
 
@@ -222,14 +222,14 @@ Common errors:
 | `components/settings_registry/settings_registry.c` | Dispatch table and wrapper functions |
 | `components/settings_registry/include/settings_registry.h` | Public API |
 | `components/usb_cdc_update/usb_cdc_update.c` | CONFIG mode state machine |
-| `schemas/settings.schema.json` | Schema definition |
+| `web/schemas/settings.schema.json` | Schema definition |
 | `web/js/config.js` | Web UI Stimulus controller |
 | `tools/device_settings.rb` | CLI tool |
 | `tools/ss_serial.rb` | Shared serial communication base |
 
 ## Adding New Settings
 
-1. **Add to schema** (`schemas/settings.schema.json`):
+1. **Add to schema** (`web/schemas/settings.schema.json`):
    - Add to appropriate category
    - Define type, options/range, default, visibility conditions
 

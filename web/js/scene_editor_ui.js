@@ -356,6 +356,17 @@ window.SceneEditorUi = (function () {
     return selectField(`${path}.mode2`, cur, opts)
   }
 
+  function paramReleaseField (ctrl, path, a) {
+    const device = ctrl.deviceDefinition
+    const pressCc = DeviceControls.resolveParameterCc(device, a.param)
+    const opts = [{ v: '__original__', l: 'Original' },
+      ...DeviceControls.parameterOptions(device, { exclude: new Set([pressCc]) })]
+    const cur = a.release_to_original
+      ? '__original__'
+      : DeviceControls.resolveParameterCc(device, a.param2)
+    return selectField(`${path}.param2`, cur, opts)
+  }
+
   function renderLfoFields (ctrl, path, a) {
     const v = a.variant || 'modify'
     let html = ''
@@ -451,9 +462,14 @@ window.SceneEditorUi = (function () {
   const CUT_MODES = ActionCatalog.CUT_MODE_OPTIONS
 
   const BOOMERANG_PHASE_MODES = [
-    { v: 'instant', l: 'Instant' },
-    { v: 'time_ms', l: 'Time (ms)' },
-    { v: 'division', l: 'Division' }
+    { v: 'instant', l: 'Immediate' },
+    { v: 'division', l: 'Division' },
+    { v: 'time_ms', l: 'Time' }
+  ]
+
+  const BOOMERANG_TIME_PRESETS_MS = [
+    25, 50, 100, 150, 200, 300, 500, 750, 1000,
+    1500, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000, 45000, 60000
   ]
 
   const BOOMERANG_CURVES = [
@@ -475,17 +491,110 @@ window.SceneEditorUi = (function () {
   ]
 
   const BOOMERANG_PHASE_DIVISIONS = [
-    { v: 'beat', l: '1 beat' },
-    { v: 'bar', l: '1 bar' },
-    { v: '2_bars', l: '2 bars' },
-    { v: '4_bars', l: '4 bars' },
+    { v: '1_beat', l: '1 Beat' },
+    { v: '2_beats', l: '2 Beats' },
+    { v: '3_beats', l: '3 Beats' },
+    { v: '1_bar', l: '1 Bar' },
+    { v: '2_bars', l: '2 Bars' },
+    { v: '3_bars', l: '3 Bars' },
+    { v: '4_bars', l: '4 Bars' },
     { v: 'beat_2', l: 'Beat 2' },
     { v: 'beat_3', l: 'Beat 3' },
-    { v: 'beat_4', l: 'Beat 4' },
-    { v: '2_beats', l: '2 beats' },
-    { v: '3_beats', l: '3 beats' },
-    { v: '3_bars', l: '3 bars' }
+    { v: 'beat_4', l: 'Beat 4' }
   ]
+
+  function boomerangDivisionValue (stored) {
+    const legacy = { beat: '1_beat', bar: '1_bar' }
+    return legacy[stored] || stored || '1_beat'
+  }
+
+  function boomerangDivisionOptions (stored) {
+    const cur = boomerangDivisionValue(stored)
+    const opts = BOOMERANG_PHASE_DIVISIONS.slice()
+    if (cur && !opts.some(o => o.v === cur)) {
+      opts.unshift({ v: cur, l: cur.replace(/_/g, ' ') })
+    }
+    return opts
+  }
+
+  function boomerangTimeLabel (ms) {
+    if (ms < 1000) return `${ms} ms`
+    const s = ms / 1000
+    return Number.isInteger(s) ? `${s} s` : `${s.toFixed(1)} s`
+  }
+
+  function boomerangTimeOptions (stored) {
+    const cur = Number(stored ?? 1000)
+    const opts = BOOMERANG_TIME_PRESETS_MS.map(v => ({ v, l: boomerangTimeLabel(v) }))
+    if (!opts.some(o => o.v === cur)) {
+      opts.unshift({ v: cur, l: boomerangTimeLabel(cur) })
+    }
+    return opts
+  }
+
+  function boomerangOriginOptions () {
+    const opts = [{ v: 'current', l: 'Current' }]
+    for (let i = 0; i <= 127; i++) opts.push({ v: i, l: String(i) })
+    return opts
+  }
+
+  function boomerangOriginSelection (a) {
+    return (a.start_mode || 'current') === 'current' ? 'current' : (a.start_value ?? 0)
+  }
+
+  function boomerangTargetOptions () {
+    const opts = [{ v: 'random', l: 'Random' }]
+    for (let i = 0; i <= 127; i++) opts.push({ v: i, l: String(i) })
+    return opts
+  }
+
+  function boomerangTargetSelection (a, ot) {
+    if ((a.target_mode || 'explicit') === 'random') return 'random'
+    let v = a.target_value ?? 127
+    if (ot === 'pitch_bend') {
+      v = Math.min(127, Math.round(v / 128))
+    }
+    return v
+  }
+
+  const BOOM_NOTIFY = ' change->boomerang-fields#notify'
+
+  function boomerangSelectField (path, value, options) {
+    const opts = options
+      .map(o => {
+        const sel = String(o.v) === String(value) ? ' selected' : ''
+        return `<option value="${esc(o.v)}"${sel}>${esc(o.l)}</option>`
+      })
+      .join('')
+    return `<select class="scene-select" data-scene-path="${esc(path)}"
+      data-action="change->scene#patchSelect${BOOM_NOTIFY}">${opts}</select>`
+  }
+
+  function boomerangNumberField (path, value, min, max) {
+    return `<input type="number" class="scene-input" min="${min}" max="${max}"
+      value="${esc(value)}" data-scene-path="${esc(path)}"
+      data-action="input->scene#patchNumber input->boomerang-fields#notify">`
+  }
+
+  function boomerangValueField (ctrl, path, cc, val) {
+    const device = ctrl.deviceDefinition
+    const rawCc =
+      DeviceControls.resolveCcForValuePath(p => ctrl.getAtPath(p), path) ?? cc
+    const ccNum = DeviceControls.resolveParameterCc(device, rawCc)
+    if (DeviceControls.hasDiscreteValues(device, ccNum)) {
+      const opts = DeviceControls.discreteValueOptions(device, ccNum)
+      const inner = opts
+        .map(o => {
+          const sel = String(o.v) === String(val) ? ' selected' : ''
+          return `<option value="${esc(o.v)}"${sel}>${esc(o.l)}</option>`
+        })
+        .join('')
+      return `<select class="scene-select" data-scene-path="${esc(path)}"
+        data-action="change->scene#patchSelect${BOOM_NOTIFY}">${inner}</select>`
+    }
+    const range = DeviceControls.continuousValueRange(device, ccNum)
+    return boomerangNumberField(path, val, range.min, range.max)
+  }
 
   function renderCcValuePair (ctrl, path, ccKey, valKey, cc, val) {
     const ccPath = `${path}.${ccKey}`
@@ -603,44 +712,62 @@ window.SceneEditorUi = (function () {
     return html
   }
 
+  function renderParamTargetField (ctrl, path, a) {
+    const cur = a.target || 'touchwheel'
+    const opts = ActionCatalog.paramStreamTargetOptions(ctrl.editModel, cur)
+    return fieldRow('Target', selectField(`${path}.target`, cur, opts))
+  }
+
   function renderParamFields (ctrl, path, a) {
     const v = a.variant || 'hold'
     const device = ctrl.deviceDefinition
+    let html = renderParamTargetField(ctrl, path, a)
     if (v === 'hold') {
       const pressCc = DeviceControls.resolveParameterCc(device, a.param)
-      const relCc = DeviceControls.resolveParameterCc(device, a.param2)
-      let html = fieldRow(
-        'Press',
-        paramField(ctrl, `${path}.param`, pressCc, { exclude: new Set([relCc]), keep: pressCc })
-      )
+      const relCc = a.release_to_original
+        ? null
+        : DeviceControls.resolveParameterCc(device, a.param2)
       html += fieldRow(
-        'Release',
-        paramField(ctrl, `${path}.param2`, relCc, { exclude: new Set([pressCc]), keep: relCc })
+        'Press',
+        paramField(ctrl, `${path}.param`, pressCc,
+          { exclude: relCc == null ? new Set() : new Set([relCc]), keep: pressCc })
       )
+      html += fieldRow('Release', paramReleaseField(ctrl, path, a))
       return html
     }
-    if (v === 'cycle') return renderParamCycle(ctrl, path, a)
-    return ''
+    if (v === 'cycle') {
+      html += renderParamCycle(ctrl, path, a)
+      return html
+    }
+    return html
   }
 
   function renderParamCycle (ctrl, path, a) {
     const device = ctrl.deviceDefinition
     const stepCount = ActionCatalog.paramStepCount(a)
     const steps = Array.isArray(a.params) ? a.params.slice() : []
-    const stepOpts = []
-    for (let i = 2; i <= 8; i++) stepOpts.push({ v: i, l: String(i) })
 
-    let html = fieldRow(
-      'Steps',
-      selectField(`${path}.num_params`, stepCount, stepOpts)
-    )
-    html += `<div class="scene-cycle scene-param-cycle" style="--cycle-steps: ${stepCount}">`
+    let html = `<div class="scene-cycle scene-param-cycle" style="--cycle-steps: ${stepCount}">`
     html += '<div class="scene-cycle-row scene-cycle-row-head">'
     html += '<div class="scene-cycle-param-col">Parameter</div>'
     for (let i = 0; i < stepCount; i++) {
-      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span></div>`
+      const add = (i === stepCount - 1 && stepCount < 8)
+        ? slotAddButton(path, 'param-cycle-step', 'Add step', 8) : ''
+      const remove = i > 1
+        ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
+            data-controller="slots" data-slots-path-value="${esc(path)}" data-slots-kind-value="param-cycle-step"
+            data-slots-min-value="2" data-slots-max-value="8" data-slots-default-value="0"
+            data-action="click->slots#remove" data-slot-index="${i}"
+            title="Remove step ${i + 1}" aria-label="Remove step ${i + 1}"
+            ><wa-icon name="xmark"></wa-icon></wa-button>`
+        : ''
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${
+        i + 1
+      }</span>${remove}${add}</div>`
     }
-    html += '</div><div class="scene-cycle-row">'
+    html += '</div>'
+
+    html += '<div class="scene-cycle-row">'
     html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
     for (let i = 0; i < stepCount; i++) {
       const cc = DeviceControls.resolveParameterCc(device, steps[i])
@@ -702,27 +829,20 @@ window.SceneEditorUi = (function () {
 
   function renderEngineFields (ctrl, path, a) {
     const v = a.variant || 'toggle'
-    if (v === 'step') {
-      return fieldRow(
-        'Target',
-        selectField(
-          `${path}.step_target`,
-          a.step_target || (a.type === 'sample_hold' ? 'sh' : 'rtg'),
-          ActionCatalog.STEP_TARGET_OPTIONS
-        )
-      )
-    }
     if (v === 'modify') return renderEngineModifyFields(ctrl, path, a)
     return ''
   }
 
   function renderPunchInFields (ctrl, path, a) {
-    let html = renderCcValuePair(
+    const startBody = renderCcValuePair(
       ctrl, path, 'start_cc', 'start_value', a.start_cc, a.start_value
     )
-    html += renderCcValuePair(
+    const finishBody = renderCcValuePair(
       ctrl, path, 'finish_cc', 'finish_value', a.finish_cc, a.finish_value
     )
+    let html = `<div class="scene-slots">${
+      slotBlock('Start', startBody, -1, '')
+    }${slotBlock('Finish', finishBody, -1, '')}</div>`
     const beats = ctrl.editModel?.time_signature?.numerator ?? 4
     const dur = a.duration || '1_bar'
     const durOpts = ActionCatalog.punchInDurationOptions(beats)
@@ -735,13 +855,15 @@ window.SceneEditorUi = (function () {
   }
 
   function renderFlagCeremonyFields (ctrl, path, a) {
-    let html = renderCcValuePair(
+    const upBody = renderCcValuePair(
       ctrl, path, 'flag_up_cc', 'flag_up_value', a.flag_up_cc, a.flag_up_value
     )
-    html += renderCcValuePair(
+    const downBody = renderCcValuePair(
       ctrl, path, 'flag_down_cc', 'flag_down_value', a.flag_down_cc, a.flag_down_value
     )
-    return html
+    const rows = slotBlock('Flag Up', upBody, -1, '')
+      + slotBlock('Flag Down', downBody, -1, '')
+    return `<div class="scene-slots">${rows}</div>`
   }
 
   function renderBoomerangPhase (ctrl, path, a, phase) {
@@ -751,47 +873,60 @@ window.SceneEditorUi = (function () {
     const curveKey = `${phase}_curve`
     const slopeKey = `${phase}_curve_slope`
     const mode = a[modeKey] || 'instant'
+    const phaseTitle = `${phase.charAt(0).toUpperCase()}${phase.slice(1)}`
     let html = fieldRow(
-      `${phase.charAt(0).toUpperCase()}${phase.slice(1)} mode`,
-      selectField(`${path}.${modeKey}`, mode, BOOMERANG_PHASE_MODES)
+      `${phaseTitle} mode`,
+      boomerangSelectField(`${path}.${modeKey}`, mode, BOOMERANG_PHASE_MODES)
     )
-    if (mode === 'time_ms') {
+    if (mode === 'division') {
       html += fieldRow(
-        `${phase.charAt(0).toUpperCase()}${phase.slice(1)} time (ms)`,
-        numberField(`${path}.${timeKey}`, a[timeKey] ?? 0, 0, 60000)
-      )
-    } else if (mode === 'division') {
-      html += fieldRow(
-        `${phase.charAt(0).toUpperCase()}${phase.slice(1)} division`,
-        selectField(
+        `${phaseTitle} division`,
+        boomerangSelectField(
           `${path}.${divKey}`,
-          a[divKey] || 'beat',
-          BOOMERANG_PHASE_DIVISIONS
+          boomerangDivisionValue(a[divKey]),
+          boomerangDivisionOptions(a[divKey])
+        )
+      )
+    } else if (mode === 'time_ms') {
+      html += fieldRow(
+        `${phaseTitle} time`,
+        boomerangSelectField(
+          `${path}.${timeKey}`,
+          a[timeKey] ?? 1000,
+          boomerangTimeOptions(a[timeKey])
         )
       )
     }
-    if (phase !== 'sustain') {
+    if (phase !== 'sustain' && mode !== 'instant') {
+      const curve = Number(a[curveKey] ?? 0)
       html += fieldRow(
         `${phase.charAt(0).toUpperCase()}${phase.slice(1)} curve`,
-        selectField(`${path}.${curveKey}`, a[curveKey] ?? 0, BOOMERANG_CURVES)
+        boomerangSelectField(`${path}.${curveKey}`, curve, BOOMERANG_CURVES)
       )
-      html += fieldRow(
-        `${phase.charAt(0).toUpperCase()}${phase.slice(1)} slope`,
-        selectField(`${path}.${slopeKey}`, a[slopeKey] ?? 1, BOOMERANG_SLOPE)
-      )
+      if (curve !== 0) {
+        html += fieldRow(
+          `${phase.charAt(0).toUpperCase()}${phase.slice(1)} slope`,
+          boomerangSelectField(`${path}.${slopeKey}`, a[slopeKey] ?? 1, BOOMERANG_SLOPE)
+        )
+      }
     }
     return html
   }
 
   function renderBoomerangFields (ctrl, path, a) {
     const ot = a.output_type || 'cc'
-    let html = fieldRow(
+    const envSvg = window.BoomerangEnvelope?.renderSvg(a) || ''
+    let html = `<div class="scene-boomerang-block" data-controller="boomerang-fields"
+      data-boomerang-fields-path-value="${esc(path)}">
+      <div class="scene-boomerang-env" data-boomerang-fields-target="envelope"
+        data-controller="boomerang-envelope" data-boomerang-envelope-path-value="${esc(path)}">${envSvg}</div>`
+    html += fieldRow(
       'Output',
-      selectField(`${path}.output_type`, ot, OUTPUT_TYPES)
+      boomerangSelectField(`${path}.output_type`, ot, OUTPUT_TYPES)
     )
     if (ot === 'cc') {
       html += fieldRow(
-        'CC',
+        'Parameter',
         paramField(
           ctrl,
           `${path}.cc_number`,
@@ -802,47 +937,31 @@ window.SceneEditorUi = (function () {
     if (ot === 'lfo_rate' || ot === 'lfo_depth') {
       html += fieldRow(
         'LFO target',
-        selectField(`${path}.lfo_target`, a.lfo_target || 'both', LFO_TARGET)
-      )
-    }
-    html += fieldRow(
-      'Target mode',
-      selectField(`${path}.target_mode`, a.target_mode || 'explicit', [
-        { v: 'explicit', l: 'Explicit' },
-        { v: 'random', l: 'Random' }
-      ])
-    )
-    if ((a.target_mode || 'explicit') === 'explicit') {
-      const cc = ot === 'cc'
-        ? DeviceControls.resolveParameterCc(ctrl.deviceDefinition, a.cc_number)
-        : null
-      const max = ot === 'pitch_bend' ? 16383 : 127
-      html += fieldRow(
-        'Target value',
-        cc && DeviceControls.hasDiscreteValues(ctrl.deviceDefinition, cc)
-          ? valueField(ctrl, `${path}.target_value`, cc, a.target_value ?? 0)
-          : numberField(`${path}.target_value`, a.target_value ?? 0, 0, max)
+        boomerangSelectField(`${path}.lfo_target`, a.lfo_target || 'both', LFO_TARGET)
       )
     }
     if (ot === 'cc') {
       html += fieldRow(
-        'Start mode',
-        selectField(`${path}.start_mode`, a.start_mode || 'current', [
-          { v: 'current', l: 'Current' },
-          { v: 'explicit', l: 'Explicit' }
-        ])
-      )
-      if ((a.start_mode || 'current') === 'explicit') {
-        const cc = DeviceControls.resolveParameterCc(ctrl.deviceDefinition, a.cc_number)
-        html += fieldRow(
-          'Start value',
-          valueField(ctrl, `${path}.start_value`, cc, a.start_value ?? 0)
+        'Origin',
+        boomerangSelectField(
+          `${path}.__boomerang_origin`,
+          boomerangOriginSelection(a),
+          boomerangOriginOptions()
         )
-      }
+      )
     }
+    html += fieldRow(
+      'Target',
+      boomerangSelectField(
+        `${path}.__boomerang_target`,
+        boomerangTargetSelection(a, ot),
+        boomerangTargetOptions()
+      )
+    )
     html += renderBoomerangPhase(ctrl, path, a, 'attack')
     html += renderBoomerangPhase(ctrl, path, a, 'sustain')
     html += renderBoomerangPhase(ctrl, path, a, 'release')
+    html += '</div>'
     return html
   }
 
@@ -2210,8 +2329,10 @@ window.SceneEditorUi = (function () {
     if (m.tilt_x?.enabled) open.add('Tilt X')
     if (m.tilt_y?.enabled) open.add('Tilt Y')
     if (m.rtg_config?.enabled) open.add('RTG')
-    if ((m.cc_triggers || []).some(t => hasAction(t?.action)))
+    if (ctrl.deviceContext?.midiControl &&
+        (m.cc_triggers || []).some(t => hasAction(t?.action))) {
       open.add('CC Triggers')
+    }
     if (m.note_track?.enabled) open.add('Note Track')
     return open
   }

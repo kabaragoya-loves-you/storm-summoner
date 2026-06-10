@@ -13,11 +13,14 @@
 #include "scene_inspect.h"
 #include "transport.h"
 #include "tempo.h"
+#include "config.h"
+#include "action.h"
 #include "ui.h"
 #include "screensaver.h"
 #include "cv.h"
 #include "expression.h"
 #include "midi_in_uart.h"
+#include "midi_control.h"
 #include "cJSON.h"
 #include "version.h"
 #include "task_monitor.h"
@@ -141,6 +144,7 @@ static void cdc_clock_position_handler(const event_t *event, void *context);
 #if CDC_CLOCK_NOTIFY_ON_BEAT
 static void cdc_clock_beat_handler(const event_t *event, void *context);
 #endif
+static void cdc_clock_action_handler(const event_t *event, void *context);
 static void cdc_send_scene_inspect(const char *arg);
 static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position);
 static void cdc_send_info_json(void);
@@ -351,6 +355,7 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
 #if CDC_CLOCK_NOTIFY_ON_BEAT
   event_bus_subscribe_named(EVENT_BEAT, cdc_clock_beat_handler, NULL, "cdc.clock_beat");
 #endif
+  event_bus_subscribe(EVENT_ACTION_EXECUTED, cdc_clock_action_handler, NULL);
   if (event_bus_subscribe(EVENT_CONNECTIONS_CHANGED, cdc_connections_handler, NULL) != ESP_OK)
     ESP_LOGE(TAG, "Failed to subscribe for connection status updates");
 
@@ -895,6 +900,7 @@ static void cdc_send_scene_inspect(const char *arg) {
 
   cJSON_AddStringToObject(root, "text", text_buf);
   cJSON_AddBoolToObject(root, "truncated", truncated);
+  cJSON_AddBoolToObject(root, "midi_control_enabled", midi_control_is_enabled());
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
@@ -944,6 +950,8 @@ typedef struct {
   uint8_t numerator;
   uint8_t denominator;
   uint8_t use_transport;
+  uint8_t flag_enabled;
+  uint8_t flag;
 } cdc_clock_snapshot_t;
 
 static cdc_clock_snapshot_t s_last_clock_notify;
@@ -962,6 +970,8 @@ static void cdc_read_clock_snapshot(cdc_clock_snapshot_t *out) {
   out->numerator = sig.numerator ? sig.numerator : 4;
   out->denominator = sig.denominator ? sig.denominator : 4;
   out->use_transport = scene_get_use_transport(scene_idx) ? 1u : 0u;
+  out->flag_enabled = config_get_flag_enabled() ? 1u : 0u;
+  out->flag = action_get_flag() ? 1u : 0u;
 }
 
 static void cdc_add_clock_json(cJSON *root) {
@@ -987,6 +997,9 @@ static void cdc_add_clock_json(cJSON *root) {
     cJSON_AddItemToObject(clock, "time_signature", ts);
   }
 
+  cJSON_AddBoolToObject(clock, "flag_enabled", snap.flag_enabled != 0);
+  cJSON_AddBoolToObject(clock, "flag", snap.flag != 0);
+
   cJSON_AddItemToObject(root, "clock", clock);
 }
 
@@ -1000,11 +1013,12 @@ static void cdc_push_clock_evt(void) {
     return;
   s_last_clock_notify = snap;
 
-  char buf[80];
-  snprintf(buf, sizeof(buf), "EVT:clock:%u:%u:%lu:%u:%u:%u:%u",
+  char buf[96];
+  snprintf(buf, sizeof(buf), "EVT:clock:%u:%u:%lu:%u:%u:%u:%u:%u:%u",
     (unsigned)snap.bpm, (unsigned)snap.playing, (unsigned long)snap.bar,
     (unsigned)snap.beat, (unsigned)snap.numerator, (unsigned)snap.denominator,
-    (unsigned)snap.use_transport);
+    (unsigned)snap.use_transport, (unsigned)snap.flag_enabled,
+    (unsigned)snap.flag);
   cdc_send_notify_line(buf);
 }
 
@@ -1033,6 +1047,12 @@ static void cdc_clock_beat_handler(const event_t *event, void *context) {
   cdc_push_clock_evt();
 }
 #endif
+
+static void cdc_clock_action_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_ACTION_EXECUTED) return;
+  cdc_push_clock_evt();
+}
 
 extern bool input_get_cable_detection_enabled(void);
 

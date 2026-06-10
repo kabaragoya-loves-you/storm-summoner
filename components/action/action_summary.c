@@ -1158,6 +1158,102 @@ static void ainspect_append_control_set_lines(ainspect_buf_t *b, const action_t 
   if (!any) ainspect_append(b, "\nSet: Unassigned!");
 }
 
+static const char *ainspect_boomerang_division_label(uint8_t division) {
+  switch ((morph_division_t)division) {
+    case MORPH_DIV_1_BEAT: return "1 beat";
+    case MORPH_DIV_1_BAR: return "1 bar";
+    case MORPH_DIV_2_BARS: return "2 bars";
+    case MORPH_DIV_4_BARS: return "4 bars";
+    case MORPH_DIV_BEAT_2: return "Beat 2";
+    case MORPH_DIV_BEAT_3: return "Beat 3";
+    case MORPH_DIV_BEAT_4: return "Beat 4";
+    case MORPH_DIV_2_BEATS: return "2 beats";
+    case MORPH_DIV_3_BEATS: return "3 beats";
+    case MORPH_DIV_3_BARS: return "3 bars";
+    default: return "1 bar";
+  }
+}
+
+static const char *ainspect_repeat_interval_label(action_repeat_division_t div) {
+  switch (div) {
+    case ACTION_REPEAT_16_BARS: return "16 bars";
+    case ACTION_REPEAT_12_BARS: return "12 bars";
+    case ACTION_REPEAT_8_BARS: return "8 bars";
+    case ACTION_REPEAT_4_BARS: return "4 bars";
+    case ACTION_REPEAT_2_BARS: return "2 bars";
+    case ACTION_REPEAT_1_BAR: return "1 bar";
+    case ACTION_REPEAT_HALF: return "1/2 note";
+    case ACTION_REPEAT_QUARTER: return "1/4 note";
+    case ACTION_REPEAT_EIGHTH: return "1/8 note";
+    case ACTION_REPEAT_SIXTEENTH: return "1/16 note";
+    case ACTION_REPEAT_32ND: return "1/32 note";
+    default: return "1 bar";
+  }
+}
+
+static void ainspect_boomerang_param_name(char *buf, size_t cap, const action_t *action,
+    uint8_t scene_index) {
+  const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
+  if (action->params.boomerang.output_type == OUTPUT_TYPE_CC) {
+    ainspect_cc_label(buf, cap, device, action->params.boomerang.cc_number);
+  } else {
+    const char *out_name = output_type_name((output_type_t)action->params.boomerang.output_type);
+    snprintf(buf, cap, "%s", out_name ? out_name : "Output");
+  }
+}
+
+static void ainspect_boomerang_phase_duration(char *buf, size_t cap, uint8_t mode,
+    uint16_t time_ms, uint8_t division) {
+  switch (mode) {
+    case BOOMERANG_DUR_INSTANT:
+      snprintf(buf, cap, "0ms");
+      break;
+    case BOOMERANG_DUR_TIME_MS:
+      snprintf(buf, cap, "%ums", (unsigned)time_ms);
+      break;
+    case BOOMERANG_DUR_DIVISION:
+      snprintf(buf, cap, "%s", ainspect_boomerang_division_label(division));
+      break;
+    default:
+      snprintf(buf, cap, "0ms");
+      break;
+  }
+}
+
+static void ainspect_append_boomerang(ainspect_buf_t *b, const action_t *action,
+    bool show_scheduling) {
+  if (action->params.boomerang.start_mode == BOOMERANG_START_CURRENT) {
+    ainspect_append(b, "\nOrigin: Current");
+  } else {
+    ainspect_append(b, "\nOrigin: %u", (unsigned)action->params.boomerang.start_value);
+  }
+
+  if (action->params.boomerang.target_mode == BOOMERANG_TARGET_RANDOM) {
+    ainspect_append(b, " End: Random");
+  } else {
+    ainspect_append(b, " End: %u", (unsigned)action->params.boomerang.target_value);
+  }
+
+  char atk[24], sus[24], dec[24];
+  ainspect_boomerang_phase_duration(atk, sizeof(atk), action->params.boomerang.attack_mode,
+    action->params.boomerang.attack_time_ms, action->params.boomerang.attack_division);
+  ainspect_boomerang_phase_duration(sus, sizeof(sus), action->params.boomerang.sustain_mode,
+    action->params.boomerang.sustain_time_ms, action->params.boomerang.sustain_division);
+  ainspect_boomerang_phase_duration(dec, sizeof(dec), action->params.boomerang.release_mode,
+    action->params.boomerang.release_time_ms, action->params.boomerang.release_division);
+  ainspect_append(b, "\nAtk: %s Sus: %s Dec: %s", atk, sus, dec);
+
+  char timing[24];
+  if (show_scheduling && ainspect_format_timing(timing, sizeof(timing), action)) {
+    ainspect_append(b, "\nTiming: %s", timing);
+  }
+
+  if (show_scheduling && action_supports_repeat_for(action) && action->repeat_enabled) {
+    ainspect_append(b, "\nRepeat: %s",
+      ainspect_repeat_interval_label(action->repeat_division));
+  }
+}
+
 static void ainspect_append_action_options(ainspect_buf_t *b, const action_t *action,
     bool show_scheduling) {
   if (action_supports_morph_for(action) && action->morph_enabled) {
@@ -1187,6 +1283,11 @@ static void ainspect_append_action_options(ainspect_buf_t *b, const action_t *ac
 
 static void ainspect_append_action_body(ainspect_buf_t *out, const action_t *action,
   uint8_t scene_index, bool show_scheduling) {
+  if (action->type == ACTION_BOOMERANG) {
+    ainspect_append_boomerang(out, action, show_scheduling);
+    return;
+  }
+
   if (action->type == ACTION_CONTROL && action->variant == VARIANT_SET) {
     ainspect_append_control_set_lines(out, action, scene_index);
   } else {
@@ -1262,7 +1363,7 @@ bool action_summary_format_inspect_continuous(const continuous_mapping_t *mappin
 }
 
 static bool ainspect_format_inspect_headline(const char *pad_name, const action_t *action,
-  char *buf, size_t cap) {
+  uint8_t scene_index, char *buf, size_t cap) {
   if (!pad_name || !action || !buf || cap == 0) return false;
 
   if (action->type == ACTION_SCENE) {
@@ -1281,6 +1382,13 @@ static bool ainspect_format_inspect_headline(const char *pad_name, const action_
     return true;
   }
 
+  if (action->type == ACTION_BOOMERANG) {
+    char param[32];
+    ainspect_boomerang_param_name(param, sizeof(param), action, scene_index);
+    snprintf(buf, cap, "%s: Boomerang: %s", pad_name, param);
+    return true;
+  }
+
   return false;
 }
 
@@ -1292,7 +1400,7 @@ bool action_summary_format_inspect_pad(const action_t *action, const char *pad_n
   buf[0] = '\0';
 
   char headline[96];
-  if (ainspect_format_inspect_headline(pad_name, action, headline, sizeof(headline)))
+  if (ainspect_format_inspect_headline(pad_name, action, scene_index, headline, sizeof(headline)))
     ainspect_append(&out, "%s", headline);
   else
     ainspect_append(&out, "%s: %s", pad_name, ainspect_family_name(action->type));

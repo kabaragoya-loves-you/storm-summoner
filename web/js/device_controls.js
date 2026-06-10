@@ -706,6 +706,7 @@ window.DeviceControls = (function () {
     isControlAction,
     resolveCcForValuePath,
     hasParameters,
+    firstParameterCc,
     isValidParameterCc,
     resolveParameterCc,
     defaultValueForParameter,

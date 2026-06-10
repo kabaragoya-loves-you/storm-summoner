@@ -12,7 +12,9 @@ idf_component_register(
     cv
     display
     expression
+    menu
     midi
+    note_track
     scene
     screensaver
     sensor

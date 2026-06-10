@@ -9,6 +9,7 @@ application.register(
       this.schema = null
       this.values = {}
       this.inConfigMode = false
+      this._midiNoteOptions = null
 
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
 
@@ -55,9 +56,7 @@ application.register(
       if (!this.connection.isConnected) return
 
       try {
-        if (!this.schema) {
-          await this.loadSchema()
-        }
+        await this.loadSchema()
 
         await this.connection.runSerialTask(async () => {
           await this.connection._requestModeImpl('CONFIG')
@@ -71,7 +70,7 @@ application.register(
 
     async loadSchema () {
       try {
-        const response = await fetch('/schemas/settings.schema.json')
+        const response = await fetch('/schemas/settings.schema.json', { cache: 'no-store' })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         this.schema = await response.json()
       } catch (err) {
@@ -137,7 +136,6 @@ application.register(
         `
 
         for (const setting of category.settings) {
-          const value = this.values[setting.id]
           const isVisible = this.checkVisibility(setting)
           const visibilityStyle = isVisible ? '' : 'style="display: none;"'
 
@@ -148,7 +146,7 @@ application.register(
                 <span class="config-setting-desc">${setting.description || ''}</span>
               </div>
               <div class="config-setting-control">
-                ${this.renderControl(setting, value)}
+                ${this.renderControl(setting)}
               </div>
             </div>
           `
@@ -188,13 +186,55 @@ application.register(
       else if (expected === false) expected = 0
 
       if (condition.operator === '!=') {
-        return depValue !== expected
+        return Number(depValue) !== Number(expected)
       }
-      return depValue === expected
+      return Number(depValue) === Number(expected)
+    }
+
+    settingValue (setting) {
+      const raw = this.values[setting.id]
+      if (raw !== undefined && raw !== null) return raw
+      if (setting.default !== undefined) return setting.default
+      return setting.type === 'toggle' ? 0 : ''
+    }
+
+    optionSelected (optValue, current) {
+      return Number(optValue) === Number(current)
+    }
+
+    midiNoteLabel (n) {
+      const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+      const note = Number(n)
+      const octave = Math.floor(note / 12) - 1
+      return `${names[note % 12]}${octave} (${note})`
+    }
+
+    midiNoteOptions () {
+      if (this._midiNoteOptions) return this._midiNoteOptions
+      this._midiNoteOptions = Array.from({ length: 128 }, (_, i) => ({
+        value: i,
+        label: this.midiNoteLabel(i)
+      }))
+      return this._midiNoteOptions
+    }
+
+    renderSelect (id, settingId, value, options) {
+      const current = this.settingValue({ id: settingId, default: value })
+      let optionsHtml = ''
+      for (const opt of options) {
+        const selected = this.optionSelected(opt.value, current) ? 'selected' : ''
+        optionsHtml += `<wa-option value="${opt.value}" ${selected}>${opt.label}</wa-option>`
+      }
+      return `
+        <wa-select id="${id}" data-config-control data-setting-id="${settingId}" value="${current}">
+          ${optionsHtml}
+        </wa-select>
+      `
     }
 
     renderControl (setting, value) {
       const id = `config-${setting.id.replace(/\./g, '-')}`
+      const current = this.settingValue(setting)
 
       switch (setting.type) {
         case 'calibration':
@@ -206,38 +246,36 @@ application.register(
           `
 
         case 'toggle':
-          const checked = value ? 'checked' : ''
+        case 'boolean': {
+          const checked = Number(current) !== 0 ? 'checked' : ''
           return `
             <wa-switch id="${id}" data-config-control data-setting-id="${setting.id}" ${checked}>
             </wa-switch>
           `
+        }
+
+        case 'midi_note':
+          return this.renderSelect(id, setting.id, current, this.midiNoteOptions())
 
         case 'select':
-          let optionsHtml = ''
-          for (const opt of setting.options) {
-            const selected = opt.value === value ? 'selected' : ''
-            optionsHtml += `<wa-option value="${opt.value}" ${selected}>${opt.label}</wa-option>`
-          }
-          return `
-            <wa-select id="${id}" data-config-control data-setting-id="${setting.id}" value="${value}">
-              ${optionsHtml}
-            </wa-select>
-          `
+          return this.renderSelect(id, setting.id, current, setting.options)
 
-        case 'number':
+        case 'number': {
           const min = setting.min !== undefined ? setting.min : 0
           const max = setting.max !== undefined ? setting.max : 100
           const step = setting.step !== undefined ? setting.step : 1
           const unit = setting.unit || ''
+          const display = current === '' ? '' : String(current)
           return `
             <wa-input type="number" id="${id}" data-config-control data-setting-id="${setting.id}"
-                      value="${value}" min="${min}" max="${max}" step="${step}" size="small">
+                      value="${display}" min="${min}" max="${max}" step="${step}" size="small">
               ${unit ? `<span slot="suffix">${unit}</span>` : ''}
             </wa-input>
           `
+        }
 
         default:
-          return `<span>${value}</span>`
+          return `<span>${current}</span>`
       }
     }
 
@@ -250,12 +288,15 @@ application.register(
       if (el.tagName === 'WA-SWITCH') {
         value = el.checked ? 1 : 0
       } else if (el.tagName === 'WA-SELECT') {
-        value = parseInt(el.value)
+        value = parseInt(el.value, 10)
       } else if (el.tagName === 'WA-INPUT') {
-        value = parseInt(el.value)
+        value = parseInt(el.value, 10)
+        if (Number.isNaN(value)) return
       } else {
         return
       }
+
+      if (Number.isNaN(value)) return
 
       try {
         await this.connection.runSerialTask(async () => {

@@ -57,6 +57,17 @@
           "description": "Remember selected scene across power cycles",
           "type": "toggle",
           "default": false
+        },
+        {
+          "id": "config.flag_enabled",
+          "label": "Erect Flagpole",
+          "description": "Enable the flag system",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "I just can't"},
+            {"value": 1, "label": "Fuck it, why not"}
+          ],
+          "default": 0
         }
       ]
     },
@@ -174,6 +185,59 @@
             {"value": 3, "label": "Both"}
           ],
           "default": 0
+        }
+      ]
+    },
+    {
+      "id": "midi_control",
+      "label": "MIDI Control",
+      "description": "Incoming MIDI CC control of device parameters",
+      "settings": [
+        {
+          "id": "midi_control.enabled",
+          "label": "Enabled",
+          "description": "Enable MIDI Control mode",
+          "type": "toggle",
+          "default": false
+        },
+        {
+          "id": "midi_control.channel",
+          "label": "Channel",
+          "description": "MIDI channel for incoming control messages",
+          "type": "select",
+          "options": [
+            {"value": 1, "label": "Ch 1"},
+            {"value": 2, "label": "Ch 2"},
+            {"value": 3, "label": "Ch 3"},
+            {"value": 4, "label": "Ch 4"},
+            {"value": 5, "label": "Ch 5"},
+            {"value": 6, "label": "Ch 6"},
+            {"value": 7, "label": "Ch 7"},
+            {"value": 8, "label": "Ch 8"},
+            {"value": 9, "label": "Ch 9"},
+            {"value": 10, "label": "Ch 10"},
+            {"value": 11, "label": "Ch 11"},
+            {"value": 12, "label": "Ch 12"},
+            {"value": 13, "label": "Ch 13"},
+            {"value": 14, "label": "Ch 14"},
+            {"value": 15, "label": "Ch 15"},
+            {"value": 16, "label": "Ch 16"}
+          ],
+          "default": 16,
+          "visible_when": {"id": "midi_control.enabled", "value": true}
+        },
+        {
+          "id": "midi_control.input",
+          "label": "Input",
+          "description": "MIDI input port for control messages",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "TRS"},
+            {"value": 1, "label": "USB"},
+            {"value": 2, "label": "Both"}
+          ],
+          "default": 2,
+          "visible_when": {"id": "midi_control.enabled", "value": true}
         }
       ]
     },
@@ -379,10 +443,57 @@
           "id": "proximity.deadzone",
           "label": "Deadzone",
           "description": "Proximity deadzone to reduce jitter",
-          "type": "number",
-          "min": 0,
-          "max": 10,
-          "step": 1,
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "0"},
+            {"value": 1, "label": "1"},
+            {"value": 2, "label": "2"},
+            {"value": 3, "label": "3"},
+            {"value": 4, "label": "4"},
+            {"value": 5, "label": "5"},
+            {"value": 6, "label": "6"},
+            {"value": 7, "label": "7"},
+            {"value": 8, "label": "8"},
+            {"value": 9, "label": "9"},
+            {"value": 10, "label": "10"}
+          ],
+          "default": 0
+        },
+        {
+          "id": "proximity.ir_rejection",
+          "label": "IR Rejection",
+          "description": "Ambient IR cancellation (sunlight rejection)",
+          "type": "toggle",
+          "default": false
+        },
+        {
+          "id": "proximity.gamma",
+          "label": "Gamma",
+          "description": "Inverse-square distance compensation",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "0 (0.15)"},
+            {"value": 5, "label": "5 (0.19)"},
+            {"value": 10, "label": "10 (0.24)"},
+            {"value": 15, "label": "15 (0.28)"},
+            {"value": 20, "label": "20 (0.32)"},
+            {"value": 25, "label": "25 (0.36)"},
+            {"value": 30, "label": "30 (0.41)"},
+            {"value": 35, "label": "35 (0.45)"},
+            {"value": 40, "label": "40 (0.49)"},
+            {"value": 45, "label": "45 (0.53)"},
+            {"value": 50, "label": "50 (0.58)"},
+            {"value": 55, "label": "55 (0.62)"},
+            {"value": 60, "label": "60 (0.66)"},
+            {"value": 65, "label": "65 (0.70)"},
+            {"value": 70, "label": "70 (0.75)"},
+            {"value": 75, "label": "75 (0.79)"},
+            {"value": 80, "label": "80 (0.83)"},
+            {"value": 85, "label": "85 (0.87)"},
+            {"value": 90, "label": "90 (0.92)"},
+            {"value": 95, "label": "95 (0.96)"},
+            {"value": 100, "label": "100 (1.00)"}
+          ],
           "default": 0
         }
       ]
@@ -454,60 +565,126 @@
           "id": "tilt.middle_width",
           "label": "Middle Width",
           "description": "Half-width (in MIDI units) of the forgiving middle band",
-          "type": "number",
-          "min": 1,
-          "max": 30,
-          "step": 1,
+          "type": "select",
+          "options": [
+            {"value": 1, "label": "1"},
+            {"value": 2, "label": "2"},
+            {"value": 3, "label": "3"},
+            {"value": 4, "label": "4"},
+            {"value": 5, "label": "5"},
+            {"value": 6, "label": "6"},
+            {"value": 7, "label": "7"},
+            {"value": 8, "label": "8"},
+            {"value": 9, "label": "9"},
+            {"value": 10, "label": "10"},
+            {"value": 11, "label": "11"},
+            {"value": 12, "label": "12"},
+            {"value": 13, "label": "13"},
+            {"value": 14, "label": "14"},
+            {"value": 15, "label": "15"},
+            {"value": 16, "label": "16"},
+            {"value": 17, "label": "17"},
+            {"value": 18, "label": "18"},
+            {"value": 19, "label": "19"},
+            {"value": 20, "label": "20"},
+            {"value": 21, "label": "21"},
+            {"value": 22, "label": "22"},
+            {"value": 23, "label": "23"},
+            {"value": 24, "label": "24"},
+            {"value": 25, "label": "25"},
+            {"value": 26, "label": "26"},
+            {"value": 27, "label": "27"},
+            {"value": 28, "label": "28"},
+            {"value": 29, "label": "29"},
+            {"value": 30, "label": "30"}
+          ],
           "default": 8,
-          "visible_when": { "id": "tilt.forgive_middle", "value": true }
+          "visible_when": {"id": "tilt.forgive_middle", "value": true}
         },
         {
           "id": "tilt.deadzone",
           "label": "Deadzone",
           "description": "Minimum change required before a new tilt value is emitted",
-          "type": "number",
-          "min": 0,
-          "max": 10,
-          "step": 1,
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "0"},
+            {"value": 1, "label": "1"},
+            {"value": 2, "label": "2"},
+            {"value": 3, "label": "3"},
+            {"value": 4, "label": "4"},
+            {"value": 5, "label": "5"},
+            {"value": 6, "label": "6"},
+            {"value": 7, "label": "7"},
+            {"value": 8, "label": "8"},
+            {"value": 9, "label": "9"},
+            {"value": 10, "label": "10"}
+          ],
           "default": 1
         },
         {
-          "id": "tilt.rate_limit",
-          "label": "Rate Limit",
-          "description": "Tilt sampling rate (Hz)",
-          "type": "number",
-          "min": 10,
-          "max": 100,
-          "step": 5,
-          "unit": "Hz",
+          "id": "tilt.rate_hz",
+          "label": "Rate",
+          "description": "Tilt sampling rate",
+          "type": "select",
+          "options": [
+            {"value": 10, "label": "10 Hz"},
+            {"value": 15, "label": "15 Hz"},
+            {"value": 20, "label": "20 Hz"},
+            {"value": 25, "label": "25 Hz"},
+            {"value": 30, "label": "30 Hz"},
+            {"value": 35, "label": "35 Hz"},
+            {"value": 40, "label": "40 Hz"},
+            {"value": 45, "label": "45 Hz"},
+            {"value": 50, "label": "50 Hz"},
+            {"value": 55, "label": "55 Hz"},
+            {"value": 60, "label": "60 Hz"},
+            {"value": 65, "label": "65 Hz"},
+            {"value": 70, "label": "70 Hz"},
+            {"value": 75, "label": "75 Hz"},
+            {"value": 80, "label": "80 Hz"},
+            {"value": 85, "label": "85 Hz"},
+            {"value": 90, "label": "90 Hz"},
+            {"value": 95, "label": "95 Hz"},
+            {"value": 100, "label": "100 Hz"}
+          ],
           "default": 40
         },
         {
           "id": "tilt.x_invert",
           "label": "Invert X",
           "description": "Flip the X axis so right becomes lower instead of higher",
-          "type": "boolean",
+          "type": "toggle",
           "default": false
         },
         {
           "id": "tilt.y_invert",
           "label": "Invert Y",
           "description": "Flip the Y axis so back becomes lower instead of higher",
-          "type": "boolean",
+          "type": "toggle",
           "default": false
         },
         {
           "id": "tilt.note_off_mode",
           "label": "Note Off",
-          "description": "Auto note-off while the axis sits in the forgive middle zone (Notes mode only). Off, fixed times, or tempo-relative subdivisions.",
-          "type": "enum",
+          "description": "Auto note-off while the axis sits in the forgive middle zone (Notes mode only)",
+          "type": "select",
           "options": [
-            "off",
-            "100ms", "250ms", "500ms", "1s", "2s", "5s",
-            "1/16", "1/8", "1/4", "1/2", "bar", "2bars"
+            {"value": 0, "label": "Off"},
+            {"value": 1, "label": "100 ms"},
+            {"value": 2, "label": "250 ms"},
+            {"value": 3, "label": "500 ms"},
+            {"value": 4, "label": "1 s"},
+            {"value": 5, "label": "2 s"},
+            {"value": 6, "label": "5 s"},
+            {"value": 7, "label": "1/16"},
+            {"value": 8, "label": "1/8"},
+            {"value": 9, "label": "1/4"},
+            {"value": 10, "label": "1/2"},
+            {"value": 11, "label": "1 bar"},
+            {"value": 12, "label": "2 bars"}
           ],
-          "default": "off",
-          "visible_when": "tilt.forgive_middle == true"
+          "default": 0,
+          "visible_when": {"id": "tilt.forgive_middle", "value": true}
         }
       ]
     },
@@ -520,30 +697,40 @@
           "id": "note_track.low_note",
           "label": "Low Note",
           "description": "Note number that maps to value 0 (default C2 = 36)",
-          "type": "number",
-          "min": 0,
-          "max": 127,
-          "step": 1,
+          "type": "midi_note",
           "default": 36
         },
         {
           "id": "note_track.high_note",
           "label": "High Note",
           "description": "Note number that maps to value 127 (default C6 = 84)",
-          "type": "number",
-          "min": 0,
-          "max": 127,
-          "step": 1,
+          "type": "midi_note",
           "default": 84
         },
         {
           "id": "note_track.channel",
           "label": "Channel",
           "description": "MIDI channel filter (0 = Omni, 1-16 = specific channel)",
-          "type": "number",
-          "min": 0,
-          "max": 16,
-          "step": 1,
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Omni"},
+            {"value": 1, "label": "Ch 1"},
+            {"value": 2, "label": "Ch 2"},
+            {"value": 3, "label": "Ch 3"},
+            {"value": 4, "label": "Ch 4"},
+            {"value": 5, "label": "Ch 5"},
+            {"value": 6, "label": "Ch 6"},
+            {"value": 7, "label": "Ch 7"},
+            {"value": 8, "label": "Ch 8"},
+            {"value": 9, "label": "Ch 9"},
+            {"value": 10, "label": "Ch 10"},
+            {"value": 11, "label": "Ch 11"},
+            {"value": 12, "label": "Ch 12"},
+            {"value": 13, "label": "Ch 13"},
+            {"value": 14, "label": "Ch 14"},
+            {"value": 15, "label": "Ch 15"},
+            {"value": 16, "label": "Ch 16"}
+          ],
           "default": 0
         },
         {
@@ -850,6 +1037,55 @@
           ],
           "default": 0,
           "visible_when": {"id": "display.screensaver_delay", "operator": "!=", "value": 0}
+        }
+      ]
+    },
+    {
+      "id": "theme",
+      "label": "Theme",
+      "description": "Menu color theme",
+      "settings": [
+        {
+          "id": "theme.theme",
+          "label": "Theme",
+          "description": "Menu appearance theme",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Default"},
+            {"value": 1, "label": "Monotone"},
+            {"value": 2, "label": "CVD"}
+          ],
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "scene_inspect",
+      "label": "Scene Inspect",
+      "description": "On-device scene inspect overlay settings",
+      "settings": [
+        {
+          "id": "scene_inspect.scroll_speed",
+          "label": "Scroll Speed",
+          "description": "Auto-scroll speed for long inspect text",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Slow"},
+            {"value": 1, "label": "Medium"},
+            {"value": 2, "label": "Fast"}
+          ],
+          "default": 1
+        },
+        {
+          "id": "scene_inspect.scroll_mode",
+          "label": "Scroll Mode",
+          "description": "How inspect text scrolls at the end of the page",
+          "type": "select",
+          "options": [
+            {"value": 0, "label": "Ping-Pong"},
+            {"value": 1, "label": "Loop Down"}
+          ],
+          "default": 0
         }
       ]
     }
