@@ -368,7 +368,7 @@ static menu_item_kind_t menu_item_effective_kind(const menu_item_t* item) {
 static lv_color_t menu_item_text_color(const menu_item_t* item, bool is_readonly) {
   const menu_theme_palette_t* palette = menu_theme_get_palette();
   menu_item_kind_t kind = menu_item_effective_kind(item);
-  if (is_readonly || kind == MENU_ITEM_KIND_DISPLAY) {
+  if (is_readonly || kind == MENU_ITEM_KIND_DISPLAY || kind == MENU_ITEM_KIND_HEADING) {
     return palette->item_display;
   }
   switch (kind) {
@@ -464,7 +464,9 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
     const char* item_label = items[i].label;
     bool is_divider = (item_label && strncmp(item_label, "---", 3) == 0);
-    bool is_readonly = (items[i].callback == NULL && !is_divider);
+    menu_item_kind_t kind = menu_item_effective_kind(&items[i]);
+    bool is_heading = (kind == MENU_ITEM_KIND_HEADING);
+    bool is_readonly = (items[i].callback == NULL && !is_divider && !is_heading);
     
     if (is_divider) {
       lv_obj_t* line = lv_obj_create(cont);
@@ -476,6 +478,20 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
       lv_obj_set_style_pad_all(line, 0, 0);
       lv_obj_remove_flag(line, LV_OBJ_FLAG_SCROLLABLE);
       // Dividers are not focusable or clickable
+      continue;
+    }
+
+    if (is_heading) {
+      lv_obj_t* label = lv_label_create(cont);
+      lv_label_set_text(label, item_label);
+      lv_obj_set_width(label, lv_pct(100));
+      lv_obj_set_height(label, 22);
+      lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+      lv_obj_set_style_text_color(label, menu_item_text_color(&items[i], true), 0);
+      lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+      lv_obj_set_style_pad_ver(label, 2, 0);
+      // Headings are visible but not focusable or clickable
       continue;
     }
     

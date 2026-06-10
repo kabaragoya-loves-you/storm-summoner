@@ -693,6 +693,10 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   color: var(--text-dim);
 }
 
+.scenes-section.factory .scenes-section-header {
+  color: var(--text-dim);
+}
+
 .scene-list {
   list-style: none;
   margin: 0;
@@ -765,6 +769,10 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   visibility: hidden;
 }
 
+.scenes-section.factory .scene-drag-handle {
+  visibility: hidden;
+}
+
 .scene-row .scene-position {
   display: flex;
   align-items: center;
@@ -806,6 +814,12 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   opacity: 0.5;
 }
 
+.scenes-section.factory .scene-position {
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
 .scene-row .scene-name {
   display: flex;
   align-items: center;
@@ -833,6 +847,10 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
 }
 
 .scenes-section.inactive .scene-name {
+  color: var(--text-dim);
+}
+
+.scenes-section.factory .scene-name {
   color: var(--text-dim);
 }
 

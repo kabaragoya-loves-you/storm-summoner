@@ -15,9 +15,10 @@ typedef enum {
   MENU_ITEM_KIND_ROLLER,     // opens a roller / value picker   -> orange
   MENU_ITEM_KIND_ACTION,     // immediate side-effecting command -> green
   MENU_ITEM_KIND_DISPLAY,    // explicit read-only line          -> grey
+  MENU_ITEM_KIND_HEADING,    // section label, not focusable     -> grey
 } menu_item_kind_t;
 
-#define MENU_ITEM_KIND_COUNT ((int)MENU_ITEM_KIND_DISPLAY + 1)
+#define MENU_ITEM_KIND_COUNT ((int)MENU_ITEM_KIND_HEADING + 1)
 
 _Static_assert(MENU_ITEM_KIND_AUTO == 0,
   "MENU_ITEM_KIND_AUTO must be 0 so omitted/partial initializers default safely");

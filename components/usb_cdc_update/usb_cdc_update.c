@@ -3592,6 +3592,7 @@ static void process_scenes_command(const char *cmd) {
       cJSON_AddStringToObject(item, "name", name);
       cJSON_AddBoolToObject(item, "active", active);
       cJSON_AddBoolToObject(item, "current", is_current);
+      cJSON_AddBoolToObject(item, "factory", scene_is_factory_by_position(i));
       cJSON_AddItemToArray(arr, item);
     }
 

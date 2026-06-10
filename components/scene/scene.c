@@ -8076,6 +8076,13 @@ bool scene_is_active_by_position(uint16_t position) {
   return g_scene_manager.manifest[position].active;
 }
 
+bool scene_is_factory_by_position(uint16_t position) {
+  if (position >= g_scene_manager.num_scenes || !g_scene_manager.manifest) {
+    return false;
+  }
+  return factory_source_exists(g_scene_manager.manifest[position].filename);
+}
+
 esp_err_t scene_create_new(const char* name) {
   return scene_create_new_at_position(name, g_scene_manager.num_scenes);
 }

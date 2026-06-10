@@ -258,7 +258,8 @@ application.register(
       }
 
       const activeScenes = this.scenes.filter(s => s.active)
-      const inactiveScenes = this.scenes.filter(s => !s.active)
+      const inactiveScenes = this.scenes.filter(s => !s.active && !s.factory)
+      const factoryScenes = this.scenes.filter(s => !s.active && s.factory)
 
       let html = ''
 
@@ -289,6 +290,24 @@ application.register(
         `
 
         inactiveScenes.forEach(scene => {
+          html += this.renderSceneRow(scene, null, false)
+        })
+
+        html += '</ul></div>'
+      }
+
+      // Factory scenes section (if any)
+      if (factoryScenes.length > 0) {
+        html += `
+          <div class="scenes-section factory">
+            <div class="scenes-section-header">
+              <wa-icon name="industry"></wa-icon>
+              Factory (${factoryScenes.length})
+            </div>
+            <ul class="scene-list" data-section="factory">
+        `
+
+        factoryScenes.forEach(scene => {
           html += this.renderSceneRow(scene, null, false)
         })
 

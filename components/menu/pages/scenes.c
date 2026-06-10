@@ -8,7 +8,7 @@
 #include <string.h>
 
 #define TAG "MENU_SCENES"
-#define MAX_SCENE_ITEMS 132  // 128 scenes + 2 dividers + Add + slack
+#define MAX_SCENE_ITEMS 136  // 128 scenes + 2 headings + 2 dividers + Add + slack
 
 // Forward declarations
 static lv_obj_t* scene_action_menu_create(void);
@@ -34,6 +34,14 @@ static int manifest_position_to_clickable_focus(uint16_t manifest_pos) {
 
   for (uint16_t i = 0; i < total; i++) {
     if (scene_is_active_by_position(i)) continue;
+    if (scene_is_factory_by_position(i)) continue;
+    if (i == manifest_pos) return focus;
+    focus++;
+  }
+
+  for (uint16_t i = 0; i < total; i++) {
+    if (scene_is_active_by_position(i)) continue;
+    if (!scene_is_factory_by_position(i)) continue;
     if (i == manifest_pos) return focus;
     focus++;
   }
@@ -73,14 +81,28 @@ static void ensure_list_subscribed(void) {
 // Helpers
 // ============================================================================
 
-// Count inactive scenes in manifest
-static uint16_t count_inactive_scenes(void) {
+// Count inactive user-created scenes (excludes factory presets)
+static uint16_t count_inactive_user_scenes(void) {
   uint16_t total = scene_get_total_count();
   uint16_t inactive = 0;
   for (uint16_t i = 0; i < total; i++) {
-    if (!scene_is_active_by_position(i)) inactive++;
+    if (scene_is_active_by_position(i)) continue;
+    if (scene_is_factory_by_position(i)) continue;
+    inactive++;
   }
   return inactive;
+}
+
+// Count inactive factory preset scenes
+static uint16_t count_factory_scenes(void) {
+  uint16_t total = scene_get_total_count();
+  uint16_t factory = 0;
+  for (uint16_t i = 0; i < total; i++) {
+    if (scene_is_active_by_position(i)) continue;
+    if (!scene_is_factory_by_position(i)) continue;
+    factory++;
+  }
+  return factory;
 }
 
 // ============================================================================
@@ -369,7 +391,8 @@ lv_obj_t* menu_page_scenes_create(void) {
   int idx = 0;
   int label_idx = 0;
   uint16_t ordinal = 1;
-  uint16_t inactive_count = count_inactive_scenes();
+  uint16_t inactive_user_count = count_inactive_user_scenes();
+  uint16_t factory_count = count_factory_scenes();
   
   // First pass: active scenes with ordinal prefixes
   for (uint16_t i = 0; i < total && label_idx < 128; i++) {
@@ -390,17 +413,49 @@ lv_obj_t* menu_page_scenes_create(void) {
     label_idx++;
   }
   
-  // Inactive scenes section (if any)
-  if (inactive_count > 0) {
+  // Inactive user-created scenes section (if any)
+  if (inactive_user_count > 0) {
     s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
-    
+    s_scene_items[idx++] = (menu_item_t){
+      "Inactive", NULL, NULL, false, MENU_ITEM_KIND_HEADING
+    };
+
     for (uint16_t i = 0; i < total && label_idx < 128; i++) {
       if (scene_is_active_by_position(i)) continue;
-      
+      if (scene_is_factory_by_position(i)) continue;
+
       const char* name = scene_get_name_by_position(i);
       snprintf(s_scene_labels[label_idx], sizeof(s_scene_labels[label_idx]),
         "%.28s", name ? name : "Untitled");
-      
+
+      s_scene_items[idx++] = (menu_item_t){
+        s_scene_labels[label_idx],
+        nav_to_scene_action,
+        (void*)(uintptr_t)i,
+        true,
+        MENU_ITEM_KIND_SUBMENU
+      };
+      label_idx++;
+    }
+  }
+
+  // Factory preset scenes section (if any)
+  if (factory_count > 0) {
+    if (inactive_user_count == 0) {
+      s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
+    }
+    s_scene_items[idx++] = (menu_item_t){
+      "Factory", NULL, NULL, false, MENU_ITEM_KIND_HEADING
+    };
+
+    for (uint16_t i = 0; i < total && label_idx < 128; i++) {
+      if (scene_is_active_by_position(i)) continue;
+      if (!scene_is_factory_by_position(i)) continue;
+
+      const char* name = scene_get_name_by_position(i);
+      snprintf(s_scene_labels[label_idx], sizeof(s_scene_labels[label_idx]),
+        "%.28s", name ? name : "Untitled");
+
       s_scene_items[idx++] = (menu_item_t){
         s_scene_labels[label_idx],
         nav_to_scene_action,

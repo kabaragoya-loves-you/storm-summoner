@@ -493,6 +493,7 @@ esp_err_t scene_set_active(uint8_t scene_index, bool active);
 const char* scene_get_name_by_position(uint16_t position);
 uint8_t scene_get_index_by_position(uint16_t position);
 bool scene_is_active_by_position(uint16_t position);
+bool scene_is_factory_by_position(uint16_t position);
 
 // Suspend/resume scene input processing (for programming mode)
 // When suspended, the scene's touchwheel is unregistered and the LFO loops
