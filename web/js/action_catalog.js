@@ -31,8 +31,8 @@ window.ActionCatalog = (function () {
   const LFO_RESOLUTION_MANUAL = 4
 
   const LFO_TARGET_OPTIONS = [
-    { v: 1, l: 'LFO1' },
-    { v: 2, l: 'LFO2' },
+    { v: 1, l: 'LFO 1' },
+    { v: 2, l: 'LFO 2' },
     { v: 3, l: 'Both' }
   ]
 
@@ -160,6 +160,18 @@ window.ActionCatalog = (function () {
     return `${NOTE_NAMES[n % 12]}${octave}`
   }
 
+  function noteNameOptions (current) {
+    const opts = []
+    for (let midi = 36; midi <= 96; midi++) {
+      opts.push({ v: midi, l: midiNoteLabel(midi) })
+    }
+    const cur = Number(current)
+    if (!Number.isNaN(cur) && (cur < 36 || cur > 96)) {
+      opts.push({ v: cur, l: midiNoteLabel(cur) })
+    }
+    return opts
+  }
+
   function noteOptions (current) {
     const opts = [{ v: NOTE_RANDOM, l: 'Random' }]
     for (let midi = 36; midi <= 96; midi++) {
@@ -249,13 +261,8 @@ window.ActionCatalog = (function () {
 
   function lfoModifyRateModeOptions (current) {
     return lfoModifyU8Options([
-      { v: 0, l: 'Free' },
-      { v: 1, l: 'Tempo' },
-      { v: 2, l: 'Touchwheel' },
-      { v: 3, l: 'Expression' },
-      { v: 4, l: 'CV' },
-      { v: 5, l: 'ALS' },
-      { v: 6, l: 'Proximity' }
+      { v: 0, l: 'Time' },
+      { v: 1, l: 'Division' }
     ], current)
   }
 
@@ -282,6 +289,48 @@ window.ActionCatalog = (function () {
       { v: 9, l: '1/16' },
       { v: 10, l: '1/32' }
     ], current)
+  }
+
+  const LFO_SCENE_DIVISION_VALUES = [
+    '16_bars', '12_bars', '8_bars', '4_bars', '2_bars', '1_bar',
+    'half', 'quarter', 'eighth', 'sixteenth', '32nd'
+  ]
+  const LFO_SCENE_DIVISION_LABELS = [
+    '16 Bars', '12 Bars', '8 Bars', '4 Bars', '2 Bars', '1 Bar',
+    '1/2', '1/4', '1/8', '1/16', '1/32'
+  ]
+
+  function withStaleStringOption (opts, current, label) {
+    const cur = String(current ?? '')
+    if (!cur || opts.some(o => o.v === cur)) return opts
+    return opts.concat([{ v: cur, l: label ?? cur }])
+  }
+
+  function lfoSceneDivisionOptions (current) {
+    const presets = LFO_SCENE_DIVISION_VALUES.map((v, i) => ({
+      v,
+      l: LFO_SCENE_DIVISION_LABELS[i]
+    }))
+    return withStaleStringOption(presets, current || 'quarter')
+  }
+
+  function lfoSceneRateHzOptions (currentHz) {
+    const rates = [5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000]
+    const presets = rates.map(v => ({
+      v: v / 100,
+      l: `${Math.floor(v / 100)}.${String(v % 100).padStart(2, '0')} Hz`
+    }))
+    const cur = Number(currentHz)
+    if (!Number.isNaN(cur) && !presets.some(o => o.v === cur)) {
+      return presets.concat([{ v: cur, l: `${cur} Hz` }])
+    }
+    return presets
+  }
+
+  function tempoNudgeAmountOptions (current) {
+    const presets = []
+    for (let p = 5; p <= 100; p += 5) presets.push({ v: p, l: `${p}%` })
+    return withStaleOption(presets, current, `${current}%`)
   }
 
   function lfoModifyPolarityOptions (current) {
@@ -412,9 +461,13 @@ window.ActionCatalog = (function () {
 
   function engineModifyRateModeOptions (current) {
     return lfoModifyU8Options([
-      { v: 0, l: 'Free' },
-      { v: 1, l: 'Sync' }
+      { v: 0, l: 'Time' },
+      { v: 1, l: 'Division' }
     ], current)
+  }
+
+  function engineModifyDivisionOptions (current) {
+    return lfoModifyDivisionOptions(current)
   }
 
   function engineModifyRateHzOptions (current) {
@@ -486,6 +539,7 @@ window.ActionCatalog = (function () {
   function clearEngineModifyFields (action) {
     delete action.rate_mode
     delete action.rate_hz_x100
+    delete action.division
     delete action.sync_mult_x1000
     delete action.glide
     delete action.probability
@@ -494,7 +548,7 @@ window.ActionCatalog = (function () {
   function seedEngineModifyFields (action) {
     if (action.rate_mode == null) action.rate_mode = LFO_ORIG_U8
     if (action.rate_hz_x100 == null) action.rate_hz_x100 = LFO_ORIG_U16
-    if (action.sync_mult_x1000 == null) action.sync_mult_x1000 = LFO_ORIG_U16
+    if (action.division == null) action.division = LFO_ORIG_U8
     if (action.glide == null) action.glide = LFO_ORIG_U8
     if (action.probability == null) action.probability = LFO_ORIG_U8
   }
@@ -1147,6 +1201,7 @@ window.ActionCatalog = (function () {
     variantLabel,
     typeHasVariants,
     noteOptions,
+    noteNameOptions,
     noteRandomBoundOptions,
     noteVelocityOptions,
     pianoPedalOptions,
@@ -1157,6 +1212,9 @@ window.ActionCatalog = (function () {
     lfoModifyRateModeOptions,
     lfoModifyRateHzOptions,
     lfoModifyDivisionOptions,
+    lfoSceneRateHzOptions,
+    lfoSceneDivisionOptions,
+    tempoNudgeAmountOptions,
     lfoModifyPolarityOptions,
     lfoModifyFloorCeilingOptions,
     lfoModifyResolutionOptions,
@@ -1166,7 +1224,7 @@ window.ActionCatalog = (function () {
     normalizeLfoActionsInModel,
     engineModifyRateModeOptions,
     engineModifyRateHzOptions,
-    engineModifySyncMultOptions,
+    engineModifyDivisionOptions,
     engineModifyGlideOptions,
     engineModifyProbOptions,
     clockBurstSpeedOptions,

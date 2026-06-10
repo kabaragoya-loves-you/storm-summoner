@@ -264,6 +264,7 @@ typedef struct {
   uint8_t rate_mode;
   uint16_t rate_hz_x100;
   uint16_t sync_mult_x1000;
+  uint8_t division;
   uint8_t glide;
   uint8_t probability;
 } action_engine_modify_t;
@@ -531,6 +532,7 @@ static inline void action_engine_modify_seed(action_engine_modify_t* m) {
   m->rate_mode = ACTION_LFO_ORIG_U8;
   m->rate_hz_x100 = ACTION_LFO_ORIG_U16;
   m->sync_mult_x1000 = ACTION_LFO_ORIG_U16;
+  m->division = ACTION_LFO_ORIG_U8;
   m->glide = ACTION_LFO_ORIG_U8;
   m->probability = ACTION_LFO_ORIG_U8;
 }

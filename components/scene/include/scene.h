@@ -159,7 +159,11 @@ typedef struct scene_t {
   uint8_t cv_tempo_nudge_pct;
   uint8_t proximity_tempo_nudge_pct;
   uint8_t touchwheel_tempo_nudge_pct;
+  uint16_t touchwheel_tempo_floor;    // BPM floor for touchwheel tempo mode (20-300)
+  uint16_t touchwheel_tempo_ceiling;  // BPM ceiling for touchwheel tempo mode (20-300)
   uint8_t als_tempo_nudge_pct;
+  uint8_t lfo1_tempo_nudge_pct;
+  uint8_t lfo2_tempo_nudge_pct;
   
   // Tempo configuration (per-scene)
   uint16_t bpm;                          // Tempo in beats per minute (20-300)
@@ -411,6 +415,10 @@ esp_err_t scene_set_touchwheel_tempo_nudge_pct(uint8_t scene_index, uint8_t pct)
 uint8_t scene_get_touchwheel_tempo_nudge_pct(uint8_t scene_index);
 esp_err_t scene_set_als_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_als_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_lfo1_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_lfo1_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_lfo2_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
+uint8_t scene_get_lfo2_tempo_nudge_pct(uint8_t scene_index);
 
 // Touchwheel velocity (when in TOUCHWHEEL_MODE_VELOCITY)
 uint8_t scene_get_touchwheel_velocity(void);

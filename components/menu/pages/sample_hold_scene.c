@@ -219,7 +219,7 @@ static lv_obj_t* rate_mode_roller_create(void) {
   if (!scene) return NULL;
 
   uint32_t current = (scene->sample_hold_config.rate_mode == SAMPLE_HOLD_RATE_MODE_FREE) ? 0 : 1;
-  return menu_create_roller_page("Rate Mode", "Free (Hz)\nSync (BPM)", current,
+  return menu_create_roller_page("Rate Mode", "Time\nDivision", current,
     rate_mode_confirm_cb, NULL);
 }
 
@@ -305,21 +305,27 @@ static void nav_to_rate(void* user_data) {
 }
 
 // ============================================================================
-// Sync Multiplier Roller
+// Division Roller (for division/sync mode)
 // ============================================================================
 
-static const uint16_t s_sync_mult_values[] = {
-  125, 167, 250, 333, 500, 667, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000
-};
-#define NUM_SYNC_MULT_VALUES (sizeof(s_sync_mult_values) / sizeof(s_sync_mult_values[0]))
+static const char* sh_division_display(lfo_note_division_t division) {
+  switch (division) {
+    case LFO_DIVISION_16_BARS: return "16 Bars";
+    case LFO_DIVISION_12_BARS: return "12 Bars";
+    case LFO_DIVISION_8_BARS: return "8 Bars";
+    case LFO_DIVISION_4_BARS: return "4 Bars";
+    case LFO_DIVISION_2_BARS: return "2 Bars";
+    case LFO_DIVISION_1_BAR: return "1 Bar";
+    case LFO_DIVISION_HALF: return "1/2 Note";
+    case LFO_DIVISION_QUARTER: return "1/4 Note";
+    case LFO_DIVISION_EIGHTH: return "1/8 Note";
+    case LFO_DIVISION_SIXTEENTH: return "1/16 Note";
+    case LFO_DIVISION_32ND: return "1/32 Note";
+    default: return "1/4 Note";
+  }
+}
 
-static const char* s_sync_mult_labels[] = {
-  "1/8 (0.125x)", "1/6 (0.167x)", "1/4 (0.25x)", "1/3 (0.333x)",
-  "1/2 (0.5x)", "2/3 (0.667x)", "3/4 (0.75x)", "1x",
-  "3/2 (1.5x)", "2x", "3x", "4x", "6x", "8x"
-};
-
-static void sync_mult_confirm_cb(uint32_t selected_index, void* user_data) {
+static void division_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
 
   if (s_callback_in_progress) return;
@@ -332,8 +338,8 @@ static void sync_mult_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
 
-  if (selected_index < NUM_SYNC_MULT_VALUES) {
-    scene->sample_hold_config.sync_mult_x1000 = s_sync_mult_values[selected_index];
+  if (selected_index < LFO_DIVISION_MAX) {
+    scene->sample_hold_config.division = (lfo_note_division_t)selected_index;
     sample_hold_apply_config(&scene->sample_hold_config);
     persist_scene_changes();
   }
@@ -342,40 +348,19 @@ static void sync_mult_confirm_cb(uint32_t selected_index, void* user_data) {
   menu_navigate_back_then_to(2, "S+H", menu_page_sample_hold_scene_create);
 }
 
-static lv_obj_t* sync_mult_roller_create(void) {
+static lv_obj_t* division_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
 
-  static char options[384];
-  options[0] = '\0';
-  size_t pos = 0;
-
-  for (size_t i = 0; i < NUM_SYNC_MULT_VALUES; i++) {
-    if (i > 0) options[pos++] = '\n';
-    pos += snprintf(options + pos, sizeof(options) - pos, "%s", s_sync_mult_labels[i]);
-  }
-
-  uint32_t current = 7;  // Default to 1x
-  uint16_t current_mult = scene->sample_hold_config.sync_mult_x1000;
-  for (size_t i = 0; i < NUM_SYNC_MULT_VALUES; i++) {
-    if (s_sync_mult_values[i] >= current_mult) {
-      if (i > 0) {
-        uint16_t diff_prev = current_mult - s_sync_mult_values[i - 1];
-        uint16_t diff_curr = s_sync_mult_values[i] - current_mult;
-        current = (diff_prev <= diff_curr) ? (i - 1) : i;
-      } else {
-        current = i;
-      }
-      break;
-    }
-  }
-
-  return menu_create_roller_page("Multiplier", options, current, sync_mult_confirm_cb, NULL);
+  uint32_t current = (uint32_t)scene->sample_hold_config.division;
+  return menu_create_roller_page("Divider",
+    "16 Bars\n12 Bars\n8 Bars\n4 Bars\n2 Bars\n1 Bar\n1/2 Note\n1/4 Note\n1/8 Note\n1/16 Note\n1/32 Note",
+    current, division_confirm_cb, NULL);
 }
 
-static void nav_to_sync_mult(void* user_data) {
+static void nav_to_division(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Multiplier", sync_mult_roller_create);
+  menu_navigate_to("Divider", division_roller_create);
 }
 
 // ============================================================================
@@ -796,7 +781,7 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
     // Rate settings only apply to Continuous mode
     if (scene->sample_hold_config.mode == SAMPLE_HOLD_MODE_CONTINUOUS) {
     const char* rate_mode_str = (scene->sample_hold_config.rate_mode == SAMPLE_HOLD_RATE_MODE_SYNC) ?
-      "Sync (BPM)" : "Free (Hz)";
+      "Division" : "Time";
     snprintf(s_rate_mode_label[buf], sizeof(s_rate_mode_label[buf]), "Rate: %s", rate_mode_str);
     s_sh_items[idx++] = (menu_item_t){ s_rate_mode_label[buf], nav_to_rate_mode, NULL, false, MENU_ITEM_KIND_ROLLER };
 
@@ -811,16 +796,9 @@ lv_obj_t* menu_page_sample_hold_scene_create(void) {
       }
       s_sh_items[idx++] = (menu_item_t){ s_rate_label[buf], nav_to_rate, NULL, false, MENU_ITEM_KIND_ROLLER };
     } else {
-      uint16_t mult = scene->sample_hold_config.sync_mult_x1000;
-      const char* mult_label = "1x";
-      for (size_t i = 0; i < NUM_SYNC_MULT_VALUES; i++) {
-        if (s_sync_mult_values[i] == mult) {
-          mult_label = s_sync_mult_labels[i];
-          break;
-        }
-      }
-      snprintf(s_sync_mult_label[buf], sizeof(s_sync_mult_label[buf]), "Mult: %s", mult_label);
-      s_sh_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_sync_mult, NULL, false, MENU_ITEM_KIND_ROLLER };
+      snprintf(s_sync_mult_label[buf], sizeof(s_sync_mult_label[buf]), "Divider: %s",
+        sh_division_display(scene->sample_hold_config.division));
+      s_sh_items[idx++] = (menu_item_t){ s_sync_mult_label[buf], nav_to_division, NULL, false, MENU_ITEM_KIND_ROLLER };
     }
 
       // Probability (only in continuous mode)

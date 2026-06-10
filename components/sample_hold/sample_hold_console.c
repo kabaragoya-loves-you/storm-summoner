@@ -28,7 +28,7 @@ static void print_sh_info(void) {
   if (config.rate_mode == SAMPLE_HOLD_RATE_MODE_FREE) {
     ESP_LOGI(TAG, "  Rate:        %.2f Hz", config.rate_hz_x100 / 100.0f);
   } else {
-    ESP_LOGI(TAG, "  Sync Mult:   %.3fx", config.sync_mult_x1000 / 1000.0f);
+    ESP_LOGI(TAG, "  Division:    %s", lfo_division_to_string(config.division));
   }
   ESP_LOGI(TAG, "  Glide:       %s", config.glide ? "ON" : "OFF");
   ESP_LOGI(TAG, "  Running:     %s", sample_hold_is_running() ? "YES" : "NO");
@@ -85,15 +85,15 @@ static int cmd_sh(int argc, char **argv) {
     sample_hold_set_rate_mode(SAMPLE_HOLD_RATE_MODE_FREE);
     ESP_LOGI(TAG, "S+H rate: %.2f Hz (free mode)", sample_hold_get_rate_hz());
     
-  } else if (strcmp(subcmd, "mult") == 0) {
-    if (sh_args.rate->count == 0) {
-      ESP_LOGE(TAG, "Missing multiplier (0.125 - 8.0)");
+  } else if (strcmp(subcmd, "division") == 0 || strcmp(subcmd, "div") == 0) {
+    if (sh_args.value->count == 0) {
+      ESP_LOGE(TAG, "Missing division (e.g. 1/4, 1/8, 1/16)");
       return 1;
     }
-    float mult = (float)sh_args.rate->dval[0];
-    sample_hold_set_sync_mult(mult);
+    lfo_note_division_t div = lfo_division_from_string(sh_args.value->sval[0]);
+    sample_hold_set_division(div);
     sample_hold_set_rate_mode(SAMPLE_HOLD_RATE_MODE_SYNC);
-    ESP_LOGI(TAG, "S+H multiplier: %.3fx (sync mode)", sample_hold_get_sync_mult());
+    ESP_LOGI(TAG, "S+H division: %s (sync mode)", lfo_division_to_string(sample_hold_get_division()));
     
   } else if (strcmp(subcmd, "step") == 0) {
     sample_hold_step();
@@ -115,7 +115,7 @@ static int cmd_sh(int argc, char **argv) {
     
   } else {
     ESP_LOGE(TAG, "Unknown subcommand: %s", subcmd);
-    ESP_LOGI(TAG, "Usage: sh <info|enable|mode|start|rate|mult|step|toggle|glide> [value]");
+    ESP_LOGI(TAG, "Usage: sh <info|enable|mode|start|rate|division|step|toggle|glide> [value]");
     return 1;
   }
   
@@ -123,14 +123,14 @@ static int cmd_sh(int argc, char **argv) {
 }
 
 void sample_hold_console_init(void) {
-  sh_args.subcmd = arg_str0(NULL, NULL, "<cmd>", "Subcommand: info, enable, mode, start, rate, mult, step, toggle, glide");
+  sh_args.subcmd = arg_str0(NULL, NULL, "<cmd>", "Subcommand: info, enable, mode, start, rate, division, step, toggle, glide");
   sh_args.value = arg_str0(NULL, NULL, "<value>", "Value for subcommand");
-  sh_args.rate = arg_dbl0(NULL, NULL, "<rate>", "Rate in Hz or multiplier");
+  sh_args.rate = arg_dbl0(NULL, NULL, "<rate>", "Rate in Hz");
   sh_args.end = arg_end(2);
   
   const esp_console_cmd_t cmd = {
     .command = "sh",
-    .help = "Sample+Hold control: sh <info|enable|mode|start|rate|mult|step|toggle|glide> [value]",
+    .help = "Sample+Hold control: sh <info|enable|mode|start|rate|division|step|toggle|glide> [value]",
     .hint = NULL,
     .func = &cmd_sh,
     .argtable = &sh_args

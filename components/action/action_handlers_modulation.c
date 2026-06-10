@@ -39,8 +39,11 @@ static int apply_engine_modify(const action_engine_modify_t* m, bool rtg) {
     50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500,
     600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500,
   };
-  static const uint16_t sync_mults[] = {
-    125, 167, 250, 333, 500, 667, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000,
+  static const uint8_t divisions[] = {
+    LFO_DIVISION_16_BARS, LFO_DIVISION_12_BARS, LFO_DIVISION_8_BARS,
+    LFO_DIVISION_4_BARS, LFO_DIVISION_2_BARS, LFO_DIVISION_1_BAR,
+    LFO_DIVISION_HALF, LFO_DIVISION_QUARTER, LFO_DIVISION_EIGHTH,
+    LFO_DIVISION_SIXTEENTH, LFO_DIVISION_32ND,
   };
   static const uint8_t prob_values[] = {
     10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
@@ -61,11 +64,11 @@ static int apply_engine_modify(const action_engine_modify_t* m, bool rtg) {
     else sample_hold_set_rate_hz((float)hz_x100 / 100.0f);
     applied++;
   }
-  if (m->sync_mult_x1000 != ACTION_LFO_ORIG_U16) {
-    uint16_t mult = lfo_modify_resolve_u16_table(m->sync_mult_x1000, sync_mults,
-      sizeof(sync_mults) / sizeof(sync_mults[0]));
-    if (rtg) rtg_set_sync_mult((float)mult / 1000.0f);
-    else sample_hold_set_sync_mult((float)mult / 1000.0f);
+  if (m->division != ACTION_LFO_ORIG_U8) {
+    uint8_t div = lfo_modify_resolve_u8_table(m->division, divisions,
+      sizeof(divisions) / sizeof(divisions[0]));
+    if (rtg) rtg_set_division((lfo_note_division_t)div);
+    else sample_hold_set_division((lfo_note_division_t)div);
     applied++;
   }
   if (m->glide != ACTION_LFO_ORIG_U8) {
@@ -179,9 +182,8 @@ action_handle_result_t action_handlers_modulation_dispatch(
             }
             if (a->params.lfo.rate_mode != ACTION_LFO_ORIG_U8) {
               static const uint8_t rate_modes[] = {
-                LFO_RATE_MODE_FREE, LFO_RATE_MODE_TEMPO, LFO_RATE_MODE_TOUCHWHEEL,
-                LFO_RATE_MODE_EXPRESSION, LFO_RATE_MODE_CV, LFO_RATE_MODE_ALS,
-                LFO_RATE_MODE_PROXIMITY,
+                LFO_RATE_MODE_FREE,
+                LFO_RATE_MODE_TEMPO,
               };
               uint8_t rm = lfo_modify_resolve_u8_table(a->params.lfo.rate_mode,
                 rate_modes, sizeof(rate_modes) / sizeof(rate_modes[0]));

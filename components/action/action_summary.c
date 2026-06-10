@@ -1058,7 +1058,8 @@ static void ainspect_append_lfo_modify(ainspect_buf_t *b, const action_t *action
   }
   if (action->params.lfo.rate_mode != ACTION_LFO_ORIG_U8) {
     if (action->params.lfo.rate_mode == ACTION_LFO_RAND_U8) snprintf(val, sizeof(val), "Random");
-    else snprintf(val, sizeof(val), "%s", action->params.lfo.rate_mode == 0 ? "Free" : "Sync");
+    else snprintf(val, sizeof(val), "%s",
+      action->params.lfo.rate_mode == 0 ? "Time" : "Division");
     ainspect_append_lfo_modify_pair(b, "Rate Mode", val);
   }
   if (action->params.lfo.rate_hz_x100 != ACTION_LFO_ORIG_U16) {
@@ -1104,16 +1105,16 @@ static void ainspect_append_engine_modify(ainspect_buf_t *b,
 
   if (m->rate_mode != ACTION_LFO_ORIG_U8) {
     const char *mode = (m->rate_mode == ACTION_LFO_RAND_U8) ? "Random" :
-      (m->rate_mode == 0 ? "Free" : "Sync");
+      (m->rate_mode == 0 ? "Time" : "Division");
     ainspect_append(b, "\nRate Mode: %s", mode);
   }
   if (m->rate_hz_x100 != ACTION_LFO_ORIG_U16) {
     if (m->rate_hz_x100 == ACTION_LFO_RAND_U16) ainspect_append(b, "\nRate: Random");
     else ainspect_append(b, "\nRate: %.1f Hz", (double)m->rate_hz_x100 / 100.0);
   }
-  if (m->sync_mult_x1000 != ACTION_LFO_ORIG_U16) {
-    if (m->sync_mult_x1000 == ACTION_LFO_RAND_U16) ainspect_append(b, "\nSync: Random");
-    else ainspect_append(b, "\nSync: %.2fx BPM", (double)m->sync_mult_x1000 / 1000.0);
+  if (m->division != ACTION_LFO_ORIG_U8) {
+    if (m->division == ACTION_LFO_RAND_U8) ainspect_append(b, "\nDivider: Random");
+    else ainspect_append(b, "\nDivider: %u", (unsigned)m->division);
   }
   if (m->glide != ACTION_LFO_ORIG_U8) {
     if (m->glide == ACTION_LFO_RAND_U8) ainspect_append(b, "\nGlide: Random");

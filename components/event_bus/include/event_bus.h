@@ -14,7 +14,7 @@
 
 // Configuration
 #define EVENT_BUS_QUEUE_SIZE          128
-#define EVENT_BUS_MAX_HANDLERS        96  // Increased for UI modules and update events
+#define EVENT_BUS_MAX_HANDLERS        98
 #define EVENT_BUS_HISTORY_SIZE        16
 
 typedef enum {

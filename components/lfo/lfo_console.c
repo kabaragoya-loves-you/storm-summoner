@@ -135,7 +135,8 @@ static int cmd_lfo(int argc, char **argv) {
       const char* val = lfo_args.value->sval[0];
       lfo_rate_mode_t mode = (strcmp(val, "tempo") == 0) ? LFO_RATE_MODE_TEMPO : LFO_RATE_MODE_FREE;
       lfo_set_rate_mode(slot, mode);
-      ESP_LOGI(TAG, "LFO%d mode: %s", slot + 1, mode == LFO_RATE_MODE_TEMPO ? "tempo" : "free");
+      ESP_LOGI(TAG, "LFO%d mode: %s", slot + 1,
+        mode == LFO_RATE_MODE_TEMPO ? "division" : "time");
       
     } else if (strcmp(subcmd, "phase") == 0) {
       if (lfo_args.slot->count < 2) {

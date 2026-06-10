@@ -963,13 +963,19 @@ static void cdc_read_clock_snapshot(cdc_clock_snapshot_t *out) {
   uint8_t scene_idx = scene_get_current_index();
 
   out->bpm = tempo_get_bpm();
+  out->use_transport = scene_get_use_transport(scene_idx) ? 1u : 0u;
   out->playing = transport_is_playing() ? 1u : 0u;
-  out->bar = transport_get_current_bar();
-  out->beat = transport_get_current_beat();
+  if (out->use_transport) {
+    out->bar = transport_get_current_bar();
+    out->beat = transport_get_current_beat();
+  } else {
+    // Free-running scenes advance tempo's beat counter without transport play.
+    out->bar = 1;
+    out->beat = tempo_get_current_beat();
+  }
   if (out->beat == 0) out->beat = 1;
   out->numerator = sig.numerator ? sig.numerator : 4;
   out->denominator = sig.denominator ? sig.denominator : 4;
-  out->use_transport = scene_get_use_transport(scene_idx) ? 1u : 0u;
   out->flag_enabled = config_get_flag_enabled() ? 1u : 0u;
   out->flag = action_get_flag() ? 1u : 0u;
 }

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "lfo.h"
 
 // S+H mode (time-based vs triggered)
 typedef enum {
@@ -31,7 +32,8 @@ typedef struct {
   sample_hold_rate_mode_t rate_mode;
   sample_hold_start_mode_t start_mode;
   uint16_t rate_hz_x100;        // 50-2500 (0.5-25.0 Hz), used when rate_mode == FREE
-  uint16_t sync_mult_x1000;     // 125-8000 (0.125x-8.0x), used when rate_mode == SYNC
+  uint16_t sync_mult_x1000;     // Legacy; migrated to division on load
+  lfo_note_division_t division; // Note division when rate_mode == SYNC
   bool glide;                   // Enable smooth transitions between values
   uint8_t probability;          // Chance of firing 10-100% (default 100)
   uint8_t pattern_length;       // Step pattern length 2-8 (0 = disabled)
@@ -82,6 +84,9 @@ float sample_hold_get_rate_hz(void);
 
 void sample_hold_set_sync_mult(float mult);
 float sample_hold_get_sync_mult(void);
+
+void sample_hold_set_division(lfo_note_division_t division);
+lfo_note_division_t sample_hold_get_division(void);
 
 void sample_hold_set_glide(bool glide);
 bool sample_hold_get_glide(void);

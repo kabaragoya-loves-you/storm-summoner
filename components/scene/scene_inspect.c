@@ -648,16 +648,6 @@ static const char *inspect_lfo_division_note_label(lfo_note_division_t div) {
   }
 }
 
-static const char *inspect_lfo_external_timing_label(lfo_rate_mode_t mode) {
-  switch (mode) {
-    case LFO_RATE_MODE_TOUCHWHEEL: return "Touchwheel";
-    case LFO_RATE_MODE_EXPRESSION: return "Expression";
-    case LFO_RATE_MODE_CV: return "CV";
-    case LFO_RATE_MODE_ALS: return "ALS";
-    case LFO_RATE_MODE_PROXIMITY: return "Proximity";
-    default: return "?";
-  }
-}
 
 static void append_lfo_slot(scene_inspect_buf_t *b, uint8_t slot,
   const scene_t *scene, uint8_t scene_index) {
@@ -670,19 +660,22 @@ static void append_lfo_slot(scene_inspect_buf_t *b, uint8_t slot,
   scene_inspect_buf_append(b, "%s: %s\n", label,
     inspect_lfo_waveform_label(config->waveform));
 
-  if (config->rate_mode == LFO_RATE_MODE_FREE) {
-    float hz = (float)config->rate_hz_x100 / 100.0f;
-    scene_inspect_buf_append(b, "Free Timing: %.1fHz\n", hz);
-  } else if (config->rate_mode == LFO_RATE_MODE_TEMPO) {
-    scene_inspect_buf_append(b, "Tempo Sync: %s\n",
+  if (config->rate_mode == LFO_RATE_MODE_TEMPO) {
+    scene_inspect_buf_append(b, "Division: %s\n",
       inspect_lfo_division_note_label(config->division));
   } else {
-    scene_inspect_buf_append(b, "Timing: %s\n",
-      inspect_lfo_external_timing_label(config->rate_mode));
+    float hz = (float)config->rate_hz_x100 / 100.0f;
+    scene_inspect_buf_append(b, "Time: %.1fHz\n", hz);
   }
 
   if (mapping->enabled) {
-    append_continuous_assignment(b, "Set", mapping, scene_index);
+    if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+      uint8_t pct = (slot == 0) ? scene->lfo1_tempo_nudge_pct : scene->lfo2_tempo_nudge_pct;
+      scene_inspect_buf_append(b, "Set: Tempo\n");
+      scene_inspect_buf_append(b, "Nudge %u%%\n", (unsigned)pct);
+    } else {
+      append_continuous_assignment(b, "Set", mapping, scene_index);
+    }
   }
 
   scene_inspect_buf_append(b, "\n");

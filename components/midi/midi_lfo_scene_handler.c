@@ -10,12 +10,48 @@
 #include "rtg.h"
 #include "sample_hold.h"
 #include "expression.h"
+#include "tempo.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char* TAG = "lfo_scene";
 
 static smart_filter_t s_lfo1_filter;
 static smart_filter_t s_lfo2_filter;
+
+static uint32_t s_lfo1_last_tempo_apply_ms = 0;
+static uint8_t  s_lfo1_last_applied_midi = 64;
+static uint32_t s_lfo2_last_tempo_apply_ms = 0;
+static uint8_t  s_lfo2_last_applied_midi = 64;
+
+static void apply_lfo_tempo_nudge(uint8_t slot, uint8_t midi_value, scene_t* scene) {
+  uint32_t* last_apply_ms = (slot == 0) ? &s_lfo1_last_tempo_apply_ms : &s_lfo2_last_tempo_apply_ms;
+  uint8_t* last_applied_midi = (slot == 0) ? &s_lfo1_last_applied_midi : &s_lfo2_last_applied_midi;
+
+  uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+  if (now_ms - *last_apply_ms < 50) return;
+  *last_apply_ms = now_ms;
+  if (*last_applied_midi == midi_value) return;
+  *last_applied_midi = midi_value;
+
+  uint8_t pct = (slot == 0)
+    ? scene_get_lfo1_tempo_nudge_pct(scene_get_current_index())
+    : scene_get_lfo2_tempo_nudge_pct(scene_get_current_index());
+  if (pct > 100) pct = 100;
+
+  int32_t bpm = scene->bpm;
+  float scale = ((float)midi_value - 64.0f) / 63.0f;
+  if (scale > 1.0f) scale = 1.0f;
+  if (scale < -1.0f) scale = -1.0f;
+  float factor = 1.0f + scale * ((float)pct / 100.0f);
+  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
+  if (new_bpm < 20) new_bpm = 20;
+  if (new_bpm > 300) new_bpm = 300;
+
+  tempo_set_bpm((uint16_t)new_bpm);
+  ESP_LOGD(TAG, "LFO%d tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
+    slot + 1, (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+}
 
 // Get velocity based on velocity mode setting for LFO1
 static uint8_t get_lfo1_velocity(continuous_mapping_t* mapping) {
@@ -132,6 +168,10 @@ static void handle_lfo1_event(const event_t* event, void* context) {
       ESP_LOGD(TAG, "LFO1 -> Pitch Bend: %d", pb_value);
       break;
     }
+
+    case OUTPUT_TYPE_TEMPO_NUDGE:
+      apply_lfo_tempo_nudge(0, output_value, scene);
+      break;
       
     case OUTPUT_TYPE_CC:
     default: {
@@ -217,6 +257,10 @@ static void handle_lfo2_event(const event_t* event, void* context) {
       ESP_LOGD(TAG, "LFO2 -> Pitch Bend: %d", pb_value);
       break;
     }
+
+    case OUTPUT_TYPE_TEMPO_NUDGE:
+      apply_lfo_tempo_nudge(1, output_value, scene);
+      break;
       
     case OUTPUT_TYPE_CC:
     default: {

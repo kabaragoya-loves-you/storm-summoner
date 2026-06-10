@@ -1364,9 +1364,10 @@ application.register(
         btn.variant = 'success'
       }
 
-      // If connected, activate the currently visible tab
       if (connected) {
         this.activateCurrentTab()
+      } else {
+        this.navigateToTab('info')
       }
     }
 

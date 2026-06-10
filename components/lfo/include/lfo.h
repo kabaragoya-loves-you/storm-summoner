@@ -195,6 +195,8 @@ const char* lfo_trigger_timing_to_string(lfo_trigger_timing_t timing);
 const char* lfo_rate_mode_to_string(lfo_rate_mode_t mode);
 lfo_waveform_t lfo_waveform_from_string(const char* str);
 lfo_note_division_t lfo_division_from_string(const char* str);
+float lfo_rate_hz_for_division(uint16_t bpm, uint8_t felt_beats_per_bar,
+  lfo_note_division_t division);
 lfo_start_mode_t lfo_start_mode_from_string(const char* str);
 lfo_trigger_timing_t lfo_trigger_timing_from_string(const char* str);
 lfo_rate_mode_t lfo_rate_mode_from_string(const char* str);

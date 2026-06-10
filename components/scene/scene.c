@@ -329,7 +329,11 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->cv_tempo_nudge_pct = 10;
   scene->proximity_tempo_nudge_pct = 10;
   scene->touchwheel_tempo_nudge_pct = 10;
+  scene->touchwheel_tempo_floor = 20;
+  scene->touchwheel_tempo_ceiling = 300;
   scene->als_tempo_nudge_pct = 10;
+  scene->lfo1_tempo_nudge_pct = 10;
+  scene->lfo2_tempo_nudge_pct = 10;
   
   // Tempo configuration
   scene->bpm = 120;                                    // Default to 120 BPM
@@ -660,10 +664,15 @@ static void touchwheel_tempo_callback(int value, void* user_data) {
   
   if (value == 0) return;
   
+  uint16_t floor = scene->touchwheel_tempo_floor;
+  uint16_t ceiling = scene->touchwheel_tempo_ceiling;
+  if (floor < 20) floor = 20;
+  if (ceiling > 300) ceiling = 300;
+  if (floor > ceiling) floor = ceiling;
+
   s_touchwheel_tempo_bpm += value;
-  // Clamp to 20-300 BPM
-  if (s_touchwheel_tempo_bpm < 20) s_touchwheel_tempo_bpm = 20;
-  if (s_touchwheel_tempo_bpm > 300) s_touchwheel_tempo_bpm = 300;
+  if (s_touchwheel_tempo_bpm < (int)floor) s_touchwheel_tempo_bpm = (int)floor;
+  if (s_touchwheel_tempo_bpm > (int)ceiling) s_touchwheel_tempo_bpm = (int)ceiling;
   
   tempo_set_bpm((uint16_t)s_touchwheel_tempo_bpm);
   ESP_LOGD(TAG, "Touchwheel tempo: %d BPM", s_touchwheel_tempo_bpm);
@@ -850,12 +859,17 @@ static void touchwheel_double_cc_callback(int value, void* user_data) {
   if (s_touchwheel_14bit_value > 16383) s_touchwheel_14bit_value = 16383;
 
   uint8_t channel = scene_get_effective_channel(g_scene_manager.current_scene_index) - 1;
-  uint8_t msb_cc = scene->touchwheel.num_cc_numbers > 0 ? scene->touchwheel.cc_numbers[0] : 0;
-  uint8_t lsb_cc = msb_cc + 32;  // Standard 14-bit CC: LSB = MSB + 32
-  send_double_control_change(channel, msb_cc, lsb_cc, (uint16_t)s_touchwheel_14bit_value);
-  ESP_LOGD(TAG, "Touchwheel DoubleCC[%d/%d]: %d (MSB=%d, LSB=%d)", 
-    msb_cc, lsb_cc, s_touchwheel_14bit_value,
-    (s_touchwheel_14bit_value >> 7) & 0x7F, s_touchwheel_14bit_value & 0x7F);
+  uint16_t cc_value = (uint16_t)s_touchwheel_14bit_value;
+
+  for (int i = 0; i < MAX_MULTI_CC; i++) {
+    uint8_t msb_cc = scene->touchwheel.cc_numbers[i];
+    if (msb_cc == 0) continue;
+    uint8_t lsb_cc = msb_cc + 32;  // Standard 14-bit CC: LSB = MSB + 32
+    send_double_control_change(channel, msb_cc, lsb_cc, cc_value);
+    ESP_LOGD(TAG, "Touchwheel DoubleCC slot %d [%u/%u]: %u (MSB=%u, LSB=%u)",
+      i, (unsigned)msb_cc, (unsigned)lsb_cc, (unsigned)cc_value,
+      (unsigned)((cc_value >> 7) & 0x7F), (unsigned)(cc_value & 0x7F));
+  }
 }
 
 // Callback for velocity mode touchwheel (internal only - no MIDI output)
@@ -1236,11 +1250,12 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       
     case TOUCHWHEEL_MODE_DOUBLE_CC:
       // Double CC (14-bit): default to endless for fine control
-      s_touchwheel_14bit_value = 0;
       if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
+        s_touchwheel_14bit_value = 0;
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "double_cc (odometer)";
       } else {
+        s_touchwheel_14bit_value = (scene->touchwheel_initial_value * 16383) / 127;
         mode_proc = touchwheel_mode_create_endless();
         mode_desc = "double_cc (endless)";
       }
@@ -2871,10 +2886,15 @@ esp_err_t scene_set_touchwheel_mode_runtime(uint8_t scene_index, touchwheel_mode
   return ESP_OK;
 }
 
-// Set the touchwheel's internal value (used when switching CC parameters)
+// Set the touchwheel's internal value (used when switching CC parameters or setting initial value)
 void scene_set_touchwheel_value(uint8_t value) {
-  s_touchwheel_endless_value = value;
-  s_touchwheel_last_sent_cc = -1;  // Force next send even if same value
+  scene_t* scene = scene_get_current();
+  if (scene && scene->touchwheel_mode == TOUCHWHEEL_MODE_DOUBLE_CC) {
+    s_touchwheel_14bit_value = (value * 16383) / 127;
+  } else {
+    s_touchwheel_endless_value = value;
+    s_touchwheel_last_sent_cc = -1;  // Force next send even if same value
+  }
   ESP_LOGD(TAG, "Touchwheel value set to %u", (unsigned)value);
 }
 
@@ -3943,6 +3963,36 @@ uint8_t scene_get_als_tempo_nudge_pct(uint8_t scene_index) {
   return scene ? scene->als_tempo_nudge_pct : 10;
 }
 
+esp_err_t scene_set_lfo1_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->lfo1_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_lfo1_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->lfo1_tempo_nudge_pct : 10;
+}
+
+esp_err_t scene_set_lfo2_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (pct > 100) pct = 100;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->lfo2_tempo_nudge_pct = pct;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_lfo2_tempo_nudge_pct(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->lfo2_tempo_nudge_pct : 10;
+}
+
 uint8_t scene_get_touchwheel_velocity(void) {
   scene_t* scene = scene_get_current();
   if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) {
@@ -4430,8 +4480,8 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddNumberToObject(obj, "rate_mode", m->rate_mode);
     if (m->rate_hz_x100 != ACTION_LFO_ORIG_U16)
       cJSON_AddNumberToObject(obj, "rate_hz_x100", m->rate_hz_x100);
-    if (m->sync_mult_x1000 != ACTION_LFO_ORIG_U16)
-      cJSON_AddNumberToObject(obj, "sync_mult_x1000", m->sync_mult_x1000);
+    if (m->division != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "division", m->division);
     if (m->glide != ACTION_LFO_ORIG_U8)
       cJSON_AddNumberToObject(obj, "glide", m->glide);
     if (m->probability != ACTION_LFO_ORIG_U8)
@@ -4442,8 +4492,8 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddNumberToObject(obj, "rate_mode", m->rate_mode);
     if (m->rate_hz_x100 != ACTION_LFO_ORIG_U16)
       cJSON_AddNumberToObject(obj, "rate_hz_x100", m->rate_hz_x100);
-    if (m->sync_mult_x1000 != ACTION_LFO_ORIG_U16)
-      cJSON_AddNumberToObject(obj, "sync_mult_x1000", m->sync_mult_x1000);
+    if (m->division != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "division", m->division);
     if (m->glide != ACTION_LFO_ORIG_U8)
       cJSON_AddNumberToObject(obj, "glide", m->glide);
     if (m->probability != ACTION_LFO_ORIG_U8)
@@ -5078,7 +5128,9 @@ static action_t json_to_action(cJSON* obj) {
         m->rate_mode = (uint8_t)item->valueint;
       if ((item = cJSON_GetObjectItem(obj, "rate_hz_x100")))
         m->rate_hz_x100 = (uint16_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "sync_mult_x1000")))
+      if ((item = cJSON_GetObjectItem(obj, "division")))
+        m->division = (uint8_t)item->valueint;
+      else if ((item = cJSON_GetObjectItem(obj, "sync_mult_x1000")))
         m->sync_mult_x1000 = (uint16_t)item->valueint;
       if ((item = cJSON_GetObjectItem(obj, "glide")))
         m->glide = (uint8_t)item->valueint;
@@ -5800,6 +5852,10 @@ static void json_to_lfo_config(cJSON* obj, lfo_config_t* config) {
   cJSON* rate_mode = cJSON_GetObjectItem(obj, "rate_mode");
   if (rate_mode && cJSON_IsString(rate_mode)) {
     config->rate_mode = lfo_rate_mode_from_string(rate_mode->valuestring);
+    if (config->rate_mode != LFO_RATE_MODE_FREE &&
+        config->rate_mode != LFO_RATE_MODE_TEMPO) {
+      config->rate_mode = LFO_RATE_MODE_FREE;
+    }
   }
 
   cJSON* start_mode = cJSON_GetObjectItem(obj, "start_mode");
@@ -5872,7 +5928,8 @@ static cJSON* rtg_config_to_json(const rtg_config_t* config) {
   cJSON_AddStringToObject(obj, "start_mode", rtg_start_mode_to_string(config->start_mode));
   cJSON_AddStringToObject(obj, "rate_mode", rtg_rate_mode_to_string(config->rate_mode));
   cJSON_AddNumberToObject(obj, "rate_hz", config->rate_hz_x100 / 100.0);
-  cJSON_AddNumberToObject(obj, "sync_mult", config->sync_mult_x1000 / 1000.0);
+  cJSON_AddStringToObject(obj, "division",
+    lfo_division_to_string(config->division));
   cJSON_AddBoolToObject(obj, "glide", config->glide);
   cJSON_AddNumberToObject(obj, "velocity", config->velocity);
   cJSON_AddNumberToObject(obj, "note_min", config->note_min);
@@ -5948,12 +6005,18 @@ static void json_to_rtg_config(cJSON* obj, rtg_config_t* config) {
     config->rate_hz_x100 = (uint16_t)(hz * 100.0f);
   }
 
-  cJSON* sync_mult = cJSON_GetObjectItem(obj, "sync_mult");
-  if (sync_mult && cJSON_IsNumber(sync_mult)) {
-    float mult = (float)sync_mult->valuedouble;
-    if (mult < 0.125f) mult = 0.125f;
-    if (mult > 8.0f) mult = 8.0f;
-    config->sync_mult_x1000 = (uint16_t)(mult * 1000.0f);
+  config->division = LFO_DIVISION_QUARTER;
+  cJSON* division = cJSON_GetObjectItem(obj, "division");
+  if (division && cJSON_IsString(division)) {
+    config->division = lfo_division_from_string(division->valuestring);
+  } else {
+    cJSON* sync_mult = cJSON_GetObjectItem(obj, "sync_mult");
+    if (sync_mult && cJSON_IsNumber(sync_mult)) {
+      float mult = (float)sync_mult->valuedouble;
+      if (mult < 0.125f) mult = 0.125f;
+      if (mult > 8.0f) mult = 8.0f;
+      config->sync_mult_x1000 = (uint16_t)(mult * 1000.0f);
+    }
   }
 
   cJSON* glide = cJSON_GetObjectItem(obj, "glide");
@@ -6048,7 +6111,8 @@ static cJSON* sample_hold_config_to_json(const sample_hold_config_t* config) {
   cJSON_AddStringToObject(obj, "start_mode", sample_hold_start_mode_to_string(config->start_mode));
   cJSON_AddStringToObject(obj, "rate_mode", sample_hold_rate_mode_to_string(config->rate_mode));
   cJSON_AddNumberToObject(obj, "rate_hz", config->rate_hz_x100 / 100.0);
-  cJSON_AddNumberToObject(obj, "sync_mult", config->sync_mult_x1000 / 1000.0);
+  cJSON_AddStringToObject(obj, "division",
+    lfo_division_to_string(config->division));
   cJSON_AddBoolToObject(obj, "glide", config->glide);
 
   // Only serialize probability if not default (100%)
@@ -6094,12 +6158,18 @@ static void json_to_sample_hold_config(cJSON* obj, sample_hold_config_t* config)
     config->rate_hz_x100 = (uint16_t)(hz * 100.0f);
   }
 
-  cJSON* sync_mult = cJSON_GetObjectItem(obj, "sync_mult");
-  if (sync_mult && cJSON_IsNumber(sync_mult)) {
-    float mult = (float)sync_mult->valuedouble;
-    if (mult < 0.125f) mult = 0.125f;
-    if (mult > 8.0f) mult = 8.0f;
-    config->sync_mult_x1000 = (uint16_t)(mult * 1000.0f);
+  config->division = LFO_DIVISION_QUARTER;
+  cJSON* division = cJSON_GetObjectItem(obj, "division");
+  if (division && cJSON_IsString(division)) {
+    config->division = lfo_division_from_string(division->valuestring);
+  } else {
+    cJSON* sync_mult = cJSON_GetObjectItem(obj, "sync_mult");
+    if (sync_mult && cJSON_IsNumber(sync_mult)) {
+      float mult = (float)sync_mult->valuedouble;
+      if (mult < 0.125f) mult = 0.125f;
+      if (mult > 8.0f) mult = 8.0f;
+      config->sync_mult_x1000 = (uint16_t)(mult * 1000.0f);
+    }
   }
 
   cJSON* glide = cJSON_GetObjectItem(obj, "glide");
@@ -6291,7 +6361,15 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddNumberToObject(root, "cv_tempo_nudge_pct", scene->cv_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "proximity_tempo_nudge_pct", scene->proximity_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "touchwheel_tempo_nudge_pct", scene->touchwheel_tempo_nudge_pct);
+  if (scene->touchwheel_tempo_floor != 20) {
+    cJSON_AddNumberToObject(root, "touchwheel_tempo_floor", scene->touchwheel_tempo_floor);
+  }
+  if (scene->touchwheel_tempo_ceiling != 300) {
+    cJSON_AddNumberToObject(root, "touchwheel_tempo_ceiling", scene->touchwheel_tempo_ceiling);
+  }
   cJSON_AddNumberToObject(root, "als_tempo_nudge_pct", scene->als_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "lfo1_tempo_nudge_pct", scene->lfo1_tempo_nudge_pct);
+  cJSON_AddNumberToObject(root, "lfo2_tempo_nudge_pct", scene->lfo2_tempo_nudge_pct);
 
   #undef VEL_MODE_STR
   
@@ -6590,8 +6668,34 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* tnptw = cJSON_GetObjectItem(root, "touchwheel_tempo_nudge_pct");
   if (tnptw && cJSON_IsNumber(tnptw)) scene->touchwheel_tempo_nudge_pct = (uint8_t)tnptw->valueint;
 
+  cJSON* tw_tempo_floor = cJSON_GetObjectItem(root, "touchwheel_tempo_floor");
+  if (tw_tempo_floor && cJSON_IsNumber(tw_tempo_floor)) {
+    int val = tw_tempo_floor->valueint;
+    scene->touchwheel_tempo_floor = (val >= 20 && val <= 300) ? (uint16_t)val : 20;
+  }
+  cJSON* tw_tempo_ceiling = cJSON_GetObjectItem(root, "touchwheel_tempo_ceiling");
+  if (tw_tempo_ceiling && cJSON_IsNumber(tw_tempo_ceiling)) {
+    int val = tw_tempo_ceiling->valueint;
+    scene->touchwheel_tempo_ceiling = (val >= 20 && val <= 300) ? (uint16_t)val : 300;
+  }
+  if (scene->touchwheel_tempo_floor < 20 || scene->touchwheel_tempo_floor > 300) {
+    scene->touchwheel_tempo_floor = 20;
+  }
+  if (scene->touchwheel_tempo_ceiling < 20 || scene->touchwheel_tempo_ceiling > 300) {
+    scene->touchwheel_tempo_ceiling = 300;
+  }
+  if (scene->touchwheel_tempo_floor > scene->touchwheel_tempo_ceiling) {
+    scene->touchwheel_tempo_ceiling = scene->touchwheel_tempo_floor;
+  }
+
   cJSON* tnpa = cJSON_GetObjectItem(root, "als_tempo_nudge_pct");
   if (tnpa && cJSON_IsNumber(tnpa)) scene->als_tempo_nudge_pct = (uint8_t)tnpa->valueint;
+
+  cJSON* tnpl1 = cJSON_GetObjectItem(root, "lfo1_tempo_nudge_pct");
+  if (tnpl1 && cJSON_IsNumber(tnpl1)) scene->lfo1_tempo_nudge_pct = (uint8_t)tnpl1->valueint;
+
+  cJSON* tnpl2 = cJSON_GetObjectItem(root, "lfo2_tempo_nudge_pct");
+  if (tnpl2 && cJSON_IsNumber(tnpl2)) scene->lfo2_tempo_nudge_pct = (uint8_t)tnpl2->valueint;
   
   // Deserialize expression jack mode
   cJSON* expr_mode = cJSON_GetObjectItem(root, "expression_mode");
@@ -6990,6 +7094,8 @@ touchwheel_mode_t scene_get_persisted_touchwheel_mode(uint8_t scene_index) {
       mode = TOUCHWHEEL_MODE_VELOCITY;
     } else if (strcmp(mode_str, "lfo_rate") == 0) {
       mode = TOUCHWHEEL_MODE_LFO_RATE;
+    } else if (strcmp(mode_str, "lfo_depth") == 0) {
+      mode = TOUCHWHEEL_MODE_LFO_DEPTH;
     } else if (strcmp(mode_str, "rtg_rate") == 0) {
       mode = TOUCHWHEEL_MODE_RTG_RATE;
     }
@@ -7027,8 +7133,31 @@ output_type_t scene_get_persisted_touchwheel_output_type(uint8_t scene_index) {
   if (tw) {
     cJSON* ot = cJSON_GetObjectItem(tw, "output_type");
     if (ot && cJSON_IsString(ot)) {
-      if (strcmp(ot->valuestring, "note") == 0) {
+      const char* type_str = ot->valuestring;
+      if (strcmp(type_str, "note") == 0) {
         output_type = OUTPUT_TYPE_NOTE;
+      } else if (strcmp(type_str, "lfo_rate") == 0) {
+        output_type = OUTPUT_TYPE_LFO_RATE;
+      } else if (strcmp(type_str, "lfo_depth") == 0) {
+        output_type = OUTPUT_TYPE_LFO_DEPTH;
+      } else if (strcmp(type_str, "lfo2_rate") == 0) {
+        output_type = OUTPUT_TYPE_LFO2_RATE;
+      } else if (strcmp(type_str, "lfo2_depth") == 0) {
+        output_type = OUTPUT_TYPE_LFO2_DEPTH;
+      } else if (strcmp(type_str, "lfo1_rate") == 0) {
+        output_type = OUTPUT_TYPE_LFO1_RATE;
+      } else if (strcmp(type_str, "lfo1_depth") == 0) {
+        output_type = OUTPUT_TYPE_LFO1_DEPTH;
+      } else if (strcmp(type_str, "rtg_rate") == 0) {
+        output_type = OUTPUT_TYPE_RTG_RATE;
+      } else if (strcmp(type_str, "sh_rate") == 0) {
+        output_type = OUTPUT_TYPE_SH_RATE;
+      } else if (strcmp(type_str, "pitch_bend") == 0) {
+        output_type = OUTPUT_TYPE_PITCH_BEND;
+      } else if (strcmp(type_str, "tempo_nudge") == 0) {
+        output_type = OUTPUT_TYPE_TEMPO_NUDGE;
+      } else {
+        output_type = OUTPUT_TYPE_CC;
       }
     }
   }

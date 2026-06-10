@@ -769,18 +769,10 @@ lv_obj_t* menu_page_expression_create(void) {
   input_mode_t cv_mode = scene_get_cv_input_mode(scene_index);
   bool locked_by_cv_gate = (cv_mode == INPUT_MODE_NOTE);
 
-  // Check if either LFO is using expression for rate control
-  bool locked_by_lfo = (scene->lfo1_config.rate_mode == LFO_RATE_MODE_EXPRESSION) ||
-                       (scene->lfo2_config.rate_mode == LFO_RATE_MODE_EXPRESSION);
-
   // Mode selector (always first)
   if (locked_by_cv_gate) {
     // Show read-only mode indicating CV/Gate controls this
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\nGate (Locked)");
-    s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
-  } else if (locked_by_lfo) {
-    // Show read-only mode indicating LFO controls this
-    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\nLFO Rate (Locked)");
     s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
   } else {
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",

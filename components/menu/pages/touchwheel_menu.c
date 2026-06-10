@@ -45,8 +45,8 @@ static char s_velocity_label[32];
 static char s_latch_label[32];
 static char s_release_label[32];
 static char s_polyphony_label[32];
-static char s_param_label[48];
 static char s_initial_value_label[32];
+static char s_lfo_target_label[32];
 
 // Dynamic storage for CC options from device
 typedef struct {
@@ -63,20 +63,38 @@ static cc_options_t s_cc_options = {0};
 
 #define NUM_BASE_MODES NUM_TOUCHWHEEL_USER_MODES
 
-// Get current mode mapping index from PERSISTED JSON (not runtime memory)
-// This ensures the menu shows the configured value, not temporary runtime changes
+static bool is_touchwheel_disabled(const scene_t* scene) {
+  return scene && scene->touchwheel_mode != TOUCHWHEEL_MODE_PADS && !scene->touchwheel.enabled;
+}
+
+static const char* touchwheel_lfo_target_label(lfo_target_t target) {
+  switch (target) {
+    case LFO_TARGET_LFO1: return "LFO 1";
+    case LFO_TARGET_LFO2: return "LFO 2";
+    default: return "Both";
+  }
+}
+
+// Get current mode mapping index from the live scene (falls back to JSON on disk)
 static int get_current_mode_index(void) {
-  uint8_t scene_index = scene_get_current_index();
-  
-  // Read persisted values from JSON file
-  touchwheel_mode_t mode = scene_get_persisted_touchwheel_mode(scene_index);
-  output_type_t output = scene_get_persisted_touchwheel_output_type(scene_index);
-  
+  scene_t* scene = scene_get_current();
+  touchwheel_mode_t mode;
+  output_type_t output;
+
+  if (scene) {
+    mode = scene->touchwheel_mode;
+    output = scene->touchwheel.output_type;
+  } else {
+    uint8_t scene_index = scene_get_current_index();
+    mode = scene_get_persisted_touchwheel_mode(scene_index);
+    output = scene_get_persisted_touchwheel_output_type(scene_index);
+  }
+
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     if (g_touchwheel_mode_mappings[i].mode == mode) {
       // For CONTINUOUS mode, also check output type
       if (mode == TOUCHWHEEL_MODE_CONTINUOUS) {
-        if (g_touchwheel_mode_mappings[i].use_output_type && 
+        if (g_touchwheel_mode_mappings[i].use_output_type &&
             g_touchwheel_mode_mappings[i].output_type == output) {
           return (int)i;
         }
@@ -185,12 +203,21 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  // Convert roller index to mapping index (accounting for skipped Tempo and Program Change)
+  if (selected_index == 0) {
+    scene->touchwheel.enabled = false;
+    persist_scene_changes();
+    s_callback_in_progress = false;
+    menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+    return;
+  }
+
+  // Convert roller index to mapping index (accounting for Disabled + skipped modes)
   bool show_tempo = (scene->clock_source == CLOCK_SOURCE_INTERNAL);
   scene_mode_t scene_mode = scene_get_mode();
   bool show_program_change = (scene_mode != SCENE_MODE_PRESET_SYNC);
   uint32_t mapping_index = 0;
   uint32_t roller_count = 0;
+  uint32_t adjusted_index = selected_index - 1;
   
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal (same logic as mode_roller_create)
@@ -201,14 +228,14 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
     if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE && !show_program_change) {
       continue;
     }
-    if (roller_count == selected_index) {
+    if (roller_count == adjusted_index) {
       mapping_index = (uint32_t)i;
       break;
     }
     roller_count++;
   }
   
-  if (mapping_index >= NUM_BASE_MODES) {
+  if (mapping_index >= NUM_BASE_MODES || adjusted_index >= roller_count) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
@@ -261,8 +288,9 @@ static lv_obj_t* mode_roller_create(void) {
   options[0] = '\0';
   
   int current_mode_idx = get_current_mode_index();
-  uint32_t roller_index = 0;
-  uint32_t option_count = 0;
+  uint32_t roller_index = is_touchwheel_disabled(scene) ? 0 : 1;
+  uint32_t option_count = 1;
+  strcpy(options, "Disabled");
   
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal
@@ -274,10 +302,10 @@ static lv_obj_t* mode_roller_create(void) {
       continue;
     }
     
-    if (option_count > 0) strcat(options, "\n");
+    strcat(options, "\n");
     strcat(options, g_touchwheel_mode_mappings[i].display_name);
     
-    if ((int)i == current_mode_idx) {
+    if (!is_touchwheel_disabled(scene) && (int)i == current_mode_idx) {
       roller_index = option_count;
     }
     option_count++;
@@ -362,6 +390,121 @@ static lv_obj_t* style_roller_create(void) {
 static void nav_to_style(void* user_data) {
   (void)user_data;
   menu_navigate_to("Style", style_roller_create);
+}
+
+// ============================================================================
+// LFO Target Roller (LFO Rate / LFO Depth modes)
+// ============================================================================
+
+static void touchwheel_lfo_target_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->touchwheel_lfo_target = (lfo_target_t)selected_index;
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+}
+
+static lv_obj_t* touchwheel_lfo_target_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = (uint32_t)scene->touchwheel_lfo_target;
+  return menu_create_roller_page("Target", "LFO 1\nLFO 2\nBoth", current,
+    touchwheel_lfo_target_confirm_cb, NULL);
+}
+
+static void nav_to_touchwheel_lfo_target(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Target", touchwheel_lfo_target_roller_create);
+}
+
+// ============================================================================
+// Touchwheel Tempo Floor / Ceiling Rollers
+// ============================================================================
+
+static char s_tempo_floor_label[32];
+static char s_tempo_ceiling_label[32];
+
+static void touchwheel_tempo_bound_confirm_cb(uint32_t selected_index, void* user_data) {
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  uint16_t bpm = (uint16_t)(selected_index + 20);
+  bool is_floor = (user_data != NULL);
+  if (is_floor) {
+    scene->touchwheel_tempo_floor = bpm;
+    if (scene->touchwheel_tempo_floor > scene->touchwheel_tempo_ceiling) {
+      scene->touchwheel_tempo_ceiling = scene->touchwheel_tempo_floor;
+    }
+  } else {
+    scene->touchwheel_tempo_ceiling = bpm;
+    if (scene->touchwheel_tempo_ceiling < scene->touchwheel_tempo_floor) {
+      scene->touchwheel_tempo_floor = scene->touchwheel_tempo_ceiling;
+    }
+  }
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+}
+
+static lv_obj_t* touchwheel_tempo_bound_roller_create(void* user_data) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  static char options[4096];
+  char* pos = options;
+  size_t remaining = sizeof(options);
+  options[0] = '\0';
+  for (unsigned bpm = 20; bpm <= 300; bpm++) {
+    int n = snprintf(pos, remaining, "%s%u", bpm > 20 ? "\n" : "", bpm);
+    if (n <= 0 || (size_t)n >= remaining) break;
+    pos += n;
+    remaining -= (size_t)n;
+  }
+
+  bool is_floor = (user_data != NULL);
+  uint16_t current = is_floor ? scene->touchwheel_tempo_floor : scene->touchwheel_tempo_ceiling;
+  if (current < 20 || current > 300) current = is_floor ? 20 : 300;
+
+  return menu_create_roller_page(is_floor ? "Floor" : "Ceiling", options,
+    (uint32_t)(current - 20), touchwheel_tempo_bound_confirm_cb, user_data);
+}
+
+static lv_obj_t* touchwheel_tempo_floor_roller_create(void) {
+  return touchwheel_tempo_bound_roller_create((void*)1);
+}
+
+static lv_obj_t* touchwheel_tempo_ceiling_roller_create(void) {
+  return touchwheel_tempo_bound_roller_create(NULL);
+}
+
+static void nav_to_touchwheel_tempo_floor(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Floor", touchwheel_tempo_floor_roller_create);
+}
+
+static void nav_to_touchwheel_tempo_ceiling(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Ceiling", touchwheel_tempo_ceiling_roller_create);
 }
 
 // ============================================================================
@@ -466,7 +609,10 @@ static lv_obj_t* cc_slot_roller_create(void) {
   }
   
   static char title[32];
-  snprintf(title, sizeof(title), "Control Change %u", (unsigned)(slot + 1));
+  int mode_idx = get_current_mode_index();
+  const char* slot_label = (g_touchwheel_mode_mappings[mode_idx].mode == TOUCHWHEEL_MODE_DOUBLE_CC)
+    ? "Parameter" : "Control Change";
+  snprintf(title, sizeof(title), "%s %u", slot_label, (unsigned)(slot + 1));
   
   ESP_LOGI(TAG, "Creating CC slot roller: slot=%u, current_idx=%lu", 
            (unsigned)slot, (unsigned long)current_idx);
@@ -667,7 +813,7 @@ static void initial_value_confirm_cb(uint32_t selected_index, void* user_data) {
   }
 
   scene->touchwheel_initial_value = (uint8_t)selected_index;
-  scene_set_touchwheel_value(selected_index);
+  scene_set_touchwheel_value((uint8_t)selected_index);
   persist_scene_changes();
 
   ESP_LOGI(TAG, "Touchwheel initial value set to: %u", (unsigned)selected_index);
@@ -824,65 +970,6 @@ static void nav_to_polyphony(void* user_data) {
 }
 
 // ============================================================================
-// Double CC Parameter Roller
-// ============================================================================
-
-static void double_cc_param_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-
-  // Prevent re-entry
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-
-  scene_t* scene = scene_get_current();
-  if (!scene || selected_index == 0) {
-    // Inactive or no scene - just go back
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-
-  uint8_t cc_num = s_cc_options.cc_numbers[selected_index];
-
-  // For Double CC, we store in the first cc_numbers slot
-  scene->touchwheel.cc_numbers[0] = cc_num;
-  scene->touchwheel.num_cc_numbers = 1;
-  persist_scene_changes();
-
-  ESP_LOGI(TAG, "Double CC parameter set to CC%u (LSB=CC%u)",
-           (unsigned)cc_num, (unsigned)(cc_num + 32));
-
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
-}
-
-static lv_obj_t* double_cc_param_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene || !s_cc_options.options_str) {
-    return NULL;
-  }
-  
-  uint32_t current_idx = 0;
-  if (scene->touchwheel.num_cc_numbers > 0) {
-    current_idx = cc_number_to_option_index(scene->touchwheel.cc_numbers[0]);
-  }
-  
-  return menu_create_roller_page("Parameter", s_cc_options.options_str, 
-                                  current_idx, double_cc_param_confirm_cb, NULL);
-}
-
-static void nav_to_double_cc_param(void* user_data) {
-  (void)user_data;
-  
-  // Ensure CC options are loaded
-  if (!s_cc_options.options_str) {
-    load_cc_options();
-  }
-  
-  menu_navigate_to("Parameter", double_cc_param_roller_create);
-}
-
-// ============================================================================
 // Main Touchwheel Menu Page
 // ============================================================================
 
@@ -927,10 +1014,18 @@ lv_obj_t* menu_page_touchwheel_create(void) {
   
   int item_count = 0;
   
-  snprintf(s_mode_label, sizeof(s_mode_label), "Mode\n%s", mapping->display_name);
+  if (is_touchwheel_disabled(scene)) {
+    snprintf(s_mode_label, sizeof(s_mode_label), "Mode\nDisabled");
+  } else {
+    snprintf(s_mode_label, sizeof(s_mode_label), "Mode\n%s", mapping->display_name);
+  }
   s_tw_items[item_count++] = (menu_item_t){
     s_mode_label, nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
   };
+
+  if (is_touchwheel_disabled(scene)) {
+    return menu_create_page_2line("Touchwheel", s_tw_items, item_count);
+  }
   
   // Mode-specific items
   switch (mapping->mode) {
@@ -994,14 +1089,13 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       break;
       
     case TOUCHWHEEL_MODE_DOUBLE_CC:
-      // Parameter selection (2-line format)
-      {
-        const char* param_name = "Inactive";
-        if (scene->touchwheel.num_cc_numbers > 0) {
-          param_name = get_cc_slot_display(scene, 0);
-        }
-        snprintf(s_param_label, sizeof(s_param_label), "Parameter\n%s", param_name);
-        s_tw_items[item_count++] = (menu_item_t){s_param_label, nav_to_double_cc_param, NULL, true, MENU_ITEM_KIND_ROLLER};
+      for (int i = 0; i < MAX_MULTI_CC; i++) {
+        const char* cc_name = get_cc_slot_display(scene, (uint8_t)i);
+        snprintf(s_cc_slot_labels[i], sizeof(s_cc_slot_labels[i]),
+                 "Parameter %d\n%s", i + 1, cc_name);
+        s_tw_items[item_count++] = (menu_item_t){
+          s_cc_slot_labels[i], nav_to_cc_slot, (void*)(uintptr_t)i, true, MENU_ITEM_KIND_ROLLER
+        };
       }
       break;
       
@@ -1012,10 +1106,31 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       break;
       
     case TOUCHWHEEL_MODE_SET_TEMPO:
+      snprintf(s_tempo_floor_label, sizeof(s_tempo_floor_label), "Floor\n%u BPM",
+        (unsigned)scene->touchwheel_tempo_floor);
+      s_tw_items[item_count++] = (menu_item_t){
+        s_tempo_floor_label, nav_to_touchwheel_tempo_floor, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
+      snprintf(s_tempo_ceiling_label, sizeof(s_tempo_ceiling_label), "Ceiling\n%u BPM",
+        (unsigned)scene->touchwheel_tempo_ceiling);
+      s_tw_items[item_count++] = (menu_item_t){
+        s_tempo_ceiling_label, nav_to_touchwheel_tempo_ceiling, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
+      break;
+
     case TOUCHWHEEL_MODE_AFTERTOUCH:
-      // These have style selection (added below)
+      // Style selection added below
       break;
       
+    case TOUCHWHEEL_MODE_LFO_RATE:
+    case TOUCHWHEEL_MODE_LFO_DEPTH:
+      snprintf(s_lfo_target_label, sizeof(s_lfo_target_label), "Target\n%s",
+        touchwheel_lfo_target_label(scene->touchwheel_lfo_target));
+      s_tw_items[item_count++] = (menu_item_t){
+        s_lfo_target_label, nav_to_touchwheel_lfo_target, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
+      break;
+
     default:
       break;
   }
@@ -1027,10 +1142,11 @@ lv_obj_t* menu_page_touchwheel_create(void) {
     s_tw_items[item_count++] = (menu_item_t){s_style_label, nav_to_style, NULL, true, MENU_ITEM_KIND_ROLLER};
   }
   
-  // Initial Value (only for CC mode with endless encoder style)
-  if (mapping->mode == TOUCHWHEEL_MODE_CONTINUOUS &&
-      mapping->output_type == OUTPUT_TYPE_CC &&
-      scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+  // Initial Value (endless CC or Double CC)
+  if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS &&
+      ((mapping->mode == TOUCHWHEEL_MODE_CONTINUOUS &&
+        mapping->output_type == OUTPUT_TYPE_CC) ||
+       mapping->mode == TOUCHWHEEL_MODE_DOUBLE_CC)) {
     snprintf(s_initial_value_label, sizeof(s_initial_value_label), 
       "Initial Value\n%u", (unsigned)scene->touchwheel_initial_value);
     s_tw_items[item_count++] = (menu_item_t){

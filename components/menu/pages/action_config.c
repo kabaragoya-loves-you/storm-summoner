@@ -4670,9 +4670,8 @@ static void nav_to_lfo_modify_waveform(void* user_data) {
 // --- Rate mode ------------------------------------------------------------
 
 static const lfo_rate_mode_t s_lfo_modify_rate_modes[] = {
-  LFO_RATE_MODE_FREE, LFO_RATE_MODE_TEMPO, LFO_RATE_MODE_TOUCHWHEEL,
-  LFO_RATE_MODE_EXPRESSION, LFO_RATE_MODE_CV, LFO_RATE_MODE_ALS,
-  LFO_RATE_MODE_PROXIMITY,
+  LFO_RATE_MODE_FREE,
+  LFO_RATE_MODE_TEMPO,
 };
 #define NUM_LFO_MODIFY_RATE_MODES (sizeof(s_lfo_modify_rate_modes) / sizeof(s_lfo_modify_rate_modes[0]))
 
@@ -4680,14 +4679,9 @@ static const char* lfo_modify_rate_mode_display(uint8_t v) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
   if (v == ACTION_LFO_RAND_U8) return "Random";
   switch ((lfo_rate_mode_t)v) {
-    case LFO_RATE_MODE_FREE:       return "Free";
-    case LFO_RATE_MODE_TEMPO:      return "Tempo";
-    case LFO_RATE_MODE_TOUCHWHEEL: return "Touchwheel";
-    case LFO_RATE_MODE_EXPRESSION: return "Expression";
-    case LFO_RATE_MODE_CV:         return "CV";
-    case LFO_RATE_MODE_ALS:        return "ALS";
-    case LFO_RATE_MODE_PROXIMITY:  return "Proximity";
-    default:                       return "Original";
+    case LFO_RATE_MODE_FREE:  return "Time";
+    case LFO_RATE_MODE_TEMPO: return "Division";
+    default:                  return "Original";
   }
 }
 
@@ -4711,8 +4705,7 @@ static void lfo_modify_rate_mode_confirm_cb(uint32_t selected_index, void* user_
 static lv_obj_t* lfo_modify_rate_mode_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
   static char options[128];
-  snprintf(options, sizeof(options),
-    "Original\nRandom\nFree\nTempo\nTouchwheel\nExpression\nCV\nALS\nProximity");
+  snprintf(options, sizeof(options), "Original\nRandom\nTime\nDivision");
   uint32_t current = lfo_modify_u8_roller_current(
     s_ctx->target_action->params.lfo.rate_mode,
     (const uint8_t*)s_lfo_modify_rate_modes, NUM_LFO_MODIFY_RATE_MODES);
@@ -5088,7 +5081,7 @@ static void nav_to_lfo_modify_steps(void* user_data) {
 typedef struct {
   uint8_t* rate_mode;
   uint16_t* rate_hz_x100;
-  uint16_t* sync_mult_x1000;
+  uint8_t* division;
   uint8_t* glide;
   uint8_t* probability;
 } engine_modify_bind_t;
@@ -5101,7 +5094,7 @@ static bool engine_modify_bind_action(action_t* action) {
     s_engine_modify = (engine_modify_bind_t){
       &action->params.rtg_modify.rate_mode,
       &action->params.rtg_modify.rate_hz_x100,
-      &action->params.rtg_modify.sync_mult_x1000,
+      &action->params.rtg_modify.division,
       &action->params.rtg_modify.glide,
       &action->params.rtg_modify.probability,
     };
@@ -5111,7 +5104,7 @@ static bool engine_modify_bind_action(action_t* action) {
     s_engine_modify = (engine_modify_bind_t){
       &action->params.sh_modify.rate_mode,
       &action->params.sh_modify.rate_hz_x100,
-      &action->params.sh_modify.sync_mult_x1000,
+      &action->params.sh_modify.division,
       &action->params.sh_modify.glide,
       &action->params.sh_modify.probability,
     };
@@ -5125,7 +5118,7 @@ static const uint8_t s_engine_modify_rate_modes[] = { 0, 1 };
 static const char* engine_modify_rate_mode_display(uint8_t v) {
   if (v == ACTION_LFO_ORIG_U8) return "Original";
   if (v == ACTION_LFO_RAND_U8) return "Random";
-  return (v == 0) ? "Free" : "Sync";
+  return (v == 0) ? "Time" : "Division";
 }
 
 static const uint16_t s_engine_modify_rates_x100[] = {
@@ -5147,22 +5140,24 @@ static const char* engine_modify_rate_hz_display(uint16_t v, char* buf, size_t l
   return buf;
 }
 
-static const uint16_t s_engine_modify_sync_mults[] = {
-  125, 167, 250, 333, 500, 667, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000,
+static const uint8_t s_engine_modify_divisions[] = {
+  LFO_DIVISION_16_BARS, LFO_DIVISION_12_BARS, LFO_DIVISION_8_BARS,
+  LFO_DIVISION_4_BARS, LFO_DIVISION_2_BARS, LFO_DIVISION_1_BAR,
+  LFO_DIVISION_HALF, LFO_DIVISION_QUARTER, LFO_DIVISION_EIGHTH,
+  LFO_DIVISION_SIXTEENTH, LFO_DIVISION_32ND,
 };
-#define NUM_ENGINE_MODIFY_SYNC_MULTS (sizeof(s_engine_modify_sync_mults) / sizeof(s_engine_modify_sync_mults[0]))
+#define NUM_ENGINE_MODIFY_DIVISIONS (sizeof(s_engine_modify_divisions) / sizeof(s_engine_modify_divisions[0]))
 
-static const char* s_engine_modify_sync_labels[] = {
-  "1/8 (0.125x)", "1/6 (0.167x)", "1/4 (0.25x)", "1/3 (0.333x)",
-  "1/2 (0.5x)", "2/3 (0.667x)", "3/4 (0.75x)", "1x",
-  "3/2 (1.5x)", "2x", "3x", "4x", "6x", "8x",
+static const char* s_engine_modify_division_labels[] = {
+  "16 Bars", "12 Bars", "8 Bars", "4 Bars", "2 Bars", "1 Bar",
+  "1/2", "1/4", "1/8", "1/16", "1/32",
 };
 
-static const char* engine_modify_sync_mult_display(uint16_t v) {
-  if (v == ACTION_LFO_ORIG_U16) return "Original";
-  if (v == ACTION_LFO_RAND_U16) return "Random";
-  for (size_t i = 0; i < NUM_ENGINE_MODIFY_SYNC_MULTS; i++) {
-    if (s_engine_modify_sync_mults[i] == v) return s_engine_modify_sync_labels[i];
+static const char* engine_modify_division_display(uint8_t v) {
+  if (v == ACTION_LFO_ORIG_U8) return "Original";
+  if (v == ACTION_LFO_RAND_U8) return "Random";
+  for (size_t i = 0; i < NUM_ENGINE_MODIFY_DIVISIONS; i++) {
+    if (s_engine_modify_divisions[i] == v) return s_engine_modify_division_labels[i];
   }
   return "Custom";
 }
@@ -5202,7 +5197,7 @@ static void engine_modify_rate_mode_confirm_cb(uint32_t selected_index, void* us
 
 static lv_obj_t* engine_modify_rate_mode_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) return NULL;
-  return menu_create_roller_page("Rate Mode", "Original\nRandom\nFree\nSync",
+  return menu_create_roller_page("Rate Mode", "Original\nRandom\nTime\nDivision",
     lfo_modify_u8_roller_current(*s_engine_modify.rate_mode, s_engine_modify_rate_modes, 2),
     engine_modify_rate_mode_confirm_cb, NULL);
 }
@@ -5254,7 +5249,7 @@ static void nav_to_engine_modify_rate_hz(void* user_data) {
   nav_to_subpage("Rate", engine_modify_rate_hz_roller_create);
 }
 
-static void engine_modify_sync_mult_confirm_cb(uint32_t selected_index, void* user_data) {
+static void engine_modify_division_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
@@ -5263,31 +5258,31 @@ static void engine_modify_sync_mult_confirm_cb(uint32_t selected_index, void* us
     menu_navigate_back();
     return;
   }
-  lfo_modify_u16_roller_apply(s_engine_modify.sync_mult_x1000, selected_index,
-    s_engine_modify_sync_mults, NUM_ENGINE_MODIFY_SYNC_MULTS);
+  lfo_modify_u8_roller_apply(s_engine_modify.division, selected_index,
+    s_engine_modify_divisions, NUM_ENGINE_MODIFY_DIVISIONS);
   persist_scene_changes();
   s_callback_in_progress = false;
   return_to_detail_page(2);
 }
 
-static lv_obj_t* engine_modify_sync_mult_roller_create(void) {
+static lv_obj_t* engine_modify_division_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action || !engine_modify_bind_action(s_ctx->target_action)) return NULL;
-  static char options[384];
+  static char options[256];
   size_t pos = (size_t)snprintf(options, sizeof(options), "Original\nRandom");
-  for (size_t i = 0; i < NUM_ENGINE_MODIFY_SYNC_MULTS && pos < sizeof(options); i++) {
+  for (size_t i = 0; i < NUM_ENGINE_MODIFY_DIVISIONS && pos < sizeof(options); i++) {
     pos += (size_t)snprintf(options + pos, sizeof(options) - pos, "\n%s",
-      s_engine_modify_sync_labels[i]);
+      s_engine_modify_division_labels[i]);
   }
-  return menu_create_roller_page("Sync Mult",
+  return menu_create_roller_page("Divider",
     options,
-    lfo_modify_u16_roller_current(*s_engine_modify.sync_mult_x1000,
-      s_engine_modify_sync_mults, NUM_ENGINE_MODIFY_SYNC_MULTS),
-    engine_modify_sync_mult_confirm_cb, NULL);
+    lfo_modify_u8_roller_current(*s_engine_modify.division,
+      s_engine_modify_divisions, NUM_ENGINE_MODIFY_DIVISIONS),
+    engine_modify_division_confirm_cb, NULL);
 }
 
-static void nav_to_engine_modify_sync_mult(void* user_data) {
+static void nav_to_engine_modify_division(void* user_data) {
   (void)user_data;
-  nav_to_subpage("Sync Mult", engine_modify_sync_mult_roller_create);
+  nav_to_subpage("Divider", engine_modify_division_roller_create);
 }
 
 static void engine_modify_glide_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -5377,9 +5372,9 @@ static void engine_modify_append_detail_rows(const action_engine_modify_t* m, in
 
   if (*item_count >= MAX_DETAIL_ITEMS) return;
   snprintf(s_engine_modify_sync_mult_label[buf], sizeof(s_engine_modify_sync_mult_label[buf]),
-    "Sync Mult\n%s", engine_modify_sync_mult_display(m->sync_mult_x1000));
+    "Divider\n%s", engine_modify_division_display(m->division));
   s_detail_items[(*item_count)++] = (menu_item_t){
-    s_engine_modify_sync_mult_label[buf], nav_to_engine_modify_sync_mult, NULL, true, MENU_ITEM_KIND_ROLLER
+    s_engine_modify_sync_mult_label[buf], nav_to_engine_modify_division, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
   if (*item_count >= MAX_DETAIL_ITEMS) return;

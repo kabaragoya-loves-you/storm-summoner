@@ -37,8 +37,8 @@ VALID_ACTION_TYPES = %w[
 
 # Valid touchwheel modes
 VALID_TOUCHWHEEL_MODES = %w[
-  buttons program_change continuous set_tempo
-  pitch_bend aftertouch nrpn rpn double_cc
+  pads program_change continuous set_tempo pitch_bend aftertouch
+  double_cc velocity lfo_rate lfo_depth rtg_rate
 ].freeze
 
 # Valid touchwheel styles
@@ -101,10 +101,10 @@ def validate_engine_modify_fields(action, context, errors)
        (action['rate_hz_x100'] == rand_u16 || action['rate_hz_x100'].between?(50, 2500)))
     errors << "#{context}: modify 'rate_hz_x100' must be 50-2500 or #{rand_u16} (random)"
   end
-  if action.key?('sync_mult_x1000') &&
-     !(action['sync_mult_x1000'].is_a?(Integer) &&
-       (action['sync_mult_x1000'] == rand_u16 || action['sync_mult_x1000'].between?(125, 8000)))
-    errors << "#{context}: modify 'sync_mult_x1000' must be 125-8000 or #{rand_u16} (random)"
+  if action.key?('division') &&
+     !(action['division'].is_a?(Integer) &&
+       (action['division'] == rand_u8 || action['division'].between?(0, 10)))
+    errors << "#{context}: modify 'division' must be 0-10 or #{rand_u8} (random)"
   end
   if action.key?('glide') &&
      !(action['glide'].is_a?(Integer) &&
@@ -287,8 +287,8 @@ def validate_action(action, context, errors, scene_data: nil)
       if action.key?('waveform') && !(action['waveform'].is_a?(Integer) && (action['waveform'] == lfo_rand_u8 || action['waveform'].between?(0, 5)))
         errors << "#{context}: lfo modify 'waveform' must be 0-5 or #{lfo_rand_u8} (random)"
       end
-      if action.key?('rate_mode') && !(action['rate_mode'].is_a?(Integer) && (action['rate_mode'] == lfo_rand_u8 || action['rate_mode'].between?(0, 6)))
-        errors << "#{context}: lfo modify 'rate_mode' must be 0-6 or #{lfo_rand_u8} (random)"
+      if action.key?('rate_mode') && !(action['rate_mode'].is_a?(Integer) && (action['rate_mode'] == lfo_rand_u8 || action['rate_mode'].between?(0, 1)))
+        errors << "#{context}: lfo modify 'rate_mode' must be 0-1 or #{lfo_rand_u8} (random)"
       end
       if action.key?('rate_hz_x100') && !(action['rate_hz_x100'].is_a?(Integer) && (action['rate_hz_x100'] == lfo_rand_u16 || action['rate_hz_x100'].between?(5, 2000)))
         errors << "#{context}: lfo modify 'rate_hz_x100' must be 5-2000 or #{lfo_rand_u16} (random)"

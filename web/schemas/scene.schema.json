@@ -75,7 +75,7 @@
       "type": "string",
       "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc", "velocity", "lfo_rate", "lfo_depth", "rtg_rate"],
       "default": "pads",
-      "description": "Touchwheel behavior mode"
+      "description": "Touchwheel behavior mode (storage enum; web editor uses user-facing modes including Disabled, Notes, Tempo Nudge)"
     },
     "touchwheel_lfo_target": {
       "type": "string",
@@ -88,7 +88,7 @@
       "minimum": 0,
       "maximum": 127,
       "default": 0,
-      "description": "Initial CC value for touchwheel endless encoder mode"
+      "description": "Initial value (0-127) for touchwheel endless encoder; scaled to 14-bit in Double CC mode"
     },
     "touchwheel_style": {
       "type": "string",
@@ -298,12 +298,40 @@
       "default": 10,
       "description": "Percent of scene BPM to swing around center for touchwheel (OUTPUT_TYPE_TEMPO_NUDGE)"
     },
+    "touchwheel_tempo_floor": {
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 300,
+      "default": 20,
+      "description": "Minimum BPM when touchwheel mode is set_tempo"
+    },
+    "touchwheel_tempo_ceiling": {
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 300,
+      "default": 300,
+      "description": "Maximum BPM when touchwheel mode is set_tempo"
+    },
     "als_tempo_nudge_pct": {
       "type": "integer",
       "minimum": 0,
       "maximum": 100,
       "default": 10,
       "description": "Percent of scene BPM to swing around center for ambient light (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "lfo1_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for LFO 1 tempo nudge routing"
+    },
+    "lfo2_tempo_nudge_pct": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 100,
+      "default": 10,
+      "description": "Percent of scene BPM to swing around center for LFO 2 tempo nudge routing"
     },
     "audio_config": {
       "type": "object",
@@ -585,9 +613,9 @@
         },
         "rate_mode": {
           "type": "string",
-          "enum": ["free", "tempo", "touchwheel", "expression", "cv", "als", "proximity"],
+          "enum": ["free", "tempo"],
           "default": "free",
-          "description": "Rate mode: free (Hz-based), tempo (note division sync), touchwheel, expression, cv, als, or proximity (sensor-controlled)"
+          "description": "Rate mode: free/Time (Hz-based) or tempo/Division (note division sync)"
         },
         "start_mode": {
           "type": "string",
@@ -706,12 +734,11 @@
           "default": 2.0,
           "description": "Rate in Hz (when rate_mode=free)"
         },
-        "sync_mult": {
-          "type": "number",
-          "minimum": 0.125,
-          "maximum": 8.0,
-          "default": 1.0,
-          "description": "BPM sync multiplier (when rate_mode=sync). 1.0 = one step per beat."
+        "division": {
+          "type": "string",
+          "enum": ["16_bars", "12_bars", "8_bars", "4_bars", "2_bars", "1_bar", "half", "quarter", "eighth", "sixteenth", "32nd"],
+          "default": "quarter",
+          "description": "Note division (when rate_mode=sync/Division)"
         },
         "glide": {
           "type": "boolean",
@@ -832,12 +859,11 @@
           "default": 2.0,
           "description": "Rate in Hz (when rate_mode=free)"
         },
-        "sync_mult": {
-          "type": "number",
-          "minimum": 0.125,
-          "maximum": 8.0,
-          "default": 1.0,
-          "description": "BPM sync multiplier (when rate_mode=sync). 1.0 = one step per beat."
+        "division": {
+          "type": "string",
+          "enum": ["16_bars", "12_bars", "8_bars", "4_bars", "2_bars", "1_bar", "half", "quarter", "eighth", "sixteenth", "32nd"],
+          "default": "quarter",
+          "description": "Note division (when rate_mode=sync/Division)"
         },
         "glide": {
           "type": "boolean",
@@ -1641,10 +1667,10 @@
               },
               "rate_mode": {
                 "anyOf": [
-                  { "type": "integer", "minimum": 0, "maximum": 6 },
+                  { "type": "integer", "minimum": 0, "maximum": 1 },
                   { "type": "integer", "const": 254 }
                 ],
-                "description": "Override rate mode (0=Free, 1=Tempo, 2=Touchwheel, 3=Expression, 4=CV, 5=ALS, 6=Proximity). 254 = randomize on each trigger. Omit to keep the scene's configured rate mode."
+                "description": "Override rate mode (0=Time, 1=Division). 254 = randomize on each trigger. Omit to keep the scene's configured rate mode."
               },
               "rate_hz_x100": {
                 "anyOf": [
@@ -1713,7 +1739,7 @@
                   { "type": "integer", "minimum": 0, "maximum": 1 },
                   { "type": "integer", "const": 254 }
                 ],
-                "description": "Override rate mode (0=Free, 1=Sync). 254 = randomize on each trigger. Omit to keep the scene's configured rate mode."
+                "description": "Override rate mode (0=Time, 1=Division). 254 = randomize on each trigger. Omit to keep the scene's configured rate mode."
               },
               "rate_hz_x100": {
                 "anyOf": [
@@ -1722,12 +1748,12 @@
                 ],
                 "description": "Override free-running rate in Hz * 100 (50=0.5Hz .. 2500=25.0Hz). 65534 = randomize on each trigger. Omit to keep the scene's configured rate."
               },
-              "sync_mult_x1000": {
+              "division": {
                 "anyOf": [
-                  { "type": "integer", "minimum": 125, "maximum": 8000 },
-                  { "type": "integer", "const": 65534 }
+                  { "type": "integer", "minimum": 0, "maximum": 10 },
+                  { "type": "integer", "const": 254 }
                 ],
-                "description": "Override tempo-sync multiplier * 1000. 65534 = randomize on each trigger. Omit to keep the scene's configured sync multiplier."
+                "description": "Override note division (0=16 bars .. 10=1/32). 254 = randomize on each trigger. Omit to keep the scene's configured divider."
               },
               "glide": {
                 "anyOf": [

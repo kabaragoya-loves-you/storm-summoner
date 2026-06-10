@@ -4606,8 +4606,16 @@ static int cmd_touchwheel_mode(int argc, char **argv) {
     mode = TOUCHWHEEL_MODE_AFTERTOUCH;
   } else if (strcmp(mode_str, "double_cc") == 0 || strcmp(mode_str, "14bit") == 0) {
     mode = TOUCHWHEEL_MODE_DOUBLE_CC;
+  } else if (strcmp(mode_str, "velocity") == 0) {
+    mode = TOUCHWHEEL_MODE_VELOCITY;
+  } else if (strcmp(mode_str, "lfo_rate") == 0) {
+    mode = TOUCHWHEEL_MODE_LFO_RATE;
+  } else if (strcmp(mode_str, "lfo_depth") == 0) {
+    mode = TOUCHWHEEL_MODE_LFO_DEPTH;
+  } else if (strcmp(mode_str, "rtg_rate") == 0) {
+    mode = TOUCHWHEEL_MODE_RTG_RATE;
   } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: pads, pc, cc, tempo, pb, at, double_cc");
+    ESP_LOGE(TAG, "Unknown mode. Use: pads, pc, cc, tempo, pb, at, double_cc, velocity, lfo_rate, lfo_depth, rtg_rate");
     return 1;
   }
   
@@ -5984,12 +5992,13 @@ esp_err_t scene_console_init(void) {
   esp_console_cmd_register(&lfo2_trigger_cmd);
 
   // touchwheel_mode command
-  touchwheel_mode_args.mode = arg_str1(NULL, NULL, "<mode>", "Touchwheel mode");
+  touchwheel_mode_args.mode = arg_str1(NULL, NULL, "<mode>",
+    "pads, pc, cc, tempo, pb, at, double_cc, velocity, lfo_rate, lfo_depth, rtg_rate");
   touchwheel_mode_args.end = arg_end(2);
   
   const esp_console_cmd_t touchwheel_mode_cmd = {
     .command = "touchwheel_mode",
-    .help = "Set touchwheel mode: pads, pc, continuous/cc, tempo, pb, at, double_cc",
+    .help = "Set touchwheel mode: pads, pc, cc, tempo, pb, at, double_cc, velocity, lfo_rate, lfo_depth, rtg_rate",
     .hint = NULL,
     .func = &cmd_touchwheel_mode,
     .argtable = &touchwheel_mode_args

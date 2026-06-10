@@ -505,40 +505,8 @@ static void lfo_task(void* arg) {
           uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
           lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
         } else if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
-          // Free-running mode: use configured Hz rate
+          // Time mode: use configured Hz rate
           float rate_hz = lfo->config.rate_hz_x100 / 100.0f;
-          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-        } else if (lfo->config.rate_mode == LFO_RATE_MODE_TOUCHWHEEL) {
-          // Touchwheel mode: rate controlled by touchwheel position
-          // Map 0-127 to 0.1-10.0 Hz exponentially for better feel
-          uint8_t tw_value = scene_get_touchwheel_lfo_rate();
-          // Exponential mapping: 0.1 Hz at 0, ~1Hz at 64, 10Hz at 127
-          float rate_hz = 0.1f * powf(100.0f, tw_value / 127.0f);
-          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-        } else if (lfo->config.rate_mode == LFO_RATE_MODE_EXPRESSION) {
-          // Expression pedal mode: rate controlled by expression input
-          uint8_t val = scene_get_expression_lfo_rate();
-          float rate_hz = 0.1f * powf(100.0f, val / 127.0f);
-          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-        } else if (lfo->config.rate_mode == LFO_RATE_MODE_CV) {
-          // CV mode: rate controlled by CV input
-          uint8_t val = scene_get_cv_lfo_rate();
-          float rate_hz = 0.1f * powf(100.0f, val / 127.0f);
-          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-        } else if (lfo->config.rate_mode == LFO_RATE_MODE_ALS) {
-          // ALS mode: rate controlled by ambient light sensor
-          uint8_t val = scene_get_als_lfo_rate();
-          float rate_hz = 0.1f * powf(100.0f, val / 127.0f);
-          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-        } else if (lfo->config.rate_mode == LFO_RATE_MODE_PROXIMITY) {
-          // Proximity mode: rate controlled by proximity sensor
-          uint8_t val = scene_get_proximity_lfo_rate();
-          float rate_hz = 0.1f * powf(100.0f, val / 127.0f);
           uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
           lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
         } else {
@@ -1051,6 +1019,30 @@ lfo_waveform_t lfo_waveform_from_string(const char* str) {
   if (strcmp(str, "sample_hold") == 0) return LFO_WAVEFORM_SAMPLE_HOLD;
   if (strcmp(str, "custom") == 0) return LFO_WAVEFORM_CUSTOM;
   return LFO_WAVEFORM_SINE;
+}
+
+float lfo_rate_hz_for_division(uint16_t bpm, uint8_t felt_beats_per_bar,
+    lfo_note_division_t division) {
+  if (bpm == 0) return 1.0f;
+  if (felt_beats_per_bar == 0) felt_beats_per_bar = 4;
+
+  float cycles_per_beat;
+  switch (division) {
+    case LFO_DIVISION_32ND:      cycles_per_beat = 8.0f; break;
+    case LFO_DIVISION_SIXTEENTH: cycles_per_beat = 4.0f; break;
+    case LFO_DIVISION_EIGHTH:    cycles_per_beat = 2.0f; break;
+    case LFO_DIVISION_QUARTER:   cycles_per_beat = 1.0f; break;
+    case LFO_DIVISION_HALF:      cycles_per_beat = 0.5f; break;
+    case LFO_DIVISION_1_BAR:     cycles_per_beat = 1.0f / felt_beats_per_bar; break;
+    case LFO_DIVISION_2_BARS:    cycles_per_beat = 1.0f / (felt_beats_per_bar * 2); break;
+    case LFO_DIVISION_4_BARS:    cycles_per_beat = 1.0f / (felt_beats_per_bar * 4); break;
+    case LFO_DIVISION_8_BARS:    cycles_per_beat = 1.0f / (felt_beats_per_bar * 8); break;
+    case LFO_DIVISION_12_BARS:   cycles_per_beat = 1.0f / (felt_beats_per_bar * 12); break;
+    case LFO_DIVISION_16_BARS:   cycles_per_beat = 1.0f / (felt_beats_per_bar * 16); break;
+    default:                     cycles_per_beat = 1.0f; break;
+  }
+
+  return (bpm / 60.0f) * cycles_per_beat;
 }
 
 lfo_note_division_t lfo_division_from_string(const char* str) {

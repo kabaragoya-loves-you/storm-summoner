@@ -1,4 +1,5 @@
 #include "rtg.h"
+#include "lfo.h"
 #include "lfsr.h"
 #include "midi_messages.h"
 #include "scene.h"
@@ -61,12 +62,6 @@ static uint64_t rate_to_interval_us(uint16_t rate_hz_x100) {
   return (100000000ULL / rate_hz_x100);
 }
 
-// Sync multiplier values (same as menu roller) - for touchwheel/LFO mapping
-static const uint16_t s_sync_mult_table[] = {
-  125, 167, 250, 333, 500, 667, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000
-};
-#define NUM_SYNC_MULT_TABLE (sizeof(s_sync_mult_table) / sizeof(s_sync_mult_table[0]))
-
 // Free Hz values (same as menu roller) - Hz * 100
 static const uint16_t s_rate_hz_table[] = {
   50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400,
@@ -86,26 +81,20 @@ static uint16_t get_effective_rate_x100(void) {
   bool tw_active = (tw_rate != 64);  // 64 is default/center, means no modulation
 
   if (s_config.rate_mode == RTG_RATE_MODE_SYNC) {
-    // Base rate: BPM / 60 = Hz (one step per beat)
-    uint32_t base_hz_x100 = (s_current_bpm * 100) / 60;
-    uint32_t mult;
-
+    lfo_note_division_t division = s_config.division;
     if (s_has_dynamic_rate) {
-      // LFO is modulating: map 0-127 to multiplier table index
-      uint8_t idx = (s_dynamic_rate_value * (NUM_SYNC_MULT_TABLE - 1)) / 127;
-      if (idx >= NUM_SYNC_MULT_TABLE) idx = NUM_SYNC_MULT_TABLE - 1;
-      mult = s_sync_mult_table[idx];
+      uint8_t idx = (s_dynamic_rate_value * (LFO_DIVISION_MAX - 1)) / 127;
+      if (idx >= LFO_DIVISION_MAX) idx = LFO_DIVISION_MAX - 1;
+      division = (lfo_note_division_t)idx;
     } else if (tw_active) {
-      // Touchwheel is modulating: map 0-127 to multiplier table index
-      uint8_t idx = (tw_rate * (NUM_SYNC_MULT_TABLE - 1)) / 127;
-      if (idx >= NUM_SYNC_MULT_TABLE) idx = NUM_SYNC_MULT_TABLE - 1;
-      mult = s_sync_mult_table[idx];
-    } else {
-      mult = s_config.sync_mult_x1000;
-      if (mult == 0) mult = 1000;
+      uint8_t idx = (tw_rate * (LFO_DIVISION_MAX - 1)) / 127;
+      if (idx >= LFO_DIVISION_MAX) idx = LFO_DIVISION_MAX - 1;
+      division = (lfo_note_division_t)idx;
     }
 
-    uint32_t result = (base_hz_x100 * mult) / 1000;
+    uint8_t felt_beats = tempo_get_felt_beats_per_bar();
+    float hz = lfo_rate_hz_for_division(s_current_bpm, felt_beats, division);
+    uint32_t result = (uint32_t)(hz * 100.0f);
     if (result < 50) result = 50;
     if (result > 2500) result = 2500;
     return (uint16_t)result;
@@ -868,7 +857,7 @@ void rtg_apply_config(const rtg_config_t* config) {
   bool was_enabled = s_config.enabled;
   bool was_continuous = (s_config.mode == RTG_MODE_CONTINUOUS);
   uint16_t old_rate = s_config.rate_hz_x100;
-  uint16_t old_sync_mult = s_config.sync_mult_x1000;
+  lfo_note_division_t old_division = s_config.division;
   rtg_rate_mode_t old_rate_mode = s_config.rate_mode;
   rtg_generator_t old_generator = s_config.generator;
   shepard_layout_t old_layout = s_config.shepard_layout;
@@ -884,8 +873,7 @@ void rtg_apply_config(const rtg_config_t* config) {
   // Clamp values
   if (s_config.rate_hz_x100 < 50) s_config.rate_hz_x100 = 50;
   if (s_config.rate_hz_x100 > 2500) s_config.rate_hz_x100 = 2500;
-  if (s_config.sync_mult_x1000 < 125) s_config.sync_mult_x1000 = 125;
-  if (s_config.sync_mult_x1000 > 8000) s_config.sync_mult_x1000 = 8000;
+  if (s_config.division >= LFO_DIVISION_MAX) s_config.division = LFO_DIVISION_QUARTER;
   if (s_config.velocity < 1) s_config.velocity = 1;
   if (s_config.velocity > 127) s_config.velocity = 127;
   if (s_config.note_min > 127) s_config.note_min = 127;
@@ -903,7 +891,7 @@ void rtg_apply_config(const rtg_config_t* config) {
 
   bool is_continuous = (s_config.mode == RTG_MODE_CONTINUOUS);
   bool rate_changed = (old_rate != s_config.rate_hz_x100) ||
-                      (old_sync_mult != s_config.sync_mult_x1000) ||
+                      (old_division != s_config.division) ||
                       (old_rate_mode != s_config.rate_mode);
 
   // Detect changes that require flushing currently-held notes/voices.
@@ -982,7 +970,8 @@ rtg_config_t rtg_config_create_default(void) {
     .rate_mode = RTG_RATE_MODE_FREE,
     .start_mode = RTG_START_RUNNING,
     .rate_hz_x100 = 200,       // 2.0 Hz
-    .sync_mult_x1000 = 1000,   // 1.0x (1 step per beat)
+    .sync_mult_x1000 = 1000,
+    .division = LFO_DIVISION_QUARTER,
     .glide = false,
     .velocity = 100,
     .note_min = 36,   // C2
@@ -1094,6 +1083,19 @@ void rtg_set_sync_mult(float mult) {
 
 float rtg_get_sync_mult(void) {
   return (float)s_config.sync_mult_x1000 / 1000.0f;
+}
+
+void rtg_set_division(lfo_note_division_t division) {
+  if (division >= LFO_DIVISION_MAX) division = LFO_DIVISION_QUARTER;
+  s_config.division = division;
+
+  if (s_config.rate_mode == RTG_RATE_MODE_SYNC) {
+    rtg_timer_update_rate();
+  }
+}
+
+lfo_note_division_t rtg_get_division(void) {
+  return s_config.division;
 }
 
 // Touchwheel rate changed notification

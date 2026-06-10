@@ -132,16 +132,7 @@ static const char* trigger_timing_to_display_string(lfo_trigger_timing_t timing)
 }
 
 static const char* rate_mode_to_display_string(lfo_rate_mode_t mode) {
-  switch (mode) {
-    case LFO_RATE_MODE_FREE: return "Free";
-    case LFO_RATE_MODE_TEMPO: return "Tempo Sync";
-    case LFO_RATE_MODE_TOUCHWHEEL: return "Touchwheel";
-    case LFO_RATE_MODE_EXPRESSION: return "Expression";
-    case LFO_RATE_MODE_CV: return "CV";
-    case LFO_RATE_MODE_ALS: return "ALS";
-    case LFO_RATE_MODE_PROXIMITY: return "Proximity";
-    default: return "Free";
-  }
+  return (mode == LFO_RATE_MODE_TEMPO) ? "Division" : "Time";
 }
 
 // ============================================================================
@@ -322,9 +313,10 @@ static void nav_to_waveform(void* user_data) {
 // Rate Mode Roller
 // ============================================================================
 
-// Rate mode arrays for dynamic roller building
-static lfo_rate_mode_t s_rate_modes[7];
-static int s_rate_mode_count = 0;
+static const lfo_rate_mode_t s_rate_modes[2] = {
+  LFO_RATE_MODE_FREE,
+  LFO_RATE_MODE_TEMPO,
+};
 
 static void rate_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -339,7 +331,7 @@ static void rate_mode_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
 
-  if ((int)selected_index < s_rate_mode_count) {
+  if (selected_index < 2) {
     scene->lfo2_config.rate_mode = s_rate_modes[selected_index];
     lfo_apply_config(1, &scene->lfo2_config);
     persist_scene_changes();
@@ -353,51 +345,9 @@ static lv_obj_t* rate_mode_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
 
-  // Check if CV is in CV/Gate mode (locks expression to gate, can't use for LFO)
-  uint8_t scene_index = scene_get_current_index();
-  input_mode_t cv_mode = scene_get_cv_input_mode(scene_index);
-  bool expr_locked = (cv_mode == INPUT_MODE_NOTE);
-
-  // Build dynamic mode list and options string
-  static char options[128];
-  options[0] = '\0';
-  s_rate_mode_count = 0;
-
-  // Always include these modes
-  strcat(options, "Free");
-  s_rate_modes[s_rate_mode_count++] = LFO_RATE_MODE_FREE;
-
-  strcat(options, "\nTempo Sync");
-  s_rate_modes[s_rate_mode_count++] = LFO_RATE_MODE_TEMPO;
-
-  strcat(options, "\nTouchwheel");
-  s_rate_modes[s_rate_mode_count++] = LFO_RATE_MODE_TOUCHWHEEL;
-
-  // Only include Expression if CV is not in CV/Gate mode
-  if (!expr_locked) {
-    strcat(options, "\nExpression");
-    s_rate_modes[s_rate_mode_count++] = LFO_RATE_MODE_EXPRESSION;
-  }
-
-  strcat(options, "\nCV");
-  s_rate_modes[s_rate_mode_count++] = LFO_RATE_MODE_CV;
-
-  strcat(options, "\nALS");
-  s_rate_modes[s_rate_mode_count++] = LFO_RATE_MODE_ALS;
-
-  strcat(options, "\nProximity");
-  s_rate_modes[s_rate_mode_count++] = LFO_RATE_MODE_PROXIMITY;
-
-  // Find current mode in the dynamic list
-  uint32_t current = 0;
-  for (int i = 0; i < s_rate_mode_count; i++) {
-    if (s_rate_modes[i] == scene->lfo2_config.rate_mode) {
-      current = (uint32_t)i;
-      break;
-    }
-  }
-
-  return menu_create_roller_page("Rate Mode", options, current, rate_mode_confirm_cb, NULL);
+  uint32_t current = (scene->lfo2_config.rate_mode == LFO_RATE_MODE_TEMPO) ? 1 : 0;
+  return menu_create_roller_page("Rate Mode", "Time\nDivision", current,
+    rate_mode_confirm_cb, NULL);
 }
 
 static void nav_to_rate_mode(void* user_data) {

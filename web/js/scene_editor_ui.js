@@ -30,8 +30,8 @@ window.SceneEditorUi = (function () {
   ]
 
   const LFO_TARGET = [
-    { v: 'lfo1', l: 'LFO1' },
-    { v: 'lfo2', l: 'LFO2' },
+    { v: 'lfo1', l: 'LFO 1' },
+    { v: 'lfo2', l: 'LFO 2' },
     { v: 'both', l: 'Both' }
   ]
 
@@ -56,21 +56,32 @@ window.SceneEditorUi = (function () {
     { v: 'trigger', l: 'Trigger' }
   ]
 
-  const TOUCHWHEEL_MODE = [
-    { v: 'pads', l: 'Pads' },
-    { v: 'program_change', l: 'Program Change' },
-    { v: 'continuous', l: 'Continuous' },
-    { v: 'set_tempo', l: 'Set Tempo' },
-    { v: 'pitch_bend', l: 'Pitch Bend' },
-    { v: 'aftertouch', l: 'Aftertouch' },
-    { v: 'double_cc', l: 'Double CC' },
-    { v: 'velocity', l: 'Velocity' },
-    { v: 'lfo_rate', l: 'LFO Rate' },
-    { v: 'lfo_depth', l: 'LFO Depth' },
-    { v: 'lfo1_rate', l: 'LFO1 Rate' },
-    { v: 'lfo2_rate', l: 'LFO2 Rate' },
-    { v: 'rtg_rate', l: 'RTG Rate' }
+  const TOUCHWHEEL_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'pads', l: 'Pads', touchwheel_mode: 'pads' },
+    { v: 'control_change', l: 'Control Change', touchwheel_mode: 'continuous', output_type: 'cc', touchwheel_style: 'endless', supports_style: true },
+    { v: 'program_change', l: 'Program Change', touchwheel_mode: 'program_change' },
+    { v: 'tempo', l: 'Tempo', touchwheel_mode: 'set_tempo', touchwheel_style: 'endless', supports_style: true },
+    { v: 'pitch_bend', l: 'Pitch Bend', touchwheel_mode: 'pitch_bend' },
+    { v: 'aftertouch', l: 'After Touch', touchwheel_mode: 'aftertouch', touchwheel_style: 'odometer', supports_style: true },
+    { v: 'notes', l: 'Notes', touchwheel_mode: 'continuous', output_type: 'note', touchwheel_style: 'odometer', supports_style: true },
+    { v: 'double_cc', l: 'Double CC', touchwheel_mode: 'double_cc', touchwheel_style: 'endless', supports_style: true },
+    { v: 'velocity', l: 'Velocity', touchwheel_mode: 'velocity' },
+    { v: 'lfo_rate', l: 'LFO Rate', touchwheel_mode: 'lfo_rate', touchwheel_style: 'odometer', supports_style: true, lfo_target: true },
+    { v: 'lfo_depth', l: 'LFO Depth', touchwheel_mode: 'lfo_depth', touchwheel_style: 'odometer', supports_style: true, lfo_target: true },
+    { v: 'rtg_rate', l: 'RTG Rate', touchwheel_mode: 'rtg_rate', touchwheel_style: 'odometer', supports_style: true },
+    { v: 'tempo_nudge', l: 'Tempo Nudge', touchwheel_mode: 'continuous', output_type: 'tempo_nudge', touchwheel_style: 'bipolar', supports_style: true }
   ]
+
+  const TOUCHWHEEL_STYLE_OPTIONS = [
+    { v: 'odometer', l: 'Odometer' },
+    { v: 'endless', l: 'Endless' }
+  ]
+
+  const NOTE_OCTAVE_OPTIONS = Array.from({ length: 10 }, (_, i) => {
+    const n = i + 1
+    return { v: n * 12, l: `${n} Octave${n > 1 ? 's' : ''}` }
+  })
 
   const SCREEN_MODULES = [
     { v: 'beat', l: 'Beat Grid' },
@@ -175,31 +186,162 @@ window.SceneEditorUi = (function () {
     if (!m.cc_number && m.cc_numbers[0]) m.cc_number = m.cc_numbers[0]
   }
 
+  function touchwheelActiveCcList (tw) {
+    const raw = tw?.cc_numbers || []
+    const active = raw.filter(cc => Number(cc) > 0)
+    return active.length ? active.slice(0, 4) : [0]
+  }
+
+  function syncTouchwheelCcNumbers (tw) {
+    const list = touchwheelActiveCcList(tw)
+    tw.cc_numbers = list
+    tw.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
+    if (list[0]) tw.cc_number = list[0]
+  }
+
+  function lfoRoutingOptions (n) {
+    const opts = [
+      { v: 'cc', l: 'Control Change' },
+      { v: 'note', l: 'Notes' }
+    ]
+    if (n === 1) {
+      opts.push({ v: 'lfo2_rate', l: 'LFO 2 Rate' })
+      opts.push({ v: 'lfo2_depth', l: 'LFO 2 Depth' })
+    } else {
+      opts.push({ v: 'lfo1_rate', l: 'LFO 1 Rate' })
+      opts.push({ v: 'lfo1_depth', l: 'LFO 1 Depth' })
+    }
+    opts.push(
+      { v: 'rtg_rate', l: 'RTG Rate' },
+      { v: 'sh_rate', l: 'S+H Rate' },
+      { v: 'pitch_bend', l: 'Pitch Bend' },
+      { v: 'tempo_nudge', l: 'Tempo Nudge' }
+    )
+    return opts
+  }
+
+  function lfoActiveCcList (mapping) {
+    const raw = mapping?.cc_numbers || []
+    const active = raw.filter(cc => Number(cc) > 0)
+    return active.length ? active.slice(0, 4) : [0]
+  }
+
+  function syncLfoCcNumbers (mapping) {
+    const list = lfoActiveCcList(mapping)
+    mapping.cc_numbers = list
+    mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
+    if (list[0]) mapping.cc_number = list[0]
+  }
+
+  function renderLfoCcSlots (ctrl, mappingPath, mapping) {
+    syncLfoCcNumbers(mapping)
+    const device = ctrl.deviceDefinition
+    const ccList = mapping.cc_numbers
+    const maxSlots = DeviceControls.hasParameters(device)
+      ? Math.min(4, DeviceControls.parameterCount(device))
+      : 4
+    const ccBySlot = ccList.map(cc =>
+      DeviceControls.resolveParameterCc(device, cc)
+    )
+    const usedCcs = new Set(ccBySlot.map(Number).filter(n => n > 0))
+    let rows = ''
+    for (let i = 0; i < ccList.length; i++) {
+      const cc = ccBySlot[i]
+      const exclude = new Set(usedCcs)
+      if (Number(cc) > 0) exclude.delete(Number(cc))
+      let body = fieldRow(
+        'Parameter',
+        paramField(ctrl, `${mappingPath}.cc_numbers.${i}`, cc, { exclude, keep: cc })
+      )
+      const add =
+        ccList.length < maxSlots && i === ccList.length - 1
+          ? slotAddButton(mappingPath, 'lfo-cc', 'Add parameter', maxSlots)
+          : ''
+      rows += slotBlock(`Slot ${i + 1}`, body, i > 0 ? i : -1, add)
+    }
+    return slotGroup({
+      path: mappingPath,
+      kind: 'lfo-cc',
+      min: 1,
+      max: maxSlots,
+      def: 0,
+      rows
+    })
+  }
+
+  function renderTouchwheelCcSlots (ctrl) {
+    const m = ctrl.editModel
+    if (!m.touchwheel) m.touchwheel = { enabled: true }
+    const tw = m.touchwheel
+    syncTouchwheelCcNumbers(tw)
+    const device = ctrl.deviceDefinition
+    const ccList = tw.cc_numbers
+    const maxSlots = DeviceControls.hasParameters(device)
+      ? Math.min(4, DeviceControls.parameterCount(device))
+      : 4
+    const ccBySlot = ccList.map(cc =>
+      DeviceControls.resolveParameterCc(device, cc)
+    )
+    const usedCcs = new Set(ccBySlot.map(Number).filter(n => n > 0))
+    let rows = ''
+    for (let i = 0; i < ccList.length; i++) {
+      const cc = ccBySlot[i]
+      const exclude = new Set(usedCcs)
+      if (Number(cc) > 0) exclude.delete(Number(cc))
+      let body = fieldRow(
+        'Parameter',
+        paramField(ctrl, `touchwheel.cc_numbers.${i}`, cc, { exclude, keep: cc })
+      )
+      const add =
+        ccList.length < maxSlots && i === ccList.length - 1
+          ? slotAddButton('touchwheel', 'touchwheel-cc', 'Add parameter', maxSlots)
+          : ''
+      rows += slotBlock(`Slot ${i + 1}`, body, i > 0 ? i : -1, add)
+    }
+    return slotGroup({
+      path: 'touchwheel',
+      kind: 'touchwheel-cc',
+      min: 1,
+      max: maxSlots,
+      def: 0,
+      rows
+    })
+  }
+
   function renderContinuousMapping (ctrl, mappingPath, mapping, opts = {}) {
     const m = mapping || {}
     const enabledPath = `${mappingPath}.enabled`
     const otPath = `${mappingPath}.output_type`
     const ot = m.output_type || 'cc'
-    let html = fieldRow(
-      'Enabled',
-      checkboxField(enabledPath, m.enabled !== false)
-    )
-    if (m.enabled === false) return html
+    const routingTypes = opts.routingTypes || OUTPUT_TYPES
+    const routingLabel = opts.routingLabel || 'Output'
+    let html = ''
+    if (!opts.hideEnabled) {
+      html += fieldRow(
+        'Enabled',
+        checkboxField(enabledPath, m.enabled !== false)
+      )
+      if (m.enabled === false) return html
+    }
 
-    html += fieldRow('Output', selectField(otPath, ot, OUTPUT_TYPES))
+    html += fieldRow(routingLabel, selectField(otPath, ot, routingTypes))
     ensureCcNumbers(m)
 
     if (ot === 'cc') {
-      for (let i = 0; i < 4; i++) {
-        html += fieldRow(
-          `CC slot ${i + 1}`,
-          numberField(
-            `${mappingPath}.cc_numbers.${i}`,
-            m.cc_numbers[i] ?? 0,
-            0,
-            127
+      if (opts.ccSlots) {
+        html += renderLfoCcSlots(ctrl, mappingPath, m)
+      } else {
+        for (let i = 0; i < 4; i++) {
+          html += fieldRow(
+            `CC slot ${i + 1}`,
+            numberField(
+              `${mappingPath}.cc_numbers.${i}`,
+              m.cc_numbers[i] ?? 0,
+              0,
+              127
+            )
           )
-        )
+        }
       }
       html += fieldRow(
         'Polarity',
@@ -254,14 +396,16 @@ window.SceneEditorUi = (function () {
         )
       )
     } else if (ot === 'tempo_nudge' && opts.tempoNudgePath) {
+      const nudgePct = ctrl.getAtPath(opts.tempoNudgePath) ?? 10
       html += fieldRow(
-        'Nudge %',
-        numberField(
-          opts.tempoNudgePath,
-          ctrl.getAtPath(opts.tempoNudgePath) ?? 10,
-          0,
-          100
-        )
+        'Amount',
+        opts.tempoNudgeSelect
+          ? selectField(
+            opts.tempoNudgePath,
+            nudgePct,
+            ActionCatalog.tempoNudgeAmountOptions(nudgePct)
+          )
+          : numberField(opts.tempoNudgePath, nudgePct, 0, 100)
       )
     }
 
@@ -801,11 +945,11 @@ window.SceneEditorUi = (function () {
       )
     )
     html += fieldRow(
-      'Sync mult',
+      'Divider',
       selectField(
-        `${path}.sync_mult_x1000`,
-        a.sync_mult_x1000 ?? 65535,
-        ActionCatalog.engineModifySyncMultOptions(a.sync_mult_x1000)
+        `${path}.division`,
+        a.division ?? 255,
+        ActionCatalog.engineModifyDivisionOptions(a.division)
       )
     )
     html += fieldRow(
@@ -1878,14 +2022,9 @@ window.SceneEditorUi = (function () {
   function renderExpression (ctrl) {
     const m = ctrl.editModel
     const lockedGate = m.cv_input_mode === 'note'
-    const lockedLfo =
-      m.lfo1_config?.rate_mode === 'expression' ||
-      m.lfo2_config?.rate_mode === 'expression'
     let html = ''
     if (lockedGate) {
       html += `<wa-callout variant="neutral">Expression locked to Gate (CV/Gate mode).</wa-callout>`
-    } else if (lockedLfo) {
-      html += `<wa-callout variant="neutral">Expression locked to LFO rate source.</wa-callout>`
     } else {
       html += fieldRow(
         'Mode',
@@ -1896,7 +2035,7 @@ window.SceneEditorUi = (function () {
         )
       )
     }
-    if (m.expression_mode === 'expression' && !lockedGate && !lockedLfo) {
+    if (m.expression_mode === 'expression' && !lockedGate) {
       if (!m.expression) m.expression = { enabled: true, output_type: 'cc' }
       html += renderContinuousMapping(ctrl, 'expression', m.expression, {
         velocityModePath: 'expression_velocity_mode',
@@ -1969,42 +2108,116 @@ window.SceneEditorUi = (function () {
     return section('Control Voltage', html)
   }
 
+  function touchwheelUserModeSelection (m) {
+    if ((m.touchwheel_mode || 'pads') === 'pads') return 'pads'
+    if (m.touchwheel?.enabled === false) return 'disabled'
+    const mode = m.touchwheel_mode || 'pads'
+    const ot = m.touchwheel?.output_type || 'cc'
+    for (const opt of TOUCHWHEEL_USER_MODES) {
+      if (!opt.touchwheel_mode) continue
+      if (opt.touchwheel_mode !== mode) continue
+      if (opt.output_type && opt.output_type !== ot) continue
+      return opt.v
+    }
+    return 'control_change'
+  }
+
+  function renderTouchwheelStyle (m) {
+    return fieldRow(
+      'Style',
+      selectField('touchwheel_style', m.touchwheel_style || 'odometer', TOUCHWHEEL_STYLE_OPTIONS)
+    )
+  }
+
   function renderTouchwheel (ctrl) {
     const m = ctrl.editModel
+    const userMode = touchwheelUserModeSelection(m)
     let html = fieldRow(
       'Mode',
-      selectField(
-        'touchwheel_mode',
-        m.touchwheel_mode || 'pads',
-        TOUCHWHEEL_MODE
-      )
+      selectField('__touchwheel_user_mode', userMode, TOUCHWHEEL_USER_MODES)
     )
-    const mode = m.touchwheel_mode || 'pads'
-    if (mode === 'continuous') {
-      if (!m.touchwheel) m.touchwheel = { enabled: true, output_type: 'cc' }
-      html += renderContinuousMapping(ctrl, 'touchwheel', m.touchwheel, {
-        tempoNudgePath: 'touchwheel_tempo_nudge_pct'
-      })
-      html += fieldRow(
-        'Style',
-        selectField('touchwheel_style', m.touchwheel_style || 'odometer', [
-          { v: 'odometer', l: 'Odometer' },
-          { v: 'endless', l: 'Endless' },
-          { v: 'bipolar', l: 'Bipolar' }
-        ])
-      )
+    if (userMode === 'disabled' || userMode === 'pads') {
+      return section('Touchwheel', html)
+    }
+
+    const spec = TOUCHWHEEL_USER_MODES.find(o => o.v === userMode)
+    if (!m.touchwheel) m.touchwheel = { enabled: true, output_type: 'cc' }
+
+    if (userMode === 'control_change') {
+      html += renderTouchwheelCcSlots(ctrl)
+      if (spec?.supports_style) html += renderTouchwheelStyle(m)
       if (m.touchwheel_style === 'endless') {
         html += fieldRow(
           'Initial value',
-          numberField(
-            'touchwheel_initial_value',
-            m.touchwheel_initial_value ?? 0,
-            0,
-            127
-          )
+          numberField('touchwheel_initial_value', m.touchwheel_initial_value ?? 0, 0, 127)
         )
       }
+    } else if (userMode === 'notes') {
+      html += fieldRow(
+        'Base note',
+        selectField('touchwheel.base_note', m.touchwheel.base_note ?? 60,
+          ActionCatalog.noteNameOptions(m.touchwheel.base_note ?? 60))
+      )
+      html += fieldRow(
+        'Range',
+        selectField('touchwheel.note_range', m.touchwheel.note_range ?? 24, NOTE_OCTAVE_OPTIONS)
+      )
+      html += fieldRow(
+        'Velocity',
+        numberField('touchwheel.velocity', m.touchwheel.velocity ?? 100, 1, 127)
+      )
+      html += fieldRow('Latch', checkboxField('touchwheel.note_latch', !!m.touchwheel.note_latch))
+      if (m.touchwheel.note_latch) {
+        html += fieldRow(
+          'Release',
+          numberField('touchwheel.note_release_ms', m.touchwheel.note_release_ms ?? 500, 100, 5000)
+        )
+      }
+      if (m.touchwheel_style === 'odometer') {
+        html += fieldRow(
+          'Polyphony',
+          selectField('touchwheel.polyphony', m.touchwheel.polyphony || 'mono', [
+            { v: 'mono', l: 'Mono' },
+            { v: 'poly', l: 'Poly' }
+          ])
+        )
+      }
+      if (spec?.supports_style) html += renderTouchwheelStyle(m)
+    } else if (userMode === 'double_cc') {
+      html += renderTouchwheelCcSlots(ctrl)
+      if (spec?.supports_style) html += renderTouchwheelStyle(m)
+      if (m.touchwheel_style === 'endless') {
+        html += fieldRow(
+          'Initial value',
+          numberField('touchwheel_initial_value', m.touchwheel_initial_value ?? 0, 0, 127)
+        )
+      }
+    } else if (userMode === 'tempo_nudge') {
+      html += fieldRow(
+        'Nudge %',
+        numberField('touchwheel_tempo_nudge_pct', m.touchwheel_tempo_nudge_pct ?? 10, 1, 50)
+      )
+      if (spec?.supports_style) html += renderTouchwheelStyle(m)
+    } else if (userMode === 'tempo') {
+      if (spec?.supports_style) html += renderTouchwheelStyle(m)
+      html += fieldRow(
+        'Floor',
+        numberField('touchwheel_tempo_floor', m.touchwheel_tempo_floor ?? 20, 20, 300)
+      )
+      html += fieldRow(
+        'Ceiling',
+        numberField('touchwheel_tempo_ceiling', m.touchwheel_tempo_ceiling ?? 300, 20, 300)
+      )
+    } else if (userMode === 'lfo_rate' || userMode === 'lfo_depth') {
+      html += fieldRow(
+        'Target',
+        selectField('touchwheel_lfo_target', m.touchwheel_lfo_target || 'both', LFO_TARGET)
+      )
+      if (spec?.supports_style) html += renderTouchwheelStyle(m)
+    } else if (spec?.supports_style) {
+      html += renderTouchwheelStyle(m)
     }
+
     return section('Touchwheel', html)
   }
 
@@ -2017,10 +2230,14 @@ window.SceneEditorUi = (function () {
       m[cfgKey] = { enabled: false, waveform: 'sine', rate_mode: 'free' }
     if (!m[mapKey]) m[mapKey] = { enabled: false, output_type: 'cc' }
     let html = fieldRow(
-      'LFO enabled',
+      'Enabled',
       checkboxField(`${cfgKey}.enabled`, !!m[cfgKey].enabled)
     )
     if (!m[cfgKey].enabled) return section(`LFO${n}`, html)
+    m[mapKey].enabled = m[cfgKey].enabled
+    const validRouting = lfoRoutingOptions(n).map(o => o.v)
+    if (!validRouting.includes(m[mapKey].output_type))
+      m[mapKey].output_type = 'cc'
 
     html += fieldRow(
       'Waveform',
@@ -2033,32 +2250,46 @@ window.SceneEditorUi = (function () {
         { v: 'sample_hold', l: 'Sample & Hold' }
       ])
     )
+    const lfoRateMode = (m[cfgKey].rate_mode === 'tempo') ? 'tempo' : 'free'
+    if (m[cfgKey].rate_mode !== lfoRateMode) m[cfgKey].rate_mode = lfoRateMode
     html += fieldRow(
       'Rate mode',
-      selectField(`${cfgKey}.rate_mode`, m[cfgKey].rate_mode || 'free', [
-        { v: 'free', l: 'Free' },
-        { v: 'tempo', l: 'Tempo' },
-        { v: 'touchwheel', l: 'Touchwheel' },
-        { v: 'expression', l: 'Expression' },
-        { v: 'cv', l: 'CV' },
-        { v: 'als', l: 'ALS' },
-        { v: 'proximity', l: 'Proximity' }
+      selectField(`${cfgKey}.rate_mode`, lfoRateMode, [
+        { v: 'free', l: 'Time' },
+        { v: 'tempo', l: 'Division' }
       ])
     )
-    if (m[cfgKey].rate_mode === 'free') {
+    if (lfoRateMode === 'free') {
       html += fieldRow(
-        'Rate Hz',
-        numberField(`${cfgKey}.rate_hz`, m[cfgKey].rate_hz ?? 1, 0.05, 20)
+        'Rate',
+        selectField(
+          `${cfgKey}.rate_hz`,
+          m[cfgKey].rate_hz ?? 1,
+          ActionCatalog.lfoSceneRateHzOptions(m[cfgKey].rate_hz ?? 1)
+        )
       )
     }
-    if (m[cfgKey].rate_mode === 'tempo') {
+    if (lfoRateMode === 'tempo') {
       html += fieldRow(
-        'Division',
-        textField(`${cfgKey}.division`, m[cfgKey].division || 'quarter', 16)
+        'Divider',
+        selectField(
+          `${cfgKey}.division`,
+          m[cfgKey].division || 'quarter',
+          ActionCatalog.lfoSceneDivisionOptions(m[cfgKey].division || 'quarter')
+        )
       )
     }
+    const nudgeKey = n === 1 ? 'lfo1_tempo_nudge_pct' : 'lfo2_tempo_nudge_pct'
+    if (m[mapKey].output_type === 'tempo_nudge' && m[nudgeKey] == null)
+      m[nudgeKey] = 10
     html += renderContinuousMapping(ctrl, mapKey, m[mapKey], {
-      velocityModePath: velKey
+      hideEnabled: true,
+      routingLabel: 'Routing',
+      routingTypes: lfoRoutingOptions(n),
+      ccSlots: true,
+      velocityModePath: velKey,
+      tempoNudgePath: nudgeKey,
+      tempoNudgeSelect: true
     })
     return section(`LFO${n}`, html)
   }
@@ -2090,24 +2321,28 @@ window.SceneEditorUi = (function () {
       html += fieldRow(
         'Rate mode',
         selectField('rtg_config.rate_mode', m.rtg_config.rate_mode || 'free', [
-          { v: 'free', l: 'Free' },
-          { v: 'sync', l: 'Sync' }
+          { v: 'free', l: 'Time' },
+          { v: 'sync', l: 'Division' }
         ])
       )
       if (m.rtg_config.rate_mode === 'free') {
         html += fieldRow(
-          'Rate Hz',
-          numberField('rtg_config.rate_hz', m.rtg_config.rate_hz ?? 2, 0.5, 25)
+          'Rate',
+          selectField('rtg_config.rate_hz', m.rtg_config.rate_hz ?? 2,
+            ActionCatalog.engineModifyRateHzOptions(200).map(o => ({
+              v: o.v / 100,
+              l: o.l
+            })))
         )
       } else {
         html += fieldRow(
-          'Sync mult',
-          numberField(
-            'rtg_config.sync_mult',
-            m.rtg_config.sync_mult ?? 1,
-            0.125,
-            8
-          )
+          'Divider',
+          selectField('rtg_config.division', m.rtg_config.division || 'quarter',
+            ActionCatalog.lfoModifyDivisionOptions(0).map(o => ({
+              v: ['16_bars', '12_bars', '8_bars', '4_bars', '2_bars', '1_bar',
+                'half', 'quarter', 'eighth', 'sixteenth', '32nd'][o.v],
+              l: o.l
+            })))
         )
       }
     }
@@ -2147,14 +2382,32 @@ window.SceneEditorUi = (function () {
     )
     if (m.sample_hold_config.mode === 'continuous') {
       html += fieldRow(
-        'Rate Hz',
-        numberField(
-          'sample_hold_config.rate_hz',
-          m.sample_hold_config.rate_hz ?? 2,
-          0.5,
-          25
-        )
+        'Rate mode',
+        selectField('sample_hold_config.rate_mode', m.sample_hold_config.rate_mode || 'free', [
+          { v: 'free', l: 'Time' },
+          { v: 'sync', l: 'Division' }
+        ])
       )
+      if (m.sample_hold_config.rate_mode === 'sync') {
+        html += fieldRow(
+          'Divider',
+          selectField('sample_hold_config.division', m.sample_hold_config.division || 'quarter',
+            ActionCatalog.lfoModifyDivisionOptions(0).map(o => ({
+              v: ['16_bars', '12_bars', '8_bars', '4_bars', '2_bars', '1_bar',
+                'half', 'quarter', 'eighth', 'sixteenth', '32nd'][o.v],
+              l: o.l
+            })))
+        )
+      } else {
+        html += fieldRow(
+          'Rate',
+          selectField('sample_hold_config.rate_hz', m.sample_hold_config.rate_hz ?? 2,
+            ActionCatalog.engineModifyRateHzOptions(200).map(o => ({
+              v: o.v / 100,
+              l: o.l
+            })))
+        )
+      }
     }
     ensureCcNumbers(m.sample_hold)
     for (let i = 0; i < 4; i++) {

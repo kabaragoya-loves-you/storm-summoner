@@ -221,7 +221,9 @@ application.register(
 
     onConnectionChanged ({ connected }) {
       if (!connected) {
-        this.renderDisconnected()
+        this.editing = false
+        this.dirty = false
+        this.baselineJson = null
         this.editModel = null
         this.editPosition = null
         this.deviceProgramming = false
@@ -229,9 +231,8 @@ application.register(
         this.pedalCatalog = null
         this._pedalCatalogLoad = null
         this.deviceContext.globalPedal = null
-        if (this.hasEditorToolbarTarget) {
-          this.editorToolbarTarget.classList.add('hidden')
-        }
+        this.renderDisconnected()
+        this.showViewMode()
       } else {
         this.fetchDeviceProgramming()
       }
@@ -1030,6 +1031,61 @@ application.register(
       if (!path) return
       let val = e.target.value
 
+      if (path === '__touchwheel_user_mode') {
+        const specByKey = {
+          disabled: { enabled: false },
+          pads: { touchwheel_mode: 'pads', enabled: false },
+          control_change: {
+            touchwheel_mode: 'continuous',
+            output_type: 'cc',
+            touchwheel_style: 'endless',
+            enabled: true,
+            touchwheel: { enabled: true, output_type: 'cc', cc_numbers: [0], num_cc_numbers: 0 }
+          },
+          program_change: { touchwheel_mode: 'program_change', enabled: true },
+          tempo: {
+            touchwheel_mode: 'set_tempo',
+            touchwheel_style: 'endless',
+            enabled: true,
+            touchwheel_tempo_floor: 20,
+            touchwheel_tempo_ceiling: 300
+          },
+          pitch_bend: { touchwheel_mode: 'pitch_bend', enabled: true },
+          aftertouch: { touchwheel_mode: 'aftertouch', touchwheel_style: 'odometer', enabled: true },
+          notes: { touchwheel_mode: 'continuous', output_type: 'note', touchwheel_style: 'odometer', enabled: true },
+          double_cc: { touchwheel_mode: 'double_cc', touchwheel_style: 'endless', enabled: true },
+          velocity: { touchwheel_mode: 'velocity', enabled: true },
+          lfo_rate: { touchwheel_mode: 'lfo_rate', touchwheel_style: 'odometer', enabled: true },
+          lfo_depth: { touchwheel_mode: 'lfo_depth', touchwheel_style: 'odometer', enabled: true },
+          rtg_rate: { touchwheel_mode: 'rtg_rate', touchwheel_style: 'odometer', enabled: true },
+          tempo_nudge: { touchwheel_mode: 'continuous', output_type: 'tempo_nudge', touchwheel_style: 'bipolar', enabled: true }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.touchwheel) this.editModel.touchwheel = {}
+        if (spec.touchwheel) Object.assign(this.editModel.touchwheel, spec.touchwheel)
+        if (spec.touchwheel_mode) this.editModel.touchwheel_mode = spec.touchwheel_mode
+        if (spec.output_type) this.editModel.touchwheel.output_type = spec.output_type
+        if (spec.touchwheel_tempo_floor != null) {
+          this.editModel.touchwheel_tempo_floor = spec.touchwheel_tempo_floor
+        }
+        if (spec.touchwheel_tempo_ceiling != null) {
+          this.editModel.touchwheel_tempo_ceiling = spec.touchwheel_tempo_ceiling
+        }
+        if (spec.touchwheel_style) this.editModel.touchwheel_style = spec.touchwheel_style
+        if (spec.enabled === false) {
+          this.editModel.touchwheel.enabled = false
+        } else if (spec.enabled) {
+          this.editModel.touchwheel.enabled = true
+        }
+        if (val === 'lfo_rate' || val === 'lfo_depth') {
+          if (!this.editModel.touchwheel_lfo_target) this.editModel.touchwheel_lfo_target = 'both'
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
       if (path.endsWith('.__boomerang_target')) {
         const aPath = path.slice(0, -'.__boomerang_target'.length)
         const action = this.getAtPath(aPath)
@@ -1240,6 +1296,15 @@ application.register(
         }
       }
 
+      const twCcMatch = path.match(/^touchwheel\.cc_numbers\.(\d+)$/)
+      if (twCcMatch) {
+        this.setAtPath(path, Number(val))
+        if (this.editModel.touchwheel) this.syncTouchwheelCcNumbers(this.editModel.touchwheel)
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
       if (this.isNumericScenePath(path)) val = Number(val)
       this.setAtPath(path, val)
       if (path.endsWith('.type')) {
@@ -1376,6 +1441,18 @@ application.register(
         if (maxAttr !== null && maxAttr !== '') v = Math.min(Number(maxAttr), v)
       }
       this.setAtPath(path, v)
+      if (path === 'touchwheel_tempo_floor' || path === 'touchwheel_tempo_ceiling') {
+        let floor = Number(this.editModel.touchwheel_tempo_floor ?? 20)
+        let ceiling = Number(this.editModel.touchwheel_tempo_ceiling ?? 300)
+        if (floor < 20) floor = 20
+        if (ceiling > 300) ceiling = 300
+        if (floor > ceiling) {
+          if (path === 'touchwheel_tempo_floor') ceiling = floor
+          else floor = ceiling
+        }
+        this.editModel.touchwheel_tempo_floor = floor
+        this.editModel.touchwheel_tempo_ceiling = ceiling
+      }
       this.markDirty()
     }
 
@@ -1415,6 +1492,8 @@ application.register(
       const { path, kind, max, default: def } = e.detail || {}
       if (!path) return
       if (kind === 'control') this.addControlCcSlot(path)
+      else if (kind === 'touchwheel-cc') this.addTouchwheelCcSlot(path)
+      else if (kind === 'lfo-cc') this.addLfoCcSlot(path)
       else if (kind === 'cycle-step') this.addCycleStep(path)
       else if (kind === 'param-cycle-step') this.addParamCycleStep(path)
       else if (kind === 'preset-step') this.addPresetCycleStep(path)
@@ -1429,6 +1508,8 @@ application.register(
       const { path, kind, index, min } = e.detail || {}
       if (!path || index == null || index < 0) return
       if (kind === 'control') this.removeControlCcSlot(path, index)
+      else if (kind === 'touchwheel-cc') this.removeTouchwheelCcSlot(path, index)
+      else if (kind === 'lfo-cc') this.removeLfoCcSlot(path, index)
       else if (kind === 'cycle-step') this.removeCycleStep(path, index)
       else if (kind === 'param-cycle-step') this.removeParamCycleStep(path, index)
       else if (kind === 'preset-step') this.removePresetCycleStep(path, index)
@@ -1442,6 +1523,96 @@ application.register(
     asArray (field) {
       if (Array.isArray(field)) return field.slice()
       return field == null ? [] : [field]
+    }
+
+    touchwheelCcList (tw) {
+      const raw = tw?.cc_numbers || []
+      const active = raw.filter(cc => Number(cc) > 0)
+      return active.length ? active.slice(0, 4) : [raw[0] || 0]
+    }
+
+    syncTouchwheelCcNumbers (tw) {
+      if (!tw) return
+      const list = this.touchwheelCcList(tw)
+      tw.cc_numbers = list
+      tw.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
+      if (list[0]) tw.cc_number = list[0]
+    }
+
+    addTouchwheelCcSlot (path) {
+      const tw = this.getAtPath(path)
+      if (!tw) return
+      const device = this.deviceDefinition
+      const list = this.touchwheelCcList(tw)
+      if (list.length >= 4) return
+      const used = new Set(list.map(Number).filter(n => n > 0))
+      list.push(
+        DeviceControls.hasParameters(device)
+          ? DeviceControls.firstUnusedParameterCc(device, used)
+          : 0
+      )
+      tw.cc_numbers = list
+      this.syncTouchwheelCcNumbers(tw)
+    }
+
+    removeTouchwheelCcSlot (path, index) {
+      const tw = this.getAtPath(path)
+      if (!tw) return
+      const list = this.touchwheelCcList(tw)
+      if (list.length <= 1) {
+        list[0] = 0
+        tw.cc_numbers = [0]
+        tw.num_cc_numbers = 0
+        return
+      }
+      list.splice(index, 1)
+      tw.cc_numbers = list
+      this.syncTouchwheelCcNumbers(tw)
+    }
+
+    lfoCcList (mapping) {
+      const raw = mapping?.cc_numbers || []
+      const active = raw.filter(cc => Number(cc) > 0)
+      return active.length ? active.slice(0, 4) : [raw[0] || 0]
+    }
+
+    syncLfoCcNumbers (mapping) {
+      if (!mapping) return
+      const list = this.lfoCcList(mapping)
+      mapping.cc_numbers = list
+      mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
+      if (list[0]) mapping.cc_number = list[0]
+    }
+
+    addLfoCcSlot (path) {
+      const mapping = this.getAtPath(path)
+      if (!mapping) return
+      const device = this.deviceDefinition
+      const list = this.lfoCcList(mapping)
+      if (list.length >= 4) return
+      const used = new Set(list.map(Number).filter(n => n > 0))
+      list.push(
+        DeviceControls.hasParameters(device)
+          ? DeviceControls.firstUnusedParameterCc(device, used)
+          : 0
+      )
+      mapping.cc_numbers = list
+      this.syncLfoCcNumbers(mapping)
+    }
+
+    removeLfoCcSlot (path, index) {
+      const mapping = this.getAtPath(path)
+      if (!mapping) return
+      const list = this.lfoCcList(mapping)
+      if (list.length <= 1) {
+        list[0] = 0
+        mapping.cc_numbers = [0]
+        mapping.num_cc_numbers = 0
+        return
+      }
+      list.splice(index, 1)
+      mapping.cc_numbers = list
+      this.syncLfoCcNumbers(mapping)
     }
 
     addControlCcSlot (path) {

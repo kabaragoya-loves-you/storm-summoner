@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "lfo.h"
 
 // RTG mode (time-based vs triggered)
 typedef enum {
@@ -66,7 +67,8 @@ typedef struct {
   rtg_rate_mode_t rate_mode;    // FREE (Hz) or SYNC (BPM)
   rtg_start_mode_t start_mode;  // When to start RTG on scene load
   uint16_t rate_hz_x100;        // 50-2500 (0.5-25.0 Hz), used when rate_mode == FREE
-  uint16_t sync_mult_x1000;     // 125-8000 (0.125x-8.0x), used when rate_mode == SYNC
+  uint16_t sync_mult_x1000;     // Legacy; migrated to division on load
+  lfo_note_division_t division; // Note division when rate_mode == SYNC
   bool glide;                   // Random: pitch bend smoothing. Shepard: smooth (bend + fade)
   uint8_t velocity;             // Random: note velocity. Shepard: peak velocity (bell-scaled)
   uint8_t note_min;             // Range floor (default 36/C2). Shepard: BASE_NOTE
@@ -129,6 +131,9 @@ float rtg_get_rate_hz(void);
 
 void rtg_set_sync_mult(float mult);
 float rtg_get_sync_mult(void);
+
+void rtg_set_division(lfo_note_division_t division);
+lfo_note_division_t rtg_get_division(void);
 
 // Notify RTG that touchwheel rate modulation changed (triggers timer update)
 void rtg_touchwheel_rate_changed(void);
