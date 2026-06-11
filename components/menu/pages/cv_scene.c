@@ -838,18 +838,11 @@ static void note_vel_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   s_callback_in_progress = true;
   
   uint8_t scene_index = scene_get_current_index();
-  velocity_mode_t mode;
-  switch (selected_index) {
-    case 0: mode = VELOCITY_MODE_FIXED; break;
-    case 1: mode = VELOCITY_MODE_GATE_VOLTAGE; break;
-    case 2: mode = VELOCITY_MODE_TOUCHWHEEL; break;
-    default: mode = VELOCITY_MODE_FIXED; break;
-  }
+  velocity_mode_t mode = (selected_index == 1) ? VELOCITY_MODE_GATE_VOLTAGE : VELOCITY_MODE_FIXED;
   
   scene_set_cv_velocity_mode(scene_index, mode);
   
-  const char* mode_str = (mode == VELOCITY_MODE_FIXED) ? "Fixed" :
-                         (mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
+  const char* mode_str = (mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
   ESP_LOGI(TAG, "CV velocity mode set to: %s", mode_str);
   
   s_callback_in_progress = false;
@@ -859,15 +852,8 @@ static void note_vel_mode_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* note_vel_mode_roller_create(void) {
   uint8_t scene_index = scene_get_current_index();
   velocity_mode_t current = scene_get_cv_velocity_mode(scene_index);
-  
-  uint32_t current_idx;
-  switch (current) {
-    case VELOCITY_MODE_FIXED: current_idx = 0; break;
-    case VELOCITY_MODE_GATE_VOLTAGE: current_idx = 1; break;
-    case VELOCITY_MODE_TOUCHWHEEL: current_idx = 2; break;
-    default: current_idx = 0; break;
-  }
-  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage\nTouchwheel", current_idx, 
+  uint32_t current_idx = (current == VELOCITY_MODE_GATE_VOLTAGE) ? 1 : 0;
+  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage", current_idx, 
     note_vel_mode_confirm_cb, NULL);
 }
 
@@ -1340,8 +1326,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
       // CV/Gate Mode: CV pitch + Expression gate
       // Show velocity mode
       velocity_mode_t vel_mode = scene_get_cv_velocity_mode(scene_index);
-      const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
-                                 (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
+      const char* vel_mode_str = (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
       snprintf(s_vel_mode_label[buf], sizeof(s_vel_mode_label[buf]),
         "Velocity Mode\n%s", vel_mode_str);
       s_cv_items[item_count++] = (menu_item_t){s_vel_mode_label[buf], nav_to_note_vel_mode, NULL, true, MENU_ITEM_KIND_ROLLER};

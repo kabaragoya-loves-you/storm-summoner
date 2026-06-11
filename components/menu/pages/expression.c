@@ -3,6 +3,7 @@
 #include "action_config.h"
 #include "expression.h"
 #include "scene.h"
+#include "expression_mode_mapping.h"
 #include "cv.h"
 #include "action.h"
 #include "curve.h"
@@ -33,13 +34,11 @@ static int s_current_buffer_set = 0;
 static menu_item_t s_expr_items[MAX_EXPR_ITEMS];
 
 static char s_mode_label[LABEL_BUFFER_SETS][32];
-static char s_output_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
 static char s_base_note_label[LABEL_BUFFER_SETS][32];
 static char s_range_label[LABEL_BUFFER_SETS][32];
-static char s_velocity_mode_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_label[LABEL_BUFFER_SETS][32];
 static char s_action_label[LABEL_BUFFER_SETS][48];
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
@@ -83,18 +82,6 @@ static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
   int octave = (midi_note / 12) - 1;
   int note_idx = midi_note % 12;
   snprintf(buf, buf_size, "%s%d", NOTE_NAMES[note_idx], octave);
-}
-
-static const char* get_mode_display_name(expression_mode_t mode) {
-  switch (mode) {
-    case EXPRESSION_MODE_NONE: return "<None>";
-    case EXPRESSION_MODE_PEDAL: return "Expression";
-    case EXPRESSION_MODE_SUSTAIN: return "Sustain";
-    case EXPRESSION_MODE_SOSTENUTO: return "Sostenuto";
-    case EXPRESSION_MODE_SWITCH: return "Switch";
-    case EXPRESSION_MODE_GATE: return "Gate";
-    default: return "Unknown";
-  }
 }
 
 // ============================================================================
@@ -171,27 +158,26 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
   
-  // Map index to mode (Gate is not in the list, None is at index 0)
-  expression_mode_t modes[] = {
-    EXPRESSION_MODE_NONE,
-    EXPRESSION_MODE_PEDAL,
-    EXPRESSION_MODE_SUSTAIN,
-    EXPRESSION_MODE_SOSTENUTO,
-    EXPRESSION_MODE_SWITCH
-  };
-  
-  if (selected_index >= 5) {
+  const expression_mode_mapping_t* mapping = expression_get_mode_mapping((uint8_t)selected_index);
+  if (!mapping) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
   
-  expression_mode_t new_mode = modes[selected_index];
   uint8_t scene_index = scene_get_current_index();
   
-  esp_err_t ret = scene_set_expression_mode(scene_index, new_mode);
+  // Output type lives in the continuous mapping; set it before the mode so the
+  // PEDAL reconfigure sees the intended routing.
+  if (mapping->use_output_type) {
+    scene_t* scene = scene_get_current();
+    if (scene) scene->expression.output_type = mapping->output_type;
+  }
+  
+  esp_err_t ret = scene_set_expression_mode(scene_index, mapping->mode);
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Expression mode set to: %s", get_mode_display_name(new_mode));
+    persist_scene_changes();
+    ESP_LOGI(TAG, "Expression mode set to: %s", mapping->display_name);
   } else {
     ESP_LOGW(TAG, "Failed to set expression mode: %s", esp_err_to_name(ret));
   }
@@ -201,20 +187,14 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
 }
 
 static lv_obj_t* mode_roller_create(void) {
-  static const char* options = "<None>\nExpression\nSustain\nSostenuto\nSwitch";
-  
-  uint8_t scene_index = scene_get_current_index();
-  expression_mode_t current = scene_get_expression_mode(scene_index);
-  
-  uint32_t current_idx = 0;
-  switch (current) {
-    case EXPRESSION_MODE_NONE: current_idx = 0; break;
-    case EXPRESSION_MODE_PEDAL: current_idx = 1; break;
-    case EXPRESSION_MODE_SUSTAIN: current_idx = 2; break;
-    case EXPRESSION_MODE_SOSTENUTO: current_idx = 3; break;
-    case EXPRESSION_MODE_SWITCH: current_idx = 4; break;
-    default: current_idx = 0; break;
+  static char options[256];
+  options[0] = '\0';
+  for (uint8_t i = 0; i < NUM_EXPRESSION_USER_MODES; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, expression_get_mode_name(i));
   }
+  
+  uint32_t current_idx = expression_get_current_mode_index(scene_get_current());
   
   return menu_create_roller_page("Mode", options, current_idx, mode_confirm_cb, NULL);
 }
@@ -222,64 +202,6 @@ static lv_obj_t* mode_roller_create(void) {
 static void nav_to_mode(void* user_data) {
   (void)user_data;
   menu_navigate_to("Mode", mode_roller_create);
-}
-
-// ============================================================================
-// Output Type Roller (CC vs Notes)
-// ============================================================================
-
-static void output_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  scene_t* scene = scene_get_current();
-  if (!scene) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-  
-  // Map roller index to output type
-  // 0=CC, 1=Note, 2=LFO Rate, 3=LFO Depth, 4=Tempo Nudge
-  switch (selected_index) {
-    case 0: scene->expression.output_type = OUTPUT_TYPE_CC; break;
-    case 1: scene->expression.output_type = OUTPUT_TYPE_NOTE; break;
-    case 2: scene->expression.output_type = OUTPUT_TYPE_LFO_RATE; break;
-    case 3: scene->expression.output_type = OUTPUT_TYPE_LFO_DEPTH; break;
-    case 4: scene->expression.output_type = OUTPUT_TYPE_TEMPO_NUDGE; break;
-    default: scene->expression.output_type = OUTPUT_TYPE_CC; break;
-  }
-  persist_scene_changes();
-  
-  ESP_LOGI(TAG, "Expression output set to type %d", (int)selected_index);
-  
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "Expression", menu_page_expression_create);
-}
-
-static lv_obj_t* output_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-  
-  uint32_t current = 0;
-  switch (scene->expression.output_type) {
-    case OUTPUT_TYPE_CC: current = 0; break;
-    case OUTPUT_TYPE_NOTE: current = 1; break;
-    case OUTPUT_TYPE_LFO_RATE: current = 2; break;
-    case OUTPUT_TYPE_LFO_DEPTH: current = 3; break;
-    case OUTPUT_TYPE_TEMPO_NUDGE: current = 4; break;
-    default: current = 0; break;
-  }
-  return menu_create_roller_page("Output",
-    "Control Change\nNotes\nLFO Rate\nLFO Depth\nTempo Nudge",
-    current, output_confirm_cb, NULL);
-}
-
-static void nav_to_output(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Output", output_roller_create);
 }
 
 // ============================================================================
@@ -590,55 +512,7 @@ static void nav_to_range(void* user_data) {
 }
 
 // ============================================================================
-// Velocity Mode Roller (for Notes mode)
-// ============================================================================
-
-static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  velocity_mode_t mode;
-  switch (selected_index) {
-    case 0: mode = VELOCITY_MODE_FIXED; break;
-    case 1: mode = VELOCITY_MODE_GATE_VOLTAGE; break;
-    case 2: mode = VELOCITY_MODE_TOUCHWHEEL; break;
-    default: mode = VELOCITY_MODE_FIXED; break;
-  }
-  
-  scene_set_expression_velocity_mode(scene_get_current_index(), mode);
-  
-  const char* mode_str = (mode == VELOCITY_MODE_FIXED) ? "Fixed" :
-                         (mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
-  ESP_LOGI(TAG, "Expression velocity mode set to: %s", mode_str);
-  
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "Expression", menu_page_expression_create);
-}
-
-static lv_obj_t* velocity_mode_roller_create(void) {
-  velocity_mode_t current = scene_get_expression_velocity_mode(scene_get_current_index());
-  
-  uint32_t current_idx;
-  switch (current) {
-    case VELOCITY_MODE_FIXED: current_idx = 0; break;
-    case VELOCITY_MODE_GATE_VOLTAGE: current_idx = 1; break;
-    case VELOCITY_MODE_TOUCHWHEEL: current_idx = 2; break;
-    default: current_idx = 0; break;
-  }
-  
-  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage\nTouchwheel", current_idx,
-    velocity_mode_confirm_cb, NULL);
-}
-
-static void nav_to_velocity_mode(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Velocity Mode", velocity_mode_roller_create);
-}
-
-// ============================================================================
-// Velocity Roller (for Notes mode, only when velocity mode is Fixed)
+// Velocity Roller (for Notes mode, fixed 0-127)
 // ============================================================================
 
 static void velocity_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -654,7 +528,7 @@ static void velocity_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  scene->expression.velocity = (uint8_t)(selected_index + 1);
+  scene->expression.velocity = (uint8_t)selected_index;
   persist_scene_changes();
   
   ESP_LOGI(TAG, "Expression velocity set to: %u", (unsigned)scene->expression.velocity);
@@ -669,16 +543,15 @@ static lv_obj_t* velocity_roller_create(void) {
   
   static char options[640];
   options[0] = '\0';
-  for (int i = 1; i <= 127; i++) {
+  for (int i = 0; i <= 127; i++) {
     char num[8];
     snprintf(num, sizeof(num), "%d", i);
-    if (i > 1) strcat(options, "\n");
+    if (i > 0) strcat(options, "\n");
     strcat(options, num);
   }
   
-  uint8_t vel = scene->expression.velocity;
-  if (vel == 0) vel = 100;
-  uint32_t current = vel - 1;
+  uint32_t current = scene->expression.velocity;
+  if (current > 127) current = 127;
   
   return menu_create_roller_page("Velocity", options, current, velocity_confirm_cb, NULL);
 }
@@ -776,7 +649,7 @@ lv_obj_t* menu_page_expression_create(void) {
     s_expr_items[item_count++] = (menu_item_t){s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY};
   } else {
     snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
-      get_mode_display_name(mode));
+      expression_get_mode_name(expression_get_current_mode_index(scene)));
     s_expr_items[item_count++] = (menu_item_t){
       s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
     };
@@ -785,19 +658,8 @@ lv_obj_t* menu_page_expression_create(void) {
   // Mode-specific items
   switch (mode) {
     case EXPRESSION_MODE_PEDAL: {
-      // Output type selector
-      const char* output_name;
-      switch (scene->expression.output_type) {
-        case OUTPUT_TYPE_CC: output_name = "Control Change"; break;
-        case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
-        case OUTPUT_TYPE_LFO_RATE: output_name = "LFO Rate"; break;
-        case OUTPUT_TYPE_LFO_DEPTH: output_name = "LFO Depth"; break;
-        case OUTPUT_TYPE_TEMPO_NUDGE: output_name = "Tempo Nudge"; break;
-        default: output_name = "Control Change"; break;
-      }
-      snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-      s_expr_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER};
-      
+      // Output routing is now folded into the flat Mode list; sub-params follow
+      // directly from the resolved output_type.
       if (scene->expression.output_type == OUTPUT_TYPE_CC) {
         // CC slots
         uint8_t scene_idx = scene_get_current_index();
@@ -835,7 +697,7 @@ lv_obj_t* menu_page_expression_create(void) {
         s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
         
       } else if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
-        // Notes mode: Base Note, Range, Velocity Mode, (Fixed) Velocity
+        // Notes mode: Base Note, Range, Velocity (fixed 0-127)
         char note_name[8];
         get_note_name(scene->expression.base_note, note_name, sizeof(note_name));
         snprintf(s_base_note_label[buf], sizeof(s_base_note_label[buf]),
@@ -848,22 +710,9 @@ lv_obj_t* menu_page_expression_create(void) {
           "Range\n%u Octave%s", (unsigned)octaves, octaves > 1 ? "s" : "");
         s_expr_items[item_count++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
         
-        // Velocity mode
-        velocity_mode_t vel_mode = scene_get_expression_velocity_mode(scene_get_current_index());
-        const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
-                                   (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
-        snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
-          "Velocity Mode\n%s", vel_mode_str);
-        s_expr_items[item_count++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
-        
-        // Fixed velocity (only shown when mode is FIXED)
-        if (vel_mode == VELOCITY_MODE_FIXED) {
-          uint8_t vel = scene->expression.velocity;
-          if (vel == 0) vel = 100;
-          snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
-            "Velocity\n%u", (unsigned)vel);
-          s_expr_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true, MENU_ITEM_KIND_ROLLER};
-        }
+        snprintf(s_velocity_label[buf], sizeof(s_velocity_label[buf]),
+          "Velocity\n%u", (unsigned)scene->expression.velocity);
+        s_expr_items[item_count++] = (menu_item_t){s_velocity_label[buf], nav_to_velocity, NULL, true, MENU_ITEM_KIND_ROLLER};
         
         // Polarity (envelope shaping - also applies to notes)
         snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),

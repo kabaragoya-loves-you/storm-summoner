@@ -173,9 +173,9 @@
     },
     "expression_mode": {
       "type": "string",
-      "enum": ["expression", "sustain", "sostenuto", "gate", "switch"],
+      "enum": ["none", "expression", "sustain", "sostenuto", "gate", "switch"],
       "default": "expression",
-      "description": "Expression jack operating mode"
+      "description": "Expression jack operating mode (none = disabled)"
     },
     "sustain": {
       "$ref": "#/definitions/action_chain",
@@ -186,8 +186,8 @@
       "description": "Actions for sostenuto events (default: CC66 toggle)"
     },
     "expr_switch": {
-      "$ref": "#/definitions/action_chain",
-      "description": "Actions for expression switch mode (up to 8 arbitrary actions)"
+      "$ref": "#/definitions/action",
+      "description": "Action for expression switch mode (single action; matches device)"
     },
     "cv_input_mode": {
       "type": "string",

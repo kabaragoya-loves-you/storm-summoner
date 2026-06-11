@@ -37,15 +37,21 @@ window.SceneEditorUi = (function () {
 
   const VELOCITY_MODE = [
     { v: 'fixed', l: 'Fixed' },
-    { v: 'gate_voltage', l: 'Gate Voltage' },
-    { v: 'touchwheel', l: 'Touchwheel' }
+    { v: 'gate_voltage', l: 'Gate Voltage' }
   ]
 
-  const EXPRESSION_MODE = [
-    { v: 'expression', l: 'Expression' },
-    { v: 'sustain', l: 'Sustain' },
-    { v: 'sostenuto', l: 'Sostenuto' },
-    { v: 'switch', l: 'Switch' }
+  // Flattened expression mode list (matches device g_expression_mode_mappings order).
+  // Continuous routings map to expression_mode 'expression' + a specific output_type.
+  const EXPRESSION_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'control_change', l: 'Control Change', expression_mode: 'expression', output_type: 'cc' },
+    { v: 'sustain', l: 'Sustain', expression_mode: 'sustain' },
+    { v: 'sostenuto', l: 'Sostenuto', expression_mode: 'sostenuto' },
+    { v: 'switch', l: 'Switch', expression_mode: 'switch' },
+    { v: 'lfo_rate', l: 'LFO Rate', expression_mode: 'expression', output_type: 'lfo_rate' },
+    { v: 'lfo_depth', l: 'LFO Depth', expression_mode: 'expression', output_type: 'lfo_depth' },
+    { v: 'notes', l: 'Notes', expression_mode: 'expression', output_type: 'note' },
+    { v: 'tempo_nudge', l: 'Tempo Nudge', expression_mode: 'expression', output_type: 'tempo_nudge' }
   ]
 
   const CV_INPUT_MODE = [
@@ -186,17 +192,23 @@ window.SceneEditorUi = (function () {
     if (!m.cc_number && m.cc_numbers[0]) m.cc_number = m.cc_numbers[0]
   }
 
-  function touchwheelActiveCcList (tw) {
-    const raw = tw?.cc_numbers || []
-    const active = raw.filter(cc => Number(cc) > 0)
-    return active.length ? active.slice(0, 4) : [0]
+  // Preserve explicit slot count; trim only trailing inactive slots (min 1).
+  function normalizeCcSlotList (raw) {
+    let list = (raw || []).slice(0, 4)
+    if (list.length === 0) return [0]
+    while (list.length > 1 && Number(list[list.length - 1]) === 0) list.pop()
+    return list
+  }
+
+  function applyCcSlotFields (mapping, list) {
+    mapping.cc_numbers = list
+    mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
+    const firstActive = list.find(cc => Number(cc) > 0)
+    if (firstActive) mapping.cc_number = firstActive
   }
 
   function syncTouchwheelCcNumbers (tw) {
-    const list = touchwheelActiveCcList(tw)
-    tw.cc_numbers = list
-    tw.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
-    if (list[0]) tw.cc_number = list[0]
+    applyCcSlotFields(tw, normalizeCcSlotList(tw?.cc_numbers))
   }
 
   function lfoRoutingOptions (n) {
@@ -220,17 +232,8 @@ window.SceneEditorUi = (function () {
     return opts
   }
 
-  function lfoActiveCcList (mapping) {
-    const raw = mapping?.cc_numbers || []
-    const active = raw.filter(cc => Number(cc) > 0)
-    return active.length ? active.slice(0, 4) : [0]
-  }
-
   function syncLfoCcNumbers (mapping) {
-    const list = lfoActiveCcList(mapping)
-    mapping.cc_numbers = list
-    mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
-    if (list[0]) mapping.cc_number = list[0]
+    applyCcSlotFields(mapping, normalizeCcSlotList(mapping?.cc_numbers))
   }
 
   function renderLfoCcSlots (ctrl, mappingPath, mapping) {
@@ -324,7 +327,9 @@ window.SceneEditorUi = (function () {
       if (m.enabled === false) return html
     }
 
-    html += fieldRow(routingLabel, selectField(otPath, ot, routingTypes))
+    if (!opts.hideRouting) {
+      html += fieldRow(routingLabel, selectField(otPath, ot, routingTypes))
+    }
     ensureCcNumbers(m)
 
     if (ot === 'cc') {
@@ -352,14 +357,27 @@ window.SceneEditorUi = (function () {
         selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
       )
     } else if (ot === 'note') {
-      html += fieldRow(
-        'Base note',
-        numberField(`${mappingPath}.base_note`, m.base_note ?? 60, 0, 127)
-      )
-      html += fieldRow(
-        'Range (semitones)',
-        numberField(`${mappingPath}.note_range`, m.note_range ?? 24, 1, 127)
-      )
+      if (opts.noteSelectors) {
+        html += fieldRow(
+          'Base note',
+          selectField(`${mappingPath}.base_note`, m.base_note ?? 60,
+            ActionCatalog.noteNameOptions(m.base_note ?? 60))
+        )
+        html += fieldRow(
+          'Range',
+          selectField(`${mappingPath}.note_range`, m.note_range ?? 24, NOTE_OCTAVE_OPTIONS)
+        )
+      } else {
+        html += fieldRow(
+          'Base note',
+          numberField(`${mappingPath}.base_note`, m.base_note ?? 60, 0, 127)
+        )
+        html += fieldRow(
+          'Range (semitones)',
+          numberField(`${mappingPath}.note_range`, m.note_range ?? 24, 1, 127)
+        )
+      }
+      const velMin = opts.velocityMin ?? 1
       if (opts.velocityModePath) {
         const vm = ctrl.getAtPath(opts.velocityModePath) || 'fixed'
         html += fieldRow(
@@ -369,13 +387,13 @@ window.SceneEditorUi = (function () {
         if (vm === 'fixed') {
           html += fieldRow(
             'Velocity',
-            numberField(`${mappingPath}.velocity`, m.velocity ?? 100, 1, 127)
+            numberField(`${mappingPath}.velocity`, m.velocity ?? 100, velMin, 127)
           )
         }
       } else {
         html += fieldRow(
           'Velocity',
-          numberField(`${mappingPath}.velocity`, m.velocity ?? 100, 1, 127)
+          numberField(`${mappingPath}.velocity`, m.velocity ?? 100, velMin, 127)
         )
       }
       html += fieldRow(
@@ -1617,7 +1635,7 @@ window.SceneEditorUi = (function () {
       typeOpts.unshift({ v: a.type, l: ActionCatalog.typeLabel(a.type) })
     }
     let html = fieldRow(
-      'Type',
+      opts.typeLabel || 'Type',
       selectField(`${path}.type`, a.type || 'none', typeOpts)
     )
     if (a.type && a.type !== 'none') {
@@ -2019,29 +2037,61 @@ window.SceneEditorUi = (function () {
     return section('Note Track', body)
   }
 
+  function expressionUserModeSelection (m) {
+    const mode = m.expression_mode || 'expression'
+    if (mode === 'none') return 'disabled'
+    if (mode === 'sustain') return 'sustain'
+    if (mode === 'sostenuto') return 'sostenuto'
+    if (mode === 'switch') return 'switch'
+    const ot = m.expression?.output_type || 'cc'
+    for (const opt of EXPRESSION_USER_MODES) {
+      if (opt.expression_mode !== 'expression') continue
+      if (opt.output_type !== ot) continue
+      return opt.v
+    }
+    return 'control_change'
+  }
+
   function renderExpression (ctrl) {
     const m = ctrl.editModel
-    const lockedGate = m.cv_input_mode === 'note'
-    let html = ''
-    if (lockedGate) {
-      html += `<wa-callout variant="neutral">Expression locked to Gate (CV/Gate mode).</wa-callout>`
-    } else {
-      html += fieldRow(
-        'Mode',
-        selectField(
-          'expression_mode',
-          m.expression_mode || 'expression',
-          EXPRESSION_MODE
-        )
+    if (m.cv_input_mode === 'note') {
+      return section(
+        'Expression',
+        `<wa-callout variant="neutral">Expression locked to Gate (CV/Gate mode).</wa-callout>`
       )
     }
-    if (m.expression_mode === 'expression' && !lockedGate) {
-      if (!m.expression) m.expression = { enabled: true, output_type: 'cc' }
-      html += renderContinuousMapping(ctrl, 'expression', m.expression, {
-        velocityModePath: 'expression_velocity_mode',
-        tempoNudgePath: 'expression_tempo_nudge_pct'
-      })
+
+    const userMode = expressionUserModeSelection(m)
+    let html = fieldRow(
+      'Mode',
+      selectField('__expression_user_mode', userMode, EXPRESSION_USER_MODES)
+    )
+
+    if (userMode === 'disabled' || userMode === 'sustain' || userMode === 'sostenuto') {
+      return section('Expression', html)
     }
+
+    if (userMode === 'switch') {
+      html += renderAction(
+        ctrl,
+        'expr_switch',
+        m.expr_switch || { type: 'none' },
+        { trigger: ActionCatalog.TRIGGERS.EXPR_SWITCH }
+      )
+      return section('Expression', html)
+    }
+
+    // Continuous pedal routings (control_change / notes / lfo_rate / lfo_depth / tempo_nudge)
+    if (!m.expression) m.expression = { enabled: true, output_type: 'cc' }
+    html += renderContinuousMapping(ctrl, 'expression', m.expression, {
+      hideEnabled: true,
+      hideRouting: true,
+      noteSelectors: true,
+      velocityMin: 0,
+      ccSlots: true,
+      tempoNudgePath: 'expression_tempo_nudge_pct',
+      tempoNudgeSelect: true
+    })
     return section('Expression', html)
   }
 
@@ -2466,7 +2516,7 @@ window.SceneEditorUi = (function () {
       html += `<div class="scene-pad-row"><h4>${esc(
         ActionCatalog.padDisplayName(i)
       )}</h4>`
-      html += renderAction(ctrl, `touchpads.${i}.action`, act, { trigger })
+      html += renderAction(ctrl, `touchpads.${i}.action`, act, { trigger, typeLabel: 'Action' })
       html += '</div>'
     }
     return section('Pads', html)

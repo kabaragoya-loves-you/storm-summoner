@@ -743,13 +743,7 @@ static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
 
-  velocity_mode_t mode;
-  switch (selected_index) {
-    case 0: mode = VELOCITY_MODE_FIXED; break;
-    case 1: mode = VELOCITY_MODE_GATE_VOLTAGE; break;
-    case 2: mode = VELOCITY_MODE_TOUCHWHEEL; break;
-    default: mode = VELOCITY_MODE_FIXED; break;
-  }
+  velocity_mode_t mode = (selected_index == 1) ? VELOCITY_MODE_GATE_VOLTAGE : VELOCITY_MODE_FIXED;
 
   set_vel_mode(scene_get_current_index(), mode);
 
@@ -759,16 +753,9 @@ static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
 
 static lv_obj_t* velocity_mode_roller_create(void) {
   velocity_mode_t current = get_vel_mode(scene_get_current_index());
+  uint32_t current_idx = (current == VELOCITY_MODE_GATE_VOLTAGE) ? 1 : 0;
 
-  uint32_t current_idx;
-  switch (current) {
-    case VELOCITY_MODE_FIXED: current_idx = 0; break;
-    case VELOCITY_MODE_GATE_VOLTAGE: current_idx = 1; break;
-    case VELOCITY_MODE_TOUCHWHEEL: current_idx = 2; break;
-    default: current_idx = 0; break;
-  }
-
-  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage\nTouchwheel", current_idx,
+  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage", current_idx,
     velocity_mode_confirm_cb, NULL);
 }
 
@@ -977,8 +964,7 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
     s_items[idx++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     velocity_mode_t vel_mode = get_vel_mode(scene_get_current_index());
-    const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
-      (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
+    const char* vel_mode_str = (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
     snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
       "Velocity Mode\n%s", vel_mode_str);
     s_items[idx++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true, MENU_ITEM_KIND_ROLLER};

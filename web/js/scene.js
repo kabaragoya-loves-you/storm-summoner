@@ -1021,9 +1021,10 @@ application.register(
     isNumericScenePath (path) {
       if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') return true
       if (/touchwheel_(tempo_nudge_(pct|return)|aftertouch_return)$/.test(path)) return true
+      if (/tempo_nudge_pct$/.test(path)) return true
       if (/\.values(\.\d+)+$/.test(path)) return true
       if (/\.presets(\.\d+)+$/.test(path)) return true
-      return /\.(note|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
+      return /\.(note|base_note|note_range|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
     }
 
     patchSelect (e) {
@@ -1098,6 +1099,32 @@ application.register(
         }
         if (val === 'lfo_rate' || val === 'lfo_depth') {
           if (!this.editModel.touchwheel_lfo_target) this.editModel.touchwheel_lfo_target = 'both'
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__expression_user_mode') {
+        const specByKey = {
+          disabled: { expression_mode: 'none', enabled: false },
+          control_change: { expression_mode: 'expression', output_type: 'cc', enabled: true },
+          sustain: { expression_mode: 'sustain', enabled: false },
+          sostenuto: { expression_mode: 'sostenuto', enabled: false },
+          switch: { expression_mode: 'switch', enabled: false },
+          lfo_rate: { expression_mode: 'expression', output_type: 'lfo_rate', enabled: true },
+          lfo_depth: { expression_mode: 'expression', output_type: 'lfo_depth', enabled: true },
+          notes: { expression_mode: 'expression', output_type: 'note', enabled: true },
+          tempo_nudge: { expression_mode: 'expression', output_type: 'tempo_nudge', enabled: true }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.expression) this.editModel.expression = { enabled: true, output_type: 'cc' }
+        this.editModel.expression_mode = spec.expression_mode
+        if (spec.output_type) this.editModel.expression.output_type = spec.output_type
+        this.editModel.expression.enabled = spec.enabled
+        if ((val === 'lfo_rate' || val === 'lfo_depth') && !this.editModel.expression.lfo_target) {
+          this.editModel.expression.lfo_target = 'both'
         }
         this.markDirty()
         this.renderEditor()
@@ -1323,6 +1350,16 @@ application.register(
         return
       }
 
+      const mapCcMatch = path.match(/^(expression|proximity|als|tilt_x|tilt_y|cv|lfo1|lfo2|note_track)\.cc_numbers\.(\d+)$/)
+      if (mapCcMatch) {
+        this.setAtPath(path, Number(val))
+        const mapping = this.getAtPath(mapCcMatch[1])
+        if (mapping) this.syncLfoCcNumbers(mapping)
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
       if (this.isNumericScenePath(path)) val = Number(val)
       this.setAtPath(path, val)
       if (path.endsWith('.type')) {
@@ -1543,25 +1580,34 @@ application.register(
       return field == null ? [] : [field]
     }
 
+    normalizeCcSlotList (raw) {
+      let list = (raw || []).slice(0, 4)
+      if (list.length === 0) return [0]
+      while (list.length > 1 && Number(list[list.length - 1]) === 0) list.pop()
+      return list
+    }
+
+    applyCcSlotFields (mapping, list) {
+      mapping.cc_numbers = list
+      mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
+      const firstActive = list.find(cc => Number(cc) > 0)
+      if (firstActive) mapping.cc_number = firstActive
+    }
+
     touchwheelCcList (tw) {
-      const raw = tw?.cc_numbers || []
-      const active = raw.filter(cc => Number(cc) > 0)
-      return active.length ? active.slice(0, 4) : [raw[0] || 0]
+      return this.normalizeCcSlotList(tw?.cc_numbers)
     }
 
     syncTouchwheelCcNumbers (tw) {
       if (!tw) return
-      const list = this.touchwheelCcList(tw)
-      tw.cc_numbers = list
-      tw.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
-      if (list[0]) tw.cc_number = list[0]
+      this.applyCcSlotFields(tw, this.touchwheelCcList(tw))
     }
 
     addTouchwheelCcSlot (path) {
       const tw = this.getAtPath(path)
       if (!tw) return
       const device = this.deviceDefinition
-      const list = this.touchwheelCcList(tw)
+      const list = this.touchwheelCcList(tw).slice()
       if (list.length >= 4) return
       const used = new Set(list.map(Number).filter(n => n > 0))
       list.push(
@@ -1569,8 +1615,7 @@ application.register(
           ? DeviceControls.firstUnusedParameterCc(device, used)
           : 0
       )
-      tw.cc_numbers = list
-      this.syncTouchwheelCcNumbers(tw)
+      this.applyCcSlotFields(tw, list)
     }
 
     removeTouchwheelCcSlot (path, index) {
@@ -1589,24 +1634,19 @@ application.register(
     }
 
     lfoCcList (mapping) {
-      const raw = mapping?.cc_numbers || []
-      const active = raw.filter(cc => Number(cc) > 0)
-      return active.length ? active.slice(0, 4) : [raw[0] || 0]
+      return this.normalizeCcSlotList(mapping?.cc_numbers)
     }
 
     syncLfoCcNumbers (mapping) {
       if (!mapping) return
-      const list = this.lfoCcList(mapping)
-      mapping.cc_numbers = list
-      mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
-      if (list[0]) mapping.cc_number = list[0]
+      this.applyCcSlotFields(mapping, this.lfoCcList(mapping))
     }
 
     addLfoCcSlot (path) {
       const mapping = this.getAtPath(path)
       if (!mapping) return
       const device = this.deviceDefinition
-      const list = this.lfoCcList(mapping)
+      const list = this.lfoCcList(mapping).slice()
       if (list.length >= 4) return
       const used = new Set(list.map(Number).filter(n => n > 0))
       list.push(
@@ -1614,8 +1654,7 @@ application.register(
           ? DeviceControls.firstUnusedParameterCc(device, used)
           : 0
       )
-      mapping.cc_numbers = list
-      this.syncLfoCcNumbers(mapping)
+      this.applyCcSlotFields(mapping, list)
     }
 
     removeLfoCcSlot (path, index) {

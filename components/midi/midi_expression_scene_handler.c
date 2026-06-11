@@ -43,25 +43,9 @@ static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
     (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
 }
 
-// Get velocity based on velocity mode setting
+// Expression notes use a simple fixed velocity (0-127); no velocity-mode options.
 static uint8_t get_expression_velocity(continuous_mapping_t* mapping) {
-  velocity_mode_t vel_mode = scene_get_expression_velocity_mode(scene_get_current_index());
-  
-  switch (vel_mode) {
-    case VELOCITY_MODE_TOUCHWHEEL:
-      return scene_get_touchwheel_velocity();
-    case VELOCITY_MODE_GATE_VOLTAGE:
-      // Use current expression value (0.0-1.0) as velocity source
-      {
-        float expr_value = expression_get_value();
-        uint8_t vel = 1 + (uint8_t)(expr_value * 126.0f);
-        if (vel > 127) vel = 127;
-        return vel;
-      }
-    case VELOCITY_MODE_FIXED:
-    default:
-      return mapping->velocity;
-  }
+  return mapping->velocity;
 }
 
 // Handle continuous expression pedal events
