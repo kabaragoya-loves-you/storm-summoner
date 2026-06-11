@@ -2220,6 +2220,16 @@ window.SceneEditorUi = (function () {
         'Ceiling',
         numberField('touchwheel_tempo_ceiling', m.touchwheel_tempo_ceiling ?? 300, 20, 300)
       )
+    } else if (userMode === 'aftertouch') {
+      html += fieldRow(
+        'Return Speed',
+        selectField(
+          'touchwheel_aftertouch_return',
+          m.touchwheel_aftertouch_return ?? 1,
+          ActionCatalog.touchwheelNudgeReturnOptions(m.touchwheel_aftertouch_return ?? 1)
+        )
+      )
+      if (spec?.supports_style) html += renderTouchwheelStyle(m)
     } else if (userMode === 'lfo_rate' || userMode === 'lfo_depth') {
       html += fieldRow(
         'Target',

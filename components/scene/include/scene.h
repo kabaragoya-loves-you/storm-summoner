@@ -167,6 +167,7 @@ typedef struct scene_t {
   uint8_t proximity_tempo_nudge_pct;
   uint8_t touchwheel_tempo_nudge_pct;
   uint8_t touchwheel_tempo_nudge_return;  // Return speed after touch release (tempo nudge)
+  uint8_t touchwheel_aftertouch_return;   // Return speed after touch release (aftertouch)
   uint16_t touchwheel_tempo_floor;    // BPM floor for touchwheel tempo mode (20-300)
   uint16_t touchwheel_tempo_ceiling;  // BPM ceiling for touchwheel tempo mode (20-300)
   uint8_t als_tempo_nudge_pct;
@@ -423,6 +424,8 @@ esp_err_t scene_set_touchwheel_tempo_nudge_pct(uint8_t scene_index, uint8_t pct)
 uint8_t scene_get_touchwheel_tempo_nudge_pct(uint8_t scene_index);
 esp_err_t scene_set_touchwheel_tempo_nudge_return(uint8_t scene_index, uint8_t speed);
 uint8_t scene_get_touchwheel_tempo_nudge_return(uint8_t scene_index);
+esp_err_t scene_set_touchwheel_aftertouch_return(uint8_t scene_index, uint8_t speed);
+uint8_t scene_get_touchwheel_aftertouch_return(uint8_t scene_index);
 esp_err_t scene_set_als_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_als_tempo_nudge_pct(uint8_t scene_index);
 esp_err_t scene_set_lfo1_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);

@@ -480,6 +480,16 @@ static void append_touchwheel(scene_inspect_buf_t *b, const scene_t *scene,
     return;
   }
 
+  if (scene->touchwheel_mode == TOUCHWHEEL_MODE_AFTERTOUCH) {
+    scene_inspect_buf_append(b, "Touchwheel: After Touch\n");
+    if (scene->touchwheel_aftertouch_return != TOUCHWHEEL_NUDGE_RETURN_INSTANT) {
+      scene_inspect_buf_append(b, "Return: %s\n",
+        touchwheel_nudge_return_inspect_label(scene->touchwheel_aftertouch_return));
+    }
+    scene_inspect_buf_append(b, "\n");
+    return;
+  }
+
   action_summary_t summary;
   action_summary_init(&summary);
   action_summary_set_input(&summary, SUMMARY_INPUT_TOUCHWHEEL, true);

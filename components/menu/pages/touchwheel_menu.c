@@ -530,6 +530,30 @@ static void nav_to_return_speed(void* user_data) {
   menu_navigate_to("Return Speed", return_speed_roller_create);
 }
 
+static void aftertouch_return_speed_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (selected_index > TOUCHWHEEL_NUDGE_RETURN_SLOW) selected_index = TOUCHWHEEL_NUDGE_RETURN_INSTANT;
+  scene_set_touchwheel_aftertouch_return(scene_get_current_index(), (uint8_t)selected_index);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+}
+
+static lv_obj_t* aftertouch_return_speed_roller_create(void) {
+  uint8_t cur = scene_get_touchwheel_aftertouch_return(scene_get_current_index());
+  if (cur > TOUCHWHEEL_NUDGE_RETURN_SLOW) cur = TOUCHWHEEL_NUDGE_RETURN_INSTANT;
+  return menu_create_roller_page("Return Speed", "Instant\nFast\nMedium\nSlow",
+    (uint32_t)cur, aftertouch_return_speed_confirm_cb, NULL);
+}
+
+static void nav_to_aftertouch_return_speed(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Return Speed", aftertouch_return_speed_roller_create);
+}
+
 static void nudge_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   if (s_callback_in_progress) return;
@@ -1141,9 +1165,15 @@ lv_obj_t* menu_page_touchwheel_create(void) {
       };
       break;
 
-    case TOUCHWHEEL_MODE_AFTERTOUCH:
-      // Style selection added below
+    case TOUCHWHEEL_MODE_AFTERTOUCH: {
+      uint8_t at_ret = scene_get_touchwheel_aftertouch_return(scene_get_current_index());
+      snprintf(s_return_speed_label, sizeof(s_return_speed_label), "Return Speed\n%s",
+        return_speed_to_string(at_ret));
+      s_tw_items[item_count++] = (menu_item_t){
+        s_return_speed_label, nav_to_aftertouch_return_speed, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
       break;
+    }
       
     case TOUCHWHEEL_MODE_LFO_RATE:
     case TOUCHWHEEL_MODE_LFO_DEPTH:

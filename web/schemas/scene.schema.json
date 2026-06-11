@@ -305,6 +305,13 @@
       "default": 0,
       "description": "Return speed after touchwheel tempo nudge release (0=instant, 1=fast, 2=medium, 3=slow)"
     },
+    "touchwheel_aftertouch_return": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "default": 1,
+      "description": "Return speed after touchwheel aftertouch release (0=instant, 1=fast, 2=medium, 3=slow)"
+    },
     "touchwheel_tempo_floor": {
       "type": "integer",
       "minimum": 20,

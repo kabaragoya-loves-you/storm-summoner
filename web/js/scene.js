@@ -1020,7 +1020,7 @@ application.register(
 
     isNumericScenePath (path) {
       if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') return true
-      if (/tempo_nudge_(pct|return)$/.test(path)) return true
+      if (/touchwheel_(tempo_nudge_(pct|return)|aftertouch_return)$/.test(path)) return true
       if (/\.values(\.\d+)+$/.test(path)) return true
       if (/\.presets(\.\d+)+$/.test(path)) return true
       return /\.(note|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
@@ -1052,7 +1052,12 @@ application.register(
             touchwheel_tempo_ceiling: 300
           },
           pitch_bend: { touchwheel_mode: 'pitch_bend', enabled: true },
-          aftertouch: { touchwheel_mode: 'aftertouch', touchwheel_style: 'odometer', enabled: true },
+          aftertouch: {
+            touchwheel_mode: 'aftertouch',
+            touchwheel_style: 'odometer',
+            enabled: true,
+            touchwheel_aftertouch_return: 1
+          },
           notes: { touchwheel_mode: 'continuous', output_type: 'note', touchwheel_style: 'odometer', enabled: true },
           double_cc: { touchwheel_mode: 'double_cc', touchwheel_style: 'endless', enabled: true },
           velocity: { touchwheel_mode: 'velocity', enabled: true },
@@ -1081,6 +1086,9 @@ application.register(
         }
         if (spec.touchwheel_tempo_nudge_return != null) {
           this.editModel.touchwheel_tempo_nudge_return = spec.touchwheel_tempo_nudge_return
+        }
+        if (spec.touchwheel_aftertouch_return != null) {
+          this.editModel.touchwheel_aftertouch_return = spec.touchwheel_aftertouch_return
         }
         if (spec.touchwheel_style) this.editModel.touchwheel_style = spec.touchwheel_style
         if (spec.enabled === false) {
