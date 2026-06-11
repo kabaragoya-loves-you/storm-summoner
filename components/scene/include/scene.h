@@ -62,6 +62,13 @@ typedef enum {
   TOUCHWHEEL_STYLE_BIPOLAR        // Bipolar center-return for pitch bend
 } touchwheel_style_t;
 
+typedef enum {
+  TOUCHWHEEL_NUDGE_RETURN_INSTANT = 0,
+  TOUCHWHEEL_NUDGE_RETURN_FAST,    // 200ms
+  TOUCHWHEEL_NUDGE_RETURN_MEDIUM,  // 500ms
+  TOUCHWHEEL_NUDGE_RETURN_SLOW     // 1000ms
+} touchwheel_nudge_return_t;
+
 // Touchpad mapping
 typedef struct {
   action_t action;            // Action to execute (ACTION_NONE = unassigned)
@@ -159,6 +166,7 @@ typedef struct scene_t {
   uint8_t cv_tempo_nudge_pct;
   uint8_t proximity_tempo_nudge_pct;
   uint8_t touchwheel_tempo_nudge_pct;
+  uint8_t touchwheel_tempo_nudge_return;  // Return speed after touch release (tempo nudge)
   uint16_t touchwheel_tempo_floor;    // BPM floor for touchwheel tempo mode (20-300)
   uint16_t touchwheel_tempo_ceiling;  // BPM ceiling for touchwheel tempo mode (20-300)
   uint8_t als_tempo_nudge_pct;
@@ -413,6 +421,8 @@ esp_err_t scene_set_proximity_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_proximity_tempo_nudge_pct(uint8_t scene_index);
 esp_err_t scene_set_touchwheel_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_touchwheel_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_touchwheel_tempo_nudge_return(uint8_t scene_index, uint8_t speed);
+uint8_t scene_get_touchwheel_tempo_nudge_return(uint8_t scene_index);
 esp_err_t scene_set_als_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_als_tempo_nudge_pct(uint8_t scene_index);
 esp_err_t scene_set_lfo1_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);

@@ -333,6 +333,23 @@ window.ActionCatalog = (function () {
     return withStaleOption(presets, current, `${current}%`)
   }
 
+  function touchwheelTempoNudgeAmountOptions (current) {
+    const presets = []
+    for (let p = 0; p <= 100; p += 5) presets.push({ v: p, l: `${p}%` })
+    return withStaleOption(presets, current, `${current}%`)
+  }
+
+  function touchwheelNudgeReturnOptions (current) {
+    const presets = [
+      { v: 0, l: 'Instant' },
+      { v: 1, l: 'Fast (200ms)' },
+      { v: 2, l: 'Medium (500ms)' },
+      { v: 3, l: 'Slow (1s)' }
+    ]
+    const hit = presets.find(p => p.v === current)
+    return withStaleOption(presets, current, hit ? hit.l : String(current))
+  }
+
   function lfoModifyPolarityOptions (current) {
     return lfoModifyU8Options([
       { v: 0, l: 'Unipolar' },
@@ -1215,6 +1232,8 @@ window.ActionCatalog = (function () {
     lfoSceneRateHzOptions,
     lfoSceneDivisionOptions,
     tempoNudgeAmountOptions,
+    touchwheelTempoNudgeAmountOptions,
+    touchwheelNudgeReturnOptions,
     lfoModifyPolarityOptions,
     lfoModifyFloorCeilingOptions,
     lfoModifyResolutionOptions,

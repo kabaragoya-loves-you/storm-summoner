@@ -184,6 +184,7 @@ static bool s_input_suspended = false;  // True when in programming mode
 
 // Pitch bend return-to-center animation (declared early for cleanup function)
 static esp_timer_handle_t s_pitch_bend_timer = NULL;
+static esp_timer_handle_t s_tw_nudge_return_timer = NULL;
 
 // Cached device definition for current scene
 static device_def_t* s_cached_device = NULL;
@@ -329,6 +330,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->cv_tempo_nudge_pct = 10;
   scene->proximity_tempo_nudge_pct = 10;
   scene->touchwheel_tempo_nudge_pct = 10;
+  scene->touchwheel_tempo_nudge_return = TOUCHWHEEL_NUDGE_RETURN_INSTANT;
   scene->touchwheel_tempo_floor = 20;
   scene->touchwheel_tempo_ceiling = 300;
   scene->als_tempo_nudge_pct = 10;
@@ -370,6 +372,11 @@ static void scene_cleanup_touchwheel(void) {
     esp_timer_stop(s_pitch_bend_timer);
     esp_timer_delete(s_pitch_bend_timer);
     s_pitch_bend_timer = NULL;
+  }
+  if (s_tw_nudge_return_timer) {
+    esp_timer_stop(s_tw_nudge_return_timer);
+    esp_timer_delete(s_tw_nudge_return_timer);
+    s_tw_nudge_return_timer = NULL;
   }
   
   if (s_scene_touchwheel) {
@@ -601,12 +608,19 @@ static void latch_release_timer_cb(void* arg) {
   }
 }
 
+static void touchwheel_stop_nudge_return(void);
+static void touchwheel_start_nudge_return(scene_t* scene);
+
 // Release callback for continuous mode touchwheel (note off)
 static void touchwheel_continuous_release_callback(void* user_data) {
   // Don't send MIDI in programming mode
   if (ui_is_in_programming_mode()) return;
   
   scene_t* scene = (scene_t*)user_data;
+  if (scene && scene->touchwheel.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    touchwheel_start_nudge_return(scene);
+    return;
+  }
   
   // In latch mode, don't release immediately - start timers
   if (scene && scene->touchwheel.note_latch) {
@@ -808,6 +822,109 @@ static void touchwheel_pitch_bend_release_callback(void* user_data) {
   esp_timer_start_periodic(s_pitch_bend_timer, PB_ANIM_INTERVAL_US);
 }
 
+#define TW_NUDGE_RETURN_INTERVAL_US  20000  // 20ms between frames
+
+static uint32_t s_tw_last_tempo_apply_ms = 0;
+static uint8_t  s_tw_last_applied_midi = 64;
+
+static int32_t s_tw_nudge_return_start_bpm = 0;
+static int32_t s_tw_nudge_return_target_bpm = 0;
+static uint16_t s_tw_nudge_return_frame = 0;
+static uint16_t s_tw_nudge_return_total_frames = 0;
+
+static uint16_t touchwheel_nudge_return_duration_ms(uint8_t speed) {
+  switch (speed) {
+    case TOUCHWHEEL_NUDGE_RETURN_FAST: return 200;
+    case TOUCHWHEEL_NUDGE_RETURN_MEDIUM: return 500;
+    case TOUCHWHEEL_NUDGE_RETURN_SLOW: return 1000;
+    default: return 0;
+  }
+}
+
+static void touchwheel_nudge_return_complete(void) {
+  if (s_tw_nudge_return_timer) esp_timer_stop(s_tw_nudge_return_timer);
+  s_tw_nudge_return_frame = 0;
+  s_tw_nudge_return_total_frames = 0;
+  s_tw_last_applied_midi = 64;
+}
+
+static void nudge_return_timer_cb(void* arg) {
+  (void)arg;
+
+  if (s_tw_nudge_return_total_frames == 0) {
+    touchwheel_nudge_return_complete();
+    return;
+  }
+
+  s_tw_nudge_return_frame++;
+  if (s_tw_nudge_return_frame >= s_tw_nudge_return_total_frames) {
+    tempo_set_bpm((uint16_t)s_tw_nudge_return_target_bpm);
+    touchwheel_nudge_return_complete();
+    ESP_LOGD(TAG, "Touchwheel tempo nudge return complete -> bpm=%d",
+      (int)s_tw_nudge_return_target_bpm);
+    return;
+  }
+
+  int32_t delta = s_tw_nudge_return_target_bpm - s_tw_nudge_return_start_bpm;
+  int32_t new_bpm = s_tw_nudge_return_start_bpm +
+    (delta * (int32_t)s_tw_nudge_return_frame) / (int32_t)s_tw_nudge_return_total_frames;
+  if (new_bpm < 20) new_bpm = 20;
+  if (new_bpm > 300) new_bpm = 300;
+  tempo_set_bpm((uint16_t)new_bpm);
+}
+
+static void touchwheel_stop_nudge_return(void) {
+  if (s_tw_nudge_return_timer) esp_timer_stop(s_tw_nudge_return_timer);
+  s_tw_nudge_return_frame = 0;
+  s_tw_nudge_return_total_frames = 0;
+}
+
+static void touchwheel_start_nudge_return(scene_t* scene) {
+  if (!scene) return;
+
+  touchwheel_stop_nudge_return();
+
+  int32_t target = (int32_t)scene->bpm;
+  int32_t current = (int32_t)tempo_get_bpm();
+  if (current == target) {
+    s_tw_last_applied_midi = 64;
+    return;
+  }
+
+  uint8_t speed = scene->touchwheel_tempo_nudge_return;
+  if (speed > TOUCHWHEEL_NUDGE_RETURN_SLOW) speed = TOUCHWHEEL_NUDGE_RETURN_INSTANT;
+
+  uint16_t duration_ms = touchwheel_nudge_return_duration_ms(speed);
+  if (duration_ms == 0) {
+    tempo_set_bpm((uint16_t)target);
+    s_tw_last_applied_midi = 64;
+    ESP_LOGD(TAG, "Touchwheel tempo nudge instant return -> bpm=%d", (int)target);
+    return;
+  }
+
+  s_tw_nudge_return_start_bpm = current;
+  s_tw_nudge_return_target_bpm = target;
+  s_tw_nudge_return_frame = 0;
+  s_tw_nudge_return_total_frames = duration_ms / 20;
+  if (s_tw_nudge_return_total_frames < 1) s_tw_nudge_return_total_frames = 1;
+
+  if (!s_tw_nudge_return_timer) {
+    const esp_timer_create_args_t timer_args = {
+      .callback = nudge_return_timer_cb,
+      .name = "tw_nudge_ret"
+    };
+    if (esp_timer_create(&timer_args, &s_tw_nudge_return_timer) != ESP_OK) {
+      tempo_set_bpm((uint16_t)target);
+      s_tw_last_applied_midi = 64;
+      return;
+    }
+  }
+
+  esp_timer_start_periodic(s_tw_nudge_return_timer, TW_NUDGE_RETURN_INTERVAL_US);
+  ESP_LOGD(TAG, "Touchwheel tempo nudge return: %d -> %d over %u ms",
+    (int)current, (int)target, (unsigned)duration_ms);
+}
+
 // Callback for channel aftertouch mode touchwheel
 static void touchwheel_aftertouch_callback(int value, void* user_data) {
   // Don't send MIDI in programming mode
@@ -996,10 +1113,9 @@ static void touchwheel_rtg_rate_callback(int value, void* user_data) {
 }
 
 // Bipolar tempo nudge around scene->bpm; shaped to match the tilt handler.
-static uint32_t s_tw_last_tempo_apply_ms = 0;
-static uint8_t  s_tw_last_applied_midi = 64;
-
 static void touchwheel_apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
+  touchwheel_stop_nudge_return();
+
   uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
   if (now_ms - s_tw_last_tempo_apply_ms < 50) return;
   s_tw_last_tempo_apply_ms = now_ms;
@@ -3948,6 +4064,21 @@ uint8_t scene_get_touchwheel_tempo_nudge_pct(uint8_t scene_index) {
   return scene ? scene->touchwheel_tempo_nudge_pct : 10;
 }
 
+esp_err_t scene_set_touchwheel_tempo_nudge_return(uint8_t scene_index, uint8_t speed) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  if (speed > TOUCHWHEEL_NUDGE_RETURN_SLOW) speed = TOUCHWHEEL_NUDGE_RETURN_SLOW;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->touchwheel_tempo_nudge_return = speed;
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_touchwheel_tempo_nudge_return(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->touchwheel_tempo_nudge_return : TOUCHWHEEL_NUDGE_RETURN_INSTANT;
+}
+
 esp_err_t scene_set_als_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   if (pct > 100) pct = 100;
@@ -6361,6 +6492,10 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddNumberToObject(root, "cv_tempo_nudge_pct", scene->cv_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "proximity_tempo_nudge_pct", scene->proximity_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "touchwheel_tempo_nudge_pct", scene->touchwheel_tempo_nudge_pct);
+  if (scene->touchwheel_tempo_nudge_return != TOUCHWHEEL_NUDGE_RETURN_INSTANT) {
+    cJSON_AddNumberToObject(root, "touchwheel_tempo_nudge_return",
+      scene->touchwheel_tempo_nudge_return);
+  }
   if (scene->touchwheel_tempo_floor != 20) {
     cJSON_AddNumberToObject(root, "touchwheel_tempo_floor", scene->touchwheel_tempo_floor);
   }
@@ -6667,6 +6802,13 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
 
   cJSON* tnptw = cJSON_GetObjectItem(root, "touchwheel_tempo_nudge_pct");
   if (tnptw && cJSON_IsNumber(tnptw)) scene->touchwheel_tempo_nudge_pct = (uint8_t)tnptw->valueint;
+
+  cJSON* tnptw_ret = cJSON_GetObjectItem(root, "touchwheel_tempo_nudge_return");
+  if (tnptw_ret && cJSON_IsNumber(tnptw_ret)) {
+    int val = tnptw_ret->valueint;
+    scene->touchwheel_tempo_nudge_return = (val >= 0 && val <= TOUCHWHEEL_NUDGE_RETURN_SLOW)
+      ? (uint8_t)val : TOUCHWHEEL_NUDGE_RETURN_INSTANT;
+  }
 
   cJSON* tw_tempo_floor = cJSON_GetObjectItem(root, "touchwheel_tempo_floor");
   if (tw_tempo_floor && cJSON_IsNumber(tw_tempo_floor)) {

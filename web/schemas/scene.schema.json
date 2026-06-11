@@ -298,6 +298,13 @@
       "default": 10,
       "description": "Percent of scene BPM to swing around center for touchwheel (OUTPUT_TYPE_TEMPO_NUDGE)"
     },
+    "touchwheel_tempo_nudge_return": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "default": 0,
+      "description": "Return speed after touchwheel tempo nudge release (0=instant, 1=fast, 2=medium, 3=slow)"
+    },
     "touchwheel_tempo_floor": {
       "type": "integer",
       "minimum": 20,

@@ -270,13 +270,29 @@ static bool mapping_uses_lfo_target(output_type_t type) {
   return type == OUTPUT_TYPE_LFO_RATE || type == OUTPUT_TYPE_LFO_DEPTH;
 }
 
+static const char* touchwheel_nudge_return_inspect_label(uint8_t speed) {
+  switch (speed) {
+    case TOUCHWHEEL_NUDGE_RETURN_FAST: return "Fast (200ms)";
+    case TOUCHWHEEL_NUDGE_RETURN_MEDIUM: return "Medium (500ms)";
+    case TOUCHWHEEL_NUDGE_RETURN_SLOW: return "Slow (1s)";
+    default: return "Instant";
+  }
+}
+
 static void append_continuous_mapping_block(scene_inspect_buf_t *b, const char *label,
-  const continuous_mapping_t *mapping, uint8_t scene_index, uint8_t nudge_pct) {
+  const continuous_mapping_t *mapping, uint8_t scene_index, uint8_t nudge_pct,
+  int16_t nudge_return) {
   if (!mapping || !mapping->enabled) return;
 
   if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
     scene_inspect_buf_append(b, "%s: Tempo\n", label);
-    scene_inspect_buf_append(b, "Nudge %u%%\n\n", (unsigned)nudge_pct);
+    scene_inspect_buf_append(b, "Nudge %u%%\n", (unsigned)nudge_pct);
+    if (nudge_return >= 0) {
+      scene_inspect_buf_append(b, "Return: %s\n\n",
+        touchwheel_nudge_return_inspect_label((uint8_t)nudge_return));
+    } else {
+      scene_inspect_buf_append(b, "\n");
+    }
     return;
   }
 
@@ -448,7 +464,7 @@ static void append_touchwheel(scene_inspect_buf_t *b, const scene_t *scene,
 
   if (scene->touchwheel_mode == TOUCHWHEEL_MODE_CONTINUOUS) {
     append_continuous_mapping_block(b, "Touchwheel", &scene->touchwheel, scene_index,
-      scene->touchwheel_tempo_nudge_pct);
+      scene->touchwheel_tempo_nudge_pct, scene->touchwheel_tempo_nudge_return);
     return;
   }
 
@@ -821,9 +837,9 @@ bool scene_inspect_build(const scene_t *scene, uint8_t scene_index, char *buf,
   append_expression(&b, scene, scene_index);
   append_cv(&b, scene, scene_index);
   append_continuous_mapping_block(&b, "Proximity", &scene->proximity, scene_index,
-    scene->proximity_tempo_nudge_pct);
+    scene->proximity_tempo_nudge_pct, -1);
   append_continuous_mapping_block(&b, "Ambient Light", &scene->als, scene_index,
-    scene->als_tempo_nudge_pct);
+    scene->als_tempo_nudge_pct, -1);
   append_buttons(&b, scene, scene_index);
   append_lfo_slot(&b, 0, scene, scene_index);
   append_lfo_slot(&b, 1, scene, scene_index);
@@ -832,9 +848,9 @@ bool scene_inspect_build(const scene_t *scene, uint8_t scene_index, char *buf,
   append_on_play(&b, scene, scene_index);
   append_sample_hold(&b, scene, scene_index);
   append_continuous_mapping_block(&b, "Tilt X", &scene->tilt_x, scene_index,
-    scene->tilt_x_tempo_nudge_pct);
+    scene->tilt_x_tempo_nudge_pct, -1);
   append_continuous_mapping_block(&b, "Tilt Y", &scene->tilt_y, scene_index,
-    scene->tilt_y_tempo_nudge_pct);
+    scene->tilt_y_tempo_nudge_pct, -1);
   append_rtg(&b, scene);
   append_cc_triggers(&b, scene, scene_index);
   append_note_track(&b, scene, scene_index);

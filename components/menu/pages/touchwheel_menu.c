@@ -78,32 +78,14 @@ static const char* touchwheel_lfo_target_label(lfo_target_t target) {
 // Get current mode mapping index from the live scene (falls back to JSON on disk)
 static int get_current_mode_index(void) {
   scene_t* scene = scene_get_current();
-  touchwheel_mode_t mode;
-  output_type_t output;
+  if (scene) return (int)touchwheel_get_current_mode_index(scene);
 
-  if (scene) {
-    mode = scene->touchwheel_mode;
-    output = scene->touchwheel.output_type;
-  } else {
-    uint8_t scene_index = scene_get_current_index();
-    mode = scene_get_persisted_touchwheel_mode(scene_index);
-    output = scene_get_persisted_touchwheel_output_type(scene_index);
-  }
-
-  for (size_t i = 0; i < NUM_BASE_MODES; i++) {
-    if (g_touchwheel_mode_mappings[i].mode == mode) {
-      // For CONTINUOUS mode, also check output type
-      if (mode == TOUCHWHEEL_MODE_CONTINUOUS) {
-        if (g_touchwheel_mode_mappings[i].use_output_type &&
-            g_touchwheel_mode_mappings[i].output_type == output) {
-          return (int)i;
-        }
-      } else {
-        return (int)i;
-      }
-    }
-  }
-  return 0;
+  scene_t fallback = {
+    .touchwheel_mode = scene_get_persisted_touchwheel_mode(scene_get_current_index()),
+  };
+  fallback.touchwheel.output_type =
+    scene_get_persisted_touchwheel_output_type(scene_get_current_index());
+  return (int)touchwheel_get_current_mode_index(&fallback);
 }
 
 // ============================================================================
@@ -218,6 +200,7 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   uint32_t mapping_index = 0;
   uint32_t roller_count = 0;
   uint32_t adjusted_index = selected_index - 1;
+  bool mapping_found = false;
   
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal (same logic as mode_roller_create)
@@ -230,12 +213,13 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
     }
     if (roller_count == adjusted_index) {
       mapping_index = (uint32_t)i;
+      mapping_found = true;
       break;
     }
     roller_count++;
   }
   
-  if (mapping_index >= NUM_BASE_MODES || adjusted_index >= roller_count) {
+  if (!mapping_found || mapping_index >= NUM_BASE_MODES) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
@@ -273,7 +257,6 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   ESP_LOGI(TAG, "Touchwheel mode set to: %s", mapping->display_name);
   
   s_callback_in_progress = false;
-  // Go back 2 levels: pop roller AND old Touchwheel, then push new Touchwheel
   menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
 }
 
@@ -512,6 +495,40 @@ static void nav_to_touchwheel_tempo_ceiling(void* user_data) {
 // ============================================================================
 
 static char s_nudge_label[32];
+static char s_return_speed_label[32];
+
+static const char* return_speed_to_string(uint8_t speed) {
+  switch (speed) {
+    case TOUCHWHEEL_NUDGE_RETURN_FAST: return "Fast";
+    case TOUCHWHEEL_NUDGE_RETURN_MEDIUM: return "Medium";
+    case TOUCHWHEEL_NUDGE_RETURN_SLOW: return "Slow";
+    default: return "Instant";
+  }
+}
+
+static void return_speed_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (selected_index > TOUCHWHEEL_NUDGE_RETURN_SLOW) selected_index = TOUCHWHEEL_NUDGE_RETURN_INSTANT;
+  scene_set_touchwheel_tempo_nudge_return(scene_get_current_index(), (uint8_t)selected_index);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+}
+
+static lv_obj_t* return_speed_roller_create(void) {
+  uint8_t cur = scene_get_touchwheel_tempo_nudge_return(scene_get_current_index());
+  if (cur > TOUCHWHEEL_NUDGE_RETURN_SLOW) cur = TOUCHWHEEL_NUDGE_RETURN_INSTANT;
+  return menu_create_roller_page("Return Speed", "Instant\nFast\nMedium\nSlow",
+    (uint32_t)cur, return_speed_confirm_cb, NULL);
+}
+
+static void nav_to_return_speed(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Return Speed", return_speed_roller_create);
+}
 
 static void nudge_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -1038,6 +1055,12 @@ lv_obj_t* menu_page_touchwheel_create(void) {
         uint8_t pct = scene_get_touchwheel_tempo_nudge_pct(scene_get_current_index());
         snprintf(s_nudge_label, sizeof(s_nudge_label), "Nudge %%\n%u%%", (unsigned)pct);
         s_tw_items[item_count++] = (menu_item_t){s_nudge_label, nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
+        uint8_t ret_spd = scene_get_touchwheel_tempo_nudge_return(scene_get_current_index());
+        snprintf(s_return_speed_label, sizeof(s_return_speed_label), "Return Speed\n%s",
+          return_speed_to_string(ret_spd));
+        s_tw_items[item_count++] = (menu_item_t){
+          s_return_speed_label, nav_to_return_speed, NULL, true, MENU_ITEM_KIND_ROLLER
+        };
       } else if (mapping->output_type == OUTPUT_TYPE_CC) {
         // Control Change mode: 4 CC slots + Style (2-line format)
         for (int i = 0; i < MAX_MULTI_CC; i++) {

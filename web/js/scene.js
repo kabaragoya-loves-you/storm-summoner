@@ -1020,6 +1020,7 @@ application.register(
 
     isNumericScenePath (path) {
       if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') return true
+      if (/tempo_nudge_(pct|return)$/.test(path)) return true
       if (/\.values(\.\d+)+$/.test(path)) return true
       if (/\.presets(\.\d+)+$/.test(path)) return true
       return /\.(note|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
@@ -1058,7 +1059,13 @@ application.register(
           lfo_rate: { touchwheel_mode: 'lfo_rate', touchwheel_style: 'odometer', enabled: true },
           lfo_depth: { touchwheel_mode: 'lfo_depth', touchwheel_style: 'odometer', enabled: true },
           rtg_rate: { touchwheel_mode: 'rtg_rate', touchwheel_style: 'odometer', enabled: true },
-          tempo_nudge: { touchwheel_mode: 'continuous', output_type: 'tempo_nudge', touchwheel_style: 'bipolar', enabled: true }
+          tempo_nudge: {
+            touchwheel_mode: 'continuous',
+            output_type: 'tempo_nudge',
+            touchwheel_style: 'bipolar',
+            enabled: true,
+            touchwheel_tempo_nudge_return: 0
+          }
         }
         const spec = specByKey[val]
         if (!spec) return
@@ -1071,6 +1078,9 @@ application.register(
         }
         if (spec.touchwheel_tempo_ceiling != null) {
           this.editModel.touchwheel_tempo_ceiling = spec.touchwheel_tempo_ceiling
+        }
+        if (spec.touchwheel_tempo_nudge_return != null) {
+          this.editModel.touchwheel_tempo_nudge_return = spec.touchwheel_tempo_nudge_return
         }
         if (spec.touchwheel_style) this.editModel.touchwheel_style = spec.touchwheel_style
         if (spec.enabled === false) {

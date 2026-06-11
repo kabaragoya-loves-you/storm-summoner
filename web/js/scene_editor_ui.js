@@ -2195,7 +2195,19 @@ window.SceneEditorUi = (function () {
     } else if (userMode === 'tempo_nudge') {
       html += fieldRow(
         'Nudge %',
-        numberField('touchwheel_tempo_nudge_pct', m.touchwheel_tempo_nudge_pct ?? 10, 1, 50)
+        selectField(
+          'touchwheel_tempo_nudge_pct',
+          m.touchwheel_tempo_nudge_pct ?? 10,
+          ActionCatalog.touchwheelTempoNudgeAmountOptions(m.touchwheel_tempo_nudge_pct ?? 10)
+        )
+      )
+      html += fieldRow(
+        'Return Speed',
+        selectField(
+          'touchwheel_tempo_nudge_return',
+          m.touchwheel_tempo_nudge_return ?? 0,
+          ActionCatalog.touchwheelNudgeReturnOptions(m.touchwheel_tempo_nudge_return ?? 0)
+        )
       )
       if (spec?.supports_style) html += renderTouchwheelStyle(m)
     } else if (userMode === 'tempo') {
