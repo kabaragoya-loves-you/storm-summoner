@@ -659,6 +659,9 @@ static const char *inspect_lfo_waveform_label(lfo_waveform_t wf) {
     case LFO_WAVEFORM_SAW_UP: return "Saw Up";
     case LFO_WAVEFORM_SAW_DOWN: return "Saw Down";
     case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
+    case LFO_WAVEFORM_BIN: return "Bin";
+    case LFO_WAVEFORM_GLIDER: return "Glider";
+    case LFO_WAVEFORM_STRAY: return "Stray";
     case LFO_WAVEFORM_CUSTOM: return "Custom";
     default: return "?";
   }

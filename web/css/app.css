@@ -1150,6 +1150,10 @@ wa-dialog[data-assets-target="deleteDialog"]::part(footer) {
   font-style: italic;
 }
 
+.scene-inspect-text:has(.scene-inspect-block) {
+  white-space: normal;
+}
+
 .scene-truncated-banner {
   flex-shrink: 0;
 }
@@ -1159,10 +1163,28 @@ wa-dialog[data-assets-target="deleteDialog"]::part(footer) {
   margin-bottom: 0.5rem;
 }
 
+.scene-editor-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: 0.5rem;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
 .scene-editor-title {
   font-weight: 600;
   font-size: 0.9rem;
-  margin-left: 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-section-layout-btn {
+  flex-shrink: 0;
+  font-size: var(--wa-font-size-xs);
+  --wa-form-control-padding-block: 0.25em;
+  --wa-form-control-padding-inline: 0.35em;
 }
 
 .scene-editor-save-status {
@@ -1366,11 +1388,67 @@ wa-dialog[data-scene-target="messageDialog"]::part(footer) {
   margin-bottom: 0.25rem;
 }
 
+.scene-lfo-waveform-preview {
+  margin: 0 0 0.65rem;
+}
+
+.scene-lfo-waveform-svg {
+  display: block;
+  width: 280px;
+  max-width: 100%;
+  height: 100px;
+}
+
+.scene-lfo-waveform-grid {
+  stroke: var(--border-subtle, #444);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.scene-lfo-waveform-ref {
+  stroke: var(--border-subtle, #444);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.scene-lfo-waveform-stroke {
+  stroke: var(--accent, #7eb8ff);
+  stroke-width: 1.5;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.scene-lfo-waveform-caption {
+  font-size: 0.7rem;
+  fill: var(--text-dim, #888);
+}
+
+.scene-lfo-waveform-axis-label {
+  font-size: 0.65rem;
+  fill: var(--text-dim, #888);
+}
+
+.scene-lfo-waveform-level {
+  font-size: 0.65rem;
+  fill: var(--text-dim, #888);
+  font-style: italic;
+}
+
+.scene-inspect-block-graph .scene-lfo-waveform-preview {
+  width: fit-content;
+  max-width: 280px;
+  margin: 0;
+}
+
+.scene-inspect-block-graph .scene-lfo-waveform-svg {
+  display: block;
+  width: 280px;
+  max-width: 100%;
+  height: 100px;
+}
+
 .scene-inspect-block {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 1rem 1.25rem;
-  align-items: start;
+  display: block;
   margin-bottom: 1rem;
 }
 
@@ -1384,7 +1462,9 @@ wa-dialog[data-scene-target="messageDialog"]::part(footer) {
 }
 
 .scene-inspect-block-graph {
-  width: 280px;
+  width: fit-content;
+  max-width: 280px;
+  margin: 0.35rem 0 0;
 }
 
 .scene-inspect-block-graph .scene-boomerang-env {
@@ -1401,13 +1481,8 @@ wa-dialog[data-scene-target="messageDialog"]::part(footer) {
 }
 
 @media (max-width: 640px) {
-  .scene-inspect-block {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .scene-inspect-block-graph {
-    width: 100%;
-    max-width: 280px;
+    max-width: 100%;
   }
 }
 

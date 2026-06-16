@@ -5126,8 +5126,6 @@ static cJSON* action_to_json(const action_t* action) {
         cJSON_AddNumberToObject(obj, "rate_hz_x100", action->params.lfo.rate_hz_x100);
       if (action->params.lfo.division != ACTION_LFO_ORIG_U8)
         cJSON_AddNumberToObject(obj, "division", action->params.lfo.division);
-      if (action->params.lfo.polarity != ACTION_LFO_ORIG_U8)
-        cJSON_AddNumberToObject(obj, "polarity", action->params.lfo.polarity);
       if (action->params.lfo.floor != ACTION_LFO_ORIG_U8)
         cJSON_AddNumberToObject(obj, "floor", action->params.lfo.floor);
       if (action->params.lfo.ceiling != ACTION_LFO_ORIG_U8)
@@ -5734,7 +5732,6 @@ static action_t json_to_action(cJSON* obj) {
     action.params.lfo.rate_mode       = ACTION_LFO_ORIG_U8;
     action.params.lfo.rate_hz_x100    = ACTION_LFO_ORIG_U16;
     action.params.lfo.division        = ACTION_LFO_ORIG_U8;
-    action.params.lfo.polarity        = ACTION_LFO_ORIG_U8;
     action.params.lfo.floor           = ACTION_LFO_ORIG_U8;
     action.params.lfo.ceiling         = ACTION_LFO_ORIG_U8;
     action.params.lfo.resolution_mode = ACTION_LFO_ORIG_U8;
@@ -5754,8 +5751,6 @@ static action_t json_to_action(cJSON* obj) {
         action.params.lfo.rate_hz_x100 = (uint16_t)item->valueint;
       if ((item = cJSON_GetObjectItem(obj, "division")))
         action.params.lfo.division = (uint8_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "polarity")))
-        action.params.lfo.polarity = (uint8_t)item->valueint;
       if ((item = cJSON_GetObjectItem(obj, "floor")))
         action.params.lfo.floor = (uint8_t)item->valueint;
       if ((item = cJSON_GetObjectItem(obj, "ceiling")))

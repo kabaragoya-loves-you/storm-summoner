@@ -255,7 +255,10 @@ window.ActionCatalog = (function () {
       { v: 2, l: 'Square' },
       { v: 3, l: 'Saw Up' },
       { v: 4, l: 'Saw Down' },
-      { v: 5, l: 'Sample & Hold' }
+      { v: 5, l: 'Sample & Hold' },
+      { v: 6, l: 'Bin' },
+      { v: 7, l: 'Glider' },
+      { v: 8, l: 'Stray' }
     ], current)
   }
 
@@ -437,14 +440,6 @@ window.ActionCatalog = (function () {
     return withStaleOption(presets, cur, `${cur}%`)
   }
 
-  function lfoModifyPolarityOptions (current) {
-    return lfoModifyU8Options([
-      { v: 0, l: 'Unipolar' },
-      { v: 1, l: 'Bipolar' },
-      { v: 2, l: 'Inverted' }
-    ], current)
-  }
-
   function lfoModifyFloorCeilingOptions (current) {
     const vals = [0, 10, 20, 30, 40, 50, 60, 64, 70, 80, 90, 100, 110, 120, 127]
     return lfoModifyU8Options(vals.map(v => ({ v, l: String(v) })), current)
@@ -477,7 +472,6 @@ window.ActionCatalog = (function () {
     delete action.rate_mode
     delete action.rate_hz_x100
     delete action.division
-    delete action.polarity
     delete action.floor
     delete action.ceiling
     delete action.resolution_mode
@@ -489,7 +483,6 @@ window.ActionCatalog = (function () {
     if (action.rate_mode == null) action.rate_mode = LFO_ORIG_U8
     if (action.rate_hz_x100 == null) action.rate_hz_x100 = LFO_ORIG_U16
     if (action.division == null) action.division = LFO_ORIG_U8
-    if (action.polarity == null) action.polarity = LFO_ORIG_U8
     if (action.floor == null) action.floor = LFO_ORIG_U8
     if (action.ceiling == null) action.ceiling = LFO_ORIG_U8
     if (action.resolution_mode == null) action.resolution_mode = LFO_ORIG_U8
@@ -1331,7 +1324,6 @@ window.ActionCatalog = (function () {
     cvTriggerDebounceOptions,
     closestCvTriggerThreshold,
     closestCvTriggerDebounce,
-    lfoModifyPolarityOptions,
     lfoModifyFloorCeilingOptions,
     lfoModifyResolutionOptions,
     lfoModifyManualStepsOptions,

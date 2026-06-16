@@ -100,7 +100,7 @@ static int cmd_lfo(int argc, char **argv) {
       
     } else if (strcmp(subcmd, "waveform") == 0) {
       if (lfo_args.value->count == 0) {
-        ESP_LOGE(TAG, "Missing waveform (sine, triangle, square, saw_up, saw_down, sample_hold, custom)");
+        ESP_LOGE(TAG, "Missing waveform (sine, triangle, square, saw_up, saw_down, sample_hold, bin, glider, stray, custom)");
         return 1;
       }
       lfo_waveform_t wf = lfo_waveform_from_string(lfo_args.value->sval[0]);

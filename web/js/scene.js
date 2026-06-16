@@ -6,7 +6,8 @@ application.register(
     static targets = [
       'inspectView', 'inspectText', 'editView', 'truncatedBanner',
       'copySource', 'copyBtn', 'editorToolbar',
-      'editorContainer', 'editorTitle', 'validationBox',
+      'editorContainer', 'editorTitle', 'sectionLayoutBtn', 'sectionLayoutIcon',
+      'validationBox',
       'programmingBanner', 'saveBtn', 'revertBtn', 'saveStatus',
       'pedalPickerDialog', 'pedalVendorSelect', 'pedalSelect',
       'pedalChangeWarningDialog', 'reloadConfirmDialog', 'reloadConfirmMessage',
@@ -38,6 +39,7 @@ application.register(
       this._pedalCatalogLoad = null
       this.deviceDefinition = null
       this._openEditorSections = new Set()
+      this._sectionLayoutPhase = 0
       this._pendingPedalSlug = null
       this._pendingPedalInherited = false
       this.validationErrors = []
@@ -399,6 +401,42 @@ application.register(
         ? `${row.name}${row.current ? ' (playing)' : ''}`
         : (modelName || 'Scene')
       this.editorTitleTarget.textContent = label
+    }
+
+    updateSectionLayoutButton () {
+      if (!this.hasSectionLayoutBtnTarget || !this.hasSectionLayoutIconTarget) return
+      const configs = [
+        { icon: 'minus', library: 'system', label: 'Collapse all sections' },
+        { icon: 'plus', library: 'system', label: 'Expand all sections' },
+        { icon: 'filter', library: null, label: 'Reset section layout' }
+      ]
+      const cfg = configs[this._sectionLayoutPhase] || configs[0]
+      this.sectionLayoutIconTarget.setAttribute('name', cfg.icon)
+      if (cfg.library) {
+        this.sectionLayoutIconTarget.setAttribute('library', cfg.library)
+        this.sectionLayoutIconTarget.setAttribute('variant', 'solid')
+      } else {
+        this.sectionLayoutIconTarget.removeAttribute('library')
+        this.sectionLayoutIconTarget.removeAttribute('variant')
+      }
+      this.sectionLayoutBtnTarget.setAttribute('title', cfg.label)
+      this.sectionLayoutBtnTarget.setAttribute('aria-label', cfg.label)
+    }
+
+    cycleSectionLayout () {
+      if (!this.editing || !this.editModel) return
+      this._sectionLayoutPhase = (this._sectionLayoutPhase + 1) % 3
+      let openSections
+      if (this._sectionLayoutPhase === 0) {
+        openSections = SceneEditorUi.sectionsWithContent(this)
+      } else if (this._sectionLayoutPhase === 1) {
+        openSections = new Set()
+      } else {
+        openSections = SceneEditorUi.allSectionTitles(this)
+      }
+      this._openEditorSections = openSections
+      this.renderEditor(openSections)
+      this.updateSectionLayoutButton()
     }
 
     onDownloadScene (e) {
@@ -1567,6 +1605,13 @@ application.register(
         return
       }
 
+      if (path.endsWith('.reset_phase') || path.endsWith('.restore_on_stop')) {
+        this.setAtPath(path, val === '1' || val === 1 || val === true || val === 'true')
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
       const ccValueSync = path.match(/^(.*)\.(start_cc|finish_cc|flag_up_cc|flag_down_cc)$/)
       if (ccValueSync) {
         const actionPath = ccValueSync[1]
@@ -1633,7 +1678,10 @@ application.register(
         return
       }
 
-      if (this.isNumericScenePath(path)) val = Number(val)
+      if (this.isNumericScenePath(path)) {
+        const num = Number(val)
+        if (!Number.isNaN(num)) val = num
+      }
       this.setAtPath(path, val)
       if (path.endsWith('.type')) {
         // Reset the variant to a valid default for the new type so a stale
@@ -2205,9 +2253,21 @@ application.register(
         .join('')
     }
 
-    renderEditor () {
+    renderEditor (openSectionsOverride) {
       if (!this.hasEditorContainerTarget || !this.editModel) return
-      const openSections = this.captureOpenEditorSections()
+      let openSections
+      if (openSectionsOverride !== undefined) {
+        openSections = openSectionsOverride
+        this._openEditorSections = openSections
+      } else if (this._sectionLayoutPhase === 0) {
+        openSections = this.captureOpenEditorSections()
+      } else if (this._sectionLayoutPhase === 1) {
+        openSections = new Set()
+        this._openEditorSections = openSections
+      } else {
+        openSections = SceneEditorUi.allSectionTitles(this)
+        this._openEditorSections = openSections
+      }
       this.editorContainerTarget.innerHTML =
         SceneEditorUi.renderEditor(this, openSections)
       this.renderValidation()
@@ -2288,11 +2348,13 @@ application.register(
 
         // Start with assigned/enabled sections expanded; everything else stays
         // collapsed. User toggles during editing are tracked from here on.
+        this._sectionLayoutPhase = 0
         this._openEditorSections = SceneEditorUi.sectionsWithContent(this)
 
         await this.loadSchema()
         this.validationErrors = []
         this.renderEditor()
+        this.updateSectionLayoutButton()
         this.baselineJson = JSON.stringify(this.editModel)
         this.dirty = controlCorrected || presetCorrected
         this.markDirty()
@@ -2459,11 +2521,13 @@ application.register(
       const boomOpts = this.deviceContext.midiControl === false
         ? { midiControl: false }
         : {}
-      const hasBoomerangs =
-        window.BoomerangEnvelope?.collectBoomerangs(this.inspectModel, boomOpts)?.length
-      if (hasBoomerangs) {
-        this.inspectTextTarget.innerHTML =
-          window.BoomerangEnvelope.renderInspectDocument(body, this.inspectModel, boomOpts)
+      const rich = window.LfoWaveformPreview?.renderInspectableDocument?.(
+        body,
+        this.inspectModel,
+        boomOpts
+      )
+      if (rich != null) {
+        this.inspectTextTarget.innerHTML = rich
       } else {
         this.inspectTextTarget.textContent = body
       }
@@ -2496,12 +2560,13 @@ application.register(
       const boomOpts = this.deviceContext.midiControl === false
         ? { midiControl: false }
         : {}
-      const hasBoomerangs =
-        window.BoomerangEnvelope?.collectBoomerangs(this.inspectModel, boomOpts)?.length
-      const htmlBody = hasBoomerangs
-        ? window.BoomerangEnvelope.renderInspectDocument(text, this.inspectModel, boomOpts)
-        : null
+      const htmlBody = window.LfoWaveformPreview?.renderInspectableDocument?.(
+        text,
+        this.inspectModel,
+        boomOpts
+      )
       const boomStyles = window.BoomerangEnvelope?.printStyles || ''
+      const lfoStyles = window.LfoWaveformPreview?.printStyles || ''
 
       let frame = this.printFrame
       if (!frame) {
@@ -2558,6 +2623,7 @@ application.register(
     line-height: 1.25;
   }
   ${boomStyles}
+  ${lfoStyles}
   @media print {
     html, body {
       width: 7.5in;

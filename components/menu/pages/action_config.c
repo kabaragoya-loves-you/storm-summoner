@@ -119,7 +119,6 @@ static char s_lfo_modify_waveform_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_rate_mode_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_rate_hz_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_division_label[LABEL_BUFFER_SETS][24];
-static char s_lfo_modify_polarity_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_floor_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_ceiling_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_modify_resolution_label[LABEL_BUFFER_SETS][24];
@@ -743,7 +742,6 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.lfo.rate_mode       = ACTION_LFO_ORIG_U8;
       action->params.lfo.rate_hz_x100    = ACTION_LFO_ORIG_U16;
       action->params.lfo.division        = ACTION_LFO_ORIG_U8;
-      action->params.lfo.polarity        = ACTION_LFO_ORIG_U8;
       action->params.lfo.floor           = ACTION_LFO_ORIG_U8;
       action->params.lfo.ceiling         = ACTION_LFO_ORIG_U8;
       action->params.lfo.resolution_mode = ACTION_LFO_ORIG_U8;
@@ -4616,6 +4614,7 @@ static void lfo_modify_steps_roller_apply(uint8_t* field, uint32_t idx,
 static const lfo_waveform_t s_lfo_modify_waveforms[] = {
   LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
   LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD,
+  LFO_WAVEFORM_BIN, LFO_WAVEFORM_GLIDER, LFO_WAVEFORM_STRAY,
 };
 #define NUM_LFO_MODIFY_WAVEFORMS (sizeof(s_lfo_modify_waveforms) / sizeof(s_lfo_modify_waveforms[0]))
 
@@ -4629,6 +4628,9 @@ static const char* lfo_modify_waveform_display(uint8_t v) {
     case LFO_WAVEFORM_SAW_UP:      return "Saw Up";
     case LFO_WAVEFORM_SAW_DOWN:    return "Saw Down";
     case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
+    case LFO_WAVEFORM_BIN:         return "Bin";
+    case LFO_WAVEFORM_GLIDER:      return "Glider";
+    case LFO_WAVEFORM_STRAY:       return "Stray";
     default:                       return "Original";
   }
 }
@@ -4652,9 +4654,9 @@ static void lfo_modify_waveform_confirm_cb(uint32_t selected_index, void* user_d
 
 static lv_obj_t* lfo_modify_waveform_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
-  static char options[96];
+  static char options[128];
   snprintf(options, sizeof(options),
-    "Original\nRandom\nSine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H");
+    "Original\nRandom\nSine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H\nBin\nGlider\nStray");
   uint32_t current = lfo_modify_u8_roller_current(
     s_ctx->target_action->params.lfo.waveform,
     (const uint8_t*)s_lfo_modify_waveforms, NUM_LFO_MODIFY_WAVEFORMS);
@@ -4834,56 +4836,6 @@ static lv_obj_t* lfo_modify_division_roller_create(void) {
 static void nav_to_lfo_modify_division(void* user_data) {
   (void)user_data;
   nav_to_subpage("Division", lfo_modify_division_roller_create);
-}
-
-// --- Polarity -------------------------------------------------------------
-
-static const polarity_t s_lfo_modify_polarities[] = {
-  POLARITY_UNIPOLAR, POLARITY_BIPOLAR, POLARITY_INVERTED,
-};
-#define NUM_LFO_MODIFY_POLARITIES (sizeof(s_lfo_modify_polarities) / sizeof(s_lfo_modify_polarities[0]))
-
-static const char* lfo_modify_polarity_display(uint8_t v) {
-  if (v == ACTION_LFO_ORIG_U8) return "Original";
-  if (v == ACTION_LFO_RAND_U8) return "Random";
-  switch ((polarity_t)v) {
-    case POLARITY_UNIPOLAR: return "Unipolar";
-    case POLARITY_BIPOLAR:  return "Bipolar";
-    case POLARITY_INVERTED: return "Inverted";
-    default:                return "Original";
-  }
-}
-
-static void lfo_modify_polarity_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  if (!s_ctx || !s_ctx->target_action) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-  action_t* action = s_ctx->target_action;
-  lfo_modify_u8_roller_apply(&action->params.lfo.polarity, selected_index,
-    (const uint8_t*)s_lfo_modify_polarities, NUM_LFO_MODIFY_POLARITIES);
-  persist_scene_changes();
-  s_callback_in_progress = false;
-  return_to_detail_page(2);
-}
-
-static lv_obj_t* lfo_modify_polarity_roller_create(void) {
-  if (!s_ctx || !s_ctx->target_action) return NULL;
-  uint32_t current = lfo_modify_u8_roller_current(
-    s_ctx->target_action->params.lfo.polarity,
-    (const uint8_t*)s_lfo_modify_polarities, NUM_LFO_MODIFY_POLARITIES);
-  return menu_create_roller_page("Polarity",
-    "Original\nRandom\nUnipolar\nBipolar\nInverted", current,
-    lfo_modify_polarity_confirm_cb, NULL);
-}
-
-static void nav_to_lfo_modify_polarity(void* user_data) {
-  (void)user_data;
-  nav_to_subpage("Polarity", lfo_modify_polarity_roller_create);
 }
 
 // --- Floor / Ceiling -----------------------------------------------------
@@ -9077,12 +9029,6 @@ lv_obj_t* action_config_detail_page_create(void) {
         "Division\n%s", lfo_modify_division_display(action->params.lfo.division));
       s_detail_items[item_count++] = (menu_item_t){
         s_lfo_modify_division_label[buf], nav_to_lfo_modify_division, NULL, true, MENU_ITEM_KIND_ROLLER
-      };
-
-      snprintf(s_lfo_modify_polarity_label[buf], sizeof(s_lfo_modify_polarity_label[buf]),
-        "Polarity\n%s", lfo_modify_polarity_display(action->params.lfo.polarity));
-      s_detail_items[item_count++] = (menu_item_t){
-        s_lfo_modify_polarity_label[buf], nav_to_lfo_modify_polarity, NULL, true, MENU_ITEM_KIND_ROLLER
       };
 
       snprintf(s_lfo_modify_floor_label[buf], sizeof(s_lfo_modify_floor_label[buf]),

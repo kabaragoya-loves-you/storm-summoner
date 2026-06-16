@@ -174,6 +174,7 @@ action_handle_result_t action_handlers_modulation_dispatch(
               static const uint8_t waveforms[] = {
                 LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
                 LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD,
+                LFO_WAVEFORM_BIN, LFO_WAVEFORM_GLIDER, LFO_WAVEFORM_STRAY,
               };
               uint8_t wf = lfo_modify_resolve_u8_table(a->params.lfo.waveform,
                 waveforms, sizeof(waveforms) / sizeof(waveforms[0]));
@@ -209,15 +210,6 @@ action_handle_result_t action_handlers_modulation_dispatch(
               uint8_t div = lfo_modify_resolve_u8_table(a->params.lfo.division,
                 divisions, sizeof(divisions) / sizeof(divisions[0]));
               lfo_set_division(lfo_index, (lfo_note_division_t)div);
-              applied++;
-            }
-            if (a->params.lfo.polarity != ACTION_LFO_ORIG_U8 && scene_mapping) {
-              static const uint8_t polarities[] = {
-                POLARITY_UNIPOLAR, POLARITY_BIPOLAR, POLARITY_INVERTED,
-              };
-              uint8_t pol = lfo_modify_resolve_u8_table(a->params.lfo.polarity,
-                polarities, sizeof(polarities) / sizeof(polarities[0]));
-              scene_mapping->polarity = (polarity_t)pol;
               applied++;
             }
             if (a->params.lfo.floor != ACTION_LFO_ORIG_U8) {

@@ -11,5 +11,9 @@ dependencies.lock
 .vscode/
 .devcontainer/
 
+# Cursor IDE debug session logs (temporary)
+.cursor/debug-*.log
+debug-*.log
+
 # MIDI device cache (auto-generated)
 midi-devices/cache/*.bin

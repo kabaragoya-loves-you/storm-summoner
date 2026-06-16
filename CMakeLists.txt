@@ -5,6 +5,7 @@
 cmake_minimum_required(VERSION 3.5)
 set(CMAKE_COLOR_DIAGNOSTICS OFF)
 
+include(${CMAKE_SOURCE_DIR}/cmake/check_idf_touch_patch.cmake)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # =============================================================================

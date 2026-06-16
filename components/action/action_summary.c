@@ -410,7 +410,7 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     summary->has_param = true;
 
     // MODIFY -- list each non-sentinel override as a compact tag (Wave / Rate
-    // / Pol / Floor / Ceil / Res / Steps). Tags that wouldn't fit are
+    // / Floor / Ceil / Res / Steps). Tags that wouldn't fit are
     // silently dropped rather than truncating mid-tag.
     if (action->variant == VARIANT_MODIFY) {
       // Static lookup keeps the per-call code small and easy to scan.
@@ -419,18 +419,16 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
         { 1, "RateMode" },
         { 2, "Rate"     },
         { 3, "Div"      },
-        { 4, "Pol"      },
-        { 5, "Floor"    },
-        { 6, "Ceil"     },
-        { 7, "Res"      },
-        { 8, "Steps"    },
+        { 4, "Floor"    },
+        { 5, "Ceil"     },
+        { 6, "Res"      },
+        { 7, "Steps"    },
       };
-      bool active[9] = {
+      bool active[8] = {
         action->params.lfo.waveform        != ACTION_LFO_ORIG_U8,
         action->params.lfo.rate_mode       != ACTION_LFO_ORIG_U8,
         action->params.lfo.rate_hz_x100    != ACTION_LFO_ORIG_U16,
         action->params.lfo.division        != ACTION_LFO_ORIG_U8,
-        action->params.lfo.polarity        != ACTION_LFO_ORIG_U8,
         action->params.lfo.floor           != ACTION_LFO_ORIG_U8,
         action->params.lfo.ceiling         != ACTION_LFO_ORIG_U8,
         action->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8,
@@ -1038,6 +1036,9 @@ static const char *ainspect_lfo_waveform_name(uint8_t wf) {
     case LFO_WAVEFORM_SAW_UP: return "Saw Up";
     case LFO_WAVEFORM_SAW_DOWN: return "Saw Down";
     case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
+    case LFO_WAVEFORM_BIN: return "Bin";
+    case LFO_WAVEFORM_GLIDER: return "Glider";
+    case LFO_WAVEFORM_STRAY: return "Stray";
     case LFO_WAVEFORM_CUSTOM: return "Custom";
     default: return "?";
   }
@@ -1071,11 +1072,6 @@ static void ainspect_append_lfo_modify(ainspect_buf_t *b, const action_t *action
     if (action->params.lfo.division == ACTION_LFO_RAND_U8) snprintf(val, sizeof(val), "Random");
     else snprintf(val, sizeof(val), "%u", (unsigned)action->params.lfo.division);
     ainspect_append_lfo_modify_pair(b, "Division", val);
-  }
-  if (action->params.lfo.polarity != ACTION_LFO_ORIG_U8) {
-    if (action->params.lfo.polarity == ACTION_LFO_RAND_U8) snprintf(val, sizeof(val), "Random");
-    else snprintf(val, sizeof(val), "%u", (unsigned)action->params.lfo.polarity);
-    ainspect_append_lfo_modify_pair(b, "Polarity", val);
   }
   if (action->params.lfo.floor != ACTION_LFO_ORIG_U8) {
     if (action->params.lfo.floor == ACTION_LFO_RAND_U8) snprintf(val, sizeof(val), "Random");

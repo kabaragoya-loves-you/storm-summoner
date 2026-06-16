@@ -10,6 +10,7 @@ application.register(
       this.clockData = null
       this._transportBusy = false
       this.isActivating = false
+      this._activatePending = false
       this._loadGeneration = 0
       this.releases = null
       this._onTabActivated = e => {
@@ -126,52 +127,73 @@ application.register(
 
     async activate () {
       if (!this.connection.isConnected) return
-      if (this.isActivating) return
+      // A load is already running. Remember the request instead of dropping it:
+      // a newer trigger (e.g. app:tab-activated bumping _loadGeneration during
+      // reconnect) would otherwise invalidate the in-flight load while never
+      // being serviced itself, leaving the panels empty. We re-run below.
+      if (this.isActivating) {
+        this._activatePending = true
+        return
+      }
 
-      const gen = this._loadGeneration
       this.isActivating = true
 
       try {
-        const response = await this.connection.runSerialTask(async () => {
-          if (gen !== this._loadGeneration) return null
-          await this.connection.ensureDeviceIdle()
-          if (gen !== this._loadGeneration) return null
-          await this.sleep(100)
-          return this.connection._sendCommandImpl(
-            'INFO',
-            5000,
-            data =>
-              typeof data.version === 'string' && typeof data.build === 'number'
+        do {
+          this._activatePending = false
+          const gen = this._loadGeneration
+
+          let response
+          try {
+            response = await this.connection.runSerialTask(async () => {
+              if (gen !== this._loadGeneration) return null
+              await this.connection.ensureDeviceIdle()
+              if (gen !== this._loadGeneration) return null
+              await this.sleep(100)
+              return this.connection._sendCommandImpl(
+                'INFO',
+                5000,
+                data =>
+                  typeof data.version === 'string' &&
+                    typeof data.build === 'number'
+              )
+            })
+          } catch (err) {
+            if (!this.connection.isConnected) return
+            // Stale generation: a newer load is pending and will render.
+            if (gen !== this._loadGeneration) continue
+            console.error('Info activation error:', err)
+            this.renderEmpty()
+            continue
+          }
+
+          // Generation advanced mid-load: discard this result; the pending
+          // re-run will service the newest generation.
+          if (gen !== this._loadGeneration) continue
+          if (!this.connection.isConnected) return
+
+          if (!response || response.startsWith('ERROR:')) {
+            console.error('INFO command failed:', response)
+            this.renderEmpty()
+            continue
+          }
+
+          this.infoData = JSON.parse(response)
+          if (this.infoData.clock) this.clockData = this.infoData.clock
+          console.log('Device INFO:', this.infoData)
+          this.renderInfo()
+
+          document.dispatchEvent(
+            new CustomEvent('device:info', {
+              detail: {
+                version: this.infoData.version,
+                build: this.infoData.build,
+                git: this.infoData.git,
+                assets_checksum: this.infoData.assets_checksum
+              }
+            })
           )
-        })
-
-        if (gen !== this._loadGeneration) return
-
-        if (!response || response.startsWith('ERROR:')) {
-          console.error('INFO command failed:', response)
-          this.renderEmpty()
-          return
-        }
-
-        this.infoData = JSON.parse(response)
-        if (this.infoData.clock) this.clockData = this.infoData.clock
-        console.log('Device INFO:', this.infoData)
-        this.renderInfo()
-
-        document.dispatchEvent(
-          new CustomEvent('device:info', {
-            detail: {
-              version: this.infoData.version,
-              build: this.infoData.build,
-              git: this.infoData.git,
-              assets_checksum: this.infoData.assets_checksum
-            }
-          })
-        )
-      } catch (err) {
-        if (gen !== this._loadGeneration) return
-        console.error('Info activation error:', err)
-        this.renderEmpty()
+        } while (this._activatePending && this.connection.isConnected)
       } finally {
         this.isActivating = false
       }

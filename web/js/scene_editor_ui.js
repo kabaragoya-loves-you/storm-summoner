@@ -531,14 +531,18 @@ window.SceneEditorUi = (function () {
       const polarityVal = opts.polaritySelectValue
         ? opts.polaritySelectValue(m.polarity ?? 0)
         : (m.polarity ?? 0)
-      html += fieldRow(
-        'Polarity',
-        selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
-      )
-      html += fieldRow(
-        'Curve',
-        selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
-      )
+      if (!opts.hidePolarity) {
+        html += fieldRow(
+          'Polarity',
+          selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
+        )
+      }
+      if (!opts.hideCurve) {
+        html += fieldRow(
+          'Curve',
+          selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
+        )
+      }
     } else if (ot === 'note') {
       if (opts.noteSelectors) {
         html += fieldRow(
@@ -587,14 +591,18 @@ window.SceneEditorUi = (function () {
       const polarityVal = opts.polaritySelectValue
         ? opts.polaritySelectValue(m.polarity ?? 0)
         : (m.polarity ?? 0)
-      html += fieldRow(
-        'Polarity',
-        selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
-      )
-      html += fieldRow(
-        'Curve',
-        selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
-      )
+      if (!opts.hidePolarity) {
+        html += fieldRow(
+          'Polarity',
+          selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
+        )
+      }
+      if (!opts.hideCurve) {
+        html += fieldRow(
+          'Curve',
+          selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
+        )
+      }
     } else if (ot === 'lfo_rate' || ot === 'lfo_depth') {
       html += fieldRow(
         'LFO target',
@@ -632,14 +640,18 @@ window.SceneEditorUi = (function () {
       const polarityVal = opts.polaritySelectValue
         ? opts.polaritySelectValue(m.polarity ?? 0)
         : (m.polarity ?? 0)
-      html += fieldRow(
-        'Polarity',
-        selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
-      )
-      html += fieldRow(
-        'Curve',
-        selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
-      )
+      if (!opts.hidePolarity) {
+        html += fieldRow(
+          'Polarity',
+          selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
+        )
+      }
+      if (!opts.hideCurve) {
+        html += fieldRow(
+          'Curve',
+          selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
+        )
+      }
     }
 
     if (opts.showMinMidMax && ot === 'cc') {
@@ -788,14 +800,6 @@ window.SceneEditorUi = (function () {
           `${path}.division`,
           a.division ?? 255,
           ActionCatalog.lfoModifyDivisionOptions(a.division)
-        )
-      )
-      html += fieldRow(
-        'Polarity',
-        selectField(
-          `${path}.polarity`,
-          a.polarity ?? 255,
-          ActionCatalog.lfoModifyPolarityOptions(a.polarity)
         )
       )
       html += fieldRow(
@@ -2253,11 +2257,17 @@ window.SceneEditorUi = (function () {
     )
     html += fieldRow(
       'On restart',
-      checkboxField(`${cfgKey}.reset_phase`, cfg.reset_phase !== false)
+      selectField(`${cfgKey}.reset_phase`, cfg.reset_phase !== false ? 1 : 0, [
+        { v: 1, l: 'From Start' },
+        { v: 0, l: 'Continue' }
+      ])
     )
     html += fieldRow(
       'On stop',
-      checkboxField(`${cfgKey}.restore_on_stop`, !!cfg.restore_on_stop)
+      selectField(`${cfgKey}.restore_on_stop`, cfg.restore_on_stop ? 1 : 0, [
+        { v: 0, l: 'Nothing' },
+        { v: 1, l: 'Restore' }
+      ])
     )
     return html
   }
@@ -2271,19 +2281,21 @@ window.SceneEditorUi = (function () {
       'Ceiling',
       numberField(`${cfgKey}.ceiling`, cfg.ceiling ?? 127, 0, 127)
     )
-    html += fieldRow(
-      'Resolution',
-      selectField(
-        `${cfgKey}.resolution_mode`,
-        cfg.resolution_mode || 'auto',
-        LFO_RESOLUTION
-      )
-    )
-    if ((cfg.resolution_mode || 'auto') === 'manual') {
+    if (cfg.waveform !== 'glider') {
       html += fieldRow(
-        'Manual steps',
-        numberField(`${cfgKey}.manual_steps`, cfg.manual_steps ?? 32, 1, 256)
+        'Resolution',
+        selectField(
+          `${cfgKey}.resolution_mode`,
+          cfg.resolution_mode || 'auto',
+          LFO_RESOLUTION
+        )
       )
+      if ((cfg.resolution_mode || 'auto') === 'manual') {
+        html += fieldRow(
+          'Manual steps',
+          numberField(`${cfgKey}.manual_steps`, cfg.manual_steps ?? 32, 1, 256)
+        )
+      }
     }
     return html
   }
@@ -2904,18 +2916,31 @@ window.SceneEditorUi = (function () {
       { v: 'square', l: 'Square' },
       { v: 'saw_up', l: 'Saw Up' },
       { v: 'saw_down', l: 'Saw Down' },
-      { v: 'sample_hold', l: 'Sample & Hold' }
+      { v: 'sample_hold', l: 'Sample & Hold' },
+      { v: 'bin', l: 'Bin' },
+      { v: 'glider', l: 'Glider' },
+      { v: 'stray', l: 'Stray' }
     ]
 
     if (cvClaimsSource(m, claimKey)) {
       html += CV_GATE_CONTROLLED_CALLOUT
     }
 
+    const lfoCtx = {
+      bpm: m.bpm ?? 120,
+      feltBeats: m.time_signature?.numerator ?? 4
+    }
+    const lfoPreviewSvg = window.LfoWaveformPreview?.renderSvg(m[cfgKey], lfoCtx) || ''
+
+    html += `<div class="scene-lfo-block" data-controller="lfo-waveform-fields"
+      data-lfo-waveform-fields-cfg-key-value="${esc(cfgKey)}">`
     html += renderLfoEngineFields(cfgKey, m[cfgKey])
     html += fieldRow(
       'Waveform',
       selectField(`${cfgKey}.waveform`, m[cfgKey].waveform || 'sine', waveformOpts)
     )
+    html += `<div class="scene-lfo-waveform-preview" data-lfo-waveform-fields-target="preview"
+      data-controller="lfo-waveform" data-lfo-waveform-cfg-key-value="${esc(cfgKey)}">${lfoPreviewSvg}</div>`
     const lfoRateMode = (m[cfgKey].rate_mode === 'tempo') ? 'tempo' : 'free'
     if (m[cfgKey].rate_mode !== lfoRateMode) m[cfgKey].rate_mode = lfoRateMode
     html += fieldRow(
@@ -2945,25 +2970,21 @@ window.SceneEditorUi = (function () {
         )
       )
     }
+    html += renderLfoOutputRangeFields(cfgKey, m[cfgKey])
+    html += '</div>'
 
     if (!cvClaimsSource(m, claimKey)) {
-      const ot = m[mapKey].output_type || 'cc'
       html += renderContinuousMapping(ctrl, mapKey, m[mapKey], {
         hideEnabled: true,
         hideRouting: true,
         ccSlots: true,
         noteSelectors: true,
         noteOctaveOptions: SENSOR_NOTE_OCTAVE_OPTIONS,
-        velocityModePath: velKey
+        velocityModePath: velKey,
+        hideCurve: true,
+        hidePolarity: true
       })
-      if (ot !== 'cc' && ot !== 'note') {
-        html += fieldRow(
-          'Polarity',
-          selectField(`${mapKey}.polarity`, m[mapKey].polarity ?? 0, POLARITY)
-        )
-      }
     }
-    html += renderLfoOutputRangeFields(cfgKey, m[cfgKey])
     return section(`LFO${n}`, html)
   }
 
@@ -3331,6 +3352,17 @@ window.SceneEditorUi = (function () {
     return open
   }
 
+  function allSectionTitles (ctrl) {
+    const titles = [
+      'Pads', 'Touchwheel', 'Expression', 'Control Voltage', 'Proximity',
+      'Ambient Light', 'Buttons', 'LFO1', 'LFO2', 'Bump', 'On-Load',
+      'S+H', 'Tilt X', 'Tilt Y', 'RTG', 'Note Track'
+    ]
+    if (ctrl.editModel?.use_transport) titles.push('On-Play')
+    if (ctrl.deviceContext?.midiControl) titles.push('CC Triggers')
+    return new Set(titles)
+  }
+
   function sceneNameToSlug (name) {
     if (!name) return 's.json'
     let out = ''
@@ -3356,6 +3388,7 @@ window.SceneEditorUi = (function () {
     section,
     fieldRow,
     sectionsWithContent,
+    allSectionTitles,
     isReservedSceneName,
     sceneNameToSlug
   }

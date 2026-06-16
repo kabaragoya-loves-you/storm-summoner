@@ -293,16 +293,15 @@ window.BoomerangEnvelope = (function () {
 
   const PRINT_STYLES = `
 .scene-inspect-block {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 2.8in;
-  gap: 0.2in 0.25in;
-  align-items: start;
+  display: block;
   margin-bottom: 0.2in;
   break-inside: avoid;
   page-break-inside: avoid;
 }
 .scene-inspect-block-graph {
   width: 2.8in;
+  max-width: 2.8in;
+  margin: 0.08in 0 0;
 }
 .scene-inspect-paragraph {
   white-space: pre-wrap;

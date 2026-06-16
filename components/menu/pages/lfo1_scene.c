@@ -91,6 +91,9 @@ static const char* waveform_to_display_string(lfo_waveform_t wf) {
     case LFO_WAVEFORM_SAW_UP: return "Saw Up";
     case LFO_WAVEFORM_SAW_DOWN: return "Saw Down";
     case LFO_WAVEFORM_SAMPLE_HOLD: return "S&H";
+    case LFO_WAVEFORM_BIN: return "Bin";
+    case LFO_WAVEFORM_GLIDER: return "Glider";
+    case LFO_WAVEFORM_STRAY: return "Stray";
     case LFO_WAVEFORM_CUSTOM: return "Custom";
     default: return "Unknown";
   }
@@ -285,10 +288,11 @@ static void waveform_confirm_cb(uint32_t selected_index, void* user_data) {
   
   lfo_waveform_t waveforms[] = {
     LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
-    LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD
+    LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD,
+    LFO_WAVEFORM_BIN, LFO_WAVEFORM_GLIDER, LFO_WAVEFORM_STRAY
   };
-  
-  if (selected_index < 6) {
+
+  if (selected_index < 9) {
     scene->lfo1_config.waveform = waveforms[selected_index];
     lfo_apply_config(0, &scene->lfo1_config);
     persist_scene_changes();
@@ -310,11 +314,14 @@ static lv_obj_t* waveform_roller_create(void) {
     case LFO_WAVEFORM_SAW_UP: current = 3; break;
     case LFO_WAVEFORM_SAW_DOWN: current = 4; break;
     case LFO_WAVEFORM_SAMPLE_HOLD: current = 5; break;
+    case LFO_WAVEFORM_BIN: current = 6; break;
+    case LFO_WAVEFORM_GLIDER: current = 7; break;
+    case LFO_WAVEFORM_STRAY: current = 8; break;
     default: current = 0; break;
   }
-  
-  return menu_create_roller_page("Waveform", 
-    "Sine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H", current, waveform_confirm_cb, NULL);
+
+  return menu_create_roller_page("Waveform",
+    "Sine\nTriangle\nSquare\nSaw Up\nSaw Down\nS&&H\nBin\nGlider\nStray", current, waveform_confirm_cb, NULL);
 }
 
 static void nav_to_waveform(void* user_data) {
@@ -1097,11 +1104,6 @@ lv_obj_t* menu_page_lfo1_scene_create(void) {
     }
   }
   
-  // Polarity
-  snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
-    "Polarity\n%s", polarity_to_string(scene->lfo1.polarity));
-  s_lfo_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
-
   // Floor
   snprintf(s_floor_label[buf], sizeof(s_floor_label[buf]),
     "Floor\n%d", scene->lfo1_config.floor);
@@ -1112,16 +1114,17 @@ lv_obj_t* menu_page_lfo1_scene_create(void) {
     "Ceiling\n%d", scene->lfo1_config.ceiling);
   s_lfo_items[item_count++] = (menu_item_t){s_ceiling_label[buf], nav_to_ceiling, NULL, true, MENU_ITEM_KIND_ROLLER};
 
-  // Resolution
-  snprintf(s_resolution_label[buf], sizeof(s_resolution_label[buf]),
-    "Resolution\n%s", resolution_to_display_string(scene->lfo1_config.resolution_mode));
-  s_lfo_items[item_count++] = (menu_item_t){s_resolution_label[buf], nav_to_resolution, NULL, true, MENU_ITEM_KIND_ROLLER};
+  // Resolution (Glider streams continuously at 30 Hz — no step resolution)
+  if (scene->lfo1_config.waveform != LFO_WAVEFORM_GLIDER) {
+    snprintf(s_resolution_label[buf], sizeof(s_resolution_label[buf]),
+      "Resolution\n%s", resolution_to_display_string(scene->lfo1_config.resolution_mode));
+    s_lfo_items[item_count++] = (menu_item_t){s_resolution_label[buf], nav_to_resolution, NULL, true, MENU_ITEM_KIND_ROLLER};
 
-  // Steps (only show when Manual mode is selected)
-  if (scene->lfo1_config.resolution_mode == LFO_RESOLUTION_MANUAL) {
-    snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]),
-      "Steps\n%d", scene->lfo1_config.manual_steps);
-    s_lfo_items[item_count++] = (menu_item_t){s_steps_label[buf], nav_to_steps, NULL, true, MENU_ITEM_KIND_ROLLER};
+    if (scene->lfo1_config.resolution_mode == LFO_RESOLUTION_MANUAL) {
+      snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]),
+        "Steps\n%d", scene->lfo1_config.manual_steps);
+      s_lfo_items[item_count++] = (menu_item_t){s_steps_label[buf], nav_to_steps, NULL, true, MENU_ITEM_KIND_ROLLER};
+    }
   }
 
   return menu_create_page_2line("LFO1", s_lfo_items, item_count);

@@ -33,6 +33,7 @@ window.ConnectionManager = (function () {
       this._modeNotifyReader = null
       this._modeNotifySuspended = false
       this._exclusiveSession = 0
+      this._connectingPromise = null
     }
 
     beginExclusiveSession () {
@@ -96,36 +97,92 @@ window.ConnectionManager = (function () {
       return result
     }
 
-    // Connect to device
+    // Connect to device. Re-entrancy guard: a second click (or a duplicate
+    // button event) while a connect is already in flight must NOT start a
+    // parallel flow. Two concurrent connect()s would each open a requestPort
+    // chooser and call open() on the same device, which surfaces as
+    // "NotFoundError: No port selected by the user" and competing opens.
     async connect () {
       if (this.port) return true
+      if (this._connectingPromise) return this._connectingPromise
 
+      this._connectingPromise = this._connectFlow()
       try {
-        this.port = await navigator.serial.requestPort({
-          filters: [{ usbVendorId: 0x303a }]
-        })
-        await this.port.open({ baudRate: 115200 })
-        await this.port.setSignals({
-          dataTerminalReady: true,
-          requestToSend: true
-        })
+        return await this._connectingPromise
+      } finally {
+        this._connectingPromise = null
+      }
+    }
 
-        // Listen for unexpected disconnection
-        navigator.serial.addEventListener('disconnect', this.onPortDisconnect)
+    async _connectFlow () {
+      // Port selection is the one step that requires a user gesture, so it must
+      // happen exactly once. A failure here (chooser dismissed / no port) is a
+      // real user-facing error with nothing to retry.
+      const port = await navigator.serial.requestPort({
+        filters: [{ usbVendorId: 0x303a }]
+      })
 
-        this._startRxPump()
-        await this.sleep(50)
+      // Opening + the initial drain can transiently fail right after a device
+      // reset (USB re-enumeration, stray boot output, or a serialized command
+      // racing for the readable reader). Retry the setup WITHOUT re-prompting
+      // the chooser so the user never has to manually reconnect.
+      const maxAttempts = 3
+      let lastErr = null
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          await this._openAndInit(port)
+          this.emit('connection:changed', { connected: true })
+          return true
+        } catch (err) {
+          lastErr = err
+          await this._abortConnect(port)
+          if (attempt < maxAttempts) await this.sleep(250)
+        }
+      }
+      throw lastErr
+    }
+
+    async _openAndInit (port) {
+      await port.open({ baudRate: 115200 })
+      await port.setSignals({
+        dataTerminalReady: true,
+        requestToSend: true
+      })
+      this.port = port
+
+      // Listen for unexpected disconnection
+      navigator.serial.addEventListener('disconnect', this.onPortDisconnect)
+
+      this._startRxPump()
+      await this.sleep(50)
+
+      // Run the initial drain/EXIT/drain through the serial task chain. drainInput
+      // acquires the port's single readable reader; if a command (e.g. info
+      // activation firing on reconnect) grabs that reader concurrently, getReader
+      // throws "already locked to a reader". Serializing here makes the setup
+      // mutually exclusive with every other serial transaction.
+      await this.runSerialTask(async () => {
         await this.drainInput()
         // Clear any CDC mode left over from a prior browser session.
         await this.sendRaw('EXIT\n')
         await this.sleep(150)
         await this.drainInput()
-        this.emit('connection:changed', { connected: true })
-        return true
-      } catch (err) {
-        this.port = null
-        throw err
-      }
+      })
+    }
+
+    async _abortConnect (port) {
+      this._stopRxPump()
+      this._stopModeNotifyLoop()
+      navigator.serial.removeEventListener('disconnect', this.onPortDisconnect)
+      this.port = null
+      this.mode = null
+      this._deviceScenesActive = false
+      this._rxBuffer = ''
+      this._lineQueue = []
+      this._rejectLineWaiters()
+      try {
+        await port.close()
+      } catch (e) {}
     }
 
     // Handle unexpected port disconnection

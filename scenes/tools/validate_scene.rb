@@ -284,8 +284,8 @@ def validate_action(action, context, errors, scene_data: nil)
       lfo_rand_u8 = 254
       lfo_rand_u16 = 65534
       lfo_rand_steps = 254
-      if action.key?('waveform') && !(action['waveform'].is_a?(Integer) && (action['waveform'] == lfo_rand_u8 || action['waveform'].between?(0, 5)))
-        errors << "#{context}: lfo modify 'waveform' must be 0-5 or #{lfo_rand_u8} (random)"
+      if action.key?('waveform') && !(action['waveform'].is_a?(Integer) && (action['waveform'] == lfo_rand_u8 || action['waveform'].between?(0, 8)))
+        errors << "#{context}: lfo modify 'waveform' must be 0-8 or #{lfo_rand_u8} (random)"
       end
       if action.key?('rate_mode') && !(action['rate_mode'].is_a?(Integer) && (action['rate_mode'] == lfo_rand_u8 || action['rate_mode'].between?(0, 1)))
         errors << "#{context}: lfo modify 'rate_mode' must be 0-1 or #{lfo_rand_u8} (random)"
@@ -295,9 +295,6 @@ def validate_action(action, context, errors, scene_data: nil)
       end
       if action.key?('division') && !(action['division'].is_a?(Integer) && (action['division'] == lfo_rand_u8 || action['division'].between?(0, 10)))
         errors << "#{context}: lfo modify 'division' must be 0-10 or #{lfo_rand_u8} (random)"
-      end
-      if action.key?('polarity') && !(action['polarity'].is_a?(Integer) && (action['polarity'] == lfo_rand_u8 || action['polarity'].between?(0, 2)))
-        errors << "#{context}: lfo modify 'polarity' must be 0-2 or #{lfo_rand_u8} (random)"
       end
       if action.key?('floor') && !(action['floor'].is_a?(Integer) && (action['floor'] == lfo_rand_u8 || action['floor'].between?(0, 127)))
         errors << "#{context}: lfo modify 'floor' must be 0-127 or #{lfo_rand_u8} (random)"
@@ -533,8 +530,8 @@ def validate_action(action, context, errors, scene_data: nil)
       # shapes[] is optional in legacy files; if present, sanity-check it.
       if action['shapes'].is_a?(Array)
         action['shapes'].each_with_index do |s, i|
-          unless s.is_a?(Integer) && s.between?(0, 5)
-            errors << "#{context}: legacy lfo_shape shapes[#{i}] must be 0-5"
+          unless s.is_a?(Integer) && s.between?(0, 8)
+            errors << "#{context}: legacy lfo_shape shapes[#{i}] must be 0-8"
           end
         end
       end

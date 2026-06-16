@@ -686,7 +686,7 @@
         },
         "waveform": {
           "type": "string",
-          "enum": ["sine", "triangle", "square", "saw_up", "saw_down", "sample_hold", "custom"],
+          "enum": ["sine", "triangle", "square", "saw_up", "saw_down", "sample_hold", "bin", "glider", "stray", "custom"],
           "default": "sine",
           "description": "LFO waveform shape"
         },
@@ -1739,10 +1739,10 @@
               },
               "waveform": {
                 "anyOf": [
-                  { "type": "integer", "minimum": 0, "maximum": 5 },
+                  { "type": "integer", "minimum": 0, "maximum": 8 },
                   { "type": "integer", "const": 254 }
                 ],
-                "description": "Override LFO waveform (0=Sine, 1=Triangle, 2=Square, 3=Saw Up, 4=Saw Down, 5=Sample&Hold). 254 = randomize on each trigger. Omit to keep the scene's configured waveform."
+                "description": "Override LFO waveform (0=Sine, 1=Triangle, 2=Square, 3=Saw Up, 4=Saw Down, 5=Sample&Hold, 6=Bin, 7=Glider, 8=Stray). 254 = randomize on each trigger. Omit to keep the scene's configured waveform."
               },
               "rate_mode": {
                 "anyOf": [
@@ -1764,13 +1764,6 @@
                   { "type": "integer", "const": 254 }
                 ],
                 "description": "Override tempo-synced note division (0=16 bars .. 10=1/32). 254 = randomize on each trigger. Used when rate_mode=tempo. Omit to keep the scene's configured division."
-              },
-              "polarity": {
-                "anyOf": [
-                  { "type": "integer", "minimum": 0, "maximum": 2 },
-                  { "type": "integer", "const": 254 }
-                ],
-                "description": "Override output polarity (0=Unipolar, 1=Bipolar, 2=Inverted). 254 = randomize on each trigger. Omit to keep the scene's per-LFO continuous-mapping polarity."
               },
               "floor": {
                 "anyOf": [

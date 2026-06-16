@@ -66,7 +66,7 @@ typedef enum {
   // LFO control (consolidated -- variants START / STOP / TOGGLE / MODIFY)
   //   START  / STOP / TOGGLE = drive the LFO engine for slot 1, 2, or 3 (both)
   //   MODIFY = apply per-parameter overrides to a running LFO (waveform,
-  //            rate mode, rate, polarity, floor, ceiling, resolution, steps).
+  //            rate mode, rate, floor, ceiling, resolution, steps).
   //            Each override has an "Original" sentinel meaning "do not
   //            touch this field". Replaces the old SHAPE-cycle behavior.
   ACTION_LFO,
@@ -401,7 +401,6 @@ typedef struct {
       uint8_t rate_mode;         // lfo_rate_mode_t,       0xFF = Original, 0xFE = Random
       uint16_t rate_hz_x100;     // Free-rate Hz * 100,  0xFFFF = Original, 0xFFFE = Random
       uint8_t division;          // lfo_note_division_t,   0xFF = Original, 0xFE = Random
-      uint8_t polarity;          // polarity_t,            0xFF = Original, 0xFE = Random
       uint8_t floor;             // 0-127,                 0xFF = Original, 0xFE = Random
       uint8_t ceiling;           // 0-127,                 0xFF = Original, 0xFE = Random
       uint8_t resolution_mode;   // lfo_resolution_mode_t, 0xFF = Original, 0xFE = Random

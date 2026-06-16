@@ -416,7 +416,16 @@
               <div class="scenes-detail-panel scene-inspect-panel" data-controller="scene"
                    data-action="slots:add->scene#slotAdd slots:remove->scene#slotRemove">
                 <div class="scenes-detail-toolbar toolbar hidden" data-scene-target="editorToolbar">
-                  <span class="scene-editor-title" data-scene-target="editorTitle"></span>
+                  <div class="scene-editor-title-row">
+                    <span class="scene-editor-title" data-scene-target="editorTitle"></span>
+                    <wa-button class="scene-section-layout-btn" size="small" appearance="text"
+                               variant="neutral" data-scene-target="sectionLayoutBtn"
+                               data-action="click->scene#cycleSectionLayout"
+                               title="Collapse all sections" aria-label="Collapse all sections">
+                      <wa-icon name="minus" library="system" variant="solid"
+                               data-scene-target="sectionLayoutIcon"></wa-icon>
+                    </wa-button>
+                  </div>
                   <div class="toolbar-spacer"></div>
                   <span class="scene-editor-save-status hidden"
                         data-scene-target="saveStatus" aria-live="polite"></span>
@@ -845,6 +854,9 @@
   <script src="/js/controllers/reveal.js"></script>
   <script src="/js/controllers/slots.js"></script>
   <script src="/js/boomerang_envelope.js"></script>
+  <script src="/js/lfo_waveform_preview.js"></script>
+  <script src="/js/controllers/lfo-waveform-fields.js"></script>
+  <script src="/js/controllers/lfo-waveform.js"></script>
   <script src="/js/controllers/boomerang-fields.js"></script>
   <script src="/js/controllers/boomerang-envelope.js"></script>
   <script src="/js/info.js"></script>

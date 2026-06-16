@@ -21,6 +21,17 @@
 #define LFO_TASK_PRIORITY 5
 #define LFO_UPDATE_RATE_HZ 100  // Internal update rate
 
+// Stochastic waveform tuning (adjust on hardware to taste)
+#define LFO_BIN_SWITCH_PCT 65
+#define LFO_GLIDER_OUTPUT_COEFF 0.008f   // Output slew per 100 Hz tick (very smooth)
+#define LFO_GLIDER_TARGET_COEFF 0.018f   // Target slew per tick (wish -> target)
+#define LFO_GLIDER_OUTPUT_COEFF_MAX 0.045f
+#define LFO_GLIDER_TARGET_COEFF_MAX 0.07f
+#define LFO_GLIDER_TARGET_DELTA 16
+#define LFO_GLIDER_RETARGET_MIN_MS 3000
+#define LFO_GLIDER_RETARGET_RANGE_MS 5000
+#define LFO_STRAY_DELTA 72
+
 // Phase is stored as 16-bit for precision, output as 8-bit
 #define PHASE_MAX 65536
 #define PHASE_TO_8BIT(p) ((uint8_t)((p) >> 8))
@@ -44,6 +55,17 @@ typedef struct {
   uint32_t last_send_time;  // Timestamp of last event post
   uint8_t sample_hold_value; // Held value for S&H waveform
   bool sample_hold_triggered; // Whether S&H has triggered this cycle
+  uint8_t bin_state;        // Current high/low level for Bin waveform
+  bool bin_triggered;
+  float glider_value;       // Smoothed output for Glider waveform
+  float glider_target;      // Intermediate slew target
+  float glider_wish;        // Slow random aim the target drifts toward
+  uint32_t glider_next_retarget_ms;
+  float stray_p0;           // Catmull-Rom control points for Stray spline
+  float stray_p1;
+  float stray_p2;
+  float stray_p3;
+  bool stray_triggered;
   bool cycle_completed;     // True when one-shot has finished its cycle
   uint8_t queued_cycles;    // Number of additional cycles queued (for retrigger)
   bool pending_start;       // LFO Start was triggered, waiting for timing
@@ -76,8 +98,14 @@ static esp_timer_handle_t s_start_timer = NULL;
 static void lfo_start_timer_cb(void* arg);
 static void lfo_task(void* arg);
 static uint8_t calculate_waveform(lfo_state_t* lfo);
+static uint8_t evaluate_waveform_at_phase(lfo_state_t* lfo, uint8_t adjusted_phase, bool update_state);
+static void reset_stochastic_waveform_state(lfo_state_t* lfo);
+static void lfo_clear_cycle_triggers(lfo_state_t* lfo);
 static void handle_beat_event(const event_t* event, void* context);
 static void handle_transport_event(const event_t* event, void* context);
+static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm);
+static float lfo_get_effective_rate_hz(lfo_state_t* lfo);
+static float glider_speed_factor(lfo_state_t* lfo);
 
 // Calculate LFO cycle duration in milliseconds
 static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm) {
@@ -114,6 +142,33 @@ static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm) {
   }
 }
 
+static float lfo_get_effective_rate_hz(lfo_state_t* lfo) {
+  if (lfo->has_dynamic_rate) {
+    return 0.1f * powf(100.0f, lfo->dynamic_rate / 127.0f);
+  }
+  if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
+    float rate_hz = lfo->config.rate_hz_x100 / 100.0f;
+    return (rate_hz > 0.01f) ? rate_hz : 0.01f;
+  }
+  uint16_t bpm = tempo_get_bpm();
+  if (bpm == 0) bpm = 120;
+  float cycle_ms = calculate_cycle_duration_ms(lfo, bpm);
+  return (cycle_ms > 0.0f) ? (1000.0f / cycle_ms) : 1.0f;
+}
+
+// Map LFO rate (0.05-20 Hz) to Glider speed: 1x at slowest, 10x at 20 Hz
+static float glider_speed_factor(lfo_state_t* lfo) {
+  float rate_hz = lfo_get_effective_rate_hz(lfo);
+  if (rate_hz < 0.05f) rate_hz = 0.05f;
+  if (rate_hz > 20.0f) rate_hz = 20.0f;
+  float log_min = logf(0.05f);
+  float log_max = logf(20.0f);
+  float t = (logf(rate_hz) - log_min) / (log_max - log_min);
+  if (t < 0.0f) t = 0.0f;
+  if (t > 1.0f) t = 1.0f;
+  return 1.0f + t * 9.0f;
+}
+
 // Get effective steps per cycle based on resolution mode
 static uint8_t get_effective_steps(lfo_state_t* lfo, float cycle_ms) {
   switch (lfo->config.resolution_mode) {
@@ -131,6 +186,9 @@ static uint8_t get_effective_steps(lfo_state_t* lfo, float cycle_ms) {
 
 // Calculate send interval for an LFO based on resolution mode
 static uint32_t get_send_interval_ms(lfo_state_t* lfo, uint16_t bpm) {
+  // Glider is continuous slewing — always stream at 30 Hz regardless of resolution
+  if (lfo->config.waveform == LFO_WAVEFORM_GLIDER) return 33;
+
   float cycle_ms = calculate_cycle_duration_ms(lfo, bpm);
   uint8_t steps = get_effective_steps(lfo, cycle_ms);
 
@@ -157,8 +215,7 @@ esp_err_t lfo_init(void) {
     s_lfo[i].last_value = 0;
     s_lfo[i].last_sent_value = 0;
     s_lfo[i].last_send_time = 0;
-    s_lfo[i].sample_hold_value = 64;
-    s_lfo[i].sample_hold_triggered = false;
+    reset_stochastic_waveform_state(&s_lfo[i]);
     s_lfo[i].cycle_completed = false;
     s_lfo[i].queued_cycles = 0;
     s_lfo[i].pending_start = false;
@@ -336,6 +393,7 @@ static void handle_beat_event(const event_t* event, void* context) {
       lfo->pending_start = false;
       lfo->phase = 0;
       lfo->prev_phase = 0;
+      lfo_clear_cycle_triggers(lfo);
       lfo->cycle_completed = false;
       lfo->just_started = true;  // Skip first one-shot check (race protection)
       lfo->config.enabled = true;
@@ -379,11 +437,65 @@ static uint8_t lookup_sine(uint8_t phase) {
   return value;
 }
 
-static uint8_t calculate_waveform(lfo_state_t* lfo) {
-  uint8_t phase8 = PHASE_TO_8BIT(lfo->phase);
-  uint8_t offset = lfo->config.phase_offset;
-  uint8_t adjusted_phase = phase8 + offset;
+static float stray_clamp_f(float v) {
+  if (v < 0.0f) return 0.0f;
+  if (v > 255.0f) return 255.0f;
+  return v;
+}
 
+static float stray_random_delta(void) {
+  return (float)((int)(esp_random() % (LFO_STRAY_DELTA * 2 + 1)) - LFO_STRAY_DELTA);
+}
+
+static void reset_stray_spline(lfo_state_t* lfo) {
+  lfo->stray_p1 = 128.0f;
+  lfo->stray_p0 = stray_clamp_f(lfo->stray_p1 + stray_random_delta());
+  lfo->stray_p2 = stray_clamp_f(lfo->stray_p1 + stray_random_delta());
+  lfo->stray_p3 = stray_clamp_f(lfo->stray_p2 + stray_random_delta());
+  lfo->stray_triggered = false;
+}
+
+static void reset_stochastic_waveform_state(lfo_state_t* lfo) {
+  lfo->sample_hold_value = 128;
+  lfo->sample_hold_triggered = false;
+  lfo->bin_state = 0;
+  lfo->bin_triggered = false;
+  lfo->glider_value = 128.0f;
+  lfo->glider_target = 128.0f;
+  lfo->glider_wish = 128.0f;
+  lfo->glider_next_retarget_ms = 0;
+  reset_stray_spline(lfo);
+}
+
+static void lfo_clear_cycle_triggers(lfo_state_t* lfo) {
+  lfo->sample_hold_triggered = false;
+  lfo->bin_triggered = false;
+  lfo->stray_triggered = false;
+}
+
+static float catmull_rom(float p0, float p1, float p2, float p3, float t) {
+  float t2 = t * t;
+  float t3 = t2 * t;
+  return 0.5f * ((2.0f * p1) +
+    (-p0 + p2) * t +
+    (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+    (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+}
+
+static float evaluate_stray_value(lfo_state_t* lfo, uint8_t adjusted_phase) {
+  float t = adjusted_phase / 255.0f;
+  float v = catmull_rom(lfo->stray_p0, lfo->stray_p1, lfo->stray_p2, lfo->stray_p3, t);
+  return stray_clamp_f(v);
+}
+
+static void advance_stray_spline(lfo_state_t* lfo) {
+  lfo->stray_p0 = lfo->stray_p1;
+  lfo->stray_p1 = lfo->stray_p2;
+  lfo->stray_p2 = lfo->stray_p3;
+  lfo->stray_p3 = stray_clamp_f(lfo->stray_p2 + stray_random_delta());
+}
+
+static uint8_t evaluate_waveform_at_phase(lfo_state_t* lfo, uint8_t adjusted_phase, bool update_state) {
   uint8_t value = 0;
 
   switch (lfo->config.waveform) {
@@ -414,29 +526,92 @@ static uint8_t calculate_waveform(lfo_state_t* lfo) {
       break;
 
     case LFO_WAVEFORM_SAMPLE_HOLD:
-      // Trigger new random value at phase 0
-      if (adjusted_phase < 8 && !lfo->sample_hold_triggered) {
-        lfo->sample_hold_value = (uint8_t)(esp_random() & 0xFF);
-        lfo->sample_hold_triggered = true;
-      } else if (adjusted_phase >= 128) {
-        lfo->sample_hold_triggered = false;
+      if (update_state) {
+        if (adjusted_phase < 8 && !lfo->sample_hold_triggered) {
+          lfo->sample_hold_value = (uint8_t)(esp_random() & 0xFF);
+          lfo->sample_hold_triggered = true;
+        } else if (adjusted_phase >= 128) {
+          lfo->sample_hold_triggered = false;
+        }
       }
       value = lfo->sample_hold_value;
       break;
 
+    case LFO_WAVEFORM_BIN:
+      if (update_state) {
+        if (adjusted_phase < 8 && !lfo->bin_triggered) {
+          if ((esp_random() % 100) < LFO_BIN_SWITCH_PCT)
+            lfo->bin_state = lfo->bin_state ? 0 : 255;
+          lfo->bin_triggered = true;
+        } else if (adjusted_phase >= 128) {
+          lfo->bin_triggered = false;
+        }
+      }
+      value = lfo->bin_state;
+      break;
+
+    case LFO_WAVEFORM_GLIDER:
+      if (update_state) {
+        float speed = glider_speed_factor(lfo);
+        float out_coeff = LFO_GLIDER_OUTPUT_COEFF * speed;
+        if (out_coeff > LFO_GLIDER_OUTPUT_COEFF_MAX) out_coeff = LFO_GLIDER_OUTPUT_COEFF_MAX;
+        float tgt_coeff = LFO_GLIDER_TARGET_COEFF * speed;
+        if (tgt_coeff > LFO_GLIDER_TARGET_COEFF_MAX) tgt_coeff = LFO_GLIDER_TARGET_COEFF_MAX;
+
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (lfo->glider_next_retarget_ms == 0 || now >= lfo->glider_next_retarget_ms) {
+          int span = (int)(LFO_GLIDER_TARGET_DELTA * (0.5f + speed * 0.1f));
+          if (span < 6) span = 6;
+          int delta = (int)(esp_random() % (span * 2 + 1)) - span;
+          float new_wish = lfo->glider_wish + (float)delta;
+          if (new_wish < 0.0f) new_wish = 0.0f;
+          if (new_wish > 255.0f) new_wish = 255.0f;
+          lfo->glider_wish = new_wish;
+          uint32_t base_delay = LFO_GLIDER_RETARGET_MIN_MS +
+            (esp_random() % (LFO_GLIDER_RETARGET_RANGE_MS + 1));
+          uint32_t delay = (uint32_t)((float)base_delay / speed);
+          if (delay < 200) delay = 200;
+          lfo->glider_next_retarget_ms = now + delay;
+        }
+        lfo->glider_target += (lfo->glider_wish - lfo->glider_target) * tgt_coeff;
+        lfo->glider_value += (lfo->glider_target - lfo->glider_value) * out_coeff;
+      }
+      value = (uint8_t)(lfo->glider_value + 0.5f);
+      break;
+
+    case LFO_WAVEFORM_STRAY:
+      if (update_state) {
+        if (adjusted_phase < 8 && !lfo->stray_triggered) {
+          advance_stray_spline(lfo);
+          lfo->stray_triggered = true;
+        } else if (adjusted_phase >= 128) {
+          lfo->stray_triggered = false;
+        }
+      }
+      value = (uint8_t)(evaluate_stray_value(lfo, adjusted_phase) + 0.5f);
+      break;
+
     case LFO_WAVEFORM_CUSTOM:
       if (lfo->config.custom_curve && lfo->config.custom_curve->valid) {
-        // Map phase to curve index
         uint8_t index = (adjusted_phase * (CURVE_RESOLUTION - 1)) / 255;
         value = lfo->config.custom_curve->values[index];
       } else {
-        value = adjusted_phase;  // Fallback to saw
+        value = adjusted_phase;
       }
       break;
 
     default:
       value = 128;
   }
+
+  return value;
+}
+
+static uint8_t calculate_waveform(lfo_state_t* lfo) {
+  uint8_t phase8 = PHASE_TO_8BIT(lfo->phase);
+  uint8_t offset = lfo->config.phase_offset;
+  uint8_t adjusted_phase = phase8 + offset;
+  uint8_t value = evaluate_waveform_at_phase(lfo, adjusted_phase, true);
 
   // Apply floor/ceiling at full 0-255 resolution for maximum precision
   // This avoids double-quantization when using continuous_mapping scaling
@@ -711,10 +886,12 @@ void lfo_enable(uint8_t slot, bool enabled) {
         } else {
           // No beat sync, start from phase 0
           s_lfo[slot].phase = 0;
+          lfo_clear_cycle_triggers(&s_lfo[slot]);
         }
       } else {
         // Non-tempo mode, start from phase 0
         s_lfo[slot].phase = 0;
+        lfo_clear_cycle_triggers(&s_lfo[slot]);
       }
     }
     s_lfo[slot].last_sent_value = 255;  // Force first send
@@ -859,7 +1036,7 @@ uint8_t lfo_get_manual_steps(uint8_t slot) {
 void lfo_reset_phase(uint8_t slot) {
   if (slot >= LFO_NUM_SLOTS) return;
   s_lfo[slot].phase = 0;
-  s_lfo[slot].sample_hold_triggered = false;
+  lfo_clear_cycle_triggers(&s_lfo[slot]);
   ESP_LOGD(TAG, "LFO%d phase reset", slot + 1);
 }
 
@@ -875,56 +1052,11 @@ uint8_t lfo_get_phase(uint8_t slot) {
 
 uint8_t lfo_get_value_at_phase(uint8_t slot, uint8_t phase) {
   if (slot >= LFO_NUM_SLOTS) return 0;
-  
+
   lfo_state_t* lfo = &s_lfo[slot];
   uint8_t offset = lfo->config.phase_offset;
   uint8_t adjusted_phase = phase + offset;
-  uint8_t value = 0;
-  
-  switch (lfo->config.waveform) {
-    case LFO_WAVEFORM_SINE:
-      value = lookup_sine(adjusted_phase);
-      break;
-      
-    case LFO_WAVEFORM_TRIANGLE:
-      if (adjusted_phase < 128) {
-        value = adjusted_phase * 2;
-      } else {
-        value = 255 - ((adjusted_phase - 128) * 2);
-      }
-      break;
-      
-    case LFO_WAVEFORM_SQUARE: {
-      uint8_t threshold = (lfo->config.duty_cycle * 255) / 127;
-      value = (adjusted_phase < threshold) ? 255 : 0;
-      break;
-    }
-    
-    case LFO_WAVEFORM_SAW_UP:
-      value = adjusted_phase;
-      break;
-      
-    case LFO_WAVEFORM_SAW_DOWN:
-      value = 255 - adjusted_phase;
-      break;
-      
-    case LFO_WAVEFORM_SAMPLE_HOLD:
-      // For S&H, return the currently held value (can't predict future)
-      value = lfo->sample_hold_value;
-      break;
-      
-    case LFO_WAVEFORM_CUSTOM:
-      if (lfo->config.custom_curve && lfo->config.custom_curve->valid) {
-        uint8_t index = (adjusted_phase * (CURVE_RESOLUTION - 1)) / 255;
-        value = lfo->config.custom_curve->values[index];
-      } else {
-        value = adjusted_phase;  // Fallback to saw
-      }
-      break;
-
-    default:
-      value = 128;
-  }
+  uint8_t value = evaluate_waveform_at_phase(lfo, adjusted_phase, false);
 
   // Apply floor/ceiling at full 0-255 resolution for maximum precision
   uint8_t floor = lfo->config.floor;
@@ -946,6 +1078,7 @@ uint8_t lfo_get_value_at_phase(uint8_t slot, uint8_t phase) {
 void lfo_apply_config(uint8_t slot, const lfo_config_t* config) {
   if (slot >= LFO_NUM_SLOTS || !config) return;
   memcpy(&s_lfo[slot].config, config, sizeof(lfo_config_t));
+  reset_stochastic_waveform_state(&s_lfo[slot]);
   if (config->enabled) {
     s_lfo[slot].last_sent_value = 255;  // Force first send
   }
@@ -987,6 +1120,9 @@ const char* lfo_waveform_to_string(lfo_waveform_t waveform) {
     case LFO_WAVEFORM_SAW_UP: return "saw_up";
     case LFO_WAVEFORM_SAW_DOWN: return "saw_down";
     case LFO_WAVEFORM_SAMPLE_HOLD: return "sample_hold";
+    case LFO_WAVEFORM_BIN: return "bin";
+    case LFO_WAVEFORM_GLIDER: return "glider";
+    case LFO_WAVEFORM_STRAY: return "stray";
     case LFO_WAVEFORM_CUSTOM: return "custom";
     default: return "unknown";
   }
@@ -1017,6 +1153,9 @@ lfo_waveform_t lfo_waveform_from_string(const char* str) {
   if (strcmp(str, "saw_up") == 0) return LFO_WAVEFORM_SAW_UP;
   if (strcmp(str, "saw_down") == 0) return LFO_WAVEFORM_SAW_DOWN;
   if (strcmp(str, "sample_hold") == 0) return LFO_WAVEFORM_SAMPLE_HOLD;
+  if (strcmp(str, "bin") == 0) return LFO_WAVEFORM_BIN;
+  if (strcmp(str, "glider") == 0) return LFO_WAVEFORM_GLIDER;
+  if (strcmp(str, "stray") == 0) return LFO_WAVEFORM_STRAY;
   if (strcmp(str, "custom") == 0) return LFO_WAVEFORM_CUSTOM;
   return LFO_WAVEFORM_SINE;
 }
@@ -1286,6 +1425,7 @@ bool lfo_trigger_start(uint8_t slot) {
     // Start immediately
     lfo->phase = 0;
     lfo->prev_phase = 0;
+    lfo_clear_cycle_triggers(lfo);
     lfo->cycle_completed = false;
     lfo->just_started = true;  // Skip first one-shot check (race protection)
     lfo->queued_cycles = 0;

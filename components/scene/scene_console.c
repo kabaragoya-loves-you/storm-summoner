@@ -369,7 +369,6 @@ static void format_action_details_with_device(const action_t* action, const devi
         if (action->params.lfo.rate_mode       != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("RateMode");
         if (action->params.lfo.rate_hz_x100    != ACTION_LFO_ORIG_U16)   LFO_DBG_TAG("Rate");
         if (action->params.lfo.division        != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Div");
-        if (action->params.lfo.polarity        != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Pol");
         if (action->params.lfo.floor           != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Floor");
         if (action->params.lfo.ceiling         != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Ceil");
         if (action->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8)    LFO_DBG_TAG("Res");
