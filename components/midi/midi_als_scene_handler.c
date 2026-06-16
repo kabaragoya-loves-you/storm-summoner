@@ -9,6 +9,7 @@
 #include "expression.h"
 #include "lfo.h"
 #include "tempo.h"
+#include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -19,7 +20,7 @@ static smart_filter_t s_als_filter;
 static uint32_t s_last_tempo_apply_ms = 0;
 static uint8_t  s_last_applied_midi = 64;
 
-static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
+static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene, continuous_mapping_t* mapping) {
   uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
   if (now_ms - s_last_tempo_apply_ms < 50) return;
   s_last_tempo_apply_ms = now_ms;
@@ -27,20 +28,21 @@ static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
   s_last_applied_midi = midi_value;
 
   uint8_t pct = scene_get_als_tempo_nudge_pct(scene_get_current_index());
-  if (pct > 100) pct = 100;
+  tempo_nudge_direction_t dir =
+    (tempo_nudge_direction_t)scene_get_als_tempo_nudge_direction(scene_get_current_index());
+  float scale;
+  if (dir == TEMPO_NUDGE_DIR_FASTER) {
+    scale = tempo_nudge_scale_abs_from_mid(midi_value, mapping->middle_value);
+  } else if (dir == TEMPO_NUDGE_DIR_SLOWER) {
+    scale = -tempo_nudge_scale_abs_from_mid(midi_value, mapping->middle_value);
+  } else {
+    scale = tempo_nudge_scale_bipolar(midi_value);
+  }
 
-  int32_t bpm = scene->bpm;
-  float scale = ((float)midi_value - 64.0f) / 63.0f;
-  if (scale > 1.0f) scale = 1.0f;
-  if (scale < -1.0f) scale = -1.0f;
-  float factor = 1.0f + scale * ((float)pct / 100.0f);
-  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
-
-  tempo_set_bpm((uint16_t)new_bpm);
-  ESP_LOGD(TAG, "ALS tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
-    (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+  uint16_t new_bpm = tempo_nudge_compute_bpm(scene->bpm, pct, scale);
+  tempo_set_bpm(new_bpm);
+  ESP_LOGD(TAG, "ALS tempo nudge: midi=%u pct=%u -> bpm=%u (base=%d)",
+    (unsigned)midi_value, (unsigned)pct, (unsigned)new_bpm, (int)scene->bpm);
 }
 
 // Get velocity based on velocity mode setting
@@ -67,16 +69,24 @@ static uint8_t get_als_velocity(continuous_mapping_t* mapping) {
 // Handle ALS sensor events through scene mapping
 static void handle_als_event(const event_t* event, void* context) {
   if (event->type != EVENT_SENSOR_ALS) return;
-  if (!midi_local_output_is_enabled()) return;
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return;
+
+  uint8_t raw_value = event->data.sensor.value;
+
+  if (scene_cv_claims_source(VELOCITY_MODE_ALS)) {
+    uint8_t output_value = continuous_mapping_velocity_sample(raw_value, &scene->als);
+    scene_set_als_velocity_sample(output_value);
+    return;
+  }
+
+  if (!midi_local_output_is_enabled()) return;
   
   continuous_mapping_t* mapping = &scene->als;
   if (!mapping->enabled) return;
   
   // Get raw value from event (0-127)
-  uint8_t raw_value = event->data.sensor.value;
   
   // Process through curve and polarity
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
@@ -135,7 +145,7 @@ static void handle_als_event(const event_t* event, void* context) {
     }
     
     case OUTPUT_TYPE_TEMPO_NUDGE:
-      apply_tempo_nudge(output_value, scene);
+      apply_tempo_nudge(output_value, scene, mapping);
       break;
 
     case OUTPUT_TYPE_CC:

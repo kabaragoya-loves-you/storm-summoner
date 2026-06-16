@@ -38,5 +38,8 @@ void usb_cdc_notify_programming(bool active);
 /** Push EVT:connections:usb:cv:expression when jack state changes. */
 void usb_cdc_notify_connections(void);
 
+/** Enable CDC TX after boot init completes (NVS, sensors, etc.). */
+void usb_cdc_update_arm_tx(void);
+
 #endif /* _USB_CDC_UPDATE_H */
 

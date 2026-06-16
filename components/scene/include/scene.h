@@ -69,6 +69,12 @@ typedef enum {
   TOUCHWHEEL_NUDGE_RETURN_SLOW     // 1000ms
 } touchwheel_nudge_return_t;
 
+typedef enum {
+  TEMPO_NUDGE_DIR_BOTH = 0,
+  TEMPO_NUDGE_DIR_FASTER,
+  TEMPO_NUDGE_DIR_SLOWER
+} tempo_nudge_direction_t;
+
 // Touchpad mapping
 typedef struct {
   action_t action;            // Action to execute (ACTION_NONE = unassigned)
@@ -108,6 +114,8 @@ typedef struct scene_t {
   
   // Touchwheel configuration
   touchwheel_mode_t touchwheel_mode;
+  touchwheel_mode_t touchwheel_mode_prev;  // Saved before CV/Gate velocity takeover
+  bool touchwheel_mode_prev_valid;
   touchwheel_style_t touchwheel_style;  // For CONTINUOUS mode: odometer vs endless encoder
   continuous_mapping_t touchwheel;      // For TOUCHWHEEL_MODE_CONTINUOUS (like proximity/cv/etc)
   lfo_target_t touchwheel_lfo_target;   // Which LFO(s) to affect in LFO_RATE/LFO_DEPTH modes
@@ -162,15 +170,22 @@ typedef struct scene_t {
   // around the scene BPM; midi==64 returns exactly to scene->bpm.
   uint8_t tilt_x_tempo_nudge_pct;
   uint8_t tilt_y_tempo_nudge_pct;
+  uint8_t tilt_x_tempo_nudge_direction;
+  uint8_t tilt_y_tempo_nudge_direction;
   uint8_t expression_tempo_nudge_pct;
+  uint8_t expression_tempo_nudge_direction;
   uint8_t cv_tempo_nudge_pct;
+  uint8_t cv_tempo_nudge_direction;
   uint8_t proximity_tempo_nudge_pct;
+  uint8_t proximity_tempo_nudge_direction;
   uint8_t touchwheel_tempo_nudge_pct;
+  uint8_t touchwheel_tempo_nudge_direction;
   uint8_t touchwheel_tempo_nudge_return;  // Return speed after touch release (tempo nudge)
   uint8_t touchwheel_aftertouch_return;   // Return speed after touch release (aftertouch)
   uint16_t touchwheel_tempo_floor;    // BPM floor for touchwheel tempo mode (20-300)
   uint16_t touchwheel_tempo_ceiling;  // BPM ceiling for touchwheel tempo mode (20-300)
   uint8_t als_tempo_nudge_pct;
+  uint8_t als_tempo_nudge_direction;
   uint8_t lfo1_tempo_nudge_pct;
   uint8_t lfo2_tempo_nudge_pct;
   
@@ -367,6 +382,17 @@ velocity_mode_t scene_get_cv_velocity_mode(uint8_t scene_index);
 esp_err_t scene_set_cv_velocity(uint8_t scene_index, uint8_t velocity);
 uint8_t scene_get_cv_velocity(uint8_t scene_index);
 
+// CV/Gate velocity-source takeover (runtime; does not mutate source module config)
+bool scene_cv_claims_source(velocity_mode_t source);
+bool scene_cv_claims_source_for_scene(const scene_t* scene, velocity_mode_t source);
+uint8_t scene_get_cv_gate_velocity(int16_t gate_raw_adc);
+void scene_set_proximity_velocity_sample(uint8_t midi_value);
+uint8_t scene_get_proximity_velocity_sample(void);
+void scene_set_als_velocity_sample(uint8_t midi_value);
+uint8_t scene_get_als_velocity_sample(void);
+const char* scene_cv_velocity_mode_display_name(velocity_mode_t mode);
+touchwheel_mode_t scene_get_effective_touchwheel_mode(const scene_t* scene);
+
 // CV Trigger mode configuration (when cv_input_mode = TRIGGER)
 action_t* scene_get_cv_trigger_action(uint8_t scene_index);
 esp_err_t scene_set_cv_trigger_threshold(uint8_t scene_index, uint8_t threshold);
@@ -410,24 +436,38 @@ velocity_mode_t scene_get_tilt_y_velocity_mode(uint8_t scene_index);
 // Tilt tempo nudge percentages (OUTPUT_TYPE_TEMPO_NUDGE)
 esp_err_t scene_set_tilt_x_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_tilt_x_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_tilt_x_tempo_nudge_direction(uint8_t scene_index, uint8_t direction);
+uint8_t scene_get_tilt_x_tempo_nudge_direction(uint8_t scene_index);
 esp_err_t scene_set_tilt_y_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_tilt_y_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_tilt_y_tempo_nudge_direction(uint8_t scene_index, uint8_t direction);
+uint8_t scene_get_tilt_y_tempo_nudge_direction(uint8_t scene_index);
 
 // Tempo nudge percentages for other continuous sources (OUTPUT_TYPE_TEMPO_NUDGE)
 esp_err_t scene_set_expression_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_expression_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_expression_tempo_nudge_direction(uint8_t scene_index, uint8_t direction);
+uint8_t scene_get_expression_tempo_nudge_direction(uint8_t scene_index);
 esp_err_t scene_set_cv_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_cv_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_cv_tempo_nudge_direction(uint8_t scene_index, uint8_t direction);
+uint8_t scene_get_cv_tempo_nudge_direction(uint8_t scene_index);
 esp_err_t scene_set_proximity_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_proximity_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_proximity_tempo_nudge_direction(uint8_t scene_index, uint8_t direction);
+uint8_t scene_get_proximity_tempo_nudge_direction(uint8_t scene_index);
 esp_err_t scene_set_touchwheel_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_touchwheel_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_touchwheel_tempo_nudge_direction(uint8_t scene_index, uint8_t direction);
+uint8_t scene_get_touchwheel_tempo_nudge_direction(uint8_t scene_index);
 esp_err_t scene_set_touchwheel_tempo_nudge_return(uint8_t scene_index, uint8_t speed);
 uint8_t scene_get_touchwheel_tempo_nudge_return(uint8_t scene_index);
 esp_err_t scene_set_touchwheel_aftertouch_return(uint8_t scene_index, uint8_t speed);
 uint8_t scene_get_touchwheel_aftertouch_return(uint8_t scene_index);
 esp_err_t scene_set_als_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_als_tempo_nudge_pct(uint8_t scene_index);
+esp_err_t scene_set_als_tempo_nudge_direction(uint8_t scene_index, uint8_t direction);
+uint8_t scene_get_als_tempo_nudge_direction(uint8_t scene_index);
 esp_err_t scene_set_lfo1_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_lfo1_tempo_nudge_pct(uint8_t scene_index);
 esp_err_t scene_set_lfo2_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);

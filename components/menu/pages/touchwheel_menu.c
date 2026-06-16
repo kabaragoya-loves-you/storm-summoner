@@ -243,6 +243,12 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   // Set style BEFORE calling scene_set_touchwheel_mode, since that function
   // uses the style to determine which mode processor to create
   scene->touchwheel_style = mapping->default_style;
+  if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    if (scene->touchwheel_tempo_nudge_direction == TEMPO_NUDGE_DIR_BOTH)
+      scene->touchwheel_style = TOUCHWHEEL_STYLE_BIPOLAR;
+    else if (scene->touchwheel_style == TOUCHWHEEL_STYLE_BIPOLAR)
+      scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;
+  }
   
   // Enable touchwheel for all modes except Pads
   scene->touchwheel.enabled = (mapping->mode != TOUCHWHEEL_MODE_PADS);
@@ -496,6 +502,15 @@ static void nav_to_touchwheel_tempo_ceiling(void* user_data) {
 
 static char s_nudge_label[32];
 static char s_return_speed_label[32];
+static char s_nudge_direction_label[32];
+
+static const char* tempo_nudge_direction_to_string(uint8_t dir) {
+  switch (dir) {
+    case TEMPO_NUDGE_DIR_FASTER: return "Faster";
+    case TEMPO_NUDGE_DIR_SLOWER: return "Slower";
+    default: return "Both";
+  }
+}
 
 static const char* return_speed_to_string(uint8_t speed) {
   switch (speed) {
@@ -585,6 +600,41 @@ static lv_obj_t* nudge_roller_create(void) {
 static void nav_to_nudge(void* user_data) {
   (void)user_data;
   menu_navigate_to("Nudge %", nudge_roller_create);
+}
+
+static void nudge_direction_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (selected_index > TEMPO_NUDGE_DIR_SLOWER) selected_index = TEMPO_NUDGE_DIR_BOTH;
+  uint8_t scene_index = scene_get_current_index();
+  scene_set_touchwheel_tempo_nudge_direction(scene_index, (uint8_t)selected_index);
+
+  scene_t* scene = scene_get_current();
+  if (scene) {
+    if (selected_index == TEMPO_NUDGE_DIR_BOTH)
+      scene->touchwheel_style = TOUCHWHEEL_STYLE_BIPOLAR;
+    else if (scene->touchwheel_style == TOUCHWHEEL_STYLE_BIPOLAR)
+      scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;
+    scene_set_touchwheel_mode(scene_index, TOUCHWHEEL_MODE_CONTINUOUS);
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Touchwheel", menu_page_touchwheel_create);
+}
+
+static lv_obj_t* nudge_direction_roller_create(void) {
+  uint8_t cur = scene_get_touchwheel_tempo_nudge_direction(scene_get_current_index());
+  if (cur > TEMPO_NUDGE_DIR_SLOWER) cur = TEMPO_NUDGE_DIR_BOTH;
+  return menu_create_roller_page("Direction", "Both\nFaster\nSlower",
+    (uint32_t)cur, nudge_direction_confirm_cb, NULL);
+}
+
+static void nav_to_nudge_direction(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Direction", nudge_direction_roller_create);
 }
 
 // ============================================================================
@@ -1054,6 +1104,19 @@ lv_obj_t* menu_page_touchwheel_create(void) {
   const touchwheel_mode_mapping_t* mapping = &g_touchwheel_mode_mappings[mode_idx];
   
   int item_count = 0;
+
+  if (scene_cv_claims_source(VELOCITY_MODE_TOUCHWHEEL)) {
+    snprintf(s_mode_label, sizeof(s_mode_label), "CV/Gate\nControlled");
+    s_tw_items[item_count++] = (menu_item_t){
+      s_mode_label, NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+    };
+    snprintf(s_style_label, sizeof(s_style_label), "Style\n%s",
+      style_to_string(scene->touchwheel_style));
+    s_tw_items[item_count++] = (menu_item_t){
+      s_style_label, nav_to_style, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
+    return menu_create_page_2line("Touchwheel", s_tw_items, item_count);
+  }
   
   if (is_touchwheel_disabled(scene)) {
     snprintf(s_mode_label, sizeof(s_mode_label), "Mode\nDisabled");
@@ -1079,6 +1142,14 @@ lv_obj_t* menu_page_touchwheel_create(void) {
         uint8_t pct = scene_get_touchwheel_tempo_nudge_pct(scene_get_current_index());
         snprintf(s_nudge_label, sizeof(s_nudge_label), "Nudge %%\n%u%%", (unsigned)pct);
         s_tw_items[item_count++] = (menu_item_t){s_nudge_label, nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+        uint8_t dir = scene_get_touchwheel_tempo_nudge_direction(scene_get_current_index());
+        snprintf(s_nudge_direction_label, sizeof(s_nudge_direction_label),
+          "Direction\n%s", tempo_nudge_direction_to_string(dir));
+        s_tw_items[item_count++] = (menu_item_t){
+          s_nudge_direction_label, nav_to_nudge_direction, NULL, true, MENU_ITEM_KIND_ROLLER
+        };
+
         uint8_t ret_spd = scene_get_touchwheel_tempo_nudge_return(scene_get_current_index());
         snprintf(s_return_speed_label, sizeof(s_return_speed_label), "Return Speed\n%s",
           return_speed_to_string(ret_spd));
@@ -1190,9 +1261,13 @@ lv_obj_t* menu_page_touchwheel_create(void) {
   
   // Style roller (if mode supports it) (2-line format)
   if (mapping->supports_style_selection) {
-    snprintf(s_style_label, sizeof(s_style_label), "Style\n%s", 
-             style_to_string(scene->touchwheel_style));
-    s_tw_items[item_count++] = (menu_item_t){s_style_label, nav_to_style, NULL, true, MENU_ITEM_KIND_ROLLER};
+    bool hide_style = (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE &&
+      scene_get_touchwheel_tempo_nudge_direction(scene_get_current_index()) == TEMPO_NUDGE_DIR_BOTH);
+    if (!hide_style) {
+      snprintf(s_style_label, sizeof(s_style_label), "Style\n%s",
+               style_to_string(scene->touchwheel_style));
+      s_tw_items[item_count++] = (menu_item_t){s_style_label, nav_to_style, NULL, true, MENU_ITEM_KIND_ROLLER};
+    }
   }
   
   // Initial Value (endless CC or Double CC)

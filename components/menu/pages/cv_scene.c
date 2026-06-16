@@ -4,6 +4,7 @@
 #include "action.h"
 #include "cv.h"
 #include "scene.h"
+#include "cv_mode_mapping.h"
 #include "curve.h"
 #include "continuous_mapping.h"
 #include "device_config.h"
@@ -34,7 +35,6 @@ static int s_current_buffer_set = 0;
 static menu_item_t s_cv_items[MAX_CV_ITEMS];
 
 static char s_mode_label[LABEL_BUFFER_SETS][48];
-static char s_output_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
@@ -57,6 +57,7 @@ static char s_audio_polarity_label[LABEL_BUFFER_SETS][32];
 // LFO modulation labels
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
 static char s_nudge_label[LABEL_BUFFER_SETS][32];
+static char s_direction_label[LABEL_BUFFER_SETS][32];
 
 // Trigger mode labels
 static char s_trigger_action_label[LABEL_BUFFER_SETS][64];
@@ -99,18 +100,6 @@ static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
   int octave = (midi_note / 12) - 1;
   int note_idx = midi_note % 12;
   snprintf(buf, buf_size, "%s%d", NOTE_NAMES[note_idx], octave);
-}
-
-static const char* get_cv_mode_display_name(input_mode_t mode) {
-  switch (mode) {
-    case INPUT_MODE_NONE: return "<None>";
-    case INPUT_MODE_CV: return "Control Voltage";
-    case INPUT_MODE_CLOCK_SYNC: return "Clock Sync";
-    case INPUT_MODE_AUDIO: return "Audio";
-    case INPUT_MODE_NOTE: return "CV/Gate";
-    case INPUT_MODE_TRIGGER: return "Trigger";
-    default: return "Unknown";
-  }
 }
 
 static const char* polarity_to_string(polarity_t polarity) {
@@ -196,30 +185,26 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
   
-  // Map index to mode
-  // 0=None, 1=Control Voltage, 2=CV/Gate, 3=Audio, 4=Trigger
-  input_mode_t modes[] = {
-    INPUT_MODE_NONE,
-    INPUT_MODE_CV,
-    INPUT_MODE_NOTE,
-    INPUT_MODE_AUDIO,
-    INPUT_MODE_TRIGGER
-  };
-  
-  if (selected_index >= 5) {
+  const cv_mode_mapping_t* mapping = cv_get_mode_mapping((uint8_t)selected_index);
+  if (!mapping) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
   
-  input_mode_t new_mode = modes[selected_index];
   uint8_t scene_index = scene_get_current_index();
   
+  if (mapping->use_output_type) {
+    scene_t* scene = scene_get_current();
+    if (scene) scene->cv.output_type = mapping->output_type;
+  }
+  
+  input_mode_t new_mode = mapping->input_mode;
   esp_err_t ret = scene_set_cv_input_mode(scene_index, new_mode);
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "CV input mode set to: %s", get_cv_mode_display_name(new_mode));
+    persist_scene_changes();
+    ESP_LOGI(TAG, "CV mode set to: %s", mapping->display_name);
     
-    // Apply the mode to hardware if this is the current scene
     if (new_mode != INPUT_MODE_NONE) {
       input_set_mode(new_mode);
     }
@@ -232,20 +217,14 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
 }
 
 static lv_obj_t* mode_roller_create(void) {
-  static const char* options = "<None>\nControl Voltage\nCV/Gate\nAudio\nTrigger";
-  
-  uint8_t scene_index = scene_get_current_index();
-  input_mode_t current = scene_get_cv_input_mode(scene_index);
-  
-  uint32_t current_idx = 0;
-  switch (current) {
-    case INPUT_MODE_NONE: current_idx = 0; break;
-    case INPUT_MODE_CV: current_idx = 1; break;
-    case INPUT_MODE_NOTE: current_idx = 2; break;
-    case INPUT_MODE_AUDIO: current_idx = 3; break;
-    case INPUT_MODE_TRIGGER: current_idx = 4; break;
-    default: current_idx = 0; break;
+  static char options[256];
+  options[0] = '\0';
+  for (uint8_t i = 0; i < NUM_CV_USER_MODES; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, cv_get_mode_name(i));
   }
+  
+  uint32_t current_idx = cv_get_current_mode_index(scene_get_current());
   
   return menu_create_roller_page("Mode", options, current_idx, mode_confirm_cb, NULL);
 }
@@ -370,65 +349,6 @@ static void format_trigger_debounce_label(char* buf, size_t len, uint16_t ms) {
 }
 
 // ============================================================================
-// Output Type Roller (CC vs Notes) - For Control Voltage Mode
-// ============================================================================
-
-static void output_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  scene_t* scene = scene_get_current();
-  if (!scene) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-  
-  // Map roller index to output type
-  // 0=CC, 1=Note, 2=LFO Rate, 3=LFO Depth, 4=Tempo Nudge
-  switch (selected_index) {
-    case 0: scene->cv.output_type = OUTPUT_TYPE_CC; break;
-    case 1: scene->cv.output_type = OUTPUT_TYPE_NOTE; break;
-    case 2: scene->cv.output_type = OUTPUT_TYPE_LFO_RATE; break;
-    case 3: scene->cv.output_type = OUTPUT_TYPE_LFO_DEPTH; break;
-    case 4: scene->cv.output_type = OUTPUT_TYPE_TEMPO_NUDGE; break;
-    default: scene->cv.output_type = OUTPUT_TYPE_CC; break;
-  }
-  persist_scene_changes();
-  
-  ESP_LOGI(TAG, "CV output set to type %d", selected_index);
-  
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
-}
-
-static lv_obj_t* output_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-  
-  // Map output type to roller index
-  uint32_t current = 0;
-  switch (scene->cv.output_type) {
-    case OUTPUT_TYPE_CC: current = 0; break;
-    case OUTPUT_TYPE_NOTE: current = 1; break;
-    case OUTPUT_TYPE_LFO_RATE: current = 2; break;
-    case OUTPUT_TYPE_LFO_DEPTH: current = 3; break;
-    case OUTPUT_TYPE_TEMPO_NUDGE: current = 4; break;
-    default: current = 0; break;
-  }
-  return menu_create_roller_page("Output",
-    "Control Change\nNotes\nLFO Rate\nLFO Depth\nTempo Nudge",
-    current, output_confirm_cb, NULL);
-}
-
-static void nav_to_output(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Output", output_roller_create);
-}
-
-// ============================================================================
 // LFO Target Roller (for LFO Rate/Depth output modes)
 // ============================================================================
 
@@ -510,6 +430,38 @@ static lv_obj_t* nudge_roller_create(void) {
 static void nav_to_nudge(void* user_data) {
   (void)user_data;
   menu_navigate_to("Nudge %", nudge_roller_create);
+}
+
+static const char* tempo_nudge_direction_to_string(uint8_t dir) {
+  switch (dir) {
+    case TEMPO_NUDGE_DIR_FASTER: return "Faster";
+    case TEMPO_NUDGE_DIR_SLOWER: return "Slower";
+    default: return "Both";
+  }
+}
+
+static void direction_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (selected_index > TEMPO_NUDGE_DIR_SLOWER) selected_index = TEMPO_NUDGE_DIR_BOTH;
+  scene_set_cv_tempo_nudge_direction(scene_get_current_index(), (uint8_t)selected_index);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
+}
+
+static lv_obj_t* direction_roller_create(void) {
+  uint8_t cur = scene_get_cv_tempo_nudge_direction(scene_get_current_index());
+  if (cur > TEMPO_NUDGE_DIR_SLOWER) cur = TEMPO_NUDGE_DIR_BOTH;
+  return menu_create_roller_page("Direction", "Both\nFaster\nSlower",
+    (uint32_t)cur, direction_confirm_cb, NULL);
+}
+
+static void nav_to_direction(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Direction", direction_roller_create);
 }
 
 // ============================================================================
@@ -831,6 +783,27 @@ static void nav_to_velocity(void* user_data) {
 // CV/Gate Mode Velocity Settings (for INPUT_MODE_NOTE)
 // ============================================================================
 
+static const velocity_mode_t CV_NOTE_VEL_MODES[] = {
+  VELOCITY_MODE_FIXED,
+  VELOCITY_MODE_GATE_VOLTAGE,
+  VELOCITY_MODE_TOUCHWHEEL,
+  VELOCITY_MODE_PROXIMITY,
+  VELOCITY_MODE_ALS,
+  VELOCITY_MODE_TILT_X,
+  VELOCITY_MODE_TILT_Y,
+  VELOCITY_MODE_LFO1,
+  VELOCITY_MODE_LFO2,
+  VELOCITY_MODE_SAMPLE_HOLD,
+};
+#define NUM_CV_NOTE_VEL_MODES (sizeof(CV_NOTE_VEL_MODES) / sizeof(CV_NOTE_VEL_MODES[0]))
+
+static uint32_t cv_note_vel_mode_index(velocity_mode_t mode) {
+  for (uint32_t i = 0; i < NUM_CV_NOTE_VEL_MODES; i++) {
+    if (CV_NOTE_VEL_MODES[i] == mode) return i;
+  }
+  return 0;
+}
+
 static void note_vel_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   
@@ -838,12 +811,12 @@ static void note_vel_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   s_callback_in_progress = true;
   
   uint8_t scene_index = scene_get_current_index();
-  velocity_mode_t mode = (selected_index == 1) ? VELOCITY_MODE_GATE_VOLTAGE : VELOCITY_MODE_FIXED;
+  if (selected_index >= NUM_CV_NOTE_VEL_MODES) selected_index = 0;
+  velocity_mode_t mode = CV_NOTE_VEL_MODES[selected_index];
   
   scene_set_cv_velocity_mode(scene_index, mode);
   
-  const char* mode_str = (mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
-  ESP_LOGI(TAG, "CV velocity mode set to: %s", mode_str);
+  ESP_LOGI(TAG, "CV velocity mode set to: %s", scene_cv_velocity_mode_display_name(mode));
   
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, "Control Voltage", menu_page_cv_scene_create);
@@ -852,8 +825,11 @@ static void note_vel_mode_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* note_vel_mode_roller_create(void) {
   uint8_t scene_index = scene_get_current_index();
   velocity_mode_t current = scene_get_cv_velocity_mode(scene_index);
-  uint32_t current_idx = (current == VELOCITY_MODE_GATE_VOLTAGE) ? 1 : 0;
-  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage", current_idx, 
+  uint32_t current_idx = cv_note_vel_mode_index(current);
+  return menu_create_roller_page(
+    "Velocity Mode",
+    "Fixed\nGate Voltage\nTouchwheel\nProximity\nALS\nTilt X\nTilt Y\nLFO 1\nLFO 2\nS+H",
+    current_idx,
     note_vel_mode_confirm_cb, NULL);
 }
 
@@ -1221,7 +1197,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
   }
 
   snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
-    get_cv_mode_display_name(mode));
+    cv_get_mode_name(cv_get_current_mode_index(scene)));
   s_cv_items[item_count++] = (menu_item_t){
     s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
   };
@@ -1229,19 +1205,6 @@ lv_obj_t* menu_page_cv_scene_create(void) {
   // Mode-specific items
   switch (mode) {
     case INPUT_MODE_CV: {
-      // Control Voltage mode: Output selector (CC, Notes, LFO Rate, LFO Depth, Tempo Nudge)
-      const char* output_name;
-      switch (scene->cv.output_type) {
-        case OUTPUT_TYPE_CC: output_name = "Control Change"; break;
-        case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
-        case OUTPUT_TYPE_LFO_RATE: output_name = "LFO Rate"; break;
-        case OUTPUT_TYPE_LFO_DEPTH: output_name = "LFO Depth"; break;
-        case OUTPUT_TYPE_TEMPO_NUDGE: output_name = "Tempo Nudge"; break;
-        default: output_name = "Control Change"; break;
-      }
-      snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-      s_cv_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER};
-      
       if (scene->cv.output_type == OUTPUT_TYPE_CC) {
         // CC slots
         const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
@@ -1317,6 +1280,13 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
           "Nudge %%\n%u%%", (unsigned)pct);
         s_cv_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+        uint8_t dir = scene_get_cv_tempo_nudge_direction(scene_index);
+        snprintf(s_direction_label[buf], sizeof(s_direction_label[buf]),
+          "Direction\n%s", tempo_nudge_direction_to_string(dir));
+        s_cv_items[item_count++] = (menu_item_t){
+          s_direction_label[buf], nav_to_direction, NULL, true, MENU_ITEM_KIND_ROLLER
+        };
       }
       
       break;
@@ -1326,7 +1296,7 @@ lv_obj_t* menu_page_cv_scene_create(void) {
       // CV/Gate Mode: CV pitch + Expression gate
       // Show velocity mode
       velocity_mode_t vel_mode = scene_get_cv_velocity_mode(scene_index);
-      const char* vel_mode_str = (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
+      const char* vel_mode_str = scene_cv_velocity_mode_display_name(vel_mode);
       snprintf(s_vel_mode_label[buf], sizeof(s_vel_mode_label[buf]),
         "Velocity Mode\n%s", vel_mode_str);
       s_cv_items[item_count++] = (menu_item_t){s_vel_mode_label[buf], nav_to_note_vel_mode, NULL, true, MENU_ITEM_KIND_ROLLER};

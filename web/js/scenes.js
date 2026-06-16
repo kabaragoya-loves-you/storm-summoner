@@ -39,6 +39,8 @@ application.register(
 
       this._onCdcNotify = this.onCdcNotify.bind(this)
       document.addEventListener('cdc:notify', this._onCdcNotify)
+      this._onSceneRenamed = this.onSceneRenamed.bind(this)
+      document.addEventListener('scenes:scene-renamed', this._onSceneRenamed)
 
       // Listen for tab activation
       document.addEventListener('app:tab-activated', async (e) => {
@@ -61,7 +63,18 @@ application.register(
 
     disconnect () {
       document.removeEventListener('cdc:notify', this._onCdcNotify)
+      document.removeEventListener('scenes:scene-renamed', this._onSceneRenamed)
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
+    }
+
+    onSceneRenamed (e) {
+      const position = e.detail?.position
+      const name = String(e.detail?.name ?? '').trim() || 'Untitled'
+      if (position === undefined || position === null) return
+      const scene = this.scenes.find(s => s.position === position)
+      if (!scene) return
+      scene.name = name
+      this.renderScenes()
     }
 
     onCdcNotify (e) {

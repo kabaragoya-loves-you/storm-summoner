@@ -173,6 +173,13 @@ static const char *cv_velocity_inspect_label(const scene_t *scene) {
   switch (scene->cv_velocity_mode) {
     case VELOCITY_MODE_GATE_VOLTAGE: return "Gate Voltage";
     case VELOCITY_MODE_TOUCHWHEEL: return "Touchwheel";
+    case VELOCITY_MODE_PROXIMITY: return "Proximity";
+    case VELOCITY_MODE_ALS: return "ALS";
+    case VELOCITY_MODE_TILT_X: return "Tilt X";
+    case VELOCITY_MODE_TILT_Y: return "Tilt Y";
+    case VELOCITY_MODE_LFO1: return "LFO 1";
+    case VELOCITY_MODE_LFO2: return "LFO 2";
+    case VELOCITY_MODE_SAMPLE_HOLD: return "S+H";
     default:
       fixed_vel[0] = '\0';
       {
@@ -681,7 +688,7 @@ static void append_lfo_slot(scene_inspect_buf_t *b, uint8_t slot,
   const continuous_mapping_t *mapping = (slot == 0) ? &scene->lfo1 : &scene->lfo2;
   const char *label = (slot == 0) ? "LFO 1" : "LFO 2";
 
-  if (!config->enabled && !mapping->enabled) return;
+  if (!config->enabled) return;
 
   scene_inspect_buf_append(b, "%s: %s\n", label,
     inspect_lfo_waveform_label(config->waveform));

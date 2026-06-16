@@ -14,55 +14,18 @@ idf_component_register(
 # MIDI device DB, UI images, and the factory-preset scene library.
 # User-authored scenes and cloned/edited pedals live in the separate
 # `userdata` partition and are NEVER baked into the assets image.
-file(GLOB_RECURSE MIDI_DEVICE_FILES "${CMAKE_SOURCE_DIR}/midi-devices/*.json")
-file(GLOB_RECURSE IMAGE_FILES "${CMAKE_SOURCE_DIR}/images/*.bin" "${CMAKE_SOURCE_DIR}/images/*.bin.z" "${CMAKE_SOURCE_DIR}/images/*.svg")
-file(GLOB FACTORY_SCENE_FILES "${CMAKE_SOURCE_DIR}/scenes/factory/*.json")
-
 set(ASSETS_BUILD_DIR "${CMAKE_BINARY_DIR}/assets_combined")
 file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}")
-file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/devices")
-file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/images")
-file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/scenes")
-file(MAKE_DIRECTORY "${ASSETS_BUILD_DIR}/scenes/factory")
 
-# Copy midi-devices to assets/devices, but explicitly drop the `user/` subtree.
-# User-defined pedals (the seed `default.json` and any clones) live on the RW
-# `userdata` partition; baking them into the RO image would defeat the split.
-add_custom_command(
-  OUTPUT "${ASSETS_BUILD_DIR}/devices/.copied"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/midi-devices"
-    "${ASSETS_BUILD_DIR}/devices"
-  COMMAND ${CMAKE_COMMAND} -E remove_directory "${ASSETS_BUILD_DIR}/devices/tools"
-  COMMAND ${CMAKE_COMMAND} -E remove_directory "${ASSETS_BUILD_DIR}/devices/user"
-  COMMAND ${CMAKE_COMMAND} -E remove -f "${ASSETS_BUILD_DIR}/devices/README.md"
-  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/devices/.copied"
-  DEPENDS ${MIDI_DEVICE_FILES}
-  COMMENT "Copying shared MIDI device files to build assets (excluding user/)"
-)
-
-# Copy images to assets/images
-add_custom_command(
-  OUTPUT "${ASSETS_BUILD_DIR}/images/.copied"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/images"
-    "${ASSETS_BUILD_DIR}/images"
-  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/images/.copied"
-  DEPENDS ${IMAGE_FILES}
-  COMMENT "Copying image files to build assets"
-)
-
-# Copy factory-preset scenes to assets/scenes/factory. These are seeded into
-# /userdata/scenes/ as inactive entries on first boot (see scene.c). Empty
-# folder is fine; the firmware no-ops if there's nothing to seed.
-add_custom_command(
-  OUTPUT "${ASSETS_BUILD_DIR}/scenes/factory/.copied"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/scenes/factory"
-    "${ASSETS_BUILD_DIR}/scenes/factory"
-  COMMAND ${CMAKE_COMMAND} -E touch "${ASSETS_BUILD_DIR}/scenes/factory/.copied"
-  DEPENDS ${FACTORY_SCENE_FILES}
-  COMMENT "Copying factory preset scenes to build assets"
+# Always refresh the staging directory before packing the LittleFS image.
+# Configure-time globs and stamp outputs miss newly added files; this runs
+# every build (same pattern as increment_build_number in the root CMakeLists).
+add_custom_target(prep_assets ALL
+  COMMAND ${CMAKE_COMMAND}
+    -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+    -DASSETS_BUILD_DIR=${ASSETS_BUILD_DIR}
+    -P ${CMAKE_SOURCE_DIR}/cmake/prep_assets.cmake
+  COMMENT "Preparing assets (manifest, devices, images, factory scenes)"
 )
 
 # Create LittleFS partition image from combined assets directory.
@@ -71,8 +34,5 @@ add_custom_command(
 # and seeds `default.json` from baked-in code.
 # To flash: idf.py assets-flash
 littlefs_create_partition_image(assets ${ASSETS_BUILD_DIR}
-  DEPENDS
-    "${ASSETS_BUILD_DIR}/devices/.copied"
-    "${ASSETS_BUILD_DIR}/images/.copied"
-    "${ASSETS_BUILD_DIR}/scenes/factory/.copied"
+  DEPENDS prep_assets
 )

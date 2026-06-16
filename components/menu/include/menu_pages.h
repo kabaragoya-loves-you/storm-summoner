@@ -13,7 +13,7 @@ void menu_page_device_config_cleanup(void);  // Free PSRAM allocations after men
 lv_obj_t* menu_page_touchwheel_create(void);
 void menu_page_touchwheel_cleanup(void);     // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_pads_create(void);
-void menu_page_pads_cleanup(void);           // Free PSRAM allocations for CC options
+  void menu_page_pads_cleanup(void);           // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_settings_create(void);
 lv_obj_t* menu_page_about_create(void);
 

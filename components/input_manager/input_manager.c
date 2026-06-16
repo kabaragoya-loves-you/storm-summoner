@@ -17,6 +17,7 @@
 #include "action.h"
 
 #define TAG "INPUT_MGR"
+#define CV_NOTE_SETTLE_MS 20
 
 // External function for ADC-based CV cable detection
 extern bool cv_is_cable_connected(void);
@@ -33,8 +34,10 @@ static bool s_cable_detection_enabled = true;  // Default: cable detection enabl
 static bool s_note_mode_hw_enabled = false;  // True when NOTE mode hardware is actually enabled
 static bool s_note_active = false;
 static bool s_note_pending = false;          // True while waiting for CV to settle (prevents duplicate triggers)
+static int16_t s_gate_raw_at_rise = 0;       // Expression ADC at gate rising edge (for gate_voltage velocity)
 static uint8_t s_current_cv_note = 60;  // Current CV pitch reading
 static uint8_t s_active_note = 60;      // The note that was sent in last Note On
+static esp_timer_handle_t s_note_settle_timer = NULL;
 
 // TRIGGER mode state
 static esp_timer_handle_t s_trigger_debounce_timer = NULL;
@@ -43,6 +46,8 @@ static bool s_trigger_armed = false;
 // Forward declarations
 static void note_mode_cv_handler(const event_t* event, void* context);
 static void note_mode_gate_handler(const event_t* event, void* context);
+static void note_settle_timeout_cb(void* arg);
+static void note_mode_cancel_pending(void);
 static void trigger_mode_cv_handler(const event_t* event, void* context);
 static void trigger_debounce_timeout_cb(void* arg);
 
@@ -139,6 +144,17 @@ esp_err_t input_manager_init(void) {
   return ESP_OK;
 }
 
+static esp_err_t note_mode_ensure_settle_timer(void) {
+  if (s_note_settle_timer) return ESP_OK;
+  const esp_timer_create_args_t settle_args = {
+    .callback = note_settle_timeout_cb,
+    .name = "cv_note_settle"
+  };
+  esp_err_t err = esp_timer_create(&settle_args, &s_note_settle_timer);
+  if (err != ESP_OK) ESP_LOGE(TAG, "Failed to create CV note settle timer");
+  return err;
+}
+
 esp_err_t input_set_mode(input_mode_t mode) {
   if (!s_initialized) {
     ESP_LOGE(TAG, "Input manager not initialized");
@@ -167,6 +183,7 @@ esp_err_t input_set_mode(input_mode_t mode) {
       break;
     case INPUT_MODE_NOTE:
       // Disable NOTE mode
+      note_mode_cancel_pending();
       cv_disable();
       expression_disable();
       event_bus_unsubscribe(EVENT_CV_VALUE, note_mode_cv_handler);
@@ -239,6 +256,8 @@ esp_err_t input_set_mode(input_mode_t mode) {
       bool exp_connected = !s_cable_detection_enabled || gpio_get_level(PIN_EXP_SW) == 1;
       
       if (cv_connected && exp_connected) {
+        esp_err_t err = note_mode_ensure_settle_timer();
+        if (err != ESP_OK) return err;
         // NOTE mode requires PITCH mode and 5V range for CV interpretation
         cv_set_mode(CV_MODE_PITCH);
         cv_set_range(CV_RANGE_5V);  // Standard modular synth CV is 0-5V
@@ -304,7 +323,7 @@ void input_manager_cable_changed(bool connected) {
         ESP_LOGI(TAG, "NOTE OFF (CV cable disconnected): ch=%d, note=%d", channel + 1, s_active_note);
         s_note_active = false;
       }
-      s_note_pending = false;
+      note_mode_cancel_pending();
       
       event_bus_unsubscribe(EVENT_CV_VALUE, note_mode_cv_handler);
       event_bus_unsubscribe(EVENT_EXPRESSION_GATE, note_mode_gate_handler);
@@ -359,6 +378,7 @@ void input_manager_cable_changed(bool connected) {
         bool exp_connected = gpio_get_level(PIN_EXP_SW) == 1;
         
         if (cv_connected && exp_connected) {
+          if (note_mode_ensure_settle_timer() != ESP_OK) break;
           // Both cables now connected - enable NOTE mode
           cv_set_mode(CV_MODE_PITCH);
           cv_set_range(CV_RANGE_5V);
@@ -403,6 +423,7 @@ void input_manager_expression_cable_changed(bool connected) {
     bool cv_connected = cv_is_cable_connected();
     
     if (cv_connected) {
+      if (note_mode_ensure_settle_timer() != ESP_OK) return;
       // Both cables now connected - enable NOTE mode
       cv_set_mode(CV_MODE_PITCH);
       cv_set_range(CV_RANGE_5V);
@@ -429,7 +450,7 @@ void input_manager_expression_cable_changed(bool connected) {
         ESP_LOGI(TAG, "NOTE OFF (Expression cable disconnected): ch=%d, note=%d", channel + 1, s_active_note);
         s_note_active = false;
       }
-      s_note_pending = false;
+      note_mode_cancel_pending();
       
       event_bus_unsubscribe(EVENT_CV_VALUE, note_mode_cv_handler);
       event_bus_unsubscribe(EVENT_EXPRESSION_GATE, note_mode_gate_handler);
@@ -516,6 +537,29 @@ static void note_mode_cv_handler(const event_t* event, void* context) {
   // (monophonic behavior - gate must go low then high for new note)
 }
 
+static void note_mode_cancel_pending(void) {
+  s_note_pending = false;
+  if (s_note_settle_timer) esp_timer_stop(s_note_settle_timer);
+}
+
+static void note_settle_timeout_cb(void* arg) {
+  (void)arg;
+  if (!s_note_pending) return;
+
+  s_note_pending = false;
+  if (!expression_get_gate_state()) {
+    ESP_LOGD(TAG, "Gate LOW after settle - no note on");
+    return;
+  }
+
+  s_active_note = cv_read_pitch_note_now();
+  uint8_t velocity = scene_get_cv_gate_velocity(s_gate_raw_at_rise);
+  uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
+  send_note_on(channel, s_active_note, velocity);
+  ESP_LOGD(TAG, "NOTE ON: ch=%d, note=%d, velocity=%d", channel + 1, s_active_note, velocity);
+  s_note_active = true;
+}
+
 static void note_mode_gate_handler(const event_t* event, void* context) {
   if (event->type != EVENT_EXPRESSION_GATE) return;
   
@@ -525,56 +569,22 @@ static void note_mode_gate_handler(const event_t* event, void* context) {
   bool gate_high = event->data.gate.high;
   
   if (gate_high && !s_note_active && !s_note_pending) {
-    // Gate went high - mark as pending immediately to prevent duplicate triggers
     s_note_pending = true;
-    
-    // Wait for CV to settle before sampling pitch
-    // Many analog sequencers (like SQ-1) change gate before CV settles
-    vTaskDelay(pdMS_TO_TICKS(20));  // 20ms settling time
-    
-    // Read pitch directly from ADC (bypasses task caching)
-    s_active_note = cv_read_pitch_note_now();
-    
-    // Get velocity from current scene based on velocity mode
-    velocity_mode_t vel_mode = scene_get_cv_velocity_mode(scene_get_current_index());
-    uint8_t velocity;
-    
-    switch (vel_mode) {
-      case VELOCITY_MODE_TOUCHWHEEL:
-        velocity = scene_get_touchwheel_velocity();
-        break;
-      case VELOCITY_MODE_GATE_VOLTAGE:
-        // Map ADC to velocity
-        {
-          int16_t raw = event->data.gate.raw_value;
-          velocity = (uint8_t)((raw * 127) / 4095);
-          if (velocity < 1) velocity = 1;  // MIDI velocity must be 1-127
-          if (velocity > 127) velocity = 127;
-        }
-        break;
-      case VELOCITY_MODE_FIXED:
-      default:
-        velocity = scene_get_cv_velocity(scene_get_current_index());
-        break;
+    s_gate_raw_at_rise = event->data.gate.raw_value;
+    if (!s_note_settle_timer) {
+      ESP_LOGW(TAG, "Note settle timer missing - sending note on immediately");
+      note_settle_timeout_cb(NULL);
+      return;
     }
-    
-    // Send MIDI Note On on the note channel
-    uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;  // scene uses 1-based, MIDI uses 0-based
-    send_note_on(channel, s_active_note, velocity);
-    ESP_LOGD(TAG, "NOTE ON: ch=%d, note=%d, velocity=%d", channel + 1, s_active_note, velocity);
-    s_note_active = true;
-    s_note_pending = false;
-    
+    esp_timer_start_once(s_note_settle_timer, (uint64_t)CV_NOTE_SETTLE_MS * 1000ULL);
   } else if (!gate_high && s_note_active) {
-    // Gate went low - send note off using the SAME note that was sent on
     uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
     send_note_off(channel, s_active_note, 0);
     ESP_LOGD(TAG, "NOTE OFF: ch=%d, note=%d", channel + 1, s_active_note);
     s_note_active = false;
   } else if (!gate_high && s_note_pending) {
-    // Gate went low while we were waiting - cancel the pending note
     ESP_LOGD(TAG, "Gate LOW during pending - cancelling");
-    s_note_pending = false;
+    note_mode_cancel_pending();
   }
 }
 

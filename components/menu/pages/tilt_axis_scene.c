@@ -1,6 +1,7 @@
 #include "menu.h"
 #include "menu_pages.h"
 #include "scene.h"
+#include "tilt_mode_mapping.h"
 #include "tilt.h"
 #include "curve.h"
 #include "continuous_mapping.h"
@@ -54,6 +55,18 @@ static esp_err_t set_nudge_pct(uint8_t scene_index, uint8_t pct) {
     : scene_set_tilt_y_tempo_nudge_pct(scene_index, pct);
 }
 
+static uint8_t get_nudge_direction(uint8_t scene_index) {
+  return (s_axis == TILT_AXIS_X)
+    ? scene_get_tilt_x_tempo_nudge_direction(scene_index)
+    : scene_get_tilt_y_tempo_nudge_direction(scene_index);
+}
+
+static esp_err_t set_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  return (s_axis == TILT_AXIS_X)
+    ? scene_set_tilt_x_tempo_nudge_direction(scene_index, direction)
+    : scene_set_tilt_y_tempo_nudge_direction(scene_index, direction);
+}
+
 // ============================================================================
 // Static Storage
 // ============================================================================
@@ -69,8 +82,7 @@ static menu_item_t s_items[MAX_ITEMS];
 // (roller). If they're deeper, we fall through to default navigation.
 static lv_obj_t* s_axis_screen = NULL;
 
-static char s_enabled_label[LABEL_BUFFER_SETS][32];
-static char s_output_label[LABEL_BUFFER_SETS][32];
+static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
@@ -80,6 +92,7 @@ static char s_velocity_mode_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_label[LABEL_BUFFER_SETS][32];
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
 static char s_nudge_label[LABEL_BUFFER_SETS][32];
+static char s_direction_label[LABEL_BUFFER_SETS][32];
 static char s_min_label[LABEL_BUFFER_SETS][32];
 static char s_middle_label[LABEL_BUFFER_SETS][32];
 static char s_max_label[LABEL_BUFFER_SETS][32];
@@ -119,13 +132,20 @@ static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
   snprintf(buf, buf_size, "%s%d", NOTE_NAMES[note_idx], octave);
 }
 
-static const char* polarity_to_string(polarity_t polarity) {
+static const char* tilt_polarity_to_string(polarity_t polarity) {
   switch (polarity) {
-    case POLARITY_UNIPOLAR: return "Unipolar";
-    case POLARITY_BIPOLAR: return "Bipolar";
-    case POLARITY_INVERTED: return "Inverted";
-    default: return "Unknown";
+    case POLARITY_UNIPOLAR:
+    case POLARITY_BIPOLAR:
+      return "Unipolar";
+    case POLARITY_INVERTED:
+      return "Inverted";
+    default:
+      return "Unknown";
   }
+}
+
+static uint32_t tilt_polarity_to_index(polarity_t polarity) {
+  return polarity == POLARITY_INVERTED ? 1 : 0;
 }
 
 static const char* lfo_target_to_string(lfo_target_t target) {
@@ -205,10 +225,17 @@ static uint32_t cc_number_to_option_index(uint8_t cc_num) {
 // Enabled Roller
 // ============================================================================
 
-static void enabled_confirm_cb(uint32_t selected_index, void* user_data) {
+static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
+
+  const tilt_mode_mapping_t* mapping = tilt_get_mode_mapping((uint8_t)selected_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
 
   scene_t* scene = scene_get_current();
   continuous_mapping_t* m = get_mapping(scene);
@@ -218,106 +245,35 @@ static void enabled_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
 
-  m->enabled = (selected_index == 1);
+  m->enabled = mapping->enabled;
+  m->output_type = mapping->output_type;
   persist_scene_changes();
 
-  // Drive the sampling task state to avoid useless I2C traffic.
   tilt_axis_set_enabled(s_axis, m->enabled);
 
-  ESP_LOGI(TAG, "Tilt %c %s", s_axis == TILT_AXIS_X ? 'X' : 'Y',
-    m->enabled ? "enabled" : "disabled");
+  ESP_LOGI(TAG, "Tilt %c mode set to: %s", s_axis == TILT_AXIS_X ? 'X' : 'Y',
+    mapping->display_name);
 
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, axis_title(), menu_page_tilt_axis_scene_create);
 }
 
-static lv_obj_t* enabled_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  continuous_mapping_t* m = get_mapping(scene);
-  uint32_t current = (m && m->enabled) ? 1 : 0;
-  return menu_create_roller_page(axis_title(), "Disabled\nEnabled", current, enabled_confirm_cb, NULL);
+static lv_obj_t* mode_roller_create(void) {
+  static char options[256];
+  options[0] = '\0';
+  for (uint8_t i = 0; i < NUM_TILT_USER_MODES; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, tilt_get_mode_name(i));
+  }
+
+  continuous_mapping_t* m = get_mapping(scene_get_current());
+  uint32_t current_idx = tilt_get_current_mode_index(m);
+  return menu_create_roller_page("Mode", options, current_idx, mode_confirm_cb, NULL);
 }
 
-static void nav_to_enabled(void* user_data) {
+static void nav_to_mode(void* user_data) {
   (void)user_data;
-  menu_navigate_to(axis_title(), enabled_roller_create);
-}
-
-// ============================================================================
-// Output Type Roller
-// ============================================================================
-
-// Option indices: 0=CC, 1=Notes, 2=LFO Rate, 3=LFO Depth, 4=Pitch Bend, 5=Tempo Nudge
-static output_type_t output_index_to_type(uint32_t idx) {
-  switch (idx) {
-    case 0: return OUTPUT_TYPE_CC;
-    case 1: return OUTPUT_TYPE_NOTE;
-    case 2: return OUTPUT_TYPE_LFO_RATE;
-    case 3: return OUTPUT_TYPE_LFO_DEPTH;
-    case 4: return OUTPUT_TYPE_PITCH_BEND;
-    case 5: return OUTPUT_TYPE_TEMPO_NUDGE;
-    default: return OUTPUT_TYPE_CC;
-  }
-}
-
-static uint32_t output_type_to_index(output_type_t t) {
-  switch (t) {
-    case OUTPUT_TYPE_CC: return 0;
-    case OUTPUT_TYPE_NOTE: return 1;
-    case OUTPUT_TYPE_LFO_RATE: return 2;
-    case OUTPUT_TYPE_LFO_DEPTH: return 3;
-    case OUTPUT_TYPE_PITCH_BEND: return 4;
-    case OUTPUT_TYPE_TEMPO_NUDGE: return 5;
-    default: return 0;
-  }
-}
-
-static const char* output_type_name(output_type_t t) {
-  switch (t) {
-    case OUTPUT_TYPE_CC: return "Control Change";
-    case OUTPUT_TYPE_NOTE: return "Notes";
-    case OUTPUT_TYPE_LFO_RATE: return "LFO Rate";
-    case OUTPUT_TYPE_LFO_DEPTH: return "LFO Depth";
-    case OUTPUT_TYPE_PITCH_BEND: return "Pitch Bend";
-    case OUTPUT_TYPE_TEMPO_NUDGE: return "Tempo Nudge";
-    default: return "Control Change";
-  }
-}
-
-static void output_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-
-  scene_t* scene = scene_get_current();
-  continuous_mapping_t* m = get_mapping(scene);
-  if (!m) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-
-  m->output_type = output_index_to_type(selected_index);
-  persist_scene_changes();
-
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, axis_title(), menu_page_tilt_axis_scene_create);
-}
-
-static lv_obj_t* output_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  continuous_mapping_t* m = get_mapping(scene);
-  if (!m) return NULL;
-
-  uint32_t current = output_type_to_index(m->output_type);
-  return menu_create_roller_page("Output",
-    "Control Change\nNotes\nLFO Rate\nLFO Depth\nPitch Bend\nTempo Nudge",
-    current, output_confirm_cb, NULL);
-}
-
-static void nav_to_output(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Output", output_roller_create);
+  menu_navigate_to("Mode", mode_roller_create);
 }
 
 // ============================================================================
@@ -435,8 +391,8 @@ static void polarity_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
 
-  polarity_t polarities[] = { POLARITY_UNIPOLAR, POLARITY_BIPOLAR, POLARITY_INVERTED };
-  if (selected_index < 3) {
+  polarity_t polarities[] = { POLARITY_UNIPOLAR, POLARITY_INVERTED };
+  if (selected_index < 2) {
     m->polarity = polarities[selected_index];
     persist_scene_changes();
   }
@@ -450,13 +406,8 @@ static lv_obj_t* polarity_roller_create(void) {
   continuous_mapping_t* m = get_mapping(scene);
   if (!m) return NULL;
 
-  uint32_t current = 0;
-  switch (m->polarity) {
-    case POLARITY_UNIPOLAR: current = 0; break;
-    case POLARITY_BIPOLAR: current = 1; break;
-    case POLARITY_INVERTED: current = 2; break;
-  }
-  return menu_create_roller_page("Polarity", "Unipolar\nBipolar\nInverted", current,
+  uint32_t current = tilt_polarity_to_index(m->polarity);
+  return menu_create_roller_page("Polarity", "Unipolar\nInverted", current,
     polarity_confirm_cb, NULL);
 }
 
@@ -743,7 +694,12 @@ static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
 
-  velocity_mode_t mode = (selected_index == 1) ? VELOCITY_MODE_GATE_VOLTAGE : VELOCITY_MODE_FIXED;
+  velocity_mode_t mode;
+  switch (selected_index) {
+    case 1: mode = VELOCITY_MODE_GATE_VOLTAGE; break;
+    case 2: mode = VELOCITY_MODE_TOUCHWHEEL; break;
+    default: mode = VELOCITY_MODE_FIXED; break;
+  }
 
   set_vel_mode(scene_get_current_index(), mode);
 
@@ -753,9 +709,14 @@ static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
 
 static lv_obj_t* velocity_mode_roller_create(void) {
   velocity_mode_t current = get_vel_mode(scene_get_current_index());
-  uint32_t current_idx = (current == VELOCITY_MODE_GATE_VOLTAGE) ? 1 : 0;
+  uint32_t current_idx;
+  switch (current) {
+    case VELOCITY_MODE_GATE_VOLTAGE: current_idx = 1; break;
+    case VELOCITY_MODE_TOUCHWHEEL: current_idx = 2; break;
+    default: current_idx = 0; break;
+  }
 
-  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage", current_idx,
+  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage\nTouchwheel", current_idx,
     velocity_mode_confirm_cb, NULL);
 }
 
@@ -850,6 +811,38 @@ static void nav_to_nudge(void* user_data) {
   menu_navigate_to("Nudge %", nudge_roller_create);
 }
 
+static const char* tempo_nudge_direction_to_string(uint8_t dir) {
+  switch (dir) {
+    case TEMPO_NUDGE_DIR_FASTER: return "Faster";
+    case TEMPO_NUDGE_DIR_SLOWER: return "Slower";
+    default: return "Both";
+  }
+}
+
+static void direction_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (selected_index > TEMPO_NUDGE_DIR_SLOWER) selected_index = TEMPO_NUDGE_DIR_BOTH;
+  set_nudge_direction(scene_get_current_index(), (uint8_t)selected_index);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, axis_title(), menu_page_tilt_axis_scene_create);
+}
+
+static lv_obj_t* direction_roller_create(void) {
+  uint8_t cur = get_nudge_direction(scene_get_current_index());
+  if (cur > TEMPO_NUDGE_DIR_SLOWER) cur = TEMPO_NUDGE_DIR_BOTH;
+  return menu_create_roller_page("Direction", "Both\nFaster\nSlower",
+    (uint32_t)cur, direction_confirm_cb, NULL);
+}
+
+static void nav_to_direction(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Direction", direction_roller_create);
+}
+
 // ============================================================================
 // Custom back handler: rebuild the Tilt submenu on exit so it reflects any
 // changes to the axis's enabled state, with focus restored to the axis the
@@ -891,9 +884,44 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
 
-  snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "%s\n%s",
-    axis_title(), m->enabled ? "Enabled" : "Disabled");
-  s_items[idx++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true, MENU_ITEM_KIND_ROLLER};
+  velocity_mode_t tilt_claim = (s_axis == TILT_AXIS_X)
+    ? VELOCITY_MODE_TILT_X : VELOCITY_MODE_TILT_Y;
+  if (scene_cv_claims_source(tilt_claim)) {
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "CV/Gate\nControlled");
+    s_items[idx++] = (menu_item_t){
+      s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+    };
+    snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
+      "Polarity\n%s", tilt_polarity_to_string(m->polarity));
+    s_items[idx++] = (menu_item_t){
+      s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
+    snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
+      "Curve\n%s", curve_type_to_string(m->curve.type));
+    s_items[idx++] = (menu_item_t){
+      s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
+    snprintf(s_min_label[buf], sizeof(s_min_label[buf]), "Min\n%u", (unsigned)m->min_value);
+    s_items[idx++] = (menu_item_t){s_min_label[buf], nav_to_min, NULL, true, MENU_ITEM_KIND_ROLLER};
+    snprintf(s_middle_label[buf], sizeof(s_middle_label[buf]),
+      "Middle\n%u", (unsigned)m->middle_value);
+    s_items[idx++] = (menu_item_t){
+      s_middle_label[buf], nav_to_middle, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
+    snprintf(s_max_label[buf], sizeof(s_max_label[buf]), "Max\n%u", (unsigned)m->max_value);
+    s_items[idx++] = (menu_item_t){s_max_label[buf], nav_to_max, NULL, true, MENU_ITEM_KIND_ROLLER};
+    lv_obj_t* screen = menu_create_page_2line(axis_title(), s_items, idx);
+    s_axis_screen = screen;
+    menu_set_custom_back_handler(axis_back_handler);
+    return screen;
+  }
+
+  uint8_t mode_idx = tilt_get_current_mode_index(m);
+  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
+    tilt_get_mode_name(mode_idx));
+  s_items[idx++] = (menu_item_t){
+    s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
 
   if (!m->enabled) {
     lv_obj_t* disabled_screen = menu_create_page_2line(axis_title(), s_items, idx);
@@ -902,12 +930,6 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
     return disabled_screen;
   }
 
-  snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s",
-    output_type_name(m->output_type));
-  s_items[idx++] = (menu_item_t){
-    s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER
-  };
-
   if (m->output_type == OUTPUT_TYPE_CC) {
     for (int i = 0; i < 4; i++) {
       uint8_t cc_num = m->cc_numbers[i];
@@ -915,23 +937,23 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
         const char* cc_name = assets_get_cc_name(device, cc_num);
         if (cc_name && strcmp(cc_name, "Undefined") != 0) {
           snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-            "CC Slot %d\n%s", i + 1, cc_name);
+            "Control Change %d\n%s", i + 1, cc_name);
         } else {
           snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-            "CC Slot %d\nCC %u", i + 1, (unsigned)cc_num);
+            "Control Change %d\nCC %u", i + 1, (unsigned)cc_num);
         }
       } else {
         snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-          "CC Slot %d\nInactive", i + 1);
+          "Control Change %d\nInactive", i + 1);
       }
       s_items[idx++] = (menu_item_t){
         s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
-        MENU_ITEM_KIND_SUBMENU
+        MENU_ITEM_KIND_ROLLER
       };
     }
 
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
-      "Polarity\n%s", polarity_to_string(m->polarity));
+      "Polarity\n%s", tilt_polarity_to_string(m->polarity));
     s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
@@ -964,7 +986,8 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
     s_items[idx++] = (menu_item_t){s_range_label[buf], nav_to_range, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     velocity_mode_t vel_mode = get_vel_mode(scene_get_current_index());
-    const char* vel_mode_str = (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
+    const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
+      (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
     snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
       "Velocity Mode\n%s", vel_mode_str);
     s_items[idx++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
@@ -978,7 +1001,7 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
     }
 
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
-      "Polarity\n%s", polarity_to_string(m->polarity));
+      "Polarity\n%s", tilt_polarity_to_string(m->polarity));
     s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
@@ -997,11 +1020,18 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
       "Nudge %%\n%u%%", (unsigned)pct);
     s_items[idx++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
 
+    uint8_t dir = get_nudge_direction(scene_get_current_index());
+    snprintf(s_direction_label[buf], sizeof(s_direction_label[buf]),
+      "Direction\n%s", tempo_nudge_direction_to_string(dir));
+    s_items[idx++] = (menu_item_t){
+      s_direction_label[buf], nav_to_direction, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
+
   } else if (m->output_type == OUTPUT_TYPE_PITCH_BEND) {
     // Pitch bend has no extra options on this page; polarity/curve still
     // influence the bipolar mapping.
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
-      "Polarity\n%s", polarity_to_string(m->polarity));
+      "Polarity\n%s", tilt_polarity_to_string(m->polarity));
     s_items[idx++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
 
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),

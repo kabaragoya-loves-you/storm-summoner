@@ -10,10 +10,15 @@
 #include "expression.h"
 #include "lfo.h"
 #include "tempo.h"
+#include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
 static const char* TAG = "proximity_scene";
+
+#define PROX_NUDGE_OUT_OF_RANGE_THRESH  5
+#define PROX_NUDGE_RETURN_INTERVAL_US   20000   // 20ms between return frames
+#define PROX_NUDGE_WATCHDOG_INTERVAL_US 100000  // 100ms silence check
 
 static smart_filter_t s_proximity_filter;
 static uint32_t s_note_at_rest_start = 0;  // When sensor went below threshold (ms)
@@ -22,28 +27,222 @@ static bool s_note_timing_active = false;  // True when tracking at-rest duratio
 static uint32_t s_last_tempo_apply_ms = 0;
 static uint8_t  s_last_applied_midi = 64;
 
-static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
+static uint32_t s_nudge_at_rest_start = 0;
+static bool s_nudge_timing_active = false;
+static uint32_t s_last_prox_event_ms = 0;
+
+static esp_timer_handle_t s_nudge_return_timer = NULL;
+static esp_timer_handle_t s_nudge_watchdog_timer = NULL;
+
+static int32_t s_nudge_return_start_bpm = 0;
+static int32_t s_nudge_return_target_bpm = 0;
+static uint16_t s_nudge_return_frame = 0;
+static uint16_t s_nudge_return_total_frames = 0;
+
+static bool nudge_return_is_active(void) {
+  return s_nudge_return_total_frames > 0;
+}
+
+static uint16_t proximity_nudge_return_duration_ms(void) {
+  switch (proximity_get_return_speed()) {
+    case PROXIMITY_RETURN_FAST: return 250;
+    case PROXIMITY_RETURN_MEDIUM: return 1000;
+    case PROXIMITY_RETURN_SLOW: return 2000;
+    default: return 0;
+  }
+}
+
+static void proximity_reset_nudge_at_rest(void) {
+  s_nudge_at_rest_start = 0;
+  s_nudge_timing_active = false;
+}
+
+static void proximity_stop_nudge_return(void) {
+  if (s_nudge_return_timer) esp_timer_stop(s_nudge_return_timer);
+  s_nudge_return_frame = 0;
+  s_nudge_return_total_frames = 0;
+}
+
+static void proximity_stop_watchdog(void) {
+  if (s_nudge_watchdog_timer) esp_timer_stop(s_nudge_watchdog_timer);
+}
+
+static void proximity_nudge_return_complete(void) {
+  proximity_stop_nudge_return();
+  s_last_applied_midi = 64;
+  proximity_stop_watchdog();
+}
+
+static void proximity_start_nudge_return(scene_t* scene);
+static void proximity_ensure_watchdog(void);
+static float proximity_tempo_nudge_scale(uint8_t raw_value, tempo_nudge_direction_t dir,
+    continuous_mapping_t* mapping);
+static void apply_tempo_nudge_from_scale(float scale, scene_t* scene, int dedupe_key);
+
+static void nudge_return_timer_cb(void* arg) {
+  (void)arg;
+
+  if (s_nudge_return_total_frames == 0) {
+    proximity_nudge_return_complete();
+    return;
+  }
+
+  s_nudge_return_frame++;
+  if (s_nudge_return_frame >= s_nudge_return_total_frames) {
+    tempo_set_bpm((uint16_t)s_nudge_return_target_bpm);
+    proximity_nudge_return_complete();
+    ESP_LOGD(TAG, "Proximity tempo nudge return complete -> bpm=%d",
+      (int)s_nudge_return_target_bpm);
+    return;
+  }
+
+  int32_t delta = s_nudge_return_target_bpm - s_nudge_return_start_bpm;
+  int32_t new_bpm = s_nudge_return_start_bpm +
+    (delta * (int32_t)s_nudge_return_frame) / (int32_t)s_nudge_return_total_frames;
+  if (new_bpm < 20) new_bpm = 20;
+  if (new_bpm > 300) new_bpm = 300;
+  tempo_set_bpm((uint16_t)new_bpm);
+}
+
+static void proximity_start_nudge_return(scene_t* scene) {
+  if (!scene) return;
+
+  proximity_stop_nudge_return();
+
+  int32_t target = (int32_t)scene->bpm;
+  int32_t current = (int32_t)tempo_get_bpm();
+  if (current == target) {
+    s_last_applied_midi = 64;
+    proximity_stop_watchdog();
+    return;
+  }
+
+  uint16_t duration_ms = proximity_nudge_return_duration_ms();
+  if (duration_ms == 0) {
+    tempo_set_bpm((uint16_t)target);
+    s_last_applied_midi = 64;
+    proximity_stop_watchdog();
+    ESP_LOGD(TAG, "Proximity tempo nudge instant return -> bpm=%d", (int)target);
+    return;
+  }
+
+  s_nudge_return_start_bpm = current;
+  s_nudge_return_target_bpm = target;
+  s_nudge_return_frame = 0;
+  s_nudge_return_total_frames = duration_ms / 20;
+  if (s_nudge_return_total_frames < 1) s_nudge_return_total_frames = 1;
+
+  if (!s_nudge_return_timer) {
+    const esp_timer_create_args_t timer_args = {
+      .callback = nudge_return_timer_cb,
+      .name = "prox_nudge_ret"
+    };
+    if (esp_timer_create(&timer_args, &s_nudge_return_timer) != ESP_OK) {
+      tempo_set_bpm((uint16_t)target);
+      s_last_applied_midi = 64;
+      return;
+    }
+  }
+
+  esp_timer_start_periodic(s_nudge_return_timer, PROX_NUDGE_RETURN_INTERVAL_US);
+  ESP_LOGD(TAG, "Proximity tempo nudge return: %d -> %d over %u ms",
+    (int)current, (int)target, (unsigned)duration_ms);
+}
+
+static void nudge_watchdog_timer_cb(void* arg) {
+  (void)arg;
+
+  scene_t* scene = scene_get_current();
+  if (!scene || !scene->proximity.enabled ||
+      scene->proximity.output_type != OUTPUT_TYPE_TEMPO_NUDGE) {
+    proximity_stop_watchdog();
+    return;
+  }
+
+  if (nudge_return_is_active()) return;
+
+  if ((int32_t)tempo_get_bpm() == (int32_t)scene->bpm) {
+    proximity_stop_watchdog();
+    return;
+  }
+
+  if (s_last_prox_event_ms == 0) return;
+
+  uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+  if ((now - s_last_prox_event_ms) >= proximity_get_timeout_ms())
+    proximity_start_nudge_return(scene);
+}
+
+static void proximity_ensure_watchdog(void) {
+  if (!s_nudge_watchdog_timer) {
+    const esp_timer_create_args_t timer_args = {
+      .callback = nudge_watchdog_timer_cb,
+      .name = "prox_nudge_wd"
+    };
+    if (esp_timer_create(&timer_args, &s_nudge_watchdog_timer) != ESP_OK)
+      return;
+  }
+
+  if (!esp_timer_is_active(s_nudge_watchdog_timer))
+    esp_timer_start_periodic(s_nudge_watchdog_timer, PROX_NUDGE_WATCHDOG_INTERVAL_US);
+}
+
+static float proximity_tempo_nudge_scale(uint8_t raw_value, tempo_nudge_direction_t dir,
+    continuous_mapping_t* mapping) {
+  if (dir == TEMPO_NUDGE_DIR_BOTH)
+    return tempo_nudge_scale_bipolar(
+      continuous_mapping_unipolar_bipolar_map(raw_value, mapping));
+
+  if (raw_value < PROX_NUDGE_OUT_OF_RANGE_THRESH) return 0.0f;
+  float closeness = ((float)raw_value - (float)PROX_NUDGE_OUT_OF_RANGE_THRESH) / 122.0f;
+  if (closeness > 1.0f) closeness = 1.0f;
+  return (dir == TEMPO_NUDGE_DIR_FASTER) ? closeness : -closeness;
+}
+
+static void apply_tempo_nudge_from_scale(float scale, scene_t* scene, int dedupe_key) {
+  if (nudge_return_is_active()) return;
   uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
   if (now_ms - s_last_tempo_apply_ms < 50) return;
   s_last_tempo_apply_ms = now_ms;
-  if (s_last_applied_midi == midi_value) return;
-  s_last_applied_midi = midi_value;
+  if (s_last_applied_midi == (uint8_t)dedupe_key) return;
+  s_last_applied_midi = (uint8_t)dedupe_key;
 
   uint8_t pct = scene_get_proximity_tempo_nudge_pct(scene_get_current_index());
-  if (pct > 100) pct = 100;
+  uint16_t new_bpm = tempo_nudge_compute_bpm(scene->bpm, pct, scale);
+  tempo_set_bpm(new_bpm);
+  ESP_LOGD(TAG, "Proximity tempo nudge: scale=%.2f pct=%u -> bpm=%u (base=%d)",
+    (double)scale, (unsigned)pct, (unsigned)new_bpm, (int)scene->bpm);
+}
 
-  int32_t bpm = scene->bpm;
-  float scale = ((float)midi_value - 64.0f) / 63.0f;
-  if (scale > 1.0f) scale = 1.0f;
-  if (scale < -1.0f) scale = -1.0f;
-  float factor = 1.0f + scale * ((float)pct / 100.0f);
-  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
+static void handle_tempo_nudge_event(uint8_t raw_value, scene_t* scene) {
+  uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+  s_last_prox_event_ms = now;
+  proximity_ensure_watchdog();
 
-  tempo_set_bpm((uint16_t)new_bpm);
-  ESP_LOGD(TAG, "Proximity tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
-    (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+  if (raw_value < PROX_NUDGE_OUT_OF_RANGE_THRESH) {
+    if (!s_nudge_timing_active) {
+      s_nudge_at_rest_start = now;
+      s_nudge_timing_active = true;
+    } else if (!nudge_return_is_active()) {
+      if ((now - s_nudge_at_rest_start) >= proximity_get_timeout_ms()) {
+        if ((int32_t)tempo_get_bpm() != (int32_t)scene->bpm)
+          proximity_start_nudge_return(scene);
+      }
+    }
+    return;
+  }
+
+  proximity_reset_nudge_at_rest();
+  if (nudge_return_is_active())
+    proximity_stop_nudge_return();
+
+  tempo_nudge_direction_t dir = (tempo_nudge_direction_t)
+    scene_get_proximity_tempo_nudge_direction(scene_get_current_index());
+  float scale = proximity_tempo_nudge_scale(raw_value, dir, &scene->proximity);
+  int dedupe_key = (dir == TEMPO_NUDGE_DIR_BOTH)
+    ? (int)continuous_mapping_unipolar_bipolar_map(raw_value, &scene->proximity)
+    : (int)raw_value;
+  apply_tempo_nudge_from_scale(scale, scene, dedupe_key);
 }
 
 // Get velocity based on velocity mode setting
@@ -70,16 +269,30 @@ static uint8_t get_proximity_velocity(continuous_mapping_t* mapping) {
 // Handle proximity sensor events through scene mapping
 static void handle_proximity_event(const event_t* event, void* context) {
   if (event->type != EVENT_SENSOR_PROXIMITY) return;
-  if (!midi_local_output_is_enabled()) return;
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return;
+
+  uint8_t raw_value = event->data.sensor.value;
+
+  if (scene_cv_claims_source(VELOCITY_MODE_PROXIMITY)) {
+    uint8_t output_value = continuous_mapping_velocity_sample(raw_value, &scene->proximity);
+    scene_set_proximity_velocity_sample(output_value);
+    return;
+  }
+
+  if (!midi_local_output_is_enabled()) return;
   
   continuous_mapping_t* mapping = &scene->proximity;
   if (!mapping->enabled) return;
-  
-  // Get raw value from event (0-127)
-  uint8_t raw_value = event->data.sensor.value;
+
+  // Tempo Nudge always uses unipolar->bipolar mapping: nothing in range sits at
+  // middle (no tempo change), nearer than halfway speeds up, farther slows down.
+  // Bypass smart_filter here — its bottom snap-to-zero breaks the rest point.
+  if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    handle_tempo_nudge_event(raw_value, scene);
+    return;
+  }
   
   // Handle note mode out-of-range silence
   if (mapping->output_type == OUTPUT_TYPE_NOTE) {
@@ -112,15 +325,16 @@ static void handle_proximity_event(const event_t* event, void* context) {
     }
   }
   
-  // Process through curve and polarity
-  uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
-  
+  uint8_t processed_value = mapping->polarity == POLARITY_BIPOLAR
+    ? continuous_mapping_unipolar_bipolar_map(raw_value, mapping)
+    : continuous_mapping_process(raw_value, mapping);
+
   // Apply smart filtering (handles extremes + deadzone)
   bool value_changed = false;
   uint8_t output_value = smart_filter_process(&s_proximity_filter, processed_value, &value_changed);
-  
+
   if (!value_changed) return;
-  
+
   switch (mapping->output_type) {
     case OUTPUT_TYPE_NOTE: {
       uint8_t channel = scene_get_note_channel(scene_get_current_index()) - 1;
@@ -169,10 +383,6 @@ static void handle_proximity_event(const event_t* event, void* context) {
       break;
     }
     
-    case OUTPUT_TYPE_TEMPO_NUDGE:
-      apply_tempo_nudge(output_value, scene);
-      break;
-
     case OUTPUT_TYPE_CC:
     default: {
       uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
@@ -205,6 +415,10 @@ static void handle_scene_changed(const event_t* event, void* context) {
   smart_filter_reset(&s_proximity_filter);
   s_note_at_rest_start = 0;
   s_note_timing_active = false;
+  proximity_stop_nudge_return();
+  proximity_stop_watchdog();
+  proximity_reset_nudge_at_rest();
+  s_last_prox_event_ms = 0;
   s_last_tempo_apply_ms = 0;
   s_last_applied_midi = 64;
 }

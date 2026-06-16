@@ -304,6 +304,24 @@
                 </div>
               </div>
             </div>
+
+            <wa-dialog data-assets-target="deleteDialog" label="Delete">
+              <div class="confirm-delete-dialog-content">
+                <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>
+                <p data-assets-target="deleteDialogMessage"></p>
+                <p class="hint">This action cannot be undone.</p>
+              </div>
+              <div slot="footer">
+                <wa-button variant="neutral" appearance="outlined"
+                           data-action="click->assets#cancelDeleteConfirm">
+                  Cancel
+                </wa-button>
+                <wa-button variant="danger"
+                           data-action="click->assets#confirmDeleteConfirm">
+                  Delete
+                </wa-button>
+              </div>
+            </wa-dialog>
           </div>
         </wa-tab-panel>
 
@@ -505,6 +523,16 @@
                                data-action="click->scene#confirmReloadDiscard">
                       Discard Changes
                     </wa-button>
+                  </div>
+                </wa-dialog>
+
+                <wa-dialog data-scene-target="messageDialog" label="Error">
+                  <div class="confirm-delete-dialog-content pedals-message-dialog-content">
+                    <wa-icon name="circle-exclamation" class="warning-icon"></wa-icon>
+                    <p data-scene-target="messageDialogBody"></p>
+                  </div>
+                  <div slot="footer">
+                    <wa-button variant="brand" data-action="click->scene#hideMessageDialog">OK</wa-button>
                   </div>
                 </wa-dialog>
               </div>

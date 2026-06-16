@@ -96,6 +96,7 @@ static uint8_t get_lfo2_velocity(continuous_mapping_t* mapping) {
 // Handle LFO1 events through scene mapping
 static void handle_lfo1_event(const event_t* event, void* context) {
   if (event->type != EVENT_LFO1_VALUE) return;
+  if (scene_cv_claims_source(VELOCITY_MODE_LFO1)) return;
   if (!midi_local_output_is_enabled()) return;
 
   scene_t* scene = scene_get_current();
@@ -186,6 +187,7 @@ static void handle_lfo1_event(const event_t* event, void* context) {
 // Handle LFO2 events through scene mapping
 static void handle_lfo2_event(const event_t* event, void* context) {
   if (event->type != EVENT_LFO2_VALUE) return;
+  if (scene_cv_claims_source(VELOCITY_MODE_LFO2)) return;
   if (!midi_local_output_is_enabled()) return;
   
   scene_t* scene = scene_get_current();

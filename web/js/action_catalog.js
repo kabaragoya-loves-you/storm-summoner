@@ -333,6 +333,16 @@ window.ActionCatalog = (function () {
     return withStaleOption(presets, current, `${current}%`)
   }
 
+  function tempoNudgeDirectionOptions (current) {
+    const presets = [
+      { v: 0, l: 'Both' },
+      { v: 1, l: 'Faster' },
+      { v: 2, l: 'Slower' }
+    ]
+    const hit = presets.find(p => p.v === current)
+    return withStaleOption(presets, current, hit ? hit.l : String(current))
+  }
+
   function touchwheelTempoNudgeAmountOptions (current) {
     const presets = []
     for (let p = 0; p <= 100; p += 5) presets.push({ v: p, l: `${p}%` })
@@ -348,6 +358,83 @@ window.ActionCatalog = (function () {
     ]
     const hit = presets.find(p => p.v === current)
     return withStaleOption(presets, current, hit ? hit.l : String(current))
+  }
+
+  function gainToSensitivity (gain) {
+    const g = Math.max(1, Math.min(64, Number(gain) || 1))
+    return Math.round(255 * Math.log(g * 4) / Math.log(256))
+  }
+
+  function sensitivityToGain (sens) {
+    return 0.25 * Math.pow(256, (Number(sens) || 0) / 255)
+  }
+
+  function closestAudioGain (sens) {
+    let best = 1
+    let bestDiff = Infinity
+    for (let g = 1; g <= 64; g++) {
+      const diff = Math.abs(gainToSensitivity(g) - (Number(sens) || 0))
+      if (diff < bestDiff) {
+        bestDiff = diff
+        best = g
+      }
+    }
+    return best
+  }
+
+  function cvAudioGainOptions (currentSens) {
+    const presets = []
+    for (let g = 1; g <= 64; g++) presets.push({ v: g, l: `${g}x` })
+    const curGain = closestAudioGain(currentSens)
+    return withStaleOption(presets, curGain, `${curGain}x`)
+  }
+
+  function cvAudioThresholdOptions (current) {
+    const presets = [{ v: 0, l: 'Off' }]
+    for (let t = 1; t <= 127; t++) presets.push({ v: t, l: String(t) })
+    const hit = presets.find(p => p.v === current)
+    return withStaleOption(presets, current, hit ? hit.l : String(current))
+  }
+
+  const CV_TRIGGER_DEBOUNCE_MS = [0, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000]
+
+  function cvTriggerDebounceLabel (ms) {
+    if (ms === 0) return 'Immediate'
+    if (ms === 1000) return '1s'
+    if (ms === 1500) return '1.5s'
+    if (ms === 2000) return '2s'
+    return `${ms}ms`
+  }
+
+  function closestCvTriggerDebounce (ms) {
+    let best = CV_TRIGGER_DEBOUNCE_MS[0]
+    let bestDiff = Infinity
+    for (const v of CV_TRIGGER_DEBOUNCE_MS) {
+      const diff = Math.abs(v - (Number(ms) || 0))
+      if (diff < bestDiff) {
+        bestDiff = diff
+        best = v
+      }
+    }
+    return best
+  }
+
+  function cvTriggerDebounceOptions (currentMs) {
+    const presets = CV_TRIGGER_DEBOUNCE_MS.map(v => ({ v, l: cvTriggerDebounceLabel(v) }))
+    const cur = closestCvTriggerDebounce(currentMs)
+    return withStaleOption(presets, cur, cvTriggerDebounceLabel(cur))
+  }
+
+  function closestCvTriggerThreshold (pct) {
+    const n = Math.max(0, Math.min(100, Number(pct) || 0))
+    return Math.round(n / 10) * 10
+  }
+
+  function cvTriggerThresholdOptions (currentPct) {
+    const presets = []
+    for (let p = 0; p <= 100; p += 10) presets.push({ v: p, l: `${p}%` })
+    const cur = closestCvTriggerThreshold(currentPct)
+    return withStaleOption(presets, cur, `${cur}%`)
   }
 
   function lfoModifyPolarityOptions (current) {
@@ -1232,8 +1319,18 @@ window.ActionCatalog = (function () {
     lfoSceneRateHzOptions,
     lfoSceneDivisionOptions,
     tempoNudgeAmountOptions,
+    tempoNudgeDirectionOptions,
     touchwheelTempoNudgeAmountOptions,
     touchwheelNudgeReturnOptions,
+    gainToSensitivity,
+    sensitivityToGain,
+    closestAudioGain,
+    cvAudioGainOptions,
+    cvAudioThresholdOptions,
+    cvTriggerThresholdOptions,
+    cvTriggerDebounceOptions,
+    closestCvTriggerThreshold,
+    closestCvTriggerDebounce,
     lfoModifyPolarityOptions,
     lfoModifyFloorCeilingOptions,
     lfoModifyResolutionOptions,

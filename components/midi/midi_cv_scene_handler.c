@@ -8,6 +8,7 @@
 #include "event_bus.h"
 #include "lfo.h"
 #include "tempo.h"
+#include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -25,20 +26,17 @@ static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
   s_last_applied_midi = midi_value;
 
   uint8_t pct = scene_get_cv_tempo_nudge_pct(scene_get_current_index());
-  if (pct > 100) pct = 100;
+  tempo_nudge_direction_t dir =
+    (tempo_nudge_direction_t)scene_get_cv_tempo_nudge_direction(scene_get_current_index());
+  float scale;
+  if (dir == TEMPO_NUDGE_DIR_FASTER) scale = tempo_nudge_scale_unipolar_low_anchor(midi_value);
+  else if (dir == TEMPO_NUDGE_DIR_SLOWER) scale = tempo_nudge_scale_unipolar_high_anchor(midi_value);
+  else scale = tempo_nudge_scale_unipolar_span(midi_value);
 
-  int32_t bpm = scene->bpm;
-  float scale = ((float)midi_value - 64.0f) / 63.0f;
-  if (scale > 1.0f) scale = 1.0f;
-  if (scale < -1.0f) scale = -1.0f;
-  float factor = 1.0f + scale * ((float)pct / 100.0f);
-  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
-
-  tempo_set_bpm((uint16_t)new_bpm);
-  ESP_LOGD(TAG, "CV tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
-    (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+  uint16_t new_bpm = tempo_nudge_compute_bpm(scene->bpm, pct, scale);
+  tempo_set_bpm(new_bpm);
+  ESP_LOGD(TAG, "CV tempo nudge: midi=%u pct=%u -> bpm=%u (base=%d)",
+    (unsigned)midi_value, (unsigned)pct, (unsigned)new_bpm, (int)scene->bpm);
 }
 
 static void handle_cv_event(const event_t* event, void* context) {
@@ -56,6 +54,15 @@ static void handle_cv_event(const event_t* event, void* context) {
   
   continuous_mapping_t* mapping = &scene->cv;
   uint8_t raw_value = event->data.cv.midi_value;
+
+  if (mapping->output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+    bool value_changed = false;
+    uint8_t nudge_value = smart_filter_process(&s_cv_filter, raw_value, &value_changed);
+    if (!value_changed) return;
+    apply_tempo_nudge(nudge_value, scene);
+    return;
+  }
+
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
   
   bool value_changed = false;
@@ -108,10 +115,6 @@ static void handle_cv_event(const event_t* event, void* context) {
       ESP_LOGD(TAG, "CV -> LFO depth: %d (target: %d)", output_value, target);
       break;
     }
-    
-    case OUTPUT_TYPE_TEMPO_NUDGE:
-      apply_tempo_nudge(output_value, scene);
-      break;
 
     case OUTPUT_TYPE_CC:
     default: {

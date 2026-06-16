@@ -9,7 +9,8 @@ application.register(
       'editorContainer', 'editorTitle', 'validationBox',
       'programmingBanner', 'saveBtn', 'revertBtn', 'saveStatus',
       'pedalPickerDialog', 'pedalVendorSelect', 'pedalSelect',
-      'pedalChangeWarningDialog', 'reloadConfirmDialog', 'reloadConfirmMessage'
+      'pedalChangeWarningDialog', 'reloadConfirmDialog', 'reloadConfirmMessage',
+      'messageDialog', 'messageDialogBody'
     ]
 
     connect () {
@@ -443,14 +444,14 @@ application.register(
           })
         })
         if (!result?.data?.length) {
-          alert('Failed to download scene')
+          this.showMessageDialog('Download failed', 'Failed to download scene')
           return
         }
         const model = JSON.parse(new TextDecoder().decode(result.data))
         this.saveJsonBlob(model, pos)
       } catch (err) {
         console.error('Scene download error:', err)
-        alert(err.message || 'Download failed')
+        this.showMessageDialog('Download failed', err.message || 'Download failed')
       }
     }
 
@@ -649,8 +650,35 @@ application.register(
       }
     }
 
+    normalizeCvGateModel (model) {
+      if (!model) return false
+      let changed = false
+      if (model.cv_input_mode === 'note') {
+        const cvVel = model.cv_velocity_mode ||
+          (model.touchwheel_mode === 'velocity' ? 'touchwheel' : 'fixed')
+        if ((!model.cv_velocity_mode || model.cv_velocity_mode === 'fixed') &&
+            model.touchwheel_mode === 'velocity') {
+          model.cv_velocity_mode = 'touchwheel'
+          changed = true
+        }
+        if (model.touchwheel_mode === 'velocity' && cvVel !== 'touchwheel') {
+          const restored = model.touchwheel_mode_prev || 'pads'
+          if (model.touchwheel_mode !== restored) {
+            model.touchwheel_mode = restored
+            changed = true
+          }
+        } else if (cvVel === 'touchwheel' && model.touchwheel_mode !== 'velocity' &&
+            !model.touchwheel_mode_prev) {
+          model.touchwheel_mode_prev = model.touchwheel_mode || 'pads'
+          changed = true
+        }
+      }
+      return changed
+    }
+
     normalizeBeforeSave (model) {
       if (typeof model.name === 'string') model.name = model.name.trim()
+      this.normalizeCvGateModel(model)
       if (model.touchpads) {
         model.touchpads.forEach(tp => {
           this.normalizeTouchpadMapping(tp)
@@ -789,7 +817,7 @@ application.register(
         await this.ensurePedalCatalog()
       } catch (err) {
         console.error('Pedal catalog load failed:', err)
-        alert(err.message || 'Failed to load pedal list')
+        this.showMessageDialog('Pedal list', err.message || 'Failed to load pedal list')
         return
       }
       this.populatePedalPickerSelects()
@@ -798,6 +826,20 @@ application.register(
 
     closePedalPicker () {
       if (this.hasPedalPickerDialogTarget) this.pedalPickerDialogTarget.open = false
+    }
+
+    showMessageDialog (title, message) {
+      if (this.hasMessageDialogTarget) {
+        this.messageDialogTarget.label = title || 'Error'
+        this.messageDialogTarget.open = true
+      }
+      if (this.hasMessageDialogBodyTarget) {
+        this.messageDialogBodyTarget.textContent = message || ''
+      }
+    }
+
+    hideMessageDialog () {
+      if (this.hasMessageDialogTarget) this.messageDialogTarget.open = false
     }
 
     closePedalWarning () {
@@ -810,7 +852,8 @@ application.register(
 
     confirmDiscardChanges (message) {
       if (!this.hasReloadConfirmDialogTarget) {
-        return Promise.resolve(window.confirm(message))
+        console.warn('Discard confirm dialog unavailable:', message)
+        return Promise.resolve(false)
       }
       if (this._discardConfirmResolver) this.resolveDiscardConfirm(false)
       return new Promise(resolve => {
@@ -921,7 +964,7 @@ application.register(
 
       const slug = this.hasPedalSelectTarget ? this.pedalSelectTarget.value : ''
       if (!slug) {
-        alert('Select a pedal')
+        this.showMessageDialog('Select a pedal', 'Choose a pedal from the list.')
         return
       }
       if (slug === currentId) {
@@ -1020,8 +1063,10 @@ application.register(
 
     isNumericScenePath (path) {
       if (path === 'midi_channel' || path === 'trs_type' || path === 'note_channel') return true
-      if (/touchwheel_(tempo_nudge_(pct|return)|aftertouch_return)$/.test(path)) return true
-      if (/tempo_nudge_pct$/.test(path)) return true
+      if (/touchwheel_(tempo_nudge_(pct|return|direction)|aftertouch_return)$/.test(path)) return true
+      if (/tempo_nudge_(pct|direction)$/.test(path)) return true
+      if (/^audio_config\.(sensitivity|attack_ms|release_ms|threshold)$/.test(path)) return true
+      if (path === 'cv_trigger_threshold' || path === 'cv_trigger_debounce_ms') return true
       if (/\.values(\.\d+)+$/.test(path)) return true
       if (/\.presets(\.\d+)+$/.test(path)) return true
       return /\.(note|base_note|note_range|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
@@ -1070,7 +1115,8 @@ application.register(
             output_type: 'tempo_nudge',
             touchwheel_style: 'bipolar',
             enabled: true,
-            touchwheel_tempo_nudge_return: 0
+            touchwheel_tempo_nudge_return: 0,
+            touchwheel_tempo_nudge_direction: 0
           }
         }
         const spec = specByKey[val]
@@ -1092,6 +1138,9 @@ application.register(
           this.editModel.touchwheel_aftertouch_return = spec.touchwheel_aftertouch_return
         }
         if (spec.touchwheel_style) this.editModel.touchwheel_style = spec.touchwheel_style
+        if (spec.touchwheel_tempo_nudge_direction != null) {
+          this.editModel.touchwheel_tempo_nudge_direction = spec.touchwheel_tempo_nudge_direction
+        }
         if (spec.enabled === false) {
           this.editModel.touchwheel.enabled = false
         } else if (spec.enabled) {
@@ -1099,6 +1148,18 @@ application.register(
         }
         if (val === 'lfo_rate' || val === 'lfo_depth') {
           if (!this.editModel.touchwheel_lfo_target) this.editModel.touchwheel_lfo_target = 'both'
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === 'touchwheel_tempo_nudge_direction') {
+        const dir = Number(val)
+        this.editModel.touchwheel_tempo_nudge_direction = dir
+        if (dir === 0) this.editModel.touchwheel_style = 'bipolar'
+        else if (this.editModel.touchwheel_style === 'bipolar') {
+          this.editModel.touchwheel_style = 'odometer'
         }
         this.markDirty()
         this.renderEditor()
@@ -1126,6 +1187,218 @@ application.register(
         if ((val === 'lfo_rate' || val === 'lfo_depth') && !this.editModel.expression.lfo_target) {
           this.editModel.expression.lfo_target = 'both'
         }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__cv_user_mode') {
+        const specByKey = {
+          disabled: { cv_input_mode: 'none', enabled: false },
+          control_change: { cv_input_mode: 'cv', output_type: 'cc', enabled: true },
+          lfo_rate: { cv_input_mode: 'cv', output_type: 'lfo_rate', enabled: true },
+          lfo_depth: { cv_input_mode: 'cv', output_type: 'lfo_depth', enabled: true },
+          notes: { cv_input_mode: 'cv', output_type: 'note', enabled: true },
+          tempo_nudge: { cv_input_mode: 'cv', output_type: 'tempo_nudge', enabled: true },
+          cv_gate: { cv_input_mode: 'note', enabled: false },
+          audio: { cv_input_mode: 'audio', enabled: false },
+          trigger: { cv_input_mode: 'trigger', enabled: false }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.cv) this.editModel.cv = { enabled: true, output_type: 'cc' }
+        this.editModel.cv_input_mode = spec.cv_input_mode
+        if (spec.output_type) this.editModel.cv.output_type = spec.output_type
+        this.editModel.cv.enabled = spec.enabled
+        if ((val === 'lfo_rate' || val === 'lfo_depth') && !this.editModel.cv.lfo_target) {
+          this.editModel.cv.lfo_target = 'both'
+        }
+        if (val === 'audio' && !this.editModel.audio_config) {
+          this.editModel.audio_config = {
+            range: 'bi5v',
+            sensitivity: 128,
+            attack_ms: 10,
+            release_ms: 200,
+            threshold: 5,
+            polarity: 'attract'
+          }
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__proximity_user_mode') {
+        const specByKey = {
+          disabled: { enabled: false },
+          control_change: { output_type: 'cc', enabled: true },
+          notes_theremin: { output_type: 'note', enabled: true },
+          lfo_rate: { output_type: 'lfo_rate', enabled: true },
+          lfo_depth: { output_type: 'lfo_depth', enabled: true },
+          tempo_nudge: { output_type: 'tempo_nudge', enabled: true }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.proximity) {
+          this.editModel.proximity = { enabled: false, output_type: 'cc' }
+        }
+        if (spec.output_type) this.editModel.proximity.output_type = spec.output_type
+        this.editModel.proximity.enabled = spec.enabled
+        if ((val === 'lfo_rate' || val === 'lfo_depth') && !this.editModel.proximity.lfo_target) {
+          this.editModel.proximity.lfo_target = 'both'
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__als_user_mode') {
+        const specByKey = {
+          disabled: { enabled: false },
+          control_change: { output_type: 'cc', enabled: true },
+          notes: { output_type: 'note', enabled: true },
+          lfo_rate: { output_type: 'lfo_rate', enabled: true },
+          lfo_depth: { output_type: 'lfo_depth', enabled: true },
+          tempo_nudge: { output_type: 'tempo_nudge', enabled: true }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.als) this.editModel.als = { enabled: false, output_type: 'cc' }
+        if (spec.output_type) this.editModel.als.output_type = spec.output_type
+        this.editModel.als.enabled = spec.enabled
+        if ((val === 'lfo_rate' || val === 'lfo_depth') && !this.editModel.als.lfo_target) {
+          this.editModel.als.lfo_target = 'both'
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__lfo1_user_mode' || path === '__lfo2_user_mode') {
+        const n = path === '__lfo1_user_mode' ? 1 : 2
+        const cfgKey = n === 1 ? 'lfo1_config' : 'lfo2_config'
+        const mapKey = n === 1 ? 'lfo1' : 'lfo2'
+        const specByKey = {
+          disabled: { enabled: false },
+          control_change: { output_type: 'cc', enabled: true },
+          notes: { output_type: 'note', enabled: true },
+          lfo2_rate: { output_type: 'lfo2_rate', enabled: true },
+          lfo2_depth: { output_type: 'lfo2_depth', enabled: true },
+          lfo1_rate: { output_type: 'lfo1_rate', enabled: true },
+          lfo1_depth: { output_type: 'lfo1_depth', enabled: true },
+          rtg_rate: { output_type: 'rtg_rate', enabled: true },
+          sh_rate: { output_type: 'sh_rate', enabled: true },
+          pitch_bend: { output_type: 'pitch_bend', enabled: true }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel[cfgKey]) {
+          this.editModel[cfgKey] = { enabled: false, waveform: 'sine', rate_mode: 'free' }
+        }
+        if (!this.editModel[mapKey]) {
+          this.editModel[mapKey] = { enabled: false, output_type: 'cc' }
+        }
+        this.editModel[cfgKey].enabled = spec.enabled
+        this.editModel[mapKey].enabled = spec.enabled
+        if (spec.output_type) this.editModel[mapKey].output_type = spec.output_type
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__note_track_user_mode') {
+        const specByKey = {
+          disabled: { enabled: false },
+          control_change: { output_type: 'cc', enabled: true },
+          lfo_rate: { output_type: 'lfo_rate', enabled: true },
+          lfo_depth: { output_type: 'lfo_depth', enabled: true },
+          pitch_bend: { output_type: 'pitch_bend', enabled: true },
+          tempo_nudge: { output_type: 'tempo_nudge', enabled: true }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.note_track) {
+          this.editModel.note_track = { enabled: false, output_type: 'cc' }
+        }
+        this.editModel.note_track.enabled = spec.enabled
+        if (spec.output_type) this.editModel.note_track.output_type = spec.output_type
+        if ((val === 'lfo_rate' || val === 'lfo_depth') && !this.editModel.note_track.lfo_target) {
+          this.editModel.note_track.lfo_target = 'both'
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__tilt_x_user_mode' || path === '__tilt_y_user_mode') {
+        const key = path === '__tilt_x_user_mode' ? 'tilt_x' : 'tilt_y'
+        const specByKey = {
+          disabled: { enabled: false },
+          control_change: { output_type: 'cc', enabled: true },
+          notes: { output_type: 'note', enabled: true },
+          lfo_rate: { output_type: 'lfo_rate', enabled: true },
+          lfo_depth: { output_type: 'lfo_depth', enabled: true },
+          pitch_bend: { output_type: 'pitch_bend', enabled: true },
+          tempo_nudge: { output_type: 'tempo_nudge', enabled: true }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel[key]) {
+          this.editModel[key] = { enabled: false, output_type: 'cc' }
+        }
+        this.editModel[key].enabled = spec.enabled
+        if (spec.output_type) this.editModel[key].output_type = spec.output_type
+        if ((val === 'lfo_rate' || val === 'lfo_depth') && !this.editModel[key].lfo_target) {
+          this.editModel[key].lfo_target = 'both'
+        }
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__sample_hold_user_mode') {
+        const specByKey = {
+          disabled: { enabled: false },
+          continuous: { enabled: true, mode: 'continuous' },
+          step: { enabled: true, mode: 'step' }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.sample_hold_config) {
+          this.editModel.sample_hold_config = { enabled: false, mode: 'continuous' }
+        }
+        if (!this.editModel.sample_hold) {
+          this.editModel.sample_hold = { enabled: false, output_type: 'cc' }
+        }
+        this.editModel.sample_hold_config.enabled = spec.enabled
+        this.editModel.sample_hold.enabled = spec.enabled
+        if (spec.mode) this.editModel.sample_hold_config.mode = spec.mode
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__rtg_user_mode') {
+        const specByKey = {
+          disabled: { enabled: false },
+          continuous: { enabled: true, mode: 'continuous' },
+          step: { enabled: true, mode: 'step' }
+        }
+        const spec = specByKey[val]
+        if (!spec) return
+        if (!this.editModel.rtg_config) {
+          this.editModel.rtg_config = { enabled: false, mode: 'continuous', generator: 'random' }
+        }
+        this.editModel.rtg_config.enabled = spec.enabled
+        if (spec.mode) this.editModel.rtg_config.mode = spec.mode
+        this.markDirty()
+        this.renderEditor()
+        return
+      }
+
+      if (path === '__cv_audio_gain') {
+        if (!this.editModel.audio_config) this.editModel.audio_config = {}
+        this.editModel.audio_config.sensitivity = ActionCatalog.gainToSensitivity(Number(val))
         this.markDirty()
         this.renderEditor()
         return
@@ -1350,7 +1623,7 @@ application.register(
         return
       }
 
-      const mapCcMatch = path.match(/^(expression|proximity|als|tilt_x|tilt_y|cv|lfo1|lfo2|note_track)\.cc_numbers\.(\d+)$/)
+      const mapCcMatch = path.match(/^(expression|proximity|als|tilt_x|tilt_y|cv|lfo1|lfo2|note_track|sample_hold)\.cc_numbers\.(\d+)$/)
       if (mapCcMatch) {
         this.setAtPath(path, Number(val))
         const mapping = this.getAtPath(mapCcMatch[1])
@@ -2003,6 +2276,7 @@ application.register(
 
         const text = new TextDecoder().decode(result.data)
         const model = JSON.parse(text)
+        this.normalizeCvGateModel(model)
         if (model.touchpads) {
           model.touchpads.forEach(tp => this.normalizeTouchpadMapping(tp))
         }
@@ -2106,7 +2380,7 @@ application.register(
 
       const pos = Number(this.editPosition)
       if (Number.isNaN(pos)) {
-        alert('Cannot resolve scene position for save')
+        this.showMessageDialog('Save failed', 'Cannot resolve scene position for save')
         return
       }
 
@@ -2134,10 +2408,17 @@ application.register(
         this.baselineJson = JSON.stringify(this.editModel)
         this.dirty = false
         this.markDirty()
+        const savedName = String(this.editModel.name || '').trim()
+        const row = this.sceneList.find(s => s.position === pos)
+        if (row) row.name = savedName
+        this.updatePanelTitle()
+        document.dispatchEvent(new CustomEvent('scenes:scene-renamed', {
+          detail: { position: pos, name: savedName }
+        }))
         this.flashSaveStatus()
       } catch (err) {
         console.error('Scene save error:', err)
-        alert(err.message || 'Save failed')
+        this.showMessageDialog('Save failed', err.message || 'Save failed')
       } finally {
         this.connection.setTabsLocked(false)
       }

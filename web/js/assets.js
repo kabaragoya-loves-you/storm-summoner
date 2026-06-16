@@ -26,7 +26,9 @@ application.register(
       'newFolderInput',
       'renameModal',
       'renameInput',
-      'readonlyBanner'
+      'readonlyBanner',
+      'deleteDialog',
+      'deleteDialogMessage'
     ]
 
     // Roots known to the device. The Assets tab shows / as the userdata root;
@@ -458,11 +460,45 @@ application.register(
       }
     }
 
+    showDeleteConfirm (title, message) {
+      if (!this.hasDeleteDialogTarget) {
+        console.warn('Delete dialog unavailable:', message)
+        return Promise.resolve(false)
+      }
+      return new Promise(resolve => {
+        this._deleteConfirmResolver = resolve
+        this.deleteDialogTarget.label = title || 'Delete'
+        if (this.hasDeleteDialogMessageTarget) {
+          this.deleteDialogMessageTarget.textContent = message || ''
+        }
+        this.deleteDialogTarget.open = true
+      })
+    }
+
+    resolveDeleteConfirm (accepted) {
+      if (this.hasDeleteDialogTarget) this.deleteDialogTarget.open = false
+      const resolve = this._deleteConfirmResolver
+      this._deleteConfirmResolver = null
+      resolve?.(accepted)
+    }
+
+    cancelDeleteConfirm () {
+      this.resolveDeleteConfirm(false)
+    }
+
+    confirmDeleteConfirm () {
+      this.resolveDeleteConfirm(true)
+    }
+
     async deleteFile (event) {
       event.stopPropagation()
       const path = event.currentTarget.dataset.path
       const name = path.split('/').pop()
       const type = event.currentTarget.closest('.file-item')?.dataset.type
+
+      let useRmrf = false
+      let title = type === 'dir' ? 'Delete Folder' : 'Delete File'
+      let message = `Delete "${name}"?`
 
       if (type === 'dir') {
         try {
@@ -470,36 +506,28 @@ application.register(
           const contents = JSON.parse(lsResponse)
 
           if (contents.length > 0) {
-            if (
-              !confirm(
-                `"${name}" contains ${contents.length} item(s).\n\nDelete folder and ALL contents?`
-              )
-            ) {
-              return
-            }
-
-            const response = await this.sendCommand(`RMRF ${this.toDevicePath(path)}`)
-            if (response === 'OK') {
-              this.log(`Deleted ${name} and contents`, 'success')
-              await this.loadDirectory()
-              await this.loadStats()
-            } else {
-              this.log(response, 'error')
-            }
-            return
+            useRmrf = true
+            message =
+              `"${name}" contains ${contents.length} item(s). Delete folder and ALL contents?`
           }
         } catch (err) {
           // If LS fails, try normal delete
         }
       }
 
-      if (!confirm(`Delete "${name}"?`)) return
+      if (!await this.showDeleteConfirm(title, message)) return
 
       try {
-        const response = await this.sendCommand(`RM ${this.toDevicePath(path)}`)
+        const cmd = useRmrf
+          ? `RMRF ${this.toDevicePath(path)}`
+          : `RM ${this.toDevicePath(path)}`
+        const response = await this.sendCommand(cmd)
 
         if (response === 'OK') {
-          this.log(`Deleted ${name}`, 'success')
+          this.log(
+            useRmrf ? `Deleted ${name} and contents` : `Deleted ${name}`,
+            'success'
+          )
           await this.loadDirectory()
           await this.loadStats()
         } else {

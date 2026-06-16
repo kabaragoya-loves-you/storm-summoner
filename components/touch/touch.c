@@ -742,7 +742,6 @@ static void touch_health_check_task(void *pvParameters) {
       } else {
         hardware_is_touching = (delta > (int32_t)calib_data.threshold);
       }
-      
       // 4. State Mismatch Correction (SW≠HW)
       // This is the primary job: if SW thinks pad is pressed but HW says idle (or vice versa),
       // just correct the software state. This fixes missed press/release events.

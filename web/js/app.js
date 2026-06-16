@@ -116,6 +116,10 @@ window.ConnectionManager = (function () {
         this._startRxPump()
         await this.sleep(50)
         await this.drainInput()
+        // Clear any CDC mode left over from a prior browser session.
+        await this.sendRaw('EXIT\n')
+        await this.sleep(150)
+        await this.drainInput()
         this.emit('connection:changed', { connected: true })
         return true
       } catch (err) {
@@ -231,6 +235,17 @@ window.ConnectionManager = (function () {
       if (this.mode || this._deviceScenesActive) {
         await this._exitModeImpl()
         await this.sleep(200)
+        return
+      }
+      // Host state is idle; the device may still be in a CDC mode.
+      const pumpWasRunning = this._rxPumpRunning && !this._pumpSuspended
+      if (pumpWasRunning) await this._suspendRxPump()
+      try {
+        await this.sendRaw('EXIT\n')
+        await this.sleep(150)
+        await this.drainInput()
+      } finally {
+        if (pumpWasRunning) this._resumeRxPump()
       }
     }
 
@@ -265,6 +280,28 @@ window.ConnectionManager = (function () {
       const line = this._rxBuffer.substring(0, idx).replace(/\r/g, '').trim()
       this._rxBuffer = this._rxBuffer.substring(idx + 1)
       return line
+    }
+
+    _isGluedSerialPrefix (prefix) {
+      if (prefix === 'OK' || prefix === 'READY' || prefix === 'SUCCESS' ||
+          prefix === 'CANCELLED' || prefix === 'RESETTING') return true
+      if (prefix.startsWith('ERROR:') || prefix.startsWith('SIZE ')) return true
+      return prefix === 'SCENES_STARTED' || prefix === 'SCENES_STOPPED' ||
+        prefix === 'CONFIG_STARTED' || prefix === 'CONFIG_STOPPED' ||
+        prefix === 'SETTINGS_STARTED' || prefix === 'SETTINGS_STOPPED' ||
+        prefix === 'PEDALS_STARTED' || prefix === 'PEDALS_STOPPED' ||
+        prefix === 'CONSOLE_STARTED' || prefix === 'DISPLAY_STOPPED' ||
+        prefix === 'MIDI_STOPPED'
+    }
+
+    _expandSerialLines (line) {
+      if (!line) return ['']
+      const evtIdx = line.indexOf('EVT:')
+      if (evtIdx <= 0) return [line]
+      const prefix = line.slice(0, evtIdx)
+      if (!this._isGluedSerialPrefix(prefix)) return [line]
+      const tail = line.slice(evtIdx)
+      return prefix.length > 0 ? [prefix, tail] : [tail]
     }
 
     dispatchCdcNotify (line) {
@@ -327,8 +364,10 @@ window.ConnectionManager = (function () {
       while (true) {
         const line = this._takeLineFromBuffer()
         if (line === null) break
-        if (this.dispatchCdcNotify(line)) continue
-        this._deliverLine(line)
+        for (const sub of this._expandSerialLines(line)) {
+          if (this.dispatchCdcNotify(sub)) continue
+          this._deliverLine(sub)
+        }
       }
     }
 
@@ -337,8 +376,10 @@ window.ConnectionManager = (function () {
       while (true) {
         const line = this._takeLineFromBuffer()
         if (line === null) return null
-        if (this.dispatchCdcNotify(line)) continue
-        return line
+        for (const sub of this._expandSerialLines(line)) {
+          if (this.dispatchCdcNotify(sub)) continue
+          return sub
+        }
       }
     }
 
@@ -833,60 +874,62 @@ window.ConnectionManager = (function () {
               rxBuf = rxBuf.substring(idx + 1)
               if (!rawLine) continue
 
-              if (rawLine.startsWith('EVT:')) {
-                this.dispatchCdcNotify(rawLine)
-                continue
-              }
-              if (this._isNoiseLine(rawLine)) continue
-              if (rawLine === 'SCENES_STOPPED' || rawLine === 'SCENES_STARTED' ||
-                  rawLine === 'CONFIG_STOPPED' || rawLine === 'SETTINGS_STOPPED' ||
-                  rawLine === 'PEDALS_STOPPED') continue
-
-              const direct = this._tryParseCommandJson(rawLine, validator)
-              if (direct) {
-                this._mergeRxTail(rxBuf)
-                return direct
-              }
-
-              if (rawLine.startsWith('ERROR:')) {
-                this._mergeRxTail(rxBuf)
-                return rawLine
-              }
-              if (!validator && rawLine.startsWith('[')) {
-                try {
-                  JSON.parse(rawLine)
-                  this._mergeRxTail(rxBuf)
-                  return rawLine
-                } catch (_) { /* accumulate below */ }
-              }
-              if (!validator) {
-                if (!rawLine.includes('{') && !rawLine.includes('[')) {
-                  this._mergeRxTail(rxBuf)
-                  return rawLine
+              for (const line of this._expandSerialLines(rawLine)) {
+                if (line.startsWith('EVT:')) {
+                  this.dispatchCdcNotify(line)
+                  continue
                 }
-              }
-              if (!rawLine.includes('{') && !rawLine.includes('"')) continue
+                if (this._isNoiseLine(line)) continue
+                if (line === 'SCENES_STOPPED' || line === 'SCENES_STARTED' ||
+                    line === 'CONFIG_STOPPED' || line === 'SETTINGS_STOPPED' ||
+                    line === 'PEDALS_STOPPED') continue
 
-              jsonAcc += rawLine
-              const candidate = this._repairJsonLine(jsonAcc)
-              const json = this._extractFirstJson(candidate)
-              try {
-                const data = JSON.parse(json)
-                if (validator && !validator(data)) {
+                const direct = this._tryParseCommandJson(line, validator)
+                if (direct) {
+                  this._mergeRxTail(rxBuf)
+                  return direct
+                }
+
+                if (line.startsWith('ERROR:')) {
+                  this._mergeRxTail(rxBuf)
+                  return line
+                }
+                if (!validator && line.startsWith('[')) {
+                  try {
+                    JSON.parse(line)
+                    this._mergeRxTail(rxBuf)
+                    return line
+                  } catch (_) { /* accumulate below */ }
+                }
+                if (!validator) {
+                  if (!line.includes('{') && !line.includes('[')) {
+                    this._mergeRxTail(rxBuf)
+                    return line
+                  }
+                }
+                if (!line.includes('{') && !line.includes('"')) continue
+
+                jsonAcc += line
+                const candidate = this._repairJsonLine(jsonAcc)
+                const json = this._extractFirstJson(candidate)
+                try {
+                  const data = JSON.parse(json)
+                  if (validator && !validator(data)) {
+                    if (expectMarker && !jsonAcc.includes(expectMarker)) {
+                      jsonAcc = ''
+                      continue
+                    }
+                    continue
+                  }
+                  this._mergeRxTail(rxBuf)
+                  return json
+                } catch (e) {
                   if (expectMarker && !jsonAcc.includes(expectMarker)) {
                     jsonAcc = ''
                     continue
                   }
-                  continue
+                  if (line.endsWith('}')) jsonAcc = ''
                 }
-                this._mergeRxTail(rxBuf)
-                return json
-              } catch (e) {
-                if (expectMarker && !jsonAcc.includes(expectMarker)) {
-                  jsonAcc = ''
-                  continue
-                }
-                if (rawLine.endsWith('}')) jsonAcc = ''
               }
             }
           }
@@ -973,12 +1016,14 @@ window.ConnectionManager = (function () {
         while (true) {
           const idx = buffer.indexOf('\n')
           if (idx === -1) return null
-          const line = buffer.substring(0, idx).replace(/\r/g, '').trim()
+          const composite = buffer.substring(0, idx).replace(/\r/g, '').trim()
           buffer = buffer.substring(idx + 1)
-          if (!line) continue
-          if (this.dispatchCdcNotify(line)) continue
-          if (/^I \(/.test(line)) continue
-          return line
+          if (!composite) continue
+          for (const line of this._expandSerialLines(composite)) {
+            if (this.dispatchCdcNotify(line)) continue
+            if (/^I \(/.test(line)) continue
+            return line
+          }
         }
       }
 
@@ -1106,13 +1151,16 @@ window.ConnectionManager = (function () {
               const { line, rest } = this._takeLineFromBytes(buffer)
               buffer = rest
               if (!line) break
-              if (line.startsWith('EVT:')) {
-                this.dispatchCdcNotify(line)
-                continue
+              for (const sub of this._expandSerialLines(line)) {
+                if (sub.startsWith('EVT:')) {
+                  this.dispatchCdcNotify(sub)
+                  continue
+                }
+                if (this._isNoiseLine(sub)) continue
+                responseLine = sub
+                break
               }
-              if (this._isNoiseLine(line)) continue
-              responseLine = line
-              break
+              if (responseLine) break
             }
           }
         }

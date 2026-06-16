@@ -2969,7 +2969,7 @@ static int cmd_cv_input_mode(int argc, char **argv) {
   return 0;
 }
 
-// Helper to parse velocity mode string
+// Helper to parse velocity mode string (note-output modules: fixed/gate/touchwheel)
 static velocity_mode_t parse_velocity_mode(const char* mode_str, bool* valid) {
   *valid = true;
   if (strcmp(mode_str, "fixed") == 0) return VELOCITY_MODE_FIXED;
@@ -2979,13 +2979,24 @@ static velocity_mode_t parse_velocity_mode(const char* mode_str, bool* valid) {
   return VELOCITY_MODE_FIXED;
 }
 
+static velocity_mode_t parse_cv_velocity_mode(const char* mode_str, bool* valid) {
+  *valid = true;
+  if (strcmp(mode_str, "fixed") == 0) return VELOCITY_MODE_FIXED;
+  if (strcmp(mode_str, "gate") == 0 || strcmp(mode_str, "gate_voltage") == 0) return VELOCITY_MODE_GATE_VOLTAGE;
+  if (strcmp(mode_str, "touchwheel") == 0 || strcmp(mode_str, "tw") == 0) return VELOCITY_MODE_TOUCHWHEEL;
+  if (strcmp(mode_str, "proximity") == 0) return VELOCITY_MODE_PROXIMITY;
+  if (strcmp(mode_str, "als") == 0) return VELOCITY_MODE_ALS;
+  if (strcmp(mode_str, "tilt_x") == 0) return VELOCITY_MODE_TILT_X;
+  if (strcmp(mode_str, "tilt_y") == 0) return VELOCITY_MODE_TILT_Y;
+  if (strcmp(mode_str, "lfo1") == 0) return VELOCITY_MODE_LFO1;
+  if (strcmp(mode_str, "lfo2") == 0) return VELOCITY_MODE_LFO2;
+  if (strcmp(mode_str, "sample_hold") == 0 || strcmp(mode_str, "sh") == 0) return VELOCITY_MODE_SAMPLE_HOLD;
+  *valid = false;
+  return VELOCITY_MODE_FIXED;
+}
+
 static const char* velocity_mode_name(velocity_mode_t mode) {
-  switch (mode) {
-    case VELOCITY_MODE_FIXED: return "Fixed";
-    case VELOCITY_MODE_GATE_VOLTAGE: return "Gate Voltage";
-    case VELOCITY_MODE_TOUCHWHEEL: return "Touchwheel";
-    default: return "Unknown";
-  }
+  return scene_cv_velocity_mode_display_name(mode);
 }
 
 // Command: cv_velocity_mode - Set CV NOTE mode velocity mode
@@ -3005,9 +3016,9 @@ static int cmd_cv_velocity_mode(int argc, char **argv) {
   if (!scene) return 1;
   
   bool valid;
-  velocity_mode_t mode = parse_velocity_mode(cv_velocity_mode_args.mode->sval[0], &valid);
+  velocity_mode_t mode = parse_cv_velocity_mode(cv_velocity_mode_args.mode->sval[0], &valid);
   if (!valid) {
-    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage, touchwheel)");
+    ESP_LOGE(TAG, "Unknown velocity mode (use: fixed, gate_voltage, touchwheel, proximity, als, tilt_x, tilt_y, lfo1, lfo2, sample_hold)");
     return 1;
   }
   

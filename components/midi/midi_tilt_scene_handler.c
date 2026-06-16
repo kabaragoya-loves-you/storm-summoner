@@ -7,6 +7,7 @@
 #include "event_bus.h"
 #include "lfo.h"
 #include "tempo.h"
+#include "tempo_nudge.h"
 #include "tilt.h"
 #include "expression.h"
 #include "esp_log.h"
@@ -117,22 +118,19 @@ static void apply_tempo_nudge(int axis, uint8_t midi_value, scene_t* scene) {
   uint8_t pct = (axis == 0)
     ? scene_get_tilt_x_tempo_nudge_pct(scene_get_current_index())
     : scene_get_tilt_y_tempo_nudge_pct(scene_get_current_index());
-  if (pct > 100) pct = 100;
+  tempo_nudge_direction_t dir = (tempo_nudge_direction_t)((axis == 0)
+    ? scene_get_tilt_x_tempo_nudge_direction(scene_get_current_index())
+    : scene_get_tilt_y_tempo_nudge_direction(scene_get_current_index()));
+  float scale;
+  if (dir == TEMPO_NUDGE_DIR_FASTER) scale = tempo_nudge_scale_abs_bipolar(midi_value);
+  else if (dir == TEMPO_NUDGE_DIR_SLOWER) scale = -tempo_nudge_scale_abs_bipolar(midi_value);
+  else scale = tempo_nudge_scale_bipolar(midi_value);
 
-  int32_t bpm = scene->bpm;
-  // signed delta: -1.0 at midi=0, 0 at 64, +1.0 at 127
-  float scale = ((float)midi_value - 64.0f) / 63.0f;
-  if (scale > 1.0f) scale = 1.0f;
-  if (scale < -1.0f) scale = -1.0f;
-  float factor = 1.0f + scale * ((float)pct / 100.0f);
-  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
-
-  tempo_set_bpm((uint16_t)new_bpm);
-  ESP_LOGD(TAG, "tilt_%c tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
+  uint16_t new_bpm = tempo_nudge_compute_bpm(scene->bpm, pct, scale);
+  tempo_set_bpm(new_bpm);
+  ESP_LOGD(TAG, "tilt_%c tempo nudge: midi=%u pct=%u -> bpm=%u (base=%d)",
     axis == 0 ? 'x' : 'y', (unsigned)midi_value, (unsigned)pct,
-    (int)new_bpm, (int)bpm);
+    (unsigned)new_bpm, (int)scene->bpm);
 }
 
 static void handle_tilt_event(const event_t* event, void* context) {
@@ -140,10 +138,14 @@ static void handle_tilt_event(const event_t* event, void* context) {
   int axis = (event->type == EVENT_SENSOR_TILT_X) ? 0
            : (event->type == EVENT_SENSOR_TILT_Y) ? 1 : -1;
   if (axis < 0) return;
-  if (!midi_local_output_is_enabled()) return;
 
   scene_t* scene = scene_get_current();
   if (!scene) return;
+
+  velocity_mode_t claim_mode = (axis == 0) ? VELOCITY_MODE_TILT_X : VELOCITY_MODE_TILT_Y;
+  if (scene_cv_claims_source(claim_mode)) return;
+
+  if (!midi_local_output_is_enabled()) return;
 
   continuous_mapping_t* mapping = tilt_mapping(scene, axis);
   if (!mapping->enabled) return;

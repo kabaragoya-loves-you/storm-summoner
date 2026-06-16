@@ -40,6 +40,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "esp_system.h"
+#include "freertos/semphr.h"
 
 // Suppress warnings from miniz header (unused static functions)
 #pragma GCC diagnostic push
@@ -164,6 +165,101 @@ static size_t s_scene_put_size = 0;
 static size_t s_scene_put_received = 0;
 static uint8_t s_scene_put_index = 0;
 
+static SemaphoreHandle_t s_cdc_tx_mutex = NULL;
+static StaticSemaphore_t s_cdc_tx_mutex_buf;
+static TaskHandle_t s_cdc_task_handle = NULL;
+static bool s_cdc_tx_armed = false;
+static uint8_t s_cdc_response_depth = 0;
+
+#define CDC_NOTIFY_QUEUE_LEN 8
+#define CDC_NOTIFY_LINE_MAX 96
+static char s_notify_queue[CDC_NOTIFY_QUEUE_LEN][CDC_NOTIFY_LINE_MAX];
+static uint8_t s_notify_head = 0;
+static uint8_t s_notify_tail = 0;
+
+static bool cdc_tx_write_locked(const uint8_t *data, size_t len, int max_retries,
+                                int delay_ms);
+static void cdc_tx_flush_locked(void);
+static bool cdc_send_line_locked(const char *msg, int body_max_retries,
+                                 int body_delay_ms);
+static void cdc_notify_enqueue(const char *msg);
+static void cdc_flush_pending_notifies(void);
+static void cdc_send_notify_line(const char *msg);
+static bool cdc_may_push_notify(void);
+
+static bool cdc_tx_write(const uint8_t *data, size_t len, int max_retries,
+                         int delay_ms) {
+  if (!s_cdc_tx_armed || !s_cdc_tx_mutex || !data || len == 0) return false;
+  if (xSemaphoreTake(s_cdc_tx_mutex, portMAX_DELAY) != pdTRUE) return false;
+  bool ok = cdc_tx_write_locked(data, len, max_retries, delay_ms);
+  if (ok) cdc_tx_flush_locked();
+  xSemaphoreGive(s_cdc_tx_mutex);
+  return ok;
+}
+
+static bool cdc_tx_write_locked(const uint8_t *data, size_t len, int max_retries,
+                                int delay_ms) {
+  if (!tud_cdc_n_connected(0)) return false;
+
+  size_t sent = 0;
+  int retry_count = 0;
+
+  while (sent < len) {
+    if (!tud_cdc_n_connected(0)) return false;
+
+    uint32_t written = tud_cdc_n_write(0, data + sent, len - sent);
+    sent += written;
+
+    if (written == 0) {
+      tud_cdc_n_write_flush(0);
+      retry_count++;
+      if (retry_count >= max_retries) return false;
+      if (!s_cdc_task_handle ||
+          xTaskGetCurrentTaskHandle() != s_cdc_task_handle) {
+        return false;
+      }
+      vTaskDelay(pdMS_TO_TICKS((TickType_t)delay_ms));
+    } else {
+      retry_count = 0;
+    }
+  }
+
+  return true;
+}
+
+static void cdc_tx_flush_locked(void) {
+  tud_cdc_n_write_flush(0);
+}
+
+static bool cdc_send_line_locked(const char *msg, int body_max_retries,
+                                 int body_delay_ms) {
+  if (!msg) return false;
+  size_t len = strlen(msg);
+  if (len == 0) return false;
+
+  char stack_buf[512];
+  if (len + 1 <= sizeof(stack_buf)) {
+    memcpy(stack_buf, msg, len);
+    stack_buf[len] = '\n';
+    return cdc_tx_write_locked((const uint8_t *)stack_buf, len + 1,
+                             body_max_retries, body_delay_ms);
+  }
+
+  if (!cdc_tx_write_locked((const uint8_t *)msg, len, body_max_retries,
+                           body_delay_ms)) {
+    return false;
+  }
+  return cdc_tx_write_locked((const uint8_t *)"\n", 1, 100, 1);
+}
+
+static void cdc_console_echo_bytes(const uint8_t *data, size_t len) {
+  if (!s_cdc_tx_armed || !data || len == 0 || !s_cdc_tx_mutex) return;
+  if (xSemaphoreTake(s_cdc_tx_mutex, portMAX_DELAY) != pdTRUE) return;
+  (void)cdc_tx_write_locked(data, len, 100, 1);
+  cdc_tx_flush_locked();
+  xSemaphoreGive(s_cdc_tx_mutex);
+}
+
 // ============================================================================
 // VFS wrapper for CDC stdout redirect
 // ============================================================================
@@ -180,25 +276,37 @@ static int cdc_vfs_close(int fd) {
 
 static ssize_t cdc_vfs_write(int fd, const void *data, size_t size) {
   (void)fd;
-  if (!tud_cdc_n_connected(0)) {
+  if (!s_cdc_tx_armed || !tud_cdc_n_connected(0)) {
     errno = EIO;
     return -1;
   }
-  
+
   const char *ptr = (const char *)data;
-  size_t written = 0;
-  
-  while (written < size) {
-    // Handle newline conversion (LF -> CRLF for terminal)
-    if (ptr[written] == '\n') {
-      tud_cdc_n_write_char(0, '\r');
-    }
-    tud_cdc_n_write_char(0, ptr[written]);
-    written++;
+  char crlf_buf[LOG_BUF_SIZE];
+  size_t out_len = 0;
+
+  for (size_t i = 0; i < size && out_len + 2 < sizeof(crlf_buf); i++) {
+    if (ptr[i] == '\n') crlf_buf[out_len++] = '\r';
+    crlf_buf[out_len++] = ptr[i];
   }
-  tud_cdc_n_write_flush(0);
-  
-  return written;
+
+  if (out_len == 0) return (ssize_t)size;
+
+  if (!s_cdc_tx_mutex || xSemaphoreTake(s_cdc_tx_mutex, portMAX_DELAY) != pdTRUE) {
+    errno = EIO;
+    return -1;
+  }
+
+  bool ok = cdc_tx_write_locked((const uint8_t *)crlf_buf, out_len, 100, 5);
+  if (ok) cdc_tx_flush_locked();
+  xSemaphoreGive(s_cdc_tx_mutex);
+
+  if (!ok) {
+    errno = EIO;
+    return -1;
+  }
+
+  return (ssize_t)size;
 }
 
 static int cdc_vfs_fstat(int fd, struct stat *st) {
@@ -299,14 +407,15 @@ static void extract_task(void *arg);
 
 // Log redirect function - sends to CDC when in console mode
 static int cdc_log_vprintf(const char *fmt, va_list args) {
+  if (!fmt) return 0;
+
   char buf[LOG_BUF_SIZE];
   int len = vsnprintf(buf, sizeof(buf), fmt, args);
 
   // Send to CDC if connected and in console mode
   if (s_log_redirect_active && tud_cdc_n_connected(0)) {
-    size_t write_len = (len < LOG_BUF_SIZE) ? len : LOG_BUF_SIZE - 1;
-    tud_cdc_n_write(0, buf, write_len);
-    tud_cdc_n_write_flush(0);
+    size_t write_len = (len < LOG_BUF_SIZE) ? (size_t)len : LOG_BUF_SIZE - 1;
+    (void)cdc_tx_write((const uint8_t *)buf, write_len, 100, 5);
   }
 
   // Write to original JTAG destination (use saved stdout if redirected)
@@ -334,6 +443,12 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
 
   CDC_LOGI("Initializing CDC update handler");
 
+  s_cdc_tx_mutex = xSemaphoreCreateMutexStatic(&s_cdc_tx_mutex_buf);
+  if (!s_cdc_tx_mutex) {
+    ESP_LOGE(TAG, "Failed to create CDC TX mutex");
+    return ESP_FAIL;
+  }
+
   // Register VFS for console stdout redirect
   cdc_vfs_register();
 
@@ -343,7 +458,7 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
   // Create task to poll CDC
   // Stack size for printf/VFS operations in console mode
   // ZIP operations spawn their own task with larger stack
-  xTaskCreate(cdc_update_task, "cdc_update", 8192, NULL, 5, NULL);
+  xTaskCreate(cdc_update_task, "cdc_update", 8192, NULL, 5, &s_cdc_task_handle);
 
   event_bus_subscribe(EVENT_SCENE_CHANGED, cdc_scene_changed_handler, NULL);
   event_bus_subscribe(EVENT_SCENE_UPDATED, cdc_scene_updated_handler, NULL);
@@ -362,6 +477,10 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
   s_initialized = true;
   CDC_LOGI("CDC update handler initialized");
   return ESP_OK;
+}
+
+void usb_cdc_update_arm_tx(void) {
+  s_cdc_tx_armed = true;
 }
 
 void usb_cdc_task(void) {
@@ -479,10 +598,14 @@ void usb_cdc_task(void) {
         // In console mode, handle interactive input with echo
         for (uint32_t i = 0; i < count; i++) {
           uint8_t ch = buf[i];
-          
+
           // Echo the character
-          tud_cdc_n_write_char(0, ch);
-          tud_cdc_n_write_flush(0);
+          if (ch == '\n') {
+            const uint8_t crlf[] = { '\r', ch };
+            cdc_console_echo_bytes(crlf, sizeof(crlf));
+          } else {
+            cdc_console_echo_bytes(&ch, 1);
+          }
           
           if (ch == '\r' || ch == '\n') {
             if (s_cmd_pos > 0) {
@@ -638,10 +761,12 @@ void usb_cdc_task(void) {
       }
     }
   }
+
+  cdc_flush_pending_notifies();
 }
 
 bool usb_cdc_update_in_progress(void) {
-  return s_state != CDC_STATE_IDLE && s_state != CDC_STATE_ERROR && 
+  return s_state != CDC_STATE_IDLE && s_state != CDC_STATE_ERROR &&
          s_state != CDC_STATE_ASSETS;  // Assets mode is not an "update"
 }
 
@@ -660,138 +785,140 @@ uint8_t usb_cdc_update_get_progress(void) {
 // }
 
 static void send_response(const char *msg) {
+  if (!s_cdc_tx_armed) return;
   if (!tud_cdc_n_connected(0)) {
     ESP_LOGW(TAG, "send_response: CDC not connected, dropping '%s'", msg);
     return;
   }
+  if (!s_cdc_tx_mutex || xSemaphoreTake(s_cdc_tx_mutex, portMAX_DELAY) != pdTRUE) return;
 
-  // Write the payload AND its trailing newline contiguously into the CDC TX
-  // FIFO, flushing only on backpressure (FIFO full). The newline must ride out
-  // in the same final transfer as the last body bytes: sending it as a separate
-  // write_char()+flush produces an isolated 1-byte transfer that races the
-  // automatic ZLP transfers and gets dropped, so the host never sees the line
-  // terminator and the response line never completes.
-  const int max_retries = 100;  // Max retries when buffer full
-  size_t len = strlen(msg);
-  size_t sent = 0;
-  int retry_count = 0;
-
-  while (sent < len) {
-    if (!tud_cdc_n_connected(0)) {
-      ESP_LOGW(TAG, "CDC disconnected during send_response");
-      return;
-    }
-
-    uint32_t written = tud_cdc_n_write(0, msg + sent, len - sent);
-    sent += written;
-
-    if (written == 0) {
-      // FIFO full: flush to make room, then wait briefly for space.
-      tud_cdc_n_write_flush(0);
-      retry_count++;
-      if (retry_count >= max_retries) {
-        ESP_LOGW(TAG, "send_response: max retries reached, sent %u/%u bytes", (unsigned)sent, (unsigned)len);
-        return;
-      }
-      vTaskDelay(pdMS_TO_TICKS(5));
-    } else {
-      retry_count = 0;
-    }
+  s_cdc_response_depth++;
+  if (!cdc_send_line_locked(msg, 100, 5)) {
+    ESP_LOGW(TAG, "send_response: failed to send '%s'", msg);
+  } else {
+    cdc_tx_flush_locked();
   }
-
-  // Append the newline to whatever is still buffered, then a single flush so it
-  // leaves as the tail of the final body transfer.
-  while (tud_cdc_n_write_char(0, '\n') == 0) {
-    tud_cdc_n_write_flush(0);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    if (!tud_cdc_n_connected(0)) return;
-  }
-  tud_cdc_n_write_flush(0);
+  s_cdc_response_depth--;
+  xSemaphoreGive(s_cdc_tx_mutex);
 }
 
-// Short notify lines (EVT:...) — avoid send_response chunk delays blocking scene events
+static void cdc_notify_enqueue(const char *msg) {
+  if (!msg || !msg[0]) return;
+  size_t len = strlen(msg);
+  if (len >= CDC_NOTIFY_LINE_MAX) return;
+
+  uint8_t next = (uint8_t)((s_notify_head + 1) % CDC_NOTIFY_QUEUE_LEN);
+  if (next == s_notify_tail) return;
+
+  memcpy(s_notify_queue[s_notify_head], msg, len + 1);
+  s_notify_head = next;
+}
+
 static void cdc_send_notify_line(const char *msg) {
-  if (!tud_cdc_n_connected(0)) return;
-  size_t len = strlen(msg);
-  if (len == 0) return;
-  tud_cdc_n_write(0, msg, len);
-  tud_cdc_n_write_char(0, '\n');
-  tud_cdc_n_write_flush(0);
+  if (!msg || !msg[0]) return;
+  cdc_notify_enqueue(msg);
 }
 
-// Large JSON payloads — write in bigger chunks, no per-chunk delay
+static void cdc_flush_pending_notifies(void) {
+  if (!s_cdc_tx_armed || !tud_cdc_n_connected(0)) return;
+  while (s_notify_tail != s_notify_head) {
+    if (!cdc_may_push_notify()) break;
+    if (!s_cdc_tx_mutex || xSemaphoreTake(s_cdc_tx_mutex, 0) != pdTRUE) break;
+    bool ok = cdc_send_line_locked(s_notify_queue[s_notify_tail], 1, 0);
+    if (ok) cdc_tx_flush_locked();
+    xSemaphoreGive(s_cdc_tx_mutex);
+    if (!ok) break;
+    s_notify_tail = (uint8_t)((s_notify_tail + 1) % CDC_NOTIFY_QUEUE_LEN);
+  }
+}
+
 static void send_json_response(const char *msg) {
+  if (!s_cdc_tx_armed) return;
   if (!tud_cdc_n_connected(0)) {
     ESP_LOGW(TAG, "send_json_response: CDC not connected");
     return;
   }
-
-  size_t len = strlen(msg);
-  size_t sent = 0;
-  int retry_count = 0;
-  const int max_retries = 500;
-
-  while (sent < len) {
-    if (!tud_cdc_n_connected(0)) {
-      ESP_LOGW(TAG, "send_json_response: CDC disconnected at %u/%u", (unsigned)sent, (unsigned)len);
-      return;
-    }
-
-    uint32_t written = tud_cdc_n_write(0, msg + sent, len - sent);
-    tud_cdc_n_write_flush(0);
-    if (written == 0) {
-      retry_count++;
-      if (retry_count >= max_retries) {
-        ESP_LOGW(TAG, "send_json_response: max retries, sent %u/%u", (unsigned)sent, (unsigned)len);
-        return;
-      }
-      vTaskDelay(pdMS_TO_TICKS(2));
-      continue;
-    }
-    sent += written;
-    retry_count = 0;
+  if (!msg || !s_cdc_tx_mutex ||
+      xSemaphoreTake(s_cdc_tx_mutex, portMAX_DELAY) != pdTRUE) {
+    return;
   }
 
-  tud_cdc_n_write_char(0, '\n');
-  tud_cdc_n_write_flush(0);
+  size_t len = strlen(msg);
+  int max_retries = 500 + (int)(len / 64);
+  bool ok = true;
+
+  s_cdc_response_depth++;
+  if (!cdc_tx_write_locked((const uint8_t *)msg, len, max_retries, 2)) {
+    ok = false;
+  } else if (!cdc_tx_write_locked((const uint8_t *)"\n", 1, 100, 1)) {
+    ok = false;
+  }
+
+  if (ok) {
+    cdc_tx_flush_locked();
+  } else {
+    ESP_LOGW(TAG, "send_json_response: max retries, sent partial (avail=%u)",
+      (unsigned)tud_cdc_n_write_available(0));
+  }
+
+  s_cdc_response_depth--;
+  xSemaphoreGive(s_cdc_tx_mutex);
 }
 
 static void send_binary(const uint8_t *data, size_t len) {
-  if (!tud_cdc_n_connected(0)) return;
-  
-  // Send in chunks to avoid overflow
+  if (!s_cdc_tx_armed) return;
+  if (!tud_cdc_n_connected(0) || !data || len == 0) return;
+  if (!s_cdc_tx_mutex || xSemaphoreTake(s_cdc_tx_mutex, portMAX_DELAY) != pdTRUE) return;
+
   const size_t chunk_size = 512;
-  const int max_retries = 100;  // Max retries when buffer full
+  const int max_retries = 100;
   size_t sent = 0;
-  int retry_count = 0;
-  
+
+  s_cdc_response_depth++;
   while (sent < len) {
-    // Check connection before each write attempt
     if (!tud_cdc_n_connected(0)) {
       ESP_LOGW(TAG, "CDC disconnected during send_binary");
-      return;
+      break;
     }
-    
+
     size_t to_send = (len - sent > chunk_size) ? chunk_size : len - sent;
-    uint32_t written = tud_cdc_n_write(0, data + sent, to_send);
-    tud_cdc_n_write_flush(0);
-    sent += written;
-    
-    if (written == 0) {
+    int retry_count = 0;
+    bool chunk_ok = false;
+
+    while (!chunk_ok) {
+      if (!tud_cdc_n_connected(0)) break;
+
+      uint32_t written = tud_cdc_n_write(0, data + sent, to_send);
+      if (written > 0) {
+        sent += written;
+        chunk_ok = true;
+        continue;
+      }
+
+      tud_cdc_n_write_flush(0);
       retry_count++;
       if (retry_count >= max_retries) {
-        ESP_LOGW(TAG, "send_binary: max retries reached, sent %u/%u bytes", (unsigned)sent, (unsigned)len);
-        return;
+        ESP_LOGW(TAG, "send_binary: max retries reached, sent %u/%u bytes",
+          (unsigned)sent, (unsigned)len);
+        goto send_binary_done;
       }
-      vTaskDelay(pdMS_TO_TICKS(5));  // Wait for buffer space
-    } else {
-      retry_count = 0;  // Reset retry counter on successful write
+      if (!s_cdc_task_handle ||
+          xTaskGetCurrentTaskHandle() != s_cdc_task_handle) {
+        goto send_binary_done;
+      }
+      vTaskDelay(pdMS_TO_TICKS(5));
     }
   }
+
+send_binary_done:
+  cdc_tx_flush_locked();
+  s_cdc_response_depth--;
+  xSemaphoreGive(s_cdc_tx_mutex);
 }
 
 static bool cdc_may_push_notify(void) {
   if (!tud_cdc_n_connected(0)) return false;
+  if (s_cdc_response_depth > 0) return false;
 
   switch (s_state) {
     case CDC_STATE_IDLE:
@@ -807,8 +934,6 @@ static bool cdc_may_push_notify(void) {
 }
 
 static void cdc_push_scene_evt(const char *kind, uint8_t scene_index) {
-  if (!cdc_may_push_notify()) return;
-
   char buf[48];
   snprintf(buf, sizeof(buf), "EVT:%s:%u", kind, (unsigned)scene_index);
   CDC_LOGI("CDC notify: %s", buf);
@@ -816,7 +941,6 @@ static void cdc_push_scene_evt(const char *kind, uint8_t scene_index) {
 }
 
 void usb_cdc_notify_programming(bool active) {
-  if (!cdc_may_push_notify()) return;
   char buf[24];
   snprintf(buf, sizeof(buf), "EVT:programming:%u", active ? 1u : 0u);
   CDC_LOGI("CDC notify: %s", buf);
@@ -1010,8 +1134,6 @@ static void cdc_add_clock_json(cJSON *root) {
 }
 
 static void cdc_push_clock_evt(void) {
-  if (!cdc_may_push_notify()) return;
-
   cdc_clock_snapshot_t snap;
   cdc_read_clock_snapshot(&snap);
 
@@ -1126,7 +1248,6 @@ static void cdc_push_connections_evt(void) {
   s_last_conn_cv = cv;
   s_last_conn_exp = exp;
   s_last_conn_midi_in = midi_in;
-  if (!cdc_may_push_notify()) return;
   char buf[40];
   snprintf(buf, sizeof(buf), "EVT:connections:%u:%u:%u:%u",
     (unsigned)usb, (unsigned)cv, (unsigned)exp, (unsigned)midi_in);
@@ -1241,6 +1362,15 @@ static void cdc_send_info_json(void) {
   }
 }
 
+// INFO is read-only and safe in any CDC mode (web client polls it often).
+static bool cdc_try_info_command(const char *cmd) {
+  if (strcmp(cmd, "INFO") == 0) {
+    cdc_send_info_json();
+    return true;
+  }
+  return false;
+}
+
 static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position) {
   if (!arg || !arg[0]) return 0;
   if (strcmp(arg, "current") == 0) {
@@ -1353,7 +1483,6 @@ static void handle_scene_put_binary(const uint8_t *data, size_t len) {
     (const char *)s_scene_put_buffer, s_scene_put_size);
   heap_caps_free(s_scene_put_buffer);
   s_scene_put_buffer = NULL;
-  s_state = CDC_STATE_IDLE;
 
   if (err == ESP_OK) {
     send_response("OK");
@@ -1363,6 +1492,7 @@ static void handle_scene_put_binary(const uint8_t *data, size_t len) {
       esp_err_to_name(err));
     send_response(resp);
   }
+  s_state = CDC_STATE_IDLE;
 }
 
 // Console mode helpers - use printf since stdout is redirected to CDC
@@ -1375,8 +1505,7 @@ static void console_send(const char *str) {
   } else {
     // Fallback to direct CDC write if not in console mode
     if (!tud_cdc_n_connected(0)) return;
-    tud_cdc_n_write(0, str, strlen(str));
-    tud_cdc_n_write_flush(0);
+    (void)cdc_tx_write((const uint8_t *)str, strlen(str), 100, 5);
   }
 }
 
@@ -3368,6 +3497,8 @@ static void process_settings_command(const char *cmd) {
     send_response("SETTINGS_STOPPED");
     return;
   }
+
+  if (cdc_try_info_command(cmd)) return;
   
   // LIST - enumerate all keys
   if (strcmp(cmd, "LIST") == 0) {
@@ -3441,6 +3572,8 @@ static void process_config_command(const char *cmd) {
     send_response("CONFIG_STOPPED");
     return;
   }
+
+  if (cdc_try_info_command(cmd)) return;
   
   // VALUES - get all setting values as JSON
   if (strcmp(cmd, "VALUES") == 0) {
@@ -3558,6 +3691,8 @@ static void process_scenes_command(const char *cmd) {
     send_response("SCENES_STOPPED");
     return;
   }
+
+  if (cdc_try_info_command(cmd)) return;
 
   // SCENE_INSPECT — allowed in scenes mode (inspect uses idle handler)
   if (strncmp(cmd, "SCENE_INSPECT", 13) == 0) {
@@ -3879,6 +4014,8 @@ static void process_pedals_command(const char *cmd) {
     send_response("PEDALS_STOPPED");
     return;
   }
+
+  if (cdc_try_info_command(cmd)) return;
   
   // MANIFEST - send the full manifest.json file
   if (strcmp(cmd, "MANIFEST") == 0) {

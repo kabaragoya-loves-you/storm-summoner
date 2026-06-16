@@ -11,6 +11,7 @@
 #include "assets_types.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -216,15 +217,29 @@ static const char* get_action_display_name(action_type_t type) {
 // CC Options Loading (from device definition)
 // ============================================================================
 
+// CC option buffers are always allocated from PSRAM (MALLOC_CAP_SPIRAM), so a
+// valid pointer must reside in external RAM. If s_cc_options has been corrupted
+// by a stray write (observed: a flash-code value such as 0xd0042703 landing in
+// this .bss), the pointer is outside any heap and heap_caps_free() would assert
+// and panic. Validate before freeing so corruption can't crash the device.
+static bool cc_ptr_is_freeable(const void* p) {
+  return p != NULL && esp_ptr_external_ram(p);
+}
+
 static void free_cc_options(void) {
+  bool corrupted = false;
   if (s_cc_options.options_str) {
-    heap_caps_free(s_cc_options.options_str);
+    if (cc_ptr_is_freeable(s_cc_options.options_str)) heap_caps_free(s_cc_options.options_str);
+    else corrupted = true;
     s_cc_options.options_str = NULL;
   }
   if (s_cc_options.cc_numbers) {
-    heap_caps_free(s_cc_options.cc_numbers);
+    if (cc_ptr_is_freeable(s_cc_options.cc_numbers)) heap_caps_free(s_cc_options.cc_numbers);
+    else corrupted = true;
     s_cc_options.cc_numbers = NULL;
   }
+  if (corrupted)
+    ESP_LOGE(TAG, "cc_options corrupted (non-heap pointer); skipped free to avoid panic");
   s_cc_options.count = 0;
 }
 

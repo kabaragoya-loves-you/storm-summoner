@@ -7,6 +7,8 @@
 
 static const char* TAG = "continuous_mapping";
 
+#define UNIPOLAR_BIPOLAR_REST_THRESH 5
+
 uint8_t apply_polarity(uint8_t input, polarity_t polarity) {
   switch (polarity) {
     case POLARITY_UNIPOLAR:
@@ -52,6 +54,42 @@ uint8_t continuous_mapping_process(uint8_t raw_input, continuous_mapping_t* mapp
   mapping->last_activity_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
   return (uint8_t)scaled;
+}
+
+uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input, const continuous_mapping_t* mapping) {
+  if (!mapping) return 64;
+
+  uint8_t curved = curve_apply(&mapping->curve, raw_input);
+  int16_t min = (int16_t)mapping->min_value;
+  int16_t mid = (int16_t)mapping->middle_value;
+  int16_t max = (int16_t)mapping->max_value;
+  int16_t scaled;
+
+  if (curved < UNIPOLAR_BIPOLAR_REST_THRESH) {
+    scaled = mid;
+  } else if (curved <= 64) {
+    int16_t span = 64 - UNIPOLAR_BIPOLAR_REST_THRESH;
+    if (span < 1) span = 1;
+    scaled = min + ((mid - min) * ((int16_t)curved - UNIPOLAR_BIPOLAR_REST_THRESH)) / span;
+  } else {
+    scaled = mid + ((max - mid) * ((int16_t)curved - 64)) / 63;
+  }
+
+  if (scaled < 0) scaled = 0;
+  if (scaled > 127) scaled = 127;
+  return (uint8_t)scaled;
+}
+
+uint8_t continuous_mapping_velocity_sample(uint8_t raw_input, const continuous_mapping_t* mapping) {
+  if (!mapping) return 64;
+
+  if (mapping->polarity == POLARITY_BIPOLAR) {
+    return continuous_mapping_unipolar_bipolar_map(raw_input, mapping);
+  }
+
+  continuous_mapping_t temp = *mapping;
+  temp.enabled = true;
+  return continuous_mapping_process(raw_input, &temp);
 }
 
 bool continuous_mapping_check_idle(continuous_mapping_t* mapping) {

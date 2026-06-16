@@ -32,7 +32,7 @@ static const touchwheel_mode_mapping_t g_touchwheel_mode_mappings[] = {
   { "LFO Rate",       TOUCHWHEEL_MODE_LFO_RATE,       OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, true  },
   { "LFO Depth",      TOUCHWHEEL_MODE_LFO_DEPTH,      OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, true  },
   { "RTG Rate",       TOUCHWHEEL_MODE_RTG_RATE,       OUTPUT_TYPE_CC,          false, TOUCHWHEEL_STYLE_ODOMETER, true  },
-  { "Tempo Nudge",    TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_TEMPO_NUDGE, true,  TOUCHWHEEL_STYLE_BIPOLAR,  true  },
+  { "Tempo Nudge",    TOUCHWHEEL_MODE_CONTINUOUS,     OUTPUT_TYPE_TEMPO_NUDGE, true,  TOUCHWHEEL_STYLE_ODOMETER, true  },
 };
 
 // Get mode mapping by user-facing index (0-7)
@@ -53,7 +53,7 @@ static inline const char* touchwheel_get_mode_name(uint8_t user_mode_index) {
 static inline uint8_t touchwheel_get_current_mode_index(scene_t* scene) {
   if (!scene) return 0;
   
-  touchwheel_mode_t mode = scene->touchwheel_mode;
+  touchwheel_mode_t mode = scene_get_effective_touchwheel_mode(scene);
   output_type_t output = scene->touchwheel.output_type;
   
   for (uint8_t i = 0; i < NUM_TOUCHWHEEL_USER_MODES; i++) {

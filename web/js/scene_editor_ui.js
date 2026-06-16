@@ -22,6 +22,15 @@ window.SceneEditorUi = (function () {
     { v: 2, l: 'Inverted' }
   ]
 
+  const TILT_POLARITY = [
+    { v: 0, l: 'Unipolar' },
+    { v: 2, l: 'Inverted' }
+  ]
+
+  function tiltPolaritySelectValue (polarity) {
+    return polarity === 2 ? 2 : 0
+  }
+
   const CURVE = [
     { v: 0, l: 'Linear' },
     { v: 1, l: 'Exponential' },
@@ -37,8 +46,37 @@ window.SceneEditorUi = (function () {
 
   const VELOCITY_MODE = [
     { v: 'fixed', l: 'Fixed' },
-    { v: 'gate_voltage', l: 'Gate Voltage' }
+    { v: 'gate_voltage', l: 'Gate Voltage' },
+    { v: 'touchwheel', l: 'Touchwheel' }
   ]
+
+  const CV_GATE_VELOCITY_MODE = [
+    { v: 'fixed', l: 'Fixed' },
+    { v: 'gate_voltage', l: 'Gate Voltage' },
+    { v: 'touchwheel', l: 'Touchwheel' },
+    { v: 'proximity', l: 'Proximity' },
+    { v: 'als', l: 'ALS' },
+    { v: 'tilt_x', l: 'Tilt X' },
+    { v: 'tilt_y', l: 'Tilt Y' },
+    { v: 'lfo1', l: 'LFO 1' },
+    { v: 'lfo2', l: 'LFO 2' },
+    { v: 'sample_hold', l: 'S+H' }
+  ]
+
+  const CV_GATE_CONTROLLED_CALLOUT =
+    `<wa-callout variant="neutral">Controlled by CV/Gate.</wa-callout>`
+
+  function cvGateVelocityModeValue (m) {
+    if (m.cv_input_mode !== 'note') return m.cv_velocity_mode || 'fixed'
+    if (m.cv_velocity_mode && m.cv_velocity_mode !== 'fixed') return m.cv_velocity_mode
+    // Legacy: touchwheel_mode velocity supplied CV/Gate velocity before cv_velocity_mode.
+    if (m.touchwheel_mode === 'velocity') return 'touchwheel'
+    return m.cv_velocity_mode || 'fixed'
+  }
+
+  function cvClaimsSource (m, source) {
+    return m.cv_input_mode === 'note' && cvGateVelocityModeValue(m) === source
+  }
 
   // Flattened expression mode list (matches device g_expression_mode_mappings order).
   // Continuous routings map to expression_mode 'expression' + a specific output_type.
@@ -54,12 +92,151 @@ window.SceneEditorUi = (function () {
     { v: 'tempo_nudge', l: 'Tempo Nudge', expression_mode: 'expression', output_type: 'tempo_nudge' }
   ]
 
-  const CV_INPUT_MODE = [
+  const CV_USER_MODES = [
+    { v: 'disabled', l: 'Disabled', cv_input_mode: 'none' },
+    { v: 'control_change', l: 'Control Change', cv_input_mode: 'cv', output_type: 'cc' },
+    { v: 'cv_gate', l: 'CV/Gate', cv_input_mode: 'note' },
+    { v: 'audio', l: 'Audio', cv_input_mode: 'audio' },
+    { v: 'trigger', l: 'Trigger', cv_input_mode: 'trigger' },
+    { v: 'notes', l: 'Notes', cv_input_mode: 'cv', output_type: 'note' },
+    { v: 'lfo_rate', l: 'LFO Rate', cv_input_mode: 'cv', output_type: 'lfo_rate' },
+    { v: 'lfo_depth', l: 'LFO Depth', cv_input_mode: 'cv', output_type: 'lfo_depth' },
+    { v: 'tempo_nudge', l: 'Tempo Nudge', cv_input_mode: 'cv', output_type: 'tempo_nudge' }
+  ]
+
+  // Flattened proximity mode list (matches device g_proximity_mode_mappings order).
+  const PROXIMITY_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    { v: 'notes_theremin', l: 'Notes (Theremin)', output_type: 'note', enabled: true },
+    { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
+    { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
+    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+  ]
+
+  // Flattened ALS mode list (matches device g_als_mode_mappings order).
+  const ALS_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
+    { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
+    { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
+    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+  ]
+
+  const LFO1_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
+    { v: 'lfo2_rate', l: 'LFO 2 Rate', output_type: 'lfo2_rate', enabled: true },
+    { v: 'lfo2_depth', l: 'LFO 2 Depth', output_type: 'lfo2_depth', enabled: true },
+    { v: 'rtg_rate', l: 'RTG Rate', output_type: 'rtg_rate', enabled: true },
+    { v: 'sh_rate', l: 'S+H Rate', output_type: 'sh_rate', enabled: true },
+    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true }
+  ]
+
+  const LFO2_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
+    { v: 'lfo1_rate', l: 'LFO 1 Rate', output_type: 'lfo1_rate', enabled: true },
+    { v: 'lfo1_depth', l: 'LFO 1 Depth', output_type: 'lfo1_depth', enabled: true },
+    { v: 'rtg_rate', l: 'RTG Rate', output_type: 'rtg_rate', enabled: true },
+    { v: 'sh_rate', l: 'S+H Rate', output_type: 'sh_rate', enabled: true },
+    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true }
+  ]
+
+  const NOTE_TRACK_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
+    { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
+    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true },
+    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+  ]
+
+  const TILT_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
+    { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
+    { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
+    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true },
+    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+  ]
+
+  const SAMPLE_HOLD_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'continuous', l: 'Continuous', mode: 'continuous', enabled: true },
+    { v: 'step', l: 'Step', mode: 'step', enabled: true }
+  ]
+
+  const RTG_USER_MODES = [
+    { v: 'disabled', l: 'Disabled' },
+    { v: 'continuous', l: 'Continuous', mode: 'continuous', enabled: true },
+    { v: 'step', l: 'Step', mode: 'step', enabled: true }
+  ]
+
+  const ENGINE_START_MODE = [
+    { v: 'running', l: 'Running' },
+    { v: 'paused', l: 'Paused' },
+    { v: 'transport', l: 'Follow Transport' }
+  ]
+
+  const LFO_TRIGGER_TIMING = [
+    { v: 'immediate', l: 'Immediate' },
+    { v: 'beat', l: 'Next Beat' },
+    { v: 'bar', l: 'Next Bar' }
+  ]
+
+  const LFO_RESOLUTION = [
+    { v: 'auto', l: 'Auto' },
+    { v: 'coarse', l: 'Coarse' },
+    { v: 'medium', l: 'Medium' },
+    { v: 'fine', l: 'Fine' },
+    { v: 'manual', l: 'Manual' }
+  ]
+
+  const SHEPARD_DIRECTION = [
+    { v: 'rising', l: 'Rising' },
+    { v: 'falling', l: 'Falling' }
+  ]
+
+  const SHEPARD_STYLE = [
+    { v: 'stream', l: 'Stream' },
+    { v: 'wide', l: 'Wide' },
+    { v: 'crossfade', l: 'Crossfade' }
+  ]
+
+  const SHEPARD_LAYOUT = [
+    { v: 'single', l: 'Single' },
+    { v: 'multi', l: 'Multi-Ch' }
+  ]
+
+  const SHEPARD_FADE = [
     { v: 'none', l: 'None' },
-    { v: 'cv', l: 'Control Voltage' },
-    { v: 'note', l: 'CV/Gate' },
-    { v: 'audio', l: 'Audio' },
-    { v: 'trigger', l: 'Trigger' }
+    { v: 'cc11', l: 'CC11' },
+    { v: 'poly_at', l: 'Poly AT' }
+  ]
+
+  const AUDIO_ATTACK_OPTIONS = [5, 10, 20, 30, 50, 75, 100].map(v => ({
+    v,
+    l: `${v} ms`
+  }))
+
+  const AUDIO_RELEASE_OPTIONS = [50, 100, 200, 300, 500, 750, 1000, 1500, 2000].map(v => ({
+    v,
+    l: `${v} ms`
+  }))
+
+  const AUDIO_RANGE_OPTIONS = [
+    { v: 'bi5v', l: '±5V' },
+    { v: 'bi10v', l: '±10V' }
+  ]
+
+  const AUDIO_POLARITY_OPTIONS = [
+    { v: 'attract', l: 'Attract' },
+    { v: 'repel', l: 'Repel (Duck)' }
   ]
 
   const TOUCHWHEEL_USER_MODES = [
@@ -72,7 +249,7 @@ window.SceneEditorUi = (function () {
     { v: 'aftertouch', l: 'After Touch', touchwheel_mode: 'aftertouch', touchwheel_style: 'odometer', supports_style: true },
     { v: 'notes', l: 'Notes', touchwheel_mode: 'continuous', output_type: 'note', touchwheel_style: 'odometer', supports_style: true },
     { v: 'double_cc', l: 'Double CC', touchwheel_mode: 'double_cc', touchwheel_style: 'endless', supports_style: true },
-    { v: 'velocity', l: 'Velocity', touchwheel_mode: 'velocity' },
+    { v: 'velocity', l: 'Velocity', touchwheel_mode: 'velocity', supports_style: true },
     { v: 'lfo_rate', l: 'LFO Rate', touchwheel_mode: 'lfo_rate', touchwheel_style: 'odometer', supports_style: true, lfo_target: true },
     { v: 'lfo_depth', l: 'LFO Depth', touchwheel_mode: 'lfo_depth', touchwheel_style: 'odometer', supports_style: true, lfo_target: true },
     { v: 'rtg_rate', l: 'RTG Rate', touchwheel_mode: 'rtg_rate', touchwheel_style: 'odometer', supports_style: true },
@@ -88,6 +265,8 @@ window.SceneEditorUi = (function () {
     const n = i + 1
     return { v: n * 12, l: `${n} Octave${n > 1 ? 's' : ''}` }
   })
+
+  const SENSOR_NOTE_OCTAVE_OPTIONS = NOTE_OCTAVE_OPTIONS.slice(0, 5)
 
   const SCREEN_MODULES = [
     { v: 'beat', l: 'Beat Grid' },
@@ -226,8 +405,7 @@ window.SceneEditorUi = (function () {
     opts.push(
       { v: 'rtg_rate', l: 'RTG Rate' },
       { v: 'sh_rate', l: 'S+H Rate' },
-      { v: 'pitch_bend', l: 'Pitch Bend' },
-      { v: 'tempo_nudge', l: 'Tempo Nudge' }
+      { v: 'pitch_bend', l: 'Pitch Bend' }
     )
     return opts
   }
@@ -236,13 +414,14 @@ window.SceneEditorUi = (function () {
     applyCcSlotFields(mapping, normalizeCcSlotList(mapping?.cc_numbers))
   }
 
-  function renderLfoCcSlots (ctrl, mappingPath, mapping) {
+  function renderLfoCcSlots (ctrl, mappingPath, mapping, opts = {}) {
     syncLfoCcNumbers(mapping)
     const device = ctrl.deviceDefinition
-    const ccList = mapping.cc_numbers
-    const maxSlots = DeviceControls.hasParameters(device)
+    const slotCap = opts.ccSlotMax ?? 4
+    const ccList = mapping.cc_numbers.slice(0, slotCap)
+    const maxSlots = opts.ccSlotMax ?? (DeviceControls.hasParameters(device)
       ? Math.min(4, DeviceControls.parameterCount(device))
-      : 4
+      : 4)
     const ccBySlot = ccList.map(cc =>
       DeviceControls.resolveParameterCc(device, cc)
     )
@@ -334,7 +513,7 @@ window.SceneEditorUi = (function () {
 
     if (ot === 'cc') {
       if (opts.ccSlots) {
-        html += renderLfoCcSlots(ctrl, mappingPath, m)
+        html += renderLfoCcSlots(ctrl, mappingPath, m, opts)
       } else {
         for (let i = 0; i < 4; i++) {
           html += fieldRow(
@@ -348,9 +527,13 @@ window.SceneEditorUi = (function () {
           )
         }
       }
+      const polarityOpts = opts.polarityOptions || POLARITY
+      const polarityVal = opts.polaritySelectValue
+        ? opts.polaritySelectValue(m.polarity ?? 0)
+        : (m.polarity ?? 0)
       html += fieldRow(
         'Polarity',
-        selectField(`${mappingPath}.polarity`, m.polarity ?? 0, POLARITY)
+        selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
       )
       html += fieldRow(
         'Curve',
@@ -365,7 +548,11 @@ window.SceneEditorUi = (function () {
         )
         html += fieldRow(
           'Range',
-          selectField(`${mappingPath}.note_range`, m.note_range ?? 24, NOTE_OCTAVE_OPTIONS)
+          selectField(
+            `${mappingPath}.note_range`,
+            m.note_range ?? 24,
+            opts.noteOctaveOptions || NOTE_OCTAVE_OPTIONS
+          )
         )
       } else {
         html += fieldRow(
@@ -396,9 +583,13 @@ window.SceneEditorUi = (function () {
           numberField(`${mappingPath}.velocity`, m.velocity ?? 100, velMin, 127)
         )
       }
+      const polarityOpts = opts.polarityOptions || POLARITY
+      const polarityVal = opts.polaritySelectValue
+        ? opts.polaritySelectValue(m.polarity ?? 0)
+        : (m.polarity ?? 0)
       html += fieldRow(
         'Polarity',
-        selectField(`${mappingPath}.polarity`, m.polarity ?? 0, POLARITY)
+        selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
       )
       html += fieldRow(
         'Curve',
@@ -424,6 +615,30 @@ window.SceneEditorUi = (function () {
             ActionCatalog.tempoNudgeAmountOptions(nudgePct)
           )
           : numberField(opts.tempoNudgePath, nudgePct, 0, 100)
+      )
+      if (opts.tempoNudgeDirectionPath) {
+        const dir = ctrl.getAtPath(opts.tempoNudgeDirectionPath) ?? 0
+        html += fieldRow(
+          'Direction',
+          selectField(
+            opts.tempoNudgeDirectionPath,
+            dir,
+            ActionCatalog.tempoNudgeDirectionOptions(dir)
+          )
+        )
+      }
+    } else if (ot === 'pitch_bend') {
+      const polarityOpts = opts.polarityOptions || POLARITY
+      const polarityVal = opts.polaritySelectValue
+        ? opts.polaritySelectValue(m.polarity ?? 0)
+        : (m.polarity ?? 0)
+      html += fieldRow(
+        'Polarity',
+        selectField(`${mappingPath}.polarity`, polarityVal, polarityOpts)
+      )
+      html += fieldRow(
+        'Curve',
+        selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
       )
     }
 
@@ -1635,7 +1850,7 @@ window.SceneEditorUi = (function () {
       typeOpts.unshift({ v: a.type, l: ActionCatalog.typeLabel(a.type) })
     }
     let html = fieldRow(
-      opts.typeLabel || 'Type',
+      opts.typeLabel || 'Action',
       selectField(`${path}.type`, a.type || 'none', typeOpts)
     )
     if (a.type && a.type !== 'none') {
@@ -1787,7 +2002,7 @@ window.SceneEditorUi = (function () {
           selectField(`${path}.confirm_target`, a.confirm_target || 'preset', CONFIRM_TARGETS)
         )
       }
-      if (ActionCatalog.supportsTiming(a)) {
+      if (trigger !== ActionCatalog.TRIGGERS.ON_LOAD && ActionCatalog.supportsTiming(a)) {
         const beats = ctrl.editModel?.time_signature?.numerator ?? 4
         const useTransport = !!ctrl.editModel?.use_transport
         const timingVal = a.timing || 'immediate'
@@ -1800,7 +2015,9 @@ window.SceneEditorUi = (function () {
           selectField(`${path}.timing`, timingVal, timingOpts)
         )
       }
-      html += renderRepeatBlock(ctrl, path, a)
+      if (trigger !== ActionCatalog.TRIGGERS.ON_LOAD) {
+        html += renderRepeatBlock(ctrl, path, a)
+      }
       html += renderFollowUpBlock(ctrl, path, a)
       html += renderMorphBlock(ctrl, path, a)
       if (ActionCatalog.supportsRaiseFlag(a) && ctrl.deviceContext?.flagEnabled) {
@@ -1813,14 +2030,16 @@ window.SceneEditorUi = (function () {
     return html
   }
 
-  function renderActionChain (ctrl, path, chain, maxItems, trigger) {
+  function renderActionChain (ctrl, path, chain, maxItems, trigger, opts = {}) {
     const arr = Array.isArray(chain) ? chain : []
+    const slotPrefix = opts.slotTitlePrefix || 'Action'
     let html = ''
     for (let i = 0; i < maxItems; i++) {
       const itemPath = `${path}.${i}`
-      html += `<div class="scene-action-slot"><h4>Action ${i + 1}</h4>`
+      html += `<div class="scene-action-slot"><h4>${esc(slotPrefix)} ${i + 1}</h4>`
       html += renderAction(ctrl, itemPath, arr[i] || { type: 'none' }, {
-        trigger
+        trigger,
+        typeLabel: opts.typeLabel || 'Action'
       })
       html += '</div>'
     }
@@ -1983,58 +2202,311 @@ window.SceneEditorUi = (function () {
     return flatBlock('Scene settings', html)
   }
 
-  function renderProximity (ctrl) {
-    if (!ctrl.editModel.proximity)
-      ctrl.editModel.proximity = { enabled: false, output_type: 'cc' }
-    const body = renderContinuousMapping(
-      ctrl,
-      'proximity',
-      ctrl.editModel.proximity,
-      {
-        velocityModePath: 'proximity_velocity_mode',
-        tempoNudgePath: 'proximity_tempo_nudge_pct'
-      }
+  function routingUserModeSelection (modes, mapping, enabledKey) {
+    if (!mapping?.[enabledKey ?? 'enabled']) return 'disabled'
+    const ot = mapping.output_type || 'cc'
+    for (const opt of modes) {
+      if (opt.output_type === ot) return opt.v
+    }
+    return modes[1]?.v || 'control_change'
+  }
+
+  function lfoUserModeSelection (n, m) {
+    const cfgKey = n === 1 ? 'lfo1_config' : 'lfo2_config'
+    if (!m[cfgKey]?.enabled) return 'disabled'
+    const mapKey = n === 1 ? 'lfo1' : 'lfo2'
+    const modes = n === 1 ? LFO1_USER_MODES : LFO2_USER_MODES
+    return routingUserModeSelection(modes, m[mapKey], 'enabled')
+  }
+
+  function noteTrackUserModeSelection (m) {
+    return routingUserModeSelection(NOTE_TRACK_USER_MODES, m.note_track)
+  }
+
+  function tiltUserModeSelection (m, key) {
+    return routingUserModeSelection(TILT_USER_MODES, m[key])
+  }
+
+  function generatorUserModeSelection (modes, cfg) {
+    if (!cfg?.enabled) return 'disabled'
+    return (cfg.mode === 'step') ? 'step' : 'continuous'
+  }
+
+  function renderLfoEngineFields (cfgKey, cfg) {
+    let html = fieldRow(
+      'Start mode',
+      selectField(`${cfgKey}.start_mode`, cfg.start_mode || 'running', ENGINE_START_MODE)
     )
-    return section('Proximity', body)
+    if ((cfg.start_mode || 'running') === 'paused') {
+      html += fieldRow(
+        'Trigger timing',
+        selectField(
+          `${cfgKey}.trigger_timing`,
+          cfg.trigger_timing || 'immediate',
+          LFO_TRIGGER_TIMING
+        )
+      )
+    }
+    html += fieldRow(
+      'Repeat',
+      checkboxField(`${cfgKey}.repeat`, cfg.repeat !== false)
+    )
+    html += fieldRow(
+      'On restart',
+      checkboxField(`${cfgKey}.reset_phase`, cfg.reset_phase !== false)
+    )
+    html += fieldRow(
+      'On stop',
+      checkboxField(`${cfgKey}.restore_on_stop`, !!cfg.restore_on_stop)
+    )
+    return html
+  }
+
+  function renderLfoOutputRangeFields (cfgKey, cfg) {
+    let html = fieldRow(
+      'Floor',
+      numberField(`${cfgKey}.floor`, cfg.floor ?? 0, 0, 127)
+    )
+    html += fieldRow(
+      'Ceiling',
+      numberField(`${cfgKey}.ceiling`, cfg.ceiling ?? 127, 0, 127)
+    )
+    html += fieldRow(
+      'Resolution',
+      selectField(
+        `${cfgKey}.resolution_mode`,
+        cfg.resolution_mode || 'auto',
+        LFO_RESOLUTION
+      )
+    )
+    if ((cfg.resolution_mode || 'auto') === 'manual') {
+      html += fieldRow(
+        'Manual steps',
+        numberField(`${cfgKey}.manual_steps`, cfg.manual_steps ?? 32, 1, 256)
+      )
+    }
+    return html
+  }
+
+  function renderGeneratorPatternFields (cfgKey, cfg) {
+    let html = fieldRow(
+      'Probability',
+      selectField(`${cfgKey}.probability`, cfg.probability ?? 100, PROBABILITY)
+    )
+    html += fieldRow(
+      'Pattern length',
+      selectField(`${cfgKey}.pattern_length`, cfg.pattern_length ?? 0, PATTERN_LENGTHS)
+    )
+    const plen = Number(cfg.pattern_length ?? 0)
+    if (plen >= 2)
+      html += renderPatternMask(cfgKey, plen, cfg.pattern_mask ?? 255)
+    return html
+  }
+
+  function renderSampleHoldCcSlots (ctrl) {
+    const m = ctrl.editModel
+    if (!m.sample_hold) m.sample_hold = { enabled: true, output_type: 'cc' }
+    return renderLfoCcSlots(ctrl, 'sample_hold', m.sample_hold)
+  }
+
+  function proximityUserModeSelection (m) {
+    if (!m.proximity?.enabled) return 'disabled'
+    const ot = m.proximity.output_type || 'cc'
+    const known = new Set(['cc', 'note', 'lfo_rate', 'lfo_depth', 'tempo_nudge'])
+    if (!known.has(ot)) return 'control_change'
+    if (ot === 'note') return 'notes_theremin'
+    for (const opt of PROXIMITY_USER_MODES) {
+      if (opt.output_type === ot) return opt.v
+    }
+    return 'control_change'
+  }
+
+  function alsUserModeSelection (m) {
+    if (!m.als?.enabled) return 'disabled'
+    const ot = m.als.output_type || 'cc'
+    const known = new Set(['cc', 'note', 'lfo_rate', 'lfo_depth', 'tempo_nudge'])
+    if (!known.has(ot)) return 'control_change'
+    for (const opt of ALS_USER_MODES) {
+      if (opt.output_type === ot) return opt.v
+    }
+    return 'control_change'
+  }
+
+  function renderProximity (ctrl) {
+    const m = ctrl.editModel
+    if (!m.proximity) m.proximity = { enabled: false, output_type: 'cc' }
+
+    if (cvClaimsSource(m, 'proximity')) {
+      let html = CV_GATE_CONTROLLED_CALLOUT
+      const prox = m.proximity
+      html += fieldRow(
+        'Polarity',
+        selectField('proximity.polarity', prox.polarity ?? 0, POLARITY)
+      )
+      html += fieldRow(
+        'Curve',
+        selectField('proximity.curve_type', prox.curve_type ?? 0, CURVE)
+      )
+      return section('Proximity', html)
+    }
+
+    const userMode = proximityUserModeSelection(m)
+    let html = fieldRow(
+      'Mode',
+      selectField('__proximity_user_mode', userMode, PROXIMITY_USER_MODES)
+    )
+
+    if (userMode === 'disabled') return section('Proximity', html)
+
+    html += renderContinuousMapping(ctrl, 'proximity', m.proximity, {
+      hideEnabled: true,
+      hideRouting: true,
+      ccSlots: true,
+      noteSelectors: true,
+      noteOctaveOptions: SENSOR_NOTE_OCTAVE_OPTIONS,
+      velocityModePath: 'proximity_velocity_mode',
+      tempoNudgePath: 'proximity_tempo_nudge_pct',
+      tempoNudgeDirectionPath: 'proximity_tempo_nudge_direction',
+      tempoNudgeSelect: true
+    })
+    return section('Proximity', html)
   }
 
   function renderAls (ctrl) {
-    if (!ctrl.editModel.als)
-      ctrl.editModel.als = { enabled: false, output_type: 'cc' }
-    const body = renderContinuousMapping(ctrl, 'als', ctrl.editModel.als, {
+    const m = ctrl.editModel
+    if (!m.als) m.als = { enabled: false, output_type: 'cc' }
+
+    if (cvClaimsSource(m, 'als')) {
+      let html = CV_GATE_CONTROLLED_CALLOUT
+      const als = m.als
+      html += fieldRow(
+        'Polarity',
+        selectField('als.polarity', als.polarity ?? 0, POLARITY)
+      )
+      html += fieldRow(
+        'Curve',
+        selectField('als.curve_type', als.curve_type ?? 0, CURVE)
+      )
+      return section('Ambient Light', html)
+    }
+
+    const userMode = alsUserModeSelection(m)
+    let html = fieldRow(
+      'Mode',
+      selectField('__als_user_mode', userMode, ALS_USER_MODES)
+    )
+
+    if (userMode === 'disabled') return section('Ambient Light', html)
+
+    html += renderContinuousMapping(ctrl, 'als', m.als, {
+      hideEnabled: true,
+      hideRouting: true,
+      ccSlots: true,
+      noteSelectors: true,
+      noteOctaveOptions: SENSOR_NOTE_OCTAVE_OPTIONS,
       velocityModePath: 'als_velocity_mode',
-      tempoNudgePath: 'als_tempo_nudge_pct'
+      tempoNudgePath: 'als_tempo_nudge_pct',
+      tempoNudgeDirectionPath: 'als_tempo_nudge_direction',
+      tempoNudgeSelect: true
     })
-    return section('Ambient Light', body)
+    return section('Ambient Light', html)
   }
 
   function renderTiltAxis (ctrl, axis) {
     const key = axis === 'x' ? 'tilt_x' : 'tilt_y'
+    const modePath = axis === 'x' ? '__tilt_x_user_mode' : '__tilt_y_user_mode'
     const velKey =
       axis === 'x' ? 'tilt_x_velocity_mode' : 'tilt_y_velocity_mode'
     const nudgeKey =
       axis === 'x' ? 'tilt_x_tempo_nudge_pct' : 'tilt_y_tempo_nudge_pct'
+    const nudgeDirectionKey =
+      axis === 'x' ? 'tilt_x_tempo_nudge_direction' : 'tilt_y_tempo_nudge_direction'
+    const claimKey = axis === 'x' ? 'tilt_x' : 'tilt_y'
     if (!ctrl.editModel[key])
       ctrl.editModel[key] = { enabled: false, output_type: 'cc' }
-    const body = renderContinuousMapping(ctrl, key, ctrl.editModel[key], {
+    const m = ctrl.editModel
+    let html = ''
+    if (cvClaimsSource(m, claimKey)) {
+      const tilt = m[key]
+      html += CV_GATE_CONTROLLED_CALLOUT
+      html += fieldRow(
+        'Polarity',
+        selectField(
+          `${key}.polarity`,
+          tiltPolaritySelectValue(tilt.polarity ?? 0),
+          TILT_POLARITY
+        )
+      )
+      html += fieldRow(
+        'Curve',
+        selectField(`${key}.curve_type`, tilt.curve_type ?? 0, CURVE)
+      )
+      html += fieldRow(
+        'Min',
+        numberField(`${key}.min_value`, tilt.min_value ?? 0, 0, 127)
+      )
+      html += fieldRow(
+        'Middle',
+        numberField(`${key}.middle_value`, tilt.middle_value ?? 64, 0, 127)
+      )
+      html += fieldRow(
+        'Max',
+        numberField(`${key}.max_value`, tilt.max_value ?? 127, 0, 127)
+      )
+      return section(`Tilt ${axis.toUpperCase()}`, html)
+    }
+    const userMode = tiltUserModeSelection(m, key)
+    html += fieldRow(
+      'Mode',
+      selectField(modePath, userMode, TILT_USER_MODES)
+    )
+    if (userMode === 'disabled') return section(`Tilt ${axis.toUpperCase()}`, html)
+    html += renderContinuousMapping(ctrl, key, m[key], {
+      hideEnabled: true,
+      hideRouting: true,
+      ccSlots: true,
+      noteSelectors: true,
+      noteOctaveOptions: SENSOR_NOTE_OCTAVE_OPTIONS,
       velocityModePath: velKey,
       tempoNudgePath: nudgeKey,
-      showMinMidMax: true
+      tempoNudgeDirectionPath: nudgeDirectionKey,
+      tempoNudgeSelect: true,
+      showMinMidMax: true,
+      polarityOptions: TILT_POLARITY,
+      polaritySelectValue: tiltPolaritySelectValue
     })
-    return section(`Tilt ${axis.toUpperCase()}`, body)
+    return section(`Tilt ${axis.toUpperCase()}`, html)
   }
 
   function renderNoteTrack (ctrl) {
     if (!ctrl.editModel.note_track) {
       ctrl.editModel.note_track = { enabled: false, output_type: 'cc' }
     }
-    const body = renderContinuousMapping(
-      ctrl,
-      'note_track',
-      ctrl.editModel.note_track,
-      {}
+    const m = ctrl.editModel
+    const userMode = noteTrackUserModeSelection(m)
+    let html = fieldRow(
+      'Mode',
+      selectField('__note_track_user_mode', userMode, NOTE_TRACK_USER_MODES)
     )
-    return section('Note Track', body)
+    if (userMode === 'disabled') return section('Note Track', html)
+    const ot = m.note_track.output_type || 'cc'
+    html += renderContinuousMapping(ctrl, 'note_track', m.note_track, {
+      hideEnabled: true,
+      hideRouting: true,
+      ccSlots: true,
+      ccSlotMax: 1
+    })
+    if (['lfo_rate', 'lfo_depth', 'tempo_nudge'].includes(ot)) {
+      html += fieldRow(
+        'Polarity',
+        selectField('note_track.polarity', m.note_track.polarity ?? 0, POLARITY)
+      )
+      html += fieldRow(
+        'Curve',
+        selectField('note_track.curve_type', m.note_track.curve_type ?? 0, CURVE)
+      )
+    }
+    return section('Note Track', html)
   }
 
   function expressionUserModeSelection (m) {
@@ -2090,9 +2562,76 @@ window.SceneEditorUi = (function () {
       velocityMin: 0,
       ccSlots: true,
       tempoNudgePath: 'expression_tempo_nudge_pct',
+      tempoNudgeDirectionPath: 'expression_tempo_nudge_direction',
       tempoNudgeSelect: true
     })
     return section('Expression', html)
+  }
+
+  function cvUserModeSelection (m) {
+    const mode = m.cv_input_mode || 'none'
+    if (mode === 'none') return 'disabled'
+    if (mode === 'note') return 'cv_gate'
+    if (mode === 'audio') return 'audio'
+    if (mode === 'trigger') return 'trigger'
+    const ot = m.cv?.output_type || 'cc'
+    for (const opt of CV_USER_MODES) {
+      if (opt.cv_input_mode !== 'cv') continue
+      if (opt.output_type !== ot) continue
+      return opt.v
+    }
+    return 'control_change'
+  }
+
+  function renderCvAudio (ctrl) {
+    const m = ctrl.editModel
+    if (!m.cv) m.cv = { enabled: true, output_type: 'cc' }
+    if (!m.audio_config) {
+      m.audio_config = {
+        range: 'bi5v',
+        sensitivity: 128,
+        attack_ms: 10,
+        release_ms: 200,
+        threshold: 5,
+        polarity: 'attract'
+      }
+    }
+    const ac = m.audio_config
+    let html = ''
+    html += fieldRow(
+      'Sensitivity',
+      selectField(
+        '__cv_audio_gain',
+        ActionCatalog.closestAudioGain(ac.sensitivity ?? 128),
+        ActionCatalog.cvAudioGainOptions(ac.sensitivity ?? 128)
+      )
+    )
+    html += fieldRow(
+      'Threshold',
+      selectField(
+        'audio_config.threshold',
+        ac.threshold ?? 0,
+        ActionCatalog.cvAudioThresholdOptions(ac.threshold ?? 0)
+      )
+    )
+    html += fieldRow(
+      'Range',
+      selectField('audio_config.range', ac.range || 'bi5v', AUDIO_RANGE_OPTIONS)
+    )
+    html += fieldRow(
+      'Attack',
+      selectField('audio_config.attack_ms', ac.attack_ms ?? 10, AUDIO_ATTACK_OPTIONS)
+    )
+    html += fieldRow(
+      'Release',
+      selectField('audio_config.release_ms', ac.release_ms ?? 200, AUDIO_RELEASE_OPTIONS)
+    )
+    html += fieldRow(
+      'Polarity',
+      selectField('audio_config.polarity', ac.polarity || 'attract', AUDIO_POLARITY_OPTIONS)
+    )
+    html += renderLfoCcSlots(ctrl, 'cv', m.cv)
+    return html
   }
 
   function renderCv (ctrl) {
@@ -2101,67 +2640,95 @@ window.SceneEditorUi = (function () {
     let html = ''
     if (syncClock) {
       html += `<wa-callout variant="neutral">CV mode is Clock Sync while tempo source is Sync.</wa-callout>`
-    } else {
-      html += fieldRow(
-        'Input mode',
-        selectField('cv_input_mode', m.cv_input_mode || 'none', CV_INPUT_MODE)
-      )
+      return section('Control Voltage', html)
     }
-    const mode = m.cv_input_mode || 'none'
-    if (mode === 'cv' && !syncClock) {
-      if (!m.cv) m.cv = { enabled: true, output_type: 'cc' }
-      html += renderContinuousMapping(ctrl, 'cv', m.cv, {
-        velocityModePath: 'cv_velocity_mode',
-        tempoNudgePath: 'cv_tempo_nudge_pct'
-      })
-    } else if (mode === 'note') {
+
+    const userMode = cvUserModeSelection(m)
+    html += fieldRow(
+      'Mode',
+      selectField('__cv_user_mode', userMode, CV_USER_MODES)
+    )
+
+    if (userMode === 'disabled') {
+      return section('Control Voltage', html)
+    }
+
+    if (userMode === 'cv_gate') {
       html += fieldRow(
         'Velocity mode',
         selectField(
           'cv_velocity_mode',
-          m.cv_velocity_mode || 'fixed',
-          VELOCITY_MODE
+          cvGateVelocityModeValue(m),
+          CV_GATE_VELOCITY_MODE
         )
       )
-      if (m.cv_velocity_mode === 'fixed') {
+      const cvVelMode = cvGateVelocityModeValue(m)
+      if (cvVelMode === 'fixed') {
         html += fieldRow(
           'Fixed velocity',
           numberField('cv_velocity', m.cv_velocity ?? 100, 1, 127)
         )
       }
-    } else if (mode === 'trigger') {
+      return section('Control Voltage', html)
+    }
+
+    if (userMode === 'trigger') {
       html += renderAction(
         ctrl,
         'cv_trigger_action',
         m.cv_trigger_action || { type: 'none' },
-        { trigger: ActionCatalog.TRIGGERS.BUTTON }
+        { trigger: ActionCatalog.TRIGGERS.BUTTON, typeLabel: 'Action' }
       )
       html += fieldRow(
-        'Threshold %',
-        numberField(
+        'Threshold',
+        selectField(
           'cv_trigger_threshold',
-          m.cv_trigger_threshold ?? 50,
-          0,
-          100
+          ActionCatalog.closestCvTriggerThreshold(m.cv_trigger_threshold ?? 50),
+          ActionCatalog.cvTriggerThresholdOptions(m.cv_trigger_threshold ?? 50)
         )
       )
       html += fieldRow(
-        'Debounce ms',
-        numberField(
+        'Debounce',
+        selectField(
           'cv_trigger_debounce_ms',
-          m.cv_trigger_debounce_ms ?? 0,
-          0,
-          2000
+          ActionCatalog.closestCvTriggerDebounce(m.cv_trigger_debounce_ms ?? 0),
+          ActionCatalog.cvTriggerDebounceOptions(m.cv_trigger_debounce_ms ?? 0)
         )
       )
+      return section('Control Voltage', html)
     }
+
+    if (userMode === 'audio') {
+      html += renderCvAudio(ctrl)
+      return section('Control Voltage', html)
+    }
+
+    // Continuous CV routings (control_change / notes / lfo_rate / lfo_depth / tempo_nudge)
+    if (!m.cv) m.cv = { enabled: true, output_type: 'cc' }
+    html += renderContinuousMapping(ctrl, 'cv', m.cv, {
+      hideEnabled: true,
+      hideRouting: true,
+      noteSelectors: true,
+      velocityMin: 0,
+      ccSlots: true,
+      tempoNudgePath: 'cv_tempo_nudge_pct',
+      tempoNudgeDirectionPath: 'cv_tempo_nudge_direction',
+      tempoNudgeSelect: true
+    })
     return section('Control Voltage', html)
   }
 
-  function touchwheelUserModeSelection (m) {
-    if ((m.touchwheel_mode || 'pads') === 'pads') return 'pads'
-    if (m.touchwheel?.enabled === false) return 'disabled'
+  function effectiveTouchwheelMode (m) {
     const mode = m.touchwheel_mode || 'pads'
+    if (mode !== 'velocity') return mode
+    if (cvGateVelocityModeValue(m) === 'touchwheel') return 'velocity'
+    return m.touchwheel_mode_prev || 'pads'
+  }
+
+  function touchwheelUserModeSelection (m) {
+    const mode = effectiveTouchwheelMode(m)
+    if (mode === 'pads') return 'pads'
+    if (m.touchwheel?.enabled === false) return 'disabled'
     const ot = m.touchwheel?.output_type || 'cc'
     for (const opt of TOUCHWHEEL_USER_MODES) {
       if (!opt.touchwheel_mode) continue
@@ -2181,6 +2748,11 @@ window.SceneEditorUi = (function () {
 
   function renderTouchwheel (ctrl) {
     const m = ctrl.editModel
+    if (cvClaimsSource(m, 'touchwheel')) {
+      let html = CV_GATE_CONTROLLED_CALLOUT
+      html += renderTouchwheelStyle(m)
+      return section('Touchwheel', html)
+    }
     const userMode = touchwheelUserModeSelection(m)
     let html = fieldRow(
       'Mode',
@@ -2244,6 +2816,14 @@ window.SceneEditorUi = (function () {
       }
     } else if (userMode === 'tempo_nudge') {
       html += fieldRow(
+        'Direction',
+        selectField(
+          'touchwheel_tempo_nudge_direction',
+          m.touchwheel_tempo_nudge_direction ?? 0,
+          ActionCatalog.tempoNudgeDirectionOptions(m.touchwheel_tempo_nudge_direction ?? 0)
+        )
+      )
+      html += fieldRow(
         'Nudge %',
         selectField(
           'touchwheel_tempo_nudge_pct',
@@ -2259,7 +2839,12 @@ window.SceneEditorUi = (function () {
           ActionCatalog.touchwheelNudgeReturnOptions(m.touchwheel_tempo_nudge_return ?? 0)
         )
       )
-      if (spec?.supports_style) html += renderTouchwheelStyle(m)
+      if ((m.touchwheel_tempo_nudge_direction ?? 0) !== 0) {
+        html += fieldRow(
+          'Style',
+          selectField('touchwheel_style', m.touchwheel_style || 'odometer', TOUCHWHEEL_STYLE_OPTIONS)
+        )
+      }
     } else if (userMode === 'tempo') {
       if (spec?.supports_style) html += renderTouchwheelStyle(m)
       html += fieldRow(
@@ -2297,30 +2882,39 @@ window.SceneEditorUi = (function () {
     const cfgKey = n === 1 ? 'lfo1_config' : 'lfo2_config'
     const mapKey = n === 1 ? 'lfo1' : 'lfo2'
     const velKey = n === 1 ? 'lfo1_velocity_mode' : 'lfo2_velocity_mode'
+    const modePath = n === 1 ? '__lfo1_user_mode' : '__lfo2_user_mode'
+    const userModes = n === 1 ? LFO1_USER_MODES : LFO2_USER_MODES
     const m = ctrl.editModel
     if (!m[cfgKey])
       m[cfgKey] = { enabled: false, waveform: 'sine', rate_mode: 'free' }
     if (!m[mapKey]) m[mapKey] = { enabled: false, output_type: 'cc' }
-    let html = fieldRow(
-      'Enabled',
-      checkboxField(`${cfgKey}.enabled`, !!m[cfgKey].enabled)
-    )
-    if (!m[cfgKey].enabled) return section(`LFO${n}`, html)
-    m[mapKey].enabled = m[cfgKey].enabled
-    const validRouting = lfoRoutingOptions(n).map(o => o.v)
-    if (!validRouting.includes(m[mapKey].output_type))
-      m[mapKey].output_type = 'cc'
 
+    const userMode = lfoUserModeSelection(n, m)
+    let html = fieldRow(
+      'Mode',
+      selectField(modePath, userMode, userModes)
+    )
+    if (userMode === 'disabled') return section(`LFO${n}`, html)
+
+    m[mapKey].enabled = m[cfgKey].enabled
+    const claimKey = n === 1 ? 'lfo1' : 'lfo2'
+    const waveformOpts = [
+      { v: 'sine', l: 'Sine' },
+      { v: 'triangle', l: 'Triangle' },
+      { v: 'square', l: 'Square' },
+      { v: 'saw_up', l: 'Saw Up' },
+      { v: 'saw_down', l: 'Saw Down' },
+      { v: 'sample_hold', l: 'Sample & Hold' }
+    ]
+
+    if (cvClaimsSource(m, claimKey)) {
+      html += CV_GATE_CONTROLLED_CALLOUT
+    }
+
+    html += renderLfoEngineFields(cfgKey, m[cfgKey])
     html += fieldRow(
       'Waveform',
-      selectField(`${cfgKey}.waveform`, m[cfgKey].waveform || 'sine', [
-        { v: 'sine', l: 'Sine' },
-        { v: 'triangle', l: 'Triangle' },
-        { v: 'square', l: 'Square' },
-        { v: 'saw_up', l: 'Saw Up' },
-        { v: 'saw_down', l: 'Saw Down' },
-        { v: 'sample_hold', l: 'Sample & Hold' }
-      ])
+      selectField(`${cfgKey}.waveform`, m[cfgKey].waveform || 'sine', waveformOpts)
     )
     const lfoRateMode = (m[cfgKey].rate_mode === 'tempo') ? 'tempo' : 'free'
     if (m[cfgKey].rate_mode !== lfoRateMode) m[cfgKey].rate_mode = lfoRateMode
@@ -2351,18 +2945,25 @@ window.SceneEditorUi = (function () {
         )
       )
     }
-    const nudgeKey = n === 1 ? 'lfo1_tempo_nudge_pct' : 'lfo2_tempo_nudge_pct'
-    if (m[mapKey].output_type === 'tempo_nudge' && m[nudgeKey] == null)
-      m[nudgeKey] = 10
-    html += renderContinuousMapping(ctrl, mapKey, m[mapKey], {
-      hideEnabled: true,
-      routingLabel: 'Routing',
-      routingTypes: lfoRoutingOptions(n),
-      ccSlots: true,
-      velocityModePath: velKey,
-      tempoNudgePath: nudgeKey,
-      tempoNudgeSelect: true
-    })
+
+    if (!cvClaimsSource(m, claimKey)) {
+      const ot = m[mapKey].output_type || 'cc'
+      html += renderContinuousMapping(ctrl, mapKey, m[mapKey], {
+        hideEnabled: true,
+        hideRouting: true,
+        ccSlots: true,
+        noteSelectors: true,
+        noteOctaveOptions: SENSOR_NOTE_OCTAVE_OPTIONS,
+        velocityModePath: velKey
+      })
+      if (ot !== 'cc' && ot !== 'note') {
+        html += fieldRow(
+          'Polarity',
+          selectField(`${mapKey}.polarity`, m[mapKey].polarity ?? 0, POLARITY)
+        )
+      }
+    }
+    html += renderLfoOutputRangeFields(cfgKey, m[cfgKey])
     return section(`LFO${n}`, html)
   }
 
@@ -2370,11 +2971,13 @@ window.SceneEditorUi = (function () {
     const m = ctrl.editModel
     if (!m.rtg_config)
       m.rtg_config = { enabled: false, mode: 'continuous', generator: 'random' }
+    const userMode = generatorUserModeSelection(RTG_USER_MODES, m.rtg_config)
     let html = fieldRow(
-      'Enabled',
-      checkboxField('rtg_config.enabled', !!m.rtg_config.enabled)
+      'Mode',
+      selectField('__rtg_user_mode', userMode, RTG_USER_MODES)
     )
-    if (!m.rtg_config.enabled) return section('RTG', html)
+    if (userMode === 'disabled') return section('RTG', html)
+
     html += fieldRow(
       'Generator',
       selectField('rtg_config.generator', m.rtg_config.generator || 'random', [
@@ -2383,11 +2986,12 @@ window.SceneEditorUi = (function () {
       ])
     )
     html += fieldRow(
-      'Mode',
-      selectField('rtg_config.mode', m.rtg_config.mode || 'continuous', [
-        { v: 'continuous', l: 'Continuous' },
-        { v: 'step', l: 'Step' }
-      ])
+      'Start mode',
+      selectField(
+        'rtg_config.start_mode',
+        m.rtg_config.start_mode || 'running',
+        ENGINE_START_MODE
+      )
     )
     if (m.rtg_config.mode === 'continuous') {
       html += fieldRow(
@@ -2417,12 +3021,75 @@ window.SceneEditorUi = (function () {
             })))
         )
       }
+      html += renderGeneratorPatternFields('rtg_config', m.rtg_config)
     }
     if (m.rtg_config.generator === 'random') {
       html += fieldRow(
         'Glide',
         checkboxField('rtg_config.glide', !!m.rtg_config.glide)
       )
+      html += fieldRow(
+        'Note min',
+        numberField('rtg_config.note_min', m.rtg_config.note_min ?? 36, 0, 127)
+      )
+      html += fieldRow(
+        'Note max',
+        numberField('rtg_config.note_max', m.rtg_config.note_max ?? 96, 0, 127)
+      )
+      html += fieldRow(
+        'Velocity',
+        numberField('rtg_config.velocity', m.rtg_config.velocity ?? 100, 1, 127)
+      )
+    }
+    if (m.rtg_config.generator === 'shepard') {
+      html += fieldRow(
+        'Direction',
+        selectField(
+          'rtg_config.shepard_direction',
+          m.rtg_config.shepard_direction || 'rising',
+          SHEPARD_DIRECTION
+        )
+      )
+      html += fieldRow(
+        'Smooth',
+        checkboxField('rtg_config.glide', !!m.rtg_config.glide)
+      )
+      if (m.rtg_config.glide) {
+        html += fieldRow(
+          'Style',
+          selectField(
+            'rtg_config.shepard_style',
+            m.rtg_config.shepard_style || 'stream',
+            SHEPARD_STYLE
+          )
+        )
+        if (m.rtg_config.shepard_style === 'wide') {
+          html += fieldRow(
+            'Retrigger (semitones)',
+            selectField('rtg_config.shepard_wide_semis', m.rtg_config.shepard_wide_semis ?? 4, [
+              { v: 2, l: '2' },
+              { v: 3, l: '3' },
+              { v: 4, l: '4' }
+            ])
+          )
+        }
+        html += fieldRow(
+          'Layout',
+          selectField(
+            'rtg_config.shepard_layout',
+            m.rtg_config.shepard_layout || 'single',
+            SHEPARD_LAYOUT
+          )
+        )
+        html += fieldRow(
+          'Fade',
+          selectField(
+            'rtg_config.shepard_fade',
+            m.rtg_config.shepard_fade || 'none',
+            SHEPARD_FADE
+          )
+        )
+      }
     }
     return section('RTG', html)
   }
@@ -2433,24 +3100,27 @@ window.SceneEditorUi = (function () {
       m.sample_hold_config = { enabled: false, mode: 'continuous' }
     }
     if (!m.sample_hold) m.sample_hold = { enabled: false, output_type: 'cc' }
+    const userMode = generatorUserModeSelection(SAMPLE_HOLD_USER_MODES, m.sample_hold_config)
     let html = fieldRow(
-      'Enabled',
-      checkboxField(
-        'sample_hold_config.enabled',
-        !!m.sample_hold_config.enabled
+      'Mode',
+      selectField('__sample_hold_user_mode', userMode, SAMPLE_HOLD_USER_MODES)
+    )
+    if (userMode === 'disabled') return section('S+H', html)
+
+    if (cvClaimsSource(m, 'sample_hold')) {
+      html += CV_GATE_CONTROLLED_CALLOUT
+    }
+    html += fieldRow(
+      'Start mode',
+      selectField(
+        'sample_hold_config.start_mode',
+        m.sample_hold_config.start_mode || 'running',
+        ENGINE_START_MODE
       )
     )
-    if (!m.sample_hold_config.enabled) return section('S+H', html)
     html += fieldRow(
-      'Mode',
-      selectField(
-        'sample_hold_config.mode',
-        m.sample_hold_config.mode || 'continuous',
-        [
-          { v: 'continuous', l: 'Continuous' },
-          { v: 'step', l: 'Step' }
-        ]
-      )
+      'Glide',
+      checkboxField('sample_hold_config.glide', !!m.sample_hold_config.glide)
     )
     if (m.sample_hold_config.mode === 'continuous') {
       html += fieldRow(
@@ -2480,19 +3150,10 @@ window.SceneEditorUi = (function () {
             })))
         )
       }
+      html += renderGeneratorPatternFields('sample_hold_config', m.sample_hold_config)
     }
-    ensureCcNumbers(m.sample_hold)
-    for (let i = 0; i < 4; i++) {
-      html += fieldRow(
-        `CC slot ${i + 1}`,
-        numberField(
-          `sample_hold.cc_numbers.${i}`,
-          m.sample_hold.cc_numbers[i] ?? 0,
-          0,
-          127
-        )
-      )
-    }
+    if (!cvClaimsSource(m, 'sample_hold'))
+      html += renderSampleHoldCcSlots(ctrl)
     return section('S+H', html)
   }
 
@@ -2549,7 +3210,14 @@ window.SceneEditorUi = (function () {
     if (!ctrl.editModel.on_load) ctrl.editModel.on_load = []
     return section(
       'On-Load',
-      renderActionChain(ctrl, 'on_load', ctrl.editModel.on_load, 4)
+      renderActionChain(
+        ctrl,
+        'on_load',
+        ctrl.editModel.on_load,
+        4,
+        ActionCatalog.TRIGGERS.ON_LOAD,
+        { slotTitlePrefix: 'Load Action' }
+      )
     )
   }
 
@@ -2563,7 +3231,8 @@ window.SceneEditorUi = (function () {
         'on_play',
         ctrl.editModel.on_play,
         4,
-        ActionCatalog.TRIGGERS.ON_PLAY
+        ActionCatalog.TRIGGERS.ON_PLAY,
+        { slotTitlePrefix: 'Play Action' }
       )
     )
   }

@@ -193,10 +193,26 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
     if (err1 == ESP_OK && err2 == ESP_OK && calib_ret == ESP_OK && calib_data.valid) {
       int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
       bool hardware_touched = (delta > (int32_t)calib_data.threshold);
+      // A dead-band phantom is a sagging *benchmark*: the live benchmark drops
+      // below true rest while the smoothed reading stays at rest, so delta reads
+      // like a touch with no finger present. A real finger - even a very light one
+      // on the pad-12 screw - instead lifts the smoothed reading ABOVE the
+      // calibrated resting baseline. Verify elevation against that stable baseline
+      // (only updated at calibration/recovery, so trustworthy when the live
+      // benchmark has sagged) rather than the live benchmark: light touches pass,
+      // phantoms (smooth at/below rest) are rejected.
+      int32_t elevation = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
+      bool real_touch = (calib_data.baseline > 0) ? (elevation > (int32_t)calib_data.threshold) : hardware_touched;
       
       if (!hardware_touched) {
         ESP_LOGW(TAG, "Pad 12 long press ignored - hardware shows idle (delta=%"PRId32", thresh=%"PRIu32")",
           delta, calib_data.threshold);
+        touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
+        return;
+      }
+      if (!real_touch) {
+        ESP_LOGW(TAG, "Pad 12 long press ignored - smooth not elevated above resting baseline (elev=%"PRId32", thresh=%"PRIu32")",
+          elevation, calib_data.threshold);
         touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
         return;
       }

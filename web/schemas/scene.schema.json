@@ -77,6 +77,11 @@
       "default": "pads",
       "description": "Touchwheel behavior mode (storage enum; web editor uses user-facing modes including Disabled, Notes, Tempo Nudge)"
     },
+    "touchwheel_mode_prev": {
+      "type": "string",
+      "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc", "velocity", "lfo_rate", "lfo_depth", "rtg_rate"],
+      "description": "Touchwheel mode saved before CV/Gate velocity takeover; restored when takeover ends"
+    },
     "touchwheel_lfo_target": {
       "type": "string",
       "enum": ["lfo1", "lfo2", "both"],
@@ -197,7 +202,18 @@
     },
     "cv_velocity_mode": {
       "type": "string",
-      "enum": ["fixed", "gate_voltage", "touchwheel"],
+      "enum": [
+        "fixed",
+        "gate_voltage",
+        "touchwheel",
+        "proximity",
+        "als",
+        "tilt_x",
+        "tilt_y",
+        "lfo1",
+        "lfo2",
+        "sample_hold"
+      ],
       "default": "fixed",
       "description": "Velocity mode for CV NOTE input mode"
     },
@@ -263,12 +279,26 @@
       "default": 10,
       "description": "Percent of scene BPM to swing around center for tilt X (OUTPUT_TYPE_TEMPO_NUDGE)"
     },
+    "tilt_x_tempo_nudge_direction": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "description": "Tempo nudge direction for tilt X (0=both, 1=faster only, 2=slower only)"
+    },
     "tilt_y_tempo_nudge_pct": {
       "type": "integer",
       "minimum": 0,
       "maximum": 100,
       "default": 10,
       "description": "Percent of scene BPM to swing around center for tilt Y (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "tilt_y_tempo_nudge_direction": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "description": "Tempo nudge direction for tilt Y (0=both, 1=faster only, 2=slower only)"
     },
     "expression_tempo_nudge_pct": {
       "type": "integer",
@@ -277,12 +307,26 @@
       "default": 10,
       "description": "Percent of scene BPM to swing around center for expression (OUTPUT_TYPE_TEMPO_NUDGE)"
     },
+    "expression_tempo_nudge_direction": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "description": "Tempo nudge direction for expression (0=both, 1=faster only, 2=slower only)"
+    },
     "cv_tempo_nudge_pct": {
       "type": "integer",
       "minimum": 0,
       "maximum": 100,
       "default": 10,
       "description": "Percent of scene BPM to swing around center for CV (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "cv_tempo_nudge_direction": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "description": "Tempo nudge direction for CV (0=both, 1=faster only, 2=slower only)"
     },
     "proximity_tempo_nudge_pct": {
       "type": "integer",
@@ -291,12 +335,26 @@
       "default": 10,
       "description": "Percent of scene BPM to swing around center for proximity (OUTPUT_TYPE_TEMPO_NUDGE)"
     },
+    "proximity_tempo_nudge_direction": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "description": "Tempo nudge direction for proximity (0=both, 1=faster only, 2=slower only)"
+    },
     "touchwheel_tempo_nudge_pct": {
       "type": "integer",
       "minimum": 0,
       "maximum": 100,
       "default": 10,
       "description": "Percent of scene BPM to swing around center for touchwheel (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "touchwheel_tempo_nudge_direction": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "description": "Tempo nudge direction for touchwheel (0=both/bipolar, 1=faster only, 2=slower only)"
     },
     "touchwheel_tempo_nudge_return": {
       "type": "integer",
@@ -332,6 +390,13 @@
       "maximum": 100,
       "default": 10,
       "description": "Percent of scene BPM to swing around center for ambient light (OUTPUT_TYPE_TEMPO_NUDGE)"
+    },
+    "als_tempo_nudge_direction": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0,
+      "description": "Tempo nudge direction for ambient light (0=both, 1=faster only, 2=slower only)"
     },
     "lfo1_tempo_nudge_pct": {
       "type": "integer",

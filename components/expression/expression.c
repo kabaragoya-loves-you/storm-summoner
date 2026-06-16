@@ -42,6 +42,8 @@
 #define PEDAL_RELEASED_THRESHOLD 3000  // ADC > 3000 = released (tip pulled high)
 
 #define GATE_HIGH_THRESHOLD 2048        // ADC > 2048 = gate high
+#define GATE_LOW_THRESHOLD 1536         // Hysteresis: stay high until below this
+#define GATE_LOW_DEBOUNCE_SAMPLES 2     // Stable low reads before gate-off event
 
 // Filtering parameters
 #define MOVING_AVG_LENGTH 10
@@ -91,6 +93,8 @@ static void expression_task(void *pvParameters) {
   bool first_reading = true;  // Flag to skip initial change detection
   bool last_pedal_state = false;  // For sustain/sostenuto
   bool last_gate_state = false;   // For gate mode
+  uint8_t gate_low_count = 0;     // Gate-off debounce (reset on mode/cable entry)
+  expression_mode_t last_mode = s_mode;
   static uint32_t last_cable_check_ms = 0;  // Throttle cable checks when disconnected
   
   // Adaptive sampling state
@@ -166,6 +170,11 @@ static void expression_task(void *pvParameters) {
         input_manager_expression_cable_changed(false);
       }
       was_connected = is_connected;
+    }
+
+    if (s_mode != last_mode) {
+      first_reading = true;
+      last_mode = s_mode;
     }
     
     if (is_connected) {
@@ -350,31 +359,48 @@ static void expression_task(void *pvParameters) {
       } else if (s_mode == EXPRESSION_MODE_GATE) {
         // Gate mode - high/low detection for MIDI notes
         // Use raw_exp directly (not ratiometric) - gate signals are absolute voltages
-        bool current_gate = (raw_exp > GATE_HIGH_THRESHOLD);
-        s_gate_state = current_gate;
-        
-        // Detect gate transitions
+        bool sampled_gate = s_gate_state
+          ? (raw_exp > GATE_LOW_THRESHOLD)
+          : (raw_exp > GATE_HIGH_THRESHOLD);
+
         if (first_reading) {
-          last_gate_state = current_gate;
+          s_gate_state = sampled_gate;
+          last_gate_state = sampled_gate;
+          gate_low_count = 0;
           first_reading = false;
-          ESP_LOGI(TAG, "Gate initial: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw_exp);
-        } else if (current_gate != last_gate_state) {
-          // Post gate event
-          event_t gate_event = {
-            .type = EVENT_EXPRESSION_GATE,
-            .priority = EVENT_PRIORITY_NORMAL,
-            .timestamp = event_bus_get_current_timestamp(),
-            .data.gate = {
-              .high = current_gate,
-              .raw_value = raw_exp
+          ESP_LOGI(TAG, "Gate initial: %s (raw: %d)", sampled_gate ? "HIGH" : "LOW", raw_exp);
+        } else if (sampled_gate) {
+          gate_low_count = 0;
+          if (!last_gate_state) {
+            s_gate_state = true;
+            event_t gate_event = {
+              .type = EVENT_EXPRESSION_GATE,
+              .priority = EVENT_PRIORITY_NORMAL,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.gate = { .high = true, .raw_value = raw_exp }
+            };
+            if (event_bus_post(&gate_event) == ESP_OK) {
+              if (s_gate_logging_enabled) ESP_LOGI(TAG, "Gate: HIGH (raw: %d)", raw_exp);
+              last_gate_state = true;
             }
-          };
-          
-          if (event_bus_post(&gate_event) == ESP_OK) {
-            if (s_gate_logging_enabled) {
-              ESP_LOGI(TAG, "Gate: %s (raw: %d)", current_gate ? "HIGH" : "LOW", raw_exp);
+          }
+        } else {
+          if (last_gate_state) {
+            if (gate_low_count < GATE_LOW_DEBOUNCE_SAMPLES) gate_low_count++;
+            if (gate_low_count >= GATE_LOW_DEBOUNCE_SAMPLES) {
+              s_gate_state = false;
+              event_t gate_event = {
+                .type = EVENT_EXPRESSION_GATE,
+                .priority = EVENT_PRIORITY_NORMAL,
+                .timestamp = event_bus_get_current_timestamp(),
+                .data.gate = { .high = false, .raw_value = raw_exp }
+              };
+              if (event_bus_post(&gate_event) == ESP_OK) {
+                if (s_gate_logging_enabled) ESP_LOGI(TAG, "Gate: LOW (raw: %d)", raw_exp);
+                last_gate_state = false;
+              }
+              gate_low_count = 0;
             }
-            last_gate_state = current_gate;
           }
         }
       }
@@ -478,9 +504,11 @@ void expression_init(bool enable_logging) {
   };
   gpio_config(&io_conf);
   
-  const char* mode_names[] = {"PEDAL", "SUSTAIN", "SOSTENUTO", "GATE", "SWITCH"};
+  const char* mode_names[] = {"NONE", "PEDAL", "SUSTAIN", "SOSTENUTO", "GATE", "SWITCH"};
+  const char* mode_name = ((unsigned)s_mode < (sizeof(mode_names) / sizeof(mode_names[0])))
+    ? mode_names[s_mode] : "UNKNOWN";
   ESP_LOGI(TAG, "Expression initialized - Mode: %s, Min: %d, Max: %d, Deadzone: %d (Ratiometric)", 
-    mode_names[s_mode], s_min_value, s_max_value, s_deadzone);
+    mode_name, s_min_value, s_max_value, s_deadzone);
   
   // Check initial cable state
   bool cable_connected = gpio_get_level(PIN_EXP_SW) == 1;
@@ -856,9 +884,9 @@ esp_err_t expression_auto_calibrate(uint32_t duration_ms) {
     ESP_LOGW(TAG, "Insufficient swing detected (%d counts). Calibration may be inaccurate.", swing);
   }
   
-  // Apply 1% margin on each extreme for headroom
+  // Headroom on toe side only — heel uses trimmed min so full-down reaches MIDI 0.
   float margin = swing * 0.01f;
-  int16_t final_min = min_reading + (int16_t)margin;
+  int16_t final_min = min_reading;
   int16_t final_max = max_reading - (int16_t)margin;
   
   // Ensure min < max after applying margins
@@ -871,7 +899,7 @@ esp_err_t expression_auto_calibrate(uint32_t duration_ms) {
   ESP_LOGI(TAG, "  Absolute range:   %d - %d", absolute_min, absolute_max);
   ESP_LOGI(TAG, "  Trimmed range:    %d - %d (%d counts, discarded %u extreme samples)", 
     min_reading, max_reading, swing, trim_count * 2);
-  ESP_LOGI(TAG, "  Final range:      %d - %d (1%% margins applied)", final_min, final_max);
+  ESP_LOGI(TAG, "  Final range:      %d - %d (1%% toe margin)", final_min, final_max);
   
   // Store calibration
   expression_set_range(final_min, final_max);

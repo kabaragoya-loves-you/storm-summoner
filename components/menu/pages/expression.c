@@ -43,6 +43,7 @@ static char s_velocity_label[LABEL_BUFFER_SETS][32];
 static char s_action_label[LABEL_BUFFER_SETS][48];
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
 static char s_nudge_label[LABEL_BUFFER_SETS][32];
+static char s_direction_label[LABEL_BUFFER_SETS][32];
 
 // CC options from device
 typedef struct {
@@ -598,6 +599,38 @@ static void nav_to_nudge(void* user_data) {
   menu_navigate_to("Nudge %", nudge_roller_create);
 }
 
+static const char* tempo_nudge_direction_to_string(uint8_t dir) {
+  switch (dir) {
+    case TEMPO_NUDGE_DIR_FASTER: return "Faster";
+    case TEMPO_NUDGE_DIR_SLOWER: return "Slower";
+    default: return "Both";
+  }
+}
+
+static void direction_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (selected_index > TEMPO_NUDGE_DIR_SLOWER) selected_index = TEMPO_NUDGE_DIR_BOTH;
+  scene_set_expression_tempo_nudge_direction(scene_get_current_index(), (uint8_t)selected_index);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Expression", menu_page_expression_create);
+}
+
+static lv_obj_t* direction_roller_create(void) {
+  uint8_t cur = scene_get_expression_tempo_nudge_direction(scene_get_current_index());
+  if (cur > TEMPO_NUDGE_DIR_SLOWER) cur = TEMPO_NUDGE_DIR_BOTH;
+  return menu_create_roller_page("Direction", "Both\nFaster\nSlower",
+    (uint32_t)cur, direction_confirm_cb, NULL);
+}
+
+static void nav_to_direction(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Direction", direction_roller_create);
+}
+
 // ============================================================================
 // Switch Mode - Action Configuration
 // ============================================================================
@@ -734,6 +767,13 @@ lv_obj_t* menu_page_expression_create(void) {
         snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
           "Nudge %%\n%u%%", (unsigned)pct);
         s_expr_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+        uint8_t dir = scene_get_expression_tempo_nudge_direction(scene_get_current_index());
+        snprintf(s_direction_label[buf], sizeof(s_direction_label[buf]),
+          "Direction\n%s", tempo_nudge_direction_to_string(dir));
+        s_expr_items[item_count++] = (menu_item_t){
+          s_direction_label[buf], nav_to_direction, NULL, true, MENU_ITEM_KIND_ROLLER
+        };
       }
       
       break;

@@ -19,7 +19,14 @@ typedef enum {
 typedef enum {
   VELOCITY_MODE_FIXED = 0,        // Use fixed velocity value
   VELOCITY_MODE_GATE_VOLTAGE,     // Derive from gate voltage (expression jack ADC)
-  VELOCITY_MODE_TOUCHWHEEL        // Derive from touchwheel position (when in velocity mode)
+  VELOCITY_MODE_TOUCHWHEEL,       // Derive from touchwheel position
+  VELOCITY_MODE_PROXIMITY,        // CV/Gate only: live proximity stream
+  VELOCITY_MODE_ALS,              // CV/Gate only: live ALS stream
+  VELOCITY_MODE_TILT_X,           // CV/Gate only: live tilt X stream
+  VELOCITY_MODE_TILT_Y,           // CV/Gate only: live tilt Y stream
+  VELOCITY_MODE_LFO1,             // CV/Gate only: live LFO1 stream
+  VELOCITY_MODE_LFO2,             // CV/Gate only: live LFO2 stream
+  VELOCITY_MODE_SAMPLE_HOLD       // CV/Gate only: live S+H stream
 } velocity_mode_t;
 
 // CV voltage ranges (only relevant when INPUT_MODE_CV is selected)

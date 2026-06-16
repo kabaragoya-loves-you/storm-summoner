@@ -22,6 +22,8 @@
 #include "esp_log.h"
 #include "expression.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"
+#include <string.h>
 #include "performance.h"
 #include "driver/gpio.h"
 #include "io.h"
@@ -68,6 +70,15 @@
 #define TAG "MAIN"
 
 void app_main(void) {
+  // On the USB-serial-JTAG reset path (rst:0x17 -> ESP_RST_USB) the ROM leaves a
+  // fixed ~7.4KB block of stale data at 0x4ff80000, overwriting menu .bss
+  // (including s_cc_options) AFTER the C runtime's .bss-clear. Restore the region
+  // to its intended zero state before any component initializes. Gated on
+  // ESP_RST_USB so we only touch the region on the exact boot path known to
+  // corrupt it; on a clean boot there is nothing to fix and .bss is left alone.
+  esp_reset_reason_t reset_reason = esp_reset_reason();
+  if (reset_reason == ESP_RST_USB)
+    memset((void *)0x4ff80000, 0, 0x2000);
   ldo_init();
   adc_manager_init();
   revision_init(-1);
@@ -165,6 +176,8 @@ void app_main(void) {
   screensaver_init();
 
   console_repl_init();
+
+  usb_cdc_update_arm_tx();
 
   // Now that all tasks are created and memory is settled, load the UI module
   // The beat module triggers decompression of animated vector art which

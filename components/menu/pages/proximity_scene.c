@@ -4,6 +4,7 @@
 #include "scene.h"
 #include "curve.h"
 #include "continuous_mapping.h"
+#include "proximity_mode_mapping.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "assets_types.h"
@@ -28,8 +29,7 @@ static int s_current_buffer_set = 0;
 #define MAX_PROXIMITY_ITEMS 12
 static menu_item_t s_prox_items[MAX_PROXIMITY_ITEMS];
 
-static char s_enabled_label[LABEL_BUFFER_SETS][32];
-static char s_output_label[LABEL_BUFFER_SETS][32];
+static char s_mode_label[LABEL_BUFFER_SETS][40];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
@@ -39,6 +39,7 @@ static char s_velocity_mode_label[LABEL_BUFFER_SETS][32];
 static char s_velocity_label[LABEL_BUFFER_SETS][32];
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
 static char s_nudge_label[LABEL_BUFFER_SETS][32];
+static char s_direction_label[LABEL_BUFFER_SETS][32];
 
 // CC options from device
 typedef struct {
@@ -151,108 +152,57 @@ static uint32_t cc_number_to_option_index(uint8_t cc_num) {
 }
 
 // ============================================================================
-// Enabled Roller
+// Mode Roller
 // ============================================================================
 
-static void enabled_confirm_cb(uint32_t selected_index, void* user_data) {
+static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
-  
+
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
-  
+
+  const proximity_mode_mapping_t* mapping = proximity_get_mode_mapping((uint8_t)selected_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
   scene_t* scene = scene_get_current();
   if (!scene) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
-  
-  scene->proximity.enabled = (selected_index == 1);
+
+  scene->proximity.enabled = mapping->enabled;
+  scene->proximity.output_type = mapping->output_type;
   persist_scene_changes();
-  
-  // Enable/disable sensor hardware
-  if (scene->proximity.enabled) {
-    ps_enable();
-  } else {
-    ps_disable();
-  }
-  
-  ESP_LOGI(TAG, "Proximity %s", scene->proximity.enabled ? "enabled" : "disabled");
-  
+
+  if (scene->proximity.enabled) ps_enable();
+  else ps_disable();
+
+  ESP_LOGI(TAG, "Proximity mode set to: %s", mapping->display_name);
+
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, "Proximity", menu_page_proximity_scene_create);
 }
 
-static lv_obj_t* enabled_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-  
-  uint32_t current = scene->proximity.enabled ? 1 : 0;
-  return menu_create_roller_page("Proximity Sensor", "Disabled\nEnabled", current, enabled_confirm_cb, NULL);
-}
-
-static void nav_to_enabled(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Proximity Sensor", enabled_roller_create);
-}
-
-// ============================================================================
-// Output Type Roller (CC vs Notes/Theremin)
-// ============================================================================
-
-static void output_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  scene_t* scene = scene_get_current();
-  if (!scene) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
+static lv_obj_t* mode_roller_create(void) {
+  static char options[256];
+  options[0] = '\0';
+  for (uint8_t i = 0; i < NUM_PROXIMITY_USER_MODES; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, proximity_get_mode_name(i));
   }
-  
-  // Map roller index to output type
-  // 0=CC, 1=Note, 2=LFO Rate, 3=LFO Depth, 4=Tempo Nudge
-  switch (selected_index) {
-    case 0: scene->proximity.output_type = OUTPUT_TYPE_CC; break;
-    case 1: scene->proximity.output_type = OUTPUT_TYPE_NOTE; break;
-    case 2: scene->proximity.output_type = OUTPUT_TYPE_LFO_RATE; break;
-    case 3: scene->proximity.output_type = OUTPUT_TYPE_LFO_DEPTH; break;
-    case 4: scene->proximity.output_type = OUTPUT_TYPE_TEMPO_NUDGE; break;
-    default: scene->proximity.output_type = OUTPUT_TYPE_CC; break;
-  }
-  
-  persist_scene_changes();
-  
-  ESP_LOGI(TAG, "Proximity output set to type %d", (int)selected_index);
-  
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "Proximity", menu_page_proximity_scene_create);
+
+  uint32_t current_idx = proximity_get_current_mode_index(scene_get_current());
+  return menu_create_roller_page("Mode", options, current_idx, mode_confirm_cb, NULL);
 }
 
-static lv_obj_t* output_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-  
-  uint32_t current = 0;
-  switch (scene->proximity.output_type) {
-    case OUTPUT_TYPE_CC: current = 0; break;
-    case OUTPUT_TYPE_NOTE: current = 1; break;
-    case OUTPUT_TYPE_LFO_RATE: current = 2; break;
-    case OUTPUT_TYPE_LFO_DEPTH: current = 3; break;
-    case OUTPUT_TYPE_TEMPO_NUDGE: current = 4; break;
-    default: current = 0; break;
-  }
-  return menu_create_roller_page("Output",
-    "Control Change\nNotes (Theremin)\nLFO Rate\nLFO Depth\nTempo Nudge",
-    current, output_confirm_cb, NULL);
-}
-
-static void nav_to_output(void* user_data) {
+static void nav_to_mode(void* user_data) {
   (void)user_data;
-  menu_navigate_to("Output", output_roller_create);
+  menu_navigate_to("Mode", mode_roller_create);
 }
 
 // ============================================================================
@@ -352,17 +302,17 @@ static lv_obj_t* cc_slot_roller_create(void) {
   uint8_t current_cc = scene->proximity.cc_numbers[s_editing_cc_slot];
   uint32_t current_idx = (current_cc == 0) ? 0 : cc_number_to_option_index(current_cc);
   
-  char title[16];
-  snprintf(title, sizeof(title), "CC Slot %d", s_editing_cc_slot + 1);
-  
-  return menu_create_roller_page(title, s_cc_options.options_str, current_idx, 
+  char title[24];
+  snprintf(title, sizeof(title), "Control Change %d", s_editing_cc_slot + 1);
+
+  return menu_create_roller_page(title, s_cc_options.options_str, current_idx,
     cc_slot_confirm_cb, (void*)(uintptr_t)s_editing_cc_slot);
 }
 
 static void nav_to_cc_slot(void* user_data) {
   s_editing_cc_slot = (uint8_t)(uintptr_t)user_data;
-  char title[16];
-  snprintf(title, sizeof(title), "CC Slot %d", s_editing_cc_slot + 1);
+  char title[24];
+  snprintf(title, sizeof(title), "Control Change %d", s_editing_cc_slot + 1);
   menu_navigate_to(title, cc_slot_roller_create);
 }
 
@@ -573,11 +523,17 @@ static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
   
-  velocity_mode_t mode = (selected_index == 1) ? VELOCITY_MODE_GATE_VOLTAGE : VELOCITY_MODE_FIXED;
+  velocity_mode_t mode;
+  switch (selected_index) {
+    case 1: mode = VELOCITY_MODE_GATE_VOLTAGE; break;
+    case 2: mode = VELOCITY_MODE_TOUCHWHEEL; break;
+    default: mode = VELOCITY_MODE_FIXED; break;
+  }
   
   scene_set_proximity_velocity_mode(scene_get_current_index(), mode);
   
-  const char* mode_str = (mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
+  const char* mode_str = (mode == VELOCITY_MODE_FIXED) ? "Fixed" :
+    (mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
   ESP_LOGI(TAG, "Proximity velocity mode set to: %s", mode_str);
   
   s_callback_in_progress = false;
@@ -586,9 +542,14 @@ static void velocity_mode_confirm_cb(uint32_t selected_index, void* user_data) {
 
 static lv_obj_t* velocity_mode_roller_create(void) {
   velocity_mode_t current = scene_get_proximity_velocity_mode(scene_get_current_index());
-  uint32_t current_idx = (current == VELOCITY_MODE_GATE_VOLTAGE) ? 1 : 0;
+  uint32_t current_idx;
+  switch (current) {
+    case VELOCITY_MODE_GATE_VOLTAGE: current_idx = 1; break;
+    case VELOCITY_MODE_TOUCHWHEEL: current_idx = 2; break;
+    default: current_idx = 0; break;
+  }
   
-  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage", current_idx,
+  return menu_create_roller_page("Velocity Mode", "Fixed\nGate Voltage\nTouchwheel", current_idx,
     velocity_mode_confirm_cb, NULL);
 }
 
@@ -688,6 +649,42 @@ static void nav_to_nudge(void* user_data) {
 }
 
 // ============================================================================
+// Tempo Nudge Direction Roller
+// ============================================================================
+
+static const char* tempo_nudge_direction_to_string(uint8_t dir) {
+  switch (dir) {
+    case TEMPO_NUDGE_DIR_FASTER: return "Faster";
+    case TEMPO_NUDGE_DIR_SLOWER: return "Slower";
+    default: return "Both";
+  }
+}
+
+static void direction_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (selected_index > TEMPO_NUDGE_DIR_SLOWER) selected_index = TEMPO_NUDGE_DIR_BOTH;
+  scene_set_proximity_tempo_nudge_direction(scene_get_current_index(), (uint8_t)selected_index);
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Proximity", menu_page_proximity_scene_create);
+}
+
+static lv_obj_t* direction_roller_create(void) {
+  uint8_t cur = scene_get_proximity_tempo_nudge_direction(scene_get_current_index());
+  if (cur > TEMPO_NUDGE_DIR_SLOWER) cur = TEMPO_NUDGE_DIR_BOTH;
+  return menu_create_roller_page("Direction", "Both\nFaster\nSlower",
+    (uint32_t)cur, direction_confirm_cb, NULL);
+}
+
+static void nav_to_direction(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Direction", direction_roller_create);
+}
+
+// ============================================================================
 // Main Proximity Scene Page
 // ============================================================================
 
@@ -704,32 +701,36 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  
-  // Enable/Disable
-  snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "Proximity Sensor\n%s",
-    scene->proximity.enabled ? "Enabled" : "Disabled");
-  s_prox_items[item_count++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true, MENU_ITEM_KIND_ROLLER};
-  
-  // Only show more options if enabled
-  if (!scene->proximity.enabled) {
+
+  if (scene_cv_claims_source(VELOCITY_MODE_PROXIMITY)) {
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "CV/Gate\nControlled");
+    s_prox_items[item_count++] = (menu_item_t){
+      s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+    };
+    snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
+      "Polarity\n%s", polarity_to_string(scene->proximity.polarity));
+    s_prox_items[item_count++] = (menu_item_t){
+      s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
+    snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
+      "Curve\n%s", curve_type_to_string(scene->proximity.curve.type));
+    s_prox_items[item_count++] = (menu_item_t){
+      s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
     return menu_create_page_2line("Proximity", s_prox_items, item_count);
   }
   
-  // Output type selector
-  const char* output_name;
-  switch (scene->proximity.output_type) {
-    case OUTPUT_TYPE_CC: output_name = "Control Change"; break;
-    case OUTPUT_TYPE_NOTE: output_name = "Notes (Theremin)"; break;
-    case OUTPUT_TYPE_LFO_RATE: output_name = "LFO Rate"; break;
-    case OUTPUT_TYPE_LFO_DEPTH: output_name = "LFO Depth"; break;
-    case OUTPUT_TYPE_TEMPO_NUDGE: output_name = "Tempo Nudge"; break;
-    default: output_name = "Control Change"; break;
-  }
-  snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
+  uint8_t mode_idx = proximity_get_current_mode_index(scene);
+  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
+    proximity_get_mode_name(mode_idx));
   s_prox_items[item_count++] = (menu_item_t){
-    s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER
+    s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
   };
-  
+
+  if (!scene->proximity.enabled) {
+    return menu_create_page_2line("Proximity", s_prox_items, item_count);
+  }
+
   if (scene->proximity.output_type == OUTPUT_TYPE_CC) {
     // CC slots
     for (int i = 0; i < 4; i++) {
@@ -738,18 +739,18 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
         const char* cc_name = assets_get_cc_name(device, cc_num);
         if (cc_name && strcmp(cc_name, "Undefined") != 0) {
           snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-            "CC Slot %d\n%s", i + 1, cc_name);
+            "Control Change %d\n%s", i + 1, cc_name);
         } else {
           snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-            "CC Slot %d\nCC %u", i + 1, (unsigned)cc_num);
+            "Control Change %d\nCC %u", i + 1, (unsigned)cc_num);
         }
       } else {
         snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-          "CC Slot %d\nInactive", i + 1);
+          "Control Change %d\nInactive", i + 1);
       }
       s_prox_items[item_count++] = (menu_item_t){
         s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
-        MENU_ITEM_KIND_SUBMENU
+        MENU_ITEM_KIND_ROLLER
       };
     }
     
@@ -779,7 +780,8 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     
     // Velocity mode
     velocity_mode_t vel_mode = scene_get_proximity_velocity_mode(scene_get_current_index());
-    const char* vel_mode_str = (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Fixed";
+    const char* vel_mode_str = (vel_mode == VELOCITY_MODE_FIXED) ? "Fixed" :
+      (vel_mode == VELOCITY_MODE_GATE_VOLTAGE) ? "Gate Voltage" : "Touchwheel";
     snprintf(s_velocity_mode_label[buf], sizeof(s_velocity_mode_label[buf]),
       "Velocity Mode\n%s", vel_mode_str);
     s_prox_items[item_count++] = (menu_item_t){s_velocity_mode_label[buf], nav_to_velocity_mode, NULL, true, MENU_ITEM_KIND_ROLLER};
@@ -813,6 +815,13 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     snprintf(s_nudge_label[buf], sizeof(s_nudge_label[buf]),
       "Nudge %%\n%u%%", (unsigned)pct);
     s_prox_items[item_count++] = (menu_item_t){s_nudge_label[buf], nav_to_nudge, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+    uint8_t dir = scene_get_proximity_tempo_nudge_direction(scene_get_current_index());
+    snprintf(s_direction_label[buf], sizeof(s_direction_label[buf]),
+      "Direction\n%s", tempo_nudge_direction_to_string(dir));
+    s_prox_items[item_count++] = (menu_item_t){
+      s_direction_label[buf], nav_to_direction, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
   }
   
   return menu_create_page_2line("Proximity", s_prox_items, item_count);

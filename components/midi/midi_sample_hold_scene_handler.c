@@ -17,6 +17,7 @@ static smart_filter_t s_sh_filter;
 static void handle_sample_hold_event(const event_t* event, void* context) {
   (void)context;
   if (event->type != EVENT_SAMPLE_HOLD_VALUE) return;
+  if (scene_cv_claims_source(VELOCITY_MODE_SAMPLE_HOLD)) return;
   if (!midi_local_output_is_enabled()) return;
 
   scene_t* scene = scene_get_current();

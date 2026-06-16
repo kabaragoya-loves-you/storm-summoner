@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "rtg.h"
 #include "scene.h"
+#include "rtg_mode_mapping.h"
 #include "ui.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -22,7 +23,6 @@ static int s_current_buffer_set = 0;
 #define MAX_RTG_ITEMS 16
 static menu_item_t s_rtg_items[MAX_RTG_ITEMS];
 
-static char s_enabled_label[LABEL_BUFFER_SETS][32];
 static char s_generator_label[LABEL_BUFFER_SETS][32];
 static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_start_mode_label[LABEL_BUFFER_SETS][32];
@@ -58,49 +58,6 @@ static void persist_scene_changes(void) {
 }
 
 // ============================================================================
-// Enabled Roller
-// ============================================================================
-
-static void enabled_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-
-  scene_t* scene = scene_get_current();
-  if (!scene) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-
-  scene->rtg_config.enabled = (selected_index == 1);
-
-  // Apply to RTG engine
-  rtg_apply_config(&scene->rtg_config);
-
-  persist_scene_changes();
-
-  ESP_LOGI(TAG, "RTG %s", scene->rtg_config.enabled ? "enabled" : "disabled");
-
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
-}
-
-static lv_obj_t* enabled_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-
-  uint32_t current = scene->rtg_config.enabled ? 1 : 0;
-  return menu_create_roller_page("RTG", "Disabled\nEnabled", current, enabled_confirm_cb, NULL);
-}
-
-static void nav_to_enabled(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("RTG", enabled_roller_create);
-}
-
-// ============================================================================
 // Mode Roller
 // ============================================================================
 
@@ -110,6 +67,13 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
 
+  const rtg_mode_mapping_t* mapping = rtg_get_mode_mapping((uint8_t)selected_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
   scene_t* scene = scene_get_current();
   if (!scene) {
     s_callback_in_progress = false;
@@ -117,21 +81,28 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
 
-  scene->rtg_config.mode = (selected_index == 0) ? RTG_MODE_CONTINUOUS : RTG_MODE_STEP;
+  scene->rtg_config.enabled = mapping->enabled;
+  scene->rtg_config.mode = mapping->mode;
 
   rtg_apply_config(&scene->rtg_config);
   persist_scene_changes();
+
+  ESP_LOGI(TAG, "RTG mode set to: %s", mapping->display_name);
 
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
 }
 
 static lv_obj_t* mode_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
+  static char options[128];
+  options[0] = '\0';
+  for (uint8_t i = 0; i < NUM_RTG_USER_MODES; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, rtg_get_mode_name(i));
+  }
 
-  uint32_t current = (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) ? 0 : 1;
-  return menu_create_roller_page("Mode", "Continuous\nStep", current, mode_confirm_cb, NULL);
+  uint32_t current_idx = rtg_get_current_mode_index(scene_get_current());
+  return menu_create_roller_page("Mode", options, current_idx, mode_confirm_cb, NULL);
 }
 
 static void nav_to_mode(void* user_data) {
@@ -986,12 +957,13 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
   int buf = get_next_buffer_set();
   int idx = 0;
 
-  // Enabled
-  snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]),
-    "RTG: %s", scene->rtg_config.enabled ? "Enabled" : "Disabled");
-  s_rtg_items[idx++] = (menu_item_t){ s_enabled_label[buf], nav_to_enabled, NULL, false, MENU_ITEM_KIND_ROLLER };
+  uint8_t mode_idx = rtg_get_current_mode_index(scene);
+  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
+    rtg_get_mode_name(mode_idx));
+  s_rtg_items[idx++] = (menu_item_t){
+    s_mode_label[buf], nav_to_mode, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
 
-  // Only show other options when RTG is enabled
   if (!scene->rtg_config.enabled) {
     return menu_create_page("RTG", s_rtg_items, idx);
   }
@@ -1004,11 +976,6 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
     s_rtg_items[idx++] = (menu_item_t){
       s_generator_label[buf], nav_to_generator, NULL, false, MENU_ITEM_KIND_ROLLER
     };
-
-    // Mode
-    const char* mode_str = (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) ? "Continuous" : "Step";
-    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode: %s", mode_str);
-    s_rtg_items[idx++] = (menu_item_t){ s_mode_label[buf], nav_to_mode, NULL, false, MENU_ITEM_KIND_ROLLER };
 
     // Start Mode and Rate settings only apply to Continuous mode
     if (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) {

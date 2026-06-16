@@ -15,6 +15,7 @@
 #include "action_migration.h"
 #include "param_stream.h"
 #include "tempo.h"
+#include "tempo_nudge.h"
 #include "input_manager.h"
 #include "ui.h"
 #include "screensaver.h"
@@ -22,6 +23,7 @@
 #include "lfo.h"
 #include "rtg.h"
 #include "tilt.h"
+#include "sample_hold.h"
 #include "version.h"
 #include "scene_inspect.h"
 #include "cJSON.h"
@@ -66,10 +68,14 @@ static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_
 static void scene_name_to_slug(const char* name, char* slug, size_t slug_size);
 static void scene_trim_name(char *name);
 static int scene_count_json_files_on_disk(void);
+static esp_err_t scene_read_json_name(const char *filepath, char *name, size_t name_size);
+static void scene_sync_all_manifest_names_from_json(void);
+static esp_err_t scene_update_manifest_name(uint8_t scene_index, const char *name);
 static esp_err_t json_to_scene(cJSON* root, scene_t* scene);
 static void scene_init_defaults(scene_t* scene, uint8_t index);
 static void scene_cleanup_touchwheel(void);
 static void scene_setup_touchwheel_for_mode(const scene_t* scene);
+static void scene_refresh_cv_velocity_sources(void);
 static void scene_post_updated_event(uint8_t scene_index);
 static void scene_post_list_changed_event(uint8_t scene_index);
 static uint8_t scene_get_first_active_index(void);
@@ -232,6 +238,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   
   // Default touchwheel mode
   scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;
+  scene->touchwheel_mode_prev_valid = false;
   scene->touchwheel_style = TOUCHWHEEL_STYLE_ODOMETER;  // Default: position-based (~15 values)
   scene->touchwheel = continuous_mapping_create(0);     // No CC hint -- user picks on enable
   scene->touchwheel.enabled = false;                    // Disabled by default (PADS mode)
@@ -273,13 +280,13 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->tilt_x.use_idle_value = true;
   scene->tilt_x.idle_value = 64;
   scene->tilt_x.idle_timeout_ms = 1000;
-  scene->tilt_x.polarity = POLARITY_BIPOLAR;
+  scene->tilt_x.polarity = POLARITY_UNIPOLAR;
   scene->tilt_y = continuous_mapping_create(21);       // CC21 (defaults: disabled)
   scene->tilt_y.enabled = false;
   scene->tilt_y.use_idle_value = true;
   scene->tilt_y.idle_value = 64;
   scene->tilt_y.idle_timeout_ms = 1000;
-  scene->tilt_y.polarity = POLARITY_BIPOLAR;
+  scene->tilt_y.polarity = POLARITY_UNIPOLAR;
   scene->note_track = continuous_mapping_create(1);    // CC1 = Mod Wheel
   scene->note_track.enabled = false;                   // Disabled by default
 
@@ -327,15 +334,22 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->tilt_y_velocity_mode = VELOCITY_MODE_FIXED;
   scene->tilt_x_tempo_nudge_pct = 10;
   scene->tilt_y_tempo_nudge_pct = 10;
+  scene->tilt_x_tempo_nudge_direction = TEMPO_NUDGE_DIR_BOTH;
+  scene->tilt_y_tempo_nudge_direction = TEMPO_NUDGE_DIR_BOTH;
   scene->expression_tempo_nudge_pct = 10;
+  scene->expression_tempo_nudge_direction = TEMPO_NUDGE_DIR_BOTH;
   scene->cv_tempo_nudge_pct = 10;
+  scene->cv_tempo_nudge_direction = TEMPO_NUDGE_DIR_BOTH;
   scene->proximity_tempo_nudge_pct = 10;
+  scene->proximity_tempo_nudge_direction = TEMPO_NUDGE_DIR_BOTH;
   scene->touchwheel_tempo_nudge_pct = 10;
+  scene->touchwheel_tempo_nudge_direction = TEMPO_NUDGE_DIR_BOTH;
   scene->touchwheel_tempo_nudge_return = TOUCHWHEEL_NUDGE_RETURN_INSTANT;
   scene->touchwheel_aftertouch_return = TOUCHWHEEL_NUDGE_RETURN_FAST;
   scene->touchwheel_tempo_floor = 20;
   scene->touchwheel_tempo_ceiling = 300;
   scene->als_tempo_nudge_pct = 10;
+  scene->als_tempo_nudge_direction = TEMPO_NUDGE_DIR_BOTH;
   scene->lfo1_tempo_nudge_pct = 10;
   scene->lfo2_tempo_nudge_pct = 10;
   
@@ -497,7 +511,9 @@ static int s_touchwheel_pitch_bend = 0;            // -8192 to 8191, center at 0
 static int s_touchwheel_prev_pitch_bend = 0;       // Previous value for smooth interpolation
 static int s_touchwheel_aftertouch = 0;            // 0-127
 static int s_touchwheel_14bit_value = 0;           // For NRPN/RPN/DoubleCC (0-16383)
-static volatile uint8_t s_touchwheel_velocity = 100; // For TOUCHWHEEL_MODE_VELOCITY
+static volatile uint8_t s_touchwheel_velocity = 100; // For TOUCHWHEEL_MODE_VELOCITY / CV takeover
+static volatile uint8_t s_proximity_velocity_sample = 64;
+static volatile uint8_t s_als_velocity_sample = 64;
 static volatile uint8_t s_touchwheel_lfo_rate = 64;   // For TOUCHWHEEL_MODE_LFO_RATE (64 = center/default)
 static volatile uint8_t s_touchwheel_lfo_depth = 127; // For TOUCHWHEEL_MODE_LFO_DEPTH (127 = full depth)
 static volatile uint8_t s_touchwheel_rtg_rate = 64;   // For TOUCHWHEEL_MODE_RTG_RATE (64 = center/default)
@@ -833,6 +849,8 @@ static void touchwheel_pitch_bend_release_callback(void* user_data) {
 
 static uint32_t s_tw_last_tempo_apply_ms = 0;
 static uint8_t  s_tw_last_applied_midi = 64;
+static int      s_tw_last_nudge_input = -9999;
+static int      s_tw_nudge_endless_pos = 0;
 
 static int32_t s_tw_nudge_return_start_bpm = 0;
 static int32_t s_tw_nudge_return_target_bpm = 0;
@@ -853,6 +871,7 @@ static void touchwheel_nudge_return_complete(void) {
   s_tw_nudge_return_frame = 0;
   s_tw_nudge_return_total_frames = 0;
   s_tw_last_applied_midi = 64;
+  s_tw_last_nudge_input = -9999;
 }
 
 static void nudge_return_timer_cb(void* arg) {
@@ -1219,31 +1238,34 @@ static void touchwheel_rtg_rate_callback(int value, void* user_data) {
   rtg_touchwheel_rate_changed();
 }
 
-// Bipolar tempo nudge around scene->bpm; shaped to match the tilt handler.
-static void touchwheel_apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
+// Apply tempo nudge from a signed scale (-1..+1) around scene->bpm.
+static void touchwheel_apply_tempo_nudge_scale(float scale, scene_t* scene, int input_key) {
   touchwheel_stop_nudge_return();
 
   uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
   if (now_ms - s_tw_last_tempo_apply_ms < 50) return;
   s_tw_last_tempo_apply_ms = now_ms;
-  if (s_tw_last_applied_midi == midi_value) return;
-  s_tw_last_applied_midi = midi_value;
+  if (s_tw_last_nudge_input == input_key) return;
+  s_tw_last_nudge_input = input_key;
 
   uint8_t pct = scene->touchwheel_tempo_nudge_pct;
-  if (pct > 100) pct = 100;
+  uint16_t new_bpm = tempo_nudge_compute_bpm(scene->bpm, pct, scale);
+  tempo_set_bpm(new_bpm);
+  ESP_LOGD(TAG, "Touchwheel tempo nudge: scale=%.2f pct=%u -> bpm=%u (base=%d)",
+    (double)scale, (unsigned)pct, (unsigned)new_bpm, (int)scene->bpm);
+}
 
-  int32_t bpm = scene->bpm;
-  float scale = ((float)midi_value - 64.0f) / 63.0f;
+static void touchwheel_tempo_nudge_bipolar_callback(int value, void* user_data) {
+  if (!midi_local_output_is_enabled()) return;
+
+  scene_t* scene = (scene_t*)user_data;
+  if (!scene || !scene->touchwheel.enabled) return;
+  if (scene->touchwheel.output_type != OUTPUT_TYPE_TEMPO_NUDGE) return;
+
+  float scale = (float)value / 100.0f;
   if (scale > 1.0f) scale = 1.0f;
   if (scale < -1.0f) scale = -1.0f;
-  float factor = 1.0f + scale * ((float)pct / 100.0f);
-  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
-
-  tempo_set_bpm((uint16_t)new_bpm);
-  ESP_LOGD(TAG, "Touchwheel tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
-    (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+  touchwheel_apply_tempo_nudge_scale(scale, scene, value);
 }
 
 // Callback for continuous mode touchwheel (CC/Note output)
@@ -1253,7 +1275,26 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
   
   scene_t* scene = (scene_t*)user_data;
   if (!scene || !scene->touchwheel.enabled) return;
-  
+
+  if (scene->touchwheel.output_type == OUTPUT_TYPE_TEMPO_NUDGE &&
+      scene->touchwheel_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    uint8_t dir = scene->touchwheel_tempo_nudge_direction;
+    int pos = value;
+
+    if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+      s_tw_nudge_endless_pos += value;
+      if (s_tw_nudge_endless_pos < 0) s_tw_nudge_endless_pos = 0;
+      if (s_tw_nudge_endless_pos > 100) s_tw_nudge_endless_pos = 100;
+      pos = s_tw_nudge_endless_pos;
+    }
+
+    float scale = (dir == TEMPO_NUDGE_DIR_FASTER)
+      ? ((float)pos / 100.0f)
+      : -((100.0f - (float)pos) / 100.0f);
+    touchwheel_apply_tempo_nudge_scale(scale, scene, pos);
+    return;
+  }
+
   // Get device for discrete value handling
   const device_def_t* device = s_cached_device;
   uint8_t cc_num = scene->touchwheel.cc_number;
@@ -1321,7 +1362,8 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
 
   // Tempo nudge short-circuits the CC/Note path and modulates scene BPM.
   if (scene->touchwheel.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
-    touchwheel_apply_tempo_nudge(output, scene);
+    float scale = tempo_nudge_scale_bipolar(output);
+    touchwheel_apply_tempo_nudge_scale(scale, scene, (int)output);
     return;
   }
 
@@ -1399,12 +1441,17 @@ static void touchwheel_continuous_callback(int value, void* user_data) {
 // Setup touchwheel instance based on scene mode
 static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
   if (!scene) return;
+
+  touchwheel_mode_t effective_mode = scene->touchwheel_mode;
+  if (scene_cv_claims_source_for_scene(scene, VELOCITY_MODE_TOUCHWHEEL)) {
+    effective_mode = TOUCHWHEEL_MODE_VELOCITY;
+  }
   
   touchwheel_mode_processor_t* mode_proc = NULL;
   touchwheel_output_t* output = NULL;
   const char* mode_desc = NULL;
   
-  switch (scene->touchwheel_mode) {
+  switch (effective_mode) {
     case TOUCHWHEEL_MODE_PROGRAM_CHANGE:
       mode_proc = touchwheel_mode_create_endless();
       output = touchwheel_output_callback_create(touchwheel_program_change_callback, NULL);
@@ -1412,8 +1459,36 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       break;
       
     case TOUCHWHEEL_MODE_CONTINUOUS:
-      // Choose between odometer and endless based on style setting
-      if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+      if (scene->touchwheel.output_type == OUTPUT_TYPE_TEMPO_NUDGE &&
+          scene->touchwheel_tempo_nudge_direction == TEMPO_NUDGE_DIR_BOTH) {
+        mode_proc = touchwheel_mode_create_bipolar();
+        mode_desc = "tempo_nudge (bipolar)";
+        output = touchwheel_output_callback_create(
+          touchwheel_tempo_nudge_bipolar_callback, (void*)scene);
+        if (output) {
+          touchwheel_output_set_release_callback(
+            output, touchwheel_continuous_release_callback);
+        }
+        s_tw_last_nudge_input = -9999;
+      } else if (scene->touchwheel.output_type == OUTPUT_TYPE_TEMPO_NUDGE) {
+        uint8_t dir = scene->touchwheel_tempo_nudge_direction;
+        int start_pos = (dir == TEMPO_NUDGE_DIR_SLOWER) ? 100 : 0;
+        s_tw_nudge_endless_pos = start_pos;
+        if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
+          mode_proc = touchwheel_mode_create_endless();
+          mode_desc = "tempo_nudge (endless)";
+        } else {
+          mode_proc = touchwheel_mode_create_odometer();
+          touchwheel_mode_set_value(mode_proc, start_pos);
+          mode_desc = "tempo_nudge (odometer)";
+        }
+        output = touchwheel_output_callback_create(touchwheel_continuous_callback, (void*)scene);
+        if (output) {
+          touchwheel_output_set_release_callback(
+            output, touchwheel_continuous_release_callback);
+        }
+        s_tw_last_nudge_input = -9999;
+      } else if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) {
         mode_proc = touchwheel_mode_create_endless();
         mode_desc = "continuous (endless)";
         // Apply initial value for CC endless mode
@@ -1424,10 +1499,11 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "continuous (odometer)";
       }
-      output = touchwheel_output_callback_create(touchwheel_continuous_callback, (void*)scene);
-      // Register release callback for note mode (sends note off when touch is released)
-      if (output) {
-        touchwheel_output_set_release_callback(output, touchwheel_continuous_release_callback);
+      if (!output) {
+        output = touchwheel_output_callback_create(touchwheel_continuous_callback, (void*)scene);
+        if (output) {
+          touchwheel_output_set_release_callback(output, touchwheel_continuous_release_callback);
+        }
       }
       // Reset state when mode is initialized
       s_touchwheel_note_active = false;
@@ -1946,6 +2022,10 @@ esp_err_t scene_init(void) {
       if (scene_rebuild_manifest_from_disk(false) == ESP_OK)
         ret = scene_load_manifest();
     }
+  }
+
+  if (g_scene_manager.manifest && g_scene_manager.num_scenes > 0) {
+    scene_sync_all_manifest_names_from_json();
   }
   
   // Load first scene in manifest order into cache slot 0
@@ -3614,6 +3694,10 @@ esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   } else if (is_current && mode != old_mode) {
     input_set_mode(mode);
   }
+
+  if (is_current && (mode == INPUT_MODE_NOTE || old_mode == INPUT_MODE_NOTE)) {
+    scene_refresh_cv_velocity_sources();
+  }
   
   const char* mode_str = (mode == INPUT_MODE_NONE) ? "none" :
                          (mode == INPUT_MODE_CV) ? "cv" :
@@ -3847,14 +3931,224 @@ bool scene_get_send_clock(uint8_t scene_index) {
   return scene ? scene->send_clock : true;  // Default to true if no scene
 }
 
-// Helper to get velocity mode name
+// Helper to get velocity mode name (note-output modules: fixed/gate/touchwheel only)
 static const char* velocity_mode_to_string(velocity_mode_t mode) {
   switch (mode) {
-    case VELOCITY_MODE_FIXED: return "Fixed";
     case VELOCITY_MODE_GATE_VOLTAGE: return "Gate Voltage";
     case VELOCITY_MODE_TOUCHWHEEL: return "Touchwheel";
-    default: return "Unknown";
+    case VELOCITY_MODE_FIXED:
+    default: return "Fixed";
   }
+}
+
+static const char* touchwheel_mode_json_str(touchwheel_mode_t mode) {
+  switch (mode) {
+    case TOUCHWHEEL_MODE_PADS: return "pads";
+    case TOUCHWHEEL_MODE_PROGRAM_CHANGE: return "program_change";
+    case TOUCHWHEEL_MODE_SET_TEMPO: return "set_tempo";
+    case TOUCHWHEEL_MODE_PITCH_BEND: return "pitch_bend";
+    case TOUCHWHEEL_MODE_AFTERTOUCH: return "aftertouch";
+    case TOUCHWHEEL_MODE_DOUBLE_CC: return "double_cc";
+    case TOUCHWHEEL_MODE_VELOCITY: return "velocity";
+    case TOUCHWHEEL_MODE_LFO_RATE: return "lfo_rate";
+    case TOUCHWHEEL_MODE_LFO_DEPTH: return "lfo_depth";
+    case TOUCHWHEEL_MODE_RTG_RATE: return "rtg_rate";
+    default: return "continuous";
+  }
+}
+
+static touchwheel_mode_t touchwheel_mode_from_json_str(const char* mode_str) {
+  if (!mode_str) return TOUCHWHEEL_MODE_PADS;
+  if (strcmp(mode_str, "pads") == 0 || strcmp(mode_str, "buttons") == 0) return TOUCHWHEEL_MODE_PADS;
+  if (strcmp(mode_str, "program_change") == 0) return TOUCHWHEEL_MODE_PROGRAM_CHANGE;
+  if (strcmp(mode_str, "continuous") == 0) return TOUCHWHEEL_MODE_CONTINUOUS;
+  if (strcmp(mode_str, "set_tempo") == 0) return TOUCHWHEEL_MODE_SET_TEMPO;
+  if (strcmp(mode_str, "pitch_bend") == 0) return TOUCHWHEEL_MODE_PITCH_BEND;
+  if (strcmp(mode_str, "aftertouch") == 0) return TOUCHWHEEL_MODE_AFTERTOUCH;
+  if (strcmp(mode_str, "double_cc") == 0) return TOUCHWHEEL_MODE_DOUBLE_CC;
+  if (strcmp(mode_str, "velocity") == 0) return TOUCHWHEEL_MODE_VELOCITY;
+  if (strcmp(mode_str, "lfo_rate") == 0) return TOUCHWHEEL_MODE_LFO_RATE;
+  if (strcmp(mode_str, "lfo_depth") == 0) return TOUCHWHEEL_MODE_LFO_DEPTH;
+  if (strcmp(mode_str, "rtg_rate") == 0) return TOUCHWHEEL_MODE_RTG_RATE;
+  return TOUCHWHEEL_MODE_PADS;
+}
+
+static void scene_fixup_touchwheel_orphan(scene_t* scene) {
+  if (!scene) return;
+  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) return;
+  if (scene_cv_claims_source_for_scene(scene, VELOCITY_MODE_TOUCHWHEEL)) return;
+  if (scene->touchwheel_mode_prev_valid) {
+    scene->touchwheel_mode = scene->touchwheel_mode_prev;
+    scene->touchwheel_mode_prev_valid = false;
+  } else {
+    scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;
+  }
+}
+
+static void scene_reconcile_touchwheel_for_cv_velocity(scene_t* scene,
+    velocity_mode_t old_mode, velocity_mode_t new_mode) {
+  if (!scene) return;
+
+  if (new_mode == VELOCITY_MODE_TOUCHWHEEL && old_mode != VELOCITY_MODE_TOUCHWHEEL) {
+    if (scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY && !scene->touchwheel_mode_prev_valid) {
+      scene->touchwheel_mode_prev = scene->touchwheel_mode;
+      scene->touchwheel_mode_prev_valid = true;
+    }
+  }
+
+  if (old_mode == VELOCITY_MODE_TOUCHWHEEL && new_mode != VELOCITY_MODE_TOUCHWHEEL) {
+    scene_fixup_touchwheel_orphan(scene);
+  } else if (new_mode != VELOCITY_MODE_TOUCHWHEEL) {
+    scene_fixup_touchwheel_orphan(scene);
+  }
+}
+
+touchwheel_mode_t scene_get_effective_touchwheel_mode(const scene_t* scene) {
+  if (!scene) return TOUCHWHEEL_MODE_PADS;
+  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) return scene->touchwheel_mode;
+  if (scene_cv_claims_source_for_scene(scene, VELOCITY_MODE_TOUCHWHEEL)) return TOUCHWHEEL_MODE_VELOCITY;
+  if (scene->touchwheel_mode_prev_valid) return scene->touchwheel_mode_prev;
+  return TOUCHWHEEL_MODE_PADS;
+}
+
+static void scene_refresh_cv_velocity_sources(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  scene_cleanup_touchwheel();
+  scene_setup_touchwheel_for_mode(scene);
+}
+
+static uint8_t scene_clamp_midi_velocity(uint8_t vel) {
+  if (vel < 1) return 1;
+  if (vel > 127) return 127;
+  return vel;
+}
+
+bool scene_cv_claims_source_for_scene(const scene_t* scene, velocity_mode_t source) {
+  if (!scene) return false;
+  return scene->cv_input_mode == INPUT_MODE_NOTE && scene->cv_velocity_mode == source;
+}
+
+bool scene_cv_claims_source(velocity_mode_t source) {
+  return scene_cv_claims_source_for_scene(scene_get_current(), source);
+}
+
+void scene_set_proximity_velocity_sample(uint8_t midi_value) {
+  s_proximity_velocity_sample = midi_value;
+}
+
+uint8_t scene_get_proximity_velocity_sample(void) {
+  return s_proximity_velocity_sample;
+}
+
+void scene_set_als_velocity_sample(uint8_t midi_value) {
+  s_als_velocity_sample = midi_value;
+}
+
+uint8_t scene_get_als_velocity_sample(void) {
+  return s_als_velocity_sample;
+}
+
+const char* scene_cv_velocity_mode_display_name(velocity_mode_t mode) {
+  switch (mode) {
+    case VELOCITY_MODE_GATE_VOLTAGE: return "Gate Voltage";
+    case VELOCITY_MODE_TOUCHWHEEL: return "Touchwheel";
+    case VELOCITY_MODE_PROXIMITY: return "Proximity";
+    case VELOCITY_MODE_ALS: return "ALS";
+    case VELOCITY_MODE_TILT_X: return "Tilt X";
+    case VELOCITY_MODE_TILT_Y: return "Tilt Y";
+    case VELOCITY_MODE_LFO1: return "LFO 1";
+    case VELOCITY_MODE_LFO2: return "LFO 2";
+    case VELOCITY_MODE_SAMPLE_HOLD: return "S+H";
+    case VELOCITY_MODE_FIXED:
+    default: return "Fixed";
+  }
+}
+
+static const char* velocity_mode_json_str(velocity_mode_t mode) {
+  switch (mode) {
+    case VELOCITY_MODE_GATE_VOLTAGE: return "gate_voltage";
+    case VELOCITY_MODE_TOUCHWHEEL: return "touchwheel";
+    case VELOCITY_MODE_PROXIMITY: return "proximity";
+    case VELOCITY_MODE_ALS: return "als";
+    case VELOCITY_MODE_TILT_X: return "tilt_x";
+    case VELOCITY_MODE_TILT_Y: return "tilt_y";
+    case VELOCITY_MODE_LFO1: return "lfo1";
+    case VELOCITY_MODE_LFO2: return "lfo2";
+    case VELOCITY_MODE_SAMPLE_HOLD: return "sample_hold";
+    case VELOCITY_MODE_FIXED:
+    default: return "fixed";
+  }
+}
+
+static velocity_mode_t velocity_mode_from_json_str(const char* mode_str) {
+  if (!mode_str) return VELOCITY_MODE_FIXED;
+  if (strcmp(mode_str, "gate_voltage") == 0) return VELOCITY_MODE_GATE_VOLTAGE;
+  if (strcmp(mode_str, "touchwheel") == 0) return VELOCITY_MODE_TOUCHWHEEL;
+  if (strcmp(mode_str, "proximity") == 0) return VELOCITY_MODE_PROXIMITY;
+  if (strcmp(mode_str, "als") == 0) return VELOCITY_MODE_ALS;
+  if (strcmp(mode_str, "tilt_x") == 0) return VELOCITY_MODE_TILT_X;
+  if (strcmp(mode_str, "tilt_y") == 0) return VELOCITY_MODE_TILT_Y;
+  if (strcmp(mode_str, "lfo1") == 0) return VELOCITY_MODE_LFO1;
+  if (strcmp(mode_str, "lfo2") == 0) return VELOCITY_MODE_LFO2;
+  if (strcmp(mode_str, "sample_hold") == 0) return VELOCITY_MODE_SAMPLE_HOLD;
+  return VELOCITY_MODE_FIXED;
+}
+
+static velocity_mode_t velocity_mode_from_json_str_notes_only(const char* mode_str) {
+  velocity_mode_t mode = velocity_mode_from_json_str(mode_str);
+  if (mode <= VELOCITY_MODE_TOUCHWHEEL) return mode;
+  return VELOCITY_MODE_FIXED;
+}
+
+static const char* velocity_mode_json_str_notes_only(velocity_mode_t mode) {
+  if (mode > VELOCITY_MODE_TOUCHWHEEL) return "fixed";
+  return velocity_mode_json_str(mode);
+}
+
+uint8_t scene_get_cv_gate_velocity(int16_t gate_raw_adc) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return 100;
+
+  uint8_t vel = 100;
+  switch (scene->cv_velocity_mode) {
+    case VELOCITY_MODE_FIXED:
+      vel = scene->cv_velocity;
+      if (vel == 0) vel = 100;
+      break;
+    case VELOCITY_MODE_GATE_VOLTAGE:
+      vel = (uint8_t)((gate_raw_adc * 127) / 4095);
+      break;
+    case VELOCITY_MODE_TOUCHWHEEL:
+      vel = s_touchwheel_velocity;
+      break;
+    case VELOCITY_MODE_PROXIMITY:
+      vel = s_proximity_velocity_sample;
+      break;
+    case VELOCITY_MODE_ALS:
+      vel = s_als_velocity_sample;
+      break;
+    case VELOCITY_MODE_TILT_X:
+      vel = tilt_get_midi(TILT_AXIS_X);
+      break;
+    case VELOCITY_MODE_TILT_Y:
+      vel = tilt_get_midi(TILT_AXIS_Y);
+      break;
+    case VELOCITY_MODE_LFO1:
+      vel = lfo_get_value(0);
+      break;
+    case VELOCITY_MODE_LFO2:
+      vel = lfo_get_value(1);
+      break;
+    case VELOCITY_MODE_SAMPLE_HOLD:
+      vel = sample_hold_get_value();
+      break;
+    default:
+      vel = scene->cv_velocity;
+      if (vel == 0) vel = 100;
+      break;
+  }
+  return scene_clamp_midi_velocity(vel);
 }
 
 esp_err_t scene_set_cv_velocity_mode(uint8_t scene_index, velocity_mode_t mode) {
@@ -3863,10 +4157,17 @@ esp_err_t scene_set_cv_velocity_mode(uint8_t scene_index, velocity_mode_t mode) 
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
+  velocity_mode_t old_mode = scene->cv_velocity_mode;
   scene->cv_velocity_mode = mode;
+  scene_reconcile_touchwheel_for_cv_velocity(scene, old_mode, mode);
   scene_persist_if_programming();
+
+  if (scene_index == g_scene_manager.current_scene_index) {
+    scene_refresh_cv_velocity_sources();
+  }
   
-  ESP_LOGI(TAG, "Scene %d CV velocity mode set to %s", scene_index + 1, velocity_mode_to_string(mode));
+  ESP_LOGI(TAG, "Scene %d CV velocity mode set to %s", scene_index + 1,
+    scene_cv_velocity_mode_display_name(mode));
   return ESP_OK;
 }
 
@@ -4249,9 +4550,115 @@ uint8_t scene_get_lfo2_tempo_nudge_pct(uint8_t scene_index) {
   return scene ? scene->lfo2_tempo_nudge_pct : 10;
 }
 
+static uint8_t clamp_tempo_nudge_direction(uint8_t direction) {
+  return direction > TEMPO_NUDGE_DIR_SLOWER ? TEMPO_NUDGE_DIR_BOTH : direction;
+}
+
+esp_err_t scene_set_tilt_x_tempo_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->tilt_x_tempo_nudge_direction = clamp_tempo_nudge_direction(direction);
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_tilt_x_tempo_nudge_direction(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->tilt_x_tempo_nudge_direction : TEMPO_NUDGE_DIR_BOTH;
+}
+
+esp_err_t scene_set_tilt_y_tempo_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->tilt_y_tempo_nudge_direction = clamp_tempo_nudge_direction(direction);
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_tilt_y_tempo_nudge_direction(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->tilt_y_tempo_nudge_direction : TEMPO_NUDGE_DIR_BOTH;
+}
+
+esp_err_t scene_set_expression_tempo_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->expression_tempo_nudge_direction = clamp_tempo_nudge_direction(direction);
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_expression_tempo_nudge_direction(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->expression_tempo_nudge_direction : TEMPO_NUDGE_DIR_BOTH;
+}
+
+esp_err_t scene_set_cv_tempo_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->cv_tempo_nudge_direction = clamp_tempo_nudge_direction(direction);
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_cv_tempo_nudge_direction(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->cv_tempo_nudge_direction : TEMPO_NUDGE_DIR_BOTH;
+}
+
+esp_err_t scene_set_proximity_tempo_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->proximity_tempo_nudge_direction = clamp_tempo_nudge_direction(direction);
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_proximity_tempo_nudge_direction(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->proximity_tempo_nudge_direction : TEMPO_NUDGE_DIR_BOTH;
+}
+
+esp_err_t scene_set_touchwheel_tempo_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->touchwheel_tempo_nudge_direction = clamp_tempo_nudge_direction(direction);
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_touchwheel_tempo_nudge_direction(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->touchwheel_tempo_nudge_direction : TEMPO_NUDGE_DIR_BOTH;
+}
+
+esp_err_t scene_set_als_tempo_nudge_direction(uint8_t scene_index, uint8_t direction) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  scene->als_tempo_nudge_direction = clamp_tempo_nudge_direction(direction);
+  scene_persist_if_programming();
+  return ESP_OK;
+}
+
+uint8_t scene_get_als_tempo_nudge_direction(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->als_tempo_nudge_direction : TEMPO_NUDGE_DIR_BOTH;
+}
+
 uint8_t scene_get_touchwheel_velocity(void) {
   scene_t* scene = scene_get_current();
-  if (!scene || scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) {
+  if (!scene) return 100;
+  if (scene_cv_claims_source_for_scene(scene, VELOCITY_MODE_TOUCHWHEEL)) {
+    return s_touchwheel_velocity ? s_touchwheel_velocity : 100;
+  }
+  if (scene->touchwheel_mode != TOUCHWHEEL_MODE_VELOCITY) {
     return 100;  // Default velocity when not in velocity mode
   }
   return s_touchwheel_velocity;
@@ -6502,6 +6909,10 @@ static cJSON* scene_to_json(const scene_t* scene) {
     default: tw_mode_str = "continuous"; break;
   }
   cJSON_AddStringToObject(root, "touchwheel_mode", tw_mode_str);
+  if (scene->touchwheel_mode_prev_valid) {
+    cJSON_AddStringToObject(root, "touchwheel_mode_prev",
+      touchwheel_mode_json_str(scene->touchwheel_mode_prev));
+  }
   const char* tw_style_str = (scene->touchwheel_style == TOUCHWHEEL_STYLE_BIPOLAR) ? "bipolar" :
                              (scene->touchwheel_style == TOUCHWHEEL_STYLE_ENDLESS) ? "endless" : "odometer";
   cJSON_AddStringToObject(root, "touchwheel_style", tw_style_str);
@@ -6579,12 +6990,9 @@ static cJSON* scene_to_json(const scene_t* scene) {
                             (scene->cv_input_mode == INPUT_MODE_TRIGGER) ? "trigger" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
   
-  // Serialize velocity mode settings (helper inline)
-  #define VEL_MODE_STR(m) ((m) == VELOCITY_MODE_GATE_VOLTAGE ? "gate_voltage" : \
-                           (m) == VELOCITY_MODE_TOUCHWHEEL ? "touchwheel" : "fixed")
-  
-  // CV velocity mode and value
-  cJSON_AddStringToObject(root, "cv_velocity_mode", VEL_MODE_STR(scene->cv_velocity_mode));
+  // Serialize velocity mode settings
+  cJSON_AddStringToObject(root, "cv_velocity_mode",
+    velocity_mode_json_str(scene->cv_velocity_mode));
   cJSON_AddNumberToObject(root, "cv_velocity", scene->cv_velocity);
 
   // CV Trigger mode configuration
@@ -6605,12 +7013,17 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddStringToObject(audio_config, "polarity", audio_pol_str);
   cJSON_AddItemToObject(root, "audio_config", audio_config);
   
-  // Other continuous input velocity modes
-  cJSON_AddStringToObject(root, "expression_velocity_mode", VEL_MODE_STR(scene->expression_velocity_mode));
-  cJSON_AddStringToObject(root, "proximity_velocity_mode", VEL_MODE_STR(scene->proximity_velocity_mode));
-  cJSON_AddStringToObject(root, "als_velocity_mode", VEL_MODE_STR(scene->als_velocity_mode));
-  cJSON_AddStringToObject(root, "tilt_x_velocity_mode", VEL_MODE_STR(scene->tilt_x_velocity_mode));
-  cJSON_AddStringToObject(root, "tilt_y_velocity_mode", VEL_MODE_STR(scene->tilt_y_velocity_mode));
+  // Other continuous input velocity modes (note-output only: fixed/gate/touchwheel)
+  cJSON_AddStringToObject(root, "expression_velocity_mode",
+    velocity_mode_json_str_notes_only(scene->expression_velocity_mode));
+  cJSON_AddStringToObject(root, "proximity_velocity_mode",
+    velocity_mode_json_str_notes_only(scene->proximity_velocity_mode));
+  cJSON_AddStringToObject(root, "als_velocity_mode",
+    velocity_mode_json_str_notes_only(scene->als_velocity_mode));
+  cJSON_AddStringToObject(root, "tilt_x_velocity_mode",
+    velocity_mode_json_str_notes_only(scene->tilt_x_velocity_mode));
+  cJSON_AddStringToObject(root, "tilt_y_velocity_mode",
+    velocity_mode_json_str_notes_only(scene->tilt_y_velocity_mode));
   cJSON_AddNumberToObject(root, "tilt_x_tempo_nudge_pct", scene->tilt_x_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "tilt_y_tempo_nudge_pct", scene->tilt_y_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "expression_tempo_nudge_pct", scene->expression_tempo_nudge_pct);
@@ -6635,8 +7048,33 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON_AddNumberToObject(root, "lfo1_tempo_nudge_pct", scene->lfo1_tempo_nudge_pct);
   cJSON_AddNumberToObject(root, "lfo2_tempo_nudge_pct", scene->lfo2_tempo_nudge_pct);
 
-  #undef VEL_MODE_STR
-  
+  if (scene->tilt_x_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    cJSON_AddNumberToObject(root, "tilt_x_tempo_nudge_direction",
+      scene->tilt_x_tempo_nudge_direction);
+  }
+  if (scene->tilt_y_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    cJSON_AddNumberToObject(root, "tilt_y_tempo_nudge_direction",
+      scene->tilt_y_tempo_nudge_direction);
+  }
+  if (scene->expression_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    cJSON_AddNumberToObject(root, "expression_tempo_nudge_direction",
+      scene->expression_tempo_nudge_direction);
+  }
+  if (scene->cv_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    cJSON_AddNumberToObject(root, "cv_tempo_nudge_direction", scene->cv_tempo_nudge_direction);
+  }
+  if (scene->proximity_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    cJSON_AddNumberToObject(root, "proximity_tempo_nudge_direction",
+      scene->proximity_tempo_nudge_direction);
+  }
+  if (scene->touchwheel_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    cJSON_AddNumberToObject(root, "touchwheel_tempo_nudge_direction",
+      scene->touchwheel_tempo_nudge_direction);
+  }
+  if (scene->als_tempo_nudge_direction != TEMPO_NUDGE_DIR_BOTH) {
+    cJSON_AddNumberToObject(root, "als_tempo_nudge_direction", scene->als_tempo_nudge_direction);
+  }
+
   // Serialize tempo settings
   cJSON_AddNumberToObject(root, "bpm", scene->bpm);
   
@@ -6766,6 +7204,14 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
       scene->touchwheel_mode = TOUCHWHEEL_MODE_CONTINUOUS;
     }
     else scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;
+  }
+
+  cJSON* tw_mode_prev = cJSON_GetObjectItem(root, "touchwheel_mode_prev");
+  if (tw_mode_prev && cJSON_IsString(tw_mode_prev)) {
+    scene->touchwheel_mode_prev = touchwheel_mode_from_json_str(tw_mode_prev->valuestring);
+    scene->touchwheel_mode_prev_valid = true;
+  } else {
+    scene->touchwheel_mode_prev_valid = false;
   }
   
   // Deserialize touchwheel style (odometer, endless, or bipolar)
@@ -6974,7 +7420,36 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
 
   cJSON* tnpl2 = cJSON_GetObjectItem(root, "lfo2_tempo_nudge_pct");
   if (tnpl2 && cJSON_IsNumber(tnpl2)) scene->lfo2_tempo_nudge_pct = (uint8_t)tnpl2->valueint;
-  
+
+  cJSON* tnd_x = cJSON_GetObjectItem(root, "tilt_x_tempo_nudge_direction");
+  if (tnd_x && cJSON_IsNumber(tnd_x)) {
+    scene->tilt_x_tempo_nudge_direction = clamp_tempo_nudge_direction((uint8_t)tnd_x->valueint);
+  }
+  cJSON* tnd_y = cJSON_GetObjectItem(root, "tilt_y_tempo_nudge_direction");
+  if (tnd_y && cJSON_IsNumber(tnd_y)) {
+    scene->tilt_y_tempo_nudge_direction = clamp_tempo_nudge_direction((uint8_t)tnd_y->valueint);
+  }
+  cJSON* tnd_e = cJSON_GetObjectItem(root, "expression_tempo_nudge_direction");
+  if (tnd_e && cJSON_IsNumber(tnd_e)) {
+    scene->expression_tempo_nudge_direction = clamp_tempo_nudge_direction((uint8_t)tnd_e->valueint);
+  }
+  cJSON* tnd_cv = cJSON_GetObjectItem(root, "cv_tempo_nudge_direction");
+  if (tnd_cv && cJSON_IsNumber(tnd_cv)) {
+    scene->cv_tempo_nudge_direction = clamp_tempo_nudge_direction((uint8_t)tnd_cv->valueint);
+  }
+  cJSON* tnd_p = cJSON_GetObjectItem(root, "proximity_tempo_nudge_direction");
+  if (tnd_p && cJSON_IsNumber(tnd_p)) {
+    scene->proximity_tempo_nudge_direction = clamp_tempo_nudge_direction((uint8_t)tnd_p->valueint);
+  }
+  cJSON* tnd_tw = cJSON_GetObjectItem(root, "touchwheel_tempo_nudge_direction");
+  if (tnd_tw && cJSON_IsNumber(tnd_tw)) {
+    scene->touchwheel_tempo_nudge_direction = clamp_tempo_nudge_direction((uint8_t)tnd_tw->valueint);
+  }
+  cJSON* tnd_a = cJSON_GetObjectItem(root, "als_tempo_nudge_direction");
+  if (tnd_a && cJSON_IsNumber(tnd_a)) {
+    scene->als_tempo_nudge_direction = clamp_tempo_nudge_direction((uint8_t)tnd_a->valueint);
+  }
+
   // Deserialize expression jack mode
   cJSON* expr_mode = cJSON_GetObjectItem(root, "expression_mode");
   if (expr_mode && cJSON_IsString(expr_mode)) {
@@ -7057,20 +7532,12 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   // INPUT_MODE_NOTE: enabled is managed by input_manager at runtime
   // INPUT_MODE_CLOCK_SYNC: CV is used for tempo, not continuous routing
   
-  // Helper to parse velocity mode from JSON string
-  #define PARSE_VEL_MODE(json_obj, target) do { \
-    if ((json_obj) && cJSON_IsString(json_obj)) { \
-      const char* _mode_str = (json_obj)->valuestring; \
-      if (strcmp(_mode_str, "gate_voltage") == 0) (target) = VELOCITY_MODE_GATE_VOLTAGE; \
-      else if (strcmp(_mode_str, "touchwheel") == 0) (target) = VELOCITY_MODE_TOUCHWHEEL; \
-      else (target) = VELOCITY_MODE_FIXED; \
-    } \
-  } while(0)
-  
   // Deserialize CV velocity mode settings (check both old and new field names)
   cJSON* cv_vel_mode = cJSON_GetObjectItem(root, "cv_velocity_mode");
   if (!cv_vel_mode) cv_vel_mode = cJSON_GetObjectItem(root, "note_velocity_mode");  // Backward compat
-  PARSE_VEL_MODE(cv_vel_mode, scene->cv_velocity_mode);
+  if (cv_vel_mode && cJSON_IsString(cv_vel_mode)) {
+    scene->cv_velocity_mode = velocity_mode_from_json_str(cv_vel_mode->valuestring);
+  }
   
   cJSON* cv_vel = cJSON_GetObjectItem(root, "cv_velocity");
   if (!cv_vel) cv_vel = cJSON_GetObjectItem(root, "note_fixed_velocity");  // Backward compat
@@ -7152,14 +7619,20 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     }
   }
   
-  // Deserialize other velocity modes
-  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "expression_velocity_mode"), scene->expression_velocity_mode);
-  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "proximity_velocity_mode"), scene->proximity_velocity_mode);
-  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "als_velocity_mode"), scene->als_velocity_mode);
-  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "tilt_x_velocity_mode"), scene->tilt_x_velocity_mode);
-  PARSE_VEL_MODE(cJSON_GetObjectItem(root, "tilt_y_velocity_mode"), scene->tilt_y_velocity_mode);
-  
-  #undef PARSE_VEL_MODE
+  // Deserialize other velocity modes (note-output modules: fixed/gate/touchwheel only)
+  #define PARSE_NOTE_VEL_MODE(json_obj, target) do { \
+    if ((json_obj) && cJSON_IsString(json_obj)) { \
+      (target) = velocity_mode_from_json_str_notes_only((json_obj)->valuestring); \
+    } \
+  } while(0)
+
+  PARSE_NOTE_VEL_MODE(cJSON_GetObjectItem(root, "expression_velocity_mode"), scene->expression_velocity_mode);
+  PARSE_NOTE_VEL_MODE(cJSON_GetObjectItem(root, "proximity_velocity_mode"), scene->proximity_velocity_mode);
+  PARSE_NOTE_VEL_MODE(cJSON_GetObjectItem(root, "als_velocity_mode"), scene->als_velocity_mode);
+  PARSE_NOTE_VEL_MODE(cJSON_GetObjectItem(root, "tilt_x_velocity_mode"), scene->tilt_x_velocity_mode);
+  PARSE_NOTE_VEL_MODE(cJSON_GetObjectItem(root, "tilt_y_velocity_mode"), scene->tilt_y_velocity_mode);
+
+  #undef PARSE_NOTE_VEL_MODE
   
   // Deserialize tempo settings
   cJSON* bpm_json = cJSON_GetObjectItem(root, "bpm");
@@ -7265,6 +7738,8 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   }
   // Output mapping has no separate enable UI; keep it in sync with the engine.
   scene->sample_hold.enabled = scene->sample_hold_config.enabled;
+
+  scene_fixup_touchwheel_orphan(scene);
 
   return ESP_OK;
 }
@@ -7526,7 +8001,15 @@ static esp_err_t scene_load_into_cache_slot(int cache_idx, uint8_t scene_index) 
   free(json_str);
   if (!root) return ESP_ERR_INVALID_ARG;
 
+  bool preserve_send_clock = g_scene_manager.cache[cache_idx].valid &&
+    g_scene_manager.cache[cache_idx].index == scene_index;
+  bool prev_send_clock = preserve_send_clock
+    ? g_scene_manager.cache[cache_idx].scene.send_clock : true;
+
   scene_init_defaults(&g_scene_manager.cache[cache_idx].scene, scene_index);
+  if (preserve_send_clock)
+    g_scene_manager.cache[cache_idx].scene.send_clock = prev_send_clock;
+
   esp_err_t ret = json_to_scene(root, &g_scene_manager.cache[cache_idx].scene);
   cJSON_Delete(root);
 
@@ -7621,14 +8104,15 @@ esp_err_t scene_reload_index(uint8_t scene_index) {
   if (!g_scene_manager.initialized) return ESP_ERR_INVALID_STATE;
   if (!scene_index_in_manifest(scene_index)) return ESP_ERR_NOT_FOUND;
 
-  scene_invalidate_cache_index(scene_index);
-
-  if (scene_index != g_scene_manager.current_scene_index)
+  if (scene_index != g_scene_manager.current_scene_index) {
+    scene_invalidate_cache_index(scene_index);
     return ESP_OK;
+  }
 
   int cache_idx = g_scene_manager.current_cache_idx;
   esp_err_t ret = scene_load_into_cache_slot(cache_idx, scene_index);
   if (ret != ESP_OK) {
+    scene_invalidate_cache_index(scene_index);
     ESP_LOGW(TAG, "scene_reload_index: load failed for %u", (unsigned)scene_index);
     return ret;
   }
@@ -7794,6 +8278,10 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
     return ESP_ERR_INVALID_ARG;
   }
 
+  char saved_name[sizeof(scratch->name)];
+  strncpy(saved_name, scratch->name, sizeof(saved_name) - 1);
+  saved_name[sizeof(saved_name) - 1] = '\0';
+
   cJSON *out = scene_to_json(scratch);
   heap_caps_free(scratch);
   if (!out) return ESP_ERR_NO_MEM;
@@ -7814,8 +8302,14 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
   free(json_str);
 
   ESP_LOGI(TAG, "SCENE_PUT wrote scene %u (%s)", (unsigned)scene_index, filepath);
-  scene_invalidate_cache_index(scene_index);
   ret = scene_reload_index(scene_index);
+  if (ret == ESP_OK) {
+    esp_err_t name_err = scene_update_manifest_name(scene_index, saved_name);
+    if (name_err != ESP_OK && name_err != ESP_ERR_NOT_FOUND) {
+      ESP_LOGW(TAG, "SCENE_PUT manifest name sync failed: %s",
+        esp_err_to_name(name_err));
+    }
+  }
   if (ret == ESP_OK && scene_index != g_scene_manager.current_scene_index)
     scene_post_updated_event(scene_index);
   return ret;
@@ -7897,6 +8391,63 @@ static esp_err_t scene_read_json_name(const char *filepath, char *name, size_t n
   }
   cJSON_Delete(root);
   return ESP_OK;
+}
+
+static esp_err_t scene_update_manifest_name(uint8_t scene_index, const char *name) {
+  if (!name || name[0] == '\0') return ESP_ERR_INVALID_ARG;
+  if (!g_scene_manager.manifest) return ESP_ERR_INVALID_STATE;
+
+  int pos = -1;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == scene_index) {
+      pos = i;
+      break;
+    }
+  }
+  if (pos < 0) return ESP_ERR_NOT_FOUND;
+  if (strcmp(g_scene_manager.manifest[pos].name, name) == 0) return ESP_OK;
+
+  strncpy(g_scene_manager.manifest[pos].name, name,
+    sizeof(g_scene_manager.manifest[pos].name) - 1);
+  g_scene_manager.manifest[pos].name[
+    sizeof(g_scene_manager.manifest[pos].name) - 1] = '\0';
+
+  esp_err_t err = scene_save_manifest();
+  if (err == ESP_OK) scene_post_list_changed_event(scene_index);
+  return err;
+}
+
+static void scene_sync_all_manifest_names_from_json(void) {
+  if (!g_scene_manager.manifest || g_scene_manager.num_scenes == 0) return;
+
+  bool changed = false;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    char filepath[320];
+    snprintf(filepath, sizeof(filepath), "%s/%s", SCENES_BASE_PATH,
+      g_scene_manager.manifest[i].filename);
+
+    char json_name[sizeof(g_scene_manager.manifest[i].name)];
+    if (scene_read_json_name(filepath, json_name, sizeof(json_name)) != ESP_OK ||
+        json_name[0] == '\0') {
+      continue;
+    }
+
+    if (strcmp(g_scene_manager.manifest[i].name, json_name) == 0) continue;
+
+    strncpy(g_scene_manager.manifest[i].name, json_name,
+      sizeof(g_scene_manager.manifest[i].name) - 1);
+    g_scene_manager.manifest[i].name[
+      sizeof(g_scene_manager.manifest[i].name) - 1] = '\0';
+    changed = true;
+  }
+
+  if (!changed) return;
+
+  esp_err_t err = scene_save_manifest();
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to sync manifest names from JSON: %s",
+      esp_err_to_name(err));
+  }
 }
 
 static esp_err_t scene_write_manifest_entries(const scene_manifest_entry_t *entries,
@@ -8041,15 +8592,14 @@ esp_err_t scene_rebuild_manifest_from_disk(bool reload_runtime) {
     if (stat(filepath, &st) != 0) continue;
 
     scene_manifest_entry_t entry = old_entries[i];
-    if (entry.name[0] == '\0') {
-      char read_name[sizeof(entry.name)];
-      if (scene_read_json_name(filepath, read_name, sizeof(read_name)) == ESP_OK &&
-          read_name[0] != '\0') {
-        strncpy(entry.name, read_name, sizeof(entry.name) - 1);
-      } else {
-        snprintf(entry.name, sizeof(entry.name), "Scene %u",
-          (unsigned)entry.index + 1);
-      }
+    char read_name[sizeof(entry.name)];
+    if (scene_read_json_name(filepath, read_name, sizeof(read_name)) == ESP_OK &&
+        read_name[0] != '\0') {
+      strncpy(entry.name, read_name, sizeof(entry.name) - 1);
+      entry.name[sizeof(entry.name) - 1] = '\0';
+    } else if (entry.name[0] == '\0') {
+      snprintf(entry.name, sizeof(entry.name), "Scene %u",
+        (unsigned)entry.index + 1);
     }
 
     if (count >= capacity) {

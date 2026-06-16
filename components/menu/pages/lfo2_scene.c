@@ -9,6 +9,7 @@
 #include "assets_types.h"
 #include "ui.h"
 #include "midi_lfo_scene_handler.h"
+#include "lfo_mode_mapping.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <stdio.h>
@@ -29,7 +30,6 @@ static int s_current_buffer_set = 0;
 #define MAX_LFO_ITEMS 18
 static menu_item_t s_lfo_items[MAX_LFO_ITEMS];
 
-static char s_enabled_label[LABEL_BUFFER_SETS][32];
 static char s_start_mode_label[LABEL_BUFFER_SETS][32];
 static char s_trigger_timing_label[LABEL_BUFFER_SETS][32];
 static char s_repeat_label[LABEL_BUFFER_SETS][32];
@@ -39,7 +39,7 @@ static char s_waveform_label[LABEL_BUFFER_SETS][32];
 static char s_rate_mode_label[LABEL_BUFFER_SETS][32];
 static char s_rate_label[LABEL_BUFFER_SETS][32];
 static char s_division_label[LABEL_BUFFER_SETS][32];
-static char s_output_label[LABEL_BUFFER_SETS][32];
+static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_floor_label[LABEL_BUFFER_SETS][32];
@@ -200,57 +200,70 @@ static uint32_t cc_number_to_option_index(uint8_t cc_num) {
 }
 
 // ============================================================================
-// Enabled Roller
+// Mode Roller
 // ============================================================================
 
-static void enabled_confirm_cb(uint32_t selected_index, void* user_data) {
+static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
-  
+
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
-  
+
+  const lfo_mode_mapping_t* mapping = lfo_get_mode_mapping(1, (uint8_t)selected_index);
+  if (!mapping) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
   scene_t* scene = scene_get_current();
   if (!scene) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
-  
-  bool was_enabled = scene->lfo2_config.enabled;
-  bool will_be_enabled = (selected_index == 1);
 
-  // If turning the LFO off, release any held NOTE-output mapping voice
-  // before lfo_apply_config stops the loop. The channel computation inside
-  // release_notes_for_slot needs the same scene context the NoteOn used.
-  if (was_enabled && !will_be_enabled) {
+  bool was_enabled = scene->lfo2_config.enabled;
+  bool will_be_enabled = mapping->enabled;
+
+  if (was_enabled && !will_be_enabled)
     midi_lfo_scene_handler_release_notes_for_slot(1);
+
+  if (will_be_enabled) {
+    output_type_t prev_type = scene->lfo2.output_type;
+    scene->lfo2.output_type = mapping->output_type;
+    if (prev_type == OUTPUT_TYPE_RTG_RATE && scene->lfo2.output_type != OUTPUT_TYPE_RTG_RATE)
+      rtg_clear_dynamic_rate();
+    if (prev_type == OUTPUT_TYPE_SH_RATE && scene->lfo2.output_type != OUTPUT_TYPE_SH_RATE)
+      sample_hold_clear_dynamic_rate();
   }
 
   scene->lfo2_config.enabled = will_be_enabled;
-  scene->lfo2.enabled = scene->lfo2_config.enabled;
-
-  // Apply to LFO engine
+  scene->lfo2.enabled = will_be_enabled;
   lfo_apply_config(1, &scene->lfo2_config);
-  
   persist_scene_changes();
-  
-  ESP_LOGI(TAG, "LFO2 %s", scene->lfo2_config.enabled ? "enabled" : "disabled");
-  
+
+  ESP_LOGI(TAG, "LFO2 mode set to: %s", mapping->display_name);
+
   s_callback_in_progress = false;
   menu_navigate_back_then_to(2, "LFO2", menu_page_lfo2_scene_create);
 }
 
-static lv_obj_t* enabled_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-  
-  uint32_t current = scene->lfo2_config.enabled ? 1 : 0;
-  return menu_create_roller_page("LFO2", "Disabled\nEnabled", current, enabled_confirm_cb, NULL);
+static lv_obj_t* mode_roller_create(void) {
+  static char options[384];
+  options[0] = '\0';
+  for (uint8_t i = 0; i < NUM_LFO_USER_MODES; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, lfo_get_mode_name(1, i));
+  }
+
+  uint32_t current_idx = lfo_get_current_mode_index(1, scene_get_current());
+  return menu_create_roller_page("Mode", options, current_idx, mode_confirm_cb, NULL);
 }
 
-static void nav_to_enabled(void* user_data) {
+static void nav_to_mode(void* user_data) {
   (void)user_data;
-  menu_navigate_to("LFO2", enabled_roller_create);
+  menu_navigate_to("Mode", mode_roller_create);
 }
 
 // ============================================================================
@@ -663,76 +676,6 @@ static void nav_to_division(void* user_data) {
 }
 
 // ============================================================================
-// Output Type Roller
-// ============================================================================
-
-static void output_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  scene_t* scene = scene_get_current();
-  if (!scene) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-  
-  output_type_t prev_type = scene->lfo2.output_type;
-  
-  // Map roller index to output type
-  // 0=CC, 1=Note, 2=LFO1 Rate, 3=LFO1 Depth, 4=RTG Rate, 5=S+H Rate, 6=Pitch Bend
-  switch (selected_index) {
-    case 0: scene->lfo2.output_type = OUTPUT_TYPE_CC; break;
-    case 1: scene->lfo2.output_type = OUTPUT_TYPE_NOTE; break;
-    case 2: scene->lfo2.output_type = OUTPUT_TYPE_LFO1_RATE; break;
-    case 3: scene->lfo2.output_type = OUTPUT_TYPE_LFO1_DEPTH; break;
-    case 4: scene->lfo2.output_type = OUTPUT_TYPE_RTG_RATE; break;
-    case 5: scene->lfo2.output_type = OUTPUT_TYPE_SH_RATE; break;
-    case 6: scene->lfo2.output_type = OUTPUT_TYPE_PITCH_BEND; break;
-    default: scene->lfo2.output_type = OUTPUT_TYPE_CC; break;
-  }
-  
-  // Clear dynamic rate modulation when switching away from RTG/S+H rate
-  if (prev_type == OUTPUT_TYPE_RTG_RATE && scene->lfo2.output_type != OUTPUT_TYPE_RTG_RATE)
-    rtg_clear_dynamic_rate();
-  if (prev_type == OUTPUT_TYPE_SH_RATE && scene->lfo2.output_type != OUTPUT_TYPE_SH_RATE)
-    sample_hold_clear_dynamic_rate();
-  
-  persist_scene_changes();
-  
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "LFO2", menu_page_lfo2_scene_create);
-}
-
-static lv_obj_t* output_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-  
-  // Map output type to roller index
-  uint32_t current = 0;
-  switch (scene->lfo2.output_type) {
-    case OUTPUT_TYPE_CC: current = 0; break;
-    case OUTPUT_TYPE_NOTE: current = 1; break;
-    case OUTPUT_TYPE_LFO1_RATE: current = 2; break;
-    case OUTPUT_TYPE_LFO1_DEPTH: current = 3; break;
-    case OUTPUT_TYPE_RTG_RATE: current = 4; break;
-    case OUTPUT_TYPE_SH_RATE: current = 5; break;
-    case OUTPUT_TYPE_PITCH_BEND: current = 6; break;
-    default: current = 0; break;
-  }
-  return menu_create_roller_page("Output",
-    "Control Change\nNotes\nLFO1 Rate\nLFO1 Depth\nRTG Rate\nS+H Rate\nPitch Bend",
-    current, output_confirm_cb, NULL);
-}
-
-static void nav_to_output(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Output", output_roller_create);
-}
-
-// ============================================================================
 // CC Slot Rollers
 // ============================================================================
 
@@ -783,7 +726,7 @@ static lv_obj_t* cc_slot_roller_create(void) {
   uint32_t current_idx = (current_cc == 0) ? 0 : cc_number_to_option_index(current_cc);
   
   char title[16];
-  snprintf(title, sizeof(title), "CC Slot %d", s_editing_cc_slot + 1);
+  snprintf(title, sizeof(title), "Parameter %d", s_editing_cc_slot + 1);
   
   return menu_create_roller_page(title, s_cc_options.options_str, current_idx, 
     cc_slot_confirm_cb, (void*)(uintptr_t)s_editing_cc_slot);
@@ -792,7 +735,7 @@ static lv_obj_t* cc_slot_roller_create(void) {
 static void nav_to_cc_slot(void* user_data) {
   s_editing_cc_slot = (uint8_t)(uintptr_t)user_data;
   char title[16];
-  snprintf(title, sizeof(title), "CC Slot %d", s_editing_cc_slot + 1);
+  snprintf(title, sizeof(title), "Parameter %d", s_editing_cc_slot + 1);
   menu_navigate_to(title, cc_slot_roller_create);
 }
 
@@ -1061,27 +1004,14 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
   
-  // Enable/Disable - show actual runtime state for accuracy
-  const char* enabled_status;
-  bool show_full_menu;
-  if (lfo_is_enabled(1)) {
-    enabled_status = "Running";
-    show_full_menu = true;
-  } else if (lfo_is_pending_start(1)) {
-    enabled_status = "Pending";
-    show_full_menu = true;
-  } else if (scene->lfo2_config.enabled) {
-    enabled_status = "Enabled";
-    show_full_menu = true;
-  } else {
-    enabled_status = "Disabled";
-    show_full_menu = false;
-  }
-  snprintf(s_enabled_label[buf], sizeof(s_enabled_label[buf]), "LFO2\n%s", enabled_status);
-  s_lfo_items[item_count++] = (menu_item_t){s_enabled_label[buf], nav_to_enabled, NULL, true, MENU_ITEM_KIND_ROLLER};
-  
-  // Only show more options if enabled/running/pending
-  if (!show_full_menu) {
+  uint8_t mode_idx = lfo_get_current_mode_index(1, scene);
+  snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "Mode\n%s",
+    lfo_get_mode_name(1, mode_idx));
+  s_lfo_items[item_count++] = (menu_item_t){
+    s_mode_label[buf], nav_to_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
+
+  if (!scene->lfo2_config.enabled) {
     return menu_create_page_2line("LFO2", s_lfo_items, item_count);
   }
   
@@ -1136,41 +1066,33 @@ lv_obj_t* menu_page_lfo2_scene_create(void) {
   }
   // For TOUCHWHEEL mode, no rate setting needed (controlled by touchwheel)
   
-  // Output type selector
-  const char* output_name;
-  switch (scene->lfo2.output_type) {
-    case OUTPUT_TYPE_CC: output_name = "Control Change"; break;
-    case OUTPUT_TYPE_NOTE: output_name = "Notes"; break;
-    case OUTPUT_TYPE_LFO1_RATE: output_name = "LFO1 Rate"; break;
-    case OUTPUT_TYPE_LFO1_DEPTH: output_name = "LFO1 Depth"; break;
-    case OUTPUT_TYPE_RTG_RATE: output_name = "RTG Rate"; break;
-    case OUTPUT_TYPE_SH_RATE: output_name = "S+H Rate"; break;
-    case OUTPUT_TYPE_PITCH_BEND: output_name = "Pitch Bend"; break;
-    default: output_name = "Control Change"; break;
+  if (scene_cv_claims_source(VELOCITY_MODE_LFO2)) {
+    snprintf(s_mode_label[buf], sizeof(s_mode_label[buf]), "CV/Gate\nControlled");
+    s_lfo_items[item_count++] = (menu_item_t){
+      s_mode_label[buf], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+    };
+    return menu_create_page_2line("LFO2", s_lfo_items, item_count);
   }
-  snprintf(s_output_label[buf], sizeof(s_output_label[buf]), "Output\n%s", output_name);
-  s_lfo_items[item_count++] = (menu_item_t){s_output_label[buf], nav_to_output, NULL, true, MENU_ITEM_KIND_ROLLER};
-  
+
   if (scene->lfo2.output_type == OUTPUT_TYPE_CC) {
-    // CC slots
     for (int i = 0; i < 4; i++) {
       uint8_t cc_num = scene->lfo2.cc_numbers[i];
       if (cc_num > 0) {
         const char* cc_name = assets_get_cc_name(device, cc_num);
         if (cc_name && strcmp(cc_name, "Undefined") != 0) {
           snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-            "CC Slot %d\n%s", i + 1, cc_name);
+            "Parameter %d\n%s", i + 1, cc_name);
         } else {
           snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-            "CC Slot %d\nCC %u", i + 1, (unsigned)cc_num);
+            "Parameter %d\nCC %u", i + 1, (unsigned)cc_num);
         }
       } else {
         snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-          "CC Slot %d\nInactive", i + 1);
+          "Parameter %d\nInactive", i + 1);
       }
       s_lfo_items[item_count++] = (menu_item_t){
         s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
-        MENU_ITEM_KIND_SUBMENU
+        MENU_ITEM_KIND_ROLLER
       };
     }
   }

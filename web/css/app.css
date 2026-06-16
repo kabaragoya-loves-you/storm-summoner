@@ -899,7 +899,8 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
 /* Pedals / scenes modal dialogs */
 wa-dialog[data-pedals-target="deleteDialog"]::part(dialog),
 wa-dialog[data-pedals-target="messageDialog"]::part(dialog),
-wa-dialog[data-scenes-target="deleteDialog"]::part(dialog) {
+wa-dialog[data-scenes-target="deleteDialog"]::part(dialog),
+wa-dialog[data-assets-target="deleteDialog"]::part(dialog) {
   background-color: var(--bg-card);
   color: var(--text);
   border: 1px solid var(--border);
@@ -907,19 +908,22 @@ wa-dialog[data-scenes-target="deleteDialog"]::part(dialog) {
 
 wa-dialog[data-pedals-target="deleteDialog"]::part(dialog)::backdrop,
 wa-dialog[data-pedals-target="messageDialog"]::part(dialog)::backdrop,
-wa-dialog[data-scenes-target="deleteDialog"]::part(dialog)::backdrop {
+wa-dialog[data-scenes-target="deleteDialog"]::part(dialog)::backdrop,
+wa-dialog[data-assets-target="deleteDialog"]::part(dialog)::backdrop {
   background-color: rgba(0, 0, 0, 0.7);
 }
 
 wa-dialog[data-pedals-target="deleteDialog"]::part(title),
 wa-dialog[data-pedals-target="messageDialog"]::part(title),
-wa-dialog[data-scenes-target="deleteDialog"]::part(title) {
+wa-dialog[data-scenes-target="deleteDialog"]::part(title),
+wa-dialog[data-assets-target="deleteDialog"]::part(title) {
   color: var(--text);
 }
 
 wa-dialog[data-pedals-target="deleteDialog"]::part(header),
 wa-dialog[data-pedals-target="messageDialog"]::part(header),
-wa-dialog[data-scenes-target="deleteDialog"]::part(header) {
+wa-dialog[data-scenes-target="deleteDialog"]::part(header),
+wa-dialog[data-assets-target="deleteDialog"]::part(header) {
   border-bottom: 1px solid var(--border);
 }
 
@@ -991,7 +995,8 @@ wa-dialog[data-scenes-target="deleteDialog"]::part(header) {
 wa-dialog[data-pedals-target="deleteDialog"]::part(footer),
 wa-dialog[data-pedals-target="messageDialog"]::part(footer),
 wa-dialog[data-scenes-target="deleteDialog"]::part(footer),
-wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
+wa-dialog[data-scenes-target="nameDialog"]::part(footer),
+wa-dialog[data-assets-target="deleteDialog"]::part(footer) {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
@@ -1315,7 +1320,8 @@ wa-dialog[data-scenes-target="nameDialog"]::part(footer) {
 
 wa-dialog[data-scene-target="pedalPickerDialog"]::part(dialog),
 wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(dialog),
-wa-dialog[data-scene-target="reloadConfirmDialog"]::part(dialog) {
+wa-dialog[data-scene-target="reloadConfirmDialog"]::part(dialog),
+wa-dialog[data-scene-target="messageDialog"]::part(dialog) {
   background-color: var(--bg-card);
   color: var(--text);
   border: 1px solid var(--border);
@@ -1323,7 +1329,8 @@ wa-dialog[data-scene-target="reloadConfirmDialog"]::part(dialog) {
 
 wa-dialog[data-scene-target="pedalPickerDialog"]::part(footer),
 wa-dialog[data-scene-target="pedalChangeWarningDialog"]::part(footer),
-wa-dialog[data-scene-target="reloadConfirmDialog"]::part(footer) {
+wa-dialog[data-scene-target="reloadConfirmDialog"]::part(footer),
+wa-dialog[data-scene-target="messageDialog"]::part(footer) {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
