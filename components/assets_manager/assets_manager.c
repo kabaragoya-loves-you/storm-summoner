@@ -85,6 +85,7 @@ static esp_err_t parse_manifest_into(const char *json_str, manifest_t *out, bool
   cJSON_ArrayForEach(dev_item, devices) {
     manifest_device_t *dev = &out->devices[idx];
     dev->from_userdata = from_userdata;
+    dev->cc_count = 0;
     
     cJSON *item;
     
@@ -115,6 +116,10 @@ static esp_err_t parse_manifest_into(const char *json_str, manifest_t *out, bool
     item = cJSON_GetObjectItem(dev_item, "size");
     if (item && cJSON_IsNumber(item))
       dev->size = item->valueint;
+
+    item = cJSON_GetObjectItem(dev_item, "ccCount");
+    if (item && cJSON_IsNumber(item) && item->valueint >= 0)
+      dev->cc_count = (uint16_t)item->valueint;
     
     // Parse trsType
     item = cJSON_GetObjectItem(dev_item, "trsType");
@@ -518,13 +523,16 @@ device_def_t *assets_load_device(const char *slug) {
     return device;
   }
   
-  // Cache miss - parse JSON. Origin partition determines the mount root.
+  // Cache miss - parse JSON.
   ESP_LOGI(TAG, "Cache miss, parsing JSON");
 
-  const char *json_root = manifest_dev->from_userdata
-    ? USERDATA_BASE_PATH : ASSETS_BASE_PATH;
   char json_path[256];
-  snprintf(json_path, sizeof(json_path), "%s/%s", json_root, manifest_dev->file);
+  esp_err_t path_err = assets_manifest_device_json_path(manifest_dev,
+    json_path, sizeof(json_path));
+  if (path_err != ESP_OK) {
+    ESP_LOGE(TAG, "Invalid manifest path for device: %s", slug);
+    return NULL;
+  }
 
   device = assets_parse_device_file(json_path, slug);
   if (!device) {
@@ -626,6 +634,24 @@ esp_err_t assets_manager_reload_manifest(void) {
   s_vendors_cached = false;
 
   ESP_LOGI(TAG, "Manifest reloaded successfully (%u devices)", (unsigned)g_manifest.device_count);
+  return ESP_OK;
+}
+
+esp_err_t assets_manifest_device_json_path(const manifest_device_t *dev,
+  char *out, size_t out_len) {
+  if (!dev || !out || out_len == 0 || dev->file[0] == '\0') {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  // Manifest paths are relative to the manifest directory on each partition:
+  //   RO: /assets/devices/manifest.json  -> /assets/devices/<path>
+  //   RW: /userdata/devices/manifest.json -> /userdata/<path>
+  const char *base = dev->from_userdata
+    ? USERDATA_BASE_PATH : ASSETS_BASE_PATH "/devices";
+  int n = snprintf(out, out_len, "%s/%s", base, dev->file);
+  if (n < 0 || (size_t)n >= out_len) {
+    return ESP_ERR_INVALID_SIZE;
+  }
   return ESP_OK;
 }
 

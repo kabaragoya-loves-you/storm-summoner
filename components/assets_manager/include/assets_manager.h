@@ -185,6 +185,14 @@ esp_err_t assets_rebuild_manifest(void);
 esp_err_t assets_manager_reload_device(const char *slug);
 
 /**
+ * Resolve the on-disk JSON path for a manifest device entry.
+ * RO entries: /assets/devices/<manifest path>
+ * RW entries: /userdata/<manifest path>
+ */
+esp_err_t assets_manifest_device_json_path(const manifest_device_t *dev,
+  char *out, size_t out_len);
+
+/**
  * Sync all device profiles and scenes to MSC RAM volume
  * Helper function for USB manager to populate MSC volume
  * @return ESP_OK on success

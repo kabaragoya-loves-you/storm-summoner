@@ -1050,6 +1050,96 @@ static const char *cdc_trs_type_str(midi_trs_type_t trs) {
   }
 }
 
+static bool cdc_parse_trs_type_str(const char *str, midi_trs_type_t *out) {
+  if (!str || !out) return false;
+  if (strcmp(str, "TYPE_A") == 0) {
+    *out = MIDI_TRS_TYPE_A;
+    return true;
+  }
+  if (strcmp(str, "TYPE_B") == 0) {
+    *out = MIDI_TRS_TYPE_B;
+    return true;
+  }
+  if (strcmp(str, "TYPE_TS") == 0) {
+    *out = MIDI_TRS_TYPE_TS;
+    return true;
+  }
+  if (strcmp(str, "BOTH") == 0) {
+    *out = MIDI_TRS_TYPE_BOTH;
+    return true;
+  }
+  return false;
+}
+
+static bool cdc_try_pedal_set_command(const char *cmd) {
+  if (strncmp(cmd, "PEDAL_SET ", 10) != 0) return false;
+
+  const char *args = cmd + 10;
+  while (*args == ' ') args++;
+
+  if (strncmp(args, "CHANNEL ", 8) == 0) {
+    unsigned ch = strtoul(args + 8, NULL, 10);
+    if (ch < 1 || ch > 16) {
+      send_response("ERROR: Channel must be 1-16");
+      return true;
+    }
+    esp_err_t err = device_config_set_channel((uint8_t)ch);
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return true;
+  }
+
+  if (strncmp(args, "TRS ", 4) == 0) {
+    const char *trs_str = args + 4;
+    while (*trs_str == ' ') trs_str++;
+    midi_trs_type_t trs;
+    if (!cdc_parse_trs_type_str(trs_str, &trs)) {
+      send_response("ERROR: Invalid TRS type");
+      return true;
+    }
+    esp_err_t err = device_config_set_trs_type(trs);
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return true;
+  }
+
+  if (strncmp(args, "SEND_CLOCK ", 11) == 0) {
+    const char *val = args + 11;
+    while (*val == ' ') val++;
+    bool send;
+    if (strcmp(val, "1") == 0) {
+      send = true;
+    } else if (strcmp(val, "0") == 0) {
+      send = false;
+    } else {
+      send_response("ERROR: Send clock must be 0 or 1");
+      return true;
+    }
+    esp_err_t err = device_config_set_send_clock(send);
+    if (err == ESP_OK) {
+      send_response("OK");
+    } else {
+      char resp[64];
+      snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    return true;
+  }
+
+  send_response("ERROR: Usage PEDAL_SET CHANNEL|TRS|SEND_CLOCK <value>");
+  return true;
+}
+
 static const char *cdc_scene_mode_str(scene_mode_t mode) {
   switch (mode) {
     case SCENE_MODE_PRESET_SYNC: return "preset_sync";
@@ -1323,6 +1413,7 @@ static void cdc_send_info_json(void) {
     cJSON_AddStringToObject(pedal, "bank_mode",
       cfg ? cdc_bank_mode_str(cfg->bank_select_mode) : "none");
     cJSON_AddNumberToObject(pedal, "preset_base", cfg ? (unsigned)cfg->preset_base : 0);
+    cJSON_AddNumberToObject(pedal, "cc_count", mdev ? (unsigned)mdev->cc_count : 0);
     cJSON_AddItemToObject(root, "pedal", pedal);
   }
 
@@ -1486,6 +1577,8 @@ static void handle_scene_put_binary(const uint8_t *data, size_t len) {
 
   if (err == ESP_OK) {
     send_response("OK");
+  } else if (err == ESP_ERR_INVALID_ARG) {
+    send_response("ERROR: Name already exists or is invalid");
   } else {
     char resp[64];
     snprintf(resp, sizeof(resp), "ERROR: Scene put failed (%s)",
@@ -1894,6 +1987,9 @@ static void process_command(const char *cmd) {
   } else if (strcmp(cmd, "SCENE CANCEL") == 0) {
     esp_err_t err = scene_cancel_pending();
     send_response(err == ESP_OK ? "OK" : "ERROR: Scene cancel failed");
+
+  } else if (cdc_try_pedal_set_command(cmd)) {
+    /* handled */
 
   } else if (strncmp(cmd, "TRANSPORT ", 10) == 0) {
     const char *op = cmd + 10;
@@ -4016,6 +4112,8 @@ static void process_pedals_command(const char *cmd) {
   }
 
   if (cdc_try_info_command(cmd)) return;
+
+  if (cdc_try_pedal_set_command(cmd)) return;
   
   // MANIFEST - send the full manifest.json file
   if (strcmp(cmd, "MANIFEST") == 0) {
@@ -4077,9 +4175,11 @@ static void process_pedals_command(const char *cmd) {
       return;
     }
     
-    // Build full path - path is relative to /assets/devices/ (manifest directory)
     char full_path[MAX_PATH_LEN];
-    snprintf(full_path, sizeof(full_path), "%s/devices/%s", ASSETS_BASE_PATH, mdev->file);
+    if (assets_manifest_device_json_path(mdev, full_path, sizeof(full_path)) != ESP_OK) {
+      send_response("ERROR: Device has no file path");
+      return;
+    }
     CDC_LOGI("Loading device file: %s", full_path);
     
     struct stat st;

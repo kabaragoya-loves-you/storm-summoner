@@ -157,18 +157,13 @@ action_handle_result_t action_handlers_modulation_dispatch(
         case VARIANT_MODIFY: {
           // Apply each non-sentinel override in place. Mirrors the SHAPE
           // action's "runtime mutation without phase reset" behavior, but
-          // generalized to every LFO parameter. Polarity is on the per-scene
-          // continuous_mapping (not the engine), so we mutate the scene
-          // struct directly for that field.
+          // generalized to every LFO parameter.
           const action_t* a = action;
           int applied = 0;
           for (int side = 0; side < 2; side++) {
             uint8_t lfo_index = (uint8_t)side;
             uint8_t slot_bit = (side == 0) ? 1 : 2;
             if (!(slot == slot_bit || slot == 3)) continue;
-
-            continuous_mapping_t* scene_mapping =
-              scene ? (lfo_index == 0 ? &scene->lfo1 : &scene->lfo2) : NULL;
 
             if (a->params.lfo.waveform != ACTION_LFO_ORIG_U8) {
               static const uint8_t waveforms[] = {

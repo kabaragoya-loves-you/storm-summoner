@@ -412,6 +412,13 @@ application.register(
 
       this.inScenesMode = false
       const impl = async () => {
+        // The activated tab's app:tab-activated handler is queued ahead of
+        // ours (it registers earlier in the DOM), so by the time this leave
+        // task runs the device may already be in another mode (e.g. ASSETS).
+        // Forcing idle here would EXIT that mode out from under it. Only tear
+        // down when we're still the scenes session (or a deferred scenes mode).
+        const cm = this.connection.currentMode
+        if (cm !== null && cm !== 'SCENES') return
         await this.connection.ensureDeviceIdle()
       }
       if (this.connection.isSerialBusy) await impl()
@@ -484,7 +491,14 @@ application.register(
           </div>
           <div class="scene-position">${positionDisplay}</div>
           <div class="scene-name">
+            ${scene.factory ? `
             <span>${this.escapeHtml(scene.name)}</span>
+            ` : `
+            <span class="scene-name-rename"
+                  data-action="click->scenes#startRename"
+                  data-position="${scene.position}"
+                  title="Rename">${this.escapeHtml(scene.name)}</span>
+            `}
             ${scene.current ? '<span class="scene-current-badge">Playing</span>' : ''}
           </div>
           <div class="scene-actions" data-action="click->scenes#stopRowClick">
@@ -678,6 +692,7 @@ application.register(
 
     // Start inline rename
     startRename(e) {
+      e.stopPropagation()
       const position = parseInt(e.currentTarget.dataset.position, 10)
       const scene = this.scenes.find(s => s.position === position)
       if (!scene) return

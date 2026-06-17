@@ -41,7 +41,6 @@ static char s_rate_label[LABEL_BUFFER_SETS][32];
 static char s_division_label[LABEL_BUFFER_SETS][32];
 static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
-static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_floor_label[LABEL_BUFFER_SETS][32];
 static char s_ceiling_label[LABEL_BUFFER_SETS][32];
 static char s_resolution_label[LABEL_BUFFER_SETS][32];
@@ -72,14 +71,6 @@ static void persist_scene_changes(void) {
   if (ui_is_in_programming_mode()) {
     uint8_t scene_index = scene_get_current_index();
     scene_save_to_flash(scene_index);
-  }
-}
-
-static const char* polarity_to_string(polarity_t polarity) {
-  switch (polarity) {
-    case POLARITY_UNIPOLAR: return "Unipolar";
-    case POLARITY_INVERTED: return "Inverted";
-    default: return "Unipolar";
   }
 }
 
@@ -744,48 +735,6 @@ static void nav_to_cc_slot(void* user_data) {
   char title[16];
   snprintf(title, sizeof(title), "Parameter %d", s_editing_cc_slot + 1);
   menu_navigate_to(title, cc_slot_roller_create);
-}
-
-// ============================================================================
-// Polarity Roller
-// ============================================================================
-
-static void polarity_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-
-  scene_t* scene = scene_get_current();
-  if (!scene) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-
-  polarity_t polarities[] = { POLARITY_UNIPOLAR, POLARITY_INVERTED };
-  if (selected_index < 2) {
-    scene->lfo2.polarity = polarities[selected_index];
-    persist_scene_changes();
-  }
-
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "LFO2", menu_page_lfo2_scene_create);
-}
-
-static lv_obj_t* polarity_roller_create(void) {
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
-
-  uint32_t current = (scene->lfo2.polarity == POLARITY_INVERTED) ? 1 : 0;
-
-  return menu_create_roller_page("Polarity", "Unipolar\nInverted", current,
-    polarity_confirm_cb, NULL);
-}
-
-static void nav_to_polarity(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Polarity", polarity_roller_create);
 }
 
 // ============================================================================

@@ -572,13 +572,13 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 127,
-          "description": "Primary MIDI CC number (when output_type=cc)"
+          "description": "Primary MIDI CC (mirrors first active cc_numbers entry when present)"
         },
         "cc_numbers": {
           "type": "array",
           "items": { "type": "integer", "minimum": 0, "maximum": 127 },
           "maxItems": 4,
-          "description": "Additional CC numbers for simultaneous control (up to 4 total)"
+          "description": "Active CC slots for this source (compact list; trailing zeros omitted)"
         },
         "base_note": {
           "type": "integer",

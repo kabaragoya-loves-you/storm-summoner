@@ -1289,6 +1289,57 @@ window.ActionCatalog = (function () {
     return changed
   }
 
+  const TEMPO_KEEP_FIELDS = {
+    tap: new Set(),
+    downbeat: new Set(),
+    increment: new Set(['inc_amount']),
+    decrement: new Set(['inc_amount']),
+    set: new Set(['bpm', 'random_floor', 'random_ceiling']),
+    hold: new Set(['press_bpm', 'release_bpm']),
+    cycle: new Set(['tempos', 'num_tempos'])
+  }
+
+  const ACTION_STRIP_KEYS = [
+    'cc', 'value', 'value2', 'values', 'bpm', 'press_bpm', 'release_bpm',
+    'tempos', 'num_tempos', 'random_floor', 'random_ceiling', 'inc_amount',
+    'note', 'velocity'
+  ]
+
+  function stripActionFields (action) {
+    if (!action?.type || action.type === 'none') return false
+    let changed = false
+    if (action.type === 'tempo') {
+      const v = action.variant || defaultVariant('tempo')
+      const keep = TEMPO_KEEP_FIELDS[v] || new Set()
+      for (const key of ACTION_STRIP_KEYS) {
+        if (key in action && !keep.has(key)) {
+          delete action[key]
+          changed = true
+        }
+      }
+    } else if (action.type === 'control' || action.type === 'control_change') {
+      for (const key of ['bpm', 'press_bpm', 'release_bpm', 'tempos', 'num_tempos',
+        'note', 'velocity']) {
+        if (key in action) {
+          delete action[key]
+          changed = true
+        }
+      }
+    }
+    return changed
+  }
+
+  function stripActionFieldsInModel (model) {
+    if (!model) return false
+    let changed = false
+    const visit = (action) => {
+      if (stripActionFields(action)) changed = true
+    }
+    forEachAction(model, visit)
+    visit(model.expr_switch)
+    return changed
+  }
+
   return {
     NOTE_RANDOM,
     NOTE_VEL_RANDOM,
@@ -1363,6 +1414,7 @@ window.ActionCatalog = (function () {
     clearRepeatFields,
     normalizeRepeatActionsInModel,
     tempoStepCount,
-    normalizeTempoActionsInModel
+    normalizeTempoActionsInModel,
+    stripActionFieldsInModel
   }
 })()

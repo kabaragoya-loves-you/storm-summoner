@@ -367,7 +367,7 @@ application.register(
       const items = visible
         .map(file => {
           const isDir = file.type === 'dir'
-          const icon = isDir ? 'folder-fill' : 'file-earmark'
+          const icon = isDir ? 'folder' : 'file'
           const iconClass = isDir ? 'folder' : 'file'
           const size = isDir ? '--' : this.formatSize(file.size)
           const fullPath = atRoot

@@ -110,7 +110,15 @@ application.register(
               line = line.replace(/\r/g, '').trim()
 
               if (line) {
-                if (line === 'CONSOLE_STARTED' || line === 'CONSOLE_STOPPED') {
+                // Async device notifications (clock/connections) ride the same
+                // CDC stream and may arrive glued to the trailing "> " prompt.
+                // Forward them to the global notify path instead of dumping
+                // them into the console output.
+                const evtIdx = line.indexOf('EVT:')
+                const evtPrefix = evtIdx === -1 ? null : line.slice(0, evtIdx).trim()
+                if (evtIdx !== -1 && (evtPrefix === '' || evtPrefix === '>')) {
+                  this.connection.dispatchCdcNotify(line.slice(evtIdx))
+                } else if (line === 'CONSOLE_STARTED' || line === 'CONSOLE_STOPPED') {
                   this.appendLine(`[${line}]`, 'system')
                 } else if (line !== '>' && line !== '> ') {
                   this.appendLine(line)

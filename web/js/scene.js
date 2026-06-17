@@ -714,6 +714,94 @@ application.register(
       return changed
     }
 
+    static get CONTINUOUS_MAPPING_KEYS () {
+      return [
+        'expression', 'proximity', 'als', 'tilt_x', 'tilt_y', 'cv',
+        'lfo1', 'lfo2', 'note_track', 'sample_hold'
+      ]
+    }
+
+    normalizeContinuousMapping (mapping, { forSave = false } = {}) {
+      if (!mapping) return
+      let list = this.normalizeCcSlotList(mapping.cc_numbers)
+      if ((!mapping.cc_numbers || mapping.cc_numbers.length === 0) &&
+          mapping.cc_number != null && Number(mapping.cc_number) > 0) {
+        list = [Number(mapping.cc_number)]
+      }
+      const active = list.filter(cc => Number(cc) > 0)
+      delete mapping.num_cc_numbers
+      if (active.length) {
+        mapping.cc_numbers = list
+        mapping.cc_number = active[0]
+      } else {
+        mapping.cc_number = 0
+        if (forSave) delete mapping.cc_numbers
+        else mapping.cc_numbers = [0]
+      }
+      if (forSave && mapping.cc_numbers?.length === 1 && Number(mapping.cc_numbers[0]) === 0) {
+        delete mapping.cc_numbers
+      }
+    }
+
+    isPadPlaceholderAction (action) {
+      if (!action || action.type !== 'control') return false
+      if ((action.variant || 'set') !== 'set') return false
+      const cc = Array.isArray(action.cc) ? action.cc[0] : action.cc
+      const val = Array.isArray(action.value) ? action.value[0] : action.value
+      return cc != null && cc !== '' && Number(val) === 0
+    }
+
+    normalizePadPlaceholders (model, { forSave = false } = {}) {
+      if (!model?.touchpads) return
+      for (let i = 0; i < 8 && i < model.touchpads.length; i++) {
+        const tp = model.touchpads[i]
+        if (!tp) continue
+        if (this.isPadPlaceholderAction(tp.action)) {
+          if (forSave) delete tp.action
+          else tp.action = { type: 'none' }
+        } else if (forSave && tp.action?.type === 'none') {
+          delete tp.action
+        }
+      }
+    }
+
+    ccTriggerIsActive (slot) {
+      if (!slot) return false
+      return Number(slot.cc_number) > 0 ||
+        (slot.action?.type && slot.action.type !== 'none')
+    }
+
+    normalizeCcTriggers (model, { forSave = false } = {}) {
+      const empty = () => ({ cc_number: 0, action: { type: 'none' } })
+      if (!model.cc_triggers) {
+        if (!forSave) model.cc_triggers = Array.from({ length: 4 }, empty)
+        return
+      }
+      if (forSave) {
+        const active = model.cc_triggers.filter(s => this.ccTriggerIsActive(s))
+        if (active.length) model.cc_triggers = active
+        else delete model.cc_triggers
+        return
+      }
+      const padded = model.cc_triggers.filter(s => this.ccTriggerIsActive(s))
+      while (padded.length < 4) padded.push(empty())
+      model.cc_triggers = padded.slice(0, 4)
+    }
+
+    normalizeSceneModel (model, { forSave = false } = {}) {
+      if (!model) return
+      if (model.touchwheel) {
+        this.normalizeContinuousMapping(model.touchwheel, { forSave })
+      }
+      for (const key of this.constructor.CONTINUOUS_MAPPING_KEYS) {
+        if (model[key]) this.normalizeContinuousMapping(model[key], { forSave })
+      }
+      this.normalizeCcTriggers(model, { forSave })
+      this.normalizePadPlaceholders(model, { forSave })
+      ActionCatalog.stripActionFieldsInModel(model)
+      if (forSave && model.expr_switch?.type === 'none') delete model.expr_switch
+    }
+
     normalizeBeforeSave (model) {
       if (typeof model.name === 'string') model.name = model.name.trim()
       this.normalizeCvGateModel(model)
@@ -722,6 +810,7 @@ application.register(
           this.normalizeTouchpadMapping(tp)
         })
       }
+      this.normalizeSceneModel(model, { forSave: true })
       DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, model)
       DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
       DeviceControls.normalizeRandomizeActionsInModel(this.deviceDefinition, model)
@@ -1125,7 +1214,7 @@ application.register(
             output_type: 'cc',
             touchwheel_style: 'endless',
             enabled: true,
-            touchwheel: { enabled: true, output_type: 'cc', cc_numbers: [0], num_cc_numbers: 0 }
+            touchwheel: { enabled: true, output_type: 'cc', cc_numbers: [0] }
           },
           program_change: { touchwheel_mode: 'program_change', enabled: true },
           tempo: {
@@ -1910,9 +1999,10 @@ application.register(
 
     applyCcSlotFields (mapping, list) {
       mapping.cc_numbers = list
-      mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
       const firstActive = list.find(cc => Number(cc) > 0)
       if (firstActive) mapping.cc_number = firstActive
+      else mapping.cc_number = 0
+      delete mapping.num_cc_numbers
     }
 
     touchwheelCcList (tw) {
@@ -1946,7 +2036,8 @@ application.register(
       if (list.length <= 1) {
         list[0] = 0
         tw.cc_numbers = [0]
-        tw.num_cc_numbers = 0
+        tw.cc_number = 0
+        delete tw.num_cc_numbers
         return
       }
       list.splice(index, 1)
@@ -1985,7 +2076,8 @@ application.register(
       if (list.length <= 1) {
         list[0] = 0
         mapping.cc_numbers = [0]
-        mapping.num_cc_numbers = 0
+        mapping.cc_number = 0
+        delete mapping.num_cc_numbers
         return
       }
       list.splice(index, 1)
@@ -2218,10 +2310,19 @@ application.register(
 
     validateScene (model) {
       const errors = []
-      if (this.deviceContext.sceneMode !== 0) {
-        const name = String(model?.name ?? '').trim()
-        if (!name) {
-          errors.push({ path: 'name', message: 'Scene name is required' })
+      const name = String(model?.name ?? '').trim()
+      if (!name) {
+        errors.push({ path: 'name', message: 'Scene name is required' })
+      } else {
+        const pos = Number(this.editPosition)
+        if (!Number.isNaN(pos) &&
+            this.sceneList.some(s =>
+              s.position !== pos &&
+              s.name.toLowerCase() === name.toLowerCase())) {
+          errors.push({
+            path: 'name',
+            message: 'A scene with this name already exists'
+          })
         }
       }
       if (model?.name && window.SceneEditorUi?.isReservedSceneName?.(model.name)) {
@@ -2315,33 +2416,37 @@ application.register(
             console.warn('Scene editor: INFO pedal context skipped:', err.message)
           }
           if (gen !== this._loadGeneration) return null
+          await this.ensureDeviceIdleInTask()
+
+          if (gen !== this._loadGeneration) return null
+          const transfer = await this.connection._fetchSizedTransferImpl(`SCENE_GET ${arg}`, {
+            lineTimeout: 30000,
+            binaryTimeout: 120000
+          })
+          if (!transfer?.data?.length) return transfer
+          const sceneModel = JSON.parse(new TextDecoder().decode(transfer.data))
+          this.editModel = sceneModel
           try {
             await this.loadDeviceDefinitionInTask()
           } catch (err) {
             console.warn('Scene editor: device definition skipped:', err.message)
           }
-          await this.ensureDeviceIdleInTask()
-
-          if (gen !== this._loadGeneration) return null
-          return this.connection._fetchSizedTransferImpl(`SCENE_GET ${arg}`, {
-            lineTimeout: 30000,
-            binaryTimeout: 120000
-          })
+          return { sceneModel }
         })
 
         if (gen !== this._loadGeneration) return
-        if (!result?.data?.length) {
+        if (!result?.sceneModel) {
           throw new Error('No scene data from device (SCENE_GET failed or was cancelled)')
         }
 
-        const text = new TextDecoder().decode(result.data)
-        const model = JSON.parse(text)
+        const model = result.sceneModel
         this.normalizeCvGateModel(model)
         if (model.touchpads) {
           model.touchpads.forEach(tp => this.normalizeTouchpadMapping(tp))
         }
+        this.normalizeSceneModel(model, { forSave: false })
         const controlCorrected =
-          DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, model)
+          DeviceControls.normalizeControlActionsIfInvalid(this.deviceDefinition, model)
         const presetCorrected =
           DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
         this.editModel = model
@@ -2798,6 +2903,7 @@ application.register(
       if (model.touchpads) {
         model.touchpads.forEach(tp => this.normalizeTouchpadMapping(tp))
       }
+      this.normalizeSceneModel(model, { forSave: false })
       return model
     }
 

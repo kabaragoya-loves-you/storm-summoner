@@ -134,6 +134,7 @@ typedef struct {
   bool receives_clock;
   bool receives_notes;
   bool transmits_pc;
+  uint16_t cc_count;
   // PC info from x_pc extension (needed for cache loading)
   uint16_t pc_index_base;  // 0 or 1
   uint16_t pc_count;       // Number of presets (default 128)

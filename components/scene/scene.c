@@ -66,11 +66,14 @@ static const char* TAG = "scene";
 // Forward declarations
 static void get_scene_filename(uint8_t scene_index, char* buffer, size_t buffer_size);
 static void scene_name_to_slug(const char* name, char* slug, size_t slug_size);
+static bool scene_filename_in_manifest(const char *filename, int8_t exclude_index);
+static bool scene_slug_is_taken(const char *slug, int8_t exclude_index);
+static esp_err_t scene_unique_slug_for_name(const char *name, int8_t exclude_index,
+                                            char *slug, size_t slug_size);
 static void scene_trim_name(char *name);
 static int scene_count_json_files_on_disk(void);
 static esp_err_t scene_read_json_name(const char *filepath, char *name, size_t name_size);
 static void scene_sync_all_manifest_names_from_json(void);
-static esp_err_t scene_update_manifest_name(uint8_t scene_index, const char *name);
 static esp_err_t json_to_scene(cJSON* root, scene_t* scene);
 static void scene_init_defaults(scene_t* scene, uint8_t index);
 static void scene_cleanup_touchwheel(void);
@@ -196,6 +199,20 @@ static esp_timer_handle_t s_tw_at_return_timer = NULL;
 // Cached device definition for current scene
 static device_def_t* s_cached_device = NULL;
 static char s_cached_device_slug[64] = "";
+// Transient scene used for device slug lookup (SCENE_INSPECT at non-active index).
+static const scene_t *s_device_lookup_scene = NULL;
+
+static const char *scene_effective_slug_from_scene(const scene_t *scene) {
+  if (config_get_device_mode() == DEVICE_MODE_SINGLE) {
+    return device_config_get_pedal_slug();
+  }
+  if (scene && scene->device_id[0] != '\0') {
+    return scene->device_id;
+  }
+  return device_config_get_pedal_slug();
+}
+
+static const scene_t *scene_find_cached(uint8_t scene_index);
 
 // Helper: Get scene by index (returns current scene if it matches, otherwise error)
 // For now, we only allow modifications to the current scene
@@ -2650,7 +2667,9 @@ esp_err_t scene_set_name(uint8_t scene_index, const char* name) {
     g_scene_manager.manifest[pos].filename);
 
   char new_slug[64];
-  scene_name_to_slug(name, new_slug, sizeof(new_slug));
+  esp_err_t slug_err = scene_unique_slug_for_name(name, (int8_t)scene_index,
+    new_slug, sizeof(new_slug));
+  if (slug_err != ESP_OK) return slug_err;
   snprintf(new_filepath, sizeof(new_filepath), "%s/%s",
     SCENES_BASE_PATH, new_slug);
 
@@ -2879,24 +2898,24 @@ uint8_t scene_get_midi_channel(uint8_t scene_index) {
 const char* scene_get_effective_device_slug(uint8_t scene_index) {
   if (scene_index > MAX_SCENE_INDEX) return NULL;
 
-  if (scene_index != g_scene_manager.current_scene_index) {
-    return NULL;
+  if (s_device_lookup_scene) {
+    return scene_effective_slug_from_scene(s_device_lookup_scene);
   }
 
-  scene_t* scene = scene_get_current();
-  if (!scene) return NULL;
+  if (scene_index == g_scene_manager.current_scene_index) {
+    scene_t* scene = scene_get_current();
+    return scene_effective_slug_from_scene(scene);
+  }
 
-  // In single device mode, always use global device
+  const scene_t *cached = scene_find_cached(scene_index);
+  if (cached) {
+    return scene_effective_slug_from_scene(cached);
+  }
+
   if (config_get_device_mode() == DEVICE_MODE_SINGLE) {
     return device_config_get_pedal_slug();
   }
 
-  // In per-scene mode, use scene's device_id if set
-  if (scene->device_id[0] != '\0') {
-    return scene->device_id;
-  }
-
-  // Fall back to global device_config
   return device_config_get_pedal_slug();
 }
 
@@ -3351,6 +3370,7 @@ esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, c
   if (!scene) return ESP_ERR_INVALID_STATE;
 
   touchpad_mapping_t* mapping = &scene->touchpads[pad_index];
+  memset(&mapping->action, 0, sizeof(action_t));
   mapping->action = *action;
   scene_persist_if_programming();
 
@@ -3642,6 +3662,7 @@ esp_err_t scene_assign_expr_switch(uint8_t scene_index, const action_t* action) 
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
+  memset(&scene->expr_switch, 0, sizeof(action_t));
   scene->expr_switch = *action;
   scene_persist_if_programming();
   
@@ -4769,6 +4790,47 @@ static void scene_name_to_slug(const char* name, char* slug, size_t slug_size) {
   snprintf(slug + out, slug_size - out, ".json");
 }
 
+static bool scene_filename_in_manifest(const char *filename, int8_t exclude_index) {
+  if (!filename || !g_scene_manager.manifest) return false;
+
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (exclude_index >= 0 &&
+        g_scene_manager.manifest[i].index == (uint8_t)exclude_index) {
+      continue;
+    }
+    if (strcmp(g_scene_manager.manifest[i].filename, filename) == 0) return true;
+  }
+  return false;
+}
+
+static bool scene_slug_is_taken(const char *slug, int8_t exclude_index) {
+  if (!slug || slug[0] == '\0') return true;
+  if (factory_source_exists(slug)) return true;
+  return scene_filename_in_manifest(slug, exclude_index);
+}
+
+static esp_err_t scene_unique_slug_for_name(const char *name, int8_t exclude_index,
+                                            char *slug, size_t slug_size) {
+  if (!name || !slug || slug_size < 6) return ESP_ERR_INVALID_ARG;
+
+  scene_name_to_slug(name, slug, slug_size);
+  if (!scene_slug_is_taken(slug, exclude_index)) return ESP_OK;
+
+  size_t len = strlen(slug);
+  if (len <= 5 || strcmp(slug + len - 5, ".json") != 0) return ESP_ERR_INVALID_ARG;
+
+  char base[58];
+  if (len - 5 >= sizeof(base)) return ESP_ERR_INVALID_ARG;
+  memcpy(base, slug, len - 5);
+  base[len - 5] = '\0';
+
+  for (int n = 2; n < 100; n++) {
+    snprintf(slug, slug_size, "%s_%d.json", base, n);
+    if (!scene_slug_is_taken(slug, exclude_index)) return ESP_OK;
+  }
+  return ESP_ERR_INVALID_ARG;
+}
+
 bool scene_name_is_reserved(const char* name) {
   if (!name || name[0] == '\0') return false;
   char slug[64];
@@ -5479,6 +5541,9 @@ static action_t json_to_action(cJSON* obj) {
   cJSON* values = cJSON_GetObjectItem(obj, "values");
 
   if (cc) {
+    if (action.type == ACTION_CONTROL &&
+        (action.variant == VARIANT_SET || action.variant == VARIANT_HOLD ||
+         action.variant == VARIANT_CYCLE)) {
     if (cJSON_IsArray(cc)) {
       // Multi-CC format: cc is array
       int num_ccs = cJSON_GetArraySize(cc);
@@ -5541,6 +5606,7 @@ static action_t json_to_action(cJSON* obj) {
           if (item) action.params.control.cycle_values[0][i] = item->valueint;
         }
       }
+    }
     }
   }
   
@@ -5654,7 +5720,9 @@ static action_t json_to_action(cJSON* obj) {
   // Parse tempo actions (consolidated: ACTION_TEMPO + variant)
   if (action.type == ACTION_TEMPO) {
     cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
-    if (bpm) action.params.tempo.bpm = (uint16_t)bpm->valueint;
+    if (bpm && action.variant == VARIANT_SET) {
+      action.params.tempo.bpm = (uint16_t)bpm->valueint;
+    }
 
     if (action.variant == VARIANT_SET && action.params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
       cJSON* floor = cJSON_GetObjectItem(obj, "random_floor");
@@ -6246,6 +6314,10 @@ static cJSON* cc_triggers_to_json(const scene_t* scene) {
   if (!scene) return NULL;
   cJSON* arr = cJSON_CreateArray();
   for (int i = 0; i < NUM_CC_TRIGGERS; i++) {
+    if (scene->cc_triggers[i].cc_number == 0 &&
+        scene->cc_triggers[i].action.type == ACTION_NONE) {
+      continue;
+    }
     cJSON* slot = cJSON_CreateObject();
     cJSON_AddNumberToObject(slot, "cc_number", scene->cc_triggers[i].cc_number);
     cJSON* action_json = action_to_json(&scene->cc_triggers[i].action);
@@ -6328,17 +6400,16 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
   }
   cJSON_AddStringToObject(obj, "lfo_target", lfo_target_str);
   
-  cJSON_AddNumberToObject(obj, "cc_number", mapping->cc_number);
-  
-  // Multi-CC array - always save all 4 slots to preserve positions
-  // (0 values indicate inactive slots)
+  uint8_t cc_primary = mapping->cc_number;
   if (mapping->num_cc_numbers > 0) {
+    cc_primary = mapping->cc_numbers[0];
     cJSON* cc_arr = cJSON_CreateArray();
-    for (int i = 0; i < MAX_MULTI_CC; i++) {
+    for (int i = 0; i < mapping->num_cc_numbers && i < MAX_MULTI_CC; i++) {
       cJSON_AddItemToArray(cc_arr, cJSON_CreateNumber(mapping->cc_numbers[i]));
     }
     cJSON_AddItemToObject(obj, "cc_numbers", cc_arr);
   }
+  cJSON_AddNumberToObject(obj, "cc_number", cc_primary);
   
   cJSON_AddNumberToObject(obj, "base_note", mapping->base_note);
   cJSON_AddNumberToObject(obj, "note_range", mapping->note_range);
@@ -6417,6 +6488,9 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
       if (mapping->cc_numbers[i] > 0) {
         mapping->num_cc_numbers++;
       }
+    }
+    if (mapping->num_cc_numbers > 0) {
+      mapping->cc_number = mapping->cc_numbers[0];
     }
   } else {
     mapping->num_cc_numbers = 0;
@@ -8187,7 +8261,9 @@ esp_err_t scene_inspect_at_index(uint8_t scene_index, char *buf, size_t cap,
     scene = heap_scene;
   }
 
+  s_device_lookup_scene = scene;
   bool complete = scene_inspect_build(scene, scene_index, buf, cap);
+  s_device_lookup_scene = NULL;
   if (truncated_out) *truncated_out = !complete;
 
   if (heap_scene) heap_caps_free(heap_scene);
@@ -8277,6 +8353,37 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
   strncpy(saved_name, scratch->name, sizeof(saved_name) - 1);
   saved_name[sizeof(saved_name) - 1] = '\0';
 
+  if (scene_name_exists(saved_name, (int8_t)scene_index)) {
+    ESP_LOGW(TAG, "SCENE_PUT rejected: name '%s' already exists", saved_name);
+    heap_caps_free(scratch);
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (scene_name_is_reserved(saved_name)) {
+    ESP_LOGW(TAG, "SCENE_PUT rejected: name '%s' is reserved", saved_name);
+    heap_caps_free(scratch);
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  int manifest_pos = -1;
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == scene_index) {
+      manifest_pos = i;
+      break;
+    }
+  }
+  if (manifest_pos < 0) {
+    heap_caps_free(scratch);
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  char new_slug[64];
+  esp_err_t slug_err = scene_unique_slug_for_name(saved_name, (int8_t)scene_index,
+    new_slug, sizeof(new_slug));
+  if (slug_err != ESP_OK) {
+    heap_caps_free(scratch);
+    return slug_err;
+  }
+
   cJSON *out = scene_to_json(scratch);
   heap_caps_free(scratch);
   if (!out) return ESP_ERR_NO_MEM;
@@ -8285,9 +8392,18 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
   cJSON_Delete(out);
   if (!json_str) return ESP_ERR_NO_MEM;
 
-  char filepath[128];
-  get_scene_filename(scene_index, filepath, sizeof(filepath));
-  FILE *f = fopen(filepath, "w");
+  char old_filepath[128];
+  snprintf(old_filepath, sizeof(old_filepath), "%s/%s", SCENES_BASE_PATH,
+    g_scene_manager.manifest[manifest_pos].filename);
+
+  char new_filepath[128];
+  snprintf(new_filepath, sizeof(new_filepath), "%s/%s", SCENES_BASE_PATH, new_slug);
+
+  bool file_changed =
+    strcmp(g_scene_manager.manifest[manifest_pos].filename, new_slug) != 0;
+  const char *write_path = file_changed ? new_filepath : old_filepath;
+
+  FILE *f = fopen(write_path, "w");
   if (!f) {
     free(json_str);
     return ESP_ERR_NOT_FOUND;
@@ -8296,15 +8412,21 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
   fclose(f);
   free(json_str);
 
-  ESP_LOGI(TAG, "SCENE_PUT wrote scene %u (%s)", (unsigned)scene_index, filepath);
+  if (file_changed && strcmp(old_filepath, new_filepath) != 0) remove(old_filepath);
+
+  strncpy(g_scene_manager.manifest[manifest_pos].name, saved_name,
+    sizeof(g_scene_manager.manifest[manifest_pos].name) - 1);
+  g_scene_manager.manifest[manifest_pos].name[
+    sizeof(g_scene_manager.manifest[manifest_pos].name) - 1] = '\0';
+  strncpy(g_scene_manager.manifest[manifest_pos].filename, new_slug,
+    sizeof(g_scene_manager.manifest[manifest_pos].filename) - 1);
+  g_scene_manager.manifest[manifest_pos].filename[
+    sizeof(g_scene_manager.manifest[manifest_pos].filename) - 1] = '\0';
+  scene_save_manifest();
+
+  ESP_LOGI(TAG, "SCENE_PUT wrote scene %u (%s)", (unsigned)scene_index, write_path);
   ret = scene_reload_index(scene_index);
-  if (ret == ESP_OK) {
-    esp_err_t name_err = scene_update_manifest_name(scene_index, saved_name);
-    if (name_err != ESP_OK && name_err != ESP_ERR_NOT_FOUND) {
-      ESP_LOGW(TAG, "SCENE_PUT manifest name sync failed: %s",
-        esp_err_to_name(name_err));
-    }
-  }
+  if (ret == ESP_OK) scene_post_list_changed_event(scene_index);
   if (ret == ESP_OK && scene_index != g_scene_manager.current_scene_index)
     scene_post_updated_event(scene_index);
   return ret;
@@ -8386,30 +8508,6 @@ static esp_err_t scene_read_json_name(const char *filepath, char *name, size_t n
   }
   cJSON_Delete(root);
   return ESP_OK;
-}
-
-static esp_err_t scene_update_manifest_name(uint8_t scene_index, const char *name) {
-  if (!name || name[0] == '\0') return ESP_ERR_INVALID_ARG;
-  if (!g_scene_manager.manifest) return ESP_ERR_INVALID_STATE;
-
-  int pos = -1;
-  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
-    if (g_scene_manager.manifest[i].index == scene_index) {
-      pos = i;
-      break;
-    }
-  }
-  if (pos < 0) return ESP_ERR_NOT_FOUND;
-  if (strcmp(g_scene_manager.manifest[pos].name, name) == 0) return ESP_OK;
-
-  strncpy(g_scene_manager.manifest[pos].name, name,
-    sizeof(g_scene_manager.manifest[pos].name) - 1);
-  g_scene_manager.manifest[pos].name[
-    sizeof(g_scene_manager.manifest[pos].name) - 1] = '\0';
-
-  esp_err_t err = scene_save_manifest();
-  if (err == ESP_OK) scene_post_list_changed_event(scene_index);
-  return err;
 }
 
 static void scene_sync_all_manifest_names_from_json(void) {
@@ -8947,9 +9045,10 @@ esp_err_t scene_create_new_at_position(const char* name, uint16_t position) {
     g_scene_manager.manifest[i] = g_scene_manager.manifest[i - 1];
   }
   
-  // Generate slug filename from scene name
+  // Generate a slug that does not collide with factory presets or other scenes
   char slug[64];
-  scene_name_to_slug(name, slug, sizeof(slug));
+  esp_err_t slug_err = scene_unique_slug_for_name(name, -1, slug, sizeof(slug));
+  if (slug_err != ESP_OK) return slug_err;
   
   // Insert new entry at position
   g_scene_manager.manifest[position].index = new_index;
@@ -9055,9 +9154,10 @@ esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
   if (!new_manifest) return ESP_ERR_NO_MEM;
   g_scene_manager.manifest = new_manifest;
 
-  // Generate slug filename from scene name
+  // Generate a slug that does not collide with factory presets or other scenes
   char slug[64];
-  scene_name_to_slug(new_name, slug, sizeof(slug));
+  esp_err_t slug_err = scene_unique_slug_for_name(new_name, -1, slug, sizeof(slug));
+  if (slug_err != ESP_OK) return slug_err;
 
   // Insert right after source
   uint16_t insert_pos = source_pos + 1;

@@ -494,7 +494,7 @@ application.register(
         const response = await this.connection.sendCommand('DEVICE', 2000)
         console.log('[MIDI] DEVICE response:', response)
 
-        if (!response.startsWith('DEVICE ')) {
+        if (!response || !response.startsWith('DEVICE ')) {
           console.log('[MIDI] Invalid DEVICE response')
           return
         }
@@ -541,7 +541,7 @@ application.register(
         // Wait for ASSETS_STARTED confirmation
         const modeResponse = await this.connection.readLine(2000)
         console.log('[MIDI] Mode response:', modeResponse)
-        if (!modeResponse.includes('ASSETS_STARTED')) {
+        if (!modeResponse || !modeResponse.includes('ASSETS_STARTED')) {
           console.log('[MIDI] Failed to enter ASSETS mode')
           return null
         }
@@ -554,7 +554,7 @@ application.register(
         const sizeResponse = await this.connection.readLine(2000)
         console.log('[MIDI] GET response:', sizeResponse)
 
-        if (!sizeResponse.startsWith('SIZE ')) {
+        if (!sizeResponse || !sizeResponse.startsWith('SIZE ')) {
           console.log('[MIDI] Not a SIZE response, exiting assets')
           await this.connection.sendRaw('EXIT\n')
           return null

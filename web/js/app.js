@@ -513,10 +513,20 @@ window.ConnectionManager = (function () {
 
     _startModeNotifyLoop () {
       if (this._modeNotifyRunning || !this.mode) return
-      // ASSETS/CONFIG use request/response lines (and ASSETS binary transfers).
-      // DISPLAY owns the readable stream for binary frames.
-      // A background reader competes with readLine / fetchSizedTransfer.
-      if (this.mode === 'ASSETS' || this.mode === 'CONFIG' || this.mode === 'DISPLAY') return
+      // These modes own the readable stream themselves and must not share it
+      // with a background reader, which would compete for the single port
+      // reader and swallow bytes out from under them:
+      //   ASSETS  - request/response lines + binary transfers
+      //   CONFIG  - request/response lines
+      //   DISPLAY - binary frames
+      //   UPDATE  - updater controller's dedicated reader (firmware handshake)
+      //   CONSOLE - pipeTo() on port.readable
+      //   MIDI    - pipeTo() on port.readable for the relay loop
+      //   SETTINGS- its own getReader()-based readLine
+      if (this.mode === 'ASSETS' || this.mode === 'CONFIG' ||
+          this.mode === 'DISPLAY' || this.mode === 'UPDATE' ||
+          this.mode === 'CONSOLE' || this.mode === 'MIDI' ||
+          this.mode === 'SETTINGS') return
       this._modeNotifyRunning = true
       this._modeNotifyLoop()
     }

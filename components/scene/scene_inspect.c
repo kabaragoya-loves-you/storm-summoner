@@ -131,10 +131,9 @@ static void append_jack_action_block(scene_inspect_buf_t *b, const char *jack_la
   scene_inspect_buf_append(b, "%s: %s\n", jack_label, jack_connection_status(connected));
 
   if (action && action->type != ACTION_NONE) {
-    scene_inspect_buf_append(b, "%s\n", action_summary_inspect_family_name(action->type));
-    char body[512];
-    if (action_summary_format_inspect_action_body(action, scene_index, body, sizeof(body))) {
-      scene_inspect_buf_append(b, "%s\n", body);
+    char line[512];
+    if (action_summary_format_inspect_jack_line(action, scene_index, line, sizeof(line))) {
+      scene_inspect_buf_append(b, "%s\n", line);
     }
   }
 

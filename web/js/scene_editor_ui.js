@@ -365,12 +365,6 @@ window.SceneEditorUi = (function () {
       data-action="input->scene#patchText">`
   }
 
-  function ensureCcNumbers (m) {
-    if (!m.cc_numbers) m.cc_numbers = []
-    while (m.cc_numbers.length < 4) m.cc_numbers.push(0)
-    if (!m.cc_number && m.cc_numbers[0]) m.cc_number = m.cc_numbers[0]
-  }
-
   // Preserve explicit slot count; trim only trailing inactive slots (min 1).
   function normalizeCcSlotList (raw) {
     let list = (raw || []).slice(0, 4)
@@ -381,9 +375,10 @@ window.SceneEditorUi = (function () {
 
   function applyCcSlotFields (mapping, list) {
     mapping.cc_numbers = list
-    mapping.num_cc_numbers = list.filter(cc => Number(cc) > 0).length
     const firstActive = list.find(cc => Number(cc) > 0)
     if (firstActive) mapping.cc_number = firstActive
+    else mapping.cc_number = 0
+    delete mapping.num_cc_numbers
   }
 
   function syncTouchwheelCcNumbers (tw) {
@@ -509,18 +504,19 @@ window.SceneEditorUi = (function () {
     if (!opts.hideRouting) {
       html += fieldRow(routingLabel, selectField(otPath, ot, routingTypes))
     }
-    ensureCcNumbers(m)
+    syncLfoCcNumbers(m)
 
     if (ot === 'cc') {
       if (opts.ccSlots) {
         html += renderLfoCcSlots(ctrl, mappingPath, m, opts)
       } else {
-        for (let i = 0; i < 4; i++) {
+        const ccList = m.cc_numbers || [0]
+        for (let i = 0; i < ccList.length; i++) {
           html += fieldRow(
             `CC slot ${i + 1}`,
             numberField(
               `${mappingPath}.cc_numbers.${i}`,
-              m.cc_numbers[i] ?? 0,
+              ccList[i] ?? 0,
               0,
               127
             )
@@ -2121,9 +2117,7 @@ window.SceneEditorUi = (function () {
     const ctx = ctrl.deviceContext
     let html = ''
 
-    if (ctx.sceneMode !== 0) {
-      html += fieldRow('Scene name', textField('name', m.name || '', 16))
-    }
+    html += fieldRow('Scene name', textField('name', m.name || '', 16))
     html += fieldRow(
       'Screen',
       selectField(
@@ -3323,7 +3317,15 @@ window.SceneEditorUi = (function () {
     if ((m.touchpads || []).some(padAction)) open.add('Pads')
     if (m.touchwheel_mode && m.touchwheel_mode !== 'pads')
       open.add('Touchwheel')
-    if (m.expression?.enabled) open.add('Expression')
+    const exprMode = m.expression_mode || 'expression'
+    if (
+      m.expression?.enabled ||
+      exprMode === 'switch' ||
+      exprMode === 'sustain' ||
+      exprMode === 'sostenuto'
+    ) {
+      open.add('Expression')
+    }
     if (m.cv_input_mode && m.cv_input_mode !== 'none')
       open.add('Control Voltage')
     if (m.proximity?.enabled) open.add('Proximity')

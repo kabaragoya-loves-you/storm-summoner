@@ -1317,6 +1317,37 @@ bool action_summary_format_inspect_action_body(const action_t *action, uint8_t s
   return out.len > 0;
 }
 
+bool action_summary_format_inspect_jack_line(const action_t *action, uint8_t scene_index,
+  char *buf, size_t len) {
+  if (!action || action->type == ACTION_NONE || !buf || len == 0) return false;
+  buf[0] = '\0';
+
+  const char *family = ainspect_family_name(action->type);
+
+  if (action->type == ACTION_CONTROL && action->variant == VARIANT_SET) {
+    char detail[256];
+    ainspect_buf_t out = { .buf = detail, .cap = sizeof(detail), .len = 0 };
+    ainspect_append_control_set_lines(&out, action, scene_index);
+    if (detail[0] == '\n') {
+      snprintf(buf, len, "%s%s", family, detail);
+    } else if (detail[0] != '\0') {
+      snprintf(buf, len, "%s: %s", family, detail);
+    } else {
+      snprintf(buf, len, "%s", family);
+    }
+    return true;
+  }
+
+  char detail[192];
+  if (ainspect_format_variant_line(action, scene_index, detail, sizeof(detail))) {
+    snprintf(buf, len, "%s: %s", family, detail);
+    return true;
+  }
+
+  snprintf(buf, len, "%s", family);
+  return true;
+}
+
 bool action_summary_format_inspect_continuous(const continuous_mapping_t *mapping,
   uint8_t scene_index, char *buf, size_t len) {
   if (!mapping || !mapping->enabled || !buf || len == 0) return false;

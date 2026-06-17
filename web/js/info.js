@@ -13,6 +13,14 @@ application.register(
       this._activatePending = false
       this._loadGeneration = 0
       this.releases = null
+      this._lastPedalSlug = null
+      this._pedalSettingsBusy = false
+      this._onPedalSettingsChanged = e => {
+        if (this.infoData?.pedal) Object.assign(this.infoData.pedal, e.detail)
+      }
+      this._onPedalSettingsBusy = e => {
+        this._pedalSettingsBusy = !!e.detail?.busy
+      }
       this._onTabActivated = e => {
         if (e.detail.tab === 'info' && this.connection.isConnected) {
           this._loadGeneration++
@@ -65,6 +73,8 @@ application.register(
 
       document.addEventListener('app:tab-activated', this._onTabActivated)
       document.addEventListener('cdc:notify', this._onCdcNotify)
+      document.addEventListener('info-pedal-settings:changed', this._onPedalSettingsChanged)
+      document.addEventListener('info-pedal-settings:busy', this._onPedalSettingsBusy)
 
       document.addEventListener('updater:complete', () => {
         if (this.connection.isConnected) {
@@ -96,6 +106,8 @@ application.register(
     disconnect () {
       document.removeEventListener('app:tab-activated', this._onTabActivated)
       document.removeEventListener('cdc:notify', this._onCdcNotify)
+      document.removeEventListener('info-pedal-settings:changed', this._onPedalSettingsChanged)
+      document.removeEventListener('info-pedal-settings:busy', this._onPedalSettingsBusy)
       if (this._notifyDebounce) clearTimeout(this._notifyDebounce)
     }
 
@@ -399,71 +411,147 @@ application.register(
 
       const pedal = this.infoData.pedal
       if (!pedal) {
+        this._lastPedalSlug = null
         this.pedalCardTarget.innerHTML = `
           <div class="empty-state">
             <p>Pedal info unavailable</p>
           </div>
         `
       } else {
-        const trsDisplay = this.formatTrsType(pedal.trs_type)
-        const bankDisplay = this.formatBankMode(pedal.bank_mode)
-
-        const capabilities = []
-        if (pedal.receives_pc) capabilities.push('PC')
-        if (pedal.receives_clock) capabilities.push('Clock')
-        if (pedal.receives_notes) capabilities.push('Notes')
-        if (pedal.transmits_pc) capabilities.push('TX PC')
-
-        this.pedalCardTarget.innerHTML = `
-          <div class="info-rows">
-            <div class="info-row">
-              <span class="info-label">Name</span>
-              <span class="info-value">${pedal.name}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Manufacturer</span>
-              <span class="info-value">${pedal.vendor}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">MIDI Channel</span>
-              <span class="info-value">${pedal.midi_channel}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">TRS Type</span>
-              <span class="info-value">${trsDisplay}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Send Clock</span>
-              <span class="info-value">${pedal.send_clock ? 'Yes' : 'No'}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Capabilities</span>
-              <span class="info-value">${
-                capabilities.join(', ') || 'None'
-              }</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Presets</span>
-              <span class="info-value">${pedal.preset_count} (${
-          pedal.preset_base
-        }-based)</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Bank Mode</span>
-              <span class="info-value">${bankDisplay}</span>
-            </div>
-          </div>
-          <div class="info-card-actions">
-            <wa-button size="small" variant="brand" appearance="outlined"
-                       data-action="click->info#goToPedals">
-              <wa-icon name="guitar" slot="prefix"></wa-icon>
-              Change Pedal
-            </wa-button>
-          </div>
-        `
+        this.renderPedalCard(pedal)
       }
 
       this.renderSceneCard()
+    }
+
+    renderPedalCard (pedal) {
+      const card = this.pedalCardTarget
+      const slugChanged = this._lastPedalSlug !== pedal.slug
+      const skipSettings = !slugChanged && this._pedalSettingsBusy
+      const staticEl = card.querySelector('[data-info-pedal-static]')
+      const settingsHost = card.querySelector('[data-info-pedal-settings-host]')
+
+      if (!staticEl || !settingsHost) {
+        card.innerHTML = this.buildPedalCardHtml(pedal)
+        this._lastPedalSlug = pedal.slug
+        return
+      }
+
+      staticEl.outerHTML = this.buildPedalStaticHtml(pedal)
+      if (!skipSettings) {
+        settingsHost.outerHTML = this.buildPedalSettingsHtml(pedal)
+      }
+      this._lastPedalSlug = pedal.slug
+    }
+
+    buildPedalCardHtml (pedal) {
+      return `
+        ${this.buildPedalStaticHtml(pedal)}
+        ${this.buildPedalSettingsHtml(pedal)}
+        <div class="info-card-actions">
+          <wa-button size="small" variant="brand" appearance="outlined"
+                     data-action="click->info#goToPedals">
+            <wa-icon name="guitar" slot="prefix"></wa-icon>
+            Change Pedal
+          </wa-button>
+        </div>
+      `
+    }
+
+    buildPedalStaticHtml (pedal) {
+      const capabilities = []
+      if (pedal.receives_pc) capabilities.push('PC')
+      if (pedal.receives_clock) capabilities.push('Clock')
+      if (pedal.receives_notes) capabilities.push('Notes')
+      if (pedal.transmits_pc) capabilities.push('TX PC')
+      const bankDisplay = this.formatBankMode(pedal.bank_mode)
+      const ccCount = pedal.cc_count != null ? pedal.cc_count : '—'
+
+      return `
+        <div class="info-rows" data-info-pedal-static>
+          <div class="info-row">
+            <span class="info-label">Name</span>
+            <span class="info-value">${pedal.name}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Manufacturer</span>
+            <span class="info-value">${pedal.vendor}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Capabilities</span>
+            <span class="info-value">${capabilities.join(', ') || 'None'}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Presets</span>
+            <span class="info-value">${pedal.preset_count} (${
+        pedal.preset_base
+      }-based)</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">CC commands</span>
+            <span class="info-value">${ccCount}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Bank Mode</span>
+            <span class="info-value">${bankDisplay}</span>
+          </div>
+        </div>
+      `
+    }
+
+    buildPedalSettingsHtml (pedal) {
+      const ch = pedal.midi_channel ?? 1
+      const trs = pedal.trs_type || 'TYPE_A'
+      const sendClock = !!pedal.send_clock
+      const formatTrs = window.PedalCatalog?.formatTrsLabel ||
+        (t => this.formatTrsType(t))
+
+      let channelOptions = ''
+      for (let n = 1; n <= 16; n++) {
+        const selected = n === ch ? 'selected' : ''
+        channelOptions += `<wa-option value="${n}" ${selected}>${n}</wa-option>`
+      }
+
+      const trsTypes = ['TYPE_A', 'TYPE_B', 'TYPE_TS', 'BOTH']
+      let trsOptions = ''
+      for (const t of trsTypes) {
+        const selected = t === trs ? 'selected' : ''
+        trsOptions += `<wa-option value="${t}" ${selected}>${formatTrs(t)}</wa-option>`
+      }
+
+      const clockVal = sendClock ? '1' : '0'
+      const clockOptions = `
+        <wa-option value="1" ${sendClock ? 'selected' : ''}>Yes</wa-option>
+        <wa-option value="0" ${!sendClock ? 'selected' : ''}>No</wa-option>
+      `
+
+      return `
+        <div class="info-pedal-settings"
+             data-info-pedal-settings-host
+             data-controller="info-pedal-settings"
+             data-info-pedal-settings-midi-channel-value="${ch}"
+             data-info-pedal-settings-trs-type-value="${trs}"
+             data-info-pedal-settings-send-clock-value="${sendClock}">
+          <div class="info-row info-row-control">
+            <span class="info-label">MIDI Channel</span>
+            <wa-select size="small" value="${ch}" data-pedal-field="midiChannel">
+              ${channelOptions}
+            </wa-select>
+          </div>
+          <div class="info-row info-row-control">
+            <span class="info-label">TRS Type</span>
+            <wa-select size="small" value="${trs}" data-pedal-field="trsType">
+              ${trsOptions}
+            </wa-select>
+          </div>
+          <div class="info-row info-row-control">
+            <span class="info-label">Send Clock</span>
+            <wa-select size="small" value="${clockVal}" data-pedal-field="sendClock">
+              ${clockOptions}
+            </wa-select>
+          </div>
+        </div>
+      `
     }
 
     renderSceneClockRows () {

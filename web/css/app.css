@@ -846,6 +846,12 @@ wa-dialog[data-updater-target="factoryResetDialog"]::part(footer) {
   white-space: nowrap;
 }
 
+.scene-name-rename {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .scenes-section.inactive .scene-name {
   color: var(--text-dim);
 }
@@ -1831,6 +1837,20 @@ wa-dialog[data-scene-target="messageDialog"]::part(footer) {
 
 .info-row:last-child {
   border-bottom: none;
+}
+
+.info-row-control {
+  gap: 0.75rem;
+}
+
+.info-row-control wa-select {
+  min-width: 6.5rem;
+  max-width: 9rem;
+}
+
+.info-pedal-settings.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .info-label {

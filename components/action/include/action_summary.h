@@ -101,6 +101,10 @@ bool action_summary_format_inspect_pad(const action_t *action, const char *pad_n
 bool action_summary_format_inspect_action_body(const action_t *action, uint8_t scene_index,
   char *buf, size_t len);
 
+// Single-line action summary for jack blocks (e.g. "Tempo: Downbeat").
+bool action_summary_format_inspect_jack_line(const action_t *action, uint8_t scene_index,
+  char *buf, size_t len);
+
 // Continuous mapping lines (output type, target/range, curve, polarity).
 bool action_summary_format_inspect_continuous(const continuous_mapping_t *mapping,
   uint8_t scene_index, char *buf, size_t len);

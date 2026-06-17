@@ -370,6 +370,36 @@ window.DeviceControls = (function () {
     return changed
   }
 
+  function controlActionHasInvalidCc (device, action) {
+    if (!action || !isControlAction(action.type) || !hasParameters(device)) return false
+    return toList(action.cc).some(cc => {
+      const n = Number(cc)
+      return Number.isNaN(n) || !isValidParameterCc(device, n)
+    })
+  }
+
+  function normalizeControlActionsIfInvalid (device, model) {
+    if (!model || !hasParameters(device)) return false
+    let changed = false
+    const fix = (action) => {
+      if (controlActionHasInvalidCc(device, action) &&
+          normalizeControlAction(device, action)) {
+        changed = true
+      }
+    }
+    model.touchpads?.forEach(tp => fix(tp.action))
+    fix(model.button_left)
+    fix(model.button_right)
+    fix(model.button_both)
+    fix(model.bump)
+    model.on_load?.forEach(fix)
+    model.on_play?.forEach(fix)
+    model.cc_triggers?.forEach(t => fix(t?.action))
+    fix(model.cv_trigger_action)
+    fix(model.expr_switch)
+    return changed
+  }
+
   function seedSlotValues (device, action, field) {
     const slots = Math.max(1, controlSlotCount(action))
     const resolved = []
@@ -720,6 +750,7 @@ window.DeviceControls = (function () {
     cycleStepsForSlot,
     normalizeControlAction,
     normalizeControlActionsInModel,
+    normalizeControlActionsIfInvalid,
     validateControlActionsInModel,
     isPresetAction,
     presetRange,

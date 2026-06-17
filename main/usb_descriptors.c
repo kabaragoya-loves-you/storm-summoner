@@ -71,7 +71,7 @@ const char* string_desc_arr [] = {
   "Kabaragoya",                   // 1: Manufacturer
   "Storm Summoner",               // 2: Product
   "STORM001",                     // 3: Serial (should be unique per device)
-  "Storm Summoner CDC",           // 4: CDC Interface
+  "Storm Summoner",           // 4: CDC Interface
   // "Storm Summoner Storage",       // 5: MSC Interface (disabled)
 };
 
