@@ -5,6 +5,34 @@ window.ActionCatalog = (function () {
   const NOTE_VEL_RANDOM = 254
   const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
+  function clampBpm (n) {
+    const x = Number(n)
+    if (Number.isNaN(x)) return 120
+    return Math.max(20, Math.min(300, Math.round(x * 10) / 10))
+  }
+
+  function clampBpmForDevice (n, allowFractional) {
+    const x = clampBpm(n)
+    return allowFractional ? x : Math.round(x)
+  }
+
+  function clampIncAmount (n) {
+    const x = Number(n)
+    if (Number.isNaN(x)) return 1
+    return Math.max(0.1, Math.min(20, Math.round(x * 10) / 10))
+  }
+
+  function clampIncAmountForDevice (n, allowFractional) {
+    const x = clampIncAmount(n)
+    return allowFractional ? x : Math.round(x)
+  }
+
+  function formatBpmDisplay (n) {
+    const x = Number(n)
+    if (Number.isNaN(x)) return '--'
+    return Number.isInteger(x) ? String(x) : x.toFixed(1)
+  }
+
   const NOTE_VELOCITY_PRESETS = [
     { v: NOTE_VEL_RANDOM, l: 'Random' },
     { v: 127, l: 'Forte' },
@@ -1207,7 +1235,10 @@ window.ActionCatalog = (function () {
     const t = action.type
     const v = action.variant || defaultVariant(t)
     if (t === 'control') return v === 'hold' || v === 'cycle'
-    if (t === 'tempo') return v === 'hold'
+    if (t === 'tempo') {
+      return v === 'set' || v === 'hold' || v === 'increment' ||
+        v === 'decrement' || v === 'cycle'
+    }
     if (t === 'randomize') return true
     return false
   }
@@ -1219,29 +1250,29 @@ window.ActionCatalog = (function () {
     return Math.max(2, Math.min(8, Math.max(n, declared || 2)))
   }
 
-  function normalizeTempoActionsInModel (model) {
+  function normalizeTempoActionsInModel (model, allowFractional = true) {
     let changed = false
     forEachAction(model, action => {
       if (action?.type !== 'tempo') return
       const before = JSON.stringify(action)
       const v = action.variant || defaultVariant('tempo')
-      const clampBpm = (n) => {
-        const x = Number(n)
-        if (Number.isNaN(x)) return 120
-        return Math.max(20, Math.min(300, Math.round(x)))
-      }
+      const clampBpmLocal = n => clampBpmForDevice(n, allowFractional)
       if (v === 'set') {
-        if (action.bpm != null) action.bpm = clampBpm(action.bpm)
+        if (action.bpm != null) action.bpm = clampBpmLocal(action.bpm)
       } else if (v === 'hold') {
-        action.press_bpm = clampBpm(action.press_bpm)
-        action.release_bpm = clampBpm(action.release_bpm)
+        action.press_bpm = clampBpmLocal(action.press_bpm)
+        action.release_bpm = clampBpmLocal(action.release_bpm)
       } else if (v === 'cycle') {
         let steps = Array.isArray(action.tempos) ? action.tempos.slice() : []
         const stepCount = tempoStepCount(action)
         while (steps.length < stepCount) steps.push(120)
-        steps = steps.slice(0, stepCount).map(clampBpm)
+        steps = steps.slice(0, stepCount).map(clampBpmLocal)
         action.tempos = steps
         action.num_tempos = steps.length
+      } else if (v === 'increment' || v === 'decrement') {
+        if (action.inc_amount != null) {
+          action.inc_amount = clampIncAmountForDevice(action.inc_amount, allowFractional)
+        }
       }
       if (JSON.stringify(action) !== before) changed = true
     })
@@ -1415,6 +1446,10 @@ window.ActionCatalog = (function () {
     normalizeRepeatActionsInModel,
     tempoStepCount,
     normalizeTempoActionsInModel,
+    clampBpm,
+    clampBpmForDevice,
+    clampIncAmountForDevice,
+    formatBpmDisplay,
     stripActionFieldsInModel
   }
 })()

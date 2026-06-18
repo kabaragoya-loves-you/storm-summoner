@@ -45,7 +45,7 @@
         "start_value": 3,
         "finish_cc": 11,
         "finish_value": 2,
-        "duration": "8_bars",
+        "duration": "1_bar",
         "raise_flag": true
       }
     },

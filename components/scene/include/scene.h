@@ -190,7 +190,7 @@ typedef struct scene_t {
   uint8_t lfo2_tempo_nudge_pct;
   
   // Tempo configuration (per-scene)
-  uint16_t bpm;                          // Tempo in beats per minute (20-300)
+  uint16_t bpm_x10;                      // Tempo in tenths of BPM (200-3000)
   tempo_clock_source_t clock_source;     // INTERNAL, MIDI, SYNC
   tempo_note_divider_t beat_divider;     // QUARTER, EIGHTH, SIXTEENTH
   time_signature_t time_signature;       // Beats per bar and beat unit
@@ -494,6 +494,8 @@ uint8_t scene_get_tilt_x_lfo_rate(void);
 uint8_t scene_get_tilt_y_lfo_rate(void);
 
 // Tempo configuration (per-scene)
+esp_err_t scene_set_bpm_x10(uint8_t scene_index, uint16_t bpm_x10);
+uint16_t scene_get_bpm_x10(uint8_t scene_index);
 esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm);
 uint16_t scene_get_bpm(uint8_t scene_index);
 esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source);

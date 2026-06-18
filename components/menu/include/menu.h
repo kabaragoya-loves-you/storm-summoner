@@ -143,5 +143,23 @@ typedef void (*menu_roller_confirm_cb_t)(uint32_t selected_index, void* user_dat
 lv_obj_t* menu_create_roller_page(const char* title, const char* options, 
   uint32_t initial_index, menu_roller_confirm_cb_t confirm_cb, void* user_data);
 
+// Fractional BPM editor: single roller with whole-number then tenths phases
+typedef void (*menu_bpm_commit_cb_t)(uint16_t bpm_x10, void* user_data);
+
+typedef struct {
+  const char* title;
+  uint16_t initial_bpm_x10;
+  uint16_t min_whole;
+  uint16_t max_whole;
+  const char* prefix_options;   // e.g. "Original\nRandom" or NULL
+  uint8_t prefix_count;
+  const uint16_t* prefix_values;
+  bool allow_fractional;
+  menu_bpm_commit_cb_t commit;
+  void* user_data;
+} menu_bpm_editor_cfg_t;
+
+lv_obj_t* menu_create_bpm_editor_page(const menu_bpm_editor_cfg_t* cfg);
+
 #endif // MENU_H
 

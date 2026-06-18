@@ -3,6 +3,7 @@
 #include "scene_name_gen.h"
 #include "device_config.h"
 #include "assets_manager.h"
+#include "tempo.h"
 #include "touchwheel_mode_mapping.h"
 #include "esp_log.h"
 #include "esp_console.h"
@@ -304,8 +305,11 @@ static void format_action_details_with_device(const action_t* action, const devi
           snprintf(buf, buf_size, "Tempo Original");
         else if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM)
           snprintf(buf, buf_size, "Tempo Random");
-        else
-          snprintf(buf, buf_size, "Tempo %d BPM", action->params.tempo.bpm);
+        else {
+          char bpm_buf[16];
+          tempo_format_bpm(bpm_buf, sizeof(bpm_buf), action->params.tempo.bpm);
+          snprintf(buf, buf_size, "Tempo %s BPM", bpm_buf);
+        }
       } else {
         snprintf(buf, buf_size, "%s", action_type_to_string(action->type));
       }
@@ -514,7 +518,11 @@ static void cmd_scene_info(void) {
   
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Tempo settings:");
-  ESP_LOGI(TAG, "  BPM: %d", scene->bpm);
+  {
+    char bpm_buf[16];
+    tempo_format_bpm(bpm_buf, sizeof(bpm_buf), scene->bpm_x10);
+    ESP_LOGI(TAG, "  BPM: %s", bpm_buf);
+  }
   ESP_LOGI(TAG, "  Clock source: %s",
            scene->clock_source == CLOCK_SOURCE_INTERNAL ? "Internal" :
            scene->clock_source == CLOCK_SOURCE_MIDI ? "MIDI" : "Sync");

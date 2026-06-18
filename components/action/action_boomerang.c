@@ -4,6 +4,7 @@
 #include "scene.h"
 #include "transport.h"
 #include "tempo.h"
+#include "tempo_nudge.h"
 #include "assets_manager.h"
 #include "lfo.h"
 #include "rtg.h"
@@ -94,7 +95,7 @@ bool action_boomerang_any_active(void) {
 
 // Convert a boomerang duration mode + params into a millisecond duration
 static uint32_t boomerang_phase_duration_ms(uint8_t mode, uint16_t time_ms, uint8_t division,
-    uint16_t bpm, uint8_t current_beat, uint8_t beats_per_bar) {
+    uint16_t bpm_x10, uint8_t current_beat, uint8_t beats_per_bar) {
   (void)current_beat;
   (void)beats_per_bar;
   switch (mode) {
@@ -103,7 +104,7 @@ static uint32_t boomerang_phase_duration_ms(uint8_t mode, uint16_t time_ms, uint
     case BOOMERANG_DUR_TIME_MS:
       return (uint32_t)time_ms;
     case BOOMERANG_DUR_DIVISION:
-      return action_morph_get_duration_ms((morph_division_t)division, bpm);
+      return action_morph_get_duration_ms((morph_division_t)division, bpm_x10);
     default:
       return 0;
   }
@@ -236,15 +237,12 @@ static void boomerang_apply_value(active_boomerang_t* b, int32_t value) {
       scene_t* scene = scene_get_current();
       if (scene) {
         uint8_t pct = 20;
-        int32_t base_bpm = scene->bpm;
+        int32_t base_bpm_x10 = scene->bpm_x10;
         float scale = ((float)v8 - 64.0f) / 63.0f;
         if (scale > 1.0f) scale = 1.0f;
         if (scale < -1.0f) scale = -1.0f;
-        float factor = 1.0f + scale * ((float)pct / 100.0f);
-        int32_t new_bpm = (int32_t)((float)base_bpm * factor + 0.5f);
-        if (new_bpm < 20) new_bpm = 20;
-        if (new_bpm > 300) new_bpm = 300;
-        tempo_set_bpm((uint16_t)new_bpm);
+        uint16_t new_bpm_x10 = tempo_nudge_compute_bpm_x10((int32_t)base_bpm_x10, pct, scale);
+        tempo_set_bpm_x10(new_bpm_x10);
       }
       break;
     }
@@ -347,8 +345,8 @@ bool action_boomerang_start_internal(const action_t* action) {
     return false;
   }
 
-  uint16_t bpm = tempo_get_bpm();
-  if (bpm == 0) bpm = 120;
+  uint16_t bpm_x10 = tempo_get_bpm_x10();
+  if (bpm_x10 == 0) bpm_x10 = TEMPO_DEFAULT_BPM_X10;
   time_signature_t sig = tempo_get_time_signature();
   uint8_t beats_per_bar = sig.numerator;
   if (beats_per_bar == 0) beats_per_bar = 4;
@@ -377,17 +375,17 @@ bool action_boomerang_start_internal(const action_t* action) {
     action->params.boomerang.attack_mode,
     action->params.boomerang.attack_time_ms,
     action->params.boomerang.attack_division,
-    bpm, current_beat, beats_per_bar);
+    bpm_x10, current_beat, beats_per_bar);
   b->sustain_ms = boomerang_phase_duration_ms(
     action->params.boomerang.sustain_mode,
     action->params.boomerang.sustain_time_ms,
     action->params.boomerang.sustain_division,
-    bpm, current_beat, beats_per_bar);
+    bpm_x10, current_beat, beats_per_bar);
   b->release_ms = boomerang_phase_duration_ms(
     action->params.boomerang.release_mode,
     action->params.boomerang.release_time_ms,
     action->params.boomerang.release_division,
-    bpm, current_beat, beats_per_bar);
+    bpm_x10, current_beat, beats_per_bar);
 
   b->attack_curve = action->params.boomerang.attack_curve;
   b->attack_curve_slope = action->params.boomerang.attack_curve_slope;

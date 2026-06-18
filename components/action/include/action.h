@@ -354,18 +354,18 @@ typedef struct {
     } preset;
     
     // For tempo actions (set, hold, cycle, increment, decrement)
+    // BPM fields store fixed-point tenths (1205 = 120.5 BPM) except sentinels.
     struct {
-      uint16_t bpm;               // VARIANT_SET: 20-300, 0=random, 0xFFFF=original
-      uint16_t random_floor;      // VARIANT_SET + random: lower bound (default 20)
-      uint16_t random_ceiling;    // VARIANT_SET + random: upper bound (default 300)
-      uint16_t press_bpm;         // For VARIANT_HOLD: tempo on press
-      uint16_t release_bpm;       // For VARIANT_HOLD: tempo on release
-      uint8_t num_tempos;         // For VARIANT_CYCLE: number of tempos (2-8)
-      uint16_t cycle_tempos[8];   // For VARIANT_CYCLE: tempo values
-      uint8_t current_index;      // For VARIANT_CYCLE: current position
-      uint8_t inc_amount;         // For VARIANT_INCREMENT/DECREMENT: step
-                                  // (1,2,3,4,5,10,15,20). Treated as 1 if
-                                  // 0 so legacy scenes Just Work.
+      uint16_t bpm;               // VARIANT_SET: x10, 0=random, 0xFFFF=original
+      uint16_t random_floor;      // VARIANT_SET + random: lower bound x10
+      uint16_t random_ceiling;    // VARIANT_SET + random: upper bound x10
+      uint16_t press_bpm;         // VARIANT_HOLD: tempo on press (x10)
+      uint16_t release_bpm;       // VARIANT_HOLD: tempo on release (x10)
+      uint8_t num_tempos;         // VARIANT_CYCLE: number of tempos (2-8)
+      uint16_t cycle_tempos[8];   // VARIANT_CYCLE: tempo values (x10)
+      uint8_t current_index;      // VARIANT_CYCLE: current position
+      uint16_t inc_amount;        // INCREMENT/DECREMENT: step size x10 (10 = 1.0 BPM)
+      uint8_t fractional;         // 0=integer-only, 1=allow fractional (tap/nudge)
     } tempo;
     
     // For randomize (one or more CCs, always 0-127 range)

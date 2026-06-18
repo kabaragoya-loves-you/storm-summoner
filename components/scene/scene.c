@@ -371,7 +371,7 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->lfo2_tempo_nudge_pct = 10;
   
   // Tempo configuration
-  scene->bpm = 120;                                    // Default to 120 BPM
+  scene->bpm_x10 = TEMPO_DEFAULT_BPM_X10;
   scene->clock_source = CLOCK_SOURCE_INTERNAL;         // Default to internal clock
   scene->beat_divider = DIVIDER_QUARTER;               // Default to quarter note beats
   scene->time_signature.numerator = 4;                 // Default to 4/4 time
@@ -523,7 +523,7 @@ static int s_touchwheel_endless_value = 64;  // Start at center
 static int s_touchwheel_last_sent_cc = -1;   // Last sent CC value (-1 = none sent yet)
 
 // Tracked values for new touchwheel modes
-static int s_touchwheel_tempo_bpm = 120;           // BPM 20-300
+static int s_touchwheel_tempo_bpm_x10 = TEMPO_DEFAULT_BPM_X10;
 static int s_touchwheel_pitch_bend = 0;            // -8192 to 8191, center at 0
 static int s_touchwheel_prev_pitch_bend = 0;       // Previous value for smooth interpolation
 static int s_touchwheel_aftertouch = 0;            // 0-127
@@ -718,18 +718,23 @@ static void touchwheel_tempo_callback(int value, void* user_data) {
   
   if (value == 0) return;
   
-  uint16_t floor = scene->touchwheel_tempo_floor;
-  uint16_t ceiling = scene->touchwheel_tempo_ceiling;
-  if (floor < 20) floor = 20;
-  if (ceiling > 300) ceiling = 300;
-  if (floor > ceiling) floor = ceiling;
+  uint16_t floor_x10 = tempo_whole_to_x10(scene->touchwheel_tempo_floor);
+  uint16_t ceiling_x10 = tempo_whole_to_x10(scene->touchwheel_tempo_ceiling);
+  if (floor_x10 < TEMPO_MIN_BPM_X10) floor_x10 = TEMPO_MIN_BPM_X10;
+  if (ceiling_x10 > TEMPO_MAX_BPM_X10) ceiling_x10 = TEMPO_MAX_BPM_X10;
+  if (floor_x10 > ceiling_x10) floor_x10 = ceiling_x10;
 
-  s_touchwheel_tempo_bpm += value;
-  if (s_touchwheel_tempo_bpm < (int)floor) s_touchwheel_tempo_bpm = (int)floor;
-  if (s_touchwheel_tempo_bpm > (int)ceiling) s_touchwheel_tempo_bpm = (int)ceiling;
+  int step = tempo_get_allow_fractional_bpm() ? value : (value * 10);
+  s_touchwheel_tempo_bpm_x10 += step;
+  if (s_touchwheel_tempo_bpm_x10 < (int)floor_x10)
+    s_touchwheel_tempo_bpm_x10 = (int)floor_x10;
+  if (s_touchwheel_tempo_bpm_x10 > (int)ceiling_x10)
+    s_touchwheel_tempo_bpm_x10 = (int)ceiling_x10;
   
-  tempo_set_bpm((uint16_t)s_touchwheel_tempo_bpm);
-  ESP_LOGD(TAG, "Touchwheel tempo: %d BPM", s_touchwheel_tempo_bpm);
+  tempo_set_bpm_x10((uint16_t)s_touchwheel_tempo_bpm_x10);
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), (uint16_t)s_touchwheel_tempo_bpm_x10);
+  ESP_LOGD(TAG, "Touchwheel tempo: %s BPM", bpm_buf);
 }
 
 // Callback for pitch bend mode touchwheel (true bipolar - position maps directly to value)
@@ -869,8 +874,8 @@ static uint8_t  s_tw_last_applied_midi = 64;
 static int      s_tw_last_nudge_input = -9999;
 static int      s_tw_nudge_endless_pos = 0;
 
-static int32_t s_tw_nudge_return_start_bpm = 0;
-static int32_t s_tw_nudge_return_target_bpm = 0;
+static int32_t s_tw_nudge_return_start_bpm_x10 = 0;
+static int32_t s_tw_nudge_return_target_bpm_x10 = 0;
 static uint16_t s_tw_nudge_return_frame = 0;
 static uint16_t s_tw_nudge_return_total_frames = 0;
 
@@ -901,19 +906,19 @@ static void nudge_return_timer_cb(void* arg) {
 
   s_tw_nudge_return_frame++;
   if (s_tw_nudge_return_frame >= s_tw_nudge_return_total_frames) {
-    tempo_set_bpm((uint16_t)s_tw_nudge_return_target_bpm);
+    tempo_set_bpm_x10((uint16_t)s_tw_nudge_return_target_bpm_x10);
     touchwheel_nudge_return_complete();
-    ESP_LOGD(TAG, "Touchwheel tempo nudge return complete -> bpm=%d",
-      (int)s_tw_nudge_return_target_bpm);
+    ESP_LOGD(TAG, "Touchwheel tempo nudge return complete -> bpm_x10=%d",
+      (int)s_tw_nudge_return_target_bpm_x10);
     return;
   }
 
-  int32_t delta = s_tw_nudge_return_target_bpm - s_tw_nudge_return_start_bpm;
-  int32_t new_bpm = s_tw_nudge_return_start_bpm +
+  int32_t delta = s_tw_nudge_return_target_bpm_x10 - s_tw_nudge_return_start_bpm_x10;
+  int32_t new_bpm_x10 = s_tw_nudge_return_start_bpm_x10 +
     (delta * (int32_t)s_tw_nudge_return_frame) / (int32_t)s_tw_nudge_return_total_frames;
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
-  tempo_set_bpm((uint16_t)new_bpm);
+  if (new_bpm_x10 < (int32_t)TEMPO_MIN_BPM_X10) new_bpm_x10 = TEMPO_MIN_BPM_X10;
+  if (new_bpm_x10 > (int32_t)TEMPO_MAX_BPM_X10) new_bpm_x10 = TEMPO_MAX_BPM_X10;
+  tempo_set_bpm_x10((uint16_t)new_bpm_x10);
 }
 
 static void touchwheel_stop_nudge_return(void) {
@@ -927,8 +932,8 @@ static void touchwheel_start_nudge_return(scene_t* scene) {
 
   touchwheel_stop_nudge_return();
 
-  int32_t target = (int32_t)scene->bpm;
-  int32_t current = (int32_t)tempo_get_bpm();
+  int32_t target = (int32_t)scene->bpm_x10;
+  int32_t current = (int32_t)tempo_get_bpm_x10();
   if (current == target) {
     s_tw_last_applied_midi = 64;
     return;
@@ -939,14 +944,14 @@ static void touchwheel_start_nudge_return(scene_t* scene) {
 
   uint16_t duration_ms = touchwheel_nudge_return_duration_ms(speed);
   if (duration_ms == 0) {
-    tempo_set_bpm((uint16_t)target);
+    tempo_set_bpm_x10((uint16_t)target);
     s_tw_last_applied_midi = 64;
-    ESP_LOGD(TAG, "Touchwheel tempo nudge instant return -> bpm=%d", (int)target);
+    ESP_LOGD(TAG, "Touchwheel tempo nudge instant return -> bpm_x10=%d", (int)target);
     return;
   }
 
-  s_tw_nudge_return_start_bpm = current;
-  s_tw_nudge_return_target_bpm = target;
+  s_tw_nudge_return_start_bpm_x10 = current;
+  s_tw_nudge_return_target_bpm_x10 = target;
   s_tw_nudge_return_frame = 0;
   s_tw_nudge_return_total_frames = duration_ms / 20;
   if (s_tw_nudge_return_total_frames < 1) s_tw_nudge_return_total_frames = 1;
@@ -957,7 +962,7 @@ static void touchwheel_start_nudge_return(scene_t* scene) {
       .name = "tw_nudge_ret"
     };
     if (esp_timer_create(&timer_args, &s_tw_nudge_return_timer) != ESP_OK) {
-      tempo_set_bpm((uint16_t)target);
+      tempo_set_bpm_x10((uint16_t)target);
       s_tw_last_applied_midi = 64;
       return;
     }
@@ -1266,10 +1271,14 @@ static void touchwheel_apply_tempo_nudge_scale(float scale, scene_t* scene, int 
   s_tw_last_nudge_input = input_key;
 
   uint8_t pct = scene->touchwheel_tempo_nudge_pct;
-  uint16_t new_bpm = tempo_nudge_compute_bpm(scene->bpm, pct, scale);
-  tempo_set_bpm(new_bpm);
-  ESP_LOGD(TAG, "Touchwheel tempo nudge: scale=%.2f pct=%u -> bpm=%u (base=%d)",
-    (double)scale, (unsigned)pct, (unsigned)new_bpm, (int)scene->bpm);
+  uint16_t new_bpm_x10 = tempo_nudge_compute_bpm_x10(scene->bpm_x10, pct, scale);
+  tempo_set_bpm_x10(new_bpm_x10);
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), new_bpm_x10);
+  char base_buf[16];
+  tempo_format_bpm(base_buf, sizeof(base_buf), scene->bpm_x10);
+  ESP_LOGD(TAG, "Touchwheel tempo nudge: scale=%.2f pct=%u -> %s BPM (base=%s)",
+    (double)scale, (unsigned)pct, bpm_buf, base_buf);
 }
 
 static void touchwheel_tempo_nudge_bipolar_callback(int value, void* user_data) {
@@ -1529,7 +1538,7 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
       
     case TOUCHWHEEL_MODE_SET_TEMPO:
       // Tempo mode: default to endless (only use odometer if explicitly set)
-      s_touchwheel_tempo_bpm = tempo_get_bpm();  // Initialize to current BPM
+      s_touchwheel_tempo_bpm_x10 = (int)tempo_get_bpm_x10();
       if (scene->touchwheel_style == TOUCHWHEEL_STYLE_ODOMETER) {
         mode_proc = touchwheel_mode_create_odometer();
         mode_desc = "set_tempo (odometer)";
@@ -2202,12 +2211,13 @@ esp_err_t scene_init(void) {
   }
   
   // Configure tempo settings for initial scene
-  tempo_set_bpm(initial_scene->bpm);
+  tempo_set_bpm_x10(initial_scene->bpm_x10);
   tempo_set_source(initial_scene->clock_source);
   tempo_set_note_divider(initial_scene->beat_divider);
   tempo_set_time_signature(initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
-  ESP_LOGD(TAG, "Set initial tempo: bpm=%d, source=%d, beat_divider=%d, time_sig=%d/%d", 
-           initial_scene->bpm, initial_scene->clock_source, initial_scene->beat_divider,
+  ESP_LOGD(TAG, "Set initial tempo: bpm_x10=%u, source=%d, beat_divider=%d, time_sig=%d/%d",
+           (unsigned)initial_scene->bpm_x10, initial_scene->clock_source,
+           initial_scene->beat_divider,
            initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
   
   // Validate action timings against time signature (remap invalid beats to beat 1)
@@ -2409,12 +2419,12 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   expression_set_mode(new_scene->expression_mode);
   
   // Configure tempo settings for this scene
-  tempo_set_bpm(new_scene->bpm);
+  tempo_set_bpm_x10(new_scene->bpm_x10);
   tempo_set_source(new_scene->clock_source);
   tempo_set_note_divider(new_scene->beat_divider);
   tempo_set_time_signature(new_scene->time_signature.numerator, new_scene->time_signature.denominator);
-  ESP_LOGD(TAG, "Set tempo: bpm=%d, source=%d, beat_divider=%d, time_sig=%d/%d", 
-           new_scene->bpm, new_scene->clock_source, new_scene->beat_divider,
+  ESP_LOGD(TAG, "Set tempo: bpm_x10=%u, source=%d, beat_divider=%d, time_sig=%d/%d",
+           (unsigned)new_scene->bpm_x10, new_scene->clock_source, new_scene->beat_divider,
            new_scene->time_signature.numerator, new_scene->time_signature.denominator);
   
   // Validate action timings against time signature (remap invalid beats to beat 1)
@@ -3773,12 +3783,11 @@ uint16_t scene_get_cv_trigger_debounce_ms(uint8_t scene_index) {
   return scene ? scene->cv_trigger_debounce_ms : 0;
 }
 
-esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
+esp_err_t scene_set_bpm_x10(uint8_t scene_index, uint16_t bpm_x10) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
-  if (bpm < 20 || bpm > 300) return ESP_ERR_INVALID_ARG;
+  if (bpm_x10 < TEMPO_MIN_BPM_X10 || bpm_x10 > TEMPO_MAX_BPM_X10) return ESP_ERR_INVALID_ARG;
+  bpm_x10 = tempo_snap_bpm_x10(bpm_x10);
   
-  // Scene BPM can only be modified in programming mode
-  // Performance tempo changes should use tempo_set_bpm() directly
   if (!ui_is_in_programming_mode()) {
     ESP_LOGW(TAG, "Cannot modify scene BPM outside programming mode (use tempo bpm for live changes)");
     return ESP_ERR_INVALID_STATE;
@@ -3787,21 +3796,29 @@ esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
-  scene->bpm = bpm;
+  scene->bpm_x10 = bpm_x10;
   scene_persist_if_programming();
   
-  // Update tempo component immediately if this is the current scene
-  if (scene_index == g_scene_manager.current_scene_index) {
-    tempo_set_bpm(bpm);
-  }
+  if (scene_index == g_scene_manager.current_scene_index)
+    tempo_set_bpm_x10(bpm_x10);
   
-  ESP_LOGI(TAG, "Scene %d BPM set to %d", scene_index + 1, bpm);
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), bpm_x10);
+  ESP_LOGI(TAG, "Scene %d BPM set to %s", scene_index + 1, bpm_buf);
   return ESP_OK;
 }
 
-uint16_t scene_get_bpm(uint8_t scene_index) {
+uint16_t scene_get_bpm_x10(uint8_t scene_index) {
   scene_t* scene = get_scene_for_modification(scene_index);
-  return scene ? scene->bpm : 120;
+  return scene ? scene->bpm_x10 : TEMPO_DEFAULT_BPM_X10;
+}
+
+esp_err_t scene_set_bpm(uint8_t scene_index, uint16_t bpm) {
+  return scene_set_bpm_x10(scene_index, tempo_whole_to_x10(bpm));
+}
+
+uint16_t scene_get_bpm(uint8_t scene_index) {
+  return tempo_x10_to_whole(scene_get_bpm_x10(scene_index));
 }
 
 esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t source) {
@@ -4957,6 +4974,42 @@ static action_type_t action_type_from_string(const char* name) {
 
 // Serialize/deserialize actions
 // Returns NULL for ACTION_NONE (empty actions should be skipped)
+
+static void action_json_add_bpm_x10(cJSON* obj, const char* key, uint16_t bpm_x10) {
+  if (bpm_x10 == ACTION_TEMPO_BPM_RANDOM || bpm_x10 == ACTION_TEMPO_BPM_ORIGINAL)
+    cJSON_AddNumberToObject(obj, key, bpm_x10);
+  else
+    cJSON_AddNumberToObject(obj, key, (double)bpm_x10 / 10.0);
+}
+
+static uint16_t action_json_parse_bpm_x10(const cJSON* item) {
+  if (!item || !cJSON_IsNumber(item)) return TEMPO_DEFAULT_BPM_X10;
+  int vi = item->valueint;
+  if (vi == (int)ACTION_TEMPO_BPM_RANDOM) return ACTION_TEMPO_BPM_RANDOM;
+  if (vi == (int)ACTION_TEMPO_BPM_ORIGINAL) return ACTION_TEMPO_BPM_ORIGINAL;
+  return tempo_bpm_from_double(item->valuedouble);
+}
+
+#define INC_AMOUNT_MIN_X10 1    // 0.1 BPM
+#define INC_AMOUNT_MAX_X10 200  // 20.0 BPM
+#define INC_AMOUNT_DEFAULT_X10 10
+
+static uint16_t action_json_parse_inc_amount_x10(const cJSON* item) {
+  if (!item || !cJSON_IsNumber(item)) return INC_AMOUNT_DEFAULT_X10;
+  int32_t x10 = (int32_t)(item->valuedouble * 10.0 + 0.5);
+  if (x10 < (int32_t)INC_AMOUNT_MIN_X10) x10 = (int32_t)INC_AMOUNT_MIN_X10;
+  if (x10 > (int32_t)INC_AMOUNT_MAX_X10) x10 = (int32_t)INC_AMOUNT_MAX_X10;
+  return (uint16_t)x10;
+}
+
+static void action_json_add_inc_amount_x10(cJSON* obj, uint16_t amount_x10) {
+  if (amount_x10 == 0) amount_x10 = INC_AMOUNT_DEFAULT_X10;
+  if (amount_x10 % 10 == 0)
+    cJSON_AddNumberToObject(obj, "inc_amount", amount_x10 / 10);
+  else
+    cJSON_AddNumberToObject(obj, "inc_amount", (double)amount_x10 / 10.0);
+}
+
 static cJSON* action_to_json(const action_t* action) {
   // Don't serialize empty actions
   if (!action || action->type == ACTION_NONE) {
@@ -5114,33 +5167,40 @@ static cJSON* action_to_json(const action_t* action) {
     // tell SET from HOLD from CYCLE without legacy aliases.
     switch (action->variant) {
       case VARIANT_SET:
-        cJSON_AddNumberToObject(obj, "bpm", action->params.tempo.bpm);
+        action_json_add_bpm_x10(obj, "bpm", action->params.tempo.bpm);
         if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
-          cJSON_AddNumberToObject(obj, "random_floor",
+          action_json_add_bpm_x10(obj, "random_floor",
             action->params.tempo.random_floor);
-          cJSON_AddNumberToObject(obj, "random_ceiling",
+          action_json_add_bpm_x10(obj, "random_ceiling",
             action->params.tempo.random_ceiling);
         }
         break;
       case VARIANT_HOLD:
-        cJSON_AddNumberToObject(obj, "press_bpm", action->params.tempo.press_bpm);
-        cJSON_AddNumberToObject(obj, "release_bpm", action->params.tempo.release_bpm);
+        action_json_add_bpm_x10(obj, "press_bpm", action->params.tempo.press_bpm);
+        action_json_add_bpm_x10(obj, "release_bpm", action->params.tempo.release_bpm);
         break;
       case VARIANT_CYCLE: {
         uint8_t num_tempos = action->params.tempo.num_tempos;
         cJSON_AddNumberToObject(obj, "num_tempos", num_tempos);
         cJSON* tempos = cJSON_CreateArray();
         for (int i = 0; i < num_tempos && i < 8; i++) {
-          cJSON_AddItemToArray(tempos, cJSON_CreateNumber(action->params.tempo.cycle_tempos[i]));
+          cJSON_AddItemToArray(tempos,
+            cJSON_CreateNumber((double)action->params.tempo.cycle_tempos[i] / 10.0));
         }
         cJSON_AddItemToObject(obj, "tempos", tempos);
         break;
       }
+      case VARIANT_TAP:
+        if (action->params.tempo.fractional)
+          cJSON_AddNumberToObject(obj, "fractional", 1);
+        break;
       case VARIANT_INCREMENT:
       case VARIANT_DECREMENT: {
-        uint8_t amount = action->params.tempo.inc_amount;
-        if (amount == 0) amount = 1;
-        cJSON_AddNumberToObject(obj, "inc_amount", amount);
+        uint16_t amount_x10 = action->params.tempo.inc_amount;
+        if (amount_x10 == 0) amount_x10 = INC_AMOUNT_DEFAULT_X10;
+        action_json_add_inc_amount_x10(obj, amount_x10);
+        if (action->params.tempo.fractional)
+          cJSON_AddNumberToObject(obj, "fractional", 1);
         break;
       }
       default:
@@ -5412,8 +5472,8 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddBoolToObject(obj, "raise_flag", true);
   }
 
-  // Serialize morph settings (only if enabled; ACTION_CONTROL + HOLD/CYCLE variants, RANDOMIZE)
-  if (action->morph_enabled && action_supports_morph(action->type)) {
+  // Serialize morph settings when enabled for a morph-capable variant.
+  if (action->morph_enabled && action_supports_morph_for(action)) {
     cJSON_AddBoolToObject(obj, "morph", true);
     // Only serialize non-default values
     if (action->morph_steps_mode != MORPH_STEPS_AUTO) {
@@ -5720,49 +5780,47 @@ static action_t json_to_action(cJSON* obj) {
   // Parse tempo actions (consolidated: ACTION_TEMPO + variant)
   if (action.type == ACTION_TEMPO) {
     cJSON* bpm = cJSON_GetObjectItem(obj, "bpm");
-    if (bpm && action.variant == VARIANT_SET) {
-      action.params.tempo.bpm = (uint16_t)bpm->valueint;
-    }
+    if (bpm && action.variant == VARIANT_SET)
+      action.params.tempo.bpm = action_json_parse_bpm_x10(bpm);
 
     if (action.variant == VARIANT_SET && action.params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
       cJSON* floor = cJSON_GetObjectItem(obj, "random_floor");
       cJSON* ceiling = cJSON_GetObjectItem(obj, "random_ceiling");
-      action.params.tempo.random_floor = floor ? (uint16_t)floor->valueint : 20;
-      action.params.tempo.random_ceiling = ceiling ? (uint16_t)ceiling->valueint : 300;
+      action.params.tempo.random_floor = floor ?
+        action_json_parse_bpm_x10(floor) : TEMPO_MIN_BPM_X10;
+      action.params.tempo.random_ceiling = ceiling ?
+        action_json_parse_bpm_x10(ceiling) : TEMPO_MAX_BPM_X10;
     }
 
     if (action.variant == VARIANT_HOLD) {
       cJSON* press_bpm = cJSON_GetObjectItem(obj, "press_bpm");
       cJSON* release_bpm = cJSON_GetObjectItem(obj, "release_bpm");
-      if (press_bpm) action.params.tempo.press_bpm = press_bpm->valueint;
-      if (release_bpm) action.params.tempo.release_bpm = release_bpm->valueint;
+      if (press_bpm) action.params.tempo.press_bpm = action_json_parse_bpm_x10(press_bpm);
+      if (release_bpm)
+        action.params.tempo.release_bpm = action_json_parse_bpm_x10(release_bpm);
     }
     if (action.variant == VARIANT_CYCLE) {
       cJSON* num_tempos = cJSON_GetObjectItem(obj, "num_tempos");
       cJSON* tempos = cJSON_GetObjectItem(obj, "tempos");
-      if (num_tempos) {
+      if (num_tempos)
         action.params.tempo.num_tempos = num_tempos->valueint;
-      }
       if (tempos && cJSON_IsArray(tempos)) {
         int count = cJSON_GetArraySize(tempos);
         if (count > 8) count = 8;
         for (int i = 0; i < count; i++) {
           cJSON* item = cJSON_GetArrayItem(tempos, i);
-          if (item) action.params.tempo.cycle_tempos[i] = item->valueint;
+          if (item) action.params.tempo.cycle_tempos[i] = action_json_parse_bpm_x10(item);
         }
       }
     }
     if (action.variant == VARIANT_INCREMENT || action.variant == VARIANT_DECREMENT) {
       cJSON* amt = cJSON_GetObjectItem(obj, "inc_amount");
-      // Legacy tempo_inc/tempo_dec scenes won't carry inc_amount; the
-      // executor treats 0 as 1, so absence is harmless.
-      if (amt) {
-        int v = amt->valueint;
-        if (v < 1) v = 1;
-        if (v > 20) v = 20;
-        action.params.tempo.inc_amount = (uint8_t)v;
-      }
+      if (amt)
+        action.params.tempo.inc_amount = action_json_parse_inc_amount_x10(amt);
     }
+    cJSON* fractional = cJSON_GetObjectItem(obj, "fractional");
+    if (fractional && cJSON_IsNumber(fractional) && fractional->valueint != 0)
+      action.params.tempo.fractional = 1;
   }
   
   // Parse touchwheel mode actions. Gated on ACTION_TOUCHWHEEL so other
@@ -6191,7 +6249,7 @@ static action_t json_to_action(cJSON* obj) {
     action.raise_flag = cJSON_IsTrue(raise_flag);
   }
 
-  // Parse morph settings (default: disabled; ACTION_CONTROL + HOLD/CYCLE variants, RANDOMIZE)
+  // Parse morph settings (default: disabled; eligible variants only)
   action.morph_enabled = false;
   action.morph_steps_mode = MORPH_STEPS_AUTO;
   action.morph_manual_steps = 32;
@@ -7145,7 +7203,7 @@ static cJSON* scene_to_json(const scene_t* scene) {
   }
 
   // Serialize tempo settings
-  cJSON_AddNumberToObject(root, "bpm", scene->bpm);
+  cJSON_AddNumberToObject(root, "bpm", (double)scene->bpm_x10 / 10.0);
   
   const char* clock_src_str = (scene->clock_source == CLOCK_SOURCE_INTERNAL) ? "internal" :
                               (scene->clock_source == CLOCK_SOURCE_MIDI) ? "midi" : "sync";
@@ -7706,8 +7764,9 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   // Deserialize tempo settings
   cJSON* bpm_json = cJSON_GetObjectItem(root, "bpm");
   if (bpm_json && cJSON_IsNumber(bpm_json)) {
-    int bpm = bpm_json->valueint;
-    if (bpm >= 20 && bpm <= 300) scene->bpm = (uint16_t)bpm;
+    double bpm_val = bpm_json->valuedouble;
+    if (bpm_val >= 20.0 && bpm_val <= 300.0)
+      scene->bpm_x10 = tempo_bpm_from_double(bpm_val);
   }
   
   cJSON* clock_src = cJSON_GetObjectItem(root, "clock_source");
@@ -8111,7 +8170,7 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
   input_set_mode(scene->cv_input_mode);
   expression_set_mode(scene->expression_mode);
 
-  tempo_set_bpm(scene->bpm);
+  tempo_set_bpm_x10(scene->bpm_x10);
   tempo_set_source(scene->clock_source);
   tempo_set_note_divider(scene->beat_divider);
   tempo_set_time_signature(scene->time_signature.numerator,

@@ -1,0 +1,503 @@
+{
+  "name": "Young Bloops",
+  "program_number": 0,
+  "send_pc_on_load": false,
+  "touchwheel_mode": "continuous",
+  "touchwheel_style": "odometer",
+  "touchwheel": {
+    "enabled": true,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      15
+    ],
+    "cc_number": 15,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "touchwheel_lfo_target": "both",
+  "touchwheel_initial_value": 0,
+  "touchpads": [
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "action": {
+        "type": "punch_in",
+        "start_cc": 11,
+        "start_value": 3,
+        "finish_cc": 11,
+        "finish_value": 2,
+        "duration": "8_bars",
+        "raise_flag": true
+      }
+    },
+    {
+      "action": {
+        "type": "control",
+        "variant": "set",
+        "cc": 30,
+        "value": 127
+      }
+    },
+    {
+      "action": {
+        "type": "flag_ceremony",
+        "flag_up_cc": 11,
+        "flag_up_value": 4,
+        "flag_down_cc": 11,
+        "flag_down_value": 2,
+        "timing": "beat_1",
+        "raise_flag": true
+      }
+    },
+    {
+      "action": {
+        "type": "control",
+        "variant": "set",
+        "cc": 31,
+        "value": 127
+      }
+    }
+  ],
+  "on_load": [
+    {
+      "type": "control",
+      "variant": "set",
+      "cc": 16,
+      "value": 127
+    }
+  ],
+  "on_play": [],
+  "button_left": {
+    "type": "control",
+    "variant": "set",
+    "cc": 11,
+    "value": 6
+  },
+  "button_right": {
+    "type": "control",
+    "variant": "set",
+    "cc": 11,
+    "value": 5
+  },
+  "button_both": {
+    "type": "control",
+    "variant": "set",
+    "cc": 11,
+    "value": 7
+  },
+  "expression": {
+    "enabled": false,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      4
+    ],
+    "cc_number": 4,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 1,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "cv": {
+    "enabled": false,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      16
+    ],
+    "cc_number": 16,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 2,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "proximity": {
+    "enabled": true,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      18
+    ],
+    "cc_number": 18,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": true,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "als": {
+    "enabled": false,
+    "output_type": "lfo_depth",
+    "lfo_target": "both",
+    "cc_numbers": [
+      18
+    ],
+    "cc_number": 18,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "tilt_x": {
+    "enabled": true,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      17
+    ],
+    "cc_number": 17,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 1,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": true,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "tilt_y": {
+    "enabled": true,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      19
+    ],
+    "cc_number": 19,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 1,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": true,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "note_track": {
+    "enabled": false,
+    "output_type": "lfo_depth",
+    "lfo_target": "both",
+    "cc_numbers": [
+      20
+    ],
+    "cc_number": 20,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "cc_triggers": [
+    {
+      "cc_number": 0,
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "cc_number": 0,
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "cc_number": 0,
+      "action": {
+        "type": "none"
+      }
+    },
+    {
+      "cc_number": 0,
+      "action": {
+        "type": "none"
+      }
+    }
+  ],
+  "expression_mode": "switch",
+  "sustain": {
+    "type": "piano_pedal",
+    "cc": 64
+  },
+  "sostenuto": {
+    "type": "piano_pedal",
+    "cc": 66
+  },
+  "expr_switch": {
+    "type": "tempo",
+    "variant": "downbeat"
+  },
+  "cv_input_mode": "none",
+  "cv_velocity_mode": "gate_voltage",
+  "cv_velocity": 100,
+  "cv_trigger_threshold": 50,
+  "cv_trigger_debounce_ms": 0,
+  "audio_config": {
+    "range": "bi5v",
+    "sensitivity": 128,
+    "attack_ms": 10,
+    "release_ms": 200,
+    "threshold": 5,
+    "polarity": "attract"
+  },
+  "expression_velocity_mode": "fixed",
+  "proximity_velocity_mode": "fixed",
+  "als_velocity_mode": "fixed",
+  "tilt_x_velocity_mode": "fixed",
+  "tilt_y_velocity_mode": "fixed",
+  "tilt_x_tempo_nudge_pct": 25,
+  "tilt_y_tempo_nudge_pct": 20,
+  "expression_tempo_nudge_pct": 10,
+  "cv_tempo_nudge_pct": 10,
+  "proximity_tempo_nudge_pct": 10,
+  "touchwheel_tempo_nudge_pct": 10,
+  "als_tempo_nudge_pct": 10,
+  "lfo1_tempo_nudge_pct": 10,
+  "lfo2_tempo_nudge_pct": 10,
+  "bpm": 137.4,
+  "clock_source": "internal",
+  "beat_divider": "quarter",
+  "time_signature": {
+    "numerator": 4,
+    "denominator": 4
+  },
+  "use_transport": false,
+  "send_clock": false,
+  "lfo1_config": {
+    "enabled": false,
+    "waveform": "sine",
+    "rate_mode": "free",
+    "start_mode": "running",
+    "trigger_timing": "immediate",
+    "repeat": true,
+    "reset_phase": true,
+    "restore_on_stop": false,
+    "rate_hz": 1,
+    "division": "quarter",
+    "phase_offset": 0,
+    "duty_cycle": 64,
+    "floor": 0,
+    "ceiling": 127,
+    "resolution": "auto",
+    "manual_steps": 32
+  },
+  "lfo2_config": {
+    "enabled": false,
+    "waveform": "sine",
+    "rate_mode": "free",
+    "start_mode": "running",
+    "trigger_timing": "immediate",
+    "repeat": true,
+    "reset_phase": true,
+    "restore_on_stop": false,
+    "rate_hz": 1,
+    "division": "quarter",
+    "phase_offset": 0,
+    "duty_cycle": 64,
+    "floor": 0,
+    "ceiling": 127,
+    "resolution": "auto",
+    "manual_steps": 32
+  },
+  "lfo1": {
+    "enabled": false,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      17
+    ],
+    "cc_number": 17,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "lfo2": {
+    "enabled": false,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      81
+    ],
+    "cc_number": 81,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  },
+  "lfo1_velocity_mode": "fixed",
+  "lfo2_velocity_mode": "fixed",
+  "rtg_config": {
+    "enabled": false,
+    "mode": "continuous",
+    "start_mode": "running",
+    "rate_mode": "free",
+    "rate_hz": 2,
+    "division": "quarter",
+    "glide": true,
+    "velocity": 100,
+    "note_min": 36,
+    "note_max": 96
+  },
+  "sample_hold_config": {
+    "enabled": false,
+    "mode": "continuous",
+    "start_mode": "running",
+    "rate_mode": "sync",
+    "rate_hz": 2,
+    "division": "quarter",
+    "glide": false
+  },
+  "sample_hold": {
+    "enabled": false,
+    "output_type": "cc",
+    "lfo_target": "both",
+    "cc_numbers": [
+      19
+    ],
+    "cc_number": 19,
+    "base_note": 60,
+    "note_range": 24,
+    "velocity": 100,
+    "note_latch": false,
+    "note_release_ms": 500,
+    "polyphony": "mono",
+    "curve_type": 0,
+    "polarity": 0,
+    "min_value": 0,
+    "middle_value": 64,
+    "max_value": 127,
+    "use_idle_value": false,
+    "idle_value": 64,
+    "idle_timeout_ms": 1000
+  }
+}

@@ -361,36 +361,32 @@ static void nav_to_screen(void* user_data) {
   menu_navigate_to("Screen", screen_roller_create);
 }
 
-// BPM roller (20-300)
-static void bpm_confirm_cb(uint32_t selected_index, void* user_data) {
+// BPM editor (20-300, optional 0.1 tenths when fractional enabled)
+static void bpm_commit_cb(uint16_t bpm_x10, void* user_data) {
   (void)user_data;
-  uint16_t bpm = (uint16_t)(selected_index + 20);  // 0 = 20 BPM
   uint8_t scene_index = scene_get_current_index();
-  esp_err_t ret = scene_set_bpm(scene_index, bpm);
-  if (ret != ESP_OK) {
+  esp_err_t ret = scene_set_bpm_x10(scene_index, bpm_x10);
+  if (ret != ESP_OK)
     ESP_LOGW(TAG, "Failed to set BPM: %s", esp_err_to_name(ret));
-  }
   menu_navigate_back_then_to(2, s_page_title, menu_page_current_scene_create);
 }
 
 static lv_obj_t* bpm_roller_create(void) {
   scene_t* scene = scene_get_current();
-  uint16_t current_bpm = scene ? scene->bpm : 120;
-  if (current_bpm < 20) current_bpm = 20;
-  if (current_bpm > 300) current_bpm = 300;
-  uint32_t index = current_bpm - 20;
-  
-  // Build options string for 20-300
-  static char options[1536];
-  options[0] = '\0';
-  for (int i = 20; i <= 300; i++) {
-    char num[8];
-    snprintf(num, sizeof(num), "%d", i);
-    strcat(options, num);
-    if (i < 300) strcat(options, "\n");
-  }
-  
-  return menu_create_roller_page("BPM", options, index, bpm_confirm_cb, NULL);
+  uint16_t current_bpm_x10 = scene ? scene->bpm_x10 : TEMPO_DEFAULT_BPM_X10;
+  menu_bpm_editor_cfg_t cfg = {
+    .title = "BPM",
+    .initial_bpm_x10 = current_bpm_x10,
+    .min_whole = 20,
+    .max_whole = 300,
+    .prefix_options = NULL,
+    .prefix_count = 0,
+    .prefix_values = NULL,
+    .allow_fractional = tempo_get_allow_fractional_bpm(),
+    .commit = bpm_commit_cb,
+    .user_data = NULL,
+  };
+  return menu_create_bpm_editor_page(&cfg);
 }
 
 static void nav_to_bpm(void* user_data) {
@@ -1310,8 +1306,10 @@ lv_obj_t* menu_page_current_scene_create(void) {
     };
   }
   
-  snprintf(s_bpm_label, sizeof(s_bpm_label), "%d BPM",
-    scene ? scene->bpm : 120);
+  if (scene)
+    tempo_format_bpm_label(s_bpm_label, sizeof(s_bpm_label), scene->bpm_x10);
+  else
+    snprintf(s_bpm_label, sizeof(s_bpm_label), "120 BPM");
   s_scene_items[idx++] = (menu_item_t){
     s_bpm_label, nav_to_bpm, NULL, false, MENU_ITEM_KIND_ROLLER
   };

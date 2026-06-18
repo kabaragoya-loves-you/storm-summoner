@@ -365,6 +365,14 @@ static esp_err_t set_disable_on_passthrough(uint32_t v) {
   return ESP_OK;
 }
 
+static uint32_t get_allow_fractional_bpm(void) {
+  return tempo_get_allow_fractional_bpm() ? 1 : 0;
+}
+static esp_err_t set_allow_fractional_bpm(uint32_t v) {
+  tempo_set_allow_fractional_bpm(v != 0);
+  return ESP_OK;
+}
+
 static uint32_t get_bpm_deadzone(void) { return tempo_get_bpm_deadzone(); }
 static esp_err_t set_bpm_deadzone(uint32_t v) {
   tempo_set_bpm_deadzone((uint8_t)v);
@@ -546,6 +554,7 @@ static const setting_entry_t s_settings[] = {
   {"tempo.clock_standard", get_clock_standard, set_clock_standard},
   {"tempo.always_send", get_always_send, set_always_send},
   {"tempo.disable_on_passthrough", get_disable_on_passthrough, set_disable_on_passthrough},
+  {"tempo.allow_fractional_bpm", get_allow_fractional_bpm, set_allow_fractional_bpm},
   {"tempo.bpm_deadzone", get_bpm_deadzone, set_bpm_deadzone},
   {"tempo.led_sync", get_led_sync, set_led_sync},
   {"tempo.flash_duration", get_flash_duration, set_flash_duration},

@@ -1740,19 +1740,19 @@ static void nav_to_scene_set(void* user_data) {
 // Set Tempo Roller
 // ============================================================================
 
-static void set_tempo_confirm_cb(uint32_t selected_index, void* user_data) {
+static void set_tempo_commit_cb(uint16_t bpm_x10, void* user_data) {
   (void)user_data;
-  
+
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) {
@@ -1760,18 +1760,17 @@ static void set_tempo_confirm_cb(uint32_t selected_index, void* user_data) {
     menu_navigate_back();
     return;
   }
-  
-  // Roller shows 20-300, so index 0 = 20 BPM
-  uint16_t bpm = (uint16_t)(selected_index + 20);
-  mapping->action.params.tempo.bpm = bpm;
+
+  mapping->action.params.tempo.bpm = bpm_x10;
   persist_scene_changes();
-  
-  ESP_LOGI(TAG, "Pad %s Set Tempo set to %u BPM",
-    get_pad_display_name(s_editing_pad_index), (unsigned)bpm);
-  
+
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), bpm_x10);
+  ESP_LOGI(TAG, "Pad %s Set Tempo set to %s BPM",
+    get_pad_display_name(s_editing_pad_index), bpm_buf);
+
   s_callback_in_progress = false;
-  
-  // Go back 2: pop tempo roller, old pad detail, push fresh pad detail
+
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(2, title, pad_detail_page_create);
 }
@@ -1779,33 +1778,24 @@ static void set_tempo_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* set_tempo_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return NULL;
-  
-  // Build options: 20, 21, 22, ... 300
-  static char options[2048];
-  options[0] = '\0';
-  char* pos = options;
-  size_t remaining = sizeof(options);
-  
-  for (uint16_t bpm = 20; bpm <= 300 && remaining > 8; bpm++) {
-    int written = snprintf(pos, remaining, "%s%u", bpm > 20 ? "\n" : "", (unsigned)bpm);
-    if (written > 0 && (size_t)written < remaining) {
-      pos += written;
-      remaining -= written;
-    }
-  }
-  
-  // Current selection: convert BPM to roller index
-  uint16_t current_bpm = mapping->action.params.tempo.bpm;
-  if (current_bpm < 20) current_bpm = 120;  // Default
-  if (current_bpm > 300) current_bpm = 300;
-  uint32_t current_idx = current_bpm - 20;
-  
-  return menu_create_roller_page("Tempo", options, current_idx, 
-    set_tempo_confirm_cb, NULL);
+
+  menu_bpm_editor_cfg_t cfg = {
+    .title = "Tempo",
+    .initial_bpm_x10 = mapping->action.params.tempo.bpm,
+    .min_whole = 20,
+    .max_whole = 300,
+    .prefix_options = NULL,
+    .prefix_count = 0,
+    .prefix_values = NULL,
+    .allow_fractional = tempo_get_allow_fractional_bpm(),
+    .commit = set_tempo_commit_cb,
+    .user_data = NULL,
+  };
+  return menu_create_bpm_editor_page(&cfg);
 }
 
 static void nav_to_set_tempo(void* user_data) {
@@ -2191,59 +2181,47 @@ static void nav_to_preset_cycle_step(void* user_data) {
 
 static lv_obj_t* tempo_hold_page_create(void);  // Forward declaration
 
-// Helper to build tempo options string for roller (20-300 BPM)
-static void build_tempo_options(char* buf, size_t buf_size) {
-  buf[0] = '\0';
-  char* pos = buf;
-  size_t remaining = buf_size;
-  
-  for (uint16_t bpm = 20; bpm <= 300 && remaining > 8; bpm++) {
-    int written = snprintf(pos, remaining, "%s%u", bpm > 20 ? "\n" : "", (unsigned)bpm);
-    if (written > 0 && (size_t)written < remaining) {
-      pos += written;
-      remaining -= written;
-    }
-  }
-}
-
-static void tempo_hold_press_confirm_cb(uint32_t selected_idx, void* user_data) {
+static void tempo_hold_press_commit_cb(uint16_t bpm_x10, void* user_data) {
   (void)user_data;
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return;
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return;
-  
-  uint16_t bpm = 20 + selected_idx;  // Range 20-300
-  mapping->action.params.tempo.press_bpm = bpm;
+
+  mapping->action.params.tempo.press_bpm = bpm_x10;
   persist_scene_changes();
-  
-  ESP_LOGI(TAG, "Tempo Hold press set to %u BPM", (unsigned)bpm);
-  
-  // Go back to tempo hold submenu
+
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), bpm_x10);
+  ESP_LOGI(TAG, "Tempo Hold press set to %s BPM", bpm_buf);
+
   menu_navigate_back_then_to(2, "Tempo Hold", tempo_hold_page_create);
 }
 
 static lv_obj_t* tempo_hold_press_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return NULL;
-  
-  static char options[2048];
-  build_tempo_options(options, sizeof(options));
-  
-  uint16_t current = mapping->action.params.tempo.press_bpm;
-  if (current < 20) current = 120;
-  if (current > 300) current = 120;
-  uint32_t current_idx = current - 20;
-  
-  return menu_create_roller_page("Press", options, current_idx,
-    tempo_hold_press_confirm_cb, NULL);
+
+  menu_bpm_editor_cfg_t cfg = {
+    .title = "Press",
+    .initial_bpm_x10 = mapping->action.params.tempo.press_bpm,
+    .min_whole = 20,
+    .max_whole = 300,
+    .prefix_options = NULL,
+    .prefix_count = 0,
+    .prefix_values = NULL,
+    .allow_fractional = tempo_get_allow_fractional_bpm(),
+    .commit = tempo_hold_press_commit_cb,
+    .user_data = NULL,
+  };
+  return menu_create_bpm_editor_page(&cfg);
 }
 
 static void nav_to_tempo_hold_press(void* user_data) {
@@ -2251,44 +2229,47 @@ static void nav_to_tempo_hold_press(void* user_data) {
   menu_navigate_to("Press", tempo_hold_press_roller_create);
 }
 
-static void tempo_hold_release_confirm_cb(uint32_t selected_idx, void* user_data) {
+static void tempo_hold_release_commit_cb(uint16_t bpm_x10, void* user_data) {
   (void)user_data;
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return;
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return;
-  
-  uint16_t bpm = 20 + selected_idx;  // Range 20-300
-  mapping->action.params.tempo.release_bpm = bpm;
+
+  mapping->action.params.tempo.release_bpm = bpm_x10;
   persist_scene_changes();
-  
-  ESP_LOGI(TAG, "Tempo Hold release set to %u BPM", (unsigned)bpm);
-  
-  // Go back to tempo hold submenu
+
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), bpm_x10);
+  ESP_LOGI(TAG, "Tempo Hold release set to %s BPM", bpm_buf);
+
   menu_navigate_back_then_to(2, "Tempo Hold", tempo_hold_page_create);
 }
 
 static lv_obj_t* tempo_hold_release_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return NULL;
-  
-  static char options[2048];
-  build_tempo_options(options, sizeof(options));
-  
-  uint16_t current = mapping->action.params.tempo.release_bpm;
-  if (current < 20) current = 120;
-  if (current > 300) current = 120;
-  uint32_t current_idx = current - 20;
-  
-  return menu_create_roller_page("Release", options, current_idx,
-    tempo_hold_release_confirm_cb, NULL);
+
+  menu_bpm_editor_cfg_t cfg = {
+    .title = "Release",
+    .initial_bpm_x10 = mapping->action.params.tempo.release_bpm,
+    .min_whole = 20,
+    .max_whole = 300,
+    .prefix_options = NULL,
+    .prefix_count = 0,
+    .prefix_values = NULL,
+    .allow_fractional = tempo_get_allow_fractional_bpm(),
+    .commit = tempo_hold_release_commit_cb,
+    .user_data = NULL,
+  };
+  return menu_create_bpm_editor_page(&cfg);
 }
 
 static void nav_to_tempo_hold_release(void* user_data) {
@@ -2312,15 +2293,14 @@ static lv_obj_t* tempo_hold_page_create(void) {
   
   int buf = get_next_buffer_set();
   
-  uint16_t press = mapping->action.params.tempo.press_bpm;
-  uint16_t release = mapping->action.params.tempo.release_bpm;
-  if (press < 20 || press > 300) press = 120;
-  if (release < 20 || release > 300) release = 120;
+  char press_line[12], release_line[12];
+  tempo_format_bpm_label(press_line, sizeof(press_line), mapping->action.params.tempo.press_bpm);
+  tempo_format_bpm_label(release_line, sizeof(release_line), mapping->action.params.tempo.release_bpm);
   
   snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
-    "Press: %u BPM", (unsigned)press);
+    "Press: %s", press_line);
   snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
-    "Release: %u BPM", (unsigned)release);
+    "Release: %s", release_line);
   
   s_tempo_hold_items[0] = (menu_item_t){
     s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
@@ -2383,25 +2363,26 @@ static void nav_to_tempo_cycle_steps(void* user_data) {
   menu_navigate_to("Steps", tempo_cycle_steps_roller_create);
 }
 
-static void tempo_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) {
+static void tempo_cycle_step_commit_cb(uint16_t bpm_x10, void* user_data) {
   (void)user_data;
-  
+
   scene_t* scene = scene_get_current();
   if (!scene) return;
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return;
-  
+
   uint8_t step = s_editing_tempo_step;
   if (step < MAX_TEMPO_CYCLE_STEPS) {
-    uint16_t bpm = 20 + selected_idx;  // Range 20-300
-    mapping->action.params.tempo.cycle_tempos[step] = bpm;
+    mapping->action.params.tempo.cycle_tempos[step] = bpm_x10;
     persist_scene_changes();
-    
-    ESP_LOGI(TAG, "Tempo Cycle step %u set to %u BPM", (unsigned)step, (unsigned)bpm);
+
+    char bpm_buf[16];
+    tempo_format_bpm(bpm_buf, sizeof(bpm_buf), bpm_x10);
+    ESP_LOGI(TAG, "Tempo Cycle step %u set to %s BPM", (unsigned)(step + 1), bpm_buf);
   }
-  
+
   const char* title = get_pad_display_name(s_editing_pad_index);
   menu_navigate_back_then_to(2, title, pad_detail_page_create);
 }
@@ -2409,24 +2390,28 @@ static void tempo_cycle_step_confirm_cb(uint32_t selected_idx, void* user_data) 
 static lv_obj_t* tempo_cycle_step_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
-  
+
   touchpad_mapping_t* mapping = scene_get_touchpad_mapping(
     scene_get_current_index(), s_editing_pad_index);
   if (!mapping) return NULL;
-  
-  static char options[2048];
-  build_tempo_options(options, sizeof(options));
-  
+
   uint8_t step = s_editing_tempo_step;
-  uint16_t current = mapping->action.params.tempo.cycle_tempos[step];
-  if (current < 20 || current > 300) current = 120;
-  uint32_t current_idx = current - 20;
-  
   static char title[24];
   snprintf(title, sizeof(title), "Step %u", (unsigned)(step + 1));
-  
-  return menu_create_roller_page(title, options, current_idx,
-    tempo_cycle_step_confirm_cb, NULL);
+
+  menu_bpm_editor_cfg_t cfg = {
+    .title = title,
+    .initial_bpm_x10 = mapping->action.params.tempo.cycle_tempos[step],
+    .min_whole = 20,
+    .max_whole = 300,
+    .prefix_options = NULL,
+    .prefix_count = 0,
+    .prefix_values = NULL,
+    .allow_fractional = tempo_get_allow_fractional_bpm(),
+    .commit = tempo_cycle_step_commit_cb,
+    .user_data = NULL,
+  };
+  return menu_create_bpm_editor_page(&cfg);
 }
 
 static void nav_to_tempo_cycle_step(void* user_data) {
@@ -3771,15 +3756,14 @@ static lv_obj_t* pad_detail_page_create(void) {
   // detail-page path only renders the value rows for whichever variant is
   // already set, leaving variant changes to the new UI.
   if (mapping->action.type == ACTION_TEMPO && mapping->action.variant == VARIANT_HOLD) {
-    uint16_t press = mapping->action.params.tempo.press_bpm;
-    uint16_t release = mapping->action.params.tempo.release_bpm;
-    if (press < 20 || press > 300) press = 120;
-    if (release < 20 || release > 300) release = 120;
+    char press_line[12], release_line[12];
+    tempo_format_bpm_label(press_line, sizeof(press_line), mapping->action.params.tempo.press_bpm);
+    tempo_format_bpm_label(release_line, sizeof(release_line), mapping->action.params.tempo.release_bpm);
 
     snprintf(s_tempo_hold_press_label[buf], sizeof(s_tempo_hold_press_label[buf]),
-      "Press\n%u BPM", (unsigned)press);
+      "Press\n%s", press_line);
     snprintf(s_tempo_hold_release_label[buf], sizeof(s_tempo_hold_release_label[buf]),
-      "Release\n%u BPM", (unsigned)release);
+      "Release\n%s", release_line);
 
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_hold_press_label[buf], nav_to_tempo_hold_press, NULL, true, MENU_ITEM_KIND_ROLLER
@@ -3801,10 +3785,10 @@ static lv_obj_t* pad_detail_page_create(void) {
     };
 
     for (int i = 0; i < num_steps && item_count < MAX_DETAIL_ITEMS; i++) {
-      uint16_t bpm = mapping->action.params.tempo.cycle_tempos[i];
-      if (bpm < 20 || bpm > 300) bpm = 120;
+      char bpm_line[12];
+      tempo_format_bpm_label(bpm_line, sizeof(bpm_line), mapping->action.params.tempo.cycle_tempos[i]);
       snprintf(s_tempo_cycle_step_labels[buf][i], sizeof(s_tempo_cycle_step_labels[buf][i]),
-        "Step %d\n%u BPM", i + 1, (unsigned)bpm);
+        "Step %d\n%s", i + 1, bpm_line);
       s_detail_items[item_count++] = (menu_item_t){
         s_tempo_cycle_step_labels[buf][i], nav_to_tempo_cycle_step, (void*)(uintptr_t)i, true,
         MENU_ITEM_KIND_ROLLER
@@ -3868,8 +3852,9 @@ static lv_obj_t* pad_detail_page_create(void) {
     else if (bpm == ACTION_TEMPO_BPM_RANDOM)
       snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\nRandom");
     else {
-      if (bpm < 20 || bpm > 300) bpm = 120;
-      snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%u BPM", (unsigned)bpm);
+      char bpm_line[12];
+      tempo_format_bpm_label(bpm_line, sizeof(bpm_line), mapping->action.params.tempo.bpm);
+      snprintf(s_tempo_label[buf], sizeof(s_tempo_label[buf]), "Tempo\n%s", bpm_line);
     }
     s_detail_items[item_count++] = (menu_item_t){
       s_tempo_label[buf], nav_to_set_tempo, NULL, true, MENU_ITEM_KIND_ROLLER

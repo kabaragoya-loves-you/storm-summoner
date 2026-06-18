@@ -484,10 +484,11 @@ bool action_supports_morph_for(const action_t* action) {
     return action->variant == VARIANT_HOLD || action->variant == VARIANT_CYCLE;
   }
   if (action->type == ACTION_TEMPO) {
-    // Only HOLD glides between two BPMs; the other variants are one-shots
-    // (TAP, SET) or already-quantized step changes (INCREMENT, DECREMENT,
-    // CYCLE) where a ramp would feel mushy.
-    return action->variant == VARIANT_HOLD;
+    return action->variant == VARIANT_SET ||
+      action->variant == VARIANT_HOLD ||
+      action->variant == VARIANT_INCREMENT ||
+      action->variant == VARIANT_DECREMENT ||
+      action->variant == VARIANT_CYCLE;
   }
   return action_supports_morph(action->type);
 }

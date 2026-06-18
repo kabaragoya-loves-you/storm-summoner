@@ -825,6 +825,13 @@
           "default": 0
         },
         {
+          "id": "tempo.allow_fractional_bpm",
+          "label": "Fractional BPM",
+          "description": "Allow tempo editing in 0.1 BPM steps (rollers, tap, nudge, MIDI clock snap)",
+          "type": "toggle",
+          "default": false
+        },
+        {
           "id": "tempo.led_sync",
           "label": "LED Sync",
           "description": "Flash LED on beats",

@@ -33,6 +33,7 @@
 #include "esp_vfs.h"
 #include "esp_littlefs.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -1157,7 +1158,7 @@ static const char *cdc_bank_mode_str(bank_select_mode_t mode) {
 }
 
 typedef struct {
-  uint16_t bpm;
+  uint16_t bpm_x10;
   uint8_t playing;
   uint32_t bar;
   uint8_t beat;
@@ -1176,7 +1177,7 @@ static void cdc_read_clock_snapshot(cdc_clock_snapshot_t *out) {
   time_signature_t sig = tempo_get_time_signature();
   uint8_t scene_idx = scene_get_current_index();
 
-  out->bpm = tempo_get_bpm();
+  out->bpm_x10 = tempo_get_bpm_x10();
   out->use_transport = scene_get_use_transport(scene_idx) ? 1u : 0u;
   out->playing = transport_is_playing() ? 1u : 0u;
   if (out->use_transport) {
@@ -1203,7 +1204,7 @@ static void cdc_add_clock_json(cJSON *root) {
   cJSON *clock = cJSON_CreateObject();
   if (!clock) return;
 
-  cJSON_AddNumberToObject(clock, "bpm", (unsigned)snap.bpm);
+  cJSON_AddNumberToObject(clock, "bpm", (double)snap.bpm_x10 / 10.0);
   cJSON_AddStringToObject(clock, "transport",
     snap.playing ? "playing" : "stopped");
   cJSON_AddNumberToObject(clock, "bar", (unsigned)snap.bar);
@@ -1219,8 +1220,22 @@ static void cdc_add_clock_json(cJSON *root) {
 
   cJSON_AddBoolToObject(clock, "flag_enabled", snap.flag_enabled != 0);
   cJSON_AddBoolToObject(clock, "flag", snap.flag != 0);
+  cJSON_AddBoolToObject(clock, "allow_fractional_bpm", tempo_get_allow_fractional_bpm());
 
   cJSON_AddItemToObject(root, "clock", clock);
+}
+
+static void cdc_send_clock_evt_snapshot(const cdc_clock_snapshot_t *snap) {
+  if (!snap) return;
+  s_last_clock_notify = *snap;
+
+  char buf[96];
+  snprintf(buf, sizeof(buf), "EVT:clock:%u:%u:%lu:%u:%u:%u:%u:%u:%u",
+    (unsigned)snap->bpm_x10, (unsigned)snap->playing, (unsigned long)snap->bar,
+    (unsigned)snap->beat, (unsigned)snap->numerator, (unsigned)snap->denominator,
+    (unsigned)snap->use_transport, (unsigned)snap->flag_enabled,
+    (unsigned)snap->flag);
+  cdc_send_notify_line(buf);
 }
 
 static void cdc_push_clock_evt(void) {
@@ -1229,15 +1244,7 @@ static void cdc_push_clock_evt(void) {
 
   if (memcmp(&snap, &s_last_clock_notify, sizeof(snap)) == 0)
     return;
-  s_last_clock_notify = snap;
-
-  char buf[96];
-  snprintf(buf, sizeof(buf), "EVT:clock:%u:%u:%lu:%u:%u:%u:%u:%u:%u",
-    (unsigned)snap.bpm, (unsigned)snap.playing, (unsigned long)snap.bar,
-    (unsigned)snap.beat, (unsigned)snap.numerator, (unsigned)snap.denominator,
-    (unsigned)snap.use_transport, (unsigned)snap.flag_enabled,
-    (unsigned)snap.flag);
-  cdc_send_notify_line(buf);
+  cdc_send_clock_evt_snapshot(&snap);
 }
 
 static void cdc_clock_transport_handler(const event_t *event, void *context) {
@@ -1460,6 +1467,19 @@ static bool cdc_try_info_command(const char *cmd) {
     return true;
   }
   return false;
+}
+
+static bool cdc_parse_bpm_value(const char *arg, uint16_t *out_bpm_x10) {
+  if (!arg || !*arg || !out_bpm_x10) return false;
+
+  char *end = NULL;
+  double bpm = strtod(arg, &end);
+  while (end && *end == ' ') end++;
+  if (end && *end != '\0') return false;
+  if (bpm < 20.0 || bpm > 300.0) return false;
+
+  *out_bpm_x10 = tempo_snap_bpm_x10(tempo_bpm_from_double(bpm));
+  return true;
 }
 
 static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position) {
@@ -2005,6 +2025,49 @@ static void process_command(const char *cmd) {
       send_response("OK");
     } else {
       send_response("ERROR: Unknown transport command");
+    }
+
+  } else if (strncmp(cmd, "TEMPO ", 6) == 0) {
+    const char *op = cmd + 6;
+    while (op && *op == ' ') op++;
+    if (strcmp(op, "DOWNBEAT") == 0) {
+      tempo_resync_downbeat();
+      cdc_push_clock_evt();
+      send_response("OK");
+    } else if (strncmp(op, "BPM ", 4) == 0) {
+      const char *arg = op + 4;
+      while (arg && *arg == ' ') arg++;
+      uint16_t bpm_x10;
+      if (!cdc_parse_bpm_value(arg, &bpm_x10)) {
+        send_response("ERROR: Usage TEMPO BPM <bpm> (20-300)");
+      } else {
+        tempo_set_bpm_x10(bpm_x10);
+        cdc_push_clock_evt();
+        send_response("OK");
+      }
+    } else {
+      send_response("ERROR: Unknown tempo command");
+    }
+
+  } else if (strncmp(cmd, "FLAG ", 5) == 0) {
+    const char *op = cmd + 5;
+    while (op && *op == ' ') op++;
+    if (!config_get_flag_enabled()) {
+      send_response("ERROR: Flag not enabled");
+    } else if (strcmp(op, "RAISE") == 0) {
+      action_set_flag(1);
+      cdc_clock_snapshot_t snap;
+      cdc_read_clock_snapshot(&snap);
+      cdc_send_clock_evt_snapshot(&snap);
+      send_response("OK");
+    } else if (strcmp(op, "LOWER") == 0) {
+      action_set_flag(0);
+      cdc_clock_snapshot_t snap;
+      cdc_read_clock_snapshot(&snap);
+      cdc_send_clock_evt_snapshot(&snap);
+      send_response("OK");
+    } else {
+      send_response("ERROR: Unknown flag command");
     }
 
   } else if (strncmp(cmd, "SCENE_INSPECT", 13) == 0) {

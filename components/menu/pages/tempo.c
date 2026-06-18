@@ -8,8 +8,8 @@
 #define TAG "MENU_TEMPO"
 
 // Maximum menu items (sync pulse mode, clock output, standard,
-// always send, disable on passthrough, deadzone, led sync, flash duration)
-#define MAX_TEMPO_ITEMS 8
+// always send, disable on passthrough, fractional bpm, deadzone, led sync, flash duration)
+#define MAX_TEMPO_ITEMS 9
 
 // Label buffers
 static char s_sync_pulse_mode_label[32];
@@ -17,6 +17,7 @@ static char s_clock_output_label[32];
 static char s_clock_standard_label[40];
 static char s_always_send_label[32];
 static char s_disable_passthrough_label[40];
+static char s_fractional_bpm_label[32];
 static char s_deadzone_label[32];
 static char s_led_sync_label[32];
 static char s_flash_duration_label[32];
@@ -256,6 +257,32 @@ static void nav_to_disable_passthrough(void* user_data) {
 }
 
 // ============================================================================
+// Fractional BPM Roller (Off / On)
+// ============================================================================
+
+static const char* FRACTIONAL_BPM_OPTIONS = "Off\nOn";
+
+static void fractional_bpm_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  bool enabled = (selected_index == 1);
+  tempo_set_allow_fractional_bpm(enabled);
+  ESP_LOGI(TAG, "Fractional BPM %s", enabled ? "enabled" : "disabled");
+  menu_navigate_back_then_to(2, "Tempo", menu_page_tempo_create);
+}
+
+static lv_obj_t* fractional_bpm_roller_create(void) {
+  bool current = tempo_get_allow_fractional_bpm();
+  uint32_t initial_index = current ? 1 : 0;
+  return menu_create_roller_page("Fractional BPM", FRACTIONAL_BPM_OPTIONS,
+    initial_index, fractional_bpm_confirm_cb, NULL);
+}
+
+static void nav_to_fractional_bpm(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Fractional BPM", fractional_bpm_roller_create);
+}
+
+// ============================================================================
 // BPM Deadzone Roller (Off / 1 / 2 / 3 / 4 / 5)
 // ============================================================================
 
@@ -395,6 +422,14 @@ lv_obj_t* menu_page_tempo_create(void) {
       "Disable on Passthrough\n%s", disable_passthrough ? "On" : "Off");
     s_tempo_items[idx++] = (menu_item_t){ s_disable_passthrough_label, nav_to_disable_passthrough, NULL, true, MENU_ITEM_KIND_ROLLER };
   }
+  
+  // Fractional BPM
+  bool fractional = tempo_get_allow_fractional_bpm();
+  snprintf(s_fractional_bpm_label, sizeof(s_fractional_bpm_label),
+    "Fractional BPM\n%s", fractional ? "On" : "Off");
+  s_tempo_items[idx++] = (menu_item_t){
+    s_fractional_bpm_label, nav_to_fractional_bpm, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
   
   // BPM Deadzone
   uint8_t deadzone = tempo_get_bpm_deadzone();

@@ -1,6 +1,7 @@
 #include "action_summary.h"
 #include "assets_manager.h"
 #include "scene.h"
+#include "tempo.h"
 #include "touchwheel_mode_mapping.h"
 #include "lfo.h"
 #include <stdarg.h>
@@ -340,25 +341,25 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     if (action->params.tempo.bpm == ACTION_TEMPO_BPM_ORIGINAL) {
       snprintf(summary->param_value, sizeof(summary->param_value), "Original");
     } else if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
-      uint16_t lo = action->params.tempo.random_floor;
-      uint16_t hi = action->params.tempo.random_ceiling;
-      if (lo < 20 || lo > 300) lo = 20;
-      if (hi < 20 || hi > 300) hi = 300;
-      if (lo > hi) hi = lo;
-      snprintf(summary->param_value, sizeof(summary->param_value), "Random %u-%u",
-        (unsigned)lo, (unsigned)hi);
+      char lo_buf[8], hi_buf[8];
+      tempo_format_bpm(lo_buf, sizeof(lo_buf), action->params.tempo.random_floor);
+      tempo_format_bpm(hi_buf, sizeof(hi_buf), action->params.tempo.random_ceiling);
+      snprintf(summary->param_value, sizeof(summary->param_value), "Random %s-%s",
+        lo_buf, hi_buf);
     } else {
-      snprintf(summary->param_value, sizeof(summary->param_value), "%u",
-        (unsigned)action->params.tempo.bpm);
+      tempo_format_bpm(summary->param_value, sizeof(summary->param_value),
+        action->params.tempo.bpm);
     }
     summary->has_value = true;
 
   } else if (action->type == ACTION_TEMPO && action->variant == VARIANT_HOLD) {
     snprintf(summary->param_name, sizeof(summary->param_name), "BPM");
     summary->has_param = true;
-    snprintf(summary->param_value, sizeof(summary->param_value), "%u / %u",
-      (unsigned)action->params.tempo.press_bpm,
-      (unsigned)action->params.tempo.release_bpm);
+    char press_buf[8], release_buf[8];
+    tempo_format_bpm(press_buf, sizeof(press_buf), action->params.tempo.press_bpm);
+    tempo_format_bpm(release_buf, sizeof(release_buf), action->params.tempo.release_bpm);
+    snprintf(summary->param_value, sizeof(summary->param_value), "%s / %s",
+      press_buf, release_buf);
     summary->has_value = true;
 
   } else if (action->type == ACTION_TEMPO && action->variant == VARIANT_CYCLE) {
@@ -371,12 +372,14 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
   } else if (action->type == ACTION_TEMPO &&
              (action->variant == VARIANT_INCREMENT ||
               action->variant == VARIANT_DECREMENT)) {
-    uint8_t amount = action->params.tempo.inc_amount;
-    if (amount == 0) amount = 1;
+    uint16_t amount_x10 = action->params.tempo.inc_amount;
+    if (amount_x10 == 0) amount_x10 = 10;
+    char amount_buf[16];
+    tempo_format_bpm(amount_buf, sizeof(amount_buf), amount_x10);
     snprintf(summary->param_name, sizeof(summary->param_name), "Step");
     summary->has_param = true;
-    snprintf(summary->param_value, sizeof(summary->param_value), "%c%u BPM",
-      action->variant == VARIANT_INCREMENT ? '+' : '-', (unsigned)amount);
+    snprintf(summary->param_value, sizeof(summary->param_value), "%c%s BPM",
+      action->variant == VARIANT_INCREMENT ? '+' : '-', amount_buf);
     summary->has_value = true;
 
   } else if (action->type == ACTION_TOUCHWHEEL && action->variant == VARIANT_HOLD) {
@@ -919,28 +922,34 @@ static bool ainspect_format_variant_line(const action_t *action, uint8_t scene_i
 
   if (action->type == ACTION_TEMPO) {
     if (action->variant == VARIANT_INCREMENT || action->variant == VARIANT_DECREMENT) {
-      uint8_t amount = action->params.tempo.inc_amount;
-      if (amount == 0) amount = 1;
-      snprintf(buf, cap, "%s: %c%u",
-        variant, action->variant == VARIANT_INCREMENT ? '+' : '-', (unsigned)amount);
+      uint16_t amount_x10 = action->params.tempo.inc_amount;
+      if (amount_x10 == 0) amount_x10 = 10;
+      char amount_buf[16];
+      tempo_format_bpm(amount_buf, sizeof(amount_buf), amount_x10);
+      snprintf(buf, cap, "%s: %c%s",
+        variant, action->variant == VARIANT_INCREMENT ? '+' : '-', amount_buf);
       return true;
     }
     if (action->variant == VARIANT_SET) {
       if (action->params.tempo.bpm == ACTION_TEMPO_BPM_RANDOM) {
-        snprintf(buf, cap, "Set: Random %u-%u",
-          (unsigned)action->params.tempo.random_floor,
-          (unsigned)action->params.tempo.random_ceiling);
+        char lo_buf[16], hi_buf[16];
+        tempo_format_bpm(lo_buf, sizeof(lo_buf), action->params.tempo.random_floor);
+        tempo_format_bpm(hi_buf, sizeof(hi_buf), action->params.tempo.random_ceiling);
+        snprintf(buf, cap, "Set: Random %s-%s", lo_buf, hi_buf);
       } else if (action->params.tempo.bpm == ACTION_TEMPO_BPM_ORIGINAL) {
         snprintf(buf, cap, "Set: Original");
       } else {
-        snprintf(buf, cap, "Set: %u BPM", (unsigned)action->params.tempo.bpm);
+        char bpm_buf[16];
+        tempo_format_bpm(bpm_buf, sizeof(bpm_buf), action->params.tempo.bpm);
+        snprintf(buf, cap, "Set: %s BPM", bpm_buf);
       }
       return true;
     }
     if (action->variant == VARIANT_HOLD) {
-      snprintf(buf, cap, "Hold: %u / %u BPM",
-        (unsigned)action->params.tempo.press_bpm,
-        (unsigned)action->params.tempo.release_bpm);
+      char press_buf[16], release_buf[16];
+      tempo_format_bpm(press_buf, sizeof(press_buf), action->params.tempo.press_bpm);
+      tempo_format_bpm(release_buf, sizeof(release_buf), action->params.tempo.release_bpm);
+      snprintf(buf, cap, "Hold: %s / %s BPM", press_buf, release_buf);
       return true;
     }
     if (action->variant == VARIANT_TAP) {
@@ -1188,6 +1197,24 @@ static const char *ainspect_repeat_interval_label(action_repeat_division_t div) 
   }
 }
 
+static const char *ainspect_punch_in_duration_label(punch_in_duration_t duration) {
+  switch (duration) {
+    case PUNCH_IN_1_BEAT:  return "1 beat";
+    case PUNCH_IN_2_BEATS: return "2 beats";
+    case PUNCH_IN_3_BEATS: return "3 beats";
+    case PUNCH_IN_4_BEATS: return "4 beats";
+    case PUNCH_IN_5_BEATS: return "5 beats";
+    case PUNCH_IN_6_BEATS: return "6 beats";
+    case PUNCH_IN_7_BEATS: return "7 beats";
+    case PUNCH_IN_1_BAR:   return "1 bar";
+    case PUNCH_IN_2_BARS:  return "2 bars";
+    case PUNCH_IN_4_BARS:  return "4 bars";
+    case PUNCH_IN_8_BARS:  return "8 bars";
+    case PUNCH_IN_16_BARS: return "16 bars";
+    default: return "1 bar";
+  }
+}
+
 static void ainspect_boomerang_param_name(char *buf, size_t cap, const action_t *action,
     uint8_t scene_index) {
   const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
@@ -1283,6 +1310,11 @@ static void ainspect_append_action_body(ainspect_buf_t *out, const action_t *act
   if (action->type == ACTION_BOOMERANG) {
     ainspect_append_boomerang(out, action, show_scheduling);
     return;
+  }
+
+  if (action->type == ACTION_PUNCH_IN) {
+    ainspect_append(out, "\n%s",
+      ainspect_punch_in_duration_label(action->params.punch_in.duration));
   }
 
   if (action->type == ACTION_CONTROL && action->variant == VARIANT_SET) {

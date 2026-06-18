@@ -270,7 +270,8 @@ window.ConnectionManager = (function () {
       return this.isSerialBusy ? impl() : this.runSerialTask(impl)
     }
 
-    async _exitModeImpl () {
+    async _exitModeImpl (options = {}) {
+      const leavePumpSuspended = options.leavePumpSuspended === true
       if ((!this.mode && !this._deviceScenesActive) || !this.port) return
       this._stopModeNotifyLoop()
       await this._suspendModeNotify()
@@ -284,14 +285,35 @@ window.ConnectionManager = (function () {
       } catch (err) {
         // Ignore exit errors
       }
-      this._resumeRxPump()
+      if (!leavePumpSuspended) this._resumeRxPump()
     }
 
-    async ensureDeviceIdle () {
+    async ensureDeviceIdle (options = {}) {
+      const leavePumpSuspended = options.leavePumpSuspended === true
       if (!this.port) return
       if (this.mode || this._deviceScenesActive) {
-        await this._exitModeImpl()
+        await this._exitModeImpl({ leavePumpSuspended })
         await this.sleep(200)
+        return
+      }
+      if (leavePumpSuspended) {
+        await this._armRxPump()
+        await this.sendRaw('EXIT\n')
+        await this.sleep(150)
+        const exitDeadline = Date.now() + 500
+        while (Date.now() < exitDeadline) {
+          const remaining = exitDeadline - Date.now()
+          if (remaining <= 0) break
+          const line = await this.readLine(Math.min(100, remaining))
+          if (!line) continue
+          if (line === 'OK' || line.startsWith('ERROR:')) break
+          if (line === 'SCENES_STOPPED' || line === 'SCENES_STARTED' ||
+              line === 'CONFIG_STOPPED' || line === 'SETTINGS_STOPPED' ||
+              line === 'PEDALS_STOPPED') break
+        }
+        this._lineQueue = []
+        this._rejectLineWaiters()
+        this._rxBuffer = ''
         return
       }
       // Host state is idle; the device may still be in a CDC mode.
@@ -302,7 +324,7 @@ window.ConnectionManager = (function () {
         await this.sleep(150)
         await this.drainInput()
       } finally {
-        if (pumpWasRunning) this._resumeRxPump()
+        if (pumpWasRunning && !leavePumpSuspended) this._resumeRxPump()
       }
     }
 
@@ -369,8 +391,9 @@ window.ConnectionManager = (function () {
       const detail = { kind, index: -1 }
 
       if (kind === 'clock' && parts.length >= 9) {
+        const bpmX10 = parseInt(parts[2], 10) || 0
         detail.clock = {
-          bpm: parseInt(parts[2], 10) || 0,
+          bpm: bpmX10 / 10,
           transport: parts[3] === '1' ? 'playing' : 'stopped',
           bar: parseInt(parts[4], 10) || 1,
           beat: parseInt(parts[5], 10) || 1,
@@ -826,6 +849,41 @@ window.ConnectionManager = (function () {
         if (hadMode) this._resumeModeNotifyIfAllowed()
         else this._resumeRxPump()
       }
+    }
+
+    async _armRxPump (timeoutMs = 1000) {
+      this._resumeRxPump()
+      const deadline = Date.now() + timeoutMs
+      while (!this._rxPumpReader && Date.now() < deadline) await this.sleep(20)
+    }
+
+    // Send a command expecting OK or ERROR: through the persistent rx pump.
+    // Unlike _sendCommandImpl, this never acquires a dedicated reader after a
+    // prior command, avoiding a Chromium Web Serial stall. Caller must already
+    // be inside a serial task with mode === null.
+    async _sendOkCommandViaPump (cmd, timeout = 30000) {
+      if (!this.port) throw new Error('Not connected')
+
+      await this._armRxPump()
+      this._lineQueue = []
+      this._rejectLineWaiters()
+      this._rxBuffer = ''
+
+      await this.sendRaw(cmd + '\n')
+
+      const deadline = Date.now() + timeout
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        const line = await this.readLine(Math.min(1000, remaining))
+        if (!line) continue
+        if (line === 'OK') return 'OK'
+        if (line.startsWith('ERROR:')) return line
+        if (line === 'SCENES_STOPPED' || line === 'SCENES_STARTED' ||
+            line === 'CONFIG_STOPPED' || line === 'SETTINGS_STOPPED' ||
+            line === 'PEDALS_STOPPED') continue
+      }
+      return ''
     }
 
     // Send a command and read a single JSON response line through the persistent

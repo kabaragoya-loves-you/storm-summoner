@@ -55,11 +55,11 @@ static esp_timer_handle_t s_morph_timer = NULL;
 // ----------------------------------------------------------------------------
 typedef struct {
   bool active;
-  uint16_t start_bpm;
-  uint16_t target_bpm;
+  uint16_t start_bpm_x10;
+  uint16_t target_bpm_x10;
   uint32_t start_ms;
   uint32_t end_ms;
-  uint16_t last_sent_bpm;
+  uint16_t last_sent_bpm_x10;
 } tempo_morph_t;
 
 static tempo_morph_t s_tempo_morph;
@@ -99,9 +99,9 @@ static int find_discrete_index(const uint8_t* values, uint8_t count, uint8_t tar
   return best_idx;
 }
 
-static uint32_t get_feel_duration_ms(morph_feel_t feel, uint16_t bpm) {
-  if (bpm == 0) bpm = 120;
-  uint32_t beat_ms = 60000 / bpm;
+static uint32_t get_feel_duration_ms(morph_feel_t feel, uint16_t bpm_x10) {
+  if (bpm_x10 == 0) bpm_x10 = TEMPO_DEFAULT_BPM_X10;
+  uint32_t beat_ms = 600000 / bpm_x10;
 
   switch (feel) {
     case MORPH_FEEL_FAST:   return beat_ms / 4;
@@ -112,9 +112,9 @@ static uint32_t get_feel_duration_ms(morph_feel_t feel, uint16_t bpm) {
 }
 
 // Get morph duration for DURATION mode (fixed musical duration)
-uint32_t action_morph_get_duration_ms(morph_division_t div, uint16_t bpm) {
-  if (bpm == 0) bpm = 120;
-  uint32_t beat_ms = 60000 / bpm;
+uint32_t action_morph_get_duration_ms(morph_division_t div, uint16_t bpm_x10) {
+  if (bpm_x10 == 0) bpm_x10 = TEMPO_DEFAULT_BPM_X10;
+  uint32_t beat_ms = 600000 / bpm_x10;
   uint8_t felt_beats = tempo_get_felt_beats_per_bar();
   if (felt_beats == 0) felt_beats = 4;
 
@@ -132,13 +132,13 @@ uint32_t action_morph_get_duration_ms(morph_division_t div, uint16_t bpm) {
   }
 }
 
-static uint32_t get_sync_duration_ms(morph_division_t div, uint16_t bpm,
+static uint32_t get_sync_duration_ms(morph_division_t div, uint16_t bpm_x10,
     uint8_t current_beat, uint8_t beats_per_bar) {
-  if (bpm == 0) bpm = 120;
+  if (bpm_x10 == 0) bpm_x10 = TEMPO_DEFAULT_BPM_X10;
   if (beats_per_bar == 0) beats_per_bar = 4;
   if (current_beat == 0) current_beat = 1;
 
-  uint32_t beat_ms = 60000 / bpm;
+  uint32_t beat_ms = 600000 / bpm_x10;
   uint8_t target_beat;
   uint8_t beats_remaining;
 
@@ -325,9 +325,8 @@ static void tempo_morph_tick(uint32_t now) {
   if (!s_tempo_morph.active) return;
 
   if (now >= s_tempo_morph.end_ms) {
-    if (s_tempo_morph.target_bpm != s_tempo_morph.last_sent_bpm) {
-      tempo_set_bpm(s_tempo_morph.target_bpm);
-    }
+    if (s_tempo_morph.target_bpm_x10 != s_tempo_morph.last_sent_bpm_x10)
+      tempo_set_bpm_x10(s_tempo_morph.target_bpm_x10);
     s_tempo_morph.active = false;
     return;
   }
@@ -335,15 +334,16 @@ static void tempo_morph_tick(uint32_t now) {
   uint32_t total = s_tempo_morph.end_ms - s_tempo_morph.start_ms;
   if (total == 0) total = 1;
   uint32_t elapsed = now - s_tempo_morph.start_ms;
-  int32_t delta = (int32_t)s_tempo_morph.target_bpm - (int32_t)s_tempo_morph.start_bpm;
-  int32_t value = (int32_t)s_tempo_morph.start_bpm
-                + (delta * (int32_t)elapsed) / (int32_t)total;
-  if (value < 20) value = 20;
-  if (value > 300) value = 300;
-  uint16_t bpm = (uint16_t)value;
-  if (bpm != s_tempo_morph.last_sent_bpm) {
-    tempo_set_bpm(bpm);
-    s_tempo_morph.last_sent_bpm = bpm;
+  int32_t delta = (int32_t)s_tempo_morph.target_bpm_x10 -
+    (int32_t)s_tempo_morph.start_bpm_x10;
+  int32_t value = (int32_t)s_tempo_morph.start_bpm_x10 +
+    (delta * (int32_t)elapsed) / (int32_t)total;
+  if (value < (int32_t)TEMPO_MIN_BPM_X10) value = TEMPO_MIN_BPM_X10;
+  if (value > (int32_t)TEMPO_MAX_BPM_X10) value = TEMPO_MAX_BPM_X10;
+  uint16_t bpm_x10 = (uint16_t)value;
+  if (bpm_x10 != s_tempo_morph.last_sent_bpm_x10) {
+    tempo_set_bpm_x10(bpm_x10);
+    s_tempo_morph.last_sent_bpm_x10 = bpm_x10;
   }
 }
 
@@ -434,8 +434,8 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
   active_morph_t* m = find_or_create_morph_slot(num_ccs, cc_numbers);
   if (!m) return false;
 
-  uint16_t bpm = tempo_get_bpm();
-  if (bpm == 0) bpm = 120;
+  uint16_t bpm_x10 = tempo_get_bpm_x10();
+  if (bpm_x10 == 0) bpm_x10 = TEMPO_DEFAULT_BPM_X10;
 
   time_signature_t sig = tempo_get_time_signature();
   uint8_t beats_per_bar = sig.numerator;
@@ -447,13 +447,13 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
   uint32_t duration_ms;
   switch (action->morph_timing_mode) {
     case MORPH_TIMING_FEEL:
-      duration_ms = get_feel_duration_ms(action->morph_feel, bpm);
+      duration_ms = get_feel_duration_ms(action->morph_feel, bpm_x10);
       break;
     case MORPH_TIMING_DURATION:
-      duration_ms = action_morph_get_duration_ms(action->morph_division, bpm);
+      duration_ms = action_morph_get_duration_ms(action->morph_division, bpm_x10);
       break;
     case MORPH_TIMING_SYNC:
-      duration_ms = get_sync_duration_ms(action->morph_division, bpm,
+      duration_ms = get_sync_duration_ms(action->morph_division, bpm_x10,
         current_beat, beats_per_bar);
       break;
     default:
@@ -534,19 +534,19 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
 // Compute the duration in ms for an action's morph configuration. Used by
 // both CC and tempo morph paths so the three timing modes behave the same.
 uint32_t action_morph_compute_duration_ms(const action_t* action) {
-  uint16_t bpm = tempo_get_bpm();
-  if (bpm == 0) bpm = 120;
+  uint16_t bpm_x10 = tempo_get_bpm_x10();
+  if (bpm_x10 == 0) bpm_x10 = TEMPO_DEFAULT_BPM_X10;
   switch (action->morph_timing_mode) {
     case MORPH_TIMING_FEEL:
-      return get_feel_duration_ms(action->morph_feel, bpm);
+      return get_feel_duration_ms(action->morph_feel, bpm_x10);
     case MORPH_TIMING_DURATION:
-      return action_morph_get_duration_ms(action->morph_division, bpm);
+      return action_morph_get_duration_ms(action->morph_division, bpm_x10);
     case MORPH_TIMING_SYNC: {
       time_signature_t sig = tempo_get_time_signature();
       uint8_t beats_per_bar = sig.numerator ? sig.numerator : 4;
       uint8_t current_beat = transport_get_current_beat();
       if (current_beat == 0) current_beat = 1;
-      return get_sync_duration_ms(action->morph_division, bpm,
+      return get_sync_duration_ms(action->morph_division, bpm_x10,
         current_beat, beats_per_bar);
     }
     default:
@@ -554,14 +554,14 @@ uint32_t action_morph_compute_duration_ms(const action_t* action) {
   }
 }
 
-bool action_tempo_morph_start(uint16_t target_bpm, uint32_t duration_ms) {
-  uint16_t current = tempo_get_bpm();
-  if (current == 0) current = 120;
-  if (target_bpm < 20) target_bpm = 20;
-  if (target_bpm > 300) target_bpm = 300;
+bool action_tempo_morph_start(uint16_t target_bpm_x10, uint32_t duration_ms) {
+  uint16_t current = tempo_get_bpm_x10();
+  if (current == 0) current = TEMPO_DEFAULT_BPM_X10;
+  if (target_bpm_x10 < TEMPO_MIN_BPM_X10) target_bpm_x10 = TEMPO_MIN_BPM_X10;
+  if (target_bpm_x10 > TEMPO_MAX_BPM_X10) target_bpm_x10 = TEMPO_MAX_BPM_X10;
 
-  if (duration_ms < 10 || current == target_bpm) {
-    if (current != target_bpm) tempo_set_bpm(target_bpm);
+  if (duration_ms < 10 || current == target_bpm_x10) {
+    if (current != target_bpm_x10) tempo_set_bpm_x10(target_bpm_x10);
     s_tempo_morph.active = false;
     action_morph_update_timer();
     return true;
@@ -569,15 +569,18 @@ bool action_tempo_morph_start(uint16_t target_bpm, uint32_t duration_ms) {
 
   uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
   s_tempo_morph.active = true;
-  s_tempo_morph.start_bpm = current;
-  s_tempo_morph.target_bpm = target_bpm;
+  s_tempo_morph.start_bpm_x10 = current;
+  s_tempo_morph.target_bpm_x10 = target_bpm_x10;
   s_tempo_morph.start_ms = now;
   s_tempo_morph.end_ms = now + duration_ms;
-  s_tempo_morph.last_sent_bpm = current;
+  s_tempo_morph.last_sent_bpm_x10 = current;
   action_morph_update_timer();
 
-  ESP_LOGD(TAG, "Tempo morph: %u -> %u BPM over %lu ms",
-    (unsigned)current, (unsigned)target_bpm, (unsigned long)duration_ms);
+  char cur_buf[16], tgt_buf[16];
+  tempo_format_bpm(cur_buf, sizeof(cur_buf), current);
+  tempo_format_bpm(tgt_buf, sizeof(tgt_buf), target_bpm_x10);
+  ESP_LOGD(TAG, "Tempo morph: %s -> %s BPM over %lu ms",
+    cur_buf, tgt_buf, (unsigned long)duration_ms);
   return true;
 }
 

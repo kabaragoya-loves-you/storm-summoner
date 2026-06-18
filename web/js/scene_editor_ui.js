@@ -347,11 +347,14 @@ window.SceneEditorUi = (function () {
       data-action="change->scene#patchSelect">${opts}</select>`
   }
 
-  function numberField (path, value, min, max, action) {
-    return `<input type="number" class="scene-input" min="${min}" max="${max}"
+  function numberField (path, value, min, max, step = 1) {
+    const stepAttr = step === 1 ? '' : ` step="${step}"`
+    return `<input type="number" class="scene-input" min="${min}" max="${max}"${stepAttr}
       value="${esc(value)}" data-scene-path="${esc(path)}"
       data-action="input->scene#patchNumber">`
   }
+
+  let bpmStep = 1
 
   function checkboxField (path, checked, action) {
     return `<input type="checkbox" class="scene-checkbox"
@@ -1413,7 +1416,7 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
     for (let i = 0; i < stepCount; i++) {
       html += `<div class="scene-cycle-step-col">${numberField(
-        `${path}.tempos.${i}`, steps[i] ?? 120, 20, 300
+        `${path}.tempos.${i}`, steps[i] ?? 120, 20, 300, bpmStep
       )}</div>`
     }
     html += '</div></div>'
@@ -1953,17 +1956,31 @@ window.SceneEditorUi = (function () {
       if (a.type === 'tempo' && a.variant === 'set') {
         html += fieldRow(
           'BPM',
-          numberField(`${path}.bpm`, a.bpm ?? 120, 20, 300)
+          numberField(`${path}.bpm`, a.bpm ?? 120, 20, 300, bpmStep)
         )
       }
       if (a.type === 'tempo' && a.variant === 'hold') {
         html += fieldRow(
           'Press BPM',
-          numberField(`${path}.press_bpm`, a.press_bpm ?? 120, 20, 300)
+          numberField(`${path}.press_bpm`, a.press_bpm ?? 120, 20, 300, bpmStep)
         )
         html += fieldRow(
           'Release BPM',
-          numberField(`${path}.release_bpm`, a.release_bpm ?? 120, 20, 300)
+          numberField(`${path}.release_bpm`, a.release_bpm ?? 120, 20, 300, bpmStep)
+        )
+      }
+      if (a.type === 'tempo' && (a.variant === 'increment' ||
+          a.variant === 'decrement')) {
+        html += fieldRow(
+          'Amount',
+          numberField(`${path}.inc_amount`, a.inc_amount ?? 1, 0.1, 20, bpmStep)
+        )
+      }
+      if (a.type === 'tempo' && (a.variant === 'tap' ||
+          a.variant === 'increment' || a.variant === 'decrement')) {
+        html += fieldRow(
+          'Fractional BPM',
+          checkboxField(`${path}.fractional`, !!a.fractional)
         )
       }
       if (a.type === 'tempo' && a.variant === 'cycle') {
@@ -2138,7 +2155,7 @@ window.SceneEditorUi = (function () {
       )
     }
 
-    html += fieldRow('BPM', numberField('bpm', m.bpm ?? 120, 20, 300))
+    html += fieldRow('BPM', numberField('bpm', m.bpm ?? 120, 20, 300, bpmStep))
     html += fieldRow(
       'Time sig (num)',
       numberField(
@@ -3281,6 +3298,7 @@ window.SceneEditorUi = (function () {
 
   function renderEditor (ctrl, openSections) {
     _openSections = openSections || new Set()
+    bpmStep = ctrl.deviceContext?.allowFractionalBpm ? 0.1 : 1
     // Order matches device Scene menu (current_scene.c assignment list, then globals).
     let html = renderPads(ctrl)
     html += renderTouchwheel(ctrl)

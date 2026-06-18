@@ -10,6 +10,7 @@
 #include "lfo.h"
 #include "sample_hold.h"
 #include "ui.h"
+#include "tempo.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -364,8 +365,10 @@ static void append_overview(scene_inspect_buf_t *b, const scene_t *scene,
   uint8_t scene_index) {
   if (!scene) return;
 
-  scene_inspect_buf_append(b, "%u BPM, %u/%u\n",
-    (unsigned)scene->bpm,
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), scene->bpm_x10);
+  scene_inspect_buf_append(b, "%s BPM, %u/%u\n",
+    bpm_buf,
     (unsigned)scene->time_signature.numerator,
     (unsigned)scene->time_signature.denominator);
 

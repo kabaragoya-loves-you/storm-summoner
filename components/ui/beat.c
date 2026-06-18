@@ -141,9 +141,9 @@ static const size_t beat_settings_count = sizeof(beat_settings) / sizeof(beat_se
 // Beat tracking (volatile - updated from event handler context)
 static volatile uint8_t g_current_beat = 1;      // 1-based beat position
 static volatile uint8_t g_bar_length = 4;        // Beats per bar
-static volatile uint16_t g_current_bpm = 120;    // Current BPM
+static volatile uint16_t g_current_bpm_x10 = TEMPO_DEFAULT_BPM_X10;
 static volatile uint32_t g_last_beat_time_ms = 0;
-static volatile uint32_t g_beat_duration_ms = 500; // 60000 / BPM
+static volatile uint32_t g_beat_duration_ms = 500; // 600000 / bpm_x10
 
 // Transport state (volatile - updated from event handler context)
 static volatile transport_state_t g_transport_state = TRANSPORT_STOPPED;
@@ -266,15 +266,15 @@ static lv_color_t get_transport_color(void) {
 static void update_tempo_labels(void) {
   // Only update if something changed
   uint8_t beat = g_current_beat;
-  uint16_t bpm = g_current_bpm;
+  uint16_t bpm_x10 = g_current_bpm_x10;
   transport_state_t state = g_transport_state;
   
-  if (beat == g_last_label_beat && bpm == g_last_label_bpm && state == g_last_label_state) {
+  if (beat == g_last_label_beat && bpm_x10 == g_last_label_bpm && state == g_last_label_state) {
     return;
   }
   
   g_last_label_beat = beat;
-  g_last_label_bpm = bpm;
+  g_last_label_bpm = bpm_x10;
   g_last_label_state = state;
   
   lv_color_t color = get_transport_color();
@@ -282,7 +282,9 @@ static void update_tempo_labels(void) {
   
   // Update BPM label
   if (g_bpm_label) {
-    lv_label_set_text_fmt(g_bpm_label, "%d BPM", bpm);
+    char bpm_buf[16];
+    tempo_format_bpm_label(bpm_buf, sizeof(bpm_buf), bpm_x10);
+    lv_label_set_text(g_bpm_label, bpm_buf);
     lv_obj_set_style_text_color(g_bpm_label, color, 0);
   }
   
@@ -388,8 +390,8 @@ static void beat_event_handler(const event_t* event, void* context) {
 static void tempo_changed_handler(const event_t* event, void* context) {
   if (!event || !g_module_active) return;
   
-  g_current_bpm = event->data.tempo.bpm;
-  g_beat_duration_ms = 60000 / g_current_bpm;
+  g_current_bpm_x10 = event->data.tempo.bpm_x10;
+  g_beat_duration_ms = 600000 / g_current_bpm_x10;
   g_tempo_dirty = true;
   
   // Update bar length from current time signature
@@ -679,8 +681,8 @@ static void beat_draw_deferred_cb(lv_timer_t *timer) {
   update_scene_info_label();
   
   // Initialize state from tempo/transport
-  g_current_bpm = tempo_get_bpm();
-  g_beat_duration_ms = 60000 / g_current_bpm;
+  g_current_bpm_x10 = tempo_get_bpm_x10();
+  g_beat_duration_ms = 600000 / g_current_bpm_x10;
   g_transport_state = transport_get_state();
   time_signature_t sig = tempo_get_time_signature();
   g_bar_length = sig.numerator;
@@ -713,8 +715,10 @@ static void beat_draw_deferred_cb(lv_timer_t *timer) {
   // Mark module as active
   g_module_active = true;
   
-  ESP_LOGI(TAG, "Beat module created - BPM: %d, Time Sig: %d/%d, Body ratio: %d",
-           g_current_bpm, sig.numerator, sig.denominator, g_body_ratio);
+  char bpm_buf[16];
+  tempo_format_bpm(bpm_buf, sizeof(bpm_buf), g_current_bpm_x10);
+  ESP_LOGI(TAG, "Beat module created - BPM: %s, Time Sig: %d/%d, Body ratio: %d",
+           bpm_buf, sig.numerator, sig.denominator, g_body_ratio);
   
   lv_screen_load(g_screen);
   lv_timer_delete(timer);

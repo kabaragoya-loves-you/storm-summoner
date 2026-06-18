@@ -26,7 +26,7 @@
 // State
 static clock_sync_mode_t s_mode = CLOCK_SYNC_24PPQN;
 static bool s_sync_active = false;
-static uint8_t s_current_bpm = 0;
+static uint16_t s_current_bpm_x10 = 0;
 static bool s_enabled = false;
 
 // Pulse detection
@@ -41,7 +41,7 @@ static QueueHandle_t s_gpio_evt_queue = NULL;
 
 // Forward declarations
 static void clock_sync_task(void *pvParameters);
-static uint8_t calculate_bpm_from_interval(uint32_t interval_ms, clock_sync_mode_t mode);
+static uint16_t calculate_bpm_x10_from_interval(uint32_t interval_ms, clock_sync_mode_t mode);
 
 // ISR handler for clock pulses
 static void IRAM_ATTR clock_sync_isr(void *arg) {
@@ -109,7 +109,7 @@ void clock_sync_disable(void) {
     gpio_reset_pin(PIN_CV_CLOCK);
     
     s_sync_active = false;
-    s_current_bpm = 0;
+    s_current_bpm_x10 = 0;
     s_pulse_count = 0;
     
     ESP_LOGI(TAG, "Clock sync disabled");
@@ -187,12 +187,15 @@ static void clock_sync_task(void *pvParameters) {
           uint32_t avg_interval = total_interval / s_pulse_count;
           
           // Calculate BPM
-          uint8_t new_bpm = calculate_bpm_from_interval(avg_interval, s_mode);
+          uint16_t new_bpm_x10 = calculate_bpm_x10_from_interval(avg_interval, s_mode);
+          uint16_t new_whole = tempo_x10_to_whole(new_bpm_x10);
           
-          if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM) {
-            if (new_bpm != s_current_bpm) {
-              s_current_bpm = new_bpm;
-              ESP_LOGI(TAG, "Sync BPM: %d (interval: %lums)", s_current_bpm, avg_interval);
+          if (new_whole >= MIN_BPM && new_whole <= MAX_BPM) {
+            if (new_bpm_x10 != s_current_bpm_x10) {
+              s_current_bpm_x10 = new_bpm_x10;
+              char bpm_buf[16];
+              tempo_format_bpm(bpm_buf, sizeof(bpm_buf), s_current_bpm_x10);
+              ESP_LOGI(TAG, "Sync BPM: %s (interval: %lums)", bpm_buf, avg_interval);
             }
             s_sync_active = true;
           }
@@ -207,7 +210,7 @@ static void clock_sync_task(void *pvParameters) {
         uint32_t now = esp_timer_get_time() / 1000;
         if ((now - s_last_pulse_time) > SYNC_TIMEOUT_MS) {
           s_sync_active = false;
-          s_current_bpm = 0;
+          s_current_bpm_x10 = 0;
           s_pulse_count = 0;
           ESP_LOGI(TAG, "Clock sync lost");
         }
@@ -218,7 +221,7 @@ static void clock_sync_task(void *pvParameters) {
   vTaskDelete(NULL);
 }
 
-static uint8_t calculate_bpm_from_interval(uint32_t interval_ms, clock_sync_mode_t mode) {
+static uint16_t calculate_bpm_x10_from_interval(uint32_t interval_ms, clock_sync_mode_t mode) {
   if (interval_ms == 0) return 0;
   
   uint32_t ms_per_beat;
@@ -247,8 +250,10 @@ static uint8_t calculate_bpm_from_interval(uint32_t interval_ms, clock_sync_mode
       break;
   }
   
-  // BPM = 60000 / ms_per_beat
-  return (uint8_t)(60000 / ms_per_beat);
+  uint32_t bpm_x10 = (600000U + ms_per_beat / 2) / ms_per_beat;
+  if (!tempo_get_allow_fractional_bpm())
+    bpm_x10 = tempo_whole_to_x10((uint16_t)((bpm_x10 + 5) / 10));
+  return (uint16_t)bpm_x10;
 }
 
 // Public API functions
@@ -265,7 +270,7 @@ clock_sync_mode_t clock_sync_get_mode(void) {
 }
 
 uint8_t clock_sync_get_bpm(void) {
-  return s_sync_active ? s_current_bpm : 0;
+  return s_sync_active ? (uint8_t)tempo_x10_to_whole(s_current_bpm_x10) : 0;
 }
 
 bool clock_sync_is_active(void) {

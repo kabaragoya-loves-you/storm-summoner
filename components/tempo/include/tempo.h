@@ -1,9 +1,15 @@
 #ifndef _TEMPO_H
 #define _TEMPO_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+
+// Fixed-point BPM: tenths of a beat per minute (1205 = 120.5 BPM).
+#define TEMPO_MIN_BPM_X10 200
+#define TEMPO_MAX_BPM_X10 3000
+#define TEMPO_DEFAULT_BPM_X10 1200
 
 // Clock source types
 typedef enum {
@@ -49,9 +55,30 @@ void tempo_init(void);
 void tempo_start(void);
 void tempo_stop(void);
 
-// Set and get the global BPM.
+// Set and get the global BPM (fixed-point tenths).
+void tempo_set_bpm_x10(uint16_t bpm_x10);
+uint16_t tempo_get_bpm_x10(void);
+
+// Whole-BPM wrappers (round to nearest integer).
 void tempo_set_bpm(uint16_t bpm);
 uint16_t tempo_get_bpm(void);
+
+// Format BPM for display ("120" or "120.5").
+void tempo_format_bpm(char* buf, size_t buf_len, uint16_t bpm_x10);
+void tempo_format_bpm_label(char* buf, size_t buf_len, uint16_t bpm_x10);
+
+// Parse/convert helpers.
+uint16_t tempo_bpm_from_double(double bpm);
+uint16_t tempo_whole_to_x10(uint16_t whole_bpm);
+uint16_t tempo_x10_to_whole(uint16_t bpm_x10);
+
+// Snap to whole BPM when fractional editing is disabled.
+uint16_t tempo_snap_bpm_x10(uint16_t bpm_x10);
+uint16_t tempo_snap_bpm_x10_ex(uint16_t bpm_x10, bool allow_fractional);
+
+// Global setting: allow fractional BPM in editors (default off).
+void tempo_set_allow_fractional_bpm(bool allow);
+bool tempo_get_allow_fractional_bpm(void);
 
 // Set the clock source.
 void tempo_set_source(tempo_clock_source_t source);
@@ -67,13 +94,14 @@ void tempo_enable_quarter_note_log(bool enable);
 // recent up to N inter-tap intervals. If more than X ms have elapsed since the
 // previous tap, the next tap restarts the averaging window.
 void tempo_tap(void);
+void tempo_tap_ex(bool allow_fractional);
 
 // For MIDI clock mode.
 void tempo_midi_clock_tick(void);
 void tempo_midi_transport_start(void);  // Called immediately on MIDI Start to reset counters
 bool tempo_is_midi_clock_active(void);  // True if MIDI clock ticks are being received
 
-// Re-align bar/beat to downbeat on demand (internal or external clock).
+// Re-align bar/beat to downbeat immediately (internal, sync, or MIDI clock).
 void tempo_resync_downbeat(void);
 
 // Align beat counter to a bar/beat position (e.g. after Song Position Pointer).

@@ -9,6 +9,12 @@ application.register(
       this.infoData = null
       this.clockData = null
       this._transportBusy = false
+      this._sceneActionBusy = false
+      this._flagOverrideUntil = 0
+      this._flagOverrideValue = false
+      this._pendingFlagCmd = null
+      this._bpmInputEditing = false
+      this._bpmInputDraft = null
       this.isActivating = false
       this._activatePending = false
       this._loadGeneration = 0
@@ -33,8 +39,19 @@ application.register(
         if (kind === 'clock') {
           if (!this.connection.isConnected) return
           if (e.detail.clock) {
-            this.clockData = e.detail.clock
-            this.renderSceneCard()
+            const incoming = e.detail.clock
+            const prevClock = this.clockData
+            const prevFlag = prevClock?.flag
+            const prevAllow = prevClock?.allow_fractional_bpm
+            const overrideActive =
+              this._flagOverrideUntil > 0 && Date.now() < this._flagOverrideUntil
+            const appliedFlag = overrideActive ? this._flagOverrideValue : incoming.flag
+            this.clockData = { ...incoming, flag: appliedFlag }
+            if (this.clockData.allow_fractional_bpm == null) {
+              this.clockData.allow_fractional_bpm =
+                prevAllow ?? this.infoData?.clock?.allow_fractional_bpm ?? false
+            }
+            this.applyClockDisplay(prevClock, prevFlag, appliedFlag, incoming)
           }
           return
         }
@@ -83,9 +100,6 @@ application.register(
       })
 
       this.element.addEventListener('click', e => {
-        const btn = e.target.closest('[data-action*="goToPedals"]')
-        if (btn) this.goToPedals()
-
         const updateBtn = e.target.closest('[data-action*="goToUpdater"]')
         if (updateBtn) this.goToUpdater()
 
@@ -100,6 +114,32 @@ application.register(
           const cmd = navBtn.getAttribute('data-nav-cmd')
           if (cmd) this.sendNav(cmd)
         }
+
+        const sceneBtnClosest = e.target.closest('[data-scene-cmd]')
+        const scenePath = e.composedPath?.() ?? []
+        const sceneBtn = sceneBtnClosest ||
+          scenePath.find(el => el?.matches?.('[data-scene-cmd]'))
+        if (sceneBtn) {
+          const cmd = sceneBtn.getAttribute('data-scene-cmd')
+          if (cmd) this.sendSceneAction(cmd)
+        }
+      })
+
+      this.element.addEventListener('focusin', e => {
+        if (this._bpmInputFromEvent(e)) this._bpmInputEditing = true
+      })
+
+      this.element.addEventListener('focusout', e => {
+        const wa = this._bpmInputFromEvent(e)
+        if (wa) {
+          this._bpmInputEditing = false
+          this._bpmInputDraft = wa.value
+        }
+      })
+
+      this.element.addEventListener('input', e => {
+        const wa = this._bpmInputFromEvent(e)
+        if (wa) this.maskBpmInput(wa)
       })
     }
 
@@ -132,6 +172,8 @@ application.register(
       } else {
         this.infoData = null
         this.clockData = null
+        this._bpmInputEditing = false
+        this._bpmInputDraft = null
         this.isActivating = false
         this.renderEmpty()
       }
@@ -159,7 +201,7 @@ application.register(
           try {
             response = await this.connection.runSerialTask(async () => {
               if (gen !== this._loadGeneration) return null
-              await this.connection.ensureDeviceIdle()
+              await this.connection.ensureDeviceIdle({ leavePumpSuspended: true })
               if (gen !== this._loadGeneration) return null
               await this.sleep(100)
               return this.connection._sendCommandImpl(
@@ -217,8 +259,10 @@ application.register(
       if (op !== 'PREV' && op !== 'NEXT') return
       try {
         const response = await this.connection.runSerialTask(async () => {
-          await this.connection.ensureDeviceIdle()
-          return this.connection._sendCommandImpl(`NAV ${op}`, 3000)
+          if (this.connection.mode || this.connection._deviceScenesActive) {
+            await this.connection.ensureDeviceIdle({ leavePumpSuspended: true })
+          }
+          return this.connection._sendOkCommandViaPump(`NAV ${op}`, 5000)
         })
         if (response !== 'OK') {
           console.error('Navigation command failed:', response)
@@ -236,8 +280,10 @@ application.register(
       this._transportBusy = true
       try {
         const response = await this.connection.runSerialTask(async () => {
-          await this.connection.ensureDeviceIdle()
-          return this.connection._sendCommandImpl(`TRANSPORT ${op}`, 3000)
+          if (this.connection.mode || this.connection._deviceScenesActive) {
+            await this.connection.ensureDeviceIdle({ leavePumpSuspended: true })
+          }
+          return this.connection._sendOkCommandViaPump(`TRANSPORT ${op}`, 5000)
         })
         if (response !== 'OK') {
           console.error('Transport command failed:', response)
@@ -247,6 +293,155 @@ application.register(
       } finally {
         this._transportBusy = false
       }
+    }
+
+    async sendSceneAction (sceneCmd) {
+      const isFlag = sceneCmd === 'flag-raise' || sceneCmd === 'flag-lower'
+      if (!this.connection.isConnected) {
+        console.warn('Scene command skipped: not connected')
+        return
+      }
+      if (this._sceneActionBusy) {
+        if (isFlag) this._pendingFlagCmd = sceneCmd
+        console.warn('Scene command skipped: previous command in progress')
+        return
+      }
+
+      let cdcCmd = null
+      let bpmSetValue = null
+      if (sceneCmd === 'downbeat') {
+        cdcCmd = 'TEMPO DOWNBEAT'
+      } else if (sceneCmd === 'flag-raise') {
+        cdcCmd = 'FLAG RAISE'
+      } else if (sceneCmd === 'flag-lower') {
+        cdcCmd = 'FLAG LOWER'
+      } else if (sceneCmd === 'bpm-set') {
+        const wa = this.sceneCardTarget.querySelector('[data-scene-bpm-input]')
+        const allowFrac = !!this.clockData?.allow_fractional_bpm
+        const raw = wa?.value?.trim()
+        if (!raw) {
+          console.error('BPM value required')
+          return
+        }
+        const num = allowFrac ? parseFloat(raw) : parseInt(raw, 10)
+        if (Number.isNaN(num)) {
+          console.error('Invalid BPM value')
+          return
+        }
+        const clamped = ActionCatalog.clampBpmForDevice(num, allowFrac)
+        bpmSetValue = clamped
+        cdcCmd = `TEMPO BPM ${ActionCatalog.formatBpmDisplay(clamped)}`
+      } else {
+        return
+      }
+
+      this._sceneActionBusy = true
+      const runCdc = async () => this.connection.runSerialTask(async () => {
+        if (this.connection.mode || this.connection._deviceScenesActive) {
+          await this.connection.ensureDeviceIdle({ leavePumpSuspended: true })
+        }
+        return this.connection._sendOkCommandViaPump(cdcCmd, 5000)
+      })
+      try {
+        let response = await runCdc()
+        if (isFlag && response !== 'OK' && !(response && response.startsWith('ERROR:'))) {
+          for (let retry = 1; retry <= 2 && response !== 'OK'; retry++) {
+            await this.connection.sleep(80)
+            response = await runCdc()
+          }
+        }
+        if (response !== 'OK') {
+          const detail = response || 'no response (timeout)'
+          console.warn(`Scene command ${sceneCmd} failed:`, detail)
+          return
+        }
+        if (this.clockData) {
+          if (sceneCmd === 'flag-raise') {
+            this._flagOverrideValue = true
+            this._flagOverrideUntil = Date.now() + 800
+            this.clockData = { ...this.clockData, flag: true }
+            this.renderSceneCard()
+          } else if (sceneCmd === 'flag-lower') {
+            this._flagOverrideValue = false
+            this._flagOverrideUntil = Date.now() + 800
+            this.clockData = { ...this.clockData, flag: false }
+            this.renderSceneCard()
+          } else if (sceneCmd === 'downbeat') {
+            this.clockData = { ...this.clockData, beat: 1 }
+            this.renderSceneCard()
+          }
+        }
+        if (sceneCmd === 'bpm-set') {
+          this._bpmInputDraft = null
+          this._bpmInputEditing = false
+          if (bpmSetValue != null && this.clockData) {
+            this.clockData = { ...this.clockData, bpm: bpmSetValue }
+            this.renderSceneCard()
+          }
+        }
+      } catch (err) {
+        console.error('Scene command error:', err)
+      } finally {
+        this._sceneActionBusy = false
+        const pending = this._pendingFlagCmd
+        if (pending) {
+          this._pendingFlagCmd = null
+          void this.sendSceneAction(pending)
+        }
+      }
+    }
+
+    applyClockDisplay (prevClock, prevFlag, appliedFlag, incoming) {
+      const flagChanged = !!prevFlag !== !!appliedFlag
+      const transportChanged =
+        (prevClock?.transport ?? null) !== (incoming.transport ?? null)
+      const beatChanged =
+        (prevClock?.beat ?? null) !== (incoming.beat ?? null) ||
+        (prevClock?.bar ?? null) !== (incoming.bar ?? null)
+      const bpmChanged = (prevClock?.bpm ?? null) !== (incoming.bpm ?? null)
+
+      if (flagChanged || transportChanged || bpmChanged ||
+          !this.sceneCardTarget.querySelector('[data-scene-flag-status]')) {
+        this.renderSceneCard()
+        return
+      }
+
+      if (beatChanged) {
+        const beatEl = this.sceneCardTarget.querySelector('[data-scene-beat-display]')
+        if (beatEl) beatEl.textContent = String(incoming.beat ?? 1)
+        const posEl = this.sceneCardTarget.querySelector('[data-scene-position-display]')
+        if (posEl) {
+          posEl.textContent = `Bar ${incoming.bar ?? 1}, Beat ${incoming.beat ?? 1}`
+        }
+      }
+    }
+
+    getSceneBpmInputValue (clock) {
+      if (this._bpmInputEditing && this._bpmInputDraft != null) return this._bpmInputDraft
+      return ActionCatalog.formatBpmDisplay(clock?.bpm ?? 120)
+    }
+
+    _bpmInputFromEvent (e) {
+      const path = e.composedPath?.() ?? []
+      return path.find(el => el?.matches?.('[data-scene-bpm-input]')) ?? null
+    }
+
+    maskBpmInput (wa) {
+      const allowFrac = !!this.clockData?.allow_fractional_bpm
+      let raw = String(wa.value ?? '')
+      if (allowFrac) {
+        raw = raw.replace(/[^\d.]/g, '')
+        const dot = raw.indexOf('.')
+        if (dot >= 0) {
+          const whole = raw.slice(0, dot)
+          const frac = raw.slice(dot + 1).replace(/\./g, '').slice(0, 1)
+          raw = frac.length ? `${whole}.${frac}` : `${whole}.`
+        }
+      } else {
+        raw = raw.replace(/\D/g, '')
+      }
+      wa.value = raw
+      this._bpmInputDraft = raw
     }
 
     renderEmpty () {
@@ -448,13 +643,6 @@ application.register(
       return `
         ${this.buildPedalStaticHtml(pedal)}
         ${this.buildPedalSettingsHtml(pedal)}
-        <div class="info-card-actions">
-          <wa-button size="small" variant="brand" appearance="outlined"
-                     data-action="click->info#goToPedals">
-            <wa-icon name="guitar" slot="prefix"></wa-icon>
-            Change Pedal
-          </wa-button>
-        </div>
       `
     }
 
@@ -562,25 +750,60 @@ application.register(
       const num = ts.numerator || 4
       const den = ts.denominator || 4
       const useTransport = !!clock.use_transport
+      const allowFrac = !!clock.allow_fractional_bpm
+      const bpmInputVal = this.getSceneBpmInputValue(clock)
+
+      const downbeatBtn = `
+            <wa-button class="info-scene-btn" variant="neutral" appearance="outlined"
+                       data-scene-cmd="downbeat" title="Reset beat to 1">
+              Downbeat
+            </wa-button>`
+
+      const sceneActionRow = (label, btnHtml, statusHtml) => `
+        <div class="info-row info-row-scene info-row-scene-3col">
+          <span class="info-label">${label}</span>
+          <div class="info-scene-mid">${btnHtml}</div>
+          <span class="info-value info-scene-status">${statusHtml}</span>
+        </div>`
 
       const flagRow = () => {
         if (!clock.flag_enabled) return ''
         const raised = !!clock.flag
         const icon = raised ? 'house-flag' : 'house-chimney-window'
         const label = raised ? 'Raised' : 'Lowered'
-        return `
-        <div class="info-row">
-          <span class="info-label">Flag</span>
-          <span class="info-value info-flag-value">
-            <wa-icon name="${icon}"></wa-icon> ${label}
-          </span>
-        </div>`
+        const flagCmd = raised ? 'flag-lower' : 'flag-raise'
+        const flagBtnLabel = raised ? 'Lower' : 'Raise'
+        const flagBtn = `
+            <wa-button class="info-scene-btn" variant="neutral" appearance="outlined"
+                       data-scene-cmd="${flagCmd}">
+              ${flagBtnLabel}
+            </wa-button>`
+        const flagStatus = `
+            <span class="info-flag-value" data-scene-cmd="${flagCmd}" data-scene-flag-status role="button">
+              ${label} <wa-icon name="${icon}"></wa-icon>
+            </span>`
+        return sceneActionRow('Flag', flagBtn, flagStatus)
       }
 
       let rows = `
-        <div class="info-row">
+        <div class="info-row info-row-scene">
           <span class="info-label">BPM</span>
-          <span class="info-value">${clock.bpm ?? '--'}</span>
+          <div class="info-scene-value">
+            <span class="info-value" data-scene-bpm-display>${
+              ActionCatalog.formatBpmDisplay(clock.bpm)
+            }</span>
+            <span class="info-scene-inline">
+              <wa-icon name="arrow-right" class="info-scene-arrow"></wa-icon>
+              <wa-input class="info-scene-input" inputmode="decimal"
+                        data-scene-bpm-input
+                        data-allow-fractional="${allowFrac ? '1' : '0'}"
+                        value="${bpmInputVal}"></wa-input>
+              <wa-button class="info-scene-btn" variant="brand" appearance="outlined"
+                         data-scene-cmd="bpm-set">
+                Set
+              </wa-button>
+            </span>
+          </div>
         </div>
         <div class="info-row">
           <span class="info-label">Time Signature</span>
@@ -597,12 +820,11 @@ application.register(
           playing ? 'Playing' : 'Stopped'
         }</span>
         </div>
-        <div class="info-row">
-          <span class="info-label">Position</span>
-          <span class="info-value">Bar ${clock.bar ?? 1}, Beat ${
-          clock.beat ?? 1
-        }</span>
-        </div>
+        ${sceneActionRow(
+          'Position',
+          downbeatBtn,
+          `<span data-scene-position-display>Bar ${clock.bar ?? 1}, Beat ${clock.beat ?? 1}</span>`
+        )}
         ${flagRow()}
         <div class="info-transport-actions">
           <wa-button size="small" variant="brand"
@@ -628,10 +850,7 @@ application.register(
         </div>`
       } else {
         rows += `
-        <div class="info-row">
-          <span class="info-label">Beat</span>
-          <span class="info-value">${clock.beat ?? 1}</span>
-        </div>
+        ${sceneActionRow('Beat', downbeatBtn, `<span data-scene-beat-display>${clock.beat ?? 1}</span>`)}
         ${flagRow()}`
       }
 
@@ -681,7 +900,7 @@ application.register(
         const ordinal = scene.active_ordinal || 0
         const total = scene.active_count || 0
         const positionLine =
-          total > 0 ? `Scene ${ordinal} of ${total}` : 'Scene —'
+          total > 0 ? `${ordinal} of ${total}` : '—'
 
         sceneRows = `
           <div class="info-row">
@@ -734,17 +953,6 @@ application.register(
     formatAssetsChecksum (checksum) {
       if (!checksum) return '--'
       return checksum
-    }
-
-    goToPedals () {
-      document.dispatchEvent(
-        new CustomEvent('app:navigate-tab', {
-          detail: {
-            tab: 'pedals',
-            params: { slug: this.infoData?.pedal?.slug }
-          }
-        })
-      )
     }
 
     goToUpdater () {

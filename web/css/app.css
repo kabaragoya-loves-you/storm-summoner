@@ -237,8 +237,61 @@ wa-tab-panel::part(base) { height: 100%; padding: 1.5rem; }
 .modal input[type="text"]:focus { outline: none; border-color: var(--accent); }
 .modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
 
-wa-button { --wa-button-font-family: var(--font-mono); }
-wa-button[variant="brand"] { --wa-color-brand-600: var(--color-primary); }
+wa-button {
+  --wa-button-font-family: var(--font-mono);
+}
+
+/* Neutral = default action style; use brand blue (grey on grey was too low contrast) */
+wa-button[variant="neutral"] {
+  --wa-color-neutral-fill-normal: var(--color-primary);
+  --wa-color-neutral-on-normal: #fff;
+  --wa-color-neutral-border-normal: transparent;
+}
+
+wa-button[variant="brand"] {
+  --wa-color-brand-600: var(--color-primary);
+  --wa-color-brand-fill-normal: var(--color-primary);
+  --wa-color-brand-on-normal: #fff;
+}
+
+wa-button[variant="danger"] {
+  --wa-color-danger-fill-normal: color-mix(in oklab, var(--error) 85%, #000);
+  --wa-color-danger-on-normal: #fff;
+}
+
+wa-button[variant="success"] {
+  --wa-color-success-fill-normal: color-mix(in oklab, var(--success) 75%, #000);
+  --wa-color-success-on-normal: #0a0a0a;
+}
+
+/* Outlined reads as disabled on our dark theme; render as filled instead */
+wa-button[appearance="outlined"]::part(base) {
+  color: var(--wa-color-on-normal, var(--wa-color-neutral-on-normal));
+  background-color: var(--wa-color-fill-normal, var(--wa-color-neutral-fill-normal));
+  border-color: transparent;
+}
+
+wa-button[variant="neutral"][appearance="outlined"]::part(base),
+wa-button[variant="brand"][appearance="outlined"]::part(base) {
+  color: #fff;
+  background-color: var(--color-primary);
+}
+
+wa-button[variant="danger"][appearance="outlined"]::part(base) {
+  color: var(--wa-color-danger-on-normal, #fff);
+  background-color: var(--wa-color-danger-fill-normal, var(--error));
+}
+
+wa-button[variant="success"][appearance="outlined"]::part(base) {
+  color: var(--wa-color-success-on-normal, #0a0a0a);
+  background-color: var(--wa-color-success-fill-normal, var(--success));
+}
+
+@media (hover: hover) {
+  wa-button[appearance="outlined"]:not([disabled]):hover::part(base) {
+    filter: brightness(1.08);
+  }
+}
 
 /* MIDI Monitor Styles */
 .midi-status-info { 
@@ -1059,6 +1112,8 @@ wa-dialog[data-assets-target="deleteDialog"]::part(footer) {
 .info-nav-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
   gap: 0.5rem;
   padding: 0 0 0.75rem;
   margin-bottom: 0.25rem;
@@ -1078,6 +1133,75 @@ wa-dialog[data-assets-target="deleteDialog"]::part(footer) {
   border-top: none;
   margin-top: 0;
   padding-top: 0.5rem;
+}
+
+.info-row-scene {
+  gap: 0.5rem;
+}
+
+.info-row.info-row-scene-3col {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  column-gap: 0.35rem;
+}
+
+.info-row.info-row-scene-3col .info-label {
+  justify-self: start;
+}
+
+.info-scene-mid {
+  justify-self: center;
+}
+
+.info-row.info-row-scene-3col .info-scene-status {
+  justify-self: end;
+  text-align: right;
+  min-width: 0;
+}
+
+.info-scene-value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.info-scene-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.info-scene-arrow {
+  color: var(--text-muted, #888);
+  font-size: 0.7rem;
+}
+
+.info-scene-input {
+  width: 2.75rem;
+  font-size: var(--wa-font-size-xs);
+  --wa-form-control-padding-block: 0.1em;
+  --wa-form-control-padding-inline: 0.3em;
+}
+
+.info-scene-inline [data-scene-cmd="bpm-set"] {
+  margin-left: 4px;
+}
+
+.info-scene-btn::part(base) {
+  font-size: var(--wa-font-size-xs);
+  padding: 0.1rem 0.35rem;
+  min-height: 1.35rem;
+  line-height: 1.2;
+}
+
+.info-scene-value .info-flag-value wa-icon,
+.info-scene-status .info-flag-value wa-icon {
+  font-size: 0.85rem;
 }
 
 .info-card-header h3 {
@@ -1873,6 +1997,7 @@ wa-dialog[data-scene-target="messageDialog"]::part(footer) {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  cursor: pointer;
 }
 
 .info-flag-value wa-icon {

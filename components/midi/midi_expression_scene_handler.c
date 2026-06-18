@@ -35,10 +35,11 @@ static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
   else if (dir == TEMPO_NUDGE_DIR_SLOWER) scale = tempo_nudge_scale_unipolar_high_anchor(midi_value);
   else scale = tempo_nudge_scale_unipolar_span(midi_value);
 
-  uint16_t new_bpm = tempo_nudge_compute_bpm(scene->bpm, pct, scale);
-  tempo_set_bpm(new_bpm);
-  ESP_LOGD(TAG, "Expression tempo nudge: midi=%u pct=%u -> bpm=%u (base=%d)",
-    (unsigned)midi_value, (unsigned)pct, (unsigned)new_bpm, (int)scene->bpm);
+  uint16_t new_bpm_x10 = tempo_nudge_compute_bpm_x10(scene->bpm_x10, pct, scale);
+  tempo_set_bpm_x10(new_bpm_x10);
+  ESP_LOGD(TAG, "Expression tempo nudge: midi=%u pct=%u -> bpm_x10=%u (base=%u)",
+    (unsigned)midi_value, (unsigned)pct, (unsigned)new_bpm_x10,
+    (unsigned)scene->bpm_x10);
 }
 
 // Expression notes use a simple fixed velocity (0-127); no velocity-mode options.

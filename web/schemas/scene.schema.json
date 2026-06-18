@@ -459,11 +459,11 @@
       }
     },
     "bpm": {
-      "type": "integer",
+      "type": "number",
       "minimum": 20,
       "maximum": 300,
       "default": 120,
-      "description": "Tempo in beats per minute for this scene"
+      "description": "Tempo in beats per minute for this scene (integer or one decimal place)"
     },
     "clock_source": {
       "type": "string",
@@ -1111,7 +1111,7 @@
         "morph": {
           "type": "boolean",
           "default": false,
-          "description": "Enable smooth value transition (for control + hold/cycle variants, randomize)"
+          "description": "Enable smooth value transition (control hold/cycle, tempo set/hold/increment/decrement/cycle, randomize)"
         },
         "morph_steps": {
           "type": "string",
@@ -1544,19 +1544,19 @@
                 "anyOf": [
                   { "type": "integer", "const": 0 },
                   { "type": "integer", "const": 65535 },
-                  { "type": "integer", "minimum": 20, "maximum": 300 }
+                  { "type": "number", "minimum": 20, "maximum": 300 }
                 ],
                 "description": "Tempo to set when triggered (BPM). 0 = randomize within random_floor..random_ceiling on each trigger. 65535 = restore the scene's configured BPM."
               },
               "random_floor": {
-                "type": "integer",
+                "type": "number",
                 "minimum": 20,
                 "maximum": 300,
                 "default": 20,
                 "description": "When bpm=0 (random), lower bound of the random BPM range."
               },
               "random_ceiling": {
-                "type": "integer",
+                "type": "number",
                 "minimum": 20,
                 "maximum": 300,
                 "default": 300,
@@ -1577,13 +1577,13 @@
             "required": ["press_bpm", "release_bpm"],
             "properties": {
               "press_bpm": {
-                "type": "integer",
+                "type": "number",
                 "minimum": 20,
                 "maximum": 300,
                 "description": "Tempo to set on press (BPM)"
               },
               "release_bpm": {
-                "type": "integer",
+                "type": "number",
                 "minimum": 20,
                 "maximum": 300,
                 "description": "Tempo to set on release (BPM)"
@@ -1613,7 +1613,7 @@
                 "minItems": 2,
                 "maxItems": 8,
                 "items": {
-                  "type": "integer",
+                  "type": "number",
                   "minimum": 20,
                   "maximum": 300
                 },
@@ -1633,9 +1633,36 @@
           "then": {
             "properties": {
               "inc_amount": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 20,
+                "default": 1,
+                "description": "Step size in BPM applied each time the action fires (0.1-20.0). The runtime clamps the resulting tempo to [20, 300]. Defaults to 1 if omitted."
+              },
+              "fractional": {
                 "type": "integer",
-                "enum": [1, 2, 3, 4, 5, 10, 15, 20],
-                "description": "Step size in BPM applied each time the action fires. The runtime clamps the resulting tempo to [20, 300]. Defaults to 1 if omitted (covers legacy tempo_inc/tempo_dec scenes)."
+                "enum": [0, 1],
+                "default": 0,
+                "description": "When 1, allow fractional BPM steps for this action (overrides integer-only device default for tap/nudge paths)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "tempo"},
+              "variant": {"const": "tap"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "properties": {
+              "fractional": {
+                "type": "integer",
+                "enum": [0, 1],
+                "default": 0,
+                "description": "When 1, tap tempo may resolve to 0.1 BPM precision."
               }
             }
           }

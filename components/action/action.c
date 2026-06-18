@@ -3,6 +3,7 @@
 #include "action_note_hold.h"
 #include "device_config.h"
 #include "scene.h"
+#include "tempo.h"
 #include "config.h"
 #include "event_bus.h"
 #include "esp_log.h"
@@ -276,7 +277,7 @@ action_t action_create_set_tempo(uint16_t bpm) {
   action_t action = {0};
   action.type = ACTION_TEMPO;
   action.variant = VARIANT_SET;
-  action.params.tempo.bpm = bpm;
+  action.params.tempo.bpm = tempo_whole_to_x10(bpm);
   return action;
 }
 

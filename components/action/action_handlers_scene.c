@@ -12,24 +12,37 @@
 
 static const char* TAG = "action_handlers_scene";
 
-static uint16_t tempo_set_clamp_random_bound(uint16_t v, uint16_t fallback) {
-  if (v < 20 || v > 300) return fallback;
+static uint16_t tempo_set_clamp_random_bound_x10(uint16_t v, uint16_t fallback) {
+  if (v < TEMPO_MIN_BPM_X10 || v > TEMPO_MAX_BPM_X10) return fallback;
   return v;
 }
 
-static uint16_t tempo_set_resolve_bpm(const action_t* action) {
+static uint16_t tempo_set_resolve_bpm_x10(const action_t* action) {
   uint16_t configured = action->params.tempo.bpm;
   if (configured == ACTION_TEMPO_BPM_ORIGINAL) {
     scene_t* scene = scene_get_current();
-    return scene ? scene->bpm : 120;
+    return scene ? scene->bpm_x10 : TEMPO_DEFAULT_BPM_X10;
   }
   if (configured == ACTION_TEMPO_BPM_RANDOM) {
-    uint16_t lo = tempo_set_clamp_random_bound(action->params.tempo.random_floor, 20);
-    uint16_t hi = tempo_set_clamp_random_bound(action->params.tempo.random_ceiling, 300);
+    uint16_t lo = tempo_set_clamp_random_bound_x10(
+      action->params.tempo.random_floor, TEMPO_MIN_BPM_X10);
+    uint16_t hi = tempo_set_clamp_random_bound_x10(
+      action->params.tempo.random_ceiling, TEMPO_MAX_BPM_X10);
     if (lo > hi) hi = lo;
     return (uint16_t)(lo + (esp_random() % (unsigned)(hi - lo + 1)));
   }
   return configured;
+}
+
+static void tempo_apply_bpm_x10(const action_t* action, uint16_t bpm_x10) {
+  if (bpm_x10 < TEMPO_MIN_BPM_X10 || bpm_x10 > TEMPO_MAX_BPM_X10)
+    return;
+  if (action->morph_enabled) {
+    uint32_t duration = action_morph_compute_duration_ms(action);
+    action_tempo_morph_start(bpm_x10, duration);
+  } else {
+    tempo_set_bpm_x10(bpm_x10);
+  }
 }
 
 // Apply a preset/program number, picking the right device_config call based
@@ -204,7 +217,11 @@ action_handle_result_t action_handlers_scene_dispatch(
     case ACTION_TEMPO:
       switch (action->variant) {
         case VARIANT_TAP:
-          if (is_press) tempo_tap();
+          if (is_press) {
+            bool allow_frac = action->params.tempo.fractional != 0 ||
+              tempo_get_allow_fractional_bpm();
+            tempo_tap_ex(allow_frac);
+          }
           return ACTION_HANDLED;
 
         case VARIANT_DOWNBEAT:
@@ -213,31 +230,32 @@ action_handle_result_t action_handlers_scene_dispatch(
 
         case VARIANT_SET:
           if (is_press) {
-            uint16_t bpm = tempo_set_resolve_bpm(action);
-            if (bpm >= 20 && bpm <= 300)
-              tempo_set_bpm(bpm);
+            uint16_t bpm_x10 = tempo_set_resolve_bpm_x10(action);
+            tempo_apply_bpm_x10(action, bpm_x10);
           }
           return ACTION_HANDLED;
 
         case VARIANT_INCREMENT:
           if (is_press) {
-            uint16_t bpm = tempo_get_bpm();
-            uint8_t amount = action->params.tempo.inc_amount;
-            if (amount == 0) amount = 1;
-            uint16_t target = (bpm + amount > 300) ? 300 : (uint16_t)(bpm + amount);
-            if (target < 20) target = 20;
-            if (target != bpm) tempo_set_bpm(target);
+            uint16_t bpm_x10 = tempo_get_bpm_x10();
+            uint16_t step_x10 = action->params.tempo.inc_amount;
+            if (step_x10 == 0) step_x10 = 10;
+            uint32_t target = (uint32_t)bpm_x10 + step_x10;
+            if (target > TEMPO_MAX_BPM_X10) target = TEMPO_MAX_BPM_X10;
+            if ((uint16_t)target != bpm_x10)
+              tempo_apply_bpm_x10(action, (uint16_t)target);
           }
           return ACTION_HANDLED;
 
         case VARIANT_DECREMENT:
           if (is_press) {
-            uint16_t bpm = tempo_get_bpm();
-            uint8_t amount = action->params.tempo.inc_amount;
-            if (amount == 0) amount = 1;
-            uint16_t target = (bpm <= 20 + amount) ? 20 : (uint16_t)(bpm - amount);
-            if (target > 300) target = 300;
-            if (target != bpm) tempo_set_bpm(target);
+            uint16_t bpm_x10 = tempo_get_bpm_x10();
+            uint16_t step_x10 = action->params.tempo.inc_amount;
+            if (step_x10 == 0) step_x10 = 10;
+            int32_t target = (int32_t)bpm_x10 - (int32_t)step_x10;
+            if (target < (int32_t)TEMPO_MIN_BPM_X10) target = TEMPO_MIN_BPM_X10;
+            if ((uint16_t)target != bpm_x10)
+              tempo_apply_bpm_x10(action, (uint16_t)target);
           }
           return ACTION_HANDLED;
 
@@ -248,18 +266,13 @@ action_handle_result_t action_handlers_scene_dispatch(
             ESP_LOGD(TAG, "Tempo hold release skipped by follow-up");
             return ACTION_HANDLED;
           }
-          uint16_t bpm = is_press ?
+          uint16_t bpm_x10 = is_press ?
             action->params.tempo.press_bpm : action->params.tempo.release_bpm;
-          if (bpm < 20 || bpm > 300) return ACTION_HANDLED;
-
-          if (action->morph_enabled) {
-            uint32_t duration = action_morph_compute_duration_ms(action);
-            action_tempo_morph_start(bpm, duration);
-          } else {
-            tempo_set_bpm(bpm);
-          }
-          ESP_LOGD(TAG, "Tempo hold: %s -> %u BPM (%s)",
-            is_press ? "press" : "release", (unsigned)bpm,
+          tempo_apply_bpm_x10(action, bpm_x10);
+          char bpm_buf[16];
+          tempo_format_bpm(bpm_buf, sizeof(bpm_buf), bpm_x10);
+          ESP_LOGD(TAG, "Tempo hold: %s -> %s BPM (%s)",
+            is_press ? "press" : "release", bpm_buf,
             action->morph_enabled ? "morph" : "jump");
           return ACTION_HANDLED;
         }
@@ -273,12 +286,14 @@ action_handle_result_t action_handlers_scene_dispatch(
               return ACTION_HANDLED;
             }
             uint8_t idx = mutable_action->params.tempo.current_index;
-            uint16_t bpm = mutable_action->params.tempo.cycle_tempos[idx];
+            uint16_t bpm_x10 = mutable_action->params.tempo.cycle_tempos[idx];
 
-            if (bpm >= 20 && bpm <= 300) {
-              tempo_set_bpm(bpm);
-              ESP_LOGD(TAG, "Tempo cycle step %u: %u BPM", (unsigned)idx, (unsigned)bpm);
-            }
+            tempo_apply_bpm_x10(action, bpm_x10);
+            char bpm_buf[16];
+            tempo_format_bpm(bpm_buf, sizeof(bpm_buf), bpm_x10);
+            ESP_LOGD(TAG, "Tempo cycle step %u: %s BPM (%s)",
+              (unsigned)idx, bpm_buf,
+              action->morph_enabled ? "morph" : "jump");
 
             mutable_action->params.tempo.current_index = (idx + 1) % num_tempos;
           }

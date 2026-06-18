@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
+#include <stdio.h>
 
 #define TAG "MENU"
 
@@ -1654,5 +1655,210 @@ lv_obj_t* menu_create_roller_page(const char* title, const char* options,
   
   ESP_LOGD(TAG, "Roller page created: %s, initial=%lu", title, (unsigned long)initial_index);
   
+  return screen;
+}
+
+// ============================================================================
+// Fractional BPM editor (two-phase single roller)
+// ============================================================================
+
+typedef enum {
+  BPM_EDITOR_PHASE_WHOLE = 0,
+  BPM_EDITOR_PHASE_TENTHS,
+} bpm_editor_phase_t;
+
+static struct {
+  menu_bpm_editor_cfg_t cfg;
+  bpm_editor_phase_t phase;
+  uint16_t frozen_whole;
+  lv_obj_t* roller;
+  char whole_options[2048];
+  char tenths_options[128];
+  uint32_t create_time_ms;
+  menu_custom_back_cb_t saved_back_handler;
+  bool active;
+} s_bpm_editor = {0};
+
+static void bpm_editor_build_whole_options(char* buf, size_t cap,
+  const menu_bpm_editor_cfg_t* cfg) {
+  size_t pos = 0;
+  buf[0] = '\0';
+  if (cfg->prefix_options && cfg->prefix_count > 0) {
+    int n = snprintf(buf, cap, "%s", cfg->prefix_options);
+    if (n > 0 && (size_t)n < cap) pos = (size_t)n;
+  }
+  for (uint16_t w = cfg->min_whole; w <= cfg->max_whole && pos < cap; w++) {
+    int n = snprintf(buf + pos, cap - pos, "%s%u",
+      pos > 0 ? "\n" : "", (unsigned)w);
+    if (n <= 0 || (size_t)n >= cap - pos) break;
+    pos += (size_t)n;
+  }
+}
+
+static void bpm_editor_build_tenths_options(char* buf, size_t cap, uint16_t whole) {
+  size_t pos = 0;
+  buf[0] = '\0';
+  for (uint8_t t = 0; t < 10 && pos < cap; t++) {
+    int n = snprintf(buf + pos, cap - pos, "%s%u.%u",
+      t > 0 ? "\n" : "", (unsigned)whole, (unsigned)t);
+    if (n <= 0 || (size_t)n >= cap - pos) break;
+    pos += (size_t)n;
+  }
+}
+
+static uint32_t bpm_editor_whole_index_from_bpm(const menu_bpm_editor_cfg_t* cfg) {
+  uint16_t bpm = cfg->initial_bpm_x10;
+  if (cfg->prefix_count > 0 && cfg->prefix_values) {
+    for (uint8_t i = 0; i < cfg->prefix_count; i++) {
+      if (bpm == cfg->prefix_values[i]) return i;
+    }
+  }
+  uint16_t whole = bpm / 10;
+  if (whole < cfg->min_whole) whole = cfg->min_whole;
+  if (whole > cfg->max_whole) whole = cfg->max_whole;
+  return (uint32_t)(cfg->prefix_count + (whole - cfg->min_whole));
+}
+
+static void bpm_editor_enter_tenths_phase(uint8_t initial_tenth) {
+  menu_bpm_editor_cfg_t* cfg = &s_bpm_editor.cfg;
+  s_bpm_editor.phase = BPM_EDITOR_PHASE_TENTHS;
+  bpm_editor_build_tenths_options(s_bpm_editor.tenths_options,
+    sizeof(s_bpm_editor.tenths_options), s_bpm_editor.frozen_whole);
+  lv_roller_set_options(s_bpm_editor.roller, s_bpm_editor.tenths_options,
+    LV_ROLLER_MODE_NORMAL);
+  if (initial_tenth > 9) initial_tenth = 0;
+  lv_roller_set_selected(s_bpm_editor.roller, initial_tenth, LV_ANIM_OFF);
+  (void)cfg;
+}
+
+static void bpm_editor_revert_to_whole(void) {
+  menu_bpm_editor_cfg_t* cfg = &s_bpm_editor.cfg;
+  s_bpm_editor.phase = BPM_EDITOR_PHASE_WHOLE;
+  bpm_editor_build_whole_options(s_bpm_editor.whole_options,
+    sizeof(s_bpm_editor.whole_options), cfg);
+  lv_roller_set_options(s_bpm_editor.roller, s_bpm_editor.whole_options,
+    LV_ROLLER_MODE_NORMAL);
+  uint32_t idx = (uint32_t)(cfg->prefix_count +
+    (s_bpm_editor.frozen_whole - cfg->min_whole));
+  lv_roller_set_selected(s_bpm_editor.roller, idx, LV_ANIM_OFF);
+}
+
+static void bpm_editor_finish(void) {
+  menu_custom_back_cb_t restore = s_bpm_editor.saved_back_handler;
+  s_bpm_editor.active = false;
+  s_bpm_editor.roller = NULL;
+  s_bpm_editor.saved_back_handler = NULL;
+  menu_set_custom_back_handler(restore);
+}
+
+static bool bpm_editor_back_handler(void) {
+  if (!s_bpm_editor.active) return false;
+  if (s_bpm_editor.phase == BPM_EDITOR_PHASE_TENTHS) {
+    bpm_editor_revert_to_whole();
+    return true;
+  }
+  bpm_editor_finish();
+  return false;
+}
+
+static void bpm_editor_click_cb(lv_event_t* e) {
+  uint32_t now = lv_tick_get();
+  if (now - s_bpm_editor.create_time_ms < ROLLER_DEBOUNCE_MS) {
+    ESP_LOGW(TAG, "BPM editor confirmation ignored (debounce: %lums)",
+      (unsigned long)(now - s_bpm_editor.create_time_ms));
+    return;
+  }
+
+  lv_obj_t* roller = lv_event_get_target(e);
+  uint32_t selected = lv_roller_get_selected(roller);
+  menu_bpm_editor_cfg_t* cfg = &s_bpm_editor.cfg;
+
+  if (s_bpm_editor.phase == BPM_EDITOR_PHASE_WHOLE) {
+    if (cfg->prefix_count > 0 && cfg->prefix_values &&
+        selected < cfg->prefix_count) {
+      uint16_t value = cfg->prefix_values[selected];
+      menu_bpm_commit_cb_t commit = cfg->commit;
+      void* user_data = cfg->user_data;
+      bpm_editor_finish();
+      if (commit) commit(value, user_data);
+      return;
+    }
+    uint16_t whole = (uint16_t)(cfg->min_whole + (selected - cfg->prefix_count));
+    if (cfg->allow_fractional) {
+      s_bpm_editor.frozen_whole = whole;
+      uint8_t tenth = 0;
+      if (cfg->initial_bpm_x10 / 10 == whole)
+        tenth = (uint8_t)(cfg->initial_bpm_x10 % 10);
+      bpm_editor_enter_tenths_phase(tenth);
+      return;
+    }
+    menu_bpm_commit_cb_t commit = cfg->commit;
+    void* user_data = cfg->user_data;
+    bpm_editor_finish();
+    if (commit) commit((uint16_t)(whole * 10), user_data);
+    return;
+  }
+
+  menu_bpm_commit_cb_t commit = cfg->commit;
+  void* user_data = cfg->user_data;
+  uint16_t bpm_x10 = (uint16_t)(s_bpm_editor.frozen_whole * 10 + selected);
+  bpm_editor_finish();
+  if (commit) commit(bpm_x10, user_data);
+}
+
+lv_obj_t* menu_create_bpm_editor_page(const menu_bpm_editor_cfg_t* cfg) {
+  if (!cfg || !cfg->commit) return NULL;
+
+  uint16_t disp_w = display_get_width();
+  uint16_t disp_h = display_get_height();
+
+  memset(&s_bpm_editor, 0, sizeof(s_bpm_editor));
+  s_bpm_editor.cfg = *cfg;
+  s_bpm_editor.phase = BPM_EDITOR_PHASE_WHOLE;
+  s_bpm_editor.active = true;
+  s_bpm_editor.create_time_ms = lv_tick_get();
+
+  bpm_editor_build_whole_options(s_bpm_editor.whole_options,
+    sizeof(s_bpm_editor.whole_options), cfg);
+  uint32_t initial_index = bpm_editor_whole_index_from_bpm(cfg);
+
+  lv_obj_t* screen = lv_obj_create(NULL);
+  lv_obj_set_size(screen, disp_w, disp_h);
+  lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(screen, 0, 0);
+  lv_obj_set_style_pad_all(screen, 0, 0);
+
+  const int title_bar_h = 27;
+  lv_obj_t* title_bar = lv_obj_create(screen);
+  lv_obj_set_size(title_bar, disp_w, title_bar_h);
+  lv_obj_align(title_bar, LV_ALIGN_TOP_MID, 0, 0);
+
+  lv_obj_t* title_label = lv_label_create(title_bar);
+  lv_label_set_text(title_label, cfg->title ? cfg->title : "BPM");
+  menu_apply_title_bar_style(title_bar, title_label, false);
+  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 8);
+
+  lv_obj_t* roller = lv_roller_create(screen);
+  s_bpm_editor.roller = roller;
+  lv_roller_set_options(roller, s_bpm_editor.whole_options, LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(roller, 3);
+  lv_roller_set_selected(roller, initial_index, LV_ANIM_OFF);
+  lv_obj_align(roller, LV_ALIGN_CENTER, 0, 10);
+  menu_apply_roller_style(roller);
+  lv_obj_add_event_cb(roller, bpm_editor_click_cb, LV_EVENT_CLICKED, NULL);
+
+  if (menu_state.group) {
+    lv_group_add_obj(menu_state.group, roller);
+    lv_group_focus_obj(roller);
+    lv_group_set_editing(menu_state.group, true);
+  }
+
+  s_bpm_editor.saved_back_handler = s_custom_back_handler;
+  menu_set_custom_back_handler(bpm_editor_back_handler);
+
+  ESP_LOGD(TAG, "BPM editor created: %s, initial=%lu",
+    cfg->title ? cfg->title : "BPM", (unsigned long)initial_index);
+
   return screen;
 }

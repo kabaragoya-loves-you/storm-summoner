@@ -9,6 +9,7 @@
 #include "note_track_config.h"
 #include "lfo.h"
 #include "tempo.h"
+#include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -31,18 +32,15 @@ static void apply_tempo_nudge(uint8_t midi_value, scene_t* scene) {
   uint8_t pct = scene_get_expression_tempo_nudge_pct(scene_get_current_index());
   if (pct > 100) pct = 100;
 
-  int32_t bpm = scene->bpm;
   float scale = ((float)midi_value - 64.0f) / 63.0f;
   if (scale > 1.0f) scale = 1.0f;
   if (scale < -1.0f) scale = -1.0f;
-  float factor = 1.0f + scale * ((float)pct / 100.0f);
-  int32_t new_bpm = (int32_t)((float)bpm * factor + 0.5f);
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
 
-  tempo_set_bpm((uint16_t)new_bpm);
-  ESP_LOGD(TAG, "Note Track tempo nudge: midi=%u pct=%u -> bpm=%d (base=%d)",
-    (unsigned)midi_value, (unsigned)pct, (int)new_bpm, (int)bpm);
+  uint16_t new_bpm_x10 = tempo_nudge_compute_bpm_x10(scene->bpm_x10, pct, scale);
+  tempo_set_bpm_x10(new_bpm_x10);
+  ESP_LOGD(TAG, "Note Track tempo nudge: midi=%u pct=%u -> bpm_x10=%u (base=%u)",
+    (unsigned)midi_value, (unsigned)pct, (unsigned)new_bpm_x10,
+    (unsigned)scene->bpm_x10);
 }
 
 // Map a note number in [low, high] to 0..127. Returns false if out of range.

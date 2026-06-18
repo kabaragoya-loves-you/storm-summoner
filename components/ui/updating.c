@@ -44,6 +44,14 @@ static uint32_t g_flash_estimate_ms = 0;
 static lv_timer_t *g_progress_timer = NULL;
 static ui_draw_module_t *g_previous_module = NULL;
 
+// Cross-task handoff. The event handler runs on the event_bus dispatcher task;
+// touching LVGL from there races the renderer (lv_inv_area assert). The handler
+// only flips these plain flags, and progress_timer_cb -- which runs on the LVGL
+// task -- applies the corresponding widget changes.
+static volatile bool g_completion_pending = false;
+static volatile bool g_completion_success = false;
+static updating_state_t g_applied_ui_state = UPDATING_STATE_IDLE;
+
 // Forward declarations
 static void updating_event_handler(const event_t *event, void *context);
 static void progress_timer_cb(lv_timer_t *timer);
@@ -56,6 +64,21 @@ static void unsubscribe_active_events(void);
 // Progress timer callback - polls actual progress during transfer, animates during flash
 static void progress_timer_cb(lv_timer_t *timer) {
   (void)timer;
+
+  // Apply completion flagged by the event handler (event_dispatch task) here,
+  // on the LVGL task, so every widget mutation stays single-threaded.
+  if (g_completion_pending) {
+    g_completion_pending = false;
+    show_completion_ui(g_completion_success);
+  }
+
+  // Apply the status text once per state transition (LVGL task context).
+  if (g_state != g_applied_ui_state) {
+    g_applied_ui_state = g_state;
+    if (g_status_label && g_state == UPDATING_STATE_FLASHING) {
+      lv_label_set_text(g_status_label, "Writing to flash...");
+    }
+  }
 
   if (g_state == UPDATING_STATE_RECEIVING) {
     uint8_t progress = usb_cdc_update_get_progress();
@@ -83,10 +106,10 @@ static void update_progress_display(uint8_t percent) {
 static void show_completion_ui(bool success) {
   g_state = success ? UPDATING_STATE_COMPLETE : UPDATING_STATE_ERROR;
 
-  if (g_progress_timer) {
-    lv_timer_delete(g_progress_timer);
-    g_progress_timer = NULL;
-  }
+  // Note: g_progress_timer is intentionally left running. This function is
+  // now invoked from within that timer's own callback, so deleting it here
+  // would free the timer mid-dispatch. In the COMPLETE/ERROR state the timer
+  // is a no-op, and updating_teardown() frees it.
 
   if (g_progress_bar) {
     lv_bar_set_value(g_progress_bar, success ? 100 : 0, LV_ANIM_ON);
@@ -147,6 +170,8 @@ static void updating_event_handler(const event_t *event, void *context) {
 
       g_update_type = (update_type_t)event->data.update.update_type;
       g_state = UPDATING_STATE_RECEIVING;
+      g_completion_pending = false;
+      g_applied_ui_state = UPDATING_STATE_RECEIVING;
       g_flash_estimate_ms = (g_update_type == UPDATE_TYPE_FIRMWARE)
         ? FIRMWARE_FLASH_ESTIMATE_MS : ASSETS_FLASH_ESTIMATE_MS;
 
@@ -160,15 +185,13 @@ static void updating_event_handler(const event_t *event, void *context) {
         ESP_LOGI(TAG, "Entering flash phase");
         g_state = UPDATING_STATE_FLASHING;
         g_flash_start_time = esp_log_timestamp();
-        if (g_status_label) {
-          lv_label_set_text(g_status_label, "Writing to flash...");
-        }
       }
       break;
 
     case EVENT_UPDATE_COMPLETE:
       ESP_LOGI(TAG, "Update complete: success=%d", event->data.update.success);
-      show_completion_ui(event->data.update.success);
+      g_completion_success = (event->data.update.success != 0);
+      g_completion_pending = true;
       break;
 
     default:
@@ -262,6 +285,8 @@ static void updating_teardown(void) {
   }
 
   g_state = UPDATING_STATE_IDLE;
+  g_completion_pending = false;
+  g_applied_ui_state = UPDATING_STATE_IDLE;
   ESP_LOGD(TAG, "Updating module teardown");
 }
 

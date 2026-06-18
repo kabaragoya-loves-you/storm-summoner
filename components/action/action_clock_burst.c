@@ -43,19 +43,10 @@ void action_clock_burst_start(uint8_t speed_percent) {
     return;
   }
 
-  uint16_t current_bpm = tempo_get_bpm();
+  uint16_t current_bpm_x10 = tempo_get_bpm_x10();
 
-  // Calculate the base tick interval (for 24 PPQN)
-  // Base ticks per second = (bpm * 24) / 60 = bpm * 0.4
-  // Base tick interval = 60000000 / (bpm * 24) microseconds
-  // For the burst, we need to add (speed_percent / 100) of that rate
-  // So burst interval = base_interval * 100 / speed_percent
-
-  // If speed_percent is 100%, we match the existing tempo (double the clocks)
-  // If speed_percent is 200%, we send twice as many extra clocks (triple total)
-  // If speed_percent is 50%, we send half as many extra clocks (1.5x total)
-
-  uint64_t base_interval_us = (60 * 1000000ULL) / (current_bpm * 24);
+  uint64_t base_interval_us =
+    (60ULL * 1000000ULL * 10ULL) / ((uint64_t)current_bpm_x10 * 24);
   uint64_t burst_interval_us = (base_interval_us * 100) / speed_percent;
 
   if (burst_interval_us < 1000) burst_interval_us = 1000;

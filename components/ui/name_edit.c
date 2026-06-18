@@ -46,10 +46,19 @@ static bool g_active = false;
 static uint8_t g_scene_index = 0;
 static bool g_is_scene_name_mode = false;
 
+// Async pad operations that mutate LVGL widgets. These MUST run in the LVGL
+// task context (via lv_async_call) so they never race the renderer.
+typedef enum {
+  TE_OP_INSERT = 1,
+  TE_OP_CURSOR_FWD,
+  TE_OP_BACKSPACE
+} te_op_t;
+
 // Forward declarations
 static void update_gallery_display(void);
 static void insert_selected_char(void);
 static void post_haptic_click(void);
+static void text_edit_op_async(void* user_data);
 
 static void text_edit_draw_deferred_cb(lv_timer_t *timer) {
   if (g_screen == NULL) {
@@ -316,6 +325,31 @@ static void return_to_menu_timer_cb(lv_timer_t* timer) {
   lv_timer_delete(timer);
 }
 
+// Runs in LVGL task context (queued via lv_async_call). Because the wheel
+// updates are queued the same way, all edits execute in press order.
+static void text_edit_op_async(void* user_data) {
+  if (!g_active || !g_textarea) return;
+  te_op_t op = (te_op_t)(uintptr_t)user_data;
+  switch (op) {
+    case TE_OP_INSERT:
+      insert_selected_char();
+      break;
+    case TE_OP_CURSOR_FWD: {
+      uint32_t pos = lv_textarea_get_cursor_pos(g_textarea);
+      const char* text = lv_textarea_get_text(g_textarea);
+      uint32_t len = strlen(text);
+      if (pos >= len) lv_textarea_set_cursor_pos(g_textarea, 0);
+      else lv_textarea_cursor_right(g_textarea);
+      break;
+    }
+    case TE_OP_BACKSPACE:
+      lv_textarea_delete_char(g_textarea);
+      strncpy(g_edit_buffer, lv_textarea_get_text(g_textarea), g_max_length);
+      g_edit_buffer[g_max_length] = '\0';
+      break;
+  }
+}
+
 bool text_edit_handle_pad(uint8_t pad_id, bool pressed) {
   // Consume release events while exit is pending (prevents menu activation)
   if (g_exit_pending && !pressed) {
@@ -337,31 +371,18 @@ bool text_edit_handle_pad(uint8_t pad_id, bool pressed) {
       return true;
 
     case 9:  // Insert selected character at cursor
-      insert_selected_char();
+      lv_async_call(text_edit_op_async, (void*)(uintptr_t)TE_OP_INSERT);
       post_haptic_click();
       return true;
 
     case 10:  // Cursor forward (right), wrap at end
-      if (g_textarea) {
-        uint32_t pos = lv_textarea_get_cursor_pos(g_textarea);
-        const char* text = lv_textarea_get_text(g_textarea);
-        uint32_t len = strlen(text);
-        if (pos >= len) {
-          lv_textarea_set_cursor_pos(g_textarea, 0);
-        } else {
-          lv_textarea_cursor_right(g_textarea);
-        }
-        post_haptic_click();
-      }
+      lv_async_call(text_edit_op_async, (void*)(uintptr_t)TE_OP_CURSOR_FWD);
+      post_haptic_click();
       return true;
 
     case 11:  // Backspace - delete character before cursor
-      if (g_textarea) {
-        lv_textarea_delete_char(g_textarea);
-        strncpy(g_edit_buffer, lv_textarea_get_text(g_textarea), g_max_length);
-        g_edit_buffer[g_max_length] = '\0';
-        post_haptic_click();
-      }
+      lv_async_call(text_edit_op_async, (void*)(uintptr_t)TE_OP_BACKSPACE);
+      post_haptic_click();
       return true;
 
     case 12:  // Cancel - don't save, just exit

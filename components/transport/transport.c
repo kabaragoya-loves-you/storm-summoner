@@ -407,7 +407,8 @@ uint8_t transport_get_current_beat(void) {
 
 void transport_reset_position(void) {
   set_position(1, 1);
-  ESP_LOGI(TAG, "Position reset to bar 1, beat 1");
+  publish_position_changed();
+  ESP_LOGD(TAG, "Position reset to bar 1, beat 1");
 }
 
 void transport_set_song_position(uint16_t spp_sixteenths) {

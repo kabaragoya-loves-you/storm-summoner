@@ -2,9 +2,11 @@
 #define TEMPO_NUDGE_H
 
 #include <stdint.h>
+#include "tempo.h"
 
 // Shared tempo nudge scale/BPM helpers used by continuous input handlers.
 
+uint16_t tempo_nudge_compute_bpm_x10(int32_t scene_bpm_x10, uint8_t pct, float scale);
 uint16_t tempo_nudge_compute_bpm(int32_t scene_bpm, uint8_t pct, float scale);
 
 float tempo_nudge_scale_bipolar(uint8_t midi);

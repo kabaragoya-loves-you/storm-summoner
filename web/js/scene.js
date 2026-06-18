@@ -33,6 +33,7 @@ application.register(
         confirmChange: 0,
         midiControl: false,
         flagEnabled: false,
+        allowFractionalBpm: false,
         globalPedal: null
       }
       this.pedalCatalog = null
@@ -652,12 +653,8 @@ application.register(
       const action = this.getAtPath(actionPath)
       if (!action || action.type !== 'tempo') return
       const variant = action.variant || 'set'
-      const clampBpm = (n) => {
-        const x = Number(n)
-        if (Number.isNaN(x) || x < 20 || x > 300) return 120
-        return Math.round(x)
-      }
-
+      const allowFrac = this.deviceContext.allowFractionalBpm
+      const clampBpm = n => ActionCatalog.clampBpmForDevice(n, allowFrac)
       if (variant === 'set') {
         delete action.press_bpm
         delete action.release_bpm
@@ -804,6 +801,10 @@ application.register(
 
     normalizeBeforeSave (model) {
       if (typeof model.name === 'string') model.name = model.name.trim()
+      if (model.bpm != null) {
+        model.bpm = ActionCatalog.clampBpmForDevice(
+          model.bpm, this.deviceContext.allowFractionalBpm)
+      }
       this.normalizeCvGateModel(model)
       if (model.touchpads) {
         model.touchpads.forEach(tp => {
@@ -814,7 +815,8 @@ application.register(
       DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, model)
       DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
       DeviceControls.normalizeRandomizeActionsInModel(this.deviceDefinition, model)
-      ActionCatalog.normalizeTempoActionsInModel(model)
+      ActionCatalog.normalizeTempoActionsInModel(
+        model, this.deviceContext.allowFractionalBpm)
       ActionCatalog.normalizeTouchwheelActionsInModel(model)
       ActionCatalog.normalizeLfoActionsInModel(model)
       ActionCatalog.normalizeSimpleActionsInModel(model)
@@ -1899,6 +1901,20 @@ application.register(
       let v = e.target.value === '' ? 0 : Number(e.target.value)
       if (path.includes('rate_hz') || path.includes('sync_mult')) {
         v = parseFloat(e.target.value)
+      } else if (
+        path === 'bpm' ||
+        path.endsWith('.bpm') ||
+        path.includes('_bpm') ||
+        /\.tempos\.\d+$/.test(path)
+      ) {
+        v = parseFloat(e.target.value)
+        if (Number.isNaN(v)) v = 120
+        v = ActionCatalog.clampBpmForDevice(v, this.deviceContext.allowFractionalBpm)
+      } else if (path.endsWith('.inc_amount')) {
+        v = parseFloat(e.target.value)
+        if (Number.isNaN(v)) v = 1
+        v = ActionCatalog.clampIncAmountForDevice(
+          v, this.deviceContext.allowFractionalBpm)
       } else {
         const minAttr = e.target.getAttribute('min')
         const maxAttr = e.target.getAttribute('max')
@@ -1925,7 +1941,8 @@ application.register(
       if (this.deviceProgramming) return
       const path = e.target.dataset.scenePath
       if (!path) return
-      this.setAtPath(path, e.target.checked)
+      const v = path.endsWith('.fractional') ? (e.target.checked ? 1 : 0) : e.target.checked
+      this.setAtPath(path, v)
       this.markDirty()
       this.renderEditor()
     }
@@ -2523,6 +2540,10 @@ application.register(
         }
         if (vals['midi_control.enabled'] != null) {
           this.deviceContext.midiControl = Number(vals['midi_control.enabled']) !== 0
+        }
+        if (vals['tempo.allow_fractional_bpm'] != null) {
+          this.deviceContext.allowFractionalBpm =
+            Number(vals['tempo.allow_fractional_bpm']) !== 0
         }
       } finally {
         await this.ensureDeviceIdleInTask()

@@ -191,6 +191,27 @@ application.register(
       return Number(depValue) === Number(expected)
     }
 
+    findSetting (settingId) {
+      if (!this.schema?.categories) return null
+      for (const category of this.schema.categories) {
+        for (const setting of category.settings) {
+          if (setting.id === settingId) return setting
+        }
+      }
+      return null
+    }
+
+    parseNumberSettingValue (setting, raw) {
+      const step = setting?.step !== undefined ? setting.step : 1
+      if (step < 1) {
+        let value = parseFloat(raw)
+        if (Number.isNaN(value)) return NaN
+        value = Math.round(value / step) * step
+        return Math.round(value * 1000) / 1000
+      }
+      return parseInt(raw, 10)
+    }
+
     settingValue (setting) {
       const raw = this.values[setting.id]
       if (raw !== undefined && raw !== null) return raw
@@ -290,7 +311,8 @@ application.register(
       } else if (el.tagName === 'WA-SELECT') {
         value = parseInt(el.value, 10)
       } else if (el.tagName === 'WA-INPUT') {
-        value = parseInt(el.value, 10)
+        const setting = this.findSetting(settingId)
+        value = this.parseNumberSettingValue(setting, el.value)
         if (Number.isNaN(value)) return
       } else {
         return

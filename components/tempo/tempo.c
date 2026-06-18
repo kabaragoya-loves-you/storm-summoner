@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "io.h"
+#include <stdio.h>
 #include <string.h>
 
 #define TAG "TEMPO"
@@ -26,6 +27,7 @@
 #define NVS_KEY_CLOCK_ALWAYS "tempo_clk_alws"
 #define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
 #define NVS_KEY_CLOCK_STD "tempo_clk_std"
+#define NVS_KEY_ALLOW_FRAC "tempo_frac_bpm"
 
 // LED NVS keys
 #define LED_ENABLED_KEY "led_enabled"
@@ -35,14 +37,16 @@
 // Note: NVS_KEY_TIME_SIG_NUM and NVS_KEY_TIME_SIG_DEN removed
 // Time signature is now a per-scene setting stored in scene JSON files
 
-// Constants
+// Constants (whole BPM kept for tap timeout comments and legacy clamps)
 #define MIN_BPM 20
 #define MAX_BPM 300
-#define DEFAULT_BPM 120
+#define MIN_BPM_X10 TEMPO_MIN_BPM_X10
+#define MAX_BPM_X10 TEMPO_MAX_BPM_X10
+#define DEFAULT_BPM_X10 TEMPO_DEFAULT_BPM_X10
 #define MIDI_CLOCKS_PER_QUARTER 24
 
 // State variables
-static uint16_t s_bpm = DEFAULT_BPM;
+static uint16_t s_bpm_x10 = DEFAULT_BPM_X10;
 static tempo_clock_source_t s_clock_source = CLOCK_SOURCE_INTERNAL;
 static tempo_clock_standard_t s_clock_standard = CLOCK_STANDARD_24PPQN;  // Default to 24ppqn
 static time_signature_t s_time_signature = {4, 4};  // Default 4/4
@@ -53,6 +57,7 @@ static uint8_t s_bpm_deadzone = 0;  // BPM change deadzone (0 = no deadzone, 1-5
 static clock_output_t s_clock_output = CLOCK_OUTPUT_BOTH;  // Where to send clock (USB, UART, BOTH, NONE)
 static bool s_clock_always_send = true;  // Send clock even when transport stopped
 static bool s_disable_clock_on_passthrough = true;  // Auto-disable clock when passthrough active
+static bool s_allow_fractional_bpm = false;  // Factory default: integer-only editing
 
 // LED state variables
 static bool s_led_enabled = true;
@@ -94,11 +99,11 @@ static SemaphoreHandle_t s_sync_semaphore = NULL;
 static uint32_t s_sync_pulse_intervals[EXTERNAL_CLOCK_HISTORY_SIZE];
 static uint8_t s_sync_pulse_history_idx = 0;
 static uint8_t s_sync_pulse_history_count = 0;
-static uint16_t s_sync_last_known_good_bpm = DEFAULT_BPM;
+static uint16_t s_sync_last_known_good_bpm_x10 = DEFAULT_BPM_X10;
 static uint32_t s_sync_last_pulse_time_ms = 0;
 static bool s_sync_clock_active = false;
 
-static uint16_t s_midi_last_known_good_bpm = DEFAULT_BPM;
+static uint16_t s_midi_last_known_good_bpm_x10 = DEFAULT_BPM_X10;
 static uint32_t s_midi_last_tick_time_ms = 0;
 static bool s_midi_clock_active = false;
 static bool s_clock_muted = false;  // When true, suppress MIDI clock output
@@ -114,13 +119,14 @@ static bool s_clock_timing_reset_needed = false;
 
 // Tempo lock state (stabilizes BPM during playback)
 #define TEMPO_LOCK_BEATS 4              // Beats before locking tempo
-#define TEMPO_LOCK_CHANGE_THRESHOLD 2   // BPM difference required to unlock
 #define TEMPO_LOCK_CONFIRM_COUNT 3      // Consecutive measurements needed to confirm change
+#define TEMPO_LOCK_CHANGE_THRESHOLD_X10 20   // 2.0 BPM difference required to unlock
+#define TEMPO_LOCK_CONFIRM_TOLERANCE_X10 10  // ±1.0 BPM for candidate confirmation
 static uint8_t s_tempo_lock_beat_count = 0;     // Beats since transport start
 static bool s_tempo_locked = false;             // Whether tempo is locked
-static uint16_t s_tempo_locked_bpm = 0;         // The locked BPM value
+static uint16_t s_tempo_locked_bpm_x10 = 0;     // The locked BPM value
 static uint8_t s_tempo_change_confirm = 0;      // Consecutive measurements confirming change
-static uint16_t s_tempo_change_candidate = 0;   // Candidate BPM for tempo change
+static uint16_t s_tempo_change_candidate_x10 = 0;   // Candidate BPM for tempo change
 
 // Forward declarations
 static void tempo_task(void *pvParameters);
@@ -131,6 +137,9 @@ static void update_midi_out_clock_settings(void);
 static void process_sync_pulse_interval(uint32_t interval_ms);
 static bool check_sync_clock_dropout(uint32_t now_ms);
 static void reset_sync_pulse_tracking(void);
+static uint32_t tempo_beat_divisor_for_standard(tempo_clock_standard_t standard);
+static bool tempo_advance_clock_tick_beat(tempo_clock_standard_t standard);
+static bool tempo_advance_midi_clock_tick_beat(void);
 
 // LED forward declarations
 static void led_als_event_handler(const event_t* event, void* context);
@@ -204,6 +213,13 @@ void tempo_init(void) {
   } else {
     app_settings_save_u8(NVS_KEY_CLOCK_NO_PT, s_disable_clock_on_passthrough ? 1 : 0);
   }
+
+  uint8_t allow_frac = 0;
+  if (app_settings_load_u8(NVS_KEY_ALLOW_FRAC, &allow_frac) == ESP_OK) {
+    s_allow_fractional_bpm = (allow_frac != 0);
+  } else {
+    app_settings_save_u8(NVS_KEY_ALLOW_FRAC, 0);
+  }
   
   // Note: update_midi_out_clock_settings() will be called when tempo_start() is called
   // Can't call it here because midi_out_init() hasn't run yet
@@ -212,8 +228,10 @@ void tempo_init(void) {
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, transport_state_handler, NULL);
   
   const char* std_names[] = {"24ppqn", "16th", "Beat"};
-  ESP_LOGI(TAG, "Tempo initialized - BPM: %d, Time Sig: %d/%d, LED Sync: %s, Clock: %s",
-    s_bpm, s_time_signature.numerator, s_time_signature.denominator,
+  char bpm_init_buf[16];
+  tempo_format_bpm(bpm_init_buf, sizeof(bpm_init_buf), s_bpm_x10);
+  ESP_LOGI(TAG, "Tempo initialized - BPM: %s, Time Sig: %d/%d, LED Sync: %s, Clock: %s",
+    bpm_init_buf, s_time_signature.numerator, s_time_signature.denominator,
     s_led_sync_enabled ? "ON" : "OFF", std_names[s_clock_standard]);
   ESP_LOGI(TAG, "Note: Clock source is now set by scenes");
 }
@@ -256,7 +274,7 @@ static void process_sync_pulse_interval(uint32_t interval_ms) {
   // Calculate expected interval based on last known good BPM
   // At 24 PPQN: expected_interval = 60000 / (24 * BPM) = 2500 / BPM
   // But sync pulses are typically 1 per quarter note, so: 60000 / BPM
-  uint32_t expected_interval = 60000 / s_sync_last_known_good_bpm;
+  uint32_t expected_interval = 600000 / s_sync_last_known_good_bpm_x10;
   
   // Check if interval is "reasonable" (within factor of expected)
   // This filters out glitches and first pulse after dropout
@@ -301,15 +319,17 @@ static void process_sync_pulse_interval(uint32_t interval_ms) {
     uint32_t avg_interval = total / s_sync_pulse_history_count;
     
     if (avg_interval > 0) {
-      uint16_t new_bpm = (uint16_t)(60000 / avg_interval);
-      if (new_bpm >= MIN_BPM && new_bpm <= MAX_BPM) {
-        s_sync_last_known_good_bpm = new_bpm;
+      uint16_t new_bpm_x10 = (uint16_t)((600000ULL + avg_interval / 2) / avg_interval);
+      if (!s_allow_fractional_bpm)
+        new_bpm_x10 = (uint16_t)(((new_bpm_x10 + 5) / 10) * 10);
+      if (new_bpm_x10 >= MIN_BPM_X10 && new_bpm_x10 <= MAX_BPM_X10) {
+        s_sync_last_known_good_bpm_x10 = new_bpm_x10;
         s_sync_clock_active = true;
         
         // Update live tempo
-        if (new_bpm != s_bpm) {
+        if (new_bpm_x10 != s_bpm_x10) {
           xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-          s_bpm = new_bpm;
+          s_bpm_x10 = new_bpm_x10;
           xSemaphoreGive(s_state_mutex);
           publish_tempo_changed_event();
         }
@@ -325,7 +345,7 @@ static bool check_sync_clock_dropout(uint32_t now_ms) {
   uint32_t elapsed = now_ms - s_sync_last_pulse_time_ms;
   
   // Calculate expected interval based on last known good BPM
-  uint32_t expected_interval = 60000 / s_sync_last_known_good_bpm;
+  uint32_t expected_interval = 600000 / s_sync_last_known_good_bpm_x10;
   uint32_t dropout_threshold = expected_interval * EXTERNAL_CLOCK_DROPOUT_FACTOR;
   
   // Minimum threshold of 1 second to avoid false positives at very fast tempos
@@ -336,7 +356,7 @@ static bool check_sync_clock_dropout(uint32_t now_ms) {
       ESP_LOGW(TAG, "Sync clock dropout detected (no pulse for %lu ms, expected ~%lu ms)",
         (unsigned long)elapsed, (unsigned long)expected_interval);
       s_sync_clock_active = false;
-      // Keep s_sync_last_known_good_bpm - this is the value we hold at
+      // Keep s_sync_last_known_good_bpm_x10 - this is the value we hold at
     }
     return true;
   }
@@ -344,10 +364,58 @@ static bool check_sync_clock_dropout(uint32_t now_ms) {
   return false;
 }
 
+static uint32_t tempo_beat_divisor_for_standard(tempo_clock_standard_t standard) {
+  uint32_t beat_divisor = s_note_divider;
+  if (standard == CLOCK_STANDARD_16TH_NOTE) {
+    beat_divisor /= 4;
+  } else if (standard == CLOCK_STANDARD_BEAT) {
+    beat_divisor = 1;
+  }
+  return beat_divisor;
+}
+
+// Advance one clock tick; publish EVENT_BEAT when a beat boundary is crossed.
+// Must hold s_state_mutex internally so downbeat resync cannot race the pulse.
+static bool tempo_advance_clock_tick_beat(tempo_clock_standard_t standard) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+
+  uint32_t beat_divisor = tempo_beat_divisor_for_standard(standard);
+  bool publish = false;
+  if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
+    s_beat_counter++;
+    if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+    publish = true;
+  }
+  s_tick_counter++;
+
+  xSemaphoreGive(s_state_mutex);
+
+  if (publish) publish_beat_event();
+  return publish;
+}
+
+static bool tempo_advance_midi_clock_tick_beat(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+
+  bool publish = false;
+  if (s_note_divider > 0 && (s_tick_counter % s_note_divider == 0)) {
+    s_beat_counter++;
+    if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+    if (s_tempo_lock_beat_count < 255) s_tempo_lock_beat_count++;
+    publish = true;
+  }
+  s_tick_counter++;
+
+  xSemaphoreGive(s_state_mutex);
+
+  if (publish) publish_beat_event();
+  return publish;
+}
+
 static void tempo_task(void *pvParameters) {
   ESP_LOGD(TAG, "Tempo task running");
   
-  uint16_t last_bpm = s_bpm;
+  uint16_t last_bpm_x10 = s_bpm_x10;
   bool was_running = false;  // Track state transitions
   
   while (1) {
@@ -366,7 +434,7 @@ static void tempo_task(void *pvParameters) {
     }
     
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    uint16_t current_bpm = s_bpm;
+    uint16_t current_bpm_x10 = s_bpm_x10;
     tempo_clock_source_t source = s_clock_source;
     tempo_clock_standard_t standard = s_clock_standard;
     xSemaphoreGive(s_state_mutex);
@@ -391,7 +459,7 @@ static void tempo_task(void *pvParameters) {
       
       // Calculate tick interval in MICROSECONDS for precision
       // FreeRTOS ticks (10ms at 100Hz) are too coarse for MIDI timing
-      uint32_t tick_interval_us = 60000000 / (ppqn * current_bpm);
+      uint32_t tick_interval_us = (uint32_t)(600000000ULL / (ppqn * (uint64_t)current_bpm_x10));
       
       // Track target time with microsecond precision to prevent drift
       static int64_t next_tick_time_us = 0;
@@ -416,34 +484,11 @@ static void tempo_task(void *pvParameters) {
         send_clock();
       }
 
-      // Compute beat divisor (s_note_divider is based on 24ppqn, scale if needed).
-      uint32_t beat_divisor = s_note_divider;
-      if (standard == CLOCK_STANDARD_16TH_NOTE) {
-        beat_divisor /= 4;  // Adjust for 6ppqn
-      } else if (standard == CLOCK_STANDARD_BEAT) {
-        beat_divisor = 1;   // One tick = one beat
-      }
-
-      // Publish beat event at the START of each musical beat (i.e. coincident
-      // with sending the FIRST pulse of that beat: ticks 0, 24, 48, ...). The
-      // check runs BEFORE incrementing s_tick_counter so it triggers on the
-      // current tick value (0 on the very first iteration after init or a
-      // time-signature reset, then 24 ticks later, etc.). This replaces the
-      // previous post-increment check that fired on tick 24, 48, ... which is
-      // the LAST tick of the prior beat -- causing every beat event to lead
-      // its musical position by one tick (~125 ms at 20 BPM) and pre-fix to
-      // miss beat 1 entirely until tick 24.
-      if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
-        s_beat_counter++;
-        if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
-        publish_beat_event();
-      }
-
-      s_tick_counter++;
+      tempo_advance_clock_tick_beat(standard);
       
       // Check if BPM changed
-      if (current_bpm != last_bpm) {
-        last_bpm = current_bpm;
+      if (current_bpm_x10 != last_bpm_x10) {
+        last_bpm_x10 = current_bpm_x10;
         publish_tempo_changed_event();
         // Reset timing on BPM change for immediate response
         next_tick_time_us = now_us + tick_interval_us;
@@ -496,13 +541,13 @@ static void tempo_task(void *pvParameters) {
           process_sync_pulse_interval(interval_ms);
         } else {
           // First pulse - just record time, initialize last known good from current
-          s_sync_last_known_good_bpm = s_bpm;
+          s_sync_last_known_good_bpm_x10 = s_bpm_x10;
         }
         s_sync_last_pulse_time_ms = now;
       }
       
       // Send clocks continuously based on current BPM
-      // During dropout, s_bpm holds at last known good value
+      // During dropout, s_bpm_x10 holds at last known good value
       uint32_t ppqn;
       switch (standard) {
         case CLOCK_STANDARD_24PPQN:
@@ -520,7 +565,7 @@ static void tempo_task(void *pvParameters) {
       }
       
       // Calculate tick interval in MICROSECONDS for precision
-      uint32_t tick_interval_us = 60000000 / (ppqn * current_bpm);
+      uint32_t tick_interval_us = (uint32_t)(600000000ULL / (ppqn * (uint64_t)current_bpm_x10));
       
       // Track target time with microsecond precision
       static int64_t sync_next_tick_time_us = 0;
@@ -544,22 +589,7 @@ static void tempo_task(void *pvParameters) {
         send_clock();
       }
 
-      uint32_t beat_divisor = s_note_divider;
-      if (standard == CLOCK_STANDARD_16TH_NOTE) {
-        beat_divisor /= 4;
-      } else if (standard == CLOCK_STANDARD_BEAT) {
-        beat_divisor = 1;
-      }
-
-      // See INTERNAL branch above for the rationale: publish BEFORE the tick
-      // increment so beat N aligns with the first pulse of musical beat N.
-      if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
-        s_beat_counter++;
-        if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
-        publish_beat_event();
-      }
-
-      s_tick_counter++;
+      tempo_advance_clock_tick_beat(standard);
       
       // Schedule next tick - use actual send time after reset
       if (sync_did_reset && sync_actual_send_time_us > 0) {
@@ -601,7 +631,7 @@ static void tempo_task(void *pvParameters) {
         // Expected interval at 24 PPQN: 60000 / (24 * BPM)
         // At 120 BPM = ~21ms between ticks
         // Use quarter note interval (24 ticks) as base for dropout detection
-        uint32_t expected_quarter_interval = 60000 / s_midi_last_known_good_bpm;
+        uint32_t expected_quarter_interval = 600000 / s_midi_last_known_good_bpm_x10;
         uint32_t dropout_threshold = expected_quarter_interval * EXTERNAL_CLOCK_DROPOUT_FACTOR;
         if (dropout_threshold < 1000) dropout_threshold = 1000;
         
@@ -609,7 +639,7 @@ static void tempo_task(void *pvParameters) {
           ESP_LOGW(TAG, "MIDI clock dropout detected (no tick for %lu ms)",
             (unsigned long)elapsed);
           s_midi_clock_active = false;
-          // Keep s_midi_last_known_good_bpm - BPM continues at this value
+          // Keep s_midi_last_known_good_bpm_x10 - BPM continues at this value
         }
       }
       
@@ -622,11 +652,11 @@ static void tempo_task(void *pvParameters) {
         // Generate beats internally when:
         // 1. Transport is playing but MIDI clock not active (fallback), OR
         // 2. Scene doesn't use transport controls (free-running clock)
-        uint16_t fallback_bpm = (s_midi_last_known_good_bpm > 0) ?
-          s_midi_last_known_good_bpm : s_bpm;
-        if (fallback_bpm == 0) fallback_bpm = 120;
+        uint16_t fallback_bpm_x10 = (s_midi_last_known_good_bpm_x10 > 0) ?
+          s_midi_last_known_good_bpm_x10 : s_bpm_x10;
+        if (fallback_bpm_x10 == 0) fallback_bpm_x10 = DEFAULT_BPM_X10;
         
-        uint32_t beat_interval_ms = 60000 / fallback_bpm;
+        uint32_t beat_interval_ms = 600000 / fallback_bpm_x10;
         
         s_beat_counter++;
         if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
@@ -679,9 +709,9 @@ static void transport_state_handler(const event_t* event, void* context) {
         s_midi_tick_last_update_time = 0;
         s_tempo_lock_beat_count = 0;
         s_tempo_locked = false;
-        s_tempo_locked_bpm = 0;
+        s_tempo_locked_bpm_x10 = 0;
         s_tempo_change_confirm = 0;
-        s_tempo_change_candidate = 0;
+        s_tempo_change_candidate_x10 = 0;
         // No immediate publish_beat_event() here -- the first tick from the
         // active clock source will publish naturally and at the right moment.
       }
@@ -699,7 +729,7 @@ static void transport_state_handler(const event_t* event, void* context) {
 static void publish_beat_event(void) {
   // Flash LED FIRST if sync is enabled - flash_led() is now synchronous (no task)
   if (s_led_sync_enabled && s_led_enabled && !s_led_solid_on_mode) {
-    uint32_t beat_duration_ms = 60000 / s_bpm;
+    uint32_t beat_duration_ms = 600000 / s_bpm_x10;
     uint32_t flash_duration_ms = (beat_duration_ms * s_led_flash_ratio) / 100;
     if (flash_duration_ms < 10) flash_duration_ms = 10;  // Minimum 10ms
     if (flash_duration_ms > 200) flash_duration_ms = 200;  // Maximum 200ms
@@ -725,12 +755,15 @@ static void publish_tempo_changed_event(void) {
     .priority = EVENT_PRIORITY_NORMAL,
     .timestamp = event_bus_get_current_timestamp(),
     .data.tempo = {
-      .bpm = s_bpm
+      .bpm_x10 = s_bpm_x10,
+      .bpm = (uint16_t)((s_bpm_x10 + 5) / 10)
     }
   };
   event_bus_post(&tempo_event);
   
-  ESP_LOGI(TAG, "BPM: %d", s_bpm);
+  char bpm_log[16];
+  tempo_format_bpm(bpm_log, sizeof(bpm_log), s_bpm_x10);
+  ESP_LOGI(TAG, "BPM: %s", bpm_log);
 }
 
 // Timer callback that actually creates the tempo task
@@ -819,28 +852,90 @@ void tempo_stop(void) {
   }
 }
 
-void tempo_set_bpm(uint16_t bpm) {
-  if (bpm < MIN_BPM) bpm = MIN_BPM;
-  if (bpm > MAX_BPM) bpm = MAX_BPM;
+void tempo_set_bpm_x10(uint16_t bpm_x10) {
+  if (bpm_x10 < MIN_BPM_X10) bpm_x10 = MIN_BPM_X10;
+  if (bpm_x10 > MAX_BPM_X10) bpm_x10 = MAX_BPM_X10;
   
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-  if (s_bpm != bpm) {
-    s_bpm = bpm;
+  if (s_bpm_x10 != bpm_x10) {
+    s_bpm_x10 = bpm_x10;
     xSemaphoreGive(s_state_mutex);
-    
-    // Note: BPM is now per-scene, saved in scene JSON files
-    // Notify about change
     publish_tempo_changed_event();
   } else {
     xSemaphoreGive(s_state_mutex);
   }
 }
 
-uint16_t tempo_get_bpm(void) {
+uint16_t tempo_get_bpm_x10(void) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-  uint16_t bpm = s_bpm;
+  uint16_t bpm_x10 = s_bpm_x10;
   xSemaphoreGive(s_state_mutex);
-  return bpm;
+  return bpm_x10;
+}
+
+void tempo_set_bpm(uint16_t bpm) {
+  tempo_set_bpm_x10(tempo_whole_to_x10(bpm));
+}
+
+uint16_t tempo_get_bpm(void) {
+  return tempo_x10_to_whole(tempo_get_bpm_x10());
+}
+
+uint16_t tempo_whole_to_x10(uint16_t whole_bpm) {
+  if (whole_bpm < MIN_BPM) whole_bpm = MIN_BPM;
+  if (whole_bpm > MAX_BPM) whole_bpm = MAX_BPM;
+  return (uint16_t)(whole_bpm * 10);
+}
+
+uint16_t tempo_x10_to_whole(uint16_t bpm_x10) {
+  return (uint16_t)((bpm_x10 + 5) / 10);
+}
+
+uint16_t tempo_bpm_from_double(double bpm) {
+  int32_t x10 = (int32_t)(bpm * 10.0 + 0.5);
+  if (x10 < (int32_t)MIN_BPM_X10) x10 = (int32_t)MIN_BPM_X10;
+  if (x10 > (int32_t)MAX_BPM_X10) x10 = (int32_t)MAX_BPM_X10;
+  return (uint16_t)x10;
+}
+
+uint16_t tempo_snap_bpm_x10_ex(uint16_t bpm_x10, bool allow_fractional) {
+  if (allow_fractional) return bpm_x10;
+  return (uint16_t)(((bpm_x10 + 5) / 10) * 10);
+}
+
+uint16_t tempo_snap_bpm_x10(uint16_t bpm_x10) {
+  return tempo_snap_bpm_x10_ex(bpm_x10, s_allow_fractional_bpm);
+}
+
+void tempo_format_bpm(char* buf, size_t buf_len, uint16_t bpm_x10) {
+  if (!buf || buf_len == 0) return;
+  if (bpm_x10 % 10 == 0)
+    snprintf(buf, buf_len, "%u", (unsigned)(bpm_x10 / 10));
+  else
+    snprintf(buf, buf_len, "%u.%u", (unsigned)(bpm_x10 / 10),
+      (unsigned)(bpm_x10 % 10));
+}
+
+void tempo_format_bpm_label(char* buf, size_t buf_len, uint16_t bpm_x10) {
+  if (!buf || buf_len == 0) return;
+  char bpm[16];
+  tempo_format_bpm(bpm, sizeof(bpm), bpm_x10);
+  snprintf(buf, buf_len, "%s BPM", bpm);
+}
+
+void tempo_set_allow_fractional_bpm(bool allow) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_allow_fractional_bpm = allow;
+  xSemaphoreGive(s_state_mutex);
+  app_settings_save_u8(NVS_KEY_ALLOW_FRAC, allow ? 1 : 0);
+  ESP_LOGI(TAG, "Fractional BPM: %s", allow ? "enabled" : "disabled");
+}
+
+bool tempo_get_allow_fractional_bpm(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool allow = s_allow_fractional_bpm;
+  xSemaphoreGive(s_state_mutex);
+  return allow;
 }
 
 void tempo_set_source(tempo_clock_source_t source) {
@@ -852,11 +947,11 @@ void tempo_set_source(tempo_clock_source_t source) {
   // Initialize last known good BPM from current BPM
   if (source == CLOCK_SOURCE_SYNC) {
     reset_sync_pulse_tracking();
-    s_sync_last_known_good_bpm = s_bpm;
+    s_sync_last_known_good_bpm_x10 = s_bpm_x10;
   } else if (source == CLOCK_SOURCE_MIDI) {
     s_midi_last_tick_time_ms = 0;
     s_midi_clock_active = false;
-    s_midi_last_known_good_bpm = s_bpm;
+    s_midi_last_known_good_bpm_x10 = s_bpm_x10;
   }
   
   // Note: No NVS save - clock source is now a per-scene setting
@@ -900,7 +995,7 @@ static void reset_tap_buffer(void) {
 }
 
 // Internal: calculate and set BPM from tap buffer
-static void calculate_tap_bpm(void) {
+static void calculate_tap_bpm(bool allow_fractional) {
   if (s_tap_count < 2) return;
   
   uint32_t total_interval = 0;
@@ -915,13 +1010,16 @@ static void calculate_tap_bpm(void) {
   
   if (intervals > 0 && total_interval > 0) {
     uint32_t avg_interval = total_interval / intervals;
-    uint16_t new_bpm = 60000 / avg_interval;
-    tempo_set_bpm(new_bpm);
-    ESP_LOGI(TAG, "Tap tempo: %d BPM (from %d taps)", new_bpm, s_tap_count);
+    uint16_t new_bpm_x10 = (uint16_t)((600000ULL + avg_interval / 2) / avg_interval);
+    new_bpm_x10 = tempo_snap_bpm_x10_ex(new_bpm_x10, allow_fractional);
+    tempo_set_bpm_x10(new_bpm_x10);
+    char bpm_buf[16];
+    tempo_format_bpm(bpm_buf, sizeof(bpm_buf), new_bpm_x10);
+    ESP_LOGI(TAG, "Tap tempo: %s BPM (from %d taps)", bpm_buf, s_tap_count);
   }
 }
 
-void tempo_tap(void) {
+void tempo_tap_ex(bool allow_fractional) {
   uint32_t now = esp_timer_get_time() / 1000;
 
   if (s_tap_count > 0) {
@@ -935,7 +1033,11 @@ void tempo_tap(void) {
 
   ESP_LOGI(TAG, "Tap %d received", s_tap_count);
 
-  calculate_tap_bpm();
+  calculate_tap_bpm(allow_fractional);
+}
+
+void tempo_tap(void) {
+  tempo_tap_ex(tempo_get_allow_fractional_bpm());
 }
 
 void tempo_midi_clock_tick(void) {
@@ -945,20 +1047,7 @@ void tempo_midi_clock_tick(void) {
   // Only process if source is MIDI
   if (s_clock_source != CLOCK_SOURCE_MIDI) return;
 
-  // Publish beat event at the START of each musical beat. The modulo check
-  // uses the CURRENT s_tick_counter value (before increment) so it triggers
-  // on ticks 0, 24, 48, ..., which is the moment we receive the first MIDI
-  // clock pulse of that musical beat. See INTERNAL clock branch in tempo_task
-  // for the full rationale.
-  if (s_note_divider > 0 && (s_tick_counter % s_note_divider == 0)) {
-    s_beat_counter++;
-    if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
-    if (s_tempo_lock_beat_count < 255) s_tempo_lock_beat_count++;
-    publish_beat_event();
-  }
-
-  // Use global tick counter (reset by transport_state_handler on start/stop)
-  s_tick_counter++;
+  tempo_advance_midi_clock_tick_beat();
 
   uint32_t now = esp_timer_get_time() / 1000;
   
@@ -1013,74 +1102,72 @@ void tempo_midi_clock_tick(void) {
           }
         }
         
-        // Calculate BPM from EMA interval (use rounding, not truncation)
-        uint16_t calculated_bpm = (uint16_t)(60000.0f / s_midi_tick_ema_interval_ms + 0.5f);
+        // Calculate BPM from EMA interval (tenths of BPM)
+        uint16_t calculated_bpm_x10 =
+          (uint16_t)(600000.0f / s_midi_tick_ema_interval_ms + 0.5f);
         
-        // Clamp to valid range (20-300 BPM)
-        if (calculated_bpm < MIN_BPM) calculated_bpm = MIN_BPM;
-        if (calculated_bpm > MAX_BPM) calculated_bpm = MAX_BPM;
+        if (calculated_bpm_x10 < MIN_BPM_X10) calculated_bpm_x10 = MIN_BPM_X10;
+        if (calculated_bpm_x10 > MAX_BPM_X10) calculated_bpm_x10 = MAX_BPM_X10;
+        if (!s_allow_fractional_bpm)
+          calculated_bpm_x10 = (uint16_t)(((calculated_bpm_x10 + 5) / 10) * 10);
         
-        uint16_t measured_bpm = calculated_bpm;
+        uint16_t measured_bpm_x10 = calculated_bpm_x10;
         
-        if (measured_bpm >= MIN_BPM && measured_bpm <= MAX_BPM) {
-          // Update last known good BPM for dropout protection
-          s_midi_last_known_good_bpm = measured_bpm;
+        if (measured_bpm_x10 >= MIN_BPM_X10 && measured_bpm_x10 <= MAX_BPM_X10) {
+          s_midi_last_known_good_bpm_x10 = measured_bpm_x10;
+          
+          uint8_t deadzone_x10 = (uint8_t)(s_bpm_deadzone * 10);
           
           // Tempo lock logic: Once locked, require significant sustained change
           bool should_update = false;
           
           if (!s_tempo_locked) {
-            // Check if we should lock now (based on beat count, independent of BPM change)
             if (s_tempo_lock_beat_count >= TEMPO_LOCK_BEATS) {
               s_tempo_locked = true;
-              s_tempo_locked_bpm = measured_bpm;
-              ESP_LOGI(TAG, "Tempo LOCKED at %d BPM", s_tempo_locked_bpm);
+              s_tempo_locked_bpm_x10 = measured_bpm_x10;
+              char lock_buf[16];
+              tempo_format_bpm(lock_buf, sizeof(lock_buf), s_tempo_locked_bpm_x10);
+              ESP_LOGI(TAG, "Tempo LOCKED at %s BPM", lock_buf);
             }
             
-            // Not locked yet - use normal update logic
-            int bpm_delta = abs((int)measured_bpm - (int)s_bpm);
-            if (bpm_delta > s_bpm_deadzone) {
-              should_update = true;
-            }
+            int bpm_delta = abs((int)measured_bpm_x10 - (int)s_bpm_x10);
+            if (bpm_delta > (int)deadzone_x10) should_update = true;
           } else {
-            // Tempo is locked - require significant change with confirmation
-            int delta_from_locked = abs((int)measured_bpm - (int)s_tempo_locked_bpm);
+            int delta_from_locked =
+              abs((int)measured_bpm_x10 - (int)s_tempo_locked_bpm_x10);
             
-            if (delta_from_locked >= TEMPO_LOCK_CHANGE_THRESHOLD) {
-              // Potential tempo change detected
-              if (s_tempo_change_candidate == 0 ||
-                  abs((int)measured_bpm - (int)s_tempo_change_candidate) <= 1) {
-                // Same candidate (within ±1 BPM) - increment confirmation
-                s_tempo_change_candidate = measured_bpm;
+            if (delta_from_locked >= (int)TEMPO_LOCK_CHANGE_THRESHOLD_X10) {
+              if (s_tempo_change_candidate_x10 == 0 ||
+                  abs((int)measured_bpm_x10 - (int)s_tempo_change_candidate_x10)
+                    <= (int)TEMPO_LOCK_CONFIRM_TOLERANCE_X10) {
+                s_tempo_change_candidate_x10 = measured_bpm_x10;
                 s_tempo_change_confirm++;
                 
                 if (s_tempo_change_confirm >= TEMPO_LOCK_CONFIRM_COUNT) {
-                  // Confirmed tempo change - update and re-lock
-                  s_tempo_locked_bpm = measured_bpm;
+                  s_tempo_locked_bpm_x10 = measured_bpm_x10;
                   s_tempo_change_confirm = 0;
-                  s_tempo_change_candidate = 0;
+                  s_tempo_change_candidate_x10 = 0;
                   should_update = true;
-                  ESP_LOGI(TAG, "Tempo change confirmed, re-locked at %d BPM",
-                    s_tempo_locked_bpm);
+                  char lock_buf[16];
+                  tempo_format_bpm(lock_buf, sizeof(lock_buf), s_tempo_locked_bpm_x10);
+                  ESP_LOGI(TAG, "Tempo change confirmed, re-locked at %s BPM",
+                    lock_buf);
                 }
               } else {
-                // Different candidate - reset confirmation
-                s_tempo_change_candidate = measured_bpm;
+                s_tempo_change_candidate_x10 = measured_bpm_x10;
                 s_tempo_change_confirm = 1;
               }
             } else {
-              // Within lock threshold - reset any pending change
               s_tempo_change_confirm = 0;
-              s_tempo_change_candidate = 0;
+              s_tempo_change_candidate_x10 = 0;
             }
           }
           
           if (should_update) {
-            // Rate limit updates: minimum 500ms between BPM announcements
             if (s_midi_tick_last_update_time == 0 ||
                 (now - s_midi_tick_last_update_time) >= 500) {
               xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-              s_bpm = measured_bpm;
+              s_bpm_x10 = measured_bpm_x10;
               xSemaphoreGive(s_state_mutex);
               publish_tempo_changed_event();
               s_midi_tick_last_update_time = now;
@@ -1129,9 +1216,9 @@ void tempo_midi_transport_start(void) {
 
   s_tempo_lock_beat_count = 0;
   s_tempo_locked = false;
-  s_tempo_locked_bpm = 0;
+  s_tempo_locked_bpm_x10 = 0;
   s_tempo_change_confirm = 0;
-  s_tempo_change_candidate = 0;
+  s_tempo_change_candidate_x10 = 0;
 
   xSemaphoreGive(s_state_mutex);
 }
@@ -1141,17 +1228,35 @@ void tempo_resync_downbeat(void) {
 
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
 
-  uint8_t numerator = s_time_signature.numerator;
-  if (numerator == 0) numerator = 4;
-  s_beat_counter = numerator;
-  s_tick_counter = 0;
-  if (s_clock_source == CLOCK_SOURCE_INTERNAL)
+  // If we land on the first pulse of beat 1 that the clock loop just published,
+  // skip a second EVENT_BEAT -- the natural downbeat is already in flight.
+  bool skip_publish = (s_beat_counter == 1 && s_tick_counter == 1);
+
+  // Immediate downbeat: beat 1 is now. tick_counter=1 marks the first pulse of
+  // beat 1 as consumed so tempo_advance_* will not publish again this pulse.
+  s_beat_counter = 1;
+  s_tick_counter = 1;
+
+  if (s_clock_source == CLOCK_SOURCE_INTERNAL ||
+      s_clock_source == CLOCK_SOURCE_SYNC) {
     s_clock_timing_reset_needed = true;
+  }
+
+  s_midi_tick_last_quarter_time = 0;
+  s_midi_tick_ema_initialized = false;
+  s_midi_tick_last_update_time = 0;
+  s_tempo_lock_beat_count = 0;
+  s_tempo_locked = false;
+  s_tempo_locked_bpm_x10 = 0;
+  s_tempo_change_confirm = 0;
+  s_tempo_change_candidate_x10 = 0;
 
   xSemaphoreGive(s_state_mutex);
 
   transport_reset_position();
-  ESP_LOGI(TAG, "Downbeat resync: bar 1, beat 1 on next tick");
+  if (!skip_publish) publish_beat_event();
+  ESP_LOGI(TAG, "Downbeat resync: bar 1, beat 1 %s",
+    skip_publish ? "(beat event already sent this pulse)" : "now");
 }
 
 void tempo_sync_to_bar_beat(uint8_t bar, uint8_t beat) {
@@ -1173,9 +1278,9 @@ void tempo_sync_to_bar_beat(uint8_t bar, uint8_t beat) {
   s_midi_tick_last_update_time = 0;
   s_tempo_lock_beat_count = 0;
   s_tempo_locked = false;
-  s_tempo_locked_bpm = 0;
+  s_tempo_locked_bpm_x10 = 0;
   s_tempo_change_confirm = 0;
-  s_tempo_change_candidate = 0;
+  s_tempo_change_candidate_x10 = 0;
   if (s_clock_source == CLOCK_SOURCE_INTERNAL)
     s_clock_timing_reset_needed = true;
 

@@ -1,15 +1,21 @@
 #include "tempo_nudge.h"
+#include "tempo.h"
 
-uint16_t tempo_nudge_compute_bpm(int32_t scene_bpm, uint8_t pct, float scale) {
+uint16_t tempo_nudge_compute_bpm_x10(int32_t scene_bpm_x10, uint8_t pct, float scale) {
   if (pct > 100) pct = 100;
   if (scale > 1.0f) scale = 1.0f;
   if (scale < -1.0f) scale = -1.0f;
 
   float factor = 1.0f + scale * ((float)pct / 100.0f);
-  int32_t new_bpm = (int32_t)((float)scene_bpm * factor + 0.5f);
-  if (new_bpm < 20) new_bpm = 20;
-  if (new_bpm > 300) new_bpm = 300;
-  return (uint16_t)new_bpm;
+  int32_t new_bpm_x10 = (int32_t)((float)scene_bpm_x10 * factor + 0.5f);
+  if (new_bpm_x10 < (int32_t)TEMPO_MIN_BPM_X10) new_bpm_x10 = TEMPO_MIN_BPM_X10;
+  if (new_bpm_x10 > (int32_t)TEMPO_MAX_BPM_X10) new_bpm_x10 = TEMPO_MAX_BPM_X10;
+  return tempo_snap_bpm_x10((uint16_t)new_bpm_x10);
+}
+
+uint16_t tempo_nudge_compute_bpm(int32_t scene_bpm, uint8_t pct, float scale) {
+  return tempo_x10_to_whole(
+    tempo_nudge_compute_bpm_x10(tempo_whole_to_x10((uint16_t)scene_bpm), pct, scale));
 }
 
 float tempo_nudge_scale_bipolar(uint8_t midi) {
