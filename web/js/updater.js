@@ -82,9 +82,19 @@ application.register(
       this.stopReading()
     }
 
+    // Firmware/asset binaries and the manifest are served under stable,
+    // version-named paths (e.g. storm-summoner-0.7.bin) that are overwritten
+    // in place on every rebuild. A normal fetch can hand back a stale cached
+    // copy, so the device flashes an old-but-valid image and reports success
+    // while the running build never changes. Force a fresh network read.
+    fetchFresh (url) {
+      const bust = (url.includes('?') ? '&' : '?') + '_=' + Date.now()
+      return fetch(url + bust, { cache: 'no-store' })
+    }
+
     async fetchReleases () {
       try {
-        const response = await fetch('/releases.json')
+        const response = await this.fetchFresh('/releases.json')
         if (response.ok) {
           this.releases = await response.json()
           this.populateFirmwareDropdown()
@@ -277,7 +287,7 @@ application.register(
       this.log(`Downloading firmware: ${filename}`)
 
       try {
-        const response = await fetch(`/binaries/${filename}`)
+        const response = await this.fetchFresh(`/binaries/${filename}`)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
         const buffer = await response.arrayBuffer()
@@ -304,7 +314,7 @@ application.register(
       this.log(`Downloading assets: ${filename}`)
 
       try {
-        const response = await fetch(`/binaries/${filename}`)
+        const response = await this.fetchFresh(`/binaries/${filename}`)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
         const buffer = await response.arrayBuffer()

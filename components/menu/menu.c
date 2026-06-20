@@ -462,7 +462,7 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
   const menu_theme_palette_t* palette = menu_theme_get_palette();
 
   // Create labels for menu items
-  for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
+  for (int i = 0; i < item_count; i++) {
     const char* item_label = items[i].label;
     bool is_divider = (item_label && strncmp(item_label, "---", 3) == 0);
     menu_item_kind_t kind = menu_item_effective_kind(&items[i]);
@@ -600,7 +600,7 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
   lv_obj_add_event_cb(cont, scroll_event_cb, LV_EVENT_SCROLL, NULL);
 
   // Create labels for menu items
-  for (int i = 0; i < item_count && i < MAX_MENU_ITEMS; i++) {
+  for (int i = 0; i < item_count; i++) {
     const char* item_label = items[i].label;
     bool is_readonly = (items[i].callback == NULL);
     

@@ -153,7 +153,9 @@ application.register(
 
     async fetchReleases () {
       try {
-        const response = await fetch('/releases.json')
+        // Bypass the HTTP cache: releases.json is overwritten in place on every
+        // rebuild, and a stale copy would misreport the latest available build.
+        const response = await fetch('/releases.json?_=' + Date.now(), { cache: 'no-store' })
         if (response.ok) {
           this.releases = await response.json()
         }

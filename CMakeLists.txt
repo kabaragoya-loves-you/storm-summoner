@@ -70,20 +70,13 @@ idf_build_set_property(COMPILE_DEFINITIONS "-DFW_VERSION_MAJOR=${FW_VERSION_MAJO
 idf_build_set_property(COMPILE_DEFINITIONS "-DFW_VERSION_MINOR=${FW_VERSION_MINOR}" APPEND)
 idf_build_set_property(COMPILE_DEFINITIONS "-DFW_GIT_HASH=\"${FW_GIT_HASH}\"" APPEND)
 
-# Build number auto-increment: runs on every build via custom target
-set(BUILD_NUMBER_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
-set(BUILD_NUMBER_HEADER "${CMAKE_BINARY_DIR}/version_build.h")
-
-add_custom_target(increment_build_number ALL
-  COMMAND ${CMAKE_COMMAND} 
-    -DBUILD_NUMBER_FILE=${BUILD_NUMBER_FILE}
-    -DBUILD_NUMBER_HEADER=${BUILD_NUMBER_HEADER}
-    -P ${CMAKE_SOURCE_DIR}/cmake/increment_build.cmake
-  COMMENT "Incrementing build number"
-)
-
-# Make the ELF depend on the build number target
-add_dependencies(${elf} increment_build_number)
+# Build number auto-increment is defined inside the version component
+# (components/version/CMakeLists.txt), NOT here. It has to live in the same
+# CMake directory scope as version.c: a custom-command OUTPUT only forces its
+# consumer to recompile when producer and consumer share scope. Defining it at
+# the top level while version.c compiles in the component left the header
+# dependency as a plain mtime check, so version.c kept linking the PREVIOUS
+# build number (build_number.txt ended up one ahead of the binary).
 
 # Release promotion: runs after build to copy binaries to web/binaries if needed
 add_custom_command(TARGET ${elf} POST_BUILD
