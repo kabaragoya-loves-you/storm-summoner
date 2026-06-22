@@ -1980,6 +1980,7 @@ application.register(
       else if (kind === 'param-cycle-step') this.addParamCycleStep(path)
       else if (kind === 'preset-step') this.addPresetCycleStep(path)
       else if (kind === 'tempo-step') this.addTempoCycleStep(path)
+      else if (kind === 'randomize') this.addRandomizeSlot(path)
       else this.addListItem(path, def ?? 0, max ?? 8)
       this.markDirty()
       this.renderEditor()
@@ -2262,26 +2263,34 @@ application.register(
       const action = this.getAtPath(actionPath)
       if (!action || action.type !== 'randomize') return false
       const list = this.asArray(action.cc)
-
-      if (val === '__inactive__') {
-        if (slot < list.length) list.splice(slot, 1)
-      } else {
-        const cc = Number(val)
-        if (Number.isNaN(cc)) return false
-        if (slot < list.length) list[slot] = cc
-        else if (slot === list.length) list.push(cc)
-        else return false
-      }
-
+      const cc = Number(val)
+      if (Number.isNaN(cc) || slot < 0 || slot >= list.length) return false
+      list[slot] = cc
       action.cc = list
       return true
+    }
+
+    addRandomizeSlot (path) {
+      const action = this.getAtPath(path)
+      if (!action || action.type !== 'randomize') return
+      const device = this.deviceDefinition
+      const list = this.asArray(action.cc)
+      const max = DeviceControls.randomizeMaxSlots(device)
+      if (list.length >= max) return
+      const used = new Set(list.map(Number))
+      list.push(
+        DeviceControls.hasParameters(device)
+          ? DeviceControls.firstUnusedParameterCc(device, used)
+          : 0
+      )
+      action.cc = list
     }
 
     removeRandomizeSlot (path, slotIndex) {
       const action = this.getAtPath(path)
       if (!action || action.type !== 'randomize') return
       const list = this.asArray(action.cc)
-      if (slotIndex <= 0 || slotIndex >= list.length) return
+      if (slotIndex <= 0 || slotIndex >= list.length || list.length <= 1) return
       list.splice(slotIndex, 1)
       action.cc = list
     }

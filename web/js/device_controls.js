@@ -174,44 +174,8 @@ window.DeviceControls = (function () {
     return toList(action?.cc)
   }
 
-  function randomizeDisplaySlotCount (action, device) {
-    const active = randomizeCcList(action).length
-    const max = randomizeMaxSlots(device)
-    if (active >= max) return max
-    return Math.max(1, active + 1)
-  }
-
-  function randomizeSlotOptions (device, ccList, slotIndex) {
-    const opts = [{ v: '__inactive__', l: 'Inactive' }]
-    const active = slotIndex < ccList.length
-    const keep = active ? Number(ccList[slotIndex]) : null
-    const exclude = new Set()
-    ccList.forEach((c, i) => {
-      if (i === slotIndex) return
-      const n = Number(c)
-      if (!Number.isNaN(n)) exclude.add(n)
-    })
-
-    if (hasParameters(device)) {
-      opts.push(...parameterOptions(device, {
-        exclude,
-        keep: keep == null || Number.isNaN(keep) ? null : keep
-      }))
-    } else if (active && keep != null && !Number.isNaN(keep)) {
-      opts.push({ v: keep, l: parameterLabel(device, keep) })
-    }
-
-    if (!hasParameters(device)) {
-      for (let cc = 0; cc <= 127; cc++) {
-        if (exclude.has(cc) || cc === keep) continue
-        opts.push({ v: cc, l: `CC ${cc}` })
-      }
-    } else if (active && keep != null && !Number.isNaN(keep) &&
-        !opts.some(o => Number(o.v) === keep)) {
-      opts.push({ v: keep, l: parameterLabel(device, keep) })
-    }
-
-    return opts
+  function randomizeSlotCount (action) {
+    return Math.max(1, randomizeCcList(action).length)
   }
 
   function normalizeRandomizeAction (device, action) {
@@ -764,8 +728,7 @@ window.DeviceControls = (function () {
     isRandomizeAction,
     randomizeMaxSlots,
     randomizeCcList,
-    randomizeDisplaySlotCount,
-    randomizeSlotOptions,
+    randomizeSlotCount,
     normalizeRandomizeAction,
     normalizeRandomizeActionsInModel,
     seedRandomizeAction,

@@ -1620,22 +1620,27 @@ window.SceneEditorUi = (function () {
   function renderRandomizeFields (ctrl, path, a) {
     const device = ctrl.deviceDefinition
     const ccList = DeviceControls.randomizeCcList(a)
-    const slotCount = DeviceControls.randomizeDisplaySlotCount(a, device)
+    const slotCount = DeviceControls.randomizeSlotCount(a)
     const maxSlots = DeviceControls.randomizeMaxSlots(device)
+    const ccBySlot = ccList.map(cc =>
+      DeviceControls.resolveParameterCc(device, cc)
+    )
+    const usedCcs = new Set(ccBySlot.map(Number))
     let rows = ''
     for (let i = 0; i < slotCount; i++) {
       const ccPath = `${path}.cc.${i}`
-      const active = i < ccList.length
-      const cur = active ? DeviceControls.resolveParameterCc(device, ccList[i]) : '__inactive__'
+      const cc = ccBySlot[i]
+      const exclude = new Set(usedCcs)
+      if (Number(cc) > 0) exclude.delete(Number(cc))
       const body = fieldRow(
         'Parameter',
-        selectField(
-          ccPath,
-          active ? cur : '__inactive__',
-          DeviceControls.randomizeSlotOptions(device, ccList, i)
-        )
+        paramField(ctrl, ccPath, cc, { exclude, keep: cc })
       )
-      rows += slotBlock(`Slot ${i + 1}`, body, i > 0 ? i : -1, '')
+      const add =
+        slotCount < maxSlots && i === slotCount - 1
+          ? slotAddButton(path, 'randomize', 'Add parameter', maxSlots)
+          : ''
+      rows += slotBlock(`Slot ${i + 1}`, body, i > 0 ? i : -1, add)
     }
     return slotGroup({ path, kind: 'randomize', min: 1, max: maxSlots, def: 0, rows })
   }
@@ -2061,6 +2066,10 @@ window.SceneEditorUi = (function () {
       html += '</div>'
     }
     return html
+  }
+
+  function lfoSectionTitle (n) {
+    return `LFO ${n}`
   }
 
   function section (title, body, open = false) {
@@ -2917,7 +2926,7 @@ window.SceneEditorUi = (function () {
       'Mode',
       selectField(modePath, userMode, userModes)
     )
-    if (userMode === 'disabled') return section(`LFO${n}`, html)
+    if (userMode === 'disabled') return section(lfoSectionTitle(n), html)
 
     m[mapKey].enabled = m[cfgKey].enabled
     const claimKey = n === 1 ? 'lfo1' : 'lfo2'
@@ -2996,7 +3005,7 @@ window.SceneEditorUi = (function () {
         hidePolarity: true
       })
     }
-    return section(`LFO${n}`, html)
+    return section(lfoSectionTitle(n), html)
   }
 
   function renderRtg (ctrl) {
@@ -3355,8 +3364,8 @@ window.SceneEditorUi = (function () {
     ) {
       open.add('Buttons')
     }
-    if (m.lfo1_config?.enabled) open.add('LFO1')
-    if (m.lfo2_config?.enabled) open.add('LFO2')
+    if (m.lfo1_config?.enabled) open.add(lfoSectionTitle(1))
+    if (m.lfo2_config?.enabled) open.add(lfoSectionTitle(2))
     if (hasAction(m.bump)) open.add('Bump')
     if ((m.on_load || []).some(hasAction)) open.add('On-Load')
     if ((m.on_play || []).some(hasAction)) open.add('On-Play')
@@ -3375,7 +3384,7 @@ window.SceneEditorUi = (function () {
   function allSectionTitles (ctrl) {
     const titles = [
       'Pads', 'Touchwheel', 'Expression', 'Control Voltage', 'Proximity',
-      'Ambient Light', 'Buttons', 'LFO1', 'LFO2', 'Bump', 'On-Load',
+      'Ambient Light', 'Buttons', lfoSectionTitle(1), lfoSectionTitle(2), 'Bump', 'On-Load',
       'S+H', 'Tilt X', 'Tilt Y', 'RTG', 'Note Track'
     ]
     if (ctrl.editModel?.use_transport) titles.push('On-Play')
