@@ -2285,8 +2285,8 @@ window.SceneEditorUi = (function () {
     html += fieldRow(
       'On stop',
       selectField(`${cfgKey}.restore_on_stop`, cfg.restore_on_stop ? 1 : 0, [
-        { v: 0, l: 'Nothing' },
-        { v: 1, l: 'Restore' }
+        { v: 0, l: 'Halt' },
+        { v: 1, l: 'Restore Original' }
       ])
     )
     return html
