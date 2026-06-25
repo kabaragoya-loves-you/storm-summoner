@@ -13,6 +13,7 @@
 #include "scene_inspect.h"
 #include "transport.h"
 #include "tempo.h"
+#include "sync.h"
 #include "config.h"
 #include "action.h"
 #include "ui.h"
@@ -171,6 +172,7 @@ static StaticSemaphore_t s_cdc_tx_mutex_buf;
 static TaskHandle_t s_cdc_task_handle = NULL;
 static bool s_cdc_tx_armed = false;
 static uint8_t s_cdc_response_depth = 0;
+static bool s_cdc_tx_poisoned = false;
 
 #define CDC_NOTIFY_QUEUE_LEN 8
 #define CDC_NOTIFY_LINE_MAX 96
@@ -214,7 +216,12 @@ static bool cdc_tx_write_locked(const uint8_t *data, size_t len, int max_retries
     if (written == 0) {
       tud_cdc_n_write_flush(0);
       retry_count++;
-      if (retry_count >= max_retries) return false;
+      if (retry_count >= max_retries) {
+        if (sent > 0) {
+          s_cdc_tx_poisoned = true;
+        }
+        return false;
+      }
       if (!s_cdc_task_handle ||
           xTaskGetCurrentTaskHandle() != s_cdc_task_handle) {
         return false;
@@ -796,7 +803,10 @@ static void send_response(const char *msg) {
   s_cdc_response_depth++;
   if (!cdc_send_line_locked(msg, 100, 5)) {
     ESP_LOGW(TAG, "send_response: failed to send '%s'", msg);
+    if (s_cdc_tx_poisoned)
+      (void)cdc_send_line_locked("ERROR: CDC TX truncated", 50, 2);
   } else {
+    s_cdc_tx_poisoned = false;
     cdc_tx_flush_locked();
   }
   s_cdc_response_depth--;
@@ -826,7 +836,9 @@ static void cdc_flush_pending_notifies(void) {
     if (!cdc_may_push_notify()) break;
     if (!s_cdc_tx_mutex || xSemaphoreTake(s_cdc_tx_mutex, 0) != pdTRUE) break;
     bool ok = cdc_send_line_locked(s_notify_queue[s_notify_tail], 1, 0);
-    if (ok) cdc_tx_flush_locked();
+    if (ok) {
+      cdc_tx_flush_locked();
+    }
     xSemaphoreGive(s_cdc_tx_mutex);
     if (!ok) break;
     s_notify_tail = (uint8_t)((s_notify_tail + 1) % CDC_NOTIFY_QUEUE_LEN);
@@ -856,10 +868,13 @@ static void send_json_response(const char *msg) {
   }
 
   if (ok) {
+    s_cdc_tx_poisoned = false;
     cdc_tx_flush_locked();
   } else {
     ESP_LOGW(TAG, "send_json_response: max retries, sent partial (avail=%u)",
       (unsigned)tud_cdc_n_write_available(0));
+    if (s_cdc_tx_poisoned)
+      (void)cdc_send_line_locked("ERROR: CDC TX truncated", 50, 2);
   }
 
   s_cdc_response_depth--;
@@ -920,6 +935,7 @@ send_binary_done:
 static bool cdc_may_push_notify(void) {
   if (!tud_cdc_n_connected(0)) return false;
   if (s_cdc_response_depth > 0) return false;
+  if (s_cdc_tx_poisoned) return false;
 
   switch (s_state) {
     case CDC_STATE_IDLE:
@@ -1205,8 +1221,11 @@ static void cdc_add_clock_json(cJSON *root) {
   if (!clock) return;
 
   cJSON_AddNumberToObject(clock, "bpm", (double)snap.bpm_x10 / 10.0);
-  cJSON_AddStringToObject(clock, "transport",
-    snap.playing ? "playing" : "stopped");
+  transport_state_t transport = transport_get_state();
+  const char *transport_str = "stopped";
+  if (transport == TRANSPORT_PLAYING) transport_str = "playing";
+  else if (transport == TRANSPORT_LOCATING) transport_str = "locating";
+  cJSON_AddStringToObject(clock, "transport", transport_str);
   cJSON_AddNumberToObject(clock, "bar", (unsigned)snap.bar);
   cJSON_AddNumberToObject(clock, "beat", (unsigned)snap.beat);
   cJSON_AddBoolToObject(clock, "use_transport", snap.use_transport != 0);
@@ -1223,6 +1242,53 @@ static void cdc_add_clock_json(cJSON *root) {
   cJSON_AddBoolToObject(clock, "allow_fractional_bpm", tempo_get_allow_fractional_bpm());
 
   cJSON_AddItemToObject(root, "clock", clock);
+}
+
+static void cdc_add_sync_json(cJSON *root) {
+  if (!root) return;
+
+  sync_state_t snap;
+  sync_get_snapshot(&snap);
+
+  cJSON *sync = cJSON_CreateObject();
+  if (!sync) return;
+
+  cJSON_AddNumberToObject(sync, "revision", (double)snap.revision);
+
+  const char *transport_str = "stopped";
+  if (snap.transport.state == TRANSPORT_PLAYING) transport_str = "playing";
+  else if (snap.transport.state == TRANSPORT_LOCATING) transport_str = "locating";
+  cJSON_AddStringToObject(sync, "transport", transport_str);
+  cJSON_AddNumberToObject(sync, "bar", (unsigned)snap.musical.bar);
+  cJSON_AddNumberToObject(sync, "beat", (unsigned)snap.musical.beat_in_bar);
+  cJSON_AddNumberToObject(sync, "ppq_tick", (unsigned)snap.musical.ppq_tick);
+  cJSON_AddNumberToObject(sync, "spp_sixteenths", (unsigned)snap.song.spp_sixteenths);
+  cJSON_AddNumberToObject(sync, "quarter_notes", (unsigned)snap.song.quarter_notes);
+  cJSON_AddStringToObject(sync, "active_source",
+    sync_clock_source_str(snap.quality.active_musical_source));
+
+  cJSON *quality = cJSON_CreateObject();
+  if (quality) {
+    cJSON_AddStringToObject(quality, "internal",
+      sync_clock_quality_str(snap.quality.internal));
+    cJSON_AddStringToObject(quality, "midi_clock",
+      sync_clock_quality_str(snap.quality.midi_clock));
+    cJSON_AddStringToObject(quality, "analog_sync",
+      sync_clock_quality_str(snap.quality.analog_sync));
+    cJSON_AddItemToObject(sync, "quality", quality);
+  }
+
+  cJSON *latency = cJSON_CreateObject();
+  if (latency) {
+    cJSON_AddNumberToObject(latency, "output_offset_ms",
+      (double)snap.latency.output_offset_ms);
+    cJSON_AddNumberToObject(latency, "input_offset_ms",
+      (double)snap.latency.input_offset_ms);
+    cJSON_AddItemToObject(sync, "latency", latency);
+  }
+
+  cJSON_AddBoolToObject(sync, "timecode_valid", snap.timecode.valid);
+  cJSON_AddItemToObject(root, "sync", sync);
 }
 
 static void cdc_send_clock_evt_snapshot(const cdc_clock_snapshot_t *snap) {
@@ -1443,6 +1509,7 @@ static void cdc_send_info_json(void) {
 
   cdc_add_connections_json(root);
   cdc_add_clock_json(root);
+  cdc_add_sync_json(root);
   cdc_read_clock_snapshot(&s_last_clock_notify);
   s_last_conn_usb = cdc_connection_usb() ? 1u : 0u;
   s_last_conn_cv = cdc_connection_cv() ? 1u : 0u;
@@ -1458,6 +1525,52 @@ static void cdc_send_info_json(void) {
   } else {
     send_response("ERROR: Out of memory");
   }
+}
+
+static void cdc_send_sync_json(void) {
+  cJSON *root = cJSON_CreateObject();
+  if (!root) {
+    send_response("ERROR: Out of memory");
+    return;
+  }
+
+  cdc_add_sync_json(root);
+
+  char *json = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+
+  if (json) {
+    send_json_response(json);
+    cJSON_free(json);
+  } else {
+    send_response("ERROR: Out of memory");
+  }
+}
+
+static void cdc_cmd_sync_spp(const char *cmd) {
+  const char *arg = cmd + 8;
+  while (*arg == ' ') arg++;
+  if (!*arg) {
+    send_response("ERROR: Usage SYNC SPP <sixteenths>");
+    return;
+  }
+
+  char *end = NULL;
+  unsigned long spp = strtoul(arg, &end, 10);
+  while (end && *end == ' ') end++;
+  if (end && *end != '\0') {
+    send_response("ERROR: Usage SYNC SPP <sixteenths>");
+    return;
+  }
+  if (spp > 65535) {
+    send_response("ERROR: SPP out of range (0-65535)");
+    return;
+  }
+
+  ESP_LOGI(TAG, "CDC inject SPP %lu (transport=%d)",
+    spp, (int)transport_get_state());
+  transport_set_song_position((uint16_t)spp);
+  send_response("OK");
 }
 
 // INFO is read-only and safe in any CDC mode (web client polls it often).
@@ -1964,6 +2077,13 @@ static void process_command(const char *cmd) {
 
   } else if (strcmp(cmd, "INFO") == 0) {
     cdc_send_info_json();
+
+  } else if (strcmp(cmd, "SYNC SNAP") == 0 || strcmp(cmd, "sync snap") == 0) {
+    cdc_send_sync_json();
+
+  } else if (strncmp(cmd, "SYNC SPP ", 9) == 0 ||
+             strncmp(cmd, "sync spp ", 9) == 0) {
+    cdc_cmd_sync_spp(cmd);
 
   } else if (strcmp(cmd, "MEM") == 0) {
     cdc_send_mem_json();
@@ -3847,6 +3967,7 @@ static void process_scenes_command(const char *cmd) {
   if (strcmp(cmd, "EXIT") == 0 || strcmp(cmd, "exit") == 0) {
     CDC_LOGI("Exiting scenes mode");
     s_state = CDC_STATE_IDLE;
+    s_cdc_tx_poisoned = false;
     send_response("SCENES_STOPPED");
     return;
   }
@@ -3898,7 +4019,7 @@ static void process_scenes_command(const char *cmd) {
     }
 
     vTaskDelay(pdMS_TO_TICKS(10));
-    send_response(json);
+    send_json_response(json);
     cJSON_free(json);
     return;
   }

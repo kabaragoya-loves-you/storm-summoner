@@ -63,12 +63,12 @@ window.SceneEditorUi = (function () {
     { v: 'sample_hold', l: 'S+H' }
   ]
 
-  const CV_GATE_CONTROLLED_CALLOUT =
-    `<wa-callout variant="neutral">Controlled by CV/Gate.</wa-callout>`
+  const CV_GATE_CONTROLLED_CALLOUT = `<wa-callout variant="neutral">Controlled by CV/Gate.</wa-callout>`
 
   function cvGateVelocityModeValue (m) {
     if (m.cv_input_mode !== 'note') return m.cv_velocity_mode || 'fixed'
-    if (m.cv_velocity_mode && m.cv_velocity_mode !== 'fixed') return m.cv_velocity_mode
+    if (m.cv_velocity_mode && m.cv_velocity_mode !== 'fixed')
+      return m.cv_velocity_mode
     // Legacy: touchwheel_mode velocity supplied CV/Gate velocity before cv_velocity_mode.
     if (m.touchwheel_mode === 'velocity') return 'touchwheel'
     return m.cv_velocity_mode || 'fixed'
@@ -82,87 +82,227 @@ window.SceneEditorUi = (function () {
   // Continuous routings map to expression_mode 'expression' + a specific output_type.
   const EXPRESSION_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
-    { v: 'control_change', l: 'Control Change', expression_mode: 'expression', output_type: 'cc' },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      expression_mode: 'expression',
+      output_type: 'cc'
+    },
     { v: 'sustain', l: 'Sustain', expression_mode: 'sustain' },
     { v: 'sostenuto', l: 'Sostenuto', expression_mode: 'sostenuto' },
     { v: 'switch', l: 'Switch', expression_mode: 'switch' },
-    { v: 'lfo_rate', l: 'LFO Rate', expression_mode: 'expression', output_type: 'lfo_rate' },
-    { v: 'lfo_depth', l: 'LFO Depth', expression_mode: 'expression', output_type: 'lfo_depth' },
-    { v: 'notes', l: 'Notes', expression_mode: 'expression', output_type: 'note' },
-    { v: 'tempo_nudge', l: 'Tempo Nudge', expression_mode: 'expression', output_type: 'tempo_nudge' }
+    {
+      v: 'lfo_rate',
+      l: 'LFO Rate',
+      expression_mode: 'expression',
+      output_type: 'lfo_rate'
+    },
+    {
+      v: 'lfo_depth',
+      l: 'LFO Depth',
+      expression_mode: 'expression',
+      output_type: 'lfo_depth'
+    },
+    {
+      v: 'notes',
+      l: 'Notes',
+      expression_mode: 'expression',
+      output_type: 'note'
+    },
+    {
+      v: 'tempo_nudge',
+      l: 'Tempo Nudge',
+      expression_mode: 'expression',
+      output_type: 'tempo_nudge'
+    }
   ]
 
   const CV_USER_MODES = [
     { v: 'disabled', l: 'Disabled', cv_input_mode: 'none' },
-    { v: 'control_change', l: 'Control Change', cv_input_mode: 'cv', output_type: 'cc' },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      cv_input_mode: 'cv',
+      output_type: 'cc'
+    },
     { v: 'cv_gate', l: 'CV/Gate', cv_input_mode: 'note' },
     { v: 'audio', l: 'Audio', cv_input_mode: 'audio' },
     { v: 'trigger', l: 'Trigger', cv_input_mode: 'trigger' },
     { v: 'notes', l: 'Notes', cv_input_mode: 'cv', output_type: 'note' },
-    { v: 'lfo_rate', l: 'LFO Rate', cv_input_mode: 'cv', output_type: 'lfo_rate' },
-    { v: 'lfo_depth', l: 'LFO Depth', cv_input_mode: 'cv', output_type: 'lfo_depth' },
-    { v: 'tempo_nudge', l: 'Tempo Nudge', cv_input_mode: 'cv', output_type: 'tempo_nudge' }
+    {
+      v: 'lfo_rate',
+      l: 'LFO Rate',
+      cv_input_mode: 'cv',
+      output_type: 'lfo_rate'
+    },
+    {
+      v: 'lfo_depth',
+      l: 'LFO Depth',
+      cv_input_mode: 'cv',
+      output_type: 'lfo_depth'
+    },
+    {
+      v: 'tempo_nudge',
+      l: 'Tempo Nudge',
+      cv_input_mode: 'cv',
+      output_type: 'tempo_nudge'
+    }
   ]
 
   // Flattened proximity mode list (matches device g_proximity_mode_mappings order).
   const PROXIMITY_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
-    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
-    { v: 'notes_theremin', l: 'Notes (Theremin)', output_type: 'note', enabled: true },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      output_type: 'cc',
+      enabled: true
+    },
+    {
+      v: 'notes_theremin',
+      l: 'Notes (Theremin)',
+      output_type: 'note',
+      enabled: true
+    },
     { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
     { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
-    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+    {
+      v: 'tempo_nudge',
+      l: 'Tempo Nudge',
+      output_type: 'tempo_nudge',
+      enabled: true
+    }
   ]
 
   // Flattened ALS mode list (matches device g_als_mode_mappings order).
   const ALS_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
-    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      output_type: 'cc',
+      enabled: true
+    },
     { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
     { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
     { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
-    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+    {
+      v: 'tempo_nudge',
+      l: 'Tempo Nudge',
+      output_type: 'tempo_nudge',
+      enabled: true
+    }
   ]
 
   const LFO1_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
-    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      output_type: 'cc',
+      enabled: true
+    },
     { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
-    { v: 'lfo2_rate', l: 'LFO 2 Rate', output_type: 'lfo2_rate', enabled: true },
-    { v: 'lfo2_depth', l: 'LFO 2 Depth', output_type: 'lfo2_depth', enabled: true },
+    {
+      v: 'lfo2_rate',
+      l: 'LFO 2 Rate',
+      output_type: 'lfo2_rate',
+      enabled: true
+    },
+    {
+      v: 'lfo2_depth',
+      l: 'LFO 2 Depth',
+      output_type: 'lfo2_depth',
+      enabled: true
+    },
     { v: 'rtg_rate', l: 'RTG Rate', output_type: 'rtg_rate', enabled: true },
     { v: 'sh_rate', l: 'S+H Rate', output_type: 'sh_rate', enabled: true },
-    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true }
+    {
+      v: 'pitch_bend',
+      l: 'Pitch Bend',
+      output_type: 'pitch_bend',
+      enabled: true
+    }
   ]
 
   const LFO2_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
-    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      output_type: 'cc',
+      enabled: true
+    },
     { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
-    { v: 'lfo1_rate', l: 'LFO 1 Rate', output_type: 'lfo1_rate', enabled: true },
-    { v: 'lfo1_depth', l: 'LFO 1 Depth', output_type: 'lfo1_depth', enabled: true },
+    {
+      v: 'lfo1_rate',
+      l: 'LFO 1 Rate',
+      output_type: 'lfo1_rate',
+      enabled: true
+    },
+    {
+      v: 'lfo1_depth',
+      l: 'LFO 1 Depth',
+      output_type: 'lfo1_depth',
+      enabled: true
+    },
     { v: 'rtg_rate', l: 'RTG Rate', output_type: 'rtg_rate', enabled: true },
     { v: 'sh_rate', l: 'S+H Rate', output_type: 'sh_rate', enabled: true },
-    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true }
+    {
+      v: 'pitch_bend',
+      l: 'Pitch Bend',
+      output_type: 'pitch_bend',
+      enabled: true
+    }
   ]
 
   const NOTE_TRACK_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
-    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      output_type: 'cc',
+      enabled: true
+    },
     { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
     { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
-    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true },
-    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+    {
+      v: 'pitch_bend',
+      l: 'Pitch Bend',
+      output_type: 'pitch_bend',
+      enabled: true
+    },
+    {
+      v: 'tempo_nudge',
+      l: 'Tempo Nudge',
+      output_type: 'tempo_nudge',
+      enabled: true
+    }
   ]
 
   const TILT_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
-    { v: 'control_change', l: 'Control Change', output_type: 'cc', enabled: true },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      output_type: 'cc',
+      enabled: true
+    },
     { v: 'notes', l: 'Notes', output_type: 'note', enabled: true },
     { v: 'lfo_rate', l: 'LFO Rate', output_type: 'lfo_rate', enabled: true },
     { v: 'lfo_depth', l: 'LFO Depth', output_type: 'lfo_depth', enabled: true },
-    { v: 'pitch_bend', l: 'Pitch Bend', output_type: 'pitch_bend', enabled: true },
-    { v: 'tempo_nudge', l: 'Tempo Nudge', output_type: 'tempo_nudge', enabled: true }
+    {
+      v: 'pitch_bend',
+      l: 'Pitch Bend',
+      output_type: 'pitch_bend',
+      enabled: true
+    },
+    {
+      v: 'tempo_nudge',
+      l: 'Tempo Nudge',
+      output_type: 'tempo_nudge',
+      enabled: true
+    }
   ]
 
   const SAMPLE_HOLD_USER_MODES = [
@@ -224,7 +364,9 @@ window.SceneEditorUi = (function () {
     l: `${v} ms`
   }))
 
-  const AUDIO_RELEASE_OPTIONS = [50, 100, 200, 300, 500, 750, 1000, 1500, 2000].map(v => ({
+  const AUDIO_RELEASE_OPTIONS = [
+    50, 100, 200, 300, 500, 750, 1000, 1500, 2000
+  ].map(v => ({
     v,
     l: `${v} ms`
   }))
@@ -242,18 +384,86 @@ window.SceneEditorUi = (function () {
   const TOUCHWHEEL_USER_MODES = [
     { v: 'disabled', l: 'Disabled' },
     { v: 'pads', l: 'Pads', touchwheel_mode: 'pads' },
-    { v: 'control_change', l: 'Control Change', touchwheel_mode: 'continuous', output_type: 'cc', touchwheel_style: 'endless', supports_style: true },
-    { v: 'program_change', l: 'Program Change', touchwheel_mode: 'program_change' },
-    { v: 'tempo', l: 'Tempo', touchwheel_mode: 'set_tempo', touchwheel_style: 'endless', supports_style: true },
+    {
+      v: 'control_change',
+      l: 'Control Change',
+      touchwheel_mode: 'continuous',
+      output_type: 'cc',
+      touchwheel_style: 'endless',
+      supports_style: true
+    },
+    {
+      v: 'program_change',
+      l: 'Program Change',
+      touchwheel_mode: 'program_change'
+    },
+    {
+      v: 'tempo',
+      l: 'Tempo',
+      touchwheel_mode: 'set_tempo',
+      touchwheel_style: 'endless',
+      supports_style: true
+    },
     { v: 'pitch_bend', l: 'Pitch Bend', touchwheel_mode: 'pitch_bend' },
-    { v: 'aftertouch', l: 'After Touch', touchwheel_mode: 'aftertouch', touchwheel_style: 'odometer', supports_style: true },
-    { v: 'notes', l: 'Notes', touchwheel_mode: 'continuous', output_type: 'note', touchwheel_style: 'odometer', supports_style: true },
-    { v: 'double_cc', l: 'Double CC', touchwheel_mode: 'double_cc', touchwheel_style: 'endless', supports_style: true },
-    { v: 'velocity', l: 'Velocity', touchwheel_mode: 'velocity', supports_style: true },
-    { v: 'lfo_rate', l: 'LFO Rate', touchwheel_mode: 'lfo_rate', touchwheel_style: 'odometer', supports_style: true, lfo_target: true },
-    { v: 'lfo_depth', l: 'LFO Depth', touchwheel_mode: 'lfo_depth', touchwheel_style: 'odometer', supports_style: true, lfo_target: true },
-    { v: 'rtg_rate', l: 'RTG Rate', touchwheel_mode: 'rtg_rate', touchwheel_style: 'odometer', supports_style: true },
-    { v: 'tempo_nudge', l: 'Tempo Nudge', touchwheel_mode: 'continuous', output_type: 'tempo_nudge', touchwheel_style: 'bipolar', supports_style: true }
+    {
+      v: 'aftertouch',
+      l: 'After Touch',
+      touchwheel_mode: 'aftertouch',
+      touchwheel_style: 'odometer',
+      supports_style: true
+    },
+    {
+      v: 'notes',
+      l: 'Notes',
+      touchwheel_mode: 'continuous',
+      output_type: 'note',
+      touchwheel_style: 'odometer',
+      supports_style: true
+    },
+    {
+      v: 'double_cc',
+      l: 'Double CC',
+      touchwheel_mode: 'double_cc',
+      touchwheel_style: 'endless',
+      supports_style: true
+    },
+    {
+      v: 'velocity',
+      l: 'Velocity',
+      touchwheel_mode: 'velocity',
+      supports_style: true
+    },
+    {
+      v: 'lfo_rate',
+      l: 'LFO Rate',
+      touchwheel_mode: 'lfo_rate',
+      touchwheel_style: 'odometer',
+      supports_style: true,
+      lfo_target: true
+    },
+    {
+      v: 'lfo_depth',
+      l: 'LFO Depth',
+      touchwheel_mode: 'lfo_depth',
+      touchwheel_style: 'odometer',
+      supports_style: true,
+      lfo_target: true
+    },
+    {
+      v: 'rtg_rate',
+      l: 'RTG Rate',
+      touchwheel_mode: 'rtg_rate',
+      touchwheel_style: 'odometer',
+      supports_style: true
+    },
+    {
+      v: 'tempo_nudge',
+      l: 'Tempo Nudge',
+      touchwheel_mode: 'continuous',
+      output_type: 'tempo_nudge',
+      touchwheel_style: 'bipolar',
+      supports_style: true
+    }
   ]
 
   const TOUCHWHEEL_STYLE_OPTIONS = [
@@ -417,9 +627,11 @@ window.SceneEditorUi = (function () {
     const device = ctrl.deviceDefinition
     const slotCap = opts.ccSlotMax ?? 4
     const ccList = mapping.cc_numbers.slice(0, slotCap)
-    const maxSlots = opts.ccSlotMax ?? (DeviceControls.hasParameters(device)
-      ? Math.min(4, DeviceControls.parameterCount(device))
-      : 4)
+    const maxSlots =
+      opts.ccSlotMax ??
+      (DeviceControls.hasParameters(device)
+        ? Math.min(4, DeviceControls.parameterCount(device))
+        : 4)
     const ccBySlot = ccList.map(cc =>
       DeviceControls.resolveParameterCc(device, cc)
     )
@@ -431,7 +643,10 @@ window.SceneEditorUi = (function () {
       if (Number(cc) > 0) exclude.delete(Number(cc))
       let body = fieldRow(
         'Parameter',
-        paramField(ctrl, `${mappingPath}.cc_numbers.${i}`, cc, { exclude, keep: cc })
+        paramField(ctrl, `${mappingPath}.cc_numbers.${i}`, cc, {
+          exclude,
+          keep: cc
+        })
       )
       const add =
         ccList.length < maxSlots && i === ccList.length - 1
@@ -470,11 +685,19 @@ window.SceneEditorUi = (function () {
       if (Number(cc) > 0) exclude.delete(Number(cc))
       let body = fieldRow(
         'Parameter',
-        paramField(ctrl, `touchwheel.cc_numbers.${i}`, cc, { exclude, keep: cc })
+        paramField(ctrl, `touchwheel.cc_numbers.${i}`, cc, {
+          exclude,
+          keep: cc
+        })
       )
       const add =
         ccList.length < maxSlots && i === ccList.length - 1
-          ? slotAddButton('touchwheel', 'touchwheel-cc', 'Add parameter', maxSlots)
+          ? slotAddButton(
+              'touchwheel',
+              'touchwheel-cc',
+              'Add parameter',
+              maxSlots
+            )
           : ''
       rows += slotBlock(`Slot ${i + 1}`, body, i > 0 ? i : -1, add)
     }
@@ -529,7 +752,7 @@ window.SceneEditorUi = (function () {
       const polarityOpts = opts.polarityOptions || POLARITY
       const polarityVal = opts.polaritySelectValue
         ? opts.polaritySelectValue(m.polarity ?? 0)
-        : (m.polarity ?? 0)
+        : m.polarity ?? 0
       if (!opts.hidePolarity) {
         html += fieldRow(
           'Polarity',
@@ -546,8 +769,11 @@ window.SceneEditorUi = (function () {
       if (opts.noteSelectors) {
         html += fieldRow(
           'Base note',
-          selectField(`${mappingPath}.base_note`, m.base_note ?? 60,
-            ActionCatalog.noteNameOptions(m.base_note ?? 60))
+          selectField(
+            `${mappingPath}.base_note`,
+            m.base_note ?? 60,
+            ActionCatalog.noteNameOptions(m.base_note ?? 60)
+          )
         )
         html += fieldRow(
           'Range',
@@ -577,7 +803,12 @@ window.SceneEditorUi = (function () {
         if (vm === 'fixed') {
           html += fieldRow(
             'Velocity',
-            numberField(`${mappingPath}.velocity`, m.velocity ?? 100, velMin, 127)
+            numberField(
+              `${mappingPath}.velocity`,
+              m.velocity ?? 100,
+              velMin,
+              127
+            )
           )
         }
       } else {
@@ -589,7 +820,7 @@ window.SceneEditorUi = (function () {
       const polarityOpts = opts.polarityOptions || POLARITY
       const polarityVal = opts.polaritySelectValue
         ? opts.polaritySelectValue(m.polarity ?? 0)
-        : (m.polarity ?? 0)
+        : m.polarity ?? 0
       if (!opts.hidePolarity) {
         html += fieldRow(
           'Polarity',
@@ -617,10 +848,10 @@ window.SceneEditorUi = (function () {
         'Amount',
         opts.tempoNudgeSelect
           ? selectField(
-            opts.tempoNudgePath,
-            nudgePct,
-            ActionCatalog.tempoNudgeAmountOptions(nudgePct)
-          )
+              opts.tempoNudgePath,
+              nudgePct,
+              ActionCatalog.tempoNudgeAmountOptions(nudgePct)
+            )
           : numberField(opts.tempoNudgePath, nudgePct, 0, 100)
       )
       if (opts.tempoNudgeDirectionPath) {
@@ -638,7 +869,7 @@ window.SceneEditorUi = (function () {
       const polarityOpts = opts.polarityOptions || POLARITY
       const polarityVal = opts.polaritySelectValue
         ? opts.polaritySelectValue(m.polarity ?? 0)
-        : (m.polarity ?? 0)
+        : m.polarity ?? 0
       if (!opts.hidePolarity) {
         html += fieldRow(
           'Polarity',
@@ -707,7 +938,11 @@ window.SceneEditorUi = (function () {
     const device = ctrl.deviceDefinition
     const resolved = DeviceControls.resolvePresetValue(device, val)
     if (DeviceControls.hasPresetCatalog(device)) {
-      return selectField(path, resolved, DeviceControls.presetOptions(device, resolved))
+      return selectField(
+        path,
+        resolved,
+        DeviceControls.presetOptions(device, resolved)
+      )
     }
     const { min, max } = DeviceControls.presetRange(device)
     return numberField(path, resolved, min, max)
@@ -715,9 +950,16 @@ window.SceneEditorUi = (function () {
 
   function sceneSetField (ctrl, path, a) {
     const exclude = SceneActions.currentEditIndex(ctrl)
-    const stored = SceneActions.resolveStoredIndex(ctrl.sceneList, a.number, exclude)
-    return selectField(path, stored,
-      SceneActions.setOptions(ctrl.sceneList, stored, exclude))
+    const stored = SceneActions.resolveStoredIndex(
+      ctrl.sceneList,
+      a.number,
+      exclude
+    )
+    return selectField(
+      path,
+      stored,
+      SceneActions.setOptions(ctrl.sceneList, stored, exclude)
+    )
   }
 
   function presetReleaseField (ctrl, path, a) {
@@ -738,17 +980,23 @@ window.SceneEditorUi = (function () {
   }
 
   function touchwheelReleaseField (path, a) {
-    const opts = [{ v: '__original__', l: 'Original' },
-      ...ActionCatalog.touchwheelModeOptions(a.mode2)]
-    const cur = a.release_to_original ? '__original__' : (a.mode2 ?? 0)
+    const opts = [
+      { v: '__original__', l: 'Original' },
+      ...ActionCatalog.touchwheelModeOptions(a.mode2)
+    ]
+    const cur = a.release_to_original ? '__original__' : a.mode2 ?? 0
     return selectField(`${path}.mode2`, cur, opts)
   }
 
   function paramReleaseField (ctrl, path, a) {
     const device = ctrl.deviceDefinition
     const pressCc = DeviceControls.resolveParameterCc(device, a.param)
-    const opts = [{ v: '__original__', l: 'Original' },
-      ...DeviceControls.parameterOptions(device, { exclude: new Set([pressCc]) })]
+    const opts = [
+      { v: '__original__', l: 'Original' },
+      ...DeviceControls.parameterOptions(device, {
+        exclude: new Set([pressCc])
+      })
+    ]
     const cur = a.release_to_original
       ? '__original__'
       : DeviceControls.resolveParameterCc(device, a.param2)
@@ -848,8 +1096,8 @@ window.SceneEditorUi = (function () {
   ]
 
   const BOOMERANG_TIME_PRESETS_MS = [
-    25, 50, 100, 150, 200, 300, 500, 750, 1000,
-    1500, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000, 45000, 60000
+    25, 50, 100, 150, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500,
+    10000, 15000, 20000, 30000, 45000, 60000
   ]
 
   const BOOMERANG_CURVES = [
@@ -905,7 +1153,10 @@ window.SceneEditorUi = (function () {
 
   function boomerangTimeOptions (stored) {
     const cur = Number(stored ?? 1000)
-    const opts = BOOMERANG_TIME_PRESETS_MS.map(v => ({ v, l: boomerangTimeLabel(v) }))
+    const opts = BOOMERANG_TIME_PRESETS_MS.map(v => ({
+      v,
+      l: boomerangTimeLabel(v)
+    }))
     if (!opts.some(o => o.v === cur)) {
       opts.unshift({ v: cur, l: boomerangTimeLabel(cur) })
     }
@@ -919,7 +1170,9 @@ window.SceneEditorUi = (function () {
   }
 
   function boomerangOriginSelection (a) {
-    return (a.start_mode || 'current') === 'current' ? 'current' : (a.start_value ?? 0)
+    return (a.start_mode || 'current') === 'current'
+      ? 'current'
+      : a.start_value ?? 0
   }
 
   function boomerangTargetOptions () {
@@ -980,14 +1233,8 @@ window.SceneEditorUi = (function () {
     const ccPath = `${path}.${ccKey}`
     const valPath = `${path}.${valKey}`
     const ccNum = DeviceControls.resolveParameterCc(ctrl.deviceDefinition, cc)
-    let html = fieldRow(
-      'CC',
-      paramField(ctrl, ccPath, ccNum)
-    )
-    html += fieldRow(
-      'Value',
-      valueField(ctrl, valPath, ccNum, val)
-    )
+    let html = fieldRow('CC', paramField(ctrl, ccPath, ccNum))
+    html += fieldRow('Value', valueField(ctrl, valPath, ccNum, val))
     return html
   }
 
@@ -1020,11 +1267,7 @@ window.SceneEditorUi = (function () {
   function renderCutFields (ctrl, path, a) {
     return fieldRow(
       'Cut target',
-      selectField(
-        `${path}.cut_mode`,
-        a.cut_mode || 'both',
-        CUT_MODES
-      )
+      selectField(`${path}.cut_mode`, a.cut_mode || 'both', CUT_MODES)
     )
   }
 
@@ -1077,7 +1320,9 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-row scene-cycle-row-head">'
     html += '<div class="scene-cycle-param-col">Module</div>'
     for (let i = 0; i < stepCount; i++) {
-      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span></div>`
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${
+        i + 1
+      }</span></div>`
     }
     html += '</div><div class="scene-cycle-row">'
     html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
@@ -1109,8 +1354,10 @@ window.SceneEditorUi = (function () {
         : DeviceControls.resolveParameterCc(device, a.param2)
       html += fieldRow(
         'Press',
-        paramField(ctrl, `${path}.param`, pressCc,
-          { exclude: relCc == null ? new Set() : new Set([relCc]), keep: pressCc })
+        paramField(ctrl, `${path}.param`, pressCc, {
+          exclude: relCc == null ? new Set() : new Set([relCc]),
+          keep: pressCc
+        })
       )
       html += fieldRow('Release', paramReleaseField(ctrl, path, a))
       return html
@@ -1131,16 +1378,21 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-row scene-cycle-row-head">'
     html += '<div class="scene-cycle-param-col">Parameter</div>'
     for (let i = 0; i < stepCount; i++) {
-      const add = (i === stepCount - 1 && stepCount < 8)
-        ? slotAddButton(path, 'param-cycle-step', 'Add step', 8) : ''
-      const remove = i > 1
-        ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
-            data-controller="slots" data-slots-path-value="${esc(path)}" data-slots-kind-value="param-cycle-step"
+      const add =
+        i === stepCount - 1 && stepCount < 8
+          ? slotAddButton(path, 'param-cycle-step', 'Add step', 8)
+          : ''
+      const remove =
+        i > 1
+          ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
+            data-controller="slots" data-slots-path-value="${esc(
+              path
+            )}" data-slots-kind-value="param-cycle-step"
             data-slots-min-value="2" data-slots-max-value="8" data-slots-default-value="0"
             data-action="click->slots#remove" data-slot-index="${i}"
             title="Remove step ${i + 1}" aria-label="Remove step ${i + 1}"
             ><wa-icon name="xmark"></wa-icon></wa-button>`
-        : ''
+          : ''
       html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${
         i + 1
       }</span>${remove}${add}</div>`
@@ -1215,34 +1467,55 @@ window.SceneEditorUi = (function () {
 
   function renderPunchInFields (ctrl, path, a) {
     const startBody = renderCcValuePair(
-      ctrl, path, 'start_cc', 'start_value', a.start_cc, a.start_value
+      ctrl,
+      path,
+      'start_cc',
+      'start_value',
+      a.start_cc,
+      a.start_value
     )
     const finishBody = renderCcValuePair(
-      ctrl, path, 'finish_cc', 'finish_value', a.finish_cc, a.finish_value
+      ctrl,
+      path,
+      'finish_cc',
+      'finish_value',
+      a.finish_cc,
+      a.finish_value
     )
-    let html = `<div class="scene-slots">${
-      slotBlock('Start', startBody, -1, '')
-    }${slotBlock('Finish', finishBody, -1, '')}</div>`
+    let html = `<div class="scene-slots">${slotBlock(
+      'Start',
+      startBody,
+      -1,
+      ''
+    )}${slotBlock('Finish', finishBody, -1, '')}</div>`
     const beats = ctrl.editModel?.time_signature?.numerator ?? 4
     const dur = a.duration || '1_bar'
     const durOpts = ActionCatalog.punchInDurationOptions(beats)
     if (!durOpts.some(o => o.v === dur)) durOpts.unshift({ v: dur, l: dur })
-    html += fieldRow(
-      'Duration',
-      selectField(`${path}.duration`, dur, durOpts)
-    )
+    html += fieldRow('Duration', selectField(`${path}.duration`, dur, durOpts))
     return html
   }
 
   function renderFlagCeremonyFields (ctrl, path, a) {
     const upBody = renderCcValuePair(
-      ctrl, path, 'flag_up_cc', 'flag_up_value', a.flag_up_cc, a.flag_up_value
+      ctrl,
+      path,
+      'flag_up_cc',
+      'flag_up_value',
+      a.flag_up_cc,
+      a.flag_up_value
     )
     const downBody = renderCcValuePair(
-      ctrl, path, 'flag_down_cc', 'flag_down_value', a.flag_down_cc, a.flag_down_value
+      ctrl,
+      path,
+      'flag_down_cc',
+      'flag_down_value',
+      a.flag_down_cc,
+      a.flag_down_value
     )
-    const rows = slotBlock('Flag Up', upBody, -1, '')
-      + slotBlock('Flag Down', downBody, -1, '')
+    const rows =
+      slotBlock('Flag Up', upBody, -1, '') +
+      slotBlock('Flag Down', downBody, -1, '')
     return `<div class="scene-slots">${rows}</div>`
   }
 
@@ -1286,7 +1559,11 @@ window.SceneEditorUi = (function () {
       if (curve !== 0) {
         html += fieldRow(
           `${phase.charAt(0).toUpperCase()}${phase.slice(1)} slope`,
-          boomerangSelectField(`${path}.${slopeKey}`, a[slopeKey] ?? 1, BOOMERANG_SLOPE)
+          boomerangSelectField(
+            `${path}.${slopeKey}`,
+            a[slopeKey] ?? 1,
+            BOOMERANG_SLOPE
+          )
         )
       }
     }
@@ -1299,7 +1576,9 @@ window.SceneEditorUi = (function () {
     let html = `<div class="scene-boomerang-block" data-controller="boomerang-fields"
       data-boomerang-fields-path-value="${esc(path)}">
       <div class="scene-boomerang-env" data-boomerang-fields-target="envelope"
-        data-controller="boomerang-envelope" data-boomerang-envelope-path-value="${esc(path)}">${envSvg}</div>`
+        data-controller="boomerang-envelope" data-boomerang-envelope-path-value="${esc(
+          path
+        )}">${envSvg}</div>`
     html += fieldRow(
       'Output',
       boomerangSelectField(`${path}.output_type`, ot, OUTPUT_TYPES)
@@ -1317,7 +1596,11 @@ window.SceneEditorUi = (function () {
     if (ot === 'lfo_rate' || ot === 'lfo_depth') {
       html += fieldRow(
         'LFO target',
-        boomerangSelectField(`${path}.lfo_target`, a.lfo_target || 'both', LFO_TARGET)
+        boomerangSelectField(
+          `${path}.lfo_target`,
+          a.lfo_target || 'both',
+          LFO_TARGET
+        )
       )
     }
     if (ot === 'cc') {
@@ -1373,7 +1656,9 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-row scene-cycle-row-head">'
     html += '<div class="scene-cycle-param-col">Mode</div>'
     for (let i = 0; i < stepCount; i++) {
-      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span></div>`
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${
+        i + 1
+      }</span></div>`
     }
     html += '</div>'
 
@@ -1398,17 +1683,24 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-row scene-cycle-row-head">'
     html += '<div class="scene-cycle-param-col">Tempo</div>'
     for (let i = 0; i < stepCount; i++) {
-      const add = (i === stepCount - 1 && stepCount < 8)
-        ? slotAddButton(path, 'tempo-step', 'Add column', 8) : ''
-      const remove = i > 1
-        ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
-            data-controller="slots" data-slots-path-value="${esc(path)}" data-slots-kind-value="tempo-step"
+      const add =
+        i === stepCount - 1 && stepCount < 8
+          ? slotAddButton(path, 'tempo-step', 'Add column', 8)
+          : ''
+      const remove =
+        i > 1
+          ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
+            data-controller="slots" data-slots-path-value="${esc(
+              path
+            )}" data-slots-kind-value="tempo-step"
             data-slots-min-value="2" data-slots-max-value="8" data-slots-default-value="120"
             data-action="click->slots#remove" data-slot-index="${i}"
             title="Remove column ${i + 1}" aria-label="Remove column ${i + 1}"
             ><wa-icon name="xmark"></wa-icon></wa-button>`
-        : ''
-      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span>${remove}${add}</div>`
+          : ''
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${
+        i + 1
+      }</span>${remove}${add}</div>`
     }
     html += '</div>'
 
@@ -1416,7 +1708,11 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
     for (let i = 0; i < stepCount; i++) {
       html += `<div class="scene-cycle-step-col">${numberField(
-        `${path}.tempos.${i}`, steps[i] ?? 120, 20, 300, bpmStep
+        `${path}.tempos.${i}`,
+        steps[i] ?? 120,
+        20,
+        300,
+        bpmStep
       )}</div>`
     }
     html += '</div></div>'
@@ -1432,17 +1728,24 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-row scene-cycle-row-head">'
     html += '<div class="scene-cycle-param-col">Preset</div>'
     for (let i = 0; i < stepCount; i++) {
-      const add = (i === stepCount - 1 && stepCount < 8)
-        ? slotAddButton(path, 'preset-step', 'Add column', 8) : ''
-      const remove = i > 1
-        ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
-            data-controller="slots" data-slots-path-value="${esc(path)}" data-slots-kind-value="preset-step"
+      const add =
+        i === stepCount - 1 && stepCount < 8
+          ? slotAddButton(path, 'preset-step', 'Add column', 8)
+          : ''
+      const remove =
+        i > 1
+          ? `<wa-button class="scene-slot-remove scene-cycle-step-remove" size="small" appearance="text" variant="neutral"
+            data-controller="slots" data-slots-path-value="${esc(
+              path
+            )}" data-slots-kind-value="preset-step"
             data-slots-min-value="2" data-slots-max-value="8" data-slots-default-value="0"
             data-action="click->slots#remove" data-slot-index="${i}"
             title="Remove column ${i + 1}" aria-label="Remove column ${i + 1}"
             ><wa-icon name="xmark"></wa-icon></wa-button>`
-        : ''
-      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${i + 1}</span>${remove}${add}</div>`
+          : ''
+      html += `<div class="scene-cycle-step-col"><span class="scene-cycle-step-label">Step ${
+        i + 1
+      }</span>${remove}${add}</div>`
     }
     html += '</div>'
 
@@ -1450,7 +1753,11 @@ window.SceneEditorUi = (function () {
     html += '<div class="scene-cycle-param-col" aria-hidden="true"></div>'
     for (let i = 0; i < stepCount; i++) {
       const val = DeviceControls.resolvePresetValue(device, steps[i])
-      html += `<div class="scene-cycle-step-col">${presetField(ctrl, `${path}.presets.${i}`, val)}</div>`
+      html += `<div class="scene-cycle-step-col">${presetField(
+        ctrl,
+        `${path}.presets.${i}`,
+        val
+      )}</div>`
     }
     html += '</div></div>'
     return html
@@ -1462,19 +1769,25 @@ window.SceneEditorUi = (function () {
 
     let html = ''
     if (variant === 'set') {
-      html += fieldRow('Preset',
-        presetField(ctrl, `${path}.number`, a.number))
+      html += fieldRow('Preset', presetField(ctrl, `${path}.number`, a.number))
     } else if (variant === 'hold') {
-      html += fieldRow('Press preset',
-        presetField(ctrl, `${path}.press_preset`, a.press_preset))
-      html += fieldRow('Release preset',
-        presetReleaseField(ctrl, `${path}.release_preset`, a))
+      html += fieldRow(
+        'Press preset',
+        presetField(ctrl, `${path}.press_preset`, a.press_preset)
+      )
+      html += fieldRow(
+        'Release preset',
+        presetReleaseField(ctrl, `${path}.release_preset`, a)
+      )
     }
     return html
   }
 
   function slotAddButton (path, kind, label, max = 4) {
-    const min = (kind === 'cycle-step' || kind === 'preset-step' || kind === 'tempo-step') ? 2 : 1
+    const min =
+      kind === 'cycle-step' || kind === 'preset-step' || kind === 'tempo-step'
+        ? 2
+        : 1
     return `<wa-button class="scene-slot-add" size="small" appearance="text" variant="brand"
       data-controller="slots"
       data-slots-path-value="${esc(path)}" data-slots-kind-value="${esc(kind)}"
@@ -1642,7 +1955,14 @@ window.SceneEditorUi = (function () {
           : ''
       rows += slotBlock(`Slot ${i + 1}`, body, i > 0 ? i : -1, add)
     }
-    return slotGroup({ path, kind: 'randomize', min: 1, max: maxSlots, def: 0, rows })
+    return slotGroup({
+      path,
+      kind: 'randomize',
+      min: 1,
+      max: maxSlots,
+      def: 0,
+      rows
+    })
   }
 
   function renderControlFields (ctrl, path, a) {
@@ -1800,12 +2120,19 @@ window.SceneEditorUi = (function () {
   function renderFollowUpBlock (ctrl, path, a) {
     if (!ActionCatalog.supportsFollowUp(a)) return ''
     const mode = a.release_mode || 'always'
-    let html = fieldRow('Follow-up',
-      selectField(`${path}.release_mode`, mode, FOLLOWUP_MODES))
+    let html = fieldRow(
+      'Follow-up',
+      selectField(`${path}.release_mode`, mode, FOLLOWUP_MODES)
+    )
     if (mode !== 'always') {
-      html += fieldRow('Duration',
-        selectField(`${path}.release_threshold_ms`, a.release_threshold_ms ?? 1000,
-          FOLLOWUP_DURATIONS))
+      html += fieldRow(
+        'Duration',
+        selectField(
+          `${path}.release_threshold_ms`,
+          a.release_threshold_ms ?? 1000,
+          FOLLOWUP_DURATIONS
+        )
+      )
     }
     return html
   }
@@ -1816,21 +2143,40 @@ window.SceneEditorUi = (function () {
     let html = fieldRow('Morph', checkboxField(`${path}.morph`, on))
     if (!on) return html
     const steps = a.morph_steps || 'auto'
-    html += fieldRow('Steps',
-      selectField(`${path}.morph_steps`, steps, MORPH_STEPS))
+    html += fieldRow(
+      'Steps',
+      selectField(`${path}.morph_steps`, steps, MORPH_STEPS)
+    )
     if (steps === 'manual') {
-      html += fieldRow('Manual steps',
-        numberField(`${path}.morph_manual_steps`, a.morph_manual_steps ?? 32, 8, 128))
+      html += fieldRow(
+        'Manual steps',
+        numberField(
+          `${path}.morph_manual_steps`,
+          a.morph_manual_steps ?? 32,
+          8,
+          128
+        )
+      )
     }
     const timing = a.morph_timing || 'feel'
-    html += fieldRow('Timing',
-      selectField(`${path}.morph_timing`, timing, MORPH_TIMING))
+    html += fieldRow(
+      'Timing',
+      selectField(`${path}.morph_timing`, timing, MORPH_TIMING)
+    )
     if (timing === 'feel') {
-      html += fieldRow('Feel',
-        selectField(`${path}.morph_feel`, a.morph_feel || 'medium', MORPH_FEEL))
+      html += fieldRow(
+        'Feel',
+        selectField(`${path}.morph_feel`, a.morph_feel || 'medium', MORPH_FEEL)
+      )
     } else {
-      html += fieldRow('Division',
-        selectField(`${path}.morph_division`, a.morph_division || 'bar', MORPH_DIVISION))
+      html += fieldRow(
+        'Division',
+        selectField(
+          `${path}.morph_division`,
+          a.morph_division || 'bar',
+          MORPH_DIVISION
+        )
+      )
     }
     return html
   }
@@ -1953,10 +2299,7 @@ window.SceneEditorUi = (function () {
         html += renderPresetFields(ctrl, path, a)
       }
       if (a.type === 'scene' && a.variant === 'set') {
-        html += fieldRow(
-          'Scene',
-          sceneSetField(ctrl, `${path}.number`, a)
-        )
+        html += fieldRow('Scene', sceneSetField(ctrl, `${path}.number`, a))
       }
       if (a.type === 'tempo' && a.variant === 'set') {
         html += fieldRow(
@@ -1971,18 +2314,30 @@ window.SceneEditorUi = (function () {
         )
         html += fieldRow(
           'Release BPM',
-          numberField(`${path}.release_bpm`, a.release_bpm ?? 120, 20, 300, bpmStep)
+          numberField(
+            `${path}.release_bpm`,
+            a.release_bpm ?? 120,
+            20,
+            300,
+            bpmStep
+          )
         )
       }
-      if (a.type === 'tempo' && (a.variant === 'increment' ||
-          a.variant === 'decrement')) {
+      if (
+        a.type === 'tempo' &&
+        (a.variant === 'increment' || a.variant === 'decrement')
+      ) {
         html += fieldRow(
           'Amount',
           numberField(`${path}.inc_amount`, a.inc_amount ?? 1, 0.1, 20, bpmStep)
         )
       }
-      if (a.type === 'tempo' && (a.variant === 'tap' ||
-          a.variant === 'increment' || a.variant === 'decrement')) {
+      if (
+        a.type === 'tempo' &&
+        (a.variant === 'tap' ||
+          a.variant === 'increment' ||
+          a.variant === 'decrement')
+      ) {
         html += fieldRow(
           'Fractional BPM',
           checkboxField(`${path}.fractional`, !!a.fractional)
@@ -2018,13 +2373,23 @@ window.SceneEditorUi = (function () {
       if (a.type === 'boomerang') {
         html += renderBoomerangFields(ctrl, path, a)
       }
-      if (a.type === 'confirm_pending' && (ctrl.deviceContext?.sceneMode ?? 0) === 2) {
+      if (
+        a.type === 'confirm_pending' &&
+        (ctrl.deviceContext?.sceneMode ?? 0) === 2
+      ) {
         html += fieldRow(
           'Confirms',
-          selectField(`${path}.confirm_target`, a.confirm_target || 'preset', CONFIRM_TARGETS)
+          selectField(
+            `${path}.confirm_target`,
+            a.confirm_target || 'preset',
+            CONFIRM_TARGETS
+          )
         )
       }
-      if (trigger !== ActionCatalog.TRIGGERS.ON_LOAD && ActionCatalog.supportsTiming(a)) {
+      if (
+        trigger !== ActionCatalog.TRIGGERS.ON_LOAD &&
+        ActionCatalog.supportsTiming(a)
+      ) {
         const beats = ctrl.editModel?.time_signature?.numerator ?? 4
         const useTransport = !!ctrl.editModel?.use_transport
         const timingVal = a.timing || 'immediate'
@@ -2042,7 +2407,10 @@ window.SceneEditorUi = (function () {
       }
       html += renderFollowUpBlock(ctrl, path, a)
       html += renderMorphBlock(ctrl, path, a)
-      if (ActionCatalog.supportsRaiseFlag(a) && ctrl.deviceContext?.flagEnabled) {
+      if (
+        ActionCatalog.supportsRaiseFlag(a) &&
+        ctrl.deviceContext?.flagEnabled
+      ) {
         html += fieldRow(
           'Raise the Flag',
           checkboxField(`${path}.raise_flag`, !!a.raise_flag)
@@ -2058,7 +2426,9 @@ window.SceneEditorUi = (function () {
     let html = ''
     for (let i = 0; i < maxItems; i++) {
       const itemPath = `${path}.${i}`
-      html += `<div class="scene-action-slot"><h4>${esc(slotPrefix)} ${i + 1}</h4>`
+      html += `<div class="scene-action-slot"><h4>${esc(slotPrefix)} ${
+        i + 1
+      }</h4>`
       html += renderAction(ctrl, itemPath, arr[i] || { type: 'none' }, {
         trigger,
         typeLabel: opts.typeLabel || 'Action'
@@ -2196,7 +2566,7 @@ window.SceneEditorUi = (function () {
       selectField('clock_source', m.clock_source || 'internal', [
         { v: 'internal', l: 'Internal' },
         { v: 'midi', l: 'MIDI' },
-        { v: 'sync', l: 'Sync' }
+        { v: 'sync', l: 'Analog Sync' }
       ])
     )
     html += fieldRow(
@@ -2253,13 +2623,17 @@ window.SceneEditorUi = (function () {
 
   function generatorUserModeSelection (modes, cfg) {
     if (!cfg?.enabled) return 'disabled'
-    return (cfg.mode === 'step') ? 'step' : 'continuous'
+    return cfg.mode === 'step' ? 'step' : 'continuous'
   }
 
   function renderLfoEngineFields (cfgKey, cfg) {
     let html = fieldRow(
       'Start mode',
-      selectField(`${cfgKey}.start_mode`, cfg.start_mode || 'running', ENGINE_START_MODE)
+      selectField(
+        `${cfgKey}.start_mode`,
+        cfg.start_mode || 'running',
+        ENGINE_START_MODE
+      )
     )
     if ((cfg.start_mode || 'running') === 'paused') {
       html += fieldRow(
@@ -2327,7 +2701,11 @@ window.SceneEditorUi = (function () {
     )
     html += fieldRow(
       'Pattern length',
-      selectField(`${cfgKey}.pattern_length`, cfg.pattern_length ?? 0, PATTERN_LENGTHS)
+      selectField(
+        `${cfgKey}.pattern_length`,
+        cfg.pattern_length ?? 0,
+        PATTERN_LENGTHS
+      )
     )
     const plen = Number(cfg.pattern_length ?? 0)
     if (plen >= 2)
@@ -2344,7 +2722,13 @@ window.SceneEditorUi = (function () {
   function proximityUserModeSelection (m) {
     if (!m.proximity?.enabled) return 'disabled'
     const ot = m.proximity.output_type || 'cc'
-    const known = new Set(['cc', 'note', 'lfo_rate', 'lfo_depth', 'tempo_nudge'])
+    const known = new Set([
+      'cc',
+      'note',
+      'lfo_rate',
+      'lfo_depth',
+      'tempo_nudge'
+    ])
     if (!known.has(ot)) return 'control_change'
     if (ot === 'note') return 'notes_theremin'
     for (const opt of PROXIMITY_USER_MODES) {
@@ -2356,7 +2740,13 @@ window.SceneEditorUi = (function () {
   function alsUserModeSelection (m) {
     if (!m.als?.enabled) return 'disabled'
     const ot = m.als.output_type || 'cc'
-    const known = new Set(['cc', 'note', 'lfo_rate', 'lfo_depth', 'tempo_nudge'])
+    const known = new Set([
+      'cc',
+      'note',
+      'lfo_rate',
+      'lfo_depth',
+      'tempo_nudge'
+    ])
     if (!known.has(ot)) return 'control_change'
     for (const opt of ALS_USER_MODES) {
       if (opt.output_type === ot) return opt.v
@@ -2452,7 +2842,9 @@ window.SceneEditorUi = (function () {
     const nudgeKey =
       axis === 'x' ? 'tilt_x_tempo_nudge_pct' : 'tilt_y_tempo_nudge_pct'
     const nudgeDirectionKey =
-      axis === 'x' ? 'tilt_x_tempo_nudge_direction' : 'tilt_y_tempo_nudge_direction'
+      axis === 'x'
+        ? 'tilt_x_tempo_nudge_direction'
+        : 'tilt_y_tempo_nudge_direction'
     const claimKey = axis === 'x' ? 'tilt_x' : 'tilt_y'
     if (!ctrl.editModel[key])
       ctrl.editModel[key] = { enabled: false, output_type: 'cc' }
@@ -2488,11 +2880,9 @@ window.SceneEditorUi = (function () {
       return section(`Tilt ${axis.toUpperCase()}`, html)
     }
     const userMode = tiltUserModeSelection(m, key)
-    html += fieldRow(
-      'Mode',
-      selectField(modePath, userMode, TILT_USER_MODES)
-    )
-    if (userMode === 'disabled') return section(`Tilt ${axis.toUpperCase()}`, html)
+    html += fieldRow('Mode', selectField(modePath, userMode, TILT_USER_MODES))
+    if (userMode === 'disabled')
+      return section(`Tilt ${axis.toUpperCase()}`, html)
     html += renderContinuousMapping(ctrl, key, m[key], {
       hideEnabled: true,
       hideRouting: true,
@@ -2535,7 +2925,11 @@ window.SceneEditorUi = (function () {
       )
       html += fieldRow(
         'Curve',
-        selectField('note_track.curve_type', m.note_track.curve_type ?? 0, CURVE)
+        selectField(
+          'note_track.curve_type',
+          m.note_track.curve_type ?? 0,
+          CURVE
+        )
       )
     }
     return section('Note Track', html)
@@ -2571,7 +2965,11 @@ window.SceneEditorUi = (function () {
       selectField('__expression_user_mode', userMode, EXPRESSION_USER_MODES)
     )
 
-    if (userMode === 'disabled' || userMode === 'sustain' || userMode === 'sostenuto') {
+    if (
+      userMode === 'disabled' ||
+      userMode === 'sustain' ||
+      userMode === 'sostenuto'
+    ) {
       return section('Expression', html)
     }
 
@@ -2652,15 +3050,27 @@ window.SceneEditorUi = (function () {
     )
     html += fieldRow(
       'Attack',
-      selectField('audio_config.attack_ms', ac.attack_ms ?? 10, AUDIO_ATTACK_OPTIONS)
+      selectField(
+        'audio_config.attack_ms',
+        ac.attack_ms ?? 10,
+        AUDIO_ATTACK_OPTIONS
+      )
     )
     html += fieldRow(
       'Release',
-      selectField('audio_config.release_ms', ac.release_ms ?? 200, AUDIO_RELEASE_OPTIONS)
+      selectField(
+        'audio_config.release_ms',
+        ac.release_ms ?? 200,
+        AUDIO_RELEASE_OPTIONS
+      )
     )
     html += fieldRow(
       'Polarity',
-      selectField('audio_config.polarity', ac.polarity || 'attract', AUDIO_POLARITY_OPTIONS)
+      selectField(
+        'audio_config.polarity',
+        ac.polarity || 'attract',
+        AUDIO_POLARITY_OPTIONS
+      )
     )
     html += renderLfoCcSlots(ctrl, 'cv', m.cv)
     return html
@@ -2774,7 +3184,11 @@ window.SceneEditorUi = (function () {
   function renderTouchwheelStyle (m) {
     return fieldRow(
       'Style',
-      selectField('touchwheel_style', m.touchwheel_style || 'odometer', TOUCHWHEEL_STYLE_OPTIONS)
+      selectField(
+        'touchwheel_style',
+        m.touchwheel_style || 'odometer',
+        TOUCHWHEEL_STYLE_OPTIONS
+      )
     )
   }
 
@@ -2803,37 +3217,61 @@ window.SceneEditorUi = (function () {
       if (m.touchwheel_style === 'endless') {
         html += fieldRow(
           'Initial value',
-          numberField('touchwheel_initial_value', m.touchwheel_initial_value ?? 0, 0, 127)
+          numberField(
+            'touchwheel_initial_value',
+            m.touchwheel_initial_value ?? 0,
+            0,
+            127
+          )
         )
       }
     } else if (userMode === 'notes') {
       html += fieldRow(
         'Base note',
-        selectField('touchwheel.base_note', m.touchwheel.base_note ?? 60,
-          ActionCatalog.noteNameOptions(m.touchwheel.base_note ?? 60))
+        selectField(
+          'touchwheel.base_note',
+          m.touchwheel.base_note ?? 60,
+          ActionCatalog.noteNameOptions(m.touchwheel.base_note ?? 60)
+        )
       )
       html += fieldRow(
         'Range',
-        selectField('touchwheel.note_range', m.touchwheel.note_range ?? 24, NOTE_OCTAVE_OPTIONS)
+        selectField(
+          'touchwheel.note_range',
+          m.touchwheel.note_range ?? 24,
+          NOTE_OCTAVE_OPTIONS
+        )
       )
       html += fieldRow(
         'Velocity',
         numberField('touchwheel.velocity', m.touchwheel.velocity ?? 100, 1, 127)
       )
-      html += fieldRow('Latch', checkboxField('touchwheel.note_latch', !!m.touchwheel.note_latch))
+      html += fieldRow(
+        'Latch',
+        checkboxField('touchwheel.note_latch', !!m.touchwheel.note_latch)
+      )
       if (m.touchwheel.note_latch) {
         html += fieldRow(
           'Release',
-          numberField('touchwheel.note_release_ms', m.touchwheel.note_release_ms ?? 500, 100, 5000)
+          numberField(
+            'touchwheel.note_release_ms',
+            m.touchwheel.note_release_ms ?? 500,
+            100,
+            5000
+          )
         )
       }
       if (m.touchwheel_style === 'odometer') {
         html += fieldRow(
           'Polyphony',
-          selectField('touchwheel.polyphony', m.touchwheel.polyphony || 'mono', [
-            { v: 'mono', l: 'Mono' },
-            { v: 'poly', l: 'Poly' }
-          ])
+          selectField(
+            'touchwheel.polyphony',
+            m.touchwheel.polyphony || 'mono',
+            [
+              { v: 'mono', l: 'Mono' },
+              { v: 'poly', l: 'Poly' }
+            ]
+          )
         )
       }
       if (spec?.supports_style) html += renderTouchwheelStyle(m)
@@ -2843,7 +3281,12 @@ window.SceneEditorUi = (function () {
       if (m.touchwheel_style === 'endless') {
         html += fieldRow(
           'Initial value',
-          numberField('touchwheel_initial_value', m.touchwheel_initial_value ?? 0, 0, 127)
+          numberField(
+            'touchwheel_initial_value',
+            m.touchwheel_initial_value ?? 0,
+            0,
+            127
+          )
         )
       }
     } else if (userMode === 'tempo_nudge') {
@@ -2852,7 +3295,9 @@ window.SceneEditorUi = (function () {
         selectField(
           'touchwheel_tempo_nudge_direction',
           m.touchwheel_tempo_nudge_direction ?? 0,
-          ActionCatalog.tempoNudgeDirectionOptions(m.touchwheel_tempo_nudge_direction ?? 0)
+          ActionCatalog.tempoNudgeDirectionOptions(
+            m.touchwheel_tempo_nudge_direction ?? 0
+          )
         )
       )
       html += fieldRow(
@@ -2860,7 +3305,9 @@ window.SceneEditorUi = (function () {
         selectField(
           'touchwheel_tempo_nudge_pct',
           m.touchwheel_tempo_nudge_pct ?? 10,
-          ActionCatalog.touchwheelTempoNudgeAmountOptions(m.touchwheel_tempo_nudge_pct ?? 10)
+          ActionCatalog.touchwheelTempoNudgeAmountOptions(
+            m.touchwheel_tempo_nudge_pct ?? 10
+          )
         )
       )
       html += fieldRow(
@@ -2868,24 +3315,40 @@ window.SceneEditorUi = (function () {
         selectField(
           'touchwheel_tempo_nudge_return',
           m.touchwheel_tempo_nudge_return ?? 0,
-          ActionCatalog.touchwheelNudgeReturnOptions(m.touchwheel_tempo_nudge_return ?? 0)
+          ActionCatalog.touchwheelNudgeReturnOptions(
+            m.touchwheel_tempo_nudge_return ?? 0
+          )
         )
       )
       if ((m.touchwheel_tempo_nudge_direction ?? 0) !== 0) {
         html += fieldRow(
           'Style',
-          selectField('touchwheel_style', m.touchwheel_style || 'odometer', TOUCHWHEEL_STYLE_OPTIONS)
+          selectField(
+            'touchwheel_style',
+            m.touchwheel_style || 'odometer',
+            TOUCHWHEEL_STYLE_OPTIONS
+          )
         )
       }
     } else if (userMode === 'tempo') {
       if (spec?.supports_style) html += renderTouchwheelStyle(m)
       html += fieldRow(
         'Floor',
-        numberField('touchwheel_tempo_floor', m.touchwheel_tempo_floor ?? 20, 20, 300)
+        numberField(
+          'touchwheel_tempo_floor',
+          m.touchwheel_tempo_floor ?? 20,
+          20,
+          300
+        )
       )
       html += fieldRow(
         'Ceiling',
-        numberField('touchwheel_tempo_ceiling', m.touchwheel_tempo_ceiling ?? 300, 20, 300)
+        numberField(
+          'touchwheel_tempo_ceiling',
+          m.touchwheel_tempo_ceiling ?? 300,
+          20,
+          300
+        )
       )
     } else if (userMode === 'aftertouch') {
       html += fieldRow(
@@ -2893,14 +3356,20 @@ window.SceneEditorUi = (function () {
         selectField(
           'touchwheel_aftertouch_return',
           m.touchwheel_aftertouch_return ?? 1,
-          ActionCatalog.touchwheelNudgeReturnOptions(m.touchwheel_aftertouch_return ?? 1)
+          ActionCatalog.touchwheelNudgeReturnOptions(
+            m.touchwheel_aftertouch_return ?? 1
+          )
         )
       )
       if (spec?.supports_style) html += renderTouchwheelStyle(m)
     } else if (userMode === 'lfo_rate' || userMode === 'lfo_depth') {
       html += fieldRow(
         'Target',
-        selectField('touchwheel_lfo_target', m.touchwheel_lfo_target || 'both', LFO_TARGET)
+        selectField(
+          'touchwheel_lfo_target',
+          m.touchwheel_lfo_target || 'both',
+          LFO_TARGET
+        )
       )
       if (spec?.supports_style) html += renderTouchwheelStyle(m)
     } else if (spec?.supports_style) {
@@ -2922,10 +3391,7 @@ window.SceneEditorUi = (function () {
     if (!m[mapKey]) m[mapKey] = { enabled: false, output_type: 'cc' }
 
     const userMode = lfoUserModeSelection(n, m)
-    let html = fieldRow(
-      'Mode',
-      selectField(modePath, userMode, userModes)
-    )
+    let html = fieldRow('Mode', selectField(modePath, userMode, userModes))
     if (userMode === 'disabled') return section(lfoSectionTitle(n), html)
 
     m[mapKey].enabled = m[cfgKey].enabled
@@ -2950,18 +3416,25 @@ window.SceneEditorUi = (function () {
       bpm: m.bpm ?? 120,
       feltBeats: m.time_signature?.numerator ?? 4
     }
-    const lfoPreviewSvg = window.LfoWaveformPreview?.renderSvg(m[cfgKey], lfoCtx) || ''
+    const lfoPreviewSvg =
+      window.LfoWaveformPreview?.renderSvg(m[cfgKey], lfoCtx) || ''
 
     html += `<div class="scene-lfo-block" data-controller="lfo-waveform-fields"
       data-lfo-waveform-fields-cfg-key-value="${esc(cfgKey)}">`
     html += renderLfoEngineFields(cfgKey, m[cfgKey])
     html += fieldRow(
       'Waveform',
-      selectField(`${cfgKey}.waveform`, m[cfgKey].waveform || 'sine', waveformOpts)
+      selectField(
+        `${cfgKey}.waveform`,
+        m[cfgKey].waveform || 'sine',
+        waveformOpts
+      )
     )
     html += `<div class="scene-lfo-waveform-preview" data-lfo-waveform-fields-target="preview"
-      data-controller="lfo-waveform" data-lfo-waveform-cfg-key-value="${esc(cfgKey)}">${lfoPreviewSvg}</div>`
-    const lfoRateMode = (m[cfgKey].rate_mode === 'tempo') ? 'tempo' : 'free'
+      data-controller="lfo-waveform" data-lfo-waveform-cfg-key-value="${esc(
+        cfgKey
+      )}">${lfoPreviewSvg}</div>`
+    const lfoRateMode = m[cfgKey].rate_mode === 'tempo' ? 'tempo' : 'free'
     if (m[cfgKey].rate_mode !== lfoRateMode) m[cfgKey].rate_mode = lfoRateMode
     html += fieldRow(
       'Rate mode',
@@ -3045,21 +3518,38 @@ window.SceneEditorUi = (function () {
       if (m.rtg_config.rate_mode === 'free') {
         html += fieldRow(
           'Rate',
-          selectField('rtg_config.rate_hz', m.rtg_config.rate_hz ?? 2,
+          selectField(
+            'rtg_config.rate_hz',
+            m.rtg_config.rate_hz ?? 2,
             ActionCatalog.engineModifyRateHzOptions(200).map(o => ({
               v: o.v / 100,
               l: o.l
-            })))
+            }))
+          )
         )
       } else {
         html += fieldRow(
           'Divider',
-          selectField('rtg_config.division', m.rtg_config.division || 'quarter',
+          selectField(
+            'rtg_config.division',
+            m.rtg_config.division || 'quarter',
             ActionCatalog.lfoModifyDivisionOptions(0).map(o => ({
-              v: ['16_bars', '12_bars', '8_bars', '4_bars', '2_bars', '1_bar',
-                'half', 'quarter', 'eighth', 'sixteenth', '32nd'][o.v],
+              v: [
+                '16_bars',
+                '12_bars',
+                '8_bars',
+                '4_bars',
+                '2_bars',
+                '1_bar',
+                'half',
+                'quarter',
+                'eighth',
+                'sixteenth',
+                '32nd'
+              ][o.v],
               l: o.l
-            })))
+            }))
+          )
         )
       }
       html += renderGeneratorPatternFields('rtg_config', m.rtg_config)
@@ -3107,11 +3597,15 @@ window.SceneEditorUi = (function () {
         if (m.rtg_config.shepard_style === 'wide') {
           html += fieldRow(
             'Retrigger (semitones)',
-            selectField('rtg_config.shepard_wide_semis', m.rtg_config.shepard_wide_semis ?? 4, [
-              { v: 2, l: '2' },
-              { v: 3, l: '3' },
-              { v: 4, l: '4' }
-            ])
+            selectField(
+              'rtg_config.shepard_wide_semis',
+              m.rtg_config.shepard_wide_semis ?? 4,
+              [
+                { v: 2, l: '2' },
+                { v: 3, l: '3' },
+                { v: 4, l: '4' }
+              ]
+            )
           )
         }
         html += fieldRow(
@@ -3141,7 +3635,10 @@ window.SceneEditorUi = (function () {
       m.sample_hold_config = { enabled: false, mode: 'continuous' }
     }
     if (!m.sample_hold) m.sample_hold = { enabled: false, output_type: 'cc' }
-    const userMode = generatorUserModeSelection(SAMPLE_HOLD_USER_MODES, m.sample_hold_config)
+    const userMode = generatorUserModeSelection(
+      SAMPLE_HOLD_USER_MODES,
+      m.sample_hold_config
+    )
     let html = fieldRow(
       'Mode',
       selectField('__sample_hold_user_mode', userMode, SAMPLE_HOLD_USER_MODES)
@@ -3166,35 +3663,58 @@ window.SceneEditorUi = (function () {
     if (m.sample_hold_config.mode === 'continuous') {
       html += fieldRow(
         'Rate mode',
-        selectField('sample_hold_config.rate_mode', m.sample_hold_config.rate_mode || 'free', [
-          { v: 'free', l: 'Time' },
-          { v: 'sync', l: 'Division' }
-        ])
+        selectField(
+          'sample_hold_config.rate_mode',
+          m.sample_hold_config.rate_mode || 'free',
+          [
+            { v: 'free', l: 'Time' },
+            { v: 'sync', l: 'Division' }
+          ]
+        )
       )
       if (m.sample_hold_config.rate_mode === 'sync') {
         html += fieldRow(
           'Divider',
-          selectField('sample_hold_config.division', m.sample_hold_config.division || 'quarter',
+          selectField(
+            'sample_hold_config.division',
+            m.sample_hold_config.division || 'quarter',
             ActionCatalog.lfoModifyDivisionOptions(0).map(o => ({
-              v: ['16_bars', '12_bars', '8_bars', '4_bars', '2_bars', '1_bar',
-                'half', 'quarter', 'eighth', 'sixteenth', '32nd'][o.v],
+              v: [
+                '16_bars',
+                '12_bars',
+                '8_bars',
+                '4_bars',
+                '2_bars',
+                '1_bar',
+                'half',
+                'quarter',
+                'eighth',
+                'sixteenth',
+                '32nd'
+              ][o.v],
               l: o.l
-            })))
+            }))
+          )
         )
       } else {
         html += fieldRow(
           'Rate',
-          selectField('sample_hold_config.rate_hz', m.sample_hold_config.rate_hz ?? 2,
+          selectField(
+            'sample_hold_config.rate_hz',
+            m.sample_hold_config.rate_hz ?? 2,
             ActionCatalog.engineModifyRateHzOptions(200).map(o => ({
               v: o.v / 100,
               l: o.l
-            })))
+            }))
+          )
         )
       }
-      html += renderGeneratorPatternFields('sample_hold_config', m.sample_hold_config)
+      html += renderGeneratorPatternFields(
+        'sample_hold_config',
+        m.sample_hold_config
+      )
     }
-    if (!cvClaimsSource(m, 'sample_hold'))
-      html += renderSampleHoldCcSlots(ctrl)
+    if (!cvClaimsSource(m, 'sample_hold')) html += renderSampleHoldCcSlots(ctrl)
     return section('S+H', html)
   }
 
@@ -3218,7 +3738,10 @@ window.SceneEditorUi = (function () {
       html += `<div class="scene-pad-row"><h4>${esc(
         ActionCatalog.padDisplayName(i)
       )}</h4>`
-      html += renderAction(ctrl, `touchpads.${i}.action`, act, { trigger, typeLabel: 'Action' })
+      html += renderAction(ctrl, `touchpads.${i}.action`, act, {
+        trigger,
+        typeLabel: 'Action'
+      })
       html += '</div>'
     }
     return section('Pads', html)
@@ -3373,8 +3896,10 @@ window.SceneEditorUi = (function () {
     if (m.tilt_x?.enabled) open.add('Tilt X')
     if (m.tilt_y?.enabled) open.add('Tilt Y')
     if (m.rtg_config?.enabled) open.add('RTG')
-    if (ctrl.deviceContext?.midiControl &&
-        (m.cc_triggers || []).some(t => hasAction(t?.action))) {
+    if (
+      ctrl.deviceContext?.midiControl &&
+      (m.cc_triggers || []).some(t => hasAction(t?.action))
+    ) {
       open.add('CC Triggers')
     }
     if (m.note_track?.enabled) open.add('Note Track')
@@ -3383,9 +3908,22 @@ window.SceneEditorUi = (function () {
 
   function allSectionTitles (ctrl) {
     const titles = [
-      'Pads', 'Touchwheel', 'Expression', 'Control Voltage', 'Proximity',
-      'Ambient Light', 'Buttons', lfoSectionTitle(1), lfoSectionTitle(2), 'Bump', 'On-Load',
-      'S+H', 'Tilt X', 'Tilt Y', 'RTG', 'Note Track'
+      'Pads',
+      'Touchwheel',
+      'Expression',
+      'Control Voltage',
+      'Proximity',
+      'Ambient Light',
+      'Buttons',
+      lfoSectionTitle(1),
+      lfoSectionTitle(2),
+      'Bump',
+      'On-Load',
+      'S+H',
+      'Tilt X',
+      'Tilt Y',
+      'RTG',
+      'Note Track'
     ]
     if (ctrl.editModel?.use_transport) titles.push('On-Play')
     if (ctrl.deviceContext?.midiControl) titles.push('CC Triggers')

@@ -411,7 +411,13 @@ static void cv_task(void *pvParameters) {
   // Add initial delay to ensure ADC is stable
   // Stagger by 100ms from expression task to avoid ADC contention
   vTaskDelay(pdMS_TO_TICKS(300));
-  
+
+  if (s_task_should_exit) {
+    s_task_handle = NULL;
+    vTaskDelete(NULL);
+    return;
+  }
+
   // Prime the median filter buffer with real readings (avoid zero contamination)
   int16_t initial_reading = oversample_read();
   for (int i = 0; i < MEDIAN_WINDOW; i++) {
@@ -760,17 +766,21 @@ static uint8_t convert_to_midi(int16_t raw_value, cv_mode_t mode) {
 static uint8_t cv_range_to_switch_channel(cv_range_t range) {
   switch (range) {
     case CV_RANGE_BIPOLAR_10V:
-      return SWITCH_CHANNEL_BIPOLAR_10V;  // 0
+      return SWITCH_CHANNEL_BIPOLAR_10V;
     case CV_RANGE_10V:
     case CV_RANGE_BIPOLAR_5V:
-      return SWITCH_CHANNEL_10V;          // 1 (shared by 10V and ±5V)
+      return SWITCH_CHANNEL_10V;
     case CV_RANGE_5V:
-      return SWITCH_CHANNEL_5V;           // 2
+      return SWITCH_CHANNEL_5V;
     case CV_RANGE_3V3:
-      return SWITCH_CHANNEL_3V3;          // 3
+      return SWITCH_CHANNEL_3V3;
     default:
-      return SWITCH_CHANNEL_5V;           // Default to 5V
+      return SWITCH_CHANNEL_5V;
   }
+}
+
+uint8_t cv_get_switch_channel_for_range(cv_range_t range) {
+  return cv_range_to_switch_channel(range);
 }
 
 static const char* cv_range_to_string(cv_range_t range) {

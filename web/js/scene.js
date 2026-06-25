@@ -51,6 +51,7 @@ application.register(
       this._programmingFetchPromise = null
       this._programmingPollTimer = null
       this._programmingExitDebounce = null
+      this._pendingReconnectEdit = null
 
       this._onConnectionChanged = this.onConnectionChanged.bind(this)
       this._onTabActivated = this.onTabActivated.bind(this)
@@ -225,21 +226,67 @@ application.register(
 
     onConnectionChanged ({ connected }) {
       if (!connected) {
+        this._pendingReconnectEdit =
+          this.editing && this.editPosition !== null
+            ? { position: this.editPosition }
+            : null
         this.editing = false
         this.dirty = false
         this.baselineJson = null
         this.editModel = null
-        this.editPosition = null
+        if (!this._pendingReconnectEdit) this.editPosition = null
         this.deviceProgramming = false
         this.stopProgrammingPoll()
         this.pedalCatalog = null
         this._pedalCatalogLoad = null
         this.deviceContext.globalPedal = null
         this.renderDisconnected()
-        this.showViewMode()
+        if (this._pendingReconnectEdit && this.hasEditorContainerTarget) {
+          this.editorContainerTarget.innerHTML =
+            `<div class="scene-editor-loading">
+              <p>Device disconnected. Reconnect to continue editing.</p>
+            </div>`
+        } else {
+          this.showViewMode()
+        }
       } else {
-        this.fetchDeviceProgramming()
+        void this.onReconnected()
       }
+    }
+
+    async onReconnected () {
+      this.fetchDeviceProgramming()
+      const pending = this._pendingReconnectEdit
+      this._pendingReconnectEdit = null
+      if (pending?.position == null) return
+      try {
+        await this.connection.recoverSerialState()
+      } catch (err) {
+        console.warn('Serial recovery after reconnect:', err)
+      }
+      this.editPosition = pending.position
+      this.editing = true
+      this.inspectViewTarget.classList.add('hidden')
+      this.editViewTarget.classList.remove('hidden')
+      if (this.hasEditorToolbarTarget) {
+        this.editorToolbarTarget.classList.remove('hidden')
+      }
+      this.updateProgrammingLock()
+      const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
+      if (activeTab?.getAttribute('panel') === 'scenes') {
+        await this.loadSceneForEdit()
+      } else if (this.hasEditorContainerTarget) {
+        this.editorContainerTarget.innerHTML =
+          `<div class="scene-editor-loading">
+            <p>Reconnected. Open the Scenes tab to resume editing.</p>
+            <wa-button variant="brand" data-action="click->scene#retryLoadScene">Retry</wa-button>
+          </div>`
+      }
+    }
+
+    retryLoadScene () {
+      if (!this.connection.isConnected || this.editPosition === null) return
+      this.loadSceneForEdit()
     }
 
     onTabActivated (e) {
@@ -342,7 +389,7 @@ application.register(
             await this.connection._exitModeImpl()
             await this.sleep(300)
           }
-          return this.connection._sendCommandImpl('INFO', 15000, (d) =>
+          return this.connection._sendCommandViaPump('INFO', 15000, (d) =>
             typeof d.programming === 'boolean')
         })
         if (syncGen !== this._programmingSyncGen) return
@@ -477,7 +524,7 @@ application.register(
             await this.sleep(300)
           }
           await this.ensureDeviceIdleInTask()
-          return this.connection._fetchSizedTransferImpl(`SCENE_GET ${pos}`, {
+          return this.connection.fetchSizedTransfer(`SCENE_GET ${pos}`, {
             lineTimeout: 30000,
             binaryTimeout: 120000
           })
@@ -795,6 +842,9 @@ application.register(
       }
       this.normalizeCcTriggers(model, { forSave })
       this.normalizePadPlaceholders(model, { forSave })
+      if (model.clock_source === 'sync' && model.cv_input_mode !== 'clock_sync') {
+        model.cv_input_mode = 'clock_sync'
+      }
       ActionCatalog.stripActionFieldsInModel(model)
       if (forSave && model.expr_switch?.type === 'none') delete model.expr_switch
     }
@@ -869,7 +919,7 @@ application.register(
     }
 
     async fetchGlobalPedalInTask () {
-      const response = await this.connection._sendCommandImpl('INFO', 15000, (data) =>
+      const response = await this.connection._sendCommandViaPump('INFO', 15000, (data) =>
         typeof data.version === 'string')
       if (!response || response.startsWith('ERROR:')) return
       const info = JSON.parse(response)
@@ -921,6 +971,9 @@ application.register(
         await this.connection.sendRaw('EXIT\n')
         await this.sleep(200)
         await this.connection.drainInput?.()
+        if (this.connection.currentMode === 'ASSETS') {
+          await this.connection._exitModeImpl()
+        }
       }
     }
 
@@ -1774,6 +1827,8 @@ application.register(
         if (!Number.isNaN(num)) val = num
       }
       this.setAtPath(path, val)
+      if (path === 'clock_source')
+        this.normalizeSceneModel(this.editModel, { forSave: false })
       if (path.endsWith('.type')) {
         // Reset the variant to a valid default for the new type so a stale
         // variant (e.g. lfo's "start") can't leak into the next type's list.
@@ -2321,16 +2376,21 @@ application.register(
 
     async loadSchema () {
       if (this._schema) return this._schema
-      if (this._schemaLoad) return this._schemaLoad
-      this._schemaLoad = fetch('/schemas/scene.schema.json', { cache: 'no-store' })
-        .then(r => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`)
-          return r.json()
-        })
-        .then(s => {
-          this._schema = s
-          return s
-        })
+      if (!this._schemaLoad) {
+        this._schemaLoad = fetch('/schemas/scene.schema.json', { cache: 'no-store' })
+          .then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            return r.json()
+          })
+          .then(s => {
+            this._schema = s
+            return s
+          })
+          .catch(err => {
+            this._schemaLoad = null
+            throw err
+          })
+      }
       return this._schemaLoad
     }
 
@@ -2413,94 +2473,114 @@ application.register(
           </div>`
       }
 
-      try {
-        const arg = String(this.editPosition)
-        const result = await this.connection.runSerialTask(async () => {
-          if (gen !== this._loadGeneration) return null
-          if (this.connection.currentMode) {
-            await this.connection._exitModeImpl()
-            await this.sleep(300)
-          }
-          await this.ensureDeviceIdleInTask()
-
-          if (!this.sceneList?.length) {
-            try {
-              await this.fetchSceneListInTask()
-            } catch (err) {
-              console.warn('Scene editor: scene list skipped:', err.message)
+      let lastErr = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const arg = String(this.editPosition)
+          const result = await this.connection.runSerialTask(async () => {
+            if (gen !== this._loadGeneration) return null
+            if (this.connection.currentMode) {
+              await this.connection._exitModeImpl()
+              await this.sleep(300)
             }
-          }
+            await this.ensureDeviceIdleInTask()
 
-          try {
-            await this.fetchConfigContextInTask()
-          } catch (err) {
-            console.warn('Scene editor: CONFIG context skipped:', err.message)
-          }
-          try {
-            await this.fetchGlobalPedalInTask()
-          } catch (err) {
-            console.warn('Scene editor: INFO pedal context skipped:', err.message)
-          }
-          if (gen !== this._loadGeneration) return null
-          await this.ensureDeviceIdleInTask()
+            if (!this.sceneList?.length) {
+              try {
+                await this.fetchSceneListInTask()
+              } catch (err) {
+                console.warn('Scene editor: scene list skipped:', err.message)
+              }
+            }
 
-          if (gen !== this._loadGeneration) return null
-          const transfer = await this.connection._fetchSizedTransferImpl(`SCENE_GET ${arg}`, {
-            lineTimeout: 30000,
-            binaryTimeout: 120000
+            try {
+              await this.fetchConfigContextInTask()
+            } catch (err) {
+              console.warn('Scene editor: CONFIG context skipped:', err.message)
+            }
+            try {
+              await this.fetchGlobalPedalInTask()
+            } catch (err) {
+              console.warn('Scene editor: INFO pedal context skipped:', err.message)
+            }
+            if (gen !== this._loadGeneration) return null
+            await this.ensureDeviceIdleInTask()
+
+            if (gen !== this._loadGeneration) return null
+            const transfer = await this.connection.fetchSizedTransfer(`SCENE_GET ${arg}`, {
+              lineTimeout: 30000,
+              binaryTimeout: 120000
+            })
+            if (!transfer?.data?.length) return transfer
+            const sceneModel = JSON.parse(new TextDecoder().decode(transfer.data))
+            this.editModel = sceneModel
+            try {
+              await this.loadDeviceDefinitionInTask()
+            } catch (err) {
+              console.warn('Scene editor: device definition skipped:', err.message)
+            }
+            return { sceneModel }
           })
-          if (!transfer?.data?.length) return transfer
-          const sceneModel = JSON.parse(new TextDecoder().decode(transfer.data))
-          this.editModel = sceneModel
-          try {
-            await this.loadDeviceDefinitionInTask()
-          } catch (err) {
-            console.warn('Scene editor: device definition skipped:', err.message)
+
+          if (gen !== this._loadGeneration) return
+          if (!result?.sceneModel) {
+            throw new Error('No scene data from device (SCENE_GET failed or was cancelled)')
           }
-          return { sceneModel }
-        })
 
-        if (gen !== this._loadGeneration) return
-        if (!result?.sceneModel) {
-          throw new Error('No scene data from device (SCENE_GET failed or was cancelled)')
+          const model = result.sceneModel
+          this.normalizeCvGateModel(model)
+          if (model.touchpads) {
+            model.touchpads.forEach(tp => this.normalizeTouchpadMapping(tp))
+          }
+          this.normalizeSceneModel(model, { forSave: false })
+          const controlCorrected =
+            DeviceControls.normalizeControlActionsIfInvalid(this.deviceDefinition, model)
+          const presetCorrected =
+            DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
+          this.editModel = model
+
+          this._sectionLayoutPhase = 0
+          this._openEditorSections = SceneEditorUi.sectionsWithContent(this)
+
+          await this.loadSchema()
+          this.validationErrors = []
+          this.renderEditor()
+          this.updateSectionLayoutButton()
+          this.baselineJson = JSON.stringify(this.editModel)
+          this.dirty = controlCorrected || presetCorrected
+          this.markDirty()
+          this.updatePanelTitle()
+          return
+        } catch (err) {
+          lastErr = err
+          if (attempt === 0 && this.connection._isRecoverableSerialError(err)) {
+            console.warn('Scene load failed, recovering serial state:', err.message)
+            try {
+              await this.connection.recoverSerialState()
+            } catch (recoverErr) {
+              console.warn('Serial recovery failed:', recoverErr)
+            }
+            continue
+          }
+          break
         }
+      }
 
-        const model = result.sceneModel
-        this.normalizeCvGateModel(model)
-        if (model.touchpads) {
-          model.touchpads.forEach(tp => this.normalizeTouchpadMapping(tp))
-        }
-        this.normalizeSceneModel(model, { forSave: false })
-        const controlCorrected =
-          DeviceControls.normalizeControlActionsIfInvalid(this.deviceDefinition, model)
-        const presetCorrected =
-          DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
-        this.editModel = model
-
-        // Start with assigned/enabled sections expanded; everything else stays
-        // collapsed. User toggles during editing are tracked from here on.
-        this._sectionLayoutPhase = 0
-        this._openEditorSections = SceneEditorUi.sectionsWithContent(this)
-
-        await this.loadSchema()
-        this.validationErrors = []
-        this.renderEditor()
-        this.updateSectionLayoutButton()
-        this.baselineJson = JSON.stringify(this.editModel)
-        this.dirty = controlCorrected || presetCorrected
-        this.markDirty()
-        this.updatePanelTitle()
-      } catch (err) {
-        console.error('Scene load error:', err)
-        if (this.hasEditorContainerTarget) {
-          const msg = err?.message || 'Failed to load scene'
-          this.editorContainerTarget.innerHTML =
-            `<p class="scene-editor-error">${this.escapeHtml(msg)}</p>`
-        }
+      console.error('Scene load error:', lastErr)
+      if (this.hasEditorContainerTarget) {
+        const msg = lastErr?.message || 'Failed to load scene'
+        this.editorContainerTarget.innerHTML =
+          `<div class="scene-editor-error">
+            <p>${this.escapeHtml(msg)}</p>
+            <wa-button variant="brand" data-action="click->scene#retryLoadScene">
+              Retry
+            </wa-button>
+          </div>`
       }
     }
 
     async ensureDeviceIdleInTask () {
+      this.connection.clearPendingRx()
       for (let attempt = 0; attempt < 3; attempt++) {
         await this.connection.sendRaw('EXIT\n')
         await this.sleep(100)
@@ -2524,9 +2604,15 @@ application.register(
 
     async fetchConfigContextInTask () {
       try {
-        await this.connection.sendRaw('CONFIG\n')
-        const started = await this.connection.readLine(5000)
-        if (started !== 'CONFIG_STARTED') {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          this.connection.clearPendingRx()
+          await this.connection.sendRaw('CONFIG\n')
+          const started = await this.connection.readLine(5000)
+          if (started === 'CONFIG_STARTED') break
+          if (attempt === 0 && started?.trim().startsWith('{')) {
+            await this.ensureDeviceIdleInTask()
+            continue
+          }
           throw new Error(started || 'CONFIG did not start')
         }
         await this.connection.sendRaw('VALUES\n')
@@ -2924,7 +3010,7 @@ application.register(
 
     async fetchSceneJsonAtPosition (position) {
       const arg = String(position)
-      const result = await this.connection._fetchSizedTransferImpl(`SCENE_GET ${arg}`, {
+      const result = await this.connection.fetchSizedTransfer(`SCENE_GET ${arg}`, {
         lineTimeout: 30000,
         binaryTimeout: 120000
       })

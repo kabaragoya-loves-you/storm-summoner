@@ -14,7 +14,7 @@ application.register(
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
 
       this.connection.on('mode:changed', ({ mode }) => {
-        if (mode !== 'CONFIG') {
+        if (mode != null && mode !== 'CONFIG') {
           this.inConfigMode = false
         }
       })
@@ -22,10 +22,7 @@ application.register(
       document.addEventListener('app:tab-activated', (e) => {
         if (e.detail.tab === 'config' && this.connection.isConnected && !this.inConfigMode) {
           this.activate()
-        } else if (
-          e.detail.tab !== 'config' &&
-          (this.inConfigMode || this.connection.currentMode === 'CONFIG')
-        ) {
+        } else if (e.detail.tab !== 'config' && this.inConfigMode) {
           this.leaveConfigMode()
         }
       })
@@ -40,12 +37,11 @@ application.register(
     }
 
     async leaveConfigMode () {
-      if (!this.inConfigMode && this.connection.currentMode !== 'CONFIG') return
+      if (!this.inConfigMode) return
       try {
-        if (this.connection.currentMode) {
-          await this.connection.exitMode()
-          await this.sleep(200)
-        }
+        await this.connection.runSerialTask(async () => {
+          await this.connection.ensureDeviceIdle()
+        })
       } catch (err) {
         console.warn('Config leave mode:', err)
       }
@@ -59,12 +55,17 @@ application.register(
         await this.loadSchema()
 
         await this.connection.runSerialTask(async () => {
-          await this.connection._requestModeImpl('CONFIG')
+          await this.connection._prepareConfigClientMode()
           await this.enterConfigModeBody()
           await this.fetchValuesBody()
         })
       } catch (err) {
         console.error('Config activation error:', err)
+        try {
+          await this.connection.recoverSerialState()
+        } catch (recoverErr) {
+          console.warn('Serial recovery after config activation error:', recoverErr)
+        }
       }
     }
 
@@ -323,7 +324,7 @@ application.register(
       try {
         await this.connection.runSerialTask(async () => {
           if (!this.inConfigMode) {
-            await this.connection._requestModeImpl('CONFIG')
+            await this.connection._prepareConfigClientMode()
             await this.enterConfigModeBody()
           }
           await this.connection.sendRaw(`SET ${settingId} ${value}\n`)

@@ -219,10 +219,11 @@ esp_err_t input_set_mode(input_mode_t mode) {
       // Clock sync mode uses GPIO interrupt - pin will be configured as GPIO by clock_sync_enable()
       // Check cable before enabling (if cable detection is enabled)
       if (!s_cable_detection_enabled || cv_is_cable_connected()) {
-        // For clock sync, we typically use unipolar 5V range (switch channel 2)
-        switch_set_channel(2);
+        uint8_t sw = cv_get_switch_channel_for_range(CV_RANGE_5V);
+        switch_set_channel(sw);
         clock_sync_enable();
-        ESP_LOGI(TAG, "Enabled clock sync mode (GPIO interrupt, 0-5V range)%s", s_cable_detection_enabled ? "" : " (cable detection disabled)");
+        ESP_LOGI(TAG, "Enabled clock sync mode (GPIO interrupt, 0-5V switch ch %u)%s",
+          (unsigned)sw, s_cable_detection_enabled ? "" : " (cable detection disabled)");
       } else {
         ESP_LOGW(TAG, "Cannot enable clock sync - no cable connected");
         return ESP_FAIL;
@@ -357,7 +358,7 @@ void input_manager_cable_changed(bool connected) {
         break;
         
       case INPUT_MODE_CLOCK_SYNC:
-        switch_set_channel(2);  // Unipolar 5V for clock sync (switch channel 2)
+        switch_set_channel(cv_get_switch_channel_for_range(CV_RANGE_5V));
         break;
         
       case INPUT_MODE_AUDIO: {

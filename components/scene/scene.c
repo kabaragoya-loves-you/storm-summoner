@@ -85,6 +85,7 @@ static uint8_t scene_get_first_active_index(void);
 static void scene_invalidate_cache_index(uint8_t scene_index);
 static esp_err_t scene_load_into_cache_slot(int cache_idx, uint8_t scene_index);
 static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene);
+static void scene_coerce_sync_cv_input(scene_t *scene);
 
 static char s_deferred_ui_module[MAX_UI_MODULE_NAME + 1];
 static lv_timer_t *s_deferred_ui_module_timer = NULL;
@@ -2415,6 +2416,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     new_scene->expression.enabled = false;
   }
   input_manager_cv_trigger_scene_changed();
+  scene_coerce_sync_cv_input(new_scene);
   input_set_mode(new_scene->cv_input_mode);
   expression_set_mode(new_scene->expression_mode);
   
@@ -3685,6 +3687,15 @@ action_t* scene_get_expr_switch(uint8_t scene_index) {
   return scene ? &scene->expr_switch : NULL;
 }
 
+static void scene_coerce_sync_cv_input(scene_t *scene) {
+  if (!scene || scene->clock_source != CLOCK_SOURCE_SYNC) return;
+  if (scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) return;
+
+  ESP_LOGW(TAG, "clock_source=sync but cv_input_mode=%d; forcing clock_sync",
+    (int)scene->cv_input_mode);
+  scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
+}
+
 esp_err_t scene_set_cv_input_mode(uint8_t scene_index, input_mode_t mode) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
@@ -3827,13 +3838,12 @@ esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t sourc
   scene_t* scene = get_scene_for_modification(scene_index);
   if (!scene) return ESP_ERR_INVALID_STATE;
   
+  input_mode_t old_input_mode = scene->cv_input_mode;
   scene->clock_source = source;
-  scene_persist_if_programming();
-  
+
   // If setting to SYNC, automatically set cv_input_mode to CLOCK_SYNC for coherence
   if (source == CLOCK_SOURCE_SYNC) {
-    input_mode_t old_input_mode = scene->cv_input_mode;
-    scene->cv_input_mode = INPUT_MODE_CLOCK_SYNC;
+    scene_coerce_sync_cv_input(scene);
     
     // If we were in NOTE mode, also reset expression mode to Disabled
     if (old_input_mode == INPUT_MODE_NOTE) {
@@ -3851,20 +3861,22 @@ esp_err_t scene_set_clock_source(uint8_t scene_index, tempo_clock_source_t sourc
       ESP_LOGI(TAG, "Switched to clock sync input mode");
     }
   }
-  
+
+  scene_persist_if_programming();
+
   // Update tempo component immediately if this is the current scene
   if (scene_index == g_scene_manager.current_scene_index) {
     ESP_LOGI(TAG, "Updating tempo to clock source %d (current scene)", source);
     tempo_set_source(source);
   } else {
-    ESP_LOGI(TAG, "Not updating tempo (scene %u is not current scene %u)", 
+    ESP_LOGI(TAG, "Not updating tempo (scene %u is not current scene %u)",
              (unsigned)scene_index, (unsigned)g_scene_manager.current_scene_index);
   }
-  
+
   const char* source_str = (source == CLOCK_SOURCE_INTERNAL) ? "Internal" :
                            (source == CLOCK_SOURCE_MIDI) ? "MIDI" : "Sync";
   ESP_LOGI(TAG, "Scene %d clock source set to %s", scene_index + 1, source_str);
-  
+
   return ESP_OK;
 }
 
@@ -7109,12 +7121,15 @@ static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* expr_sw_json = action_to_json(&scene->expr_switch);
   if (expr_sw_json) cJSON_AddItemToObject(root, "expr_switch", expr_sw_json);
   
-  // Serialize CV input mode
-  const char* cv_mode_str = (scene->cv_input_mode == INPUT_MODE_NONE) ? "none" :
-                            (scene->cv_input_mode == INPUT_MODE_CV) ? "cv" :
-                            (scene->cv_input_mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
-                            (scene->cv_input_mode == INPUT_MODE_AUDIO) ? "audio" :
-                            (scene->cv_input_mode == INPUT_MODE_TRIGGER) ? "trigger" : "note";
+  // Serialize CV input mode (clock_source=sync always exports clock_sync)
+  input_mode_t cv_export_mode = scene->cv_input_mode;
+  if (scene->clock_source == CLOCK_SOURCE_SYNC)
+    cv_export_mode = INPUT_MODE_CLOCK_SYNC;
+  const char* cv_mode_str = (cv_export_mode == INPUT_MODE_NONE) ? "none" :
+                            (cv_export_mode == INPUT_MODE_CV) ? "cv" :
+                            (cv_export_mode == INPUT_MODE_CLOCK_SYNC) ? "clock_sync" :
+                            (cv_export_mode == INPUT_MODE_AUDIO) ? "audio" :
+                            (cv_export_mode == INPUT_MODE_TRIGGER) ? "trigger" : "note";
   cJSON_AddStringToObject(root, "cv_input_mode", cv_mode_str);
   
   // Serialize velocity mode settings
@@ -7868,6 +7883,7 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   scene->sample_hold.enabled = scene->sample_hold_config.enabled;
 
   scene_fixup_touchwheel_orphan(scene);
+  scene_coerce_sync_cv_input(scene);
 
   return ESP_OK;
 }
@@ -8167,6 +8183,7 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
     scene->expression.enabled = false;
   }
   input_manager_cv_trigger_scene_changed();
+  scene_coerce_sync_cv_input(scene);
   input_set_mode(scene->cv_input_mode);
   expression_set_mode(scene->expression_mode);
 

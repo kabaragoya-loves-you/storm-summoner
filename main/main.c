@@ -29,6 +29,7 @@
 #include "io.h"
 #include "transport.h"
 #include "tempo.h"
+#include "sync.h"
 #include "rtg.h"
 #include "sample_hold.h"
 #include "midi_sample_hold_scene_handler.h"
@@ -100,6 +101,7 @@ void app_main(void) {
   
   transport_init();
   tempo_init();
+  sync_init();
   
   ui_set_draw_module(&splash_module);
   display_start();

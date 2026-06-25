@@ -320,10 +320,10 @@
           "description": "CV input voltage range",
           "type": "select",
           "options": [
-            {"value": 0, "label": "0-10V"},
-            {"value": 1, "label": "+/-10V"},
-            {"value": 2, "label": "0-5V"},
-            {"value": 3, "label": "+/-5V"},
+            {"value": 1, "label": "0-10V"},
+            {"value": 0, "label": "+/-10V"},
+            {"value": 3, "label": "0-5V"},
+            {"value": 2, "label": "+/-5V"},
             {"value": 4, "label": "0-3.3V"}
           ],
           "default": 0

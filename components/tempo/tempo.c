@@ -77,6 +77,7 @@ static esp_timer_handle_t s_start_timer = NULL;  // Deferred start timer
 static SemaphoreHandle_t s_state_mutex = NULL;
 static uint32_t s_tick_counter = 0;
 static uint8_t s_beat_counter = 0;  // Counts beats within bar
+static uint32_t s_beat_generation = 0;
 
 // Tap tempo
 // N = moving window size (most recent up to N taps are averaged).
@@ -102,6 +103,7 @@ static uint8_t s_sync_pulse_history_count = 0;
 static uint16_t s_sync_last_known_good_bpm_x10 = DEFAULT_BPM_X10;
 static uint32_t s_sync_last_pulse_time_ms = 0;
 static bool s_sync_clock_active = false;
+static bool s_analog_sync_bpm_active = false;
 
 static uint16_t s_midi_last_known_good_bpm_x10 = DEFAULT_BPM_X10;
 static uint32_t s_midi_last_tick_time_ms = 0;
@@ -270,6 +272,7 @@ static void reset_sync_pulse_tracking(void) {
 // Process an incoming sync pulse interval and update last known good BPM
 static void process_sync_pulse_interval(uint32_t interval_ms) {
   if (interval_ms == 0) return;
+  if (s_analog_sync_bpm_active) return;
   
   // Calculate expected interval based on last known good BPM
   // At 24 PPQN: expected_interval = 60000 / (24 * BPM) = 2500 / BPM
@@ -281,13 +284,30 @@ static void process_sync_pulse_interval(uint32_t interval_ms) {
   uint32_t max_reasonable = expected_interval * EXTERNAL_CLOCK_REASONABLE_FACTOR;
   uint32_t min_reasonable = expected_interval / EXTERNAL_CLOCK_REASONABLE_FACTOR;
   
-  // Also enforce absolute bounds (20-300 BPM = 3000-200ms intervals)
-  if (interval_ms < 200 || interval_ms > 3000) {
+  // Absolute bounds: 300 BPM (~190 ms at 1 PPQ) to 20 BPM (3600 ms), with jitter headroom.
+  if (interval_ms < 190 || interval_ms > 3600) {
     ESP_LOGD(TAG, "Sync pulse interval %lu ms outside BPM range, ignoring",
       (unsigned long)interval_ms);
     return;
   }
-  
+
+  if (s_sync_pulse_history_count > 0) {
+    uint8_t prev_idx = (uint8_t)((s_sync_pulse_history_idx + EXTERNAL_CLOCK_HISTORY_SIZE - 1) %
+      EXTERNAL_CLOCK_HISTORY_SIZE);
+    uint32_t prev_iv = s_sync_pulse_intervals[prev_idx];
+    if (prev_iv > 0) {
+      uint32_t diff = (interval_ms > prev_iv) ? interval_ms - prev_iv : prev_iv - interval_ms;
+      if (diff * 4 > prev_iv) {
+        s_sync_pulse_history_count = 0;
+        s_sync_pulse_history_idx = 0;
+        expected_interval = interval_ms;
+        max_reasonable = expected_interval * EXTERNAL_CLOCK_REASONABLE_FACTOR;
+        min_reasonable = expected_interval / EXTERNAL_CLOCK_REASONABLE_FACTOR;
+        if (min_reasonable < 190) min_reasonable = 190;
+      }
+    }
+  }
+
   if (interval_ms < min_reasonable || interval_ms > max_reasonable) {
     // Interval is unreasonable - could be first pulse after dropout or glitch
     // Don't add to history, but if we have no history, initialize with it
@@ -322,17 +342,17 @@ static void process_sync_pulse_interval(uint32_t interval_ms) {
       uint16_t new_bpm_x10 = (uint16_t)((600000ULL + avg_interval / 2) / avg_interval);
       if (!s_allow_fractional_bpm)
         new_bpm_x10 = (uint16_t)(((new_bpm_x10 + 5) / 10) * 10);
-      if (new_bpm_x10 >= MIN_BPM_X10 && new_bpm_x10 <= MAX_BPM_X10) {
-        s_sync_last_known_good_bpm_x10 = new_bpm_x10;
-        s_sync_clock_active = true;
-        
-        // Update live tempo
-        if (new_bpm_x10 != s_bpm_x10) {
-          xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-          s_bpm_x10 = new_bpm_x10;
-          xSemaphoreGive(s_state_mutex);
-          publish_tempo_changed_event();
-        }
+      if (new_bpm_x10 < MIN_BPM_X10) new_bpm_x10 = MIN_BPM_X10;
+      if (new_bpm_x10 > MAX_BPM_X10) new_bpm_x10 = MAX_BPM_X10;
+
+      s_sync_last_known_good_bpm_x10 = new_bpm_x10;
+      s_sync_clock_active = true;
+
+      if (new_bpm_x10 != s_bpm_x10) {
+        xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+        s_bpm_x10 = new_bpm_x10;
+        xSemaphoreGive(s_state_mutex);
+        publish_tempo_changed_event();
       }
     }
   }
@@ -420,7 +440,7 @@ static void tempo_task(void *pvParameters) {
   
   while (1) {
     // Check if we should be running based on clock_always_send setting
-    bool should_run = s_clock_always_send || transport_is_playing();
+    bool should_run = s_clock_always_send || transport_is_advancing();
     
     if (!should_run) {
       was_running = false;
@@ -647,7 +667,7 @@ static void tempo_task(void *pvParameters) {
         // MIDI clock is active - timing comes from tempo_midi_clock_tick()
         // Just sleep and check for dropout periodically
         vTaskDelay(pdMS_TO_TICKS(50));
-      } else if (transport_is_playing() ||
+      } else if (transport_is_advancing() ||
                  !scene_get_use_transport(scene_get_current_index())) {
         // Generate beats internally when:
         // 1. Transport is playing but MIDI clock not active (fallback), OR
@@ -680,7 +700,10 @@ static void transport_state_handler(const event_t* event, void* context) {
   ESP_LOGI(TAG, "Transport state change: %d (resume: %d)", state, is_resume);
   
   switch (state) {
-    case TRANSPORT_PLAYING: {
+    case TRANSPORT_PLAYING:
+    case TRANSPORT_LOCATING: {
+      if (state == TRANSPORT_LOCATING)
+        ESP_LOGI(TAG, "Locating - holding tempo until beat lock");
       if (is_resume) {
         ESP_LOGI(TAG, "Resuming at beat %d", s_beat_counter);
       } else {
@@ -747,6 +770,11 @@ static void publish_beat_event(void) {
     }
   };
   event_bus_post(&beat_event);
+  s_beat_generation++;
+}
+
+uint32_t tempo_get_beat_generation(void) {
+  return s_beat_generation;
 }
 
 static void publish_tempo_changed_event(void) {
@@ -979,6 +1007,18 @@ void tempo_sync_pulse(void) {
   // Note: Now always processes if source is SYNC (set by scene)
   // Scene controls clock source, so no extra gating needed
   xSemaphoreGive(s_sync_semaphore);
+}
+
+void tempo_set_analog_sync_bpm_active(bool active) {
+  s_analog_sync_bpm_active = active;
+  if (!active) {
+    s_sync_pulse_history_count = 0;
+    s_sync_pulse_history_idx = 0;
+  }
+}
+
+bool tempo_analog_sync_bpm_active(void) {
+  return s_analog_sync_bpm_active;
 }
 
 void tempo_enable_quarter_note_log(bool enable) {
@@ -1342,6 +1382,22 @@ uint8_t tempo_get_current_beat(void) {
   uint8_t beat = s_beat_counter;
   xSemaphoreGive(s_state_mutex);
   return (beat == 0) ? 1 : beat;  // Return 1 if uninitialized
+}
+
+uint8_t tempo_get_ppq_tick(void) {
+  if (!s_state_mutex) return 0;
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  uint8_t tick = (uint8_t)(s_tick_counter % MIDI_CLOCKS_PER_QUARTER);
+  xSemaphoreGive(s_state_mutex);
+  return tick;
+}
+
+bool tempo_is_tempo_locked(void) {
+  if (!s_state_mutex) return false;
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool locked = s_tempo_locked;
+  xSemaphoreGive(s_state_mutex);
+  return locked;
 }
 
 bool tempo_is_compound_meter(void) {

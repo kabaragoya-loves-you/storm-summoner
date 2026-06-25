@@ -28,7 +28,9 @@ window.ConnectionManager = (function () {
       this._lineQueue = []
       this._lineWaiters = []
       this._commandChain = Promise.resolve()
+      this._writeChain = Promise.resolve()
       this._serialDepth = 0
+      this._serialTaskReentrant = false
       this._modeNotifyRunning = false
       this._modeNotifyReader = null
       this._modeNotifySuspended = false
@@ -80,14 +82,20 @@ window.ConnectionManager = (function () {
       return this._serialDepth > 0
     }
 
-    // Serialize every WebSerial transaction. One task at a time — never bypass
-    // the queue (reentrant bypass caused concurrent reader locks mid-await).
+    // Serialize every WebSerial transaction. Only bypass the queue for nested
+    // calls from inside an active serial task (readLine during sendCommand).
+    // _serialDepth alone is NOT enough — a second top-level task during an
+    // in-flight first task must still queue, or getWriter/getReader collide.
     runSerialTask (fn) {
+      if (this._serialTaskReentrant) return fn()
+
       const run = async () => {
         this._serialDepth++
+        this._serialTaskReentrant = true
         try {
           return await fn()
         } finally {
+          this._serialTaskReentrant = false
           this._serialDepth--
         }
       }
@@ -95,6 +103,12 @@ window.ConnectionManager = (function () {
       const result = this._commandChain.then(run, run)
       this._commandChain = result.then(() => {}, () => {})
       return result
+    }
+
+    clearPendingRx () {
+      this._rxBuffer = ''
+      this._lineQueue = []
+      this._rejectLineWaiters()
     }
 
     // Connect to device. Re-entrancy guard: a second click (or a duplicate
@@ -191,6 +205,7 @@ window.ConnectionManager = (function () {
         console.log('USB device disconnected')
         this._stopRxPump()
         this._stopModeNotifyLoop()
+        this._releaseAllReaders()
         this.port = null
         this.mode = null
         this._deviceScenesActive = false
@@ -198,7 +213,9 @@ window.ConnectionManager = (function () {
         this._lineQueue = []
         this._lineWaiters = []
         this._commandChain = Promise.resolve()
+        this._writeChain = Promise.resolve()
         this._serialDepth = 0
+        this._serialTaskReentrant = false
         this.setTabsLocked(false)
         navigator.serial.removeEventListener(
           'disconnect',
@@ -214,6 +231,7 @@ window.ConnectionManager = (function () {
 
       this._stopRxPump()
       this._stopModeNotifyLoop()
+      this._releaseAllReaders()
       navigator.serial.removeEventListener('disconnect', this.onPortDisconnect)
 
       try {
@@ -231,7 +249,9 @@ window.ConnectionManager = (function () {
         this._lineQueue = []
         this._lineWaiters = []
         this._commandChain = Promise.resolve()
+        this._writeChain = Promise.resolve()
         this._serialDepth = 0
+        this._serialTaskReentrant = false
         this.setTabsLocked(false)
         this.emit('connection:changed', { connected: false })
       }
@@ -239,8 +259,7 @@ window.ConnectionManager = (function () {
 
     // Request a mode - returns true if mode was entered
     async requestMode (newMode) {
-      const impl = () => this._requestModeImpl(newMode)
-      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
+      return this.runSerialTask(() => this._requestModeImpl(newMode))
     }
 
     async _requestModeImpl (newMode) {
@@ -266,8 +285,7 @@ window.ConnectionManager = (function () {
 
     // Exit current mode
     async exitMode () {
-      const impl = () => this._exitModeImpl()
-      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
+      return this.runSerialTask(() => this._exitModeImpl())
     }
 
     async _exitModeImpl (options = {}) {
@@ -342,15 +360,21 @@ window.ConnectionManager = (function () {
       })
     }
 
-    // Low-level I/O
+    // Low-level I/O — writes are serialized on their own chain so two serial
+    // tasks can never interleave getWriter() on the single WritableStream.
     async sendRaw (data) {
       if (!this.port?.writable) throw new Error('Port not writable')
-      const writer = this.port.writable.getWriter()
-      try {
-        await writer.write(new TextEncoder().encode(data))
-      } finally {
-        writer.releaseLock()
+      const run = async () => {
+        const writer = this.port.writable.getWriter()
+        try {
+          await writer.write(new TextEncoder().encode(data))
+        } finally {
+          writer.releaseLock()
+        }
       }
+      const result = this._writeChain.then(run, run)
+      this._writeChain = result.then(() => {}, () => {})
+      return result
     }
 
     _takeLineFromBuffer () {
@@ -463,6 +487,95 @@ window.ConnectionManager = (function () {
       }
     }
 
+    _releaseAllReaders () {
+      this._releaseRxPumpReader()
+      this._releaseModeNotifyReader()
+    }
+
+    async _acquireDedicatedReader () {
+      if (!this.port?.readable) throw new Error('Not connected')
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          return this.port.readable.getReader()
+        } catch (err) {
+          const msg = String(err?.message || err)
+          if (!msg.includes('locked') && !msg.includes('Reader')) throw err
+          this._releaseAllReaders()
+          await this.sleep(80 * (attempt + 1))
+        }
+      }
+      throw new Error('Serial reader busy')
+    }
+
+    async _prepareConfigClientMode () {
+      if (this.mode === 'CONFIG') {
+        this._stopModeNotifyLoop()
+        await this._suspendModeNotify()
+        this.mode = null
+        this.emit('mode:changed', { mode: null })
+      } else if (this.mode) {
+        await this._exitModeImpl()
+      } else if (!this._rxPumpRunning) {
+        this._resumeRxPump()
+      }
+    }
+
+    async _prepareScenesClientMode () {
+      if (this.mode === 'SCENES') {
+        this._stopModeNotifyLoop()
+        await this._suspendModeNotify()
+        this.mode = null
+        this.emit('mode:changed', { mode: null })
+      } else if (this.mode) {
+        await this._exitModeImpl()
+      } else if (!this._rxPumpRunning) {
+        this._resumeRxPump()
+      }
+    }
+
+    /** Release the rx pump reader after a one-shot pump command (e.g. INFO). */
+    async _releasePumpAfterCommand () {
+      await this._suspendRxPump()
+    }
+
+    // Reset pump/mode readers after a mid-transfer dropout or failed acquire.
+    async recoverSerialState () {
+      if (!this.port) return false
+      const impl = async () => {
+        this._releaseAllReaders()
+        this._pumpSuspended = false
+        this._modeNotifySuspended = false
+        this._lineQueue = []
+        this._rejectLineWaiters()
+        if (this.mode || this._deviceScenesActive) {
+          this._stopModeNotifyLoop()
+          try {
+            await this.sendRaw('EXIT\n')
+            await this.sleep(150)
+          } catch (e) {}
+          this.mode = null
+          this._deviceScenesActive = false
+          this.emit('mode:changed', { mode: null })
+        }
+        this._rxBuffer = ''
+        if (!this._rxPumpRunning) this._startRxPump()
+        else this._resumeRxPump()
+        await this._armRxPump(2000)
+        return true
+      }
+      return this.runSerialTask(impl)
+    }
+
+    _isRecoverableSerialError (err) {
+      const msg = String(err?.message || err)
+      return msg.includes('No response') ||
+        msg.includes('Not connected') ||
+        msg.includes('Serial reader busy') ||
+        msg.includes('locked') ||
+        msg.includes('Incomplete download') ||
+        msg.includes('Failed to fetch')
+    }
+
     _releaseRxPumpReader () {
       if (!this._rxPumpReader) return
       try {
@@ -549,7 +662,7 @@ window.ConnectionManager = (function () {
       if (this.mode === 'ASSETS' || this.mode === 'CONFIG' ||
           this.mode === 'DISPLAY' || this.mode === 'UPDATE' ||
           this.mode === 'CONSOLE' || this.mode === 'MIDI' ||
-          this.mode === 'SETTINGS') return
+          this.mode === 'SETTINGS' || this.mode === 'SCENES') return
       this._modeNotifyRunning = true
       this._modeNotifyLoop()
     }
@@ -940,8 +1053,7 @@ window.ConnectionManager = (function () {
     }
 
     async sendCommand (cmd, timeout = 30000, validator = null) {
-      const impl = () => this._sendCommandImpl(cmd, timeout, validator)
-      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
+      return this.runSerialTask(() => this._sendCommandImpl(cmd, timeout, validator))
     }
 
     async _sendCommandImpl (cmd, timeout = 30000, validator = null, options = null) {
@@ -971,7 +1083,7 @@ window.ConnectionManager = (function () {
         await this.sendRaw(cmd + '\n')
         let reader = null
         try {
-          reader = this.port.readable.getReader()
+          reader = await this._acquireDedicatedReader()
         } catch (getErr) {
           throw getErr
         }
@@ -1109,12 +1221,23 @@ window.ConnectionManager = (function () {
 
     async readLine (timeout = 10000) {
       if (!this.port?.readable) return null
-      const impl = () => this._readLineBody(timeout)
-      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
+      return this.runSerialTask(() => this._readLineBody(timeout))
+    }
+
+    _usesPumpLineReader () {
+      const exclusiveModes = new Set([
+        'ASSETS', 'DISPLAY', 'UPDATE', 'CONSOLE', 'MIDI', 'PEDALS'
+      ])
+      return this.mode === null || !exclusiveModes.has(this.mode)
     }
 
     async _readLineBody (timeout = 10000) {
-      if (this.mode !== null) return this._readLineExclusive(timeout)
+      if (!this._usesPumpLineReader()) return this._readLineExclusive(timeout)
+
+      if (!this._rxPumpRunning || this._pumpSuspended) {
+        this._resumeRxPump()
+        await this._armRxPump(Math.min(500, timeout))
+      }
 
       const deadline = Date.now() + timeout
       while (Date.now() < deadline) {
@@ -1133,7 +1256,7 @@ window.ConnectionManager = (function () {
     async _readLineExclusive (timeout = 10000) {
       await this._suspendRxPump()
       await this._suspendModeNotify()
-      const reader = this.port.readable.getReader()
+      let reader = null
       const decoder = new TextDecoder()
       let buffer = ''
 
@@ -1153,6 +1276,7 @@ window.ConnectionManager = (function () {
       }
 
       try {
+        reader = await this._acquireDedicatedReader()
         const deadline = Date.now() + timeout
         let pendingRead = null
 
@@ -1177,7 +1301,9 @@ window.ConnectionManager = (function () {
           }
         }
       } finally {
-        try { reader.releaseLock() } catch (e) {}
+        if (reader) {
+          try { reader.releaseLock() } catch (e) {}
+        }
         this._resumeModeNotifyIfAllowed()
       }
       return buffer.trim()
@@ -1224,8 +1350,7 @@ window.ConnectionManager = (function () {
     // SIZE line + raw binary in one exclusive read (MANIFEST/GET). Avoids resuming
     // the mode-notify reader between sendCommand and readBinary (stream lock race).
     async fetchSizedTransfer (cmd, options = {}) {
-      const impl = () => this._fetchSizedTransferImpl(cmd, options)
-      return this.isSerialBusy ? impl() : this.runSerialTask(impl)
+      return this.runSerialTask(() => this._fetchSizedTransferImpl(cmd, options))
     }
 
     _binaryStallTimeoutMs (size, explicit) {
@@ -1250,11 +1375,12 @@ window.ConnectionManager = (function () {
         await this._waitForModeNotifyReaderRelease()
       }
 
-      const reader = this.port.readable.getReader()
+      let reader = null
       let buffer = new Uint8Array(0)
       let responseLine = ''
 
       try {
+        reader = await this._acquireDedicatedReader()
         await this.sendRaw(cmd + '\n')
         const lineDeadline = Date.now() + lineTimeout
         let pendingRead = null
@@ -1343,7 +1469,9 @@ window.ConnectionManager = (function () {
 
         return { line: responseLine, data }
       } finally {
-        try { reader.releaseLock() } catch (e) {}
+        if (reader) {
+          try { reader.releaseLock() } catch (e) {}
+        }
         if (hadMode) this._resumeModeNotifyIfAllowed()
         else this._resumeRxPump()
       }
@@ -1354,7 +1482,7 @@ window.ConnectionManager = (function () {
       await this._waitForPumpReaderRelease()
       await this._suspendModeNotify()
       await this._waitForModeNotifyReaderRelease()
-      const reader = this.port.readable.getReader()
+      let reader = null
       const data = new Uint8Array(size)
       // Firmware appends a 1-byte short-packet terminator when the payload is an
       // exact multiple of the 64-byte FS bulk packet size; consume and discard it.
@@ -1366,6 +1494,7 @@ window.ConnectionManager = (function () {
       let deadline = Date.now() + stallMs
 
       try {
+        reader = await this._acquireDedicatedReader()
         while (consumed < total && Date.now() < deadline) {
           const { value, done } = await reader.read()
           if (done) break
@@ -1381,7 +1510,9 @@ window.ConnectionManager = (function () {
           }
         }
       } finally {
-        reader.releaseLock()
+        if (reader) {
+          try { reader.releaseLock() } catch (e) {}
+        }
         if (this.mode !== null) this._resumeModeNotifyIfAllowed()
         else this._resumeRxPump()
       }
@@ -1389,15 +1520,20 @@ window.ConnectionManager = (function () {
     }
 
     async sendBinary (data) {
-      const writer = this.port.writable.getWriter()
-      const chunkSize = 1024
-      try {
-        for (let i = 0; i < data.length; i += chunkSize) {
-          await writer.write(data.slice(i, i + chunkSize))
+      const run = async () => {
+        const writer = this.port.writable.getWriter()
+        const chunkSize = 1024
+        try {
+          for (let i = 0; i < data.length; i += chunkSize) {
+            await writer.write(data.slice(i, i + chunkSize))
+          }
+        } finally {
+          writer.releaseLock()
         }
-      } finally {
-        writer.releaseLock()
       }
+      const result = this._writeChain.then(run, run)
+      this._writeChain = result.then(() => {}, () => {})
+      return result
     }
 
     async drainInput () {
@@ -1538,7 +1674,9 @@ application.register(
       }
 
       if (connected) {
-        this.activateCurrentTab()
+        void this.connection.recoverSerialState().finally(() => {
+          this.activateCurrentTab()
+        })
       } else {
         this.navigateToTab('info')
       }

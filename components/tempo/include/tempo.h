@@ -87,6 +87,10 @@ tempo_clock_source_t tempo_get_source(void);
 // Function to be called from the sync ISR.
 void tempo_sync_pulse(void);
 
+// When true, clock_sync owns BPM from analog pulses; tempo skips duplicate tracking.
+void tempo_set_analog_sync_bpm_active(bool active);
+bool tempo_analog_sync_bpm_active(void);
+
 // Enable or disable logging/LED blink on every note divider tick.
 void tempo_enable_quarter_note_log(bool enable);
 
@@ -117,6 +121,9 @@ time_signature_t tempo_get_time_signature(void);
 
 // Get current beat within bar (1 to numerator)
 uint8_t tempo_get_current_beat(void);
+uint8_t tempo_get_ppq_tick(void);
+bool tempo_is_tempo_locked(void);
+uint32_t tempo_get_beat_generation(void);
 
 // Meter classification and felt beats
 // Compound meters (6/8, 9/8, 12/8) have fewer "felt" beats than written beats

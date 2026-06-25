@@ -126,6 +126,7 @@ target_link_options(${elf} PRIVATE
     "$<TARGET_FILE:__idf_haptic>"
     "$<TARGET_FILE:__idf_display>"
     "$<TARGET_FILE:__idf_ui>"
+    "$<TARGET_FILE:__idf_sync>"
     "$<TARGET_FILE:__idf_screensaver>"
     "$<TARGET_FILE:__idf_assets_manager>"
     "$<TARGET_FILE:__idf_firmware_update>"

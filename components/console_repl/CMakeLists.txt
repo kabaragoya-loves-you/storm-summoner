@@ -23,6 +23,7 @@ idf_component_register(
     tempo
     transport
     clock_sync
+    sync
     haptic
     display
     ui

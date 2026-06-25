@@ -88,17 +88,31 @@ window.PedalCatalog = (function () {
     return { deviceBySlug, userDevices, vendorTree, sharedManifest, userManifest }
   }
 
+  async function ensureAssetsReady (connection) {
+    connection.clearPendingRx?.()
+    await connection.sendRaw('ASSETS\n')
+    const response = await connection.readLine(3000)
+    if (!response?.includes('ASSETS_STARTED')) {
+      throw new Error(`Assets not ready (got: ${response || 'nothing'})`)
+    }
+    // Device ignores commands while ASSETS_SENDING; allow prior transfer to finish.
+    await new Promise(r => setTimeout(r, 80))
+  }
+
   async function fetchManifestByCommand (connection, type) {
     const maxAttempts = 2
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const { data } = await connection._fetchSizedTransferImpl(`MANIFEST ${type}`)
+        await ensureAssetsReady(connection)
+        const { data } = await connection.fetchSizedTransfer(`MANIFEST ${type}`)
         const manifest = JSON.parse(new TextDecoder().decode(data))
         return Array.isArray(manifest?.devices) ? manifest : { devices: [] }
       } catch (err) {
-        const retryable = /Incomplete download|No response|Unexpected response/i.test(err.message)
+        const msg = err?.message || String(err)
+        const retryable = /Incomplete download|No response|Unexpected response|Unknown assets command|Assets not ready/i.test(msg)
+        const missing = /Manifest not found/i.test(msg)
+        if (missing) return { devices: [] }
         if (retryable && attempt < maxAttempts) {
-          console.warn(`Manifest fetch retry (${type}):`, err)
           await new Promise(r => setTimeout(r, 300))
           continue
         }
@@ -112,11 +126,7 @@ window.PedalCatalog = (function () {
   async function ensureAssetsModeBody (connection) {
     const modeGranted = await connection._requestModeImpl('ASSETS')
     if (!modeGranted) throw new Error('Could not enter ASSETS mode')
-    await new Promise(r => setTimeout(r, 50))
-    await connection.sendRaw('ASSETS\n')
-    const response = await connection.readLine(5000)
-    if (response?.includes('ASSETS_STARTED')) return
-    throw new Error(`Timeout waiting for ASSETS_STARTED (got: ${response || 'nothing'})`)
+    await ensureAssetsReady(connection)
   }
 
   async function fetchManifestsInAssets (connection) {
@@ -167,11 +177,12 @@ window.PedalCatalog = (function () {
     let lastErr = null
     for (const path of paths) {
       try {
-        const { data } = await connection._fetchSizedTransferImpl(`GET ${path}`)
+        await ensureAssetsReady(connection)
+        const { data } = await connection.fetchSizedTransfer(`GET ${path}`)
         return JSON.parse(new TextDecoder().decode(data))
       } catch (err) {
         lastErr = err
-        const retryable = /Incomplete download|No response|Unexpected response/i.test(err.message)
+        const retryable = /Incomplete download|No response|Unexpected response|Unknown assets command|Assets not ready/i.test(err.message)
         if (retryable) {
           await new Promise(r => setTimeout(r, 300))
           continue
@@ -197,6 +208,7 @@ window.PedalCatalog = (function () {
     formatPedalMenuLabel,
     formatPedalDisplayName,
     buildCatalog,
+    ensureAssetsReady,
     fetchManifestByCommand,
     ensureAssetsModeBody,
     fetchManifestsInAssets,

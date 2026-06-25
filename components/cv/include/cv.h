@@ -61,6 +61,11 @@ void cv_set_range(cv_range_t range);
 cv_range_t cv_get_range(void);
 
 /**
+ * Hardware switch channel for a CV voltage range (front-end routing).
+ */
+uint8_t cv_get_switch_channel_for_range(cv_range_t range);
+
+/**
  * Set the CV processing mode (LINEAR or PITCH)
  * @param mode The mode to use
  */

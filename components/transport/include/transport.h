@@ -8,7 +8,8 @@
 // Transport states (two-state model: pause is STOPPED with position held)
 typedef enum {
   TRANSPORT_STOPPED = 0,
-  TRANSPORT_PLAYING
+  TRANSPORT_PLAYING,
+  TRANSPORT_LOCATING
 } transport_state_t;
 
 // Transport event sources
@@ -23,6 +24,7 @@ esp_err_t transport_init(void);
 
 transport_state_t transport_get_state(void);
 bool transport_is_playing(void);
+bool transport_is_advancing(void);
 
 // Fresh start from stopped (F2 00 00 + FA). If playing, stops first.
 esp_err_t transport_play(void);
@@ -41,5 +43,6 @@ void transport_reset_position(void);
 
 // Song Position Pointer (MIDI beats = 1/16 notes from top).
 void transport_set_song_position(uint16_t spp_sixteenths);
+uint16_t transport_get_song_position_sixteenths(void);
 
 #endif /* _TRANSPORT_H */

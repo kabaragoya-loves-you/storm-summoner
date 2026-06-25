@@ -30,9 +30,9 @@ application.register(
       // Listen for connection changes
       this.connection.on('connection:changed', this.onConnectionChanged.bind(this))
 
-      // Listen for mode changes
+      // Listen for mode changes — device SCENES runs with client mode null.
       this.connection.on('mode:changed', ({ mode }) => {
-        if (mode !== 'SCENES') {
+        if (mode != null && mode !== 'SCENES') {
           this.inScenesMode = false
         }
       })
@@ -117,22 +117,28 @@ application.register(
         await this.openDetailPanelAfterListLoad()
       } catch (err) {
         console.error('Scenes activation error:', err)
+        try {
+          await this.connection.recoverSerialState()
+        } catch (recoverErr) {
+          console.warn('Serial recovery after activation error:', recoverErr)
+        }
         this.log('Activation error: ' + err.message, 'error')
       }
     }
 
     scenesSerial(fn) {
-      const impl = () => fn()
-      return this.connection.isSerialBusy ? impl() : this.connection.runSerialTask(impl)
+      return this.connection.runSerialTask(fn)
     }
 
     async ensureScenesMode() {
       if (this.inScenesMode) return
 
-      if (this.connection.currentMode !== 'SCENES') {
-        const modeGranted = await this.connection.requestMode('SCENES')
-        if (!modeGranted) throw new Error('Could not enter SCENES mode')
-      }
+      const cm = this.connection
+      // Never requestMode('SCENES'): that starts the mode-notify reader while
+      // readLine still needs the single WebSerial readable lock. Device entry
+      // uses SCENES\\n with client mode null (see _deviceScenesActive).
+      await cm._prepareScenesClientMode()
+
       await this.enterScenesMode()
     }
 
@@ -190,11 +196,9 @@ application.register(
       if (this._fetchScenesPromise) return this._fetchScenesPromise
 
       const run = () => this.fetchScenesBody()
-      const task = this.connection.isSerialBusy
-        ? run()
-        : this.connection.runSerialTask(run)
-
-      this._fetchScenesPromise = Promise.resolve(task).finally(() => {
+      this._fetchScenesPromise = Promise.resolve(
+        this.connection.runSerialTask(run)
+      ).finally(() => {
         this._fetchScenesPromise = null
       })
       return this._fetchScenesPromise
@@ -411,7 +415,7 @@ application.register(
           this.connection.currentMode !== 'SCENES') return
 
       this.inScenesMode = false
-      const impl = async () => {
+      await this.connection.runSerialTask(async () => {
         // The activated tab's app:tab-activated handler is queued ahead of
         // ours (it registers earlier in the DOM), so by the time this leave
         // task runs the device may already be in another mode (e.g. ASSETS).
@@ -420,9 +424,7 @@ application.register(
         const cm = this.connection.currentMode
         if (cm !== null && cm !== 'SCENES') return
         await this.connection.ensureDeviceIdle()
-      }
-      if (this.connection.isSerialBusy) await impl()
-      else await this.connection.runSerialTask(impl)
+      })
     }
 
     async leaveScenesModeInTask () {

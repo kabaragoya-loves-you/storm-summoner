@@ -16,7 +16,8 @@ static int cmd_info(int argc, char **argv) {
   uint32_t bar = transport_get_current_bar();
   uint8_t beat = transport_get_current_beat();
 
-  const char* state_str = (state == TRANSPORT_PLAYING) ? "Playing" : "Stopped";
+  const char* state_str = (state == TRANSPORT_PLAYING) ? "Playing"
+    : (state == TRANSPORT_LOCATING) ? "Locating" : "Stopped";
 
   ESP_LOGI(TAG, "====== TRANSPORT ======");
   ESP_LOGI(TAG, "State: %s", state_str);

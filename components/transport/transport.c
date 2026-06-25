@@ -16,6 +16,8 @@ static SemaphoreHandle_t s_state_mutex = NULL;
 
 static uint32_t s_current_bar = 1;
 static uint8_t s_current_beat = 1;
+static uint16_t s_last_spp_sixteenths = 0;
+static uint32_t s_locating_beat_gen_at_spp = 0;
 static SemaphoreHandle_t s_position_mutex = NULL;
 
 static void transport_event_handler(const event_t* event, void* context);
@@ -36,6 +38,12 @@ static void set_position(uint32_t bar, uint8_t beat) {
   xSemaphoreTake(s_position_mutex, portMAX_DELAY);
   s_current_bar = bar;
   s_current_beat = beat;
+  xSemaphoreGive(s_position_mutex);
+}
+
+static void set_spp_storage(uint16_t spp_sixteenths) {
+  xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+  s_last_spp_sixteenths = spp_sixteenths;
   xSemaphoreGive(s_position_mutex);
 }
 
@@ -180,6 +188,7 @@ esp_err_t transport_init(void) {
 
 static void handle_second_stop(transport_source_t source) {
   set_position(1, 1);
+  set_spp_storage(0);
   tempo_sync_to_bar_beat(1, 1);
   publish_position_changed();
   ESP_LOGI(TAG, "Second stop: relocated to bar 1, beat 1");
@@ -200,6 +209,7 @@ static void transport_event_handler(const event_t* event, void* context) {
     case EVENT_TRANSPORT_START: {
       ESP_LOGD(TAG, "Received START event (source=%d)", source);
       set_position(1, 1);
+      set_spp_storage(0);
       ESP_LOGD(TAG, "Position reset to bar 1, beat 1 (START)");
 
       bool was_playing = transport_is_playing();
@@ -288,6 +298,37 @@ transport_state_t transport_get_state(void) {
 
 bool transport_is_playing(void) {
   return transport_get_state() == TRANSPORT_PLAYING;
+}
+
+bool transport_is_advancing(void) {
+  transport_state_t state = transport_get_state();
+  return state == TRANSPORT_PLAYING || state == TRANSPORT_LOCATING;
+}
+
+static void clear_locating_on_beat(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  if (s_state == TRANSPORT_LOCATING) {
+    transport_state_t old_state = s_state;
+    s_state = TRANSPORT_PLAYING;
+    xSemaphoreGive(s_state_mutex);
+
+    ESP_LOGI(TAG, "Locating complete: %d -> %d", old_state, TRANSPORT_PLAYING);
+
+    event_t state_event = {
+      .type = EVENT_TRANSPORT_STATE_CHANGED,
+      .priority = EVENT_PRIORITY_HIGH,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.transport = {
+        .state = TRANSPORT_PLAYING,
+        .source = TRANSPORT_SOURCE_MIDI,
+        .is_resume = 1,
+        .is_fresh_start = 0
+      }
+    };
+    event_bus_post(&state_event);
+    return;
+  }
+  xSemaphoreGive(s_state_mutex);
 }
 
 esp_err_t transport_play(void) {
@@ -379,7 +420,7 @@ esp_err_t transport_record(void) {
 
 static void tempo_beat_handler(const event_t* event, void* context) {
   (void)context;
-  if (!event || !transport_is_playing()) return;
+  if (!event || !transport_is_advancing()) return;
 
   xSemaphoreTake(s_position_mutex, portMAX_DELAY);
 
@@ -389,6 +430,13 @@ static void tempo_beat_handler(const event_t* event, void* context) {
   s_current_beat = beat_in_bar;
 
   xSemaphoreGive(s_position_mutex);
+
+  if (transport_get_state() == TRANSPORT_LOCATING) {
+    uint32_t beat_gen = tempo_get_beat_generation();
+    if (beat_gen <= s_locating_beat_gen_at_spp)
+      return;
+    clear_locating_on_beat();
+  }
 }
 
 uint32_t transport_get_current_bar(void) {
@@ -423,10 +471,23 @@ void transport_set_song_position(uint16_t spp_sixteenths) {
   uint32_t bar = ((uint32_t)spp_sixteenths / sixteenths_per_bar) + 1;
   uint8_t beat = (uint8_t)(((spp_sixteenths % sixteenths_per_bar) / sixteenths_per_beat) + 1);
 
+  set_spp_storage(spp_sixteenths);
   set_position(bar, beat);
   tempo_sync_to_bar_beat((uint8_t)bar, beat);
   publish_position_changed();
 
+  if (transport_get_state() == TRANSPORT_PLAYING) {
+    s_locating_beat_gen_at_spp = tempo_get_beat_generation();
+    set_state_ex(TRANSPORT_LOCATING, TRANSPORT_SOURCE_MIDI, true);
+  }
+
   ESP_LOGI(TAG, "SPP %u sixteenths -> bar %lu beat %u",
     (unsigned)spp_sixteenths, (unsigned long)bar, (unsigned)beat);
+}
+
+uint16_t transport_get_song_position_sixteenths(void) {
+  xSemaphoreTake(s_position_mutex, portMAX_DELAY);
+  uint16_t spp = s_last_spp_sixteenths;
+  xSemaphoreGive(s_position_mutex);
+  return spp;
 }

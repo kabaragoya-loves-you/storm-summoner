@@ -256,6 +256,8 @@ static lv_color_t get_transport_color(void) {
   switch (g_transport_state) {
     case TRANSPORT_STOPPED:
       return lv_color_make(0, 0, 0);
+    case TRANSPORT_LOCATING:
+      return lv_color_make(128, 128, 128);
     case TRANSPORT_PLAYING:
       return lv_color_make(255, 255, 255);
     default:
@@ -374,9 +376,8 @@ static void beat_event_handler(const event_t* event, void* context) {
   
   // Only filter by transport state when use_transport is enabled
   if (use_transport) {
-    // Only update state when transport is actively playing
-    // This prevents state drift while stopped/paused
-    if (g_transport_state != TRANSPORT_PLAYING)
+    if (g_transport_state != TRANSPORT_PLAYING &&
+        g_transport_state != TRANSPORT_LOCATING)
       return;
   }
   
@@ -477,6 +478,7 @@ static void interp_timer_cb(lv_timer_t *timer) {
         g_last_beat_time_ms = esp_timer_get_time() / 1000;
         break;
 
+      case TRANSPORT_LOCATING:
       case TRANSPORT_STOPPED:
         if (g_body_art && lv_vector_art_is_animated(g_body_art))
           lv_vector_art_set_frame(g_body_art, 0);

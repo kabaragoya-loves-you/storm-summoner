@@ -206,13 +206,16 @@ application.register(
               await this.connection.ensureDeviceIdle({ leavePumpSuspended: true })
               if (gen !== this._loadGeneration) return null
               await this.sleep(100)
-              return this.connection._sendCommandImpl(
+              const resp = await this.connection._sendCommandViaPump(
                 'INFO',
                 5000,
                 data =>
                   typeof data.version === 'string' &&
                     typeof data.build === 'number'
               )
+              await this.connection._releasePumpAfterCommand()
+              this.connection._resumeRxPump()
+              return resp
             })
           } catch (err) {
             if (!this.connection.isConnected) return
