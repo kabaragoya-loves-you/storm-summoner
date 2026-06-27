@@ -31,6 +31,7 @@ static midi_out_config_t s_config = {0};
 // Cut state (temporary runtime mute, not persisted)
 static bool s_cut_local = false;       // Cut locally-generated MIDI messages
 static bool s_cut_passthrough = false; // Cut passthrough MIDI messages
+static midi_out_cdc_mirror_fn s_cdc_mirror_fn = NULL;
 
 static void midi_out_task(void *pvParameters);
 static void load_config_from_nvs(void);
@@ -338,7 +339,9 @@ static void midi_out_task(void *pvParameters) {
         // Send to enabled interfaces
         if (send_to_uart) midi_out_uart_send(job->data, job->len);
         if (send_to_usb) midi_out_usb_send(job->data, job->len);
-        
+
+        if (s_cdc_mirror_fn) s_cdc_mirror_fn(job->data, job->len);
+
         xSemaphoreGive(midi_out_mutex);
       }
       free(job->data);
@@ -370,4 +373,8 @@ void midi_out_reset_cut(void) {
   s_cut_local = false;
   s_cut_passthrough = false;
   ESP_LOGD(TAG, "Cut states reset");
+}
+
+void midi_out_set_cdc_mirror_fn(midi_out_cdc_mirror_fn fn) {
+  s_cdc_mirror_fn = fn;
 }

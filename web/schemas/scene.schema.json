@@ -63,6 +63,29 @@
       "default": true,
       "description": "Send program change when loading this scene"
     },
+    "cc_defaults": {
+      "type": "array",
+      "description": "Per-scene default CC values. Sparse: only CCs the user has assigned a value appear here. Each entry is sent on scene load and seeds the live CC cache used for x_variants / x_noop mode resolution. CCs flagged x_mandatory in the device definition are required and always present.",
+      "items": {
+        "type": "object",
+        "required": ["cc", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "cc": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 127,
+            "description": "Control change number"
+          },
+          "value": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 127,
+            "description": "Default value to send on scene load"
+          }
+        }
+      }
+    },
     "on_load": {
       "$ref": "#/definitions/action_chain",
       "description": "Actions to execute when scene loads (for pedal initialization)"

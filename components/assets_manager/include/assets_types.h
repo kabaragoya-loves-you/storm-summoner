@@ -20,16 +20,52 @@ typedef enum {
 
 // Cache file magic number
 #define CACHE_MAGIC 0x4D444343  // 'MDCC'
-#define CACHE_SCHEMA_VERSION 1
+// Schema 2 adds x_variants (mode-dependent CC overrides).
+// Schema 3 adds x_noop (hide a CC in certain gate combinations).
+// Schema 4 parses x_mandatory into the control flags byte.
+#define CACHE_SCHEMA_VERSION 4
+
+// midi_control_t.flags bits
+#define MIDI_CONTROL_FLAG_MANDATORY 0x01  // x_mandatory: required per-scene CC default
 
 // Maximum discrete values per control
 #define MAX_DISCRETE_VALUES 16
+
+// Maximum x_variants per control
+#define MAX_VARIANTS 8
+
+// Comparison operators for x_variants constraints.
+// Evaluated as: (gating CC current value) op value
+typedef enum {
+  CC_VARIANT_OP_LT = 0,   // <
+  CC_VARIANT_OP_LE,       // <=
+  CC_VARIANT_OP_GT,       // >
+  CC_VARIANT_OP_GE,       // >=
+  CC_VARIANT_OP_EQ,       // ==
+  CC_VARIANT_OP_NE        // !=
+} cc_variant_op_t;
 
 // Discrete value entry (for controls with named preset values)
 typedef struct {
   const char *name;       // Value name (points into PSRAM string blob)
   uint16_t value;         // MIDI value (0-127 for CC, 0-16383 for NRPN)
 } discrete_value_t;
+
+// A single mode-dependent override of a control (x_variants entry).
+// When the gating CC satisfies the constraint, these fields replace the
+// control's base name/min/max/discrete set. Inherited fields are
+// materialized at parse/load time, so every field is always populated.
+typedef struct {
+  uint8_t gating_cc;      // CC number whose value is tested
+  uint8_t op;             // cc_variant_op_t
+  uint16_t value;         // comparison value
+  const char *name;       // Effective name (points into PSRAM string blob)
+  uint16_t min;           // Effective minimum value
+  uint16_t max;           // Effective maximum value
+  discrete_value_t *discrete_values;  // Effective discrete values (NULL if continuous)
+  uint8_t discrete_count;             // Number of discrete values (0 if continuous)
+  uint8_t noop;           // x_noop: when set, hide the CC while this variant matches
+} cc_variant_t;
 
 // Individual MIDI control definition
 typedef struct {
@@ -42,6 +78,9 @@ typedef struct {
   uint8_t flags;          // Reserved for taper, stepped, etc.
   discrete_value_t *discrete_values;  // Array of discrete values (NULL if continuous)
   uint8_t discrete_count;             // Number of discrete values (0 if continuous)
+  cc_variant_t *variants;             // Array of mode variants (NULL if none)
+  uint8_t variant_count;              // Number of variants (0 if none)
+  uint8_t noop;                       // x_noop on base: hide CC when no variant matches
 } midi_control_t;
 
 // Bank select mode for program changes (matches device_config.h)
@@ -84,6 +123,15 @@ typedef struct {
   
   void *string_blob;      // PSRAM blob containing all strings
   size_t string_blob_size;
+
+  // Owning base pointers for the bulk pools the controls/variants point into.
+  // controls[].discrete_values, variants[], and variants[].discrete_values are
+  // sub-ranges of these single allocations, so they must be freed here (not per
+  // control) by assets_free_device.
+  void *discrete_pool;          // Base of all controls' discrete value entries
+  void *variant_pool;           // Base of all cc_variant_t entries
+  void *variant_discrete_pool;  // Base of all variants' discrete value entries
+  void *pc_names_blob;          // String storage backing pc_info->names
 } device_def_t;
 
 // Binary cache file header
@@ -108,7 +156,8 @@ typedef struct {
   uint32_t info_offset;  // Offset into string blob (0 if none)
   uint8_t flags;
   uint8_t discrete_count;  // Number of discrete values (0 if continuous)
-  uint16_t padding;        // Align to 16 bytes
+  uint8_t variant_count;   // Number of x_variants (0 if none)
+  uint8_t noop;            // x_noop on base control (0/1)
 } __attribute__((packed)) control_record_t;
 
 // Packed binary discrete value record for cache files
@@ -117,6 +166,22 @@ typedef struct {
   uint16_t value;        // MIDI value
   uint16_t padding;      // Align to 8 bytes
 } __attribute__((packed)) discrete_value_record_t;
+
+// Packed binary variant record for cache files.
+// Variant records follow all base discrete records; variant discrete
+// records (discrete_value_record_t) follow all variant records in the
+// same control/variant order.
+typedef struct {
+  uint8_t gating_cc;     // CC number whose value is tested
+  uint8_t op;            // cc_variant_op_t
+  uint16_t value;        // comparison value
+  uint32_t name_offset;  // Offset into string blob
+  uint16_t min;
+  uint16_t max;
+  uint8_t discrete_count;  // Number of discrete values for this variant
+  uint8_t noop;            // x_noop on this variant (0/1)
+  uint8_t padding[2];      // Align to 16 bytes
+} __attribute__((packed)) cc_variant_record_t;
 
 // Manifest device entry
 typedef struct {

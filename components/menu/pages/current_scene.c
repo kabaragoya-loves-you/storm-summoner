@@ -22,7 +22,7 @@
 #define TAG "MENU_CURRENT_SCENE"
 
 // Static storage for menu items and labels
-#define MAX_SCENE_ITEMS 30
+#define MAX_SCENE_ITEMS 36
 static menu_item_t s_scene_items[MAX_SCENE_ITEMS];
 static char s_page_title[24];
 static char s_preset_label[32];
@@ -168,6 +168,11 @@ static void nav_to_cc_triggers(void* user_data) {
 static void nav_to_note_track(void* user_data) {
   (void)user_data;
   menu_navigate_to("Note Track", menu_page_note_track_scene_create);
+}
+
+static void nav_to_cc_defaults(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("CC Defaults", menu_page_cc_defaults_scene_create);
 }
 
 // ============================================================================
@@ -1235,6 +1240,14 @@ lv_obj_t* menu_page_current_scene_create(void) {
     };
   }
   s_scene_items[idx++] = (menu_item_t){ "Note Track", nav_to_note_track, NULL, true, MENU_ITEM_KIND_SUBMENU };
+
+  // CC Defaults (only when the current device exposes CC parameters)
+  const device_def_t* ccd_dev = (const device_def_t*)scene_get_device(scene_index);
+  if (ccd_dev && ccd_dev->control_count > 0) {
+    s_scene_items[idx++] = (menu_item_t){
+      "CC Defaults", nav_to_cc_defaults, NULL, true, MENU_ITEM_KIND_SUBMENU
+    };
+  }
   
   // Per-scene device controls (only in per-scene device mode)
   if (config_get_device_mode() == DEVICE_MODE_PER_SCENE) {

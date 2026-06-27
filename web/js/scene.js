@@ -39,6 +39,10 @@ application.register(
       this.pedalCatalog = null
       this._pedalCatalogLoad = null
       this.deviceDefinition = null
+      // Editor-local CC->value map: the web stand-in for the device's
+      // s_last_cc_values. Gate CCs default to 0; the mock-runtime controller
+      // updates entries when an x_variants gating CC is edited.
+      this.runtimeCcValues = {}
       this._openEditorSections = new Set()
       this._sectionLayoutPhase = 0
       this._pendingPedalSlug = null
@@ -50,6 +54,10 @@ application.register(
       this._programmingSyncGen = 0
       this._programmingFetchPromise = null
       this._programmingPollTimer = null
+      this._saveReloadSuppressUntil = 0
+      this._saveInProgress = false
+      this._configContextLoaded = false
+      this._deviceDefLoadInProgress = false
       this._programmingExitDebounce = null
       this._pendingReconnectEdit = null
 
@@ -60,6 +68,8 @@ application.register(
       this._onOpenScene = this.onOpenScene.bind(this)
       this._onSceneListUpdated = this.onSceneListUpdated.bind(this)
       this._onDownloadScene = this.onDownloadScene.bind(this)
+      this._onScenesActivationComplete = this.onScenesActivationComplete.bind(this)
+      this._onDeviceInfo = this.onDeviceInfo.bind(this)
 
       this.connection.on('connection:changed', this._onConnectionChanged)
       this.connection.on('mode:changed', this._onModeChanged)
@@ -68,6 +78,8 @@ application.register(
       document.addEventListener('scenes:open-scene', this._onOpenScene)
       document.addEventListener('scenes:list-updated', this._onSceneListUpdated)
       document.addEventListener('scenes:download-scene', this._onDownloadScene)
+      document.addEventListener('scenes:activation-complete', this._onScenesActivationComplete)
+      document.addEventListener('device:info', this._onDeviceInfo)
 
       this._onEditorSectionToggle = (e) => {
         const el = e.target
@@ -90,6 +102,8 @@ application.register(
       document.removeEventListener('scenes:open-scene', this._onOpenScene)
       document.removeEventListener('scenes:list-updated', this._onSceneListUpdated)
       document.removeEventListener('scenes:download-scene', this._onDownloadScene)
+      document.removeEventListener('scenes:activation-complete', this._onScenesActivationComplete)
+      document.removeEventListener('device:info', this._onDeviceInfo)
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       if (this.printFrame) {
         this.printFrame.remove()
@@ -255,10 +269,16 @@ application.register(
     }
 
     async onReconnected () {
-      this.fetchDeviceProgramming()
       const pending = this._pendingReconnectEdit
       this._pendingReconnectEdit = null
-      if (pending?.position == null) return
+      if (pending?.position == null) {
+        // Info tab already runs INFO on connect; Scenes tab must finish LIST first.
+        // A redundant INFO poll here contends with those handshakes on the serial port.
+        const panel = document.querySelector('wa-tab-group wa-tab[active]')
+          ?.getAttribute('panel')
+        if (panel !== 'scenes' && panel !== 'info') void this.fetchDeviceProgramming()
+        return
+      }
       try {
         await this.connection.recoverSerialState()
       } catch (err) {
@@ -295,16 +315,58 @@ application.register(
         this.renderDisconnected()
         return
       }
+      // Editor reload is deferred to scenes:activation-complete so loadSceneForEdit
+      // does not run ensureDeviceIdle / SCENES+EXIT while the list is still entering
+      // SCENES mode (that race produced SCENES no-response on tab activate).
+    }
+
+    onDeviceInfo (e) {
+      if (typeof e.detail?.programming === 'boolean') {
+        this.setDeviceProgramming(e.detail.programming)
+      }
+      const p = e.detail?.pedal
+      if (p?.slug) {
+        this.deviceContext.globalPedal = {
+          slug: p.slug || '',
+          name: p.name || 'Unknown',
+          vendor: p.vendor || '',
+          midi_channel: Number(p.midi_channel) || 1,
+          trs_type: p.trs_type || 'TYPE_A'
+        }
+      }
+      if (this.editing && this.editModel && !this.deviceDefinition && p?.slug &&
+          !this.connection.isSerialBusy && !this._deviceDefLoadInProgress) {
+        void this.reloadDeviceDefinitionForEditor()
+      }
+    }
+
+    async reloadDeviceDefinitionForEditor () {
+      if (!this.connection.isConnected || !this.editModel) return
+      if (this.connection.isSerialBusy || this._deviceDefLoadInProgress) return
+      void this.loadDeviceDefinitionAndRefresh()
+    }
+
+    onScenesActivationComplete (e) {
+      if (!e.detail?.ok) return
+      // Only reload the editor after the list controller owns SCENES mode. Do not
+      // poll INFO here — it can contend with the SCENES session; loadSceneForEdit
+      // fetches programming when the user is actually editing.
       if (this.editPosition !== null && this.editing) {
-        this.loadSceneForEdit()
+        void this.loadSceneForEdit()
       }
     }
 
     onModeChanged ({ mode }) {
       // ASSETS/CONFIG modes don't run a background CDC reader, so EVT:programming
       // lines can be missed while those tabs hold the port. Re-sync on exit.
+      if (this._saveInProgress) return
       if (mode === null && this.connection.isConnected &&
           !this.connection.isSerialBusy) {
+        const panel = document.querySelector('wa-tab-group wa-tab[active]')
+          ?.getAttribute('panel')
+        // Only poll INFO while actively editing on Scenes; polling from other tabs
+        // races with CONFIG/SETTINGS handshakes and leaves the device mid-mode.
+        if (panel !== 'scenes' || !this.editing) return
         void this.fetchDeviceProgramming()
       }
     }
@@ -321,7 +383,9 @@ application.register(
       if (kind !== 'scene_changed' && kind !== 'scene_updated') return
       if (!this.connection.isConnected) return
       if (this.deviceProgramming) return
-      if (this.connection.isSerialBusy) return
+      if (this.connection.isSerialBusy || this._deviceDefLoadInProgress) return
+      if (Date.now() < this._saveReloadSuppressUntil) return
+      if (this._saveInProgress) return
       if (this.editing && this.dirty) return
 
       const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
@@ -331,7 +395,7 @@ application.register(
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       this.notifyDebounce = setTimeout(() => {
         this.notifyDebounce = null
-        if (this.connection.isSerialBusy) return
+        if (this.connection.isSerialBusy || this._saveInProgress) return
         if (this.editing) this.loadSceneForEdit()
         else this.fetchInspectForPosition(this.editPosition)
       }, 100)
@@ -381,6 +445,7 @@ application.register(
     }
 
     async _fetchDeviceProgrammingImpl () {
+      if (this._saveInProgress) return
       const syncGen = this._programmingSyncGen
       const wasProgramming = this.deviceProgramming
       try {
@@ -410,6 +475,7 @@ application.register(
             this.stopProgrammingPoll()
             return
           }
+          if (this._saveInProgress) return
           // Don't yank ASSETS/CONFIG (or other modes) just to poll INFO.
           if (this.connection.currentMode) return
           void this.fetchDeviceProgramming()
@@ -919,6 +985,11 @@ application.register(
     }
 
     async fetchGlobalPedalInTask () {
+      if (this.deviceContext.globalPedal?.slug) return
+      if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+        this.connection._resumeRxPump()
+      }
+      await this.connection._armRxPump(2000)
       const response = await this.connection._sendCommandViaPump('INFO', 15000, (data) =>
         typeof data.version === 'string')
       if (!response || response.startsWith('ERROR:')) return
@@ -951,29 +1022,102 @@ application.register(
       return open
     }
 
+    deviceJsonPathsFromSlug (slug) {
+      const clean = String(slug || '').replace(/@\d+$/, '')
+      const dot = clean.indexOf('.')
+      if (dot <= 0) return []
+      const vendor = clean.slice(0, dot)
+      const pedal = clean.slice(dot + 1)
+      if (!vendor || !pedal) return []
+      return [`/assets/devices/devices/${vendor}/${pedal}.json`]
+    }
+
+    async fetchDeviceJsonBySlugInTask (slug) {
+      const paths = this.deviceJsonPathsFromSlug(slug)
+      if (!paths.length) return null
+      await this.connection._ensureAssetsReadyDedicated()
+      let lastErr = null
+      for (const path of paths) {
+        try {
+          const { data } = await this.connection._fetchSizedTransferImpl(`GET ${path}`)
+          return JSON.parse(new TextDecoder().decode(data))
+        } catch (err) {
+          lastErr = err
+          const retryable = /Incomplete download|No response|Unexpected response|Serial reader busy|locked|Assets not ready/i
+            .test(err?.message || '')
+          if (retryable) {
+            await this.connection._ensureAssetsReadyDedicated()
+            await this.sleep(200)
+            continue
+          }
+        }
+      }
+      if (lastErr) throw lastErr
+      return null
+    }
+
+    async loadDeviceDefinitionAndRefresh () {
+      if (!this.connection.isConnected || !this.editing || !this.editModel) return
+      const gen = this._loadGeneration
+      try {
+        await this.connection.runSerialTask(() => this.loadDeviceDefinitionInTask())
+      } catch (err) {
+        console.warn('Scene editor: device definition reload skipped:', err.message)
+        return
+      }
+      if (gen !== this._loadGeneration || !this.deviceDefinition) return
+      const controlCorrected =
+        DeviceControls.normalizeControlActionsIfInvalid(this.deviceDefinition, this.editModel)
+      const presetCorrected =
+        DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, this.editModel)
+      this.seedRuntimeCcValues()
+      this.ensureMandatoryCcDefaults()
+      this.renderEditor()
+      if (controlCorrected || presetCorrected) {
+        this.dirty = true
+        this.markDirty()
+      }
+    }
+
     async loadDeviceDefinitionInTask () {
       const slug = this.editModel?.device_id || this.deviceContext.globalPedal?.slug || ''
       if (!slug) {
         this.deviceDefinition = null
         return
       }
+      this._deviceDefLoadInProgress = true
       try {
-        await PedalCatalog.ensureAssetsModeBody(this.connection)
-        if (!this.pedalCatalog) {
-          this.pedalCatalog = await PedalCatalog.fetchManifestsInAssets(this.connection)
+        if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+          this.connection._resumeRxPump()
         }
-        this.deviceDefinition = await PedalCatalog.fetchDeviceJson(
-          this.connection, this.pedalCatalog, slug)
+        await this.connection._armRxPump(2000)
+
+        let deviceJson = null
+        try {
+          deviceJson = await this.fetchDeviceJsonBySlugInTask(slug)
+        } catch (err) {
+          console.warn('Scene editor: direct device JSON fetch failed:', err.message)
+        }
+
+        if (!deviceJson) {
+          if (!this.pedalCatalog) {
+            this.pedalCatalog = await PedalCatalog.fetchManifestsInAssets(this.connection)
+          }
+          deviceJson = await PedalCatalog.fetchDeviceJson(
+            this.connection, this.pedalCatalog, slug)
+        }
+        this.deviceDefinition = deviceJson
+        if (deviceJson && slug) {
+          this.connection.setPedalCcCacheFromDefinition(slug, deviceJson)
+        }
       } catch (err) {
         console.warn('Scene editor: device definition skipped:', err.message)
         this.deviceDefinition = null
       } finally {
-        await this.connection.sendRaw('EXIT\n')
-        await this.sleep(200)
-        await this.connection.drainInput?.()
-        if (this.connection.currentMode === 'ASSETS') {
-          await this.connection._exitModeImpl()
-        }
+        this._deviceDefLoadInProgress = false
+        // ensureDeviceIdle sends the single EXIT that leaves ASSETS; no need for
+        // a separate EXIT + long sleep here.
+        await this.connection.ensureDeviceIdle()
       }
     }
 
@@ -1181,6 +1325,10 @@ application.register(
       }
       DeviceControls.normalizeControlActionsInModel(this.deviceDefinition, this.editModel)
       DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, this.editModel)
+      // Drop CC defaults that no longer exist on the new device, then re-seed.
+      this.pruneCcDefaultsToDevice()
+      this.seedRuntimeCcValues()
+      this.ensureMandatoryCcDefaults()
       this.markDirty()
       this.renderEditor()
     }
@@ -1899,6 +2047,7 @@ application.register(
       const action = this.getAtPath(actionPath)
       if (!DeviceControls.isControlAction(action?.type)) return
       const variant = action.variant || 'set'
+      const getCcValue = (c) => this.getCcValue(c)
       if (variant === 'cycle') {
         const idx = m[2] != null ? Number(m[2]) : 0
         const cc = Number(val)
@@ -1910,7 +2059,7 @@ application.register(
             ? `${actionPath}.values.${idx}.${i}`
             : `${actionPath}.values.${i}`
           const cur = multi ? action.values?.[idx]?.[i] : action.values?.[i]
-          this.setAtPath(valPath, DeviceControls.resolveParameterValue(device, cc, cur))
+          this.setAtPath(valPath, DeviceControls.resolveParameterValue(device, cc, cur, getCcValue))
         }
         return
       }
@@ -1920,11 +2069,11 @@ application.register(
       const device = this.deviceDefinition
       const valuePath = idx != null ? `${actionPath}.value.${idx}` : `${actionPath}.value`
       const curVal = idx != null ? action.value?.[idx] : action.value
-      this.setAtPath(valuePath, DeviceControls.resolveParameterValue(device, cc, curVal))
+      this.setAtPath(valuePath, DeviceControls.resolveParameterValue(device, cc, curVal, getCcValue))
       if (variant === 'hold') {
         const rPath = idx != null ? `${actionPath}.value2.${idx}` : `${actionPath}.value2`
         const curRel = idx != null ? action.value2?.[idx] : action.value2
-        this.setAtPath(rPath, DeviceControls.resolveParameterValue(device, cc, curRel))
+        this.setAtPath(rPath, DeviceControls.resolveParameterValue(device, cc, curRel, getCcValue))
       }
     }
 
@@ -1935,18 +2084,174 @@ application.register(
       if (action?.type !== 'boomerang') return
       const cc = Number(val)
       const device = this.deviceDefinition
+      const getCcValue = (c) => this.getCcValue(c)
       if (action.target_value != null) {
         this.setAtPath(
           `${boomMatch[1]}.target_value`,
-          DeviceControls.resolveParameterValue(device, cc, action.target_value)
+          DeviceControls.resolveParameterValue(device, cc, action.target_value, getCcValue)
         )
       }
       if (action.start_mode === 'explicit' && action.start_value != null) {
         this.setAtPath(
           `${boomMatch[1]}.start_value`,
-          DeviceControls.resolveParameterValue(device, cc, action.start_value)
+          DeviceControls.resolveParameterValue(device, cc, action.start_value, getCcValue)
         )
       }
+    }
+
+    // Editor-local gating value lookup (web stand-in for s_last_cc_values).
+    // Returns undefined when unknown so DeviceControls falls back to the base
+    // (default-mode) control.
+    getCcValue (cc) {
+      const n = Number(cc)
+      if (Number.isNaN(n)) return undefined
+      const v = this.runtimeCcValues ? this.runtimeCcValues[n] : undefined
+      return v == null ? undefined : Number(v)
+    }
+
+    // Walk every control-type action in the current edit model.
+    eachControlAction (fn) {
+      const model = this.editModel
+      if (!model) return
+      const visit = (action) => {
+        if (action && DeviceControls.isControlAction(action.type)) fn(action)
+      }
+      model.touchpads?.forEach(tp => visit(tp?.action))
+      visit(model.button_left)
+      visit(model.button_right)
+      visit(model.button_both)
+      visit(model.bump)
+      model.on_load?.forEach(visit)
+      model.on_play?.forEach(visit)
+      model.cc_triggers?.forEach(t => visit(t?.action))
+      visit(model.cv_trigger_action)
+      visit(model.expr_switch)
+    }
+
+    // Read the scene's stored default for a CC (undefined when unset).
+    ccDefaultValue (cc) {
+      const arr = this.editModel?.cc_defaults
+      if (!Array.isArray(arr)) return undefined
+      const n = Number(cc)
+      const entry = arr.find(e => Number(e.cc) === n)
+      return entry ? Number(entry.value) : undefined
+    }
+
+    // Set (val 0-127) or clear (val == null) a CC default in the scene model.
+    setCcDefault (cc, val) {
+      if (!this.editModel) return
+      if (!Array.isArray(this.editModel.cc_defaults)) this.editModel.cc_defaults = []
+      const arr = this.editModel.cc_defaults
+      const n = Number(cc)
+      const idx = arr.findIndex(e => Number(e.cc) === n)
+      if (val == null) {
+        if (idx >= 0) arr.splice(idx, 1)
+      } else if (idx >= 0) {
+        arr[idx].value = Number(val)
+      } else {
+        arr.push({ cc: n, value: Number(val) })
+      }
+    }
+
+    // Ensure every x_mandatory CC carries a default (first valid option). Used
+    // on load (before baseline capture, so it does not dirty the scene) and on
+    // pedal change. Returns true if anything was added.
+    ensureMandatoryCcDefaults () {
+      const device = this.deviceDefinition
+      if (!device || !this.editModel) return false
+      const mand = DeviceControls.mandatoryGatingCcs(device)
+      let changed = false
+      for (const cc of mand) {
+        if (this.ccDefaultValue(cc) != null) continue
+        const v = DeviceControls.defaultValueForParameter(device, cc, (c) => this.getCcValue(c))
+        this.setCcDefault(cc, v)
+        if (!this.runtimeCcValues) this.runtimeCcValues = {}
+        this.runtimeCcValues[cc] = v
+        changed = true
+      }
+      return changed
+    }
+
+    // Remove CC defaults for CCs that do not exist on the current device.
+    pruneCcDefaultsToDevice () {
+      if (!this.editModel || !Array.isArray(this.editModel.cc_defaults)) return
+      const device = this.deviceDefinition
+      this.editModel.cc_defaults = this.editModel.cc_defaults.filter(
+        e => DeviceControls.isValidParameterCc(device, e.cc))
+    }
+
+    // Seed the runtime map on scene load from the persisted CC defaults (the
+    // source of truth for x_variants / x_noop mode resolution). Any gating CC
+    // without a stored default falls back to its first valid option so variants
+    // still resolve deterministically. Then clamp dependents to the effective
+    // option sets.
+    seedRuntimeCcValues () {
+      this.runtimeCcValues = {}
+      const device = this.deviceDefinition
+      if (!device || !this.editModel) return
+      const arr = this.editModel.cc_defaults
+      if (Array.isArray(arr)) {
+        arr.forEach(e => {
+          const n = Number(e.cc)
+          if (!Number.isNaN(n)) this.runtimeCcValues[n] = Number(e.value)
+        })
+      }
+      const gating = DeviceControls.controlGatingCcs(device)
+      for (const cc of gating) {
+        if (this.runtimeCcValues[cc] == null) {
+          this.runtimeCcValues[cc] = DeviceControls.defaultValueForParameter(device, cc, undefined)
+        }
+      }
+      this.clampDependentCcValues()
+    }
+
+    // Re-resolve every control action's values against the current effective
+    // option sets (dependent CCs clamp to the active mode). Returns true if any
+    // stored value changed.
+    clampDependentCcValues () {
+      if (!this.deviceDefinition || !this.editModel) return false
+      return DeviceControls.normalizeControlActionsInModel(
+        this.deviceDefinition, this.editModel, (cc) => this.getCcValue(cc))
+    }
+
+    // Called by the mock-runtime controller when a gating CC's value field is
+    // edited: update the assumed mode, persist it as the scene CC default,
+    // clamp dependents, and re-render so dependent fields rebuild with the new
+    // effective options.
+    setRuntimeCcValue (cc, val) {
+      const n = Number(cc)
+      if (Number.isNaN(n)) return
+      if (!this.runtimeCcValues) this.runtimeCcValues = {}
+      this.runtimeCcValues[n] = Number(val)
+      this.setCcDefault(n, Number(val))
+      this.clampDependentCcValues()
+      this.markDirty()
+      this.renderEditor()
+    }
+
+    // Handler for the CC Defaults section. Reads data-cc and the widget value;
+    // an empty value or "none" clears the default (non-mandatory CCs only).
+    // Persists to cc_defaults, updates the runtime map, and re-renders when the
+    // CC gates other parameters so dependents rebuild.
+    applyCcDefaultFromEvent (e) {
+      if (this.deviceProgramming) return
+      const cc = Number(e.target.dataset.cc)
+      if (Number.isNaN(cc)) return
+      const raw = e.target.value
+      if (raw === '' || raw === 'none') {
+        this.setCcDefault(cc, null)
+        if (this.runtimeCcValues) delete this.runtimeCcValues[cc]
+      } else {
+        const v = Number(raw)
+        if (Number.isNaN(v)) return
+        this.setCcDefault(cc, v)
+        if (!this.runtimeCcValues) this.runtimeCcValues = {}
+        this.runtimeCcValues[cc] = v
+      }
+      this.markDirty()
+      const gates = DeviceControls.controlGatingCcs(this.deviceDefinition).has(cc)
+      if (gates) this.clampDependentCcValues()
+      this.renderEditor()
     }
 
     patchNumber (e) {
@@ -2481,29 +2786,7 @@ application.register(
             if (gen !== this._loadGeneration) return null
             if (this.connection.currentMode) {
               await this.connection._exitModeImpl()
-              await this.sleep(300)
             }
-            await this.ensureDeviceIdleInTask()
-
-            if (!this.sceneList?.length) {
-              try {
-                await this.fetchSceneListInTask()
-              } catch (err) {
-                console.warn('Scene editor: scene list skipped:', err.message)
-              }
-            }
-
-            try {
-              await this.fetchConfigContextInTask()
-            } catch (err) {
-              console.warn('Scene editor: CONFIG context skipped:', err.message)
-            }
-            try {
-              await this.fetchGlobalPedalInTask()
-            } catch (err) {
-              console.warn('Scene editor: INFO pedal context skipped:', err.message)
-            }
-            if (gen !== this._loadGeneration) return null
             await this.ensureDeviceIdleInTask()
 
             if (gen !== this._loadGeneration) return null
@@ -2514,6 +2797,8 @@ application.register(
             if (!transfer?.data?.length) return transfer
             const sceneModel = JSON.parse(new TextDecoder().decode(transfer.data))
             this.editModel = sceneModel
+            // Device definition (parameter names) on the load path so the editor
+            // renders with names intact, not bare CC numbers.
             try {
               await this.loadDeviceDefinitionInTask()
             } catch (err) {
@@ -2538,6 +2823,10 @@ application.register(
           const presetCorrected =
             DeviceControls.normalizePresetActionsInModel(this.deviceDefinition, model)
           this.editModel = model
+          this.seedRuntimeCcValues()
+          // Required gate CCs always carry a default; seed before capturing the
+          // baseline so a freshly opened scene is not marked dirty by it.
+          this.ensureMandatoryCcDefaults()
 
           this._sectionLayoutPhase = 0
           this._openEditorSections = SceneEditorUi.sectionsWithContent(this)
@@ -2550,6 +2839,9 @@ application.register(
           this.dirty = controlCorrected || presetCorrected
           this.markDirty()
           this.updatePanelTitle()
+          // CONFIG context (device flags) is not needed for rendering; load it
+          // in the background so it never blocks the editor.
+          void this.fetchConfigContextDeferred()
           return
         } catch (err) {
           lastErr = err
@@ -2581,40 +2873,47 @@ application.register(
 
     async ensureDeviceIdleInTask () {
       this.connection.clearPendingRx()
-      for (let attempt = 0; attempt < 3; attempt++) {
-        await this.connection.sendRaw('EXIT\n')
-        await this.sleep(100)
-        const deadline = Date.now() + 2000
-        while (Date.now() < deadline) {
-          const line = await this.connection.readLine(400)
-          if (!line) break
-          if (line === 'SCENES_STOPPED' || line === 'CONFIG_STOPPED' ||
-              line === 'SETTINGS_STOPPED' || line === 'PEDALS_STOPPED') break
-          if (line.startsWith('EVT:')) {
-            this.connection.dispatchCdcNotify(line)
-            continue
+      await this.connection.ensureDeviceIdle()
+      if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+        this.connection._resumeRxPump()
+      }
+      await this.connection._armRxPump(2000)
+    }
+
+    async fetchConfigContextDeferred () {
+      if (this._configContextLoaded) return
+      try {
+        await this.connection.runSerialTask(async () => {
+          if (!this.deviceContext.globalPedal?.slug) {
+            try {
+              await this.fetchGlobalPedalInTask()
+            } catch (err) {
+              console.warn('Scene editor: INFO pedal context skipped:', err.message)
+            }
           }
-        }
-        await this.connection.drainInput()
-        if (this.connection.currentMode === null) break
-        await this.connection._exitModeImpl()
-        await this.sleep(150)
+          await this.fetchConfigContextInTask()
+        })
+      } catch (err) {
+        console.warn('Scene editor: CONFIG context skipped:', err.message)
       }
     }
 
     async fetchConfigContextInTask () {
+      if (this._configContextLoaded) return
+      let configEntered = false
       try {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          this.connection.clearPendingRx()
-          await this.connection.sendRaw('CONFIG\n')
-          const started = await this.connection.readLine(5000)
-          if (started === 'CONFIG_STARTED') break
-          if (attempt === 0 && started?.trim().startsWith('{')) {
-            await this.ensureDeviceIdleInTask()
-            continue
-          }
+        await this.connection.ensureDeviceIdle()
+        this.connection.clearPendingRx()
+        if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+          this.connection._resumeRxPump()
+        }
+        await this.connection._armRxPump(2000)
+        await this.connection.sendRaw('CONFIG\n')
+        const started = await this.connection._waitForSerialBanner('CONFIG_STARTED', 5000)
+        if (started !== 'CONFIG_STARTED') {
           throw new Error(started || 'CONFIG did not start')
         }
+        configEntered = true
         await this.connection.sendRaw('VALUES\n')
         const line = await this.connection.readLine(15000)
         if (!line || !line.includes('{')) {
@@ -2640,8 +2939,10 @@ application.register(
           this.deviceContext.allowFractionalBpm =
             Number(vals['tempo.allow_fractional_bpm']) !== 0
         }
+        this._configContextLoaded = true
       } finally {
-        await this.ensureDeviceIdleInTask()
+        if (configEntered) await this.ensureDeviceIdleInTask()
+        else this.connection.clearPendingRx()
       }
     }
 
@@ -2673,18 +2974,18 @@ application.register(
 
       try {
         this.connection.setTabsLocked(true, 'scenes')
+        this._saveInProgress = true
+        this._loadGeneration++
 
         await this.connection.runSerialTask(async () => {
-          if (this.connection.currentMode) {
-            await this.connection._exitModeImpl()
-            await this.sleep(300)
-          }
           await this.ensureDeviceIdleInTask()
           await this.connection.sendRaw(`SCENE_PUT ${pos} ${bytes.length}\n`)
-          const ready = await this.connection.readLine(10000)
-          if (ready !== 'READY') throw new Error(ready || 'No READY')
+          const ready = await this.connection._readPlainLineViaPumpImpl('READY', 10000)
+          if (ready !== 'READY') {
+            throw new Error(ready || 'No READY')
+          }
           await this.connection.sendBinary(bytes)
-          const resp = await this.connection.readLine(60000)
+          const resp = await this.connection._readPlainLineViaPumpImpl('OK', 60000)
           if (resp !== 'OK') throw new Error(resp || 'Save failed')
         })
 
@@ -2699,10 +3000,12 @@ application.register(
           detail: { position: pos, name: savedName }
         }))
         this.flashSaveStatus()
+        this._saveReloadSuppressUntil = Date.now() + 2000
       } catch (err) {
         console.error('Scene save error:', err)
         this.showMessageDialog('Save failed', err.message || 'Save failed')
       } finally {
+        this._saveInProgress = false
         this.connection.setTabsLocked(false)
       }
     }
@@ -3086,7 +3389,11 @@ application.register(
         console.error('Scene inspect fetch error:', err)
         this.renderError('Failed to load scene inspect text')
       } finally {
-        if (gen === this._loadGeneration) void this.fetchDeviceProgramming()
+        if (gen === this._loadGeneration) {
+          const panel = document.querySelector('wa-tab-group wa-tab[active]')
+            ?.getAttribute('panel')
+          if (panel === 'scenes' && this.editing) void this.fetchDeviceProgramming()
+        }
       }
     }
   }

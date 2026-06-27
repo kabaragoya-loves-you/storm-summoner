@@ -73,15 +73,17 @@ application.register(
       this.deviceSlug = null
       this.cdcReader = null
       this.cdcReadLoopActive = false
+      this._loadDeviceInfoPromise = null
+      this._relayStarting = false
 
       // Listen for tab activation
       document.addEventListener('app:tab-activated', e => {
         if (e.detail.tab === 'midi') {
           this.activate()
-        } else if (this.active) {
-          this.deactivate()
         }
       })
+
+      this.connection.registerTabLeaveHandler('midi', () => this.deactivate())
 
       // Listen for connection changes
       this.connection.on('connection:changed', ({ connected }) => {
@@ -130,6 +132,19 @@ application.register(
 
       // Stop CDC relay
       await this.stopCdcRelay()
+
+      if (this.connection.isConnected) {
+        try {
+          await this.connection.runSerialTask(async () => {
+            if (this.connection.mode === 'MIDI') {
+              await this.connection._exitModeImpl()
+            }
+            await this.connection.ensureDeviceIdle()
+          })
+        } catch (err) {
+          console.warn('MIDI tab leave cleanup:', err)
+        }
+      }
 
       this.updateStatus('Inactive', false)
     }
@@ -292,25 +307,58 @@ application.register(
 
     async startCdcRelay () {
       if (!this.connection.isConnected || !this.active) return
+      if (this._relayStarting) return
+      this._relayStarting = true
 
       try {
-        // Load device info BEFORE entering MIDI relay mode
-        await this.loadDeviceInfo()
+        const loaded = await this.loadDeviceInfo()
+        if (!loaded) {
+          this.updateStatus('Device lookup failed', false)
+          return
+        }
 
-        // Request MIDI relay mode
-        const modeGranted = await this.connection.requestMode('MIDI')
-        if (!modeGranted) return
+        await this.connection.runSerialTask(async () => {
+          await this.connection.ensureDeviceIdle()
+          if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+            this.connection._resumeRxPump()
+          }
+          await this.connection._armRxPump(2000)
+          const cmd = this.showClock ? 'MIDI CLOCK' : 'MIDI'
+          this.connection.clearPendingRx()
+          await this.connection.sendRaw(cmd + '\n')
+          const banner = await this.connection._readPumpLineBody(3000)
+          if (banner !== 'MIDI_STARTED') {
+            throw new Error(`MIDI relay failed: ${banner || '(no response)'}`)
+          }
+          await this.connection._requestModeImpl('MIDI')
+        })
 
-        // Send MIDI relay command (with CLOCK option if enabled)
-        await this.sleep(100)
-        const cmd = this.showClock ? 'MIDI CLOCK' : 'MIDI'
-        await this.connection.sendRaw(cmd + '\n')
+        const unlocked = await this.waitForStreamUnlock(2000)
+        if (!unlocked) {
+          this.updateStatus('Serial stream locked', false)
+          return
+        }
 
-        // Start reading relay messages
         this.startCdcReadLoop()
       } catch (err) {
         console.error('CDC relay start failed:', err)
+        try {
+          await this.connection.recoverSerialState()
+        } catch (recoverErr) {
+          console.warn('Serial recovery after MIDI relay error:', recoverErr)
+        }
+      } finally {
+        this._relayStarting = false
       }
+    }
+
+    async waitForStreamUnlock (timeout = 2000) {
+      const startTime = Date.now()
+      while (Date.now() - startTime < timeout) {
+        if (!this.connection.port?.readable?.locked) return true
+        await this.sleep(50)
+      }
+      return false
     }
 
     async stopCdcRelay () {
@@ -325,11 +373,16 @@ application.register(
       }
     }
 
-    async startCdcReadLoop () {
-      if (!this.connection.port?.readable) return
-      if (this.connection.port.readable.locked) return
+    startCdcReadLoop () {
+      if (!this.connection.port?.readable) return false
+      if (this.connection.port.readable.locked) return false
 
       this.cdcReadLoopActive = true
+      void this._runCdcReadLoop()
+      return true
+    }
+
+    async _runCdcReadLoop () {
       const decoder = new TextDecoderStream()
 
       try {
@@ -352,8 +405,10 @@ application.register(
               let line = buffer.substring(0, idx).replace(/\r/g, '').trim()
               buffer = buffer.substring(idx + 1)
 
-              if (line.startsWith('M:')) {
-                this.processCdcMessage(line)
+              if (line.startsWith('MO:')) {
+                this.processCdcMessage('M:' + line.slice(3), 'out')
+              } else if (line.startsWith('M:')) {
+                this.processCdcMessage(line, 'in')
               } else if (line.startsWith('EVT:')) {
                 this.connection.dispatchCdcNotify(line)
               } else if (line === 'MIDI_STARTED') {
@@ -377,7 +432,7 @@ application.register(
       }
     }
 
-    processCdcMessage (msg) {
+    processCdcMessage (msg, direction = 'in') {
       // Format: M:<type>,<channel>,<data1>,<data2>,<length>[,<hex_sysex>]
       const parts = msg.substring(2).split(',')
       if (parts.length < 5) return
@@ -398,7 +453,7 @@ application.register(
             `Note Off: ${this.noteName(data1)}`,
             '',
             'note',
-            'in'
+            direction
           )
           break
         case 'note_on':
@@ -408,7 +463,7 @@ application.register(
               `Note Off: ${this.noteName(data1)}`,
               '',
               'note',
-              'in'
+              direction
             )
           } else {
             this.addMessage(
@@ -416,7 +471,7 @@ application.register(
               `Note On: ${this.noteName(data1)}`,
               `vel ${data2}`,
               'note',
-              'in'
+              direction
             )
           }
           break
@@ -426,35 +481,35 @@ application.register(
             `Poly AT: ${this.noteName(data1)}`,
             data2,
             '',
-            'in'
+            direction
           )
           break
         case 'control_change':
-          this.handleCC(channel + 1, data1, data2, 'in')
+          this.handleCC(channel + 1, data1, data2, direction)
           break
         case 'program_change':
-          this.addMessage(channel + 1, 'Program Change', data1, 'pc', 'in')
+          this.addMessage(channel + 1, 'Program Change', data1, 'pc', direction)
           break
         case 'channel_aftertouch':
-          this.addMessage(channel + 1, 'Aftertouch', data1, '', 'in')
+          this.addMessage(channel + 1, 'Aftertouch', data1, '', direction)
           break
         case 'pitch_bend':
           const bend = (data2 << 7) | data1
-          this.addMessage(channel + 1, 'Pitch Bend', bend, '', 'in')
+          this.addMessage(channel + 1, 'Pitch Bend', bend, '', direction)
           break
         case 'clock':
           if (this.showClock) {
-            this.addMessage('-', 'Clock', '', 'clock', 'in')
+            this.addMessage('-', 'Clock', '', 'clock', direction)
           }
           break
         case 'start':
-          this.addMessage('-', 'Start', '', 'transport', 'in')
+          this.addMessage('-', 'Start', '', 'transport', direction)
           break
         case 'continue':
-          this.addMessage('-', 'Continue', '', 'transport', 'in')
+          this.addMessage('-', 'Continue', '', 'transport', direction)
           break
         case 'stop':
-          this.addMessage('-', 'Stop', '', 'transport', 'in')
+          this.addMessage('-', 'Stop', '', 'transport', direction)
           break
         case 'sysex':
           if (hexSysex) {
@@ -462,9 +517,9 @@ application.register(
             for (let i = 0; i < hexSysex.length; i += 2) {
               bytes.push(parseInt(hexSysex.substring(i, i + 2), 16))
             }
-            this.processSysEx(bytes, 'in')
+            this.processSysEx(bytes, direction)
           } else {
-            this.addMessage('-', 'SysEx', `${length} bytes`, 'sysex', 'in')
+            this.addMessage('-', 'SysEx', `${length} bytes`, 'sysex', direction)
           }
           break
       }
@@ -475,115 +530,115 @@ application.register(
     async loadDeviceInfo () {
       if (!this.connection.isConnected) {
         console.log('[MIDI] loadDeviceInfo: not connected')
-        return
+        return false
       }
+      if (this._loadDeviceInfoPromise) return this._loadDeviceInfoPromise
+      this._loadDeviceInfoPromise = this._loadDeviceInfoBody()
+        .finally(() => { this._loadDeviceInfoPromise = null })
+      return this._loadDeviceInfoPromise
+    }
 
+    _applyCachedCcMap (slug, cached) {
+      this.deviceSlug = slug
+      this.ccMap = cached
+    }
+
+    async _loadDeviceInfoBody () {
       try {
-        // Exit any current mode first (e.g., ASSETS from previous tab)
-        if (this.connection.currentMode) {
-          console.log(
-            '[MIDI] Exiting current mode:',
-            this.connection.currentMode
-          )
-          await this.connection.exitMode()
-          await this.sleep(100)
-        }
+        return await this.connection.runSerialTask(async () => {
+          await this.connection.ensureDeviceIdle()
+          this.connection.clearPendingRx()
+          if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+            this.connection._resumeRxPump()
+          }
+          await this.connection._armRxPump(2000)
 
-        // Get current device slug
-        console.log('[MIDI] Sending DEVICE command...')
-        const response = await this.connection.sendCommand('DEVICE', 2000)
-        console.log('[MIDI] DEVICE response:', response)
+          const cachedSlug = this.connection.getPedalCcCacheSlug()
+          if (cachedSlug) {
+            const cached = this.connection.getPedalCcCache(cachedSlug)
+            if (cached) {
+              this._applyCachedCcMap(cachedSlug, cached)
+              console.log('[MIDI] Using cached CC map (skip DEVICE):',
+                Object.keys(cached).length, 'entries')
+              return true
+            }
+          }
 
-        if (!response || !response.startsWith('DEVICE ')) {
-          console.log('[MIDI] Invalid DEVICE response')
-          return
-        }
+          console.log('[MIDI] Sending DEVICE command...')
+          let slug = await this.connection._queryDeviceSlug()
 
-        // Parse slug: "meris.ottobit_jr@0" -> vendor="meris", pedal="ottobit_jr"
-        let slug = response.substring(7).trim()
-        slug = slug.replace(/@\d+$/, '') // Strip @N suffix
-        this.deviceSlug = slug
-        console.log('[MIDI] Device slug:', slug)
+          if (!slug && cachedSlug) {
+            const fallback = this.connection.getPedalCcCache(cachedSlug)
+            if (fallback) {
+              this._applyCachedCcMap(cachedSlug, fallback)
+              console.log('[MIDI] DEVICE failed; using cached CC map')
+              return true
+            }
+          }
 
-        const [vendor, pedal] = slug.split('.')
-        if (!vendor || !pedal) {
-          console.log('[MIDI] Invalid slug format')
-          return
-        }
+          if (!slug) {
+            console.log('[MIDI] Invalid DEVICE response')
+            return false
+          }
 
-        // Fetch device JSON via CDC assets
-        // Path structure: /assets/devices/devices/<vendor>/<pedal>.json (mirrors midi-devices repo)
-        const jsonPath = `devices/devices/${vendor}/${pedal}.json`
-        console.log('[MIDI] Fetching:', jsonPath)
-        const jsonResponse = await this.fetchDeviceJson(jsonPath)
+          this.deviceSlug = slug
+          console.log('[MIDI] Device slug:', slug)
 
-        if (!jsonResponse) {
-          console.log('[MIDI] Failed to fetch device JSON')
-          return
-        }
+          const cached = this.connection.getPedalCcCache(slug)
+          if (cached) {
+            this.ccMap = cached
+            console.log('[MIDI] Using cached CC map:', Object.keys(cached).length, 'entries')
+            return true
+          }
 
-        console.log('[MIDI] Got JSON, length:', jsonResponse.length)
+          const [vendor, pedal] = slug.split('.')
+          if (!vendor || !pedal) {
+            console.log('[MIDI] Invalid slug format')
+            return false
+          }
 
-        // Parse CC map
-        this.parseDeviceJson(jsonResponse)
-        console.log('[MIDI] CC map entries:', Object.keys(this.ccMap).length)
+          const jsonPaths = [
+            `/assets/devices/devices/${vendor}/${pedal}.json`,
+            `devices/devices/${vendor}/${pedal}.json`
+          ]
+          let jsonResponse = null
+          for (const jsonPath of jsonPaths) {
+            console.log('[MIDI] Fetching:', jsonPath)
+            jsonResponse = await this.fetchDeviceJsonInTask(jsonPath)
+            if (jsonResponse) break
+          }
+
+          if (!jsonResponse) {
+            console.log('[MIDI] Failed to fetch device JSON')
+            return false
+          }
+
+          console.log('[MIDI] Got JSON, length:', jsonResponse.length)
+          this.parseDeviceJson(jsonResponse)
+          this.connection.setPedalCcCache(slug, this.ccMap)
+          console.log('[MIDI] CC map entries:', Object.keys(this.ccMap).length)
+          await this.connection.ensureDeviceIdle()
+          return true
+        })
       } catch (err) {
         console.error('[MIDI] Failed to load device info:', err)
+        try {
+          await this.connection.recoverSerialState()
+        } catch (recoverErr) {
+          console.warn('Serial recovery after device lookup error:', recoverErr)
+        }
+        return false
       }
     }
 
-    async fetchDeviceJson (path) {
+    async fetchDeviceJsonInTask (path) {
       try {
-        // Enter assets mode briefly
-        console.log('[MIDI] Entering ASSETS mode...')
-        await this.connection.sendRaw('ASSETS\n')
-
-        // Wait for ASSETS_STARTED confirmation
-        const modeResponse = await this.connection.readLine(2000)
-        console.log('[MIDI] Mode response:', modeResponse)
-        if (!modeResponse || !modeResponse.includes('ASSETS_STARTED')) {
-          console.log('[MIDI] Failed to enter ASSETS mode')
-          return null
-        }
-
-        // Request file download
-        console.log('[MIDI] Sending GET command...')
-        await this.connection.sendRaw(`GET ${path}\n`)
-
-        // Read response - expect "SIZE <size>" or error
-        const sizeResponse = await this.connection.readLine(2000)
-        console.log('[MIDI] GET response:', sizeResponse)
-
-        if (!sizeResponse || !sizeResponse.startsWith('SIZE ')) {
-          console.log('[MIDI] Not a SIZE response, exiting assets')
-          await this.connection.sendRaw('EXIT\n')
-          return null
-        }
-
-        const size = parseInt(sizeResponse.split(' ')[1])
-        console.log('[MIDI] File size:', size)
-
-        if (size <= 0 || size > 100000) {
-          console.log('[MIDI] Invalid file size')
-          await this.connection.sendRaw('EXIT\n')
-          return null
-        }
-
-        // Read binary data
-        const data = await this.connection.readBinary(size, 5000)
+        await this.connection._ensureAssetsReadyDedicated()
+        const { data } = await this.connection._fetchSizedTransferImpl(`GET ${path}`)
         const text = new TextDecoder().decode(data)
-        console.log('[MIDI] Got file content, length:', text.length)
-
-        // Exit assets mode
-        await this.connection.sendRaw('EXIT\n')
-        await this.sleep(50)
-
         return text
       } catch (err) {
         console.error('[MIDI] Failed to fetch device JSON:', err)
-        try {
-          await this.connection.sendRaw('EXIT\n')
-        } catch (e) {}
         return null
       }
     }

@@ -90,6 +90,9 @@ window.PedalCatalog = (function () {
 
   async function ensureAssetsReady (connection) {
     connection.clearPendingRx?.()
+    if (typeof connection._ensureAssetsReadyDedicated === 'function') {
+      return connection._ensureAssetsReadyDedicated()
+    }
     await connection.sendRaw('ASSETS\n')
     const response = await connection.readLine(3000)
     if (!response?.includes('ASSETS_STARTED')) {

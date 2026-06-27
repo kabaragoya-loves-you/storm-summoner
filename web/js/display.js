@@ -75,6 +75,21 @@ application.register(
           this.activate()
         }
       })
+
+      this.connection.registerTabLeaveHandler('display', () => this.deactivate())
+    }
+
+    async deactivate () {
+      this.activating = false
+      this.stopStream()
+      if (this.connection.currentMode !== 'DISPLAY') return
+      try {
+        await this.connection.runSerialTask(async () => {
+          await this.connection._exitModeImpl()
+        })
+      } catch (err) {
+        console.warn('Display tab leave:', err)
+      }
     }
 
     disconnect () {

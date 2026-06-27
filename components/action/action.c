@@ -6,6 +6,8 @@
 #include "tempo.h"
 #include "config.h"
 #include "event_bus.h"
+#include "assets_manager.h"
+#include "midi_in.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -23,14 +25,78 @@ static uint8_t s_last_cc_values[128];
 // ============================================================================
 static uint8_t s_scene_flag = 0;
 
+// Optional UI observer for gating-CC changes driven by the incoming-CC mirror.
+static action_gating_changed_cb_t s_gating_changed_observer = NULL;
+
+void action_set_gating_changed_observer(action_gating_changed_cb_t cb) {
+  s_gating_changed_observer = cb;
+}
+
 uint8_t action_get_cc_value(uint8_t cc_num) {
   if (cc_num >= 128) return 0;
   return s_last_cc_values[cc_num];
 }
 
+// When a gating CC changes, re-clamp the cached values of CCs that carry
+// x_variants so the live cache stays valid for the new mode's effective range
+// (e.g. a 0-127 value left over from Delay mode is snapped into Loop mode's
+// 0-1 range). Touches only s_last_cc_values, never stored scene data.
+static void action_clamp_dependents_for_gating(const device_def_t* dev) {
+  for (uint16_t i = 0; i < dev->control_count; i++) {
+    const midi_control_t* ctrl = &dev->controls[i];
+    if (ctrl->type != MIDI_CONTROL_TYPE_CC || ctrl->id >= 128) continue;
+    if (ctrl->variant_count == 0) continue;  // only mode-dependent CCs
+
+    uint8_t cur = s_last_cc_values[ctrl->id];
+    uint8_t clamped = (uint8_t)assets_clamp_cc_value(dev, ctrl->id, cur);
+    if (assets_cc_has_discrete_values(dev, ctrl->id))
+      clamped = (uint8_t)assets_snap_to_discrete(dev, ctrl->id, clamped);
+    if (clamped != cur)
+      s_last_cc_values[ctrl->id] = clamped;
+  }
+}
+
 void action_set_cc_value(uint8_t cc_num, uint8_t value) {
   if (cc_num >= 128) return;
+  uint8_t prev = s_last_cc_values[cc_num];
   s_last_cc_values[cc_num] = value;
+  if (prev == value) return;
+
+  // A gating CC crossing a variant boundary can invalidate dependent CCs'
+  // cached values; re-clamp them against the new effective ranges.
+  const device_def_t* dev =
+    (const device_def_t*)scene_get_device(scene_get_current_index());
+  if (dev && assets_cc_is_gating(dev, cc_num))
+    action_clamp_dependents_for_gating(dev);
+}
+
+// Mirror incoming CC into the live value cache so mode-gating CCs set by an
+// external controller drive x_variants resolution. Gated by config_get_cc_mirror
+// (default off) and filtered to the active device's MIDI channel. Runs on the
+// event-dispatcher task (not ISR), so action_set_cc_value is safe to call.
+static void action_cc_mirror_handler(const event_t* event, void* context) {
+  (void)context;
+  if (!config_get_cc_mirror()) return;
+  if (!event || event->type != EVENT_MIDI_IN) return;
+  if (event->data.midi_in.type != MIDI_EVENT_CONTROL_CHANGE) return;
+
+  uint8_t our_channel = scene_get_effective_channel(scene_get_current_index());
+  if (our_channel < 1 || our_channel > 16) return;
+  if (event->data.midi_in.channel != (uint8_t)(our_channel - 1)) return;
+
+  uint8_t cc = event->data.midi_in.data1;
+  uint8_t prev = s_last_cc_values[cc < 128 ? cc : 0];
+  action_set_cc_value(cc, event->data.midi_in.data2);
+
+  // Runs on the event-dispatcher task (same context as button nav), so it is
+  // safe to drive a UI roller refresh when an external controller changed a
+  // gating CC's value.
+  if (s_gating_changed_observer && cc < 128 && prev != event->data.midi_in.data2) {
+    const device_def_t* dev =
+      (const device_def_t*)scene_get_device(scene_get_current_index());
+    if (dev && assets_cc_is_gating(dev, cc))
+      s_gating_changed_observer(cc);
+  }
 }
 
 void action_reset_cc_values(const void* device) {
@@ -78,6 +144,12 @@ esp_err_t action_init(void) {
 
   memset(s_last_cc_values, 64, sizeof(s_last_cc_values));
   s_scene_flag = 0;
+
+  // Let assets_manager resolve x_variants against the live CC cache.
+  assets_set_cc_value_provider(action_get_cc_value);
+
+  // Mirror incoming CC into s_last_cc_values when enabled (default off).
+  event_bus_subscribe(EVENT_MIDI_IN, action_cc_mirror_handler, NULL);
 
   action_punch_in_init();
   action_boomerang_init();

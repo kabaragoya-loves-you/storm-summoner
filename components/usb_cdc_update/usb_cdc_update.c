@@ -6,6 +6,7 @@
 #include "display_driver.h"
 #include "event_bus.h"
 #include "midi_in.h"
+#include "midi_out.h"
 #include "device_config.h"
 #include "app_settings.h"
 #include "settings_registry.h"
@@ -134,6 +135,10 @@ static bool s_midi_relay_show_clock = false;
 // Forward declarations for MIDI relay
 static void midi_relay_event_handler(const event_t* event, void* context);
 static void midi_relay_stop(void);
+static bool midi_relay_parse_raw(const uint8_t *data, size_t len,
+    midi_event_type_t *type, uint8_t *channel,
+    uint8_t *data1, uint8_t *data2, uint16_t *out_len);
+static void cdc_mirror_outgoing_midi(const uint8_t *data, size_t len);
 
 // Scene CDC notifications (idle / text-safe modes)
 static void cdc_scene_changed_handler(const event_t *event, void *context);
@@ -481,6 +486,8 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
   event_bus_subscribe(EVENT_ACTION_EXECUTED, cdc_clock_action_handler, NULL);
   if (event_bus_subscribe(EVENT_CONNECTIONS_CHANGED, cdc_connections_handler, NULL) != ESP_OK)
     ESP_LOGE(TAG, "Failed to subscribe for connection status updates");
+
+  midi_out_set_cdc_mirror_fn(cdc_mirror_outgoing_midi);
 
   s_initialized = true;
   CDC_LOGI("CDC update handler initialized");
@@ -3410,6 +3417,93 @@ static void midi_relay_stop(void) {
     s_midi_relay_active = false;
     CDC_LOGI("MIDI relay stopped");
   }
+}
+
+static bool midi_relay_parse_raw(const uint8_t *data, size_t len,
+    midi_event_type_t *type, uint8_t *channel,
+    uint8_t *data1, uint8_t *data2, uint16_t *out_len) {
+  if (!data || len == 0 || !type || !channel || !data1 || !data2 || !out_len) return false;
+
+  uint8_t status = data[0];
+
+  if (status >= 0xF8) {
+    *channel = 0;
+    *data1 = 0;
+    *data2 = 0;
+    *out_len = 1;
+    switch (status) {
+      case 0xF8: *type = MIDI_EVENT_REALTIME_CLOCK; return true;
+      case 0xF9: *type = MIDI_EVENT_REALTIME_TICK; return true;
+      case 0xFA: *type = MIDI_EVENT_REALTIME_START; return true;
+      case 0xFB: *type = MIDI_EVENT_REALTIME_CONTINUE; return true;
+      case 0xFC: *type = MIDI_EVENT_REALTIME_STOP; return true;
+      case 0xFF: *type = MIDI_EVENT_REALTIME_RESET; return true;
+      case 0xFE: *type = MIDI_EVENT_ACTIVE_SENSING; return true;
+      default: return false;
+    }
+  }
+
+  if (status >= 0xF0) return false;
+
+  *channel = status & 0x0F;
+  switch (status & 0xF0) {
+    case 0x80:
+      if (len < 3) return false;
+      *type = MIDI_EVENT_NOTE_OFF;
+      *data1 = data[1]; *data2 = data[2]; *out_len = 3;
+      return true;
+    case 0x90:
+      if (len < 3) return false;
+      *type = MIDI_EVENT_NOTE_ON;
+      *data1 = data[1]; *data2 = data[2]; *out_len = 3;
+      return true;
+    case 0xA0:
+      if (len < 3) return false;
+      *type = MIDI_EVENT_POLY_AFTERTOUCH;
+      *data1 = data[1]; *data2 = data[2]; *out_len = 3;
+      return true;
+    case 0xB0:
+      if (len < 3) return false;
+      *type = MIDI_EVENT_CONTROL_CHANGE;
+      *data1 = data[1]; *data2 = data[2]; *out_len = 3;
+      return true;
+    case 0xC0:
+      if (len < 2) return false;
+      *type = MIDI_EVENT_PROGRAM_CHANGE;
+      *data1 = data[1]; *data2 = 0; *out_len = 2;
+      return true;
+    case 0xD0:
+      if (len < 2) return false;
+      *type = MIDI_EVENT_CHANNEL_AFTERTOUCH;
+      *data1 = data[1]; *data2 = 0; *out_len = 2;
+      return true;
+    case 0xE0:
+      if (len < 3) return false;
+      *type = MIDI_EVENT_PITCH_BEND;
+      *data1 = data[1]; *data2 = data[2]; *out_len = 3;
+      return true;
+    default:
+      return false;
+  }
+}
+
+static void cdc_mirror_outgoing_midi(const uint8_t *data, size_t len) {
+  if (!s_midi_relay_active || s_state != CDC_STATE_MIDI_RELAY || !s_cdc_tx_armed) return;
+
+  midi_event_type_t type;
+  uint8_t channel, data1, data2;
+  uint16_t msg_len;
+  if (!midi_relay_parse_raw(data, len, &type, &channel, &data1, &data2, &msg_len)) return;
+
+  if (type == MIDI_EVENT_REALTIME_CLOCK && !s_midi_relay_show_clock) return;
+  if (type == MIDI_EVENT_ACTIVE_SENSING) return;
+
+  char buf[64];
+  snprintf(buf, sizeof(buf), "MO:%d,%d,%d,%d,%u",
+    (int)type, (int)channel, (int)data1, (int)data2, (unsigned)msg_len);
+  tud_cdc_write(buf, strlen(buf));
+  tud_cdc_write("\n", 1);
+  tud_cdc_write_flush();
 }
 
 static void midi_relay_event_handler(const event_t* event, void* context) {

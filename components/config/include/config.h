@@ -42,5 +42,13 @@ esp_err_t config_set_device_mode(device_mode_t mode);
 bool config_get_flag_enabled(void);
 esp_err_t config_set_flag_enabled(bool enabled);
 
+// Incoming CC mirror setting
+// When true: incoming USB/UART CC messages on the device's own MIDI channel
+// update the s_last_cc_values cache, so mode-gating CCs set by another
+// controller are reflected in variant resolution.
+// When false (default): incoming CC is ignored for mode tracking.
+bool config_get_cc_mirror(void);
+esp_err_t config_set_cc_mirror(bool enabled);
+
 #endif // CONFIG_H
 

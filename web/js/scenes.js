@@ -42,21 +42,21 @@ application.register(
       this._onSceneRenamed = this.onSceneRenamed.bind(this)
       document.addEventListener('scenes:scene-renamed', this._onSceneRenamed)
 
+      this.connection.registerTabLeaveHandler('scenes', () => this.leaveScenesModeFully())
+
       // Listen for tab activation
       document.addEventListener('app:tab-activated', async (e) => {
         if (e.detail.tab === 'scenes') {
           if (!this.connection.isConnected) return
-          if (!this.inScenesMode) {
-            await this.activate()
-          } else {
-            await this.openDetailPanelAfterListLoad()
+          try {
+            if (!this.inScenesMode) {
+              await this.activate()
+            } else {
+              await this.openDetailPanelAfterListLoad()
+            }
+          } finally {
+            this.emitActivationComplete()
           }
-          return
-        }
-        if (this.connection.isConnected &&
-            (this.inScenesMode || this.connection._deviceScenesActive ||
-             this.connection.currentMode === 'SCENES')) {
-          await this.leaveScenesModeFully()
         }
       })
     }
@@ -146,11 +146,13 @@ application.register(
       await this.sleep(100)
 
       for (let attempt = 0; attempt < 2; attempt++) {
+        this.connection.clearPendingRx()
         await this.connection.sendRaw('SCENES\n')
-        const response = await this.connection.readLine(3000)
+        const response = await this.connection._waitForSerialBanner('SCENES_STARTED', 5000)
 
         if (response === 'SCENES_STARTED') {
           this.inScenesMode = true
+          this.connection._deviceScenesActive = true
           this.log('Entered scenes mode')
           return
         }
@@ -345,6 +347,14 @@ application.register(
       )
     }
 
+    // Fired after the Scenes tab finishes its SCENES/LIST handshake so the scene
+    // editor panel can load without contending for the serial port mid-entry.
+    emitActivationComplete () {
+      document.dispatchEvent(new CustomEvent('scenes:activation-complete', {
+        detail: { ok: this.inScenesMode, scenes: this.scenes }
+      }))
+    }
+
     highlightSelection () {
       if (!this.hasContainerTarget) return
       this.containerTarget.querySelectorAll('.scene-row').forEach(row => {
@@ -428,18 +438,18 @@ application.register(
     }
 
     async leaveScenesModeInTask () {
-      if (!this.inScenesMode && this.connection.currentMode !== 'SCENES') return
+      if (!this.inScenesMode && !this.connection._deviceScenesActive &&
+          this.connection.currentMode !== 'SCENES') return
 
       this.inScenesMode = false
       if (this.connection.currentMode === 'SCENES') {
         this.connection._stopModeNotifyLoop()
         await this.connection._suspendModeNotify()
         this.connection.mode = null
-        // The device is still in SCENES even though we present mode as null;
-        // record it so a later mode change / exit sends EXIT to the device.
-        this.connection._deviceScenesActive = true
         this.connection.emit('mode:changed', { mode: null })
       }
+      // SCENE_GET / SCENE_PUT require idle; leave the device SCENES session first.
+      await this.connection.ensureDeviceIdle()
     }
 
     openView (e) {

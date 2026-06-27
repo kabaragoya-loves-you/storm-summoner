@@ -909,29 +909,92 @@ window.SceneEditorUi = (function () {
   function paramField (ctrl, path, cc, optionOpts) {
     const device = ctrl.deviceDefinition
     if (DeviceControls.hasParameters(device)) {
+      const opts = { ...(optionOpts || {}), getCcValue: ccValueResolver(ctrl) }
       return selectField(
         path,
         cc,
-        DeviceControls.parameterOptions(device, optionOpts)
+        DeviceControls.parameterOptions(device, opts)
       )
     }
     return numberField(path, cc, 0, 127)
   }
 
+  // getCcValue resolver bound to the scene controller's editor-local runtime CC
+  // map (web stand-in for the device's s_last_cc_values). Undefined when the
+  // controller has no resolver, in which case effective == base behavior.
+  function ccValueResolver (ctrl) {
+    return typeof ctrl.getCcValue === 'function' ? (cc) => ctrl.getCcValue(cc) : undefined
+  }
+
+  // True when ccNum is referenced by some other CC's x_variants constraint, i.e.
+  // its value gates another control's effective options.
+  function isGatingCc (ctrl, ccNum) {
+    const device = ctrl.deviceDefinition
+    if (!device) return false
+    return DeviceControls.controlGatingCcs(device).has(Number(ccNum))
+  }
+
+  // Single-value discrete control: render a verb/trigger badge instead of a
+  // one-option <select>. The stored value is kept in sync by the seed/clamp
+  // pipeline (resolveParameterValue collapses to the single discrete value).
+  function verbField (path, option) {
+    return `<div class="scene-verb" data-scene-path="${esc(path)}"
+      data-scene-verb-value="${esc(option.v)}"
+      title="Sends ${esc(option.l)} (value ${esc(option.v)})">
+      <wa-icon name="bolt"></wa-icon>
+      <span class="scene-verb-label">${esc(option.l)}</span></div>`
+  }
+
+  // No-op (x_noop) control: the CC does not exist in the current gating state,
+  // so render a disabled placeholder instead of an editor. The stored value is
+  // left untouched (no data-action), so it returns if the gate value changes.
+  function noopField (path) {
+    return `<div class="scene-noop" data-scene-path="${esc(path)}"
+      title="This parameter is not available in the current mode">
+      <wa-icon name="ban"></wa-icon>
+      <span class="scene-noop-label">n/a in this mode</span></div>`
+  }
+
+  // Value fields bound to a gating CC carry the mock-runtime controller so an
+  // edit updates the editor-local runtime map and re-resolves dependent fields.
+  function gatingSelectField (path, value, options, ccNum) {
+    const opts = options
+      .map(o => {
+        const sel = String(o.v) === String(value) ? ' selected' : ''
+        return `<option value="${esc(o.v)}"${sel}>${esc(o.l)}</option>`
+      })
+      .join('')
+    return `<select class="scene-select" data-scene-path="${esc(path)}"
+      data-controller="mock-runtime" data-mock-runtime-cc-value="${esc(ccNum)}"
+      data-action="change->scene#patchSelect change->mock-runtime#update">${opts}</select>`
+  }
+
+  function gatingNumberField (path, value, min, max, ccNum) {
+    return `<input type="number" class="scene-input" min="${min}" max="${max}"
+      value="${esc(value)}" data-scene-path="${esc(path)}"
+      data-controller="mock-runtime" data-mock-runtime-cc-value="${esc(ccNum)}"
+      data-action="input->scene#patchNumber input->mock-runtime#update">`
+  }
+
   function valueField (ctrl, path, cc, val) {
     const device = ctrl.deviceDefinition
+    const getCcValue = ccValueResolver(ctrl)
     const rawCc =
       DeviceControls.resolveCcForValuePath(p => ctrl.getAtPath(p), path) ?? cc
     const ccNum = DeviceControls.resolveParameterCc(device, rawCc)
-    if (DeviceControls.hasDiscreteValues(device, ccNum)) {
-      return selectField(
-        path,
-        val,
-        DeviceControls.discreteValueOptions(device, ccNum)
-      )
+    if (DeviceControls.controlIsNoop(device, ccNum, getCcValue)) return noopField(path)
+    const gating = isGatingCc(ctrl, ccNum)
+    if (DeviceControls.hasDiscreteValues(device, ccNum, getCcValue)) {
+      const opts = DeviceControls.discreteValueOptions(device, ccNum, getCcValue)
+      if (opts.length === 1) return verbField(path, opts[0])
+      return gating
+        ? gatingSelectField(path, val, opts, ccNum)
+        : selectField(path, val, opts)
     }
-    const range = DeviceControls.continuousValueRange(device, ccNum)
-    return numberField(path, val, range.min, range.max)
+    const range = DeviceControls.continuousValueRange(device, ccNum, getCcValue)
+    return gating
+      ? gatingNumberField(path, val, range.min, range.max, ccNum)
+      : numberField(path, val, range.min, range.max)
   }
 
   function presetField (ctrl, path, val) {
@@ -994,7 +1057,9 @@ window.SceneEditorUi = (function () {
     const opts = [
       { v: '__original__', l: 'Original' },
       ...DeviceControls.parameterOptions(device, {
-        exclude: new Set([pressCc])
+        exclude: new Set([pressCc]),
+        keep: DeviceControls.resolveParameterCc(device, a.param2),
+        getCcValue: ccValueResolver(ctrl)
       })
     ]
     const cur = a.release_to_original
@@ -1211,21 +1276,35 @@ window.SceneEditorUi = (function () {
 
   function boomerangValueField (ctrl, path, cc, val) {
     const device = ctrl.deviceDefinition
+    const getCcValue = ccValueResolver(ctrl)
     const rawCc =
       DeviceControls.resolveCcForValuePath(p => ctrl.getAtPath(p), path) ?? cc
     const ccNum = DeviceControls.resolveParameterCc(device, rawCc)
-    if (DeviceControls.hasDiscreteValues(device, ccNum)) {
-      const opts = DeviceControls.discreteValueOptions(device, ccNum)
+    if (DeviceControls.controlIsNoop(device, ccNum, getCcValue)) return noopField(path)
+    const gating = isGatingCc(ctrl, ccNum)
+    if (DeviceControls.hasDiscreteValues(device, ccNum, getCcValue)) {
+      const opts = DeviceControls.discreteValueOptions(device, ccNum, getCcValue)
+      if (opts.length === 1) return verbField(path, opts[0])
       const inner = opts
         .map(o => {
           const sel = String(o.v) === String(val) ? ' selected' : ''
           return `<option value="${esc(o.v)}"${sel}>${esc(o.l)}</option>`
         })
         .join('')
-      return `<select class="scene-select" data-scene-path="${esc(path)}"
-        data-action="change->scene#patchSelect${BOOM_NOTIFY}">${inner}</select>`
+      const gatingAttrs = gating
+        ? ` data-controller="mock-runtime" data-mock-runtime-cc-value="${esc(ccNum)}"`
+        : ''
+      const gatingAction = gating ? ' change->mock-runtime#update' : ''
+      return `<select class="scene-select" data-scene-path="${esc(path)}"${gatingAttrs}
+        data-action="change->scene#patchSelect${BOOM_NOTIFY}${gatingAction}">${inner}</select>`
     }
-    const range = DeviceControls.continuousValueRange(device, ccNum)
+    const range = DeviceControls.continuousValueRange(device, ccNum, getCcValue)
+    if (gating) {
+      return `<input type="number" class="scene-input" min="${range.min}" max="${range.max}"
+        value="${esc(val)}" data-scene-path="${esc(path)}"
+        data-controller="mock-runtime" data-mock-runtime-cc-value="${esc(ccNum)}"
+        data-action="input->scene#patchNumber input->boomerang-fields#notify input->mock-runtime#update">`
+    }
     return boomerangNumberField(path, val, range.min, range.max)
   }
 
@@ -1883,7 +1962,7 @@ window.SceneEditorUi = (function () {
       const ccPath = multiSlot ? `${path}.cc.${s}` : `${path}.cc`
       const cc = ccBySlot[s]
       const steps = DeviceControls.cycleStepsForSlot(a, s)
-      const paramLabel = DeviceControls.parameterLabel(device, cc)
+      const paramLabel = DeviceControls.parameterLabel(device, cc, ccValueResolver(ctrl))
       const removeSlot =
         s > 0
           ? `<wa-button class="scene-slot-remove" size="small" appearance="text" variant="neutral"
@@ -1915,7 +1994,7 @@ window.SceneEditorUi = (function () {
         const valPath = multiSlot
           ? `${path}.values.${s}.${i}`
           : `${path}.values.${i}`
-        const val = DeviceControls.resolveParameterValue(device, cc, steps[i])
+        const val = DeviceControls.resolveParameterValue(device, cc, steps[i], ccValueResolver(ctrl))
         html += `<div class="scene-cycle-step-col">${valueField(
           ctrl,
           valPath,
@@ -2001,7 +2080,8 @@ window.SceneEditorUi = (function () {
         const val = DeviceControls.resolveParameterValue(
           device,
           cc,
-          slotValue(a.value, i)
+          slotValue(a.value, i),
+          ccValueResolver(ctrl)
         )
         body += fieldRow('Value', valueField(ctrl, valPath, cc, val))
       } else if (variant === 'hold') {
@@ -2010,12 +2090,14 @@ window.SceneEditorUi = (function () {
         const press = DeviceControls.resolveParameterValue(
           device,
           cc,
-          slotValue(a.value, i)
+          slotValue(a.value, i),
+          ccValueResolver(ctrl)
         )
         const rel = DeviceControls.resolveParameterValue(
           device,
           cc,
-          slotValue(a.value2, i)
+          slotValue(a.value2, i),
+          ccValueResolver(ctrl)
         )
         body += fieldRow('Press value', valueField(ctrl, pressPath, cc, press))
         body += fieldRow('Release value', valueField(ctrl, relPath, cc, rel))
@@ -2935,6 +3017,83 @@ window.SceneEditorUi = (function () {
     return section('Note Track', html)
   }
 
+  // Value picker for a CC Defaults row. A non-mandatory CC gets a leading
+  // "None" option (no default, nothing sent on load). Mandatory CCs are
+  // required so they omit None. Bound to scene#applyCcDefaultFromEvent, which
+  // persists into cc_defaults and re-renders when the CC gates other params.
+  function ccDefaultField (ctrl, cc, current, mandatory, getCcValue) {
+    const device = ctrl.deviceDefinition
+    const opts = DeviceControls.valueOptions(device, cc, getCcValue)
+    const list = mandatory ? opts : [{ v: 'none', l: 'None' }, ...opts]
+    const selected = current == null ? 'none' : current
+    const optsHtml = list
+      .map(o => {
+        const sel = String(o.v) === String(selected) ? ' selected' : ''
+        return `<option value="${esc(o.v)}"${sel}>${esc(o.l)}</option>`
+      })
+      .join('')
+    return `<select class="scene-select" data-cc="${esc(cc)}"
+      data-action="change->scene#applyCcDefaultFromEvent">${optsHtml}</select>`
+  }
+
+  function ccDefaultRows (ctrl, { mandatoryOnly, optionalOnly }) {
+    const device = ctrl.deviceDefinition
+    if (!DeviceControls.hasParameters(device)) return ''
+    const getCcValue = ccValueResolver(ctrl)
+    const mandatory = DeviceControls.mandatoryGatingCcs(device)
+    let rows = ''
+    for (const c of (device.controlChangeCommands || [])) {
+      const cc = Number(c.controlChangeNumber)
+      const isMand = mandatory.has(cc)
+      if (mandatoryOnly && !isMand) continue
+      if (optionalOnly && isMand) continue
+      if (!isMand && DeviceControls.controlIsNoop(device, cc, getCcValue)) continue
+      const eff = DeviceControls.resolveEffectiveControl(device, cc, getCcValue)
+      const name = (eff && eff.name) || c.name || `CC ${cc}`
+      const cur = ctrl.ccDefaultValue(cc)
+      rows += fieldRow(name, ccDefaultField(ctrl, cc, cur, isMand, getCcValue))
+    }
+    return rows
+  }
+
+  function optionalCcDefinitionCount (device) {
+    const mandatory = DeviceControls.mandatoryGatingCcs(device)
+    return (device?.controlChangeCommands || [])
+      .filter(c => !mandatory.has(Number(c.controlChangeNumber))).length
+  }
+
+  // x_mandatory gate CCs (mode selectors) in their own collapsible so the full
+  // CC Defaults list stays collapsed on pedals with many parameters.
+  function renderModeSelectors (ctrl) {
+    const device = ctrl.deviceDefinition
+    if (!DeviceControls.mandatoryGatingCcs(device).size) return ''
+    const rows = ccDefaultRows(ctrl, { mandatoryOnly: true })
+    if (!rows) {
+      return section(
+        'Mode Selectors',
+        '<wa-callout variant="neutral">Loading pedal parameters…</wa-callout>'
+      )
+    }
+    return section('Mode Selectors', rows)
+  }
+
+  // Per-scene default values for optional device CCs. CCs with a value are sent
+  // on scene load and seed the live cache used for x_variants / x_noop resolution.
+  // Mandatory gate CCs live in Mode Selectors; no-op CCs in the current mode are hidden.
+  function renderCcDefaults (ctrl) {
+    const device = ctrl.deviceDefinition
+    if (!DeviceControls.hasParameters(device)) return ''
+    const rows = ccDefaultRows(ctrl, { optionalOnly: true })
+    if (!rows) {
+      if (optionalCcDefinitionCount(device) === 0) return ''
+      return section(
+        'CC Defaults',
+        '<wa-callout variant="neutral">No optional parameters in the current mode.</wa-callout>'
+      )
+    }
+    return section('CC Defaults', rows)
+  }
+
   function expressionUserModeSelection (m) {
     const mode = m.expression_mode || 'expression'
     if (mode === 'none') return 'disabled'
@@ -3850,6 +4009,8 @@ window.SceneEditorUi = (function () {
     html += renderRtg(ctrl)
     html += renderCcTriggers(ctrl)
     html += renderNoteTrack(ctrl)
+    html += renderModeSelectors(ctrl)
+    html += renderCcDefaults(ctrl)
     html += editorDivider()
     html += renderPerSceneDevice(ctrl)
     html += renderSceneGlobals(ctrl)
@@ -3903,6 +4064,19 @@ window.SceneEditorUi = (function () {
       open.add('CC Triggers')
     }
     if (m.note_track?.enabled) open.add('Note Track')
+    const hasCcDefaults = (m.cc_defaults || []).some(e => {
+      const cc = Number(e.cc)
+      return !DeviceControls.mandatoryGatingCcs(ctrl.deviceDefinition).has(cc)
+    })
+    if (
+      DeviceControls.hasParameters(ctrl.deviceDefinition) &&
+      DeviceControls.mandatoryGatingCcs(ctrl.deviceDefinition).size
+    ) {
+      open.add('Mode Selectors')
+    }
+    if (DeviceControls.hasParameters(ctrl.deviceDefinition) && hasCcDefaults) {
+      open.add('CC Defaults')
+    }
     return open
   }
 
@@ -3927,6 +4101,12 @@ window.SceneEditorUi = (function () {
     ]
     if (ctrl.editModel?.use_transport) titles.push('On-Play')
     if (ctrl.deviceContext?.midiControl) titles.push('CC Triggers')
+    if (DeviceControls.hasParameters(ctrl.deviceDefinition)) {
+      if (DeviceControls.mandatoryGatingCcs(ctrl.deviceDefinition).size) {
+        titles.push('Mode Selectors')
+      }
+      titles.push('CC Defaults')
+    }
     return new Set(titles)
   }
 

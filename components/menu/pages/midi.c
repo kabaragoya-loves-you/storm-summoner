@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "menu_pages.h"
+#include "config.h"
 #include "midi_out.h"
 #include "midi_passthrough.h"
 #include "midi_loopback.h"
@@ -12,7 +13,8 @@
 static char s_interface_label[32];
 static char s_passthrough_label[32];
 static char s_loopback_label[32];
-static menu_item_t s_midi_items[3];
+static char s_cc_mirror_label[40];
+static menu_item_t s_midi_items[4];
 
 // ============================================================================
 // Interface Roller (None, TRS, USB, Both)
@@ -173,6 +175,30 @@ static void nav_to_loopback(void* user_data) {
 }
 
 // ============================================================================
+// Incoming CC Mirror Roller (Track Incoming CC)
+// ============================================================================
+
+static const char* CC_MIRROR_OPTIONS = "Disabled\nEnabled";
+
+static void cc_mirror_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  config_set_cc_mirror(selected_index == 1);
+  ESP_LOGI(TAG, "Incoming CC mirror set to %s", selected_index == 1 ? "enabled" : "disabled");
+  menu_navigate_back_then_to(2, "MIDI", menu_page_midi_create);
+}
+
+static lv_obj_t* cc_mirror_roller_create(void) {
+  bool enabled = config_get_cc_mirror();
+  return menu_create_roller_page("Track Incoming CC", CC_MIRROR_OPTIONS,
+    enabled ? 1 : 0, cc_mirror_confirm_cb, NULL);
+}
+
+static void nav_to_cc_mirror(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Track Incoming CC", cc_mirror_roller_create);
+}
+
+// ============================================================================
 // MIDI Settings Menu Page
 // ============================================================================
 
@@ -196,6 +222,13 @@ lv_obj_t* menu_page_midi_create(void) {
   snprintf(s_loopback_label, sizeof(s_loopback_label), "Loopback\n%s",
     loopback_to_string());
   s_midi_items[idx++] = (menu_item_t){ s_loopback_label, nav_to_loopback, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+  bool cc_mirror = config_get_cc_mirror();
+  snprintf(s_cc_mirror_label, sizeof(s_cc_mirror_label), "Track Incoming CC\n%s",
+    cc_mirror ? "Enabled" : "Disabled");
+  s_midi_items[idx++] = (menu_item_t){
+    s_cc_mirror_label, nav_to_cc_mirror, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
 
   return menu_create_page_2line("MIDI", s_midi_items, idx);
 }

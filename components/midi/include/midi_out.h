@@ -56,4 +56,8 @@ void midi_out_reset_cut(void);              // Reset both cut states to false
 // Get current configuration
 midi_out_config_t midi_out_get_config(void);
 
+/** Optional hook: mirror locally-generated OUT bytes to the web CDC MIDI monitor. */
+typedef void (*midi_out_cdc_mirror_fn)(const uint8_t *data, size_t len);
+void midi_out_set_cdc_mirror_fn(midi_out_cdc_mirror_fn fn);
+
 #endif /* _MIDI_OUT_H */

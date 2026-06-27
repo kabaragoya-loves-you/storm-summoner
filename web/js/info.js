@@ -248,7 +248,9 @@ application.register(
                 version: this.infoData.version,
                 build: this.infoData.build,
                 git: this.infoData.git,
-                assets_checksum: this.infoData.assets_checksum
+                assets_checksum: this.infoData.assets_checksum,
+                programming: this.infoData.programming,
+                pedal: this.infoData.pedal || null
               }
             })
           )

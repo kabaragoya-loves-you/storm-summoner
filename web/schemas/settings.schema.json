@@ -185,6 +185,13 @@
             {"value": 3, "label": "Both"}
           ],
           "default": 0
+        },
+        {
+          "id": "config.cc_mirror",
+          "label": "Track Incoming CC",
+          "description": "Follow incoming CC on the device channel so mode changes from another controller update gated parameters",
+          "type": "toggle",
+          "default": false
         }
       ]
     },

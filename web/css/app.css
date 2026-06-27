@@ -1681,6 +1681,55 @@ wa-dialog[data-scene-target="messageDialog"]::part(footer) {
   font-size: 0.85rem;
 }
 
+/* Single-value discrete CC: a verb/trigger badge instead of a select. The
+   value it emits is fixed by the device definition, so this is display-only. */
+.scene-verb {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 20rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  background: var(--bg-deep);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.scene-verb wa-icon {
+  color: var(--accent, var(--text-dim));
+  font-size: 0.9rem;
+}
+
+.scene-verb-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.scene-noop {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 20rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  background: var(--bg-deep);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.scene-noop wa-icon {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.scene-noop-label {
+  font-style: italic;
+  color: var(--text-dim);
+}
+
 .scene-validation-box {
   padding: 0.5rem 0.75rem;
   border-radius: 8px;

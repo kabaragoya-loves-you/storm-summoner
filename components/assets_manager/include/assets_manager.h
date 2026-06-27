@@ -77,10 +77,62 @@ device_def_t *assets_load_device(const char *slug);
 void assets_free_device(device_def_t *device);
 
 /**
+ * Resolver for a gating CC's current value (0-127). Implemented by the action
+ * layer (action_get_cc_value) and registered via assets_set_cc_value_provider.
+ */
+typedef uint8_t (*assets_cc_value_fn)(uint8_t cc_num);
+
+/**
+ * Register the gating-CC value provider used by the effective-control
+ * resolution (x_variants). Pass NULL to disable variant resolution (all
+ * lookups then use the base control). Call once during init with
+ * action_get_cc_value.
+ */
+void assets_set_cc_value_provider(assets_cc_value_fn fn);
+
+/**
  * Get control by CC number
  * Returns pointer to control or NULL if not found
  */
 const midi_control_t *assets_get_control_by_cc(const device_def_t *device, uint8_t cc_num);
+
+/**
+ * True if `cc_num` is referenced as a gating CC by any control's x_variants
+ * constraint on this device (i.e. changing it can alter other controls'
+ * effective options).
+ */
+bool assets_cc_is_gating(const device_def_t *device, uint8_t cc_num);
+
+/**
+ * True if `cc_num` resolves to a no-op (x_noop) in the current gating state,
+ * i.e. the CC should be hidden/not rendered. Uses the registered gating-CC
+ * value provider. Returns false if the CC is not defined or no provider is set
+ * and the base control is not itself x_noop.
+ */
+bool assets_cc_is_noop(const device_def_t *device, uint8_t cc_num);
+
+/**
+ * True if `cc_num` is flagged x_mandatory in the device definition, meaning the
+ * scene must always carry a default value for it (the gate/mode CC).
+ */
+bool assets_cc_is_mandatory(const device_def_t *device, uint8_t cc_num);
+
+/**
+ * Resolve the effective control for a CC, applying the first matching
+ * x_variants override based on the current value of its gating CC.
+ *
+ * @param device    Device definition
+ * @param cc_num    CC number to resolve
+ * @param get_value Gating-CC value resolver (NULL = use registered provider)
+ * @param scratch   Caller-provided buffer that receives the merged control
+ *                  when a variant matches. Must remain valid while the
+ *                  returned pointer is used.
+ * @return The base control when no variant matches (or none defined), or
+ *         `scratch` populated with the matched variant's overrides. NULL if
+ *         the CC is not defined on the device.
+ */
+const midi_control_t *assets_get_effective_control(const device_def_t *device,
+  uint8_t cc_num, assets_cc_value_fn get_value, midi_control_t *scratch);
 
 /**
  * Get control by array index

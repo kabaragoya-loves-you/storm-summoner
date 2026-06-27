@@ -14,7 +14,10 @@
 
 // Configuration
 #define EVENT_BUS_QUEUE_SIZE          128
-#define EVENT_BUS_MAX_HANDLERS        98
+// Was 98 and fully consumed; bumped for headroom (the incoming-CC mirror
+// subscriber and future subscribers). Each slot is a small struct, so the
+// extra static RAM is negligible.
+#define EVENT_BUS_MAX_HANDLERS        112
 #define EVENT_BUS_HISTORY_SIZE        16
 
 typedef enum {

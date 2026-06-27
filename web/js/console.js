@@ -36,6 +36,23 @@ application.register(
           this.activate()
         }
       })
+
+      this.connection.registerTabLeaveHandler('console', () => this.deactivate())
+    }
+
+    async deactivate () {
+      this.inConsoleMode = false
+      this.stopReadLoop()
+      if (this.connection.currentMode === 'CONSOLE') {
+        try {
+          await this.connection.runSerialTask(async () => {
+            await this.connection._exitModeImpl()
+            this.connection.clearPendingRx()
+          })
+        } catch (err) {
+          console.warn('Console tab leave:', err)
+        }
+      }
     }
 
     disconnect () {
@@ -70,8 +87,12 @@ application.register(
       try {
         this.appendLine('Entering console mode...', 'system')
 
-        await this.sleep(300)
-        await this.connection.sendRaw('CONSOLE\n')
+        await this.connection.runSerialTask(async () => {
+          this.connection.clearPendingRx()
+          await this.connection.drainInput()
+          await this.sleep(100)
+          await this.connection.sendRaw('CONSOLE\n')
+        })
 
         this.inConsoleMode = true
         this.startReadLoop()
@@ -80,6 +101,18 @@ application.register(
       } catch (err) {
         this.appendLine(`Console mode failed: ${err.message}`, 'error')
       }
+    }
+
+    _isStaleConsoleLine (line) {
+      if (!line) return true
+      if (line.startsWith('EVT:')) return true
+      if (line.trimStart().startsWith('{')) return true
+      if (/^I \(/.test(line)) return true
+      const stale = new Set([
+        'INFO', 'DEVICE', 'CONFIG', 'SETTINGS', 'DUMP', 'VALUES', 'EXIT',
+        'SCENES', 'ASSETS', 'DISPLAY', 'CONSOLE', 'MIDI', 'PEDALS', 'LIST'
+      ])
+      return stale.has(line)
     }
 
     async startReadLoop () {
@@ -120,6 +153,8 @@ application.register(
                   this.connection.dispatchCdcNotify(line.slice(evtIdx))
                 } else if (line === 'CONSOLE_STARTED' || line === 'CONSOLE_STOPPED') {
                   this.appendLine(`[${line}]`, 'system')
+                } else if (this._isStaleConsoleLine(line)) {
+                  // Drop stale CDC command echoes left in the USB buffer.
                 } else if (line !== '>' && line !== '> ') {
                   this.appendLine(line)
                 }

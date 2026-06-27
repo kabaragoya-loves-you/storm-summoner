@@ -103,6 +103,12 @@ typedef struct scene_t {
   // Program change settings (modes 2 & 3)
   uint8_t program_number;     // PC value (0-127)
   bool send_pc_on_load;       // Send PC when loading this scene
+
+  // Per-scene default CC values, indexed by CC number. 0xFF = "no default"
+  // (not sent, no seed). CCs with a value 0-127 are sent on scene load and seed
+  // the live CC cache for x_variants / x_noop mode resolution. x_mandatory CCs
+  // are always populated (default = first valid option).
+  uint8_t cc_defaults[128];
   
   // Scene load actions (up to 4 actions executed when scene loads)
   uint8_t num_on_load_actions;
@@ -279,6 +285,13 @@ uint8_t scene_get_touchwheel_value(void);
 
 esp_err_t scene_set_program_number(uint8_t scene_index, uint8_t program);
 esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc);
+
+// Per-scene CC defaults (indexed by CC number; 0xFF / SCENE_CC_DEFAULT_NONE = none)
+#define SCENE_CC_DEFAULT_NONE 0xFF
+// Returns the default value for a CC (0-127) or SCENE_CC_DEFAULT_NONE if unset.
+uint8_t scene_get_cc_default(uint8_t scene_index, uint8_t cc_num);
+// Sets (0-127) or clears (SCENE_CC_DEFAULT_NONE) a CC default. Marks scene dirty.
+esp_err_t scene_set_cc_default(uint8_t scene_index, uint8_t cc_num, uint8_t value);
 
 // UI module (per-scene screen)
 esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name);
@@ -562,6 +575,20 @@ esp_err_t scene_resume_input(void);
 // deferred because a scene change occurred in programming mode.
 // Called automatically when returning to performance mode.
 void scene_apply_deferred_init(void);
+
+// Ensure every x_mandatory (gate) CC on the current device has a default value
+// in the current scene, seeding any missing one to its first valid option. In
+// memory only (not persisted until the next scene save).
+void scene_ensure_mandatory_cc_defaults(void);
+
+// Seed the live CC cache (action's s_last_cc_values) from device control
+// minimums plus the current scene's stored CC defaults. No MIDI is transmitted;
+// gives x_variants / x_noop resolution a deterministic basis. Call when entering
+// programming mode so CC choosers reflect the scene's default mode.
+void scene_seed_cc_cache(void);
+
+// Transmit the current scene's CC defaults as MIDI on the scene channel.
+void scene_send_cc_defaults(void);
 
 // Clean up any active touchwheel notes (call when disabling touchwheel, changing modes, etc.)
 void scene_touchwheel_cleanup_notes(void);

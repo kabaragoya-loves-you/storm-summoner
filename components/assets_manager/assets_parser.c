@@ -36,6 +36,28 @@ static bool cc_array_has_duplicate_numbers(cJSON *cc_array) {
   return false;
 }
 
+// Map an x_variants constraint operator string to cc_variant_op_t.
+// Returns -1 for an unrecognized operator.
+static int parse_variant_op(const char *op) {
+  if (!op) return -1;
+  if (strcmp(op, "<") == 0) return CC_VARIANT_OP_LT;
+  if (strcmp(op, "<=") == 0) return CC_VARIANT_OP_LE;
+  if (strcmp(op, ">") == 0) return CC_VARIANT_OP_GT;
+  if (strcmp(op, ">=") == 0) return CC_VARIANT_OP_GE;
+  if (strcmp(op, "==") == 0) return CC_VARIANT_OP_EQ;
+  if (strcmp(op, "!=") == 0) return CC_VARIANT_OP_NE;
+  return -1;
+}
+
+// Number of discrete entries a valueRange would yield, capped to the max.
+static int range_discrete_count(cJSON *range) {
+  if (!range) return 0;
+  cJSON *arr = cJSON_GetObjectItem(range, "discreteValues");
+  if (!arr || !cJSON_IsArray(arr)) return 0;
+  int n = cJSON_GetArraySize(arr);
+  return (n > MAX_DISCRETE_VALUES) ? MAX_DISCRETE_VALUES : n;
+}
+
 /**
  * Parse a device JSON file from filesystem
  */
@@ -205,6 +227,8 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
       // Calculate total string size needed (including discrete value names)
       size_t string_size = 0;
       size_t total_discrete_count = 0;
+      size_t total_variant_count = 0;
+      size_t total_variant_discrete_count = 0;
       cJSON *cc_item;
       cJSON_ArrayForEach(cc_item, cc_array) {
         cJSON *name = cJSON_GetObjectItem(cc_item, "name");
@@ -216,14 +240,13 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
           string_size += strlen(info->valuestring) + 1;
         
         // Count discrete values and their string sizes
+        int base_dv_count = 0;
         cJSON *range = cJSON_GetObjectItem(cc_item, "valueRange");
         if (range) {
           cJSON *discrete_arr = cJSON_GetObjectItem(range, "discreteValues");
           if (discrete_arr && cJSON_IsArray(discrete_arr)) {
-            int dv_count = cJSON_GetArraySize(discrete_arr);
-            if (dv_count > MAX_DISCRETE_VALUES)
-              dv_count = MAX_DISCRETE_VALUES;
-            total_discrete_count += dv_count;
+            base_dv_count = range_discrete_count(range);
+            total_discrete_count += base_dv_count;
             
             cJSON *dv_item;
             int dv_idx = 0;
@@ -233,6 +256,47 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
               if (dv_name && cJSON_IsString(dv_name))
                 string_size += strlen(dv_name->valuestring) + 1;
               dv_idx++;
+            }
+          }
+        }
+        
+        // Count x_variants and their string/discrete sizes. A variant with
+        // its own valueRange materializes its own discrete set; a variant
+        // without a valueRange inherits the base discrete set (its names are
+        // already in the blob, so no new string bytes are needed for them).
+        cJSON *variants = cJSON_GetObjectItem(cc_item, "x_variants");
+        if (variants && cJSON_IsArray(variants)) {
+          cJSON *var_item;
+          int var_idx = 0;
+          cJSON_ArrayForEach(var_item, variants) {
+            if (var_idx >= MAX_VARIANTS) break;
+            var_idx++;
+            total_variant_count++;
+            
+            cJSON *v_name = cJSON_GetObjectItem(var_item, "name");
+            if (v_name && cJSON_IsString(v_name))
+              string_size += strlen(v_name->valuestring) + 1;
+            
+            cJSON *v_range = cJSON_GetObjectItem(var_item, "valueRange");
+            if (v_range) {
+              cJSON *v_disc = cJSON_GetObjectItem(v_range, "discreteValues");
+              if (v_disc && cJSON_IsArray(v_disc)) {
+                int vc = range_discrete_count(v_range);
+                total_variant_discrete_count += vc;
+                cJSON *dv_item;
+                int dv_idx = 0;
+                cJSON_ArrayForEach(dv_item, v_disc) {
+                  if (dv_idx >= MAX_DISCRETE_VALUES) break;
+                  cJSON *dv_name = cJSON_GetObjectItem(dv_item, "name");
+                  if (dv_name && cJSON_IsString(dv_name))
+                    string_size += strlen(dv_name->valuestring) + 1;
+                  dv_idx++;
+                }
+              }
+              // valueRange without discreteValues = continuous override (0)
+            } else {
+              // Inherits the base discrete set (names reuse base strings)
+              total_variant_discrete_count += base_dv_count;
             }
           }
         }
@@ -259,6 +323,29 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
           ESP_LOGW(TAG, "Failed to allocate discrete values, continuing without them");
         }
       }
+      
+      // Allocate variant pools if needed
+      cc_variant_t *all_variants = NULL;
+      cc_variant_t *variant_ptr = NULL;
+      if (total_variant_count > 0) {
+        all_variants = calloc_prefer_psram(total_variant_count, sizeof(cc_variant_t));
+        variant_ptr = all_variants;
+        if (!all_variants)
+          ESP_LOGW(TAG, "Failed to allocate variants, continuing without them");
+      }
+      discrete_value_t *all_variant_discrete = NULL;
+      discrete_value_t *variant_discrete_ptr = NULL;
+      if (total_variant_discrete_count > 0) {
+        all_variant_discrete = calloc_prefer_psram(total_variant_discrete_count, sizeof(discrete_value_t));
+        variant_discrete_ptr = all_variant_discrete;
+        if (!all_variant_discrete)
+          ESP_LOGW(TAG, "Failed to allocate variant discrete values, continuing without them");
+      }
+
+      // Record the owning bases so assets_free_device can release these pools.
+      device->discrete_pool = all_discrete;
+      device->variant_pool = all_variants;
+      device->variant_discrete_pool = all_variant_discrete;
       
       // Parse each control
       char *string_ptr = (char *)device->string_blob;
@@ -333,6 +420,120 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
                 }
               }
             }
+          }
+        }
+
+        // x_noop on the base control: hide the CC when no variant matches.
+        cJSON *base_noop = cJSON_GetObjectItem(cc_item, "x_noop");
+        ctrl->noop = (base_noop && cJSON_IsTrue(base_noop)) ? 1 : 0;
+
+        // x_mandatory: this CC must always carry a per-scene default value.
+        cJSON *mandatory = cJSON_GetObjectItem(cc_item, "x_mandatory");
+        if (mandatory && cJSON_IsTrue(mandatory))
+          ctrl->flags |= MIDI_CONTROL_FLAG_MANDATORY;
+        
+        // Parse x_variants (mode-dependent overrides). Each variant's
+        // inherited fields are materialized now so the runtime resolver and
+        // the binary cache always see fully-populated variant records.
+        cJSON *variants = cJSON_GetObjectItem(cc_item, "x_variants");
+        if (variants && cJSON_IsArray(variants) && variant_ptr) {
+          cc_variant_t *first_variant = variant_ptr;
+          uint8_t vcount = 0;
+          int var_pos = 0;
+          cJSON *var_item;
+          cJSON_ArrayForEach(var_item, variants) {
+            if (var_pos >= MAX_VARIANTS) break;
+            var_pos++;
+            
+            cJSON *constraint = cJSON_GetObjectItem(var_item, "constraint");
+            if (!constraint) continue;
+            cJSON *c_cc = cJSON_GetObjectItem(constraint, "cc");
+            cJSON *c_op = cJSON_GetObjectItem(constraint, "op");
+            cJSON *c_val = cJSON_GetObjectItem(constraint, "value");
+            if (!c_cc || !cJSON_IsNumber(c_cc) || !c_op || !cJSON_IsString(c_op) ||
+                !c_val || !cJSON_IsNumber(c_val))
+              continue;
+            int op = parse_variant_op(c_op->valuestring);
+            if (op < 0) continue;
+            
+            cc_variant_t *v = variant_ptr;
+            v->gating_cc = (uint8_t)c_cc->valueint;
+            v->op = (uint8_t)op;
+            v->value = (uint16_t)c_val->valueint;
+
+            cJSON *v_noop = cJSON_GetObjectItem(var_item, "x_noop");
+            v->noop = (v_noop && cJSON_IsTrue(v_noop)) ? 1 : 0;
+            
+            // Name: variant's own name, else inherit the base control name
+            cJSON *v_name = cJSON_GetObjectItem(var_item, "name");
+            if (v_name && cJSON_IsString(v_name)) {
+              size_t len = strlen(v_name->valuestring) + 1;
+              memcpy(string_ptr, v_name->valuestring, len);
+              v->name = string_ptr;
+              string_ptr += len;
+            } else {
+              v->name = ctrl->name;
+            }
+            
+            cJSON *v_range = cJSON_GetObjectItem(var_item, "valueRange");
+            if (v_range) {
+              v->min = ctrl->min;
+              v->max = ctrl->max;
+              cJSON *vmin = cJSON_GetObjectItem(v_range, "min");
+              cJSON *vmax = cJSON_GetObjectItem(v_range, "max");
+              if (vmin && cJSON_IsNumber(vmin)) v->min = vmin->valueint;
+              if (vmax && cJSON_IsNumber(vmax)) v->max = vmax->valueint;
+              
+              cJSON *v_disc = cJSON_GetObjectItem(v_range, "discreteValues");
+              if (v_disc && cJSON_IsArray(v_disc) && variant_discrete_ptr) {
+                v->discrete_values = variant_discrete_ptr;
+                v->discrete_count = 0;
+                cJSON *dv_item;
+                cJSON_ArrayForEach(dv_item, v_disc) {
+                  if (v->discrete_count >= MAX_DISCRETE_VALUES) break;
+                  cJSON *dv_name = cJSON_GetObjectItem(dv_item, "name");
+                  cJSON *dv_value = cJSON_GetObjectItem(dv_item, "value");
+                  if (dv_name && cJSON_IsString(dv_name) && dv_value && cJSON_IsNumber(dv_value)) {
+                    size_t len = strlen(dv_name->valuestring) + 1;
+                    memcpy(string_ptr, dv_name->valuestring, len);
+                    variant_discrete_ptr->name = string_ptr;
+                    variant_discrete_ptr->value = dv_value->valueint;
+                    string_ptr += len;
+                    variant_discrete_ptr++;
+                    v->discrete_count++;
+                  }
+                }
+                if (v->discrete_count == 0) v->discrete_values = NULL;
+              } else {
+                // valueRange without discreteValues = continuous in this mode
+                v->discrete_values = NULL;
+                v->discrete_count = 0;
+              }
+            } else {
+              // No valueRange: inherit the base range and discrete set
+              v->min = ctrl->min;
+              v->max = ctrl->max;
+              if (ctrl->discrete_count > 0 && ctrl->discrete_values && variant_discrete_ptr) {
+                v->discrete_values = variant_discrete_ptr;
+                v->discrete_count = ctrl->discrete_count;
+                for (uint8_t k = 0; k < ctrl->discrete_count; k++) {
+                  variant_discrete_ptr->name = ctrl->discrete_values[k].name;
+                  variant_discrete_ptr->value = ctrl->discrete_values[k].value;
+                  variant_discrete_ptr++;
+                }
+              } else {
+                v->discrete_values = NULL;
+                v->discrete_count = 0;
+              }
+            }
+            
+            variant_ptr++;
+            vcount++;
+          }
+          
+          if (vcount > 0) {
+            ctrl->variants = first_variant;
+            ctrl->variant_count = vcount;
           }
         }
         
@@ -411,6 +612,7 @@ device_def_t *parse_device_json(const char *json_str, size_t json_len, const cha
             }
           }
           device->pc_info->names = (const char **)names_arr;
+          device->pc_names_blob = names_blob;
         }
       }
     }

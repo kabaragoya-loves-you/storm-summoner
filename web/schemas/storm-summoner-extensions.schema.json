@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "storm-summoner-extensions-0.1.1",
+  "title": "StormSummonerDeviceExtensions",
+  "description": "Authoring/reference schema for the Storm Summoner 'x_' extension fields layered on top of the read-only Open MIDI RTC schema (open-midi-rtc-schema.json). This file is NOT loaded for runtime validation; the custom offline validator in pedals.js does not support $ref/allOf composition. It is the documented source of truth for the 'x_' whitelist enforced by midi-devices/tools/validate_devices.rb and pedals.js lintPedal(). Any 'x_' key not described here is invalid and must fail validation.",
+  "type": "object",
+  "properties": {
+    "controlChangeCommands": {
+      "type": "array",
+      "description": "Extension fields permitted on each Open MIDI RTC controlChangeCommands entry.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "x_mandatory": {
+            "type": "boolean",
+            "description": "Marks a gate CC (e.g. a Mode selector) whose value gates other CCs' x_variants. The default-value mechanism (separate ticket) must keep a non-deletable scene entry for this CC, defaulting to its first possible value. This schema only defines and validates the flag."
+          },
+          "x_noop": {
+            "type": "boolean",
+            "description": "When true on the base entry, the CC is hidden/non-rendered by default (when no x_variants entry matches the current gating values). Use on a variant instead to hide the CC only in specific gate combinations (e.g. a footswitch that exists only in one mode). A no-op control is skipped by the device menu and the web editor; it carries no value widget."
+          },
+          "x_variants": {
+            "type": "array",
+            "description": "Constraint-gated overrides of this CC's name/valueRange based on the current value of another CC. Evaluated in array order; first matching constraint wins. When no variant matches (or the gating value is unknown) the entry's base name/valueRange applies. Author a variant only for modes that differ from the default-mode (value 0) base.",
+            "items": { "$ref": "#/definitions/ccVariant" },
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "x_pc": {
+      "type": "object",
+      "description": "Program Change / preset metadata. Always present in a device file, even when the device has no presets (use count 0).",
+      "properties": {
+        "indexBase": {
+          "type": "integer",
+          "description": "0 if presets are numbered from 0, 1 if numbered from 1.",
+          "enum": [0, 1]
+        },
+        "count": {
+          "type": "integer",
+          "description": "Total number of presets (0 if none).",
+          "minimum": 0
+        },
+        "bankSelectMode": {
+          "type": "string",
+          "description": "Bank select scheme used to reach more than 128 presets.",
+          "enum": ["none", "CC0", "CC0_CC32"]
+        },
+        "names": {
+          "type": "array",
+          "description": "Optional positional preset names, indexed from indexBase. Read by firmware (assets_parser.c) but rarely used.",
+          "items": { "type": "string" }
+        },
+        "additionalInfo": {
+          "type": "string",
+          "description": "Author-only notes; never displayed in device or web UI."
+        }
+      },
+      "required": ["indexBase", "count", "bankSelectMode"],
+      "additionalProperties": false
+    },
+    "x_midiTrs": {
+      "type": "string",
+      "description": "MIDI TRS wiring type. NOTE: the misspelled key 'x_midiTrsType' is invalid and must be rejected.",
+      "enum": ["TYPE_A", "TYPE_B", "TYPE_TS", "BOTH"]
+    },
+    "x_midiChannel": {
+      "type": "integer",
+      "description": "Default MIDI channel (1-16).",
+      "minimum": 1,
+      "maximum": 16
+    }
+  },
+  "definitions": {
+    "ccConstraint": {
+      "type": "object",
+      "description": "A single comparison against another CC's current value.",
+      "properties": {
+        "cc": {
+          "type": "integer",
+          "description": "The gating CC number whose current value is tested.",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "op": {
+          "type": "string",
+          "description": "Comparison operator applied as: (gating CC value) op value.",
+          "enum": ["<", "<=", ">", ">=", "==", "!="]
+        },
+        "value": {
+          "type": "integer",
+          "description": "The value the gating CC is compared against.",
+          "minimum": 0,
+          "maximum": 127
+        }
+      },
+      "required": ["cc", "op", "value"],
+      "additionalProperties": false
+    },
+    "ccVariant": {
+      "type": "object",
+      "description": "An override applied to the parent CC entry when its constraint matches. Omitted fields fall back to the base entry.",
+      "properties": {
+        "constraint": { "$ref": "#/definitions/ccConstraint" },
+        "name": {
+          "type": "string",
+          "description": "Override display name for this mode. Must stand alone within ~14 chars (additionalInfo is never shown).",
+          "maxLength": 14
+        },
+        "additionalInfo": {
+          "type": "string",
+          "description": "Author-only notes; never displayed."
+        },
+        "valueRange": { "$ref": "#/definitions/ccValueRange" },
+        "x_noop": {
+          "type": "boolean",
+          "description": "When true, the CC is hidden/non-rendered while this variant's constraint matches (the CC does not exist in this gate combination). A no-op variant needs only its constraint; name/valueRange are ignored."
+        }
+      },
+      "required": ["constraint"],
+      "additionalProperties": false
+    },
+    "ccValueRange": {
+      "type": "object",
+      "description": "Same shape as the Open MIDI RTC CCValueRange. Tighten max to the highest useful value (e.g. 1 for a toggle/verb); never 127 for a 0/1 control.",
+      "properties": {
+        "min": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "max": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "discreteValues": {
+          "type": "array",
+          "description": "Named values. 0 = continuous roller; 1 = single-value verb/trigger; >= 2 = discrete list/dropdown.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "value": { "type": "integer", "minimum": 0, "maximum": 127 }
+            },
+            "required": ["name", "value"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["min", "max"],
+      "additionalProperties": false
+    }
+  }
+}

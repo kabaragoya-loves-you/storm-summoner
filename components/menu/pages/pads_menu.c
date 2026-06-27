@@ -156,6 +156,23 @@ static uint8_t s_editing_cc_slot = 0;
 static uint8_t s_editing_step = 0;  // For CC Cycle step editing
 static uint8_t s_pending_cc_number = 0;
 static const midi_control_t* s_pending_control = NULL;  // For value roller
+// Dedicated scratch for s_pending_control so transient effective lookups can't
+// clobber the variant copy it points at while a value roller is open.
+static midi_control_t s_pending_control_scratch;
+
+// Variant-aware control lookup for transient use within a single builder or
+// confirm callback. The returned pointer may alias a shared scratch buffer, so
+// consume it before the calling function returns and do not store it.
+static const midi_control_t* menu_effective_control(const device_def_t* device, uint8_t cc_num) {
+  static midi_control_t scratch;
+  return assets_get_effective_control(device, cc_num, NULL, &scratch);
+}
+
+// Variant-aware control lookup whose result is stored in s_pending_control and
+// stays valid across the create->confirm roller handoff.
+static const midi_control_t* menu_pending_effective(const device_def_t* device, uint8_t cc_num) {
+  return assets_get_effective_control(device, cc_num, NULL, &s_pending_control_scratch);
+}
 
 // Action config context for pad actions
 static action_config_context_t s_pad_action_ctx;
@@ -277,8 +294,13 @@ static bool load_cc_options(void) {
   for (uint16_t i = 0; i < device->control_count && (pos + 28) < str_size; i++) {
     const midi_control_t* ctrl = &device->controls[i];
     if (ctrl->type == MIDI_CONTROL_TYPE_CC) {
+      // Skip CCs that are no-ops in the current gating state (x_noop): they do
+      // not exist in this mode and must not be offered for assignment.
+      if (assets_cc_is_noop(device, (uint8_t)ctrl->id)) continue;
       s_cc_options.options_str[pos++] = '\n';
-      const char* name = ctrl->name ? ctrl->name : "Unknown";
+      const midi_control_t* eff = menu_effective_control(device, (uint8_t)ctrl->id);
+      const char* name = (eff && eff->name) ? eff->name
+        : (ctrl->name ? ctrl->name : "Unknown");
       size_t name_len = strlen(name);
       if (name_len > 24) name_len = 24;  // Truncate long names
       memcpy(s_cc_options.options_str + pos, name, name_len);
@@ -346,7 +368,7 @@ static const char* get_cc_slot_display(action_t* action, uint8_t slot) {
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   static char buf[40];
   
@@ -385,7 +407,7 @@ static const char* get_cc_hold_slot_display(action_t* action, uint8_t slot) {
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   static char buf[32];
   
@@ -423,7 +445,7 @@ static const char* get_cc_cycle_slot_display(action_t* action, uint8_t slot) {
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   static char buf[32];
   
@@ -560,7 +582,7 @@ static lv_obj_t* cc_value_roller_create(void) {
   // Get device and control info
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  s_pending_control = assets_get_control_by_cc(device, s_pending_cc_number);
+  s_pending_control = menu_pending_effective(device, s_pending_cc_number);
   
   static char options[1024];
   options[0] = '\0';
@@ -895,7 +917,7 @@ static void cc_hold_press_confirm_cb(uint32_t selected_index, void* user_data) {
   // Get device and control to determine actual value
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   uint8_t press_val;
   if (ctrl && ctrl->discrete_count > 0) {
@@ -937,7 +959,7 @@ static lv_obj_t* cc_hold_press_roller_create(void) {
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   static char options[1024];
   options[0] = '\0';
@@ -1019,7 +1041,7 @@ static void cc_hold_release_confirm_cb(uint32_t selected_index, void* user_data)
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   uint8_t release_val;
   if (ctrl && ctrl->discrete_count > 0) {
@@ -1061,7 +1083,7 @@ static lv_obj_t* cc_hold_release_roller_create(void) {
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   static char options[1024];
   options[0] = '\0';
@@ -1325,7 +1347,7 @@ static void cc_cycle_step_confirm_cb(uint32_t selected_index, void* user_data) {
   // Get device and control to determine actual value
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   uint8_t step_val;
   if (ctrl && ctrl->discrete_count > 0) {
@@ -1369,7 +1391,7 @@ static lv_obj_t* cc_cycle_step_roller_create(void) {
   
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  const midi_control_t* ctrl = assets_get_control_by_cc(device, cc_num);
+  const midi_control_t* ctrl = menu_effective_control(device, cc_num);
   
   static char options[1024];
   options[0] = '\0';

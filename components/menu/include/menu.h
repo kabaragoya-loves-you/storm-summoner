@@ -67,6 +67,17 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder);
 // Deferred version - safe to call during LVGL rendering/event callbacks
 void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t builder);
 
+// Rebuild the current top page in place (deferred), re-invoking its stored
+// builder. Used to refresh variant-dependent rollers when a gating CC changes
+// underneath an open page. No-op at the top level (no builder). Must only be
+// called from the event-dispatcher/LVGL task (same context as button nav).
+void menu_refresh_current_page(void);
+
+// Refresh an open CC value roller when a gating CC changed underneath it.
+// Suitable for registration as the action layer's gating-changed observer.
+// Must only be called from the event-dispatcher/LVGL task.
+void menu_on_gating_cc_changed(uint8_t gating_cc);
+
 // Pop N levels, then replace the new top page (does not push an extra level)
 void menu_pop_then_replace_deferred(int levels, const char* menu_name,
   menu_page_builder_t builder);

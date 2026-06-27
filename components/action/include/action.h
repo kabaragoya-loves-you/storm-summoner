@@ -834,4 +834,11 @@ void action_set_cc_value(uint8_t cc_num, uint8_t value);
 // If device is NULL, resets all to 0
 void action_reset_cc_values(const void* device);
 
+// Observer invoked (on the event-dispatcher task) when an incoming-CC mirror
+// update changes a gating CC, so the UI can refresh an open mode-dependent
+// roller. Registered by the application layer to avoid an action->menu
+// dependency. Pass NULL to clear.
+typedef void (*action_gating_changed_cb_t)(uint8_t gating_cc);
+void action_set_gating_changed_observer(action_gating_changed_cb_t cb);
+
 #endif // ACTION_H

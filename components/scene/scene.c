@@ -253,6 +253,10 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   // Program change defaults (display Preset 1 for this device)
   scene->program_number = (uint8_t)device_config_get_min_preset();
   scene->send_pc_on_load = true;
+
+  // No CC defaults until the user assigns them (0xFF = none). memset above
+  // zeroed the array, which would mean "default every CC to 0", so reset it.
+  memset(scene->cc_defaults, 0xFF, sizeof(scene->cc_defaults));
   
   // Default touchwheel mode
   scene->touchwheel_mode = TOUCHWHEEL_MODE_PADS;
@@ -2512,6 +2516,60 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   return ESP_OK;
 }
 
+void scene_ensure_mandatory_cc_defaults(void) {
+  uint8_t idx = g_scene_manager.current_scene_index;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  const device_def_t* device = (const device_def_t*)scene_get_device(idx);
+  if (!device || !device->controls) return;
+
+  // Every x_mandatory (gate) CC must carry a value. If the scene has none yet,
+  // seed it to the control's first valid option (in memory; not persisted until
+  // the user saves something). Mirrors the web editor's ensureMandatoryCcDefaults.
+  for (uint16_t i = 0; i < device->control_count; i++) {
+    const midi_control_t* ctrl = &device->controls[i];
+    if (ctrl->type != MIDI_CONTROL_TYPE_CC || ctrl->id >= 128) continue;
+    if (!(ctrl->flags & MIDI_CONTROL_FLAG_MANDATORY)) continue;
+    if (scene->cc_defaults[ctrl->id] != SCENE_CC_DEFAULT_NONE) continue;
+    scene->cc_defaults[ctrl->id] = (ctrl->discrete_count > 0)
+      ? (uint8_t)ctrl->discrete_values[0].value
+      : (uint8_t)ctrl->min;
+  }
+}
+
+void scene_seed_cc_cache(void) {
+  uint8_t idx = g_scene_manager.current_scene_index;
+  // Baseline: reset every device CC to its control minimum. This also clears
+  // the boot-time 64 seed so gate CCs resolve to a real default mode.
+  const device_def_t* device = (const device_def_t*)scene_get_device(idx);
+  action_reset_cc_values(device);
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  // Required gate CCs always carry a value before we seed the cache.
+  scene_ensure_mandatory_cc_defaults();
+  // Overlay this scene's stored CC defaults (no MIDI is transmitted here).
+  for (int cc = 0; cc < 128; cc++) {
+    uint8_t v = scene->cc_defaults[cc];
+    if (v == SCENE_CC_DEFAULT_NONE) continue;
+    action_set_cc_value((uint8_t)cc, v);
+  }
+}
+
+void scene_send_cc_defaults(void) {
+  uint8_t idx = g_scene_manager.current_scene_index;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  uint8_t ch = scene_get_effective_channel(idx);
+  ch = (ch >= 1) ? (uint8_t)(ch - 1) : 0;
+  for (int cc = 0; cc < 128; cc++) {
+    uint8_t v = scene->cc_defaults[cc];
+    if (v == SCENE_CC_DEFAULT_NONE) continue;
+    send_control_change(ch, (uint8_t)cc, v);
+    action_set_cc_value((uint8_t)cc, v);
+  }
+}
+
 void scene_apply_deferred_init(void) {
   if (!s_needs_deferred_init) return;
   s_needs_deferred_init = false;
@@ -2522,9 +2580,9 @@ void scene_apply_deferred_init(void) {
   uint8_t scene_index = g_scene_manager.current_scene_index;
   ESP_LOGI(TAG, "Applying deferred MIDI init for scene %d: %s", scene_index + 1, scene->name);
   
-  // Reset CC value cache to device defaults for this scene
-  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
-  action_reset_cc_values(device);
+  // Reset CC cache to device minimums and overlay this scene's CC defaults so
+  // variant/no-op resolution is correct (no MIDI sent yet).
+  scene_seed_cc_cache();
   
   // Compute program number (same logic as scene_set_current)
   uint8_t program;
@@ -2544,6 +2602,10 @@ void scene_apply_deferred_init(void) {
     device_config_set_program(program);
     ESP_LOGD(TAG, "Deferred PC %d on channel %d", program, device_config_get_channel());
   }
+
+  // Transmit the scene's CC defaults after the PC (so they land on the selected
+  // preset) and before on_load actions (so an explicit on_load can override).
+  scene_send_cc_defaults();
   
   // Execute on-load actions
   if (scene->num_on_load_actions > 0) {
@@ -3157,6 +3219,38 @@ esp_err_t scene_set_send_pc_on_load(uint8_t scene_index, bool send_pc) {
     return ESP_ERR_INVALID_STATE;
   }
   ESP_LOGI(TAG, "Scene %d send PC on load: %s", scene_index + 1, send_pc ? "enabled" : "disabled");
+  return ESP_OK;
+}
+
+uint8_t scene_get_cc_default(uint8_t scene_index, uint8_t cc_num) {
+  if (cc_num > 127) return SCENE_CC_DEFAULT_NONE;
+  scene_t* scene = scene_get_current();
+  if (!scene || g_scene_manager.current_scene_index != scene_index) return SCENE_CC_DEFAULT_NONE;
+  return scene->cc_defaults[cc_num];
+}
+
+esp_err_t scene_set_cc_default(uint8_t scene_index, uint8_t cc_num, uint8_t value) {
+  if (scene_index > MAX_SCENE_INDEX || cc_num > 127) return ESP_ERR_INVALID_ARG;
+  if (value > 127 && value != SCENE_CC_DEFAULT_NONE) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->cc_defaults[cc_num] = value;
+
+  // Keep the live CC cache in sync so the CC choosers re-resolve variants/no-ops
+  // immediately. action_set_cc_value also fires the gating-changed observer,
+  // which refreshes any open dependent roller. Clearing falls back to the
+  // control minimum so a gating CC resolves to its default mode.
+  if (value != SCENE_CC_DEFAULT_NONE) {
+    action_set_cc_value(cc_num, value);
+  } else {
+    const device_def_t* dev = (const device_def_t*)scene_get_device(scene_index);
+    const midi_control_t* ctrl = dev ? assets_get_control_by_cc(dev, cc_num) : NULL;
+    action_set_cc_value(cc_num, ctrl ? (uint8_t)ctrl->min : 0);
+  }
+
+  scene_persist_if_programming();
   return ESP_OK;
 }
 
@@ -7031,7 +7125,18 @@ static cJSON* scene_to_json(const scene_t* scene) {
 
   cJSON_AddNumberToObject(root, "program_number", scene->program_number);
   cJSON_AddBoolToObject(root, "send_pc_on_load", scene->send_pc_on_load);
-  
+
+  // Serialize per-scene CC defaults sparsely (only CCs that have a value).
+  cJSON* cc_defaults = cJSON_CreateArray();
+  for (int cc = 0; cc < 128; cc++) {
+    if (scene->cc_defaults[cc] == 0xFF) continue;
+    cJSON* entry = cJSON_CreateObject();
+    cJSON_AddNumberToObject(entry, "cc", cc);
+    cJSON_AddNumberToObject(entry, "value", scene->cc_defaults[cc]);
+    cJSON_AddItemToArray(cc_defaults, entry);
+  }
+  cJSON_AddItemToObject(root, "cc_defaults", cc_defaults);
+
   // Serialize touchwheel mode, style, and continuous mapping
   const char* tw_mode_str;
   switch (scene->touchwheel_mode) {
@@ -7323,6 +7428,25 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   cJSON* send_pc = cJSON_GetObjectItem(root, "send_pc_on_load");
   if (!send_pc) send_pc = cJSON_GetObjectItem(root, "send_pc_on_change");  // Legacy
   if (send_pc) scene->send_pc_on_load = cJSON_IsTrue(send_pc);
+
+  // Per-scene CC defaults (sparse). Reset to "none" first so stale cache-slot
+  // data does not leak across loads, then fill from the array.
+  memset(scene->cc_defaults, 0xFF, sizeof(scene->cc_defaults));
+  cJSON* cc_defaults = cJSON_GetObjectItem(root, "cc_defaults");
+  if (cc_defaults && cJSON_IsArray(cc_defaults)) {
+    int count = cJSON_GetArraySize(cc_defaults);
+    for (int i = 0; i < count; i++) {
+      cJSON* entry = cJSON_GetArrayItem(cc_defaults, i);
+      if (!entry || !cJSON_IsObject(entry)) continue;
+      cJSON* cc = cJSON_GetObjectItem(entry, "cc");
+      cJSON* value = cJSON_GetObjectItem(entry, "value");
+      if (!cc || !cJSON_IsNumber(cc) || !value || !cJSON_IsNumber(value)) continue;
+      int cc_num = cc->valueint;
+      int val = value->valueint;
+      if (cc_num < 0 || cc_num > 127 || val < 0 || val > 127) continue;
+      scene->cc_defaults[cc_num] = (uint8_t)val;
+    }
+  }
   
   // Deserialize touchwheel mode
   cJSON* tw_mode = cJSON_GetObjectItem(root, "touchwheel_mode");

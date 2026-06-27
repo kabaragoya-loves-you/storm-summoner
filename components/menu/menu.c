@@ -1335,6 +1335,25 @@ void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t bu
   lv_timer_set_repeat_count(nav_timer, 1);
 }
 
+void menu_refresh_current_page(void) {
+  if (menu_state.stack_depth < 1) return;
+  menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
+  // Top-level menu has no builder; nothing to rebuild from.
+  if (!entry->builder || !entry->name) return;
+  if (menu_state.has_pending_nav) return;  // a nav is already queued
+  menu_replace_current_deferred(entry->name, entry->builder);
+}
+
+void menu_on_gating_cc_changed(uint8_t gating_cc) {
+  (void)gating_cc;
+  // The CC value roller ("Value") and the CC Defaults list both derive their
+  // contents from the effective (mode-resolved) control, so rebuild them when a
+  // gating CC moves underneath them (e.g. an incoming-CC mirror or a mode edit).
+  // Other pages are left alone to avoid spurious selection resets.
+  if (menu_current_page_is("Value") || menu_current_page_is("CC Defaults"))
+    menu_refresh_current_page();
+}
+
 void menu_pop_then_replace_deferred(int levels, const char* menu_name,
   menu_page_builder_t builder) {
   if (menu_state.stack_depth < 1 || !builder || levels < 1) {

@@ -8,6 +8,91 @@ window.DeviceControls = (function () {
       .find(c => Number(c.controlChangeNumber) === n) || null
   }
 
+  // Evaluate a single x_variants constraint { cc, op, value } against the
+  // current value of its gating CC. Returns false on any malformed input.
+  function evaluateConstraint (constraint, value) {
+    if (!constraint) return false
+    const v = Number(value)
+    const target = Number(constraint.value)
+    if (Number.isNaN(v) || Number.isNaN(target)) return false
+    switch (constraint.op) {
+      case '<': return v < target
+      case '<=': return v <= target
+      case '>': return v > target
+      case '>=': return v >= target
+      case '==': return v === target
+      case '!=': return v !== target
+      default: return false
+    }
+  }
+
+  // Resolve the effective control for a CC given the current gating values.
+  // The base entry's name/valueRange is the default (mode 0 / unknown gating);
+  // the first matching x_variants entry overrides name/additionalInfo/valueRange.
+  // getCcValue(ccNum) -> current value of a CC (web stand-in for s_last_cc_values),
+  // or undefined when unknown. When omitted, the base entry is returned.
+  function resolveEffectiveControl (device, ccNum, getCcValue) {
+    const base = findControl(device, ccNum)
+    if (!base) return null
+    const baseNoop = base.x_noop === true
+    const variants = base.x_variants
+    const noVariants = !Array.isArray(variants) || !variants.length ||
+      typeof getCcValue !== 'function'
+    if (noVariants) return baseNoop ? { ...base, noop: true } : base
+    for (const variant of variants) {
+      const c = variant?.constraint
+      if (!c) continue
+      const gating = getCcValue(c.cc)
+      if (gating == null) continue
+      if (evaluateConstraint(c, gating)) {
+        return {
+          ...base,
+          name: variant.name != null ? variant.name : base.name,
+          additionalInfo: variant.additionalInfo != null
+            ? variant.additionalInfo
+            : base.additionalInfo,
+          valueRange: variant.valueRange != null ? variant.valueRange : base.valueRange,
+          noop: variant.x_noop === true
+        }
+      }
+    }
+    return baseNoop ? { ...base, noop: true } : base
+  }
+
+  // True when the CC resolves to a no-op (hidden) in the current gating state.
+  function controlIsNoop (device, ccNum, getCcValue) {
+    const cmd = resolveEffectiveControl(device, ccNum, getCcValue)
+    return !!(cmd && cmd.noop)
+  }
+
+  // Set of CC numbers referenced by any variant constraint (the "gating" CCs).
+  function controlGatingCcs (device) {
+    const set = new Set()
+    for (const c of (device?.controlChangeCommands || [])) {
+      if (!Array.isArray(c.x_variants)) continue
+      for (const variant of c.x_variants) {
+        const cc = variant?.constraint?.cc
+        if (Number.isInteger(Number(cc))) set.add(Number(cc))
+      }
+    }
+    return set
+  }
+
+  // True when a CC entry is flagged x_mandatory (a required scene CC default).
+  function isMandatoryCc (device, ccNum) {
+    const c = findControl(device, ccNum)
+    return !!(c && c.x_mandatory === true)
+  }
+
+  // Set of CC numbers flagged x_mandatory in the device definition.
+  function mandatoryGatingCcs (device) {
+    const set = new Set()
+    for (const c of (device?.controlChangeCommands || [])) {
+      if (c.x_mandatory === true) set.add(Number(c.controlChangeNumber))
+    }
+    return set
+  }
+
   function hasParameters (device) {
     return (device?.controlChangeCommands?.length || 0) > 0
   }
@@ -31,16 +116,26 @@ window.DeviceControls = (function () {
   function parameterOptions (device, opts = {}) {
     const exclude = opts.exclude instanceof Set ? opts.exclude : null
     const keep = opts.keep == null ? null : Number(opts.keep)
+    const getCcValue = typeof opts.getCcValue === 'function' ? opts.getCcValue : null
     return (device?.controlChangeCommands || [])
       .filter(c => {
         const n = Number(c.controlChangeNumber)
-        if (!exclude) return true
-        return n === keep || !exclude.has(n)
+        // The slot's own current value is always selectable, even if it is now
+        // a no-op or excluded by a sibling.
+        if (n === keep) return true
+        if (exclude && exclude.has(n)) return false
+        // Hide CCs that are no-ops in the current gating state (x_noop), to
+        // match the on-device parameter chooser.
+        if (getCcValue && controlIsNoop(device, n, getCcValue)) return false
+        return true
       })
-      .map(c => ({
-        v: c.controlChangeNumber,
-        l: c.name || `CC ${c.controlChangeNumber}`
-      }))
+      .map(c => {
+        const eff = resolveEffectiveControl(device, c.controlChangeNumber, getCcValue)
+        return {
+          v: c.controlChangeNumber,
+          l: (eff && eff.name) || c.name || `CC ${c.controlChangeNumber}`
+        }
+      })
   }
 
   function parameterCount (device) {
@@ -64,8 +159,8 @@ window.DeviceControls = (function () {
     return firstParameterCc(device)
   }
 
-  function defaultValueForParameter (device, ccNum) {
-    const cmd = findControl(device, ccNum)
+  function defaultValueForParameter (device, ccNum, getCcValue) {
+    const cmd = resolveEffectiveControl(device, ccNum, getCcValue)
     if (cmd?.valueRange?.discreteValues?.length) {
       return cmd.valueRange.discreteValues[0].value
     }
@@ -76,13 +171,13 @@ window.DeviceControls = (function () {
     return type === 'control' || type === 'control_change'
   }
 
-  function hasDiscreteValues (device, ccNum) {
-    const cmd = findControl(device, ccNum)
+  function hasDiscreteValues (device, ccNum, getCcValue) {
+    const cmd = resolveEffectiveControl(device, ccNum, getCcValue)
     return (cmd?.valueRange?.discreteValues?.length || 0) > 0
   }
 
-  function discreteValueOptions (device, ccNum) {
-    const cmd = findControl(device, ccNum)
+  function discreteValueOptions (device, ccNum, getCcValue) {
+    const cmd = resolveEffectiveControl(device, ccNum, getCcValue)
     if (!cmd?.valueRange?.discreteValues?.length) return []
     return cmd.valueRange.discreteValues.map(dv => ({
       v: dv.value,
@@ -90,8 +185,8 @@ window.DeviceControls = (function () {
     }))
   }
 
-  function continuousValueRange (device, ccNum) {
-    const cmd = findControl(device, ccNum)
+  function continuousValueRange (device, ccNum, getCcValue) {
+    const cmd = resolveEffectiveControl(device, ccNum, getCcValue)
     if (!cmd?.valueRange) return { min: 0, max: 127 }
     let min = cmd.valueRange.min ?? 0
     let max = Math.min(cmd.valueRange.max ?? 127, 127)
@@ -99,11 +194,11 @@ window.DeviceControls = (function () {
     return { min, max }
   }
 
-  function valueOptions (device, ccNum) {
-    const discrete = discreteValueOptions(device, ccNum)
+  function valueOptions (device, ccNum, getCcValue) {
+    const discrete = discreteValueOptions(device, ccNum, getCcValue)
     if (discrete.length) return discrete
 
-    const { min, max } = continuousValueRange(device, ccNum)
+    const { min, max } = continuousValueRange(device, ccNum, getCcValue)
     const opts = []
     for (let i = min; i <= max; i++) opts.push({ v: i, l: String(i) })
     return opts
@@ -118,8 +213,8 @@ window.DeviceControls = (function () {
     return ccForSlot(action, slot)
   }
 
-  function resolveParameterValue (device, ccNum, currentValue) {
-    const opts = valueOptions(device, ccNum)
+  function resolveParameterValue (device, ccNum, currentValue, getCcValue) {
+    const opts = valueOptions(device, ccNum, getCcValue)
     if (!opts.length) return 0
     const cur = currentValue == null || currentValue === '' ? NaN : Number(currentValue)
     if (!Number.isNaN(cur) && opts.some(o => Number(o.v) === cur)) return cur
@@ -156,8 +251,8 @@ window.DeviceControls = (function () {
     return Math.max(0, Math.min(127, n))
   }
 
-  function parameterLabel (device, ccNum) {
-    const cmd = findControl(device, ccNum)
+  function parameterLabel (device, ccNum, getCcValue) {
+    const cmd = resolveEffectiveControl(device, ccNum, getCcValue)
     return cmd?.name || `CC ${ccNum}`
   }
 
@@ -257,10 +352,10 @@ window.DeviceControls = (function () {
     return slotIndex === 0 ? toList(v) : []
   }
 
-  function normalizeCycleValues (device, action, ccResolved) {
+  function normalizeCycleValues (device, action, ccResolved, getCcValue) {
     const slots = ccResolved.length
     const stepCount = Math.max(2, Math.min(8, cycleStepCount(action)))
-    const defFor = (cc) => resolveParameterValue(device, cc, null)
+    const defFor = (cc) => resolveParameterValue(device, cc, null, getCcValue)
 
     if (slots === 1) {
       let steps = cycleIsMultiValues(action.values)
@@ -268,7 +363,7 @@ window.DeviceControls = (function () {
         : toList(action.values)
       steps = steps.slice(0, stepCount).map(clampMidi)
       while (steps.length < stepCount) steps.push(defFor(ccResolved[0]))
-      action.values = steps.map(v => resolveParameterValue(device, ccResolved[0], v))
+      action.values = steps.map(v => resolveParameterValue(device, ccResolved[0], v, getCcValue))
       return
     }
 
@@ -279,12 +374,12 @@ window.DeviceControls = (function () {
     matrix = matrix.slice(0, slots).map((row, i) => {
       let steps = row.slice(0, stepCount).map(clampMidi)
       while (steps.length < stepCount) steps.push(defFor(ccResolved[i]))
-      return steps.map(v => resolveParameterValue(device, ccResolved[i], v))
+      return steps.map(v => resolveParameterValue(device, ccResolved[i], v, getCcValue))
     })
     action.values = matrix
   }
 
-  function normalizeControlAction (device, action) {
+  function normalizeControlAction (device, action, getCcValue) {
     if (!action || !isControlAction(action.type)) return false
     if (!hasParameters(device)) return false
 
@@ -300,27 +395,27 @@ window.DeviceControls = (function () {
     if (variant === 'set' || variant === 'hold') {
       const valList = toList(action.value)
       const valResolved = ccResolved.map((cc, i) =>
-        resolveParameterValue(device, cc, valList[i]))
+        resolveParameterValue(device, cc, valList[i], getCcValue))
       action.value = packField(valResolved)
     }
     if (variant === 'hold') {
       const rel = toList(action.value2)
       const relResolved = ccResolved.map((cc, i) =>
-        resolveParameterValue(device, cc, rel[i]))
+        resolveParameterValue(device, cc, rel[i], getCcValue))
       action.value2 = packField(relResolved)
     }
     if (variant === 'cycle') {
-      normalizeCycleValues(device, action, ccResolved)
+      normalizeCycleValues(device, action, ccResolved, getCcValue)
     }
 
     return JSON.stringify([action.cc, action.value, action.value2, action.values]) !== before
   }
 
-  function normalizeControlActionsInModel (device, model) {
+  function normalizeControlActionsInModel (device, model, getCcValue) {
     if (!model || !hasParameters(device)) return false
     let changed = false
     const fix = (action) => {
-      if (normalizeControlAction(device, action)) changed = true
+      if (normalizeControlAction(device, action, getCcValue)) changed = true
     }
     model.touchpads?.forEach(tp => fix(tp.action))
     fix(model.button_left)
@@ -342,12 +437,12 @@ window.DeviceControls = (function () {
     })
   }
 
-  function normalizeControlActionsIfInvalid (device, model) {
+  function normalizeControlActionsIfInvalid (device, model, getCcValue) {
     if (!model || !hasParameters(device)) return false
     let changed = false
     const fix = (action) => {
       if (controlActionHasInvalidCc(device, action) &&
-          normalizeControlAction(device, action)) {
+          normalizeControlAction(device, action, getCcValue)) {
         changed = true
       }
     }
@@ -364,12 +459,12 @@ window.DeviceControls = (function () {
     return changed
   }
 
-  function seedSlotValues (device, action, field) {
+  function seedSlotValues (device, action, field, getCcValue) {
     const slots = Math.max(1, controlSlotCount(action))
     const resolved = []
     for (let i = 0; i < slots; i++) {
       const cc = resolveParameterCc(device, ccForSlot(action, i))
-      resolved.push(resolveParameterValue(device, cc, slotVal(action[field], i)))
+      resolved.push(resolveParameterValue(device, cc, slotVal(action[field], i), getCcValue))
     }
     return packField(resolved)
   }
@@ -377,6 +472,9 @@ window.DeviceControls = (function () {
   function seedControlAction (ctrl, actionPath) {
     const device = ctrl.deviceDefinition
     if (!hasParameters(device)) return
+    const getCcValue = typeof ctrl.getCcValue === 'function'
+      ? (cc) => ctrl.getCcValue(cc)
+      : undefined
     const action = ctrl.getAtPath(actionPath) || {}
     const slots = Math.max(1, controlSlotCount(action))
     const ccResolved = []
@@ -393,10 +491,10 @@ window.DeviceControls = (function () {
     if (variant !== 'cycle') delete action.values
     if (variant !== 'hold') delete action.value2
     if (variant === 'set') {
-      ctrl.setAtPath(`${actionPath}.value`, seedSlotValues(device, action, 'value'))
+      ctrl.setAtPath(`${actionPath}.value`, seedSlotValues(device, action, 'value', getCcValue))
     } else if (variant === 'hold') {
-      ctrl.setAtPath(`${actionPath}.value`, seedSlotValues(device, action, 'value'))
-      ctrl.setAtPath(`${actionPath}.value2`, seedSlotValues(device, action, 'value2'))
+      ctrl.setAtPath(`${actionPath}.value`, seedSlotValues(device, action, 'value', getCcValue))
+      ctrl.setAtPath(`${actionPath}.value2`, seedSlotValues(device, action, 'value2', getCcValue))
     } else if (variant === 'cycle') {
       const cc = ccResolved[0]
       const cur = Array.isArray(action.values) ? action.values : []
@@ -404,8 +502,8 @@ window.DeviceControls = (function () {
         ctrl.setAtPath(`${actionPath}.values`, cur)
       } else {
         ctrl.setAtPath(`${actionPath}.values`, [
-          resolveParameterValue(device, cc, cur[0]),
-          resolveParameterValue(device, cc, defaultValueForParameter(device, cc))
+          resolveParameterValue(device, cc, cur[0], getCcValue),
+          resolveParameterValue(device, cc, defaultValueForParameter(device, cc, getCcValue), getCcValue)
         ])
       }
     }
@@ -690,6 +788,12 @@ window.DeviceControls = (function () {
 
   return {
     findControl,
+    evaluateConstraint,
+    resolveEffectiveControl,
+    controlIsNoop,
+    controlGatingCcs,
+    isMandatoryCc,
+    mandatoryGatingCcs,
     parameterOptions,
     parameterCount,
     firstUnusedParameterCc,

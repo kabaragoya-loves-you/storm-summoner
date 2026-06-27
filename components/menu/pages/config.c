@@ -17,7 +17,7 @@ static char s_change_mode_label[40];
 static char s_preset_wrap_label[40];
 static char s_persist_scene_label[40];
 static char s_flag_enabled_label[48];
-static menu_item_t s_config_items[7];
+static menu_item_t s_config_items[8];
 
 // ============================================================================
 // Scene Mode Roller

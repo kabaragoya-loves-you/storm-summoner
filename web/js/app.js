@@ -36,6 +36,75 @@ window.ConnectionManager = (function () {
       this._modeNotifySuspended = false
       this._exclusiveSession = 0
       this._connectingPromise = null
+      this._pedalCcCacheSlug = null
+      this._pedalCcCacheMap = null
+      this._tabLeaveHandlers = new Map()
+      this._onDeviceInfoForCache = (e) => {
+        const slug = this._normalizePedalSlug(e.detail?.pedal?.slug)
+        if (this._pedalCcCacheSlug && slug && slug !== this._pedalCcCacheSlug) {
+          this.clearPedalCcCache()
+        }
+      }
+      document.addEventListener('device:info', this._onDeviceInfoForCache)
+    }
+
+    _normalizePedalSlug (slug) {
+      if (!slug) return null
+      return String(slug).trim().replace(/@\d+$/, '')
+    }
+
+    clearPedalCcCache () {
+      this._pedalCcCacheSlug = null
+      this._pedalCcCacheMap = null
+    }
+
+    getPedalCcCache (slug) {
+      const key = this._normalizePedalSlug(slug)
+      if (!key || key !== this._pedalCcCacheSlug || !this._pedalCcCacheMap) return null
+      return this._pedalCcCacheMap
+    }
+
+    setPedalCcCache (slug, ccMap) {
+      const key = this._normalizePedalSlug(slug)
+      if (!key || !ccMap) return
+      this._pedalCcCacheSlug = key
+      this._pedalCcCacheMap = ccMap
+    }
+
+    getPedalCcCacheSlug () {
+      return this._pedalCcCacheSlug
+    }
+
+    buildCcMapFromDefinition (data) {
+      const ccMap = {}
+      if (!data?.controlChangeCommands) return ccMap
+      for (const cc of data.controlChangeCommands) {
+        const ccNum = cc.controlChangeNumber
+        let discreteValues = null
+        if (cc.valueRange?.discreteValues) {
+          discreteValues = cc.valueRange.discreteValues
+            .map(dv => ({ value: dv.value, name: dv.name }))
+            .sort((a, b) => b.value - a.value)
+        }
+        ccMap[ccNum] = { name: cc.name, discreteValues }
+      }
+      return ccMap
+    }
+
+    setPedalCcCacheFromDefinition (slug, definition) {
+      if (!definition) return
+      this.setPedalCcCache(slug, this.buildCcMapFromDefinition(definition))
+    }
+
+    registerTabLeaveHandler (tab, fn) {
+      if (!tab || typeof fn !== 'function') return
+      this._tabLeaveHandlers.set(tab, fn)
+    }
+
+    async leaveTab (tab) {
+      const fn = this._tabLeaveHandlers.get(tab)
+      if (!fn) return
+      await fn()
     }
 
     beginExclusiveSession () {
@@ -252,6 +321,7 @@ window.ConnectionManager = (function () {
         this._writeChain = Promise.resolve()
         this._serialDepth = 0
         this._serialTaskReentrant = false
+        this.clearPedalCcCache()
         this.setTabsLocked(false)
         this.emit('connection:changed', { connected: false })
       }
@@ -291,58 +361,253 @@ window.ConnectionManager = (function () {
     async _exitModeImpl (options = {}) {
       const leavePumpSuspended = options.leavePumpSuspended === true
       if ((!this.mode && !this._deviceScenesActive) || !this.port) return
+      const stopBanner = this._modeStopBanner(this.mode)
       this._stopModeNotifyLoop()
       await this._suspendModeNotify()
       this.mode = null
       this._deviceScenesActive = false
       this.emit('mode:changed', { mode: null })
+      // Exclusive tabs (DISPLAY/CONSOLE/MIDI) release their readers in this handler.
+      await this.sleep(50)
       try {
         await this.sendRaw('EXIT\n')
-        await this.sleep(100)
-        await this.drainInput()
+        if (stopBanner) {
+          await this._waitForSerialBanner(stopBanner, 3000)
+          this.clearPendingRx()
+        } else {
+          await this.sleep(100)
+          await this.drainInput()
+        }
       } catch (err) {
         // Ignore exit errors
       }
       if (!leavePumpSuspended) this._resumeRxPump()
     }
 
+    _modeStopBanner (mode) {
+      switch (mode) {
+        case 'DISPLAY': return 'DISPLAY_STOPPED'
+        case 'CONSOLE': return 'CONSOLE_STOPPED'
+        case 'MIDI': return 'MIDI_STOPPED'
+        case 'ASSETS': return 'ASSETS_STOPPED'
+        case 'PEDALS': return 'PEDALS_STOPPED'
+        default: return null
+      }
+    }
+
+    async _queryDeviceSlug (retries = 3) {
+      if (!this._rxPumpRunning || this._pumpSuspended) {
+        this._resumeRxPump()
+        await this._armRxPump(2000)
+      }
+
+      for (let attempt = 0; attempt < retries; attempt++) {
+        if (attempt > 0) {
+          this.clearPendingRx()
+          await this.sleep(80 * (attempt + 1))
+        }
+        await this.sendRaw('DEVICE\n')
+        const line = await this._readPumpLineBody(4000)
+        if (line?.startsWith('DEVICE ')) {
+          return this._normalizePedalSlug(line.substring(7).trim())
+        }
+      }
+      return null
+    }
+
     async ensureDeviceIdle (options = {}) {
       const leavePumpSuspended = options.leavePumpSuspended === true
       if (!this.port) return
+
+      // Device is in a known CDC mode: exit it. In a mode the firmware DOES
+      // reply with a *_STOPPED banner, so _exitModeImpl resolves promptly.
       if (this.mode || this._deviceScenesActive) {
         await this._exitModeImpl({ leavePumpSuspended })
-        await this.sleep(200)
-        return
-      }
-      if (leavePumpSuspended) {
-        await this._armRxPump()
-        await this.sendRaw('EXIT\n')
-        await this.sleep(150)
-        const exitDeadline = Date.now() + 500
-        while (Date.now() < exitDeadline) {
-          const remaining = exitDeadline - Date.now()
-          if (remaining <= 0) break
-          const line = await this.readLine(Math.min(100, remaining))
-          if (!line) continue
-          if (line === 'OK' || line.startsWith('ERROR:')) break
-          if (line === 'SCENES_STOPPED' || line === 'SCENES_STARTED' ||
-              line === 'CONFIG_STOPPED' || line === 'SETTINGS_STOPPED' ||
-              line === 'PEDALS_STOPPED') break
+        if (!leavePumpSuspended) {
+          if (this._pumpSuspended) this._resumeRxPump()
+          await this._armRxPump(800)
         }
-        this._lineQueue = []
-        this._rejectLineWaiters()
-        this._rxBuffer = ''
         return
       }
-      // Host state is idle; the device may still be in a CDC mode.
-      const pumpWasRunning = this._rxPumpRunning && !this._pumpSuspended
-      if (pumpWasRunning) await this._suspendRxPump()
+
+      // Client state is already idle ⇒ the device is idle. The firmware IGNORES
+      // EXIT while idle and sends NO response, so any "wait for *_STOPPED" loop
+      // here can only ever time out. Just nudge to idle and clear buffered RX.
+      if (!leavePumpSuspended && (this._pumpSuspended || !this._rxPumpRunning)) {
+        this._resumeRxPump()
+      }
+      await this.sendRaw('EXIT\n')
+      await this.sleep(80)
+      this._lineQueue = []
+      this._rejectLineWaiters()
+      this._rxBuffer = ''
+      if (!leavePumpSuspended) await this._armRxPump(800)
+    }
+
+    _isModeStopBanner (line) {
+      return line === 'SCENES_STOPPED' || line === 'CONFIG_STOPPED' ||
+        line === 'SETTINGS_STOPPED' || line === 'PEDALS_STOPPED' ||
+        line === 'DISPLAY_STOPPED' || line === 'MIDI_STOPPED' ||
+        line === 'ASSETS_STOPPED' || line === 'CONSOLE_STOPPED'
+    }
+
+    // Wait for a single-line mode banner, skipping stale JSON and EVT noise.
+    async _waitForSerialBanner (expected, timeout = 5000) {
+      if (!this._usesPumpLineReader()) {
+        await this._exitModeImpl({ leavePumpSuspended: true })
+        await this.sleep(50)
+        this._resumeRxPump()
+        await this._armRxPump(500)
+      }
+
+      const deadline = Date.now() + timeout
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        const line = await this._readPumpLineBody(Math.min(1000, remaining))
+        if (!line) continue
+        if (line.startsWith('ERROR:')) throw new Error(line)
+        if (line.trimStart().startsWith('{')) continue
+        if (line !== expected && this._isStaleSerialLine(line)) continue
+        return line
+      }
+      return ''
+    }
+
+    async _readPumpLineBody (timeout = 10000) {
+      if (!this._rxPumpRunning || this._pumpSuspended) {
+        this._resumeRxPump()
+        await this._armRxPump(Math.min(500, timeout))
+      }
+
+      const deadline = Date.now() + timeout
+      while (Date.now() < deadline) {
+        const line = this._tryDequeueLine()
+        if (line !== null) return line
+
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        const waited = await this._waitForLine(Math.min(50, remaining))
+        if (waited !== null) return waited
+      }
+
+      return ''
+    }
+
+    _isStaleSerialLine (line) {
+      if (!line) return true
+      if (this._isNoiseLine(line)) return true
+      if (line.endsWith('_STARTED') || line.endsWith('_STOPPED')) return true
+      if (line.startsWith('DEVICE ') || line.startsWith('SIZE ')) return true
+      return false
+    }
+
+    // Read a JSON object line via the rx pump, skipping mode banners and noise.
+    async _readJsonLineViaPump (timeout = 10000) {
+      if (!this._usesPumpLineReader()) {
+        await this._exitModeImpl({ leavePumpSuspended: true })
+        await this.sleep(50)
+        this._resumeRxPump()
+        await this._armRxPump(500)
+      }
+
+      const deadline = Date.now() + timeout
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        const line = await this._readPumpLineBody(Math.min(1000, remaining))
+        if (!line) continue
+        if (line.startsWith('ERROR:')) return line
+        if (this._isStaleSerialLine(line)) continue
+        if (line.trimStart().startsWith('{')) return line
+      }
+      return ''
+    }
+
+    // Read an exact line (READY, OK, …) via pump, skipping stale JSON and banners.
+    async _readPlainLineViaPumpImpl (expected, timeout = 10000) {
+      const deadline = Date.now() + timeout
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        const line = await this._readPumpLineBody(Math.min(1000, remaining))
+        if (!line) continue
+        if (line.startsWith('ERROR:')) throw new Error(line)
+        if (this._isStaleSerialLine(line)) continue
+        if (line.trimStart().startsWith('{')) continue
+        if (line === expected) return line
+      }
+      return ''
+    }
+
+    async _readDedicatedBanner (reader, expected, timeout = 5000) {
+      const decoder = new TextDecoder()
+      let buffer = ''
+      const deadline = Date.now() + timeout
+      let pendingRead = null
+
+      while (Date.now() < deadline) {
+        while (true) {
+          const idx = buffer.indexOf('\n')
+          if (idx === -1) break
+          const composite = buffer.substring(0, idx).replace(/\r/g, '').trim()
+          buffer = buffer.substring(idx + 1)
+          if (!composite) continue
+          for (const sub of this._expandSerialLines(composite)) {
+            if (sub.startsWith('EVT:')) {
+              this.dispatchCdcNotify(sub)
+              continue
+            }
+            if (this._isNoiseLine(sub)) continue
+            if (sub.trimStart().startsWith('{')) continue
+            if (sub === expected) return sub
+          }
+        }
+
+        if (!pendingRead) pendingRead = reader.read()
+        const waitMs = Math.min(100, deadline - Date.now())
+        if (waitMs <= 0) break
+        const result = await Promise.race([
+          pendingRead,
+          this.sleep(waitMs).then(() => ({ timeout: true }))
+        ])
+        if (result.timeout) continue
+        pendingRead = null
+        if (result.done) break
+        if (result.value?.length) {
+          buffer += decoder.decode(result.value, { stream: true })
+        }
+      }
+      return ''
+    }
+
+    // Enter device ASSETS mode using a dedicated reader (safe after fetchSizedTransfer).
+    async _ensureAssetsReadyDedicated () {
+      if (!this.port) throw new Error('Not connected')
+      this.clearPendingRx()
+      await this._suspendRxPump()
+      await this._waitForPumpReaderRelease()
+      const hadMode = this.mode !== null
+      if (hadMode) {
+        await this._suspendModeNotify()
+        await this._waitForModeNotifyReaderRelease()
+      }
+
+      let reader = null
       try {
-        await this.sendRaw('EXIT\n')
-        await this.sleep(150)
-        await this.drainInput()
+        reader = await this._acquireDedicatedReader()
+        await this.sendRaw('ASSETS\n')
+        const banner = await this._readDedicatedBanner(reader, 'ASSETS_STARTED', 5000)
+        if (banner !== 'ASSETS_STARTED') {
+          throw new Error(`Assets not ready (got: ${banner || 'nothing'})`)
+        }
+        await this.sleep(80)
       } finally {
-        if (pumpWasRunning && !leavePumpSuspended) this._resumeRxPump()
+        if (reader) {
+          try { reader.releaseLock() } catch (e) {}
+        }
+        if (hadMode) this._resumeModeNotifyIfAllowed()
+        else this._resumeRxPump()
       }
     }
 
@@ -515,9 +780,13 @@ window.ConnectionManager = (function () {
         this.emit('mode:changed', { mode: null })
       } else if (this.mode) {
         await this._exitModeImpl()
-      } else if (!this._rxPumpRunning) {
+      }
+      await this.ensureDeviceIdle()
+      this.clearPendingRx()
+      if (this._pumpSuspended || !this._rxPumpRunning) {
         this._resumeRxPump()
       }
+      await this._armRxPump(2000)
     }
 
     async _prepareScenesClientMode () {
@@ -528,9 +797,14 @@ window.ConnectionManager = (function () {
         this.emit('mode:changed', { mode: null })
       } else if (this.mode) {
         await this._exitModeImpl()
-      } else if (!this._rxPumpRunning) {
+      }
+      // INFO / CONFIG prep often leaves the pump suspended while _rxPumpRunning
+      // stays true; without an explicit resume + arm, SCENES/LIST readLine can
+      // time out even though sendRaw succeeded (looks like a Heisenbug).
+      if (this._pumpSuspended || !this._rxPumpRunning) {
         this._resumeRxPump()
       }
+      await this._armRxPump(2000)
     }
 
     /** Release the rx pump reader after a one-shot pump command (e.g. INFO). */
@@ -1408,6 +1682,10 @@ window.ConnectionManager = (function () {
                   continue
                 }
                 if (this._isNoiseLine(sub)) continue
+                if (sub === 'SCENES_STOPPED' || sub === 'CONFIG_STOPPED' ||
+                    sub === 'SETTINGS_STOPPED' || sub === 'PEDALS_STOPPED' ||
+                    sub === 'SCENES_STARTED' || sub === 'CONFIG_STARTED') continue
+                if (!sub.startsWith('SIZE ') && sub.trimStart().startsWith('{')) continue
                 responseLine = sub
                 break
               }
@@ -1643,6 +1921,8 @@ application.register(
         'connection:changed',
         this.onConnectionChanged.bind(this)
       )
+      this._currentTab = 'info'
+      this._tabSwitchChain = Promise.resolve()
 
       // Check WebSerial support
       if (!navigator.serial) {
@@ -1683,24 +1963,32 @@ application.register(
     }
 
     onTabShow (event) {
-      // Dispatch custom event that tab controllers listen for
       const panelName = event.detail?.name || event.target?.panel
-      if (panelName) {
-        document.dispatchEvent(
-          new CustomEvent('app:tab-activated', { detail: { tab: panelName } })
-        )
+      if (!panelName) return
+      this._tabSwitchChain = this._tabSwitchChain
+        .then(() => this._switchTab(panelName))
+        .catch(err => console.warn('Tab switch error:', err))
+    }
+
+    async _switchTab (panelName) {
+      const prev = this._currentTab
+      this._currentTab = panelName
+      if (prev && prev !== panelName) {
+        await this.connection.leaveTab(prev)
       }
+      document.dispatchEvent(
+        new CustomEvent('app:tab-activated', { detail: { tab: panelName } })
+      )
     }
 
     activateCurrentTab () {
       const tabGroup = document.querySelector('wa-tab-group')
       if (!tabGroup) return
-      // Get the active tab's panel name
       const activeTab = tabGroup.querySelector('wa-tab[active]')
       const panelName = activeTab?.getAttribute('panel') || 'assets'
-      document.dispatchEvent(
-        new CustomEvent('app:tab-activated', { detail: { tab: panelName } })
-      )
+      this._tabSwitchChain = this._tabSwitchChain
+        .then(() => this._switchTab(panelName))
+        .catch(err => console.warn('Tab switch error:', err))
     }
 
     async toggleConnection () {

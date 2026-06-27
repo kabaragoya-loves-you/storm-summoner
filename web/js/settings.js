@@ -27,10 +27,7 @@ application.register(
 
       // Listen for mode changes
       this.connection.on('mode:changed', ({ mode }) => {
-        if (mode !== 'SETTINGS') {
-          this.inSettingsMode = false
-          this.stopReadLoop()
-        }
+        if (mode !== 'SETTINGS') this.inSettingsMode = false
       })
 
       // Listen for tab activation
@@ -41,19 +38,20 @@ application.register(
           !this.inSettingsMode
         ) {
           this.activate()
+        } else if (e.detail.tab !== 'settings' && this.inSettingsMode) {
+          void this.leaveSettingsMode()
         }
       })
     }
 
     disconnect () {
-      this.stopReadLoop()
+      this.inSettingsMode = false
     }
 
     onConnectionChanged ({ connected }) {
       this.setControlsEnabled(connected)
       if (!connected) {
         this.inSettingsMode = false
-        this.stopReadLoop()
         this.renderEmpty()
       }
     }
@@ -72,139 +70,93 @@ application.register(
       }
 
       try {
-        const modeGranted = await this.connection.requestMode('SETTINGS')
-        if (!modeGranted) return
-
-        await this.enterSettingsMode()
-        await this.fetchSettings()
+        await this.connection.runSerialTask(async () => {
+          await this.connection.ensureDeviceIdle()
+          this.connection.clearPendingRx()
+          if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+            this.connection._resumeRxPump()
+          }
+          await this.connection._armRxPump(2000)
+          await this.enterSettingsModeBody()
+          await this.fetchSettingsBody()
+        })
       } catch (err) {
         this.log(`Failed to activate: ${err.message}`, 'error')
       }
     }
 
-    async enterSettingsMode () {
+    async leaveSettingsMode () {
+      if (!this.inSettingsMode) return
       try {
-        this.log('Entering settings mode...')
-        await this.sleep(100)
-        await this.connection.sendRaw('SETTINGS\n')
-
-        // Wait for SETTINGS_STARTED response
-        const response = await this.readLine(3000)
-
-        if (response === 'SETTINGS_STARTED') {
-          this.inSettingsMode = true
-          this.log('Settings mode active')
-        } else {
-          throw new Error(`Unexpected response: ${response}`)
-        }
+        await this.connection.runSerialTask(async () => {
+          await this.connection.ensureDeviceIdle()
+          await this.connection.sendRaw('EXIT\n')
+          await this.connection._waitForSerialBanner('SETTINGS_STOPPED', 3000)
+          this.connection.clearPendingRx()
+        })
       } catch (err) {
-        this.log(`Settings mode failed: ${err.message}`, 'error')
+        console.warn('Settings leave mode:', err)
       }
+      this.inSettingsMode = false
     }
 
-    async readLine (timeout = 2000) {
-      const reader = this.connection.port.readable.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
+    async enterSettingsModeBody () {
+      this.log('Entering settings mode...')
+      await this.sleep(100)
+      let response = ''
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+          await this.connection.ensureDeviceIdle()
+          this.connection.clearPendingRx()
+        }
+        await this.connection.sendRaw('SETTINGS\n')
+        response = await this.connection._waitForSerialBanner('SETTINGS_STARTED', 5000)
+        if (response === 'SETTINGS_STARTED') break
+      }
+      if (response !== 'SETTINGS_STARTED') {
+        throw new Error(`Unexpected response: ${response}`)
+      }
+      this.inSettingsMode = true
+      this.log('Settings mode active')
+    }
+
+    async fetchSettingsBody () {
+      this.log('Fetching settings...')
+      await this.connection.sendRaw('DUMP\n')
+      const response = await this.connection._readJsonLineViaPump(10000)
+
+      if (!response) {
+        this.log('No response from device', 'error')
+        this.renderEmpty()
+        return
+      }
+
+      if (response.startsWith('ERROR:')) {
+        this.log(response, 'error')
+        this.renderEmpty()
+        return
+      }
 
       try {
-        const startTime = Date.now()
-
-        while (Date.now() - startTime < timeout) {
-          const result = await Promise.race([
-            reader.read(),
-            this.sleep(50).then(() => ({ timeout: true }))
-          ])
-
-          if (result.timeout) continue
-          if (result.done) break
-
-          if (result.value) {
-            const text = decoder.decode(result.value, { stream: true })
-            for (const char of text) {
-              if (char === '\n') {
-                const line = buffer.replace('\r', '').trim()
-                return line
-              }
-              buffer += char
-            }
-          }
-        }
-      } finally {
-        try {
-          reader.releaseLock()
-        } catch (e) {}
-      }
-
-      return buffer.trim()
-    }
-
-    async readLinesUntilEnd (timeout = 2000) {
-      const lines = []
-      const startTime = Date.now()
-
-      while (Date.now() - startTime < timeout) {
-        const line = await this.readLine(timeout - (Date.now() - startTime))
-        if (!line) break
-        if (line === 'END') break
-        lines.push(line)
-      }
-
-      return lines
-    }
-
-    async sendCommand (cmd) {
-      if (!this.connection.port) return null
-
-      await this.connection.sendRaw(cmd + '\n')
-      return await this.readLine()
-    }
-
-    stopReadLoop () {
-      this.readLoopActive = false
-      if (this.reader) {
-        try {
-          this.reader.cancel()
-          this.reader.releaseLock()
-        } catch (e) {}
-        this.reader = null
+        this.settings = JSON.parse(response)
+        this.renderSettings()
+        this.log(`Loaded ${Object.keys(this.settings).length} settings`)
+        this.setControlsEnabled(true)
+      } catch (e) {
+        this.log('Failed to parse settings JSON', 'error')
+        console.error(
+          'JSON parse error:',
+          e,
+          'Response:',
+          response.substring(0, 200)
+        )
+        this.renderEmpty()
       }
     }
 
     async fetchSettings () {
-      this.log('Fetching settings...')
-
       try {
-        await this.connection.sendRaw('DUMP\n')
-        const response = await this.readLine(5000)
-
-        if (!response) {
-          this.log('No response from device', 'error')
-          this.renderEmpty()
-          return
-        }
-
-        if (response.startsWith('ERROR:')) {
-          this.log(response, 'error')
-          this.renderEmpty()
-          return
-        }
-
-        try {
-          this.settings = JSON.parse(response)
-          this.renderSettings()
-          this.log(`Loaded ${Object.keys(this.settings).length} settings`)
-          this.setControlsEnabled(true)
-        } catch (e) {
-          this.log('Failed to parse settings JSON', 'error')
-          console.error(
-            'JSON parse error:',
-            e,
-            'Response:',
-            response.substring(0, 200)
-          )
-          this.renderEmpty()
-        }
+        await this.connection.runSerialTask(() => this.fetchSettingsBody())
       } catch (err) {
         this.log(`Error fetching settings: ${err.message}`, 'error')
         this.renderEmpty()
@@ -314,22 +266,23 @@ application.register(
       this.log(`Setting ${key} = ${value}`)
 
       try {
-        await this.connection.sendRaw(`SET ${type} ${key} ${value}\n`)
-        const response = await this.readLine()
+        await this.connection.runSerialTask(async () => {
+          await this.connection.sendRaw(`SET ${type} ${key} ${value}\n`)
+          const response = await this.connection.readLine(3000)
 
-        if (response === 'OK') {
-          // Update local cache
-          if (type === 'bool') {
-            this.settings[key] = value === 'true'
-          } else if (type === 'str') {
-            this.settings[key] = value
+          if (response === 'OK') {
+            if (type === 'bool') {
+              this.settings[key] = value === 'true'
+            } else if (type === 'str') {
+              this.settings[key] = value
+            } else {
+              this.settings[key] = parseInt(value, 10)
+            }
+            this.log(`${key} updated`)
           } else {
-            this.settings[key] = parseInt(value)
+            this.log(`Failed: ${response}`, 'error')
           }
-          this.log(`${key} updated`)
-        } else {
-          this.log(`Failed: ${response}`, 'error')
-        }
+        })
       } catch (err) {
         this.log(`Failed to set ${key}: ${err.message}`, 'error')
       }
@@ -386,38 +339,39 @@ application.register(
         let count = 0
         let errors = 0
 
-        for (const [key, value] of Object.entries(json)) {
-          let type, valStr
+        await this.connection.runSerialTask(async () => {
+          for (const [key, value] of Object.entries(json)) {
+            let type, valStr
 
-          if (typeof value === 'boolean') {
-            type = 'bool'
-            valStr = value.toString()
-          } else if (typeof value === 'number' && Number.isInteger(value)) {
-            if (value >= 0 && value <= 255) type = 'u8'
-            else if (value >= 0 && value <= 65535) type = 'u16'
-            else type = 'u32'
-            valStr = value.toString()
-          } else if (typeof value === 'string') {
-            type = 'str'
-            valStr = value
-          } else if (typeof value === 'object' && value._blob) {
-            type = 'blob'
-            valStr = value._blob
-          } else {
-            this.log(`Skipping ${key}: unsupported type`, 'warn')
-            continue
+            if (typeof value === 'boolean') {
+              type = 'bool'
+              valStr = value.toString()
+            } else if (typeof value === 'number' && Number.isInteger(value)) {
+              if (value >= 0 && value <= 255) type = 'u8'
+              else if (value >= 0 && value <= 65535) type = 'u16'
+              else type = 'u32'
+              valStr = value.toString()
+            } else if (typeof value === 'string') {
+              type = 'str'
+              valStr = value
+            } else if (typeof value === 'object' && value._blob) {
+              type = 'blob'
+              valStr = value._blob
+            } else {
+              this.log(`Skipping ${key}: unsupported type`, 'warn')
+              continue
+            }
+
+            await this.connection.sendRaw(`SET ${type} ${key} ${valStr}\n`)
+            const response = await this.connection.readLine(1000)
+
+            if (response === 'OK') count++
+            else {
+              errors++
+              this.log(`Failed to set ${key}: ${response}`, 'error')
+            }
           }
-
-          await this.connection.sendRaw(`SET ${type} ${key} ${valStr}\n`)
-          const response = await this.readLine(1000)
-
-          if (response === 'OK') {
-            count++
-          } else {
-            errors++
-            this.log(`Failed to set ${key}: ${response}`, 'error')
-          }
-        }
+        })
 
         this.log(
           `Imported ${count} settings` +

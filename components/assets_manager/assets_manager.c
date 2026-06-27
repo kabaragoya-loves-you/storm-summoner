@@ -24,6 +24,26 @@ static manifest_t g_manifest = {0};
 static bool g_initialized = false;
 static bool g_userdata_available = false;
 
+// Gating-CC value provider for x_variants resolution (set by the action layer).
+static assets_cc_value_fn s_cc_value_provider = NULL;
+
+void assets_set_cc_value_provider(assets_cc_value_fn fn) {
+  s_cc_value_provider = fn;
+}
+
+// Evaluate a variant constraint: (gating value) op target.
+static bool variant_constraint_matches(uint8_t op, uint16_t gating_value, uint16_t target) {
+  switch (op) {
+    case CC_VARIANT_OP_LT: return gating_value <  target;
+    case CC_VARIANT_OP_LE: return gating_value <= target;
+    case CC_VARIANT_OP_GT: return gating_value >  target;
+    case CC_VARIANT_OP_GE: return gating_value >= target;
+    case CC_VARIANT_OP_EQ: return gating_value == target;
+    case CC_VARIANT_OP_NE: return gating_value != target;
+    default:               return false;
+  }
+}
+
 // Forward decl: vendor cache lives at the bottom of the file but
 // assets_manager_reload_manifest() needs to invalidate it.
 static bool s_vendors_cached;
@@ -567,10 +587,21 @@ void assets_free_device(device_def_t *device) {
   
   if (device->cc_lookup)
     heap_caps_free(device->cc_lookup);
+
+  // Bulk pools that controls/variants point into. Freed once here because the
+  // per-control/per-variant pointers are sub-ranges of these allocations.
+  if (device->discrete_pool)
+    heap_caps_free(device->discrete_pool);
+  if (device->variant_pool)
+    heap_caps_free(device->variant_pool);
+  if (device->variant_discrete_pool)
+    heap_caps_free(device->variant_discrete_pool);
   
   if (device->pc_info) {
     if (device->pc_info->names)
       heap_caps_free((void *)device->pc_info->names);
+    if (device->pc_names_blob)
+      heap_caps_free(device->pc_names_blob);
     heap_caps_free(device->pc_info);
   }
   
@@ -721,6 +752,74 @@ const midi_control_t *assets_get_control_by_cc(const device_def_t *device, uint8
   return &device->controls[idx];
 }
 
+const midi_control_t *assets_get_effective_control(const device_def_t *device,
+  uint8_t cc_num, assets_cc_value_fn get_value, midi_control_t *scratch) {
+  const midi_control_t *base = assets_get_control_by_cc(device, cc_num);
+  if (!base)
+    return NULL;
+  
+  // Fall back to the registered live-cache provider when no resolver is given.
+  if (!get_value)
+    get_value = s_cc_value_provider;
+  
+  if (base->variant_count == 0 || !base->variants || !get_value || !scratch)
+    return base;
+  
+  for (uint8_t i = 0; i < base->variant_count; i++) {
+    const cc_variant_t *v = &base->variants[i];
+    uint16_t gating = get_value(v->gating_cc);
+    if (!variant_constraint_matches(v->op, gating, v->value))
+      continue;
+    
+    // First matching variant wins; merge its overrides onto a copy of base.
+    *scratch = *base;
+    scratch->name = v->name;
+    scratch->min = v->min;
+    scratch->max = v->max;
+    scratch->discrete_values = v->discrete_values;
+    scratch->discrete_count = v->discrete_count;
+    scratch->noop = v->noop;      // x_noop is per-variant
+    scratch->variants = NULL;     // prevent recursive resolution
+    scratch->variant_count = 0;
+    return scratch;
+  }
+  
+  return base;
+}
+
+bool assets_cc_is_gating(const device_def_t *device, uint8_t cc_num) {
+  if (!device || !device->controls)
+    return false;
+  
+  for (uint16_t i = 0; i < device->control_count; i++) {
+    const midi_control_t *ctrl = &device->controls[i];
+    for (uint8_t v = 0; v < ctrl->variant_count; v++) {
+      if (ctrl->variants[v].gating_cc == cc_num)
+        return true;
+    }
+  }
+  return false;
+}
+
+bool assets_cc_is_noop(const device_def_t *device, uint8_t cc_num) {
+  midi_control_t scratch;
+  const midi_control_t *eff = assets_get_effective_control(device, cc_num, NULL, &scratch);
+  return eff && eff->noop;
+}
+
+bool assets_cc_is_mandatory(const device_def_t *device, uint8_t cc_num) {
+  if (!device) return false;
+  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  return ctrl && (ctrl->flags & MIDI_CONTROL_FLAG_MANDATORY);
+}
+
+// Resolve the effective control for a CC using the registered gating-CC
+// provider. Returns base when no provider/variant applies.
+static const midi_control_t *effective_for_cc(const device_def_t *device,
+  uint8_t cc_num, midi_control_t *scratch) {
+  return assets_get_effective_control(device, cc_num, NULL, scratch);
+}
+
 /**
  * Get control by index
  */
@@ -758,7 +857,8 @@ const char *assets_get_cc_name(const device_def_t *device, uint8_t cc_num) {
   if (!device)
     return NULL;
   
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   if (!ctrl || !ctrl->name)
     return "Undefined";
   
@@ -770,7 +870,8 @@ const char *assets_get_cc_name(const device_def_t *device, uint8_t cc_num) {
  * For ranges (e.g., 0-24 = "Stretch", 25-50 = "Blur"), finds which range contains the value
  */
 int assets_get_discrete_index(const device_def_t *device, uint8_t cc_num, uint16_t value) {
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
     return -1;
   
@@ -796,8 +897,9 @@ const char *assets_get_discrete_name(const device_def_t *device, uint8_t cc_num,
   if (idx < 0)
     return NULL;
   
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
-  if (!ctrl)
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
+  if (!ctrl || !ctrl->discrete_values || idx >= ctrl->discrete_count)
     return NULL;
   
   return ctrl->discrete_values[idx].name;
@@ -807,7 +909,8 @@ const char *assets_get_discrete_name(const device_def_t *device, uint8_t cc_num,
  * Snap a value to the nearest discrete value for a CC
  */
 uint16_t assets_snap_to_discrete(const device_def_t *device, uint8_t cc_num, uint16_t value) {
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
     return value;  // No discrete values, return original
   
@@ -831,7 +934,8 @@ uint16_t assets_snap_to_discrete(const device_def_t *device, uint8_t cc_num, uin
  * Get next discrete value (for cycling through options)
  */
 uint16_t assets_get_next_discrete(const device_def_t *device, uint8_t cc_num, uint16_t current) {
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
     return current;  // No discrete values
   
@@ -849,7 +953,8 @@ uint16_t assets_get_next_discrete(const device_def_t *device, uint8_t cc_num, ui
  * Get previous discrete value (for cycling through options)
  */
 uint16_t assets_get_prev_discrete(const device_def_t *device, uint8_t cc_num, uint16_t current) {
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   if (!ctrl || !ctrl->discrete_values || ctrl->discrete_count == 0)
     return current;  // No discrete values
   
@@ -867,7 +972,8 @@ uint16_t assets_get_prev_discrete(const device_def_t *device, uint8_t cc_num, ui
  * Check if value is valid for a CC according to device min/max
  */
 bool assets_validate_cc_value(const device_def_t *device, uint8_t cc_num, uint16_t value) {
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   if (!ctrl)
     return true;  // Permissive: allow if not defined
   
@@ -878,7 +984,8 @@ bool assets_validate_cc_value(const device_def_t *device, uint8_t cc_num, uint16
  * Clamp value to device min/max for a CC
  */
 uint16_t assets_clamp_cc_value(const device_def_t *device, uint8_t cc_num, uint16_t value) {
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   if (!ctrl)
     return value;  // Return original if not defined
   
@@ -893,7 +1000,8 @@ uint16_t assets_clamp_cc_value(const device_def_t *device, uint8_t cc_num, uint1
  * Check if a CC has discrete values defined
  */
 bool assets_cc_has_discrete_values(const device_def_t *device, uint8_t cc_num) {
-  const midi_control_t *ctrl = assets_get_control_by_cc(device, cc_num);
+  midi_control_t scratch;
+  const midi_control_t *ctrl = effective_for_cc(device, cc_num, &scratch);
   return (ctrl && ctrl->discrete_values && ctrl->discrete_count > 0);
 }
 

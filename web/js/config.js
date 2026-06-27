@@ -41,6 +41,9 @@ application.register(
       try {
         await this.connection.runSerialTask(async () => {
           await this.connection.ensureDeviceIdle()
+          await this.connection.sendRaw('EXIT\n')
+          await this.connection._waitForSerialBanner('CONFIG_STOPPED', 3000)
+          this.connection.clearPendingRx()
         })
       } catch (err) {
         console.warn('Config leave mode:', err)
@@ -89,8 +92,20 @@ application.register(
 
     async enterConfigModeBody () {
       await this.sleep(100)
-      await this.connection.sendRaw('CONFIG\n')
-      const response = await this.connection.readLine(3000)
+      let response = ''
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+          await this.connection.ensureDeviceIdle()
+          this.connection.clearPendingRx()
+          if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
+            this.connection._resumeRxPump()
+          }
+          await this.connection._armRxPump(2000)
+        }
+        await this.connection.sendRaw('CONFIG\n')
+        response = await this.connection._waitForSerialBanner('CONFIG_STARTED', 5000)
+        if (response === 'CONFIG_STARTED') break
+      }
 
       if (response === 'CONFIG_STARTED') {
         this.inConfigMode = true
@@ -101,7 +116,7 @@ application.register(
 
     async fetchValuesBody () {
       await this.connection.sendRaw('VALUES\n')
-      const response = await this.connection.readLine(5000)
+      const response = await this.connection._readJsonLineViaPump(10000)
 
       if (!response || response.startsWith('ERROR:')) {
         this.renderEmpty()

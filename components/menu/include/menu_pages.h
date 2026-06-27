@@ -45,6 +45,7 @@ uint8_t cc_triggers_focus_slot_get(void);
 void cc_triggers_focus_slot_set(uint8_t slot);
 lv_obj_t* menu_page_note_track_scene_create(void); // Scene -> Note Track
 void menu_page_note_track_scene_cleanup(void);
+lv_obj_t* menu_page_cc_defaults_scene_create(void); // Scene -> CC Defaults
 lv_obj_t* menu_page_settings_note_track_create(void); // Settings -> Note Track
 lv_obj_t* menu_page_settings_scene_inspect_create(void); // Settings -> Scene Inspect
 lv_obj_t* menu_page_tilt_scene_create(void);          // Scene -> Tilt (submenu)

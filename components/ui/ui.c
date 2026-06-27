@@ -9,6 +9,7 @@
 #include "touch.h"
 #include "menu.h"
 #include "menu_pages.h"
+#include "action.h"
 #include "scene.h"
 #include "midi_local_output.h"
 #include "esp_log.h"
@@ -316,6 +317,9 @@ static void deferred_programming_mode_enter_cb(lv_timer_t *timer) {
   menu_init();
   menu_create();
   
+  // Let the incoming-CC mirror refresh an open mode-dependent roller.
+  action_set_gating_changed_observer(menu_on_gating_cc_changed);
+  
   // Attach encoder to menu group
   if (s_ui_touchwheel_output) {
     lv_indev_t* encoder_indev = touchwheel_output_get_lvgl_indev(s_ui_touchwheel_output);
@@ -477,6 +481,11 @@ void ui_set_app_mode(app_mode_t mode) {
     // Suspend scene input first: this snapshots the LFO running state and
     // stops the LFO loops so they don't emit fresh values during release.
     scene_suspend_input();
+
+    // Seed the live CC cache from the scene's CC defaults so variant/no-op
+    // resolution in the CC choosers reflects the scene's default mode rather
+    // than the boot-time placeholder. No MIDI is sent.
+    scene_seed_cc_cache();
 
     // Then synchronously release every on-device producer's held notes,
     // mute the clock, and flip the silence predicate. release_all() catches

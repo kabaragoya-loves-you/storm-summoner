@@ -11,6 +11,12 @@ const PEDALS_MIDI_TOKENS = [
 ]
 const PEDALS_TRS_TYPES = ['BOTH', 'TYPE_A', 'TYPE_B', 'TYPE_TS']
 const PEDALS_BANK_MODES = ['none', 'CC0', 'CC0_CC32']
+// Whitelisted Storm Summoner extension keys (mirror of validate_devices.rb).
+// Any x_-prefixed key not on these lists is invalid.
+const PEDALS_ALLOWED_TOP_LEVEL_X_KEYS = ['x_pc', 'x_midiTrs', 'x_midiChannel']
+const PEDALS_ALLOWED_CC_X_KEYS = ['x_variants', 'x_mandatory', 'x_noop']
+const PEDALS_VARIANT_OPS = ['<', '<=', '>', '>=', '==', '!=']
+const PEDALS_MAX_NAME_LENGTH = 14
 
 const INDEX_BASE_HELP_TOOLTIP =
   'The MIDI program number for the first preset. Some devices use PC 0 as bypass (first preset is PC 1); ' +
@@ -1135,6 +1141,14 @@ application.register(
       if (obj.x_midiTrs && !PEDALS_TRS_TYPES.includes(obj.x_midiTrs)) {
         errors.push({ path: '/x_midiTrs', message: `must be one of: ${PEDALS_TRS_TYPES.join(', ')}` })
       }
+      for (const key of Object.keys(obj)) {
+        if (key.startsWith('x_') && !PEDALS_ALLOWED_TOP_LEVEL_X_KEYS.includes(key)) {
+          errors.push({
+            path: `/${key}`,
+            message: `unknown extension key (allowed: ${PEDALS_ALLOWED_TOP_LEVEL_X_KEYS.join(', ')})`
+          })
+        }
+      }
       for (const field of ['receives', 'transmits']) {
         for (const token of (obj[field] || [])) {
           if (!PEDALS_MIDI_TOKENS.includes(token)) {
@@ -1143,10 +1157,15 @@ application.register(
         }
       }
       const ccs = obj.controlChangeCommands || []
+      const definedCcNumbers = new Set(
+        ccs
+          .map(cc => cc.controlChangeNumber)
+          .filter(n => Number.isInteger(n))
+      )
       const seenCc = new Set()
       ccs.forEach((cc, i) => {
         const path = `/controlChangeCommands/${i}`
-        if ((cc.name || '').length > 14) {
+        if ((cc.name || '').length > PEDALS_MAX_NAME_LENGTH) {
           errors.push({ path: `${path}/name`, message: 'name must be 14 characters or fewer' })
         }
         if (!cc.valueRange || cc.valueRange.min === undefined || cc.valueRange.max === undefined) {
@@ -1161,6 +1180,80 @@ application.register(
             })
           } else {
             seenCc.add(n)
+          }
+        }
+        for (const key of Object.keys(cc)) {
+          if (key.startsWith('x_') && !PEDALS_ALLOWED_CC_X_KEYS.includes(key)) {
+            errors.push({
+              path: `${path}/${key}`,
+              message: `unknown extension key (allowed on CC entries: ${PEDALS_ALLOWED_CC_X_KEYS.join(', ')})`
+            })
+          }
+        }
+        if (cc.x_mandatory !== undefined && typeof cc.x_mandatory !== 'boolean') {
+          errors.push({ path: `${path}/x_mandatory`, message: 'must be a boolean' })
+        }
+        if (cc.x_noop !== undefined && typeof cc.x_noop !== 'boolean') {
+          errors.push({ path: `${path}/x_noop`, message: 'must be a boolean' })
+        }
+        if (cc.x_variants !== undefined) {
+          errors.push(...this.lintCcVariants(cc.x_variants, path, definedCcNumbers))
+        }
+      })
+      return errors
+    }
+
+    lintCcVariants (variants, path, definedCcNumbers) {
+      const errors = []
+      if (!Array.isArray(variants)) {
+        errors.push({ path: `${path}/x_variants`, message: 'must be an array' })
+        return errors
+      }
+      if (variants.length === 0) {
+        errors.push({ path: `${path}/x_variants`, message: 'must not be empty' })
+        return errors
+      }
+      variants.forEach((variant, vi) => {
+        const vpath = `${path}/x_variants/${vi}`
+        if (!variant || typeof variant !== 'object') {
+          errors.push({ path: vpath, message: 'must be an object' })
+          return
+        }
+        const c = variant.constraint
+        if (!c || typeof c !== 'object') {
+          errors.push({ path: `${vpath}/constraint`, message: 'constraint is required' })
+        } else {
+          if (!Number.isInteger(c.cc) || c.cc < 0 || c.cc > 127) {
+            errors.push({ path: `${vpath}/constraint/cc`, message: 'must be an integer 0-127' })
+          } else if (!definedCcNumbers.has(c.cc)) {
+            errors.push({ path: `${vpath}/constraint/cc`, message: `CC ${c.cc} is not a defined controlChangeNumber` })
+          }
+          if (!PEDALS_VARIANT_OPS.includes(c.op)) {
+            errors.push({ path: `${vpath}/constraint/op`, message: `must be one of: ${PEDALS_VARIANT_OPS.join(', ')}` })
+          }
+          if (!Number.isInteger(c.value) || c.value < 0 || c.value > 127) {
+            errors.push({ path: `${vpath}/constraint/value`, message: 'must be an integer 0-127' })
+          }
+        }
+        if (variant.name !== undefined && (variant.name || '').length > PEDALS_MAX_NAME_LENGTH) {
+          errors.push({ path: `${vpath}/name`, message: 'name must be 14 characters or fewer' })
+        }
+        if (variant.x_noop !== undefined && typeof variant.x_noop !== 'boolean') {
+          errors.push({ path: `${vpath}/x_noop`, message: 'must be a boolean' })
+        }
+        const vr = variant.valueRange
+        if (vr !== undefined) {
+          if (!vr || vr.min === undefined || vr.max === undefined) {
+            errors.push({ path: `${vpath}/valueRange`, message: 'min and max are required' })
+          } else {
+            for (const dv of (vr.discreteValues || [])) {
+              if (Number.isInteger(dv?.value) && (dv.value < vr.min || dv.value > vr.max)) {
+                errors.push({
+                  path: `${vpath}/valueRange/discreteValues`,
+                  message: `value ${dv.value} outside range ${vr.min}-${vr.max}`
+                })
+              }
+            }
           }
         }
       })
