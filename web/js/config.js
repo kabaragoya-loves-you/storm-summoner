@@ -343,7 +343,7 @@ application.register(
             await this.enterConfigModeBody()
           }
           await this.connection.sendRaw(`SET ${settingId} ${value}\n`)
-          const response = await this.connection.readLine(5000)
+          const response = await this.connection._readLineBody(5000)
 
           if (response === 'OK') {
             this.values[settingId] = value

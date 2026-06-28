@@ -310,7 +310,13 @@ application.register(
     }
 
     onTabActivated (e) {
-      if (e.detail.tab !== 'scenes') return
+      if (e.detail.tab !== 'scenes') {
+        // Leaving Scenes: stop the programming poll so its INFO requests don't
+        // contend with SETTINGS/CONFIG (which run with connection.mode === null
+        // and so are not protected by the poll's currentMode guard).
+        this.stopProgrammingPoll()
+        return
+      }
       if (!this.connection.isConnected) {
         this.renderDisconnected()
         return
@@ -478,6 +484,12 @@ application.register(
           if (this._saveInProgress) return
           // Don't yank ASSETS/CONFIG (or other modes) just to poll INFO.
           if (this.connection.currentMode) return
+          // Only poll while Scenes is the active tab. SETTINGS/CONFIG/SCENES run
+          // with connection.mode === null, so currentMode alone won't shield them
+          // from an INFO request stealing their serial response.
+          const panel = document.querySelector('wa-tab-group wa-tab[active]')
+            ?.getAttribute('panel')
+          if (panel !== 'scenes') return
           void this.fetchDeviceProgramming()
         }, 2000)
       } else {
@@ -590,7 +602,7 @@ application.register(
             await this.sleep(300)
           }
           await this.ensureDeviceIdleInTask()
-          return this.connection.fetchSizedTransfer(`SCENE_GET ${pos}`, {
+          return this.connection._fetchSizedTransferImpl(`SCENE_GET ${pos}`, {
             lineTimeout: 30000,
             binaryTimeout: 120000
           })
@@ -963,10 +975,10 @@ application.register(
     async fetchSceneListInTask () {
       try {
         await this.connection.sendRaw('SCENES\n')
-        const started = await this.connection.readLine(5000)
+        const started = await this.connection._readLineBody(5000)
         if (started !== 'SCENES_STARTED') return false
         await this.connection.sendRaw('LIST\n')
-        const response = await this.connection.readLine(5000)
+        const response = await this.connection._readLineBody(5000)
         await this.connection.sendRaw('EXIT\n')
         await this.sleep(150)
         if (!response || !response.includes('[')) return false
@@ -2790,7 +2802,7 @@ application.register(
             await this.ensureDeviceIdleInTask()
 
             if (gen !== this._loadGeneration) return null
-            const transfer = await this.connection.fetchSizedTransfer(`SCENE_GET ${arg}`, {
+            const transfer = await this.connection._fetchSizedTransferImpl(`SCENE_GET ${arg}`, {
               lineTimeout: 30000,
               binaryTimeout: 120000
             })
@@ -2915,7 +2927,7 @@ application.register(
         }
         configEntered = true
         await this.connection.sendRaw('VALUES\n')
-        const line = await this.connection.readLine(15000)
+        const line = await this.connection._readLineBody(15000)
         if (!line || !line.includes('{')) {
           throw new Error('CONFIG VALUES missing')
         }
@@ -3313,7 +3325,7 @@ application.register(
 
     async fetchSceneJsonAtPosition (position) {
       const arg = String(position)
-      const result = await this.connection.fetchSizedTransfer(`SCENE_GET ${arg}`, {
+      const result = await this.connection._fetchSizedTransferImpl(`SCENE_GET ${arg}`, {
         lineTimeout: 30000,
         binaryTimeout: 120000
       })
@@ -3338,9 +3350,7 @@ application.register(
           if (gen !== this._loadGeneration) return null
           return this.fetchSceneJsonAtPosition(position)
         }
-        const sceneModel = this.connection.isSerialBusy
-          ? await fetchTask()
-          : await this.connection.runSerialTask(fetchTask)
+        const sceneModel = await this.connection.runSerialTask(fetchTask)
         if (gen !== this._loadGeneration) return
         this.inspectModel = sceneModel
         this.applyInspectBody()
@@ -3377,9 +3387,7 @@ application.register(
             { preludeExit: wasScenes }
           )
         }
-        const response = this.connection.isSerialBusy
-          ? await fetchImpl()
-          : await this.connection.runSerialTask(fetchImpl)
+        const response = await this.connection.runSerialTask(fetchImpl)
 
         if (gen !== this._loadGeneration) return
         const inspectOk = this.applyInspectResponse(response)

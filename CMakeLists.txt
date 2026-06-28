@@ -50,6 +50,17 @@ set(HW_CONFIG_DEV_BOARD 0)
 
 project(storm-summoner)
 
+find_program(RUBY_EXECUTABLE ruby)
+if(RUBY_EXECUTABLE)
+  add_custom_target(sync_fa_icons ALL
+    COMMAND ${RUBY_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/sync_fa_icons.rb
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Syncing vendored Font Awesome SVG icons for web app"
+  )
+else()
+  message(WARNING "Ruby not found; sync_fa_icons skipped (install Ruby or run tools/sync_fa_icons.rb manually)")
+endif()
+
 set(COMPONENT_DIRS main)
 
 # Force-include specific component libraries that are called indirectly to prevent garbage collection

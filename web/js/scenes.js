@@ -174,8 +174,10 @@ application.register(
       await this.sleep(200)
     }
 
+    // Only ever called from inside a runSerialTask body, so it goes straight to
+    // the private body method (the public readLine would enqueue and deadlock).
     readLine(timeout = 2000) {
-      return this.connection.readLine(timeout)
+      return this.connection._readLineBody(timeout)
     }
 
     normalizeSceneListEntry (scene) {
@@ -392,13 +394,17 @@ application.register(
 
       await this.connection.runSerialTask(async () => {
         await this.leaveScenesModeInTask()
-        document.dispatchEvent(
-          new CustomEvent('scenes:open-scene', {
-            detail: { position, mode, ready: done }
-          })
-        )
-        await loaded
       })
+
+      // Dispatch and await panel load outside the serial task — the panel enqueues
+      // its own runSerialTask (SCENE_INSPECT / SCENE_GET); holding the lock here
+      // deadlocks the queue.
+      document.dispatchEvent(
+        new CustomEvent('scenes:open-scene', {
+          detail: { position, mode, ready: done }
+        })
+      )
+      await loaded
     }
 
     async openDetailPanelAfterListLoad () {

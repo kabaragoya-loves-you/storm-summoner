@@ -90,7 +90,7 @@ application.register(
         await this.connection.runSerialTask(async () => {
           await this.connection.ensureDeviceIdle()
           await this.connection.sendRaw(`${command}\n`)
-          const response = await this.connection.readLine(5000)
+          const response = await this.connection._readLineBody(5000)
           if (response !== 'OK') throw new Error(response || 'No response')
         })
         onSuccess()

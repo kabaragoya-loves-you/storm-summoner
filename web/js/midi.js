@@ -75,6 +75,7 @@ application.register(
       this.cdcReadLoopActive = false
       this._loadDeviceInfoPromise = null
       this._relayStarting = false
+      this._relayGeneration = 0
 
       // Listen for tab activation
       document.addEventListener('app:tab-activated', e => {
@@ -88,7 +89,7 @@ application.register(
       // Listen for connection changes
       this.connection.on('connection:changed', ({ connected }) => {
         if (connected && this.active) {
-          this.startCdcRelay()
+          this.startCdcRelay(this._relayGeneration)
         } else if (!connected) {
           this.stopCdcRelay()
         }
@@ -102,6 +103,7 @@ application.register(
     async activate () {
       if (this.active) return
       this.active = true
+      this._relayGeneration++
 
       this.updateStatus('Initializing...', false)
 
@@ -116,13 +118,14 @@ application.register(
 
       // Start CDC relay for IN messages (if connected)
       if (this.connection.isConnected) {
-        await this.startCdcRelay()
+        await this.startCdcRelay(this._relayGeneration)
       }
     }
 
     async deactivate () {
       if (!this.active) return
       this.active = false
+      this._relayGeneration++
 
       // Stop WebMIDI
       if (this.midiInput) {
@@ -305,19 +308,22 @@ application.register(
 
     // ========== CDC Relay (IN messages) ==========
 
-    async startCdcRelay () {
+    async startCdcRelay (gen = this._relayGeneration) {
       if (!this.connection.isConnected || !this.active) return
+      if (gen !== this._relayGeneration) return
       if (this._relayStarting) return
       this._relayStarting = true
 
       try {
         const loaded = await this.loadDeviceInfo()
+        if (!this.active || gen !== this._relayGeneration) return
         if (!loaded) {
           this.updateStatus('Device lookup failed', false)
           return
         }
 
         await this.connection.runSerialTask(async () => {
+          if (!this.active || gen !== this._relayGeneration) return
           await this.connection.ensureDeviceIdle()
           if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {
             this.connection._resumeRxPump()
@@ -333,6 +339,8 @@ application.register(
           await this.connection._requestModeImpl('MIDI')
         })
 
+        if (!this.active || gen !== this._relayGeneration) return
+
         const unlocked = await this.waitForStreamUnlock(2000)
         if (!unlocked) {
           this.updateStatus('Serial stream locked', false)
@@ -341,6 +349,7 @@ application.register(
 
         this.startCdcReadLoop()
       } catch (err) {
+        if (!this.active || gen !== this._relayGeneration) return
         console.error('CDC relay start failed:', err)
         try {
           await this.connection.recoverSerialState()
@@ -389,6 +398,11 @@ application.register(
         const readableStreamClosed = this.connection.port.readable.pipeTo(
           decoder.writable
         )
+        this._cdcPipePromise = readableStreamClosed
+        // pipeTo() rejects (often with `undefined`) when the relay is torn down
+        // via cdcReader.cancel() on tab leave. Without a rejection handler this
+        // surfaces as "Uncaught (in promise) undefined". Swallow it here.
+        readableStreamClosed.catch(() => {})
         this.cdcReader = decoder.readable.getReader()
 
         let buffer = ''
@@ -546,6 +560,7 @@ application.register(
     async _loadDeviceInfoBody () {
       try {
         return await this.connection.runSerialTask(async () => {
+          if (!this.active) return false
           await this.connection.ensureDeviceIdle()
           this.connection.clearPendingRx()
           if (this.connection._pumpSuspended || !this.connection._rxPumpRunning) {

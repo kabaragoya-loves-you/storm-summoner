@@ -198,7 +198,7 @@ application.register(
         this.log('Entering assets mode...')
         await this.sleep(50)
         await this.connection.sendRaw('ASSETS\n')
-        const line = await this.connection.readLine(5000)
+        const line = await this.connection._readLineBody(5000)
         if (!line?.includes('ASSETS_STARTED')) {
           throw new Error(`Timeout waiting for ASSETS_STARTED (got: ${line || 'nothing'})`)
         }

@@ -268,7 +268,7 @@ application.register(
       try {
         await this.connection.runSerialTask(async () => {
           await this.connection.sendRaw(`SET ${type} ${key} ${value}\n`)
-          const response = await this.connection.readLine(3000)
+          const response = await this.connection._readLineBody(3000)
 
           if (response === 'OK') {
             if (type === 'bool') {
@@ -363,7 +363,7 @@ application.register(
             }
 
             await this.connection.sendRaw(`SET ${type} ${key} ${valStr}\n`)
-            const response = await this.connection.readLine(1000)
+            const response = await this.connection._readLineBody(1000)
 
             if (response === 'OK') count++
             else {

@@ -57,6 +57,7 @@ application.register(
       this.inAssetsMode = false
       this.isActivating = false
       this._activateQueue = Promise.resolve()
+      this._activateGeneration = 0
       this._schema = null
       this._schemaLoad = null
       this._authoringText = null
@@ -138,19 +139,24 @@ application.register(
 
     async activate () {
       if (!this.connection.isConnected) return
-      this._activateQueue = this._activateQueue.then(() => this._runActivate())
+      this._activateGeneration++
+      const gen = this._activateGeneration
+      this._activateQueue = this._activateQueue.then(() => this._runActivate(gen))
       return this._activateQueue
     }
 
-    async _runActivate () {
+    async _runActivate (gen) {
+      if (gen !== this._activateGeneration || !this.isTabActive('pedals')) return
       if (this.isActivating) return
       this.isActivating = true
       this.renderCatalogLoading()
       try {
         await this.connection.runSerialTask(async () => {
+          if (gen !== this._activateGeneration || !this.isTabActive('pedals')) return
           this.connection.beginExclusiveSession()
           try {
             if (!this.currentSlug) await this.fetchCurrentDeviceFirstBody()
+            if (gen !== this._activateGeneration || !this.isTabActive('pedals')) return
             await this.ensureAssetsModeBody()
             await this.fetchManifestsBody()
             await this.loadCurrentPedalIfKnownBody()
@@ -159,6 +165,7 @@ application.register(
           }
         })
       } catch (err) {
+        if (gen !== this._activateGeneration || !this.isTabActive('pedals')) return
         console.error('Pedals activation error:', err)
       } finally {
         this.isActivating = false
@@ -324,7 +331,7 @@ application.register(
         const response = await this.assetsCommandBody(`PUT ${path} ${data.length}`)
         if (response !== 'READY') throw new Error(response || 'PUT not ready')
         await this.connection.sendBinary(data)
-        const result = await this.connection.readLine(30000)
+        const result = await this.connection._readLineBody(30000)
         if (result !== 'OK') throw new Error(result || 'PUT failed')
       })
     }
@@ -1705,8 +1712,10 @@ application.register(
       return this._activateQueue
     }
 
+    // Only ever called from inside a runSerialTask body, so it goes straight to
+    // the private body method (the public readLine would enqueue and deadlock).
     readLine (timeout = 2000) {
-      return this.connection.readLine(timeout)
+      return this.connection._readLineBody(timeout)
     }
   }
 )

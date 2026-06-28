@@ -30,7 +30,6 @@ window.ConnectionManager = (function () {
       this._commandChain = Promise.resolve()
       this._writeChain = Promise.resolve()
       this._serialDepth = 0
-      this._serialTaskReentrant = false
       this._modeNotifyRunning = false
       this._modeNotifyReader = null
       this._modeNotifySuspended = false
@@ -151,20 +150,30 @@ window.ConnectionManager = (function () {
       return this._serialDepth > 0
     }
 
-    // Serialize every WebSerial transaction. Only bypass the queue for nested
-    // calls from inside an active serial task (readLine during sendCommand).
-    // _serialDepth alone is NOT enough — a second top-level task during an
-    // in-flight first task must still queue, or getWriter/getReader collide.
+    // Serialize every top-level WebSerial transaction. A top-level task ALWAYS
+    // enqueues behind any in-flight task — even one currently parked on an await
+    // (e.g. a tab-activated handler firing while another tab's task awaits the
+    // device). The public connection helpers (requestMode/exitMode/sendCommand/
+    // readLine/fetchSizedTransfer/recoverSerialState) likewise enqueue, so they
+    // are safe to call from anywhere OUTSIDE a task. Code running INSIDE a task
+    // body must call the private _*Impl/_*Body methods instead — calling a public
+    // helper from inside a task would enqueue behind itself and deadlock.
     runSerialTask (fn) {
-      if (this._serialTaskReentrant) return fn()
+      return this._enqueueSerialTask(fn)
+    }
 
+    // Every top-level serial entry point (runSerialTask and the public connection
+    // helpers: requestMode/exitMode/sendCommand/readLine/fetchSizedTransfer/
+    // recoverSerialState) funnels through here so the single port is accessed by
+    // exactly one task at a time. Code that is ALREADY running inside a task body
+    // must call the private _*Impl/_*Body methods directly (never the public
+    // helpers), otherwise it would enqueue behind itself and deadlock.
+    _enqueueSerialTask (fn) {
       const run = async () => {
         this._serialDepth++
-        this._serialTaskReentrant = true
         try {
           return await fn()
         } finally {
-          this._serialTaskReentrant = false
           this._serialDepth--
         }
       }
@@ -284,7 +293,6 @@ window.ConnectionManager = (function () {
         this._commandChain = Promise.resolve()
         this._writeChain = Promise.resolve()
         this._serialDepth = 0
-        this._serialTaskReentrant = false
         this.setTabsLocked(false)
         navigator.serial.removeEventListener(
           'disconnect',
@@ -305,7 +313,7 @@ window.ConnectionManager = (function () {
 
       try {
         if (this.mode) {
-          await this.exitMode()
+          await this._exitModeImpl()
         }
         await this.port.close()
       } catch (err) {
@@ -320,7 +328,6 @@ window.ConnectionManager = (function () {
         this._commandChain = Promise.resolve()
         this._writeChain = Promise.resolve()
         this._serialDepth = 0
-        this._serialTaskReentrant = false
         this.clearPedalCcCache()
         this.setTabsLocked(false)
         this.emit('connection:changed', { connected: false })
@@ -329,7 +336,7 @@ window.ConnectionManager = (function () {
 
     // Request a mode - returns true if mode was entered
     async requestMode (newMode) {
-      return this.runSerialTask(() => this._requestModeImpl(newMode))
+      return this._enqueueSerialTask(() => this._requestModeImpl(newMode))
     }
 
     async _requestModeImpl (newMode) {
@@ -355,7 +362,7 @@ window.ConnectionManager = (function () {
 
     // Exit current mode
     async exitMode () {
-      return this.runSerialTask(() => this._exitModeImpl())
+      return this._enqueueSerialTask(() => this._exitModeImpl())
     }
 
     async _exitModeImpl (options = {}) {
@@ -815,29 +822,31 @@ window.ConnectionManager = (function () {
     // Reset pump/mode readers after a mid-transfer dropout or failed acquire.
     async recoverSerialState () {
       if (!this.port) return false
-      const impl = async () => {
-        this._releaseAllReaders()
-        this._pumpSuspended = false
-        this._modeNotifySuspended = false
-        this._lineQueue = []
-        this._rejectLineWaiters()
-        if (this.mode || this._deviceScenesActive) {
-          this._stopModeNotifyLoop()
-          try {
-            await this.sendRaw('EXIT\n')
-            await this.sleep(150)
-          } catch (e) {}
-          this.mode = null
-          this._deviceScenesActive = false
-          this.emit('mode:changed', { mode: null })
-        }
-        this._rxBuffer = ''
-        if (!this._rxPumpRunning) this._startRxPump()
-        else this._resumeRxPump()
-        await this._armRxPump(2000)
-        return true
+      return this._enqueueSerialTask(() => this._recoverSerialStateImpl())
+    }
+
+    async _recoverSerialStateImpl () {
+      if (!this.port) return false
+      this._releaseAllReaders()
+      this._pumpSuspended = false
+      this._modeNotifySuspended = false
+      this._lineQueue = []
+      this._rejectLineWaiters()
+      if (this.mode || this._deviceScenesActive) {
+        this._stopModeNotifyLoop()
+        try {
+          await this.sendRaw('EXIT\n')
+          await this.sleep(150)
+        } catch (e) {}
+        this.mode = null
+        this._deviceScenesActive = false
+        this.emit('mode:changed', { mode: null })
       }
-      return this.runSerialTask(impl)
+      this._rxBuffer = ''
+      if (!this._rxPumpRunning) this._startRxPump()
+      else this._resumeRxPump()
+      await this._armRxPump(2000)
+      return true
     }
 
     _isRecoverableSerialError (err) {
@@ -1262,7 +1271,7 @@ window.ConnectionManager = (function () {
       while (Date.now() < deadline) {
         const remaining = deadline - Date.now()
         if (remaining <= 0) break
-        const line = await this.readLine(Math.min(1000, remaining))
+        const line = await this._readLineBody(Math.min(1000, remaining))
         if (!line) continue
         if (line === 'OK') return 'OK'
         if (line.startsWith('ERROR:')) return line
@@ -1295,7 +1304,7 @@ window.ConnectionManager = (function () {
       const deadline = Date.now() + timeout
       let acc = ''
       while (Date.now() < deadline) {
-        const line = await this.readLine(Math.min(1000, Math.max(1, deadline - Date.now())))
+        const line = await this._readLineBody(Math.min(1000, Math.max(1, deadline - Date.now())))
         if (!line) continue
         if (line.startsWith('ERROR:')) return line
         if (line === 'SCENES_STOPPED' || line === 'SCENES_STARTED' ||
@@ -1327,7 +1336,7 @@ window.ConnectionManager = (function () {
     }
 
     async sendCommand (cmd, timeout = 30000, validator = null) {
-      return this.runSerialTask(() => this._sendCommandImpl(cmd, timeout, validator))
+      return this._enqueueSerialTask(() => this._sendCommandImpl(cmd, timeout, validator))
     }
 
     async _sendCommandImpl (cmd, timeout = 30000, validator = null, options = null) {
@@ -1495,7 +1504,7 @@ window.ConnectionManager = (function () {
 
     async readLine (timeout = 10000) {
       if (!this.port?.readable) return null
-      return this.runSerialTask(() => this._readLineBody(timeout))
+      return this._enqueueSerialTask(() => this._readLineBody(timeout))
     }
 
     _usesPumpLineReader () {
@@ -1624,7 +1633,7 @@ window.ConnectionManager = (function () {
     // SIZE line + raw binary in one exclusive read (MANIFEST/GET). Avoids resuming
     // the mode-notify reader between sendCommand and readBinary (stream lock race).
     async fetchSizedTransfer (cmd, options = {}) {
-      return this.runSerialTask(() => this._fetchSizedTransferImpl(cmd, options))
+      return this._enqueueSerialTask(() => this._fetchSizedTransferImpl(cmd, options))
     }
 
     _binaryStallTimeoutMs (size, explicit) {
@@ -1906,6 +1915,11 @@ window.BaseController = class extends Controller {
 
   sleep (ms) {
     return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  isTabActive (panelName) {
+    const activeTab = document.querySelector('wa-tab-group wa-tab[active]')
+    return activeTab?.getAttribute('panel') === panelName
   }
 }
 

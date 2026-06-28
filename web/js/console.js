@@ -123,6 +123,10 @@ application.register(
       const readableStreamClosed = this.connection.port.readable.pipeTo(
         decoder.writable
       )
+      // pipeTo() rejects (often with `undefined`) when the read loop is torn
+      // down via reader.cancel() on tab leave. Without a rejection handler this
+      // surfaces as "Uncaught (in promise) undefined". Swallow it here.
+      readableStreamClosed.catch(() => {})
       this.reader = decoder.readable.getReader()
 
       let buffer = ''

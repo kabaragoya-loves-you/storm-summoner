@@ -94,7 +94,7 @@ window.PedalCatalog = (function () {
       return connection._ensureAssetsReadyDedicated()
     }
     await connection.sendRaw('ASSETS\n')
-    const response = await connection.readLine(3000)
+    const response = await connection._readLineBody(3000)
     if (!response?.includes('ASSETS_STARTED')) {
       throw new Error(`Assets not ready (got: ${response || 'nothing'})`)
     }
@@ -107,7 +107,7 @@ window.PedalCatalog = (function () {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await ensureAssetsReady(connection)
-        const { data } = await connection.fetchSizedTransfer(`MANIFEST ${type}`)
+        const { data } = await connection._fetchSizedTransferImpl(`MANIFEST ${type}`)
         const manifest = JSON.parse(new TextDecoder().decode(data))
         return Array.isArray(manifest?.devices) ? manifest : { devices: [] }
       } catch (err) {
@@ -181,7 +181,7 @@ window.PedalCatalog = (function () {
     for (const path of paths) {
       try {
         await ensureAssetsReady(connection)
-        const { data } = await connection.fetchSizedTransfer(`GET ${path}`)
+        const { data } = await connection._fetchSizedTransferImpl(`GET ${path}`)
         return JSON.parse(new TextDecoder().decode(data))
       } catch (err) {
         lastErr = err
