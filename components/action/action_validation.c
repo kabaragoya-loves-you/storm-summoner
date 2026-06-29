@@ -527,6 +527,14 @@ bool action_supports_raise_flag_for(const action_t* action) {
 bool action_validate_timing(action_t* action, uint8_t beats_per_bar) {
   if (!action) return false;
   if (action->timing == ACTION_TIMING_TRANSPORT_START) return false;
+  if (action->timing == ACTION_TIMING_BAR) {
+    if (action->timing_beat < 1) {
+      ESP_LOGW(TAG, "Bar count 0 invalid, remapping to 1 bar");
+      action->timing_beat = 1;
+      return true;
+    }
+    return false;
+  }
   if (action->timing != ACTION_TIMING_SPECIFIC_BEAT) return false;
   if (action->timing_beat <= beats_per_bar) return false;
 

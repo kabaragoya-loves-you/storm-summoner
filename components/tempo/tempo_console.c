@@ -1,5 +1,7 @@
 #include "tempo_console.h"
 #include "tempo.h"
+#include "transport.h"
+#include "scene.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -41,6 +43,14 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "--- Runtime State (per-scene) ---");
   ESP_LOGI(TAG, "BPM: %u", (unsigned)bpm);
   ESP_LOGI(TAG, "Clock source: %s", source_str);
+  {
+    uint8_t scene_idx = scene_get_current_index();
+    bool use_transport = scene_get_use_transport(scene_idx);
+    uint32_t bar = use_transport ? transport_get_current_bar() : tempo_get_current_bar();
+    uint8_t beat = use_transport ? transport_get_current_beat() : tempo_get_current_beat();
+    ESP_LOGI(TAG, "Position: Bar %lu, Beat %u%s", (unsigned long)bar, (unsigned)beat,
+      use_transport ? "" : " (free-run from scene load)");
+  }
   ESP_LOGI(TAG, "(Use 'scene' context for BPM, clock source, beat divider, time signature)");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "--- Clock Output (global) ---");

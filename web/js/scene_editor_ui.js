@@ -2475,14 +2475,24 @@ window.SceneEditorUi = (function () {
         const beats = ctrl.editModel?.time_signature?.numerator ?? 4
         const useTransport = !!ctrl.editModel?.use_transport
         const timingVal = a.timing || 'immediate'
+        const barParsed = ActionCatalog.parseBarTiming(timingVal)
         const timingOpts = ActionCatalog.timingOptions(beats, useTransport)
-        if (!timingOpts.some(o => o.v === timingVal)) {
-          timingOpts.unshift({ v: timingVal, l: timingVal })
+        if (!timingOpts.some(o => o.v === barParsed.select)) {
+          timingOpts.unshift({ v: barParsed.select, l: barParsed.select })
         }
         html += fieldRow(
           'Timing',
-          selectField(`${path}.timing`, timingVal, timingOpts)
+          selectField(`${path}.timing`, barParsed.select, timingOpts)
         )
+        if (barParsed.select === 'bar_custom') {
+          html += fieldRow(
+            'Bar',
+            `<input type="number" class="scene-input" min="1" max="255"
+              value="${esc(String(barParsed.count ?? ActionCatalog.BAR_TIMING_CUSTOM_DEFAULT))}"
+              data-scene-path="${esc(`${path}.timing`)}"
+              data-action="input->scene#patchBarCount">`
+          )
+        }
       }
       if (trigger !== ActionCatalog.TRIGGERS.ON_LOAD) {
         html += renderRepeatBlock(ctrl, path, a)

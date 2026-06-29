@@ -7853,8 +7853,67 @@ static bool detail_page_handle_back(void) {
 // Timing Roller
 // ============================================================================
 
-// Forward declaration for roller
+static const uint8_t s_bar_presets[] = {1, 2, 4, 8, 16, 32};
+#define NUM_BAR_PRESETS (sizeof(s_bar_presets) / sizeof(s_bar_presets[0]))
+
+static uint32_t timing_specify_bar_idx(uint8_t beats) {
+  return (uint32_t)(beats + 2 + NUM_BAR_PRESETS);
+}
+
+static uint32_t timing_transport_idx(uint8_t beats, bool use_transport) {
+  (void)use_transport;
+  return timing_specify_bar_idx(beats) + 1;
+}
+
+static bool timing_is_bar_preset(uint8_t bar_count, uint32_t* out_idx, uint8_t beats) {
+  for (uint32_t i = 0; i < NUM_BAR_PRESETS; i++) {
+    if (s_bar_presets[i] == bar_count) {
+      if (out_idx) *out_idx = (uint32_t)(beats + 2 + i);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Forward declarations for rollers
 static lv_obj_t* timing_roller_create(void);
+static lv_obj_t* bar_count_roller_create(void);
+
+static void bar_count_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+
+  action_t* action = s_ctx->target_action;
+  action->timing = ACTION_TIMING_BAR;
+  action->timing_beat = (uint8_t)(selected_index + 1);
+  if (action->timing_beat < 1) action->timing_beat = 1;
+
+  ESP_LOGD(TAG, "Set bar timing: %s",
+    action_timing_to_string(action->timing, action->timing_beat));
+
+  return_to_detail_page(3);
+}
+
+static lv_obj_t* bar_count_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Bar", "Error", 0, NULL, NULL);
+  }
+
+  static char bar_options[1024];
+  int pos = 0;
+  for (int i = 1; i <= 255 && pos < (int)sizeof(bar_options) - 8; i++) {
+    pos += snprintf(bar_options + pos, sizeof(bar_options) - pos,
+      "%s%d", (i == 1) ? "" : "\n", i);
+  }
+
+  action_t* action = s_ctx->target_action;
+  uint32_t current_idx = 0;
+  if (action->timing == ACTION_TIMING_BAR && action->timing_beat >= 1)
+    current_idx = action->timing_beat - 1;
+
+  return menu_create_roller_page("Bar", bar_options, current_idx,
+    bar_count_confirm_cb, NULL);
+}
 
 static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -7866,7 +7925,8 @@ static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
   uint8_t beats = sig.numerator;
   if (beats == 0) beats = 4;
   if (beats > 16) beats = 16;
-  uint32_t transport_idx = (uint32_t)(beats + 2);
+  uint32_t specify_idx = timing_specify_bar_idx(beats);
+  uint32_t transport_idx = timing_transport_idx(beats, use_transport);
 
   if (selected_index == 0) {
     action->timing = ACTION_TIMING_IMMEDIATE;
@@ -7877,6 +7937,14 @@ static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
   } else if (use_transport && selected_index == transport_idx) {
     action->timing = ACTION_TIMING_TRANSPORT_START;
     action->timing_beat = 0;
+  } else if (selected_index == specify_idx) {
+    nav_to_subpage("Bar", bar_count_roller_create);
+    return;
+  } else if (selected_index >= (uint32_t)(beats + 2) &&
+             selected_index < specify_idx) {
+    uint32_t preset_i = selected_index - (beats + 2);
+    action->timing = ACTION_TIMING_BAR;
+    action->timing_beat = s_bar_presets[preset_i];
   } else {
     action->timing = ACTION_TIMING_SPECIFIC_BEAT;
     action->timing_beat = (uint8_t)(selected_index - 1);
@@ -7898,11 +7966,13 @@ static lv_obj_t* timing_roller_create(void) {
   if (beats > 16) beats = 16;
   bool use_transport = scene_get_use_transport(scene_get_current_index());
 
-  static char timing_options[288];
+  static char timing_options[384];
   int pos = snprintf(timing_options, sizeof(timing_options), "Immediate\nNext Beat");
   for (int i = 1; i <= beats; i++) {
     pos += snprintf(timing_options + pos, sizeof(timing_options) - pos, "\nBeat %d", i);
   }
+  pos += snprintf(timing_options + pos, sizeof(timing_options) - pos,
+    "\nBar 1\nBar 2\nBar 4\nBar 8\nBar 16\nBar 32\nSpecify Bar");
   if (use_transport)
     pos += snprintf(timing_options + pos, sizeof(timing_options) - pos, "\nOn Transport");
 
@@ -7913,7 +7983,13 @@ static lv_obj_t* timing_roller_create(void) {
   } else if (action->timing == ACTION_TIMING_NEXT_BEAT) {
     current_idx = 1;
   } else if (action->timing == ACTION_TIMING_TRANSPORT_START && use_transport) {
-    current_idx = (uint32_t)(beats + 2);
+    current_idx = timing_transport_idx(beats, use_transport);
+  } else if (action->timing == ACTION_TIMING_BAR) {
+    uint32_t preset_idx = 0;
+    if (timing_is_bar_preset(action->timing_beat, &preset_idx, beats))
+      current_idx = preset_idx;
+    else
+      current_idx = timing_specify_bar_idx(beats);
   } else if (action->timing == ACTION_TIMING_SPECIFIC_BEAT) {
     current_idx = action->timing_beat + 1;
     if (current_idx > (uint32_t)(beats + 1)) current_idx = 2;
@@ -7940,6 +8016,11 @@ static const char* get_timing_display(action_t* action) {
       static char beat_buf[16];
       snprintf(beat_buf, sizeof(beat_buf), "Beat %d", action->timing_beat);
       return beat_buf;
+    }
+    case ACTION_TIMING_BAR: {
+      static char bar_buf[16];
+      snprintf(bar_buf, sizeof(bar_buf), "Bar %u", (unsigned)action->timing_beat);
+      return bar_buf;
     }
     case ACTION_TIMING_TRANSPORT_START:
       return "On Transport";

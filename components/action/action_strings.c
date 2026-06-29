@@ -322,6 +322,9 @@ const char* action_timing_to_string(action_timing_t timing, uint8_t beat) {
     case ACTION_TIMING_SPECIFIC_BEAT:
       snprintf(s_timing_str, sizeof(s_timing_str), "beat_%d", beat);
       return s_timing_str;
+    case ACTION_TIMING_BAR:
+      snprintf(s_timing_str, sizeof(s_timing_str), "bar_%d", beat);
+      return s_timing_str;
     case ACTION_TIMING_TRANSPORT_START:
       return "transport";
     default:
@@ -342,6 +345,12 @@ void action_timing_from_string(const char* str, action_timing_t* timing, uint8_t
   } else if (strcmp(str, "transport") == 0) {
     *timing = ACTION_TIMING_TRANSPORT_START;
     *beat = 0;
+  } else if (strncmp(str, "bar_", 4) == 0) {
+    int bar_num = atoi(str + 4);
+    if (bar_num < 1) bar_num = 1;
+    if (bar_num > 255) bar_num = 255;
+    *timing = ACTION_TIMING_BAR;
+    *beat = (uint8_t)bar_num;
   } else if (strncmp(str, "beat_", 5) == 0) {
     int beat_num = atoi(str + 5);
     if (beat_num >= 1 && beat_num <= 16) {
@@ -409,6 +418,18 @@ uint8_t action_repeat_division_to_beats(action_repeat_division_t div, uint8_t be
     case ACTION_REPEAT_SIXTEENTH: return 0;
     case ACTION_REPEAT_32ND:      return 0;
     default: return 1;
+  }
+}
+
+uint8_t action_repeat_division_to_bars(action_repeat_division_t div) {
+  switch (div) {
+    case ACTION_REPEAT_16_BARS: return 16;
+    case ACTION_REPEAT_12_BARS: return 12;
+    case ACTION_REPEAT_8_BARS:  return 8;
+    case ACTION_REPEAT_4_BARS:  return 4;
+    case ACTION_REPEAT_2_BARS:  return 2;
+    case ACTION_REPEAT_1_BAR:   return 1;
+    default: return 0;
   }
 }
 

@@ -2220,6 +2220,7 @@ esp_err_t scene_init(void) {
   tempo_set_source(initial_scene->clock_source);
   tempo_set_note_divider(initial_scene->beat_divider);
   tempo_set_time_signature(initial_scene->time_signature.numerator, initial_scene->time_signature.denominator);
+  tempo_reset_scene_position();
   ESP_LOGD(TAG, "Set initial tempo: bpm_x10=%u, source=%d, beat_divider=%d, time_sig=%d/%d",
            (unsigned)initial_scene->bpm_x10, initial_scene->clock_source,
            initial_scene->beat_divider,
@@ -2429,6 +2430,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   tempo_set_source(new_scene->clock_source);
   tempo_set_note_divider(new_scene->beat_divider);
   tempo_set_time_signature(new_scene->time_signature.numerator, new_scene->time_signature.denominator);
+  tempo_reset_scene_position();
   ESP_LOGD(TAG, "Set tempo: bpm_x10=%u, source=%d, beat_divider=%d, time_sig=%d/%d",
            (unsigned)new_scene->bpm_x10, new_scene->clock_source, new_scene->beat_divider,
            new_scene->time_signature.numerator, new_scene->time_signature.denominator);
@@ -8316,6 +8318,7 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
   tempo_set_note_divider(scene->beat_divider);
   tempo_set_time_signature(scene->time_signature.numerator,
     scene->time_signature.denominator);
+  tempo_reset_scene_position();
   action_validate_scene_timings(scene);
   midi_out_reset_cut();
 

@@ -77,6 +77,7 @@ static esp_timer_handle_t s_start_timer = NULL;  // Deferred start timer
 static SemaphoreHandle_t s_state_mutex = NULL;
 static uint32_t s_tick_counter = 0;
 static uint8_t s_beat_counter = 0;  // Counts beats within bar
+static uint32_t s_bar_counter = 1;  // 1-based bar position (free-running / tempo authority)
 static uint32_t s_beat_generation = 0;
 
 // Tap tempo
@@ -394,6 +395,16 @@ static uint32_t tempo_beat_divisor_for_standard(tempo_clock_standard_t standard)
   return beat_divisor;
 }
 
+static void tempo_advance_beat_counter_locked(void) {
+  uint8_t numerator = s_time_signature.numerator;
+  if (numerator == 0) numerator = 4;
+  s_beat_counter++;
+  if (s_beat_counter > numerator) {
+    s_beat_counter = 1;
+    s_bar_counter++;
+  }
+}
+
 // Advance one clock tick; publish EVENT_BEAT when a beat boundary is crossed.
 // Must hold s_state_mutex internally so downbeat resync cannot race the pulse.
 static bool tempo_advance_clock_tick_beat(tempo_clock_standard_t standard) {
@@ -402,8 +413,7 @@ static bool tempo_advance_clock_tick_beat(tempo_clock_standard_t standard) {
   uint32_t beat_divisor = tempo_beat_divisor_for_standard(standard);
   bool publish = false;
   if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
-    s_beat_counter++;
-    if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+    tempo_advance_beat_counter_locked();
     publish = true;
   }
   s_tick_counter++;
@@ -419,8 +429,7 @@ static bool tempo_advance_midi_clock_tick_beat(void) {
 
   bool publish = false;
   if (s_note_divider > 0 && (s_tick_counter % s_note_divider == 0)) {
-    s_beat_counter++;
-    if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+    tempo_advance_beat_counter_locked();
     if (s_tempo_lock_beat_count < 255) s_tempo_lock_beat_count++;
     publish = true;
   }
@@ -439,8 +448,9 @@ static void tempo_task(void *pvParameters) {
   bool was_running = false;  // Track state transitions
   
   while (1) {
-    // Check if we should be running based on clock_always_send setting
-    bool should_run = s_clock_always_send || transport_is_advancing();
+    // Run when sending clock, transport is moving, or scene free-runs (use_transport off).
+    bool free_run = !scene_get_use_transport(scene_get_current_index());
+    bool should_run = s_clock_always_send || transport_is_advancing() || free_run;
     
     if (!should_run) {
       was_running = false;
@@ -677,9 +687,10 @@ static void tempo_task(void *pvParameters) {
         if (fallback_bpm_x10 == 0) fallback_bpm_x10 = DEFAULT_BPM_X10;
         
         uint32_t beat_interval_ms = 600000 / fallback_bpm_x10;
-        
-        s_beat_counter++;
-        if (s_beat_counter > s_time_signature.numerator) s_beat_counter = 1;
+
+        xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+        tempo_advance_beat_counter_locked();
+        xSemaphoreGive(s_state_mutex);
         publish_beat_event();
         
         vTaskDelay(pdMS_TO_TICKS(beat_interval_ms));
@@ -1248,6 +1259,7 @@ void tempo_midi_transport_start(void) {
   uint8_t numerator = s_time_signature.numerator;
   if (numerator == 0) numerator = 4;
   s_beat_counter = numerator;
+  s_bar_counter = 1;
   s_tick_counter = 0;
 
   s_midi_tick_last_quarter_time = 0;
@@ -1261,6 +1273,36 @@ void tempo_midi_transport_start(void) {
   s_tempo_change_candidate_x10 = 0;
 
   xSemaphoreGive(s_state_mutex);
+}
+
+void tempo_reset_scene_position(void) {
+  if (!s_state_mutex) return;
+
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+
+  s_bar_counter = 1;
+  s_beat_counter = 1;
+  s_tick_counter = 1;
+
+  if (s_clock_source == CLOCK_SOURCE_INTERNAL ||
+      s_clock_source == CLOCK_SOURCE_SYNC) {
+    s_clock_timing_reset_needed = true;
+  }
+
+  s_midi_tick_last_quarter_time = 0;
+  s_midi_tick_ema_initialized = false;
+  s_midi_tick_last_update_time = 0;
+  s_tempo_lock_beat_count = 0;
+  s_tempo_locked = false;
+  s_tempo_locked_bpm_x10 = 0;
+  s_tempo_change_confirm = 0;
+  s_tempo_change_candidate_x10 = 0;
+
+  xSemaphoreGive(s_state_mutex);
+
+  transport_reset_position();
+  publish_beat_event();
+  ESP_LOGI(TAG, "Scene position reset: bar 1, beat 1");
 }
 
 void tempo_resync_downbeat(void) {
@@ -1357,6 +1399,7 @@ void tempo_set_time_signature(uint8_t numerator, uint8_t denominator) {
   // mid-beat (the modulo check would have to wait up to a full beat for the
   // tick counter to wrap around to a multiple of divisor).
   s_beat_counter = 0;
+  s_bar_counter = 1;
   s_tick_counter = 0;
   xSemaphoreGive(s_state_mutex);
   
@@ -1382,6 +1425,14 @@ uint8_t tempo_get_current_beat(void) {
   uint8_t beat = s_beat_counter;
   xSemaphoreGive(s_state_mutex);
   return (beat == 0) ? 1 : beat;  // Return 1 if uninitialized
+}
+
+uint32_t tempo_get_current_bar(void) {
+  if (!s_state_mutex) return 1;
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  uint32_t bar = s_bar_counter;
+  xSemaphoreGive(s_state_mutex);
+  return bar == 0 ? 1 : bar;
 }
 
 uint8_t tempo_get_ppq_tick(void) {

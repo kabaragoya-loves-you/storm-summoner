@@ -182,7 +182,8 @@ typedef enum {
 typedef enum {
   ACTION_TIMING_IMMEDIATE = 0,   // Execute on trigger (default)
   ACTION_TIMING_NEXT_BEAT,       // Wait for any next beat
-  ACTION_TIMING_SPECIFIC_BEAT,   // Wait for specific beat (uses timing_beat field)
+  ACTION_TIMING_SPECIFIC_BEAT,   // Wait for specific beat (uses timing_beat field, 1-16)
+  ACTION_TIMING_BAR,             // Fire on downbeat of bar N (timing_beat = N, 1-255)
   ACTION_TIMING_TRANSPORT_START  // Fire on transport fresh-start downbeat (scene use_transport)
 } action_timing_t;
 
@@ -274,7 +275,7 @@ typedef struct {
   action_type_t type;
   action_variant_t variant;            // Secondary operation discriminator (see action_variant_t)
   action_timing_t timing;              // When to execute (default: IMMEDIATE)
-  uint8_t timing_beat;                 // Target beat 1-16 (only used when timing == SPECIFIC_BEAT)
+  uint8_t timing_beat;                 // Beat 1-16 (SPECIFIC_BEAT) or bar count 1-255 (BAR)
   bool repeat_enabled;                 // Whether action repeats at repeat_division
   action_repeat_division_t repeat_division;  // Repeat interval (when repeat_enabled == true)
   uint8_t probability;                 // Chance of firing 10-100% (default 100, only for repeating)
@@ -733,6 +734,9 @@ action_repeat_division_t action_repeat_division_from_string(const char* str);
 // Get repeat interval in beats (for scheduling)
 // Returns quarter notes equivalent (e.g., 1 bar in 4/4 = 4 beats)
 uint8_t action_repeat_division_to_beats(action_repeat_division_t div, uint8_t beats_per_bar);
+
+// Bar-aligned repeat interval (0 when division is sub-bar)
+uint8_t action_repeat_division_to_bars(action_repeat_division_t div);
 
 // Punch-in duration string conversion
 const char* punch_in_duration_to_string(punch_in_duration_t duration);

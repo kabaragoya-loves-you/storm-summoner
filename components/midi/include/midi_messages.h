@@ -44,6 +44,7 @@ void send_mmc(uint8_t command);
 void send_mmc_play(void);
 void send_mmc_stop(void);
 void send_mmc_record_strobe(void);
+void send_mmc_record_exit(void);
 void send_mmc_pause(void);
 void send_note_on_optimized(uint8_t channel, uint8_t note, uint8_t velocity);
 void send_nrpn(uint8_t channel, uint16_t parameter, uint16_t value);

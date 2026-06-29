@@ -22,7 +22,9 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "====== TRANSPORT ======");
   ESP_LOGI(TAG, "State: %s", state_str);
   ESP_LOGI(TAG, "Playing: %s", playing ? "yes" : "no");
+  ESP_LOGI(TAG, "Recording: %s", transport_is_recording() ? "yes" : "no");
   ESP_LOGI(TAG, "Position: Bar %lu, Beat %u", (unsigned long)bar, (unsigned)beat);
+  ESP_LOGI(TAG, "(Use 'sync info' for musical position when use_transport is off)");
   ESP_LOGI(TAG, "=======================");
 
   return 0;

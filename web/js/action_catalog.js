@@ -988,9 +988,31 @@ window.ActionCatalog = (function () {
     for (let i = 1; i <= beats; i++) {
       opts.push({ v: `beat_${i}`, l: `Beat ${i}` })
     }
+    opts.push(
+      { v: 'bar_1', l: 'Bar 1' },
+      { v: 'bar_2', l: 'Bar 2' },
+      { v: 'bar_4', l: 'Bar 4' },
+      { v: 'bar_8', l: 'Bar 8' },
+      { v: 'bar_16', l: 'Bar 16' },
+      { v: 'bar_32', l: 'Bar 32' },
+      { v: 'bar_custom', l: 'Specify Bar...' }
+    )
     if (useTransport)
       opts.push({ v: 'transport', l: 'On Transport' })
     return opts
+  }
+
+  const BAR_TIMING_PRESETS = new Set([
+    'bar_1', 'bar_2', 'bar_4', 'bar_8', 'bar_16', 'bar_32'
+  ])
+  const BAR_TIMING_CUSTOM_DEFAULT = 3
+
+  function parseBarTiming (timing) {
+    const m = /^bar_(\d+)$/.exec(timing || '')
+    if (!m) return { select: timing || 'immediate', count: null }
+    if (BAR_TIMING_PRESETS.has(timing))
+      return { select: timing, count: null }
+    return { select: 'bar_custom', count: Number(m[1]) }
   }
 
   function triggerCaps (trigger) {
@@ -1434,6 +1456,9 @@ window.ActionCatalog = (function () {
     touchwheelStepCount,
     normalizeTouchwheelActionsInModel,
     timingOptions,
+    BAR_TIMING_PRESETS,
+    BAR_TIMING_CUSTOM_DEFAULT,
+    parseBarTiming,
     typesForTrigger,
     variantsForType,
     defaultVariant,

@@ -162,6 +162,62 @@ esp_err_t action_init(void) {
   return ESP_OK;
 }
 
+static bool action_queue_timed(action_t* action, uint8_t trigger_value, bool repeats,
+    bool include_transport_start) {
+  bool supports_timing = action_supports_timing_for(action);
+  if (!supports_timing || action->timing == ACTION_TIMING_IMMEDIATE)
+    return false;
+
+  uint8_t target_beat = 0;
+  uint16_t target_bars = 0;
+
+  if (action->timing == ACTION_TIMING_BAR) {
+    target_bars = (uint16_t)action->timing_beat;
+  } else if (action->timing == ACTION_TIMING_TRANSPORT_START) {
+    if (!include_transport_start) return false;
+    target_beat = 1;
+  } else {
+    target_beat = (action->timing == ACTION_TIMING_NEXT_BEAT)
+      ? 0 : action->timing_beat;
+  }
+
+  return action_scheduler_enqueue(action, trigger_value, target_beat,
+    target_bars, repeats, 1);
+}
+
+static void action_queue_immediate_repeat(action_t* action, uint8_t trigger_value) {
+  if (!action->repeat_enabled || !action_supports_repeat_for(action)) return;
+  if (!action_supports_timing_for(action)) return;
+  if (action->timing != ACTION_TIMING_IMMEDIATE) return;
+
+  scene_t* scene = scene_get_current();
+  uint8_t beats_per_bar = (scene && scene->time_signature.numerator)
+    ? scene->time_signature.numerator : 4;
+  uint8_t interval = action_repeat_division_to_beats(
+    action->repeat_division, beats_per_bar);
+  if (interval == 0) interval = 1;
+  action_scheduler_enqueue(action, trigger_value, 0, 0, true, interval);
+}
+
+esp_err_t action_execute_triggered(const action_t* action, uint8_t trigger_value) {
+  if (!action || action->type == ACTION_NONE) return ESP_OK;
+  action_t* mutable_action = (action_t*)action;
+
+  action_scheduler_prepare_trigger(mutable_action);
+
+  bool repeats = action->repeat_enabled && action_supports_repeat_for(action);
+  if (repeats)
+    action_scheduler_start_repeating(mutable_action);
+
+  if (action_queue_timed(mutable_action, trigger_value, repeats, true))
+    return ESP_OK;
+
+  if (repeats)
+    action_queue_immediate_repeat(mutable_action, trigger_value);
+
+  return action_execute_immediate(action, trigger_value, true);
+}
+
 // ============================================================================
 // Public execute entry point - handles timing, queuing, and repeat toggle
 // ============================================================================
@@ -200,32 +256,11 @@ esp_err_t action_execute(const action_t* action, uint8_t trigger_value, bool is_
                       action->timing != ACTION_TIMING_IMMEDIATE &&
                       action->timing != ACTION_TIMING_TRANSPORT_START;
 
-  if (should_queue) {
-    uint8_t target_beat = (action->timing == ACTION_TIMING_NEXT_BEAT)
-      ? 0 : action->timing_beat;
+  if (should_queue && action_queue_timed(mutable_action, trigger_value, repeats, false))
+    return ESP_OK;
 
-    if (action_scheduler_enqueue(mutable_action, trigger_value, target_beat,
-                                 repeats, 1)) {
-      return ESP_OK;
-    }
-    // Fall through to immediate execution if queue is full
-  }
-
-  // Immediate+Repeat: fire now and arm the scheduler for periodic re-fires.
-  // First scheduled fire is one full interval after the press, so the
-  // pacing is consistent regardless of where in the bar the press landed.
-  // Without this, start_repeating() above just adds the action to a tracker
-  // list and nothing in the queue ever re-fires it.
-  if (repeats && action->timing == ACTION_TIMING_IMMEDIATE && supports_timing) {
-    scene_t* scene = scene_get_current();
-    uint8_t beats_per_bar = (scene && scene->time_signature.numerator)
-      ? scene->time_signature.numerator : 4;
-    uint8_t interval = action_repeat_division_to_beats(
-      action->repeat_division, beats_per_bar);
-    if (interval == 0) interval = 1;  // sub-beat divisions: every beat
-    action_scheduler_enqueue(mutable_action, trigger_value,
-                             /*target_beat=*/0, /*repeating=*/true, interval);
-  }
+  if (repeats && action->timing == ACTION_TIMING_IMMEDIATE && supports_timing)
+    action_queue_immediate_repeat(mutable_action, trigger_value);
 
   return action_execute_immediate(action, trigger_value, is_press);
 }

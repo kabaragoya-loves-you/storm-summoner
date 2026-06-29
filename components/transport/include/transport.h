@@ -24,6 +24,7 @@ esp_err_t transport_init(void);
 
 transport_state_t transport_get_state(void);
 bool transport_is_playing(void);
+bool transport_is_recording(void);
 bool transport_is_advancing(void);
 
 // Fresh start from stopped (F2 00 00 + FA). If playing, stops first.
@@ -34,7 +35,7 @@ esp_err_t transport_stop(void);
 esp_err_t transport_pause(void);
 // Resume from stopped position (FB).
 esp_err_t transport_resume(void);
-// Play locally + MMC Record strobe (no recording state on device).
+// Play locally + MMC Record strobe; toggles recording while playing (punch-in/out).
 esp_err_t transport_record(void);
 
 uint32_t transport_get_current_bar(void);

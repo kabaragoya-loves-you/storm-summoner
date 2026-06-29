@@ -91,6 +91,9 @@ void action_scheduler_stop_repeating(action_t* action);
 bool action_scheduler_is_repeating(action_t* action);
 bool action_scheduler_start_repeating(action_t* action);
 // Returns true if successfully queued, false if queue full.
+// target_bar: when > 0, fire on the downbeat of that absolute bar number
+//   (from scene load when use_transport is off, from transport position when on);
+//   target_beat is ignored. When 0, use target_beat (0 = any beat, 1-16 = specific).
 // initial_beats_remaining controls when the first scheduled fire happens:
 //   1 = fire on the first beat event whose current_beat matches target_beat
 //       (or any beat if target_beat==0) -- the historical default.
@@ -98,19 +101,25 @@ bool action_scheduler_start_repeating(action_t* action);
 //       the caller has already fired once and wants the next scheduled fire
 //       to occur a full interval later instead of on the very next beat.
 bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
-  uint8_t target_beat, bool repeating, uint8_t initial_beats_remaining);
+  uint8_t target_beat, uint16_t target_bar, bool repeating,
+  uint8_t initial_beats_remaining);
 // Mark a HOLD action as released; its next scheduled fire will clear the slot.
 void action_scheduler_mark_hold_released(action_t* action);
 
-// On-Transport timing: pad press arms; transport start fires only when armed.
+// Clear pending/repeat state before a fresh automated trigger (on_play, etc.).
+void action_scheduler_prepare_trigger(action_t* action);
+void action_scheduler_pause_triggered(action_t* action);
+void action_scheduler_resume_triggered(action_t* action);
 bool action_scheduler_is_transport_armed(action_t* action);
 void action_scheduler_arm_transport(action_t* action);
 void action_scheduler_disarm_transport(action_t* action);
 // Arm on pad press; if transport is already playing, enqueue for the next beat.
 void action_scheduler_transport_pad_press(action_t* action);
+void action_scheduler_reset_cycle_index(action_t* action);
 
-// ----------------------------------------------------------------------------
-// Core dispatch (action.c)
+// Automated trigger path (on_play, etc.): honors timing/repeat without pad
+// toggle or On-Transport arming semantics.
+esp_err_t action_execute_triggered(const action_t* action, uint8_t trigger_value);
 // Called by scheduler when a pending action's beat arrives.
 // Bypasses timing check.
 // ----------------------------------------------------------------------------

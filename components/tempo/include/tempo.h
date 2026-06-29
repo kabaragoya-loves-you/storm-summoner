@@ -108,6 +108,9 @@ bool tempo_is_midi_clock_active(void);  // True if MIDI clock ticks are being re
 // Re-align bar/beat to downbeat immediately (internal, sync, or MIDI clock).
 void tempo_resync_downbeat(void);
 
+// Reset musical position to bar 1, beat 1 (tempo + transport). Call on scene load/reload.
+void tempo_reset_scene_position(void);
+
 // Align beat counter to a bar/beat position (e.g. after Song Position Pointer).
 void tempo_sync_to_bar_beat(uint8_t bar, uint8_t beat);
 
@@ -121,6 +124,8 @@ time_signature_t tempo_get_time_signature(void);
 
 // Get current beat within bar (1 to numerator)
 uint8_t tempo_get_current_beat(void);
+// Get current bar (1-based; advances with tempo beats when use_transport is off)
+uint32_t tempo_get_current_bar(void);
 uint8_t tempo_get_ppq_tick(void);
 bool tempo_is_tempo_locked(void);
 uint32_t tempo_get_beat_generation(void);

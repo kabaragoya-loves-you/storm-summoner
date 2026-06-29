@@ -853,6 +853,9 @@ static bool ainspect_format_timing(char *buf, size_t cap, const action_t *action
     case ACTION_TIMING_SPECIFIC_BEAT:
       snprintf(buf, cap, "Beat %u", (unsigned)action->timing_beat);
       return true;
+    case ACTION_TIMING_BAR:
+      snprintf(buf, cap, "Bar %u", (unsigned)action->timing_beat);
+      return true;
     case ACTION_TIMING_TRANSPORT_START:
       snprintf(buf, cap, "On Transport");
       return true;

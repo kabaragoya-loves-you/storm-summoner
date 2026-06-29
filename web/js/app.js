@@ -703,6 +703,8 @@ window.ConnectionManager = (function () {
           detail.clock.flag_enabled = parts[9] === '1'
           detail.clock.flag = parts[10] === '1'
         }
+        if (parts.length >= 12)
+          detail.clock.recording = parts[11] === '1'
       } else if (kind === 'connections' && parts.length >= 6) {
         detail.connections = {
           usb: parts[2] === '1',

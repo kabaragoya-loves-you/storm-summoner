@@ -12,6 +12,7 @@
 #define TAG "TRANSPORT"
 
 static transport_state_t s_state = TRANSPORT_STOPPED;
+static bool s_recording = false;
 static SemaphoreHandle_t s_state_mutex = NULL;
 
 static uint32_t s_current_bar = 1;
@@ -64,8 +65,17 @@ static void publish_position_changed(void) {
   event_bus_post(&pos_event);
 }
 
+static void set_recording(bool recording) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_recording = recording;
+  xSemaphoreGive(s_state_mutex);
+}
+
 static void set_state_ex(transport_state_t new_state, transport_source_t source, bool is_resume) {
   xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+
+  if (new_state == TRANSPORT_STOPPED)
+    s_recording = false;
 
   if (s_state != new_state) {
     transport_state_t old_state = s_state;
@@ -270,13 +280,29 @@ static void transport_event_handler(const event_t* event, void* context) {
     case EVENT_TRANSPORT_RECORD: {
       ESP_LOGD(TAG, "Received RECORD event (source=%d)", source);
 
-      if (!transport_is_playing()) {
-        if (transport_at_top())
-          set_state(TRANSPORT_PLAYING, source);
-        else
-          set_state_ex(TRANSPORT_PLAYING, source, true);
+      if (transport_is_playing()) {
+        if (transport_is_recording()) {
+          set_recording(false);
+          if (source == TRANSPORT_SOURCE_MIDI && !passthrough_blocks_echo()) {
+            send_mmc_record_exit();
+            ESP_LOGD(TAG, "Echoed MMC Record Exit (passthrough disabled)");
+          }
+        } else {
+          set_recording(true);
+          if (source == TRANSPORT_SOURCE_MIDI && !passthrough_blocks_echo()) {
+            send_mmc_record_strobe();
+            ESP_LOGD(TAG, "Echoed MMC Record Strobe (passthrough disabled)");
+          }
+        }
+        break;
       }
 
+      if (transport_at_top())
+        set_state(TRANSPORT_PLAYING, source);
+      else
+        set_state_ex(TRANSPORT_PLAYING, source, true);
+
+      set_recording(true);
       if (source == TRANSPORT_SOURCE_MIDI && !passthrough_blocks_echo()) {
         send_mmc_record_strobe();
         ESP_LOGD(TAG, "Echoed MMC Record Strobe (passthrough disabled)");
@@ -298,6 +324,13 @@ transport_state_t transport_get_state(void) {
 
 bool transport_is_playing(void) {
   return transport_get_state() == TRANSPORT_PLAYING;
+}
+
+bool transport_is_recording(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool recording = s_recording;
+  xSemaphoreGive(s_state_mutex);
+  return recording;
 }
 
 bool transport_is_advancing(void) {
@@ -339,6 +372,8 @@ esp_err_t transport_play(void) {
     set_position(1, 1);
     publish_position_changed();
     post_restart_event(TRANSPORT_SOURCE_INTERNAL);
+    if (transport_is_recording())
+      send_mmc_record_strobe();
     ESP_LOGI(TAG, "Play restart from top (was already playing)");
     return ESP_OK;
   }
@@ -370,6 +405,8 @@ esp_err_t transport_stop(void) {
     return ESP_OK;
   }
 
+  if (transport_is_recording())
+    send_mmc_record_exit();
   send_stop();
   send_mmc_stop();
   set_state(TRANSPORT_STOPPED, TRANSPORT_SOURCE_INTERNAL);
@@ -395,8 +432,15 @@ esp_err_t transport_resume(void) {
 
 esp_err_t transport_record(void) {
   if (transport_is_playing()) {
-    send_mmc_record_strobe();
-    ESP_LOGI(TAG, "Record strobe while playing (punch-in gesture)");
+    if (transport_is_recording()) {
+      send_mmc_record_exit();
+      set_recording(false);
+      ESP_LOGI(TAG, "Punch-out (MMC Record Exit)");
+    } else {
+      send_mmc_record_strobe();
+      set_recording(true);
+      ESP_LOGI(TAG, "Punch-in (MMC Record Strobe)");
+    }
     return ESP_OK;
   }
 
@@ -415,6 +459,7 @@ esp_err_t transport_record(void) {
   }
 
   send_mmc_record_strobe();
+  set_recording(true);
   return ESP_OK;
 }
 
@@ -455,6 +500,7 @@ uint8_t transport_get_current_beat(void) {
 
 void transport_reset_position(void) {
   set_position(1, 1);
+  set_spp_storage(0);
   publish_position_changed();
   ESP_LOGD(TAG, "Position reset to bar 1, beat 1");
 }

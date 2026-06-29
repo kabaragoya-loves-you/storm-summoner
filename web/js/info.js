@@ -402,12 +402,14 @@ application.register(
       const flagChanged = !!prevFlag !== !!appliedFlag
       const transportChanged =
         (prevClock?.transport ?? null) !== (incoming.transport ?? null)
+      const recordingChanged =
+        !!prevClock?.recording !== !!incoming.recording
       const beatChanged =
         (prevClock?.beat ?? null) !== (incoming.beat ?? null) ||
         (prevClock?.bar ?? null) !== (incoming.bar ?? null)
       const bpmChanged = (prevClock?.bpm ?? null) !== (incoming.bpm ?? null)
 
-      if (flagChanged || transportChanged || bpmChanged ||
+      if (flagChanged || transportChanged || recordingChanged || bpmChanged ||
           !this.sceneCardTarget.querySelector('[data-scene-flag-status]')) {
         this.renderSceneCard()
         return
@@ -819,6 +821,7 @@ application.register(
 
       if (useTransport) {
         const playing = clock.transport === 'playing'
+        const recording = !!clock.recording
         const transportClass = playing ? 'clock-playing' : 'clock-stopped'
         rows += `
         <div class="info-row">
@@ -848,11 +851,12 @@ application.register(
             <wa-icon name="stop" slot="prefix"></wa-icon>
             Stop
           </wa-button>
-          <wa-button size="small" variant="danger" appearance="outlined"
+          <wa-button size="small" variant="danger"
+                     appearance="${recording ? 'filled' : 'outlined'}"
                      data-transport-cmd="record"
-                     title="${playing ? 'Punch-in (MMC strobe)' : 'Play + record strobe'}">
+                     title="${recording ? 'Punch-out (stop recording)' : (playing ? 'Punch-in (MMC strobe)' : 'Play + record strobe')}">
             <wa-icon name="circle" slot="prefix"></wa-icon>
-            Record
+            ${recording ? 'Recording' : 'Record'}
           </wa-button>
         </div>`
       } else {

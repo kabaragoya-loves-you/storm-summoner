@@ -1414,6 +1414,18 @@ application.register(
       return /\.(note|base_note|note_range|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
     }
 
+    patchBarCount (e) {
+      if (this.deviceProgramming) return
+      const path = e.target.dataset.scenePath
+      if (!path) return
+      let n = Number(e.target.value)
+      if (Number.isNaN(n)) return
+      n = Math.max(1, Math.min(255, Math.round(n)))
+      this.setAtPath(path, `bar_${n}`)
+      this.markDirty()
+      this.renderEditor()
+    }
+
     patchSelect (e) {
       if (this.deviceProgramming) return
       const path = e.target.dataset.scenePath
@@ -1985,6 +1997,13 @@ application.register(
       if (this.isNumericScenePath(path)) {
         const num = Number(val)
         if (!Number.isNaN(num)) val = num
+      }
+      if (path.endsWith('.timing') && val === 'bar_custom') {
+        const cur = this.getAtPath(path) || 'immediate'
+        if (!/^bar_\d+$/.test(cur) || ActionCatalog.BAR_TIMING_PRESETS.has(cur))
+          val = `bar_${ActionCatalog.BAR_TIMING_CUSTOM_DEFAULT}`
+        else
+          val = cur
       }
       this.setAtPath(path, val)
       if (path === 'clock_source')

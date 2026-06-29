@@ -1190,6 +1190,7 @@ typedef struct {
   uint8_t use_transport;
   uint8_t flag_enabled;
   uint8_t flag;
+  uint8_t recording;
 } cdc_clock_snapshot_t;
 
 static cdc_clock_snapshot_t s_last_clock_notify;
@@ -1216,6 +1217,7 @@ static void cdc_read_clock_snapshot(cdc_clock_snapshot_t *out) {
   out->denominator = sig.denominator ? sig.denominator : 4;
   out->flag_enabled = config_get_flag_enabled() ? 1u : 0u;
   out->flag = action_get_flag() ? 1u : 0u;
+  out->recording = transport_is_recording() ? 1u : 0u;
 }
 
 static void cdc_add_clock_json(cJSON *root) {
@@ -1246,6 +1248,7 @@ static void cdc_add_clock_json(cJSON *root) {
 
   cJSON_AddBoolToObject(clock, "flag_enabled", snap.flag_enabled != 0);
   cJSON_AddBoolToObject(clock, "flag", snap.flag != 0);
+  cJSON_AddBoolToObject(clock, "recording", snap.recording != 0);
   cJSON_AddBoolToObject(clock, "allow_fractional_bpm", tempo_get_allow_fractional_bpm());
 
   cJSON_AddItemToObject(root, "clock", clock);
@@ -1302,12 +1305,12 @@ static void cdc_send_clock_evt_snapshot(const cdc_clock_snapshot_t *snap) {
   if (!snap) return;
   s_last_clock_notify = *snap;
 
-  char buf[96];
-  snprintf(buf, sizeof(buf), "EVT:clock:%u:%u:%lu:%u:%u:%u:%u:%u:%u",
+  char buf[112];
+  snprintf(buf, sizeof(buf), "EVT:clock:%u:%u:%lu:%u:%u:%u:%u:%u:%u:%u",
     (unsigned)snap->bpm_x10, (unsigned)snap->playing, (unsigned long)snap->bar,
     (unsigned)snap->beat, (unsigned)snap->numerator, (unsigned)snap->denominator,
     (unsigned)snap->use_transport, (unsigned)snap->flag_enabled,
-    (unsigned)snap->flag);
+    (unsigned)snap->flag, (unsigned)snap->recording);
   cdc_send_notify_line(buf);
 }
 
@@ -2143,12 +2146,15 @@ static void process_command(const char *cmd) {
     while (op && *op == ' ') op++;
     if (strcmp(op, "PLAY") == 0) {
       transport_play();
+      cdc_push_clock_evt();
       send_response("OK");
     } else if (strcmp(op, "STOP") == 0) {
       transport_stop();
+      cdc_push_clock_evt();
       send_response("OK");
     } else if (strcmp(op, "RECORD") == 0) {
       transport_record();
+      cdc_push_clock_evt();
       send_response("OK");
     } else {
       send_response("ERROR: Unknown transport command");

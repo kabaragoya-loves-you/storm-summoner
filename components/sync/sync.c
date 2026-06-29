@@ -101,7 +101,7 @@ static void refresh_musical_snapshot_locked(void) {
     s_snapshot.musical.bar = transport_get_current_bar();
     s_snapshot.musical.beat_in_bar = transport_get_current_beat();
   } else {
-    s_snapshot.musical.bar = 1;
+    s_snapshot.musical.bar = tempo_get_current_bar();
     s_snapshot.musical.beat_in_bar = tempo_get_current_beat();
   }
   if (s_snapshot.musical.beat_in_bar == 0)

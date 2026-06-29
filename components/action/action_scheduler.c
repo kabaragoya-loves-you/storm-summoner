@@ -1,6 +1,7 @@
 #include "action_internal.h"
 #include "scene.h"
 #include "transport.h"
+#include "tempo.h"
 #include "midi_local_output.h"
 #include "event_bus.h"
 #include "esp_log.h"
@@ -23,6 +24,8 @@ typedef struct {
 
   uint8_t target_beat;        // 0 = any beat, 1-16 = specific beat
 
+  uint16_t target_bar;        // Absolute bar number to fire on (0 = not bar mode)
+
   bool repeating;             // True if this action should re-queue after firing
   uint16_t beats_remaining;   // Beats until next fire (for multi-bar divisions)
   bool hold_released;         // For HOLD actions
@@ -31,6 +34,13 @@ typedef struct {
 } pending_action_t;
 
 static pending_action_t s_pending_actions[MAX_PENDING_ACTIONS];
+
+static uint32_t get_musical_bar(void) {
+  scene_t* scene = scene_get_current();
+  if (scene && scene->use_transport)
+    return transport_get_current_bar();
+  return tempo_get_current_bar();
+}
 
 // ============================================================================
 // Active Repeating Actions Tracking (for toggle behavior)
@@ -135,20 +145,82 @@ void action_scheduler_disarm_transport(action_t* action) {
 static void clear_pending_for_action(action_t* action) {
   if (!action) return;
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
-    if (s_pending_actions[i].valid && s_pending_actions[i].original == action)
+    if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
       s_pending_actions[i].valid = false;
+      s_pending_actions[i].paused = false;
+    }
+  }
+}
+
+void action_scheduler_prepare_trigger(action_t* action) {
+  if (!action) return;
+  action_scheduler_stop_repeating(action);
+  clear_pending_for_action(action);
+}
+
+void action_scheduler_pause_triggered(action_t* action) {
+  if (!action || action->type == ACTION_NONE) return;
+
+  bool repeats = action->repeat_enabled && action_supports_repeat_for(action);
+  if (!repeats) {
+    clear_pending_for_action(action);
+    return;
+  }
+
+  if (!action_scheduler_is_repeating(action)) return;
+
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].original == action)
+      s_pending_actions[i].paused = true;
+  }
+}
+
+void action_scheduler_resume_triggered(action_t* action) {
+  if (!action || action->type == ACTION_NONE) return;
+
+  bool repeats = action->repeat_enabled && action_supports_repeat_for(action);
+  if (!repeats) return;
+
+  action_scheduler_start_repeating(action);
+
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].paused &&
+        s_pending_actions[i].original == action) {
+      s_pending_actions[i].paused = false;
+      return;
+    }
   }
 }
 
 bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
-    uint8_t target_beat, bool repeating, uint8_t initial_beats_remaining) {
+    uint8_t target_beat, uint16_t target_bar, bool repeating,
+    uint8_t initial_beats_remaining) {
   if (initial_beats_remaining == 0) initial_beats_remaining = 1;
+
+  // One pending schedule per action -- refresh instead of duplicating.
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
+      s_pending_actions[i].action = *action;
+      s_pending_actions[i].trigger_value = trigger_value;
+      s_pending_actions[i].target_beat = target_beat;
+      s_pending_actions[i].target_bar = target_bar;
+      s_pending_actions[i].paused = false;
+      s_pending_actions[i].repeating = repeating;
+      s_pending_actions[i].beats_remaining = initial_beats_remaining;
+      s_pending_actions[i].hold_released = false;
+      s_pending_actions[i].pattern_step = 0;
+      ESP_LOGD(TAG, "Refreshed pending %s (slot %d)", action_type_name(action->type), i);
+      return true;
+    }
+  }
+
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     if (!s_pending_actions[i].valid) {
       s_pending_actions[i].action = *action;
       s_pending_actions[i].original = action;
       s_pending_actions[i].trigger_value = trigger_value;
       s_pending_actions[i].target_beat = target_beat;
+      s_pending_actions[i].target_bar = target_bar;
       s_pending_actions[i].valid = true;
       s_pending_actions[i].paused = false;
       s_pending_actions[i].repeating = repeating;
@@ -156,11 +228,16 @@ bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
       s_pending_actions[i].hold_released = false;
       s_pending_actions[i].pattern_step = 0;
 
-      ESP_LOGI(TAG, "Queued %s timing=%s target_beat=%d (slot %d, repeating=%d, wait=%u beats)",
-        action_type_name(action->type),
-        target_beat == 0 ? "NEXT_BEAT" : "SPECIFIC_BEAT",
-        target_beat == 0 ? -1 : (int)target_beat, i, repeating,
-        (unsigned)initial_beats_remaining);
+      if (target_bar > 0) {
+        ESP_LOGI(TAG, "Queued %s timing=BAR target_bar=%u (slot %d, repeating=%d)",
+          action_type_name(action->type), (unsigned)target_bar, i, repeating);
+      } else {
+        ESP_LOGI(TAG, "Queued %s timing=%s target_beat=%d (slot %d, repeating=%d, wait=%u beats)",
+          action_type_name(action->type),
+          target_beat == 0 ? "NEXT_BEAT" : "SPECIFIC_BEAT",
+          target_beat == 0 ? -1 : (int)target_beat, i, repeating,
+          (unsigned)initial_beats_remaining);
+      }
       return true;
     }
   }
@@ -198,7 +275,7 @@ void action_clear_pending(void) {
 }
 
 // Reset cycle index for cycle-type actions
-static void reset_action_cycle_index(action_t* action) {
+void action_scheduler_reset_cycle_index(action_t* action) {
   if (!action) return;
   switch (action->type) {
     case ACTION_CONTROL:
@@ -265,7 +342,16 @@ static void handle_beat_event(const event_t* event, void* context) {
       continue;
     }
 
-    if (pending->target_beat == 0) {
+    if (pending->target_bar > 0) {
+      if (current_beat != 1) continue;
+      uint32_t cur_bar = get_musical_bar();
+      if (cur_bar < pending->target_bar) continue;
+      if (cur_bar > pending->target_bar) {
+        pending->valid = false;
+        continue;
+      }
+      should_fire = true;
+    } else if (pending->target_beat == 0) {
       should_fire = true;
     } else if (pending->target_beat == current_beat) {
       should_fire = true;
@@ -343,15 +429,34 @@ static void handle_beat_event(const event_t* event, void* context) {
 
       // Handle repeating: re-queue for next interval (even if pattern/probability failed)
       if (pending->repeating && !pending->hold_released) {
-        uint8_t interval_beats = action_repeat_division_to_beats(
-          pending->action.repeat_division, beats_per_bar);
-
-        if (interval_beats > 0) {
-          pending->beats_remaining = interval_beats;
-          ESP_LOGD(TAG, "Re-queued repeating action for %d beats", interval_beats);
+        if (pending->target_bar > 0) {
+          uint8_t bar_interval = action_repeat_division_to_bars(
+            pending->action.repeat_division);
+          if (bar_interval > 0) {
+            pending->target_bar = get_musical_bar() + bar_interval;
+            pending->beats_remaining = 1;
+            ESP_LOGD(TAG, "Re-queued repeating bar action for bar %u",
+              (unsigned)pending->target_bar);
+          } else {
+            pending->target_bar = 0;
+            pending->target_beat = 0;
+            uint8_t interval_beats = action_repeat_division_to_beats(
+              pending->action.repeat_division, beats_per_bar);
+            pending->beats_remaining = interval_beats > 0 ? interval_beats : 1;
+            ESP_LOGD(TAG, "Re-queued repeating action for %u beats (sub-bar)",
+              (unsigned)pending->beats_remaining);
+          }
         } else {
-          // Sub-beat divisions - treat as every beat for now
-          pending->beats_remaining = 1;
+          uint8_t interval_beats = action_repeat_division_to_beats(
+            pending->action.repeat_division, beats_per_bar);
+
+          if (interval_beats > 0) {
+            pending->beats_remaining = interval_beats;
+            ESP_LOGD(TAG, "Re-queued repeating action for %d beats", interval_beats);
+          } else {
+            // Sub-beat divisions - treat as every beat for now
+            pending->beats_remaining = 1;
+          }
         }
       } else {
         pending->valid = false;
@@ -404,14 +509,14 @@ static void transport_start_action(action_t* action, bool fresh_start) {
     ESP_LOGI(TAG, "Transport starting: %s", action_type_name(action->type));
   }
 
-  reset_action_cycle_index(action);
+  action_scheduler_reset_cycle_index(action);
   ESP_LOGI(TAG, "Reset cycle index to 0 for %s", action_type_name(action->type));
 
   if (repeats)
     action_scheduler_start_repeating(action);
 
   // Queue for downbeat firing on the first beat event after transport start.
-  action_scheduler_enqueue(action, 127, 0, repeats, 1);
+  action_scheduler_enqueue(action, 127, 0, 0, repeats, 1);
 }
 
 static void transport_stop_action(action_t* action) {
@@ -521,12 +626,18 @@ static void handle_transport_event(const event_t* event, void* context) {
       START_ACTION(&scene->expr_switch);
     }
 
-    // On-Play: downbeat-aligned, fresh start only (from STOPPED, incl. record).
-    if (is_fresh_start && scene->use_transport && scene->num_on_play_actions > 0) {
-      ESP_LOGI(TAG, "Queuing %d on_play action(s) for downbeat",
-        scene->num_on_play_actions);
-      for (int i = 0; i < scene->num_on_play_actions; i++) {
-        action_scheduler_enqueue(&scene->on_play[i], 127, 0, false, 1);
+    // On-Play: fresh start re-arms; resume unpauses an in-flight schedule.
+    if (scene->use_transport && scene->num_on_play_actions > 0) {
+      if (is_fresh_start) {
+        ESP_LOGI(TAG, "Queuing %d on_play action(s)",
+          scene->num_on_play_actions);
+        for (int i = 0; i < scene->num_on_play_actions; i++) {
+          action_scheduler_reset_cycle_index(&scene->on_play[i]);
+          action_execute_triggered(&scene->on_play[i], 127);
+        }
+      } else if (is_resume) {
+        for (int i = 0; i < scene->num_on_play_actions; i++)
+          action_scheduler_resume_triggered(&scene->on_play[i]);
       }
     }
   } else if (stopping && scene->use_transport) {
@@ -537,6 +648,8 @@ static void handle_transport_event(const event_t* event, void* context) {
     STOP_ACTION(&scene->button_both);
     STOP_ACTION(&scene->bump);
     STOP_ACTION(&scene->expr_switch);
+    for (int i = 0; i < scene->num_on_play_actions; i++)
+      action_scheduler_pause_triggered(&scene->on_play[i]);
   }
 
   #undef START_ACTION
