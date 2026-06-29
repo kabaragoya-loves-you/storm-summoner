@@ -2233,6 +2233,7 @@ esp_err_t scene_init(void) {
   if (initial_scene->num_on_load_actions > 0) {
     ESP_LOGI(TAG, "Executing %d on_load action(s)", initial_scene->num_on_load_actions);
     for (int i = 0; i < initial_scene->num_on_load_actions; i++) {
+      action_set_next_trigger_source(ACTION_SOURCE_ON_LOAD, (uint8_t)i);
       action_execute(&initial_scene->on_load[i], 127, true);
     }
   }
@@ -2468,6 +2469,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     if (new_scene->num_on_load_actions > 0) {
       ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->num_on_load_actions);
       for (int i = 0; i < new_scene->num_on_load_actions; i++) {
+        action_set_next_trigger_source(ACTION_SOURCE_ON_LOAD, (uint8_t)i);
         action_execute(&new_scene->on_load[i], 127, true);
       }
     }
@@ -2613,6 +2615,7 @@ void scene_apply_deferred_init(void) {
   if (scene->num_on_load_actions > 0) {
     ESP_LOGD(TAG, "Executing %d deferred on_load action(s)", scene->num_on_load_actions);
     for (int i = 0; i < scene->num_on_load_actions; i++) {
+      action_set_next_trigger_source(ACTION_SOURCE_ON_LOAD, (uint8_t)i);
       action_execute(&scene->on_load[i], 127, true);
     }
   }
@@ -2892,6 +2895,33 @@ const char* scene_get_ui_module(uint8_t scene_index) {
   scene_t* scene = scene_get_current();
   if (!scene || scene->ui_module[0] == '\0') return "beat";
   return scene->ui_module;
+}
+
+const scope_channel_t* scene_get_scope_channel(uint8_t scene_index, uint8_t ch) {
+  if (ch >= SCOPE_CHANNEL_COUNT) return NULL;
+  // Only the current scene is kept in memory
+  if (scene_index != g_scene_manager.current_scene_index) return NULL;
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  return &scene->scope.channels[ch];
+}
+
+esp_err_t scene_set_scope_channel(uint8_t scene_index, uint8_t ch,
+  uint8_t kind, uint8_t id) {
+  if (scene_index > MAX_SCENE_INDEX || ch >= SCOPE_CHANNEL_COUNT)
+    return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  if (kind != SCOPE_SRC_PARAM && kind != SCOPE_SRC_CC) kind = SCOPE_SRC_NONE;
+  scene->scope.channels[ch].kind = kind;
+  scene->scope.channels[ch].id = (kind == SCOPE_SRC_NONE) ? 0 : id;
+
+  scene_persist_if_programming();
+  ESP_LOGI(TAG, "Scene %d scope ch%u set to kind=%u id=%u",
+    scene_index + 1, (unsigned)ch, (unsigned)kind, (unsigned)id);
+  return ESP_OK;
 }
 
 esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id) {
@@ -3455,7 +3485,8 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
   if (action_requires_hold_for(&mapping->action)) {
     touch_set_hold_active(pad_index, pressed);
   }
-  
+
+  action_set_next_trigger_source(ACTION_SOURCE_PAD, pad_index);
   return action_execute(&mapping->action, pressed ? 127 : 0, pressed);
 }
 
@@ -7105,6 +7136,37 @@ static cJSON* scene_to_json(const scene_t* scene) {
     cJSON_AddStringToObject(root, "ui_module", scene->ui_module);
   }
 
+  // Scope channels: array of 4 strings ("" = off, param name, or "cc:<n>").
+  // Only written when at least one channel is active.
+  bool scope_has_active = false;
+  for (int i = 0; i < SCOPE_CHANNEL_COUNT; i++) {
+    if (scene->scope.channels[i].kind != SCOPE_SRC_NONE) {
+      scope_has_active = true;
+      break;
+    }
+  }
+  if (scope_has_active) {
+    cJSON* scope = cJSON_CreateArray();
+    int last_idx = -1;
+    for (int i = 0; i < SCOPE_CHANNEL_COUNT; i++) {
+      if (scene->scope.channels[i].kind != SCOPE_SRC_NONE) last_idx = i;
+    }
+    for (int i = 0; i <= last_idx; i++) {
+      const scope_channel_t* chn = &scene->scope.channels[i];
+      char buf[24];
+      if (chn->kind == SCOPE_SRC_PARAM) {
+        snprintf(buf, sizeof(buf), "%s",
+          param_target_to_string((param_target_t)chn->id));
+      } else if (chn->kind == SCOPE_SRC_CC) {
+        snprintf(buf, sizeof(buf), "cc:%u", (unsigned)chn->id);
+      } else {
+        buf[0] = '\0';
+      }
+      cJSON_AddItemToArray(scope, cJSON_CreateString(buf));
+    }
+    cJSON_AddItemToObject(root, "scope", scope);
+  }
+
   // Only write device_id if it's set (non-empty)
   if (scene->device_id[0] != '\0') {
     cJSON_AddStringToObject(root, "device_id", scene->device_id);
@@ -7385,6 +7447,38 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
     scene->ui_module[sizeof(scene->ui_module) - 1] = '\0';
   } else {
     scene->ui_module[0] = '\0';  // Default: use "beat"
+  }
+
+  // Parse scope channels (optional - missing means all off).
+  // Each array entry is "" (off), a param name, or "cc:<n>".
+  for (int i = 0; i < SCOPE_CHANNEL_COUNT; i++) {
+    scene->scope.channels[i].kind = SCOPE_SRC_NONE;
+    scene->scope.channels[i].id = 0;
+  }
+  cJSON* scope = cJSON_GetObjectItem(root, "scope");
+  if (scope && cJSON_IsArray(scope)) {
+    int n = cJSON_GetArraySize(scope);
+    if (n > SCOPE_CHANNEL_COUNT) n = SCOPE_CHANNEL_COUNT;
+    for (int i = 0; i < n; i++) {
+      cJSON* item = cJSON_GetArrayItem(scope, i);
+      if (!item || !cJSON_IsString(item)) continue;
+      const char* s = item->valuestring;
+      if (!s || s[0] == '\0') continue;
+      if (strncmp(s, "cc:", 3) == 0) {
+        int cc = atoi(s + 3);
+        if (cc >= 0 && cc <= 127) {
+          scene->scope.channels[i].kind = SCOPE_SRC_CC;
+          scene->scope.channels[i].id = (uint8_t)cc;
+        }
+      } else {
+        param_target_t t = param_target_from_string(s);
+        // Accept only an exact match (from_string falls back to target 0).
+        if (strcmp(param_target_to_string(t), s) == 0) {
+          scene->scope.channels[i].kind = SCOPE_SRC_PARAM;
+          scene->scope.channels[i].id = (uint8_t)t;
+        }
+      }
+    }
   }
 
   // Parse device_id (optional - empty means use global device_config)
@@ -8350,8 +8444,10 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
       device_config_set_program(program);
     }
     if (scene->num_on_load_actions > 0) {
-      for (int i = 0; i < scene->num_on_load_actions; i++)
+      for (int i = 0; i < scene->num_on_load_actions; i++) {
+        action_set_next_trigger_source(ACTION_SOURCE_ON_LOAD, (uint8_t)i);
         action_execute(&scene->on_load[i], 127, true);
+      }
     }
     lfo_apply_start_modes();
     rtg_apply_start_mode();

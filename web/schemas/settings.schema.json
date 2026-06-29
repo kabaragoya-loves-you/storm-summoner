@@ -377,16 +377,9 @@
           "type": "calibration"
         },
         {
-          "id": "proximity.hysteresis",
-          "label": "Hysteresis",
-          "description": "Enable hysteresis for CC mode",
-          "type": "toggle",
-          "default": false
-        },
-        {
           "id": "proximity.rest_position",
           "label": "Rest Position",
-          "description": "Rest position value (0-127)",
+          "description": "CC value when the hand is away (0-127)",
           "type": "select",
           "options": [
             {"value": 0, "label": "0"},
@@ -406,8 +399,14 @@
             {"value": 112, "label": "112"},
             {"value": 127, "label": "127"}
           ],
-          "default": 0,
-          "visible_when": {"id": "proximity.hysteresis", "value": true}
+          "default": 0
+        },
+        {
+          "id": "proximity.hysteresis",
+          "label": "Hysteresis",
+          "description": "Hold last value, then animate back to rest when the hand leaves",
+          "type": "toggle",
+          "default": false
         },
         {
           "id": "proximity.return_speed",

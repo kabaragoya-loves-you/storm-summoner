@@ -31,6 +31,7 @@ static ui_draw_module_t* available_modules[] = {
   &summoner_module,
   &beat_module,
   &khyron_module,
+  &scope_module,
   &template_module,
   &working_module,
   &updating_module,
@@ -42,6 +43,7 @@ static const int num_modules = sizeof(available_modules) / sizeof(available_modu
 const char* const ui_scene_selectable_modules[] = {
   "beat",
   "khyron",
+  "scope",
   "space",
   "summoner",
   "pixels",

@@ -16,6 +16,131 @@ static const char* TAG = "action";
 static bool s_initialized = false;
 
 // ============================================================================
+// Trigger source + last-executed snapshot (khyron)
+// ============================================================================
+static action_trigger_source_t s_next_source = {
+  .type = ACTION_SOURCE_UNKNOWN,
+  .index = 0
+};
+
+typedef struct {
+  action_trigger_source_t source;
+  uint8_t scene_index;
+  action_t action;
+} action_executed_snapshot_t;
+
+static action_executed_snapshot_t s_executed_snapshot;
+static volatile uint32_t s_snapshot_seq = 0;
+
+void action_set_next_trigger_source(action_source_type_t type, uint8_t index) {
+  s_next_source.type = type;
+  s_next_source.index = index;
+}
+
+action_trigger_source_t action_peek_trigger_source(void) {
+  return s_next_source;
+}
+
+static action_trigger_source_t action_consume_trigger_source(void) {
+  action_trigger_source_t src = s_next_source;
+  s_next_source.type = ACTION_SOURCE_UNKNOWN;
+  s_next_source.index = 0;
+  return src;
+}
+
+// Cycle index that was just fired (current_index already advanced by the handler).
+static uint8_t control_fired_cycle_index(const action_t *action) {
+  uint8_t steps = action->params.control.num_cycle_steps;
+  if (steps < 2) steps = 2;
+  return action->params.control.current_index == 0 ?
+    (uint8_t)(steps - 1) :
+    (uint8_t)(action->params.control.current_index - 1);
+}
+
+// CC value the action sent (or selected for cycle), from stored params — not the
+// live cache, which can differ after gating clamps or morph deferral.
+static uint8_t action_control_sent_cc_value(const action_t *action, uint8_t cc_slot) {
+  if (!action || cc_slot >= 4) return 0;
+
+  if (action->variant == VARIANT_CYCLE) {
+    uint8_t idx = control_fired_cycle_index(action);
+    return action->params.control.cycle_values[cc_slot][idx];
+  }
+
+  return action->params.control.values[cc_slot];
+}
+
+static void snapshot_apply_executed_values(action_t *snap) {
+  if (!snap) return;
+
+  switch (snap->type) {
+    case ACTION_CONTROL: {
+      uint8_t num = snap->params.control.num_ccs;
+      if (num == 0) num = 1;
+      if (num > 4) num = 4;
+
+      for (uint8_t i = 0; i < num; i++)
+        snap->params.control.values[i] = action_control_sent_cc_value(snap, i);
+      break;
+    }
+
+    case ACTION_RANDOMIZE:
+      break;
+
+    case ACTION_BOOMERANG:
+      if (snap->params.boomerang.output_type == OUTPUT_TYPE_CC) {
+        uint8_t cc = snap->params.boomerang.cc_number;
+        snap->params.boomerang.start_value = action_get_cc_value(cc);
+      }
+      break;
+
+    case ACTION_NOTE:
+      if (snap->params.note.active_count > 0)
+        snap->params.note.note = snap->params.note.active_notes[0];
+      break;
+
+    default:
+      break;
+  }
+}
+
+static void store_executed_snapshot(const action_t *action,
+  action_trigger_source_t source, uint8_t scene_index) {
+  s_snapshot_seq++;
+  s_executed_snapshot.source = source;
+  s_executed_snapshot.scene_index = scene_index;
+  s_executed_snapshot.action = *action;
+  snapshot_apply_executed_values(&s_executed_snapshot.action);
+  s_snapshot_seq++;
+}
+
+bool action_get_last_executed(action_trigger_source_t *src, uint8_t *scene_index,
+    action_t *out) {
+  if (!src || !scene_index || !out) return false;
+
+  for (int attempt = 0; attempt < 4; attempt++) {
+    uint32_t seq1 = s_snapshot_seq;
+    if (seq1 & 1u) continue;
+
+    action_trigger_source_t local_src = s_executed_snapshot.source;
+    uint8_t local_scene = s_executed_snapshot.scene_index;
+    action_t local_action = s_executed_snapshot.action;
+
+    uint32_t seq2 = s_snapshot_seq;
+    if (seq1 != seq2 || (seq2 & 1u)) continue;
+
+    if (local_src.type == ACTION_SOURCE_UNKNOWN) return false;
+
+    *src = local_src;
+    *scene_index = local_scene;
+    *out = local_action;
+    return true;
+  }
+
+  return false;
+}
+
+// ============================================================================
 // CC value cache (shared across action modules via action_get/set_cc_value)
 // ============================================================================
 static uint8_t s_last_cc_values[128];
@@ -181,8 +306,10 @@ static bool action_queue_timed(action_t* action, uint8_t trigger_value, bool rep
       ? 0 : action->timing_beat;
   }
 
-  return action_scheduler_enqueue(action, trigger_value, target_beat,
+  bool queued = action_scheduler_enqueue(action, trigger_value, target_beat,
     target_bars, repeats, 1);
+  if (queued) (void)action_consume_trigger_source();
+  return queued;
 }
 
 static void action_queue_immediate_repeat(action_t* action, uint8_t trigger_value) {
@@ -196,7 +323,8 @@ static void action_queue_immediate_repeat(action_t* action, uint8_t trigger_valu
   uint8_t interval = action_repeat_division_to_beats(
     action->repeat_division, beats_per_bar);
   if (interval == 0) interval = 1;
-  action_scheduler_enqueue(action, trigger_value, 0, 0, true, interval);
+  bool queued = action_scheduler_enqueue(action, trigger_value, 0, 0, true, interval);
+  if (queued) (void)action_consume_trigger_source();
 }
 
 esp_err_t action_execute_triggered(const action_t* action, uint8_t trigger_value) {
@@ -297,13 +425,18 @@ esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value
   }
 
   if (is_press) {
+    action_trigger_source_t source = action_consume_trigger_source();
+    uint8_t scene_index = scene_get_current_index();
+
+    store_executed_snapshot(action, source, scene_index);
+
     event_t evt = {
       .type = EVENT_ACTION_EXECUTED,
       .priority = EVENT_PRIORITY_NORMAL,
       .timestamp = event_bus_get_current_timestamp(),
       .data.action_executed = {
-        .source_type = 255,
-        .source_index = 0,
+        .source_type = (uint8_t)source.type,
+        .source_index = source.index,
         .action_type = action->type,
         .action_variant = action->variant,
         .cc_number = 0,
@@ -316,14 +449,19 @@ esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value
     if (action->type == ACTION_CONTROL) {
       if (action->params.control.num_ccs > 0) {
         evt.data.action_executed.cc_number = action->params.control.cc_numbers[0];
-        evt.data.action_executed.cc_value = action->params.control.values[0];
+        evt.data.action_executed.cc_value = action_control_sent_cc_value(action, 0);
         if (action->variant == VARIANT_HOLD) {
           evt.data.action_executed.cc_value2 = action->params.control.values2[0];
         }
       }
     } else if (action->type == ACTION_NOTE) {
-      evt.data.action_executed.note = action->params.note.note;
-      evt.data.action_executed.velocity = action->params.note.velocity;
+      if (action->params.note.active_count > 0) {
+        evt.data.action_executed.note = action->params.note.active_notes[0];
+        evt.data.action_executed.velocity = action->params.note.velocity;
+      } else {
+        evt.data.action_executed.note = action->params.note.note;
+        evt.data.action_executed.velocity = action->params.note.velocity;
+      }
     }
 
     event_bus_post(&evt);

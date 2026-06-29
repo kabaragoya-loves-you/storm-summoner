@@ -42,6 +42,8 @@ application.register(
           void this.leaveSettingsMode()
         }
       })
+
+      this.connection.registerTabLeaveHandler('settings', () => this.leaveSettingsMode())
     }
 
     disconnect () {
@@ -86,12 +88,10 @@ application.register(
     }
 
     async leaveSettingsMode () {
-      if (!this.inSettingsMode) return
+      if (!this.inSettingsMode && !this.connection._deviceSettingsActive) return
       try {
         await this.connection.runSerialTask(async () => {
           await this.connection.ensureDeviceIdle()
-          await this.connection.sendRaw('EXIT\n')
-          await this.connection._waitForSerialBanner('SETTINGS_STOPPED', 3000)
           this.connection.clearPendingRx()
         })
       } catch (err) {
@@ -117,6 +117,7 @@ application.register(
         throw new Error(`Unexpected response: ${response}`)
       }
       this.inSettingsMode = true
+      this.connection._deviceSettingsActive = true
       this.log('Settings mode active')
     }
 

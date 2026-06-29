@@ -1,4 +1,5 @@
 #include "action_internal.h"
+#include "action.h"
 #include "scene.h"
 #include "transport.h"
 #include "tempo.h"
@@ -19,6 +20,7 @@ typedef struct {
   action_t action;
   action_t* original;         // Pointer to original action for state sync
   uint8_t trigger_value;
+  action_trigger_source_t source;
   bool valid;
   bool paused;                // True if action is paused (transport stopped)
 
@@ -192,6 +194,24 @@ void action_scheduler_resume_triggered(action_t* action) {
   }
 }
 
+static action_trigger_source_t scheduler_capture_source(void) {
+  action_trigger_source_t src = action_peek_trigger_source();
+  if (src.type == ACTION_SOURCE_UNKNOWN) {
+    src.type = ACTION_SOURCE_SCHEDULED;
+    src.index = 0;
+  }
+  return src;
+}
+
+static void scheduler_restore_source(const action_trigger_source_t *src) {
+  action_trigger_source_t use = *src;
+  if (use.type == ACTION_SOURCE_UNKNOWN) {
+    use.type = ACTION_SOURCE_SCHEDULED;
+    use.index = 0;
+  }
+  action_set_next_trigger_source(use.type, use.index);
+}
+
 bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
     uint8_t target_beat, uint16_t target_bar, bool repeating,
     uint8_t initial_beats_remaining) {
@@ -202,6 +222,7 @@ bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
     if (s_pending_actions[i].valid && s_pending_actions[i].original == action) {
       s_pending_actions[i].action = *action;
       s_pending_actions[i].trigger_value = trigger_value;
+      s_pending_actions[i].source = scheduler_capture_source();
       s_pending_actions[i].target_beat = target_beat;
       s_pending_actions[i].target_bar = target_bar;
       s_pending_actions[i].paused = false;
@@ -219,6 +240,7 @@ bool action_scheduler_enqueue(action_t* action, uint8_t trigger_value,
       s_pending_actions[i].action = *action;
       s_pending_actions[i].original = action;
       s_pending_actions[i].trigger_value = trigger_value;
+      s_pending_actions[i].source = scheduler_capture_source();
       s_pending_actions[i].target_beat = target_beat;
       s_pending_actions[i].target_bar = target_bar;
       s_pending_actions[i].valid = true;
@@ -388,6 +410,7 @@ static void handle_beat_event(const event_t* event, void* context) {
             action_type_name(pending->action.type), current_beat,
             pending->target_beat == 0 ? -1 : (int)pending->target_beat);
 
+          scheduler_restore_source(&pending->source);
           action_execute_immediate(&pending->action, pending->trigger_value, true);
         }
 
@@ -633,6 +656,7 @@ static void handle_transport_event(const event_t* event, void* context) {
           scene->num_on_play_actions);
         for (int i = 0; i < scene->num_on_play_actions; i++) {
           action_scheduler_reset_cycle_index(&scene->on_play[i]);
+          action_set_next_trigger_source(ACTION_SOURCE_ON_PLAY, (uint8_t)i);
           action_execute_triggered(&scene->on_play[i], 127);
         }
       } else if (is_resume) {

@@ -56,7 +56,8 @@ uint8_t continuous_mapping_process(uint8_t raw_input, continuous_mapping_t* mapp
   return (uint8_t)scaled;
 }
 
-uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input, const continuous_mapping_t* mapping) {
+uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input,
+  continuous_mapping_t* mapping) {
   if (!mapping) return 64;
 
   uint8_t curved = curve_apply(&mapping->curve, raw_input);
@@ -77,19 +78,31 @@ uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input, const continu
 
   if (scaled < 0) scaled = 0;
   if (scaled > 127) scaled = 127;
+
+  mapping->last_value = (uint8_t)scaled;
+  mapping->last_activity_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
   return (uint8_t)scaled;
 }
 
-uint8_t continuous_mapping_velocity_sample(uint8_t raw_input, const continuous_mapping_t* mapping) {
+uint8_t continuous_mapping_apply(uint8_t raw_input, continuous_mapping_t* mapping) {
+  if (!mapping || !mapping->enabled) return 0;
+  if (mapping->polarity == POLARITY_BIPOLAR)
+    return continuous_mapping_unipolar_bipolar_map(raw_input, mapping);
+  return continuous_mapping_process(raw_input, mapping);
+}
+
+uint8_t continuous_mapping_velocity_sample(uint8_t raw_input, continuous_mapping_t* mapping) {
   if (!mapping) return 64;
 
   if (mapping->polarity == POLARITY_BIPOLAR) {
     return continuous_mapping_unipolar_bipolar_map(raw_input, mapping);
   }
 
-  continuous_mapping_t temp = *mapping;
-  temp.enabled = true;
-  return continuous_mapping_process(raw_input, &temp);
+  bool was_enabled = mapping->enabled;
+  mapping->enabled = true;
+  uint8_t value = continuous_mapping_process(raw_input, mapping);
+  mapping->enabled = was_enabled;
+  return value;
 }
 
 bool continuous_mapping_check_idle(continuous_mapping_t* mapping) {

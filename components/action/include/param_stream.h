@@ -35,11 +35,13 @@ const char* param_target_display_name(param_target_t target);
 
 bool param_target_is_cc_active(const scene_t* scene, param_target_t target);
 continuous_mapping_t* param_target_get_mapping(scene_t* scene, param_target_t target);
+continuous_mapping_t* param_target_get_mapping_live(scene_t* scene, param_target_t target);
 
 uint8_t param_target_get_cc(const scene_t* scene, param_target_t target);
 void param_target_set_cc(scene_t* scene, param_target_t target, uint8_t cc);
 
 uint8_t param_target_get_value(const scene_t* scene, param_target_t target);
+uint8_t param_target_scope_value(const scene_t* scene, param_target_t target);
 void param_target_set_value(scene_t* scene, param_target_t target, uint8_t value);
 
 void param_target_apply(scene_t* scene, param_target_t target, uint8_t cc, uint8_t value);

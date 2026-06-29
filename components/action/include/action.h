@@ -823,6 +823,39 @@ uint8_t action_get_flag(void);
 void action_set_flag(uint8_t value);
 
 // ============================================================================
+// Action trigger source (for khyron / EVENT_ACTION_EXECUTED)
+// ============================================================================
+
+typedef enum {
+  ACTION_SOURCE_UNKNOWN = 0,
+  ACTION_SOURCE_PAD,
+  ACTION_SOURCE_BUTTON,
+  ACTION_SOURCE_BUMP,
+  ACTION_SOURCE_FOOTSWITCH,
+  ACTION_SOURCE_CC_INPUT,
+  ACTION_SOURCE_SCHEDULED,
+  ACTION_SOURCE_ON_LOAD,
+  ACTION_SOURCE_ON_PLAY,
+  ACTION_SOURCE_CV
+} action_source_type_t;
+
+typedef struct {
+  action_source_type_t type;
+  uint8_t index;
+} action_trigger_source_t;
+
+// Set the source consumed by the next action_execute* call. Cleared after use.
+void action_set_next_trigger_source(action_source_type_t type, uint8_t index);
+
+// Peek without consuming (scheduler captures at enqueue time).
+action_trigger_source_t action_peek_trigger_source(void);
+
+// Last executed action snapshot (seqlock; reader may retry). Returns false if no
+// consistent snapshot is available yet.
+bool action_get_last_executed(action_trigger_source_t *src, uint8_t *scene_index,
+  action_t *out);
+
+// ============================================================================
 // CC Value Cache API
 // ============================================================================
 // Tracks current CC values (0-127) for all 128 CC numbers.

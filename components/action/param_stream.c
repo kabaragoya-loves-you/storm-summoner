@@ -1,7 +1,14 @@
 #include "param_stream.h"
 #include "action.h"
 #include "scene.h"
+#include "continuous_mapping.h"
+#include "lfo.h"
+#include "tilt.h"
+#include "expression.h"
+#include "cv.h"
 #include "esp_log.h"
+
+extern uint8_t als_get_processed_midi(void);
 #include <string.h>
 
 static const char* TAG = "param_stream";
@@ -86,9 +93,54 @@ bool param_target_is_cc_active(const scene_t* scene, param_target_t target) {
   }
 }
 
+static continuous_mapping_t* param_target_get_mapping_enabled(scene_t* scene,
+  param_target_t target) {
+  if (!scene || target >= PARAM_TARGET_COUNT) return NULL;
+
+  switch (target) {
+    case PARAM_TARGET_TOUCHWHEEL:
+      if (scene->touchwheel_mode != TOUCHWHEEL_MODE_CONTINUOUS) return NULL;
+      return scene->touchwheel.enabled ? &scene->touchwheel : NULL;
+    case PARAM_TARGET_EXPRESSION:
+      if (scene->expression_mode != EXPRESSION_MODE_PEDAL) return NULL;
+      return scene->expression.enabled ? &scene->expression : NULL;
+    case PARAM_TARGET_CV:
+      if (scene->cv_input_mode != INPUT_MODE_CV) return NULL;
+      return scene->cv.enabled ? &scene->cv : NULL;
+    case PARAM_TARGET_PROXIMITY:
+      return scene->proximity.enabled ? &scene->proximity : NULL;
+    case PARAM_TARGET_ALS:
+      return scene->als.enabled ? &scene->als : NULL;
+    case PARAM_TARGET_TILT_X:
+      return scene->tilt_x.enabled ? &scene->tilt_x : NULL;
+    case PARAM_TARGET_TILT_Y:
+      return scene->tilt_y.enabled ? &scene->tilt_y : NULL;
+    case PARAM_TARGET_NOTE_TRACK:
+      return scene->note_track.enabled ? &scene->note_track : NULL;
+    case PARAM_TARGET_LFO1:
+      if (!scene->lfo1_config.enabled) return NULL;
+      return scene->lfo1.enabled ? &scene->lfo1 : NULL;
+    case PARAM_TARGET_LFO2:
+      if (!scene->lfo2_config.enabled) return NULL;
+      return scene->lfo2.enabled ? &scene->lfo2 : NULL;
+    default:
+      return NULL;
+  }
+}
+
 continuous_mapping_t* param_target_get_mapping(scene_t* scene, param_target_t target) {
   if (!scene || target >= PARAM_TARGET_COUNT) return NULL;
   if (!param_target_is_cc_active(scene, target)) return NULL;
+  return param_target_get_mapping_enabled(scene, target);
+}
+
+continuous_mapping_t* param_target_get_mapping_live(scene_t* scene, param_target_t target) {
+  return param_target_get_mapping_enabled(scene, target);
+}
+
+static const continuous_mapping_t* param_target_scope_mapping(const scene_t* scene,
+  param_target_t target) {
+  if (!scene || target >= PARAM_TARGET_COUNT) return NULL;
 
   switch (target) {
     case PARAM_TARGET_TOUCHWHEEL: return &scene->touchwheel;
@@ -103,6 +155,64 @@ continuous_mapping_t* param_target_get_mapping(scene_t* scene, param_target_t ta
     case PARAM_TARGET_LFO2: return &scene->lfo2;
     default: return NULL;
   }
+}
+
+static uint8_t param_target_scope_cc_value(const continuous_mapping_t* mapping) {
+  if (!mapping || mapping->output_type != OUTPUT_TYPE_CC) return 0;
+  uint8_t cc = mapping->cc_number;
+  if (mapping->num_cc_numbers > 0 && mapping->cc_numbers[0] > 0)
+    cc = mapping->cc_numbers[0];
+  return cc > 0 ? action_get_cc_value(cc) : 0;
+}
+
+uint8_t param_target_scope_value(const scene_t* scene, param_target_t target) {
+  if (!scene || target >= PARAM_TARGET_COUNT) return 0;
+
+  const continuous_mapping_t* mapping = param_target_scope_mapping(scene, target);
+  uint8_t raw = 0;
+
+  switch (target) {
+    case PARAM_TARGET_TOUCHWHEEL:
+      raw = scene_get_touchwheel_value();
+      break;
+    case PARAM_TARGET_EXPRESSION:
+      raw = expression_get_midi_value();
+      break;
+    case PARAM_TARGET_CV:
+      raw = cv_get_midi_value();
+      break;
+    case PARAM_TARGET_TILT_X:
+      raw = tilt_get_processed_midi(TILT_AXIS_X);
+      break;
+    case PARAM_TARGET_TILT_Y:
+      raw = tilt_get_processed_midi(TILT_AXIS_Y);
+      break;
+    case PARAM_TARGET_ALS:
+      raw = als_get_processed_midi();
+      break;
+    case PARAM_TARGET_LFO1: {
+      if (!mapping) return 0;
+      continuous_mapping_t snap = *mapping;
+      return continuous_mapping_velocity_sample(lfo_get_value(0), &snap);
+    }
+    case PARAM_TARGET_LFO2: {
+      if (!mapping) return 0;
+      continuous_mapping_t snap = *mapping;
+      return continuous_mapping_velocity_sample(lfo_get_value(1), &snap);
+    }
+    case PARAM_TARGET_PROXIMITY:
+    case PARAM_TARGET_NOTE_TRACK:
+    default: {
+      uint8_t cc_val = param_target_scope_cc_value(mapping);
+      if (cc_val > 0 || (mapping && mapping->cc_number > 0))
+        return cc_val;
+      return mapping ? mapping->last_value : 0;
+    }
+  }
+
+  if (!mapping) return raw;
+  continuous_mapping_t snap = *mapping;
+  return continuous_mapping_velocity_sample(raw, &snap);
 }
 
 uint8_t param_target_get_cc(const scene_t* scene, param_target_t target) {
@@ -133,11 +243,14 @@ void param_target_set_cc(scene_t* scene, param_target_t target, uint8_t cc) {
 }
 
 uint8_t param_target_get_value(const scene_t* scene, param_target_t target) {
-  if (!scene || !param_target_is_cc_active(scene, target)) return 0;
-  if (target == PARAM_TARGET_TOUCHWHEEL) return scene_get_touchwheel_value();
+  if (!scene || target >= PARAM_TARGET_COUNT) return 0;
+  if (target == PARAM_TARGET_TOUCHWHEEL) {
+    if (scene->touchwheel_mode != TOUCHWHEEL_MODE_CONTINUOUS) return 0;
+    return scene_get_touchwheel_value();
+  }
 
   continuous_mapping_t* mapping =
-    param_target_get_mapping((scene_t*)scene, target);
+    param_target_get_mapping_enabled((scene_t*)scene, target);
   return mapping ? mapping->last_value : 0;
 }
 

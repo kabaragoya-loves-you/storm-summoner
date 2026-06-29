@@ -23,9 +23,11 @@ application.register(
         if (e.detail.tab === 'config' && this.connection.isConnected && !this.inConfigMode) {
           this.activate()
         } else if (e.detail.tab !== 'config' && this.inConfigMode) {
-          this.leaveConfigMode()
+          void this.leaveConfigMode()
         }
       })
+
+      this.connection.registerTabLeaveHandler('config', () => this.leaveConfigMode())
     }
 
     onConnectionChanged ({ connected }) {
@@ -37,12 +39,10 @@ application.register(
     }
 
     async leaveConfigMode () {
-      if (!this.inConfigMode) return
+      if (!this.inConfigMode && !this.connection._deviceConfigActive) return
       try {
         await this.connection.runSerialTask(async () => {
           await this.connection.ensureDeviceIdle()
-          await this.connection.sendRaw('EXIT\n')
-          await this.connection._waitForSerialBanner('CONFIG_STOPPED', 3000)
           this.connection.clearPendingRx()
         })
       } catch (err) {
@@ -109,6 +109,7 @@ application.register(
 
       if (response === 'CONFIG_STARTED') {
         this.inConfigMode = true
+        this.connection._deviceConfigActive = true
       } else {
         throw new Error(`Unexpected response: ${response}`)
       }
@@ -228,9 +229,32 @@ application.register(
       return parseInt(raw, 10)
     }
 
+    nearestSelectValue (setting, raw) {
+      if (!setting?.options?.length) return raw
+      const n = Number(raw)
+      if (Number.isNaN(n)) return setting.options[0].value
+      for (const opt of setting.options) {
+        if (Number(opt.value) === n) return opt.value
+      }
+      let best = setting.options[0].value
+      let bestDist = Math.abs(n - Number(best))
+      for (const opt of setting.options) {
+        const dist = Math.abs(n - Number(opt.value))
+        if (dist < bestDist) {
+          bestDist = dist
+          best = opt.value
+        }
+      }
+      return best
+    }
+
     settingValue (setting) {
       const raw = this.values[setting.id]
-      if (raw !== undefined && raw !== null) return raw
+      if (raw !== undefined && raw !== null) {
+        if (setting.type === 'select' && setting.options)
+          return this.nearestSelectValue(setting, raw)
+        return raw
+      }
       if (setting.default !== undefined) return setting.default
       return setting.type === 'toggle' ? 0 : ''
     }

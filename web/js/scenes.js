@@ -148,7 +148,12 @@ application.register(
       for (let attempt = 0; attempt < 2; attempt++) {
         this.connection.clearPendingRx()
         await this.connection.sendRaw('SCENES\n')
-        const response = await this.connection._waitForSerialBanner('SCENES_STARTED', 5000)
+        let response = ''
+        try {
+          response = await this.connection._waitForSerialBanner('SCENES_STARTED', 5000)
+        } catch (err) {
+          response = String(err?.message || err).replace(/^Error:\s*/, '')
+        }
 
         if (response === 'SCENES_STARTED') {
           this.inScenesMode = true
@@ -157,11 +162,9 @@ application.register(
           return
         }
 
-        // Device may still be in SCENES after the scene panel sent EXIT; sync to idle.
+        // Device may still be in CONFIG/SETTINGS/SCENES; sync to idle and retry once.
         if (attempt === 0 && response?.includes('Unknown')) {
-          await this.connection.sendRaw('EXIT\n')
-          await this.sleep(150)
-          await this.connection.drainInput()
+          await this.connection.ensureDeviceIdle()
           continue
         }
 

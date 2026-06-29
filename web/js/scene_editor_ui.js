@@ -481,9 +481,27 @@ window.SceneEditorUi = (function () {
   const SCREEN_MODULES = [
     { v: 'beat', l: 'Beat Grid' },
     { v: 'khyron', l: 'Khyron' },
+    { v: 'scope', l: 'Scope' },
     { v: 'space', l: 'Space' },
     { v: 'summoner', l: 'Summoner' },
     { v: 'pixels', l: 'Pixels' }
+  ]
+
+  // Named continuous sources selectable per scope channel. Values match the
+  // firmware param_target_to_string() tokens; "" = channel off. Device CCs are
+  // appended at render time as "cc:<n>".
+  const SCOPE_PARAM_SOURCES = [
+    { v: '', l: 'Off' },
+    { v: 'touchwheel', l: 'Touchwheel' },
+    { v: 'expression', l: 'Expression' },
+    { v: 'cv', l: 'Control Voltage' },
+    { v: 'proximity', l: 'Proximity' },
+    { v: 'als', l: 'Ambient Light' },
+    { v: 'tilt_x', l: 'Tilt X' },
+    { v: 'tilt_y', l: 'Tilt Y' },
+    { v: 'note_track', l: 'Note Track' },
+    { v: 'lfo1', l: 'LFO 1' },
+    { v: 'lfo2', l: 'LFO 2' }
   ]
 
   const REPEAT_DIVISIONS = [
@@ -2513,21 +2531,41 @@ window.SceneEditorUi = (function () {
   }
 
   function renderActionChain (ctrl, path, chain, maxItems, trigger, opts = {}) {
-    const arr = Array.isArray(chain) ? chain : []
+    syncActionChainList(ctrl.editModel, path, ctrl)
+    const arr = ctrl.editModel[path]
     const slotPrefix = opts.slotTitlePrefix || 'Action'
-    let html = ''
-    for (let i = 0; i < maxItems; i++) {
+    let rows = ''
+    for (let i = 0; i < arr.length; i++) {
       const itemPath = `${path}.${i}`
-      html += `<div class="scene-action-slot"><h4>${esc(slotPrefix)} ${
-        i + 1
-      }</h4>`
-      html += renderAction(ctrl, itemPath, arr[i] || { type: 'none' }, {
+      const body = renderAction(ctrl, itemPath, arr[i] || { type: 'none' }, {
         trigger,
         typeLabel: opts.typeLabel || 'Action'
       })
-      html += '</div>'
+      const add =
+        arr.length < maxItems && i === arr.length - 1
+          ? slotAddButton(path, 'action-chain', 'Add action', maxItems)
+          : ''
+      rows += slotBlock(`${slotPrefix} ${i + 1}`, body, i > 0 ? i : -1, add)
     }
-    return html
+    return slotGroup({
+      path,
+      kind: 'action-chain',
+      min: 1,
+      max: maxItems,
+      def: '',
+      rows
+    })
+  }
+
+  function actionChainEditorList (raw, ctrl) {
+    if (ctrl?.actionChainEditorList) return ctrl.actionChainEditorList(raw)
+    if (!Array.isArray(raw) || raw.length === 0) return [{ type: 'none' }]
+    return raw.slice(0, 4)
+  }
+
+  function syncActionChainList (m, path, ctrl) {
+    if (!m) return
+    m[path] = actionChainEditorList(m[path], ctrl)
   }
 
   function lfoSectionTitle (n) {
@@ -2599,14 +2637,72 @@ window.SceneEditorUi = (function () {
     return flatBlock('Pedal', html)
   }
 
-  /** Scene globals (device menu after assignment submenus). */
-  function renderSceneGlobals (ctrl) {
-    const m = ctrl.editModel
-    const ctx = ctrl.deviceContext
-    let html = ''
+  // Full option list for a scope channel: "Off" + named sources + device CCs.
+  function scopeChannelOptions (ctrl) {
+    const opts = SCOPE_PARAM_SOURCES.slice()
+    const device = ctrl.deviceDefinition
+    if (DeviceControls.hasParameters(device)) {
+      for (const c of DeviceControls.parameterOptions(device)) {
+        opts.push({ v: `cc:${c.v}`, l: c.l })
+      }
+    }
+    return opts
+  }
 
-    html += fieldRow('Scene name', textField('name', m.name || '', 16))
-    html += fieldRow(
+  // Trim trailing Off only when loading/saving — not while editing (+ adds '').
+  function normalizeScopeList (raw, ctrl) {
+    if (ctrl?.normalizeScopeEditorList) return ctrl.normalizeScopeEditorList(raw)
+    if (!Array.isArray(raw) || raw.length === 0) return ['']
+    let list = raw.map(v => (typeof v === 'string' ? v : '')).slice(0, 4)
+    while (list.length > 1 && list[list.length - 1] === '') list.pop()
+    return list
+  }
+
+  function scopeEditorList (raw, ctrl) {
+    if (ctrl?.scopeEditorList) return ctrl.scopeEditorList(raw)
+    if (!Array.isArray(raw) || raw.length === 0) return ['']
+    return raw.map(v => (typeof v === 'string' ? v : '')).slice(0, 4)
+  }
+
+  function syncScopeList (m, ctrl) {
+    if (!m) return
+    m.scope = scopeEditorList(m.scope, ctrl)
+  }
+
+  function screenModuleHasParams (uiModule) {
+    return normalizeUiModule(uiModule) === 'scope'
+  }
+
+  function renderScopeChannelSlots (ctrl) {
+    const m = ctrl.editModel
+    syncScopeList(m, ctrl)
+    const channels = m.scope
+    const options = scopeChannelOptions(ctrl)
+    const maxSlots = 4
+    let rows = ''
+    for (let i = 0; i < channels.length; i++) {
+      const body = fieldRow(
+        'Source',
+        selectField(`scope.${i}`, channels[i], options)
+      )
+      const add =
+        channels.length < maxSlots && i === channels.length - 1
+          ? slotAddButton('scope', 'scope-channel', 'Add channel', maxSlots)
+          : ''
+      rows += slotBlock(`Channel ${i + 1}`, body, i > 0 ? i : -1, add)
+    }
+    return slotGroup({
+      path: 'scope',
+      kind: 'scope-channel',
+      min: 1,
+      max: maxSlots,
+      def: '',
+      rows
+    })
+  }
+
+  function renderScreenField (ctrl, m) {
+    return fieldRow(
       'Screen',
       selectField(
         'ui_module',
@@ -2614,6 +2710,25 @@ window.SceneEditorUi = (function () {
         screenModuleOptions(m.ui_module)
       )
     )
+  }
+
+  /** Scene globals (device menu after assignment submenus). */
+  function renderSceneGlobals (ctrl) {
+    const m = ctrl.editModel
+    const ctx = ctrl.deviceContext
+    let html = ''
+
+    html += fieldRow('Scene name', textField('name', m.name || '', 16))
+
+    const uiMod = normalizeUiModule(m.ui_module)
+    if (screenModuleHasParams(uiMod)) {
+      html += '<div class="scene-slot scene-screen-block">'
+      html += renderScreenField(ctrl, m)
+      if (uiMod === 'scope') html += renderScopeChannelSlots(ctrl)
+      html += '</div>'
+    } else {
+      html += renderScreenField(ctrl, m)
+    }
 
     if (ctx.sceneMode !== 1) {
       html += fieldRow(
@@ -3940,7 +4055,6 @@ window.SceneEditorUi = (function () {
   }
 
   function renderOnLoad (ctrl) {
-    if (!ctrl.editModel.on_load) ctrl.editModel.on_load = []
     return section(
       'On-Load',
       renderActionChain(
@@ -3956,7 +4070,6 @@ window.SceneEditorUi = (function () {
 
   function renderOnPlay (ctrl) {
     if (!ctrl.editModel.use_transport) return ''
-    if (!ctrl.editModel.on_play) ctrl.editModel.on_play = []
     return section(
       'On-Play',
       renderActionChain(

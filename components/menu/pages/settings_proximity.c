@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "sensor.h"
+#include "midi_proximity_scene_handler.h"
 #include "display_driver.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -385,6 +386,7 @@ static void hysteresis_confirm_cb(uint32_t selected_index, void* user_data) {
   s_callback_in_progress = true;
   
   proximity_set_hysteresis_enabled(selected_index == 1);
+  midi_proximity_scene_handler_proximity_settings_changed();
   ESP_LOGI(TAG, "Hysteresis %s", selected_index == 1 ? "enabled" : "disabled");
   
   s_callback_in_progress = false;
@@ -408,6 +410,12 @@ static void nav_to_hysteresis(void* user_data) {
 // Rest Position Roller
 // ============================================================================
 
+static uint32_t rest_pos_option_index(uint8_t current) {
+  if (current >= 127) return 15;
+  uint32_t idx = ((uint32_t)current + 4) / 8;
+  return idx > 15 ? 15 : idx;
+}
+
 static void rest_pos_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
   
@@ -419,6 +427,7 @@ static void rest_pos_confirm_cb(uint32_t selected_index, void* user_data) {
   if (selected_index == 15) value = 127;  // Last option is 127
   
   proximity_set_rest_position(value);
+  midi_proximity_scene_handler_proximity_settings_changed();
   ESP_LOGI(TAG, "Rest position set to: %u", value);
   
   s_callback_in_progress = false;
@@ -431,9 +440,8 @@ static lv_obj_t* rest_pos_roller_create(void) {
     "0\n8\n16\n24\n32\n40\n48\n56\n64\n72\n80\n88\n96\n104\n112\n127";
   
   uint8_t current = proximity_get_rest_position();
-  uint32_t idx = current / 8;
-  if (idx > 15) idx = 15;
-  
+  uint32_t idx = rest_pos_option_index(current);
+
   return menu_create_roller_page("Rest Position", options, idx, rest_pos_confirm_cb, NULL);
 }
 
@@ -461,6 +469,7 @@ static void return_speed_confirm_cb(uint32_t selected_index, void* user_data) {
   
   if (selected_index < 4) {
     proximity_set_return_speed(speeds[selected_index]);
+    midi_proximity_scene_handler_proximity_settings_changed();
     ESP_LOGI(TAG, "Return speed set to: %s", return_speed_to_string(speeds[selected_index]));
   }
   
@@ -505,6 +514,7 @@ static void timeout_confirm_cb(uint32_t selected_index, void* user_data) {
   
   if (selected_index < 3) {
     proximity_set_timeout(timeouts[selected_index]);
+    midi_proximity_scene_handler_proximity_settings_changed();
     ESP_LOGI(TAG, "Timeout set to: %s", timeout_to_string(timeouts[selected_index]));
   }
   
@@ -657,20 +667,19 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
     "Gamma\n%u (%.2f)", gamma, 0.15f + gamma * 0.0085f);
   s_prox_items[item_count++] = (menu_item_t){s_gamma_label[buf], nav_to_gamma, NULL, true, MENU_ITEM_KIND_ROLLER};
   
-  // Hysteresis Enable (for CC mode)
+  // Hysteresis Enable (dwell + animated return to rest)
   bool hyst_enabled = proximity_get_hysteresis_enabled();
   snprintf(s_hysteresis_label[buf], sizeof(s_hysteresis_label[buf]),
     "Hysteresis\n%s", hyst_enabled ? "Enabled" : "Disabled");
   s_prox_items[item_count++] = (menu_item_t){s_hysteresis_label[buf], nav_to_hysteresis, NULL, true, MENU_ITEM_KIND_ROLLER};
-  
-  // Only show hysteresis-related settings if enabled
+
+  // Rest Position (CC output when hand is away)
+  uint8_t rest_pos = proximity_get_rest_position();
+  snprintf(s_rest_pos_label[buf], sizeof(s_rest_pos_label[buf]),
+    "Rest Position\n%u", (unsigned)rest_pos);
+  s_prox_items[item_count++] = (menu_item_t){s_rest_pos_label[buf], nav_to_rest_pos, NULL, true, MENU_ITEM_KIND_ROLLER};
+
   if (hyst_enabled) {
-    // Rest Position
-    uint8_t rest_pos = proximity_get_rest_position();
-    snprintf(s_rest_pos_label[buf], sizeof(s_rest_pos_label[buf]),
-      "Rest Position\n%u", (unsigned)rest_pos);
-    s_prox_items[item_count++] = (menu_item_t){s_rest_pos_label[buf], nav_to_rest_pos, NULL, true, MENU_ITEM_KIND_ROLLER};
-    
     // Return Speed
     proximity_return_speed_t speed = proximity_get_return_speed();
     snprintf(s_return_speed_label[buf], sizeof(s_return_speed_label[buf]),

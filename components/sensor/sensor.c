@@ -48,7 +48,7 @@
 #define NVS_KEY_REST_POSITION "prox_rest"
 #define NVS_KEY_RETURN_SPEED "prox_ret_spd"
 #define NVS_KEY_TIMEOUT "prox_timeout"
-#define DEFAULT_REST_POSITION 65
+#define DEFAULT_REST_POSITION 0
 #define NVS_KEY_PROXIMITY_MODE "prox_mode"
 #define NVS_KEY_NOTE_SILENCE "prox_note_sil"
 #define NVS_KEY_SUNLIGHT_CANCEL "prox_sc_en"
@@ -59,9 +59,11 @@
 static TaskHandle_t sensor_task_handle = NULL;
 static volatile bool als_enabled_flag = false;
 static volatile bool ps_enabled_flag = false;
+static volatile bool ps_force_next_post = false;
 static volatile uint16_t als_value = 0;
 static volatile uint16_t ps_value = 0;
 static volatile uint8_t last_midi_als_value = 0;  // Last MIDI value actually sent
+static volatile uint8_t als_processed_midi = 0;   // Latest scaled MIDI (every read)
 static volatile uint8_t last_midi_ps_value = 0;   // Last MIDI value actually sent
 static volatile float filtered_als = 0.0f;
 static volatile float filtered_proximity = 0.0f;
@@ -93,10 +95,11 @@ static volatile bool hysteresis_enabled = false;
 static uint8_t rest_position = DEFAULT_REST_POSITION;
 static proximity_return_speed_t return_speed = PROXIMITY_RETURN_MEDIUM;
 static proximity_timeout_t timeout_setting = PROXIMITY_TIMEOUT_MEDIUM;
-static volatile uint32_t at_rest_start_time = 0;  // When sensor went to rest
+static volatile uint32_t at_rest_start_time = 0;
 static volatile bool returning_to_rest = false;
-static volatile float return_start_value = 0.0f;  // MIDI value when return began
-static volatile uint32_t return_start_time = 0;   // When return started
+static volatile bool proximity_sensor_at_rest = false;
+static volatile float return_start_value = 0.0f;
+static volatile uint32_t return_start_time = 0;
 
 // Mode settings (note generation now handled by midi_proximity_scene_handler)
 static proximity_mode_t proximity_mode = PROXIMITY_MODE_CC;
@@ -195,6 +198,7 @@ void sensor_init(bool enable_logging) {
 
   err = app_settings_load_u32(NVS_KEY_REST_POSITION, &stored_val);
   if (err != ESP_OK) {
+    rest_position = DEFAULT_REST_POSITION;
     app_settings_save_u32(NVS_KEY_REST_POSITION, DEFAULT_REST_POSITION);
   } else {
     rest_position = (uint8_t)stored_val;
@@ -634,12 +638,18 @@ uint8_t als_get_deadzone(void) {
   return als_deadzone;
 }
 
+#define PROX_IN_RANGE_CANCEL_THRESH  15
+
+bool proximity_output_bypass_scene_mapping(void) {
+  return hysteresis_enabled && (returning_to_rest || proximity_sensor_at_rest);
+}
+
 void proximity_set_hysteresis_enabled(bool enabled) {
   hysteresis_enabled = enabled;
   app_settings_save_u8(NVS_KEY_HYSTERESIS_ENABLED, enabled ? 1 : 0);
-  // Reset state when toggling
   at_rest_start_time = 0;
   returning_to_rest = false;
+  proximity_sensor_at_rest = false;
   ESP_LOGI(TAG, "Proximity hysteresis %s", enabled ? "enabled" : "disabled");
 }
 
@@ -656,6 +666,18 @@ void proximity_set_rest_position(uint8_t position) {
 
 uint8_t proximity_get_rest_position(void) {
   return rest_position;
+}
+
+void proximity_notify_settings_changed(void) {
+  at_rest_start_time = 0;
+  proximity_sensor_at_rest = false;
+  returning_to_rest = false;
+  if (hysteresis_enabled) {
+    returning_to_rest = true;
+    return_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    return_start_value = (float)last_midi_ps_value;
+  }
+  ps_force_next_post = true;
 }
 
 void proximity_set_return_speed(proximity_return_speed_t speed) {
@@ -839,7 +861,6 @@ static void sensor_task(void *arg) {
   uint16_t ps_raw_value;
   uint32_t ps_last_log_time = 0;
   uint32_t ps_last_send_time = 0;
-  uint8_t ps_last_sent_midi = 0;
   uint32_t ps_consecutive_errors = 0;
   
   bool read_proximity = true;  // Alternate between sensors to reduce bus load
@@ -916,89 +937,84 @@ static void sensor_task(void *arg) {
         
         // Scale to MIDI range (0-127)
         uint8_t midi_value = (uint8_t)(compensated * 127.0f + 0.5f);
-        
-        // Hysteresis logic - determine output value
-        // Note: Theremin/note mode is now handled by midi_proximity_scene_handler
-        // based on scene->proximity.output_type
-        uint8_t output_value = midi_value;  // Default to sensor reading
-          
-          if (hysteresis_enabled) {
-            // Determine if sensor is "at rest" (nothing detected = near minimum)
-            bool at_rest = (midi_value < 5);  // Near minimum (nothing detected)
-            
-            // Get timeout duration
-            uint32_t timeout_ms;
-            switch (timeout_setting) {
-              case PROXIMITY_TIMEOUT_FAST: timeout_ms = 500; break;
-              case PROXIMITY_TIMEOUT_MEDIUM: timeout_ms = 1000; break;
-              case PROXIMITY_TIMEOUT_SLOW: timeout_ms = 5000; break;
-              default: timeout_ms = 1000; break;
-            }
-            
-            // State machine logic
-            if (at_rest) {
-              if (at_rest_start_time == 0) {
-                // Just entered at-rest state
-                at_rest_start_time = current_time;
-              } else if (!returning_to_rest && (current_time - at_rest_start_time) >= timeout_ms) {
-                // Timeout expired, begin return to rest position
-                returning_to_rest = true;
-                return_start_time = current_time;
-                return_start_value = (float)ps_last_sent_midi;
-                ESP_LOGD(TAG, "Starting return to rest: from=%u to=%u", ps_last_sent_midi, rest_position);
-              }
-            } else {
-              // Sensor is active (user is interacting), reset hysteresis state
-              at_rest_start_time = 0;
+        uint8_t output_value = midi_value;
+
+        if (hysteresis_enabled) {
+          bool at_rest = (midi_value < 5);
+          proximity_sensor_at_rest = at_rest;
+
+          uint32_t timeout_ms;
+          switch (timeout_setting) {
+            case PROXIMITY_TIMEOUT_FAST: timeout_ms = 500; break;
+            case PROXIMITY_TIMEOUT_MEDIUM: timeout_ms = 1000; break;
+            case PROXIMITY_TIMEOUT_SLOW: timeout_ms = 5000; break;
+            default: timeout_ms = 1000; break;
+          }
+
+          if (returning_to_rest) {
+            if (!at_rest && midi_value >= PROX_IN_RANGE_CANCEL_THRESH) {
               returning_to_rest = false;
+              at_rest_start_time = 0;
             }
-            
-            // Apply return interpolation if active
-            if (returning_to_rest) {
-              uint32_t return_duration_ms;
-              switch (return_speed) {
-                case PROXIMITY_RETURN_INSTANT: return_duration_ms = 0; break;
-                case PROXIMITY_RETURN_FAST: return_duration_ms = 250; break;
-                case PROXIMITY_RETURN_MEDIUM: return_duration_ms = 1000; break;
-                case PROXIMITY_RETURN_SLOW: return_duration_ms = 2000; break;
-                default: return_duration_ms = 1000; break;
-              }
-              
-              if (return_duration_ms == 0) {
-                // Instant return
+          } else if (at_rest) {
+            if (at_rest_start_time == 0)
+              at_rest_start_time = current_time;
+            else if ((current_time - at_rest_start_time) >= timeout_ms) {
+              returning_to_rest = true;
+              return_start_time = current_time;
+              return_start_value = 0.0f;
+            }
+          } else {
+            at_rest_start_time = 0;
+          }
+
+          if (returning_to_rest) {
+            uint32_t return_duration_ms;
+            switch (return_speed) {
+              case PROXIMITY_RETURN_INSTANT: return_duration_ms = 0; break;
+              case PROXIMITY_RETURN_FAST: return_duration_ms = 250; break;
+              case PROXIMITY_RETURN_MEDIUM: return_duration_ms = 1000; break;
+              case PROXIMITY_RETURN_SLOW: return_duration_ms = 2000; break;
+              default: return_duration_ms = 1000; break;
+            }
+
+            if (return_duration_ms == 0) {
+              output_value = rest_position;
+            } else {
+              uint32_t elapsed = current_time - return_start_time;
+              if (elapsed >= return_duration_ms)
                 output_value = rest_position;
-              } else {
-                // Interpolate over time
-                uint32_t elapsed = current_time - return_start_time;
-                if (elapsed >= return_duration_ms) {
-                  // Return complete
-                  output_value = rest_position;
-                } else {
-                  // Calculate interpolated value
-                  float progress = (float)elapsed / (float)return_duration_ms;
-                  output_value = (uint8_t)(return_start_value + progress * ((float)rest_position - return_start_value));
-                }
+              else {
+                float progress = (float)elapsed / (float)return_duration_ms;
+                output_value = (uint8_t)(return_start_value +
+                  progress * ((float)rest_position - return_start_value) + 0.5f);
               }
             }
           }
-          
+        } else {
+          proximity_sensor_at_rest = false;
+        }
+
           // Log values periodically
           if (s_ps_logging_enabled && current_time - ps_last_log_time >= 500) {
             if (hysteresis_enabled && returning_to_rest) {
-              ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u (returning to %u)", 
+              ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u (returning to %u)",
                 ps_raw_value, filtered_proximity, midi_value, output_value, rest_position);
             } else {
-              ESP_LOGD(TAG, "PS (CC): raw=%u, filtered=%.1f, MIDI=%u, output=%u, last_sent=%u", 
-                ps_raw_value, filtered_proximity, midi_value, output_value, ps_last_sent_midi);
+              ESP_LOGD(TAG, "PS: raw=%u, filtered=%.1f, MIDI=%u, output=%u, last_sent=%u",
+                ps_raw_value, filtered_proximity, midi_value, output_value, last_midi_ps_value);
             }
             ps_last_log_time = current_time;
           }
           
           // Only send if the value has changed beyond deadzone AND rate limit allows
-          // Use output_value (which includes hysteresis) instead of raw midi_value
-          int diff = abs((int)output_value - (int)ps_last_sent_midi);
-          if (diff >= proximity_deadzone && (current_time - ps_last_send_time) >= ps_min_interval_ms) {
-            ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d", output_value, ps_last_sent_midi, diff);
+          int diff = abs((int)output_value - (int)last_midi_ps_value);
+          bool force_post = ps_force_next_post;
+          if ((force_post || diff >= proximity_deadzone) &&
+              (current_time - ps_last_send_time) >= ps_min_interval_ms) {
+            if (force_post) ps_force_next_post = false;
+            ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d%s",
+              output_value, last_midi_ps_value, diff, force_post ? " (forced)" : "");
             
             // Post sensor event instead of direct MIDI call
             event_t sensor_event = {
@@ -1013,8 +1029,8 @@ static void sensor_task(void *arg) {
             };
             event_bus_post(&sensor_event);
             
-            ps_last_sent_midi = output_value;  // Update last sent value immediately after posting
             ps_last_send_time = current_time;  // Update rate limiting timestamp
+            last_midi_ps_value = output_value;
             
             // Value changed - reset to fast polling
             ps_stability_count = 0;
@@ -1071,7 +1087,8 @@ static void sensor_task(void *arg) {
         
         // Convert to MIDI value (polarity now handled by scene mapping)
         uint8_t midi_value = (uint8_t)(scaled + 0.5f);
-        
+        als_processed_midi = midi_value;
+
         // Log values periodically for debugging
         if (s_als_logging_enabled && current_time - als_last_log_time >= 5000) {  // Log every 5 seconds
           ESP_LOGD(TAG, "%s: raw=%u, filtered=%.1f, min=%u, max=%u, MIDI=%u", 
@@ -1150,7 +1167,8 @@ void als_disable(void) {
 
 void ps_enable(void) {
   ps_enabled_flag = true;
-  
+  ps_force_next_post = true;
+
   // Start unified sensor task if not already running
   if (sensor_task_handle == NULL) {
     BaseType_t ret = xTaskCreate(sensor_task, "sensor", 4096, NULL, TASK_PRIORITY_SENSOR_PS, &sensor_task_handle);
@@ -1172,6 +1190,10 @@ uint16_t get_als(void) {
   return als_value;
 }
 
+uint8_t als_get_processed_midi(void) {
+  return als_processed_midi;
+}
+
 uint16_t get_ps(void) {
   return ps_value;
 }
@@ -1188,6 +1210,7 @@ void sensor_reset(void) {
     filtered_als = 0.0f;
     filtered_proximity = 0.0f;
     last_midi_als_value = 0;
+    als_processed_midi = 0;
     last_midi_ps_value = 0;
     
     ESP_LOGI(TAG, "Sensor software reset complete");

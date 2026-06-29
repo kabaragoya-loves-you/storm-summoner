@@ -1,36 +1,39 @@
 #include "lvgl.h"
 #include "ui.h"
 #include "event_bus.h"
+#include "action.h"
 #include "action_summary.h"
 #include "esp_log.h"
 #include "misc/lv_async.h"
+#include <string.h>
 
 #define TAG "KHYRON"
 
-// Screen and widget references
 static lv_obj_t *g_screen = NULL;
 static lv_obj_t *g_label = NULL;
 static lv_timer_t *g_hide_timer = NULL;
 
-// Module active flag
 static volatile bool g_module_active = false;
 
-// Text buffer for display
-static char g_text_buf[256];
+static char g_text_buf[512];
 
-// Hide timeout in ms
-#define HIDE_TIMEOUT_MS 1000
+#define HIDE_TIMEOUT_MS 1500
+#define INPUT_COLOR 0x00FFFF
 
-// Forward declarations
+typedef struct {
+  action_trigger_source_t source;
+  uint8_t scene_index;
+  action_t action;
+} khyron_pending_t;
+
+static khyron_pending_t g_pending;
+
 static void khyron_draw_deferred_cb(lv_timer_t *timer);
 static void action_executed_handler(const event_t *event, void *context);
 
-// Timer callback to hide the label
 static void hide_timer_cb(lv_timer_t *timer) {
   (void)timer;
-  if (g_label) {
-    lv_label_set_text(g_label, "");
-  }
+  if (g_label) lv_label_set_text(g_label, "");
   g_hide_timer = NULL;
 }
 
@@ -43,98 +46,96 @@ static void start_hide_timer(void) {
   }
 }
 
-// Map source_type and source_index to summary_input_t
-static summary_input_t map_source_to_input(uint8_t source_type, uint8_t source_index) {
-  switch (source_type) {
-    case 0:  // pad
-      if (source_index <= 11) return (summary_input_t)(SUMMARY_INPUT_PAD_0 + source_index);
+static void format_source_label(const action_trigger_source_t *src, char *buf, size_t len) {
+  if (!src || !buf || len == 0) return;
+  buf[0] = '\0';
+
+  if (src->type == ACTION_SOURCE_PAD && src->index <= 11) {
+    action_summary_t summary;
+    action_summary_init(&summary);
+    action_summary_set_input(&summary,
+      (summary_input_t)(SUMMARY_INPUT_PAD_0 + src->index), true);
+    snprintf(buf, len, "%s", summary.input_name);
+    return;
+  }
+
+  switch (src->type) {
+    case ACTION_SOURCE_BUTTON:
+      if (src->index == 0) snprintf(buf, len, "Left Button");
+      else if (src->index == 1) snprintf(buf, len, "Right Button");
+      else snprintf(buf, len, "Both Buttons");
       break;
-    case 1:  // button
-      if (source_index == 0) return SUMMARY_INPUT_BUTTON_L;
-      if (source_index == 1) return SUMMARY_INPUT_BUTTON_R;
-      if (source_index == 2) return SUMMARY_INPUT_BUTTON_BOTH;
+    case ACTION_SOURCE_BUMP:
+      snprintf(buf, len, "Bump");
       break;
-    case 2:  // bump
-      return SUMMARY_INPUT_BUMP;
-    case 3:  // on_load
-      return SUMMARY_INPUT_ON_LOAD;
-    case 4:  // on_play
-      return SUMMARY_INPUT_ON_PLAY;
-    case 5:  // expr_switch
-      return SUMMARY_INPUT_EXPRESSION;
+    case ACTION_SOURCE_FOOTSWITCH:
+      if (src->index == 0) snprintf(buf, len, "Sustain");
+      else if (src->index == 1) snprintf(buf, len, "Sostenuto");
+      else snprintf(buf, len, "Expr Switch");
+      break;
+    case ACTION_SOURCE_CC_INPUT:
+      snprintf(buf, len, "CC %u In", (unsigned)src->index);
+      break;
+    case ACTION_SOURCE_SCHEDULED:
+      snprintf(buf, len, "Scheduled");
+      break;
+    case ACTION_SOURCE_ON_LOAD:
+      snprintf(buf, len, "On Load");
+      break;
+    case ACTION_SOURCE_ON_PLAY:
+      snprintf(buf, len, "On Play");
+      break;
+    case ACTION_SOURCE_CV:
+      snprintf(buf, len, "CV Trigger");
+      break;
     default:
+      snprintf(buf, len, "Action");
       break;
   }
-  return SUMMARY_INPUT_UNKNOWN;
 }
-
-// Async callback to update display from event context
-typedef struct {
-  action_summary_t summary;
-} khyron_update_t;
-
-static khyron_update_t g_pending_update;
 
 static void update_display_async(void *user_data) {
   (void)user_data;
   if (!g_module_active || !g_label) return;
 
-  // Format with cyan input name
-  action_summary_format_display(&g_pending_update.summary, g_text_buf,
-    sizeof(g_text_buf), 0x00FFFF);
+  char src_label[32];
+  format_source_label(&g_pending.source, src_label, sizeof(src_label));
+
+  const char *family = action_summary_inspect_family_name(g_pending.action.type);
+  char body[384];
+  body[0] = '\0';
+  action_summary_format_inspect_action_body(&g_pending.action, g_pending.scene_index,
+    body, sizeof(body));
+
+  const char *body_start = body;
+  while (*body_start == '\n') body_start++;
+
+  uint8_t r = (INPUT_COLOR >> 16) & 0xFF;
+  uint8_t g = (INPUT_COLOR >> 8) & 0xFF;
+  uint8_t b = INPUT_COLOR & 0xFF;
+
+  if (*body_start) {
+    snprintf(g_text_buf, sizeof(g_text_buf), "#%02X%02X%02X %s#\n%s\n%s",
+      r, g, b, src_label, family, body_start);
+  } else {
+    snprintf(g_text_buf, sizeof(g_text_buf), "#%02X%02X%02X %s#\n%s",
+      r, g, b, src_label, family);
+  }
 
   lv_label_set_recolor(g_label, true);
   lv_label_set_text(g_label, g_text_buf);
-
-  // Start/reset hide timer
   start_hide_timer();
 }
 
 static void action_executed_handler(const event_t *event, void *context) {
+  (void)event;
   (void)context;
-  if (!g_module_active || !event) return;
-
-  // Don't show actions while in programming mode
+  if (!g_module_active) return;
   if (ui_is_in_programming_mode()) return;
 
-  // Build the summary
-  action_summary_init(&g_pending_update.summary);
+  if (!action_get_last_executed(&g_pending.source, &g_pending.scene_index, &g_pending.action))
+    return;
 
-  // Determine input source
-  summary_input_t input = map_source_to_input(
-    event->data.action_executed.source_type,
-    event->data.action_executed.source_index);
-
-  // For unknown sources, try to use the action type to create a meaningful name
-  if (input == SUMMARY_INPUT_UNKNOWN) {
-    snprintf(g_pending_update.summary.input_name,
-      sizeof(g_pending_update.summary.input_name), "Action");
-  } else {
-    action_summary_set_input(&g_pending_update.summary, input, true);
-  }
-
-  // Create a minimal action struct for formatting
-  // (We only have limited info from the event)
-  action_t action = {0};
-  action.type = (action_type_t)event->data.action_executed.action_type;
-  action.variant = (action_variant_t)event->data.action_executed.action_variant;
-
-  if (action.type == ACTION_CONTROL) {
-    action.params.control.num_ccs = 1;
-    action.params.control.cc_numbers[0] = event->data.action_executed.cc_number;
-    action.params.control.values[0] = event->data.action_executed.cc_value;
-    if (action.variant == VARIANT_HOLD) {
-      action.params.control.values2[0] = event->data.action_executed.cc_value2;
-    }
-  } else if (action.type == ACTION_NOTE) {
-    action.params.note.note = event->data.action_executed.note;
-    action.params.note.velocity = event->data.action_executed.velocity;
-  }
-
-  // Format the action summary
-  action_format_summary(&action, &g_pending_update.summary, scene_get_current_index());
-
-  // Schedule async update
   lv_async_call(update_display_async, NULL);
 }
 
@@ -149,14 +150,12 @@ static void khyron_draw_deferred_cb(lv_timer_t *timer) {
   uint16_t disp_width = lv_display_get_horizontal_resolution(disp);
   uint16_t disp_height = lv_display_get_vertical_resolution(disp);
 
-  // Create screen with black background
   g_screen = lv_obj_create(NULL);
   lv_obj_set_size(g_screen, disp_width, disp_height);
   lv_obj_remove_flag(g_screen, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(g_screen, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(g_screen, LV_OPA_COVER, 0);
 
-  // Create centered label for action display
   g_label = lv_label_create(g_screen);
   lv_obj_set_width(g_label, disp_width - 20);
   lv_obj_align(g_label, LV_ALIGN_CENTER, 0, 0);
@@ -165,10 +164,7 @@ static void khyron_draw_deferred_cb(lv_timer_t *timer) {
   lv_label_set_recolor(g_label, true);
   lv_label_set_text(g_label, "");
 
-  // Subscribe to action executed events
   event_bus_subscribe(EVENT_ACTION_EXECUTED, action_executed_handler, NULL);
-
-  // Mark module as active
   g_module_active = true;
 
   ESP_LOGI(TAG, "Khyron module created");
@@ -180,13 +176,9 @@ static void khyron_draw_deferred_cb(lv_timer_t *timer) {
 UI_CREATE_DEFERRED_DRAW_FUNC(khyron, khyron_draw_deferred_cb)
 
 static void khyron_teardown(void) {
-  // Mark module as inactive
   g_module_active = false;
-
-  // Unsubscribe from events
   event_bus_unsubscribe(EVENT_ACTION_EXECUTED, action_executed_handler);
 
-  // Clean up hide timer
   if (g_hide_timer) {
     lv_timer_delete(g_hide_timer);
     g_hide_timer = NULL;

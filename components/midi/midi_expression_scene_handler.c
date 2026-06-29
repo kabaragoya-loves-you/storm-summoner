@@ -161,6 +161,7 @@ static void handle_sustain_event(const event_t* event, void* context) {
     pressed ? "pressed" : "released", action_type_to_string(scene->sustain.type));
   
   // Execute sustain action with press/release
+  action_set_next_trigger_source(ACTION_SOURCE_FOOTSWITCH, 0);
   action_execute(&scene->sustain, pressed ? 127 : 0, pressed);
 }
 
@@ -177,6 +178,7 @@ static void handle_sostenuto_event(const event_t* event, void* context) {
     pressed ? "pressed" : "released", action_type_to_string(scene->sostenuto.type));
   
   // Execute sostenuto action
+  action_set_next_trigger_source(ACTION_SOURCE_FOOTSWITCH, 1);
   action_execute(&scene->sostenuto, pressed ? 127 : 0, pressed);
 }
 
@@ -193,6 +195,7 @@ static void handle_switch_event(const event_t* event, void* context) {
     pressed ? "pressed" : "released", action_type_to_string(scene->expr_switch.type));
   
   // Execute expr_switch action
+  action_set_next_trigger_source(ACTION_SOURCE_FOOTSWITCH, 2);
   action_execute(&scene->expr_switch, pressed ? 127 : 0, pressed);
 }
 

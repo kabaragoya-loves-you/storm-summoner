@@ -29,6 +29,7 @@ static char s_preset_label[32];
 static char s_send_pc_label[24];
 static char s_bpm_label[24];
 static char s_screen_label[32];
+static char s_setup_label[24];
 static char s_time_sig_label[16];
 static char s_divider_label[24];
 static char s_clock_label[24];
@@ -364,6 +365,33 @@ static lv_obj_t* screen_roller_create(void) {
 static void nav_to_screen(void* user_data) {
   (void)user_data;
   menu_navigate_to("Screen", screen_roller_create);
+}
+
+// Display modules that expose a per-scene configuration page. When the
+// scene's selected module is in this table, a "Configure Display" item is
+// shown directly below the Screen selector.
+typedef struct {
+  const char* module;
+  const char* title;
+  lv_obj_t* (*create)(void);
+} module_config_entry_t;
+
+static const module_config_entry_t s_module_configs[] = {
+  { "scope", "Scope", menu_page_scope_config_create },
+};
+
+static const module_config_entry_t* module_config_for(const char* module_name) {
+  if (!module_name) return NULL;
+  for (size_t i = 0; i < sizeof(s_module_configs) / sizeof(s_module_configs[0]); i++) {
+    if (strcmp(module_name, s_module_configs[i].module) == 0)
+      return &s_module_configs[i];
+  }
+  return NULL;
+}
+
+static void nav_to_configure_display(void* user_data) {
+  const module_config_entry_t* entry = (const module_config_entry_t*)user_data;
+  if (entry) menu_navigate_to(entry->title, entry->create);
 }
 
 // BPM editor (20-300, optional 0.1 tenths when fractional enabled)
@@ -1301,6 +1329,16 @@ lv_obj_t* menu_page_current_scene_create(void) {
     s_scene_items[idx++] = (menu_item_t){
       s_screen_label, nav_to_screen, NULL, false, MENU_ITEM_KIND_ROLLER
     };
+
+    // Per-module setup page when the selected screen has options
+    const module_config_entry_t* cfg = module_config_for(mod_name);
+    if (cfg) {
+      snprintf(s_setup_label, sizeof(s_setup_label), "Setup %s", title);
+      s_scene_items[idx++] = (menu_item_t){
+        s_setup_label, nav_to_configure_display, (void*)cfg, true,
+        MENU_ITEM_KIND_SUBMENU
+      };
+    }
   }
   
   if (mode != SCENE_MODE_PRESET_SYNC) {

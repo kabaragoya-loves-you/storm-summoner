@@ -280,8 +280,8 @@ typedef struct {
     
     // Action executed event data (for EVENT_ACTION_EXECUTED)
     struct {
-      uint8_t source_type;    // 0=pad, 1=button, 2=bump, 3=on_load, 4=on_play, 5=expr_switch
-      uint8_t source_index;   // pad index (0-11), button (0=L, 1=R, 2=both), etc.
+      uint8_t source_type;    // action_source_type_t
+      uint8_t source_index;   // pad index, button (0=L, 1=R, 2=both), CC number, etc.
       uint8_t action_type;    // action_type_t value
       uint8_t action_variant; // action_variant_t value (for consolidated families)
       uint8_t cc_number;      // For CC actions

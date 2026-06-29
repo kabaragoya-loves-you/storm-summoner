@@ -1779,6 +1779,11 @@ wa-dialog[data-scene-target="messageDialog"]::part(footer) {
   background: var(--bg-deep);
 }
 
+.scene-screen-block .scene-slots {
+  margin-top: 0.5rem;
+  margin-bottom: 0;
+}
+
 .scene-slot-head {
   display: flex;
   align-items: center;

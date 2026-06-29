@@ -86,8 +86,23 @@ static void handle_button_event(const event_t* event, void* context) {
       return;
   }
   
-  if (action && action->type != ACTION_NONE)
+  if (action && action->type != ACTION_NONE) {
+    uint8_t button_index = 0;
+    switch (event->type) {
+      case EVENT_BUTTON_R_PRESS:
+      case EVENT_BUTTON_R_RELEASE:
+        button_index = 1;
+        break;
+      case EVENT_BUTTON_BOTH_PRESS:
+      case EVENT_BUTTON_BOTH_RELEASE:
+        button_index = 2;
+        break;
+      default:
+        break;
+    }
+    action_set_next_trigger_source(ACTION_SOURCE_BUTTON, button_index);
     action_execute(action, 127, is_press);
+  }
 }
 
 // Handle bump events using scene-based action assignments
@@ -104,6 +119,7 @@ static void handle_bump_event(const event_t* event, void* context) {
   
   if (action->type != ACTION_NONE) {
     ESP_LOGD(TAG, "Bump detected - executing %s", action_type_to_string(action->type));
+    action_set_next_trigger_source(ACTION_SOURCE_BUMP, 0);
     action_execute(action, 127, true);
   } else {
     ESP_LOGD(TAG, "Bump detected - no action assigned");

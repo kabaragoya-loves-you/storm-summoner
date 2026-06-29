@@ -58,6 +58,7 @@ void set_als_polarity(als_polarity_t polarity);
 
 uint16_t get_als(void);
 uint16_t get_ps(void);
+uint8_t als_get_processed_midi(void);
 
 // Rate limit control functions
 uint32_t get_als_rate_limit(void);
@@ -94,6 +95,7 @@ void proximity_set_hysteresis_enabled(bool enabled);
 bool proximity_get_hysteresis_enabled(void);
 void proximity_set_rest_position(uint8_t position);
 uint8_t proximity_get_rest_position(void);
+void proximity_notify_settings_changed(void);
 void proximity_set_return_speed(proximity_return_speed_t speed);
 proximity_return_speed_t proximity_get_return_speed(void);
 void proximity_set_timeout(proximity_timeout_t timeout);
@@ -127,5 +129,8 @@ uint8_t proximity_get_gamma(void);
 
 // Helper to get timeout in milliseconds
 uint32_t proximity_get_timeout_ms(void);
+
+// True while hysteresis is driving out-of-range / return-to-rest output (skip scene CC curve)
+bool proximity_output_bypass_scene_mapping(void);
 
 #endif // SENSOR_H

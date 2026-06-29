@@ -33,6 +33,7 @@ bool tilt_axis_get_enabled(tilt_axis_t axis);
 // Latest processed values (always available, independent of enable)
 int16_t tilt_get_raw(tilt_axis_t axis);
 uint8_t tilt_get_midi(tilt_axis_t axis);
+uint8_t tilt_get_processed_midi(tilt_axis_t axis);
 
 // 5-step calibration wizard. Non-blocking on captures; UI drives timing.
 void tilt_cal_begin(void);

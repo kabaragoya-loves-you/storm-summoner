@@ -13,6 +13,9 @@ window.ConnectionManager = (function () {
       // flag remembers that the device side is still in SCENES so that a later
       // mode change / exit knows to send EXIT even though this.mode is null.
       this._deviceScenesActive = false
+      // CONFIG and SETTINGS (NVS) also run with client mode null via the rx pump.
+      this._deviceConfigActive = false
+      this._deviceSettingsActive = false
       this.listeners = new Map()
       // Persistent receive buffer. Without this, readLine/sendCommand would
       // each open a fresh reader, read a chunk that may contain MULTIPLE
@@ -269,6 +272,8 @@ window.ConnectionManager = (function () {
       this.port = null
       this.mode = null
       this._deviceScenesActive = false
+      this._deviceConfigActive = false
+      this._deviceSettingsActive = false
       this._rxBuffer = ''
       this._lineQueue = []
       this._rejectLineWaiters()
@@ -287,6 +292,8 @@ window.ConnectionManager = (function () {
         this.port = null
         this.mode = null
         this._deviceScenesActive = false
+        this._deviceConfigActive = false
+        this._deviceSettingsActive = false
         this._rxBuffer = ''
         this._lineQueue = []
         this._lineWaiters = []
@@ -312,7 +319,7 @@ window.ConnectionManager = (function () {
       navigator.serial.removeEventListener('disconnect', this.onPortDisconnect)
 
       try {
-        if (this.mode) {
+        if (this.mode || this._hasPumpSession()) {
           await this._exitModeImpl()
         }
         await this.port.close()
@@ -322,6 +329,8 @@ window.ConnectionManager = (function () {
         this.port = null
         this.mode = null
         this._deviceScenesActive = false
+        this._deviceConfigActive = false
+        this._deviceSettingsActive = false
         this._rxBuffer = ''
         this._lineQueue = []
         this._lineWaiters = []
@@ -343,7 +352,7 @@ window.ConnectionManager = (function () {
       if (!this.port) throw new Error('Not connected')
       if (this.mode === newMode) return true
 
-      if (this.mode || this._deviceScenesActive) {
+      if (this.mode || this._hasPumpSession()) {
         await this._exitModeImpl()
       }
 
@@ -365,14 +374,34 @@ window.ConnectionManager = (function () {
       return this._enqueueSerialTask(() => this._exitModeImpl())
     }
 
+    _hasPumpSession () {
+      return this._deviceScenesActive ||
+        this._deviceConfigActive ||
+        this._deviceSettingsActive
+    }
+
+    _clearPumpSessionFlags () {
+      this._deviceScenesActive = false
+      this._deviceConfigActive = false
+      this._deviceSettingsActive = false
+    }
+
+    _pumpSessionStopBanner () {
+      if (this._deviceConfigActive) return 'CONFIG_STOPPED'
+      if (this._deviceSettingsActive) return 'SETTINGS_STOPPED'
+      if (this._deviceScenesActive) return 'SCENES_STOPPED'
+      return null
+    }
+
     async _exitModeImpl (options = {}) {
       const leavePumpSuspended = options.leavePumpSuspended === true
-      if ((!this.mode && !this._deviceScenesActive) || !this.port) return
-      const stopBanner = this._modeStopBanner(this.mode)
+      if ((!this.mode && !this._hasPumpSession()) || !this.port) return
+      const stopBanner = this._modeStopBanner(this.mode) ||
+        this._pumpSessionStopBanner()
       this._stopModeNotifyLoop()
       await this._suspendModeNotify()
       this.mode = null
-      this._deviceScenesActive = false
+      this._clearPumpSessionFlags()
       this.emit('mode:changed', { mode: null })
       // Exclusive tabs (DISPLAY/CONSOLE/MIDI) release their readers in this handler.
       await this.sleep(50)
@@ -428,7 +457,7 @@ window.ConnectionManager = (function () {
 
       // Device is in a known CDC mode: exit it. In a mode the firmware DOES
       // reply with a *_STOPPED banner, so _exitModeImpl resolves promptly.
-      if (this.mode || this._deviceScenesActive) {
+      if (this.mode || this._hasPumpSession()) {
         await this._exitModeImpl({ leavePumpSuspended })
         if (!leavePumpSuspended) {
           if (this._pumpSuspended) this._resumeRxPump()
@@ -834,14 +863,14 @@ window.ConnectionManager = (function () {
       this._modeNotifySuspended = false
       this._lineQueue = []
       this._rejectLineWaiters()
-      if (this.mode || this._deviceScenesActive) {
+      if (this.mode || this._hasPumpSession()) {
         this._stopModeNotifyLoop()
         try {
           await this.sendRaw('EXIT\n')
           await this.sleep(150)
         } catch (e) {}
         this.mode = null
-        this._deviceScenesActive = false
+        this._clearPumpSessionFlags()
         this.emit('mode:changed', { mode: null })
       }
       this._rxBuffer = ''

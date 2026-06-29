@@ -106,11 +106,17 @@ uint8_t apply_polarity(uint8_t input, polarity_t polarity);
 uint8_t continuous_mapping_process(uint8_t raw_input, continuous_mapping_t* mapping);
 
 // Proximity-style unipolar bipolar: nothing in field -> middle, far in-range ->
-// min, close -> max. Curve and min/middle/max scaling apply.
-uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input, const continuous_mapping_t* mapping);
+// min, close -> max. Curve and min/middle/max scaling apply. Updates
+// mapping->last_value and last_activity_ms like continuous_mapping_process().
+uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input,
+  continuous_mapping_t* mapping);
 
-// Velocity sample for CV/Gate takeover (ignores enabled).
-uint8_t continuous_mapping_velocity_sample(uint8_t raw_input, const continuous_mapping_t* mapping);
+// Apply curve/polarity/scaling for the mapping's polarity mode; updates
+// mapping->last_value. Returns 0 if mapping is NULL or disabled.
+uint8_t continuous_mapping_apply(uint8_t raw_input, continuous_mapping_t* mapping);
+
+// Velocity sample for CV/Gate takeover (ignores enabled; updates last_value).
+uint8_t continuous_mapping_velocity_sample(uint8_t raw_input, continuous_mapping_t* mapping);
 
 // Convert 0-127 value to MIDI note number based on mapping
 // value: 0-127 input value (after curve/polarity/scaling)

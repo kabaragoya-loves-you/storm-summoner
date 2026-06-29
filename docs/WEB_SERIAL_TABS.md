@@ -104,6 +104,8 @@ There is **no** “nested bypass” based on `_serialDepth` or `isSerialBusy`. D
 |-------|---------|
 | `connection.mode` | Client-side mode flag: `ASSETS`, `CONSOLE`, `MIDI`, `DISPLAY`, `UPDATE`, `PEDALS`, or `null` |
 | `connection._deviceScenesActive` | Device is in `CDC_STATE_SCENES` while client keeps `mode === null` so SCENE_INSPECT / SCENE_GET can use the rx pump |
+| `connection._deviceConfigActive` | Device is in CONFIG while client keeps `mode === null` (Settings tab) |
+| `connection._deviceSettingsActive` | Device is in SETTINGS while client keeps `mode === null` (NVS tab) |
 
 The Scenes tab deliberately **does not** call `requestMode('SCENES')`. It sends `SCENES\n` with `mode === null`, sets `_deviceScenesActive`, and reads lines through the pump. See `_prepareScenesClientMode()` and `scenes.js` `enterScenesMode()`.
 

@@ -219,6 +219,12 @@ static uint8_t process_axis(tilt_axis_t axis, int16_t raw) {
   return (uint8_t)midi_i;
 }
 
+uint8_t tilt_get_processed_midi(tilt_axis_t axis) {
+  if ((int)axis < 0 || (int)axis > 1) return 64;
+  int16_t raw = (axis == TILT_AXIS_X) ? s_last_sample_x : s_last_sample_y;
+  return process_axis(axis, raw);
+}
+
 static void post_axis_event(tilt_axis_t axis, uint8_t midi) {
   event_t ev = {
     .type = (axis == TILT_AXIS_X) ? EVENT_SENSOR_TILT_X : EVENT_SENSOR_TILT_Y,

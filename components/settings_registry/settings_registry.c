@@ -26,6 +26,7 @@
 #include "midi_control.h"
 #include "menu_theme.h"
 #include "inspect_config.h"
+#include "midi_proximity_scene_handler.h"
 
 static const char* TAG = "settings_registry";
 
@@ -168,18 +169,21 @@ static esp_err_t set_cv_deadzone(uint32_t v) {
 static uint32_t get_prox_hysteresis(void) { return proximity_get_hysteresis_enabled() ? 1 : 0; }
 static esp_err_t set_prox_hysteresis(uint32_t v) {
   proximity_set_hysteresis_enabled(v != 0);
+  midi_proximity_scene_handler_proximity_settings_changed();
   return ESP_OK;
 }
 
 static uint32_t get_prox_rest_position(void) { return proximity_get_rest_position(); }
 static esp_err_t set_prox_rest_position(uint32_t v) {
   proximity_set_rest_position((uint8_t)v);
+  midi_proximity_scene_handler_proximity_settings_changed();
   return ESP_OK;
 }
 
 static uint32_t get_prox_return_speed(void) { return (uint32_t)proximity_get_return_speed(); }
 static esp_err_t set_prox_return_speed(uint32_t v) {
   proximity_set_return_speed((proximity_return_speed_t)v);
+  midi_proximity_scene_handler_proximity_settings_changed();
   return ESP_OK;
 }
 
@@ -192,6 +196,7 @@ static esp_err_t set_prox_note_silence(uint32_t v) {
 static uint32_t get_prox_timeout(void) { return (uint32_t)proximity_get_timeout(); }
 static esp_err_t set_prox_timeout(uint32_t v) {
   proximity_set_timeout((proximity_timeout_t)v);
+  midi_proximity_scene_handler_proximity_settings_changed();
   return ESP_OK;
 }
 

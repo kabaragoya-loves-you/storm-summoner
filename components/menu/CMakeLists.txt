@@ -43,6 +43,7 @@ idf_component_register(
     "pages/cc_triggers_scene.c"
     "pages/note_track_scene.c"
     "pages/cc_defaults_menu.c"
+    "pages/scope_config.c"
     "pages/settings_note_track.c"
     "pages/settings_scene_inspect.c"
     "pages/inspect_scene.c"

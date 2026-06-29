@@ -91,6 +91,22 @@ typedef struct {
   bool pressing;
 } cc_trigger_slot_t;
 
+// Scope display module: up to 4 plotted channels, each a named param target or
+// a device CC number.
+#define SCOPE_CHANNEL_COUNT 4
+typedef enum {
+  SCOPE_SRC_NONE = 0,   // Channel off
+  SCOPE_SRC_PARAM = 1,  // id = param_target_t
+  SCOPE_SRC_CC = 2      // id = CC number (0-127)
+} scope_src_kind_t;
+typedef struct {
+  uint8_t kind;  // scope_src_kind_t
+  uint8_t id;    // param_target_t value or CC number
+} scope_channel_t;
+typedef struct {
+  scope_channel_t channels[SCOPE_CHANNEL_COUNT];
+} scope_config_t;
+
 // Scene structure
 typedef struct scene_t {
   char name[17];              // Scene name (max 16 chars + null)
@@ -99,6 +115,7 @@ typedef struct scene_t {
   uint8_t note_channel;       // Note output channel override (0 = use scene channel, 1-16 = specific)
   uint8_t trs_type;           // Per-scene TRS polarity (0 = use global, 1=A, 2=B, 3=TS, 4=Both)
   char ui_module[MAX_UI_MODULE_NAME]; // UI module to load with scene (empty = "beat")
+  scope_config_t scope;       // Scope display module channel selections
   
   // Program change settings (modes 2 & 3)
   uint8_t program_number;     // PC value (0-127)
@@ -296,6 +313,11 @@ esp_err_t scene_set_cc_default(uint8_t scene_index, uint8_t cc_num, uint8_t valu
 // UI module (per-scene screen)
 esp_err_t scene_set_ui_module(uint8_t scene_index, const char* module_name);
 const char* scene_get_ui_module(uint8_t scene_index);
+
+// Scope display module channels (ch = 0..SCOPE_CHANNEL_COUNT-1)
+const scope_channel_t* scene_get_scope_channel(uint8_t scene_index, uint8_t ch);
+esp_err_t scene_set_scope_channel(uint8_t scene_index, uint8_t ch,
+  uint8_t kind, uint8_t id);
 
 // Device association (per-scene device targeting)
 esp_err_t scene_set_device_id(uint8_t scene_index, const char* device_id);

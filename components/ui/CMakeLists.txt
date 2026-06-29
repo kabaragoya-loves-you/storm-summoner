@@ -19,6 +19,8 @@ idf_component_register(
         "transport"
         "scene"
         "action"
+        "assets_manager"
+        "lfo"
         "version"
         "memory_utils"
         "task_monitor"

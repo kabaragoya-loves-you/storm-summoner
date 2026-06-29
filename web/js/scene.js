@@ -925,6 +925,60 @@ application.register(
       }
       ActionCatalog.stripActionFieldsInModel(model)
       if (forSave && model.expr_switch?.type === 'none') delete model.expr_switch
+      if (forSave) this.normalizeScopeForSave(model)
+      else if (model.scope) model.scope = this.normalizeScopeEditorList(model.scope)
+      for (const key of ['on_load', 'on_play']) {
+        if (forSave) this.normalizeActionChainForSave(model, key)
+        else if (model[key]) model[key] = this.normalizeActionChainEditorList(model[key])
+      }
+    }
+
+    normalizeScopeForSave (model) {
+      if (!model || !Array.isArray(model.scope)) return
+      const list = this.normalizeScopeEditorList(model.scope)
+      const hasActive = list.some(s => s !== '')
+      if (!hasActive) {
+        delete model.scope
+        return
+      }
+      model.scope = list
+    }
+
+    normalizeScopeEditorList (raw) {
+      if (!Array.isArray(raw) || raw.length === 0) return ['']
+      let list = raw.map(v => (typeof v === 'string' ? v : '')).slice(0, 4)
+      while (list.length > 1 && list[list.length - 1] === '') list.pop()
+      return list
+    }
+
+    // Live editor list: preserve trailing Off slot opened via + (do not trim).
+    scopeEditorList (raw) {
+      if (!Array.isArray(raw) || raw.length === 0) return ['']
+      return raw.map(v => (typeof v === 'string' ? v : '')).slice(0, 4)
+    }
+
+    actionChainIsEmpty (action) {
+      return !action?.type || action.type === 'none'
+    }
+
+    normalizeActionChainEditorList (raw) {
+      if (!Array.isArray(raw) || raw.length === 0) return [{ type: 'none' }]
+      let list = raw.slice(0, 4)
+      while (list.length > 1 && this.actionChainIsEmpty(list[list.length - 1])) list.pop()
+      return list
+    }
+
+    // Live editor list: preserve trailing empty slot opened via + (do not trim).
+    actionChainEditorList (raw) {
+      if (!Array.isArray(raw) || raw.length === 0) return [{ type: 'none' }]
+      return raw.slice(0, 4)
+    }
+
+    normalizeActionChainForSave (model, key) {
+      if (!model || !Array.isArray(model[key])) return
+      const active = model[key].filter(a => !this.actionChainIsEmpty(a))
+      if (active.length) model[key] = active
+      else delete model[key]
     }
 
     normalizeBeforeSave (model) {
@@ -2372,6 +2426,8 @@ application.register(
       else if (kind === 'preset-step') this.addPresetCycleStep(path)
       else if (kind === 'tempo-step') this.addTempoCycleStep(path)
       else if (kind === 'randomize') this.addRandomizeSlot(path)
+      else if (kind === 'scope-channel') this.addScopeChannel(path)
+      else if (kind === 'action-chain') this.addActionChainSlot(path)
       else this.addListItem(path, def ?? 0, max ?? 8)
       this.markDirty()
       this.renderEditor()
@@ -2389,6 +2445,8 @@ application.register(
       else if (kind === 'preset-step') this.removePresetCycleStep(path, index)
       else if (kind === 'tempo-step') this.removeTempoCycleStep(path, index)
       else if (kind === 'randomize') this.removeRandomizeSlot(path, index)
+      else if (kind === 'scope-channel') this.removeScopeChannel(path, index)
+      else if (kind === 'action-chain') this.removeActionChainSlot(path, index)
       else this.removeListItem(path, index, min ?? 0)
       this.markDirty()
       this.renderEditor()
@@ -2404,6 +2462,44 @@ application.register(
       if (list.length === 0) return [0]
       while (list.length > 1 && Number(list[list.length - 1]) === 0) list.pop()
       return list
+    }
+
+    addScopeChannel (path) {
+      let list = this.scopeEditorList(this.getAtPath(path)).slice()
+      if (list.length >= 4) return
+      list.push('')
+      this.setAtPath(path, list)
+    }
+
+    removeScopeChannel (path, index) {
+      let list = this.scopeEditorList(this.getAtPath(path))
+      if (list.length <= 1) {
+        list[0] = ''
+        this.setAtPath(path, list)
+        return
+      }
+      list = list.slice()
+      list.splice(index, 1)
+      this.setAtPath(path, list)
+    }
+
+    addActionChainSlot (path) {
+      let list = this.actionChainEditorList(this.getAtPath(path)).slice()
+      if (list.length >= 4) return
+      list.push({ type: 'none' })
+      this.setAtPath(path, list)
+    }
+
+    removeActionChainSlot (path, index) {
+      let list = this.actionChainEditorList(this.getAtPath(path))
+      if (list.length <= 1) {
+        list[0] = { type: 'none' }
+        this.setAtPath(path, list)
+        return
+      }
+      list = list.slice()
+      list.splice(index, 1)
+      this.setAtPath(path, list)
     }
 
     applyCcSlotFields (mapping, list) {

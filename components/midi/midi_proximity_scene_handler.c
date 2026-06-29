@@ -7,6 +7,7 @@
 #include "midi_messages.h"
 #include "event_bus.h"
 #include "sensor.h"
+#include "action.h"
 #include "expression.h"
 #include "lfo.h"
 #include "tempo.h"
@@ -236,6 +237,8 @@ static void handle_tempo_nudge_event(uint8_t raw_value, scene_t* scene) {
   if (nudge_return_is_active())
     proximity_stop_nudge_return();
 
+  continuous_mapping_unipolar_bipolar_map(raw_value, &scene->proximity);
+
   tempo_nudge_direction_t dir = (tempo_nudge_direction_t)
     scene_get_proximity_tempo_nudge_direction(scene_get_current_index());
   float scale = proximity_tempo_nudge_scale(raw_value, dir, &scene->proximity);
@@ -325,15 +328,23 @@ static void handle_proximity_event(const event_t* event, void* context) {
     }
   }
   
-  uint8_t processed_value = mapping->polarity == POLARITY_BIPOLAR
-    ? continuous_mapping_unipolar_bipolar_map(raw_value, mapping)
-    : continuous_mapping_process(raw_value, mapping);
-
-  // Apply smart filtering (handles extremes + deadzone)
+  uint8_t processed_value;
+  continuous_mapping_t map_work = *mapping;
+  bool bypass_mapping = proximity_output_bypass_scene_mapping();
+  uint8_t output_value;
   bool value_changed = false;
-  uint8_t output_value = smart_filter_process(&s_proximity_filter, processed_value, &value_changed);
+
+  if (bypass_mapping) {
+    output_value = raw_value;
+    value_changed = (output_value != mapping->last_value);
+  } else {
+    processed_value = continuous_mapping_apply(raw_value, &map_work);
+    output_value = smart_filter_process(&s_proximity_filter, processed_value, &value_changed);
+  }
 
   if (!value_changed) return;
+
+  mapping->last_value = output_value;
 
   switch (mapping->output_type) {
     case OUTPUT_TYPE_NOTE: {
@@ -406,9 +417,6 @@ void midi_proximity_scene_handler_release_notes(void) {
   }
 }
 
-// On scene change, drop all of the across-event state we cache so the new
-// scene's first event isn't compared against (or snapped to) values captured
-// under the previous scene's curve/polarity/extremes.
 static void handle_scene_changed(const event_t* event, void* context) {
   (void)event;
   (void)context;
@@ -421,6 +429,10 @@ static void handle_scene_changed(const event_t* event, void* context) {
   s_last_prox_event_ms = 0;
   s_last_tempo_apply_ms = 0;
   s_last_applied_midi = 64;
+}
+
+void midi_proximity_scene_handler_proximity_settings_changed(void) {
+  proximity_notify_settings_changed();
 }
 
 esp_err_t midi_proximity_scene_handler_init(void) {
