@@ -568,9 +568,10 @@ window.ActionCatalog = (function () {
   const UI_MODULE_OPTIONS = [
     { v: 0, l: 'Beat Grid' },
     { v: 1, l: 'Khyron' },
-    { v: 2, l: 'Space' },
-    { v: 3, l: 'Summoner' },
-    { v: 4, l: 'Pixels' }
+    { v: 2, l: 'Scope' },
+    { v: 3, l: 'Space' },
+    { v: 4, l: 'Summoner' },
+    { v: 5, l: 'Pixels' }
   ]
 
   const CUT_MODE_OPTIONS = [
