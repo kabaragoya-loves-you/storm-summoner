@@ -11,10 +11,10 @@
 
 #define TAG "MENU_DEVICE_CONFIG"
 
-// menu_items[] row focused when Pedal Setup opens (display name, read-only)
-#define PEDAL_SETUP_FOCUS_ITEM  1
+// menu_items[] row focused when Pedal Setup opens (pedal name)
+#define PEDAL_SETUP_FOCUS_ITEM  0
 
-// Static storage for main menu (16 items max: select, name, midi ch, trs, send clock, divider, info labels, refresh)
+// Static storage for main menu (16 items max: name, midi ch, trs, send clock, divider, info labels, refresh)
 #define MAX_DEVICE_CONFIG_ITEMS 16
 static menu_item_t s_device_config_items[MAX_DEVICE_CONFIG_ITEMS];
 static char s_current_pedal_label[80];
@@ -434,16 +434,11 @@ lv_obj_t* menu_page_device_config_create(void) {
   
   int item_idx = 0;
   
-  // Item 0: Select pedal (opens vendor / user device list)
-  s_device_config_items[item_idx++] = (menu_item_t){
-    "Select Pedal", nav_to_vendor_select, NULL, true, MENU_ITEM_KIND_SUBMENU
-  };
-
   const char *pedal_display = (device && device->name[0]) ? device->name : NULL;
   assets_format_pedal_menu_label(cfg->pedal_slug, pedal_display,
     s_current_pedal_label, sizeof(s_current_pedal_label));
   s_device_config_items[item_idx++] = (menu_item_t){
-    s_current_pedal_label, NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+    s_current_pedal_label, nav_to_vendor_select, NULL, true, MENU_ITEM_KIND_SUBMENU
   };
 
   snprintf(s_midi_ch_label, sizeof(s_midi_ch_label), "MIDI Ch: %d", cfg->midi_channel);

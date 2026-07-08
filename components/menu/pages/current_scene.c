@@ -1281,17 +1281,13 @@ lv_obj_t* menu_page_current_scene_create(void) {
   if (config_get_device_mode() == DEVICE_MODE_PER_SCENE) {
     s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
     
-    s_scene_items[idx++] = (menu_item_t){
-      "Select Pedal", nav_to_select_pedal, NULL, true, MENU_ITEM_KIND_SUBMENU
-    };
-
     const char* effective_slug = scene_get_effective_device_slug(scene_index);
     const manifest_device_t* mdev = assets_get_manifest_device(effective_slug);
     const char* device_name = mdev ? mdev->name : "Default";
     assets_format_pedal_menu_label(effective_slug, device_name,
       s_pedal_label, sizeof(s_pedal_label));
     s_scene_items[idx++] = (menu_item_t){
-      s_pedal_label, NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+      s_pedal_label, nav_to_select_pedal, NULL, true, MENU_ITEM_KIND_SUBMENU
     };
     
     uint8_t midi_ch = scene_get_midi_channel(scene_index);
