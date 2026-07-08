@@ -1,6 +1,7 @@
 #include "config.h"
 #include "app_settings.h"
 #include "esp_log.h"
+#include <string.h>
 
 static const char* TAG = "config";
 
@@ -10,6 +11,7 @@ static const char* TAG = "config";
 #define NVS_KEY_DEVICE_MODE "dev_mode"
 #define NVS_KEY_FLAG_ENABLED "flag_en"
 #define NVS_KEY_CC_MIRROR "cc_mirror"
+#define NVS_KEY_USER_HANDLE "user_handle"
 
 // Cached settings
 static bool s_preset_wrap = false;   // Default: clamp at boundaries
@@ -151,6 +153,47 @@ esp_err_t config_set_cc_mirror(bool enabled) {
     s_cc_mirror = enabled;
     ESP_LOGI(TAG, "Incoming CC mirror set to %s", enabled ? "on" : "off");
   }
+  return ret;
+}
+
+static void sanitize_user_handle(const char* input, char* out, size_t out_size) {
+  if (!out || out_size == 0) return;
+  out[0] = '\0';
+  if (!input) return;
+
+  size_t pos = 0;
+  for (size_t i = 0; input[i] != '\0' && pos < USER_HANDLE_MAX_LEN; i++) {
+    char c = input[i];
+    if (c == ' ') c = '-';
+    if (pos < out_size - 1) out[pos++] = c;
+  }
+  out[pos] = '\0';
+
+  while (pos > 0 && out[pos - 1] == '-') out[--pos] = '\0';
+
+  size_t start = 0;
+  while (out[start] == '-') start++;
+  if (start > 0) memmove(out, out + start, pos - start + 1);
+}
+
+esp_err_t config_get_user_handle(char* buf, size_t len) {
+  if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
+  buf[0] = '\0';
+
+  esp_err_t ret = app_settings_load_str(NVS_KEY_USER_HANDLE, buf, len);
+  if (ret != ESP_OK) return ret;
+  return ESP_OK;
+}
+
+esp_err_t config_set_user_handle(const char* handle) {
+  if (!handle) return ESP_ERR_INVALID_ARG;
+
+  char sanitized[USER_HANDLE_MAX_LEN + 1];
+  sanitize_user_handle(handle, sanitized, sizeof(sanitized));
+  if (sanitized[0] == '\0') return ESP_ERR_INVALID_ARG;
+
+  esp_err_t ret = app_settings_save_str(NVS_KEY_USER_HANDLE, sanitized);
+  if (ret == ESP_OK) ESP_LOGI(TAG, "User handle set to '%s'", sanitized);
   return ret;
 }
 

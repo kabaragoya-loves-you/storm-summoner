@@ -110,6 +110,7 @@ typedef struct {
 // Scene structure
 typedef struct scene_t {
   char name[17];              // Scene name (max 16 chars + null)
+  char creator[13];           // Scene author handle (max 12 chars + null)
   char device_id[64];         // Device slug (empty = use global device_config)
   uint8_t midi_channel;       // Per-scene MIDI channel (0 = use global, 1-16 = override)
   uint8_t note_channel;       // Note output channel override (0 = use scene channel, 1-16 = specific)

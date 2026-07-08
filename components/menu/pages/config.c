@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "scene.h"
 #include "config.h"
+#include "text_edit.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -17,7 +18,10 @@ static char s_change_mode_label[40];
 static char s_preset_wrap_label[40];
 static char s_persist_scene_label[40];
 static char s_flag_enabled_label[48];
-static menu_item_t s_config_items[8];
+static char s_user_handle_label[48];
+static char s_user_handle_edit_buf[USER_HANDLE_MAX_LEN + 1];
+static int s_user_handle_item_index = 0;
+static menu_item_t s_config_items[9];
 
 // ============================================================================
 // Scene Mode Roller
@@ -196,6 +200,46 @@ static void nav_to_flag_enabled(void* user_data) {
 }
 
 // ============================================================================
+// User Handle Editor
+// ============================================================================
+
+static void user_handle_nav_back(void* user_data) {
+  (void)user_data;
+  menu_set_restore_focus_item(s_user_handle_item_index);
+  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
+}
+
+static void user_handle_confirm_cb(const char* text, void* user_data) {
+  (void)user_data;
+  esp_err_t ret = config_set_user_handle(text);
+  if (ret == ESP_OK)
+    ESP_LOGI(TAG, "User handle set to '%s'", text);
+  else
+    ESP_LOGW(TAG, "Failed to set user handle: %s", esp_err_to_name(ret));
+  user_handle_nav_back(NULL);
+}
+
+static void user_handle_cancel_cb(void* user_data) {
+  (void)user_data;
+  user_handle_nav_back(NULL);
+}
+
+static void nav_to_user_handle(void* user_data) {
+  (void)user_data;
+  config_get_user_handle(s_user_handle_edit_buf, sizeof(s_user_handle_edit_buf));
+
+  text_edit_config_t cfg = {
+    .title = "User Handle",
+    .initial_text = s_user_handle_edit_buf,
+    .max_length = USER_HANDLE_MAX_LEN,
+    .on_confirm = user_handle_confirm_cb,
+    .on_cancel = user_handle_cancel_cb,
+    .user_data = NULL
+  };
+  text_edit_start(&cfg);
+}
+
+// ============================================================================
 // Config Menu Page
 // ============================================================================
 
@@ -249,6 +293,15 @@ lv_obj_t* menu_page_config_create(void) {
   s_config_items[idx++] = (menu_item_t){
     s_flag_enabled_label, nav_to_flag_enabled, NULL, true, MENU_ITEM_KIND_ROLLER
   };
-  
+
+  char handle_display[USER_HANDLE_MAX_LEN + 1];
+  config_get_user_handle(handle_display, sizeof(handle_display));
+  if (handle_display[0] == '\0') strncpy(handle_display, "<unset>", sizeof(handle_display) - 1);
+  snprintf(s_user_handle_label, sizeof(s_user_handle_label), "User Handle\n%s", handle_display);
+  s_user_handle_item_index = idx;
+  s_config_items[idx++] = (menu_item_t){
+    s_user_handle_label, nav_to_user_handle, NULL, false, MENU_ITEM_KIND_ACTION
+  };
+
   return menu_create_page_2line("Global Config", s_config_items, idx);
 }

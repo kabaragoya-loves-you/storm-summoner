@@ -1475,6 +1475,9 @@ static void cdc_send_info_json(void) {
   cJSON_AddNumberToObject(root, "build", version_get_build());
   cJSON_AddStringToObject(root, "git", version_get_git_hash());
   cJSON_AddStringToObject(root, "serial", version_get_serial());
+  char user_handle[USER_HANDLE_MAX_LEN + 1];
+  config_get_user_handle(user_handle, sizeof(user_handle));
+  cJSON_AddStringToObject(root, "user_handle", user_handle);
   cJSON_AddStringToObject(root, "assets_checksum", assets_csum ? assets_csum : "");
   cJSON_AddBoolToObject(root, "programming",
     ui_is_in_programming_mode() || screensaver_preserves_programming_session());
@@ -3977,6 +3980,16 @@ static void process_config_command(const char *cmd) {
   // GET <id> - get a single setting value
   if (strncmp(cmd, "GET ", 4) == 0) {
     const char *id = cmd + 4;
+
+    if (settings_registry_is_string(id)) {
+      char value[USER_HANDLE_MAX_LEN + 1];
+      esp_err_t err = settings_registry_get_string(id, value, sizeof(value));
+      if (err == ESP_OK) send_response(value);
+      else if (err == ESP_ERR_NOT_FOUND) send_response("ERROR: Unknown setting");
+      else send_response("ERROR: Read failed");
+      return;
+    }
+
     uint32_t value = 0;
     
     esp_err_t err = settings_registry_get_value(id, &value);
@@ -3995,6 +4008,31 @@ static void process_config_command(const char *cmd) {
   // SET <id> <value> - set a single setting
   if (strncmp(cmd, "SET ", 4) == 0) {
     char id[64];
+
+    if (sscanf(cmd + 4, "%63s", id) != 1) {
+      send_response("ERROR: Usage: SET <id> <value>");
+      return;
+    }
+
+    if (settings_registry_is_string(id)) {
+      const char *value = cmd + 4 + strlen(id);
+      while (*value == ' ') value++;
+      if (*value == '\0') {
+        send_response("ERROR: Usage: SET <id> <value>");
+        return;
+      }
+
+      esp_err_t err = settings_registry_set_string(id, value);
+      if (err == ESP_OK) send_response("OK");
+      else if (err == ESP_ERR_NOT_FOUND) send_response("ERROR: Unknown setting");
+      else {
+        char resp[64];
+        snprintf(resp, sizeof(resp), "ERROR: %s", esp_err_to_name(err));
+        send_response(resp);
+      }
+      return;
+    }
+
     uint32_t value = 0;
     
     if (sscanf(cmd + 4, "%63s %lu", id, (unsigned long *)&value) != 2) {

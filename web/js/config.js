@@ -259,6 +259,12 @@ application.register(
       return setting.type === 'toggle' ? 0 : ''
     }
 
+    sanitizeTextSettingValue (value, setting) {
+      let text = String(value ?? '')
+      if (setting?.maxlength) text = text.slice(0, setting.maxlength)
+      return text.replace(/ /g, '-').replace(/^-+|-+$/g, '')
+    }
+
     optionSelected (optValue, current) {
       return Number(optValue) === Number(current)
     }
@@ -335,6 +341,16 @@ application.register(
           `
         }
 
+        case 'text': {
+          const maxLength = setting.maxlength !== undefined ? setting.maxlength : 32
+          const display = current === '' ? '' : String(current)
+          return `
+            <wa-input type="text" id="${id}" data-config-control data-setting-id="${setting.id}"
+                      value="${display}" maxlength="${maxLength}" size="small">
+            </wa-input>
+          `
+        }
+
         default:
           return `<span>${current}</span>`
       }
@@ -346,19 +362,24 @@ application.register(
       if (!settingId) return
 
       let value
+      const setting = this.findSetting(settingId)
       if (el.tagName === 'WA-SWITCH') {
         value = el.checked ? 1 : 0
       } else if (el.tagName === 'WA-SELECT') {
         value = parseInt(el.value, 10)
       } else if (el.tagName === 'WA-INPUT') {
-        const setting = this.findSetting(settingId)
-        value = this.parseNumberSettingValue(setting, el.value)
-        if (Number.isNaN(value)) return
+        if (setting?.type === 'text') {
+          value = this.sanitizeTextSettingValue(el.value, setting)
+          if (!value) return
+        } else {
+          value = this.parseNumberSettingValue(setting, el.value)
+          if (Number.isNaN(value)) return
+        }
       } else {
         return
       }
 
-      if (Number.isNaN(value)) return
+      if (setting?.type !== 'text' && Number.isNaN(value)) return
 
       try {
         await this.connection.runSerialTask(async () => {

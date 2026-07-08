@@ -69,6 +69,14 @@ static esp_err_t set_flag_enabled(uint32_t v) { return config_set_flag_enabled(v
 static uint32_t get_cc_mirror(void) { return config_get_cc_mirror() ? 1 : 0; }
 static esp_err_t set_cc_mirror(uint32_t v) { return config_set_cc_mirror(v != 0); }
 
+static esp_err_t get_user_handle_str(char* buf, size_t len) {
+  return config_get_user_handle(buf, len);
+}
+
+static esp_err_t set_user_handle_str(const char* value) {
+  return config_set_user_handle(value);
+}
+
 // Touch wrappers
 static uint32_t get_stuck_timeout(void) { return touch_get_stuck_timeout_ms(); }
 static esp_err_t set_stuck_timeout(uint32_t v) {
@@ -595,6 +603,26 @@ static const setting_entry_t s_settings[] = {
 static const size_t s_settings_count = sizeof(s_settings) / sizeof(s_settings[0]);
 
 // ============================================================================
+// String settings dispatch table
+// ============================================================================
+
+typedef esp_err_t (*string_setting_getter_t)(char* buf, size_t len);
+typedef esp_err_t (*string_setting_setter_t)(const char* value);
+
+typedef struct {
+  const char* id;
+  string_setting_getter_t getter;
+  string_setting_setter_t setter;
+} string_setting_entry_t;
+
+static const string_setting_entry_t s_string_settings[] = {
+  {"config.user_handle", get_user_handle_str, set_user_handle_str},
+};
+
+static const size_t s_string_settings_count =
+  sizeof(s_string_settings) / sizeof(s_string_settings[0]);
+
+// ============================================================================
 // Public API implementation
 // ============================================================================
 
@@ -603,6 +631,14 @@ static const setting_entry_t* find_setting(const char* id) {
     if (strcmp(s_settings[i].id, id) == 0) {
       return &s_settings[i];
     }
+  }
+  return NULL;
+}
+
+static const string_setting_entry_t* find_string_setting(const char* id) {
+  for (size_t i = 0; i < s_string_settings_count; i++) {
+    if (strcmp(s_string_settings[i].id, id) == 0)
+      return &s_string_settings[i];
   }
   return NULL;
 }
@@ -637,23 +673,46 @@ esp_err_t settings_registry_get_all_values(char* buffer, size_t buffer_size, siz
   
   size_t pos = 0;
   buffer[pos++] = '{';
+  bool first = true;
   
   for (size_t i = 0; i < s_settings_count; i++) {
     const setting_entry_t* entry = &s_settings[i];
     uint32_t value = entry->getter();
     
-    // Calculate required space: "id":value, (or "id":value} for last)
     char temp[128];
     int len = snprintf(temp, sizeof(temp), "%s\"%s\":%lu",
-      (i > 0) ? "," : "",
+      first ? "" : ",",
       entry->id,
       (unsigned long)value);
+    first = false;
     
     if (pos + len + 2 >= buffer_size) {
       ESP_LOGE(TAG, "Buffer too small for settings JSON");
       return ESP_ERR_NO_MEM;
     }
     
+    memcpy(buffer + pos, temp, len);
+    pos += len;
+  }
+
+  for (size_t i = 0; i < s_string_settings_count; i++) {
+    const string_setting_entry_t* entry = &s_string_settings[i];
+    char value[USER_HANDLE_MAX_LEN + 1];
+    value[0] = '\0';
+    entry->getter(value, sizeof(value));
+
+    char temp[160];
+    int len = snprintf(temp, sizeof(temp), "%s\"%s\":\"%s\"",
+      first ? "" : ",",
+      entry->id,
+      value);
+    first = false;
+
+    if (pos + len + 2 >= buffer_size) {
+      ESP_LOGE(TAG, "Buffer too small for settings JSON");
+      return ESP_ERR_NO_MEM;
+    }
+
     memcpy(buffer + pos, temp, len);
     pos += len;
   }
@@ -666,9 +725,37 @@ esp_err_t settings_registry_get_all_values(char* buffer, size_t buffer_size, siz
 }
 
 bool settings_registry_exists(const char* id) {
-  return find_setting(id) != NULL;
+  return find_setting(id) != NULL || find_string_setting(id) != NULL;
+}
+
+bool settings_registry_is_string(const char* id) {
+  return find_string_setting(id) != NULL;
+}
+
+esp_err_t settings_registry_get_string(const char* id, char* buf, size_t len) {
+  if (!id || !buf || len == 0) return ESP_ERR_INVALID_ARG;
+
+  const string_setting_entry_t* entry = find_string_setting(id);
+  if (!entry) {
+    ESP_LOGW(TAG, "Unknown string setting: %s", id);
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  return entry->getter(buf, len);
+}
+
+esp_err_t settings_registry_set_string(const char* id, const char* value) {
+  if (!id || !value) return ESP_ERR_INVALID_ARG;
+
+  const string_setting_entry_t* entry = find_string_setting(id);
+  if (!entry) {
+    ESP_LOGW(TAG, "Unknown string setting: %s", id);
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  return entry->setter(value);
 }
 
 size_t settings_registry_count(void) {
-  return s_settings_count;
+  return s_settings_count + s_string_settings_count;
 }

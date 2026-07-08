@@ -7130,6 +7130,8 @@ static void json_to_sample_hold_config(cJSON* obj, sample_hold_config_t* config)
 static cJSON* scene_to_json(const scene_t* scene) {
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "name", scene->name);
+  if (scene->creator[0] != '\0')
+    cJSON_AddStringToObject(root, "creator", scene->creator);
 
   // Only write ui_module if it's set (non-empty and not the default "beat")
   if (scene->ui_module[0] != '\0' && strcmp(scene->ui_module, "beat") != 0) {
@@ -7430,6 +7432,17 @@ static cJSON* scene_to_json(const scene_t* scene) {
   return root;
 }
 
+static void scene_stamp_creator_if_empty(scene_t* scene) {
+  if (!scene || scene->creator[0] != '\0') return;
+
+  char handle[USER_HANDLE_MAX_LEN + 1];
+  if (config_get_user_handle(handle, sizeof(handle)) != ESP_OK || handle[0] == '\0')
+    return;
+
+  strncpy(scene->creator, handle, sizeof(scene->creator) - 1);
+  scene->creator[sizeof(scene->creator) - 1] = '\0';
+}
+
 static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   if (!root || !scene) return ESP_ERR_INVALID_ARG;
 
@@ -7437,6 +7450,12 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   if (name && cJSON_IsString(name)) {
     strncpy(scene->name, name->valuestring, sizeof(scene->name) - 1);
     scene->name[sizeof(scene->name) - 1] = '\0';
+  }
+
+  cJSON* creator = cJSON_GetObjectItem(root, "creator");
+  if (creator && cJSON_IsString(creator)) {
+    strncpy(scene->creator, creator->valuestring, sizeof(scene->creator) - 1);
+    scene->creator[sizeof(scene->creator) - 1] = '\0';
   }
 
   // Parse ui_module (optional - empty/missing means "beat")
@@ -8292,7 +8311,9 @@ esp_err_t scene_save_to_flash(uint8_t scene_index) {
     }
   }
   if (!scene) return ESP_ERR_NOT_FOUND;
-  
+
+  scene_stamp_creator_if_empty(scene);
+
   char filepath[128];
   get_scene_filename(scene_index, filepath, sizeof(filepath));
   
@@ -8640,6 +8661,8 @@ esp_err_t scene_put_json(uint8_t scene_index, const char *json, size_t len) {
     heap_caps_free(scratch);
     return ret;
   }
+
+  scene_stamp_creator_if_empty(scratch);
 
   scene_trim_name(scratch->name);
   if (scratch->name[0] == '\0') {

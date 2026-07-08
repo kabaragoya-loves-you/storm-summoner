@@ -24,6 +24,14 @@ esp_err_t scene_name_gen_init(void);
 void scene_name_generate(char* out, size_t out_size);
 
 /**
+ * Generate a random user handle from two words
+ * Format: "WORD1-WORD2" (uppercase, dash between words, max 12 chars)
+ * @param out Output buffer
+ * @param out_size Size of output buffer (should be >= 13)
+ */
+void scene_name_gen_generate_handle(char* out, size_t out_size);
+
+/**
  * Check if name generator is initialized and ready
  * @return true if wordlist is loaded
  */

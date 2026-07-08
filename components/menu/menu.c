@@ -1092,7 +1092,9 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
 
   // Auto-capture focus from the page being replaced (if not manually set)
   // When doing back_then_to(2, ...), the page at stack_depth-2 is being replaced
-  if (menu_state.restore_focus_index < 0 && levels >= 2 && 
+  if (menu_state.restore_focus_index < 0 &&
+      menu_state.restore_focus_item_index < 0 &&
+      levels >= 2 &&
       menu_state.stack_depth >= levels) {
     int target_depth = menu_state.stack_depth - levels;
     if (target_depth >= 0) {

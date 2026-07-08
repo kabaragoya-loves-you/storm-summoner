@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "version.h"
 #include "revision.h"
+#include "config.h"
 #include "esp_littlefs.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -9,7 +10,7 @@
 #define TAG "MENU_ABOUT"
 
 // Static storage for menu items and labels
-#define MAX_ABOUT_ITEMS 9
+#define MAX_ABOUT_ITEMS 10
 static menu_item_t s_about_items[MAX_ABOUT_ITEMS];
 static char s_labels[MAX_ABOUT_ITEMS][48];
 
@@ -70,6 +71,16 @@ lv_obj_t* menu_page_about_create(void) {
   } else {
     snprintf(s_labels[idx], sizeof(s_labels[0]), "Storage\nunavailable");
   }
+  s_about_items[idx] = (menu_item_t){
+    s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
+  };
+  idx++;
+
+  // User handle
+  char user_handle[USER_HANDLE_MAX_LEN + 1];
+  config_get_user_handle(user_handle, sizeof(user_handle));
+  if (user_handle[0] == '\0') strncpy(user_handle, "<unset>", sizeof(user_handle) - 1);
+  snprintf(s_labels[idx], sizeof(s_labels[0]), "Handle\n%s", user_handle);
   s_about_items[idx] = (menu_item_t){
     s_labels[idx], NULL, NULL, false, MENU_ITEM_KIND_DISPLAY
   };

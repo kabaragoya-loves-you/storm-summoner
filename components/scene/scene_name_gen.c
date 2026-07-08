@@ -123,6 +123,55 @@ void scene_name_generate(char* out, size_t out_size) {
   out[pos] = '\0';
 }
 
+#define USER_HANDLE_GEN_MAX_LEN 12
+
+void scene_name_gen_generate_handle(char* out, size_t out_size) {
+  if (!out || out_size == 0) return;
+  out[0] = '\0';
+
+  if (!s_words || s_word_count < 2) {
+    ESP_LOGW(TAG, "Wordlist not loaded or too few words");
+    strncpy(out, "NEW-USER", out_size - 1);
+    out[out_size - 1] = '\0';
+    return;
+  }
+
+  size_t max_len = (out_size - 1 < USER_HANDLE_GEN_MAX_LEN) ?
+    out_size - 1 : USER_HANDLE_GEN_MAX_LEN;
+
+  for (int attempt = 0; attempt < 32; attempt++) {
+    uint16_t idx1 = esp_random() % s_word_count;
+    uint16_t idx2;
+    do {
+      idx2 = esp_random() % s_word_count;
+    } while (idx2 == idx1);
+
+    const char* word1 = s_words[idx1];
+    const char* word2 = s_words[idx2];
+
+    size_t pos = 0;
+    for (size_t i = 0; word1[i] && pos < max_len; i++)
+      out[pos++] = (char)toupper((unsigned char)word1[i]);
+
+    if (pos < max_len) out[pos++] = '-';
+
+    for (size_t i = 0; word2[i] && pos < max_len; i++)
+      out[pos++] = (char)toupper((unsigned char)word2[i]);
+
+    out[pos] = '\0';
+
+    size_t len1 = 0;
+    while (word1[len1]) len1++;
+    size_t len2 = 0;
+    while (word2[len2]) len2++;
+    size_t needed = len1 + 1 + len2;
+    if (needed <= max_len) return;
+  }
+
+  strncpy(out, "NEW-USER", out_size - 1);
+  out[out_size - 1] = '\0';
+}
+
 bool scene_name_gen_ready(void) {
   return s_words != NULL && s_word_count >= 2;
 }

@@ -2,8 +2,11 @@
 #define CONFIG_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+
+#define USER_HANDLE_MAX_LEN 12
 
 // Device mode: single device for all scenes vs per-scene device selection
 typedef enum {
@@ -49,6 +52,10 @@ esp_err_t config_set_flag_enabled(bool enabled);
 // When false (default): incoming CC is ignored for mode tracking.
 bool config_get_cc_mirror(void);
 esp_err_t config_set_cc_mirror(bool enabled);
+
+// User handle (stored in NVS, read on demand)
+esp_err_t config_get_user_handle(char* buf, size_t len);
+esp_err_t config_set_user_handle(const char* handle);
 
 #endif // CONFIG_H
 

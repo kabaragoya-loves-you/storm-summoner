@@ -68,6 +68,14 @@
             {"value": 1, "label": "Fuck it, why not"}
           ],
           "default": 0
+        },
+        {
+          "id": "config.user_handle",
+          "label": "User Handle",
+          "description": "Your display name for scene attribution (spaces become dashes, max 12 characters)",
+          "type": "text",
+          "maxlength": 12,
+          "default": ""
         }
       ]
     },

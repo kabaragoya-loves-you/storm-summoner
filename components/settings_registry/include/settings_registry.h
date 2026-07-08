@@ -57,4 +57,19 @@ bool settings_registry_exists(const char* id);
  */
 size_t settings_registry_count(void);
 
+/**
+ * Check if a setting ID is a string setting
+ */
+bool settings_registry_is_string(const char* id);
+
+/**
+ * Get a string setting value by ID
+ */
+esp_err_t settings_registry_get_string(const char* id, char* buf, size_t len);
+
+/**
+ * Set a string setting value by ID
+ */
+esp_err_t settings_registry_set_string(const char* id, const char* value);
+
 #endif // SETTINGS_REGISTRY_H

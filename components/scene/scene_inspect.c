@@ -358,7 +358,10 @@ static void append_continuous_mapping_block(scene_inspect_buf_t *b, const char *
 
 static void append_header(scene_inspect_buf_t *b, const scene_t *scene) {
   const char *name = (scene && scene->name[0]) ? scene->name : "Untitled";
-  scene_inspect_buf_append(b, "%s\n\n", name);
+  scene_inspect_buf_append(b, "%s\n", name);
+  if (scene && scene->creator[0])
+    scene_inspect_buf_append(b, "by %s\n", scene->creator);
+  scene_inspect_buf_append(b, "\n");
 }
 
 static void append_overview(scene_inspect_buf_t *b, const scene_t *scene,

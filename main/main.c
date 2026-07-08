@@ -109,6 +109,15 @@ void app_main(void) {
   firmware_update_init();
   device_config_init();
   config_init();
+
+  char user_handle[USER_HANDLE_MAX_LEN + 1];
+  if (config_get_user_handle(user_handle, sizeof(user_handle)) != ESP_OK ||
+      user_handle[0] == '\0') {
+    scene_name_gen_generate_handle(user_handle, sizeof(user_handle));
+    config_set_user_handle(user_handle);
+    ESP_LOGI(TAG, "Generated default user handle: %s", user_handle);
+  }
+
   action_init();
   curve_init();
   tinyusb_init_and_start();
