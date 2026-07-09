@@ -327,6 +327,10 @@ const char* action_timing_to_string(action_timing_t timing, uint8_t beat) {
       return s_timing_str;
     case ACTION_TIMING_TRANSPORT_START:
       return "transport";
+    case ACTION_TIMING_FLAG_RAISED:
+      return "flag_raised";
+    case ACTION_TIMING_FLAG_LOWERED:
+      return "flag_lowered";
     default:
       return "immediate";
   }
@@ -344,6 +348,12 @@ void action_timing_from_string(const char* str, action_timing_t* timing, uint8_t
     *timing = ACTION_TIMING_NEXT_BEAT;
   } else if (strcmp(str, "transport") == 0) {
     *timing = ACTION_TIMING_TRANSPORT_START;
+    *beat = 0;
+  } else if (strcmp(str, "flag_raised") == 0) {
+    *timing = ACTION_TIMING_FLAG_RAISED;
+    *beat = 0;
+  } else if (strcmp(str, "flag_lowered") == 0) {
+    *timing = ACTION_TIMING_FLAG_LOWERED;
     *beat = 0;
   } else if (strncmp(str, "bar_", 4) == 0) {
     int bar_num = atoi(str + 4);

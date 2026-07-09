@@ -7865,6 +7865,16 @@ static uint32_t timing_transport_idx(uint8_t beats, bool use_transport) {
   return timing_specify_bar_idx(beats) + 1;
 }
 
+static uint32_t timing_flag_raised_idx(uint8_t beats, bool use_transport, bool flag_enabled) {
+  if (!flag_enabled) return 0;
+  return timing_specify_bar_idx(beats) + 1 + (use_transport ? 1 : 0);
+}
+
+static uint32_t timing_flag_lowered_idx(uint8_t beats, bool use_transport, bool flag_enabled) {
+  if (!flag_enabled) return 0;
+  return timing_flag_raised_idx(beats, use_transport, true) + 1;
+}
+
 static bool timing_is_bar_preset(uint8_t bar_count, uint32_t* out_idx, uint8_t beats) {
   for (uint32_t i = 0; i < NUM_BAR_PRESETS; i++) {
     if (s_bar_presets[i] == bar_count) {
@@ -7921,12 +7931,15 @@ static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
 
   action_t* action = s_ctx->target_action;
   bool use_transport = scene_get_use_transport(scene_get_current_index());
+  bool flag_enabled = config_get_flag_enabled();
   time_signature_t sig = tempo_get_time_signature();
   uint8_t beats = sig.numerator;
   if (beats == 0) beats = 4;
   if (beats > 16) beats = 16;
   uint32_t specify_idx = timing_specify_bar_idx(beats);
   uint32_t transport_idx = timing_transport_idx(beats, use_transport);
+  uint32_t flag_raised_idx = timing_flag_raised_idx(beats, use_transport, flag_enabled);
+  uint32_t flag_lowered_idx = timing_flag_lowered_idx(beats, use_transport, flag_enabled);
 
   if (selected_index == 0) {
     action->timing = ACTION_TIMING_IMMEDIATE;
@@ -7936,6 +7949,12 @@ static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
     action->timing_beat = 0;
   } else if (use_transport && selected_index == transport_idx) {
     action->timing = ACTION_TIMING_TRANSPORT_START;
+    action->timing_beat = 0;
+  } else if (flag_enabled && selected_index == flag_raised_idx) {
+    action->timing = ACTION_TIMING_FLAG_RAISED;
+    action->timing_beat = 0;
+  } else if (flag_enabled && selected_index == flag_lowered_idx) {
+    action->timing = ACTION_TIMING_FLAG_LOWERED;
     action->timing_beat = 0;
   } else if (selected_index == specify_idx) {
     nav_to_subpage("Bar", bar_count_roller_create);
@@ -7965,6 +7984,7 @@ static lv_obj_t* timing_roller_create(void) {
   if (beats == 0) beats = 4;
   if (beats > 16) beats = 16;
   bool use_transport = scene_get_use_transport(scene_get_current_index());
+  bool flag_enabled = config_get_flag_enabled();
 
   static char timing_options[384];
   int pos = snprintf(timing_options, sizeof(timing_options), "Immediate\nNext Beat");
@@ -7975,6 +7995,9 @@ static lv_obj_t* timing_roller_create(void) {
     "\nBar 1\nBar 2\nBar 4\nBar 8\nBar 16\nBar 32\nSpecify Bar");
   if (use_transport)
     pos += snprintf(timing_options + pos, sizeof(timing_options) - pos, "\nOn Transport");
+  if (flag_enabled)
+    pos += snprintf(timing_options + pos, sizeof(timing_options) - pos,
+      "\nFlag Raised\nFlag Lowered");
 
   action_t* action = s_ctx->target_action;
   uint32_t current_idx = 0;
@@ -7984,6 +8007,10 @@ static lv_obj_t* timing_roller_create(void) {
     current_idx = 1;
   } else if (action->timing == ACTION_TIMING_TRANSPORT_START && use_transport) {
     current_idx = timing_transport_idx(beats, use_transport);
+  } else if (action->timing == ACTION_TIMING_FLAG_RAISED && flag_enabled) {
+    current_idx = timing_flag_raised_idx(beats, use_transport, flag_enabled);
+  } else if (action->timing == ACTION_TIMING_FLAG_LOWERED && flag_enabled) {
+    current_idx = timing_flag_lowered_idx(beats, use_transport, flag_enabled);
   } else if (action->timing == ACTION_TIMING_BAR) {
     uint32_t preset_idx = 0;
     if (timing_is_bar_preset(action->timing_beat, &preset_idx, beats))
@@ -8024,6 +8051,10 @@ static const char* get_timing_display(action_t* action) {
     }
     case ACTION_TIMING_TRANSPORT_START:
       return "On Transport";
+    case ACTION_TIMING_FLAG_RAISED:
+      return "Flag Raised";
+    case ACTION_TIMING_FLAG_LOWERED:
+      return "Flag Lowered";
     default:
       return "Immediate";
   }

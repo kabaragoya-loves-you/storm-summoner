@@ -534,7 +534,8 @@ window.SceneEditorUi = (function () {
     return {
       sceneMode: ctrl.deviceContext?.sceneMode ?? 2,
       confirmChange: ctrl.deviceContext?.confirmChange ?? 0,
-      clockSource: ctrl.editModel?.clock_source || 'internal'
+      clockSource: ctrl.editModel?.clock_source || 'internal',
+      flagEnabled: !!ctrl.deviceContext?.flagEnabled
     }
   }
 
@@ -2492,11 +2493,14 @@ window.SceneEditorUi = (function () {
       ) {
         const beats = ctrl.editModel?.time_signature?.numerator ?? 4
         const useTransport = !!ctrl.editModel?.use_transport
+        const flagEnabled = !!ctrl.deviceContext?.flagEnabled
         const timingVal = a.timing || 'immediate'
         const barParsed = ActionCatalog.parseBarTiming(timingVal)
-        const timingOpts = ActionCatalog.timingOptions(beats, useTransport)
+        const timingOpts = ActionCatalog.timingOptions(beats, useTransport, flagEnabled)
         if (!timingOpts.some(o => o.v === barParsed.select)) {
-          timingOpts.unshift({ v: barParsed.select, l: barParsed.select })
+          const label = barParsed.select === 'flag_raised' ? 'Flag Raised'
+            : barParsed.select === 'flag_lowered' ? 'Flag Lowered' : barParsed.select
+          timingOpts.unshift({ v: barParsed.select, l: label })
         }
         html += fieldRow(
           'Timing',

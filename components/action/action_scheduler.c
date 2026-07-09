@@ -336,6 +336,165 @@ void action_scheduler_reset_cycle_index(action_t* action) {
   }
 }
 
+static bool pending_is_flag_timing(const pending_action_t* pending) {
+  if (!pending) return false;
+  return pending->action.timing == ACTION_TIMING_FLAG_RAISED ||
+         pending->action.timing == ACTION_TIMING_FLAG_LOWERED;
+}
+
+static bool pending_matches_flag_state(const pending_action_t* pending, uint8_t state) {
+  if (!pending || !pending->valid) return false;
+  if (pending->action.timing == ACTION_TIMING_FLAG_RAISED) return state == 1;
+  if (pending->action.timing == ACTION_TIMING_FLAG_LOWERED) return state == 0;
+  return false;
+}
+
+static void scheduler_fire_pending_slot(pending_action_t* pending, uint8_t current_beat,
+    uint8_t beats_per_bar, bool in_programming_mode) {
+  bool pattern_passed = true;
+  if (pending->repeating && pending->action.pattern_length >= 2) {
+    pattern_passed = (pending->action.pattern_mask >> pending->pattern_step) & 1;
+    if (!pattern_passed) {
+      ESP_LOGD(TAG, "Pattern step %d skipped for %s",
+        pending->pattern_step + 1, action_type_name(pending->action.type));
+    }
+    pending->pattern_step = (pending->pattern_step + 1) % pending->action.pattern_length;
+  }
+
+  bool probability_passed = true;
+  if (pattern_passed && pending->repeating) {
+    uint8_t prob = pending->action.probability;
+    if (prob == 0) prob = 100;
+    if (prob < 100) {
+      uint8_t roll = (uint8_t)(esp_random() % 100);
+      probability_passed = (roll < prob);
+      if (!probability_passed) {
+        ESP_LOGD(TAG, "Probability check failed (%d%%, rolled %d) for %s",
+          prob, roll, action_type_name(pending->action.type));
+      }
+    }
+  }
+
+  if (pattern_passed && probability_passed) {
+    if (!in_programming_mode) {
+      if (pending_is_flag_timing(pending)) {
+        ESP_LOGI(TAG, "Firing %s on flag %s",
+          action_type_name(pending->action.type),
+          pending->action.timing == ACTION_TIMING_FLAG_RAISED ? "raised" : "lowered");
+      } else {
+        ESP_LOGI(TAG, "Firing %s on beat %d (target_beat=%d)",
+          action_type_name(pending->action.type), current_beat,
+          pending->target_beat == 0 ? -1 : (int)pending->target_beat);
+      }
+
+      scheduler_restore_source(&pending->source);
+      action_execute_immediate(&pending->action, pending->trigger_value, true);
+    }
+
+    // Sync cycle state back to original action (for CYCLE actions)
+    if (pending->original) {
+      switch (pending->action.type) {
+        case ACTION_CONTROL:
+          if (pending->action.variant == VARIANT_CYCLE) {
+            pending->original->params.control.current_index =
+              pending->action.params.control.current_index;
+          }
+          break;
+        case ACTION_PRESET:
+          if (pending->action.variant == VARIANT_CYCLE) {
+            pending->original->params.preset.current_index =
+              pending->action.params.preset.current_index;
+          }
+          break;
+        case ACTION_TEMPO:
+          if (pending->action.variant == VARIANT_CYCLE) {
+            pending->original->params.tempo.current_index =
+              pending->action.params.tempo.current_index;
+          }
+          break;
+        case ACTION_TOUCHWHEEL:
+          if (pending->action.variant == VARIANT_CYCLE) {
+            pending->original->params.tw_mode.current_index =
+              pending->action.params.tw_mode.current_index;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  // Handle repeating: re-queue for next interval (even if pattern/probability failed)
+  if (pending->repeating && !pending->hold_released) {
+    if (pending_is_flag_timing(pending)) {
+      pending->action.timing = ACTION_TIMING_NEXT_BEAT;
+      pending->action.timing_beat = 0;
+    }
+    if (pending->target_bar > 0) {
+      uint8_t bar_interval = action_repeat_division_to_bars(
+        pending->action.repeat_division);
+      if (bar_interval > 0) {
+        pending->target_bar = get_musical_bar() + bar_interval;
+        pending->beats_remaining = 1;
+        ESP_LOGD(TAG, "Re-queued repeating bar action for bar %u",
+          (unsigned)pending->target_bar);
+      } else {
+        pending->target_bar = 0;
+        pending->target_beat = 0;
+        uint8_t interval_beats = action_repeat_division_to_beats(
+          pending->action.repeat_division, beats_per_bar);
+        pending->beats_remaining = interval_beats > 0 ? interval_beats : 1;
+        ESP_LOGD(TAG, "Re-queued repeating action for %u beats (sub-bar)",
+          (unsigned)pending->beats_remaining);
+      }
+    } else {
+      uint8_t interval_beats = action_repeat_division_to_beats(
+        pending->action.repeat_division, beats_per_bar);
+
+      if (interval_beats > 0) {
+        pending->beats_remaining = interval_beats;
+        ESP_LOGD(TAG, "Re-queued repeating action for %d beats", interval_beats);
+      } else {
+        // Sub-beat divisions - treat as every beat for now
+        pending->beats_remaining = 1;
+      }
+    }
+  } else {
+    pending->valid = false;
+    if (pending->original) {
+      if (!pending->repeating &&
+          pending->original->timing == ACTION_TIMING_TRANSPORT_START)
+        action_scheduler_disarm_transport(pending->original);
+      action_scheduler_stop_repeating(pending->original);
+    }
+  }
+}
+
+void action_scheduler_flag_changed(uint8_t new_state) {
+  bool in_programming_mode = !midi_local_output_is_enabled();
+
+  scene_t* scene = scene_get_current();
+  uint8_t beats_per_bar = (scene && scene->time_signature.numerator)
+    ? scene->time_signature.numerator : 4;
+  if (beats_per_bar == 0) beats_per_bar = 4;
+
+  int slots[MAX_PENDING_ACTIONS];
+  int slot_count = 0;
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (!s_pending_actions[i].valid) continue;
+    if (s_pending_actions[i].paused) continue;
+    if (!pending_matches_flag_state(&s_pending_actions[i], new_state)) continue;
+    slots[slot_count++] = i;
+  }
+
+  for (int j = 0; j < slot_count; j++) {
+    int i = slots[j];
+    if (!s_pending_actions[i].valid) continue;
+    scheduler_fire_pending_slot(&s_pending_actions[i], 0, beats_per_bar,
+      in_programming_mode);
+  }
+}
+
 // ============================================================================
 // Beat event handler - fires pending actions when beat matches
 // ============================================================================
@@ -355,6 +514,7 @@ static void handle_beat_event(const event_t* event, void* context) {
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
     if (!s_pending_actions[i].valid) continue;
     if (s_pending_actions[i].paused) continue;
+    if (pending_is_flag_timing(&s_pending_actions[i])) continue;
 
     pending_action_t* pending = &s_pending_actions[i];
     bool should_fire = false;
@@ -379,118 +539,8 @@ static void handle_beat_event(const event_t* event, void* context) {
       should_fire = true;
     }
 
-    if (should_fire) {
-      bool pattern_passed = true;
-      if (pending->repeating && pending->action.pattern_length >= 2) {
-        pattern_passed = (pending->action.pattern_mask >> pending->pattern_step) & 1;
-        if (!pattern_passed) {
-          ESP_LOGD(TAG, "Pattern step %d skipped for %s",
-            pending->pattern_step + 1, action_type_name(pending->action.type));
-        }
-        pending->pattern_step = (pending->pattern_step + 1) % pending->action.pattern_length;
-      }
-
-      bool probability_passed = true;
-      if (pattern_passed && pending->repeating) {
-        uint8_t prob = pending->action.probability;
-        if (prob == 0) prob = 100;
-        if (prob < 100) {
-          uint8_t roll = (uint8_t)(esp_random() % 100);
-          probability_passed = (roll < prob);
-          if (!probability_passed) {
-            ESP_LOGD(TAG, "Probability check failed (%d%%, rolled %d) for %s",
-              prob, roll, action_type_name(pending->action.type));
-          }
-        }
-      }
-
-      if (pattern_passed && probability_passed) {
-        if (!in_programming_mode) {
-          ESP_LOGI(TAG, "Firing %s on beat %d (target_beat=%d)",
-            action_type_name(pending->action.type), current_beat,
-            pending->target_beat == 0 ? -1 : (int)pending->target_beat);
-
-          scheduler_restore_source(&pending->source);
-          action_execute_immediate(&pending->action, pending->trigger_value, true);
-        }
-
-        // Sync cycle state back to original action (for CYCLE actions)
-        if (pending->original) {
-          switch (pending->action.type) {
-            case ACTION_CONTROL:
-              if (pending->action.variant == VARIANT_CYCLE) {
-                pending->original->params.control.current_index =
-                  pending->action.params.control.current_index;
-              }
-              break;
-            case ACTION_PRESET:
-              if (pending->action.variant == VARIANT_CYCLE) {
-                pending->original->params.preset.current_index =
-                  pending->action.params.preset.current_index;
-              }
-              break;
-            case ACTION_TEMPO:
-              if (pending->action.variant == VARIANT_CYCLE) {
-                pending->original->params.tempo.current_index =
-                  pending->action.params.tempo.current_index;
-              }
-              break;
-            case ACTION_TOUCHWHEEL:
-              if (pending->action.variant == VARIANT_CYCLE) {
-                pending->original->params.tw_mode.current_index =
-                  pending->action.params.tw_mode.current_index;
-              }
-              break;
-            // ACTION_LFO has no cycle state to sync back -- the consolidated
-            // family dropped SHAPE cycling in favor of MODIFY's per-press
-            // override push.
-            default:
-              break;
-          }
-        }
-      }
-
-      // Handle repeating: re-queue for next interval (even if pattern/probability failed)
-      if (pending->repeating && !pending->hold_released) {
-        if (pending->target_bar > 0) {
-          uint8_t bar_interval = action_repeat_division_to_bars(
-            pending->action.repeat_division);
-          if (bar_interval > 0) {
-            pending->target_bar = get_musical_bar() + bar_interval;
-            pending->beats_remaining = 1;
-            ESP_LOGD(TAG, "Re-queued repeating bar action for bar %u",
-              (unsigned)pending->target_bar);
-          } else {
-            pending->target_bar = 0;
-            pending->target_beat = 0;
-            uint8_t interval_beats = action_repeat_division_to_beats(
-              pending->action.repeat_division, beats_per_bar);
-            pending->beats_remaining = interval_beats > 0 ? interval_beats : 1;
-            ESP_LOGD(TAG, "Re-queued repeating action for %u beats (sub-bar)",
-              (unsigned)pending->beats_remaining);
-          }
-        } else {
-          uint8_t interval_beats = action_repeat_division_to_beats(
-            pending->action.repeat_division, beats_per_bar);
-
-          if (interval_beats > 0) {
-            pending->beats_remaining = interval_beats;
-            ESP_LOGD(TAG, "Re-queued repeating action for %d beats", interval_beats);
-          } else {
-            // Sub-beat divisions - treat as every beat for now
-            pending->beats_remaining = 1;
-          }
-        }
-      } else {
-        pending->valid = false;
-        if (pending->original) {
-          if (!pending->repeating &&
-              pending->original->timing == ACTION_TIMING_TRANSPORT_START)
-            action_scheduler_disarm_transport(pending->original);
-          action_scheduler_stop_repeating(pending->original);
-        }
-      }
-    }
+    if (should_fire)
+      scheduler_fire_pending_slot(pending, current_beat, beats_per_bar, in_programming_mode);
   }
 
   // Process active punch-ins

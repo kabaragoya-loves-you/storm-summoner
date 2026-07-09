@@ -70,6 +70,7 @@ application.register(
       this._onDownloadScene = this.onDownloadScene.bind(this)
       this._onScenesActivationComplete = this.onScenesActivationComplete.bind(this)
       this._onDeviceInfo = this.onDeviceInfo.bind(this)
+      this._onConfigSettingChanged = this.onConfigSettingChanged.bind(this)
 
       this.connection.on('connection:changed', this._onConnectionChanged)
       this.connection.on('mode:changed', this._onModeChanged)
@@ -80,6 +81,7 @@ application.register(
       document.addEventListener('scenes:download-scene', this._onDownloadScene)
       document.addEventListener('scenes:activation-complete', this._onScenesActivationComplete)
       document.addEventListener('device:info', this._onDeviceInfo)
+      document.addEventListener('config:setting-changed', this._onConfigSettingChanged)
 
       this._onEditorSectionToggle = (e) => {
         const el = e.target
@@ -104,6 +106,7 @@ application.register(
       document.removeEventListener('scenes:download-scene', this._onDownloadScene)
       document.removeEventListener('scenes:activation-complete', this._onScenesActivationComplete)
       document.removeEventListener('device:info', this._onDeviceInfo)
+      document.removeEventListener('config:setting-changed', this._onConfigSettingChanged)
       if (this.notifyDebounce) clearTimeout(this.notifyDebounce)
       if (this.printFrame) {
         this.printFrame.remove()
@@ -253,7 +256,9 @@ application.register(
         this.stopProgrammingPoll()
         this.pedalCatalog = null
         this._pedalCatalogLoad = null
+        this._configContextLoaded = false
         this.deviceContext.globalPedal = null
+        this.deviceContext.flagEnabled = false
         this.renderDisconnected()
         if (this._pendingReconnectEdit && this.hasEditorContainerTarget) {
           this.editorContainerTarget.innerHTML =
@@ -324,6 +329,31 @@ application.register(
       // Editor reload is deferred to scenes:activation-complete so loadSceneForEdit
       // does not run ensureDeviceIdle / SCENES+EXIT while the list is still entering
       // SCENES mode (that race produced SCENES no-response on tab activate).
+      if (this.editing && this.editModel)
+        void this.refreshConfigContext()
+    }
+
+    onConfigSettingChanged (e) {
+      const { id, value } = e.detail || {}
+      if (id === 'config.flag_enabled') {
+        this.deviceContext.flagEnabled = Number(value) !== 0
+        if (this.editing && this.editModel) this.renderEditor()
+        return
+      }
+      if (id === 'config.scene_mode' && value != null) {
+        this.deviceContext.sceneMode = Number(value)
+        if (this.editing && this.editModel) this.renderEditor()
+        return
+      }
+      if (id === 'config.confirm_change' && value != null) {
+        this.deviceContext.confirmChange = Number(value)
+        if (this.editing && this.editModel) this.renderEditor()
+      }
+    }
+
+    async refreshConfigContext () {
+      this._configContextLoaded = false
+      await this.fetchConfigContextDeferred()
     }
 
     onDeviceInfo (e) {
@@ -2896,6 +2926,7 @@ application.register(
     async loadSceneForEdit () {
       if (!this.connection.isConnected) return
       if (this.editPosition === null) return
+      this._configContextLoaded = false
       const gen = ++this._loadGeneration
       if (this.hasEditorContainerTarget) {
         this.editorContainerTarget.innerHTML =
@@ -2966,8 +2997,6 @@ application.register(
           this.dirty = controlCorrected || presetCorrected
           this.markDirty()
           this.updatePanelTitle()
-          // CONFIG context (device flags) is not needed for rendering; load it
-          // in the background so it never blocks the editor.
           void this.fetchConfigContextDeferred()
           return
         } catch (err) {
@@ -3020,6 +3049,7 @@ application.register(
           }
           await this.fetchConfigContextInTask()
         })
+        if (this.editing && this.editModel) this.renderEditor()
       } catch (err) {
         console.warn('Scene editor: CONFIG context skipped:', err.message)
       }

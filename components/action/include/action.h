@@ -184,7 +184,9 @@ typedef enum {
   ACTION_TIMING_NEXT_BEAT,       // Wait for any next beat
   ACTION_TIMING_SPECIFIC_BEAT,   // Wait for specific beat (uses timing_beat field, 1-16)
   ACTION_TIMING_BAR,             // Fire on downbeat of bar N (timing_beat = N, 1-255)
-  ACTION_TIMING_TRANSPORT_START  // Fire on transport fresh-start downbeat (scene use_transport)
+  ACTION_TIMING_TRANSPORT_START, // Fire on transport fresh-start downbeat (scene use_transport)
+  ACTION_TIMING_FLAG_RAISED,     // Fire on next flag transition to raised (requires flag system)
+  ACTION_TIMING_FLAG_LOWERED     // Fire on next flag transition to lowered (requires flag system)
 } action_timing_t;
 
 // Repeat division (matches LFO divisions for consistency)

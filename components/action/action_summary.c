@@ -859,6 +859,12 @@ static bool ainspect_format_timing(char *buf, size_t cap, const action_t *action
     case ACTION_TIMING_TRANSPORT_START:
       snprintf(buf, cap, "On Transport");
       return true;
+    case ACTION_TIMING_FLAG_RAISED:
+      snprintf(buf, cap, "Flag Raised");
+      return true;
+    case ACTION_TIMING_FLAG_LOWERED:
+      snprintf(buf, cap, "Flag Lowered");
+      return true;
     default:
       return false;
   }

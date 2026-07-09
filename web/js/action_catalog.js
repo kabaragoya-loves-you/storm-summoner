@@ -978,7 +978,7 @@ window.ActionCatalog = (function () {
     return changed
   }
 
-  function timingOptions (numerator, useTransport) {
+  function timingOptions (numerator, useTransport, flagEnabled) {
     let beats = Number(numerator)
     if (!beats || beats < 1) beats = 4
     if (beats > 16) beats = 16
@@ -1000,6 +1000,10 @@ window.ActionCatalog = (function () {
     )
     if (useTransport)
       opts.push({ v: 'transport', l: 'On Transport' })
+    if (flagEnabled) {
+      opts.push({ v: 'flag_raised', l: 'Flag Raised' })
+      opts.push({ v: 'flag_lowered', l: 'Flag Lowered' })
+    }
     return opts
   }
 
@@ -1168,6 +1172,7 @@ window.ActionCatalog = (function () {
     if (type === 'preset' && sceneMode !== 0 && sceneMode !== 2) return false
     if (type === 'scene' && sceneMode !== 1 && sceneMode !== 2) return false
     if (type === 'confirm_pending' && (ctx?.confirmChange ?? 0) !== 1) return false
+    if (type === 'flag_ceremony' && !ctx?.flagEnabled) return false
 
     const clockSource = ctx?.clockSource || 'internal'
     if (type === 'tempo' && clockSource !== 'internal') {

@@ -150,6 +150,8 @@ static uint8_t s_last_cc_values[128];
 // ============================================================================
 static uint8_t s_scene_flag = 0;
 
+static void action_set_flag_internal(uint8_t value, bool notify);
+
 // Optional UI observer for gating-CC changes driven by the incoming-CC mirror.
 static action_gating_changed_cb_t s_gating_changed_observer = NULL;
 
@@ -243,7 +245,7 @@ void action_reset_cc_values(const void* device) {
 }
 
 void action_clear_flag(void) {
-  s_scene_flag = 0;
+  action_set_flag_internal(0, false);
   ESP_LOGD(TAG, "Scene flag cleared");
 }
 
@@ -252,8 +254,36 @@ uint8_t action_get_flag(void) {
 }
 
 void action_set_flag(uint8_t value) {
-  s_scene_flag = value ? 1 : 0;
+  action_set_flag_internal(value, true);
+}
+
+static uint8_t s_flag_notify_depth = 0;
+static int8_t s_flag_notify_deferred = -1;
+
+static void action_dispatch_flag_changed(uint8_t new_state) {
+  action_scheduler_flag_changed(new_state);
+  while (s_flag_notify_deferred >= 0) {
+    int8_t deferred = s_flag_notify_deferred;
+    s_flag_notify_deferred = -1;
+    action_scheduler_flag_changed((uint8_t)deferred);
+  }
+}
+
+static void action_set_flag_internal(uint8_t value, bool notify) {
+  uint8_t new_val = value ? 1 : 0;
+  if (s_scene_flag == new_val) return;
+  s_scene_flag = new_val;
   ESP_LOGD(TAG, "Scene flag set to %d", s_scene_flag);
+  if (!notify || !config_get_flag_enabled()) return;
+
+  if (s_flag_notify_depth > 0) {
+    s_flag_notify_deferred = (int8_t)new_val;
+    return;
+  }
+
+  s_flag_notify_depth++;
+  action_dispatch_flag_changed(new_val);
+  s_flag_notify_depth--;
 }
 
 // ============================================================================
@@ -287,11 +317,23 @@ esp_err_t action_init(void) {
   return ESP_OK;
 }
 
+static bool action_timing_is_flag_wait(action_timing_t timing) {
+  return timing == ACTION_TIMING_FLAG_RAISED ||
+         timing == ACTION_TIMING_FLAG_LOWERED;
+}
+
 static bool action_queue_timed(action_t* action, uint8_t trigger_value, bool repeats,
     bool include_transport_start) {
   bool supports_timing = action_supports_timing_for(action);
   if (!supports_timing || action->timing == ACTION_TIMING_IMMEDIATE)
     return false;
+
+  if (action_timing_is_flag_wait(action->timing)) {
+    if (!config_get_flag_enabled()) return false;
+    bool queued = action_scheduler_enqueue(action, trigger_value, 0, 0, repeats, 1);
+    if (queued) (void)action_consume_trigger_source();
+    return queued;
+  }
 
   uint8_t target_beat = 0;
   uint16_t target_bars = 0;
@@ -418,11 +460,8 @@ esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value
 
   if (result == ACTION_HANDLED_SKIP_FLAG) return ESP_OK;
 
-  if (is_press && config_get_flag_enabled() && action->raise_flag) {
-    s_scene_flag = 1;
-    ESP_LOGD(TAG, "Raise the Flag: flag set to 1 after action %s",
-      action_type_name(action->type));
-  }
+  if (is_press && config_get_flag_enabled() && action->raise_flag)
+    action_set_flag_internal(1, true);
 
   if (is_press) {
     action_trigger_source_t source = action_consume_trigger_source();

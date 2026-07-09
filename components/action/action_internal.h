@@ -116,6 +116,7 @@ void action_scheduler_disarm_transport(action_t* action);
 // Arm on pad press; if transport is already playing, enqueue for the next beat.
 void action_scheduler_transport_pad_press(action_t* action);
 void action_scheduler_reset_cycle_index(action_t* action);
+void action_scheduler_flag_changed(uint8_t new_state);
 
 // Automated trigger path (on_play, etc.): honors timing/repeat without pad
 // toggle or On-Transport arming semantics.

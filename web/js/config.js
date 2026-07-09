@@ -393,6 +393,9 @@ application.register(
           if (response === 'OK') {
             this.values[settingId] = value
             this.updateVisibility()
+            document.dispatchEvent(new CustomEvent('config:setting-changed', {
+              detail: { id: settingId, value }
+            }))
           } else {
             console.error(`Failed to set ${settingId}: ${response}`)
           }
