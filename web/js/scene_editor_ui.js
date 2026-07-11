@@ -2495,7 +2495,10 @@ window.SceneEditorUi = (function () {
         html += renderTouchwheelCycle(ctrl, path, a)
       }
       if (a.type === 'control' || a.type === 'control_change') {
-        html += renderControlFields(ctrl, path, a)
+        if ((a.variant || 'set') === 'flag_ceremony')
+          html += renderFlagCeremonyFields(ctrl, path, a)
+        else
+          html += renderControlFields(ctrl, path, a)
       }
       if (a.type === 'preset') {
         html += renderPresetFields(ctrl, path, a)
@@ -2569,9 +2572,6 @@ window.SceneEditorUi = (function () {
       if (a.type === 'punch_in') {
         html += renderPunchInFields(ctrl, path, a)
       }
-      if (a.type === 'flag_ceremony') {
-        html += renderFlagCeremonyFields(ctrl, path, a)
-      }
       if (a.type === 'boomerang') {
         html += renderBoomerangFields(ctrl, path, a)
       }
@@ -2594,7 +2594,8 @@ window.SceneEditorUi = (function () {
       ) {
         const beats = ctrl.editModel?.time_signature?.numerator ?? 4
         const useTransport = !!ctrl.editModel?.use_transport
-        const flagEnabled = !!ctrl.deviceContext?.flagEnabled
+        const flagEnabled = !!ctrl.deviceContext?.flagEnabled &&
+          !ActionCatalog.isFlagListTrigger(trigger)
         const timingVal = a.timing || 'immediate'
         const barParsed = ActionCatalog.parseBarTiming(timingVal)
         const timingOpts = ActionCatalog.timingOptions(beats, useTransport, flagEnabled)
@@ -2624,7 +2625,8 @@ window.SceneEditorUi = (function () {
       html += renderMorphBlock(ctrl, path, a)
       if (
         ActionCatalog.supportsRaiseFlag(a) &&
-        ctrl.deviceContext?.flagEnabled
+        ctrl.deviceContext?.flagEnabled &&
+        !ActionCatalog.isFlagListTrigger(trigger)
       ) {
         html += fieldRow(
           'Raise the Flag',
@@ -4188,6 +4190,36 @@ window.SceneEditorUi = (function () {
     )
   }
 
+  function renderFlagRaised (ctrl) {
+    if (!ctrl.deviceContext?.flagEnabled) return ''
+    return section(
+      'Flag Raised',
+      renderActionChain(
+        ctrl,
+        'on_flag_raised',
+        ctrl.editModel.on_flag_raised,
+        4,
+        ActionCatalog.TRIGGERS.FLAG_RAISED,
+        { slotTitlePrefix: 'Raised Action' }
+      )
+    )
+  }
+
+  function renderFlagLowered (ctrl) {
+    if (!ctrl.deviceContext?.flagEnabled) return ''
+    return section(
+      'Flag Lowered',
+      renderActionChain(
+        ctrl,
+        'on_flag_lowered',
+        ctrl.editModel.on_flag_lowered,
+        4,
+        ActionCatalog.TRIGGERS.FLAG_LOWERED,
+        { slotTitlePrefix: 'Lowered Action' }
+      )
+    )
+  }
+
   function renderCcTriggers (ctrl) {
     if (!ctrl.deviceContext.midiControl) return ''
     if (!ctrl.editModel.cc_triggers) {
@@ -4231,6 +4263,8 @@ window.SceneEditorUi = (function () {
     html += renderBump(ctrl)
     html += renderOnLoad(ctrl)
     html += renderOnPlay(ctrl)
+    html += renderFlagRaised(ctrl)
+    html += renderFlagLowered(ctrl)
     html += renderSampleHold(ctrl)
     html += renderTiltAxis(ctrl, 'x')
     html += renderTiltAxis(ctrl, 'y')
@@ -4281,6 +4315,8 @@ window.SceneEditorUi = (function () {
     if (hasAction(m.bump)) open.add('Bump')
     if ((m.on_load || []).some(hasAction)) open.add('On-Load')
     if ((m.on_play || []).some(hasAction)) open.add('On-Play')
+    if ((m.on_flag_raised || []).some(hasAction)) open.add('Flag Raised')
+    if ((m.on_flag_lowered || []).some(hasAction)) open.add('Flag Lowered')
     if (m.sample_hold_config?.enabled) open.add('S+H')
     if (m.tilt_x?.enabled) open.add('Tilt X')
     if (m.tilt_y?.enabled) open.add('Tilt Y')

@@ -479,6 +479,28 @@ void action_scheduler_flag_changed(uint8_t new_state) {
     ? scene->time_signature.numerator : 4;
   if (beats_per_bar == 0) beats_per_bar = 4;
 
+  // Flag-gated repeats: cancel repeating slots spawned by the opposite list.
+  action_source_type_t cancel_src = new_state
+    ? ACTION_SOURCE_ON_FLAG_LOWERED
+    : ACTION_SOURCE_ON_FLAG_RAISED;
+  for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {
+    if (!s_pending_actions[i].valid) continue;
+    if (!s_pending_actions[i].repeating) continue;
+    if (s_pending_actions[i].source.type != cancel_src) continue;
+    if (s_pending_actions[i].original)
+      action_scheduler_stop_repeating(s_pending_actions[i].original);
+    s_pending_actions[i].valid = false;
+  }
+  if (scene) {
+    if (cancel_src == ACTION_SOURCE_ON_FLAG_LOWERED) {
+      for (int i = 0; i < scene->num_flag_lowered_actions; i++)
+        action_scheduler_stop_repeating(&scene->flag_lowered[i]);
+    } else {
+      for (int i = 0; i < scene->num_flag_raised_actions; i++)
+        action_scheduler_stop_repeating(&scene->flag_raised[i]);
+    }
+  }
+
   int slots[MAX_PENDING_ACTIONS];
   int slot_count = 0;
   for (int i = 0; i < MAX_PENDING_ACTIONS; i++) {

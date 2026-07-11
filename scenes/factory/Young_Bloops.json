@@ -91,7 +91,8 @@
     },
     {
       "action": {
-        "type": "flag_ceremony",
+        "type": "control",
+        "variant": "flag_ceremony",
         "flag_up_cc": 11,
         "flag_up_value": 4,
         "flag_down_cc": 11,

@@ -406,33 +406,6 @@ action_handle_result_t action_handlers_modulation_dispatch(
       }
       return ACTION_HANDLED;
 
-    case ACTION_FLAG_CEREMONY:
-      if (is_press) {
-        uint8_t cc, value;
-        bool took_down_path = false;
-        if (action_get_flag() == 1) {
-          cc = action->params.flag_ceremony.flag_up_cc;
-          value = action->params.flag_ceremony.flag_up_value;
-          action_set_flag(0);
-          ESP_LOGI(TAG, "Flag Ceremony: flag was UP, sending CC%d=%d, flag now DOWN",
-            cc, value);
-        } else {
-          cc = action->params.flag_ceremony.flag_down_cc;
-          value = action->params.flag_ceremony.flag_down_value;
-          took_down_path = true;
-          ESP_LOGI(TAG, "Flag Ceremony: flag was DOWN, sending CC%d=%d",
-            cc, value);
-        }
-        send_control_change(channel, cc, value);
-        action_set_cc_value(cc, value);
-
-        if (took_down_path && config_get_flag_enabled() && action->raise_flag) {
-          action_set_flag(1);
-          ESP_LOGI(TAG, "Flag Ceremony: raise_flag set, flag now UP");
-        }
-      }
-      return ACTION_HANDLED_SKIP_FLAG;
-
     default:
       return ACTION_NOT_HANDLED;
   }

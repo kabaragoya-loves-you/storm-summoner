@@ -85,6 +85,12 @@ static void format_source_label(const action_trigger_source_t *src, char *buf, s
     case ACTION_SOURCE_ON_PLAY:
       snprintf(buf, len, "On Play");
       break;
+    case ACTION_SOURCE_ON_FLAG_RAISED:
+      snprintf(buf, len, "Flag Raised");
+      break;
+    case ACTION_SOURCE_ON_FLAG_LOWERED:
+      snprintf(buf, len, "Flag Lowered");
+      break;
     case ACTION_SOURCE_CV:
       snprintf(buf, len, "CV Trigger");
       break;

@@ -230,6 +230,10 @@ window.BoomerangEnvelope = (function () {
     if (m) return `On-Load ${Number(m[1]) + 1}`
     m = path.match(/^on_play\.(\d+)$/)
     if (m) return `On-Play ${Number(m[1]) + 1}`
+    m = path.match(/^on_flag_raised\.(\d+)$/)
+    if (m) return `Flag Raised ${Number(m[1]) + 1}`
+    m = path.match(/^on_flag_lowered\.(\d+)$/)
+    if (m) return `Flag Lowered ${Number(m[1]) + 1}`
     m = path.match(/^cc_triggers\.(\d+)\.action$/)
     if (m) {
       const idx = Number(m[1])

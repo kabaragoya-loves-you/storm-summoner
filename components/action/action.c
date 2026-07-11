@@ -260,12 +260,39 @@ void action_set_flag(uint8_t value) {
 static uint8_t s_flag_notify_depth = 0;
 static int8_t s_flag_notify_deferred = -1;
 
+static void action_execute_flag_lists(uint8_t new_state) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  if (new_state) {
+    if (scene->num_flag_raised_actions == 0) return;
+    ESP_LOGI(TAG, "Queuing %d flag_raised action(s)",
+      scene->num_flag_raised_actions);
+    for (int i = 0; i < scene->num_flag_raised_actions; i++) {
+      action_scheduler_reset_cycle_index(&scene->flag_raised[i]);
+      action_set_next_trigger_source(ACTION_SOURCE_ON_FLAG_RAISED, (uint8_t)i);
+      action_execute_triggered(&scene->flag_raised[i], 127);
+    }
+  } else {
+    if (scene->num_flag_lowered_actions == 0) return;
+    ESP_LOGI(TAG, "Queuing %d flag_lowered action(s)",
+      scene->num_flag_lowered_actions);
+    for (int i = 0; i < scene->num_flag_lowered_actions; i++) {
+      action_scheduler_reset_cycle_index(&scene->flag_lowered[i]);
+      action_set_next_trigger_source(ACTION_SOURCE_ON_FLAG_LOWERED, (uint8_t)i);
+      action_execute_triggered(&scene->flag_lowered[i], 127);
+    }
+  }
+}
+
 static void action_dispatch_flag_changed(uint8_t new_state) {
   action_scheduler_flag_changed(new_state);
+  action_execute_flag_lists(new_state);
   while (s_flag_notify_deferred >= 0) {
     int8_t deferred = s_flag_notify_deferred;
     s_flag_notify_deferred = -1;
     action_scheduler_flag_changed((uint8_t)deferred);
+    action_execute_flag_lists((uint8_t)deferred);
   }
 }
 

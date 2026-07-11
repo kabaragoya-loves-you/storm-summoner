@@ -103,6 +103,14 @@
       "$ref": "#/definitions/action_chain",
       "description": "Actions to execute when transport starts playing (fresh start only, not resume)"
     },
+    "on_flag_raised": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Actions to execute when the scene flag transitions to raised"
+    },
+    "on_flag_lowered": {
+      "$ref": "#/definitions/action_chain",
+      "description": "Actions to execute when the scene flag transitions to lowered"
+    },
     "touchwheel_mode": {
       "type": "string",
       "enum": ["pads", "program_change", "continuous", "set_tempo", "pitch_bend", "aftertouch", "double_cc", "velocity", "lfo_rate", "lfo_depth", "rtg_rate"],
@@ -1111,8 +1119,8 @@
         },
         "variant": {
           "type": "string",
-          "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record", "modify", "step", "downbeat"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle/downbeat), type='control' (set/hold/cycle), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/record; legacy pause aliases stop), type='touchwheel' (hold/cycle), type='lfo' (start/stop/toggle/modify), type='clock' (toggle/hold/burst), type='cut' (toggle/hold), type='ui' (set/hold/cycle), type='param' (hold/cycle), type='rtg' (toggle/hold/step/modify), and type='sample_hold' (toggle/hold/step/modify). Omit for singleton types."
+          "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record", "modify", "step", "downbeat", "flag_ceremony"],
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle/downbeat), type='control' (set/hold/cycle/flag_ceremony), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/record; legacy pause aliases stop), type='touchwheel' (hold/cycle), type='lfo' (start/stop/toggle/modify), type='clock' (toggle/hold/burst), type='cut' (toggle/hold), type='ui' (set/hold/cycle), type='param' (hold/cycle), type='rtg' (toggle/hold/step/modify), and type='sample_hold' (toggle/hold/step/modify). Omit for singleton types. Legacy type='flag_ceremony' is migrated to type='control' with variant='flag_ceremony' on load."
         },
         "timing": {
           "type": "string",
@@ -1344,6 +1352,44 @@
                 "maximum": 7,
                 "default": 0,
                 "description": "Current position in cycle"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "control"},
+              "variant": {"const": "flag_ceremony"}
+            },
+            "required": ["type", "variant"]
+          },
+          "then": {
+            "required": ["flag_up_cc", "flag_up_value", "flag_down_cc", "flag_down_value"],
+            "properties": {
+              "flag_up_cc": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number to send when flag is up (semaphore = 1)"
+              },
+              "flag_up_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC value to send when flag is up"
+              },
+              "flag_down_cc": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC number to send when flag is down (semaphore = 0)"
+              },
+              "flag_down_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127,
+                "description": "CC value to send when flag is down"
               }
             }
           }
@@ -2399,6 +2445,7 @@
             }
           },
           "then": {
+            "description": "Legacy standalone Flag Ceremony type; migrated to type=control variant=flag_ceremony on load",
             "required": ["flag_up_cc", "flag_up_value", "flag_down_cc", "flag_down_value"],
             "properties": {
               "flag_up_cc": {

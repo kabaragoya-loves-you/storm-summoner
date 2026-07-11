@@ -788,7 +788,7 @@ application.register(
         if (action.finish_cc == null) action.finish_cc = cc
         if (action.finish_value == null) action.finish_value = 0
         if (!action.duration) action.duration = '1_bar'
-      } else if (t === 'flag_ceremony') {
+      } else if (t === 'control' && (action.variant || 'set') === 'flag_ceremony') {
         const cc = firstCc()
         if (action.flag_up_cc == null) action.flag_up_cc = cc
         if (action.flag_up_value == null) action.flag_up_value = 127
@@ -1006,12 +1006,22 @@ application.register(
         model.cv_input_mode = 'clock_sync'
       }
       ActionCatalog.stripActionFieldsInModel(model)
+      ActionCatalog.normalizeSimpleActionsInModel(model)
       if (forSave && model.expr_switch?.type === 'none') delete model.expr_switch
       if (forSave) this.normalizeScopeForSave(model)
       else if (model.scope) model.scope = this.normalizeScopeEditorList(model.scope)
-      for (const key of ['on_load', 'on_play']) {
+      for (const key of ['on_load', 'on_play', 'on_flag_raised', 'on_flag_lowered']) {
         if (forSave) this.normalizeActionChainForSave(model, key)
         else if (model[key]) model[key] = this.normalizeActionChainEditorList(model[key])
+      }
+      for (const key of ['on_flag_raised', 'on_flag_lowered']) {
+        if (!Array.isArray(model[key])) continue
+        for (const action of model[key]) {
+          if (!action || action.type === 'none') continue
+          if (action.timing === 'flag_raised' || action.timing === 'flag_lowered')
+            action.timing = 'immediate'
+          if (action.raise_flag) action.raise_flag = false
+        }
       }
     }
 
@@ -2082,7 +2092,8 @@ application.register(
         const ccKey = ccValueSync[2]
         const valKey = ccKey.replace('_cc', '_value')
         const action = this.getAtPath(actionPath)
-        if (action && (action.type === 'punch_in' || action.type === 'flag_ceremony')) {
+        if (action && (action.type === 'punch_in' ||
+            (action.type === 'control' && action.variant === 'flag_ceremony'))) {
           const cc = Number(val)
           const curVal = action[valKey]
           this.setAtPath(path, cc)
@@ -2175,7 +2186,7 @@ application.register(
         else if (val === 'lfo') this.seedLfoAction(aPath)
         else if (val === 'tempo') this.seedTempoAction(aPath)
         else if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold', 'punch_in',
-          'flag_ceremony', 'boomerang'].includes(val)) {
+          'boomerang'].includes(val)) {
           this.seedConsolidatedAction(aPath)
         } else {
           const updated = this.getAtPath(aPath)
@@ -2302,6 +2313,8 @@ application.register(
       visit(model.bump)
       model.on_load?.forEach(visit)
       model.on_play?.forEach(visit)
+      model.on_flag_raised?.forEach(visit)
+      model.on_flag_lowered?.forEach(visit)
       model.cc_triggers?.forEach(t => visit(t?.action))
       visit(model.cv_trigger_action)
       visit(model.expr_switch)

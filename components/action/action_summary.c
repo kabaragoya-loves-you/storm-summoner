@@ -875,7 +875,6 @@ static bool ainspect_action_is_singleton(action_type_t type) {
     case ACTION_RESET:
     case ACTION_CONFIRM_PENDING:
     case ACTION_INSPECT_SCENE:
-    case ACTION_FLAG_CEREMONY:
     case ACTION_PUNCH_IN:
     case ACTION_RANDOMIZE:
     case ACTION_BOOMERANG:
@@ -896,6 +895,23 @@ static bool ainspect_format_variant_line(const action_t *action, uint8_t scene_i
   if (!variant || variant[0] == '\0') variant = "Set";
 
   const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
+
+  if (action->type == ACTION_CONTROL &&
+      action->variant == VARIANT_FLAG_CEREMONY) {
+    char up_cc[32], down_cc[32], up_val[24], down_val[24];
+    ainspect_cc_label(up_cc, sizeof(up_cc), device,
+      action->params.flag_ceremony.flag_up_cc);
+    ainspect_cc_label(down_cc, sizeof(down_cc), device,
+      action->params.flag_ceremony.flag_down_cc);
+    ainspect_value_label(up_val, sizeof(up_val), device,
+      action->params.flag_ceremony.flag_up_cc,
+      action->params.flag_ceremony.flag_up_value);
+    ainspect_value_label(down_val, sizeof(down_val), device,
+      action->params.flag_ceremony.flag_down_cc,
+      action->params.flag_ceremony.flag_down_value);
+    snprintf(buf, cap, "Flag: %s %s / %s %s", up_cc, up_val, down_cc, down_val);
+    return true;
+  }
 
   if (action->type == ACTION_CONTROL && action->params.control.num_ccs > 0) {
     uint8_t cc = action->params.control.cc_numbers[0];

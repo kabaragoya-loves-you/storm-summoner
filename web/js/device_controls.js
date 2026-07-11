@@ -307,6 +307,8 @@ window.DeviceControls = (function () {
     fix(model.bump)
     model.on_load?.forEach(fix)
     model.on_play?.forEach(fix)
+    model.on_flag_raised?.forEach(fix)
+    model.on_flag_lowered?.forEach(fix)
     model.cc_triggers?.forEach(t => fix(t?.action))
     fix(model.cv_trigger_action)
     return changed
@@ -381,6 +383,7 @@ window.DeviceControls = (function () {
 
   function normalizeControlAction (device, action, getCcValue) {
     if (!action || !isControlAction(action.type)) return false
+    if ((action.variant || 'set') === 'flag_ceremony') return false
     if (!hasParameters(device)) return false
 
     const variant = action.variant || 'set'
@@ -424,6 +427,8 @@ window.DeviceControls = (function () {
     fix(model.bump)
     model.on_load?.forEach(fix)
     model.on_play?.forEach(fix)
+    model.on_flag_raised?.forEach(fix)
+    model.on_flag_lowered?.forEach(fix)
     model.cc_triggers?.forEach(t => fix(t?.action))
     fix(model.cv_trigger_action)
     return changed
@@ -453,6 +458,8 @@ window.DeviceControls = (function () {
     fix(model.bump)
     model.on_load?.forEach(fix)
     model.on_play?.forEach(fix)
+    model.on_flag_raised?.forEach(fix)
+    model.on_flag_lowered?.forEach(fix)
     model.cc_triggers?.forEach(t => fix(t?.action))
     fix(model.cv_trigger_action)
     fix(model.expr_switch)
@@ -471,18 +478,22 @@ window.DeviceControls = (function () {
 
   function seedControlAction (ctrl, actionPath) {
     const device = ctrl.deviceDefinition
+    const action = ctrl.getAtPath(actionPath) || {}
+    if ((action.variant || 'set') === 'flag_ceremony') {
+      ctrl.seedConsolidatedAction(actionPath)
+      return
+    }
     if (!hasParameters(device)) return
     const getCcValue = typeof ctrl.getCcValue === 'function'
       ? (cc) => ctrl.getCcValue(cc)
       : undefined
-    const action = ctrl.getAtPath(actionPath) || {}
     const slots = Math.max(1, controlSlotCount(action))
     const ccResolved = []
     for (let i = 0; i < slots; i++) {
       ccResolved.push(resolveParameterCc(device, ccForSlot(action, i)))
     }
     ctrl.setAtPath(`${actionPath}.cc`, packField(ccResolved))
-    if (!['set', 'hold', 'cycle'].includes(action.variant)) {
+    if (!['set', 'hold', 'cycle', 'flag_ceremony'].includes(action.variant)) {
       ctrl.setAtPath(`${actionPath}.variant`, 'set')
     }
     const variant = ctrl.getAtPath(`${actionPath}.variant`) || 'set'
@@ -608,6 +619,8 @@ window.DeviceControls = (function () {
     fix(model.bump)
     model.on_load?.forEach(fix)
     model.on_play?.forEach(fix)
+    model.on_flag_raised?.forEach(fix)
+    model.on_flag_lowered?.forEach(fix)
     model.cc_triggers?.forEach(t => fix(t?.action))
     fix(model.cv_trigger_action)
     return changed
@@ -718,6 +731,8 @@ window.DeviceControls = (function () {
     check(model.bump, 'bump')
     model.on_load?.forEach((a, i) => check(a, `on_load.${i}`))
     model.on_play?.forEach((a, i) => check(a, `on_play.${i}`))
+    model.on_flag_raised?.forEach((a, i) => check(a, `on_flag_raised.${i}`))
+    model.on_flag_lowered?.forEach((a, i) => check(a, `on_flag_lowered.${i}`))
     model.cc_triggers?.forEach((t, i) => check(t?.action, `cc_triggers.${i}.action`))
     check(model.cv_trigger_action, 'cv_trigger_action')
     return errors
@@ -781,6 +796,8 @@ window.DeviceControls = (function () {
     check(model.bump, 'bump')
     model.on_load?.forEach((a, i) => check(a, `on_load.${i}`))
     model.on_play?.forEach((a, i) => check(a, `on_play.${i}`))
+    model.on_flag_raised?.forEach((a, i) => check(a, `on_flag_raised.${i}`))
+    model.on_flag_lowered?.forEach((a, i) => check(a, `on_flag_lowered.${i}`))
     model.cc_triggers?.forEach((t, i) => check(t?.action, `cc_triggers.${i}.action`))
     check(model.cv_trigger_action, 'cv_trigger_action')
     return errors

@@ -109,6 +109,12 @@ trigger_capabilities_t action_trigger_capabilities(action_trigger_type_t trigger
       caps.fires_at_play_time = true;
       caps.inhibits_transport = true;
       break;
+    case ACTION_TRIGGER_FLAG_RAISED:
+    case ACTION_TRIGGER_FLAG_LOWERED:
+      // Reuse the fire-and-forget gate (Rule 3). Transport is allowed —
+      // start/stop depending on flag state is a headline use case.
+      caps.fires_at_play_time = true;
+      break;
   }
   return caps;
 }
@@ -416,9 +422,12 @@ bool action_supports_repeat_for(const action_t* action) {
     }
   }
   if (action->type == ACTION_CONTROL) {
-    // SET and CYCLE repeat (every press resends / advances).
-    // HOLD does not repeat -- the release event has nowhere to go.
-    return action->variant == VARIANT_SET || action->variant == VARIANT_CYCLE;
+    // SET, CYCLE, and FLAG_CEREMONY repeat (every press resends / advances /
+    // toggles the semaphore). HOLD does not -- the release event has nowhere
+    // to go.
+    return action->variant == VARIANT_SET ||
+           action->variant == VARIANT_CYCLE ||
+           action->variant == VARIANT_FLAG_CEREMONY;
   }
   if (action->type == ACTION_PRESET) {
     // HOLD has no place to send repeated release events; suppress it.
@@ -503,7 +512,6 @@ bool action_supports_raise_flag(action_type_t type) {
     case ACTION_RANDOMIZE:
     case ACTION_LFO:
     case ACTION_PUNCH_IN:
-    case ACTION_FLAG_CEREMONY:
     case ACTION_BOOMERANG:
       return true;
     default:
@@ -568,6 +576,32 @@ void action_validate_scene_timings(scene_t* scene) {
       a->timing = ACTION_TIMING_IMMEDIATE;
       a->timing_beat = 0;
       a->repeat_enabled = false;
+    }
+    if (action_validate_timing(a, beats)) remapped++;
+  }
+
+  for (int i = 0; i < scene->num_flag_raised_actions && i < MAX_ON_FLAG_RAISED_ACTIONS; i++) {
+    action_t *a = &scene->flag_raised[i];
+    if (a->type != ACTION_NONE) {
+      if (a->timing == ACTION_TIMING_FLAG_RAISED ||
+          a->timing == ACTION_TIMING_FLAG_LOWERED) {
+        a->timing = ACTION_TIMING_IMMEDIATE;
+        a->timing_beat = 0;
+      }
+      a->raise_flag = false;
+    }
+    if (action_validate_timing(a, beats)) remapped++;
+  }
+
+  for (int i = 0; i < scene->num_flag_lowered_actions && i < MAX_ON_FLAG_LOWERED_ACTIONS; i++) {
+    action_t *a = &scene->flag_lowered[i];
+    if (a->type != ACTION_NONE) {
+      if (a->timing == ACTION_TIMING_FLAG_RAISED ||
+          a->timing == ACTION_TIMING_FLAG_LOWERED) {
+        a->timing = ACTION_TIMING_IMMEDIATE;
+        a->timing_beat = 0;
+      }
+      a->raise_flag = false;
     }
     if (action_validate_timing(a, beats)) remapped++;
   }

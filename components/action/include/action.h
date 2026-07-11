@@ -36,9 +36,10 @@ typedef enum {
   
   // Direct MIDI output
   // Control (consolidated -- use variant field to pick operation:
-  //   VARIANT_SET    = send CC with value(s) on press (legacy "Control Change")
-  //   VARIANT_HOLD   = send press values, then release values (with release_mode)
-  //   VARIANT_CYCLE  = cycle through multiple CC values per press)
+  //   VARIANT_SET           = send CC with value(s) on press (legacy "Control Change")
+  //   VARIANT_HOLD          = send press values, then release values (with release_mode)
+  //   VARIANT_CYCLE         = cycle through multiple CC values per press
+  //   VARIANT_FLAG_CEREMONY = flag-state-keyed CC toggle (scene semaphore))
   ACTION_CONTROL,
   ACTION_NOTE,                // Send Note On on press, Note Off on release
   
@@ -95,9 +96,6 @@ typedef enum {
   // Looper punch-in
   ACTION_PUNCH_IN,            // Send start CC at bar, finish CC after duration
 
-  // Flag ceremony (scene-local semaphore)
-  ACTION_FLAG_CEREMONY,       // Check flag state, send CC, flip flag
-
   // Boomerang (ADSR-style envelope: dive to target, hold, return)
   ACTION_BOOMERANG,           // 3-phase envelope on any continuous output
 
@@ -136,6 +134,8 @@ typedef enum {
   VARIANT_STEP,
   // Tempo family: re-align bar/beat to downbeat on press (append-only).
   VARIANT_DOWNBEAT,
+  // Control family: flag-state-keyed CC toggle (append-only).
+  VARIANT_FLAG_CEREMONY,
   VARIANT_MAX
 } action_variant_t;
 
@@ -463,7 +463,7 @@ typedef struct {
       punch_in_duration_t duration;  // How long to record
     } punch_in;
 
-    // For flag ceremony action (scene-local semaphore)
+    // For ACTION_CONTROL + VARIANT_FLAG_CEREMONY (scene-local semaphore)
     struct {
       uint8_t flag_up_cc;       // CC number to send when flag is up (1)
       uint8_t flag_up_value;    // CC value to send when flag is up
@@ -509,6 +509,10 @@ typedef struct {
 
 // Maximum on_play actions per scene
 #define MAX_ON_PLAY_ACTIONS 4
+
+// Maximum flag raised / lowered actions per scene
+#define MAX_ON_FLAG_RAISED_ACTIONS 4
+#define MAX_ON_FLAG_LOWERED_ACTIONS 4
 
 // "Original" sentinel values for ACTION_LFO + VARIANT_MODIFY override
 // fields. Each field carries one of these in its default state, meaning
@@ -633,6 +637,8 @@ typedef enum {
   ACTION_TRIGGER_EXPR_SWITCH,    // Expression in switch mode
   ACTION_TRIGGER_ON_LOAD,        // Scene load actions
   ACTION_TRIGGER_ON_PLAY,        // Transport play actions (fresh start only)
+  ACTION_TRIGGER_FLAG_RAISED,    // Scene flag raised action list
+  ACTION_TRIGGER_FLAG_LOWERED,   // Scene flag lowered action list
   ACTION_TRIGGER_CC              // Incoming MIDI CC trigger slots
 } action_trigger_type_t;
 
@@ -641,10 +647,10 @@ typedef enum {
 // One source of truth for what each trigger does; the validator below
 // uses it to decide which actions/variants are valid where.
 typedef struct {
-  bool delivers_release;    // false for BUMP, ON_LOAD, ON_PLAY (no release pair)
+  bool delivers_release;    // false for BUMP, ON_LOAD, ON_PLAY, FLAG_* (no release pair)
   bool inhibits_transport;  // true for ON_PLAY (firing transport here would recurse)
   bool fires_at_load_time;  // true for ON_LOAD (scene not fully live yet)
-  bool fires_at_play_time;  // true for ON_PLAY (transport-start moment)
+  bool fires_at_play_time;  // true for ON_PLAY / FLAG_* (event-time fire-and-forget gate)
 } trigger_capabilities_t;
 
 trigger_capabilities_t action_trigger_capabilities(action_trigger_type_t trigger);
@@ -838,6 +844,8 @@ typedef enum {
   ACTION_SOURCE_SCHEDULED,
   ACTION_SOURCE_ON_LOAD,
   ACTION_SOURCE_ON_PLAY,
+  ACTION_SOURCE_ON_FLAG_RAISED,
+  ACTION_SOURCE_ON_FLAG_LOWERED,
   ACTION_SOURCE_CV
 } action_source_type_t;
 

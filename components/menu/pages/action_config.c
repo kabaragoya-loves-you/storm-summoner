@@ -233,7 +233,6 @@ static const action_type_t s_all_action_types[] = {
   ACTION_RTG,
   ACTION_SAMPLE_HOLD,
   ACTION_PUNCH_IN,
-  ACTION_FLAG_CEREMONY,
   ACTION_BOOMERANG,
   ACTION_INSPECT_SCENE,
   ACTION_RESET,
@@ -283,7 +282,6 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_RTG: return "RTG";
     case ACTION_SAMPLE_HOLD: return "S+H";
     case ACTION_PUNCH_IN: return "Punch-In";
-    case ACTION_FLAG_CEREMONY: return "Flag Ceremony";
     case ACTION_BOOMERANG: return "Boomerang";
     case ACTION_INSPECT_SCENE: return "Inspect Scene";
     default: return "Unknown";
@@ -327,9 +325,6 @@ static bool is_action_visible(action_type_t type) {
     return action_variant_is_valid_for_trigger(ACTION_TEMPO, VARIANT_DOWNBEAT,
       s_ctx->trigger_type);
   }
-
-  // Flag Ceremony only when flag system is enabled
-  if (type == ACTION_FLAG_CEREMONY && !config_get_flag_enabled()) return false;
 
   return true;
 }
@@ -571,6 +566,15 @@ static void action_config_apply_trigger_defaults(action_t *action,
     action->timing = ACTION_TIMING_IMMEDIATE;
     action->timing_beat = 0;
     action->repeat_enabled = false;
+  }
+  if (trigger == ACTION_TRIGGER_FLAG_RAISED ||
+      trigger == ACTION_TRIGGER_FLAG_LOWERED) {
+    if (action->timing == ACTION_TIMING_FLAG_RAISED ||
+        action->timing == ACTION_TIMING_FLAG_LOWERED) {
+      action->timing = ACTION_TIMING_IMMEDIATE;
+      action->timing_beat = 0;
+    }
+    action->raise_flag = false;
   }
 }
 
@@ -2491,10 +2495,12 @@ static void nav_to_tempo_variant(void* user_data) {
 
 // Variants offered for ACTION_CONTROL. SET appears first as it is the most
 // common operation ("Control Change" in MIDI parlance). HOLD/CYCLE follow.
+// FLAG_CEREMONY is gated on config_get_flag_enabled() in the filter below.
 static const action_variant_t s_control_variants[] = {
   VARIANT_SET,
   VARIANT_HOLD,
   VARIANT_CYCLE,
+  VARIANT_FLAG_CEREMONY,
 };
 #define NUM_CONTROL_VARIANTS (sizeof(s_control_variants) / sizeof(s_control_variants[0]))
 
@@ -2506,10 +2512,10 @@ static void build_filtered_control_variants(void) {
   s_num_filtered_control_variants = 0;
   if (!s_ctx) return;
   for (size_t i = 0; i < NUM_CONTROL_VARIANTS; i++) {
-    if (action_variant_is_valid_for_trigger(ACTION_CONTROL, s_control_variants[i],
-                                            s_ctx->trigger_type)) {
-      s_filtered_control_variants[s_num_filtered_control_variants++] = s_control_variants[i];
-    }
+    action_variant_t v = s_control_variants[i];
+    if (v == VARIANT_FLAG_CEREMONY && !config_get_flag_enabled()) continue;
+    if (action_variant_is_valid_for_trigger(ACTION_CONTROL, v, s_ctx->trigger_type))
+      s_filtered_control_variants[s_num_filtered_control_variants++] = v;
   }
 }
 
@@ -2575,6 +2581,17 @@ static void control_variant_confirm_cb(uint32_t selected_index, void* user_data)
         }
       }
       action->params.control.current_index = 0;
+    } else if (new_variant == VARIANT_FLAG_CEREMONY) {
+      // Seed from the first CC slot when switching from SET/HOLD/CYCLE.
+      if (action->params.flag_ceremony.flag_up_cc == 0 &&
+          action->params.flag_ceremony.flag_down_cc == 0) {
+        uint8_t cc = action->params.control.cc_numbers[0];
+        if (cc == 0) cc = 1;
+        action->params.flag_ceremony.flag_up_cc = cc;
+        action->params.flag_ceremony.flag_up_value = 127;
+        action->params.flag_ceremony.flag_down_cc = cc;
+        action->params.flag_ceremony.flag_down_value = 0;
+      }
     }
 
     ESP_LOGI(TAG, "Control variant set to %s", action_variant_to_string(new_variant));
@@ -2591,7 +2608,7 @@ static lv_obj_t* control_variant_roller_create(void) {
   build_filtered_control_variants();
   if (s_num_filtered_control_variants == 0) return NULL;
 
-  static char options[128];
+  static char options[160];
   options[0] = '\0';
   for (size_t i = 0; i < s_num_filtered_control_variants; i++) {
     if (i > 0) strcat(options, "\n");
@@ -7875,6 +7892,15 @@ static uint32_t timing_flag_lowered_idx(uint8_t beats, bool use_transport, bool 
   return timing_flag_raised_idx(beats, use_transport, true) + 1;
 }
 
+static bool timing_allows_flag_options(void) {
+  if (!s_ctx) return false;
+  if (s_ctx->trigger_type == ACTION_TRIGGER_FLAG_RAISED ||
+      s_ctx->trigger_type == ACTION_TRIGGER_FLAG_LOWERED) {
+    return false;
+  }
+  return config_get_flag_enabled();
+}
+
 static bool timing_is_bar_preset(uint8_t bar_count, uint32_t* out_idx, uint8_t beats) {
   for (uint32_t i = 0; i < NUM_BAR_PRESETS; i++) {
     if (s_bar_presets[i] == bar_count) {
@@ -7931,7 +7957,7 @@ static void timing_confirm_cb(uint32_t selected_index, void* user_data) {
 
   action_t* action = s_ctx->target_action;
   bool use_transport = scene_get_use_transport(scene_get_current_index());
-  bool flag_enabled = config_get_flag_enabled();
+  bool flag_enabled = timing_allows_flag_options();
   time_signature_t sig = tempo_get_time_signature();
   uint8_t beats = sig.numerator;
   if (beats == 0) beats = 4;
@@ -7984,7 +8010,7 @@ static lv_obj_t* timing_roller_create(void) {
   if (beats == 0) beats = 4;
   if (beats > 16) beats = 16;
   bool use_transport = scene_get_use_transport(scene_get_current_index());
-  bool flag_enabled = config_get_flag_enabled();
+  bool flag_enabled = timing_allows_flag_options();
 
   static char timing_options[384];
   int pos = snprintf(timing_options, sizeof(timing_options), "Immediate\nNext Beat");
@@ -8657,38 +8683,74 @@ lv_obj_t* action_config_detail_page_create(void) {
       s_control_variant_label[buf], nav_to_control_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
-    // For CC Cycle, show Steps selector first
-    if (action->variant == VARIANT_CYCLE) {
-      uint8_t steps = action->params.control.num_cycle_steps;
-      if (steps < 2) steps = 2;
-      snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps\n%u", (unsigned)steps);
-      s_detail_items[item_count++] = (menu_item_t){
-        s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
-      };
-    }
-
-    // CC slots
-    for (int i = 0; i < 4; i++) {
-      const char* slot_display;
-      if (action->variant == VARIANT_HOLD) {
-        slot_display = get_cc_hold_slot_display(action, (uint8_t)i);
-      } else if (action->variant == VARIANT_CYCLE) {
-        slot_display = get_cc_cycle_slot_display(action, (uint8_t)i);
-      } else {
-        slot_display = get_cc_slot_display(action, (uint8_t)i);
+    if (action->variant == VARIANT_FLAG_CEREMONY) {
+      // Flag Up / Flag Down rows (shared with the dedicated config below).
+      if (item_count < MAX_DETAIL_ITEMS) {
+        uint8_t up_cc = action->params.flag_ceremony.flag_up_cc;
+        uint8_t up_val = action->params.flag_ceremony.flag_up_value;
+        if (cc_is_supported(up_cc)) {
+          snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
+            "Flag Up\n%s: %s", get_cc_display_name(up_cc),
+            get_cc_value_display_name(up_cc, up_val));
+        } else {
+          snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
+            "Flag Up\nInactive");
+        }
+        s_detail_items[item_count++] = (menu_item_t){
+          s_flag_ceremony_up_label[buf], nav_to_flag_ceremony_up, NULL, true,
+          MENU_ITEM_KIND_ROLLER
+        };
+      }
+      if (item_count < MAX_DETAIL_ITEMS) {
+        uint8_t down_cc = action->params.flag_ceremony.flag_down_cc;
+        uint8_t down_val = action->params.flag_ceremony.flag_down_value;
+        if (cc_is_supported(down_cc)) {
+          snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
+            "Flag Down\n%s: %s", get_cc_display_name(down_cc),
+            get_cc_value_display_name(down_cc, down_val));
+        } else {
+          snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
+            "Flag Down\nInactive");
+        }
+        s_detail_items[item_count++] = (menu_item_t){
+          s_flag_ceremony_down_label[buf], nav_to_flag_ceremony_down, NULL, true,
+          MENU_ITEM_KIND_ROLLER
+        };
+      }
+    } else {
+      // For CC Cycle, show Steps selector first
+      if (action->variant == VARIANT_CYCLE) {
+        uint8_t steps = action->params.control.num_cycle_steps;
+        if (steps < 2) steps = 2;
+        snprintf(s_steps_label[buf], sizeof(s_steps_label[buf]), "Steps\n%u", (unsigned)steps);
+        s_detail_items[item_count++] = (menu_item_t){
+          s_steps_label[buf], nav_to_cc_cycle_steps, NULL, true, MENU_ITEM_KIND_ROLLER
+        };
       }
 
-      if (strcmp(slot_display, "Inactive") == 0) {
-        snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-          "Slot %d\nInactive", i + 1);
-      } else {
-        snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
-          "Slot %d\n%s", i + 1, slot_display);
+      // CC slots
+      for (int i = 0; i < 4; i++) {
+        const char* slot_display;
+        if (action->variant == VARIANT_HOLD) {
+          slot_display = get_cc_hold_slot_display(action, (uint8_t)i);
+        } else if (action->variant == VARIANT_CYCLE) {
+          slot_display = get_cc_cycle_slot_display(action, (uint8_t)i);
+        } else {
+          slot_display = get_cc_slot_display(action, (uint8_t)i);
+        }
+
+        if (strcmp(slot_display, "Inactive") == 0) {
+          snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
+            "Slot %d\nInactive", i + 1);
+        } else {
+          snprintf(s_cc_slot_labels[buf][i], sizeof(s_cc_slot_labels[buf][i]),
+            "Slot %d\n%s", i + 1, slot_display);
+        }
+        s_detail_items[item_count++] = (menu_item_t){
+          s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
+          MENU_ITEM_KIND_SUBMENU
+        };
       }
-      s_detail_items[item_count++] = (menu_item_t){
-        s_cc_slot_labels[buf][i], nav_to_cc_slot, (void*)(uintptr_t)i, true,
-        MENU_ITEM_KIND_SUBMENU
-      };
     }
   }
   
@@ -9645,43 +9707,6 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
-  // Show Flag Ceremony configuration
-  if (action->type == ACTION_FLAG_CEREMONY) {
-    // Flag Up CC/Value -- drop ": <value>" suffix when CC is unsupported.
-    if (item_count < MAX_DETAIL_ITEMS) {
-      uint8_t up_cc = action->params.flag_ceremony.flag_up_cc;
-      uint8_t up_val = action->params.flag_ceremony.flag_up_value;
-      if (cc_is_supported(up_cc)) {
-        snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
-          "Flag Up\n%s: %s", get_cc_display_name(up_cc),
-          get_cc_value_display_name(up_cc, up_val));
-      } else {
-        snprintf(s_flag_ceremony_up_label[buf], sizeof(s_flag_ceremony_up_label[buf]),
-          "Flag Up\nInactive");
-      }
-      s_detail_items[item_count++] = (menu_item_t){
-        s_flag_ceremony_up_label[buf], nav_to_flag_ceremony_up, NULL, true, MENU_ITEM_KIND_ROLLER
-      };
-    }
-
-    // Flag Down CC/Value -- same treatment as Up.
-    if (item_count < MAX_DETAIL_ITEMS) {
-      uint8_t down_cc = action->params.flag_ceremony.flag_down_cc;
-      uint8_t down_val = action->params.flag_ceremony.flag_down_value;
-      if (cc_is_supported(down_cc)) {
-        snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
-          "Flag Down\n%s: %s", get_cc_display_name(down_cc),
-          get_cc_value_display_name(down_cc, down_val));
-      } else {
-        snprintf(s_flag_ceremony_down_label[buf], sizeof(s_flag_ceremony_down_label[buf]),
-          "Flag Down\nInactive");
-      }
-      s_detail_items[item_count++] = (menu_item_t){
-        s_flag_ceremony_down_label[buf], nav_to_flag_ceremony_down, NULL, true, MENU_ITEM_KIND_ROLLER
-      };
-    }
-  }
-
   // Follow-Up: optional gate that lets a hold action skip its release-phase
   // work based on how long the trigger was held. Same row shape for every
   // eligible variant; reads top-level action_t.followup_mode/threshold.
@@ -9818,8 +9843,11 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
-  // Show Raise the Flag option for actions that support it (when flag system enabled)
+  // Show Raise the Flag option for actions that support it (when flag system enabled).
+  // Hidden in flag-list contexts (self-referential / reentrancy risk).
   if (config_get_flag_enabled() && action_supports_raise_flag_for(action) &&
+      s_ctx && s_ctx->trigger_type != ACTION_TRIGGER_FLAG_RAISED &&
+      s_ctx->trigger_type != ACTION_TRIGGER_FLAG_LOWERED &&
       item_count < MAX_DETAIL_ITEMS) {
     snprintf(s_raise_flag_label[buf], sizeof(s_raise_flag_label[buf]),
       "Raise the Flag\n%s", action->raise_flag ? "Sure, why not" : "Not today");

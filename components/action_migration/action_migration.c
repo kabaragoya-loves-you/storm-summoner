@@ -97,6 +97,8 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "send_cc",          ACTION_CONTROL,          VARIANT_SET       },
   { "send_cc_hold",     ACTION_CONTROL,          VARIANT_HOLD      },
   { "send_cc_cycle",    ACTION_CONTROL,          VARIANT_CYCLE     },
+  // Standalone Flag Ceremony relocated into Control family
+  { "flag_ceremony",    ACTION_CONTROL,          VARIANT_FLAG_CEREMONY },
 
   // Pre-consolidation note names (both old separate types -> single hold note)
   { "send_note_on",     ACTION_NOTE,             VARIANT_NONE      },

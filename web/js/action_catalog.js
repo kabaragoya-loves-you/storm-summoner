@@ -83,7 +83,7 @@ window.ActionCatalog = (function () {
   const ALL_TYPES = [
     'none', 'control', 'preset', 'scene', 'confirm_pending', 'transport', 'tempo',
     'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'clock', 'cut', 'ui',
-    'param', 'rtg', 'sample_hold', 'punch_in', 'flag_ceremony', 'boomerang',
+    'param', 'rtg', 'sample_hold', 'punch_in', 'boomerang',
     'inspect_scene', 'reset'
   ]
 
@@ -107,7 +107,6 @@ window.ActionCatalog = (function () {
     rtg: 'RTG',
     sample_hold: 'S+H',
     punch_in: 'Punch-In',
-    flag_ceremony: 'Flag Ceremony',
     boomerang: 'Boomerang',
     inspect_scene: 'Inspect Scene',
     reset: 'Reset'
@@ -115,7 +114,7 @@ window.ActionCatalog = (function () {
 
   const VARIANTS_BY_TYPE = {
     tempo: ['tap', 'set', 'increment', 'decrement', 'hold', 'cycle', 'downbeat'],
-    control: ['set', 'hold', 'cycle'],
+    control: ['set', 'hold', 'cycle', 'flag_ceremony'],
     scene: ['set', 'increment', 'decrement'],
     preset: ['set', 'hold', 'cycle', 'increment', 'decrement'],
     transport: ['play', 'stop', 'record'],
@@ -145,7 +144,8 @@ window.ActionCatalog = (function () {
     record: 'Record',
     modify: 'Modify',
     step: 'Step',
-    downbeat: 'Downbeat'
+    downbeat: 'Downbeat',
+    flag_ceremony: 'Flag Ceremony'
   }
 
   const HOLD_TYPES = new Set(['note', 'piano_pedal', 'inspect_scene'])
@@ -157,8 +157,14 @@ window.ActionCatalog = (function () {
     BUMP: 'bump',
     ON_LOAD: 'on_load',
     ON_PLAY: 'on_play',
+    FLAG_RAISED: 'flag_raised',
+    FLAG_LOWERED: 'flag_lowered',
     CC: 'cc',
     EXPR_SWITCH: 'expr_switch'
+  }
+
+  function isFlagListTrigger (trigger) {
+    return trigger === TRIGGERS.FLAG_RAISED || trigger === TRIGGERS.FLAG_LOWERED
   }
 
   function padDisplayName (index) {
@@ -906,10 +912,15 @@ window.ActionCatalog = (function () {
         delete action.raise_flag
         if (JSON.stringify(action) !== before) changed = true
       }
-      if (action.type === 'punch_in' || action.type === 'flag_ceremony') {
+      if (action.type === 'punch_in') {
         const before = JSON.stringify(action)
         clearRepeatFields(action)
         if (JSON.stringify(action) !== before) changed = true
+      }
+      if (action.type === 'flag_ceremony') {
+        action.type = 'control'
+        action.variant = 'flag_ceremony'
+        changed = true
       }
     })
     return changed
@@ -1054,6 +1065,14 @@ window.ActionCatalog = (function () {
           firesAtLoad: false,
           firesAtPlay: true
         }
+      case TRIGGERS.FLAG_RAISED:
+      case TRIGGERS.FLAG_LOWERED:
+        return {
+          deliversRelease: false,
+          inhibitsTransport: false,
+          firesAtLoad: false,
+          firesAtPlay: true
+        }
       default:
         return {
           deliversRelease: true,
@@ -1172,7 +1191,6 @@ window.ActionCatalog = (function () {
     if (type === 'preset' && sceneMode !== 0 && sceneMode !== 2) return false
     if (type === 'scene' && sceneMode !== 1 && sceneMode !== 2) return false
     if (type === 'confirm_pending' && (ctx?.confirmChange ?? 0) !== 1) return false
-    if (type === 'flag_ceremony' && !ctx?.flagEnabled) return false
 
     const clockSource = ctx?.clockSource || 'internal'
     if (type === 'tempo' && clockSource !== 'internal') {
@@ -1192,7 +1210,11 @@ window.ActionCatalog = (function () {
     if (!typeHasVariants(type)) return []
     const variants = VARIANTS_BY_TYPE[type] || []
     return variants
-      .filter(v => isValidForTrigger({ type, variant: v }, trigger))
+      .filter(v => {
+        if (type === 'control' && v === 'flag_ceremony' && !ctx?.flagEnabled)
+          return false
+        return isValidForTrigger({ type, variant: v }, trigger)
+      })
       .map(v => ({ v, l: variantLabel(v) }))
   }
 
@@ -1228,7 +1250,7 @@ window.ActionCatalog = (function () {
     if (t === 'tempo') {
       return v === 'increment' || v === 'decrement' || v === 'cycle'
     }
-    if (t === 'control') return v === 'set' || v === 'cycle'
+    if (t === 'control') return v === 'set' || v === 'cycle' || v === 'flag_ceremony'
     if (t === 'preset') return v !== 'hold'
     if (t === 'touchwheel') return false
     if (t === 'lfo') return v === 'toggle' || v === 'modify'
@@ -1249,7 +1271,7 @@ window.ActionCatalog = (function () {
 
   const RAISE_FLAG_TYPES = new Set([
     'transport', 'control', 'preset', 'tempo', 'note', 'randomize', 'lfo',
-    'punch_in', 'flag_ceremony', 'boomerang'
+    'punch_in', 'boomerang'
   ])
 
   function supportsRaiseFlag (action) {
@@ -1333,6 +1355,8 @@ window.ActionCatalog = (function () {
     visit(model.bump, 'bump')
     model.on_load?.forEach((a, i) => visit(a, `on_load.${i}`))
     model.on_play?.forEach((a, i) => visit(a, `on_play.${i}`))
+    model.on_flag_raised?.forEach((a, i) => visit(a, `on_flag_raised.${i}`))
+    model.on_flag_lowered?.forEach((a, i) => visit(a, `on_flag_lowered.${i}`))
     model.cc_triggers?.forEach((t, i) => visit(t?.action, `cc_triggers.${i}.action`))
     visit(model.cv_trigger_action, 'cv_trigger_action')
   }
@@ -1377,11 +1401,23 @@ window.ActionCatalog = (function () {
         }
       }
     } else if (action.type === 'control' || action.type === 'control_change') {
-      for (const key of ['bpm', 'press_bpm', 'release_bpm', 'tempos', 'num_tempos',
-        'note', 'velocity']) {
-        if (key in action) {
-          delete action[key]
-          changed = true
+      const v = action.variant || 'set'
+      if (v === 'flag_ceremony') {
+        for (const key of ['cc', 'value', 'value2', 'values', 'bpm', 'press_bpm',
+          'release_bpm', 'tempos', 'num_tempos', 'note', 'velocity']) {
+          if (key in action) {
+            delete action[key]
+            changed = true
+          }
+        }
+      } else {
+        for (const key of ['bpm', 'press_bpm', 'release_bpm', 'tempos', 'num_tempos',
+          'note', 'velocity', 'flag_up_cc', 'flag_up_value', 'flag_down_cc',
+          'flag_down_value']) {
+          if (key in action) {
+            delete action[key]
+            changed = true
+          }
         }
       }
     }
@@ -1403,6 +1439,7 @@ window.ActionCatalog = (function () {
     NOTE_RANDOM,
     NOTE_VEL_RANDOM,
     TRIGGERS,
+    isFlagListTrigger,
     padDisplayName,
     typeLabel,
     variantLabel,

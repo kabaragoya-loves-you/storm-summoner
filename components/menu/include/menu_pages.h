@@ -59,6 +59,9 @@ lv_obj_t* menu_page_settings_tilt_create(void);       // Settings -> Tilt
 lv_obj_t* menu_page_buttons_scene_create(void);       // Scene -> Buttons
 lv_obj_t* menu_page_on_load_scene_create(void);       // Scene -> On-Load
 lv_obj_t* menu_page_on_play_scene_create(void);       // Scene -> On-Play
+lv_obj_t* menu_page_flag_scene_create(void);          // Scene -> Flag
+lv_obj_t* menu_page_flag_raised_scene_create(void);   // Scene -> Flag -> Raised
+lv_obj_t* menu_page_flag_lowered_scene_create(void);  // Scene -> Flag -> Lowered
 lv_obj_t* menu_page_tempo_create(void);
 lv_obj_t* menu_page_led_create(void);
 lv_obj_t* menu_page_buttons_create(void);

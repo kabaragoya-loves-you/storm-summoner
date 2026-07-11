@@ -135,6 +135,12 @@ typedef struct scene_t {
   // Transport play actions (up to 4 actions executed when transport starts playing)
   uint8_t num_on_play_actions;
   action_t on_play[MAX_ON_PLAY_ACTIONS];
+
+  // Flag raised / lowered action lists (up to 4 each; fire on flag transitions)
+  uint8_t num_flag_raised_actions;
+  action_t flag_raised[MAX_ON_FLAG_RAISED_ACTIONS];
+  uint8_t num_flag_lowered_actions;
+  action_t flag_lowered[MAX_ON_FLAG_LOWERED_ACTIONS];
   
   // Touchwheel configuration
   touchwheel_mode_t touchwheel_mode;
@@ -388,6 +394,18 @@ esp_err_t scene_add_on_play_action(uint8_t scene_index, const action_t* action);
 esp_err_t scene_clear_on_play_actions(uint8_t scene_index);
 uint8_t scene_get_num_on_play_actions(uint8_t scene_index);
 action_t* scene_get_on_play_action(uint8_t scene_index, uint8_t action_index);
+
+// Flag raised actions (up to 4 per scene, fire when flag transitions to raised)
+esp_err_t scene_add_flag_raised_action(uint8_t scene_index, const action_t* action);
+esp_err_t scene_clear_flag_raised_actions(uint8_t scene_index);
+uint8_t scene_get_num_flag_raised_actions(uint8_t scene_index);
+action_t* scene_get_flag_raised_action(uint8_t scene_index, uint8_t action_index);
+
+// Flag lowered actions (up to 4 per scene, fire when flag transitions to lowered)
+esp_err_t scene_add_flag_lowered_action(uint8_t scene_index, const action_t* action);
+esp_err_t scene_clear_flag_lowered_actions(uint8_t scene_index);
+uint8_t scene_get_num_flag_lowered_actions(uint8_t scene_index);
+action_t* scene_get_flag_lowered_action(uint8_t scene_index, uint8_t action_index);
 
 // Pending change mode
 uint8_t scene_get_pending_index(void);

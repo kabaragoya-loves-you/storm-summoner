@@ -82,6 +82,8 @@ window.SceneActions = (function () {
     visit(model.bump, 'bump')
     model.on_load?.forEach((a, i) => visit(a, `on_load.${i}`))
     model.on_play?.forEach((a, i) => visit(a, `on_play.${i}`))
+    model.on_flag_raised?.forEach((a, i) => visit(a, `on_flag_raised.${i}`))
+    model.on_flag_lowered?.forEach((a, i) => visit(a, `on_flag_lowered.${i}`))
     model.cc_triggers?.forEach((t, i) => visit(t?.action, `cc_triggers.${i}.action`))
     visit(model.cv_trigger_action, 'cv_trigger_action')
   }

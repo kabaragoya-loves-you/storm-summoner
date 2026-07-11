@@ -3715,6 +3715,106 @@ action_t* scene_get_on_play_action(uint8_t scene_index, uint8_t action_index) {
   return &scene->on_play[action_index];
 }
 
+esp_err_t scene_add_flag_raised_action(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_FLAG_RAISED)) {
+    ESP_LOGW(TAG, "Cannot add '%s' to flag_raised (invalid for this trigger)",
+      action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  if (scene->num_flag_raised_actions >= MAX_ON_FLAG_RAISED_ACTIONS) {
+    ESP_LOGW(TAG, "flag_raised already has %d actions (max)", MAX_ON_FLAG_RAISED_ACTIONS);
+    return ESP_ERR_NO_MEM;
+  }
+
+  scene->flag_raised[scene->num_flag_raised_actions++] = *action;
+  scene_persist_if_programming();
+
+  ESP_LOGI(TAG, "Added flag_raised action: %s (now %d total)",
+    action_type_to_string(action->type), scene->num_flag_raised_actions);
+  return ESP_OK;
+}
+
+esp_err_t scene_clear_flag_raised_actions(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->num_flag_raised_actions = 0;
+  memset(scene->flag_raised, 0, sizeof(scene->flag_raised));
+  scene_persist_if_programming();
+
+  ESP_LOGI(TAG, "Cleared flag_raised actions");
+  return ESP_OK;
+}
+
+uint8_t scene_get_num_flag_raised_actions(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->num_flag_raised_actions : 0;
+}
+
+action_t* scene_get_flag_raised_action(uint8_t scene_index, uint8_t action_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene || action_index >= scene->num_flag_raised_actions) return NULL;
+  return &scene->flag_raised[action_index];
+}
+
+esp_err_t scene_add_flag_lowered_action(uint8_t scene_index, const action_t* action) {
+  if (scene_index > MAX_SCENE_INDEX || !action) return ESP_ERR_INVALID_ARG;
+
+  if (!action_is_valid_for_trigger_for(action, ACTION_TRIGGER_FLAG_LOWERED)) {
+    ESP_LOGW(TAG, "Cannot add '%s' to flag_lowered (invalid for this trigger)",
+      action_type_to_string(action->type));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  if (scene->num_flag_lowered_actions >= MAX_ON_FLAG_LOWERED_ACTIONS) {
+    ESP_LOGW(TAG, "flag_lowered already has %d actions (max)", MAX_ON_FLAG_LOWERED_ACTIONS);
+    return ESP_ERR_NO_MEM;
+  }
+
+  scene->flag_lowered[scene->num_flag_lowered_actions++] = *action;
+  scene_persist_if_programming();
+
+  ESP_LOGI(TAG, "Added flag_lowered action: %s (now %d total)",
+    action_type_to_string(action->type), scene->num_flag_lowered_actions);
+  return ESP_OK;
+}
+
+esp_err_t scene_clear_flag_lowered_actions(uint8_t scene_index) {
+  if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
+
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene) return ESP_ERR_INVALID_STATE;
+
+  scene->num_flag_lowered_actions = 0;
+  memset(scene->flag_lowered, 0, sizeof(scene->flag_lowered));
+  scene_persist_if_programming();
+
+  ESP_LOGI(TAG, "Cleared flag_lowered actions");
+  return ESP_OK;
+}
+
+uint8_t scene_get_num_flag_lowered_actions(uint8_t scene_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  return scene ? scene->num_flag_lowered_actions : 0;
+}
+
+action_t* scene_get_flag_lowered_action(uint8_t scene_index, uint8_t action_index) {
+  scene_t* scene = get_scene_for_modification(scene_index);
+  if (!scene || action_index >= scene->num_flag_lowered_actions) return NULL;
+  return &scene->flag_lowered[action_index];
+}
+
 esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   
@@ -5048,7 +5148,6 @@ static const char* action_type_json_names[] = {
   [ACTION_RTG] = "rtg",
   [ACTION_SAMPLE_HOLD] = "sample_hold",
   [ACTION_PUNCH_IN] = "punch_in",
-  [ACTION_FLAG_CEREMONY] = "flag_ceremony",
   [ACTION_BOOMERANG] = "boomerang",
   [ACTION_INSPECT_SCENE] = "inspect_scene"
 };
@@ -5074,6 +5173,7 @@ static const char* action_variant_json_names[] = {
   [VARIANT_MODIFY]    = "modify",
   [VARIANT_STEP]      = "step",
   [VARIANT_DOWNBEAT]  = "downbeat",
+  [VARIANT_FLAG_CEREMONY] = "flag_ceremony",
 };
 
 static action_variant_t action_variant_from_string(const char* name) {
@@ -5232,6 +5332,12 @@ static cJSON* action_to_json(const action_t* action) {
       cJSON_AddItemToObject(obj, "cc", cc_arr);
       cJSON_AddItemToObject(obj, "values", vals_arr);
     }
+  } else if (action->type == ACTION_CONTROL &&
+      action->variant == VARIANT_FLAG_CEREMONY) {
+    cJSON_AddNumberToObject(obj, "flag_up_cc", action->params.flag_ceremony.flag_up_cc);
+    cJSON_AddNumberToObject(obj, "flag_up_value", action->params.flag_ceremony.flag_up_value);
+    cJSON_AddNumberToObject(obj, "flag_down_cc", action->params.flag_ceremony.flag_down_cc);
+    cJSON_AddNumberToObject(obj, "flag_down_value", action->params.flag_ceremony.flag_down_value);
   } else if (action->type == ACTION_RANDOMIZE) {
     // Randomize uses a different struct
     cJSON* cc_arr = cJSON_CreateArray();
@@ -5500,11 +5606,6 @@ static cJSON* action_to_json(const action_t* action) {
     cJSON_AddNumberToObject(obj, "finish_value", action->params.punch_in.finish_value);
     cJSON_AddStringToObject(obj, "duration",
       punch_in_duration_to_string(action->params.punch_in.duration));
-  } else if (action->type == ACTION_FLAG_CEREMONY) {
-    cJSON_AddNumberToObject(obj, "flag_up_cc", action->params.flag_ceremony.flag_up_cc);
-    cJSON_AddNumberToObject(obj, "flag_up_value", action->params.flag_ceremony.flag_up_value);
-    cJSON_AddNumberToObject(obj, "flag_down_cc", action->params.flag_ceremony.flag_down_cc);
-    cJSON_AddNumberToObject(obj, "flag_down_value", action->params.flag_ceremony.flag_down_value);
   } else if (action->type == ACTION_BOOMERANG) {
     const char* ot;
     switch (action->params.boomerang.output_type) {
@@ -6219,8 +6320,9 @@ static action_t json_to_action(cJSON* obj) {
     }
   }
 
-  // Parse flag ceremony action
-  if (action.type == ACTION_FLAG_CEREMONY) {
+  // Parse flag ceremony (ACTION_CONTROL + VARIANT_FLAG_CEREMONY)
+  if (action.type == ACTION_CONTROL &&
+      action.variant == VARIANT_FLAG_CEREMONY) {
     cJSON* flag_up_cc = cJSON_GetObjectItem(obj, "flag_up_cc");
     cJSON* flag_up_value = cJSON_GetObjectItem(obj, "flag_up_value");
     cJSON* flag_down_cc = cJSON_GetObjectItem(obj, "flag_down_cc");
@@ -6497,6 +6599,70 @@ static void json_to_on_play(cJSON* array, scene_t* scene) {
     }
     
     scene->on_play[scene->num_on_play_actions++] = action;
+  }
+}
+
+static void sanitize_flag_list_action(action_t* action) {
+  if (!action || action->type == ACTION_NONE) return;
+  if (action->timing == ACTION_TIMING_FLAG_RAISED ||
+      action->timing == ACTION_TIMING_FLAG_LOWERED) {
+    action->timing = ACTION_TIMING_IMMEDIATE;
+    action->timing_beat = 0;
+  }
+  action->raise_flag = false;
+}
+
+static cJSON* on_flag_raised_to_json(const scene_t* scene) {
+  cJSON* array = cJSON_CreateArray();
+  for (int i = 0; i < scene->num_flag_raised_actions && i < MAX_ON_FLAG_RAISED_ACTIONS; i++) {
+    cJSON* action_json = action_to_json(&scene->flag_raised[i]);
+    if (action_json) cJSON_AddItemToArray(array, action_json);
+  }
+  return array;
+}
+
+static void json_to_on_flag_raised(cJSON* array, scene_t* scene) {
+  scene->num_flag_raised_actions = 0;
+  if (!cJSON_IsArray(array)) return;
+
+  int count = cJSON_GetArraySize(array);
+  for (int i = 0; i < count && scene->num_flag_raised_actions < MAX_ON_FLAG_RAISED_ACTIONS; i++) {
+    action_t action = json_to_action(cJSON_GetArrayItem(array, i));
+    if (action.type == ACTION_NONE) continue;
+    sanitize_flag_list_action(&action);
+    if (!action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_FLAG_RAISED)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' in on_flag_raised",
+        action_type_to_string(action.type));
+      continue;
+    }
+    scene->flag_raised[scene->num_flag_raised_actions++] = action;
+  }
+}
+
+static cJSON* on_flag_lowered_to_json(const scene_t* scene) {
+  cJSON* array = cJSON_CreateArray();
+  for (int i = 0; i < scene->num_flag_lowered_actions && i < MAX_ON_FLAG_LOWERED_ACTIONS; i++) {
+    cJSON* action_json = action_to_json(&scene->flag_lowered[i]);
+    if (action_json) cJSON_AddItemToArray(array, action_json);
+  }
+  return array;
+}
+
+static void json_to_on_flag_lowered(cJSON* array, scene_t* scene) {
+  scene->num_flag_lowered_actions = 0;
+  if (!cJSON_IsArray(array)) return;
+
+  int count = cJSON_GetArraySize(array);
+  for (int i = 0; i < count && scene->num_flag_lowered_actions < MAX_ON_FLAG_LOWERED_ACTIONS; i++) {
+    action_t action = json_to_action(cJSON_GetArrayItem(array, i));
+    if (action.type == ACTION_NONE) continue;
+    sanitize_flag_list_action(&action);
+    if (!action_is_valid_for_trigger_for(&action, ACTION_TRIGGER_FLAG_LOWERED)) {
+      ESP_LOGW(TAG, "Ignoring invalid action '%s' in on_flag_lowered",
+        action_type_to_string(action.type));
+      continue;
+    }
+    scene->flag_lowered[scene->num_flag_lowered_actions++] = action;
   }
 }
 
@@ -7290,6 +7456,9 @@ static cJSON* scene_to_json(const scene_t* scene) {
   
   // on_play is an array (up to 4 actions, fires when transport starts playing)
   cJSON_AddItemToObject(root, "on_play", on_play_to_json(scene));
+
+  cJSON_AddItemToObject(root, "on_flag_raised", on_flag_raised_to_json(scene));
+  cJSON_AddItemToObject(root, "on_flag_lowered", on_flag_lowered_to_json(scene));
   
   // Discrete inputs are single actions
   cJSON* btn_l = action_to_json(&scene->button_left);
@@ -7697,6 +7866,12 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   // on_play is an array of up to 4 actions
   cJSON* on_play = cJSON_GetObjectItem(root, "on_play");
   if (on_play) json_to_on_play(on_play, scene);
+
+  cJSON* on_flag_raised = cJSON_GetObjectItem(root, "on_flag_raised");
+  if (on_flag_raised) json_to_on_flag_raised(on_flag_raised, scene);
+
+  cJSON* on_flag_lowered = cJSON_GetObjectItem(root, "on_flag_lowered");
+  if (on_flag_lowered) json_to_on_flag_lowered(on_flag_lowered, scene);
   
   // Discrete inputs: try object first (new format), fall back to array (old format)
   cJSON* btn_l = cJSON_GetObjectItem(root, "button_left");

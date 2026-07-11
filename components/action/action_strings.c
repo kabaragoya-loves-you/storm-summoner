@@ -27,7 +27,6 @@ static const char* action_type_names[] = {
   [ACTION_RTG] = "RTG",
   [ACTION_SAMPLE_HOLD] = "S+H",
   [ACTION_PUNCH_IN] = "Punch-In",
-  [ACTION_FLAG_CEREMONY] = "Flag Ceremony",
   [ACTION_BOOMERANG] = "Boomerang",
   [ACTION_INSPECT_SCENE] = "Inspect Scene"
 };
@@ -64,6 +63,7 @@ static const char* action_variant_display_names[] = {
   [VARIANT_MODIFY]    = "Modify",
   [VARIANT_STEP]      = "Step",
   [VARIANT_DOWNBEAT]  = "Downbeat",
+  [VARIANT_FLAG_CEREMONY] = "Flag Ceremony",
 };
 
 const char* action_variant_to_string(action_variant_t variant) {
@@ -128,6 +128,7 @@ static const char* control_variant_display(action_variant_t v) {
     case VARIANT_SET:   return "Control Change";
     case VARIANT_HOLD:  return "Control Hold";
     case VARIANT_CYCLE: return "Control Cycle";
+    case VARIANT_FLAG_CEREMONY: return "Flag Ceremony";
     default:            return "Control";
   }
 }
