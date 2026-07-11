@@ -427,10 +427,11 @@ static void scheduler_fire_pending_slot(pending_action_t* pending, uint8_t curre
   // Handle repeating: re-queue for next interval (even if pattern/probability failed)
   if (pending->repeating && !pending->hold_released) {
     if (pending_is_flag_timing(pending)) {
-      pending->action.timing = ACTION_TIMING_NEXT_BEAT;
-      pending->action.timing_beat = 0;
-    }
-    if (pending->target_bar > 0) {
+      // Stay flag-timed so the next matching flag transition can fire again.
+      ESP_LOGD(TAG, "Re-armed repeating %s for next flag %s",
+        action_type_name(pending->action.type),
+        pending->action.timing == ACTION_TIMING_FLAG_RAISED ? "raised" : "lowered");
+    } else if (pending->target_bar > 0) {
       uint8_t bar_interval = action_repeat_division_to_bars(
         pending->action.repeat_division);
       if (bar_interval > 0) {

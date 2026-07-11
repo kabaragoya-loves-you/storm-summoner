@@ -704,6 +704,30 @@
           "minimum": 100,
           "maximum": 10000,
           "default": 1000
+        },
+        "flag_raise_above": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 126,
+          "description": "Raise scene flag when processed CC value crosses above this threshold (requires flag mode)"
+        },
+        "flag_raise_below": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 127,
+          "description": "Raise scene flag when processed CC value crosses below this threshold (requires flag mode)"
+        },
+        "flag_lower_above": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 126,
+          "description": "Lower scene flag when processed CC value crosses above this threshold (requires flag mode)"
+        },
+        "flag_lower_below": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 127,
+          "description": "Lower scene flag when processed CC value crosses below this threshold (requires flag mode)"
         }
       }
     },

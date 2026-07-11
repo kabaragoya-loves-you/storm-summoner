@@ -41,6 +41,7 @@ idf_component_register(
     "pages/rtg_scene.c"
     "pages/sample_hold_scene.c"
     "pages/cc_triggers_scene.c"
+    "pages/continuous_flag_rollers.c"
     "pages/note_track_scene.c"
     "pages/cc_defaults_menu.c"
     "pages/scope_config.c"

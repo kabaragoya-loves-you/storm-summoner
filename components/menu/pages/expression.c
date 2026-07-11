@@ -8,6 +8,7 @@
 #include "action.h"
 #include "curve.h"
 #include "continuous_mapping.h"
+#include "continuous_flag_rollers.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "assets_types.h"
@@ -30,8 +31,10 @@ lv_obj_t* menu_page_expression_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_EXPR_ITEMS 12
+#define MAX_EXPR_ITEMS 16
 static menu_item_t s_expr_items[MAX_EXPR_ITEMS];
+
+static char s_flag_labels[LABEL_BUFFER_SETS][4][48];
 
 static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
@@ -77,6 +80,10 @@ static void persist_scene_changes(void) {
     uint8_t scene_index = scene_get_current_index();
     scene_save_to_flash(scene_index);
   }
+}
+
+static continuous_mapping_t* expression_flag_mapping(scene_t* scene) {
+  return scene ? &scene->expression : NULL;
 }
 
 static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
@@ -662,6 +669,13 @@ lv_obj_t* menu_page_expression_create(void) {
   if (!scene) {
     return menu_create_page_2line("Expression", NULL, 0);
   }
+
+  continuous_flag_ctx_set(&(continuous_flag_ctx_t){
+    .get_mapping = expression_flag_mapping,
+    .parent_title = "Expression",
+    .parent_create = menu_page_expression_create,
+    .persist = persist_scene_changes,
+  });
   
   load_cc_options();
   
@@ -728,6 +742,9 @@ lv_obj_t* menu_page_expression_create(void) {
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->expression.curve.type));
         s_expr_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+        item_count = continuous_flag_append_cc_items(s_expr_items, s_flag_labels[buf],
+          item_count);
         
       } else if (scene->expression.output_type == OUTPUT_TYPE_NOTE) {
         // Notes mode: Base Note, Range, Velocity (fixed 0-127)

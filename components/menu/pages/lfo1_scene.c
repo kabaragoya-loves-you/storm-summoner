@@ -3,6 +3,7 @@
 #include "lfo.h"
 #include "scene.h"
 #include "continuous_mapping.h"
+#include "continuous_flag_rollers.h"
 #include "rtg.h"
 #include "sample_hold.h"
 #include "assets_manager.h"
@@ -41,6 +42,7 @@ static char s_rate_label[LABEL_BUFFER_SETS][32];
 static char s_division_label[LABEL_BUFFER_SETS][32];
 static char s_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
+static char s_flag_labels[LABEL_BUFFER_SETS][4][48];
 static char s_floor_label[LABEL_BUFFER_SETS][32];
 static char s_ceiling_label[LABEL_BUFFER_SETS][32];
 static char s_resolution_label[LABEL_BUFFER_SETS][32];
@@ -72,6 +74,10 @@ static void persist_scene_changes(void) {
     uint8_t scene_index = scene_get_current_index();
     scene_save_to_flash(scene_index);
   }
+}
+
+static continuous_mapping_t* lfo1_flag_mapping(scene_t* scene) {
+  return scene ? &scene->lfo1 : NULL;
 }
 
 static const char* waveform_to_display_string(lfo_waveform_t wf) {
@@ -951,6 +957,13 @@ lv_obj_t* menu_page_lfo1_scene_create(void) {
   if (!scene) {
     return menu_create_page_2line("LFO1", NULL, 0);
   }
+
+  continuous_flag_ctx_set(&(continuous_flag_ctx_t){
+    .get_mapping = lfo1_flag_mapping,
+    .parent_title = "LFO1",
+    .parent_create = menu_page_lfo1_scene_create,
+    .persist = persist_scene_changes,
+  });
   
   load_cc_options();
   
@@ -1051,6 +1064,8 @@ lv_obj_t* menu_page_lfo1_scene_create(void) {
         MENU_ITEM_KIND_ROLLER
       };
     }
+    item_count = continuous_flag_append_cc_items(s_lfo_items, s_flag_labels[buf],
+      item_count);
   }
   
   // Floor

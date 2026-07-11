@@ -5,6 +5,7 @@
 #include "tilt.h"
 #include "curve.h"
 #include "continuous_mapping.h"
+#include "continuous_flag_rollers.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "assets_types.h"
@@ -74,7 +75,7 @@ static esp_err_t set_nudge_direction(uint8_t scene_index, uint8_t direction) {
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_ITEMS 14
+#define MAX_ITEMS 18
 static menu_item_t s_items[MAX_ITEMS];
 
 // Tracks the live axis screen so our custom back handler can tell whether
@@ -96,6 +97,7 @@ static char s_direction_label[LABEL_BUFFER_SETS][32];
 static char s_min_label[LABEL_BUFFER_SETS][32];
 static char s_middle_label[LABEL_BUFFER_SETS][32];
 static char s_max_label[LABEL_BUFFER_SETS][32];
+static char s_flag_labels[LABEL_BUFFER_SETS][4][48];
 
 typedef struct {
   char* options_str;
@@ -876,6 +878,13 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
     return empty;
   }
 
+  continuous_flag_ctx_set(&(continuous_flag_ctx_t){
+    .get_mapping = get_mapping,
+    .parent_title = axis_title(),
+    .parent_create = menu_page_tilt_axis_scene_create,
+    .persist = persist_scene_changes,
+  });
+
   load_cc_options();
 
   int buf = get_next_buffer_set();
@@ -971,6 +980,8 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
     snprintf(s_max_label[buf], sizeof(s_max_label[buf]),
       "Max\n%u", (unsigned)m->max_value);
     s_items[idx++] = (menu_item_t){s_max_label[buf], nav_to_max, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+    idx = continuous_flag_append_cc_items(s_items, s_flag_labels[buf], idx);
 
   } else if (m->output_type == OUTPUT_TYPE_NOTE) {
     char note_name[8];

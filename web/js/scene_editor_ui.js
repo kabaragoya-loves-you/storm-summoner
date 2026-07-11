@@ -572,8 +572,108 @@ window.SceneEditorUi = (function () {
         return `<option value="${esc(o.v)}"${sel}>${esc(o.l)}</option>`
       })
       .join('')
+    const actionAttr = action || 'change->scene#patchSelect'
     return `<select class="scene-select" data-scene-path="${esc(path)}"
-      data-action="change->scene#patchSelect">${opts}</select>`
+      data-action="${esc(actionAttr)}">${opts}</select>`
+  }
+
+  const FLAG_THRESHOLD_SPECS = [
+    { key: 'flag_raise_above', label: 'Raise flag above', isAbove: true },
+    { key: 'flag_raise_below', label: 'Raise flag below', isAbove: false },
+    { key: 'flag_lower_above', label: 'Lower flag above', isAbove: true },
+    { key: 'flag_lower_below', label: 'Lower flag below', isAbove: false }
+  ]
+
+  function flagThresholdOn (v) {
+    return v != null && v !== ''
+  }
+
+  function flagThresholdsValid (ra, rb, la, lb) {
+    const inRange = (v, isAbove) => {
+      if (!flagThresholdOn(v)) return true
+      const n = Number(v)
+      if (Number.isNaN(n)) return false
+      return isAbove ? n >= 0 && n <= 126 : n >= 1 && n <= 127
+    }
+    if (!inRange(ra, true) || !inRange(rb, false) ||
+        !inRange(la, true) || !inRange(lb, false)) return false
+
+    const hasRa = flagThresholdOn(ra)
+    const hasRb = flagThresholdOn(rb)
+    const hasLa = flagThresholdOn(la)
+    const hasLb = flagThresholdOn(lb)
+    if ((hasRa ? 1 : 0) + (hasRb ? 1 : 0) > 1) return false
+    if ((hasLa ? 1 : 0) + (hasLb ? 1 : 0) > 1) return false
+    if (hasRa && hasLa) return false
+    if (hasRb && hasLb) return false
+    if (hasRa && hasLb && Number(lb) > Number(ra) + 1) return false
+    if (hasLa && hasRb && Number(rb) > Number(la) + 1) return false
+    return true
+  }
+
+  function flagThresholdAllowed (mapping, key, value) {
+    const m = mapping || {}
+    const next = {
+      flag_raise_above: m.flag_raise_above,
+      flag_raise_below: m.flag_raise_below,
+      flag_lower_above: m.flag_lower_above,
+      flag_lower_below: m.flag_lower_below
+    }
+    next[key] = value === '' || value == null ? undefined : value
+    return flagThresholdsValid(
+      next.flag_raise_above,
+      next.flag_raise_below,
+      next.flag_lower_above,
+      next.flag_lower_below
+    )
+  }
+
+  function flagThresholdOptions (mapping, spec) {
+    const opts = [{ v: '', l: 'Off' }]
+    const min = spec.isAbove ? 0 : 1
+    const max = spec.isAbove ? 126 : 127
+    for (let v = min; v <= max; v++) {
+      if (flagThresholdAllowed(mapping, spec.key, v))
+        opts.push({ v: String(v), l: String(v) })
+    }
+    return opts
+  }
+
+  function flagThresholdRowVisible (mapping, spec) {
+    const m = mapping || {}
+    const cur = m[spec.key]
+    if (cur != null && cur !== '') return true
+    const min = spec.isAbove ? 0 : 1
+    const max = spec.isAbove ? 126 : 127
+    for (let v = min; v <= max; v++) {
+      if (flagThresholdAllowed(m, spec.key, v)) return true
+    }
+    return false
+  }
+
+  function renderFlagThresholds (mappingPath, mapping, ctrl) {
+    if (!ctrl.deviceContext?.flagEnabled) return ''
+    const m = mapping || {}
+    const specs = FLAG_THRESHOLD_SPECS.filter(spec => flagThresholdRowVisible(m, spec))
+    if (!specs.length) return ''
+    let html = `<div class="scene-flag-thresholds" data-controller="flag-thresholds"`
+    html += ` data-flag-thresholds-path-value="${esc(mappingPath)}">`
+    for (const spec of specs) {
+      const path = `${mappingPath}.${spec.key}`
+      const cur = m[spec.key]
+      const val = cur == null || cur === '' ? '' : String(cur)
+      html += fieldRow(
+        spec.label,
+        selectField(
+          path,
+          val,
+          flagThresholdOptions(m, spec),
+          'change->scene#patchSelect change->flag-thresholds#changed'
+        )
+      )
+    }
+    html += '</div>'
+    return html
   }
 
   function numberField (path, value, min, max, step = 1) {
@@ -784,6 +884,7 @@ window.SceneEditorUi = (function () {
           selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
         )
       }
+      html += renderFlagThresholds(mappingPath, m, ctrl)
     } else if (ot === 'note') {
       if (opts.noteSelectors) {
         html += fieldRow(

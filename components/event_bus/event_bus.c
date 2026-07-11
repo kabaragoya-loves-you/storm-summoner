@@ -125,7 +125,8 @@ static const char* event_type_names[] = {
   // Sample+Hold events
   [EVENT_SAMPLE_HOLD_VALUE] = "SAMPLE_HOLD_VALUE",
   // Action events
-  [EVENT_ACTION_EXECUTED] = "ACTION_EXECUTED"
+  [EVENT_ACTION_EXECUTED] = "ACTION_EXECUTED",
+  [EVENT_FLAG_CHANGED] = "FLAG_CHANGED"
 };
 
 const char* event_type_to_string(event_type_t type) {

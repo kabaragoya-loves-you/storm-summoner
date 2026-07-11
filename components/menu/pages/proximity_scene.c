@@ -4,6 +4,7 @@
 #include "scene.h"
 #include "curve.h"
 #include "continuous_mapping.h"
+#include "continuous_flag_rollers.h"
 #include "proximity_mode_mapping.h"
 #include "device_config.h"
 #include "assets_manager.h"
@@ -26,8 +27,10 @@ lv_obj_t* menu_page_proximity_scene_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_PROXIMITY_ITEMS 12
+#define MAX_PROXIMITY_ITEMS 16
 static menu_item_t s_prox_items[MAX_PROXIMITY_ITEMS];
+
+static char s_flag_labels[LABEL_BUFFER_SETS][4][48];
 
 static char s_mode_label[LABEL_BUFFER_SETS][40];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
@@ -70,6 +73,10 @@ static void persist_scene_changes(void) {
     uint8_t scene_index = scene_get_current_index();
     scene_save_to_flash(scene_index);
   }
+}
+
+static continuous_mapping_t* proximity_flag_mapping(scene_t* scene) {
+  return scene ? &scene->proximity : NULL;
 }
 
 static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
@@ -693,6 +700,13 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
   if (!scene) {
     return menu_create_page_2line("Proximity", NULL, 0);
   }
+
+  continuous_flag_ctx_set(&(continuous_flag_ctx_t){
+    .get_mapping = proximity_flag_mapping,
+    .parent_title = "Proximity",
+    .parent_create = menu_page_proximity_scene_create,
+    .persist = persist_scene_changes,
+  });
   
   load_cc_options();
   
@@ -763,6 +777,9 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
       "Curve\n%s", curve_type_to_string(scene->proximity.curve.type));
     s_prox_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+    item_count = continuous_flag_append_cc_items(s_prox_items, s_flag_labels[buf],
+      item_count);
     
   } else if (scene->proximity.output_type == OUTPUT_TYPE_NOTE) {
     // Notes (Theremin) output mode: Base Note, Range, Velocity Mode, (Fixed) Velocity

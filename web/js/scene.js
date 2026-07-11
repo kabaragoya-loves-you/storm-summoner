@@ -893,6 +893,58 @@ application.register(
       if (forSave && mapping.cc_numbers?.length === 1 && Number(mapping.cc_numbers[0]) === 0) {
         delete mapping.cc_numbers
       }
+      this.sanitizeFlagThresholds(mapping)
+      if (forSave) this.stripFlagThresholdsForSave(mapping)
+    }
+
+    sanitizeFlagThresholds (mapping) {
+      if (!mapping) return
+      const on = (key) => mapping[key] != null && mapping[key] !== ''
+      const clear = (key) => { delete mapping[key] }
+      const asNum = (key) => Number(mapping[key])
+
+      const clampAbove = (key) => {
+        if (!on(key)) { clear(key); return }
+        let v = asNum(key)
+        if (Number.isNaN(v) || v < 0 || v > 126) clear(key)
+        else mapping[key] = v
+      }
+      const clampBelow = (key) => {
+        if (!on(key)) { clear(key); return }
+        let v = asNum(key)
+        if (Number.isNaN(v) || v < 1 || v > 127) clear(key)
+        else mapping[key] = v
+      }
+      clampAbove('flag_raise_above')
+      clampBelow('flag_raise_below')
+      clampAbove('flag_lower_above')
+      clampBelow('flag_lower_below')
+
+      // Prefer raise-above / lower-above when resolving conflicts.
+      if (on('flag_raise_above') && on('flag_raise_below'))
+        clear('flag_raise_below')
+      if (on('flag_lower_above') && on('flag_lower_below'))
+        clear('flag_lower_below')
+      if (on('flag_raise_above') && on('flag_lower_above'))
+        clear('flag_lower_above')
+      if (on('flag_raise_below') && on('flag_lower_below'))
+        clear('flag_lower_below')
+
+      if (on('flag_raise_above') && on('flag_lower_below') &&
+          asNum('flag_lower_below') > asNum('flag_raise_above') + 1)
+        mapping.flag_lower_below = asNum('flag_raise_above') + 1
+      if (on('flag_lower_above') && on('flag_raise_below') &&
+          asNum('flag_raise_below') > asNum('flag_lower_above') + 1)
+        mapping.flag_raise_below = asNum('flag_lower_above') + 1
+    }
+
+    stripFlagThresholdsForSave (mapping) {
+      if (!mapping) return
+      for (const key of [
+        'flag_raise_above', 'flag_raise_below', 'flag_lower_above', 'flag_lower_below'
+      ]) {
+        if (mapping[key] == null || mapping[key] === '') delete mapping[key]
+      }
     }
 
     isPadPlaceholderAction (action) {
@@ -1515,6 +1567,18 @@ application.register(
       const path = e.target.dataset.scenePath
       if (!path) return
       let val = e.target.value
+
+      if (/\.flag_(raise|lower)_(above|below)$/.test(path)) {
+        const mappingPath = path.replace(/\.flag_.+$/, '')
+        const key = path.slice(mappingPath.length + 1)
+        const mapping = this.getAtPath(mappingPath)
+        if (!mapping) return
+        if (val === '' || val === 'off') delete mapping[key]
+        else mapping[key] = Number(val)
+        this.sanitizeFlagThresholds(mapping)
+        this.markDirty()
+        return
+      }
 
       if (path === '__touchwheel_user_mode') {
         const specByKey = {

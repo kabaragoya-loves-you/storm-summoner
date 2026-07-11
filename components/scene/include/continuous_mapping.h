@@ -47,6 +47,9 @@ typedef enum {
 // Maximum number of CCs that can be controlled simultaneously
 #define MAX_MULTI_CC 4
 
+// Flag threshold disabled sentinel (omitted from JSON when off)
+#define CONTINUOUS_FLAG_THRESHOLD_OFF 0xFF
+
 // Continuous input mapping configuration
 typedef struct {
   bool enabled;              // Whether this input is active
@@ -85,12 +88,20 @@ typedef struct {
   
   // LFO modulation target (for OUTPUT_TYPE_LFO_RATE/LFO_DEPTH)
   lfo_target_t lfo_target;   // Which LFO(s) to target
+
+  // Flag thresholds (CC mode, requires config flag system; OFF = 0xFF)
+  uint8_t flag_raise_above;  // Raise flag when processed value crosses above (0-126)
+  uint8_t flag_raise_below;  // Raise flag when processed value crosses below (1-127)
+  uint8_t flag_lower_above;  // Lower flag when processed value crosses above (0-126)
+  uint8_t flag_lower_below;  // Lower flag when processed value crosses below (1-127)
   
   // State tracking
   uint32_t last_activity_ms; // Last time value changed (for idle timeout)
   uint8_t last_value;        // Last sent CC value (0-127)
   uint8_t last_note;         // Last sent note number (for NOTE output)
   bool note_active;          // For NOTE output: whether a note is currently on
+  uint8_t flag_prev_value;   // Previous processed CC for flag edge detection
+  bool flag_prev_valid;      // Whether flag_prev_value has been seeded
 } continuous_mapping_t;
 
 // Apply polarity transformation to value
@@ -130,9 +141,23 @@ bool continuous_mapping_check_idle(continuous_mapping_t* mapping);
 // Create default continuous mapping
 continuous_mapping_t continuous_mapping_create(uint8_t cc_number);
 
+typedef enum {
+  CONTINUOUS_FLAG_RAISE_ABOVE = 0,
+  CONTINUOUS_FLAG_RAISE_BELOW,
+  CONTINUOUS_FLAG_LOWER_ABOVE,
+  CONTINUOUS_FLAG_LOWER_BELOW,
+} continuous_flag_threshold_kind_t;
+
+// True if setting kind to value (or OFF) is legal given the other three fields.
+bool continuous_mapping_flag_threshold_allowed(const continuous_mapping_t* mapping,
+    continuous_flag_threshold_kind_t kind, uint8_t value);
+
+// Sanitize flag thresholds after load or edit (clears/clamps conflicts)
+void continuous_mapping_sanitize_flag_thresholds(continuous_mapping_t* mapping);
+
 // Send CC value to all configured CCs in mapping
 // Uses multi-CC mode if num_cc_numbers > 0, otherwise uses cc_number
-void continuous_mapping_send_cc(const continuous_mapping_t* mapping, uint8_t channel, uint8_t value);
+void continuous_mapping_send_cc(continuous_mapping_t* mapping, uint8_t channel, uint8_t value);
 
 #endif // CONTINUOUS_MAPPING_H
 

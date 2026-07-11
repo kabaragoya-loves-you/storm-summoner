@@ -6623,6 +6623,15 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
   cJSON_AddBoolToObject(obj, "use_idle_value", mapping->use_idle_value);
   cJSON_AddNumberToObject(obj, "idle_value", mapping->idle_value);
   cJSON_AddNumberToObject(obj, "idle_timeout_ms", mapping->idle_timeout_ms);
+
+  if (mapping->flag_raise_above != CONTINUOUS_FLAG_THRESHOLD_OFF)
+    cJSON_AddNumberToObject(obj, "flag_raise_above", mapping->flag_raise_above);
+  if (mapping->flag_raise_below != CONTINUOUS_FLAG_THRESHOLD_OFF)
+    cJSON_AddNumberToObject(obj, "flag_raise_below", mapping->flag_raise_below);
+  if (mapping->flag_lower_above != CONTINUOUS_FLAG_THRESHOLD_OFF)
+    cJSON_AddNumberToObject(obj, "flag_lower_above", mapping->flag_lower_above);
+  if (mapping->flag_lower_below != CONTINUOUS_FLAG_THRESHOLD_OFF)
+    cJSON_AddNumberToObject(obj, "flag_lower_below", mapping->flag_lower_below);
   
   return obj;
 }
@@ -6740,6 +6749,32 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
   
   cJSON* idle_timeout = cJSON_GetObjectItem(obj, "idle_timeout_ms");
   if (idle_timeout) mapping->idle_timeout_ms = idle_timeout->valueint;
+
+  cJSON* flag_raise_above = cJSON_GetObjectItem(obj, "flag_raise_above");
+  if (flag_raise_above && cJSON_IsNumber(flag_raise_above))
+    mapping->flag_raise_above = (uint8_t)flag_raise_above->valueint;
+  else
+    mapping->flag_raise_above = CONTINUOUS_FLAG_THRESHOLD_OFF;
+
+  cJSON* flag_raise_below = cJSON_GetObjectItem(obj, "flag_raise_below");
+  if (flag_raise_below && cJSON_IsNumber(flag_raise_below))
+    mapping->flag_raise_below = (uint8_t)flag_raise_below->valueint;
+  else
+    mapping->flag_raise_below = CONTINUOUS_FLAG_THRESHOLD_OFF;
+
+  cJSON* flag_lower_above = cJSON_GetObjectItem(obj, "flag_lower_above");
+  if (flag_lower_above && cJSON_IsNumber(flag_lower_above))
+    mapping->flag_lower_above = (uint8_t)flag_lower_above->valueint;
+  else
+    mapping->flag_lower_above = CONTINUOUS_FLAG_THRESHOLD_OFF;
+
+  cJSON* flag_lower_below = cJSON_GetObjectItem(obj, "flag_lower_below");
+  if (flag_lower_below && cJSON_IsNumber(flag_lower_below))
+    mapping->flag_lower_below = (uint8_t)flag_lower_below->valueint;
+  else
+    mapping->flag_lower_below = CONTINUOUS_FLAG_THRESHOLD_OFF;
+
+  continuous_mapping_sanitize_flag_thresholds(mapping);
 }
 
 // Serialize LFO config to JSON

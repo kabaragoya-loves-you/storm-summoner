@@ -428,7 +428,7 @@ action_handle_result_t action_handlers_modulation_dispatch(
 
         if (took_down_path && config_get_flag_enabled() && action->raise_flag) {
           action_set_flag(1);
-          ESP_LOGD(TAG, "Raise the Flag: flag set to 1 after Flag Ceremony (down path)");
+          ESP_LOGI(TAG, "Flag Ceremony: raise_flag set, flag now UP");
         }
       }
       return ACTION_HANDLED_SKIP_FLAG;

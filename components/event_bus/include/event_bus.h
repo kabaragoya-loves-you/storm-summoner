@@ -89,6 +89,7 @@ typedef enum {
   EVENT_LFO2_VALUE,
   EVENT_SAMPLE_HOLD_VALUE,
   EVENT_ACTION_EXECUTED,    // Posted when an action completes execution
+  EVENT_FLAG_CHANGED,       // Scene flag raised/lowered (data.value_uint8 = new state)
   
   // Firmware/assets update events
   EVENT_UPDATE_STARTED,

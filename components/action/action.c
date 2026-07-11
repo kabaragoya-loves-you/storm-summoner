@@ -273,7 +273,16 @@ static void action_set_flag_internal(uint8_t value, bool notify) {
   uint8_t new_val = value ? 1 : 0;
   if (s_scene_flag == new_val) return;
   s_scene_flag = new_val;
-  ESP_LOGD(TAG, "Scene flag set to %d", s_scene_flag);
+  ESP_LOGI(TAG, "Scene flag %s", new_val ? "raised" : "lowered");
+
+  event_t flag_evt = {
+    .type = EVENT_FLAG_CHANGED,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp(),
+    .data.value_uint8 = new_val,
+  };
+  event_bus_post(&flag_evt);
+
   if (!notify || !config_get_flag_enabled()) return;
 
   if (s_flag_notify_depth > 0) {

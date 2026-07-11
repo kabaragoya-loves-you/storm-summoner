@@ -153,6 +153,7 @@ static void cdc_clock_position_handler(const event_t *event, void *context);
 static void cdc_clock_beat_handler(const event_t *event, void *context);
 #endif
 static void cdc_clock_action_handler(const event_t *event, void *context);
+static void cdc_flag_changed_handler(const event_t *event, void *context);
 static void cdc_send_scene_inspect(const char *arg);
 static uint8_t cdc_resolve_scene_index(const char *arg, bool *is_position);
 static void cdc_send_info_json(void);
@@ -484,6 +485,7 @@ esp_err_t usb_cdc_update_init(bool enable_logging) {
   event_bus_subscribe_named(EVENT_BEAT, cdc_clock_beat_handler, NULL, "cdc.clock_beat");
 #endif
   event_bus_subscribe(EVENT_ACTION_EXECUTED, cdc_clock_action_handler, NULL);
+  event_bus_subscribe(EVENT_FLAG_CHANGED, cdc_flag_changed_handler, NULL);
   if (event_bus_subscribe(EVENT_CONNECTIONS_CHANGED, cdc_connections_handler, NULL) != ESP_OK)
     ESP_LOGE(TAG, "Failed to subscribe for connection status updates");
 
@@ -1352,6 +1354,12 @@ static void cdc_clock_beat_handler(const event_t *event, void *context) {
 static void cdc_clock_action_handler(const event_t *event, void *context) {
   (void)context;
   if (!event || event->type != EVENT_ACTION_EXECUTED) return;
+  cdc_push_clock_evt();
+}
+
+static void cdc_flag_changed_handler(const event_t *event, void *context) {
+  (void)context;
+  if (!event || event->type != EVENT_FLAG_CHANGED) return;
   cdc_push_clock_evt();
 }
 

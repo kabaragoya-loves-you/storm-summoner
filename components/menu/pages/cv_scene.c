@@ -7,6 +7,7 @@
 #include "cv_mode_mapping.h"
 #include "curve.h"
 #include "continuous_mapping.h"
+#include "continuous_flag_rollers.h"
 #include "device_config.h"
 #include "assets_manager.h"
 #include "assets_types.h"
@@ -58,6 +59,7 @@ static char s_audio_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_lfo_target_label[LABEL_BUFFER_SETS][32];
 static char s_nudge_label[LABEL_BUFFER_SETS][32];
 static char s_direction_label[LABEL_BUFFER_SETS][32];
+static char s_flag_labels[LABEL_BUFFER_SETS][4][48];
 
 // Trigger mode labels
 static char s_trigger_action_label[LABEL_BUFFER_SETS][64];
@@ -94,6 +96,10 @@ static void persist_scene_changes(void) {
     uint8_t scene_index = scene_get_current_index();
     scene_save_to_flash(scene_index);
   }
+}
+
+static continuous_mapping_t* cv_flag_mapping(scene_t* scene) {
+  return scene ? &scene->cv : NULL;
 }
 
 static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
@@ -1173,6 +1179,13 @@ lv_obj_t* menu_page_cv_scene_create(void) {
   if (!scene) {
     return menu_create_page_2line("Control Voltage", NULL, 0);
   }
+
+  continuous_flag_ctx_set(&(continuous_flag_ctx_t){
+    .get_mapping = cv_flag_mapping,
+    .parent_title = "Control Voltage",
+    .parent_create = menu_page_cv_scene_create,
+    .persist = persist_scene_changes,
+  });
   
   load_cc_options();
   
@@ -1239,6 +1252,9 @@ lv_obj_t* menu_page_cv_scene_create(void) {
         snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),
           "Curve\n%s", curve_type_to_string(scene->cv.curve.type));
         s_cv_items[item_count++] = (menu_item_t){s_curve_label[buf], nav_to_curve, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+        item_count = continuous_flag_append_cc_items(s_cv_items, s_flag_labels[buf],
+          item_count);
         
       } else if (scene->cv.output_type == OUTPUT_TYPE_NOTE) {
         // Notes output mode: Base Note, Range, Velocity
