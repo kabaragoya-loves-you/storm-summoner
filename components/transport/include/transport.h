@@ -41,6 +41,8 @@ esp_err_t transport_record(void);
 uint32_t transport_get_current_bar(void);
 uint8_t transport_get_current_beat(void);
 void transport_reset_position(void);
+// Absolute position sync (e.g. after tempo grid-fold across missed beats).
+void transport_sync_position(uint32_t bar, uint8_t beat);
 
 // Song Position Pointer (MIDI beats = 1/16 notes from top).
 void transport_set_song_position(uint16_t spp_sixteenths);

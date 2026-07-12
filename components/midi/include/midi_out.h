@@ -12,6 +12,7 @@
 typedef struct {
   uint8_t *data;
   size_t   len;
+  int64_t  enqueue_time_us;
 } midi_out_job_t;
 
 typedef enum {
@@ -59,5 +60,10 @@ midi_out_config_t midi_out_get_config(void);
 /** Optional hook: mirror locally-generated OUT bytes to the web CDC MIDI monitor. */
 typedef void (*midi_out_cdc_mirror_fn)(const uint8_t *data, size_t len);
 void midi_out_set_cdc_mirror_fn(midi_out_cdc_mirror_fn fn);
+
+// Queue / staleness diagnostics
+uint32_t midi_out_get_queue_high_watermark(void);
+void midi_out_print_stats(void);
+void midi_out_reset_stats(void);
 
 #endif /* _MIDI_OUT_H */

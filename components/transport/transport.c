@@ -505,6 +505,14 @@ void transport_reset_position(void) {
   ESP_LOGD(TAG, "Position reset to bar 1, beat 1");
 }
 
+void transport_sync_position(uint32_t bar, uint8_t beat) {
+  if (bar == 0) bar = 1;
+  if (beat == 0) beat = 1;
+  set_position(bar, beat);
+  ESP_LOGD(TAG, "Position synced to bar %lu, beat %u",
+    (unsigned long)bar, (unsigned)beat);
+}
+
 void transport_set_song_position(uint16_t spp_sixteenths) {
   time_signature_t sig = tempo_get_time_signature();
   uint8_t numerator = sig.numerator ? sig.numerator : 4;

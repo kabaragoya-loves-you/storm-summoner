@@ -2,6 +2,7 @@
 #include "tempo.h"
 #include "transport.h"
 #include "scene.h"
+#include "midi_out.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -13,6 +14,7 @@ static const char* registered_commands[] = {
   "info", "bpm", "tap", "start", "stop",
   "led_sync", "led_ratio", "deadzone",
   "clock_output", "clock_always", "clock_no_passthrough", "clock_standard",
+  "clock_catchup", "jitter",
   // LED commands (merged from led component)
   "led_on", "led_off", "led_flash", "led_enable", "led_mode", "led_sundial", "led_info"
 };
@@ -57,6 +59,7 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Output: %s", output_names[clk_out]);
   ESP_LOGI(TAG, "Standard: %s", std_str);
   ESP_LOGI(TAG, "Always send: %s", always_send ? "yes" : "no");
+  ESP_LOGI(TAG, "Clock catch-up: %s", tempo_get_clock_catchup() ? "yes" : "no");
   ESP_LOGI(TAG, "Disable on passthrough: %s", disable_on_pt ? "yes" : "no");
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "--- Stability (global) ---");
@@ -299,6 +302,56 @@ static int cmd_clock_standard(int argc, char **argv) {
   }
   
   tempo_set_clock_standard(standard);
+  return 0;
+}
+
+// Command: clock_catchup
+static struct {
+  struct arg_str *state;
+  struct arg_end *end;
+} clock_catchup_args;
+
+static int cmd_clock_catchup(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &clock_catchup_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, clock_catchup_args.end, argv[0]);
+    return 1;
+  }
+
+  const char* state_str = clock_catchup_args.state->sval[0];
+  bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
+  tempo_set_clock_catchup(enable);
+  return 0;
+}
+
+// Command: jitter
+static struct {
+  struct arg_str *action;
+  struct arg_end *end;
+} jitter_args;
+
+static int cmd_jitter(int argc, char **argv) {
+  int nerrors = arg_parse(argc, argv, (void **) &jitter_args);
+  if (nerrors != 0) {
+    arg_print_errors(stderr, jitter_args.end, argv[0]);
+    return 1;
+  }
+
+  const char* action = jitter_args.action->sval[0];
+  if (strcmp(action, "reset") == 0) {
+    tempo_jitter_reset_stats();
+    midi_out_reset_stats();
+    ESP_LOGI(TAG, "Jitter and MIDI out stats reset");
+    return 0;
+  }
+
+  if (strcmp(action, "show") != 0 && strcmp(action, "dump") != 0) {
+    ESP_LOGE(TAG, "Use: jitter show|reset");
+    return 1;
+  }
+
+  tempo_jitter_print_stats();
+  midi_out_print_stats();
   return 0;
 }
 
@@ -585,6 +638,32 @@ esp_err_t tempo_console_init(void) {
     .argtable = &clock_standard_args
   };
   esp_console_cmd_register(&clock_standard_cmd);
+
+  // clock_catchup command
+  clock_catchup_args.state = arg_str1(NULL, NULL, "<on|off>", "Enable/disable");
+  clock_catchup_args.end = arg_end(2);
+
+  const esp_console_cmd_t clock_catchup_cmd = {
+    .command = "clock_catchup",
+    .help = "Transmit missed MIDI clock ticks on recovery (default off)",
+    .hint = NULL,
+    .func = &cmd_clock_catchup,
+    .argtable = &clock_catchup_args
+  };
+  esp_console_cmd_register(&clock_catchup_cmd);
+
+  // jitter command
+  jitter_args.action = arg_str1(NULL, NULL, "<show|reset>", "Show or reset stats");
+  jitter_args.end = arg_end(2);
+
+  const esp_console_cmd_t jitter_cmd = {
+    .command = "jitter",
+    .help = "Show/reset clock jitter and MIDI out queue stats",
+    .hint = NULL,
+    .func = &cmd_jitter,
+    .argtable = &jitter_args
+  };
+  esp_console_cmd_register(&jitter_cmd);
   
   // ========== LED Commands ==========
   

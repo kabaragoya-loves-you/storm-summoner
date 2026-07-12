@@ -1,4 +1,5 @@
 #include "lvgl.h"
+#include "src/osal/lv_os.h"
 #include "ui.h"
 #include "usb_cdc_update.h"
 #include "shared_canvas_buffer.h"
@@ -232,6 +233,7 @@ static void ui_set_draw_module_internal(ui_draw_module_t* module) {
   // Store pending module and defer switch to LVGL context
   pending_module = module;
 
+  lv_lock();
   lv_timer_t *switch_timer = lv_timer_create(deferred_module_switch_cb, 10, NULL);
   if (switch_timer) {
     lv_timer_set_repeat_count(switch_timer, 1);
@@ -239,6 +241,7 @@ static void ui_set_draw_module_internal(ui_draw_module_t* module) {
     ESP_LOGE(TAG, "Failed to create module switch timer");
     pending_module = NULL;
   }
+  lv_unlock();
 }
 
 void ui_set_draw_module(ui_draw_module_t* module) {
@@ -502,12 +505,14 @@ void ui_set_app_mode(app_mode_t mode) {
     // Defer ALL LVGL operations to LVGL context (cannot call LVGL from timer/ISR context)
     // This includes: touchwheel creation, hiding canvas, and creating menu widgets
     // Note: ui_set_app_mode() may be called from FreeRTOS timer callback context
+    lv_lock();
     lv_timer_t *enter_timer = lv_timer_create(deferred_programming_mode_enter_cb, 10, NULL);
     if (enter_timer) {
       lv_timer_set_repeat_count(enter_timer, 1);
     } else {
       ESP_LOGE(TAG, "Failed to create Programming mode enter timer");
     }
+    lv_unlock();
   }
   // Handle exiting Programming mode
   else if (mode != APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PROGRAMMING) {
@@ -524,12 +529,14 @@ void ui_set_app_mode(app_mode_t mode) {
 
     // Defer ALL LVGL operations to LVGL context (cannot call LVGL from event handler context)
     // This includes: touchwheel destruction, screen switching, and menu cleanup
+    lv_lock();
     lv_timer_t *exit_timer = lv_timer_create(deferred_programming_mode_exit_cb, 10, NULL);
     if (exit_timer) {
       lv_timer_set_repeat_count(exit_timer, 1);
     } else {
       ESP_LOGE(TAG, "Failed to create Programming mode exit timer");
     }
+    lv_unlock();
   }
 }
 
@@ -543,19 +550,23 @@ void ui_set_programming_top_level(bool is_top_level) {
 }
 
 void ui_graphics_suspend(void) {
+  lv_lock();
   if (g_ui_refresh_timer != NULL) lv_timer_pause(g_ui_refresh_timer);
 
   // Defer canvas hiding to avoid blocking in timer callback context
   lv_timer_t *hide_timer = lv_timer_create(deferred_canvas_hide_cb, 1, NULL);
   if (hide_timer != NULL) lv_timer_set_repeat_count(hide_timer, 1);
+  lv_unlock();
 }
 
 void ui_graphics_resume(void) {
+  lv_lock();
   if (g_ui_refresh_timer != NULL) lv_timer_resume(g_ui_refresh_timer);
 
   // Defer canvas showing to avoid blocking in timer callback context
   lv_timer_t *show_timer = lv_timer_create(deferred_canvas_show_cb, 1, NULL);
   if (show_timer != NULL) lv_timer_set_repeat_count(show_timer, 1);
+  lv_unlock();
 }
 
 bool ui_scene_is_transitioning(void) {

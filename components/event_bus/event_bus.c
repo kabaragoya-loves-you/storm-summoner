@@ -416,7 +416,17 @@ static void event_bus_overflow_dump(const event_t* dropped_event) {
   ESP_LOGE(TAG, "=================================================");
 }
 
+static esp_err_t event_bus_post_timeout(const event_t* event, TickType_t timeout);
+
 esp_err_t event_bus_post(const event_t* event) {
+  return event_bus_post_timeout(event, pdMS_TO_TICKS(10));
+}
+
+esp_err_t event_bus_post_nowait(const event_t* event) {
+  return event_bus_post_timeout(event, 0);
+}
+
+static esp_err_t event_bus_post_timeout(const event_t* event, TickType_t timeout) {
   if (!event_bus_state.initialized) return ESP_ERR_INVALID_STATE;
   if (!event || event->type >= EVENT_TYPE_MAX) return ESP_ERR_INVALID_ARG;
   
@@ -427,9 +437,9 @@ esp_err_t event_bus_post(const event_t* event) {
   // Critical priority events jump to the front of the queue for minimal latency
   BaseType_t result;
   if (event->priority == EVENT_PRIORITY_CRITICAL) {
-    result = xQueueSendToFront(event_bus_state.queue, event, pdMS_TO_TICKS(10));
+    result = xQueueSendToFront(event_bus_state.queue, event, timeout);
   } else {
-    result = xQueueSend(event_bus_state.queue, event, pdMS_TO_TICKS(10));
+    result = xQueueSend(event_bus_state.queue, event, timeout);
   }
   
   if (result != pdTRUE) {

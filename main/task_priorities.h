@@ -11,7 +11,9 @@
 #define TASK_PRIORITY_SENSOR_PS       TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_MIDI_IN         TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_MIDI_OUT        TASK_PRIORITY_DEFAULT
-#define TASK_PRIORITY_MIDI_TEMPO      TASK_PRIORITY_DEFAULT
+// Above the priority-5 pack (LVGL/sensors/MIDI I/O) so clock generation is not
+// round-robin starved during heavy UI work; below event_dispatch (20).
+#define TASK_PRIORITY_MIDI_TEMPO      10
 #define TASK_PRIORITY_SYNC_BPM        TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_HAPTIC          TASK_PRIORITY_DEFAULT
 #define TASK_PRIORITY_DISPLAY         TASK_PRIORITY_DEFAULT

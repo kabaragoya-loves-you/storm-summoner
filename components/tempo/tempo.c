@@ -28,6 +28,7 @@
 #define NVS_KEY_CLOCK_NO_PT "tempo_clk_no_pt"
 #define NVS_KEY_CLOCK_STD "tempo_clk_std"
 #define NVS_KEY_ALLOW_FRAC "tempo_frac_bpm"
+#define NVS_KEY_CLOCK_CATCHUP "tempo_clk_ctch"
 
 // LED NVS keys
 #define LED_ENABLED_KEY "led_enabled"
@@ -58,6 +59,7 @@ static clock_output_t s_clock_output = CLOCK_OUTPUT_BOTH;  // Where to send cloc
 static bool s_clock_always_send = true;  // Send clock even when transport stopped
 static bool s_disable_clock_on_passthrough = true;  // Auto-disable clock when passthrough active
 static bool s_allow_fractional_bpm = false;  // Factory default: integer-only editing
+static bool s_clock_catchup = false;  // Default off: drop missed clock ticks (preserve phase)
 
 // LED state variables
 static bool s_led_enabled = true;
@@ -119,6 +121,15 @@ static uint32_t s_midi_tick_last_update_time = 0;
 
 // Flag to reset timing when clock is unmuted (prevents catch-up burst)
 static bool s_clock_timing_reset_needed = false;
+
+// ============================================================================
+// Clock jitter instrumentation (Phase 1 sign-off tool)
+// ============================================================================
+#define TEMPO_JITTER_WARN_LATE_US 5000
+#define TEMPO_JITTER_WARN_INTERVAL_US 500000
+
+static tempo_jitter_stats_t s_jitter = {0};
+static int64_t s_jitter_last_warn_us = 0;
 
 // Tempo lock state (stabilizes BPM during playback)
 #define TEMPO_LOCK_BEATS 4              // Beats before locking tempo
@@ -222,6 +233,13 @@ void tempo_init(void) {
     s_allow_fractional_bpm = (allow_frac != 0);
   } else {
     app_settings_save_u8(NVS_KEY_ALLOW_FRAC, 0);
+  }
+
+  uint8_t catchup = 0;
+  if (app_settings_load_u8(NVS_KEY_CLOCK_CATCHUP, &catchup) == ESP_OK) {
+    s_clock_catchup = (catchup != 0);
+  } else {
+    app_settings_save_u8(NVS_KEY_CLOCK_CATCHUP, 0);
   }
   
   // Note: update_midi_out_clock_settings() will be called when tempo_start() is called
@@ -441,6 +459,142 @@ static bool tempo_advance_midi_clock_tick_beat(void) {
   return publish;
 }
 
+static void tempo_jitter_record_late(int64_t late_us) {
+  if (late_us < 0) late_us = 0;
+  uint32_t late = (uint32_t)late_us;
+  if (late > s_jitter.max_late_us) s_jitter.max_late_us = late;
+  if (late > 10000) s_jitter.over_10ms++;
+  else if (late > 5000) s_jitter.over_5ms++;
+  else if (late > 1000) s_jitter.over_1ms++;
+  s_jitter.ticks_sent++;
+
+  if (late_us > TEMPO_JITTER_WARN_LATE_US) {
+    int64_t now = esp_timer_get_time();
+    if (now - s_jitter_last_warn_us >= TEMPO_JITTER_WARN_INTERVAL_US) {
+      ESP_LOGW(TAG, "Clock tick late by %ld us", (long)late_us);
+      s_jitter_last_warn_us = now;
+    }
+  }
+}
+
+// Fold `count` missed ticks into counters without bursting beat events.
+// Publishes at most one EVENT_BEAT for the most recent boundary crossed
+// (fire-once-late), and syncs transport absolute position before posting
+// so the beat handler cannot mis-count bars.
+static void tempo_fold_missed_ticks(uint32_t count, tempo_clock_standard_t standard) {
+  if (count == 0) return;
+
+  bool any_beat = false;
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  uint32_t beat_divisor = tempo_beat_divisor_for_standard(standard);
+  for (uint32_t i = 0; i < count; i++) {
+    if (beat_divisor > 0 && (s_tick_counter % beat_divisor == 0)) {
+      tempo_advance_beat_counter_locked();
+      any_beat = true;
+    }
+    s_tick_counter++;
+  }
+  uint8_t beat = s_beat_counter;
+  uint32_t bar = s_bar_counter;
+  xSemaphoreGive(s_state_mutex);
+
+  if (any_beat) {
+    if (beat == 0) beat = 1;
+    if (bar == 0) bar = 1;
+    transport_sync_position(bar, beat);
+    publish_beat_event();
+  }
+}
+
+// Shared INTERNAL/SYNC grid runner: phase-anchored skip-forward, no catch-up burst.
+static void tempo_run_internal_grid_tick(uint16_t current_bpm_x10, uint16_t* last_bpm_x10,
+    tempo_clock_standard_t standard, int64_t* next_tick_time_us) {
+  uint32_t ppqn;
+  switch (standard) {
+    case CLOCK_STANDARD_24PPQN: ppqn = 24; break;
+    case CLOCK_STANDARD_16TH_NOTE: ppqn = 6; break;
+    case CLOCK_STANDARD_BEAT: ppqn = 1; break;
+    default: ppqn = 24; break;
+  }
+
+  uint32_t tick_interval_us =
+    (uint32_t)(600000000ULL / (ppqn * (uint64_t)current_bpm_x10));
+  if (tick_interval_us == 0) tick_interval_us = 1;
+
+  int64_t now_us = esp_timer_get_time();
+  bool deliberate_reset = (*next_tick_time_us == 0) || s_clock_timing_reset_needed;
+  if (s_clock_timing_reset_needed) s_clock_timing_reset_needed = false;
+
+  // BPM change is a deliberate musical re-anchor.
+  if (current_bpm_x10 != *last_bpm_x10) {
+    *last_bpm_x10 = current_bpm_x10;
+    publish_tempo_changed_event();
+    deliberate_reset = true;
+  }
+
+  if (!deliberate_reset && *next_tick_time_us > 0) {
+    // Skip ticks that are at least one full interval late; keep the most
+    // recent due slot for an immediate (sub-tick-late) send.
+    uint32_t overdue = 0;
+    while (*next_tick_time_us + (int64_t)tick_interval_us <= now_us) {
+      *next_tick_time_us += (int64_t)tick_interval_us;
+      overdue++;
+    }
+    if (overdue > 0) {
+      s_jitter.skip_events++;
+      s_jitter.ticks_skipped += overdue;
+      ESP_LOGD(TAG, "Grid skip: dropped %lu tick(s), phase preserved",
+        (unsigned long)overdue);
+
+      if (s_clock_catchup && !s_clock_muted) {
+        for (uint32_t i = 0; i < overdue; i++) send_clock();
+        s_jitter.catchup_bytes_sent += overdue;
+      }
+      tempo_fold_missed_ticks(overdue, standard);
+      now_us = esp_timer_get_time();
+    }
+  }
+
+  // Sub-tick lateness or on-time: send the due tick now.
+  int64_t late_us = 0;
+  if (!deliberate_reset && *next_tick_time_us > 0 && now_us > *next_tick_time_us)
+    late_us = now_us - *next_tick_time_us;
+
+  int64_t actual_send_time_us = 0;
+  if (!s_clock_muted) {
+    actual_send_time_us = esp_timer_get_time();
+    send_clock();
+  }
+  tempo_jitter_record_late(late_us);
+  tempo_advance_clock_tick_beat(standard);
+
+  if (deliberate_reset && actual_send_time_us > 0)
+    *next_tick_time_us = actual_send_time_us + (int64_t)tick_interval_us;
+  else if (deliberate_reset)
+    *next_tick_time_us = esp_timer_get_time() + (int64_t)tick_interval_us;
+  else if (*next_tick_time_us == 0)
+    *next_tick_time_us = esp_timer_get_time() + (int64_t)tick_interval_us;
+  else
+    *next_tick_time_us += (int64_t)tick_interval_us;
+
+  now_us = esp_timer_get_time();
+  int64_t delay_us = *next_tick_time_us - now_us;
+  if (delay_us <= 0) {
+    // Still slightly behind after the send — do not burst; yield and retry.
+    taskYIELD();
+    return;
+  }
+
+  uint32_t delay_ms = (uint32_t)((delay_us + 999) / 1000);
+  uint32_t delay_ticks = (delay_ms * configTICK_RATE_HZ + 999) / 1000;
+  if (delay_ticks > 1)
+    vTaskDelay(delay_ticks - 1);
+
+  while (esp_timer_get_time() < *next_tick_time_us) {
+    // Busy wait for final microseconds
+  }
+}
+
 static void tempo_task(void *pvParameters) {
   ESP_LOGD(TAG, "Tempo task running");
   
@@ -470,90 +624,9 @@ static void tempo_task(void *pvParameters) {
     xSemaphoreGive(s_state_mutex);
     
     if (source == CLOCK_SOURCE_INTERNAL) {
-      // Calculate pulses per quarter note based on clock standard
-      uint32_t ppqn;
-      switch (standard) {
-        case CLOCK_STANDARD_24PPQN:
-          ppqn = 24;  // Standard MIDI clock
-          break;
-        case CLOCK_STANDARD_16TH_NOTE:
-          ppqn = 6;   // 1 pulse per 16th note (1/4 of 24ppqn)
-          break;
-        case CLOCK_STANDARD_BEAT:
-          ppqn = 1;   // 1 pulse per beat (1/24 of 24ppqn)
-          break;
-        default:
-          ppqn = 24;
-          break;
-      }
-      
-      // Calculate tick interval in MICROSECONDS for precision
-      // FreeRTOS ticks (10ms at 100Hz) are too coarse for MIDI timing
-      uint32_t tick_interval_us = (uint32_t)(600000000ULL / (ppqn * (uint64_t)current_bpm_x10));
-      
-      // Track target time with microsecond precision to prevent drift
       static int64_t next_tick_time_us = 0;
-      int64_t now_us = esp_timer_get_time();
-      
-      // Initialize or reset if we've drifted too far (e.g., after pause)
-      // Also reset if unmute triggered a timing reset (prevents catch-up burst)
-      bool did_reset = false;
-      if (next_tick_time_us == 0 || (now_us - next_tick_time_us) > 1000000 ||
-          s_clock_timing_reset_needed) {
-        did_reset = true;
-        // Don't set next_tick_time_us here - we'll set it after the clock send
-        // to use the actual send time, avoiding timing errors from stale timestamps
-        s_clock_timing_reset_needed = false;
-      }
-      
-      // Send MIDI clock directly (low latency requirement)
-      // Capture actual send time to use for timing after reset
-      int64_t actual_send_time_us = 0;
-      if (!s_clock_muted) {
-        actual_send_time_us = esp_timer_get_time();
-        send_clock();
-      }
-
-      tempo_advance_clock_tick_beat(standard);
-      
-      // Check if BPM changed
-      if (current_bpm_x10 != last_bpm_x10) {
-        last_bpm_x10 = current_bpm_x10;
-        publish_tempo_changed_event();
-        // Reset timing on BPM change for immediate response
-        next_tick_time_us = now_us + tick_interval_us;
-      } else if (did_reset && actual_send_time_us > 0) {
-        // After timing reset, base next tick on actual send time (Hypothesis F fix)
-        // This prevents the ~500μs error from using stale now_us
-        next_tick_time_us = actual_send_time_us + tick_interval_us;
-      } else {
-        // Schedule next tick
-        next_tick_time_us += tick_interval_us;
-      }
-      
-      // Calculate delay needed to hit target time
-      now_us = esp_timer_get_time();
-      int64_t delay_us = next_tick_time_us - now_us;
-      
-      // If we're behind schedule, catch up without sleeping
-      if (delay_us <= 0) {
-        taskYIELD();  // Let other tasks run briefly
-        continue;
-      }
-      
-      // Convert to ticks, rounding UP to avoid waking too early
-      // Then fine-tune with a spin-wait if needed for precision
-      uint32_t delay_ms = (uint32_t)((delay_us + 999) / 1000);
-      uint32_t delay_ticks = (delay_ms * configTICK_RATE_HZ + 999) / 1000;
-      if (delay_ticks > 1) {
-        // Sleep for slightly less to allow spin-wait fine-tuning
-        vTaskDelay(delay_ticks - 1);
-      }
-      
-      // Spin-wait for precise timing (only for short remaining time)
-      while (esp_timer_get_time() < next_tick_time_us) {
-        // Busy wait for final microseconds
-      }
+      tempo_run_internal_grid_tick(current_bpm_x10, &last_bpm_x10, standard,
+        &next_tick_time_us);
     }
     else if (source == CLOCK_SOURCE_SYNC) {
       // In SYNC mode, we track incoming pulses with dropout protection
@@ -575,77 +648,15 @@ static void tempo_task(void *pvParameters) {
         }
         s_sync_last_pulse_time_ms = now;
       }
-      
-      // Send clocks continuously based on current BPM
-      // During dropout, s_bpm_x10 holds at last known good value
-      uint32_t ppqn;
-      switch (standard) {
-        case CLOCK_STANDARD_24PPQN:
-          ppqn = 24;
-          break;
-        case CLOCK_STANDARD_16TH_NOTE:
-          ppqn = 6;
-          break;
-        case CLOCK_STANDARD_BEAT:
-          ppqn = 1;
-          break;
-        default:
-          ppqn = 24;
-          break;
-      }
-      
-      // Calculate tick interval in MICROSECONDS for precision
-      uint32_t tick_interval_us = (uint32_t)(600000000ULL / (ppqn * (uint64_t)current_bpm_x10));
-      
-      // Track target time with microsecond precision
-      static int64_t sync_next_tick_time_us = 0;
-      int64_t now_us = esp_timer_get_time();
-      
-      // Reset timing on drift, init, or after unmute
-      bool sync_did_reset = false;
-      if (sync_next_tick_time_us == 0 || (now_us - sync_next_tick_time_us) > 1000000 ||
-          s_clock_timing_reset_needed) {
-        sync_did_reset = true;
-        // Don't set sync_next_tick_time_us here - set after clock send
-        if (s_clock_timing_reset_needed) {
-          s_clock_timing_reset_needed = false;
-          ESP_LOGD(TAG, "Sync clock timing reset after unmute");
-        }
-      }
-      
-      int64_t sync_actual_send_time_us = 0;
-      if (!s_clock_muted) {
-        sync_actual_send_time_us = esp_timer_get_time();
-        send_clock();
-      }
 
-      tempo_advance_clock_tick_beat(standard);
-      
-      // Schedule next tick - use actual send time after reset
-      if (sync_did_reset && sync_actual_send_time_us > 0) {
-        sync_next_tick_time_us = sync_actual_send_time_us + tick_interval_us;
-      } else {
-        sync_next_tick_time_us += tick_interval_us;
-      }
-      
-      // Calculate delay needed
-      now_us = esp_timer_get_time();
-      int64_t delay_us = sync_next_tick_time_us - now_us;
-      
-      if (delay_us <= 0) {
-        taskYIELD();
-        continue;
-      }
-      
-      uint32_t delay_ms = (uint32_t)((delay_us + 999) / 1000);
-      uint32_t delay_ticks = (delay_ms * configTICK_RATE_HZ + 999) / 1000;
-      if (delay_ticks > 1) {
-        vTaskDelay(delay_ticks - 1);
-      }
-      
-      while (esp_timer_get_time() < sync_next_tick_time_us) {
-        // Busy wait for final microseconds
-      }
+      // Refresh BPM after possible sync-pulse update
+      xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+      current_bpm_x10 = s_bpm_x10;
+      xSemaphoreGive(s_state_mutex);
+
+      static int64_t sync_next_tick_time_us = 0;
+      tempo_run_internal_grid_tick(current_bpm_x10, &last_bpm_x10, standard,
+        &sync_next_tick_time_us);
     }
     else { // CLOCK_SOURCE_MIDI
       // In MIDI clock mode, beat/tick tracking is normally handled by tempo_midi_clock_tick()
@@ -780,7 +791,7 @@ static void publish_beat_event(void) {
       .bar_length = s_time_signature.numerator
     }
   };
-  event_bus_post(&beat_event);
+  event_bus_post_nowait(&beat_event);
   s_beat_generation++;
 }
 
@@ -1619,6 +1630,48 @@ bool tempo_get_disable_clock_on_passthrough(void) {
   bool disable = s_disable_clock_on_passthrough;
   xSemaphoreGive(s_state_mutex);
   return disable;
+}
+
+void tempo_set_clock_catchup(bool enabled) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  s_clock_catchup = enabled;
+  xSemaphoreGive(s_state_mutex);
+  app_settings_save_u8(NVS_KEY_CLOCK_CATCHUP, enabled ? 1 : 0);
+  ESP_LOGI(TAG, "Clock catch-up: %s", enabled ? "enabled" : "disabled");
+}
+
+bool tempo_get_clock_catchup(void) {
+  xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+  bool enabled = s_clock_catchup;
+  xSemaphoreGive(s_state_mutex);
+  return enabled;
+}
+
+void tempo_jitter_get_stats(tempo_jitter_stats_t* stats) {
+  if (!stats) return;
+  *stats = s_jitter;
+}
+
+void tempo_jitter_reset_stats(void) {
+  memset(&s_jitter, 0, sizeof(s_jitter));
+  s_jitter_last_warn_us = 0;
+}
+
+void tempo_jitter_print_stats(void) {
+  ESP_LOGI(TAG, "========== TEMPO JITTER ==========");
+  ESP_LOGI(TAG, "Ticks sent: %lu", (unsigned long)s_jitter.ticks_sent);
+  ESP_LOGI(TAG, "Max late: %lu us", (unsigned long)s_jitter.max_late_us);
+  ESP_LOGI(TAG, "Late >1ms: %lu  >5ms: %lu  >10ms: %lu",
+    (unsigned long)s_jitter.over_1ms,
+    (unsigned long)s_jitter.over_5ms,
+    (unsigned long)s_jitter.over_10ms);
+  ESP_LOGI(TAG, "Skip events: %lu  ticks skipped: %lu  catchup bytes: %lu",
+    (unsigned long)s_jitter.skip_events,
+    (unsigned long)s_jitter.ticks_skipped,
+    (unsigned long)s_jitter.catchup_bytes_sent);
+  ESP_LOGI(TAG, "Clock catch-up setting: %s",
+    s_clock_catchup ? "ON" : "OFF");
+  ESP_LOGI(TAG, "==================================");
 }
 
 // ============================================================================

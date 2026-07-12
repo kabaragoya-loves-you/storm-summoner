@@ -161,6 +161,28 @@ bool tempo_get_clock_always_send(void);
 void tempo_set_disable_clock_on_passthrough(bool disable);
 bool tempo_get_disable_clock_on_passthrough(void);
 
+// When true, missed MIDI clock ticks are transmitted on recovery (for gear that
+// counts 0xF8). Default off: drop missed ticks; the phase-anchored grid is
+// never affected by this setting.
+void tempo_set_clock_catchup(bool enabled);
+bool tempo_get_clock_catchup(void);
+
+// Clock jitter / skip instrumentation (console: `tempo jitter`)
+typedef struct {
+  uint32_t ticks_sent;
+  uint32_t max_late_us;
+  uint32_t over_1ms;
+  uint32_t over_5ms;
+  uint32_t over_10ms;
+  uint32_t skip_events;
+  uint32_t ticks_skipped;
+  uint32_t catchup_bytes_sent;
+} tempo_jitter_stats_t;
+
+void tempo_jitter_get_stats(tempo_jitter_stats_t* stats);
+void tempo_jitter_reset_stats(void);
+void tempo_jitter_print_stats(void);
+
 // ============================================================================
 // LED Control (merged from led component)
 // ============================================================================

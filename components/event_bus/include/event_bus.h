@@ -325,6 +325,9 @@ esp_err_t event_bus_unsubscribe(event_type_t type, event_handler_t handler);
 
 // Event posting
 esp_err_t event_bus_post(const event_t* event);
+// Non-blocking post (timeout 0). Prefer for time-critical producers (e.g. beat)
+// so a full queue cannot stall the caller.
+esp_err_t event_bus_post_nowait(const event_t* event);
 esp_err_t event_bus_post_connections_changed(void);
 esp_err_t event_bus_post_from_isr(const event_t* event, BaseType_t* higher_priority_woken);
 

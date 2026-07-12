@@ -8,14 +8,16 @@
 #define TAG "MENU_TEMPO"
 
 // Maximum menu items (sync pulse mode, clock output, standard,
-// always send, disable on passthrough, fractional bpm, deadzone, led sync, flash duration)
-#define MAX_TEMPO_ITEMS 9
+// always send, clock catch-up, disable on passthrough, fractional bpm,
+// deadzone, led sync, flash duration)
+#define MAX_TEMPO_ITEMS 10
 
 // Label buffers
 static char s_sync_pulse_mode_label[32];
 static char s_clock_output_label[32];
 static char s_clock_standard_label[40];
 static char s_always_send_label[32];
+static char s_clock_catchup_label[32];
 static char s_disable_passthrough_label[40];
 static char s_fractional_bpm_label[32];
 static char s_deadzone_label[32];
@@ -228,6 +230,35 @@ static void nav_to_always_send(void* user_data) {
 }
 
 // ============================================================================
+// Clock Catch-Up Roller (Off / On)
+// ============================================================================
+
+static const char* CLOCK_CATCHUP_OPTIONS = "Off\nOn";
+
+static void clock_catchup_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  bool enabled = (selected_index == 1);
+  tempo_set_clock_catchup(enabled);
+  ESP_LOGI(TAG, "Clock catch-up %s", enabled ? "enabled" : "disabled");
+
+  menu_navigate_back_then_to(2, "Tempo", menu_page_tempo_create);
+}
+
+static lv_obj_t* clock_catchup_roller_create(void) {
+  bool current = tempo_get_clock_catchup();
+  uint32_t initial_index = current ? 1 : 0;
+
+  return menu_create_roller_page("Clock Catch-Up", CLOCK_CATCHUP_OPTIONS,
+    initial_index, clock_catchup_confirm_cb, NULL);
+}
+
+static void nav_to_clock_catchup(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Clock Catch-Up", clock_catchup_roller_create);
+}
+
+// ============================================================================
 // Disable on Passthrough Roller (Off / On)
 // ============================================================================
 
@@ -415,6 +446,12 @@ lv_obj_t* menu_page_tempo_create(void) {
     snprintf(s_always_send_label, sizeof(s_always_send_label), "Always Send\n%s",
       always_send ? "On" : "Off");
     s_tempo_items[idx++] = (menu_item_t){ s_always_send_label, nav_to_always_send, NULL, true, MENU_ITEM_KIND_ROLLER };
+
+    // Clock Catch-Up
+    bool catchup = tempo_get_clock_catchup();
+    snprintf(s_clock_catchup_label, sizeof(s_clock_catchup_label), "Clock Catch-Up\n%s",
+      catchup ? "On" : "Off");
+    s_tempo_items[idx++] = (menu_item_t){ s_clock_catchup_label, nav_to_clock_catchup, NULL, true, MENU_ITEM_KIND_ROLLER };
     
     // Disable on Passthrough
     bool disable_passthrough = tempo_get_disable_clock_on_passthrough();
