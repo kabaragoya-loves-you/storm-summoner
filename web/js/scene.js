@@ -360,18 +360,28 @@ application.register(
       if (typeof e.detail?.programming === 'boolean') {
         this.setDeviceProgramming(e.detail.programming)
       }
-      const p = e.detail?.pedal
-      if (p?.slug) {
-        this.deviceContext.globalPedal = {
-          slug: p.slug || '',
-          name: p.name || 'Unknown',
-          vendor: p.vendor || '',
-          midi_channel: Number(p.midi_channel) || 1,
-          trs_type: p.trs_type || 'TYPE_A'
-        }
+      this.applyGlobalPedalFromInfo(e.detail?.pedal)
+    }
+
+    // Cache the active global pedal and, when it changes the device the open
+    // scene depends on, reload the device definition so every parameter
+    // dropdown rebinds to the new pedal's CC tables. Scenes that carry their
+    // own device_id (per-scene device mode) are unaffected by global switches.
+    applyGlobalPedalFromInfo (p) {
+      if (!p?.slug) return
+      const prevSlug = this.deviceContext.globalPedal?.slug || ''
+      this.deviceContext.globalPedal = {
+        slug: p.slug || '',
+        name: p.name || 'Unknown',
+        vendor: p.vendor || '',
+        midi_channel: Number(p.midi_channel) || 1,
+        trs_type: p.trs_type || 'TYPE_A'
       }
-      if (this.editing && this.editModel && !this.deviceDefinition && p?.slug &&
-          !this.connection.isSerialBusy && !this._deviceDefLoadInProgress) {
+      if (!this.editing || !this.editModel) return
+      if (this.connection.isSerialBusy || this._deviceDefLoadInProgress) return
+      const usesGlobalPedal = !this.editModel.device_id
+      const slugChanged = usesGlobalPedal && p.slug !== prevSlug
+      if (!this.deviceDefinition || slugChanged) {
         void this.reloadDeviceDefinitionForEditor()
       }
     }
@@ -499,6 +509,7 @@ application.register(
         const next = !!data.programming
         this.setDeviceProgramming(next)
         if (wasProgramming && !next) this.onProgrammingModeEnded()
+        this.applyGlobalPedalFromInfo(data.pedal)
       } catch (_) { /* ignore */ }
     }
 

@@ -1177,6 +1177,33 @@ application.register(
         }
         if (!cc.valueRange || cc.valueRange.min === undefined || cc.valueRange.max === undefined) {
           errors.push({ path: `${path}/valueRange`, message: 'min and max are required' })
+        } else {
+          const vr = cc.valueRange
+          ;(vr.discreteValues || []).forEach((dv, di) => {
+            const dpath = `${path}/valueRange/discreteValues/${di}`
+            if (dv && Object.prototype.hasOwnProperty.call(dv, 'label') && dv.name === undefined) {
+              errors.push({
+                path: dpath,
+                message: "uses 'label'; must be 'name' (firmware ignores label)"
+              })
+            }
+            if (!dv || typeof dv.name !== 'string' || !dv.name) {
+              errors.push({ path: `${dpath}/name`, message: 'name is required' })
+            }
+            if (!Number.isInteger(dv?.value)) {
+              errors.push({ path: `${dpath}/value`, message: 'integer value is required' })
+            } else if (dv.value < vr.min || dv.value > vr.max) {
+              errors.push({
+                path: `${dpath}/value`,
+                message: `value ${dv.value} outside range ${vr.min}-${vr.max}`
+              })
+            }
+            for (const key of Object.keys(dv || {})) {
+              if (key !== 'name' && key !== 'value') {
+                errors.push({ path: `${dpath}/${key}`, message: `unknown key '${key}'` })
+              }
+            }
+          })
         }
         const n = cc.controlChangeNumber
         if (n !== undefined && Number.isInteger(n)) {
