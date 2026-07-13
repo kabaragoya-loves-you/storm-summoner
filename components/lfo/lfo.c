@@ -81,9 +81,10 @@ static lfo_state_t s_lfo[LFO_NUM_SLOTS];
 static TaskHandle_t s_lfo_task_handle = NULL;
 static volatile bool s_running = false;
 
-// Beat tracking for tempo sync
-static volatile uint32_t s_beat_count = 0;
-static volatile uint32_t s_last_beat_time = 0;
+// Beat tracking for tempo sync (all times from esp_timer ms)
+static volatile uint32_t s_beat_count = 0;       // Absolute beats since transport start
+static volatile uint32_t s_last_beat_time = 0;   // esp_timer ms of last EVENT_BEAT
+static volatile uint32_t s_beat_interval_ms = 0; // Measured (smoothed) inter-beat interval
 static volatile uint8_t s_beats_per_bar = 4;
 static volatile uint8_t s_beat_in_bar = 1;  // 1-based position within current bar
 
@@ -106,6 +107,10 @@ static void handle_transport_event(const event_t* event, void* context);
 static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm);
 static float lfo_get_effective_rate_hz(lfo_state_t* lfo);
 static float glider_speed_factor(lfo_state_t* lfo);
+static uint32_t lfo_nominal_beat_ms(void);
+static uint32_t lfo_get_beat_duration_ms(void);
+static float lfo_cycles_per_beat(lfo_note_division_t div, uint8_t felt_beats);
+static uint16_t lfo_phase_from_beat_sync(lfo_note_division_t div, uint32_t now_ms);
 
 // Calculate LFO cycle duration in milliseconds
 static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm) {
@@ -167,6 +172,69 @@ static float glider_speed_factor(lfo_state_t* lfo) {
   if (t < 0.0f) t = 0.0f;
   if (t > 1.0f) t = 1.0f;
   return 1.0f + t * 9.0f;
+}
+
+// Nominal beat duration from tempo (x10 BPM for sub-BPM accuracy)
+static uint32_t lfo_nominal_beat_ms(void) {
+  uint16_t bpm_x10 = tempo_get_bpm_x10();
+  if (bpm_x10 == 0) bpm_x10 = 1200;
+  return (uint32_t)(600000UL / bpm_x10);
+}
+
+// Prefer measured inter-beat interval; fall back to nominal BPM
+static uint32_t lfo_get_beat_duration_ms(void) {
+  uint32_t measured = s_beat_interval_ms;
+  if (measured > 0) return measured;
+  return lfo_nominal_beat_ms();
+}
+
+static float lfo_cycles_per_beat(lfo_note_division_t div, uint8_t felt_beats) {
+  if (felt_beats == 0) felt_beats = 4;
+  switch (div) {
+    case LFO_DIVISION_32ND:      return 8.0f;
+    case LFO_DIVISION_SIXTEENTH: return 4.0f;
+    case LFO_DIVISION_EIGHTH:    return 2.0f;
+    case LFO_DIVISION_QUARTER:   return 1.0f;
+    case LFO_DIVISION_HALF:      return 0.5f;
+    case LFO_DIVISION_1_BAR:     return 1.0f / felt_beats;
+    case LFO_DIVISION_2_BARS:    return 1.0f / (felt_beats * 2);
+    case LFO_DIVISION_4_BARS:    return 1.0f / (felt_beats * 4);
+    case LFO_DIVISION_8_BARS:    return 1.0f / (felt_beats * 8);
+    case LFO_DIVISION_12_BARS:   return 1.0f / (felt_beats * 12);
+    case LFO_DIVISION_16_BARS:   return 1.0f / (felt_beats * 16);
+    default:                     return 1.0f;
+  }
+}
+
+// Beat-aligned phase from absolute beat count + extrapolated fraction.
+// Extrapolates past the expected beat boundary (no hard clamp) so the
+// waveform never parks waiting for the next EVENT_BEAT.
+static uint16_t lfo_phase_from_beat_sync(lfo_note_division_t div, uint32_t now_ms) {
+  uint8_t felt_beats = tempo_get_felt_beats_per_bar();
+  if (felt_beats == 0) felt_beats = 4;
+
+  uint32_t beat_duration_ms = lfo_get_beat_duration_ms();
+  if (beat_duration_ms == 0) beat_duration_ms = 500;
+
+  uint32_t last_beat = s_last_beat_time;
+  uint32_t time_since_beat = (now_ms >= last_beat) ? (now_ms - last_beat) : 0;
+
+  // Cap at ~2 beats for clock-dropout safety; otherwise allow >1.0
+  uint32_t max_extrapolate = beat_duration_ms * 2;
+  if (time_since_beat > max_extrapolate) time_since_beat = max_extrapolate;
+
+  float beat_fraction = (float)time_since_beat / (float)beat_duration_ms;
+
+  // Absolute beats completed before the current beat, plus fraction through it.
+  // s_beat_count is 1 after the first EVENT_BEAT, so subtract 1 for 0-based.
+  uint32_t beats_completed = (s_beat_count > 0) ? (s_beat_count - 1) : 0;
+  float total_beats = (float)beats_completed + beat_fraction;
+
+  float phase_in_cycle = total_beats * lfo_cycles_per_beat(div, felt_beats);
+  phase_in_cycle = fmodf(phase_in_cycle, 1.0f);
+  if (phase_in_cycle < 0.0f) phase_in_cycle += 1.0f;
+
+  return (uint16_t)(phase_in_cycle * PHASE_MAX);
 }
 
 // Get effective steps per cycle based on resolution mode
@@ -361,8 +429,25 @@ void lfo_stop(void) {
 static void handle_beat_event(const event_t* event, void* context) {
   if (event->type != EVENT_BEAT) return;
 
+  uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+
+  // Measure inter-beat interval (same esp_timer clock used by lfo_task).
+  // Reject outliers (transport start / resync) and fall back to nominal BPM.
+  if (s_last_beat_time > 0 && now_ms > s_last_beat_time) {
+    uint32_t measured = now_ms - s_last_beat_time;
+    uint32_t nominal = lfo_nominal_beat_ms();
+    // Accept if within 25%–200% of nominal (covers swing / mild jitter)
+    if (measured >= nominal / 4 && measured <= nominal * 2) {
+      // Light EMA: 3/4 previous + 1/4 new
+      uint32_t prev = s_beat_interval_ms;
+      s_beat_interval_ms = (prev > 0)
+        ? ((prev * 3 + measured) / 4)
+        : measured;
+    }
+  }
+
   s_beat_count++;
-  s_last_beat_time = event->timestamp;
+  s_last_beat_time = now_ms;
 
   // Store beat position within bar (1-based)
   if (event->data.beat.beat_in_bar > 0) {
@@ -651,175 +736,126 @@ static uint8_t calculate_waveform(lfo_state_t* lfo) {
 }
 
 static void lfo_task(void* arg) {
-  uint32_t last_update_time = 0;
-  const uint32_t update_interval_ms = 1000 / LFO_UPDATE_RATE_HZ;
-
   while (s_running) {
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
 
-    if (now - last_update_time >= update_interval_ms) {
-      last_update_time = now;
+    // Get current BPM for dynamic send interval calculation
+    uint16_t bpm = tempo_get_bpm();
+    if (bpm == 0) bpm = 120;
 
-      // Get current BPM for dynamic send interval calculation
-      uint16_t bpm = tempo_get_bpm();
-      if (bpm == 0) bpm = 120;
+    for (int i = 0; i < LFO_NUM_SLOTS; i++) {
+      lfo_state_t* lfo = &s_lfo[i];
 
-      for (int i = 0; i < LFO_NUM_SLOTS; i++) {
-        lfo_state_t* lfo = &s_lfo[i];
+      if (!lfo->config.enabled) continue;
 
-        if (!lfo->config.enabled) continue;
+      // Save previous phase for cycle wrap detection
+      lfo->prev_phase = lfo->phase;
 
-        // Save previous phase for cycle wrap detection
-        lfo->prev_phase = lfo->phase;
+      // Update phase based on rate mode
+      // Dynamic rate (from external modulation) takes priority if active
+      if (lfo->has_dynamic_rate) {
+        // Dynamic rate: external source controls rate (0.1-10.0 Hz exponential)
+        float rate_hz = 0.1f * powf(100.0f, lfo->dynamic_rate / 127.0f);
+        uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
+        lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
+      } else if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
+        // Time mode: use configured Hz rate
+        float rate_hz = lfo->config.rate_hz_x100 / 100.0f;
+        uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
+        lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
+      } else {
+        // Tempo sync mode - calculate phase based on beat position
+        if (bpm > 0) {
+          uint8_t felt_beats = tempo_get_felt_beats_per_bar();
+          if (felt_beats == 0) felt_beats = 4;
 
-        // Update phase based on rate mode
-        // Dynamic rate (from external modulation) takes priority if active
-        if (lfo->has_dynamic_rate) {
-          // Dynamic rate: external source controls rate (0.1-10.0 Hz exponential)
-          float rate_hz = 0.1f * powf(100.0f, lfo->dynamic_rate / 127.0f);
-          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-        } else if (lfo->config.rate_mode == LFO_RATE_MODE_FREE) {
-          // Time mode: use configured Hz rate
-          float rate_hz = lfo->config.rate_hz_x100 / 100.0f;
-          uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-          lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-        } else {
-          // Tempo sync mode - calculate phase based on beat position
-          uint16_t bpm = tempo_get_bpm();
-          if (bpm > 0) {
-            // Use felt beats for bar-length divisions (handles compound meters like 6/8)
-            uint8_t felt_beats = tempo_get_felt_beats_per_bar();
-            if (felt_beats == 0) felt_beats = 4;  // Safety fallback
+          lfo_note_division_t div = lfo->config.division;
+          float cycles_per_beat = lfo_cycles_per_beat(div, felt_beats);
 
-            lfo_note_division_t div = lfo->config.division;
+          // Beat sync requires: scene uses transport AND beat events are available
+          scene_t* scene = scene_get_current();
+          bool use_beat_sync = scene && scene->use_transport &&
+                               (s_last_beat_time > 0);
 
-            // Get number of LFO cycles per beat based on division
-            // Fast divisions: multiple cycles per beat
-            // Slow divisions: fraction of a cycle per beat
-            float cycles_per_beat;
-
-            switch (div) {
-              case LFO_DIVISION_32ND:     cycles_per_beat = 8.0f; break;
-              case LFO_DIVISION_SIXTEENTH: cycles_per_beat = 4.0f; break;
-              case LFO_DIVISION_EIGHTH:   cycles_per_beat = 2.0f; break;
-              case LFO_DIVISION_QUARTER:  cycles_per_beat = 1.0f; break;
-              case LFO_DIVISION_HALF:     cycles_per_beat = 0.5f; break;
-              case LFO_DIVISION_1_BAR:    cycles_per_beat = 1.0f / felt_beats; break;
-              case LFO_DIVISION_2_BARS:   cycles_per_beat = 1.0f / (felt_beats * 2); break;
-              case LFO_DIVISION_4_BARS:   cycles_per_beat = 1.0f / (felt_beats * 4); break;
-              case LFO_DIVISION_8_BARS:   cycles_per_beat = 1.0f / (felt_beats * 8); break;
-              case LFO_DIVISION_12_BARS:  cycles_per_beat = 1.0f / (felt_beats * 12); break;
-              case LFO_DIVISION_16_BARS:  cycles_per_beat = 1.0f / (felt_beats * 16); break;
-              default: cycles_per_beat = 1.0f; break;
-            }
-
-            // Check if we should use beat-aligned sync or free-running
-            // Beat sync requires: scene uses transport AND beat events are available
-            scene_t* scene = scene_get_current();
-            bool use_beat_sync = scene && scene->use_transport &&
-                                 (s_last_beat_time > 0);
-
-            if (use_beat_sync) {
-              // Beat-aligned mode: calculate phase from bar position + interpolation
-              uint32_t beat_duration_ms = 60000 / bpm;
-              uint32_t time_since_beat = now - s_last_beat_time;
-              if (time_since_beat > beat_duration_ms) time_since_beat = beat_duration_ms;
-
-              // Calculate fraction through current beat (0.0 - 1.0 as fixed point 16.16)
-              uint32_t beat_fraction = (time_since_beat * 65536) / beat_duration_ms;
-
-              // Calculate position within bar: (beat_in_bar - 1) + beat_fraction
-              // beat_in_bar is 1-based, so subtract 1 for 0-based position
-              uint8_t beat_pos = (s_beat_in_bar > 0) ? (s_beat_in_bar - 1) : 0;
-
-              // Total beats elapsed = beat_pos + fraction (as fixed point)
-              // Then multiply by cycles_per_beat to get LFO phase position
-              float bar_position = (float)beat_pos + (float)beat_fraction / 65536.0f;
-              float phase_in_cycle = bar_position * cycles_per_beat;
-
-              // Convert to 16-bit phase (wrap to single cycle)
-              phase_in_cycle = fmodf(phase_in_cycle, 1.0f);
-              if (phase_in_cycle < 0) phase_in_cycle += 1.0f;
-
-              lfo->phase = (uint16_t)(phase_in_cycle * PHASE_MAX);
-            } else {
-              // Free-running mode: advance phase at tempo-derived rate
-              // beats_per_second = bpm / 60, cycles_per_second = beats_per_second * cycles_per_beat
-              float rate_hz = (bpm / 60.0f) * cycles_per_beat;
-              uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
-              lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
-            }
-          }
-        }
-
-        // One-shot mode: detect cycle completion (phase wrapped from high to low)
-        // Skip detection on first tick after start to avoid race condition where
-        // prev_phase was stored before reset but phase was read after reset
-        if (lfo->just_started) {
-          lfo->just_started = false;  // Clear flag, next tick will check normally
-        } else if (!lfo->config.repeat && lfo->phase < lfo->prev_phase) {
-          // Cycle just completed
-          if (lfo->queued_cycles > 0) {
-            // More cycles queued, continue running
-            lfo->queued_cycles--;
-            ESP_LOGD(TAG, "LFO%d: one-shot cycle completed, %d cycles remaining", i + 1, lfo->queued_cycles);
+          if (use_beat_sync) {
+            lfo->phase = lfo_phase_from_beat_sync(div, now);
           } else {
-            // No more cycles, stop the LFO
-            // If restore_on_stop is enabled, post the phase-0 value before stopping
-            if (lfo->config.restore_on_stop && !ui_is_in_programming_mode()) {
-              uint8_t restore_value = lfo_get_value_at_phase(i, 0);
-              event_t event = {
-                .type = (i == 0) ? EVENT_LFO1_VALUE : EVENT_LFO2_VALUE,
-                .priority = EVENT_PRIORITY_NORMAL,
-                .timestamp = event_bus_get_current_timestamp(),
-                .data.sensor = {
-                  .channel = 0,
-                  .controller = (uint8_t)(80 + i),
-                  .value = restore_value
-                }
-              };
-              event_bus_post(&event);
-            }
-            lfo->cycle_completed = true;
-            lfo->config.enabled = false;
-            ESP_LOGI(TAG, "LFO%d: one-shot completed, stopping", i + 1);
-            continue;  // Skip waveform calculation and event posting
+            // Free-running: advance at tempo-derived rate
+            float rate_hz = (bpm / 60.0f) * cycles_per_beat;
+            uint16_t phase_increment = (uint16_t)((rate_hz * PHASE_MAX) / LFO_UPDATE_RATE_HZ);
+            lfo->phase = (lfo->phase + phase_increment) % PHASE_MAX;
           }
         }
+      }
 
-        // Calculate waveform value
-        lfo->last_value = calculate_waveform(lfo);
+      // One-shot mode: detect cycle completion (phase wrapped from high to low)
+      // Skip detection on first tick after start to avoid race condition where
+      // prev_phase was stored before reset but phase was read after reset
+      if (lfo->just_started) {
+        lfo->just_started = false;  // Clear flag, next tick will check normally
+      } else if (!lfo->config.repeat && lfo->phase < lfo->prev_phase) {
+        // Cycle just completed
+        if (lfo->queued_cycles > 0) {
+          // More cycles queued, continue running
+          lfo->queued_cycles--;
+          ESP_LOGD(TAG, "LFO%d: one-shot cycle completed, %d cycles remaining", i + 1, lfo->queued_cycles);
+        } else {
+          // No more cycles, stop the LFO
+          // If restore_on_stop is enabled, post the phase-0 value before stopping
+          if (lfo->config.restore_on_stop && !ui_is_in_programming_mode()) {
+            uint8_t restore_value = lfo_get_value_at_phase(i, 0);
+            event_t event = {
+              .type = (i == 0) ? EVENT_LFO1_VALUE : EVENT_LFO2_VALUE,
+              .priority = EVENT_PRIORITY_NORMAL,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.sensor = {
+                .channel = 0,
+                .controller = (uint8_t)(80 + i),
+                .value = restore_value
+              }
+            };
+            event_bus_post(&event);
+          }
+          lfo->cycle_completed = true;
+          lfo->config.enabled = false;
+          ESP_LOGI(TAG, "LFO%d: one-shot completed, stopping", i + 1);
+          continue;  // Skip waveform calculation and event posting
+        }
+      }
 
-        // Skip event posting in programming mode (LFO keeps running internally)
-        if (!ui_is_in_programming_mode()) {
-          // Calculate dynamic send interval for this LFO based on resolution mode
-          uint32_t send_interval_ms = get_send_interval_ms(lfo, bpm);
+      // Calculate waveform value
+      lfo->last_value = calculate_waveform(lfo);
 
-          // Rate-limited event posting
-          if (now - lfo->last_send_time >= send_interval_ms) {
-            if (lfo->last_value != lfo->last_sent_value) {
-              event_t event = {
-                .type = (i == 0) ? EVENT_LFO1_VALUE : EVENT_LFO2_VALUE,
-                .priority = EVENT_PRIORITY_NORMAL,
-                .timestamp = event_bus_get_current_timestamp(),
-                .data.sensor = {
-                  .channel = 0,
-                  .controller = (uint8_t)(80 + i),  // CC80 for LFO1, CC81 for LFO2
-                  .value = lfo->last_value
-                }
-              };
-              event_bus_post(&event);
+      // Skip event posting in programming mode (LFO keeps running internally)
+      if (!ui_is_in_programming_mode()) {
+        // Calculate dynamic send interval for this LFO based on resolution mode
+        uint32_t send_interval_ms = get_send_interval_ms(lfo, bpm);
 
-              lfo->last_sent_value = lfo->last_value;
-              lfo->last_send_time = now;
-            }
+        // Rate-limited event posting
+        if (now - lfo->last_send_time >= send_interval_ms) {
+          if (lfo->last_value != lfo->last_sent_value) {
+            event_t event = {
+              .type = (i == 0) ? EVENT_LFO1_VALUE : EVENT_LFO2_VALUE,
+              .priority = EVENT_PRIORITY_NORMAL,
+              .timestamp = event_bus_get_current_timestamp(),
+              .data.sensor = {
+                .channel = 0,
+                .controller = (uint8_t)(80 + i),  // CC80 for LFO1, CC81 for LFO2
+                .value = lfo->last_value
+              }
+            };
+            event_bus_post(&event);
+
+            lfo->last_sent_value = lfo->last_value;
+            lfo->last_send_time = now;
           }
         }
       }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(5));
+    // 1 tick = 10ms at CONFIG_FREERTOS_HZ=100 (matches LFO_UPDATE_RATE_HZ).
+    // pdMS_TO_TICKS(5) was 0 and busy-spun.
+    vTaskDelay(1);
   }
 
   vTaskDelete(NULL);
@@ -842,47 +878,12 @@ void lfo_enable(uint8_t slot, bool enabled) {
         bool use_beat_sync = scene && scene->use_transport && (s_last_beat_time > 0);
 
         if (use_beat_sync) {
-          // Calculate phase based on current position within the bar
-          uint8_t felt_beats = tempo_get_felt_beats_per_bar();
-          if (felt_beats == 0) felt_beats = 4;
-
-          lfo_note_division_t div = s_lfo[slot].config.division;
-          float cycles_per_beat;
-
-          switch (div) {
-            case LFO_DIVISION_32ND:     cycles_per_beat = 8.0f; break;
-            case LFO_DIVISION_SIXTEENTH: cycles_per_beat = 4.0f; break;
-            case LFO_DIVISION_EIGHTH:   cycles_per_beat = 2.0f; break;
-            case LFO_DIVISION_QUARTER:  cycles_per_beat = 1.0f; break;
-            case LFO_DIVISION_HALF:     cycles_per_beat = 0.5f; break;
-            case LFO_DIVISION_1_BAR:    cycles_per_beat = 1.0f / felt_beats; break;
-            case LFO_DIVISION_2_BARS:   cycles_per_beat = 1.0f / (felt_beats * 2); break;
-            case LFO_DIVISION_4_BARS:   cycles_per_beat = 1.0f / (felt_beats * 4); break;
-            case LFO_DIVISION_8_BARS:   cycles_per_beat = 1.0f / (felt_beats * 8); break;
-            case LFO_DIVISION_12_BARS:  cycles_per_beat = 1.0f / (felt_beats * 12); break;
-            case LFO_DIVISION_16_BARS:  cycles_per_beat = 1.0f / (felt_beats * 16); break;
-            default: cycles_per_beat = 1.0f; break;
-          }
-
-          // Calculate current bar position from beat_in_bar and time since last beat
-          uint16_t bpm = tempo_get_bpm();
+          // Snap phase to absolute beat position (supports multi-bar divisions)
           uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-          uint32_t beat_duration_ms = (bpm > 0) ? (60000 / bpm) : 500;
-          uint32_t time_since_beat = now - s_last_beat_time;
-          if (time_since_beat > beat_duration_ms) time_since_beat = beat_duration_ms;
-
-          uint8_t beat_pos = (s_beat_in_bar > 0) ? (s_beat_in_bar - 1) : 0;
-          float beat_fraction = (float)time_since_beat / (float)beat_duration_ms;
-          float bar_position = (float)beat_pos + beat_fraction;
-
-          // Calculate phase in cycle and wrap
-          float phase_in_cycle = bar_position * cycles_per_beat;
-          phase_in_cycle = fmodf(phase_in_cycle, 1.0f);
-          if (phase_in_cycle < 0) phase_in_cycle += 1.0f;
-
-          s_lfo[slot].phase = (uint16_t)(phase_in_cycle * PHASE_MAX);
-          ESP_LOGD(TAG, "LFO%d snap to bar pos %.2f -> phase %u",
-            slot + 1, bar_position, s_lfo[slot].phase);
+          s_lfo[slot].phase = lfo_phase_from_beat_sync(
+            s_lfo[slot].config.division, now);
+          ESP_LOGD(TAG, "LFO%d snap to beat_count %lu -> phase %u",
+            slot + 1, (unsigned long)s_beat_count, s_lfo[slot].phase);
         } else {
           // No beat sync, start from phase 0
           s_lfo[slot].phase = 0;
@@ -1344,6 +1345,7 @@ static void handle_transport_event(const event_t* event, void* context) {
     s_beat_count = 0;
     s_beat_in_bar = 1;  // Will be updated by first beat event
     s_last_beat_time = 0;
+    s_beat_interval_ms = 0;
   }
   
   for (int i = 0; i < LFO_NUM_SLOTS; i++) {

@@ -2,7 +2,6 @@
 #include "scene.h"
 #include "midi_local_output.h"
 #include "continuous_mapping.h"
-#include "smart_filter.h"
 #include "device_config.h"
 #include "midi_messages.h"
 #include "event_bus.h"
@@ -17,8 +16,11 @@
 
 static const char* TAG = "lfo_scene";
 
-static smart_filter_t s_lfo1_filter;
-static smart_filter_t s_lfo2_filter;
+// Last processed output per slot (curve/polarity may collapse distinct raw
+// values). No smart_filter: its 0/127 snap+hysteresis is for noisy sensors
+// and parks a clean sine at the extremes for hundreds of ms.
+static uint8_t s_lfo1_last_output = 0xFF;
+static uint8_t s_lfo2_last_output = 0xFF;
 
 static uint32_t s_lfo1_last_tempo_apply_ms = 0;
 static uint8_t  s_lfo1_last_applied_midi = 64;
@@ -108,13 +110,9 @@ static void handle_lfo1_event(const event_t* event, void* context) {
   uint8_t raw_value = event->data.sensor.value;
   
   // Process through curve and polarity
-  uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
-  
-  // Apply smart filtering (handles extremes + deadzone)
-  bool value_changed = false;
-  uint8_t output_value = smart_filter_process(&s_lfo1_filter, processed_value, &value_changed);
-
-  if (!value_changed) return;
+  uint8_t output_value = continuous_mapping_process(raw_value, mapping);
+  if (output_value == s_lfo1_last_output) return;
+  s_lfo1_last_output = output_value;
 
   switch (mapping->output_type) {
     case OUTPUT_TYPE_NOTE: {
@@ -198,13 +196,9 @@ static void handle_lfo2_event(const event_t* event, void* context) {
   uint8_t raw_value = event->data.sensor.value;
   
   // Process through curve and polarity
-  uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
-  
-  // Apply smart filtering (handles extremes + deadzone)
-  bool value_changed = false;
-  uint8_t output_value = smart_filter_process(&s_lfo2_filter, processed_value, &value_changed);
-  
-  if (!value_changed) return;
+  uint8_t output_value = continuous_mapping_process(raw_value, mapping);
+  if (output_value == s_lfo2_last_output) return;
+  s_lfo2_last_output = output_value;
   
   switch (mapping->output_type) {
     case OUTPUT_TYPE_NOTE: {
@@ -306,6 +300,9 @@ void midi_lfo_scene_handler_restore_value(uint8_t slot) {
   
   // Process through curve and polarity
   uint8_t processed_value = continuous_mapping_process(raw_value, mapping);
+
+  if (slot == 0) s_lfo1_last_output = processed_value;
+  else s_lfo2_last_output = processed_value;
   
   // Send CC value
   uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
@@ -315,21 +312,16 @@ void midi_lfo_scene_handler_restore_value(uint8_t slot) {
     slot + 1, raw_value, processed_value);
 }
 
-// On scene change, drop the across-event filter state so the new scene's
-// first LFO sample isn't compared against (or snapped to) values captured
-// under the previous scene's curve/polarity/extremes.
+// On scene change, drop last-output dedupe so the new scene's first sample
+// is not suppressed by a value left over from the previous curve/polarity.
 static void handle_scene_changed(const event_t* event, void* context) {
   (void)event;
   (void)context;
-  smart_filter_reset(&s_lfo1_filter);
-  smart_filter_reset(&s_lfo2_filter);
+  s_lfo1_last_output = 0xFF;
+  s_lfo2_last_output = 0xFF;
 }
 
 esp_err_t midi_lfo_scene_handler_init(void) {
-  // Initialize smart filters with deadzone=2
-  smart_filter_init(&s_lfo1_filter, 2);
-  smart_filter_init(&s_lfo2_filter, 2);
-  
   // Subscribe to LFO events
   esp_err_t ret = event_bus_subscribe(EVENT_LFO1_VALUE, handle_lfo1_event, NULL);
   if (ret != ESP_OK) {
