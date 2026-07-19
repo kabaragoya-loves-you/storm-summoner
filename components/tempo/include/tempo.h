@@ -55,6 +55,11 @@ void tempo_init(void);
 void tempo_start(void);
 void tempo_stop(void);
 
+// Temporarily idle the tempo task without tearing it down (system update).
+// While suspended no clock ticks, beats, or MIDI clock bytes are produced.
+// Resuming re-anchors the tick grid so there is no catch-up burst.
+void tempo_set_suspended(bool suspended);
+
 // Set and get the global BPM (fixed-point tenths).
 void tempo_set_bpm_x10(uint16_t bpm_x10);
 uint16_t tempo_get_bpm_x10(void);

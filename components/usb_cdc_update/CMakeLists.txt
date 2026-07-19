@@ -23,6 +23,7 @@ idf_component_register(
     json
     transport
     tempo
+    lfo
     sync
     task_monitor
     cv

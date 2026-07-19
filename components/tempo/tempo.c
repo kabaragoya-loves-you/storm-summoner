@@ -122,6 +122,10 @@ static uint32_t s_midi_tick_last_update_time = 0;
 // Flag to reset timing when clock is unmuted (prevents catch-up burst)
 static bool s_clock_timing_reset_needed = false;
 
+// System-update suspension: tempo task idles without being deleted, so
+// transport events can't accidentally respawn it mid-update.
+static volatile bool s_suspended = false;
+
 // ============================================================================
 // Clock jitter instrumentation (Phase 1 sign-off tool)
 // ============================================================================
@@ -602,6 +606,12 @@ static void tempo_task(void *pvParameters) {
   bool was_running = false;  // Track state transitions
   
   while (1) {
+    if (s_suspended) {
+      was_running = false;
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+
     // Run when sending clock, transport is moving, or scene free-runs (use_transport off).
     bool free_run = !scene_get_use_transport(scene_get_current_index());
     bool should_run = s_clock_always_send || transport_is_advancing() || free_run;
@@ -900,6 +910,14 @@ void tempo_stop(void) {
     s_tempo_task_handle = NULL;
     ESP_LOGD(TAG, "Tempo task stopped");
   }
+}
+
+void tempo_set_suspended(bool suspended) {
+  if (s_suspended == suspended) return;
+  s_suspended = suspended;
+  // Re-anchor the tick grid on resume so we don't burst missed ticks.
+  if (!suspended) s_clock_timing_reset_needed = true;
+  ESP_LOGI(TAG, "Tempo %s", suspended ? "suspended" : "resumed");
 }
 
 void tempo_set_bpm_x10(uint16_t bpm_x10) {

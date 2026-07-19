@@ -10,6 +10,7 @@
 
 set(WEB_BINARIES_DIR "${SOURCE_DIR}/web/binaries")
 set(RELEASES_JSON "${SOURCE_DIR}/web/releases.json")
+set(PARTITIONS_CSV "${SOURCE_DIR}/partitions.csv")
 
 set(PROMOTED_SOMETHING FALSE)
 
@@ -57,6 +58,7 @@ endif()
 # byte-derived and stable.
 set(ASSETS_SOURCE "${BINARY_DIR}/assets.bin")
 set(ASSETS_FILENAME "")
+set(ASSETS_HASH_SHORT "")
 
 if(EXISTS "${ASSETS_SOURCE}")
   file(SHA256 "${ASSETS_SOURCE}" ASSETS_FULL_HASH)
@@ -78,6 +80,45 @@ if(EXISTS "${ASSETS_SOURCE}")
   endif()
 else()
   message(STATUS "Assets source not found: ${ASSETS_SOURCE}")
+endif()
+
+# --- Partition table promotion ---
+# Hash the source partitions.csv (small text input -> stable, human-traceable
+# identifier; the generated .bin can vary slightly across IDF versions).
+# Consumed by the System Update tab's PARTITION_TABLE CDC path.
+set(PT_SOURCE "${BINARY_DIR}/partition_table/partition-table.bin")
+set(PT_FILENAME "")
+set(PT_HASH "")
+
+if(EXISTS "${PARTITIONS_CSV}" AND EXISTS "${PT_SOURCE}")
+  file(SHA256 "${PARTITIONS_CSV}" PT_FULL_HASH)
+  string(SUBSTRING "${PT_FULL_HASH}" 0 8 PT_HASH_SHORT)
+
+  set(PT_FILENAME "partition_table_v2-${PT_HASH_SHORT}.bin")
+  set(PT_HASH "${PT_HASH_SHORT}")
+  set(PT_DEST "${WEB_BINARIES_DIR}/${PT_FILENAME}")
+
+  if(NOT EXISTS "${PT_DEST}"
+      OR "${PT_SOURCE}" IS_NEWER_THAN "${PT_DEST}")
+    if(EXISTS "${PT_DEST}")
+      message(STATUS "Re-promoting partition table (source is newer): ${PT_FILENAME}")
+    else()
+      message(STATUS "Promoting partition table: ${PT_FILENAME}")
+    endif()
+    file(COPY "${PT_SOURCE}" DESTINATION "${WEB_BINARIES_DIR}")
+    file(RENAME "${WEB_BINARIES_DIR}/partition-table.bin" "${PT_DEST}")
+    file(TOUCH "${PT_DEST}")
+    set(PROMOTED_SOMETHING TRUE)
+  else()
+    message(STATUS "Partition table already up to date: ${PT_FILENAME}")
+  endif()
+else()
+  if(NOT EXISTS "${PARTITIONS_CSV}")
+    message(STATUS "partitions.csv not found: ${PARTITIONS_CSV}")
+  endif()
+  if(NOT EXISTS "${PT_SOURCE}")
+    message(STATUS "Partition-table binary not found: ${PT_SOURCE}")
+  endif()
 endif()
 
 # --- Generate releases.json (only if something was promoted or manifest doesn't exist) ---
@@ -179,6 +220,53 @@ foreach(ASSET_ITEM ${ASSETS_ITEMS})
   endif()
 endforeach()
 
+# Collect partition table binaries (System Update bundles consume these).
+file(GLOB PT_BINARIES "${WEB_BINARIES_DIR}/partition_table_v2-*.bin")
+set(PT_ITEMS "")
+
+foreach(PT_BIN ${PT_BINARIES})
+  get_filename_component(PT_NAME "${PT_BIN}" NAME)
+  string(REGEX MATCH "partition_table_v2-([a-f0-9]+)\\.bin" _ "${PT_NAME}")
+  set(PT_CHECKSUM "${CMAKE_MATCH_1}")
+
+  if(PT_CHECKSUM)
+    file(TIMESTAMP "${PT_BIN}" PT_DATE "%Y-%m-%d")
+    file(TIMESTAMP "${PT_BIN}" PT_SORT "%Y%m%d%H%M%S")
+    list(APPEND PT_ITEMS "${PT_SORT}|${PT_CHECKSUM}|${PT_NAME}|${PT_DATE}")
+  endif()
+endforeach()
+
+list(SORT PT_ITEMS)
+list(REVERSE PT_ITEMS)
+
+set(PT_JSON_ARRAY "")
+foreach(PT_ITEM ${PT_ITEMS})
+  string(REPLACE "|" ";" PT_PARTS "${PT_ITEM}")
+  list(GET PT_PARTS 1 PT_CHECKSUM)
+  list(GET PT_PARTS 2 PT_NAME)
+  list(GET PT_PARTS 3 PT_DATE)
+
+  if(PT_JSON_ARRAY)
+    set(PT_JSON_ARRAY "${PT_JSON_ARRAY},\n    { \"checksum\": \"${PT_CHECKSUM}\", \"filename\": \"${PT_NAME}\", \"date\": \"${PT_DATE}\" }")
+  else()
+    set(PT_JSON_ARRAY "    { \"checksum\": \"${PT_CHECKSUM}\", \"filename\": \"${PT_NAME}\", \"date\": \"${PT_DATE}\" }")
+  endif()
+endforeach()
+
+# Synthesize the System Update bundle entry for the *current* build.
+# A `system_update` entry pins one specific {firmware, partition_table,
+# assets} triple by filename so the web app's System Update orchestrator
+# can refuse a mismatched combination before driving the multi-step push.
+# `shared_assets` reuses the existing assets-<hash>.bin (same 8 MB LittleFS
+# image; no duplicate binary under a shared_assets- prefix).
+# Only emitted when all three pieces are present from this build.
+set(SYSTEM_UPDATE_JSON_ARRAY "")
+if(NOT "${PT_HASH}" STREQUAL ""
+   AND NOT "${ASSETS_HASH_SHORT}" STREQUAL ""
+   AND EXISTS "${FW_DEST}")
+  set(SYSTEM_UPDATE_JSON_ARRAY "    {\n      \"firmware_version\": \"${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}\",\n      \"firmware\": \"${FW_FILENAME}\",\n      \"partition_table\": \"partition_table_v2-${PT_HASH}.bin\",\n      \"shared_assets\": \"${ASSETS_FILENAME}\",\n      \"date\": \"${CURRENT_DATE}\"\n    }")
+endif()
+
 set(RELEASES_CONTENT "{
   \"generated\": \"${CURRENT_TIMESTAMP}\",
   \"firmware\": [
@@ -186,6 +274,12 @@ ${FW_JSON_ARRAY}
   ],
   \"assets\": [
 ${ASSETS_JSON_ARRAY}
+  ],
+  \"partition_tables\": [
+${PT_JSON_ARRAY}
+  ],
+  \"system_update\": [
+${SYSTEM_UPDATE_JSON_ARRAY}
   ]
 }
 ")

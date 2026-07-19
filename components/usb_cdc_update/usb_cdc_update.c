@@ -14,6 +14,7 @@
 #include "scene_inspect.h"
 #include "transport.h"
 #include "tempo.h"
+#include "lfo.h"
 #include "sync.h"
 #include "config.h"
 #include "action.h"
@@ -73,6 +74,8 @@ typedef enum {
   CDC_STATE_RECEIVING_ASSETS,
   CDC_STATE_WAITING_COMMIT,
   CDC_STATE_COMMITTING,
+  CDC_STATE_RECEIVING_PT,      // Phase 0: receiving partition table image
+  CDC_STATE_RECEIVING_RAW,     // Phase 0: receiving a raw assets-partition chunk
   CDC_STATE_CONSOLE,  // Interactive console mode
   CDC_STATE_ASSETS,   // Assets management mode
   CDC_STATE_ASSETS_RECEIVING,  // Receiving file data in assets mode
@@ -132,6 +135,18 @@ static volatile bool s_extract_in_progress = false;
 static bool s_midi_relay_active = false;
 static bool s_midi_relay_show_clock = false;
 
+// Phase 0: partition-table OTA upload state. The actual staging buffer lives
+// inside firmware_update.c; we only track the byte-level receive progress here.
+static size_t s_pt_expected = 0;
+static size_t s_pt_received = 0;
+
+// Phase 0: raw assets-partition chunk receive state. Each RAW_ASSETS_WRITE
+// command stages one chunk in PSRAM, then flushes to flash on completion.
+static uint32_t s_raw_offset = 0;
+static size_t s_raw_expected = 0;
+static size_t s_raw_received = 0;
+static uint8_t *s_raw_buffer = NULL;
+
 // Forward declarations for MIDI relay
 static void midi_relay_event_handler(const event_t* event, void* context);
 static void midi_relay_stop(void);
@@ -139,6 +154,21 @@ static bool midi_relay_parse_raw(const uint8_t *data, size_t len,
     midi_event_type_t *type, uint8_t *channel,
     uint8_t *data1, uint8_t *data2, uint16_t *out_len);
 static void cdc_mirror_outgoing_midi(const uint8_t *data, size_t len);
+
+// Forward declarations for Phase 0 binary handlers
+static void handle_pt_binary_data(const uint8_t *data, size_t len);
+static void handle_raw_binary_data(const uint8_t *data, size_t len);
+
+// Phase 0: system-update quiesce. While a RAW_ASSETS / PARTITION_TABLE
+// session is active we suspend the tempo and LFO tasks (flash writes were
+// fighting the 24 PPQN clock grid for CPU -- "Clock tick late" spam) and
+// suppress EVT: notify lines entirely. Under TX-FIFO pressure a notify can
+// be truncated mid-line (observed as "VT:clock:..." on the host), which
+// corrupts the READY/RAW_OK protocol stream.
+static bool s_sysupdate_quiesced = false;
+static void sysupdate_quiesce(void);
+static void sysupdate_resume(void);
+static void sysupdate_kick_screensaver(void);
 
 // Scene CDC notifications (idle / text-safe modes)
 static void cdc_scene_changed_handler(const event_t *event, void *context);
@@ -583,6 +613,41 @@ void usb_cdc_task(void) {
       s_pending_assets_checksum[0] = '\0';
       s_state = CDC_STATE_IDLE;
     }
+    // Phase 0: clean up partition-table upload on disconnect.
+    if (s_state == CDC_STATE_RECEIVING_PT) {
+      ESP_LOGW(TAG, "CDC disconnected during PT upload, aborting");
+      partition_table_update_abort();
+      s_pt_expected = 0;
+      s_pt_received = 0;
+      s_state = CDC_STATE_IDLE;
+    }
+    // Phase 0: clean up raw assets chunk on disconnect.
+    if (s_state == CDC_STATE_RECEIVING_RAW) {
+      ESP_LOGW(TAG, "CDC disconnected during raw assets chunk, discarding");
+      if (s_raw_buffer) {
+        heap_caps_free(s_raw_buffer);
+        s_raw_buffer = NULL;
+      }
+      s_raw_expected = 0;
+      s_raw_received = 0;
+      s_raw_offset = 0;
+      raw_assets_write_finalize(NULL);
+      s_state = CDC_STATE_IDLE;
+
+      // Publish update cancelled event for UI
+      event_t cancel_event = {
+        .type = EVENT_UPDATE_COMPLETE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.update = {
+          .update_type = s_is_firmware ? UPDATE_TYPE_FIRMWARE : UPDATE_TYPE_ASSETS,
+          .success = 0
+        }
+      };
+      event_bus_post(&cancel_event);
+    }
+    // Host went away mid-session: whatever we suspended must come back.
+    sysupdate_resume();
     return;
   }
   
@@ -654,6 +719,10 @@ void usb_cdc_task(void) {
       } else if (s_state == CDC_STATE_RECEIVING_FIRMWARE || s_state == CDC_STATE_RECEIVING_ASSETS) {
         // In receiving state, handle binary data
         handle_binary_data(buf, count);
+      } else if (s_state == CDC_STATE_RECEIVING_PT) {
+        handle_pt_binary_data(buf, count);
+      } else if (s_state == CDC_STATE_RECEIVING_RAW) {
+        handle_raw_binary_data(buf, count);
       } else if (s_state == CDC_STATE_SCENE_RECEIVING) {
         handle_scene_put_binary(buf, count);
       } else if (s_state == CDC_STATE_ASSETS) {
@@ -941,8 +1010,41 @@ send_binary_done:
   xSemaphoreGive(s_cdc_tx_mutex);
 }
 
+static void sysupdate_quiesce(void) {
+  if (s_sysupdate_quiesced) return;
+  s_sysupdate_quiesced = true;
+  s_notify_tail = s_notify_head;  // Drop stale queued notifies
+  tempo_set_suspended(true);
+  lfo_set_suspended(true);
+  ESP_LOGI(TAG, "System update: tempo/LFO suspended, CDC notifies muted");
+}
+
+static void sysupdate_resume(void) {
+  if (!s_sysupdate_quiesced) return;
+  s_sysupdate_quiesced = false;
+  s_notify_tail = s_notify_head;
+  tempo_set_suspended(false);
+  lfo_set_suspended(false);
+  ESP_LOGI(TAG, "System update: tempo/LFO resumed");
+}
+
+// Keep the screensaver inactivity timer from firing during a multi-minute
+// upload (a starfield render mid-session is exactly the CPU contention we
+// are trying to avoid). Calling screensaver_notify_activity() directly from
+// the CDC task would touch LVGL timers; posting EVENT_UI_ACTION defers it
+// to the event-bus task, matching the elite/plasma/stars convention.
+static void sysupdate_kick_screensaver(void) {
+  event_t event = {
+    .type = EVENT_UI_ACTION,
+    .priority = EVENT_PRIORITY_NORMAL,
+    .timestamp = event_bus_get_current_timestamp()
+  };
+  event_bus_post(&event);
+}
+
 static bool cdc_may_push_notify(void) {
   if (!tud_cdc_n_connected(0)) return false;
+  if (s_sysupdate_quiesced) return false;
   if (s_cdc_response_depth > 0) return false;
   if (s_cdc_tx_poisoned) return false;
 
@@ -1799,6 +1901,8 @@ static void process_command(const char *cmd) {
     s_last_progress_sent = 0;
     s_is_firmware = true;
     s_state = CDC_STATE_RECEIVING_FIRMWARE;
+    sysupdate_quiesce();
+    sysupdate_kick_screensaver();
     send_response("READY");
 
     // Publish update started event for UI
@@ -1853,6 +1957,8 @@ static void process_command(const char *cmd) {
     s_last_progress_sent = 0;
     s_is_firmware = false;
     s_state = CDC_STATE_RECEIVING_ASSETS;
+    sysupdate_quiesce();
+    sysupdate_kick_screensaver();
     send_response("READY");
 
     // Publish update started event for UI
@@ -1955,6 +2061,111 @@ static void process_command(const char *cmd) {
     }
     s_update_size = 0;
     s_received_bytes = 0;
+    sysupdate_resume();
+
+  } else if (strncmp(cmd, "PARTITION_TABLE ", 16) == 0) {
+    // Phase 0: stage a candidate partition table in PSRAM.
+    // Layout: PARTITION_TABLE <size> ; size must be 1..0x1000 bytes.
+    size_t size = (size_t)strtoul(cmd + 16, NULL, 0);
+    if (size == 0 || size > 0x1000) {
+      send_response("ERROR: Invalid partition table size (1..4096 bytes)");
+      return;
+    }
+    esp_err_t err = partition_table_update_start(size);
+    if (err != ESP_OK) {
+      char resp[80];
+      snprintf(resp, sizeof(resp), "ERROR: PT start failed: %s", esp_err_to_name(err));
+      send_response(resp);
+      s_state = CDC_STATE_ERROR;
+      return;
+    }
+    s_pt_expected = size;
+    s_pt_received = 0;
+    s_state = CDC_STATE_RECEIVING_PT;
+    sysupdate_quiesce();
+    sysupdate_kick_screensaver();
+    ESP_LOGI(TAG, "PARTITION_TABLE: receiving %u bytes", (unsigned)size);
+    send_response("READY");
+
+  } else if (strcmp(cmd, "COMMIT_PARTITION_TABLE") == 0) {
+    // Phase 0: commit a previously verified PT to flash. CRITICAL operation;
+    // the host should have warned the user not to power-cycle.
+    partition_table_update_state_t st = partition_table_update_get_state();
+    if (st != PT_UPDATE_VERIFIED) {
+      char resp[80];
+      snprintf(resp, sizeof(resp),
+        "PT_COMMIT_FAILED: not verified (state=%d)", (int)st);
+      send_response(resp);
+      return;
+    }
+    ESP_LOGW(TAG, "Committing partition table - DO NOT POWER OFF");
+    esp_err_t err = partition_table_update_commit();
+    if (err == ESP_OK) {
+      send_response("PT_COMMITTED");
+    } else {
+      char resp[96];
+      snprintf(resp, sizeof(resp),
+        "PT_COMMIT_FAILED: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
+    sysupdate_resume();
+
+  } else if (strcmp(cmd, "ABORT_PARTITION_TABLE") == 0) {
+    // Phase 0: drop any staged PT without committing.
+    partition_table_update_abort();
+    s_pt_expected = 0;
+    s_pt_received = 0;
+    if (s_state == CDC_STATE_RECEIVING_PT) s_state = CDC_STATE_IDLE;
+    sysupdate_resume();
+    send_response("PT_ABORTED");
+
+  } else if (strncmp(cmd, "RAW_ASSETS_WRITE ", 17) == 0) {
+    // Phase 0: write a chunk to the existing assets partition at <offset>.
+    // Layout: RAW_ASSETS_WRITE <offset> <size>
+    uint32_t offset = 0;
+    unsigned long size_ul = 0;
+    int parsed = sscanf(cmd + 17, "%lu %lu", (unsigned long *)&offset, &size_ul);
+    size_t size = (size_t)size_ul;
+    if (parsed != 2 || size == 0 || size > 1 * 1024 * 1024) {
+      send_response("ERROR: Invalid RAW_ASSETS_WRITE args (need <offset> <size>, size <= 1MB)");
+      return;
+    }
+    if (s_raw_buffer) {
+      heap_caps_free(s_raw_buffer);
+      s_raw_buffer = NULL;
+    }
+    s_raw_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    if (!s_raw_buffer) {
+      send_response("ERROR: Memory allocation failed");
+      s_state = CDC_STATE_ERROR;
+      return;
+    }
+    s_raw_offset = offset;
+    s_raw_expected = size;
+    s_raw_received = 0;
+    s_state = CDC_STATE_RECEIVING_RAW;
+    sysupdate_quiesce();
+    sysupdate_kick_screensaver();
+    ESP_LOGI(TAG, "RAW_ASSETS_WRITE: offset=0x%lx size=%u",
+      (unsigned long)offset, (unsigned)size);
+    send_response("READY");
+
+  } else if (strcmp(cmd, "RAW_ASSETS_FINALIZE") == 0 ||
+             strncmp(cmd, "RAW_ASSETS_FINALIZE ", 20) == 0) {
+    // Optional 8-hex assets checksum may follow the command name, e.g.
+    // `RAW_ASSETS_FINALIZE f56767b1`. When present we persist it via
+    // version_set_assets_checksum() inside raw_assets_write_finalize() so
+    // the scene-manager factory-preset merge can detect the new blob on
+    // next boot. The no-arg form is kept for older tooling.
+    const char *csum = NULL;
+    if (cmd[19] == ' ') {
+      const char *p = cmd + 20;
+      while (*p == ' ') p++;
+      if (*p != '\0') csum = p;
+    }
+    raw_assets_write_finalize(csum);
+    sysupdate_resume();
+    send_response("RAW_FINALIZED");
 
   } else if (strcmp(cmd, "RESET") == 0) {
     CDC_LOGI("Reset command received. Rebooting...");
@@ -1977,6 +2188,7 @@ static void process_command(const char *cmd) {
     s_state = CDC_STATE_IDLE;
     s_update_size = 0;
     s_received_bytes = 0;
+    sysupdate_resume();
     send_response("CANCELLED");
 
   } else if (strcmp(cmd, "CONSOLE") == 0) {
@@ -2280,6 +2492,81 @@ static void handle_binary_data(const uint8_t *data, size_t len) {
       }
     };
     event_bus_post(&progress_event);
+  }
+}
+
+// Phase 0: handle bytes arriving for a PARTITION_TABLE upload. On full receipt
+// we automatically run partition_table_update_verify() and report the result;
+// the host then issues COMMIT_PARTITION_TABLE (or ABORT_PARTITION_TABLE).
+static void handle_pt_binary_data(const uint8_t *data, size_t len) {
+  size_t remaining = (s_pt_expected > s_pt_received) ? (s_pt_expected - s_pt_received) : 0;
+  size_t to_copy = (len < remaining) ? len : remaining;
+  esp_err_t err = partition_table_update_write(data, to_copy);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "PT receive: write failed: %s", esp_err_to_name(err));
+    partition_table_update_abort();
+    s_pt_expected = 0;
+    s_pt_received = 0;
+    char resp[80];
+    snprintf(resp, sizeof(resp), "PT_INVALID: write failed: %s", esp_err_to_name(err));
+    send_response(resp);
+    s_state = CDC_STATE_ERROR;
+    return;
+  }
+  s_pt_received += to_copy;
+
+  if (s_pt_received >= s_pt_expected) {
+    char err_msg[96] = {0};
+    err = partition_table_update_verify(err_msg, sizeof(err_msg));
+    s_state = CDC_STATE_IDLE;  // Back to text mode either way.
+    if (err == ESP_OK) {
+      send_response("PT_VERIFIED");
+    } else {
+      char resp[160];
+      snprintf(resp, sizeof(resp), "PT_INVALID: %s",
+        err_msg[0] ? err_msg : esp_err_to_name(err));
+      send_response(resp);
+      // Leave the staged buffer in place so the host can retry verify or abort.
+    }
+    s_pt_expected = 0;
+    s_pt_received = 0;
+  }
+}
+
+// Phase 0: handle bytes arriving for a RAW_ASSETS_WRITE chunk. On full receipt
+// we flush the chunk to flash via raw_assets_write_chunk().
+static void handle_raw_binary_data(const uint8_t *data, size_t len) {
+  if (!s_raw_buffer) {
+    ESP_LOGE(TAG, "RAW receive: no buffer");
+    s_state = CDC_STATE_ERROR;
+    send_response("RAW_ERROR: no buffer");
+    return;
+  }
+  size_t remaining = (s_raw_expected > s_raw_received) ? (s_raw_expected - s_raw_received) : 0;
+  size_t to_copy = (len < remaining) ? len : remaining;
+  memcpy(s_raw_buffer + s_raw_received, data, to_copy);
+  s_raw_received += to_copy;
+
+  if (s_raw_received >= s_raw_expected) {
+    esp_err_t err = raw_assets_write_chunk(s_raw_offset, s_raw_buffer, s_raw_expected);
+    heap_caps_free(s_raw_buffer);
+    s_raw_buffer = NULL;
+    uint32_t completed_offset = s_raw_offset;
+    size_t completed_size = s_raw_expected;
+    s_raw_offset = 0;
+    s_raw_expected = 0;
+    s_raw_received = 0;
+    s_state = CDC_STATE_IDLE;
+    if (err == ESP_OK) {
+      char resp[80];
+      snprintf(resp, sizeof(resp), "RAW_OK %lu %u",
+        (unsigned long)completed_offset, (unsigned)completed_size);
+      send_response(resp);
+    } else {
+      char resp[96];
+      snprintf(resp, sizeof(resp), "RAW_ERROR: %s", esp_err_to_name(err));
+      send_response(resp);
+    }
   }
 }
 

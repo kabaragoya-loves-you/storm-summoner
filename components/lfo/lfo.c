@@ -80,6 +80,7 @@ typedef struct {
 static lfo_state_t s_lfo[LFO_NUM_SLOTS];
 static TaskHandle_t s_lfo_task_handle = NULL;
 static volatile bool s_running = false;
+static volatile bool s_suspended = false;
 
 // Beat tracking for tempo sync (all times from esp_timer ms)
 static volatile uint32_t s_beat_count = 0;       // Absolute beats since transport start
@@ -426,6 +427,12 @@ void lfo_stop(void) {
   ESP_LOGI(TAG, "LFO task stopped");
 }
 
+void lfo_set_suspended(bool suspended) {
+  if (s_suspended == suspended) return;
+  s_suspended = suspended;
+  ESP_LOGI(TAG, "LFO %s", suspended ? "suspended" : "resumed");
+}
+
 static void handle_beat_event(const event_t* event, void* context) {
   if (event->type != EVENT_BEAT) return;
 
@@ -737,6 +744,11 @@ static uint8_t calculate_waveform(lfo_state_t* lfo) {
 
 static void lfo_task(void* arg) {
   while (s_running) {
+    if (s_suspended) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
 
     // Get current BPM for dynamic send interval calculation

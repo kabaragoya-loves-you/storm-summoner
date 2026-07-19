@@ -12,7 +12,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Firmware Version Configuration
 # =============================================================================
 set(FW_VERSION_MAJOR 0)
-set(FW_VERSION_MINOR 8)
+set(FW_VERSION_MINOR 9)
 
 # Get short git hash (captured at configure time - rebuild after commits to update)
 find_package(Git QUIET)
@@ -89,16 +89,26 @@ idf_build_set_property(COMPILE_DEFINITIONS "-DFW_GIT_HASH=\"${FW_GIT_HASH}\"" AP
 # dependency as a plain mtime check, so version.c kept linking the PREVIOUS
 # build number (build_number.txt ended up one ahead of the binary).
 
-# Release promotion: runs after build to copy binaries to web/binaries if needed
-add_custom_command(TARGET ${elf} POST_BUILD
+# Release promotion: must run after gen_project_binary writes storm-summoner.bin.
+# Hooking ${elf} POST_BUILD races ahead of elf2image (clean/version-bump builds
+# report "Firmware source not found"; a rebuild can promote a stale .bin under
+# the new version name). `app` is an add_custom_target, so TARGET POST_BUILD is
+# not valid on it — depend on IDF's .bin_timestamp instead.
+set(PROMOTE_STAMP "${CMAKE_BINARY_DIR}/.promote_release_stamp")
+add_custom_command(OUTPUT "${PROMOTE_STAMP}"
   COMMAND ${CMAKE_COMMAND}
     -DFW_VERSION_MAJOR=${FW_VERSION_MAJOR}
     -DFW_VERSION_MINOR=${FW_VERSION_MINOR}
     -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
     -DBINARY_DIR=${CMAKE_BINARY_DIR}
     -P ${CMAKE_SOURCE_DIR}/cmake/promote_release.cmake
+  COMMAND ${CMAKE_COMMAND} -E touch "${PROMOTE_STAMP}"
+  DEPENDS "${CMAKE_BINARY_DIR}/.bin_timestamp"
   COMMENT "Checking for release promotion"
+  VERBATIM
 )
+add_custom_target(promote_release ALL DEPENDS "${PROMOTE_STAMP}")
+add_dependencies(promote_release gen_project_binary)
 
 # Force enable TinyUSB classes globally to ensure the library compiles with them
 # even if disabled in Kconfig to avoid wrapper interference

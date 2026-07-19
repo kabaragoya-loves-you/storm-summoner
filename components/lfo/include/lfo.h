@@ -117,6 +117,9 @@ esp_err_t lfo_init(void);
 void lfo_start(void);
 void lfo_stop(void);
 
+// Temporarily idle the LFO task without tearing it down (system update).
+void lfo_set_suspended(bool suspended);
+
 // Enable/disable individual LFOs
 void lfo_enable(uint8_t slot, bool enabled);
 bool lfo_is_enabled(uint8_t slot);
