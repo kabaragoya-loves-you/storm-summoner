@@ -18,7 +18,7 @@ static bool s_preset_wrap = false;   // Default: clamp at boundaries
 static bool s_persist_scene = false; // Default: always boot to scene 1
 static uint8_t s_last_scene = 0;     // Default: scene index 0
 static device_mode_t s_device_mode = DEVICE_MODE_SINGLE; // Default: single device for all scenes
-static bool s_flag_enabled = false;  // Default: flag system hidden
+static bool s_flag_enabled = true;   // Default: flag system enabled
 static bool s_cc_mirror = false;     // Default: ignore incoming CC for mode tracking
 static bool s_initialized = false;
 

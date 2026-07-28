@@ -1,5 +1,8 @@
 /* Storm Summoner - System Update Controller (Phase 8 of partition split)
 
+See docs/SYSTEM_UPDATE.md for the operator runbook, protocol reference,
+resume semantics, and why this tab is hidden by default rather than deleted.
+
 Drives the coordinated v(N+1) -> v(N+2) push:
   Step 0: pre-flight
   Step 1: write new shared assets via RAW_ASSETS_WRITE chunks

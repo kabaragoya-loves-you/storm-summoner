@@ -176,7 +176,7 @@ static void nav_to_persist_scene(void* user_data) {
 // Flag System Roller (Erect Flagpole)
 // ============================================================================
 
-static const char* FLAG_ENABLED_OPTIONS = "I just can't\nFuck it, why not";
+static const char* FLAG_ENABLED_OPTIONS = "Disabled\nEnabled";
 
 static void flag_enabled_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -289,7 +289,7 @@ lv_obj_t* menu_page_config_create(void) {
   
   bool flag_enabled = config_get_flag_enabled();
   snprintf(s_flag_enabled_label, sizeof(s_flag_enabled_label), "Erect Flagpole\n%s",
-    flag_enabled ? "Fuck it, why not" : "I just can't");
+    flag_enabled ? "Enabled" : "Disabled");
   s_config_items[idx++] = (menu_item_t){
     s_flag_enabled_label, nav_to_flag_enabled, NULL, true, MENU_ITEM_KIND_ROLLER
   };

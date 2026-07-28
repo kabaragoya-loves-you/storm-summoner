@@ -165,6 +165,7 @@ static void handle_raw_binary_data(const uint8_t *data, size_t len);
 // suppress EVT: notify lines entirely. Under TX-FIFO pressure a notify can
 // be truncated mid-line (observed as "VT:clock:..." on the host), which
 // corrupts the READY/RAW_OK protocol stream.
+// See docs/SYSTEM_UPDATE.md for the host orchestrator and operator notes.
 static bool s_sysupdate_quiesced = false;
 static void sysupdate_quiesce(void);
 static void sysupdate_resume(void);

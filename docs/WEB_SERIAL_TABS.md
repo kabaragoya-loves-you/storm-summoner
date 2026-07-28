@@ -245,6 +245,7 @@ Always enter the mode **immediately before** sending its subcommands in the **sa
 | MIDI | `midi.js` | MIDI_RELAY | `MIDI` | `deactivate` | WebMIDI out + CDC in relay; `_relayGeneration` |
 | Display | `display.js` | DISPLAY | `DISPLAY` | `deactivate` | Binary LVGL stream |
 | Updater | `updater.js` | UPDATE / binary | `UPDATE` | — | Own reader for progress; locks tabs |
+| System Update | `system_update.js` | idle (pump) | `null` | — | Hidden by default (`?systemupdate=1`); see [SYSTEM_UPDATE.md](SYSTEM_UPDATE.md) |
 | Settings | `settings.js` | SETTINGS | local flag only | `leaveSettingsMode` on tab change | NVS `DUMP` / `SET` |
 | Config (NVS UI) | `config.js` | CONFIG | local flag; pump for session | `leaveConfigMode` on tab change | Schema-driven `VALUES` |
 
@@ -369,6 +370,7 @@ CONSOLE/MIDI teardown cancels the readable stream. Attach `.catch(() => {})` to 
 | `web/js/pedals.js` / `assets.js` | ASSETS mode, manifests, exclusive session |
 | `web/js/console.js` / `midi.js` / `display.js` | Streaming modes + `pipeTo` |
 | `web/js/settings.js` / `config.js` | SETTINGS / CONFIG modes |
+| `web/js/system_update.js` | Hidden System Update tab; see [SYSTEM_UPDATE.md](SYSTEM_UPDATE.md) |
 | `web/js/pedal_catalog.js` | Shared ASSETS helpers (`ensureAssetsReady`, manifests) |
 
 ---

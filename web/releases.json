@@ -1,5 +1,5 @@
 {
-  "generated": "2026-07-19T13:16:36",
+  "generated": "2026-07-25T15:43:28",
   "firmware": [
     { "version": "0.9", "filename": "storm-summoner-0.9.bin", "date": "2026-07-19" },
     { "version": "0.8", "filename": "storm-summoner-0.8.bin", "date": "2026-06-29" },
@@ -12,6 +12,7 @@
     { "version": "0.1", "filename": "storm-summoner-0.1.bin", "date": "2026-03-25" }
   ],
   "assets": [
+    { "checksum": "3cfe6b73", "filename": "assets-3cfe6b73.bin", "date": "2026-07-25" },
     { "checksum": "91e88f8f", "filename": "assets-91e88f8f.bin", "date": "2026-07-12" },
     { "checksum": "18b2ad46", "filename": "assets-18b2ad46.bin", "date": "2026-06-29" },
     { "checksum": "0657f185", "filename": "assets-0657f185.bin", "date": "2026-06-19" },
@@ -29,8 +30,8 @@
       "firmware_version": "0.9",
       "firmware": "storm-summoner-0.9.bin",
       "partition_table": "partition_table_v2-dde93853.bin",
-      "shared_assets": "assets-91e88f8f.bin",
-      "date": "2026-07-19"
+      "shared_assets": "assets-3cfe6b73.bin",
+      "date": "2026-07-25"
     }
   ]
 }

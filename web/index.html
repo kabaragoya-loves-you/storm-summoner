@@ -51,7 +51,7 @@
         <wa-tab slot="nav" panel="midi">MIDI</wa-tab>
         <wa-tab slot="nav" panel="display">Display</wa-tab>
         <wa-tab slot="nav" panel="updater">Updater</wa-tab>
-        <wa-tab slot="nav" panel="system-update">System Update</wa-tab>
+        <wa-tab slot="nav" panel="system-update" hidden>System Update</wa-tab>
         <wa-tab slot="nav" panel="config">Settings</wa-tab>
         <wa-tab slot="nav" panel="settings">NVS</wa-tab>
 
@@ -979,6 +979,22 @@
         </div>
       `;
     }
+
+    // System Update is hidden by default. Reveal with ?systemupdate=1 (persists
+    // across reloads so a mid-flow reboot does not lose the tab). Clear with
+    // ?systemupdate=0. See docs/SYSTEM_UPDATE.md.
+    ;(function () {
+      const KEY = 'storm-summoner.system_update.visible'
+      const params = new URLSearchParams(location.search)
+      if (params.has('systemupdate')) {
+        if (params.get('systemupdate') === '1') localStorage.setItem(KEY, '1')
+        else localStorage.removeItem(KEY)
+      }
+      if (localStorage.getItem(KEY) === '1') {
+        const tab = document.querySelector('wa-tab[panel="system-update"]')
+        if (tab) tab.removeAttribute('hidden')
+      }
+    })()
   </script>
 </body>
 </html>
