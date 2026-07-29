@@ -23,6 +23,10 @@ bool cc_state_is_known(uint8_t cc);
 
 void cc_state_clear_dirty_all(void);
 
+// Clear the dirty bit for a single CC. Used when Restore finishes ramping
+// a CC back to its scene default.
+void cc_state_clear_dirty(uint8_t cc);
+
 // Reset all slots to 0, clear known + dirty.
 void cc_state_reset_all(void);
 

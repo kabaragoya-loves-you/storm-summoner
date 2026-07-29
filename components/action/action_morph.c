@@ -5,6 +5,7 @@
 #include "transport.h"
 #include "tempo.h"
 #include "assets_manager.h"
+#include "cc_state.h"
 #include "event_bus.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -17,16 +18,13 @@ static const char* TAG = "action_morph";
 
 #define MAX_ACTIVE_MORPHS 4
 
-// Max discrete values to track per CC (keep small for memory)
-#define MORPH_MAX_DISCRETE 8
-
 typedef struct {
   bool active;
   action_t* action;           // For state sync (cycle index)
   uint8_t num_ccs;
-  uint8_t cc_numbers[4];
-  uint8_t start_values[4];    // Values at morph start
-  uint8_t target_values[4];   // Values at morph end
+  uint8_t cc_numbers[MORPH_MAX_CCS];
+  uint8_t start_values[MORPH_MAX_CCS];    // Values at morph start
+  uint8_t target_values[MORPH_MAX_CCS];   // Values at morph end
   uint8_t current_step;       // 0 to total_steps-1
   uint8_t total_steps;
   uint32_t step_interval_ms;  // Time between steps
@@ -37,11 +35,11 @@ typedef struct {
   uint8_t sync_target_beat;   // Target beat (1-16, 0=any/bar start)
   bool sync_waiting_final;    // True when waiting for beat event to send final value
 
-  // Per-CC control metadata (looked up at morph start)
-  uint8_t last_sent_values[4];
-  uint8_t discrete_counts[4];
-  uint8_t discrete_values[4][MORPH_MAX_DISCRETE];
-  bool delay_final[4];
+  // Per-CC runtime state. Discrete tables are looked up on demand via
+  // assets_get_control_by_cc (O(1)) — no per-slot cache.
+  uint8_t last_sent_values[MORPH_MAX_CCS];
+  bool delay_final[MORPH_MAX_CCS];
+  bool clear_dirty_on_complete;
 } active_morph_t;
 
 static active_morph_t s_active_morphs[MAX_ACTIVE_MORPHS];
@@ -80,16 +78,18 @@ static uint8_t calculate_auto_steps(uint8_t value_delta, uint32_t duration_ms) {
   return steps;
 }
 
-// Find the index of a value in a discrete values array
-// Returns the index of the closest matching value, or 0 if not found
-static int find_discrete_index(const uint8_t* values, uint8_t count, uint8_t target) {
+// Find the index of a value in a discrete_value_t array.
+// Returns the index of the closest matching value, or 0 if not found.
+static int find_discrete_index(const discrete_value_t* values, uint8_t count,
+    uint8_t target) {
   if (!values || count == 0) return 0;
 
   int best_idx = 0;
   int best_diff = 255;
 
   for (int i = 0; i < count; i++) {
-    int diff = (target > values[i]) ? (target - values[i]) : (values[i] - target);
+    int v = (int)(values[i].value & 0x7F);
+    int diff = (target > v) ? (target - v) : (v - target);
     if (diff < best_diff) {
       best_diff = diff;
       best_idx = i;
@@ -246,7 +246,7 @@ void action_morph_update_timer(void) {
 static void morph_send_final_values(active_morph_t* m) {
   uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
 
-  for (int i = 0; i < m->num_ccs && i < 4; i++) {
+  for (int i = 0; i < m->num_ccs; i++) {
     uint8_t target = m->target_values[i];
 
     if (target != m->last_sent_values[i]) {
@@ -254,10 +254,13 @@ static void morph_send_final_values(active_morph_t* m) {
       action_set_cc_value(m->cc_numbers[i], target);
       m->last_sent_values[i] = target;
     }
+
+    if (m->clear_dirty_on_complete)
+      cc_state_clear_dirty(m->cc_numbers[i]);
   }
 
-  ESP_LOGD(TAG, "Morph completed: CC%d -> %d",
-    m->cc_numbers[0], m->target_values[0]);
+  ESP_LOGD(TAG, "Morph completed: CC%d -> %d (%u CCs)",
+    m->cc_numbers[0], m->target_values[0], (unsigned)m->num_ccs);
 }
 
 static void morph_advance_step(active_morph_t* m) {
@@ -277,28 +280,34 @@ static void morph_advance_step(active_morph_t* m) {
   }
 
   uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
 
-  for (int i = 0; i < m->num_ccs && i < 4; i++) {
+  for (int i = 0; i < m->num_ccs; i++) {
     uint8_t new_value;
 
-    if (m->discrete_counts[i] > 0) {
+    const midi_control_t* ctrl = device ?
+      assets_get_control_by_cc(device, m->cc_numbers[i]) : NULL;
+    bool is_discrete = ctrl && ctrl->discrete_count > 0 && ctrl->discrete_values;
+
+    if (is_discrete) {
       if (m->delay_final[i]) {
         new_value = m->start_values[i];
       } else {
         float progress = (float)m->current_step / m->total_steps;
 
-        int start_idx = find_discrete_index(m->discrete_values[i],
-          m->discrete_counts[i], m->start_values[i]);
-        int target_idx = find_discrete_index(m->discrete_values[i],
-          m->discrete_counts[i], m->target_values[i]);
+        int start_idx = find_discrete_index(ctrl->discrete_values,
+          ctrl->discrete_count, m->start_values[i]);
+        int target_idx = find_discrete_index(ctrl->discrete_values,
+          ctrl->discrete_count, m->target_values[i]);
 
         int idx_range = target_idx - start_idx;
         int current_idx = start_idx + (int)(idx_range * progress);
 
         if (current_idx < 0) current_idx = 0;
-        if (current_idx >= m->discrete_counts[i]) current_idx = m->discrete_counts[i] - 1;
+        if (current_idx >= ctrl->discrete_count) current_idx = ctrl->discrete_count - 1;
 
-        new_value = m->discrete_values[i][current_idx];
+        new_value = (uint8_t)(ctrl->discrete_values[current_idx].value & 0x7F);
       }
     } else {
       int16_t start = m->start_values[i];
@@ -405,8 +414,8 @@ static active_morph_t* find_or_create_morph_slot(uint8_t num_ccs,
     const uint8_t* cc_numbers) {
   for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
     if (s_active_morphs[i].active) {
-      for (int j = 0; j < s_active_morphs[i].num_ccs && j < 4; j++) {
-        for (int k = 0; k < num_ccs && k < 4; k++) {
+      for (int j = 0; j < s_active_morphs[i].num_ccs; j++) {
+        for (int k = 0; k < num_ccs; k++) {
           if (s_active_morphs[i].cc_numbers[j] == cc_numbers[k]) {
             ESP_LOGD(TAG, "Canceling existing morph for CC%d", cc_numbers[k]);
             return &s_active_morphs[i];
@@ -427,9 +436,10 @@ static active_morph_t* find_or_create_morph_slot(uint8_t num_ccs,
 }
 
 bool action_morph_start(const action_t* action, uint8_t num_ccs,
-    const uint8_t* cc_numbers, const uint8_t* target_values) {
+    const uint8_t* cc_numbers, const uint8_t* target_values,
+    bool clear_dirty_on_complete) {
   if (!action->morph_enabled) return false;
-  if (num_ccs == 0 || num_ccs > 4) return false;
+  if (num_ccs == 0 || num_ccs > MORPH_MAX_CCS) return false;
 
   active_morph_t* m = find_or_create_morph_slot(num_ccs, cc_numbers);
   if (!m) return false;
@@ -462,7 +472,7 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
   }
 
   uint8_t max_delta = 0;
-  for (int i = 0; i < num_ccs && i < 4; i++) {
+  for (int i = 0; i < num_ccs; i++) {
     uint8_t start = action_get_cc_value(cc_numbers[i]);
     uint8_t target = target_values[i];
     uint8_t delta = (start > target) ? (start - target) : (target - start);
@@ -470,8 +480,16 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
   }
 
   uint8_t steps = get_morph_steps(action, max_delta, duration_ms);
-
   if (steps == 0) steps = 1;
+
+  // Clamp so num_ccs * (1000 / step_interval) stays under ~800 msg/s. AUTO
+  // already self-limits; FINE/MANUAL at the 10ms floor can otherwise flood
+  // MIDI DIN (~1040 msg/s) and drop jobs from midi_out_queue.
+  if (num_ccs > 0 && duration_ms > 0) {
+    uint32_t max_steps_bw = (duration_ms * 800u) / ((uint32_t)num_ccs * 1000u);
+    if (max_steps_bw < 4) max_steps_bw = 4;
+    if (steps > max_steps_bw) steps = (uint8_t)max_steps_bw;
+  }
 
   uint32_t step_interval = duration_ms / steps;
   if (step_interval < 10) step_interval = 10;
@@ -486,11 +504,12 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
   m->sync_target_beat = (action->morph_timing_mode == MORPH_TIMING_SYNC) ?
     get_sync_target_beat(action->morph_division) : 0;
   m->sync_waiting_final = false;
+  m->clear_dirty_on_complete = clear_dirty_on_complete;
 
   uint8_t scene_index = scene_get_current_index();
   const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
 
-  for (int i = 0; i < num_ccs && i < 4; i++) {
+  for (int i = 0; i < num_ccs; i++) {
     m->cc_numbers[i] = cc_numbers[i];
     m->start_values[i] = action_get_cc_value(cc_numbers[i]);
     m->target_values[i] = target_values[i];
@@ -498,35 +517,24 @@ bool action_morph_start(const action_t* action, uint8_t num_ccs,
 
     const midi_control_t* ctrl = device ?
       assets_get_control_by_cc(device, cc_numbers[i]) : NULL;
-
-    if (ctrl && ctrl->discrete_count > 0 && ctrl->discrete_values) {
-      uint8_t dcount = ctrl->discrete_count;
-      if (dcount > MORPH_MAX_DISCRETE) dcount = MORPH_MAX_DISCRETE;
-      m->discrete_counts[i] = dcount;
-      for (int j = 0; j < dcount; j++) {
-        m->discrete_values[i][j] = (uint8_t)ctrl->discrete_values[j].value;
-      }
-      m->delay_final[i] = (ctrl->discrete_count <= 4);
-    } else {
-      m->discrete_counts[i] = 0;
-      m->delay_final[i] = false;
-    }
+    m->delay_final[i] = (ctrl && ctrl->discrete_count > 0 &&
+      ctrl->discrete_count <= 4);
   }
 
   uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
   m->next_step_time = now + step_interval;
 
   uint8_t channel = scene_get_effective_channel(scene_get_current_index()) - 1;
-  for (int i = 0; i < num_ccs && i < 4; i++) {
+  for (int i = 0; i < num_ccs; i++) {
     send_control_change(channel, cc_numbers[i], m->start_values[i]);
     m->last_sent_values[i] = m->start_values[i];
   }
 
   action_morph_update_timer();
 
-  ESP_LOGD(TAG, "Morph started: CC%d %d->%d, %d steps, %lu ms interval",
+  ESP_LOGD(TAG, "Morph started: CC%d %d->%d, %d CCs, %d steps, %lu ms interval",
     cc_numbers[0], m->start_values[0], m->target_values[0],
-    (int)steps, (unsigned long)step_interval);
+    (int)num_ccs, (int)steps, (unsigned long)step_interval);
 
   return true;
 }

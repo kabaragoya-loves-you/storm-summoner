@@ -105,6 +105,9 @@ typedef enum {
   // Duplicate current scene with dirty CC values baked into cc_defaults
   ACTION_SNAPSHOT,
 
+  // Return dirty CCs (and optionally tempo/preset/screen/modulators) to scene defaults
+  ACTION_RESTORE,
+
   ACTION_MAX
 } action_type_t;
 
@@ -289,7 +292,7 @@ typedef struct {
   bool transport_trigger;              // Legacy JSON only; migrated to ACTION_TIMING_TRANSPORT_START on load
   bool raise_flag;                     // Set scene flag to 1 after action completes (when flag system enabled)
   
-  // Morph configuration (for ACTION_CONTROL+VARIANT_HOLD/CYCLE, RANDOMIZE)
+  // Morph configuration (for ACTION_CONTROL+VARIANT_HOLD/CYCLE, RANDOMIZE, RESTORE)
   bool morph_enabled;                  // Enable smooth value transition
   morph_steps_mode_t morph_steps_mode; // Step resolution
   uint8_t morph_manual_steps;          // 8-128, used when steps_mode=MANUAL
@@ -504,6 +507,14 @@ typedef struct {
       uint8_t release_curve;        // curve_type_t
       uint8_t release_curve_slope;  // curve_slope_t
     } boomerang;
+
+    // For restore action (return scene to its loaded state)
+    struct {
+      bool restore_tempo;       // default true
+      bool restore_preset;      // default false
+      bool restore_screen;      // default true
+      bool restore_modulators;  // default true
+    } restore;
   } params;
 } action_t;
 

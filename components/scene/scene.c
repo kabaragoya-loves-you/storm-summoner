@@ -5230,7 +5230,8 @@ static const char* action_type_json_names[] = {
   [ACTION_PUNCH_IN] = "punch_in",
   [ACTION_BOOMERANG] = "boomerang",
   [ACTION_INSPECT_SCENE] = "inspect_scene",
-  [ACTION_SNAPSHOT] = "snapshot"
+  [ACTION_SNAPSHOT] = "snapshot",
+  [ACTION_RESTORE] = "restore"
 };
 
 // Variant string table for consolidated action families. Indexed by
@@ -5764,6 +5765,16 @@ static cJSON* action_to_json(const action_t* action) {
       morph_division_to_string((morph_division_t)action->params.boomerang.release_division));
     cJSON_AddNumberToObject(obj, "release_curve", action->params.boomerang.release_curve);
     cJSON_AddNumberToObject(obj, "release_curve_slope", action->params.boomerang.release_curve_slope);
+  } else if (action->type == ACTION_RESTORE) {
+    // Defaults: tempo/screen/modulators on, preset off. Only write when off-default.
+    if (!action->params.restore.restore_tempo)
+      cJSON_AddBoolToObject(obj, "restore_tempo", false);
+    if (action->params.restore.restore_preset)
+      cJSON_AddBoolToObject(obj, "restore_preset", true);
+    if (!action->params.restore.restore_screen)
+      cJSON_AddBoolToObject(obj, "restore_screen", false);
+    if (!action->params.restore.restore_modulators)
+      cJSON_AddBoolToObject(obj, "restore_modulators", false);
   }
 
   // Serialize timing (only if not immediate default)
@@ -6512,6 +6523,23 @@ static action_t json_to_action(cJSON* obj) {
     if (rcurve) action.params.boomerang.release_curve = (uint8_t)rcurve->valueint;
     cJSON* rslope = cJSON_GetObjectItem(obj, "release_curve_slope");
     if (rslope) action.params.boomerang.release_curve_slope = (uint8_t)rslope->valueint;
+  }
+
+  // Parse restore action (defaults: tempo/screen/modulators on, preset off)
+  if (action.type == ACTION_RESTORE) {
+    action.params.restore.restore_tempo = true;
+    action.params.restore.restore_preset = false;
+    action.params.restore.restore_screen = true;
+    action.params.restore.restore_modulators = true;
+
+    cJSON* rt = cJSON_GetObjectItem(obj, "restore_tempo");
+    if (rt && cJSON_IsBool(rt)) action.params.restore.restore_tempo = cJSON_IsTrue(rt);
+    cJSON* rp = cJSON_GetObjectItem(obj, "restore_preset");
+    if (rp && cJSON_IsBool(rp)) action.params.restore.restore_preset = cJSON_IsTrue(rp);
+    cJSON* rs = cJSON_GetObjectItem(obj, "restore_screen");
+    if (rs && cJSON_IsBool(rs)) action.params.restore.restore_screen = cJSON_IsTrue(rs);
+    cJSON* rm = cJSON_GetObjectItem(obj, "restore_modulators");
+    if (rm && cJSON_IsBool(rm)) action.params.restore.restore_modulators = cJSON_IsTrue(rm);
   }
 
   // Parse timing (default: immediate)

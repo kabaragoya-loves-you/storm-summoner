@@ -164,7 +164,8 @@ action_handle_result_t action_handlers_midi_dispatch(
               action->params.control.values[i] : action->params.control.values2[i];
           }
 
-          if (action_morph_start(action, num_ccs, action->params.control.cc_numbers, target_values)) {
+          if (action_morph_start(action, num_ccs, action->params.control.cc_numbers,
+              target_values, false)) {
             ESP_LOGD(TAG, "CC%d hold morph started -> %d",
               action->params.control.cc_numbers[0], target_values[0]);
             return ACTION_HANDLED;
@@ -197,7 +198,7 @@ action_handle_result_t action_handlers_midi_dispatch(
             }
 
             if (action_morph_start(action, num_ccs, mutable_action->params.control.cc_numbers,
-                target_values)) {
+                target_values, false)) {
               ESP_LOGD(TAG, "CC%d cycle morph started -> %d",
                 mutable_action->params.control.cc_numbers[0], target_values[0]);
               mutable_action->params.control.current_index = (idx + 1) % num_steps;
@@ -316,12 +317,12 @@ action_handle_result_t action_handlers_midi_dispatch(
           target_values[i] = random_val;
         }
 
-        uint8_t morph_ccs = (num_ccs > 4) ? 4 : num_ccs;
+        uint8_t morph_ccs = (num_ccs > MORPH_MAX_CCS) ? MORPH_MAX_CCS : num_ccs;
         if (action_morph_start(action, morph_ccs, action->params.randomize.cc_numbers,
-            target_values)) {
+            target_values, false)) {
           ESP_LOGD(TAG, "Randomize morph started for %d CCs", morph_ccs);
 
-          for (int i = 4; i < num_ccs; i++) {
+          for (int i = morph_ccs; i < num_ccs; i++) {
             uint8_t cc = action->params.randomize.cc_numbers[i];
             send_control_change(channel, cc, target_values[i]);
             action_set_cc_value(cc, target_values[i]);

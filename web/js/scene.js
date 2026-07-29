@@ -812,6 +812,11 @@ application.register(
         if (action.attack_mode == null) action.attack_mode = 'instant'
         if (action.sustain_mode == null) action.sustain_mode = 'instant'
         if (action.release_mode == null) action.release_mode = 'instant'
+      } else if (t === 'restore') {
+        if (action.restore_tempo == null) action.restore_tempo = true
+        if (action.restore_preset == null) action.restore_preset = false
+        if (action.restore_screen == null) action.restore_screen = true
+        if (action.restore_modulators == null) action.restore_modulators = true
       }
     }
 
@@ -2197,7 +2202,7 @@ application.register(
         else if (val === 'lfo') this.seedLfoAction(aPath)
         else if (val === 'tempo') this.seedTempoAction(aPath)
         else if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold', 'punch_in',
-          'boomerang'].includes(val)) {
+          'boomerang', 'restore'].includes(val)) {
           this.seedConsolidatedAction(aPath)
         } else {
           const updated = this.getAtPath(aPath)

@@ -44,12 +44,19 @@ void action_punch_in_beat_tick(uint8_t channel, uint8_t beat, bool in_programmin
 // Also owns the shared periodic timer used by boomerang ticks.
 // ----------------------------------------------------------------------------
 esp_err_t action_morph_init(void);
+
+// Max CCs in a single morph slot. Callers with more CCs morph the first
+// MORPH_MAX_CCS and send the remainder immediately.
+#define MORPH_MAX_CCS 16
+
 // Start a CC morph. Returns false (caller falls back to immediate send) when
-// morph is disabled on the action, the CC count is out of range (1-4), or
-// no morph slot is available. Callers therefore do NOT need to guard with
-// action->morph_enabled themselves.
+// morph is disabled on the action, the CC count is out of range (1-MORPH_MAX_CCS),
+// or no morph slot is available. Callers therefore do NOT need to guard with
+// action->morph_enabled themselves. When clear_dirty_on_complete is true, each
+// morphed CC's dirty bit is cleared when the ramp finishes (used by Restore).
 bool action_morph_start(const action_t* action, uint8_t num_ccs,
-  const uint8_t* cc_numbers, const uint8_t* target_values);
+  const uint8_t* cc_numbers, const uint8_t* target_values,
+  bool clear_dirty_on_complete);
 void action_morph_clear(void);
 // Start/stop the shared 10ms periodic timer based on whether any
 // morph or boomerang is currently active.

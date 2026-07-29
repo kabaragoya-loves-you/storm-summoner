@@ -8,6 +8,12 @@
 #include "ui.h"
 #include "inspect_overlay.h"
 #include "toast_overlay.h"
+#include "midi_messages.h"
+#include "assets_manager.h"
+#include "cc_state.h"
+#include "lfo.h"
+#include "rtg.h"
+#include "sample_hold.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include <stdio.h>
@@ -54,6 +60,118 @@ static void apply_preset_program(uint16_t program) {
     device_config_set_preset(program);
   } else {
     device_config_set_program(program & 0x7F);
+  }
+}
+
+// Restore dirty CCs (and optional tempo/preset/screen/modulators) to the
+// scene's stored defaults. Morphs the first MORPH_MAX_CCS dirty CCs when
+// morph is enabled; anything past that is sent immediately.
+static void restore_execute(const action_t* action) {
+  scene_t* scene = scene_get_current();
+  if (!scene || !action) return;
+
+  action_clear_morphs();
+  action_clear_boomerangs();
+
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t* device = (const device_def_t*)scene_get_device(scene_index);
+  uint8_t channel = scene_get_effective_channel(scene_index);
+  channel = (channel >= 1) ? (uint8_t)(channel - 1) : 0;
+
+  uint8_t cc_numbers[128];
+  uint8_t target_values[128];
+  uint8_t num_dirty = 0;
+
+  for (int cc = 0; cc < 128; cc++) {
+    if (!cc_state_is_dirty((uint8_t)cc)) continue;
+
+    uint8_t target;
+    if (scene->cc_defaults[cc] != SCENE_CC_DEFAULT_NONE) {
+      target = scene->cc_defaults[cc];
+    } else {
+      const midi_control_t* ctrl = device ?
+        assets_get_control_by_cc(device, (uint8_t)cc) : NULL;
+      target = ctrl ? (uint8_t)(ctrl->min & 0x7F) : 0;
+    }
+
+    cc_numbers[num_dirty] = (uint8_t)cc;
+    target_values[num_dirty] = target;
+    num_dirty++;
+  }
+
+  if (num_dirty > 0) {
+    uint8_t morph_ccs = (num_dirty > MORPH_MAX_CCS) ? MORPH_MAX_CCS : num_dirty;
+    bool morphed = action_morph_start(action, morph_ccs, cc_numbers,
+      target_values, true);
+
+    uint8_t start_immediate = morphed ? morph_ccs : 0;
+    for (uint8_t i = start_immediate; i < num_dirty; i++) {
+      send_control_change(channel, cc_numbers[i], target_values[i]);
+      action_set_cc_value(cc_numbers[i], target_values[i]);
+      cc_state_clear_dirty(cc_numbers[i]);
+    }
+
+    if (morphed) {
+      ESP_LOGI(TAG, "Restore: morphing %u CCs%s", (unsigned)morph_ccs,
+        (num_dirty > morph_ccs) ? " (+immediate overflow)" : "");
+    } else {
+      ESP_LOGI(TAG, "Restore: sent %u CCs immediately", (unsigned)num_dirty);
+    }
+  }
+
+  if (action->params.restore.restore_tempo)
+    tempo_apply_bpm_x10(action, scene->bpm_x10);
+
+  if (action->params.restore.restore_preset) {
+    if (scene_get_mode() == SCENE_MODE_PRESET_SYNC) {
+      ESP_LOGD(TAG, "Restore preset skipped (PRESET_SYNC mode)");
+    } else {
+      apply_preset_program(scene->program_number);
+      ESP_LOGI(TAG, "Restore preset: %u", (unsigned)scene->program_number);
+    }
+  }
+
+  if (action->params.restore.restore_screen) {
+    const char* name = scene->ui_module[0] ? scene->ui_module : "beat";
+    ui_draw_module_t* mod = ui_get_module_by_name(name);
+    if (mod) {
+      ui_set_draw_module(mod);
+      ESP_LOGI(TAG, "Restore screen: %s", name);
+    }
+  }
+
+  if (action->params.restore.restore_modulators) {
+    // Restore rate/shape/depth/etc. from the scene, but leave whatever is
+    // currently running still running. *_apply_start_mode would re-apply the
+    // scene's load-time start policy and can stop a live engine.
+    bool lfo1_on = lfo_is_enabled(0);
+    bool lfo2_on = lfo_is_enabled(1);
+    lfo_config_t lfo1 = scene->lfo1_config;
+    lfo_config_t lfo2 = scene->lfo2_config;
+    lfo1.enabled = lfo1_on;
+    lfo2.enabled = lfo2_on;
+    lfo_apply_config(0, &lfo1);
+    lfo_apply_config(1, &lfo2);
+
+    bool rtg_running = rtg_is_running();
+    rtg_config_t rtg_live;
+    rtg_get_config(&rtg_live);
+    rtg_config_t rtg = scene->rtg_config;
+    rtg.enabled = rtg_live.enabled;
+    rtg_apply_config(&rtg);
+    if (rtg_running) rtg_start();
+    else rtg_stop();
+
+    bool sh_running = sample_hold_is_running();
+    sample_hold_config_t sh_live;
+    sample_hold_get_config(&sh_live);
+    sample_hold_config_t sh = scene->sample_hold_config;
+    sh.enabled = sh_live.enabled;
+    sample_hold_apply_config(&sh);
+    if (sh_running) sample_hold_start();
+    else sample_hold_stop();
+
+    ESP_LOGI(TAG, "Restore modulators (config only; run state preserved)");
   }
 }
 
@@ -519,6 +637,13 @@ action_handle_result_t action_handlers_scene_dispatch(
           toast_overlay_show("Snapshot failed");
           ESP_LOGW(TAG, "Snapshot failed: %s", esp_err_to_name(err));
         }
+      }
+      return ACTION_HANDLED;
+
+    case ACTION_RESTORE:
+      if (is_press) {
+        restore_execute(action);
+        toast_overlay_show("Restored");
       }
       return ACTION_HANDLED;
 

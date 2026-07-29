@@ -73,6 +73,11 @@ void cc_state_clear_dirty_all(void) {
   memset(s_dirty, 0, sizeof(s_dirty));
 }
 
+void cc_state_clear_dirty(uint8_t cc) {
+  if (cc >= 128) return;
+  bit_clear(s_dirty, cc);
+}
+
 void cc_state_reset_all(void) {
   memset(s_values, 0, sizeof(s_values));
   memset(s_dirty, 0, sizeof(s_dirty));

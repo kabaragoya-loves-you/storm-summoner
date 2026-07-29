@@ -486,6 +486,23 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     }
     summary->has_value = true;
 
+  } else if (action->type == ACTION_RESTORE) {
+    char *out = summary->param_name;
+    size_t cap = sizeof(summary->param_name);
+    size_t n = 0;
+    out[0] = '\0';
+    if (action->params.restore.restore_tempo)
+      n += (size_t)snprintf(out + n, cap - n, "%sTempo", n ? "+" : "");
+    if (action->params.restore.restore_preset && n < cap)
+      n += (size_t)snprintf(out + n, cap - n, "%sPreset", n ? "+" : "");
+    if (action->params.restore.restore_screen && n < cap)
+      n += (size_t)snprintf(out + n, cap - n, "%sScreen", n ? "+" : "");
+    if (action->params.restore.restore_modulators && n < cap)
+      n += (size_t)snprintf(out + n, cap - n, "%sMods", n ? "+" : "");
+    if (n == 0)
+      snprintf(out, cap, "CCs only");
+    summary->has_param = true;
+
   } else {
     summary->param_name[0] = '\0';
     summary->param_value[0] = '\0';
@@ -792,6 +809,7 @@ static const char *ainspect_family_name(action_type_t type) {
     case ACTION_BOOMERANG: return "Boomerang";
     case ACTION_INSPECT_SCENE: return "Inspect Scene";
     case ACTION_SNAPSHOT: return "Snapshot";
+    case ACTION_RESTORE: return "Restore";
     default: return action_type_to_string(type);
   }
 }
@@ -877,6 +895,7 @@ static bool ainspect_action_is_singleton(action_type_t type) {
     case ACTION_CONFIRM_PENDING:
     case ACTION_INSPECT_SCENE:
     case ACTION_SNAPSHOT:
+    case ACTION_RESTORE:
     case ACTION_PUNCH_IN:
     case ACTION_RANDOMIZE:
     case ACTION_BOOMERANG:
@@ -1336,6 +1355,19 @@ static void ainspect_append_action_body(ainspect_buf_t *out, const action_t *act
   uint8_t scene_index, bool show_scheduling) {
   if (action->type == ACTION_BOOMERANG) {
     ainspect_append_boomerang(out, action, show_scheduling);
+    return;
+  }
+
+  if (action->type == ACTION_RESTORE) {
+    ainspect_append(out, "\nTempo: %s",
+      action->params.restore.restore_tempo ? "Yes" : "No");
+    ainspect_append(out, "\nPreset: %s",
+      action->params.restore.restore_preset ? "Yes" : "No");
+    ainspect_append(out, "\nScreen: %s",
+      action->params.restore.restore_screen ? "Yes" : "No");
+    ainspect_append(out, "\nModulators: %s",
+      action->params.restore.restore_modulators ? "Yes" : "No");
+    ainspect_append_action_options(out, action, show_scheduling);
     return;
   }
 

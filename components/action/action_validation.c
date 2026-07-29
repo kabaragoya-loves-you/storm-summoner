@@ -150,6 +150,7 @@ bool action_is_fire_and_forget_for(const action_t* action) {
     case ACTION_RESET:
     case ACTION_BOOMERANG:
     case ACTION_SNAPSHOT:
+    case ACTION_RESTORE:
     // ACTION_LFO -- all variants (START/STOP/TOGGLE/MODIFY) are press-only
     // one-shots, so fire-and-forget at the category level. Rule 4 of the
     // validator additionally rejects START/STOP/TOGGLE on ON_LOAD (LFOs
@@ -343,6 +344,7 @@ bool action_supports_repeat(action_type_t type) {
     case ACTION_CONFIRM_PENDING:
     case ACTION_TRANSPORT:
     case ACTION_RESET:
+    case ACTION_RESTORE:
       return false;
     default:
       return true;
@@ -461,6 +463,8 @@ bool action_supports_repeat_for(const action_t* action) {
     return action->variant == VARIANT_MODIFY;
   if (action->type == ACTION_RESET)
     return false;
+  if (action->type == ACTION_RESTORE)
+    return false;
   return action_supports_repeat(action->type);
 }
 
@@ -481,6 +485,7 @@ bool action_supports_morph(action_type_t type) {
     case ACTION_CONTROL:
     case ACTION_RANDOMIZE:
     case ACTION_TEMPO:
+    case ACTION_RESTORE:
       return true;
     default:
       return false;
@@ -514,6 +519,7 @@ bool action_supports_raise_flag(action_type_t type) {
     case ACTION_LFO:
     case ACTION_PUNCH_IN:
     case ACTION_BOOMERANG:
+    case ACTION_RESTORE:
       return true;
     default:
       return false;

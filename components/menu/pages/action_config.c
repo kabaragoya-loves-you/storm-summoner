@@ -172,6 +172,10 @@ static char s_repeat_label[LABEL_BUFFER_SETS][24];
 static char s_probability_label[LABEL_BUFFER_SETS][24];
 static char s_pattern_label[LABEL_BUFFER_SETS][24];
 static char s_morph_label[LABEL_BUFFER_SETS][24];
+static char s_restore_tempo_label[LABEL_BUFFER_SETS][24];
+static char s_restore_preset_label[LABEL_BUFFER_SETS][24];
+static char s_restore_screen_label[LABEL_BUFFER_SETS][24];
+static char s_restore_mods_label[LABEL_BUFFER_SETS][28];
 static char s_punch_in_start_label[LABEL_BUFFER_SETS][48];
 static char s_punch_in_finish_label[LABEL_BUFFER_SETS][48];
 static char s_punch_in_duration_label[LABEL_BUFFER_SETS][32];
@@ -236,6 +240,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_BOOMERANG,
   ACTION_INSPECT_SCENE,
   ACTION_SNAPSHOT,
+  ACTION_RESTORE,
   ACTION_RESET,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
@@ -286,6 +291,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_BOOMERANG: return "Boomerang";
     case ACTION_INSPECT_SCENE: return "Inspect Scene";
     case ACTION_SNAPSHOT: return "Snapshot";
+    case ACTION_RESTORE: return "Restore";
     default: return "Unknown";
   }
 }
@@ -850,6 +856,13 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.punch_in.finish_cc = default_cc;
       action->params.punch_in.finish_value = 0;
       action->params.punch_in.duration = PUNCH_IN_1_BAR;
+    }
+
+    if (new_type == ACTION_RESTORE) {
+      action->params.restore.restore_tempo = true;
+      action->params.restore.restore_preset = false;
+      action->params.restore.restore_screen = true;
+      action->params.restore.restore_modulators = true;
     }
 
     ESP_LOGI(TAG, "Action type changed to: %s", action_config_get_display_name(new_type));
@@ -8365,6 +8378,67 @@ static void nav_to_morph(void* user_data) {
 }
 
 // ============================================================================
+// Restore toggles (Tempo / Preset / Screen / Modulators)
+// ============================================================================
+
+typedef enum {
+  RESTORE_TOGGLE_TEMPO = 0,
+  RESTORE_TOGGLE_PRESET,
+  RESTORE_TOGGLE_SCREEN,
+  RESTORE_TOGGLE_MODULATORS,
+} restore_toggle_field_t;
+
+static bool* restore_toggle_ptr(action_t* action, restore_toggle_field_t field) {
+  if (!action) return NULL;
+  switch (field) {
+    case RESTORE_TOGGLE_TEMPO: return &action->params.restore.restore_tempo;
+    case RESTORE_TOGGLE_PRESET: return &action->params.restore.restore_preset;
+    case RESTORE_TOGGLE_SCREEN: return &action->params.restore.restore_screen;
+    case RESTORE_TOGGLE_MODULATORS: return &action->params.restore.restore_modulators;
+    default: return NULL;
+  }
+}
+
+static const char* restore_toggle_title(restore_toggle_field_t field) {
+  switch (field) {
+    case RESTORE_TOGGLE_TEMPO: return "Restore Tempo";
+    case RESTORE_TOGGLE_PRESET: return "Restore Preset";
+    case RESTORE_TOGGLE_SCREEN: return "Restore Screen";
+    case RESTORE_TOGGLE_MODULATORS: return "Restore Mods";
+    default: return "Restore";
+  }
+}
+
+static void restore_toggle_confirm_cb(uint32_t selected_index, void* user_data) {
+  restore_toggle_field_t field = (restore_toggle_field_t)(uintptr_t)user_data;
+  if (!s_ctx || !s_ctx->target_action) return;
+  bool* ptr = restore_toggle_ptr(s_ctx->target_action, field);
+  if (!ptr) return;
+  *ptr = (selected_index == 1);
+  ESP_LOGD(TAG, "Set %s: %s", restore_toggle_title(field), selected_index ? "On" : "Off");
+  return_to_detail_page(2);
+}
+
+static void* s_restore_toggle_field = NULL;
+
+static lv_obj_t* restore_toggle_roller_create(void) {
+  restore_toggle_field_t field = (restore_toggle_field_t)(uintptr_t)s_restore_toggle_field;
+  if (!s_ctx || !s_ctx->target_action) {
+    return menu_create_roller_page("Restore", "Error", 0, NULL, NULL);
+  }
+  bool* ptr = restore_toggle_ptr(s_ctx->target_action, field);
+  uint32_t current_idx = (ptr && *ptr) ? 1 : 0;
+  return menu_create_roller_page(restore_toggle_title(field), "Off\nOn", current_idx,
+    restore_toggle_confirm_cb, (void*)(uintptr_t)field);
+}
+
+static void nav_to_restore_toggle(void* user_data) {
+  s_restore_toggle_field = user_data;
+  nav_to_subpage(restore_toggle_title((restore_toggle_field_t)(uintptr_t)user_data),
+    restore_toggle_roller_create);
+}
+
+// ============================================================================
 // Morph Steps Roller
 // ============================================================================
 
@@ -9726,6 +9800,42 @@ lv_obj_t* action_config_detail_page_create(void) {
         "Duration\n%s", duration_disp);
       s_detail_items[item_count++] = (menu_item_t){
         s_cc_hold_duration_label[buf], nav_to_cc_hold_duration, NULL, true, MENU_ITEM_KIND_ROLLER
+      };
+    }
+  }
+
+  // Show Restore toggles
+  if (action->type == ACTION_RESTORE) {
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_restore_tempo_label[buf], sizeof(s_restore_tempo_label[buf]),
+        "Tempo\n%s", action->params.restore.restore_tempo ? "On" : "Off");
+      s_detail_items[item_count++] = (menu_item_t){
+        s_restore_tempo_label[buf], nav_to_restore_toggle,
+        (void*)(uintptr_t)RESTORE_TOGGLE_TEMPO, true, MENU_ITEM_KIND_ROLLER
+      };
+    }
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_restore_preset_label[buf], sizeof(s_restore_preset_label[buf]),
+        "Preset\n%s", action->params.restore.restore_preset ? "On" : "Off");
+      s_detail_items[item_count++] = (menu_item_t){
+        s_restore_preset_label[buf], nav_to_restore_toggle,
+        (void*)(uintptr_t)RESTORE_TOGGLE_PRESET, true, MENU_ITEM_KIND_ROLLER
+      };
+    }
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_restore_screen_label[buf], sizeof(s_restore_screen_label[buf]),
+        "Screen\n%s", action->params.restore.restore_screen ? "On" : "Off");
+      s_detail_items[item_count++] = (menu_item_t){
+        s_restore_screen_label[buf], nav_to_restore_toggle,
+        (void*)(uintptr_t)RESTORE_TOGGLE_SCREEN, true, MENU_ITEM_KIND_ROLLER
+      };
+    }
+    if (item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_restore_mods_label[buf], sizeof(s_restore_mods_label[buf]),
+        "Modulators\n%s", action->params.restore.restore_modulators ? "On" : "Off");
+      s_detail_items[item_count++] = (menu_item_t){
+        s_restore_mods_label[buf], nav_to_restore_toggle,
+        (void*)(uintptr_t)RESTORE_TOGGLE_MODULATORS, true, MENU_ITEM_KIND_ROLLER
       };
     }
   }

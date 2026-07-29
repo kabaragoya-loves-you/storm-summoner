@@ -1798,6 +1798,27 @@ window.SceneEditorUi = (function () {
     return html
   }
 
+  function renderRestoreFields (ctrl, path, a) {
+    let html = ''
+    html += fieldRow(
+      'Restore Tempo',
+      checkboxField(`${path}.restore_tempo`, a.restore_tempo !== false)
+    )
+    html += fieldRow(
+      'Restore Preset',
+      checkboxField(`${path}.restore_preset`, !!a.restore_preset)
+    )
+    html += fieldRow(
+      'Restore Screen',
+      checkboxField(`${path}.restore_screen`, a.restore_screen !== false)
+    )
+    html += fieldRow(
+      'Restore Modulators',
+      checkboxField(`${path}.restore_modulators`, a.restore_modulators !== false)
+    )
+    return html
+  }
+
   function renderBoomerangFields (ctrl, path, a) {
     const ot = a.output_type || 'cc'
     const envSvg = window.BoomerangEnvelope?.renderSvg(a) || ''
@@ -2603,6 +2624,9 @@ window.SceneEditorUi = (function () {
       }
       if (a.type === 'boomerang') {
         html += renderBoomerangFields(ctrl, path, a)
+      }
+      if (a.type === 'restore') {
+        html += renderRestoreFields(ctrl, path, a)
       }
       if (
         a.type === 'confirm_pending' &&

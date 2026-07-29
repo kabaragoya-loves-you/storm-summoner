@@ -84,7 +84,7 @@ window.ActionCatalog = (function () {
     'none', 'control', 'preset', 'scene', 'confirm_pending', 'transport', 'tempo',
     'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'clock', 'cut', 'ui',
     'param', 'rtg', 'sample_hold', 'punch_in', 'boomerang',
-    'inspect_scene', 'snapshot', 'reset'
+    'inspect_scene', 'snapshot', 'restore', 'reset'
   ]
 
   const TYPE_LABELS = {
@@ -110,6 +110,7 @@ window.ActionCatalog = (function () {
     boomerang: 'Boomerang',
     inspect_scene: 'Inspect Scene',
     snapshot: 'Snapshot',
+    restore: 'Restore',
     reset: 'Reset'
   }
 
@@ -1139,6 +1140,8 @@ window.ActionCatalog = (function () {
       case 'randomize':
       case 'reset':
       case 'boomerang':
+      case 'snapshot':
+      case 'restore':
       case 'lfo':
         return true
       case 'clock':
@@ -1245,7 +1248,7 @@ window.ActionCatalog = (function () {
     const t = action.type
     const v = action.variant || defaultVariant(t)
     if (t === 'scene' || t === 'punch_in' || t === 'confirm_pending' || t === 'transport' ||
-        t === 'reset') {
+        t === 'reset' || t === 'restore') {
       return false
     }
     if (t === 'tempo') {
@@ -1272,7 +1275,7 @@ window.ActionCatalog = (function () {
 
   const RAISE_FLAG_TYPES = new Set([
     'transport', 'control', 'preset', 'tempo', 'note', 'randomize', 'lfo',
-    'punch_in', 'boomerang'
+    'punch_in', 'boomerang', 'restore'
   ])
 
   function supportsRaiseFlag (action) {
@@ -1291,6 +1294,7 @@ window.ActionCatalog = (function () {
         v === 'decrement' || v === 'cycle'
     }
     if (t === 'randomize') return true
+    if (t === 'restore') return true
     return false
   }
 
