@@ -373,21 +373,59 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     if (touch_channel_read_data(s_chan_handles[pad_index],
         TOUCH_CHAN_DATA_TYPE_BENCHMARK, bench_now) == ESP_OK) {
       uint32_t known = s_known_good_benchmark[pad_index];
-      // Reject if benchmark dropped >25% from known-good
+      // Benchmark dropped >25% from known-good: either a phantom press caused
+      // by benchmark collapse, or a REAL press arriving while the benchmark is
+      // stale from a recent collapse. Discriminate using smooth vs the
+      // calibrated baseline: a real finger drives smooth well above baseline
+      // (confirmed live: smooth=35146 vs baseline 20881), while a phantom
+      // leaves smooth near or below it.
       if (bench_now[0] < (known * 3) / 4) {
-        ESP_LOGI(TAG, "Pad %d phantom press rejected (bench=%"PRIu32" vs known=%"PRIu32"), recovering",
-          pad_index, bench_now[0], known);
-        touch_recover_pad_state(pad_index);
-        s_pad_recovery_timestamps[pad_index] = now;
-        // Update known_good with the fresh baseline
-        uint32_t fresh_bench[1];
+        uint32_t smooth_now[1] = {0};
+        touch_pad_calibration_t pcalib;
+        bool real_touch = false;
         if (touch_channel_read_data(s_chan_handles[pad_index],
-            TOUCH_CHAN_DATA_TYPE_BENCHMARK, fresh_bench) == ESP_OK) {
-          if (fresh_bench[0] >= 10000 && fresh_bench[0] <= 100000) {
-            s_known_good_benchmark[pad_index] = fresh_bench[0];
-          }
+            TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth_now) == ESP_OK &&
+            touch_get_calibration_data(TOUCH_PADS[pad_index], &pcalib) == ESP_OK &&
+            pcalib.valid) {
+          real_touch = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
+            ? (smooth_now[0] + pcalib.threshold < pcalib.baseline)
+            : (smooth_now[0] > pcalib.baseline + pcalib.threshold);
         }
-        return;
+
+        if (real_touch) {
+          ESP_LOGI(TAG, "Pad %d press accepted despite stale benchmark"
+            " (smooth=%"PRIu32" baseline=%"PRIu32" bench=%"PRIu32" known=%"PRIu32")",
+            pad_index, smooth_now[0], pcalib.baseline, bench_now[0], known);
+          // Fall through to normal press processing.
+        } else {
+          ESP_LOGI(TAG, "Pad %d phantom press rejected (bench=%"PRIu32" vs known=%"PRIu32"), recovering",
+            pad_index, bench_now[0], known);
+          // #region agent log
+          if (pad_index == 12) {
+            uint32_t dbg_since = (s_pad_recovery_timestamps[pad_index] > 0)
+              ? (now - s_pad_recovery_timestamps[pad_index]) : 0;
+            ESP_LOGI(TAG, "[DBG12/H4] phantom-reject ctx: smooth=%u bench=%u known=%u since_last_recovery=%ums",
+              (unsigned)smooth_now[0], (unsigned)bench_now[0], (unsigned)known, (unsigned)dbg_since);
+          }
+          // #endregion
+          // Recovery cooldown: avoid thrashing the sensor with back-to-back
+          // restarts (each restart resets filter convergence on all channels).
+          uint32_t since_recovery = now - s_pad_recovery_timestamps[pad_index];
+          if (s_pad_recovery_timestamps[pad_index] == 0 || since_recovery >= RECOVERY_COOLDOWN_MS) {
+            touch_recover_pad_state(pad_index);
+            s_pad_recovery_timestamps[pad_index] = now;
+            // Refresh known_good from the calibrated baseline - NOT from a
+            // fresh benchmark read, which is unreliable right after the
+            // sensor restart (confirmed live: 31381/30141/24753 transients).
+            touch_pad_calibration_t post_calib;
+            if (touch_get_calibration_data(TOUCH_PADS[pad_index], &post_calib) == ESP_OK &&
+                post_calib.valid &&
+                post_calib.baseline >= 10000 && post_calib.baseline <= 100000) {
+              s_known_good_benchmark[pad_index] = post_calib.baseline;
+            }
+          }
+          return;
+        }
       }
     }
   }
@@ -679,6 +717,14 @@ static void touch_health_check_task(void *pvParameters) {
       // Track known-good benchmark values for drift detection
       if (benchmark[0] >= 10000 && benchmark[0] <= 100000) {
         if (s_known_good_benchmark[i] == 0 || benchmark[0] > s_known_good_benchmark[i] * 0.9) {
+          // #region agent log
+          if (i == 12 && s_known_good_benchmark[i] > 0 &&
+              benchmark[0] > s_known_good_benchmark[i] + s_known_good_benchmark[i] / 10) {
+            ESP_LOGI(TAG, "[DBG12/H1] known_good ratchet UP: %u -> %u (smooth=%u sw_pressed=%d thresh=%u)",
+              (unsigned)s_known_good_benchmark[i], (unsigned)benchmark[0], (unsigned)smooth[0],
+              (int)s_button_pressed_states[i], (unsigned)calib_data.threshold);
+          }
+          // #endregion
           s_known_good_benchmark[i] = benchmark[0];
         }
       }
@@ -688,6 +734,28 @@ static void touch_health_check_task(void *pvParameters) {
       if (s_known_good_benchmark[i] > 0 && !s_hold_active[i]) {
         uint32_t known = s_known_good_benchmark[i];
         if (benchmark[0] < (known * 3) / 4) {
+          // Real-touch discrimination: a collapsed/stale benchmark with an
+          // ELEVATED smooth reading means the user is genuinely pressing the
+          // pad (confirmed live: smooth=35146 vs calibrated baseline 20881
+          // during a real press at 242817ms). Leave it alone - recovering here
+          // would reset the benchmark to the touched value and swallow the
+          // press. Once the finger lifts, smooth returns to baseline and the
+          // normal path below handles the stale benchmark.
+          bool real_touch = (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL)
+            ? (smooth[0] + calib_data.threshold < calib_data.baseline)
+            : (smooth[0] > calib_data.baseline + calib_data.threshold);
+          if (real_touch) {
+            // #region agent log
+            if (i == 12) {
+              ESP_LOGI(TAG, "[DBG12/H2r] drift check: real touch in progress"
+                " (smooth=%u baseline=%u bench=%u known=%u), leaving pad alone",
+                (unsigned)smooth[0], (unsigned)calib_data.baseline,
+                (unsigned)benchmark[0], (unsigned)known);
+            }
+            // #endregion
+            continue;
+          }
+
           // If pad is currently "pressed", this is likely a phantom touch - force release
           if (s_button_pressed_states[i]) {
             ESP_LOGI(TAG, "Pad %d phantom touch detected (drift), forcing release + recovery", i);
@@ -704,15 +772,70 @@ static void touch_health_check_task(void *pvParameters) {
             ESP_LOGD(TAG, "Pad %d benchmark drift detected, recovering", i);
           }
           
+          // #region agent log
+          if (i == 12) {
+            uint32_t dbg_since = (s_pad_recovery_timestamps[i] > 0)
+              ? (now - s_pad_recovery_timestamps[i]) : 0;
+            ESP_LOGI(TAG, "[DBG12/H2] drift-recover trigger: bench=%u known=%u smooth=%u"
+              " sw_pressed=%d since_last_recovery=%ums",
+              (unsigned)benchmark[0], (unsigned)s_known_good_benchmark[i], (unsigned)smooth[0],
+              (int)s_button_pressed_states[i], (unsigned)dbg_since);
+          }
+          // #endregion
+
+          // Recovery cooldown: each recovery restarts the entire sensor,
+          // which resets filter convergence on every channel. Back-to-back
+          // recoveries (450ms apart, confirmed live) keep the benchmark in a
+          // perpetually-converging state and prolong the outage. The signal
+          // recovers naturally within ~1s when left alone.
+          // Exception: once smooth has settled back near the calibrated
+          // baseline, the collapse is over and a stuck-low benchmark is safe
+          // to reset immediately (confirmed live: smooth returned to ~20850
+          // by 2460ms while bench stayed frozen at 6179 until the full 5s
+          // cooldown expired).
+          uint32_t since_recovery = now - s_pad_recovery_timestamps[i];
+          if (s_pad_recovery_timestamps[i] != 0 && since_recovery < RECOVERY_COOLDOWN_MS) {
+            bool settled = false;
+            if (calib_data.baseline > 0) {
+              uint32_t lo = calib_data.baseline - calib_data.baseline / 10;
+              uint32_t hi = calib_data.baseline + calib_data.baseline / 10;
+              settled = (smooth[0] >= lo && smooth[0] <= hi);
+            }
+            if (!settled) {
+              ESP_LOGD(TAG, "Pad %d drift recovery deferred (cooldown, %"PRIu32"ms since last)",
+                i, since_recovery);
+              continue;
+            }
+            // #region agent log
+            if (i == 12) {
+              ESP_LOGI(TAG, "[DBG12/H6] early recover: smooth settled near baseline"
+                " (smooth=%u baseline=%u bench=%u since=%ums)",
+                (unsigned)smooth[0], (unsigned)calib_data.baseline,
+                (unsigned)benchmark[0], (unsigned)since_recovery);
+            }
+            // #endregion
+          }
+
           touch_recover_pad_state(i);
           s_pad_recovery_timestamps[i] = now;
-          // Update known_good with the fresh baseline
-          uint32_t fresh_bench[1];
-          if (touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_BENCHMARK, fresh_bench) == ESP_OK) {
-            if (fresh_bench[0] >= 10000 && fresh_bench[0] <= 100000) {
-              s_known_good_benchmark[i] = fresh_bench[0];
-            }
+          // Refresh known_good from the CALIBRATED baseline (updated by the
+          // recovery when it succeeds). Do NOT use a fresh benchmark read:
+          // reads taken right after the sensor restart are unreliable
+          // (confirmed live: 31381/30141/24753 transients vs true idle 20890)
+          // and poisoned known_good, re-arming this detector indefinitely.
+          touch_pad_calibration_t post_calib;
+          if (touch_get_calibration_data(TOUCH_PADS[i], &post_calib) == ESP_OK && post_calib.valid &&
+              post_calib.baseline >= 10000 && post_calib.baseline <= 100000) {
+            s_known_good_benchmark[i] = post_calib.baseline;
           }
+          // #region agent log
+          if (i == 12) {
+            uint32_t fresh_bench[1] = {0};
+            touch_channel_read_data(s_chan_handles[i], TOUCH_CHAN_DATA_TYPE_BENCHMARK, fresh_bench);
+            ESP_LOGI(TAG, "[DBG12/H2b] post-recover: fresh_bench=%u known_now=%u",
+              (unsigned)fresh_bench[0], (unsigned)s_known_good_benchmark[i]);
+          }
+          // #endregion
           continue;
         }
       }

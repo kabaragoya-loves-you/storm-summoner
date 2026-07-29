@@ -772,16 +772,58 @@ esp_err_t touch_recover_pad_state(int pad_index) {
 
   ESP_LOGI(TAG, "Recovering pad %d...", pad_index);
 
-  // 1. Clear software pressed state immediately (like manual reset does)
-  touch_clear_pressed_state(pad_index);
-
   touch_channel_handle_t chan_handle = touch_get_channel_handle(pad_index);
   if (chan_handle == NULL) {
     if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
     return ESP_ERR_INVALID_STATE;
   }
 
-  // 2. Reset Benchmark to current smooth reading (fixes corruption and drift)
+  // 1. Guard: never reset the benchmark while the pad reads as actively
+  // touched relative to the CALIBRATED baseline. Resetting mid-press captures
+  // the touched value as the new benchmark, which makes the ongoing (and
+  // subsequent) real presses invisible to the hardware (delta ~0) and poisons
+  // drift tracking. Confirmed live: [DBG12/H3] looks_touched=1 at 242817ms
+  // produced new_baseline=31885 on a pad whose calibrated baseline is 20881.
+  uint32_t guard_smooth[1] = {0};
+  uint32_t guard_bench[1] = {0};
+  touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, guard_smooth);
+  touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, guard_bench);
+  if (s_pad_calibration[pad_index].valid) {
+    uint32_t base = s_pad_calibration[pad_index].baseline;
+    uint32_t thresh = s_pad_calibration[pad_index].threshold;
+    bool looks_touched = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
+      ? (guard_smooth[0] + thresh < base)
+      : (guard_smooth[0] > base + thresh);
+    // #region agent log
+    if (pad_index == 12) {
+      int32_t dbg_delta = (int32_t)guard_smooth[0] - (int32_t)guard_bench[0];
+      ESP_LOGI(TAG, "[DBG12/H3] pre-reset: smooth=%u bench=%u delta=%d"
+        " base=%u thresh=%u looks_touched=%d",
+        (unsigned)guard_smooth[0], (unsigned)guard_bench[0], (int)dbg_delta,
+        (unsigned)base, (unsigned)thresh, (int)looks_touched);
+    }
+    // #endregion
+    if (looks_touched) {
+      ESP_LOGW(TAG, "Pad %d appears actively touched (smooth=%u, baseline=%u, thresh=%u);"
+        " deferring benchmark reset", pad_index,
+        (unsigned)guard_smooth[0], (unsigned)base, (unsigned)thresh);
+      if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+      return ESP_ERR_INVALID_STATE;
+    }
+  } else {
+    // #region agent log
+    if (pad_index == 12) {
+      int32_t dbg_delta = (int32_t)guard_smooth[0] - (int32_t)guard_bench[0];
+      ESP_LOGI(TAG, "[DBG12/H3] pre-reset: smooth=%u bench=%u delta=%d (no calib)",
+        (unsigned)guard_smooth[0], (unsigned)guard_bench[0], (int)dbg_delta);
+    }
+    // #endregion
+  }
+
+  // 2. Clear software pressed state immediately (like manual reset does)
+  touch_clear_pressed_state(pad_index);
+
+  // 3. Reset Benchmark to current smooth reading (fixes corruption and drift)
   touch_chan_benchmark_config_t benchmark_cfg = {
     .do_reset = true,
   };
@@ -795,7 +837,7 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   // Wait longer for benchmark to stabilize (like manual reset does)
   vTaskDelay(pdMS_TO_TICKS(100));
 
-  // 3. Read new Benchmark (should now match current smooth reading)
+  // 4. Read new Benchmark (should now match current smooth reading)
   uint32_t benchmark[1];
   ret = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
   if (ret != ESP_OK) {
@@ -804,7 +846,7 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     return ret;
   }
 
-  // 4. Update baseline ONLY - keep the original calibrated threshold from NVS
+  // 5. Update baseline ONLY - keep the original calibrated threshold from NVS
   //    This is the key insight: don't recalculate thresholds from potentially
   //    corrupted readings. The original NVS thresholds were calculated from
   //    good data and should remain valid.
@@ -812,8 +854,10 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   uint32_t original_threshold = s_pad_calibration[pad_index].threshold;
   
   // Only update baseline if it looks healthy
+  bool baseline_updated = false;
   if (new_baseline >= 10000 && new_baseline <= 100000) {
     s_pad_calibration[pad_index].baseline = new_baseline;
+    baseline_updated = true;
     ESP_LOGI(TAG, "Pad %d recovered: new_baseline=%"PRIu32", keeping threshold=%"PRIu32,
       pad_index, new_baseline, original_threshold);
   } else {
@@ -821,8 +865,16 @@ esp_err_t touch_recover_pad_state(int pad_index) {
       pad_index, new_baseline);
   }
   
-  // 5. Apply existing thresholds (reloads from s_pad_calibration which has original NVS values)
-  ret = apply_thresholds();
+  // 6. Apply thresholds only when the baseline update succeeded.
+  // Confirmed live (4408096): unhealthy recovery still called apply_thresholds(),
+  // which restarts the entire sensor and left benchmark frozen at ~6179 for ~3s
+  // while smooth had already returned to the calibrated idle (~20850). Thresholds
+  // were unchanged, so the restart bought nothing and prolonged the outage.
+  if (baseline_updated) {
+    ret = apply_thresholds();
+  } else {
+    ret = ESP_OK;
+  }
 
   if (s_calibration_mutex) {
     xSemaphoreGive(s_calibration_mutex);
