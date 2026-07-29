@@ -1355,7 +1355,10 @@ window.ConnectionManager = (function () {
       return ''
     }
 
-    async _tryParseCommandJson (rawLine, validator) {
+    // Sync on purpose: both call sites test the result for truthiness without
+    // awaiting, so returning a promise would make every non-JSON reply (a bare
+    // "OK") resolve to null.
+    _tryParseCommandJson (rawLine, validator) {
       if (!rawLine.startsWith('{') && !rawLine.startsWith('[')) return null
       try {
         const data = JSON.parse(rawLine)

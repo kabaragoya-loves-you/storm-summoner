@@ -235,6 +235,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PUNCH_IN,
   ACTION_BOOMERANG,
   ACTION_INSPECT_SCENE,
+  ACTION_SNAPSHOT,
   ACTION_RESET,
 };
 #define NUM_ALL_ACTION_TYPES (sizeof(s_all_action_types) / sizeof(s_all_action_types[0]))
@@ -284,6 +285,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_PUNCH_IN: return "Punch-In";
     case ACTION_BOOMERANG: return "Boomerang";
     case ACTION_INSPECT_SCENE: return "Inspect Scene";
+    case ACTION_SNAPSHOT: return "Snapshot";
     default: return "Unknown";
   }
 }

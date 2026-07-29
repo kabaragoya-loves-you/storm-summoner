@@ -9,7 +9,7 @@
 
 static const char *TAG = "inspect_overlay";
 
-#define INSPECT_TEXT_BUF_SIZE 2048
+#define INSPECT_TEXT_BUF_SIZE 4096
 #define SCROLL_TIMER_PERIOD_MS 50
 
 static bool s_want_active = false;
@@ -93,7 +93,7 @@ static void overlay_show_async(void *param) {
 
   scene_t *scene = scene_get_current();
   uint8_t scene_index = scene_get_current_index();
-  if (!scene_inspect_build(scene, scene_index, s_inspect_text, sizeof(s_inspect_text))) {
+  if (!scene_inspect_build(scene, scene_index, s_inspect_text, sizeof(s_inspect_text), true)) {
     ESP_LOGW(TAG, "Inspect text truncated");
   }
 
@@ -124,10 +124,6 @@ static void overlay_hide_async(void *param) {
   s_want_active = false;
   destroy_overlay_widgets();
   ESP_LOGD(TAG, "Performance inspect overlay hidden");
-}
-
-bool inspect_overlay_is_active(void) {
-  return s_overlay_active || s_want_active;
 }
 
 void inspect_overlay_show(void) {

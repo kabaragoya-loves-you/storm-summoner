@@ -486,10 +486,14 @@ void ui_set_app_mode(app_mode_t mode) {
     // stops the LFO loops so they don't emit fresh values during release.
     scene_suspend_input();
 
-    // Seed the live CC cache from the scene's CC defaults so variant/no-op
-    // resolution in the CC choosers reflects the scene's default mode rather
-    // than the boot-time placeholder. No MIDI is sent.
-    scene_seed_cc_cache();
+    // Stash the live performance state (CC table, tempo, preset, screen, LFO /
+    // RTG / S+H config), then seed the CC cache from the scene's defaults so
+    // variant/no-op resolution in the CC choosers reflects the scene's default
+    // mode rather than the boot-time placeholder. The stash keeps the
+    // performance values readable by Snapshot / Scene Inspect, which the
+    // re-seed and the draw-module swap below would otherwise discard. No MIDI
+    // is sent. Must run before saved_draw_module is captured.
+    scene_enter_programming_mode();
 
     // Then synchronously release every on-device producer's held notes,
     // mute the clock, and flip the silence predicate. release_all() catches
@@ -520,6 +524,10 @@ void ui_set_app_mode(app_mode_t mode) {
     // When going to Screensaver, we'll return to Programming mode later with scene still suspended
     if (mode == APP_MODE_PERFORMANCE) {
       scene_resume_input();
+      // Drop the performance stash before the deferred init re-seeds; the live
+      // values are authoritative again from here. Unconditional, because
+      // scene_apply_deferred_init() no-ops when no scene change is pending.
+      scene_exit_programming_mode();
       scene_apply_deferred_init();
       midi_local_output_enable();
     }

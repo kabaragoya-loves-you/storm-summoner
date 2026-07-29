@@ -28,8 +28,16 @@ application.register(
       'renameInput',
       'readonlyBanner',
       'deleteDialog',
-      'deleteDialogMessage'
+      'deleteDialogMessage',
+      'viewerModal',
+      'viewerTitle',
+      'viewerMeta',
+      'viewerBody'
     ]
+
+    // Refuse to render anything larger than this in the viewer; the file is
+    // still downloadable.
+    static VIEWER_MAX_BYTES = 512 * 1024
 
     // Roots known to the device. The Assets tab shows / as the userdata root;
     // commands are translated to USERDATA_BASE_PATH behind the scenes.
@@ -71,6 +79,15 @@ application.register(
       this.inAssetsMode = false
       this.renameTarget = null
       this.userdataAvailable = true
+
+      // Esc closes the file viewer. Bound on document because focus is usually
+      // still on the file row, not inside the modal.
+      this._onViewerKeydown = (e) => {
+        if (e.key !== 'Escape' || !this.isViewerOpen()) return
+        e.preventDefault()
+        this.hideViewer()
+      }
+      document.addEventListener('keydown', this._onViewerKeydown)
 
       // Listen for connection changes
       this.connection.on(
@@ -398,10 +415,16 @@ application.register(
             : ''
           const clickAction = isDir && !unavailable
             ? `data-action="click->assets#openFolder"` : ''
+          // Folders navigate from the whole row; files open the viewer from the
+          // name only, so the action buttons stay unambiguous.
+          const nameAttrs = isDir
+            ? ''
+            : `data-action="click->assets#viewFile" data-path="${fullPath}"`
+          const nameClass = isDir ? 'file-name' : 'file-name viewable'
 
           return `
         <div class="file-item" data-path="${fullPath}" data-type="${file.type}" data-name="${file.name}" ${clickAction}>
-          <div class="file-name">
+          <div class="${nameClass}" ${nameAttrs}>
             <wa-icon name="${icon}" class="file-icon ${iconClass}"></wa-icon>
             <span>${file.name}</span>${nameSuffix}
           </div>
@@ -458,6 +481,79 @@ application.register(
       } catch (err) {
         this.log(`Download failed: ${err.message}`, 'error')
       }
+    }
+
+    // A file is treated as binary if it carries a NUL or an implausible run of
+    // control bytes; rendering those into a <pre> produces noise, not content.
+    looksBinary (bytes) {
+      const limit = Math.min(bytes.length, 4096)
+      let controls = 0
+      for (let i = 0; i < limit; i++) {
+        const b = bytes[i]
+        if (b === 0) return true
+        if (b < 0x09 || (b > 0x0d && b < 0x20)) controls++
+      }
+      return limit > 0 && controls / limit > 0.1
+    }
+
+    async viewFile (event) {
+      event.preventDefault()
+      event.stopPropagation()
+      const path = event.currentTarget.dataset.path
+      if (!path) return
+      const name = path.split('/').pop()
+
+      // A close or a second click while the transfer is in flight must win over
+      // the late result, which would otherwise reopen or overwrite the viewer.
+      const token = (this._viewerToken ?? 0) + 1
+      this._viewerToken = token
+      const update = (meta, body) => {
+        if (this._viewerToken === token) this.showViewer(name, meta, body)
+      }
+
+      this.showViewer(name, '', 'Loading...')
+
+      try {
+        const { data } = await this.connection.fetchSizedTransfer(
+          `GET ${this.toDevicePath(path)}`)
+
+        const meta = this.formatSize(data.length)
+        if (data.length > this.constructor.VIEWER_MAX_BYTES) {
+          update(meta, `File is too large to preview (${meta}). Use Download instead.`)
+          return
+        }
+        if (this.looksBinary(data)) {
+          update(meta, `Binary file (${meta}). Use Download instead.`)
+          return
+        }
+
+        update(meta, new TextDecoder('utf-8').decode(data))
+      } catch (err) {
+        update('', `Failed to read file: ${err.message}`)
+        this.log(`View failed: ${err.message}`, 'error')
+      }
+    }
+
+    showViewer (title, meta, body) {
+      if (!this.hasViewerModalTarget) return
+      this.viewerTitleTarget.textContent = title
+      this.viewerMetaTarget.textContent = meta
+      this.viewerBodyTarget.textContent = body
+      this.viewerBodyTarget.scrollTop = 0
+      this.viewerModalTarget.classList.add('open')
+    }
+
+    hideViewer () {
+      if (!this.hasViewerModalTarget) return
+      this._viewerToken = (this._viewerToken ?? 0) + 1
+      this.viewerModalTarget.classList.remove('open')
+      // Drop the contents so a large preview isn't retained in the DOM.
+      this.viewerBodyTarget.textContent = ''
+    }
+
+    isViewerOpen () {
+      return this.hasViewerModalTarget &&
+        this.viewerModalTarget.classList.contains('open')
     }
 
     showDeleteConfirm (title, message) {

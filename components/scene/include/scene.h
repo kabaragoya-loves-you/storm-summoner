@@ -588,6 +588,15 @@ esp_err_t scene_create_new_at_position(const char* name, uint16_t position);
 esp_err_t scene_delete(uint8_t scene_index);
 esp_err_t scene_duplicate(uint8_t source_index, const char* new_name);
 
+// Snapshot the current scene: duplicate with an incremented name, overlay dirty
+// CC values into the new scene's cc_defaults, and save. Does not switch scenes.
+// On success, copies the new scene name into out_name (may be NULL).
+esp_err_t scene_snapshot_current(char* out_name, size_t out_cap);
+
+// Write the current scene's inspect text to /userdata/readouts/<slug>_N.txt.
+// On success, copies the absolute path into out_path (may be NULL).
+esp_err_t scene_readout_save(char* out_path, size_t out_cap);
+
 // Check if a scene name already exists (case-insensitive)
 // Pass exclude_index >= 0 to skip a specific scene (e.g., when renaming)
 bool scene_name_exists(const char* name, int8_t exclude_index);
@@ -622,11 +631,39 @@ void scene_apply_deferred_init(void);
 // memory only (not persisted until the next scene save).
 void scene_ensure_mandatory_cc_defaults(void);
 
-// Seed the live CC cache (action's s_last_cc_values) from device control
-// minimums plus the current scene's stored CC defaults. No MIDI is transmitted;
-// gives x_variants / x_noop resolution a deterministic basis. Call when entering
-// programming mode so CC choosers reflect the scene's default mode.
+// Seed the live CC cache from device control minimums plus the current
+// scene's stored CC defaults. No MIDI is transmitted; gives x_variants /
+// x_noop resolution a deterministic basis. Call when entering programming
+// mode so CC choosers reflect the scene's default mode.
 void scene_seed_cc_cache(void);
+
+// Runtime performance state that lives in the engine components rather than in
+// the cached scene_t, so copying a scene would otherwise miss it. Everything
+// here maps onto an existing scene_t field: Snapshot folds it into the copy and
+// Scene Inspect reports it for the current scene.
+typedef struct {
+  uint16_t bpm_x10;
+  uint8_t program_number;
+  char ui_module[MAX_UI_MODULE_NAME];
+  lfo_config_t lfo_config[2];
+  rtg_config_t rtg_config;
+  bool rtg_running;
+  sample_hold_config_t sample_hold_config;
+  bool sample_hold_running;
+} scene_live_state_t;
+
+// Fill out with the live performance state: the stash captured on entering
+// programming mode when one is held, otherwise the running values.
+void scene_get_live_state(scene_live_state_t* out);
+
+// Programming-mode bracket. Entering stashes the live performance state — the
+// CC table plus everything in scene_live_state_t — so Snapshot and Scene
+// Inspect can still report what the pedal was actually doing, then re-seeds the
+// CC cache to the scene's defaults for the choosers. Exiting drops the stash so
+// the live values are authoritative again. Call these from the app-mode
+// transition, not per page.
+void scene_enter_programming_mode(void);
+void scene_exit_programming_mode(void);
 
 // Transmit the current scene's CC defaults as MIDI on the scene channel.
 void scene_send_cc_defaults(void);

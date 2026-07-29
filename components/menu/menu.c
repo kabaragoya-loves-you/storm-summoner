@@ -5,6 +5,7 @@
 #include "display_driver.h"
 #include "event_bus.h"
 #include "scene.h"
+#include "toast_overlay.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -102,20 +103,46 @@ static void deferred_scene_change_cb(lv_timer_t* timer) {
   }
 }
 
-// Handle button events for scene navigation on index page
+// Handle button events for scene navigation on index page, plus Snapshot /
+// Readout on both-button long-press.
 static void menu_button_event_handler(const event_t* event, void* context) {
   (void)context;
   if (!event) return;
-  
+
+  // Both-button hold: Snapshot at top-level menu, Readout while Inspect is open.
+  // Only meaningful in programming mode (performance uses midi_scene_handler).
+  if (event->type == EVENT_BUTTON_BOTH_LONG_PRESS) {
+    if (ui_get_app_mode() != APP_MODE_PROGRAMMING) return;
+    if (inspect_scene_is_active()) {
+      char path[160];
+      esp_err_t err = scene_readout_save(path, sizeof(path));
+      if (err == ESP_OK) toast_overlay_show("Readout saved");
+      else toast_overlay_show("Readout failed");
+      return;
+    }
+    if (menu_is_top_level()) {
+      char name[17];
+      esp_err_t err = scene_snapshot_current(name, sizeof(name));
+      if (err == ESP_OK) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "Snapshot: %s", name);
+        toast_overlay_show(msg);
+      } else {
+        toast_overlay_show("Snapshot failed");
+      }
+    }
+    return;
+  }
+
   if (!menu_is_top_level() && !inspect_scene_is_active()) return;
-  
+
   // Only in multi-scene modes
   scene_mode_t mode = scene_get_mode();
   if (mode == SCENE_MODE_SINGLE) return;
-  
+
   // Don't queue if a scene change is already pending
   if (s_pending_scene_direction != 0) return;
-  
+
   switch (event->type) {
     case EVENT_BUTTON_L_PRESS:
       s_pending_scene_direction = 1;
@@ -126,7 +153,7 @@ static void menu_button_event_handler(const event_t* event, void* context) {
     default:
       return;
   }
-  
+
   // Defer scene change + rebuild to LVGL task context to avoid stack overflow
   lv_timer_t* t = lv_timer_create(deferred_scene_change_cb, 10, NULL);
   if (t) {
@@ -154,6 +181,7 @@ void menu_init(void) {
   // Subscribe to button events for scene navigation on index page
   event_bus_subscribe(EVENT_BUTTON_L_PRESS, menu_button_event_handler, NULL);
   event_bus_subscribe(EVENT_BUTTON_R_PRESS, menu_button_event_handler, NULL);
+  event_bus_subscribe(EVENT_BUTTON_BOTH_LONG_PRESS, menu_button_event_handler, NULL);
   
   ESP_LOGI(TAG, "Menu system initialized");
 }

@@ -11,6 +11,7 @@
 #include "sample_hold.h"
 #include "ui.h"
 #include "tempo.h"
+#include "cc_state.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -365,24 +366,41 @@ static void append_header(scene_inspect_buf_t *b, const scene_t *scene) {
 }
 
 static void append_overview(scene_inspect_buf_t *b, const scene_t *scene,
-  uint8_t scene_index) {
+  uint8_t scene_index, const scene_live_state_t *live) {
   if (!scene) return;
 
   char bpm_buf[16];
   tempo_format_bpm(bpm_buf, sizeof(bpm_buf), scene->bpm_x10);
-  scene_inspect_buf_append(b, "%s BPM, %u/%u\n",
-    bpm_buf,
-    (unsigned)scene->time_signature.numerator,
-    (unsigned)scene->time_signature.denominator);
+  if (live && live->bpm_x10 != scene->bpm_x10) {
+    char now_buf[16];
+    tempo_format_bpm(now_buf, sizeof(now_buf), live->bpm_x10);
+    scene_inspect_buf_append(b, "%s BPM (now %s), %u/%u\n",
+      bpm_buf, now_buf,
+      (unsigned)scene->time_signature.numerator,
+      (unsigned)scene->time_signature.denominator);
+  } else {
+    scene_inspect_buf_append(b, "%s BPM, %u/%u\n",
+      bpm_buf,
+      (unsigned)scene->time_signature.numerator,
+      (unsigned)scene->time_signature.denominator);
+  }
 
   if (scene->send_clock) {
     scene_inspect_buf_append(b, "Clock: %s\n",
       clock_source_name(scene->clock_source));
   }
 
-  const char *mod_name = scene_get_ui_module(scene_index);
+  // Read straight off the scene we were handed. scene_get_ui_module() answers
+  // "beat" for anything that is not the loaded scene, which is wrong here:
+  // scene_inspect_at_index() may have parsed this one from flash.
+  const char *mod_name = (scene->ui_module[0] != '\0') ? scene->ui_module : "beat";
   const char *screen_title = ui_get_module_title(mod_name);
-  scene_inspect_buf_append(b, "Screen: %s\n", screen_title);
+  if (live && live->ui_module[0] && strcmp(live->ui_module, mod_name) != 0) {
+    scene_inspect_buf_append(b, "Screen: %s (now %s)\n", screen_title,
+      ui_get_module_title(live->ui_module));
+  } else {
+    scene_inspect_buf_append(b, "Screen: %s\n", screen_title);
+  }
 
   scene_inspect_buf_append(b, "Divider: %s\n",
     beat_divider_name(scene->beat_divider));
@@ -426,7 +444,14 @@ static void append_overview(scene_inspect_buf_t *b, const scene_t *scene,
     uint8_t pc = scene->program_number;
     if (pc < index_base) pc = index_base;
     int display_preset = (int)pc - (int)index_base + 1;
-    scene_inspect_buf_append(b, "Preset: %d\n", display_preset);
+    if (live && live->program_number != scene->program_number) {
+      uint8_t now_pc = live->program_number;
+      if (now_pc < index_base) now_pc = index_base;
+      scene_inspect_buf_append(b, "Preset: %d (now %d)\n", display_preset,
+        (int)now_pc - (int)index_base + 1);
+    } else {
+      scene_inspect_buf_append(b, "Preset: %d\n", display_preset);
+    }
   }
 }
 
@@ -690,23 +715,57 @@ static const char *inspect_lfo_division_note_label(lfo_note_division_t div) {
 }
 
 
+// The rate line's label depends on the rate mode, which itself can change at
+// runtime, so split it into label and value to annotate either independently.
+static void lfo_rate_parts(const lfo_config_t *c, const char **label, char *val,
+  size_t cap) {
+  if (c->rate_mode == LFO_RATE_MODE_TEMPO) {
+    *label = "Division";
+    snprintf(val, cap, "%s", inspect_lfo_division_note_label(c->division));
+  } else {
+    *label = "Time";
+    snprintf(val, cap, "%.1fHz", (float)c->rate_hz_x100 / 100.0f);
+  }
+}
+
 static void append_lfo_slot(scene_inspect_buf_t *b, uint8_t slot,
-  const scene_t *scene, uint8_t scene_index) {
+  const scene_t *scene, uint8_t scene_index, const scene_live_state_t *live) {
   const lfo_config_t *config = (slot == 0) ? &scene->lfo1_config : &scene->lfo2_config;
+  const lfo_config_t *now = live ? &live->lfo_config[slot] : NULL;
   const continuous_mapping_t *mapping = (slot == 0) ? &scene->lfo1 : &scene->lfo2;
   const char *label = (slot == 0) ? "LFO 1" : "LFO 2";
 
-  if (!config->enabled) return;
+  // An LFO started at runtime earns a section even if the scene had it off.
+  if (!config->enabled && !(now && now->enabled)) return;
 
-  scene_inspect_buf_append(b, "%s: %s\n", label,
-    inspect_lfo_waveform_label(config->waveform));
-
-  if (config->rate_mode == LFO_RATE_MODE_TEMPO) {
-    scene_inspect_buf_append(b, "Division: %s\n",
-      inspect_lfo_division_note_label(config->division));
+  if (now && now->waveform != config->waveform) {
+    scene_inspect_buf_append(b, "%s: %s (now %s)\n", label,
+      inspect_lfo_waveform_label(config->waveform),
+      inspect_lfo_waveform_label(now->waveform));
   } else {
-    float hz = (float)config->rate_hz_x100 / 100.0f;
-    scene_inspect_buf_append(b, "Time: %.1fHz\n", hz);
+    scene_inspect_buf_append(b, "%s: %s\n", label,
+      inspect_lfo_waveform_label(config->waveform));
+  }
+
+  if (now) scene_inspect_buf_append(b, "State: %s\n", now->enabled ? "Running" : "Stopped");
+
+  const char *rate_label;
+  char rate_val[32];
+  lfo_rate_parts(config, &rate_label, rate_val, sizeof(rate_val));
+  if (now) {
+    const char *now_label;
+    char now_val[32];
+    lfo_rate_parts(now, &now_label, now_val, sizeof(now_val));
+    if (strcmp(rate_label, now_label) != 0) {
+      scene_inspect_buf_append(b, "%s: %s (now %s %s)\n", rate_label, rate_val,
+        now_label, now_val);
+    } else if (strcmp(rate_val, now_val) != 0) {
+      scene_inspect_buf_append(b, "%s: %s (now %s)\n", rate_label, rate_val, now_val);
+    } else {
+      scene_inspect_buf_append(b, "%s: %s\n", rate_label, rate_val);
+    }
+  } else {
+    scene_inspect_buf_append(b, "%s: %s\n", rate_label, rate_val);
   }
 
   if (mapping->enabled) {
@@ -729,21 +788,53 @@ static const char *inspect_rtg_generator_label(rtg_generator_t gen) {
   }
 }
 
-static void append_rtg(scene_inspect_buf_t *b, const scene_t *scene) {
-  if (!scene || !scene->rtg_config.enabled) return;
+static void rtg_rate_text(const rtg_config_t *c, char *out, size_t cap) {
+  if (c->rate_mode == RTG_RATE_MODE_FREE)
+    snprintf(out, cap, "%.1f Hz", (float)c->rate_hz_x100 / 100.0f);
+  else
+    snprintf(out, cap, "%.1fx BPM", (float)c->sync_mult_x1000 / 1000.0f);
+}
 
+static void append_rtg(scene_inspect_buf_t *b, const scene_t *scene,
+  const scene_live_state_t *live) {
+  if (!scene) return;
+
+  // RTG can be toggled on at runtime regardless of the stored enabled flag, so
+  // a running engine earns a section even when the scene had it switched off.
   const rtg_config_t *rc = &scene->rtg_config;
-  scene_inspect_buf_append(b, "RTG: %s\n", inspect_rtg_generator_label(rc->generator));
+  const rtg_config_t *now = live ? &live->rtg_config : NULL;
+  if (!rc->enabled && !(live && live->rtg_running)) return;
 
-  if (rc->rate_mode == RTG_RATE_MODE_FREE) {
-    float hz = (float)rc->rate_hz_x100 / 100.0f;
-    scene_inspect_buf_append(b, "Rate: %.1f Hz\n", hz);
+  if (now && now->generator != rc->generator) {
+    scene_inspect_buf_append(b, "RTG: %s (now %s)\n",
+      inspect_rtg_generator_label(rc->generator),
+      inspect_rtg_generator_label(now->generator));
   } else {
-    float mult = (float)rc->sync_mult_x1000 / 1000.0f;
-    scene_inspect_buf_append(b, "Rate: %.1fx BPM\n", mult);
+    scene_inspect_buf_append(b, "RTG: %s\n", inspect_rtg_generator_label(rc->generator));
   }
 
-  scene_inspect_buf_append(b, "Glide: %s\n\n", rc->glide ? "On" : "Off");
+  if (live) scene_inspect_buf_append(b, "State: %s\n", live->rtg_running ? "Running" : "Stopped");
+
+  char rate[32];
+  rtg_rate_text(rc, rate, sizeof(rate));
+  if (now) {
+    char now_rate[32];
+    rtg_rate_text(now, now_rate, sizeof(now_rate));
+    if (strcmp(rate, now_rate) != 0) {
+      scene_inspect_buf_append(b, "Rate: %s (now %s)\n", rate, now_rate);
+    } else {
+      scene_inspect_buf_append(b, "Rate: %s\n", rate);
+    }
+  } else {
+    scene_inspect_buf_append(b, "Rate: %s\n", rate);
+  }
+
+  if (now && now->glide != rc->glide) {
+    scene_inspect_buf_append(b, "Glide: %s (now %s)\n\n", rc->glide ? "On" : "Off",
+      now->glide ? "On" : "Off");
+  } else {
+    scene_inspect_buf_append(b, "Glide: %s\n\n", rc->glide ? "On" : "Off");
+  }
 }
 
 static const char *inspect_sh_mode_label(sample_hold_mode_t mode) {
@@ -753,21 +844,46 @@ static const char *inspect_sh_mode_label(sample_hold_mode_t mode) {
   }
 }
 
+static void sh_rate_text(const sample_hold_config_t *c, char *out, size_t cap) {
+  if (c->rate_mode == SAMPLE_HOLD_RATE_MODE_FREE)
+    snprintf(out, cap, "%.1f Hz", (float)c->rate_hz_x100 / 100.0f);
+  else
+    snprintf(out, cap, "%.1fx BPM", (float)c->sync_mult_x1000 / 1000.0f);
+}
+
 static void append_sample_hold(scene_inspect_buf_t *b, const scene_t *scene,
-  uint8_t scene_index) {
-  if (!scene || !scene->sample_hold_config.enabled) return;
+  uint8_t scene_index, const scene_live_state_t *live) {
+  if (!scene) return;
 
   const sample_hold_config_t *config = &scene->sample_hold_config;
+  const sample_hold_config_t *now = live ? &live->sample_hold_config : NULL;
   const continuous_mapping_t *mapping = &scene->sample_hold;
+  if (!config->enabled && !(live && live->sample_hold_running)) return;
 
-  scene_inspect_buf_append(b, "S+H: %s\n", inspect_sh_mode_label(config->mode));
-
-  if (config->rate_mode == SAMPLE_HOLD_RATE_MODE_FREE) {
-    float hz = (float)config->rate_hz_x100 / 100.0f;
-    scene_inspect_buf_append(b, "Timing: %.1f Hz\n", hz);
+  if (now && now->mode != config->mode) {
+    scene_inspect_buf_append(b, "S+H: %s (now %s)\n", inspect_sh_mode_label(config->mode),
+      inspect_sh_mode_label(now->mode));
   } else {
-    float mult = (float)config->sync_mult_x1000 / 1000.0f;
-    scene_inspect_buf_append(b, "Timing: %.1fx BPM\n", mult);
+    scene_inspect_buf_append(b, "S+H: %s\n", inspect_sh_mode_label(config->mode));
+  }
+
+  if (live) {
+    scene_inspect_buf_append(b, "State: %s\n",
+      live->sample_hold_running ? "Running" : "Stopped");
+  }
+
+  char timing[32];
+  sh_rate_text(config, timing, sizeof(timing));
+  if (now) {
+    char now_timing[32];
+    sh_rate_text(now, now_timing, sizeof(now_timing));
+    if (strcmp(timing, now_timing) != 0) {
+      scene_inspect_buf_append(b, "Timing: %s (now %s)\n", timing, now_timing);
+    } else {
+      scene_inspect_buf_append(b, "Timing: %s\n", timing);
+    }
+  } else {
+    scene_inspect_buf_append(b, "Timing: %s\n", timing);
   }
 
   if (mapping->enabled) {
@@ -838,8 +954,59 @@ static void append_pending(scene_inspect_buf_t *b) {
     (unsigned)(scene_get_pending_index() + 1));
 }
 
+// A CC earns a line if the scene stores a default for it, or if it was changed
+// during this scene's run. Untouched CCs the scene says nothing about are
+// omitted, however well known their value is. In a live view a changed CC
+// reports its runtime value and everything else its stored default; a stored
+// view shows the scene's defaults alone. Snapshot bakes exactly this list.
+static void append_current_cc_values(scene_inspect_buf_t *b, const scene_t *scene,
+  uint8_t scene_index, const scene_live_state_t *live) {
+  if (!scene) return;
+
+  const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
+  bool any = false;
+
+  for (int cc = 0; cc < 128; cc++) {
+    bool has_default = scene->cc_defaults[cc] != SCENE_CC_DEFAULT_NONE;
+    bool changed = live && cc_state_effective_is_dirty((uint8_t)cc);
+    if (!has_default && !changed) continue;
+
+    if (!any) {
+      scene_inspect_buf_append(b, live ? "\nCURRENT CC VALUES\n" : "\nCC DEFAULTS\n");
+      any = true;
+    }
+
+    const midi_control_t *ctrl = device
+      ? assets_get_control_by_cc(device, (uint8_t)cc) : NULL;
+    const char *name = (ctrl && ctrl->name) ? ctrl->name : NULL;
+
+    uint8_t value = changed ? cc_state_effective_get((uint8_t)cc)
+      : scene->cc_defaults[cc];
+
+    char valbuf[24];
+    if (ctrl && ctrl->discrete_count > 0 && ctrl->discrete_values) {
+      const char *dn = NULL;
+      for (int d = 0; d < ctrl->discrete_count; d++) {
+        if (ctrl->discrete_values[d].value == value) {
+          dn = ctrl->discrete_values[d].name;
+          break;
+        }
+      }
+      if (dn) snprintf(valbuf, sizeof(valbuf), "%.20s", dn);
+      else snprintf(valbuf, sizeof(valbuf), "%u", (unsigned)value);
+    } else {
+      snprintf(valbuf, sizeof(valbuf), "%u", (unsigned)value);
+    }
+
+    if (name)
+      scene_inspect_buf_append(b, "%s: %s\n", name, valbuf);
+    else
+      scene_inspect_buf_append(b, "CC%u: %s\n", (unsigned)cc, valbuf);
+  }
+}
+
 bool scene_inspect_build(const scene_t *scene, uint8_t scene_index, char *buf,
-  size_t cap) {
+  size_t cap, bool live_view) {
   if (!buf || cap == 0) return false;
 
   if (!scene) {
@@ -853,8 +1020,20 @@ bool scene_inspect_build(const scene_t *scene, uint8_t scene_index, char *buf,
   scene_inspect_buf_t b;
   scene_inspect_buf_init(&b, buf, cap);
 
+  // Tempo, preset, screen and the modulation engines all drift at runtime
+  // without writing back to the scene. Stored values stay the headline
+  // everywhere; live ones are annotated alongside them, but only in a live view
+  // of the current scene. A definition lookup (the web Scenes tab) passes
+  // live_view = false and sees the scene exactly as it is on disk.
+  scene_live_state_t live_state;
+  const scene_live_state_t *live = NULL;
+  if (live_view && scene_index == scene_get_current_index()) {
+    scene_get_live_state(&live_state);
+    live = &live_state;
+  }
+
   append_header(&b, scene);
-  append_overview(&b, scene, scene_index);
+  append_overview(&b, scene, scene_index, live);
   scene_inspect_buf_append(&b, "\n");
 
   append_touchpads(&b, scene, scene_index);
@@ -866,20 +1045,21 @@ bool scene_inspect_build(const scene_t *scene, uint8_t scene_index, char *buf,
   append_continuous_mapping_block(&b, "Ambient Light", &scene->als, scene_index,
     scene->als_tempo_nudge_pct, -1);
   append_buttons(&b, scene, scene_index);
-  append_lfo_slot(&b, 0, scene, scene_index);
-  append_lfo_slot(&b, 1, scene, scene_index);
+  append_lfo_slot(&b, 0, scene, scene_index, live);
+  append_lfo_slot(&b, 1, scene, scene_index, live);
   append_inspect_action(&b, "Bump", &scene->bump, scene_index, true, true);
   append_on_load(&b, scene, scene_index);
   append_on_play(&b, scene, scene_index);
-  append_sample_hold(&b, scene, scene_index);
+  append_sample_hold(&b, scene, scene_index, live);
   append_continuous_mapping_block(&b, "Tilt X", &scene->tilt_x, scene_index,
     scene->tilt_x_tempo_nudge_pct, -1);
   append_continuous_mapping_block(&b, "Tilt Y", &scene->tilt_y, scene_index,
     scene->tilt_y_tempo_nudge_pct, -1);
-  append_rtg(&b, scene);
+  append_rtg(&b, scene, live);
   append_cc_triggers(&b, scene, scene_index);
   append_note_track(&b, scene, scene_index);
   append_pending(&b);
+  append_current_cc_values(&b, scene, scene_index, live);
 
   append_truncation_marker(&b);
   return !b.truncated;

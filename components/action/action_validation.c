@@ -149,6 +149,7 @@ bool action_is_fire_and_forget_for(const action_t* action) {
     case ACTION_RANDOMIZE:
     case ACTION_RESET:
     case ACTION_BOOMERANG:
+    case ACTION_SNAPSHOT:
     // ACTION_LFO -- all variants (START/STOP/TOGGLE/MODIFY) are press-only
     // one-shots, so fire-and-forget at the category level. Rule 4 of the
     // validator additionally rejects START/STOP/TOGGLE on ON_LOAD (LFOs

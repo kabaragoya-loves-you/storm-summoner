@@ -64,7 +64,7 @@
 #define ASSETS_BASE_PATH "/assets"
 #define MAX_PATH_LEN 320  // Must accommodate paths + d_name (255)
 #define CAT_MAX_SIZE 4096
-#define SCENE_INSPECT_TEXT_SIZE 2048
+#define SCENE_INSPECT_TEXT_SIZE 4096
 #define SCENE_JSON_MAX_BYTES (256 * 1024)
 
 // Update protocol states
@@ -2432,6 +2432,34 @@ static void process_command(const char *cmd) {
     while (arg && *arg == ' ') arg++;
     cdc_send_scene_inspect(arg && *arg ? arg : NULL);
 
+  } else if (strcmp(cmd, "SNAPSHOT") == 0) {
+    char name[17];
+    esp_err_t err = scene_snapshot_current(name, sizeof(name));
+    if (err == ESP_OK) {
+      char json[96];
+      snprintf(json, sizeof(json), "{\"ok\":true,\"name\":\"%s\"}", name);
+      send_response(json);
+    } else {
+      char json[96];
+      snprintf(json, sizeof(json), "{\"ok\":false,\"error\":\"%s\"}",
+        esp_err_to_name(err));
+      send_response(json);
+    }
+
+  } else if (strcmp(cmd, "READOUT") == 0) {
+    char path[160];
+    esp_err_t err = scene_readout_save(path, sizeof(path));
+    if (err == ESP_OK) {
+      char json[192];
+      snprintf(json, sizeof(json), "{\"ok\":true,\"path\":\"%s\"}", path);
+      send_response(json);
+    } else {
+      char json[96];
+      snprintf(json, sizeof(json), "{\"ok\":false,\"error\":\"%s\"}",
+        esp_err_to_name(err));
+      send_response(json);
+    }
+
   } else if (strncmp(cmd, "SCENE_GET ", 10) == 0) {
     cdc_send_scene_get(cmd + 10);
 
@@ -3037,6 +3065,7 @@ static void assets_cmd_rm(const char *path) {
   }
 
   if (result == 0) {
+    ESP_LOGI(TAG, "RM removed %s %s", S_ISDIR(st.st_mode) ? "dir" : "file", full_path);
     // Trigger manifest update if needed
     assets_file_deleted(full_path);
     send_response("OK");
@@ -3063,6 +3092,7 @@ static void assets_cmd_rmrf(const char *path) {
   esp_err_t result = assets_recursive_delete(full_path);
 
   if (result == ESP_OK) {
+    ESP_LOGI(TAG, "RMRF removed %s", full_path);
     // Trigger manifest update for the folder
     assets_file_deleted(full_path);
     send_response("OK");

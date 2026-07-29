@@ -339,14 +339,16 @@ static void button_process_press(uint8_t button_id) {
   if (other_button->pressed) {
     // Second button pressed - cancel the first button's chord timer
     xTimerStopFromISR(other_button->chord_timer, &higher_priority_woken);
-    
-    // Stop individual long press timers
+
+    // Stop individual long press timers (neither should fire as a single)
     xTimerStopFromISR(g_button_left.long_press_timer, &higher_priority_woken);
     xTimerStopFromISR(g_button_right.long_press_timer, &higher_priority_woken);
-    
+
     g_both_pressed = true;
     g_first_button_pressed = 0xFF; // Clear first button tracking
-    
+    g_button_left.long_press_fired = false;
+    g_button_right.long_press_fired = false;
+
     // Post both-press event immediately
     event_t event = {
       .type = EVENT_BUTTON_BOTH_PRESS,
@@ -356,7 +358,12 @@ static void button_process_press(uint8_t button_id) {
       .data.button.duration_ms = 0
     };
     event_bus_post_from_isr(&event, &higher_priority_woken);
-    
+
+    // Restart the just-pressed button's long-press timer so a continued
+    // hold of both emits EVENT_BUTTON_BOTH_LONG_PRESS (callback checks
+    // g_both_pressed).
+    xTimerStartFromISR(button->long_press_timer, &higher_priority_woken);
+
     if (g_logging_enabled) {
       ESP_EARLY_LOGI(TAG, "Both buttons pressed");
     }

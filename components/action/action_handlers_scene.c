@@ -7,8 +7,10 @@
 #include "touchwheel_mode_mapping.h"
 #include "ui.h"
 #include "inspect_overlay.h"
+#include "toast_overlay.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include <stdio.h>
 
 static const char* TAG = "action_handlers_scene";
 
@@ -502,6 +504,21 @@ action_handle_result_t action_handlers_scene_dispatch(
         inspect_overlay_show();
       } else {
         inspect_overlay_hide();
+      }
+      return ACTION_HANDLED;
+
+    case ACTION_SNAPSHOT:
+      if (is_press) {
+        char name[17];
+        esp_err_t err = scene_snapshot_current(name, sizeof(name));
+        if (err == ESP_OK) {
+          char msg[48];
+          snprintf(msg, sizeof(msg), "Snapshot: %s", name);
+          toast_overlay_show(msg);
+        } else {
+          toast_overlay_show("Snapshot failed");
+          ESP_LOGW(TAG, "Snapshot failed: %s", esp_err_to_name(err));
+        }
       }
       return ACTION_HANDLED;
 

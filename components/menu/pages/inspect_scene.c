@@ -9,7 +9,7 @@
 #include <string.h>
 
 #define TAG "INSPECT_SCENE"
-#define INSPECT_TEXT_BUF_SIZE 2048
+#define INSPECT_TEXT_BUF_SIZE 4096
 
 // Touch events use logical pad indices; on this PCB Alpha is logical 9, Gamma is 11.
 #define INSPECT_PAD_ALPHA_LOGICAL 9
@@ -118,7 +118,7 @@ lv_obj_t *menu_page_inspect_scene_create(void) {
   scene_t *scene = scene_get_current();
   uint8_t scene_index = scene_get_current_index();
 
-  if (!scene_inspect_build(scene, scene_index, s_inspect_text, sizeof(s_inspect_text))) {
+  if (!scene_inspect_build(scene, scene_index, s_inspect_text, sizeof(s_inspect_text), true)) {
     ESP_LOGW(TAG, "Inspect text truncated");
   }
 

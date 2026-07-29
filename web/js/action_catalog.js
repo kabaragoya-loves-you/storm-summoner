@@ -84,7 +84,7 @@ window.ActionCatalog = (function () {
     'none', 'control', 'preset', 'scene', 'confirm_pending', 'transport', 'tempo',
     'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'clock', 'cut', 'ui',
     'param', 'rtg', 'sample_hold', 'punch_in', 'boomerang',
-    'inspect_scene', 'reset'
+    'inspect_scene', 'snapshot', 'reset'
   ]
 
   const TYPE_LABELS = {
@@ -109,6 +109,7 @@ window.ActionCatalog = (function () {
     punch_in: 'Punch-In',
     boomerang: 'Boomerang',
     inspect_scene: 'Inspect Scene',
+    snapshot: 'Snapshot',
     reset: 'Reset'
   }
 

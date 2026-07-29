@@ -101,7 +101,10 @@ typedef enum {
 
   // Performance-mode scene summary overlay (hold to show, release to dismiss)
   ACTION_INSPECT_SCENE,
-  
+
+  // Duplicate current scene with dirty CC values baked into cc_defaults
+  ACTION_SNAPSHOT,
+
   ACTION_MAX
 } action_type_t;
 
@@ -585,6 +588,7 @@ action_t action_create_set_tempo(uint16_t bpm);
 action_t action_create_transport(action_variant_t variant);
 action_t action_create_reset(void);
 action_t action_create_inspect_scene(void);
+action_t action_create_snapshot(void);
 action_t action_create_piano_pedal(uint8_t cc_number);
 
 // Get action type name (for debugging/console and the type-picker roller).

@@ -123,6 +123,12 @@ application.register(
           const cmd = sceneBtn.getAttribute('data-scene-cmd')
           if (cmd) this.sendSceneAction(cmd)
         }
+
+        const toolBtn = e.target.closest('[data-scene-tool]')
+        if (toolBtn) {
+          const tool = toolBtn.getAttribute('data-scene-tool')
+          if (tool) this.sendSceneTool(tool)
+        }
       })
 
       this.element.addEventListener('focusin', e => {
@@ -934,7 +940,88 @@ application.register(
           ${sceneRows}
           ${clockRows}
         </div>
+        ${scene ? `
+        <div class="info-scene-tools">
+          <wa-button size="small" variant="neutral" appearance="outlined"
+                     data-scene-tool="snapshot">
+            Snapshot
+          </wa-button>
+          <wa-button size="small" variant="neutral" appearance="outlined"
+                     data-scene-tool="readout">
+            Readout
+          </wa-button>
+          <span class="info-scene-tool-status hidden" data-info-scene-status
+                aria-live="polite"></span>
+        </div>` : ''}
       `
+    }
+
+    flashSceneStatus (message) {
+      const el = this.sceneCardTarget.querySelector('[data-info-scene-status]')
+      if (!el) return
+      if (this._sceneStatusTimer) clearTimeout(this._sceneStatusTimer)
+      el.textContent = message
+      el.classList.remove('hidden')
+      this._sceneStatusTimer = setTimeout(() => {
+        el.classList.add('hidden')
+        el.textContent = ''
+        this._sceneStatusTimer = null
+      }, 2500)
+    }
+
+    async sendSceneTool (tool) {
+      if (!this.connection.isConnected) return
+      if (this._sceneToolBusy) return
+      const cmd = tool === 'snapshot' ? 'SNAPSHOT' : tool === 'readout' ? 'READOUT' : null
+      if (!cmd) return
+
+      this._sceneToolBusy = true
+      try {
+        const response = await this.connection.runSerialTask(async () => {
+          if (this.connection.mode || this.connection._deviceScenesActive) {
+            await this.connection.ensureDeviceIdle({ leavePumpSuspended: true })
+          }
+          const resp = await this.connection._sendCommandViaPump(
+            cmd,
+            10000,
+            data => typeof data.ok === 'boolean'
+          )
+          await this.connection._releasePumpAfterCommand()
+          this.connection._resumeRxPump()
+          return resp
+        })
+        // _sendCommandViaPump resolves to the JSON response as a string.
+        let result = null
+        if (response && !response.startsWith('ERROR:')) {
+          try {
+            result = JSON.parse(response)
+          } catch (_) {
+            result = null
+          }
+        }
+
+        if (result?.ok) {
+          if (tool === 'snapshot') {
+            this.flashSceneStatus(
+              result.name ? `Snapshot: ${result.name}` : 'Snapshot created'
+            )
+          } else {
+            this.flashSceneStatus('Readout saved')
+          }
+        } else {
+          this.flashSceneStatus(
+            tool === 'snapshot' ? 'Snapshot failed' : 'Readout failed'
+          )
+          console.warn(`${cmd} failed:`, response)
+        }
+      } catch (err) {
+        this.flashSceneStatus(
+          tool === 'snapshot' ? 'Snapshot failed' : 'Readout failed'
+        )
+        console.error(`${cmd} error:`, err)
+      } finally {
+        this._sceneToolBusy = false
+      }
     }
 
     formatTrsType (trsType) {

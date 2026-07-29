@@ -791,6 +791,7 @@ static const char *ainspect_family_name(action_type_t type) {
     case ACTION_RANDOMIZE: return "Randomize";
     case ACTION_BOOMERANG: return "Boomerang";
     case ACTION_INSPECT_SCENE: return "Inspect Scene";
+    case ACTION_SNAPSHOT: return "Snapshot";
     default: return action_type_to_string(type);
   }
 }
@@ -875,6 +876,7 @@ static bool ainspect_action_is_singleton(action_type_t type) {
     case ACTION_RESET:
     case ACTION_CONFIRM_PENDING:
     case ACTION_INSPECT_SCENE:
+    case ACTION_SNAPSHOT:
     case ACTION_PUNCH_IN:
     case ACTION_RANDOMIZE:
     case ACTION_BOOMERANG:

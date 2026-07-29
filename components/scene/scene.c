@@ -26,6 +26,7 @@
 #include "sample_hold.h"
 #include "version.h"
 #include "scene_inspect.h"
+#include "cc_state.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -33,6 +34,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 static const char* TAG = "scene";
 
@@ -173,6 +175,18 @@ static scene_manager_t g_scene_manager = {
 // (PC send, on-load actions, LFO start) was skipped because we were in
 // programming mode. It will be replayed on return to performance mode.
 static bool s_needs_deferred_init = false;
+
+// Performance state captured on the way into programming mode. Entering
+// programming re-seeds the CC cache and swaps the draw module for the menu, so
+// by the time a programming-mode Snapshot or readout runs the live picture is
+// already gone. See scene_enter_programming_mode().
+static scene_live_state_t s_perf_stash;
+static bool s_perf_stash_valid = false;
+
+static void perf_stash_drop(void) {
+  cc_state_stash_exit();
+  s_perf_stash_valid = false;
+}
 
 // Helper: Save current scene immediately if in programming mode
 // Programming mode changes are always persisted; performance mode changes are temporary
@@ -2208,12 +2222,14 @@ esp_err_t scene_init(void) {
                             : initial_scene->program_number;
   
   // In PRESET_SYNC mode, always send PC; otherwise respect per-scene flag
+  scene_seed_cc_cache();
   if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || initial_scene->send_pc_on_load) {
     device_config_set_program(initial_program);
     ESP_LOGI(TAG, "Sent initial PC %d on channel %d", initial_program, device_config_get_channel());
   } else {
     ESP_LOGI(TAG, "Scene loaded but send_pc_on_load=false, PC not sent");
   }
+  scene_send_cc_defaults();
   
   // Configure tempo settings for initial scene
   tempo_set_bpm_x10(initial_scene->bpm_x10);
@@ -2251,6 +2267,9 @@ esp_err_t scene_init(void) {
   sample_hold_apply_config(&initial_scene->sample_hold_config);
   initial_scene->sample_hold.enabled = initial_scene->sample_hold_config.enabled;
   sample_hold_apply_start_mode();
+
+  // Boot-time sends are a clean baseline.
+  cc_state_clear_dirty_all();
 
   // Sync tilt per-axis enable so the unified LIS3DHTR sampling task starts
   // polling if this scene has tilt enabled. Without this, the persisted
@@ -2458,14 +2477,23 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   sample_hold_apply_config(&new_scene->sample_hold_config);
   new_scene->sample_hold.enabled = new_scene->sample_hold_config.enabled;
   
-  // MIDI phase: PC send, on-load actions, LFO start
+  // MIDI phase: seed CC cache, PC, CC defaults, on-load actions, LFO start
   // In programming mode, defer these until returning to performance mode
   if (!ui_is_in_programming_mode()) {
+    // Reset CC cache to device minimums and overlay this scene's CC defaults
+    // so variant/no-op resolution is correct (no MIDI sent yet).
+    scene_seed_cc_cache();
+
     if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || new_scene->send_pc_on_load) {
       device_config_set_program(program);
       ESP_LOGD(TAG, "Sent PC %d on channel %d", program, device_config_get_channel());
     }
-    
+
+    // Transmit the scene's CC defaults after the PC (so they land on the
+    // selected preset) and before on_load actions (so an explicit on_load
+    // can override).
+    scene_send_cc_defaults();
+
     if (new_scene->num_on_load_actions > 0) {
       ESP_LOGD(TAG, "Executing %d on_load action(s)", new_scene->num_on_load_actions);
       for (int i = 0; i < new_scene->num_on_load_actions; i++) {
@@ -2473,13 +2501,21 @@ esp_err_t scene_set_current(uint8_t scene_index) {
         action_execute(&new_scene->on_load[i], 127, true);
       }
     }
-    
+
     lfo_apply_start_modes();
     rtg_apply_start_mode();
     sample_hold_apply_start_mode();
+
+    // Load-time sends are a clean baseline — clear dirty so only post-load
+    // runtime changes are tracked.
+    cc_state_clear_dirty_all();
     s_needs_deferred_init = false;
   } else {
     ESP_LOGI(TAG, "Programming mode: deferring MIDI phase for scene %d", scene_index + 1);
+    // The stash belongs to the scene we just left, so drop it before seeding.
+    perf_stash_drop();
+    // Still seed the cache so programming UI / variant resolution is correct.
+    scene_seed_cc_cache();
     s_needs_deferred_init = true;
   }
 
@@ -2556,8 +2592,49 @@ void scene_seed_cc_cache(void) {
   for (int cc = 0; cc < 128; cc++) {
     uint8_t v = scene->cc_defaults[cc];
     if (v == SCENE_CC_DEFAULT_NONE) continue;
-    action_set_cc_value((uint8_t)cc, v);
+    cc_state_set((uint8_t)cc, v, false);
   }
+  // Seed is a clean baseline — nothing is dirty yet.
+  cc_state_clear_dirty_all();
+}
+
+static void scene_read_live_state(scene_live_state_t* out) {
+  memset(out, 0, sizeof(*out));
+  out->bpm_x10 = tempo_get_bpm_x10();
+  out->program_number = device_config_get_program();
+
+  ui_draw_module_t* mod = ui_get_current_module();
+  if (mod && mod->name) {
+    strlcpy(out->ui_module, mod->name, sizeof(out->ui_module));
+  }
+
+  lfo_get_config(0, &out->lfo_config[0]);
+  lfo_get_config(1, &out->lfo_config[1]);
+  rtg_get_config(&out->rtg_config);
+  out->rtg_running = rtg_is_running();
+  sample_hold_get_config(&out->sample_hold_config);
+  out->sample_hold_running = sample_hold_is_running();
+}
+
+void scene_get_live_state(scene_live_state_t* out) {
+  if (!out) return;
+  if (s_perf_stash_valid) {
+    *out = s_perf_stash;
+    return;
+  }
+  scene_read_live_state(out);
+}
+
+void scene_enter_programming_mode(void) {
+  cc_state_stash_enter();
+  // Read before the seed and before ui.c swaps the draw module for the menu.
+  scene_read_live_state(&s_perf_stash);
+  s_perf_stash_valid = true;
+  scene_seed_cc_cache();
+}
+
+void scene_exit_programming_mode(void) {
+  perf_stash_drop();
 }
 
 void scene_send_cc_defaults(void) {
@@ -2624,6 +2701,9 @@ void scene_apply_deferred_init(void) {
   lfo_apply_start_modes();
   rtg_apply_start_mode();
   sample_hold_apply_start_mode();
+
+  // Load-time sends are a clean baseline.
+  cc_state_clear_dirty_all();
 
   // Restore LED state based on current scene's proximity setting
   // (proximity may have been enabled/disabled in programming mode)
@@ -5149,7 +5229,8 @@ static const char* action_type_json_names[] = {
   [ACTION_SAMPLE_HOLD] = "sample_hold",
   [ACTION_PUNCH_IN] = "punch_in",
   [ACTION_BOOMERANG] = "boomerang",
-  [ACTION_INSPECT_SCENE] = "inspect_scene"
+  [ACTION_INSPECT_SCENE] = "inspect_scene",
+  [ACTION_SNAPSHOT] = "snapshot"
 };
 
 // Variant string table for consolidated action families. Indexed by
@@ -8659,6 +8740,9 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
   scene->sample_hold.enabled = scene->sample_hold_config.enabled;
 
   if (!ui_is_in_programming_mode()) {
+    // Reset CC cache and overlay defaults before PC / on_load.
+    scene_seed_cc_cache();
+
     uint8_t program;
     if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
       int ordinal = 0;
@@ -8674,6 +8758,9 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
     if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || scene->send_pc_on_load) {
       device_config_set_program(program);
     }
+
+    scene_send_cc_defaults();
+
     if (scene->num_on_load_actions > 0) {
       for (int i = 0; i < scene->num_on_load_actions; i++) {
         action_set_next_trigger_source(ACTION_SOURCE_ON_LOAD, (uint8_t)i);
@@ -8683,8 +8770,12 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
     lfo_apply_start_modes();
     rtg_apply_start_mode();
     sample_hold_apply_start_mode();
+    cc_state_clear_dirty_all();
     s_needs_deferred_init = false;
   } else {
+    // The stash belongs to the scene we just left, so drop it before seeding.
+    perf_stash_drop();
+    scene_seed_cc_cache();
     s_needs_deferred_init = true;
   }
 
@@ -8792,7 +8883,8 @@ esp_err_t scene_inspect_at_index(uint8_t scene_index, char *buf, size_t cap,
   }
 
   s_device_lookup_scene = scene;
-  bool complete = scene_inspect_build(scene, scene_index, buf, cap);
+  // Definition lookup for the web Scenes tab: render the scene as stored.
+  bool complete = scene_inspect_build(scene, scene_index, buf, cap, false);
   s_device_lookup_scene = NULL;
   if (truncated_out) *truncated_out = !complete;
 
@@ -9650,7 +9742,93 @@ esp_err_t scene_delete(uint8_t scene_index) {
   return ESP_OK;
 }
 
-esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
+// A cycle action's cursor is mutated in place at runtime, so a copy taken
+// mid-performance would start the new scene part-way through the cycle.
+static void snapshot_reset_cycle_cursor(action_t* a) {
+  switch (a->type) {
+    case ACTION_CONTROL:    a->params.control.current_index = 0; break;
+    case ACTION_PRESET:     a->params.preset.current_index = 0; break;
+    case ACTION_TEMPO:      a->params.tempo.current_index = 0; break;
+    case ACTION_TOUCHWHEEL: a->params.tw_mode.current_index = 0; break;
+    case ACTION_UI:         a->params.ui.current_index = 0; break;
+    case ACTION_PARAM:      a->params.tw_param.current_index = 0; break;
+    default: break;
+  }
+}
+
+static void snapshot_reset_all_cycle_cursors(scene_t* s) {
+  for (int i = 0; i < NUM_TOUCHPADS; i++) snapshot_reset_cycle_cursor(&s->touchpads[i].action);
+  for (int i = 0; i < MAX_ON_LOAD_ACTIONS; i++) snapshot_reset_cycle_cursor(&s->on_load[i]);
+  for (int i = 0; i < MAX_ON_PLAY_ACTIONS; i++) snapshot_reset_cycle_cursor(&s->on_play[i]);
+  for (int i = 0; i < MAX_ON_FLAG_RAISED_ACTIONS; i++) snapshot_reset_cycle_cursor(&s->flag_raised[i]);
+  for (int i = 0; i < MAX_ON_FLAG_LOWERED_ACTIONS; i++) snapshot_reset_cycle_cursor(&s->flag_lowered[i]);
+  for (int i = 0; i < NUM_CC_TRIGGERS; i++) snapshot_reset_cycle_cursor(&s->cc_triggers[i].action);
+  snapshot_reset_cycle_cursor(&s->button_left);
+  snapshot_reset_cycle_cursor(&s->button_right);
+  snapshot_reset_cycle_cursor(&s->button_both);
+  snapshot_reset_cycle_cursor(&s->bump);
+  snapshot_reset_cycle_cursor(&s->sustain);
+  snapshot_reset_cycle_cursor(&s->sostenuto);
+  snapshot_reset_cycle_cursor(&s->expr_switch);
+  snapshot_reset_cycle_cursor(&s->cv_trigger_action);
+}
+
+// Fold everything the performance changed into the copy, so reloading it lands
+// on the sound that was playing. Limited to fields the scene format already
+// has: runtime CC values become cc_defaults, engine state overwrites the stored
+// config, and "was it running" becomes the matching start mode.
+static void snapshot_bake_live_state(scene_t* copy) {
+  // Only CCs changed since this scene came up. The copy already inherited the
+  // source's cc_defaults, so an unchanged default persists into the snapshot
+  // untouched; overwriting a dirty one leaves the union of the two, which is
+  // exactly the list Scene Inspect shows.
+  int baked = 0;
+  for (int cc = 0; cc < 128; cc++) {
+    if (!cc_state_effective_is_dirty((uint8_t)cc)) continue;
+    copy->cc_defaults[cc] = cc_state_effective_get((uint8_t)cc);
+    baked++;
+  }
+
+  scene_live_state_t live;
+  scene_get_live_state(&live);
+
+  copy->bpm_x10 = live.bpm_x10;
+  if (live.ui_module[0]) strlcpy(copy->ui_module, live.ui_module, sizeof(copy->ui_module));
+
+  ESP_LOGI(TAG, "Snapshot bake: stash=%d cc_changed=%d bpm=%u pc=%u ui='%s'",
+    cc_state_stash_active() ? 1 : 0, baked, (unsigned)live.bpm_x10,
+    (unsigned)live.program_number, live.ui_module);
+
+  // Capturing the preset is pointless unless the copy actually sends it.
+  copy->program_number = live.program_number;
+  copy->send_pc_on_load = true;
+
+  copy->lfo1_config = live.lfo_config[0];
+  copy->lfo2_config = live.lfo_config[1];
+  copy->rtg_config = live.rtg_config;
+  copy->sample_hold_config = live.sample_hold_config;
+
+  // TRANSPORT is left alone — it already reproduces the right behaviour on the
+  // next load, and rewriting it would sever the transport link.
+  if (copy->lfo1_config.start_mode != LFO_START_TRANSPORT)
+    copy->lfo1_config.start_mode = copy->lfo1_config.enabled ? LFO_START_RUNNING : LFO_START_PAUSED;
+  if (copy->lfo2_config.start_mode != LFO_START_TRANSPORT)
+    copy->lfo2_config.start_mode = copy->lfo2_config.enabled ? LFO_START_RUNNING : LFO_START_PAUSED;
+  if (copy->rtg_config.start_mode != RTG_START_TRANSPORT)
+    copy->rtg_config.start_mode = live.rtg_running ? RTG_START_RUNNING : RTG_START_PAUSED;
+  if (copy->sample_hold_config.start_mode != SAMPLE_HOLD_START_TRANSPORT) {
+    copy->sample_hold_config.start_mode = live.sample_hold_running
+      ? SAMPLE_HOLD_START_RUNNING : SAMPLE_HOLD_START_PAUSED;
+  }
+
+  snapshot_reset_all_cycle_cursors(copy);
+}
+
+// Shared body of scene_duplicate. When bake_dirty_cc is set, the live
+// performance state is folded into the copy before the single flash write, so a
+// snapshot costs the same flash traffic as a plain duplicate.
+static esp_err_t scene_duplicate_internal(uint8_t source_index, const char* new_name,
+  bool bake_dirty_cc) {
   if (!new_name || new_name[0] == '\0') return ESP_ERR_INVALID_ARG;
   
   // Check for name uniqueness
@@ -9760,11 +9938,217 @@ esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
   g_scene_manager.cache[temp_idx].index = new_index;
   g_scene_manager.cache[temp_idx].valid = true;
 
+  if (bake_dirty_cc) snapshot_bake_live_state(&g_scene_manager.cache[temp_idx].scene);
+
   scene_save_to_flash(new_index);
   scene_save_manifest();
 
   scene_post_list_changed_event(new_index);
 
+  return ESP_OK;
+}
+
+esp_err_t scene_duplicate(uint8_t source_index, const char* new_name) {
+  return scene_duplicate_internal(source_index, new_name, false);
+}
+
+// Strip a trailing " <digits>" suffix from name into base (NUL-terminated).
+// Returns the parsed trailing number, or 1 if none was present.
+static int snapshot_strip_trailing_number(const char* name, char* base, size_t base_cap) {
+  if (!name || !base || base_cap == 0) return 1;
+  size_t len = strlen(name);
+  if (len == 0) {
+    base[0] = '\0';
+    return 1;
+  }
+
+  // Walk back over trailing digits
+  size_t i = len;
+  while (i > 0 && name[i - 1] >= '0' && name[i - 1] <= '9') i--;
+  // Require a space before the digits, and at least one digit
+  if (i < len && i > 0 && name[i - 1] == ' ') {
+    int n = atoi(&name[i]);
+    size_t base_len = i - 1;
+    if (base_len >= base_cap) base_len = base_cap - 1;
+    memcpy(base, name, base_len);
+    base[base_len] = '\0';
+    return n > 0 ? n : 1;
+  }
+
+  strncpy(base, name, base_cap - 1);
+  base[base_cap - 1] = '\0';
+  return 1;
+}
+
+// Build "Base N" that fits in 16 chars and is unique across the manifest.
+static esp_err_t snapshot_next_name(const char* current_name, char* out, size_t out_cap) {
+  if (!current_name || !out || out_cap < 2) return ESP_ERR_INVALID_ARG;
+
+  char base[17];
+  snapshot_strip_trailing_number(current_name, base, sizeof(base));
+  if (base[0] == '\0') {
+    strncpy(base, "Scene", sizeof(base) - 1);
+    base[sizeof(base) - 1] = '\0';
+  }
+
+  // Find the highest existing "base" / "base N" (case-insensitive).
+  int max_n = 1;
+  size_t base_len = strlen(base);
+  for (uint16_t p = 0; p < scene_get_total_count(); p++) {
+    const char* n = scene_get_name_by_position(p);
+    if (!n) continue;
+    if (strcasecmp(n, base) == 0) {
+      if (max_n < 1) max_n = 1;
+      continue;
+    }
+    size_t nlen = strlen(n);
+    if (nlen <= base_len + 1) continue;
+    if (strncasecmp(n, base, base_len) != 0) continue;
+    if (n[base_len] != ' ') continue;
+    const char* digits = &n[base_len + 1];
+    bool all_digit = digits[0] != '\0';
+    for (const char* d = digits; *d; d++) {
+      if (*d < '0' || *d > '9') { all_digit = false; break; }
+    }
+    if (!all_digit) continue;
+    int num = atoi(digits);
+    if (num > max_n) max_n = num;
+  }
+
+  int next = max_n + 1;
+  if (next < 2) next = 2;
+
+  // Truncate base so "base N" fits in 16 chars. candidate is oversized so the
+  // format is provably non-truncating; the `allowed` clamp is what actually
+  // holds the result to the scene name limit.
+  char candidate[40];
+  for (;;) {
+    if (next > 9999) return ESP_ERR_INVALID_SIZE;
+
+    char suffix[8];
+    int suffix_len = snprintf(suffix, sizeof(suffix), " %d", next);
+    int allowed = 16 - suffix_len;
+    if (allowed < 1) return ESP_ERR_INVALID_SIZE;
+
+    char trimmed[17];
+    size_t tlen = strlen(base);
+    if ((int)tlen > allowed) tlen = (size_t)allowed;
+    memcpy(trimmed, base, tlen);
+    trimmed[tlen] = '\0';
+    // Trim trailing space left by truncation
+    while (tlen > 0 && trimmed[tlen - 1] == ' ') {
+      trimmed[--tlen] = '\0';
+    }
+    if (tlen == 0) {
+      strncpy(trimmed, "S", sizeof(trimmed) - 1);
+      trimmed[sizeof(trimmed) - 1] = '\0';
+    }
+
+    snprintf(candidate, sizeof(candidate), "%s%s", trimmed, suffix);
+    if (!scene_name_exists(candidate, -1)) {
+      strncpy(out, candidate, out_cap - 1);
+      out[out_cap - 1] = '\0';
+      return ESP_OK;
+    }
+    next++;
+  }
+}
+
+esp_err_t scene_snapshot_current(char* out_name, size_t out_cap) {
+  if (!g_scene_manager.initialized) return ESP_ERR_INVALID_STATE;
+
+  scene_t* current = scene_get_current();
+  if (!current) return ESP_ERR_INVALID_STATE;
+
+  char new_name[17];
+  esp_err_t err = snapshot_next_name(current->name, new_name, sizeof(new_name));
+  if (err != ESP_OK) return err;
+
+  uint8_t source_index = g_scene_manager.current_scene_index;
+  // Dirty CCs are baked into cc_defaults before the copy is written, so this
+  // is a single scene write rather than a write-then-patch-then-rewrite.
+  err = scene_duplicate_internal(source_index, new_name, true);
+  if (err != ESP_OK) return err;
+
+  if (out_name && out_cap > 0) {
+    strncpy(out_name, new_name, out_cap - 1);
+    out_name[out_cap - 1] = '\0';
+  }
+
+  ESP_LOGI(TAG, "Snapshot created: %s", new_name);
+  return ESP_OK;
+}
+
+#define READOUTS_BASE_PATH USERDATA_BASE_PATH "/readouts"
+
+esp_err_t scene_readout_save(char* out_path, size_t out_cap) {
+  if (!g_scene_manager.initialized) return ESP_ERR_INVALID_STATE;
+  if (!assets_userdata_available()) return ESP_ERR_INVALID_STATE;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return ESP_ERR_INVALID_STATE;
+  uint8_t scene_index = g_scene_manager.current_scene_index;
+
+  // Ensure readouts directory exists.
+  if (mkdir(READOUTS_BASE_PATH, 0755) != 0 && errno != EEXIST) {
+    ESP_LOGW(TAG, "mkdir(%s) failed (errno=%d)", READOUTS_BASE_PATH, errno);
+    return ESP_FAIL;
+  }
+
+  // Slug from manifest filename (strip .json) or fall back to scene_NNN.
+  char slug[64] = {0};
+  for (int i = 0; i < g_scene_manager.num_scenes; i++) {
+    if (g_scene_manager.manifest[i].index == scene_index) {
+      const char* fname = g_scene_manager.manifest[i].filename;
+      size_t flen = strlen(fname);
+      if (flen > 5 && strcasecmp(fname + flen - 5, ".json") == 0) {
+        size_t copy = flen - 5;
+        if (copy >= sizeof(slug)) copy = sizeof(slug) - 1;
+        memcpy(slug, fname, copy);
+        slug[copy] = '\0';
+      } else {
+        strncpy(slug, fname, sizeof(slug) - 1);
+      }
+      break;
+    }
+  }
+  if (slug[0] == '\0')
+    snprintf(slug, sizeof(slug), "scene_%03d", scene_index + 1);
+
+  // Pick an unused <slug>_<n>.txt
+  char filepath[160];
+  int n = 1;
+  for (;;) {
+    snprintf(filepath, sizeof(filepath), "%s/%s_%d.txt", READOUTS_BASE_PATH, slug, n);
+    FILE* probe = fopen(filepath, "r");
+    if (!probe) break;
+    fclose(probe);
+    n++;
+    if (n > 9999) return ESP_ERR_NO_MEM;
+  }
+
+  char* text = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!text) text = malloc(4096);
+  if (!text) return ESP_ERR_NO_MEM;
+
+  scene_inspect_build(scene, scene_index, text, 4096, true);
+
+  FILE* f = fopen(filepath, "w");
+  if (!f) {
+    free(text);
+    ESP_LOGW(TAG, "Failed to open readout file: %s", filepath);
+    return ESP_FAIL;
+  }
+  fputs(text, f);
+  fclose(f);
+  free(text);
+
+  if (out_path && out_cap > 0) {
+    strncpy(out_path, filepath, out_cap - 1);
+    out_path[out_cap - 1] = '\0';
+  }
+
+  ESP_LOGI(TAG, "Readout saved: %s", filepath);
   return ESP_OK;
 }
 

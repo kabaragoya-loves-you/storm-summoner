@@ -307,6 +307,17 @@
               </div>
             </div>
 
+            <!-- File Viewer Modal -->
+            <div class="modal-backdrop" data-assets-target="viewerModal">
+              <div class="modal file-viewer">
+                <button class="file-viewer-close" title="Close (Esc)"
+                        data-action="click->assets#hideViewer">&times;</button>
+                <h2 data-assets-target="viewerTitle"></h2>
+                <div class="file-viewer-meta" data-assets-target="viewerMeta"></div>
+                <pre class="file-viewer-body" data-assets-target="viewerBody"></pre>
+              </div>
+            </div>
+
             <wa-dialog data-assets-target="deleteDialog" label="Delete">
               <div class="confirm-delete-dialog-content">
                 <wa-icon name="triangle-exclamation" class="warning-icon"></wa-icon>

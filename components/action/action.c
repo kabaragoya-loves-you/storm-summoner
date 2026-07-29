@@ -8,6 +8,7 @@
 #include "event_bus.h"
 #include "assets_manager.h"
 #include "midi_in.h"
+#include "cc_state.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -141,9 +142,8 @@ bool action_get_last_executed(action_trigger_source_t *src, uint8_t *scene_index
 }
 
 // ============================================================================
-// CC value cache (shared across action modules via action_get/set_cc_value)
+// CC value cache — backed by cc_state (shared scene-local table)
 // ============================================================================
-static uint8_t s_last_cc_values[128];
 
 // ============================================================================
 // Scene-local flag (semaphore) - reset on scene change
@@ -160,33 +160,34 @@ void action_set_gating_changed_observer(action_gating_changed_cb_t cb) {
 }
 
 uint8_t action_get_cc_value(uint8_t cc_num) {
-  if (cc_num >= 128) return 0;
-  return s_last_cc_values[cc_num];
+  return cc_state_get(cc_num);
 }
 
 // When a gating CC changes, re-clamp the cached values of CCs that carry
 // x_variants so the live cache stays valid for the new mode's effective range
 // (e.g. a 0-127 value left over from Delay mode is snapped into Loop mode's
-// 0-1 range). Touches only s_last_cc_values, never stored scene data.
+// 0-1 range). Touches only the live cache, never stored scene data.
 static void action_clamp_dependents_for_gating(const device_def_t* dev) {
   for (uint16_t i = 0; i < dev->control_count; i++) {
     const midi_control_t* ctrl = &dev->controls[i];
     if (ctrl->type != MIDI_CONTROL_TYPE_CC || ctrl->id >= 128) continue;
     if (ctrl->variant_count == 0) continue;  // only mode-dependent CCs
 
-    uint8_t cur = s_last_cc_values[ctrl->id];
+    uint8_t cur = cc_state_get(ctrl->id);
     uint8_t clamped = (uint8_t)assets_clamp_cc_value(dev, ctrl->id, cur);
     if (assets_cc_has_discrete_values(dev, ctrl->id))
       clamped = (uint8_t)assets_snap_to_discrete(dev, ctrl->id, clamped);
     if (clamped != cur)
-      s_last_cc_values[ctrl->id] = clamped;
+      cc_state_set(ctrl->id, clamped, false);
   }
 }
 
 void action_set_cc_value(uint8_t cc_num, uint8_t value) {
   if (cc_num >= 128) return;
-  uint8_t prev = s_last_cc_values[cc_num];
-  s_last_cc_values[cc_num] = value;
+  uint8_t prev = cc_state_get(cc_num);
+  // Runtime cache updates are dirty; seeding uses cc_state_set(..., false)
+  // directly or goes through action_reset_cc_values + clear_dirty.
+  cc_state_set(cc_num, value, true);
   if (prev == value) return;
 
   // A gating CC crossing a variant boundary can invalidate dependent CCs'
@@ -212,7 +213,7 @@ static void action_cc_mirror_handler(const event_t* event, void* context) {
   if (event->data.midi_in.channel != (uint8_t)(our_channel - 1)) return;
 
   uint8_t cc = event->data.midi_in.data1;
-  uint8_t prev = s_last_cc_values[cc < 128 ? cc : 0];
+  uint8_t prev = cc_state_get(cc < 128 ? cc : 0);
   action_set_cc_value(cc, event->data.midi_in.data2);
 
   // Runs on the event-dispatcher task (same context as button nav), so it is
@@ -229,18 +230,14 @@ static void action_cc_mirror_handler(const event_t* event, void* context) {
 void action_reset_cc_values(const void* device) {
   const device_def_t* dev = (const device_def_t*)device;
 
-  if (!dev || dev->control_count == 0) {
-    memset(s_last_cc_values, 0, sizeof(s_last_cc_values));
-    return;
-  }
+  cc_state_reset_all();
 
-  memset(s_last_cc_values, 0, sizeof(s_last_cc_values));
+  if (!dev || dev->control_count == 0) return;
 
   for (uint16_t i = 0; i < dev->control_count; i++) {
     const midi_control_t* ctrl = &dev->controls[i];
-    if (ctrl->type == MIDI_CONTROL_TYPE_CC && ctrl->id < 128) {
-      s_last_cc_values[ctrl->id] = (uint8_t)ctrl->min;
-    }
+    if (ctrl->type == MIDI_CONTROL_TYPE_CC && ctrl->id < 128)
+      cc_state_set(ctrl->id, (uint8_t)ctrl->min, false);
   }
 }
 
@@ -333,13 +330,17 @@ esp_err_t action_init(void) {
 
   ESP_LOGI(TAG, "Initializing action system");
 
-  memset(s_last_cc_values, 64, sizeof(s_last_cc_values));
+  cc_state_init();
+  // Boot-time seed of mid-scale so unresolved CCs aren't zero until a scene
+  // seeds for real. Not marked dirty.
+  for (int i = 0; i < 128; i++)
+    cc_state_set((uint8_t)i, 64, false);
   s_scene_flag = 0;
 
   // Let assets_manager resolve x_variants against the live CC cache.
   assets_set_cc_value_provider(action_get_cc_value);
 
-  // Mirror incoming CC into s_last_cc_values when enabled (default off).
+  // Mirror incoming CC into the live cache when enabled (default off).
   event_bus_subscribe(EVENT_MIDI_IN, action_cc_mirror_handler, NULL);
 
   action_punch_in_init();
@@ -617,6 +618,12 @@ action_t action_create_reset(void) {
 action_t action_create_inspect_scene(void) {
   action_t action = {0};
   action.type = ACTION_INSPECT_SCENE;
+  return action;
+}
+
+action_t action_create_snapshot(void) {
+  action_t action = {0};
+  action.type = ACTION_SNAPSHOT;
   return action;
 }
 

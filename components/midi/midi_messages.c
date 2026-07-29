@@ -2,6 +2,7 @@
 #include "midi_messages.h"
 #include "device_config.h"
 #include "scene.h"
+#include "cc_state.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,8 @@ void send_control_change(uint8_t channel, uint8_t controller, uint8_t value) {
     value & 0x7F             // Controller Value
   };
   midi_send_message(message, sizeof(message));
+  // Track runtime CC values (denylist filtered inside cc_state).
+  cc_state_set(controller & 0x7F, value & 0x7F, true);
 }
 
 void send_program_change(uint8_t channel, uint8_t program) {
@@ -147,11 +150,9 @@ void send_double_control_change(uint8_t channel, uint8_t msb_cc, uint8_t lsb_cc,
   uint8_t msb_value = (value >> 7) & 0x7F; // Upper 7 bits
   uint8_t lsb_value = value & 0x7F;        // Lower 7 bits
 
-  const uint8_t msb_message[3] = {0xB0 | (channel & 0x0F), msb_cc & 0x7F, msb_value};
-  const uint8_t lsb_message[3] = {0xB0 | (channel & 0x0F), lsb_cc & 0x7F, lsb_value};
-
-  midi_send_message(msb_message, 3);
-  midi_send_message(lsb_message, 3);
+  // Route through send_control_change so both halves update cc_state.
+  send_control_change(channel, msb_cc, msb_value);
+  send_control_change(channel, lsb_cc, lsb_value);
 }
 
 void send_active_sensing(void) {

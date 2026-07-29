@@ -78,10 +78,14 @@ static void handle_button_event(const event_t* event, void* context) {
     case EVENT_BUTTON_L_LONG_PRESS:
     case EVENT_BUTTON_R_LONG_PRESS:
     case EVENT_BUTTON_BOTH_LONG_PRESS:
-      // Long presses reserved for future features
+      // Long presses reserved for future features. Readout is deliberately
+      // NOT bound here: the performance-mode Inspect overlay ping-pong scrolls
+      // for as long as both buttons are held, so a both-hold readout would
+      // fire the instant the user starts scrolling. Readout lives in
+      // programming mode only (menu.c).
       ESP_LOGD(TAG, "Long press - reserved for future use");
       return;
-      
+
     default:
       return;
   }
