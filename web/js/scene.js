@@ -1568,7 +1568,7 @@ application.register(
       if (path === 'cv_trigger_threshold' || path === 'cv_trigger_debounce_ms') return true
       if (/\.values(\.\d+)+$/.test(path)) return true
       if (/\.presets(\.\d+)+$/.test(path)) return true
-      return /\.(note|base_note|note_range|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide)(\.\d+)?$/.test(path)
+      return /\.(note|base_note|note_range|velocity|mode|mode2|num_modes|modes|slot|waveform|rate_mode|rate_hz_x100|sync_mult_x1000|division|polarity|floor|ceiling|resolution_mode|manual_steps|module|module2|num_modules|modules|param|param2|num_params|params|speed_percent|start_cc|start_value|finish_cc|finish_value|flag_up_cc|flag_up_value|flag_down_cc|flag_down_value|cc_number|target_value|attack_time_ms|sustain_time_ms|release_time_ms|attack_curve|release_curve|attack_curve_slope|release_curve_slope|random_floor|random_ceiling|voices|cc|value|value2|number|press_preset|release_preset|probability|pattern_length|release_threshold_ms|morph_manual_steps|glide|triplet_pct|chord_pct|shepard_wide_semis)(\.\d+)?$/.test(path)
     }
 
     patchBarCount (e) {

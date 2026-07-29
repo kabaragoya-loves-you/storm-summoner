@@ -37,6 +37,8 @@ static char s_style_label[LABEL_BUFFER_SETS][32];
 static char s_wide_semis_label[LABEL_BUFFER_SETS][32];
 static char s_probability_label[LABEL_BUFFER_SETS][32];
 static char s_pattern_label[LABEL_BUFFER_SETS][32];
+static char s_triplet_label[LABEL_BUFFER_SETS][32];
+static char s_chord_label[LABEL_BUFFER_SETS][32];
 
 static bool s_callback_in_progress = false;
 
@@ -945,6 +947,389 @@ static void nav_to_smooth(void* user_data) {
 }
 
 // ============================================================================
+// Triplets Roller (Disabled / 10%..100%) — Random + Continuous only
+// ============================================================================
+
+static void triplet_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  // Index 0 = Disabled, 1 = 10%, ..., 10 = 100%
+  scene->rtg_config.triplet_pct =
+    (selected_index == 0) ? 0 : (uint8_t)(selected_index * 10);
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+}
+
+static lv_obj_t* triplet_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint8_t pct = scene->rtg_config.triplet_pct;
+  uint32_t current = (pct == 0) ? 0 : (pct / 10);
+  if (current > 10) current = 10;
+
+  return menu_create_roller_page("Triplets",
+    "Disabled\n10%\n20%\n30%\n40%\n50%\n60%\n70%\n80%\n90%\n100%",
+    current, triplet_confirm_cb, NULL);
+}
+
+static void nav_to_triplet(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Triplets", triplet_roller_create);
+}
+
+// ============================================================================
+// Chords subpage (Amount + Notes/Quality/Spread/Bass Root when enabled)
+// ============================================================================
+
+#define MAX_CHORD_EDITOR_ITEMS 6
+static menu_item_t s_chord_editor_items[MAX_CHORD_EDITOR_ITEMS];
+static char s_chord_amount_label[32];
+static char s_chord_notes_label[32];
+static char s_chord_quality_label[32];
+static char s_chord_spread_label[32];
+static char s_chord_bass_label[32];
+
+static lv_obj_t* chords_editor_create(void);  // Forward
+
+static bool chords_editor_back_handler(void) {
+  menu_set_custom_back_handler(NULL);
+  persist_scene_changes();
+  menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+  return true;
+}
+
+static const char* chord_size_display(rtg_chord_size_t size) {
+  switch (size) {
+    case RTG_CHORD_2: return "2";
+    case RTG_CHORD_3: return "3";
+    case RTG_CHORD_4: return "4";
+    case RTG_CHORD_RANDOM: return "Random";
+    default: return "3";
+  }
+}
+
+static const char* chord_quality_display(rtg_chord_quality_t quality) {
+  switch (quality) {
+    case RTG_CHORD_QUALITY_MAJOR: return "Major";
+    case RTG_CHORD_QUALITY_MINOR: return "Minor";
+    case RTG_CHORD_QUALITY_SUS: return "Sus";
+    case RTG_CHORD_QUALITY_QUARTAL: return "Quartal";
+    case RTG_CHORD_QUALITY_FIFTHS: return "Fifths";
+    case RTG_CHORD_QUALITY_RANDOM: return "Random";
+    default: return "Random";
+  }
+}
+
+// Amount roller (from main RTG page when disabled, or from editor)
+static void chord_amount_confirm_cb(uint32_t selected_index, void* user_data) {
+  uintptr_t from_editor = (uintptr_t)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  uint8_t new_pct = (selected_index == 0) ? 0 : (uint8_t)(selected_index * 10);
+  scene->rtg_config.chord_pct = new_pct;
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+
+  if (new_pct == 0) {
+    // Disabled - return to RTG main page
+    if (from_editor) menu_set_custom_back_handler(NULL);
+    menu_navigate_back_then_to(2, "RTG", menu_page_rtg_scene_create);
+  } else if (from_editor) {
+    menu_navigate_back_then_to(2, "Chords", chords_editor_create);
+  } else {
+    // Just enabled from main page - open the chords editor
+    menu_navigate_back_then_to(1, "Chords", chords_editor_create);
+  }
+}
+
+static lv_obj_t* chord_amount_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint8_t pct = scene->rtg_config.chord_pct;
+  uint32_t current = (pct == 0) ? 0 : (pct / 10);
+  if (current > 10) current = 10;
+
+  // user_data = 0 means opened from main RTG page
+  return menu_create_roller_page("Chords",
+    "Disabled\n10%\n20%\n30%\n40%\n50%\n60%\n70%\n80%\n90%\n100%",
+    current, chord_amount_confirm_cb, (void*)(uintptr_t)0);
+}
+
+static lv_obj_t* chord_amount_editor_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint8_t pct = scene->rtg_config.chord_pct;
+  uint32_t current = (pct == 0) ? 0 : (pct / 10);
+  if (current > 10) current = 10;
+
+  return menu_create_roller_page("Amount",
+    "Disabled\n10%\n20%\n30%\n40%\n50%\n60%\n70%\n80%\n90%\n100%",
+    current, chord_amount_confirm_cb, (void*)(uintptr_t)1);
+}
+
+static void nav_to_chord_amount_editor(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Amount", chord_amount_editor_roller_create);
+}
+
+static void chord_size_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  switch (selected_index) {
+    case 0: scene->rtg_config.chord_size = RTG_CHORD_2; break;
+    case 1: scene->rtg_config.chord_size = RTG_CHORD_3; break;
+    case 2: scene->rtg_config.chord_size = RTG_CHORD_4; break;
+    default: scene->rtg_config.chord_size = RTG_CHORD_RANDOM; break;
+  }
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Chords", chords_editor_create);
+}
+
+static lv_obj_t* chord_size_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = 1;
+  switch (scene->rtg_config.chord_size) {
+    case RTG_CHORD_2: current = 0; break;
+    case RTG_CHORD_3: current = 1; break;
+    case RTG_CHORD_4: current = 2; break;
+    case RTG_CHORD_RANDOM: current = 3; break;
+  }
+
+  return menu_create_roller_page("Notes", "2\n3\n4\nRandom",
+    current, chord_size_confirm_cb, NULL);
+}
+
+static void nav_to_chord_size(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Notes", chord_size_roller_create);
+}
+
+static void chord_quality_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  switch (selected_index) {
+    case 0: scene->rtg_config.chord_quality = RTG_CHORD_QUALITY_MAJOR; break;
+    case 1: scene->rtg_config.chord_quality = RTG_CHORD_QUALITY_MINOR; break;
+    case 2: scene->rtg_config.chord_quality = RTG_CHORD_QUALITY_SUS; break;
+    case 3: scene->rtg_config.chord_quality = RTG_CHORD_QUALITY_QUARTAL; break;
+    case 4: scene->rtg_config.chord_quality = RTG_CHORD_QUALITY_FIFTHS; break;
+    default: scene->rtg_config.chord_quality = RTG_CHORD_QUALITY_RANDOM; break;
+  }
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Chords", chords_editor_create);
+}
+
+static lv_obj_t* chord_quality_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = 5;
+  switch (scene->rtg_config.chord_quality) {
+    case RTG_CHORD_QUALITY_MAJOR: current = 0; break;
+    case RTG_CHORD_QUALITY_MINOR: current = 1; break;
+    case RTG_CHORD_QUALITY_SUS: current = 2; break;
+    case RTG_CHORD_QUALITY_QUARTAL: current = 3; break;
+    case RTG_CHORD_QUALITY_FIFTHS: current = 4; break;
+    case RTG_CHORD_QUALITY_RANDOM: current = 5; break;
+  }
+
+  return menu_create_roller_page("Quality",
+    "Major\nMinor\nSus\nQuartal\nFifths\nRandom",
+    current, chord_quality_confirm_cb, NULL);
+}
+
+static void nav_to_chord_quality(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Quality", chord_quality_roller_create);
+}
+
+static void chord_spread_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->rtg_config.chord_spread =
+    (selected_index == 1) ? RTG_CHORD_SPREAD_OPEN : RTG_CHORD_SPREAD_CLOSE;
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Chords", chords_editor_create);
+}
+
+static lv_obj_t* chord_spread_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current =
+    (scene->rtg_config.chord_spread == RTG_CHORD_SPREAD_OPEN) ? 1 : 0;
+  return menu_create_roller_page("Spread", "Close\nOpen",
+    current, chord_spread_confirm_cb, NULL);
+}
+
+static void nav_to_chord_spread(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Spread", chord_spread_roller_create);
+}
+
+static void chord_bass_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  scene->rtg_config.chord_bass_root = (selected_index == 1);
+
+  rtg_apply_config(&scene->rtg_config);
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Chords", chords_editor_create);
+}
+
+static lv_obj_t* chord_bass_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+
+  uint32_t current = scene->rtg_config.chord_bass_root ? 1 : 0;
+  return menu_create_roller_page("Bass Root", "Off\nOn",
+    current, chord_bass_confirm_cb, NULL);
+}
+
+static void nav_to_chord_bass(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Bass Root", chord_bass_roller_create);
+}
+
+static lv_obj_t* chords_editor_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return menu_create_page("Error", NULL, 0);
+
+  menu_set_custom_back_handler(chords_editor_back_handler);
+
+  int idx = 0;
+  uint8_t pct = scene->rtg_config.chord_pct;
+  if (pct == 0) pct = 10;
+
+  snprintf(s_chord_amount_label, sizeof(s_chord_amount_label), "Amount: %d%%", pct);
+  s_chord_editor_items[idx++] = (menu_item_t){
+    s_chord_amount_label, nav_to_chord_amount_editor, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
+
+  snprintf(s_chord_notes_label, sizeof(s_chord_notes_label), "Notes: %s",
+    chord_size_display(scene->rtg_config.chord_size));
+  s_chord_editor_items[idx++] = (menu_item_t){
+    s_chord_notes_label, nav_to_chord_size, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
+
+  snprintf(s_chord_quality_label, sizeof(s_chord_quality_label), "Quality: %s",
+    chord_quality_display(scene->rtg_config.chord_quality));
+  s_chord_editor_items[idx++] = (menu_item_t){
+    s_chord_quality_label, nav_to_chord_quality, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
+
+  snprintf(s_chord_spread_label, sizeof(s_chord_spread_label), "Spread: %s",
+    (scene->rtg_config.chord_spread == RTG_CHORD_SPREAD_OPEN) ? "Open" : "Close");
+  s_chord_editor_items[idx++] = (menu_item_t){
+    s_chord_spread_label, nav_to_chord_spread, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
+
+  snprintf(s_chord_bass_label, sizeof(s_chord_bass_label), "Bass Root: %s",
+    scene->rtg_config.chord_bass_root ? "On" : "Off");
+  s_chord_editor_items[idx++] = (menu_item_t){
+    s_chord_bass_label, nav_to_chord_bass, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
+
+  return menu_create_page("Chords", s_chord_editor_items, idx);
+}
+
+static void nav_to_chords(void* user_data) {
+  (void)user_data;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  if (scene->rtg_config.chord_pct == 0)
+    menu_navigate_to("Chords", chord_amount_roller_create);
+  else
+    menu_navigate_to("Chords", chords_editor_create);
+}
+
+// ============================================================================
 // Main RTG Page
 // ============================================================================
 
@@ -1077,6 +1462,30 @@ lv_obj_t* menu_page_rtg_scene_create(void) {
       snprintf(s_glide_label[buf], sizeof(s_glide_label[buf]),
         "Glide: %s", scene->rtg_config.glide ? "On" : "Off");
       s_rtg_items[idx++] = (menu_item_t){ s_glide_label[buf], nav_to_glide, NULL, false, MENU_ITEM_KIND_ROLLER };
+
+      // Triplets (Continuous mode only)
+      if (scene->rtg_config.mode == RTG_MODE_CONTINUOUS) {
+        uint8_t tpct = scene->rtg_config.triplet_pct;
+        if (tpct == 0)
+          snprintf(s_triplet_label[buf], sizeof(s_triplet_label[buf]), "Triplets: Off");
+        else
+          snprintf(s_triplet_label[buf], sizeof(s_triplet_label[buf]), "Triplets: %d%%", tpct);
+        s_rtg_items[idx++] = (menu_item_t){
+          s_triplet_label[buf], nav_to_triplet, NULL, false, MENU_ITEM_KIND_ROLLER
+        };
+      }
+
+      // Chords
+      {
+        uint8_t cpct = scene->rtg_config.chord_pct;
+        if (cpct == 0)
+          snprintf(s_chord_label[buf], sizeof(s_chord_label[buf]), "Chords: Off");
+        else
+          snprintf(s_chord_label[buf], sizeof(s_chord_label[buf]), "Chords: %d%%", cpct);
+        s_rtg_items[idx++] = (menu_item_t){
+          s_chord_label[buf], nav_to_chords, NULL, false, MENU_ITEM_KIND_ROLLER
+        };
+      }
     }
   }
 

@@ -22,11 +22,19 @@ static uint16_t s_current_bpm = 120;
 typedef struct {
   uint8_t lfsr;           // 8-bit pseudo-random state
   float smoothed;         // 0..1, for exponential smoothing (glide)
-  uint8_t last_note;      // Last note sent (for NoteOff)
+  uint8_t last_note;      // Last note sent (legacy single-note track)
   uint8_t held_note;      // Held note for glide mode
-  bool have_last;         // Do we need to send NoteOff?
+  bool have_last;         // Do we need to send NoteOff? (glide / single)
   bool gate_open;         // Is a note currently sounding?
   uint8_t pattern_step;   // Current position in pattern (0 to length-1)
+
+  // Discrete multi-note tracking (chords + single notes when not gliding)
+  uint8_t active_notes[RTG_CHORD_MAX_NOTES];
+  uint8_t active_count;
+
+  // Triplet sub-hit state (Random + Continuous)
+  uint8_t triplet_remaining;  // Remaining sub-hits after the first (0..2)
+  uint64_t triplet_interval_us;
 
   // Shepard runtime state
   uint16_t shepard_phase;                                     // 0..(N*12-1), continuous phase across full range
@@ -55,6 +63,7 @@ static bool s_initialized = false;
 static bool s_running = false;  // Runtime running state (independent of config.enabled)
 static esp_timer_handle_t s_rtg_timer = NULL;
 static esp_timer_handle_t s_shepard_bend_timer = NULL;  // Periodic bend stream timer (smooth Shepard)
+static esp_timer_handle_t s_triplet_timer = NULL;        // One-shot sub-hit timer for triplets
 
 // Convert rate_hz_x100 to interval in microseconds (for esp_timer)
 static uint64_t rate_to_interval_us(uint16_t rate_hz_x100) {
@@ -201,25 +210,114 @@ static uint8_t rtg_next_note(void) {
   return note;
 }
 
-// Send note in discrete mode (NoteOff old, NoteOn new)
-static void rtg_send_discrete(uint8_t new_note) {
+// Clamp a MIDI note to 0..127
+static uint8_t clamp_note(int note) {
+  if (note < 0) return 0;
+  if (note > 127) return 127;
+  return (uint8_t)note;
+}
+
+// Chord interval tables: [quality][size_index 0=2,1=3,2=4][offsets]
+// Qualities: Major, Minor, Sus, Quartal, Fifths
+static const int8_t s_chord_intervals[5][3][4] = {
+  // Major
+  { {0, 4, 0, 0}, {0, 4, 7, 0}, {0, 4, 7, 11} },
+  // Minor
+  { {0, 3, 0, 0}, {0, 3, 7, 0}, {0, 3, 7, 10} },
+  // Sus
+  { {0, 5, 0, 0}, {0, 5, 7, 0}, {0, 5, 7, 10} },
+  // Quartal
+  { {0, 5, 0, 0}, {0, 5, 10, 0}, {0, 5, 10, 15} },
+  // Fifths
+  { {0, 7, 0, 0}, {0, 7, 14, 0}, {0, 7, 14, 21} },
+};
+
+// Build a chord from a root note into out_notes[]. Returns note count (1..4).
+static uint8_t rtg_build_chord(uint8_t root, uint8_t* out_notes) {
+  rtg_chord_quality_t quality = s_config.chord_quality;
+  if (quality == RTG_CHORD_QUALITY_RANDOM)
+    quality = (rtg_chord_quality_t)(esp_random() % 5);  // Major..Fifths
+
+  uint8_t size_count;
+  switch (s_config.chord_size) {
+    case RTG_CHORD_2: size_count = 2; break;
+    case RTG_CHORD_4: size_count = 4; break;
+    case RTG_CHORD_RANDOM: size_count = (uint8_t)(2 + (esp_random() % 3)); break;
+    case RTG_CHORD_3:
+    default: size_count = 3; break;
+  }
+  uint8_t size_idx = size_count - 2;  // 0, 1, or 2
+
+  for (uint8_t i = 0; i < size_count; i++) {
+    int note = (int)root + (int)s_chord_intervals[quality][size_idx][i];
+    // Open spread: raise odd-index upper voices one octave
+    if (s_config.chord_spread == RTG_CHORD_SPREAD_OPEN && i > 0 && (i & 1))
+      note += 12;
+    // Bass root: drop the root one octave
+    if (s_config.chord_bass_root && i == 0)
+      note -= 12;
+    out_notes[i] = clamp_note(note);
+  }
+  return size_count;
+}
+
+// NoteOff all currently active discrete notes
+static void rtg_release_active_notes(uint8_t channel) {
+  for (uint8_t i = 0; i < s_state.active_count; i++)
+    send_note_off(channel, s_state.active_notes[i], 0x00);
+  s_state.active_count = 0;
+  s_state.have_last = false;
+  s_state.gate_open = false;
+}
+
+// Cancel any pending triplet sub-hits
+static void rtg_cancel_triplet(void) {
+  if (s_triplet_timer) esp_timer_stop(s_triplet_timer);
+  s_state.triplet_remaining = 0;
+  s_state.triplet_interval_us = 0;
+}
+
+// Send notes in discrete mode (NoteOff previous set, NoteOn new set)
+static void rtg_send_discrete_notes(const uint8_t* notes, uint8_t count) {
   uint8_t channel = get_midi_channel();
 
-  if (s_state.have_last) {
-    send_note_off(channel, s_state.last_note, 0x00);
+  // Leaving glide: release held note and reset bend before chord/discrete set
+  if (s_state.gate_open && s_config.glide && s_state.active_count == 0) {
+    send_note_off(channel, s_state.held_note, 0x00);
+    send_pitch_bend(channel, 0);
+    s_state.gate_open = false;
   }
 
-  send_note_on(channel, new_note, s_config.velocity);
+  rtg_release_active_notes(channel);
 
-  s_state.last_note = new_note;
+  if (count == 0) return;
+  if (count > RTG_CHORD_MAX_NOTES) count = RTG_CHORD_MAX_NOTES;
+
+  for (uint8_t i = 0; i < count; i++) {
+    send_note_on(channel, notes[i], s_config.velocity);
+    s_state.active_notes[i] = notes[i];
+  }
+  s_state.active_count = count;
+  s_state.last_note = notes[0];
   s_state.have_last = true;
   s_state.gate_open = true;
+}
+
+// Send a single note in discrete mode
+static void rtg_send_discrete(uint8_t new_note) {
+  rtg_send_discrete_notes(&new_note, 1);
 }
 
 // Send note in glide mode (hold one note, use pitch bend)
 // Re-anchors when target drifts beyond +/- 2 semitones
 static void rtg_send_glide(uint8_t target_note) {
   uint8_t channel = get_midi_channel();
+
+  // If discrete notes were sounding, release them before gliding
+  if (s_state.active_count > 0) {
+    rtg_release_active_notes(channel);
+    send_pitch_bend(channel, 0);
+  }
 
   // Compute semitone offset from held note
   int16_t diff_semi = (int16_t)target_note - (int16_t)s_state.held_note;
@@ -243,6 +341,48 @@ static void rtg_send_glide(uint8_t target_note) {
   // +/- 2 semitones maps to +/- 8191
   int16_t bend = (int16_t)((diff_semi / 2.0f) * 8191.0f);
   send_pitch_bend(channel, bend);
+}
+
+// Play one Random-generator note event (single note or chord).
+// Chord events always use discrete multi-note; glide only applies to singles.
+static void rtg_play_event(void) {
+  uint8_t root = rtg_next_note();
+
+  bool want_chord = false;
+  if (s_config.chord_pct > 0) {
+    uint8_t pct = s_config.chord_pct;
+    if (pct > 100) pct = 100;
+    want_chord = ((esp_random() % 100) < pct);
+  }
+
+  if (want_chord) {
+    uint8_t notes[RTG_CHORD_MAX_NOTES];
+    uint8_t count = rtg_build_chord(root, notes);
+    rtg_send_discrete_notes(notes, count);
+    return;
+  }
+
+  if (s_config.glide)
+    rtg_send_glide(root);
+  else
+    rtg_send_discrete(root);
+}
+
+// Triplet one-shot callback: play next sub-hit and re-arm if more remain
+static void rtg_triplet_timer_callback(void* arg) {
+  (void)arg;
+  if (!s_running) return;
+  if (s_config.generator != RTG_GEN_RANDOM) return;
+  if (!midi_local_output_is_enabled()) return;
+  if (s_state.triplet_remaining == 0) return;
+
+  rtg_play_event();
+  s_state.triplet_remaining--;
+
+  if (s_state.triplet_remaining > 0 && s_state.triplet_interval_us > 0 &&
+      s_triplet_timer) {
+    esp_timer_start_once(s_triplet_timer, s_state.triplet_interval_us);
+  }
 }
 
 // ============================================================================
@@ -686,12 +826,26 @@ static void rtg_do_step(void) {
     return;
   }
 
-  uint8_t new_note = rtg_next_note();
+  // Cancel any leftover triplet sub-hits from a previous step
+  rtg_cancel_triplet();
 
-  if (s_config.glide) {
-    rtg_send_glide(new_note);
-  } else {
-    rtg_send_discrete(new_note);
+  // Triplet roll: Continuous mode only, Random generator
+  bool want_triplet = false;
+  if (s_config.mode == RTG_MODE_CONTINUOUS && s_config.triplet_pct > 0) {
+    uint8_t pct = s_config.triplet_pct;
+    if (pct > 100) pct = 100;
+    want_triplet = ((esp_random() % 100) < pct);
+  }
+
+  // First event always plays immediately
+  rtg_play_event();
+
+  if (want_triplet && s_triplet_timer) {
+    uint64_t interval_us = rate_to_interval_us(get_effective_rate_x100());
+    s_state.triplet_interval_us = interval_us / 3;
+    if (s_state.triplet_interval_us < 1000) s_state.triplet_interval_us = 1000;
+    s_state.triplet_remaining = 2;  // Two more sub-hits after this one
+    esp_timer_start_once(s_triplet_timer, s_state.triplet_interval_us);
   }
 }
 
@@ -721,6 +875,9 @@ esp_err_t rtg_init(void) {
   s_state.have_last = false;
   s_state.gate_open = false;
   s_state.pattern_step = 0;
+  s_state.active_count = 0;
+  s_state.triplet_remaining = 0;
+  s_state.triplet_interval_us = 0;
   s_state.shepard_phase = 0;
   s_state.shepard_tick_start_us = 0;
   s_state.shepard_tick_interval_us = 0;
@@ -774,6 +931,19 @@ esp_err_t rtg_init(void) {
     return ret;
   }
 
+  // Create the triplet one-shot timer (armed per-step when triplets fire)
+  const esp_timer_create_args_t triplet_timer_args = {
+    .callback = rtg_triplet_timer_callback,
+    .arg = NULL,
+    .dispatch_method = ESP_TIMER_TASK,
+    .name = "rtg_triplet"
+  };
+  ret = esp_timer_create(&triplet_timer_args, &s_triplet_timer);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create RTG triplet timer: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
   s_initialized = true;
   ESP_LOGI(TAG, "RTG initialized");
   return ESP_OK;
@@ -801,16 +971,20 @@ void rtg_stop(void) {
   // Stop the timer (also sets s_running = false for continuous mode)
   rtg_timer_stop();
 
-  // Stop any pending Shepard bend follow-up
+  // Stop any pending Shepard bend follow-up and triplet sub-hits
   if (s_shepard_bend_timer) esp_timer_stop(s_shepard_bend_timer);
+  rtg_cancel_triplet();
 
   // Ensure running is false for step mode too
   s_running = false;
 
   uint8_t channel = get_midi_channel();
 
-  // Send NoteOff if a random-mode note is sounding
-  if (s_state.gate_open) {
+  // Release discrete multi-note set if sounding
+  if (s_state.active_count > 0) {
+    rtg_release_active_notes(channel);
+  } else if (s_state.gate_open) {
+    // Send NoteOff if a random-mode glide note is sounding
     if (s_config.glide) {
       send_note_off(channel, s_state.held_note, 0x00);
       send_pitch_bend(channel, 0);  // Reset pitch bend
@@ -833,8 +1007,12 @@ void rtg_stop(void) {
 // leaving it running means smooth Shepard self-recovers when the rate
 // timer rebuilds voices (e.g. on programming-mode exit).
 void rtg_release_notes(void) {
-  if (s_state.gate_open) {
-    uint8_t channel = get_midi_channel();
+  rtg_cancel_triplet();
+
+  uint8_t channel = get_midi_channel();
+  if (s_state.active_count > 0) {
+    rtg_release_active_notes(channel);
+  } else if (s_state.gate_open) {
     if (s_config.glide) {
       send_note_off(channel, s_state.held_note, 0x00);
       send_pitch_bend(channel, 0);
@@ -888,6 +1066,23 @@ void rtg_apply_config(const rtg_config_t* config) {
   if (s_config.pattern_length > 8) s_config.pattern_length = 8;
   if (s_config.shepard_wide_semis < 2) s_config.shepard_wide_semis = 2;
   if (s_config.shepard_wide_semis > 4) s_config.shepard_wide_semis = 4;
+  // Triplet/chord pct: 0 = disabled; otherwise snap to 10..100 in 10% steps
+  if (s_config.triplet_pct > 0) {
+    if (s_config.triplet_pct < 10) s_config.triplet_pct = 10;
+    if (s_config.triplet_pct > 100) s_config.triplet_pct = 100;
+    s_config.triplet_pct = (uint8_t)((s_config.triplet_pct / 10) * 10);
+  }
+  if (s_config.chord_pct > 0) {
+    if (s_config.chord_pct < 10) s_config.chord_pct = 10;
+    if (s_config.chord_pct > 100) s_config.chord_pct = 100;
+    s_config.chord_pct = (uint8_t)((s_config.chord_pct / 10) * 10);
+  }
+  if (s_config.chord_size > RTG_CHORD_RANDOM)
+    s_config.chord_size = RTG_CHORD_3;
+  if (s_config.chord_quality > RTG_CHORD_QUALITY_RANDOM)
+    s_config.chord_quality = RTG_CHORD_QUALITY_RANDOM;
+  if (s_config.chord_spread > RTG_CHORD_SPREAD_OPEN)
+    s_config.chord_spread = RTG_CHORD_SPREAD_CLOSE;
 
   bool is_continuous = (s_config.mode == RTG_MODE_CONTINUOUS);
   bool rate_changed = (old_rate != s_config.rate_hz_x100) ||
@@ -984,7 +1179,13 @@ rtg_config_t rtg_config_create_default(void) {
     .shepard_layout = SHEPARD_LAYOUT_SINGLE,
     .shepard_fade = SHEPARD_FADE_NONE,
     .shepard_style = SHEPARD_STYLE_STREAM,
-    .shepard_wide_semis = 4
+    .shepard_wide_semis = 4,
+    .triplet_pct = 0,
+    .chord_pct = 0,
+    .chord_size = RTG_CHORD_3,
+    .chord_quality = RTG_CHORD_QUALITY_RANDOM,
+    .chord_spread = RTG_CHORD_SPREAD_CLOSE,
+    .chord_bass_root = false
   };
 }
 
@@ -1117,16 +1318,22 @@ void rtg_set_glide(bool glide) {
       shepard_release_voices();
       if (s_shepard_bend_timer) esp_timer_stop(s_shepard_bend_timer);
       s_state.shepard_phase = 0;
-    } else if (s_state.gate_open) {
+    } else {
+      rtg_cancel_triplet();
       uint8_t channel = get_midi_channel();
-      if (s_config.glide) {
-        send_note_off(channel, s_state.held_note, 0x00);
+      if (s_state.active_count > 0) {
+        rtg_release_active_notes(channel);
         send_pitch_bend(channel, 0);
-      } else if (s_state.have_last) {
-        send_note_off(channel, s_state.last_note, 0x00);
+      } else if (s_state.gate_open) {
+        if (s_config.glide) {
+          send_note_off(channel, s_state.held_note, 0x00);
+          send_pitch_bend(channel, 0);
+        } else if (s_state.have_last) {
+          send_note_off(channel, s_state.last_note, 0x00);
+        }
+        s_state.gate_open = false;
+        s_state.have_last = false;
       }
-      s_state.gate_open = false;
-      s_state.have_last = false;
     }
   }
 
@@ -1325,6 +1532,60 @@ shepard_style_t shepard_style_from_string(const char* str) {
   return SHEPARD_STYLE_STREAM;
 }
 
+const char* rtg_chord_size_to_string(rtg_chord_size_t size) {
+  switch (size) {
+    case RTG_CHORD_2: return "2";
+    case RTG_CHORD_3: return "3";
+    case RTG_CHORD_4: return "4";
+    case RTG_CHORD_RANDOM: return "random";
+    default: return "3";
+  }
+}
+
+rtg_chord_size_t rtg_chord_size_from_string(const char* str) {
+  if (!str) return RTG_CHORD_3;
+  if (strcmp(str, "2") == 0) return RTG_CHORD_2;
+  if (strcmp(str, "4") == 0) return RTG_CHORD_4;
+  if (strcmp(str, "random") == 0) return RTG_CHORD_RANDOM;
+  return RTG_CHORD_3;
+}
+
+const char* rtg_chord_quality_to_string(rtg_chord_quality_t quality) {
+  switch (quality) {
+    case RTG_CHORD_QUALITY_MAJOR: return "major";
+    case RTG_CHORD_QUALITY_MINOR: return "minor";
+    case RTG_CHORD_QUALITY_SUS: return "sus";
+    case RTG_CHORD_QUALITY_QUARTAL: return "quartal";
+    case RTG_CHORD_QUALITY_FIFTHS: return "fifths";
+    case RTG_CHORD_QUALITY_RANDOM: return "random";
+    default: return "random";
+  }
+}
+
+rtg_chord_quality_t rtg_chord_quality_from_string(const char* str) {
+  if (!str) return RTG_CHORD_QUALITY_RANDOM;
+  if (strcmp(str, "major") == 0) return RTG_CHORD_QUALITY_MAJOR;
+  if (strcmp(str, "minor") == 0) return RTG_CHORD_QUALITY_MINOR;
+  if (strcmp(str, "sus") == 0) return RTG_CHORD_QUALITY_SUS;
+  if (strcmp(str, "quartal") == 0) return RTG_CHORD_QUALITY_QUARTAL;
+  if (strcmp(str, "fifths") == 0) return RTG_CHORD_QUALITY_FIFTHS;
+  return RTG_CHORD_QUALITY_RANDOM;
+}
+
+const char* rtg_chord_spread_to_string(rtg_chord_spread_t spread) {
+  switch (spread) {
+    case RTG_CHORD_SPREAD_CLOSE: return "close";
+    case RTG_CHORD_SPREAD_OPEN: return "open";
+    default: return "close";
+  }
+}
+
+rtg_chord_spread_t rtg_chord_spread_from_string(const char* str) {
+  if (!str) return RTG_CHORD_SPREAD_CLOSE;
+  if (strcmp(str, "open") == 0) return RTG_CHORD_SPREAD_OPEN;
+  return RTG_CHORD_SPREAD_CLOSE;
+}
+
 // Start mode getter/setter
 void rtg_set_start_mode(rtg_start_mode_t start_mode) {
   s_config.start_mode = start_mode;
@@ -1418,6 +1679,69 @@ void rtg_set_shepard_wide_semis(uint8_t semis) {
 
 uint8_t rtg_get_shepard_wide_semis(void) {
   return s_config.shepard_wide_semis;
+}
+
+// Triplets
+void rtg_set_triplet_pct(uint8_t pct) {
+  if (pct > 0) {
+    if (pct < 10) pct = 10;
+    if (pct > 100) pct = 100;
+    pct = (uint8_t)((pct / 10) * 10);
+  }
+  s_config.triplet_pct = pct;
+}
+
+uint8_t rtg_get_triplet_pct(void) {
+  return s_config.triplet_pct;
+}
+
+// Chords
+void rtg_set_chord_pct(uint8_t pct) {
+  if (pct > 0) {
+    if (pct < 10) pct = 10;
+    if (pct > 100) pct = 100;
+    pct = (uint8_t)((pct / 10) * 10);
+  }
+  s_config.chord_pct = pct;
+}
+
+uint8_t rtg_get_chord_pct(void) {
+  return s_config.chord_pct;
+}
+
+void rtg_set_chord_size(rtg_chord_size_t size) {
+  if (size > RTG_CHORD_RANDOM) size = RTG_CHORD_3;
+  s_config.chord_size = size;
+}
+
+rtg_chord_size_t rtg_get_chord_size(void) {
+  return s_config.chord_size;
+}
+
+void rtg_set_chord_quality(rtg_chord_quality_t quality) {
+  if (quality > RTG_CHORD_QUALITY_RANDOM) quality = RTG_CHORD_QUALITY_RANDOM;
+  s_config.chord_quality = quality;
+}
+
+rtg_chord_quality_t rtg_get_chord_quality(void) {
+  return s_config.chord_quality;
+}
+
+void rtg_set_chord_spread(rtg_chord_spread_t spread) {
+  if (spread > RTG_CHORD_SPREAD_OPEN) spread = RTG_CHORD_SPREAD_CLOSE;
+  s_config.chord_spread = spread;
+}
+
+rtg_chord_spread_t rtg_get_chord_spread(void) {
+  return s_config.chord_spread;
+}
+
+void rtg_set_chord_bass_root(bool bass_root) {
+  s_config.chord_bass_root = bass_root;
+}
+
+bool rtg_get_chord_bass_root(void) {
+  return s_config.chord_bass_root;
 }
 
 // Handle transport state changes (for RTG_START_TRANSPORT mode)

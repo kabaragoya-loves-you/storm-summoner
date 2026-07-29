@@ -359,6 +359,35 @@ window.SceneEditorUi = (function () {
     { v: 'poly_at', l: 'Poly AT' }
   ]
 
+  const RTG_CHANCE = [
+    { v: 0, l: 'Disabled' },
+    ...Array.from({ length: 10 }, (_, i) => {
+      const v = (i + 1) * 10
+      return { v, l: `${v}%` }
+    })
+  ]
+
+  const RTG_CHORD_SIZE = [
+    { v: '2', l: '2' },
+    { v: '3', l: '3' },
+    { v: '4', l: '4' },
+    { v: 'random', l: 'Random' }
+  ]
+
+  const RTG_CHORD_QUALITY = [
+    { v: 'major', l: 'Major' },
+    { v: 'minor', l: 'Minor' },
+    { v: 'sus', l: 'Sus' },
+    { v: 'quartal', l: 'Quartal' },
+    { v: 'fifths', l: 'Fifths' },
+    { v: 'random', l: 'Random' }
+  ]
+
+  const RTG_CHORD_SPREAD = [
+    { v: 'close', l: 'Close' },
+    { v: 'open', l: 'Open' }
+  ]
+
   const AUDIO_ATTACK_OPTIONS = [5, 10, 20, 30, 50, 75, 100].map(v => ({
     v,
     l: `${v} ms`
@@ -3883,9 +3912,10 @@ window.SceneEditorUi = (function () {
     )
     if (userMode === 'disabled') return section('RTG', html)
 
+    const generator = m.rtg_config.generator || 'random'
     html += fieldRow(
       'Generator',
-      selectField('rtg_config.generator', m.rtg_config.generator || 'random', [
+      selectField('rtg_config.generator', generator, [
         { v: 'random', l: 'Random' },
         { v: 'shepard', l: 'Shepard' }
       ])
@@ -3945,25 +3975,84 @@ window.SceneEditorUi = (function () {
       }
       html += renderGeneratorPatternFields('rtg_config', m.rtg_config)
     }
-    if (m.rtg_config.generator === 'random') {
+    if (generator === 'random') {
       html += fieldRow(
         'Glide',
         checkboxField('rtg_config.glide', !!m.rtg_config.glide)
       )
       html += fieldRow(
         'Note min',
-        numberField('rtg_config.note_min', m.rtg_config.note_min ?? 36, 0, 127)
+        selectField(
+          'rtg_config.note_min',
+          m.rtg_config.note_min ?? 36,
+          ActionCatalog.noteNameOptions(m.rtg_config.note_min ?? 36)
+        )
       )
       html += fieldRow(
         'Note max',
-        numberField('rtg_config.note_max', m.rtg_config.note_max ?? 96, 0, 127)
+        selectField(
+          'rtg_config.note_max',
+          m.rtg_config.note_max ?? 96,
+          ActionCatalog.noteNameOptions(m.rtg_config.note_max ?? 96)
+        )
       )
       html += fieldRow(
         'Velocity',
         numberField('rtg_config.velocity', m.rtg_config.velocity ?? 100, 1, 127)
       )
+      if (m.rtg_config.mode === 'continuous') {
+        html += fieldRow(
+          'Triplets',
+          selectField(
+            'rtg_config.triplet_pct',
+            m.rtg_config.triplet_pct ?? 0,
+            RTG_CHANCE
+          )
+        )
+      }
+      html += fieldRow(
+        'Chords',
+        selectField(
+          'rtg_config.chord_pct',
+          m.rtg_config.chord_pct ?? 0,
+          RTG_CHANCE
+        )
+      )
+      if ((m.rtg_config.chord_pct ?? 0) > 0) {
+        html += fieldRow(
+          'Chord notes',
+          selectField(
+            'rtg_config.chord_size',
+            m.rtg_config.chord_size || '3',
+            RTG_CHORD_SIZE
+          )
+        )
+        html += fieldRow(
+          'Chord quality',
+          selectField(
+            'rtg_config.chord_quality',
+            m.rtg_config.chord_quality || 'random',
+            RTG_CHORD_QUALITY
+          )
+        )
+        html += fieldRow(
+          'Chord spread',
+          selectField(
+            'rtg_config.chord_spread',
+            m.rtg_config.chord_spread || 'close',
+            RTG_CHORD_SPREAD
+          )
+        )
+        html += fieldRow(
+          'Bass root',
+          checkboxField(
+            'rtg_config.chord_bass_root',
+            !!m.rtg_config.chord_bass_root
+          )
+        )
+      }
     }
-    if (m.rtg_config.generator === 'shepard') {
+    if (generator === 'shepard') {
       html += fieldRow(
         'Direction',
         selectField(

@@ -965,6 +965,41 @@
           "enum": [2, 3, 4],
           "default": 4,
           "description": "Retrigger spacing in semitones for the wide Shepard style (only used when shepard_style=wide)"
+        },
+        "triplet_pct": {
+          "type": "integer",
+          "enum": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+          "default": 0,
+          "description": "Probability that a Continuous-mode Random step fires as a triplet of three fresh notes (0=disabled)"
+        },
+        "chord_pct": {
+          "type": "integer",
+          "enum": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+          "default": 0,
+          "description": "Probability that a Random-generator note event is a chord instead of a single note (0=disabled)"
+        },
+        "chord_size": {
+          "type": "string",
+          "enum": ["2", "3", "4", "random"],
+          "default": "3",
+          "description": "Number of notes in a chord (only used when chord_pct > 0)"
+        },
+        "chord_quality": {
+          "type": "string",
+          "enum": ["major", "minor", "sus", "quartal", "fifths", "random"],
+          "default": "random",
+          "description": "Chord quality as interval structure from the random root (only used when chord_pct > 0)"
+        },
+        "chord_spread": {
+          "type": "string",
+          "enum": ["close", "open"],
+          "default": "close",
+          "description": "Chord voicing: close (packed) or open (odd-index upper voices raised one octave)"
+        },
+        "chord_bass_root": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, drop the chord root one octave below the upper voices"
         }
       }
     },

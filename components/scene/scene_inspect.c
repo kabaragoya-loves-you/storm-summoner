@@ -830,11 +830,40 @@ static void append_rtg(scene_inspect_buf_t *b, const scene_t *scene,
   }
 
   if (now && now->glide != rc->glide) {
-    scene_inspect_buf_append(b, "Glide: %s (now %s)\n\n", rc->glide ? "On" : "Off",
+    scene_inspect_buf_append(b, "Glide: %s (now %s)\n", rc->glide ? "On" : "Off",
       now->glide ? "On" : "Off");
   } else {
-    scene_inspect_buf_append(b, "Glide: %s\n\n", rc->glide ? "On" : "Off");
+    scene_inspect_buf_append(b, "Glide: %s\n", rc->glide ? "On" : "Off");
   }
+
+  if (rc->generator == RTG_GEN_RANDOM) {
+    if (rc->triplet_pct > 0)
+      scene_inspect_buf_append(b, "Triplets: %d%%\n", rc->triplet_pct);
+    if (rc->chord_pct > 0) {
+      const char *size_s = "3";
+      switch (rc->chord_size) {
+        case RTG_CHORD_2: size_s = "2"; break;
+        case RTG_CHORD_4: size_s = "4"; break;
+        case RTG_CHORD_RANDOM: size_s = "Rnd"; break;
+        default: break;
+      }
+      const char *qual_s = "Rnd";
+      switch (rc->chord_quality) {
+        case RTG_CHORD_QUALITY_MAJOR: qual_s = "Maj"; break;
+        case RTG_CHORD_QUALITY_MINOR: qual_s = "Min"; break;
+        case RTG_CHORD_QUALITY_SUS: qual_s = "Sus"; break;
+        case RTG_CHORD_QUALITY_QUARTAL: qual_s = "Quart"; break;
+        case RTG_CHORD_QUALITY_FIFTHS: qual_s = "5ths"; break;
+        default: break;
+      }
+      scene_inspect_buf_append(b, "Chords: %d%% (%s, %s%s%s)\n",
+        rc->chord_pct, size_s, qual_s,
+        (rc->chord_spread == RTG_CHORD_SPREAD_OPEN) ? ", Open" : "",
+        rc->chord_bass_root ? ", Bass" : "");
+    }
+  }
+
+  scene_inspect_buf_append(b, "\n");
 }
 
 static const char *inspect_sh_mode_label(sample_hold_mode_t mode) {

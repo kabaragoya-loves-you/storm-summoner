@@ -57,8 +57,35 @@ typedef enum {
   SHEPARD_STYLE_CROSSFADE     // Retrigger every semitone with overlap via fade source
 } shepard_style_t;
 
+// Chord note count (Random generator only)
+typedef enum {
+  RTG_CHORD_2 = 0,
+  RTG_CHORD_3,
+  RTG_CHORD_4,
+  RTG_CHORD_RANDOM
+} rtg_chord_size_t;
+
+// Chord quality as interval structure from a random root (Random generator only)
+typedef enum {
+  RTG_CHORD_QUALITY_MAJOR = 0,
+  RTG_CHORD_QUALITY_MINOR,
+  RTG_CHORD_QUALITY_SUS,
+  RTG_CHORD_QUALITY_QUARTAL,
+  RTG_CHORD_QUALITY_FIFTHS,
+  RTG_CHORD_QUALITY_RANDOM
+} rtg_chord_quality_t;
+
+// Chord voicing spread (Random generator only)
+typedef enum {
+  RTG_CHORD_SPREAD_CLOSE = 0,  // Notes packed within ~1 octave
+  RTG_CHORD_SPREAD_OPEN        // Odd-index upper voices raised one octave
+} rtg_chord_spread_t;
+
 // Maximum voice count for Shepard mode (8 octaves max)
 #define RTG_SHEPARD_MAX_VOICES 8
+
+// Maximum notes in a chord (including root)
+#define RTG_CHORD_MAX_NOTES 4
 
 // RTG configuration (stored per-scene)
 typedef struct {
@@ -82,6 +109,12 @@ typedef struct {
   shepard_fade_t shepard_fade;            // None / CC11 / Poly AT
   shepard_style_t shepard_style;          // Stream / Wide / Crossfade (smooth Shepard)
   uint8_t shepard_wide_semis;             // Retrigger spacing for Wide style (2..4)
+  uint8_t triplet_pct;                    // 0 = disabled, 10..100 (Random + Continuous)
+  uint8_t chord_pct;                      // 0 = disabled, 10..100 (Random generator)
+  rtg_chord_size_t chord_size;            // 2 / 3 / 4 / Random
+  rtg_chord_quality_t chord_quality;      // Major / Minor / Sus / Quartal / Fifths / Random
+  rtg_chord_spread_t chord_spread;        // Close / Open
+  bool chord_bass_root;                   // Drop root one octave below upper voices
 } rtg_config_t;
 
 // Initialize the RTG component
@@ -190,6 +223,26 @@ shepard_style_t rtg_get_shepard_style(void);
 void rtg_set_shepard_wide_semis(uint8_t semis);
 uint8_t rtg_get_shepard_wide_semis(void);
 
+// Triplets (0 = disabled, 10..100)
+void rtg_set_triplet_pct(uint8_t pct);
+uint8_t rtg_get_triplet_pct(void);
+
+// Chords (0 = disabled, 10..100)
+void rtg_set_chord_pct(uint8_t pct);
+uint8_t rtg_get_chord_pct(void);
+
+void rtg_set_chord_size(rtg_chord_size_t size);
+rtg_chord_size_t rtg_get_chord_size(void);
+
+void rtg_set_chord_quality(rtg_chord_quality_t quality);
+rtg_chord_quality_t rtg_get_chord_quality(void);
+
+void rtg_set_chord_spread(rtg_chord_spread_t spread);
+rtg_chord_spread_t rtg_get_chord_spread(void);
+
+void rtg_set_chord_bass_root(bool bass_root);
+bool rtg_get_chord_bass_root(void);
+
 // String conversion utilities
 const char* rtg_mode_to_string(rtg_mode_t mode);
 rtg_mode_t rtg_mode_from_string(const char* str);
@@ -214,6 +267,15 @@ shepard_fade_t shepard_fade_from_string(const char* str);
 
 const char* shepard_style_to_string(shepard_style_t style);
 shepard_style_t shepard_style_from_string(const char* str);
+
+const char* rtg_chord_size_to_string(rtg_chord_size_t size);
+rtg_chord_size_t rtg_chord_size_from_string(const char* str);
+
+const char* rtg_chord_quality_to_string(rtg_chord_quality_t quality);
+rtg_chord_quality_t rtg_chord_quality_from_string(const char* str);
+
+const char* rtg_chord_spread_to_string(rtg_chord_spread_t spread);
+rtg_chord_spread_t rtg_chord_spread_from_string(const char* str);
 
 // Apply start mode (called when scene loads, after rtg_apply_config)
 void rtg_apply_start_mode(void);

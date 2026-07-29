@@ -7183,6 +7183,27 @@ static cJSON* rtg_config_to_json(const rtg_config_t* config) {
       config->shepard_wide_semis);
   }
 
+  // Triplets / Chords: only serialize when enabled so legacy scenes stay terse
+  if (config->triplet_pct > 0)
+    cJSON_AddNumberToObject(obj, "triplet_pct", config->triplet_pct);
+  if (config->chord_pct > 0) {
+    cJSON_AddNumberToObject(obj, "chord_pct", config->chord_pct);
+    if (config->chord_size != RTG_CHORD_3) {
+      cJSON_AddStringToObject(obj, "chord_size",
+        rtg_chord_size_to_string(config->chord_size));
+    }
+    if (config->chord_quality != RTG_CHORD_QUALITY_RANDOM) {
+      cJSON_AddStringToObject(obj, "chord_quality",
+        rtg_chord_quality_to_string(config->chord_quality));
+    }
+    if (config->chord_spread != RTG_CHORD_SPREAD_CLOSE) {
+      cJSON_AddStringToObject(obj, "chord_spread",
+        rtg_chord_spread_to_string(config->chord_spread));
+    }
+    if (config->chord_bass_root)
+      cJSON_AddBoolToObject(obj, "chord_bass_root", true);
+  }
+
   return obj;
 }
 
@@ -7283,6 +7304,12 @@ static void json_to_rtg_config(cJSON* obj, rtg_config_t* config) {
   config->shepard_fade = SHEPARD_FADE_NONE;
   config->shepard_style = SHEPARD_STYLE_STREAM;
   config->shepard_wide_semis = 4;
+  config->triplet_pct = 0;
+  config->chord_pct = 0;
+  config->chord_size = RTG_CHORD_3;
+  config->chord_quality = RTG_CHORD_QUALITY_RANDOM;
+  config->chord_spread = RTG_CHORD_SPREAD_CLOSE;
+  config->chord_bass_root = false;
 
   cJSON* gen = cJSON_GetObjectItem(obj, "generator");
   if (gen && cJSON_IsString(gen)) {
@@ -7311,6 +7338,42 @@ static void json_to_rtg_config(cJSON* obj, rtg_config_t* config) {
     if (semis > 4) semis = 4;
     config->shepard_wide_semis = (uint8_t)semis;
   }
+
+  cJSON* triplet = cJSON_GetObjectItem(obj, "triplet_pct");
+  if (triplet && cJSON_IsNumber(triplet)) {
+    int pct = triplet->valueint;
+    if (pct > 0) {
+      if (pct < 10) pct = 10;
+      if (pct > 100) pct = 100;
+      pct = (pct / 10) * 10;
+    } else {
+      pct = 0;
+    }
+    config->triplet_pct = (uint8_t)pct;
+  }
+  cJSON* chord = cJSON_GetObjectItem(obj, "chord_pct");
+  if (chord && cJSON_IsNumber(chord)) {
+    int pct = chord->valueint;
+    if (pct > 0) {
+      if (pct < 10) pct = 10;
+      if (pct > 100) pct = 100;
+      pct = (pct / 10) * 10;
+    } else {
+      pct = 0;
+    }
+    config->chord_pct = (uint8_t)pct;
+  }
+  cJSON* csize = cJSON_GetObjectItem(obj, "chord_size");
+  if (csize && cJSON_IsString(csize))
+    config->chord_size = rtg_chord_size_from_string(csize->valuestring);
+  cJSON* cqual = cJSON_GetObjectItem(obj, "chord_quality");
+  if (cqual && cJSON_IsString(cqual))
+    config->chord_quality = rtg_chord_quality_from_string(cqual->valuestring);
+  cJSON* cspread = cJSON_GetObjectItem(obj, "chord_spread");
+  if (cspread && cJSON_IsString(cspread))
+    config->chord_spread = rtg_chord_spread_from_string(cspread->valuestring);
+  cJSON* cbass = cJSON_GetObjectItem(obj, "chord_bass_root");
+  if (cbass) config->chord_bass_root = cJSON_IsTrue(cbass);
 }
 
 // Serialize Sample+Hold config to JSON
