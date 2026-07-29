@@ -106,10 +106,14 @@ wa-tab[hidden] { display: none !important; }
 .breadcrumb button:hover { color: var(--text); }
 
 .file-list { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow-y: auto; flex: 1; min-height: 200px; max-height: 400px; }
-.file-header { display: grid; grid-template-columns: 1fr 80px 280px; padding: 0.75rem 1rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; position: sticky; top: 0; z-index: 1; }
-.file-item { display: grid; grid-template-columns: 1fr 80px 280px; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; align-items: center; }
+.file-header { display: grid; grid-template-columns: 28px 1fr 80px 280px; padding: 0.75rem 1rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; position: sticky; top: 0; z-index: 1; align-items: center; }
+.file-item { display: grid; grid-template-columns: 28px 1fr 80px 280px; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; align-items: center; }
 .file-item:last-child { border-bottom: none; }
 .file-item:hover { background: var(--bg-hover); }
+.file-item.is-selected { background: rgba(255, 255, 255, 0.04); }
+.file-check { display: flex; align-items: center; justify-content: center; }
+.file-check input[type="checkbox"] { width: 14px; height: 14px; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.file-check-spacer { width: 14px; height: 14px; }
 .file-name { display: flex; align-items: center; gap: 0.75rem; font-family: var(--font-mono); font-size: 0.9rem; }
 .file-icon { font-size: 1.25rem; }
 .file-icon.folder { color: var(--folder); }
@@ -410,7 +414,7 @@ wa-button.active {
   .app-header { flex-direction: column; gap: 0.75rem; }
   .connection-controls { width: 100%; justify-content: space-between; }
   .stats-panel { grid-template-columns: repeat(2, 1fr); }
-  .file-header, .file-item { grid-template-columns: 1fr 60px; }
+  .file-header, .file-item { grid-template-columns: 28px 1fr 60px; }
   .file-actions { display: none; }
 }
 

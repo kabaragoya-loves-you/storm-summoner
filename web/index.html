@@ -202,6 +202,12 @@
                 <wa-icon name="folder-plus" slot="prefix"></wa-icon>
                 New Folder
               </wa-button>
+              <wa-button size="small" variant="danger" appearance="outlined"
+                         data-action="click->assets#deleteSelected"
+                         data-assets-target="deleteSelectedBtn" disabled>
+                <wa-icon name="trash" slot="prefix"></wa-icon>
+                Delete
+              </wa-button>
               <wa-button size="small" variant="neutral" appearance="outlined"
                          data-action="click->assets#downloadCurrentFolder"
                          data-assets-target="downloadZipBtn" disabled>
@@ -222,8 +228,10 @@
               <span>This area is <strong>read-only</strong>. Shared content is replaced by the Assets OTA flow.</span>
             </div>
 
-            <div class="file-list" data-assets-target="fileList">
+            <div class="file-list" data-assets-target="fileList"
+                 data-action="assets-row:toggled->assets#onRowToggled">
               <div class="file-header">
+                <span class="file-check-spacer" aria-hidden="true"></span>
                 <span>Name</span>
                 <span style="text-align: right">Size</span>
                 <span style="text-align: right">Actions</span>
@@ -951,6 +959,7 @@
   <script src="/js/controllers/collapsible.js"></script>
   <script src="/js/controllers/reveal.js"></script>
   <script src="/js/controllers/slots.js"></script>
+  <script src="/js/controllers/assets-row.js"></script>
   <script src="/js/controllers/flag-thresholds.js"></script>
   <script src="/js/controllers/mock-runtime.js"></script>
   <script src="/js/boomerang_envelope.js"></script>

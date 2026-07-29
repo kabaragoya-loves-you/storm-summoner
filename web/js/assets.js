@@ -8,9 +8,11 @@ application.register(
       'fileList',
       'refreshBtn',
       'newFolderBtn',
+      'deleteSelectedBtn',
       'uploadZipBtn',
       'downloadZipBtn',
       'zipInput',
+      'selectAllCheckbox',
       'uploadZone',
       'fileInput',
       'statsBar',
@@ -79,6 +81,8 @@ application.register(
       this.inAssetsMode = false
       this.renameTarget = null
       this.userdataAvailable = true
+      this.selectedPaths = new Set()
+      this._bulkDeleteBusy = false
 
       // Esc closes the file viewer. Bound on document because focus is usually
       // still on the file row, not inside the modal.
@@ -126,6 +130,8 @@ application.register(
         this.newFolderBtnTarget.disabled = true
         this.uploadZipBtnTarget.disabled = true
         if (this.hasDownloadZipBtnTarget) this.downloadZipBtnTarget.disabled = true
+        if (this.hasDeleteSelectedBtnTarget) this.deleteSelectedBtnTarget.disabled = true
+        this.selectedPaths.clear()
         this.inAssetsMode = false
       } else {
         this.applyWritableState()
@@ -179,6 +185,62 @@ application.register(
           && !writable
         this.readonlyBannerTarget.style.display = showBanner ? 'flex' : 'none'
       }
+      this.updateBulkDeleteBtn()
+    }
+
+    clearSelection () {
+      this.selectedPaths.clear()
+      this.updateBulkDeleteBtn()
+      this.syncSelectAllCheckbox()
+    }
+
+    updateBulkDeleteBtn () {
+      if (!this.hasDeleteSelectedBtnTarget) return
+      const writable = this.isCurrentPathWritable() && this.connection.isConnected
+      this.deleteSelectedBtnTarget.disabled =
+        !writable || this._bulkDeleteBusy || this.selectedPaths.size <= 1
+    }
+
+    selectableRowElements () {
+      if (!this.hasFileListTarget) return []
+      return [...this.fileListTarget.querySelectorAll('[data-controller~="assets-row"]')]
+    }
+
+    rowControllerFor (el) {
+      return this.application.getControllerForElementAndIdentifier(el, 'assets-row')
+    }
+
+    onRowToggled (e) {
+      const { path, selected } = e.detail || {}
+      if (!path) return
+      if (selected) this.selectedPaths.add(path)
+      else this.selectedPaths.delete(path)
+      this.updateBulkDeleteBtn()
+      this.syncSelectAllCheckbox()
+    }
+
+    syncSelectAllCheckbox () {
+      if (!this.hasSelectAllCheckboxTarget) return
+      const rows = this.selectableRowElements()
+      const n = rows.length
+      const selected = this.selectedPaths.size
+      this.selectAllCheckboxTarget.disabled = n === 0 || this._bulkDeleteBusy
+      this.selectAllCheckboxTarget.checked = n > 0 && selected === n
+      this.selectAllCheckboxTarget.indeterminate = selected > 0 && selected < n
+    }
+
+    toggleSelectAll (e) {
+      e?.stopPropagation()
+      const checked = !!this.selectAllCheckboxTarget?.checked
+      this.selectedPaths.clear()
+      for (const el of this.selectableRowElements()) {
+        const ctrl = this.rowControllerFor(el)
+        if (!ctrl) continue
+        ctrl.selectedValue = checked
+        if (checked) this.selectedPaths.add(ctrl.pathValue)
+      }
+      this.updateBulkDeleteBtn()
+      this.syncSelectAllCheckbox()
     }
 
     async activate () {
@@ -337,8 +399,19 @@ application.register(
     }
 
     renderFileList () {
+      this.clearSelection()
+      const atRoot = this.toDisplayPath(this.currentPath) === '/'
+      const showSelectAll = !atRoot && this.isCurrentPathWritable()
+      const selectAllCell = showSelectAll
+        ? `<div class="file-check">
+            <input type="checkbox" data-assets-target="selectAllCheckbox"
+              data-action="click->assets#stopEventPropagation change->assets#toggleSelectAll"
+              title="Select all" aria-label="Select all">
+          </div>`
+        : `<span class="file-check-spacer" aria-hidden="true"></span>`
       const header = `
       <div class="file-header">
+        ${selectAllCell}
         <span>Name</span>
         <span style="text-align: right">Size</span>
         <span style="text-align: right">Actions</span>
@@ -356,6 +429,7 @@ application.register(
           <p>Empty folder</p>
         </div>
       `
+        this.syncSelectAllCheckbox()
         return
       }
 
@@ -364,7 +438,6 @@ application.register(
           return a.name.localeCompare(b.name)
         })
 
-      const atRoot = this.toDisplayPath(this.currentPath) === '/'
       const visible = sorted.filter(f => !this.isHiddenEntry(f, atRoot))
 
       if (visible.length === 0) {
@@ -378,6 +451,7 @@ application.register(
           <p>Empty folder</p>
         </div>
       `
+        this.syncSelectAllCheckbox()
         return
       }
 
@@ -391,15 +465,19 @@ application.register(
             ? `/${file.name}`
             : `${this.toDisplayPath(this.currentPath)}/${file.name}`.replace(/\/+/g, '/')
           const rowWritable = this.isWritablePath(fullPath)
+          const mutable = rowWritable && !atRoot
+          // Only files get checkboxes; folder deletes stay on the row button so
+          // recursive removal is always an explicit, single-target action.
+          const selectable = mutable && !isDir
           const unavailable = false
           const nameSuffix = ''
 
-          const renameBtn = rowWritable && !atRoot
+          const renameBtn = mutable
             ? `<button data-action="click->assets#showRename"`
               + ` data-path="${fullPath}"`
               + ` data-name="${file.name}">Rename</button>`
             : ''
-          const deleteBtn = rowWritable && !atRoot
+          const deleteBtn = mutable
             ? `<button class="delete"`
               + ` data-action="click->assets#deleteFile"`
               + ` data-path="${fullPath}">Delete</button>`
@@ -421,9 +499,26 @@ application.register(
             ? ''
             : `data-action="click->assets#viewFile" data-path="${fullPath}"`
           const nameClass = isDir ? 'file-name' : 'file-name viewable'
+          const checkCell = selectable
+            ? `<div class="file-check"
+                data-action="click->assets-row#stopPropagation">
+                <input type="checkbox" data-assets-row-target="checkbox"
+                  data-action="click->assets-row#stopPropagation change->assets-row#toggle"
+                  aria-label="Select ${file.name}">
+              </div>`
+            : `<span class="file-check-spacer" aria-hidden="true"></span>`
+          const rowController = selectable
+            ? `data-controller="assets-row"`
+              + ` data-assets-row-path-value="${fullPath}"`
+              + ` data-assets-row-type-value="${file.type}"`
+              + ` data-assets-row-name-value="${file.name}"`
+              + ` data-assets-row-selected-value="false"`
+            : ''
 
           return `
-        <div class="file-item" data-path="${fullPath}" data-type="${file.type}" data-name="${file.name}" ${clickAction}>
+        <div class="file-item" data-path="${fullPath}" data-type="${file.type}"
+          data-name="${file.name}" ${rowController} ${clickAction}>
+          ${checkCell}
           <div class="${nameClass}" ${nameAttrs}>
             <wa-icon name="${icon}" class="file-icon ${iconClass}"></wa-icon>
             <span>${file.name}</span>${nameSuffix}
@@ -441,6 +536,12 @@ application.register(
         .join('')
 
       this.fileListTarget.innerHTML = header + items
+      this.syncSelectAllCheckbox()
+      this.updateBulkDeleteBtn()
+    }
+
+    stopEventPropagation (e) {
+      e?.stopPropagation()
     }
 
     openFolder (event) {
@@ -586,40 +687,67 @@ application.register(
       this.resolveDeleteConfirm(true)
     }
 
+    async inspectDeletePlan (path, type) {
+      let useRmrf = false
+      let contentCount = 0
+      if (type === 'dir') {
+        try {
+          const lsResponse = await this.sendCommand(`LS ${this.toDevicePath(path)}`)
+          const contents = JSON.parse(lsResponse)
+          contentCount = contents.length
+          if (contentCount > 0) useRmrf = true
+        } catch (_) {
+          // If LS fails, try normal delete
+        }
+      }
+      return { useRmrf, contentCount }
+    }
+
+    async deletePathOnDevice (path, type, plan = null) {
+      const { useRmrf } = plan || await this.inspectDeletePlan(path, type)
+      const cmd = useRmrf
+        ? `RMRF ${this.toDevicePath(path)}`
+        : `RM ${this.toDevicePath(path)}`
+      const response = await this.sendCommand(cmd)
+      return { ok: response === 'OK', response, useRmrf }
+    }
+
+    removeFileRow (path) {
+      const row = this.fileListTarget?.querySelector(
+        `.file-item[data-path="${CSS.escape(path)}"]`)
+      row?.remove()
+      this.selectedPaths.delete(path)
+      this.files = this.files.filter(f => {
+        const atRoot = this.toDisplayPath(this.currentPath) === '/'
+        const fullPath = atRoot
+          ? `/${f.name}`
+          : `${this.toDisplayPath(this.currentPath)}/${f.name}`.replace(/\/+/g, '/')
+        return fullPath !== path
+      })
+      this.updateBulkDeleteBtn()
+      this.syncSelectAllCheckbox()
+    }
+
     async deleteFile (event) {
       event.stopPropagation()
       const path = event.currentTarget.dataset.path
       const name = path.split('/').pop()
       const type = event.currentTarget.closest('.file-item')?.dataset.type
 
-      let useRmrf = false
-      let title = type === 'dir' ? 'Delete Folder' : 'Delete File'
+      const title = type === 'dir' ? 'Delete Folder' : 'Delete File'
       let message = `Delete "${name}"?`
-
-      if (type === 'dir') {
-        try {
-          const lsResponse = await this.sendCommand(`LS ${this.toDevicePath(path)}`)
-          const contents = JSON.parse(lsResponse)
-
-          if (contents.length > 0) {
-            useRmrf = true
-            message =
-              `"${name}" contains ${contents.length} item(s). Delete folder and ALL contents?`
-          }
-        } catch (err) {
-          // If LS fails, try normal delete
-        }
+      const plan = await this.inspectDeletePlan(path, type)
+      if (type === 'dir' && plan.contentCount > 0) {
+        message =
+          `"${name}" contains ${plan.contentCount} item(s). Delete folder and ALL contents?`
       }
 
       if (!await this.showDeleteConfirm(title, message)) return
 
       try {
-        const cmd = useRmrf
-          ? `RMRF ${this.toDevicePath(path)}`
-          : `RM ${this.toDevicePath(path)}`
-        const response = await this.sendCommand(cmd)
-
-        if (response === 'OK') {
+        const { ok, response, useRmrf } =
+          await this.deletePathOnDevice(path, type, plan)
+        if (ok) {
           this.log(
             useRmrf ? `Deleted ${name} and contents` : `Deleted ${name}`,
             'success'
@@ -631,6 +759,57 @@ application.register(
         }
       } catch (err) {
         this.log(`Delete failed: ${err.message}`, 'error')
+      }
+    }
+
+    async deleteSelected () {
+      if (this._bulkDeleteBusy || this.selectedPaths.size <= 1) return
+      if (!this.isCurrentPathWritable() || !this.connection.isConnected) return
+
+      const items = this.selectableRowElements()
+        .map(el => this.rowControllerFor(el))
+        .filter(ctrl => ctrl && this.selectedPaths.has(ctrl.pathValue))
+        .map(ctrl => ({
+          path: ctrl.pathValue,
+          type: ctrl.typeValue,
+          name: ctrl.nameValue
+        }))
+
+      if (items.length <= 1) return
+
+      const title = 'Delete Files'
+      const message = `Delete ${items.length} selected files?`
+      if (!await this.showDeleteConfirm(title, message)) return
+
+      this._bulkDeleteBusy = true
+      this.updateBulkDeleteBtn()
+      this.syncSelectAllCheckbox()
+
+      let deleted = 0
+      try {
+        for (const item of items) {
+          try {
+            const { ok, response } =
+              await this.deletePathOnDevice(item.path, item.type)
+            if (!ok) {
+              this.log(response || `Failed to delete ${item.name}`, 'error')
+              break
+            }
+            this.log(`Deleted ${item.name}`, 'success')
+            deleted++
+            this.removeFileRow(item.path)
+          } catch (err) {
+            this.log(`Delete failed for ${item.name}: ${err.message}`, 'error')
+            break
+          }
+        }
+      } finally {
+        this._bulkDeleteBusy = false
+        // Removing the last row leaves no rows to re-sync, so draw the empty state.
+        if (!this.fileListTarget.querySelector('.file-item')) this.renderFileList()
+        this.updateBulkDeleteBtn()
+        this.syncSelectAllCheckbox()
+        if (deleted > 0) await this.loadStats()
       }
     }
 
