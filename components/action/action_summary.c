@@ -774,12 +774,6 @@ static bool ainspect_append(ainspect_buf_t *b, const char *fmt, ...) {
   return true;
 }
 
-static bool ainspect_control_cc_assigned(const device_def_t *device, uint8_t cc) {
-  if (cc > 127) return false;
-  if (!device) return false;
-  return assets_get_control_by_cc(device, cc) != NULL;
-}
-
 static const char *ainspect_polarity_name(polarity_t pol) {
   switch (pol) {
     case POLARITY_BIPOLAR: return "Bipolar";
@@ -1192,22 +1186,20 @@ static void ainspect_append_pattern(ainspect_buf_t *b, const action_t *action) {
 static void ainspect_append_control_set_lines(ainspect_buf_t *b, const action_t *action,
   uint8_t scene_index) {
   const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
+  // 0 means one slot, same as the dispatch and serialize paths.
   uint8_t num = action->params.control.num_ccs;
+  if (num == 0) num = 1;
   if (num > 4) num = 4;
 
-  bool any = false;
   for (uint8_t i = 0; i < num; i++) {
     uint8_t cc = action->params.control.cc_numbers[i];
-    if (!ainspect_control_cc_assigned(device, cc)) continue;
-
+    uint8_t value = action->params.control.values[i];
     char cc_name[32];
     char val[24];
     ainspect_cc_label(cc_name, sizeof(cc_name), device, cc);
-    ainspect_value_label(val, sizeof(val), device, cc, action->params.control.values[i]);
+    ainspect_value_label(val, sizeof(val), device, cc, value);
     ainspect_append(b, "\nSet: %s %s", cc_name, val);
-    any = true;
   }
-  if (!any) ainspect_append(b, "\nSet: Unassigned!");
 }
 
 static const char *ainspect_boomerang_division_label(uint8_t division) {
@@ -1382,8 +1374,6 @@ static void ainspect_append_action_body(ainspect_buf_t *out, const action_t *act
     char variant_line[192];
     if (ainspect_format_variant_line(action, scene_index, variant_line, sizeof(variant_line))) {
       ainspect_append(out, "\n%s", variant_line);
-    } else if (action->type == ACTION_CONTROL && action->variant == VARIANT_SET) {
-      ainspect_append(out, "\nSet: Unassigned!");
     }
   }
 
@@ -1453,13 +1443,9 @@ bool action_summary_format_inspect_continuous(const continuous_mapping_t *mappin
 
   if (mapping->output_type == OUTPUT_TYPE_CC) {
     char cc_name[32];
-    if (ainspect_control_cc_assigned(device, mapping->cc_number)) {
-      ainspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
-      ainspect_append(&out, "\n%s %u - %u", cc_name,
-        (unsigned)mapping->min_value, (unsigned)mapping->max_value);
-    } else {
-      ainspect_append(&out, "\nUnassigned!");
-    }
+    ainspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
+    ainspect_append(&out, "\n%s %u - %u", cc_name,
+      (unsigned)mapping->min_value, (unsigned)mapping->max_value);
   } else if (mapping->output_type == OUTPUT_TYPE_NOTE) {
     ainspect_append(&out, "\nBase %u, Range %u",
       (unsigned)mapping->base_note, (unsigned)mapping->note_range);

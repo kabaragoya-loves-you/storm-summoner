@@ -219,11 +219,6 @@ static void scene_inspect_cc_label(char *buf, size_t cap, const device_def_t *de
   }
 }
 
-static bool scene_inspect_cc_assigned(const device_def_t *device, uint8_t cc) {
-  if (!device || cc > 127) return false;
-  return assets_get_control_by_cc(device, cc) != NULL;
-}
-
 static const char *SCENE_INSPECT_NOTE_NAMES[] = {
   "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 };
@@ -241,13 +236,9 @@ static void append_continuous_assignment(scene_inspect_buf_t *b, const char *pre
 
   if (mapping->output_type == OUTPUT_TYPE_CC) {
     char cc_name[32];
-    if (scene_inspect_cc_assigned(device, mapping->cc_number)) {
-      scene_inspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
-      scene_inspect_buf_append(b, "%s: %s %u-%u\n", prefix, cc_name,
-        (unsigned)mapping->min_value, (unsigned)mapping->max_value);
-    } else {
-      scene_inspect_buf_append(b, "%s: Unassigned!\n", prefix);
-    }
+    scene_inspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
+    scene_inspect_buf_append(b, "%s: %s %u-%u\n", prefix, cc_name,
+      (unsigned)mapping->min_value, (unsigned)mapping->max_value);
     return;
   }
 
@@ -331,13 +322,9 @@ static void append_continuous_mapping_block(scene_inspect_buf_t *b, const char *
     char cc_name[32];
     const device_def_t *device = (const device_def_t *)scene_get_device(scene_index);
     scene_inspect_buf_append(b, "%s: Control Change\n", label);
-    if (scene_inspect_cc_assigned(device, mapping->cc_number)) {
-      scene_inspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
-      scene_inspect_buf_append(b, "Set: %s %u-%u\n\n", cc_name,
-        (unsigned)mapping->min_value, (unsigned)mapping->max_value);
-    } else {
-      scene_inspect_buf_append(b, "Set: Unassigned!\n\n");
-    }
+    scene_inspect_cc_label(cc_name, sizeof(cc_name), device, mapping->cc_number);
+    scene_inspect_buf_append(b, "Set: %s %u-%u\n\n", cc_name,
+      (unsigned)mapping->min_value, (unsigned)mapping->max_value);
     return;
   }
 
