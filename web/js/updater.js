@@ -107,7 +107,7 @@ application.register(
       try {
         const response = await this.fetchFresh('/releases.json')
         if (response.ok) {
-          this.releases = await response.json()
+          this.releases = window.Releases.normalize(await response.json())
           this.populateFirmwareDropdown()
           this.populateAssetsDropdown()
           this.log('Loaded releases manifest', 'success')

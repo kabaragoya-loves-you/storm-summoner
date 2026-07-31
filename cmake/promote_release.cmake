@@ -154,8 +154,8 @@ foreach(FW_BIN ${FW_BINARIES})
   endif()
 endforeach()
 
-# Sort firmware entries by version (descending) - newest first
-# We'll use a simple approach: collect version numbers, sort, then rebuild
+# Sort firmware entries by version (descending) - newest first.
+# COMPARE NATURAL so 0.10 sorts after 0.9 (lexicographic "10" < "9" would not).
 set(FW_VERSIONS "")
 foreach(FW_BIN ${FW_BINARIES})
   get_filename_component(FW_NAME "${FW_BIN}" NAME)
@@ -168,8 +168,7 @@ foreach(FW_BIN ${FW_BINARIES})
   endif()
 endforeach()
 
-list(SORT FW_VERSIONS)
-list(REVERSE FW_VERSIONS)
+list(SORT FW_VERSIONS COMPARE NATURAL ORDER DESCENDING)
 
 set(FW_JSON_ARRAY "")
 foreach(FW_ITEM ${FW_VERSIONS})

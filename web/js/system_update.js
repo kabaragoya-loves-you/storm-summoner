@@ -165,7 +165,7 @@ application.register(
       try {
         const response = await fetch('/releases.json')
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        this.releases = await response.json()
+        this.releases = window.Releases.normalize(await response.json())
         this.populateBundleSelect()
       } catch (err) {
         this.log(`Failed to load releases: ${err.message}`, 'error')

@@ -163,7 +163,7 @@ application.register(
         // rebuild, and a stale copy would misreport the latest available build.
         const response = await fetch('/releases.json?_=' + Date.now(), { cache: 'no-store' })
         if (response.ok) {
-          this.releases = await response.json()
+          this.releases = window.Releases.normalize(await response.json())
         }
       } catch (err) {
         console.warn('Failed to load releases manifest:', err)

@@ -1,6 +1,7 @@
 {
   "generated": "2026-07-29T02:45:34",
   "firmware": [
+    { "version": "0.10", "filename": "storm-summoner-0.10.bin", "date": "2026-07-29" },
     { "version": "0.9", "filename": "storm-summoner-0.9.bin", "date": "2026-07-19" },
     { "version": "0.8", "filename": "storm-summoner-0.8.bin", "date": "2026-06-29" },
     { "version": "0.7", "filename": "storm-summoner-0.7.bin", "date": "2026-06-19" },
@@ -9,8 +10,7 @@
     { "version": "0.4", "filename": "storm-summoner-0.4.bin", "date": "2026-05-22" },
     { "version": "0.3", "filename": "storm-summoner-0.3.bin", "date": "2026-05-15" },
     { "version": "0.2", "filename": "storm-summoner-0.2.bin", "date": "2026-03-28" },
-    { "version": "0.1", "filename": "storm-summoner-0.1.bin", "date": "2026-03-25" },
-    { "version": "0.10", "filename": "storm-summoner-0.10.bin", "date": "2026-07-29" }
+    { "version": "0.1", "filename": "storm-summoner-0.1.bin", "date": "2026-03-25" }
   ],
   "assets": [
     { "checksum": "71788d20", "filename": "assets-71788d20.bin", "date": "2026-07-28" },
