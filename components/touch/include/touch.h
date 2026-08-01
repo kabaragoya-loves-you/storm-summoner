@@ -55,6 +55,10 @@ void touch_set_stuck_timeout_ms(uint32_t timeout_ms);
 uint32_t touch_get_idle_calibration_interval_ms(void);
 void touch_set_idle_calibration_interval_ms(uint32_t interval_ms);
 
+// Persist idle-calib RAM thresholds to NVS if they changed since last flash write.
+// Safe to call from programming enter / scene save (no-op when clean).
+void touch_flush_idle_calibration_nvs(void);
+
 // Get timestamps for debugging/monitoring
 uint32_t touch_get_last_calibration_time_ms(void);
 uint32_t touch_get_last_touch_time_ms(void);

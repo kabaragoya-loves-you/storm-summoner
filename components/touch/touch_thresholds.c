@@ -35,6 +35,7 @@ static bool s_calibration_loaded = false;
 static uint32_t s_backup_thresholds[MAX_TOUCH_PADS];
 static bool s_backup_valid = false;
 static SemaphoreHandle_t s_calibration_mutex = NULL;
+static bool s_nvs_dirty = false;
 
 typedef struct {
   bool pending;
@@ -54,6 +55,8 @@ static bool fetch_calibration_request(calibration_request_t* out_request);
 static void run_calibration_sequence(touch_calibration_reason_t reason, bool force);
 static const char* calibration_reason_to_string(touch_calibration_reason_t reason);
 static esp_err_t calibrate_single_pad(int pad_index);
+static esp_err_t touch_calibrate_body(bool force, bool persist_nvs);
+static esp_err_t touch_calibrate_internal(bool force, bool persist_nvs);
 
 static uint32_t calculate_mean(uint32_t *samples, size_t count) {
   uint64_t sum = 0;
@@ -118,9 +121,14 @@ static void run_calibration_sequence(touch_calibration_reason_t reason, bool for
   const int max_attempts = 3;
   ESP_LOGD(TAG, "Starting calibration sequence (%s)%s", reason_str, force ? " [forced]" : "");
   
+  // Idle recalibration refreshes RAM thresholds for the current session.
+  // Persisting to NVS every interval burns flash and can stall the clock
+  // via cache suspend (~30-60ms); boot already has a valid NVS snapshot.
+  bool persist_nvs = (reason != TOUCH_CALIBRATION_REASON_IDLE);
+
   for (int attempt = 0; attempt < max_attempts; attempt++) {
     bool attempt_force = force || (attempt == max_attempts - 1);
-    esp_err_t ret = touch_calibrate(attempt_force);
+    esp_err_t ret = touch_calibrate_internal(attempt_force, persist_nvs);
     
     if (ret == ESP_OK) {
       ESP_LOGD(TAG, "Calibration succeeded on attempt %d (%s)", attempt + 1, reason_str);
@@ -182,6 +190,7 @@ static esp_err_t save_calibration_to_nvs(void) {
     return ret;
   }
   
+  s_nvs_dirty = false;
   ESP_LOGD(TAG, "Calibration data saved to NVS successfully");
   return ESP_OK;
 }
@@ -603,7 +612,7 @@ void touch_thresholds_init(void) {
   // to save memory (combined into one task instead of two)
 }
 
-static esp_err_t touch_calibrate_body(bool force) {
+static esp_err_t touch_calibrate_body(bool force, bool persist_nvs) {
   ESP_LOGD(TAG, "Starting touch sensor calibration...");
   
   touch_sensor_handle_t sens_handle = touch_get_sensor_handle();
@@ -704,22 +713,30 @@ static esp_err_t touch_calibrate_body(bool force) {
     return ret;
   }
   
-  ret = save_calibration_to_nvs();
-  if (ret != ESP_OK) ESP_LOGW(TAG, "Failed to save calibration to NVS: %s", esp_err_to_name(ret));
+  if (persist_nvs) {
+    ret = save_calibration_to_nvs();
+    if (ret != ESP_OK) ESP_LOGW(TAG, "Failed to save calibration to NVS: %s", esp_err_to_name(ret));
+  } else {
+    s_nvs_dirty = true;
+  }
   
   ESP_LOGD(TAG, "Touch sensor calibration completed successfully");
   return ESP_OK;
 }
 
-esp_err_t touch_calibrate(bool force) {
+static esp_err_t touch_calibrate_internal(bool force, bool persist_nvs) {
   if (s_calibration_mutex) {
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
   }
-  esp_err_t ret = touch_calibrate_body(force);
+  esp_err_t ret = touch_calibrate_body(force, persist_nvs);
   if (s_calibration_mutex) {
     xSemaphoreGive(s_calibration_mutex);
   }
   return ret;
+}
+
+esp_err_t touch_calibrate(bool force) {
+  return touch_calibrate_internal(force, true);
 }
 
 esp_err_t touch_calibrate_pad(int pad_index) {
@@ -782,42 +799,23 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   // touched relative to the CALIBRATED baseline. Resetting mid-press captures
   // the touched value as the new benchmark, which makes the ongoing (and
   // subsequent) real presses invisible to the hardware (delta ~0) and poisons
-  // drift tracking. Confirmed live: [DBG12/H3] looks_touched=1 at 242817ms
-  // produced new_baseline=31885 on a pad whose calibrated baseline is 20881.
-  uint32_t guard_smooth[1] = {0};
-  uint32_t guard_bench[1] = {0};
-  touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, guard_smooth);
-  touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, guard_bench);
+  // drift tracking.
   if (s_pad_calibration[pad_index].valid) {
-    uint32_t base = s_pad_calibration[pad_index].baseline;
-    uint32_t thresh = s_pad_calibration[pad_index].threshold;
-    bool looks_touched = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
-      ? (guard_smooth[0] + thresh < base)
-      : (guard_smooth[0] > base + thresh);
-    // #region agent log
-    if (pad_index == 12) {
-      int32_t dbg_delta = (int32_t)guard_smooth[0] - (int32_t)guard_bench[0];
-      ESP_LOGI(TAG, "[DBG12/H3] pre-reset: smooth=%u bench=%u delta=%d"
-        " base=%u thresh=%u looks_touched=%d",
-        (unsigned)guard_smooth[0], (unsigned)guard_bench[0], (int)dbg_delta,
-        (unsigned)base, (unsigned)thresh, (int)looks_touched);
+    uint32_t guard_smooth[1] = {0};
+    if (touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, guard_smooth) == ESP_OK) {
+      uint32_t base = s_pad_calibration[pad_index].baseline;
+      uint32_t thresh = s_pad_calibration[pad_index].threshold;
+      bool looks_touched = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
+        ? (guard_smooth[0] + thresh < base)
+        : (guard_smooth[0] > base + thresh);
+      if (looks_touched) {
+        ESP_LOGW(TAG, "Pad %d appears actively touched (smooth=%u, baseline=%u, thresh=%u);"
+          " deferring benchmark reset", pad_index,
+          (unsigned)guard_smooth[0], (unsigned)base, (unsigned)thresh);
+        if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+        return ESP_ERR_INVALID_STATE;
+      }
     }
-    // #endregion
-    if (looks_touched) {
-      ESP_LOGW(TAG, "Pad %d appears actively touched (smooth=%u, baseline=%u, thresh=%u);"
-        " deferring benchmark reset", pad_index,
-        (unsigned)guard_smooth[0], (unsigned)base, (unsigned)thresh);
-      if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
-      return ESP_ERR_INVALID_STATE;
-    }
-  } else {
-    // #region agent log
-    if (pad_index == 12) {
-      int32_t dbg_delta = (int32_t)guard_smooth[0] - (int32_t)guard_bench[0];
-      ESP_LOGI(TAG, "[DBG12/H3] pre-reset: smooth=%u bench=%u delta=%d (no calib)",
-        (unsigned)guard_smooth[0], (unsigned)guard_bench[0], (int)dbg_delta);
-    }
-    // #endregion
   }
 
   // 2. Clear software pressed state immediately (like manual reset does)
@@ -1053,5 +1051,25 @@ esp_err_t touch_update_thresholds_from_benchmarks(void) {
 
 void touch_thresholds_request_calibration(touch_calibration_reason_t reason, bool force) {
   enqueue_calibration_request(reason, force);
+}
+
+void touch_thresholds_flush_nvs_if_dirty(void) {
+  if (!s_nvs_dirty || !s_calibration_loaded) return;
+
+  if (s_calibration_mutex) {
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+  }
+
+  if (s_nvs_dirty && s_calibration_loaded) {
+    esp_err_t ret = save_calibration_to_nvs();
+    if (ret != ESP_OK)
+      ESP_LOGW(TAG, "Deferred NVS flush failed: %s", esp_err_to_name(ret));
+    else
+      ESP_LOGI(TAG, "Deferred idle calibration flush to NVS");
+  }
+
+  if (s_calibration_mutex) {
+    xSemaphoreGive(s_calibration_mutex);
+  }
 }
 

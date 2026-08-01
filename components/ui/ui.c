@@ -472,6 +472,8 @@ void ui_set_app_mode(app_mode_t mode) {
   
   ESP_LOGI(TAG, "App mode changed: %s -> %s", prev_name, new_name);
   if (mode == APP_MODE_PROGRAMMING && previous_mode != APP_MODE_PROGRAMMING) {
+    // Clock is muted on programming entry; safe moment to persist idle-calib RAM.
+    touch_flush_idle_calibration_nvs();
     usb_cdc_notify_programming(true);
   } else if (previous_mode == APP_MODE_PROGRAMMING && mode == APP_MODE_PERFORMANCE) {
     usb_cdc_notify_programming(false);

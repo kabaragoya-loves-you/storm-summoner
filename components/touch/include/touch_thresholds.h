@@ -46,5 +46,9 @@ void touch_thresholds_request_calibration(touch_calibration_reason_t reason, boo
 // Returns true if a calibration was processed
 bool touch_thresholds_process_pending(void);
 
+// If idle calib refreshed RAM without persisting, flush those values to NVS now.
+// Call from intentional, non-clock-critical moments (programming enter, scene save).
+void touch_thresholds_flush_nvs_if_dirty(void);
+
 #endif // TOUCH_THRESHOLDS_H_
 

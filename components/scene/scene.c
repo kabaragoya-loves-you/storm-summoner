@@ -3517,6 +3517,7 @@ esp_err_t scene_cancel_pending(void) {
 
 esp_err_t scene_save_config(void) {
   ESP_LOGI(TAG, "Saving scene configuration to NVS");
+  touch_flush_idle_calibration_nvs();
   
   uint8_t mode_val = (uint8_t)g_scene_manager.mode;
   esp_err_t ret = app_settings_save_u8(NVS_KEY_SCENE_MODE, mode_val);
@@ -8693,6 +8694,9 @@ esp_err_t scene_save_to_flash(uint8_t scene_index) {
     }
   }
   if (!scene) return ESP_ERR_NOT_FOUND;
+
+  // Piggyback on an intentional flash write; covers all menu persist paths.
+  touch_flush_idle_calibration_nvs();
 
   scene_stamp_creator_if_empty(scene);
 
