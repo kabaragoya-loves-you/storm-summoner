@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "touch.h"
 #include "ui.h"
+#include "screw_calibrate.h"
 #include "esp_log.h"
 #include <stdio.h>
 
@@ -17,10 +18,11 @@ extern void working_set_message(const char *msg);
 
 // Label buffers
 static char s_calibrate_label[32];
+static char s_screw_calibrate_label[32];
 static char s_stuck_timeout_label[32];
 static char s_idle_calib_label[32];
 static char s_menu_hold_label[32];
-static menu_item_t s_touch_items[4];
+static menu_item_t s_touch_items[5];
 
 // ============================================================================
 // Calibrate Action
@@ -55,6 +57,12 @@ static void action_calibrate(void* user_data) {
   // Defer calibration to let LVGL render the working screen
   lv_timer_t *timer = lv_timer_create(calibrate_deferred_cb, 100, NULL);
   if (timer) lv_timer_set_repeat_count(timer, 1);
+}
+
+static void action_screw_calibrate(void* user_data) {
+  (void)user_data;
+  ESP_LOGI(TAG, "Starting screw calibration wizard");
+  ui_set_draw_module(&screw_calibrate_module);
 }
 
 // ============================================================================
@@ -226,6 +234,12 @@ lv_obj_t* menu_page_touch_create(void) {
   snprintf(s_calibrate_label, sizeof(s_calibrate_label), "Calibrate\n");
   s_touch_items[idx++] = (menu_item_t){
     s_calibrate_label, action_calibrate, NULL, false, MENU_ITEM_KIND_ACTION
+  };
+
+  // Screw Calibrate (guided pad-12 wizard)
+  snprintf(s_screw_calibrate_label, sizeof(s_screw_calibrate_label), "Screw Calibrate\n");
+  s_touch_items[idx++] = (menu_item_t){
+    s_screw_calibrate_label, action_screw_calibrate, NULL, false, MENU_ITEM_KIND_ACTION
   };
   
   // Stuck Timeout with current value

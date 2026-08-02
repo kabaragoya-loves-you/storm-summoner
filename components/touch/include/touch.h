@@ -84,6 +84,20 @@ void touch_set_hold_active(int pad_index, bool active);
 bool touch_is_hold_active(int pad_index);
 bool touch_is_any_hold_active(void);
 
+// Screw calibration wizard: while active, pad-12 phantom/drift/dead-band
+// recovery is suppressed so guided presses aren't fought by health checks.
+void touch_screw_calib_set_active(bool active);
+bool touch_screw_calib_is_active(void);
+
+// Read current pad-12 smooth/benchmark for the screw calib wizard (non-blocking).
+esp_err_t touch_pad12_read_smooth_bench(uint32_t* smooth_out, uint32_t* bench_out);
+
+// Reset pad-12 hardware benchmark to the current smooth reading.
+esp_err_t touch_pad12_reset_benchmark(void);
+
+// Update known-good benchmark tracking (used after screw calib apply).
+void touch_update_known_good_benchmark(int pad_index, uint32_t value);
+
 // Clear pressed state for a specific pad (used during recovery)
 void touch_clear_pressed_state(int pad_index);
 

@@ -179,7 +179,13 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
     return;
   }
   
-  // Additional hardware verification: read the actual sensor values
+  // Confirm the finger is still on the screw using elevation above the
+  // calibrated resting baseline — NOT live (smooth - benchmark). During a
+  // sustained hold the ESP touch benchmark often tracks up toward the touched
+  // smooth value, so delta collapses to ~0 even with a real finger present
+  // (observed on a fresh unit: delta=1 while holding through the 2s timer).
+  // Elevation against the NVS/recovery baseline stays valid for that case,
+  // and still rejects dead-band phantoms where smooth sits at rest.
   touch_channel_handle_t chan_handle = touch_get_channel_handle(BUTTON_13_LOGICAL_PAD);
   if (chan_handle) {
     uint32_t smooth[1], benchmark[1];
@@ -192,27 +198,21 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
     
     if (err1 == ESP_OK && err2 == ESP_OK && calib_ret == ESP_OK && calib_data.valid) {
       int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
-      bool hardware_touched = (delta > (int32_t)calib_data.threshold);
-      // A dead-band phantom is a sagging *benchmark*: the live benchmark drops
-      // below true rest while the smoothed reading stays at rest, so delta reads
-      // like a touch with no finger present. A real finger - even a very light one
-      // on the pad-12 screw - instead lifts the smoothed reading ABOVE the
-      // calibrated resting baseline. Verify elevation against that stable baseline
-      // (only updated at calibration/recovery, so trustworthy when the live
-      // benchmark has sagged) rather than the live benchmark: light touches pass,
-      // phantoms (smooth at/below rest) are rejected.
       int32_t elevation = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
-      bool real_touch = (calib_data.baseline > 0) ? (elevation > (int32_t)calib_data.threshold) : hardware_touched;
-      
-      if (!hardware_touched) {
-        ESP_LOGW(TAG, "Pad 12 long press ignored - hardware shows idle (delta=%"PRId32", thresh=%"PRIu32")",
-          delta, calib_data.threshold);
-        touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
-        return;
-      }
+      // The copper screw often produces a smaller capacitive jump than the
+      // calibrated pad threshold. Prefer measured screw elev bar when valid;
+      // otherwise half-threshold (legacy fallback for uncalibrated units).
+      int32_t elev_thresh = (int32_t)touch_pad12_elev_thresh();
+      bool real_touch = (calib_data.baseline > 0)
+        ? (elevation > elev_thresh)
+        : (delta > elev_thresh);
+
       if (!real_touch) {
-        ESP_LOGW(TAG, "Pad 12 long press ignored - smooth not elevated above resting baseline (elev=%"PRId32", thresh=%"PRIu32")",
-          elevation, calib_data.threshold);
+        ESP_LOGW(TAG, "Pad 12 long press ignored - smooth not elevated"
+          " (elev=%"PRId32", delta=%"PRId32", elev_thresh=%"PRId32", thresh=%"PRIu32","
+          " smooth=%"PRIu32", bench=%"PRIu32", base=%"PRIu32")",
+          elevation, delta, elev_thresh, calib_data.threshold,
+          smooth[0], benchmark[0], calib_data.baseline);
         touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
         return;
       }
@@ -337,6 +337,8 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
       // Handle pad 8 (enter/confirm, or dismiss Inspect Scene)
       if (pad_id == BUTTON_8_LOGICAL_PAD) {
+        // Screw calib wizard is a modal draw module — ignore menu enter
+        if (touch_screw_calib_is_active()) return;
         // If text editor exit is pending, consume the release to prevent menu activation
         if (text_edit_exit_pending()) {
           return;
@@ -357,6 +359,12 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       if (pad_id == BUTTON_13_LOGICAL_PAD) {
         touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
         xTimerStop(s_button13_long_press_timer, 0);
+
+        // Screw calib wizard owns pad 12 for measurement — don't navigate back
+        if (touch_screw_calib_is_active()) {
+          ESP_LOGD(TAG, "Pad 12 release ignored (screw calib active)");
+          return;
+        }
         
         if (s_long_press_timer_fired) {
           s_long_press_timer_fired = false;

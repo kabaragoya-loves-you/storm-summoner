@@ -180,12 +180,33 @@ static action_config_context_t s_pad_action_ctx;
 // Re-entry guard
 static bool s_callback_in_progress = false;
 
+// Map a pad index to its clickable row on the Pads list (depends on TW mode)
+static int pad_list_focus_index(uint8_t pad_index) {
+  scene_t* scene = scene_get_current();
+  bool show_all = scene && (scene->touchwheel_mode == TOUCHWHEEL_MODE_PADS);
+  if (show_all) return (int)pad_index;
+  if (pad_index >= 8) return (int)(pad_index - 8);
+  return 0;
+}
+
+static void prepare_pads_list_focus(void) {
+  menu_set_restore_focus(pad_list_focus_index(s_editing_pad_index));
+}
+
 // Custom back handler for pad detail page - recreates Pads list when going back
 static bool pad_detail_handle_back(void) {
   menu_set_custom_back_handler(NULL);  // Clear handler before navigation
+  prepare_pads_list_focus();
   // Pop 2: pad detail AND old Pads, then push fresh Pads at same depth
   menu_navigate_back_then_to(2, "Pads", menu_page_pads_create);
   return true;  // Handled, don't do normal back
+}
+
+// Called by action_config when returning to the Pads list
+static void pad_action_on_complete(action_config_context_t* ctx, action_t* action) {
+  (void)ctx;
+  (void)action;
+  prepare_pads_list_focus();
 }
 
 // Dynamic CC options (loaded from device)
@@ -479,7 +500,7 @@ static void nav_to_pad_detail(void* user_data) {
   s_pad_action_ctx.detail_title = title;
   s_pad_action_ctx.return_page = menu_page_pads_create;
   s_pad_action_ctx.return_depth = 2;  // Pop detail + old Pads, push fresh Pads
-  s_pad_action_ctx.on_complete = NULL;
+  s_pad_action_ctx.on_complete = pad_action_on_complete;
   s_pad_action_ctx.user_data = NULL;
   s_pad_action_ctx.trigger_type = (s_editing_pad_index <= 7) ?
     ACTION_TRIGGER_TOUCHPAD_0_7 : ACTION_TRIGGER_TOUCHPAD_8_11;

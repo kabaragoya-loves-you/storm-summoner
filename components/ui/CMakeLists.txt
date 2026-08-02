@@ -1,5 +1,7 @@
 file(GLOB UI_SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/*.c")
 list(APPEND UI_SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/ui_console.c")
+# Explicit so CMake picks up new modules without a stale GLOB cache
+list(APPEND UI_SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/screw_calibrate.c")
 
 idf_component_register(
     SRCS

@@ -25,6 +25,9 @@
 #define NVS_THRESHOLD_KEY "touch_thresh"
 #define NVS_VARIANCE_KEY "touch_varianc"
 #define NVS_CALIBRATION_VALID_KEY "calib_valid"
+#define NVS_SCREW_VALID_KEY "screw_valid"
+#define NVS_SCREW_BASELINE_KEY "screw_base"   // NVS keys max 15 chars
+#define NVS_SCREW_TOUCH_ELEV_KEY "screw_elev"
 
 extern touch_sensor_handle_t touch_get_sensor_handle(void);
 extern touch_channel_handle_t touch_get_channel_handle(int pad_index);
@@ -36,6 +39,7 @@ static uint32_t s_backup_thresholds[MAX_TOUCH_PADS];
 static bool s_backup_valid = false;
 static SemaphoreHandle_t s_calibration_mutex = NULL;
 static bool s_nvs_dirty = false;
+static touch_screw_calibration_t s_screw_calib = {0};
 
 typedef struct {
   bool pending;
@@ -57,6 +61,11 @@ static const char* calibration_reason_to_string(touch_calibration_reason_t reaso
 static esp_err_t calibrate_single_pad(int pad_index);
 static esp_err_t touch_calibrate_body(bool force, bool persist_nvs);
 static esp_err_t touch_calibrate_internal(bool force, bool persist_nvs);
+static esp_err_t load_screw_calib_from_nvs(void);
+static esp_err_t save_screw_calib_to_nvs(void);
+static uint32_t screw_elev_to_threshold(uint32_t touch_elev, uint32_t baseline);
+static uint32_t screw_cap_elev(uint32_t touch_elev, uint32_t baseline);
+static void apply_screw_metrics_to_pad12(void);
 
 static uint32_t calculate_mean(uint32_t *samples, size_t count) {
   uint64_t sum = 0;
@@ -237,6 +246,91 @@ static esp_err_t load_calibration_from_nvs(void) {
   
   s_calibration_loaded = true;
   ESP_LOGI(TAG, "Calibration data loaded from NVS successfully");
+
+  // Overlay screw metrics if a prior wizard completed successfully
+  load_screw_calib_from_nvs();
+  if (s_screw_calib.valid) apply_screw_metrics_to_pad12();
+
+  return ESP_OK;
+}
+
+static uint32_t screw_elev_to_threshold(uint32_t touch_elev, uint32_t baseline) {
+  // Soft-cap elev so a filter-climb during calib can't demand a 13k+ trip point.
+  // 20% of baseline is well above a weak-screw finger (~500-1000) and far below
+  // the 25-40k climb peaks we saw on guided holds.
+  if (baseline > 0) {
+    uint32_t cap = (baseline * 20) / 100;
+    if (cap < 400) cap = 400;
+    if (touch_elev > cap) touch_elev = cap;
+  }
+
+  // Trip at ~40% of measured solid-press elevation so a light finger still works
+  uint32_t thresh = (touch_elev * 40) / 100;
+  uint32_t min_gap = touch_elev / 4;  // at least 25% of elev
+  if (baseline > 0) {
+    uint32_t pct = (baseline * 2) / 100;  // 2% of baseline soft floor
+    if (pct > min_gap) min_gap = pct;
+  }
+  if (thresh < min_gap) thresh = min_gap;
+  if (thresh < MIN_THRESHOLD_VALUE) thresh = MIN_THRESHOLD_VALUE;
+  if (thresh > MAX_THRESHOLD_VALUE) thresh = MAX_THRESHOLD_VALUE;
+  return thresh;
+}
+
+static uint32_t screw_cap_elev(uint32_t touch_elev, uint32_t baseline) {
+  if (baseline == 0) return touch_elev;
+  uint32_t cap = (baseline * 20) / 100;
+  if (cap < 400) cap = 400;
+  return (touch_elev > cap) ? cap : touch_elev;
+}
+
+static void apply_screw_metrics_to_pad12(void) {
+  if (!s_screw_calib.valid || s_screw_calib.baseline == 0 || s_screw_calib.touch_elev == 0)
+    return;
+
+  uint32_t elev = screw_cap_elev(s_screw_calib.touch_elev, s_screw_calib.baseline);
+  uint32_t thresh = screw_elev_to_threshold(elev, s_screw_calib.baseline);
+  s_pad_calibration[TOUCH_PAD12_INDEX].baseline = s_screw_calib.baseline;
+  s_pad_calibration[TOUCH_PAD12_INDEX].threshold = thresh;
+  s_pad_calibration[TOUCH_PAD12_INDEX].valid = true;
+  touch_update_known_good_benchmark(TOUCH_PAD12_INDEX, s_screw_calib.baseline);
+  ESP_LOGI(TAG, "Pad 12 screw calib applied: baseline=%"PRIu32" elev=%"PRIu32" (raw=%"PRIu32") thresh=%"PRIu32,
+    s_screw_calib.baseline, elev, s_screw_calib.touch_elev, thresh);
+}
+
+static esp_err_t load_screw_calib_from_nvs(void) {
+  bool valid = false;
+  uint32_t baseline = 0;
+  uint32_t elev = 0;
+
+  if (app_settings_load_bool(NVS_SCREW_VALID_KEY, &valid) != ESP_OK || !valid) {
+    s_screw_calib = (touch_screw_calibration_t){0};
+    return ESP_ERR_NOT_FOUND;
+  }
+  if (app_settings_load_u32(NVS_SCREW_BASELINE_KEY, &baseline) != ESP_OK || baseline == 0) {
+    s_screw_calib = (touch_screw_calibration_t){0};
+    return ESP_ERR_NOT_FOUND;
+  }
+  if (app_settings_load_u32(NVS_SCREW_TOUCH_ELEV_KEY, &elev) != ESP_OK || elev == 0) {
+    s_screw_calib = (touch_screw_calibration_t){0};
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  s_screw_calib.valid = true;
+  s_screw_calib.baseline = baseline;
+  s_screw_calib.touch_elev = elev;
+  ESP_LOGI(TAG, "Screw calib loaded: baseline=%"PRIu32" elev=%"PRIu32, baseline, elev);
+  return ESP_OK;
+}
+
+static esp_err_t save_screw_calib_to_nvs(void) {
+  esp_err_t ret = app_settings_save_bool(NVS_SCREW_VALID_KEY, s_screw_calib.valid);
+  if (ret != ESP_OK) return ret;
+  ret = app_settings_save_u32(NVS_SCREW_BASELINE_KEY, s_screw_calib.baseline);
+  if (ret != ESP_OK) return ret;
+  ret = app_settings_save_u32(NVS_SCREW_TOUCH_ELEV_KEY, s_screw_calib.touch_elev);
+  if (ret != ESP_OK) return ret;
+  ESP_LOGI(TAG, "Screw calib saved to NVS");
   return ESP_OK;
 }
 
@@ -400,27 +494,33 @@ static esp_err_t calibrate_single_pad(int pad_index) {
   
   // Adaptive threshold for pads with lower baseline values
   // Lower baseline pads (typically higher channel numbers) need different handling
-  if (mean < 25000) {
+  // Pad 12 (copper screw) is excluded: its touch delta is often only a few
+  // percent of baseline, so the 1.2x desensitization makes the threshold
+  // larger than the real finger signal (observed: elev~1000 vs thresh 1656).
+  if (pad_index != 12 && mean < 25000) {
     // For very low baseline pads (GPIO11-15), use less sensitive thresholds
     // to prevent oscillation and stuck states
     threshold_ratio *= 1.2f;  // Make 20% LESS sensitive
     ESP_LOGD(TAG, "Pad %d: Low baseline detected (%"PRIu32"), using higher threshold ratio %.1f%% to prevent oscillation", 
       pad_index, mean, threshold_ratio * 100.0f);
-  } else if (mean < 28000) {
+  } else if (pad_index != 12 && mean < 28000) {
     // Medium-low baseline pads can use normal sensitivity
     threshold_ratio *= 1.0f;  // Keep normal sensitivity
     ESP_LOGD(TAG, "Pad %d: Medium-low baseline detected (%"PRIu32"), keeping threshold ratio at %.1f%%", 
       pad_index, mean, threshold_ratio * 100.0f);
   }
   
+  // Pad 12 (menu screw): weak capacitive coupling. Cap the ratio at 3% so the
+  // active threshold stays inside the actual touch amplitude on weaker units.
+  // When screw calib is valid, touch_calibrate_body re-applies screw metrics
+  // after this pass so the ratio result is overwritten.
+  if (pad_index == 12 && threshold_ratio > 0.03f) threshold_ratio = 0.03f;
+
   uint32_t calculated_threshold = (uint32_t)(mean * threshold_ratio);
   
   // Special handling for specific pads
   if (pad_index == 12) {
     // Pad 12 (GPIO3, channel 2) - copper screw contact for menu access
-    // Needs to be sensitive enough for reliable detection but not so sensitive
-    // that it stays triggered after release (causing phantom touches).
-    // Apply the same 3% minimum gap as other pads - no special exception.
     uint32_t min_gap = (uint32_t)(mean * 0.03f);
     if (calculated_threshold < min_gap) {
       calculated_threshold = min_gap;
@@ -564,10 +664,15 @@ void touch_thresholds_init(void) {
     // No valid calibration in NVS, perform fresh calibration
     ESP_LOGI(TAG, "No valid calibration found in NVS, performing fresh calibration");
     ret = touch_calibrate(false);
+    if (load_screw_calib_from_nvs() == ESP_OK && s_screw_calib.valid) {
+      apply_screw_metrics_to_pad12();
+      apply_thresholds();
+    }
   } else {
     // Apply the stored thresholds directly
     // Since benchmarks were reset before this function was called,
     // they should now be at stable untouched values
+    // (screw overlay already applied inside load_calibration_from_nvs)
     ret = apply_thresholds();
     if (ret != ESP_OK) {
       ESP_LOGW(TAG, "Failed to apply thresholds from NVS");
@@ -704,6 +809,9 @@ static esp_err_t touch_calibrate_body(bool force, bool persist_nvs) {
     restore_backup_thresholds();
     return ESP_ERR_INVALID_STATE;
   }
+
+  // Preserve guided screw metrics over ratio-based pad-12 results
+  if (s_screw_calib.valid) apply_screw_metrics_to_pad12();
   
   s_calibration_loaded = true;
   esp_err_t ret = apply_thresholds();
@@ -756,6 +864,8 @@ esp_err_t touch_calibrate_pad(int pad_index) {
   esp_err_t ret = calibrate_single_pad(pad_index);
   
   if (ret == ESP_OK) {
+    // Preserve guided screw metrics over a single-pad ratio recalibration
+    if (pad_index == 12 && s_screw_calib.valid) apply_screw_metrics_to_pad12();
     // To apply the new threshold, we need to call apply_thresholds which stops/starts scanning
     // But apply_thresholds applies ALL pads. That's fine.
     ret = apply_thresholds();
@@ -805,6 +915,7 @@ esp_err_t touch_recover_pad_state(int pad_index) {
     if (touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, guard_smooth) == ESP_OK) {
       uint32_t base = s_pad_calibration[pad_index].baseline;
       uint32_t thresh = s_pad_calibration[pad_index].threshold;
+      if (pad_index == 12) thresh = touch_pad12_elev_thresh();
       bool looks_touched = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
         ? (guard_smooth[0] + thresh < base)
         : (guard_smooth[0] > base + thresh);
@@ -854,22 +965,43 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   // Only update baseline if it looks healthy
   bool baseline_updated = false;
   if (new_baseline >= 10000 && new_baseline <= 100000) {
-    s_pad_calibration[pad_index].baseline = new_baseline;
-    baseline_updated = true;
-    ESP_LOGI(TAG, "Pad %d recovered: new_baseline=%"PRIu32", keeping threshold=%"PRIu32,
-      pad_index, new_baseline, original_threshold);
+    // Pad 12 with guided screw calib: keep wizard idle baseline. Adopting a
+    // post-hold climb (~39k after a 20k idle) poisons elev guards until the
+    // next reapply and was confirmed live after the first wizard runs.
+    if (pad_index == 12 && s_screw_calib.valid) {
+      baseline_updated = true;
+      ESP_LOGI(TAG, "Pad %d recovered: keeping screw baseline=%"PRIu32" (live=%"PRIu32"), thresh=%"PRIu32,
+        pad_index, s_screw_calib.baseline, new_baseline, original_threshold);
+    } else {
+      s_pad_calibration[pad_index].baseline = new_baseline;
+      baseline_updated = true;
+      ESP_LOGI(TAG, "Pad %d recovered: new_baseline=%"PRIu32", keeping threshold=%"PRIu32,
+        pad_index, new_baseline, original_threshold);
+    }
   } else {
     ESP_LOGW(TAG, "Pad %d benchmark still unhealthy (%"PRIu32"), skipping update",
       pad_index, new_baseline);
   }
+
+  // Screw wizard metrics win over opportunistic recovery baseline for pad 12
+  if (pad_index == 12 && s_screw_calib.valid) apply_screw_metrics_to_pad12();
   
   // 6. Apply thresholds only when the baseline update succeeded.
   // Confirmed live (4408096): unhealthy recovery still called apply_thresholds(),
   // which restarts the entire sensor and left benchmark frozen at ~6179 for ~3s
   // while smooth had already returned to the calibrated idle (~20850). Thresholds
   // were unchanged, so the restart bought nothing and prolonged the outage.
+  //
+  // Pad 12 + screw calib: metrics are already correct in RAM/HW. apply_thresholds
+  // restarts every channel and was confirmed to trigger dead-band phantom ~1s
+  // after the wizard's own settle/reset. Bench reset above is enough.
   if (baseline_updated) {
-    ret = apply_thresholds();
+    if (pad_index == 12 && s_screw_calib.valid) {
+      ret = ESP_OK;
+      ESP_LOGI(TAG, "Pad 12 screw recovery: bench reset only (skip apply_thresholds)");
+    } else {
+      ret = apply_thresholds();
+    }
   } else {
     ret = ESP_OK;
   }
@@ -1071,5 +1203,64 @@ void touch_thresholds_flush_nvs_if_dirty(void) {
   if (s_calibration_mutex) {
     xSemaphoreGive(s_calibration_mutex);
   }
+}
+
+bool touch_screw_calib_is_valid(void) {
+  return s_screw_calib.valid;
+}
+
+esp_err_t touch_screw_calib_get(touch_screw_calibration_t* out) {
+  if (!out) return ESP_ERR_INVALID_ARG;
+  *out = s_screw_calib;
+  return s_screw_calib.valid ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+uint32_t touch_pad12_elev_thresh(void) {
+  if (s_screw_calib.valid && s_screw_calib.touch_elev > 0) {
+    uint32_t elev = screw_cap_elev(s_screw_calib.touch_elev, s_screw_calib.baseline);
+    return elev / 2;
+  }
+  if (s_pad_calibration[TOUCH_PAD12_INDEX].valid)
+    return s_pad_calibration[TOUCH_PAD12_INDEX].threshold / 2;
+  return MIN_THRESHOLD_VALUE;
+}
+
+void touch_screw_calib_reapply_if_valid(void) {
+  if (!s_screw_calib.valid) return;
+  if (s_calibration_mutex) xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+  apply_screw_metrics_to_pad12();
+  if (s_calibration_loaded) apply_thresholds();
+  if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+}
+
+esp_err_t touch_screw_calib_apply(uint32_t baseline, uint32_t touch_elev) {
+  if (baseline == 0 || touch_elev == 0) return ESP_ERR_INVALID_ARG;
+
+  if (s_calibration_mutex) xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+
+  uint32_t capped = screw_cap_elev(touch_elev, baseline);
+  if (capped != touch_elev)
+    ESP_LOGW(TAG, "Screw elev capped: raw=%"PRIu32" -> %"PRIu32" (baseline=%"PRIu32")",
+      touch_elev, capped, baseline);
+
+  s_screw_calib.valid = true;
+  s_screw_calib.baseline = baseline;
+  s_screw_calib.touch_elev = capped;
+  apply_screw_metrics_to_pad12();
+  s_calibration_loaded = true;
+
+  esp_err_t ret = apply_thresholds();
+  if (ret == ESP_OK) {
+    esp_err_t nvs_ret = save_screw_calib_to_nvs();
+    if (nvs_ret != ESP_OK)
+      ESP_LOGW(TAG, "Screw calib apply OK but NVS save failed: %s", esp_err_to_name(nvs_ret));
+    // Also persist pad-12 baseline/threshold into the main calib blob
+    nvs_ret = save_calibration_to_nvs();
+    if (nvs_ret != ESP_OK)
+      ESP_LOGW(TAG, "Pad calib NVS save after screw apply failed: %s", esp_err_to_name(nvs_ret));
+  }
+
+  if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+  return ret;
 }
 

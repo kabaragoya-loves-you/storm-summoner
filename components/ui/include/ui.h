@@ -55,6 +55,7 @@ extern ui_draw_module_t khyron_module;
 extern ui_draw_module_t scope_module;
 extern ui_draw_module_t working_module;
 extern ui_draw_module_t updating_module;
+extern ui_draw_module_t screw_calibrate_module;
 
 void ui_init(void);
 

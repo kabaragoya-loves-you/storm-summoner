@@ -91,6 +91,12 @@
           "type": "calibration"
         },
         {
+          "id": "touch.screw_calibrate",
+          "label": "Screw Calibrate",
+          "description": "Calibrate the programming-mode screw (pad 12). Perform on device.",
+          "type": "calibration"
+        },
+        {
           "id": "touch.stuck_timeout",
           "label": "Stuck Timeout",
           "description": "Timeout for stuck touch detection",

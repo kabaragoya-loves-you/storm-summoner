@@ -143,6 +143,9 @@ static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 // Hold action suppression - when a hold action is active, suppress health check interventions
 static bool s_hold_active[MAX_TOUCH_PADS] = {false};
 
+// Guided screw calibration wizard active — skip pad-12 health interventions
+static bool s_screw_calib_active = false;
+
 // Track known-good benchmark values for drift detection
 // Updated after successful recoveries and calibrations
 static uint32_t s_known_good_benchmark[MAX_TOUCH_PADS] = {0};
@@ -230,6 +233,11 @@ static int get_pad_index(int chan_id) {
 static void quarantine_pad(int pad_index, uint32_t now, const char* reason) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
   if (s_pad_suppressed[pad_index]) return;
+  // Guided screw calib owns pad 12 — never lock it out mid-wizard
+  if (pad_index == 12 && s_screw_calib_active) {
+    ESP_LOGD(TAG, "Pad 12 quarantine skipped (screw calib active, reason=%s)", reason);
+    return;
+  }
 
   s_pad_suppressed[pad_index] = true;
   s_pad_suppressed_since_ms[pad_index] = now;
@@ -346,9 +354,14 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // press on a quarantined pad must NOT reset the system-idle timer, or the
   // back-off logic upstream can never determine the user is actually idle.
   if (s_pad_suppressed[pad_index]) {
-    ESP_LOGD(TAG, "Suppressed pad %d: dropping %s",
-      pad_index, is_pressed ? "PRESS" : "RELEASE");
-    return;
+    // Screw wizard may have started while pad 12 was still suppressed
+    if (pad_index == 12 && s_screw_calib_active) {
+      unquarantine_pad(12, xTaskGetTickCount() * portTICK_PERIOD_MS);
+    } else {
+      ESP_LOGD(TAG, "Suppressed pad %d: dropping %s",
+        pad_index, is_pressed ? "PRESS" : "RELEASE");
+      return;
+    }
   }
 
   // === [SCENE TRANSITION] Drop input while the screen is frozen ===
@@ -373,7 +386,8 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   // a >25%-from-known gate and holds SW pressed for 10s; elevation catches it.
   // Other pads: keep the stricter >25% known-good collapse gate so we don't
   // restart the whole sensor on marginal musical-pad readings mid-performance.
-  if (is_pressed) {
+  // During guided screw calib, skip all pad-12 phantom/recovery logic.
+  if (is_pressed && !(pad_index == 12 && s_screw_calib_active)) {
     uint32_t smooth_now[1] = {0};
     uint32_t bench_now[1] = {0};
     touch_pad_calibration_t pcalib;
@@ -386,9 +400,13 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
 
     bool real_touch = false;
     if (have_smooth && have_calib) {
+      // Pad 12 screw often elevates less than a full pad threshold; use the
+      // screw-calib elev bar (or half-threshold fallback) so real presses
+      // aren't treated as dead-band phantoms.
+      uint32_t elev_thresh = (pad_index == 12) ? touch_pad12_elev_thresh() : pcalib.threshold;
       real_touch = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
-        ? (smooth_now[0] + pcalib.threshold < pcalib.baseline)
-        : (smooth_now[0] > pcalib.baseline + pcalib.threshold);
+        ? (smooth_now[0] + elev_thresh < pcalib.baseline)
+        : (smooth_now[0] > pcalib.baseline + elev_thresh);
     }
 
     bool hard_collapse = false;
@@ -431,6 +449,9 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     s_pad_press_timestamps[pad_index] = now;
 
     // === [QUARANTINE] Press-time multi-pad detector ===
+    // Skip entirely during screw calib: holding the screw plus any EMI on
+    // other pads was quarantining pad 12 for 15s mid-wizard (confirmed live).
+    if (!s_screw_calib_active) {
     // The health-check stuck-detection path catches system events only after
     // STUCK_TOUCH_TIMEOUT_MS (10s) — long enough for phantom presses to
     // hijack the menu. Here we check at press time: if N+ pads have all
@@ -497,6 +518,7 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
         return;
       }
     }
+    }  // !s_screw_calib_active
   }
   
   // Special handling for inverted polarity channel
@@ -675,6 +697,9 @@ static void touch_health_check_task(void *pvParameters) {
     uint32_t newly_stuck_mask_this_cycle = 0;
 
     for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+      // Guided screw calib owns pad 12 — don't fight holds/taps with recovery
+      if (i == 12 && s_screw_calib_active) continue;
+
       // 1. Read Data
       uint32_t smooth[1], benchmark[1];
       touch_pad_calibration_t calib_data;
@@ -739,9 +764,13 @@ static void touch_health_check_task(void *pvParameters) {
           // would reset the benchmark to the touched value and swallow the
           // press. Once the finger lifts, smooth returns to baseline and the
           // normal path below handles the stale benchmark.
-          bool real_touch = (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL)
-            ? (smooth[0] + calib_data.threshold < calib_data.baseline)
-            : (smooth[0] > calib_data.baseline + calib_data.threshold);
+          bool real_touch = false;
+          {
+            uint32_t elev_thresh = (i == 12) ? touch_pad12_elev_thresh() : calib_data.threshold;
+            real_touch = (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL)
+              ? (smooth[0] + elev_thresh < calib_data.baseline)
+              : (smooth[0] > calib_data.baseline + elev_thresh);
+          }
           if (real_touch) continue;
 
           // If pad is currently "pressed", this is likely a phantom touch - force release
@@ -832,9 +861,11 @@ static void touch_health_check_task(void *pvParameters) {
       // baseline (no finger). Overnight: bench=18341 vs baseline~208xx produced
       // a 10s stuck hold that the >25% drift gate missed. Scoped to pad 12 so
       // we don't restart the sensor on marginal readings of musical pads.
+      // Elevation bar comes from screw calib when valid, else half-threshold.
+      uint32_t elev_thresh = (i == 12) ? touch_pad12_elev_thresh() : (calib_data.threshold / 2);
       bool smooth_elevated = (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL)
-        ? (smooth[0] + calib_data.threshold < calib_data.baseline)
-        : (smooth[0] > calib_data.baseline + calib_data.threshold);
+        ? (smooth[0] + elev_thresh < calib_data.baseline)
+        : (smooth[0] > calib_data.baseline + elev_thresh);
 
       if (i == 12 && !s_hold_active[i] && hardware_is_touching && !smooth_elevated) {
         if (s_button_pressed_states[i]) {
@@ -1158,9 +1189,10 @@ void touch_sync_states_after_reconfig(void) {
     // released". Require the same smooth-vs-baseline elevation as the
     // press-time / health-check guards before syncing TO pressed.
     if (hardware_is_touching) {
+      uint32_t elev_thresh = (i == 12) ? touch_pad12_elev_thresh() : calib_data.threshold;
       bool smooth_elevated = (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL)
-        ? (smooth[0] + calib_data.threshold < calib_data.baseline)
-        : (smooth[0] > calib_data.baseline + calib_data.threshold);
+        ? (smooth[0] + elev_thresh < calib_data.baseline)
+        : (smooth[0] > calib_data.baseline + elev_thresh);
       if (!smooth_elevated) hardware_is_touching = false;
     }
     
@@ -1875,6 +1907,56 @@ bool touch_is_any_hold_active(void) {
     if (s_hold_active[i]) return true;
   }
   return false;
+}
+
+void touch_screw_calib_set_active(bool active) {
+  s_screw_calib_active = active;
+  if (active) {
+    // Clear any leftover quarantine so the wizard can read/press pad 12
+    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    unquarantine_pad(12, now);
+    touch_clear_pressed_state(12);
+  }
+  ESP_LOGI(TAG, "Screw calib active: %s", active ? "yes" : "no");
+}
+
+bool touch_screw_calib_is_active(void) {
+  return s_screw_calib_active;
+}
+
+esp_err_t touch_pad12_read_smooth_bench(uint32_t* smooth_out, uint32_t* bench_out) {
+  if (!smooth_out && !bench_out) return ESP_ERR_INVALID_ARG;
+  touch_channel_handle_t chan = touch_get_channel_handle(12);
+  if (!chan) return ESP_ERR_INVALID_STATE;
+  uint32_t smooth[1] = {0};
+  uint32_t bench[1] = {0};
+  esp_err_t err1 = ESP_OK;
+  esp_err_t err2 = ESP_OK;
+  if (smooth_out)
+    err1 = touch_channel_read_data(chan, TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
+  if (bench_out)
+    err2 = touch_channel_read_data(chan, TOUCH_CHAN_DATA_TYPE_BENCHMARK, bench);
+  if (err1 != ESP_OK) return err1;
+  if (err2 != ESP_OK) return err2;
+  if (smooth_out) *smooth_out = smooth[0];
+  if (bench_out) *bench_out = bench[0];
+  return ESP_OK;
+}
+
+esp_err_t touch_pad12_reset_benchmark(void) {
+  touch_channel_handle_t chan = touch_get_channel_handle(12);
+  if (!chan) return ESP_ERR_INVALID_STATE;
+  touch_chan_benchmark_config_t cfg = { .do_reset = true };
+  esp_err_t ret = touch_channel_config_benchmark(chan, &cfg);
+  if (ret == ESP_OK)
+    ESP_LOGI(TAG, "Pad 12 benchmark reset");
+  return ret;
+}
+
+void touch_update_known_good_benchmark(int pad_index, uint32_t value) {
+  if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
+  if (value < 10000 || value > 100000) return;
+  s_known_good_benchmark[pad_index] = value;
 }
 
 void touch_clear_pressed_state(int pad_index) {

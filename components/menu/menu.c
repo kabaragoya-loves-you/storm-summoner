@@ -75,6 +75,19 @@ static lv_obj_t* find_menu_item_widget(lv_obj_t* cont, int item_index);
 static void apply_menu_focus(lv_obj_t* cont, lv_obj_t* focus_target);
 static void apply_initial_page_focus(lv_obj_t* cont);
 
+// Add only intentionally focusable menu rows to the encoder group.
+// Dividers and headings are container children but must not take focus —
+// create_page marks real rows with SCROLL_ON_FOCUS and leaves separators without it.
+static void menu_group_add_focusable_children(lv_obj_t* cont) {
+  if (!cont || !menu_state.group) return;
+  uint32_t child_cnt = lv_obj_get_child_count(cont);
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(cont, i);
+    if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_SCROLL_ON_FOCUS))
+      lv_group_add_obj(menu_state.group, child);
+  }
+}
+
 // Pending scene change direction (set by event handler, consumed by LVGL timer)
 static int s_pending_scene_direction = 0;  // +1 = next, -1 = previous
 
@@ -777,12 +790,22 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
     }
   }
 
+  // Builders may call apply_initial_page_focus() and clear restore indices
+  // before the screen is loaded (when scroll_to_view is ineffective).
+  int saved_restore_focus = menu_state.restore_focus_index;
+  int saved_restore_item = menu_state.restore_focus_item_index;
+
   // Create new menu screen using builder
   lv_obj_t* screen = builder();
   if (!screen) {
     ESP_LOGE(TAG, "Builder failed to create screen");
     return;
   }
+
+  if (saved_restore_focus >= 0 && menu_state.restore_focus_index < 0)
+    menu_state.restore_focus_index = saved_restore_focus;
+  if (saved_restore_item >= 0 && menu_state.restore_focus_item_index < 0)
+    menu_state.restore_focus_item_index = saved_restore_item;
 
   // Find the container widget
   lv_obj_t* container = find_container_in_screen(screen);
@@ -803,6 +826,37 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   // Load screen
   lv_screen_load(screen);
   update_top_level_flag();
+
+  // Re-apply focus after load so scroll_to_view has valid coordinates.
+  // Without this, long pages (e.g. Scene) stay at scroll 0 and the
+  // center-snap visuals highlight a mid-list item like Control Voltage.
+  if (container && menu_state.group) {
+    lv_obj_t* focus_target = NULL;
+    if (menu_state.restore_focus_item_index >= 0) {
+      focus_target = find_menu_item_widget(container,
+        menu_state.restore_focus_item_index);
+      menu_state.restore_focus_item_index = -1;
+      menu_state.restore_focus_index = -1;
+    } else if (menu_state.restore_focus_index >= 0) {
+      int clickable_count = 0;
+      uint32_t child_cnt = lv_obj_get_child_count(container);
+      for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(container, i);
+        if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+          if (clickable_count == menu_state.restore_focus_index) {
+            focus_target = child;
+            break;
+          }
+          clickable_count++;
+        }
+      }
+      menu_state.restore_focus_index = -1;
+    } else {
+      focus_target = lv_group_get_focused(menu_state.group);
+    }
+    if (focus_target)
+      apply_menu_focus(container, focus_target);
+  }
 
   ESP_LOGI(TAG, "Navigated to menu: %s (depth: %d)", 
     menu_name ? menu_name : "(unnamed)", menu_state.stack_depth);
@@ -1016,10 +1070,7 @@ static void menu_navigate_back_internal(void) {
     if (prev_cont) {
       uint32_t child_cnt = lv_obj_get_child_count(prev_cont);
       
-      for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(prev_cont, i);
-        if (child) lv_group_add_obj(menu_state.group, child);
-      }
+      menu_group_add_focusable_children(prev_cont);
       
       // Restore focus to saved clickable index
       int32_t focus_idx = entry->focused_index;
@@ -1239,10 +1290,7 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
 
   if (menu_state.group && new_container) {
     uint32_t new_child_cnt = lv_obj_get_child_count(new_container);
-    for (uint32_t i = 0; i < new_child_cnt; i++) {
-      lv_obj_t* child = lv_obj_get_child(new_container, i);
-      if (child) lv_group_add_obj(menu_state.group, child);
-    }
+    menu_group_add_focusable_children(new_container);
     
     if (menu_state.restore_focus_item_index >= 0) {
       focus_target = find_menu_item_widget(new_container,

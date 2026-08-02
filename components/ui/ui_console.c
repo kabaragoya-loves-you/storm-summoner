@@ -1,5 +1,6 @@
 #include "ui_console.h"
 #include "ui.h"
+#include "screw_calibrate.h"
 #include "ui_module_settings.h"
 #include "task_monitor.h"
 #include "esp_log.h"
@@ -35,6 +36,7 @@ static ui_draw_module_t* available_modules[] = {
   &template_module,
   &working_module,
   &updating_module,
+  &screw_calibrate_module,
 };
 static const int num_modules = sizeof(available_modules) / sizeof(available_modules[0]);
 
