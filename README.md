@@ -49,11 +49,12 @@ idf.py build
 
 The `sdkconfig.defaults` file contains all Storm Summoner-specific configuration, so no manual `menuconfig` setup is required.
 
-4. **Flash firmware and device database**:
+4. **Flash device database and firmware**:
 ```bash
-idf.py -p PORT flash
-idf.py -p PORT assets-flash monitor
+idf.py -p PORT assets-flash flash monitor
 ```
+
+Prefer `assets-flash` before `flash` on new units so the first boot already has a valid assets image (the firmware derives the assets checksum from that partition when NVS has none yet). `flash` alone does not write the assets partition.
 
 Replace `PORT` with your device's serial port (e.g., `COM3` on Windows or `/dev/ttyUSB0` on Linux).
 

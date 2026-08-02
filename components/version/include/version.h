@@ -62,6 +62,16 @@ const char* version_get_assets_checksum(void);
 esp_err_t version_set_assets_checksum(const char* checksum);
 
 /**
+ * If NVS has no assets checksum yet, SHA256 the live assets partition
+ * (same identity as promote_release / releases.json) and persist the first
+ * 8 hex chars. Call only after the assets LittleFS mount succeeds so an
+ * empty partition between `idf.py flash` and `assets-flash` is not stamped.
+ * No-op when a real checksum is already loaded or set.
+ * @return ESP_OK on success or when already known
+ */
+esp_err_t version_reconcile_assets_checksum(void);
+
+/**
  * Get unique device serial number
  * Derived from ESP32's factory-burned eFuse MAC address
  * @return Serial number string (e.g., "001122334455")

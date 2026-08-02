@@ -1,6 +1,7 @@
 #include "assets_manager.h"
 #include "assets_types.h"
 #include "memory_utils.h"
+#include "version.h"
 #include "esp_log.h"
 #include "esp_littlefs.h"
 #include "esp_heap_caps.h"
@@ -394,6 +395,13 @@ esp_err_t assets_manager_init(void) {
     ESP_LOGI(TAG, "assets mounted: used=%u of %u bytes",
       (unsigned)a_used, (unsigned)a_total);
   }
+
+  // Virgin units have no NVS assets_csum until an OTA writes one. Hash the
+  // mounted partition (same SHA256[:8] as promote_release) only now so a
+  // flash-before-assets-flash boot cannot stamp an empty image.
+  esp_err_t csum_ret = version_reconcile_assets_checksum();
+  if (csum_ret != ESP_OK)
+    ESP_LOGW(TAG, "Assets checksum reconcile failed: %s", esp_err_to_name(csum_ret));
 
   // Mount the RW `userdata` partition. format_if_mount_failed=true so the
   // first-boot empty partition is auto-formatted. If the mount fails outright
