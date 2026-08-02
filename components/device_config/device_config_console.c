@@ -4,12 +4,14 @@
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
+#include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 static const char* TAG = "device_config_console";
 
 static const char* registered_commands[] = {
-  "info", "pedal", "program"
+  "info", "pedal", "vendor", "program"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
@@ -85,11 +87,11 @@ static bool slug_exists_in_database(const char* slug) {
   return false;
 }
 
-// Helper to list available vendors and pedals
-static void list_available_pedals(void) {
+// Helper to list available vendors
+static void list_available_vendors(void) {
   uint32_t vendor_count = assets_get_vendor_count();
   ESP_LOGI(TAG, "Available vendors (%u):", (unsigned)vendor_count);
-  
+
   for (uint32_t i = 0; i < vendor_count; i++) {
     const char* vendor = assets_get_vendor_by_index(i);
     if (vendor) {
@@ -97,40 +99,107 @@ static void list_available_pedals(void) {
       ESP_LOGI(TAG, "  %s (%u pedals)", vendor, (unsigned)pedal_count);
     }
   }
+  ESP_LOGI(TAG, "Usage: vendor <name>  (e.g., vendor Chase Bliss)");
+}
+
+// Join argv[1..] into a single vendor name (supports multi-word names)
+static bool join_vendor_name(int argc, char **argv, char *out, size_t out_len) {
+  if (argc < 2 || !out || out_len == 0) return false;
+
+  size_t pos = 0;
+  out[0] = '\0';
+  for (int i = 1; i < argc; i++) {
+    int written = snprintf(out + pos, out_len - pos, "%s%s",
+      (pos > 0) ? " " : "", argv[i]);
+    if (written < 0 || (size_t)written >= out_len - pos) {
+      out[out_len - 1] = '\0';
+      return false;
+    }
+    pos += (size_t)written;
+  }
+  return pos > 0;
+}
+
+// Resolve a typed vendor name to the canonical manifest name (case-insensitive)
+static const char* resolve_vendor_name(const char* typed) {
+  if (!typed || typed[0] == '\0') return NULL;
+
+  uint32_t vendor_count = assets_get_vendor_count();
+  for (uint32_t i = 0; i < vendor_count; i++) {
+    const char* vendor = assets_get_vendor_by_index(i);
+    if (vendor && strcasecmp(vendor, typed) == 0) return vendor;
+  }
+  return NULL;
+}
+
+static void list_pedals_for_vendor(const char* vendor) {
+  uint32_t pedal_count = assets_get_device_count_for_vendor(vendor);
+  ESP_LOGI(TAG, "%s (%u pedals):", vendor, (unsigned)pedal_count);
+
+  for (uint32_t i = 0; i < pedal_count; i++) {
+    const char* slug = NULL;
+    const char* name = NULL;
+    if (assets_get_device_for_vendor(vendor, i, &slug, &name) == ESP_OK) {
+      ESP_LOGI(TAG, "  %s  (%s)", slug ? slug : "?", name ? name : "?");
+    }
+  }
+  ESP_LOGI(TAG, "Usage: pedal <slug>  (e.g., pedal chase_bliss.mood_mkii@0)");
+}
+
+static int cmd_vendor(int argc, char **argv) {
+  if (argc == 1) {
+    list_available_vendors();
+    return 0;
+  }
+
+  char typed[128];
+  if (!join_vendor_name(argc, argv, typed, sizeof(typed))) {
+    ESP_LOGE(TAG, "Vendor name too long");
+    return 1;
+  }
+
+  const char* vendor = resolve_vendor_name(typed);
+  if (!vendor) {
+    ESP_LOGE(TAG, "Unknown vendor: %s", typed);
+    list_available_vendors();
+    return 1;
+  }
+
+  list_pedals_for_vendor(vendor);
+  return 0;
 }
 
 static int cmd_pedal(int argc, char **argv) {
-  // If no arguments, list available pedals
   if (argc == 1) {
-    list_available_pedals();
-    ESP_LOGI(TAG, "Usage: pedal <slug> (e.g., chase_bliss.mood_mkii@0)");
+    ESP_LOGI(TAG, "Usage: pedal <slug>  (e.g., pedal chase_bliss.mood_mkii@0)");
+    ESP_LOGI(TAG, "To browse pedals, use: vendor  or  vendor <name>");
     return 0;
   }
-  
+
   int nerrors = arg_parse(argc, argv, (void **) &pedal_args);
   if (nerrors != 0) {
     arg_print_errors(stderr, pedal_args.end, argv[0]);
     return 1;
   }
-  
+
   const char* slug = pedal_args.pedal_slug->sval[0];
-  
+
   // Validate slug exists in database
   if (!slug_exists_in_database(slug)) {
     ESP_LOGE(TAG, "Unknown pedal: %s", slug);
-    list_available_pedals();
+    ESP_LOGI(TAG, "To browse pedals, use: vendor  or  vendor <name>");
     return 1;
   }
-  
+
   // device_config_set_pedal automatically saves to NVS
   esp_err_t ret = device_config_set_pedal(slug);
-  
+
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "Pedal set to: %s (saved)", slug);
   } else {
     ESP_LOGE(TAG, "Failed to set pedal: %s", esp_err_to_name(ret));
   }
-  
+
   return (ret == ESP_OK) ? 0 : 1;
 }
 
@@ -173,16 +242,25 @@ esp_err_t device_config_console_init(void) {
   // pedal command
   pedal_args.pedal_slug = arg_str0(NULL, NULL, "<slug>", "e.g. chase_bliss.mood_mkii@0");
   pedal_args.end = arg_end(2);
-  
+
   const esp_console_cmd_t pedal_cmd = {
     .command = "pedal",
-    .help = "Set pedal from database, or list available vendors",
+    .help = "Set pedal by slug (use 'vendor' to browse)",
     .hint = NULL,
     .func = &cmd_pedal,
     .argtable = &pedal_args
   };
   esp_console_cmd_register(&pedal_cmd);
-  
+
+  // vendor command
+  const esp_console_cmd_t vendor_cmd = {
+    .command = "vendor",
+    .help = "List vendors, or list pedals for a vendor (multi-word names OK)",
+    .hint = NULL,
+    .func = &cmd_vendor,
+  };
+  esp_console_cmd_register(&vendor_cmd);
+
   // program command
   program_args.program_num = arg_int1(NULL, NULL, "<0-127>", "Program number");
   program_args.end = arg_end(2);

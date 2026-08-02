@@ -237,20 +237,25 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     return NULL;
   }
   
-  // Read control records first to count discrete values
-  size_t control_data_size = header.control_count * sizeof(control_record_t);
-  control_record_t *records = malloc_prefer_psram(control_data_size);
-  if (!records) {
-    ESP_LOGE(TAG, "Failed to allocate control records buffer");
-    fclose(f);
-    return NULL;
-  }
-  
-  if (fread(records, 1, control_data_size, f) != control_data_size) {
-    ESP_LOGE(TAG, "Failed to read control records");
-    free(records);
-    fclose(f);
-    return NULL;
+  // Read control records first to count discrete values.
+  // control_count == 0 is valid (e.g. user.default@0); skip the alloc
+  // because ESP-IDF malloc(0) returns NULL and would false-fail here.
+  control_record_t *records = NULL;
+  if (header.control_count > 0) {
+    size_t control_data_size = header.control_count * sizeof(control_record_t);
+    records = malloc_prefer_psram(control_data_size);
+    if (!records) {
+      ESP_LOGE(TAG, "Failed to allocate control records buffer");
+      fclose(f);
+      return NULL;
+    }
+
+    if (fread(records, 1, control_data_size, f) != control_data_size) {
+      ESP_LOGE(TAG, "Failed to read control records");
+      free(records);
+      fclose(f);
+      return NULL;
+    }
   }
   
   // Count total discrete values
@@ -317,27 +322,30 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
     }
   }
   
-  // Read string blob
-  uint8_t *string_blob = malloc_prefer_psram(header.string_blob_size);
-  if (!string_blob) {
-    ESP_LOGE(TAG, "Failed to allocate string blob");
-    free(var_dv_records);
-    free(var_records);
-    free(dv_records);
-    free(records);
-    fclose(f);
-    return NULL;
-  }
-  
-  if (fread(string_blob, 1, header.string_blob_size, f) != header.string_blob_size) {
-    ESP_LOGE(TAG, "Failed to read string blob");
-    free(string_blob);
-    free(var_dv_records);
-    free(var_records);
-    free(dv_records);
-    free(records);
-    fclose(f);
-    return NULL;
+  // Read string blob (may be empty for devices with no named controls)
+  uint8_t *string_blob = NULL;
+  if (header.string_blob_size > 0) {
+    string_blob = malloc_prefer_psram(header.string_blob_size);
+    if (!string_blob) {
+      ESP_LOGE(TAG, "Failed to allocate string blob");
+      free(var_dv_records);
+      free(var_records);
+      free(dv_records);
+      free(records);
+      fclose(f);
+      return NULL;
+    }
+
+    if (fread(string_blob, 1, header.string_blob_size, f) != header.string_blob_size) {
+      ESP_LOGE(TAG, "Failed to read string blob");
+      free(string_blob);
+      free(var_dv_records);
+      free(var_records);
+      free(dv_records);
+      free(records);
+      fclose(f);
+      return NULL;
+    }
   }
   
   fclose(f);
@@ -362,17 +370,20 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   // Note: Cache doesn't store device metadata (trs_type, midi_channel, etc.)
   // These will be filled in by assets_load_device from the manifest
   
-  // Allocate controls array
-  device->controls = calloc_prefer_psram(device->control_count, sizeof(midi_control_t));
-  if (!device->controls) {
-    ESP_LOGE(TAG, "Failed to allocate controls array");
-    free(device->string_blob);
-    free(device);
-    free(var_dv_records);
-    free(var_records);
-    free(dv_records);
-    free(records);
-    return NULL;
+  // Allocate controls array (skip when empty; calloc(0) can also return NULL)
+  device->controls = NULL;
+  if (device->control_count > 0) {
+    device->controls = calloc_prefer_psram(device->control_count, sizeof(midi_control_t));
+    if (!device->controls) {
+      ESP_LOGE(TAG, "Failed to allocate controls array");
+      free(device->string_blob);
+      free(device);
+      free(var_dv_records);
+      free(var_records);
+      free(dv_records);
+      free(records);
+      return NULL;
+    }
   }
   
   // Allocate discrete values array if needed
