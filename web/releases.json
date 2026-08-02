@@ -1,6 +1,7 @@
 {
-  "generated": "2026-08-01T23:51:23",
+  "generated": "2026-08-02T13:18:01",
   "firmware": [
+    { "version": "0.11", "filename": "storm-summoner-0.11.bin", "date": "2026-08-02" },
     { "version": "0.10", "filename": "storm-summoner-0.10.bin", "date": "2026-07-29" },
     { "version": "0.9", "filename": "storm-summoner-0.9.bin", "date": "2026-07-19" },
     { "version": "0.8", "filename": "storm-summoner-0.8.bin", "date": "2026-06-29" },
@@ -28,11 +29,11 @@
   ],
   "system_update": [
     {
-      "firmware_version": "0.10",
-      "firmware": "storm-summoner-0.10.bin",
+      "firmware_version": "0.11",
+      "firmware": "storm-summoner-0.11.bin",
       "partition_table": "partition_table_v2-dde93853.bin",
       "shared_assets": "assets-71788d20.bin",
-      "date": "2026-08-01"
+      "date": "2026-08-02"
     }
   ]
 }

@@ -294,7 +294,9 @@ static void apply_screw_metrics_to_pad12(void) {
   s_pad_calibration[TOUCH_PAD12_INDEX].threshold = thresh;
   s_pad_calibration[TOUCH_PAD12_INDEX].valid = true;
   touch_update_known_good_benchmark(TOUCH_PAD12_INDEX, s_screw_calib.baseline);
-  ESP_LOGI(TAG, "Pad 12 screw calib applied: baseline=%"PRIu32" elev=%"PRIu32" (raw=%"PRIu32") thresh=%"PRIu32,
+  // LOGD: idle calib re-applies this every interval with unchanged numbers.
+  // Wizard save / elev-capped still log at info/warn elsewhere.
+  ESP_LOGD(TAG, "Pad 12 screw calib applied: baseline=%"PRIu32" elev=%"PRIu32" (raw=%"PRIu32") thresh=%"PRIu32,
     s_screw_calib.baseline, elev, s_screw_calib.touch_elev, thresh);
 }
 
@@ -1248,6 +1250,8 @@ esp_err_t touch_screw_calib_apply(uint32_t baseline, uint32_t touch_elev) {
   s_screw_calib.touch_elev = capped;
   apply_screw_metrics_to_pad12();
   s_calibration_loaded = true;
+  ESP_LOGI(TAG, "Screw calib stored: baseline=%"PRIu32" elev=%"PRIu32" thresh=%"PRIu32,
+    baseline, capped, s_pad_calibration[TOUCH_PAD12_INDEX].threshold);
 
   esp_err_t ret = apply_thresholds();
   if (ret == ESP_OK) {
