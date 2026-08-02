@@ -6,6 +6,7 @@
 #include "event_bus.h"
 #include "scene.h"
 #include "toast_overlay.h"
+#include "memory_utils.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,6 +14,10 @@
 #include <stdio.h>
 
 #define TAG "MENU"
+
+bool menu_clear_spiram(void** pp) {
+  return clear_spiram_ptr(pp);
+}
 
 // Centralized callback debounce - prevents double-firing from LVGL events
 #define MENU_CALLBACK_DEBOUNCE_MS 100

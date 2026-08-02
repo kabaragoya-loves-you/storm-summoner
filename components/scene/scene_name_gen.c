@@ -1,5 +1,6 @@
 #include "scene_name_gen.h"
 #include "compressed_loader.h"
+#include "memory_utils.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_heap_caps.h"
@@ -181,10 +182,8 @@ uint16_t scene_name_gen_word_count(void) {
 }
 
 void scene_name_gen_deinit(void) {
-  if (s_words) {
-    heap_caps_free(s_words);
-    s_words = NULL;
-  }
+  if (clear_spiram_ptr((void**)&s_words))
+    ESP_LOGE(TAG, "word list corrupted (non-SPIRAM pointer); skipped free");
   if (s_word_data) {
     compressed_free(s_word_data);
     s_word_data = NULL;

@@ -5,8 +5,11 @@
 #include "assets_manager.h"
 #include "assets_types.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
+
+#define TAG "MENU_SCOPE"
 
 // ============================================================================
 // Static Storage
@@ -32,9 +35,12 @@ static scope_options_t s_opts = {0};
 // ============================================================================
 
 static void free_options(void) {
-  if (s_opts.options_str) { heap_caps_free(s_opts.options_str); s_opts.options_str = NULL; }
-  if (s_opts.kinds) { heap_caps_free(s_opts.kinds); s_opts.kinds = NULL; }
-  if (s_opts.ids) { heap_caps_free(s_opts.ids); s_opts.ids = NULL; }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&s_opts.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_opts.kinds);
+  corrupted |= menu_clear_spiram((void**)&s_opts.ids);
+  if (corrupted)
+    ESP_LOGE(TAG, "scope options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_opts.count = 0;
 }
 

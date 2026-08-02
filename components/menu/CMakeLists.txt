@@ -77,5 +77,6 @@ idf_component_register(
     sample_hold
     note_track
     app_settings
+    memory_utils
   PRIV_REQUIRES main
 )

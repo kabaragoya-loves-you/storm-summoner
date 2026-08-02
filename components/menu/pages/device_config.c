@@ -47,18 +47,12 @@ static lv_obj_t* menu_page_pedal_select_create(void);
 // ============================================================================
 
 static void dynamic_menu_free(dynamic_menu_t* menu) {
-  if (menu->items) {
-    heap_caps_free(menu->items);
-    menu->items = NULL;
-  }
-  if (menu->labels) {
-    heap_caps_free(menu->labels);
-    menu->labels = NULL;
-  }
-  if (menu->indices) {
-    heap_caps_free(menu->indices);
-    menu->indices = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&menu->items);
+  corrupted |= menu_clear_spiram((void**)&menu->labels);
+  corrupted |= menu_clear_spiram((void**)&menu->indices);
+  if (corrupted)
+    ESP_LOGE(TAG, "dynamic_menu corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   menu->count = 0;
   menu->capacity = 0;
 }

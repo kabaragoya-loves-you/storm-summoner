@@ -1,6 +1,7 @@
 #include "plasma.h"
 #include "shared_canvas_buffer.h"
 #include "event_bus.h"
+#include "memory_utils.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "lvgl.h"
@@ -365,10 +366,8 @@ void plasma_cleanup(void) {
     g_plasma_canvas = NULL;
   }
 
-  if (s_prev_row) {
-    heap_caps_free(s_prev_row);
-    s_prev_row = NULL;
-  }
+  if (clear_spiram_ptr((void**)&s_prev_row))
+    ESP_LOGE(TAG, "prev_row corrupted (non-SPIRAM pointer); skipped free");
 
   g_previous_screen = NULL;
 

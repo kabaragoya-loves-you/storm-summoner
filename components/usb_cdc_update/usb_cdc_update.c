@@ -33,6 +33,7 @@
 #include "esp_log.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
+#include "memory_utils.h"
 #include "esp_vfs.h"
 #include "esp_littlefs.h"
 #include <string.h>
@@ -53,6 +54,12 @@
 #pragma GCC diagnostic pop
 
 #define TAG "USB_CDC_UPDATE"
+
+static void cdc_clear_spiram(uint8_t** pp, const char* name) {
+  if (clear_spiram_ptr((void**)pp))
+    ESP_LOGE(TAG, "%s corrupted (non-SPIRAM pointer); skipped free", name);
+}
+
 
 // Push EVT:clock on each beat while playing (~2/s at 120 BPM). Set 0 if USB load/lag is an issue.
 #define CDC_CLOCK_NOTIFY_ON_BEAT 1
@@ -551,8 +558,7 @@ void usb_cdc_task(void) {
         s_assets_file = NULL;
       }
       if (s_extract_buffer) {
-        heap_caps_free(s_extract_buffer);
-        s_extract_buffer = NULL;
+        cdc_clear_spiram(&s_extract_buffer, "s_extract_buffer");
       }
       s_extract_mode = false;
       s_extract_in_progress = false;
@@ -595,8 +601,7 @@ void usb_cdc_task(void) {
     // If we were receiving firmware/assets and disconnected, cleanup
     if (s_state == CDC_STATE_SCENE_RECEIVING) {
       if (s_scene_put_buffer) {
-        heap_caps_free(s_scene_put_buffer);
-        s_scene_put_buffer = NULL;
+        cdc_clear_spiram(&s_scene_put_buffer, "s_scene_put_buffer");
       }
       s_state = CDC_STATE_IDLE;
       CDC_LOGI("CDC disconnected during SCENE_PUT, aborted");
@@ -606,8 +611,7 @@ void usb_cdc_task(void) {
         s_state == CDC_STATE_WAITING_COMMIT) {
       ESP_LOGW(TAG, "CDC disconnected during update, cleaning up");
       if (s_update_buffer) {
-        heap_caps_free(s_update_buffer);
-        s_update_buffer = NULL;
+        cdc_clear_spiram(&s_update_buffer, "s_update_buffer");
       }
       s_update_size = 0;
       s_received_bytes = 0;
@@ -626,8 +630,7 @@ void usb_cdc_task(void) {
     if (s_state == CDC_STATE_RECEIVING_RAW) {
       ESP_LOGW(TAG, "CDC disconnected during raw assets chunk, discarding");
       if (s_raw_buffer) {
-        heap_caps_free(s_raw_buffer);
-        s_raw_buffer = NULL;
+        cdc_clear_spiram(&s_raw_buffer, "s_raw_buffer");
       }
       s_raw_expected = 0;
       s_raw_received = 0;
@@ -1798,8 +1801,7 @@ static void cdc_cmd_scene_put(const char *args) {
   }
 
   if (s_scene_put_buffer) {
-    heap_caps_free(s_scene_put_buffer);
-    s_scene_put_buffer = NULL;
+    cdc_clear_spiram(&s_scene_put_buffer, "s_scene_put_buffer");
   }
 
   s_scene_put_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
@@ -1829,8 +1831,7 @@ static void handle_scene_put_binary(const uint8_t *data, size_t len) {
 
   esp_err_t err = scene_put_json(s_scene_put_index,
     (const char *)s_scene_put_buffer, s_scene_put_size);
-  heap_caps_free(s_scene_put_buffer);
-  s_scene_put_buffer = NULL;
+  cdc_clear_spiram(&s_scene_put_buffer, "s_scene_put_buffer");
 
   if (err == ESP_OK) {
     send_response("OK");
@@ -1886,7 +1887,7 @@ static void process_command(const char *cmd) {
 
     // Allocate buffer in PSRAM
     if (s_update_buffer) {
-      heap_caps_free(s_update_buffer);
+      cdc_clear_spiram(&s_update_buffer, "s_update_buffer");
     }
     
     s_update_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
@@ -1942,7 +1943,7 @@ static void process_command(const char *cmd) {
 
     // Allocate buffer in PSRAM
     if (s_update_buffer) {
-      heap_caps_free(s_update_buffer);
+      cdc_clear_spiram(&s_update_buffer, "s_update_buffer");
     }
 
     s_update_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
@@ -2057,8 +2058,7 @@ static void process_command(const char *cmd) {
 
     // Free buffer
     if (s_update_buffer) {
-      heap_caps_free(s_update_buffer);
-      s_update_buffer = NULL;
+      cdc_clear_spiram(&s_update_buffer, "s_update_buffer");
     }
     s_update_size = 0;
     s_received_bytes = 0;
@@ -2132,8 +2132,7 @@ static void process_command(const char *cmd) {
       return;
     }
     if (s_raw_buffer) {
-      heap_caps_free(s_raw_buffer);
-      s_raw_buffer = NULL;
+      cdc_clear_spiram(&s_raw_buffer, "s_raw_buffer");
     }
     s_raw_buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
     if (!s_raw_buffer) {
@@ -2183,8 +2182,7 @@ static void process_command(const char *cmd) {
   } else if (strcmp(cmd, "CANCEL") == 0) {
     CDC_LOGI("Update cancelled");
     if (s_update_buffer) {
-      heap_caps_free(s_update_buffer);
-      s_update_buffer = NULL;
+      cdc_clear_spiram(&s_update_buffer, "s_update_buffer");
     }
     s_state = CDC_STATE_IDLE;
     s_update_size = 0;
@@ -2578,8 +2576,7 @@ static void handle_raw_binary_data(const uint8_t *data, size_t len) {
 
   if (s_raw_received >= s_raw_expected) {
     esp_err_t err = raw_assets_write_chunk(s_raw_offset, s_raw_buffer, s_raw_expected);
-    heap_caps_free(s_raw_buffer);
-    s_raw_buffer = NULL;
+    cdc_clear_spiram(&s_raw_buffer, "s_raw_buffer");
     uint32_t completed_offset = s_raw_offset;
     size_t completed_size = s_raw_expected;
     s_raw_offset = 0;
@@ -3317,8 +3314,7 @@ static void handle_assets_binary_data(const uint8_t *data, size_t len) {
       
       if (ret != pdPASS) {
         // Failed to create task - cleanup
-        heap_caps_free(s_extract_buffer);
-        s_extract_buffer = NULL;
+        cdc_clear_spiram(&s_extract_buffer, "s_extract_buffer");
         s_extract_in_progress = false;
         ESP_LOGE(TAG, "Failed to create extract task");
         send_response("ERROR: Failed to create extract task");
@@ -3567,8 +3563,7 @@ static void extract_task(void *arg) {
   esp_err_t result = assets_extract_zip(s_extract_buffer, s_extract_size, s_extract_dest);
   
   // Free the buffer
-  heap_caps_free(s_extract_buffer);
-  s_extract_buffer = NULL;
+  cdc_clear_spiram(&s_extract_buffer, "s_extract_buffer");
   
   if (result == ESP_OK) {
     // Trigger manifest updates for the destination folder

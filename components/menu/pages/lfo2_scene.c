@@ -140,14 +140,11 @@ static const char* rate_mode_to_display_string(lfo_rate_mode_t mode) {
 // ============================================================================
 
 static void free_cc_options(void) {
-  if (s_cc_options.options_str) {
-    heap_caps_free(s_cc_options.options_str);
-    s_cc_options.options_str = NULL;
-  }
-  if (s_cc_options.cc_numbers) {
-    heap_caps_free(s_cc_options.cc_numbers);
-    s_cc_options.cc_numbers = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&s_cc_options.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_cc_options.cc_numbers);
+  if (corrupted)
+    ESP_LOGE(TAG, "cc_options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_cc_options.count = 0;
 }
 

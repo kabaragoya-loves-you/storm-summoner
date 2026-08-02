@@ -358,14 +358,11 @@ static uint32_t action_type_to_roller_index(action_type_t type) {
 // ============================================================================
 
 static void free_cc_options(void) {
-  if (s_cc_options.options_str) {
-    heap_caps_free(s_cc_options.options_str);
-    s_cc_options.options_str = NULL;
-  }
-  if (s_cc_options.cc_numbers) {
-    heap_caps_free(s_cc_options.cc_numbers);
-    s_cc_options.cc_numbers = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&s_cc_options.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_cc_options.cc_numbers);
+  if (corrupted)
+    ESP_LOGE(TAG, "cc_options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_cc_options.count = 0;
 }
 
@@ -4135,14 +4132,11 @@ static void nav_to_tw_cycle_step(void* user_data) {
 // ============================================================================
 
 static void free_randomize_cc_options(void) {
-  if (s_randomize_cc_options.options_str) {
-    heap_caps_free(s_randomize_cc_options.options_str);
-    s_randomize_cc_options.options_str = NULL;
-  }
-  if (s_randomize_cc_options.cc_numbers) {
-    heap_caps_free(s_randomize_cc_options.cc_numbers);
-    s_randomize_cc_options.cc_numbers = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&s_randomize_cc_options.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_randomize_cc_options.cc_numbers);
+  if (corrupted)
+    ESP_LOGE(TAG, "randomize_cc_options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_randomize_cc_options.count = 0;
 }
 
@@ -4231,14 +4225,11 @@ static bool build_randomize_cc_options(action_t* action, uint8_t editing_slot) {
 // ============================================================================
 
 static void free_param_cc_options(void) {
-  if (s_param_cc_options.options_str) {
-    heap_caps_free(s_param_cc_options.options_str);
-    s_param_cc_options.options_str = NULL;
-  }
-  if (s_param_cc_options.cc_numbers) {
-    heap_caps_free(s_param_cc_options.cc_numbers);
-    s_param_cc_options.cc_numbers = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&s_param_cc_options.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_param_cc_options.cc_numbers);
+  if (corrupted)
+    ESP_LOGE(TAG, "param_cc_options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_param_cc_options.count = 0;
 }
 

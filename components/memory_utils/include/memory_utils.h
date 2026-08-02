@@ -2,7 +2,9 @@
 #define MEMORY_UTILS_H
 
 #include <stdlib.h>
+#include <stdbool.h>
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 
 /**
  * @brief Allocate memory preferring PSRAM with fallback to internal heap
@@ -49,6 +51,27 @@ static inline void *realloc_prefer_psram(void *ptr, size_t size) {
   void *new_ptr = heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM);
   if (!new_ptr) new_ptr = realloc(ptr, size);
   return new_ptr;
+}
+
+/**
+ * @brief Free a pointer that must have been allocated with MALLOC_CAP_SPIRAM
+ *
+ * Always nulls *pp. If *pp is non-NULL but not in external RAM, the free is
+ * skipped (avoids heap_caps_free panic on corrupted static pointer slots) and
+ * the function returns true so the caller can log / fail hard.
+ *
+ * @param pp Address of the pointer to clear
+ * @return true if *pp was non-NULL but not SPIRAM (corrupt); false otherwise
+ */
+static inline bool clear_spiram_ptr(void **pp) {
+  if (!pp || !*pp) return false;
+  void *p = *pp;
+  *pp = NULL;
+  if (esp_ptr_external_ram(p)) {
+    heap_caps_free(p);
+    return false;
+  }
+  return true;
 }
 
 #endif // MEMORY_UTILS_H

@@ -6,6 +6,7 @@
 #include "esp_flash.h"
 #include "esp_flash_partitions.h"
 #include "esp_heap_caps.h"
+#include "memory_utils.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "version.h"
@@ -270,10 +271,8 @@ static size_t s_pt_staging_len = 0;
 static size_t s_pt_received = 0;
 
 static void pt_release_staging(void) {
-  if (s_pt_staging) {
-    heap_caps_free(s_pt_staging);
-    s_pt_staging = NULL;
-  }
+  if (clear_spiram_ptr((void**)&s_pt_staging))
+    ESP_LOGE(TAG, "PT staging corrupted (non-SPIRAM pointer); skipped free");
   s_pt_staging_len = 0;
   s_pt_received = 0;
 }
@@ -552,8 +551,8 @@ esp_err_t raw_assets_write_chunk(uint32_t offset, const uint8_t *data, size_t le
 
 void raw_assets_write_finalize(const char *checksum_or_null) {
   if (s_raw_erase_bitmap) {
-    heap_caps_free(s_raw_erase_bitmap);
-    s_raw_erase_bitmap = NULL;
+    if (clear_spiram_ptr((void**)&s_raw_erase_bitmap))
+      ESP_LOGE(TAG, "raw erase bitmap corrupted (non-SPIRAM pointer); skipped free");
     s_raw_erase_bitmap_bytes = 0;
     ESP_LOGI(TAG, "raw_assets: session ended");
   }

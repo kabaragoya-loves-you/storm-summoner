@@ -4,6 +4,7 @@
 #include "transport.h"
 #include "scene.h"
 #include "ui.h"
+#include "memory_utils.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -419,10 +420,8 @@ void lfo_stop(void) {
   }
 
   // Free PSRAM stack (can be re-allocated on next start)
-  if (s_lfo_task_stack != NULL) {
-    heap_caps_free(s_lfo_task_stack);
-    s_lfo_task_stack = NULL;
-  }
+  if (clear_spiram_ptr((void**)&s_lfo_task_stack))
+    ESP_LOGE(TAG, "LFO task stack corrupted (non-SPIRAM pointer); skipped free");
 
   ESP_LOGI(TAG, "LFO task stopped");
 }

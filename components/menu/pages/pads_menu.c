@@ -11,7 +11,6 @@
 #include "assets_types.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "esp_memory_utils.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -255,29 +254,12 @@ static const char* get_action_display_name(action_type_t type) {
 // CC Options Loading (from device definition)
 // ============================================================================
 
-// CC option buffers are always allocated from PSRAM (MALLOC_CAP_SPIRAM), so a
-// valid pointer must reside in external RAM. If s_cc_options has been corrupted
-// by a stray write (observed: a flash-code value such as 0xd0042703 landing in
-// this .bss), the pointer is outside any heap and heap_caps_free() would assert
-// and panic. Validate before freeing so corruption can't crash the device.
-static bool cc_ptr_is_freeable(const void* p) {
-  return p != NULL && esp_ptr_external_ram(p);
-}
-
 static void free_cc_options(void) {
   bool corrupted = false;
-  if (s_cc_options.options_str) {
-    if (cc_ptr_is_freeable(s_cc_options.options_str)) heap_caps_free(s_cc_options.options_str);
-    else corrupted = true;
-    s_cc_options.options_str = NULL;
-  }
-  if (s_cc_options.cc_numbers) {
-    if (cc_ptr_is_freeable(s_cc_options.cc_numbers)) heap_caps_free(s_cc_options.cc_numbers);
-    else corrupted = true;
-    s_cc_options.cc_numbers = NULL;
-  }
+  corrupted |= menu_clear_spiram((void**)&s_cc_options.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_cc_options.cc_numbers);
   if (corrupted)
-    ESP_LOGE(TAG, "cc_options corrupted (non-heap pointer); skipped free to avoid panic");
+    ESP_LOGE(TAG, "cc_options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_cc_options.count = 0;
 }
 
@@ -2718,14 +2700,11 @@ static void nav_to_tw_cycle_step(void* user_data) {
 
 // Free filtered randomize CC options
 static void free_randomize_cc_options(void) {
-  if (s_randomize_cc_options.options_str) {
-    heap_caps_free(s_randomize_cc_options.options_str);
-    s_randomize_cc_options.options_str = NULL;
-  }
-  if (s_randomize_cc_options.cc_numbers) {
-    heap_caps_free(s_randomize_cc_options.cc_numbers);
-    s_randomize_cc_options.cc_numbers = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&s_randomize_cc_options.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_randomize_cc_options.cc_numbers);
+  if (corrupted)
+    ESP_LOGE(TAG, "randomize_cc_options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_randomize_cc_options.count = 0;
 }
 
@@ -2819,14 +2798,11 @@ static bool build_randomize_cc_options(const action_t* action, uint8_t editing_s
 // ============================================================================
 
 static void free_param_cc_options(void) {
-  if (s_param_cc_options.options_str) {
-    heap_caps_free(s_param_cc_options.options_str);
-    s_param_cc_options.options_str = NULL;
-  }
-  if (s_param_cc_options.cc_numbers) {
-    heap_caps_free(s_param_cc_options.cc_numbers);
-    s_param_cc_options.cc_numbers = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&s_param_cc_options.options_str);
+  corrupted |= menu_clear_spiram((void**)&s_param_cc_options.cc_numbers);
+  if (corrupted)
+    ESP_LOGE(TAG, "param_cc_options corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   s_param_cc_options.count = 0;
 }
 

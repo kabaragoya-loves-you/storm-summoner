@@ -794,18 +794,12 @@ static lv_obj_t* scene_pedal_select_create(void);
 
 // Dynamic menu helpers
 static void scene_dynamic_menu_free(scene_dynamic_menu_t* menu) {
-  if (menu->items) {
-    heap_caps_free(menu->items);
-    menu->items = NULL;
-  }
-  if (menu->labels) {
-    heap_caps_free(menu->labels);
-    menu->labels = NULL;
-  }
-  if (menu->indices) {
-    heap_caps_free(menu->indices);
-    menu->indices = NULL;
-  }
+  bool corrupted = false;
+  corrupted |= menu_clear_spiram((void**)&menu->items);
+  corrupted |= menu_clear_spiram((void**)&menu->labels);
+  corrupted |= menu_clear_spiram((void**)&menu->indices);
+  if (corrupted)
+    ESP_LOGE(TAG, "scene_dynamic_menu corrupted (non-SPIRAM pointer); skipped free to avoid panic");
   menu->count = 0;
   menu->capacity = 0;
 }

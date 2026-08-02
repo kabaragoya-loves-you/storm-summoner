@@ -171,5 +171,10 @@ typedef struct {
 
 lv_obj_t* menu_create_bpm_editor_page(const menu_bpm_editor_cfg_t* cfg);
 
+// Free a pointer that must have been allocated with MALLOC_CAP_SPIRAM.
+// Always nulls *pp. Returns true if *pp was non-NULL but not in external RAM
+// (free skipped — avoids heap_caps_free panic on corrupted .bss pointers).
+bool menu_clear_spiram(void** pp);
+
 #endif // MENU_H
 

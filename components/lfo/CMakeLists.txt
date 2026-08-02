@@ -12,6 +12,7 @@ idf_component_register(
     esp_timer
     freertos
     console
+    memory_utils
   PRIV_REQUIRES
     scene
     ui

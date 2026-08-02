@@ -30,6 +30,7 @@ idf_component_register(
     expression
     input_manager
     midi
+    memory_utils
   PRIV_REQUIRES
     main
     screensaver
