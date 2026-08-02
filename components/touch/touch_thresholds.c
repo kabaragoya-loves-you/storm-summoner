@@ -912,22 +912,35 @@ esp_err_t touch_recover_pad_state(int pad_index) {
   // the touched value as the new benchmark, which makes the ongoing (and
   // subsequent) real presses invisible to the hardware (delta ~0) and poisons
   // drift tracking.
-  if (s_pad_calibration[pad_index].valid) {
-    uint32_t guard_smooth[1] = {0};
-    if (touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, guard_smooth) == ESP_OK) {
-      uint32_t base = s_pad_calibration[pad_index].baseline;
-      uint32_t thresh = s_pad_calibration[pad_index].threshold;
-      if (pad_index == 12) thresh = touch_pad12_elev_thresh();
-      bool looks_touched = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
-        ? (guard_smooth[0] + thresh < base)
-        : (guard_smooth[0] > base + thresh);
-      if (looks_touched) {
-        ESP_LOGW(TAG, "Pad %d appears actively touched (smooth=%u, baseline=%u, thresh=%u);"
-          " deferring benchmark reset", pad_index,
-          (unsigned)guard_smooth[0], (unsigned)base, (unsigned)thresh);
-        if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
-        return ESP_ERR_INVALID_STATE;
-      }
+  uint32_t guard_smooth[1] = {0};
+  bool have_guard_smooth = (touch_channel_read_data(chan_handle,
+    TOUCH_CHAN_DATA_TYPE_SMOOTH, guard_smooth) == ESP_OK);
+
+  if (s_pad_calibration[pad_index].valid && have_guard_smooth) {
+    uint32_t base = s_pad_calibration[pad_index].baseline;
+    uint32_t thresh = s_pad_calibration[pad_index].threshold;
+    if (pad_index == 12) thresh = touch_pad12_elev_thresh();
+    bool looks_touched = (TOUCH_PADS[pad_index] == INVERTED_TOUCH_CHANNEL)
+      ? (guard_smooth[0] + thresh < base)
+      : (guard_smooth[0] > base + thresh);
+    if (looks_touched) {
+      ESP_LOGW(TAG, "Pad %d appears actively touched (smooth=%u, baseline=%u, thresh=%u);"
+        " deferring benchmark reset", pad_index,
+        (unsigned)guard_smooth[0], (unsigned)base, (unsigned)thresh);
+      if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+      return ESP_ERR_INVALID_STATE;
+    }
+
+    // Confirmed live: recover while smooth was collapsed (~164) reset the
+    // benchmark TO that dead value. Later presses then stick with huge HW
+    // delta while elev≈0, so long-press confirm fails and fights menu entry.
+    if (guard_smooth[0] < 10000 ||
+        (base > 0 && guard_smooth[0] < (base * 3) / 4)) {
+      ESP_LOGW(TAG, "Pad %d smooth collapsed (smooth=%u, baseline=%u);"
+        " deferring benchmark reset", pad_index,
+        (unsigned)guard_smooth[0], (unsigned)base);
+      if (s_calibration_mutex) xSemaphoreGive(s_calibration_mutex);
+      return ESP_ERR_INVALID_STATE;
     }
   }
 

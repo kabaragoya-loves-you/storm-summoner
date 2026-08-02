@@ -204,12 +204,25 @@ static void scene_persist_if_programming(void) {
 
 // Touchwheel instance for scene encoder mode
 static touchwheel_instance_t* s_scene_touchwheel = NULL;
+static bool s_scene_touchwheel_registered = false;  // In touch's dispatch list
 static bool s_input_suspended = false;  // True when in programming mode
 
 // Pitch bend return-to-center animation (declared early for cleanup function)
 static esp_timer_handle_t s_pitch_bend_timer = NULL;
 static esp_timer_handle_t s_tw_nudge_return_timer = NULL;
 static esp_timer_handle_t s_tw_at_return_timer = NULL;
+
+static void scene_touchwheel_register(void) {
+  if (!s_scene_touchwheel || s_scene_touchwheel_registered) return;
+  if (touch_register_touchwheel_instance(s_scene_touchwheel) == ESP_OK)
+    s_scene_touchwheel_registered = true;
+}
+
+static void scene_touchwheel_unregister(void) {
+  if (!s_scene_touchwheel || !s_scene_touchwheel_registered) return;
+  touch_unregister_touchwheel_instance(s_scene_touchwheel);
+  s_scene_touchwheel_registered = false;
+}
 
 // Cached device definition for current scene
 static device_def_t* s_cached_device = NULL;
@@ -437,7 +450,7 @@ static void scene_cleanup_touchwheel(void) {
   }
   
   if (s_scene_touchwheel) {
-    touch_unregister_touchwheel_instance(s_scene_touchwheel);
+    scene_touchwheel_unregister();
     touchwheel_destroy(s_scene_touchwheel);
     s_scene_touchwheel = NULL;
   }
@@ -1671,7 +1684,9 @@ static void scene_setup_touchwheel_for_mode(const scene_t* scene) {
   if (mode_proc && output) {
     s_scene_touchwheel = touchwheel_create(mode_proc, output, 500);  // 500ms timeout
     if (s_scene_touchwheel) {
-      touch_register_touchwheel_instance(s_scene_touchwheel);
+      // While programming input is suspended, keep the instance alive but out of
+      // the touch dispatch list; scene_resume_input() will register it.
+      if (!s_input_suspended) scene_touchwheel_register();
       ESP_LOGD(TAG, "Created touchwheel instance for %s mode", mode_desc);
     } else {
       touchwheel_mode_destroy(mode_proc);
@@ -10286,7 +10301,7 @@ esp_err_t scene_suspend_input(void) {
 
   // Unregister scene touchwheel so it doesn't receive input
   if (s_scene_touchwheel) {
-    touch_unregister_touchwheel_instance(s_scene_touchwheel);
+    scene_touchwheel_unregister();
     ESP_LOGD(TAG, "Scene touchwheel unregistered");
   }
 
@@ -10312,7 +10327,7 @@ esp_err_t scene_resume_input(void) {
 
   // Re-register scene touchwheel if it exists
   if (s_scene_touchwheel) {
-    touch_register_touchwheel_instance(s_scene_touchwheel);
+    scene_touchwheel_register();
     ESP_LOGD(TAG, "Scene touchwheel re-registered");
   }
 

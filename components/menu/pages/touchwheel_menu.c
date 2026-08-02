@@ -75,17 +75,27 @@ static const char* touchwheel_lfo_target_label(lfo_target_t target) {
   }
 }
 
-// Get current mode mapping index from the live scene (falls back to JSON on disk)
+// Get current mode mapping index from the live scene (falls back to JSON on disk).
+// Never put a scene_t on the stack — it is ~6KB and event_dispatch is only 4KB.
 static int get_current_mode_index(void) {
   scene_t* scene = scene_get_current();
   if (scene) return (int)touchwheel_get_current_mode_index(scene);
 
-  scene_t fallback = {
-    .touchwheel_mode = scene_get_persisted_touchwheel_mode(scene_get_current_index()),
-  };
-  fallback.touchwheel.output_type =
+  touchwheel_mode_t mode =
+    scene_get_persisted_touchwheel_mode(scene_get_current_index());
+  output_type_t output =
     scene_get_persisted_touchwheel_output_type(scene_get_current_index());
-  return (int)touchwheel_get_current_mode_index(&fallback);
+  for (uint8_t i = 0; i < NUM_TOUCHWHEEL_USER_MODES; i++) {
+    if (g_touchwheel_mode_mappings[i].mode != mode) continue;
+    if (mode == TOUCHWHEEL_MODE_CONTINUOUS) {
+      if (g_touchwheel_mode_mappings[i].use_output_type &&
+          g_touchwheel_mode_mappings[i].output_type == output)
+        return (int)i;
+    } else {
+      return (int)i;
+    }
+  }
+  return 0;
 }
 
 // ============================================================================

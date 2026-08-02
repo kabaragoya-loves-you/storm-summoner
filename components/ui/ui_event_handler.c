@@ -23,6 +23,7 @@
 #define PAD_10_LOGICAL 10
 #define PAD_11_LOGICAL 11
 #define BUTTON_13_LONG_PRESS_MS 2000  // 2 seconds for intentional menu access
+#define BUTTON_13_LP_POLL_MS 100      // Poll elev while arming long-press
 #define BUTTON_13_SHORT_PRESS_MIN_MS 75  // Minimum press duration for back/cancel
 #define BOOT_GRACE_PERIOD_MS 8000         // Ignore pad 12 long press within this time after boot
 
@@ -33,6 +34,7 @@
 static TimerHandle_t s_button13_long_press_timer = NULL;
 static bool s_long_press_timer_fired = false;
 static uint32_t s_button13_press_start_time = 0;  // Track when button 13 was pressed
+static uint32_t s_button13_elev_accum_ms = 0;     // Continuous elevated time toward long-press
 
 // Configuration values
 static uint32_t s_button13_long_press_ms = BUTTON_13_LONG_PRESS_MS;
@@ -153,87 +155,84 @@ static void load_config_from_settings(void) {
 }
 
 static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
+  (void)xTimer;
   app_mode_t mode = ui_get_app_mode();
-  if (mode != APP_MODE_PERFORMANCE) {
-    ESP_LOGW(TAG, "Pad 12 long press ignored - mode is %d (expected Performance)", mode);
+  if (mode != APP_MODE_PERFORMANCE && mode != APP_MODE_SCREENSAVER) {
+    s_button13_elev_accum_ms = 0;
     touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
+    xTimerStop(s_button13_long_press_timer, 0);
     return;
   }
-  
+
   uint32_t uptime_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
-  
-  // Guard against boot-time false positives: if we're within the boot grace period,
-  // pad 12 might be registering spurious touches during sensor initialization.
   if (uptime_ms < BOOT_GRACE_PERIOD_MS) {
-    ESP_LOGW(TAG, "Pad 12 long press ignored - within boot grace period (%"PRIu32"ms < %dms)",
-      uptime_ms, BOOT_GRACE_PERIOD_MS);
+    s_button13_elev_accum_ms = 0;
     touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
+    xTimerStop(s_button13_long_press_timer, 0);
     return;
   }
-  
-  // Verify hardware actually shows pad 12 as touched RIGHT NOW.
-  // This catches spurious press events that didn't have a corresponding release.
+
   if (!touch_is_pad_pressed(BUTTON_13_LOGICAL_PAD)) {
-    ESP_LOGW(TAG, "Pad 12 long press ignored - software state shows released");
+    s_button13_elev_accum_ms = 0;
     touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
+    xTimerStop(s_button13_long_press_timer, 0);
     return;
   }
-  
-  // Confirm the finger is still on the screw using elevation above the
-  // calibrated resting baseline — NOT live (smooth - benchmark). During a
-  // sustained hold the ESP touch benchmark often tracks up toward the touched
-  // smooth value, so delta collapses to ~0 even with a real finger present
-  // (observed on a fresh unit: delta=1 while holding through the 2s timer).
-  // Elevation against the NVS/recovery baseline stays valid for that case,
-  // and still rejects dead-band phantoms where smooth sits at rest.
+
+  // Confirm finger elevation each poll. Dead-band zombies keep SW pressed with
+  // collapsed bench + idle smooth (confirmed live: elev=33, bench=213 after a
+  // real spike) — abort and recover so the next real hold can arm cleanly.
   touch_channel_handle_t chan_handle = touch_get_channel_handle(BUTTON_13_LOGICAL_PAD);
+  bool real_touch = false;
+  bool bench_collapsed = false;
   if (chan_handle) {
     uint32_t smooth[1], benchmark[1];
     touch_pad_calibration_t calib_data;
-    
     esp_err_t err1 = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
     esp_err_t err2 = touch_channel_read_data(chan_handle, TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
     touch_pad_t channel = touch_get_channel_for_pad(BUTTON_13_LOGICAL_PAD);
     esp_err_t calib_ret = touch_get_calibration_data(channel, &calib_data);
-    
+
     if (err1 == ESP_OK && err2 == ESP_OK && calib_ret == ESP_OK && calib_data.valid) {
-      int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
       int32_t elevation = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
-      // The copper screw often produces a smaller capacitive jump than the
-      // calibrated pad threshold. Prefer measured screw elev bar when valid;
-      // otherwise half-threshold (legacy fallback for uncalibrated units).
       int32_t elev_thresh = (int32_t)touch_pad12_elev_thresh();
-      bool real_touch = (calib_data.baseline > 0)
-        ? (elevation > elev_thresh)
-        : (delta > elev_thresh);
+      real_touch = (calib_data.baseline > 0) && (elevation > elev_thresh);
+      bench_collapsed = (calib_data.baseline > 0) &&
+        (benchmark[0] < (calib_data.baseline * 3) / 4);
 
       if (!real_touch) {
-        ESP_LOGW(TAG, "Pad 12 long press ignored - smooth not elevated"
-          " (elev=%"PRId32", delta=%"PRId32", elev_thresh=%"PRId32", thresh=%"PRIu32","
-          " smooth=%"PRIu32", bench=%"PRIu32", base=%"PRIu32")",
-          elevation, delta, elev_thresh, calib_data.threshold,
-          smooth[0], benchmark[0], calib_data.baseline);
-        touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
-        return;
+        ESP_LOGW(TAG, "Pad 12 long-press aborted - not elevated"
+          " (elev=%"PRId32", elev_thresh=%"PRId32", smooth=%"PRIu32","
+          " bench=%"PRIu32", base=%"PRIu32", accum=%"PRIu32"ms)",
+          elevation, elev_thresh, smooth[0], benchmark[0], calib_data.baseline,
+          s_button13_elev_accum_ms);
       }
     }
   }
-  
-  // All checks passed - this is a legitimate long press.
-  // Keep hold_active set: the user's finger is still on the pad and needs
-  // protection from spurious releases until they actually lift it. The
-  // release event handlers clear hold_active when the finger is lifted.
+
+  if (!real_touch) {
+    s_button13_elev_accum_ms = 0;
+    touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
+    xTimerStop(s_button13_long_press_timer, 0);
+    if (bench_collapsed) touch_force_recover_pad(BUTTON_13_LOGICAL_PAD);
+    return;
+  }
+
+  s_button13_elev_accum_ms += BUTTON_13_LP_POLL_MS;
+  if (s_button13_elev_accum_ms < s_button13_long_press_ms) return;
+
+  // Sustained elevated hold long enough — enter programming mode
+  xTimerStop(s_button13_long_press_timer, 0);
   s_long_press_timer_fired = true;
   ESP_LOGD(TAG, "Pad 12 long press detected - entering Programming Mode");
-  
-  // Post mode change event - handle in event bus task context (safe for LVGL)
+
   event_t event = {
     .type = EVENT_MODE_CHANGE_REQUEST,
     .priority = EVENT_PRIORITY_HIGH,
     .timestamp = event_bus_get_current_timestamp(),
     .data.custom = {
-      .custom_type = 1,  // 1 = enter programming mode
-      .param1 = 1        // 1 = top level
+      .custom_type = 1,
+      .param1 = 1
     }
   };
   event_bus_post(&event);
@@ -261,15 +260,35 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     if (pad_id == BUTTON_13_LOGICAL_PAD) {
       s_button13_press_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
       
-      // Start long press timer in Performance or Screensaver mode (not Programming mode)
-      // When in Screensaver, the screensaver will exit on touch and by the time the
-      // 2-second timer fires, mode will be Performance.
+      // Start long press arming in Performance or Screensaver mode (not Programming).
+      // Require smooth elevation now so collapsed-bench dead-band presses cannot
+      // start a 2s timer that later "ignores" with elev≈0 (confirmed live).
       app_mode_t mode = ui_get_app_mode();
       if (mode == APP_MODE_PERFORMANCE || mode == APP_MODE_SCREENSAVER) {
-        s_long_press_timer_fired = false;
-        touch_set_hold_active(BUTTON_13_LOGICAL_PAD, true);
-        xTimerStart(s_button13_long_press_timer, 0);
-        ESP_LOGD(TAG, "Pad 12 pressed - long press timer started (mode=%d)", mode);
+        bool elevated = false;
+        touch_channel_handle_t chan = touch_get_channel_handle(BUTTON_13_LOGICAL_PAD);
+        if (chan) {
+          uint32_t smooth[1] = {0};
+          touch_pad_calibration_t calib;
+          touch_pad_t channel = touch_get_channel_for_pad(BUTTON_13_LOGICAL_PAD);
+          if (touch_channel_read_data(chan, TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth) == ESP_OK &&
+              touch_get_calibration_data(channel, &calib) == ESP_OK && calib.valid &&
+              calib.baseline > 0) {
+            int32_t elev = (int32_t)smooth[0] - (int32_t)calib.baseline;
+            elevated = (elev > (int32_t)touch_pad12_elev_thresh());
+          }
+        }
+
+        if (elevated) {
+          s_long_press_timer_fired = false;
+          s_button13_elev_accum_ms = 0;
+          touch_set_hold_active(BUTTON_13_LOGICAL_PAD, true);
+          xTimerStart(s_button13_long_press_timer, 0);
+          ESP_LOGD(TAG, "Pad 12 pressed - long press arming (mode=%d)", mode);
+        } else {
+          ESP_LOGW(TAG, "Pad 12 press not elevated - long press not armed");
+          touch_force_recover_pad(BUTTON_13_LOGICAL_PAD);
+        }
       } else {
         ESP_LOGD(TAG, "Pad 12 pressed in Programming mode - long press timer not started");
       }
@@ -358,6 +377,7 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
       // Handle Button 13 (back/cancel) - require minimum press duration
       if (pad_id == BUTTON_13_LOGICAL_PAD) {
         touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
+        s_button13_elev_accum_ms = 0;
         xTimerStop(s_button13_long_press_timer, 0);
 
         // Screw calib wizard owns pad 12 for measurement — don't navigate back
@@ -388,6 +408,7 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     // Handle Button 13 release (for Performance mode)
     if (pad_id == BUTTON_13_LOGICAL_PAD) {
       touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
+      s_button13_elev_accum_ms = 0;
       xTimerStop(s_button13_long_press_timer, 0);
     }
   }
@@ -508,10 +529,10 @@ void ui_event_handler_init(void) {
 
   load_config_from_settings();
   
-  // Create Button 13 long press timer
-  s_button13_long_press_timer = xTimerCreate("btn13_lp_tmr", 
-    pdMS_TO_TICKS(BUTTON_13_LONG_PRESS_MS), 
-    pdFALSE, (void *)0, 
+  // Poll pad-12 elevation every 100ms; accumulate until menu hold time is met
+  s_button13_long_press_timer = xTimerCreate("btn13_lp_tmr",
+    pdMS_TO_TICKS(BUTTON_13_LP_POLL_MS),
+    pdTRUE, (void *)0,
     button13_long_press_timer_cb);
   if (s_button13_long_press_timer == NULL) {
     ESP_LOGE(TAG, "Failed to create Button 13 long press timer");
@@ -560,8 +581,6 @@ uint32_t ui_get_button13_long_press_ms(void) {
 
 void ui_set_button13_long_press_ms(uint32_t value_ms) {
   s_button13_long_press_ms = value_ms;
-  // Update timer period if it exists
-  if (s_button13_long_press_timer != NULL) xTimerChangePeriod(s_button13_long_press_timer, pdMS_TO_TICKS(value_ms), 0);
   ESP_LOGD(TAG, "Button 13 long press timeout set to %lu ms", value_ms);
 
   esp_err_t err = app_settings_save_u32(SETTINGS_KEY_BUTTON13_LONG_PRESS_MS, value_ms);
