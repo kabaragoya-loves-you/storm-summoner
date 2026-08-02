@@ -7,6 +7,7 @@
 #include "transport.h"
 #include "scene.h"
 #include "device_config.h"
+#include "assets_types.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <math.h>
@@ -180,6 +181,7 @@ static void interp_timer_cb(lv_timer_t *timer);
 static void update_gradient(float phase, bool is_beat_one);
 static void update_tempo_labels(void);
 static void update_scene_info_label(void);
+static void refresh_scene_info_if_needed(void);
 static lv_color_t get_transport_color(void);
 
 //=============================================================================
@@ -305,31 +307,58 @@ static void update_tempo_labels(void) {
 
 static void update_scene_info_label(void) {
   if (!g_scene_info_label) return;
-  
+
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t *device =
+    (const device_def_t *)scene_get_device(scene_index);
+  bool show_preset = device && device->pc_info && device->pc_info->count > 0;
   scene_mode_t mode = scene_get_mode();
-  if (mode == SCENE_MODE_SINGLE) {
-    // Hide in Simple mode
-    lv_obj_add_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
+
+  // Simple / Preset Sync: only "Preset n", or hide if device has no presets
+  if (mode == SCENE_MODE_SINGLE || mode == SCENE_MODE_PRESET_SYNC) {
+    if (!show_preset) {
+      lv_obj_add_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
+      return;
+    }
+
+    uint16_t index_base = device_config_get_min_preset();
+    int display_preset = (int)device_config_get_preset() - (int)index_base + 1;
+    if (display_preset < 1) display_preset = 1;
+
+    if (device_config_has_pending_program()) {
+      int pending_preset =
+        (int)device_config_get_pending_preset() - (int)index_base + 1;
+      if (pending_preset < 1) pending_preset = 1;
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "Preset %d > Preset %d", display_preset, pending_preset);
+    } else if (mode == SCENE_MODE_PRESET_SYNC && scene_has_pending_change()) {
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "Preset %d > Preset %u", display_preset,
+        (unsigned)(scene_get_pending_index() + 1));
+    } else {
+      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
+        "Preset %d", display_preset);
+    }
+
+    lv_obj_remove_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(g_scene_info_label, g_scene_info_text);
     return;
   }
-  
+
+  // Advanced: scene ordinal/name, with live Pn when device supports presets
   lv_obj_remove_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
-  
-  // Get current scene info
-  uint8_t scene_index = scene_get_current_index();
-  const scene_t* scene = scene_get_current();
-  const char* name = (scene && scene->name[0]) ? scene->name : "Untitled";
-  
-  // Find active ordinal (1-based position among active scenes)
+
+  const scene_t *scene = scene_get_current();
+  const char *name = (scene && scene->name[0]) ? scene->name : "Untitled";
+
   uint16_t ordinal = 0;
   uint16_t total = scene_get_total_count();
   for (uint16_t i = 0; i < total; i++) {
     if (scene_is_active_by_position(i)) ordinal++;
     if (scene_get_index_by_position(i) == scene_index) break;
   }
-  
-  if (mode == SCENE_MODE_PRESET_SYNC) {
-    // Preset Sync: show scene number and name, pending if any
+
+  if (!show_preset) {
     if (scene_has_pending_change()) {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
         "%u. %.12s > %u", (unsigned)ordinal, name,
@@ -339,18 +368,16 @@ static void update_scene_info_label(void) {
         "%u. %.16s", (unsigned)ordinal, name);
     }
   } else {
-    // Advanced: show scene and preset info
-    // Convert PC to 1-based display preset: (pc - index_base + 1)
     uint16_t index_base = device_config_get_min_preset();
-    uint8_t pc = scene ? scene->program_number : (uint8_t)index_base;
-    int display_preset = pc - index_base + 1;
+    int display_preset = (int)device_config_get_preset() - (int)index_base + 1;
     if (display_preset < 1) display_preset = 1;
     if (scene_has_pending_change()) {
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
         "%u. %.10s P%d > S%u", (unsigned)ordinal, name,
         display_preset, (unsigned)(scene_get_pending_index() + 1));
     } else if (device_config_has_pending_program()) {
-      int pending_preset = device_config_get_pending_program() - index_base + 1;
+      int pending_preset =
+        (int)device_config_get_pending_preset() - (int)index_base + 1;
       if (pending_preset < 1) pending_preset = 1;
       snprintf(g_scene_info_text, sizeof(g_scene_info_text),
         "%u. %.10s P%d > P%d", (unsigned)ordinal, name,
@@ -360,7 +387,7 @@ static void update_scene_info_label(void) {
         "%u. %.12s P%d", (unsigned)ordinal, name, display_preset);
     }
   }
-  
+
   lv_label_set_text(g_scene_info_label, g_scene_info_text);
 }
 
@@ -446,6 +473,50 @@ static void scene_list_changed_handler(const event_t* event, void* context) {
   g_scene_info_dirty = true;
 }
 
+// Refresh when scene events dirty the label, or live preset/pending state changes.
+// Runs from the 16ms interp timer so PC updates show within one frame.
+static void refresh_scene_info_if_needed(void) {
+  static uint16_t last_preset = 0xFFFF;
+  static uint16_t last_pending_preset = 0xFFFF;
+  static bool last_has_pending_pc = false;
+  static uint8_t last_pending_scene = 0xFF;
+  static uint8_t last_scene_index = 0xFF;
+  static uint16_t last_pc_count = 0xFFFF;
+  static scene_mode_t last_mode = (scene_mode_t)0xFF;
+
+  uint8_t scene_index = scene_get_current_index();
+  const device_def_t *device =
+    (const device_def_t *)scene_get_device(scene_index);
+  uint16_t pc_count = (device && device->pc_info) ? device->pc_info->count : 0;
+  uint16_t preset = device_config_get_preset();
+  bool has_pending_pc = device_config_has_pending_program();
+  uint16_t pending_preset = has_pending_pc
+    ? device_config_get_pending_preset() : 0;
+  uint8_t pending_scene = scene_has_pending_change()
+    ? scene_get_pending_index() : 0xFF;
+  scene_mode_t mode = scene_get_mode();
+
+  if (!g_scene_info_dirty
+      && preset == last_preset
+      && has_pending_pc == last_has_pending_pc
+      && pending_preset == last_pending_preset
+      && pending_scene == last_pending_scene
+      && scene_index == last_scene_index
+      && pc_count == last_pc_count
+      && mode == last_mode)
+    return;
+
+  last_preset = preset;
+  last_has_pending_pc = has_pending_pc;
+  last_pending_preset = pending_preset;
+  last_pending_scene = pending_scene;
+  last_scene_index = scene_index;
+  last_pc_count = pc_count;
+  last_mode = mode;
+  g_scene_info_dirty = false;
+  update_scene_info_label();
+}
+
 //=============================================================================
 // INTERPOLATION TIMER (runs in LVGL context - safe for LVGL calls)
 //=============================================================================
@@ -453,7 +524,9 @@ static void scene_list_changed_handler(const event_t* event, void* context) {
 static void interp_timer_cb(lv_timer_t *timer) {
   if (!g_module_active) return;
   if (ui_is_in_screensaver_mode()) return;
-  
+
+  refresh_scene_info_if_needed();
+
   // Check if animation is enabled at all
   if (!g_animation_enabled) {
     // Still update labels
@@ -557,14 +630,6 @@ static void interp_timer_cb(lv_timer_t *timer) {
     uint16_t body_frame = (uint16_t)(body_phase * BODY_FRAME_COUNT);
     if (body_frame >= BODY_FRAME_COUNT) body_frame = BODY_FRAME_COUNT - 1;
     lv_vector_art_set_frame(g_body_art, body_frame);
-  }
-  
-  // Update scene info label periodically (~every 500ms) or when manifest order changes
-  static uint8_t scene_info_counter = 0;
-  if (g_scene_info_dirty || ++scene_info_counter >= 30) {
-    scene_info_counter = 0;
-    g_scene_info_dirty = false;
-    update_scene_info_label();
   }
 }
 
