@@ -314,7 +314,7 @@ esp_err_t console_repl_init(void) {
   console_register_context("event_bus", event_bus_console_init, event_bus_console_cleanup);
   console_register_context("version", version_console_init, version_console_cleanup);
   console_register_context("lfo", lfo_console_init, lfo_console_cleanup);
-  sample_hold_console_init();
+  console_register_context("sample_hold", sample_hold_console_init, sample_hold_console_cleanup);
   
   // Start the REPL
   ret = esp_console_start_repl(g_repl);

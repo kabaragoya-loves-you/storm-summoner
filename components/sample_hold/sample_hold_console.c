@@ -8,6 +8,11 @@
 
 static const char* TAG = "sh_console";
 
+static const char* registered_commands[] = {
+  "sh"
+};
+static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
+
 // Subcommand argument table
 static struct {
   struct arg_str *subcmd;
@@ -122,12 +127,14 @@ static int cmd_sh(int argc, char **argv) {
   return 0;
 }
 
-void sample_hold_console_init(void) {
+esp_err_t sample_hold_console_init(void) {
+  ESP_LOGI(TAG, "Registering Sample+Hold console commands");
+
   sh_args.subcmd = arg_str0(NULL, NULL, "<cmd>", "Subcommand: info, enable, mode, start, rate, division, step, toggle, glide");
   sh_args.value = arg_str0(NULL, NULL, "<value>", "Value for subcommand");
   sh_args.rate = arg_dbl0(NULL, NULL, "<rate>", "Rate in Hz");
   sh_args.end = arg_end(2);
-  
+
   const esp_console_cmd_t cmd = {
     .command = "sh",
     .help = "Sample+Hold control: sh <info|enable|mode|start|rate|division|step|toggle|glide> [value]",
@@ -135,13 +142,15 @@ void sample_hold_console_init(void) {
     .func = &cmd_sh,
     .argtable = &sh_args
   };
-  
-  ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
-  ESP_LOGI(TAG, "Registered 'sh' console command");
+
+  esp_console_cmd_register(&cmd);
+  return ESP_OK;
 }
 
-const char* const* sample_hold_console_get_commands(int* count) {
-  static const char* commands[] = { "sh" };
-  *count = 1;
-  return commands;
+void sample_hold_console_cleanup(void) {
+  ESP_LOGI(TAG, "Unregistering Sample+Hold console commands");
+
+  for (int i = 0; i < num_registered_commands; i++) {
+    esp_console_cmd_deregister(registered_commands[i]);
+  }
 }
