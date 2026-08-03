@@ -642,6 +642,25 @@ bool buttons_check_boot_right(void) {
   return pressed;
 }
 
+bool buttons_check_boot_left(void) {
+  gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << PIN_BUTTON_L),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE,
+  };
+  gpio_config(&io_conf);
+
+  int level = gpio_get_level(PIN_BUTTON_L);
+  bool pressed = (level == 0);
+
+  if (pressed)
+    ESP_LOGI(TAG, "Left button held at boot");
+
+  return pressed;
+}
+
 // Helper to remove existing glitch filters
 static void remove_glitch_filters(void) {
   if (g_filter_left) {

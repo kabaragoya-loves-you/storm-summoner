@@ -1,0 +1,30 @@
+# Storm Summoner — crash-hunt / UART console debug profile (opt-in rebuild)
+#
+# Apply on top of sdkconfig.defaults:
+#
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.debug_uart" reconfigure
+#
+# What this does:
+#   - Primary console = UART0 custom on GPIO37 (TX) / GPIO38 (RX) @ 115200
+#   - Secondary console = USB Serial/JTAG (stdout mirror when USB is plugged in)
+#   - Panic / Guru Meditation text goes to GPIO37 (ESP-Prog Program COM port)
+#
+# Does NOT add a coredump partition — that would require a field partition-table
+# migration (userdata shrink). Shipping layout stays assets + 2MB userdata.
+#
+# Capture wiring (ESP-Prog Program header, P4 on 9V barrel):
+#   P4 GPIO37 -> ESP_RXD
+#   P4 GPIO38 -> ESP_TXD   (optional; needed for UART stdin)
+#   GND       -> GND
+#   Leave ESP_EN / ESP_IO0 / VDD disconnected.
+
+# Clear USB-Serial-JTAG as sole primary (set by sdkconfig.defaults)
+# CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG is not set
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_CUSTOM_NUM_0=y
+CONFIG_ESP_CONSOLE_UART_TX_GPIO=37
+CONFIG_ESP_CONSOLE_UART_RX_GPIO=38
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+# CONFIG_ESP_CONSOLE_SECONDARY_NONE is not set
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y

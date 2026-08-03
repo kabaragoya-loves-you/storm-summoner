@@ -2,6 +2,7 @@
 #include "menu_pages.h"
 #include "sensor.h"
 #include "scene.h"
+#include "tempo.h"
 #include "curve.h"
 #include "continuous_mapping.h"
 #include "continuous_flag_rollers.h"
@@ -185,6 +186,7 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
 
   if (scene->als.enabled) als_enable();
   else als_disable();
+  led_apply_blanking_policy();
 
   ESP_LOGI(TAG, "Ambient Light mode set to: %s", mapping->display_name);
 

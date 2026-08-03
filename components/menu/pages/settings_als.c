@@ -1,5 +1,6 @@
 #include "menu.h"
 #include "sensor.h"
+#include "tempo.h"
 #include "display_driver.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -91,6 +92,7 @@ static void calibration_cleanup(void) {
   s_cal_value_label = NULL;
   s_cal_screen = NULL;
   s_cal_done_btn = NULL;
+  led_set_als_cal_holdoff(false);
 }
 
 static bool is_value_stable(void) {
@@ -308,9 +310,10 @@ static lv_obj_t* calibration_page_create(void) {
   
   // Start the calibration timer
   s_cal_timer = lv_timer_create(calibration_timer_cb, CAL_SAMPLE_INTERVAL_MS, NULL);
-  
+  led_set_als_cal_holdoff(true);
+
   ESP_LOGI(TAG, "ALS calibration wizard started");
-  
+
   return screen;
 }
 

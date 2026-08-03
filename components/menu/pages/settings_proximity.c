@@ -96,8 +96,8 @@ static const char* return_speed_to_string(proximity_return_speed_t speed) {
 
 static const char* timeout_to_string(proximity_timeout_t timeout) {
   switch (timeout) {
-    case PROXIMITY_TIMEOUT_FAST: return "Fast (500ms)";
-    case PROXIMITY_TIMEOUT_MEDIUM: return "Medium (1s)";
+    case PROXIMITY_TIMEOUT_FAST: return "Fast (800ms)";
+    case PROXIMITY_TIMEOUT_MEDIUM: return "Medium (1.5s)";
     case PROXIMITY_TIMEOUT_SLOW: return "Slow (5s)";
     default: return "Unknown";
   }
@@ -523,7 +523,7 @@ static void timeout_confirm_cb(uint32_t selected_index, void* user_data) {
 }
 
 static lv_obj_t* timeout_roller_create(void) {
-  static const char* options = "Fast (500ms)\nMedium (1s)\nSlow (5s)";
+  static const char* options = "Fast (800ms)\nMedium (1.5s)\nSlow (5s)";
   
   uint32_t current = 0;
   switch (proximity_get_timeout()) {
@@ -601,16 +601,16 @@ static void nav_to_sunlight(void* user_data) {
 }
 
 // ============================================================================
-// Gamma Roller (inverse-square compensation)
+// Gamma Roller (artistic curve after inverse-square distance linearization)
 // ============================================================================
 
 static void gamma_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
-  
+
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
-  
-  // Map index 0-20 to gamma 0-100 (steps of 5)
+
+  // Map index 0-20 to gamma 0-100 (steps of 5); 100 = identity after 1/sqrt
   uint8_t gamma = (uint8_t)(selected_index * 5);
   proximity_set_gamma(gamma);
   ESP_LOGI(TAG, "Gamma set to: %u (%.2f)", gamma, 0.15f + gamma * 0.0085f);
@@ -661,7 +661,7 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
     "IR Rejection\n%s", sunlight_enabled ? "On" : "Off");
   s_prox_items[item_count++] = (menu_item_t){s_sunlight_label[buf], nav_to_sunlight, NULL, true, MENU_ITEM_KIND_ROLLER};
   
-  // Gamma (inverse-square compensation)
+  // Gamma (optional curve after inverse-square linearization; 100 = linear)
   uint8_t gamma = proximity_get_gamma();
   snprintf(s_gamma_label[buf], sizeof(s_gamma_label[buf]),
     "Gamma\n%u (%.2f)", gamma, 0.15f + gamma * 0.0085f);
@@ -673,13 +673,13 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
     "Hysteresis\n%s", hyst_enabled ? "Enabled" : "Disabled");
   s_prox_items[item_count++] = (menu_item_t){s_hysteresis_label[buf], nav_to_hysteresis, NULL, true, MENU_ITEM_KIND_ROLLER};
 
-  // Rest Position (CC output when hand is away)
-  uint8_t rest_pos = proximity_get_rest_position();
-  snprintf(s_rest_pos_label[buf], sizeof(s_rest_pos_label[buf]),
-    "Rest Position\n%u", (unsigned)rest_pos);
-  s_prox_items[item_count++] = (menu_item_t){s_rest_pos_label[buf], nav_to_rest_pos, NULL, true, MENU_ITEM_KIND_ROLLER};
-
   if (hyst_enabled) {
+    // Rest Position (CC output when hand is away)
+    uint8_t rest_pos = proximity_get_rest_position();
+    snprintf(s_rest_pos_label[buf], sizeof(s_rest_pos_label[buf]),
+      "Rest Position\n%u", (unsigned)rest_pos);
+    s_prox_items[item_count++] = (menu_item_t){s_rest_pos_label[buf], nav_to_rest_pos, NULL, true, MENU_ITEM_KIND_ROLLER};
+
     // Return Speed
     proximity_return_speed_t speed = proximity_get_return_speed();
     snprintf(s_return_speed_label[buf], sizeof(s_return_speed_label[buf]),

@@ -391,6 +391,13 @@
           "type": "calibration"
         },
         {
+          "id": "proximity.hysteresis",
+          "label": "Hysteresis",
+          "description": "Hold last value, then animate back to rest when the hand leaves",
+          "type": "toggle",
+          "default": false
+        },
+        {
           "id": "proximity.rest_position",
           "label": "Rest Position",
           "description": "CC value when the hand is away (0-127)",
@@ -413,14 +420,8 @@
             {"value": 112, "label": "112"},
             {"value": 127, "label": "127"}
           ],
-          "default": 0
-        },
-        {
-          "id": "proximity.hysteresis",
-          "label": "Hysteresis",
-          "description": "Hold last value, then animate back to rest when the hand leaves",
-          "type": "toggle",
-          "default": false
+          "default": 0,
+          "visible_when": {"id": "proximity.hysteresis", "value": true}
         },
         {
           "id": "proximity.return_speed",
@@ -449,8 +450,8 @@
           "description": "Timeout for hysteresis/note silence",
           "type": "select",
           "options": [
-            {"value": 0, "label": "Fast (500ms)"},
-            {"value": 1, "label": "Medium (1s)"},
+            {"value": 0, "label": "Fast (800ms)"},
+            {"value": 1, "label": "Medium (1.5s)"},
             {"value": 2, "label": "Slow (5s)"}
           ],
           "default": 1,

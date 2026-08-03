@@ -50,6 +50,7 @@ lv_obj_t* menu_page_scope_config_create(void);      // Scene -> Configure Displa
 void menu_page_scope_config_cleanup(void);          // Free PSRAM allocations for CC options
 lv_obj_t* menu_page_settings_note_track_create(void); // Settings -> Note Track
 lv_obj_t* menu_page_settings_scene_inspect_create(void); // Settings -> Scene Inspect
+lv_obj_t* menu_page_settings_debug_create(void);         // Settings -> Debug
 lv_obj_t* menu_page_tilt_scene_create(void);          // Scene -> Tilt (submenu)
 lv_obj_t* menu_page_tilt_axis_scene_create(void);     // Scene -> Tilt -> X/Y (parameterized)
 void menu_page_tilt_axis_scene_cleanup(void);         // Free PSRAM allocations for CC options

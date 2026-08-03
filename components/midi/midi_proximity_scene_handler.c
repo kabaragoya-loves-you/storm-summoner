@@ -438,8 +438,11 @@ void midi_proximity_scene_handler_proximity_settings_changed(void) {
 esp_err_t midi_proximity_scene_handler_init(void) {
   ESP_LOGD(TAG, "Initializing proximity scene handler");
   
-  // Initialize smart filter with deadzone=2
-  smart_filter_init(&s_proximity_filter, 2);
+  // Full MIDI resolution for proximity: deadzone 1, no 0/127 edge snap.
+  // Edge snap with deadzone=2 was forcing +2 steps and 123<->127 chatter
+  // (snap at >=125, release only at <=123), which crushed the near field.
+  smart_filter_init(&s_proximity_filter, 1);
+  smart_filter_set_snap_extremes(&s_proximity_filter, false);
   
   // Subscribe to proximity sensor events
   esp_err_t ret = event_bus_subscribe(EVENT_SENSOR_PROXIMITY, handle_proximity_event, NULL);

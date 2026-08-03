@@ -37,6 +37,11 @@ CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
 #
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# FRAME_POINTER + 48K DMA reserve cannot both fit on this firmware (boot
+# aborts at esp_psram_extram_reserve_dma_pool). 40K boots but display SPI
+# hits ESP_ERR_NO_MEM under animation. Keep NO_BACKTRACE for shipping;
+# idf.py monitor still decodes backtraces from the ELF over USB.
+CONFIG_ESP_SYSTEM_NO_BACKTRACE=y
 # CONFIG_ESP_BROWNOUT_DET=n
 
 #
@@ -52,7 +57,7 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 # Route allocations <=4KB to internal; larger ones prefer PSRAM (was 16KB default).
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
-# Guarantee more internal/DMA headroom for drivers that cannot use PSRAM.
+# Required for display SPI DMA. Do not lower without re-validating animation.
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=49152
 
 #

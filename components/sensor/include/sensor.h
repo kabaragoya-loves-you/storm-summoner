@@ -32,8 +32,8 @@ typedef enum {
 } proximity_return_speed_t;
 
 typedef enum {
-  PROXIMITY_TIMEOUT_FAST,    // 500ms before return starts
-  PROXIMITY_TIMEOUT_MEDIUM,  // 1000ms before return starts
+  PROXIMITY_TIMEOUT_FAST,    // 800ms before return starts
+  PROXIMITY_TIMEOUT_MEDIUM,  // 1500ms before return starts
   PROXIMITY_TIMEOUT_SLOW     // 5000ms before return starts
 } proximity_timeout_t;
 
@@ -122,15 +122,14 @@ void proximity_set_sunlight_cancel(bool enabled);
 bool proximity_get_sunlight_cancel(void);
 
 // Gamma correction for inverse-square compensation (0-100, maps to 0.15-1.00)
-// Lower gamma values expand low readings (useful for proximity sensors)
-// Default 25 = gamma 0.36
+// Applied after 1/sqrt distance linearization; default 100 = identity (1.00)
 void proximity_set_gamma(uint8_t gamma);
 uint8_t proximity_get_gamma(void);
 
 // Helper to get timeout in milliseconds
 uint32_t proximity_get_timeout_ms(void);
 
-// True while hysteresis is driving out-of-range / return-to-rest output (skip scene CC curve)
+// True while hysteresis is returning to rest or settled there (skip scene CC curve)
 bool proximity_output_bypass_scene_mapping(void);
 
 #endif // SENSOR_H

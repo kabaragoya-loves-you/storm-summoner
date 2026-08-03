@@ -3771,14 +3771,16 @@ static int cmd_als_enable(int argc, char **argv) {
   bool enable = (strcmp(state_str, "on") == 0 || strcmp(state_str, "1") == 0);
   
   scene->als.enabled = enable;
-  
+
   // If enabling and range is invalid, set defaults
   if (enable && scene->als.max_value == 0) {
     scene->als.min_value = 0;
     scene->als.max_value = 127;
     ESP_LOGI(TAG, "Initialized range to 0-127");
   }
-  
+
+  led_apply_blanking_policy();
+
   ESP_LOGI(TAG, "ALS: %s", enable ? "enabled" : "disabled");
   return 0;
 }

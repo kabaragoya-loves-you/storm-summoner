@@ -10,15 +10,26 @@
 #include "app_settings.h"
 #include "scene.h"
 #include "ui.h"
+#include "tempo.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <math.h>
 #include "task_priorities.h"
 
 #define TAG "SENSOR"
-// Default calibration values
-#define DEFAULT_PROXIMITY_MIN 0       // Minimum value when nothing is near
-#define DEFAULT_PROXIMITY_MAX 2200    // Maximum value when finger is close (12-bit mode max ~4095)
+// Default calibration values (200mA / 8T / 16-bit measured idle~17, contact~24k)
+#define DEFAULT_PROXIMITY_MIN 20      // Below this → MIDI 0
+#define DEFAULT_PROXIMITY_MAX 19000   // At/above this → MIDI 127
+// PS_CONF1/2 (0x03): low=PS_CONF1 (Duty[7:6] PERS[5:4] IT[3:1] SD[0]), high=PS_CONF2 (HD[3])
+// 8T integration, duty 1/40, 16-bit output, PS powered on
+#define PS_CONF1_DEFAULT      0x080E
+// ALS_CONF (0x00 low byte): IT[7:6] PERS[3:2] INT_EN[1] SD[0]; high byte reserved
+#define ALS_CONF_SHUTDOWN     0x0001
+#define ALS_CONF_160MS        0x0040
+// LED_I codes: 0=50mA .. 7=200mA; MPS codes: 0=1, 1=2, 2=4, 3=8 pulses
+#define PS_LED_I_200MA        7
+#define PS_MPS_1              0
+#define PS_MPS_8              3
 #define DEFAULT_PROXIMITY_DEADZONE 1 // Minimum change required to send MIDI
 #define PROXIMITY_IIR_ALPHA 0.2f     // Filter coefficient for smoothing
 
@@ -53,7 +64,8 @@
 #define NVS_KEY_NOTE_SILENCE "prox_note_sil"
 #define NVS_KEY_SUNLIGHT_CANCEL "prox_sc_en"
 #define NVS_KEY_PS_GAMMA "prox_gamma"
-#define DEFAULT_PS_GAMMA 25  // Stored as 0-100, applied as 0.15-1.00 (25 = 0.36)
+// After inverse-square distance linearization, 100 → gamma 1.00 (identity)
+#define DEFAULT_PS_GAMMA 100
 // Theremin settings now come from scene->proximity mapping (base_note, note_range, velocity)
 
 static TaskHandle_t sensor_task_handle = NULL;
@@ -97,7 +109,7 @@ static proximity_return_speed_t return_speed = PROXIMITY_RETURN_MEDIUM;
 static proximity_timeout_t timeout_setting = PROXIMITY_TIMEOUT_MEDIUM;
 static volatile uint32_t at_rest_start_time = 0;
 static volatile bool returning_to_rest = false;
-static volatile bool proximity_sensor_at_rest = false;
+static volatile bool rest_settled = false;
 static volatile float return_start_value = 0.0f;
 static volatile uint32_t return_start_time = 0;
 
@@ -105,11 +117,26 @@ static volatile uint32_t return_start_time = 0;
 static proximity_mode_t proximity_mode = PROXIMITY_MODE_CC;
 static volatile bool note_silence_on_low = true;  // Send note_off when sensor is out of range
 static bool sunlight_cancel_enabled = false;  // PS_SC_EN for ambient IR rejection
-static uint8_t proximity_gamma = DEFAULT_PS_GAMMA;  // Gamma for inverse-square compensation (50 = 0.60)
+static uint8_t proximity_gamma = DEFAULT_PS_GAMMA;  // Post-linearization curve (100 = identity)
+
+// PS_CONF3/MS (0x04): low=PS_CONF3 (MPS[6:5] SMART_PERS[4] AF[3] TRIG[2] reserved[1]=0 SC_EN[0]),
+// high=PS_MS (White_EN[7]: 0=enabled/1=disabled, PS_MS[6], LED_I[2:0])
+static uint16_t ps_conf3_build(uint8_t led_i, uint8_t mps, bool white_enabled, bool sunlight_cancel) {
+  uint16_t high = led_i & 0x7;
+  if (!white_enabled) high |= 0x80;
+  uint16_t low = ((mps & 0x3) << 5) | (sunlight_cancel ? 0x01 : 0x00);
+  return (high << 8) | low;
+}
+
+static esp_err_t ps_conf3_apply(void) {
+  if (!vcnl4040_dev) return ESP_ERR_INVALID_STATE;
+  uint16_t val = ps_conf3_build(PS_LED_I_200MA, PS_MPS_1, use_white_channel, sunlight_cancel_enabled);
+  return i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, val);
+}
 
 void sensor_init(bool enable_logging) {
   esp_err_t err;
-  
+
   s_als_logging_enabled = enable_logging;
   s_ps_logging_enabled = enable_logging;
   
@@ -153,6 +180,15 @@ void sensor_init(bool enable_logging) {
     proximity_max = DEFAULT_PROXIMITY_MAX;
   } else {
     proximity_max = (uint16_t)stored_val;
+  }
+
+  // Migrate pre-200mA calibration (0-2200) to measured 16-bit range
+  if (proximity_max <= 2200) {
+    proximity_min = DEFAULT_PROXIMITY_MIN;
+    proximity_max = DEFAULT_PROXIMITY_MAX;
+    app_settings_save_u32(NVS_KEY_PROXIMITY_MIN, proximity_min);
+    app_settings_save_u32(NVS_KEY_PROXIMITY_MAX, proximity_max);
+    ESP_LOGI(TAG, "Migrated proximity cal to %u-%u", (unsigned)proximity_min, (unsigned)proximity_max);
   }
 
   err = app_settings_load_u32(NVS_KEY_PROXIMITY_DEADZONE, &stored_val);
@@ -242,10 +278,16 @@ void sensor_init(bool enable_logging) {
     app_settings_save_u8(NVS_KEY_SUNLIGHT_CANCEL, 0);  // Default: disabled
   }
 
-  // Load proximity gamma setting (inverse-square compensation)
+  // Load proximity gamma (optional artistic curve after inverse-square linearization)
   uint8_t stored_gamma = DEFAULT_PS_GAMMA;
   if (app_settings_load_u8(NVS_KEY_PS_GAMMA, &stored_gamma) == ESP_OK) {
-    proximity_gamma = stored_gamma;
+    // Old default 25 was compensating for missing 1/sqrt; migrate to identity
+    if (stored_gamma == 25) {
+      proximity_gamma = DEFAULT_PS_GAMMA;
+      app_settings_save_u8(NVS_KEY_PS_GAMMA, DEFAULT_PS_GAMMA);
+    } else {
+      proximity_gamma = stored_gamma;
+    }
   } else {
     app_settings_save_u8(NVS_KEY_PS_GAMMA, DEFAULT_PS_GAMMA);
   }
@@ -272,44 +314,17 @@ void sensor_init(bool enable_logging) {
   // Register device for debug tracking
   i2c_common_register_device(vcnl4040_dev, SENSOR_ADDR, "VCNL4040");
 
-  // Configure proximity sensor
-  // PS_CONF1 bits [7:0] and PS_CONF2 bits [15:8]:
-  // [15] - Reserved
-  // [14:11] - PS_IT (Integration Time): 0001 = 1T (default)
-  // [10:9] - PS_PERS: 00 = 1 (default)
-  // [8] - Reserved
-  // [7:6] - PS_DUTY: 00 = 1/40
-  // [5] - PS_INT: 0 = disable interrupt
-  // [4:3] - Reserved
-  // [2] - PS_HD: 0 = 12-bit
-  // [1] - PS_SMART_PERS: 0 = disable
-  // [0] - PS_SD: 0 = enable, 1 = shutdown
-  
-  // Enable proximity sensor with 8T integration time for better sensitivity
-  // PS_CONF1/2 register (0x03): low byte = PS_CONF1, high byte = PS_CONF2
-  // PS_IT is bits 3:1 of low byte: 100b = 8T → 0x08
-  // PS_SD=0 (enable) is bit 0
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x0008); // 8T integration, enabled
+  // PS_CONF1/2 (0x03): low=PS_CONF1, high=PS_CONF2
+  // PS_CONF1: Duty[7:6]=00 (1/40), PERS[5:4]=00, IT[3:1]=111 (8T), SD[0]=0 (on)
+  // PS_CONF2: HD[3]=1 (16-bit)
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, PS_CONF1_DEFAULT);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing PS_CONF1");
     return;
   }
-  
-  // Configure LED current for proximity sensor
-  // PS_CONF3/MS register bits:
-  // [15] - WHITE_EN: 1 = enable white channel
-  // [14] - PS_MS: 0 = normal mode
-  // [13] - LED_I_LOW: 0 = not in low power mode
-  // [12] - Reserved
-  // [11] - PS_SC_EN: sunlight cancellation (0=off, 1=on)
-  // [10:8] - PS_TRIG: 000 = no trigger
-  // [7:6] - PS_AF: 00 = auto mode
-  // [5] - PS_SMART_PERS: 0 = disable
-  // [4:3] - Reserved
-  // [2:0] - LED_I: 000=50mA, 001=75mA, 010=100mA, 011=120mA, 100=140mA, 101=160mA, 110=180mA, 111=200mA
-  // Enable white channel, LED current to 200mA, optionally enable sunlight cancellation
-  uint16_t ps_conf3 = 0x8007;  // WHITE_EN=1, LED_I=200mA
-  if (sunlight_cancel_enabled) ps_conf3 |= 0x0800;  // Set PS_SC_EN bit 11
+
+  // PS_CONF3/MS (0x04): 200mA LED, 1 pulse, white per use_white_channel, optional SC_EN
+  uint16_t ps_conf3 = ps_conf3_build(PS_LED_I_200MA, PS_MPS_1, use_white_channel, sunlight_cancel_enabled);
   err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, ps_conf3);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed configuring PS_CONF3");
@@ -318,24 +333,15 @@ void sensor_init(bool enable_logging) {
   ESP_LOGI(TAG, "PS_CONF3: 0x%04X (sunlight cancel %s)", ps_conf3,
     sunlight_cancel_enabled ? "enabled" : "disabled");
 
-  // First put ALS into shutdown mode to reset any automatic features
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // ALS_SD=1 (shutdown)
+  // ALS shutdown (ALS_SD=1 in low byte bit 0), then enable at 160ms IT (bits 7:6 = 01)
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, ALS_CONF_SHUTDOWN);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to shutdown ALS");
     return;
   }
-  vTaskDelay(pdMS_TO_TICKS(10)); // Short delay to ensure shutdown
+  vTaskDelay(pdMS_TO_TICKS(10));
 
-  // Now configure ALS with proper settings
-  // ALS_CONF bits:
-  // [15:12] - Reserved
-  // [11:8]  - ALS_IT (Integration Time): 0000=80ms, 0001=160ms, 0010=320ms, 0011=640ms
-  // [7:6]   - ALS_PERS (Persistence): 00=1, 01=2, 10=4, 11=8
-  // [5]     - ALS_INT_EN (Interrupt Enable)
-  // [4]     - ALS_SD (Shutdown)
-  // [3:0]   - Reserved
-  // Try 160ms integration time (0x0100) for more stable readings
-  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0100); // ALS_SD=0, IT=160ms
+  err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, ALS_CONF_160MS);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed initializing ALS_CONF");
     return;
@@ -529,42 +535,45 @@ void als_get_calibration(uint16_t *min_value, uint16_t *max_value) {
 esp_err_t als_auto_calibrate(uint32_t duration_ms) {
   ESP_LOGI(TAG, "=== Auto-calibrating ambient light sensor ===");
   ESP_LOGI(TAG, "Position in DARK and wait...");
-  
+
   if (!vcnl4040_dev) {
     ESP_LOGE(TAG, "ALS sensor not initialized");
     return ESP_FAIL;
   }
-  
+
+  led_set_als_cal_holdoff(true);
+
   // Wait for sensor to settle
   ESP_LOGI(TAG, "Settling for 2 seconds...");
   vTaskDelay(pdMS_TO_TICKS(2000));
-  
+
   ESP_LOGI(TAG, "Starting calibration: HOLD DARK, then HOLD BRIGHT, then vary for %u seconds", (unsigned)(duration_ms / 1000));
-  
+
   // Determine which channel to read
   uint16_t reg_addr = use_white_channel ? 0x0A : SENSOR_ALS_DATA;
-  
+
   // Allocate buffer for all samples
   uint32_t max_samples = (duration_ms / 20) + 10;
   uint16_t *samples = (uint16_t*)malloc(max_samples * sizeof(uint16_t));
   if (!samples) {
     ESP_LOGE(TAG, "Failed to allocate sample buffer");
+    led_set_als_cal_holdoff(false);
     return ESP_ERR_NO_MEM;
   }
-  
+
   uint32_t sample_count = 0;
   uint32_t last_log_time = 0;
-  
+
   // Sample for the specified duration
   TickType_t start_tick = xTaskGetTickCount();
   TickType_t duration_ticks = pdMS_TO_TICKS(duration_ms);
-  
+
   while ((xTaskGetTickCount() - start_tick) < duration_ticks && sample_count < max_samples) {
     uint16_t reading;
-    
+
     if (i2c_common_read_reg16(vcnl4040_dev, reg_addr, &reading) == ESP_OK) {
       samples[sample_count++] = reading;
-      
+
       // Log every second for debugging
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
       if (current_time - last_log_time >= 1000) {
@@ -574,58 +583,61 @@ esp_err_t als_auto_calibrate(uint32_t duration_ms) {
     }
     vTaskDelay(pdMS_TO_TICKS(20));  // Sample at ~50Hz
   }
-  
+
   if (sample_count < 10) {
     ESP_LOGE(TAG, "Insufficient samples collected: %u", (unsigned)sample_count);
     free(samples);
+    led_set_als_cal_holdoff(false);
     return ESP_FAIL;
   }
-  
+
   // Sort samples to find range while rejecting extreme outliers
   qsort(samples, sample_count, sizeof(uint16_t), compare_uint16);
-  
+
   // Discard only the 2 most extreme samples on each end
   uint32_t trim_count = 2;
   uint32_t min_index = (trim_count < sample_count) ? trim_count : 0;
   uint32_t max_index = (trim_count < sample_count) ? (sample_count - 1 - trim_count) : (sample_count - 1);
-  
+
   if (min_index >= sample_count) min_index = 0;
   if (max_index >= sample_count) max_index = sample_count - 1;
   if (min_index >= max_index) max_index = sample_count - 1;
-  
+
   uint16_t min_reading = samples[min_index];
   uint16_t max_reading = samples[max_index];
   uint16_t absolute_min = samples[0];
   uint16_t absolute_max = samples[sample_count - 1];
-  
+
   free(samples);
-  
+
   // Check if we got a valid swing
   uint16_t swing = max_reading - min_reading;
   if (swing < 10) {
     ESP_LOGW(TAG, "Insufficient swing detected (%u counts). Calibration may be inaccurate.", (unsigned)swing);
   }
-  
+
   // Apply 1% margin on each extreme for headroom
   float margin = swing * 0.01f;
   uint16_t final_min = min_reading + (uint16_t)margin;
   uint16_t final_max = max_reading - (uint16_t)margin;
-  
+
   // Ensure min < max after applying margins
   if (final_min >= final_max) {
     ESP_LOGE(TAG, "Calibration failed: min >= max after applying margins");
+    led_set_als_cal_holdoff(false);
     return ESP_FAIL;
   }
-  
+
   ESP_LOGI(TAG, "Calibration complete: %u samples (%s channel)", (unsigned)sample_count, use_white_channel ? "WHITE" : "ALS");
   ESP_LOGI(TAG, "  Absolute range:   %u - %u", (unsigned)absolute_min, (unsigned)absolute_max);
-  ESP_LOGI(TAG, "  Trimmed range:    %u - %u (%u counts, discarded %u extreme samples)", 
+  ESP_LOGI(TAG, "  Trimmed range:    %u - %u (%u counts, discarded %u extreme samples)",
     (unsigned)min_reading, (unsigned)max_reading, (unsigned)swing, trim_count * 2);
   ESP_LOGI(TAG, "  Final range:      %u - %u (1%% margins applied)", (unsigned)final_min, (unsigned)final_max);
-  
+
   // Store calibration
   als_set_calibration(final_min, final_max);
-  
+
+  led_set_als_cal_holdoff(false);
   return ESP_OK;
 }
 
@@ -638,10 +650,13 @@ uint8_t als_get_deadzone(void) {
   return als_deadzone;
 }
 
-#define PROX_IN_RANGE_CANCEL_THRESH  15
+#define PROX_IDLE_ENTER_THRESH  1  // start idle timer when midi < 1 (i.e. 0)
+#define PROX_IDLE_LEAVE_THRESH  2  // leave settled/return when midi >= 2
 
 bool proximity_output_bypass_scene_mapping(void) {
-  return hysteresis_enabled && (returning_to_rest || proximity_sensor_at_rest);
+  // Only the return animation / settled rest are final CC values; live play
+  // (including 0–4) still goes through the scene curve.
+  return hysteresis_enabled && (returning_to_rest || rest_settled);
 }
 
 void proximity_set_hysteresis_enabled(bool enabled) {
@@ -649,7 +664,7 @@ void proximity_set_hysteresis_enabled(bool enabled) {
   app_settings_save_u8(NVS_KEY_HYSTERESIS_ENABLED, enabled ? 1 : 0);
   at_rest_start_time = 0;
   returning_to_rest = false;
-  proximity_sensor_at_rest = false;
+  rest_settled = false;
   ESP_LOGI(TAG, "Proximity hysteresis %s", enabled ? "enabled" : "disabled");
 }
 
@@ -669,14 +684,10 @@ uint8_t proximity_get_rest_position(void) {
 }
 
 void proximity_notify_settings_changed(void) {
+  // Reset idle/return state only — do not force a return-to-rest animation.
   at_rest_start_time = 0;
-  proximity_sensor_at_rest = false;
   returning_to_rest = false;
-  if (hysteresis_enabled) {
-    returning_to_rest = true;
-    return_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    return_start_value = (float)last_midi_ps_value;
-  }
+  rest_settled = false;
   ps_force_next_post = true;
 }
 
@@ -694,7 +705,7 @@ proximity_return_speed_t proximity_get_return_speed(void) {
 void proximity_set_timeout(proximity_timeout_t timeout) {
   timeout_setting = timeout;
   app_settings_save_u32(NVS_KEY_TIMEOUT, timeout);
-  const char* names[] = {"FAST (500ms)", "MEDIUM (1s)", "SLOW (5s)"};
+  const char* names[] = {"FAST (800ms)", "MEDIUM (1.5s)", "SLOW (5s)"};
   ESP_LOGI(TAG, "Proximity timeout set to %s", names[timeout]);
 }
 
@@ -782,11 +793,9 @@ bool proximity_get_note_silence_on_low(void) {
 void proximity_set_sunlight_cancel(bool enabled) {
   sunlight_cancel_enabled = enabled;
   app_settings_save_u8(NVS_KEY_SUNLIGHT_CANCEL, enabled ? 1 : 0);
-  
-  // Update PS_CONF3 register immediately if sensor is initialized
+
   if (vcnl4040_dev) {
-    uint16_t ps_conf3 = 0x8007;  // WHITE_EN=1, LED_I=200mA
-    if (enabled) ps_conf3 |= 0x0800;  // Set PS_SC_EN bit 11
+    uint16_t ps_conf3 = ps_conf3_build(PS_LED_I_200MA, PS_MPS_1, use_white_channel, enabled);
     esp_err_t err = i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, ps_conf3);
     if (err == ESP_OK) {
       ESP_LOGI(TAG, "Sunlight cancellation %s (PS_CONF3=0x%04X)",
@@ -817,10 +826,10 @@ uint8_t proximity_get_gamma(void) {
 
 uint32_t proximity_get_timeout_ms(void) {
   switch (timeout_setting) {
-    case PROXIMITY_TIMEOUT_FAST: return 500;
-    case PROXIMITY_TIMEOUT_MEDIUM: return 1000;
+    case PROXIMITY_TIMEOUT_FAST: return 800;
+    case PROXIMITY_TIMEOUT_MEDIUM: return 1500;
     case PROXIMITY_TIMEOUT_SLOW: return 5000;
-    default: return 1000;
+    default: return 1500;
   }
 }
 
@@ -840,6 +849,11 @@ void als_reset_filter(void) {
 
 void als_set_use_white_channel(bool enable) {
   use_white_channel = enable;
+  if (vcnl4040_dev) {
+    esp_err_t err = ps_conf3_apply();
+    if (err != ESP_OK)
+      ESP_LOGE(TAG, "Failed to update white channel enable: %s", esp_err_to_name(err));
+  }
   ESP_LOGI(TAG, "Light sensor mode: %s", enable ? "WHITE channel" : "ALS channel");
 }
 
@@ -917,55 +931,62 @@ static void sensor_task(void *arg) {
         // Apply IIR filter to smooth the values
         filtered_proximity = PROXIMITY_IIR_ALPHA * ps_raw_value + (1.0f - PROXIMITY_IIR_ALPHA) * filtered_proximity;
         
-        // Noise floor: raw values below this are treated as zero
-        // Typical noise floor is 0-3 based on observation
-        const float noise_floor = 4.0f;
-        
-        // Normalize to 0-1 range using calibration values, with noise floor cutoff
-        float effective_value = filtered_proximity - noise_floor;
-        if (effective_value < 0.0f) effective_value = 0.0f;
-        
-        float range = (float)proximity_max - (float)proximity_min - noise_floor;
-        float normalized = effective_value / range;
-        if (normalized > 1.0f) normalized = 1.0f;
-        
-        // Apply gamma correction for inverse-square compensation
-        // Gamma < 1 expands low values (useful for proximity sensors)
-        // proximity_gamma 0-100 maps to actual gamma 0.15-1.00
+        // Inverse-square distance linearization: reflected IR ≈ k/d² → d ∝ 1/sqrt(I).
+        // Map intensity so equal distance steps become equal MIDI steps (far=0, touch=1).
+        float i_min = (float)proximity_min;
+        float i_max = (float)proximity_max;
+        if (i_max <= i_min) i_max = i_min + 1.0f;
+
+        float intensity = filtered_proximity;
+        if (intensity < i_min) intensity = i_min;
+        if (intensity > i_max) intensity = i_max;
+
+        float inv_far = 1.0f / sqrtf(i_min);
+        float inv_near = 1.0f / sqrtf(i_max);
+        float inv = 1.0f / sqrtf(intensity);
+        float linear = (inv_far - inv) / (inv_far - inv_near);
+        if (linear < 0.0f) linear = 0.0f;
+        if (linear > 1.0f) linear = 1.0f;
+
+        // Optional artistic gamma after linearization (100 → 1.00 = unchanged)
         float gamma = 0.15f + proximity_gamma * 0.0085f;
-        float compensated = (normalized > 0.0f) ? powf(normalized, gamma) : 0.0f;
-        
+        float compensated = (linear > 0.0f) ? powf(linear, gamma) : 0.0f;
+
         // Scale to MIDI range (0-127)
         uint8_t midi_value = (uint8_t)(compensated * 127.0f + 0.5f);
         uint8_t output_value = midi_value;
 
         if (hysteresis_enabled) {
-          bool at_rest = (midi_value < 5);
-          proximity_sensor_at_rest = at_rest;
+          // Live-track the full 0–127 range. Idle timer only runs at midi == 0;
+          // after timeout, lerp last posted value → rest_position. No early
+          // freeze below 5 (that made the bottom of the range unplayable).
+          if ((rest_settled || returning_to_rest) &&
+              midi_value >= PROX_IDLE_LEAVE_THRESH) {
+            returning_to_rest = false;
+            rest_settled = false;
+            at_rest_start_time = 0;
+          }
 
           uint32_t timeout_ms;
           switch (timeout_setting) {
-            case PROXIMITY_TIMEOUT_FAST: timeout_ms = 500; break;
-            case PROXIMITY_TIMEOUT_MEDIUM: timeout_ms = 1000; break;
+            case PROXIMITY_TIMEOUT_FAST: timeout_ms = 800; break;
+            case PROXIMITY_TIMEOUT_MEDIUM: timeout_ms = 1500; break;
             case PROXIMITY_TIMEOUT_SLOW: timeout_ms = 5000; break;
-            default: timeout_ms = 1000; break;
+            default: timeout_ms = 1500; break;
           }
 
-          if (returning_to_rest) {
-            if (!at_rest && midi_value >= PROX_IN_RANGE_CANCEL_THRESH) {
-              returning_to_rest = false;
+          if (!returning_to_rest && !rest_settled) {
+            if (midi_value < PROX_IDLE_ENTER_THRESH) {
+              if (at_rest_start_time == 0)
+                at_rest_start_time = current_time;
+              else if ((current_time - at_rest_start_time) >= timeout_ms) {
+                returning_to_rest = true;
+                return_start_time = current_time;
+                return_start_value = (float)last_midi_ps_value;
+              }
+            } else {
               at_rest_start_time = 0;
             }
-          } else if (at_rest) {
-            if (at_rest_start_time == 0)
-              at_rest_start_time = current_time;
-            else if ((current_time - at_rest_start_time) >= timeout_ms) {
-              returning_to_rest = true;
-              return_start_time = current_time;
-              return_start_value = 0.0f;
-            }
-          } else {
-            at_rest_start_time = 0;
           }
 
           if (returning_to_rest) {
@@ -978,21 +999,25 @@ static void sensor_task(void *arg) {
               default: return_duration_ms = 1000; break;
             }
 
-            if (return_duration_ms == 0) {
+            if (return_duration_ms == 0 ||
+                (current_time - return_start_time) >= return_duration_ms) {
               output_value = rest_position;
+              returning_to_rest = false;
+              rest_settled = true;
+              at_rest_start_time = 0;
             } else {
-              uint32_t elapsed = current_time - return_start_time;
-              if (elapsed >= return_duration_ms)
-                output_value = rest_position;
-              else {
-                float progress = (float)elapsed / (float)return_duration_ms;
-                output_value = (uint8_t)(return_start_value +
-                  progress * ((float)rest_position - return_start_value) + 0.5f);
-              }
+              float progress = (float)(current_time - return_start_time) /
+                (float)return_duration_ms;
+              output_value = (uint8_t)(return_start_value +
+                progress * ((float)rest_position - return_start_value) + 0.5f);
             }
+          } else if (rest_settled) {
+            output_value = rest_position;
           }
         } else {
-          proximity_sensor_at_rest = false;
+          rest_settled = false;
+          returning_to_rest = false;
+          at_rest_start_time = 0;
         }
 
           // Log values periodically
@@ -1006,7 +1031,7 @@ static void sensor_task(void *arg) {
             }
             ps_last_log_time = current_time;
           }
-          
+
           // Only send if the value has changed beyond deadzone AND rate limit allows
           int diff = abs((int)output_value - (int)last_midi_ps_value);
           bool force_post = ps_force_next_post;
@@ -1200,19 +1225,18 @@ uint16_t get_ps(void) {
 
 void sensor_reset(void) {
   if (vcnl4040_dev) {
-    // First try to reset through software
-    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0010); // Shutdown
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, ALS_CONF_SHUTDOWN);
     vTaskDelay(pdMS_TO_TICKS(100));
-    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, 0x0100); // Re-enable with 160ms IT
+    i2c_common_write_reg16(vcnl4040_dev, SENSOR_ALS_CONF, ALS_CONF_160MS);
     vTaskDelay(pdMS_TO_TICKS(100));
-    
+
     // Clear any accumulated values
     filtered_als = 0.0f;
     filtered_proximity = 0.0f;
     last_midi_als_value = 0;
     als_processed_midi = 0;
     last_midi_ps_value = 0;
-    
+
     ESP_LOGI(TAG, "Sensor software reset complete");
   }
 }
@@ -1220,103 +1244,107 @@ void sensor_reset(void) {
 void sensor_dump_registers(void) {
   uint16_t val;
   ESP_LOGI(TAG, "=== VCNL4040 Register Dump ===");
-  
+
   if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_CONF, &val) == ESP_OK) {
+    uint8_t als_it = (val >> 6) & 0x3;
     ESP_LOGI(TAG, "ALS_CONF (0x00): 0x%04X", val);
-    ESP_LOGI(TAG, "  ALS_SD=%u, ALS_IT=%ub (%ums)", 
-      (val >> 0) & 1, (val >> 8) & 0xF, 
-      (((val >> 8) & 0xF) == 0) ? 80 : (((val >> 8) & 0xF) == 1) ? 160 : (((val >> 8) & 0xF) == 2) ? 320 : 640);
+    ESP_LOGI(TAG, "  ALS_SD=%u, ALS_IT=%ub (%ums)",
+      val & 1, als_it,
+      (als_it == 0) ? 80 : (als_it == 1) ? 160 : (als_it == 2) ? 320 : 640);
   }
-  
+
   if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF1, &val) == ESP_OK) {
     ESP_LOGI(TAG, "PS_CONF1/2 (0x03): 0x%04X", val);
-    uint8_t ps_sd = (val >> 0) & 1;
-    uint8_t ps_it = (val >> 1) & 0x7;  // Bits 3:1 of low byte
-    uint8_t ps_duty = (val >> 6) & 0x3;  // Bits 7:6 of low byte
-    uint8_t ps_hd = (val >> 11) & 1;  // Bit 11 (high byte bit 3)
-    const char* it_names[] = {"1T", "1.5T", "2T", "4T", "8T", "?", "?", "?"};
+    uint8_t ps_sd = val & 1;
+    uint8_t ps_it = (val >> 1) & 0x7;
+    uint8_t ps_duty = (val >> 6) & 0x3;
+    uint8_t ps_hd = (val >> 11) & 1;
+    const char* it_names[] = {"1T", "1.5T", "2T", "2.5T", "3T", "3.5T", "4T", "8T"};
     ESP_LOGI(TAG, "  PS_SD=%u (0=ON), PS_IT=%u (%s), PS_DUTY=%u (1/%u), PS_HD=%u (%ubit)",
       ps_sd, ps_it, it_names[ps_it],
       ps_duty, (ps_duty == 0) ? 40 : (ps_duty == 1) ? 80 : (ps_duty == 2) ? 160 : 320,
       ps_hd, ps_hd ? 16 : 12);
   }
-  
+
   if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_CONF3, &val) == ESP_OK) {
     ESP_LOGI(TAG, "PS_CONF3/MS (0x%02X): 0x%04X", SENSOR_PS_CONF3, val);
     uint8_t white_en = (val >> 15) & 1;
-    uint8_t led_i = val & 0x7;
-    ESP_LOGI(TAG, "  WHITE_EN=%u, LED_I=%ub (%umA)",
-      white_en, led_i,
+    uint8_t led_i = (val >> 8) & 0x7;
+    uint8_t ps_mps = (val >> 5) & 0x3;
+    uint8_t ps_sc = val & 1;
+    const uint8_t mps_counts[] = {1, 2, 4, 8};
+    ESP_LOGI(TAG, "  WHITE_EN=%u (%s), LED_I=%ub (%umA), PS_MPS=%u (%u pulse), PS_SC_EN=%u",
+      white_en, white_en ? "disabled" : "enabled", led_i,
       (led_i == 0) ? 50 : (led_i == 1) ? 75 : (led_i == 2) ? 100 : (led_i == 3) ? 120 :
-      (led_i == 4) ? 140 : (led_i == 5) ? 160 : (led_i == 6) ? 180 : 200);
+      (led_i == 4) ? 140 : (led_i == 5) ? 160 : (led_i == 6) ? 180 : 200,
+      ps_mps, mps_counts[ps_mps], ps_sc);
   }
-  
+
   if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &val) == ESP_OK) {
     ESP_LOGI(TAG, "PS_DATA (0x08): %u", val);
   }
-  
+
   if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_ALS_DATA, &val) == ESP_OK) {
     ESP_LOGI(TAG, "ALS_DATA (0x09): %u", val);
   }
-  
-  // Read white channel
+
   if (i2c_common_read_reg16(vcnl4040_dev, 0x0A, &val) == ESP_OK) {
     ESP_LOGI(TAG, "WHITE_DATA (0x0A): %u", val);
   }
-  
-  // Read interrupt flags
+
   if (i2c_common_read_reg16(vcnl4040_dev, 0x0B, &val) == ESP_OK) {
     ESP_LOGI(TAG, "INT_FLAG (0x0B): 0x%04X", val);
   }
-  
-  // Read device ID
+
   if (i2c_common_read_reg16(vcnl4040_dev, 0x0C, &val) == ESP_OK) {
     ESP_LOGI(TAG, "DEVICE_ID (0x0C): 0x%04X (should be 0x0186)", val);
   }
-  
+
   ESP_LOGI(TAG, "==============================");
 }
 
 // Diagnostic function to test proximity sensor with different configs
 void proximity_diagnostic_test(uint32_t duration_ms) {
   ESP_LOGI(TAG, "=== Proximity Diagnostic Test ===");
-  
+
   if (!vcnl4040_dev) {
     ESP_LOGE(TAG, "Sensor not initialized");
     return;
   }
-  
-  // Test configurations to try
-  // PS_IT is bits 3:1 of low byte: 001=1.5T, 010=2T, 011=4T, 100=8T
+
+  // PS_IT[3:1]: 000=1T .. 110=4T, 111=8T; PS_HD bit11 for 16-bit
   struct {
     const char* name;
     uint16_t ps_conf1;
     uint16_t ps_conf3;
   } configs[] = {
-    {"Current (8T, 200mA, WHITE)", 0x0008, 0x8007},
-    {"8T, 200mA, NO WHITE", 0x0008, 0x0007},
-    {"8T, 100mA, NO WHITE", 0x0008, 0x0002},
-    {"4T, 200mA, NO WHITE", 0x0006, 0x0007},
-    {"1T, 200mA, NO WHITE", 0x0000, 0x0007},
+    {"8T 16bit 200mA 1pulse", PS_CONF1_DEFAULT,
+      ps_conf3_build(PS_LED_I_200MA, PS_MPS_1, false, sunlight_cancel_enabled)},
+    {"8T 16bit 200mA 8pulse", PS_CONF1_DEFAULT,
+      ps_conf3_build(PS_LED_I_200MA, PS_MPS_8, false, sunlight_cancel_enabled)},
+    {"8T 16bit 100mA 1pulse", PS_CONF1_DEFAULT,
+      ps_conf3_build(2, PS_MPS_1, false, sunlight_cancel_enabled)},
+    {"4T 16bit 200mA 1pulse", 0x080C,
+      ps_conf3_build(PS_LED_I_200MA, PS_MPS_1, false, sunlight_cancel_enabled)},
+    {"1T 16bit 200mA 1pulse", 0x0800,
+      ps_conf3_build(PS_LED_I_200MA, PS_MPS_1, false, sunlight_cancel_enabled)},
   };
-  
+
   uint32_t test_duration = duration_ms / (sizeof(configs) / sizeof(configs[0]));
-  
+
   for (int i = 0; i < sizeof(configs) / sizeof(configs[0]); i++) {
     ESP_LOGI(TAG, "Testing config %d: %s", i, configs[i].name);
     ESP_LOGI(TAG, "  PS_CONF1=0x%04X, PS_CONF3=0x%04X", configs[i].ps_conf1, configs[i].ps_conf3);
-    
-    // Apply configuration
+
     i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, configs[i].ps_conf1);
     vTaskDelay(pdMS_TO_TICKS(50));
     i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, configs[i].ps_conf3);
-    vTaskDelay(pdMS_TO_TICKS(200));  // Allow sensor to settle
-    
-    // Sample for test duration
+    vTaskDelay(pdMS_TO_TICKS(200));
+
     uint16_t min_val = 65535, max_val = 0;
     uint32_t sample_count = 0;
     TickType_t start = xTaskGetTickCount();
-    
+
     while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(test_duration)) {
       uint16_t reading;
       if (i2c_common_read_reg16(vcnl4040_dev, SENSOR_PS_DATA, &reading) == ESP_OK) {
@@ -1326,17 +1354,16 @@ void proximity_diagnostic_test(uint32_t duration_ms) {
       }
       vTaskDelay(pdMS_TO_TICKS(20));
     }
-    
+
     ESP_LOGI(TAG, "  Results: min=%u, max=%u, swing=%u (samples=%u)",
       (unsigned)min_val, (unsigned)max_val, (unsigned)(max_val - min_val), (unsigned)sample_count);
   }
-  
-  // Restore original configuration
+
   ESP_LOGI(TAG, "Restoring original configuration...");
-  i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, 0x0008);  // 8T integration
+  i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF1, PS_CONF1_DEFAULT);
   vTaskDelay(pdMS_TO_TICKS(50));
-  i2c_common_write_reg16(vcnl4040_dev, SENSOR_PS_CONF3, 0x8007);  // WHITE enabled, 200mA
+  ps_conf3_apply();
   vTaskDelay(pdMS_TO_TICKS(200));
-  
+
   ESP_LOGI(TAG, "=== Diagnostic Test Complete ===");
 }

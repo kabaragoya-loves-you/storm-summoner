@@ -8,8 +8,6 @@
 
 static const char* TAG = "continuous_mapping";
 
-#define UNIPOLAR_BIPOLAR_REST_THRESH 5
-
 uint8_t apply_polarity(uint8_t input, polarity_t polarity) {
   switch (polarity) {
     case POLARITY_UNIPOLAR:
@@ -59,6 +57,9 @@ uint8_t continuous_mapping_process(uint8_t raw_input, continuous_mapping_t* mapp
 
 uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input,
   continuous_mapping_t* mapping) {
+  // Same continuous 3-point scale as unipolar — do NOT snap idle (<5) to
+  // middle. That cliff caused 0↔64 chatter and hand-away jumps like 2→64,
+  // and fought device return-to-rest (which owns settling at rest_position).
   if (!mapping) return 64;
 
   uint8_t curved = curve_apply(&mapping->curve, raw_input);
@@ -66,17 +67,10 @@ uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input,
   int16_t mid = (int16_t)mapping->middle_value;
   int16_t max = (int16_t)mapping->max_value;
   int16_t scaled;
-
-  if (curved < UNIPOLAR_BIPOLAR_REST_THRESH) {
-    scaled = mid;
-  } else if (curved <= 64) {
-    int16_t span = 64 - UNIPOLAR_BIPOLAR_REST_THRESH;
-    if (span < 1) span = 1;
-    scaled = min + ((mid - min) * ((int16_t)curved - UNIPOLAR_BIPOLAR_REST_THRESH)) / span;
-  } else {
+  if (curved <= 64)
+    scaled = min + ((mid - min) * (int16_t)curved) / 64;
+  else
     scaled = mid + ((max - mid) * ((int16_t)curved - 64)) / 63;
-  }
-
   if (scaled < 0) scaled = 0;
   if (scaled > 127) scaled = 127;
 

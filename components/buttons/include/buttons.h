@@ -102,6 +102,15 @@ uint16_t buttons_get_long_press_threshold(void);
 bool buttons_check_boot_right(void);
 
 /**
+ * Check if the Left button is held during boot
+ * Must be called BEFORE buttons_init() for accurate reading.
+ * Used to enable the UART0 debug log mirror for this boot only.
+ *
+ * @return true if Left button is pressed (held) at boot
+ */
+bool buttons_check_boot_left(void);
+
+/**
  * Glitch filter modes for hardware debouncing
  * 0 = None (software debounce + hysteresis only)
  * 1 = Simple (filters very short pulses based on APB clock cycles)

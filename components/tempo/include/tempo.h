@@ -201,6 +201,10 @@ void led_set_on(void);              // Turn LED on (solid)
 void led_set_off(void);             // Turn LED off
 void led_restore_baseline(void);    // Restore LED to normal day/night mode state
 
+// Blank UV LED while scene ALS mapping is enabled or ALS calibration is running
+void led_apply_blanking_policy(void);
+void led_set_als_cal_holdoff(bool active);
+
 // Day/Night mode
 esp_err_t led_set_mode(led_mode_t mode);
 led_mode_t led_get_mode(void);

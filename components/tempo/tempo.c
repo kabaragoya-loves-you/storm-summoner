@@ -66,6 +66,7 @@ static bool s_led_enabled = true;
 static bool s_led_solid_on_mode = false;
 static led_mode_t s_led_mode = LED_MODE_DAYLIGHT;
 static bool s_led_sundial_mode = true;   // Default: sundial on for magical first experience
+static bool s_als_cal_holdoff = false;   // Blank UV LED during ALS calibration
 static esp_timer_handle_t s_led_off_timer = NULL;
 
 // Sundial mode thresholds (ALS CC value 0-127)
@@ -1696,11 +1697,26 @@ void tempo_jitter_print_stats(void) {
 // LED Implementation (merged from led component)
 // ============================================================================
 
-// Check if LED should be blocked because proximity sensor is active
-// Proximity IR interferes with the tempo IR LEDs, so they're mutually exclusive
-static bool led_is_blocked_by_proximity(void) {
+// 395 nm UV LEDs can disturb the VCNL4040 ALS channel. Blank them when the
+// current scene uses ALS as a control, or while ALS calibration is running.
+static bool led_is_blocked_by_als(void) {
+  if (s_als_cal_holdoff) return true;
   scene_t* scene = scene_get_current();
-  return (scene && scene->proximity.enabled);
+  return (scene && scene->als.enabled);
+}
+
+void led_apply_blanking_policy(void) {
+  if (led_is_blocked_by_als()) {
+    s_led_solid_on_mode = false;
+    gpio_set_level(PIN_LED, 0);  // Absolute off (not nighttime-inverted "off")
+    return;
+  }
+  led_restore_baseline();
+}
+
+void led_set_als_cal_holdoff(bool active) {
+  s_als_cal_holdoff = active;
+  led_apply_blanking_policy();
 }
 
 // Get the actual GPIO level based on mode (daylight vs nighttime inversion)
@@ -1721,9 +1737,9 @@ static int get_gpio_level_for_off(void) {
 static void led_als_event_handler(const event_t* event, void* context) {
   if (!s_led_sundial_mode) return;
   if (event->type != EVENT_SENSOR_ALS) return;
-  
+
   uint8_t als_value = event->data.sensor.value;
-  
+
   // Switch to nighttime if dark
   if (als_value < ALS_DARK_THRESHOLD && s_led_mode == LED_MODE_DAYLIGHT) {
     ESP_LOGI(TAG, "Sundial: Switching to nighttime mode (ALS=%d)", als_value);
@@ -1739,9 +1755,9 @@ static void led_als_event_handler(const event_t* event, void* context) {
 // Handle transport state changes to update LED baseline
 static void led_transport_state_handler(const event_t* event, void* context) {
   if (event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
-  
+
   transport_state_t state = event->data.transport.state;
-  
+
   // Update LED baseline when transport stops
   if (state == TRANSPORT_STOPPED) {
     led_restore_baseline();
@@ -1751,24 +1767,21 @@ static void led_transport_state_handler(const event_t* event, void* context) {
   }
 }
 
-// Handle scene changes to enforce LED/proximity mutual exclusivity
+// Handle scene changes to enforce LED/ALS blanking
 static void led_scene_change_handler(const event_t* event, void* context) {
   if (event->type != EVENT_SCENE_CHANGED) return;
-  
-  // When scene changes, check if proximity is now enabled and enforce LED state
-  if (led_is_blocked_by_proximity()) {
-    s_led_solid_on_mode = false;  // Clear solid mode since we're forcing off
-    gpio_set_level(PIN_LED, 0);  // Force LED off
-    ESP_LOGI(TAG, "Proximity enabled in scene - LED forced off");
-  } else {
-    // Proximity not active, restore normal baseline
-    led_restore_baseline();
-  }
+  led_apply_blanking_policy();
+  if (led_is_blocked_by_als())
+    ESP_LOGI(TAG, "ALS active in scene - UV LED forced off");
 }
 
 // LED off timer callback - turns LED off after flash duration
 static void led_off_timer_callback(void* arg) {
   if (!s_led_solid_on_mode) {
+    if (led_is_blocked_by_als()) {
+      gpio_set_level(PIN_LED, 0);
+      return;
+    }
     gpio_set_level(PIN_LED, get_gpio_level_for_off());
   }
 }
@@ -1813,7 +1826,7 @@ void led_init(void) {
   // Set initial LED state based on mode
   gpio_set_level(PIN_LED, (s_led_mode == LED_MODE_NIGHTTIME && s_led_enabled) ? 1 : 0);
 
-  ESP_LOGI(TAG, "UV LED initialized: enabled=%s, mode=%s, sundial=%s", 
+  ESP_LOGI(TAG, "UV LED initialized: enabled=%s, mode=%s, sundial=%s",
            s_led_enabled ? "yes" : "no",
            s_led_mode == LED_MODE_DAYLIGHT ? "daylight" : "nighttime",
            s_led_sundial_mode ? "yes" : "no");
@@ -1828,29 +1841,33 @@ void led_init(void) {
   // Subscribe to transport state changes for LED baseline restore
   event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, led_transport_state_handler, NULL);
   
-  // Subscribe to scene changes to enforce LED/proximity mutual exclusivity
+  // Subscribe to scene changes to enforce LED/ALS blanking
   event_bus_subscribe(EVENT_SCENE_CHANGED, led_scene_change_handler, NULL);
 }
 
 void led_set_on(void) {
   if (!s_led_enabled) return;
-  if (led_is_blocked_by_proximity()) return;
+  if (led_is_blocked_by_als()) return;
   s_led_solid_on_mode = true;
   gpio_set_level(PIN_LED, get_gpio_level_for_on());
 }
 
 void led_set_off(void) {
   s_led_solid_on_mode = false;
+  if (led_is_blocked_by_als()) {
+    gpio_set_level(PIN_LED, 0);
+    return;
+  }
   gpio_set_level(PIN_LED, get_gpio_level_for_off());
 }
 
 void led_restore_baseline(void) {
   if (s_led_solid_on_mode) return;  // Don't override solid mode
-  if (led_is_blocked_by_proximity()) {
-    gpio_set_level(PIN_LED, 0);  // Force off when proximity active
+  if (led_is_blocked_by_als()) {
+    gpio_set_level(PIN_LED, 0);  // Force off when ALS mapping/calibration active
     return;
   }
-  
+
   // Set LED to appropriate state based on current mode
   // (ignoring transport state - this is for returning to normal)
   if (s_led_mode == LED_MODE_NIGHTTIME && s_led_enabled) {
@@ -1862,11 +1879,11 @@ void led_restore_baseline(void) {
 
 void flash_led(uint32_t duration) {
   if (!s_led_enabled || s_led_solid_on_mode || !s_led_off_timer) return;
-  if (led_is_blocked_by_proximity()) return;
-  
+  if (led_is_blocked_by_als()) return;
+
   // Turn LED on immediately
   gpio_set_level(PIN_LED, get_gpio_level_for_on());
-  
+
   // Stop any pending timer and start new one-shot for LED off
   esp_timer_stop(s_led_off_timer);  // Safe even if not running
   esp_timer_start_once(s_led_off_timer, duration * 1000);  // Convert ms to us
@@ -1889,10 +1906,10 @@ bool led_get_enabled(void) {
 esp_err_t led_set_mode(led_mode_t mode) {
   s_led_mode = mode;
   
-  // Update LED state to match new mode (blocked when proximity active)
+  // Update LED state to match new mode (blocked when ALS mapping/calibration active)
   if (!s_led_solid_on_mode) {
     bool should_be_on = (s_led_mode == LED_MODE_NIGHTTIME && s_led_enabled);
-    if (led_is_blocked_by_proximity()) should_be_on = false;
+    if (led_is_blocked_by_als()) should_be_on = false;
     gpio_set_level(PIN_LED, should_be_on ? 1 : 0);
     ESP_LOGD(TAG, "LED baseline set to: %s", (s_led_mode == LED_MODE_NIGHTTIME) ? "on (nighttime)" : "off (daylight)");
   }

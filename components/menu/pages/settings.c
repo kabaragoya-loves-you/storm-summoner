@@ -92,6 +92,11 @@ static void nav_to_scene_inspect(void* user_data) {
   menu_navigate_to("Scene Inspect", menu_page_settings_scene_inspect_create);
 }
 
+static void nav_to_debug(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Debug", menu_page_settings_debug_create);
+}
+
 // Factory Reset confirmation
 static void factory_reset_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -135,6 +140,7 @@ lv_obj_t* menu_page_settings_create(void) {
     { "Display", nav_to_display, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "Theme", nav_to_theme, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "Scene Inspect", nav_to_scene_inspect, NULL, true, MENU_ITEM_KIND_SUBMENU },
+    { "Debug", nav_to_debug, NULL, true, MENU_ITEM_KIND_SUBMENU },
     { "Factory Reset", nav_to_factory_reset, NULL, true, MENU_ITEM_KIND_SUBMENU }
   };
   

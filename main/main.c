@@ -56,6 +56,7 @@
 #include "scene.h"
 #include "scene_name_gen.h"
 #include "buttons.h"
+#include "debug_uart.h"
 #include "assets_manager.h"
 #include "firmware_update.h"
 #include "tinyusb_init.h"
@@ -86,9 +87,15 @@ void app_main(void) {
   gpio_install_isr_service(0);
 
   bool boot_calibrate = buttons_check_boot_right();
+  bool boot_debug_uart = buttons_check_boot_left();
 
   i2c_common_scan();
   app_settings_init();
+  if (boot_debug_uart || debug_uart_nvs_enabled()) {
+    debug_uart_enable();
+    ESP_LOGI(TAG, "UART0 debug log mirror active (%s)",
+      boot_debug_uart ? "left button" : "NVS");
+  }
   version_init();  // Must be after app_settings_init for NVS access
   assets_manager_init();
   scene_name_gen_init();  // Load wordlist for random name generation
@@ -187,6 +194,8 @@ void app_main(void) {
   screensaver_init();
 
   console_repl_init();
+  if (debug_uart_is_enabled())
+    debug_uart_start_console();
 
   usb_cdc_update_arm_tx();
 

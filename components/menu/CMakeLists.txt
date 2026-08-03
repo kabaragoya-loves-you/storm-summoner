@@ -48,6 +48,7 @@ idf_component_register(
     "pages/scope_config.c"
     "pages/settings_note_track.c"
     "pages/settings_scene_inspect.c"
+    "pages/settings_debug.c"
     "pages/inspect_scene.c"
   INCLUDE_DIRS
     "include"
@@ -78,5 +79,6 @@ idf_component_register(
     note_track
     app_settings
     memory_utils
+    debug_uart
   PRIV_REQUIRES main
 )

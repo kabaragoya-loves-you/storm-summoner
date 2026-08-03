@@ -2720,8 +2720,8 @@ void scene_apply_deferred_init(void) {
   // Load-time sends are a clean baseline.
   cc_state_clear_dirty_all();
 
-  // Restore LED state based on current scene's proximity setting
-  // (proximity may have been enabled/disabled in programming mode)
+  // Restore LED state based on current scene's ALS mapping
+  // (ALS may have been enabled/disabled in programming mode)
   led_restore_baseline();
 
   // Switch UI module for this scene
