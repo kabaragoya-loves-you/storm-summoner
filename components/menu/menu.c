@@ -30,6 +30,7 @@ typedef struct {
   const char* name;
   menu_page_builder_t builder;
   int32_t focused_index;  // Remember position when navigating away
+  int32_t scroll_y;       // List scroll position (-1 = unset)
 } menu_stack_entry_t;
 
 // Deferred navigation context
@@ -79,6 +80,9 @@ static void save_focused_index(void);
 static lv_obj_t* find_menu_item_widget(lv_obj_t* cont, int item_index);
 static void apply_menu_focus(lv_obj_t* cont, lv_obj_t* focus_target);
 static void apply_initial_page_focus(lv_obj_t* cont);
+static bool is_menu_list_container(lv_obj_t* cont);
+static void restore_non_list_page_input(menu_stack_entry_t* entry);
+static void commit_roller_selections_on_screen(lv_obj_t* screen);
 
 // Add only intentionally focusable menu rows to the encoder group.
 // Dividers and headings are container children but must not take focus —
@@ -223,17 +227,111 @@ static lv_obj_t* find_container_in_screen(lv_obj_t* screen) {
   return NULL;
 }
 
+// LVGL rollers revert sel_opt_id to sel_opt_id_ori on DEFOCUSED. Encoder scrolling
+// updates sel_opt_id but leaves ori at the edit-mode entry value — so removing the
+// roller from the group (e.g. opening Inspect) would bounce back to that original.
+// Committing via set_selected syncs ori to the current selection first.
+static void commit_roller_selections_on_screen(lv_obj_t* screen) {
+  if (!screen) return;
+  uint32_t child_cnt = lv_obj_get_child_count(screen);
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(screen, i);
+    if (!child || !lv_obj_check_type(child, &lv_roller_class)) continue;
+    uint32_t sel = lv_roller_get_selected(child);
+    lv_roller_set_selected(child, sel, LV_ANIM_OFF);
+  }
+}
+
+// Menu list rows are marked SCROLL_ON_FOCUS; info/inspect content is not.
+static bool is_menu_list_container(lv_obj_t* cont) {
+  if (!cont) return false;
+  uint32_t child_cnt = lv_obj_get_child_count(cont);
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(cont, i);
+    if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_SCROLL_ON_FOCUS))
+      return true;
+  }
+  return false;
+}
+
+// Restore rollers / content-scroll pages that have no menu-list container.
+static void restore_non_list_page_input(menu_stack_entry_t* entry) {
+  if (!entry || !entry->screen || !menu_state.group) return;
+
+  lv_obj_t* screen = entry->screen;
+  uint32_t child_cnt = lv_obj_get_child_count(screen);
+  bool have_rollers = false;
+  lv_obj_t* focus_target = NULL;
+
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(screen, i);
+    if (!child || !lv_obj_check_type(child, &lv_roller_class)) continue;
+    if (!have_rollers) {
+      lv_group_remove_all_objs(menu_state.group);
+      have_rollers = true;
+    }
+    lv_group_add_obj(menu_state.group, child);
+  }
+
+  if (have_rollers) {
+    if (entry->focused_index >= 0 && (uint32_t)entry->focused_index < child_cnt) {
+      lv_obj_t* candidate = lv_obj_get_child(screen, (uint32_t)entry->focused_index);
+      if (candidate && lv_obj_check_type(candidate, &lv_roller_class))
+        focus_target = candidate;
+    }
+    if (!focus_target) {
+      for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(screen, i);
+        if (child && lv_obj_check_type(child, &lv_roller_class)) {
+          focus_target = child;
+          break;
+        }
+      }
+    }
+    if (focus_target) {
+      lv_group_focus_obj(focus_target);
+      lv_group_set_editing(menu_state.group, true);
+    }
+    return;
+  }
+
+  lv_obj_t* cont = entry->container;
+  if (!cont) cont = find_container_in_screen(screen);
+  if (!cont || is_menu_list_container(cont)) return;
+
+  lv_group_remove_all_objs(menu_state.group);
+  lv_group_add_obj(menu_state.group, cont);
+  lv_group_focus_obj(cont);
+  lv_group_set_editing(menu_state.group, true);
+}
+
 // Save the currently focused item index before navigating away
-// Saves the clickable item index (not raw child index) for consistency with restore
+// List pages: clickable item index + scroll_y. Roller pages: screen child index.
 static void save_focused_index(void) {
   if (menu_state.stack_depth <= 0) return;
-  
+
   menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
-  if (!entry->container) return;
-  
+  entry->scroll_y = -1;
+
   lv_obj_t* focused = lv_group_get_focused(menu_state.group);
   if (!focused) return;
-  
+
+  // Roller / dual-roller / BPM editor: no list container — save screen child index
+  if (!entry->container) {
+    if (!entry->screen) return;
+    uint32_t child_cnt = lv_obj_get_child_count(entry->screen);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      if (lv_obj_get_child(entry->screen, i) == focused) {
+        entry->focused_index = (int32_t)i;
+        ESP_LOGD(TAG, "Saved roller focus child index: %ld", (long)entry->focused_index);
+        return;
+      }
+    }
+    return;
+  }
+
+  entry->scroll_y = lv_obj_get_scroll_y(entry->container);
+
   // Find the clickable item index of the focused object
   uint32_t child_cnt = lv_obj_get_child_count(entry->container);
   int clickable_idx = 0;
@@ -241,7 +339,8 @@ static void save_focused_index(void) {
     lv_obj_t* child = lv_obj_get_child(entry->container, i);
     if (child == focused) {
       entry->focused_index = (int32_t)clickable_idx;
-      ESP_LOGD(TAG, "Saved focused index: %ld (clickable)", (long)entry->focused_index);
+      ESP_LOGD(TAG, "Saved focused index: %ld (clickable) scroll_y=%ld",
+        (long)entry->focused_index, (long)entry->scroll_y);
       return;
     }
     if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
@@ -253,6 +352,8 @@ static void save_focused_index(void) {
 // Update visual styling for scroll container (translation, opacity, font size)
 static void update_scroll_visuals(lv_obj_t* cont) {
   if (!cont) return;
+  // Inspect / info pages reuse a scroll container but are not carousel lists
+  if (!is_menu_list_container(cont)) return;
 
   lv_area_t cont_a;
   lv_obj_get_coords(cont, &cont_a);
@@ -759,6 +860,7 @@ void menu_create(void) {
   menu_state.stack[0].name = "Menu";
   menu_state.stack[0].builder = NULL;
   menu_state.stack[0].focused_index = 0;
+  menu_state.stack[0].scroll_y = -1;
   menu_state.stack_depth = 1;
 
   // Load screen
@@ -783,6 +885,10 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   // Save the focused index before navigating away
   save_focused_index();
 
+  // Commit in-progress roller values before group teardown defocuses them
+  if (menu_state.stack_depth > 0)
+    commit_roller_selections_on_screen(menu_state.stack[menu_state.stack_depth - 1].screen);
+
   // Remove current menu items from group
   if (menu_state.group && menu_state.stack_depth > 0) {
     lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
@@ -792,6 +898,8 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
         lv_obj_t* child = lv_obj_get_child(current_cont, i);
         if (child) lv_group_remove_obj(child);
       }
+      // Info/inspect pages put the container itself in the group
+      lv_group_remove_obj(current_cont);
     }
   }
 
@@ -826,6 +934,7 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   menu_state.stack[menu_state.stack_depth].name = menu_name;
   menu_state.stack[menu_state.stack_depth].builder = builder;
   menu_state.stack[menu_state.stack_depth].focused_index = 0;
+  menu_state.stack[menu_state.stack_depth].scroll_y = -1;
   menu_state.stack_depth++;
 
   // Load screen
@@ -835,7 +944,7 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
   // Re-apply focus after load so scroll_to_view has valid coordinates.
   // Without this, long pages (e.g. Scene) stay at scroll 0 and the
   // center-snap visuals highlight a mid-list item like Control Voltage.
-  if (container && menu_state.group) {
+  if (container && menu_state.group && is_menu_list_container(container)) {
     lv_obj_t* focus_target = NULL;
     if (menu_state.restore_focus_item_index >= 0) {
       focus_target = find_menu_item_widget(container,
@@ -861,6 +970,16 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
     }
     if (focus_target)
       apply_menu_focus(container, focus_target);
+  } else if (inspect_scene_is_active()) {
+    // Builder rebinds before screen load; redo after load so encoder edit mode sticks
+    inspect_scene_rebind_input();
+  } else if (container && menu_state.group && !is_menu_list_container(container)) {
+    // Info-style content page: keep encoder scrolling
+    lv_obj_t* focused = lv_group_get_focused(menu_state.group);
+    if (focused) {
+      lv_group_focus_obj(focused);
+      lv_group_set_editing(menu_state.group, true);
+    }
   }
 
   ESP_LOGI(TAG, "Navigated to menu: %s (depth: %d)", 
@@ -887,6 +1006,7 @@ static void menu_pop_current_page(void) {
         lv_obj_t* child = lv_obj_get_child(current_cont, i);
         if (child) lv_group_remove_obj(child);
       }
+      lv_group_remove_obj(current_cont);
     }
   }
   
@@ -1049,6 +1169,8 @@ static void menu_navigate_back_internal(void) {
         lv_obj_t* child = lv_obj_get_child(current_cont, i);
         if (child) lv_group_remove_obj(child);
       }
+      // Info/inspect pages put the container itself in the group
+      lv_group_remove_obj(current_cont);
     }
   }
 
@@ -1068,15 +1190,15 @@ static void menu_navigate_back_internal(void) {
   if (menu_state.group && menu_state.stack_depth > 0) {
     menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
     lv_obj_t* prev_cont = entry->container;
-    
+
     // Debug: log what we're restoring to
     ESP_LOGD(TAG, "Back nav to %s: container=%p", entry->name ? entry->name : "NULL", (void*)prev_cont);
-    
-    if (prev_cont) {
+
+    if (prev_cont && is_menu_list_container(prev_cont)) {
       uint32_t child_cnt = lv_obj_get_child_count(prev_cont);
-      
+
       menu_group_add_focusable_children(prev_cont);
-      
+
       // Restore focus to saved clickable index
       int32_t focus_idx = entry->focused_index;
       if (entry->name && strcmp(entry->name, "CC Triggers") == 0)
@@ -1095,7 +1217,7 @@ static void menu_navigate_back_internal(void) {
           clickable_count++;
         }
       }
-      
+
       // Fallback to first clickable if saved index not found
       if (!focus_target) {
         for (uint32_t i = 0; i < child_cnt; i++) {
@@ -1106,17 +1228,26 @@ static void menu_navigate_back_internal(void) {
           }
         }
       }
-      
+
       if (focus_target) {
+        lv_obj_update_layout(prev_cont);
         menu_state.skip_focus_scroll = true;
         lv_group_focus_obj(focus_target);
-        lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
+        // Prefer exact scroll position from when we left; else snap focused row to center
+        if (entry->scroll_y >= 0)
+          lv_obj_scroll_to_y(prev_cont, entry->scroll_y, LV_ANIM_OFF);
+        else
+          lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
         menu_state.skip_focus_scroll = false;
-        
+
         update_scroll_visuals(prev_cont);
-        
-        ESP_LOGD(TAG, "Restored focus to clickable index: %ld", (long)focus_idx);
+
+        ESP_LOGD(TAG, "Restored focus to clickable index: %ld scroll_y=%ld",
+          (long)focus_idx, (long)entry->scroll_y);
       }
+    } else {
+      // Roller / info / other non-list pages
+      restore_non_list_page_input(entry);
     }
   }
 
@@ -1241,6 +1372,7 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
         lv_obj_t* child = lv_obj_get_child(current_cont, i);
         if (child) lv_group_remove_obj(child);
       }
+      lv_group_remove_obj(current_cont);
     }
   }
   
@@ -1282,6 +1414,7 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   menu_state.stack[menu_state.stack_depth].name = menu_name;
   menu_state.stack[menu_state.stack_depth].builder = builder;
   menu_state.stack[menu_state.stack_depth].focused_index = 0;
+  menu_state.stack[menu_state.stack_depth].scroll_y = -1;
   menu_state.stack_depth++;
   
   // Add new items to group
@@ -1392,6 +1525,7 @@ void menu_rebuild_stack_entry(int depth, const char* menu_name,
   menu_state.stack[depth].name = menu_name;
   menu_state.stack[depth].builder = builder;
   menu_state.stack[depth].focused_index = focused_index;
+  menu_state.stack[depth].scroll_y = -1;
 
   if (old_screen) lv_obj_delete_async(old_screen);
 
@@ -1500,6 +1634,11 @@ void menu_set_custom_back_handler(menu_custom_back_cb_t handler) {
 }
 
 void menu_handle_back(void) {
+  // Inspect Scene owns back while active (don't run roller/BPM custom handlers under it)
+  if (inspect_scene_is_active()) {
+    menu_navigate_back();
+    return;
+  }
   // Check for custom back handler first
   if (s_custom_back_handler && s_custom_back_handler()) {
     return;  // Handled by custom handler
