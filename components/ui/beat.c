@@ -312,40 +312,8 @@ static void update_scene_info_label(void) {
   const device_def_t *device =
     (const device_def_t *)scene_get_device(scene_index);
   bool show_preset = device && device->pc_info && device->pc_info->count > 0;
-  scene_mode_t mode = scene_get_mode();
 
-  // Simple / Preset Sync: only "Preset n", or hide if device has no presets
-  if (mode == SCENE_MODE_SINGLE || mode == SCENE_MODE_PRESET_SYNC) {
-    if (!show_preset) {
-      lv_obj_add_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
-      return;
-    }
-
-    uint16_t index_base = device_config_get_min_preset();
-    int display_preset = (int)device_config_get_preset() - (int)index_base + 1;
-    if (display_preset < 1) display_preset = 1;
-
-    if (device_config_has_pending_program()) {
-      int pending_preset =
-        (int)device_config_get_pending_preset() - (int)index_base + 1;
-      if (pending_preset < 1) pending_preset = 1;
-      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "Preset %d > Preset %d", display_preset, pending_preset);
-    } else if (mode == SCENE_MODE_PRESET_SYNC && scene_has_pending_change()) {
-      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "Preset %d > Preset %u", display_preset,
-        (unsigned)(scene_get_pending_index() + 1));
-    } else {
-      snprintf(g_scene_info_text, sizeof(g_scene_info_text),
-        "Preset %d", display_preset);
-    }
-
-    lv_obj_remove_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(g_scene_info_label, g_scene_info_text);
-    return;
-  }
-
-  // Advanced: scene ordinal/name, with live Pn when device supports presets
+  // Scene ordinal/name, with live Pn when device supports presets
   lv_obj_remove_flag(g_scene_info_label, LV_OBJ_FLAG_HIDDEN);
 
   const scene_t *scene = scene_get_current();
@@ -482,7 +450,6 @@ static void refresh_scene_info_if_needed(void) {
   static uint8_t last_pending_scene = 0xFF;
   static uint8_t last_scene_index = 0xFF;
   static uint16_t last_pc_count = 0xFFFF;
-  static scene_mode_t last_mode = (scene_mode_t)0xFF;
 
   uint8_t scene_index = scene_get_current_index();
   const device_def_t *device =
@@ -494,7 +461,6 @@ static void refresh_scene_info_if_needed(void) {
     ? device_config_get_pending_preset() : 0;
   uint8_t pending_scene = scene_has_pending_change()
     ? scene_get_pending_index() : 0xFF;
-  scene_mode_t mode = scene_get_mode();
 
   if (!g_scene_info_dirty
       && preset == last_preset
@@ -502,8 +468,7 @@ static void refresh_scene_info_if_needed(void) {
       && pending_preset == last_pending_preset
       && pending_scene == last_pending_scene
       && scene_index == last_scene_index
-      && pc_count == last_pc_count
-      && mode == last_mode)
+      && pc_count == last_pc_count)
     return;
 
   last_preset = preset;
@@ -512,7 +477,6 @@ static void refresh_scene_info_if_needed(void) {
   last_pending_scene = pending_scene;
   last_scene_index = scene_index;
   last_pc_count = pc_count;
-  last_mode = mode;
   g_scene_info_dirty = false;
   update_scene_info_label();
 }

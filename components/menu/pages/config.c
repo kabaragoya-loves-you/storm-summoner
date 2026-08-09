@@ -12,7 +12,6 @@
 // Forward declaration (uses public declaration from menu_pages.h)
 
 // Label buffers
-static char s_scene_mode_label[40];
 static char s_device_mode_label[40];
 static char s_change_mode_label[40];
 static char s_preset_wrap_label[40];
@@ -21,46 +20,10 @@ static char s_flag_enabled_label[48];
 static char s_user_handle_label[48];
 static char s_user_handle_edit_buf[USER_HANDLE_MAX_LEN + 1];
 static int s_user_handle_item_index = 0;
-static menu_item_t s_config_items[9];
+static menu_item_t s_config_items[8];
 
 // ============================================================================
-// Scene Mode Roller
-// ============================================================================
-
-static const char* SCENE_MODE_OPTIONS = "Simple\nPreset Sync\nAdvanced";
-
-static void scene_mode_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  scene_mode_t mode;
-  switch (selected_index) {
-    case 0: mode = SCENE_MODE_SINGLE; break;
-    case 1: mode = SCENE_MODE_PRESET_SYNC; break;
-    default: mode = SCENE_MODE_ADVANCED; break;
-  }
-  scene_set_mode(mode);
-  ESP_LOGI(TAG, "Scene mode set to %s",
-    (mode == SCENE_MODE_SINGLE) ? "Simple" :
-    (mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced");
-
-  menu_rebuild_stack_entry(0, "Menu", menu_page_index_create, "Settings");
-  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
-}
-
-static lv_obj_t* scene_mode_roller_create(void) {
-  scene_mode_t mode = scene_get_mode();
-  uint32_t current_idx = (mode == SCENE_MODE_SINGLE) ? 0 :
-                         (mode == SCENE_MODE_PRESET_SYNC) ? 1 : 2;
-  return menu_create_roller_page("Scene Mode", SCENE_MODE_OPTIONS, current_idx,
-    scene_mode_confirm_cb, NULL);
-}
-
-static void nav_to_scene_mode(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Scene Mode", scene_mode_roller_create);
-}
-
-// ============================================================================
-// Device Mode Roller (only visible in Advanced mode)
+// Device Mode Roller
 // ============================================================================
 
 static const char* DEVICE_MODE_OPTIONS = "Single\nPer-Scene";
@@ -248,23 +211,12 @@ lv_obj_t* menu_page_config_create(void) {
   
   int idx = 0;
   
-  // Scene Mode with current value
-  scene_mode_t scene_mode = scene_get_mode();
-  const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Simple" :
-    (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
-  snprintf(s_scene_mode_label, sizeof(s_scene_mode_label), "Scene Mode\n%s", scene_mode_str);
+  device_mode_t device_mode = config_get_device_mode();
+  const char* device_mode_str = (device_mode == DEVICE_MODE_SINGLE) ? "Single" : "Per-Scene";
+  snprintf(s_device_mode_label, sizeof(s_device_mode_label), "Device Mode\n%s", device_mode_str);
   s_config_items[idx++] = (menu_item_t){
-    s_scene_mode_label, nav_to_scene_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+    s_device_mode_label, nav_to_device_mode, NULL, true, MENU_ITEM_KIND_ROLLER
   };
-  
-  if (scene_mode == SCENE_MODE_ADVANCED) {
-    device_mode_t device_mode = config_get_device_mode();
-    const char* device_mode_str = (device_mode == DEVICE_MODE_SINGLE) ? "Single" : "Per-Scene";
-    snprintf(s_device_mode_label, sizeof(s_device_mode_label), "Device Mode\n%s", device_mode_str);
-    s_config_items[idx++] = (menu_item_t){
-      s_device_mode_label, nav_to_device_mode, NULL, true, MENU_ITEM_KIND_ROLLER
-    };
-  }
   
   scene_change_mode_t change_mode = scene_get_change_mode();
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";

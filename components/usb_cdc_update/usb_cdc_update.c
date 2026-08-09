@@ -1272,14 +1272,6 @@ static bool cdc_try_pedal_set_command(const char *cmd) {
   return true;
 }
 
-static const char *cdc_scene_mode_str(scene_mode_t mode) {
-  switch (mode) {
-    case SCENE_MODE_PRESET_SYNC: return "preset_sync";
-    case SCENE_MODE_ADVANCED: return "advanced";
-    default: return "single";
-  }
-}
-
 static const char *cdc_bank_mode_str(bank_select_mode_t mode) {
   switch (mode) {
     case BANK_SELECT_CC0: return "CC0";
@@ -1627,7 +1619,6 @@ static void cdc_send_info_json(void) {
     cJSON *scene_obj = cJSON_CreateObject();
     if (scene_obj) {
       cJSON_AddStringToObject(scene_obj, "name", scene->name);
-      cJSON_AddStringToObject(scene_obj, "mode", cdc_scene_mode_str(scene_get_mode()));
       cJSON_AddNumberToObject(scene_obj, "active_ordinal", (unsigned)ordinal);
       cJSON_AddNumberToObject(scene_obj, "active_count", (unsigned)active_total);
       cJSON_AddItemToObject(root, "scene", scene_obj);
@@ -2339,10 +2330,7 @@ static void process_command(const char *cmd) {
   } else if (strncmp(cmd, "NAV ", 4) == 0) {
     const char *op = cmd + 4;
     while (op && *op == ' ') op++;
-    scene_mode_t mode = scene_get_mode();
-    if (mode == SCENE_MODE_SINGLE) {
-      send_response("ERROR: Navigation not available in Single mode");
-    } else if (strcmp(op, "PREV") == 0) {
+    if (strcmp(op, "PREV") == 0) {
       esp_err_t err = cdc_scene_apply_if_pending(scene_previous());
       send_response(err == ESP_OK ? "OK" : "ERROR: Scene previous failed");
     } else if (strcmp(op, "NEXT") == 0) {

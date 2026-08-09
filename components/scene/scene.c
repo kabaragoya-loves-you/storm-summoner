@@ -150,7 +150,6 @@ static void scene_apply_ui_module_for_performance(const char *module_name) {
 }
 
 // NVS keys
-#define NVS_KEY_SCENE_MODE       "scene_mode"
 #define NVS_KEY_CHANGE_MODE      "change_mode"
 // 8-hex assets checksum we last reconciled factory presets against. Kept
 // separate from `assets_csum` (which version.c manages) so the merge
@@ -166,7 +165,6 @@ static scene_manager_t g_scene_manager = {
   .has_pending_change = false,
   .manifest = NULL,
   .num_scenes = 1,
-  .mode = SCENE_MODE_SINGLE,
   .change_mode = CHANGE_MODE_IMMEDIATE,
   .initialized = false
 };
@@ -254,19 +252,10 @@ static scene_t* get_scene_for_modification(uint8_t scene_index) {
   return scene_get_current();
 }
 
-// Set default button assignments based on scene mode.
+// Set default button assignments (scene navigation).
 static void set_default_button_assignments(scene_t* scene) {
-  scene_mode_t mode = g_scene_manager.mode;
-
-  if (mode == SCENE_MODE_ADVANCED) {
-    // Advanced: buttons navigate scenes (presets are arbitrary per scene)
-    scene->button_left = action_create_scene_dec();
-    scene->button_right = action_create_scene_inc();
-  } else {
-    // Simple and Preset Sync: buttons change presets
-    scene->button_left = action_create_preset_dec();
-    scene->button_right = action_create_preset_inc();
-  }
+  scene->button_left = action_create_scene_dec();
+  scene->button_right = action_create_scene_inc();
   scene->button_both = action_create_inspect_scene();
 }
 
@@ -460,12 +449,6 @@ static void scene_cleanup_touchwheel(void) {
 static void touchwheel_program_change_callback(int value, void* user_data) {
   // Don't send MIDI in programming mode
   if (ui_is_in_programming_mode()) return;
-  
-  // In Preset Sync mode, preset is locked to scene ordinal - ignore touchwheel PC
-  if (scene_get_mode() == SCENE_MODE_PRESET_SYNC) {
-    ESP_LOGW(TAG, "Touchwheel program change ignored: not allowed in Preset Sync mode");
-    return;
-  }
   
   (void)user_data;
   
@@ -2020,12 +2003,6 @@ esp_err_t scene_init(void) {
   
   ESP_LOGI(TAG, "Initializing scene manager with flash-based storage");
   
-  // Load scene mode from NVS
-  uint8_t mode_val;
-  if (app_settings_load_u8(NVS_KEY_SCENE_MODE, &mode_val) == ESP_OK) {
-    g_scene_manager.mode = (scene_mode_t)mode_val;
-  }
-  
   // Load change mode from NVS
   uint8_t change_val;
   if (app_settings_load_u8(NVS_KEY_CHANGE_MODE, &change_val) == ESP_OK) {
@@ -2225,22 +2202,16 @@ esp_err_t scene_init(void) {
 
   g_scene_manager.initialized = true;
 
-  const char* mode_str = (g_scene_manager.mode == SCENE_MODE_SINGLE) ? "Single" :
-                         (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
-  ESP_LOGI(TAG, "Scene manager initialized: mode=%s, total_scenes=%d", mode_str, g_scene_manager.num_scenes);
+  ESP_LOGI(TAG, "Scene manager initialized: total_scenes=%d", g_scene_manager.num_scenes);
   
   // Initialize device current_program from scene's program_number
-  // For PRESET_SYNC mode, initial scene is at position 0, so PC = 0 + min_preset
   scene_t* initial_scene = &g_scene_manager.cache[0].scene;
-  uint8_t initial_program = (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC)
-                            ? (uint8_t)device_config_get_min_preset()
-                            : initial_scene->program_number;
   
-  // In PRESET_SYNC mode, always send PC; otherwise respect per-scene flag
   scene_seed_cc_cache();
-  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || initial_scene->send_pc_on_load) {
-    device_config_set_program(initial_program);
-    ESP_LOGI(TAG, "Sent initial PC %d on channel %d", initial_program, device_config_get_channel());
+  if (initial_scene->send_pc_on_load) {
+    device_config_set_program(initial_scene->program_number);
+    ESP_LOGI(TAG, "Sent initial PC %d on channel %d",
+      initial_scene->program_number, device_config_get_channel());
   } else {
     ESP_LOGI(TAG, "Scene loaded but send_pc_on_load=false, PC not sent");
   }
@@ -2433,19 +2404,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     device_config_cancel_pending_program();
   }
   
-  // Update device current_program and send PC based on mode
-  // For PRESET_SYNC mode, use active ordinal (0-based) + indexBase
-  uint8_t program;
-  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
-    int ordinal = 0;
-    for (int i = 0; i < g_scene_manager.num_scenes; i++) {
-      if (g_scene_manager.manifest[i].index == scene_index) break;
-      if (g_scene_manager.manifest[i].active) ordinal++;
-    }
-    program = (uint8_t)(ordinal + device_config_get_min_preset());
-  } else {
-    program = new_scene->program_number;
-  }
+  uint8_t program = new_scene->program_number;
   
   ESP_LOGI(TAG, "Switched to scene %d: %s", scene_index + 1, new_scene->name);
   
@@ -2499,7 +2458,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
     // so variant/no-op resolution is correct (no MIDI sent yet).
     scene_seed_cc_cache();
 
-    if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || new_scene->send_pc_on_load) {
+    if (new_scene->send_pc_on_load) {
       device_config_set_program(program);
       ESP_LOGD(TAG, "Sent PC %d on channel %d", program, device_config_get_channel());
     }
@@ -2680,23 +2639,11 @@ void scene_apply_deferred_init(void) {
   // variant/no-op resolution is correct (no MIDI sent yet).
   scene_seed_cc_cache();
   
-  // Compute program number (same logic as scene_set_current)
-  uint8_t program;
-  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
-    int ordinal = 0;
-    for (int i = 0; i < g_scene_manager.num_scenes; i++) {
-      if (g_scene_manager.manifest[i].index == scene_index) break;
-      if (g_scene_manager.manifest[i].active) ordinal++;
-    }
-    program = (uint8_t)(ordinal + device_config_get_min_preset());
-  } else {
-    program = scene->program_number;
-  }
-  
   // Send PC
-  if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || scene->send_pc_on_load) {
-    device_config_set_program(program);
-    ESP_LOGD(TAG, "Deferred PC %d on channel %d", program, device_config_get_channel());
+  if (scene->send_pc_on_load) {
+    device_config_set_program(scene->program_number);
+    ESP_LOGD(TAG, "Deferred PC %d on channel %d",
+      scene->program_number, device_config_get_channel());
   }
 
   // Transmit the scene's CC defaults after the PC (so they land on the selected
@@ -2745,12 +2692,6 @@ scene_t* scene_get_current(void) {
 }
 
 esp_err_t scene_next(void) {
-  // Scene navigation disabled in single mode
-  if (g_scene_manager.mode == SCENE_MODE_SINGLE) {
-    ESP_LOGW(TAG, "Scene navigation disabled in single mode");
-    return ESP_ERR_NOT_SUPPORTED;
-  }
-  
   // Find current position in manifest
   int current_pos = -1;
   for (int i = 0; i < g_scene_manager.num_scenes; i++) {
@@ -2773,12 +2714,6 @@ esp_err_t scene_next(void) {
 }
 
 esp_err_t scene_previous(void) {
-  // Scene navigation disabled in single mode
-  if (g_scene_manager.mode == SCENE_MODE_SINGLE) {
-    ESP_LOGW(TAG, "Scene navigation disabled in single mode");
-    return ESP_ERR_NOT_SUPPORTED;
-  }
-  
   // Find current position in manifest
   int current_pos = -1;
   for (int i = 0; i < g_scene_manager.num_scenes; i++) {
@@ -3287,21 +3222,6 @@ const struct device_def_t* scene_get_device(uint8_t scene_index) {
   return (const struct device_def_t*)s_cached_device;
 }
 
-esp_err_t scene_set_mode(scene_mode_t mode) {
-  g_scene_manager.mode = mode;
-  
-  const char* mode_str = (mode == SCENE_MODE_SINGLE) ? "Single" :
-                         (mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
-  ESP_LOGI(TAG, "Scene mode set to %s", mode_str);
-  
-  uint8_t mode_val = (uint8_t)mode;
-  return app_settings_save_u8(NVS_KEY_SCENE_MODE, mode_val);
-}
-
-scene_mode_t scene_get_mode(void) {
-  return g_scene_manager.mode;
-}
-
 esp_err_t scene_set_change_mode(scene_change_mode_t mode) {
   g_scene_manager.change_mode = mode;
   
@@ -3534,20 +3454,11 @@ esp_err_t scene_save_config(void) {
   ESP_LOGI(TAG, "Saving scene configuration to NVS");
   touch_flush_idle_calibration_nvs();
   
-  uint8_t mode_val = (uint8_t)g_scene_manager.mode;
-  esp_err_t ret = app_settings_save_u8(NVS_KEY_SCENE_MODE, mode_val);
-  if (ret != ESP_OK) return ret;
-  
   uint8_t change_val = (uint8_t)g_scene_manager.change_mode;
   return app_settings_save_u8(NVS_KEY_CHANGE_MODE, change_val);
 }
 
 esp_err_t scene_load_config(void) {
-  uint8_t mode_val;
-  if (app_settings_load_u8(NVS_KEY_SCENE_MODE, &mode_val) == ESP_OK) {
-    g_scene_manager.mode = (scene_mode_t)mode_val;
-  }
-  
   uint8_t change_val;
   if (app_settings_load_u8(NVS_KEY_CHANGE_MODE, &change_val) == ESP_OK) {
     g_scene_manager.change_mode = (scene_change_mode_t)change_val;
@@ -8853,20 +8764,8 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
     // Reset CC cache and overlay defaults before PC / on_load.
     scene_seed_cc_cache();
 
-    uint8_t program;
-    if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC) {
-      int ordinal = 0;
-      for (int i = 0; i < g_scene_manager.num_scenes; i++) {
-        if (g_scene_manager.manifest[i].index == scene_index) break;
-        if (g_scene_manager.manifest[i].active) ordinal++;
-      }
-      program = (uint8_t)(ordinal + device_config_get_min_preset());
-    } else {
-      program = scene->program_number;
-    }
-
-    if (g_scene_manager.mode == SCENE_MODE_PRESET_SYNC || scene->send_pc_on_load) {
-      device_config_set_program(program);
+    if (scene->send_pc_on_load) {
+      device_config_set_program(scene->program_number);
     }
 
     scene_send_cc_defaults();

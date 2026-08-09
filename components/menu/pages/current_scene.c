@@ -1222,27 +1222,20 @@ lv_obj_t* menu_page_current_scene_create(void) {
   
   scene_t* scene = scene_get_current();
   uint8_t scene_index = scene_get_current_index();
-  scene_mode_t mode = scene_get_mode();
   uint16_t index_base = get_device_index_base();
   
   int idx = 0;
   
-  // Build page title: prefix with ordinal in non-Simple modes
-  if (mode == SCENE_MODE_SINGLE) {
-    snprintf(s_page_title, sizeof(s_page_title), "%s",
-      (scene && scene->name[0]) ? scene->name : "Scene");
-  } else {
-    // Find active ordinal (1-based position among active scenes)
-    uint16_t ordinal = 0;
-    uint16_t total = scene_get_total_count();
-    for (uint16_t i = 0; i < total; i++) {
-      if (scene_is_active_by_position(i)) ordinal++;
-      if (scene_get_index_by_position(i) == scene_index) break;
-    }
-    snprintf(s_page_title, sizeof(s_page_title), "%u. %s",
-      (unsigned)ordinal,
-      (scene && scene->name[0]) ? scene->name : "Untitled");
+  // Build page title with active ordinal
+  uint16_t ordinal = 0;
+  uint16_t total = scene_get_total_count();
+  for (uint16_t i = 0; i < total; i++) {
+    if (scene_is_active_by_position(i)) ordinal++;
+    if (scene_get_index_by_position(i) == scene_index) break;
   }
+  snprintf(s_page_title, sizeof(s_page_title), "%u. %s",
+    (unsigned)ordinal,
+    (scene && scene->name[0]) ? scene->name : "Untitled");
   
   // Assignment submenus
   s_scene_items[idx++] = (menu_item_t){ "Pads", nav_to_pads, NULL, true, MENU_ITEM_KIND_SUBMENU };
@@ -1314,11 +1307,9 @@ lv_obj_t* menu_page_current_scene_create(void) {
   // Divider
   s_scene_items[idx++] = (menu_item_t){ "---", NULL, NULL, false, MENU_ITEM_KIND_DISPLAY };
   
-  if (mode != SCENE_MODE_SINGLE) {
-    s_scene_items[idx++] = (menu_item_t){
-      "Scene Name", nav_to_name, NULL, true, MENU_ITEM_KIND_SUBMENU
-    };
-  }
+  s_scene_items[idx++] = (menu_item_t){
+    "Scene Name", nav_to_name, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
   
   {
     const char* mod_name = scene_get_ui_module(scene_index);
@@ -1339,7 +1330,7 @@ lv_obj_t* menu_page_current_scene_create(void) {
     }
   }
   
-  if (mode != SCENE_MODE_PRESET_SYNC) {
+  {
     uint8_t current_pc = scene ? scene->program_number : index_base;
     if (current_pc < index_base) current_pc = index_base;
     int display_preset = current_pc - index_base + 1;
@@ -1347,13 +1338,13 @@ lv_obj_t* menu_page_current_scene_create(void) {
     s_scene_items[idx++] = (menu_item_t){
       s_preset_label, nav_to_preset, NULL, false, MENU_ITEM_KIND_ROLLER
     };
-    
-    snprintf(s_send_pc_label, sizeof(s_send_pc_label), "PC on load: %s",
-      (scene && scene->send_pc_on_load) ? "Yes" : "No");
-    s_scene_items[idx++] = (menu_item_t){
-      s_send_pc_label, nav_to_send_pc, NULL, false, MENU_ITEM_KIND_ROLLER
-    };
   }
+  
+  snprintf(s_send_pc_label, sizeof(s_send_pc_label), "PC on load: %s",
+    (scene && scene->send_pc_on_load) ? "Yes" : "No");
+  s_scene_items[idx++] = (menu_item_t){
+    s_send_pc_label, nav_to_send_pc, NULL, false, MENU_ITEM_KIND_ROLLER
+  };
   
   if (scene)
     tempo_format_bpm_label(s_bpm_label, sizeof(s_bpm_label), scene->bpm_x10);

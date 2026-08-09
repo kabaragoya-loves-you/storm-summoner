@@ -10,18 +10,6 @@
       "description": "Scene and preset behavior settings",
       "settings": [
         {
-          "id": "config.scene_mode",
-          "label": "Scene Mode",
-          "description": "Controls how scenes operate",
-          "type": "select",
-          "options": [
-            {"value": 0, "label": "Simple"},
-            {"value": 1, "label": "Preset Sync"},
-            {"value": 2, "label": "Advanced"}
-          ],
-          "default": 0
-        },
-        {
           "id": "config.device_mode",
           "label": "Device Mode",
           "description": "Single device for all scenes or per-scene device selection",
@@ -30,8 +18,7 @@
             {"value": 0, "label": "Single"},
             {"value": 1, "label": "Per-Scene"}
           ],
-          "default": 0,
-          "visible_when": {"id": "config.scene_mode", "value": 2}
+          "default": 0
         },
         {
           "id": "config.confirm_change",

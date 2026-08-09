@@ -1191,9 +1191,6 @@ window.ActionCatalog = (function () {
     const probe = { type, variant: defaultVariant(type) }
     if (!isValidForTrigger(probe, trigger)) return false
 
-    const sceneMode = ctx?.sceneMode ?? 2
-    if (type === 'preset' && sceneMode !== 0 && sceneMode !== 2) return false
-    if (type === 'scene' && sceneMode !== 1 && sceneMode !== 2) return false
     if (type === 'confirm_pending' && (ctx?.confirmChange ?? 0) !== 1) return false
 
     const clockSource = ctx?.clockSource || 'internal'

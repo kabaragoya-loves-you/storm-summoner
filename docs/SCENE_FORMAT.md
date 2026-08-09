@@ -273,25 +273,6 @@ Multiple actions can be assigned to a single input (max 4):
 
 This randomizes 3 CCs, then starts transport - both on a single button press!
 
-## Scene Modes
-
-Storm Summoner supports three operational modes (configured globally, not per-scene):
-
-### Mode 1: Single Scene
-- Only one active scene
-- Scene navigation disabled
-- Buttons default to program change control
-
-### Mode 2: Preset Sync
-- Scenes map 1:1 to pedal presets
-- Changing scene sends PC matching scene index
-- Buttons default to scene navigation
-
-### Mode 3: Advanced
-- Custom PC value per scene
-- Full control over PC messages
-- Buttons default to scene navigation
-
 ## File Location
 
 All scene files must be in:

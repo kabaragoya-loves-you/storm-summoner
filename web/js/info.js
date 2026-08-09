@@ -879,23 +879,16 @@ application.register(
     }
 
     renderSceneNavRow () {
-      const mode = this.infoData?.scene?.mode
-      if (!mode || mode === 'single') return ''
-
-      const isPreset = mode === 'preset_sync'
-      const prevLabel = isPreset ? 'Prev Preset' : 'Prev Scene'
-      const nextLabel = isPreset ? 'Next Preset' : 'Next Scene'
-
       return `
         <div class="info-nav-actions">
           <wa-button size="small" variant="neutral" appearance="outlined"
                      data-nav-cmd="prev">
             <wa-icon name="chevron-left" slot="prefix"></wa-icon>
-            ${prevLabel}
+            Prev Scene
           </wa-button>
           <wa-button size="small" variant="neutral" appearance="outlined"
                      data-nav-cmd="next">
-            ${nextLabel}
+            Next Scene
             <wa-icon name="chevron-right" slot="suffix"></wa-icon>
           </wa-button>
         </div>`

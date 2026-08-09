@@ -48,9 +48,6 @@ typedef struct {
 // ============================================================================
 
 // Config wrappers
-static uint32_t get_scene_mode(void) { return (uint32_t)scene_get_mode(); }
-static esp_err_t set_scene_mode(uint32_t v) { return scene_set_mode((scene_mode_t)v); }
-
 static uint32_t get_confirm_change(void) { return (uint32_t)scene_get_change_mode(); }
 static esp_err_t set_confirm_change(uint32_t v) { return scene_set_change_mode((scene_change_mode_t)v); }
 
@@ -494,7 +491,6 @@ static esp_err_t set_screensaver_mode(uint32_t v) {
 
 static const setting_entry_t s_settings[] = {
   // Config category
-  {"config.scene_mode", get_scene_mode, set_scene_mode},
   {"config.device_mode", get_device_mode, set_device_mode},
   {"config.confirm_change", get_confirm_change, set_confirm_change},
   {"config.preset_wrap", get_preset_wrap, set_preset_wrap},

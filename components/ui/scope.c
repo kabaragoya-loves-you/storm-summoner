@@ -349,23 +349,18 @@ static void scope_sync_channel_display(uint8_t scene_index) {
 static void scope_update_scene_label(void) {
   if (!g_scene_label) return;
 
-  scene_mode_t mode = scene_get_mode();
   uint8_t scene_index = scene_get_current_index();
   const scene_t *scene = scene_get_current();
   const char *name = (scene && scene->name[0]) ? scene->name : "Untitled";
 
-  if (mode == SCENE_MODE_SINGLE) {
-    snprintf(g_scene_info_text, sizeof(g_scene_info_text), "%.20s", name);
-  } else {
-    uint16_t ordinal = 0;
-    uint16_t total = scene_get_total_count();
-    for (uint16_t i = 0; i < total; i++) {
-      if (scene_is_active_by_position(i)) ordinal++;
-      if (scene_get_index_by_position(i) == scene_index) break;
-    }
-    snprintf(g_scene_info_text, sizeof(g_scene_info_text), "%u. %.16s",
-      (unsigned)ordinal, name);
+  uint16_t ordinal = 0;
+  uint16_t total = scene_get_total_count();
+  for (uint16_t i = 0; i < total; i++) {
+    if (scene_is_active_by_position(i)) ordinal++;
+    if (scene_get_index_by_position(i) == scene_index) break;
   }
+  snprintf(g_scene_info_text, sizeof(g_scene_info_text), "%u. %.16s",
+    (unsigned)ordinal, name);
   lv_label_set_text(g_scene_label, g_scene_info_text);
   scope_update_layout();
 }

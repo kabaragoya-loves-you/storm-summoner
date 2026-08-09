@@ -11,21 +11,18 @@ static const char* TAG = "config_console";
 
 // Track registered command names for cleanup
 static const char* registered_commands[] = {
-  "info", "scene_mode", "device_mode", "change_mode", "preset_wrap", "persist_scene"
+  "info", "device_mode", "change_mode", "preset_wrap", "persist_scene"
 };
 static const int num_registered_commands = sizeof(registered_commands) / sizeof(registered_commands[0]);
 
 // Command: info - Show device configuration
 static int cmd_config_info(int argc, char **argv) {
-  scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
   device_mode_t device_mode = config_get_device_mode();
   uint8_t channel = device_config_get_channel();
   uint8_t program = device_config_get_program();
   bool preset_wrap = config_get_preset_wrap();
   
-  const char* scene_mode_str = (scene_mode == SCENE_MODE_SINGLE) ? "Single" :
-                                (scene_mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   const char* device_mode_str = (device_mode == DEVICE_MODE_SINGLE) ? "Single" : "Per-Scene";
   const char* change_mode_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   const char* preset_wrap_str = preset_wrap ? "On (wrap around)" : "Off (clamp at boundaries)";
@@ -38,41 +35,10 @@ static int cmd_config_info(int argc, char **argv) {
   ESP_LOGI(TAG, "Preset wrap: %s", preset_wrap_str);
   ESP_LOGI(TAG, "Persist scene: %s", persist_scene_str);
   ESP_LOGI(TAG, "");
-  ESP_LOGI(TAG, "Scene mode: %s", scene_mode_str);
   ESP_LOGI(TAG, "Device mode: %s", device_mode_str);
   ESP_LOGI(TAG, "Change mode: %s", change_mode_str);
   ESP_LOGI(TAG, "===========================");
   
-  return 0;
-}
-
-// Command: scene_mode - Set scene operational mode
-static struct {
-  struct arg_str *mode_type;
-  struct arg_end *end;
-} scene_mode_args;
-
-static int cmd_scene_mode(int argc, char **argv) {
-  int nerrors = arg_parse(argc, argv, (void **) &scene_mode_args);
-  if (nerrors != 0) {
-    arg_print_errors(stderr, scene_mode_args.end, argv[0]);
-    return 1;
-  }
-  
-  const char *mode = scene_mode_args.mode_type->sval[0];
-  if (strcmp(mode, "single") == 0) {
-    scene_set_mode(SCENE_MODE_SINGLE);
-    ESP_LOGI(TAG, "Scene mode: Single");
-  } else if (strcmp(mode, "preset") == 0) {
-    scene_set_mode(SCENE_MODE_PRESET_SYNC);
-    ESP_LOGI(TAG, "Scene mode: Preset Sync");
-  } else if (strcmp(mode, "advanced") == 0) {
-    scene_set_mode(SCENE_MODE_ADVANCED);
-    ESP_LOGI(TAG, "Scene mode: Advanced");
-  } else {
-    ESP_LOGE(TAG, "Unknown mode. Use: single, preset, or advanced");
-    return 1;
-  }
   return 0;
 }
 
@@ -195,19 +161,6 @@ esp_err_t config_console_init(void) {
     .func = &cmd_config_info,
   };
   esp_console_cmd_register(&info_cmd);
-  
-  // scene_mode command
-  scene_mode_args.mode_type = arg_str1(NULL, NULL, "<single|preset|advanced>", "Scene mode");
-  scene_mode_args.end = arg_end(2);
-  
-  const esp_console_cmd_t scene_mode_cmd = {
-    .command = "scene_mode",
-    .help = "Set scene operational mode",
-    .hint = NULL,
-    .func = &cmd_scene_mode,
-    .argtable = &scene_mode_args
-  };
-  esp_console_cmd_register(&scene_mode_cmd);
   
   // device_mode command
   device_mode_args.mode_type = arg_str1(NULL, NULL, "<single|per_scene>", "Device mode");

@@ -158,10 +158,6 @@ static void menu_button_event_handler(const event_t* event, void* context) {
 
   if (!menu_is_top_level() && !inspect_scene_is_active()) return;
 
-  // Only in multi-scene modes
-  scene_mode_t mode = scene_get_mode();
-  if (mode == SCENE_MODE_SINGLE) return;
-
   // Don't queue if a scene change is already pending
   if (s_pending_scene_direction != 0) return;
 

@@ -28,7 +28,6 @@ application.register(
       this.sceneList = []
       this.deviceProgramming = false
       this.deviceContext = {
-        sceneMode: 2,
         deviceMode: 0,
         confirmChange: 0,
         midiControl: false,
@@ -337,11 +336,6 @@ application.register(
       const { id, value } = e.detail || {}
       if (id === 'config.flag_enabled') {
         this.deviceContext.flagEnabled = Number(value) !== 0
-        if (this.editing && this.editModel) this.renderEditor()
-        return
-      }
-      if (id === 'config.scene_mode' && value != null) {
-        this.deviceContext.sceneMode = Number(value)
         if (this.editing && this.editModel) this.renderEditor()
         return
       }
@@ -664,7 +658,7 @@ application.register(
       const action = this.getAtPath(actionPath)
       if (!action || action.type !== 'confirm_pending') return
       ActionCatalog.clearRepeatFields(action)
-      if (this.deviceContext.sceneMode === 2 && !action.confirm_target) {
+      if (!action.confirm_target) {
         this.setAtPath(`${actionPath}.confirm_target`, 'preset')
       }
     }
@@ -3170,9 +3164,6 @@ application.register(
           throw new Error('CONFIG VALUES missing')
         }
         const vals = JSON.parse(line.substring(line.indexOf('{')))
-        if (vals['config.scene_mode'] != null) {
-          this.deviceContext.sceneMode = Number(vals['config.scene_mode'])
-        }
         if (vals['config.device_mode'] != null) {
           this.deviceContext.deviceMode = Number(vals['config.device_mode'])
         }

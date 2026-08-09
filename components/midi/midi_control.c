@@ -119,30 +119,18 @@ static int scene_index_for_active_ordinal(uint16_t ordinal_1based) {
 }
 
 static void handle_program_change(uint8_t program) {
-  scene_mode_t mode = scene_get_mode();
+  if (program == 0) return;
 
-  if (mode == SCENE_MODE_ADVANCED) {
-    if (program == 0) return;
-
-    int idx = scene_index_for_active_ordinal((uint16_t)program);
-    if (idx < 0) {
-      ESP_LOGD(TAG, "PC %u: no active scene at ordinal", (unsigned)program);
-      return;
-    }
-
-    esp_err_t ret = scene_set_current((uint8_t)idx);
-    if (ret != ESP_OK)
-      ESP_LOGW(TAG, "PC %u -> scene %d failed: %s", (unsigned)program, idx,
-        esp_err_to_name(ret));
+  int idx = scene_index_for_active_ordinal((uint16_t)program);
+  if (idx < 0) {
+    ESP_LOGD(TAG, "PC %u: no active scene at ordinal", (unsigned)program);
     return;
   }
 
-  if (mode == SCENE_MODE_SINGLE || mode == SCENE_MODE_PRESET_SYNC) {
-    esp_err_t ret = device_config_set_program(program);
-    if (ret != ESP_OK)
-      ESP_LOGW(TAG, "PC %u preset set failed: %s", (unsigned)program,
-        esp_err_to_name(ret));
-  }
+  esp_err_t ret = scene_set_current((uint8_t)idx);
+  if (ret != ESP_OK)
+    ESP_LOGW(TAG, "PC %u -> scene %d failed: %s", (unsigned)program, idx,
+      esp_err_to_name(ret));
 }
 
 static void handle_control_change(uint8_t cc_number, uint8_t value) {

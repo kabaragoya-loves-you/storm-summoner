@@ -2665,7 +2665,7 @@
               "restore_preset": {
                 "type": "boolean",
                 "default": false,
-                "description": "Restore scene program/preset (default false; skipped in PRESET_SYNC mode)"
+                "description": "Restore scene program/preset (default false)"
               },
               "restore_screen": {
                 "type": "boolean",

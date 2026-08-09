@@ -306,24 +306,9 @@ static bool is_action_visible(action_type_t type) {
     return false;
   }
 
-  scene_mode_t scene_mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
   tempo_clock_source_t clock_source = scene_get_clock_source(scene_get_current_index());
 
-  // Preset actions only in single or advanced mode. All variants share this
-  // gate; per-variant gating (e.g. HOLD requires CHANGE_MODE_IMMEDIATE) is
-  // applied by build_filtered_preset_variants() when the user opens the
-  // variant roller.
-  if (type == ACTION_PRESET) {
-    if (scene_mode != SCENE_MODE_SINGLE && scene_mode != SCENE_MODE_ADVANCED) return false;
-  }
-
-  // Scene actions only in preset_sync or advanced mode (all variants share
-  // this gate; the variant picker applies once the user opens it).
-  if (type == ACTION_SCENE) {
-    if (scene_mode != SCENE_MODE_PRESET_SYNC && scene_mode != SCENE_MODE_ADVANCED) return false;
-  }
-  
   // Confirm pending only in pending change mode
   if (type == ACTION_CONFIRM_PENDING && change_mode != CHANGE_MODE_PENDING) return false;
   
@@ -9378,9 +9363,8 @@ lv_obj_t* action_config_detail_page_create(void) {
       engine_modify_append_detail_rows(&action->params.sh_modify, buf, &item_count);
   }
 
-  // Show confirm target selector for confirm_pending action in Advanced mode only
+  // Show confirm target selector for confirm_pending action
   if (action->type == ACTION_CONFIRM_PENDING &&
-      scene_get_mode() == SCENE_MODE_ADVANCED &&
       item_count < MAX_DETAIL_ITEMS) {
     const char* target_name = (action->params.confirm.target == CONFIRM_TARGET_SCENE) ?
       "Scene" : "Preset";

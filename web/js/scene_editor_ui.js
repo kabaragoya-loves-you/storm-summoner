@@ -561,7 +561,6 @@ window.SceneEditorUi = (function () {
 
   function actionContext (ctrl) {
     return {
-      sceneMode: ctrl.deviceContext?.sceneMode ?? 2,
       confirmChange: ctrl.deviceContext?.confirmChange ?? 0,
       clockSource: ctrl.editModel?.clock_source || 'internal',
       flagEnabled: !!ctrl.deviceContext?.flagEnabled
@@ -2628,10 +2627,7 @@ window.SceneEditorUi = (function () {
       if (a.type === 'restore') {
         html += renderRestoreFields(ctrl, path, a)
       }
-      if (
-        a.type === 'confirm_pending' &&
-        (ctrl.deviceContext?.sceneMode ?? 0) === 2
-      ) {
+      if (a.type === 'confirm_pending') {
         html += fieldRow(
           'Confirms',
           selectField(
@@ -2890,16 +2886,14 @@ window.SceneEditorUi = (function () {
       html += renderScreenField(ctrl, m)
     }
 
-    if (ctx.sceneMode !== 1) {
-      html += fieldRow(
-        'Pedal Preset',
-        numberField('program_number', m.program_number ?? 0, 0, 127)
-      )
-      html += fieldRow(
-        'Load preset when loading scene',
-        checkboxField('send_pc_on_load', m.send_pc_on_load !== false)
-      )
-    }
+    html += fieldRow(
+      'Pedal Preset',
+      numberField('program_number', m.program_number ?? 0, 0, 127)
+    )
+    html += fieldRow(
+      'Load preset when loading scene',
+      checkboxField('send_pc_on_load', m.send_pc_on_load !== false)
+    )
 
     html += fieldRow('BPM', numberField('bpm', m.bpm ?? 120, 20, 300, bpmStep))
     html += fieldRow(

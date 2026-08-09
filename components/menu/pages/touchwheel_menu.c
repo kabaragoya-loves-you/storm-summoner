@@ -202,8 +202,6 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
 
   // Convert roller index to mapping index (accounting for Disabled + skipped modes)
   bool show_tempo = (scene->clock_source == CLOCK_SOURCE_INTERNAL);
-  scene_mode_t scene_mode = scene_get_mode();
-  bool show_program_change = (scene_mode != SCENE_MODE_PRESET_SYNC);
   uint32_t mapping_index = 0;
   uint32_t roller_count = 0;
   uint32_t adjusted_index = selected_index - 1;
@@ -212,10 +210,6 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal (same logic as mode_roller_create)
     if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_SET_TEMPO && !show_tempo) {
-      continue;
-    }
-    // Skip Program Change in Preset Sync mode (same logic as mode_roller_create)
-    if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE && !show_program_change) {
       continue;
     }
     if (roller_count == adjusted_index) {
@@ -276,10 +270,8 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
 static lv_obj_t* mode_roller_create(void) {
   scene_t* scene = scene_get_current();
   bool show_tempo = (scene && scene->clock_source == CLOCK_SOURCE_INTERNAL);
-  scene_mode_t scene_mode = scene_get_mode();
-  bool show_program_change = (scene_mode != SCENE_MODE_PRESET_SYNC);
   
-  // Build options string, conditionally including Tempo and Program Change
+  // Build options string, conditionally including Tempo
   static char options[256];
   options[0] = '\0';
   
@@ -291,10 +283,6 @@ static lv_obj_t* mode_roller_create(void) {
   for (size_t i = 0; i < NUM_BASE_MODES; i++) {
     // Skip Tempo if clock is not internal
     if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_SET_TEMPO && !show_tempo) {
-      continue;
-    }
-    // Skip Program Change in Preset Sync mode (presets tied to scenes)
-    if (g_touchwheel_mode_mappings[i].mode == TOUCHWHEEL_MODE_PROGRAM_CHANGE && !show_program_change) {
       continue;
     }
     

@@ -17,16 +17,12 @@ void scene_test_info(void) {
     return;
   }
   
-  scene_mode_t mode = scene_get_mode();
   scene_change_mode_t change_mode = scene_get_change_mode();
   uint8_t device_channel = device_config_get_channel();
   
-  const char* mode_str = (mode == SCENE_MODE_SINGLE) ? "Single" :
-                         (mode == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
   const char* change_str = (change_mode == CHANGE_MODE_IMMEDIATE) ? "Immediate" : "Pending";
   
   ESP_LOGI(TAG, "====== SCENE INFO ======");
-  ESP_LOGI(TAG, "Scene mode: %s", mode_str);
   ESP_LOGI(TAG, "Change mode: %s", change_str);
   ESP_LOGI(TAG, "Device MIDI channel: %d", device_channel);
   ESP_LOGI(TAG, "");
@@ -153,21 +149,6 @@ void scene_test_monitor_handler(char key) {
       ESP_LOGI(TAG, "Switched to scene 3");
       break;
       
-    case 'm':
-    case 'M':
-      // Cycle through scene modes
-      {
-        scene_mode_t current = scene_get_mode();
-        scene_mode_t next = (current == SCENE_MODE_SINGLE) ? SCENE_MODE_PRESET_SYNC :
-                            (current == SCENE_MODE_PRESET_SYNC) ? SCENE_MODE_ADVANCED :
-                            SCENE_MODE_SINGLE;
-        scene_set_mode(next);
-        const char* mode_str = (next == SCENE_MODE_SINGLE) ? "Single" :
-                               (next == SCENE_MODE_PRESET_SYNC) ? "Preset Sync" : "Advanced";
-        ESP_LOGI(TAG, "Scene mode: %s", mode_str);
-      }
-      break;
-      
     case 'c':
     case 'C':
       // Toggle change mode
@@ -232,7 +213,6 @@ void scene_test_monitor_handler(char key) {
       ESP_LOGI(TAG, "  p - Previous scene");
       ESP_LOGI(TAG, "  d - Apply demo configuration");
       ESP_LOGI(TAG, "  1-3 - Switch to scene 1-3");
-      ESP_LOGI(TAG, "  m - Cycle scene mode (Single/Preset Sync/Advanced)");
       ESP_LOGI(TAG, "  c - Toggle change mode (Immediate/Pending)");
       ESP_LOGI(TAG, "  y - Confirm pending change");
       ESP_LOGI(TAG, "  x - Cancel pending change");

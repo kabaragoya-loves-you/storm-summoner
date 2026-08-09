@@ -36,7 +36,7 @@ Get all current setting values as a JSON object.
 **Response:** Single-line JSON object with setting IDs as keys and integer values.
 
 ```json
-{"config.scene_mode":0,"config.preset_wrap":1,"midi.passthrough":3,...}
+{"config.device_mode":0,"config.preset_wrap":1,"midi.passthrough":3,...}
 ```
 
 ### GET
@@ -50,7 +50,7 @@ Get a single setting value.
 
 **Example:**
 ```
-GET config.scene_mode
+GET config.device_mode
 0
 ```
 
@@ -65,7 +65,7 @@ Set a single setting value.
 
 **Example:**
 ```
-SET config.scene_mode 1
+SET config.device_mode 1
 OK
 ```
 
@@ -99,7 +99,7 @@ Setting IDs follow a hierarchical naming convention:
 ```
 
 Examples:
-- `config.scene_mode`
+- `config.device_mode`
 - `tempo.clock_standard`
 - `buttons.debounce`
 - `sensor.prox_hysteresis`
@@ -115,7 +115,7 @@ The settings registry (`components/settings_registry/`) provides a dispatch tabl
 │  ┌───────────────┐    ┌─────────────────────────────────────┐  │
 │  │ Setting ID    │ -> │ Getter/Setter Function Pointers     │  │
 │  ├───────────────┤    ├─────────────────────────────────────┤  │
-│  │ config.scene  │ -> │ get_scene_mode / set_scene_mode     │  │
+│  │ config.device  │ -> │ get_device_mode / set_device_mode   │  │
 │  │ midi.passthru │ -> │ get_midi_passthrough / set_passthru │  │
 │  │ buttons.deb   │ -> │ buttons_get_debounce / set_debounce │  │
 │  └───────────────┘    └─────────────────────────────────────┘  │

@@ -27,13 +27,6 @@
 #define TOUCHWHEEL_END 7
 #define TOUCHWHEEL_SIZE 8
 
-// Scene operational modes
-typedef enum {
-  SCENE_MODE_SINGLE,        // Mode 1: Single scene, PC messages available
-  SCENE_MODE_PRESET_SYNC,   // Mode 2: 1:1 scene-to-preset mapping
-  SCENE_MODE_ADVANCED       // Mode 3: Arbitrary PC messages per scene
-} scene_mode_t;
-
 // Scene change modes
 typedef enum {
   CHANGE_MODE_IMMEDIATE,    // Send PC and change immediately
@@ -273,7 +266,6 @@ typedef struct {
   scene_manifest_entry_t* manifest;  // Dynamic array of scene metadata
   uint16_t num_scenes;               // Total number of scenes in manifest
   
-  scene_mode_t mode;
   scene_change_mode_t change_mode;
   bool initialized;
 } scene_manager_t;
@@ -288,9 +280,7 @@ scene_t* scene_get_current(void);
 esp_err_t scene_next(void);
 esp_err_t scene_previous(void);
 
-// Scene mode configuration
-esp_err_t scene_set_mode(scene_mode_t mode);
-scene_mode_t scene_get_mode(void);
+// Scene change mode configuration
 esp_err_t scene_set_change_mode(scene_change_mode_t mode);
 scene_change_mode_t scene_get_change_mode(void);
 

@@ -123,12 +123,8 @@ static void restore_execute(const action_t* action) {
     tempo_apply_bpm_x10(action, scene->bpm_x10);
 
   if (action->params.restore.restore_preset) {
-    if (scene_get_mode() == SCENE_MODE_PRESET_SYNC) {
-      ESP_LOGD(TAG, "Restore preset skipped (PRESET_SYNC mode)");
-    } else {
-      apply_preset_program(scene->program_number);
-      ESP_LOGI(TAG, "Restore preset: %u", (unsigned)scene->program_number);
-    }
+    apply_preset_program(scene->program_number);
+    ESP_LOGI(TAG, "Restore preset: %u", (unsigned)scene->program_number);
   }
 
   if (action->params.restore.restore_screen) {
@@ -207,16 +203,8 @@ action_handle_result_t action_handlers_scene_dispatch(
   (void)trigger_value;
   (void)channel;
 
-  scene_mode_t current_mode = scene_get_mode();
-
   switch (action->type) {
     case ACTION_PRESET: {
-      // Preset Sync mode gate is identical across every variant -- factor it.
-      if (current_mode == SCENE_MODE_PRESET_SYNC) {
-        ESP_LOGW(TAG, "Preset action ignored: not allowed in Preset Sync mode");
-        return ACTION_HANDLED;
-      }
-
       switch (action->variant) {
         case VARIANT_INCREMENT:
           if (is_press) device_config_program_next();
@@ -286,11 +274,6 @@ action_handle_result_t action_handlers_scene_dispatch(
     }
 
     case ACTION_SCENE: {
-      // Scene Mode gate is identical across all variants -- factor it out.
-      if (current_mode == SCENE_MODE_SINGLE) {
-        ESP_LOGW(TAG, "Scene action ignored: not allowed in Simple mode");
-        return ACTION_HANDLED;
-      }
       if (!is_press) return ACTION_HANDLED;
 
       switch (action->variant) {
@@ -426,17 +409,10 @@ action_handle_result_t action_handlers_scene_dispatch(
 
     case ACTION_CONFIRM_PENDING:
       if (is_press) {
-        scene_mode_t mode = scene_get_mode();
-        if (mode == SCENE_MODE_SINGLE) {
-          if (device_config_has_pending_program()) device_config_confirm_program();
-        } else if (mode == SCENE_MODE_PRESET_SYNC) {
+        if (action->params.confirm.target == CONFIRM_TARGET_SCENE) {
           if (scene_has_pending_change()) scene_confirm_change();
         } else {
-          if (action->params.confirm.target == CONFIRM_TARGET_SCENE) {
-            if (scene_has_pending_change()) scene_confirm_change();
-          } else {
-            if (device_config_has_pending_program()) device_config_confirm_program();
-          }
+          if (device_config_has_pending_program()) device_config_confirm_program();
         }
       }
       return ACTION_HANDLED;

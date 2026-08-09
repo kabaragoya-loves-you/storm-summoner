@@ -41,42 +41,32 @@ static void nav_to_about(void* user_data) {
 lv_obj_t* menu_page_index_create(void) {
   ESP_LOGD(TAG, "Creating index page");
   
-  scene_mode_t mode = scene_get_mode();
-  
-  // Build menu items dynamically based on mode
+  // Build menu items: current scene (with ordinal) AND scene manager
   static menu_item_t index_items[6];
   int idx = 0;
   
-  if (mode == SCENE_MODE_SINGLE) {
-    // Single mode: just "Scene" for current scene editor
-    index_items[idx++] = (menu_item_t){
-      "Scene", nav_to_current_scene, NULL, true, MENU_ITEM_KIND_SUBMENU
-    };
-  } else {
-    // Multi-scene modes: show current scene (with ordinal) AND scene manager
-    scene_t* scene = scene_get_current();
-    uint8_t scene_index = scene_get_current_index();
-    
-    // Find active ordinal (1-based position among active scenes)
-    uint16_t ordinal = 0;
-    uint16_t total = scene_get_total_count();
-    for (uint16_t i = 0; i < total; i++) {
-      if (scene_is_active_by_position(i)) ordinal++;
-      if (scene_get_index_by_position(i) == scene_index) break;
-    }
-    
-    // Build scene title with ordinal
-    const char* name = (scene && scene->name[0]) ? scene->name : "Untitled";
-    snprintf(s_scene_title, sizeof(s_scene_title), "%u. %.24s",
-      (unsigned)ordinal, name);
-    
-    index_items[idx++] = (menu_item_t){
-      s_scene_title, nav_to_current_scene, NULL, true, MENU_ITEM_KIND_SUBMENU
-    };
-    index_items[idx++] = (menu_item_t){
-      "Scenes", nav_to_scenes_manager, NULL, true, MENU_ITEM_KIND_SUBMENU
-    };
+  scene_t* scene = scene_get_current();
+  uint8_t scene_index = scene_get_current_index();
+  
+  // Find active ordinal (1-based position among active scenes)
+  uint16_t ordinal = 0;
+  uint16_t total = scene_get_total_count();
+  for (uint16_t i = 0; i < total; i++) {
+    if (scene_is_active_by_position(i)) ordinal++;
+    if (scene_get_index_by_position(i) == scene_index) break;
   }
+  
+  // Build scene title with ordinal
+  const char* name = (scene && scene->name[0]) ? scene->name : "Untitled";
+  snprintf(s_scene_title, sizeof(s_scene_title), "%u. %.24s",
+    (unsigned)ordinal, name);
+  
+  index_items[idx++] = (menu_item_t){
+    s_scene_title, nav_to_current_scene, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
+  index_items[idx++] = (menu_item_t){
+    "Scenes", nav_to_scenes_manager, NULL, true, MENU_ITEM_KIND_SUBMENU
+  };
   
   const char* pedal_label = (config_get_device_mode() == DEVICE_MODE_PER_SCENE)
     ? "Default Pedal" : "Pedal Setup";
