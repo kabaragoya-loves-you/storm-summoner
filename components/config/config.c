@@ -9,7 +9,6 @@ static const char* TAG = "config";
 #define NVS_KEY_PERSIST_SCENE "persist_scn"
 #define NVS_KEY_LAST_SCENE "last_scene"
 #define NVS_KEY_DEVICE_MODE "dev_mode"
-#define NVS_KEY_FLAG_ENABLED "flag_en"
 #define NVS_KEY_CC_MIRROR "cc_mirror"
 #define NVS_KEY_USER_HANDLE "user_handle"
 
@@ -18,7 +17,6 @@ static bool s_preset_wrap = false;   // Default: clamp at boundaries
 static bool s_persist_scene = false; // Default: always boot to scene 1
 static uint8_t s_last_scene = 0;     // Default: scene index 0
 static device_mode_t s_device_mode = DEVICE_MODE_SINGLE; // Default: single device for all scenes
-static bool s_flag_enabled = true;   // Default: flag system enabled
 static bool s_cc_mirror = false;     // Default: ignore incoming CC for mode tracking
 static bool s_initialized = false;
 
@@ -53,12 +51,6 @@ esp_err_t config_init(void) {
     s_device_mode = (mode_val == 1) ? DEVICE_MODE_PER_SCENE : DEVICE_MODE_SINGLE;
   }
   
-  // Load flag_enabled from NVS
-  bool flag_val;
-  if (app_settings_load_bool(NVS_KEY_FLAG_ENABLED, &flag_val) == ESP_OK) {
-    s_flag_enabled = flag_val;
-  }
-  
   // Load cc_mirror from NVS
   bool cc_mirror_val;
   if (app_settings_load_bool(NVS_KEY_CC_MIRROR, &cc_mirror_val) == ESP_OK) {
@@ -67,12 +59,11 @@ esp_err_t config_init(void) {
   
   s_initialized = true;
   ESP_LOGI(TAG, "Config initialized: preset_wrap=%s, persist_scene=%s, last_scene=%d, "
-    "device_mode=%s, flag_enabled=%s, cc_mirror=%s",
+    "device_mode=%s, cc_mirror=%s",
     s_preset_wrap ? "on" : "off",
     s_persist_scene ? "on" : "off",
     s_last_scene,
     s_device_mode == DEVICE_MODE_PER_SCENE ? "per_scene" : "single",
-    s_flag_enabled ? "on" : "off",
     s_cc_mirror ? "on" : "off");
   
   return ESP_OK;
@@ -126,19 +117,6 @@ esp_err_t config_set_device_mode(device_mode_t mode) {
     s_device_mode = mode;
     ESP_LOGI(TAG, "Device mode set to %s",
       mode == DEVICE_MODE_PER_SCENE ? "per_scene" : "single");
-  }
-  return ret;
-}
-
-bool config_get_flag_enabled(void) {
-  return s_flag_enabled;
-}
-
-esp_err_t config_set_flag_enabled(bool enabled) {
-  esp_err_t ret = app_settings_save_bool(NVS_KEY_FLAG_ENABLED, enabled);
-  if (ret == ESP_OK) {
-    s_flag_enabled = enabled;
-    ESP_LOGI(TAG, "Flag system set to %s", enabled ? "on" : "off");
   }
   return ret;
 }

@@ -4,7 +4,6 @@
 #include "scene.h"
 #include "action.h"
 #include "param_stream.h"
-#include "config.h"
 #include "lfo.h"
 #include "curve.h"
 #include "touchwheel_mode_mapping.h"
@@ -2492,7 +2491,6 @@ static void nav_to_tempo_variant(void* user_data) {
 
 // Variants offered for ACTION_CONTROL. SET appears first as it is the most
 // common operation ("Control Change" in MIDI parlance). HOLD/CYCLE follow.
-// FLAG_CEREMONY is gated on config_get_flag_enabled() in the filter below.
 static const action_variant_t s_control_variants[] = {
   VARIANT_SET,
   VARIANT_HOLD,
@@ -2510,7 +2508,6 @@ static void build_filtered_control_variants(void) {
   if (!s_ctx) return;
   for (size_t i = 0; i < NUM_CONTROL_VARIANTS; i++) {
     action_variant_t v = s_control_variants[i];
-    if (v == VARIANT_FLAG_CEREMONY && !config_get_flag_enabled()) continue;
     if (action_variant_is_valid_for_trigger(ACTION_CONTROL, v, s_ctx->trigger_type))
       s_filtered_control_variants[s_num_filtered_control_variants++] = v;
   }
@@ -7884,12 +7881,12 @@ static uint32_t timing_flag_lowered_idx(uint8_t beats, bool use_transport, bool 
 }
 
 static bool timing_allows_flag_options(void) {
-  if (!s_ctx) return false;
+  if (!s_ctx) return true;
   if (s_ctx->trigger_type == ACTION_TRIGGER_FLAG_RAISED ||
       s_ctx->trigger_type == ACTION_TRIGGER_FLAG_LOWERED) {
     return false;
   }
-  return config_get_flag_enabled();
+  return true;
 }
 
 static bool timing_is_bar_preset(uint8_t bar_count, uint32_t* out_idx, uint8_t beats) {
@@ -9930,9 +9927,9 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
-  // Show Raise the Flag option for actions that support it (when flag system enabled).
+  // Show Raise the Flag option for actions that support it.
   // Hidden in flag-list contexts (self-referential / reentrancy risk).
-  if (config_get_flag_enabled() && action_supports_raise_flag_for(action) &&
+  if (action_supports_raise_flag_for(action) &&
       s_ctx && s_ctx->trigger_type != ACTION_TRIGGER_FLAG_RAISED &&
       s_ctx->trigger_type != ACTION_TRIGGER_FLAG_LOWERED &&
       item_count < MAX_DETAIL_ITEMS) {

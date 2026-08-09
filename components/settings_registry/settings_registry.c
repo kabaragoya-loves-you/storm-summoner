@@ -60,9 +60,6 @@ static esp_err_t set_persist_scene(uint32_t v) { return config_set_persist_scene
 static uint32_t get_device_mode(void) { return (uint32_t)config_get_device_mode(); }
 static esp_err_t set_device_mode(uint32_t v) { return config_set_device_mode((device_mode_t)v); }
 
-static uint32_t get_flag_enabled(void) { return config_get_flag_enabled() ? 1 : 0; }
-static esp_err_t set_flag_enabled(uint32_t v) { return config_set_flag_enabled(v != 0); }
-
 static uint32_t get_cc_mirror(void) { return config_get_cc_mirror() ? 1 : 0; }
 static esp_err_t set_cc_mirror(uint32_t v) { return config_set_cc_mirror(v != 0); }
 
@@ -495,7 +492,6 @@ static const setting_entry_t s_settings[] = {
   {"config.confirm_change", get_confirm_change, set_confirm_change},
   {"config.preset_wrap", get_preset_wrap, set_preset_wrap},
   {"config.persist_scene", get_persist_scene, set_persist_scene},
-  {"config.flag_enabled", get_flag_enabled, set_flag_enabled},
   {"config.cc_mirror", get_cc_mirror, set_cc_mirror},
   
   // Touch category

@@ -1,7 +1,6 @@
 #include "continuous_mapping.h"
 #include "midi_messages.h"
 #include "action.h"
-#include "config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -250,7 +249,6 @@ static void continuous_mapping_flag_check(continuous_mapping_t* mapping,
     uint8_t value) {
   if (!mapping || !mapping->enabled || mapping->output_type != OUTPUT_TYPE_CC)
     return;
-  if (!config_get_flag_enabled()) return;
 
   bool any_threshold = !flag_threshold_is_off(mapping->flag_raise_above) ||
     !flag_threshold_is_off(mapping->flag_raise_below) ||

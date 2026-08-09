@@ -562,8 +562,7 @@ window.SceneEditorUi = (function () {
   function actionContext (ctrl) {
     return {
       confirmChange: ctrl.deviceContext?.confirmChange ?? 0,
-      clockSource: ctrl.editModel?.clock_source || 'internal',
-      flagEnabled: !!ctrl.deviceContext?.flagEnabled
+      clockSource: ctrl.editModel?.clock_source || 'internal'
     }
   }
 
@@ -680,7 +679,6 @@ window.SceneEditorUi = (function () {
   }
 
   function renderFlagThresholds (mappingPath, mapping, ctrl) {
-    if (!ctrl.deviceContext?.flagEnabled) return ''
     const m = mapping || {}
     const specs = FLAG_THRESHOLD_SPECS.filter(spec => flagThresholdRowVisible(m, spec))
     if (!specs.length) return ''
@@ -2643,11 +2641,12 @@ window.SceneEditorUi = (function () {
       ) {
         const beats = ctrl.editModel?.time_signature?.numerator ?? 4
         const useTransport = !!ctrl.editModel?.use_transport
-        const flagEnabled = !!ctrl.deviceContext?.flagEnabled &&
-          !ActionCatalog.isFlagListTrigger(trigger)
+        const allowFlagTimings = !ActionCatalog.isFlagListTrigger(trigger)
         const timingVal = a.timing || 'immediate'
         const barParsed = ActionCatalog.parseBarTiming(timingVal)
-        const timingOpts = ActionCatalog.timingOptions(beats, useTransport, flagEnabled)
+        const timingOpts = ActionCatalog.timingOptions(beats, useTransport)
+          .filter(o => allowFlagTimings ||
+            (o.v !== 'flag_raised' && o.v !== 'flag_lowered'))
         if (!timingOpts.some(o => o.v === barParsed.select)) {
           const label = barParsed.select === 'flag_raised' ? 'Flag Raised'
             : barParsed.select === 'flag_lowered' ? 'Flag Lowered' : barParsed.select
@@ -2674,7 +2673,6 @@ window.SceneEditorUi = (function () {
       html += renderMorphBlock(ctrl, path, a)
       if (
         ActionCatalog.supportsRaiseFlag(a) &&
-        ctrl.deviceContext?.flagEnabled &&
         !ActionCatalog.isFlagListTrigger(trigger)
       ) {
         html += fieldRow(
@@ -4298,7 +4296,6 @@ window.SceneEditorUi = (function () {
   }
 
   function renderFlagRaised (ctrl) {
-    if (!ctrl.deviceContext?.flagEnabled) return ''
     return section(
       'Flag Raised',
       renderActionChain(
@@ -4313,7 +4310,6 @@ window.SceneEditorUi = (function () {
   }
 
   function renderFlagLowered (ctrl) {
-    if (!ctrl.deviceContext?.flagEnabled) return ''
     return section(
       'Flag Lowered',
       renderActionChain(

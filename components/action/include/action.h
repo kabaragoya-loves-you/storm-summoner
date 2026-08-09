@@ -191,8 +191,8 @@ typedef enum {
   ACTION_TIMING_SPECIFIC_BEAT,   // Wait for specific beat (uses timing_beat field, 1-16)
   ACTION_TIMING_BAR,             // Fire on downbeat of bar N (timing_beat = N, 1-255)
   ACTION_TIMING_TRANSPORT_START, // Fire on transport fresh-start downbeat (scene use_transport)
-  ACTION_TIMING_FLAG_RAISED,     // Fire on next flag transition to raised (requires flag system)
-  ACTION_TIMING_FLAG_LOWERED     // Fire on next flag transition to lowered (requires flag system)
+  ACTION_TIMING_FLAG_RAISED,     // Fire on next flag transition to raised
+  ACTION_TIMING_FLAG_LOWERED     // Fire on next flag transition to lowered
 } action_timing_t;
 
 // Repeat division (matches LFO divisions for consistency)
@@ -290,7 +290,7 @@ typedef struct {
   uint8_t pattern_length;              // Step pattern length 2-8 (0 = disabled, only for repeating)
   uint8_t pattern_mask;                // Bitmask of active steps (bit 0 = step 1)
   bool transport_trigger;              // Legacy JSON only; migrated to ACTION_TIMING_TRANSPORT_START on load
-  bool raise_flag;                     // Set scene flag to 1 after action completes (when flag system enabled)
+  bool raise_flag;                     // Set scene flag to 1 after action completes
   
   // Morph configuration (for ACTION_CONTROL+VARIANT_HOLD/CYCLE, RANDOMIZE, RESTORE)
   bool morph_enabled;                  // Enable smooth value transition

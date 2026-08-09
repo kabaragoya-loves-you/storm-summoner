@@ -786,7 +786,6 @@ application.register(
         </div>`
 
       const flagRow = () => {
-        if (!clock.flag_enabled) return ''
         const raised = !!clock.flag
         const icon = raised ? 'house-flag' : 'house-chimney-window'
         const label = raised ? 'Raised' : 'Lowered'

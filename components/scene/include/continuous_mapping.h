@@ -89,7 +89,7 @@ typedef struct {
   // LFO modulation target (for OUTPUT_TYPE_LFO_RATE/LFO_DEPTH)
   lfo_target_t lfo_target;   // Which LFO(s) to target
 
-  // Flag thresholds (CC mode, requires config flag system; OFF = 0xFF)
+  // Flag thresholds (CC mode; OFF = 0xFF)
   uint8_t flag_raise_above;  // Raise flag when processed value crosses above (0-126)
   uint8_t flag_raise_below;  // Raise flag when processed value crosses below (1-127)
   uint8_t flag_lower_above;  // Lower flag when processed value crosses above (0-126)

@@ -991,7 +991,7 @@ window.ActionCatalog = (function () {
     return changed
   }
 
-  function timingOptions (numerator, useTransport, flagEnabled) {
+  function timingOptions (numerator, useTransport) {
     let beats = Number(numerator)
     if (!beats || beats < 1) beats = 4
     if (beats > 16) beats = 16
@@ -1013,10 +1013,8 @@ window.ActionCatalog = (function () {
     )
     if (useTransport)
       opts.push({ v: 'transport', l: 'On Transport' })
-    if (flagEnabled) {
-      opts.push({ v: 'flag_raised', l: 'Flag Raised' })
-      opts.push({ v: 'flag_lowered', l: 'Flag Lowered' })
-    }
+    opts.push({ v: 'flag_raised', l: 'Flag Raised' })
+    opts.push({ v: 'flag_lowered', l: 'Flag Lowered' })
     return opts
   }
 
@@ -1211,11 +1209,7 @@ window.ActionCatalog = (function () {
     if (!typeHasVariants(type)) return []
     const variants = VARIANTS_BY_TYPE[type] || []
     return variants
-      .filter(v => {
-        if (type === 'control' && v === 'flag_ceremony' && !ctx?.flagEnabled)
-          return false
-        return isValidForTrigger({ type, variant: v }, trigger)
-      })
+      .filter(v => isValidForTrigger({ type, variant: v }, trigger))
       .map(v => ({ v, l: variantLabel(v) }))
   }
 

@@ -4,7 +4,6 @@
 #include "midi_messages.h"
 #include "midi_local_output.h"
 #include "device_config.h"
-#include "config.h"
 #include "scene.h"
 #include "assets_manager.h"
 #include "esp_log.h"
@@ -237,7 +236,7 @@ action_handle_result_t action_handlers_midi_dispatch(
             send_control_change(channel, cc, value);
             action_set_cc_value(cc, value);
 
-            if (took_down_path && config_get_flag_enabled() && action->raise_flag) {
+            if (took_down_path && action->raise_flag) {
               action_set_flag(1);
               ESP_LOGI(TAG, "Flag Ceremony: raise_flag set, flag now UP");
             }

@@ -729,7 +729,7 @@ window.ConnectionManager = (function () {
           use_transport: parts[8] === '1'
         }
         if (parts.length >= 11) {
-          detail.clock.flag_enabled = parts[9] === '1'
+          // parts[9] remains flag_enabled=1 for wire compatibility; unused.
           detail.clock.flag = parts[10] === '1'
         }
         if (parts.length >= 12)

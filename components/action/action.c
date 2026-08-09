@@ -307,7 +307,7 @@ static void action_set_flag_internal(uint8_t value, bool notify) {
   };
   event_bus_post(&flag_evt);
 
-  if (!notify || !config_get_flag_enabled()) return;
+  if (!notify) return;
 
   if (s_flag_notify_depth > 0) {
     s_flag_notify_deferred = (int8_t)new_val;
@@ -366,7 +366,6 @@ static bool action_queue_timed(action_t* action, uint8_t trigger_value, bool rep
     return false;
 
   if (action_timing_is_flag_wait(action->timing)) {
-    if (!config_get_flag_enabled()) return false;
     bool queued = action_scheduler_enqueue(action, trigger_value, 0, 0, repeats, 1);
     if (queued) (void)action_consume_trigger_source();
     return queued;
@@ -497,7 +496,7 @@ esp_err_t action_execute_immediate(const action_t* action, uint8_t trigger_value
 
   if (result == ACTION_HANDLED_SKIP_FLAG) return ESP_OK;
 
-  if (is_press && config_get_flag_enabled() && action->raise_flag)
+  if (is_press && action->raise_flag)
     action_set_flag_internal(1, true);
 
   if (is_press) {

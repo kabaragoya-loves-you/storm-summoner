@@ -31,7 +31,6 @@ application.register(
         deviceMode: 0,
         confirmChange: 0,
         midiControl: false,
-        flagEnabled: false,
         allowFractionalBpm: false,
         globalPedal: null
       }
@@ -257,7 +256,6 @@ application.register(
         this._pedalCatalogLoad = null
         this._configContextLoaded = false
         this.deviceContext.globalPedal = null
-        this.deviceContext.flagEnabled = false
         this.renderDisconnected()
         if (this._pendingReconnectEdit && this.hasEditorContainerTarget) {
           this.editorContainerTarget.innerHTML =
@@ -334,11 +332,6 @@ application.register(
 
     onConfigSettingChanged (e) {
       const { id, value } = e.detail || {}
-      if (id === 'config.flag_enabled') {
-        this.deviceContext.flagEnabled = Number(value) !== 0
-        if (this.editing && this.editModel) this.renderEditor()
-        return
-      }
       if (id === 'config.confirm_change' && value != null) {
         this.deviceContext.confirmChange = Number(value)
         if (this.editing && this.editModel) this.renderEditor()
@@ -3169,9 +3162,6 @@ application.register(
         }
         if (vals['config.confirm_change'] != null) {
           this.deviceContext.confirmChange = Number(vals['config.confirm_change'])
-        }
-        if (vals['config.flag_enabled'] != null) {
-          this.deviceContext.flagEnabled = Number(vals['config.flag_enabled']) !== 0
         }
         if (vals['midi_control.enabled'] != null) {
           this.deviceContext.midiControl = Number(vals['midi_control.enabled']) !== 0

@@ -46,17 +46,6 @@
           "default": false
         },
         {
-          "id": "config.flag_enabled",
-          "label": "Erect Flagpole",
-          "description": "Enable the flag system",
-          "type": "select",
-          "options": [
-            {"value": 0, "label": "Disabled"},
-            {"value": 1, "label": "Enabled"}
-          ],
-          "default": 1
-        },
-        {
           "id": "config.user_handle",
           "label": "User Handle",
           "description": "Your display name for scene attribution (spaces become dashes, max 12 characters)",

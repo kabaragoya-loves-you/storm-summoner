@@ -717,25 +717,25 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 126,
-          "description": "Raise scene flag when processed CC value crosses above this threshold (requires flag mode)"
+          "description": "Raise scene flag when processed CC value crosses above this threshold"
         },
         "flag_raise_below": {
           "type": "integer",
           "minimum": 1,
           "maximum": 127,
-          "description": "Raise scene flag when processed CC value crosses below this threshold (requires flag mode)"
+          "description": "Raise scene flag when processed CC value crosses below this threshold"
         },
         "flag_lower_above": {
           "type": "integer",
           "minimum": 0,
           "maximum": 126,
-          "description": "Lower scene flag when processed CC value crosses above this threshold (requires flag mode)"
+          "description": "Lower scene flag when processed CC value crosses above this threshold"
         },
         "flag_lower_below": {
           "type": "integer",
           "minimum": 1,
           "maximum": 127,
-          "description": "Lower scene flag when processed CC value crosses below this threshold (requires flag mode)"
+          "description": "Lower scene flag when processed CC value crosses below this threshold"
         }
       }
     },
@@ -1163,7 +1163,7 @@
           "type": "string",
           "pattern": "^(immediate|beat|beat_[1-9]|beat_1[0-6]|bar_([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|transport|flag_raised|flag_lowered)$",
           "default": "immediate",
-          "description": "When action takes effect: immediate (default), beat (next beat), beat_N (specific beat 1-16), bar_N (downbeat of bar N from scene load or transport position), transport (on transport fresh-start downbeat, requires scene use_transport), flag_raised (on next flag transition to raised, requires flag system), flag_lowered (on next flag transition to lowered, requires flag system)"
+          "description": "When action takes effect: immediate (default), beat (next beat), beat_N (specific beat 1-16), bar_N (downbeat of bar N from scene load or transport position), transport (on transport fresh-start downbeat, requires scene use_transport), flag_raised (on next flag transition to raised), flag_lowered (on next flag transition to lowered)"
         },
         "repeat": {
           "type": "boolean",
@@ -1207,7 +1207,7 @@
         "raise_flag": {
           "type": "boolean",
           "default": false,
-          "description": "Set scene flag to 1 after action completes (when flag system enabled)"
+          "description": "Set scene flag to 1 after action completes"
         },
         "morph": {
           "type": "boolean",

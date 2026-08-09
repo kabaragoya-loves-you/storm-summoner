@@ -1251,9 +1251,7 @@ lv_obj_t* menu_page_current_scene_create(void) {
   if (scene && scene->use_transport) {
     s_scene_items[idx++] = (menu_item_t){ "On-Play", nav_to_on_play, NULL, true, MENU_ITEM_KIND_SUBMENU };
   }
-  if (config_get_flag_enabled()) {
-    s_scene_items[idx++] = (menu_item_t){ "Flag", nav_to_flag, NULL, true, MENU_ITEM_KIND_SUBMENU };
-  }
+  s_scene_items[idx++] = (menu_item_t){ "Flag", nav_to_flag, NULL, true, MENU_ITEM_KIND_SUBMENU };
   s_scene_items[idx++] = (menu_item_t){ "S+H", nav_to_sample_hold, NULL, true, MENU_ITEM_KIND_SUBMENU };
   s_scene_items[idx++] = (menu_item_t){ "Tilt", nav_to_tilt, NULL, true, MENU_ITEM_KIND_SUBMENU };
   s_scene_items[idx++] = (menu_item_t){ "RTG", nav_to_rtg, NULL, true, MENU_ITEM_KIND_SUBMENU };

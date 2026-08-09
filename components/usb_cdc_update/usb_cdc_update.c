@@ -1315,7 +1315,7 @@ static void cdc_read_clock_snapshot(cdc_clock_snapshot_t *out) {
   if (out->beat == 0) out->beat = 1;
   out->numerator = sig.numerator ? sig.numerator : 4;
   out->denominator = sig.denominator ? sig.denominator : 4;
-  out->flag_enabled = config_get_flag_enabled() ? 1u : 0u;
+  out->flag_enabled = 1u;
   out->flag = action_get_flag() ? 1u : 0u;
   out->recording = transport_is_recording() ? 1u : 0u;
 }
@@ -2395,9 +2395,7 @@ static void process_command(const char *cmd) {
   } else if (strncmp(cmd, "FLAG ", 5) == 0) {
     const char *op = cmd + 5;
     while (op && *op == ' ') op++;
-    if (!config_get_flag_enabled()) {
-      send_response("ERROR: Flag not enabled");
-    } else if (strcmp(op, "RAISE") == 0) {
+    if (strcmp(op, "RAISE") == 0) {
       action_set_flag(1);
       cdc_clock_snapshot_t snap;
       cdc_read_clock_snapshot(&snap);

@@ -16,11 +16,10 @@ static char s_device_mode_label[40];
 static char s_change_mode_label[40];
 static char s_preset_wrap_label[40];
 static char s_persist_scene_label[40];
-static char s_flag_enabled_label[48];
 static char s_user_handle_label[48];
 static char s_user_handle_edit_buf[USER_HANDLE_MAX_LEN + 1];
 static int s_user_handle_item_index = 0;
-static menu_item_t s_config_items[8];
+static menu_item_t s_config_items[7];
 
 // ============================================================================
 // Device Mode Roller
@@ -136,33 +135,6 @@ static void nav_to_persist_scene(void* user_data) {
 }
 
 // ============================================================================
-// Flag System Roller (Erect Flagpole)
-// ============================================================================
-
-static const char* FLAG_ENABLED_OPTIONS = "Disabled\nEnabled";
-
-static void flag_enabled_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  bool enabled = (selected_index == 1);
-  config_set_flag_enabled(enabled);
-  ESP_LOGI(TAG, "Flag system set to %s", enabled ? "enabled" : "disabled");
-  
-  menu_navigate_back_then_to(2, "Global Config", menu_page_config_create);
-}
-
-static lv_obj_t* flag_enabled_roller_create(void) {
-  bool enabled = config_get_flag_enabled();
-  uint32_t current_idx = enabled ? 1 : 0;
-  return menu_create_roller_page("Erect Flagpole", FLAG_ENABLED_OPTIONS, current_idx,
-    flag_enabled_confirm_cb, NULL);
-}
-
-static void nav_to_flag_enabled(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Erect Flagpole", flag_enabled_roller_create);
-}
-
-// ============================================================================
 // User Handle Editor
 // ============================================================================
 
@@ -239,13 +211,6 @@ lv_obj_t* menu_page_config_create(void) {
     s_persist_scene_label, nav_to_persist_scene, NULL, true, MENU_ITEM_KIND_ROLLER
   };
   
-  bool flag_enabled = config_get_flag_enabled();
-  snprintf(s_flag_enabled_label, sizeof(s_flag_enabled_label), "Erect Flagpole\n%s",
-    flag_enabled ? "Enabled" : "Disabled");
-  s_config_items[idx++] = (menu_item_t){
-    s_flag_enabled_label, nav_to_flag_enabled, NULL, true, MENU_ITEM_KIND_ROLLER
-  };
-
   char handle_display[USER_HANDLE_MAX_LEN + 1];
   config_get_user_handle(handle_display, sizeof(handle_display));
   if (handle_display[0] == '\0') strncpy(handle_display, "<unset>", sizeof(handle_display) - 1);

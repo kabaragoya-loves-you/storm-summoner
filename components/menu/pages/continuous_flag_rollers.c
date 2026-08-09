@@ -1,5 +1,4 @@
 #include "continuous_flag_rollers.h"
-#include "config.h"
 #include "menu_pages.h"
 #include <stdio.h>
 #include <string.h>
@@ -171,7 +170,7 @@ static void format_threshold_label(char* buf, size_t buf_size,
 }
 
 int continuous_flag_append_cc_items(menu_item_t* items, char labels[4][48], int idx) {
-  if (!items || !labels || !config_get_flag_enabled()) return idx;
+  if (!items || !labels) return idx;
 
   continuous_mapping_t* m = current_mapping();
   if (!m) return idx;
