@@ -8,18 +8,16 @@
 #include "menu_pages.h"
 #include "display_driver.h"
 #include "event_bus.h"
+#include "config.h"
 #include "esp_log.h"
 #include <string.h>
 
 #define TAG "TEXT_EDIT"
 
-// Character set available in chalet_ny font
-// Space first, then uppercase, lowercase, digits, and punctuation
-static const char CHARSET[] =
-  " ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-  "abcdefghijklmnopqrstuvwxyz"
-  "0123456789"
-  ".,!?-_+@#";
+// Leading space for typing (converted to '-' on user-handle save), then the
+// shared USER_HANDLE_ALLOWED_CHARS set from config.h so editor and validator
+// cannot drift. All glyphs are available in chalet_ny / flyer_venice.
+static const char CHARSET[] = " " USER_HANDLE_ALLOWED_CHARS;
 
 #define CHARSET_LEN (sizeof(CHARSET) - 1)
 #define VISIBLE_CHARS 7  // Number of characters visible in gallery

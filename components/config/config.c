@@ -134,15 +134,28 @@ esp_err_t config_set_cc_mirror(bool enabled) {
   return ret;
 }
 
-static void sanitize_user_handle(const char* input, char* out, size_t out_size) {
-  if (!out || out_size == 0) return;
+static bool is_allowed_handle_char(char c) {
+  unsigned char uc = (unsigned char)c;
+  if (uc < 0x20 || uc > 0x7E) return false;
+  return strchr(USER_HANDLE_ALLOWED_CHARS, (char)uc) != NULL;
+}
+
+// Convert spaces to dashes, truncate to USER_HANDLE_MAX_LEN, trim leading/trailing
+// dashes. Returns false if any kept character is outside USER_HANDLE_ALLOWED_CHARS
+// (reject the whole value; do not strip).
+static bool sanitize_user_handle(const char* input, char* out, size_t out_size) {
+  if (!out || out_size == 0) return false;
   out[0] = '\0';
-  if (!input) return;
+  if (!input) return false;
 
   size_t pos = 0;
   for (size_t i = 0; input[i] != '\0' && pos < USER_HANDLE_MAX_LEN; i++) {
     char c = input[i];
     if (c == ' ') c = '-';
+    if (!is_allowed_handle_char(c)) {
+      out[0] = '\0';
+      return false;
+    }
     if (pos < out_size - 1) out[pos++] = c;
   }
   out[pos] = '\0';
@@ -152,6 +165,7 @@ static void sanitize_user_handle(const char* input, char* out, size_t out_size) 
   size_t start = 0;
   while (out[start] == '-') start++;
   if (start > 0) memmove(out, out + start, pos - start + 1);
+  return true;
 }
 
 esp_err_t config_get_user_handle(char* buf, size_t len) {
@@ -167,7 +181,8 @@ esp_err_t config_set_user_handle(const char* handle) {
   if (!handle) return ESP_ERR_INVALID_ARG;
 
   char sanitized[USER_HANDLE_MAX_LEN + 1];
-  sanitize_user_handle(handle, sanitized, sizeof(sanitized));
+  if (!sanitize_user_handle(handle, sanitized, sizeof(sanitized)))
+    return ESP_ERR_INVALID_ARG;
   if (sanitized[0] == '\0') return ESP_ERR_INVALID_ARG;
 
   esp_err_t ret = app_settings_save_str(NVS_KEY_USER_HANDLE, sanitized);

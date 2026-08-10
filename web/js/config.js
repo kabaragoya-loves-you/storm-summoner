@@ -262,7 +262,10 @@ application.register(
     sanitizeTextSettingValue (value, setting) {
       let text = String(value ?? '')
       if (setting?.maxlength) text = text.slice(0, setting.maxlength)
-      return text.replace(/ /g, '-').replace(/^-+|-+$/g, '')
+      // Mirror USER_HANDLE_ALLOWED_CHARS on device (space → dash, then whitelist)
+      text = text.replace(/ /g, '-')
+      text = text.replace(/[^A-Za-z0-9.,!?\-_+@#]/g, '')
+      return text.replace(/^-+|-+$/g, '')
     }
 
     optionSelected (optValue, current) {
@@ -343,7 +346,7 @@ application.register(
 
         case 'text': {
           const maxLength = setting.maxlength !== undefined ? setting.maxlength : 32
-          const display = current === '' ? '' : String(current)
+          const display = current === '' ? '' : this.escapeHtml(String(current))
           return `
             <wa-input type="text" id="${id}" data-config-control data-setting-id="${setting.id}"
                       value="${display}" maxlength="${maxLength}" size="small">
@@ -370,6 +373,7 @@ application.register(
       } else if (el.tagName === 'WA-INPUT') {
         if (setting?.type === 'text') {
           value = this.sanitizeTextSettingValue(el.value, setting)
+          if (el.value !== value) el.value = value
           if (!value) return
         } else {
           value = this.parseNumberSettingValue(setting, el.value)
@@ -398,10 +402,26 @@ application.register(
             }))
           } else {
             console.error(`Failed to set ${settingId}: ${response}`)
+            if (setting?.type === 'text') {
+              const prev = this.values[settingId]
+              el.value = prev === undefined || prev === null ? '' : String(prev)
+            }
+            const msg = (typeof response === 'string' && response.startsWith('ERROR'))
+              ? response
+              : `Failed to set ${setting?.label || settingId}`
+            if (typeof el.setCustomValidity === 'function') {
+              el.setCustomValidity(msg)
+              if (typeof el.reportValidity === 'function') el.reportValidity()
+              setTimeout(() => el.setCustomValidity(''), 0)
+            }
           }
         })
       } catch (err) {
         console.error(`Failed to set ${settingId}:`, err)
+        if (setting?.type === 'text') {
+          const prev = this.values[settingId]
+          el.value = prev === undefined || prev === null ? '' : String(prev)
+        }
       }
     }
 

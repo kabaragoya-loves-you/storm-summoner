@@ -48,7 +48,7 @@
         {
           "id": "config.user_handle",
           "label": "User Handle",
-          "description": "Your display name for scene attribution (spaces become dashes, max 12 characters)",
+          "description": "Your display name for scene attribution (spaces become dashes, max 12 characters). Allowed: A–Z, a–z, 0–9, and .,!?-_+@#",
           "type": "text",
           "maxlength": 12,
           "default": ""

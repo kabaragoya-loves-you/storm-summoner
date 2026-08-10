@@ -8,6 +8,15 @@
 
 #define USER_HANDLE_MAX_LEN 12
 
+// Allowed characters after space→dash sanitization. Must stay in sync with the
+// on-device text editor charset (name_edit.c prepends a leading space for typing).
+// Pure ASCII printable subset that both chalet_ny_14 and flyer_venice_14 cover.
+#define USER_HANDLE_ALLOWED_CHARS \
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
+  "abcdefghijklmnopqrstuvwxyz" \
+  "0123456789" \
+  ".,!?-_+@#"
+
 // Device mode: single device for all scenes vs per-scene device selection
 typedef enum {
   DEVICE_MODE_SINGLE = 0,    // One device for all scenes (default)

@@ -615,7 +615,7 @@ application.register(
           </div>
           <div class="info-row">
             <span class="info-label">Handle</span>
-            <span class="info-value">${this.infoData.user_handle || '—'}</span>
+            <span class="info-value">${this.escapeHtml(this.infoData.user_handle) || '—'}</span>
           </div>
           <div class="info-subsection" data-info-connections>
             ${this.renderDeviceConnectionsHtml()}

@@ -660,6 +660,49 @@ esp_err_t settings_registry_set_value(const char* id, uint32_t value) {
   return entry->setter(value);
 }
 
+// Escape for embedding as a JSON string value (no surrounding quotes).
+// Returns bytes written excluding NUL, or -1 on overflow.
+static int json_escape_string(const char* in, char* out, size_t out_size) {
+  if (!in || !out || out_size == 0) return -1;
+
+  size_t o = 0;
+  for (size_t i = 0; in[i] != '\0'; i++) {
+    unsigned char c = (unsigned char)in[i];
+    char unicode[7];
+    const char* esc = NULL;
+
+    switch (c) {
+      case '"': esc = "\\\""; break;
+      case '\\': esc = "\\\\"; break;
+      case '\b': esc = "\\b"; break;
+      case '\f': esc = "\\f"; break;
+      case '\n': esc = "\\n"; break;
+      case '\r': esc = "\\r"; break;
+      case '\t': esc = "\\t"; break;
+      default:
+        if (c < 0x20) {
+          snprintf(unicode, sizeof(unicode), "\\u%04x", (unsigned)c);
+          esc = unicode;
+        }
+        break;
+    }
+
+    if (esc) {
+      size_t elen = strlen(esc);
+      if (o + elen >= out_size) return -1;
+      memcpy(out + o, esc, elen);
+      o += elen;
+    } else {
+      if (o + 1 >= out_size) return -1;
+      out[o++] = (char)c;
+    }
+  }
+
+  if (o >= out_size) return -1;
+  out[o] = '\0';
+  return (int)o;
+}
+
 esp_err_t settings_registry_get_all_values(char* buffer, size_t buffer_size, size_t* written) {
   if (!buffer || buffer_size < 3) return ESP_ERR_INVALID_ARG;
   
@@ -693,11 +736,18 @@ esp_err_t settings_registry_get_all_values(char* buffer, size_t buffer_size, siz
     value[0] = '\0';
     entry->getter(value, sizeof(value));
 
+    // Worst case: every byte becomes \u00XX (6 chars)
+    char escaped[USER_HANDLE_MAX_LEN * 6 + 1];
+    if (json_escape_string(value, escaped, sizeof(escaped)) < 0) {
+      ESP_LOGE(TAG, "Failed to escape string setting");
+      return ESP_ERR_INVALID_ARG;
+    }
+
     char temp[160];
     int len = snprintf(temp, sizeof(temp), "%s\"%s\":\"%s\"",
       first ? "" : ",",
       entry->id,
-      value);
+      escaped);
     first = false;
 
     if (pos + len + 2 >= buffer_size) {

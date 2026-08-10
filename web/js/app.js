@@ -1918,6 +1918,14 @@ window.BaseController = class extends Controller {
     return ConnectionManager.getInstance()
   }
 
+  escapeHtml (str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+  }
+
   log (message, type = '') {
     const logContent = this.hasLogContentTarget ? this.logContentTarget : null
     if (!logContent) return
