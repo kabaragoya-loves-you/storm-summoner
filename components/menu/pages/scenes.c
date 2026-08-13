@@ -189,7 +189,7 @@ static void action_delete_scene(void* user_data) {
   }
   
   // Refresh list
-  menu_set_restore_focus((int)s_selected_position);
+  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
   menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
 }
 
@@ -238,7 +238,7 @@ static void action_duplicate_scene(void* user_data) {
     ESP_LOGW(TAG, "Failed to duplicate scene: %s", esp_err_to_name(ret));
   }
 
-  menu_set_restore_focus((int)s_selected_position);
+  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
   menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
 }
 
@@ -251,7 +251,7 @@ static void action_activate_scene(void* user_data) {
   } else {
     ESP_LOGW(TAG, "Failed to activate scene: %s", esp_err_to_name(ret));
   }
-  menu_set_restore_focus((int)s_selected_position);
+  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
   menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
 }
 
@@ -264,7 +264,7 @@ static void action_deactivate_scene(void* user_data) {
   } else {
     ESP_LOGW(TAG, "Failed to deactivate scene: %s", esp_err_to_name(ret));
   }
-  menu_set_restore_focus((int)s_selected_position);
+  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
   menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
 }
 
@@ -360,13 +360,13 @@ static void action_add_scene(void* user_data) {
     ESP_LOGI(TAG, "Created new scene: %s", name);
     // Focus on new scene (at the end of active scenes)
     s_selected_position = scene_get_total_count() - 1;
+    // Clickable index, not manifest pos — event handler refreshes the list
+    menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
   } else {
     ESP_LOGW(TAG, "Failed to create scene: %s", esp_err_to_name(ret));
   }
-  
-  // Refresh list with focus on new scene
-  menu_set_restore_focus((int)s_selected_position);
-  menu_replace_current("Scenes", menu_page_scenes_create);
+  // Refresh comes from async EVENT_SCENE_LIST_CHANGED — do not also
+  // menu_replace_current here or the list rebuilds twice.
 }
 
 // ============================================================================

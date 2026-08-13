@@ -83,6 +83,35 @@ static void apply_initial_page_focus(lv_obj_t* cont);
 static bool is_menu_list_container(lv_obj_t* cont);
 static void restore_non_list_page_input(menu_stack_entry_t* entry);
 static void commit_roller_selections_on_screen(lv_obj_t* screen);
+static void menu_group_remove_page_input(lv_obj_t* screen, lv_obj_t* container);
+
+// Remove encoder-group membership for a page. List pages use container children;
+// roller pages have container==NULL so we must detach rollers from the screen.
+static void menu_group_remove_page_input(lv_obj_t* screen, lv_obj_t* container) {
+  if (!menu_state.group) return;
+  if (container) {
+    uint32_t child_cnt = lv_obj_get_child_count(container);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(container, i);
+      if (child) lv_group_remove_obj(child);
+    }
+    // Info/inspect pages put the container itself in the group
+    lv_group_remove_obj(container);
+    return;
+  }
+  if (!screen) return;
+  bool removed_roller = false;
+  uint32_t child_cnt = lv_obj_get_child_count(screen);
+  for (uint32_t i = 0; i < child_cnt; i++) {
+    lv_obj_t* child = lv_obj_get_child(screen, i);
+    if (child && lv_obj_check_type(child, &lv_roller_class)) {
+      lv_group_remove_obj(child);
+      removed_roller = true;
+    }
+  }
+  // Rollers put the group into editing mode; leave that behind.
+  if (removed_roller) lv_group_set_editing(menu_state.group, false);
+}
 
 // Add only intentionally focusable menu rows to the encoder group.
 // Dividers and headings are container children but must not take focus —
@@ -307,7 +336,6 @@ static void save_focused_index(void) {
   if (menu_state.stack_depth <= 0) return;
 
   menu_stack_entry_t* entry = &menu_state.stack[menu_state.stack_depth - 1];
-  entry->scroll_y = -1;
 
   lv_obj_t* focused = lv_group_get_focused(menu_state.group);
   if (!focused) return;
@@ -319,24 +347,22 @@ static void save_focused_index(void) {
     for (uint32_t i = 0; i < child_cnt; i++) {
       if (lv_obj_get_child(entry->screen, i) == focused) {
         entry->focused_index = (int32_t)i;
-        ESP_LOGD(TAG, "Saved roller focus child index: %ld", (long)entry->focused_index);
+        entry->scroll_y = -1;
         return;
       }
     }
     return;
   }
 
-  entry->scroll_y = lv_obj_get_scroll_y(entry->container);
-
-  // Find the clickable item index of the focused object
+  // Only update when focused is actually on this page — orphan group members
+  // (e.g. a roller left behind) must not stomp scroll_y / leave a half-written entry.
   uint32_t child_cnt = lv_obj_get_child_count(entry->container);
   int clickable_idx = 0;
   for (uint32_t i = 0; i < child_cnt; i++) {
     lv_obj_t* child = lv_obj_get_child(entry->container, i);
     if (child == focused) {
       entry->focused_index = (int32_t)clickable_idx;
-      ESP_LOGD(TAG, "Saved focused index: %ld (clickable) scroll_y=%ld",
-        (long)entry->focused_index, (long)entry->scroll_y);
+      entry->scroll_y = lv_obj_get_scroll_y(entry->container);
       return;
     }
     if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
@@ -886,17 +912,9 @@ static void menu_navigate_to_internal(const char* menu_name, menu_page_builder_t
     commit_roller_selections_on_screen(menu_state.stack[menu_state.stack_depth - 1].screen);
 
   // Remove current menu items from group
-  if (menu_state.group && menu_state.stack_depth > 0) {
-    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
-    if (current_cont) {
-      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
-      for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(current_cont, i);
-        if (child) lv_group_remove_obj(child);
-      }
-      // Info/inspect pages put the container itself in the group
-      lv_group_remove_obj(current_cont);
-    }
+  if (menu_state.stack_depth > 0) {
+    menu_stack_entry_t* cur = &menu_state.stack[menu_state.stack_depth - 1];
+    menu_group_remove_page_input(cur->screen, cur->container);
   }
 
   // Builders may call apply_initial_page_focus() and clear restore indices
@@ -993,27 +1011,18 @@ static int s_pending_delete_count = 0;
 static void menu_pop_current_page(void) {
   if (menu_state.stack_depth < 1) return;
   
-  // Remove current page from group
-  if (menu_state.group) {
-    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
-    if (current_cont) {
-      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
-      for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(current_cont, i);
-        if (child) lv_group_remove_obj(child);
-      }
-      lv_group_remove_obj(current_cont);
-    }
-  }
+  // Remove current page from group (list container or roller screen)
+  menu_stack_entry_t* cur = &menu_state.stack[menu_state.stack_depth - 1];
+  menu_group_remove_page_input(cur->screen, cur->container);
   
   // Queue screen for deletion (don't delete yet - might be active)
-  lv_obj_t* screen = menu_state.stack[menu_state.stack_depth - 1].screen;
+  lv_obj_t* screen = cur->screen;
   if (screen && s_pending_delete_count < MAX_PENDING_DELETES) {
     s_pending_delete_screens[s_pending_delete_count++] = screen;
   }
   
-  menu_state.stack[menu_state.stack_depth - 1].screen = NULL;
-  menu_state.stack[menu_state.stack_depth - 1].container = NULL;
+  cur->screen = NULL;
+  cur->container = NULL;
   menu_state.stack_depth--;
 }
 
@@ -1151,23 +1160,15 @@ static void menu_navigate_back_internal(void) {
 
   if (inspect_scene_is_active()) menu_page_inspect_scene_cleanup();
 
-  // Reset editing mode (info pages set this to true for scrolling)
+  // Reset editing mode (info pages / rollers set this to true)
   if (menu_state.group) {
     lv_group_set_editing(menu_state.group, false);
   }
 
   // Remove current menu items from group
-  if (menu_state.group && menu_state.stack_depth > 0) {
-    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
-    if (current_cont) {
-      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
-      for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(current_cont, i);
-        if (child) lv_group_remove_obj(child);
-      }
-      // Info/inspect pages put the container itself in the group
-      lv_group_remove_obj(current_cont);
-    }
+  if (menu_state.stack_depth > 0) {
+    menu_stack_entry_t* cur = &menu_state.stack[menu_state.stack_depth - 1];
+    menu_group_remove_page_input(cur->screen, cur->container);
   }
 
   // CRITICAL: Load previous screen FIRST before deleting current
@@ -1229,11 +1230,8 @@ static void menu_navigate_back_internal(void) {
         lv_obj_update_layout(prev_cont);
         menu_state.skip_focus_scroll = true;
         lv_group_focus_obj(focus_target);
-        // Prefer exact scroll position from when we left; else snap focused row to center
-        if (entry->scroll_y >= 0)
-          lv_obj_scroll_to_y(prev_cont, entry->scroll_y, LV_ANIM_OFF);
-        else
-          lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
+        // Snap focused row to center so carousel visuals match encoder focus
+        lv_obj_scroll_to_view(focus_target, LV_ANIM_OFF);
         menu_state.skip_focus_scroll = false;
 
         update_scroll_visuals(prev_cont);
@@ -1312,8 +1310,8 @@ void menu_navigate_back_then_to(int levels, const char* menu_name,
       menu_stack_entry_t* target_entry = &menu_state.stack[target_depth];
       if (target_entry->focused_index >= 0) {
         menu_state.restore_focus_index = (int)target_entry->focused_index;
-        ESP_LOGD(TAG, "Auto-captured restore focus: %d", 
-                 menu_state.restore_focus_index);
+        ESP_LOGD(TAG, "Auto-captured restore focus: %d",
+          menu_state.restore_focus_index);
       }
     }
   }
@@ -1358,18 +1356,16 @@ void menu_replace_current(const char* menu_name, menu_page_builder_t builder) {
   }
   
   ESP_LOGI(TAG, "Replacing current page with: %s", menu_name ? menu_name : "(unnamed)");
+
+  // Sync replace already refreshes the page — drop a pending deferred replace so
+  // EVENT_SCENE_LIST_CHANGED does not rebuild a second time (double delete).
+  if (menu_state.has_pending_nav && menu_state.pending_nav.is_replace)
+    menu_state.has_pending_nav = false;
   
   // Remove current page from group
-  if (menu_state.group) {
-    lv_obj_t* current_cont = menu_state.stack[menu_state.stack_depth - 1].container;
-    if (current_cont) {
-      uint32_t child_cnt = lv_obj_get_child_count(current_cont);
-      for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t* child = lv_obj_get_child(current_cont, i);
-        if (child) lv_group_remove_obj(child);
-      }
-      lv_group_remove_obj(current_cont);
-    }
+  if (menu_state.stack_depth > 0) {
+    menu_stack_entry_t* cur = &menu_state.stack[menu_state.stack_depth - 1];
+    menu_group_remove_page_input(cur->screen, cur->container);
   }
   
   // Delete current screen
