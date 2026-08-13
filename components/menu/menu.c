@@ -23,6 +23,10 @@ bool menu_clear_spiram(void** pp) {
 #define MENU_CALLBACK_DEBOUNCE_MS 100
 static uint32_t s_last_callback_time = 0;
 
+// When rebuilding a non-visible stack entry, builders must not join the encoder
+// group or consume restore-focus (that steals input from the current page).
+static bool s_building_buried_page = false;
+
 // Menu navigation stack entry
 typedef struct {
   lv_obj_t* screen;
@@ -84,32 +88,106 @@ static bool is_menu_list_container(lv_obj_t* cont);
 static void restore_non_list_page_input(menu_stack_entry_t* entry);
 static void commit_roller_selections_on_screen(lv_obj_t* screen);
 static void menu_group_remove_page_input(lv_obj_t* screen, lv_obj_t* container);
+static void menu_group_add_focusable_children(lv_obj_t* cont);
+static void menu_ensure_encoder_on_current_page(void);
 
-// Remove encoder-group membership for a page. List pages use container children;
-// roller pages have container==NULL so we must detach rollers from the screen.
+// Drop encoder-group members that are not under the visible screen, then make
+// sure focus sits on that page. Prevents buried Menu rebuilds from leaving
+// index rows selectable while Scenes (or another page) is on screen.
+static void menu_ensure_encoder_on_current_page(void) {
+  if (!menu_state.group || menu_state.stack_depth < 1) return;
+  menu_stack_entry_t* top = &menu_state.stack[menu_state.stack_depth - 1];
+  if (!top->screen) return;
+
+  uint32_t guard = 0;
+  while (guard++ < 256) {
+    uint32_t cnt = lv_group_get_obj_count(menu_state.group);
+    bool removed = false;
+    for (uint32_t i = 0; i < cnt; i++) {
+      lv_obj_t* obj = lv_group_get_obj_by_index(menu_state.group, i);
+      if (!obj) continue;
+      bool under = false;
+      for (lv_obj_t* w = obj; w; w = lv_obj_get_parent(w)) {
+        if (w == top->screen) { under = true; break; }
+      }
+      if (!under) {
+        lv_group_remove_obj(obj);
+        removed = true;
+        break;
+      }
+    }
+    if (!removed) break;
+  }
+
+  lv_obj_t* focused = lv_group_get_focused(menu_state.group);
+  for (lv_obj_t* w = focused; w; w = lv_obj_get_parent(w)) {
+    if (w == top->screen) return;
+  }
+
+  if (top->container && is_menu_list_container(top->container)) {
+    if (lv_group_get_obj_count(menu_state.group) == 0)
+      menu_group_add_focusable_children(top->container);
+    if (menu_state.restore_focus_index >= 0 || menu_state.restore_focus_item_index >= 0) {
+      apply_initial_page_focus(top->container);
+      return;
+    }
+    uint32_t child_cnt = lv_obj_get_child_count(top->container);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(top->container, i);
+      if (child && lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) {
+        apply_menu_focus(top->container, child);
+        return;
+      }
+    }
+  } else {
+    restore_non_list_page_input(top);
+  }
+}
+
+// Remove encoder-group membership for a page.
+// Always detach rollers on the screen (dual-roller pages may store the first
+// roller as container). List pages also detach list children; non-list pages
+// detach any other group members that are descendants of the screen.
 static void menu_group_remove_page_input(lv_obj_t* screen, lv_obj_t* container) {
   if (!menu_state.group) return;
-  if (container) {
+
+  bool removed_roller = false;
+  if (screen) {
+    uint32_t child_cnt = lv_obj_get_child_count(screen);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+      lv_obj_t* child = lv_obj_get_child(screen, i);
+      if (child && lv_obj_check_type(child, &lv_roller_class)) {
+        lv_group_remove_obj(child);
+        removed_roller = true;
+      }
+    }
+  }
+
+  if (container && is_menu_list_container(container)) {
     uint32_t child_cnt = lv_obj_get_child_count(container);
     for (uint32_t i = 0; i < child_cnt; i++) {
       lv_obj_t* child = lv_obj_get_child(container, i);
       if (child) lv_group_remove_obj(child);
     }
-    // Info/inspect pages put the container itself in the group
     lv_group_remove_obj(container);
-    return;
-  }
-  if (!screen) return;
-  bool removed_roller = false;
-  uint32_t child_cnt = lv_obj_get_child_count(screen);
-  for (uint32_t i = 0; i < child_cnt; i++) {
-    lv_obj_t* child = lv_obj_get_child(screen, i);
-    if (child && lv_obj_check_type(child, &lv_roller_class)) {
-      lv_group_remove_obj(child);
-      removed_roller = true;
+  } else if (screen) {
+    // Non-list / custom pages (cal wizards, pedal warning, inspect): remove
+    // any remaining group members that belong to this screen.
+    lv_obj_t* focused = lv_group_get_focused(menu_state.group);
+    while (focused) {
+      lv_obj_t* walk = focused;
+      bool on_screen = false;
+      while (walk) {
+        if (walk == screen) { on_screen = true; break; }
+        walk = lv_obj_get_parent(walk);
+      }
+      if (!on_screen) break;
+      lv_group_remove_obj(focused);
+      focused = lv_group_get_focused(menu_state.group);
     }
+    if (container) lv_group_remove_obj(container);
   }
-  // Rollers put the group into editing mode; leave that behind.
+
   if (removed_roller) lv_group_set_editing(menu_state.group, false);
 }
 
@@ -129,6 +207,62 @@ static void menu_group_add_focusable_children(lv_obj_t* cont) {
 // Pending scene change direction (set by event handler, consumed by LVGL timer)
 static int s_pending_scene_direction = 0;  // +1 = next, -1 = previous
 
+// Coalesced refresh of the top-level Menu index after scene/list events
+static lv_timer_t* s_index_refresh_timer = NULL;
+static bool s_index_refresh_listish = false;  // LIST_CHANGED / REORDERED (not SCENE_CHANGED alone)
+
+static void deferred_index_refresh_cb(lv_timer_t* timer) {
+  lv_timer_delete(timer);
+  s_index_refresh_timer = NULL;
+
+  // Wait for Scenes (or other) deferred nav to finish so we do not race focus
+  if (menu_state.has_pending_nav) {
+    s_index_refresh_timer = lv_timer_create(deferred_index_refresh_cb, 10, NULL);
+    if (!s_index_refresh_timer) {
+      ESP_LOGW(TAG, "Failed to reschedule index refresh timer");
+      s_index_refresh_listish = false;
+      return;
+    }
+    lv_timer_set_repeat_count(s_index_refresh_timer, 1);
+    return;
+  }
+
+  bool listish = s_index_refresh_listish;
+  s_index_refresh_listish = false;
+
+  if (menu_state.stack_depth < 1) return;
+  const char* root_name = menu_state.stack[0].name;
+  if (!root_name || strcmp(root_name, "Menu") != 0) return;
+
+  if (menu_state.stack_depth == 1) {
+    // Menu is current. Top-level L/R already sync-replaces on SCENE_CHANGED;
+    // only refresh here for list/reorder (ordinal may change without L/R).
+    if (!listish) return;
+    menu_replace_current_deferred("Menu", menu_page_index_create);
+    return;
+  }
+
+  // Buried Menu: rebuild in place so Inspect/Edit back sees a fresh title
+  menu_rebuild_stack_entry(0, "Menu", menu_page_index_create, NULL);
+  menu_ensure_encoder_on_current_page();
+}
+
+static void menu_index_refresh_handler(const event_t* event, void* context) {
+  (void)context;
+  if (!event) return;
+  if (event->type == EVENT_SCENE_LIST_CHANGED || event->type == EVENT_SCENE_REORDERED)
+    s_index_refresh_listish = true;
+
+  if (s_index_refresh_timer) return;
+  s_index_refresh_timer = lv_timer_create(deferred_index_refresh_cb, 10, NULL);
+  if (!s_index_refresh_timer) {
+    ESP_LOGW(TAG, "Failed to create index refresh timer");
+    s_index_refresh_listish = false;
+    return;
+  }
+  lv_timer_set_repeat_count(s_index_refresh_timer, 1);
+}
+
 // Deferred scene change + index rebuild (runs in LVGL task context, off event_dispatch stack)
 static void deferred_scene_change_cb(lv_timer_t* timer) {
   lv_timer_delete(timer);
@@ -147,7 +281,8 @@ static void deferred_scene_change_cb(lv_timer_t* timer) {
   
   if (ret == ESP_OK) {
     if (inspect_scene_is_active()) {
-      menu_replace_current("Inspect Scene", menu_page_inspect_scene_create);
+      // Rebuild comes from EVENT_SCENE_CHANGED -> inspect_scene refresh handler.
+      // Do not also menu_replace_current here or Inspect rebuilds twice.
     } else {
       menu_replace_current("Menu", menu_page_index_create);
     }
@@ -229,6 +364,11 @@ void menu_init(void) {
   event_bus_subscribe(EVENT_BUTTON_L_PRESS, menu_button_event_handler, NULL);
   event_bus_subscribe(EVENT_BUTTON_R_PRESS, menu_button_event_handler, NULL);
   event_bus_subscribe(EVENT_BUTTON_BOTH_LONG_PRESS, menu_button_event_handler, NULL);
+
+  // Keep buried (or list-changed) Menu index title/ordinal fresh
+  event_bus_subscribe(EVENT_SCENE_CHANGED, menu_index_refresh_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_LIST_CHANGED, menu_index_refresh_handler, NULL);
+  event_bus_subscribe(EVENT_SCENE_REORDERED, menu_index_refresh_handler, NULL);
   
   ESP_LOGI(TAG, "Menu system initialized");
 }
@@ -688,18 +828,20 @@ lv_obj_t* menu_create_page(const char* title, const menu_item_t* items, int item
     
     if (is_readonly) {
       lv_obj_set_user_data(label, (void*)&items[i]);
-      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+      if (menu_state.group && !s_building_buried_page)
+        lv_group_add_obj(menu_state.group, label);
     } else {
       // Clickable items: in group and respond to enter
       lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
       // Store menu_item_t* on the object so we can retrieve from focused object
       lv_obj_set_user_data(label, (void*)&items[i]);
       lv_obj_add_event_cb(label, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
-      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+      if (menu_state.group && !s_building_buried_page)
+        lv_group_add_obj(menu_state.group, label);
     }
   }
 
-  if (item_count > 0 && menu_state.group) {
+  if (item_count > 0 && menu_state.group && !s_building_buried_page) {
     apply_initial_page_focus(cont);
   } else {
     update_scroll_visuals(cont);
@@ -795,16 +937,18 @@ lv_obj_t* menu_create_page_2line(const char* title, const menu_item_t* items, in
     
     if (is_readonly) {
       lv_obj_set_user_data(label, (void*)&items[i]);
-      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+      if (menu_state.group && !s_building_buried_page)
+        lv_group_add_obj(menu_state.group, label);
     } else {
       lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_set_user_data(label, (void*)&items[i]);
       lv_obj_add_event_cb(label, menu_item_event_cb, LV_EVENT_CLICKED, (void*)&items[i]);
-      if (menu_state.group) lv_group_add_obj(menu_state.group, label);
+      if (menu_state.group && !s_building_buried_page)
+        lv_group_add_obj(menu_state.group, label);
     }
   }
 
-  if (item_count > 0 && menu_state.group) {
+  if (item_count > 0 && menu_state.group && !s_building_buried_page) {
     apply_initial_page_focus(cont);
   } else {
     update_scroll_visuals(cont);
@@ -880,7 +1024,7 @@ void menu_create(void) {
   menu_state.stack[0].screen = screen;
   menu_state.stack[0].container = container;
   menu_state.stack[0].name = "Menu";
-  menu_state.stack[0].builder = NULL;
+  menu_state.stack[0].builder = menu_page_index_create;
   menu_state.stack[0].focused_index = 0;
   menu_state.stack[0].scroll_y = -1;
   menu_state.stack_depth = 1;
@@ -1486,7 +1630,16 @@ void menu_rebuild_stack_entry(int depth, const char* menu_name,
     return;
   }
 
+  // Preserve restore-focus across buried builds; builders must not join the
+  // encoder group or they steal clicks from the visible page (e.g. Scenes
+  // select opening the index "current scene" editor).
+  int saved_restore_focus = menu_state.restore_focus_index;
+  int saved_restore_item = menu_state.restore_focus_item_index;
+  s_building_buried_page = true;
   lv_obj_t* new_screen = builder();
+  s_building_buried_page = false;
+  menu_state.restore_focus_index = saved_restore_focus;
+  menu_state.restore_focus_item_index = saved_restore_item;
   if (!new_screen) {
     ESP_LOGE(TAG, "menu_rebuild_stack_entry: builder returned NULL");
     return;
@@ -1494,7 +1647,9 @@ void menu_rebuild_stack_entry(int depth, const char* menu_name,
 
   lv_obj_t* new_container = find_container_in_screen(new_screen);
 
-  int32_t focused_index = 0;
+  // Preserve prior focus when no label is given (e.g. buried Menu refresh)
+  int32_t focused_index = menu_state.stack[depth].focused_index;
+  if (focused_index < 0) focused_index = 0;
   if (focus_label && new_container) {
     uint32_t child_cnt = lv_obj_get_child_count(new_container);
     int clickable_idx = 0;
@@ -1511,6 +1666,9 @@ void menu_rebuild_stack_entry(int depth, const char* menu_name,
   }
 
   lv_obj_t* old_screen = menu_state.stack[depth].screen;
+  lv_obj_t* old_container = menu_state.stack[depth].container;
+  // Detach the previous buried page immediately (don't wait for async delete)
+  if (old_screen) menu_group_remove_page_input(old_screen, old_container);
 
   menu_state.stack[depth].screen = new_screen;
   menu_state.stack[depth].container = new_container;
@@ -1518,6 +1676,9 @@ void menu_rebuild_stack_entry(int depth, const char* menu_name,
   menu_state.stack[depth].builder = builder;
   menu_state.stack[depth].focused_index = focused_index;
   menu_state.stack[depth].scroll_y = -1;
+
+  // Belt-and-suspenders: never leave buried widgets in the encoder group
+  menu_group_remove_page_input(new_screen, new_container);
 
   if (old_screen) lv_obj_delete_async(old_screen);
 
@@ -1529,6 +1690,11 @@ void menu_replace_current_deferred(const char* menu_name, menu_page_builder_t bu
   // Deferred replacement - safe to call during LVGL event callbacks/rendering
   if (menu_state.stack_depth < 1 || !builder) {
     ESP_LOGW(TAG, "Cannot replace current (deferred): invalid state");
+    return;
+  }
+  if (menu_state.has_pending_nav) {
+    ESP_LOGW(TAG, "Navigation already pending, dropping deferred replace for: %s",
+      menu_name ? menu_name : "(unnamed)");
     return;
   }
 

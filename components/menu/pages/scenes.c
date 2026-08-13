@@ -21,6 +21,7 @@ static char s_scene_labels[128][32];  // "1. SceneName" format
 // Reorder roller state
 static char s_reorder_options[2048];  // Roller options string
 static bool s_list_subscribed = false;
+static lv_timer_t* s_scenes_refresh_wait = NULL;
 
 static int manifest_position_to_clickable_focus(uint16_t manifest_pos) {
   uint16_t total = scene_get_total_count();
@@ -49,10 +50,47 @@ static int manifest_position_to_clickable_focus(uint16_t manifest_pos) {
   return focus > 0 ? focus - 1 : 0;
 }
 
+// 1-based active ordinal for a manifest position (0 if that slot is inactive)
+static uint16_t active_ordinal_for_position(uint16_t manifest_pos) {
+  uint16_t total = scene_get_total_count();
+  if (manifest_pos >= total || !scene_is_active_by_position(manifest_pos))
+    return 0;
+  uint16_t ordinal = 0;
+  for (uint16_t i = 0; i <= manifest_pos; i++) {
+    if (scene_is_active_by_position(i)) ordinal++;
+  }
+  return ordinal;
+}
+
+static void scenes_refresh_when_current_cb(lv_timer_t* timer) {
+  // Event may arrive while an action/reorder submenu is still on top. Retry until
+  // Scenes is current so the deferred rebuild runs once after pop.
+  if (!menu_current_page_is("Scenes")) return;
+
+  lv_timer_delete(timer);
+  s_scenes_refresh_wait = NULL;
+
+  // Intervening multi-level back may have consumed restore focus on the stale list.
+  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
+  menu_replace_current_deferred("Scenes", menu_page_scenes_create);
+}
+
 static void scene_list_refresh_handler(const event_t *event, void *context) {
   (void)event;
   (void)context;
-  if (!menu_current_page_is("Scenes")) return;
+  if (!menu_current_page_is("Scenes")) {
+    if (!s_scenes_refresh_wait) {
+      s_scenes_refresh_wait = lv_timer_create(scenes_refresh_when_current_cb, 20, NULL);
+      if (!s_scenes_refresh_wait)
+        ESP_LOGW(TAG, "Failed to create scenes refresh wait timer");
+    }
+    return;
+  }
+
+  if (s_scenes_refresh_wait) {
+    lv_timer_delete(s_scenes_refresh_wait);
+    s_scenes_refresh_wait = NULL;
+  }
 
   void *focused = menu_get_focused_item_user_data();
   if (focused) {
@@ -114,41 +152,59 @@ static void reorder_confirm_cb(uint32_t selected_index, void* user_data) {
   
   uint16_t target_position = (uint16_t)selected_index;
   if (target_position == s_selected_position) {
-    // No change needed
-    menu_navigate_back_then_to(3, "Scenes", menu_page_scenes_create);
+    // No change — pop Reorder + Action; keep focus on this scene (do not let
+    // back_then_to auto-capture the Action menu's "Reorder" row index).
+    menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
+    menu_navigate_back_then_to(2, NULL, NULL);
     return;
   }
   
   uint8_t scene_index = scene_get_index_by_position(s_selected_position);
   uint8_t target_index = scene_get_index_by_position(target_position);
   
+  menu_set_restore_focus(manifest_position_to_clickable_focus(target_position));
+  uint16_t from_ord = active_ordinal_for_position(s_selected_position);
+  uint16_t to_ord = active_ordinal_for_position(target_position);
   esp_err_t ret = scene_reorder(scene_index, target_index);
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Reordered scene from position %u to %u",
-      (unsigned)(s_selected_position + 1), (unsigned)(target_position + 1));
+    if (from_ord && to_ord) {
+      ESP_LOGI(TAG, "Reordered scene from %u to %u",
+        (unsigned)from_ord, (unsigned)to_ord);
+    } else {
+      ESP_LOGI(TAG, "Reordered scene (manifest %u -> %u)",
+        (unsigned)s_selected_position, (unsigned)target_position);
+    }
     s_selected_position = target_position;
   } else {
     ESP_LOGW(TAG, "Failed to reorder scene: %s", esp_err_to_name(ret));
   }
 
-  menu_set_restore_focus(manifest_position_to_clickable_focus(target_position));
-  menu_navigate_back_then_to(3, "Scenes", menu_page_scenes_create);
+  // Pop without rebuild; EVENT_SCENE_REORDERED / LIST_CHANGED refreshes Scenes
+  menu_navigate_back_then_to(2, NULL, NULL);
 }
 
 static lv_obj_t* reorder_roller_create(void) {
   uint16_t total = scene_get_total_count();
   
-  // Build options string with ordinal + scene name for each position
+  // Match Scenes list labeling: active ordinal for actives; name-only otherwise
   s_reorder_options[0] = '\0';
   char* pos = s_reorder_options;
   size_t remaining = sizeof(s_reorder_options);
+  uint16_t ordinal = 1;
   
   for (uint16_t i = 0; i < total && remaining > 40; i++) {
     const char* name = scene_get_name_by_position(i);
     if (!name) name = "Untitled";
     
-    int written = snprintf(pos, remaining, "%s%u. %.20s",
-      i > 0 ? "\n" : "", (unsigned)(i + 1), name);
+    int written;
+    if (scene_is_active_by_position(i)) {
+      written = snprintf(pos, remaining, "%s%u. %.20s",
+        i > 0 ? "\n" : "", (unsigned)ordinal, name);
+      ordinal++;
+    } else {
+      written = snprintf(pos, remaining, "%s%.24s",
+        i > 0 ? "\n" : "", name);
+    }
     if (written > 0 && (size_t)written < remaining) {
       pos += written;
       remaining -= written;
@@ -178,19 +234,32 @@ static void action_delete_scene(void* user_data) {
   }
   
   uint8_t scene_index = scene_get_index_by_position(s_selected_position);
+  bool deleted_was_factory = scene_is_factory_by_position(s_selected_position);
+  uint16_t slot = s_selected_position;
   
   esp_err_t ret = scene_delete(scene_index);
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Deleted scene at position %u", (unsigned)s_selected_position);
-    // Focus on scene above (or first scene if deleted first)
-    if (s_selected_position > 0) s_selected_position--;
+    ESP_LOGI(TAG, "Deleted scene at position %u", (unsigned)slot);
+    // Stay at deleted slot so focus lands on whatever slid into it
+    total = scene_get_total_count();
+    if (total == 0) {
+      s_selected_position = 0;
+    } else {
+      if (slot >= total) slot = total - 1;
+      // Deleting last Inactive must not land on first Factory
+      if (!deleted_was_factory && scene_is_factory_by_position(slot)) {
+        while (slot > 0 && scene_is_factory_by_position(slot))
+          slot--;
+      }
+      s_selected_position = slot;
+    }
   } else {
     ESP_LOGW(TAG, "Failed to delete scene: %s", esp_err_to_name(ret));
   }
-  
-  // Refresh list
+
   menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
-  menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
+  // Pop without rebuild; EVENT_SCENE_LIST_CHANGED refreshes Scenes
+  menu_navigate_back_then_to(1, NULL, NULL);
 }
 
 static void action_edit_scene(void* user_data) {
@@ -230,42 +299,57 @@ static void action_duplicate_scene(void* user_data) {
   }
 
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Duplicated scene %u as \"%s\"",
-      (unsigned)(s_selected_position + 1), dup_name);
+    uint16_t src_ord = active_ordinal_for_position(s_selected_position);
     // Focus on the new copy (inserted right after source)
     s_selected_position++;
+    uint16_t copy_ord = active_ordinal_for_position(s_selected_position);
+    if (src_ord && copy_ord) {
+      ESP_LOGI(TAG, "Duplicated scene %u as \"%s\" (now %u)",
+        (unsigned)src_ord, dup_name, (unsigned)copy_ord);
+    } else {
+      ESP_LOGI(TAG, "Duplicated scene as \"%s\"", dup_name);
+    }
   } else {
     ESP_LOGW(TAG, "Failed to duplicate scene: %s", esp_err_to_name(ret));
   }
 
   menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
-  menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
+  // Pop without rebuild; EVENT_SCENE_LIST_CHANGED refreshes Scenes
+  menu_navigate_back_then_to(1, NULL, NULL);
 }
 
 static void action_activate_scene(void* user_data) {
   (void)user_data;
   uint8_t scene_index = scene_get_index_by_position(s_selected_position);
+  const char* name = scene_get_name_by_position(s_selected_position);
+  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
   esp_err_t ret = scene_set_active(scene_index, true);
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Activated scene at position %u", (unsigned)s_selected_position);
+    uint16_t ord = active_ordinal_for_position(s_selected_position);
+    ESP_LOGI(TAG, "Activated \"%s\" as %u",
+      name ? name : "Untitled", (unsigned)ord);
   } else {
     ESP_LOGW(TAG, "Failed to activate scene: %s", esp_err_to_name(ret));
   }
-  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
-  menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
+  // Pop without rebuild; EVENT_SCENE_LIST_CHANGED refreshes Scenes
+  menu_navigate_back_then_to(1, NULL, NULL);
 }
 
 static void action_deactivate_scene(void* user_data) {
   (void)user_data;
   uint8_t scene_index = scene_get_index_by_position(s_selected_position);
+  uint16_t ord = active_ordinal_for_position(s_selected_position);
+  const char* name = scene_get_name_by_position(s_selected_position);
+  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
   esp_err_t ret = scene_set_active(scene_index, false);
   if (ret == ESP_OK) {
-    ESP_LOGI(TAG, "Deactivated scene at position %u", (unsigned)s_selected_position);
+    ESP_LOGI(TAG, "Deactivated %u. \"%s\"",
+      (unsigned)ord, name ? name : "Untitled");
   } else {
     ESP_LOGW(TAG, "Failed to deactivate scene: %s", esp_err_to_name(ret));
   }
-  menu_set_restore_focus(manifest_position_to_clickable_focus(s_selected_position));
-  menu_navigate_back_then_to(2, "Scenes", menu_page_scenes_create);
+  // Pop without rebuild; EVENT_SCENE_LIST_CHANGED refreshes Scenes
+  menu_navigate_back_then_to(1, NULL, NULL);
 }
 
 static lv_obj_t* scene_action_menu_create(void) {
