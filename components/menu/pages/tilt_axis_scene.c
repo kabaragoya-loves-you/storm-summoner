@@ -75,7 +75,7 @@ static esp_err_t set_nudge_direction(uint8_t scene_index, uint8_t direction) {
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_ITEMS 18
+#define MAX_ITEMS 19
 static menu_item_t s_items[MAX_ITEMS];
 
 // Tracks the live axis screen so our custom back handler can tell whether
@@ -84,6 +84,7 @@ static menu_item_t s_items[MAX_ITEMS];
 static lv_obj_t* s_axis_screen = NULL;
 
 static char s_mode_label[LABEL_BUFFER_SETS][32];
+static char s_start_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
@@ -248,7 +249,7 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   m->output_type = mapping->output_type;
   persist_scene_changes();
 
-  tilt_axis_set_enabled(s_axis, m->enabled);
+  scene_apply_tilt_start_modes();
 
   ESP_LOGI(TAG, "Tilt %c mode set to: %s", s_axis == TILT_AXIS_X ? 'X' : 'Y',
     mapping->display_name);
@@ -273,6 +274,67 @@ static lv_obj_t* mode_roller_create(void) {
 static void nav_to_mode(void* user_data) {
   (void)user_data;
   menu_navigate_to("Mode", mode_roller_create);
+}
+
+// ============================================================================
+// Start Mode Roller (Running / Paused / Follow Transport)
+// ============================================================================
+
+static const char* start_mode_display(continuous_start_mode_t mode) {
+  switch (mode) {
+    case CONTINUOUS_START_PAUSED: return "Paused";
+    case CONTINUOUS_START_TRANSPORT: return "Follow Transport";
+    case CONTINUOUS_START_RUNNING:
+    default: return "Running";
+  }
+}
+
+static void start_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  continuous_mapping_t* m = get_mapping(scene);
+  if (!m) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  continuous_start_mode_t modes[] = {
+    CONTINUOUS_START_RUNNING, CONTINUOUS_START_PAUSED, CONTINUOUS_START_TRANSPORT
+  };
+  if (selected_index < 3)
+    m->start_mode = modes[selected_index];
+  else
+    m->start_mode = CONTINUOUS_START_RUNNING;
+  persist_scene_changes();
+  scene_apply_tilt_start_modes();
+
+  ESP_LOGI(TAG, "Tilt %c start mode: %s", s_axis == TILT_AXIS_X ? 'X' : 'Y',
+    start_mode_display(m->start_mode));
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, axis_title(), menu_page_tilt_axis_scene_create);
+}
+
+static lv_obj_t* start_mode_roller_create(void) {
+  continuous_mapping_t* m = get_mapping(scene_get_current());
+  if (!m) return NULL;
+  uint32_t current_idx = 0;
+  switch (m->start_mode) {
+    case CONTINUOUS_START_PAUSED: current_idx = 1; break;
+    case CONTINUOUS_START_TRANSPORT: current_idx = 2; break;
+    default: current_idx = 0; break;
+  }
+  return menu_create_roller_page("Start Mode", "Running\nPaused\nFollow Transport",
+    current_idx, start_mode_confirm_cb, NULL);
+}
+
+static void nav_to_start_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Start Mode", start_mode_roller_create);
 }
 
 // ============================================================================
@@ -935,6 +997,12 @@ lv_obj_t* menu_page_tilt_axis_scene_create(void) {
     menu_set_custom_back_handler(axis_back_handler);
     return disabled_screen;
   }
+
+  snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]),
+    "Start Mode\n%s", start_mode_display(m->start_mode));
+  s_items[idx++] = (menu_item_t){
+    s_start_mode_label[buf], nav_to_start_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
 
   if (m->output_type == OUTPUT_TYPE_CC) {
     for (int i = 0; i < 4; i++) {

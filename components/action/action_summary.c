@@ -456,6 +456,16 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       summary->has_value = true;
     }
 
+  } else if (action->type == ACTION_TILT) {
+    uint8_t target = action->params.tilt.target;
+    if (target == 3)
+      snprintf(summary->param_name, sizeof(summary->param_name), "Both");
+    else if (target == 2)
+      snprintf(summary->param_name, sizeof(summary->param_name), "Y");
+    else
+      snprintf(summary->param_name, sizeof(summary->param_name), "X");
+    summary->has_param = true;
+
   } else if (action->type == ACTION_RANDOMIZE) {
     snprintf(summary->param_name, sizeof(summary->param_name), "%u CCs",
       (unsigned)action->params.randomize.num_ccs);
@@ -791,6 +801,7 @@ static const char *ainspect_family_name(action_type_t type) {
     case ACTION_SCENE: return "Scene";
     case ACTION_TRANSPORT: return "Transport";
     case ACTION_LFO: return "LFO";
+    case ACTION_TILT: return "Tilt";
     case ACTION_TOUCHWHEEL: return "Touchwheel";
     case ACTION_CLOCK: return "Clock";
     case ACTION_CUT: return "Cut";
@@ -1011,10 +1022,29 @@ static bool ainspect_format_variant_line(const action_t *action, uint8_t scene_i
       else snprintf(buf, cap, "Toggle: LFO %u", (unsigned)slot);
       return true;
     }
-    if (action->variant == VARIANT_START || action->variant == VARIANT_STOP) {
+    if (action->variant == VARIANT_START || action->variant == VARIANT_STOP ||
+        action->variant == VARIANT_HOLD) {
       uint8_t slot = action->params.lfo.slot;
       if (slot == 3) snprintf(buf, cap, "%s: Both", variant);
       else snprintf(buf, cap, "%s: LFO %u", variant, (unsigned)slot);
+      return true;
+    }
+  }
+
+  if (action->type == ACTION_TILT) {
+    const char *axis =
+      (action->params.tilt.target == 3) ? "Both" :
+      (action->params.tilt.target == 2) ? "Y" : "X";
+    if (action->variant == VARIANT_TOGGLE) {
+      snprintf(buf, cap, "Toggle: %s", axis);
+      return true;
+    }
+    if (action->variant == VARIANT_HOLD) {
+      snprintf(buf, cap, "Hold: %s", axis);
+      return true;
+    }
+    if (action->variant == VARIANT_START || action->variant == VARIANT_STOP) {
+      snprintf(buf, cap, "%s: %s", variant, axis);
       return true;
     }
   }

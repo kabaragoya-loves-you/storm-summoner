@@ -127,6 +127,8 @@ static char s_piano_pedal_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 static char s_lfo_variant_label[LABEL_BUFFER_SETS][24];
+static char s_tilt_target_label[LABEL_BUFFER_SETS][24];
+static char s_tilt_variant_label[LABEL_BUFFER_SETS][24];
 // MODIFY override row labels. Each holds "<row>\n<value-or-Original>"; the
 // row itself is conditionally rendered only when action->variant ==
 // VARIANT_MODIFY. Steps is shown only when resolution_mode == MANUAL (the
@@ -229,6 +231,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PIANO_PEDAL,
   ACTION_TOUCHWHEEL,
   ACTION_LFO,
+  ACTION_TILT,
   ACTION_CLOCK,
   ACTION_CUT,
   ACTION_UI,
@@ -280,6 +283,7 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_PIANO_PEDAL: return "Piano Pedal";
     case ACTION_TOUCHWHEEL: return "Touchwheel";
     case ACTION_LFO: return "LFO";
+    case ACTION_TILT: return "Tilt";
     case ACTION_CLOCK: return "Clock";
     case ACTION_CUT: return "Cut";
     case ACTION_UI: return "UI";
@@ -760,6 +764,11 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.lfo.ceiling         = ACTION_LFO_ORIG_U8;
       action->params.lfo.resolution_mode = ACTION_LFO_ORIG_U8;
       action->params.lfo.manual_steps    = ACTION_LFO_ORIG_STEPS;
+    }
+
+    if (new_type == ACTION_TILT) {
+      action->variant = VARIANT_START;
+      action->params.tilt.target = 3;  // Both
     }
     
     if (new_type == ACTION_CLOCK) {
@@ -4467,6 +4476,7 @@ static const action_variant_t s_lfo_variants[] = {
   VARIANT_START,
   VARIANT_STOP,
   VARIANT_TOGGLE,
+  VARIANT_HOLD,
   VARIANT_MODIFY,
 };
 #define NUM_LFO_VARIANTS (sizeof(s_lfo_variants) / sizeof(s_lfo_variants[0]))
@@ -4538,6 +4548,130 @@ static lv_obj_t* lfo_variant_roller_create(void) {
 static void nav_to_lfo_variant(void* user_data) {
   (void)user_data;
   nav_to_subpage("Variant", lfo_variant_roller_create);
+}
+
+// ============================================================================
+// Tilt Target Roller (X / Y / Both)
+// ============================================================================
+
+static const char* TILT_TARGET_OPTIONS = "X\nY\nBoth";
+
+static void tilt_target_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action->params.tilt.target = (uint8_t)(selected_index + 1);
+
+  ESP_LOGI(TAG, "Tilt target set to %u", (unsigned)action->params.tilt.target);
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* tilt_target_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  action_t* action = s_ctx->target_action;
+  uint8_t target = action->params.tilt.target;
+  uint32_t current_idx = (target > 0 && target <= 3) ? target - 1 : 2;
+
+  return menu_create_roller_page("Target", TILT_TARGET_OPTIONS, current_idx,
+    tilt_target_confirm_cb, NULL);
+}
+
+static void nav_to_tilt_target(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Target", tilt_target_roller_create);
+}
+
+// ============================================================================
+// Tilt Variant Picker (Start / Stop / Toggle / Hold)
+// ============================================================================
+
+static const action_variant_t s_tilt_variants[] = {
+  VARIANT_START,
+  VARIANT_STOP,
+  VARIANT_TOGGLE,
+  VARIANT_HOLD,
+};
+#define NUM_TILT_VARIANTS (sizeof(s_tilt_variants) / sizeof(s_tilt_variants[0]))
+
+static action_variant_t s_filtered_tilt_variants[NUM_TILT_VARIANTS];
+static size_t s_num_filtered_tilt_variants = 0;
+
+static void build_filtered_tilt_variants(void) {
+  s_num_filtered_tilt_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_TILT_VARIANTS; i++) {
+    action_variant_t v = s_tilt_variants[i];
+    if (!action_variant_is_valid_for_trigger(ACTION_TILT, v, s_ctx->trigger_type)) continue;
+    s_filtered_tilt_variants[s_num_filtered_tilt_variants++] = v;
+  }
+}
+
+static void tilt_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_tilt_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_tilt_variants[selected_index];
+
+  if (action->variant != new_variant) {
+    action->variant = new_variant;
+    ESP_LOGI(TAG, "Tilt variant set to %s", action_variant_to_string(new_variant));
+    persist_scene_changes();
+  }
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* tilt_variant_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  build_filtered_tilt_variants();
+  if (s_num_filtered_tilt_variants == 0) return NULL;
+
+  static char options[64];
+  options[0] = '\0';
+  for (size_t i = 0; i < s_num_filtered_tilt_variants; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, action_variant_to_string(s_filtered_tilt_variants[i]));
+  }
+
+  uint32_t current_idx = 0;
+  action_variant_t current = s_ctx->target_action->variant;
+  for (size_t i = 0; i < s_num_filtered_tilt_variants; i++) {
+    if (s_filtered_tilt_variants[i] == current) {
+      current_idx = (uint32_t)i;
+      break;
+    }
+  }
+
+  return menu_create_roller_page("Variant", options, current_idx, tilt_variant_confirm_cb, NULL);
+}
+
+static void nav_to_tilt_variant(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Variant", tilt_variant_roller_create);
 }
 
 // ============================================================================
@@ -9283,6 +9417,29 @@ lv_obj_t* action_config_detail_page_create(void) {
     };
       }
     }
+  }
+
+  // Show ACTION_TILT (consolidated family) rows: Variant + Target.
+  if (action->type == ACTION_TILT) {
+    snprintf(s_tilt_variant_label[buf], sizeof(s_tilt_variant_label[buf]),
+      "Variant\n%s", action_variant_to_string(action->variant));
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tilt_variant_label[buf], nav_to_tilt_variant, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
+
+    uint8_t target = action->params.tilt.target;
+    const char* target_name;
+    switch (target) {
+      case 1: target_name = "X"; break;
+      case 2: target_name = "Y"; break;
+      case 3: target_name = "Both"; break;
+      default: target_name = "Both"; action->params.tilt.target = 3; break;
+    }
+    snprintf(s_tilt_target_label[buf], sizeof(s_tilt_target_label[buf]),
+      "Target\n%s", target_name);
+    s_detail_items[item_count++] = (menu_item_t){
+      s_tilt_target_label[buf], nav_to_tilt_target, NULL, true, MENU_ITEM_KIND_ROLLER
+    };
   }
   
   // ACTION_CLOCK (consolidated family): Variant row always; Toggle/Hold get

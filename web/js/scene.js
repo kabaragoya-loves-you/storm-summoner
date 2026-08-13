@@ -723,7 +723,18 @@ application.register(
       if (action.slot == null) action.slot = 1
       if (v === 'modify') ActionCatalog.seedLfoModifyFields(action)
       else ActionCatalog.clearLfoModifyFields(action)
-      if (v === 'start' || v === 'stop') ActionCatalog.clearRepeatFields(action)
+      if (v === 'start' || v === 'stop' || v === 'hold') ActionCatalog.clearRepeatFields(action)
+    }
+
+    seedTiltAction (actionPath) {
+      const action = this.getAtPath(actionPath)
+      if (!action || action.type !== 'tilt') return
+      const t = String(action.target || 'both').toLowerCase()
+      action.target = (t === 'x' || t === 'y') ? t : 'both'
+      const v = action.variant || 'start'
+      if (v === 'start' || v === 'stop' || v === 'hold') {
+        ActionCatalog.clearRepeatFields(action)
+      }
     }
 
     seedConsolidatedAction (actionPath) {
@@ -898,6 +909,16 @@ application.register(
       }
       this.sanitizeFlagThresholds(mapping)
       if (forSave) this.stripFlagThresholdsForSave(mapping)
+
+      // Tilt Start Mode: migrate legacy start_enabled bool; default running.
+      if (mapping.start_mode == null && mapping.start_enabled != null) {
+        mapping.start_mode = mapping.start_enabled ? 'running' : 'paused'
+      }
+      delete mapping.start_enabled
+      if (mapping.start_mode != null &&
+          !['running', 'paused', 'transport'].includes(mapping.start_mode)) {
+        mapping.start_mode = 'running'
+      }
     }
 
     sanitizeFlagThresholds (mapping) {
@@ -1096,6 +1117,7 @@ application.register(
         model, this.deviceContext.allowFractionalBpm)
       ActionCatalog.normalizeTouchwheelActionsInModel(model)
       ActionCatalog.normalizeLfoActionsInModel(model)
+      ActionCatalog.normalizeTiltActionsInModel(model)
       ActionCatalog.normalizeSimpleActionsInModel(model)
       ActionCatalog.normalizeRepeatActionsInModel(model)
       if (model.device_id === '' || model.device_id == null) delete model.device_id
@@ -2187,6 +2209,7 @@ application.register(
         else if (val === 'piano_pedal') this.seedPianoPedalAction(aPath)
         else if (val === 'touchwheel') this.seedTouchwheelAction(aPath)
         else if (val === 'lfo') this.seedLfoAction(aPath)
+        else if (val === 'tilt') this.seedTiltAction(aPath)
         else if (val === 'tempo') this.seedTempoAction(aPath)
         else if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold', 'punch_in',
           'boomerang', 'restore'].includes(val)) {
@@ -2219,6 +2242,9 @@ application.register(
         }
         if (action?.type === 'lfo') {
           this.seedLfoAction(aPath)
+        }
+        if (action?.type === 'tilt') {
+          this.seedTiltAction(aPath)
         }
         if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold'].includes(action?.type)) {
           this.seedConsolidatedAction(aPath)

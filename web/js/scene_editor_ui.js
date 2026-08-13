@@ -1217,7 +1217,7 @@ window.SceneEditorUi = (function () {
   function renderLfoFields (ctrl, path, a) {
     const v = a.variant || 'modify'
     let html = ''
-    if (v === 'start' || v === 'stop' || v === 'toggle' || v === 'modify') {
+    if (v === 'start' || v === 'stop' || v === 'toggle' || v === 'hold' || v === 'modify') {
       html += fieldRow(
         'Target',
         selectField(
@@ -1296,6 +1296,17 @@ window.SceneEditorUi = (function () {
       }
     }
     return html
+  }
+
+  function renderTiltFields (ctrl, path, a) {
+    return fieldRow(
+      'Target',
+      selectField(
+        `${path}.target`,
+        a.target || 'both',
+        ActionCatalog.tiltTargetOptions(a.target)
+      )
+    )
   }
 
   const CUT_MODES = ActionCatalog.CUT_MODE_OPTIONS
@@ -2601,6 +2612,9 @@ window.SceneEditorUi = (function () {
       if (a.type === 'lfo') {
         html += renderLfoFields(ctrl, path, a)
       }
+      if (a.type === 'tilt') {
+        html += renderTiltFields(ctrl, path, a)
+      }
       if (a.type === 'clock') {
         html += renderClockFields(ctrl, path, a)
       }
@@ -3242,6 +3256,15 @@ window.SceneEditorUi = (function () {
     html += fieldRow('Mode', selectField(modePath, userMode, TILT_USER_MODES))
     if (userMode === 'disabled')
       return section(`Tilt ${axis.toUpperCase()}`, html)
+    if (!m[key].start_mode) m[key].start_mode = 'running'
+    html += fieldRow(
+      'Start mode',
+      selectField(
+        `${key}.start_mode`,
+        m[key].start_mode || 'running',
+        ENGINE_START_MODE
+      )
+    )
     html += renderContinuousMapping(ctrl, key, m[key], {
       hideEnabled: true,
       hideRouting: true,

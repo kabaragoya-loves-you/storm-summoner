@@ -269,7 +269,7 @@ def validate_action(action, context, errors, scene_data: nil)
     end
   when 'lfo'
     # Consolidated LFO family. Variant decides which fields apply.
-    #   start/stop/toggle: slot only.
+    #   start/stop/toggle/hold: slot only.
     #   modify: slot plus any of 8 optional override fields, each with the
     #     range matched in the JSON schema (sentinels live in firmware as
     #     "field absent from JSON = Original").
@@ -278,7 +278,7 @@ def validate_action(action, context, errors, scene_data: nil)
       errors << "#{context}: lfo requires 'slot' (1=LFO1, 2=LFO2, 3=both)"
     end
     case variant
-    when 'start', 'stop', 'toggle', nil
+    when 'start', 'stop', 'toggle', 'hold', nil
       # nil variant defaults to start per firmware fallback. No further fields.
     when 'modify'
       lfo_rand_u8 = 254
@@ -309,7 +309,7 @@ def validate_action(action, context, errors, scene_data: nil)
         errors << "#{context}: lfo modify 'manual_steps' must be 1-256 or #{lfo_rand_steps} (random)"
       end
     else
-      errors << "#{context}: lfo variant must be 'start', 'stop', 'toggle', or 'modify' (got #{variant.inspect})"
+      errors << "#{context}: lfo variant must be 'start', 'stop', 'toggle', 'hold', or 'modify' (got #{variant.inspect})"
     end
   when 'clock'
     variant = action['variant']
@@ -542,6 +542,12 @@ end
 def validate_continuous_mapping(mapping, name, errors)
   return unless mapping.is_a?(Hash)
   
+  if mapping.key?('start_mode')
+    unless %w[running paused transport].include?(mapping['start_mode'])
+      errors << "#{name}: start_mode must be running, paused, or transport"
+    end
+  end
+
   if mapping.key?('output_type')
     unless %w[cc note pitch_bend aftertouch].include?(mapping['output_type'])
       errors << "#{name}: invalid output_type '#{mapping['output_type']}'"

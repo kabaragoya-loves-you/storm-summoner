@@ -20,6 +20,7 @@ static const char* action_type_names[] = {
   [ACTION_PIANO_PEDAL] = "Piano Pedal",
   [ACTION_TOUCHWHEEL] = "Touchwheel",
   [ACTION_LFO] = "LFO",
+  [ACTION_TILT] = "Tilt",
   [ACTION_CLOCK] = "Clock",
   [ACTION_CUT] = "Cut",
   [ACTION_UI] = "UI",
@@ -86,6 +87,7 @@ bool action_type_has_variants(action_type_t type) {
     case ACTION_TRANSPORT:
     case ACTION_TOUCHWHEEL:
     case ACTION_LFO:
+    case ACTION_TILT:
     case ACTION_CLOCK:
       return true;
     case ACTION_CUT:
@@ -183,15 +185,26 @@ static const char* touchwheel_variant_display(action_variant_t v) {
   }
 }
 
-// LFO family: SHAPE collapsed into MODIFY (general parameter override). All
-// three of START/STOP/TOGGLE keep their pre-consolidation wording.
+// LFO family: SHAPE collapsed into MODIFY (general parameter override).
+// START/STOP/TOGGLE keep their pre-consolidation wording; HOLD is new.
 static const char* lfo_variant_display(action_variant_t v) {
   switch (v) {
     case VARIANT_START:  return "LFO Start";
     case VARIANT_STOP:   return "LFO Stop";
     case VARIANT_TOGGLE: return "LFO Toggle";
+    case VARIANT_HOLD:   return "LFO Hold";
     case VARIANT_MODIFY: return "LFO Modify";
     default:             return "LFO";
+  }
+}
+
+static const char* tilt_variant_display(action_variant_t v) {
+  switch (v) {
+    case VARIANT_START:  return "Tilt Start";
+    case VARIANT_STOP:   return "Tilt Stop";
+    case VARIANT_TOGGLE: return "Tilt Toggle";
+    case VARIANT_HOLD:   return "Tilt Hold";
+    default:             return "Tilt";
   }
 }
 
@@ -281,6 +294,10 @@ void action_get_display_name(const action_t* action, char* buf, size_t len) {
   }
   if (action->type == ACTION_LFO) {
     snprintf(buf, len, "%s", lfo_variant_display(action->variant));
+    return;
+  }
+  if (action->type == ACTION_TILT) {
+    snprintf(buf, len, "%s", tilt_variant_display(action->variant));
     return;
   }
   if (action->type == ACTION_CLOCK) {

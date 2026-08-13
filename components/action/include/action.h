@@ -64,13 +64,21 @@ typedef enum {
   //   CYCLE = step through a list of 2-8 modes, one per press
   ACTION_TOUCHWHEEL,
   
-  // LFO control (consolidated -- variants START / STOP / TOGGLE / MODIFY)
+  // LFO control (consolidated -- variants START / STOP / TOGGLE / HOLD / MODIFY)
   //   START  / STOP / TOGGLE = drive the LFO engine for slot 1, 2, or 3 (both)
+  //   HOLD   = start on press, stop on release (same slot targeting)
   //   MODIFY = apply per-parameter overrides to a running LFO (waveform,
   //            rate mode, rate, floor, ceiling, resolution, steps).
   //            Each override has an "Original" sentinel meaning "do not
   //            touch this field". Replaces the old SHAPE-cycle behavior.
   ACTION_LFO,
+
+  // Tilt sensor control (consolidated -- variants START / STOP / TOGGLE / HOLD)
+  //   START / STOP / TOGGLE = drive the runtime active state for Tilt X, Y,
+  //                           or Both (axes whose scene Mode is Disabled are
+  //                           ignored). Does not rewrite the saved scene.
+  //   HOLD = activate on press, restore prior runtime state on release.
+  ACTION_TILT,
   
   // Clock control (consolidated -- variants TOGGLE / HOLD / BURST)
   //   TOGGLE = flip scene send_clock on each press (was ACTION_CLOCK_TOGGLE)
@@ -397,8 +405,8 @@ typedef struct {
       uint8_t current_index;       // VARIANT_CYCLE: rotating cursor (mutable at runtime)
     } tw_mode;
     
-    // For ACTION_LFO (consolidated -- variants START / STOP / TOGGLE / MODIFY).
-    // START/STOP/TOGGLE only read `slot`. MODIFY adds per-parameter override
+    // For ACTION_LFO (consolidated -- variants START / STOP / TOGGLE / HOLD / MODIFY).
+    // START/STOP/TOGGLE/HOLD only read `slot`. MODIFY adds per-parameter override
     // slots; each field's "Original" sentinel (documented per-field) means
     // "leave the scene config's value in place". This replaces the old
     // SHAPE cycling fields (num_shapes/shapes[]/current_index were removed
@@ -415,6 +423,13 @@ typedef struct {
       uint8_t resolution_mode;   // lfo_resolution_mode_t, 0xFF = Original, 0xFE = Random
       uint8_t manual_steps;      // 1-N (Manual mode only),   0 = Original, 254 = Random
     } lfo;
+
+    // For ACTION_TILT (consolidated -- variants START / STOP / TOGGLE / HOLD).
+    // target: 1 = X, 2 = Y, 3 = Both. Axes with scene mapping.enabled == false
+    // are ignored at runtime.
+    struct {
+      uint8_t target;            // 1=X, 2=Y, 3=Both
+    } tilt;
     
     // For ACTION_CLOCK (consolidated -- variants TOGGLE / HOLD / BURST).
     struct {
@@ -639,8 +654,9 @@ bool action_requires_hold_for(const action_t* action);
 
 // True for hold actions where it makes sense to optionally skip the
 // release-phase work based on hold duration ("Follow-Up"). Excludes
-// NOTE / SUSTAIN / SOSTENUTO (stuck-note/pedal risk) and non-paired
-// types like LFO_TOGGLE / LFO_SHAPE / CLOCK_BURST.
+// NOTE / SUSTAIN / SOSTENUTO (stuck-note/pedal risk) and hold variants
+// whose release must always restore engine state (LFO / CUT / UI /
+// PARAM / RTG / SAMPLE_HOLD / CLOCK_BURST).
 bool action_supports_followup_for(const action_t* action);
 
 // Action trigger types for validation

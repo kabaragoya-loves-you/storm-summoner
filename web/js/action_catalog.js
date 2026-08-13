@@ -64,6 +64,12 @@ window.ActionCatalog = (function () {
     { v: 3, l: 'Both' }
   ]
 
+  const TILT_TARGET_OPTIONS = [
+    { v: 'x', l: 'X' },
+    { v: 'y', l: 'Y' },
+    { v: 'both', l: 'Both' }
+  ]
+
   const TOUCHWHEEL_MODES = [
     { v: 0, l: 'Pads' },
     { v: 1, l: 'Control Change' },
@@ -82,7 +88,7 @@ window.ActionCatalog = (function () {
 
   const ALL_TYPES = [
     'none', 'control', 'preset', 'scene', 'confirm_pending', 'transport', 'tempo',
-    'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'clock', 'cut', 'ui',
+    'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'tilt', 'clock', 'cut', 'ui',
     'param', 'rtg', 'sample_hold', 'punch_in', 'boomerang',
     'inspect_scene', 'snapshot', 'restore', 'reset'
   ]
@@ -100,6 +106,7 @@ window.ActionCatalog = (function () {
     piano_pedal: 'Piano Pedal',
     touchwheel: 'Touchwheel',
     lfo: 'LFO',
+    tilt: 'Tilt',
     clock: 'Clock',
     cut: 'Cut',
     ui: 'UI',
@@ -121,7 +128,8 @@ window.ActionCatalog = (function () {
     preset: ['set', 'hold', 'cycle', 'increment', 'decrement'],
     transport: ['play', 'stop', 'record'],
     touchwheel: ['hold', 'cycle'],
-    lfo: ['start', 'stop', 'toggle', 'modify'],
+    lfo: ['start', 'stop', 'toggle', 'hold', 'modify'],
+    tilt: ['start', 'stop', 'toggle', 'hold'],
     clock: ['toggle', 'hold', 'burst'],
     cut: ['toggle', 'hold'],
     ui: ['set', 'hold', 'cycle'],
@@ -268,6 +276,14 @@ window.ActionCatalog = (function () {
       return LFO_TARGET_OPTIONS.concat([{ v: cur, l: `Target ${cur}` }])
     }
     return LFO_TARGET_OPTIONS.slice()
+  }
+
+  function tiltTargetOptions (current) {
+    const cur = String(current || 'both')
+    if (!TILT_TARGET_OPTIONS.some(o => o.v === cur)) {
+      return TILT_TARGET_OPTIONS.concat([{ v: cur, l: cur }])
+    }
+    return TILT_TARGET_OPTIONS.slice()
   }
 
   function lfoModifyU8Options (presets, current) {
@@ -536,7 +552,7 @@ window.ActionCatalog = (function () {
       seedLfoModifyFields(action)
     } else {
       clearLfoModifyFields(action)
-      if (v === 'start' || v === 'stop') clearRepeatFields(action)
+      if (v === 'start' || v === 'stop' || v === 'hold') clearRepeatFields(action)
     }
     return JSON.stringify(action) !== before
   }
@@ -545,6 +561,24 @@ window.ActionCatalog = (function () {
     let changed = false
     forEachAction(model, action => {
       if (normalizeLfoAction(action)) changed = true
+    })
+    return changed
+  }
+
+  function normalizeTiltAction (action) {
+    if (!action || action.type !== 'tilt') return false
+    const before = JSON.stringify(action)
+    const t = String(action.target || 'both').toLowerCase()
+    action.target = (t === 'x' || t === 'y') ? t : 'both'
+    const v = action.variant || defaultVariant('tilt')
+    if (v === 'start' || v === 'stop' || v === 'hold') clearRepeatFields(action)
+    return JSON.stringify(action) !== before
+  }
+
+  function normalizeTiltActionsInModel (model) {
+    let changed = false
+    forEachAction(model, action => {
+      if (normalizeTiltAction(action)) changed = true
     })
     return changed
   }
@@ -1089,7 +1123,7 @@ window.ActionCatalog = (function () {
     const v = action.variant
     if (v === 'hold') {
       return ['tempo', 'control', 'preset', 'touchwheel', 'clock', 'cut', 'ui', 'param',
-        'rtg', 'sample_hold'].includes(action.type)
+        'rtg', 'sample_hold', 'tilt', 'lfo'].includes(action.type)
     }
     if (v === 'burst' && action.type === 'clock') return true
     return false
@@ -1111,6 +1145,8 @@ window.ActionCatalog = (function () {
         return 'play'
       case 'lfo':
         return 'modify'
+      case 'tilt':
+        return 'start'
       case 'clock':
       case 'cut':
       case 'rtg':
@@ -1140,8 +1176,11 @@ window.ActionCatalog = (function () {
       case 'boomerang':
       case 'snapshot':
       case 'restore':
-      case 'lfo':
         return true
+      case 'lfo':
+        return v !== 'hold'
+      case 'tilt':
+        return v === 'start' || v === 'stop' || v === 'toggle'
       case 'clock':
       case 'cut':
         return v === 'toggle'
@@ -1181,6 +1220,7 @@ window.ActionCatalog = (function () {
       const v = action.variant || defaultVariant('lfo')
       if (v === 'start' || v === 'stop' || v === 'toggle') return false
     }
+    if (caps.firesAtLoad && action.type === 'tilt') return false
     return inputRestrictionAllows(action, trigger)
   }
 
@@ -1230,6 +1270,9 @@ window.ActionCatalog = (function () {
     if (t === 'lfo') {
       return v === 'start' || v === 'stop' || v === 'modify' || v === 'toggle'
     }
+    if (t === 'tilt') {
+      return v === 'start' || v === 'stop' || v === 'toggle'
+    }
     if (t === 'clock' || t === 'cut') return false
     return !HOLD_TYPES.has(t)
   }
@@ -1249,6 +1292,7 @@ window.ActionCatalog = (function () {
     if (t === 'preset') return v !== 'hold'
     if (t === 'touchwheel') return false
     if (t === 'lfo') return v === 'toggle' || v === 'modify'
+    if (t === 'tilt') return v === 'toggle'
     if (t === 'rtg' || t === 'sample_hold') return v === 'modify'
     if (t === 'clock' || t === 'cut' || t === 'param') return false
     if (t === 'ui') return v === 'cycle'
@@ -1265,7 +1309,7 @@ window.ActionCatalog = (function () {
   }
 
   const RAISE_FLAG_TYPES = new Set([
-    'transport', 'control', 'preset', 'tempo', 'note', 'randomize', 'lfo',
+    'transport', 'control', 'preset', 'tempo', 'note', 'randomize', 'lfo', 'tilt',
     'punch_in', 'boomerang', 'restore'
   ])
 
@@ -1448,6 +1492,7 @@ window.ActionCatalog = (function () {
     resolvePianoPedalCc,
     LFO_RESOLUTION_MANUAL,
     lfoTargetOptions,
+    tiltTargetOptions,
     lfoModifyWaveformOptions,
     lfoModifyRateModeOptions,
     lfoModifyRateHzOptions,
@@ -1473,6 +1518,7 @@ window.ActionCatalog = (function () {
     clearLfoModifyFields,
     seedLfoModifyFields,
     normalizeLfoActionsInModel,
+    normalizeTiltActionsInModel,
     engineModifyRateModeOptions,
     engineModifyRateHzOptions,
     engineModifyDivisionOptions,

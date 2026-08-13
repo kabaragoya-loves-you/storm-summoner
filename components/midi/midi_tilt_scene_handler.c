@@ -10,6 +10,7 @@
 #include "tempo_nudge.h"
 #include "tilt.h"
 #include "expression.h"
+#include "transport.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -260,6 +261,18 @@ static void handle_scene_changed(const event_t* event, void* context) {
   }
 }
 
+static void handle_transport_event(const event_t* event, void* context) {
+  if (event->type != EVENT_TRANSPORT_STATE_CHANGED) return;
+  (void)context;
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  bool playing = transport_is_playing();
+  if (scene->tilt_x.enabled && scene->tilt_x.start_mode == CONTINUOUS_START_TRANSPORT)
+    tilt_axis_set_enabled(TILT_AXIS_X, playing);
+  if (scene->tilt_y.enabled && scene->tilt_y.start_mode == CONTINUOUS_START_TRANSPORT)
+    tilt_axis_set_enabled(TILT_AXIS_Y, playing);
+}
+
 esp_err_t midi_tilt_scene_handler_init(void) {
   for (int i = 0; i < 2; i++) {
     smart_filter_init(&s_state[i].filter, 2);
@@ -276,6 +289,8 @@ esp_err_t midi_tilt_scene_handler_init(void) {
   ret = event_bus_subscribe(EVENT_SENSOR_TILT_Y, handle_tilt_event, NULL);
   if (ret != ESP_OK) return ret;
   ret = event_bus_subscribe(EVENT_SCENE_CHANGED, handle_scene_changed, NULL);
+  if (ret != ESP_OK) return ret;
+  ret = event_bus_subscribe(EVENT_TRANSPORT_STATE_CHANGED, handle_transport_event, NULL);
   if (ret != ESP_OK) return ret;
   ESP_LOGI(TAG, "Tilt scene handler initialized");
   return ESP_OK;

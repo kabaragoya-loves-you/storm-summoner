@@ -50,9 +50,18 @@ typedef enum {
 // Flag threshold disabled sentinel (omitted from JSON when off)
 #define CONTINUOUS_FLAG_THRESHOLD_OFF 0xFF
 
+// Tilt-only start mode (mirrors LFO/RTG/S+H). Other continuous mappings ignore it.
+typedef enum {
+  CONTINUOUS_START_RUNNING = 0,  // Active when scene loads
+  CONTINUOUS_START_PAUSED,       // Inactive until a Tilt Start/Toggle/Hold action
+  CONTINUOUS_START_TRANSPORT     // Follow transport play/stop
+} continuous_start_mode_t;
+
 // Continuous input mapping configuration
 typedef struct {
   bool enabled;              // Whether this input is active
+  // Tilt-only: Running / Paused / Follow Transport. Default RUNNING.
+  continuous_start_mode_t start_mode;
   output_type_t output_type; // CC or Note output
   
   // CC output parameters
@@ -140,6 +149,9 @@ bool continuous_mapping_check_idle(continuous_mapping_t* mapping);
 
 // Create default continuous mapping
 continuous_mapping_t continuous_mapping_create(uint8_t cc_number);
+
+const char* continuous_start_mode_to_string(continuous_start_mode_t mode);
+continuous_start_mode_t continuous_start_mode_from_string(const char* str);
 
 typedef enum {
   CONTINUOUS_FLAG_RAISE_ABOVE = 0,

@@ -14,10 +14,9 @@ static const action_type_t hold_actions[] = {
   ACTION_NOTE,
   ACTION_PIANO_PEDAL,
   ACTION_INSPECT_SCENE,
-  // ACTION_LFO is intentionally NOT in this list. None of its variants are
-  // press/release pairs (START/STOP/TOGGLE/MODIFY are all press-only).
-  // Per-variant timing/repeat rules live in action_supports_timing_for /
-  // action_supports_repeat_for.
+  // ACTION_LFO is variant-aware: only HOLD is hold-like.
+  // START/STOP/TOGGLE/MODIFY are press-only. Per-variant timing/repeat
+  // rules live in action_supports_timing_for / action_supports_repeat_for.
   // ACTION_CLOCK is variant-aware: only HOLD is hold-like; BURST needs
   // press/release but is handled via fire-and-forget (Toggle only on load).
   // ACTION_CUT is variant-aware: only HOLD is hold-like.
@@ -48,6 +47,8 @@ bool action_requires_hold_for(const action_t* action) {
   if (action->type == ACTION_PARAM && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_RTG && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_SAMPLE_HOLD && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_TILT && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_LFO && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -55,10 +56,11 @@ bool action_requires_hold_for(const action_t* action) {
 // phase on hold duration. Excludes:
 //   - NOTE / SUSTAIN / SOSTENUTO -- the release IS the NoteOff / CC=0
 //     pair; suppressing it strands a note or pedal.
-//   - LFO variants / ACTION_CLOCK BURST -- not symmetric press/release pairs
-//     (start/stop/toggle/modify and one-shot burst all fire on press only).
-//   - ACTION_CUT / ACTION_UI / ACTION_PARAM / ACTION_RTG / ACTION_SAMPLE_HOLD
-//     HOLD -- release must always restore state; skipping release would strand it.
+//   - ACTION_CLOCK BURST and LFO START/STOP/TOGGLE/MODIFY -- not
+//     symmetric press/release pairs (press-only).
+//   - ACTION_LFO / ACTION_CUT / ACTION_UI / ACTION_PARAM / ACTION_RTG /
+//     ACTION_SAMPLE_HOLD HOLD -- release must always restore state;
+//     skipping release would strand it.
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
@@ -151,12 +153,22 @@ bool action_is_fire_and_forget_for(const action_t* action) {
     case ACTION_BOOMERANG:
     case ACTION_SNAPSHOT:
     case ACTION_RESTORE:
-    // ACTION_LFO -- all variants (START/STOP/TOGGLE/MODIFY) are press-only
-    // one-shots, so fire-and-forget at the category level. Rule 4 of the
-    // validator additionally rejects START/STOP/TOGGLE on ON_LOAD (LFOs
-    // auto-start from scene config), but MODIFY and ON_PLAY are fine.
-    case ACTION_LFO:
       return true;
+
+    // ACTION_LFO -- START/STOP/TOGGLE/MODIFY are press-only one-shots.
+    // HOLD needs a release pair. Rule 4 additionally rejects START/STOP/
+    // TOGGLE on ON_LOAD (LFOs auto-start from scene config); MODIFY and
+    // ON_PLAY are fine for the press-only variants.
+    case ACTION_LFO:
+      return action->variant != VARIANT_HOLD;
+
+    // ACTION_TILT -- START/STOP/TOGGLE are press-only; HOLD is not
+    // fire-and-forget (needs a release pair). Rule 4 rejects all tilt
+    // variants on ON_LOAD (Start Mode covers load-time behavior).
+    case ACTION_TILT:
+      return action->variant == VARIANT_START ||
+        action->variant == VARIANT_STOP ||
+        action->variant == VARIANT_TOGGLE;
 
     case ACTION_CLOCK:
       return action->variant == VARIANT_TOGGLE;
@@ -257,6 +269,12 @@ bool action_is_valid_for_trigger_for(const action_t* action,
     }
   }
 
+  // Rule 4b: ACTION_TILT rejected entirely on ON_LOAD. Start Mode on each
+  // axis covers load-time enablement; firing Start/Stop/Toggle here would
+  // race the scene sync that applies start_mode.
+  if (caps.fires_at_load_time && action->type == ACTION_TILT)
+    return false;
+
   // Rule 5: per-action input affordance requirements (touchwheel/param holds).
   return action_input_restriction_allows(action, trigger);
 }
@@ -281,6 +299,11 @@ static action_variant_t default_variant_for_type(action_type_t type) {
       // forget, and exempt from the LFO ON_LOAD carve-out in Rule 4). Other
       // variants would falsely fail the type-level probe on ON_LOAD.
       return VARIANT_MODIFY;
+    case ACTION_TILT:
+      // START is the most permissive live-input default. ON_LOAD rejects
+      // the whole family via Rule 4b regardless of variant, so the type
+      // picker simply hides Tilt there.
+      return VARIANT_START;
     case ACTION_CLOCK:
       return VARIANT_TOGGLE;
     case ACTION_CUT:
@@ -384,8 +407,14 @@ bool action_supports_timing_for(const action_t* action) {
     return true;
   }
   if (action->type == ACTION_LFO) {
-    // All LFO variants are press-only one-shots that schedule on a beat,
-    // including TOGGLE (flip on the scheduled beat, not the press beat).
+    // HOLD needs a release pair. START/STOP/TOGGLE/MODIFY schedule on a
+    // beat, including TOGGLE (flip on the scheduled beat, not the press).
+    if (action->variant == VARIANT_HOLD) return false;
+    return true;
+  }
+  if (action->type == ACTION_TILT) {
+    // HOLD needs a release pair; START/STOP/TOGGLE schedule like LFO.
+    if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
   if (action->type == ACTION_CLOCK) {
@@ -448,6 +477,11 @@ bool action_supports_repeat_for(const action_t* action) {
     // TOGGLE and MODIFY repeat musically; START/STOP are one-shot edges.
     return action->variant == VARIANT_TOGGLE ||
            action->variant == VARIANT_MODIFY;
+  }
+  if (action->type == ACTION_TILT) {
+    // TOGGLE repeats; START/STOP are one-shot edges; HOLD has nowhere to
+    // send repeated release events.
+    return action->variant == VARIANT_TOGGLE;
   }
   if (action->type == ACTION_CLOCK)
     return false;
@@ -517,6 +551,7 @@ bool action_supports_raise_flag(action_type_t type) {
     case ACTION_NOTE:
     case ACTION_RANDOMIZE:
     case ACTION_LFO:
+    case ACTION_TILT:
     case ACTION_PUNCH_IN:
     case ACTION_BOOMERANG:
     case ACTION_RESTORE:

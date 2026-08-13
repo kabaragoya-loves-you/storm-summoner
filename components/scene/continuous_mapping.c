@@ -4,8 +4,25 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <string.h>
 
 static const char* TAG = "continuous_mapping";
+
+const char* continuous_start_mode_to_string(continuous_start_mode_t mode) {
+  switch (mode) {
+    case CONTINUOUS_START_RUNNING: return "running";
+    case CONTINUOUS_START_PAUSED: return "paused";
+    case CONTINUOUS_START_TRANSPORT: return "transport";
+    default: return "running";
+  }
+}
+
+continuous_start_mode_t continuous_start_mode_from_string(const char* str) {
+  if (!str) return CONTINUOUS_START_RUNNING;
+  if (strcmp(str, "paused") == 0) return CONTINUOUS_START_PAUSED;
+  if (strcmp(str, "transport") == 0) return CONTINUOUS_START_TRANSPORT;
+  return CONTINUOUS_START_RUNNING;
+}
 
 uint8_t apply_polarity(uint8_t input, polarity_t polarity) {
   switch (polarity) {
@@ -113,6 +130,7 @@ bool continuous_mapping_check_idle(continuous_mapping_t* mapping) {
 continuous_mapping_t continuous_mapping_create(uint8_t cc_number) {
   continuous_mapping_t mapping = {
     .enabled = true,
+    .start_mode = CONTINUOUS_START_RUNNING,
     .output_type = OUTPUT_TYPE_CC,
     .cc_number = cc_number,
     .base_note = 60,           // Middle C

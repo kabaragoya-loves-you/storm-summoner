@@ -381,7 +381,7 @@ static void format_action_details_with_device(const action_t* action, const devi
         #undef LFO_DBG_TAG
       } else {
         snprintf(buf, buf_size, "%s %s",
-          action_variant_to_string(action->variant) /* Start/Stop/Toggle */, slot_name);
+          action_variant_to_string(action->variant) /* Start/Stop/Toggle/Hold */, slot_name);
         // Fall back if variant string is empty (shouldn't happen for the
         // consolidated family; defensive only).
         if (buf[0] == ' ') {

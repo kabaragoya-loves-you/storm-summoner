@@ -7,10 +7,32 @@
 #include "lfo.h"
 #include "rtg.h"
 #include "sample_hold.h"
+#include "tilt.h"
 #include "esp_log.h"
 #include "esp_random.h"
 
 static const char* TAG = "action_handlers_modulation";
+
+// Tilt Hold: prior runtime enable state captured on press, restored on release.
+static bool s_tilt_hold_prior[2];
+static bool s_tilt_hold_active[2];
+
+// Apply a Tilt action to one axis when the scene mapping is configured
+// (Mode != Disabled). Returns true if the axis was eligible.
+static bool tilt_axis_mapping_configured(const scene_t* scene, tilt_axis_t axis) {
+  if (!scene) return false;
+  const continuous_mapping_t* m =
+    (axis == TILT_AXIS_X) ? &scene->tilt_x : &scene->tilt_y;
+  return m->enabled;
+}
+
+static void tilt_apply_to_target(uint8_t target, const scene_t* scene,
+    void (*fn)(tilt_axis_t axis, bool arg), bool arg) {
+  if ((target == 1 || target == 3) && tilt_axis_mapping_configured(scene, TILT_AXIS_X))
+    fn(TILT_AXIS_X, arg);
+  if ((target == 2 || target == 3) && tilt_axis_mapping_configured(scene, TILT_AXIS_Y))
+    fn(TILT_AXIS_Y, arg);
+}
 
 static uint8_t lfo_modify_resolve_u8_rand(uint8_t v, uint8_t lo, uint8_t hi) {
   if (v != ACTION_LFO_RAND_U8) return v;
@@ -90,10 +112,10 @@ static int apply_engine_modify(const action_engine_modify_t* m, bool rtg) {
 // ============================================================================
 // Per-slot LFO helpers
 // ----------------------------------------------------------------------------
-// LFO_START / LFO_STOP / LFO_TOGGLE all branch on slot 1/2/3 with mirrored
-// behavior per slot. These helpers run the operation on one engine index
-// (0 = LFO1, 1 = LFO2) and reflect the new enabled state in the scene's
-// matching continuous_mapping (NULL skips the scene write).
+// LFO_START / LFO_STOP / LFO_TOGGLE / LFO_HOLD all branch on slot 1/2/3
+// with mirrored behavior per slot. These helpers run the operation on one
+// engine index (0 = LFO1, 1 = LFO2) and reflect the new enabled state in
+// the scene's matching continuous_mapping (NULL skips the scene write).
 // ============================================================================
 
 static void lfo_start_one(uint8_t lfo_index, continuous_mapping_t* scene_mapping) {
@@ -135,26 +157,40 @@ action_handle_result_t action_handlers_modulation_dispatch(
 
   switch (action->type) {
     case ACTION_LFO: {
-      if (!is_press) return ACTION_HANDLED;
       uint8_t slot = action->params.lfo.slot;
       scene_t* scene = scene_get_current();
       switch (action->variant) {
         case VARIANT_START:
+          if (!is_press) return ACTION_HANDLED;
           if (slot == 1 || slot == 3) lfo_start_one(0, scene ? &scene->lfo1 : NULL);
           if (slot == 2 || slot == 3) lfo_start_one(1, scene ? &scene->lfo2 : NULL);
           ESP_LOGI(TAG, "LFO Start: slot %d", slot);
           return ACTION_HANDLED;
         case VARIANT_STOP:
+          if (!is_press) return ACTION_HANDLED;
           if (slot == 1 || slot == 3) lfo_stop_one(0, scene ? &scene->lfo1 : NULL);
           if (slot == 2 || slot == 3) lfo_stop_one(1, scene ? &scene->lfo2 : NULL);
           ESP_LOGI(TAG, "LFO Stop: slot %d", slot);
           return ACTION_HANDLED;
         case VARIANT_TOGGLE:
+          if (!is_press) return ACTION_HANDLED;
           if (slot == 1 || slot == 3) lfo_toggle_one(0, scene ? &scene->lfo1 : NULL);
           if (slot == 2 || slot == 3) lfo_toggle_one(1, scene ? &scene->lfo2 : NULL);
           ESP_LOGI(TAG, "LFO Toggle: slot %d", slot);
           return ACTION_HANDLED;
+        case VARIANT_HOLD:
+          if (is_press) {
+            if (slot == 1 || slot == 3) lfo_start_one(0, scene ? &scene->lfo1 : NULL);
+            if (slot == 2 || slot == 3) lfo_start_one(1, scene ? &scene->lfo2 : NULL);
+            ESP_LOGD(TAG, "LFO Hold: press slot %d", slot);
+          } else {
+            if (slot == 1 || slot == 3) lfo_stop_one(0, scene ? &scene->lfo1 : NULL);
+            if (slot == 2 || slot == 3) lfo_stop_one(1, scene ? &scene->lfo2 : NULL);
+            ESP_LOGD(TAG, "LFO Hold: release slot %d", slot);
+          }
+          return ACTION_HANDLED;
         case VARIANT_MODIFY: {
+          if (!is_press) return ACTION_HANDLED;
           // Apply each non-sentinel override in place. Mirrors the SHAPE
           // action's "runtime mutation without phase reset" behavior, but
           // generalized to every LFO parameter.
@@ -238,6 +274,73 @@ action_handle_result_t action_handlers_modulation_dispatch(
         }
         default:
           ESP_LOGW(TAG, "Unknown LFO variant %d", (int)action->variant);
+          return ACTION_HANDLED;
+      }
+    }
+
+    case ACTION_TILT: {
+      uint8_t target = action->params.tilt.target;
+      if (target < 1 || target > 3) target = 3;
+      scene_t* scene = scene_get_current();
+
+      switch (action->variant) {
+        case VARIANT_START:
+          if (!is_press) return ACTION_HANDLED;
+          tilt_apply_to_target(target, scene, tilt_axis_set_enabled, true);
+          ESP_LOGI(TAG, "Tilt Start: target %u", (unsigned)target);
+          return ACTION_HANDLED;
+
+        case VARIANT_STOP:
+          if (!is_press) return ACTION_HANDLED;
+          tilt_apply_to_target(target, scene, tilt_axis_set_enabled, false);
+          ESP_LOGI(TAG, "Tilt Stop: target %u", (unsigned)target);
+          return ACTION_HANDLED;
+
+        case VARIANT_TOGGLE:
+          if (!is_press) return ACTION_HANDLED;
+          if ((target == 1 || target == 3) &&
+              tilt_axis_mapping_configured(scene, TILT_AXIS_X)) {
+            tilt_axis_set_enabled(TILT_AXIS_X, !tilt_axis_get_enabled(TILT_AXIS_X));
+          }
+          if ((target == 2 || target == 3) &&
+              tilt_axis_mapping_configured(scene, TILT_AXIS_Y)) {
+            tilt_axis_set_enabled(TILT_AXIS_Y, !tilt_axis_get_enabled(TILT_AXIS_Y));
+          }
+          ESP_LOGI(TAG, "Tilt Toggle: target %u", (unsigned)target);
+          return ACTION_HANDLED;
+
+        case VARIANT_HOLD:
+          if (is_press) {
+            if ((target == 1 || target == 3) &&
+                tilt_axis_mapping_configured(scene, TILT_AXIS_X)) {
+              s_tilt_hold_prior[TILT_AXIS_X] = tilt_axis_get_enabled(TILT_AXIS_X);
+              s_tilt_hold_active[TILT_AXIS_X] = true;
+              tilt_axis_set_enabled(TILT_AXIS_X, true);
+            }
+            if ((target == 2 || target == 3) &&
+                tilt_axis_mapping_configured(scene, TILT_AXIS_Y)) {
+              s_tilt_hold_prior[TILT_AXIS_Y] = tilt_axis_get_enabled(TILT_AXIS_Y);
+              s_tilt_hold_active[TILT_AXIS_Y] = true;
+              tilt_axis_set_enabled(TILT_AXIS_Y, true);
+            }
+            ESP_LOGI(TAG, "Tilt Hold: press target %u", (unsigned)target);
+          } else {
+            if (s_tilt_hold_active[TILT_AXIS_X] &&
+                (target == 1 || target == 3)) {
+              tilt_axis_set_enabled(TILT_AXIS_X, s_tilt_hold_prior[TILT_AXIS_X]);
+              s_tilt_hold_active[TILT_AXIS_X] = false;
+            }
+            if (s_tilt_hold_active[TILT_AXIS_Y] &&
+                (target == 2 || target == 3)) {
+              tilt_axis_set_enabled(TILT_AXIS_Y, s_tilt_hold_prior[TILT_AXIS_Y]);
+              s_tilt_hold_active[TILT_AXIS_Y] = false;
+            }
+            ESP_LOGI(TAG, "Tilt Hold: release target %u", (unsigned)target);
+          }
+          return ACTION_HANDLED;
+
+        default:
+          ESP_LOGW(TAG, "Unknown Tilt variant %d", (int)action->variant);
           return ACTION_HANDLED;
       }
     }

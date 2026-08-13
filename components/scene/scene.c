@@ -24,6 +24,7 @@
 #include "rtg.h"
 #include "tilt.h"
 #include "sample_hold.h"
+#include "transport.h"
 #include "version.h"
 #include "scene_inspect.h"
 #include "cc_state.h"
@@ -2261,8 +2262,7 @@ esp_err_t scene_init(void) {
   // polling if this scene has tilt enabled. Without this, the persisted
   // scene->tilt_x.enabled flag is loaded into RAM but never reaches the
   // hardware sampling layer until the user manually toggles the axis.
-  tilt_axis_set_enabled(TILT_AXIS_X, initial_scene->tilt_x.enabled);
-  tilt_axis_set_enabled(TILT_AXIS_Y, initial_scene->tilt_y.enabled);
+  scene_apply_tilt_start_modes_for(initial_scene);
 
   // Setup touchwheel instance for non-buttons modes
   scene_setup_touchwheel_for_mode(initial_scene);
@@ -2498,8 +2498,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // vs performance mode) so the unified LIS3DHTR sampling task picks up the
   // scene's tilt configuration. No MIDI is emitted while local output is
   // silenced (midi_tilt_scene_handler bails on !midi_local_output_is_enabled).
-  tilt_axis_set_enabled(TILT_AXIS_X, new_scene->tilt_x.enabled);
-  tilt_axis_set_enabled(TILT_AXIS_Y, new_scene->tilt_y.enabled);
+  scene_apply_tilt_start_modes_for(new_scene);
 
   // Switch UI module for this scene (only in performance mode)
   scene_apply_ui_module_for_performance(new_scene->ui_module);
@@ -4669,6 +4668,35 @@ velocity_mode_t scene_get_tilt_y_velocity_mode(uint8_t scene_index) {
   return scene ? scene->tilt_y_velocity_mode : VELOCITY_MODE_FIXED;
 }
 
+static void tilt_apply_axis_start_mode(tilt_axis_t axis, const continuous_mapping_t* m) {
+  if (!m || !m->enabled) {
+    tilt_axis_set_enabled(axis, false);
+    return;
+  }
+  switch (m->start_mode) {
+    case CONTINUOUS_START_PAUSED:
+      tilt_axis_set_enabled(axis, false);
+      break;
+    case CONTINUOUS_START_TRANSPORT:
+      tilt_axis_set_enabled(axis, transport_is_playing());
+      break;
+    case CONTINUOUS_START_RUNNING:
+    default:
+      tilt_axis_set_enabled(axis, true);
+      break;
+  }
+}
+
+void scene_apply_tilt_start_modes_for(const scene_t* scene) {
+  if (!scene) return;
+  tilt_apply_axis_start_mode(TILT_AXIS_X, &scene->tilt_x);
+  tilt_apply_axis_start_mode(TILT_AXIS_Y, &scene->tilt_y);
+}
+
+void scene_apply_tilt_start_modes(void) {
+  scene_apply_tilt_start_modes_for(scene_get_current());
+}
+
 esp_err_t scene_set_tilt_x_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   if (pct > 100) pct = 100;
@@ -5148,6 +5176,7 @@ static const char* action_type_json_names[] = {
   [ACTION_PIANO_PEDAL] = "piano_pedal",
   [ACTION_TOUCHWHEEL] = "touchwheel",
   [ACTION_LFO] = "lfo",
+  [ACTION_TILT] = "tilt",
   [ACTION_CLOCK] = "clock",
   [ACTION_CUT] = "cut",
   [ACTION_UI] = "ui",
@@ -5511,6 +5540,11 @@ static cJSON* action_to_json(const action_t* action) {
       if (action->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS)
         cJSON_AddNumberToObject(obj, "manual_steps", action->params.lfo.manual_steps);
     }
+  } else if (action->type == ACTION_TILT) {
+    const char* target_str =
+      (action->params.tilt.target == 1) ? "x" :
+      (action->params.tilt.target == 2) ? "y" : "both";
+    cJSON_AddStringToObject(obj, "target", target_str);
   } else if (action->type == ACTION_RTG && action->variant == VARIANT_MODIFY) {
     const action_engine_modify_t* m = &action->params.rtg_modify;
     if (m->rate_mode != ACTION_LFO_ORIG_U8)
@@ -5821,6 +5855,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_TRANSPORT)  action.variant = VARIANT_PLAY;
     if (action.type == ACTION_TOUCHWHEEL) action.variant = VARIANT_HOLD;
     if (action.type == ACTION_LFO)        action.variant = VARIANT_START;
+    if (action.type == ACTION_TILT)       action.variant = VARIANT_START;
     if (action.type == ACTION_CLOCK)      action.variant = VARIANT_TOGGLE;
     if (action.type == ACTION_CUT)        action.variant = VARIANT_TOGGLE;
     if (action.type == ACTION_UI)         action.variant = VARIANT_SET;
@@ -6157,6 +6192,21 @@ static action_t json_to_action(cJSON* obj) {
         cJSON* first = cJSON_GetArrayItem(shapes, 0);
         if (first) action.params.lfo.waveform = (uint8_t)first->valueint;
       }
+    }
+  }
+
+  // Parse ACTION_TILT actions
+  if (action.type == ACTION_TILT) {
+    action.params.tilt.target = 3;  // default Both
+    cJSON* target = cJSON_GetObjectItem(obj, "target");
+    if (target && cJSON_IsString(target)) {
+      const char* t = target->valuestring;
+      if (strcmp(t, "x") == 0) action.params.tilt.target = 1;
+      else if (strcmp(t, "y") == 0) action.params.tilt.target = 2;
+      else action.params.tilt.target = 3;
+    } else if (target && cJSON_IsNumber(target)) {
+      uint8_t n = (uint8_t)target->valueint;
+      action.params.tilt.target = (n >= 1 && n <= 3) ? n : 3;
     }
   }
 
@@ -6769,6 +6819,8 @@ static cJSON* continuous_mapping_to_json(const continuous_mapping_t* mapping) {
   cJSON* obj = cJSON_CreateObject();
   
   cJSON_AddBoolToObject(obj, "enabled", mapping->enabled);
+  cJSON_AddStringToObject(obj, "start_mode",
+    continuous_start_mode_to_string(mapping->start_mode));
   
   // Serialize output type
   const char* output_type_str;
@@ -6844,6 +6896,20 @@ static void json_to_continuous_mapping(cJSON* obj, continuous_mapping_t* mapping
   
   cJSON* enabled = cJSON_GetObjectItem(obj, "enabled");
   if (enabled) mapping->enabled = cJSON_IsTrue(enabled);
+
+  // Prefer start_mode (running/paused/transport). Legacy start_enabled bool
+  // maps true->running, false->paused. Absent keys default to running.
+  cJSON* start_mode = cJSON_GetObjectItem(obj, "start_mode");
+  if (start_mode && cJSON_IsString(start_mode)) {
+    mapping->start_mode = continuous_start_mode_from_string(start_mode->valuestring);
+  } else {
+    cJSON* start_enabled = cJSON_GetObjectItem(obj, "start_enabled");
+    if (start_enabled)
+      mapping->start_mode = cJSON_IsTrue(start_enabled)
+        ? CONTINUOUS_START_RUNNING : CONTINUOUS_START_PAUSED;
+    else
+      mapping->start_mode = CONTINUOUS_START_RUNNING;
+  }
   
   cJSON* output_type = cJSON_GetObjectItem(obj, "output_type");
   if (output_type && cJSON_IsString(output_type)) {
@@ -8788,8 +8854,7 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
     s_needs_deferred_init = true;
   }
 
-  tilt_axis_set_enabled(TILT_AXIS_X, scene->tilt_x.enabled);
-  tilt_axis_set_enabled(TILT_AXIS_Y, scene->tilt_y.enabled);
+  scene_apply_tilt_start_modes_for(scene);
 
   scene_apply_ui_module_for_performance(scene->ui_module);
 
