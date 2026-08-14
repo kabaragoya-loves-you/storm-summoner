@@ -57,17 +57,22 @@ static const char* s_cal_step_instructions[] = {
 // Stability detection settings
 #define CAL_SAMPLE_INTERVAL_MS  50
 #define CAL_STABILITY_WINDOW    20
-#define CAL_STABILITY_THRESHOLD 50   // Proximity has more noise
+#define CAL_STABILITY_THRESHOLD 50   // Absolute spread floor (counts)
+#define CAL_STABILITY_REL       0.05f  // Also allow 5% of mean (NEAR is much noisier)
 #define CAL_STABLE_DURATION     20
+#define CAL_WAIT_LOG_TICKS      40   // 2s at 50ms
 
 // Calibration state
 static calibration_step_t s_cal_step = CAL_STEP_FAR;
-static uint16_t s_cal_min = UINT16_MAX;
-static uint16_t s_cal_max = 0;
+static uint16_t s_cal_idle_hi = 0;
+static uint16_t s_cal_far_spread = 0;
+static uint16_t s_cal_near_lo = UINT16_MAX;
+static uint16_t s_cal_near_spread = 0;
 static float s_cal_samples[CAL_STABILITY_WINDOW];
 static uint8_t s_cal_sample_index = 0;
 static uint8_t s_cal_sample_count = 0;
 static uint8_t s_cal_stable_count = 0;
+static uint8_t s_cal_wait_log = 0;
 static lv_timer_t* s_cal_timer = NULL;
 static lv_obj_t* s_cal_instruction_label = NULL;
 static lv_obj_t* s_cal_value_label = NULL;
@@ -118,46 +123,81 @@ static void calibration_cleanup(void) {
   s_cal_done_btn = NULL;
 }
 
-static bool is_value_stable(void) {
+static bool is_value_stable(float *out_mean, float *out_spread) {
   if (s_cal_sample_count < CAL_STABILITY_WINDOW) return false;
-  
-  // Calculate mean
+
   float sum = 0;
+  float smin = s_cal_samples[0];
+  float smax = s_cal_samples[0];
   for (int i = 0; i < CAL_STABILITY_WINDOW; i++) {
-    sum += s_cal_samples[i];
+    float v = s_cal_samples[i];
+    sum += v;
+    if (v < smin) smin = v;
+    if (v > smax) smax = v;
   }
   float mean = sum / CAL_STABILITY_WINDOW;
-  
-  // Calculate variance
-  float variance = 0;
-  for (int i = 0; i < CAL_STABILITY_WINDOW; i++) {
-    float diff = s_cal_samples[i] - mean;
-    variance += diff * diff;
+  float spread = smax - smin;
+  float limit = (float)CAL_STABILITY_THRESHOLD;
+  float rel = mean * CAL_STABILITY_REL;
+  if (rel > limit) limit = rel;
+
+  if (out_mean) *out_mean = mean;
+  if (out_spread) *out_spread = spread;
+  return spread < limit;
+}
+
+// NEAR holds must actually be closer than idle; FAR_2 must be back at idle.
+// Without this, a loosened NEAR threshold would let FAR_2 lock while still touching.
+static bool step_has_expected_range(float mean) {
+  switch (s_cal_step) {
+    case CAL_STEP_NEAR:
+    case CAL_STEP_NEAR_2: {
+      uint16_t sep = (s_cal_idle_hi > 50) ? s_cal_idle_hi : 50;
+      return mean >= (float)s_cal_idle_hi + (float)sep;
+    }
+    case CAL_STEP_FAR_2:
+      if (s_cal_near_lo != UINT16_MAX && s_cal_near_lo > 0)
+        return mean <= (float)s_cal_near_lo * 0.25f;
+      return mean <= (float)s_cal_idle_hi * 4.0f + 50.0f;
+    default:
+      return true;
   }
-  variance /= CAL_STABILITY_WINDOW;
-  
-  return variance < (CAL_STABILITY_THRESHOLD * CAL_STABILITY_THRESHOLD);
+}
+
+static void cal_window_stats(uint16_t *out_min, uint16_t *out_max, float *out_mean) {
+  float sum = 0;
+  uint16_t wmin = UINT16_MAX;
+  uint16_t wmax = 0;
+  for (int i = 0; i < CAL_STABILITY_WINDOW; i++) {
+    uint16_t v = (uint16_t)s_cal_samples[i];
+    if (v < wmin) wmin = v;
+    if (v > wmax) wmax = v;
+    sum += s_cal_samples[i];
+  }
+  *out_min = wmin;
+  *out_max = wmax;
+  if (out_mean) *out_mean = sum / CAL_STABILITY_WINDOW;
 }
 
 static void advance_calibration_step(void) {
-  // Get stable value (average of samples)
-  float sum = 0;
-  for (int i = 0; i < CAL_STABILITY_WINDOW; i++) {
-    sum += s_cal_samples[i];
-  }
-  uint16_t stable_value = (uint16_t)(sum / CAL_STABILITY_WINDOW);
-  
-  ESP_LOGI(TAG, "Calibration step %d complete, value=%u", s_cal_step, stable_value);
-  
-  // Update min/max based on step (FAR = low value, NEAR = high value)
+  uint16_t wmin, wmax;
+  float mean;
+  cal_window_stats(&wmin, &wmax, &mean);
+  uint16_t spread = wmax - wmin;
+
+  ESP_LOGI(TAG, "Calibration step %d complete, mean=%.1f min=%u max=%u spread=%u",
+    s_cal_step, mean, (unsigned)wmin, (unsigned)wmax, (unsigned)spread);
+
   if (s_cal_step == CAL_STEP_FAR || s_cal_step == CAL_STEP_FAR_2) {
-    if (stable_value < s_cal_min) {
-      s_cal_min = stable_value;
-    }
+    if (wmax > s_cal_idle_hi)
+      s_cal_idle_hi = wmax;
+    if (spread > s_cal_far_spread)
+      s_cal_far_spread = spread;
   } else if (s_cal_step == CAL_STEP_NEAR || s_cal_step == CAL_STEP_NEAR_2) {
-    if (stable_value > s_cal_max) {
-      s_cal_max = stable_value;
-    }
+    if (wmin < s_cal_near_lo)
+      s_cal_near_lo = wmin;
+    if (spread > s_cal_near_spread)
+      s_cal_near_spread = spread;
   }
   
   // Advance to next step
@@ -165,6 +205,7 @@ static void advance_calibration_step(void) {
   s_cal_stable_count = 0;
   s_cal_sample_count = 0;
   s_cal_sample_index = 0;
+  s_cal_wait_log = 0;
   
   // Update instruction label
   if (s_cal_instruction_label) {
@@ -179,21 +220,23 @@ static void advance_calibration_step(void) {
       s_cal_timer = NULL;
     }
     
-    uint16_t swing = s_cal_max - s_cal_min;
-    
-    if (s_cal_min < s_cal_max && swing > 50) {
-      proximity_set_calibration(s_cal_min, s_cal_max);
-      ESP_LOGI(TAG, "Calibration saved: min=%u, max=%u (swing=%u)",
-        s_cal_min, s_cal_max, swing);
-      
-      // Update value label to show result
+    uint16_t guarded_min, guarded_max;
+    if (proximity_compute_guarded_range(s_cal_idle_hi, s_cal_far_spread,
+        s_cal_near_lo, s_cal_near_spread, &guarded_min, &guarded_max)) {
+      proximity_set_calibration(guarded_min, guarded_max);
+      ESP_LOGI(TAG, "Calibration saved: min=%u, max=%u (idle_hi=%u far_spread=%u near_lo=%u near_spread=%u)",
+        (unsigned)guarded_min, (unsigned)guarded_max,
+        (unsigned)s_cal_idle_hi, (unsigned)s_cal_far_spread,
+        (unsigned)s_cal_near_lo, (unsigned)s_cal_near_spread);
+
       if (s_cal_value_label) {
         static char result[64];
-        snprintf(result, sizeof(result), "Range: %u - %u", s_cal_min, s_cal_max);
+        snprintf(result, sizeof(result), "Range: %u - %u", guarded_min, guarded_max);
         lv_label_set_text(s_cal_value_label, result);
       }
     } else {
-      ESP_LOGW(TAG, "Calibration failed: insufficient range (swing=%u)", swing);
+      ESP_LOGW(TAG, "Calibration failed: insufficient range (idle_hi=%u near_lo=%u)",
+        (unsigned)s_cal_idle_hi, (unsigned)s_cal_near_lo);
       if (s_cal_value_label) {
         lv_label_set_text(s_cal_value_label, "Insufficient range!");
       }
@@ -207,29 +250,48 @@ static void calibration_timer_cb(lv_timer_t* timer) {
   if (s_cal_step == CAL_STEP_COMPLETE) return;
   
   uint16_t current = get_ps();
-  
+
   // Add to ring buffer
   s_cal_samples[s_cal_sample_index] = (float)current;
   s_cal_sample_index = (s_cal_sample_index + 1) % CAL_STABILITY_WINDOW;
   if (s_cal_sample_count < CAL_STABILITY_WINDOW) {
     s_cal_sample_count++;
   }
-  
-  // Update value display
-  if (s_cal_value_label) {
-    static char buf[32];
-    snprintf(buf, sizeof(buf), "Raw: %u", current);
-    lv_label_set_text(s_cal_value_label, buf);
-  }
-  
-  // Check stability
-  if (is_value_stable()) {
+
+  float mean = 0;
+  float spread = 0;
+  bool stable = is_value_stable(&mean, &spread);
+  bool range_ok = step_has_expected_range(mean);
+
+  if (stable && range_ok) {
     s_cal_stable_count++;
     if (s_cal_stable_count >= CAL_STABLE_DURATION) {
       advance_calibration_step();
+      return;
     }
   } else {
     s_cal_stable_count = 0;
+  }
+
+  if (s_cal_value_label) {
+    static char buf[32];
+    if (s_cal_stable_count > 0) {
+      snprintf(buf, sizeof(buf), "Raw: %u  %u/%u", current,
+        (unsigned)s_cal_stable_count, (unsigned)CAL_STABLE_DURATION);
+    } else {
+      snprintf(buf, sizeof(buf), "Raw: %u", current);
+    }
+    lv_label_set_text(s_cal_value_label, buf);
+  }
+
+  s_cal_wait_log++;
+  if (s_cal_wait_log >= CAL_WAIT_LOG_TICKS) {
+    s_cal_wait_log = 0;
+    if (s_cal_stable_count < CAL_STABLE_DURATION) {
+      ESP_LOGI(TAG, "Cal waiting step=%d raw=%u mean=%.1f spread=%.1f stable=%d range_ok=%d",
+        s_cal_step, (unsigned)current, mean, spread,
+        stable ? 1 : 0, range_ok ? 1 : 0);
+    }
   }
 }
 
@@ -252,11 +314,14 @@ static lv_obj_t* calibration_page_create(void) {
   
   // Initialize calibration state
   s_cal_step = CAL_STEP_FAR;
-  s_cal_min = UINT16_MAX;
-  s_cal_max = 0;
+  s_cal_idle_hi = 0;
+  s_cal_far_spread = 0;
+  s_cal_near_lo = UINT16_MAX;
+  s_cal_near_spread = 0;
   s_cal_sample_count = 0;
   s_cal_sample_index = 0;
   s_cal_stable_count = 0;
+  s_cal_wait_log = 0;
   
   // Create screen
   lv_obj_t* screen = lv_obj_create(NULL);

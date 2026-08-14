@@ -64,8 +64,12 @@
 #define NVS_KEY_NOTE_SILENCE "prox_note_sil"
 #define NVS_KEY_SUNLIGHT_CANCEL "prox_sc_en"
 #define NVS_KEY_PS_GAMMA "prox_gamma"
+#define NVS_KEY_PROX_CAL_V2 "prox_cal_v2"
 // After inverse-square distance linearization, 100 → gamma 1.00 (identity)
 #define DEFAULT_PS_GAMMA 100
+#define PROX_CAL_FLOOR_MIN_GUARD 3   // Minimum raw counts above highest idle
+#define PROX_CAL_MIN_SWING 50        // Guarded range must exceed this
+#define PROX_LEGACY_FLOOR_GUARD 4    // Runtime bump for pre-guard calibrations
 // Theremin settings now come from scene->proximity mapping (base_note, note_range, velocity)
 
 static TaskHandle_t sensor_task_handle = NULL;
@@ -189,6 +193,17 @@ void sensor_init(bool enable_logging) {
     app_settings_save_u32(NVS_KEY_PROXIMITY_MIN, proximity_min);
     app_settings_save_u32(NVS_KEY_PROXIMITY_MAX, proximity_max);
     ESP_LOGI(TAG, "Migrated proximity cal to %u-%u", (unsigned)proximity_min, (unsigned)proximity_max);
+  }
+
+  // Pre-guard calibrations sit idle on the 0/1 MIDI boundary. Bump the floor
+  // at runtime (not persisted) until the user recalibrates.
+  uint8_t cal_v2 = 0;
+  if (app_settings_load_u8(NVS_KEY_PROX_CAL_V2, &cal_v2) != ESP_OK || cal_v2 == 0) {
+    uint16_t old_min = proximity_min;
+    if (proximity_min <= UINT16_MAX - PROX_LEGACY_FLOOR_GUARD)
+      proximity_min += PROX_LEGACY_FLOOR_GUARD;
+    ESP_LOGW(TAG, "Pre-guard proximity calibration (min %u -> %u). Recalibrate to measure the noise floor.",
+      (unsigned)old_min, (unsigned)proximity_min);
   }
 
   err = app_settings_load_u32(NVS_KEY_PROXIMITY_DEADZONE, &stored_val);
@@ -399,11 +414,67 @@ void proximity_set_calibration(uint16_t min_value, uint16_t max_value) {
   proximity_max = max_value;
   app_settings_save_u32(NVS_KEY_PROXIMITY_MIN, min_value);
   app_settings_save_u32(NVS_KEY_PROXIMITY_MAX, max_value);
+  app_settings_save_u8(NVS_KEY_PROX_CAL_V2, 1);
 }
 
 void proximity_get_calibration(uint16_t *min_value, uint16_t *max_value) {
   if (min_value) *min_value = proximity_min;
   if (max_value) *max_value = proximity_max;
+}
+
+bool proximity_compute_guarded_range(uint16_t highest_idle, uint16_t far_spread,
+                                     uint16_t lowest_near, uint16_t near_spread,
+                                     uint16_t *out_min, uint16_t *out_max) {
+  if (lowest_near <= highest_idle) {
+    ESP_LOGW(TAG, "Cal guard rejected: near %u <= idle %u",
+      (unsigned)lowest_near, (unsigned)highest_idle);
+    return false;
+  }
+
+  uint32_t floor_guard = (uint32_t)far_spread * 2;
+  if (floor_guard < PROX_CAL_FLOOR_MIN_GUARD)
+    floor_guard = PROX_CAL_FLOOR_MIN_GUARD;
+
+  if ((uint32_t)highest_idle + floor_guard > UINT16_MAX) {
+    ESP_LOGW(TAG, "Cal guard rejected: floor overflow (idle %u + guard %u)",
+      (unsigned)highest_idle, (unsigned)floor_guard);
+    return false;
+  }
+  uint16_t guarded_min = (uint16_t)(highest_idle + floor_guard);
+
+  uint16_t raw_swing = lowest_near - highest_idle;
+  uint32_t ceil_guard = near_spread;
+  uint32_t pct_margin = (uint32_t)raw_swing / 100;
+  if (pct_margin > ceil_guard)
+    ceil_guard = pct_margin;
+  if (ceil_guard == 0)
+    ceil_guard = 1;
+
+  if ((uint32_t)lowest_near <= ceil_guard) {
+    ESP_LOGW(TAG, "Cal guard rejected: ceiling underflow (near %u - guard %u)",
+      (unsigned)lowest_near, (unsigned)ceil_guard);
+    return false;
+  }
+  uint16_t guarded_max = (uint16_t)(lowest_near - ceil_guard);
+
+  if (guarded_min >= guarded_max ||
+      (uint16_t)(guarded_max - guarded_min) <= PROX_CAL_MIN_SWING) {
+    ESP_LOGW(TAG, "Cal guard rejected: guarded range %u-%u (swing %u)",
+      (unsigned)guarded_min, (unsigned)guarded_max,
+      guarded_max > guarded_min ? (unsigned)(guarded_max - guarded_min) : 0);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Cal guard: idle_hi=%u far_spread=%u floor_guard=%u -> min=%u",
+    (unsigned)highest_idle, (unsigned)far_spread, (unsigned)floor_guard,
+    (unsigned)guarded_min);
+  ESP_LOGI(TAG, "Cal guard: near_lo=%u near_spread=%u ceil_guard=%u -> max=%u",
+    (unsigned)lowest_near, (unsigned)near_spread, (unsigned)ceil_guard,
+    (unsigned)guarded_max);
+
+  if (out_min) *out_min = guarded_min;
+  if (out_max) *out_max = guarded_max;
+  return true;
 }
 
 void proximity_set_deadzone(uint8_t deadzone) {
@@ -488,35 +559,47 @@ esp_err_t proximity_auto_calibrate(uint32_t duration_ms) {
   uint16_t max_reading = samples[max_index];
   uint16_t absolute_min = samples[0];
   uint16_t absolute_max = samples[sample_count - 1];
-  
+
+  // Treat the lowest/highest remaining clusters as FAR/NEAR hold windows
+  uint32_t remaining = max_index - min_index + 1;
+  uint32_t cluster = 20;
+  if (cluster > remaining / 4) cluster = remaining / 4;
+  if (cluster < 2) cluster = 2;
+  if (cluster > remaining) cluster = remaining;
+
+  uint16_t idle_lo = samples[min_index];
+  uint16_t idle_hi = samples[min_index + cluster - 1];
+  uint16_t far_spread = idle_hi - idle_lo;
+  uint32_t idle_sum = 0;
+  for (uint32_t i = 0; i < cluster; i++)
+    idle_sum += samples[min_index + i];
+
+  uint16_t near_lo = samples[max_index - cluster + 1];
+  uint16_t near_hi = samples[max_index];
+  uint16_t near_spread = near_hi - near_lo;
+
   free(samples);
-  
-  // Check if we got a valid swing
-  uint16_t swing = max_reading - min_reading;
-  if (swing < 10) {
-    ESP_LOGW(TAG, "Insufficient swing detected (%u counts). Calibration may be inaccurate.", (unsigned)swing);
-  }
-  
-  // Apply 1% margin on each extreme for headroom
-  float margin = swing * 0.01f;
-  uint16_t final_min = min_reading + (uint16_t)margin;
-  uint16_t final_max = max_reading - (uint16_t)margin;
-  
-  // Ensure min < max after applying margins
-  if (final_min >= final_max) {
-    ESP_LOGE(TAG, "Calibration failed: min >= max after applying margins");
+
+  ESP_LOGI(TAG, "Calibration complete: %u samples", (unsigned)sample_count);
+  ESP_LOGI(TAG, "  Absolute range: %u - %u", (unsigned)absolute_min, (unsigned)absolute_max);
+  ESP_LOGI(TAG, "  Trimmed range:  %u - %u (discarded %u extreme samples)",
+    (unsigned)min_reading, (unsigned)max_reading, (unsigned)(trim_count * 2));
+  ESP_LOGI(TAG, "  Idle cluster:   mean=%.1f min=%u max=%u spread=%u (n=%u)",
+    (float)idle_sum / (float)cluster, (unsigned)idle_lo, (unsigned)idle_hi,
+    (unsigned)far_spread, (unsigned)cluster);
+  ESP_LOGI(TAG, "  Near cluster:   min=%u max=%u spread=%u (n=%u)",
+    (unsigned)near_lo, (unsigned)near_hi, (unsigned)near_spread, (unsigned)cluster);
+
+  uint16_t final_min, final_max;
+  if (!proximity_compute_guarded_range(idle_hi, far_spread, near_lo, near_spread,
+      &final_min, &final_max)) {
+    ESP_LOGE(TAG, "Calibration failed: guarded range unusable");
     return ESP_FAIL;
   }
-  
-  ESP_LOGI(TAG, "Calibration complete: %u samples", (unsigned)sample_count);
-  ESP_LOGI(TAG, "  Absolute range:   %u - %u", (unsigned)absolute_min, (unsigned)absolute_max);
-  ESP_LOGI(TAG, "  Trimmed range:    %u - %u (%u counts, discarded %u extreme samples)", 
-    (unsigned)min_reading, (unsigned)max_reading, (unsigned)swing, trim_count * 2);
-  ESP_LOGI(TAG, "  Final range:      %u - %u (1%% margins applied)", (unsigned)final_min, (unsigned)final_max);
-  
-  // Store calibration
+
+  ESP_LOGI(TAG, "  Final range:    %u - %u", (unsigned)final_min, (unsigned)final_max);
   proximity_set_calibration(final_min, final_max);
-  
+
   return ESP_OK;
 }
 

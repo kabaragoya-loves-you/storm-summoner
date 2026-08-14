@@ -454,7 +454,7 @@
             {"value": 9, "label": "9"},
             {"value": 10, "label": "10"}
           ],
-          "default": 0
+          "default": 1
         },
         {
           "id": "proximity.ir_rejection",
@@ -491,7 +491,7 @@
             {"value": 95, "label": "95 (0.96)"},
             {"value": 100, "label": "100 (1.00)"}
           ],
-          "default": 0
+          "default": 100
         }
       ]
     },

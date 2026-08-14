@@ -69,6 +69,12 @@ void set_ps_rate_limit(uint32_t rate);
 // Calibration functions
 void proximity_set_calibration(uint16_t min_value, uint16_t max_value);
 void proximity_get_calibration(uint16_t *min_value, uint16_t *max_value);
+// Derive a noise-guarded [min, max] from FAR/NEAR hold statistics.
+// highest_idle / far_spread from FAR holds; lowest_near / near_spread from NEAR holds.
+// Returns false if the guarded range is unusable.
+bool proximity_compute_guarded_range(uint16_t highest_idle, uint16_t far_spread,
+                                     uint16_t lowest_near, uint16_t near_spread,
+                                     uint16_t *out_min, uint16_t *out_max);
 esp_err_t proximity_auto_calibrate(uint32_t duration_ms);
 void proximity_set_deadzone(uint8_t deadzone);
 uint8_t proximity_get_deadzone(void);
