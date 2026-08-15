@@ -17,8 +17,10 @@
 
 // Forward declarations from other modules
 extern device_def_t *assets_parse_device_file(const char *filepath, const char *slug);
-extern device_def_t *load_device_cache(const char *cache_path, const char *slug);
-extern esp_err_t generate_device_cache(const device_def_t *device, const char *cache_path);
+extern device_def_t *load_device_cache(const char *cache_path, const char *slug,
+  const uint8_t *expected_sha256);
+extern esp_err_t generate_device_cache(const device_def_t *device, const char *cache_path,
+  const uint8_t *json_sha256);
 
 // Global manifest
 static manifest_t g_manifest = {0};
@@ -48,6 +50,25 @@ static bool variant_constraint_matches(uint8_t op, uint16_t gating_value, uint16
 // Forward decl: vendor cache lives at the bottom of the file but
 // assets_manager_reload_manifest() needs to invalidate it.
 static bool s_vendors_cached;
+
+// Decode a 64-char hex string into 32 bytes. Returns false on bad input.
+static bool hex_to_sha256(const char *hex, uint8_t out[32]) {
+  if (!hex || strlen(hex) != 64) return false;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
+    out[i] = (uint8_t)byte;
+  }
+  return true;
+}
+
+// True when the sha256 field carries a real digest (all-zero = unknown).
+static bool sha256_is_set(const uint8_t sha[32]) {
+  for (int i = 0; i < 32; i++) {
+    if (sha[i]) return true;
+  }
+  return false;
+}
 
 bool assets_userdata_available(void) {
   return g_userdata_available;
@@ -137,6 +158,12 @@ static esp_err_t parse_manifest_into(const char *json_str, manifest_t *out, bool
     item = cJSON_GetObjectItem(dev_item, "size");
     if (item && cJSON_IsNumber(item))
       dev->size = item->valueint;
+
+    // Source-JSON digest: used to invalidate the parsed-device cache when
+    // the JSON content changes without a slug/version change.
+    item = cJSON_GetObjectItem(dev_item, "sha256");
+    if (item && cJSON_IsString(item))
+      hex_to_sha256(item->valuestring, dev->sha256);
 
     item = cJSON_GetObjectItem(dev_item, "ccCount");
     if (item && cJSON_IsNumber(item) && item->valueint >= 0)
@@ -490,7 +517,32 @@ static manifest_device_t *find_device_in_manifest(const char *slug) {
     if (strcmp(g_manifest.devices[i].slug, slug) == 0)
       return &g_manifest.devices[i];
   }
-  return NULL;
+
+  // Version-agnostic fallback: persisted slugs (NVS pedal, per-scene device
+  // overrides) are pinned to the implementationVersion current at save time.
+  // When an assets update bumps the version, the exact slug disappears from
+  // the manifest; resolve on the base slug (before '@') and prefer the
+  // highest version rather than failing outright.
+  const char *at = strchr(slug, '@');
+  size_t base_len = at ? (size_t)(at - slug) : strlen(slug);
+  if (base_len == 0) return NULL;
+
+  manifest_device_t *best = NULL;
+  long best_ver = -1;
+  for (uint32_t i = 0; i < g_manifest.device_count; i++) {
+    const char *cand = g_manifest.devices[i].slug;
+    const char *cand_at = strchr(cand, '@');
+    size_t cand_len = cand_at ? (size_t)(cand_at - cand) : strlen(cand);
+    if (cand_len != base_len || strncmp(cand, slug, base_len) != 0) continue;
+    long ver = cand_at ? strtol(cand_at + 1, NULL, 10) : 0;
+    if (ver > best_ver) {
+      best_ver = ver;
+      best = &g_manifest.devices[i];
+    }
+  }
+  if (best)
+    ESP_LOGW(TAG, "Slug %s not in manifest; resolved to %s", slug, best->slug);
+  return best;
 }
 
 /**
@@ -518,15 +570,21 @@ device_def_t *assets_load_device(const char *slug) {
   }
   
   ESP_LOGD(TAG, "Loading device: %s", slug);
-  
+
+  // The manifest entry's slug is authoritative: it may differ from the
+  // requested slug when the version fallback migrated an old @version.
+  // Cache files are keyed by the resolved slug so migrated lookups don't
+  // resurrect a stale cache under the old key.
+  const char *eff_slug = manifest_dev->slug;
+
   // The parsed-device cache lives on the RW userdata partition: it can be
   // regenerated from JSON, so wiping it (or having it absent on a degraded
   // boot) is harmless. Moving it off /assets means an ASSETS OTA does not
   // invalidate caches for unchanged shared devices.
   char cache_path[128];
-  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", USERDATA_BASE_PATH, slug);
+  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", USERDATA_BASE_PATH, eff_slug);
 
-  device_def_t *device = load_device_cache(cache_path, slug);
+  device_def_t *device = load_device_cache(cache_path, eff_slug, manifest_dev->sha256);
   if (device) {
     // Cache doesn't store device metadata - fill in from manifest
     strncpy(device->name, manifest_dev->name, sizeof(device->name) - 1);
@@ -562,7 +620,7 @@ device_def_t *assets_load_device(const char *slug) {
     return NULL;
   }
 
-  device = assets_parse_device_file(json_path, slug);
+  device = assets_parse_device_file(json_path, eff_slug);
   if (!device) {
     ESP_LOGE(TAG, "Failed to parse device JSON");
     return NULL;
@@ -572,9 +630,10 @@ device_def_t *assets_load_device(const char *slug) {
   // unavailable - parsing-from-JSON every load is the acceptable fallback.
   if (g_userdata_available) {
     ESP_LOGI(TAG, "Generating cache for future use");
-    generate_device_cache(device, cache_path);
+    generate_device_cache(device, cache_path,
+      sha256_is_set(manifest_dev->sha256) ? manifest_dev->sha256 : NULL);
   } else {
-    ESP_LOGW(TAG, "userdata unavailable - skipping cache write for %s", slug);
+    ESP_LOGW(TAG, "userdata unavailable - skipping cache write for %s", eff_slug);
   }
 
   return device;
@@ -713,10 +772,11 @@ esp_err_t assets_manager_reload_device(const char *slug) {
     return ESP_ERR_NOT_FOUND;
   }
 
-  // Delete cache file to force reload from JSON
+  // Delete cache file to force reload from JSON (keyed by resolved slug)
   char cache_path[128];
-  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", USERDATA_BASE_PATH, slug);
-  
+  snprintf(cache_path, sizeof(cache_path), "%s/cache/%s.bin", USERDATA_BASE_PATH,
+    manifest_dev->slug);
+
   struct stat st;
   if (stat(cache_path, &st) == 0) {
     if (unlink(cache_path) == 0) {

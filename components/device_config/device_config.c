@@ -268,6 +268,18 @@ esp_err_t device_config_init(void) {
   if (g_device_config.pedal_slug[0] != '\0') {
     device_def_t* device = assets_load_device(g_device_config.pedal_slug);
     if (device) {
+      // The assets manager resolves slugs version-agnostically: if the stored
+      // slug was pinned to an older implementationVersion, adopt and persist
+      // the resolved slug so NVS tracks the shipped version.
+      if (strcmp(device->slug, g_device_config.pedal_slug) != 0) {
+        ESP_LOGI(TAG, "Pedal slug migrated: %s -> %s",
+                 g_device_config.pedal_slug, device->slug);
+        strncpy(g_device_config.pedal_slug, device->slug,
+                sizeof(g_device_config.pedal_slug) - 1);
+        g_device_config.pedal_slug[sizeof(g_device_config.pedal_slug) - 1] = '\0';
+        app_settings_save_str(NVS_KEY_PEDAL_SLUG, g_device_config.pedal_slug);
+      }
+
       // Get preset info from device
       if (device->pc_info) {
         g_device_config.preset_base = (device->pc_info->index_base > 0)
@@ -373,6 +385,15 @@ esp_err_t device_config_set_pedal(const char* slug) {
   // Load device profile and apply settings
   device_def_t *device = assets_load_device(slug);
   if (device) {
+    // Adopt the resolved slug in case the requested one was version-migrated.
+    if (strcmp(device->slug, g_device_config.pedal_slug) != 0) {
+      ESP_LOGI(TAG, "Pedal slug migrated: %s -> %s",
+               g_device_config.pedal_slug, device->slug);
+      strncpy(g_device_config.pedal_slug, device->slug,
+              sizeof(g_device_config.pedal_slug) - 1);
+      g_device_config.pedal_slug[sizeof(g_device_config.pedal_slug) - 1] = '\0';
+    }
+
     // Apply TRS type via setter (also updates MIDI layer)
     // UNKNOWN means use BOTH as default
     midi_trs_type_t trs = (device->trs_type != MIDI_TRS_UNKNOWN) 

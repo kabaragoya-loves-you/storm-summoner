@@ -17,10 +17,22 @@ static uint32_t calculate_crc32(const uint8_t *data, size_t len) {
   return crc32_le(0, data, len);
 }
 
+// True when the digest carries a real value (all-zero = unknown).
+static bool sha256_present(const uint8_t sha[32]) {
+  for (int i = 0; i < 32; i++) {
+    if (sha[i]) return true;
+  }
+  return false;
+}
+
 /**
- * Generate binary cache from parsed device definition
+ * Generate binary cache from parsed device definition.
+ * json_sha256 is the source JSON digest from the manifest (NULL = unknown);
+ * it is stamped into the header so load_device_cache can detect content
+ * changes that don't alter the slug.
  */
-esp_err_t generate_device_cache(const device_def_t *device, const char *cache_path) {
+esp_err_t generate_device_cache(const device_def_t *device, const char *cache_path,
+                                const uint8_t *json_sha256) {
   ESP_LOGI(TAG, "Generating cache: %s", cache_path);
   
   // Ensure cache directory exists.
@@ -70,8 +82,11 @@ esp_err_t generate_device_cache(const device_def_t *device, const char *cache_pa
     .crc32 = 0  // Will be calculated at the end
   };
   
-  // TODO: SHA256 calculation would go here
-  memset(header.json_sha256, 0, 32);
+  if (json_sha256) {
+    memcpy(header.json_sha256, json_sha256, 32);
+  } else {
+    memset(header.json_sha256, 0, 32);
+  }
   
   // Count PC names
   if (device->pc_info && device->pc_info->names) {
@@ -196,9 +211,13 @@ esp_err_t generate_device_cache(const device_def_t *device, const char *cache_pa
 }
 
 /**
- * Load device from binary cache
+ * Load device from binary cache.
+ * expected_sha256 is the source JSON digest from the current manifest
+ * (NULL or all-zero = skip the check). A mismatch means the JSON changed
+ * since the cache was generated, so the cache is treated as a miss.
  */
-device_def_t *load_device_cache(const char *cache_path, const char *slug) {
+device_def_t *load_device_cache(const char *cache_path, const char *slug,
+                                const uint8_t *expected_sha256) {
   ESP_LOGD(TAG, "Loading cache: %s", cache_path);
   
   // Check if cache file exists
@@ -233,6 +252,16 @@ device_def_t *load_device_cache(const char *cache_path, const char *slug) {
   // Validate schema version
   if (header.schema != CACHE_SCHEMA_VERSION) {
     ESP_LOGW(TAG, "Cache schema mismatch: %u (expected %u)", (unsigned)header.schema, (unsigned)CACHE_SCHEMA_VERSION);
+    fclose(f);
+    return NULL;
+  }
+
+  // Validate source-JSON digest against the current manifest entry. Caches
+  // written before digest stamping (all-zero header) always fail this check
+  // and get regenerated from JSON.
+  if (expected_sha256 && sha256_present(expected_sha256) &&
+      memcmp(header.json_sha256, expected_sha256, 32) != 0) {
+    ESP_LOGW(TAG, "Cache content stale for %s (source JSON changed), reparsing", slug);
     fclose(f);
     return NULL;
   }

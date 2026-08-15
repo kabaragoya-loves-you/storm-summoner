@@ -28,10 +28,23 @@ else()
 endif()
 
 set(NEED_REGEN FALSE)
+set(REGEN_REASON "")
 if(NOT EXISTS "${MANIFEST_FILE}")
   set(NEED_REGEN TRUE)
+  set(REGEN_REASON "manifest missing")
 elseif(NOT CURRENT_COUNT EQUAL STORED_COUNT)
   set(NEED_REGEN TRUE)
+  set(REGEN_REASON "device count changed (${STORED_COUNT} -> ${CURRENT_COUNT})")
+else()
+  # Content edits (e.g. an implementationVersion bump) don't change the file
+  # count, so also regenerate when any device JSON is newer than the manifest.
+  foreach(fp IN LISTS DEVICE_FILES_FILTERED)
+    if("${fp}" IS_NEWER_THAN "${MANIFEST_FILE}")
+      set(NEED_REGEN TRUE)
+      set(REGEN_REASON "device file newer than manifest: ${fp}")
+      break()
+    endif()
+  endforeach()
 endif()
 
 if(NEED_REGEN)
@@ -40,7 +53,7 @@ if(NEED_REGEN)
     message(FATAL_ERROR "Ruby not found; required to regenerate device manifest")
   endif()
 
-  message(STATUS "Device count changed (${STORED_COUNT} -> ${CURRENT_COUNT}); regenerating manifest")
+  message(STATUS "Regenerating device manifest: ${REGEN_REASON}")
   execute_process(
     COMMAND ${RUBY_EXECUTABLE} ${MANIFEST_SCRIPT} --root ${MANIFEST_ROOT}
     RESULT_VARIABLE MANIFEST_RC
@@ -51,5 +64,5 @@ if(NEED_REGEN)
 
   file(WRITE "${DEVICE_COUNT_FILE}" "${CURRENT_COUNT}\n")
 else()
-  message(STATUS "Device count unchanged (${CURRENT_COUNT}); skipping manifest regen")
+  message(STATUS "Device manifest up to date (${CURRENT_COUNT} devices); skipping regen")
 endif()
