@@ -27,7 +27,35 @@ window.SceneEditorUi = (function () {
     { v: 2, l: 'Inverted' }
   ]
 
+  const PROXIMITY_POLARITY = [
+    { v: 0, l: 'Unipolar' },
+    { v: 2, l: 'Inverted' }
+  ]
+
+  const REST_POSITION_OPTIONS = [
+    { v: 0, l: '0' },
+    { v: 8, l: '8' },
+    { v: 16, l: '16' },
+    { v: 24, l: '24' },
+    { v: 32, l: '32' },
+    { v: 40, l: '40' },
+    { v: 48, l: '48' },
+    { v: 56, l: '56' },
+    { v: 64, l: '64' },
+    { v: 72, l: '72' },
+    { v: 80, l: '80' },
+    { v: 88, l: '88' },
+    { v: 96, l: '96' },
+    { v: 104, l: '104' },
+    { v: 112, l: '112' },
+    { v: 127, l: '127' }
+  ]
+
   function tiltPolaritySelectValue (polarity) {
+    return polarity === 2 ? 2 : 0
+  }
+
+  function proximityPolaritySelectValue (polarity) {
     return polarity === 2 ? 2 : 0
   }
 
@@ -322,6 +350,18 @@ window.SceneEditorUi = (function () {
     { v: 'paused', l: 'Paused' },
     { v: 'transport', l: 'Follow Transport' }
   ]
+
+  function renderStartModeField (mappingPath, mapping) {
+    if (!mapping.start_mode) mapping.start_mode = 'running'
+    return fieldRow(
+      'Start mode',
+      selectField(
+        `${mappingPath}.start_mode`,
+        mapping.start_mode || 'running',
+        ENGINE_START_MODE
+      )
+    )
+  }
 
   const LFO_TRIGGER_TIMING = [
     { v: 'immediate', l: 'Immediate' },
@@ -910,6 +950,16 @@ window.SceneEditorUi = (function () {
           selectField(`${mappingPath}.curve_type`, m.curve_type ?? 0, CURVE)
         )
       }
+      if (opts.showRest) {
+        html += fieldRow(
+          'Rest Position',
+          selectField(
+            `${mappingPath}.idle_value`,
+            m.idle_value ?? 64,
+            REST_POSITION_OPTIONS
+          )
+        )
+      }
       html += renderFlagThresholds(mappingPath, m, ctrl)
     } else if (ot === 'note') {
       if (opts.noteSelectors) {
@@ -1215,96 +1265,91 @@ window.SceneEditorUi = (function () {
   }
 
   function renderLfoFields (ctrl, path, a) {
-    const v = a.variant || 'modify'
     let html = ''
-    if (v === 'start' || v === 'stop' || v === 'toggle' || v === 'hold' || v === 'modify') {
+    html += fieldRow(
+      'Target',
+      selectField(
+        `${path}.slot`,
+        a.slot ?? 1,
+        ActionCatalog.lfoTargetOptions(a.slot)
+      )
+    )
+    html += fieldRow(
+      'Waveform',
+      selectField(
+        `${path}.waveform`,
+        a.waveform ?? 255,
+        ActionCatalog.lfoModifyWaveformOptions(a.waveform)
+      )
+    )
+    html += fieldRow(
+      'Rate mode',
+      selectField(
+        `${path}.rate_mode`,
+        a.rate_mode ?? 255,
+        ActionCatalog.lfoModifyRateModeOptions(a.rate_mode)
+      )
+    )
+    html += fieldRow(
+      'Rate',
+      selectField(
+        `${path}.rate_hz_x100`,
+        a.rate_hz_x100 ?? 65535,
+        ActionCatalog.lfoModifyRateHzOptions(a.rate_hz_x100)
+      )
+    )
+    html += fieldRow(
+      'Division',
+      selectField(
+        `${path}.division`,
+        a.division ?? 255,
+        ActionCatalog.lfoModifyDivisionOptions(a.division)
+      )
+    )
+    html += fieldRow(
+      'Floor',
+      selectField(
+        `${path}.floor`,
+        a.floor ?? 255,
+        ActionCatalog.lfoModifyFloorCeilingOptions(a.floor)
+      )
+    )
+    html += fieldRow(
+      'Ceiling',
+      selectField(
+        `${path}.ceiling`,
+        a.ceiling ?? 255,
+        ActionCatalog.lfoModifyFloorCeilingOptions(a.ceiling)
+      )
+    )
+    html += fieldRow(
+      'Resolution',
+      selectField(
+        `${path}.resolution_mode`,
+        a.resolution_mode ?? 255,
+        ActionCatalog.lfoModifyResolutionOptions(a.resolution_mode)
+      )
+    )
+    if (Number(a.resolution_mode) === ActionCatalog.LFO_RESOLUTION_MANUAL) {
       html += fieldRow(
-        'Target',
+        'Steps',
         selectField(
-          `${path}.slot`,
-          a.slot ?? 1,
-          ActionCatalog.lfoTargetOptions(a.slot)
+          `${path}.manual_steps`,
+          a.manual_steps ?? 0,
+          ActionCatalog.lfoModifyManualStepsOptions(a.manual_steps)
         )
       )
-    }
-    if (v === 'modify') {
-      html += fieldRow(
-        'Waveform',
-        selectField(
-          `${path}.waveform`,
-          a.waveform ?? 255,
-          ActionCatalog.lfoModifyWaveformOptions(a.waveform)
-        )
-      )
-      html += fieldRow(
-        'Rate mode',
-        selectField(
-          `${path}.rate_mode`,
-          a.rate_mode ?? 255,
-          ActionCatalog.lfoModifyRateModeOptions(a.rate_mode)
-        )
-      )
-      html += fieldRow(
-        'Rate',
-        selectField(
-          `${path}.rate_hz_x100`,
-          a.rate_hz_x100 ?? 65535,
-          ActionCatalog.lfoModifyRateHzOptions(a.rate_hz_x100)
-        )
-      )
-      html += fieldRow(
-        'Division',
-        selectField(
-          `${path}.division`,
-          a.division ?? 255,
-          ActionCatalog.lfoModifyDivisionOptions(a.division)
-        )
-      )
-      html += fieldRow(
-        'Floor',
-        selectField(
-          `${path}.floor`,
-          a.floor ?? 255,
-          ActionCatalog.lfoModifyFloorCeilingOptions(a.floor)
-        )
-      )
-      html += fieldRow(
-        'Ceiling',
-        selectField(
-          `${path}.ceiling`,
-          a.ceiling ?? 255,
-          ActionCatalog.lfoModifyFloorCeilingOptions(a.ceiling)
-        )
-      )
-      html += fieldRow(
-        'Resolution',
-        selectField(
-          `${path}.resolution_mode`,
-          a.resolution_mode ?? 255,
-          ActionCatalog.lfoModifyResolutionOptions(a.resolution_mode)
-        )
-      )
-      if (Number(a.resolution_mode) === ActionCatalog.LFO_RESOLUTION_MANUAL) {
-        html += fieldRow(
-          'Steps',
-          selectField(
-            `${path}.manual_steps`,
-            a.manual_steps ?? 0,
-            ActionCatalog.lfoModifyManualStepsOptions(a.manual_steps)
-          )
-        )
-      }
     }
     return html
   }
 
-  function renderTiltFields (ctrl, path, a) {
+  function renderStreamFields (ctrl, path, a) {
     return fieldRow(
       'Target',
       selectField(
         `${path}.target`,
-        a.target || 'both',
-        ActionCatalog.tiltTargetOptions(a.target)
+        a.target || 'lfo_both',
+        ActionCatalog.streamTargetOptions(a.target)
       )
     )
   }
@@ -1696,7 +1741,7 @@ window.SceneEditorUi = (function () {
   }
 
   function renderEngineFields (ctrl, path, a) {
-    const v = a.variant || 'toggle'
+    const v = a.variant || 'step'
     if (v === 'modify') return renderEngineModifyFields(ctrl, path, a)
     return ''
   }
@@ -2612,8 +2657,8 @@ window.SceneEditorUi = (function () {
       if (a.type === 'lfo') {
         html += renderLfoFields(ctrl, path, a)
       }
-      if (a.type === 'tilt') {
-        html += renderTiltFields(ctrl, path, a)
+      if (a.type === 'stream') {
+        html += renderStreamFields(ctrl, path, a)
       }
       if (a.type === 'clock') {
         html += renderClockFields(ctrl, path, a)
@@ -3136,7 +3181,11 @@ window.SceneEditorUi = (function () {
       const prox = m.proximity
       html += fieldRow(
         'Polarity',
-        selectField('proximity.polarity', prox.polarity ?? 0, POLARITY)
+        selectField(
+          'proximity.polarity',
+          proximityPolaritySelectValue(prox.polarity ?? 0),
+          PROXIMITY_POLARITY
+        )
       )
       html += fieldRow(
         'Curve',
@@ -3153,6 +3202,7 @@ window.SceneEditorUi = (function () {
 
     if (userMode === 'disabled') return section('Proximity', html)
 
+    html += renderStartModeField('proximity', m.proximity)
     html += renderContinuousMapping(ctrl, 'proximity', m.proximity, {
       hideEnabled: true,
       hideRouting: true,
@@ -3162,7 +3212,10 @@ window.SceneEditorUi = (function () {
       velocityModePath: 'proximity_velocity_mode',
       tempoNudgePath: 'proximity_tempo_nudge_pct',
       tempoNudgeDirectionPath: 'proximity_tempo_nudge_direction',
-      tempoNudgeSelect: true
+      tempoNudgeSelect: true,
+      polarityOptions: PROXIMITY_POLARITY,
+      polaritySelectValue: proximityPolaritySelectValue,
+      showRest: true
     })
     return section('Proximity', html)
   }
@@ -3193,6 +3246,7 @@ window.SceneEditorUi = (function () {
 
     if (userMode === 'disabled') return section('Ambient Light', html)
 
+    html += renderStartModeField('als', m.als)
     html += renderContinuousMapping(ctrl, 'als', m.als, {
       hideEnabled: true,
       hideRouting: true,
@@ -3293,6 +3347,7 @@ window.SceneEditorUi = (function () {
       selectField('__note_track_user_mode', userMode, NOTE_TRACK_USER_MODES)
     )
     if (userMode === 'disabled') return section('Note Track', html)
+    html += renderStartModeField('note_track', m.note_track)
     const ot = m.note_track.output_type || 'cc'
     html += renderContinuousMapping(ctrl, 'note_track', m.note_track, {
       hideEnabled: true,
@@ -3444,6 +3499,7 @@ window.SceneEditorUi = (function () {
 
     // Continuous pedal routings (control_change / notes / lfo_rate / lfo_depth / tempo_nudge)
     if (!m.expression) m.expression = { enabled: true, output_type: 'cc' }
+    html += renderStartModeField('expression', m.expression)
     html += renderContinuousMapping(ctrl, 'expression', m.expression, {
       hideEnabled: true,
       hideRouting: true,
@@ -3600,12 +3656,15 @@ window.SceneEditorUi = (function () {
     }
 
     if (userMode === 'audio') {
+      if (!m.cv) m.cv = { enabled: true, output_type: 'cc' }
+      html += renderStartModeField('cv', m.cv)
       html += renderCvAudio(ctrl)
       return section('Control Voltage', html)
     }
 
     // Continuous CV routings (control_change / notes / lfo_rate / lfo_depth / tempo_nudge)
     if (!m.cv) m.cv = { enabled: true, output_type: 'cc' }
+    html += renderStartModeField('cv', m.cv)
     html += renderContinuousMapping(ctrl, 'cv', m.cv, {
       hideEnabled: true,
       hideRouting: true,

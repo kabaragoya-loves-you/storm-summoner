@@ -600,7 +600,7 @@
           "type": "string",
           "enum": ["running", "paused", "transport"],
           "default": "running",
-          "description": "Tilt axes only: running (active on scene load), paused (requires a Tilt Start/Toggle/Hold action), or transport (follows transport play/stop). Other continuous mappings ignore this field. Legacy start_enabled true/false maps to running/paused."
+          "description": "Start mode: running (active on scene load), paused (requires a Stream Start/Toggle/Hold action), or transport (follows transport play/stop). Used by expression, CV, proximity, ALS, note track, and tilt. LFO/RTG/S+H keep their own config start_mode. Legacy start_enabled true/false maps to running/paused."
         },
         "output_type": {
           "type": "string",
@@ -711,7 +711,7 @@
           "minimum": 0,
           "maximum": 127,
           "default": 64,
-          "description": "Idle value (64 for CC bipolar, 60 for NOTE mode)"
+          "description": "Proximity rest CC when hysteresis returns (hand away). Other mappings: idle/center value."
         },
         "idle_timeout_ms": {
           "type": "integer",
@@ -1130,6 +1130,7 @@
             "lfo_stop",
             "lfo_toggle",
             "lfo_shape",
+            "stream",
             "tilt",
             "clock",
             "clock_toggle",
@@ -1159,12 +1160,12 @@
             "snapshot",
             "restore"
           ],
-          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement/Downbeat; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Record (legacy 'pause' aliases Stop); 'touchwheel' supports Hold/Cycle; 'lfo' supports Start/Stop/Toggle/Hold/Modify (Modify carries optional per-parameter overrides; absent fields keep the scene's LFO config in place); 'tilt' supports Start/Stop/Toggle/Hold (target X/Y/Both; drives runtime tilt active state without rewriting the scene); 'clock' supports Toggle/Hold/Burst; 'cut' supports Toggle/Hold; 'ui' supports Set/Hold/Cycle; 'param' supports Hold/Cycle; 'rtg' supports Toggle/Hold/Step/Modify; 'sample_hold' supports Toggle/Hold/Step/Modify. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). 'snapshot' duplicates the current scene with dirty CC values baked into cc_defaults. 'restore' returns dirty CCs (and optionally tempo/preset/screen/modulators) to the scene's stored defaults. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66), the legacy lfo_start / lfo_stop / lfo_toggle / lfo_shape types (now migrated to lfo with variant=start/stop/toggle/modify; lfo_shape's per-press waveform cycle is collapsed to a single waveform override), the legacy clock_toggle / clock_hold / clock_burst types (now migrated to clock with variant=toggle/hold/burst), the legacy cut_toggle / cut_hold types (now migrated to cut with variant=toggle/hold), the legacy set_ui / ui_hold / ui_cycle types (now migrated to ui with variant=set/hold/cycle), the legacy param_hold / param_cycle types (now migrated to param with variant=hold/cycle), the legacy rtg_toggle / rtg_hold types (now migrated to rtg with variant=toggle/hold), the legacy sample_hold_toggle / sample_hold_hold types (now migrated to sample_hold with variant=toggle/hold), and the legacy type='step' with step_target (now migrated to rtg or sample_hold with variant=step) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
+          "description": "Action type name. Consolidated families use 'variant' to pick the operation. 'tempo' supports Set/Hold/Cycle/Tap/Increment/Decrement/Downbeat; 'control' supports Set/Hold/Cycle; 'scene' supports Set/Increment/Decrement; 'preset' supports Set/Hold/Cycle/Increment/Decrement; 'transport' supports Play/Stop/Record (legacy 'pause' aliases Stop); 'touchwheel' supports Hold/Cycle; 'stream' supports Start/Stop/Toggle/Hold (target selects Expression/CV/Proximity/ALS/Note Track/Tilt/LFO/S+H/RTG; drives runtime stream active state without rewriting the scene); 'lfo' is a singleton Modify action (optional per-parameter overrides; absent fields keep the scene's LFO config in place); 'clock' supports Toggle/Hold/Burst; 'cut' supports Toggle/Hold; 'ui' supports Set/Hold/Cycle; 'param' supports Hold/Cycle; 'rtg' supports Step/Modify; 'sample_hold' supports Step/Modify. 'piano_pedal' is a singleton hold action whose 'cc' field picks which switch-style MIDI CC fires on press (127) / release (0); supported CCs are 64 (Damper), 66 (Sostenuto), 67 (Soft), 68 (Legato), 69 (Hold 2). 'snapshot' duplicates the current scene with dirty CC values baked into cc_defaults. 'restore' returns dirty CCs (and optionally tempo/preset/screen/modulators) to the scene's stored defaults. Legacy tempo_* (tap_tempo, set_tempo, tempo_inc, tempo_dec, tempo_hold, tempo_cycle), control_* (control_change, control_hold, control_cycle), scene_* (scene_inc, scene_dec, scene_next, scene_prev), preset_* (preset_inc, preset_dec, preset_hold, preset_cycle, program_next, program_prev, pc), transport_* (transport_play, transport_stop, transport_pause, transport_record) plus the bare verbs (play, stop, pause, record), touchwheel_hold / touchwheel_cycle and the older tw_mode_hold / tw_mode_cycle (now migrated to touchwheel with variant=hold/cycle), the legacy sustain / sostenuto types (now migrated to piano_pedal with cc=64 / cc=66), the legacy lfo_start / lfo_stop / lfo_toggle / lfo_shape types (now migrated to stream for start/stop/toggle/hold and to lfo Modify for lfo_shape), the legacy type='tilt' (now migrated to stream with tilt_x/tilt_y/tilt_both), the legacy clock_toggle / clock_hold / clock_burst types (now migrated to clock with variant=toggle/hold/burst), the legacy cut_toggle / cut_hold types (now migrated to cut with variant=toggle/hold), the legacy set_ui / ui_hold / ui_cycle types (now migrated to ui with variant=set/hold/cycle), the legacy param_hold / param_cycle types (now migrated to param with variant=hold/cycle), the legacy rtg_toggle / rtg_hold types (now migrated to stream with target=rtg), the legacy sample_hold_toggle / sample_hold_hold types (now migrated to stream with target=sample_hold), and the legacy type='step' with step_target (now migrated to rtg or sample_hold with variant=step) are accepted for backward compatibility and migrated to the consolidated form on load. They will be removed in a future schema revision."
         },
         "variant": {
           "type": "string",
           "enum": ["increment", "decrement", "set", "hold", "cycle", "toggle", "start", "stop", "tap", "burst", "play", "pause", "record", "modify", "step", "downbeat", "flag_ceremony"],
-          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle/downbeat), type='control' (set/hold/cycle/flag_ceremony), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/record; legacy pause aliases stop), type='touchwheel' (hold/cycle), type='lfo' (start/stop/toggle/hold/modify), type='tilt' (start/stop/toggle/hold), type='clock' (toggle/hold/burst), type='cut' (toggle/hold), type='ui' (set/hold/cycle), type='param' (hold/cycle), type='rtg' (toggle/hold/step/modify), and type='sample_hold' (toggle/hold/step/modify). Omit for singleton types. Legacy type='flag_ceremony' is migrated to type='control' with variant='flag_ceremony' on load."
+          "description": "Secondary operation discriminator for consolidated action families. Used by type='tempo' (tap/set/increment/decrement/hold/cycle/downbeat), type='control' (set/hold/cycle/flag_ceremony), type='scene' (set/increment/decrement), type='preset' (set/hold/cycle/increment/decrement), type='transport' (play/stop/record; legacy pause aliases stop), type='touchwheel' (hold/cycle), type='stream' (start/stop/toggle/hold), type='clock' (toggle/hold/burst), type='cut' (toggle/hold), type='ui' (set/hold/cycle), type='param' (hold/cycle), type='rtg' (step/modify; legacy toggle/hold migrate to stream), and type='sample_hold' (step/modify; legacy toggle/hold migrate to stream). Omit for singleton types including type='lfo' (Modify). Legacy type='flag_ceremony' is migrated to type='control' with variant='flag_ceremony' on load. Legacy type='tilt' is migrated to type='stream'."
         },
         "timing": {
           "type": "string",
@@ -1878,18 +1879,27 @@
         {
           "if": {
             "properties": {
-              "type":    {"const": "lfo"},
-              "variant": {"enum": ["start", "stop", "toggle", "hold"]}
+              "type": {"const": "stream"}
             },
-            "required": ["type", "variant"]
+            "required": ["type"]
           },
           "then": {
-            "required": ["slot"],
+            "required": ["target"],
             "properties": {
-              "slot": {
-                "type": "integer",
-                "enum": [1, 2, 3],
-                "description": "Target LFO: 1=LFO1, 2=LFO2, 3=both"
+              "target": {
+                "type": "string",
+                "enum": [
+                  "expression", "cv", "proximity", "als", "note_track",
+                  "tilt_x", "tilt_y", "tilt_both",
+                  "lfo1", "lfo2", "lfo_both",
+                  "sample_hold", "rtg"
+                ],
+                "description": "Stream target. Combo keys tilt_both and lfo_both map to Tilt X+Y and LFO 1+2."
+              },
+              "variant": {
+                "type": "string",
+                "enum": ["start", "stop", "toggle", "hold"],
+                "description": "Stream operation: start/stop/toggle/hold"
               }
             }
           }
@@ -1902,17 +1912,17 @@
             "required": ["type"]
           },
           "then": {
-            "required": ["target"],
+            "description": "Legacy tilt family; migrated to type=stream with tilt_x/tilt_y/tilt_both on load",
             "properties": {
               "target": {
                 "type": "string",
-                "enum": ["x", "y", "both"],
-                "description": "Target tilt axis: x, y, or both"
+                "enum": ["x", "y", "both", "tilt_x", "tilt_y", "tilt_both"],
+                "description": "Legacy tilt axis; migrated to stream target tilt_x/tilt_y/tilt_both"
               },
               "variant": {
                 "type": "string",
                 "enum": ["start", "stop", "toggle", "hold"],
-                "description": "Tilt operation: start/stop/toggle/hold"
+                "description": "Legacy tilt operation; kept on the migrated stream action"
               }
             }
           }
@@ -1920,10 +1930,9 @@
         {
           "if": {
             "properties": {
-              "type":    {"const": "lfo"},
-              "variant": {"const": "modify"}
+              "type": {"const": "lfo"}
             },
-            "required": ["type", "variant"]
+            "required": ["type"]
           },
           "then": {
             "required": ["slot"],

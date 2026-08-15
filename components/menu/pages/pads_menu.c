@@ -3949,7 +3949,7 @@ static lv_obj_t* pad_detail_page_create(void) {
     switch (slot) {
       case 1: slot_name = "LFO 1"; break;
       case 2: slot_name = "LFO 2"; break;
-      case 3: slot_name = "Both"; break;
+      case 3: slot_name = "LFO 1+2"; break;
       default: slot_name = "LFO 1"; mapping->action.params.lfo.slot = 1; break;  // Fix invalid default
     }
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);

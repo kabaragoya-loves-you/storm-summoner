@@ -38,7 +38,7 @@ static int cmd_info(int argc, char **argv) {
   ESP_LOGI(TAG, "  MIDI: %u  (deadzone: %u)", (unsigned)ps_midi, (unsigned)proximity_get_deadzone());
   ESP_LOGI(TAG, "  Hysteresis: %s", proximity_get_hysteresis_enabled() ? "ON" : "OFF");
   if (proximity_get_hysteresis_enabled()) {
-    ESP_LOGI(TAG, "    Rest position: %u, Timeout: %u, Return speed: %u", 
+    ESP_LOGI(TAG, "    Rest (scene): %u, Timeout: %u, Return speed: %u", 
       (unsigned)proximity_get_rest_position(),
       (unsigned)proximity_get_timeout(),
       (unsigned)proximity_get_return_speed());
@@ -163,7 +163,7 @@ static int cmd_hysteresis(int argc, char **argv) {
   
   ESP_LOGI(TAG, "Hysteresis: %s", enable ? "ENABLED" : "DISABLED");
   if (enable) {
-    ESP_LOGI(TAG, "  Rest position: %u", (unsigned)proximity_get_rest_position());
+    ESP_LOGI(TAG, "  Rest (scene): %u", (unsigned)proximity_get_rest_position());
     ESP_LOGI(TAG, "  Return speed: %u", (unsigned)proximity_get_return_speed());
     ESP_LOGI(TAG, "  Timeout: %u", (unsigned)proximity_get_timeout());
   }

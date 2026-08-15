@@ -50,17 +50,19 @@ typedef enum {
 // Flag threshold disabled sentinel (omitted from JSON when off)
 #define CONTINUOUS_FLAG_THRESHOLD_OFF 0xFF
 
-// Tilt-only start mode (mirrors LFO/RTG/S+H). Other continuous mappings ignore it.
+// Start mode (Running / Paused / Follow Transport). Applied at scene load
+// for Expression, CV, Proximity, ALS, Note Track, and Tilt. LFO/RTG/S+H
+// use their own config start_mode.
 typedef enum {
   CONTINUOUS_START_RUNNING = 0,  // Active when scene loads
-  CONTINUOUS_START_PAUSED,       // Inactive until a Tilt Start/Toggle/Hold action
+  CONTINUOUS_START_PAUSED,       // Inactive until a Stream Start/Toggle/Hold action
   CONTINUOUS_START_TRANSPORT     // Follow transport play/stop
 } continuous_start_mode_t;
 
 // Continuous input mapping configuration
 typedef struct {
   bool enabled;              // Whether this input is active
-  // Tilt-only: Running / Paused / Follow Transport. Default RUNNING.
+  // Running / Paused / Follow Transport. Default RUNNING.
   continuous_start_mode_t start_mode;
   output_type_t output_type; // CC or Note output
   
@@ -92,7 +94,7 @@ typedef struct {
   
   // Special behaviors (for proximity sensor)
   bool use_idle_value;       // Return to idle when no activity
-  uint8_t idle_value;        // Value when idle (64 for CC bipolar, 60 for NOTE)
+  uint8_t idle_value;        // Proximity rest CC (hysteresis park); default 64
   uint16_t idle_timeout_ms;  // Time before reverting to idle
   
   // LFO modulation target (for OUTPUT_TYPE_LFO_RATE/LFO_DEPTH)

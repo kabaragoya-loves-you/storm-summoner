@@ -12,8 +12,7 @@ esp_err_t midi_lfo_scene_handler_init(void);
 void midi_lfo_scene_handler_release_notes(void);
 
 // Release the active note for a single slot (0=LFO1, 1=LFO2). Used by
-// individual-slot disable paths (menu page, ACTION_LFO + VARIANT_STOP /
-// VARIANT_TOGGLE) so a NOTE-output mapping doesn't sustain when its LFO
+// individual-slot disable paths (menu page, Stream Stop/Toggle) so a NOTE-output mapping doesn't sustain when its LFO
 // loop is turned off.
 void midi_lfo_scene_handler_release_notes_for_slot(uint8_t slot);
 

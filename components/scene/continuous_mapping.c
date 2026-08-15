@@ -74,8 +74,8 @@ uint8_t continuous_mapping_process(uint8_t raw_input, continuous_mapping_t* mapp
 uint8_t continuous_mapping_unipolar_bipolar_map(uint8_t raw_input,
   continuous_mapping_t* mapping) {
   // Same continuous 3-point scale as unipolar — do NOT snap idle (<5) to
-  // middle. That cliff caused 0↔64 chatter and hand-away jumps like 2→64,
-  // and fought device return-to-rest (which owns settling at rest_position).
+  // middle. That cliff caused 0↔64 chatter and hand-away jumps like 2→64.
+  // Scene idle_value + device hysteresis own settling at rest.
   if (!mapping) return 64;
 
   uint8_t curved = curve_apply(&mapping->curve, raw_input);

@@ -173,6 +173,10 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   }
 
   if (!touch_is_pad_pressed(BUTTON_13_LOGICAL_PAD)) {
+    // #region agent log
+    ESP_LOGW(TAG, "[DBG12/H4] poll abort: SW released accum=%"PRIu32,
+      s_button13_elev_accum_ms);
+    // #endregion
     s_button13_elev_accum_ms = 0;
     touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
     xTimerStop(s_button13_long_press_timer, 0);
@@ -201,6 +205,15 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
         (benchmark[0] < (calib_data.baseline * 3) / 4);
 
       if (!real_touch) {
+        // #region agent log
+        ESP_LOGW(TAG, "[DBG12/H3] poll abort elev=%"PRId32" thresh=%"PRId32
+          " smooth=%"PRIu32" bench=%"PRIu32" base=%"PRIu32" accum=%"PRIu32
+          " sw_pressed=%d bench_collapsed=%d",
+          elevation, elev_thresh, smooth[0], benchmark[0], calib_data.baseline,
+          s_button13_elev_accum_ms,
+          touch_is_pad_pressed(BUTTON_13_LOGICAL_PAD) ? 1 : 0,
+          bench_collapsed ? 1 : 0);
+        // #endregion
         ESP_LOGW(TAG, "Pad 12 long-press aborted - not elevated"
           " (elev=%"PRId32", elev_thresh=%"PRId32", smooth=%"PRIu32","
           " bench=%"PRIu32", base=%"PRIu32", accum=%"PRIu32"ms)",
@@ -224,6 +237,9 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
   // Sustained elevated hold long enough — enter programming mode
   xTimerStop(s_button13_long_press_timer, 0);
   s_long_press_timer_fired = true;
+  // #region agent log
+  ESP_LOGI(TAG, "[DBG12/H5] long-press FIRED accum=%"PRIu32, s_button13_elev_accum_ms);
+  // #endregion
   ESP_LOGD(TAG, "Pad 12 long press detected - entering Programming Mode");
 
   event_t event = {
@@ -284,8 +300,14 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
           s_button13_elev_accum_ms = 0;
           touch_set_hold_active(BUTTON_13_LOGICAL_PAD, true);
           xTimerStart(s_button13_long_press_timer, 0);
+          // #region agent log
+          ESP_LOGI(TAG, "[DBG12/H1] long-press ARMED mode=%d", (int)mode);
+          // #endregion
           ESP_LOGD(TAG, "Pad 12 pressed - long press arming (mode=%d)", mode);
         } else {
+          // #region agent log
+          ESP_LOGW(TAG, "[DBG12/H1] long-press NOT ARMED (not elevated)");
+          // #endregion
           ESP_LOGW(TAG, "Pad 12 press not elevated - long press not armed");
           touch_force_recover_pad(BUTTON_13_LOGICAL_PAD);
         }

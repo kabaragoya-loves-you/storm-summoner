@@ -11,6 +11,7 @@
 #include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "stream.h"
 
 static const char* TAG = "cv_scene";
 static smart_filter_t s_cv_filter;
@@ -48,6 +49,7 @@ static void handle_cv_event(const event_t* event, void* context) {
   
   scene_t* scene = scene_get_current();
   if (!scene || !scene->cv.enabled) return;
+  if (!stream_is_active(STREAM_TARGET_CV)) return;
   
   // Only process CV values in CV or Audio mode
   // CV/Gate mode (INPUT_MODE_NOTE) is handled by input_manager's note handlers

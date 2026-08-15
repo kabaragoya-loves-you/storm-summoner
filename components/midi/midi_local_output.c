@@ -51,5 +51,6 @@ void midi_local_output_silence(void) {
 void midi_local_output_enable(void) {
   tempo_set_clock_muted(false);
   s_enabled = true;
+  midi_proximity_scene_handler_on_output_enabled();
   ESP_LOGD(TAG, "Local MIDI output enabled");
 }

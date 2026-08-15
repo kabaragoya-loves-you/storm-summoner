@@ -751,6 +751,22 @@ static void touch_health_check_task(void *pvParameters) {
           s_known_good_benchmark[i] = benchmark[0];
         }
       }
+
+      // #region agent log
+      if (i == 12 && s_known_good_benchmark[i] > 0 &&
+          benchmark[0] < (s_known_good_benchmark[i] * 3) / 4) {
+        static uint32_t s_dbg12_stale_log_ms;
+        if (now - s_dbg12_stale_log_ms >= 1000) {
+          s_dbg12_stale_log_ms = now;
+          int32_t elev = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
+          ESP_LOGW(TAG, "[DBG12/H6] STALE BENCH window — long-press now"
+            " smooth=%u bench=%u known=%u elev=%d hold=%d sw=%d",
+            (unsigned)smooth[0], (unsigned)benchmark[0],
+            (unsigned)s_known_good_benchmark[i], (int)elev,
+            s_hold_active[i] ? 1 : 0, s_button_pressed_states[i] ? 1 : 0);
+        }
+      }
+      // #endregion
       
       // Detect relative drift: benchmark dropped >25% from known-good
       // This catches drift that causes phantom touches (e.g., 20500->12836)
@@ -775,6 +791,16 @@ static void touch_health_check_task(void *pvParameters) {
 
           // If pad is currently "pressed", this is likely a phantom touch - force release
           if (s_button_pressed_states[i]) {
+            // #region agent log
+            if (i == 12) {
+              int32_t elev = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
+              ESP_LOGI(TAG, "[DBG12/H2] drift-kill sw_pressed=1 hold=%d smooth=%u bench=%u known=%u base=%u elev=%d elev_thresh=%u",
+                s_hold_active[i] ? 1 : 0,
+                (unsigned)smooth[0], (unsigned)benchmark[0], (unsigned)known,
+                (unsigned)calib_data.baseline, (int)elev,
+                (unsigned)((i == 12) ? touch_pad12_elev_thresh() : calib_data.threshold));
+            }
+            // #endregion
             ESP_LOGI(TAG, "Pad %d phantom touch detected (drift), forcing release + recovery", i);
             s_button_pressed_states[i] = false;
             s_pad_press_timestamps[i] = 0;
@@ -1894,6 +1920,10 @@ void touch_set_stuck_timeout_ms(uint32_t timeout_ms) {
 void touch_set_hold_active(int pad_index, bool active) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
   s_hold_active[pad_index] = active;
+  // #region agent log
+  if (pad_index == 12)
+    ESP_LOGI(TAG, "[DBG12/H1] hold_active=%d", active ? 1 : 0);
+  // #endregion
   ESP_LOGD(TAG, "Pad %d hold active: %s", pad_index, active ? "yes" : "no");
 }
 

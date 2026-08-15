@@ -526,8 +526,8 @@ void ui_set_app_mode(app_mode_t mode) {
     // When going to Screensaver, we'll return to Programming mode later with scene still suspended
     if (mode == APP_MODE_PERFORMANCE) {
       scene_resume_input();
-      // Drop the performance stash before the deferred init re-seeds; the live
-      // values are authoritative again from here. Unconditional, because
+      // Restore the performance CC table (or leave it for deferred init to
+      // re-seed if the scene changed). Unconditional, because
       // scene_apply_deferred_init() no-ops when no scene change is pending.
       scene_exit_programming_mode();
       scene_apply_deferred_init();

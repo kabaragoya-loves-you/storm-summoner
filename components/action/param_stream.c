@@ -1,5 +1,6 @@
 #include "param_stream.h"
 #include "action.h"
+#include "cc_state.h"
 #include "scene.h"
 #include "continuous_mapping.h"
 #include "lfo.h"
@@ -162,7 +163,7 @@ static uint8_t param_target_scope_cc_value(const continuous_mapping_t* mapping) 
   uint8_t cc = mapping->cc_number;
   if (mapping->num_cc_numbers > 0 && mapping->cc_numbers[0] > 0)
     cc = mapping->cc_numbers[0];
-  return cc > 0 ? action_get_cc_value(cc) : 0;
+  return cc > 0 ? cc_state_effective_get(cc) : 0;
 }
 
 uint8_t param_target_scope_value(const scene_t* scene, param_target_t target) {

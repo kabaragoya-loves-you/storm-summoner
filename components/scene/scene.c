@@ -28,6 +28,7 @@
 #include "version.h"
 #include "scene_inspect.h"
 #include "cc_state.h"
+#include "stream.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -308,10 +309,10 @@ static void scene_init_defaults(scene_t* scene, uint8_t index) {
   scene->cv.enabled = false;
   scene->proximity = continuous_mapping_create(0);
   scene->proximity.enabled = false;
-  scene->proximity.use_idle_value = true;              // Proximity returns to center
-  scene->proximity.idle_value = 64;                    // Center for CC (60 for NOTE mode)
+  scene->proximity.use_idle_value = true;
+  scene->proximity.idle_value = 64;
   scene->proximity.idle_timeout_ms = 1000;
-  scene->proximity.polarity = POLARITY_BIPOLAR;
+  scene->proximity.polarity = POLARITY_UNIPOLAR;
   scene->als = continuous_mapping_create(0);
   scene->als.enabled = false;
   scene->tilt_x = continuous_mapping_create(20);       // CC20 (defaults: disabled)
@@ -2262,7 +2263,7 @@ esp_err_t scene_init(void) {
   // polling if this scene has tilt enabled. Without this, the persisted
   // scene->tilt_x.enabled flag is loaded into RAM but never reaches the
   // hardware sampling layer until the user manually toggles the axis.
-  scene_apply_tilt_start_modes_for(initial_scene);
+  stream_apply_start_modes_for(initial_scene);
 
   // Setup touchwheel instance for non-buttons modes
   scene_setup_touchwheel_for_mode(initial_scene);
@@ -2498,7 +2499,7 @@ esp_err_t scene_set_current(uint8_t scene_index) {
   // vs performance mode) so the unified LIS3DHTR sampling task picks up the
   // scene's tilt configuration. No MIDI is emitted while local output is
   // silenced (midi_tilt_scene_handler bails on !midi_local_output_is_enabled).
-  scene_apply_tilt_start_modes_for(new_scene);
+  stream_apply_start_modes_for(new_scene);
 
   // Switch UI module for this scene (only in performance mode)
   scene_apply_ui_module_for_performance(new_scene->ui_module);
@@ -2607,6 +2608,11 @@ void scene_enter_programming_mode(void) {
 }
 
 void scene_exit_programming_mode(void) {
+  // A scene change in programming mode will re-seed from the new scene in
+  // scene_apply_deferred_init(). Otherwise put the performance CC table back
+  // so the scope (and last_value consumers) don't flash the seeded 0s.
+  if (!s_needs_deferred_init)
+    cc_state_stash_restore();
   perf_stash_drop();
 }
 
@@ -4668,35 +4674,6 @@ velocity_mode_t scene_get_tilt_y_velocity_mode(uint8_t scene_index) {
   return scene ? scene->tilt_y_velocity_mode : VELOCITY_MODE_FIXED;
 }
 
-static void tilt_apply_axis_start_mode(tilt_axis_t axis, const continuous_mapping_t* m) {
-  if (!m || !m->enabled) {
-    tilt_axis_set_enabled(axis, false);
-    return;
-  }
-  switch (m->start_mode) {
-    case CONTINUOUS_START_PAUSED:
-      tilt_axis_set_enabled(axis, false);
-      break;
-    case CONTINUOUS_START_TRANSPORT:
-      tilt_axis_set_enabled(axis, transport_is_playing());
-      break;
-    case CONTINUOUS_START_RUNNING:
-    default:
-      tilt_axis_set_enabled(axis, true);
-      break;
-  }
-}
-
-void scene_apply_tilt_start_modes_for(const scene_t* scene) {
-  if (!scene) return;
-  tilt_apply_axis_start_mode(TILT_AXIS_X, &scene->tilt_x);
-  tilt_apply_axis_start_mode(TILT_AXIS_Y, &scene->tilt_y);
-}
-
-void scene_apply_tilt_start_modes(void) {
-  scene_apply_tilt_start_modes_for(scene_get_current());
-}
-
 esp_err_t scene_set_tilt_x_tempo_nudge_pct(uint8_t scene_index, uint8_t pct) {
   if (scene_index > MAX_SCENE_INDEX) return ESP_ERR_INVALID_ARG;
   if (pct > 100) pct = 100;
@@ -5176,7 +5153,7 @@ static const char* action_type_json_names[] = {
   [ACTION_PIANO_PEDAL] = "piano_pedal",
   [ACTION_TOUCHWHEEL] = "touchwheel",
   [ACTION_LFO] = "lfo",
-  [ACTION_TILT] = "tilt",
+  [ACTION_STREAM] = "stream",
   [ACTION_CLOCK] = "clock",
   [ACTION_CUT] = "cut",
   [ACTION_UI] = "ui",
@@ -5522,29 +5499,25 @@ static cJSON* action_to_json(const action_t* action) {
     // only when it carries a non-sentinel value -- absent fields mean
     // "Original" (leave the scene config in place) on the load side too.
     cJSON_AddNumberToObject(obj, "slot", action->params.lfo.slot);
-    if (action->variant == VARIANT_MODIFY) {
-      if (action->params.lfo.waveform != ACTION_LFO_ORIG_U8)
-        cJSON_AddNumberToObject(obj, "waveform", action->params.lfo.waveform);
-      if (action->params.lfo.rate_mode != ACTION_LFO_ORIG_U8)
-        cJSON_AddNumberToObject(obj, "rate_mode", action->params.lfo.rate_mode);
-      if (action->params.lfo.rate_hz_x100 != ACTION_LFO_ORIG_U16)
-        cJSON_AddNumberToObject(obj, "rate_hz_x100", action->params.lfo.rate_hz_x100);
-      if (action->params.lfo.division != ACTION_LFO_ORIG_U8)
-        cJSON_AddNumberToObject(obj, "division", action->params.lfo.division);
-      if (action->params.lfo.floor != ACTION_LFO_ORIG_U8)
-        cJSON_AddNumberToObject(obj, "floor", action->params.lfo.floor);
-      if (action->params.lfo.ceiling != ACTION_LFO_ORIG_U8)
-        cJSON_AddNumberToObject(obj, "ceiling", action->params.lfo.ceiling);
-      if (action->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8)
-        cJSON_AddNumberToObject(obj, "resolution_mode", action->params.lfo.resolution_mode);
-      if (action->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS)
-        cJSON_AddNumberToObject(obj, "manual_steps", action->params.lfo.manual_steps);
-    }
-  } else if (action->type == ACTION_TILT) {
-    const char* target_str =
-      (action->params.tilt.target == 1) ? "x" :
-      (action->params.tilt.target == 2) ? "y" : "both";
-    cJSON_AddStringToObject(obj, "target", target_str);
+    if (action->params.lfo.waveform != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "waveform", action->params.lfo.waveform);
+    if (action->params.lfo.rate_mode != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "rate_mode", action->params.lfo.rate_mode);
+    if (action->params.lfo.rate_hz_x100 != ACTION_LFO_ORIG_U16)
+      cJSON_AddNumberToObject(obj, "rate_hz_x100", action->params.lfo.rate_hz_x100);
+    if (action->params.lfo.division != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "division", action->params.lfo.division);
+    if (action->params.lfo.floor != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "floor", action->params.lfo.floor);
+    if (action->params.lfo.ceiling != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "ceiling", action->params.lfo.ceiling);
+    if (action->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8)
+      cJSON_AddNumberToObject(obj, "resolution_mode", action->params.lfo.resolution_mode);
+    if (action->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS)
+      cJSON_AddNumberToObject(obj, "manual_steps", action->params.lfo.manual_steps);
+  } else if (action->type == ACTION_STREAM) {
+    cJSON_AddStringToObject(obj, "target",
+      stream_target_to_string((stream_target_t)action->params.stream.target));
   } else if (action->type == ACTION_RTG && action->variant == VARIANT_MODIFY) {
     const action_engine_modify_t* m = &action->params.rtg_modify;
     if (m->rate_mode != ACTION_LFO_ORIG_U8)
@@ -5854,8 +5827,7 @@ static action_t json_to_action(cJSON* obj) {
     if (action.type == ACTION_PRESET)     action.variant = VARIANT_SET;
     if (action.type == ACTION_TRANSPORT)  action.variant = VARIANT_PLAY;
     if (action.type == ACTION_TOUCHWHEEL) action.variant = VARIANT_HOLD;
-    if (action.type == ACTION_LFO)        action.variant = VARIANT_START;
-    if (action.type == ACTION_TILT)       action.variant = VARIANT_START;
+    if (action.type == ACTION_STREAM)     action.variant = VARIANT_START;
     if (action.type == ACTION_CLOCK)      action.variant = VARIANT_TOGGLE;
     if (action.type == ACTION_CUT)        action.variant = VARIANT_TOGGLE;
     if (action.type == ACTION_UI)         action.variant = VARIANT_SET;
@@ -6160,53 +6132,49 @@ static action_t json_to_action(cJSON* obj) {
     cJSON* slot = cJSON_GetObjectItem(obj, "slot");
     if (slot) action.params.lfo.slot = (uint8_t)slot->valueint;
 
-    if (action.variant == VARIANT_MODIFY) {
-      // Modern MODIFY overrides -- absent keys stay at the Original sentinel.
-      cJSON* item;
-      if ((item = cJSON_GetObjectItem(obj, "waveform")))
-        action.params.lfo.waveform = (uint8_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "rate_mode")))
-        action.params.lfo.rate_mode = (uint8_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "rate_hz_x100")))
-        action.params.lfo.rate_hz_x100 = (uint16_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "division")))
-        action.params.lfo.division = (uint8_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "floor")))
-        action.params.lfo.floor = (uint8_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "ceiling")))
-        action.params.lfo.ceiling = (uint8_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "resolution_mode")))
-        action.params.lfo.resolution_mode = (uint8_t)item->valueint;
-      if ((item = cJSON_GetObjectItem(obj, "manual_steps")))
-        action.params.lfo.manual_steps = (uint8_t)item->valueint;
+    // Modern MODIFY overrides -- absent keys stay at the Original sentinel.
+    cJSON* item;
+    if ((item = cJSON_GetObjectItem(obj, "waveform")))
+      action.params.lfo.waveform = (uint8_t)item->valueint;
+    if ((item = cJSON_GetObjectItem(obj, "rate_mode")))
+      action.params.lfo.rate_mode = (uint8_t)item->valueint;
+    if ((item = cJSON_GetObjectItem(obj, "rate_hz_x100")))
+      action.params.lfo.rate_hz_x100 = (uint16_t)item->valueint;
+    if ((item = cJSON_GetObjectItem(obj, "division")))
+      action.params.lfo.division = (uint8_t)item->valueint;
+    if ((item = cJSON_GetObjectItem(obj, "floor")))
+      action.params.lfo.floor = (uint8_t)item->valueint;
+    if ((item = cJSON_GetObjectItem(obj, "ceiling")))
+      action.params.lfo.ceiling = (uint8_t)item->valueint;
+    if ((item = cJSON_GetObjectItem(obj, "resolution_mode")))
+      action.params.lfo.resolution_mode = (uint8_t)item->valueint;
+    if ((item = cJSON_GetObjectItem(obj, "manual_steps")))
+      action.params.lfo.manual_steps = (uint8_t)item->valueint;
 
-      // Legacy lfo_shape compatibility: the migration alias rewrote the
-      // type/variant to ACTION_LFO + VARIANT_MODIFY but the JSON still
-      // carries the old shapes[] cycle. Seed the waveform override from
-      // shapes[0] so the legacy file at least flips to its first listed
-      // waveform on every press. The other 1-7 entries (and the cycle
-      // semantics) are lost; this is the documented regression.
-      cJSON* shapes = cJSON_GetObjectItem(obj, "shapes");
-      if (action.params.lfo.waveform == ACTION_LFO_ORIG_U8 &&
-          shapes && cJSON_IsArray(shapes) && cJSON_GetArraySize(shapes) > 0) {
-        cJSON* first = cJSON_GetArrayItem(shapes, 0);
-        if (first) action.params.lfo.waveform = (uint8_t)first->valueint;
-      }
+    // Legacy lfo_shape compatibility: the migration alias rewrote the
+    // type/variant to ACTION_LFO + VARIANT_MODIFY but the JSON still
+    // carries the old shapes[] cycle. Seed the waveform override from
+    // shapes[0] so the legacy file at least flips to its first listed
+    // waveform on every press. The other 1-7 entries (and the cycle
+    // semantics) are lost; this is the documented regression.
+    cJSON* shapes = cJSON_GetObjectItem(obj, "shapes");
+    if (action.params.lfo.waveform == ACTION_LFO_ORIG_U8 &&
+        shapes && cJSON_IsArray(shapes) && cJSON_GetArraySize(shapes) > 0) {
+      cJSON* first = cJSON_GetArrayItem(shapes, 0);
+      if (first) action.params.lfo.waveform = (uint8_t)first->valueint;
     }
   }
 
-  // Parse ACTION_TILT actions
-  if (action.type == ACTION_TILT) {
-    action.params.tilt.target = 3;  // default Both
+  // Parse ACTION_STREAM actions
+  if (action.type == ACTION_STREAM) {
+    action.params.stream.target = (uint8_t)STREAM_TARGET_DEFAULT;
     cJSON* target = cJSON_GetObjectItem(obj, "target");
     if (target && cJSON_IsString(target)) {
-      const char* t = target->valuestring;
-      if (strcmp(t, "x") == 0) action.params.tilt.target = 1;
-      else if (strcmp(t, "y") == 0) action.params.tilt.target = 2;
-      else action.params.tilt.target = 3;
+      action.params.stream.target =
+        (uint8_t)stream_target_from_string(target->valuestring);
     } else if (target && cJSON_IsNumber(target)) {
       uint8_t n = (uint8_t)target->valueint;
-      action.params.tilt.target = (n >= 1 && n <= 3) ? n : 3;
+      if (n < STREAM_TARGET_COUNT) action.params.stream.target = n;
     }
   }
 
@@ -8099,7 +8067,11 @@ static esp_err_t json_to_scene(cJSON* root, scene_t* scene) {
   if (cv) json_to_continuous_mapping(cv, &scene->cv);
   
   cJSON* proximity = cJSON_GetObjectItem(root, "proximity");
-  if (proximity) json_to_continuous_mapping(proximity, &scene->proximity);
+  if (proximity) {
+    json_to_continuous_mapping(proximity, &scene->proximity);
+    if (scene->proximity.polarity == POLARITY_BIPOLAR)
+      scene->proximity.polarity = POLARITY_UNIPOLAR;
+  }
   
   cJSON* als = cJSON_GetObjectItem(root, "als");
   if (als) json_to_continuous_mapping(als, &scene->als);
@@ -8854,7 +8826,7 @@ static void scene_reapply_runtime(uint8_t scene_index, scene_t *scene) {
     s_needs_deferred_init = true;
   }
 
-  scene_apply_tilt_start_modes_for(scene);
+  stream_apply_start_modes_for(scene);
 
   scene_apply_ui_module_for_performance(scene->ui_module);
 

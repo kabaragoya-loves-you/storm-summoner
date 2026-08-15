@@ -719,19 +719,17 @@ application.register(
     seedLfoAction (actionPath) {
       const action = this.getAtPath(actionPath)
       if (!action || action.type !== 'lfo') return
-      const v = action.variant || 'modify'
+      delete action.variant
       if (action.slot == null) action.slot = 1
-      if (v === 'modify') ActionCatalog.seedLfoModifyFields(action)
-      else ActionCatalog.clearLfoModifyFields(action)
-      if (v === 'start' || v === 'stop' || v === 'hold') ActionCatalog.clearRepeatFields(action)
+      ActionCatalog.seedLfoModifyFields(action)
     }
 
-    seedTiltAction (actionPath) {
+    seedStreamAction (actionPath) {
       const action = this.getAtPath(actionPath)
-      if (!action || action.type !== 'tilt') return
-      const t = String(action.target || 'both').toLowerCase()
-      action.target = (t === 'x' || t === 'y') ? t : 'both'
-      const v = action.variant || 'start'
+      if (!action || action.type !== 'stream') return
+      if (!action.variant) action.variant = 'start'
+      if (!action.target) action.target = 'lfo_both'
+      const v = action.variant
       if (v === 'start' || v === 'stop' || v === 'hold') {
         ActionCatalog.clearRepeatFields(action)
       }
@@ -910,7 +908,7 @@ application.register(
       this.sanitizeFlagThresholds(mapping)
       if (forSave) this.stripFlagThresholdsForSave(mapping)
 
-      // Tilt Start Mode: migrate legacy start_enabled bool; default running.
+      // Start Mode: migrate legacy start_enabled bool; default running.
       if (mapping.start_mode == null && mapping.start_enabled != null) {
         mapping.start_mode = mapping.start_enabled ? 'running' : 'paused'
       }
@@ -1030,6 +1028,8 @@ application.register(
         model.cv_input_mode = 'clock_sync'
       }
       ActionCatalog.stripActionFieldsInModel(model)
+      ActionCatalog.normalizeStreamActionsInModel(model)
+      ActionCatalog.normalizeLfoActionsInModel(model)
       ActionCatalog.normalizeSimpleActionsInModel(model)
       if (forSave && model.expr_switch?.type === 'none') delete model.expr_switch
       if (forSave) this.normalizeScopeForSave(model)
@@ -1116,8 +1116,8 @@ application.register(
       ActionCatalog.normalizeTempoActionsInModel(
         model, this.deviceContext.allowFractionalBpm)
       ActionCatalog.normalizeTouchwheelActionsInModel(model)
+      ActionCatalog.normalizeStreamActionsInModel(model)
       ActionCatalog.normalizeLfoActionsInModel(model)
-      ActionCatalog.normalizeTiltActionsInModel(model)
       ActionCatalog.normalizeSimpleActionsInModel(model)
       ActionCatalog.normalizeRepeatActionsInModel(model)
       if (model.device_id === '' || model.device_id == null) delete model.device_id
@@ -2209,7 +2209,7 @@ application.register(
         else if (val === 'piano_pedal') this.seedPianoPedalAction(aPath)
         else if (val === 'touchwheel') this.seedTouchwheelAction(aPath)
         else if (val === 'lfo') this.seedLfoAction(aPath)
-        else if (val === 'tilt') this.seedTiltAction(aPath)
+        else if (val === 'stream') this.seedStreamAction(aPath)
         else if (val === 'tempo') this.seedTempoAction(aPath)
         else if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold', 'punch_in',
           'boomerang', 'restore'].includes(val)) {
@@ -2243,8 +2243,8 @@ application.register(
         if (action?.type === 'lfo') {
           this.seedLfoAction(aPath)
         }
-        if (action?.type === 'tilt') {
-          this.seedTiltAction(aPath)
+        if (action?.type === 'stream') {
+          this.seedStreamAction(aPath)
         }
         if (['clock', 'cut', 'ui', 'param', 'rtg', 'sample_hold'].includes(action?.type)) {
           this.seedConsolidatedAction(aPath)

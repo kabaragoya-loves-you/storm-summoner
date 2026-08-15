@@ -11,6 +11,7 @@
 #include "scene.h"
 #include "ui.h"
 #include "tempo.h"
+#include "midi_local_output.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <math.h>
@@ -56,10 +57,9 @@
 #define DEFAULT_ALS_RATE 5   // Default: 5 messages per second (respect 160ms integration time)
 #define DEFAULT_PS_RATE 50   // Default: 50 messages per second (8T integration is ~10-16ms)
 #define NVS_KEY_HYSTERESIS_ENABLED "prox_hyst_en"
-#define NVS_KEY_REST_POSITION "prox_rest"
 #define NVS_KEY_RETURN_SPEED "prox_ret_spd"
 #define NVS_KEY_TIMEOUT "prox_timeout"
-#define DEFAULT_REST_POSITION 0
+#define DEFAULT_REST_POSITION 64
 #define NVS_KEY_PROXIMITY_MODE "prox_mode"
 #define NVS_KEY_NOTE_SILENCE "prox_note_sil"
 #define NVS_KEY_SUNLIGHT_CANCEL "prox_sc_en"
@@ -76,11 +76,13 @@ static TaskHandle_t sensor_task_handle = NULL;
 static volatile bool als_enabled_flag = false;
 static volatile bool ps_enabled_flag = false;
 static volatile bool ps_force_next_post = false;
+static volatile bool ps_wake_from_slow = false;
 static volatile uint16_t als_value = 0;
 static volatile uint16_t ps_value = 0;
 static volatile uint8_t last_midi_als_value = 0;  // Last MIDI value actually sent
 static volatile uint8_t als_processed_midi = 0;   // Latest scaled MIDI (every read)
 static volatile uint8_t last_midi_ps_value = 0;   // Last MIDI value actually sent
+static volatile uint8_t last_live_midi_ps = 0;    // Latest linearized MIDI, pre-hysteresis
 static volatile float filtered_als = 0.0f;
 static volatile float filtered_proximity = 0.0f;
 static volatile uint16_t als_min_observed = 65535;  // Track minimum observed value
@@ -239,21 +241,24 @@ void sensor_init(bool enable_logging) {
     als_deadzone = (uint8_t)stored_val;
   }
 
-  // Load hysteresis settings
-  uint8_t hyst_enabled = 0;
+  // Load hysteresis settings (default on when NVS has no key)
+  uint8_t hyst_enabled = 1;
   if (app_settings_load_u8(NVS_KEY_HYSTERESIS_ENABLED, &hyst_enabled) == ESP_OK) {
     hysteresis_enabled = (hyst_enabled != 0);
   } else {
-    app_settings_save_u8(NVS_KEY_HYSTERESIS_ENABLED, 0);
+    hysteresis_enabled = true;
+    app_settings_save_u8(NVS_KEY_HYSTERESIS_ENABLED, 1);
   }
 
-  err = app_settings_load_u32(NVS_KEY_REST_POSITION, &stored_val);
-  if (err != ESP_OK) {
-    rest_position = DEFAULT_REST_POSITION;
-    app_settings_save_u32(NVS_KEY_REST_POSITION, DEFAULT_REST_POSITION);
-  } else {
-    rest_position = (uint8_t)stored_val;
+  // Scene handler may have already cached idle_value; do not reset to 64.
+  rest_position = DEFAULT_REST_POSITION;
+  scene_t* current_scene = scene_get_current();
+  if (current_scene) {
+    uint8_t rest = current_scene->proximity.idle_value;
+    if (rest > 127) rest = 127;
+    rest_position = rest;
   }
+  ESP_LOGI(TAG, "Proximity rest (scene): %u", (unsigned)rest_position);
 
   err = app_settings_load_u32(NVS_KEY_RETURN_SPEED, &stored_val);
   if (err != ESP_OK) {
@@ -755,11 +760,35 @@ bool proximity_get_hysteresis_enabled(void) {
   return hysteresis_enabled;
 }
 
+void proximity_kick_rest_return(void) {
+  ps_wake_from_slow = true;
+  ps_force_next_post = true;
+  if (!hysteresis_enabled)
+    return;
+  // Hand in the field: new rest is only the next park target.
+  if (last_live_midi_ps >= PROX_IDLE_LEAVE_THRESH)
+    return;
+  if (last_midi_ps_value == rest_position) {
+    returning_to_rest = false;
+    rest_settled = true;
+    at_rest_start_time = 0;
+    return;
+  }
+  returning_to_rest = true;
+  rest_settled = false;
+  at_rest_start_time = 0;
+  return_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  return_start_value = (float)last_midi_ps_value;
+  ESP_LOGI(TAG, "Proximity rest return from %u to %u",
+    (unsigned)last_midi_ps_value, (unsigned)rest_position);
+}
+
 void proximity_set_rest_position(uint8_t position) {
   if (position > 127) position = 127;
+  if (position == rest_position) return;
   rest_position = position;
-  app_settings_save_u32(NVS_KEY_REST_POSITION, position);
-  ESP_LOGI(TAG, "Proximity rest position set to %u", position);
+  ESP_LOGI(TAG, "Proximity rest cache: %u", (unsigned)rest_position);
+  proximity_kick_rest_return();
 }
 
 uint8_t proximity_get_rest_position(void) {
@@ -972,6 +1001,12 @@ static void sensor_task(void *arg) {
   
   while (1) {
     uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+    if (ps_wake_from_slow) {
+      ps_wake_from_slow = false;
+      ps_use_slow_rate = false;
+      ps_stability_count = 0;
+    }
     
     // Determine which sensor is ready to read
     // Enforce minimum intervals to respect sensor integration times
@@ -1037,6 +1072,7 @@ static void sensor_task(void *arg) {
 
         // Scale to MIDI range (0-127)
         uint8_t midi_value = (uint8_t)(compensated * 127.0f + 0.5f);
+        last_live_midi_ps = midi_value;
         uint8_t output_value = midi_value;
 
         if (hysteresis_enabled) {
@@ -1115,10 +1151,13 @@ static void sensor_task(void *arg) {
             ps_last_log_time = current_time;
           }
 
-          // Only send if the value has changed beyond deadzone AND rate limit allows
+          // Only send if the value has changed beyond deadzone AND rate limit allows.
+          // Do not advance last_midi_ps_value while local MIDI is silenced, or a
+          // rest change in programming mode is eaten and never replayed on exit.
           int diff = abs((int)output_value - (int)last_midi_ps_value);
           bool force_post = ps_force_next_post;
-          if ((force_post || diff >= proximity_deadzone) &&
+          if (midi_local_output_is_enabled() &&
+              (force_post || diff >= proximity_deadzone) &&
               (current_time - ps_last_send_time) >= ps_min_interval_ms) {
             if (force_post) ps_force_next_post = false;
             ESP_LOGD(TAG, "Posting proximity event: current=%u, last=%u, diff=%d%s",
@@ -1319,6 +1358,7 @@ void sensor_reset(void) {
     last_midi_als_value = 0;
     als_processed_midi = 0;
     last_midi_ps_value = 0;
+    last_live_midi_ps = 0;
 
     ESP_LOGI(TAG, "Sensor software reset complete");
   }

@@ -1,4 +1,5 @@
 #include "action_migration.h"
+#include "stream.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -135,6 +136,7 @@ static const legacy_alias_t s_legacy_aliases[] = {
   { "lfo_stop",         ACTION_LFO,              VARIANT_STOP      },
   { "lfo_toggle",       ACTION_LFO,              VARIANT_TOGGLE    },
   { "lfo_shape",        ACTION_LFO,              VARIANT_MODIFY    },
+  { "tilt",             ACTION_STREAM,           VARIANT_NONE      },
 
   // Pre-consolidation clock names.
   { "clock_toggle",     ACTION_CLOCK,            VARIANT_TOGGLE    },
@@ -192,21 +194,50 @@ bool action_migration_fixup_action(const cJSON* action_json, action_t* action) {
 
   cJSON* type_node = cJSON_GetObjectItem(action_json, "type");
   if (!type_node || !cJSON_IsString(type_node)) return false;
-  if (strcmp(type_node->valuestring, "step") != 0) return false;
+  const char* type_str = type_node->valuestring;
+  bool hit = false;
 
-  action->variant = VARIANT_STEP;
-  cJSON* step_target = cJSON_GetObjectItem(action_json, "step_target");
-  if (step_target && cJSON_IsString(step_target) &&
-      strcmp(step_target->valuestring, "sh") == 0) {
-    action->type = ACTION_SAMPLE_HOLD;
-  } else {
-    action->type = ACTION_RTG;
+  if (strcmp(type_str, "step") == 0) {
+    action->variant = VARIANT_STEP;
+    cJSON* step_target = cJSON_GetObjectItem(action_json, "step_target");
+    if (step_target && cJSON_IsString(step_target) &&
+        strcmp(step_target->valuestring, "sh") == 0) {
+      action->type = ACTION_SAMPLE_HOLD;
+    } else {
+      action->type = ACTION_RTG;
+    }
+    hit = true;
   }
+
+  // LFO Start/Stop/Toggle/Hold -> Stream. Modify (or no variant) stays LFO.
+  if (action->type == ACTION_LFO &&
+      (action->variant == VARIANT_START || action->variant == VARIANT_STOP ||
+       action->variant == VARIANT_TOGGLE || action->variant == VARIANT_HOLD)) {
+    uint8_t slot = action->params.lfo.slot;
+    stream_target_t target = STREAM_TARGET_LFO_BOTH;
+    if (slot == 1) target = STREAM_TARGET_LFO1;
+    else if (slot == 2) target = STREAM_TARGET_LFO2;
+    action->type = ACTION_STREAM;
+    action->params.stream.target = (uint8_t)target;
+    hit = true;
+  }
+
+  // RTG / S+H Toggle/Hold -> Stream. Step/Modify stay on the engine family.
+  if ((action->type == ACTION_RTG || action->type == ACTION_SAMPLE_HOLD) &&
+      (action->variant == VARIANT_TOGGLE || action->variant == VARIANT_HOLD)) {
+    stream_target_t target = (action->type == ACTION_RTG)
+      ? STREAM_TARGET_RTG : STREAM_TARGET_SAMPLE_HOLD;
+    action->type = ACTION_STREAM;
+    action->params.stream.target = (uint8_t)target;
+    hit = true;
+  }
+
+  if (!hit) return false;
 
   s_hit_count++;
   snprintf(s_last_summary, sizeof(s_last_summary),
-    "legacy action type 'step' -> type=%d variant=%d",
-    (int)action->type, (int)action->variant);
+    "legacy action type '%s' -> type=%d variant=%d",
+    type_str, (int)action->type, (int)action->variant);
   ESP_LOGI(TAG, "%s", s_last_summary);
   return true;
 }

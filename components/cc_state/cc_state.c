@@ -10,6 +10,7 @@ static bool s_initialized = false;
 // Copy of the live table taken when programming mode re-seeds it.
 static uint8_t s_stash_values[128];
 static uint32_t s_stash_dirty[4];
+static uint32_t s_stash_known[4];
 static bool s_stash_active = false;
 
 static inline void bit_set(uint32_t* words, uint8_t cc) {
@@ -87,7 +88,15 @@ void cc_state_reset_all(void) {
 void cc_state_stash_enter(void) {
   memcpy(s_stash_values, s_values, sizeof(s_stash_values));
   memcpy(s_stash_dirty, s_dirty, sizeof(s_stash_dirty));
+  memcpy(s_stash_known, s_known, sizeof(s_stash_known));
   s_stash_active = true;
+}
+
+void cc_state_stash_restore(void) {
+  if (!s_stash_active) return;
+  memcpy(s_values, s_stash_values, sizeof(s_values));
+  memcpy(s_dirty, s_stash_dirty, sizeof(s_dirty));
+  memcpy(s_known, s_stash_known, sizeof(s_known));
 }
 
 void cc_state_stash_exit(void) {

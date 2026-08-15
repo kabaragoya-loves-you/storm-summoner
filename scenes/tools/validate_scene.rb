@@ -24,6 +24,7 @@ VALID_ACTION_TYPES = %w[
   tw_mode_hold tw_mode_cycle
   touchwheel touchwheel_hold touchwheel_cycle
   lfo lfo_start lfo_stop lfo_toggle lfo_shape
+  stream tilt
   clock clock_toggle clock_hold clock_burst
   cut cut_toggle cut_hold
   ui set_ui ui_hold ui_cycle
@@ -267,20 +268,40 @@ def validate_action(action, context, errors, scene_data: nil)
     else
       errors << "#{context}: touchwheel variant must be 'hold' or 'cycle' (got #{variant.inspect})"
     end
-  when 'lfo'
-    # Consolidated LFO family. Variant decides which fields apply.
-    #   start/stop/toggle/hold: slot only.
-    #   modify: slot plus any of 8 optional override fields, each with the
-    #     range matched in the JSON schema (sentinels live in firmware as
-    #     "field absent from JSON = Original").
+  when 'stream'
+    targets = %w[
+      expression cv proximity als note_track
+      tilt_x tilt_y tilt_both
+      lfo1 lfo2 lfo_both
+      sample_hold rtg
+    ]
+    unless targets.include?(action['target'])
+      errors << "#{context}: stream requires 'target' (#{targets.join(', ')})"
+    end
     variant = action['variant']
+    unless %w[start stop toggle hold].include?(variant) || variant.nil?
+      errors << "#{context}: stream variant must be 'start', 'stop', 'toggle', or 'hold' (got #{variant.inspect})"
+    end
+  when 'tilt'
+    # Legacy tilt family; firmware/web migrate to stream with tilt_x/tilt_y/tilt_both.
+    unless %w[x y both tilt_x tilt_y tilt_both].include?(action['target']) || action['target'].nil?
+      errors << "#{context}: tilt target must be 'x', 'y', or 'both' (got #{action['target'].inspect})"
+    end
+    variant = action['variant']
+    unless %w[start stop toggle hold].include?(variant) || variant.nil?
+      errors << "#{context}: tilt variant must be 'start', 'stop', 'toggle', or 'hold' (got #{variant.inspect})"
+    end
+  when 'lfo'
+    # Singleton LFO Modify. Start/Stop/Toggle/Hold variants are still
+    # accepted as legacy (migrated to stream on load).
     unless action['slot'].is_a?(Integer) && [1, 2, 3].include?(action['slot'])
       errors << "#{context}: lfo requires 'slot' (1=LFO1, 2=LFO2, 3=both)"
     end
+    variant = action['variant']
     case variant
-    when 'start', 'stop', 'toggle', 'hold', nil
-      # nil variant defaults to start per firmware fallback. No further fields.
-    when 'modify'
+    when 'start', 'stop', 'toggle', 'hold'
+      # Legacy transport variants; migrated to stream on load.
+    when 'modify', nil
       lfo_rand_u8 = 254
       lfo_rand_u16 = 65534
       lfo_rand_steps = 254
@@ -309,7 +330,7 @@ def validate_action(action, context, errors, scene_data: nil)
         errors << "#{context}: lfo modify 'manual_steps' must be 1-256 or #{lfo_rand_steps} (random)"
       end
     else
-      errors << "#{context}: lfo variant must be 'start', 'stop', 'toggle', 'hold', or 'modify' (got #{variant.inspect})"
+      errors << "#{context}: lfo is a Modify action (legacy start/stop/toggle/hold variants are migrated to stream)"
     end
   when 'clock'
     variant = action['variant']
@@ -416,27 +437,33 @@ def validate_action(action, context, errors, scene_data: nil)
     variant = action['variant']
     if action['step_target']
       errors << "#{context}: warning: step_target is ignored on rtg actions (use type sample_hold for S+H Step)"
+    end
     case variant
-    when 'toggle', 'hold', 'step', nil
+    when 'toggle', 'hold'
+      # Legacy; migrated to stream with target=rtg on load.
+    when 'step', nil
       # Parameterless action; no extra fields.
     when 'modify'
       validate_engine_modify_fields(action, context, errors)
     else
-      errors << "#{context}: rtg variant must be 'toggle', 'hold', 'step', or 'modify' (got #{variant.inspect})"
+      errors << "#{context}: rtg variant must be 'step' or 'modify' (got #{variant.inspect})"
     end
   when 'rtg_toggle', 'rtg_hold'
-    # Legacy single-type entries; no extra fields.
+    # Legacy single-type entries; migrated to stream with target=rtg.
   when 'sample_hold'
     variant = action['variant']
     if action['step_target']
       errors << "#{context}: warning: step_target is ignored on sample_hold actions"
+    end
     case variant
-    when 'toggle', 'hold', 'step', nil
+    when 'toggle', 'hold'
+      # Legacy; migrated to stream with target=sample_hold on load.
+    when 'step', nil
       # Parameterless action; no extra fields.
     when 'modify'
       validate_engine_modify_fields(action, context, errors)
     else
-      errors << "#{context}: sample_hold variant must be 'toggle', 'hold', 'step', or 'modify' (got #{variant.inspect})"
+      errors << "#{context}: sample_hold variant must be 'step' or 'modify' (got #{variant.inspect})"
     end
   when 'sample_hold_toggle', 'sample_hold_hold'
     # Legacy single-type entries; no extra fields.
@@ -520,9 +547,10 @@ def validate_action(action, context, errors, scene_data: nil)
     end
   when 'lfo_start', 'lfo_stop', 'lfo_toggle', 'lfo_shape'
     # Legacy single-type entries (pre-consolidation). Minimal validation --
-    # firmware's migration table rewrites them to 'lfo' + the matching
-    # variant on load; 'lfo_shape' additionally collapses its old shapes[]
-    # cycle to a single waveform override (the first entry).
+    # firmware's migration table rewrites start/stop/toggle to stream
+    # (target from slot) and lfo_shape to LFO Modify. 'lfo_shape'
+    # additionally collapses its old shapes[] cycle to a single
+    # waveform override (the first entry).
     unless action['slot'].is_a?(Integer) && [1, 2, 3].include?(action['slot'])
       errors << "#{context}: #{type} requires 'slot' (1=LFO1, 2=LFO2, 3=both)"
     end

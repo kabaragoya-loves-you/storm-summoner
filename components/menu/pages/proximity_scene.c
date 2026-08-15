@@ -10,6 +10,7 @@
 #include "assets_manager.h"
 #include "assets_types.h"
 #include "ui.h"
+#include "stream.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <stdio.h>
@@ -27,14 +28,16 @@ lv_obj_t* menu_page_proximity_scene_create(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_PROXIMITY_ITEMS 16
+#define MAX_PROXIMITY_ITEMS 17
 static menu_item_t s_prox_items[MAX_PROXIMITY_ITEMS];
 
 static char s_flag_labels[LABEL_BUFFER_SETS][4][48];
 
 static char s_mode_label[LABEL_BUFFER_SETS][40];
+static char s_start_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_slot_labels[LABEL_BUFFER_SETS][4][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
+static char s_rest_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
 static char s_base_note_label[LABEL_BUFFER_SETS][32];
 static char s_range_label[LABEL_BUFFER_SETS][32];
@@ -87,11 +90,13 @@ static void get_note_name(uint8_t midi_note, char* buf, size_t buf_size) {
 
 static const char* polarity_to_string(polarity_t polarity) {
   switch (polarity) {
-    case POLARITY_UNIPOLAR: return "Unipolar";
-    case POLARITY_BIPOLAR: return "Bipolar";
     case POLARITY_INVERTED: return "Inverted";
-    default: return "Unknown";
+    default: return "Unipolar";
   }
+}
+
+static uint32_t polarity_to_index(polarity_t polarity) {
+  return polarity == POLARITY_INVERTED ? 1 : 0;
 }
 
 // ============================================================================
@@ -207,6 +212,61 @@ static lv_obj_t* mode_roller_create(void) {
 static void nav_to_mode(void* user_data) {
   (void)user_data;
   menu_navigate_to("Mode", mode_roller_create);
+}
+
+// ============================================================================
+// Start Mode Roller (Running / Paused / Follow Transport)
+// ============================================================================
+
+static const char* start_mode_display(continuous_start_mode_t mode) {
+  switch (mode) {
+    case CONTINUOUS_START_PAUSED: return "Paused";
+    case CONTINUOUS_START_TRANSPORT: return "Follow Transport";
+    case CONTINUOUS_START_RUNNING:
+    default: return "Running";
+  }
+}
+
+static void start_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  continuous_start_mode_t modes[] = {
+    CONTINUOUS_START_RUNNING, CONTINUOUS_START_PAUSED, CONTINUOUS_START_TRANSPORT
+  };
+  scene->proximity.start_mode = (selected_index < 3) ? modes[selected_index]
+    : CONTINUOUS_START_RUNNING;
+  persist_scene_changes();
+  stream_apply_start_modes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Proximity", menu_page_proximity_scene_create);
+}
+
+static lv_obj_t* start_mode_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  uint32_t current_idx = 0;
+  switch (scene->proximity.start_mode) {
+    case CONTINUOUS_START_PAUSED: current_idx = 1; break;
+    case CONTINUOUS_START_TRANSPORT: current_idx = 2; break;
+    default: current_idx = 0; break;
+  }
+  return menu_create_roller_page("Start Mode", "Running\nPaused\nFollow Transport",
+    current_idx, start_mode_confirm_cb, NULL);
+}
+
+static void nav_to_start_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Start Mode", start_mode_roller_create);
 }
 
 // ============================================================================
@@ -337,8 +397,8 @@ static void polarity_confirm_cb(uint32_t selected_index, void* user_data) {
     return;
   }
   
-  polarity_t polarities[] = { POLARITY_UNIPOLAR, POLARITY_BIPOLAR, POLARITY_INVERTED };
-  if (selected_index < 3) {
+  polarity_t polarities[] = { POLARITY_UNIPOLAR, POLARITY_INVERTED };
+  if (selected_index < 2) {
     scene->proximity.polarity = polarities[selected_index];
     persist_scene_changes();
     ESP_LOGI(TAG, "Proximity polarity set to: %s", polarity_to_string(scene->proximity.polarity));
@@ -352,20 +412,62 @@ static lv_obj_t* polarity_roller_create(void) {
   scene_t* scene = scene_get_current();
   if (!scene) return NULL;
   
-  uint32_t current = 0;
-  switch (scene->proximity.polarity) {
-    case POLARITY_UNIPOLAR: current = 0; break;
-    case POLARITY_BIPOLAR: current = 1; break;
-    case POLARITY_INVERTED: current = 2; break;
-  }
-  
-  return menu_create_roller_page("Polarity", "Unipolar\nBipolar\nInverted", current, 
+  uint32_t current = polarity_to_index(scene->proximity.polarity);
+
+  return menu_create_roller_page("Polarity", "Unipolar\nInverted", current,
     polarity_confirm_cb, NULL);
 }
 
 static void nav_to_polarity(void* user_data) {
   (void)user_data;
   menu_navigate_to("Polarity", polarity_roller_create);
+}
+
+// ============================================================================
+// Rest Position Roller (scene idle_value, CC park target)
+// ============================================================================
+
+static uint32_t rest_pos_option_index(uint8_t current) {
+  if (current >= 127) return 15;
+  uint32_t idx = ((uint32_t)current + 4) / 8;
+  return idx > 15 ? 15 : idx;
+}
+
+static void rest_pos_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  uint8_t value = (uint8_t)(selected_index * 8);
+  if (selected_index == 15) value = 127;
+
+  scene_t* scene = scene_get_current();
+  if (scene) {
+    scene->proximity.idle_value = value;
+    persist_scene_changes();
+    proximity_set_rest_position(value);
+    ESP_LOGI(TAG, "Proximity rest set to: %u", (unsigned)value);
+  }
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Proximity", menu_page_proximity_scene_create);
+}
+
+static lv_obj_t* rest_pos_roller_create(void) {
+  static const char* options =
+    "0\n8\n16\n24\n32\n40\n48\n56\n64\n72\n80\n88\n96\n104\n112\n127";
+
+  scene_t* scene = scene_get_current();
+  uint8_t current = scene ? scene->proximity.idle_value : 64;
+  uint32_t idx = rest_pos_option_index(current);
+
+  return menu_create_roller_page("Rest Position", options, idx, rest_pos_confirm_cb, NULL);
+}
+
+static void nav_to_rest_pos(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Rest Position", rest_pos_roller_create);
 }
 
 // ============================================================================
@@ -742,6 +844,12 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     return menu_create_page_2line("Proximity", s_prox_items, item_count);
   }
 
+  snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]),
+    "Start Mode\n%s", start_mode_display(scene->proximity.start_mode));
+  s_prox_items[item_count++] = (menu_item_t){
+    s_start_mode_label[buf], nav_to_start_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
+
   if (scene->proximity.output_type == OUTPUT_TYPE_CC) {
     // CC slots
     for (int i = 0; i < 4; i++) {
@@ -769,6 +877,10 @@ lv_obj_t* menu_page_proximity_scene_create(void) {
     snprintf(s_polarity_label[buf], sizeof(s_polarity_label[buf]),
       "Polarity\n%s", polarity_to_string(scene->proximity.polarity));
     s_prox_items[item_count++] = (menu_item_t){s_polarity_label[buf], nav_to_polarity, NULL, true, MENU_ITEM_KIND_ROLLER};
+
+    snprintf(s_rest_label[buf], sizeof(s_rest_label[buf]),
+      "Rest Position\n%u", (unsigned)scene->proximity.idle_value);
+    s_prox_items[item_count++] = (menu_item_t){s_rest_label[buf], nav_to_rest_pos, NULL, true, MENU_ITEM_KIND_ROLLER};
     
     // Curve
     snprintf(s_curve_label[buf], sizeof(s_curve_label[buf]),

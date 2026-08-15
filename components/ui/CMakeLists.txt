@@ -21,6 +21,7 @@ idf_component_register(
         "transport"
         "scene"
         "action"
+        "cc_state"
         "assets_manager"
         "lfo"
         "version"

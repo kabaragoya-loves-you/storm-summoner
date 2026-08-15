@@ -8,6 +8,7 @@
 #include "midi_messages.h"
 #include "event_bus.h"
 #include "expression.h"
+#include "stream.h"
 #include "lfo.h"
 #include "tempo.h"
 #include "tempo_nudge.h"
@@ -60,6 +61,7 @@ static void handle_expression_value(const event_t* event, void* context) {
   
   continuous_mapping_t* mapping = &scene->expression;
   if (!mapping->enabled) return;
+  if (!stream_is_active(STREAM_TARGET_EXPRESSION)) return;
 
   uint8_t raw_value = event->data.expression.midi_value;
 

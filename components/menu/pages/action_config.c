@@ -5,6 +5,7 @@
 #include "action.h"
 #include "param_stream.h"
 #include "lfo.h"
+#include "stream.h"
 #include "curve.h"
 #include "touchwheel_mode_mapping.h"
 #include "tempo.h"
@@ -126,9 +127,8 @@ static char s_note_aftertouch_label[LABEL_BUFFER_SETS][20];
 static char s_piano_pedal_label[LABEL_BUFFER_SETS][24];
 static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
-static char s_lfo_variant_label[LABEL_BUFFER_SETS][24];
-static char s_tilt_target_label[LABEL_BUFFER_SETS][24];
-static char s_tilt_variant_label[LABEL_BUFFER_SETS][24];
+static char s_stream_target_label[LABEL_BUFFER_SETS][24];
+static char s_stream_variant_label[LABEL_BUFFER_SETS][24];
 // MODIFY override row labels. Each holds "<row>\n<value-or-Original>"; the
 // row itself is conditionally rendered only when action->variant ==
 // VARIANT_MODIFY. Steps is shown only when resolution_mode == MANUAL (the
@@ -231,7 +231,7 @@ static const action_type_t s_all_action_types[] = {
   ACTION_PIANO_PEDAL,
   ACTION_TOUCHWHEEL,
   ACTION_LFO,
-  ACTION_TILT,
+  ACTION_STREAM,
   ACTION_CLOCK,
   ACTION_CUT,
   ACTION_UI,
@@ -282,8 +282,8 @@ const char* action_config_get_display_name(action_type_t type) {
     case ACTION_RESET: return "Reset";
     case ACTION_PIANO_PEDAL: return "Piano Pedal";
     case ACTION_TOUCHWHEEL: return "Touchwheel";
-    case ACTION_LFO: return "LFO";
-    case ACTION_TILT: return "Tilt";
+    case ACTION_LFO: return "LFO Modify";
+    case ACTION_STREAM: return "Stream";
     case ACTION_CLOCK: return "Clock";
     case ACTION_CUT: return "Cut";
     case ACTION_UI: return "UI";
@@ -746,15 +746,9 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.tw_mode.modes[1] = 0;
     }
     
-    // Set defaults for ACTION_LFO (consolidated family).
-    //   - default variant = START so a fresh LFO action does the "obvious
-    //     useful thing" without the user having to open the Variant row.
-    //   - slot = 1 (LFO1).
-    //   - all MODIFY overrides start at their Original sentinel so the
-    //     MODIFY detail page shows "Original" in every roller out of the
-    //     box; the user opts in to each override they want to push.
+    // Set defaults for ACTION_LFO (singleton Modify).
     if (new_type == ACTION_LFO) {
-      action->variant = VARIANT_START;
+      action->variant = VARIANT_NONE;
       action->params.lfo.slot = 1;
       action->params.lfo.waveform        = ACTION_LFO_ORIG_U8;
       action->params.lfo.rate_mode       = ACTION_LFO_ORIG_U8;
@@ -766,9 +760,9 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
       action->params.lfo.manual_steps    = ACTION_LFO_ORIG_STEPS;
     }
 
-    if (new_type == ACTION_TILT) {
+    if (new_type == ACTION_STREAM) {
       action->variant = VARIANT_START;
-      action->params.tilt.target = 3;  // Both
+      action->params.stream.target = (uint8_t)STREAM_TARGET_DEFAULT;
     }
     
     if (new_type == ACTION_CLOCK) {
@@ -818,12 +812,12 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     }
 
     if (new_type == ACTION_RTG) {
-      action->variant = VARIANT_TOGGLE;
+      action->variant = VARIANT_STEP;
       action_engine_modify_seed(&action->params.rtg_modify);
     }
 
     if (new_type == ACTION_SAMPLE_HOLD) {
-      action->variant = VARIANT_TOGGLE;
+      action->variant = VARIANT_STEP;
       action_engine_modify_seed(&action->params.sh_modify);
     }
 
@@ -4421,7 +4415,7 @@ static void nav_to_randomize_slot(void* user_data) {
 // LFO Slot Roller (for LFO actions)
 // ============================================================================
 
-static const char* LFO_SLOT_OPTIONS = "LFO 1\nLFO 2\nBoth";
+static const char* LFO_SLOT_OPTIONS = "LFO 1\nLFO 2\nLFO 1+2";
 
 static void lfo_slot_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
@@ -4464,55 +4458,99 @@ static void nav_to_lfo_slot(void* user_data) {
 }
 
 // ============================================================================
-// LFO Variant Picker (Start / Stop / Toggle / Modify)
+// Stream Target Roller
 // ============================================================================
-// Mirrors the Touchwheel variant picker: a fixed candidate list is filtered
-// against the trigger and rendered into a roller. Switching variant via this
-// picker only flips action->variant -- the MODIFY override fields stay at
-// their sentinels (the type-confirm seed put them there) unless the user
-// has explicitly pushed values into them.
 
-static const action_variant_t s_lfo_variants[] = {
-  VARIANT_START,
-  VARIANT_STOP,
-  VARIANT_TOGGLE,
-  VARIANT_HOLD,
-  VARIANT_MODIFY,
-};
-#define NUM_LFO_VARIANTS (sizeof(s_lfo_variants) / sizeof(s_lfo_variants[0]))
-
-static action_variant_t s_filtered_lfo_variants[NUM_LFO_VARIANTS];
-static size_t s_num_filtered_lfo_variants = 0;
-
-static void build_filtered_lfo_variants(void) {
-  s_num_filtered_lfo_variants = 0;
-  if (!s_ctx) return;
-  for (size_t i = 0; i < NUM_LFO_VARIANTS; i++) {
-    action_variant_t v = s_lfo_variants[i];
-    if (!action_variant_is_valid_for_trigger(ACTION_LFO, v, s_ctx->trigger_type)) continue;
-    s_filtered_lfo_variants[s_num_filtered_lfo_variants++] = v;
-  }
-}
-
-static void lfo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+static void stream_target_confirm_cb(uint32_t selected_index, void* user_data) {
   (void)user_data;
 
   if (s_callback_in_progress) return;
   s_callback_in_progress = true;
 
-  if (!s_ctx || !s_ctx->target_action ||
-      selected_index >= s_num_filtered_lfo_variants) {
+  if (!s_ctx || !s_ctx->target_action || selected_index >= STREAM_TARGET_COUNT) {
     s_callback_in_progress = false;
     menu_navigate_back();
     return;
   }
 
   action_t* action = s_ctx->target_action;
-  action_variant_t new_variant = s_filtered_lfo_variants[selected_index];
+  action->params.stream.target = (uint8_t)selected_index;
+  persist_scene_changes();
+
+  ESP_LOGI(TAG, "Stream target set to %s",
+    stream_target_display_name((stream_target_t)selected_index));
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* stream_target_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+
+  static char options[192];
+  options[0] = '\0';
+  for (int i = 0; i < STREAM_TARGET_COUNT; i++) {
+    if (i > 0) strcat(options, "\n");
+    strcat(options, stream_target_display_name((stream_target_t)i));
+  }
+
+  uint8_t target = s_ctx->target_action->params.stream.target;
+  if (target >= STREAM_TARGET_COUNT) target = (uint8_t)STREAM_TARGET_DEFAULT;
+
+  return menu_create_roller_page("Target", options, target,
+    stream_target_confirm_cb, NULL);
+}
+
+static void nav_to_stream_target(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Target", stream_target_roller_create);
+}
+
+// ============================================================================
+// Stream Variant Picker (Start / Stop / Toggle / Hold)
+// ============================================================================
+
+static const action_variant_t s_stream_variants[] = {
+  VARIANT_START,
+  VARIANT_STOP,
+  VARIANT_TOGGLE,
+  VARIANT_HOLD,
+};
+#define NUM_STREAM_VARIANTS (sizeof(s_stream_variants) / sizeof(s_stream_variants[0]))
+
+static action_variant_t s_filtered_stream_variants[NUM_STREAM_VARIANTS];
+static size_t s_num_filtered_stream_variants = 0;
+
+static void build_filtered_stream_variants(void) {
+  s_num_filtered_stream_variants = 0;
+  if (!s_ctx) return;
+  for (size_t i = 0; i < NUM_STREAM_VARIANTS; i++) {
+    action_variant_t v = s_stream_variants[i];
+    if (!action_variant_is_valid_for_trigger(ACTION_STREAM, v, s_ctx->trigger_type))
+      continue;
+    s_filtered_stream_variants[s_num_filtered_stream_variants++] = v;
+  }
+}
+
+static void stream_variant_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action ||
+      selected_index >= s_num_filtered_stream_variants) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action_variant_t new_variant = s_filtered_stream_variants[selected_index];
 
   if (action->variant != new_variant) {
     action->variant = new_variant;
-    ESP_LOGI(TAG, "LFO variant set to %s", action_variant_to_string(new_variant));
+    ESP_LOGI(TAG, "Stream variant set to %s", action_variant_to_string(new_variant));
     persist_scene_changes();
   }
 
@@ -4520,158 +4558,35 @@ static void lfo_variant_confirm_cb(uint32_t selected_index, void* user_data) {
   return_to_detail_page(2);
 }
 
-static lv_obj_t* lfo_variant_roller_create(void) {
+static lv_obj_t* stream_variant_roller_create(void) {
   if (!s_ctx || !s_ctx->target_action) return NULL;
 
-  build_filtered_lfo_variants();
-  if (s_num_filtered_lfo_variants == 0) return NULL;
+  build_filtered_stream_variants();
+  if (s_num_filtered_stream_variants == 0) return NULL;
 
   static char options[64];
   options[0] = '\0';
-  for (size_t i = 0; i < s_num_filtered_lfo_variants; i++) {
+  for (size_t i = 0; i < s_num_filtered_stream_variants; i++) {
     if (i > 0) strcat(options, "\n");
-    strcat(options, action_variant_to_string(s_filtered_lfo_variants[i]));
+    strcat(options, action_variant_to_string(s_filtered_stream_variants[i]));
   }
 
   uint32_t current_idx = 0;
   action_variant_t current = s_ctx->target_action->variant;
-  for (size_t i = 0; i < s_num_filtered_lfo_variants; i++) {
-    if (s_filtered_lfo_variants[i] == current) {
+  for (size_t i = 0; i < s_num_filtered_stream_variants; i++) {
+    if (s_filtered_stream_variants[i] == current) {
       current_idx = (uint32_t)i;
       break;
     }
   }
 
-  return menu_create_roller_page("Variant", options, current_idx, lfo_variant_confirm_cb, NULL);
+  return menu_create_roller_page("Variant", options, current_idx,
+    stream_variant_confirm_cb, NULL);
 }
 
-static void nav_to_lfo_variant(void* user_data) {
+static void nav_to_stream_variant(void* user_data) {
   (void)user_data;
-  nav_to_subpage("Variant", lfo_variant_roller_create);
-}
-
-// ============================================================================
-// Tilt Target Roller (X / Y / Both)
-// ============================================================================
-
-static const char* TILT_TARGET_OPTIONS = "X\nY\nBoth";
-
-static void tilt_target_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-
-  if (!s_ctx || !s_ctx->target_action) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-
-  action_t* action = s_ctx->target_action;
-  action->params.tilt.target = (uint8_t)(selected_index + 1);
-
-  ESP_LOGI(TAG, "Tilt target set to %u", (unsigned)action->params.tilt.target);
-
-  s_callback_in_progress = false;
-  return_to_detail_page(2);
-}
-
-static lv_obj_t* tilt_target_roller_create(void) {
-  if (!s_ctx || !s_ctx->target_action) return NULL;
-
-  action_t* action = s_ctx->target_action;
-  uint8_t target = action->params.tilt.target;
-  uint32_t current_idx = (target > 0 && target <= 3) ? target - 1 : 2;
-
-  return menu_create_roller_page("Target", TILT_TARGET_OPTIONS, current_idx,
-    tilt_target_confirm_cb, NULL);
-}
-
-static void nav_to_tilt_target(void* user_data) {
-  (void)user_data;
-  nav_to_subpage("Target", tilt_target_roller_create);
-}
-
-// ============================================================================
-// Tilt Variant Picker (Start / Stop / Toggle / Hold)
-// ============================================================================
-
-static const action_variant_t s_tilt_variants[] = {
-  VARIANT_START,
-  VARIANT_STOP,
-  VARIANT_TOGGLE,
-  VARIANT_HOLD,
-};
-#define NUM_TILT_VARIANTS (sizeof(s_tilt_variants) / sizeof(s_tilt_variants[0]))
-
-static action_variant_t s_filtered_tilt_variants[NUM_TILT_VARIANTS];
-static size_t s_num_filtered_tilt_variants = 0;
-
-static void build_filtered_tilt_variants(void) {
-  s_num_filtered_tilt_variants = 0;
-  if (!s_ctx) return;
-  for (size_t i = 0; i < NUM_TILT_VARIANTS; i++) {
-    action_variant_t v = s_tilt_variants[i];
-    if (!action_variant_is_valid_for_trigger(ACTION_TILT, v, s_ctx->trigger_type)) continue;
-    s_filtered_tilt_variants[s_num_filtered_tilt_variants++] = v;
-  }
-}
-
-static void tilt_variant_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-
-  if (!s_ctx || !s_ctx->target_action ||
-      selected_index >= s_num_filtered_tilt_variants) {
-    s_callback_in_progress = false;
-    menu_navigate_back();
-    return;
-  }
-
-  action_t* action = s_ctx->target_action;
-  action_variant_t new_variant = s_filtered_tilt_variants[selected_index];
-
-  if (action->variant != new_variant) {
-    action->variant = new_variant;
-    ESP_LOGI(TAG, "Tilt variant set to %s", action_variant_to_string(new_variant));
-    persist_scene_changes();
-  }
-
-  s_callback_in_progress = false;
-  return_to_detail_page(2);
-}
-
-static lv_obj_t* tilt_variant_roller_create(void) {
-  if (!s_ctx || !s_ctx->target_action) return NULL;
-
-  build_filtered_tilt_variants();
-  if (s_num_filtered_tilt_variants == 0) return NULL;
-
-  static char options[64];
-  options[0] = '\0';
-  for (size_t i = 0; i < s_num_filtered_tilt_variants; i++) {
-    if (i > 0) strcat(options, "\n");
-    strcat(options, action_variant_to_string(s_filtered_tilt_variants[i]));
-  }
-
-  uint32_t current_idx = 0;
-  action_variant_t current = s_ctx->target_action->variant;
-  for (size_t i = 0; i < s_num_filtered_tilt_variants; i++) {
-    if (s_filtered_tilt_variants[i] == current) {
-      current_idx = (uint32_t)i;
-      break;
-    }
-  }
-
-  return menu_create_roller_page("Variant", options, current_idx, tilt_variant_confirm_cb, NULL);
-}
-
-static void nav_to_tilt_variant(void* user_data) {
-  (void)user_data;
-  nav_to_subpage("Variant", tilt_variant_roller_create);
+  nav_to_subpage("Variant", stream_variant_roller_create);
 }
 
 // ============================================================================
@@ -7378,8 +7293,6 @@ static void nav_to_ui_cycle_step(void* user_data) {
 // ============================================================================
 
 static const action_variant_t s_rtg_variants[] = {
-  VARIANT_TOGGLE,
-  VARIANT_HOLD,
   VARIANT_STEP,
   VARIANT_MODIFY,
 };
@@ -7468,8 +7381,6 @@ static void nav_to_rtg_variant(void* user_data) {
 // ============================================================================
 
 static const action_variant_t s_sh_variants[] = {
-  VARIANT_TOGGLE,
-  VARIANT_HOLD,
   VARIANT_STEP,
   VARIANT_MODIFY,
 };
@@ -9338,24 +9249,15 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
   
-  // Show ACTION_LFO (consolidated family) rows: Variant + Target are
-  // always present; MODIFY adds 8 override rollers (each defaulting to
-  // "Original"). The Steps row is only rendered when the user has actually
-  // chosen Resolution = Manual -- in every other case it would have no
-  // effect at dispatch time so we hide it for clarity.
+  // ACTION_LFO (singleton Modify): Target + override rollers. Steps is
+  // only rendered when Resolution = Manual.
   if (action->type == ACTION_LFO) {
-    snprintf(s_lfo_variant_label[buf], sizeof(s_lfo_variant_label[buf]),
-      "Variant\n%s", action_variant_to_string(action->variant));
-    s_detail_items[item_count++] = (menu_item_t){
-      s_lfo_variant_label[buf], nav_to_lfo_variant, NULL, true, MENU_ITEM_KIND_ROLLER
-    };
-
     uint8_t slot = action->params.lfo.slot;
     const char* slot_name;
     switch (slot) {
       case 1: slot_name = "LFO 1"; break;
       case 2: slot_name = "LFO 2"; break;
-      case 3: slot_name = "Both"; break;
+      case 3: slot_name = "LFO 1+2"; break;
       default: slot_name = "LFO 1"; action->params.lfo.slot = 1; break;
     }
     snprintf(s_lfo_slot_label[buf], sizeof(s_lfo_slot_label[buf]), "Target\n%s", slot_name);
@@ -9363,7 +9265,7 @@ lv_obj_t* action_config_detail_page_create(void) {
       s_lfo_slot_label[buf], nav_to_lfo_slot, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
-    if (action->variant == VARIANT_MODIFY) {
+    {
       char tmp[16];
 
       snprintf(s_lfo_modify_waveform_label[buf], sizeof(s_lfo_modify_waveform_label[buf]),
@@ -9419,26 +9321,23 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
-  // Show ACTION_TILT (consolidated family) rows: Variant + Target.
-  if (action->type == ACTION_TILT) {
-    snprintf(s_tilt_variant_label[buf], sizeof(s_tilt_variant_label[buf]),
+  // Show ACTION_STREAM rows: Variant + Target.
+  if (action->type == ACTION_STREAM) {
+    snprintf(s_stream_variant_label[buf], sizeof(s_stream_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
     s_detail_items[item_count++] = (menu_item_t){
-      s_tilt_variant_label[buf], nav_to_tilt_variant, NULL, true, MENU_ITEM_KIND_ROLLER
+      s_stream_variant_label[buf], nav_to_stream_variant, NULL, true, MENU_ITEM_KIND_ROLLER
     };
 
-    uint8_t target = action->params.tilt.target;
-    const char* target_name;
-    switch (target) {
-      case 1: target_name = "X"; break;
-      case 2: target_name = "Y"; break;
-      case 3: target_name = "Both"; break;
-      default: target_name = "Both"; action->params.tilt.target = 3; break;
+    uint8_t target = action->params.stream.target;
+    if (target >= STREAM_TARGET_COUNT) {
+      target = (uint8_t)STREAM_TARGET_DEFAULT;
+      action->params.stream.target = target;
     }
-    snprintf(s_tilt_target_label[buf], sizeof(s_tilt_target_label[buf]),
-      "Target\n%s", target_name);
+    snprintf(s_stream_target_label[buf], sizeof(s_stream_target_label[buf]),
+      "Target\n%s", stream_target_display_name((stream_target_t)target));
     s_detail_items[item_count++] = (menu_item_t){
-      s_tilt_target_label[buf], nav_to_tilt_target, NULL, true, MENU_ITEM_KIND_ROLLER
+      s_stream_target_label[buf], nav_to_stream_target, NULL, true, MENU_ITEM_KIND_ROLLER
     };
   }
   

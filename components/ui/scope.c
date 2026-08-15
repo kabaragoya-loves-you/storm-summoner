@@ -2,7 +2,7 @@
 #include "ui.h"
 #include "scene.h"
 #include "param_stream.h"
-#include "action.h"
+#include "cc_state.h"
 #include "assets_manager.h"
 #include "event_bus.h"
 #include "tempo.h"
@@ -113,7 +113,7 @@ static uint8_t scope_get_param_value(const scene_t *scene, param_target_t target
 
 static uint8_t scope_get_channel_value(const scene_t *scene, const scope_channel_t *chn) {
   if (!scene || !chn || chn->kind == SCOPE_SRC_NONE) return 0;
-  if (chn->kind == SCOPE_SRC_CC) return action_get_cc_value(chn->id);
+  if (chn->kind == SCOPE_SRC_CC) return cc_state_effective_get(chn->id);
   return scope_get_param_value(scene, (param_target_t)chn->id);
 }
 

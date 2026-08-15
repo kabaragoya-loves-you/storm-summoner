@@ -99,8 +99,13 @@ void proximity_diagnostic_test(uint32_t duration_ms);
 // Hysteresis control functions
 void proximity_set_hysteresis_enabled(bool enabled);
 bool proximity_get_hysteresis_enabled(void);
+// Runtime cache of the current scene's proximity idle_value (not NVS).
 void proximity_set_rest_position(uint8_t position);
 uint8_t proximity_get_rest_position(void);
+// If hysteresis is on and the field is idle, start (or restart) return-to-rest
+// from the last posted CC toward the current scene rest. Also forces a post so
+// a rest change during MIDI silence is not lost.
+void proximity_kick_rest_return(void);
 void proximity_notify_settings_changed(void);
 void proximity_set_return_speed(proximity_return_speed_t speed);
 proximity_return_speed_t proximity_get_return_speed(void);

@@ -3,6 +3,7 @@
 #include "scene.h"
 #include "tilt_mode_mapping.h"
 #include "tilt.h"
+#include "stream.h"
 #include "curve.h"
 #include "continuous_mapping.h"
 #include "continuous_flag_rollers.h"
@@ -249,7 +250,7 @@ static void mode_confirm_cb(uint32_t selected_index, void* user_data) {
   m->output_type = mapping->output_type;
   persist_scene_changes();
 
-  scene_apply_tilt_start_modes();
+  stream_apply_start_modes();
 
   ESP_LOGI(TAG, "Tilt %c mode set to: %s", s_axis == TILT_AXIS_X ? 'X' : 'Y',
     mapping->display_name);
@@ -310,7 +311,7 @@ static void start_mode_confirm_cb(uint32_t selected_index, void* user_data) {
   else
     m->start_mode = CONTINUOUS_START_RUNNING;
   persist_scene_changes();
-  scene_apply_tilt_start_modes();
+  stream_apply_start_modes();
 
   ESP_LOGI(TAG, "Tilt %c start mode: %s", s_axis == TILT_AXIS_X ? 'X' : 'Y',
     start_mode_display(m->start_mode));

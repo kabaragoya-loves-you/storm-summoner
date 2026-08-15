@@ -4,6 +4,7 @@
 #include "tempo.h"
 #include "touchwheel_mode_mapping.h"
 #include "lfo.h"
+#include "stream.h"
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
@@ -405,7 +406,7 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
   } else if (action->type == ACTION_LFO) {
     uint8_t slot = action->params.lfo.slot;
     if (slot == 3) {
-      snprintf(summary->param_name, sizeof(summary->param_name), "Both LFOs");
+      snprintf(summary->param_name, sizeof(summary->param_name), "LFO 1+2");
     } else {
       snprintf(summary->param_name, sizeof(summary->param_name), "LFO %u",
         (unsigned)slot);
@@ -415,7 +416,7 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     // MODIFY -- list each non-sentinel override as a compact tag (Wave / Rate
     // / Floor / Ceil / Res / Steps). Tags that wouldn't fit are
     // silently dropped rather than truncating mid-tag.
-    if (action->variant == VARIANT_MODIFY) {
+    {
       // Static lookup keeps the per-call code small and easy to scan.
       static const struct { uint8_t field; const char *tag; } overrides[] = {
         { 0, "Wave"     },
@@ -456,14 +457,9 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
       summary->has_value = true;
     }
 
-  } else if (action->type == ACTION_TILT) {
-    uint8_t target = action->params.tilt.target;
-    if (target == 3)
-      snprintf(summary->param_name, sizeof(summary->param_name), "Both");
-    else if (target == 2)
-      snprintf(summary->param_name, sizeof(summary->param_name), "Y");
-    else
-      snprintf(summary->param_name, sizeof(summary->param_name), "X");
+  } else if (action->type == ACTION_STREAM) {
+    snprintf(summary->param_name, sizeof(summary->param_name), "%s",
+      stream_target_display_name((stream_target_t)action->params.stream.target));
     summary->has_param = true;
 
   } else if (action->type == ACTION_RANDOMIZE) {
@@ -800,8 +796,8 @@ static const char *ainspect_family_name(action_type_t type) {
     case ACTION_PRESET: return "Preset";
     case ACTION_SCENE: return "Scene";
     case ACTION_TRANSPORT: return "Transport";
-    case ACTION_LFO: return "LFO";
-    case ACTION_TILT: return "Tilt";
+    case ACTION_LFO: return "LFO Modify";
+    case ACTION_STREAM: return "Stream";
     case ACTION_TOUCHWHEEL: return "Touchwheel";
     case ACTION_CLOCK: return "Clock";
     case ACTION_CUT: return "Cut";
@@ -1013,38 +1009,19 @@ static bool ainspect_format_variant_line(const action_t *action, uint8_t scene_i
     }
   }
 
-  if (action->type == ACTION_LFO) {
-    if (action->variant == VARIANT_MODIFY) return false;
-
+  if (action->type == ACTION_STREAM) {
+    const char *name = stream_target_display_name(
+      (stream_target_t)action->params.stream.target);
     if (action->variant == VARIANT_TOGGLE) {
-      uint8_t slot = action->params.lfo.slot;
-      if (slot == 3) snprintf(buf, cap, "Toggle: Both");
-      else snprintf(buf, cap, "Toggle: LFO %u", (unsigned)slot);
-      return true;
-    }
-    if (action->variant == VARIANT_START || action->variant == VARIANT_STOP ||
-        action->variant == VARIANT_HOLD) {
-      uint8_t slot = action->params.lfo.slot;
-      if (slot == 3) snprintf(buf, cap, "%s: Both", variant);
-      else snprintf(buf, cap, "%s: LFO %u", variant, (unsigned)slot);
-      return true;
-    }
-  }
-
-  if (action->type == ACTION_TILT) {
-    const char *axis =
-      (action->params.tilt.target == 3) ? "Both" :
-      (action->params.tilt.target == 2) ? "Y" : "X";
-    if (action->variant == VARIANT_TOGGLE) {
-      snprintf(buf, cap, "Toggle: %s", axis);
+      snprintf(buf, cap, "Toggle: %s", name);
       return true;
     }
     if (action->variant == VARIANT_HOLD) {
-      snprintf(buf, cap, "Hold: %s", axis);
+      snprintf(buf, cap, "Hold: %s", name);
       return true;
     }
     if (action->variant == VARIANT_START || action->variant == VARIANT_STOP) {
-      snprintf(buf, cap, "%s: %s", variant, axis);
+      snprintf(buf, cap, "%s: %s", variant, name);
       return true;
     }
   }
@@ -1407,7 +1384,7 @@ static void ainspect_append_action_body(ainspect_buf_t *out, const action_t *act
     }
   }
 
-  if (action->type == ACTION_LFO && action->variant == VARIANT_MODIFY) {
+  if (action->type == ACTION_LFO) {
     ainspect_append_lfo_modify(out, action);
   } else if (action->type == ACTION_RTG && action->variant == VARIANT_MODIFY) {
     ainspect_append_engine_modify(out, &action->params.rtg_modify);

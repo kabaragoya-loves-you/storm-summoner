@@ -24,7 +24,6 @@ static menu_item_t s_prox_items[MAX_PROX_ITEMS];
 
 static char s_deadzone_label[LABEL_BUFFER_SETS][32];
 static char s_hysteresis_label[LABEL_BUFFER_SETS][40];
-static char s_rest_pos_label[LABEL_BUFFER_SETS][40];
 static char s_return_speed_label[LABEL_BUFFER_SETS][40];
 static char s_timeout_label[LABEL_BUFFER_SETS][40];
 static char s_note_silence_label[LABEL_BUFFER_SETS][40];
@@ -472,50 +471,6 @@ static void nav_to_hysteresis(void* user_data) {
 }
 
 // ============================================================================
-// Rest Position Roller
-// ============================================================================
-
-static uint32_t rest_pos_option_index(uint8_t current) {
-  if (current >= 127) return 15;
-  uint32_t idx = ((uint32_t)current + 4) / 8;
-  return idx > 15 ? 15 : idx;
-}
-
-static void rest_pos_confirm_cb(uint32_t selected_index, void* user_data) {
-  (void)user_data;
-  
-  if (s_callback_in_progress) return;
-  s_callback_in_progress = true;
-  
-  // Map 0-127 to actual value (every 8 steps for 16 options)
-  uint8_t value = (uint8_t)(selected_index * 8);
-  if (selected_index == 15) value = 127;  // Last option is 127
-  
-  proximity_set_rest_position(value);
-  midi_proximity_scene_handler_proximity_settings_changed();
-  ESP_LOGI(TAG, "Rest position set to: %u", value);
-  
-  s_callback_in_progress = false;
-  menu_navigate_back_then_to(2, "Proximity", menu_page_settings_proximity_create);
-}
-
-static lv_obj_t* rest_pos_roller_create(void) {
-  // 16 options: 0, 8, 16, ..., 120, 127
-  static const char* options = 
-    "0\n8\n16\n24\n32\n40\n48\n56\n64\n72\n80\n88\n96\n104\n112\n127";
-  
-  uint8_t current = proximity_get_rest_position();
-  uint32_t idx = rest_pos_option_index(current);
-
-  return menu_create_roller_page("Rest Position", options, idx, rest_pos_confirm_cb, NULL);
-}
-
-static void nav_to_rest_pos(void* user_data) {
-  (void)user_data;
-  menu_navigate_to("Rest Position", rest_pos_roller_create);
-}
-
-// ============================================================================
 // Return Speed Roller
 // ============================================================================
 
@@ -739,13 +694,6 @@ lv_obj_t* menu_page_settings_proximity_create(void) {
   s_prox_items[item_count++] = (menu_item_t){s_hysteresis_label[buf], nav_to_hysteresis, NULL, true, MENU_ITEM_KIND_ROLLER};
 
   if (hyst_enabled) {
-    // Rest Position (CC output when hand is away)
-    uint8_t rest_pos = proximity_get_rest_position();
-    snprintf(s_rest_pos_label[buf], sizeof(s_rest_pos_label[buf]),
-      "Rest Position\n%u", (unsigned)rest_pos);
-    s_prox_items[item_count++] = (menu_item_t){s_rest_pos_label[buf], nav_to_rest_pos, NULL, true, MENU_ITEM_KIND_ROLLER};
-
-    // Return Speed
     proximity_return_speed_t speed = proximity_get_return_speed();
     snprintf(s_return_speed_label[buf], sizeof(s_return_speed_label[buf]),
       "Return Speed\n%s", return_speed_to_string(speed));

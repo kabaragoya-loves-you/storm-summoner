@@ -14,16 +14,13 @@ static const action_type_t hold_actions[] = {
   ACTION_NOTE,
   ACTION_PIANO_PEDAL,
   ACTION_INSPECT_SCENE,
-  // ACTION_LFO is variant-aware: only HOLD is hold-like.
-  // START/STOP/TOGGLE/MODIFY are press-only. Per-variant timing/repeat
-  // rules live in action_supports_timing_for / action_supports_repeat_for.
+  // ACTION_LFO is a singleton Modify (not hold-like).
+  // ACTION_STREAM is variant-aware: only HOLD is hold-like.
   // ACTION_CLOCK is variant-aware: only HOLD is hold-like; BURST needs
   // press/release but is handled via fire-and-forget (Toggle only on load).
   // ACTION_CUT is variant-aware: only HOLD is hold-like.
   // ACTION_UI is variant-aware: only HOLD is hold-like.
   // ACTION_PARAM is variant-aware: only HOLD is hold-like.
-  // ACTION_RTG is variant-aware: only HOLD is hold-like.
-  // ACTION_SAMPLE_HOLD is variant-aware: only HOLD is hold-like.
 };
 
 bool action_requires_hold(action_type_t type) {
@@ -45,10 +42,7 @@ bool action_requires_hold_for(const action_t* action) {
   if (action->type == ACTION_CUT && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_UI && action->variant == VARIANT_HOLD) return true;
   if (action->type == ACTION_PARAM && action->variant == VARIANT_HOLD) return true;
-  if (action->type == ACTION_RTG && action->variant == VARIANT_HOLD) return true;
-  if (action->type == ACTION_SAMPLE_HOLD && action->variant == VARIANT_HOLD) return true;
-  if (action->type == ACTION_TILT && action->variant == VARIANT_HOLD) return true;
-  if (action->type == ACTION_LFO && action->variant == VARIANT_HOLD) return true;
+  if (action->type == ACTION_STREAM && action->variant == VARIANT_HOLD) return true;
   return false;
 }
 
@@ -58,9 +52,8 @@ bool action_requires_hold_for(const action_t* action) {
 //     pair; suppressing it strands a note or pedal.
 //   - ACTION_CLOCK BURST and LFO START/STOP/TOGGLE/MODIFY -- not
 //     symmetric press/release pairs (press-only).
-//   - ACTION_LFO / ACTION_CUT / ACTION_UI / ACTION_PARAM / ACTION_RTG /
-//     ACTION_SAMPLE_HOLD HOLD -- release must always restore state;
-//     skipping release would strand it.
+//   - ACTION_STREAM / ACTION_CUT / ACTION_UI / ACTION_PARAM HOLD --
+//     release must always restore state; skipping release would strand it.
 bool action_supports_followup_for(const action_t* action) {
   if (!action) return false;
   switch (action->type) {
@@ -155,17 +148,14 @@ bool action_is_fire_and_forget_for(const action_t* action) {
     case ACTION_RESTORE:
       return true;
 
-    // ACTION_LFO -- START/STOP/TOGGLE/MODIFY are press-only one-shots.
-    // HOLD needs a release pair. Rule 4 additionally rejects START/STOP/
-    // TOGGLE on ON_LOAD (LFOs auto-start from scene config); MODIFY and
-    // ON_PLAY are fine for the press-only variants.
+    // ACTION_LFO -- singleton Modify is a press-only one-shot.
     case ACTION_LFO:
-      return action->variant != VARIANT_HOLD;
+      return true;
 
-    // ACTION_TILT -- START/STOP/TOGGLE are press-only; HOLD is not
-    // fire-and-forget (needs a release pair). Rule 4 rejects all tilt
+    // ACTION_STREAM -- START/STOP/TOGGLE are press-only; HOLD is not
+    // fire-and-forget (needs a release pair). Rule 4 rejects all stream
     // variants on ON_LOAD (Start Mode covers load-time behavior).
-    case ACTION_TILT:
+    case ACTION_STREAM:
       return action->variant == VARIANT_START ||
         action->variant == VARIANT_STOP ||
         action->variant == VARIANT_TOGGLE;
@@ -177,11 +167,11 @@ bool action_is_fire_and_forget_for(const action_t* action) {
       return action->variant == VARIANT_TOGGLE;
 
     case ACTION_RTG:
-      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP ||
+      return action->variant == VARIANT_STEP ||
         action->variant == VARIANT_MODIFY;
 
     case ACTION_SAMPLE_HOLD:
-      return action->variant == VARIANT_TOGGLE || action->variant == VARIANT_STEP ||
+      return action->variant == VARIANT_STEP ||
         action->variant == VARIANT_MODIFY;
 
     default:
@@ -256,23 +246,10 @@ bool action_is_valid_for_trigger_for(const action_t* action,
     return false;
   }
 
-  // Rule 4: ACTION_LFO START/STOP/TOGGLE rejected on ON_LOAD (LFOs auto-start
-  //   from scene config; firing them here would race the init path). MODIFY
-  //   is allowed because parameter overrides on a not-yet-running engine are
-  //   harmless. ON_PLAY is fine for all variants because the scene is already
-  //   live by then.
-  if (caps.fires_at_load_time && action->type == ACTION_LFO) {
-    if (action->variant == VARIANT_START ||
-        action->variant == VARIANT_STOP ||
-        action->variant == VARIANT_TOGGLE) {
-      return false;
-    }
-  }
-
-  // Rule 4b: ACTION_TILT rejected entirely on ON_LOAD. Start Mode on each
-  // axis covers load-time enablement; firing Start/Stop/Toggle here would
+  // Rule 4: ACTION_STREAM rejected entirely on ON_LOAD. Start Mode on each
+  // source covers load-time enablement; firing Start/Stop/Toggle here would
   // race the scene sync that applies start_mode.
-  if (caps.fires_at_load_time && action->type == ACTION_TILT)
+  if (caps.fires_at_load_time && action->type == ACTION_STREAM)
     return false;
 
   // Rule 5: per-action input affordance requirements (touchwheel/param holds).
@@ -295,14 +272,11 @@ static action_variant_t default_variant_for_type(action_type_t type) {
     case ACTION_TRANSPORT:
       return VARIANT_PLAY;
     case ACTION_LFO:
-      // MODIFY clears all four rules (not hold, not transport, fire-and-
-      // forget, and exempt from the LFO ON_LOAD carve-out in Rule 4). Other
-      // variants would falsely fail the type-level probe on ON_LOAD.
-      return VARIANT_MODIFY;
-    case ACTION_TILT:
+      return VARIANT_NONE;
+    case ACTION_STREAM:
       // START is the most permissive live-input default. ON_LOAD rejects
-      // the whole family via Rule 4b regardless of variant, so the type
-      // picker simply hides Tilt there.
+      // the whole family via Rule 4 regardless of variant, so the type
+      // picker simply hides Stream there.
       return VARIANT_START;
     case ACTION_CLOCK:
       return VARIANT_TOGGLE;
@@ -313,9 +287,9 @@ static action_variant_t default_variant_for_type(action_type_t type) {
     case ACTION_PARAM:
       return VARIANT_HOLD;
     case ACTION_RTG:
-      return VARIANT_TOGGLE;
+      return VARIANT_STEP;
     case ACTION_SAMPLE_HOLD:
-      return VARIANT_TOGGLE;
+      return VARIANT_STEP;
     default:
       return VARIANT_NONE;
   }
@@ -406,14 +380,9 @@ bool action_supports_timing_for(const action_t* action) {
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
-  if (action->type == ACTION_LFO) {
-    // HOLD needs a release pair. START/STOP/TOGGLE/MODIFY schedule on a
-    // beat, including TOGGLE (flip on the scheduled beat, not the press).
-    if (action->variant == VARIANT_HOLD) return false;
-    return true;
-  }
-  if (action->type == ACTION_TILT) {
-    // HOLD needs a release pair; START/STOP/TOGGLE schedule like LFO.
+  if (action->type == ACTION_STREAM) {
+    // HOLD needs a release pair; START/STOP/TOGGLE schedule like the old
+    // LFO/Tilt families.
     if (action->variant == VARIANT_HOLD) return false;
     return true;
   }
@@ -429,14 +398,10 @@ bool action_supports_timing_for(const action_t* action) {
   }
   if (action->type == ACTION_PARAM)
     return false;
-  if (action->type == ACTION_RTG) {
-    if (action->variant == VARIANT_HOLD) return false;
+  if (action->type == ACTION_RTG)
     return true;
-  }
-  if (action->type == ACTION_SAMPLE_HOLD) {
-    if (action->variant == VARIANT_HOLD) return false;
+  if (action->type == ACTION_SAMPLE_HOLD)
     return true;
-  }
   return action_supports_timing(action->type);
 }
 
@@ -473,12 +438,7 @@ bool action_supports_repeat_for(const action_t* action) {
     // CYCLE advances the mode cursor on every press -- repeats fine.
     return action->variant == VARIANT_CYCLE;
   }
-  if (action->type == ACTION_LFO) {
-    // TOGGLE and MODIFY repeat musically; START/STOP are one-shot edges.
-    return action->variant == VARIANT_TOGGLE ||
-           action->variant == VARIANT_MODIFY;
-  }
-  if (action->type == ACTION_TILT) {
+  if (action->type == ACTION_STREAM) {
     // TOGGLE repeats; START/STOP are one-shot edges; HOLD has nowhere to
     // send repeated release events.
     return action->variant == VARIANT_TOGGLE;
@@ -551,7 +511,7 @@ bool action_supports_raise_flag(action_type_t type) {
     case ACTION_NOTE:
     case ACTION_RANDOMIZE:
     case ACTION_LFO:
-    case ACTION_TILT:
+    case ACTION_STREAM:
     case ACTION_PUNCH_IN:
     case ACTION_BOOMERANG:
     case ACTION_RESTORE:

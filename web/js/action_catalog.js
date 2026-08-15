@@ -61,14 +61,26 @@ window.ActionCatalog = (function () {
   const LFO_TARGET_OPTIONS = [
     { v: 1, l: 'LFO 1' },
     { v: 2, l: 'LFO 2' },
-    { v: 3, l: 'Both' }
+    { v: 3, l: 'LFO 1+2' }
   ]
 
-  const TILT_TARGET_OPTIONS = [
-    { v: 'x', l: 'X' },
-    { v: 'y', l: 'Y' },
-    { v: 'both', l: 'Both' }
+  const STREAM_TARGET_OPTIONS = [
+    { v: 'expression', l: 'Expression' },
+    { v: 'cv', l: 'CV' },
+    { v: 'proximity', l: 'Proximity' },
+    { v: 'als', l: 'ALS' },
+    { v: 'note_track', l: 'Note Track' },
+    { v: 'tilt_x', l: 'Tilt X' },
+    { v: 'tilt_y', l: 'Tilt Y' },
+    { v: 'tilt_both', l: 'Tilt X+Y' },
+    { v: 'lfo1', l: 'LFO 1' },
+    { v: 'lfo2', l: 'LFO 2' },
+    { v: 'lfo_both', l: 'LFO 1+2' },
+    { v: 'sample_hold', l: 'S+H' },
+    { v: 'rtg', l: 'RTG' }
   ]
+
+  const STREAM_TARGET_KEYS = new Set(STREAM_TARGET_OPTIONS.map(o => o.v))
 
   const TOUCHWHEEL_MODES = [
     { v: 0, l: 'Pads' },
@@ -88,7 +100,7 @@ window.ActionCatalog = (function () {
 
   const ALL_TYPES = [
     'none', 'control', 'preset', 'scene', 'confirm_pending', 'transport', 'tempo',
-    'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'tilt', 'clock', 'cut', 'ui',
+    'note', 'randomize', 'piano_pedal', 'touchwheel', 'lfo', 'stream', 'clock', 'cut', 'ui',
     'param', 'rtg', 'sample_hold', 'punch_in', 'boomerang',
     'inspect_scene', 'snapshot', 'restore', 'reset'
   ]
@@ -105,8 +117,8 @@ window.ActionCatalog = (function () {
     randomize: 'Randomize',
     piano_pedal: 'Piano Pedal',
     touchwheel: 'Touchwheel',
-    lfo: 'LFO',
-    tilt: 'Tilt',
+    lfo: 'LFO Modify',
+    stream: 'Stream',
     clock: 'Clock',
     cut: 'Cut',
     ui: 'UI',
@@ -128,14 +140,13 @@ window.ActionCatalog = (function () {
     preset: ['set', 'hold', 'cycle', 'increment', 'decrement'],
     transport: ['play', 'stop', 'record'],
     touchwheel: ['hold', 'cycle'],
-    lfo: ['start', 'stop', 'toggle', 'hold', 'modify'],
-    tilt: ['start', 'stop', 'toggle', 'hold'],
+    stream: ['start', 'stop', 'toggle', 'hold'],
     clock: ['toggle', 'hold', 'burst'],
     cut: ['toggle', 'hold'],
     ui: ['set', 'hold', 'cycle'],
     param: ['hold', 'cycle'],
-    rtg: ['toggle', 'hold', 'step', 'modify'],
-    sample_hold: ['toggle', 'hold', 'step', 'modify']
+    rtg: ['step', 'modify'],
+    sample_hold: ['step', 'modify']
   }
 
   const VARIANT_LABELS = {
@@ -278,12 +289,36 @@ window.ActionCatalog = (function () {
     return LFO_TARGET_OPTIONS.slice()
   }
 
-  function tiltTargetOptions (current) {
-    const cur = String(current || 'both')
-    if (!TILT_TARGET_OPTIONS.some(o => o.v === cur)) {
-      return TILT_TARGET_OPTIONS.concat([{ v: cur, l: cur }])
+  function streamTargetOptions (current) {
+    const cur = String(current || 'lfo_both')
+    if (!STREAM_TARGET_OPTIONS.some(o => o.v === cur)) {
+      return STREAM_TARGET_OPTIONS.concat([{ v: cur, l: cur }])
     }
-    return TILT_TARGET_OPTIONS.slice()
+    return STREAM_TARGET_OPTIONS.slice()
+  }
+
+  function streamTargetFromLegacy (action) {
+    if (!action) return 'lfo_both'
+    if (action.type === 'tilt') {
+      const t = String(action.target || 'both').toLowerCase()
+      if (t === 'x' || t === 'tilt_x') return 'tilt_x'
+      if (t === 'y' || t === 'tilt_y') return 'tilt_y'
+      return 'tilt_both'
+    }
+    if (action.type === 'lfo') {
+      const slot = Number(action.slot)
+      if (slot === 1) return 'lfo1'
+      if (slot === 2) return 'lfo2'
+      return 'lfo_both'
+    }
+    if (action.type === 'rtg') return 'rtg'
+    if (action.type === 'sample_hold') return 'sample_hold'
+    const t = String(action.target || '').toLowerCase()
+    if (t === 'x') return 'tilt_x'
+    if (t === 'y') return 'tilt_y'
+    if (t === 'both') return 'tilt_both'
+    if (STREAM_TARGET_KEYS.has(t)) return t
+    return 'lfo_both'
   }
 
   function lfoModifyU8Options (presets, current) {
@@ -544,16 +579,10 @@ window.ActionCatalog = (function () {
   function normalizeLfoAction (action) {
     if (!action || action.type !== 'lfo') return false
     const before = JSON.stringify(action)
-    const v = action.variant || defaultVariant('lfo')
     const slot = Number(action.slot)
     action.slot = (slot === 2 || slot === 3) ? slot : 1
-
-    if (v === 'modify') {
-      seedLfoModifyFields(action)
-    } else {
-      clearLfoModifyFields(action)
-      if (v === 'start' || v === 'stop' || v === 'hold') clearRepeatFields(action)
-    }
+    delete action.variant
+    seedLfoModifyFields(action)
     return JSON.stringify(action) !== before
   }
 
@@ -565,20 +594,47 @@ window.ActionCatalog = (function () {
     return changed
   }
 
-  function normalizeTiltAction (action) {
-    if (!action || action.type !== 'tilt') return false
+  function normalizeStreamAction (action) {
+    if (!action) return false
     const before = JSON.stringify(action)
-    const t = String(action.target || 'both').toLowerCase()
-    action.target = (t === 'x' || t === 'y') ? t : 'both'
-    const v = action.variant || defaultVariant('tilt')
-    if (v === 'start' || v === 'stop' || v === 'hold') clearRepeatFields(action)
+    const STREAM_VARIANTS = new Set(['start', 'stop', 'toggle', 'hold'])
+    const ENGINE_TRANSPORT = new Set(['toggle', 'hold'])
+
+    if (action.type === 'tilt') {
+      action.target = streamTargetFromLegacy(action)
+      action.type = 'stream'
+    } else if (action.type === 'lfo' && STREAM_VARIANTS.has(action.variant)) {
+      action.target = streamTargetFromLegacy(action)
+      action.type = 'stream'
+      delete action.slot
+      clearLfoModifyFields(action)
+    } else if ((action.type === 'rtg' || action.type === 'sample_hold') &&
+        (!action.variant || ENGINE_TRANSPORT.has(action.variant))) {
+      action.target = streamTargetFromLegacy(action)
+      action.type = 'stream'
+      if (!action.variant) action.variant = 'toggle'
+      clearEngineModifyFields(action)
+      delete action.step_target
+      delete action.release_mode
+      delete action.release_threshold_ms
+    }
+
+    if (action.type !== 'stream') return JSON.stringify(action) !== before
+
+    action.target = streamTargetFromLegacy(action)
+    const v = action.variant || defaultVariant('stream')
+    action.variant = STREAM_VARIANTS.has(v) ? v : 'start'
+    if (action.variant === 'start' || action.variant === 'stop' ||
+        action.variant === 'hold') {
+      clearRepeatFields(action)
+    }
     return JSON.stringify(action) !== before
   }
 
-  function normalizeTiltActionsInModel (model) {
+  function normalizeStreamActionsInModel (model) {
     let changed = false
     forEachAction(model, action => {
-      if (normalizeTiltAction(action)) changed = true
+      if (normalizeStreamAction(action)) changed = true
     })
     return changed
   }
@@ -1123,7 +1179,7 @@ window.ActionCatalog = (function () {
     const v = action.variant
     if (v === 'hold') {
       return ['tempo', 'control', 'preset', 'touchwheel', 'clock', 'cut', 'ui', 'param',
-        'rtg', 'sample_hold', 'tilt', 'lfo'].includes(action.type)
+        'stream'].includes(action.type)
     }
     if (v === 'burst' && action.type === 'clock') return true
     return false
@@ -1144,14 +1200,15 @@ window.ActionCatalog = (function () {
       case 'transport':
         return 'play'
       case 'lfo':
-        return 'modify'
-      case 'tilt':
+        return ''
+      case 'stream':
         return 'start'
       case 'clock':
       case 'cut':
+        return 'toggle'
       case 'rtg':
       case 'sample_hold':
-        return 'toggle'
+        return 'step'
       case 'param':
         return 'hold'
       default:
@@ -1178,15 +1235,15 @@ window.ActionCatalog = (function () {
       case 'restore':
         return true
       case 'lfo':
-        return v !== 'hold'
-      case 'tilt':
+        return true
+      case 'stream':
         return v === 'start' || v === 'stop' || v === 'toggle'
       case 'clock':
       case 'cut':
         return v === 'toggle'
       case 'rtg':
       case 'sample_hold':
-        return v === 'toggle' || v === 'step' || v === 'modify'
+        return v === 'step' || v === 'modify'
       default:
         return false
     }
@@ -1216,11 +1273,7 @@ window.ActionCatalog = (function () {
     if (requiresHold(action) && !caps.deliversRelease) return false
     if (caps.inhibitsTransport && isTransport(action.type)) return false
     if ((caps.firesAtLoad || caps.firesAtPlay) && !isFireAndForget(action)) return false
-    if (caps.firesAtLoad && action.type === 'lfo') {
-      const v = action.variant || defaultVariant('lfo')
-      if (v === 'start' || v === 'stop' || v === 'toggle') return false
-    }
-    if (caps.firesAtLoad && action.type === 'tilt') return false
+    if (caps.firesAtLoad && action.type === 'stream') return false
     return inputRestrictionAllows(action, trigger)
   }
 
@@ -1267,10 +1320,8 @@ window.ActionCatalog = (function () {
     }
     if (t === 'param') return false
     if (t === 'touchwheel') return false
-    if (t === 'lfo') {
-      return v === 'start' || v === 'stop' || v === 'modify' || v === 'toggle'
-    }
-    if (t === 'tilt') {
+    if (t === 'lfo') return true
+    if (t === 'stream') {
       return v === 'start' || v === 'stop' || v === 'toggle'
     }
     if (t === 'clock' || t === 'cut') return false
@@ -1291,8 +1342,8 @@ window.ActionCatalog = (function () {
     if (t === 'control') return v === 'set' || v === 'cycle' || v === 'flag_ceremony'
     if (t === 'preset') return v !== 'hold'
     if (t === 'touchwheel') return false
-    if (t === 'lfo') return v === 'toggle' || v === 'modify'
-    if (t === 'tilt') return v === 'toggle'
+    if (t === 'lfo') return true
+    if (t === 'stream') return v === 'toggle'
     if (t === 'rtg' || t === 'sample_hold') return v === 'modify'
     if (t === 'clock' || t === 'cut' || t === 'param') return false
     if (t === 'ui') return v === 'cycle'
@@ -1309,7 +1360,7 @@ window.ActionCatalog = (function () {
   }
 
   const RAISE_FLAG_TYPES = new Set([
-    'transport', 'control', 'preset', 'tempo', 'note', 'randomize', 'lfo', 'tilt',
+    'transport', 'control', 'preset', 'tempo', 'note', 'randomize', 'lfo', 'stream',
     'punch_in', 'boomerang', 'restore'
   ])
 
@@ -1492,7 +1543,7 @@ window.ActionCatalog = (function () {
     resolvePianoPedalCc,
     LFO_RESOLUTION_MANUAL,
     lfoTargetOptions,
-    tiltTargetOptions,
+    streamTargetOptions,
     lfoModifyWaveformOptions,
     lfoModifyRateModeOptions,
     lfoModifyRateHzOptions,
@@ -1518,7 +1569,7 @@ window.ActionCatalog = (function () {
     clearLfoModifyFields,
     seedLfoModifyFields,
     normalizeLfoActionsInModel,
-    normalizeTiltActionsInModel,
+    normalizeStreamActionsInModel,
     engineModifyRateModeOptions,
     engineModifyRateHzOptions,
     engineModifyDivisionOptions,

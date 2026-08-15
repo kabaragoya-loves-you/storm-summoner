@@ -12,6 +12,7 @@
 #include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "stream.h"
 
 static const char* TAG = "als_scene";
 
@@ -86,6 +87,7 @@ static void handle_als_event(const event_t* event, void* context) {
   
   continuous_mapping_t* mapping = &scene->als;
   if (!mapping->enabled) return;
+  if (!stream_is_active(STREAM_TARGET_ALS)) return;
   
   // Get raw value from event (0-127)
   

@@ -52,6 +52,7 @@
 #include "midi_note_track_scene_handler.h"
 #include "note_track_config.h"
 #include "lfo.h"
+#include "stream.h"
 #include "scene_test.h"
 #include "scene.h"
 #include "scene_name_gen.h"
@@ -161,6 +162,8 @@ void app_main(void) {
   // Initialize Sample+Hold component
   sample_hold_init();
   midi_sample_hold_scene_handler_init();
+
+  stream_init();
 
   // Scene handlers (midi_scene_handler_init loads the scene, which applies LFO start modes)
   midi_scene_handler_init();

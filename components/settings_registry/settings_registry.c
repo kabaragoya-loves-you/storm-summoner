@@ -175,13 +175,6 @@ static esp_err_t set_prox_hysteresis(uint32_t v) {
   return ESP_OK;
 }
 
-static uint32_t get_prox_rest_position(void) { return proximity_get_rest_position(); }
-static esp_err_t set_prox_rest_position(uint32_t v) {
-  proximity_set_rest_position((uint8_t)v);
-  midi_proximity_scene_handler_proximity_settings_changed();
-  return ESP_OK;
-}
-
 static uint32_t get_prox_return_speed(void) { return (uint32_t)proximity_get_return_speed(); }
 static esp_err_t set_prox_return_speed(uint32_t v) {
   proximity_set_return_speed((proximity_return_speed_t)v);
@@ -517,7 +510,6 @@ static const setting_entry_t s_settings[] = {
   
   // Proximity category
   {"proximity.hysteresis", get_prox_hysteresis, set_prox_hysteresis},
-  {"proximity.rest_position", get_prox_rest_position, set_prox_rest_position},
   {"proximity.return_speed", get_prox_return_speed, set_prox_return_speed},
   {"proximity.note_silence", get_prox_note_silence, set_prox_note_silence},
   {"proximity.timeout", get_prox_timeout, set_prox_timeout},

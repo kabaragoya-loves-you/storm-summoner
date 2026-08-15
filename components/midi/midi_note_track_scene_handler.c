@@ -12,6 +12,7 @@
 #include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "stream.h"
 
 static const char* TAG = "midi_note_track";
 
@@ -134,6 +135,7 @@ static void handle_midi_in(const event_t* event, void* context) {
 
   continuous_mapping_t* mapping = &scene->note_track;
   if (!mapping->enabled) return;
+  if (!stream_is_active(STREAM_TARGET_NOTE_TRACK)) return;
 
   if (is_note_off) {
     if (mapping->use_idle_value) {

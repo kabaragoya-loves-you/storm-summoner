@@ -43,6 +43,10 @@ bool cc_state_is_denylisted(uint8_t cc);
 // the live table aside first; while a stash is held, the effective accessors
 // report it instead of the re-seeded live table.
 void cc_state_stash_enter(void);
+// Copy the stash back into the live table. No-op if no stash is held.
+// Used when leaving programming mode so producers/UI resume the performance
+// values instead of the re-seeded scene defaults.
+void cc_state_stash_restore(void);
 void cc_state_stash_exit(void);
 bool cc_state_stash_active(void);
 

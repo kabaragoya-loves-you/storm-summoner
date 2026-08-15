@@ -371,33 +371,7 @@
           "label": "Hysteresis",
           "description": "Hold last value, then animate back to rest when the hand leaves",
           "type": "toggle",
-          "default": false
-        },
-        {
-          "id": "proximity.rest_position",
-          "label": "Rest Position",
-          "description": "CC value when the hand is away (0-127)",
-          "type": "select",
-          "options": [
-            {"value": 0, "label": "0"},
-            {"value": 8, "label": "8"},
-            {"value": 16, "label": "16"},
-            {"value": 24, "label": "24"},
-            {"value": 32, "label": "32"},
-            {"value": 40, "label": "40"},
-            {"value": 48, "label": "48"},
-            {"value": 56, "label": "56"},
-            {"value": 64, "label": "64"},
-            {"value": 72, "label": "72"},
-            {"value": 80, "label": "80"},
-            {"value": 88, "label": "88"},
-            {"value": 96, "label": "96"},
-            {"value": 104, "label": "104"},
-            {"value": 112, "label": "112"},
-            {"value": 127, "label": "127"}
-          ],
-          "default": 0,
-          "visible_when": {"id": "proximity.hysteresis", "value": true}
+          "default": true
         },
         {
           "id": "proximity.return_speed",

@@ -477,10 +477,6 @@ velocity_mode_t scene_get_tilt_x_velocity_mode(uint8_t scene_index);
 esp_err_t scene_set_tilt_y_velocity_mode(uint8_t scene_index, velocity_mode_t mode);
 velocity_mode_t scene_get_tilt_y_velocity_mode(uint8_t scene_index);
 
-// Apply per-axis Start Mode (Running / Paused / Follow Transport) to hardware enable.
-void scene_apply_tilt_start_modes(void);
-void scene_apply_tilt_start_modes_for(const scene_t* scene);
-
 // Tilt tempo nudge percentages (OUTPUT_TYPE_TEMPO_NUDGE)
 esp_err_t scene_set_tilt_x_tempo_nudge_pct(uint8_t scene_index, uint8_t pct);
 uint8_t scene_get_tilt_x_tempo_nudge_pct(uint8_t scene_index);

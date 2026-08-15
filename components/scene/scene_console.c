@@ -5,6 +5,7 @@
 #include "assets_manager.h"
 #include "tempo.h"
 #include "touchwheel_mode_mapping.h"
+#include "stream.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
@@ -356,11 +357,8 @@ static void format_action_details_with_device(const action_t* action, const devi
       const char* slot_name =
         action->params.lfo.slot == 1 ? "LFO1" :
         action->params.lfo.slot == 2 ? "LFO2" :
-        action->params.lfo.slot == 3 ? "Both" : "LFO?";
-      if (action->variant == VARIANT_MODIFY) {
-        // List override tags compactly. Same naming as action_summary so
-        // the user sees consistent terminology everywhere.
-        int pos = snprintf(buf, buf_size, "LFO Modify %s:", slot_name);
+        action->params.lfo.slot == 3 ? "LFO 1+2" : "LFO?";
+      int pos = snprintf(buf, buf_size, "LFO Modify %s:", slot_name);
         int first = 1;
         #define LFO_DBG_TAG(_tag) do { \
           if (pos < (int)buf_size - 16) { \
@@ -379,15 +377,12 @@ static void format_action_details_with_device(const action_t* action, const devi
         if (action->params.lfo.manual_steps    != ACTION_LFO_ORIG_STEPS) LFO_DBG_TAG("Steps");
         if (first) snprintf(buf + pos, buf_size - pos, " no overrides");
         #undef LFO_DBG_TAG
-      } else {
-        snprintf(buf, buf_size, "%s %s",
-          action_variant_to_string(action->variant) /* Start/Stop/Toggle/Hold */, slot_name);
-        // Fall back if variant string is empty (shouldn't happen for the
-        // consolidated family; defensive only).
-        if (buf[0] == ' ') {
-          snprintf(buf, buf_size, "LFO ? %s", slot_name);
-        }
-      }
+      break;
+    }
+    case ACTION_STREAM: {
+      snprintf(buf, buf_size, "%s %s",
+        action_variant_to_string(action->variant),
+        stream_target_display_name((stream_target_t)action->params.stream.target));
       break;
     }
     default:
@@ -648,9 +643,11 @@ static void cmd_scene_info(void) {
     } else {
       char cc_buf[32];
       format_cc_list(&scene->proximity, cc_buf, sizeof(cc_buf));
-      ESP_LOGI(TAG, "  Proximity: %s, %s curve, bipolar%s", 
+      ESP_LOGI(TAG, "  Proximity: %s, %s curve, %s, rest=%u%s",
                cc_buf,
                curve_type_to_string(scene->proximity.curve.type),
+               scene->proximity.polarity == POLARITY_INVERTED ? "inverted" : "unipolar",
+               (unsigned)scene->proximity.idle_value,
                scene->proximity.use_idle_value ? " (idle timeout)" : "");
     }
   } else {
@@ -3469,11 +3466,12 @@ static int cmd_proximity_polarity(int argc, char **argv) {
   if (strcmp(pol, "unipolar") == 0 || strcmp(pol, "uni") == 0) {
     scene->proximity.polarity = POLARITY_UNIPOLAR;
   } else if (strcmp(pol, "bipolar") == 0 || strcmp(pol, "bi") == 0) {
-    scene->proximity.polarity = POLARITY_BIPOLAR;
+    scene->proximity.polarity = POLARITY_UNIPOLAR;
+    ESP_LOGW(TAG, "Proximity bipolar is Unipolar + scene rest; using unipolar");
   } else if (strcmp(pol, "inverted") == 0 || strcmp(pol, "inv") == 0) {
     scene->proximity.polarity = POLARITY_INVERTED;
   } else {
-    ESP_LOGE(TAG, "Unknown polarity (use: unipolar, bipolar, inverted)");
+    ESP_LOGE(TAG, "Unknown polarity (use: unipolar, inverted)");
     return 1;
   }
   
@@ -5541,7 +5539,7 @@ esp_err_t scene_console_init(void) {
   
   const esp_console_cmd_t proximity_polarity_cmd = {
     .command = "proximity_polarity",
-    .help = "Set proximity polarity (unipolar/bipolar/inverted)",
+    .help = "Set proximity polarity (unipolar/inverted)",
     .hint = NULL,
     .func = &cmd_proximity_polarity,
     .argtable = &proximity_polarity_args

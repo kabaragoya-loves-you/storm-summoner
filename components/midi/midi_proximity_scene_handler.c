@@ -14,6 +14,7 @@
 #include "tempo_nudge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "stream.h"
 
 static const char* TAG = "proximity_scene";
 
@@ -288,6 +289,7 @@ static void handle_proximity_event(const event_t* event, void* context) {
   
   continuous_mapping_t* mapping = &scene->proximity;
   if (!mapping->enabled) return;
+  if (!stream_is_active(STREAM_TARGET_PROXIMITY)) return;
 
   // Tempo Nudge always uses unipolar->bipolar mapping: nothing in range sits at
   // middle (no tempo change), nearer than halfway speeds up, farther slows down.
@@ -417,6 +419,15 @@ void midi_proximity_scene_handler_release_notes(void) {
   }
 }
 
+static void proximity_sync_rest_from_scene(void) {
+  scene_t* scene = scene_get_current();
+  uint8_t rest = 64;
+  if (scene)
+    rest = scene->proximity.idle_value;
+  if (rest > 127) rest = 127;
+  proximity_set_rest_position(rest);
+}
+
 static void handle_scene_changed(const event_t* event, void* context) {
   (void)event;
   (void)context;
@@ -429,10 +440,23 @@ static void handle_scene_changed(const event_t* event, void* context) {
   s_last_prox_event_ms = 0;
   s_last_tempo_apply_ms = 0;
   s_last_applied_midi = 64;
+  proximity_sync_rest_from_scene();
+  proximity_notify_settings_changed();
+}
+
+static void handle_scene_updated(const event_t* event, void* context) {
+  (void)event;
+  (void)context;
+  proximity_sync_rest_from_scene();
 }
 
 void midi_proximity_scene_handler_proximity_settings_changed(void) {
+  proximity_sync_rest_from_scene();
   proximity_notify_settings_changed();
+}
+
+void midi_proximity_scene_handler_on_output_enabled(void) {
+  proximity_kick_rest_return();
 }
 
 esp_err_t midi_proximity_scene_handler_init(void) {
@@ -456,6 +480,14 @@ esp_err_t midi_proximity_scene_handler_init(void) {
     ESP_LOGE(TAG, "Failed to subscribe to scene changed events");
     return ret;
   }
+
+  ret = event_bus_subscribe(EVENT_SCENE_UPDATED, handle_scene_updated, NULL);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to subscribe to scene updated events");
+    return ret;
+  }
+
+  proximity_sync_rest_from_scene();
 
   ESP_LOGI(TAG, "Proximity scene handler initialized (smart filtering enabled)");
   return ESP_OK;

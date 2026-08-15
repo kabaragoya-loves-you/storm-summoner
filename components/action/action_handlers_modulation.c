@@ -1,38 +1,16 @@
 #include "action_internal.h"
 #include "midi_messages.h"
-#include "midi_lfo_scene_handler.h"
 #include "midi_out.h"
 #include "scene.h"
 #include "config.h"
 #include "lfo.h"
 #include "rtg.h"
 #include "sample_hold.h"
-#include "tilt.h"
+#include "stream.h"
 #include "esp_log.h"
 #include "esp_random.h"
 
 static const char* TAG = "action_handlers_modulation";
-
-// Tilt Hold: prior runtime enable state captured on press, restored on release.
-static bool s_tilt_hold_prior[2];
-static bool s_tilt_hold_active[2];
-
-// Apply a Tilt action to one axis when the scene mapping is configured
-// (Mode != Disabled). Returns true if the axis was eligible.
-static bool tilt_axis_mapping_configured(const scene_t* scene, tilt_axis_t axis) {
-  if (!scene) return false;
-  const continuous_mapping_t* m =
-    (axis == TILT_AXIS_X) ? &scene->tilt_x : &scene->tilt_y;
-  return m->enabled;
-}
-
-static void tilt_apply_to_target(uint8_t target, const scene_t* scene,
-    void (*fn)(tilt_axis_t axis, bool arg), bool arg) {
-  if ((target == 1 || target == 3) && tilt_axis_mapping_configured(scene, TILT_AXIS_X))
-    fn(TILT_AXIS_X, arg);
-  if ((target == 2 || target == 3) && tilt_axis_mapping_configured(scene, TILT_AXIS_Y))
-    fn(TILT_AXIS_Y, arg);
-}
 
 static uint8_t lfo_modify_resolve_u8_rand(uint8_t v, uint8_t lo, uint8_t hi) {
   if (v != ACTION_LFO_RAND_U8) return v;
@@ -109,240 +87,121 @@ static int apply_engine_modify(const action_engine_modify_t* m, bool rtg) {
   return applied;
 }
 
-// ============================================================================
-// Per-slot LFO helpers
-// ----------------------------------------------------------------------------
-// LFO_START / LFO_STOP / LFO_TOGGLE / LFO_HOLD all branch on slot 1/2/3
-// with mirrored behavior per slot. These helpers run the operation on one
-// engine index (0 = LFO1, 1 = LFO2) and reflect the new enabled state in
-// the scene's matching continuous_mapping (NULL skips the scene write).
-// ============================================================================
-
-static void lfo_start_one(uint8_t lfo_index, continuous_mapping_t* scene_mapping) {
-  lfo_trigger_start(lfo_index);
-  if (scene_mapping) scene_mapping->enabled = true;
-}
-
-static void lfo_stop_one(uint8_t lfo_index, continuous_mapping_t* scene_mapping) {
-  if (lfo_is_enabled(lfo_index)) {
-    if (lfo_get_restore_on_stop(lfo_index)) {
-      midi_lfo_scene_handler_restore_value(lfo_index);
-    }
-    // Release any held NOTE-output mapping voice before stopping the LFO
-    // loop, so the channel computation still has the same scene context the
-    // NoteOn used.
-    midi_lfo_scene_handler_release_notes_for_slot(lfo_index);
-    lfo_enable(lfo_index, false);
-    if (scene_mapping) scene_mapping->enabled = false;
-  } else if (lfo_is_pending_start(lfo_index)) {
-    lfo_enable(lfo_index, false);
-  }
-}
-
-static void lfo_toggle_one(uint8_t lfo_index, continuous_mapping_t* scene_mapping) {
-  bool new_state = !lfo_is_enabled(lfo_index);
-  if (!new_state) {
-    if (lfo_get_restore_on_stop(lfo_index)) {
-      midi_lfo_scene_handler_restore_value(lfo_index);
-    }
-    midi_lfo_scene_handler_release_notes_for_slot(lfo_index);
-  }
-  lfo_enable(lfo_index, new_state);
-  if (scene_mapping) scene_mapping->enabled = new_state;
-}
-
 action_handle_result_t action_handlers_modulation_dispatch(
     const action_t* action, uint8_t trigger_value, bool is_press, uint8_t channel) {
   (void)trigger_value;
 
   switch (action->type) {
-    case ACTION_LFO: {
-      uint8_t slot = action->params.lfo.slot;
-      scene_t* scene = scene_get_current();
+    case ACTION_STREAM: {
+      stream_target_t target = (stream_target_t)action->params.stream.target;
+      if (target >= STREAM_TARGET_COUNT) target = STREAM_TARGET_DEFAULT;
       switch (action->variant) {
         case VARIANT_START:
           if (!is_press) return ACTION_HANDLED;
-          if (slot == 1 || slot == 3) lfo_start_one(0, scene ? &scene->lfo1 : NULL);
-          if (slot == 2 || slot == 3) lfo_start_one(1, scene ? &scene->lfo2 : NULL);
-          ESP_LOGI(TAG, "LFO Start: slot %d", slot);
+          stream_set_active(target, true);
+          ESP_LOGI(TAG, "Stream Start: %s", stream_target_display_name(target));
           return ACTION_HANDLED;
         case VARIANT_STOP:
           if (!is_press) return ACTION_HANDLED;
-          if (slot == 1 || slot == 3) lfo_stop_one(0, scene ? &scene->lfo1 : NULL);
-          if (slot == 2 || slot == 3) lfo_stop_one(1, scene ? &scene->lfo2 : NULL);
-          ESP_LOGI(TAG, "LFO Stop: slot %d", slot);
+          stream_set_active(target, false);
+          ESP_LOGI(TAG, "Stream Stop: %s", stream_target_display_name(target));
           return ACTION_HANDLED;
         case VARIANT_TOGGLE:
           if (!is_press) return ACTION_HANDLED;
-          if (slot == 1 || slot == 3) lfo_toggle_one(0, scene ? &scene->lfo1 : NULL);
-          if (slot == 2 || slot == 3) lfo_toggle_one(1, scene ? &scene->lfo2 : NULL);
-          ESP_LOGI(TAG, "LFO Toggle: slot %d", slot);
+          stream_toggle(target);
+          ESP_LOGI(TAG, "Stream Toggle: %s", stream_target_display_name(target));
           return ACTION_HANDLED;
         case VARIANT_HOLD:
-          if (is_press) {
-            if (slot == 1 || slot == 3) lfo_start_one(0, scene ? &scene->lfo1 : NULL);
-            if (slot == 2 || slot == 3) lfo_start_one(1, scene ? &scene->lfo2 : NULL);
-            ESP_LOGD(TAG, "LFO Hold: press slot %d", slot);
-          } else {
-            if (slot == 1 || slot == 3) lfo_stop_one(0, scene ? &scene->lfo1 : NULL);
-            if (slot == 2 || slot == 3) lfo_stop_one(1, scene ? &scene->lfo2 : NULL);
-            ESP_LOGD(TAG, "LFO Hold: release slot %d", slot);
-          }
+          stream_set_active(target, is_press);
+          ESP_LOGD(TAG, "Stream Hold: %s %s",
+            stream_target_display_name(target), is_press ? "press" : "release");
           return ACTION_HANDLED;
-        case VARIANT_MODIFY: {
-          if (!is_press) return ACTION_HANDLED;
-          // Apply each non-sentinel override in place. Mirrors the SHAPE
-          // action's "runtime mutation without phase reset" behavior, but
-          // generalized to every LFO parameter.
-          const action_t* a = action;
-          int applied = 0;
-          for (int side = 0; side < 2; side++) {
-            uint8_t lfo_index = (uint8_t)side;
-            uint8_t slot_bit = (side == 0) ? 1 : 2;
-            if (!(slot == slot_bit || slot == 3)) continue;
-
-            if (a->params.lfo.waveform != ACTION_LFO_ORIG_U8) {
-              static const uint8_t waveforms[] = {
-                LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
-                LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD,
-                LFO_WAVEFORM_BIN, LFO_WAVEFORM_GLIDER, LFO_WAVEFORM_STRAY,
-              };
-              uint8_t wf = lfo_modify_resolve_u8_table(a->params.lfo.waveform,
-                waveforms, sizeof(waveforms) / sizeof(waveforms[0]));
-              lfo_set_waveform(lfo_index, (lfo_waveform_t)wf);
-              applied++;
-            }
-            if (a->params.lfo.rate_mode != ACTION_LFO_ORIG_U8) {
-              static const uint8_t rate_modes[] = {
-                LFO_RATE_MODE_FREE,
-                LFO_RATE_MODE_TEMPO,
-              };
-              uint8_t rm = lfo_modify_resolve_u8_table(a->params.lfo.rate_mode,
-                rate_modes, sizeof(rate_modes) / sizeof(rate_modes[0]));
-              lfo_set_rate_mode(lfo_index, (lfo_rate_mode_t)rm);
-              applied++;
-            }
-            if (a->params.lfo.rate_hz_x100 != ACTION_LFO_ORIG_U16) {
-              static const uint16_t rates_x100[] = {
-                5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000,
-              };
-              uint16_t hz_x100 = lfo_modify_resolve_u16_table(a->params.lfo.rate_hz_x100,
-                rates_x100, sizeof(rates_x100) / sizeof(rates_x100[0]));
-              lfo_set_rate_hz(lfo_index, (float)hz_x100 / 100.0f);
-              applied++;
-            }
-            if (a->params.lfo.division != ACTION_LFO_ORIG_U8) {
-              static const uint8_t divisions[] = {
-                LFO_DIVISION_16_BARS, LFO_DIVISION_12_BARS, LFO_DIVISION_8_BARS,
-                LFO_DIVISION_4_BARS, LFO_DIVISION_2_BARS, LFO_DIVISION_1_BAR,
-                LFO_DIVISION_HALF, LFO_DIVISION_QUARTER, LFO_DIVISION_EIGHTH,
-                LFO_DIVISION_SIXTEENTH, LFO_DIVISION_32ND,
-              };
-              uint8_t div = lfo_modify_resolve_u8_table(a->params.lfo.division,
-                divisions, sizeof(divisions) / sizeof(divisions[0]));
-              lfo_set_division(lfo_index, (lfo_note_division_t)div);
-              applied++;
-            }
-            if (a->params.lfo.floor != ACTION_LFO_ORIG_U8) {
-              uint8_t floor = lfo_modify_resolve_u8_rand(a->params.lfo.floor, 0, 127);
-              lfo_set_floor(lfo_index, floor);
-              applied++;
-            }
-            if (a->params.lfo.ceiling != ACTION_LFO_ORIG_U8) {
-              uint8_t ceiling = lfo_modify_resolve_u8_rand(a->params.lfo.ceiling, 0, 127);
-              lfo_set_ceiling(lfo_index, ceiling);
-              applied++;
-            }
-            if (a->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8) {
-              static const uint8_t resolutions[] = {
-                LFO_RESOLUTION_AUTO, LFO_RESOLUTION_COARSE, LFO_RESOLUTION_MEDIUM,
-                LFO_RESOLUTION_FINE, LFO_RESOLUTION_MANUAL,
-              };
-              uint8_t res = lfo_modify_resolve_u8_table(a->params.lfo.resolution_mode,
-                resolutions, sizeof(resolutions) / sizeof(resolutions[0]));
-              lfo_set_resolution_mode(lfo_index, (lfo_resolution_mode_t)res);
-              applied++;
-            }
-            if (a->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS) {
-              uint8_t steps = lfo_modify_resolve_steps(a->params.lfo.manual_steps);
-              lfo_set_manual_steps(lfo_index, steps);
-              applied++;
-            }
-          }
-          ESP_LOGI(TAG, "LFO Modify: slot %d, %d override(s) applied", slot, applied);
-          return ACTION_HANDLED;
-        }
         default:
-          ESP_LOGW(TAG, "Unknown LFO variant %d", (int)action->variant);
+          ESP_LOGW(TAG, "Unknown Stream variant %d", (int)action->variant);
           return ACTION_HANDLED;
       }
     }
 
-    case ACTION_TILT: {
-      uint8_t target = action->params.tilt.target;
-      if (target < 1 || target > 3) target = 3;
-      scene_t* scene = scene_get_current();
+    case ACTION_LFO: {
+      uint8_t slot = action->params.lfo.slot;
+      if (!is_press) return ACTION_HANDLED;
+      const action_t* a = action;
+      int applied = 0;
+      for (int side = 0; side < 2; side++) {
+        uint8_t lfo_index = (uint8_t)side;
+        uint8_t slot_bit = (side == 0) ? 1 : 2;
+        if (!(slot == slot_bit || slot == 3)) continue;
 
-      switch (action->variant) {
-        case VARIANT_START:
-          if (!is_press) return ACTION_HANDLED;
-          tilt_apply_to_target(target, scene, tilt_axis_set_enabled, true);
-          ESP_LOGI(TAG, "Tilt Start: target %u", (unsigned)target);
-          return ACTION_HANDLED;
-
-        case VARIANT_STOP:
-          if (!is_press) return ACTION_HANDLED;
-          tilt_apply_to_target(target, scene, tilt_axis_set_enabled, false);
-          ESP_LOGI(TAG, "Tilt Stop: target %u", (unsigned)target);
-          return ACTION_HANDLED;
-
-        case VARIANT_TOGGLE:
-          if (!is_press) return ACTION_HANDLED;
-          if ((target == 1 || target == 3) &&
-              tilt_axis_mapping_configured(scene, TILT_AXIS_X)) {
-            tilt_axis_set_enabled(TILT_AXIS_X, !tilt_axis_get_enabled(TILT_AXIS_X));
-          }
-          if ((target == 2 || target == 3) &&
-              tilt_axis_mapping_configured(scene, TILT_AXIS_Y)) {
-            tilt_axis_set_enabled(TILT_AXIS_Y, !tilt_axis_get_enabled(TILT_AXIS_Y));
-          }
-          ESP_LOGI(TAG, "Tilt Toggle: target %u", (unsigned)target);
-          return ACTION_HANDLED;
-
-        case VARIANT_HOLD:
-          if (is_press) {
-            if ((target == 1 || target == 3) &&
-                tilt_axis_mapping_configured(scene, TILT_AXIS_X)) {
-              s_tilt_hold_prior[TILT_AXIS_X] = tilt_axis_get_enabled(TILT_AXIS_X);
-              s_tilt_hold_active[TILT_AXIS_X] = true;
-              tilt_axis_set_enabled(TILT_AXIS_X, true);
-            }
-            if ((target == 2 || target == 3) &&
-                tilt_axis_mapping_configured(scene, TILT_AXIS_Y)) {
-              s_tilt_hold_prior[TILT_AXIS_Y] = tilt_axis_get_enabled(TILT_AXIS_Y);
-              s_tilt_hold_active[TILT_AXIS_Y] = true;
-              tilt_axis_set_enabled(TILT_AXIS_Y, true);
-            }
-            ESP_LOGI(TAG, "Tilt Hold: press target %u", (unsigned)target);
-          } else {
-            if (s_tilt_hold_active[TILT_AXIS_X] &&
-                (target == 1 || target == 3)) {
-              tilt_axis_set_enabled(TILT_AXIS_X, s_tilt_hold_prior[TILT_AXIS_X]);
-              s_tilt_hold_active[TILT_AXIS_X] = false;
-            }
-            if (s_tilt_hold_active[TILT_AXIS_Y] &&
-                (target == 2 || target == 3)) {
-              tilt_axis_set_enabled(TILT_AXIS_Y, s_tilt_hold_prior[TILT_AXIS_Y]);
-              s_tilt_hold_active[TILT_AXIS_Y] = false;
-            }
-            ESP_LOGI(TAG, "Tilt Hold: release target %u", (unsigned)target);
-          }
-          return ACTION_HANDLED;
-
-        default:
-          ESP_LOGW(TAG, "Unknown Tilt variant %d", (int)action->variant);
-          return ACTION_HANDLED;
+        if (a->params.lfo.waveform != ACTION_LFO_ORIG_U8) {
+          static const uint8_t waveforms[] = {
+            LFO_WAVEFORM_SINE, LFO_WAVEFORM_TRIANGLE, LFO_WAVEFORM_SQUARE,
+            LFO_WAVEFORM_SAW_UP, LFO_WAVEFORM_SAW_DOWN, LFO_WAVEFORM_SAMPLE_HOLD,
+            LFO_WAVEFORM_BIN, LFO_WAVEFORM_GLIDER, LFO_WAVEFORM_STRAY,
+          };
+          uint8_t wf = lfo_modify_resolve_u8_table(a->params.lfo.waveform,
+            waveforms, sizeof(waveforms) / sizeof(waveforms[0]));
+          lfo_set_waveform(lfo_index, (lfo_waveform_t)wf);
+          applied++;
+        }
+        if (a->params.lfo.rate_mode != ACTION_LFO_ORIG_U8) {
+          static const uint8_t rate_modes[] = {
+            LFO_RATE_MODE_FREE,
+            LFO_RATE_MODE_TEMPO,
+          };
+          uint8_t rm = lfo_modify_resolve_u8_table(a->params.lfo.rate_mode,
+            rate_modes, sizeof(rate_modes) / sizeof(rate_modes[0]));
+          lfo_set_rate_mode(lfo_index, (lfo_rate_mode_t)rm);
+          applied++;
+        }
+        if (a->params.lfo.rate_hz_x100 != ACTION_LFO_ORIG_U16) {
+          static const uint16_t rates_x100[] = {
+            5, 10, 25, 50, 100, 200, 300, 500, 800, 1000, 1500, 2000,
+          };
+          uint16_t hz_x100 = lfo_modify_resolve_u16_table(a->params.lfo.rate_hz_x100,
+            rates_x100, sizeof(rates_x100) / sizeof(rates_x100[0]));
+          lfo_set_rate_hz(lfo_index, (float)hz_x100 / 100.0f);
+          applied++;
+        }
+        if (a->params.lfo.division != ACTION_LFO_ORIG_U8) {
+          static const uint8_t divisions[] = {
+            LFO_DIVISION_16_BARS, LFO_DIVISION_12_BARS, LFO_DIVISION_8_BARS,
+            LFO_DIVISION_4_BARS, LFO_DIVISION_2_BARS, LFO_DIVISION_1_BAR,
+            LFO_DIVISION_HALF, LFO_DIVISION_QUARTER, LFO_DIVISION_EIGHTH,
+            LFO_DIVISION_SIXTEENTH, LFO_DIVISION_32ND,
+          };
+          uint8_t div = lfo_modify_resolve_u8_table(a->params.lfo.division,
+            divisions, sizeof(divisions) / sizeof(divisions[0]));
+          lfo_set_division(lfo_index, (lfo_note_division_t)div);
+          applied++;
+        }
+        if (a->params.lfo.floor != ACTION_LFO_ORIG_U8) {
+          uint8_t floor = lfo_modify_resolve_u8_rand(a->params.lfo.floor, 0, 127);
+          lfo_set_floor(lfo_index, floor);
+          applied++;
+        }
+        if (a->params.lfo.ceiling != ACTION_LFO_ORIG_U8) {
+          uint8_t ceiling = lfo_modify_resolve_u8_rand(a->params.lfo.ceiling, 0, 127);
+          lfo_set_ceiling(lfo_index, ceiling);
+          applied++;
+        }
+        if (a->params.lfo.resolution_mode != ACTION_LFO_ORIG_U8) {
+          static const uint8_t resolutions[] = {
+            LFO_RESOLUTION_AUTO, LFO_RESOLUTION_COARSE, LFO_RESOLUTION_MEDIUM,
+            LFO_RESOLUTION_FINE, LFO_RESOLUTION_MANUAL,
+          };
+          uint8_t res = lfo_modify_resolve_u8_table(a->params.lfo.resolution_mode,
+            resolutions, sizeof(resolutions) / sizeof(resolutions[0]));
+          lfo_set_resolution_mode(lfo_index, (lfo_resolution_mode_t)res);
+          applied++;
+        }
+        if (a->params.lfo.manual_steps != ACTION_LFO_ORIG_STEPS) {
+          uint8_t steps = lfo_modify_resolve_steps(a->params.lfo.manual_steps);
+          lfo_set_manual_steps(lfo_index, steps);
+          applied++;
+        }
       }
+      ESP_LOGI(TAG, "LFO Modify: slot %d, %d override(s) applied", slot, applied);
+      return ACTION_HANDLED;
     }
 
     case ACTION_CLOCK: {
@@ -423,23 +282,6 @@ action_handle_result_t action_handlers_modulation_dispatch(
 
     case ACTION_RTG:
       switch (action->variant) {
-        case VARIANT_TOGGLE:
-          if (is_press) {
-            rtg_toggle();
-            ESP_LOGI(TAG, "RTG Toggle: now %s", rtg_is_running() ? "running" : "stopped");
-          }
-          return ACTION_HANDLED;
-
-        case VARIANT_HOLD:
-          if (is_press) {
-            rtg_start();
-            ESP_LOGD(TAG, "RTG Hold: press -> running");
-          } else {
-            rtg_stop();
-            ESP_LOGD(TAG, "RTG Hold: release -> stopped");
-          }
-          return ACTION_HANDLED;
-
         case VARIANT_STEP:
           if (is_press) {
             rtg_step();
@@ -461,23 +303,6 @@ action_handle_result_t action_handlers_modulation_dispatch(
 
     case ACTION_SAMPLE_HOLD:
       switch (action->variant) {
-        case VARIANT_TOGGLE:
-          if (is_press) {
-            sample_hold_toggle();
-            ESP_LOGI(TAG, "S+H Toggle: now %s", sample_hold_is_running() ? "running" : "stopped");
-          }
-          return ACTION_HANDLED;
-
-        case VARIANT_HOLD:
-          if (is_press) {
-            sample_hold_start();
-            ESP_LOGD(TAG, "S+H Hold: press -> running");
-          } else {
-            sample_hold_stop();
-            ESP_LOGD(TAG, "S+H Hold: release -> stopped");
-          }
-          return ACTION_HANDLED;
-
         case VARIANT_STEP:
           if (is_press) {
             sample_hold_step();

@@ -80,5 +80,6 @@ idf_component_register(
     app_settings
     memory_utils
     debug_uart
+    stream
   PRIV_REQUIRES main
 )

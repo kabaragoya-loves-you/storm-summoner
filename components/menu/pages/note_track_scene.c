@@ -7,6 +7,7 @@
 #include "assets_manager.h"
 #include "assets_types.h"
 #include "ui.h"
+#include "stream.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <stdio.h>
@@ -20,10 +21,11 @@ void menu_page_note_track_scene_cleanup(void);
 #define LABEL_BUFFER_SETS 2
 static int s_current_buffer_set = 0;
 
-#define MAX_NT_ITEMS 10
+#define MAX_NT_ITEMS 11
 static menu_item_t s_nt_items[MAX_NT_ITEMS];
 
 static char s_mode_label[LABEL_BUFFER_SETS][32];
+static char s_start_mode_label[LABEL_BUFFER_SETS][32];
 static char s_cc_label[LABEL_BUFFER_SETS][48];
 static char s_polarity_label[LABEL_BUFFER_SETS][32];
 static char s_curve_label[LABEL_BUFFER_SETS][32];
@@ -162,6 +164,57 @@ static lv_obj_t* mode_roller_create(void) {
 static void nav_to_mode(void* user_data) {
   (void)user_data;
   menu_navigate_to("Mode", mode_roller_create);
+}
+
+static const char* start_mode_display(continuous_start_mode_t mode) {
+  switch (mode) {
+    case CONTINUOUS_START_PAUSED: return "Paused";
+    case CONTINUOUS_START_TRANSPORT: return "Follow Transport";
+    case CONTINUOUS_START_RUNNING:
+    default: return "Running";
+  }
+}
+
+static void start_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  continuous_start_mode_t modes[] = {
+    CONTINUOUS_START_RUNNING, CONTINUOUS_START_PAUSED, CONTINUOUS_START_TRANSPORT
+  };
+  scene->note_track.start_mode = (selected_index < 3) ? modes[selected_index]
+    : CONTINUOUS_START_RUNNING;
+  persist_scene_changes();
+  stream_apply_start_modes();
+
+  s_callback_in_progress = false;
+  menu_navigate_back_then_to(2, "Note Track", menu_page_note_track_scene_create);
+}
+
+static lv_obj_t* start_mode_roller_create(void) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return NULL;
+  uint32_t current_idx = 0;
+  switch (scene->note_track.start_mode) {
+    case CONTINUOUS_START_PAUSED: current_idx = 1; break;
+    case CONTINUOUS_START_TRANSPORT: current_idx = 2; break;
+    default: current_idx = 0; break;
+  }
+  return menu_create_roller_page("Start Mode", "Running\nPaused\nFollow Transport",
+    current_idx, start_mode_confirm_cb, NULL);
+}
+
+static void nav_to_start_mode(void* user_data) {
+  (void)user_data;
+  menu_navigate_to("Start Mode", start_mode_roller_create);
 }
 
 static void cc_confirm_cb(uint32_t selected_index, void* user_data) {
@@ -316,6 +369,12 @@ lv_obj_t* menu_page_note_track_scene_create(void) {
   if (!scene->note_track.enabled) {
     return menu_create_page_2line("Note Track", s_nt_items, n);
   }
+
+  snprintf(s_start_mode_label[buf], sizeof(s_start_mode_label[buf]),
+    "Start Mode\n%s", start_mode_display(scene->note_track.start_mode));
+  s_nt_items[n++] = (menu_item_t){
+    s_start_mode_label[buf], nav_to_start_mode, NULL, true, MENU_ITEM_KIND_ROLLER
+  };
 
   load_cc_options();
 
