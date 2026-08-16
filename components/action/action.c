@@ -152,6 +152,16 @@ static uint8_t s_scene_flag = 0;
 
 static void action_set_flag_internal(uint8_t value, bool notify);
 
+// Note Off every ACTION_NOTE in a flag list. FLAG_* has no release event, so
+// the opposite transition (and flag clear) synthesizes one.
+static void action_release_flag_notes(action_t* list, uint8_t count) {
+  if (!list) return;
+  for (int i = 0; i < count; i++) {
+    if (list[i].type != ACTION_NOTE) continue;
+    action_execute_immediate(&list[i], 0, false);
+  }
+}
+
 // Optional UI observer for gating-CC changes driven by the incoming-CC mirror.
 static action_gating_changed_cb_t s_gating_changed_observer = NULL;
 
@@ -242,6 +252,11 @@ void action_reset_cc_values(const void* device) {
 }
 
 void action_clear_flag(void) {
+  scene_t* scene = scene_get_current();
+  if (scene) {
+    action_release_flag_notes(scene->flag_raised, scene->num_flag_raised_actions);
+    action_release_flag_notes(scene->flag_lowered, scene->num_flag_lowered_actions);
+  }
   action_set_flag_internal(0, false);
   ESP_LOGD(TAG, "Scene flag cleared");
 }
@@ -262,6 +277,7 @@ static void action_execute_flag_lists(uint8_t new_state) {
   if (!scene) return;
 
   if (new_state) {
+    action_release_flag_notes(scene->flag_lowered, scene->num_flag_lowered_actions);
     if (scene->num_flag_raised_actions == 0) return;
     ESP_LOGI(TAG, "Queuing %d flag_raised action(s)",
       scene->num_flag_raised_actions);
@@ -271,6 +287,7 @@ static void action_execute_flag_lists(uint8_t new_state) {
       action_execute_triggered(&scene->flag_raised[i], 127);
     }
   } else {
+    action_release_flag_notes(scene->flag_raised, scene->num_flag_raised_actions);
     if (scene->num_flag_lowered_actions == 0) return;
     ESP_LOGI(TAG, "Queuing %d flag_lowered action(s)",
       scene->num_flag_lowered_actions);

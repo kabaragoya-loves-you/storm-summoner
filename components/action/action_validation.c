@@ -108,6 +108,8 @@ trigger_capabilities_t action_trigger_capabilities(action_trigger_type_t trigger
     case ACTION_TRIGGER_FLAG_LOWERED:
       // Reuse the fire-and-forget gate (Rule 3). Transport is allowed —
       // start/stop depending on flag state is a headline use case.
+      // ACTION_NOTE is a validator exception: the opposite transition
+      // synthesizes Note Off so the note latches to flag state.
       caps.fires_at_play_time = true;
       break;
   }
@@ -225,6 +227,15 @@ static bool action_input_restriction_allows(const action_t* action,
   return true;
 }
 
+// FLAG_* has no press/release pair, but the opposite flag transition is used
+// as ACTION_NOTE's release (Note Off). Other hold-shaped actions stay blocked.
+static bool action_flag_list_synthesizes_hold(const action_t* action,
+  action_trigger_type_t trigger) {
+  if (!action || action->type != ACTION_NOTE) return false;
+  return trigger == ACTION_TRIGGER_FLAG_RAISED ||
+    trigger == ACTION_TRIGGER_FLAG_LOWERED;
+}
+
 // Canonical variant-aware validator. All call sites that have a real
 // action_t should use this. The by-type wrapper below builds a synthetic
 // action_t for legacy callers.
@@ -233,18 +244,22 @@ bool action_is_valid_for_trigger_for(const action_t* action,
   if (!action || action->type == ACTION_NONE) return true;
 
   trigger_capabilities_t caps = action_trigger_capabilities(trigger);
+  bool flag_note = action_flag_list_synthesizes_hold(action, trigger);
 
   // Rule 1: HOLD variants need a release event from the trigger.
-  if (action_requires_hold_for(action) && !caps.delivers_release) return false;
+  // FLAG_* synthesizes a release for ACTION_NOTE on the opposite transition.
+  if (action_requires_hold_for(action) && !caps.delivers_release && !flag_note)
+    return false;
 
   // Rule 2: transport recursion guard.
   if (caps.inhibits_transport && action_is_transport(action->type)) return false;
 
   // Rule 3: load/play-time triggers only accept fire-and-forget actions.
+  // ACTION_NOTE on FLAG_* is the hold-shaped exception: opposite transition
+  // supplies Note Off.
   if ((caps.fires_at_load_time || caps.fires_at_play_time)
-      && !action_is_fire_and_forget_for(action)) {
+      && !action_is_fire_and_forget_for(action) && !flag_note)
     return false;
-  }
 
   // Rule 4: ACTION_STREAM rejected entirely on ON_LOAD. Start Mode on each
   // source covers load-time enablement; firing Start/Stop/Toggle here would

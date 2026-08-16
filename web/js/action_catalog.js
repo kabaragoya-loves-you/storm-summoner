@@ -1157,6 +1157,9 @@ window.ActionCatalog = (function () {
         }
       case TRIGGERS.FLAG_RAISED:
       case TRIGGERS.FLAG_LOWERED:
+        // Fire-and-forget gate (same as On Play). Transport is allowed.
+        // Note is a validator exception: the opposite transition synthesizes
+        // Note Off so the note latches to flag state.
         return {
           deliversRelease: false,
           inhibitsTransport: false,
@@ -1267,12 +1270,18 @@ window.ActionCatalog = (function () {
     return true
   }
 
+  function flagSynthesizesHold (action, trigger) {
+    return action?.type === 'note' && isFlagListTrigger(trigger)
+  }
+
   function isValidForTrigger (action, trigger) {
     if (!action?.type || action.type === 'none') return true
     const caps = triggerCaps(trigger)
-    if (requiresHold(action) && !caps.deliversRelease) return false
+    const flagNote = flagSynthesizesHold(action, trigger)
+    if (requiresHold(action) && !caps.deliversRelease && !flagNote) return false
     if (caps.inhibitsTransport && isTransport(action.type)) return false
-    if ((caps.firesAtLoad || caps.firesAtPlay) && !isFireAndForget(action)) return false
+    if ((caps.firesAtLoad || caps.firesAtPlay) && !isFireAndForget(action) &&
+      !flagNote) return false
     if (caps.firesAtLoad && action.type === 'stream') return false
     return inputRestrictionAllows(action, trigger)
   }

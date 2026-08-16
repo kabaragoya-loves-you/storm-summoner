@@ -41,7 +41,9 @@ typedef enum {
   //   VARIANT_CYCLE         = cycle through multiple CC values per press
   //   VARIANT_FLAG_CEREMONY = flag-state-keyed CC toggle (scene semaphore))
   ACTION_CONTROL,
-  ACTION_NOTE,                // Send Note On on press, Note Off on release
+  // Note On on press, Note Off on release. On FLAG_*, latches to flag state:
+  // the opposite transition synthesizes the release.
+  ACTION_NOTE,
   
   // Randomization
   ACTION_RANDOMIZE,           // Randomize one or more CCs (uses multi_random params)
@@ -673,7 +675,9 @@ typedef enum {
 // One source of truth for what each trigger does; the validator below
 // uses it to decide which actions/variants are valid where.
 typedef struct {
-  bool delivers_release;    // false for BUMP, ON_LOAD, ON_PLAY, FLAG_* (no release pair)
+  bool delivers_release;    // false for BUMP, ON_LOAD, ON_PLAY, FLAG_* (no
+                            // release pair). FLAG_* still latches ACTION_NOTE:
+                            // the opposite transition synthesizes Note Off.
   bool inhibits_transport;  // true for ON_PLAY (firing transport here would recurse)
   bool fires_at_load_time;  // true for ON_LOAD (scene not fully live yet)
   bool fires_at_play_time;  // true for ON_PLAY / FLAG_* (event-time fire-and-forget gate)
