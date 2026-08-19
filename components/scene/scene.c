@@ -5523,6 +5523,9 @@ static cJSON* action_to_json(const action_t* action) {
   } else if (action->type == ACTION_STREAM) {
     cJSON_AddStringToObject(obj, "target",
       stream_target_to_string((stream_target_t)action->params.stream.target));
+    if (action->variant == VARIANT_HOLD &&
+        action->params.stream.hold_mode == STREAM_HOLD_CUT)
+      cJSON_AddStringToObject(obj, "hold_mode", "cut");
   } else if (action->type == ACTION_RTG && action->variant == VARIANT_MODIFY) {
     const action_engine_modify_t* m = &action->params.rtg_modify;
     if (m->rate_mode != ACTION_LFO_ORIG_U8)
@@ -6173,6 +6176,8 @@ static action_t json_to_action(cJSON* obj) {
   // Parse ACTION_STREAM actions
   if (action.type == ACTION_STREAM) {
     action.params.stream.target = (uint8_t)STREAM_TARGET_DEFAULT;
+    action.params.stream.hold_mode = STREAM_HOLD_ACTIVATE;
+    action.params.stream.captured = 0;
     cJSON* target = cJSON_GetObjectItem(obj, "target");
     if (target && cJSON_IsString(target)) {
       action.params.stream.target =
@@ -6181,6 +6186,10 @@ static action_t json_to_action(cJSON* obj) {
       uint8_t n = (uint8_t)target->valueint;
       if (n < STREAM_TARGET_COUNT) action.params.stream.target = n;
     }
+    cJSON* hold_mode = cJSON_GetObjectItem(obj, "hold_mode");
+    if (hold_mode && cJSON_IsString(hold_mode) &&
+        strcmp(hold_mode->valuestring, "cut") == 0)
+      action.params.stream.hold_mode = STREAM_HOLD_CUT;
   }
 
   // Parse RTG / S+H MODIFY overrides

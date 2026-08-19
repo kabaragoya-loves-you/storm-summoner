@@ -594,7 +594,7 @@ window.ActionCatalog = (function () {
     return changed
   }
 
-  function normalizeStreamAction (action) {
+  function normalizeStreamAction (action, { forSave = false } = {}) {
     if (!action) return false
     const before = JSON.stringify(action)
     const STREAM_VARIANTS = new Set(['start', 'stop', 'toggle', 'hold'])
@@ -628,13 +628,20 @@ window.ActionCatalog = (function () {
         action.variant === 'hold') {
       clearRepeatFields(action)
     }
+    if (action.variant === 'hold') {
+      if (action.hold_mode !== 'cut' && action.hold_mode !== 'activate')
+        action.hold_mode = 'activate'
+      if (forSave && action.hold_mode !== 'cut') delete action.hold_mode
+    } else {
+      delete action.hold_mode
+    }
     return JSON.stringify(action) !== before
   }
 
-  function normalizeStreamActionsInModel (model) {
+  function normalizeStreamActionsInModel (model, { forSave = false } = {}) {
     let changed = false
     forEachAction(model, action => {
-      if (normalizeStreamAction(action)) changed = true
+      if (normalizeStreamAction(action, { forSave })) changed = true
     })
     return changed
   }
@@ -1520,6 +1527,10 @@ window.ActionCatalog = (function () {
           }
         }
       }
+    }
+    if (action.type !== 'stream' && 'hold_mode' in action) {
+      delete action.hold_mode
+      changed = true
     }
     return changed
   }

@@ -733,6 +733,12 @@ application.register(
       if (v === 'start' || v === 'stop' || v === 'hold') {
         ActionCatalog.clearRepeatFields(action)
       }
+      if (v === 'hold') {
+        if (action.hold_mode !== 'cut' && action.hold_mode !== 'activate')
+          action.hold_mode = 'activate'
+      } else {
+        delete action.hold_mode
+      }
     }
 
     seedConsolidatedAction (actionPath) {
@@ -1028,7 +1034,7 @@ application.register(
         model.cv_input_mode = 'clock_sync'
       }
       ActionCatalog.stripActionFieldsInModel(model)
-      ActionCatalog.normalizeStreamActionsInModel(model)
+      ActionCatalog.normalizeStreamActionsInModel(model, { forSave })
       ActionCatalog.normalizeLfoActionsInModel(model)
       ActionCatalog.normalizeSimpleActionsInModel(model)
       if (forSave && model.expr_switch?.type === 'none') delete model.expr_switch
@@ -1116,7 +1122,7 @@ application.register(
       ActionCatalog.normalizeTempoActionsInModel(
         model, this.deviceContext.allowFractionalBpm)
       ActionCatalog.normalizeTouchwheelActionsInModel(model)
-      ActionCatalog.normalizeStreamActionsInModel(model)
+      ActionCatalog.normalizeStreamActionsInModel(model, { forSave: true })
       ActionCatalog.normalizeLfoActionsInModel(model)
       ActionCatalog.normalizeSimpleActionsInModel(model)
       ActionCatalog.normalizeRepeatActionsInModel(model)

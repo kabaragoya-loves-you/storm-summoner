@@ -380,9 +380,15 @@ static void format_action_details_with_device(const action_t* action, const devi
       break;
     }
     case ACTION_STREAM: {
-      snprintf(buf, buf_size, "%s %s",
-        action_variant_to_string(action->variant),
-        stream_target_display_name((stream_target_t)action->params.stream.target));
+      if (action->variant == VARIANT_HOLD &&
+          action->params.stream.hold_mode == STREAM_HOLD_CUT) {
+        snprintf(buf, buf_size, "hold cut %s",
+          stream_target_display_name((stream_target_t)action->params.stream.target));
+      } else {
+        snprintf(buf, buf_size, "%s %s",
+          action_variant_to_string(action->variant),
+          stream_target_display_name((stream_target_t)action->params.stream.target));
+      }
       break;
     }
     default:

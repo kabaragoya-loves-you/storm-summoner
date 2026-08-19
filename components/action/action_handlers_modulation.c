@@ -112,6 +112,18 @@ action_handle_result_t action_handlers_modulation_dispatch(
           ESP_LOGI(TAG, "Stream Toggle: %s", stream_target_display_name(target));
           return ACTION_HANDLED;
         case VARIANT_HOLD:
+          if (action->params.stream.hold_mode == STREAM_HOLD_CUT) {
+            action_t* live = (action_t*)action;
+            if (is_press) {
+              live->params.stream.captured = stream_snapshot_active(target);
+              stream_set_active(target, false);
+            } else {
+              stream_restore_active(target, live->params.stream.captured);
+            }
+            ESP_LOGD(TAG, "Stream Hold Cut: %s %s",
+              stream_target_display_name(target), is_press ? "press" : "release");
+            return ACTION_HANDLED;
+          }
           stream_set_active(target, is_press);
           ESP_LOGD(TAG, "Stream Hold: %s %s",
             stream_target_display_name(target), is_press ? "press" : "release");

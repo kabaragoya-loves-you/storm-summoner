@@ -1344,7 +1344,7 @@ window.SceneEditorUi = (function () {
   }
 
   function renderStreamFields (ctrl, path, a) {
-    return fieldRow(
+    let html = fieldRow(
       'Target',
       selectField(
         `${path}.target`,
@@ -1352,6 +1352,20 @@ window.SceneEditorUi = (function () {
         ActionCatalog.streamTargetOptions(a.target)
       )
     )
+    if ((a.variant || 'start') === 'hold') {
+      html += fieldRow(
+        'Press',
+        selectField(
+          `${path}.hold_mode`,
+          a.hold_mode === 'cut' ? 'cut' : 'activate',
+          [
+            { v: 'activate', l: 'Activate' },
+            { v: 'cut', l: 'Cut' }
+          ]
+        )
+      )
+    }
+    return html
   }
 
   const CUT_MODES = ActionCatalog.CUT_MODE_OPTIONS

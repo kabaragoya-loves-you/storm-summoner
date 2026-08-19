@@ -29,6 +29,11 @@ typedef enum {
 
 #define STREAM_TARGET_DEFAULT STREAM_TARGET_LFO_BOTH
 
+// Stream Hold press mode (params.stream.hold_mode). 0 is the default so
+// existing zero-init / omitted JSON stays Activate.
+#define STREAM_HOLD_ACTIVATE 0
+#define STREAM_HOLD_CUT 1
+
 esp_err_t stream_init(void);
 
 stream_target_t stream_target_from_string(const char* str);
@@ -46,6 +51,11 @@ bool stream_target_configured(const scene_t* scene, stream_target_t target);
 bool stream_is_active(stream_target_t target);
 void stream_set_active(stream_target_t target, bool active);
 void stream_toggle(stream_target_t target);
+
+// Hold Cut snapshot: bit 0 = first leaf (or the single target), bit 1 =
+// second leaf on tilt_both / lfo_both. Unconfigured leaves are 0.
+uint8_t stream_snapshot_active(stream_target_t target);
+void stream_restore_active(stream_target_t target, uint8_t mask);
 
 // Apply continuous_mapping start_mode (Running / Paused / Transport) for
 // gate-backed sources and tilt. LFO/RTG/S+H keep their own start_mode.

@@ -461,6 +461,11 @@ void action_format_summary(const action_t *action, action_summary_t *summary,
     snprintf(summary->param_name, sizeof(summary->param_name), "%s",
       stream_target_display_name((stream_target_t)action->params.stream.target));
     summary->has_param = true;
+    if (action->variant == VARIANT_HOLD &&
+        action->params.stream.hold_mode == STREAM_HOLD_CUT) {
+      snprintf(summary->param_value, sizeof(summary->param_value), "Cut");
+      summary->has_value = true;
+    }
 
   } else if (action->type == ACTION_RANDOMIZE) {
     snprintf(summary->param_name, sizeof(summary->param_name), "%u CCs",
@@ -1017,7 +1022,10 @@ static bool ainspect_format_variant_line(const action_t *action, uint8_t scene_i
       return true;
     }
     if (action->variant == VARIANT_HOLD) {
-      snprintf(buf, cap, "Hold: %s", name);
+      if (action->params.stream.hold_mode == STREAM_HOLD_CUT)
+        snprintf(buf, cap, "Hold Cut: %s", name);
+      else
+        snprintf(buf, cap, "Hold: %s", name);
       return true;
     }
     if (action->variant == VARIANT_START || action->variant == VARIANT_STOP) {

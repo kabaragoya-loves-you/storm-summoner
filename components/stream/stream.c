@@ -166,6 +166,57 @@ bool stream_is_active(stream_target_t target) {
   }
 }
 
+uint8_t stream_snapshot_active(stream_target_t target) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return 0;
+  switch (target) {
+    case STREAM_TARGET_TILT_BOTH: {
+      uint8_t mask = 0;
+      if (stream_target_configured(scene, STREAM_TARGET_TILT_X) &&
+          stream_is_active(STREAM_TARGET_TILT_X))
+        mask |= 1;
+      if (stream_target_configured(scene, STREAM_TARGET_TILT_Y) &&
+          stream_is_active(STREAM_TARGET_TILT_Y))
+        mask |= 2;
+      return mask;
+    }
+    case STREAM_TARGET_LFO_BOTH: {
+      uint8_t mask = 0;
+      if (stream_target_configured(scene, STREAM_TARGET_LFO1) &&
+          stream_is_active(STREAM_TARGET_LFO1))
+        mask |= 1;
+      if (stream_target_configured(scene, STREAM_TARGET_LFO2) &&
+          stream_is_active(STREAM_TARGET_LFO2))
+        mask |= 2;
+      return mask;
+    }
+    default:
+      return stream_is_active(target) ? 1 : 0;
+  }
+}
+
+void stream_restore_active(stream_target_t target, uint8_t mask) {
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+  switch (target) {
+    case STREAM_TARGET_TILT_BOTH:
+      if (stream_target_configured(scene, STREAM_TARGET_TILT_X))
+        stream_set_active(STREAM_TARGET_TILT_X, (mask & 1) != 0);
+      if (stream_target_configured(scene, STREAM_TARGET_TILT_Y))
+        stream_set_active(STREAM_TARGET_TILT_Y, (mask & 2) != 0);
+      return;
+    case STREAM_TARGET_LFO_BOTH:
+      if (stream_target_configured(scene, STREAM_TARGET_LFO1))
+        stream_set_active(STREAM_TARGET_LFO1, (mask & 1) != 0);
+      if (stream_target_configured(scene, STREAM_TARGET_LFO2))
+        stream_set_active(STREAM_TARGET_LFO2, (mask & 2) != 0);
+      return;
+    default:
+      stream_set_active(target, (mask & 1) != 0);
+      return;
+  }
+}
+
 void stream_set_active(stream_target_t target, bool active) {
   scene_t* scene = scene_get_current();
   if (!scene) return;

@@ -129,6 +129,7 @@ static char s_randomize_slot_labels[LABEL_BUFFER_SETS][8][40];
 static char s_lfo_slot_label[LABEL_BUFFER_SETS][24];
 static char s_stream_target_label[LABEL_BUFFER_SETS][24];
 static char s_stream_variant_label[LABEL_BUFFER_SETS][24];
+static char s_stream_hold_mode_label[LABEL_BUFFER_SETS][24];
 // MODIFY override row labels. Each holds "<row>\n<value-or-Original>"; the
 // row itself is conditionally rendered only when action->variant ==
 // VARIANT_MODIFY. Steps is shown only when resolution_mode == MANUAL (the
@@ -763,6 +764,8 @@ static void action_type_confirm_cb(uint32_t selected_index, void* user_data) {
     if (new_type == ACTION_STREAM) {
       action->variant = VARIANT_START;
       action->params.stream.target = (uint8_t)STREAM_TARGET_DEFAULT;
+      action->params.stream.hold_mode = STREAM_HOLD_ACTIVATE;
+      action->params.stream.captured = 0;
     }
     
     if (new_type == ACTION_CLOCK) {
@@ -4587,6 +4590,45 @@ static lv_obj_t* stream_variant_roller_create(void) {
 static void nav_to_stream_variant(void* user_data) {
   (void)user_data;
   nav_to_subpage("Variant", stream_variant_roller_create);
+}
+
+// ============================================================================
+// Stream Hold Press mode (Activate / Cut)
+// ============================================================================
+
+static void stream_hold_mode_confirm_cb(uint32_t selected_index, void* user_data) {
+  (void)user_data;
+  if (s_callback_in_progress) return;
+  s_callback_in_progress = true;
+
+  if (!s_ctx || !s_ctx->target_action) {
+    s_callback_in_progress = false;
+    menu_navigate_back();
+    return;
+  }
+
+  action_t* action = s_ctx->target_action;
+  action->params.stream.hold_mode = (selected_index == 1)
+    ? STREAM_HOLD_CUT : STREAM_HOLD_ACTIVATE;
+  ESP_LOGI(TAG, "Stream Hold Press set to %s",
+    action->params.stream.hold_mode == STREAM_HOLD_CUT ? "Cut" : "Activate");
+  persist_scene_changes();
+
+  s_callback_in_progress = false;
+  return_to_detail_page(2);
+}
+
+static lv_obj_t* stream_hold_mode_roller_create(void) {
+  if (!s_ctx || !s_ctx->target_action) return NULL;
+  uint32_t current_idx =
+    (s_ctx->target_action->params.stream.hold_mode == STREAM_HOLD_CUT) ? 1 : 0;
+  return menu_create_roller_page("Press", "Activate\nCut", current_idx,
+    stream_hold_mode_confirm_cb, NULL);
+}
+
+static void nav_to_stream_hold_mode(void* user_data) {
+  (void)user_data;
+  nav_to_subpage("Press", stream_hold_mode_roller_create);
 }
 
 // ============================================================================
@@ -9321,7 +9363,7 @@ lv_obj_t* action_config_detail_page_create(void) {
     }
   }
 
-  // Show ACTION_STREAM rows: Variant + Target.
+  // Show ACTION_STREAM rows: Variant + Target (+ Press on Hold).
   if (action->type == ACTION_STREAM) {
     snprintf(s_stream_variant_label[buf], sizeof(s_stream_variant_label[buf]),
       "Variant\n%s", action_variant_to_string(action->variant));
@@ -9339,6 +9381,16 @@ lv_obj_t* action_config_detail_page_create(void) {
     s_detail_items[item_count++] = (menu_item_t){
       s_stream_target_label[buf], nav_to_stream_target, NULL, true, MENU_ITEM_KIND_ROLLER
     };
+
+    if (action->variant == VARIANT_HOLD && item_count < MAX_DETAIL_ITEMS) {
+      snprintf(s_stream_hold_mode_label[buf], sizeof(s_stream_hold_mode_label[buf]),
+        "Press\n%s",
+        action->params.stream.hold_mode == STREAM_HOLD_CUT ? "Cut" : "Activate");
+      s_detail_items[item_count++] = (menu_item_t){
+        s_stream_hold_mode_label[buf], nav_to_stream_hold_mode, NULL, true,
+        MENU_ITEM_KIND_ROLLER
+      };
+    }
   }
   
   // ACTION_CLOCK (consolidated family): Variant row always; Toggle/Hold get

@@ -282,6 +282,11 @@ def validate_action(action, context, errors, scene_data: nil)
     unless %w[start stop toggle hold].include?(variant) || variant.nil?
       errors << "#{context}: stream variant must be 'start', 'stop', 'toggle', or 'hold' (got #{variant.inspect})"
     end
+    if action.key?('hold_mode')
+      unless %w[activate cut].include?(action['hold_mode'])
+        errors << "#{context}: stream hold_mode must be 'activate' or 'cut' (got #{action['hold_mode'].inspect})"
+      end
+    end
   when 'tilt'
     # Legacy tilt family; firmware/web migrate to stream with tilt_x/tilt_y/tilt_both.
     unless %w[x y both tilt_x tilt_y tilt_both].include?(action['target']) || action['target'].nil?

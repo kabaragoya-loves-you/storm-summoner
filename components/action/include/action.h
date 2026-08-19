@@ -78,7 +78,8 @@ typedef enum {
   //                           ALS, Note Track, Tilt, LFO, S+H, RTG).
   //                           Targets whose scene Mode is Disabled are
   //                           ignored. Does not rewrite the saved scene.
-  //   HOLD = start on press, stop on release.
+  //   HOLD = Activate (press start, release stop) or Cut (press mute,
+  //          release restore). Default Activate.
   ACTION_STREAM,
   
   // Clock control (consolidated -- variants TOGGLE / HOLD / BURST)
@@ -423,9 +424,13 @@ typedef struct {
 
     // For ACTION_STREAM (consolidated -- variants START / STOP / TOGGLE / HOLD).
     // target is a stream_target_t. Sources whose scene Mode is Disabled
-    // are ignored at runtime.
+    // are ignored at runtime. HOLD: hold_mode 0=Activate (press start /
+    // release stop), 1=Cut (press mute + snapshot, release restore).
+    // captured is a transient bitmask; not persisted.
     struct {
       uint8_t target;
+      uint8_t hold_mode;
+      uint8_t captured;
     } stream;
     
     // For ACTION_CLOCK (consolidated -- variants TOGGLE / HOLD / BURST).

@@ -1900,6 +1900,11 @@
                 "type": "string",
                 "enum": ["start", "stop", "toggle", "hold"],
                 "description": "Stream operation: start/stop/toggle/hold"
+              },
+              "hold_mode": {
+                "type": "string",
+                "enum": ["activate", "cut"],
+                "description": "Hold press mode. Activate: press starts, release stops. Cut: press snapshots and mutes, release restores. Omit for Activate."
               }
             }
           }
