@@ -786,7 +786,7 @@
         "reset_phase": {
           "type": "boolean",
           "default": true,
-          "description": "When true, LFO restarts from beginning on enable. When false, continues from previous position."
+          "description": "When true, Stream/LFO Start snaps phase to the current parameter value so the waveform does not jump. When false, continues from the previous phase."
         },
         "restore_on_stop": {
           "type": "boolean",

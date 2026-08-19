@@ -3502,6 +3502,11 @@ esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed) {
   return action_execute(&mapping->action, pressed ? 127 : 0, pressed);
 }
 
+void scene_notify_hold_for(const action_t* action, bool pressed) {
+  if (!action_requires_hold_for(action)) return;
+  touch_set_session_hold(pressed);
+}
+
 esp_err_t scene_assign_touchpad_action(uint8_t scene_index, uint8_t pad_index, const action_t* action) {
   if (scene_index > MAX_SCENE_INDEX || pad_index >= NUM_TOUCHPADS || !action) {
     return ESP_ERR_INVALID_ARG;

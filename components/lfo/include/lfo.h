@@ -82,7 +82,7 @@ typedef struct {
   lfo_start_mode_t start_mode;
   lfo_trigger_timing_t trigger_timing;  // When to start after LFO Start action
   bool repeat;  // true = loop infinitely (default), false = one-shot (run once)
-  bool reset_phase;  // true = restart from beginning, false = continue from previous position
+  bool reset_phase;  // true = snap Stream start to current value; false = resume phase
   bool restore_on_stop;  // true = send phase-0 value when LFO stops
 
   // Free mode rate (stored as fixed point: rate_hz_x100 / 100.0)
@@ -219,6 +219,25 @@ void lfo_apply_start_mode_one(uint8_t slot);
 // Trigger LFO start (respects trigger_timing setting)
 // Returns true if started immediately, false if pending
 bool lfo_trigger_start(uint8_t slot);
+
+// Called when an LFO actually becomes enabled via lfo_trigger_start (immediate
+// or deferred beat/bar). Used to sync start phase to the live parameter value.
+typedef void (*lfo_on_start_cb_t)(uint8_t slot);
+void lfo_set_on_start_callback(lfo_on_start_cb_t cb);
+
+// True after the slot has been started at least once since config apply.
+bool lfo_has_run(uint8_t slot);
+
+// Last output slope while running: +1 rising, -1 falling, 0 unknown.
+int8_t lfo_get_last_slope(uint8_t slot);
+
+// Place the oscillator at an 8-bit phase and seed last/sent values so the
+// first output does not jump.
+void lfo_place_phase(uint8_t slot, uint8_t phase8);
+
+// Seed stochastic waveforms (S+H, Bin, Glider, Stray) so the next output
+// equals raw (0-127 after floor/ceiling) instead of jumping to a default.
+void lfo_seed_to_raw(uint8_t slot, uint8_t raw);
 
 // Queue an additional cycle for one-shot LFO
 void lfo_queue_cycle(uint8_t slot);

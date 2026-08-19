@@ -77,10 +77,13 @@ void touch_reset_stuck_pads(void);
 // `recover <pad>` console command.
 void touch_force_recover_pad(int pad_index);
 
-// Hold action suppression - when a hold action is active on a pad,
-// suppress health check interventions (benchmark corruption, stuck touch)
-// to allow intentional long presses without triggering recovery
+// Hold action suppression. While any Hold is active (a pad, or a non-pad
+// trigger via touch_set_session_hold), skip stuck-timeout, quarantine, and
+// sensor recovery. A Hold has no time limit; coupling on other pads is not
+// treated as "needs calibration."
 void touch_set_hold_active(int pad_index, bool active);
+void touch_set_session_hold(bool active);
+void touch_clear_all_holds(void);
 bool touch_is_hold_active(int pad_index);
 bool touch_is_any_hold_active(void);
 

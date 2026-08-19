@@ -487,6 +487,7 @@ void ui_set_app_mode(app_mode_t mode) {
     // Suspend scene input first: this snapshots the LFO running state and
     // stops the LFO loops so they don't emit fresh values during release.
     scene_suspend_input();
+    touch_clear_all_holds();
 
     // Stash the live performance state (CC table, tempo, preset, screen, LFO /
     // RTG / S+H config), then seed the CC cache from the scene's defaults so

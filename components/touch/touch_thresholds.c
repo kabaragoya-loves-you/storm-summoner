@@ -885,12 +885,10 @@ esp_err_t touch_calibrate_pad(int pad_index) {
 esp_err_t touch_recover_pad_state(int pad_index) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return ESP_ERR_INVALID_ARG;
   
-  // Skip recovery if ANY hold action is in progress on ANY pad.
-  // Recovery calls apply_thresholds() which stops/restarts the entire touch sensor,
-  // disrupting ongoing hold actions on other pads.
-  // Exception: pad 12 (programming mode button) should always recover immediately
-  // since it's critical for device access and isn't a normal action pad.
-  if (pad_index != 12 && touch_is_any_hold_active()) {
+  // Skip recovery if ANY hold action is in progress on ANY pad, including
+  // pad 12. Recovery restarts the entire sensor; doing that mid-hold is what
+  // turns coupling spikes into a device lockout.
+  if (touch_is_any_hold_active()) {
     ESP_LOGD(TAG, "Skipping pad %d recovery - hold action in progress", pad_index);
     return ESP_OK;
   }

@@ -11,6 +11,7 @@
 #include "expression.h"
 #include "tempo.h"
 #include "tempo_nudge.h"
+#include "action.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -285,6 +286,130 @@ void midi_lfo_scene_handler_release_notes(void) {
   midi_lfo_scene_handler_release_notes_for_slot(1);
 }
 
+static bool lfo_waveform_is_periodic(lfo_waveform_t wf) {
+  switch (wf) {
+    case LFO_WAVEFORM_SINE:
+    case LFO_WAVEFORM_TRIANGLE:
+    case LFO_WAVEFORM_SQUARE:
+    case LFO_WAVEFORM_SAW_UP:
+    case LFO_WAVEFORM_SAW_DOWN:
+    case LFO_WAVEFORM_CUSTOM:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static uint8_t mapping_primary_cc(const continuous_mapping_t* mapping) {
+  if (!mapping) return 0;
+  if (mapping->num_cc_numbers > 0) {
+    for (int i = 0; i < MAX_MULTI_CC; i++) {
+      if (mapping->cc_numbers[i] > 0)
+        return mapping->cc_numbers[i];
+    }
+  }
+  return mapping->cc_number;
+}
+
+static uint8_t mapping_output_preview(continuous_mapping_t* mapping, uint8_t raw) {
+  uint8_t saved_last = mapping->last_value;
+  uint32_t saved_ms = mapping->last_activity_ms;
+  uint8_t out = continuous_mapping_process(raw, mapping);
+  mapping->last_value = saved_last;
+  mapping->last_activity_ms = saved_ms;
+  return out;
+}
+
+static bool mapping_current_target(continuous_mapping_t* mapping, uint8_t* out) {
+  if (!mapping || !out) return false;
+  if (mapping->output_type == OUTPUT_TYPE_CC) {
+    uint8_t cc = mapping_primary_cc(mapping);
+    if (cc > 0) {
+      *out = action_get_cc_value(cc);
+      return true;
+    }
+  }
+  *out = mapping->last_value;
+  return true;
+}
+
+static uint8_t mapping_raw_for_target(continuous_mapping_t* mapping, uint8_t target) {
+  uint8_t best_raw = 64;
+  uint16_t best_err = 256;
+  for (int r = 0; r < 128; r++) {
+    uint8_t out = mapping_output_preview(mapping, (uint8_t)r);
+    uint16_t err = (out > target) ? (uint16_t)(out - target) : (uint16_t)(target - out);
+    if (err < best_err) {
+      best_err = err;
+      best_raw = (uint8_t)r;
+      if (err == 0) break;
+    }
+  }
+  return best_raw;
+}
+
+// Snap a Stream-gated (or LFO Start) enable to the live parameter value so
+// the waveform does not jump to phase-0 / MIDI 64.
+static void midi_lfo_scene_handler_prepare_start(uint8_t slot) {
+  if (slot > 1) return;
+
+  // Continue: freeze-and-resume after the first run.
+  if (!lfo_get_reset_phase(slot) && lfo_has_run(slot))
+    return;
+
+  scene_t* scene = scene_get_current();
+  if (!scene) return;
+
+  continuous_mapping_t* mapping = (slot == 0) ? &scene->lfo1 : &scene->lfo2;
+  if (!mapping->enabled) return;
+
+  uint8_t target;
+  if (!mapping_current_target(mapping, &target)) return;
+
+  lfo_waveform_t wf = lfo_get_waveform(slot);
+  if (!lfo_waveform_is_periodic(wf)) {
+    uint8_t raw = mapping_raw_for_target(mapping, target);
+    lfo_seed_to_raw(slot, raw);
+    ESP_LOGI(TAG, "LFO%d start seed: target=%u raw=%u",
+      slot + 1, (unsigned)target, (unsigned)raw);
+    return;
+  }
+
+  int8_t prefer = lfo_get_last_slope(slot);
+  if (prefer == 0) prefer = 1;
+
+  uint8_t current_phase = lfo_get_phase(slot);
+  uint32_t best_score = 0xFFFFFFFFu;
+  uint8_t best_phase = 0;
+
+  for (int p = 0; p < 256; p++) {
+    uint8_t phase = (uint8_t)p;
+    uint8_t raw = lfo_get_value_at_phase(slot, phase);
+    uint8_t out = mapping_output_preview(mapping, raw);
+    uint16_t err = (out > target) ? (uint16_t)(out - target) : (uint16_t)(target - out);
+
+    uint8_t next_raw = lfo_get_value_at_phase(slot, (uint8_t)(phase + 1));
+    int8_t slope = 0;
+    if (next_raw > raw) slope = 1;
+    else if (next_raw < raw) slope = -1;
+
+    uint8_t slope_mismatch = (slope == prefer || slope == 0) ? 0 : 1;
+    uint8_t dist = (uint8_t)(phase - current_phase);
+    if (dist > 128) dist = (uint8_t)(256 - dist);
+
+    uint32_t score = ((uint32_t)err << 16) | ((uint32_t)slope_mismatch << 8) | dist;
+    if (score < best_score) {
+      best_score = score;
+      best_phase = phase;
+    }
+  }
+
+  lfo_place_phase(slot, best_phase);
+  ESP_LOGI(TAG, "LFO%d start phase %u for target %u (err=%u slope=%d)",
+    slot + 1, (unsigned)best_phase, (unsigned)target,
+    (unsigned)(best_score >> 16), (int)prefer);
+}
+
 void midi_lfo_scene_handler_restore_value(uint8_t slot) {
   scene_t* scene = scene_get_current();
   if (!scene) return;
@@ -340,6 +465,8 @@ esp_err_t midi_lfo_scene_handler_init(void) {
     ESP_LOGE(TAG, "Failed to subscribe to scene changed events");
     return ret;
   }
+
+  lfo_set_on_start_callback(midi_lfo_scene_handler_prepare_start);
 
   ESP_LOGI(TAG, "LFO scene handler initialized");
   return ESP_OK;

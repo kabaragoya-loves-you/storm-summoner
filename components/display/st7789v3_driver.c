@@ -23,8 +23,10 @@
 // L1 cache line so the SPI master never falls into its cache-alignment realloc
 // path (heap_caps_aligned_alloc from the scarce MALLOC_CAP_DMA pool, which fails
 // with ESP_ERR_NO_MEM under DMA-heap pressure). Pixels are streamed through this
-// persistent buffer in 64-byte-aligned spans; kept small to avoid permanently
-// consuming the very limited DMA-capable heap on this board.
+// persistent INTERNAL DMA buffer in 64-byte-aligned spans. PSRAM is not usable:
+// esp_ptr_dma_capable() is false for PSRAM, and SPI GDMA is configured with
+// access_ext_mem=false, so PSRAM buffers bounce-copy into internal DMA on every
+// transfer.
 #define ST7789V3_DMA_CHUNK 512
 
 // Viewport configuration (virtual display within physical)
@@ -137,7 +139,7 @@ void st7789v3_init(void) {
     .sclk_io_num = PIN_SCLK,
     .quadwp_io_num = -1,
     .quadhd_io_num = -1,
-    .max_transfer_sz = ST7789V3_WIDTH * ST7789V3_HEIGHT * 2,  // RGB565
+    .max_transfer_sz = ST7789V3_DMA_CHUNK,
   };
 
   esp_err_t ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
@@ -166,14 +168,10 @@ void st7789v3_init(void) {
   gpio_set_level(PIN_RESET, 1);
   vTaskDelay(pdMS_TO_TICKS(150)); // Wait for internal regulator (datasheet: 120ms min)
 
-  // Persistent, 64-byte-aligned DMA scratch buffer. Transfers are sliced to this
-  // size and kept cache-line aligned so the SPI master transmits directly from
-  // it without allocating a temporary bounce buffer per transfer.
+  // Persistent internal-DMA scratch buffer. Must live in DRAM
+  // (0x4FF00000-0x4FFC0000) so pixel chunks skip the SPI bounce alloc.
   st7789v3_line_buf = heap_caps_aligned_alloc(64, ST7789V3_DMA_CHUNK,
-    MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-  if (!st7789v3_line_buf) {
-    st7789v3_line_buf = heap_caps_aligned_alloc(64, ST7789V3_DMA_CHUNK, MALLOC_CAP_DMA);
-  }
+    MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
   if (!st7789v3_line_buf) {
     ESP_LOGE(TAG, "Failed to allocate DMA buffer");
     return;

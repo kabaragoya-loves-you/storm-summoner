@@ -145,10 +145,12 @@ static void handle_control_change(uint8_t cc_number, uint8_t value) {
     if (action_requires_hold_for(&slot->action)) {
       if (value > 0 && !slot->pressing) {
         action_set_next_trigger_source(ACTION_SOURCE_CC_INPUT, cc_number);
+        scene_notify_hold_for(&slot->action, true);
         action_execute(&slot->action, value, true);
         slot->pressing = true;
       } else if (value == 0 && slot->pressing) {
         action_set_next_trigger_source(ACTION_SOURCE_CC_INPUT, cc_number);
+        scene_notify_hold_for(&slot->action, false);
         action_execute(&slot->action, 0, false);
         slot->pressing = false;
       }

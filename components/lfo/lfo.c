@@ -71,6 +71,8 @@ typedef struct {
   uint8_t queued_cycles;    // Number of additional cycles queued (for retrigger)
   bool pending_start;       // LFO Start was triggered, waiting for timing
   bool just_started;        // Skip first one-shot detection after restart (race protection)
+  bool has_run;             // True after the slot has been started at least once
+  int8_t last_slope;        // +1 rising, -1 falling, 0 unknown
   // Dynamic modulation from external sources
   uint8_t dynamic_depth;    // 0-127, modulates floor/ceiling range (127=full range)
   bool has_dynamic_depth;   // Whether dynamic depth is active
@@ -113,6 +115,10 @@ static uint32_t lfo_nominal_beat_ms(void);
 static uint32_t lfo_get_beat_duration_ms(void);
 static float lfo_cycles_per_beat(lfo_note_division_t div, uint8_t felt_beats);
 static uint16_t lfo_phase_from_beat_sync(lfo_note_division_t div, uint32_t now_ms);
+static uint8_t lfo_scale_wave_to_midi(const lfo_state_t* lfo, uint8_t value);
+static void lfo_invoke_on_start(uint8_t slot);
+
+static lfo_on_start_cb_t s_on_start_cb = NULL;
 
 // Calculate LFO cycle duration in milliseconds
 static float calculate_cycle_duration_ms(lfo_state_t* lfo, uint16_t bpm) {
@@ -290,6 +296,8 @@ esp_err_t lfo_init(void) {
     s_lfo[i].queued_cycles = 0;
     s_lfo[i].pending_start = false;
     s_lfo[i].just_started = false;
+    s_lfo[i].has_run = false;
+    s_lfo[i].last_slope = 0;
     // Dynamic modulation (default: inactive, full range)
     s_lfo[i].dynamic_depth = 127;
     s_lfo[i].has_dynamic_depth = false;
@@ -482,13 +490,12 @@ static void handle_beat_event(const event_t* event, void* context) {
 
     if (should_start) {
       lfo->pending_start = false;
-      lfo->phase = 0;
-      lfo->prev_phase = 0;
       lfo_clear_cycle_triggers(lfo);
       lfo->cycle_completed = false;
       lfo->just_started = true;  // Skip first one-shot check (race protection)
       lfo->config.enabled = true;
-      lfo->last_sent_value = 255;  // Force first send
+      lfo_invoke_on_start((uint8_t)i);
+      lfo->has_run = true;
       ESP_LOGI(TAG, "LFO%d: started on %s", i + 1,
         lfo->config.trigger_timing == LFO_TRIGGER_NEXT_BEAT ? "beat" : "bar");
     }
@@ -698,47 +705,55 @@ static uint8_t evaluate_waveform_at_phase(lfo_state_t* lfo, uint8_t adjusted_pha
   return value;
 }
 
+static void lfo_effective_range(const lfo_state_t* lfo, uint8_t* floor, uint8_t* ceiling) {
+  uint8_t f = lfo->config.floor;
+  uint8_t c = lfo->config.ceiling;
+  if (lfo->has_dynamic_depth && f <= c) {
+    uint8_t configured_range = c - f;
+    uint8_t center = f + (configured_range / 2);
+    uint8_t effective_range = (uint8_t)(((uint32_t)configured_range *
+      lfo->dynamic_depth) / 127);
+    uint8_t half_range = effective_range / 2;
+    f = (center > half_range) ? (center - half_range) : 0;
+    c = (center + half_range <= 127) ? (center + half_range) : 127;
+  }
+  *floor = f;
+  *ceiling = c;
+}
+
+static uint8_t lfo_scale_wave_to_midi(const lfo_state_t* lfo, uint8_t value) {
+  uint8_t floor, ceiling;
+  lfo_effective_range(lfo, &floor, &ceiling);
+  if (floor > ceiling)
+    return (uint8_t)((floor + ceiling) / 2);
+  if (floor == 0 && ceiling == 127)
+    return value >> 1;
+  uint8_t range = ceiling - floor;
+  return floor + (uint8_t)(((uint32_t)value * range) / 255);
+}
+
+static uint8_t lfo_midi_to_wave(const lfo_state_t* lfo, uint8_t midi) {
+  uint8_t floor, ceiling;
+  lfo_effective_range(lfo, &floor, &ceiling);
+  if (floor > ceiling) return 128;
+  if (midi <= floor) return 0;
+  if (midi >= ceiling) return 255;
+  uint8_t range = ceiling - floor;
+  if (range == 0) return 128;
+  return (uint8_t)(((uint32_t)(midi - floor) * 255) / range);
+}
+
 static uint8_t calculate_waveform(lfo_state_t* lfo) {
   uint8_t phase8 = PHASE_TO_8BIT(lfo->phase);
   uint8_t offset = lfo->config.phase_offset;
   uint8_t adjusted_phase = phase8 + offset;
   uint8_t value = evaluate_waveform_at_phase(lfo, adjusted_phase, true);
+  return lfo_scale_wave_to_midi(lfo, value);
+}
 
-  // Apply floor/ceiling at full 0-255 resolution for maximum precision
-  // This avoids double-quantization when using continuous_mapping scaling
-  uint8_t floor = lfo->config.floor;
-  uint8_t ceiling = lfo->config.ceiling;
-
-  if (floor > ceiling) {
-    // Invalid range, just return midpoint
-    return (floor + ceiling) / 2;
-  }
-
-  // Apply dynamic depth modulation if active
-  // dynamic_depth 0-127 scales the range: 0=flat at center, 127=full range
-  if (lfo->has_dynamic_depth) {
-    uint8_t configured_range = ceiling - floor;
-    uint8_t center = floor + (configured_range / 2);
-    // Scale range by dynamic_depth (0-127 -> 0-100%)
-    uint8_t effective_range = (uint8_t)(((uint32_t)configured_range *
-      lfo->dynamic_depth) / 127);
-    uint8_t half_range = effective_range / 2;
-    // Recalculate floor/ceiling centered on original midpoint
-    floor = (center > half_range) ? (center - half_range) : 0;
-    ceiling = (center + half_range <= 127) ? (center + half_range) : 127;
-  }
-
-  if (floor == 0 && ceiling == 127) {
-    // Full range, just scale to 0-127
-    return value >> 1;
-  }
-
-  // Scale value (0-255) to floor-ceiling range
-  // Use 32-bit arithmetic to avoid overflow
-  uint8_t range = ceiling - floor;
-  uint8_t scaled = floor + (uint8_t)(((uint32_t)value * range) / 255);
-
-  return scaled;
+static void lfo_invoke_on_start(uint8_t slot) {
+  if (s_on_start_cb)
+    s_on_start_cb(slot);
 }
 
 static void lfo_task(void* arg) {
@@ -835,7 +850,10 @@ static void lfo_task(void* arg) {
       }
 
       // Calculate waveform value
+      uint8_t prev_value = lfo->last_value;
       lfo->last_value = calculate_waveform(lfo);
+      if (lfo->last_value > prev_value) lfo->last_slope = 1;
+      else if (lfo->last_value < prev_value) lfo->last_slope = -1;
 
       // Skip event posting in programming mode (LFO keeps running internally)
       if (!ui_is_in_programming_mode()) {
@@ -1069,28 +1087,15 @@ uint8_t lfo_get_value_at_phase(uint8_t slot, uint8_t phase) {
   uint8_t offset = lfo->config.phase_offset;
   uint8_t adjusted_phase = phase + offset;
   uint8_t value = evaluate_waveform_at_phase(lfo, adjusted_phase, false);
-
-  // Apply floor/ceiling at full 0-255 resolution for maximum precision
-  uint8_t floor = lfo->config.floor;
-  uint8_t ceiling = lfo->config.ceiling;
-
-  if (floor > ceiling) {
-    return (floor + ceiling) / 2;
-  }
-
-  if (floor == 0 && ceiling == 127) {
-    return value >> 1;
-  }
-
-  // Scale value (0-255) to floor-ceiling range
-  uint8_t range = ceiling - floor;
-  return floor + (uint8_t)(((uint32_t)value * range) / 255);
+  return lfo_scale_wave_to_midi(lfo, value);
 }
 
 void lfo_apply_config(uint8_t slot, const lfo_config_t* config) {
   if (slot >= LFO_NUM_SLOTS || !config) return;
   memcpy(&s_lfo[slot].config, config, sizeof(lfo_config_t));
   reset_stochastic_waveform_state(&s_lfo[slot]);
+  s_lfo[slot].has_run = false;
+  s_lfo[slot].last_slope = 0;
   if (config->enabled) {
     s_lfo[slot].last_sent_value = 255;  // Force first send
   }
@@ -1435,16 +1440,16 @@ bool lfo_trigger_start(uint8_t slot) {
 
   // Check trigger timing
   if (lfo->config.trigger_timing == LFO_TRIGGER_IMMEDIATE) {
-    // Start immediately
-    lfo->phase = 0;
-    lfo->prev_phase = 0;
+    // Start immediately. Phase is left as-is so Continue can resume, then
+    // the on-start callback can snap it to the live parameter value.
     lfo_clear_cycle_triggers(lfo);
     lfo->cycle_completed = false;
     lfo->just_started = true;  // Skip first one-shot check (race protection)
     lfo->queued_cycles = 0;
     lfo->pending_start = false;
     lfo->config.enabled = true;
-    lfo->last_sent_value = 255;  // Force first send
+    lfo_invoke_on_start(slot);
+    lfo->has_run = true;
     ESP_LOGI(TAG, "LFO%d: started immediately", slot + 1);
     return true;
   } else {
@@ -1472,6 +1477,66 @@ bool lfo_is_cycle_completed(uint8_t slot) {
 bool lfo_is_pending_start(uint8_t slot) {
   if (slot >= LFO_NUM_SLOTS) return false;
   return s_lfo[slot].pending_start;
+}
+
+void lfo_set_on_start_callback(lfo_on_start_cb_t cb) {
+  s_on_start_cb = cb;
+}
+
+bool lfo_has_run(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return false;
+  return s_lfo[slot].has_run;
+}
+
+int8_t lfo_get_last_slope(uint8_t slot) {
+  if (slot >= LFO_NUM_SLOTS) return 0;
+  return s_lfo[slot].last_slope;
+}
+
+void lfo_place_phase(uint8_t slot, uint8_t phase8) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  lfo_state_t* lfo = &s_lfo[slot];
+  lfo->phase = (uint16_t)phase8 << 8;
+  lfo->prev_phase = lfo->phase;
+  uint8_t value = lfo_get_value_at_phase(slot, phase8);
+  lfo->last_value = value;
+  lfo->last_sent_value = value;
+}
+
+void lfo_seed_to_raw(uint8_t slot, uint8_t raw) {
+  if (slot >= LFO_NUM_SLOTS) return;
+  lfo_state_t* lfo = &s_lfo[slot];
+  uint8_t v255 = lfo_midi_to_wave(lfo, raw);
+  float fv = (float)v255;
+
+  switch (lfo->config.waveform) {
+    case LFO_WAVEFORM_SAMPLE_HOLD:
+      lfo->sample_hold_value = v255;
+      lfo->sample_hold_triggered = true;
+      break;
+    case LFO_WAVEFORM_BIN:
+      lfo->bin_state = (v255 >= 128) ? 255 : 0;
+      lfo->bin_triggered = true;
+      break;
+    case LFO_WAVEFORM_GLIDER:
+      lfo->glider_value = fv;
+      lfo->glider_target = fv;
+      lfo->glider_wish = fv;
+      lfo->glider_next_retarget_ms = 0;
+      break;
+    case LFO_WAVEFORM_STRAY:
+      lfo->stray_p0 = fv;
+      lfo->stray_p1 = fv;
+      lfo->stray_p2 = fv;
+      lfo->stray_p3 = fv;
+      lfo->stray_triggered = true;
+      break;
+    default:
+      break;
+  }
+
+  lfo->last_value = raw;
+  lfo->last_sent_value = raw;
 }
 
 // ============================================================================

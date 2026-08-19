@@ -68,6 +68,7 @@ static void trigger_fire_press(scene_t* scene) {
   if (cv_trigger_blocked()) return;
   uint8_t value = cv_get_midi_value();
   action_set_next_trigger_source(ACTION_SOURCE_CV, 0);
+  scene_notify_hold_for(&scene->cv_trigger_action, true);
   action_execute(&scene->cv_trigger_action, value, true);
   scene->cv_trigger_pressing = true;
 }
@@ -80,6 +81,7 @@ static void trigger_fire_release(scene_t* scene) {
   action_t* action = &scene->cv_trigger_action;
   if (scene->cv_trigger_pressing && action_requires_hold_for(action)) {
     action_set_next_trigger_source(ACTION_SOURCE_CV, 0);
+    scene_notify_hold_for(action, false);
     action_execute(action, 0, false);
   }
   scene->cv_trigger_pressing = false;

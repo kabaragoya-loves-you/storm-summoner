@@ -105,6 +105,7 @@ static void handle_button_event(const event_t* event, void* context) {
         break;
     }
     action_set_next_trigger_source(ACTION_SOURCE_BUTTON, button_index);
+    scene_notify_hold_for(action, is_press);
     action_execute(action, 127, is_press);
   }
 }

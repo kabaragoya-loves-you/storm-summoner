@@ -50,6 +50,7 @@ static ui_draw_module_t *g_previous_module = NULL;
 // task -- applies the corresponding widget changes.
 static volatile bool g_completion_pending = false;
 static volatile bool g_completion_success = false;
+static volatile bool g_restart_ui_pending = false;
 static updating_state_t g_applied_ui_state = UPDATING_STATE_IDLE;
 
 // Forward declarations
@@ -61,9 +62,32 @@ static void handle_button_press(int pad_id);
 static void subscribe_active_events(void);
 static void unsubscribe_active_events(void);
 
+// Reset widgets for a new transfer. Must run on the LVGL task.
+static void reset_progress_ui(void) {
+  if (g_title_label) {
+    const char *title = (g_update_type == UPDATE_TYPE_FIRMWARE)
+      ? "Updating Firmware" : "Updating Assets";
+    lv_label_set_text(g_title_label, title);
+  }
+  if (g_progress_bar)
+    lv_bar_set_value(g_progress_bar, 0, LV_ANIM_OFF);
+  if (g_status_label)
+    lv_label_set_text(g_status_label, "Receiving...");
+  if (g_prompt_label)
+    lv_obj_add_flag(g_prompt_label, LV_OBJ_FLAG_HIDDEN);
+}
+
 // Progress timer callback - polls actual progress during transfer, animates during flash
 static void progress_timer_cb(lv_timer_t *timer) {
   (void)timer;
+
+  // Apply a same-session restart flagged by EVENT_UPDATE_STARTED. This must
+  // happen before completion handling so a leftover SUCCESS cannot paint over
+  // the new transfer's zeroed bar.
+  if (g_restart_ui_pending) {
+    g_restart_ui_pending = false;
+    reset_progress_ui();
+  }
 
   // Apply completion flagged by the event handler (event_dispatch task) here,
   // on the LVGL task, so every widget mutation stays single-threaded.
@@ -161,7 +185,7 @@ static void updating_event_handler(const event_t *event, void *context) {
   (void)context;
 
   switch (event->type) {
-    case EVENT_UPDATE_STARTED:
+    case EVENT_UPDATE_STARTED: {
       ESP_LOGI(TAG, "Update started: type=%d, size=%lu",
         event->data.update.update_type, (unsigned long)event->data.update.total_size);
 
@@ -171,14 +195,25 @@ static void updating_event_handler(const event_t *event, void *context) {
       g_update_type = (update_type_t)event->data.update.update_type;
       g_state = UPDATING_STATE_RECEIVING;
       g_completion_pending = false;
-      g_applied_ui_state = UPDATING_STATE_RECEIVING;
+      g_restart_ui_pending = true;
+      // Leave applied state IDLE so FLASHING status text is applied when
+      // that phase starts, rather than skipped because we already matched
+      // RECEIVING here. Receiving text is applied by reset_progress_ui().
+      g_applied_ui_state = UPDATING_STATE_IDLE;
       g_flash_estimate_ms = (g_update_type == UPDATE_TYPE_FIRMWARE)
         ? FIRMWARE_FLASH_ESTIMATE_MS : ASSETS_FLASH_ESTIMATE_MS;
 
-      // Store previous module and switch to updating UI
-      g_previous_module = ui_get_current_module();
-      ui_set_draw_module(&updating_module);
+      // Stay on this module if a previous update left us on the completion
+      // screen. Re-entering via ui_set_draw_module() takes the same-module
+      // reswitch path, which tears the screen down and resets g_state to
+      // IDLE — so the progress timer would stop driving the bar.
+      ui_draw_module_t *current = ui_get_current_module();
+      if (current != &updating_module) {
+        g_previous_module = current;
+        ui_set_draw_module(&updating_module);
+      }
       break;
+    }
 
     case EVENT_UPDATE_PROGRESS:
       if (event->data.update.phase == UPDATE_PHASE_FLASH) {
@@ -286,6 +321,7 @@ static void updating_teardown(void) {
 
   g_state = UPDATING_STATE_IDLE;
   g_completion_pending = false;
+  g_restart_ui_pending = false;
   g_applied_ui_state = UPDATING_STATE_IDLE;
   ESP_LOGD(TAG, "Updating module teardown");
 }

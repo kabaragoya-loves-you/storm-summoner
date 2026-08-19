@@ -142,6 +142,7 @@ static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 
 // Hold action suppression - when a hold action is active, suppress health check interventions
 static bool s_hold_active[MAX_TOUCH_PADS] = {false};
+static int s_session_hold_count = 0;
 
 // Guided screw calibration wizard active — skip pad-12 health interventions
 static bool s_screw_calib_active = false;
@@ -238,6 +239,13 @@ static void quarantine_pad(int pad_index, uint32_t now, const char* reason) {
     ESP_LOGD(TAG, "Pad 12 quarantine skipped (screw calib active, reason=%s)", reason);
     return;
   }
+  // A musical Hold is in progress. Coupling on other pads is expected and
+  // must not lock out Omega / Active or restart the sensor.
+  if (touch_is_any_hold_active()) {
+    ESP_LOGD(TAG, "Pad %d quarantine skipped (hold active, reason=%s)",
+      pad_index, reason ? reason : "?");
+    return;
+  }
 
   s_pad_suppressed[pad_index] = true;
   s_pad_suppressed_since_ms[pad_index] = now;
@@ -272,8 +280,54 @@ static void unquarantine_pad(int pad_index, uint32_t now) {
   s_pad_stuck_window_start[pad_index] = 0;
   s_pad_safety_hatch_attempted[pad_index] = false;
 
-  ESP_LOGI(TAG, "Pad %d UNQUARANTINED after %"PRIu32"ms (hw IDLE confirmed)",
+  ESP_LOGI(TAG, "Pad %d UNQUARANTINED after %"PRIu32"ms",
     pad_index, duration);
+}
+
+// Last Hold in the session ended: lift quarantines so Omega/Active cannot stay
+// locked out, drop pending sensor restarts, and release leftover coupling
+// presses that are not elevated vs the calibrated baseline.
+static void hold_session_cleanup(const char* reason) {
+  uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  int unq = 0;
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    if (!s_pad_suppressed[i]) continue;
+    unquarantine_pad(i, now);
+    unq++;
+  }
+  s_pending_recovery_mask = 0;
+  s_system_event_until_ms = 0;
+
+  int phantom = 0;
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    if (!s_button_pressed_states[i] || s_hold_active[i]) continue;
+    uint32_t smooth[1] = {0};
+    touch_pad_calibration_t calib;
+    bool have_smooth = (touch_channel_read_data(s_chan_handles[i],
+      TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth) == ESP_OK);
+    bool have_calib = (touch_get_calibration_data(TOUCH_PADS[i], &calib) == ESP_OK &&
+      calib.valid && calib.baseline > 0);
+    bool elevated = false;
+    if (have_smooth && have_calib) {
+      uint32_t elev_thresh = (i == 12) ? touch_pad12_elev_thresh() : calib.threshold;
+      elevated = (TOUCH_PADS[i] == INVERTED_TOUCH_CHANNEL)
+        ? (smooth[0] + elev_thresh < calib.baseline)
+        : (smooth[0] > calib.baseline + elev_thresh);
+    }
+    if (elevated) continue;
+    s_button_pressed_states[i] = false;
+    s_pad_press_timestamps[i] = 0;
+    event_t release_event = {
+      .type = EVENT_TOUCH_RELEASE,
+      .priority = EVENT_PRIORITY_HIGH,
+      .timestamp = event_bus_get_current_timestamp(),
+      .data.touch = { .pad_id = i }
+    };
+    event_bus_post(&release_event);
+    phantom++;
+  }
+  ESP_LOGD(TAG, "Hold session end (%s): unquarantined %d, phantom release %d",
+    reason ? reason : "?", unq, phantom);
 }
 
 // Post a synthetic RELEASE for every pad currently believed pressed, and clear
@@ -481,7 +535,8 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
         recent_press_mask |= (1u << i);
       }
     }
-    if (recent_press_count >= SYSTEM_EVENT_PAD_THRESHOLD) {
+    if (recent_press_count >= SYSTEM_EVENT_PAD_THRESHOLD &&
+        !touch_is_any_hold_active()) {
       bool wheel_only = ((recent_press_mask & ~WHEEL_PAD_MASK) == 0);
       bool wheel_active = any_touchwheel_interaction_active();
 
@@ -691,6 +746,7 @@ static void touch_health_check_task(void *pvParameters) {
   
   while (s_health_check_running) {
     uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    bool any_hold = touch_is_any_hold_active();
     // [QUARANTINE] Bitmask of pads that entered stuck state during this single
     // health-check cycle. Used after the per-pad loop to detect a multi-pad
     // simultaneous event (likely static / EMI) and quarantine the whole batch.
@@ -752,22 +808,6 @@ static void touch_health_check_task(void *pvParameters) {
         }
       }
 
-      // #region agent log
-      if (i == 12 && s_known_good_benchmark[i] > 0 &&
-          benchmark[0] < (s_known_good_benchmark[i] * 3) / 4) {
-        static uint32_t s_dbg12_stale_log_ms;
-        if (now - s_dbg12_stale_log_ms >= 1000) {
-          s_dbg12_stale_log_ms = now;
-          int32_t elev = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
-          ESP_LOGW(TAG, "[DBG12/H6] STALE BENCH window — long-press now"
-            " smooth=%u bench=%u known=%u elev=%d hold=%d sw=%d",
-            (unsigned)smooth[0], (unsigned)benchmark[0],
-            (unsigned)s_known_good_benchmark[i], (int)elev,
-            s_hold_active[i] ? 1 : 0, s_button_pressed_states[i] ? 1 : 0);
-        }
-      }
-      // #endregion
-      
       // Detect relative drift: benchmark dropped >25% from known-good
       // This catches drift that causes phantom touches (e.g., 20500->12836)
       if (s_known_good_benchmark[i] > 0 && !s_hold_active[i]) {
@@ -789,18 +829,12 @@ static void touch_health_check_task(void *pvParameters) {
           }
           if (real_touch) continue;
 
+          // Coupling while another pad is held looks like drift. Do not
+          // restart the sensor or force-release neighbors mid-hold.
+          if (any_hold) continue;
+
           // If pad is currently "pressed", this is likely a phantom touch - force release
           if (s_button_pressed_states[i]) {
-            // #region agent log
-            if (i == 12) {
-              int32_t elev = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
-              ESP_LOGI(TAG, "[DBG12/H2] drift-kill sw_pressed=1 hold=%d smooth=%u bench=%u known=%u base=%u elev=%d elev_thresh=%u",
-                s_hold_active[i] ? 1 : 0,
-                (unsigned)smooth[0], (unsigned)benchmark[0], (unsigned)known,
-                (unsigned)calib_data.baseline, (int)elev,
-                (unsigned)((i == 12) ? touch_pad12_elev_thresh() : calib_data.threshold));
-            }
-            // #endregion
             ESP_LOGI(TAG, "Pad %d phantom touch detected (drift), forcing release + recovery", i);
             s_button_pressed_states[i] = false;
             s_pad_press_timestamps[i] = 0;
@@ -894,6 +928,7 @@ static void touch_health_check_task(void *pvParameters) {
         : (smooth[0] > calib_data.baseline + elev_thresh);
 
       if (i == 12 && !s_hold_active[i] && hardware_is_touching && !smooth_elevated) {
+        if (any_hold) continue;
         if (s_button_pressed_states[i]) {
           ESP_LOGI(TAG, "Pad %d dead-band phantom (bench sag), forcing release + recovery", i);
           s_button_pressed_states[i] = false;
@@ -968,27 +1003,26 @@ static void touch_health_check_task(void *pvParameters) {
       
       // 5. Stuck Touch Detection (HW+SW both agree pad is touched, but for way too long)
       // This catches phantom touches where the threshold might be miscalibrated.
-      // Only triggers after a VERY long time (default 10s) to allow musical holds.
-      // Skip if a hold action is active - we expect the pad to be held intentionally.
-      if (s_stuck_touch_timeout_ms > 0 && !s_hold_active[i] &&
-          s_button_pressed_states[i] && hardware_is_touching && 
+      // Skip the entire detector while ANY Hold is active: coupling from the
+      // held finger makes neighbors look pressed, and a 10s timeout then
+      // quarantines Omega/Active. A Hold has no time limit.
+      if (s_stuck_touch_timeout_ms > 0 &&
+          s_button_pressed_states[i] && hardware_is_touching &&
           s_pad_press_timestamps[i] > 0) {
-        // Use fresh timestamp to avoid race condition
         uint32_t fresh_now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-        
-        // Only proceed if timestamp is valid (in the past)
+
         if (s_pad_press_timestamps[i] <= fresh_now) {
           uint32_t press_duration = fresh_now - s_pad_press_timestamps[i];
-          
-          // Sanity check + timeout check
-          if (press_duration <= 3600000 && press_duration > s_stuck_touch_timeout_ms) {
-            ESP_LOGW(TAG, "Health check: Pad %d phantom touch (held %"PRIu32"ms), forcing release", 
+
+          if (press_duration <= 3600000 && press_duration > s_stuck_touch_timeout_ms &&
+              !s_hold_active[i] && !any_hold) {
+            ESP_LOGW(TAG, "Health check: Pad %d phantom touch (held %"PRIu32"ms), forcing release",
               i, press_duration);
 
             // Force release - this clears the phantom touch
             s_button_pressed_states[i] = false;
             s_pad_press_timestamps[i] = 0;
-            
+
             event_t event = {
               .type = EVENT_TOUCH_RELEASE,
               .priority = EVENT_PRIORITY_HIGH,
@@ -1040,7 +1074,7 @@ static void touch_health_check_task(void *pvParameters) {
     // don't cascade per-pad sensor restarts during the worst possible moment.
     {
       int newly_stuck_count = __builtin_popcount(newly_stuck_mask_this_cycle);
-      if (newly_stuck_count >= SYSTEM_EVENT_PAD_THRESHOLD) {
+      if (newly_stuck_count >= SYSTEM_EVENT_PAD_THRESHOLD && !any_hold) {
         ESP_LOGW(TAG, "SYSTEM EVENT: %d pads stuck in one cycle (mask=0x%04lx);"
           " quarantining all, deferring recovery for %dms",
           newly_stuck_count,
@@ -1089,7 +1123,7 @@ static void touch_health_check_task(void *pvParameters) {
     // 6. Process Pending Recoveries (one at a time, only when system is truly idle)
     // [QUARANTINE] Also gated: refuse any recovery while a system event is
     // still within its defer window.
-    if (s_pending_recovery_mask > 0 && now >= s_system_event_until_ms) {
+    if (s_pending_recovery_mask > 0 && now >= s_system_event_until_ms && !any_hold) {
       uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
       uint32_t idle_time = current_time - s_last_any_touch_time;
       
@@ -1114,7 +1148,7 @@ static void touch_health_check_task(void *pvParameters) {
     drift_check_counter++;
     
     // Process any pending calibration requests (roughly once per second)
-    if ((drift_check_counter % iterations_per_second) == 0) {
+    if ((drift_check_counter % iterations_per_second) == 0 && !any_hold) {
       if (touch_thresholds_process_pending()) {
         // Calibration completed - update last calibration time
         s_last_calibration_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -1125,7 +1159,8 @@ static void touch_health_check_task(void *pvParameters) {
     // After startup delay, check for drift periodically
     if (drift_check_counter >= startup_iterations + drift_check_iterations) {
       drift_check_counter = startup_iterations; // Reset to just past startup
-      
+
+      if (!any_hold) {
       esp_err_t ret = touch_check_drift();
       if (ret == ESP_FAIL) {
         ESP_LOGW(TAG, "Drift detected - scheduling forced recalibration");
@@ -1134,6 +1169,7 @@ static void touch_health_check_task(void *pvParameters) {
           touch_thresholds_request_calibration(TOUCH_CALIBRATION_REASON_DRIFT, true);
         }
       }
+      }
     }
     
     // 8. Proactive idle calibration - recalibrate if pads haven't been touched in a while
@@ -1141,7 +1177,7 @@ static void touch_health_check_task(void *pvParameters) {
     // and ensures the device is always ready for input without surprising the user.
     // "Idle" here means ONLY touch idle - MIDI, UART, CV activity is irrelevant.
     // The countdown resets every time the user touches a pad.
-    if (s_idle_calibration_interval_ms > 0) {
+    if (s_idle_calibration_interval_ms > 0 && !any_hold) {
       uint32_t idle_now = xTaskGetTickCount() * portTICK_PERIOD_MS;
       uint32_t touch_idle_time = idle_now - s_last_any_touch_time;
       
@@ -1919,12 +1955,35 @@ void touch_set_stuck_timeout_ms(uint32_t timeout_ms) {
 
 void touch_set_hold_active(int pad_index, bool active) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return;
+  if (s_hold_active[pad_index] == active) return;
+  bool was_any = touch_is_any_hold_active();
   s_hold_active[pad_index] = active;
-  // #region agent log
-  if (pad_index == 12)
-    ESP_LOGI(TAG, "[DBG12/H1] hold_active=%d", active ? 1 : 0);
-  // #endregion
+  if (active) s_pending_recovery_mask = 0;
   ESP_LOGD(TAG, "Pad %d hold active: %s", pad_index, active ? "yes" : "no");
+  if (was_any && !touch_is_any_hold_active())
+    hold_session_cleanup("last pad hold released");
+}
+
+void touch_set_session_hold(bool active) {
+  bool was_any = touch_is_any_hold_active();
+  if (active) {
+    s_session_hold_count++;
+    s_pending_recovery_mask = 0;
+  } else if (s_session_hold_count > 0) {
+    s_session_hold_count--;
+  }
+  if (was_any && !touch_is_any_hold_active())
+    hold_session_cleanup("last session hold released");
+}
+
+void touch_clear_all_holds(void) {
+  bool any = touch_is_any_hold_active();
+  for (int i = 0; i < MAX_TOUCH_PADS; i++)
+    s_hold_active[i] = false;
+  s_session_hold_count = 0;
+  // Always lift quarantines on programming entry so Omega/Active cannot stay
+  // locked out even if the hold flags were already clear.
+  hold_session_cleanup(any ? "clear all holds" : "programming enter");
 }
 
 bool touch_is_hold_active(int pad_index) {
@@ -1933,6 +1992,7 @@ bool touch_is_hold_active(int pad_index) {
 }
 
 bool touch_is_any_hold_active(void) {
+  if (s_session_hold_count > 0) return true;
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {
     if (s_hold_active[i]) return true;
   }

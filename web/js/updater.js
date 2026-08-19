@@ -543,16 +543,21 @@ application.register(
       this.connection.setTabsLocked(true, 'updater')
       this.setControlsEnabled(false)
 
-      // Reset progress bars, status, and hide success messages
+      // Reset both bars, then show only the one for this update. Showing
+      // both left the firmware bar sitting at 0% during a follow-up assets
+      // flash (and vice versa).
       this.fwProgressTarget.style.width = '0%'
       this.assetsProgressTarget.style.width = '0%'
-      this.fwProgressBarTarget.classList.remove('hidden')
-      this.assetsProgressBarTarget.classList.remove('hidden')
       this.fwSuccessTarget.classList.add('hidden')
       this.assetsSuccessTarget.classList.add('hidden')
+      this.fwStatusTarget.classList.add('hidden')
+      this.assetsStatusTarget.classList.add('hidden')
 
-      // Show upload status
-      const statusTarget = type === 'FIRMWARE' ? this.fwStatusTarget : this.assetsStatusTarget
+      const isFirmware = type === 'FIRMWARE'
+      this.fwProgressBarTarget.classList.toggle('hidden', !isFirmware)
+      this.assetsProgressBarTarget.classList.toggle('hidden', isFirmware)
+
+      const statusTarget = isFirmware ? this.fwStatusTarget : this.assetsStatusTarget
       statusTarget.textContent = 'Uploading to device...'
       statusTarget.classList.remove('hidden', 'committing')
 

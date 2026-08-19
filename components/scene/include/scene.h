@@ -406,6 +406,10 @@ esp_err_t scene_cancel_pending(void);
 // Process touchpad events through scene mappings
 esp_err_t scene_process_touchpad(uint8_t pad_index, bool pressed);
 
+// Notify the touch health checker that a non-pad Hold action started or ended
+// (buttons, expression switch, pedals, CV trigger). Pads use touch_set_hold_active.
+void scene_notify_hold_for(const action_t* action, bool pressed);
+
 // Expression jack mode and pedal assignment
 esp_err_t scene_set_expression_mode(uint8_t scene_index, expression_mode_t mode);
 expression_mode_t scene_get_expression_mode(uint8_t scene_index);
