@@ -46,6 +46,7 @@ static lv_obj_t *g_screen = NULL;
 static lv_obj_t *g_title_label = NULL;
 static lv_obj_t *g_instruction_label = NULL;
 static lv_obj_t *g_progress_label = NULL;
+static lv_obj_t *g_hint_label = NULL;
 static lv_obj_t *g_hold_bar = NULL;
 static lv_timer_t *g_update_timer = NULL;
 
@@ -80,6 +81,9 @@ static uint32_t median_u32(uint32_t *vals, int count);
 static uint32_t min_u32(uint32_t *vals, int count);
 static int elev_cmp(const void *a, const void *b);
 static void request_bench_reset_when_idle(void);
+static void advance_hold_or_taps(void);
+static void complete_tap_release(void);
+static void unstick_pad12(const char *why);
 
 static uint32_t now_ms(void) {
   return (uint32_t)(esp_timer_get_time() / 1000ULL);
@@ -121,6 +125,78 @@ static uint32_t min_u32(uint32_t *vals, int count) {
 // (smooth - bench) is the real finger delta the active_thresh compares against.
 static void request_bench_reset_when_idle(void) {
   g_pending_bench_reset = true;
+}
+
+// User says they are not touching the screw. Snap HW benchmark to current
+// smooth (the likely-good idle) and clear SW pressed. Do not write elevation
+// into NVS — a stuck delta is not a measured press.
+static void unstick_pad12(const char *why) {
+  touch_pad12_reset_benchmark();
+  touch_clear_pressed_state(12);
+  uint32_t known = g_idle_baseline;
+  if (known < 10000) {
+    touch_screw_calibration_t sc;
+    if (touch_screw_calib_get(&sc) == ESP_OK && sc.baseline >= 10000)
+      known = sc.baseline;
+  }
+  if (known >= 10000)
+    touch_update_known_good_benchmark(12, known);
+  g_pending_bench_reset = false;
+  ESP_LOGD(TAG, "Pad 12 unstick (%s)", why ? why : "?");
+}
+
+static void complete_tap_release(void) {
+  uint32_t early = 0;
+  if (g_tap_sample_count > 0)
+    early = (uint32_t)(g_tap_sample_sum / g_tap_sample_count);
+  g_tap_elevs[g_tap_index] = early;
+  ESP_LOGI(TAG, "Tap %d hw_delta=%u (n=%u)",
+    g_tap_index + 1, (unsigned)early, (unsigned)g_tap_sample_count);
+  g_tap_index++;
+  request_bench_reset_when_idle();
+  if (g_tap_index >= TAP_COUNT) {
+    finish_ok_begin_settle();
+    return;
+  }
+  char buf[32];
+  snprintf(buf, sizeof(buf), "Tap %d/%d", g_tap_index + 1, TAP_COUNT);
+  set_progress(buf);
+  set_instruction("Tap screw");
+  g_step = STEP_TAP_WAIT;
+  g_step_start_ms = now_ms();
+  g_tap_sample_sum = 0;
+  g_tap_sample_count = 0;
+  g_tap_early_done = false;
+}
+
+void screw_calibrate_on_activate(void) {
+  if (!g_running) return;
+
+  unstick_pad12("activate");
+
+  switch (g_step) {
+    case STEP_HOLD_RELEASE:
+      advance_hold_or_taps();
+      break;
+    case STEP_TAP_RELEASE:
+      complete_tap_release();
+      break;
+    case STEP_HOLD_ACTIVE:
+      set_instruction("Hold screw");
+      if (g_hold_bar) lv_bar_set_value(g_hold_bar, 0, LV_ANIM_OFF);
+      g_step = STEP_HOLD_WAIT;
+      g_step_start_ms = now_ms();
+      g_hold_sample_sum = 0;
+      g_hold_sample_count = 0;
+      break;
+    case STEP_POST_SETTLE:
+      g_near_idle_since_ms = 0;
+      g_bench_reset_done = false;
+      set_instruction("Don't touch");
+      break;
+    default:
+      break;
+  }
 }
 
 static void advance_hold_or_taps(void) {
@@ -293,23 +369,36 @@ static void wizard_update_cb(lv_timer_t *timer) {
 
   uint32_t elapsed = now_ms() - g_step_start_ms;
 
-  // HW active_thresh compares smooth vs live benchmark. Measure that delta —
-  // smooth-vs-idle_baseline was 25k+ even in the first samples (filter climb).
+  // Once idle baseline is known, finger presence is smooth vs that baseline.
+  // hw_delta is only for measuring press strength. Confirmed live hold 3:
+  // vs_idle≈-30 (released) while bench=1626 made hw_delta≈19200, so OR-ing
+  // hw_delta into touching locked the wizard on Release until timeout.
   int32_t hw_delta = (int32_t)smooth - (int32_t)bench;
   if (hw_delta < 0) hw_delta = 0;
   int32_t vs_idle = (g_idle_baseline > 0)
     ? ((int32_t)smooth - (int32_t)g_idle_baseline)
     : 0;
-  bool touching = (hw_delta > (int32_t)TOUCH_DETECT_ELEV) ||
-    (vs_idle > (int32_t)TOUCH_DETECT_ELEV);
+  bool touching = (g_idle_baseline > 0)
+    ? (vs_idle > (int32_t)TOUCH_DETECT_ELEV)
+    : (hw_delta > (int32_t)TOUCH_DETECT_ELEV);
 
-  // Between presses: reset bench once we're near idle so the next edge is clean
+  if (g_idle_baseline > 0 && !touching && hw_delta > (int32_t)TOUCH_DETECT_ELEV) {
+    static uint32_t s_unstick_ms;
+    uint32_t t = now_ms();
+    if (t - s_unstick_ms >= 500) {
+      s_unstick_ms = t;
+      unstick_pad12("collapsed_bench");
+    }
+  }
+
+  // Between presses: reset bench once we're near the measured idle, even if
+  // live benchmark has collapsed (hw_delta would stay huge and block this).
   if (g_pending_bench_reset && g_idle_baseline > 0) {
     uint32_t slack = (g_idle_baseline * POST_SETTLE_NEAR_PCT) / 100;
     if (slack < 200) slack = 200;
     bool near = (smooth + slack >= g_idle_baseline) &&
       (smooth <= g_idle_baseline + slack);
-    if (near && hw_delta < (int32_t)TOUCH_DETECT_ELEV) {
+    if (near && vs_idle < (int32_t)TOUCH_DETECT_ELEV) {
       if (touch_pad12_reset_benchmark() == ESP_OK)
         g_pending_bench_reset = false;
     }
@@ -435,27 +524,7 @@ static void wizard_update_cb(lv_timer_t *timer) {
         }
       }
       if (!touching) {
-        uint32_t early = 0;
-        if (g_tap_sample_count > 0)
-          early = (uint32_t)(g_tap_sample_sum / g_tap_sample_count);
-        g_tap_elevs[g_tap_index] = early;
-        ESP_LOGI(TAG, "Tap %d hw_delta=%u (n=%u)",
-          g_tap_index + 1, (unsigned)early, (unsigned)g_tap_sample_count);
-        g_tap_index++;
-        request_bench_reset_when_idle();
-        if (g_tap_index >= TAP_COUNT) {
-          finish_ok_begin_settle();
-          return;
-        }
-        char buf[32];
-        snprintf(buf, sizeof(buf), "Tap %d/%d", g_tap_index + 1, TAP_COUNT);
-        set_progress(buf);
-        set_instruction("Tap screw");
-        g_step = STEP_TAP_WAIT;
-        g_step_start_ms = now_ms();
-        g_tap_sample_sum = 0;
-        g_tap_sample_count = 0;
-        g_tap_early_done = false;
+        complete_tap_release();
       }
       break;
     }
@@ -547,7 +616,14 @@ static void screw_calibrate_draw_deferred_cb(lv_timer_t *timer) {
     lv_obj_set_style_text_color(g_instruction_label, lv_color_make(255, 200, 0), 0);
     lv_obj_set_style_text_font(g_instruction_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_align(g_instruction_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(g_instruction_label, LV_ALIGN_BOTTOM_MID, 0, -36);
+    lv_obj_align(g_instruction_label, LV_ALIGN_BOTTOM_MID, 0, -48);
+
+    g_hint_label = lv_label_create(g_screen);
+    lv_label_set_text(g_hint_label, "If stuck: Activate");
+    lv_obj_set_style_text_color(g_hint_label, lv_color_make(140, 140, 140), 0);
+    lv_obj_set_style_text_font(g_hint_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_align(g_hint_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(g_hint_label, LV_ALIGN_BOTTOM_MID, 0, -28);
 
     ESP_LOGI(TAG, "Screw calibration screen created");
   }
@@ -573,6 +649,7 @@ static void screw_calibrate_teardown(void) {
     g_title_label = NULL;
     g_instruction_label = NULL;
     g_progress_label = NULL;
+    g_hint_label = NULL;
     g_hold_bar = NULL;
   }
   ESP_LOGD(TAG, "Screw calibrate module teardown");

@@ -10296,11 +10296,10 @@ esp_err_t scene_resume_input(void) {
       bool was_enabled = s_lfo_was_running[i];
       bool is_enabled = now_configured_enabled[i];
 
-      if (!was_enabled && is_enabled) {
+      if (!was_enabled && is_enabled)
         lfo_apply_start_mode_one((uint8_t)i);
-      } else if (was_enabled && is_enabled) {
+      else if (was_enabled && is_enabled)
         lfo_enable(i, true);
-      }
     }
   }
 

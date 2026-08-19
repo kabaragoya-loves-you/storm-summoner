@@ -9,6 +9,7 @@
 #include "app_settings.h"
 #include "touch.h"
 #include "touch_thresholds.h"
+#include "screw_calibrate.h"
 #include "driver/touch_sens.h"
 #include "expression.h"
 #include "misc/lv_async.h"
@@ -26,6 +27,17 @@
 #define BUTTON_13_LP_POLL_MS 100      // Poll elev while arming long-press
 #define BUTTON_13_SHORT_PRESS_MIN_MS 75  // Minimum press duration for back/cancel
 #define BOOT_GRACE_PERIOD_MS 8000         // Ignore pad 12 long press within this time after boot
+
+// While another pad/button Hold is active, pad 12 coupling is weaker
+// (confirmed live: elev=729 vs elev_thresh=2090 aborted a real screw hold).
+static int32_t pad12_longpress_elev_thresh(void) {
+  int32_t t = (int32_t)touch_pad12_elev_thresh();
+  if (!touch_is_any_hold_except(BUTTON_13_LOGICAL_PAD)) return t;
+  int32_t coupled = t / 4;
+  if (coupled < 200) coupled = 200;
+  if (coupled > t) coupled = t;
+  return coupled;
+}
 
 // Settings keys
 #define SETTINGS_KEY_BUTTON13_LONG_PRESS_MS "btn13_lp_ms"
@@ -78,6 +90,11 @@ static void inspect_scroll_async(void *user_data) {
   }
   if (inspect_scene_jog_scroll((uint8_t)s_inspect_scroll_pad)) post_haptic_click();
   s_inspect_scroll_pad = -1;
+}
+
+static void screw_cal_activate_async(void* user_data) {
+  (void)user_data;
+  screw_calibrate_on_activate();
 }
 
 // Async callback for pad 9/11 up/down navigation
@@ -195,10 +212,17 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
 
     if (err1 == ESP_OK && err2 == ESP_OK && calib_ret == ESP_OK && calib_data.valid) {
       int32_t elevation = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
-      int32_t elev_thresh = (int32_t)touch_pad12_elev_thresh();
-      real_touch = (calib_data.baseline > 0) && (elevation > elev_thresh);
+      int32_t elev_thresh = pad12_longpress_elev_thresh();
+      bool smooth_collapsed = (calib_data.baseline > 0) &&
+        (smooth[0] < 10000 || smooth[0] < (calib_data.baseline * 3) / 4);
       bench_collapsed = (calib_data.baseline > 0) &&
         (benchmark[0] < (calib_data.baseline * 3) / 4);
+      // Dual-touch coupling collapses smooth far below baseline. That is not
+      // a lift (idle is near baseline). Keep arming while another Hold is live.
+      if (smooth_collapsed && touch_is_any_hold_except(BUTTON_13_LOGICAL_PAD))
+        real_touch = true;
+      else
+        real_touch = (calib_data.baseline > 0) && (elevation > elev_thresh);
 
       if (!real_touch) {
         ESP_LOGW(TAG, "Pad 12 long-press aborted - not elevated"
@@ -214,7 +238,10 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
     s_button13_elev_accum_ms = 0;
     touch_set_hold_active(BUTTON_13_LOGICAL_PAD, false);
     xTimerStop(s_button13_long_press_timer, 0);
-    if (bench_collapsed) touch_force_recover_pad(BUTTON_13_LOGICAL_PAD);
+    // Don't restart the whole sensor while a musical Hold is live — that
+    // was stranding pad 8 Stream Hold / LFO after a failed screw long-press.
+    if (bench_collapsed && !touch_is_any_hold_except(BUTTON_13_LOGICAL_PAD))
+      touch_force_recover_pad(BUTTON_13_LOGICAL_PAD);
     return;
   }
 
@@ -275,7 +302,7 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
               touch_get_calibration_data(channel, &calib) == ESP_OK && calib.valid &&
               calib.baseline > 0) {
             int32_t elev = (int32_t)smooth[0] - (int32_t)calib.baseline;
-            elevated = (elev > (int32_t)touch_pad12_elev_thresh());
+            elevated = (elev > pad12_longpress_elev_thresh());
           }
         }
 
@@ -287,7 +314,8 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
           ESP_LOGD(TAG, "Pad 12 pressed - long press arming (mode=%d)", mode);
         } else {
           ESP_LOGW(TAG, "Pad 12 press not elevated - long press not armed");
-          touch_force_recover_pad(BUTTON_13_LOGICAL_PAD);
+          if (!touch_is_any_hold_except(BUTTON_13_LOGICAL_PAD))
+            touch_force_recover_pad(BUTTON_13_LOGICAL_PAD);
         }
       } else {
         ESP_LOGD(TAG, "Pad 12 pressed in Programming mode - long press timer not started");
@@ -325,6 +353,11 @@ static void ui_handle_touch_event(const event_t* event, void* context) {
     
     // Handle pads 9/11 on PRESS for immediate response (async to LVGL task)
     if (ui_get_app_mode() == APP_MODE_PROGRAMMING) {
+      if (pad_id == BUTTON_8_LOGICAL_PAD && touch_screw_calib_is_active()) {
+        lv_async_call(screw_cal_activate_async, NULL);
+        post_haptic_click();
+        return;
+      }
       if (pad_id == PAD_9_LOGICAL) {
         s_pending_nav_action = NAV_ACTION_UP;
         lv_async_call(pad_nav_async, NULL);

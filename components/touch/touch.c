@@ -143,6 +143,7 @@ static uint32_t s_stuck_touch_timeout_ms = STUCK_TOUCH_TIMEOUT_DEFAULT_MS;
 // Hold action suppression - when a hold action is active, suppress health check interventions
 static bool s_hold_active[MAX_TOUCH_PADS] = {false};
 static int s_session_hold_count = 0;
+static bool s_require_idle_before_press[MAX_TOUCH_PADS] = {false};
 
 // Guided screw calibration wizard active — skip pad-12 health interventions
 static bool s_screw_calib_active = false;
@@ -314,7 +315,12 @@ static void hold_session_cleanup(const char* reason) {
         ? (smooth[0] + elev_thresh < calib.baseline)
         : (smooth[0] > calib.baseline + elev_thresh);
     }
-    if (elevated) continue;
+    if (elevated) {
+      s_pad_press_timestamps[i] = now;
+      s_pad_stuck_count[i] = 0;
+      s_pad_stuck_window_start[i] = 0;
+      continue;
+    }
     s_button_pressed_states[i] = false;
     s_pad_press_timestamps[i] = 0;
     event_t release_event = {
@@ -429,6 +435,16 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     return;
   }
 
+  // After programming entry ended a Hold, ignore a still-down finger until
+  // it lifts. Applies in every mode so Omega/screw don't fire until a new press.
+  if (s_require_idle_before_press[pad_index]) {
+    if (!is_pressed) {
+      s_require_idle_before_press[pad_index] = false;
+    } else {
+      return;
+    }
+  }
+
   // Update last touch time for ANY pad
   uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
   s_last_any_touch_time = now;
@@ -467,11 +483,17 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
     uint32_t known = s_known_good_benchmark[pad_index];
     if (have_bench && known > 0) hard_collapse = (bench_now[0] < (known * 3) / 4);
 
+    bool smooth_collapsed = have_smooth && have_calib &&
+      (smooth_now[0] < 10000 ||
+       (pcalib.baseline > 0 && smooth_now[0] < (pcalib.baseline * 3) / 4));
+
     bool reject_phantom = false;
     if (pad_index == 12 && have_calib && have_smooth && !real_touch) {
       reject_phantom = true;  // any non-elevated press on the screw
-    } else if (pad_index != 12 && hard_collapse && !real_touch) {
-      reject_phantom = true;  // other pads: only on hard benchmark collapse
+    } else if (pad_index != 12 && !real_touch && (hard_collapse || smooth_collapsed)) {
+      // Confirmed live: pad 8 PRESS with smooth=868 vs baseline=23804
+      // restarted Stream Hold / LFO after a collapse-induced false release.
+      reject_phantom = true;
     }
 
     if (reject_phantom) {
@@ -604,39 +626,41 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
   }
   
   // Suppress spurious RELEASE events for pads with active holds.
-  // During sustained presses, benchmark drift can cause the delta to momentarily
-  // drop below threshold, triggering a hardware inactive callback. Sample the
-  // sensor multiple times over a short window to catch the signal when it
-  // swings back above threshold (standard capacitive touch debounce).
+  // Finger lift is smooth returning to the calibrated idle baseline.
+  // Live (smooth-bench) delta is not trusted here: a collapsed smooth
+  // (confirmed live: pad 8 smooth=1375 vs baseline=23804) looks like a
+  // release, and a collapsed bench with idle smooth looks like a press.
   if (!is_pressed && s_hold_active[pad_index]) {
     touch_pad_calibration_t calib_data;
     esp_err_t calib_ret = touch_get_calibration_data(
       TOUCH_PADS[pad_index], &calib_data);
 
-    if (calib_ret == ESP_OK && calib_data.valid) {
-      int32_t hold_release_thresh = (int32_t)(calib_data.threshold / 4);
-      int32_t max_delta = 0;
+    if (calib_ret == ESP_OK && calib_data.valid && calib_data.baseline > 0) {
+      uint32_t elev_bar = (pad_index == 12)
+        ? touch_pad12_elev_thresh() : calib_data.threshold;
+      if (elev_bar < 200) elev_bar = 200;
+      int32_t release_bar = (int32_t)(elev_bar / 4);
+      int32_t max_vs_idle = -1000000;
+      uint32_t last_smooth = 0;
 
       for (int attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(8));
-        uint32_t smooth[1], benchmark[1];
-        esp_err_t e1 = touch_channel_read_data(s_chan_handles[pad_index],
-          TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth);
-        esp_err_t e2 = touch_channel_read_data(s_chan_handles[pad_index],
-          TOUCH_CHAN_DATA_TYPE_BENCHMARK, benchmark);
-        if (e1 == ESP_OK && e2 == ESP_OK) {
-          int32_t delta = (int32_t)smooth[0] - (int32_t)benchmark[0];
-          if (delta > max_delta) max_delta = delta;
-          if (delta > hold_release_thresh) break;
-        }
+        uint32_t smooth[1] = {0};
+        if (touch_channel_read_data(s_chan_handles[pad_index],
+            TOUCH_CHAN_DATA_TYPE_SMOOTH, smooth) != ESP_OK)
+          continue;
+        last_smooth = smooth[0];
+        int32_t vs_idle = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
+        if (vs_idle > max_vs_idle) max_vs_idle = vs_idle;
+        if (max_vs_idle > release_bar) break;
       }
 
-      if (max_delta > hold_release_thresh) {
-        ESP_LOGD(TAG, "Hold-active pad %d spurious RELEASE suppressed"
-          " (max_delta=%"PRId32", thresh=%"PRIu32")",
-          pad_index, max_delta, calib_data.threshold);
+      bool collapsed = (last_smooth < 10000) ||
+        (last_smooth < (calib_data.baseline * 3) / 4);
+      // Collapse is not a lift (confirmed live: proximity coupling on pad 8
+      // with no other hold was treated as RELEASE and stopped Stream Hold).
+      if (collapsed || max_vs_idle > release_bar)
         return;
-      }
     }
   }
 
@@ -927,6 +951,14 @@ static void touch_health_check_task(void *pvParameters) {
         ? (smooth[0] + elev_thresh < calib_data.baseline)
         : (smooth[0] > calib_data.baseline + elev_thresh);
 
+      if (s_require_idle_before_press[i]) {
+        if (!smooth_elevated) {
+          s_require_idle_before_press[i] = false;
+        } else if (!s_button_pressed_states[i]) {
+          continue;
+        }
+      }
+
       if (i == 12 && !s_hold_active[i] && hardware_is_touching && !smooth_elevated) {
         if (any_hold) continue;
         if (s_button_pressed_states[i]) {
@@ -967,14 +999,16 @@ static void touch_health_check_task(void *pvParameters) {
       // Do NOT sync TO pressed without smooth elevation - that path is handled
       // as a dead-band phantom above.
       if (s_button_pressed_states[i] != hardware_is_touching) {
-        // Skip PRESSED→RELEASED correction for held pads - benchmark drift during
-        // sustained presses makes the delta unreliable. The stuck touch timeout
-        // (step 5) still catches genuinely stuck pads.
+        // Skip PRESSED→RELEASED for held pads: live delta is unreliable
+        // during a hold (collapse looks like a lift). Do not sync TO pressed
+        // unless smooth is elevated vs the calibrated idle baseline.
         if (s_hold_active[i] && s_button_pressed_states[i] && !hardware_is_touching) {
           ESP_LOGD(TAG, "Health check: Pad %d mismatch skipped (hold active, delta=%"PRId32")",
             i, delta);
           continue;
         }
+        if (!s_button_pressed_states[i] && hardware_is_touching && !smooth_elevated)
+          continue;
         
         ESP_LOGD(TAG, "Health check: Pad %d state sync (SW=%s -> HW=%s)",
           i, s_button_pressed_states[i] ? "PRESSED" : "RELEASED", 
@@ -1015,7 +1049,7 @@ static void touch_health_check_task(void *pvParameters) {
           uint32_t press_duration = fresh_now - s_pad_press_timestamps[i];
 
           if (press_duration <= 3600000 && press_duration > s_stuck_touch_timeout_ms &&
-              !s_hold_active[i] && !any_hold) {
+              !s_hold_active[i] && !any_hold && !smooth_elevated) {
             ESP_LOGW(TAG, "Health check: Pad %d phantom touch (held %"PRIu32"ms), forcing release",
               i, press_duration);
 
@@ -1257,6 +1291,10 @@ void touch_sync_states_after_reconfig(void) {
         : (smooth[0] > calib_data.baseline + elev_thresh);
       if (!smooth_elevated) hardware_is_touching = false;
     }
+
+    if (s_require_idle_before_press[i] && hardware_is_touching &&
+        !s_button_pressed_states[i])
+      continue;
     
     // If software state doesn't match hardware, correct it
     if (s_button_pressed_states[i] != hardware_is_touching) {
@@ -1986,6 +2024,30 @@ void touch_clear_all_holds(void) {
   hold_session_cleanup(any ? "clear all holds" : "programming enter");
 }
 
+void touch_end_holds_for_programming(void) {
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    bool was_hold = s_hold_active[i];
+    bool was_pressed = s_button_pressed_states[i];
+    if (!was_hold && !was_pressed) continue;
+
+    s_hold_active[i] = false;
+    if (was_pressed) {
+      s_button_pressed_states[i] = false;
+      s_pad_press_timestamps[i] = 0;
+      event_t release_event = {
+        .type = EVENT_TOUCH_RELEASE,
+        .priority = EVENT_PRIORITY_HIGH,
+        .timestamp = event_bus_get_current_timestamp(),
+        .data.touch = { .pad_id = i }
+      };
+      event_bus_post(&release_event);
+    }
+    s_require_idle_before_press[i] = true;
+  }
+  s_session_hold_count = 0;
+  hold_session_cleanup("programming enter");
+}
+
 bool touch_is_hold_active(int pad_index) {
   if (pad_index < 0 || pad_index >= MAX_TOUCH_PADS) return false;
   return s_hold_active[pad_index];
@@ -1994,6 +2056,15 @@ bool touch_is_hold_active(int pad_index) {
 bool touch_is_any_hold_active(void) {
   if (s_session_hold_count > 0) return true;
   for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    if (s_hold_active[i]) return true;
+  }
+  return false;
+}
+
+bool touch_is_any_hold_except(int pad_index) {
+  if (s_session_hold_count > 0) return true;
+  for (int i = 0; i < MAX_TOUCH_PADS; i++) {
+    if (i == pad_index) continue;
     if (s_hold_active[i]) return true;
   }
   return false;

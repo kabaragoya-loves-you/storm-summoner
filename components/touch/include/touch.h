@@ -84,8 +84,13 @@ void touch_force_recover_pad(int pad_index);
 void touch_set_hold_active(int pad_index, bool active);
 void touch_set_session_hold(bool active);
 void touch_clear_all_holds(void);
+// End any in-progress Hold actions before entering programming: execute
+// RELEASE while still in performance, then ignore a still-down finger until
+// it lifts so the hold does not resume on the way back.
+void touch_end_holds_for_programming(void);
 bool touch_is_hold_active(int pad_index);
 bool touch_is_any_hold_active(void);
+bool touch_is_any_hold_except(int pad_index);
 
 // Screw calibration wizard: while active, pad-12 phantom/drift/dead-band
 // recovery is suppressed so guided presses aren't fought by health checks.

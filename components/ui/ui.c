@@ -464,7 +464,18 @@ app_mode_t ui_get_app_mode(void) {
 
 void ui_set_app_mode(app_mode_t mode) {
   app_mode_t previous_mode = g_app_mode;
+  // End performance Holds before the mode flag flips so scene mappings still
+  // process RELEASE (Stream Hold stops LFO). Then flip mode and latch any
+  // still-down fingers so a PRESS cannot restart the hold on the way back.
+  if (mode == APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PERFORMANCE) {
+    for (int i = 0; i < NUM_TOUCHPADS; i++) {
+      if (!touch_is_hold_active(i) && !touch_is_pad_pressed(i)) continue;
+      scene_process_touchpad((uint8_t)i, false);
+    }
+  }
   g_app_mode = mode;
+  if (mode == APP_MODE_PROGRAMMING && previous_mode == APP_MODE_PERFORMANCE)
+    touch_end_holds_for_programming();
   
   const char* mode_names[] = {"Performance", "Programming", "Screensaver"};
   const char* prev_name = (previous_mode < 3) ? mode_names[previous_mode] : "Unknown";
