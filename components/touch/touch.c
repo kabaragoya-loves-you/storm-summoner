@@ -636,10 +636,11 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
       TOUCH_PADS[pad_index], &calib_data);
 
     if (calib_ret == ESP_OK && calib_data.valid && calib_data.baseline > 0) {
+      // Same elevation bar as health-check smooth_elevated. Confirmed live:
+      // threshold/4 (~500) swallowed a real Activate lift at vs=544, then
+      // health sat at H set / E clear for 17s with no second RELEASE.
       uint32_t elev_bar = (pad_index == 12)
-        ? touch_pad12_elev_thresh() : calib_data.threshold;
-      if (elev_bar < 200) elev_bar = 200;
-      int32_t release_bar = (int32_t)(elev_bar / 4);
+        ? touch_pad12_elev_thresh() : (calib_data.threshold / 2);
       int32_t max_vs_idle = -1000000;
       uint32_t last_smooth = 0;
 
@@ -652,14 +653,14 @@ static void handle_touch_event(int chan_id, bool is_pressed) {
         last_smooth = smooth[0];
         int32_t vs_idle = (int32_t)smooth[0] - (int32_t)calib_data.baseline;
         if (vs_idle > max_vs_idle) max_vs_idle = vs_idle;
-        if (max_vs_idle > release_bar) break;
+        if (max_vs_idle > (int32_t)elev_bar) break;
       }
 
       bool collapsed = (last_smooth < 10000) ||
         (last_smooth < (calib_data.baseline * 3) / 4);
       // Collapse is not a lift (confirmed live: proximity coupling on pad 8
       // with no other hold was treated as RELEASE and stopped Stream Hold).
-      if (collapsed || max_vs_idle > release_bar)
+      if (collapsed || max_vs_idle > (int32_t)elev_bar)
         return;
     }
   }
@@ -998,6 +999,28 @@ static void touch_health_check_task(void *pvParameters) {
       // NO RECOVERY NEEDED - the pad is fine, just the state got out of sync.
       // Do NOT sync TO pressed without smooth elevation - that path is handled
       // as a dead-band phantom above.
+      // Hold lift backstop for musical pads only. Pad 12 hold_active is the
+      // long-press arming flag; a synthetic RELEASE there aborts programming
+      // entry. Near idle (not collapsed) means the finger is gone.
+      if (i != 12 && s_hold_active[i] && s_button_pressed_states[i] &&
+          !smooth_elevated) {
+        bool collapsed = (smooth[0] < 10000) ||
+          (calib_data.baseline > 0 && smooth[0] < (calib_data.baseline * 3) / 4);
+        if (!collapsed) {
+          s_button_pressed_states[i] = false;
+          s_pad_press_timestamps[i] = 0;
+          event_t event = {
+            .type = EVENT_TOUCH_RELEASE,
+            .priority = EVENT_PRIORITY_HIGH,
+            .timestamp = event_bus_get_current_timestamp(),
+            .data.touch = { .pad_id = i }
+          };
+          event_bus_post(&event);
+          s_touch_stats.state_corrections++;
+          continue;
+        }
+      }
+
       if (s_button_pressed_states[i] != hardware_is_touching) {
         // Skip PRESSED→RELEASED for held pads: live delta is unreliable
         // during a hold (collapse looks like a lift). Do not sync TO pressed

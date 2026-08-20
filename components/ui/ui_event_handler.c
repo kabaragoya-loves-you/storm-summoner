@@ -219,7 +219,11 @@ static void button13_long_press_timer_cb(TimerHandle_t xTimer) {
         (benchmark[0] < (calib_data.baseline * 3) / 4);
       // Dual-touch coupling collapses smooth far below baseline. That is not
       // a lift (idle is near baseline). Keep arming while another Hold is live.
-      if (smooth_collapsed && touch_is_any_hold_except(BUTTON_13_LOGICAL_PAD))
+      // Coupling while another Hold is live drops pad 12 below baseline
+      // without meeting the 25% collapse gate (confirmed live: elev=-4389,
+      // smooth=16459 vs base=20848, abort at accum=1600ms). Idle is near 0.
+      bool other_hold = touch_is_any_hold_except(BUTTON_13_LOGICAL_PAD);
+      if (other_hold && (smooth_collapsed || elevation < -elev_thresh))
         real_touch = true;
       else
         real_touch = (calib_data.baseline > 0) && (elevation > elev_thresh);
